@@ -28,6 +28,23 @@ Deploy all current components:
 gsv infra deploy --all
 ```
 
+By default this deploys the historical `gsv` instance. To run multiple GSVs in
+the same Cloudflare account, choose a distinct instance name:
+
+```bash
+gsv infra deploy --instance gsv-personal --all
+gsv infra deploy --instance gsv-work --all
+```
+
+The instance name scopes Worker script names, service binding targets, and the R2
+bucket. The default `gsv` instance keeps existing resource names for
+compatibility, including `gsv`, `ripgit`, `gsv-assembler`, `gsv-channel-*`, and
+`gsv-storage`. A named instance uses names such as `gsv-work`,
+`gsv-work-ripgit`, and `gsv-work-storage`. Non-default names cannot be `ripgit`
+or end with generated component suffixes such as `-ripgit`, `-assembler`, or
+`-channel-whatsapp`. `GSV_INSTANCE` can be used instead of passing `--instance`
+on every deploy, upgrade, or destroy command.
+
 The components are `ripgit`, `assembler`, `gateway`, `channel-whatsapp`,
 `channel-discord`, and `channel-telegram`. To deploy only a subset:
 
@@ -117,11 +134,18 @@ Remove only selected components:
 gsv infra destroy -c channel-whatsapp
 ```
 
-Delete the shared R2 bucket only when you intend to destroy stored files,
+Delete the instance R2 bucket only when you intend to destroy stored files,
 artifacts, media, and archives:
 
 ```bash
 gsv infra destroy --all --delete-bucket --purge-bucket
+```
+
+For a named instance, pass the same instance name when upgrading or destroying:
+
+```bash
+gsv infra upgrade --instance gsv-work --all
+gsv infra destroy --instance gsv-work --all --delete-bucket --purge-bucket
 ```
 
 By default, destroy also tries to uninstall the local device daemon. Use

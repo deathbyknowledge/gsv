@@ -32,7 +32,7 @@ Deploy the current Cloudflare components:
 gsv infra deploy --all
 ```
 
-This deploys the Gateway, Kernel-facing services, shared storage, and adapter
+This deploys the Gateway, Kernel-facing services, instance storage, and adapter
 Workers for WhatsApp and Discord. The command prints a Gateway URL such as:
 
 ```text
@@ -40,6 +40,13 @@ https://gsv.<your-subdomain>.workers.dev
 ```
 
 Open that URL in your browser.
+
+To deploy more than one GSV in the same Cloudflare account, give each deployment
+a unique instance prefix:
+
+```bash
+gsv infra deploy --instance gsv-personal --all
+```
 
 ## 2. Complete Web Setup
 

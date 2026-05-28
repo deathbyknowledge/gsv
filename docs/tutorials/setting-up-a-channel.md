@@ -21,6 +21,8 @@ gsv infra deploy -c channel-telegram --telegram-bot-token "$TELEGRAM_BOT_TOKEN"
 ```
 
 Deploying everything with `gsv infra deploy --all` includes all adapter Workers.
+If your deployment uses a named instance, pass the same `--instance NAME` or set
+`GSV_INSTANCE` for adapter deploys.
 
 ## 2. Connect WhatsApp
 

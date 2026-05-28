@@ -178,6 +178,9 @@ gsv infra deploy -c assembler -c gateway
 gsv packages sync
 ```
 
+For a named deployment, pass the same `--instance NAME` to the infrastructure
+deploy command.
+
 Treat package review like code review. Check requested Kernel syscalls,
 filesystem writes, shell usage, adapter behavior, and network assumptions before
 enabling non-builtin packages.

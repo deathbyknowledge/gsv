@@ -22,6 +22,8 @@ Named after the planet-scale sentient ships from Iain M. Banks' Culture series, 
 curl -sSL https://install.gsv.space | bash
 # Deploys all components to your Cloudflare account
 gsv infra deploy --api-token <CLOUDFLARE-API-TOKEN>
+# For a second install in the same account, add a unique instance prefix:
+gsv infra deploy --instance gsv-personal --api-token <CLOUDFLARE-API-TOKEN>
 ```
 
 Once the deployment finishes open the URL to finish your onboarding through the Web UI.

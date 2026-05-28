@@ -13,6 +13,7 @@ struct DeployCommandOptions {
     version: String,
     component: Vec<String>,
     all: bool,
+    instance: String,
     force_fetch: bool,
     bundle_dir: Option<PathBuf>,
     api_token: Option<String>,
@@ -24,6 +25,7 @@ struct DeployCommandOptions {
 struct DestroyCommandOptions {
     component: Vec<String>,
     all: bool,
+    instance: String,
     delete_bucket: bool,
     purge_bucket: bool,
     wizard: bool,
@@ -35,6 +37,7 @@ struct DestroyCommandOptions {
 struct DestroyDeployOptions {
     component: Vec<String>,
     all: bool,
+    instance: String,
     delete_bucket: bool,
     purge_bucket: bool,
     wizard: bool,
@@ -51,6 +54,7 @@ pub(crate) async fn run_infra(
             version,
             component,
             all,
+            instance,
             force_fetch,
             bundle_dir,
             api_token,
@@ -64,6 +68,7 @@ pub(crate) async fn run_infra(
                     version,
                     component,
                     all,
+                    instance,
                     force_fetch,
                     bundle_dir,
                     api_token,
@@ -78,6 +83,7 @@ pub(crate) async fn run_infra(
             version,
             component,
             all,
+            instance,
             force_fetch,
             bundle_dir,
             api_token,
@@ -91,6 +97,7 @@ pub(crate) async fn run_infra(
                     version,
                     component,
                     all,
+                    instance,
                     force_fetch,
                     bundle_dir,
                     api_token,
@@ -104,6 +111,7 @@ pub(crate) async fn run_infra(
         InfraAction::Destroy {
             component,
             all,
+            instance,
             delete_bucket,
             purge_bucket,
             wizard,
@@ -116,6 +124,7 @@ pub(crate) async fn run_infra(
                 DestroyCommandOptions {
                     component,
                     all,
+                    instance,
                     delete_bucket,
                     purge_bucket,
                     wizard,
@@ -317,6 +326,7 @@ async fn run_destroy_command(
     let DestroyCommandOptions {
         component,
         all,
+        instance,
         delete_bucket,
         purge_bucket,
         wizard,
@@ -335,6 +345,7 @@ async fn run_destroy_command(
         DestroyDeployOptions {
             component,
             all,
+            instance,
             delete_bucket,
             purge_bucket,
             wizard,
@@ -374,6 +385,7 @@ async fn apply_deploy(
         version,
         component,
         all,
+        instance,
         force_fetch,
         bundle_dir,
         api_token,
@@ -382,6 +394,7 @@ async fn apply_deploy(
         telegram_bot_token,
     } = options;
     deploy::set_notification_output(false);
+    let instance = deploy::DeployInstance::parse(&instance)?;
 
     if all && !component.is_empty() {
         return Err("Use either --all or one/more --component values, not both".into());
@@ -396,6 +409,7 @@ async fn apply_deploy(
         resolve_cloudflare_account_id_for_deploy(&token, configured_account_id, false, false)
             .await?;
     println!("Cloudflare account ID: {}", resolved_account_id);
+    println!("GSV instance: {}", instance.name());
 
     let components = if all {
         deploy::available_components()
@@ -434,13 +448,20 @@ async fn apply_deploy(
         &token,
         &bundle_version,
         &components,
+        &instance,
     )
     .await?;
 
     if deploying_discord {
         if let Some(bot_token) = discord_bot_token.as_deref() {
             println!("Setting DISCORD_BOT_TOKEN secret on Discord channel worker...");
-            deploy::set_discord_bot_token_secret(&resolved_account_id, &token, bot_token).await?;
+            deploy::set_discord_bot_token_secret(
+                &resolved_account_id,
+                &token,
+                bot_token,
+                &instance,
+            )
+            .await?;
             println!("Configured DISCORD_BOT_TOKEN.");
         } else {
             println!("Note: Discord bot token not configured.");
@@ -453,7 +474,13 @@ async fn apply_deploy(
     if deploying_telegram {
         if let Some(bot_token) = telegram_bot_token.as_deref() {
             println!("Setting TELEGRAM_BOT_TOKEN secret on Telegram channel worker...");
-            deploy::set_telegram_bot_token_secret(&resolved_account_id, &token, bot_token).await?;
+            deploy::set_telegram_bot_token_secret(
+                &resolved_account_id,
+                &token,
+                bot_token,
+                &instance,
+            )
+            .await?;
             println!("Configured TELEGRAM_BOT_TOKEN.");
         } else {
             println!("Note: Telegram bot token not configured.");
@@ -486,6 +513,7 @@ async fn destroy_deploy(
     let DestroyDeployOptions {
         component,
         all,
+        instance,
         delete_bucket,
         purge_bucket,
         wizard,
@@ -493,6 +521,7 @@ async fn destroy_deploy(
         account_id,
     } = options;
     deploy::set_notification_output(false);
+    let instance = deploy::DeployInstance::parse(&instance)?;
 
     if all && !component.is_empty() {
         return Err("Use either --all or one/more --component values, not both".into());
@@ -530,6 +559,7 @@ async fn destroy_deploy(
     )
     .await?;
     println!("Cloudflare account ID: {}", resolved_account_id);
+    println!("GSV instance: {}", instance.name());
 
     let mut components = if all {
         deploy::available_components()
@@ -558,8 +588,11 @@ async fn destroy_deploy(
     let mut purge_bucket_resource = purge_bucket;
 
     if wizard_mode && interactive {
-        delete_bucket_resource =
-            prompt_yes_no("Also delete R2 bucket gsv-storage?", delete_bucket_resource)?;
+        let bucket_name = instance.storage_bucket_name();
+        delete_bucket_resource = prompt_yes_no(
+            &format!("Also delete R2 bucket {}?", bucket_name),
+            delete_bucket_resource,
+        )?;
         if delete_bucket_resource {
             purge_bucket_resource = prompt_yes_no(
                 "Purge bucket objects before deletion?",
@@ -593,6 +626,7 @@ async fn destroy_deploy(
         &components,
         delete_bucket_resource,
         purge_bucket_resource,
+        &instance,
     )
     .await
 }
