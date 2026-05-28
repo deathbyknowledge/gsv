@@ -40,8 +40,10 @@ The instance name scopes Worker script names, service binding targets, and the R
 bucket. The default `gsv` instance keeps existing resource names for
 compatibility, including `gsv`, `ripgit`, `gsv-assembler`, `gsv-channel-*`, and
 `gsv-storage`. A named instance uses names such as `gsv-work`,
-`gsv-work-ripgit`, and `gsv-work-storage`. `GSV_INSTANCE` can be used instead of
-passing `--instance` on every deploy, upgrade, or destroy command.
+`gsv-work-ripgit`, and `gsv-work-storage`. Non-default names cannot be `ripgit`
+or end with generated component suffixes such as `-ripgit`, `-assembler`, or
+`-channel-whatsapp`. `GSV_INSTANCE` can be used instead of passing `--instance`
+on every deploy, upgrade, or destroy command.
 
 The components are `ripgit`, `assembler`, `gateway`, `channel-whatsapp`,
 `channel-discord`, and `channel-telegram`. To deploy only a subset:

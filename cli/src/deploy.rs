@@ -40,6 +40,14 @@ const SCRIPT_RIPGIT: &str = "ripgit";
 const SCRIPT_CHANNEL_WHATSAPP: &str = "gsv-channel-whatsapp";
 const SCRIPT_CHANNEL_DISCORD: &str = "gsv-channel-discord";
 const SCRIPT_CHANNEL_TELEGRAM: &str = "gsv-channel-telegram";
+const RESERVED_NON_DEFAULT_INSTANCE_NAMES: &[&str] = &[SCRIPT_RIPGIT];
+const RESERVED_INSTANCE_NAME_SUFFIXES: &[&str] = &[
+    "-assembler",
+    "-ripgit",
+    "-channel-whatsapp",
+    "-channel-discord",
+    "-channel-telegram",
+];
 const DEV_RELEASE_TAG: &str = "dev";
 const WORKERS_SUBDOMAIN_API_DATE: &str = "2025-08-01";
 const CLOUDFLARE_MAX_ATTEMPTS: usize = 5;
@@ -131,6 +139,14 @@ fn normalize_instance_name(raw: &str) -> Result<String, Box<dyn std::error::Erro
         return Err(
             "GSV instance name must contain only lowercase letters, numbers, and '-'".into(),
         );
+    }
+    if normalized != DEFAULT_DEPLOY_INSTANCE
+        && (RESERVED_NON_DEFAULT_INSTANCE_NAMES.contains(&normalized.as_str())
+            || RESERVED_INSTANCE_NAME_SUFFIXES
+                .iter()
+                .any(|suffix| normalized.ends_with(suffix)))
+    {
+        return Err("GSV instance name would collide with generated component worker names".into());
     }
     Ok(normalized)
 }
@@ -3549,6 +3565,26 @@ mod tests {
                 "expected invalid instance name: {value}"
             );
         }
+    }
+
+    #[test]
+    fn deploy_instance_rejects_component_worker_collision_names() {
+        for value in [
+            "ripgit",
+            "team-ripgit",
+            "team-assembler",
+            "gsv-channel-whatsapp",
+            "team-channel-discord",
+            "team-channel-telegram",
+        ] {
+            assert!(
+                DeployInstance::parse(value).is_err(),
+                "expected reserved instance name: {value}"
+            );
+        }
+
+        assert!(DeployInstance::parse(DEFAULT_DEPLOY_INSTANCE).is_ok());
+        assert!(DeployInstance::parse("team-channel").is_ok());
     }
 
     #[test]

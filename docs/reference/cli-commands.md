@@ -228,7 +228,9 @@ so multiple GSVs can coexist in one Cloudflare account. The default instance is
 `gsv`, which preserves the historical names: `gsv`, `ripgit`, `gsv-assembler`,
 `gsv-channel-*`, and `gsv-storage`. A named instance such as `gsv-personal`
 deploys `gsv-personal`, `gsv-personal-ripgit`,
-`gsv-personal-channel-whatsapp`, and `gsv-personal-storage`.
+`gsv-personal-channel-whatsapp`, and `gsv-personal-storage`. Non-default
+instance names cannot be `ripgit` or end with generated component suffixes such
+as `-ripgit`, `-assembler`, or `-channel-whatsapp`.
 
 `destroy` tears down Workers for the selected instance. If no component or
 `--all` is supplied, it targets all components. `--delete-bucket` removes that
