@@ -218,6 +218,137 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
       },
     },
   ];
+  const packages = [
+    {
+      packageId: "import:sam/tools:packages/weather",
+      scope: { kind: "user", uid: 1000 },
+      manifest: {
+        name: "weather",
+        description: "Weather tools",
+        version: "1.2.3",
+        runtime: "web-ui",
+        source: {
+          repo: "sam/tools",
+          ref: "main",
+          subdir: "packages/weather",
+          resolvedCommit: "abc123",
+        },
+        entrypoints: [
+          {
+            name: "Weather",
+            kind: "ui",
+            module: "src/main.tsx",
+            route: "/apps/weather",
+          },
+          {
+            name: "Weather command",
+            kind: "command",
+            module: "src/backend.ts",
+            command: "weather",
+            description: "Fetch weather.",
+            syscalls: ["fs.read"],
+          },
+        ],
+        profiles: [
+          {
+            name: "forecast",
+            displayName: "Forecast",
+            contextFiles: [{ name: "brief.md", text: "Forecast context" }],
+          },
+        ],
+        capabilities: {
+          bindings: [{
+            binding: "KERNEL",
+            kind: "kernel",
+            interfaceName: "gsv.kernel.v1",
+            required: true,
+          }],
+        },
+      },
+      artifact: {
+        hash: "sha256:weather",
+        mainModule: "src/main.js",
+        modulePaths: ["src/main.js", "src/backend.js"],
+        publicFilePaths: ["browser/src/main.js"],
+      },
+      grants: {
+        bindings: [{
+          binding: "KERNEL",
+          providerKind: "kernel-entrypoint",
+          providerRef: "kernel://app/request",
+        }],
+      },
+      enabled: true,
+      reviewRequired: true,
+      reviewedAt: 1700,
+      installedAt: 1000,
+      updatedAt: 2000,
+    },
+    {
+      packageId: "builtin:chat@1.0.0",
+      scope: { kind: "global" },
+      manifest: {
+        name: "chat",
+        description: "Chat application",
+        version: "1.0.0",
+        runtime: "web-ui",
+        source: {
+          repo: "root/gsv",
+          ref: "main",
+          subdir: "builtin-packages/chat",
+          resolvedCommit: "def456",
+        },
+        entrypoints: [{
+          name: "Chat",
+          kind: "ui",
+          module: "src/main.tsx",
+          route: "/apps/chat",
+        }],
+      },
+      artifact: {
+        hash: "sha256:chat",
+        mainModule: "src/main.js",
+        modulePaths: ["src/main.js"],
+      },
+      enabled: true,
+      reviewRequired: false,
+      reviewedAt: null,
+      installedAt: 900,
+      updatedAt: 1900,
+    },
+    {
+      packageId: "import:alice/private:app",
+      scope: { kind: "user", uid: 1001 },
+      manifest: {
+        name: "private",
+        description: "Hidden package",
+        version: "1.0.0",
+        runtime: "web-ui",
+        source: {
+          repo: "alice/private",
+          ref: "main",
+          subdir: "app",
+        },
+        entrypoints: [{
+          name: "Private",
+          kind: "ui",
+          module: "src/main.tsx",
+          route: "/apps/private",
+        }],
+      },
+      artifact: {
+        hash: "sha256:private",
+        mainModule: "src/main.js",
+        modulePaths: ["src/main.js"],
+      },
+      enabled: true,
+      reviewRequired: false,
+      reviewedAt: null,
+      installedAt: 800,
+      updatedAt: 1800,
+    },
+  ];
+  const packageScopeKey = (scope: any) => scope.kind === "user" ? `user:${scope.uid}` : "global";
 
   const kernel: KernelRefs = {
     auth: null as never,
@@ -234,6 +365,18 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
     devices: null as never,
     caps: null as never,
     config: null as never,
+    packages: {
+      list(args?: { scopes?: any[]; enabled?: boolean; name?: string; runtime?: string }) {
+        const visibleScopes = args?.scopes?.map(packageScopeKey);
+        return packages.filter((record) => {
+          if (visibleScopes && !visibleScopes.includes(packageScopeKey(record.scope))) return false;
+          if (typeof args?.enabled === "boolean" && record.enabled !== args.enabled) return false;
+          if (args?.name && record.manifest.name !== args.name) return false;
+          if (args?.runtime && record.manifest.runtime !== args.runtime) return false;
+          return true;
+        }) as never;
+      },
+    } as never,
     schedules: {
       list(args) {
         const records = schedules.filter((schedule) => args.ownerUid === undefined || schedule.ownerUid === args.ownerUid);
@@ -1035,6 +1178,73 @@ describe("GsvFs Linux-like runtime views", () => {
     const fs = makeRuntimeViewFs(SAM);
 
     await expect(fs.readdir("/proc/task-foreign")).rejects.toThrow("ENOENT");
+  });
+
+  it("exposes installed package status and metadata under /var/lib/gsv/packages", async () => {
+    const fs = makeRuntimeViewFs(SAM);
+    const weatherBase = encodeURIComponent("import:sam/tools:packages/weather");
+    const chatBase = encodeURIComponent("builtin:chat@1.0.0");
+    const hiddenBase = encodeURIComponent("import:alice/private:app");
+
+    await expect(fs.readdir("/var/lib")).resolves.toEqual(["gsv"]);
+    await expect(fs.readdir("/var/lib/gsv/packages")).resolves.toEqual(["info", "status"]);
+    await expect(fs.readdir("/var/lib/gsv/packages/info")).resolves.toEqual([
+      `${chatBase}.list`,
+      `${chatBase}.manifest`,
+      `${chatBase}.refs`,
+      `${weatherBase}.list`,
+      `${weatherBase}.manifest`,
+      `${weatherBase}.refs`,
+    ]);
+
+    const status = await fs.readFile("/var/lib/gsv/packages/status");
+    expect(status).toContain("Package: import:sam/tools:packages/weather");
+    expect(status).toContain("Name: weather");
+    expect(status).toContain("Enabled: yes");
+    expect(status).toContain("Scope: user:1000");
+    expect(status).toContain("Package: builtin:chat@1.0.0");
+    expect(status).not.toContain("import:alice/private:app");
+
+    const manifest = JSON.parse(await fs.readFile(`/var/lib/gsv/packages/info/${weatherBase}.manifest`));
+    expect(manifest).toMatchObject({
+      name: "weather",
+      source: {
+        repo: "sam/tools",
+        subdir: "packages/weather",
+      },
+    });
+
+    const refs = JSON.parse(await fs.readFile(`/var/lib/gsv/packages/info/${weatherBase}.refs`));
+    expect(refs).toMatchObject({
+      packageId: "import:sam/tools:packages/weather",
+      source: {
+        ref: "main",
+        resolvedCommit: "abc123",
+      },
+      artifact: {
+        hash: "sha256:weather",
+      },
+      paths: {
+        source: "/src/packages/weather",
+        commands: ["/usr/local/bin/weather"],
+        publicFiles: ["/public/gsv/packages/sha256-weather/browser/src/main.js"],
+      },
+    });
+
+    const packageList = (await fs.readFile(`/var/lib/gsv/packages/info/${weatherBase}.list`))
+      .trim()
+      .split("\n");
+    expect(packageList).toEqual([
+      `/var/lib/gsv/packages/info/${weatherBase}.list`,
+      `/var/lib/gsv/packages/info/${weatherBase}.manifest`,
+      `/var/lib/gsv/packages/info/${weatherBase}.refs`,
+      "/src/packages/weather",
+      "/usr/local/bin/weather",
+      "/public/gsv/packages/sha256-weather/browser/src/main.js",
+    ]);
+
+    await expect(fs.readFile(`/var/lib/gsv/packages/info/${hiddenBase}.manifest`)).rejects.toThrow("ENOENT");
+    await expect(fs.writeFile("/var/lib/gsv/packages/status", "nope")).rejects.toThrow("EPERM");
   });
 
   it("exposes scheduler definitions and run history under /var", async () => {

@@ -3,6 +3,7 @@ import type { CapabilityStore } from "../kernel/capabilities";
 import type { ConfigStore } from "../kernel/config";
 import type { DeviceRegistry } from "../kernel/devices";
 import type { ProcessRegistry } from "../kernel/processes";
+import type { PackageStore } from "../kernel/packages";
 import type { ArgsOf, ResultOf } from "../syscalls";
 import type { ScheduleRecord, ScheduleRunHistoryEntry } from "../syscalls/scheduler";
 
@@ -38,6 +39,7 @@ export type KernelRefs = {
   devices: DeviceRegistry;
   caps: CapabilityStore;
   config: ConfigStore;
+  packages?: PackageStore;
   schedules?: ScheduleViewStore;
   processRequest?: ProcessViewRequest;
 };

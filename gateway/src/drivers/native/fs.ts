@@ -106,6 +106,7 @@ function makeFs(ctx: KernelContext): GsvFs {
       devices: ctx.devices,
       caps: ctx.caps,
       config: ctx.config,
+      packages: ctx.packages,
       schedules: ctx.schedules,
       processRequest: requestProcessView,
     },

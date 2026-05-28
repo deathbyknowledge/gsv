@@ -140,6 +140,7 @@ function createBash(
       devices: ctx.devices,
       caps: ctx.caps,
       config: ctx.config,
+      packages: ctx.packages,
       schedules: ctx.schedules,
       processRequest: requestProcessView,
     },
