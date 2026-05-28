@@ -2474,8 +2474,9 @@ export class Process extends Host<Env> {
       return;
     }
 
-    if (!response.content || response.content.length === 0) {
-      const errorMsg = response.errorMessage ?? "LLM returned empty response";
+    const responseFailure = describeAssistantResponseFailure(response);
+    if (responseFailure) {
+      const errorMsg = response.errorMessage ?? responseFailure;
       const displayError = formatGenerationFailure(errorMsg);
       console.error(`[Process] ${errorMsg}`);
       this.store.appendMessage("system", displayError, { conversationId });
@@ -3795,6 +3796,23 @@ export class Process extends Host<Env> {
 
 function snapshotAssistantMessageEvent<T extends AssistantMessageEvent>(event: T): T {
   return JSON.parse(JSON.stringify(event)) as T;
+}
+
+function describeAssistantResponseFailure(response: AssistantMessage): string | null {
+  if (response.stopReason === "error" || response.stopReason === "aborted") {
+    return response.errorMessage ?? `LLM generation ended with ${response.stopReason}`;
+  }
+  if (!response.content || response.content.length === 0) {
+    return "LLM returned empty response";
+  }
+  const hasVisibleText = response.content.some(
+    (block) => block.type === "text" && block.text.trim().length > 0,
+  );
+  const hasToolCall = response.content.some((block) => block.type === "toolCall");
+  if (!hasVisibleText && !hasToolCall) {
+    return "LLM returned reasoning but no final response";
+  }
+  return null;
 }
 
 function orderMessagesForProvider(messages: Message[]): Message[] {

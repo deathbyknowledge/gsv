@@ -670,6 +670,76 @@ describe("Process DO — mechanical", () => {
       });
     });
 
+    it("treats reasoning-only model turns as generation errors", async () => {
+      const pid = "mech-chat-thinking-only";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const emitted: Array<{ signal: string; payload: unknown }> = [];
+        process.sendSignal = async (signal: string, payload: unknown) => {
+          emitted.push({ signal, payload });
+        };
+        process.generation = {
+          async generate() {
+            return {
+              role: "assistant",
+              content: [
+                { type: "thinking", thinking: "I found the answer but never emitted it." },
+              ],
+              api: "test",
+              provider: "test",
+              model: "test",
+              stopReason: "stop",
+              timestamp: Date.now(),
+            };
+          },
+          async generateText() {
+            return "unused";
+          },
+        };
+
+        process.store.appendMessage("user", "answer visibly");
+        process.currentRun = {
+          runId: "run-chat-thinking-only",
+          queued: false,
+          conversationId: "default",
+          config: {
+            profile: "task",
+            provider: "workers-ai",
+            model: "@cf/nvidia/nemotron-3-120b-a12b",
+            apiKey: "",
+            reasoning: "high",
+            maxTokens: 8192,
+            contextWindowTokens: 256000,
+            contextWindowSource: "config",
+            maxContextBytes: 32768,
+          },
+          tools: [],
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+        await process.continueAgentLoop("run-chat-thinking-only");
+        return {
+          emitted,
+          messages: process.store.getMessages(),
+        };
+      });
+
+      expect(result.messages.map((message: any) => [message.role, message.content])).toEqual([
+        ["user", "answer visibly"],
+        ["system", "Generation failed: LLM returned reasoning but no final response"],
+      ]);
+      expect(result.emitted.some((entry) => entry.signal === "proc.run.output")).toBe(false);
+      const finished = result.emitted.find((entry) => entry.signal === "proc.run.finished")?.payload as any;
+      expect(finished).toMatchObject({
+        status: "error",
+        reason: "generation.empty",
+        error: "Generation failed: LLM returned reasoning but no final response",
+      });
+    });
+
     it("mirrors provider stream events as proc.run.stream signals", async () => {
       const pid = "mech-chat-stream";
       const stub = await initProcess(pid, ROOT_IDENTITY);

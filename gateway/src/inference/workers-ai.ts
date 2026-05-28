@@ -397,7 +397,14 @@ class WorkersAiPiEventEmitter {
     }
     message.stopReason = this.resolveStopReason(message);
 
-    if (message.content.length === 0 || message.stopReason === "error" || message.stopReason === "aborted") {
+    if (!this.hasVisibleOutput(message)) {
+      message.stopReason = "error";
+      message.errorMessage = message.content.length === 0
+        ? "Workers AI returned an empty response"
+        : "Workers AI returned reasoning but no final response";
+    }
+
+    if (message.stopReason === "error" || message.stopReason === "aborted") {
       if (message.content.length === 0) {
         message.stopReason = "error";
         message.errorMessage = "Workers AI returned an empty response";
@@ -415,6 +422,13 @@ class WorkersAiPiEventEmitter {
       reason: message.stopReason === "length" ? "length" : message.stopReason === "toolUse" ? "toolUse" : "stop",
       message,
     });
+  }
+
+  private hasVisibleOutput(message: AssistantMessage): boolean {
+    return message.content.some((block) => (
+      block.type === "toolCall" ||
+      (block.type === "text" && block.text.trim().length > 0)
+    ));
   }
 
   private appendText(delta: string): void {

@@ -286,6 +286,44 @@ describe("streamWithWorkersAi", () => {
       },
     ]);
   });
+
+  it("ends reasoning-only streams as errors", async () => {
+    const run = vi.fn().mockResolvedValue(sseStream([
+      "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"thinking only\"},\"finish_reason\":\"stop\"}]}\n\n",
+      "data: [DONE]\n\n",
+    ]));
+    (env as unknown as { AI: { run: typeof run } }).AI = { run };
+
+    const stream = streamWithWorkersAi({
+      modelName: DEFAULT_WORKERS_AI_MODEL,
+      maxTokens: 128,
+      timeoutMs: 1000,
+      context: {
+        messages: [{ role: "user", content: "answer visibly", timestamp: 1 }],
+      },
+    });
+
+    const events = [];
+    for await (const event of stream) {
+      events.push(event);
+    }
+
+    const response = await stream.result();
+    expect(events.map((event) => event.type)).toEqual([
+      "start",
+      "thinking_start",
+      "thinking_delta",
+      "thinking_end",
+      "error",
+    ]);
+    expect(response).toMatchObject({
+      stopReason: "error",
+      errorMessage: "Workers AI returned reasoning but no final response",
+    });
+    expect(response.content).toEqual([
+      { type: "thinking", thinking: "thinking only" },
+    ]);
+  });
 });
 
 function sseStream(chunks: string[]): ReadableStream<Uint8Array> {
