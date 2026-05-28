@@ -137,6 +137,78 @@ function applyAssistantSignal(payload: unknown, active: ThreadContext, setRows: 
   });
 }
 
+function applyAssistantStreamSignal(payload: unknown, active: ThreadContext, setRows: (update: (current: LogRow[]) => LogRow[]) => void): boolean {
+  const record = asRecord(payload);
+  if (!signalMatchesActiveThread(record, active)) return false;
+  const event = asRecord(record?.event);
+  const eventType = asString(event?.type);
+  const runId = asString(record?.runId);
+  if (!runId) return false;
+
+  if (eventType === "text_delta") {
+    const delta = asString(event?.delta) ?? "";
+    if (!delta) return false;
+    setRows((current) => appendAssistantDelta(current, runId, delta));
+    return true;
+  }
+
+  if (eventType === "thinking_delta") {
+    const delta = asString(event?.delta) ?? "";
+    if (!delta) return false;
+    setRows((current) => appendAssistantThinkingDelta(current, runId, delta));
+    return true;
+  }
+
+  return false;
+}
+
+function appendAssistantDelta(rows: LogRow[], runId: string, delta: string): LogRow[] {
+  const next = dropEmptyPlaceholder(rows).slice();
+  const last = next[next.length - 1];
+  if (last?.kind === "message" && last.role === "assistant" && last.runId === runId && !last.messageId) {
+    next[next.length - 1] = {
+      ...last,
+      text: `${last.text}${delta}`,
+    };
+    return next;
+  }
+
+  next.push({
+    kind: "message",
+    role: "assistant",
+    text: delta,
+    timestamp: Date.now(),
+    runId,
+  });
+  return next;
+}
+
+function appendAssistantThinkingDelta(rows: LogRow[], runId: string, delta: string): LogRow[] {
+  const next = dropEmptyPlaceholder(rows).slice();
+  const last = next[next.length - 1];
+  if (last?.kind === "message" && last.role === "assistant" && last.runId === runId && !last.messageId) {
+    const thinking = last.thinking && last.thinking.length > 0
+      ? last.thinking.slice()
+      : [""];
+    thinking[thinking.length - 1] = `${thinking[thinking.length - 1] ?? ""}${delta}`;
+    next[next.length - 1] = {
+      ...last,
+      thinking,
+    };
+    return next;
+  }
+
+  next.push({
+    kind: "message",
+    role: "assistant",
+    text: "",
+    thinking: [delta],
+    timestamp: Date.now(),
+    runId,
+  });
+  return next;
+}
+
 function applyToolCallSignal(payload: unknown, active: ThreadContext, setRows: (update: (current: LogRow[]) => LogRow[]) => void) {
   const record = asRecord(payload);
   if (!signalMatchesActiveThread(record, active)) return;
@@ -1031,6 +1103,7 @@ function escapeHtml(value: string): string {
 export {
   activeMeta,
   applyAssistantSignal,
+  applyAssistantStreamSignal,
   applyProcessMessageSignal,
   applyToolCallSignal,
   applyToolResultSignal,

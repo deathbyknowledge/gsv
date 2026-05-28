@@ -98,7 +98,12 @@ set to the PID.
 
 The model response can contain text, thinking blocks, and tool calls:
 
-- Text is emitted immediately as `proc.run.output`.
+- Provider stream events are mirrored during generation as `proc.run.stream`.
+  The payload wraps pi-ai assistant stream events (`text_delta`,
+  `thinking_delta`, `toolcall_delta`, and their start/end/done/error events)
+  with `pid`, `runId`, `conversationId`, `seq`, and `timestamp`.
+- Final assistant text and thinking blocks are still emitted as
+  `proc.run.output` for compatibility and transcript reconciliation.
 - Assistant text, thinking blocks, and tool calls are stored in the `messages`
   table.
 - If there are no tool calls, the process emits `proc.run.finished` and finishes the

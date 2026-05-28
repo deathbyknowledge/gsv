@@ -196,7 +196,7 @@ The gateway rejects setup-mode connections with error code `425` and details:
       "capabilities": ["fs.*", "proc.*"]
     },
     "syscalls": ["fs.read", "proc.send"],
-    "signals": ["proc.run.output", "proc.run.finished"]
+    "signals": ["proc.run.stream", "proc.run.output", "proc.run.finished"]
   }
 }
 ```
@@ -240,6 +240,7 @@ Current role defaults from `buildSignalList()`:
 
 - `proc.changed`
 - `proc.run.started`
+- `proc.run.stream`
 - `proc.run.output`
 - `proc.run.tool.started`
 - `proc.run.tool.finished`
@@ -263,6 +264,31 @@ Current role defaults from `buildSignalList()`:
 - user connections receive routed `proc.run.*` signals for their own runs
 - adapter surfaces use `proc.run.hil.requested` and `proc.run.finished`
 - durable watches can subscribe to `proc.changed` for message, context, queue, and conversation lifecycle changes
+
+`proc.run.stream` carries the provider stream event exactly in the pi-ai
+assistant event shape:
+
+```json
+{
+  "pid": "proc-123",
+  "runId": "run-123",
+  "conversationId": "default",
+  "seq": 3,
+  "event": {
+    "type": "text_delta",
+    "contentIndex": 0,
+    "delta": "hello",
+    "partial": {}
+  },
+  "timestamp": 1760000000000
+}
+```
+
+The nested `event.type` values are `start`, `text_start`, `text_delta`,
+`text_end`, `thinking_start`, `thinking_delta`, `thinking_end`,
+`toolcall_start`, `toolcall_delta`, `toolcall_end`, `done`, and `error`.
+Consumers should use `contentIndex` for block identity; different block streams
+are not guaranteed to be contiguous.
 
 ---
 

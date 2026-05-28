@@ -849,6 +849,9 @@ export class Kernel extends Host<Env> {
       case "proc.run.started":
         patchForActive("running");
         return;
+      case "proc.run.stream":
+        patchForActive("running");
+        return;
       case "proc.run.output":
         patchForActive("running");
         return;

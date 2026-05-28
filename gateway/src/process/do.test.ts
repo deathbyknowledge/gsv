@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterEach, vi } from "vitest";
 import { env, runInDurableObject, runDurableObjectAlarm } from "cloudflare:test";
+import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import type { Process } from "./do";
 import { Kernel } from "../kernel/do";
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
@@ -667,6 +668,104 @@ describe("Process DO — mechanical", () => {
           { type: "thinking", thinking: "Need to preserve this reasoning." },
         ],
       });
+    });
+
+    it("mirrors provider stream events as proc.run.stream signals", async () => {
+      const pid = "mech-chat-stream";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const emitted = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const emitted: Array<{ signal: string; payload: unknown }> = [];
+        process.sendSignal = async (signal: string, payload: unknown) => {
+          emitted.push({ signal, payload });
+        };
+        process.generation = {
+          stream() {
+            const stream = createAssistantMessageEventStream();
+            const partial = {
+              role: "assistant",
+              content: [{ type: "text", text: "" }],
+              api: "test",
+              provider: "test",
+              model: "test",
+              usage: {
+                input: 0,
+                output: 0,
+                cacheRead: 0,
+                cacheWrite: 0,
+                totalTokens: 0,
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+              },
+              stopReason: "stop",
+              timestamp: Date.now(),
+            } as any;
+            stream.push({ type: "start", partial: { ...partial, content: [] } });
+            stream.push({ type: "text_start", contentIndex: 0, partial });
+            partial.content[0].text = "he";
+            stream.push({ type: "text_delta", contentIndex: 0, delta: "he", partial });
+            partial.content[0].text = "hello";
+            stream.push({ type: "text_delta", contentIndex: 0, delta: "llo", partial });
+            stream.push({ type: "text_end", contentIndex: 0, content: "hello", partial });
+            stream.push({ type: "done", reason: "stop", message: { ...partial, content: [{ type: "text", text: "hello" }] } });
+            return stream;
+          },
+          async generate() {
+            throw new Error("non-stream generation should not be used");
+          },
+          async generateText() {
+            return "hello";
+          },
+        };
+
+        process.store.appendMessage("user", "stream please");
+        process.currentRun = {
+          runId: "run-chat-stream",
+          queued: false,
+          conversationId: "default",
+          config: {
+            profile: "task",
+            provider: "workers-ai",
+            model: "@cf/nvidia/nemotron-3-120b-a12b",
+            apiKey: "",
+            reasoning: "off",
+            maxTokens: 8192,
+            contextWindowTokens: 256000,
+            contextWindowSource: "config",
+            maxContextBytes: 32768,
+          },
+          tools: [],
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+        await process.continueAgentLoop("run-chat-stream");
+        return emitted;
+      });
+
+      const streamSignals = (emitted as Array<{ signal: string; payload: any }>)
+        .filter((entry) => entry.signal === "proc.run.stream");
+      expect(streamSignals.map((entry) => entry.payload.event.type)).toEqual([
+        "start",
+        "text_start",
+        "text_delta",
+        "text_delta",
+        "text_end",
+        "done",
+      ]);
+      expect(streamSignals[2].payload).toMatchObject({
+        pid,
+        runId: "run-chat-stream",
+        conversationId: "default",
+        seq: 3,
+        event: {
+          type: "text_delta",
+          delta: "he",
+        },
+      });
+      const outputSignal = (emitted as Array<{ signal: string; payload: any }>)
+        .find((entry) => entry.signal === "proc.run.output");
+      expect(outputSignal?.payload.text).toBe("hello");
     });
   });
 

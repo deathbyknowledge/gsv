@@ -10,6 +10,7 @@ import type {
 } from "../types";
 import {
   applyAssistantSignal,
+  applyAssistantStreamSignal,
   applyProcessMessageSignal,
   applyToolCallSignal,
   applyToolResultSignal,
@@ -130,6 +131,14 @@ export function useProcessSignals({
         prepareForLiveTranscriptActivity();
         applyAssistantSignal(payload, target, setRows);
         setPendingAssistant(null);
+      } else if (signal === "proc.run.stream") {
+        if (!signalMatchesActiveThread(payload, target)) {
+          return;
+        }
+        if (applyAssistantStreamSignal(payload, target, setRows)) {
+          prepareForLiveTranscriptActivity();
+          setPendingAssistant(null);
+        }
       } else if (signal === "proc.run.finished") {
         if (!signalMatchesActiveThread(payload, target)) {
           return;

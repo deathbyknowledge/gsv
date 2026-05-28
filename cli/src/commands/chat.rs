@@ -53,7 +53,26 @@ fn process_chat_signal(
 
     match signal {
         "proc.run.output" => {
-            if let Some(text) = payload.get("text").and_then(|value| value.as_str()) {
+            if !emitted_text.load(Ordering::SeqCst) {
+                if let Some(text) = payload.get("text").and_then(|value| value.as_str()) {
+                    print!("{}", text);
+                    let _ = io::stdout().flush();
+                    emitted_text.store(true, Ordering::SeqCst);
+                }
+            }
+        }
+        "proc.run.stream" => {
+            if let Some(text) = payload
+                .get("event")
+                .and_then(|event| event.as_object())
+                .and_then(|event| {
+                    if event.get("type").and_then(|value| value.as_str()) == Some("text_delta") {
+                        event.get("delta").and_then(|value| value.as_str())
+                    } else {
+                        None
+                    }
+                })
+            {
                 print!("{}", text);
                 let _ = io::stdout().flush();
                 emitted_text.store(true, Ordering::SeqCst);

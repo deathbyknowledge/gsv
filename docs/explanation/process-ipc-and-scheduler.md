@@ -55,9 +55,9 @@ Use these meanings:
 
 - `SignalFrame`: existing transport frame with `type: "sig"` and a `signal`
   topic string.
-- Notification: an outward observation such as `proc.run.output`, `proc.run.finished`,
-  `device.status`, `exec.status`, or `identity.changed`, often carried over a
-  `SignalFrame`.
+- Notification: an outward observation such as `proc.run.stream`,
+  `proc.run.output`, `proc.run.finished`, `device.status`, `exec.status`, or
+  `identity.changed`, often carried over a `SignalFrame`.
 - Process event: normal input/work delivered to a process conversation or inbox.
 - Process signal: process control operation such as abort, kill, reset, pause,
   resume, or reload.

@@ -10,6 +10,7 @@ import {
   contextToWorkersAiMessages,
   extractWorkersAiContextWindow,
   normalizeWorkersAiResponse,
+  streamWithWorkersAi,
 } from "./workers-ai";
 
 describe("contextToWorkersAiMessages", () => {
@@ -205,6 +206,99 @@ describe("completeWithWorkersAi", () => {
     }
   });
 });
+
+describe("streamWithWorkersAi", () => {
+  it("emits pi-ai text events from Workers AI SSE chunks", async () => {
+    const run = vi.fn().mockResolvedValue(sseStream([
+      "data: {\"response\":\"hel\"}\n\n",
+      "data: {\"response\":\"lo\",\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":2,\"total_tokens\":12}}\n\n",
+      "data: [DONE]\n\n",
+    ]));
+    (env as unknown as { AI: { run: typeof run } }).AI = { run };
+
+    const stream = streamWithWorkersAi({
+      modelName: DEFAULT_WORKERS_AI_MODEL,
+      maxTokens: 128,
+      timeoutMs: 1000,
+      context: {
+        messages: [{ role: "user", content: "say hello", timestamp: 1 }],
+      },
+    });
+
+    const events = [];
+    for await (const event of stream) {
+      events.push(event);
+    }
+
+    const response = await stream.result();
+    expect(events.map((event) => event.type)).toEqual([
+      "start",
+      "text_start",
+      "text_delta",
+      "text_delta",
+      "text_end",
+      "done",
+    ]);
+    expect(response.content).toEqual([{ type: "text", text: "hello" }]);
+    expect(response.usage).toMatchObject({
+      input: 10,
+      output: 2,
+      totalTokens: 12,
+    });
+    expect(run.mock.calls[0]?.[1]).toMatchObject({
+      stream: true,
+      max_completion_tokens: 128,
+    });
+  });
+
+  it("emits thinking and tool call events from OpenAI-style chunks", async () => {
+    const run = vi.fn().mockResolvedValue(sseStream([
+      "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"think \",\"content\":\"I'll call \",\"tool_calls\":[{\"index\":0,\"id\":\"tool_1\",\"function\":{\"name\":\"fs.read\",\"arguments\":\"{\\\"path\\\"\"}}]}}]}\n\n",
+      "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"more\",\"content\":\"a tool.\",\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\":\\\"README.md\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+      "data: [DONE]\n\n",
+    ]));
+    (env as unknown as { AI: { run: typeof run } }).AI = { run };
+
+    const stream = streamWithWorkersAi({
+      modelName: DEFAULT_WORKERS_AI_MODEL,
+      maxTokens: 128,
+      timeoutMs: 1000,
+      context: toolContext(),
+    });
+
+    const events = [];
+    for await (const event of stream) {
+      events.push(event);
+    }
+
+    const response = await stream.result();
+    expect(events.map((event) => event.type)).toContain("thinking_delta");
+    expect(events.map((event) => event.type)).toContain("toolcall_delta");
+    expect(response.stopReason).toBe("toolUse");
+    expect(response.content).toEqual([
+      { type: "thinking", thinking: "think more" },
+      { type: "text", text: "I'll call a tool." },
+      {
+        type: "toolCall",
+        id: "tool_1",
+        name: "fs.read",
+        arguments: { path: "README.md" },
+      },
+    ]);
+  });
+});
+
+function sseStream(chunks: string[]): ReadableStream<Uint8Array> {
+  return new ReadableStream({
+    start(controller) {
+      const encoder = new TextEncoder();
+      for (const chunk of chunks) {
+        controller.enqueue(encoder.encode(chunk));
+      }
+      controller.close();
+    },
+  });
+}
 
 function toolContext(): Context {
   return {

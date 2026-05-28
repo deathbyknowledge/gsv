@@ -16,6 +16,7 @@ const CHAT_RUNTIME_SIGNALS = [
   "proc.changed",
   "proc.run.tool.started",
   "proc.run.tool.finished",
+  "proc.run.stream",
   "proc.run.output",
   "proc.run.finished",
   "proc.run.hil.requested",

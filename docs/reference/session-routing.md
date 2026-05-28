@@ -84,7 +84,7 @@ When no PID is supplied, process syscalls default to the caller's `init:{uid}` p
 
 ## Process Signal Routing
 
-Process DOs emit run signals such as `proc.run.output`, `proc.run.tool.finished`, `proc.run.hil.requested`, and `proc.run.finished`. The Kernel routes those signals using `run_routes`.
+Process DOs emit run signals such as `proc.run.stream`, `proc.run.output`, `proc.run.tool.finished`, `proc.run.hil.requested`, and `proc.run.finished`. The Kernel routes those signals using `run_routes`.
 
 For CLI/browser-originated runs, `run_routes` maps `runId` to the originating WebSocket connection. For adapter-originated runs, it maps `runId` to the adapter, account id, surface kind, surface id, and optional thread id. Routes expire after 30 minutes.
 

@@ -88,6 +88,7 @@ import type { InteractionOrigin } from "../syscalls/interaction-origin";
 import type { AdapterSurface } from "../adapter-interface";
 import type {
   AssistantMessage,
+  AssistantMessageEvent,
   TextContent,
   ThinkingContent,
   ToolCall,
@@ -2423,10 +2424,12 @@ export class Process extends Host<Env> {
     }
 
     // Step 6: Call LLM
-    let response: AssistantMessage;
+    let response: AssistantMessage | null;
     try {
       this.activeRunPhase = { runId, phase: "generation" };
-      response = await this.generation.generate({
+      response = await this.generateAssistantResponse({
+        runId,
+        conversationId,
         purpose: "chat.reply",
         config: run.config!,
         context,
@@ -2464,6 +2467,10 @@ export class Process extends Host<Env> {
         text: null,
         error: displayError,
       });
+      return;
+    }
+
+    if (!response) {
       return;
     }
 
@@ -2550,6 +2557,50 @@ export class Process extends Host<Env> {
         usage: response.usage,
       });
     }
+  }
+
+  private async generateAssistantResponse(options: {
+    runId: string;
+    conversationId: string;
+    purpose: "chat.reply";
+    config: AiConfigResult;
+    context: Context;
+    sessionAffinityKey?: string;
+  }): Promise<AssistantMessage | null> {
+    const stream = typeof this.generation.stream === "function"
+      ? this.generation.stream({
+        purpose: options.purpose,
+        config: options.config,
+        context: options.context,
+        sessionAffinityKey: options.sessionAffinityKey,
+      })
+      : null;
+
+    if (!stream) {
+      return this.generation.generate({
+        purpose: options.purpose,
+        config: options.config,
+        context: options.context,
+        sessionAffinityKey: options.sessionAffinityKey,
+      });
+    }
+
+    let seq = 0;
+    let response: AssistantMessage | null = null;
+    for await (const event of stream) {
+      seq += 1;
+      await this.emitRunStreamEvent(options.runId, options.conversationId, seq, event);
+      if (event.type === "done") {
+        response = event.message;
+      } else if (event.type === "error") {
+        response = event.error;
+      }
+      if (await this.handleRunStopped(options.runId)) {
+        return null;
+      }
+    }
+
+    return response ?? await stream.result();
   }
 
   private async finishRun(options: RunFinishOptions): Promise<void> {
@@ -2755,6 +2806,22 @@ export class Process extends Host<Env> {
       conversationId: normalizeConversationId(conversationId),
       reason,
       queuedCount: this.store.queueSize(),
+      timestamp: Date.now(),
+    });
+  }
+
+  private async emitRunStreamEvent(
+    runId: string,
+    conversationId: string,
+    seq: number,
+    event: AssistantMessageEvent,
+  ): Promise<void> {
+    await this.sendSignal("proc.run.stream", {
+      pid: this.pid,
+      runId,
+      conversationId: normalizeConversationId(conversationId),
+      seq,
+      event: snapshotAssistantMessageEvent(event),
       timestamp: Date.now(),
     });
   }
@@ -3724,6 +3791,10 @@ export class Process extends Host<Env> {
     this.scheduleTick(next.runId);
     return next.runId;
   }
+}
+
+function snapshotAssistantMessageEvent<T extends AssistantMessageEvent>(event: T): T {
+  return JSON.parse(JSON.stringify(event)) as T;
 }
 
 function orderMessagesForProvider(messages: Message[]): Message[] {
