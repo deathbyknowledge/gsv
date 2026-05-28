@@ -2,6 +2,10 @@ export type ProcessEntry = {
   pid: string;
   label?: string | null;
   state?: string | null;
+  activeRunId?: string | null;
+  activeConversationId?: string | null;
+  queuedCount?: number | string | null;
+  lastActiveAt?: number | string | null;
   profile?: string | null;
   uid?: number | string | null;
   parentPid?: string | number | null;

@@ -22,7 +22,7 @@ directory, and source mounts when available.
 ## Chat With a Process
 
 Without `--pid`, `gsv chat` targets your init process and waits for streamed
-`chat.*` signals:
+`proc.run.*` signals:
 
 ```bash
 gsv chat "Summarize the current project."

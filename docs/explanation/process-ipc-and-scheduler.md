@@ -55,7 +55,7 @@ Use these meanings:
 
 - `SignalFrame`: existing transport frame with `type: "sig"` and a `signal`
   topic string.
-- Notification: an outward observation such as `chat.delta`, `chat.complete`,
+- Notification: an outward observation such as `proc.run.output`, `proc.run.finished`,
   `device.status`, `exec.status`, or `identity.changed`, often carried over a
   `SignalFrame`.
 - Process event: normal input/work delivered to a process conversation or inbox.
@@ -118,7 +118,7 @@ type ProcessEvent = {
   kind:
     | "user.message"
     | "adapter.message"
-    | "process.message"
+    | "process.input"
     | "process.call"
     | "schedule.tick"
     | "package.event"
@@ -238,7 +238,7 @@ A compact operation should:
 6. Record a `ConversationSegment`.
 7. Allow archived segment reads without restoring the archived messages.
 8. Emit a lifecycle notification over the existing `SignalFrame` transport,
-   for example `process.lifecycle` with `event: "conversation.compacted"`.
+   for example `proc.changed` with `event: "conversation.compacted"`.
 
 The summary record should say what happened and where the exact archive lives.
 Agents should be able to inspect the archive through normal history or
@@ -497,7 +497,7 @@ the prefix boundary, and records a `compaction` segment that can be listed with
 messages out of a compacted segment without restoring them. `proc.conversation.fork`
 can branch a live conversation through a message id, or restore a compacted
 segment into a new conversation, including the live suffix that existed at the
-compaction boundary by default. Compaction and fork emit `process.lifecycle` so
+compaction boundary by default. Compaction and fork emit `proc.changed` so
 UI clients can refresh without polling. Process-wide
 `proc.reset` and `proc.kill` archive every non-empty conversation into a
 directory with one generation file per conversation before clearing all

@@ -2,7 +2,7 @@
 
 The agent loop is the runtime inside a GSV process. It turns incoming messages,
 signals, and queued work into model calls, syscall requests, tool results, and
-`chat.*` signals. The loop is not tied to one client. CLI chat, browser apps,
+`proc.run.*` / `proc.changed` signals. The loop is not tied to one client. CLI chat, browser apps,
 adapter messages, scheduled work, and signal watches all converge on the same
 Process DO model.
 
@@ -98,10 +98,10 @@ set to the PID.
 
 The model response can contain text, thinking blocks, and tool calls:
 
-- Text is emitted immediately as `chat.text`.
+- Text is emitted immediately as `proc.run.output`.
 - Assistant text, thinking blocks, and tool calls are stored in the `messages`
   table.
-- If there are no tool calls, the process emits `chat.complete` and finishes the
+- If there are no tool calls, the process emits `proc.run.finished` and finishes the
   run.
 - If there are tool calls, the process evaluates approval rules and dispatches
   each allowed call as a syscall frame.
@@ -130,14 +130,14 @@ When a response frame arrives, the process resolves or fails the matching
 process schedules/continues the loop:
 
 1. Completed syscall results are appended as `toolResult` messages.
-2. `chat.tool_result` is emitted for clients.
+2. `proc.run.tool.finished` is emitted for clients.
 3. Any queued user messages are injected at the tool-result boundary.
 4. The model is called again with the updated message history.
 
 This repeats until the model produces a final response without tool calls.
 
 Tool result content is stored as text. Non-string syscall output is JSON encoded
-for the model history, while the live `chat.tool_result` signal also carries the
+for the model history, while the live `proc.run.tool.finished` signal also carries the
 raw output or error for clients.
 
 ## Human-in-the-Loop Approval
@@ -159,9 +159,9 @@ commands.
 
 Approval outcomes are:
 
-- `auto`: emit `chat.tool_call` and dispatch the syscall.
+- `auto`: emit `proc.run.tool.started` and dispatch the syscall.
 - `deny`: append a synthetic tool error.
-- `ask`: store `pending_hil` and emit `chat.hil`.
+- `ask`: store `pending_hil` and emit `proc.run.hil.requested`.
 
 The run pauses while a HIL request is pending. A user or adapter reply resumes it
 through `proc.hil` with `approve` or `deny`. Non-interactive profiles such as
@@ -178,7 +178,7 @@ messages in the same run. If the active run completes without that boundary, the
 next queued message is promoted into a new run.
 
 `proc.abort` stops the current run. Pending tool calls are converted to
-interruption errors when possible, pending HIL state is cleared, `chat.complete`
+interruption errors when possible, pending HIL state is cleared, `proc.run.finished`
 is emitted with `aborted: true`, and the next queued message is promoted unless
 continuation must wait for a tool-result phase to finish safely.
 
@@ -218,7 +218,7 @@ that the user or process chooses to write.
 The loop treats failures as process events rather than hidden transport details.
 
 - Generation failures are appended as system messages and emitted as
-  `chat.complete` with an error.
+  `proc.run.finished` with an error.
 - Unknown tool names become synthetic tool-result errors.
 - Denied or unapproved tools become tool-result errors visible to the model.
 - Kernel/device routing errors are stored as failed pending tool calls and fed

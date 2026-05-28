@@ -135,6 +135,10 @@ export function handleProcList(
     profile: r.profile,
     parentPid: r.parentPid,
     state: r.state,
+    activeRunId: r.activeRunId,
+    activeConversationId: r.activeConversationId,
+    queuedCount: r.queuedCount,
+    lastActiveAt: r.lastActiveAt,
     label: r.label,
     createdAt: r.createdAt,
     cwd: r.cwd,
@@ -564,6 +568,9 @@ export async function forwardToProcess(
   if (response && response.type === "res") {
     const res = response as ResponseFrame;
     if (res.ok) {
+      if (frame.call === "proc.kill") {
+        ctx.procs.kill(pid);
+      }
       return (res as { data?: unknown }).data;
     } else {
       throw new Error((res as { error: { message: string } }).error.message);

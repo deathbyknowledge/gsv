@@ -596,6 +596,10 @@ export type ProcListEntry = {
   profile: AiContextProfile;
   parentPid: string | null;
   state: string;
+  activeRunId: string | null;
+  activeConversationId: string | null;
+  queuedCount: number;
+  lastActiveAt: number | null;
   label: string | null;
   createdAt: number;
   cwd: string;

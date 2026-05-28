@@ -29,7 +29,7 @@ gsv chat [MESSAGE] [--pid PID]
 gsv shell
 ```
 
-`chat` sends a message to a process with `proc.send` and waits for `chat.*`
+`chat` sends a message to a process with `proc.send` and waits for `proc.run.*`
 signals for up to 120 seconds. Omit `MESSAGE` for an interactive prompt; type
 `quit` or `exit` to leave. `--pid` targets a specific process; when omitted, the
 Kernel targets your init process. Set `GSV_CLIENT_DEBUG=1` to trace chat signal

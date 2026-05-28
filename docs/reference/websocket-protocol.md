@@ -79,7 +79,7 @@ Error:
 ```json
 {
   "type": "sig",
-  "signal": "chat.complete",
+  "signal": "proc.run.finished",
   "payload": {},
   "seq": 1
 }
@@ -196,7 +196,7 @@ The gateway rejects setup-mode connections with error code `425` and details:
       "capabilities": ["fs.*", "proc.*"]
     },
     "syscalls": ["fs.read", "proc.send"],
-    "signals": ["chat.text", "chat.complete"]
+    "signals": ["proc.run.output", "proc.run.finished"]
   }
 }
 ```
@@ -238,13 +238,13 @@ Current role defaults from `buildSignalList()`:
 
 ### User connections
 
-- `process.message`
-- `process.context`
-- `chat.text`
-- `chat.tool_call`
-- `chat.tool_result`
-- `chat.hil`
-- `chat.complete`
+- `proc.changed`
+- `proc.run.started`
+- `proc.run.output`
+- `proc.run.tool.started`
+- `proc.run.tool.finished`
+- `proc.run.hil.requested`
+- `proc.run.finished`
 - `process.exit`
 - `device.status`
 - `adapter.status`
@@ -258,10 +258,11 @@ Current role defaults from `buildSignalList()`:
 
 - `adapter.status`
 
-`chat.*` signals are emitted by Process DOs and relayed through run-route tracking. In the current kernel:
+`proc.run.*` signals are emitted by Process DOs and relayed through run-route tracking. In the current kernel:
 
-- user connections receive routed `chat.*` signals for their own runs
-- adapter surfaces only use `chat.hil` and `chat.complete`
+- user connections receive routed `proc.run.*` signals for their own runs
+- adapter surfaces use `proc.run.hil.requested` and `proc.run.finished`
+- durable watches can subscribe to `proc.changed` for message, context, queue, and conversation lifecycle changes
 
 ---
 

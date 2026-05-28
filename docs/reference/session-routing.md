@@ -66,7 +66,7 @@ as direct model tool calls.
 
 Agent conversations are durable processes, identified by PIDs. The long-lived home process for a user is `init:{uid}`. Other processes are spawned with `proc.spawn` and usually receive UUID PIDs.
 
-The Kernel stores process metadata in the `processes` table: uid, gids, profile, parent PID, cwd, source mounts, state, label, and context files. `proc.list` is answered directly from this registry.
+The Kernel stores process metadata in the `processes` table: uid, gids, profile, parent PID, cwd, source mounts, activity state, active run/conversation ids, queued count, label, and context files. `proc.list` is answered directly from this registry.
 
 These syscalls are forwarded to the target Process DO after ownership checks:
 
@@ -82,13 +82,15 @@ codemode.run
 
 When no PID is supplied, process syscalls default to the caller's `init:{uid}` process. Non-root callers cannot access another user's process.
 
-## Chat Signal Routing
+## Process Signal Routing
 
-Process DOs emit chat signals such as `chat.delta`, `chat.tool_result`, `chat.hil`, and `chat.complete`. The Kernel routes those signals using `run_routes`.
+Process DOs emit run signals such as `proc.run.output`, `proc.run.tool.finished`, `proc.run.hil.requested`, and `proc.run.finished`. The Kernel routes those signals using `run_routes`.
 
 For CLI/browser-originated runs, `run_routes` maps `runId` to the originating WebSocket connection. For adapter-originated runs, it maps `runId` to the adapter, account id, surface kind, surface id, and optional thread id. Routes expire after 30 minutes.
 
 If a run route is missing, the Kernel falls back to broadcasting the signal to connected clients for the owning uid.
+
+Process DOs also emit `proc.changed` for durable state changes such as messages, context estimates, queue size, and conversation archive/fork events. The Kernel uses `proc.run.*` and `proc.changed` payloads to keep `proc.list` activity state current.
 
 ## Adapter Routing
 
@@ -147,7 +149,7 @@ Device routing does not rename syscalls. Agents and clients always see the same 
 |---|---|
 | `routing_table` | In-flight device-routed syscalls. |
 | `shell_sessions` | Device ownership and lifecycle for resumable shell sessions. |
-| `run_routes` | Routes process chat signals back to connections or adapter surfaces. |
+| `run_routes` | Routes process run signals back to connections or adapter surfaces. |
 | `processes` | Kernel process registry and process ownership. |
 | `devices`, `device_access` | Device catalog and group ACLs. |
 | `identity_links` | External adapter actor to local uid mapping. |

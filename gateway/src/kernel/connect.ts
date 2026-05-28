@@ -248,7 +248,7 @@ async function resolveIdentity(
 function buildSignalList(role: string): string[] {
   switch (role) {
     case "user":
-      return ["process.message", "process.context", "process.lifecycle", "chat.text", "chat.tool_call", "chat.tool_result", "chat.hil", "chat.complete", "process.exit", "device.status", "adapter.status", "pkg.changed"];
+      return ["proc.changed", "proc.run.started", "proc.run.output", "proc.run.tool.started", "proc.run.tool.finished", "proc.run.hil.requested", "proc.run.finished", "process.exit", "device.status", "adapter.status", "pkg.changed"];
     case "driver":
       return ["device.status"];
     case "service":

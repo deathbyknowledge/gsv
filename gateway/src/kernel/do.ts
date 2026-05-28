@@ -35,7 +35,7 @@ import { ConfigStore } from "./config";
 import { DeviceRegistry, type DeviceLifecycle, type DeviceRecord } from "./devices";
 import { RoutingTable, type RouteOrigin } from "./routing";
 import { ShellSessionStore, type ShellSessionStatus } from "./shell-sessions";
-import { ProcessRegistry } from "./processes";
+import { ProcessRegistry, type ProcessState } from "./processes";
 import { AdapterStore } from "./adapter-store";
 import { RunRouteStore, type AdapterRunRoute, type RunRoute } from "./run-routes";
 import { OAuthStore } from "./oauth-store";
@@ -780,11 +780,12 @@ export class Kernel extends Host<Env> {
     }
 
     const runId = this.extractRunId(frame.payload);
+    this.updateProcessRuntimeFromSignal(processId, frame, runId);
 
     await this.dispatchSignalWatches(identity.uid, processId, frame);
     await this.completeIpcCallsFromSignal(identity.uid, processId, frame, runId);
 
-    if (!frame.signal.startsWith("chat.")) return;
+    if (!frame.signal.startsWith("proc.run.")) return;
 
     if (!runId) {
       this.broadcastToUid(identity.uid, frame.signal, frame.payload);
@@ -804,15 +805,81 @@ export class Kernel extends Host<Env> {
 
     if (route.kind === "connection") {
       this.deliverSignalToConnection(route, frame, identity.uid);
-      if (frame.signal === "chat.complete") {
+      if (frame.signal === "proc.run.finished") {
         this.runRoutes.delete(runId);
       }
       return;
     }
 
     await this.deliverSignalToAdapter(route, frame);
-    if (frame.signal === "chat.complete") {
+    if (frame.signal === "proc.run.finished") {
       this.runRoutes.delete(runId);
+    }
+  }
+
+  private updateProcessRuntimeFromSignal(
+    processId: string,
+    frame: SignalFrame,
+    runId: string | null,
+  ): void {
+    const payload = frame.payload && typeof frame.payload === "object"
+      ? frame.payload as Record<string, unknown>
+      : {};
+    const conversationId = typeof payload.conversationId === "string"
+      ? payload.conversationId
+      : null;
+    const queuedCount = typeof payload.queuedCount === "number" && Number.isFinite(payload.queuedCount)
+      ? payload.queuedCount
+      : undefined;
+    const timestamp = typeof payload.timestamp === "number" && Number.isFinite(payload.timestamp)
+      ? payload.timestamp
+      : Date.now();
+
+    const patchForActive = (state: ProcessState) => {
+      this.procs.updateRuntimeState(processId, {
+        state,
+        ...(runId ? { activeRunId: runId } : {}),
+        ...(conversationId ? { activeConversationId: conversationId } : {}),
+        ...(queuedCount !== undefined ? { queuedCount } : {}),
+        lastActiveAt: timestamp,
+      });
+    };
+
+    switch (frame.signal) {
+      case "proc.run.started":
+        patchForActive("running");
+        return;
+      case "proc.run.output":
+        patchForActive("running");
+        return;
+      case "proc.run.tool.started":
+        patchForActive("waiting_tool");
+        return;
+      case "proc.run.tool.finished":
+        patchForActive("running");
+        return;
+      case "proc.run.hil.requested":
+        patchForActive("waiting_hil");
+        return;
+      case "proc.run.finished":
+        this.procs.updateRuntimeState(processId, {
+          state: queuedCount && queuedCount > 0 ? "queued" : "idle",
+          activeRunId: null,
+          activeConversationId: null,
+          ...(queuedCount !== undefined ? { queuedCount } : {}),
+          lastActiveAt: timestamp,
+        });
+        return;
+      case "proc.changed":
+        if (queuedCount !== undefined) {
+          this.procs.updateRuntimeState(processId, {
+            queuedCount,
+            lastActiveAt: timestamp,
+          });
+        }
+        return;
+      default:
+        return;
     }
   }
 
@@ -848,7 +915,7 @@ export class Kernel extends Host<Env> {
     frame: SignalFrame,
     runId: string | null,
   ): Promise<void> {
-    if (frame.signal !== "chat.complete" || !runId) {
+    if (frame.signal !== "proc.run.finished" || !runId) {
       return;
     }
 
@@ -912,7 +979,7 @@ export class Kernel extends Host<Env> {
   }
 
   private async deliverSignalToAdapter(route: AdapterRunRoute, frame: SignalFrame): Promise<void> {
-    if (frame.signal === "chat.hil") {
+    if (frame.signal === "proc.run.hil.requested") {
       const request = this.toProcHilRequest(frame.payload);
       if (!request) {
         return;
@@ -938,7 +1005,7 @@ export class Kernel extends Host<Env> {
       return;
     }
 
-    if (frame.signal !== "chat.complete") {
+    if (frame.signal !== "proc.run.finished") {
       return;
     }
 

@@ -88,6 +88,78 @@ async function initProcess(pid: string, identity: ProcessIdentity, opts?: { regi
 // ---------------------------------------------------------------------------
 
 describe("Process DO — mechanical", () => {
+  it("projects proc.run signals into kernel process activity", async () => {
+    const pid = "mech-kernel-process-activity";
+    await registerInKernel(pid, ROOT_IDENTITY);
+    const kernel = await getKernelPtr();
+
+    const state = await runInDurableObject(kernel, async (instance: Kernel) => {
+      const k = instance as any;
+      await k.handleProcessSignal(pid, {
+        type: "sig",
+        signal: "proc.run.started",
+        payload: {
+          pid,
+          runId: "run-activity",
+          conversationId: "thread",
+          queuedCount: 1,
+          timestamp: 1000,
+        },
+      });
+      const running = k.procs.get(pid);
+
+      await k.handleProcessSignal(pid, {
+        type: "sig",
+        signal: "proc.run.hil.requested",
+        payload: {
+          pid,
+          runId: "run-activity",
+          conversationId: "thread",
+          queuedCount: 1,
+          timestamp: 1100,
+        },
+      });
+      const waiting = k.procs.get(pid);
+
+      await k.handleProcessSignal(pid, {
+        type: "sig",
+        signal: "proc.run.finished",
+        payload: {
+          pid,
+          runId: "run-activity",
+          conversationId: "thread",
+          queuedCount: 0,
+          timestamp: 1200,
+        },
+      });
+      const idle = k.procs.get(pid);
+
+      return { running, waiting, idle };
+    });
+
+    expect(state.running).toMatchObject({
+      state: "running",
+      activeRunId: "run-activity",
+      activeConversationId: "thread",
+      queuedCount: 1,
+      lastActiveAt: 1000,
+    });
+    expect(state.waiting).toMatchObject({
+      state: "waiting_hil",
+      activeRunId: "run-activity",
+      activeConversationId: "thread",
+      queuedCount: 1,
+      lastActiveAt: 1100,
+    });
+    expect(state.idle).toMatchObject({
+      state: "idle",
+      activeRunId: null,
+      activeConversationId: null,
+      queuedCount: 0,
+      lastActiveAt: 1200,
+    });
+  });
+
   describe("kernel process RPC exposure", () => {
     it("allows non-root processes to call internal ai.config", async () => {
       const pid = "mech-kernel-ai-config";
@@ -287,7 +359,7 @@ describe("Process DO — mechanical", () => {
       });
     });
 
-    it("emits live process.message signals for scheduled runtime events", async () => {
+    it("emits live proc.changed message signals for scheduled runtime events", async () => {
       const pid = "mech-schedule-live-message";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
@@ -319,16 +391,25 @@ describe("Process DO — mechanical", () => {
         role: "system",
       });
       expect(result.messages[0].content).toContain("Scheduled event `nightly` fired.");
-      expect(result.emitted).toHaveLength(1);
+      expect(result.emitted).toHaveLength(2);
       expect(result.emitted[0]).toMatchObject({
-        signal: "process.message",
+        signal: "proc.changed",
         payload: expect.objectContaining({
           pid,
+          changes: ["messages"],
           conversationId: "default",
           messageId: result.messages[0].id,
           role: "system",
           content: result.messages[0].content,
           timestamp: result.messages[0].createdAt,
+        }),
+      });
+      expect(result.emitted[1]).toMatchObject({
+        signal: "proc.run.started",
+        payload: expect.objectContaining({
+          pid,
+          conversationId: "default",
+          reason: "schedule.event",
         }),
       });
     });
@@ -413,7 +494,7 @@ describe("Process DO — mechanical", () => {
       });
 
       const contextSignals = (emitted as Array<{ signal: string; payload: any }>)
-        .filter((entry) => entry.signal === "process.context");
+        .filter((entry) => entry.signal === "proc.changed" && Array.isArray((entry.payload as { changes?: unknown[] }).changes) && ((entry.payload as { changes?: unknown[] }).changes ?? []).includes("context"));
       expect(contextSignals).toHaveLength(2);
       expect(contextSignals[0].payload.context.source).toBe("estimate");
       expect(contextSignals[1].payload.context).toMatchObject({
@@ -519,7 +600,7 @@ describe("Process DO — mechanical", () => {
       });
     });
 
-    it("includes assistant thinking blocks in live chat.text signals", async () => {
+    it("includes assistant thinking blocks in live proc.run.output signals", async () => {
       const pid = "mech-chat-text-thinking";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
@@ -576,7 +657,7 @@ describe("Process DO — mechanical", () => {
       });
 
       const textSignal = (emitted as Array<{ signal: string; payload: any }>)
-        .find((entry) => entry.signal === "chat.text");
+        .find((entry) => entry.signal === "proc.run.output");
       expect(textSignal?.payload).toMatchObject({
         text: "done",
         pid,
@@ -883,7 +964,7 @@ describe("Process DO — mechanical", () => {
       await runInDurableObject(kernel, async (instance: Kernel) => {
         await (instance as any).handleProcessSignal(targetPid, {
           type: "sig",
-          signal: "chat.complete",
+          signal: "proc.run.finished",
           payload: {
             pid: targetPid,
             runId: data.runId,
@@ -941,7 +1022,7 @@ describe("Process DO — mechanical", () => {
         try {
           await instance.recvFrame(targetPid, {
             type: "sig",
-            signal: "chat.complete",
+            signal: "proc.run.finished",
             payload: {
               pid: targetPid,
               runId: data.runId,
@@ -1356,7 +1437,7 @@ describe("Process DO — mechanical", () => {
         });
         expect((instance as any).__signals).toEqual([
           {
-            signal: "process.lifecycle",
+            signal: "proc.changed",
             payload: expect.objectContaining({
               event: "conversation.compacted",
               pid,
@@ -1594,7 +1675,7 @@ describe("Process DO — mechanical", () => {
         ]);
         expect(process.__signals).toEqual([
           {
-            signal: "process.lifecycle",
+            signal: "proc.changed",
             payload: expect.objectContaining({
               event: "conversation.forked",
               pid,
@@ -1885,8 +1966,9 @@ describe("Process DO — mechanical", () => {
         kind: "compaction",
       });
       const lifecycleEvents = emitted.emitted
-        .filter((entry) => entry.signal === "process.lifecycle")
-        .map((entry) => (entry.payload as any).event);
+        .filter((entry) => entry.signal === "proc.changed")
+        .map((entry) => (entry.payload as any).event)
+        .filter(Boolean);
       expect(lifecycleEvents).toEqual([
         "conversation.compacted",
         "conversation.auto_compacted",
@@ -1962,7 +2044,7 @@ describe("Process DO — mechanical", () => {
       expect(result.segments).toHaveLength(0);
       expect(result.emitted).toEqual(expect.arrayContaining([
         {
-          signal: "chat.complete",
+          signal: "proc.run.finished",
           payload: expect.objectContaining({
             aborted: true,
             runId: "run-auto-compact-abort",
@@ -1970,8 +2052,9 @@ describe("Process DO — mechanical", () => {
         },
       ]));
       const lifecycleEvents = result.emitted
-        .filter((entry) => entry.signal === "process.lifecycle")
-        .map((entry) => (entry.payload as any).event);
+        .filter((entry) => entry.signal === "proc.changed")
+        .map((entry) => (entry.payload as any).event)
+        .filter(Boolean);
       expect(lifecycleEvents).toEqual([]);
     });
   });
