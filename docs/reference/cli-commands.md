@@ -48,7 +48,9 @@ proc list
 proc send <pid> [--conversation id] [--metadata-json json] <message>
 proc call <pid> [--conversation id] [--metadata-json json] [--timeout 60s] <message>
 sched list [--all]
-sched add --name NAME (--cron EXPR [--timezone TZ] | --every DURATION | --after DURATION | --at TIME) <prompt/message>
+sched add --name NAME (--cron EXPR [--timezone TZ] | --every DURATION | --after DURATION | --at TIME) --command COMMAND
+sched add --name NAME (--cron EXPR [--timezone TZ] | --every DURATION | --after DURATION | --at TIME) [--profile PROFILE] <prompt>
+sched add --name NAME (--cron EXPR [--timezone TZ] | --every DURATION | --after DURATION | --at TIME) --pid PID <message>
 sched remove <id>
 sched run <id> [--force]
 ```
@@ -57,6 +59,10 @@ sched run <id> [--force]
 the source process receives either `ipc.reply` or `ipc.timeout` in its default
 conversation. `proc self` prints the current GSV process id; the shell also
 exports it as `GSV_PID`.
+
+Schedules run commands. The `--profile` form is a shorthand that stores a
+`proc spawn` command; use `--command` for lifecycle/script work such as
+`proc compact ...`.
 
 ## Process Commands
 

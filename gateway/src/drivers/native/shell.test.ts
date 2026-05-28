@@ -905,7 +905,7 @@ describe("pkg shell command", () => {
     expect(result.stderr).toBe("");
   });
 
-  it("creates a process-spawn schedule from the sched command", async () => {
+  it("creates a command schedule from the sched command", async () => {
     const wake = vi.fn(async () => "wake-1");
     const setWakeScheduleId = vi.fn();
     const create = vi.fn((input) => ({
@@ -934,7 +934,7 @@ describe("pkg shell command", () => {
     const result = await handleShellExec(
       { input: "sched add --name \"quick check\" --after 30s --profile cron \"Run the quick check.\"" },
       makeContext({
-        capabilities: ["sched.add"],
+        capabilities: ["sched.add", "shell.exec"],
         schedules: {
           create,
           setWakeScheduleId,
@@ -950,13 +950,62 @@ describe("pkg shell command", () => {
       name: "quick check",
       expression: { kind: "after", afterMs: 30_000 },
       target: {
-        kind: "process.spawn",
-        profile: "cron",
-        prompt: "Run the quick check.",
+        kind: "command.exec",
+        command: "proc spawn --profile \"cron\" \"Run the quick check.\"",
       },
     }));
     expect(wake).toHaveBeenCalledWith("sched-1", expect.any(Number));
     expect(setWakeScheduleId).toHaveBeenCalledWith("sched-1", "wake-1");
+  });
+
+  it("creates an explicit command schedule from the sched command", async () => {
+    const wake = vi.fn(async () => "wake-1");
+    const setWakeScheduleId = vi.fn();
+    const create = vi.fn((input) => ({
+      id: "sched-cmd",
+      ownerUid: input.ownerUid,
+      creator: input.creator,
+      runAs: input.runAs,
+      name: input.name,
+      enabled: input.enabled,
+      expression: input.expression,
+      target: input.target,
+      overlapPolicy: "skip",
+      createdAtMs: input.now,
+      updatedAtMs: input.now,
+      state: {
+        nextRunAtMs: input.now + input.expression.afterMs,
+        runningAtMs: null,
+        lastRunAtMs: null,
+        lastStatus: null,
+        lastError: null,
+        lastDurationMs: null,
+        runCount: 0,
+      },
+    }));
+
+    const result = await handleShellExec(
+      { input: "sched add --name compact --after 30s --cwd /home/sam --timeout 5s --command \"proc compact init:1000 --conversation default --keep-last 80 --generate-summary\"" },
+      makeContext({
+        capabilities: ["sched.add", "shell.exec"],
+        schedules: {
+          create,
+          setWakeScheduleId,
+        } as unknown as KernelContext["schedules"],
+        scheduleScheduleWake: wake,
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      name: "compact",
+      target: {
+        kind: "command.exec",
+        command: "proc compact init:1000 --conversation default --keep-last 80 --generate-summary",
+        cwd: "/home/sam",
+        timeoutMs: 5_000,
+      },
+    }));
   });
 
   it("creates a process-event schedule from the sched command", async () => {

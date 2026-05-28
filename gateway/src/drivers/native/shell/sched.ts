@@ -9,7 +9,6 @@ import {
   handleSchedulerUpdate,
 } from "../../../kernel/scheduler";
 import type { SchedulerAddArgs, ScheduleExpression, ScheduleTarget } from "../../../syscalls/scheduler";
-import type { AiContextProfile } from "../../../syscalls/ai";
 import { parseDurationMs, requireCommandCapability, requireShellOptionValue } from "./common";
 
 export function buildSchedCommand(ctx: KernelContext) {
@@ -106,6 +105,9 @@ function parseSchedAddCommand(args: string[]): SchedulerAddArgs {
   let timezone: string | undefined;
   let pid: string | undefined;
   let conversationId: string | undefined;
+  let command: string | undefined;
+  let cwd: string | undefined;
+  let timeoutMs: number | undefined;
   let data: Record<string, unknown> | undefined;
   let expression: ScheduleExpression | undefined;
   let prompt: string | undefined;
@@ -130,6 +132,21 @@ function parseSchedAddCommand(args: string[]): SchedulerAddArgs {
     if (current === "--label") {
       index += 1;
       label = requireShellOptionValue(args[index], current);
+      continue;
+    }
+    if (current === "--command" || current === "-c") {
+      index += 1;
+      command = requireShellOptionValue(args[index], current);
+      continue;
+    }
+    if (current === "--cwd") {
+      index += 1;
+      cwd = requireShellOptionValue(args[index], current);
+      continue;
+    }
+    if (current === "--timeout") {
+      index += 1;
+      timeoutMs = parseDurationMs(requireShellOptionValue(args[index], current));
       continue;
     }
     if (current === "--profile") {
@@ -207,25 +224,22 @@ function parseSchedAddCommand(args: string[]): SchedulerAddArgs {
     expression = { ...expression, timezone };
   }
 
-  const message = prompt ?? positional.join(" ").trim();
-  if (!message) {
-    throw new Error("missing prompt/message");
+  if (command !== undefined && (pid || profile || label || conversationId || data || prompt || positional.length > 0)) {
+    throw new Error("--command cannot be combined with process target options or positional prompt text");
   }
 
-  const target: ScheduleTarget = pid
-    ? {
-        kind: "process.event",
-        pid,
-        message,
-        ...(conversationId ? { conversationId } : {}),
-        ...(data ? { data } : {}),
-      }
-    : {
-        kind: "process.spawn",
-        prompt: message,
-        ...(profile ? { profile: profile as AiContextProfile } : {}),
-        ...(label ? { label } : {}),
-      };
+  const message = prompt ?? positional.join(" ").trim();
+  const target: ScheduleTarget = buildScheduleTarget({
+    command,
+    pid,
+    conversationId,
+    data,
+    profile,
+    label,
+    cwd,
+    timeoutMs,
+    message,
+  });
 
   return {
     name,
@@ -234,6 +248,68 @@ function parseSchedAddCommand(args: string[]): SchedulerAddArgs {
     expression,
     target,
   };
+}
+
+function buildScheduleTarget(input: {
+  command?: string;
+  pid?: string;
+  conversationId?: string;
+  data?: Record<string, unknown>;
+  profile?: string;
+  label?: string;
+  cwd?: string;
+  timeoutMs?: number;
+  message: string;
+}): ScheduleTarget {
+  if (input.command !== undefined) {
+    const command = input.command.trim();
+    if (!command) {
+      throw new Error("missing command");
+    }
+    return {
+      kind: "command.exec",
+      command,
+      ...(input.cwd ? { cwd: input.cwd } : {}),
+      ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
+    };
+  }
+
+  if (!input.message) {
+    throw new Error("missing command/prompt/message");
+  }
+
+  if (input.pid) {
+    return {
+      kind: "process.event",
+      pid: input.pid,
+      message: input.message,
+      ...(input.conversationId ? { conversationId: input.conversationId } : {}),
+      ...(input.data ? { data: input.data } : {}),
+    };
+  }
+
+  return {
+    kind: "command.exec",
+    command: buildProcSpawnCommand(input),
+    ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
+  };
+}
+
+function buildProcSpawnCommand(input: {
+  profile?: string;
+  label?: string;
+  cwd?: string;
+  message: string;
+}): string {
+  return [
+    "proc",
+    "spawn",
+    "--profile",
+    quoteShellArg(input.profile ?? "cron"),
+    ...(input.label ? ["--label", quoteShellArg(input.label)] : []),
+    ...(input.cwd ? ["--cwd", quoteShellArg(input.cwd)] : []),
+    quoteShellArg(input.message),
+  ].join(" ");
 }
 
 function parseScheduleAtMs(value: string): number {
@@ -255,10 +331,17 @@ function requireSchedId(value: string | undefined): string {
 }
 
 function formatScheduleTarget(target: ScheduleTarget): string {
+  if (target.kind === "command.exec") {
+    return `cmd:${formatScheduleListText(target.command)}`;
+  }
   if (target.kind === "process.spawn") {
     return `spawn:${target.profile ?? "cron"}`;
   }
   return `event:${target.pid}`;
+}
+
+function quoteShellArg(value: string): string {
+  return JSON.stringify(value);
 }
 
 function formatScheduleListText(value: string | null | undefined): string {
@@ -272,15 +355,18 @@ function schedUsage(): string {
   return [
     "Usage:",
     "  sched list [--all]",
-    "  sched add --name NAME (--cron EXPR [--timezone TZ] | --every DURATION | --after DURATION | --at TIME) [--pid PID] [--conversation id] [--profile PROFILE] [--label LABEL] <prompt/message>",
+    "  sched add --name NAME (--cron EXPR [--timezone TZ] | --every DURATION | --after DURATION | --at TIME) [--command COMMAND] [--cwd PATH] [--timeout DURATION]",
+    "  sched add --name NAME (--cron EXPR [--timezone TZ] | --every DURATION | --after DURATION | --at TIME) [--profile PROFILE] [--label LABEL] [--cwd PATH] <prompt>",
+    "  sched add --name NAME (--cron EXPR [--timezone TZ] | --every DURATION | --after DURATION | --at TIME) --pid PID [--conversation id] <message>",
     "  sched add --json JSON",
     "  sched enable <id>",
     "  sched disable <id>",
     "  sched remove <id>",
     "  sched run <id> [--force]",
     "",
-    "Without --pid, sched add spawns a process. With --pid, it delivers a",
-    "process event to that process conversation.",
+    "Without --pid, prompt text is stored as a command that runs proc spawn.",
+    "Use --command for an explicit shell command. With --pid, sched add keeps",
+    "the legacy process-event target for compatibility.",
     "",
   ].join("\n");
 }

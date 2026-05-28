@@ -395,6 +395,12 @@ Example target shape:
 ```ts
 type ScheduleTarget =
   | {
+      kind: "command.exec";
+      command: string;
+      cwd?: string;
+      timeoutMs?: number;
+    }
+  | {
       kind: "process.spawn";
       profile: string;
       prompt: string;
@@ -405,13 +411,6 @@ type ScheduleTarget =
       pid: string;
       conversationId?: string;
       event: ProcessEventInput;
-    }
-  | {
-      kind: "process.lifecycle";
-      pid: string;
-      conversationId?: string;
-      action: "compact" | "reset";
-      options?: unknown;
     }
   | {
       kind: "package.event";
@@ -426,12 +425,14 @@ The first implementation should support:
 
 - `at`
 - `every`
+- `command.exec`
 - `process.spawn`
 - `process.event`
-- `process.lifecycle` for compact and reset
 
-Cron expressions, package events, advanced retry behavior, and cross-user run-as
-rules can follow after the basic lifecycle is working.
+Process lifecycle work should be exposed as commands, for example
+`proc compact` or `proc reset`, instead of scheduler-specific lifecycle target
+kinds. Package events, advanced retry behavior, and cross-user run-as rules can
+follow after the basic lifecycle is working.
 
 ## Linux-Like Views
 
@@ -535,6 +536,7 @@ Implemented:
 
 - Kernel-owned schedule store and `sched.*` syscall handlers.
 - `at`, `after`, `every`, and timezone-aware five-field cron expressions.
+- `command.exec` targets that run native shell commands as the schedule owner.
 - `process.spawn` targets for scheduled background work.
 - `process.event` targets that enter process context as visible process events.
 - Cloudflare Agent schedules as one-shot wake-ups only; GSV stores the schedule
@@ -542,7 +544,7 @@ Implemented:
 
 Still pending:
 
-- `process.lifecycle` schedule targets.
+- lifecycle commands such as `proc compact` and `proc reset`
 - package-owned Kernel schedules and package event targets.
 
 ### 8. Add filesystem views

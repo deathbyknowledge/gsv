@@ -1233,6 +1233,7 @@ type ScheduleExpression =
   | { kind: "cron"; expr: string; timezone: string };
 
 type ScheduleTarget =
+  | { kind: "command.exec"; command: string; cwd?: string; timeoutMs?: number }
   | { kind: "process.spawn"; profile?: string; label?: string; prompt: string; parentPid?: string; cwd?: string; mounts?: unknown[]; assignment?: unknown }
   | { kind: "process.event"; pid: string; conversationId?: string; message: string; data?: Record<string, unknown> };
 
@@ -1285,3 +1286,7 @@ type SchedulerSyscalls = {
   };
 };
 ```
+
+`command.exec` targets require `shell.exec` permission when they are created and
+when they run. `process.spawn` and `process.event` remain supported for existing
+schedules and compatibility surfaces.

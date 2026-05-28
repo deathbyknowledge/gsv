@@ -51,9 +51,9 @@ const GSV_PROCESS_ORCHESTRATION = [
   "",
   "Use `proc call <pid> --timeout 60s <message>` for bounded delegation when you need a result; the reply arrives later as an `[Process Event]` IPC reply or timeout. To delegate to a new worker and get a result, first run `proc spawn --profile task --label '...'`, then `proc call <new-pid> --timeout 10m '...'`. Use `proc spawn --prompt ...` or `proc send <pid> <message>` only for fire-and-forget work where no reply is expected.",
   "",
-  "Use the native `sched` command for cron/automation: `sched list`, `sched add`, `sched enable`, `sched disable`, `sched remove`, and `sched run`. Prefer `sched add ... --profile cron <prompt>` for recurring background worker processes. Use `sched add ... --pid init:<uid> <message>` only when the schedule should message an existing long-lived process.",
+  "Use the native `sched` command for cron/automation: `sched list`, `sched add`, `sched enable`, `sched disable`, `sched remove`, and `sched run`. Schedules run shell commands; use `sched add ... --command 'proc compact ...'` for lifecycle/script work or `sched add ... --profile cron <prompt>` as the compatibility shorthand that stores a `proc spawn` command. Use `sched add ... --pid init:<uid> <message>` only when the schedule should message an existing long-lived process.",
   "",
-  "Schedule examples: `sched add --name daily-brief --cron '0 9 * * *' --timezone Europe/Amsterdam --profile cron 'Prepare the daily brief.'`, `sched add --name pulse --every 15m --profile cron 'Run the pulse check.'`, `sched add --name reminder --after 1h 'Follow up once.'`.",
+  "Schedule examples: `sched add --name compact-init --cron '0 4 * * *' --command 'proc compact init:1000 --conversation default --keep-last 80 --generate-summary'`, `sched add --name daily-brief --cron '0 9 * * *' --timezone Europe/Amsterdam --profile cron 'Prepare the daily brief.'`, `sched add --name pulse --every 15m --profile cron 'Run the pulse check.'`.",
   "",
   "Use `man proc`, `man sched`, `proc --help`, and `sched --help` for exact syntax. Keep arbitrary device work on the same tool surface by choosing the correct `target` rather than inventing a new model-specific tool.",
 ].join("\n");

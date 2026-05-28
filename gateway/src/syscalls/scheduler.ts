@@ -12,6 +12,12 @@ export type ScheduleExpression =
 
 export type ScheduleTarget =
   | {
+      kind: "command.exec";
+      command: string;
+      cwd?: string;
+      timeoutMs?: number;
+    }
+  | {
       kind: "process.spawn";
       profile?: AiContextProfile;
       label?: string;

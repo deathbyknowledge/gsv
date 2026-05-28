@@ -125,6 +125,7 @@ Process and automation control also stay on the native shell surface:
 proc profiles
 proc spawn --profile task --label "docs audit"
 proc call <pid> --timeout 60s "Summarize the current result."
+sched add --name compact-init --cron "0 4 * * *" --command "proc compact init:1000 --conversation default --keep-last 80 --generate-summary"
 sched add --name daily-brief --cron "0 9 * * *" --timezone Europe/Amsterdam --profile cron "Prepare the daily brief."
 ```
 
@@ -134,8 +135,10 @@ profile prompt files live in `~/profiles.d/{name}/context.d/*.md`. Root-level
 files can be carried by the profile, but are not loaded as prompt context.
 `proc call` is the bounded request/reply path; `proc spawn --prompt` and `proc
 send` are fire-and-forget unless the worker explicitly sends a later message.
-Use `sched add` without `--pid` for scheduled worker processes; with `--pid`, it
-delivers a process event to an existing process conversation.
+Schedules run commands. Use `--command` for explicit shell commands such as
+`proc compact ...`; the `--profile` prompt shorthand stores a `proc spawn`
+command for scheduled worker processes. With `--pid`, `sched add` keeps the
+legacy process-event target for an existing process conversation.
 
 Scripts use the same CodeMode shape exposed to agents. A script is treated as
 the body of an async function: top-level `await` works, and the final value must

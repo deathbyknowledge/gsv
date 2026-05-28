@@ -94,6 +94,7 @@ import {
 import type { AppClientSessionContext } from "../protocol/app-session";
 import { listLocalPublicPackages } from "./pkg";
 import { handleProcSpawn } from "./proc-handlers";
+import { handleShellExec } from "../drivers/native/shell";
 import type {
   ScheduleRecord,
   ScheduleRunResult,
@@ -2553,6 +2554,29 @@ export class Kernel extends Host<Env> {
     firedAtMs: number,
   ): Promise<unknown> {
     const target = record.target;
+    if (target.kind === "command.exec") {
+      const ctx = this.buildScheduleContext(record);
+      if (!hasCapability(ctx.identity?.capabilities ?? [], "shell.exec")) {
+        throw new Error("Permission denied: shell.exec");
+      }
+      const result = await handleShellExec({
+        input: target.command,
+        cwd: target.cwd,
+        timeout: target.timeoutMs,
+      }, ctx);
+      if (result.status !== "completed") {
+        throw new Error(result.status === "failed" ? result.error : `Command ${result.status}`);
+      }
+      return {
+        kind: "command.exec",
+        command: target.command,
+        exitCode: result.exitCode,
+        stdout: result.stdout ?? "",
+        stderr: result.stderr ?? "",
+        truncated: result.truncated === true,
+      };
+    }
+
     if (target.kind === "process.spawn") {
       const ctx = this.buildScheduleContext(record);
       const result = await handleProcSpawn({
@@ -3031,6 +3055,11 @@ function ceilToSecondMs(value: number): number {
 
 function scheduleResultSummary(record: ScheduleRecord, result: unknown): string {
   const value = asRecord(result);
+  if (record.target.kind === "command.exec") {
+    return typeof value?.exitCode === "number"
+      ? `command exited ${value.exitCode}`
+      : "command failed";
+  }
   if (record.target.kind === "process.spawn" && typeof value?.pid === "string") {
     return `spawned process ${value.pid}`;
   }

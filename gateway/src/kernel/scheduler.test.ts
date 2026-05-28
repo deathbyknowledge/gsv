@@ -264,6 +264,25 @@ describe("scheduler", () => {
     expect(store.setWakeScheduleId).toHaveBeenCalledWith("sched-1", "wake-1");
   });
 
+  it("requires shell.exec access for command schedules", async () => {
+    const ctx = makeSchedulerContext({
+      identity: {
+        role: "user",
+        process: USER_IDENTITY,
+        capabilities: ["sched.add"],
+      },
+      schedules: {
+        create: vi.fn(),
+      } as unknown as ScheduleStore,
+    });
+
+    await expect(handleSchedulerAdd({
+      name: "command",
+      expression: { kind: "after", afterMs: 1_000 },
+      target: { kind: "command.exec", command: "proc list" },
+    }, ctx)).rejects.toThrow("Permission denied: shell.exec");
+  });
+
   it("lists only the caller owner for non-root, even when ownerUid is supplied", () => {
     const list = vi.fn(() => ({ records: [], count: 0 }));
     const ctx = makeSchedulerContext({
@@ -477,6 +496,64 @@ describe("scheduler", () => {
     expect(schedule?.state.lastStatus).toBe("ok");
     expect(schedule?.state.runCount).toBe(1);
     expect(schedule?.state.nextRunAtMs).toEqual(expect.any(Number));
+  });
+
+  it("runs a due command schedule through the Kernel shell", async () => {
+    const kernel = await getAgentByName<Env, Kernel>(
+      env.KERNEL,
+      `scheduler-command-test-${crypto.randomUUID()}`,
+    );
+    const scheduleId = await runInDurableObject(kernel, (instance: Kernel) => {
+      const k = instance as unknown as {
+        caps: { seed: () => void };
+        procs: { spawn: typeof instance["procs"]["spawn"] };
+        schedules: ScheduleStore;
+        ctx: DurableObjectState;
+      };
+      k.caps.seed();
+      k.procs.spawn("init:1000", USER_IDENTITY, {
+        profile: "init",
+        label: "init",
+      });
+      const now = Date.now();
+      const schedule = k.schedules.create({
+        ownerUid: USER_IDENTITY.uid,
+        creator: schedulePrincipal(),
+        runAs: schedulePrincipal(),
+        name: "command",
+        enabled: true,
+        expression: { kind: "every", everyMs: 60_000, anchorMs: now - 120_000 },
+        target: {
+          kind: "command.exec",
+          command: "printf 'scheduled command\\n'",
+        },
+        now,
+      });
+      k.ctx.storage.sql.exec(
+        "UPDATE schedules SET next_run_at = ? WHERE schedule_id = ?",
+        now - 1_000,
+        schedule.id,
+      );
+      return schedule.id;
+    });
+
+    await runInDurableObject(kernel, (instance: Kernel) => instance.onScheduleDue(scheduleId));
+
+    const state = await runInDurableObject(kernel, (instance: Kernel) => {
+      const k = instance as unknown as { schedules: ScheduleStore };
+      return {
+        schedule: k.schedules.get(scheduleId),
+        result: k.schedules.history(scheduleId)[0]?.result,
+      };
+    });
+
+    expect(state.schedule?.state.lastStatus).toBe("ok");
+    expect(state.result).toMatchObject({
+      kind: "command.exec",
+      command: "printf 'scheduled command\\n'",
+      exitCode: 0,
+      stdout: "scheduled command\n",
+    });
   });
 
   it("fires an armed one-shot schedule through the Agent alarm", async () => {

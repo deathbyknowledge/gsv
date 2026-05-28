@@ -5,7 +5,8 @@ GSV has two scheduling surfaces:
 - Kernel schedules through `sched.*` for user/process-owned work.
 - Package daemon schedules for package-owned backend RPC methods.
 
-Use Kernel schedules when scheduled work should create or notify a process.
+Use Kernel schedules when scheduled work should run a command, including
+commands that create or notify a process.
 Use package daemon schedules when a package backend needs to call one of its
 own RPC methods.
 
@@ -22,8 +23,7 @@ From a GSV shell:
 
 ```bash
 sched add --name "daily ops check" --cron "0 9 * * *" --timezone Europe/Amsterdam \
-  --profile cron --label "daily ops check" \
-  "Check system health and summarize anything that needs attention."
+  --command "proc spawn --profile cron --label 'daily ops check' 'Check system health and summarize anything that needs attention.'"
 ```
 
 Programmatically:
@@ -37,13 +37,21 @@ await kernel.request("sched.add", {
     timezone: "Europe/Amsterdam",
   },
   target: {
-    kind: "process.spawn",
-    profile: "cron",
-    label: "daily ops check",
-    prompt: "Check system health and summarize anything that needs attention.",
+    kind: "command.exec",
+    command: "proc spawn --profile cron --label 'daily ops check' 'Check system health and summarize anything that needs attention.'",
   },
 });
 ```
+
+The shell also keeps a compatibility shorthand for scheduled worker processes:
+
+```bash
+sched add --name "daily ops check" --cron "0 9 * * *" --timezone Europe/Amsterdam \
+  --profile cron --label "daily ops check" \
+  "Check system health and summarize anything that needs attention."
+```
+
+That shorthand stores a `command.exec` target whose command is `proc spawn ...`.
 
 Supported expression shapes:
 
@@ -67,7 +75,9 @@ onboarding, the selected system timezone is available as
 ## Notify an Existing Process
 
 Use `process.event` when the schedule should wake an existing process
-conversation instead of spawning a new process.
+conversation instead of spawning a new process. This target remains for
+compatibility; command-backed schedules should use `proc send` when normal
+process mail is sufficient.
 
 From a GSV shell:
 

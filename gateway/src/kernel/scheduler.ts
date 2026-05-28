@@ -1,5 +1,6 @@
 import type { ConnectionIdentity } from "@gsv/protocol/syscalls/system";
 import type { KernelContext } from "./context";
+import { hasCapability } from "./capabilities";
 import { isAiContextProfile } from "../syscalls/ai";
 import type {
   ScheduleExpression,
@@ -610,6 +611,17 @@ function normalizeScheduleTarget(target: ScheduleTarget): ScheduleTarget {
     throw new Error("schedule target must be an object");
   }
 
+  if (target.kind === "command.exec") {
+    return {
+      kind: "command.exec",
+      command: normalizeRequiredText(target.command, "command.exec command"),
+      ...(target.cwd ? { cwd: normalizeRequiredText(target.cwd, "command.exec cwd") } : {}),
+      ...(target.timeoutMs === undefined
+        ? {}
+        : { timeoutMs: normalizePositiveInteger(target.timeoutMs, "command.exec timeoutMs") }),
+    };
+  }
+
   if (target.kind === "process.spawn") {
     const prompt = normalizeRequiredText(target.prompt, "process.spawn prompt");
     const profile = target.profile === "personal" ? "init" : target.profile ?? "cron";
@@ -645,6 +657,9 @@ function normalizeScheduleTarget(target: ScheduleTarget): ScheduleTarget {
 
 function validateScheduleTargetAccess(target: ScheduleTarget, ctx: KernelContext): void {
   const uid = ctx.identity!.process.uid;
+  if (target.kind === "command.exec" && !hasCapability(ctx.identity?.capabilities ?? [], "shell.exec")) {
+    throw new Error("Permission denied: shell.exec");
+  }
   if (target.kind === "process.event") {
     const proc = ctx.procs.get(target.pid);
     if (!proc) {
