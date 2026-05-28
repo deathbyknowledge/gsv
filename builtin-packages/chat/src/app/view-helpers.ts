@@ -18,6 +18,8 @@ import type {
 
 const ACTIVE_THREAD_CONTEXT_KEY = "gsv.activeThreadContext.v1";
 
+type RunStreamEffect = "message" | "tool";
+
 function flattenHistory(messages: unknown[]): LogRow[] {
   const rows: LogRow[] = [];
   for (const entry of messages) {
@@ -126,10 +128,12 @@ function applyAssistantSignal(payload: unknown, active: ThreadContext, setRows: 
   const runId = asString(record?.runId);
   setRows((current) => {
     const next = current.slice();
-    const last = next[next.length - 1];
-    const row: MessageRow = { kind: "message", role: "assistant", text, thinking, timestamp: Date.now(), runId };
-    if (last?.kind === "message" && last.role === "assistant" && runId && last.runId === runId) {
-      next[next.length - 1] = row;
+    const row: MessageRow = { kind: "message", role: "assistant", text, thinking, timestamp: Date.now(), runId, streaming: false };
+    const existingIndex = runId
+      ? findLastIndex(next, (candidate) => candidate.kind === "message" && candidate.role === "assistant" && candidate.runId === runId && !candidate.messageId)
+      : -1;
+    if (existingIndex >= 0) {
+      next[existingIndex] = row;
     } else {
       next.push(row);
     }
@@ -137,29 +141,51 @@ function applyAssistantSignal(payload: unknown, active: ThreadContext, setRows: 
   });
 }
 
-function applyAssistantStreamSignal(payload: unknown, active: ThreadContext, setRows: (update: (current: LogRow[]) => LogRow[]) => void): boolean {
+function applyAssistantStreamSignal(payload: unknown, active: ThreadContext, setRows: (update: (current: LogRow[]) => LogRow[]) => void): RunStreamEffect | null {
   const record = asRecord(payload);
-  if (!signalMatchesActiveThread(record, active)) return false;
+  if (!signalMatchesActiveThread(record, active)) return null;
   const event = asRecord(record?.event);
   const eventType = asString(event?.type);
   const runId = asString(record?.runId);
-  if (!runId) return false;
+  if (!runId) return null;
 
   if (eventType === "text_delta") {
     const delta = asString(event?.delta) ?? "";
-    if (!delta) return false;
+    if (!delta) return null;
     setRows((current) => appendAssistantDelta(current, runId, delta));
-    return true;
+    return "message";
   }
 
   if (eventType === "thinking_delta") {
     const delta = asString(event?.delta) ?? "";
-    if (!delta) return false;
+    if (!delta) return null;
     setRows((current) => appendAssistantThinkingDelta(current, runId, delta));
-    return true;
+    return "message";
   }
 
-  return false;
+  if (eventType === "toolcall_start" || eventType === "toolcall_delta" || eventType === "toolcall_end") {
+    const toolCall = extractStreamToolCall(event, runId);
+    if (!toolCall) return null;
+    setRows((current) => upsertToolRow(current, {
+      kind: "toolCall",
+      toolName: toolCall.toolName,
+      callId: toolCall.callId,
+      args: toolCall.args,
+      syscall: toolCall.syscall,
+      timestamp: Date.now(),
+      runId,
+      phase: "planning",
+      contentIndex: toolCall.contentIndex,
+    }));
+    return "tool";
+  }
+
+  if (eventType === "done" || eventType === "error") {
+    setRows((current) => finishStreamingAssistantRows(current, runId));
+    return "message";
+  }
+
+  return null;
 }
 
 function appendAssistantDelta(rows: LogRow[], runId: string, delta: string): LogRow[] {
@@ -169,6 +195,7 @@ function appendAssistantDelta(rows: LogRow[], runId: string, delta: string): Log
     next[next.length - 1] = {
       ...last,
       text: `${last.text}${delta}`,
+      streaming: true,
     };
     return next;
   }
@@ -179,6 +206,7 @@ function appendAssistantDelta(rows: LogRow[], runId: string, delta: string): Log
     text: delta,
     timestamp: Date.now(),
     runId,
+    streaming: true,
   });
   return next;
 }
@@ -194,6 +222,7 @@ function appendAssistantThinkingDelta(rows: LogRow[], runId: string, delta: stri
     next[next.length - 1] = {
       ...last,
       thinking,
+      streaming: true,
     };
     return next;
   }
@@ -205,8 +234,54 @@ function appendAssistantThinkingDelta(rows: LogRow[], runId: string, delta: stri
     thinking: [delta],
     timestamp: Date.now(),
     runId,
+    streaming: true,
   });
   return next;
+}
+
+function finishStreamingAssistantRows(rows: LogRow[], runId: string): LogRow[] {
+  let changed = false;
+  const next = rows.map((row) => {
+    if (row.kind !== "message" || row.role !== "assistant" || row.runId !== runId || !row.streaming) {
+      return row;
+    }
+    changed = true;
+    return { ...row, streaming: false };
+  });
+  return changed ? next : rows;
+}
+
+function extractStreamToolCall(event: Record<string, unknown> | null, runId: string): {
+  toolName: string;
+  callId: string;
+  args: unknown;
+  syscall: string | null;
+  contentIndex?: number;
+} | null {
+  if (!event) return null;
+  const contentIndex = asNumber(event.contentIndex);
+  const toolCall = asRecord(event.toolCall) ?? streamToolCallBlock(event);
+  if (!toolCall) return null;
+  const toolName = asString(toolCall.name) || "Tool";
+  const fallbackCallId = contentIndex !== null ? `${runId}:tool:${contentIndex}` : "";
+  const callId = asString(toolCall.id) || asString(toolCall.callId) || fallbackCallId;
+  if (!callId) return null;
+  return {
+    toolName,
+    callId,
+    args: toolCall.arguments ?? toolCall.args ?? {},
+    syscall: inferToolSyscall(toolName, asString(toolCall.syscall)),
+    ...(contentIndex !== null ? { contentIndex } : {}),
+  };
+}
+
+function streamToolCallBlock(event: Record<string, unknown>): Record<string, unknown> | null {
+  const contentIndex = asNumber(event.contentIndex);
+  if (contentIndex === null) return null;
+  const partial = asRecord(event.partial);
+  const content = Array.isArray(partial?.content) ? partial.content : [];
+  const block = asRecord(content[contentIndex]);
+  return block?.type === "toolCall" ? block : null;
 }
 
 function applyToolCallSignal(payload: unknown, active: ThreadContext, setRows: (update: (current: LogRow[]) => LogRow[]) => void) {
@@ -222,6 +297,7 @@ function applyToolCallSignal(payload: unknown, active: ThreadContext, setRows: (
     syscall: asString(record?.syscall),
     timestamp: Date.now(),
     runId: asString(record?.runId),
+    phase: "running",
   };
   setRows((current) => upsertToolRow(current, row));
 }
@@ -251,14 +327,44 @@ function applyToolResultSignal(payload: unknown, active: ThreadContext, setRows:
 
 function upsertToolRow(rows: LogRow[], nextRow: ToolRow): LogRow[] {
   const next = dropEmptyPlaceholder(rows).slice();
-  const index = next.findIndex((row) => (row.kind === "toolCall" || row.kind === "toolResult") && row.callId === nextRow.callId);
+  const index = findToolRowIndex(next, nextRow);
   if (index >= 0) {
     const prior = next[index] as ToolRow;
-    next[index] = { ...nextRow, args: nextRow.args ?? prior.args, syscall: nextRow.syscall ?? prior.syscall, runId: nextRow.runId ?? prior.runId };
+    next[index] = {
+      ...nextRow,
+      args: nextRow.args ?? prior.args,
+      syscall: nextRow.syscall ?? prior.syscall,
+      runId: nextRow.runId ?? prior.runId,
+      contentIndex: nextRow.contentIndex ?? prior.contentIndex,
+    };
   } else {
     next.push(nextRow);
   }
   return next;
+}
+
+function findToolRowIndex(rows: LogRow[], nextRow: ToolRow): number {
+  const exactIndex = rows.findIndex((row) => (row.kind === "toolCall" || row.kind === "toolResult") && row.callId === nextRow.callId);
+  if (exactIndex >= 0) return exactIndex;
+
+  if (!nextRow.runId) return -1;
+  if (typeof nextRow.contentIndex === "number") {
+    const streamIndex = rows.findIndex((row) => (
+      row.kind === "toolCall"
+      && row.phase === "planning"
+      && row.runId === nextRow.runId
+      && row.contentIndex === nextRow.contentIndex
+    ));
+    if (streamIndex >= 0) return streamIndex;
+  }
+
+  if (nextRow.phase === "planning") return -1;
+  return rows.findIndex((row) => (
+    row.kind === "toolCall"
+    && row.phase === "planning"
+    && row.runId === nextRow.runId
+    && row.toolName === nextRow.toolName
+  ));
 }
 
 function findToolRow(rows: LogRow[], callId: string): ToolRow | null {
@@ -269,6 +375,15 @@ function findToolRow(rows: LogRow[], callId: string): ToolRow | null {
     }
   }
   return null;
+}
+
+function findLastIndex<T>(items: T[], predicate: (item: T) => boolean): number {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    if (predicate(items[index])) {
+      return index;
+    }
+  }
+  return -1;
 }
 
 function signalMatchesActiveThread(payload: unknown, active: ThreadContext): boolean {

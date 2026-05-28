@@ -45,6 +45,9 @@ type PresenceRun = {
   status: PresenceLogStatus;
   updatedAt: number;
   timing?: VoiceTimingTrace;
+  speechCursor?: number;
+  speechChunkIndex?: number;
+  speechStarted?: boolean;
 };
 
 type BufferedRunSignal = {
@@ -168,6 +171,7 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
   let speechAttempt = 0;
   let speechAudio: HTMLAudioElement | null = null;
   let speechPlaybackCancel: (() => void) | null = null;
+  let speechQueue: Promise<void> = Promise.resolve();
   let lastInterimSpeechKey = "";
   let lastInterimSpeechAt = 0;
   const activeRuns = new Map<string, PresenceRun>();
@@ -1038,6 +1042,94 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
     }
   }
 
+  function queueRunSpeechFromAnswer(run: PresenceRun, final: boolean): boolean {
+    if (!speakReplies || !run.answer.trim()) {
+      return false;
+    }
+    let queued = false;
+    for (;;) {
+      const segment = nextRunSpeechSegment(run, final);
+      if (!segment) {
+        break;
+      }
+      const speechText = normalizeSpeechText(segment.text);
+      if (!speechText) {
+        continue;
+      }
+      const chunkIndex = run.speechChunkIndex ?? 0;
+      run.speechChunkIndex = chunkIndex + 1;
+      run.speechStarted = true;
+      queued = true;
+      enqueueSpeechChunk({
+        text: speechText,
+        index: chunkIndex,
+        total: chunkIndex + 1,
+      }, run.timing);
+    }
+    return queued;
+  }
+
+  function finalizeRunSpeech(run: PresenceRun): boolean {
+    const queued = queueRunSpeechFromAnswer(run, true);
+    if (!run.speechStarted) {
+      return queued;
+    }
+    const timing = run.timing;
+    speechQueue = speechQueue
+      .catch(() => {})
+      .then(() => logVoiceTimingTrace(timing, "speech-complete"));
+    void speechQueue;
+    return true;
+  }
+
+  function nextRunSpeechSegment(run: PresenceRun, final: boolean): { text: string } | null {
+    const cursor = run.speechCursor ?? 0;
+    const pending = run.answer.slice(cursor);
+    const prefix = selectSpeechPrefix(pending, final, !run.speechStarted);
+    if (!prefix) {
+      return null;
+    }
+    run.speechCursor = cursor + prefix.consumed;
+    return { text: prefix.text };
+  }
+
+  function enqueueSpeechChunk(chunk: SpeechChunk, timing?: VoiceTimingTrace): void {
+    speechQueue = speechQueue
+      .catch(() => {})
+      .then(() => speakQueuedSpeechChunk(chunk, timing));
+    void speechQueue;
+  }
+
+  async function speakQueuedSpeechChunk(chunk: SpeechChunk, timing?: VoiceTimingTrace): Promise<void> {
+    if (destroyed || !speakReplies) {
+      return;
+    }
+    if (!gatewayClient.isConnected()) {
+      setSpeechStatus("Speech unavailable while disconnected");
+      return;
+    }
+    const attempt = ++speechAttempt;
+    try {
+      setSpeechStatus(speechChunkStatus("Generating speech", chunk));
+      const result = await requestSpeechChunk(chunk, attempt, timing);
+      if (attempt !== speechAttempt) {
+        return;
+      }
+      await playSpeechChunk(result, chunk, attempt, timing);
+      if (attempt === speechAttempt) {
+        setSpeechStatus(speakReplies ? "Speak replies on" : "Speech off");
+      }
+    } catch (error) {
+      if (attempt !== speechAttempt) {
+        return;
+      }
+      speechAudio = null;
+      const message = formatError(error);
+      setSpeechStatus("Speech failed: " + message);
+      recordVoiceTimingFailure(timing, message, "speech_failed");
+    }
+  }
+
   function scheduleInterimSpeech(runId: string, text: string, key: string): void {
     if (!speakReplies) {
       return;
@@ -1214,6 +1306,42 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
     }
     markRunActivity(run, signal);
 
+    if (signal === "proc.run.stream") {
+      const delta = signalPayloadStreamTextDelta(payload);
+      if (delta) {
+        markVoiceTimingOnce(run.timing, "agent_first_text");
+        run.status = "Responding";
+        run.updatedAt = Date.now();
+        run.answer = `${run.answer}${delta}`;
+        latestRunId = runId;
+        updatePresenceLog(run.row, "Responding");
+        note = "Mind is responding";
+        showPresenceActivity("Responding", run.answer || run.prompt);
+        clearPendingInterimSpeech(runId);
+        queueRunSpeechFromAnswer(run, false);
+        setState(state);
+        return;
+      }
+
+      const toolLabel = signalPayloadStreamToolLabel(payload);
+      if (toolLabel) {
+        markVoiceTimingOnce(run.timing, "agent_first_tool_call");
+        run.status = "Using tools";
+        run.updatedAt = Date.now();
+        latestRunId = runId;
+        updatePresenceLog(run.row, "Using tools");
+        note = `Mind is using ${toolLabel}`;
+        showPresenceActivity("Using tools", `Using ${toolLabel}`);
+        if (!hasPendingInterimSpeech(runId)) {
+          speakInterimStatus(`Using ${toolLabel}.`, `tool:${runId}:${toolLabel}`);
+        }
+        setState(state);
+        return;
+      }
+
+      return;
+    }
+
     if (signal === "chat.text") {
       markVoiceTiming(run.timing, "agent_first_text");
       run.status = "Responding";
@@ -1230,7 +1358,20 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
       return;
     }
 
-    if (signal === "chat.tool_call") {
+    if (signal === "proc.run.output") {
+      markVoiceTimingOnce(run.timing, "agent_first_text");
+      run.status = "Responding";
+      run.updatedAt = Date.now();
+      run.answer = signalPayloadText(payload) ?? run.answer;
+      latestRunId = runId;
+      updatePresenceLog(run.row, "Responding");
+      note = "Mind is responding";
+      showPresenceActivity("Responding", run.answer || run.prompt);
+      setState(state);
+      return;
+    }
+
+    if (signal === "chat.tool_call" || signal === "proc.run.tool.started") {
       const toolLabel = signalPayloadToolLabel(payload);
       markVoiceTiming(run.timing, "agent_first_tool_call");
       run.status = "Using tools";
@@ -1246,7 +1387,7 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
       return;
     }
 
-    if (signal === "chat.tool_result") {
+    if (signal === "chat.tool_result" || signal === "proc.run.tool.finished") {
       run.status = "Working";
       run.updatedAt = Date.now();
       latestRunId = runId;
@@ -1257,7 +1398,7 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
       return;
     }
 
-    if (signal === "chat.hil") {
+    if (signal === "chat.hil" || signal === "proc.run.hil.requested") {
       markVoiceTiming(run.timing, "agent_needs_approval");
       run.status = "Needs approval";
       run.updatedAt = Date.now();
@@ -1271,7 +1412,7 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
       return;
     }
 
-    if (signal === "chat.complete") {
+    if (signal === "chat.complete" || signal === "proc.run.finished") {
       const error = signalPayloadError(payload);
       const aborted = signalPayloadAborted(payload);
       run.answer = signalPayloadText(payload) ?? run.answer;
@@ -1292,7 +1433,9 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
         finalStatus === "Failed" ? "failed" : finalStatus === "Stopped" ? "stopped" : "done",
       );
       if (!error && !aborted && run.answer) {
-        void speakReply(run.answer, { timing: run.timing });
+        if (!finalizeRunSpeech(run)) {
+          void speakReply(run.answer, { timing: run.timing });
+        }
       } else if (run.timing) {
         logVoiceTimingTrace(run.timing, finalStatus.toLowerCase());
       }
@@ -1677,7 +1820,13 @@ function isPresenceRunSignal(signal: string): boolean {
     || signal === "chat.tool_call"
     || signal === "chat.tool_result"
     || signal === "chat.hil"
-    || signal === "chat.complete";
+    || signal === "chat.complete"
+    || signal === "proc.run.stream"
+    || signal === "proc.run.output"
+    || signal === "proc.run.tool.started"
+    || signal === "proc.run.tool.finished"
+    || signal === "proc.run.hil.requested"
+    || signal === "proc.run.finished";
 }
 
 function signalPayloadError(payload: unknown): string | null {
@@ -1708,6 +1857,50 @@ function signalPayloadToolLabel(payload: unknown): string | null {
   const syscall = typeof payload.syscall === "string" ? payload.syscall.trim() : "";
   const label = name || syscall;
   return label.length > 0 ? label : null;
+}
+
+function signalPayloadStreamTextDelta(payload: unknown): string | null {
+  const event = signalPayloadStreamEvent(payload);
+  if (!event || event.type !== "text_delta" || typeof event.delta !== "string") {
+    return null;
+  }
+  return event.delta.length > 0 ? event.delta : null;
+}
+
+function signalPayloadStreamToolLabel(payload: unknown): string | null {
+  const event = signalPayloadStreamEvent(payload);
+  if (!event) {
+    return null;
+  }
+  const type = typeof event.type === "string" ? event.type : "";
+  if (type !== "toolcall_start" && type !== "toolcall_delta" && type !== "toolcall_end") {
+    return null;
+  }
+  const toolCall = isRecord(event.toolCall) ? event.toolCall : streamToolCallBlock(event);
+  if (!toolCall) {
+    return null;
+  }
+  const name = typeof toolCall.name === "string" ? toolCall.name.trim() : "";
+  const syscall = typeof toolCall.syscall === "string" ? toolCall.syscall.trim() : "";
+  const label = name || syscall;
+  return label.length > 0 ? label : null;
+}
+
+function signalPayloadStreamEvent(payload: unknown): Record<string, unknown> | null {
+  if (!isRecord(payload) || !isRecord(payload.event)) {
+    return null;
+  }
+  return payload.event;
+}
+
+function streamToolCallBlock(event: Record<string, unknown>): Record<string, unknown> | null {
+  if (typeof event.contentIndex !== "number") {
+    return null;
+  }
+  const partial = isRecord(event.partial) ? event.partial : null;
+  const content = Array.isArray(partial?.content) ? partial.content : [];
+  const block = content[event.contentIndex];
+  return isRecord(block) && block.type === "toolCall" ? block : null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1909,6 +2102,63 @@ function normalizeInterimSpeechText(text: string): string {
     return "";
   }
   return /[.!?:;)]$/.test(normalized) ? normalized : `${normalized}.`;
+}
+
+function selectSpeechPrefix(
+  pending: string,
+  final: boolean,
+  firstChunk: boolean,
+): { text: string; consumed: number } | null {
+  const leading = pending.match(/^\s*/)?.[0].length ?? 0;
+  const body = pending.slice(leading);
+  if (!body.trim()) {
+    return null;
+  }
+
+  const minChars = SPEECH_FIRST_CHUNK_MIN_CHARS;
+  const maxChars = firstChunk ? SPEECH_FIRST_CHUNK_MAX_CHARS : SPEECH_CHUNK_MAX_CHARS;
+  const sentenceEnd = sentenceEndAfter(body, minChars);
+  let end = sentenceEnd;
+
+  if (end === null || end > maxChars) {
+    if (!final && body.length < maxChars) {
+      return null;
+    }
+    end = wordBoundaryAt(body, maxChars);
+  }
+
+  if (final && body.length <= maxChars && (sentenceEnd === null || sentenceEnd > body.length)) {
+    end = body.length;
+  }
+
+  const text = body.slice(0, end).trim();
+  return text ? { text, consumed: leading + end } : null;
+}
+
+function sentenceEndAfter(text: string, minChars: number): number | null {
+  const matcher = /[.!?](?:["')\]]+)?(?:\s+|$)/g;
+  for (;;) {
+    const match = matcher.exec(text);
+    if (!match) {
+      return null;
+    }
+    const end = match.index + match[0].length;
+    if (end >= minChars) {
+      return end;
+    }
+  }
+}
+
+function wordBoundaryAt(text: string, maxChars: number): number {
+  if (text.length <= maxChars) {
+    return text.length;
+  }
+  for (let index = Math.min(maxChars, text.length - 1); index > 0; index -= 1) {
+    if (/\s/.test(text[index])) {
+      return index;
+    }
+  }
+  return Math.min(maxChars, text.length);
 }
 
 function chunkSpeechText(text: string): SpeechChunk[] {

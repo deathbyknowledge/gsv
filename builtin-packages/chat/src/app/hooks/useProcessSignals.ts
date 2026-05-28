@@ -135,9 +135,10 @@ export function useProcessSignals({
         if (!signalMatchesActiveThread(payload, target)) {
           return;
         }
-        if (applyAssistantStreamSignal(payload, target, setRows)) {
+        const effect = applyAssistantStreamSignal(payload, target, setRows);
+        if (effect) {
           prepareForLiveTranscriptActivity();
-          setPendingAssistant(null);
+          setPendingAssistant(effect === "tool" ? "tool" : null);
         }
       } else if (signal === "proc.run.finished") {
         if (!signalMatchesActiveThread(payload, target)) {
