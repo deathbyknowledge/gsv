@@ -349,9 +349,26 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
     },
   ];
   const packageScopeKey = (scope: any) => scope.kind === "user" ? `user:${scope.uid}` : "global";
+  let samCrontab = "CRON_TZ=Europe/Amsterdam\n0 9 * * * proc spawn --profile cron \"Daily pulse\"\n";
+  const passwdEntries = [ROOT, SAM, ALICE].map((user) => ({
+    username: user.username,
+    uid: user.uid,
+    gid: user.gid,
+    gecos: user.username,
+    home: user.home,
+    shell: "/bin/sh",
+  }));
+  const canAccessCrontab = (username: string) => identity.uid === 0 || identity.username === username;
 
   const kernel: KernelRefs = {
-    auth: null as never,
+    auth: {
+      getPasswdByUsername(username: string) {
+        return passwdEntries.find((entry) => entry.username === username) ?? null;
+      },
+      getPasswdByUid(uid: number) {
+        return passwdEntries.find((entry) => entry.uid === uid) ?? null;
+      },
+    } as never,
     procs: {
       get(pid: string) {
         if (pid === "task-alpha") return processRecord;
@@ -377,6 +394,40 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
         }) as never;
       },
     } as never,
+    cron: {
+      listUserCrontabs() {
+        return canAccessCrontab("sam") ? ["sam"] : [];
+      },
+      readUserCrontab(username: string) {
+        if (username === "sam" && !canAccessCrontab(username)) {
+          throw new Error(`Permission denied: cannot access crontab for ${username}`);
+        }
+        return username === "sam" ? samCrontab : undefined;
+      },
+      async installUserCrontab(username: string, content: string) {
+        if (username !== "sam") throw new Error(`Unknown user: ${username}`);
+        if (!canAccessCrontab(username)) throw new Error(`Permission denied: cannot access crontab for ${username}`);
+        samCrontab = content.endsWith("\n") ? content : `${content}\n`;
+      },
+      async removeUserCrontab(username: string) {
+        if (username !== "sam") return false;
+        if (!canAccessCrontab(username)) throw new Error(`Permission denied: cannot access crontab for ${username}`);
+        samCrontab = "";
+        return true;
+      },
+      listSystemCrontabs() {
+        return [];
+      },
+      readSystemCrontab() {
+        return undefined;
+      },
+      async installSystemCrontab() {
+        throw new Error("Permission denied: cannot install system crontabs");
+      },
+      async removeSystemCrontab() {
+        return false;
+      },
+    },
     schedules: {
       list(args) {
         const records = schedules.filter((schedule) => args.ownerUid === undefined || schedule.ownerUid === args.ownerUid);
@@ -1247,19 +1298,34 @@ describe("GsvFs Linux-like runtime views", () => {
     await expect(fs.writeFile("/var/lib/gsv/packages/status", "nope")).rejects.toThrow("EPERM");
   });
 
-  it("exposes scheduler definitions and run history under /var", async () => {
+  it("exposes crontabs and scheduler run history under /var", async () => {
     const fs = makeRuntimeViewFs(SAM);
 
     await expect(fs.readdir("/var")).resolves.toEqual(expect.arrayContaining(["log", "spool"]));
-    await expect(fs.readdir("/var/spool/cron")).resolves.toEqual(["sched-1"]);
+    await expect(fs.readdir("/var/spool/cron")).resolves.toEqual(["sam"]);
     await expect(fs.writeFile("/var/log/custom", "hidden")).rejects.toThrow("EPERM");
 
-    const schedule = JSON.parse(await fs.readFile("/var/spool/cron/sched-1"));
-    expect(schedule).toMatchObject({
-      id: "sched-1",
-      ownerUid: 1000,
-      target: { kind: "process.event", pid: "task-alpha" },
+    const crontab = await fs.readFile("/var/spool/cron/sam");
+    expect(crontab).toContain("CRON_TZ=Europe/Amsterdam");
+    expect(crontab).toContain("proc spawn --profile cron");
+    const crontabStat = await fs.statExtended("/var/spool/cron/sam");
+    expect(crontabStat).toMatchObject({
+      isFile: true,
+      mode: 0o600,
+      uid: SAM.uid,
+      gid: SAM.gid,
     });
+    expect(crontabStat.size).toBeGreaterThan(0);
+
+    await fs.writeFile("/var/spool/cron/sam", "0 4 * * * proc compact init:1000 --conversation default --keep-last 80\n");
+    await expect(fs.readFile("/var/spool/cron/sam"))
+      .resolves.toBe("0 4 * * * proc compact init:1000 --conversation default --keep-last 80\n");
+
+    const aliceFs = makeRuntimeViewFs(ALICE);
+    await expect(aliceFs.readdir("/var/spool/cron")).resolves.toEqual([]);
+    await expect(aliceFs.readFile("/var/spool/cron/sam")).rejects.toThrow("Permission denied");
+    await expect(aliceFs.statExtended("/var/spool/cron/sam")).rejects.toThrow("Permission denied");
+    await expect(aliceFs.writeFile("/var/spool/cron/sam", "0 1 * * * echo no\n")).rejects.toThrow("Permission denied");
 
     await expect(fs.readFile("/var/spool/cron/sched-foreign")).rejects.toThrow("ENOENT");
 

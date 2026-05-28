@@ -1,6 +1,7 @@
 import type { AuthStore } from "../kernel/auth-store";
 import type { CapabilityStore } from "../kernel/capabilities";
 import type { ConfigStore } from "../kernel/config";
+import type { CronFileService } from "../kernel/crontab";
 import type { DeviceRegistry } from "../kernel/devices";
 import type { ProcessRegistry } from "../kernel/processes";
 import type { PackageStore } from "../kernel/packages";
@@ -40,6 +41,7 @@ export type KernelRefs = {
   caps: CapabilityStore;
   config: ConfigStore;
   packages?: PackageStore;
+  cron?: CronFileService;
   schedules?: ScheduleViewStore;
   processRequest?: ProcessViewRequest;
 };

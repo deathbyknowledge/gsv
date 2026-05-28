@@ -19,6 +19,7 @@ import {
   inferContentType,
 } from "../../fs";
 import type { KernelContext } from "../../kernel/context";
+import { createCronFileService } from "../../kernel/crontab";
 import { visiblePackageScopesForActor } from "../../kernel/packages";
 import { requestProcessView } from "./process-view";
 import type { FsReadArgs, FsReadResult } from "../../syscalls/read";
@@ -107,6 +108,7 @@ function makeFs(ctx: KernelContext): GsvFs {
       caps: ctx.caps,
       config: ctx.config,
       packages: ctx.packages,
+      cron: createCronFileService(ctx),
       schedules: ctx.schedules,
       processRequest: requestProcessView,
     },

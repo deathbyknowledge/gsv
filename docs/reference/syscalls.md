@@ -1215,6 +1215,10 @@ Scheduler syscalls are Kernel-owned. Schedule records live in Kernel SQLite,
 GSV computes timezone-aware next fire times, and Cloudflare Agent schedules are
 used only as concrete wake-ups.
 
+Normal cron jobs should be installed with `crontab` or by writing
+`/var/spool/cron/<username>` and `/etc/cron.d/<name>`. Those file surfaces
+compile crontab lines into `command.exec` schedule records.
+
 Runtime behavior:
 
 | Syscall | Handler | Behavior |

@@ -46,6 +46,7 @@ export class KernelMountBackend implements MountBackend {
       p.startsWith("/sys/") ||
       p === "/sys" ||
       isEtcAuth(p) ||
+      isEtcCronPath(p) ||
       isVarViewPath(p)
     );
   }
@@ -89,6 +90,10 @@ export class KernelMountBackend implements MountBackend {
       this.writeSys(p, typeof content === "string" ? content : new TextDecoder().decode(content));
       return;
     }
+    if (isCronWritablePath(p)) {
+      await this.writeCronFile(p, typeof content === "string" ? content : new TextDecoder().decode(content));
+      return;
+    }
     if (isVarViewPath(p)) {
       throw new Error(`EPERM: /var runtime views are read-only`);
     }
@@ -102,7 +107,12 @@ export class KernelMountBackend implements MountBackend {
   async appendFile(path: string, content: FileContent): Promise<void> {
     const p = normalizePath(path);
     if (p === "/dev/null") return;
-    if (p.startsWith("/dev/") || p.startsWith("/proc/") || p.startsWith("/sys/") || isVarViewPath(p)) {
+    if (isCronWritablePath(p)) {
+      const existing = await this.readVirtual(p) ?? "";
+      await this.writeCronFile(p, existing + (typeof content === "string" ? content : new TextDecoder().decode(content)));
+      return;
+    }
+    if (p.startsWith("/dev/") || p.startsWith("/proc/") || p.startsWith("/sys/") || isVarViewPath(p) || isEtcCronPath(p)) {
       throw new Error(`EPERM: cannot append to virtual path '${p}'`);
     }
     if (isEtcAuth(p)) {
@@ -119,6 +129,7 @@ export class KernelMountBackend implements MountBackend {
     if (p === "/etc") return true;
     if (await this.isVirtualDir(p)) return true;
     if (isEtcAuth(p)) return true;
+    if (isEtcCronPath(p) && await this.readEtcCron(p) !== undefined) return true;
     if (await this.readVirtual(p) !== undefined) return true;
     return false;
   }
@@ -135,6 +146,11 @@ export class KernelMountBackend implements MountBackend {
       return { isFile: true, isDirectory: false, isSymbolicLink: false, mode, size: 0, mtime: new Date(), uid: 0, gid: 0 };
     }
 
+    if (isCronWritablePath(p)) {
+      const stat = this.statCronFile(p);
+      if (stat) return stat;
+    }
+
     if (await this.readVirtual(p) !== undefined) {
       return { isFile: true, isDirectory: false, isSymbolicLink: false, mode: 0o444, size: 0, mtime: new Date(), uid: 0, gid: 0 };
     }
@@ -144,7 +160,7 @@ export class KernelMountBackend implements MountBackend {
 
   async mkdir(path: string, _options?: MkdirOptions): Promise<void> {
     const p = normalizePath(path);
-    if (p.startsWith("/proc/") || p.startsWith("/dev/") || p.startsWith("/sys/") || isVarViewPath(p) || p === "/etc" || isEtcAuth(p)) {
+    if (p.startsWith("/proc/") || p.startsWith("/dev/") || p.startsWith("/sys/") || isVarViewPath(p) || p === "/etc" || isEtcAuth(p) || isEtcCronPath(p)) {
       throw new Error(`EPERM: cannot mkdir in virtual filesystem '${p}'`);
     }
     throw new Error(`ENOENT: no such file or directory, mkdir '${p}'`);
@@ -154,13 +170,18 @@ export class KernelMountBackend implements MountBackend {
     const p = normalizePath(path);
     const entries = await this.readdirVirtual(p);
     if (entries !== undefined) return entries;
-    if (p === "/etc") return ["group", "passwd", "shadow"];
+    if (p === "/etc") return ["cron.d", "group", "passwd", "shadow"];
     throw new Error(`ENOENT: no such file or directory, scandir '${p}'`);
   }
 
   async rm(path: string, _options?: RmOptions): Promise<void> {
     const p = normalizePath(path);
-    if (p.startsWith("/proc/") || p.startsWith("/dev/") || p.startsWith("/sys/") || isVarViewPath(p) || p === "/etc" || isEtcAuth(p)) {
+    if (isCronWritablePath(p)) {
+      const removed = await this.removeCronFile(p);
+      if (removed) return;
+      throw new Error(`ENOENT: no such file or directory, unlink '${p}'`);
+    }
+    if (p.startsWith("/proc/") || p.startsWith("/dev/") || p.startsWith("/sys/") || isVarViewPath(p) || p === "/etc" || isEtcAuth(p) || isEtcCronPath(p)) {
       throw new Error(`EPERM: cannot remove virtual path '${p}'`);
     }
     throw new Error(`ENOENT: no such file or directory, unlink '${p}'`);
@@ -624,10 +645,9 @@ export class KernelMountBackend implements MountBackend {
 
   private readVarView(path: string): string | undefined {
     if (path.startsWith("/var/spool/cron/")) {
-      const scheduleId = decodePathSegment(path.slice("/var/spool/cron/".length));
-      if (!scheduleId) return undefined;
-      const schedule = this.listVisibleSchedules().find((record) => record.id === scheduleId);
-      return schedule ? jsonText(schedule) : undefined;
+      const username = decodePathSegment(path.slice("/var/spool/cron/".length));
+      if (!username) return undefined;
+      return this.kernel?.cron?.readUserCrontab(username);
     }
 
     if (path === "/var/lib/gsv/packages/status") {
@@ -654,6 +674,69 @@ export class KernelMountBackend implements MountBackend {
     }
 
     return undefined;
+  }
+
+  private readEtcCron(path: string): string | undefined {
+    if (path.startsWith("/etc/cron.d/")) {
+      const name = decodePathSegment(path.slice("/etc/cron.d/".length));
+      if (!name) return undefined;
+      return this.kernel?.cron?.readSystemCrontab(name);
+    }
+    return undefined;
+  }
+
+  private statCronFile(path: string): ExtendedMountStat | undefined {
+    if (!this.kernel?.cron) return undefined;
+    if (path.startsWith("/var/spool/cron/")) {
+      const username = decodePathSegment(path.slice("/var/spool/cron/".length));
+      if (!username) return undefined;
+      const content = this.kernel.cron.readUserCrontab(username);
+      if (content === undefined) return undefined;
+      const user = this.kernel.auth?.getPasswdByUsername(username);
+      const uid = user?.uid ?? (this.identity.username === username ? this.identity.uid : 0);
+      const gid = user?.gid ?? (this.identity.username === username ? this.identity.gid : 0);
+      return cronFileStat(content, 0o600, uid, gid);
+    }
+
+    if (path.startsWith("/etc/cron.d/")) {
+      const content = this.readEtcCron(path);
+      if (content === undefined) return undefined;
+      return cronFileStat(content, 0o644, 0, 0);
+    }
+
+    return undefined;
+  }
+
+  private async writeCronFile(path: string, content: string): Promise<void> {
+    if (!this.kernel?.cron) {
+      throw new Error("scheduler store is not configured");
+    }
+    if (path.startsWith("/var/spool/cron/")) {
+      const username = decodePathSegment(path.slice("/var/spool/cron/".length));
+      if (!username) throw new Error(`ENOENT: no such file or directory, open '${path}'`);
+      await this.kernel.cron.installUserCrontab(username, content);
+      return;
+    }
+    if (path.startsWith("/etc/cron.d/")) {
+      const name = decodePathSegment(path.slice("/etc/cron.d/".length));
+      if (!name) throw new Error(`ENOENT: no such file or directory, open '${path}'`);
+      await this.kernel.cron.installSystemCrontab(name, content);
+      return;
+    }
+    throw new Error(`EPERM: cannot write to virtual path '${path}'`);
+  }
+
+  private async removeCronFile(path: string): Promise<boolean> {
+    if (!this.kernel?.cron) return false;
+    if (path.startsWith("/var/spool/cron/")) {
+      const username = decodePathSegment(path.slice("/var/spool/cron/".length));
+      return username ? this.kernel.cron.removeUserCrontab(username) : false;
+    }
+    if (path.startsWith("/etc/cron.d/")) {
+      const name = decodePathSegment(path.slice("/etc/cron.d/".length));
+      return name ? this.kernel.cron.removeSystemCrontab(name) : false;
+    }
+    return false;
   }
 
   private readPackageInfoFile(file: string): string | undefined {
@@ -709,6 +792,7 @@ export class KernelMountBackend implements MountBackend {
     if (path.startsWith("/dev/")) return this.readDev(path);
     if (path.startsWith("/sys/")) return this.readSys(path);
     if (isVarViewPath(path)) return this.readVarView(path);
+    if (isEtcCronPath(path)) return this.readEtcCron(path);
     if (isEtcAuth(path)) return this.readEtcAuth(path);
     return undefined;
   }
@@ -719,6 +803,7 @@ export class KernelMountBackend implements MountBackend {
       "/sys/config", "/sys/users", "/sys/devices", "/sys/capabilities",
       "/var", "/var/spool", "/var/spool/cron", "/var/log", "/var/log/gsv",
       "/var/lib", "/var/lib/gsv", "/var/lib/gsv/packages", "/var/lib/gsv/packages/info",
+      "/etc/cron.d",
     ];
     if (virtualDirs.includes(path)) return true;
 
@@ -949,13 +1034,16 @@ export class KernelMountBackend implements MountBackend {
       return ["cron"];
     }
     if (path === "/var/spool/cron") {
-      return this.listVisibleSchedules().map((schedule) => encodePathSegment(schedule.id)).sort();
+      return this.kernel?.cron?.listUserCrontabs().map(encodePathSegment).sort() ?? [];
     }
     if (path === "/var/log") {
       return ["gsv"];
     }
     if (path === "/var/log/gsv") {
       return ["scheduler"];
+    }
+    if (path === "/etc/cron.d") {
+      return this.kernel?.cron?.listSystemCrontabs().map(encodePathSegment).sort() ?? [];
     }
 
     if (path.startsWith("/sys/devices/")) {
@@ -972,6 +1060,14 @@ export class KernelMountBackend implements MountBackend {
 
 function isEtcAuth(path: string): boolean {
   return path === "/etc/passwd" || path === "/etc/shadow" || path === "/etc/group";
+}
+
+function isEtcCronPath(path: string): boolean {
+  return path === "/etc/cron.d" || path.startsWith("/etc/cron.d/");
+}
+
+function isCronWritablePath(path: string): boolean {
+  return path.startsWith("/var/spool/cron/") || path.startsWith("/etc/cron.d/");
 }
 
 function isVarViewPath(path: string): boolean {
@@ -994,6 +1090,19 @@ function decodePathSegment(segment: string): string {
   } catch {
     return "";
   }
+}
+
+function cronFileStat(content: string, mode: number, uid: number, gid: number): ExtendedMountStat {
+  return {
+    isFile: true,
+    isDirectory: false,
+    isSymbolicLink: false,
+    mode,
+    size: TEXT_ENCODER.encode(content).byteLength,
+    mtime: new Date(),
+    uid,
+    gid,
+  };
 }
 
 function parsePositiveIntegerSegment(segment: string): number | null {

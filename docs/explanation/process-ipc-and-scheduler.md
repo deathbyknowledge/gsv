@@ -445,7 +445,8 @@ Potential views:
 - `/proc/<pid>/conversations/<conversationId>`
 - `/proc/<pid>/conversations/<conversationId>/history`
 - `/proc/<pid>/conversations/<conversationId>/segments`
-- `/var/spool/cron`
+- `/var/spool/cron/<username>`
+- `/etc/cron.d/<name>`
 - `/var/log/gsv/scheduler`
 
 These should be views over Kernel and Process state, not separate stores.
@@ -537,6 +538,7 @@ Implemented:
 - Kernel-owned schedule store and `sched.*` syscall handlers.
 - `at`, `after`, `every`, and timezone-aware five-field cron expressions.
 - `command.exec` targets that run native shell commands as the schedule owner.
+- writable crontab files that compile cron lines into `command.exec` schedules.
 - `process.spawn` targets for scheduled background work.
 - `process.event` targets that enter process context as visible process events.
 - Cloudflare Agent schedules as one-shot wake-ups only; GSV stores the schedule

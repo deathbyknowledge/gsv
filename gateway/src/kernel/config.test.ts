@@ -143,7 +143,9 @@ describe("ConfigStore", () => {
     expect(orchestration).toContain("target: \"gsv\"");
     expect(orchestration).toContain("proc profiles");
     expect(orchestration).toContain("proc spawn");
-    expect(orchestration).toContain("sched add");
+    expect(orchestration).toContain("crontab FILE");
+    expect(orchestration).toContain("/var/spool/cron/<username>");
+    expect(orchestration).toContain("sched list");
     expect(orchestration).toContain("~/profiles.d/{name}");
     expect(orchestration).toContain("~/profiles.d/{name}/context.d/*.md");
     expect(orchestration).toContain("root-level files");

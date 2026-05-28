@@ -40,17 +40,18 @@ Commands run inside the gateway OS context, not directly on your local machine.
 Use `:quit`, `:exit`, or `:q` to leave.
 
 Inside the gateway shell, `proc` is the process IPC userland command and
-`sched` manages Kernel schedules:
+`crontab` manages cron files; `sched` inspects and controls the compiled Kernel
+schedules:
 
 ```bash
 proc self
 proc list
 proc send <pid> [--conversation id] [--metadata-json json] <message>
 proc call <pid> [--conversation id] [--metadata-json json] [--timeout 60s] <message>
+crontab -l [-u user]
+crontab FILE [-u user]
+crontab -r [-u user]
 sched list [--all]
-sched add --name NAME (--cron EXPR [--timezone TZ] | --every DURATION | --after DURATION | --at TIME) --command COMMAND
-sched add --name NAME (--cron EXPR [--timezone TZ] | --every DURATION | --after DURATION | --at TIME) [--profile PROFILE] <prompt>
-sched add --name NAME (--cron EXPR [--timezone TZ] | --every DURATION | --after DURATION | --at TIME) --pid PID <message>
 sched remove <id>
 sched run <id> [--force]
 ```
@@ -60,9 +61,8 @@ the source process receives either `ipc.reply` or `ipc.timeout` in its default
 conversation. `proc self` prints the current GSV process id; the shell also
 exports it as `GSV_PID`.
 
-Schedules run commands. The `--profile` form is a shorthand that stores a
-`proc spawn` command; use `--command` for lifecycle/script work such as
-`proc compact ...`.
+Cron jobs live in `/var/spool/cron/<username>` or `/etc/cron.d/<name>` and run
+the command after the five time fields.
 
 ## Process Commands
 

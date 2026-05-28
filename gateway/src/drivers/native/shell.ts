@@ -19,6 +19,7 @@ import {
   resolveUserPath,
 } from "../../fs";
 import type { KernelContext } from "../../kernel/context";
+import { createCronFileService } from "../../kernel/crontab";
 import { visiblePackageScopesForActor } from "../../kernel/packages";
 import { requestProcessView } from "./process-view";
 import type { ShellExecArgs, ShellExecResult } from "../../syscalls/shell";
@@ -141,6 +142,7 @@ function createBash(
       caps: ctx.caps,
       config: ctx.config,
       packages: ctx.packages,
+      cron: createCronFileService(ctx),
       schedules: ctx.schedules,
       processRequest: requestProcessView,
     },
