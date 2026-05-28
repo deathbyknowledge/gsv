@@ -45,6 +45,7 @@ export class KernelMountBackend implements MountBackend {
       p === "/dev" ||
       p.startsWith("/sys/") ||
       p === "/sys" ||
+      p === "/etc" ||
       isEtcAuth(p) ||
       isEtcCronPath(p) ||
       isVarViewPath(p)

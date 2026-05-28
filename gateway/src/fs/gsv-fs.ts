@@ -2,7 +2,7 @@
  * GsvFs — unified IFileSystem implementation for gateway.
  *
  * Explicit mount routing:
- *   /proc/*, /dev/*, /sys/*, /var/{spool,log}/*, /etc/{passwd,shadow,group} → KernelMountBackend
+ *   /proc/*, /dev/*, /sys/*, /var/{spool,log}/*, /etc/{passwd,shadow,group,cron.d} → KernelMountBackend
  *   /src/packages/*                                     → Process package source backend
  *   /usr/local/bin/*                                      → Package backend
  *   everything else                                           → R2 backend
@@ -478,6 +478,7 @@ export class GsvFs implements IFileSystem {
     for (const name of await this.r2Backend.readdir("/etc").catch(() => [] as string[])) {
       entries.add(name);
     }
+    entries.add("cron.d");
     entries.add("passwd");
     entries.add("shadow");
     entries.add("group");

@@ -354,6 +354,9 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
   ];
   const packageScopeKey = (scope: any) => scope.kind === "user" ? `user:${scope.uid}` : "global";
   let samCrontab = "CRON_TZ=Europe/Amsterdam\n0 9 * * * proc spawn --profile cron \"Daily pulse\"\n";
+  const systemCrontabs = new Map<string, string>([
+    ["daily", "0 5 * * * proc compact init:1000 --conversation default --keep-last 80\n"],
+  ]);
   const passwdEntries = [ROOT, SAM, ALICE].map((user) => ({
     username: user.username,
     uid: user.uid,
@@ -420,16 +423,18 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
         return true;
       },
       listSystemCrontabs() {
-        return [];
+        return [...systemCrontabs.keys()].sort();
       },
-      readSystemCrontab() {
-        return undefined;
+      readSystemCrontab(name: string) {
+        return systemCrontabs.get(name);
       },
-      async installSystemCrontab() {
-        throw new Error("Permission denied: cannot install system crontabs");
+      async installSystemCrontab(name: string, content: string) {
+        if (identity.uid !== 0) throw new Error("Permission denied: cannot install system crontabs");
+        systemCrontabs.set(name, content.endsWith("\n") ? content : `${content}\n`);
       },
-      async removeSystemCrontab() {
-        return false;
+      async removeSystemCrontab(name: string) {
+        if (identity.uid !== 0) throw new Error("Permission denied: cannot remove system crontabs");
+        return systemCrontabs.delete(name);
       },
     },
     schedules: {
@@ -1344,6 +1349,25 @@ describe("GsvFs Linux-like runtime views", () => {
         scheduleName: "daily pulse",
       }),
     ]);
+  });
+
+  it("resolves system crontabs through virtual /etc parents", async () => {
+    const fs = makeRuntimeViewFs(SAM);
+
+    await expect(fs.readdir("/etc")).resolves.toEqual(expect.arrayContaining(["cron.d", "group", "passwd", "shadow"]));
+    await expect(fs.readdir("/etc/cron.d")).resolves.toEqual(["daily"]);
+    await expect(fs.readFile("/etc/cron.d/daily")).resolves.toContain("proc compact");
+    await expect(fs.statExtended("/etc/cron.d/daily")).resolves.toMatchObject({
+      isFile: true,
+      mode: 0o644,
+      uid: 0,
+      gid: 0,
+    });
+    await expect(fs.writeFile("/etc/cron.d/nightly", "0 4 * * * proc list\n")).rejects.toThrow("Permission denied");
+
+    const rootFs = makeRuntimeViewFs(ROOT);
+    await rootFs.writeFile("/etc/cron.d/nightly", "0 4 * * * proc list\n");
+    await expect(rootFs.readFile("/etc/cron.d/nightly")).resolves.toBe("0 4 * * * proc list\n");
   });
 });
 
