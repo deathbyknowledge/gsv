@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { env } from "cloudflare:test";
 import { GsvFs, parseMode, isValidMode, resolveUserPath } from "./index";
+import type { KernelRefs } from "./index";
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 
 const ROOT: ProcessIdentity = {
@@ -86,6 +87,201 @@ function makeConfigBackedFs(
     caps: null as never,
     config: config as never,
   });
+}
+
+function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
+  const processRecord = {
+    processId: "task-alpha",
+    parentPid: "init:1000",
+    uid: 1000,
+    profile: "task",
+    gid: 1000,
+    gids: [1000],
+    username: "sam",
+    home: "/home/sam",
+    cwd: "/home/sam",
+    state: "running",
+    label: "Alpha",
+    createdAt: 100,
+    mounts: [],
+    contextFiles: [{ name: "brief.md", text: "Brief" }],
+  };
+  const otherProcessRecord = {
+    ...processRecord,
+    processId: "task-foreign",
+    uid: 1001,
+    username: "alice",
+  };
+  const conversations = [
+    {
+      id: "default",
+      generation: 1,
+      status: "open",
+      title: null,
+      messageCount: 2,
+      createdAt: 1000,
+      updatedAt: 2000,
+    },
+    {
+      id: "build",
+      generation: 2,
+      status: "open",
+      title: "Build",
+      messageCount: 1,
+      createdAt: 1100,
+      updatedAt: 2100,
+    },
+  ];
+  const history = {
+    default: [
+      { id: 1, role: "user", content: "hello", timestamp: 1000 },
+      { id: 2, role: "assistant", content: { text: "hi" }, timestamp: 1100 },
+    ],
+    build: [
+      { id: 3, role: "user", content: "run build", timestamp: 1200 },
+    ],
+  };
+  const segment = {
+    id: "seg-1",
+    conversationId: "default",
+    generation: 1,
+    kind: "compaction",
+    fromMessageId: 1,
+    toMessageId: 1,
+    archivePath: "/var/sessions/sam/task-alpha/conversations/default/seg-1.jsonl.gz",
+    summaryMessageId: 2,
+    createdAt: 1300,
+  };
+  const segmentMessages = [
+    { id: 1, role: "user", content: "archived hello", timestamp: 1000 },
+  ];
+  const schedules = [
+    {
+      id: "sched-1",
+      ownerUid: 1000,
+      creator: { kind: "user", uid: 1000, username: "sam" },
+      runAs: { kind: "user", uid: 1000, username: "sam" },
+      name: "daily pulse",
+      enabled: true,
+      expression: { kind: "every", everyMs: 60_000 },
+      target: { kind: "process.event", pid: "task-alpha", message: "pulse" },
+      overlapPolicy: "skip",
+      createdAtMs: 1000,
+      updatedAtMs: 1000,
+      state: {
+        nextRunAtMs: 2000,
+        runningAtMs: null,
+        lastRunAtMs: 1500,
+        lastStatus: "ok",
+        lastError: null,
+        lastDurationMs: 10,
+        runCount: 1,
+      },
+    },
+    {
+      id: "sched-foreign",
+      ownerUid: 1001,
+      creator: { kind: "user", uid: 1001, username: "alice" },
+      runAs: { kind: "user", uid: 1001, username: "alice" },
+      name: "foreign",
+      enabled: true,
+      expression: { kind: "every", everyMs: 60_000 },
+      target: { kind: "process.event", pid: "task-foreign", message: "pulse" },
+      overlapPolicy: "skip",
+      createdAtMs: 1000,
+      updatedAtMs: 1000,
+      state: {
+        nextRunAtMs: 2000,
+        runningAtMs: null,
+        lastRunAtMs: null,
+        lastStatus: null,
+        lastError: null,
+        lastDurationMs: null,
+        runCount: 0,
+      },
+    },
+  ];
+
+  const kernel: KernelRefs = {
+    auth: null as never,
+    procs: {
+      get(pid: string) {
+        if (pid === "task-alpha") return processRecord;
+        if (pid === "task-foreign") return otherProcessRecord;
+        return null;
+      },
+      list(uid?: number) {
+        return [processRecord, otherProcessRecord].filter((record) => uid === undefined || record.uid === uid);
+      },
+    } as never,
+    devices: null as never,
+    caps: null as never,
+    config: null as never,
+    schedules: {
+      list(args) {
+        const records = schedules.filter((schedule) => args.ownerUid === undefined || schedule.ownerUid === args.ownerUid);
+        return { records: records as never, count: records.length };
+      },
+      history(scheduleId: string) {
+        if (scheduleId !== "sched-1") return [];
+        return [{
+          id: "run-1",
+          scheduleId,
+          scheduledAtMs: 1400,
+          startedAtMs: 1401,
+          finishedAtMs: 1411,
+          status: "ok",
+          result: { delivered: true },
+        }];
+      },
+    },
+    async processRequest(_pid, call, args) {
+      const conversationId = String(args?.conversationId ?? "default");
+      if (call === "proc.conversation.list") {
+        return { ok: true, pid: "task-alpha", conversations };
+      }
+      if (call === "proc.conversation.get") {
+        return {
+          ok: true,
+          pid: "task-alpha",
+          conversation: conversations.find((conversation) => conversation.id === conversationId) ?? null,
+        };
+      }
+      if (call === "proc.history") {
+        const messages = history[conversationId as keyof typeof history] ?? [];
+        const offset = Number(args?.offset ?? 0);
+        const limit = Number(args?.limit ?? 500);
+        return {
+          ok: true,
+          pid: "task-alpha",
+          conversationId,
+          messages: messages.slice(offset, offset + limit),
+          messageCount: messages.length,
+        };
+      }
+      if (call === "proc.conversation.segments") {
+        return {
+          ok: true,
+          pid: "task-alpha",
+          conversationId,
+          segments: conversationId === "default" ? [segment] : [],
+        };
+      }
+      if (call === "proc.conversation.segment.read") {
+        return {
+          ok: true,
+          pid: "task-alpha",
+          conversationId,
+          segment,
+          messages: segmentMessages,
+          messageCount: segmentMessages.length,
+        };
+      }
+      return { ok: false, error: "unknown call" };
+    },
+  };
+
+  return new GsvFs(env.STORAGE, identity, kernel, selfPid);
 }
 
 describe("parseMode", () => {
@@ -686,6 +882,82 @@ describe("GsvFs virtual /sys config tree", () => {
     expect(users).toEqual(["1000"]);
 
     await expect(fs.readdir("/sys/users/1001")).rejects.toThrow("ENOENT");
+  });
+});
+
+describe("GsvFs Linux-like runtime views", () => {
+  it("exposes process conversations and compacted segments under /proc", async () => {
+    const fs = makeRuntimeViewFs(SAM, "task-alpha");
+
+    await expect(fs.readdir("/proc/task-alpha")).resolves.toEqual([
+      "context.d",
+      "conversations",
+      "identity",
+      "status",
+    ]);
+    await expect(fs.readdir("/proc/self/conversations")).resolves.toEqual(["build", "default"]);
+    await expect(fs.readdir("/proc/task-alpha/conversations")).resolves.toEqual(["build", "default"]);
+    await expect(fs.readdir("/proc/task-alpha/conversations/default")).resolves.toEqual([
+      "history",
+      "segments",
+      "status",
+    ]);
+
+    const status = JSON.parse(await fs.readFile("/proc/task-alpha/conversations/default/status"));
+    expect(status).toMatchObject({ id: "default", generation: 1, messageCount: 2 });
+
+    const historyLines = (await fs.readFile("/proc/task-alpha/conversations/default/history"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(historyLines).toEqual([
+      expect.objectContaining({ id: 1, role: "user" }),
+      expect.objectContaining({ id: 2, role: "assistant" }),
+    ]);
+
+    await expect(fs.readdir("/proc/task-alpha/conversations/default/segments")).resolves.toEqual(["seg-1"]);
+    const segmentLines = (await fs.readFile("/proc/task-alpha/conversations/default/segments/seg-1"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(segmentLines).toEqual([
+      expect.objectContaining({ id: 1, content: "archived hello" }),
+    ]);
+  });
+
+  it("hides another user's process conversation view from non-root users", async () => {
+    const fs = makeRuntimeViewFs(SAM);
+
+    await expect(fs.readdir("/proc/task-foreign")).rejects.toThrow("ENOENT");
+  });
+
+  it("exposes scheduler definitions and run history under /var", async () => {
+    const fs = makeRuntimeViewFs(SAM);
+
+    await expect(fs.readdir("/var")).resolves.toEqual(["log", "spool"]);
+    await expect(fs.readdir("/var/spool/cron")).resolves.toEqual(["sched-1"]);
+    await expect(fs.writeFile("/var/log/custom", "hidden")).rejects.toThrow("EPERM");
+
+    const schedule = JSON.parse(await fs.readFile("/var/spool/cron/sched-1"));
+    expect(schedule).toMatchObject({
+      id: "sched-1",
+      ownerUid: 1000,
+      target: { kind: "process.event", pid: "task-alpha" },
+    });
+
+    await expect(fs.readFile("/var/spool/cron/sched-foreign")).rejects.toThrow("ENOENT");
+
+    const logLines = (await fs.readFile("/var/log/gsv/scheduler"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(logLines).toEqual([
+      expect.objectContaining({
+        id: "run-1",
+        scheduleId: "sched-1",
+        scheduleName: "daily pulse",
+      }),
+    ]);
   });
 });
 

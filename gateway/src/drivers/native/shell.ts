@@ -20,6 +20,7 @@ import {
 } from "../../fs";
 import type { KernelContext } from "../../kernel/context";
 import { visiblePackageScopesForActor } from "../../kernel/packages";
+import { requestProcessView } from "./process-view";
 import type { ShellExecArgs, ShellExecResult } from "../../syscalls/shell";
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import {
@@ -139,8 +140,10 @@ function createBash(
       devices: ctx.devices,
       caps: ctx.caps,
       config: ctx.config,
+      schedules: ctx.schedules,
+      processRequest: requestProcessView,
     },
-    undefined,
+    ctx.processId ?? undefined,
     sourceBackend,
     createHomeKnowledgeBackend(ctx.env.STORAGE, ctx.env.RIPGIT, identity),
     createPackageBackend(identity, ctx.packages),

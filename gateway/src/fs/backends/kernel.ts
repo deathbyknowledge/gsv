@@ -5,11 +5,17 @@ import type {
 } from "just-bash";
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import { canReadConfigKey } from "../../kernel/config-access";
-import type { KernelRefs } from "../refs";
+import type { KernelRefs, ProcessViewCall } from "../refs";
+import type { ArgsOf, ResultOf } from "../../syscalls";
+import type { ProcConversation, ProcConversationSegment } from "../../syscalls/proc";
+import type { ScheduleRecord } from "../../syscalls/scheduler";
 import type { MountBackend, ExtendedMountStat } from "../mount";
 import { normalizePath } from "../utils";
 
 const TEXT_ENCODER = new TextEncoder();
+const PROC_HISTORY_PAGE_SIZE = 500;
+const SCHEDULER_VIEW_PAGE_SIZE = 500;
+const SCHEDULER_LOG_HISTORY_LIMIT = 50;
 
 export class KernelMountBackend implements MountBackend {
   constructor(
@@ -19,14 +25,16 @@ export class KernelMountBackend implements MountBackend {
   ) {}
 
   handles(path: string): boolean {
+    const p = normalizePath(path);
     return (
-      path.startsWith("/proc/") ||
-      path === "/proc" ||
-      path.startsWith("/dev/") ||
-      path === "/dev" ||
-      path.startsWith("/sys/") ||
-      path === "/sys" ||
-      isEtcAuth(path)
+      p.startsWith("/proc/") ||
+      p === "/proc" ||
+      p.startsWith("/dev/") ||
+      p === "/dev" ||
+      p.startsWith("/sys/") ||
+      p === "/sys" ||
+      isEtcAuth(p) ||
+      isVarViewPath(p)
     );
   }
 
@@ -34,7 +42,7 @@ export class KernelMountBackend implements MountBackend {
     const p = normalizePath(path);
     const virt = await this.readVirtual(p);
     if (virt !== undefined) return virt;
-    if (this.isVirtualDir(p) || p === "/etc") {
+    if (await this.isVirtualDir(p) || p === "/etc") {
       throw new Error(`EISDIR: illegal operation on a directory, read '${p}'`);
     }
     throw new Error(`ENOENT: no such file or directory, open '${p}'`);
@@ -50,7 +58,7 @@ export class KernelMountBackend implements MountBackend {
 
     const virt = await this.readVirtual(p);
     if (virt !== undefined) return TEXT_ENCODER.encode(virt);
-    if (this.isVirtualDir(p) || p === "/etc") {
+    if (await this.isVirtualDir(p) || p === "/etc") {
       throw new Error(`EISDIR: illegal operation on a directory, read '${p}'`);
     }
     throw new Error(`ENOENT: no such file or directory, open '${p}'`);
@@ -69,6 +77,9 @@ export class KernelMountBackend implements MountBackend {
       this.writeSys(p, typeof content === "string" ? content : new TextDecoder().decode(content));
       return;
     }
+    if (isVarViewPath(p)) {
+      throw new Error(`EPERM: /var scheduler views are read-only`);
+    }
     if (isEtcAuth(p)) {
       this.writeEtcAuth(p, typeof content === "string" ? content : new TextDecoder().decode(content));
       return;
@@ -79,7 +90,7 @@ export class KernelMountBackend implements MountBackend {
   async appendFile(path: string, content: FileContent): Promise<void> {
     const p = normalizePath(path);
     if (p === "/dev/null") return;
-    if (p.startsWith("/dev/") || p.startsWith("/proc/") || p.startsWith("/sys/")) {
+    if (p.startsWith("/dev/") || p.startsWith("/proc/") || p.startsWith("/sys/") || isVarViewPath(p)) {
       throw new Error(`EPERM: cannot append to virtual path '${p}'`);
     }
     if (isEtcAuth(p)) {
@@ -94,7 +105,7 @@ export class KernelMountBackend implements MountBackend {
   async exists(path: string): Promise<boolean> {
     const p = normalizePath(path);
     if (p === "/etc") return true;
-    if (this.isVirtualDir(p)) return true;
+    if (await this.isVirtualDir(p)) return true;
     if (isEtcAuth(p)) return true;
     if (await this.readVirtual(p) !== undefined) return true;
     return false;
@@ -103,7 +114,7 @@ export class KernelMountBackend implements MountBackend {
   async stat(path: string): Promise<ExtendedMountStat> {
     const p = normalizePath(path);
 
-    if (this.isVirtualDir(p) || p === "/etc") {
+    if (await this.isVirtualDir(p) || p === "/etc") {
       return { isFile: false, isDirectory: true, isSymbolicLink: false, mode: 0o755, size: 0, mtime: new Date(), uid: 0, gid: 0 };
     }
 
@@ -121,7 +132,7 @@ export class KernelMountBackend implements MountBackend {
 
   async mkdir(path: string, _options?: MkdirOptions): Promise<void> {
     const p = normalizePath(path);
-    if (p.startsWith("/proc/") || p.startsWith("/dev/") || p.startsWith("/sys/") || p === "/etc" || isEtcAuth(p)) {
+    if (p.startsWith("/proc/") || p.startsWith("/dev/") || p.startsWith("/sys/") || isVarViewPath(p) || p === "/etc" || isEtcAuth(p)) {
       throw new Error(`EPERM: cannot mkdir in virtual filesystem '${p}'`);
     }
     throw new Error(`ENOENT: no such file or directory, mkdir '${p}'`);
@@ -129,7 +140,7 @@ export class KernelMountBackend implements MountBackend {
 
   async readdir(path: string): Promise<string[]> {
     const p = normalizePath(path);
-    const entries = this.readdirVirtual(p);
+    const entries = await this.readdirVirtual(p);
     if (entries !== undefined) return entries;
     if (p === "/etc") return ["group", "passwd", "shadow"];
     throw new Error(`ENOENT: no such file or directory, scandir '${p}'`);
@@ -137,7 +148,7 @@ export class KernelMountBackend implements MountBackend {
 
   async rm(path: string, _options?: RmOptions): Promise<void> {
     const p = normalizePath(path);
-    if (p.startsWith("/proc/") || p.startsWith("/dev/") || p.startsWith("/sys/") || p === "/etc" || isEtcAuth(p)) {
+    if (p.startsWith("/proc/") || p.startsWith("/dev/") || p.startsWith("/sys/") || isVarViewPath(p) || p === "/etc" || isEtcAuth(p)) {
       throw new Error(`EPERM: cannot remove virtual path '${p}'`);
     }
     throw new Error(`ENOENT: no such file or directory, unlink '${p}'`);
@@ -159,7 +170,7 @@ export class KernelMountBackend implements MountBackend {
     throw new Error(`ENOENT: no such file or directory, utimes '${p}'`);
   }
 
-  private readProc(path: string): string | undefined {
+  private async readProc(path: string): Promise<string | undefined> {
     if (!this.kernel) return undefined;
     const parts = path.slice("/proc/".length).split("/");
     if (parts.length === 0 || !parts[0]) return undefined;
@@ -169,7 +180,8 @@ export class KernelMountBackend implements MountBackend {
       pid = this.selfPid ?? `init:${this.identity.uid}`;
     }
 
-    const attr = parts.slice(1).join("/");
+    const attrParts = parts.slice(1);
+    const attr = attrParts.join("/");
 
     if (pid === "version") return `GSV ${this.identity.username} 1.0.0\n`;
     if (pid === "uptime") return "0\n";
@@ -185,6 +197,10 @@ export class KernelMountBackend implements MountBackend {
 
     if (this.identity.uid !== 0 && proc.uid !== this.identity.uid) {
       return undefined;
+    }
+
+    if (attrParts[0] === "conversations") {
+      return this.readProcConversation(pid, attrParts.slice(1));
     }
 
     switch (attr) {
@@ -222,6 +238,37 @@ export class KernelMountBackend implements MountBackend {
         }
         return undefined;
     }
+  }
+
+  private async readProcConversation(
+    pid: string,
+    parts: string[],
+  ): Promise<string | undefined> {
+    if (parts.length === 0) return undefined;
+
+    const conversationId = decodePathSegment(parts[0]);
+    if (!conversationId) return undefined;
+
+    if (parts.length === 1) return undefined;
+
+    const attr = parts[1];
+    if (attr === "status" && parts.length === 2) {
+      const conversation = await this.getProcessConversation(pid, conversationId);
+      return conversation ? jsonText(conversation) : undefined;
+    }
+
+    if (attr === "history" && parts.length === 2) {
+      return this.readProcessConversationHistory(pid, conversationId);
+    }
+
+    if (attr === "segments") {
+      if (parts.length === 2) return undefined;
+      const segmentId = decodePathSegment(parts[2]);
+      if (!segmentId || parts.length !== 3) return undefined;
+      return this.readProcessConversationSegment(pid, conversationId, segmentId);
+    }
+
+    return undefined;
   }
 
   private readDev(path: string): string | undefined {
@@ -388,18 +435,182 @@ export class KernelMountBackend implements MountBackend {
     return false;
   }
 
+  private resolveVisibleProcess(pidSegment: string) {
+    if (!this.kernel) return null;
+    const pid = pidSegment === "self"
+      ? this.selfPid ?? `init:${this.identity.uid}`
+      : pidSegment;
+    const proc = this.kernel.procs.get(pid);
+    if (!proc) return null;
+    if (this.identity.uid !== 0 && proc.uid !== this.identity.uid) return null;
+    return proc;
+  }
+
+  private async processRequest<S extends ProcessViewCall>(
+    pid: string,
+    call: S,
+    args: ArgsOf<S>,
+  ): Promise<ResultOf<S> | null> {
+    if (!this.kernel?.processRequest) return null;
+    try {
+      const result = await this.kernel.processRequest(pid, call, args);
+      if (!result || typeof result !== "object") return null;
+      if ((result as { ok?: unknown }).ok === false) return null;
+      return result;
+    } catch {
+      return null;
+    }
+  }
+
+  private async listProcessConversations(pid: string): Promise<ProcConversation[] | null> {
+    const result = await this.processRequest(
+      pid,
+      "proc.conversation.list",
+      { includeClosed: true },
+    );
+    return result?.ok ? result.conversations : null;
+  }
+
+  private async getProcessConversation(
+    pid: string,
+    conversationId: string,
+  ): Promise<ProcConversation | null> {
+    if (!conversationId) return null;
+    const result = await this.processRequest(
+      pid,
+      "proc.conversation.get",
+      { conversationId },
+    );
+    return result?.ok ? result.conversation : null;
+  }
+
+  private async readProcessConversationHistory(
+    pid: string,
+    conversationId: string,
+  ): Promise<string | undefined> {
+    const messages: unknown[] = [];
+    let offset = 0;
+    let total: number | null = null;
+
+    while (total === null || offset < total) {
+      const page = await this.processRequest(
+        pid,
+        "proc.history",
+        { conversationId, limit: PROC_HISTORY_PAGE_SIZE, offset },
+      );
+      if (!page?.ok) return undefined;
+      total = page.messageCount;
+      messages.push(...page.messages);
+      if (page.messages.length === 0) break;
+      offset += page.messages.length;
+    }
+
+    return jsonLines(messages);
+  }
+
+  private async listProcessConversationSegments(
+    pid: string,
+    conversationId: string,
+  ): Promise<ProcConversationSegment[] | null> {
+    const result = await this.processRequest(
+      pid,
+      "proc.conversation.segments",
+      { conversationId },
+    );
+    return result?.ok ? result.segments : null;
+  }
+
+  private async readProcessConversationSegment(
+    pid: string,
+    conversationId: string,
+    segmentId: string,
+  ): Promise<string | undefined> {
+    const messages: unknown[] = [];
+    let offset = 0;
+    let total: number | null = null;
+
+    while (total === null || offset < total) {
+      const page = await this.processRequest(
+        pid,
+        "proc.conversation.segment.read",
+        {
+          conversationId,
+          segmentId,
+          limit: PROC_HISTORY_PAGE_SIZE,
+          offset,
+        },
+      );
+      if (!page?.ok) return undefined;
+      total = page.messageCount;
+      messages.push(...page.messages);
+      if (page.messages.length === 0) break;
+      offset += page.messages.length;
+    }
+
+    return jsonLines(messages);
+  }
+
+  private readVarView(path: string): string | undefined {
+    if (path.startsWith("/var/spool/cron/")) {
+      const scheduleId = decodePathSegment(path.slice("/var/spool/cron/".length));
+      if (!scheduleId) return undefined;
+      const schedule = this.listVisibleSchedules().find((record) => record.id === scheduleId);
+      return schedule ? jsonText(schedule) : undefined;
+    }
+
+    if (path === "/var/log/gsv/scheduler") {
+      const entries = this.listVisibleSchedules()
+        .flatMap((schedule) =>
+          this.kernel?.schedules?.history(schedule.id, SCHEDULER_LOG_HISTORY_LIMIT)
+            .map((entry) => ({
+              ...entry,
+              scheduleName: schedule.name,
+              ownerUid: schedule.ownerUid,
+            })) ?? []
+        )
+        .sort((a, b) => b.startedAtMs - a.startedAtMs);
+      return jsonLines(entries);
+    }
+
+    return undefined;
+  }
+
+  private listVisibleSchedules(): ScheduleRecord[] {
+    const schedules = this.kernel?.schedules;
+    if (!schedules) return [];
+
+    const records: ScheduleRecord[] = [];
+    let offset = 0;
+    let count = 0;
+    do {
+      const listed = schedules.list({
+        ownerUid: this.identity.uid === 0 ? undefined : this.identity.uid,
+        includeDisabled: true,
+        limit: SCHEDULER_VIEW_PAGE_SIZE,
+        offset,
+      });
+      records.push(...listed.records);
+      count = listed.count;
+      offset += listed.records.length;
+    } while (records.length < count && offset > 0);
+
+    return records;
+  }
+
   private async readVirtual(path: string): Promise<string | undefined> {
     if (path.startsWith("/proc/")) return this.readProc(path);
     if (path.startsWith("/dev/")) return this.readDev(path);
     if (path.startsWith("/sys/")) return this.readSys(path);
+    if (isVarViewPath(path)) return this.readVarView(path);
     if (isEtcAuth(path)) return this.readEtcAuth(path);
     return undefined;
   }
 
-  private isVirtualDir(path: string): boolean {
+  private async isVirtualDir(path: string): Promise<boolean> {
     const virtualDirs = [
       "/proc", "/dev", "/sys",
       "/sys/config", "/sys/users", "/sys/devices", "/sys/capabilities",
+      "/var", "/var/spool", "/var/spool/cron", "/var/log", "/var/log/gsv",
     ];
     if (virtualDirs.includes(path)) return true;
 
@@ -419,6 +630,22 @@ export class KernelMountBackend implements MountBackend {
           pid = this.selfPid ?? `init:${this.identity.uid}`;
         }
         return this.kernel.procs.get(pid) !== null;
+      }
+      if (parts.length === 2 && parts[1] === "conversations") {
+        const proc = this.resolveVisibleProcess(parts[0]);
+        return proc !== null;
+      }
+      if (parts.length === 3 && parts[1] === "conversations") {
+        const proc = this.resolveVisibleProcess(parts[0]);
+        if (!proc) return false;
+        const conversation = await this.getProcessConversation(proc.processId, decodePathSegment(parts[2]));
+        return conversation !== null;
+      }
+      if (parts.length === 4 && parts[1] === "conversations" && parts[3] === "segments") {
+        const proc = this.resolveVisibleProcess(parts[0]);
+        if (!proc) return false;
+        const conversation = await this.getProcessConversation(proc.processId, decodePathSegment(parts[2]));
+        return conversation !== null;
       }
     }
 
@@ -459,7 +686,7 @@ export class KernelMountBackend implements MountBackend {
     return false;
   }
 
-  private readdirVirtual(path: string): string[] | undefined {
+  private async readdirVirtual(path: string): Promise<string[] | undefined> {
     if (!this.kernel) return undefined;
 
     if (path === "/proc") {
@@ -534,17 +761,47 @@ export class KernelMountBackend implements MountBackend {
     if (path.startsWith("/proc/")) {
       const parts = path.slice("/proc/".length).split("/");
       if (parts.length === 1) {
-        let pid = parts[0];
-        if (pid === "self") pid = this.selfPid ?? `init:${this.identity.uid}`;
-        const proc = this.kernel.procs.get(pid);
-        if (proc) return ["context.d", "identity", "status"];
+        const proc = this.resolveVisibleProcess(parts[0]);
+        if (proc) return ["context.d", "conversations", "identity", "status"];
       }
       if (parts.length === 2 && parts[1] === "context.d") {
-        let pid = parts[0];
-        if (pid === "self") pid = this.selfPid ?? `init:${this.identity.uid}`;
-        const proc = this.kernel.procs.get(pid);
+        const proc = this.resolveVisibleProcess(parts[0]);
         if (proc) return proc.contextFiles.map((entry) => entry.name).sort();
       }
+      if (parts.length === 2 && parts[1] === "conversations") {
+        const proc = this.resolveVisibleProcess(parts[0]);
+        if (!proc) return undefined;
+        const conversations = await this.listProcessConversations(proc.processId);
+        return conversations?.map((conversation) => encodePathSegment(conversation.id)).sort();
+      }
+      if (parts.length === 3 && parts[1] === "conversations") {
+        const proc = this.resolveVisibleProcess(parts[0]);
+        if (!proc) return undefined;
+        const conversation = await this.getProcessConversation(proc.processId, decodePathSegment(parts[2]));
+        if (conversation) return ["history", "segments", "status"];
+      }
+      if (parts.length === 4 && parts[1] === "conversations" && parts[3] === "segments") {
+        const proc = this.resolveVisibleProcess(parts[0]);
+        if (!proc) return undefined;
+        const segments = await this.listProcessConversationSegments(proc.processId, decodePathSegment(parts[2]));
+        return segments?.map((segment) => encodePathSegment(segment.id)).sort();
+      }
+    }
+
+    if (path === "/var") {
+      return ["log", "spool"];
+    }
+    if (path === "/var/spool") {
+      return ["cron"];
+    }
+    if (path === "/var/spool/cron") {
+      return this.listVisibleSchedules().map((schedule) => encodePathSegment(schedule.id)).sort();
+    }
+    if (path === "/var/log") {
+      return ["gsv"];
+    }
+    if (path === "/var/log/gsv") {
+      return ["scheduler"];
     }
 
     if (path.startsWith("/sys/devices/")) {
@@ -561,6 +818,34 @@ export class KernelMountBackend implements MountBackend {
 
 function isEtcAuth(path: string): boolean {
   return path === "/etc/passwd" || path === "/etc/shadow" || path === "/etc/group";
+}
+
+function isVarViewPath(path: string): boolean {
+  return path === "/var" ||
+    path === "/var/spool" ||
+    path.startsWith("/var/spool/") ||
+    path === "/var/log" ||
+    path.startsWith("/var/log/");
+}
+
+function encodePathSegment(segment: string): string {
+  return encodeURIComponent(segment);
+}
+
+function decodePathSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return "";
+  }
+}
+
+function jsonText(value: unknown): string {
+  return `${JSON.stringify(value, null, 2)}\n`;
+}
+
+function jsonLines(values: unknown[]): string {
+  return values.map((value) => JSON.stringify(value)).join("\n") + (values.length > 0 ? "\n" : "");
 }
 
 function uniquePrefixes(entries: { key: string }[], strip: string): string[] {

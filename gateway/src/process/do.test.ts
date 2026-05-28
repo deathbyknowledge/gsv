@@ -2439,6 +2439,35 @@ describe("Process DO — mechanical", () => {
       expect(result.result.file.content).toContain("\"ok\":true");
     });
 
+    it("lets process-local codemode read its own /proc conversation view", async () => {
+      const pid = "mech-codemode-self-proc-view";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        store.appendMessage("user", "hello from history");
+        store.appendMessage("assistant", "hello back");
+      });
+
+      const res = (await stub.recvFrame(
+        makeReq("codemode.run", {
+          code: [
+            "const file = await fs.read({ target: \"gsv\", path: \"/proc/self/conversations/default/history\" });",
+            "if (!file.ok) throw new Error(file.error);",
+            "return file.content;",
+          ].join("\n"),
+        }),
+      )) as ResponseOkFrame;
+
+      expect(res.ok).toBe(true);
+      const data = res.data as any;
+      expect(data.status, JSON.stringify(data, null, 2)).toBe("completed");
+      expect(data.result).toContain("\"role\":\"user\"");
+      expect(data.result).toContain("hello from history");
+      expect(data.result).toContain("\"role\":\"assistant\"");
+      expect(data.result).toContain("hello back");
+    });
+
     it("returns failed json for malformed codemode eval source", async () => {
       const pid = "mech-codemode-shell-syntax-error";
       await initProcess(pid, ROOT_IDENTITY);

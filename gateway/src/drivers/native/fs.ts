@@ -20,6 +20,7 @@ import {
 } from "../../fs";
 import type { KernelContext } from "../../kernel/context";
 import { visiblePackageScopesForActor } from "../../kernel/packages";
+import { requestProcessView } from "./process-view";
 import type { FsReadArgs, FsReadResult } from "../../syscalls/read";
 import type { FsWriteArgs, FsWriteResult } from "../../syscalls/write";
 import type { FsEditArgs, FsEditResult } from "../../syscalls/edit";
@@ -105,8 +106,10 @@ function makeFs(ctx: KernelContext): GsvFs {
       devices: ctx.devices,
       caps: ctx.caps,
       config: ctx.config,
+      schedules: ctx.schedules,
+      processRequest: requestProcessView,
     },
-    undefined,
+    ctx.processId ?? undefined,
     sourceBackend,
     createHomeKnowledgeBackend(ctx.env.STORAGE, ctx.env.RIPGIT, identity),
     createPackageBackend(identity, ctx.packages),

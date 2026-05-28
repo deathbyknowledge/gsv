@@ -2,7 +2,7 @@
  * GsvFs — unified IFileSystem implementation for gateway.
  *
  * Explicit mount routing:
- *   /proc/*, /dev/*, /sys/*, /etc/{passwd,shadow,group} → KernelMountBackend
+ *   /proc/*, /dev/*, /sys/*, /var/{spool,log}/*, /etc/{passwd,shadow,group} → KernelMountBackend
  *   /src/packages/*                                     → Process package source backend
  *   /usr/local/bin/*                                      → Package backend
  *   everything else                                           → R2 backend
@@ -10,6 +10,7 @@
  * Two paths remain hybrid in GsvFs itself:
  *   /      → root directory union across mounted namespaces + R2
  *   /etc   → auth virtual files overlaid on top of regular storage
+ *   /var   → runtime views overlaid on top of regular storage
  */
 
 import type {
@@ -233,6 +234,10 @@ export class GsvFs implements IFileSystem {
       return this.readdirEtc();
     }
 
+    if (normalized === "/var" && this.kernel) {
+      return this.readdirVar();
+    }
+
     const p = await this.resolveFinalPath(normalized);
     return this.backendForPath(p).readdir(p);
   }
@@ -447,6 +452,7 @@ export class GsvFs implements IFileSystem {
       entries.add("dev");
       entries.add("sys");
       entries.add("etc");
+      entries.add("var");
     }
 
     if (this.homeKnowledgeBackend) {
@@ -475,6 +481,17 @@ export class GsvFs implements IFileSystem {
     entries.add("passwd");
     entries.add("shadow");
     entries.add("group");
+    return [...entries].sort();
+  }
+
+  private async readdirVar(): Promise<string[]> {
+    const entries = new Set<string>();
+    for (const name of await this.r2Backend.readdir("/var").catch(() => [] as string[])) {
+      entries.add(name);
+    }
+    for (const name of await this.kernelBackend.readdir("/var").catch(() => [] as string[])) {
+      entries.add(name);
+    }
     return [...entries].sort();
   }
 }
