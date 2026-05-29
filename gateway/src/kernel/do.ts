@@ -174,6 +174,12 @@ type ResolvePackageAppRpcInput = {
   secret: string;
 };
 
+type ResolvePackageAppRpcRouteInput = {
+  packageName: string;
+  sessionId: string;
+  routeToken: string;
+};
+
 type ResolvePackageAppRpcResult =
   | {
       ok: true;
@@ -189,6 +195,20 @@ type ResolvePackageAppRpcResult =
         capabilities: string[];
       };
       hasRpc: boolean;
+    }
+  | {
+      ok: false;
+      status: number;
+      message: string;
+    };
+
+type ResolvePackageAppRpcRouteResult =
+  | {
+      ok: true;
+      uid: number;
+      packageId: string;
+      packageName: string;
+      sessionId: string;
     }
   | {
       ok: false;
@@ -690,6 +710,46 @@ export class Kernel extends Host<Env> {
         capabilities,
       },
       hasRpc: record.manifest.entrypoints.some((candidateEntrypoint) => candidateEntrypoint.kind === "rpc"),
+    };
+  }
+
+  async resolvePackageAppRpcRoute(input: ResolvePackageAppRpcRouteInput): Promise<ResolvePackageAppRpcRouteResult> {
+    await this.ready;
+    const packageName = input.packageName.trim();
+    const sessionId = input.sessionId.trim();
+    const routeToken = input.routeToken.trim();
+
+    if (!packageName || !sessionId || !routeToken) {
+      return { ok: false, status: 401, message: "Authentication required" };
+    }
+
+    const clientSession = this.appSessions.resolveRoute(sessionId, routeToken);
+    if (!clientSession || clientSession.packageName !== packageName) {
+      return { ok: false, status: 404, message: "Package app session not found" };
+    }
+
+    const authUser = this.auth.getPasswdByUid(clientSession.uid);
+    if (!authUser || authUser.username !== clientSession.username) {
+      return { ok: false, status: 401, message: "Authentication failed" };
+    }
+
+    const record = this.packages.resolve(
+      clientSession.packageId,
+      visiblePackageScopesForActor({ uid: clientSession.uid }),
+    );
+    if (!record || !record.enabled || record.manifest.name !== clientSession.packageName) {
+      return { ok: false, status: 404, message: "Package app not found" };
+    }
+    if (!record.manifest.entrypoints.some((candidateEntrypoint) => candidateEntrypoint.kind === "rpc")) {
+      return { ok: false, status: 404, message: "Package app has no backend rpc" };
+    }
+
+    return {
+      ok: true,
+      uid: clientSession.uid,
+      packageId: record.packageId,
+      packageName: record.manifest.name,
+      sessionId: clientSession.sessionId,
     };
   }
 

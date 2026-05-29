@@ -108,6 +108,10 @@ type PackageAppBoot = {
 };
 ```
 
+`rpcBase` is the platform app-socket endpoint used by the browser SDK. Package
+apps should treat it as opaque and use `connectBackend()` instead of speaking
+the wire protocol directly.
+
 ### `hasAppBoot()`
 
 Returns `true` when the package boot payload is present.
@@ -118,7 +122,7 @@ Connects to the package backend RPC surface and returns a stable proxy.
 
 Behavior:
 
-- opens the backend websocket session on first use
+- opens the backend app-socket session on first use
 - caches the backend proxy for reuse
 - reconnects automatically on transport disconnect and retries the failed call
   once
@@ -127,6 +131,12 @@ Behavior:
 ### `getBackend<T>()`
 
 Alias for `connectBackend<T>()`.
+
+### `onAppEvent(listener)`
+
+Subscribes to app events emitted by the backend with `this.app.emit(...)` or
+`this.app.emitTo(...)`. Events are delivered over the same app socket used by
+backend RPC.
 
 ## CLI
 

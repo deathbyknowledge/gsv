@@ -1,5 +1,4 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
-import { RpcTarget, newWorkersRpcResponse } from "capnweb";
 import { isWebSocketRequest } from "./shared//utils";
 import type {
   GatewayAdapterInterface,
@@ -137,12 +136,16 @@ export default {
 
     const appRpcMatch = matchPackageAppRpcPath(url.pathname);
     if (appRpcMatch) {
-      const response = await newWorkersRpcResponse(
-        request,
-        new PackageAppSessionRpcTarget(env, ctx, appRpcMatch.packageName, appRpcMatch.sessionId),
-      );
-      response.headers.set("cache-control", "no-store");
-      return response;
+      if (!isWebSocketRequest(request)) {
+        return new Response("App RPC requires WebSocket", {
+          status: 426,
+          headers: {
+            "cache-control": "no-store",
+            upgrade: "websocket",
+          },
+        });
+      }
+      return handlePackageAppSocketRequest(request, env, ctx, appRpcMatch);
     }
 
     const appSessionRefreshMatch = matchPackageAppSessionRefreshPath(url.pathname);
@@ -300,37 +303,6 @@ type ResolvedPackageRoute = {
     capabilities: string[];
   };
 };
-
-type ResolvedPackageAppRpcSession =
-  | {
-      ok: true;
-      packageId: string;
-      packageName: string;
-      routeBase: string;
-      artifact: PackageArtifactMetadata;
-      appFrame: AppFrameContext;
-      clientSession: {
-        sessionId: string;
-      clientId: string;
-      packageId: string;
-      packageName: string;
-        routeBase: string;
-        rpcBase: string;
-        createdAt: number;
-        expiresAt: number;
-      };
-      hasRpc: boolean;
-      auth: {
-        uid: number;
-        username: string;
-        capabilities: string[];
-      };
-    }
-  | {
-      ok: false;
-      status: number;
-      message: string;
-    };
 
 function matchPackageAppPath(pathname: string): { packageName: string } | null {
   const parts = pathname.split("/").filter(Boolean);
@@ -509,6 +481,45 @@ function buildPackageWorkerRequest(request: Request, resolved: ResolvedPackageRo
   return new Request(request, { headers });
 }
 
+function handlePackageAppSocketRequest(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext,
+  match: { packageName: string; sessionId: string },
+): Promise<Response> | Response {
+  const url = new URL(request.url);
+  const routeToken = url.searchParams.get("routeToken")?.trim() ?? "";
+  if (!routeToken) {
+    return new Response("App RPC route is missing route token", {
+      status: 400,
+      headers: { "cache-control": "no-store" },
+    });
+  }
+
+  return (async () => {
+    const kernel = await getAgentByName(env.KERNEL, "singleton");
+    const resolved = await kernel.resolvePackageAppRpcRoute({
+      packageName: match.packageName,
+      sessionId: match.sessionId,
+      routeToken,
+    });
+    if (!resolved.ok) {
+      return new Response(resolved.message, {
+        status: resolved.status,
+        headers: { "cache-control": "no-store" },
+      });
+    }
+
+    const runner = ctx.exports.AppRunner.getByName(buildAppRunnerName(resolved.uid, resolved.packageId));
+    const headers = new Headers(request.headers);
+    headers.set("x-gsv-app-package-name", resolved.packageName);
+    headers.set("x-gsv-app-session-id", resolved.sessionId);
+    headers.set("x-gsv-app-runner-uid", String(resolved.uid));
+    headers.set("x-gsv-app-runner-package-id", resolved.packageId);
+    return runner.fetch(new Request(request, { headers }));
+  })();
+}
+
 async function handlePackageAppSessionRefreshRequest(
   request: Request,
   env: Env,
@@ -605,14 +616,6 @@ function injectAppBootstrapHtml(html: string, resolved: ResolvedPackageRoute): s
   const scriptLines = [
     `<script>window.__GSV_APP_BOOT__=${boot};${PACKAGE_APP_RUNTIME_SCRIPT}</script>`,
   ];
-  if (resolved.hasRpc) {
-    scriptLines.push(
-      `<script type="module">`,
-      `import { RpcTarget, newWebSocketRpcSession } from "https://cdn.jsdelivr.net/npm/capnweb@0.6.1/+esm";`,
-      `window.capnweb={ RpcTarget, newWebSocketRpcSession };`,
-      "</script>",
-    );
-  }
   const headExtras = [
     htmlHasViewportMeta(html) ? "" : PACKAGE_APP_VIEWPORT_META,
     PACKAGE_APP_RUNTIME_STYLE,
@@ -651,52 +654,6 @@ function buildPackageAppBoot(resolved: ResolvedPackageRoute) {
     expiresAt: resolved.clientSession.expiresAt,
     hasBackend: resolved.hasRpc,
   };
-}
-
-class PackageAppSessionRpcTarget extends RpcTarget {
-  constructor(
-    private readonly env: Env,
-    private readonly ctx: ExecutionContext,
-    private readonly packageName: string,
-    private readonly sessionId: string,
-  ) {
-    super();
-  }
-
-  async authenticate(secret: string, clientTarget?: unknown): Promise<unknown> {
-    const kernel = await getAgentByName(this.env.KERNEL, "singleton");
-    const resolved = await kernel.resolvePackageAppRpcSession({
-      packageName: this.packageName,
-      sessionId: this.sessionId,
-      secret,
-    }) as ResolvedPackageAppRpcSession;
-
-    if (!resolved.ok) {
-      throw new Error(resolved.message);
-    }
-
-    const runner = this.ctx.exports.AppRunner.getByName(buildAppRunnerName(resolved.auth.uid, resolved.packageId));
-    await runner.ensureRuntime({
-      packageId: resolved.packageId,
-      packageName: resolved.packageName,
-      routeBase: resolved.routeBase,
-      entrypointName: resolved.appFrame.entrypointName,
-      artifact: resolved.artifact,
-      appFrame: resolved.appFrame,
-    });
-
-    return runner.getBackend(
-      {
-        sessionId: resolved.clientSession.sessionId,
-        clientId: resolved.clientSession.clientId,
-        rpcBase: resolved.clientSession.rpcBase,
-        expiresAt: resolved.clientSession.expiresAt,
-      },
-      clientTarget && (typeof clientTarget === "object" || typeof clientTarget === "function")
-        ? clientTarget as never
-        : null,
-    );
-  }
 }
 
 async function buildGitProxyRequest(

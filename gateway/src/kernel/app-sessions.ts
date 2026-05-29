@@ -9,6 +9,7 @@ type AppSessionRow = {
   package_name: string;
   entrypoint_name: string;
   route_base: string;
+  route_token: string | null;
   client_id: string;
   secret_hash: string;
   created_at: number;
@@ -30,6 +31,7 @@ export class AppSessionStore {
         package_name TEXT NOT NULL,
         entrypoint_name TEXT NOT NULL,
         route_base TEXT NOT NULL,
+        route_token TEXT,
         client_id TEXT NOT NULL,
         secret_hash TEXT NOT NULL,
         created_at INTEGER NOT NULL,
@@ -44,6 +46,7 @@ export class AppSessionStore {
     this.sql.exec(
       "CREATE INDEX IF NOT EXISTS idx_app_client_sessions_expires ON app_client_sessions (expires_at)",
     );
+    this.ensureRouteTokenColumn();
   }
 
   async issue(input: {
@@ -60,15 +63,16 @@ export class AppSessionStore {
     const now = Date.now();
     const sessionId = crypto.randomUUID();
     const secret = crypto.randomUUID();
+    const routeToken = crypto.randomUUID();
     const expiresAt = now + input.ttlMs;
     const secretHash = await hashToken(secret);
 
     this.sql.exec(
       `INSERT INTO app_client_sessions (
         session_id, uid, username, package_id, package_name, entrypoint_name,
-        route_base, client_id, secret_hash, created_at, last_used_at,
+        route_base, route_token, client_id, secret_hash, created_at, last_used_at,
         expires_at, revoked_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       sessionId,
       input.uid,
       input.username,
@@ -76,6 +80,7 @@ export class AppSessionStore {
       input.packageName,
       input.entrypointName,
       input.routeBase,
+      routeToken,
       input.clientId,
       secretHash,
       now,
@@ -94,11 +99,26 @@ export class AppSessionStore {
       packageName: input.packageName,
       entrypointName: input.entrypointName,
       routeBase: input.routeBase,
-      rpcBase: buildAppRpcBase(input.packageName, sessionId),
+      rpcBase: buildAppRpcBase(input.packageName, sessionId, routeToken),
       createdAt: now,
       expiresAt,
       lastUsedAt: null,
     };
+  }
+
+  resolveRoute(
+    sessionId: string,
+    routeToken: string,
+  ): AppClientSessionContext | null {
+    this.pruneExpired();
+    const row = this.getRow(sessionId);
+    if (!row || row.revoked_at != null || row.expires_at <= Date.now()) {
+      return null;
+    }
+    if (!row.route_token || row.route_token !== routeToken) {
+      return null;
+    }
+    return toContext(row);
   }
 
   async resolve(
@@ -143,6 +163,14 @@ export class AppSessionStore {
       Date.now(),
     );
   }
+
+  private ensureRouteTokenColumn(): void {
+    const columns = [...this.sql.exec<{ name: string }>("PRAGMA table_info(app_client_sessions)")];
+    if (columns.some((column) => column.name === "route_token")) {
+      return;
+    }
+    this.sql.exec("ALTER TABLE app_client_sessions ADD COLUMN route_token TEXT");
+  }
 }
 
 function toContext(row: AppSessionRow): AppClientSessionContext {
@@ -155,13 +183,20 @@ function toContext(row: AppSessionRow): AppClientSessionContext {
     packageName: row.package_name,
     entrypointName: row.entrypoint_name,
     routeBase: row.route_base,
-    rpcBase: buildAppRpcBase(row.package_name, row.session_id),
+    rpcBase: buildAppRpcBase(row.package_name, row.session_id, row.route_token ?? ""),
     createdAt: row.created_at,
     expiresAt: row.expires_at,
     lastUsedAt: row.last_used_at,
   };
 }
 
-function buildAppRpcBase(packageName: string, sessionId: string): string {
-  return `/app-rpc/${packageName}/sessions/${sessionId}`;
+function buildAppRpcBase(
+  packageName: string,
+  sessionId: string,
+  routeToken: string,
+): string {
+  const params = new URLSearchParams({
+    routeToken,
+  });
+  return `/app-rpc/${packageName}/sessions/${sessionId}?${params.toString()}`;
 }
