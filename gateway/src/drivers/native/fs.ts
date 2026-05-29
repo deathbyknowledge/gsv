@@ -14,6 +14,7 @@ import {
   createProcessSourceBackend,
   RipgitClient,
   resolveUserPath,
+  requestProcessView,
   formatSize,
   isTextContentType,
   inferContentType,
@@ -21,7 +22,6 @@ import {
 import type { KernelContext } from "../../kernel/context";
 import { createCronFileService } from "../../kernel/crontab";
 import { visiblePackageScopesForActor } from "../../kernel/packages";
-import { requestProcessView } from "./process-view";
 import type { FsReadArgs, FsReadResult } from "../../syscalls/read";
 import type { FsWriteArgs, FsWriteResult } from "../../syscalls/write";
 import type { FsEditArgs, FsEditResult } from "../../syscalls/edit";

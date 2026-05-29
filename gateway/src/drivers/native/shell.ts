@@ -17,11 +17,11 @@ import {
   createProcessSourceBackend,
   RipgitClient,
   resolveUserPath,
+  requestProcessView,
 } from "../../fs";
 import type { KernelContext } from "../../kernel/context";
 import { createCronFileService } from "../../kernel/crontab";
 import { visiblePackageScopesForActor } from "../../kernel/packages";
-import { requestProcessView } from "./process-view";
 import type { ShellExecArgs, ShellExecResult } from "../../syscalls/shell";
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import {

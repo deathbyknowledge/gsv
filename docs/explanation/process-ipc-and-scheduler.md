@@ -392,6 +392,10 @@ Schedule records should include:
 
 Example target shape:
 
+These are scheduler target kinds, not syscall names. For example,
+`kind: "process.spawn"` dispatches through the `proc.spawn` syscall, and
+`profile` is one argument field on that spawn request.
+
 ```ts
 type ScheduleTarget =
   | {
@@ -402,22 +406,20 @@ type ScheduleTarget =
     }
   | {
       kind: "process.spawn";
-      profile: string;
+      profile?: "init" | "task" | "review" | "cron" | "mcp" | "app";
+      label?: string;
       prompt: string;
+      parentPid?: string;
       cwd?: string;
+      mounts?: unknown[];
+      assignment?: unknown;
     }
   | {
       kind: "process.event";
       pid: string;
       conversationId?: string;
-      event: ProcessEventInput;
-    }
-  | {
-      kind: "package.event";
-      packageId: string;
-      entrypoint: string;
-      event: string;
-      payload?: unknown;
+      message: string;
+      data?: Record<string, unknown>;
     };
 ```
 
@@ -426,8 +428,14 @@ The first implementation should support:
 - `at`
 - `every`
 - `command.exec`
-- `process.spawn`
+- `process.spawn` as a low-level scheduler target
 - `process.event`
+
+Normal crontab files should not compile directly to `process.spawn`. They
+compile to `command.exec`, and the command can choose to run `proc spawn`,
+`proc compact`, package commands, shell scripts, or any other native shell
+surface. Keeping `process.spawn` in `ScheduleTarget` is still useful for the
+low-level `sched` API and for callers that want to bypass shell parsing.
 
 Process lifecycle work should be exposed as commands, for example
 `proc compact` or `proc reset`, instead of scheduler-specific lifecycle target
