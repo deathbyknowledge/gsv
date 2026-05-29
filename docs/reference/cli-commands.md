@@ -29,7 +29,7 @@ gsv chat [MESSAGE] [--pid PID]
 gsv shell
 ```
 
-`chat` sends a message to a process with `proc.send` and waits for `chat.*`
+`chat` sends a message to a process with `proc.send` and waits for `proc.run.*`
 signals for up to 120 seconds. Omit `MESSAGE` for an interactive prompt; type
 `quit` or `exit` to leave. `--pid` targets a specific process; when omitted, the
 Kernel targets your init process. Set `GSV_CLIENT_DEBUG=1` to trace chat signal
@@ -40,15 +40,18 @@ Commands run inside the gateway OS context, not directly on your local machine.
 Use `:quit`, `:exit`, or `:q` to leave.
 
 Inside the gateway shell, `proc` is the process IPC userland command and
-`sched` manages Kernel schedules:
+`crontab` manages cron files; `sched` inspects and controls the compiled Kernel
+schedules:
 
 ```bash
 proc self
 proc list
 proc send <pid> [--conversation id] [--metadata-json json] <message>
 proc call <pid> [--conversation id] [--metadata-json json] [--timeout 60s] <message>
+crontab -l [-u user]
+crontab FILE [-u user]
+crontab -r [-u user]
 sched list [--all]
-sched add --name NAME (--cron EXPR [--timezone TZ] | --every DURATION | --after DURATION | --at TIME) <prompt/message>
 sched remove <id>
 sched run <id> [--force]
 ```
@@ -57,6 +60,9 @@ sched run <id> [--force]
 the source process receives either `ipc.reply` or `ipc.timeout` in its default
 conversation. `proc self` prints the current GSV process id; the shell also
 exports it as `GSV_PID`.
+
+Cron jobs live in `/var/spool/cron/<username>` or `/etc/cron.d/<name>` and run
+the command after the five time fields.
 
 ## Process Commands
 

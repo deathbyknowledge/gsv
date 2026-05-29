@@ -13,15 +13,13 @@ type AppBinding = {
 };
 
 const CHAT_RUNTIME_SIGNALS = [
-  "process.message",
-  "process.context",
-  "process.lifecycle",
-  "chat.tool_call",
-  "chat.tool_result",
-  "chat.text",
-  "chat.complete",
-  "chat.hil",
-  "chat.error",
+  "proc.changed",
+  "proc.run.tool.started",
+  "proc.run.tool.finished",
+  "proc.run.stream",
+  "proc.run.output",
+  "proc.run.finished",
+  "proc.run.hil.requested",
   "process.exit",
 ];
 

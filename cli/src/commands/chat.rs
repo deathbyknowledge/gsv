@@ -52,19 +52,38 @@ fn process_chat_signal(
     );
 
     match signal {
-        "chat.text" => {
-            if let Some(text) = payload.get("text").and_then(|value| value.as_str()) {
+        "proc.run.output" => {
+            if !emitted_text.load(Ordering::SeqCst) {
+                if let Some(text) = payload.get("text").and_then(|value| value.as_str()) {
+                    print!("{}", text);
+                    let _ = io::stdout().flush();
+                    emitted_text.store(true, Ordering::SeqCst);
+                }
+            }
+        }
+        "proc.run.stream" => {
+            if let Some(text) = payload
+                .get("event")
+                .and_then(|event| event.as_object())
+                .and_then(|event| {
+                    if event.get("type").and_then(|value| value.as_str()) == Some("text_delta") {
+                        event.get("delta").and_then(|value| value.as_str())
+                    } else {
+                        None
+                    }
+                })
+            {
                 print!("{}", text);
                 let _ = io::stdout().flush();
                 emitted_text.store(true, Ordering::SeqCst);
             }
         }
-        "chat.tool_call" => {
+        "proc.run.tool.started" => {
             if let Some(name) = payload.get("name").and_then(|value| value.as_str()) {
                 println!("\n[tool] {}", name);
             }
         }
-        "chat.tool_result" => {
+        "proc.run.tool.finished" => {
             let tool_name = payload
                 .get("name")
                 .and_then(|value| value.as_str())
@@ -83,7 +102,7 @@ fn process_chat_signal(
                 eprintln!("[tool result] {}: {}", tool_name, error);
             }
         }
-        "chat.complete" => {
+        "proc.run.finished" => {
             if let Some(error) = payload.get("error").and_then(|value| value.as_str()) {
                 eprintln!("\nError: {}", error);
             } else if !emitted_text.load(Ordering::SeqCst) {
@@ -104,7 +123,7 @@ fn process_chat_signal(
             completed.store(true, Ordering::SeqCst);
             debug_log(
                 debug_enabled,
-                "chat.complete -> completed=true awaiting=false",
+                "proc.run.finished -> completed=true awaiting=false",
             );
         }
         _ => {}
@@ -231,8 +250,8 @@ pub(crate) async fn run_client(
                 debug_enabled_for_handler,
                 format!("signal recv raw={} runId={}", sig.signal, incoming_run_id),
             );
-            if !sig.signal.starts_with("chat.") {
-                debug_log(debug_enabled_for_handler, "signal ignored (non-chat)");
+            if !sig.signal.starts_with("proc.run.") {
+                debug_log(debug_enabled_for_handler, "signal ignored (non-run)");
                 return;
             }
             let expected = expected_run_id_for_handler

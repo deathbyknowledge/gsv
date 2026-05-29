@@ -188,6 +188,10 @@ struct ProcListEntryPayload {
     uid: u32,
     parent_pid: Option<String>,
     state: String,
+    active_run_id: Option<String>,
+    active_conversation_id: Option<String>,
+    queued_count: Option<u32>,
+    last_active_at: Option<i64>,
     label: Option<String>,
     created_at: i64,
 }
@@ -245,13 +249,20 @@ fn print_proc_list(processes: &[ProcListEntryPayload]) {
 
     for process in processes {
         println!(
-            "{} state={} uid={} parent={} label={} created={}",
+            "{} state={} uid={} queue={} active={} convo={} parent={} label={} created={} last_active={}",
             process.pid,
             process.state,
             process.uid,
+            process.queued_count.unwrap_or(0),
+            process.active_run_id.as_deref().unwrap_or("-"),
+            process.active_conversation_id.as_deref().unwrap_or("-"),
             process.parent_pid.as_deref().unwrap_or("-"),
             process.label.as_deref().unwrap_or("-"),
-            format_unix_ms(process.created_at)
+            format_unix_ms(process.created_at),
+            process
+                .last_active_at
+                .map(format_unix_ms)
+                .unwrap_or_else(|| "-".to_string())
         );
     }
 }

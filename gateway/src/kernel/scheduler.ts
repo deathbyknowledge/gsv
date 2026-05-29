@@ -1,5 +1,6 @@
 import type { ConnectionIdentity } from "@gsv/protocol/syscalls/system";
 import type { KernelContext } from "./context";
+import { hasCapability } from "./capabilities";
 import { isAiContextProfile } from "../syscalls/ai";
 import type {
   ScheduleExpression,
@@ -59,6 +60,26 @@ type ScheduleRunRow = {
   result_json: string;
 };
 
+export type CronFileRecord = {
+  path: string;
+  ownerUid: number | null;
+  content: string;
+  createdAtMs: number;
+  updatedAtMs: number;
+};
+
+type CronFileRow = {
+  path: string;
+  owner_uid: number | null;
+  content: string;
+  created_at: number;
+  updated_at: number;
+};
+
+type CronFileScheduleRow = {
+  schedule_id: string;
+};
+
 type StoredScheduleRecord = ScheduleRecord & {
   wakeScheduleId: string | null;
 };
@@ -115,6 +136,28 @@ export class ScheduleStore {
 
     this.sql.exec(
       "CREATE INDEX IF NOT EXISTS idx_schedule_runs_schedule ON schedule_runs (schedule_id, started_at DESC)",
+    );
+
+    this.sql.exec(`
+      CREATE TABLE IF NOT EXISTS cron_files (
+        path       TEXT PRIMARY KEY,
+        owner_uid  INTEGER,
+        content    TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `);
+
+    this.sql.exec(`
+      CREATE TABLE IF NOT EXISTS cron_file_schedules (
+        path        TEXT NOT NULL,
+        schedule_id TEXT NOT NULL,
+        PRIMARY KEY (path, schedule_id)
+      )
+    `);
+
+    this.sql.exec(
+      "CREATE INDEX IF NOT EXISTS idx_cron_files_owner ON cron_files (owner_uid, path)",
     );
   }
 
@@ -380,6 +423,92 @@ export class ScheduleStore {
       clampListLimit(limit),
     ).toArray().map(toHistoryEntry);
   }
+
+  getCronFile(path: string): CronFileRecord | null {
+    const rows = this.sql.exec<CronFileRow>(
+      "SELECT * FROM cron_files WHERE path = ? LIMIT 1",
+      path,
+    ).toArray();
+    return rows[0] ? toCronFileRecord(rows[0]) : null;
+  }
+
+  listCronFiles(args?: {
+    prefix?: string;
+    ownerUid?: number | null;
+  }): CronFileRecord[] {
+    const clauses: string[] = [];
+    const bindings: unknown[] = [];
+    if (args?.prefix) {
+      clauses.push("path LIKE ?");
+      bindings.push(`${args.prefix}%`);
+    }
+    if (args && "ownerUid" in args) {
+      if (args.ownerUid === null) {
+        clauses.push("owner_uid IS NULL");
+      } else {
+        clauses.push("owner_uid = ?");
+        bindings.push(args.ownerUid);
+      }
+    }
+
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    return this.sql.exec<CronFileRow>(
+      `SELECT * FROM cron_files ${where} ORDER BY path`,
+      ...bindings,
+    ).toArray().map(toCronFileRecord);
+  }
+
+  upsertCronFile(input: {
+    path: string;
+    ownerUid: number | null;
+    content: string;
+    now: number;
+  }): CronFileRecord {
+    const existing = this.getCronFile(input.path);
+    this.sql.exec(
+      `INSERT OR REPLACE INTO cron_files (path, owner_uid, content, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      input.path,
+      input.ownerUid,
+      input.content,
+      existing?.createdAtMs ?? input.now,
+      input.now,
+    );
+    const record = this.getCronFile(input.path);
+    if (!record) {
+      throw new Error(`Failed to store cron file ${input.path}`);
+    }
+    return record;
+  }
+
+  removeCronFile(path: string): CronFileRecord | null {
+    const existing = this.getCronFile(path);
+    if (!existing) {
+      return null;
+    }
+    this.sql.exec("DELETE FROM cron_files WHERE path = ?", path);
+    this.clearCronFileScheduleLinks(path);
+    return existing;
+  }
+
+  linkCronFileSchedule(path: string, scheduleId: string): void {
+    this.sql.exec(
+      "INSERT OR IGNORE INTO cron_file_schedules (path, schedule_id) VALUES (?, ?)",
+      path,
+      scheduleId,
+    );
+  }
+
+  cronFileScheduleIds(path: string): string[] {
+    return this.sql.exec<CronFileScheduleRow>(
+      "SELECT schedule_id FROM cron_file_schedules WHERE path = ? ORDER BY schedule_id",
+      path,
+    ).toArray().map((row) => row.schedule_id);
+  }
+
+  clearCronFileScheduleLinks(path: string): void {
+    this.sql.exec("DELETE FROM cron_file_schedules WHERE path = ?", path);
+  }
 }
 
 export function handleSchedulerList(
@@ -610,6 +739,17 @@ function normalizeScheduleTarget(target: ScheduleTarget): ScheduleTarget {
     throw new Error("schedule target must be an object");
   }
 
+  if (target.kind === "command.exec") {
+    return {
+      kind: "command.exec",
+      command: normalizeRequiredText(target.command, "command.exec command"),
+      ...(target.cwd ? { cwd: normalizeRequiredText(target.cwd, "command.exec cwd") } : {}),
+      ...(target.timeoutMs === undefined
+        ? {}
+        : { timeoutMs: normalizePositiveInteger(target.timeoutMs, "command.exec timeoutMs") }),
+    };
+  }
+
   if (target.kind === "process.spawn") {
     const prompt = normalizeRequiredText(target.prompt, "process.spawn prompt");
     const profile = target.profile === "personal" ? "init" : target.profile ?? "cron";
@@ -645,6 +785,9 @@ function normalizeScheduleTarget(target: ScheduleTarget): ScheduleTarget {
 
 function validateScheduleTargetAccess(target: ScheduleTarget, ctx: KernelContext): void {
   const uid = ctx.identity!.process.uid;
+  if (target.kind === "command.exec" && !hasCapability(ctx.identity?.capabilities ?? [], "shell.exec")) {
+    throw new Error("Permission denied: shell.exec");
+  }
   if (target.kind === "process.event") {
     const proc = ctx.procs.get(target.pid);
     if (!proc) {
@@ -973,6 +1116,16 @@ function toHistoryEntry(row: ScheduleRunRow): ScheduleRunHistoryEntry {
     status: row.status as ScheduleRunHistoryEntry["status"],
     ...(row.error ? { error: row.error } : {}),
     ...(result === null ? {} : { result }),
+  };
+}
+
+function toCronFileRecord(row: CronFileRow): CronFileRecord {
+  return {
+    path: row.path,
+    ownerUid: row.owner_uid,
+    content: row.content,
+    createdAtMs: row.created_at,
+    updatedAtMs: row.updated_at,
   };
 }
 

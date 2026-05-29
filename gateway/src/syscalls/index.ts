@@ -65,6 +65,12 @@ import type {
   ProcConversationSegmentReadResult,
   ProcConversationSegmentsArgs,
   ProcConversationSegmentsResult,
+  ProcConversationTimelineArgs,
+  ProcConversationTimelineResult,
+  ProcConversationGenerationsArgs,
+  ProcConversationGenerationsResult,
+  ProcConversationGenerationManifestArgs,
+  ProcConversationGenerationManifestResult,
   ProcResetArgs,
   ProcResetResult,
   ProcListArgs,
@@ -277,6 +283,12 @@ export type SyscallDomains = {
   "proc.conversation.fork": { args: ProcConversationForkArgs; result: ProcConversationForkResult };
   "proc.conversation.segment.read": { args: ProcConversationSegmentReadArgs; result: ProcConversationSegmentReadResult };
   "proc.conversation.segments": { args: ProcConversationSegmentsArgs; result: ProcConversationSegmentsResult };
+  "proc.conversation.timeline": { args: ProcConversationTimelineArgs; result: ProcConversationTimelineResult };
+  "proc.conversation.generations": { args: ProcConversationGenerationsArgs; result: ProcConversationGenerationsResult };
+  "proc.conversation.generation.manifest": {
+    args: ProcConversationGenerationManifestArgs;
+    result: ProcConversationGenerationManifestResult;
+  };
   "proc.reset": { args: ProcResetArgs; result: ProcResetResult };
   "proc.setidentity": { args: ProcSetIdentityArgs; result: ProcSetIdentityResult };
 

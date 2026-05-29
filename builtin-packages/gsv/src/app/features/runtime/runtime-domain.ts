@@ -11,10 +11,10 @@ export function processState(entry: ProcessEntry): string {
 
 export function processStateTone(entry: ProcessEntry): "good" | "warning" | "neutral" {
   const state = processState(entry);
-  if (state === "running") {
+  if (state === "running" || state === "waiting_tool") {
     return "good";
   }
-  if (state === "paused") {
+  if (state === "queued" || state === "waiting_hil") {
     return "warning";
   }
   return "neutral";

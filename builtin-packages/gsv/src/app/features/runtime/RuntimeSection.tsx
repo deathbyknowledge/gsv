@@ -100,13 +100,15 @@ function ProcessRow({
   const state = processState(process);
   const tone = processStateTone(process);
   const cwd = String(process.cwd ?? "").trim() || "No cwd";
+  const queue = Number(process.queuedCount ?? 0);
+  const stateLabel = Number.isFinite(queue) && queue > 0 ? `${state} +${queue}` : state;
 
   return (
     <button class={`gsv-runtime-row${selected ? " is-selected" : ""}`} type="button" onClick={onSelect}>
       <span class={`gsv-mark is-${tone}`} aria-hidden="true"></span>
       <span class="gsv-row-copy">
         <strong>{title}</strong>
-        <span>{state} / {cwd}</span>
+        <span>{stateLabel} / {cwd}</span>
       </span>
       <span class="gsv-row-meta">{String(process.profile ?? "profile")}</span>
     </button>

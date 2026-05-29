@@ -1,12 +1,13 @@
 import type {
   AssistantMessage,
+  AssistantMessageEventStream,
   Context,
   KnownProvider,
   ThinkingLevel,
 } from "@earendil-works/pi-ai";
-import { completeSimple, getModels, getProviders } from "@earendil-works/pi-ai";
+import { completeSimple, getModels, getProviders, streamSimple } from "@earendil-works/pi-ai";
 import type { AiConfigResult } from "../syscalls/ai";
-import { completeWithWorkersAi, isWorkersAiProvider } from "./workers-ai";
+import { completeWithWorkersAi, isWorkersAiProvider, streamWithWorkersAi } from "./workers-ai";
 import { withTimeout } from "./timeout";
 
 type GenerationPurpose =
@@ -24,6 +25,7 @@ type GenerateRequest = {
 
 type GenerationService = {
   generate(request: GenerateRequest): Promise<AssistantMessage>;
+  stream(request: GenerateRequest): AssistantMessageEventStream;
   generateText(request: GenerateRequest): Promise<string>;
 };
 
@@ -38,6 +40,39 @@ type ResolvedGenerationOptions = {
 const DEFAULT_GENERATION_TIMEOUT_MS = 180_000;
 
 export function createGenerationService(): GenerationService {
+  const stream = (request: GenerateRequest): AssistantMessageEventStream => {
+    const options = resolveGenerationOptions(request);
+    const generationTimeoutMs = resolveGenerationTimeoutMs(request.config);
+    if (isWorkersAiProvider(options.modelProvider)) {
+      return streamWithWorkersAi({
+        modelName: options.modelName,
+        context: request.context,
+        reasoning: options.reasoning,
+        maxTokens: options.maxTokens,
+        sessionAffinityKey: request.sessionAffinityKey,
+        timeoutMs: generationTimeoutMs,
+      });
+    }
+
+    const model = resolveModel(options.modelProvider, options.modelName);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => {
+      controller.abort(new Error(generationTimeoutMessage(generationTimeoutMs)));
+    }, generationTimeoutMs);
+    const result = streamSimple(model, request.context, {
+      apiKey: options.apiKey,
+      reasoning: options.reasoning,
+      maxTokens: options.maxTokens,
+      signal: controller.signal,
+      timeoutMs: generationTimeoutMs,
+    });
+    void result.result().then(
+      () => clearTimeout(timeout),
+      () => clearTimeout(timeout),
+    );
+    return result;
+  };
+
   const generate = async (request: GenerateRequest): Promise<AssistantMessage> => {
     const options = resolveGenerationOptions(request);
     const generationTimeoutMs = resolveGenerationTimeoutMs(request.config);
@@ -76,6 +111,7 @@ export function createGenerationService(): GenerationService {
 
   return {
     generate,
+    stream,
     async generateText(request: GenerateRequest): Promise<string> {
       const response = await generate(request);
       const text = response.content

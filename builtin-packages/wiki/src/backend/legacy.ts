@@ -418,7 +418,7 @@ export async function startBuildFromDirectory(kernel: any, args: any): Promise<W
 
   const watchKey = `wiki-build:${spawn.pid}`;
   await kernel.request("signal.watch", {
-    signal: "chat.complete",
+    signal: "proc.run.finished",
     processId: spawn.pid,
     key: watchKey,
     state: {
@@ -483,7 +483,7 @@ function readBuildWatchState(value: unknown) {
 }
 
 export async function handleAppSignal(ctx: any) {
-  if (ctx.signal !== "chat.complete") {
+  if (ctx.signal !== "proc.run.finished") {
     return;
   }
   const state = readBuildWatchState(ctx.watch?.state);

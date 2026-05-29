@@ -6,7 +6,7 @@
  * exclusively via recvFrame RPC in both directions.
  *
  * Agent loop: user message → LLM call → tool dispatch → collect results →
- * LLM call → ... → final text → chat.complete signal.
+ * LLM call → ... → proc.run.finished signal.
  * Each "turn" is scheduled via this.schedule() to avoid subrequest limits.
  */
 
@@ -67,6 +67,17 @@ import type {
   ProcConversationSegmentReadResult,
   ProcConversationSegmentsArgs,
   ProcConversationSegmentsResult,
+  ProcConversationArchive,
+  ProcConversationArchiveKind,
+  ProcConversationTimelineEntry,
+  ProcConversationTimelineArgs,
+  ProcConversationTimelineResult,
+  ProcConversationGenerationsArgs,
+  ProcConversationGenerationsResult,
+  ProcConversationGenerationManifest,
+  ProcConversationGenerationManifestArgs,
+  ProcConversationGenerationManifestResult,
+  ProcConversationLiveGeneration,
   ProcArchiveEntry,
   ProcContextState,
   ProcResetResult,
@@ -77,6 +88,7 @@ import type { InteractionOrigin } from "../syscalls/interaction-origin";
 import type { AdapterSurface } from "../adapter-interface";
 import type {
   AssistantMessage,
+  AssistantMessageEvent,
   TextContent,
   ThinkingContent,
   ToolCall,
@@ -130,6 +142,7 @@ import {
 import {
   DEFAULT_CONVERSATION_ID,
   normalizeConversationId,
+  type ProcessConversationArchiveRecord,
   type ProcessConversationRecord,
   type ProcessConversationSegmentRecord,
 } from "./conversations";
@@ -147,6 +160,16 @@ type RunState = {
 };
 
 type ActiveRunPhase = "toolDispatch" | "toolResults" | "generation";
+
+type RunFinishStatus = "ok" | "error" | "aborted";
+
+type RunFinishOptions = {
+  reason: string;
+  status?: RunFinishStatus;
+  text?: string | null;
+  error?: string | null;
+  usage?: unknown;
+};
 
 type CodeModeResponseWaiter = {
   runId: string | null;
@@ -424,6 +447,32 @@ function conversationArchiveFilename(conversationId: string, generation: number)
   return `${encodeURIComponent(conversationId)}.gen-${generation}.jsonl.gz`;
 }
 
+function compareConversationTimelineEntries(
+  a: ProcConversationTimelineEntry,
+  b: ProcConversationTimelineEntry,
+): number {
+  const generationDelta = a.generation - b.generation;
+  if (generationDelta !== 0) return generationDelta;
+  if (a.type === "live" || b.type === "live") {
+    return timelineEntryTypeRank(a.type) - timelineEntryTypeRank(b.type);
+  }
+  const timeDelta = timelineEntryTimestamp(a) - timelineEntryTimestamp(b);
+  if (timeDelta !== 0) return timeDelta;
+  return timelineEntryTypeRank(a.type) - timelineEntryTypeRank(b.type);
+}
+
+function timelineEntryTimestamp(entry: ProcConversationTimelineEntry): number {
+  return entry.type === "live" ? entry.updatedAt : entry.createdAt;
+}
+
+function timelineEntryTypeRank(type: ProcConversationTimelineEntry["type"]): number {
+  switch (type) {
+    case "archive": return 0;
+    case "segment": return 1;
+    case "live": return 2;
+  }
+}
+
 function formatCompactionSummaryMessage(input: {
   archivedMessages: number;
   archivePath: string;
@@ -647,6 +696,7 @@ export class Process extends Host<Env> {
               queued: false,
               conversationId: DEFAULT_CONVERSATION_ID,
             };
+            await this.emitRunStarted(startedRunId, DEFAULT_CONVERSATION_ID, "assignment.autostart");
             this.scheduleTick(startedRunId);
           }
           data = { ok: true, startedRunId };
@@ -658,7 +708,7 @@ export class Process extends Host<Env> {
           );
           break;
         case "proc.ipc.deliver":
-          data = this.handleProcIpcDeliver(
+          data = await this.handleProcIpcDeliver(
             frame.args as ProcIpcDeliverArgs,
           );
           break;
@@ -740,6 +790,21 @@ export class Process extends Host<Env> {
             (frame.args ?? {}) as ProcConversationSegmentsArgs,
           );
           break;
+        case "proc.conversation.timeline":
+          data = this.handleConversationTimeline(
+            (frame.args ?? {}) as ProcConversationTimelineArgs,
+          );
+          break;
+        case "proc.conversation.generations":
+          data = this.handleConversationGenerations(
+            (frame.args ?? {}) as ProcConversationGenerationsArgs,
+          );
+          break;
+        case "proc.conversation.generation.manifest":
+          data = this.handleConversationGenerationManifest(
+            (frame.args ?? {}) as ProcConversationGenerationManifestArgs,
+          );
+          break;
         case "proc.reset":
           data = await this.handleProcReset();
           break;
@@ -790,6 +855,7 @@ export class Process extends Host<Env> {
 
     if (this.currentRun) {
       this.store.enqueue(runId, args.message, media ?? undefined, undefined, conversationId, origin ?? undefined);
+      await this.emitProcChanged(["queue"], { conversationId, enqueuedRunId: runId });
       return { ok: true, status: "started", runId, queued: true };
     }
 
@@ -799,12 +865,13 @@ export class Process extends Host<Env> {
       origin: origin ?? undefined,
     });
     this.currentRun = { runId, queued: false, conversationId };
+    await this.emitRunStarted(runId, conversationId, "proc.send");
     this.scheduleTick(runId);
 
     return { ok: true, status: "started", runId };
   }
 
-  private handleProcIpcDeliver(args: ProcIpcDeliverArgs): ProcIpcDeliverResult {
+  private async handleProcIpcDeliver(args: ProcIpcDeliverArgs): Promise<ProcIpcDeliverResult> {
     if (!args || typeof args !== "object") {
       return { ok: false, error: "proc.ipc.deliver requires arguments" };
     }
@@ -856,6 +923,7 @@ export class Process extends Host<Env> {
 
     if (this.currentRun) {
       this.store.enqueue(runId, renderedMessage, undefined, undefined, conversationId, origin ?? undefined);
+      await this.emitProcChanged(["queue"], { conversationId, enqueuedRunId: runId });
       return {
         ok: true,
         status: "started",
@@ -872,6 +940,7 @@ export class Process extends Host<Env> {
       origin: origin ?? undefined,
     });
     this.currentRun = { runId, queued: false, conversationId };
+    await this.emitRunStarted(runId, conversationId, "proc.ipc.deliver");
     this.scheduleTick(runId);
 
     return {
@@ -923,20 +992,17 @@ export class Process extends Host<Env> {
     this.rejectCodeModeWaiters(runId, "User interrupted CodeMode execution");
 
     this.currentRun = null;
-    await this.sendSignal("chat.complete", {
+    await this.emitRunFinished(run, {
       text: null,
-      aborted: true,
+      status: "aborted",
       reason: "user",
-      pid,
-      runId,
-      conversationId: run.conversationId,
     });
 
     let continuedQueuedRunId: string | undefined;
     if (inToolResultPhase) {
       this.deferredAbortContinuationRunId = runId;
     } else {
-      continuedQueuedRunId = this.promoteNextQueuedRun() ?? undefined;
+      continuedQueuedRunId = await this.promoteNextQueuedRun() ?? undefined;
     }
 
     return {
@@ -989,7 +1055,7 @@ export class Process extends Host<Env> {
     this.store.clearPendingHil();
 
     if (args.decision === "approve") {
-      await this.sendSignal("chat.tool_call", {
+      await this.sendSignal("proc.run.tool.started", {
         name: pendingHil.toolName,
         syscall: pendingHil.syscall,
         args: pendingHil.args,
@@ -998,7 +1064,7 @@ export class Process extends Host<Env> {
         runId: pendingHil.runId,
         conversationId: pendingHil.conversationId,
       });
-      if (this.handleRunStopped(pendingHil.runId)) {
+      if (await this.handleRunStopped(pendingHil.runId)) {
         return {
           ok: true,
           pid,
@@ -1034,7 +1100,7 @@ export class Process extends Host<Env> {
       );
     }
 
-    if (this.handleRunStopped(pendingHil.runId)) {
+    if (await this.handleRunStopped(pendingHil.runId)) {
       return {
         ok: true,
         pid,
@@ -1050,7 +1116,7 @@ export class Process extends Host<Env> {
       pendingHil.runId,
       pendingHil.remainingToolCalls,
     );
-    if (this.handleRunStopped(pendingHil.runId)) {
+    if (await this.handleRunStopped(pendingHil.runId)) {
       return {
         ok: true,
         pid,
@@ -1302,7 +1368,7 @@ export class Process extends Host<Env> {
   ): Promise<ProcConversationResetResult> {
     const pid = this.pid;
     const conversationId = normalizeConversationId(args.conversationId);
-    this.store.ensureConversation(conversationId);
+    const existingConversation = this.store.ensureConversation(conversationId);
     const archivedMessages = this.store.messageCount(conversationId);
     let archivedTo: string | undefined;
 
@@ -1314,9 +1380,19 @@ export class Process extends Host<Env> {
         archiveId,
       );
       archivedTo = key ? `/${key}` : undefined;
+      if (archivedTo) {
+        this.store.recordConversationArchive({
+          id: archiveId,
+          conversationId,
+          generation: existingConversation.generation,
+          kind: "reset",
+          messages: archivedMessages,
+          archivePath: archivedTo,
+        });
+      }
     }
 
-    this.resetConversationExecutionState(conversationId);
+    await this.resetConversationExecutionState(conversationId);
     const conversation = this.store.resetConversation(conversationId);
 
     return {
@@ -1660,12 +1736,9 @@ export class Process extends Host<Env> {
   }
 
   private async emitProcessLifecycle(payload: Record<string, unknown>): Promise<void> {
-    await this.sendSignal("process.lifecycle", {
-      timestamp: Date.now(),
-      ...payload,
-    }).catch((error) => {
+    await this.emitProcChanged(["lifecycle", "conversations", "messages"], payload).catch((error) => {
       console.warn(
-        `[Process] Failed to emit process.lifecycle for ${this.pid}: ${
+        `[Process] Failed to emit proc.changed lifecycle for ${this.pid}: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );
@@ -1823,6 +1896,117 @@ export class Process extends Host<Env> {
     };
   }
 
+  private handleConversationTimeline(
+    args: ProcConversationTimelineArgs,
+  ): ProcConversationTimelineResult {
+    const conversationId = normalizeConversationId(args.conversationId);
+    const conversation = this.store.ensureConversation(conversationId);
+    const archives = this.store
+      .listConversationArchives(conversationId)
+      .map((archive): ProcConversationTimelineEntry => ({
+        type: "archive",
+        id: archive.id,
+        conversationId: archive.conversationId,
+        generation: archive.generation,
+        archiveKind: archive.kind,
+        messages: archive.messages,
+        archivePath: archive.archivePath,
+        createdAt: archive.createdAt,
+      }));
+    const segments = this.store
+      .listConversationSegments(conversationId)
+      .map((segment): ProcConversationTimelineEntry => ({
+        type: "segment",
+        id: segment.id,
+        conversationId: segment.conversationId,
+        generation: segment.generation,
+        segmentKind: segment.kind,
+        fromMessageId: segment.fromMessageId,
+        toMessageId: segment.toMessageId,
+        archivePath: segment.archivePath,
+        summaryMessageId: segment.summaryMessageId,
+        createdAt: segment.createdAt,
+      }));
+
+    const live: ProcConversationTimelineEntry = {
+      type: "live",
+      ...this.toProcConversationLiveGeneration(conversation),
+    };
+    const timeline: ProcConversationTimelineEntry[] = [
+      ...archives,
+      ...segments,
+      live,
+    ].sort(compareConversationTimelineEntries);
+
+    return {
+      ok: true,
+      pid: this.pid,
+      conversationId,
+      timeline,
+    };
+  }
+
+  private handleConversationGenerations(
+    args: ProcConversationGenerationsArgs,
+  ): ProcConversationGenerationsResult {
+    const conversationId = normalizeConversationId(args.conversationId);
+    this.store.ensureConversation(conversationId);
+    return {
+      ok: true,
+      pid: this.pid,
+      conversationId,
+      generations: this.store.listConversationGenerations(conversationId),
+    };
+  }
+
+  private handleConversationGenerationManifest(
+    args: ProcConversationGenerationManifestArgs,
+  ): ProcConversationGenerationManifestResult {
+    const conversationId = normalizeConversationId(args.conversationId);
+    if (!isPositiveInteger(args.generation)) {
+      return { ok: false, error: "proc.conversation.generation.manifest generation must be a positive integer" };
+    }
+
+    const manifest = this.buildConversationGenerationManifest(conversationId, args.generation);
+    return {
+      ok: true,
+      pid: this.pid,
+      conversationId,
+      manifest,
+    };
+  }
+
+  private buildConversationGenerationManifest(
+    conversationId: string,
+    generation: number,
+  ): ProcConversationGenerationManifest | null {
+    const conversation = this.store.ensureConversation(conversationId);
+    const archives = this.store
+      .listConversationArchives(conversationId)
+      .filter((archive) => archive.generation === generation)
+      .map((archive) => this.toProcConversationArchive(archive));
+    const segments = this.store
+      .listConversationSegments(conversationId)
+      .filter((segment) => segment.generation === generation)
+      .map((segment) => this.toProcConversationSegment(segment));
+    const current = conversation.generation === generation;
+
+    if (!current && archives.length === 0 && segments.length === 0) {
+      return null;
+    }
+
+    return {
+      conversationId,
+      generation,
+      current,
+      status: conversation.status,
+      title: conversation.title,
+      archives,
+      segments,
+      live: current ? this.toProcConversationLiveGeneration(conversation) : null,
+    };
+  }
+
   private toProcConversation(record: ProcessConversationRecord): ProcConversation {
     return {
       id: record.id,
@@ -1831,6 +2015,34 @@ export class Process extends Host<Env> {
       title: record.title,
       messageCount: this.store.messageCount(record.id),
       createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+    };
+  }
+
+  private toProcConversationArchive(
+    record: ProcessConversationArchiveRecord,
+  ): ProcConversationArchive {
+    return {
+      id: record.id,
+      conversationId: record.conversationId,
+      generation: record.generation,
+      kind: record.kind,
+      messages: record.messages,
+      archivePath: record.archivePath,
+      createdAt: record.createdAt,
+    };
+  }
+
+  private toProcConversationLiveGeneration(
+    record: ProcessConversationRecord,
+  ): ProcConversationLiveGeneration {
+    const stats = this.store.messageStats(record.id);
+    return {
+      conversationId: record.id,
+      generation: record.generation,
+      messageCount: stats.count,
+      firstMessageId: stats.firstMessageId,
+      lastMessageId: stats.lastMessageId,
       updatedAt: record.updatedAt,
     };
   }
@@ -1851,7 +2063,7 @@ export class Process extends Host<Env> {
     };
   }
 
-  private resetConversationExecutionState(conversationId: string): void {
+  private async resetConversationExecutionState(conversationId: string): Promise<void> {
     const normalizedConversationId = normalizeConversationId(conversationId);
     const activeRun = this.currentRun;
     const stoppedActiveRun = activeRun?.conversationId === normalizedConversationId;
@@ -1876,7 +2088,15 @@ export class Process extends Host<Env> {
     this.mediaCache.clear();
 
     if (stoppedActiveRun) {
-      this.promoteNextQueuedRun();
+      await this.emitRunFinished(activeRun, {
+        status: "aborted",
+        reason: "conversation.reset",
+        text: null,
+      });
+    }
+
+    if (stoppedActiveRun) {
+      await this.promoteNextQueuedRun();
     }
   }
 
@@ -1885,10 +2105,10 @@ export class Process extends Host<Env> {
     const totalMessages = this.store.totalMessageCount();
 
     const archive = totalMessages > 0
-      ? await this.archiveAllConversationMessages(pid, crypto.randomUUID())
+      ? await this.archiveAllConversationMessages(pid, crypto.randomUUID(), "process-reset")
       : emptyProcessArchive();
 
-    this.resetExecutionState();
+    await this.resetExecutionState("process.reset");
     this.store.resetAllConversations();
 
     await deleteProcessMedia(this.env.STORAGE, this.identity.uid, pid);
@@ -1911,10 +2131,10 @@ export class Process extends Host<Env> {
     const totalMessages = this.store.totalMessageCount();
 
     const archive = shouldArchive && totalMessages > 0
-      ? await this.archiveAllConversationMessages(pid, crypto.randomUUID())
+      ? await this.archiveAllConversationMessages(pid, crypto.randomUUID(), "kill")
       : emptyProcessArchive();
 
-    this.resetExecutionState();
+    await this.resetExecutionState("process.kill");
 
     // A killed process should restart with a clean conversation and no queued work.
     this.store.resetAllConversations();
@@ -1929,13 +2149,21 @@ export class Process extends Host<Env> {
     };
   }
 
-  private resetExecutionState(): void {
+  private async resetExecutionState(reason: string): Promise<void> {
+    const activeRun = this.currentRun;
     this.rejectCodeModeWaiters(null, "Process execution state was reset");
     this.currentRun = null;
     this.store.clearPendingToolCalls();
     this.store.clearPendingHil();
     this.store.clearQueue();
     this.mediaCache.clear();
+    if (activeRun) {
+      await this.emitRunFinished(activeRun, {
+        status: "aborted",
+        reason,
+        text: null,
+      });
+    }
   }
 
   private async handleSig(frame: SignalFrame): Promise<void> {
@@ -1986,8 +2214,7 @@ export class Process extends Host<Env> {
       createdAt: timestamp,
     });
     try {
-      await this.sendSignal("process.message", {
-        pid: this.pid,
+      await this.emitProcChanged(["messages"], {
         conversationId,
         messageId,
         role,
@@ -1996,7 +2223,7 @@ export class Process extends Host<Env> {
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      console.warn(`[Process] Failed to emit process.message for ${this.pid}: ${message}`);
+      console.warn(`[Process] Failed to emit proc.changed message for ${this.pid}: ${message}`);
     }
     return messageId;
   }
@@ -2012,6 +2239,7 @@ export class Process extends Host<Env> {
         queued: false,
         conversationId: DEFAULT_CONVERSATION_ID,
       };
+      await this.emitRunStarted(runId, DEFAULT_CONVERSATION_ID, "signal.watch");
       this.scheduleTick(runId);
     }
   }
@@ -2027,6 +2255,7 @@ export class Process extends Host<Env> {
         queued: false,
         conversationId: DEFAULT_CONVERSATION_ID,
       };
+      await this.emitRunStarted(runId, DEFAULT_CONVERSATION_ID, "ipc.reply");
       this.scheduleTick(runId);
     }
   }
@@ -2046,6 +2275,7 @@ export class Process extends Host<Env> {
         queued: false,
         conversationId,
       };
+      await this.emitRunStarted(runId, conversationId, "schedule.event");
       this.scheduleTick(runId);
     }
   }
@@ -2076,7 +2306,7 @@ export class Process extends Host<Env> {
           this.activeRunPhase = null;
         }
       }
-      if (this.handleRunStopped(runId)) {
+      if (await this.handleRunStopped(runId)) {
         return;
       }
     }
@@ -2096,8 +2326,13 @@ export class Process extends Host<Env> {
         console.log(
           `[Process] Injected ${queued.length} queued message(s) at tool-result boundary`,
         );
+        await this.emitProcChanged(["queue", "messages"], {
+          conversationId,
+          runId,
+          drainedQueuedMessages: queued.length,
+        });
       }
-      if (this.handleRunStopped(runId)) {
+      if (await this.handleRunStopped(runId)) {
         return;
       }
     }
@@ -2107,7 +2342,7 @@ export class Process extends Host<Env> {
       run.config = await this.kernelRpc("ai.config", {
         profile: this.profile,
       });
-      if (this.handleRunStopped(runId)) {
+      if (await this.handleRunStopped(runId)) {
         return;
       }
       this.currentRun = run;
@@ -2115,7 +2350,7 @@ export class Process extends Host<Env> {
 
     if (!run.tools || !run.devices) {
       const toolsResult = await this.kernelRpc("ai.tools");
-      if (this.handleRunStopped(runId)) {
+      if (await this.handleRunStopped(runId)) {
         return;
       }
       run.tools = toolsResult.tools;
@@ -2138,7 +2373,7 @@ export class Process extends Host<Env> {
         storage: this.env.STORAGE,
         ripgit: this.ripgit,
       });
-      if (this.handleRunStopped(runId)) {
+      if (await this.handleRunStopped(runId)) {
         return;
       }
       this.currentRun = run;
@@ -2159,7 +2394,7 @@ export class Process extends Host<Env> {
     };
 
     const initialContextState = await this.updateContextState(runId, conversationId, run.config!, context);
-    if (this.handleRunStopped(runId)) {
+    if (await this.handleRunStopped(runId)) {
       return;
     }
 
@@ -2173,7 +2408,7 @@ export class Process extends Host<Env> {
       return;
     }
     if (contextPreflight === "compacted") {
-      if (this.handleRunStopped(runId)) {
+      if (await this.handleRunStopped(runId)) {
         return;
       }
       piMessages = await this.buildContextMessages(conversationId);
@@ -2183,16 +2418,18 @@ export class Process extends Host<Env> {
         tools: tools.length > 0 ? tools : undefined,
       };
       await this.updateContextState(runId, conversationId, run.config!, context);
-      if (this.handleRunStopped(runId)) {
+      if (await this.handleRunStopped(runId)) {
         return;
       }
     }
 
     // Step 6: Call LLM
-    let response: AssistantMessage;
+    let response: AssistantMessage | null;
     try {
       this.activeRunPhase = { runId, phase: "generation" };
-      response = await this.generation.generate({
+      response = await this.generateAssistantResponse({
+        runId,
+        conversationId,
         purpose: "chat.reply",
         config: run.config!,
         context,
@@ -2201,50 +2438,63 @@ export class Process extends Host<Env> {
       if (this.activeRunPhase?.runId === runId && this.activeRunPhase.phase === "generation") {
         this.activeRunPhase = null;
       }
-      if (this.handleRunStopped(runId)) {
+      if (await this.handleRunStopped(runId)) {
         return;
       }
     } catch (e) {
       if (this.activeRunPhase?.runId === runId && this.activeRunPhase.phase === "generation") {
         this.activeRunPhase = null;
       }
-      if (this.handleRunStopped(runId)) {
+      if (await this.handleRunStopped(runId)) {
         return;
       }
       const errorMsg = e instanceof Error ? e.message : String(e);
       const displayError = formatGenerationFailure(errorMsg);
       console.error(`[Process] LLM call failed:`, e);
       this.store.appendMessage("system", displayError, { conversationId });
-      await this.sendSignal("chat.complete", {
-        text: null,
-        error: displayError,
-        pid: this.pid,
-        runId,
+      await this.emitProcChanged(["messages"], {
         conversationId,
+        runId,
+        role: "system",
+        content: displayError,
       });
-      if (this.handleRunStopped(runId)) {
+      if (await this.handleRunStopped(runId)) {
         return;
       }
-      await this.finishRun("chat.error");
+      await this.finishRun({
+        reason: "generation.error",
+        status: "error",
+        text: null,
+        error: displayError,
+      });
       return;
     }
 
-    if (!response.content || response.content.length === 0) {
-      const errorMsg = response.errorMessage ?? "LLM returned empty response";
+    if (!response) {
+      return;
+    }
+
+    const responseFailure = describeAssistantResponseFailure(response);
+    if (responseFailure) {
+      const errorMsg = response.errorMessage ?? responseFailure;
       const displayError = formatGenerationFailure(errorMsg);
       console.error(`[Process] ${errorMsg}`);
       this.store.appendMessage("system", displayError, { conversationId });
-      await this.sendSignal("chat.complete", {
-        text: null,
-        error: displayError,
-        pid: this.pid,
-        runId,
+      await this.emitProcChanged(["messages"], {
         conversationId,
+        runId,
+        role: "system",
+        content: displayError,
       });
-      if (this.handleRunStopped(runId)) {
+      if (await this.handleRunStopped(runId)) {
         return;
       }
-      await this.finishRun("chat.empty");
+      await this.finishRun({
+        reason: "generation.empty",
+        status: "error",
+        text: null,
+        error: displayError,
+      });
       return;
     }
 
@@ -2261,14 +2511,14 @@ export class Process extends Host<Env> {
     );
 
     if (text.trim() || thinkingBlocks.length > 0) {
-      await this.sendSignal("chat.text", {
+      await this.sendSignal("proc.run.output", {
         text,
         thinking: thinkingBlocks,
         pid: this.pid,
         runId,
         conversationId,
       });
-      if (this.handleRunStopped(runId)) {
+      if (await this.handleRunStopped(runId)) {
         return;
       }
     }
@@ -2288,40 +2538,84 @@ export class Process extends Host<Env> {
       tools: tools.length > 0 ? tools : undefined,
     };
     await this.updateContextState(runId, conversationId, run.config!, context, response.usage);
-    if (this.handleRunStopped(runId)) {
+    if (await this.handleRunStopped(runId)) {
       return;
     }
 
     if (toolCalls.length > 0) {
       const pendingHil = await this.processToolCalls(runId, toolCalls);
-      if (this.handleRunStopped(runId)) {
+      if (await this.handleRunStopped(runId)) {
         return;
       }
       if (!pendingHil && this.store.isRunResolved(runId)) {
         this.scheduleTick(runId);
       }
     } else {
-      await this.sendSignal("chat.complete", {
+      await this.finishRun({
+        reason: "turn.complete",
+        status: "ok",
         text,
-        pid: this.pid,
-        runId,
-        conversationId,
         usage: response.usage,
       });
-      if (this.handleRunStopped(runId)) {
-        return;
-      }
-      await this.finishRun("turn.complete");
     }
   }
 
-  private async finishRun(reason: string): Promise<void> {
-    const runId = this.currentRun?.runId;
+  private async generateAssistantResponse(options: {
+    runId: string;
+    conversationId: string;
+    purpose: "chat.reply";
+    config: AiConfigResult;
+    context: Context;
+    sessionAffinityKey?: string;
+  }): Promise<AssistantMessage | null> {
+    const stream = options.config.generationStreaming !== "off" &&
+      typeof this.generation.stream === "function"
+      ? this.generation.stream({
+        purpose: options.purpose,
+        config: options.config,
+        context: options.context,
+        sessionAffinityKey: options.sessionAffinityKey,
+      })
+      : null;
+
+    if (!stream) {
+      return this.generation.generate({
+        purpose: options.purpose,
+        config: options.config,
+        context: options.context,
+        sessionAffinityKey: options.sessionAffinityKey,
+      });
+    }
+
+    let seq = 0;
+    let response: AssistantMessage | null = null;
+    for await (const event of stream) {
+      seq += 1;
+      await this.emitRunStreamEvent(options.runId, options.conversationId, seq, event);
+      if (event.type === "done") {
+        response = event.message;
+      } else if (event.type === "error") {
+        response = event.error;
+      }
+      if (await this.handleRunStopped(options.runId)) {
+        return null;
+      }
+    }
+
+    return response ?? await stream.result();
+  }
+
+  private async finishRun(options: RunFinishOptions): Promise<void> {
+    const run = this.currentRun;
+    const runId = run?.runId;
     this.currentRun = null;
     this.store.clearPendingHil();
     console.log(`[Process] Finished run ${runId}`);
 
-    this.promoteNextQueuedRun();
+    if (run) {
+      await this.emitRunFinished(run, options);
+    }
+    await this.promoteNextQueuedRun();
   }
 
   private async applyConversationContextPolicy(
@@ -2348,14 +2642,18 @@ export class Process extends Host<Env> {
         "Compact or reset the conversation before sending more work.",
       ].join("\n");
       this.store.appendMessage("system", message, { conversationId });
-      await this.sendSignal("chat.complete", {
+      await this.emitProcChanged(["messages"], {
+        conversationId,
+        runId,
+        role: "system",
+        content: message,
+      });
+      await this.finishRun({
+        reason: "context.policy.fail",
+        status: "error",
         text: null,
         error: message,
-        pid: this.pid,
-        runId,
-        conversationId,
       });
-      await this.finishRun("context.policy.fail");
       return "stopped";
     }
 
@@ -2373,14 +2671,18 @@ export class Process extends Host<Env> {
         "Lower the keep-last value, compact manually, or reset this conversation.",
       ].join("\n");
       this.store.appendMessage("system", message, { conversationId });
-      await this.sendSignal("chat.complete", {
+      await this.emitProcChanged(["messages"], {
+        conversationId,
+        runId,
+        role: "system",
+        content: message,
+      });
+      await this.finishRun({
+        reason: "context.auto_compact.empty",
+        status: "error",
         text: null,
         error: message,
-        pid: this.pid,
-        runId,
-        conversationId,
       });
-      await this.finishRun("context.auto_compact.empty");
       return "stopped";
     }
 
@@ -2396,24 +2698,28 @@ export class Process extends Host<Env> {
         activeRunId: runId,
       },
     );
-    if (this.handleRunStopped(runId)) {
+    if (await this.handleRunStopped(runId)) {
       return "stopped";
     }
     if (!result.ok) {
       const message = `Auto-compaction failed before model call: ${result.error}`;
       this.store.appendMessage("system", message, { conversationId });
-      await this.sendSignal("chat.complete", {
+      await this.emitProcChanged(["messages"], {
+        conversationId,
+        runId,
+        role: "system",
+        content: message,
+      });
+      await this.finishRun({
+        reason: "context.auto_compact.failed",
+        status: "error",
         text: null,
         error: message,
-        pid: this.pid,
-        runId,
-        conversationId,
       });
-      await this.finishRun("context.auto_compact.failed");
       return "stopped";
     }
 
-    if (this.handleRunStopped(runId)) {
+    if (await this.handleRunStopped(runId)) {
       return "stopped";
     }
     await this.emitProcessLifecycle({
@@ -2451,12 +2757,11 @@ export class Process extends Host<Env> {
       usage,
     });
     this.store.setContextState(state);
-    await this.sendSignal("process.context", {
-      pid: this.pid,
+    await this.emitProcChanged(["context"], {
       context: state,
     }).catch((error) => {
       console.warn(
-        `[Process] Failed to emit process.context for ${this.pid}: ${
+        `[Process] Failed to emit proc.changed context for ${this.pid}: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );
@@ -2494,6 +2799,62 @@ export class Process extends Host<Env> {
       signal,
       payload,
     } as SignalFrame);
+  }
+
+  private async emitRunStarted(runId: string, conversationId: string, reason: string): Promise<void> {
+    await this.sendSignal("proc.run.started", {
+      pid: this.pid,
+      runId,
+      conversationId: normalizeConversationId(conversationId),
+      reason,
+      queuedCount: this.store.queueSize(),
+      timestamp: Date.now(),
+    });
+  }
+
+  private async emitRunStreamEvent(
+    runId: string,
+    conversationId: string,
+    seq: number,
+    event: AssistantMessageEvent,
+  ): Promise<void> {
+    await this.sendSignal("proc.run.stream", {
+      pid: this.pid,
+      runId,
+      conversationId: normalizeConversationId(conversationId),
+      seq,
+      event: snapshotAssistantMessageEvent(event),
+      timestamp: Date.now(),
+    });
+  }
+
+  private async emitRunFinished(run: RunState, options: RunFinishOptions): Promise<void> {
+    await this.sendSignal("proc.run.finished", {
+      pid: this.pid,
+      runId: run.runId,
+      conversationId: normalizeConversationId(run.conversationId),
+      status: options.status ?? "ok",
+      reason: options.reason,
+      text: options.text ?? null,
+      ...(options.error ? { error: options.error } : {}),
+      ...(options.usage !== undefined ? { usage: options.usage } : {}),
+      ...(options.status === "aborted" ? { aborted: true } : {}),
+      queuedCount: this.store.queueSize(),
+      timestamp: Date.now(),
+    });
+  }
+
+  private async emitProcChanged(
+    changes: string[],
+    payload: Record<string, unknown> = {},
+  ): Promise<void> {
+    await this.sendSignal("proc.changed", {
+      pid: this.pid,
+      changes,
+      queuedCount: this.store.queueSize(),
+      timestamp: Date.now(),
+      ...payload,
+    });
   }
 
   private async resolveCheckpointConfig(): Promise<AiConfigResult | null> {
@@ -2536,6 +2897,7 @@ export class Process extends Host<Env> {
   private async archiveAllConversationMessages(
     pid: string,
     archiveId: string,
+    kind: ProcConversationArchiveKind,
   ): Promise<ProcessArchiveResult> {
     const archiveDir = `var/sessions/${this.identity.username}/${pid}/${archiveId}/`;
     const archives: ProcArchiveEntry[] = [];
@@ -2557,12 +2919,21 @@ export class Process extends Host<Env> {
       )}`;
 
       await this.archiveMessageRecords(key, messages);
+      const archivePath = `/${key}`;
+      this.store.recordConversationArchive({
+        id: `${archiveId}:${encodeURIComponent(conversation.id)}:gen-${conversation.generation}`,
+        conversationId: conversation.id,
+        generation: conversation.generation,
+        kind,
+        messages: messages.length,
+        archivePath,
+      });
       archivedMessages += messages.length;
       archives.push({
         conversationId: conversation.id,
         generation: conversation.generation,
         messages: messages.length,
-        path: `/${key}`,
+        path: archivePath,
       });
     }
 
@@ -2802,7 +3173,7 @@ export class Process extends Host<Env> {
         conversationId,
       );
 
-      await this.sendSignal("chat.tool_result", {
+      await this.sendSignal("proc.run.tool.finished", {
         name: SYSCALL_TOOL_NAMES[result.call] ?? result.call,
         syscall: result.call,
         callId: result.id,
@@ -2832,7 +3203,7 @@ export class Process extends Host<Env> {
     }
 
     const approvalPolicy = await this.resolveToolApprovalPolicy(run);
-    if (this.handleRunStopped(runId)) {
+    if (await this.handleRunStopped(runId)) {
       return null;
     }
 
@@ -2893,11 +3264,11 @@ export class Process extends Host<Env> {
             createdAt: Date.now(),
           };
           this.store.setPendingHil(pendingHil);
-          await this.sendSignal("chat.hil", this.toProcHilRequest(pendingHil));
+          await this.sendSignal("proc.run.hil.requested", this.toProcHilRequest(pendingHil));
           return pendingHil;
         }
 
-        await this.sendSignal("chat.tool_call", {
+        await this.sendSignal("proc.run.tool.started", {
           name: tc.name,
           syscall,
           args: tc.arguments,
@@ -2906,7 +3277,7 @@ export class Process extends Host<Env> {
           runId,
           conversationId: run.conversationId,
         });
-        if (this.handleRunStopped(runId)) {
+        if (await this.handleRunStopped(runId)) {
           return null;
         }
 
@@ -2926,7 +3297,7 @@ export class Process extends Host<Env> {
             tc.arguments,
           );
         }
-        if (this.handleRunStopped(runId)) {
+        if (await this.handleRunStopped(runId)) {
           return null;
         }
       }
@@ -3037,7 +3408,7 @@ export class Process extends Host<Env> {
     approvalPolicy: ToolApprovalPolicy,
     conversationId: string,
   ): Promise<unknown> {
-    if (this.handleRunStopped(runId)) {
+    if (await this.handleRunStopped(runId)) {
       throw new Error("Run stopped before CodeMode tool execution completed");
     }
 
@@ -3073,7 +3444,7 @@ export class Process extends Host<Env> {
       }
     }
 
-    await this.sendSignal("chat.tool_call", {
+    await this.sendSignal("proc.run.tool.started", {
       name: toolName,
       syscall: call,
       args,
@@ -3082,7 +3453,7 @@ export class Process extends Host<Env> {
       runId,
       conversationId,
     });
-    if (this.handleRunStopped(runId)) {
+    if (await this.handleRunStopped(runId)) {
       throw new Error("Run stopped before CodeMode tool execution completed");
     }
 
@@ -3096,7 +3467,7 @@ export class Process extends Host<Env> {
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      await this.sendSignal("chat.tool_result", {
+      await this.sendSignal("proc.run.tool.finished", {
         name: toolName,
         syscall: call,
         callId: toolCallId,
@@ -3111,7 +3482,7 @@ export class Process extends Host<Env> {
 
     if (response.ok) {
       const output = response.data ?? null;
-      await this.sendSignal("chat.tool_result", {
+      await this.sendSignal("proc.run.tool.finished", {
         name: toolName,
         syscall: call,
         callId: toolCallId,
@@ -3125,7 +3496,7 @@ export class Process extends Host<Env> {
     }
 
     const error = response.error.message;
-    await this.sendSignal("chat.tool_result", {
+    await this.sendSignal("proc.run.tool.finished", {
       name: toolName,
       syscall: call,
       callId: toolCallId,
@@ -3194,7 +3565,7 @@ export class Process extends Host<Env> {
       createdAt: Date.now(),
     };
     this.store.setPendingHil(pendingHil);
-    await this.sendSignal("chat.hil", this.toProcHilRequest(pendingHil));
+    await this.sendSignal("proc.run.hil.requested", this.toProcHilRequest(pendingHil));
     return approved;
   }
 
@@ -3362,7 +3733,7 @@ export class Process extends Host<Env> {
       true,
       conversationId,
     );
-    await this.sendSignal("chat.tool_result", {
+    await this.sendSignal("proc.run.tool.finished", {
       name: SYSCALL_TOOL_NAMES[syscallName] ?? syscallName,
       syscall: syscallName,
       callId: toolCallId,
@@ -3391,18 +3762,18 @@ export class Process extends Host<Env> {
     };
   }
 
-  private handleRunStopped(runId: string): boolean {
+  private async handleRunStopped(runId: string): Promise<boolean> {
     if (this.currentRun?.runId === runId) {
       return false;
     }
     if (this.deferredAbortContinuationRunId === runId) {
       this.deferredAbortContinuationRunId = null;
-      this.promoteNextQueuedRun();
+      await this.promoteNextQueuedRun();
     }
     return true;
   }
 
-  private promoteNextQueuedRun(): string | null {
+  private async promoteNextQueuedRun(): Promise<string | null> {
     const next = this.store.dequeue();
     if (!next) {
       return null;
@@ -3418,9 +3789,31 @@ export class Process extends Host<Env> {
       queued: false,
       conversationId: next.conversationId,
     };
+    await this.emitRunStarted(next.runId, next.conversationId, "queue.promote");
     this.scheduleTick(next.runId);
     return next.runId;
   }
+}
+
+function snapshotAssistantMessageEvent<T extends AssistantMessageEvent>(event: T): T {
+  return JSON.parse(JSON.stringify(event)) as T;
+}
+
+function describeAssistantResponseFailure(response: AssistantMessage): string | null {
+  if (response.stopReason === "error" || response.stopReason === "aborted") {
+    return response.errorMessage ?? `LLM generation ended with ${response.stopReason}`;
+  }
+  if (!response.content || response.content.length === 0) {
+    return "LLM returned empty response";
+  }
+  const hasVisibleText = response.content.some(
+    (block) => block.type === "text" && block.text.trim().length > 0,
+  );
+  const hasToolCall = response.content.some((block) => block.type === "toolCall");
+  if (!hasVisibleText && !hasToolCall) {
+    return "LLM returned reasoning but no final response";
+  }
+  return null;
 }
 
 function orderMessagesForProvider(messages: Message[]): Message[] {

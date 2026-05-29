@@ -347,6 +347,9 @@ async function dispatchNative(
       case "proc.conversation.fork":
       case "proc.conversation.segment.read":
       case "proc.conversation.segments":
+      case "proc.conversation.timeline":
+      case "proc.conversation.generations":
+      case "proc.conversation.generation.manifest":
       case "proc.reset":
         data = await forwardToProcess(frame, ctx);
         break;

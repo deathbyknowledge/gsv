@@ -125,7 +125,9 @@ Process and automation control also stay on the native shell surface:
 proc profiles
 proc spawn --profile task --label "docs audit"
 proc call <pid> --timeout 60s "Summarize the current result."
-sched add --name daily-brief --cron "0 9 * * *" --timezone Europe/Amsterdam --profile cron "Prepare the daily brief."
+crontab -l
+printf '0 4 * * * proc compact init:1000 --conversation default --keep-last 80 --generate-summary\n' > /var/spool/cron/sam
+printf '0 9 * * * proc spawn --profile cron --label daily-brief "Prepare the daily brief."\n' > ~/daily.cron && crontab ~/daily.cron
 ```
 
 Use `proc profiles` to discover system, user, and package-backed worker
@@ -134,8 +136,8 @@ profile prompt files live in `~/profiles.d/{name}/context.d/*.md`. Root-level
 files can be carried by the profile, but are not loaded as prompt context.
 `proc call` is the bounded request/reply path; `proc spawn --prompt` and `proc
 send` are fire-and-forget unless the worker explicitly sends a later message.
-Use `sched add` without `--pid` for scheduled worker processes; with `--pid`, it
-delivers a process event to an existing process conversation.
+Cron jobs run shell commands from `/var/spool/cron/<user>` or `/etc/cron.d/*`.
+Use `proc compact`, `proc spawn`, or `proc send` directly in those files.
 
 Scripts use the same CodeMode shape exposed to agents. A script is treated as
 the body of an async function: top-level `await` works, and the final value must

@@ -479,15 +479,15 @@ Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `proc.list` | `handleProcList` | Reads the kernel process registry. Root defaults to all processes; non-root defaults to own uid, though an explicit `uid` is currently honored by the handler. |
+| `proc.list` | `handleProcList` | Reads the kernel process registry. Root defaults to all processes; non-root defaults to own uid, though an explicit `uid` is currently honored by the handler. Entries include activity state, active run/conversation ids, queued count, and last activity timestamp. |
 | `proc.profile.list` | `handleProcProfileList` | Returns system AI profiles plus enabled package-backed profiles visible to the caller. Package entries are sorted by package name and display name. |
 | `proc.spawn` | `handleProcSpawn` | Validates the AI profile, resolves package profiles, materializes package source mounts, registers the process with a cwd, sends kernel-only `proc.setidentity`, and optionally sends the initial prompt. `init` is singleton; other profiles get UUID pids. |
 | `proc.send` | Process DO `handleProcSend` | Defaults `pid` to `init:<uid>` when forwarded and `conversationId` to `default`. Stores media and trusted `InteractionOrigin` metadata, appends a user message, starts a run if idle, or queues the message if a run is active. The process runtime renders `[From: ...]` origin markers into model context only at source boundaries, without rewriting stored message content. Public callers do not supply trusted origin; the Kernel derives it. |
 | `proc.ipc.send` | `handleProcIpcSend` | Process-callable same-owner IPC. Validates that the caller is a registered process, the target exists, and source/target uids match, then sends kernel-only `proc.ipc.deliver` to the target Process DO. The target receives a visible user message envelope and starts or queues a run. |
 | `proc.ipc.call` | `handleProcIpcCall` | Process-callable bounded same-owner IPC. Creates a call id and deadline, delivers the request to the target process, and later sends either `ipc.reply` or `ipc.timeout` to the source process. The syscall returns after acceptance, not after the target replies. |
-| `proc.abort` | Process DO | Logical cancellation of the active run. Clears pending HIL and current run, emits `chat.complete` with `aborted: true`, and may promote the next queued run. In-flight external work can still resolve later but stale handling guards state. |
+| `proc.abort` | Process DO | Logical cancellation of the active run. Clears pending HIL and current run, emits `proc.run.finished` with `aborted: true`, and may promote the next queued run. In-flight external work can still resolve later but stale handling guards state. |
 | `proc.hil` | Process DO | Resolves a pending human-in-the-loop request. `approve` dispatches the original syscall; `deny` appends a synthetic error tool result. `remember: true` with `approve` stores a process-local allow override for the syscall and target class. |
-| `proc.kill` | Process DO | Optionally archives every non-empty conversation under one archive directory, clears active run, tool state, HIL, queue, media, and all conversation messages, then increments conversation generations. Does not remove the kernel process registry entry in normal syscall use. |
+| `proc.kill` | Process DO | Optionally archives every non-empty conversation under one archive directory, clears active run, tool state, HIL, queue, media, and all conversation messages, then increments conversation generations. On successful syscall completion the Kernel removes the process registry entry. |
 | `proc.history` | Process DO | Returns paged stored messages for `conversationId` or `default`, plus message ids, message count, cursor flags, truncation status, timestamps, origin metadata, pending HIL, and the latest context-pressure state when available. Offset paging reads from the beginning. `tail: true` reads the latest page, `beforeMessageId` reads older messages, and `afterMessageId` reads newer messages. Tool results and assistant metadata are expanded into structured content. |
 | `proc.conversation.open` | Process DO | Creates or reopens a process-local conversation. If `conversationId` is omitted, the Process DO generates one. Optional `title` is trimmed and stored. |
 | `proc.conversation.list` | Process DO | Lists open conversations by default. `includeClosed: true` includes closed conversations. Each record includes generation, status, title, message count, and timestamps. |
@@ -596,7 +596,7 @@ type ProcIpcCallResult =
 type ProcessSyscalls = {
   "proc.list": {
     args: { uid?: number };
-    result: { processes: Array<{ pid: string; uid: number; profile: AiContextProfile; parentPid: string | null; state: string; label: string | null; createdAt: number; cwd: string }> };
+    result: { processes: Array<{ pid: string; uid: number; profile: AiContextProfile; parentPid: string | null; state: "idle" | "queued" | "running" | "waiting_tool" | "waiting_hil"; activeRunId: string | null; activeConversationId: string | null; queuedCount: number; lastActiveAt: number | null; label: string | null; createdAt: number; cwd: string }> };
   };
 
   "proc.profile.list": {
@@ -1075,7 +1075,7 @@ Runtime behavior:
 | Syscall | Handler | Behavior |
 |---|---|---|
 | `ai.tools` | `handleAiTools` | Process-internal. Lists online accessible devices and filters built-in tool definitions by caller capabilities. Routable filesystem and shell tools are wrapped with required `target`; CodeMode is exposed as a process-local programmable tool. MCP tools are used through CodeMode or shell, not expanded into this direct tool list. |
-| `ai.config` | `handleAiConfig` | Process-internal. Resolves user override then system AI config. Defaults profile to `task`, provider to `workers-ai`, model to `@cf/nvidia/nemotron-3-120b-a12b`, max tokens to 8192, context window to provider/model metadata or configured fallback, and context budget to 32768 bytes. Package profiles load manifest context files and approval policy. |
+| `ai.config` | `handleAiConfig` | Process-internal. Resolves user override then system AI config for user-tunable keys, plus system-only operational keys such as generation streaming. Defaults profile to `task`, provider to `workers-ai`, model to `@cf/nvidia/nemotron-3-120b-a12b`, max tokens to 8192, context window to provider/model metadata or configured fallback, streaming to `auto`, and context budget to 32768 bytes. Package profiles load manifest context files and approval policy. |
 | `ai.transcription.create` | `handleAiTranscriptionCreate` | User-callable. Accepts base64 audio data plus MIME type, transcribes or translates it through the configured transcription model, and returns normalized text plus optional language, duration, and segments. |
 | `ai.speech.create` | `handleAiSpeechCreate` | User-callable. Accepts text, normalizes Markdown to speech-friendly text by default, synthesizes speech through the configured Workers AI text-to-speech model, and returns a browser-playable audio data URL plus MIME type and size. |
 
@@ -1090,7 +1090,7 @@ type AiSyscalls = {
 
   "ai.config": {
     args: { profile?: AiContextProfile };
-    result: { profile?: AiContextProfile; provider: string; model: string; apiKey: string; reasoning?: string; maxTokens: number; contextWindowTokens: number | null; contextWindowSource: "model" | "config" | "unknown"; systemContextFiles?: Array<{ name: string; text: string }>; profileContextFiles?: Array<{ name: string; text: string }>; skillIndex?: Array<{ id: string; name: string; description: string; source: { kind: "profile" | "home" | "package"; label: string; writable: boolean } }>; profileApprovalPolicy?: string | null; maxContextBytes: number; generationTimeoutMs: number };
+    result: { profile?: AiContextProfile; provider: string; model: string; apiKey: string; reasoning?: string; maxTokens: number; contextWindowTokens: number | null; contextWindowSource: "model" | "config" | "unknown"; systemContextFiles?: Array<{ name: string; text: string }>; profileContextFiles?: Array<{ name: string; text: string }>; skillIndex?: Array<{ id: string; name: string; description: string; source: { kind: "profile" | "home" | "package"; label: string; writable: boolean } }>; profileApprovalPolicy?: string | null; maxContextBytes: number; generationTimeoutMs: number; generationStreaming?: "auto" | "off" };
   };
 
   "ai.transcription.create": {
@@ -1215,6 +1215,10 @@ Scheduler syscalls are Kernel-owned. Schedule records live in Kernel SQLite,
 GSV computes timezone-aware next fire times, and Cloudflare Agent schedules are
 used only as concrete wake-ups.
 
+Normal cron jobs should be installed with `crontab` or by writing
+`/var/spool/cron/<username>` and `/etc/cron.d/<name>`. Those file surfaces
+compile crontab lines into `command.exec` schedule records.
+
 Runtime behavior:
 
 | Syscall | Handler | Behavior |
@@ -1233,6 +1237,7 @@ type ScheduleExpression =
   | { kind: "cron"; expr: string; timezone: string };
 
 type ScheduleTarget =
+  | { kind: "command.exec"; command: string; cwd?: string; timeoutMs?: number }
   | { kind: "process.spawn"; profile?: string; label?: string; prompt: string; parentPid?: string; cwd?: string; mounts?: unknown[]; assignment?: unknown }
   | { kind: "process.event"; pid: string; conversationId?: string; message: string; data?: Record<string, unknown> };
 
@@ -1285,3 +1290,7 @@ type SchedulerSyscalls = {
   };
 };
 ```
+
+`command.exec` targets require `shell.exec` permission when they are created and
+when they run. `process.spawn` and `process.event` remain supported for existing
+schedules and compatibility surfaces.

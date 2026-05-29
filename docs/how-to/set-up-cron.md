@@ -2,61 +2,52 @@
 
 GSV has two scheduling surfaces:
 
-- Kernel schedules through `sched.*` for user/process-owned work.
+- Cron files and `crontab` for user/process-owned work.
 - Package daemon schedules for package-owned backend RPC methods.
 
-Use Kernel schedules when scheduled work should create or notify a process.
+Use cron files when scheduled work should run a command, including commands
+that create or notify a process.
 Use package daemon schedules when a package backend needs to call one of its
 own RPC methods.
 
 Cron is an execution contract, not a separate natural-language interface. Use
 the personal agent (`init`/`personal`) to author or revise recurring intent, then
-run scheduled work through `cron` or another explicit worker profile with a
-stable target, prompt, timezone, overlap policy, and audit history.
+run scheduled work through a stable shell command, timezone, and audit history.
 
-## Add a Kernel Schedule
+## Add a User Crontab
 
-Kernel schedules have an expression and a typed target.
+User crontabs use the standard five-field cron format:
 
 From a GSV shell:
 
 ```bash
-sched add --name "daily ops check" --cron "0 9 * * *" --timezone Europe/Amsterdam \
-  --profile cron --label "daily ops check" \
-  "Check system health and summarize anything that needs attention."
+cat > ~/daily.cron <<'EOF'
+CRON_TZ=Europe/Amsterdam
+0 9 * * * proc spawn --profile cron --label "daily ops check" "Check system health and summarize anything that needs attention."
+EOF
+crontab ~/daily.cron
 ```
 
-Programmatically:
+The same file can be written directly:
 
-```ts
-await kernel.request("sched.add", {
-  name: "daily ops check",
-  expression: {
-    kind: "cron",
-    expr: "0 9 * * *",
-    timezone: "Europe/Amsterdam",
-  },
-  target: {
-    kind: "process.spawn",
-    profile: "cron",
-    label: "daily ops check",
-    prompt: "Check system health and summarize anything that needs attention.",
-  },
-});
+```bash
+cat > /var/spool/cron/sam <<'EOF'
+CRON_TZ=Europe/Amsterdam
+0 9 * * * proc spawn --profile cron --label "daily ops check" "Check system health and summarize anything that needs attention."
+EOF
 ```
 
-Supported expression shapes:
+Manage the current user's crontab:
 
-```ts
-{ kind: "at", atMs: Date.now() + 60_000 }
-{ kind: "after", afterMs: 60_000 }
-{ kind: "every", everyMs: 3_600_000, anchorMs: Date.now() }
-{ kind: "cron", expr: "0 9 * * *", timezone: "Europe/Amsterdam" }
+```bash
+crontab -l
+crontab ~/daily.cron
+crontab -r
 ```
 
-Cron expressions use five Linux-style fields:
+Cron lines use:
 
-```text
+```cron
 minute hour day-of-month month day-of-week
 ```
 
@@ -66,39 +57,37 @@ onboarding, the selected system timezone is available as
 
 ## Notify an Existing Process
 
-Use `process.event` when the schedule should wake an existing process
-conversation instead of spawning a new process.
+Use `proc send` when the schedule should wake an existing process conversation
+instead of spawning a new process.
 
 From a GSV shell:
 
 ```bash
-sched add --name "ops pulse" --every 15m --pid "$GSV_PID" --conversation ops \
-  --message "Run the scheduled ops pulse."
+cat > ~/pulse.cron <<'EOF'
+*/15 * * * * proc send init:1000 --conversation ops "Run the scheduled ops pulse."
+EOF
+crontab ~/pulse.cron
 ```
 
 Inside a process shell, `$GSV_PID` and `proc self` both identify the current
 process.
 
-Programmatically:
+The target process receives normal process mail.
 
-```ts
-await kernel.request("sched.add", {
-  name: "ops pulse",
-  expression: { kind: "every", everyMs: 15 * 60 * 1000 },
-  target: {
-    kind: "process.event",
-    pid: "init:1000",
-    conversationId: "ops",
-    message: "Run the scheduled ops pulse.",
-    data: { source: "cron" },
-  },
-});
+## Add a System Cron File
+
+Root can install `/etc/cron.d/<name>` files. These use the system crontab
+format, with a user field between the five time fields and the command:
+
+```cron
+CRON_TZ=Europe/Amsterdam
+0 4 * * * root proc compact init:0 --conversation default --keep-last 80 --generate-summary
+30 8 * * 1-5 sam proc spawn --profile cron --label "morning brief" "Prepare morning brief."
 ```
 
-The target process sees this as a runtime event. In model context it is rendered
-with the normal `[Process Event]:` prefix.
-
 ## Manage Kernel Schedules
+
+`sched` remains the low-level schedule inspector and control surface:
 
 ```ts
 await kernel.request("sched.list", { includeDisabled: true });

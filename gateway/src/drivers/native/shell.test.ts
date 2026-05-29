@@ -83,6 +83,7 @@ function makeContext(options?: {
   procs?: Partial<KernelContext["procs"]>;
   devices?: KernelContext["devices"];
   auth?: KernelContext["auth"];
+  caps?: KernelContext["caps"];
   schedules?: KernelContext["schedules"];
   getAppRunner?: KernelContext["getAppRunner"];
   scheduleScheduleWake?: KernelContext["scheduleScheduleWake"];
@@ -102,7 +103,7 @@ function makeContext(options?: {
       LOADER: { get() { throw new Error("LOADER should not be used in pkg shell tests"); } },
     } as unknown as Env,
     auth: options?.auth ?? null as never,
-    caps: null as never,
+    caps: options?.caps ?? null as never,
     config: {
       get(key: string) {
         if (key === "config/server/name") return "gsv";
@@ -872,7 +873,8 @@ describe("pkg shell command", () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(result.stdout).toContain("sched add --name NAME");
+    expect(result.stdout).toContain("sched add --json JSON");
+    expect(result.stdout).toContain("Use crontab");
     expect(result.stdout).toContain("sched run <id>");
     expect(result.stderr).toBe("");
   });
@@ -905,11 +907,20 @@ describe("pkg shell command", () => {
     expect(result.stderr).toBe("");
   });
 
-  it("creates a process-spawn schedule from the sched command", async () => {
+  it("installs and lists a user crontab", async () => {
     const wake = vi.fn(async () => "wake-1");
     const setWakeScheduleId = vi.fn();
+    const cronFiles = new Map<string, {
+      path: string;
+      ownerUid: number | null;
+      content: string;
+      createdAtMs: number;
+      updatedAtMs: number;
+    }>();
+    const links = new Map<string, string[]>();
+    const schedules = new Map<string, any>();
     const create = vi.fn((input) => ({
-      id: "sched-1",
+      id: `sched-${schedules.size + 1}`,
       ownerUid: input.ownerUid,
       creator: input.creator,
       runAs: input.runAs,
@@ -921,7 +932,7 @@ describe("pkg shell command", () => {
       createdAtMs: input.now,
       updatedAtMs: input.now,
       state: {
-        nextRunAtMs: input.now + input.expression.afterMs,
+        nextRunAtMs: input.now + 60_000,
         runningAtMs: null,
         lastRunAtMs: null,
         lastStatus: null,
@@ -930,36 +941,116 @@ describe("pkg shell command", () => {
         runCount: 0,
       },
     }));
+    create.mockImplementation((input) => {
+      const record = {
+        id: `sched-${schedules.size + 1}`,
+        ownerUid: input.ownerUid,
+        creator: input.creator,
+        runAs: input.runAs,
+        name: input.name,
+        description: input.description,
+        enabled: input.enabled,
+        expression: input.expression,
+        target: input.target,
+        overlapPolicy: "skip",
+        createdAtMs: input.now,
+        updatedAtMs: input.now,
+        state: {
+          nextRunAtMs: input.now + 60_000,
+          runningAtMs: null,
+          lastRunAtMs: null,
+          lastStatus: null,
+          lastError: null,
+          lastDurationMs: null,
+          runCount: 0,
+        },
+      };
+      schedules.set(record.id, { ...record, wakeScheduleId: null });
+      return record;
+    });
+    const auth = {
+      getPasswdByUsername: vi.fn((username: string) => username === "sam"
+        ? { username: "sam", uid: IDENTITY.uid, gid: IDENTITY.gid, gecos: "", home: IDENTITY.home, shell: "/bin/init" }
+        : null),
+      getPasswdByUid: vi.fn((uid: number) => uid === IDENTITY.uid
+        ? { username: "sam", uid: IDENTITY.uid, gid: IDENTITY.gid, gecos: "", home: IDENTITY.home, shell: "/bin/init" }
+        : null),
+      resolveGids: vi.fn(() => IDENTITY.gids),
+    } as unknown as KernelContext["auth"];
+    const ctx = makeContext({
+      capabilities: ["sched.add", "sched.remove", "sched.list"],
+      auth,
+      caps: {
+        resolve: vi.fn(() => ["shell.*"]),
+      } as unknown as KernelContext["caps"],
+      schedules: {
+        create,
+        setWakeScheduleId,
+        getStored: vi.fn((id: string) => schedules.get(id) ?? null),
+        remove: vi.fn((id: string) => {
+          const existing = schedules.get(id) ?? null;
+          schedules.delete(id);
+          return existing;
+        }),
+        getCronFile: vi.fn((path: string) => cronFiles.get(path) ?? null),
+        listCronFiles: vi.fn(() => [...cronFiles.values()]),
+        upsertCronFile: vi.fn((input) => {
+          const record = {
+            path: input.path,
+            ownerUid: input.ownerUid,
+            content: input.content,
+            createdAtMs: input.now,
+            updatedAtMs: input.now,
+          };
+          cronFiles.set(input.path, record);
+          return record;
+        }),
+        removeCronFile: vi.fn((path: string) => {
+          const existing = cronFiles.get(path) ?? null;
+          cronFiles.delete(path);
+          return existing;
+        }),
+        cronFileScheduleIds: vi.fn((path: string) => links.get(path) ?? []),
+        clearCronFileScheduleLinks: vi.fn((path: string) => links.delete(path)),
+        linkCronFileSchedule: vi.fn((path: string, scheduleId: string) => {
+          links.set(path, [...(links.get(path) ?? []), scheduleId]);
+        }),
+      } as unknown as KernelContext["schedules"],
+      scheduleScheduleWake: wake,
+    });
+    await env.STORAGE.put(
+      "home/sam/jobs.cron",
+      "CRON_TZ=Europe/Amsterdam\n0 9 * * * proc spawn --profile cron \"Daily brief\"\n",
+    );
 
     const result = await handleShellExec(
-      { input: "sched add --name \"quick check\" --after 30s --profile cron \"Run the quick check.\"" },
-      makeContext({
-        capabilities: ["sched.add"],
-        schedules: {
-          create,
-          setWakeScheduleId,
-        } as unknown as KernelContext["schedules"],
-        scheduleScheduleWake: wake,
-      }),
+      { input: "crontab jobs.cron" },
+      ctx,
     );
 
     expect(result.ok).toBe(true);
-    expect(result.stdout).toContain("schedule_id=sched-1");
+    expect(result.stderr).toBe("");
     expect(create).toHaveBeenCalledWith(expect.objectContaining({
       ownerUid: IDENTITY.uid,
-      name: "quick check",
-      expression: { kind: "after", afterMs: 30_000 },
+      name: "cron /var/spool/cron/sam:2",
+      expression: { kind: "cron", expr: "0 9 * * *", timezone: "Europe/Amsterdam" },
       target: {
-        kind: "process.spawn",
-        profile: "cron",
-        prompt: "Run the quick check.",
+        kind: "command.exec",
+        command: "proc spawn --profile cron \"Daily brief\"",
       },
     }));
     expect(wake).toHaveBeenCalledWith("sched-1", expect.any(Number));
     expect(setWakeScheduleId).toHaveBeenCalledWith("sched-1", "wake-1");
+
+    const listed = await handleShellExec(
+      { input: "crontab -l" },
+      ctx,
+    );
+    expect(listed.ok).toBe(true);
+    expect(listed.stdout).toBe("CRON_TZ=Europe/Amsterdam\n0 9 * * * proc spawn --profile cron \"Daily brief\"\n");
   });
 
-  it("creates a process-event schedule from the sched command", async () => {
+  it("keeps sched add as a low-level JSON compatibility path", async () => {
     const wake = vi.fn(async () => "wake-1");
     const setWakeScheduleId = vi.fn();
     const create = vi.fn((input) => ({
@@ -984,9 +1075,19 @@ describe("pkg shell command", () => {
         runCount: 0,
       },
     }));
+    const args = {
+      name: "ops pulse",
+      expression: { kind: "every", everyMs: 900_000 },
+      target: {
+        kind: "process.event",
+        pid: "init:1000",
+        conversationId: "ops",
+        message: "Run pulse.",
+      },
+    };
 
     const result = await handleShellExec(
-      { input: "sched add --name \"ops pulse\" --every 15m --pid init:1000 --conversation ops --message \"Run pulse.\"" },
+      { input: `sched add --json '${JSON.stringify(args)}'` },
       makeContext({
         capabilities: ["sched.add"],
         procs: {

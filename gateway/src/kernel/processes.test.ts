@@ -37,6 +37,27 @@ function createMockSql() {
       return rows([] as T[]);
     }
 
+    if (q.startsWith("UPDATE processes SET context_files_json = '[]'")) {
+      for (const row of table.values()) {
+        if (!row.context_files_json) row.context_files_json = "[]";
+      }
+      return rows([] as T[]);
+    }
+
+    if (q.startsWith("UPDATE processes SET queued_count = 0")) {
+      for (const row of table.values()) {
+        if (typeof row.queued_count !== "number" || row.queued_count < 0) row.queued_count = 0;
+      }
+      return rows([] as T[]);
+    }
+
+    if (q.startsWith("UPDATE processes SET state = 'idle'")) {
+      for (const row of table.values()) {
+        if (!row.state || row.state === "paused" || row.state === "killed") row.state = "idle";
+      }
+      return rows([] as T[]);
+    }
+
     if (q.startsWith("UPDATE processes SET profile = '")) {
       const match = q.match(/SET profile = '([^']+)'/);
       const profile = match?.[1];
@@ -125,7 +146,11 @@ function createMockSql() {
         cwd,
         mounts,
         context_files_json,
-        state: "running",
+        state: "idle",
+        active_run_id: null,
+        active_conversation_id: null,
+        queued_count: 0,
+        last_active_at: null,
         label,
         created_at,
       });
@@ -158,6 +183,36 @@ function createMockSql() {
 
     if (q.startsWith("SELECT * FROM processes ORDER BY")) {
       return rows([...table.values()] as T[]);
+    }
+
+    if (q.startsWith("UPDATE processes\n          SET state = ?")) {
+      const [
+        state,
+        active_run_id,
+        active_conversation_id,
+        queued_count,
+        last_active_at,
+        processId,
+      ] = bindings as [string, string | null, string | null, number, number | null, string];
+      const row = table.get(processId);
+      if (row) {
+        row.state = state;
+        row.active_run_id = active_run_id;
+        row.active_conversation_id = active_conversation_id;
+        row.queued_count = queued_count;
+        row.last_active_at = last_active_at;
+      }
+      return rows([] as T[]);
+    }
+
+    if (q.startsWith("UPDATE processes SET state = ?")) {
+      const [state, lastActiveAt, processId] = bindings as [string, number, string];
+      const row = table.get(processId);
+      if (row) {
+        row.state = state;
+        row.last_active_at = lastActiveAt;
+      }
+      return rows([] as T[]);
     }
 
     if (q.startsWith("UPDATE processes")) {
@@ -274,6 +329,41 @@ describe("ProcessRegistry", () => {
     const record = registry.get("task:3");
     expect(record?.profile).toBe("task");
     expect(record?.cwd).toBe("/srv/work/demo");
+  });
+
+  it("tracks runtime activity fields separately from identity metadata", () => {
+    const sql = createMockSql();
+    const registry = new ProcessRegistry(sql as unknown as SqlStorage);
+    registry.init();
+
+    registry.spawn("task:runtime", makeIdentity("/home/sam"), {
+      profile: "task",
+      cwd: "/home/sam",
+    });
+
+    expect(registry.get("task:runtime")).toMatchObject({
+      state: "idle",
+      activeRunId: null,
+      activeConversationId: null,
+      queuedCount: 0,
+      lastActiveAt: null,
+    });
+
+    registry.updateRuntimeState("task:runtime", {
+      state: "waiting_hil",
+      activeRunId: "run-1",
+      activeConversationId: "default",
+      queuedCount: 2,
+      lastActiveAt: 1234,
+    });
+
+    expect(registry.get("task:runtime")).toMatchObject({
+      state: "waiting_hil",
+      activeRunId: "run-1",
+      activeConversationId: "default",
+      queuedCount: 2,
+      lastActiveAt: 1234,
+    });
   });
 
   it("stores and returns process mounts on spawn", () => {

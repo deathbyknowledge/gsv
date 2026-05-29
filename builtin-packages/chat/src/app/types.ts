@@ -145,6 +145,7 @@ export type MessageRow = {
   thinking?: string[];
   media?: unknown[];
   runId?: string | null;
+  streaming?: boolean;
 };
 
 export type ToolRow = {
@@ -155,6 +156,8 @@ export type ToolRow = {
   syscall?: string | null;
   timestamp: number;
   runId?: string | null;
+  phase?: "planning" | "running";
+  contentIndex?: number;
   output?: unknown;
   ok?: boolean;
   error?: string | null;

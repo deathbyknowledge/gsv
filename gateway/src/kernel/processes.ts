@@ -14,7 +14,15 @@ import type { AiContextProfile } from "../syscalls/ai";
 import type { ProcContextFile } from "../syscalls/proc";
 import type { PackageInstallScope } from "./packages";
 
-export type ProcessState = "running" | "paused" | "killed";
+export type ProcessState = "idle" | "queued" | "running" | "waiting_tool" | "waiting_hil";
+
+export type ProcessRuntimePatch = {
+  state?: ProcessState;
+  activeRunId?: string | null;
+  activeConversationId?: string | null;
+  queuedCount?: number;
+  lastActiveAt?: number | null;
+};
 
 export type ProcessMount = {
   kind: "ripgit-source";
@@ -38,6 +46,10 @@ export type ProcessRecord = {
   home: string;
   cwd: string;
   state: ProcessState;
+  activeRunId: string | null;
+  activeConversationId: string | null;
+  queuedCount: number;
+  lastActiveAt: number | null;
   label: string | null;
   createdAt: number;
   mounts: ProcessMount[];
@@ -61,7 +73,11 @@ export class ProcessRegistry {
         cwd TEXT NOT NULL,
         mounts TEXT NOT NULL DEFAULT '[]',
         context_files_json TEXT NOT NULL DEFAULT '[]',
-        state TEXT NOT NULL DEFAULT 'running',
+        state TEXT NOT NULL DEFAULT 'idle',
+        active_run_id TEXT,
+        active_conversation_id TEXT,
+        queued_count INTEGER NOT NULL DEFAULT 0,
+        last_active_at INTEGER,
         label TEXT,
         created_at INTEGER NOT NULL
       )
@@ -83,9 +99,27 @@ export class ProcessRegistry {
       this.sql.exec("ALTER TABLE processes ADD COLUMN context_files_json TEXT");
     } catch {}
 
+    try {
+      this.sql.exec("ALTER TABLE processes ADD COLUMN active_run_id TEXT");
+    } catch {}
+
+    try {
+      this.sql.exec("ALTER TABLE processes ADD COLUMN active_conversation_id TEXT");
+    } catch {}
+
+    try {
+      this.sql.exec("ALTER TABLE processes ADD COLUMN queued_count INTEGER NOT NULL DEFAULT 0");
+    } catch {}
+
+    try {
+      this.sql.exec("ALTER TABLE processes ADD COLUMN last_active_at INTEGER");
+    } catch {}
+
     this.sql.exec("UPDATE processes SET cwd = home WHERE cwd IS NULL OR cwd = ''");
     this.sql.exec("UPDATE processes SET mounts = '[]' WHERE mounts IS NULL OR mounts = ''");
     this.sql.exec("UPDATE processes SET context_files_json = '[]' WHERE context_files_json IS NULL OR context_files_json = ''");
+    this.sql.exec("UPDATE processes SET queued_count = 0 WHERE queued_count IS NULL OR queued_count < 0");
+    this.sql.exec("UPDATE processes SET state = 'idle' WHERE state IS NULL OR state = '' OR state IN ('paused', 'killed')");
     this.sql.exec("UPDATE processes SET profile = 'init' WHERE (profile IS NULL OR profile = '') AND process_id LIKE 'init:%'");
     this.sql.exec("UPDATE processes SET profile = 'task' WHERE (profile IS NULL OR profile = '') AND process_id LIKE 'task:%'");
     this.sql.exec("UPDATE processes SET profile = 'review' WHERE (profile IS NULL OR profile = '') AND process_id LIKE 'review:%'");
@@ -109,8 +143,8 @@ export class ProcessRegistry {
   ): void {
     this.sql.exec(
       `INSERT OR REPLACE INTO processes
-        (process_id, parent_pid, uid, profile, gid, gids, username, home, cwd, mounts, context_files_json, state, label, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?)`,
+        (process_id, parent_pid, uid, profile, gid, gids, username, home, cwd, mounts, context_files_json, state, active_run_id, active_conversation_id, queued_count, last_active_at, label, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle', NULL, NULL, 0, NULL, ?, ?)`,
       processId,
       opts.parentPid ?? null,
       identity.uid,
@@ -186,7 +220,7 @@ export class ProcessRegistry {
 
   listByProfile(profile: AiContextProfile): ProcessRecord[] {
     return [...this.sql.exec<RowShape>(
-      "SELECT * FROM processes WHERE profile = ? AND state = 'running' ORDER BY created_at ASC",
+      "SELECT * FROM processes WHERE profile = ? ORDER BY created_at ASC",
       profile,
     )].map(toRecord);
   }
@@ -229,11 +263,36 @@ export class ProcessRegistry {
 
   setState(processId: string, state: ProcessState): boolean {
     this.sql.exec(
-      "UPDATE processes SET state = ? WHERE process_id = ?",
+      "UPDATE processes SET state = ?, last_active_at = ? WHERE process_id = ?",
       state,
+      Date.now(),
       processId,
     );
     return this.get(processId) !== null;
+  }
+
+  updateRuntimeState(processId: string, patch: ProcessRuntimePatch): boolean {
+    const existing = this.get(processId);
+    if (!existing) {
+      return false;
+    }
+
+    this.sql.exec(
+      `UPDATE processes
+          SET state = ?,
+              active_run_id = ?,
+              active_conversation_id = ?,
+              queued_count = ?,
+              last_active_at = ?
+        WHERE process_id = ?`,
+      patch.state ?? existing.state,
+      patch.activeRunId !== undefined ? patch.activeRunId : existing.activeRunId,
+      patch.activeConversationId !== undefined ? patch.activeConversationId : existing.activeConversationId,
+      patch.queuedCount !== undefined ? Math.max(0, Math.floor(patch.queuedCount)) : existing.queuedCount,
+      patch.lastActiveAt !== undefined ? patch.lastActiveAt : existing.lastActiveAt,
+      processId,
+    );
+    return true;
   }
 
   kill(processId: string): boolean {
@@ -290,6 +349,10 @@ type RowShape = {
   mounts: string | null;
   context_files_json: string | null;
   state: string;
+  active_run_id: string | null;
+  active_conversation_id: string | null;
+  queued_count: number | null;
+  last_active_at: number | null;
   label: string | null;
   created_at: number;
 };
@@ -305,12 +368,29 @@ function toRecord(row: RowShape): ProcessRecord {
     username: row.username,
     home: row.home,
     cwd: row.cwd ?? row.home,
-    state: row.state as ProcessState,
+    state: normalizeProcessState(row.state),
+    activeRunId: row.active_run_id,
+    activeConversationId: row.active_conversation_id,
+    queuedCount: Math.max(0, Math.floor(row.queued_count ?? 0)),
+    lastActiveAt: row.last_active_at,
     label: row.label,
     createdAt: row.created_at,
     mounts: parseMounts(row.mounts),
     contextFiles: parseContextFiles(row.context_files_json),
   };
+}
+
+function normalizeProcessState(value: string): ProcessState {
+  switch (value) {
+    case "idle":
+    case "queued":
+    case "running":
+    case "waiting_tool":
+    case "waiting_hil":
+      return value;
+    default:
+      return "idle";
+  }
 }
 
 function parseMounts(value: string | null): ProcessMount[] {

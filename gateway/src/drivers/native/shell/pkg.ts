@@ -90,6 +90,7 @@ export function buildPackageCommands(identity: ProcessIdentity, ctx: KernelConte
     "wiki",
     "skills",
     "codemode",
+    "crontab",
     "mcp",
   ]);
   const packageRecords = ctx.packages.list({

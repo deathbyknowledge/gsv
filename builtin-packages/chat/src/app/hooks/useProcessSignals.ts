@@ -10,6 +10,7 @@ import type {
 } from "../types";
 import {
   applyAssistantSignal,
+  applyAssistantStreamSignal,
   applyProcessMessageSignal,
   applyToolCallSignal,
   applyToolResultSignal,
@@ -65,40 +66,40 @@ export function useProcessSignals({
       if (!target) {
         return;
       }
-      if (signal === "process.message") {
-        if (!signalMatchesActiveThread(payload, target)) {
-          return;
-        }
-        prepareForLiveTranscriptActivity();
-        applyProcessMessageSignal(payload, target, setRows, setPendingAssistant);
-      } else if (signal === "process.context") {
-        const next = normalizeContextSignal(payload, target);
-        if (next) {
-          setContextStatesByConversation((current) => ({ ...current, [next.conversationId]: next }));
-          setContextState(next);
-          setMessageCount((current) => next.messageCount ?? current);
-          if (typeof next.lastMessageId === "number") {
-            onContextMessageId(target, next.lastMessageId);
-          }
-          if (next.runId && typeof next.lastMessageId === "number") {
-            setRows((current) => {
-              for (let index = current.length - 1; index >= 0; index -= 1) {
-                const row = current[index];
-                if (row.kind === "message" && row.role === "assistant" && row.runId === next.runId && !row.messageId) {
-                  const updated = current.slice();
-                  updated[index] = { ...row, messageId: next.lastMessageId };
-                  return updated;
-                }
-              }
-              return current;
-            });
-          }
-        }
-      } else if (signal === "process.lifecycle") {
+      if (signal === "proc.changed") {
         const record = asRecord(payload);
         const pid = asString(record?.pid);
         if (pid && pid !== target.pid) {
           return;
+        }
+        const changes = Array.isArray(record?.changes) ? record.changes.map((entry) => asString(entry)).filter(Boolean) : [];
+        if (changes.includes("messages") && asString(record?.content) && signalMatchesActiveThread(payload, target)) {
+          prepareForLiveTranscriptActivity();
+          applyProcessMessageSignal(payload, target, setRows, setPendingAssistant);
+        }
+        if (changes.includes("context")) {
+          const next = normalizeContextSignal(payload, target);
+          if (next) {
+            setContextStatesByConversation((current) => ({ ...current, [next.conversationId]: next }));
+            setContextState(next);
+            setMessageCount((current) => next.messageCount ?? current);
+            if (typeof next.lastMessageId === "number") {
+              onContextMessageId(target, next.lastMessageId);
+            }
+            if (next.runId && typeof next.lastMessageId === "number") {
+              setRows((current) => {
+                for (let index = current.length - 1; index >= 0; index -= 1) {
+                  const row = current[index];
+                  if (row.kind === "message" && row.role === "assistant" && row.runId === next.runId && !row.messageId) {
+                    const updated = current.slice();
+                    updated[index] = { ...row, messageId: next.lastMessageId };
+                    return updated;
+                  }
+                }
+                return current;
+              });
+            }
+          }
         }
         const event = asString(record?.event);
         if (event === "conversation.compacted" || event === "conversation.forked" || event === "conversation.auto_compacted") {
@@ -108,7 +109,7 @@ export function useProcessSignals({
             void loadArchiveSegments(true);
           }
         }
-      } else if (signal === "chat.tool_call") {
+      } else if (signal === "proc.run.tool.started") {
         if (!signalMatchesActiveThread(payload, target)) {
           return;
         }
@@ -116,21 +117,30 @@ export function useProcessSignals({
         setPendingHil(null);
         setPendingAssistant("tool");
         applyToolCallSignal(payload, target, setRows);
-      } else if (signal === "chat.tool_result") {
+      } else if (signal === "proc.run.tool.finished") {
         if (!signalMatchesActiveThread(payload, target)) {
           return;
         }
         prepareForLiveTranscriptActivity();
         applyToolResultSignal(payload, target, setRows);
         setPendingAssistant("thinking");
-      } else if (signal === "chat.text") {
+      } else if (signal === "proc.run.output") {
         if (!signalMatchesActiveThread(payload, target)) {
           return;
         }
         prepareForLiveTranscriptActivity();
         applyAssistantSignal(payload, target, setRows);
         setPendingAssistant(null);
-      } else if (signal === "chat.complete") {
+      } else if (signal === "proc.run.stream") {
+        if (!signalMatchesActiveThread(payload, target)) {
+          return;
+        }
+        const effect = applyAssistantStreamSignal(payload, target, setRows);
+        if (effect) {
+          prepareForLiveTranscriptActivity();
+          setPendingAssistant(effect === "tool" ? "tool" : null);
+        }
+      } else if (signal === "proc.run.finished") {
         if (!signalMatchesActiveThread(payload, target)) {
           return;
         }
@@ -143,20 +153,15 @@ export function useProcessSignals({
           return null;
         });
         setSuppressNextAbortedComplete(false);
-        const errorText = asString(record?.error);
-        if (errorText) {
-          prepareForLiveTranscriptActivity();
-          appendSystem(errorText);
-        }
         void loadThreads();
-      } else if (signal === "chat.hil") {
+      } else if (signal === "proc.run.hil.requested") {
         if (!signalMatchesActiveThread(payload, target)) {
           return;
         }
         prepareForLiveTranscriptActivity();
         setPendingAssistant(null);
         setPendingHil(normalizeHilRequest(payload));
-      } else if (signal === "chat.error" || signal === "process.exit") {
+      } else if (signal === "process.exit") {
         setPendingAssistant(null);
         setPendingHil(null);
         setSuppressNextAbortedComplete(false);

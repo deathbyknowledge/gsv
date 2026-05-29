@@ -51,7 +51,7 @@ describe("signal watch handlers", () => {
     });
 
     const result = handleSignalWatch({
-      signal: "chat.complete",
+      signal: "proc.run.finished",
       processId: "proc-child",
       key: "builder:product-alpha",
       state: { db: "product-alpha" },
@@ -60,7 +60,7 @@ describe("signal watch handlers", () => {
     expect(result.watchId).toBe("watch-1");
     expect(ctx.signalWatches.upsert).toHaveBeenCalledWith(expect.objectContaining({
       uid: 1000,
-      signal: "chat.complete",
+      signal: "proc.run.finished",
       processId: "proc-child",
       key: "builder:product-alpha",
       state: { db: "product-alpha" },
@@ -80,11 +80,11 @@ describe("signal watch handlers", () => {
     });
 
     expect(() => handleSignalWatch({
-      signal: "chat.complete",
+      signal: "proc.run.finished",
     }, ctx)).toThrow("process runtimes must watch an explicit processId");
 
     expect(() => handleSignalWatch({
-      signal: "chat.complete",
+      signal: "proc.run.finished",
       processId: "proc-parent",
     }, ctx)).toThrow("process runtimes cannot watch their own signals");
   });

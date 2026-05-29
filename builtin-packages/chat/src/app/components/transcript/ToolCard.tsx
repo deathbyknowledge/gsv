@@ -13,6 +13,7 @@ import {
 export function ToolCard({ row }: { row: ToolRow }) {
   const syscall = inferToolSyscall(row.toolName, row.syscall);
   const card = describeToolCard(row.toolName, row.args, syscall);
+  const isPlanning = row.kind === "toolCall" && row.phase === "planning";
   const ok = row.kind === "toolCall" ? false : row.ok !== false;
   const statusClass = row.kind === "toolCall" ? "is-pending" : ok ? "is-ok" : "is-error";
   return (
@@ -23,13 +24,13 @@ export function ToolCard({ row }: { row: ToolRow }) {
           {card.subtitle ? <p>{card.subtitle}</p> : null}
         </div>
         <span class={`tool-status ${statusClass}`}>
-          {row.kind === "toolCall" ? "Running" : ok ? "Done" : "Error"}
+          {row.kind === "toolCall" ? isPlanning ? "Preparing" : "Running" : ok ? "Done" : "Error"}
           <span>{card.target}</span>
         </span>
       </div>
       <div class="tool-preview">
         {row.kind === "toolCall"
-          ? <p>Waiting for result.</p>
+          ? <p>{isPlanning ? planningToolStatus(row.toolName, syscall) : "Waiting for result."}</p>
           : <ToolPreview row={row} syscall={syscall} />}
       </div>
       <details class="tool-details">
@@ -38,6 +39,18 @@ export function ToolCard({ row }: { row: ToolRow }) {
       </details>
     </article>
   );
+}
+
+function planningToolStatus(toolName: string, syscall: string | null): string {
+  if (toolName === "Shell" || syscall === "shell.exec") return "Using shell...";
+  if (toolName === "Read" || syscall === "fs.read") return "Reading file...";
+  if (toolName === "Search" || syscall === "fs.search") return "Searching files...";
+  if (toolName === "Write" || syscall === "fs.write") return "Preparing file write...";
+  if (toolName === "Edit" || syscall === "fs.edit") return "Preparing edit...";
+  if (toolName === "Delete" || syscall === "fs.delete") return "Preparing delete...";
+  if (toolName === "CodeMode" || syscall === "codemode.exec" || syscall === "codemode.run") return "Using CodeMode...";
+  if (syscall === "sys.mcp.call") return "Calling MCP tool...";
+  return `Using ${toolName}...`;
 }
 
 function ToolPreview({ row, syscall }: { row: ToolRow; syscall: string | null }) {

@@ -8,9 +8,8 @@ import {
   handleSchedulerRun,
   handleSchedulerUpdate,
 } from "../../../kernel/scheduler";
-import type { SchedulerAddArgs, ScheduleExpression, ScheduleTarget } from "../../../syscalls/scheduler";
-import type { AiContextProfile } from "../../../syscalls/ai";
-import { parseDurationMs, requireCommandCapability, requireShellOptionValue } from "./common";
+import type { SchedulerAddArgs, ScheduleTarget } from "../../../syscalls/scheduler";
+import { requireCommandCapability, requireShellOptionValue } from "./common";
 
 export function buildSchedCommand(ctx: KernelContext) {
   return defineCommand("sched", async (args): Promise<ExecResult> => {
@@ -99,152 +98,10 @@ async function runSchedCommand(args: string[], ctx: KernelContext): Promise<Exec
 }
 
 function parseSchedAddCommand(args: string[]): SchedulerAddArgs {
-  let name: string | undefined;
-  let description: string | undefined;
-  let label: string | undefined;
-  let profile: string | undefined;
-  let timezone: string | undefined;
-  let pid: string | undefined;
-  let conversationId: string | undefined;
-  let data: Record<string, unknown> | undefined;
-  let expression: ScheduleExpression | undefined;
-  let prompt: string | undefined;
-  let enabled = true;
-  const positional: string[] = [];
-
-  for (let index = 0; index < args.length; index += 1) {
-    const current = args[index];
-    if (current === "--json") {
-      return JSON.parse(requireShellOptionValue(args[index + 1], current)) as SchedulerAddArgs;
-    }
-    if (current === "--name") {
-      index += 1;
-      name = requireShellOptionValue(args[index], current);
-      continue;
-    }
-    if (current === "--description") {
-      index += 1;
-      description = requireShellOptionValue(args[index], current);
-      continue;
-    }
-    if (current === "--label") {
-      index += 1;
-      label = requireShellOptionValue(args[index], current);
-      continue;
-    }
-    if (current === "--profile") {
-      index += 1;
-      profile = requireShellOptionValue(args[index], current);
-      continue;
-    }
-    if (current === "--timezone") {
-      index += 1;
-      timezone = requireShellOptionValue(args[index], current);
-      continue;
-    }
-    if (current === "--pid") {
-      index += 1;
-      pid = requireShellOptionValue(args[index], current);
-      continue;
-    }
-    if (current === "--conversation") {
-      index += 1;
-      conversationId = requireShellOptionValue(args[index], current);
-      continue;
-    }
-    if (current === "--data-json") {
-      index += 1;
-      const parsed = JSON.parse(requireShellOptionValue(args[index], current));
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        throw new Error("--data-json must be a JSON object");
-      }
-      data = parsed as Record<string, unknown>;
-      continue;
-    }
-    if (current === "--prompt" || current === "--message") {
-      index += 1;
-      prompt = requireShellOptionValue(args[index], current);
-      continue;
-    }
-    if (current === "--disabled") {
-      enabled = false;
-      continue;
-    }
-    if (current === "--every") {
-      index += 1;
-      expression = { kind: "every", everyMs: parseDurationMs(requireShellOptionValue(args[index], current)) };
-      continue;
-    }
-    if (current === "--after") {
-      index += 1;
-      expression = { kind: "after", afterMs: parseDurationMs(requireShellOptionValue(args[index], current)) };
-      continue;
-    }
-    if (current === "--at") {
-      index += 1;
-      expression = { kind: "at", atMs: parseScheduleAtMs(requireShellOptionValue(args[index], current)) };
-      continue;
-    }
-    if (current === "--cron") {
-      index += 1;
-      expression = {
-        kind: "cron",
-        expr: requireShellOptionValue(args[index], current),
-        timezone: timezone ?? "",
-      };
-      continue;
-    }
-    positional.push(current);
+  if (args[0] !== "--json") {
+    throw new Error("sched add is a low-level compatibility command; use crontab FILE or sched add --json JSON");
   }
-
-  if (!name) {
-    throw new Error("missing --name");
-  }
-  if (!expression) {
-    throw new Error("missing schedule expression (--cron, --every, --after, or --at)");
-  }
-  if (expression.kind === "cron" && timezone !== undefined) {
-    expression = { ...expression, timezone };
-  }
-
-  const message = prompt ?? positional.join(" ").trim();
-  if (!message) {
-    throw new Error("missing prompt/message");
-  }
-
-  const target: ScheduleTarget = pid
-    ? {
-        kind: "process.event",
-        pid,
-        message,
-        ...(conversationId ? { conversationId } : {}),
-        ...(data ? { data } : {}),
-      }
-    : {
-        kind: "process.spawn",
-        prompt: message,
-        ...(profile ? { profile: profile as AiContextProfile } : {}),
-        ...(label ? { label } : {}),
-      };
-
-  return {
-    name,
-    ...(description ? { description } : {}),
-    enabled,
-    expression,
-    target,
-  };
-}
-
-function parseScheduleAtMs(value: string): number {
-  if (/^\d+$/.test(value)) {
-    return Number.parseInt(value, 10);
-  }
-  const parsed = Date.parse(value);
-  if (!Number.isFinite(parsed)) {
-    throw new Error(`invalid --at value: ${value}`);
-  }
-  return parsed;
+  return JSON.parse(requireShellOptionValue(args[1], "--json")) as SchedulerAddArgs;
 }
 
 function requireSchedId(value: string | undefined): string {
@@ -255,6 +112,9 @@ function requireSchedId(value: string | undefined): string {
 }
 
 function formatScheduleTarget(target: ScheduleTarget): string {
+  if (target.kind === "command.exec") {
+    return `cmd:${formatScheduleListText(target.command)}`;
+  }
   if (target.kind === "process.spawn") {
     return `spawn:${target.profile ?? "cron"}`;
   }
@@ -272,15 +132,14 @@ function schedUsage(): string {
   return [
     "Usage:",
     "  sched list [--all]",
-    "  sched add --name NAME (--cron EXPR [--timezone TZ] | --every DURATION | --after DURATION | --at TIME) [--pid PID] [--conversation id] [--profile PROFILE] [--label LABEL] <prompt/message>",
     "  sched add --json JSON",
     "  sched enable <id>",
     "  sched disable <id>",
     "  sched remove <id>",
     "  sched run <id> [--force]",
     "",
-    "Without --pid, sched add spawns a process. With --pid, it delivers a",
-    "process event to that process conversation.",
+    "Use crontab -l, crontab FILE, crontab -r, or /var/spool/cron/<user>",
+    "for normal scheduled jobs. sched is the lower-level schedule inspector.",
     "",
   ].join("\n");
 }

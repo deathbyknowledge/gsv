@@ -122,6 +122,7 @@ describe("ConfigStore", () => {
     expect(values.get("config/ai/api_key")).toBe("");
     expect(values.get("config/ai/provider")).toBe("anthropic");
     expect(values.get("config/ai/model")).toBe("claude-sonnet-4-20250514");
+    expect(values.get("config/ai/generation/streaming")).toBe("auto");
     expect(values.get("config/ai/context.d/00-gsv.md")).toContain("[Process Event]:");
   });
 
@@ -143,7 +144,9 @@ describe("ConfigStore", () => {
     expect(orchestration).toContain("target: \"gsv\"");
     expect(orchestration).toContain("proc profiles");
     expect(orchestration).toContain("proc spawn");
-    expect(orchestration).toContain("sched add");
+    expect(orchestration).toContain("crontab FILE");
+    expect(orchestration).toContain("/var/spool/cron/<username>");
+    expect(orchestration).toContain("sched list");
     expect(orchestration).toContain("~/profiles.d/{name}");
     expect(orchestration).toContain("~/profiles.d/{name}/context.d/*.md");
     expect(orchestration).toContain("root-level files");

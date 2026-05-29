@@ -131,7 +131,7 @@ gsv auth unlink --adapter discord --account-id default --actor-id discord:user:1
 2. The Worker calls the Kernel with `adapter.inbound` using a service identity.
 3. The Kernel resolves the adapter/account/actor link to a local uid.
 4. The message is delivered to the surface-routed process or `init:{uid}`.
-5. The Process DO runs the agent loop and emits `chat.*` signals.
+5. The Process DO runs the agent loop and emits `proc.run.*` signals.
 6. The Kernel sends replies back through `adapter.send`.
 
 Pending human-in-the-loop approvals can be approved or denied from a linked DM

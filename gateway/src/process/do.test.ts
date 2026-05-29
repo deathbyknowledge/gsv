@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterEach, vi } from "vitest";
 import { env, runInDurableObject, runDurableObjectAlarm } from "cloudflare:test";
+import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import type { Process } from "./do";
 import { Kernel } from "../kernel/do";
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
@@ -88,6 +89,78 @@ async function initProcess(pid: string, identity: ProcessIdentity, opts?: { regi
 // ---------------------------------------------------------------------------
 
 describe("Process DO — mechanical", () => {
+  it("projects proc.run signals into kernel process activity", async () => {
+    const pid = "mech-kernel-process-activity";
+    await registerInKernel(pid, ROOT_IDENTITY);
+    const kernel = await getKernelPtr();
+
+    const state = await runInDurableObject(kernel, async (instance: Kernel) => {
+      const k = instance as any;
+      await k.handleProcessSignal(pid, {
+        type: "sig",
+        signal: "proc.run.started",
+        payload: {
+          pid,
+          runId: "run-activity",
+          conversationId: "thread",
+          queuedCount: 1,
+          timestamp: 1000,
+        },
+      });
+      const running = k.procs.get(pid);
+
+      await k.handleProcessSignal(pid, {
+        type: "sig",
+        signal: "proc.run.hil.requested",
+        payload: {
+          pid,
+          runId: "run-activity",
+          conversationId: "thread",
+          queuedCount: 1,
+          timestamp: 1100,
+        },
+      });
+      const waiting = k.procs.get(pid);
+
+      await k.handleProcessSignal(pid, {
+        type: "sig",
+        signal: "proc.run.finished",
+        payload: {
+          pid,
+          runId: "run-activity",
+          conversationId: "thread",
+          queuedCount: 0,
+          timestamp: 1200,
+        },
+      });
+      const idle = k.procs.get(pid);
+
+      return { running, waiting, idle };
+    });
+
+    expect(state.running).toMatchObject({
+      state: "running",
+      activeRunId: "run-activity",
+      activeConversationId: "thread",
+      queuedCount: 1,
+      lastActiveAt: 1000,
+    });
+    expect(state.waiting).toMatchObject({
+      state: "waiting_hil",
+      activeRunId: "run-activity",
+      activeConversationId: "thread",
+      queuedCount: 1,
+      lastActiveAt: 1100,
+    });
+    expect(state.idle).toMatchObject({
+      state: "idle",
+      activeRunId: null,
+      activeConversationId: null,
+      queuedCount: 0,
+      lastActiveAt: 1200,
+    });
+  });
+
   describe("kernel process RPC exposure", () => {
     it("allows non-root processes to call internal ai.config", async () => {
       const pid = "mech-kernel-ai-config";
@@ -287,7 +360,7 @@ describe("Process DO — mechanical", () => {
       });
     });
 
-    it("emits live process.message signals for scheduled runtime events", async () => {
+    it("emits live proc.changed message signals for scheduled runtime events", async () => {
       const pid = "mech-schedule-live-message";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
@@ -319,16 +392,25 @@ describe("Process DO — mechanical", () => {
         role: "system",
       });
       expect(result.messages[0].content).toContain("Scheduled event `nightly` fired.");
-      expect(result.emitted).toHaveLength(1);
+      expect(result.emitted).toHaveLength(2);
       expect(result.emitted[0]).toMatchObject({
-        signal: "process.message",
+        signal: "proc.changed",
         payload: expect.objectContaining({
           pid,
+          changes: ["messages"],
           conversationId: "default",
           messageId: result.messages[0].id,
           role: "system",
           content: result.messages[0].content,
           timestamp: result.messages[0].createdAt,
+        }),
+      });
+      expect(result.emitted[1]).toMatchObject({
+        signal: "proc.run.started",
+        payload: expect.objectContaining({
+          pid,
+          conversationId: "default",
+          reason: "schedule.event",
         }),
       });
     });
@@ -413,7 +495,7 @@ describe("Process DO — mechanical", () => {
       });
 
       const contextSignals = (emitted as Array<{ signal: string; payload: any }>)
-        .filter((entry) => entry.signal === "process.context");
+        .filter((entry) => entry.signal === "proc.changed" && Array.isArray((entry.payload as { changes?: unknown[] }).changes) && ((entry.payload as { changes?: unknown[] }).changes ?? []).includes("context"));
       expect(contextSignals).toHaveLength(2);
       expect(contextSignals[0].payload.context.source).toBe("estimate");
       expect(contextSignals[1].payload.context).toMatchObject({
@@ -519,7 +601,7 @@ describe("Process DO — mechanical", () => {
       });
     });
 
-    it("includes assistant thinking blocks in live chat.text signals", async () => {
+    it("includes assistant thinking blocks in live proc.run.output signals", async () => {
       const pid = "mech-chat-text-thinking";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
@@ -576,7 +658,7 @@ describe("Process DO — mechanical", () => {
       });
 
       const textSignal = (emitted as Array<{ signal: string; payload: any }>)
-        .find((entry) => entry.signal === "chat.text");
+        .find((entry) => entry.signal === "proc.run.output");
       expect(textSignal?.payload).toMatchObject({
         text: "done",
         pid,
@@ -586,6 +668,244 @@ describe("Process DO — mechanical", () => {
           { type: "thinking", thinking: "Need to preserve this reasoning." },
         ],
       });
+    });
+
+    it("treats reasoning-only model turns as generation errors", async () => {
+      const pid = "mech-chat-thinking-only";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const emitted: Array<{ signal: string; payload: unknown }> = [];
+        process.sendSignal = async (signal: string, payload: unknown) => {
+          emitted.push({ signal, payload });
+        };
+        process.generation = {
+          async generate() {
+            return {
+              role: "assistant",
+              content: [
+                { type: "thinking", thinking: "I found the answer but never emitted it." },
+              ],
+              api: "test",
+              provider: "test",
+              model: "test",
+              stopReason: "stop",
+              timestamp: Date.now(),
+            };
+          },
+          async generateText() {
+            return "unused";
+          },
+        };
+
+        process.store.appendMessage("user", "answer visibly");
+        process.currentRun = {
+          runId: "run-chat-thinking-only",
+          queued: false,
+          conversationId: "default",
+          config: {
+            profile: "task",
+            provider: "workers-ai",
+            model: "@cf/nvidia/nemotron-3-120b-a12b",
+            apiKey: "",
+            reasoning: "high",
+            maxTokens: 8192,
+            contextWindowTokens: 256000,
+            contextWindowSource: "config",
+            maxContextBytes: 32768,
+          },
+          tools: [],
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+        await process.continueAgentLoop("run-chat-thinking-only");
+        return {
+          emitted,
+          messages: process.store.getMessages(),
+        };
+      });
+
+      expect(result.messages.map((message: any) => [message.role, message.content])).toEqual([
+        ["user", "answer visibly"],
+        ["system", "Generation failed: LLM returned reasoning but no final response"],
+      ]);
+      expect(result.emitted.some((entry) => entry.signal === "proc.run.output")).toBe(false);
+      const finished = result.emitted.find((entry) => entry.signal === "proc.run.finished")?.payload as any;
+      expect(finished).toMatchObject({
+        status: "error",
+        reason: "generation.empty",
+        error: "Generation failed: LLM returned reasoning but no final response",
+      });
+    });
+
+    it("mirrors provider stream events as proc.run.stream signals", async () => {
+      const pid = "mech-chat-stream";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const emitted = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const emitted: Array<{ signal: string; payload: unknown }> = [];
+        process.sendSignal = async (signal: string, payload: unknown) => {
+          emitted.push({ signal, payload });
+        };
+        process.generation = {
+          stream() {
+            const stream = createAssistantMessageEventStream();
+            const partial = {
+              role: "assistant",
+              content: [{ type: "text", text: "" }],
+              api: "test",
+              provider: "test",
+              model: "test",
+              usage: {
+                input: 0,
+                output: 0,
+                cacheRead: 0,
+                cacheWrite: 0,
+                totalTokens: 0,
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+              },
+              stopReason: "stop",
+              timestamp: Date.now(),
+            } as any;
+            stream.push({ type: "start", partial: { ...partial, content: [] } });
+            stream.push({ type: "text_start", contentIndex: 0, partial });
+            partial.content[0].text = "he";
+            stream.push({ type: "text_delta", contentIndex: 0, delta: "he", partial });
+            partial.content[0].text = "hello";
+            stream.push({ type: "text_delta", contentIndex: 0, delta: "llo", partial });
+            stream.push({ type: "text_end", contentIndex: 0, content: "hello", partial });
+            stream.push({ type: "done", reason: "stop", message: { ...partial, content: [{ type: "text", text: "hello" }] } });
+            return stream;
+          },
+          async generate() {
+            throw new Error("non-stream generation should not be used");
+          },
+          async generateText() {
+            return "hello";
+          },
+        };
+
+        process.store.appendMessage("user", "stream please");
+        process.currentRun = {
+          runId: "run-chat-stream",
+          queued: false,
+          conversationId: "default",
+          config: {
+            profile: "task",
+            provider: "workers-ai",
+            model: "@cf/nvidia/nemotron-3-120b-a12b",
+            apiKey: "",
+            reasoning: "off",
+            maxTokens: 8192,
+            contextWindowTokens: 256000,
+            contextWindowSource: "config",
+            maxContextBytes: 32768,
+          },
+          tools: [],
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+        await process.continueAgentLoop("run-chat-stream");
+        return emitted;
+      });
+
+      const streamSignals = (emitted as Array<{ signal: string; payload: any }>)
+        .filter((entry) => entry.signal === "proc.run.stream");
+      expect(streamSignals.map((entry) => entry.payload.event.type)).toEqual([
+        "start",
+        "text_start",
+        "text_delta",
+        "text_delta",
+        "text_end",
+        "done",
+      ]);
+      expect(streamSignals[2].payload).toMatchObject({
+        pid,
+        runId: "run-chat-stream",
+        conversationId: "default",
+        seq: 3,
+        event: {
+          type: "text_delta",
+          delta: "he",
+        },
+      });
+      const outputSignal = (emitted as Array<{ signal: string; payload: any }>)
+        .find((entry) => entry.signal === "proc.run.output");
+      expect(outputSignal?.payload.text).toBe("hello");
+    });
+
+    it("uses non-streaming generation when generation streaming is disabled", async () => {
+      const pid = "mech-chat-stream-off";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const emitted = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const emitted: Array<{ signal: string; payload: unknown }> = [];
+        process.sendSignal = async (signal: string, payload: unknown) => {
+          emitted.push({ signal, payload });
+        };
+        process.generation = {
+          stream() {
+            throw new Error("stream generation should not be used");
+          },
+          async generate() {
+            return {
+              role: "assistant",
+              content: [{ type: "text", text: "hello" }],
+              api: "test",
+              provider: "test",
+              model: "test",
+              usage: {
+                input: 0,
+                output: 0,
+                cacheRead: 0,
+                cacheWrite: 0,
+                totalTokens: 0,
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+              },
+              stopReason: "stop",
+              timestamp: Date.now(),
+            };
+          },
+          async generateText() {
+            return "hello";
+          },
+        };
+
+        process.store.appendMessage("user", "do not stream");
+        process.currentRun = {
+          runId: "run-chat-stream-off",
+          queued: false,
+          conversationId: "default",
+          config: {
+            profile: "task",
+            provider: "workers-ai",
+            model: "@cf/nvidia/nemotron-3-120b-a12b",
+            apiKey: "",
+            reasoning: "off",
+            maxTokens: 8192,
+            contextWindowTokens: 256000,
+            contextWindowSource: "config",
+            maxContextBytes: 32768,
+            generationStreaming: "off",
+          },
+          tools: [],
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+        await process.continueAgentLoop("run-chat-stream-off");
+        return emitted;
+      });
+
+      expect((emitted as Array<{ signal: string }>).some((entry) => entry.signal === "proc.run.stream")).toBe(false);
+      const outputSignal = (emitted as Array<{ signal: string; payload: any }>)
+        .find((entry) => entry.signal === "proc.run.output");
+      expect(outputSignal?.payload.text).toBe("hello");
     });
   });
 
@@ -883,7 +1203,7 @@ describe("Process DO — mechanical", () => {
       await runInDurableObject(kernel, async (instance: Kernel) => {
         await (instance as any).handleProcessSignal(targetPid, {
           type: "sig",
-          signal: "chat.complete",
+          signal: "proc.run.finished",
           payload: {
             pid: targetPid,
             runId: data.runId,
@@ -941,7 +1261,7 @@ describe("Process DO — mechanical", () => {
         try {
           await instance.recvFrame(targetPid, {
             type: "sig",
-            signal: "chat.complete",
+            signal: "proc.run.finished",
             payload: {
               pid: targetPid,
               runId: data.runId,
@@ -1176,6 +1496,49 @@ describe("Process DO — mechanical", () => {
       const obj = await env.STORAGE.get(archiveKey);
       expect(obj).not.toBeNull();
 
+      const generationsRes = (await stub.recvFrame(
+        makeReq("proc.conversation.generations", { conversationId: "side" }),
+      )) as ResponseOkFrame;
+      expect((generationsRes.data as any).generations).toEqual([1, 2]);
+
+      const manifestRes = (await stub.recvFrame(
+        makeReq("proc.conversation.generation.manifest", {
+          conversationId: "side",
+          generation: 1,
+        }),
+      )) as ResponseOkFrame;
+      expect((manifestRes.data as any).manifest).toMatchObject({
+        conversationId: "side",
+        generation: 1,
+        current: false,
+        archives: [
+          expect.objectContaining({
+            kind: "reset",
+            messages: 1,
+            archivePath: resetData.archivedTo,
+          }),
+        ],
+        segments: [],
+        live: null,
+      });
+
+      const timelineRes = (await stub.recvFrame(
+        makeReq("proc.conversation.timeline", { conversationId: "side" }),
+      )) as ResponseOkFrame;
+      expect((timelineRes.data as any).timeline).toEqual([
+        expect.objectContaining({
+          type: "archive",
+          archiveKind: "reset",
+          generation: 1,
+          archivePath: resetData.archivedTo,
+        }),
+        expect.objectContaining({
+          type: "live",
+          generation: 2,
+          messageCount: 0,
+        }),
+      ]);
+
       await runInDurableObject(stub, (instance: Process) => {
         const store = (instance as any).store;
         expect(store.messageCount()).toBe(1);
@@ -1313,7 +1676,7 @@ describe("Process DO — mechanical", () => {
         });
         expect((instance as any).__signals).toEqual([
           {
-            signal: "process.lifecycle",
+            signal: "proc.changed",
             payload: expect.objectContaining({
               event: "conversation.compacted",
               pid,
@@ -1337,6 +1700,24 @@ describe("Process DO — mechanical", () => {
           id: data.segment.id,
           archivePath: data.archivedTo,
           summaryMessageId: messageIds[0],
+        }),
+      ]);
+
+      const timelineRes = (await stub.recvFrame(
+        makeReq("proc.conversation.timeline", { conversationId: "thread" }),
+      )) as ResponseOkFrame;
+      expect((timelineRes.data as any).timeline).toEqual([
+        expect.objectContaining({
+          type: "segment",
+          id: data.segment.id,
+          generation: 1,
+        }),
+        expect.objectContaining({
+          type: "live",
+          generation: 1,
+          messageCount: 2,
+          firstMessageId: messageIds[0],
+          lastMessageId: messageIds[2],
         }),
       ]);
     });
@@ -1533,7 +1914,7 @@ describe("Process DO — mechanical", () => {
         ]);
         expect(process.__signals).toEqual([
           {
-            signal: "process.lifecycle",
+            signal: "proc.changed",
             payload: expect.objectContaining({
               event: "conversation.forked",
               pid,
@@ -1824,8 +2205,9 @@ describe("Process DO — mechanical", () => {
         kind: "compaction",
       });
       const lifecycleEvents = emitted.emitted
-        .filter((entry) => entry.signal === "process.lifecycle")
-        .map((entry) => (entry.payload as any).event);
+        .filter((entry) => entry.signal === "proc.changed")
+        .map((entry) => (entry.payload as any).event)
+        .filter(Boolean);
       expect(lifecycleEvents).toEqual([
         "conversation.compacted",
         "conversation.auto_compacted",
@@ -1901,7 +2283,7 @@ describe("Process DO — mechanical", () => {
       expect(result.segments).toHaveLength(0);
       expect(result.emitted).toEqual(expect.arrayContaining([
         {
-          signal: "chat.complete",
+          signal: "proc.run.finished",
           payload: expect.objectContaining({
             aborted: true,
             runId: "run-auto-compact-abort",
@@ -1909,8 +2291,9 @@ describe("Process DO — mechanical", () => {
         },
       ]));
       const lifecycleEvents = result.emitted
-        .filter((entry) => entry.signal === "process.lifecycle")
-        .map((entry) => (entry.payload as any).event);
+        .filter((entry) => entry.signal === "proc.changed")
+        .map((entry) => (entry.payload as any).event)
+        .filter(Boolean);
       expect(lifecycleEvents).toEqual([]);
     });
   });
@@ -2439,6 +2822,35 @@ describe("Process DO — mechanical", () => {
       expect(result.result.file.content).toContain("\"ok\":true");
     });
 
+    it("lets process-local codemode read its own /proc conversation view", async () => {
+      const pid = "mech-codemode-self-proc-view";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        store.appendMessage("user", "hello from history");
+        store.appendMessage("assistant", "hello back");
+      });
+
+      const res = (await stub.recvFrame(
+        makeReq("codemode.run", {
+          code: [
+            "const file = await fs.read({ target: \"gsv\", path: \"/proc/self/conversations/default/history\" });",
+            "if (!file.ok) throw new Error(file.error);",
+            "return file.content;",
+          ].join("\n"),
+        }),
+      )) as ResponseOkFrame;
+
+      expect(res.ok).toBe(true);
+      const data = res.data as any;
+      expect(data.status, JSON.stringify(data, null, 2)).toBe("completed");
+      expect(data.result).toContain("\"role\":\"user\"");
+      expect(data.result).toContain("hello from history");
+      expect(data.result).toContain("\"role\":\"assistant\"");
+      expect(data.result).toContain("hello back");
+    });
+
     it("returns failed json for malformed codemode eval source", async () => {
       const pid = "mech-codemode-shell-syntax-error";
       await initProcess(pid, ROOT_IDENTITY);
@@ -2593,6 +3005,26 @@ describe("Process DO — mechanical", () => {
         const obj = await env.STORAGE.get(archiveKey);
         expect(obj).not.toBeNull();
       }
+
+      const manifestRes = (await stub.recvFrame(
+        makeReq("proc.conversation.generation.manifest", {
+          conversationId: "default",
+          generation: 1,
+        }),
+      )) as ResponseOkFrame;
+      expect((manifestRes.data as any).manifest).toMatchObject({
+        conversationId: "default",
+        generation: 1,
+        current: false,
+        archives: [
+          expect.objectContaining({
+            kind: "process-reset",
+            messages: 2,
+            archivePath: expect.stringMatching(/\/default\.gen-1\.jsonl\.gz$/),
+          }),
+        ],
+        live: null,
+      });
     });
 
     it("returns zero when no messages to archive", async () => {
@@ -2721,6 +3153,23 @@ describe("Process DO — mechanical", () => {
         expect(store.totalMessageCount()).toBe(0);
         expect(store.getConversation("default").generation).toBe(2);
         expect(store.getConversation("build").generation).toBe(2);
+      });
+
+      const manifestRes = (await stub.recvFrame(
+        makeReq("proc.conversation.generation.manifest", {
+          conversationId: "build",
+          generation: 1,
+        }),
+      )) as ResponseOkFrame;
+      expect((manifestRes.data as any).manifest).toMatchObject({
+        conversationId: "build",
+        generation: 1,
+        archives: [
+          expect.objectContaining({
+            kind: "kill",
+            messages: 1,
+          }),
+        ],
       });
     });
   });

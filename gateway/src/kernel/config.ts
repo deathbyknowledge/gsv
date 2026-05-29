@@ -51,11 +51,11 @@ const GSV_PROCESS_ORCHESTRATION = [
   "",
   "Use `proc call <pid> --timeout 60s <message>` for bounded delegation when you need a result; the reply arrives later as an `[Process Event]` IPC reply or timeout. To delegate to a new worker and get a result, first run `proc spawn --profile task --label '...'`, then `proc call <new-pid> --timeout 10m '...'`. Use `proc spawn --prompt ...` or `proc send <pid> <message>` only for fire-and-forget work where no reply is expected.",
   "",
-  "Use the native `sched` command for cron/automation: `sched list`, `sched add`, `sched enable`, `sched disable`, `sched remove`, and `sched run`. Prefer `sched add ... --profile cron <prompt>` for recurring background worker processes. Use `sched add ... --pid init:<uid> <message>` only when the schedule should message an existing long-lived process.",
+  "Use `crontab` and cron files for automation. `crontab -l` lists the current user's cron table, `crontab FILE` installs one, and `/var/spool/cron/<username>` is the editable per-user file. Each job is a five-field cron line followed by a shell command. Use `sched list`, `sched run`, `sched enable`, `sched disable`, and `sched remove` only for low-level schedule inspection and control.",
   "",
-  "Schedule examples: `sched add --name daily-brief --cron '0 9 * * *' --timezone Europe/Amsterdam --profile cron 'Prepare the daily brief.'`, `sched add --name pulse --every 15m --profile cron 'Run the pulse check.'`, `sched add --name reminder --after 1h 'Follow up once.'`.",
+  "Cron examples: `printf '0 4 * * * proc compact init:1000 --conversation default --keep-last 80 --generate-summary\\n' > /var/spool/cron/sam`, `printf '0 9 * * * proc spawn --profile cron --label daily-brief \"Prepare the daily brief.\"\\n' > ~/daily.cron && crontab ~/daily.cron`, `crontab -l`.",
   "",
-  "Use `man proc`, `man sched`, `proc --help`, and `sched --help` for exact syntax. Keep arbitrary device work on the same tool surface by choosing the correct `target` rather than inventing a new model-specific tool.",
+  "Use `man proc`, `man crontab`, `man sched`, `proc --help`, `crontab --help`, and `sched --help` for exact syntax. Keep arbitrary device work on the same tool surface by choosing the correct `target` rather than inventing a new model-specific tool.",
 ].join("\n");
 
 const GSV_RUNTIME_FACTS = [
@@ -154,6 +154,8 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   "config/ai/max_context_bytes": "32768",
   // Maximum time to wait for a single model generation before releasing the run.
   "config/ai/generation/timeout_ms": "180000",
+  // Generation streaming transport: auto streams when supported, off forces final-output only.
+  "config/ai/generation/streaming": "auto",
   // Default speech synthesis model and output settings.
   "config/ai/speech/model": "@cf/deepgram/aura-2-en",
   "config/ai/speech/speaker": "luna",

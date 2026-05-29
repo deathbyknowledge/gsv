@@ -230,6 +230,10 @@
   margin: 0 0 10px;
 }
 
+.message-thinking.is-live summary {
+  color: #7a5d13;
+}
+
 .message-thinking summary,
 .tool-details summary {
   cursor: pointer;

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { env } from "cloudflare:test";
 import { GsvFs, parseMode, isValidMode, resolveUserPath } from "./index";
+import type { KernelRefs } from "./index";
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 
 const ROOT: ProcessIdentity = {
@@ -86,6 +87,484 @@ function makeConfigBackedFs(
     caps: null as never,
     config: config as never,
   });
+}
+
+function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
+  const processRecord = {
+    processId: "task-alpha",
+    parentPid: "init:1000",
+    uid: 1000,
+    profile: "task",
+    gid: 1000,
+    gids: [1000],
+    username: "sam",
+    home: "/home/sam",
+    cwd: "/home/sam",
+    state: "idle",
+    activeRunId: null,
+    activeConversationId: null,
+    queuedCount: 0,
+    lastActiveAt: null,
+    label: "Alpha",
+    createdAt: 100,
+    mounts: [],
+    contextFiles: [{ name: "brief.md", text: "Brief" }],
+  };
+  const otherProcessRecord = {
+    ...processRecord,
+    processId: "task-foreign",
+    uid: 1001,
+    username: "alice",
+  };
+  const conversations = [
+    {
+      id: "default",
+      generation: 1,
+      status: "open",
+      title: null,
+      messageCount: 2,
+      createdAt: 1000,
+      updatedAt: 2000,
+    },
+    {
+      id: "build",
+      generation: 2,
+      status: "open",
+      title: "Build",
+      messageCount: 1,
+      createdAt: 1100,
+      updatedAt: 2100,
+    },
+  ];
+  const history = {
+    default: [
+      { id: 1, role: "user", content: "hello", timestamp: 1000 },
+      { id: 2, role: "assistant", content: { text: "hi" }, timestamp: 1100 },
+    ],
+    build: [
+      { id: 3, role: "user", content: "run build", timestamp: 1200 },
+    ],
+  };
+  const segment = {
+    id: "seg-1",
+    conversationId: "default",
+    generation: 1,
+    kind: "compaction",
+    fromMessageId: 1,
+    toMessageId: 1,
+    archivePath: "/var/sessions/sam/task-alpha/conversations/default/seg-1.jsonl.gz",
+    summaryMessageId: 2,
+    createdAt: 1300,
+  };
+  const segmentMessages = [
+    { id: 1, role: "user", content: "archived hello", timestamp: 1000 },
+  ];
+  const archive = {
+    id: "reset-1",
+    conversationId: "default",
+    generation: 1,
+    kind: "reset",
+    messages: 2,
+    archivePath: "/var/sessions/sam/task-alpha/conversations/default/reset-1.jsonl.gz",
+    createdAt: 1600,
+  };
+  const liveGeneration = {
+    conversationId: "default",
+    generation: 1,
+    messageCount: 2,
+    firstMessageId: 1,
+    lastMessageId: 2,
+    updatedAt: 2000,
+  };
+  const schedules = [
+    {
+      id: "sched-1",
+      ownerUid: 1000,
+      creator: { kind: "user", uid: 1000, username: "sam" },
+      runAs: { kind: "user", uid: 1000, username: "sam" },
+      name: "daily pulse",
+      enabled: true,
+      expression: { kind: "every", everyMs: 60_000 },
+      target: { kind: "process.event", pid: "task-alpha", message: "pulse" },
+      overlapPolicy: "skip",
+      createdAtMs: 1000,
+      updatedAtMs: 1000,
+      state: {
+        nextRunAtMs: 2000,
+        runningAtMs: null,
+        lastRunAtMs: 1500,
+        lastStatus: "ok",
+        lastError: null,
+        lastDurationMs: 10,
+        runCount: 1,
+      },
+    },
+    {
+      id: "sched-foreign",
+      ownerUid: 1001,
+      creator: { kind: "user", uid: 1001, username: "alice" },
+      runAs: { kind: "user", uid: 1001, username: "alice" },
+      name: "foreign",
+      enabled: true,
+      expression: { kind: "every", everyMs: 60_000 },
+      target: { kind: "process.event", pid: "task-foreign", message: "pulse" },
+      overlapPolicy: "skip",
+      createdAtMs: 1000,
+      updatedAtMs: 1000,
+      state: {
+        nextRunAtMs: 2000,
+        runningAtMs: null,
+        lastRunAtMs: null,
+        lastStatus: null,
+        lastError: null,
+        lastDurationMs: null,
+        runCount: 0,
+      },
+    },
+  ];
+  const packages = [
+    {
+      packageId: "import:sam/tools:packages/weather",
+      scope: { kind: "user", uid: 1000 },
+      manifest: {
+        name: "weather",
+        description: "Weather tools",
+        version: "1.2.3",
+        runtime: "web-ui",
+        source: {
+          repo: "sam/tools",
+          ref: "main",
+          subdir: "packages/weather",
+          resolvedCommit: "abc123",
+        },
+        entrypoints: [
+          {
+            name: "Weather",
+            kind: "ui",
+            module: "src/main.tsx",
+            route: "/apps/weather",
+          },
+          {
+            name: "Weather command",
+            kind: "command",
+            module: "src/backend.ts",
+            command: "weather",
+            description: "Fetch weather.",
+            syscalls: ["fs.read"],
+          },
+        ],
+        profiles: [
+          {
+            name: "forecast",
+            displayName: "Forecast",
+            contextFiles: [{ name: "brief.md", text: "Forecast context" }],
+          },
+        ],
+        capabilities: {
+          bindings: [{
+            binding: "KERNEL",
+            kind: "kernel",
+            interfaceName: "gsv.kernel.v1",
+            required: true,
+          }],
+        },
+      },
+      artifact: {
+        hash: "sha256:weather",
+        mainModule: "src/main.js",
+        modulePaths: ["src/main.js", "src/backend.js"],
+        publicFilePaths: ["browser/src/main.js"],
+      },
+      grants: {
+        bindings: [{
+          binding: "KERNEL",
+          providerKind: "kernel-entrypoint",
+          providerRef: "kernel://app/request",
+        }],
+      },
+      enabled: true,
+      reviewRequired: true,
+      reviewedAt: 1700,
+      installedAt: 1000,
+      updatedAt: 2000,
+    },
+    {
+      packageId: "builtin:chat@1.0.0",
+      scope: { kind: "global" },
+      manifest: {
+        name: "chat",
+        description: "Chat application",
+        version: "1.0.0",
+        runtime: "web-ui",
+        source: {
+          repo: "root/gsv",
+          ref: "main",
+          subdir: "builtin-packages/chat",
+          resolvedCommit: "def456",
+        },
+        entrypoints: [{
+          name: "Chat",
+          kind: "ui",
+          module: "src/main.tsx",
+          route: "/apps/chat",
+        }],
+      },
+      artifact: {
+        hash: "sha256:chat",
+        mainModule: "src/main.js",
+        modulePaths: ["src/main.js"],
+      },
+      enabled: true,
+      reviewRequired: false,
+      reviewedAt: null,
+      installedAt: 900,
+      updatedAt: 1900,
+    },
+    {
+      packageId: "import:alice/private:app",
+      scope: { kind: "user", uid: 1001 },
+      manifest: {
+        name: "private",
+        description: "Hidden package",
+        version: "1.0.0",
+        runtime: "web-ui",
+        source: {
+          repo: "alice/private",
+          ref: "main",
+          subdir: "app",
+        },
+        entrypoints: [{
+          name: "Private",
+          kind: "ui",
+          module: "src/main.tsx",
+          route: "/apps/private",
+        }],
+      },
+      artifact: {
+        hash: "sha256:private",
+        mainModule: "src/main.js",
+        modulePaths: ["src/main.js"],
+      },
+      enabled: true,
+      reviewRequired: false,
+      reviewedAt: null,
+      installedAt: 800,
+      updatedAt: 1800,
+    },
+  ];
+  const packageScopeKey = (scope: any) => scope.kind === "user" ? `user:${scope.uid}` : "global";
+  let samCrontab = "CRON_TZ=Europe/Amsterdam\n0 9 * * * proc spawn --profile cron \"Daily pulse\"\n";
+  const systemCrontabs = new Map<string, string>([
+    ["daily", "0 5 * * * proc compact init:1000 --conversation default --keep-last 80\n"],
+  ]);
+  const passwdEntries = [ROOT, SAM, ALICE].map((user) => ({
+    username: user.username,
+    uid: user.uid,
+    gid: user.gid,
+    gecos: user.username,
+    home: user.home,
+    shell: "/bin/sh",
+  }));
+  const canAccessCrontab = (username: string) => identity.uid === 0 || identity.username === username;
+
+  const kernel: KernelRefs = {
+    auth: {
+      getPasswdByUsername(username: string) {
+        return passwdEntries.find((entry) => entry.username === username) ?? null;
+      },
+      getPasswdByUid(uid: number) {
+        return passwdEntries.find((entry) => entry.uid === uid) ?? null;
+      },
+    } as never,
+    procs: {
+      get(pid: string) {
+        if (pid === "task-alpha") return processRecord;
+        if (pid === "task-foreign") return otherProcessRecord;
+        return null;
+      },
+      list(uid?: number) {
+        return [processRecord, otherProcessRecord].filter((record) => uid === undefined || record.uid === uid);
+      },
+    } as never,
+    devices: null as never,
+    caps: null as never,
+    config: null as never,
+    packages: {
+      list(args?: { scopes?: any[]; enabled?: boolean; name?: string; runtime?: string }) {
+        const visibleScopes = args?.scopes?.map(packageScopeKey);
+        return packages.filter((record) => {
+          if (visibleScopes && !visibleScopes.includes(packageScopeKey(record.scope))) return false;
+          if (typeof args?.enabled === "boolean" && record.enabled !== args.enabled) return false;
+          if (args?.name && record.manifest.name !== args.name) return false;
+          if (args?.runtime && record.manifest.runtime !== args.runtime) return false;
+          return true;
+        }) as never;
+      },
+    } as never,
+    cron: {
+      listUserCrontabs() {
+        return canAccessCrontab("sam") ? ["sam"] : [];
+      },
+      readUserCrontab(username: string) {
+        if (username === "sam" && !canAccessCrontab(username)) {
+          throw new Error(`Permission denied: cannot access crontab for ${username}`);
+        }
+        return username === "sam" ? samCrontab : undefined;
+      },
+      async installUserCrontab(username: string, content: string) {
+        if (username !== "sam") throw new Error(`Unknown user: ${username}`);
+        if (!canAccessCrontab(username)) throw new Error(`Permission denied: cannot access crontab for ${username}`);
+        samCrontab = content.endsWith("\n") ? content : `${content}\n`;
+      },
+      async removeUserCrontab(username: string) {
+        if (username !== "sam") return false;
+        if (!canAccessCrontab(username)) throw new Error(`Permission denied: cannot access crontab for ${username}`);
+        samCrontab = "";
+        return true;
+      },
+      listSystemCrontabs() {
+        return [...systemCrontabs.keys()].sort();
+      },
+      readSystemCrontab(name: string) {
+        return systemCrontabs.get(name);
+      },
+      async installSystemCrontab(name: string, content: string) {
+        if (identity.uid !== 0) throw new Error("Permission denied: cannot install system crontabs");
+        systemCrontabs.set(name, content.endsWith("\n") ? content : `${content}\n`);
+      },
+      async removeSystemCrontab(name: string) {
+        if (identity.uid !== 0) throw new Error("Permission denied: cannot remove system crontabs");
+        return systemCrontabs.delete(name);
+      },
+    },
+    schedules: {
+      list(args) {
+        const records = schedules.filter((schedule) => args.ownerUid === undefined || schedule.ownerUid === args.ownerUid);
+        return { records: records as never, count: records.length };
+      },
+      history(scheduleId: string) {
+        if (scheduleId !== "sched-1") return [];
+        return [{
+          id: "run-1",
+          scheduleId,
+          scheduledAtMs: 1400,
+          startedAtMs: 1401,
+          finishedAtMs: 1411,
+          status: "ok",
+          result: { delivered: true },
+        }];
+      },
+    },
+    async processRequest(_pid, call, args) {
+      const conversationId = String(args?.conversationId ?? "default");
+      if (call === "proc.conversation.list") {
+        return { ok: true, pid: "task-alpha", conversations };
+      }
+      if (call === "proc.conversation.get") {
+        return {
+          ok: true,
+          pid: "task-alpha",
+          conversation: conversations.find((conversation) => conversation.id === conversationId) ?? null,
+        };
+      }
+      if (call === "proc.history") {
+        const messages = history[conversationId as keyof typeof history] ?? [];
+        const offset = Number(args?.offset ?? 0);
+        const limit = Number(args?.limit ?? 500);
+        return {
+          ok: true,
+          pid: "task-alpha",
+          conversationId,
+          messages: messages.slice(offset, offset + limit),
+          messageCount: messages.length,
+        };
+      }
+      if (call === "proc.conversation.segments") {
+        return {
+          ok: true,
+          pid: "task-alpha",
+          conversationId,
+          segments: conversationId === "default" ? [segment] : [],
+        };
+      }
+      if (call === "proc.conversation.segment.read") {
+        return {
+          ok: true,
+          pid: "task-alpha",
+          conversationId,
+          segment,
+          messages: segmentMessages,
+          messageCount: segmentMessages.length,
+        };
+      }
+      if (call === "proc.conversation.timeline") {
+        return {
+          ok: true,
+          pid: "task-alpha",
+          conversationId,
+          timeline: conversationId === "default"
+            ? [
+                {
+                  type: "segment",
+                  id: segment.id,
+                  conversationId: segment.conversationId,
+                  generation: segment.generation,
+                  segmentKind: segment.kind,
+                  fromMessageId: segment.fromMessageId,
+                  toMessageId: segment.toMessageId,
+                  archivePath: segment.archivePath,
+                  summaryMessageId: segment.summaryMessageId,
+                  createdAt: segment.createdAt,
+                },
+                {
+                  type: "archive",
+                  id: archive.id,
+                  conversationId: archive.conversationId,
+                  generation: archive.generation,
+                  archiveKind: archive.kind,
+                  messages: archive.messages,
+                  archivePath: archive.archivePath,
+                  createdAt: archive.createdAt,
+                },
+                { type: "live", ...liveGeneration },
+              ]
+            : [{ type: "live", conversationId, generation: 2, messageCount: 1, firstMessageId: 3, lastMessageId: 3, updatedAt: 2100 }],
+        };
+      }
+      if (call === "proc.conversation.generations") {
+        return {
+          ok: true,
+          pid: "task-alpha",
+          conversationId,
+          generations: conversationId === "default" ? [1] : [2],
+        };
+      }
+      if (call === "proc.conversation.generation.manifest") {
+        const generation = Number(args?.generation);
+        const isDefaultGeneration = conversationId === "default" && generation === 1;
+        return {
+          ok: true,
+          pid: "task-alpha",
+          conversationId,
+          manifest: isDefaultGeneration
+            ? {
+                conversationId,
+                generation,
+                current: true,
+                status: "open",
+                title: null,
+                archives: [archive],
+                segments: [segment],
+                live: liveGeneration,
+              }
+            : null,
+        };
+      }
+      return { ok: false, error: "unknown call" };
+    },
+  };
+
+  return new GsvFs(env.STORAGE, identity, kernel, selfPid);
 }
 
 describe("parseMode", () => {
@@ -686,6 +1165,209 @@ describe("GsvFs virtual /sys config tree", () => {
     expect(users).toEqual(["1000"]);
 
     await expect(fs.readdir("/sys/users/1001")).rejects.toThrow("ENOENT");
+  });
+});
+
+describe("GsvFs Linux-like runtime views", () => {
+  it("exposes process conversations and compacted segments under /proc", async () => {
+    const fs = makeRuntimeViewFs(SAM, "task-alpha");
+
+    await expect(fs.readdir("/proc/task-alpha")).resolves.toEqual([
+      "context.d",
+      "conversations",
+      "identity",
+      "status",
+    ]);
+    await expect(fs.readdir("/proc/self/conversations")).resolves.toEqual(["build", "default"]);
+    await expect(fs.readdir("/proc/task-alpha/conversations")).resolves.toEqual(["build", "default"]);
+    await expect(fs.readdir("/proc/task-alpha/conversations/default")).resolves.toEqual([
+      "generations",
+      "history",
+      "segments",
+      "status",
+      "timeline",
+    ]);
+
+    const status = JSON.parse(await fs.readFile("/proc/task-alpha/conversations/default/status"));
+    expect(status).toMatchObject({ id: "default", generation: 1, messageCount: 2 });
+
+    const historyLines = (await fs.readFile("/proc/task-alpha/conversations/default/history"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(historyLines).toEqual([
+      expect.objectContaining({ id: 1, role: "user" }),
+      expect.objectContaining({ id: 2, role: "assistant" }),
+    ]);
+
+    await expect(fs.readdir("/proc/task-alpha/conversations/default/segments")).resolves.toEqual(["seg-1"]);
+    const segmentLines = (await fs.readFile("/proc/task-alpha/conversations/default/segments/seg-1"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(segmentLines).toEqual([
+      expect.objectContaining({ id: 1, content: "archived hello" }),
+    ]);
+
+    const timelineLines = (await fs.readFile("/proc/task-alpha/conversations/default/timeline"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(timelineLines).toEqual([
+      expect.objectContaining({ type: "segment", id: "seg-1" }),
+      expect.objectContaining({ type: "archive", id: "reset-1", archiveKind: "reset" }),
+      expect.objectContaining({ type: "live", generation: 1, messageCount: 2 }),
+    ]);
+
+    await expect(fs.readdir("/proc/task-alpha/conversations/default/generations")).resolves.toEqual(["1"]);
+    await expect(fs.readdir("/proc/task-alpha/conversations/default/generations/1")).resolves.toEqual(["manifest"]);
+    const manifest = JSON.parse(
+      await fs.readFile("/proc/task-alpha/conversations/default/generations/1/manifest"),
+    );
+    expect(manifest).toMatchObject({
+      conversationId: "default",
+      generation: 1,
+      current: true,
+      archives: [expect.objectContaining({ id: "reset-1" })],
+      segments: [expect.objectContaining({ id: "seg-1" })],
+      live: expect.objectContaining({ messageCount: 2 }),
+    });
+  });
+
+  it("hides another user's process conversation view from non-root users", async () => {
+    const fs = makeRuntimeViewFs(SAM);
+
+    await expect(fs.readdir("/proc/task-foreign")).rejects.toThrow("ENOENT");
+  });
+
+  it("exposes installed package status and metadata under /var/lib/gsv/packages", async () => {
+    const fs = makeRuntimeViewFs(SAM);
+    const weatherBase = encodeURIComponent("import:sam/tools:packages/weather");
+    const chatBase = encodeURIComponent("builtin:chat@1.0.0");
+    const hiddenBase = encodeURIComponent("import:alice/private:app");
+
+    await expect(fs.readdir("/var/lib")).resolves.toEqual(["gsv"]);
+    await expect(fs.readdir("/var/lib/gsv/packages")).resolves.toEqual(["info", "status"]);
+    await expect(fs.readdir("/var/lib/gsv/packages/info")).resolves.toEqual([
+      `${chatBase}.list`,
+      `${chatBase}.manifest`,
+      `${chatBase}.refs`,
+      `${weatherBase}.list`,
+      `${weatherBase}.manifest`,
+      `${weatherBase}.refs`,
+    ]);
+
+    const status = await fs.readFile("/var/lib/gsv/packages/status");
+    expect(status).toContain("Package: import:sam/tools:packages/weather");
+    expect(status).toContain("Name: weather");
+    expect(status).toContain("Enabled: yes");
+    expect(status).toContain("Scope: user:1000");
+    expect(status).toContain("Package: builtin:chat@1.0.0");
+    expect(status).not.toContain("import:alice/private:app");
+
+    const manifest = JSON.parse(await fs.readFile(`/var/lib/gsv/packages/info/${weatherBase}.manifest`));
+    expect(manifest).toMatchObject({
+      name: "weather",
+      source: {
+        repo: "sam/tools",
+        subdir: "packages/weather",
+      },
+    });
+
+    const refs = JSON.parse(await fs.readFile(`/var/lib/gsv/packages/info/${weatherBase}.refs`));
+    expect(refs).toMatchObject({
+      packageId: "import:sam/tools:packages/weather",
+      source: {
+        ref: "main",
+        resolvedCommit: "abc123",
+      },
+      artifact: {
+        hash: "sha256:weather",
+      },
+      paths: {
+        source: "/src/packages/weather",
+        commands: ["/usr/local/bin/weather"],
+        publicFiles: ["/public/gsv/packages/sha256-weather/browser/src/main.js"],
+      },
+    });
+
+    const packageList = (await fs.readFile(`/var/lib/gsv/packages/info/${weatherBase}.list`))
+      .trim()
+      .split("\n");
+    expect(packageList).toEqual([
+      `/var/lib/gsv/packages/info/${weatherBase}.list`,
+      `/var/lib/gsv/packages/info/${weatherBase}.manifest`,
+      `/var/lib/gsv/packages/info/${weatherBase}.refs`,
+      "/src/packages/weather",
+      "/usr/local/bin/weather",
+      "/public/gsv/packages/sha256-weather/browser/src/main.js",
+    ]);
+
+    await expect(fs.readFile(`/var/lib/gsv/packages/info/${hiddenBase}.manifest`)).rejects.toThrow("ENOENT");
+    await expect(fs.writeFile("/var/lib/gsv/packages/status", "nope")).rejects.toThrow("EPERM");
+  });
+
+  it("exposes crontabs and scheduler run history under /var", async () => {
+    const fs = makeRuntimeViewFs(SAM);
+
+    await expect(fs.readdir("/var")).resolves.toEqual(expect.arrayContaining(["log", "spool"]));
+    await expect(fs.readdir("/var/spool/cron")).resolves.toEqual(["sam"]);
+    await expect(fs.writeFile("/var/log/custom", "hidden")).rejects.toThrow("EPERM");
+
+    const crontab = await fs.readFile("/var/spool/cron/sam");
+    expect(crontab).toContain("CRON_TZ=Europe/Amsterdam");
+    expect(crontab).toContain("proc spawn --profile cron");
+    const crontabStat = await fs.statExtended("/var/spool/cron/sam");
+    expect(crontabStat).toMatchObject({
+      isFile: true,
+      mode: 0o600,
+      uid: SAM.uid,
+      gid: SAM.gid,
+    });
+    expect(crontabStat.size).toBeGreaterThan(0);
+
+    await fs.writeFile("/var/spool/cron/sam", "0 4 * * * proc compact init:1000 --conversation default --keep-last 80\n");
+    await expect(fs.readFile("/var/spool/cron/sam"))
+      .resolves.toBe("0 4 * * * proc compact init:1000 --conversation default --keep-last 80\n");
+
+    const aliceFs = makeRuntimeViewFs(ALICE);
+    await expect(aliceFs.readdir("/var/spool/cron")).resolves.toEqual([]);
+    await expect(aliceFs.readFile("/var/spool/cron/sam")).rejects.toThrow("Permission denied");
+    await expect(aliceFs.statExtended("/var/spool/cron/sam")).rejects.toThrow("Permission denied");
+    await expect(aliceFs.writeFile("/var/spool/cron/sam", "0 1 * * * echo no\n")).rejects.toThrow("Permission denied");
+
+    await expect(fs.readFile("/var/spool/cron/sched-foreign")).rejects.toThrow("ENOENT");
+
+    const logLines = (await fs.readFile("/var/log/gsv/scheduler"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(logLines).toEqual([
+      expect.objectContaining({
+        id: "run-1",
+        scheduleId: "sched-1",
+        scheduleName: "daily pulse",
+      }),
+    ]);
+  });
+
+  it("resolves system crontabs through virtual /etc parents", async () => {
+    const fs = makeRuntimeViewFs(SAM);
+
+    await expect(fs.readdir("/etc")).resolves.toEqual(expect.arrayContaining(["cron.d", "group", "passwd", "shadow"]));
+    await expect(fs.readdir("/etc/cron.d")).resolves.toEqual(["daily"]);
+    await expect(fs.readFile("/etc/cron.d/daily")).resolves.toContain("proc compact");
+    await expect(fs.statExtended("/etc/cron.d/daily")).resolves.toMatchObject({
+      isFile: true,
+      mode: 0o644,
+      uid: 0,
+      gid: 0,
+    });
+    await expect(fs.writeFile("/etc/cron.d/nightly", "0 4 * * * proc list\n")).rejects.toThrow("Permission denied");
+
+    const rootFs = makeRuntimeViewFs(ROOT);
+    await rootFs.writeFile("/etc/cron.d/nightly", "0 4 * * * proc list\n");
+    await expect(rootFs.readFile("/etc/cron.d/nightly")).resolves.toBe("0 4 * * * proc list\n");
   });
 });
 

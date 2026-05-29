@@ -71,8 +71,8 @@ export function MessageBubble({
         </details>
       </div>
       {thinking.length > 0 ? (
-        <details class="message-thinking">
-          <summary>Reasoning</summary>
+        <details class={`message-thinking${row.streaming ? " is-live" : ""}`} open={row.streaming}>
+          <summary>{row.streaming ? "Reasoning..." : "Reasoning"}</summary>
           <div>{thinking.join("\n\n")}</div>
         </details>
       ) : null}

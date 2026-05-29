@@ -14,11 +14,13 @@ import {
   createProcessSourceBackend,
   RipgitClient,
   resolveUserPath,
+  requestProcessView,
   formatSize,
   isTextContentType,
   inferContentType,
 } from "../../fs";
 import type { KernelContext } from "../../kernel/context";
+import { createCronFileService } from "../../kernel/crontab";
 import { visiblePackageScopesForActor } from "../../kernel/packages";
 import type { FsReadArgs, FsReadResult } from "../../syscalls/read";
 import type { FsWriteArgs, FsWriteResult } from "../../syscalls/write";
@@ -105,8 +107,12 @@ function makeFs(ctx: KernelContext): GsvFs {
       devices: ctx.devices,
       caps: ctx.caps,
       config: ctx.config,
+      packages: ctx.packages,
+      cron: createCronFileService(ctx),
+      schedules: ctx.schedules,
+      processRequest: requestProcessView,
     },
-    undefined,
+    ctx.processId ?? undefined,
     sourceBackend,
     createHomeKnowledgeBackend(ctx.env.STORAGE, ctx.env.RIPGIT, identity),
     createPackageBackend(identity, ctx.packages),

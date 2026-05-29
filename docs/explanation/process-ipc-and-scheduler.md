@@ -55,9 +55,9 @@ Use these meanings:
 
 - `SignalFrame`: existing transport frame with `type: "sig"` and a `signal`
   topic string.
-- Notification: an outward observation such as `chat.delta`, `chat.complete`,
-  `device.status`, `exec.status`, or `identity.changed`, often carried over a
-  `SignalFrame`.
+- Notification: an outward observation such as `proc.run.stream`,
+  `proc.run.output`, `proc.run.finished`, `device.status`, `exec.status`, or
+  `identity.changed`, often carried over a `SignalFrame`.
 - Process event: normal input/work delivered to a process conversation or inbox.
 - Process signal: process control operation such as abort, kill, reset, pause,
   resume, or reload.
@@ -118,7 +118,7 @@ type ProcessEvent = {
   kind:
     | "user.message"
     | "adapter.message"
-    | "process.message"
+    | "process.input"
     | "process.call"
     | "schedule.tick"
     | "package.event"
@@ -238,7 +238,7 @@ A compact operation should:
 6. Record a `ConversationSegment`.
 7. Allow archived segment reads without restoring the archived messages.
 8. Emit a lifecycle notification over the existing `SignalFrame` transport,
-   for example `process.lifecycle` with `event: "conversation.compacted"`.
+   for example `proc.changed` with `event: "conversation.compacted"`.
 
 The summary record should say what happened and where the exact archive lives.
 Agents should be able to inspect the archive through normal history or
@@ -392,33 +392,34 @@ Schedule records should include:
 
 Example target shape:
 
+These are scheduler target kinds, not syscall names. For example,
+`kind: "process.spawn"` dispatches through the `proc.spawn` syscall, and
+`profile` is one argument field on that spawn request.
+
 ```ts
 type ScheduleTarget =
   | {
-      kind: "process.spawn";
-      profile: string;
-      prompt: string;
+      kind: "command.exec";
+      command: string;
       cwd?: string;
+      timeoutMs?: number;
+    }
+  | {
+      kind: "process.spawn";
+      profile?: "init" | "task" | "review" | "cron" | "mcp" | "app";
+      label?: string;
+      prompt: string;
+      parentPid?: string;
+      cwd?: string;
+      mounts?: unknown[];
+      assignment?: unknown;
     }
   | {
       kind: "process.event";
       pid: string;
       conversationId?: string;
-      event: ProcessEventInput;
-    }
-  | {
-      kind: "process.lifecycle";
-      pid: string;
-      conversationId?: string;
-      action: "compact" | "reset";
-      options?: unknown;
-    }
-  | {
-      kind: "package.event";
-      packageId: string;
-      entrypoint: string;
-      event: string;
-      payload?: unknown;
+      message: string;
+      data?: Record<string, unknown>;
     };
 ```
 
@@ -426,12 +427,20 @@ The first implementation should support:
 
 - `at`
 - `every`
-- `process.spawn`
+- `command.exec`
+- `process.spawn` as a low-level scheduler target
 - `process.event`
-- `process.lifecycle` for compact and reset
 
-Cron expressions, package events, advanced retry behavior, and cross-user run-as
-rules can follow after the basic lifecycle is working.
+Normal crontab files should not compile directly to `process.spawn`. They
+compile to `command.exec`, and the command can choose to run `proc spawn`,
+`proc compact`, package commands, shell scripts, or any other native shell
+surface. Keeping `process.spawn` in `ScheduleTarget` is still useful for the
+low-level `sched` API and for callers that want to bypass shell parsing.
+
+Process lifecycle work should be exposed as commands, for example
+`proc compact` or `proc reset`, instead of scheduler-specific lifecycle target
+kinds. Package events, advanced retry behavior, and cross-user run-as rules can
+follow after the basic lifecycle is working.
 
 ## Linux-Like Views
 
@@ -444,7 +453,8 @@ Potential views:
 - `/proc/<pid>/conversations/<conversationId>`
 - `/proc/<pid>/conversations/<conversationId>/history`
 - `/proc/<pid>/conversations/<conversationId>/segments`
-- `/var/spool/cron`
+- `/var/spool/cron/<username>`
+- `/etc/cron.d/<name>`
 - `/var/log/gsv/scheduler`
 
 These should be views over Kernel and Process state, not separate stores.
@@ -495,7 +505,7 @@ the prefix boundary, and records a `compaction` segment that can be listed with
 messages out of a compacted segment without restoring them. `proc.conversation.fork`
 can branch a live conversation through a message id, or restore a compacted
 segment into a new conversation, including the live suffix that existed at the
-compaction boundary by default. Compaction and fork emit `process.lifecycle` so
+compaction boundary by default. Compaction and fork emit `proc.changed` so
 UI clients can refresh without polling. Process-wide
 `proc.reset` and `proc.kill` archive every non-empty conversation into a
 directory with one generation file per conversation before clearing all
@@ -535,6 +545,8 @@ Implemented:
 
 - Kernel-owned schedule store and `sched.*` syscall handlers.
 - `at`, `after`, `every`, and timezone-aware five-field cron expressions.
+- `command.exec` targets that run native shell commands as the schedule owner.
+- writable crontab files that compile cron lines into `command.exec` schedules.
 - `process.spawn` targets for scheduled background work.
 - `process.event` targets that enter process context as visible process events.
 - Cloudflare Agent schedules as one-shot wake-ups only; GSV stores the schedule
@@ -542,7 +554,7 @@ Implemented:
 
 Still pending:
 
-- `process.lifecycle` schedule targets.
+- lifecycle commands such as `proc compact` and `proc reset`
 - package-owned Kernel schedules and package event targets.
 
 ### 8. Add filesystem views

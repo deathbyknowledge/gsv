@@ -17,8 +17,10 @@ import {
   createProcessSourceBackend,
   RipgitClient,
   resolveUserPath,
+  requestProcessView,
 } from "../../fs";
 import type { KernelContext } from "../../kernel/context";
+import { createCronFileService } from "../../kernel/crontab";
 import { visiblePackageScopesForActor } from "../../kernel/packages";
 import type { ShellExecArgs, ShellExecResult } from "../../syscalls/shell";
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
@@ -139,8 +141,12 @@ function createBash(
       devices: ctx.devices,
       caps: ctx.caps,
       config: ctx.config,
+      packages: ctx.packages,
+      cron: createCronFileService(ctx),
+      schedules: ctx.schedules,
+      processRequest: requestProcessView,
     },
-    undefined,
+    ctx.processId ?? undefined,
     sourceBackend,
     createHomeKnowledgeBackend(ctx.env.STORAGE, ctx.env.RIPGIT, identity),
     createPackageBackend(identity, ctx.packages),

@@ -8,6 +8,7 @@ import { buildNotifyCommands } from "../notify-shell";
 import { buildCodeModeCommand } from "./codemode";
 import { buildCoreCommands } from "./core";
 import { buildCpCommand } from "./cp";
+import { buildCrontabCommand } from "./crontab";
 import { buildLsCommand } from "./ls";
 import { buildMcpCommand } from "./mcp";
 import { buildPackageCommands, buildPkgCommand } from "./pkg";
@@ -31,6 +32,7 @@ export function buildCustomCommands(
   const ls = buildLsCommand(fs, identity, ctx);
   const stat = buildStatCommand(fs, identity, ctx);
   const cp = buildCpCommand(ctx, options?.fsCopyTransport);
+  const crontab = buildCrontabCommand(fs, ctx);
   const codemode = buildCodeModeCommand(fs, identity, ctx);
   const mcp = buildMcpCommand(ctx);
   const pkg = buildPkgCommand(ctx);
@@ -51,6 +53,7 @@ export function buildCustomCommands(
     ls,
     stat,
     cp,
+    crontab,
     codemode,
     mcp,
     proc,
