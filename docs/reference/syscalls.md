@@ -114,6 +114,27 @@ type BootstrapPackageSummary = {
   }>;
 };
 
+type AppLaunchWindowHint = {
+  title: string;
+  width?: number;
+  height?: number;
+  minWidth?: number;
+  minHeight?: number;
+};
+
+type AppSessionSummary = {
+  sessionId: string;
+  packageId: string;
+  packageName: string;
+  entrypointName: string;
+  routeBase: string;
+  clientId: string;
+  createdAt: number;
+  lastUsedAt: number | null;
+  expiresAt: number;
+  state: "active";
+};
+
 type ConnectionIdentity =
   | { role: "user"; process: ProcessIdentity; capabilities: string[] }
   | { role: "driver"; process: ProcessIdentity; capabilities: string[]; device: string; implements: string[] }
@@ -352,6 +373,47 @@ while (res.status === "running") {
 }
 
 return output;
+```
+
+## App Sessions: `app.*`
+
+App session syscalls are Kernel-owned. They let any authenticated app host open
+or reattach a package UI without knowing the Web shell route conventions.
+Launch results contain a URL under `/apps/sessions/<sid>/launch`; the gateway
+validates that launch token, sets the HttpOnly app-session cookie, and redirects
+to the canonical `/apps/sessions/<sid>/...` runtime namespace.
+
+Runtime behavior:
+
+| Syscall | Handler | Behavior |
+|---|---|---|
+| `app.open` | `handleAppOpen` | Resolves an enabled web-ui package and UI entrypoint visible to the current user, creates an app session, and returns a launch URL plus window defaults. |
+| `app.attach` | `handleAppAttach` | Mints a fresh launch secret for an existing current-user app session and returns a launch URL. Existing app clients are not invalidated. |
+| `app.list` | `handleAppList` | Lists active app sessions for the current user. Secrets are never returned. |
+| `app.close` | `handleAppClose` | Revokes a current-user app session and its additional launch keys. |
+
+```ts
+type AppSyscalls = {
+  "app.open": {
+    args: { packageName: string; entrypointName?: string; clientId?: string; suffix?: string; search?: string; hash?: string };
+    result: { sessionId: string; packageId: string; packageName: string; entrypointName: string; routeBase: string; clientId: string; launchUrl: string; expiresAt: number; window: AppLaunchWindowHint };
+  };
+
+  "app.attach": {
+    args: { sessionId: string; suffix?: string; search?: string; hash?: string };
+    result: { sessionId: string; packageId: string; packageName: string; entrypointName: string; routeBase: string; clientId: string; launchUrl: string; expiresAt: number; window: AppLaunchWindowHint };
+  };
+
+  "app.list": {
+    args: Empty;
+    result: { sessions: AppSessionSummary[] };
+  };
+
+  "app.close": {
+    args: { sessionId: string };
+    result: { closed: boolean };
+  };
+};
 ```
 
 ## CodeMode: `codemode.exec`, `codemode.run`

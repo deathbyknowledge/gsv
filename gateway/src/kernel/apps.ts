@@ -1,0 +1,215 @@
+import type {
+  AppAttachArgs,
+  AppCloseArgs,
+  AppCloseResult,
+  AppLaunchResult,
+  AppListArgs,
+  AppListResult,
+  AppOpenArgs,
+  AppSessionSummary,
+} from "@gsv/protocol/syscalls/apps";
+import type { AppClientSessionContext, IssuedAppClientSession } from "../protocol/app-session";
+import type { KernelContext } from "./context";
+import {
+  type InstalledPackageRecord,
+  type PackageEntrypoint,
+  packageRouteBase,
+  visiblePackageScopesForActor,
+} from "./packages";
+import { APP_CLIENT_SESSION_TTL_MS } from "./app-sessions";
+
+const APP_LAUNCH_RESERVED_PATHS = new Set(["/launch", "/refresh", "/socket"]);
+
+export class AppSyscallError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+  }
+}
+
+export async function handleAppOpen(args: AppOpenArgs, ctx: KernelContext): Promise<AppLaunchResult> {
+  const actor = currentActor(ctx);
+  const packageName = normalizeRequiredString(args.packageName, "packageName");
+  const entrypointName = normalizeOptionalString(args.entrypointName);
+  const routeBase = packageRouteBase(packageName);
+  const resolved = findLaunchableUiPackage(ctx, actor.uid, packageName, routeBase, entrypointName);
+
+  const clientSession = await ctx.appSessions.issue({
+    uid: actor.uid,
+    username: actor.username,
+    packageId: resolved.record.packageId,
+    packageName: resolved.record.manifest.name,
+    entrypointName: resolved.entrypoint.name,
+    routeBase,
+    clientId: normalizeOptionalString(args.clientId) ?? crypto.randomUUID(),
+    ttlMs: APP_CLIENT_SESSION_TTL_MS,
+  });
+
+  return toLaunchResult(clientSession, resolved.entrypoint, args);
+}
+
+export async function handleAppAttach(args: AppAttachArgs, ctx: KernelContext): Promise<AppLaunchResult> {
+  const actor = currentActor(ctx);
+  const sessionId = normalizeRequiredString(args.sessionId, "sessionId");
+  const clientSession = await ctx.appSessions.mintSecret(actor.uid, sessionId, APP_CLIENT_SESSION_TTL_MS);
+  if (!clientSession) {
+    throw new AppSyscallError(404, "App session not found");
+  }
+
+  const resolved = findLaunchableUiPackage(
+    ctx,
+    actor.uid,
+    clientSession.packageName,
+    clientSession.routeBase,
+    clientSession.entrypointName,
+  );
+  return toLaunchResult(clientSession, resolved.entrypoint, args);
+}
+
+export function handleAppList(_args: AppListArgs, ctx: KernelContext): AppListResult {
+  const actor = currentActor(ctx);
+  return {
+    sessions: ctx.appSessions.list(actor.uid).map(toSessionSummary),
+  };
+}
+
+export function handleAppClose(args: AppCloseArgs, ctx: KernelContext): AppCloseResult {
+  const actor = currentActor(ctx);
+  const sessionId = normalizeRequiredString(args.sessionId, "sessionId");
+  return {
+    closed: ctx.appSessions.close(actor.uid, sessionId),
+  };
+}
+
+function currentActor(ctx: KernelContext): { uid: number; username: string } {
+  const process = ctx.identity?.process;
+  if (!process) {
+    throw new AppSyscallError(401, "Authentication required");
+  }
+  return {
+    uid: process.uid,
+    username: process.username,
+  };
+}
+
+function findLaunchableUiPackage(
+  ctx: KernelContext,
+  uid: number,
+  packageName: string,
+  routeBase: string,
+  entrypointName: string | null,
+): { record: InstalledPackageRecord; entrypoint: PackageEntrypoint } {
+  for (const record of ctx.packages.list({
+    enabled: true,
+    name: packageName,
+    runtime: "web-ui",
+    scopes: visiblePackageScopesForActor({ uid }),
+  })) {
+    const entrypoint = record.manifest.entrypoints.find((candidate) => {
+      return candidate.kind === "ui" &&
+        candidate.route === routeBase &&
+        (!entrypointName || candidate.name === entrypointName);
+    });
+    if (entrypoint) {
+      return { record, entrypoint };
+    }
+  }
+
+  throw new AppSyscallError(404, "Package app not found");
+}
+
+function toLaunchResult(
+  session: IssuedAppClientSession,
+  entrypoint: PackageEntrypoint,
+  args: Pick<AppOpenArgs, "suffix" | "search" | "hash">,
+): AppLaunchResult {
+  return {
+    sessionId: session.sessionId,
+    packageId: session.packageId,
+    packageName: session.packageName,
+    entrypointName: session.entrypointName,
+    routeBase: session.routeBase,
+    clientId: session.clientId,
+    launchUrl: buildLaunchUrl(session, args),
+    expiresAt: session.expiresAt,
+    window: {
+      title: entrypoint.name,
+      ...entrypoint.windowDefaults,
+    },
+  };
+}
+
+function toSessionSummary(session: AppClientSessionContext): AppSessionSummary {
+  return {
+    sessionId: session.sessionId,
+    packageId: session.packageId,
+    packageName: session.packageName,
+    entrypointName: session.entrypointName,
+    routeBase: session.routeBase,
+    clientId: session.clientId,
+    createdAt: session.createdAt,
+    lastUsedAt: session.lastUsedAt ?? null,
+    expiresAt: session.expiresAt,
+    state: "active",
+  };
+}
+
+function buildLaunchUrl(
+  session: IssuedAppClientSession,
+  args: Pick<AppOpenArgs, "suffix" | "search" | "hash">,
+): string {
+  const params = new URLSearchParams({ token: session.secret });
+  const next = buildLaunchNext(args);
+  if (next !== "/") {
+    params.set("next", next);
+  }
+  return `/apps/sessions/${encodeURIComponent(session.sessionId)}/launch?${params.toString()}`;
+}
+
+function buildLaunchNext(args: Pick<AppOpenArgs, "suffix" | "search" | "hash">): string {
+  const suffix = normalizeSuffix(args.suffix);
+  const search = normalizeSearch(args.search);
+  const hash = normalizeHash(args.hash);
+  return `${suffix}${search}${hash}`;
+}
+
+function normalizeRequiredString(value: unknown, name: string): string {
+  if (typeof value !== "string") {
+    throw new AppSyscallError(400, `${name} is required`);
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new AppSyscallError(400, `${name} is required`);
+  }
+  return trimmed;
+}
+
+function normalizeOptionalString(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+function normalizeSuffix(value: unknown): string {
+  if (typeof value !== "string" || !value.trim()) {
+    return "/";
+  }
+  const trimmed = value.trim();
+  const pathname = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+  return APP_LAUNCH_RESERVED_PATHS.has(pathname) ? "/" : pathname;
+}
+
+function normalizeSearch(value: unknown): string {
+  if (typeof value !== "string" || !value) {
+    return "";
+  }
+  return value.startsWith("?") ? value : `?${value}`;
+}
+
+function normalizeHash(value: unknown): string {
+  if (typeof value !== "string" || !value) {
+    return "";
+  }
+  return value.startsWith("#") ? value : `#${value}`;
+}

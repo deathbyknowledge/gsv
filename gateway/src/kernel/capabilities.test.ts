@@ -188,6 +188,7 @@ describe("CapabilityStore", () => {
       "adapter.status",
       "ai.speech.create",
       "ai.transcription.create",
+      "app.*",
       "codemode.*",
       "fs.*",
       "notification.*",

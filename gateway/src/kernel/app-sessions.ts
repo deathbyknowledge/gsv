@@ -1,6 +1,8 @@
 import type { IssuedAppClientSession, AppClientSessionContext } from "../protocol/app-session";
 import { hashToken, verify } from "../auth/shadow";
 
+export const APP_CLIENT_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+
 type AppSessionRow = {
   session_id: string;
   uid: number;
@@ -16,6 +18,19 @@ type AppSessionRow = {
   expires_at: number;
   revoked_at: number | null;
 };
+
+type AppSessionKeyRow = {
+  key_id: string;
+  session_id: string;
+  secret_hash: string;
+  created_at: number;
+  expires_at: number;
+  revoked_at: number | null;
+};
+
+type VerifiedSecret =
+  | { ok: true; keyId: string | null }
+  | { ok: false };
 
 export class AppSessionStore {
   constructor(private readonly sql: SqlStorage) {}
@@ -43,6 +58,19 @@ export class AppSessionStore {
     );
     this.sql.exec(
       "CREATE INDEX IF NOT EXISTS idx_app_client_sessions_expires ON app_client_sessions (expires_at)",
+    );
+    this.sql.exec(`
+      CREATE TABLE IF NOT EXISTS app_client_session_keys (
+        key_id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        secret_hash TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        revoked_at INTEGER
+      )
+    `);
+    this.sql.exec(
+      "CREATE INDEX IF NOT EXISTS idx_app_client_session_keys_session ON app_client_session_keys (session_id, expires_at)",
     );
   }
 
@@ -113,8 +141,8 @@ export class AppSessionStore {
     if (row.revoked_at != null || row.expires_at <= Date.now()) {
       return null;
     }
-    const ok = await verify(secret, row.secret_hash);
-    if (!ok) {
+    const verified = await this.verifySecret(row, secret);
+    if (!verified.ok) {
       return null;
     }
     const lastUsedAt = Date.now();
@@ -142,8 +170,8 @@ export class AppSessionStore {
     if (row.revoked_at != null || row.expires_at <= Date.now()) {
       return null;
     }
-    const ok = await verify(secret, row.secret_hash);
-    if (!ok) {
+    const verified = await this.verifySecret(row, secret);
+    if (!verified.ok) {
       return null;
     }
     const now = Date.now();
@@ -154,11 +182,100 @@ export class AppSessionStore {
       expiresAt,
       sessionId,
     );
+    if (verified.keyId) {
+      this.sql.exec(
+        "UPDATE app_client_session_keys SET expires_at = ? WHERE key_id = ?",
+        expiresAt,
+        verified.keyId,
+      );
+    }
     return toContext({
       ...row,
       last_used_at: now,
       expires_at: expiresAt,
     });
+  }
+
+  list(uid: number): AppClientSessionContext[] {
+    this.pruneExpired();
+    return this.sql.exec<AppSessionRow>(
+      `SELECT * FROM app_client_sessions
+       WHERE uid = ? AND revoked_at IS NULL AND expires_at > ?
+       ORDER BY last_used_at DESC, created_at DESC`,
+      uid,
+      Date.now(),
+    ).toArray().map(toContext);
+  }
+
+  getActiveForUid(uid: number, sessionId: string): AppClientSessionContext | null {
+    this.pruneExpired();
+    const row = this.getRow(sessionId);
+    if (!row || row.uid !== uid || row.revoked_at != null || row.expires_at <= Date.now()) {
+      return null;
+    }
+    return toContext(row);
+  }
+
+  async mintSecret(uid: number, sessionId: string, ttlMs: number): Promise<IssuedAppClientSession | null> {
+    this.pruneExpired();
+    const row = this.getRow(sessionId);
+    if (!row || row.uid !== uid || row.revoked_at != null || row.expires_at <= Date.now()) {
+      return null;
+    }
+
+    const now = Date.now();
+    const keyId = crypto.randomUUID();
+    const secret = crypto.randomUUID();
+    const expiresAt = now + ttlMs;
+    const secretHash = await hashToken(secret);
+
+    this.sql.exec(
+      `INSERT INTO app_client_session_keys (
+        key_id, session_id, secret_hash, created_at, expires_at, revoked_at
+      ) VALUES (?, ?, ?, ?, ?, ?)`,
+      keyId,
+      sessionId,
+      secretHash,
+      now,
+      expiresAt,
+      null,
+    );
+    this.sql.exec(
+      "UPDATE app_client_sessions SET last_used_at = ?, expires_at = ? WHERE session_id = ?",
+      now,
+      expiresAt,
+      sessionId,
+    );
+
+    return {
+      ...toContext({
+        ...row,
+        last_used_at: now,
+        expires_at: expiresAt,
+      }),
+      secret,
+    };
+  }
+
+  close(uid: number, sessionId: string): boolean {
+    this.pruneExpired();
+    const row = this.getRow(sessionId);
+    if (!row || row.uid !== uid || row.revoked_at != null || row.expires_at <= Date.now()) {
+      return false;
+    }
+
+    const now = Date.now();
+    this.sql.exec(
+      "UPDATE app_client_sessions SET revoked_at = ? WHERE session_id = ?",
+      now,
+      sessionId,
+    );
+    this.sql.exec(
+      "UPDATE app_client_session_keys SET revoked_at = ? WHERE session_id = ? AND revoked_at IS NULL",
+      now,
+      sessionId,
+    );
+    return true;
   }
 
   private getRow(sessionId: string): AppSessionRow | null {
@@ -169,9 +286,36 @@ export class AppSessionStore {
     return rows[0] ?? null;
   }
 
+  private getKeyRows(sessionId: string): AppSessionKeyRow[] {
+    return this.sql.exec<AppSessionKeyRow>(
+      `SELECT * FROM app_client_session_keys
+       WHERE session_id = ? AND revoked_at IS NULL AND expires_at > ?`,
+      sessionId,
+      Date.now(),
+    ).toArray();
+  }
+
+  private async verifySecret(row: AppSessionRow, secret: string): Promise<VerifiedSecret> {
+    if (await verify(secret, row.secret_hash)) {
+      return { ok: true, keyId: null };
+    }
+
+    for (const key of this.getKeyRows(row.session_id)) {
+      if (await verify(secret, key.secret_hash)) {
+        return { ok: true, keyId: key.key_id };
+      }
+    }
+
+    return { ok: false };
+  }
+
   private pruneExpired(): void {
     this.sql.exec(
       "DELETE FROM app_client_sessions WHERE expires_at <= ? OR revoked_at IS NOT NULL",
+      Date.now(),
+    );
+    this.sql.exec(
+      "DELETE FROM app_client_session_keys WHERE expires_at <= ? OR revoked_at IS NOT NULL",
       Date.now(),
     );
   }

@@ -17,6 +17,7 @@ const DEFAULT_CAPABILITIES: [number, string[]][] = [
   [0,   ["*"]],                                           // root
   [100, [
     "codemode.*",
+    "app.*",
     "fs.*",
     "shell.*",
     "notification.*",

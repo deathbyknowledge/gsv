@@ -474,11 +474,6 @@ function packageAppSessionCookiePath(sessionId: string): string {
   return `/apps/sessions/${encodeURIComponent(sessionId)}`;
 }
 
-function packageSessionPath(sessionId: string, suffix: string): string {
-  const normalizedSuffix = suffix && suffix !== "/" ? suffix : "/";
-  return `${packageAppSessionCookiePath(sessionId)}${normalizedSuffix}`;
-}
-
 function packageWorkerPath(routeBase: string, suffix: string): string {
   if (!suffix || suffix === "/") {
     return routeBase;
@@ -537,6 +532,10 @@ async function handlePackageAppSessionRequest(
     return handlePackageAppSessionRefreshRequest(request, env, match);
   }
 
+  if (match.suffix === "/launch") {
+    return handlePackageAppSessionLaunchRequest(request, env, match);
+  }
+
   const resolved = await resolvePackageAppSessionFromCookie(request, env, match.sessionId);
   if (!resolved.ok) {
     return new Response(resolved.message, { status: resolved.status });
@@ -556,6 +555,42 @@ async function handlePackageAppSessionRequest(
     await runner.gsvFetch(await serializeAppHttpRequest(buildPackageWorkerRequest(request, resolved, match.suffix))),
   );
   return await withPackageAppClientSession(response, resolved);
+}
+
+async function handlePackageAppSessionLaunchRequest(
+  request: Request,
+  env: Env,
+  match: PackageAppSessionPathMatch,
+): Promise<Response> {
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    return new Response("Method Not Allowed", {
+      status: 405,
+      headers: { allow: "GET, HEAD" },
+    });
+  }
+
+  const url = new URL(request.url);
+  const secret = url.searchParams.get("token")?.trim() ?? "";
+  if (!secret) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
+  const kernel = await getAgentByName(env.KERNEL, "singleton");
+  const resolved = await kernel.resolvePackageAppRpcSession({
+    sessionId: match.sessionId,
+    secret,
+  });
+
+  if (!resolved.ok) {
+    return new Response(resolved.message, { status: resolved.status });
+  }
+
+  return redirectToPackageAppSessionLocation(
+    request,
+    resolved,
+    normalizePackageAppLaunchNext(url.searchParams.get("next")),
+    secret,
+  );
 }
 
 async function handlePackageAppSessionRefreshRequest(
@@ -660,10 +695,23 @@ function redirectToPackageAppSession(
     return new Response("Package app session is missing secret", { status: 500 });
   }
 
-  const url = new URL(request.url);
-  url.pathname = packageSessionPath(resolved.clientSession.sessionId, suffix);
+  return redirectToPackageAppSessionLocation(
+    request,
+    resolved,
+    urlPathFromSuffix(request, suffix),
+    secret,
+  );
+}
+
+function redirectToPackageAppSessionLocation(
+  request: Request,
+  resolved: ResolvedPackageRoute,
+  next: string,
+  secret: string,
+): Response {
+  const location = `${packageAppSessionCookiePath(resolved.clientSession.sessionId)}${next}`;
   const headers = new Headers({
-    location: url.pathname + url.search + url.hash,
+    location,
     "cache-control": "no-store",
     "set-cookie": buildPackageAppSessionCookie(
       request,
@@ -676,6 +724,32 @@ function redirectToPackageAppSession(
     status: 303,
     headers,
   });
+}
+
+function urlPathFromSuffix(request: Request, suffix: string): string {
+  const url = new URL(request.url);
+  const normalizedSuffix = suffix && suffix !== "/" ? suffix : "/";
+  return `${normalizedSuffix}${url.search}${url.hash}`;
+}
+
+function normalizePackageAppLaunchNext(raw: string | null): string {
+  if (!raw) {
+    return "/";
+  }
+
+  try {
+    const base = "https://gsv.invalid";
+    const parsed = new URL(raw, base);
+    if (parsed.origin !== base) {
+      return "/";
+    }
+    if (parsed.pathname === "/launch" || parsed.pathname === "/refresh" || parsed.pathname === "/socket") {
+      return "/";
+    }
+    return `${parsed.pathname || "/"}${parsed.search}${parsed.hash}`;
+  } catch {
+    return "/";
+  }
 }
 
 async function withPackageAppClientSession(

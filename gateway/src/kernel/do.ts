@@ -49,7 +49,7 @@ import {
   ScheduleStore,
   skippedScheduleResult,
 } from "./scheduler";
-import { AppSessionStore } from "./app-sessions";
+import { APP_CLIENT_SESSION_TTL_MS, AppSessionStore } from "./app-sessions";
 import {
   ensureKernelBootstrapped,
   handleConnect,
@@ -103,7 +103,6 @@ import type {
 } from "../syscalls/scheduler";
 
 const SERVER_VERSION = "0.2.1";
-const APP_CLIENT_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const KERNEL_BINARY_DEVICE_ID = "__gsv_kernel__";
 
 type ConnectionState = {
@@ -1202,6 +1201,7 @@ export class Kernel extends Host<Env> {
       adapters: this.adapters,
       runRoutes: this.runRoutes,
       shellSessions: this.shellSessions,
+      appSessions: this.appSessions,
       signalWatches: this.signalWatches,
       ipcCalls: this.ipcCalls,
       notifications: this.notifications,
@@ -1277,6 +1277,7 @@ export class Kernel extends Host<Env> {
       adapters: this.adapters,
       runRoutes: this.runRoutes,
       shellSessions: this.shellSessions,
+      appSessions: this.appSessions,
       signalWatches: this.signalWatches,
       ipcCalls: this.ipcCalls,
       notifications: this.notifications,
@@ -1314,6 +1315,7 @@ export class Kernel extends Host<Env> {
       adapters: this.adapters,
       runRoutes: this.runRoutes,
       shellSessions: this.shellSessions,
+      appSessions: this.appSessions,
       signalWatches: this.signalWatches,
       ipcCalls: this.ipcCalls,
       notifications: this.notifications,
@@ -2747,6 +2749,7 @@ export class Kernel extends Host<Env> {
       adapters: this.adapters,
       runRoutes: this.runRoutes,
       shellSessions: this.shellSessions,
+      appSessions: this.appSessions,
       signalWatches: this.signalWatches,
       ipcCalls: this.ipcCalls,
       notifications: this.notifications,
