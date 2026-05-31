@@ -22,6 +22,7 @@ const CHAT_RUNTIME_SIGNALS = [
   "proc.run.hil.requested",
   "process.exit",
 ];
+const CHAT_RUNTIME_SIGNAL_WATCH_TTL_MS = 24 * 60 * 60 * 1000;
 
 function normalizeArgs(value: unknown) {
   return value && typeof value === "object" ? value as Record<string, unknown> : {};
@@ -221,6 +222,7 @@ export async function watchProcessSignals(kernel: KernelClient, app: AppBinding 
     key: buildSignalWatchKey(clientId, pid, signal),
     state: { clientId, pid },
     once: false,
+    ttlMs: CHAT_RUNTIME_SIGNAL_WATCH_TTL_MS,
   })));
   return {
     pid,

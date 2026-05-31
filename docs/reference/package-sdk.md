@@ -101,16 +101,17 @@ type PackageAppBoot = {
   routeBase: string;
   rpcBase: string;
   sessionId: string;
-  sessionSecret: string;
   clientId: string;
   expiresAt: number;
   hasBackend: boolean;
 };
 ```
 
-`rpcBase` is the platform app-socket endpoint used by the browser SDK. Package
-apps should treat it as opaque and use `connectBackend()` instead of speaking
-the wire protocol directly.
+`routeBase` is the mounted app-session route for the current app instance.
+`rpcBase` is the platform app-socket endpoint under that session mount.
+Package apps should treat it as opaque and use `connectBackend()` instead of
+speaking the wire protocol directly. App session credentials are carried in
+HttpOnly cookies and are not exposed to package JavaScript.
 
 ### `hasAppBoot()`
 

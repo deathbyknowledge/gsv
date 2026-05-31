@@ -4,7 +4,6 @@ export type PackageAppBoot = {
   routeBase: string;
   rpcBase: string;
   sessionId: string;
-  sessionSecret: string;
   clientId: string;
   expiresAt: number;
   hasBackend: boolean;
@@ -42,14 +41,6 @@ type AppSignalFrame = {
 };
 
 type AppSocketFrame = AppResponseFrame | AppSignalFrame;
-
-type AppConnectResult = {
-  protocol: number;
-  packageId: string;
-  packageName: string;
-  clientId: string;
-  expiresAt: number;
-};
 
 type PendingBackendRequest = {
   resolve(value: unknown): void;
@@ -113,7 +104,6 @@ let backendRequestSeq = 0;
 const appEventListeners = new Set<AppEventListener>();
 const APP_SESSION_REFRESH_LEEWAY_MS = 60_000;
 const CONNECTED_READY_FALLBACK_MS = 650;
-const APP_SOCKET_PROTOCOL_VERSION = 1;
 
 function formatErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -409,18 +399,6 @@ function isAppSignalFrame(value: unknown): value is AppSignalFrame {
   return record?.type === "sig" && typeof record.signal === "string";
 }
 
-function isAppConnectResult(value: unknown): value is AppConnectResult {
-  const record = asRecord(value);
-  return Boolean(
-    record &&
-    typeof record.protocol === "number" &&
-    typeof record.packageId === "string" &&
-    typeof record.packageName === "string" &&
-    typeof record.clientId === "string" &&
-    typeof record.expiresAt === "number",
-  );
-}
-
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" ? value as Record<string, unknown> : null;
 }
@@ -435,7 +413,6 @@ function isPackageAppBoot(value: unknown): value is PackageAppBoot {
     && typeof candidate.routeBase === "string"
     && typeof candidate.rpcBase === "string"
     && typeof candidate.sessionId === "string"
-    && typeof candidate.sessionSecret === "string"
     && typeof candidate.clientId === "string"
     && typeof candidate.expiresAt === "number"
     && typeof candidate.hasBackend === "boolean";
@@ -455,10 +432,8 @@ async function refreshAppSession(boot: PackageAppBoot): Promise<PackageAppBoot> 
       method: "POST",
       credentials: "same-origin",
       headers: {
-        "content-type": "application/json",
         "accept": "application/json",
       },
-      body: JSON.stringify({ clientId: boot.clientId }),
     });
 
     if (!response.ok) {
@@ -544,23 +519,6 @@ async function connectBackendTransport(): Promise<BackendConnection> {
 
   ready = (async () => {
     await waitForSocketOpen(socket);
-    const connected = await connection.request("app.connect", {
-      secret: boot.sessionSecret,
-      clientId: boot.clientId,
-    });
-    if (!isAppConnectResult(connected)) {
-      throw new Error("package backend returned an invalid connect response");
-    }
-    if (connected.protocol !== APP_SOCKET_PROTOCOL_VERSION) {
-      throw new Error(`unsupported package backend protocol ${connected.protocol}`);
-    }
-    if (
-      connected.packageId !== boot.packageId ||
-      connected.packageName !== boot.packageName ||
-      connected.clientId !== boot.clientId
-    ) {
-      throw new Error("package backend connected to the wrong app session");
-    }
     setRuntimeStatus("connected");
     if (!appRuntimeReady) {
       scheduleConnectedReadyFallback();
@@ -636,7 +594,7 @@ function buildRpcWebSocketUrl(rpcBase: string): string {
 
 function buildRpcSessionRefreshUrl(boot: PackageAppBoot): string {
   return new URL(
-    `/app-rpc/${encodeURIComponent(boot.packageName)}/sessions/${encodeURIComponent(boot.sessionId)}/refresh`,
+    `/apps/sessions/${encodeURIComponent(boot.sessionId)}/refresh`,
     globalThis.window?.location?.href ?? "http://localhost",
   ).toString();
 }

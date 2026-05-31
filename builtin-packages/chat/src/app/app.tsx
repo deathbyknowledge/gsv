@@ -69,6 +69,7 @@ import {
 } from "./view-helpers";
 
 const HISTORY_PAGE_SIZE = 50;
+const SIGNAL_WATCH_RENEW_INTERVAL_MS = 60 * 60 * 1000;
 
 function historyTargetKey(target: Pick<ThreadContext, "pid" | "conversationId">): string {
   return `${target.pid}\n${target.conversationId || "default"}`;
@@ -407,7 +408,12 @@ export function App({ backend }: { backend: ChatBackend }) {
 
   useEffect(() => {
     if (active?.pid) {
-      void backend.watchProcessSignals({ pid: active.pid }).catch((error) => setHostError(formatError(error)));
+      const pid = active.pid;
+      const renewSignalWatch = () => {
+        void backend.watchProcessSignals({ pid }).catch((error) => setHostError(formatError(error)));
+      };
+      renewSignalWatch();
+      const renewTimer = window.setInterval(renewSignalWatch, SIGNAL_WATCH_RENEW_INTERVAL_MS);
       void loadConversations(active.pid);
       const historyKey = historyTargetKey(active);
       if (skipNextHistoryLoadRef.current === historyKey) {
@@ -416,7 +422,8 @@ export function App({ backend }: { backend: ChatBackend }) {
         void loadHistory(active);
       }
       return () => {
-        void backend.unwatchProcessSignals({ pid: active.pid }).catch(() => {});
+        window.clearInterval(renewTimer);
+        void backend.unwatchProcessSignals({ pid }).catch(() => {});
       };
     }
     void backend.unwatchProcessSignals({ pid: "" }).catch(() => {});

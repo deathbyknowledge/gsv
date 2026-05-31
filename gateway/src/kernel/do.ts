@@ -169,15 +169,9 @@ type ResolvePackageHttpResult =
     };
 
 type ResolvePackageAppRpcInput = {
-  packageName: string;
+  packageName?: string;
   sessionId: string;
   secret: string;
-};
-
-type ResolvePackageAppRpcRouteInput = {
-  packageName: string;
-  sessionId: string;
-  routeToken: string;
 };
 
 type ResolvePackageAppRpcResult =
@@ -195,20 +189,6 @@ type ResolvePackageAppRpcResult =
         capabilities: string[];
       };
       hasRpc: boolean;
-    }
-  | {
-      ok: false;
-      status: number;
-      message: string;
-    };
-
-type ResolvePackageAppRpcRouteResult =
-  | {
-      ok: true;
-      uid: number;
-      packageId: string;
-      packageName: string;
-      sessionId: string;
     }
   | {
       ok: false;
@@ -657,11 +637,11 @@ export class Kernel extends Host<Env> {
 
   async resolvePackageAppRpcSession(input: ResolvePackageAppRpcInput): Promise<ResolvePackageAppRpcResult> {
     await this.ready;
-    const packageName = input.packageName.trim();
+    const packageName = input.packageName?.trim() ?? "";
     const sessionId = input.sessionId.trim();
     const secret = input.secret.trim();
 
-    if (!packageName || !sessionId || !secret) {
+    if (!sessionId || !secret) {
       return { ok: false, status: 401, message: "Authentication required" };
     }
 
@@ -669,10 +649,35 @@ export class Kernel extends Host<Env> {
     if (!clientSession) {
       return { ok: false, status: 401, message: "Authentication failed" };
     }
-    if (clientSession.packageName !== packageName) {
+    if (packageName && clientSession.packageName !== packageName) {
       return { ok: false, status: 404, message: "Package app session not found" };
     }
 
+    return this.resolvePackageAppSessionContext(clientSession);
+  }
+
+  async refreshPackageAppRpcSession(input: ResolvePackageAppRpcInput): Promise<ResolvePackageAppRpcResult> {
+    await this.ready;
+    const packageName = input.packageName?.trim() ?? "";
+    const sessionId = input.sessionId.trim();
+    const secret = input.secret.trim();
+
+    if (!sessionId || !secret) {
+      return { ok: false, status: 401, message: "Authentication required" };
+    }
+
+    const clientSession = await this.appSessions.refresh(sessionId, secret, APP_CLIENT_SESSION_TTL_MS);
+    if (!clientSession) {
+      return { ok: false, status: 401, message: "Authentication failed" };
+    }
+    if (packageName && clientSession.packageName !== packageName) {
+      return { ok: false, status: 404, message: "Package app session not found" };
+    }
+
+    return this.resolvePackageAppSessionContext(clientSession);
+  }
+
+  private resolvePackageAppSessionContext(clientSession: AppClientSessionContext): ResolvePackageAppRpcResult {
     const authUser = this.auth.getPasswdByUid(clientSession.uid);
     if (!authUser || authUser.username !== clientSession.username) {
       return { ok: false, status: 401, message: "Authentication failed" };
@@ -710,46 +715,6 @@ export class Kernel extends Host<Env> {
         capabilities,
       },
       hasRpc: record.manifest.entrypoints.some((candidateEntrypoint) => candidateEntrypoint.kind === "rpc"),
-    };
-  }
-
-  async resolvePackageAppRpcRoute(input: ResolvePackageAppRpcRouteInput): Promise<ResolvePackageAppRpcRouteResult> {
-    await this.ready;
-    const packageName = input.packageName.trim();
-    const sessionId = input.sessionId.trim();
-    const routeToken = input.routeToken.trim();
-
-    if (!packageName || !sessionId || !routeToken) {
-      return { ok: false, status: 401, message: "Authentication required" };
-    }
-
-    const clientSession = this.appSessions.resolveRoute(sessionId, routeToken);
-    if (!clientSession || clientSession.packageName !== packageName) {
-      return { ok: false, status: 404, message: "Package app session not found" };
-    }
-
-    const authUser = this.auth.getPasswdByUid(clientSession.uid);
-    if (!authUser || authUser.username !== clientSession.username) {
-      return { ok: false, status: 401, message: "Authentication failed" };
-    }
-
-    const record = this.packages.resolve(
-      clientSession.packageId,
-      visiblePackageScopesForActor({ uid: clientSession.uid }),
-    );
-    if (!record || !record.enabled || record.manifest.name !== clientSession.packageName) {
-      return { ok: false, status: 404, message: "Package app not found" };
-    }
-    if (!record.manifest.entrypoints.some((candidateEntrypoint) => candidateEntrypoint.kind === "rpc")) {
-      return { ok: false, status: 404, message: "Package app has no backend rpc" };
-    }
-
-    return {
-      ok: true,
-      uid: clientSession.uid,
-      packageId: record.packageId,
-      packageName: record.manifest.name,
-      sessionId: clientSession.sessionId,
     };
   }
 

@@ -40,44 +40,13 @@ type AppSessionInfo = {
   expiresAt: number;
 };
 
-type ResolvePackageAppRpcResult =
-  | {
-      ok: true;
-      packageId: string;
-      packageName: string;
-      routeBase: string;
-      artifact: PackageArtifactMetadata;
-      appFrame: AppFrameContext;
-      clientSession: AppSessionInfo & {
-        packageId: string;
-        packageName: string;
-        routeBase: string;
-        createdAt: number;
-        lastUsedAt?: number | null;
-      };
-      hasRpc: boolean;
-      auth: {
-        uid: number;
-        username: string;
-        capabilities: string[];
-      };
-    }
-  | {
-      ok: false;
-      status: number;
-      message: string;
-    };
-
-type AppSocketExpectedRoute = {
-  uid: number;
-  packageId: string;
-  packageName: string;
-  sessionId: string;
+type AppSocketContext = {
+  session: AppSessionInfo;
+  appFrame: AppFrameContext;
 };
 
 type AppSocketAttachment = {
   kind: "app-client";
-  expected: AppSocketExpectedRoute;
   connected: boolean;
   session?: AppSessionInfo;
   appFrame?: AppFrameContext;
@@ -153,11 +122,6 @@ export type AppRunnerCommandInput = {
 
 type KernelAppStub = {
   appRequest(appFrame: AppFrameContext, frame: RequestFrame): Promise<ResponseFrame>;
-  resolvePackageAppRpcSession(input: {
-    packageName: string;
-    sessionId: string;
-    secret: string;
-  }): Promise<ResolvePackageAppRpcResult>;
 };
 
 type AppFetchEntrypointStub = Rpc.WorkerEntrypointBranded & {
@@ -199,7 +163,6 @@ type RegisteredAppClient = {
 };
 
 const APP_SOCKET_TAG = "app-client";
-const APP_SOCKET_PROTOCOL_VERSION = 1;
 
 class AppSocketError extends Error {
   constructor(
@@ -467,9 +430,9 @@ export class AppRunner extends DurableObject<Env> {
   }
 
   #acceptAppSocket(request: Request): Response {
-    const expected = this.#expectedRouteFromSocketRequest(request);
-    if (!expected) {
-      return new Response("App socket route is incomplete", {
+    const context = this.#appSocketContextFromRequest(request);
+    if (!context) {
+      return new Response("App socket context is missing or invalid", {
         status: 400,
         headers: { "cache-control": "no-store" },
       });
@@ -479,11 +442,7 @@ export class AppRunner extends DurableObject<Env> {
     const server = pair[0];
     const client = pair[1];
     this.ctx.acceptWebSocket(server, [APP_SOCKET_TAG]);
-    server.serializeAttachment({
-      kind: "app-client",
-      expected,
-      connected: false,
-    } satisfies AppSocketAttachment);
+    this.#registerAppSocket(server, context.session, context.appFrame);
     return new Response(null, {
       status: 101,
       webSocket: client,
@@ -492,8 +451,6 @@ export class AppRunner extends DurableObject<Env> {
 
   async #handleAppSocketRequest(ws: WebSocket, frame: AppRequestFrame): Promise<unknown> {
     switch (frame.call) {
-      case "app.connect":
-        return this.#connectAppSocket(ws, frame.args);
       case "backend.invoke":
         return this.#invokeBackendFromSocket(ws, frame.args);
       case "app.ping":
@@ -501,66 +458,6 @@ export class AppRunner extends DurableObject<Env> {
       default:
         throw new AppSocketError(404, `Unknown app call: ${frame.call}`);
     }
-  }
-
-  async #connectAppSocket(ws: WebSocket, args: unknown): Promise<unknown> {
-    const attachment = this.#getSocketAttachment(ws);
-    if (!attachment?.expected) {
-      throw new AppSocketError(401, "App socket is missing route metadata");
-    }
-    const record = this.#record(args);
-    const secret = typeof record?.secret === "string" ? record.secret.trim() : "";
-    const clientId = typeof record?.clientId === "string" ? record.clientId.trim() : "";
-    if (!secret) {
-      throw new AppSocketError(401, "App socket authentication required");
-    }
-
-    const kernel = await getAgentByName(this.env.KERNEL, "singleton") as unknown as KernelAppStub;
-    const resolved = await kernel.resolvePackageAppRpcSession({
-      packageName: attachment.expected.packageName,
-      sessionId: attachment.expected.sessionId,
-      secret,
-    });
-    if (!resolved.ok) {
-      throw new AppSocketError(resolved.status, resolved.message);
-    }
-    if (
-      resolved.auth.uid !== attachment.expected.uid ||
-      resolved.packageId !== attachment.expected.packageId ||
-      resolved.packageName !== attachment.expected.packageName
-    ) {
-      throw new AppSocketError(403, "App socket runner mismatch");
-    }
-    if (!resolved.hasRpc) {
-      throw new AppSocketError(404, "Package app has no backend rpc");
-    }
-    if (clientId && resolved.clientSession.clientId !== clientId) {
-      throw new AppSocketError(403, "App socket client mismatch");
-    }
-
-    await this.ensureRuntime({
-      packageId: resolved.packageId,
-      packageName: resolved.packageName,
-      routeBase: resolved.routeBase,
-      entrypointName: resolved.appFrame.entrypointName,
-      artifact: resolved.artifact,
-      appFrame: resolved.appFrame,
-    });
-
-    const session: AppSessionInfo = {
-      sessionId: resolved.clientSession.sessionId,
-      clientId: resolved.clientSession.clientId,
-      rpcBase: resolved.clientSession.rpcBase,
-      expiresAt: resolved.clientSession.expiresAt,
-    };
-    this.#registerAppSocket(ws, session, resolved.appFrame);
-    return {
-      protocol: APP_SOCKET_PROTOCOL_VERSION,
-      packageId: resolved.packageId,
-      packageName: resolved.packageName,
-      clientId: session.clientId,
-      expiresAt: session.expiresAt,
-    };
   }
 
   async #invokeBackendFromSocket(ws: WebSocket, args: unknown): Promise<unknown> {
@@ -637,12 +534,8 @@ export class AppRunner extends DurableObject<Env> {
     if (previous && previous.socket !== ws) {
       this.#closeSocket(previous.socket, 1000, "Replaced by newer app connection");
     }
-    const attachment = this.#getSocketAttachment(ws);
-    if (!attachment) {
-      throw new AppSocketError(401, "App socket is missing attachment");
-    }
     ws.serializeAttachment({
-      ...attachment,
+      kind: "app-client",
       connected: true,
       session,
       appFrame,
@@ -751,28 +644,18 @@ export class AppRunner extends DurableObject<Env> {
     return this.#isAppSocketAttachment(attachment) ? attachment : null;
   }
 
-  #expectedRouteFromSocketRequest(request: Request): AppSocketExpectedRoute | null {
-    const url = new URL(request.url);
-    const uid = Number.parseInt(
-      request.headers.get("x-gsv-app-runner-uid") ?? url.searchParams.get("uid") ?? "",
-      10,
-    );
-    const packageId = request.headers.get("x-gsv-app-runner-package-id") ?? url.searchParams.get("packageId") ?? "";
-    const packageName = request.headers.get("x-gsv-app-package-name") ?? this.#pathPart(url.pathname, 1);
-    const sessionId = request.headers.get("x-gsv-app-session-id") ?? this.#pathPart(url.pathname, 3);
-    if (!Number.isInteger(uid) || uid < 0 || !packageId || !packageName || !sessionId) {
+  #appSocketContextFromRequest(request: Request): AppSocketContext | null {
+    const raw = request.headers.get("x-gsv-app-socket-context");
+    if (!raw) {
       return null;
     }
-    return {
-      uid,
-      packageId,
-      packageName,
-      sessionId,
-    };
-  }
-
-  #pathPart(pathname: string, index: number): string {
-    return pathname.split("/").filter(Boolean)[index]?.trim() ?? "";
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(decodeURIComponent(raw));
+    } catch {
+      return null;
+    }
+    return this.#isAppSocketContext(parsed) ? parsed : null;
   }
 
   #isAppRequestFrame(value: unknown): value is AppRequestFrame {
@@ -789,27 +672,35 @@ export class AppRunner extends DurableObject<Env> {
     if (record?.kind !== "app-client" || typeof record.connected !== "boolean") {
       return false;
     }
-    const expected = this.#record(record.expected);
-    if (
-      !expected ||
-      typeof expected.uid !== "number" ||
-      typeof expected.packageId !== "string" ||
-      typeof expected.packageName !== "string" ||
-      typeof expected.sessionId !== "string"
-    ) {
-      return false;
-    }
     if (!record.connected) {
       return true;
     }
-    const session = this.#record(record.session);
-    const appFrame = this.#record(record.appFrame);
+    return this.#isAppSessionInfo(record.session) && this.#isAppFrameContext(record.appFrame);
+  }
+
+  #isAppSocketContext(value: unknown): value is AppSocketContext {
+    const record = this.#record(value);
+    return Boolean(
+      record &&
+      this.#isAppSessionInfo(record.session) &&
+      this.#isAppFrameContext(record.appFrame),
+    );
+  }
+
+  #isAppSessionInfo(value: unknown): value is AppSessionInfo {
+    const session = this.#record(value);
     return Boolean(
       session &&
       typeof session.sessionId === "string" &&
       typeof session.clientId === "string" &&
       typeof session.rpcBase === "string" &&
-      typeof session.expiresAt === "number" &&
+      typeof session.expiresAt === "number",
+    );
+  }
+
+  #isAppFrameContext(value: unknown): value is AppFrameContext {
+    const appFrame = this.#record(value);
+    return Boolean(
       appFrame &&
       typeof appFrame.uid === "number" &&
       typeof appFrame.username === "string" &&

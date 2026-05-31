@@ -99,11 +99,22 @@ export default {
       );
     }
 
+    const appSessionMatch = matchPackageAppSessionPath(url.pathname);
+    if (appSessionMatch) {
+      return handlePackageAppSessionRequest(request, env, ctx, appSessionMatch);
+    }
+
     const appMatch = matchPackageAppPath(url.pathname);
     if (appMatch) {
       const session = getPackageAppSession(request);
       if (!session) {
         return new Response("Unauthorized", { status: 401 });
+      }
+      if (request.method !== "GET" && request.method !== "HEAD") {
+        return new Response("Method Not Allowed", {
+          status: 405,
+          headers: { allow: "GET, HEAD" },
+        });
       }
 
       const kernel = await getAgentByName(env.KERNEL, "singleton");
@@ -118,39 +129,7 @@ export default {
         return new Response(resolved.message, { status: resolved.status });
       }
 
-      const runner = ctx.exports.AppRunner.getByName(buildAppRunnerName(resolved.auth.uid, resolved.packageId));
-      await runner.ensureRuntime({
-        packageId: resolved.packageId,
-        packageName: resolved.packageName,
-        routeBase: resolved.routeBase,
-        entrypointName: resolved.appFrame.entrypointName,
-        artifact: resolved.artifact,
-        appFrame: resolved.appFrame,
-      });
-
-      const response = deserializeAppHttpResponse(
-        await runner.gsvFetch(await serializeAppHttpRequest(buildPackageWorkerRequest(request, resolved))),
-      );
-      return await withPackageAppClientSession(response, resolved);
-    }
-
-    const appRpcMatch = matchPackageAppRpcPath(url.pathname);
-    if (appRpcMatch) {
-      if (!isWebSocketRequest(request)) {
-        return new Response("App RPC requires WebSocket", {
-          status: 426,
-          headers: {
-            "cache-control": "no-store",
-            upgrade: "websocket",
-          },
-        });
-      }
-      return handlePackageAppSocketRequest(request, env, ctx, appRpcMatch);
-    }
-
-    const appSessionRefreshMatch = matchPackageAppSessionRefreshPath(url.pathname);
-    if (appSessionRefreshMatch) {
-      return handlePackageAppSessionRefreshRequest(request, env, appSessionRefreshMatch);
+      return redirectToPackageAppSession(request, resolved, appMatch.suffix);
     }
 
     return new Response("Not Found", { status: 404 });
@@ -261,6 +240,8 @@ type PackageAppSession = {
   token: string;
 };
 
+const PACKAGE_APP_SESSION_COOKIE_PREFIX = "gsv_app_session_";
+
 type BasicAuth = {
   username: string;
   credential: string;
@@ -274,8 +255,17 @@ type GitPathMatch = {
 };
 
 type PackageAppSessionRefreshMatch = {
-  packageName: string;
   sessionId: string;
+};
+
+type PackageAppLaunchMatch = {
+  packageName: string;
+  suffix: string;
+};
+
+type PackageAppSessionPathMatch = {
+  sessionId: string;
+  suffix: string;
 };
 
 type ResolvedPackageRoute = {
@@ -287,12 +277,12 @@ type ResolvedPackageRoute = {
   appFrame: AppFrameContext;
   clientSession: {
     sessionId: string;
-    secret: string;
     clientId: string;
     packageId: string;
     packageName: string;
     routeBase: string;
     rpcBase: string;
+    secret?: string;
     createdAt: number;
     expiresAt: number;
   };
@@ -304,9 +294,12 @@ type ResolvedPackageRoute = {
   };
 };
 
-function matchPackageAppPath(pathname: string): { packageName: string } | null {
+function matchPackageAppPath(pathname: string): PackageAppLaunchMatch | null {
   const parts = pathname.split("/").filter(Boolean);
   if (parts.length < 2 || parts[0] !== "apps") {
+    return null;
+  }
+  if (parts[1] === "sessions") {
     return null;
   }
 
@@ -315,51 +308,32 @@ function matchPackageAppPath(pathname: string): { packageName: string } | null {
     return null;
   }
 
-  return { packageName: rawName };
+  const suffixParts = parts.slice(2);
+  return {
+    packageName: rawName,
+    suffix: suffixParts.length > 0 ? `/${suffixParts.join("/")}` : "/",
+  };
 }
 
-function matchPackageAppRpcPath(
-  pathname: string,
-): { packageName: string; sessionId: string } | null {
+function matchPackageAppSessionPath(pathname: string): PackageAppSessionPathMatch | null {
   const parts = pathname.split("/").filter(Boolean);
-  if (parts.length !== 4 || parts[0] !== "app-rpc" || parts[2] !== "sessions") {
+  if (parts.length < 3 || parts[0] !== "apps" || parts[1] !== "sessions") {
     return null;
   }
 
-  const packageName = parts[1]?.trim();
-  const sessionId = parts[3]?.trim();
-  if (!packageName || !sessionId) {
-    return null;
-  }
-  if (!/^[a-z0-9][a-z0-9-]*$/.test(packageName)) {
+  const sessionId = parts[2]?.trim();
+  if (!sessionId) {
     return null;
   }
   if (!/^[a-f0-9-]+$/i.test(sessionId)) {
     return null;
   }
 
-  return { packageName, sessionId };
-}
-
-function matchPackageAppSessionRefreshPath(pathname: string): PackageAppSessionRefreshMatch | null {
-  const parts = pathname.split("/").filter(Boolean);
-  if (parts.length !== 5 || parts[0] !== "app-rpc" || parts[2] !== "sessions" || parts[4] !== "refresh") {
-    return null;
-  }
-
-  const packageName = parts[1]?.trim();
-  const sessionId = parts[3]?.trim();
-  if (!packageName || !sessionId) {
-    return null;
-  }
-  if (!/^[a-z0-9][a-z0-9-]*$/.test(packageName)) {
-    return null;
-  }
-  if (!/^[a-f0-9-]+$/i.test(sessionId)) {
-    return null;
-  }
-
-  return { packageName, sessionId };
+  const suffixParts = parts.slice(3);
+  return {
+    sessionId,
+    suffix: suffixParts.length > 0 ? `/${suffixParts.join("/")}` : "/",
+  };
 }
 
 function matchGitPath(url: URL): GitPathMatch | null {
@@ -467,7 +441,56 @@ function parseCookieHeader(raw: string | null): Map<string, string> {
   return map;
 }
 
-function buildPackageWorkerRequest(request: Request, resolved: ResolvedPackageRoute): Request {
+function getPackageAppSessionSecret(request: Request, sessionId: string): string {
+  return parseCookieHeader(request.headers.get("cookie")).get(packageAppSessionCookieName(sessionId)) ?? "";
+}
+
+function buildPackageAppSessionCookie(
+  request: Request,
+  sessionId: string,
+  secret: string,
+  expiresAt: number,
+): string {
+  const url = new URL(request.url);
+  const maxAgeSeconds = Math.max(1, Math.ceil((expiresAt - Date.now()) / 1000));
+  const parts = [
+    `${packageAppSessionCookieName(sessionId)}=${encodeURIComponent(secret)}`,
+    "HttpOnly",
+    "SameSite=Strict",
+    `Path=${packageAppSessionCookiePath(sessionId)}`,
+    `Max-Age=${maxAgeSeconds}`,
+  ];
+  if (url.protocol === "https:") {
+    parts.push("Secure");
+  }
+  return parts.join("; ");
+}
+
+function packageAppSessionCookieName(sessionId: string): string {
+  return `${PACKAGE_APP_SESSION_COOKIE_PREFIX}${sessionId.replace(/[^A-Za-z0-9]/g, "_")}`;
+}
+
+function packageAppSessionCookiePath(sessionId: string): string {
+  return `/apps/sessions/${encodeURIComponent(sessionId)}`;
+}
+
+function packageSessionPath(sessionId: string, suffix: string): string {
+  const normalizedSuffix = suffix && suffix !== "/" ? suffix : "/";
+  return `${packageAppSessionCookiePath(sessionId)}${normalizedSuffix}`;
+}
+
+function packageWorkerPath(routeBase: string, suffix: string): string {
+  if (!suffix || suffix === "/") {
+    return routeBase;
+  }
+  return `${routeBase}${suffix}`;
+}
+
+function buildPackageWorkerRequest(
+  request: Request,
+  resolved: ResolvedPackageRoute,
+  sessionSuffix = "/",
+): Request {
   const headers = new Headers(request.headers);
   headers.delete("cookie");
   headers.delete("authorization");
@@ -478,46 +501,61 @@ function buildPackageWorkerRequest(request: Request, resolved: ResolvedPackageRo
   headers.set("x-gsv-package-id", resolved.packageId);
   headers.set("x-gsv-package-name", resolved.packageName);
 
-  return new Request(request, { headers });
+  const url = new URL(request.url);
+  url.pathname = packageWorkerPath(resolved.routeBase, sessionSuffix);
+
+  const init: RequestInit = {
+    method: request.method,
+    headers,
+  };
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    init.body = request.body;
+  }
+  return new Request(url.toString(), init);
 }
 
-function handlePackageAppSocketRequest(
+async function handlePackageAppSessionRequest(
   request: Request,
   env: Env,
   ctx: ExecutionContext,
-  match: { packageName: string; sessionId: string },
-): Promise<Response> | Response {
-  const url = new URL(request.url);
-  const routeToken = url.searchParams.get("routeToken")?.trim() ?? "";
-  if (!routeToken) {
-    return new Response("App RPC route is missing route token", {
-      status: 400,
-      headers: { "cache-control": "no-store" },
-    });
-  }
-
-  return (async () => {
-    const kernel = await getAgentByName(env.KERNEL, "singleton");
-    const resolved = await kernel.resolvePackageAppRpcRoute({
-      packageName: match.packageName,
-      sessionId: match.sessionId,
-      routeToken,
-    });
-    if (!resolved.ok) {
-      return new Response(resolved.message, {
-        status: resolved.status,
-        headers: { "cache-control": "no-store" },
+  match: PackageAppSessionPathMatch,
+): Promise<Response> {
+  if (match.suffix === "/socket") {
+    if (!isWebSocketRequest(request)) {
+      return new Response("App socket requires WebSocket", {
+        status: 426,
+        headers: {
+          "cache-control": "no-store",
+          upgrade: "websocket",
+        },
       });
     }
+    return handlePackageAppSocketRequest(request, env, ctx, match);
+  }
 
-    const runner = ctx.exports.AppRunner.getByName(buildAppRunnerName(resolved.uid, resolved.packageId));
-    const headers = new Headers(request.headers);
-    headers.set("x-gsv-app-package-name", resolved.packageName);
-    headers.set("x-gsv-app-session-id", resolved.sessionId);
-    headers.set("x-gsv-app-runner-uid", String(resolved.uid));
-    headers.set("x-gsv-app-runner-package-id", resolved.packageId);
-    return runner.fetch(new Request(request, { headers }));
-  })();
+  if (match.suffix === "/refresh") {
+    return handlePackageAppSessionRefreshRequest(request, env, match);
+  }
+
+  const resolved = await resolvePackageAppSessionFromCookie(request, env, match.sessionId);
+  if (!resolved.ok) {
+    return new Response(resolved.message, { status: resolved.status });
+  }
+
+  const runner = ctx.exports.AppRunner.getByName(buildAppRunnerName(resolved.auth.uid, resolved.packageId));
+  await runner.ensureRuntime({
+    packageId: resolved.packageId,
+    packageName: resolved.packageName,
+    routeBase: resolved.routeBase,
+    entrypointName: resolved.appFrame.entrypointName,
+    artifact: resolved.artifact,
+    appFrame: resolved.appFrame,
+  });
+
+  const response = deserializeAppHttpResponse(
+    await runner.gsvFetch(await serializeAppHttpRequest(buildPackageWorkerRequest(request, resolved, match.suffix))),
+  );
+  return await withPackageAppClientSession(response, resolved);
 }
 
 async function handlePackageAppSessionRefreshRequest(
@@ -532,24 +570,12 @@ async function handlePackageAppSessionRefreshRequest(
     });
   }
 
-  const session = getPackageAppSession(request);
-  if (!session) {
-    return new Response("Unauthorized", { status: 401 });
-  }
-
-  let clientId: string | undefined;
-  try {
-    clientId = await readRefreshClientId(request);
-  } catch {
-    return new Response("Invalid JSON", { status: 400 });
-  }
+  const secret = getPackageAppSessionSecret(request, match.sessionId);
 
   const kernel = await getAgentByName(env.KERNEL, "singleton");
-  const resolved = await kernel.resolvePackageHttpRoute({
-    packageName: match.packageName,
-    username: session.username,
-    token: session.token,
-    clientId,
+  const resolved = await kernel.refreshPackageAppRpcSession({
+    sessionId: match.sessionId,
+    secret,
   });
 
   if (!resolved.ok) {
@@ -559,25 +585,97 @@ async function handlePackageAppSessionRefreshRequest(
   return Response.json(buildPackageAppBoot(resolved), {
     headers: {
       "cache-control": "no-store",
+      "set-cookie": buildPackageAppSessionCookie(request, match.sessionId, secret, resolved.clientSession.expiresAt),
     },
   });
 }
 
-async function readRefreshClientId(request: Request): Promise<string | undefined> {
-  const text = await request.text();
-  if (!text.trim()) {
-    return undefined;
+async function handlePackageAppSocketRequest(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext,
+  match: PackageAppSessionPathMatch,
+): Promise<Response> {
+  const resolved = await resolvePackageAppSessionFromCookie(request, env, match.sessionId);
+  if (!resolved.ok) {
+    return new Response(resolved.message, {
+      status: resolved.status,
+      headers: { "cache-control": "no-store" },
+    });
+  }
+  if (!resolved.hasRpc) {
+    return new Response("Package app has no backend rpc", {
+      status: 404,
+      headers: { "cache-control": "no-store" },
+    });
   }
 
-  const parsed = JSON.parse(text) as unknown;
-  if (!parsed || typeof parsed !== "object") {
-    return undefined;
+  const runner = ctx.exports.AppRunner.getByName(buildAppRunnerName(resolved.auth.uid, resolved.packageId));
+  await runner.ensureRuntime({
+    packageId: resolved.packageId,
+    packageName: resolved.packageName,
+    routeBase: resolved.routeBase,
+    entrypointName: resolved.appFrame.entrypointName,
+    artifact: resolved.artifact,
+    appFrame: resolved.appFrame,
+  });
+
+  const headers = new Headers(request.headers);
+  headers.set("x-gsv-app-socket-context", encodeURIComponent(JSON.stringify({
+    session: {
+      sessionId: resolved.clientSession.sessionId,
+      clientId: resolved.clientSession.clientId,
+      rpcBase: resolved.clientSession.rpcBase,
+      expiresAt: resolved.clientSession.expiresAt,
+    },
+    appFrame: resolved.appFrame,
+  })));
+  return runner.fetch(new Request(request, { headers }));
+}
+
+async function resolvePackageAppSessionFromCookie(
+  request: Request,
+  env: Env,
+  sessionId: string,
+): Promise<ResolvedPackageRoute | { ok: false; status: number; message: string }> {
+  const secret = getPackageAppSessionSecret(request, sessionId);
+  if (!secret) {
+    return { ok: false, status: 401, message: "Unauthorized" };
   }
 
-  const clientId = (parsed as { clientId?: unknown }).clientId;
-  return typeof clientId === "string" && clientId.trim().length > 0
-    ? clientId.trim()
-    : undefined;
+  const kernel = await getAgentByName(env.KERNEL, "singleton");
+  return kernel.resolvePackageAppRpcSession({
+    sessionId,
+    secret,
+  });
+}
+
+function redirectToPackageAppSession(
+  request: Request,
+  resolved: ResolvedPackageRoute,
+  suffix: string,
+): Response {
+  const secret = resolved.clientSession.secret;
+  if (!secret) {
+    return new Response("Package app session is missing secret", { status: 500 });
+  }
+
+  const url = new URL(request.url);
+  url.pathname = packageSessionPath(resolved.clientSession.sessionId, suffix);
+  const headers = new Headers({
+    location: url.pathname + url.search + url.hash,
+    "cache-control": "no-store",
+    "set-cookie": buildPackageAppSessionCookie(
+      request,
+      resolved.clientSession.sessionId,
+      secret,
+      resolved.clientSession.expiresAt,
+    ),
+  });
+  return new Response(null, {
+    status: 303,
+    headers,
+  });
 }
 
 async function withPackageAppClientSession(
@@ -646,10 +744,9 @@ function buildPackageAppBoot(resolved: ResolvedPackageRoute) {
   return {
     packageId: resolved.packageId,
     packageName: resolved.packageName,
-    routeBase: resolved.routeBase,
+    routeBase: packageAppSessionCookiePath(resolved.clientSession.sessionId),
     rpcBase: resolved.clientSession.rpcBase,
     sessionId: resolved.clientSession.sessionId,
-    sessionSecret: resolved.clientSession.secret,
     clientId: resolved.clientSession.clientId,
     expiresAt: resolved.clientSession.expiresAt,
     hasBackend: resolved.hasRpc,
