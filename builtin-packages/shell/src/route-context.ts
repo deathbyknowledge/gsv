@@ -1,4 +1,4 @@
-import { consumePendingAppOpen } from "@gsv/package/host";
+import { consumePendingAppOpen, getAppClientId } from "@gsv/package/host";
 import type { ShellRoute } from "./types";
 
 export function readLaunchUrl(): URL {
@@ -8,15 +8,13 @@ export function readLaunchUrl(): URL {
     return current;
   }
 
-  const currentHasWindowId = current.searchParams.has("windowId");
   const currentHasExplicitState = hasExplicitShellState(current);
-  if (currentHasWindowId && currentHasExplicitState) {
+  if (currentHasExplicitState) {
     return current;
   }
 
-  const frameHasWindowId = frame.searchParams.has("windowId");
   const frameHasExplicitState = hasExplicitShellState(frame);
-  if (!frameHasWindowId && !frameHasExplicitState) {
+  if (!frameHasExplicitState) {
     return current;
   }
 
@@ -24,7 +22,7 @@ export function readLaunchUrl(): URL {
 }
 
 export function readWindowId(): string {
-  return readLaunchUrl().searchParams.get("windowId")?.trim() || "";
+  return getAppClientId();
 }
 
 export function readRouteParams(windowId: string): ShellRoute {
