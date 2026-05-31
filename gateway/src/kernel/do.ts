@@ -79,10 +79,8 @@ import {
   setAdapterActivityForKernel,
 } from "./adapter-handlers";
 import {
-  type InstalledPackageRecord,
   PackageStore,
   type PackageEntrypoint,
-  packageRouteBase,
   type PackageArtifactMetadata,
   visiblePackageScopesForActor,
 } from "./packages";
@@ -137,35 +135,6 @@ type ProcSendData = {
   runId?: string;
   queued?: boolean;
 };
-
-type ResolvePackageHttpInput = {
-  packageName: string;
-  username: string;
-  token: string;
-  clientId?: string;
-};
-
-type ResolvePackageHttpResult =
-  | {
-      ok: true;
-      packageId: string;
-      packageName: string;
-      routeBase: string;
-      artifact: PackageArtifactMetadata;
-      appFrame: AppFrameContext;
-      clientSession: AppClientSessionContext & { secret: string };
-      auth: {
-        uid: number;
-        username: string;
-        capabilities: string[];
-      };
-      hasRpc: boolean;
-    }
-  | {
-      ok: false;
-      status: number;
-      message: string;
-    };
 
 type ResolvePackageAppRpcInput = {
   packageName?: string;
@@ -552,86 +521,6 @@ export class Kernel extends Host<Env> {
     pending.cleanup();
     this.applyPostDispatchEffects(frame, result.response);
     return result.response;
-  }
-
-  async resolvePackageHttpRoute(input: ResolvePackageHttpInput): Promise<ResolvePackageHttpResult> {
-    await this.ready;
-    const packageName = input.packageName.trim();
-    const username = input.username.trim();
-    const token = input.token.trim();
-
-    if (!packageName) {
-      return { ok: false, status: 400, message: "Package name is required" };
-    }
-    if (!username || !token) {
-      return { ok: false, status: 401, message: "Authentication required" };
-    }
-
-    const auth = await this.auth.authenticateToken(username, token, { role: "user" });
-    if (!auth.ok) {
-      return { ok: false, status: 401, message: "Authentication failed" };
-    }
-
-    const routeBase = packageRouteBase(packageName);
-    let record: InstalledPackageRecord | null = null;
-    let entrypoint: PackageEntrypoint | null = null;
-
-    for (const candidate of this.packages.list({
-      enabled: true,
-      name: packageName,
-      runtime: "web-ui",
-      scopes: visiblePackageScopesForActor({ uid: auth.identity.uid }),
-    })) {
-      const matched = candidate.manifest.entrypoints.find((candidateEntrypoint) => {
-        return candidateEntrypoint.kind === "ui" && candidateEntrypoint.route === routeBase;
-      });
-      if (matched) {
-        record = candidate;
-        entrypoint = matched;
-        break;
-      }
-    }
-
-    if (!record || !entrypoint) {
-      return { ok: false, status: 404, message: "Package app not found" };
-    }
-
-    const now = Date.now();
-    const clientSession = await this.appSessions.issue({
-      uid: auth.identity.uid,
-      username: auth.identity.username,
-      packageId: record.packageId,
-      packageName: record.manifest.name,
-      entrypointName: entrypoint.name,
-      routeBase,
-      clientId: input.clientId?.trim() || crypto.randomUUID(),
-      ttlMs: APP_CLIENT_SESSION_TTL_MS,
-    });
-
-    return {
-      ok: true,
-      packageId: record.packageId,
-      packageName: record.manifest.name,
-      routeBase,
-      artifact: record.artifact,
-      appFrame: {
-        uid: auth.identity.uid,
-        username: auth.identity.username,
-        packageId: record.packageId,
-        packageName: record.manifest.name,
-        entrypointName: entrypoint.name,
-        routeBase,
-        issuedAt: now,
-        expiresAt: now + DEFAULT_APP_FRAME_TTL_MS,
-      },
-      clientSession,
-      auth: {
-        uid: auth.identity.uid,
-        username: auth.identity.username,
-        capabilities: this.caps.resolve(auth.identity.gids),
-      },
-      hasRpc: record.manifest.entrypoints.some((candidateEntrypoint) => candidateEntrypoint.kind === "rpc"),
-    };
   }
 
   async resolvePackageAppRpcSession(input: ResolvePackageAppRpcInput): Promise<ResolvePackageAppRpcResult> {

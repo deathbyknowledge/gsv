@@ -104,34 +104,6 @@ export default {
       return handlePackageAppSessionRequest(request, env, ctx, appSessionMatch);
     }
 
-    const appMatch = matchPackageAppPath(url.pathname);
-    if (appMatch) {
-      const session = getPackageAppSession(request);
-      if (!session) {
-        return new Response("Unauthorized", { status: 401 });
-      }
-      if (request.method !== "GET" && request.method !== "HEAD") {
-        return new Response("Method Not Allowed", {
-          status: 405,
-          headers: { allow: "GET, HEAD" },
-        });
-      }
-
-      const kernel = await getAgentByName(env.KERNEL, "singleton");
-      const resolved = await kernel.resolvePackageHttpRoute({
-        packageName: appMatch.packageName,
-        username: session.username,
-        token: session.token,
-        clientId: url.searchParams.get("windowId")?.trim() || undefined,
-      });
-
-      if (!resolved.ok) {
-        return new Response(resolved.message, { status: resolved.status });
-      }
-
-      return redirectToPackageAppSession(request, resolved, appMatch.suffix);
-    }
-
     return new Response("Not Found", { status: 404 });
   },
 } satisfies ExportedHandler<Env>;
@@ -235,11 +207,6 @@ const PACKAGE_APP_RUNTIME_SCRIPT = [
   "})();",
 ].join("");
 
-type PackageAppSession = {
-  username: string;
-  token: string;
-};
-
 const PACKAGE_APP_SESSION_COOKIE_PREFIX = "gsv_app_session_";
 
 type BasicAuth = {
@@ -256,11 +223,6 @@ type GitPathMatch = {
 
 type PackageAppSessionRefreshMatch = {
   sessionId: string;
-};
-
-type PackageAppLaunchMatch = {
-  packageName: string;
-  suffix: string;
 };
 
 type PackageAppSessionPathMatch = {
@@ -282,7 +244,6 @@ type ResolvedPackageRoute = {
     packageName: string;
     routeBase: string;
     rpcBase: string;
-    secret?: string;
     createdAt: number;
     expiresAt: number;
   };
@@ -293,27 +254,6 @@ type ResolvedPackageRoute = {
     capabilities: string[];
   };
 };
-
-function matchPackageAppPath(pathname: string): PackageAppLaunchMatch | null {
-  const parts = pathname.split("/").filter(Boolean);
-  if (parts.length < 2 || parts[0] !== "apps") {
-    return null;
-  }
-  if (parts[1] === "sessions") {
-    return null;
-  }
-
-  const rawName = parts[1]?.trim();
-  if (!rawName || !/^[a-z0-9][a-z0-9-]*$/.test(rawName)) {
-    return null;
-  }
-
-  const suffixParts = parts.slice(2);
-  return {
-    packageName: rawName,
-    suffix: suffixParts.length > 0 ? `/${suffixParts.join("/")}` : "/",
-  };
-}
 
 function matchPackageAppSessionPath(pathname: string): PackageAppSessionPathMatch | null {
   const parts = pathname.split("/").filter(Boolean);
@@ -393,26 +333,6 @@ function basicAuthChallenge(message: string): Response {
       "WWW-Authenticate": 'Basic realm="gsv"',
     },
   });
-}
-
-function getPackageAppSession(request: Request): PackageAppSession | null {
-  const authHeader = request.headers.get("authorization");
-  if (authHeader?.startsWith("Bearer ")) {
-    const token = authHeader.slice("Bearer ".length).trim();
-    const username = request.headers.get("x-gsv-username")?.trim() ?? "";
-    if (username && token) {
-      return { username, token };
-    }
-  }
-
-  const cookies = parseCookieHeader(request.headers.get("cookie"));
-  const username = cookies.get("gsv_app_user") ?? "";
-  const token = cookies.get("gsv_app_token") ?? "";
-  if (!username || !token) {
-    return null;
-  }
-
-  return { username, token };
 }
 
 function parseCookieHeader(raw: string | null): Map<string, string> {
@@ -685,24 +605,6 @@ async function resolvePackageAppSessionFromCookie(
   });
 }
 
-function redirectToPackageAppSession(
-  request: Request,
-  resolved: ResolvedPackageRoute,
-  suffix: string,
-): Response {
-  const secret = resolved.clientSession.secret;
-  if (!secret) {
-    return new Response("Package app session is missing secret", { status: 500 });
-  }
-
-  return redirectToPackageAppSessionLocation(
-    request,
-    resolved,
-    urlPathFromSuffix(request, suffix),
-    secret,
-  );
-}
-
 function redirectToPackageAppSessionLocation(
   request: Request,
   resolved: ResolvedPackageRoute,
@@ -724,12 +626,6 @@ function redirectToPackageAppSessionLocation(
     status: 303,
     headers,
   });
-}
-
-function urlPathFromSuffix(request: Request, suffix: string): string {
-  const url = new URL(request.url);
-  const normalizedSuffix = suffix && suffix !== "/" ? suffix : "/";
-  return `${normalizedSuffix}${url.search}${url.hash}`;
 }
 
 function normalizePackageAppLaunchNext(raw: string | null): string {

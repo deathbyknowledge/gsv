@@ -110,6 +110,21 @@ function createWebAppInstance(manifest: AppManifest, gatewayClient: GatewayClien
   let bridge: ReturnType<typeof attachHostBridge> | null = null;
   let focusController: ReturnType<typeof attachIframeInteractionFocus> | null = null;
   let mountGeneration = 0;
+  let activeSessionId: string | null = null;
+
+  const closeSession = (sessionId: string): void => {
+    void gatewayClient.call("app.close", { sessionId }).catch(() => {
+      // The server may already have expired the session or the host may be disconnecting.
+    });
+  };
+
+  const closeActiveSession = (): void => {
+    const sessionId = activeSessionId;
+    activeSessionId = null;
+    if (sessionId) {
+      closeSession(sessionId);
+    }
+  };
 
   return {
     mount: async (container, context) => {
@@ -119,8 +134,12 @@ function createWebAppInstance(manifest: AppManifest, gatewayClient: GatewayClien
         appOpenArgsFromRoute(context.route, context.windowId),
       );
       if (generation !== mountGeneration) {
+        closeSession(launch.sessionId);
         return;
       }
+
+      closeActiveSession();
+      activeSessionId = launch.sessionId;
 
       const iframe = document.createElement("iframe");
       iframe.src = launch.launchUrl;
@@ -145,6 +164,7 @@ function createWebAppInstance(manifest: AppManifest, gatewayClient: GatewayClien
     },
     terminate: () => {
       mountGeneration += 1;
+      closeActiveSession();
       focusController?.destroy();
       focusController = null;
       bridge?.destroy();

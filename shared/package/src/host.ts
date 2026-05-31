@@ -83,14 +83,9 @@ export function getAppClientId(): string {
       return getAppBoot().clientId.trim();
     }
   } catch {
-    // Fall back to the legacy query param below.
-  }
-
-  try {
-    return new URL(window.location.href).searchParams.get("windowId")?.trim() || "";
-  } catch {
     return "";
   }
+  return "";
 }
 
 export function openApp(request: OpenAppRequest): void {
