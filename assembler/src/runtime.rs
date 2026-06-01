@@ -404,7 +404,7 @@ function buildAppClient(env, props) {{
       return api.emitAppEvent(event, payload);
     }},
     async emitTo(clientId, event, payload) {{
-      return api.emitAppEvent(event, payload, clientId);
+      return api.emitAppEvent(event, payload, clientId, session?.sessionId);
     }},
   }};
 }}

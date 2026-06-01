@@ -377,6 +377,7 @@ fn builds_runtime_artifact_for_declarative_backend_and_commands() {
     assert!(wrapper.contains("function buildAppClient(env, props)"));
     assert!(wrapper.contains("typeof api.packageSqlExec !== \"function\""));
     assert!(wrapper.contains("async invoke(method, args)"));
+    assert!(wrapper.contains("api.emitAppEvent(event, payload, clientId, session?.sessionId)"));
     assert!(wrapper.contains("const api = env.GSV_API;"));
 }
 

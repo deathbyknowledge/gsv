@@ -145,7 +145,7 @@ type AppRunnerDaemonStub = Rpc.RpcTargetBranded & {
   removeRpcSchedule(key: string): Promise<{ removed: boolean }>;
   listRpcSchedules(): Promise<unknown[]>;
   packageSqlExec(statement: string, bindings?: unknown[]): Promise<unknown[]>;
-  emitAppEvent(event: string, payload?: unknown, clientId?: string): Promise<{ delivered: number }>;
+  emitAppEvent(event: string, payload?: unknown, clientId?: string, sessionId?: string): Promise<{ delivered: number }>;
 };
 
 type GsvApiBindingProps = {
@@ -214,8 +214,13 @@ export class GsvApiBinding extends WorkerEntrypoint<Env, GsvApiBindingProps> {
     return this.#getRunner().packageSqlExec(statement, bindings);
   }
 
-  async emitAppEvent(event: string, payload?: unknown, clientId?: string): Promise<{ delivered: number }> {
-    return this.#getRunner().emitAppEvent(event, payload, clientId);
+  async emitAppEvent(
+    event: string,
+    payload?: unknown,
+    clientId?: string,
+    sessionId?: string,
+  ): Promise<{ delivered: number }> {
+    return this.#getRunner().emitAppEvent(event, payload, clientId, sessionId);
   }
 
   #getRunner(): AppRunnerDaemonStub {
@@ -425,7 +430,12 @@ export class AppRunner extends DurableObject<Env> {
     return rows.map((row) => this.#serializeSqlRow(row));
   }
 
-  async emitAppEvent(event: string, payload?: unknown, clientId?: string): Promise<{ delivered: number }> {
+  async emitAppEvent(
+    event: string,
+    payload?: unknown,
+    clientId?: string,
+    sessionId?: string,
+  ): Promise<{ delivered: number }> {
     const normalizedEvent = typeof event === "string" ? event.trim() : "";
     if (!normalizedEvent) {
       throw new Error("app event name is required");
@@ -433,7 +443,10 @@ export class AppRunner extends DurableObject<Env> {
     const targetClientId = typeof clientId === "string" && clientId.trim().length > 0
       ? clientId.trim()
       : null;
-    const delivered = await this.#emitAppEventToClients(normalizedEvent, payload, targetClientId);
+    const targetSessionId = typeof sessionId === "string" && sessionId.trim().length > 0
+      ? sessionId.trim()
+      : null;
+    const delivered = await this.#emitAppEventToClients(normalizedEvent, payload, targetClientId, targetSessionId);
     return { delivered };
   }
 
@@ -620,11 +633,24 @@ export class AppRunner extends DurableObject<Env> {
     }
   }
 
-  async #emitAppEventToClients(event: string, payload: unknown, clientId: string | null): Promise<number> {
+  async #emitAppEventToClients(
+    event: string,
+    payload: unknown,
+    clientId: string | null,
+    sessionId: string | null,
+  ): Promise<number> {
     this.#restoreAppClients();
-    const targets = clientId
-      ? [...this.appClients.entries()].filter(([, registration]) => registration.session.clientId === clientId)
-      : [...this.appClients.entries()];
+    let targets: Array<[string, RegisteredAppClient]>;
+    if (clientId) {
+      if (!sessionId) {
+        throw new Error("targeted app events require an app session id");
+      }
+      const key = appClientKeyFor(sessionId, clientId);
+      const registration = this.appClients.get(key);
+      targets = registration ? [[key, registration]] : [];
+    } else {
+      targets = [...this.appClients.entries()];
+    }
     let delivered = 0;
     for (const [key, registration] of targets) {
       try {
