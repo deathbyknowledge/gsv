@@ -401,6 +401,7 @@ Runtime behavior:
 | `app.open` | `handleAppOpen` | Resolves an enabled web-ui package and UI entrypoint visible to the current user, creates an app session with one app client, and returns a launch URL plus window defaults. |
 | `app.attach` | `handleAppAttach` | Attaches a new app client to an existing current-user app session and returns a fresh launch URL. Existing app clients are not invalidated. |
 | `app.list` | `handleAppList` | Lists active app sessions for the current user. Secrets are never returned. |
+| `app.detach` | `handleAppDetach` | Detaches one app client from a current-user app session, removes that client's watches, revokes that client's launch keys, and asks the AppRunner to close that client's live socket. |
 | `app.close` | `handleAppClose` | Closes a current-user app session, revokes its launch keys, and asks the AppRunner to close live app sockets for that session. |
 
 ```ts
@@ -418,6 +419,11 @@ type AppSyscalls = {
   "app.list": {
     args: Empty;
     result: { sessions: AppSessionSummary[] };
+  };
+
+  "app.detach": {
+    args: { sessionId: string; clientId: string };
+    result: { detached: boolean };
   };
 
   "app.close": {

@@ -65,6 +65,15 @@ export type AppListResult = {
   sessions: AppSessionSummary[];
 };
 
+export type AppDetachArgs = {
+  sessionId: string;
+  clientId: string;
+};
+
+export type AppDetachResult = {
+  detached: boolean;
+};
+
 export type AppCloseArgs = {
   sessionId: string;
 };

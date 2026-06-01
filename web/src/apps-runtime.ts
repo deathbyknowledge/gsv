@@ -111,6 +111,7 @@ function createWebAppInstance(manifest: AppManifest, gatewayClient: GatewayClien
   let focusController: ReturnType<typeof attachIframeInteractionFocus> | null = null;
   let mountGeneration = 0;
   let activeSessionId: string | null = null;
+  let activeClientId: string | null = null;
 
   const closeSession = (sessionId: string): void => {
     void gatewayClient.call("app.close", { sessionId }).catch(() => {
@@ -118,11 +119,19 @@ function createWebAppInstance(manifest: AppManifest, gatewayClient: GatewayClien
     });
   };
 
-  const closeActiveSession = (): void => {
+  const detachClient = (sessionId: string, clientId: string): void => {
+    void gatewayClient.call("app.detach", { sessionId, clientId }).catch(() => {
+      // The server may already have expired the session or the host may be disconnecting.
+    });
+  };
+
+  const detachActiveClient = (): void => {
     const sessionId = activeSessionId;
+    const clientId = activeClientId;
     activeSessionId = null;
-    if (sessionId) {
-      closeSession(sessionId);
+    activeClientId = null;
+    if (sessionId && clientId) {
+      detachClient(sessionId, clientId);
     }
   };
 
@@ -138,8 +147,9 @@ function createWebAppInstance(manifest: AppManifest, gatewayClient: GatewayClien
         return;
       }
 
-      closeActiveSession();
+      detachActiveClient();
       activeSessionId = launch.sessionId;
+      activeClientId = launch.clientId;
 
       const iframe = document.createElement("iframe");
       iframe.src = launch.launchUrl;
@@ -164,7 +174,7 @@ function createWebAppInstance(manifest: AppManifest, gatewayClient: GatewayClien
     },
     terminate: () => {
       mountGeneration += 1;
-      closeActiveSession();
+      detachActiveClient();
       focusController?.destroy();
       focusController = null;
       bridge?.destroy();

@@ -163,7 +163,11 @@ type RegisteredAppClient = {
 };
 
 function appClientKey(session: AppSessionInfo): string {
-  return `${session.sessionId}:${session.clientId}`;
+  return appClientKeyFor(session.sessionId, session.clientId);
+}
+
+function appClientKeyFor(sessionId: string, clientId: string): string {
+  return `${sessionId}:${clientId}`;
 }
 
 const APP_SOCKET_TAG = "app-client";
@@ -453,6 +457,27 @@ export class AppRunner extends DurableObject<Env> {
       closed += 1;
     }
     return { closed };
+  }
+
+  async closeAppClient(sessionId: string, clientId: string): Promise<{ closed: number }> {
+    const normalizedSessionId = typeof sessionId === "string" ? sessionId.trim() : "";
+    const normalizedClientId = typeof clientId === "string" ? clientId.trim() : "";
+    if (!normalizedSessionId || !normalizedClientId) {
+      return { closed: 0 };
+    }
+
+    this.#restoreAppClients();
+    const key = appClientKeyFor(normalizedSessionId, normalizedClientId);
+    const registration = this.appClients.get(key);
+    if (!registration) {
+      return { closed: 0 };
+    }
+    this.appClients.delete(key);
+    try {
+      registration.socket.close(1000, "app client detached");
+    } catch {
+    }
+    return { closed: 1 };
   }
 
   #acceptAppSocket(request: Request): Response {

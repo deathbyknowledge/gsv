@@ -2,6 +2,8 @@ import type {
   AppAttachArgs,
   AppCloseArgs,
   AppCloseResult,
+  AppDetachArgs,
+  AppDetachResult,
   AppLaunchResult,
   AppListArgs,
   AppListResult,
@@ -74,6 +76,20 @@ export function handleAppList(_args: AppListArgs, ctx: KernelContext): AppListRe
   const actor = currentActor(ctx);
   return {
     sessions: ctx.appSessions.list(actor.uid).map(toSessionSummary),
+  };
+}
+
+export async function handleAppDetach(args: AppDetachArgs, ctx: KernelContext): Promise<AppDetachResult> {
+  const actor = currentActor(ctx);
+  const sessionId = normalizeRequiredString(args.sessionId, "sessionId");
+  const clientId = normalizeRequiredString(args.clientId, "clientId");
+  const detachedClient = ctx.appSessions.detach(actor.uid, sessionId, clientId);
+  if (detachedClient) {
+    ctx.signalWatches.removeByAppClient(actor.uid, detachedClient.sessionId, detachedClient.clientId);
+    await closeRunnerAppClient(ctx, detachedClient);
+  }
+  return {
+    detached: Boolean(detachedClient),
   };
 }
 
@@ -177,6 +193,19 @@ async function closeRunnerAppSession(ctx: KernelContext, session: AppSessionCont
     return;
   }
   await runner.closeAppSession(session.sessionId);
+}
+
+async function closeRunnerAppClient(
+  ctx: KernelContext,
+  client: Pick<IssuedAppClientSession, "uid" | "packageId" | "sessionId" | "clientId">,
+): Promise<void> {
+  const runner = ctx.getAppRunner?.(client.uid, client.packageId) as {
+    closeAppClient?: (sessionId: string, clientId: string) => Promise<unknown>;
+  } | undefined;
+  if (!runner?.closeAppClient) {
+    return;
+  }
+  await runner.closeAppClient(client.sessionId, client.clientId);
 }
 
 function buildLaunchUrl(

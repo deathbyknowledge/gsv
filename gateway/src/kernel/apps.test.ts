@@ -5,6 +5,7 @@ import {
   AppSyscallError,
   handleAppAttach,
   handleAppClose,
+  handleAppDetach,
   handleAppList,
   handleAppOpen,
 } from "./apps";
@@ -128,6 +129,20 @@ function makeContext(overrides: Partial<KernelContext> = {}): KernelContext {
           lastUsedAt: null,
         }],
       }]),
+      detach: vi.fn(() => ({
+        sessionId: "session-1",
+        clientId: "win-1",
+        uid: 1000,
+        username: "alice",
+        packageId: "pkg-chat",
+        packageName: "chat",
+        entrypointName: "Chat",
+        routeBase: "/apps/chat",
+        rpcBase: "/apps/sessions/session-1/socket",
+        createdAt: 1,
+        expiresAt: 2,
+        lastUsedAt: null,
+      })),
       close: vi.fn(() => ({
         sessionId: "session-1",
         uid: 1000,
@@ -144,6 +159,7 @@ function makeContext(overrides: Partial<KernelContext> = {}): KernelContext {
       })),
     },
     signalWatches: {
+      removeByAppClient: vi.fn(() => 0),
       removeByAppSession: vi.fn(() => 0),
     },
     ...overrides,
@@ -191,6 +207,25 @@ describe("app syscalls", () => {
       ttlMs: expect.any(Number),
     }));
     expect(result.launchUrl).toContain("token=secret-2");
+  });
+
+  it("detaches one client without closing the app session", async () => {
+    const closeAppClient = vi.fn(async () => ({ closed: 1 }));
+    const getAppRunner = vi.fn(() => ({ closeAppClient }));
+    const ctx = makeContext({
+      getAppRunner,
+    });
+
+    await expect(handleAppDetach({
+      sessionId: "session-1",
+      clientId: "win-1",
+    }, ctx)).resolves.toEqual({ detached: true });
+
+    expect(ctx.appSessions.detach).toHaveBeenCalledWith(1000, "session-1", "win-1");
+    expect(ctx.signalWatches.removeByAppClient).toHaveBeenCalledWith(1000, "session-1", "win-1");
+    expect(getAppRunner).toHaveBeenCalledWith(1000, "pkg-chat");
+    expect(closeAppClient).toHaveBeenCalledWith("session-1", "win-1");
+    expect(ctx.appSessions.close).not.toHaveBeenCalled();
   });
 
   it("lists and closes sessions for the current user", async () => {

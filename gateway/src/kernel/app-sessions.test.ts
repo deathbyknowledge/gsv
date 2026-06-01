@@ -259,11 +259,30 @@ function createMockSql() {
       return result<T>();
     }
 
+    if (q.startsWith("UPDATE app_session_clients SET closed_at = ?") && q.includes("client_id = ?")) {
+      const [closedAt, sessionId, clientId] = bindings as [number, string, string];
+      const row = clients.get(clientKey(sessionId, clientId));
+      if (row && row.closed_at === null) {
+        row.closed_at = closedAt;
+      }
+      return result<T>();
+    }
+
     if (q.startsWith("UPDATE app_session_clients SET closed_at = ?")) {
       const [closedAt, sessionId] = bindings as [number, string];
       for (const row of clients.values()) {
         if (row.session_id === sessionId && row.closed_at === null) {
           row.closed_at = closedAt;
+        }
+      }
+      return result<T>();
+    }
+
+    if (q.startsWith("UPDATE app_session_client_keys SET revoked_at = ?") && q.includes("client_id = ?")) {
+      const [revokedAt, sessionId, clientId] = bindings as [number, string, string];
+      for (const row of keys.values()) {
+        if (row.session_id === sessionId && row.client_id === clientId && row.revoked_at === null) {
+          row.revoked_at = revokedAt;
         }
       }
       return result<T>();
@@ -379,6 +398,17 @@ describe("AppSessionStore", () => {
     expect(await store.resolve(issued.sessionId, minted!.secret)).toMatchObject({
       sessionId: issued.sessionId,
       clientId: "win-2",
+    });
+
+    vi.spyOn(Date, "now").mockReturnValue(202_000);
+    expect(store.detach(1000, issued.sessionId, "win-2")).toMatchObject({
+      sessionId: issued.sessionId,
+      clientId: "win-2",
+    });
+    expect(await store.resolve(issued.sessionId, minted!.secret)).toBeNull();
+    expect(await store.resolve(issued.sessionId, issued.secret)).toMatchObject({
+      sessionId: issued.sessionId,
+      clientId: "win-1",
     });
   });
 

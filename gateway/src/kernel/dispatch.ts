@@ -118,6 +118,7 @@ import {
   AppSyscallError,
   handleAppAttach,
   handleAppClose,
+  handleAppDetach,
   handleAppList,
   handleAppOpen,
 } from "./apps";
@@ -326,6 +327,9 @@ async function dispatchNative(
         break;
       case "app.list":
         data = handleAppList(frame.args, ctx);
+        break;
+      case "app.detach":
+        data = await handleAppDetach(frame.args, ctx);
         break;
       case "app.close":
         data = await handleAppClose(frame.args, ctx);

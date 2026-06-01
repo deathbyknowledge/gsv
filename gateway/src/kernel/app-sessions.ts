@@ -311,6 +311,46 @@ export class AppSessionStore {
     return this.toSessionContext(row);
   }
 
+  detach(uid: number, sessionId: string, clientId: string): AppClientSessionContext | null {
+    this.pruneExpired();
+    const session = this.getSessionRow(sessionId);
+    if (!this.isActiveSessionForUid(session, uid)) {
+      return null;
+    }
+
+    const client = this.getClientRow(sessionId, clientId);
+    if (!client || client.closed_at != null || client.expires_at <= Date.now()) {
+      return null;
+    }
+
+    const now = Date.now();
+    this.sql.exec(
+      "UPDATE app_sessions SET last_used_at = ? WHERE session_id = ?",
+      now,
+      sessionId,
+    );
+    this.sql.exec(
+      "UPDATE app_session_clients SET closed_at = ? WHERE session_id = ? AND client_id = ? AND closed_at IS NULL",
+      now,
+      sessionId,
+      clientId,
+    );
+    this.sql.exec(
+      "UPDATE app_session_client_keys SET revoked_at = ? WHERE session_id = ? AND client_id = ? AND revoked_at IS NULL",
+      now,
+      sessionId,
+      clientId,
+    );
+
+    return toClientContext({
+      session: {
+        ...session,
+        last_used_at: now,
+      },
+      client,
+    });
+  }
+
   close(uid: number, sessionId: string): AppSessionContext | null {
     this.pruneExpired();
     const session = this.getActiveForUid(uid, sessionId);

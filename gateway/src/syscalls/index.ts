@@ -238,6 +238,8 @@ import type {
   AppAttachArgs,
   AppCloseArgs,
   AppCloseResult,
+  AppDetachArgs,
+  AppDetachResult,
   AppLaunchResult,
   AppListArgs,
   AppListResult,
@@ -268,6 +270,7 @@ export type SyscallDomains = {
   "app.open": { args: AppOpenArgs; result: AppLaunchResult };
   "app.attach": { args: AppAttachArgs; result: AppLaunchResult };
   "app.list": { args: AppListArgs; result: AppListResult };
+  "app.detach": { args: AppDetachArgs; result: AppDetachResult };
   "app.close": { args: AppCloseArgs; result: AppCloseResult };
 
   // CodeMode (process-local programmable tool use)
