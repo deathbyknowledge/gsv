@@ -390,16 +390,18 @@ return output;
 
 App session syscalls are Kernel-owned. They let any authenticated app host open
 or reattach a package UI without knowing the Web shell route conventions.
-Launch results contain a URL under `/apps/sessions/<sid>/launch`; the gateway
-validates that launch token, sets the HttpOnly app-session cookie, and redirects
-to the canonical `/apps/sessions/<sid>/...` runtime namespace.
+Launch results contain a secret-free URL under
+`/apps/sessions/<sid>/clients/<clientId>/...` plus a launch token. The app host
+POSTs that token to `/apps/sessions/<sid>/launch` before navigating the client
+URL. The gateway validates the token and sets an HttpOnly cookie scoped to the
+specific app client path.
 
 Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `app.open` | `handleAppOpen` | Resolves an enabled web-ui package and UI entrypoint visible to the current user, creates an app session with one app client, and returns a launch URL plus window defaults. |
-| `app.attach` | `handleAppAttach` | Attaches a new app client to an existing current-user app session and returns a fresh launch URL. Existing app clients are not invalidated. |
+| `app.open` | `handleAppOpen` | Resolves an enabled web-ui package and UI entrypoint visible to the current user, creates an app session with one app client, and returns a client launch URL, launch token, and window defaults. |
+| `app.attach` | `handleAppAttach` | Attaches a new app client to an existing current-user app session and returns a fresh client launch URL and launch token. Existing app clients are not invalidated. |
 | `app.list` | `handleAppList` | Lists active app sessions for the current user. Secrets are never returned. |
 | `app.detach` | `handleAppDetach` | Detaches one app client from a current-user app session, removes that client's watches, revokes that client's launch keys, and asks the AppRunner to close that client's live socket. |
 | `app.close` | `handleAppClose` | Closes a current-user app session, revokes its launch keys, and asks the AppRunner to close live app sockets for that session. |
@@ -408,12 +410,12 @@ Runtime behavior:
 type AppSyscalls = {
   "app.open": {
     args: { packageName: string; entrypointName?: string; clientId?: string; suffix?: string; search?: string; hash?: string };
-    result: { sessionId: string; packageId: string; packageName: string; entrypointName: string; routeBase: string; clientId: string; launchUrl: string; expiresAt: number; window: AppLaunchWindowHint };
+    result: { sessionId: string; packageId: string; packageName: string; entrypointName: string; routeBase: string; clientId: string; launchUrl: string; launchToken: string; expiresAt: number; window: AppLaunchWindowHint };
   };
 
   "app.attach": {
     args: { sessionId: string; clientId?: string; suffix?: string; search?: string; hash?: string };
-    result: { sessionId: string; packageId: string; packageName: string; entrypointName: string; routeBase: string; clientId: string; launchUrl: string; expiresAt: number; window: AppLaunchWindowHint };
+    result: { sessionId: string; packageId: string; packageName: string; entrypointName: string; routeBase: string; clientId: string; launchUrl: string; launchToken: string; expiresAt: number; window: AppLaunchWindowHint };
   };
 
   "app.list": {

@@ -327,7 +327,7 @@ describe("AppSessionStore", () => {
     });
 
     expect(issued.secret).toMatch(/[0-9a-f-]+/i);
-    expect(issued.rpcBase).toBe(`/apps/sessions/${issued.sessionId}/socket`);
+    expect(issued.rpcBase).toBe(`/apps/sessions/${issued.sessionId}/clients/win-1/socket`);
     expect(issued.expiresAt).toBe(70_000);
 
     vi.spyOn(Date, "now").mockReturnValue(20_000);

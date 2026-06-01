@@ -639,8 +639,9 @@ function buildRpcWebSocketUrl(rpcBase: string): string {
 }
 
 function buildRpcSessionRefreshUrl(boot: PackageAppBoot): string {
+  const routeBase = boot.routeBase.endsWith("/") ? boot.routeBase.slice(0, -1) : boot.routeBase;
   return new URL(
-    `/apps/sessions/${encodeURIComponent(boot.sessionId)}/refresh`,
+    `${routeBase}/refresh`,
     globalThis.window?.location?.href ?? "http://localhost",
   ).toString();
 }

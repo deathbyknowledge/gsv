@@ -6,7 +6,7 @@ import type {
 import type { Frame } from "./protocol/frames";
 import { getAgentByName } from "agents";
 import type { AppFrameContext } from "./protocol/app-frame";
-import { buildAppRunnerName } from "./protocol/app-session";
+import { buildAppClientRouteBase, buildAppRunnerName } from "./protocol/app-session";
 import { deserializeAppHttpResponse, serializeAppHttpRequest } from "./app-runner";
 import type { PackageArtifactMetadata } from "./kernel/packages";
 import { buildOAuthClientMetadata } from "./oauth-http";
@@ -223,10 +223,12 @@ type GitPathMatch = {
 
 type PackageAppSessionRefreshMatch = {
   sessionId: string;
+  clientId: string;
 };
 
 type PackageAppSessionPathMatch = {
   sessionId: string;
+  clientId: string | null;
   suffix: string;
 };
 
@@ -270,8 +272,31 @@ function matchPackageAppSessionPath(pathname: string): PackageAppSessionPathMatc
   }
 
   const suffixParts = parts.slice(3);
+  if (suffixParts[0] === "clients") {
+    const rawClientId = suffixParts[1]?.trim();
+    if (!rawClientId) {
+      return null;
+    }
+    let clientId = "";
+    try {
+      clientId = decodeURIComponent(rawClientId).trim();
+    } catch {
+      return null;
+    }
+    if (!clientId) {
+      return null;
+    }
+    const clientSuffixParts = suffixParts.slice(2);
+    return {
+      sessionId,
+      clientId,
+      suffix: clientSuffixParts.length > 0 ? `/${clientSuffixParts.join("/")}` : "/",
+    };
+  }
+
   return {
     sessionId,
+    clientId: null,
     suffix: suffixParts.length > 0 ? `/${suffixParts.join("/")}` : "/",
   };
 }
@@ -361,23 +386,24 @@ function parseCookieHeader(raw: string | null): Map<string, string> {
   return map;
 }
 
-function getPackageAppSessionSecret(request: Request, sessionId: string): string {
-  return parseCookieHeader(request.headers.get("cookie")).get(packageAppSessionCookieName(sessionId)) ?? "";
+function getPackageAppSessionSecret(request: Request, sessionId: string, clientId: string): string {
+  return parseCookieHeader(request.headers.get("cookie")).get(packageAppSessionCookieName(sessionId, clientId)) ?? "";
 }
 
 function buildPackageAppSessionCookie(
   request: Request,
   sessionId: string,
+  clientId: string,
   secret: string,
   expiresAt: number,
 ): string {
   const url = new URL(request.url);
   const maxAgeSeconds = Math.max(1, Math.ceil((expiresAt - Date.now()) / 1000));
   const parts = [
-    `${packageAppSessionCookieName(sessionId)}=${encodeURIComponent(secret)}`,
+    `${packageAppSessionCookieName(sessionId, clientId)}=${encodeURIComponent(secret)}`,
     "HttpOnly",
     "SameSite=Strict",
-    `Path=${packageAppSessionCookiePath(sessionId)}`,
+    `Path=${packageAppSessionCookiePath(sessionId, clientId)}`,
     `Max-Age=${maxAgeSeconds}`,
   ];
   if (url.protocol === "https:") {
@@ -386,12 +412,16 @@ function buildPackageAppSessionCookie(
   return parts.join("; ");
 }
 
-function packageAppSessionCookieName(sessionId: string): string {
-  return `${PACKAGE_APP_SESSION_COOKIE_PREFIX}${sessionId.replace(/[^A-Za-z0-9]/g, "_")}`;
+function packageAppSessionCookieName(sessionId: string, clientId: string): string {
+  return `${PACKAGE_APP_SESSION_COOKIE_PREFIX}${cookieNameSegment(sessionId)}_${cookieNameSegment(clientId)}`;
 }
 
-function packageAppSessionCookiePath(sessionId: string): string {
-  return `/apps/sessions/${encodeURIComponent(sessionId)}`;
+function cookieNameSegment(value: string): string {
+  return value.replace(/[^A-Za-z0-9]/g, "_") || "id";
+}
+
+function packageAppSessionCookiePath(sessionId: string, clientId: string): string {
+  return buildAppClientRouteBase(sessionId, clientId);
 }
 
 export function packageWorkerPath(routeBase: string, suffix: string): string {
@@ -435,6 +465,14 @@ async function handlePackageAppSessionRequest(
   ctx: ExecutionContext,
   match: PackageAppSessionPathMatch,
 ): Promise<Response> {
+  if (match.suffix === "/launch" && !match.clientId) {
+    return handlePackageAppSessionLaunchRequest(request, env, match);
+  }
+
+  if (!match.clientId) {
+    return new Response("App client route required", { status: 404 });
+  }
+
   if (match.suffix === "/socket") {
     if (!isWebSocketRequest(request)) {
       return new Response("App socket requires WebSocket", {
@@ -449,14 +487,17 @@ async function handlePackageAppSessionRequest(
   }
 
   if (match.suffix === "/refresh") {
-    return handlePackageAppSessionRefreshRequest(request, env, match);
+    return handlePackageAppSessionRefreshRequest(request, env, {
+      sessionId: match.sessionId,
+      clientId: match.clientId,
+    });
   }
 
   if (match.suffix === "/launch") {
-    return handlePackageAppSessionLaunchRequest(request, env, match);
+    return new Response("Not Found", { status: 404 });
   }
 
-  const resolved = await resolvePackageAppSessionFromCookie(request, env, match.sessionId);
+  const resolved = await resolvePackageAppSessionFromCookie(request, env, match.sessionId, match.clientId);
   if (!resolved.ok) {
     return new Response(resolved.message, { status: resolved.status });
   }
@@ -482,15 +523,14 @@ async function handlePackageAppSessionLaunchRequest(
   env: Env,
   match: PackageAppSessionPathMatch,
 ): Promise<Response> {
-  if (request.method !== "GET" && request.method !== "HEAD") {
+  if (request.method !== "POST") {
     return new Response("Method Not Allowed", {
       status: 405,
-      headers: { allow: "GET, HEAD" },
+      headers: { allow: "POST" },
     });
   }
 
-  const url = new URL(request.url);
-  const secret = url.searchParams.get("token")?.trim() ?? "";
+  const secret = await readPackageAppLaunchToken(request);
   if (!secret) {
     return new Response("Unauthorized", { status: 401 });
   }
@@ -505,10 +545,9 @@ async function handlePackageAppSessionLaunchRequest(
     return new Response(resolved.message, { status: resolved.status });
   }
 
-  return redirectToPackageAppSessionLocation(
+  return packageAppSessionLaunchResponse(
     request,
     resolved,
-    normalizePackageAppLaunchNext(url.searchParams.get("next")),
     secret,
   );
 }
@@ -525,7 +564,7 @@ async function handlePackageAppSessionRefreshRequest(
     });
   }
 
-  const secret = getPackageAppSessionSecret(request, match.sessionId);
+  const secret = getPackageAppSessionSecret(request, match.sessionId, match.clientId);
 
   const kernel = await getAgentByName(env.KERNEL, "singleton");
   const resolved = await kernel.refreshPackageAppRpcSession({
@@ -536,11 +575,20 @@ async function handlePackageAppSessionRefreshRequest(
   if (!resolved.ok) {
     return new Response(resolved.message, { status: resolved.status });
   }
+  if (resolved.clientSession.clientId !== match.clientId) {
+    return new Response("Unauthorized", { status: 401 });
+  }
 
   return Response.json(buildPackageAppBoot(resolved), {
     headers: {
       "cache-control": "no-store",
-      "set-cookie": buildPackageAppSessionCookie(request, match.sessionId, secret, resolved.clientSession.expiresAt),
+      "set-cookie": buildPackageAppSessionCookie(
+        request,
+        match.sessionId,
+        match.clientId,
+        secret,
+        resolved.clientSession.expiresAt,
+      ),
     },
   });
 }
@@ -551,7 +599,13 @@ async function handlePackageAppSocketRequest(
   ctx: ExecutionContext,
   match: PackageAppSessionPathMatch,
 ): Promise<Response> {
-  const resolved = await resolvePackageAppSessionFromCookie(request, env, match.sessionId);
+  if (!match.clientId) {
+    return new Response("App client route required", {
+      status: 404,
+      headers: { "cache-control": "no-store" },
+    });
+  }
+  const resolved = await resolvePackageAppSessionFromCookie(request, env, match.sessionId, match.clientId);
   if (!resolved.ok) {
     return new Response(resolved.message, {
       status: resolved.status,
@@ -592,60 +646,51 @@ async function resolvePackageAppSessionFromCookie(
   request: Request,
   env: Env,
   sessionId: string,
+  clientId: string,
 ): Promise<ResolvedPackageRoute | { ok: false; status: number; message: string }> {
-  const secret = getPackageAppSessionSecret(request, sessionId);
+  const secret = getPackageAppSessionSecret(request, sessionId, clientId);
   if (!secret) {
     return { ok: false, status: 401, message: "Unauthorized" };
   }
 
   const kernel = await getAgentByName(env.KERNEL, "singleton");
-  return kernel.resolvePackageAppRpcSession({
+  const resolved = await kernel.resolvePackageAppRpcSession({
     sessionId,
     secret,
   });
+  if (!resolved.ok) {
+    return resolved;
+  }
+  if (resolved.clientSession.clientId !== clientId) {
+    return { ok: false, status: 401, message: "Unauthorized" };
+  }
+  return resolved;
 }
 
-function redirectToPackageAppSessionLocation(
+function packageAppSessionLaunchResponse(
   request: Request,
   resolved: ResolvedPackageRoute,
-  next: string,
   secret: string,
 ): Response {
-  const location = `${packageAppSessionCookiePath(resolved.clientSession.sessionId)}${next}`;
   const headers = new Headers({
-    location,
     "cache-control": "no-store",
     "set-cookie": buildPackageAppSessionCookie(
       request,
       resolved.clientSession.sessionId,
+      resolved.clientSession.clientId,
       secret,
       resolved.clientSession.expiresAt,
     ),
   });
-  return new Response(null, {
-    status: 303,
-    headers,
-  });
+  return Response.json({ ok: true }, { headers });
 }
 
-function normalizePackageAppLaunchNext(raw: string | null): string {
-  if (!raw) {
-    return "/";
-  }
-
-  try {
-    const base = "https://gsv.invalid";
-    const parsed = new URL(raw, base);
-    if (parsed.origin !== base) {
-      return "/";
-    }
-    if (parsed.pathname === "/launch" || parsed.pathname === "/refresh" || parsed.pathname === "/socket") {
-      return "/";
-    }
-    return `${parsed.pathname || "/"}${parsed.search}${parsed.hash}`;
-  } catch {
-    return "/";
-  }
+async function readPackageAppLaunchToken(request: Request): Promise<string> {
+  const body = await request.json().catch(() => null);
+  const token = body && typeof body === "object" && typeof (body as { token?: unknown }).token === "string"
+    ? (body as { token: string }).token.trim()
+    : "";
+  return token;
 }
 
 async function withPackageAppClientSession(
@@ -714,7 +759,7 @@ function buildPackageAppBoot(resolved: ResolvedPackageRoute) {
   return {
     packageId: resolved.packageId,
     packageName: resolved.packageName,
-    routeBase: packageAppSessionCookiePath(resolved.clientSession.sessionId),
+    routeBase: packageAppSessionCookiePath(resolved.clientSession.sessionId, resolved.clientSession.clientId),
     rpcBase: resolved.clientSession.rpcBase,
     sessionId: resolved.clientSession.sessionId,
     clientId: resolved.clientSession.clientId,

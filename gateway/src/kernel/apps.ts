@@ -10,7 +10,11 @@ import type {
   AppOpenArgs,
   AppSessionSummary,
 } from "@gsv/protocol/syscalls/apps";
-import type { AppSessionContext, IssuedAppClientSession } from "../protocol/app-session";
+import {
+  buildAppClientRouteBase,
+  type AppSessionContext,
+  type IssuedAppClientSession,
+} from "../protocol/app-session";
 import type { KernelContext } from "./context";
 import {
   type InstalledPackageRecord,
@@ -156,6 +160,7 @@ function toLaunchResult(
     routeBase: session.routeBase,
     clientId: session.clientId,
     launchUrl: buildLaunchUrl(session, args),
+    launchToken: session.secret,
     expiresAt: session.expiresAt,
     window: {
       title: entrypoint.name,
@@ -212,12 +217,11 @@ function buildLaunchUrl(
   session: IssuedAppClientSession,
   args: Pick<AppOpenArgs, "suffix" | "search" | "hash">,
 ): string {
-  const params = new URLSearchParams({ token: session.secret });
   const next = buildLaunchNext(args);
   if (next !== "/") {
-    params.set("next", next);
+    return `${buildAppClientRouteBase(session.sessionId, session.clientId)}${next}`;
   }
-  return `/apps/sessions/${encodeURIComponent(session.sessionId)}/launch?${params.toString()}`;
+  return `${buildAppClientRouteBase(session.sessionId, session.clientId)}/`;
 }
 
 function buildLaunchNext(args: Pick<AppOpenArgs, "suffix" | "search" | "hash">): string {

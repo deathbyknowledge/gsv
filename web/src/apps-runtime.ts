@@ -106,6 +106,27 @@ function attachIframeInteractionFocus(iframe: HTMLIFrameElement, requestFocus: (
   };
 }
 
+function appSessionLaunchEndpoint(sessionId: string): string {
+  return `/apps/sessions/${encodeURIComponent(sessionId)}/launch`;
+}
+
+async function establishAppLaunchSession(launch: AppLaunchResult): Promise<void> {
+  const response = await fetch(appSessionLaunchEndpoint(launch.sessionId), {
+    method: "POST",
+    credentials: "same-origin",
+    headers: {
+      "accept": "application/json",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ token: launch.launchToken }),
+  });
+  if (response.ok) {
+    return;
+  }
+  const message = await response.text().catch(() => "");
+  throw new Error(message || `Failed to launch app session (${response.status})`);
+}
+
 function createWebAppInstance(manifest: AppManifest, gatewayClient: GatewayClientLike): AppInstance {
   let bridge: ReturnType<typeof attachHostBridge> | null = null;
   let focusController: ReturnType<typeof attachIframeInteractionFocus> | null = null;
@@ -142,6 +163,16 @@ function createWebAppInstance(manifest: AppManifest, gatewayClient: GatewayClien
         "app.open",
         appOpenArgsFromRoute(context.route, context.windowId),
       );
+      if (generation !== mountGeneration) {
+        closeSession(launch.sessionId);
+        return;
+      }
+      try {
+        await establishAppLaunchSession(launch);
+      } catch (error) {
+        closeSession(launch.sessionId);
+        throw error;
+      }
       if (generation !== mountGeneration) {
         closeSession(launch.sessionId);
         return;

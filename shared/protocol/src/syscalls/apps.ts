@@ -31,6 +31,7 @@ export type AppLaunchResult = {
   routeBase: string;
   clientId: string;
   launchUrl: string;
+  launchToken: string;
   expiresAt: number;
   window: AppLaunchWindowHint;
 };

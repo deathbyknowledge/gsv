@@ -81,7 +81,7 @@ function makeContext(overrides: Partial<KernelContext> = {}): KernelContext {
         packageName: input.packageName,
         entrypointName: input.entrypointName,
         routeBase: input.routeBase,
-        rpcBase: "/apps/sessions/session-1/socket",
+        rpcBase: `/apps/sessions/session-1/clients/${input.clientId}/socket`,
         createdAt: 1,
         expiresAt: 2,
         lastUsedAt: null,
@@ -96,7 +96,7 @@ function makeContext(overrides: Partial<KernelContext> = {}): KernelContext {
         packageName: "chat",
         entrypointName: "Chat",
         routeBase: "/apps/chat",
-        rpcBase: "/apps/sessions/session-1/socket",
+        rpcBase: `/apps/sessions/session-1/clients/${input.clientId}/socket`,
         createdAt: 1,
         expiresAt: 3,
         lastUsedAt: 2,
@@ -109,7 +109,7 @@ function makeContext(overrides: Partial<KernelContext> = {}): KernelContext {
         packageName: "chat",
         entrypointName: "Chat",
         routeBase: "/apps/chat",
-        rpcBase: "/apps/sessions/session-1/socket",
+        rpcBase: "/apps/sessions/session-1/clients/win-1/socket",
         createdAt: 1,
         expiresAt: 2,
         lastUsedAt: null,
@@ -123,7 +123,7 @@ function makeContext(overrides: Partial<KernelContext> = {}): KernelContext {
           packageName: "chat",
           entrypointName: "Chat",
           routeBase: "/apps/chat",
-          rpcBase: "/apps/sessions/session-1/socket",
+          rpcBase: "/apps/sessions/session-1/clients/win-1/socket",
           createdAt: 1,
           expiresAt: 2,
           lastUsedAt: null,
@@ -138,7 +138,7 @@ function makeContext(overrides: Partial<KernelContext> = {}): KernelContext {
         packageName: "chat",
         entrypointName: "Chat",
         routeBase: "/apps/chat",
-        rpcBase: "/apps/sessions/session-1/socket",
+        rpcBase: "/apps/sessions/session-1/clients/win-1/socket",
         createdAt: 1,
         expiresAt: 2,
         lastUsedAt: null,
@@ -191,22 +191,25 @@ describe("app syscalls", () => {
     expect(result.window).toMatchObject({ title: "Chat", width: 900 });
 
     const launch = new URL(result.launchUrl, "https://gsv.local");
-    expect(launch.pathname).toBe("/apps/sessions/session-1/launch");
-    expect(launch.searchParams.get("token")).toBe("secret-1");
-    expect(launch.searchParams.get("next")).toBe("/threads/abc?view=compact#bottom");
+    expect(launch.pathname).toBe("/apps/sessions/session-1/clients/win-1/threads/abc");
+    expect(launch.search).toBe("?view=compact");
+    expect(launch.hash).toBe("#bottom");
+    expect(result.launchToken).toBe("secret-1");
   });
 
   it("attaches to an existing app session with a fresh launch secret", async () => {
     const ctx = makeContext();
 
-    const result = await handleAppAttach({ sessionId: "session-1" }, ctx);
+    const result = await handleAppAttach({ sessionId: "session-1", clientId: "win-2" }, ctx);
 
     expect(ctx.appSessions.attach).toHaveBeenCalledWith(expect.objectContaining({
       uid: 1000,
       sessionId: "session-1",
+      clientId: "win-2",
       ttlMs: expect.any(Number),
     }));
-    expect(result.launchUrl).toContain("token=secret-2");
+    expect(result.launchUrl).toBe("/apps/sessions/session-1/clients/win-2/");
+    expect(result.launchToken).toBe("secret-2");
   });
 
   it("detaches one client without closing the app session", async () => {

@@ -108,7 +108,7 @@ describe("signal watch handlers", () => {
             packageName: "chat",
             entrypointName: "Chat",
             routeBase: "/apps/chat",
-            rpcBase: "/apps/sessions/session-1/socket",
+            rpcBase: "/apps/sessions/session-1/clients/client-1/socket",
             createdAt: 1,
             lastUsedAt: null,
             expiresAt: Date.now() + 60_000,

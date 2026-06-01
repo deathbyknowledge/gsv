@@ -1,9 +1,10 @@
-import type {
-  AppClientSessionContext,
-  AppSessionClientContext,
-  AppSessionContext,
-  AppSessionState,
-  IssuedAppClientSession,
+import {
+  buildAppClientRpcBase,
+  type AppClientSessionContext,
+  type AppSessionClientContext,
+  type AppSessionContext,
+  type AppSessionState,
+  type IssuedAppClientSession,
 } from "../protocol/app-session";
 import { hashToken, verify } from "../auth/shadow";
 
@@ -557,7 +558,7 @@ function toClientContext(input: {
     packageName: input.session.package_name,
     entrypointName: input.session.entrypoint_name,
     routeBase: input.session.route_base,
-    rpcBase: buildAppRpcBase(input.session.session_id),
+    rpcBase: buildAppClientRpcBase(input.session.session_id, input.client.client_id),
     createdAt: input.client.created_at,
     expiresAt: input.client.expires_at,
     lastUsedAt: input.client.last_used_at,
@@ -572,8 +573,4 @@ function sessionState(row: AppSessionRow, clients: AppClientSessionContext[]): A
     return "expired";
   }
   return clients.length > 0 ? "active" : "detached";
-}
-
-function buildAppRpcBase(sessionId: string): string {
-  return `/apps/sessions/${encodeURIComponent(sessionId)}/socket`;
 }
