@@ -394,9 +394,9 @@ function packageAppSessionCookiePath(sessionId: string): string {
   return `/apps/sessions/${encodeURIComponent(sessionId)}`;
 }
 
-function packageWorkerPath(routeBase: string, suffix: string): string {
+export function packageWorkerPath(routeBase: string, suffix: string): string {
   if (!suffix || suffix === "/") {
-    return routeBase;
+    return `${routeBase}/`;
   }
   return `${routeBase}${suffix}`;
 }
