@@ -4,6 +4,7 @@ import type { WikiPreviewRequest, WikiWorkspaceState } from "../../types";
 
 type Props = {
   state: WikiWorkspaceState;
+  routeBase: string;
   selectedDb: string;
   selectedInboxPath: string;
   mutating: boolean;
@@ -29,7 +30,7 @@ export function InboxPane(props: Props) {
         <ArticleView
           markdown={props.state.selectedNote.markdown || ""}
           articleTitle={extractTitle(props.state.selectedNote.markdown || "", props.state.selectedNote.path)}
-          routeBase="/apps/wiki"
+          routeBase={props.routeBase}
           selectedDb={props.selectedDb}
           selectedPath={props.state.selectedPath}
           onNavigate={props.onOpenPageAndBrowse}

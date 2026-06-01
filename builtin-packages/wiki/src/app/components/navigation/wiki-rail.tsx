@@ -6,6 +6,7 @@ import { WikiIcon, type WikiIconName } from "../ui/wiki-icon";
 
 type Props = {
   mode: WikiMode;
+  routeBase: string;
   onChangeMode(mode: WikiMode): void;
   state: WikiWorkspaceState;
   route: WikiRoute;
@@ -151,6 +152,7 @@ export function WikiRail(props: Props) {
           </div>
           <PageList
             entries={props.visiblePages}
+            routeBase={props.routeBase}
             selectedPath={props.state.selectedPath}
             selectedDb={props.selectedDb}
             onOpenPage={props.onOpenPage}
@@ -176,6 +178,7 @@ export function WikiRail(props: Props) {
           </div>
           <PageList
             entries={props.state.inbox}
+            routeBase={props.routeBase}
             selectedPath={props.selectedInboxPath}
             selectedDb={props.selectedDb}
             onOpenPage={props.onOpenInboxNote}
@@ -189,12 +192,14 @@ export function WikiRail(props: Props) {
 
 function PageList({
   entries,
+  routeBase,
   selectedPath,
   selectedDb,
   onOpenPage,
   emptyText,
 }: {
   entries: WikiEntry[];
+  routeBase: string;
   selectedPath: string;
   selectedDb: string;
   onOpenPage(path: string): void;
@@ -209,7 +214,7 @@ function PageList({
       {entries.map((entry) => (
         <a
           key={entry.path}
-          href={buildEntryHref("/apps/wiki", selectedDb, entry.path)}
+          href={buildEntryHref(routeBase, selectedDb, entry.path)}
           class={`wiki-entry-row${selectedPath === entry.path ? " is-active" : ""}`}
           onClick={(event) => {
             event.preventDefault();
