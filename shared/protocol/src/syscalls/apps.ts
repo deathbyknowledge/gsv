@@ -17,6 +17,7 @@ export type AppOpenArgs = {
 
 export type AppAttachArgs = {
   sessionId: string;
+  clientId?: string;
   suffix?: string;
   search?: string;
   hash?: string;
@@ -36,17 +37,28 @@ export type AppLaunchResult = {
 
 export type AppListArgs = Record<string, never>;
 
+export type AppSessionState = "active" | "detached" | "closing" | "closed" | "expired";
+export type AppSessionClientState = "active" | "closed" | "expired";
+
+export type AppSessionClientSummary = {
+  clientId: string;
+  createdAt: number;
+  lastUsedAt: number | null;
+  expiresAt: number;
+  state: AppSessionClientState;
+};
+
 export type AppSessionSummary = {
   sessionId: string;
   packageId: string;
   packageName: string;
   entrypointName: string;
   routeBase: string;
-  clientId: string;
   createdAt: number;
   lastUsedAt: number | null;
   expiresAt: number;
-  state: "active";
+  state: AppSessionState;
+  clients: AppSessionClientSummary[];
 };
 
 export type AppListResult = {

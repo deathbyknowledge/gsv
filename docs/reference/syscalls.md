@@ -122,17 +122,28 @@ type AppLaunchWindowHint = {
   minHeight?: number;
 };
 
+type AppSessionState = "active" | "detached" | "closing" | "closed" | "expired";
+type AppSessionClientState = "active" | "closed" | "expired";
+
+type AppSessionClientSummary = {
+  clientId: string;
+  createdAt: number;
+  lastUsedAt: number | null;
+  expiresAt: number;
+  state: AppSessionClientState;
+};
+
 type AppSessionSummary = {
   sessionId: string;
   packageId: string;
   packageName: string;
   entrypointName: string;
   routeBase: string;
-  clientId: string;
   createdAt: number;
   lastUsedAt: number | null;
   expiresAt: number;
-  state: "active";
+  state: AppSessionState;
+  clients: AppSessionClientSummary[];
 };
 
 type ConnectionIdentity =
@@ -387,10 +398,10 @@ Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `app.open` | `handleAppOpen` | Resolves an enabled web-ui package and UI entrypoint visible to the current user, creates an app session, and returns a launch URL plus window defaults. |
-| `app.attach` | `handleAppAttach` | Mints a fresh launch secret for an existing current-user app session and returns a launch URL. Existing app clients are not invalidated. |
+| `app.open` | `handleAppOpen` | Resolves an enabled web-ui package and UI entrypoint visible to the current user, creates an app session with one app client, and returns a launch URL plus window defaults. |
+| `app.attach` | `handleAppAttach` | Attaches a new app client to an existing current-user app session and returns a fresh launch URL. Existing app clients are not invalidated. |
 | `app.list` | `handleAppList` | Lists active app sessions for the current user. Secrets are never returned. |
-| `app.close` | `handleAppClose` | Revokes a current-user app session and its additional launch keys. |
+| `app.close` | `handleAppClose` | Closes a current-user app session, revokes its launch keys, and asks the AppRunner to close live app sockets for that session. |
 
 ```ts
 type AppSyscalls = {
@@ -400,7 +411,7 @@ type AppSyscalls = {
   };
 
   "app.attach": {
-    args: { sessionId: string; suffix?: string; search?: string; hash?: string };
+    args: { sessionId: string; clientId?: string; suffix?: string; search?: string; hash?: string };
     result: { sessionId: string; packageId: string; packageName: string; entrypointName: string; routeBase: string; clientId: string; launchUrl: string; expiresAt: number; window: AppLaunchWindowHint };
   };
 

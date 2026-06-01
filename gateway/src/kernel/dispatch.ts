@@ -328,7 +328,7 @@ async function dispatchNative(
         data = handleAppList(frame.args, ctx);
         break;
       case "app.close":
-        data = handleAppClose(frame.args, ctx);
+        data = await handleAppClose(frame.args, ctx);
         break;
 
       case "codemode.run":

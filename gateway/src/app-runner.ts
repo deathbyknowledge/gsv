@@ -162,6 +162,10 @@ type RegisteredAppClient = {
   registeredAt: number;
 };
 
+function appClientKey(session: AppSessionInfo): string {
+  return `${session.sessionId}:${session.clientId}`;
+}
+
 const APP_SOCKET_TAG = "app-client";
 
 class AppSocketError extends Error {
@@ -429,6 +433,28 @@ export class AppRunner extends DurableObject<Env> {
     return { delivered };
   }
 
+  async closeAppSession(sessionId: string): Promise<{ closed: number }> {
+    const normalizedSessionId = typeof sessionId === "string" ? sessionId.trim() : "";
+    if (!normalizedSessionId) {
+      return { closed: 0 };
+    }
+
+    this.#restoreAppClients();
+    let closed = 0;
+    for (const [key, registration] of [...this.appClients.entries()]) {
+      if (registration.session.sessionId !== normalizedSessionId) {
+        continue;
+      }
+      this.appClients.delete(key);
+      try {
+        registration.socket.close(1000, "app session closed");
+      } catch {
+      }
+      closed += 1;
+    }
+    return { closed };
+  }
+
   #acceptAppSocket(request: Request): Response {
     const context = this.#appSocketContextFromRequest(request);
     if (!context) {
@@ -516,7 +542,7 @@ export class AppRunner extends DurableObject<Env> {
     if (clientId) {
       this.#restoreAppClients();
     }
-    const appSession = clientId ? this.appClients.get(clientId)?.session : undefined;
+    const appSession = clientId ? this.#appSessionForClientId(clientId) : undefined;
     return this.#defaultRuntime(appSession);
   }
 
@@ -530,7 +556,8 @@ export class AppRunner extends DurableObject<Env> {
   }
 
   #registerAppSocket(ws: WebSocket, session: AppSessionInfo, appFrame: AppFrameContext): void {
-    const previous = this.appClients.get(session.clientId);
+    const key = appClientKey(session);
+    const previous = this.appClients.get(key);
     if (previous && previous.socket !== ws) {
       this.#closeSocket(previous.socket, 1000, "Replaced by newer app connection");
     }
@@ -541,7 +568,7 @@ export class AppRunner extends DurableObject<Env> {
       appFrame,
       connectedAt: Date.now(),
     } satisfies AppSocketAttachment);
-    this.appClients.set(session.clientId, {
+    this.appClients.set(key, {
       socket: ws,
       session,
       appFrame,
@@ -556,7 +583,7 @@ export class AppRunner extends DurableObject<Env> {
       if (!attachment?.connected || !attachment.session || !attachment.appFrame) {
         continue;
       }
-      this.appClients.set(attachment.session.clientId, {
+      this.appClients.set(appClientKey(attachment.session), {
         socket,
         session: attachment.session,
         appFrame: attachment.appFrame,
@@ -568,10 +595,10 @@ export class AppRunner extends DurableObject<Env> {
   async #emitAppEventToClients(event: string, payload: unknown, clientId: string | null): Promise<number> {
     this.#restoreAppClients();
     const targets = clientId
-      ? [...this.appClients.entries()].filter(([id]) => id === clientId)
+      ? [...this.appClients.entries()].filter(([, registration]) => registration.session.clientId === clientId)
       : [...this.appClients.entries()];
     let delivered = 0;
-    for (const [targetClientId, registration] of targets) {
+    for (const [key, registration] of targets) {
       try {
         this.#sendSocketFrame(registration.socket, {
           type: "sig",
@@ -581,19 +608,19 @@ export class AppRunner extends DurableObject<Env> {
         delivered += 1;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        console.warn(`[app-runner] app event delivery failed for ${targetClientId}: ${message}`);
-        this.#removeAppClient(targetClientId);
+        console.warn(`[app-runner] app event delivery failed for ${registration.session.clientId}: ${message}`);
+        this.#removeAppClient(key);
       }
     }
     return delivered;
   }
 
-  #removeAppClient(clientId: string): void {
-    const registration = this.appClients.get(clientId);
+  #removeAppClient(key: string): void {
+    const registration = this.appClients.get(key);
     if (!registration) {
       return;
     }
-    this.appClients.delete(clientId);
+    this.appClients.delete(key);
     try {
       registration.socket.close(1011, "app client removed");
     } catch {
@@ -601,9 +628,9 @@ export class AppRunner extends DurableObject<Env> {
   }
 
   #removeAppClientBySocket(socket: WebSocket): void {
-    for (const [clientId, registration] of this.appClients) {
+    for (const [key, registration] of this.appClients) {
       if (registration.socket === socket) {
-        this.appClients.delete(clientId);
+        this.appClients.delete(key);
       }
     }
   }
@@ -613,7 +640,8 @@ export class AppRunner extends DurableObject<Env> {
     if (!attachment?.connected || !attachment.session || !attachment.appFrame) {
       return null;
     }
-    const existing = this.appClients.get(attachment.session.clientId);
+    const key = appClientKey(attachment.session);
+    const existing = this.appClients.get(key);
     if (existing?.socket === socket) {
       return existing;
     }
@@ -623,8 +651,17 @@ export class AppRunner extends DurableObject<Env> {
       appFrame: attachment.appFrame,
       registeredAt: attachment.connectedAt ?? Date.now(),
     };
-    this.appClients.set(attachment.session.clientId, restored);
+    this.appClients.set(key, restored);
     return restored;
+  }
+
+  #appSessionForClientId(clientId: string): AppSessionInfo | undefined {
+    for (const registration of this.appClients.values()) {
+      if (registration.session.clientId === clientId) {
+        return registration.session;
+      }
+    }
+    return undefined;
   }
 
   #sendSocketFrame(socket: WebSocket, frame: AppSocketFrame): void {

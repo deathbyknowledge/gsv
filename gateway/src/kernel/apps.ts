@@ -8,7 +8,7 @@ import type {
   AppOpenArgs,
   AppSessionSummary,
 } from "@gsv/protocol/syscalls/apps";
-import type { AppClientSessionContext, IssuedAppClientSession } from "../protocol/app-session";
+import type { AppSessionContext, IssuedAppClientSession } from "../protocol/app-session";
 import type { KernelContext } from "./context";
 import {
   type InstalledPackageRecord,
@@ -50,7 +50,12 @@ export async function handleAppOpen(args: AppOpenArgs, ctx: KernelContext): Prom
 export async function handleAppAttach(args: AppAttachArgs, ctx: KernelContext): Promise<AppLaunchResult> {
   const actor = currentActor(ctx);
   const sessionId = normalizeRequiredString(args.sessionId, "sessionId");
-  const clientSession = await ctx.appSessions.mintSecret(actor.uid, sessionId, APP_CLIENT_SESSION_TTL_MS);
+  const clientSession = await ctx.appSessions.attach({
+    uid: actor.uid,
+    sessionId,
+    clientId: normalizeOptionalString(args.clientId) ?? crypto.randomUUID(),
+    ttlMs: APP_CLIENT_SESSION_TTL_MS,
+  });
   if (!clientSession) {
     throw new AppSyscallError(404, "App session not found");
   }
@@ -72,11 +77,15 @@ export function handleAppList(_args: AppListArgs, ctx: KernelContext): AppListRe
   };
 }
 
-export function handleAppClose(args: AppCloseArgs, ctx: KernelContext): AppCloseResult {
+export async function handleAppClose(args: AppCloseArgs, ctx: KernelContext): Promise<AppCloseResult> {
   const actor = currentActor(ctx);
   const sessionId = normalizeRequiredString(args.sessionId, "sessionId");
+  const closedSession = ctx.appSessions.close(actor.uid, sessionId);
+  if (closedSession) {
+    await closeRunnerAppSession(ctx, closedSession);
+  }
   return {
-    closed: ctx.appSessions.close(actor.uid, sessionId),
+    closed: Boolean(closedSession),
   };
 }
 
@@ -138,19 +147,35 @@ function toLaunchResult(
   };
 }
 
-function toSessionSummary(session: AppClientSessionContext): AppSessionSummary {
+function toSessionSummary(session: AppSessionContext): AppSessionSummary {
   return {
     sessionId: session.sessionId,
     packageId: session.packageId,
     packageName: session.packageName,
     entrypointName: session.entrypointName,
     routeBase: session.routeBase,
-    clientId: session.clientId,
     createdAt: session.createdAt,
     lastUsedAt: session.lastUsedAt ?? null,
     expiresAt: session.expiresAt,
-    state: "active",
+    state: session.state,
+    clients: session.clients.map((client) => ({
+      clientId: client.clientId,
+      createdAt: client.createdAt,
+      lastUsedAt: client.lastUsedAt ?? null,
+      expiresAt: client.expiresAt,
+      state: "active",
+    })),
   };
+}
+
+async function closeRunnerAppSession(ctx: KernelContext, session: AppSessionContext): Promise<void> {
+  const runner = ctx.getAppRunner?.(session.uid, session.packageId) as {
+    closeAppSession?: (sessionId: string) => Promise<unknown>;
+  } | undefined;
+  if (!runner?.closeAppSession) {
+    return;
+  }
+  await runner.closeAppSession(session.sessionId);
 }
 
 function buildLaunchUrl(

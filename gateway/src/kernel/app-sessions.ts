@@ -1,4 +1,10 @@
-import type { IssuedAppClientSession, AppClientSessionContext } from "../protocol/app-session";
+import type {
+  AppClientSessionContext,
+  AppSessionClientContext,
+  AppSessionContext,
+  AppSessionState,
+  IssuedAppClientSession,
+} from "../protocol/app-session";
 import { hashToken, verify } from "../auth/shadow";
 
 export const APP_CLIENT_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
@@ -11,17 +17,25 @@ type AppSessionRow = {
   package_name: string;
   entrypoint_name: string;
   route_base: string;
-  client_id: string;
-  secret_hash: string;
   created_at: number;
   last_used_at: number | null;
   expires_at: number;
-  revoked_at: number | null;
+  closed_at: number | null;
 };
 
-type AppSessionKeyRow = {
+type AppSessionClientRow = {
+  session_id: string;
+  client_id: string;
+  created_at: number;
+  last_used_at: number | null;
+  expires_at: number;
+  closed_at: number | null;
+};
+
+type AppSessionClientKeyRow = {
   key_id: string;
   session_id: string;
+  client_id: string;
   secret_hash: string;
   created_at: number;
   expires_at: number;
@@ -29,15 +43,22 @@ type AppSessionKeyRow = {
 };
 
 type VerifiedSecret =
-  | { ok: true; keyId: string | null }
+  | {
+      ok: true;
+      session: AppSessionRow;
+      client: AppSessionClientRow;
+      key: AppSessionClientKeyRow;
+    }
   | { ok: false };
 
 export class AppSessionStore {
   constructor(private readonly sql: SqlStorage) {}
 
   init(): void {
+    this.sql.exec("DROP TABLE IF EXISTS app_client_session_keys");
+    this.sql.exec("DROP TABLE IF EXISTS app_client_sessions");
     this.sql.exec(`
-      CREATE TABLE IF NOT EXISTS app_client_sessions (
+      CREATE TABLE IF NOT EXISTS app_sessions (
         session_id TEXT PRIMARY KEY,
         uid INTEGER NOT NULL,
         username TEXT NOT NULL,
@@ -45,24 +66,37 @@ export class AppSessionStore {
         package_name TEXT NOT NULL,
         entrypoint_name TEXT NOT NULL,
         route_base TEXT NOT NULL,
-        client_id TEXT NOT NULL,
-        secret_hash TEXT NOT NULL,
         created_at INTEGER NOT NULL,
         last_used_at INTEGER,
         expires_at INTEGER NOT NULL,
-        revoked_at INTEGER
+        closed_at INTEGER
       )
     `);
     this.sql.exec(
-      "CREATE INDEX IF NOT EXISTS idx_app_client_sessions_uid_pkg ON app_client_sessions (uid, package_id, created_at DESC)",
+      "CREATE INDEX IF NOT EXISTS idx_app_sessions_uid_pkg ON app_sessions (uid, package_id, created_at DESC)",
     );
     this.sql.exec(
-      "CREATE INDEX IF NOT EXISTS idx_app_client_sessions_expires ON app_client_sessions (expires_at)",
+      "CREATE INDEX IF NOT EXISTS idx_app_sessions_expires ON app_sessions (expires_at)",
     );
     this.sql.exec(`
-      CREATE TABLE IF NOT EXISTS app_client_session_keys (
+      CREATE TABLE IF NOT EXISTS app_session_clients (
+        session_id TEXT NOT NULL,
+        client_id TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        last_used_at INTEGER,
+        expires_at INTEGER NOT NULL,
+        closed_at INTEGER,
+        PRIMARY KEY (session_id, client_id)
+      )
+    `);
+    this.sql.exec(
+      "CREATE INDEX IF NOT EXISTS idx_app_session_clients_session ON app_session_clients (session_id, expires_at)",
+    );
+    this.sql.exec(`
+      CREATE TABLE IF NOT EXISTS app_session_client_keys (
         key_id TEXT PRIMARY KEY,
         session_id TEXT NOT NULL,
+        client_id TEXT NOT NULL,
         secret_hash TEXT NOT NULL,
         created_at INTEGER NOT NULL,
         expires_at INTEGER NOT NULL,
@@ -70,7 +104,7 @@ export class AppSessionStore {
       )
     `);
     this.sql.exec(
-      "CREATE INDEX IF NOT EXISTS idx_app_client_session_keys_session ON app_client_session_keys (session_id, expires_at)",
+      "CREATE INDEX IF NOT EXISTS idx_app_session_client_keys_session ON app_session_client_keys (session_id, client_id, expires_at)",
     );
   }
 
@@ -87,16 +121,13 @@ export class AppSessionStore {
     this.pruneExpired();
     const now = Date.now();
     const sessionId = crypto.randomUUID();
-    const secret = crypto.randomUUID();
     const expiresAt = now + input.ttlMs;
-    const secretHash = await hashToken(secret);
 
     this.sql.exec(
-      `INSERT INTO app_client_sessions (
+      `INSERT INTO app_sessions (
         session_id, uid, username, package_id, package_name, entrypoint_name,
-        route_base, client_id, secret_hash, created_at, last_used_at,
-        expires_at, revoked_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        route_base, created_at, last_used_at, expires_at, closed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       sessionId,
       input.uid,
       input.username,
@@ -104,28 +135,78 @@ export class AppSessionStore {
       input.packageName,
       input.entrypointName,
       input.routeBase,
-      input.clientId,
-      secretHash,
       now,
       null,
       expiresAt,
       null,
     );
 
+    this.insertClient(sessionId, input.clientId, now, expiresAt);
+    const secret = await this.insertClientKey(sessionId, input.clientId, now, expiresAt);
+
     return {
-      sessionId,
+      ...toClientContext({
+        session: {
+          session_id: sessionId,
+          uid: input.uid,
+          username: input.username,
+          package_id: input.packageId,
+          package_name: input.packageName,
+          entrypoint_name: input.entrypointName,
+          route_base: input.routeBase,
+          created_at: now,
+          last_used_at: null,
+          expires_at: expiresAt,
+          closed_at: null,
+        },
+        client: {
+          session_id: sessionId,
+          client_id: input.clientId,
+          created_at: now,
+          last_used_at: null,
+          expires_at: expiresAt,
+          closed_at: null,
+        },
+      }),
       secret,
-      clientId: input.clientId,
-      uid: input.uid,
-      username: input.username,
-      packageId: input.packageId,
-      packageName: input.packageName,
-      entrypointName: input.entrypointName,
-      routeBase: input.routeBase,
-      rpcBase: buildAppRpcBase(sessionId),
-      createdAt: now,
-      expiresAt,
-      lastUsedAt: null,
+    };
+  }
+
+  async attach(input: {
+    uid: number;
+    sessionId: string;
+    clientId: string;
+    ttlMs: number;
+  }): Promise<IssuedAppClientSession | null> {
+    this.pruneExpired();
+    const session = this.getSessionRow(input.sessionId);
+    if (!this.isActiveSessionForUid(session, input.uid)) {
+      return null;
+    }
+
+    const now = Date.now();
+    const expiresAt = now + input.ttlMs;
+    this.insertClient(input.sessionId, input.clientId, now, expiresAt);
+    const secret = await this.insertClientKey(input.sessionId, input.clientId, now, expiresAt);
+    this.touchSession(input.sessionId, now, expiresAt);
+
+    return {
+      ...toClientContext({
+        session: {
+          ...session,
+          last_used_at: now,
+          expires_at: Math.max(session.expires_at, expiresAt),
+        },
+        client: {
+          session_id: input.sessionId,
+          client_id: input.clientId,
+          created_at: now,
+          last_used_at: null,
+          expires_at: expiresAt,
+          closed_at: null,
+        },
+      }),
+      secret,
     };
   }
 
@@ -134,26 +215,33 @@ export class AppSessionStore {
     secret: string,
   ): Promise<AppClientSessionContext | null> {
     this.pruneExpired();
-    const row = this.getRow(sessionId);
-    if (!row) {
-      return null;
-    }
-    if (row.revoked_at != null || row.expires_at <= Date.now()) {
-      return null;
-    }
-    const verified = await this.verifySecret(row, secret);
+    const verified = await this.verifySecret(sessionId, secret);
     if (!verified.ok) {
       return null;
     }
+
     const lastUsedAt = Date.now();
     this.sql.exec(
-      "UPDATE app_client_sessions SET last_used_at = ? WHERE session_id = ?",
+      "UPDATE app_sessions SET last_used_at = ? WHERE session_id = ?",
       lastUsedAt,
       sessionId,
     );
-    return toContext({
-      ...row,
-      last_used_at: lastUsedAt,
+    this.sql.exec(
+      "UPDATE app_session_clients SET last_used_at = ? WHERE session_id = ? AND client_id = ?",
+      lastUsedAt,
+      sessionId,
+      verified.client.client_id,
+    );
+
+    return toClientContext({
+      session: {
+        ...verified.session,
+        last_used_at: lastUsedAt,
+      },
+      client: {
+        ...verified.client,
+        last_used_at: lastUsedAt,
+      },
     });
   }
 
@@ -163,179 +251,287 @@ export class AppSessionStore {
     ttlMs: number,
   ): Promise<AppClientSessionContext | null> {
     this.pruneExpired();
-    const row = this.getRow(sessionId);
-    if (!row) {
-      return null;
-    }
-    if (row.revoked_at != null || row.expires_at <= Date.now()) {
-      return null;
-    }
-    const verified = await this.verifySecret(row, secret);
+    const verified = await this.verifySecret(sessionId, secret);
     if (!verified.ok) {
       return null;
     }
+
     const now = Date.now();
     const expiresAt = now + ttlMs;
     this.sql.exec(
-      "UPDATE app_client_sessions SET last_used_at = ?, expires_at = ? WHERE session_id = ?",
+      "UPDATE app_sessions SET last_used_at = ?, expires_at = MAX(expires_at, ?) WHERE session_id = ?",
       now,
       expiresAt,
       sessionId,
     );
-    if (verified.keyId) {
-      this.sql.exec(
-        "UPDATE app_client_session_keys SET expires_at = ? WHERE key_id = ?",
-        expiresAt,
-        verified.keyId,
-      );
-    }
-    return toContext({
-      ...row,
-      last_used_at: now,
-      expires_at: expiresAt,
+    this.sql.exec(
+      "UPDATE app_session_clients SET last_used_at = ?, expires_at = ? WHERE session_id = ? AND client_id = ?",
+      now,
+      expiresAt,
+      sessionId,
+      verified.client.client_id,
+    );
+    this.sql.exec(
+      "UPDATE app_session_client_keys SET expires_at = ? WHERE key_id = ?",
+      expiresAt,
+      verified.key.key_id,
+    );
+
+    return toClientContext({
+      session: {
+        ...verified.session,
+        last_used_at: now,
+        expires_at: Math.max(verified.session.expires_at, expiresAt),
+      },
+      client: {
+        ...verified.client,
+        last_used_at: now,
+        expires_at: expiresAt,
+      },
     });
   }
 
-  list(uid: number): AppClientSessionContext[] {
+  list(uid: number): AppSessionContext[] {
     this.pruneExpired();
     return this.sql.exec<AppSessionRow>(
-      `SELECT * FROM app_client_sessions
-       WHERE uid = ? AND revoked_at IS NULL AND expires_at > ?
+      `SELECT * FROM app_sessions
+       WHERE uid = ? AND closed_at IS NULL AND expires_at > ?
        ORDER BY last_used_at DESC, created_at DESC`,
       uid,
       Date.now(),
-    ).toArray().map(toContext);
+    ).toArray().map((row) => this.toSessionContext(row));
   }
 
-  getActiveForUid(uid: number, sessionId: string): AppClientSessionContext | null {
+  getActiveForUid(uid: number, sessionId: string): AppSessionContext | null {
     this.pruneExpired();
-    const row = this.getRow(sessionId);
-    if (!row || row.uid !== uid || row.revoked_at != null || row.expires_at <= Date.now()) {
+    const row = this.getSessionRow(sessionId);
+    if (!this.isActiveSessionForUid(row, uid)) {
       return null;
     }
-    return toContext(row);
+    return this.toSessionContext(row);
   }
 
-  async mintSecret(uid: number, sessionId: string, ttlMs: number): Promise<IssuedAppClientSession | null> {
+  close(uid: number, sessionId: string): AppSessionContext | null {
     this.pruneExpired();
-    const row = this.getRow(sessionId);
-    if (!row || row.uid !== uid || row.revoked_at != null || row.expires_at <= Date.now()) {
+    const session = this.getActiveForUid(uid, sessionId);
+    if (!session) {
       return null;
     }
 
     const now = Date.now();
-    const keyId = crypto.randomUUID();
-    const secret = crypto.randomUUID();
-    const expiresAt = now + ttlMs;
-    const secretHash = await hashToken(secret);
-
     this.sql.exec(
-      `INSERT INTO app_client_session_keys (
-        key_id, session_id, secret_hash, created_at, expires_at, revoked_at
-      ) VALUES (?, ?, ?, ?, ?, ?)`,
-      keyId,
-      sessionId,
-      secretHash,
+      "UPDATE app_sessions SET closed_at = ? WHERE session_id = ?",
       now,
-      expiresAt,
-      null,
-    );
-    this.sql.exec(
-      "UPDATE app_client_sessions SET last_used_at = ?, expires_at = ? WHERE session_id = ?",
-      now,
-      expiresAt,
       sessionId,
     );
-
+    this.sql.exec(
+      "UPDATE app_session_clients SET closed_at = ? WHERE session_id = ? AND closed_at IS NULL",
+      now,
+      sessionId,
+    );
+    this.sql.exec(
+      "UPDATE app_session_client_keys SET revoked_at = ? WHERE session_id = ? AND revoked_at IS NULL",
+      now,
+      sessionId,
+    );
     return {
-      ...toContext({
-        ...row,
-        last_used_at: now,
-        expires_at: expiresAt,
-      }),
-      secret,
+      ...session,
+      state: "closed",
     };
   }
 
-  close(uid: number, sessionId: string): boolean {
-    this.pruneExpired();
-    const row = this.getRow(sessionId);
-    if (!row || row.uid !== uid || row.revoked_at != null || row.expires_at <= Date.now()) {
-      return false;
-    }
-
-    const now = Date.now();
-    this.sql.exec(
-      "UPDATE app_client_sessions SET revoked_at = ? WHERE session_id = ?",
-      now,
-      sessionId,
-    );
-    this.sql.exec(
-      "UPDATE app_client_session_keys SET revoked_at = ? WHERE session_id = ? AND revoked_at IS NULL",
-      now,
-      sessionId,
-    );
-    return true;
-  }
-
-  private getRow(sessionId: string): AppSessionRow | null {
+  private getSessionRow(sessionId: string): AppSessionRow | null {
     const rows = [...this.sql.exec<AppSessionRow>(
-      "SELECT * FROM app_client_sessions WHERE session_id = ? LIMIT 1",
+      "SELECT * FROM app_sessions WHERE session_id = ? LIMIT 1",
       sessionId,
     )];
     return rows[0] ?? null;
   }
 
-  private getKeyRows(sessionId: string): AppSessionKeyRow[] {
-    return this.sql.exec<AppSessionKeyRow>(
-      `SELECT * FROM app_client_session_keys
+  private getActiveClientRows(sessionId: string): AppSessionClientRow[] {
+    return this.sql.exec<AppSessionClientRow>(
+      `SELECT * FROM app_session_clients
+       WHERE session_id = ? AND closed_at IS NULL AND expires_at > ?
+       ORDER BY last_used_at DESC, created_at DESC`,
+      sessionId,
+      Date.now(),
+    ).toArray();
+  }
+
+  private getClientRow(sessionId: string, clientId: string): AppSessionClientRow | null {
+    const rows = [...this.sql.exec<AppSessionClientRow>(
+      `SELECT * FROM app_session_clients
+       WHERE session_id = ? AND client_id = ? LIMIT 1`,
+      sessionId,
+      clientId,
+    )];
+    return rows[0] ?? null;
+  }
+
+  private getKeyRows(sessionId: string): AppSessionClientKeyRow[] {
+    return this.sql.exec<AppSessionClientKeyRow>(
+      `SELECT * FROM app_session_client_keys
        WHERE session_id = ? AND revoked_at IS NULL AND expires_at > ?`,
       sessionId,
       Date.now(),
     ).toArray();
   }
 
-  private async verifySecret(row: AppSessionRow, secret: string): Promise<VerifiedSecret> {
-    if (await verify(secret, row.secret_hash)) {
-      return { ok: true, keyId: null };
+  private insertClient(sessionId: string, clientId: string, now: number, expiresAt: number): void {
+    this.sql.exec(
+      `INSERT INTO app_session_clients (
+        session_id, client_id, created_at, last_used_at, expires_at, closed_at
+      ) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(session_id, client_id) DO UPDATE SET
+        last_used_at = excluded.last_used_at,
+        expires_at = excluded.expires_at,
+        closed_at = NULL`,
+      sessionId,
+      clientId,
+      now,
+      null,
+      expiresAt,
+      null,
+    );
+  }
+
+  private async insertClientKey(
+    sessionId: string,
+    clientId: string,
+    now: number,
+    expiresAt: number,
+  ): Promise<string> {
+    const keyId = crypto.randomUUID();
+    const secret = crypto.randomUUID();
+    const secretHash = await hashToken(secret);
+    this.sql.exec(
+      `INSERT INTO app_session_client_keys (
+        key_id, session_id, client_id, secret_hash, created_at, expires_at, revoked_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      keyId,
+      sessionId,
+      clientId,
+      secretHash,
+      now,
+      expiresAt,
+      null,
+    );
+    return secret;
+  }
+
+  private touchSession(sessionId: string, lastUsedAt: number, expiresAt: number): void {
+    this.sql.exec(
+      "UPDATE app_sessions SET last_used_at = ?, expires_at = MAX(expires_at, ?) WHERE session_id = ?",
+      lastUsedAt,
+      expiresAt,
+      sessionId,
+    );
+  }
+
+  private async verifySecret(sessionId: string, secret: string): Promise<VerifiedSecret> {
+    const session = this.getSessionRow(sessionId);
+    if (!session || session.closed_at != null || session.expires_at <= Date.now()) {
+      return { ok: false };
     }
 
-    for (const key of this.getKeyRows(row.session_id)) {
-      if (await verify(secret, key.secret_hash)) {
-        return { ok: true, keyId: key.key_id };
+    for (const key of this.getKeyRows(sessionId)) {
+      if (!(await verify(secret, key.secret_hash))) {
+        continue;
       }
+      const client = this.getClientRow(sessionId, key.client_id);
+      if (!client || client.closed_at != null || client.expires_at <= Date.now()) {
+        return { ok: false };
+      }
+      return {
+        ok: true,
+        session,
+        client,
+        key,
+      };
     }
 
     return { ok: false };
   }
 
+  private isActiveSessionForUid(row: AppSessionRow | null, uid: number): row is AppSessionRow {
+    return Boolean(
+      row &&
+      row.uid === uid &&
+      row.closed_at == null &&
+      row.expires_at > Date.now(),
+    );
+  }
+
+  private toSessionContext(row: AppSessionRow): AppSessionContext {
+    const clients = this.getActiveClientRows(row.session_id)
+      .map((client) => toClientContext({ session: row, client }));
+    return {
+      sessionId: row.session_id,
+      uid: row.uid,
+      username: row.username,
+      packageId: row.package_id,
+      packageName: row.package_name,
+      entrypointName: row.entrypoint_name,
+      routeBase: row.route_base,
+      createdAt: row.created_at,
+      expiresAt: row.expires_at,
+      lastUsedAt: row.last_used_at,
+      state: sessionState(row, clients),
+      clients,
+    };
+  }
+
   private pruneExpired(): void {
+    const now = Date.now();
     this.sql.exec(
-      "DELETE FROM app_client_sessions WHERE expires_at <= ? OR revoked_at IS NOT NULL",
-      Date.now(),
+      "DELETE FROM app_session_client_keys WHERE expires_at <= ? OR revoked_at IS NOT NULL",
+      now,
     );
     this.sql.exec(
-      "DELETE FROM app_client_session_keys WHERE expires_at <= ? OR revoked_at IS NOT NULL",
-      Date.now(),
+      "DELETE FROM app_session_clients WHERE expires_at <= ? OR closed_at IS NOT NULL",
+      now,
+    );
+    this.sql.exec(
+      "DELETE FROM app_sessions WHERE expires_at <= ? OR closed_at IS NOT NULL",
+      now,
+    );
+    this.sql.exec(
+      "DELETE FROM app_session_client_keys WHERE session_id NOT IN (SELECT session_id FROM app_sessions)",
+    );
+    this.sql.exec(
+      "DELETE FROM app_session_clients WHERE session_id NOT IN (SELECT session_id FROM app_sessions)",
     );
   }
 }
 
-function toContext(row: AppSessionRow): AppClientSessionContext {
+function toClientContext(input: {
+  session: AppSessionRow;
+  client: AppSessionClientRow;
+}): AppSessionClientContext {
   return {
-    sessionId: row.session_id,
-    clientId: row.client_id,
-    uid: row.uid,
-    username: row.username,
-    packageId: row.package_id,
-    packageName: row.package_name,
-    entrypointName: row.entrypoint_name,
-    routeBase: row.route_base,
-    rpcBase: buildAppRpcBase(row.session_id),
-    createdAt: row.created_at,
-    expiresAt: row.expires_at,
-    lastUsedAt: row.last_used_at,
+    sessionId: input.session.session_id,
+    clientId: input.client.client_id,
+    uid: input.session.uid,
+    username: input.session.username,
+    packageId: input.session.package_id,
+    packageName: input.session.package_name,
+    entrypointName: input.session.entrypoint_name,
+    routeBase: input.session.route_base,
+    rpcBase: buildAppRpcBase(input.session.session_id),
+    createdAt: input.client.created_at,
+    expiresAt: input.client.expires_at,
+    lastUsedAt: input.client.last_used_at,
   };
+}
+
+function sessionState(row: AppSessionRow, clients: AppClientSessionContext[]): AppSessionState {
+  if (row.closed_at != null) {
+    return "closed";
+  }
+  if (row.expires_at <= Date.now()) {
+    return "expired";
+  }
+  return clients.length > 0 ? "active" : "detached";
 }
 
 function buildAppRpcBase(sessionId: string): string {

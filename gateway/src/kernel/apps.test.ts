@@ -85,10 +85,10 @@ function makeContext(overrides: Partial<KernelContext> = {}): KernelContext {
         expiresAt: 2,
         lastUsedAt: null,
       })),
-      mintSecret: vi.fn(async () => ({
+      attach: vi.fn(async (input) => ({
         sessionId: "session-1",
         secret: "secret-2",
-        clientId: "win-1",
+        clientId: input.clientId,
         uid: 1000,
         username: "alice",
         packageId: "pkg-chat",
@@ -102,7 +102,6 @@ function makeContext(overrides: Partial<KernelContext> = {}): KernelContext {
       })),
       list: vi.fn(() => [{
         sessionId: "session-1",
-        clientId: "win-1",
         uid: 1000,
         username: "alice",
         packageId: "pkg-chat",
@@ -113,8 +112,36 @@ function makeContext(overrides: Partial<KernelContext> = {}): KernelContext {
         createdAt: 1,
         expiresAt: 2,
         lastUsedAt: null,
+        state: "active",
+        clients: [{
+          sessionId: "session-1",
+          clientId: "win-1",
+          uid: 1000,
+          username: "alice",
+          packageId: "pkg-chat",
+          packageName: "chat",
+          entrypointName: "Chat",
+          routeBase: "/apps/chat",
+          rpcBase: "/apps/sessions/session-1/socket",
+          createdAt: 1,
+          expiresAt: 2,
+          lastUsedAt: null,
+        }],
       }]),
-      close: vi.fn(() => true),
+      close: vi.fn(() => ({
+        sessionId: "session-1",
+        uid: 1000,
+        username: "alice",
+        packageId: "pkg-chat",
+        packageName: "chat",
+        entrypointName: "Chat",
+        routeBase: "/apps/chat",
+        createdAt: 1,
+        expiresAt: 2,
+        lastUsedAt: null,
+        state: "closed",
+        clients: [],
+      })),
     },
     ...overrides,
   } as unknown as KernelContext;
@@ -155,20 +182,31 @@ describe("app syscalls", () => {
 
     const result = await handleAppAttach({ sessionId: "session-1" }, ctx);
 
-    expect(ctx.appSessions.mintSecret).toHaveBeenCalledWith(1000, "session-1", expect.any(Number));
+    expect(ctx.appSessions.attach).toHaveBeenCalledWith(expect.objectContaining({
+      uid: 1000,
+      sessionId: "session-1",
+      ttlMs: expect.any(Number),
+    }));
     expect(result.launchUrl).toContain("token=secret-2");
   });
 
-  it("lists and closes sessions for the current user", () => {
-    const ctx = makeContext();
+  it("lists and closes sessions for the current user", async () => {
+    const closeAppSession = vi.fn(async () => ({ closed: 1 }));
+    const getAppRunner = vi.fn(() => ({ closeAppSession }));
+    const ctx = makeContext({
+      getAppRunner,
+    });
 
     expect(handleAppList({}, ctx).sessions).toEqual([expect.objectContaining({
       sessionId: "session-1",
       packageName: "chat",
       state: "active",
+      clients: [expect.objectContaining({ clientId: "win-1" })],
     })]);
-    expect(handleAppClose({ sessionId: "session-1" }, ctx)).toEqual({ closed: true });
+    await expect(handleAppClose({ sessionId: "session-1" }, ctx)).resolves.toEqual({ closed: true });
     expect(ctx.appSessions.close).toHaveBeenCalledWith(1000, "session-1");
+    expect(getAppRunner).toHaveBeenCalledWith(1000, "pkg-chat");
+    expect(closeAppSession).toHaveBeenCalledWith("session-1");
   });
 
   it("returns a typed 404 when the package app is missing", async () => {
