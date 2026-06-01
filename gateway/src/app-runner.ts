@@ -502,9 +502,7 @@ export class AppRunner extends DurableObject<Env> {
       });
     }
 
-    const pair = new WebSocketPair();
-    const server = pair[0];
-    const client = pair[1];
+    const [client, server] = Object.values(new WebSocketPair());
     this.ctx.acceptWebSocket(server, [APP_SOCKET_TAG]);
     this.#registerAppSocket(server, context.session, context.appFrame);
     return new Response(null, {
@@ -649,7 +647,9 @@ export class AppRunner extends DurableObject<Env> {
       const registration = this.appClients.get(key);
       targets = registration ? [[key, registration]] : [];
     } else {
-      targets = [...this.appClients.entries()];
+      targets = sessionId
+        ? [...this.appClients.entries()].filter(([, registration]) => registration.session.sessionId === sessionId)
+        : [...this.appClients.entries()];
     }
     let delivered = 0;
     for (const [key, registration] of targets) {
