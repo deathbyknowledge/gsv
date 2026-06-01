@@ -4,26 +4,59 @@ export type PackageAppBoot = {
   routeBase: string;
   rpcBase: string;
   sessionId: string;
-  sessionSecret: string;
   clientId: string;
   expiresAt: number;
   hasBackend: boolean;
 };
 
-type CapnwebGlobal = {
-  newWebSocketRpcSession<T = unknown>(socket: string | WebSocket, localMain?: unknown): T;
-  RpcTarget?: abstract new (...args: unknown[]) => object;
+type AppRequestFrame = {
+  type: "req";
+  id: string;
+  call: string;
+  args?: unknown;
+};
+
+type AppResponseFrame =
+  | {
+      type: "res";
+      id: string;
+      ok: true;
+      data?: unknown;
+    }
+  | {
+      type: "res";
+      id: string;
+      ok: false;
+      error: {
+        code: number;
+        message: string;
+        details?: unknown;
+      };
+    };
+
+type AppSignalFrame = {
+  type: "sig";
+  signal: string;
+  payload?: unknown;
+};
+
+type AppSocketFrame = AppResponseFrame | AppSignalFrame;
+
+type PendingBackendRequest = {
+  resolve(value: unknown): void;
+  reject(error: unknown): void;
 };
 
 type RemoteBackend = {
   invoke(method: string, args?: unknown): Promise<unknown>;
-  onRpcBroken?: (callback: (error: unknown) => void) => void;
 } & Record<string | symbol, unknown>;
 
 type BackendConnection = {
   backend: RemoteBackend;
   socket: WebSocket;
   broken: boolean;
+  pending: Map<string, PendingBackendRequest>;
+  request<T = unknown>(call: string, args?: unknown): Promise<T>;
 };
 
 type BackendProxyControl = {
@@ -47,7 +80,6 @@ declare global {
     __GSV_BACKEND_READY__?: Promise<unknown>;
     __GSV_APP_RUNTIME__?: PackageAppRuntimeChrome;
     backend?: unknown;
-    capnweb?: CapnwebGlobal;
   }
 }
 
@@ -63,22 +95,16 @@ export function hasAppBoot(): boolean {
   return Boolean(globalThis.window?.__GSV_APP_BOOT__);
 }
 
-function getCapnweb(): CapnwebGlobal {
-  const capnweb = globalThis.window?.capnweb;
-  if (!capnweb || typeof capnweb.newWebSocketRpcSession !== "function") {
-    throw new Error("capnweb runtime is unavailable");
-  }
-  return capnweb;
-}
-
 let backendConnectionPromise: Promise<BackendConnection> | null = null;
 let backendProxy: unknown = null;
-let appClientTarget: unknown = null;
 let appSessionRefreshPromise: Promise<PackageAppBoot> | null = null;
 let appRuntimeReady = false;
 let connectedReadyFallback: ReturnType<typeof setTimeout> | null = null;
+let appSessionRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+let backendRequestSeq = 0;
 const appEventListeners = new Set<AppEventListener>();
 const APP_SESSION_REFRESH_LEEWAY_MS = 60_000;
+const APP_SESSION_REFRESH_RETRY_MS = 30_000;
 const CONNECTED_READY_FALLBACK_MS = 650;
 
 function formatErrorMessage(error: unknown): string {
@@ -109,6 +135,13 @@ function clearConnectedReadyFallback(): void {
   if (connectedReadyFallback !== null) {
     clearTimeout(connectedReadyFallback);
     connectedReadyFallback = null;
+  }
+}
+
+function clearAppSessionRefreshTimer(): void {
+  if (appSessionRefreshTimer !== null) {
+    clearTimeout(appSessionRefreshTimer);
+    appSessionRefreshTimer = null;
   }
 }
 
@@ -198,14 +231,30 @@ class BackendTransportClosedError extends Error {
   }
 }
 
+class BackendRpcError extends Error {
+  constructor(
+    readonly code: number,
+    message: string,
+    readonly details?: unknown,
+  ) {
+    super(message);
+    this.name = "BackendRpcError";
+  }
+}
+
 function resetBackendConnection(): void {
   const previousConnection = backendConnectionPromise;
   backendConnectionPromise = null;
+  clearAppSessionRefreshTimer();
   if (globalThis.window) {
     globalThis.window.__GSV_BACKEND_READY__ = undefined;
   }
   void previousConnection
-    ?.then((connection) => closeBackendSocket(connection.socket))
+    ?.then((connection) => {
+      connection.broken = true;
+      rejectPendingBackendRequests(connection, new BackendTransportClosedError("client reconnect"));
+      closeBackendSocket(connection.socket);
+    })
     .catch(() => {});
 }
 
@@ -221,6 +270,149 @@ function shouldRetryBackendCall(connection: BackendConnection | null, error: unk
     || Boolean(connection && connection.socket.readyState !== WebSocket.OPEN);
 }
 
+function createRequestId(): string {
+  backendRequestSeq += 1;
+  return `app:${Date.now().toString(36)}:${backendRequestSeq.toString(36)}`;
+}
+
+function rejectPendingBackendRequests(connection: BackendConnection, error: unknown): void {
+  for (const pending of connection.pending.values()) {
+    pending.reject(error);
+  }
+  connection.pending.clear();
+}
+
+function waitForSocketOpen(socket: WebSocket): Promise<void> {
+  if (socket.readyState === WebSocket.OPEN) {
+    return Promise.resolve();
+  }
+  if (socket.readyState === WebSocket.CLOSING || socket.readyState === WebSocket.CLOSED) {
+    return Promise.reject(new BackendTransportClosedError("package backend socket closed"));
+  }
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      socket.removeEventListener("open", onOpen);
+      socket.removeEventListener("error", onError);
+      socket.removeEventListener("close", onClose);
+    };
+    const onOpen = () => {
+      cleanup();
+      resolve();
+    };
+    const onError = (event: Event) => {
+      cleanup();
+      reject(new BackendTransportClosedError(event));
+    };
+    const onClose = (event: CloseEvent) => {
+      cleanup();
+      reject(new BackendTransportClosedError(`package backend socket closed (${event.code})`));
+    };
+    socket.addEventListener("open", onOpen);
+    socket.addEventListener("error", onError);
+    socket.addEventListener("close", onClose);
+  });
+}
+
+function sendBackendRequest<T = unknown>(
+  connection: BackendConnection,
+  call: string,
+  args?: unknown,
+): Promise<T> {
+  if (connection.broken || connection.socket.readyState !== WebSocket.OPEN) {
+    return Promise.reject(new BackendTransportClosedError("package backend socket is closed"));
+  }
+
+  const id = createRequestId();
+  const frame: AppRequestFrame = {
+    type: "req",
+    id,
+    call,
+    ...(args === undefined ? {} : { args }),
+  };
+
+  return new Promise((resolve, reject) => {
+    connection.pending.set(id, {
+      resolve: (value) => resolve(value as T),
+      reject,
+    });
+    try {
+      connection.socket.send(JSON.stringify(frame));
+    } catch (error) {
+      connection.pending.delete(id);
+      reject(new BackendTransportClosedError(error));
+    }
+  });
+}
+
+function handleBackendFrame(connection: BackendConnection, raw: unknown): void {
+  if (typeof raw !== "string") {
+    console.warn("[gsv-package] ignored non-text app frame");
+    return;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    console.warn("[gsv-package] ignored invalid app frame", error);
+    return;
+  }
+
+  if (!isAppSocketFrame(parsed)) {
+    console.warn("[gsv-package] ignored unknown app frame", parsed);
+    return;
+  }
+
+  if (parsed.type === "sig") {
+    emitAppEvent(parsed.signal, parsed.payload);
+    return;
+  }
+
+  const pending = connection.pending.get(parsed.id);
+  if (!pending) {
+    return;
+  }
+  connection.pending.delete(parsed.id);
+  if (parsed.ok) {
+    pending.resolve(parsed.data);
+    return;
+  }
+  pending.reject(new BackendRpcError(
+    parsed.error.code,
+    parsed.error.message,
+    parsed.error.details,
+  ));
+}
+
+function isAppSocketFrame(value: unknown): value is AppSocketFrame {
+  return isAppResponseFrame(value) || isAppSignalFrame(value);
+}
+
+function isAppResponseFrame(value: unknown): value is AppResponseFrame {
+  const record = asRecord(value);
+  if (record?.type !== "res" || typeof record.id !== "string" || typeof record.ok !== "boolean") {
+    return false;
+  }
+  if (record.ok) {
+    return true;
+  }
+  const error = asRecord(record.error);
+  return Boolean(
+    error &&
+    typeof error.code === "number" &&
+    typeof error.message === "string",
+  );
+}
+
+function isAppSignalFrame(value: unknown): value is AppSignalFrame {
+  const record = asRecord(value);
+  return record?.type === "sig" && typeof record.signal === "string";
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" ? value as Record<string, unknown> : null;
+}
+
 function isPackageAppBoot(value: unknown): value is PackageAppBoot {
   if (!value || typeof value !== "object") {
     return false;
@@ -231,7 +423,6 @@ function isPackageAppBoot(value: unknown): value is PackageAppBoot {
     && typeof candidate.routeBase === "string"
     && typeof candidate.rpcBase === "string"
     && typeof candidate.sessionId === "string"
-    && typeof candidate.sessionSecret === "string"
     && typeof candidate.clientId === "string"
     && typeof candidate.expiresAt === "number"
     && typeof candidate.hasBackend === "boolean";
@@ -251,10 +442,8 @@ async function refreshAppSession(boot: PackageAppBoot): Promise<PackageAppBoot> 
       method: "POST",
       credentials: "same-origin",
       headers: {
-        "content-type": "application/json",
         "accept": "application/json",
       },
-      body: JSON.stringify({ clientId: boot.clientId }),
     });
 
     if (!response.ok) {
@@ -284,6 +473,37 @@ async function refreshAppSession(boot: PackageAppBoot): Promise<PackageAppBoot> 
   return refresh;
 }
 
+function scheduleAppSessionRefresh(
+  connection: BackendConnection,
+  boot: PackageAppBoot,
+  isCurrentConnection: () => boolean,
+): void {
+  clearAppSessionRefreshTimer();
+  if (connection.broken || !isCurrentConnection()) {
+    return;
+  }
+  const delayMs = Math.max(0, boot.expiresAt - Date.now() - APP_SESSION_REFRESH_LEEWAY_MS);
+  appSessionRefreshTimer = setTimeout(() => {
+    appSessionRefreshTimer = null;
+    if (connection.broken || !isCurrentConnection()) {
+      return;
+    }
+    void refreshAppSession(getAppBoot())
+      .then((nextBoot) => {
+        scheduleAppSessionRefresh(connection, nextBoot, isCurrentConnection);
+      })
+      .catch((error) => {
+        console.warn("[gsv-package] app session refresh failed", error);
+        if (!connection.broken && isCurrentConnection()) {
+          appSessionRefreshTimer = setTimeout(() => {
+            appSessionRefreshTimer = null;
+            scheduleAppSessionRefresh(connection, getAppBoot(), isCurrentConnection);
+          }, APP_SESSION_REFRESH_RETRY_MS);
+        }
+      });
+  }, delayMs);
+}
+
 function emitAppEvent(event: string, payload: unknown): void {
   for (const listener of appEventListeners) {
     try {
@@ -292,23 +512,6 @@ function emitAppEvent(event: string, payload: unknown): void {
       console.warn("[gsv-package] app event listener failed", error);
     }
   }
-}
-
-function getOrCreateAppClientTarget(): unknown {
-  if (appClientTarget) {
-    return appClientTarget;
-  }
-  const RpcTargetCtor = getCapnweb().RpcTarget;
-  if (typeof RpcTargetCtor !== "function") {
-    throw new Error("capnweb RpcTarget is unavailable");
-  }
-  appClientTarget = new class extends RpcTargetCtor {
-    async onAppEvent(event: unknown, payload: unknown) {
-      const normalizedEvent = typeof event === "string" ? event : String(event ?? "");
-      emitAppEvent(normalizedEvent, payload);
-    }
-  }();
-  return appClientTarget;
 }
 
 async function connectBackendTransport(): Promise<BackendConnection> {
@@ -325,44 +528,44 @@ async function connectBackendTransport(): Promise<BackendConnection> {
   if (shouldRefreshAppSession(boot)) {
     boot = await refreshAppSession(boot);
   }
-  const capnweb = getCapnweb();
   const socket = new WebSocket(buildRpcWebSocketUrl(boot.rpcBase));
-  let connection: BackendConnection | null = null;
+  const connection: BackendConnection = {
+    backend: {
+      invoke(method: string, args?: unknown) {
+        return connection.request("backend.invoke", { method, args });
+      },
+    },
+    socket,
+    broken: socket.readyState === WebSocket.CLOSING || socket.readyState === WebSocket.CLOSED,
+    pending: new Map(),
+    request<T = unknown>(call: string, args?: unknown): Promise<T> {
+      return sendBackendRequest<T>(connection, call, args);
+    },
+  };
   let ready: Promise<BackendConnection>;
-  let transportBroken = socket.readyState === WebSocket.CLOSING || socket.readyState === WebSocket.CLOSED;
-  const markTransportBroken = () => {
-    transportBroken = true;
-    if (connection) {
-      connection.broken = true;
+  const isCurrentConnection = () => backendConnectionPromise === ready;
+  const markTransportBroken = (cause: unknown) => {
+    connection.broken = true;
+    if (isCurrentConnection()) {
+      clearAppSessionRefreshTimer();
     }
+    rejectPendingBackendRequests(connection, new BackendTransportClosedError(cause));
     if (backendConnectionPromise === ready) {
       resetBackendConnection();
     }
   };
-  socket.addEventListener("close", markTransportBroken);
+  socket.addEventListener("message", (event) => {
+    handleBackendFrame(connection, event.data);
+  });
+  socket.addEventListener("close", (event) => {
+    markTransportBroken(`package backend socket closed (${event.code})`);
+  });
   socket.addEventListener("error", markTransportBroken);
 
   ready = (async () => {
-    const session = capnweb.newWebSocketRpcSession<{
-      authenticate(secret: string, clientTarget?: unknown): unknown;
-    }>(socket);
-    const backend = await session.authenticate(boot.sessionSecret, getOrCreateAppClientTarget());
-    if (!backend || (typeof backend !== "object" && typeof backend !== "function")) {
-      throw new Error("package backend rpc returned an invalid target");
-    }
-    const target = backend as RemoteBackend;
-    if (typeof target.invoke !== "function") {
-      throw new Error("package backend rpc target is missing invoke()");
-    }
-    connection = {
-      backend: target,
-      socket,
-      broken: transportBroken || socket.readyState !== WebSocket.OPEN,
-    };
-    if (typeof target.onRpcBroken === "function") {
-      target.onRpcBroken(markTransportBroken);
-    }
+    await waitForSocketOpen(socket);
     setRuntimeStatus("connected");
+    scheduleAppSessionRefresh(connection, boot, isCurrentConnection);
     if (!appRuntimeReady) {
       scheduleConnectedReadyFallback();
     }
@@ -371,7 +574,7 @@ async function connectBackendTransport(): Promise<BackendConnection> {
     if (backendConnectionPromise === ready) {
       resetBackendConnection();
     }
-    const nextError = transportBroken ? new BackendTransportClosedError(error) : error;
+    const nextError = connection.broken ? new BackendTransportClosedError(error) : error;
     setAppError(nextError);
     throw nextError;
   });
@@ -436,8 +639,9 @@ function buildRpcWebSocketUrl(rpcBase: string): string {
 }
 
 function buildRpcSessionRefreshUrl(boot: PackageAppBoot): string {
+  const routeBase = boot.routeBase.endsWith("/") ? boot.routeBase.slice(0, -1) : boot.routeBase;
   return new URL(
-    `/app-rpc/${encodeURIComponent(boot.packageName)}/sessions/${encodeURIComponent(boot.sessionId)}/refresh`,
+    `${routeBase}/refresh`,
     globalThis.window?.location?.href ?? "http://localhost",
   ).toString();
 }

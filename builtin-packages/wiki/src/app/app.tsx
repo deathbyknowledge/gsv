@@ -32,7 +32,7 @@ const EMPTY_STATE: WikiWorkspaceState = {
   errorText: "",
 };
 
-export function App({ backend }: { backend: WikiBackend }) {
+export function App({ backend, routeBase }: { backend: WikiBackend; routeBase: string }) {
   const [mode, setMode] = useState<WikiMode>(readMode());
   const [route, setRoute] = useState(readRoute());
   const [state, setState] = useState<WikiWorkspaceState>(EMPTY_STATE);
@@ -318,6 +318,7 @@ export function App({ backend }: { backend: WikiBackend }) {
       <div class="wiki-layout">
         <WikiRail
           mode={mode}
+          routeBase={routeBase}
           onChangeMode={changeMode}
           state={state}
           route={route}
@@ -354,6 +355,7 @@ export function App({ backend }: { backend: WikiBackend }) {
                 <BrowsePane
                   state={state}
                   currentTitle={currentTitle}
+                  routeBase={routeBase}
                   selectedDb={selectedDb}
                   onOpenPage={openPage}
                   onPreviewOpen={handleArticlePreviewOpen}
@@ -423,6 +425,7 @@ export function App({ backend }: { backend: WikiBackend }) {
               {mode === "inbox" ? (
                 <InboxPane
                   state={state}
+                  routeBase={routeBase}
                   selectedDb={selectedDb}
                   selectedInboxPath={selectedInboxPath}
                   mutating={mutating}

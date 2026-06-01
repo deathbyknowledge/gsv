@@ -49,7 +49,7 @@ import {
   ScheduleStore,
   skippedScheduleResult,
 } from "./scheduler";
-import { AppSessionStore } from "./app-sessions";
+import { APP_CLIENT_SESSION_TTL_MS, AppSessionStore } from "./app-sessions";
 import {
   ensureKernelBootstrapped,
   handleConnect,
@@ -79,10 +79,8 @@ import {
   setAdapterActivityForKernel,
 } from "./adapter-handlers";
 import {
-  type InstalledPackageRecord,
   PackageStore,
   type PackageEntrypoint,
-  packageRouteBase,
   type PackageArtifactMetadata,
   visiblePackageScopesForActor,
 } from "./packages";
@@ -103,7 +101,6 @@ import type {
 } from "../syscalls/scheduler";
 
 const SERVER_VERSION = "0.2.1";
-const APP_CLIENT_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const KERNEL_BINARY_DEVICE_ID = "__gsv_kernel__";
 
 type ConnectionState = {
@@ -139,37 +136,8 @@ type ProcSendData = {
   queued?: boolean;
 };
 
-type ResolvePackageHttpInput = {
-  packageName: string;
-  username: string;
-  token: string;
-  clientId?: string;
-};
-
-type ResolvePackageHttpResult =
-  | {
-      ok: true;
-      packageId: string;
-      packageName: string;
-      routeBase: string;
-      artifact: PackageArtifactMetadata;
-      appFrame: AppFrameContext;
-      clientSession: AppClientSessionContext & { secret: string };
-      auth: {
-        uid: number;
-        username: string;
-        capabilities: string[];
-      };
-      hasRpc: boolean;
-    }
-  | {
-      ok: false;
-      status: number;
-      message: string;
-    };
-
 type ResolvePackageAppRpcInput = {
-  packageName: string;
+  packageName?: string;
   sessionId: string;
   secret: string;
 };
@@ -555,93 +523,13 @@ export class Kernel extends Host<Env> {
     return result.response;
   }
 
-  async resolvePackageHttpRoute(input: ResolvePackageHttpInput): Promise<ResolvePackageHttpResult> {
-    await this.ready;
-    const packageName = input.packageName.trim();
-    const username = input.username.trim();
-    const token = input.token.trim();
-
-    if (!packageName) {
-      return { ok: false, status: 400, message: "Package name is required" };
-    }
-    if (!username || !token) {
-      return { ok: false, status: 401, message: "Authentication required" };
-    }
-
-    const auth = await this.auth.authenticateToken(username, token, { role: "user" });
-    if (!auth.ok) {
-      return { ok: false, status: 401, message: "Authentication failed" };
-    }
-
-    const routeBase = packageRouteBase(packageName);
-    let record: InstalledPackageRecord | null = null;
-    let entrypoint: PackageEntrypoint | null = null;
-
-    for (const candidate of this.packages.list({
-      enabled: true,
-      name: packageName,
-      runtime: "web-ui",
-      scopes: visiblePackageScopesForActor({ uid: auth.identity.uid }),
-    })) {
-      const matched = candidate.manifest.entrypoints.find((candidateEntrypoint) => {
-        return candidateEntrypoint.kind === "ui" && candidateEntrypoint.route === routeBase;
-      });
-      if (matched) {
-        record = candidate;
-        entrypoint = matched;
-        break;
-      }
-    }
-
-    if (!record || !entrypoint) {
-      return { ok: false, status: 404, message: "Package app not found" };
-    }
-
-    const now = Date.now();
-    const clientSession = await this.appSessions.issue({
-      uid: auth.identity.uid,
-      username: auth.identity.username,
-      packageId: record.packageId,
-      packageName: record.manifest.name,
-      entrypointName: entrypoint.name,
-      routeBase,
-      clientId: input.clientId?.trim() || crypto.randomUUID(),
-      ttlMs: APP_CLIENT_SESSION_TTL_MS,
-    });
-
-    return {
-      ok: true,
-      packageId: record.packageId,
-      packageName: record.manifest.name,
-      routeBase,
-      artifact: record.artifact,
-      appFrame: {
-        uid: auth.identity.uid,
-        username: auth.identity.username,
-        packageId: record.packageId,
-        packageName: record.manifest.name,
-        entrypointName: entrypoint.name,
-        routeBase,
-        issuedAt: now,
-        expiresAt: now + DEFAULT_APP_FRAME_TTL_MS,
-      },
-      clientSession,
-      auth: {
-        uid: auth.identity.uid,
-        username: auth.identity.username,
-        capabilities: this.caps.resolve(auth.identity.gids),
-      },
-      hasRpc: record.manifest.entrypoints.some((candidateEntrypoint) => candidateEntrypoint.kind === "rpc"),
-    };
-  }
-
   async resolvePackageAppRpcSession(input: ResolvePackageAppRpcInput): Promise<ResolvePackageAppRpcResult> {
     await this.ready;
-    const packageName = input.packageName.trim();
+    const packageName = input.packageName?.trim() ?? "";
     const sessionId = input.sessionId.trim();
     const secret = input.secret.trim();
 
-    if (!packageName || !sessionId || !secret) {
+    if (!sessionId || !secret) {
       return { ok: false, status: 401, message: "Authentication required" };
     }
 
@@ -649,10 +537,35 @@ export class Kernel extends Host<Env> {
     if (!clientSession) {
       return { ok: false, status: 401, message: "Authentication failed" };
     }
-    if (clientSession.packageName !== packageName) {
+    if (packageName && clientSession.packageName !== packageName) {
       return { ok: false, status: 404, message: "Package app session not found" };
     }
 
+    return this.resolvePackageAppSessionContext(clientSession);
+  }
+
+  async refreshPackageAppRpcSession(input: ResolvePackageAppRpcInput): Promise<ResolvePackageAppRpcResult> {
+    await this.ready;
+    const packageName = input.packageName?.trim() ?? "";
+    const sessionId = input.sessionId.trim();
+    const secret = input.secret.trim();
+
+    if (!sessionId || !secret) {
+      return { ok: false, status: 401, message: "Authentication required" };
+    }
+
+    const clientSession = await this.appSessions.refresh(sessionId, secret, APP_CLIENT_SESSION_TTL_MS);
+    if (!clientSession) {
+      return { ok: false, status: 401, message: "Authentication failed" };
+    }
+    if (packageName && clientSession.packageName !== packageName) {
+      return { ok: false, status: 404, message: "Package app session not found" };
+    }
+
+    return this.resolvePackageAppSessionContext(clientSession);
+  }
+
+  private resolvePackageAppSessionContext(clientSession: AppClientSessionContext): ResolvePackageAppRpcResult {
     const authUser = this.auth.getPasswdByUid(clientSession.uid);
     if (!authUser || authUser.username !== clientSession.username) {
       return { ok: false, status: 401, message: "Authentication failed" };
@@ -1177,6 +1090,7 @@ export class Kernel extends Host<Env> {
       adapters: this.adapters,
       runRoutes: this.runRoutes,
       shellSessions: this.shellSessions,
+      appSessions: this.appSessions,
       signalWatches: this.signalWatches,
       ipcCalls: this.ipcCalls,
       notifications: this.notifications,
@@ -1252,6 +1166,7 @@ export class Kernel extends Host<Env> {
       adapters: this.adapters,
       runRoutes: this.runRoutes,
       shellSessions: this.shellSessions,
+      appSessions: this.appSessions,
       signalWatches: this.signalWatches,
       ipcCalls: this.ipcCalls,
       notifications: this.notifications,
@@ -1289,6 +1204,7 @@ export class Kernel extends Host<Env> {
       adapters: this.adapters,
       runRoutes: this.runRoutes,
       shellSessions: this.shellSessions,
+      appSessions: this.appSessions,
       signalWatches: this.signalWatches,
       ipcCalls: this.ipcCalls,
       notifications: this.notifications,
@@ -2023,7 +1939,12 @@ export class Kernel extends Host<Env> {
           continue;
         }
         if (watch.targetKind === "app") {
-          await this.invokePackageAppSignalHandler(watch, processId, frame);
+          const appClientSession = this.getActiveAppSignalWatchClient(watch);
+          if (watch.appSessionId && watch.appClientId && !appClientSession) {
+            this.signalWatches.deleteHandled(watch.watchId);
+            continue;
+          }
+          await this.invokePackageAppSignalHandler(watch, processId, frame, appClientSession);
         } else {
           await this.invokeProcessSignalWatch(watch, processId, frame);
         }
@@ -2042,10 +1963,28 @@ export class Kernel extends Host<Env> {
     return typeof key === "string" && (key.startsWith("live:") || key.startsWith("__gsv_live__:"));
   }
 
+  private getActiveAppSignalWatchClient(watch: SignalWatchRecord): AppClientSessionContext | null {
+    if (!watch.appSessionId || !watch.appClientId) {
+      return null;
+    }
+    const session = this.appSessions.getActiveForUid(watch.uid, watch.appSessionId);
+    if (
+      !session ||
+      session.packageId !== watch.packageId ||
+      session.packageName !== watch.packageName ||
+      session.entrypointName !== watch.entrypointName ||
+      session.routeBase !== watch.routeBase
+    ) {
+      return null;
+    }
+    return session.clients.find((client) => client.clientId === watch.appClientId) ?? null;
+  }
+
   private async invokePackageAppSignalHandler(
     watch: SignalWatchRecord,
     processId: string,
     frame: SignalFrame,
+    appClientSession: AppClientSessionContext | null,
   ): Promise<void> {
     if (!watch.packageId || !watch.packageName || !watch.entrypointName || !watch.routeBase) {
       throw new Error(`App signal watch ${watch.watchId} is missing package metadata`);
@@ -2083,7 +2022,6 @@ export class Kernel extends Host<Env> {
       issuedAt: now,
       expiresAt: now + DEFAULT_APP_FRAME_TTL_MS,
     };
-
     const runner = this.ctx.exports.AppRunner.getByName(buildAppRunnerName(user.uid, record.packageId));
     await runner.ensureRuntime({
       packageId: record.packageId,
@@ -2104,6 +2042,16 @@ export class Kernel extends Host<Env> {
         ...(watch.state === undefined ? {} : { state: watch.state }),
         createdAt: watch.createdAt,
       },
+      ...(appClientSession
+        ? {
+            appSession: {
+              sessionId: appClientSession.sessionId,
+              clientId: appClientSession.clientId,
+              rpcBase: appClientSession.rpcBase,
+              expiresAt: appClientSession.expiresAt,
+            },
+          }
+        : {}),
     });
   }
 
@@ -2722,6 +2670,7 @@ export class Kernel extends Host<Env> {
       adapters: this.adapters,
       runRoutes: this.runRoutes,
       shellSessions: this.shellSessions,
+      appSessions: this.appSessions,
       signalWatches: this.signalWatches,
       ipcCalls: this.ipcCalls,
       notifications: this.notifications,

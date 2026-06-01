@@ -115,6 +115,14 @@ import {
   handleSchedulerUpdate,
 } from "./scheduler";
 import {
+  AppSyscallError,
+  handleAppAttach,
+  handleAppClose,
+  handleAppDetach,
+  handleAppList,
+  handleAppOpen,
+} from "./apps";
+import {
   getVisibleTarget,
   targetCanHandle,
   type TargetDescriptor,
@@ -309,6 +317,22 @@ async function dispatchNative(
             sendDeviceBinaryFrame: deps.sendDeviceBinaryFrame,
           },
         });
+        break;
+
+      case "app.open":
+        data = await handleAppOpen(frame.args, ctx);
+        break;
+      case "app.attach":
+        data = await handleAppAttach(frame.args, ctx);
+        break;
+      case "app.list":
+        data = handleAppList(frame.args, ctx);
+        break;
+      case "app.detach":
+        data = await handleAppDetach(frame.args, ctx);
+        break;
+      case "app.close":
+        data = await handleAppClose(frame.args, ctx);
         break;
 
       case "codemode.run":
@@ -582,6 +606,9 @@ async function dispatchNative(
 
     return { type: "res", id: frame.id, ok: true, data } as ResponseFrame;
   } catch (err) {
+    if (err instanceof AppSyscallError) {
+      return errFrame(frame.id, err.status, err.message);
+    }
     const message = err instanceof Error ? err.message : String(err);
     return errFrame(frame.id, 500, message);
   }

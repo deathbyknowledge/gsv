@@ -9,6 +9,7 @@ type ViewerRuntime = {
 };
 
 type AppBinding = {
+  sessionId?: string;
   clientId?: string;
 };
 
@@ -22,7 +23,6 @@ const CHAT_RUNTIME_SIGNALS = [
   "proc.run.hil.requested",
   "process.exit",
 ];
-
 function normalizeArgs(value: unknown) {
   return value && typeof value === "object" ? value as Record<string, unknown> : {};
 }
@@ -39,8 +39,8 @@ function normalizeLimit(value: unknown, fallback = 50) {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
 }
 
-function buildSignalWatchKey(clientId: string, pid: string, signal: string) {
-  return `chat:${clientId}:${pid}:${signal}`;
+function buildSignalWatchKey(sessionId: string, clientId: string, pid: string, signal: string) {
+  return `chat:${sessionId}:${clientId}:${pid}:${signal}`;
 }
 
 export async function listProfiles(kernel: KernelClient, input: unknown) {
@@ -211,15 +211,17 @@ export async function watchProcessSignals(kernel: KernelClient, app: AppBinding 
   if (!pid) {
     throw new Error("pid is required");
   }
+  const sessionId = normalizeClientId(app?.sessionId);
   const clientId = normalizeClientId(app?.clientId);
-  if (!clientId) {
+  if (!sessionId || !clientId) {
     throw new Error("client signal watch requires an app session");
   }
   await Promise.all(CHAT_RUNTIME_SIGNALS.map((signal) => kernel.request("signal.watch", {
     signal,
     processId: pid,
-    key: buildSignalWatchKey(clientId, pid, signal),
-    state: { clientId, pid },
+    key: buildSignalWatchKey(sessionId, clientId, pid, signal),
+    owner: { appSessionId: sessionId, clientId },
+    state: { appSessionId: sessionId, clientId, pid },
     once: false,
   })));
   return {
@@ -233,14 +235,16 @@ export async function unwatchProcessSignals(kernel: KernelClient, app: AppBindin
   if (!pid) {
     return { pid: "", removed: 0 };
   }
+  const sessionId = normalizeClientId(app?.sessionId);
   const clientId = normalizeClientId(app?.clientId);
-  if (!clientId) {
+  if (!sessionId || !clientId) {
     return { pid, removed: 0 };
   }
   let removed = 0;
   await Promise.all(CHAT_RUNTIME_SIGNALS.map(async (signal) => {
     const result = await kernel.request("signal.unwatch", {
-      key: buildSignalWatchKey(clientId, pid, signal),
+      key: buildSignalWatchKey(sessionId, clientId, pid, signal),
+      owner: { appSessionId: sessionId, clientId },
     });
     const count = result && typeof result === "object" && "removed" in result && typeof result.removed === "number"
       ? result.removed

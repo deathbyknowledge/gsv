@@ -1,5 +1,5 @@
 import { render } from "preact";
-import { getBackend } from "@gsv/package/browser";
+import { getAppBoot, getBackend } from "@gsv/package/browser";
 import { App } from "./src/app/app";
 import type { WikiBackend } from "./src/app/types";
 
@@ -9,8 +9,9 @@ async function boot(): Promise<void> {
   if (!root) {
     throw new Error("wiki root missing");
   }
+  const boot = getAppBoot();
   const backend = await getBackend<WikiBackend>();
-  render(<App backend={backend} />, root);
+  render(<App backend={backend} routeBase={boot.routeBase} />, root);
 }
 
 void boot().catch((error) => {

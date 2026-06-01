@@ -401,10 +401,10 @@ function buildAppClient(env, props) {{
   return {{
     ...(session ?? {{}}),
     async emit(event, payload) {{
-      return api.emitAppEvent(event, payload);
+      return api.emitAppEvent(event, payload, undefined, session?.sessionId);
     }},
     async emitTo(clientId, event, payload) {{
-      return api.emitAppEvent(event, payload, clientId);
+      return api.emitAppEvent(event, payload, clientId, session?.sessionId);
     }},
   }};
 }}

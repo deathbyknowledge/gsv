@@ -1,4 +1,4 @@
-import { DurableObject, RpcTarget, WorkerEntrypoint } from "cloudflare:workers";
+import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import { getAgentByName } from "agents";
 import {
   loadPackageArtifact,
@@ -31,6 +31,7 @@ type AppRunnerSignalInput = {
   payload?: unknown;
   sourcePid?: string | null;
   watch: PackageAppSignalWatchInfo;
+  appSession?: AppSessionInfo;
 };
 
 type AppSessionInfo = {
@@ -39,6 +40,52 @@ type AppSessionInfo = {
   rpcBase: string;
   expiresAt: number;
 };
+
+type AppSocketContext = {
+  session: AppSessionInfo;
+  appFrame: AppFrameContext;
+};
+
+type AppSocketAttachment = {
+  kind: "app-client";
+  connected: boolean;
+  session?: AppSessionInfo;
+  appFrame?: AppFrameContext;
+  connectedAt?: number;
+};
+
+type AppRequestFrame = {
+  type: "req";
+  id: string;
+  call: string;
+  args?: unknown;
+};
+
+type AppResponseFrame =
+  | {
+      type: "res";
+      id: string;
+      ok: true;
+      data?: unknown;
+    }
+  | {
+      type: "res";
+      id: string;
+      ok: false;
+      error: {
+        code: number;
+        message: string;
+        details?: unknown;
+      };
+    };
+
+type AppSignalFrame = {
+  type: "sig";
+  signal: string;
+  payload?: unknown;
+};
+
+type AppSocketFrame = AppRequestFrame | AppResponseFrame | AppSignalFrame;
 
 type AppRuntimeContext = {
   appFrame: AppFrameContext;
@@ -78,12 +125,6 @@ type KernelAppStub = {
   appRequest(appFrame: AppFrameContext, frame: RequestFrame): Promise<ResponseFrame>;
 };
 
-type AppClientStub = Rpc.RpcTargetBranded & {
-  onAppEvent(event: string, payload?: unknown): Promise<void>;
-  dup?: () => AppClientStub;
-  [Symbol.dispose]?: () => void;
-};
-
 type AppFetchEntrypointStub = Rpc.WorkerEntrypointBranded & {
   fetch(request: Request): Promise<Response>;
 };
@@ -105,7 +146,7 @@ type AppRunnerDaemonStub = Rpc.RpcTargetBranded & {
   removeRpcSchedule(key: string): Promise<{ removed: boolean }>;
   listRpcSchedules(): Promise<unknown[]>;
   packageSqlExec(statement: string, bindings?: unknown[]): Promise<unknown[]>;
-  emitAppEvent(event: string, payload?: unknown, clientId?: string): Promise<{ delivered: number }>;
+  emitAppEvent(event: string, payload?: unknown, clientId?: string, sessionId?: string): Promise<{ delivered: number }>;
 };
 
 type GsvApiBindingProps = {
@@ -116,29 +157,29 @@ const PROPS_KEY = "app-runner:props";
 const RUNTIME_TTL_MS = 365 * 24 * 60 * 60 * 1000;
 
 type RegisteredAppClient = {
-  client: AppClientStub;
+  socket: WebSocket;
   session: AppSessionInfo;
+  appFrame: AppFrameContext;
   registeredAt: number;
 };
 
-/**
- * Browser-facing RPC shim for package backends.
- *
- * Keep the public browser-facing surface to a single generic `invoke(...)`.
- * App-specific methods still belong to the package backend surface; AppRunner
- * just forwards them after registering the connected client.
- */
-class AppRunnerBackendTarget extends RpcTarget {
-  constructor(
-    private readonly runner: AppRunner,
-    private readonly runtime: AppRuntimeContext,
-    private readonly client: AppClientStub | null,
-  ) {
-    super();
-  }
+function appClientKey(session: AppSessionInfo): string {
+  return appClientKeyFor(session.sessionId, session.clientId);
+}
 
-  async invoke(method: string, args?: unknown): Promise<unknown> {
-    return this.runner.invokeAppRpc(method, args, this.runtime);
+function appClientKeyFor(sessionId: string, clientId: string): string {
+  return `${sessionId}:${clientId}`;
+}
+
+const APP_SOCKET_TAG = "app-client";
+
+class AppSocketError extends Error {
+  constructor(
+    readonly code: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "AppSocketError";
   }
 }
 
@@ -174,8 +215,13 @@ export class GsvApiBinding extends WorkerEntrypoint<Env, GsvApiBindingProps> {
     return this.#getRunner().packageSqlExec(statement, bindings);
   }
 
-  async emitAppEvent(event: string, payload?: unknown, clientId?: string): Promise<{ delivered: number }> {
-    return this.#getRunner().emitAppEvent(event, payload, clientId);
+  async emitAppEvent(
+    event: string,
+    payload?: unknown,
+    clientId?: string,
+    sessionId?: string,
+  ): Promise<{ delivered: number }> {
+    return this.#getRunner().emitAppEvent(event, payload, clientId, sessionId);
   }
 
   #getRunner(): AppRunnerDaemonStub {
@@ -240,6 +286,7 @@ export class AppRunner extends DurableObject<Env> {
     super(ctx, env);
     this.daemonSchedules = new AppRpcScheduleStore(ctx.storage.sql);
     this.daemonSchedules.init();
+    this.#restoreAppClients();
   }
 
   async ensureRuntime(props: AppRunnerProps): Promise<void> {
@@ -265,20 +312,65 @@ export class AppRunner extends DurableObject<Env> {
   }
 
   async fetch(request: Request): Promise<Response> {
+    if (request.headers.get("upgrade")?.toLowerCase() === "websocket") {
+      return this.#acceptAppSocket(request);
+    }
     const response = await this.gsvFetch(await serializeAppHttpRequest(request));
     return deserializeAppHttpResponse(response);
-  }
-
-  async getBackend(appSession: AppSessionInfo, client?: AppClientStub | null): Promise<AppRunnerBackendTarget> {
-    if (client) {
-      this.registerAppClient(appSession, client);
-    }
-    return new AppRunnerBackendTarget(this, this.#defaultRuntime(appSession), client ?? null);
   }
 
   async deliverSignal(input: AppRunnerSignalInput): Promise<void> {
     const runtime = this.#runtimeForSignal(input);
     await this.#getSignalEntrypoint(runtime, input).run(input.signal);
+  }
+
+  async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
+    if (typeof message !== "string") {
+      this.#closeSocket(ws, 1003, "App socket only accepts text frames");
+      return;
+    }
+
+    let frame: unknown;
+    try {
+      frame = JSON.parse(message);
+    } catch {
+      this.#closeSocket(ws, 1003, "Invalid JSON frame");
+      return;
+    }
+
+    if (!this.#isAppRequestFrame(frame)) {
+      this.#closeSocket(ws, 1003, "Expected app request frame");
+      return;
+    }
+
+    try {
+      const data = await this.#handleAppSocketRequest(ws, frame);
+      this.#sendSocketFrame(ws, {
+        type: "res",
+        id: frame.id,
+        ok: true,
+        ...(data === undefined ? {} : { data }),
+      });
+    } catch (error) {
+      const { code, message: errorMessage } = this.#frameError(error);
+      this.#sendSocketFrame(ws, {
+        type: "res",
+        id: frame.id,
+        ok: false,
+        error: {
+          code,
+          message: errorMessage,
+        },
+      });
+    }
+  }
+
+  webSocketClose(ws: WebSocket): void {
+    this.#removeAppClientBySocket(ws);
+  }
+
+  webSocketError(ws: WebSocket): void {
+    this.#removeAppClientBySocket(ws);
   }
 
   async invokeAppRpc(method: string, args: unknown, runtime: AppRuntimeContext): Promise<unknown> {
@@ -339,7 +431,12 @@ export class AppRunner extends DurableObject<Env> {
     return rows.map((row) => this.#serializeSqlRow(row));
   }
 
-  async emitAppEvent(event: string, payload?: unknown, clientId?: string): Promise<{ delivered: number }> {
+  async emitAppEvent(
+    event: string,
+    payload?: unknown,
+    clientId?: string,
+    sessionId?: string,
+  ): Promise<{ delivered: number }> {
     const normalizedEvent = typeof event === "string" ? event.trim() : "";
     if (!normalizedEvent) {
       throw new Error("app event name is required");
@@ -347,8 +444,97 @@ export class AppRunner extends DurableObject<Env> {
     const targetClientId = typeof clientId === "string" && clientId.trim().length > 0
       ? clientId.trim()
       : null;
-    const delivered = await this.#emitAppEventToClients(normalizedEvent, payload, targetClientId);
+    const targetSessionId = typeof sessionId === "string" && sessionId.trim().length > 0
+      ? sessionId.trim()
+      : null;
+    const delivered = await this.#emitAppEventToClients(normalizedEvent, payload, targetClientId, targetSessionId);
     return { delivered };
+  }
+
+  async closeAppSession(sessionId: string): Promise<{ closed: number }> {
+    const normalizedSessionId = typeof sessionId === "string" ? sessionId.trim() : "";
+    if (!normalizedSessionId) {
+      return { closed: 0 };
+    }
+
+    this.#restoreAppClients();
+    let closed = 0;
+    for (const [key, registration] of [...this.appClients.entries()]) {
+      if (registration.session.sessionId !== normalizedSessionId) {
+        continue;
+      }
+      this.appClients.delete(key);
+      try {
+        registration.socket.close(1000, "app session closed");
+      } catch {
+      }
+      closed += 1;
+    }
+    return { closed };
+  }
+
+  async closeAppClient(sessionId: string, clientId: string): Promise<{ closed: number }> {
+    const normalizedSessionId = typeof sessionId === "string" ? sessionId.trim() : "";
+    const normalizedClientId = typeof clientId === "string" ? clientId.trim() : "";
+    if (!normalizedSessionId || !normalizedClientId) {
+      return { closed: 0 };
+    }
+
+    this.#restoreAppClients();
+    const key = appClientKeyFor(normalizedSessionId, normalizedClientId);
+    const registration = this.appClients.get(key);
+    if (!registration) {
+      return { closed: 0 };
+    }
+    this.appClients.delete(key);
+    try {
+      registration.socket.close(1000, "app client detached");
+    } catch {
+    }
+    return { closed: 1 };
+  }
+
+  #acceptAppSocket(request: Request): Response {
+    const context = this.#appSocketContextFromRequest(request);
+    if (!context) {
+      return new Response("App socket context is missing or invalid", {
+        status: 400,
+        headers: { "cache-control": "no-store" },
+      });
+    }
+
+    const [client, server] = Object.values(new WebSocketPair());
+    this.ctx.acceptWebSocket(server, [APP_SOCKET_TAG]);
+    this.#registerAppSocket(server, context.session, context.appFrame);
+    return new Response(null, {
+      status: 101,
+      webSocket: client,
+    });
+  }
+
+  async #handleAppSocketRequest(ws: WebSocket, frame: AppRequestFrame): Promise<unknown> {
+    switch (frame.call) {
+      case "backend.invoke":
+        return this.#invokeBackendFromSocket(ws, frame.args);
+      case "app.ping":
+        return { ok: true, timestamp: Date.now() };
+      default:
+        throw new AppSocketError(404, `Unknown app call: ${frame.call}`);
+    }
+  }
+
+  async #invokeBackendFromSocket(ws: WebSocket, args: unknown): Promise<unknown> {
+    const client = this.#clientForSocket(ws);
+    if (!client) {
+      throw new AppSocketError(401, "App socket is not connected");
+    }
+    const record = this.#record(args);
+    const method = typeof record?.method === "string" ? record.method.trim() : "";
+    if (!method) {
+      throw new AppSocketError(400, "backend.invoke requires method");
+    }
+    const runtime = this.#runtimeForAppFrame(client.appFrame, client.session);
+    return this.invokeAppRpc(method, record?.args, runtime);
   }
 
   async #gsvFetch(request: AppHttpRequest, runtime: AppRuntimeContext): Promise<AppHttpResponse> {
@@ -384,13 +570,23 @@ export class AppRunner extends DurableObject<Env> {
   }
 
   #runtimeForSignal(input: AppRunnerSignalInput): AppRuntimeContext {
+    if (this.#isAppSessionInfo(input.appSession)) {
+      return this.#defaultRuntime(input.appSession);
+    }
+
     const state = input.watch.state && typeof input.watch.state === "object"
       ? input.watch.state as Record<string, unknown>
+      : null;
+    const sessionId = typeof state?.appSessionId === "string" && state.appSessionId.trim().length > 0
+      ? state.appSessionId.trim()
       : null;
     const clientId = typeof state?.clientId === "string" && state.clientId.trim().length > 0
       ? state.clientId.trim()
       : null;
-    const appSession = clientId ? this.appClients.get(clientId)?.session : undefined;
+    if (clientId) {
+      this.#restoreAppClients();
+    }
+    const appSession = clientId ? this.#appSessionForClientId(clientId, sessionId) : undefined;
     return this.#defaultRuntime(appSession);
   }
 
@@ -403,56 +599,231 @@ export class AppRunner extends DurableObject<Env> {
     };
   }
 
-  registerAppClient(appSession: AppSessionInfo, client: AppClientStub): void {
-    const clientId = appSession.clientId?.trim();
-    if (!clientId) {
-      throw new Error("app client registration requires clientId");
+  #registerAppSocket(ws: WebSocket, session: AppSessionInfo, appFrame: AppFrameContext): void {
+    const key = appClientKey(session);
+    const previous = this.appClients.get(key);
+    if (previous && previous.socket !== ws) {
+      this.#closeSocket(previous.socket, 1000, "Replaced by newer app connection");
     }
-    const retainedClient = typeof client.dup === "function"
-      ? client.dup()
-      : client;
-    const previous = this.appClients.get(clientId);
-    if (previous) {
-      try {
-        previous.client[Symbol.dispose]?.();
-      } catch {
-      }
-    }
-    this.appClients.set(clientId, {
-      client: retainedClient,
-      session: appSession,
+    ws.serializeAttachment({
+      kind: "app-client",
+      connected: true,
+      session,
+      appFrame,
+      connectedAt: Date.now(),
+    } satisfies AppSocketAttachment);
+    this.appClients.set(key, {
+      socket: ws,
+      session,
+      appFrame,
       registeredAt: Date.now(),
     });
   }
 
-  async #emitAppEventToClients(event: string, payload: unknown, clientId: string | null): Promise<number> {
-    const targets = clientId
-      ? [...this.appClients.entries()].filter(([id]) => id === clientId)
-      : [...this.appClients.entries()];
+  #restoreAppClients(): void {
+    this.appClients.clear();
+    for (const socket of this.ctx.getWebSockets(APP_SOCKET_TAG)) {
+      const attachment = this.#getSocketAttachment(socket);
+      if (!attachment?.connected || !attachment.session || !attachment.appFrame) {
+        continue;
+      }
+      this.appClients.set(appClientKey(attachment.session), {
+        socket,
+        session: attachment.session,
+        appFrame: attachment.appFrame,
+        registeredAt: attachment.connectedAt ?? Date.now(),
+      });
+    }
+  }
+
+  async #emitAppEventToClients(
+    event: string,
+    payload: unknown,
+    clientId: string | null,
+    sessionId: string | null,
+  ): Promise<number> {
+    this.#restoreAppClients();
+    let targets: Array<[string, RegisteredAppClient]>;
+    if (clientId) {
+      if (!sessionId) {
+        throw new Error("targeted app events require an app session id");
+      }
+      const key = appClientKeyFor(sessionId, clientId);
+      const registration = this.appClients.get(key);
+      targets = registration ? [[key, registration]] : [];
+    } else {
+      targets = sessionId
+        ? [...this.appClients.entries()].filter(([, registration]) => registration.session.sessionId === sessionId)
+        : [...this.appClients.entries()];
+    }
     let delivered = 0;
-    for (const [targetClientId, registration] of targets) {
+    for (const [key, registration] of targets) {
       try {
-        await registration.client.onAppEvent(event, payload);
+        this.#sendSocketFrame(registration.socket, {
+          type: "sig",
+          signal: event,
+          payload,
+        });
         delivered += 1;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        console.warn(`[app-runner] app event delivery failed for ${targetClientId}: ${message}`);
-        this.#removeAppClient(targetClientId);
+        console.warn(`[app-runner] app event delivery failed for ${registration.session.clientId}: ${message}`);
+        this.#removeAppClient(key);
       }
     }
     return delivered;
   }
 
-  #removeAppClient(clientId: string): void {
-    const registration = this.appClients.get(clientId);
+  #removeAppClient(key: string): void {
+    const registration = this.appClients.get(key);
     if (!registration) {
       return;
     }
-    this.appClients.delete(clientId);
+    this.appClients.delete(key);
     try {
-      registration.client[Symbol.dispose]?.();
+      registration.socket.close(1011, "app client removed");
     } catch {
     }
+  }
+
+  #removeAppClientBySocket(socket: WebSocket): void {
+    for (const [key, registration] of this.appClients) {
+      if (registration.socket === socket) {
+        this.appClients.delete(key);
+      }
+    }
+  }
+
+  #clientForSocket(socket: WebSocket): RegisteredAppClient | null {
+    const attachment = this.#getSocketAttachment(socket);
+    if (!attachment?.connected || !attachment.session || !attachment.appFrame) {
+      return null;
+    }
+    const key = appClientKey(attachment.session);
+    const existing = this.appClients.get(key);
+    if (existing?.socket === socket) {
+      return existing;
+    }
+    const restored = {
+      socket,
+      session: attachment.session,
+      appFrame: attachment.appFrame,
+      registeredAt: attachment.connectedAt ?? Date.now(),
+    };
+    this.appClients.set(key, restored);
+    return restored;
+  }
+
+  #appSessionForClientId(clientId: string, sessionId?: string | null): AppSessionInfo | undefined {
+    for (const registration of this.appClients.values()) {
+      if (
+        registration.session.clientId === clientId &&
+        (!sessionId || registration.session.sessionId === sessionId)
+      ) {
+        return registration.session;
+      }
+    }
+    return undefined;
+  }
+
+  #sendSocketFrame(socket: WebSocket, frame: AppSocketFrame): void {
+    socket.send(JSON.stringify(frame));
+  }
+
+  #closeSocket(socket: WebSocket, code: number, reason: string): void {
+    this.#removeAppClientBySocket(socket);
+    try {
+      socket.close(code, reason);
+    } catch {
+    }
+  }
+
+  #getSocketAttachment(socket: WebSocket): AppSocketAttachment | null {
+    const attachment = socket.deserializeAttachment();
+    return this.#isAppSocketAttachment(attachment) ? attachment : null;
+  }
+
+  #appSocketContextFromRequest(request: Request): AppSocketContext | null {
+    const raw = request.headers.get("x-gsv-app-socket-context");
+    if (!raw) {
+      return null;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(decodeURIComponent(raw));
+    } catch {
+      return null;
+    }
+    return this.#isAppSocketContext(parsed) ? parsed : null;
+  }
+
+  #isAppRequestFrame(value: unknown): value is AppRequestFrame {
+    const record = this.#record(value);
+    return record?.type === "req" &&
+      typeof record.id === "string" &&
+      record.id.trim().length > 0 &&
+      typeof record.call === "string" &&
+      record.call.trim().length > 0;
+  }
+
+  #isAppSocketAttachment(value: unknown): value is AppSocketAttachment {
+    const record = this.#record(value);
+    if (record?.kind !== "app-client" || typeof record.connected !== "boolean") {
+      return false;
+    }
+    if (!record.connected) {
+      return true;
+    }
+    return this.#isAppSessionInfo(record.session) && this.#isAppFrameContext(record.appFrame);
+  }
+
+  #isAppSocketContext(value: unknown): value is AppSocketContext {
+    const record = this.#record(value);
+    return Boolean(
+      record &&
+      this.#isAppSessionInfo(record.session) &&
+      this.#isAppFrameContext(record.appFrame),
+    );
+  }
+
+  #isAppSessionInfo(value: unknown): value is AppSessionInfo {
+    const session = this.#record(value);
+    return Boolean(
+      session &&
+      typeof session.sessionId === "string" &&
+      typeof session.clientId === "string" &&
+      typeof session.rpcBase === "string" &&
+      typeof session.expiresAt === "number",
+    );
+  }
+
+  #isAppFrameContext(value: unknown): value is AppFrameContext {
+    const appFrame = this.#record(value);
+    return Boolean(
+      appFrame &&
+      typeof appFrame.uid === "number" &&
+      typeof appFrame.username === "string" &&
+      typeof appFrame.packageId === "string" &&
+      typeof appFrame.packageName === "string" &&
+      typeof appFrame.entrypointName === "string" &&
+      typeof appFrame.routeBase === "string" &&
+      typeof appFrame.issuedAt === "number" &&
+      typeof appFrame.expiresAt === "number",
+    );
+  }
+
+  #record(value: unknown): Record<string, unknown> | null {
+    return value && typeof value === "object" ? value as Record<string, unknown> : null;
+  }
+
+  #frameError(error: unknown): { code: number; message: string } {
+    if (error instanceof AppSocketError) {
+      return { code: error.code, message: error.message };
+    }
+    return {
+      code: 500,
+      message: error instanceof Error ? error.message : String(error),
+    };
   }
 
   #getProps(): AppRunnerProps {

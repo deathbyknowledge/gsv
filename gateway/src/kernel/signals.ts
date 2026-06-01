@@ -9,7 +9,7 @@ export function handleSignalWatch(
   args: SignalWatchArgs,
   ctx: KernelContext,
 ): SignalWatchResult {
-  const target = resolveSignalWatchTarget(ctx);
+  const target = resolveSignalWatchTarget(ctx, args);
 
   const signal = args.signal.trim();
   if (!signal) {
@@ -34,8 +34,10 @@ export function handleSignalWatch(
     }
   }
 
-  const ttlMs = clampSignalWatchTtl(args.ttlMs);
-  const expiresAt = ttlMs > 0 ? Date.now() + ttlMs : null;
+  const ttlMs = target.kind === "app" && target.appSessionId && args.ttlMs === undefined
+    ? null
+    : clampSignalWatchTtl(args.ttlMs);
+  const expiresAt = ttlMs == null ? null : Date.now() + ttlMs;
   const key = typeof args.key === "string" && args.key.trim().length > 0
     ? args.key.trim()
     : null;
@@ -63,7 +65,7 @@ export function handleSignalUnwatch(
   args: SignalUnwatchArgs,
   ctx: KernelContext,
 ): SignalUnwatchResult {
-  const target = resolveSignalWatchTarget(ctx);
+  const target = resolveSignalWatchTarget(ctx, args);
   const uid = ctx.identity!.process.uid;
 
   if ("watchId" in args) {
@@ -84,15 +86,28 @@ export function handleSignalUnwatch(
   };
 }
 
-function resolveSignalWatchTarget(ctx: KernelContext): SignalWatchTargetInput {
+function resolveSignalWatchTarget(
+  ctx: KernelContext,
+  args: Pick<SignalWatchArgs, "owner">,
+): SignalWatchTargetInput {
   if (ctx.appFrame) {
+    const owner = resolveAppWatchOwner(ctx, args.owner);
     return {
       kind: "app",
       packageId: ctx.appFrame.packageId,
       packageName: ctx.appFrame.packageName,
       entrypointName: ctx.appFrame.entrypointName,
       routeBase: ctx.appFrame.routeBase,
+      ...(owner
+        ? {
+            appSessionId: owner.appSessionId,
+            appClientId: owner.clientId,
+          }
+        : {}),
     };
+  }
+  if (args.owner !== undefined) {
+    throw new Error("signal.watch owner is only available to app runtimes");
   }
   if (ctx.processId) {
     return {
@@ -101,6 +116,45 @@ function resolveSignalWatchTarget(ctx: KernelContext): SignalWatchTargetInput {
     };
   }
   throw new Error("signal.watch is only available to app and process runtimes");
+}
+
+function resolveAppWatchOwner(
+  ctx: KernelContext,
+  rawOwner: SignalWatchArgs["owner"],
+): { appSessionId: string; clientId: string } | null {
+  if (rawOwner === undefined) {
+    return null;
+  }
+  if (!rawOwner || typeof rawOwner !== "object") {
+    throw new Error("signal.watch owner must be an object");
+  }
+
+  const appSessionId = typeof rawOwner.appSessionId === "string" ? rawOwner.appSessionId.trim() : "";
+  const clientId = typeof rawOwner.clientId === "string" ? rawOwner.clientId.trim() : "";
+  if (!appSessionId || !clientId) {
+    throw new Error("signal.watch owner requires appSessionId and clientId");
+  }
+
+  const appFrame = ctx.appFrame;
+  const uid = ctx.identity!.process.uid;
+  const session = ctx.appSessions.getActiveForUid(uid, appSessionId);
+  if (!session) {
+    throw new Error("Unknown app session");
+  }
+  if (
+    !appFrame ||
+    session.packageId !== appFrame.packageId ||
+    session.packageName !== appFrame.packageName ||
+    session.entrypointName !== appFrame.entrypointName ||
+    session.routeBase !== appFrame.routeBase
+  ) {
+    throw new Error("signal.watch owner does not match current app");
+  }
+  if (!session.clients.some((client) => client.clientId === clientId)) {
+    throw new Error("Unknown app client");
+  }
+
+  return { appSessionId, clientId };
 }
 
 function clampSignalWatchTtl(value: number | undefined): number {

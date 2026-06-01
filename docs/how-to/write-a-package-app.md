@@ -124,8 +124,8 @@ function App() {
 render(<App />, document.getElementById("root")!);
 ```
 
-`connectBackend()` caches a stable RPC proxy and retries once after a transport
-disconnect.
+`connectBackend()` caches a stable RPC proxy and retries once after the app
+socket disconnects.
 
 ## Add a CLI Command
 

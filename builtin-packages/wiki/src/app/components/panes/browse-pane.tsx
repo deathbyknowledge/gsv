@@ -4,6 +4,7 @@ import type { WikiPreviewRequest, WikiWorkspaceState } from "../../types";
 type Props = {
   state: WikiWorkspaceState;
   currentTitle: string;
+  routeBase: string;
   selectedDb: string;
   onOpenPage(path: string): void;
   onPreviewOpen(anchor: HTMLElement, request: WikiPreviewRequest, pin: boolean): void;
@@ -22,7 +23,7 @@ export function BrowsePane(props: Props) {
       <ArticleView
         markdown={props.state.selectedNote?.markdown || ""}
         articleTitle={props.currentTitle || "Untitled"}
-        routeBase="/apps/wiki"
+        routeBase={props.routeBase}
         selectedDb={props.selectedDb}
         selectedPath={props.state.selectedPath}
         onNavigate={props.onOpenPage}

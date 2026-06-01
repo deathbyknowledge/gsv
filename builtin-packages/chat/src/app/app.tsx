@@ -407,7 +407,8 @@ export function App({ backend }: { backend: ChatBackend }) {
 
   useEffect(() => {
     if (active?.pid) {
-      void backend.watchProcessSignals({ pid: active.pid }).catch((error) => setHostError(formatError(error)));
+      const pid = active.pid;
+      void backend.watchProcessSignals({ pid }).catch((error) => setHostError(formatError(error)));
       void loadConversations(active.pid);
       const historyKey = historyTargetKey(active);
       if (skipNextHistoryLoadRef.current === historyKey) {
@@ -416,7 +417,7 @@ export function App({ backend }: { backend: ChatBackend }) {
         void loadHistory(active);
       }
       return () => {
-        void backend.unwatchProcessSignals({ pid: active.pid }).catch(() => {});
+        void backend.unwatchProcessSignals({ pid }).catch(() => {});
       };
     }
     void backend.unwatchProcessSignals({ pid: "" }).catch(() => {});

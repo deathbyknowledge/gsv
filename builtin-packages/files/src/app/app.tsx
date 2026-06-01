@@ -1,4 +1,4 @@
-import { consumePendingAppOpen } from "@gsv/package/host";
+import { consumePendingAppOpen, getAppClientId } from "@gsv/package/host";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { Stage } from "./stage";
 import { Toolbar } from "./toolbar";
@@ -31,30 +31,28 @@ function readLaunchUrl(): URL {
     return current;
   }
 
-  const currentHasWindowId = current.searchParams.has("windowId");
   const currentHasExplicitState =
     current.searchParams.has("path")
     || current.searchParams.has("open")
     || current.searchParams.has("q")
     || current.searchParams.has("target");
-  if (currentHasWindowId && currentHasExplicitState) {
+  if (currentHasExplicitState) {
     return current;
   }
 
-  const frameHasWindowId = frame.searchParams.has("windowId");
   const frameHasExplicitState =
     frame.searchParams.has("path")
     || frame.searchParams.has("open")
     || frame.searchParams.has("q")
     || frame.searchParams.has("target");
-  if (!frameHasWindowId && !frameHasExplicitState) {
+  if (!frameHasExplicitState) {
     return current;
   }
 
   return frame;
 }
 
-const WINDOW_ID = readLaunchUrl().searchParams.get("windowId")?.trim() || "";
+const WINDOW_ID = getAppClientId();
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : null;

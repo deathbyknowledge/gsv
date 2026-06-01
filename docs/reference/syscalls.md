@@ -114,6 +114,38 @@ type BootstrapPackageSummary = {
   }>;
 };
 
+type AppLaunchWindowHint = {
+  title: string;
+  width?: number;
+  height?: number;
+  minWidth?: number;
+  minHeight?: number;
+};
+
+type AppSessionState = "active" | "detached" | "closing" | "closed" | "expired";
+type AppSessionClientState = "active" | "closed" | "expired";
+
+type AppSessionClientSummary = {
+  clientId: string;
+  createdAt: number;
+  lastUsedAt: number | null;
+  expiresAt: number;
+  state: AppSessionClientState;
+};
+
+type AppSessionSummary = {
+  sessionId: string;
+  packageId: string;
+  packageName: string;
+  entrypointName: string;
+  routeBase: string;
+  createdAt: number;
+  lastUsedAt: number | null;
+  expiresAt: number;
+  state: AppSessionState;
+  clients: AppSessionClientSummary[];
+};
+
 type ConnectionIdentity =
   | { role: "user"; process: ProcessIdentity; capabilities: string[] }
   | { role: "driver"; process: ProcessIdentity; capabilities: string[]; device: string; implements: string[] }
@@ -352,6 +384,55 @@ while (res.status === "running") {
 }
 
 return output;
+```
+
+## App Sessions: `app.*`
+
+App session syscalls are Kernel-owned. They let any authenticated app host open
+or reattach a package UI without knowing the Web shell route conventions.
+Launch results contain a secret-free URL under
+`/apps/sessions/<sid>/clients/<clientId>/...` plus a launch token. The app host
+POSTs that token to `/apps/sessions/<sid>/launch` before navigating the client
+URL. The gateway validates the token and sets an HttpOnly cookie scoped to the
+specific app client path.
+
+Runtime behavior:
+
+| Syscall | Handler | Behavior |
+|---|---|---|
+| `app.open` | `handleAppOpen` | Resolves an enabled web-ui package and UI entrypoint visible to the current user, creates an app session with one app client, and returns a client launch URL, launch token, and window defaults. |
+| `app.attach` | `handleAppAttach` | Attaches a new app client to an existing current-user app session and returns a fresh client launch URL and launch token. Existing app clients are not invalidated. |
+| `app.list` | `handleAppList` | Lists active app sessions for the current user. Secrets are never returned. |
+| `app.detach` | `handleAppDetach` | Detaches one app client from a current-user app session, removes that client's watches, revokes that client's launch keys, and asks the AppRunner to close that client's live socket. |
+| `app.close` | `handleAppClose` | Closes a current-user app session, revokes its launch keys, and asks the AppRunner to close live app sockets for that session. |
+
+```ts
+type AppSyscalls = {
+  "app.open": {
+    args: { packageName: string; entrypointName?: string; clientId?: string; suffix?: string; search?: string; hash?: string };
+    result: { sessionId: string; packageId: string; packageName: string; entrypointName: string; routeBase: string; clientId: string; launchUrl: string; launchToken: string; expiresAt: number; window: AppLaunchWindowHint };
+  };
+
+  "app.attach": {
+    args: { sessionId: string; clientId?: string; suffix?: string; search?: string; hash?: string };
+    result: { sessionId: string; packageId: string; packageName: string; entrypointName: string; routeBase: string; clientId: string; launchUrl: string; launchToken: string; expiresAt: number; window: AppLaunchWindowHint };
+  };
+
+  "app.list": {
+    args: Empty;
+    result: { sessions: AppSessionSummary[] };
+  };
+
+  "app.detach": {
+    args: { sessionId: string; clientId: string };
+    result: { detached: boolean };
+  };
+
+  "app.close": {
+    args: { sessionId: string };
+    result: { closed: boolean };
+  };
+};
 ```
 
 ## CodeMode: `codemode.exec`, `codemode.run`
@@ -1168,10 +1249,13 @@ Runtime behavior:
 | `notification.list` | `handleNotificationList` | Prunes expired notifications, then lists current user notifications. Defaults include read notifications, exclude dismissed notifications, and limit to 100; limit clamps to 1-500. |
 | `notification.mark_read` | `handleNotificationMarkRead` | Marks a current-user notification read if found and resets expiry to seven days. Missing, expired, or wrong-user ids return `notification: null`. Broadcasts update when found. |
 | `notification.dismiss` | `handleNotificationDismiss` | Marks a current-user notification dismissed and expires it after three days. Missing ids return `notification: null`. Broadcasts dismissal when found. |
-| `signal.watch` | `handleSignalWatch` | App/process-originated only. Creates or upserts a durable signal watch. Requires non-empty signal; TTL defaults to 24 hours and clamps to 1 second through 30 days; `once` defaults true. Process runtimes must pass an explicit `processId` and cannot watch themselves. |
-| `signal.unwatch` | `handleSignalUnwatch` | App/process-originated only. Removes watches for the current app entrypoint or target process by `watchId` or `key`. Returns number removed. |
+| `signal.watch` | `handleSignalWatch` | App/process-originated only. Creates or upserts a durable signal watch. Requires non-empty signal; TTL defaults to 24 hours and clamps to 1 second through 30 days; `once` defaults true. App runtimes may pass an `owner` for an active app session/client, in which case the watch is removed on app close and has no silent expiry unless `ttlMs` is explicitly set. Process runtimes must pass an explicit `processId` and cannot watch themselves. |
+| `signal.unwatch` | `handleSignalUnwatch` | App/process-originated only. Removes watches for the current app entrypoint/session client or target process by `watchId` or `key`. Returns number removed. |
 
 Signal watch delivery is handled by the kernel when matching signals are emitted. Once-watches are deleted after successful handling; failed deliveries mark the watch failed.
+For app-owned watches, `owner` is validated against Kernel app sessions and
+contains `{ appSessionId, clientId }`. `signal.unwatch` should pass the same
+owner when removing an app-client scoped watch.
 
 ```ts
 type NotificationAndSignalSyscalls = {
@@ -1196,12 +1280,14 @@ type NotificationAndSignalSyscalls = {
   };
 
   "signal.watch": {
-    args: { signal: string; processId?: string; key?: string; state?: unknown; once?: boolean; ttlMs?: number };
+    args: { signal: string; processId?: string; key?: string; state?: unknown; owner?: { appSessionId: string; clientId: string }; once?: boolean; ttlMs?: number };
     result: { watchId: string; created: boolean; createdAt: number; expiresAt: number | null };
   };
 
   "signal.unwatch": {
-    args: { watchId: string; key?: never } | { watchId?: never; key: string };
+    args:
+      | { watchId: string; key?: never; owner?: { appSessionId: string; clientId: string } }
+      | { watchId?: never; key: string; owner?: { appSessionId: string; clientId: string } };
     result: { removed: number };
   };
 };

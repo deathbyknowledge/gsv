@@ -3,6 +3,7 @@ import {
   buildOpenAppRoute,
   type OpenAppRequest,
 } from "@gsv/app-link";
+import { getAppBoot, hasAppBoot } from "./browser";
 
 export type HostStatus = {
   connected: boolean;
@@ -55,8 +56,7 @@ declare global {
 }
 
 export function consumePendingAppOpen(windowId?: string): OpenAppRequest | null {
-  const fallbackWindowId = new URL(window.location.href).searchParams.get("windowId")?.trim() || "";
-  const normalizedWindowId = windowId?.trim() || fallbackWindowId;
+  const normalizedWindowId = windowId?.trim() || getAppClientId();
   if (!normalizedWindowId) {
     return null;
   }
@@ -75,6 +75,17 @@ export function consumePendingAppOpen(windowId?: string): OpenAppRequest | null 
   }
 
   return null;
+}
+
+export function getAppClientId(): string {
+  try {
+    if (hasAppBoot()) {
+      return getAppBoot().clientId.trim();
+    }
+  } catch {
+    return "";
+  }
+  return "";
 }
 
 export function openApp(request: OpenAppRequest): void {

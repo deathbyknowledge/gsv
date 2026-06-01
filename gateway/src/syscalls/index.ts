@@ -234,6 +234,17 @@ import type {
   NotificationMarkReadArgs,
   NotificationMarkReadResult,
 } from "@gsv/protocol/syscalls/notification";
+import type {
+  AppAttachArgs,
+  AppCloseArgs,
+  AppCloseResult,
+  AppDetachArgs,
+  AppDetachResult,
+  AppLaunchResult,
+  AppListArgs,
+  AppListResult,
+  AppOpenArgs,
+} from "@gsv/protocol/syscalls/apps";
 export type ToolDefinition = {
   name: string;
   description: string;
@@ -254,6 +265,13 @@ export type SyscallDomains = {
 
   // Shell (device commands)
   "shell.exec": { args: ShellExecArgs; result: ShellExecResult };
+
+  // App sessions
+  "app.open": { args: AppOpenArgs; result: AppLaunchResult };
+  "app.attach": { args: AppAttachArgs; result: AppLaunchResult };
+  "app.list": { args: AppListArgs; result: AppListResult };
+  "app.detach": { args: AppDetachArgs; result: AppDetachResult };
+  "app.close": { args: AppCloseArgs; result: AppCloseResult };
 
   // CodeMode (process-local programmable tool use)
   "codemode.exec": { args: CodeModeExecArgs; result: CodeModeExecResult };
@@ -385,6 +403,7 @@ export type ResultOf<S extends SyscallName> = SyscallDomains[S]["result"];
 type SyscallDomain =
   | "fs"
   | "shell"
+  | "app"
   | "codemode"
   | "proc"
   | "pkg"

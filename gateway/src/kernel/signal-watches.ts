@@ -8,6 +8,8 @@ export type SignalWatchTargetInput =
       packageName: string;
       entrypointName: string;
       routeBase: string;
+      appSessionId?: string | null;
+      appClientId?: string | null;
     }
   | {
       kind: "process";
@@ -23,6 +25,8 @@ export type SignalWatchRecord = {
   packageName: string | null;
   entrypointName: string | null;
   routeBase: string | null;
+  appSessionId: string | null;
+  appClientId: string | null;
   signal: string;
   processId: string | null;
   key: string | null;
@@ -70,6 +74,16 @@ export class SignalWatchStore {
       "target_process_id",
       "ALTER TABLE signal_watches ADD COLUMN target_process_id TEXT",
     );
+    this.ensureColumn(
+      "signal_watches",
+      "app_session_id",
+      "ALTER TABLE signal_watches ADD COLUMN app_session_id TEXT",
+    );
+    this.ensureColumn(
+      "signal_watches",
+      "app_client_id",
+      "ALTER TABLE signal_watches ADD COLUMN app_client_id TEXT",
+    );
     this.sql.exec(
       "UPDATE signal_watches SET target_type = 'app' WHERE target_type IS NULL OR target_type = ''",
     );
@@ -82,6 +96,9 @@ export class SignalWatchStore {
     );
     this.sql.exec(
       "CREATE INDEX IF NOT EXISTS idx_signal_watches_target_key ON signal_watches (uid, target_type, target_process_id, package_id, entrypoint_name, dedupe_key, status)",
+    );
+    this.sql.exec(
+      "CREATE INDEX IF NOT EXISTS idx_signal_watches_app_owner ON signal_watches (uid, app_session_id, app_client_id, status)",
     );
   }
 
@@ -104,7 +121,8 @@ export class SignalWatchStore {
       this.sql.exec(
         `UPDATE signal_watches
            SET target_type = ?, target_process_id = ?, package_id = ?, package_name = ?, entrypoint_name = ?, route_base = ?,
-               signal = ?, process_id = ?, state_json = ?, once_only = ?, error = NULL, updated_at = ?, expires_at = ?
+               app_session_id = ?, app_client_id = ?, signal = ?, process_id = ?, state_json = ?, once_only = ?, error = NULL,
+               updated_at = ?, expires_at = ?
          WHERE watch_id = ?`,
         input.target.kind,
         input.target.kind === "process" ? input.target.processId : null,
@@ -112,6 +130,8 @@ export class SignalWatchStore {
         input.target.kind === "app" ? input.target.packageName : "",
         input.target.kind === "app" ? input.target.entrypointName : "",
         input.target.kind === "app" ? input.target.routeBase : "",
+        input.target.kind === "app" ? input.target.appSessionId ?? null : null,
+        input.target.kind === "app" ? input.target.appClientId ?? null : null,
         input.signal,
         input.processId ?? null,
         JSON.stringify(input.state ?? null),
@@ -129,6 +149,8 @@ export class SignalWatchStore {
           packageName: input.target.kind === "app" ? input.target.packageName : null,
           entrypointName: input.target.kind === "app" ? input.target.entrypointName : null,
           routeBase: input.target.kind === "app" ? input.target.routeBase : null,
+          appSessionId: input.target.kind === "app" ? input.target.appSessionId ?? null : null,
+          appClientId: input.target.kind === "app" ? input.target.appClientId ?? null : null,
           signal: input.signal,
           processId: input.processId ?? null,
           state: input.state ?? null,
@@ -150,6 +172,8 @@ export class SignalWatchStore {
       packageName: input.target.kind === "app" ? input.target.packageName : null,
       entrypointName: input.target.kind === "app" ? input.target.entrypointName : null,
       routeBase: input.target.kind === "app" ? input.target.routeBase : null,
+      appSessionId: input.target.kind === "app" ? input.target.appSessionId ?? null : null,
+      appClientId: input.target.kind === "app" ? input.target.appClientId ?? null : null,
       signal: input.signal,
       processId: input.processId ?? null,
       key: input.key ?? null,
@@ -164,9 +188,10 @@ export class SignalWatchStore {
 
     this.sql.exec(
       `INSERT INTO signal_watches (
-        watch_id, uid, target_type, target_process_id, package_id, package_name, entrypoint_name, route_base, signal,
-        process_id, dedupe_key, state_json, once_only, status, error, created_at, updated_at, expires_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        watch_id, uid, target_type, target_process_id, package_id, package_name, entrypoint_name, route_base,
+        app_session_id, app_client_id, signal, process_id, dedupe_key, state_json, once_only, status, error,
+        created_at, updated_at, expires_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       watch.watchId,
       watch.uid,
       watch.targetKind,
@@ -175,6 +200,8 @@ export class SignalWatchStore {
       watch.packageName ?? "",
       watch.entrypointName ?? "",
       watch.routeBase ?? "",
+      watch.appSessionId,
+      watch.appClientId,
       watch.signal,
       watch.processId,
       watch.key,
@@ -231,18 +258,25 @@ export class SignalWatchStore {
     if (target.kind === "app") {
       const count = [...this.sql.exec<{ count: number }>(
         `SELECT COUNT(*) as count FROM signal_watches
-         WHERE uid = ? AND target_type = 'app' AND package_id = ? AND entrypoint_name = ? AND watch_id = ?`,
+         WHERE uid = ? AND target_type = 'app' AND package_id = ? AND entrypoint_name = ?
+           AND app_session_id IS ? AND app_client_id IS ? AND watch_id = ?`,
         uid,
         target.packageId,
         target.entrypointName,
+        target.appSessionId ?? null,
+        target.appClientId ?? null,
         watchId,
       )][0]?.count ?? 0;
       if (count > 0) {
         this.sql.exec(
-          "DELETE FROM signal_watches WHERE uid = ? AND target_type = 'app' AND package_id = ? AND entrypoint_name = ? AND watch_id = ?",
+          `DELETE FROM signal_watches
+           WHERE uid = ? AND target_type = 'app' AND package_id = ? AND entrypoint_name = ?
+             AND app_session_id IS ? AND app_client_id IS ? AND watch_id = ?`,
           uid,
           target.packageId,
           target.entrypointName,
+          target.appSessionId ?? null,
+          target.appClientId ?? null,
           watchId,
         );
       }
@@ -271,18 +305,25 @@ export class SignalWatchStore {
     if (target.kind === "app") {
       const count = [...this.sql.exec<{ count: number }>(
         `SELECT COUNT(*) as count FROM signal_watches
-         WHERE uid = ? AND target_type = 'app' AND package_id = ? AND entrypoint_name = ? AND dedupe_key = ?`,
+         WHERE uid = ? AND target_type = 'app' AND package_id = ? AND entrypoint_name = ?
+           AND app_session_id IS ? AND app_client_id IS ? AND dedupe_key = ?`,
         uid,
         target.packageId,
         target.entrypointName,
+        target.appSessionId ?? null,
+        target.appClientId ?? null,
         key,
       )][0]?.count ?? 0;
       if (count > 0) {
         this.sql.exec(
-          "DELETE FROM signal_watches WHERE uid = ? AND target_type = 'app' AND package_id = ? AND entrypoint_name = ? AND dedupe_key = ?",
+          `DELETE FROM signal_watches
+           WHERE uid = ? AND target_type = 'app' AND package_id = ? AND entrypoint_name = ?
+             AND app_session_id IS ? AND app_client_id IS ? AND dedupe_key = ?`,
           uid,
           target.packageId,
           target.entrypointName,
+          target.appSessionId ?? null,
+          target.appClientId ?? null,
           key,
         );
       }
@@ -307,6 +348,42 @@ export class SignalWatchStore {
     return count;
   }
 
+  removeByAppSession(uid: number, appSessionId: string): number {
+    const count = [...this.sql.exec<{ count: number }>(
+      `SELECT COUNT(*) as count FROM signal_watches
+       WHERE uid = ? AND target_type = 'app' AND app_session_id = ?`,
+      uid,
+      appSessionId,
+    )][0]?.count ?? 0;
+    if (count > 0) {
+      this.sql.exec(
+        "DELETE FROM signal_watches WHERE uid = ? AND target_type = 'app' AND app_session_id = ?",
+        uid,
+        appSessionId,
+      );
+    }
+    return count;
+  }
+
+  removeByAppClient(uid: number, appSessionId: string, appClientId: string): number {
+    const count = [...this.sql.exec<{ count: number }>(
+      `SELECT COUNT(*) as count FROM signal_watches
+       WHERE uid = ? AND target_type = 'app' AND app_session_id = ? AND app_client_id = ?`,
+      uid,
+      appSessionId,
+      appClientId,
+    )][0]?.count ?? 0;
+    if (count > 0) {
+      this.sql.exec(
+        "DELETE FROM signal_watches WHERE uid = ? AND target_type = 'app' AND app_session_id = ? AND app_client_id = ?",
+        uid,
+        appSessionId,
+        appClientId,
+      );
+    }
+    return count;
+  }
+
   private findActiveByKey(
     uid: number,
     target: SignalWatchTargetInput,
@@ -319,6 +396,8 @@ export class SignalWatchStore {
            AND target_type = 'app'
            AND package_id = ?
            AND entrypoint_name = ?
+           AND app_session_id IS ?
+           AND app_client_id IS ?
            AND dedupe_key = ?
            AND status = 'active'
          ORDER BY created_at DESC
@@ -326,6 +405,8 @@ export class SignalWatchStore {
         uid,
         target.packageId,
         target.entrypointName,
+        target.appSessionId ?? null,
+        target.appClientId ?? null,
         key,
       )]
       : [...this.sql.exec<RowShape>(
@@ -361,6 +442,8 @@ type RowShape = {
   package_name: string;
   entrypoint_name: string;
   route_base: string;
+  app_session_id: string | null;
+  app_client_id: string | null;
   signal: string;
   process_id: string | null;
   dedupe_key: string | null;
@@ -384,6 +467,8 @@ function toSignalWatchRecord(row: RowShape): SignalWatchRecord {
     packageName: row.package_name ? row.package_name : null,
     entrypointName: row.entrypoint_name ? row.entrypoint_name : null,
     routeBase: row.route_base ? row.route_base : null,
+    appSessionId: row.app_session_id,
+    appClientId: row.app_client_id,
     signal: row.signal,
     processId: row.process_id,
     key: row.dedupe_key,
