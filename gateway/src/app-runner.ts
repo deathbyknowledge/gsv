@@ -31,6 +31,7 @@ type AppRunnerSignalInput = {
   payload?: unknown;
   sourcePid?: string | null;
   watch: PackageAppSignalWatchInfo;
+  appSession?: AppSessionInfo;
 };
 
 type AppSessionInfo = {
@@ -569,6 +570,10 @@ export class AppRunner extends DurableObject<Env> {
   }
 
   #runtimeForSignal(input: AppRunnerSignalInput): AppRuntimeContext {
+    if (this.#isAppSessionInfo(input.appSession)) {
+      return this.#defaultRuntime(input.appSession);
+    }
+
     const state = input.watch.state && typeof input.watch.state === "object"
       ? input.watch.state as Record<string, unknown>
       : null;

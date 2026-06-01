@@ -1938,12 +1938,13 @@ export class Kernel extends Host<Env> {
           this.signalWatches.deleteHandled(watch.watchId);
           continue;
         }
-        if (watch.targetKind === "app" && !this.isActiveAppSignalWatchOwner(watch)) {
-          this.signalWatches.deleteHandled(watch.watchId);
-          continue;
-        }
         if (watch.targetKind === "app") {
-          await this.invokePackageAppSignalHandler(watch, processId, frame);
+          const appClientSession = this.getActiveAppSignalWatchClient(watch);
+          if (watch.appSessionId && watch.appClientId && !appClientSession) {
+            this.signalWatches.deleteHandled(watch.watchId);
+            continue;
+          }
+          await this.invokePackageAppSignalHandler(watch, processId, frame, appClientSession);
         } else {
           await this.invokeProcessSignalWatch(watch, processId, frame);
         }
@@ -1962,25 +1963,28 @@ export class Kernel extends Host<Env> {
     return typeof key === "string" && (key.startsWith("live:") || key.startsWith("__gsv_live__:"));
   }
 
-  private isActiveAppSignalWatchOwner(watch: SignalWatchRecord): boolean {
+  private getActiveAppSignalWatchClient(watch: SignalWatchRecord): AppClientSessionContext | null {
     if (!watch.appSessionId || !watch.appClientId) {
-      return true;
+      return null;
     }
     const session = this.appSessions.getActiveForUid(watch.uid, watch.appSessionId);
-    if (!session) {
-      return false;
+    if (
+      !session ||
+      session.packageId !== watch.packageId ||
+      session.packageName !== watch.packageName ||
+      session.entrypointName !== watch.entrypointName ||
+      session.routeBase !== watch.routeBase
+    ) {
+      return null;
     }
-    return session.packageId === watch.packageId &&
-      session.packageName === watch.packageName &&
-      session.entrypointName === watch.entrypointName &&
-      session.routeBase === watch.routeBase &&
-      session.clients.some((client) => client.clientId === watch.appClientId);
+    return session.clients.find((client) => client.clientId === watch.appClientId) ?? null;
   }
 
   private async invokePackageAppSignalHandler(
     watch: SignalWatchRecord,
     processId: string,
     frame: SignalFrame,
+    appClientSession: AppClientSessionContext | null,
   ): Promise<void> {
     if (!watch.packageId || !watch.packageName || !watch.entrypointName || !watch.routeBase) {
       throw new Error(`App signal watch ${watch.watchId} is missing package metadata`);
@@ -2018,7 +2022,6 @@ export class Kernel extends Host<Env> {
       issuedAt: now,
       expiresAt: now + DEFAULT_APP_FRAME_TTL_MS,
     };
-
     const runner = this.ctx.exports.AppRunner.getByName(buildAppRunnerName(user.uid, record.packageId));
     await runner.ensureRuntime({
       packageId: record.packageId,
@@ -2039,6 +2042,16 @@ export class Kernel extends Host<Env> {
         ...(watch.state === undefined ? {} : { state: watch.state }),
         createdAt: watch.createdAt,
       },
+      ...(appClientSession
+        ? {
+            appSession: {
+              sessionId: appClientSession.sessionId,
+              clientId: appClientSession.clientId,
+              rpcBase: appClientSession.rpcBase,
+              expiresAt: appClientSession.expiresAt,
+            },
+          }
+        : {}),
     });
   }
 
