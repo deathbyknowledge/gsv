@@ -1241,10 +1241,13 @@ Runtime behavior:
 | `notification.list` | `handleNotificationList` | Prunes expired notifications, then lists current user notifications. Defaults include read notifications, exclude dismissed notifications, and limit to 100; limit clamps to 1-500. |
 | `notification.mark_read` | `handleNotificationMarkRead` | Marks a current-user notification read if found and resets expiry to seven days. Missing, expired, or wrong-user ids return `notification: null`. Broadcasts update when found. |
 | `notification.dismiss` | `handleNotificationDismiss` | Marks a current-user notification dismissed and expires it after three days. Missing ids return `notification: null`. Broadcasts dismissal when found. |
-| `signal.watch` | `handleSignalWatch` | App/process-originated only. Creates or upserts a durable signal watch. Requires non-empty signal; TTL defaults to 24 hours and clamps to 1 second through 30 days; `once` defaults true. Process runtimes must pass an explicit `processId` and cannot watch themselves. |
-| `signal.unwatch` | `handleSignalUnwatch` | App/process-originated only. Removes watches for the current app entrypoint or target process by `watchId` or `key`. Returns number removed. |
+| `signal.watch` | `handleSignalWatch` | App/process-originated only. Creates or upserts a durable signal watch. Requires non-empty signal; TTL defaults to 24 hours and clamps to 1 second through 30 days; `once` defaults true. App runtimes may pass an `owner` for an active app session/client, in which case the watch is removed on app close and has no silent expiry unless `ttlMs` is explicitly set. Process runtimes must pass an explicit `processId` and cannot watch themselves. |
+| `signal.unwatch` | `handleSignalUnwatch` | App/process-originated only. Removes watches for the current app entrypoint/session client or target process by `watchId` or `key`. Returns number removed. |
 
 Signal watch delivery is handled by the kernel when matching signals are emitted. Once-watches are deleted after successful handling; failed deliveries mark the watch failed.
+For app-owned watches, `owner` is validated against Kernel app sessions and
+contains `{ appSessionId, clientId }`. `signal.unwatch` should pass the same
+owner when removing an app-client scoped watch.
 
 ```ts
 type NotificationAndSignalSyscalls = {
@@ -1269,12 +1272,14 @@ type NotificationAndSignalSyscalls = {
   };
 
   "signal.watch": {
-    args: { signal: string; processId?: string; key?: string; state?: unknown; once?: boolean; ttlMs?: number };
+    args: { signal: string; processId?: string; key?: string; state?: unknown; owner?: { appSessionId: string; clientId: string }; once?: boolean; ttlMs?: number };
     result: { watchId: string; created: boolean; createdAt: number; expiresAt: number | null };
   };
 
   "signal.unwatch": {
-    args: { watchId: string; key?: never } | { watchId?: never; key: string };
+    args:
+      | { watchId: string; key?: never; owner?: { appSessionId: string; clientId: string } }
+      | { watchId?: never; key: string; owner?: { appSessionId: string; clientId: string } };
     result: { removed: number };
   };
 };

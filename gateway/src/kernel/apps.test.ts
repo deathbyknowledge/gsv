@@ -143,6 +143,9 @@ function makeContext(overrides: Partial<KernelContext> = {}): KernelContext {
         clients: [],
       })),
     },
+    signalWatches: {
+      removeByAppSession: vi.fn(() => 0),
+    },
     ...overrides,
   } as unknown as KernelContext;
 }
@@ -205,6 +208,7 @@ describe("app syscalls", () => {
     })]);
     await expect(handleAppClose({ sessionId: "session-1" }, ctx)).resolves.toEqual({ closed: true });
     expect(ctx.appSessions.close).toHaveBeenCalledWith(1000, "session-1");
+    expect(ctx.signalWatches.removeByAppSession).toHaveBeenCalledWith(1000, "session-1");
     expect(getAppRunner).toHaveBeenCalledWith(1000, "pkg-chat");
     expect(closeAppSession).toHaveBeenCalledWith("session-1");
   });

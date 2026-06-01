@@ -471,7 +471,8 @@ Completed initial cleanup:
 - removed archivist/curator default profile config
 - removed archivist/curator profile list entries
 
-Keep the existing `SignalFrame` protocol and `signal.watch` behavior unchanged.
+Keep the existing `SignalFrame` protocol. `signal.watch` remains the durable
+watch primitive, with app-session/client owner scoping added for UI watches.
 
 ### 2. Add process event and conversation types
 

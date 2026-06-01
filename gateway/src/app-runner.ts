@@ -536,13 +536,16 @@ export class AppRunner extends DurableObject<Env> {
     const state = input.watch.state && typeof input.watch.state === "object"
       ? input.watch.state as Record<string, unknown>
       : null;
+    const sessionId = typeof state?.appSessionId === "string" && state.appSessionId.trim().length > 0
+      ? state.appSessionId.trim()
+      : null;
     const clientId = typeof state?.clientId === "string" && state.clientId.trim().length > 0
       ? state.clientId.trim()
       : null;
     if (clientId) {
       this.#restoreAppClients();
     }
-    const appSession = clientId ? this.#appSessionForClientId(clientId) : undefined;
+    const appSession = clientId ? this.#appSessionForClientId(clientId, sessionId) : undefined;
     return this.#defaultRuntime(appSession);
   }
 
@@ -655,9 +658,12 @@ export class AppRunner extends DurableObject<Env> {
     return restored;
   }
 
-  #appSessionForClientId(clientId: string): AppSessionInfo | undefined {
+  #appSessionForClientId(clientId: string, sessionId?: string | null): AppSessionInfo | undefined {
     for (const registration of this.appClients.values()) {
-      if (registration.session.clientId === clientId) {
+      if (
+        registration.session.clientId === clientId &&
+        (!sessionId || registration.session.sessionId === sessionId)
+      ) {
         return registration.session;
       }
     }

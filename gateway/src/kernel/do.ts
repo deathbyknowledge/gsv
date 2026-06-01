@@ -1938,6 +1938,10 @@ export class Kernel extends Host<Env> {
           this.signalWatches.deleteHandled(watch.watchId);
           continue;
         }
+        if (watch.targetKind === "app" && !this.isActiveAppSignalWatchOwner(watch)) {
+          this.signalWatches.deleteHandled(watch.watchId);
+          continue;
+        }
         if (watch.targetKind === "app") {
           await this.invokePackageAppSignalHandler(watch, processId, frame);
         } else {
@@ -1956,6 +1960,21 @@ export class Kernel extends Host<Env> {
 
   private isLegacySignalWatchKey(key: string | null | undefined): boolean {
     return typeof key === "string" && (key.startsWith("live:") || key.startsWith("__gsv_live__:"));
+  }
+
+  private isActiveAppSignalWatchOwner(watch: SignalWatchRecord): boolean {
+    if (!watch.appSessionId || !watch.appClientId) {
+      return true;
+    }
+    const session = this.appSessions.getActiveForUid(watch.uid, watch.appSessionId);
+    if (!session) {
+      return false;
+    }
+    return session.packageId === watch.packageId &&
+      session.packageName === watch.packageName &&
+      session.entrypointName === watch.entrypointName &&
+      session.routeBase === watch.routeBase &&
+      session.clients.some((client) => client.clientId === watch.appClientId);
   }
 
   private async invokePackageAppSignalHandler(

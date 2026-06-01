@@ -82,6 +82,7 @@ export async function handleAppClose(args: AppCloseArgs, ctx: KernelContext): Pr
   const sessionId = normalizeRequiredString(args.sessionId, "sessionId");
   const closedSession = ctx.appSessions.close(actor.uid, sessionId);
   if (closedSession) {
+    ctx.signalWatches.removeByAppSession(actor.uid, closedSession.sessionId);
     await closeRunnerAppSession(ctx, closedSession);
   }
   return {
