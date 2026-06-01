@@ -100,9 +100,11 @@ let backendProxy: unknown = null;
 let appSessionRefreshPromise: Promise<PackageAppBoot> | null = null;
 let appRuntimeReady = false;
 let connectedReadyFallback: ReturnType<typeof setTimeout> | null = null;
+let appSessionRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 let backendRequestSeq = 0;
 const appEventListeners = new Set<AppEventListener>();
 const APP_SESSION_REFRESH_LEEWAY_MS = 60_000;
+const APP_SESSION_REFRESH_RETRY_MS = 30_000;
 const CONNECTED_READY_FALLBACK_MS = 650;
 
 function formatErrorMessage(error: unknown): string {
@@ -133,6 +135,13 @@ function clearConnectedReadyFallback(): void {
   if (connectedReadyFallback !== null) {
     clearTimeout(connectedReadyFallback);
     connectedReadyFallback = null;
+  }
+}
+
+function clearAppSessionRefreshTimer(): void {
+  if (appSessionRefreshTimer !== null) {
+    clearTimeout(appSessionRefreshTimer);
+    appSessionRefreshTimer = null;
   }
 }
 
@@ -236,6 +245,7 @@ class BackendRpcError extends Error {
 function resetBackendConnection(): void {
   const previousConnection = backendConnectionPromise;
   backendConnectionPromise = null;
+  clearAppSessionRefreshTimer();
   if (globalThis.window) {
     globalThis.window.__GSV_BACKEND_READY__ = undefined;
   }
@@ -463,6 +473,37 @@ async function refreshAppSession(boot: PackageAppBoot): Promise<PackageAppBoot> 
   return refresh;
 }
 
+function scheduleAppSessionRefresh(
+  connection: BackendConnection,
+  boot: PackageAppBoot,
+  isCurrentConnection: () => boolean,
+): void {
+  clearAppSessionRefreshTimer();
+  if (connection.broken || !isCurrentConnection()) {
+    return;
+  }
+  const delayMs = Math.max(0, boot.expiresAt - Date.now() - APP_SESSION_REFRESH_LEEWAY_MS);
+  appSessionRefreshTimer = setTimeout(() => {
+    appSessionRefreshTimer = null;
+    if (connection.broken || !isCurrentConnection()) {
+      return;
+    }
+    void refreshAppSession(getAppBoot())
+      .then((nextBoot) => {
+        scheduleAppSessionRefresh(connection, nextBoot, isCurrentConnection);
+      })
+      .catch((error) => {
+        console.warn("[gsv-package] app session refresh failed", error);
+        if (!connection.broken && isCurrentConnection()) {
+          appSessionRefreshTimer = setTimeout(() => {
+            appSessionRefreshTimer = null;
+            scheduleAppSessionRefresh(connection, getAppBoot(), isCurrentConnection);
+          }, APP_SESSION_REFRESH_RETRY_MS);
+        }
+      });
+  }, delayMs);
+}
+
 function emitAppEvent(event: string, payload: unknown): void {
   for (const listener of appEventListeners) {
     try {
@@ -502,8 +543,12 @@ async function connectBackendTransport(): Promise<BackendConnection> {
     },
   };
   let ready: Promise<BackendConnection>;
+  const isCurrentConnection = () => backendConnectionPromise === ready;
   const markTransportBroken = (cause: unknown) => {
     connection.broken = true;
+    if (isCurrentConnection()) {
+      clearAppSessionRefreshTimer();
+    }
     rejectPendingBackendRequests(connection, new BackendTransportClosedError(cause));
     if (backendConnectionPromise === ready) {
       resetBackendConnection();
@@ -520,6 +565,7 @@ async function connectBackendTransport(): Promise<BackendConnection> {
   ready = (async () => {
     await waitForSocketOpen(socket);
     setRuntimeStatus("connected");
+    scheduleAppSessionRefresh(connection, boot, isCurrentConnection);
     if (!appRuntimeReady) {
       scheduleConnectedReadyFallback();
     }
