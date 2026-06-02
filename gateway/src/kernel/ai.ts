@@ -11,6 +11,7 @@
  */
 
 import type { KernelContext } from "./context";
+import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import { getModels, getProviders, type KnownProvider } from "@earendil-works/pi-ai";
 import type {
   AiToolsResult,
@@ -137,6 +138,7 @@ export async function handleAiConfig(
   const config = ctx.config;
   const uid = ctx.identity?.process.uid ?? 0;
   const requestedProfile = args.profile === PERSONAL_PROFILE_ALIAS ? "init" : args.profile ?? "task";
+  const owner = resolveOwnerIdentity(ctx);
 
   const provider =
     config.get(`users/${uid}/ai/provider`) ??
@@ -183,9 +185,13 @@ export async function handleAiConfig(
 
   const systemContextFiles = listConfigContextFiles(config, "config/ai/context.d");
 
+  // Tool approval policy now lives per account (keyed by the run-as uid), with
+  // the legacy system/profile defaults as fallback.
+  const accountApprovalPolicy = resolveAccountApprovalPolicy(config, uid);
+
   let profile = requestedProfile;
   let profileContextFiles: ContextFile[] = [];
-  let profileApprovalPolicy: string | null = null;
+  let profileApprovalPolicy: string | null = accountApprovalPolicy;
 
   if (isPackageAiContextProfile(requestedProfile)) {
     const resolved = resolvePackageProfileReference(
@@ -199,13 +205,11 @@ export async function handleAiConfig(
     profileContextFiles = resolved.packageProfile.contextFiles
       .filter((file) => file.text.trim().length > 0)
       .sort((left, right) => left.name.localeCompare(right.name));
-    profileApprovalPolicy = resolved.packageProfile.approvalPolicy ?? null;
+    profileApprovalPolicy = resolved.packageProfile.approvalPolicy ?? accountApprovalPolicy;
   } else if (isSystemAiContextProfile(requestedProfile)) {
     profile = requestedProfile;
     profileContextFiles = listConfigContextFiles(config, `config/ai/profile/${profile}/context.d`);
-    profileApprovalPolicy =
-      config.get(`config/ai/profile/${profile}/tools/approval`) ??
-      null;
+    profileApprovalPolicy = accountApprovalPolicy;
   } else if (isUserAiContextProfile(requestedProfile)) {
     const userProfile = await resolveUserAiProfile(ctx, requestedProfile);
     if (!userProfile) {
@@ -219,16 +223,11 @@ export async function handleAiConfig(
         text: file.text,
       })),
     ];
-    profileApprovalPolicy =
-      userProfile.approvalPolicy ??
-      config.get("config/ai/profile/task/tools/approval") ??
-      null;
+    profileApprovalPolicy = userProfile.approvalPolicy ?? accountApprovalPolicy;
   } else {
     profile = "task";
     profileContextFiles = listConfigContextFiles(config, "config/ai/profile/task/context.d");
-    profileApprovalPolicy =
-      config.get("config/ai/profile/task/tools/approval") ??
-      null;
+    profileApprovalPolicy = accountApprovalPolicy;
   }
 
   const maxContextBytes = parseInt(
@@ -254,6 +253,7 @@ export async function handleAiConfig(
 
   return {
     profile,
+    owner,
     provider,
     model,
     apiKey,
@@ -400,6 +400,43 @@ export async function handleAiSpeechCreate(
     ...(result.encoding ? { encoding: result.encoding } : {}),
     ...(result.container ? { container: result.container } : {}),
   };
+}
+
+/**
+ * Resolve the owning human's identity for the calling process, when it runs as
+ * a distinct agent account (owner_uid differs from the run-as uid). Returns null
+ * for processes that run as their own owner or for non-process callers.
+ */
+function resolveOwnerIdentity(ctx: KernelContext): ProcessIdentity | null {
+  if (!ctx.processId) return null;
+  const ownerUid = ctx.procs.getOwnerUid(ctx.processId);
+  if (ownerUid === null) return null;
+  const runAsUid = ctx.identity?.process.uid;
+  if (ownerUid === runAsUid) return null;
+
+  const entry = ctx.auth.getPasswdByUid(ownerUid);
+  if (!entry) return null;
+  return {
+    uid: entry.uid,
+    gid: entry.gid,
+    gids: ctx.auth.resolveGids(entry.username, entry.gid),
+    username: entry.username,
+    home: entry.home,
+    cwd: entry.home,
+  };
+}
+
+/**
+ * Tool approval policy for an account (keyed by run-as uid), falling back to
+ * the global default and then the legacy task-profile default.
+ */
+function resolveAccountApprovalPolicy(config: KernelContext["config"], uid: number): string | null {
+  return (
+    config.get(`users/${uid}/ai/tools/approval`) ??
+    config.get("config/ai/tools/approval") ??
+    config.get("config/ai/profile/task/tools/approval") ??
+    null
+  );
 }
 
 function listConfigContextFiles(config: KernelContext["config"], prefix: string): ContextFile[] {

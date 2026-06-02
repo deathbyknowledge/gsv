@@ -7,6 +7,7 @@
  */
 
 import type { ToolDefinition } from "./index";
+import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import type {
   AiSpeechCreateArgs,
   AiSpeechCreateResult,
@@ -112,6 +113,8 @@ export type ContextFile = {
 
 export type AiConfigResult = {
   profile?: AiContextProfile;
+  /** Owning human's identity when the process runs as a distinct agent account. */
+  owner?: ProcessIdentity | null;
   provider: string;
   model: string;
   apiKey: string;

@@ -137,6 +137,7 @@ describe("selection", () => {
       "system.context",
       "profile.context",
       "home.context",
+      "owner.context",
       "available.skills",
       "process.context",
     ]);

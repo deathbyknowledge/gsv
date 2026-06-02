@@ -11,6 +11,8 @@ export type PromptAssemblyInput = {
   profile: AiContextProfile;
   purpose: "chat.reply" | "thread.resume";
   identity: ProcessIdentity;
+  /** Owning human's identity, when the process runs as a distinct agent account. */
+  ownerIdentity?: ProcessIdentity;
   devices: AiToolsDevice[];
   mcpServers: string[];
   processContextFiles?: ProcContextFile[];
