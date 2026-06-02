@@ -183,6 +183,8 @@ import type {
   SysLinkConsumeResult,
   AccountCreateArgs,
   AccountCreateResult,
+  AccountListArgs,
+  AccountListResult,
 } from "@gsv/protocol/syscalls/system";
 import type {
   SchedulerListArgs,
@@ -368,6 +370,7 @@ export type SyscallDomains = {
 
   // Accounts (humans and agents)
   "account.create": { args: AccountCreateArgs; result: AccountCreateResult };
+  "account.list": { args: AccountListArgs; result: AccountListResult };
 
   // Scheduler (cron)
   "sched.list": { args: SchedulerListArgs; result: SchedulerListResult };

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { KernelContext } from "./context";
 import type { ConnectionIdentity, ProcessIdentity } from "@gsv/protocol/syscalls/system";
-import { handleAccountCreate } from "./agents";
+import { handleAccountCreate, handleAccountList } from "./agents";
 
 type PasswdRow = { username: string; uid: number; gid: number; gecos: string; home: string; shell: string };
 type GroupRow = { name: string; gid: number; members: string[] };
@@ -60,6 +60,11 @@ function createCtx() {
       personalAgents.set(ownerUid, agentUid);
     }),
     isPersonalAgentUid: vi.fn((uid: number) => [...personalAgents.values()].includes(uid)),
+    getPasswdEntries: vi.fn(() => passwd.map((u) => ({ ...u }))),
+    getShadowByUsername: vi.fn((username: string) => {
+      const hash = shadow.get(username);
+      return hash === undefined ? null : { username, hash };
+    }),
   };
 
   const storage = {
@@ -156,5 +161,32 @@ describe("handleAccountCreate", () => {
     // A 1:1 personal agent was provisioned and mapped to the human.
     expect(result.personalAgent).toBeTruthy();
     expect(personalAgents.get(result.account.uid)).toBe(result.personalAgent?.uid);
+  });
+});
+
+describe("handleAccountList", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("lists the caller's self and run-as-able agents, not other humans", async () => {
+    const { ctxFor } = createCtx();
+    // alice creates a custom agent she can run as.
+    const aliceCtx = ctxFor(userIdentity(1000, "alice", ["account.create"]));
+    await handleAccountCreate({ kind: "agent", username: "scout" }, aliceCtx);
+
+    const result = handleAccountList({}, ctxFor(userIdentity(1000, "alice", ["account.list"])));
+    const names = result.accounts.map((a) => a.username);
+
+    expect(names).toContain("alice");
+    expect(names).toContain("scout");
+    // root is a system account and never a run-as target.
+    expect(names).not.toContain("root");
+
+    const self = result.accounts.find((a) => a.username === "alice");
+    expect(self?.relation).toBe("self");
+    const agent = result.accounts.find((a) => a.username === "scout");
+    expect(agent?.relation).toBe("agent");
+    expect(agent?.runnable).toBe(true);
+    // "self" sorts first.
+    expect(result.accounts[0].relation).toBe("self");
   });
 });

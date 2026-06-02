@@ -18,9 +18,14 @@ import type {
   AccountCreateArgs,
   AccountCreateResult,
   AccountKind,
+  AccountListArgs,
+  AccountListResult,
+  AccountRelation,
+  AccountSummary,
   ProcessIdentity,
 } from "@gsv/protocol/syscalls/system";
 import type { RequestFrame } from "../protocol/frames";
+import { isLocked } from "../auth/shadow";
 import { sendFrameToProcess } from "../shared/utils";
 import type { KernelContext } from "./context";
 import type { AuthStore } from "./auth-store";
@@ -171,6 +176,69 @@ export async function handleAccountCreate(
     persona,
   });
   return { account: identity, kind };
+}
+
+/**
+ * List the accounts the owning human may run processes as: their own account,
+ * their personal agent, and any account whose private group they belong to
+ * (custom agents, package agents). Root sees all accounts as runnable.
+ */
+export function handleAccountList(
+  args: AccountListArgs,
+  ctx: KernelContext,
+): AccountListResult {
+  const { auth } = ctx;
+  const caller = ctx.identity!;
+  const isRoot = caller.process.uid === 0;
+  const ownerUid = isRoot && typeof args.uid === "number"
+    ? args.uid
+    : resolveCallerOwnerUid(ctx);
+
+  const ownerName = auth.getPasswdByUid(ownerUid)?.username ?? null;
+  const personalAgentUid = auth.getPersonalAgentUid(ownerUid);
+
+  const accounts: AccountSummary[] = [];
+  for (const entry of auth.getPasswdEntries()) {
+    // System accounts (root, services) are not run-as targets.
+    if (entry.uid !== 0 && entry.uid < 1000) continue;
+
+    const isSelf = entry.uid === ownerUid;
+    const isPersonalAgent = personalAgentUid === entry.uid;
+    const group = auth.getGroupByGid(entry.gid);
+    const isGroupMember = !!ownerName && !!group && group.members.includes(ownerName);
+    const runnable = isRoot || isSelf || isPersonalAgent || isGroupMember;
+    if (!runnable) continue;
+
+    const shadow = auth.getShadowByUsername(entry.username);
+    const isAgent = shadow ? isLocked(shadow) : false;
+    let relation: AccountRelation;
+    if (isSelf) relation = "self";
+    else if (isPersonalAgent) relation = "personal-agent";
+    else if (isAgent) relation = "agent";
+    else relation = "human";
+
+    accounts.push({
+      uid: entry.uid,
+      username: entry.username,
+      displayName: entry.gecos?.trim() || entry.username,
+      relation,
+      runnable,
+      ...(entry.gecos ? { gecos: entry.gecos } : {}),
+    });
+  }
+
+  const relationRank: Record<AccountRelation, number> = {
+    "self": 0,
+    "personal-agent": 1,
+    "agent": 2,
+    "human": 3,
+  };
+  accounts.sort((a, b) => {
+    const rank = relationRank[a.relation] - relationRank[b.relation];
+    return rank !== 0 ? rank : a.username.localeCompare(b.username);
+  });
+
+  return { accounts };
 }
 
 /**

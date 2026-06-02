@@ -94,6 +94,28 @@ export type AccountCreateResult = {
   personalAgent?: ProcessIdentity;
 };
 
+/** How the listing caller relates to a listed account. */
+export type AccountRelation = "self" | "personal-agent" | "agent" | "human";
+
+export type AccountSummary = {
+  uid: number;
+  username: string;
+  displayName: string;
+  relation: AccountRelation;
+  /** Whether the caller may run processes as this account. */
+  runnable: boolean;
+  gecos?: string;
+};
+
+export type AccountListArgs = {
+  /** Owning human whose run-as-able accounts to list. Defaults to the caller. Root may target any uid. */
+  uid?: number;
+};
+
+export type AccountListResult = {
+  accounts: AccountSummary[];
+};
+
 export type SysSetupArgs = {
   username: string;
   password: string;
