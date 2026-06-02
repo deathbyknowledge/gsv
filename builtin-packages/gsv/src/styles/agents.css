@@ -1,0 +1,145 @@
+.gsv-agents {
+  display: grid;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.gsv-agents-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.gsv-agents-list {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.gsv-runtime-row.is-static {
+  cursor: default;
+  text-align: left;
+}
+
+.gsv-agents-create-toggle {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: 0.25rem;
+}
+
+.gsv-agents-humans {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid #dce2ea;
+  display: grid;
+  gap: 0.6rem;
+}
+
+.gsv-agents-form,
+.gsv-agents-panel {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.85rem;
+  border: 1px solid #dce2ea;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.gsv-agents-workspace {
+  display: grid;
+  gap: 0.85rem;
+  min-width: 0;
+}
+
+.gsv-field {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.gsv-field > span {
+  color: #687384;
+  font-size: 0.72rem;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+
+.gsv-field input,
+.gsv-field textarea,
+.gsv-agents-context-area,
+.gsv-agents-rule input,
+.gsv-agents-rule select {
+  width: 100%;
+  min-width: 0;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid #c8d0db;
+  border-radius: 6px;
+  font: inherit;
+  background: #fbfcfe;
+}
+
+.gsv-agents-context-area,
+.gsv-field textarea {
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.gsv-agents-context-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.gsv-chip {
+  padding: 0.3rem 0.6rem;
+  border: 1px solid #c8d0db;
+  border-radius: 999px;
+  background: #f2f5f9;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.gsv-chip.is-active {
+  background: #1f6feb;
+  border-color: #1f6feb;
+  color: #ffffff;
+}
+
+.gsv-segmented {
+  display: inline-flex;
+  border: 1px solid #c8d0db;
+  border-radius: 6px;
+  overflow: hidden;
+  width: fit-content;
+}
+
+.gsv-segment {
+  padding: 0.4rem 0.9rem;
+  border: none;
+  border-right: 1px solid #c8d0db;
+  background: #fbfcfe;
+  cursor: pointer;
+  font: inherit;
+}
+
+.gsv-segment:last-child {
+  border-right: none;
+}
+
+.gsv-segment.is-active {
+  background: #1f6feb;
+  color: #ffffff;
+}
+
+.gsv-agents-rules {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.gsv-agents-rule {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.45rem;
+}

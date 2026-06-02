@@ -15,6 +15,10 @@ export default definePackage({
       kernel: [
         "proc.list",
         "proc.kill",
+        "account.list",
+        "account.create",
+        "fs.read",
+        "fs.write",
         "sys.config.get",
         "sys.config.set",
         "sys.device.list",
@@ -68,6 +72,7 @@ export default definePackage({
       "./src/styles/shell.css",
       "./src/styles/sections.css",
       "./src/styles/runtime.css",
+      "./src/styles/agents.css",
       "./src/styles/devices.css",
       "./src/styles/integrations.css",
       "./src/styles/packages.css",

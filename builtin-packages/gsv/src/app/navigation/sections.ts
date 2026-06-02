@@ -8,6 +8,12 @@ export const GROUPS: GsvGroup[] = [
     sections: ["overview"],
   },
   {
+    id: "agents",
+    label: "Agents",
+    shortLabel: "Agents",
+    sections: ["agents"],
+  },
+  {
     id: "operations",
     label: "Operations",
     shortLabel: "Ops",
@@ -68,6 +74,34 @@ export const SECTIONS: GsvSection[] = [
         sectionId: "devices",
       },
     ],
+  },
+  {
+    id: "agents",
+    groupId: "agents",
+    label: "Agents",
+    shortLabel: "Agents",
+    title: "Agents",
+    summary: "Manage agent accounts, their context, and runtime behavior.",
+    statusLabel: "Agents",
+    tone: "accent",
+    localItems: [
+      {
+        label: "Your agents",
+        description: "Your personal agent and any custom agents you can run.",
+        meta: "Accounts",
+      },
+      {
+        label: "Persona and context",
+        description: "Edit the markdown context layered into each agent's prompt.",
+        meta: "Context",
+      },
+      {
+        label: "Behavior",
+        description: "Per-agent model override and tool approval policy.",
+        meta: "Policy",
+      },
+    ],
+    handoffs: [],
   },
   {
     id: "runtime",

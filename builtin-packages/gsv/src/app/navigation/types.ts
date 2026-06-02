@@ -1,7 +1,8 @@
-export type GsvGroupId = "overview" | "operations" | "extensions" | "administration";
+export type GsvGroupId = "overview" | "agents" | "operations" | "extensions" | "administration";
 
 export type GsvSectionId =
   | "overview"
+  | "agents"
   | "runtime"
   | "devices"
   | "packages"
