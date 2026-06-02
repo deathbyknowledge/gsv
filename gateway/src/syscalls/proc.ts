@@ -27,6 +27,12 @@ export type ProcSpawnAssignment = {
 
 export type ProcSpawnArgs = {
   profile?: AiContextProfile;
+  /**
+   * Account to run the process as: a username, a uid string, or a `pkg#agent`
+   * reference. Defaults to the caller's personal agent. The caller must own the
+   * account or hold membership in its private group (root may run as anyone).
+   */
+  runAs?: string;
   /** Whether the process can request human-in-the-loop approval. Background spawns set false. */
   interactive?: boolean;
   label?: string;

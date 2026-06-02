@@ -51,6 +51,7 @@ import {
   resolveUserAiProfile,
 } from "./user-profiles";
 import { ensurePersonalAgent } from "./agents";
+import { accountIdentity } from "./accounts";
 
 /**
  * The owner uid for processes spawned in this context: the calling process's
@@ -298,10 +299,11 @@ export async function handleProcSpawn(
     }
   }
 
-  // The spawning human owns the process; run-as identity is inherited from the
-  // parent (so children of the personal agent also run as the agent).
+  // The spawning human owns the process. The run-as identity is, in order of
+  // precedence: an explicit `runAs` account, the parent's identity (so children
+  // of the personal agent also run as the agent), or the caller's identity.
   const ownerUid = parent ? parent.ownerUid : callerOwnerUid;
-  const baseIdentity = parent
+  let baseIdentity: ProcessIdentity = parent
     ? {
         uid: parent.uid,
         gid: parent.gid,
@@ -311,6 +313,14 @@ export async function handleProcSpawn(
         cwd: parent.cwd,
       }
     : identity.process;
+
+  if (typeof args.runAs === "string" && args.runAs.trim()) {
+    const resolved = resolveRunAsIdentity(ctx, args.runAs, ownerUid);
+    if (!resolved.ok) {
+      return { ok: false, error: resolved.error };
+    }
+    baseIdentity = resolved.identity;
+  }
 
   const hasRequestedMounts = args.mounts !== undefined;
   const materializedMounts = materializeSpawnMounts(args.mounts, ctx);
@@ -378,6 +388,44 @@ export async function handleProcSpawn(
  */
 function defaultInteractiveForProfile(profile: AiContextProfile): boolean {
   return profile !== "cron";
+}
+
+/**
+ * Resolve a `runAs` account selector (username or uid) to its run-as identity,
+ * authorizing the owning human. A human may run as an account when it is their
+ * own account, their personal agent, an account whose private group they belong
+ * to, or when the caller is root.
+ */
+function resolveRunAsIdentity(
+  ctx: KernelContext,
+  runAs: string,
+  ownerUid: number,
+): { ok: true; identity: ProcessIdentity } | { ok: false; error: string } {
+  const auth = ctx.auth;
+  const trimmed = runAs.trim();
+  if (trimmed.includes("#")) {
+    return { ok: false, error: `Package agent run-as is not yet supported: ${runAs}` };
+  }
+
+  const entry = /^\d+$/.test(trimmed)
+    ? auth.getPasswdByUid(Number(trimmed))
+    : auth.getPasswdByUsername(trimmed);
+  if (!entry) {
+    return { ok: false, error: `Unknown account: ${runAs}` };
+  }
+
+  const isRoot = ctx.identity!.process.uid === 0;
+  const isSelf = entry.uid === ownerUid;
+  const isPersonalAgent = auth.getPersonalAgentUid(ownerUid) === entry.uid;
+  const ownerName = auth.getPasswdByUid(ownerUid)?.username;
+  const group = auth.getGroupByGid(entry.gid);
+  const isGroupMember = !!ownerName && !!group && group.members.includes(ownerName);
+
+  if (!isRoot && !isSelf && !isPersonalAgent && !isGroupMember) {
+    return { ok: false, error: `Permission denied: cannot run as ${entry.username}` };
+  }
+
+  return { ok: true, identity: accountIdentity(auth, entry) };
 }
 
 function normalizeSpawnProfile(profile: ProcSpawnArgs["profile"] | undefined): AiContextProfile {
