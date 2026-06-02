@@ -92,6 +92,7 @@ import {
 import type { AppClientSessionContext } from "../protocol/app-session";
 import { listLocalPublicPackages } from "./pkg";
 import { handleProcSpawn } from "./proc-handlers";
+import { ensurePersonalInitProcess } from "./agents";
 import { handleShellExec } from "../drivers/native/shell";
 import type {
   ScheduleRecord,
@@ -700,24 +701,28 @@ export class Kernel extends Host<Env> {
 
     if (!frame.signal.startsWith("proc.run.")) return;
 
+    // Client-facing run signals route by the owning human (owner_uid), not the
+    // run-as identity (which may be the personal agent account).
+    const ownerUid = this.procs.getOwnerUid(processId) ?? identity.uid;
+
     if (!runId) {
-      this.broadcastToUid(identity.uid, frame.signal, frame.payload);
+      this.broadcastToUid(ownerUid, frame.signal, frame.payload);
       return;
     }
 
     const route = this.runRoutes.get(runId);
     if (!route) {
-      this.broadcastToUid(identity.uid, frame.signal, frame.payload);
+      this.broadcastToUid(ownerUid, frame.signal, frame.payload);
       return;
     }
 
-    if (route.uid !== identity.uid) {
+    if (route.uid !== ownerUid) {
       this.runRoutes.delete(runId);
       return;
     }
 
     if (route.kind === "connection") {
-      this.deliverSignalToConnection(route, frame, identity.uid);
+      this.deliverSignalToConnection(route, frame, ownerUid);
       if (frame.signal === "proc.run.finished") {
         this.runRoutes.delete(runId);
       }
@@ -2130,8 +2135,8 @@ export class Kernel extends Host<Env> {
 
     if (outcome.identity.role === "user") {
       const freshIdentity = outcome.identity.process;
-      await this.ensureUserInitProcess(freshIdentity);
-      this.reconcileIdentity(freshIdentity);
+      await this.ensureUserInitProcess(ctx, freshIdentity);
+      this.reconcileOwnedIdentities(freshIdentity.uid);
     }
 
     this.sendOk(connection, frame.id, outcome.result);
@@ -2241,7 +2246,7 @@ export class Kernel extends Host<Env> {
     try {
       const data = await handleKernelSetup(frame.args, ctx);
       const setup = data as SysSetupResult;
-      await this.ensureUserInitProcess(setup.user);
+      await this.ensureUserInitProcess(ctx, setup.user);
       this.sendOk(connection, frame.id, data);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -2599,6 +2604,7 @@ export class Kernel extends Host<Env> {
       const ctx = this.buildScheduleContext(record);
       const result = await handleProcSpawn({
         profile: target.profile ?? "cron",
+        interactive: false,
         label: target.label ?? record.name,
         prompt: target.prompt,
         parentPid: target.parentPid,
@@ -2814,25 +2820,34 @@ export class Kernel extends Host<Env> {
   }
 
   /**
-   * Compare freshly-resolved identity from auth store against ProcessRegistry.
-   * If there's drift (groups changed, home changed, etc.), update the
-   * registry and send identity.changed signals to all processes for that uid.
+   * Reconcile the run-as identity of every process owned by `ownerUid` against
+   * the auth store. Each process keeps its run-as account (preserving the
+   * personal-agent split); only group/home/gid drift for that account is
+   * refreshed, and identity.changed is emitted when it changes.
    */
-  private reconcileIdentity(fresh: ProcessIdentity): void {
-    const existing = this.procs.getIdentity(`init:${fresh.uid}`);
-    if (!existing) return;
+  private reconcileOwnedIdentities(ownerUid: number): void {
+    for (const proc of this.procs.list(ownerUid)) {
+      const entry = this.auth.getPasswdByUsername(proc.username);
+      if (!entry) continue;
 
-    if (
-      existing.gid === fresh.gid &&
-      existing.home === fresh.home &&
-      existing.username === fresh.username &&
-      JSON.stringify(existing.gids) === JSON.stringify(fresh.gids)
-    ) {
-      return;
-    }
+      const fresh: ProcessIdentity = {
+        uid: entry.uid,
+        gid: entry.gid,
+        gids: this.auth.resolveGids(entry.username, entry.gid),
+        username: entry.username,
+        home: entry.home,
+        cwd: proc.cwd,
+      };
 
-    const processes = this.procs.list(fresh.uid);
-    for (const proc of processes) {
+      if (
+        proc.gid === fresh.gid &&
+        proc.home === fresh.home &&
+        proc.username === fresh.username &&
+        JSON.stringify(proc.gids) === JSON.stringify(fresh.gids)
+      ) {
+        continue;
+      }
+
       this.procs.updateIdentity(proc.processId, fresh);
 
       sendFrameToProcess(proc.processId, {
@@ -2975,19 +2990,11 @@ export class Kernel extends Host<Env> {
     this.purgeStaleProvidedTargets(onlineTargets);
   }
 
-  private async ensureUserInitProcess(identity: ProcessIdentity): Promise<string> {
-    const { pid, created } = this.procs.ensureInit(identity);
-
-    if (created) {
-      await sendFrameToProcess(pid, {
-        type: "req",
-        id: crypto.randomUUID(),
-        call: "proc.setidentity",
-        args: { pid, identity, profile: "init" },
-      } as RequestFrame);
-    }
-
-    return pid;
+  private async ensureUserInitProcess(
+    ctx: KernelContext,
+    human: ProcessIdentity,
+  ): Promise<string> {
+    return ensurePersonalInitProcess(ctx, human);
   }
 
   private extractRunId(payload: unknown): string | null {

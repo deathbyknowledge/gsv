@@ -5,6 +5,7 @@ import { resolveUserPath } from "../../../fs";
 import type { KernelContext } from "../../../kernel/context";
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import { sendFrameToProcess } from "../../../shared/utils";
+import { ensurePersonalInitProcess } from "../../../kernel/agents";
 import { CODEMODE_RUN } from "../../../syscalls/constants";
 import type { CodeModeRunResult } from "../../../syscalls/codemode";
 import { requireCommandCapability } from "./common";
@@ -163,23 +164,7 @@ async function ensureCodeModeProcess(
   identity: ProcessIdentity,
   ctx: KernelContext,
 ): Promise<string> {
-  const ensured = ctx.procs.ensureInit(identity);
-  if (ensured.created) {
-    const response = await sendFrameToProcess(ensured.pid, {
-      type: "req",
-      id: crypto.randomUUID(),
-      call: "proc.setidentity",
-      args: {
-        pid: ensured.pid,
-        identity,
-        profile: "init",
-      },
-    });
-    if (!response || response.type !== "res" || !response.ok) {
-      throw new Error("failed to initialize CodeMode process");
-    }
-  }
-  return ensured.pid;
+  return ensurePersonalInitProcess(ctx, identity);
 }
 
 function resolveCodeModeCwd(

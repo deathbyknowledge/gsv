@@ -71,7 +71,7 @@ describe("proc handlers", () => {
         },
       },
       procs: {
-        get: vi.fn(() => ({ uid: IDENTITY.uid })),
+        get: vi.fn(() => ({ uid: IDENTITY.uid, ownerUid: IDENTITY.uid })),
       },
     } as unknown as KernelContext;
     const spoofedOrigin = {

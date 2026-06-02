@@ -50,6 +50,19 @@ import {
   listUserAiProfiles,
   resolveUserAiProfile,
 } from "./user-profiles";
+import { ensurePersonalAgent } from "./agents";
+
+/**
+ * The owner uid for processes spawned in this context: the calling process's
+ * owner when invoked from a process, otherwise the connecting user.
+ */
+function resolveCallerOwnerUid(ctx: KernelContext): number {
+  if (ctx.processId) {
+    const self = ctx.procs.get(ctx.processId);
+    if (self) return self.ownerUid;
+  }
+  return ctx.identity!.process.uid;
+}
 
 const SYSTEM_PROFILE_ENTRIES: ProcProfileListEntry[] = [
   {
@@ -131,7 +144,7 @@ export function handleProcList(
 
   const processes: ProcListEntry[] = records.map((r) => ({
     pid: r.processId,
-    uid: r.uid,
+    uid: r.ownerUid,
     profile: r.profile,
     parentPid: r.parentPid,
     state: r.state,
@@ -206,7 +219,8 @@ export async function handleProcSpawn(
     return { ok: false, error: `Invalid process profile: ${String(profile)}` };
   }
   if (profile === "init") {
-    const ensured = ctx.procs.ensureInit(identity.process);
+    const agent = await ensurePersonalAgent(ctx, identity.process);
+    const ensured = ctx.procs.ensureInit(identity.process.uid, agent.identity);
     const initRecord = ctx.procs.get(ensured.pid);
     if (!initRecord) {
       return { ok: false, error: "Failed to resolve init process" };
@@ -219,8 +233,9 @@ export async function handleProcSpawn(
         call: "proc.setidentity",
         args: {
           pid: ensured.pid,
-          identity: identity.process,
+          identity: agent.identity,
           profile: "init",
+          interactive: true,
           assignment: args.assignment as ProcSpawnAssignment | undefined,
         },
       });
@@ -271,17 +286,21 @@ export async function handleProcSpawn(
     }
   }
 
-  const parentPid = args.parentPid ?? `init:${identity.process.uid}`;
+  const callerOwnerUid = resolveCallerOwnerUid(ctx);
+  const parentPid = args.parentPid ?? ctx.processId ?? `init:${callerOwnerUid}`;
   const parent = ctx.procs.get(parentPid);
 
-  if (parentPid !== `init:${identity.process.uid}`) {
-    if (!parent || parent.uid !== identity.process.uid) {
+  if (parentPid !== `init:${callerOwnerUid}`) {
+    if (!parent || parent.ownerUid !== callerOwnerUid) {
       if (identity.process.uid !== 0) {
         return { ok: false, error: `Cannot spawn under foreign process: ${parentPid}` };
       }
     }
   }
 
+  // The spawning human owns the process; run-as identity is inherited from the
+  // parent (so children of the personal agent also run as the agent).
+  const ownerUid = parent ? parent.ownerUid : callerOwnerUid;
   const baseIdentity = parent
     ? {
         uid: parent.uid,
@@ -304,9 +323,13 @@ export async function handleProcSpawn(
     cwd: resolveSpawnCwd(args.cwd, baseIdentity, hasRequestedMounts ? materializedMounts.mounts : []),
   };
 
+  const interactive = args.interactive ?? defaultInteractiveForProfile(profile);
+
   ctx.procs.spawn(pid, spawnIdentity, {
     parentPid,
+    ownerUid,
     profile,
+    interactive,
     label: args.label,
     cwd: spawnIdentity.cwd,
     mounts: materializedMounts.mounts,
@@ -321,6 +344,7 @@ export async function handleProcSpawn(
       pid,
       identity: spawnIdentity,
       profile,
+      interactive,
       assignment: args.assignment as ProcSpawnAssignment | undefined,
     },
   });
@@ -346,6 +370,14 @@ export async function handleProcSpawn(
     profile,
     cwd: spawnIdentity.cwd,
   };
+}
+
+/**
+ * Default interactivity for a spawn when not explicitly specified. Background
+ * worker spawns (cron) cannot request human-in-the-loop approval.
+ */
+function defaultInteractiveForProfile(profile: AiContextProfile): boolean {
+  return profile !== "cron";
 }
 
 function normalizeSpawnProfile(profile: ProcSpawnArgs["profile"] | undefined): AiContextProfile {
@@ -548,15 +580,16 @@ export async function forwardToProcess(
   ctx: KernelContext,
 ): Promise<unknown> {
   const identity = ctx.identity!;
+  const callerOwnerUid = resolveCallerOwnerUid(ctx);
   const args = frame.args as { pid?: string };
-  const pid = args.pid ?? `init:${identity.process.uid}`;
+  const pid = args.pid ?? `init:${callerOwnerUid}`;
 
   const proc = ctx.procs.get(pid);
   if (!proc) {
     throw new Error(`Process not found: ${pid}`);
   }
 
-  if (proc.uid !== identity.process.uid && identity.process.uid !== 0) {
+  if (proc.ownerUid !== callerOwnerUid && identity.process.uid !== 0) {
     throw new Error(`Permission denied: cannot access process ${pid}`);
   }
 
@@ -629,7 +662,7 @@ function resolveSameOwnerIpc(
     return { ok: false, error: `Source process identity mismatch: ${sourcePid}` };
   }
 
-  if (target.uid !== source.uid) {
+  if (target.ownerUid !== source.ownerUid) {
     return { ok: false, error: "Permission denied: target process belongs to another user" };
   }
 

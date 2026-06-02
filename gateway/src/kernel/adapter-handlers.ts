@@ -27,6 +27,7 @@ import type { RequestFrame } from "../protocol/frames";
 import { sendFrameToProcess } from "../shared/utils";
 import type { InteractionOrigin } from "../syscalls/interaction-origin";
 import { isVisibleAdapterTarget } from "./adapter-targets";
+import { ensurePersonalInitProcess } from "./agents";
 
 type AdapterServiceBinding = Fetcher & Partial<AdapterWorkerInterface>;
 type ProcSendData = {
@@ -575,18 +576,7 @@ function identityForUid(uid: number, ctx: KernelContext): ProcessIdentity | null
 }
 
 async function ensureUserInitProcess(identity: ProcessIdentity, ctx: KernelContext): Promise<string> {
-  const { pid, created } = ctx.procs.ensureInit(identity);
-
-  if (created) {
-    await sendFrameToProcess(pid, {
-      type: "req",
-      id: crypto.randomUUID(),
-      call: "proc.setidentity",
-      args: { pid, identity, profile: "init" },
-    } as RequestFrame);
-  }
-
-  return pid;
+  return ensurePersonalInitProcess(ctx, identity);
 }
 
 function resolveActorId(message: AdapterInboundMessage): string | null {

@@ -27,6 +27,8 @@ export type ProcSpawnAssignment = {
 
 export type ProcSpawnArgs = {
   profile?: AiContextProfile;
+  /** Whether the process can request human-in-the-loop approval. Background spawns set false. */
+  interactive?: boolean;
   label?: string;
   prompt?: string;
   assignment?: ProcSpawnAssignment;
@@ -636,6 +638,7 @@ export type ProcSetIdentityArgs = {
   pid: string;
   identity: ProcessIdentity;
   profile: AiContextProfile;
+  interactive?: boolean;
   assignment?: ProcSpawnAssignment;
 };
 

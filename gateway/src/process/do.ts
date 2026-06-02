@@ -607,6 +607,18 @@ export class Process extends Host<Env> {
     return "task";
   }
 
+  /**
+   * Whether this process may request human-in-the-loop approval. Stored per
+   * process at spawn time; falls back to a profile-derived default for
+   * processes initialized before the flag existed.
+   */
+  get interactive(): boolean {
+    const raw = this.store.getValue("interactive");
+    if (raw === "1") return true;
+    if (raw === "0") return false;
+    return !isNonInteractiveProfile(this.profile);
+  }
+
   get initialized(): boolean {
     return this.store.getValue("pid") !== null;
   }
@@ -682,11 +694,15 @@ export class Process extends Host<Env> {
             pid: string;
             identity: ProcessIdentity;
             profile: AiContextProfile;
+            interactive?: boolean;
             assignment?: ProcSpawnAssignment;
           };
           this.store.setValue("pid", idArgs.pid);
           this.store.setValue("identity", JSON.stringify(idArgs.identity));
           this.store.setValue("profile", idArgs.profile);
+          if (idArgs.interactive !== undefined) {
+            this.store.setValue("interactive", idArgs.interactive ? "1" : "0");
+          }
           this.store.setProcessContextFiles(idArgs.assignment?.contextFiles ?? []);
           let startedRunId: string | undefined;
           if (idArgs.assignment?.autoStart && !this.currentRun) {
@@ -2367,6 +2383,7 @@ export class Process extends Host<Env> {
         profile: this.profile,
         purpose: "chat.reply",
         identity: this.identity,
+        ownerIdentity: run.config?.owner ?? undefined,
         devices: run.devices ?? [],
         mcpServers: run.mcpServers ?? [],
         processContextFiles: this.store.getProcessContextFiles(),
@@ -3242,12 +3259,12 @@ export class Process extends Host<Env> {
         }
 
         if (approval.action === "ask") {
-          if (isNonInteractiveProfile(this.profile)) {
+          if (!this.interactive) {
             await this.appendSyntheticToolResult(
               runId,
               tc.id,
               syscall,
-              "Tool execution requires interactive approval, which is unavailable for this profile",
+              "Tool execution requires interactive approval, which is unavailable for this process",
             );
             continue;
           }
@@ -3427,9 +3444,9 @@ export class Process extends Host<Env> {
     }
 
     if (approval.action === "ask") {
-      if (isNonInteractiveProfile(this.profile)) {
+      if (!this.interactive) {
         throw new Error(
-          `Tool execution requires interactive approval, which is unavailable for this profile: ${call}`,
+          `Tool execution requires interactive approval, which is unavailable for this process: ${call}`,
         );
       }
       const approved = await this.waitForCodeModeApproval(

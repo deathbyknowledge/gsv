@@ -29,10 +29,12 @@ function makeContext(
         home: "/home/sam",
       })),
       resolveGids: vi.fn(() => [1000]),
+      getPersonalAgentUid: vi.fn(() => 1001),
+      isPersonalAgentUid: vi.fn(() => false),
     },
     procs: {
       ensureInit: vi.fn(() => ({ pid: "pid-1", created: false })),
-      get: vi.fn(() => ({ uid: 1000 })),
+      get: vi.fn(() => ({ uid: 1000, ownerUid: 1000 })),
     },
     adapters: {
       status,
