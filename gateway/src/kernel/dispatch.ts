@@ -33,7 +33,6 @@ import {
   handleProcList,
   handleProcIpcCall,
   handleProcIpcSend,
-  handleProcProfileList,
   handleProcSpawn,
   forwardToProcess,
 } from "./proc-handlers";
@@ -342,9 +341,6 @@ async function dispatchNative(
 
       case "proc.list":
         data = handleProcList(frame.args, ctx);
-        break;
-      case "proc.profile.list":
-        data = await handleProcProfileList(frame.args, ctx);
         break;
       case "proc.spawn":
         data = await handleProcSpawn(frame.args, ctx);

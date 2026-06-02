@@ -16,9 +16,6 @@ import type {
   ProcIpcCallResult,
   ProcIpcSendArgs,
   ProcIpcSendResult,
-  ProcProfileListArgs,
-  ProcProfileListEntry,
-  ProcProfileListResult,
   ProcSpawnAssignment,
   ProcSpawnMountSpec,
   ProcSpawnArgs,
@@ -46,10 +43,7 @@ import {
   resolvePackageProfileReference,
   visiblePackageScopesForActor,
 } from "./packages";
-import {
-  listUserAiProfiles,
-  resolveUserAiProfile,
-} from "./user-profiles";
+import { resolveUserAiProfile } from "./user-profiles";
 import { ensurePersonalAgent } from "./agents";
 import { accountIdentity } from "./accounts";
 import { resolvePackageAgentRunAs } from "./package-agents";
@@ -65,70 +59,6 @@ function resolveCallerOwnerUid(ctx: KernelContext): number {
   }
   return ctx.identity!.process.uid;
 }
-
-const SYSTEM_PROFILE_ENTRIES: ProcProfileListEntry[] = [
-  {
-    id: "init",
-    alias: "personal",
-    kind: "system",
-    displayName: "Personal Agent",
-    description: "The persistent user-facing agent that routes work, manages context, and coordinates automation.",
-    interactive: true,
-    startable: true,
-    background: false,
-    spawnMode: "singleton",
-  },
-  {
-    id: "task",
-    kind: "system",
-    displayName: "Worker",
-    description: "Generic bounded worker profile for delegated execution.",
-    interactive: true,
-    startable: true,
-    background: false,
-    spawnMode: "new",
-  },
-  {
-    id: "review",
-    kind: "system",
-    displayName: "Review",
-    description: "A skeptical review conversation for packages and changes.",
-    interactive: true,
-    startable: true,
-    background: false,
-    spawnMode: "new",
-  },
-  {
-    id: "mcp",
-    kind: "system",
-    displayName: "Master Control",
-    description: "Operational control-plane and diagnostics conversation.",
-    interactive: true,
-    startable: true,
-    background: false,
-    spawnMode: "new",
-  },
-  {
-    id: "app",
-    kind: "system",
-    displayName: "App Runtime",
-    description: "App-owned runtime profile.",
-    interactive: false,
-    startable: false,
-    background: false,
-    spawnMode: "new",
-  },
-  {
-    id: "cron",
-    kind: "system",
-    displayName: "Cron",
-    description: "Scheduled background worker.",
-    interactive: false,
-    startable: false,
-    background: true,
-    spawnMode: "new",
-  },
-];
 
 const DEFAULT_IPC_CALL_TIMEOUT_MS = 60_000;
 const MIN_IPC_CALL_TIMEOUT_MS = 1_000;
@@ -162,53 +92,6 @@ export function handleProcList(
   }));
 
   return { processes };
-}
-
-export async function handleProcProfileList(
-  _args: ProcProfileListArgs,
-  ctx: KernelContext,
-): Promise<ProcProfileListResult> {
-  const scopes = visiblePackageScopesForActor(ctx.identity?.process);
-  const userProfiles = await listUserAiProfiles(ctx);
-  const userProfileEntries = userProfiles.map((profile): ProcProfileListEntry => ({
-    id: profile.id,
-    kind: "user",
-    displayName: profile.displayName,
-    ...(profile.description ? { description: profile.description } : {}),
-    ...(profile.icon ? { icon: profile.icon } : {}),
-    interactive: profile.interactive,
-    startable: profile.startable,
-    background: profile.background,
-    spawnMode: "new",
-  }));
-  const packageProfiles = ctx.packages
-    .list({ scopes })
-    .filter((record) => record.enabled)
-    .flatMap((record) => (record.manifest.profiles ?? []).map((profile): ProcProfileListEntry => ({
-      id: `${record.packageId}#${profile.name}`,
-      alias: `${record.manifest.name}#${profile.name}`,
-      kind: "package",
-      displayName: profile.displayName,
-      ...(profile.description ? { description: profile.description } : {}),
-      ...(profile.icon ? { icon: profile.icon } : {}),
-      interactive: true,
-      startable: true,
-      background: false,
-      spawnMode: "new",
-      packageId: record.packageId,
-      packageName: record.manifest.name,
-    })))
-    .sort((left, right) => {
-      const packageNameCompare = (left.packageName ?? "").localeCompare(right.packageName ?? "");
-      if (packageNameCompare !== 0) {
-        return packageNameCompare;
-      }
-      return left.displayName.localeCompare(right.displayName);
-    });
-
-  return {
-    profiles: [...SYSTEM_PROFILE_ENTRIES, ...userProfileEntries, ...packageProfiles],
-  };
 }
 
 export async function handleProcSpawn(
