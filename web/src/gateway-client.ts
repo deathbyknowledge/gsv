@@ -88,6 +88,9 @@ export type ProcSendResult =
   | { ok: false; error: string };
 
 export type ProcSpawnArgs = {
+  /** Account to run as: username, uid, or `package#agent`. Defaults to the caller's personal agent. */
+  runAs?: string;
+  /** @deprecated Use `runAs`. Retained until the init bootstrap migrates off profiles. */
   profile?: string;
   label?: string;
   prompt?: string;
