@@ -2124,10 +2124,14 @@ export class Process extends Host<Env> {
       : emptyProcessArchive();
 
     await this.resetExecutionState("process.kill");
-
-    // A killed process should restart with a clean conversation and no queued work.
-    this.store.resetAllConversations();
     await deleteProcessMedia(this.env.STORAGE, this.identity.uid, pid);
+
+    // The executor is fungible: a killed process is gone. The durable
+    // transcript already lives in the agent home (archived above), so we wipe
+    // all live DO storage rather than keeping a reset stub around. A future
+    // executor gets a fresh DO (and hydrates from the home archive on resume).
+    await this.ctx.storage.deleteAll();
+    this.store.init();
 
     return {
       ok: true,

@@ -3099,14 +3099,22 @@ describe("Process DO — mechanical", () => {
         archives: [],
       });
 
+      // Kill wipes the executor entirely (the DO is fungible): no leftover run,
+      // queue, results, identity, or messages remain.
       await runInDurableObject(stub, (instance: Process) => {
         const store = (instance as any).store;
         expect(store.getValue("currentRun")).toBeNull();
         expect(store.queueSize()).toBe(0);
         expect(store.getResults(runId)).toHaveLength(0);
         expect(store.messageCount()).toBe(0);
+        expect(store.getValue("identity")).toBeNull();
       });
 
+      // A fresh executor is established (as the kernel would on resume), then a
+      // send starts cleanly rather than being queued behind stale runtime state.
+      await stub.recvFrame(
+        makeReq("proc.setidentity", { pid, identity: ROOT_IDENTITY, profile: DEFAULT_PROFILE }),
+      );
       const sendRes = (await stub.recvFrame(
         makeReq("proc.send", { message: "first after kill" }),
       )) as ResponseOkFrame;
@@ -3147,28 +3155,15 @@ describe("Process DO — mechanical", () => {
         expect(obj).not.toBeNull();
       }
 
+      // Kill wipes the executor: the DO storage is pristine afterwards (the
+      // durable transcript bytes live in the agent home, checked above). The
+      // default conversation is freshly re-initialised and the ad-hoc "build"
+      // conversation no longer exists in the wiped executor.
       await runInDurableObject(stub, (instance: Process) => {
         const store = (instance as any).store;
         expect(store.totalMessageCount()).toBe(0);
-        expect(store.getConversation("default").generation).toBe(2);
-        expect(store.getConversation("build").generation).toBe(2);
-      });
-
-      const manifestRes = (await stub.recvFrame(
-        makeReq("proc.conversation.generation.manifest", {
-          conversationId: "build",
-          generation: 1,
-        }),
-      )) as ResponseOkFrame;
-      expect((manifestRes.data as any).manifest).toMatchObject({
-        conversationId: "build",
-        generation: 1,
-        archives: [
-          expect.objectContaining({
-            kind: "kill",
-            messages: 1,
-          }),
-        ],
+        expect(store.getConversation("default").generation).toBe(1);
+        expect(store.getConversation("build")).toBeNull();
       });
     });
   });

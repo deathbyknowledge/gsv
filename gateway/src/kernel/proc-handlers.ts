@@ -496,6 +496,9 @@ export async function forwardToProcess(
     if (res.ok) {
       if (frame.call === "proc.kill") {
         ctx.procs.kill(pid);
+        // The executor is gone; detach it from any conversation it serviced so
+        // the next delivery allocates a fresh executor (and hydrates).
+        ctx.conversations?.clearActivePid(pid);
       }
       return (res as { data?: unknown }).data;
     } else {
