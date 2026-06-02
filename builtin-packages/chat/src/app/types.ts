@@ -1,6 +1,6 @@
 export type ChatBackend = {
   getViewer(args?: unknown): Promise<unknown>;
-  listProfiles(args?: unknown): Promise<unknown>;
+  listAgents(args?: unknown): Promise<unknown>;
   listProcesses(args?: unknown): Promise<unknown>;
   spawnProcess(args: unknown): Promise<unknown>;
   sendMessage(args: unknown): Promise<unknown>;
@@ -24,6 +24,10 @@ export type ThreadContext = {
   conversationTitle: string | null;
 };
 
+// An agent the viewer can run a conversation as. Sourced from account.list.
+// `id` is "init" for the viewer's personal agent (a per-user singleton spawned
+// via the init mechanism) and the account username for every other agent
+// (spawned with `runAs`).
 export type Profile = {
   id: string;
   alias?: string;
@@ -34,12 +38,16 @@ export type Profile = {
   startable: boolean;
   background: boolean;
   spawnMode: "singleton" | "new" | string;
+  /** Account username to run as; absent for the personal-agent singleton. */
+  runAs?: string;
 };
 
 export type ProcessEntry = {
   pid: string;
   label?: string;
   profile: string;
+  username: string;
+  interactive: boolean;
   state: string;
   cwd: string;
   createdAt: number;

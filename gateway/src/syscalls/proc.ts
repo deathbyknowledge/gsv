@@ -602,6 +602,10 @@ export type ProcListEntry = {
   pid: string;
   uid: number;
   profile: AiContextProfile;
+  /** Username of the account the process runs as (its run-as identity). */
+  username: string;
+  /** Whether the process can hold an interactive (human-in-the-loop) conversation. */
+  interactive: boolean;
   parentPid: string | null;
   state: string;
   activeRunId: string | null;

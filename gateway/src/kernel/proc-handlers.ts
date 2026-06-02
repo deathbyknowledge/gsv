@@ -148,6 +148,8 @@ export function handleProcList(
     pid: r.processId,
     uid: r.ownerUid,
     profile: r.profile,
+    username: r.username,
+    interactive: r.interactive,
     parentPid: r.parentPid,
     state: r.state,
     activeRunId: r.activeRunId,

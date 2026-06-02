@@ -24,7 +24,7 @@ export default definePackage({
         "proc.conversation.list",
         "proc.conversation.segment.read",
         "proc.conversation.segments",
-        "proc.profile.list",
+        "account.list",
         "proc.list",
         "signal.watch",
         "signal.unwatch",

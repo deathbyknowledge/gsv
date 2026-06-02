@@ -534,10 +534,16 @@ export function App({ backend }: { backend: ChatBackend }) {
     try {
       let target = activeRef.current;
       if (!target?.pid) {
-        const spawnResult = await backend.spawnProcess({
-          profile: draftProfile.id || "task",
-          label: deriveThreadLabel(message) || draftProfile.displayName,
-        });
+        // The personal agent is the per-user singleton spawned via init; every
+        // other agent starts a fresh process running as its account.
+        const spawnResult = await backend.spawnProcess(
+          draftProfile.runAs
+            ? {
+                runAs: draftProfile.runAs,
+                label: deriveThreadLabel(message) || draftProfile.displayName,
+              }
+            : { profile: "init", label: draftProfile.displayName },
+        );
         const record = asRecord(spawnResult);
         if (!record?.ok) {
           appendSystem("thread start failed: " + safeText(record?.error || "unknown error"));

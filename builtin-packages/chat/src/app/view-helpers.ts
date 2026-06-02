@@ -640,20 +640,32 @@ function renderMarkdownHtml(value: string): string {
   }
 }
 
+// Map an account.list summary into a chat agent. Humans (self/other) are not
+// conversation targets and are dropped. The personal agent keeps id "init" so
+// it is spawned through the per-user singleton init mechanism; every other
+// agent is started with `runAs` against its account username.
 function normalizeProfile(value: unknown): Profile | null {
   const record = asRecord(value);
-  const id = asString(record?.id);
-  if (!id) return null;
+  const username = asString(record?.username);
+  if (!username) return null;
+  const relation = asString(record?.relation) || "agent";
+  if (relation === "self" || relation === "human") return null;
+  const displayName = asString(record?.displayName) || username;
+  const runnable = record?.runnable !== false;
+  const isPersonal = relation === "personal-agent";
   return {
-    id,
-    alias: asString(record?.alias) || undefined,
-    displayName: asString(record?.displayName) || id,
-    description: asString(record?.description) || "",
-    kind: asString(record?.kind) || "system",
-    interactive: record?.interactive === true,
-    startable: record?.startable === true,
-    background: record?.background === true,
-    spawnMode: asString(record?.spawnMode) || "new",
+    id: isPersonal ? "init" : username,
+    alias: isPersonal ? "personal" : undefined,
+    displayName,
+    description: isPersonal
+      ? "Your persistent personal agent."
+      : (asString(record?.gecos) || `Run a conversation as ${displayName}.`),
+    kind: relation,
+    interactive: true,
+    startable: runnable,
+    background: false,
+    spawnMode: isPersonal ? "singleton" : "new",
+    runAs: isPersonal ? undefined : username,
   };
 }
 
@@ -665,6 +677,8 @@ function normalizeProcessEntry(value: unknown): ProcessEntry | null {
     pid,
     label: asString(record?.label) || undefined,
     profile: asString(record?.profile) || "task",
+    username: asString(record?.username) || "",
+    interactive: record?.interactive !== false,
     state: asString(record?.state) || "running",
     cwd: asString(record?.cwd) || "",
     createdAt: normalizeTimestampMs(record?.createdAt) || Date.now(),
@@ -777,10 +791,7 @@ function setStoredThreadContext(context: ThreadContext | null): ThreadContext | 
 
 function fallbackProfiles(): Profile[] {
   return [
-    { id: "init", alias: "personal", displayName: "Personal Agent", description: "Persistent personal conversation.", kind: "system", interactive: true, startable: true, background: false, spawnMode: "singleton" },
-    { id: "task", displayName: "Worker", description: "Focused delegated worker.", kind: "system", interactive: true, startable: true, background: false, spawnMode: "new" },
-    { id: "review", displayName: "Review", description: "Review conversation.", kind: "system", interactive: true, startable: true, background: false, spawnMode: "new" },
-    { id: "mcp", displayName: "Master Control", description: "Operational control-plane work.", kind: "system", interactive: true, startable: true, background: false, spawnMode: "new" },
+    { id: "init", alias: "personal", displayName: "Personal Agent", description: "Your persistent personal agent.", kind: "personal-agent", interactive: true, startable: true, background: false, spawnMode: "singleton" },
   ];
 }
 
@@ -803,17 +814,15 @@ function activeMeta(active: ThreadContext, conversation: ConversationRecord | nu
 }
 
 function draftConversationTitle(profile: Profile): string {
-  if (!profile || profile.id === "init") return "Personal Agent";
-  return profile.id === "task" ? "New Worker" : `New ${profile.displayName}`;
+  if (!profile || profile.spawnMode === "singleton") return profile?.displayName || "Personal Agent";
+  return `New ${profile.displayName}`;
 }
 
 function draftConversationMeta(profile: Profile): string {
-  if (!profile || profile.id === "init") {
-    return "Send a message to your Personal Agent.";
+  if (!profile || profile.spawnMode === "singleton") {
+    return `Send a message to ${profile?.displayName || "your Personal Agent"}.`;
   }
-  return profile.id === "task"
-    ? "Send a message to start a bounded worker."
-    : `Send a message to start ${profile.displayName.toLowerCase()}.`;
+  return `Send a message to start a conversation as ${profile.displayName}.`;
 }
 
 function getStatusText(args: {

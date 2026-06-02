@@ -30,13 +30,6 @@ export function useChatCatalog(backend: ChatBackend) {
     () => conversationProfiles.filter((profile) => profile.spawnMode === "new"),
     [conversationProfiles],
   );
-  const visibleThreadProfileKey = useMemo(
-    () => newConversationProfiles
-      .flatMap((profile) => [profile.id, profile.alias].filter(Boolean) as string[])
-      .sort()
-      .join("\0"),
-    [newConversationProfiles],
-  );
   const draftProfile = useMemo(() => {
     return conversationProfiles.find((profile) => profile.id === draftProfileId || profile.alias === draftProfileId)
       ?? conversationProfiles.find((profile) => profile.id === "init")
@@ -57,9 +50,9 @@ export function useChatCatalog(backend: ChatBackend) {
 
   const loadProfiles = useCallback(async () => {
     try {
-      const result = await backend.listProfiles({});
-      const profileRows = Array.isArray(asRecord(result)?.profiles) ? asRecord(result)?.profiles as unknown[] : [];
-      const normalized = profileRows.map(normalizeProfile).filter(Boolean) as Profile[];
+      const result = await backend.listAgents({});
+      const accountRows = Array.isArray(asRecord(result)?.accounts) ? asRecord(result)?.accounts as unknown[] : [];
+      const normalized = accountRows.map(normalizeProfile).filter(Boolean) as Profile[];
       setProfiles(normalized.length > 0 ? normalized : fallbackProfiles());
     } catch {
       setProfiles(fallbackProfiles());
@@ -72,11 +65,13 @@ export function useChatCatalog(backend: ChatBackend) {
     try {
       const result = await backend.listProcesses({});
       const processRows = Array.isArray(asRecord(result)?.processes) ? asRecord(result)?.processes as unknown[] : [];
-      const visibleThreadProfiles = new Set(visibleThreadProfileKey.split("\0").filter(Boolean));
       const normalized = processRows.map(normalizeProcessEntry).filter(Boolean) as ProcessEntry[];
       setThreads(normalized.filter((entry) => {
+        // The personal-agent (init) conversation is surfaced as the home draft,
+        // not a thread; otherwise show every interactive conversation the
+        // viewer owns regardless of which agent it runs as.
         if (entry.pid.startsWith("init:")) return false;
-        return visibleThreadProfiles.has(entry.profile);
+        return entry.interactive;
       }));
     } catch (error) {
       setThreads([]);
@@ -84,7 +79,7 @@ export function useChatCatalog(backend: ChatBackend) {
     } finally {
       setThreadsLoading(false);
     }
-  }, [backend, visibleThreadProfileKey]);
+  }, [backend]);
 
   const loadConversations = useCallback(async (pid = "") => {
     if (!pid) {
