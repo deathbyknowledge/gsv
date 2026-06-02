@@ -36,7 +36,7 @@ import {
   type InstalledPackageRecord,
   visiblePackageScopesForActor,
 } from "./packages";
-import { ensurePersonalAgent } from "./agents";
+import { ensureDefaultConversationExecutor, ensurePersonalAgent } from "./agents";
 import { accountIdentity } from "./accounts";
 import { resolvePackageAgentRunAs } from "./package-agents";
 
@@ -66,21 +66,25 @@ export function handleProcList(
 
   const records = ctx.procs.list(uid);
 
-  const processes: ProcListEntry[] = records.map((r) => ({
-    pid: r.processId,
-    uid: r.ownerUid,
-    username: r.username,
-    interactive: r.interactive,
-    parentPid: r.parentPid,
-    state: r.state,
-    activeRunId: r.activeRunId,
-    activeConversationId: r.activeConversationId,
-    queuedCount: r.queuedCount,
-    lastActiveAt: r.lastActiveAt,
-    label: r.label,
-    createdAt: r.createdAt,
-    cwd: r.cwd,
-  }));
+  const processes: ProcListEntry[] = records.map((r) => {
+    const conversation = ctx.conversations?.getByActivePid(r.processId);
+    return {
+      pid: r.processId,
+      uid: r.ownerUid,
+      username: r.username,
+      interactive: r.interactive,
+      parentPid: r.parentPid,
+      state: r.state,
+      activeRunId: r.activeRunId,
+      activeConversationId: r.activeConversationId,
+      queuedCount: r.queuedCount,
+      lastActiveAt: r.lastActiveAt,
+      label: r.label,
+      createdAt: r.createdAt,
+      cwd: r.cwd,
+      isDefaultConversation: conversation?.isDefault === true,
+    };
+  });
 
   return { processes };
 }
@@ -90,15 +94,13 @@ export async function handleProcSpawn(
   ctx: KernelContext,
 ): Promise<ProcSpawnResult> {
   const identity = ctx.identity!;
-  const pid = crypto.randomUUID();
+  const pid = `proc:${crypto.randomUUID()}`;
   const explicitRunAs = typeof args.runAs === "string" && args.runAs.trim().length > 0;
 
-  // Interim (Phase A) personal-agent routing: an interactive, top-level spawn
-  // with no explicit run-as targets the caller's persistent personal-agent
-  // executor (the per-owner default conversation). Background spawns
-  // (interactive === false, e.g. cron) and child spawns from a process get a
-  // fresh process instead. Phase B replaces this with conversation-addressed
-  // routing and removes the special init executor entirely.
+  // An interactive, top-level spawn with no explicit run-as targets the caller's
+  // default ("inbox") conversation with their personal agent — the stable
+  // surface. Background spawns (interactive === false, e.g. cron) and child
+  // spawns from a process get their own fresh executor + conversation.
   const useDefaultExecutor =
     !explicitRunAs &&
     args.interactive !== false &&
@@ -106,35 +108,20 @@ export async function handleProcSpawn(
     !args.parentPid;
 
   if (useDefaultExecutor) {
-    const agent = await ensurePersonalAgent(ctx, identity.process);
-    const ensured = ctx.procs.ensureInit(identity.process.uid, agent.identity);
-    const initRecord = ctx.procs.get(ensured.pid);
-    if (!initRecord) {
-      return { ok: false, error: "Failed to resolve personal-agent process" };
-    }
-
-    if (ensured.created) {
-      await sendFrameToProcess(ensured.pid, {
-        type: "req",
-        id: crypto.randomUUID(),
-        call: "proc.setidentity",
-        args: {
-          pid: ensured.pid,
-          identity: agent.identity,
-          interactive: true,
-          assignment: args.assignment as ProcSpawnAssignment | undefined,
-        },
-      });
+    const pidResolved = await ensureDefaultConversationExecutor(ctx, identity.process);
+    const record = ctx.procs.get(pidResolved);
+    if (!record) {
+      return { ok: false, error: "Failed to resolve personal-agent executor" };
     }
 
     if (args.prompt) {
       const origin = interactionOriginForContext(ctx);
-      await sendFrameToProcess(ensured.pid, {
+      await sendFrameToProcess(pidResolved, {
         type: "req",
         id: crypto.randomUUID(),
         call: "proc.send",
         args: {
-          pid: ensured.pid,
+          pid: pidResolved,
           message: args.prompt,
           ...(origin ? { origin } : {}),
         },
@@ -143,17 +130,17 @@ export async function handleProcSpawn(
 
     return {
       ok: true,
-      pid: initRecord.processId,
-      label: initRecord.label ?? undefined,
-      cwd: initRecord.cwd,
+      pid: record.processId,
+      label: record.label ?? undefined,
+      cwd: record.cwd,
     };
   }
 
   const callerOwnerUid = resolveCallerOwnerUid(ctx);
-  const parentPid = args.parentPid ?? ctx.processId ?? `init:${callerOwnerUid}`;
-  const parent = ctx.procs.get(parentPid);
+  const parentPid = args.parentPid ?? ctx.processId;
+  const parent = parentPid ? ctx.procs.get(parentPid) : null;
 
-  if (parentPid !== `init:${callerOwnerUid}`) {
+  if (parentPid) {
     if (!parent || parent.ownerUid !== callerOwnerUid) {
       if (identity.process.uid !== 0) {
         return { ok: false, error: `Cannot spawn under foreign process: ${parentPid}` };
@@ -163,7 +150,8 @@ export async function handleProcSpawn(
 
   // The spawning human owns the process. The run-as identity is, in order of
   // precedence: an explicit `runAs` account, the parent's identity (so children
-  // of the personal agent also run as the agent), or the caller's identity.
+  // of an agent also run as that agent), or — for a parentless spawn — the
+  // caller's personal agent (processes run as an agent, not the human).
   const ownerUid = parent ? parent.ownerUid : callerOwnerUid;
   let baseIdentity: ProcessIdentity = parent
     ? {
@@ -182,6 +170,9 @@ export async function handleProcSpawn(
       return { ok: false, error: resolved.error };
     }
     baseIdentity = resolved.identity;
+  } else if (!parent) {
+    const agent = await ensurePersonalAgent(ctx, identity.process);
+    baseIdentity = agent.identity;
   }
 
   const hasRequestedMounts = args.mounts !== undefined;
@@ -198,7 +189,7 @@ export async function handleProcSpawn(
   const interactive = args.interactive ?? true;
 
   ctx.procs.spawn(pid, spawnIdentity, {
-    parentPid,
+    parentPid: parentPid ?? undefined,
     ownerUid,
     interactive,
     label: args.label,
@@ -206,6 +197,21 @@ export async function handleProcSpawn(
     mounts: materializedMounts.mounts,
     contextFiles: args.assignment?.contextFiles ?? [],
   });
+
+  // Each spawned process gets its own durable conversation so its transcript
+  // persists in the run-as agent's home, addressable independent of this
+  // (fungible) executor.
+  let conversationId: string | undefined;
+  if (ctx.conversations) {
+    const conversation = ctx.conversations.create({
+      ownerUid,
+      agentUid: spawnIdentity.uid,
+      agentHome: spawnIdentity.home,
+      title: args.label ?? null,
+    });
+    conversationId = conversation.conversationId;
+    ctx.conversations.setActivePid(conversationId, pid);
+  }
 
   await sendFrameToProcess(pid, {
     type: "req",
@@ -216,6 +222,7 @@ export async function handleProcSpawn(
       identity: spawnIdentity,
       interactive,
       assignment: args.assignment as ProcSpawnAssignment | undefined,
+      ...(conversationId ? { conversationId } : {}),
     },
   });
 
@@ -475,7 +482,10 @@ export async function forwardToProcess(
   const identity = ctx.identity!;
   const callerOwnerUid = resolveCallerOwnerUid(ctx);
   const args = frame.args as { pid?: string };
-  const pid = args.pid ?? `init:${callerOwnerUid}`;
+  // No explicit target → the caller's default ("inbox") conversation executor
+  // (allocating/reusing one), which is the stable surface for their personal
+  // agent.
+  const pid = args.pid ?? await ensureDefaultConversationExecutor(ctx, identity.process);
 
   const proc = ctx.procs.get(pid);
   if (!proc) {
@@ -496,8 +506,20 @@ export async function forwardToProcess(
     if (res.ok) {
       if (frame.call === "proc.kill") {
         ctx.procs.kill(pid);
-        // The executor is gone; detach it from any conversation it serviced so
-        // the next delivery allocates a fresh executor (and hydrates).
+        // The executor is gone. Record where its conversation's transcript was
+        // archived (so a future executor hydrates from it), then detach so the
+        // next delivery allocates a fresh executor.
+        const conversation = ctx.conversations?.getByActivePid(pid);
+        if (conversation) {
+          const archived = (res as { data?: { archives?: Array<{ path?: string }> } }).data;
+          const base = conversation.archiveBase.replace(/^\/+/, "");
+          const primaryArchive = archived?.archives?.find((a) =>
+            typeof a.path === "string" && a.path.replace(/^\/+/, "").startsWith(base),
+          );
+          if (primaryArchive?.path) {
+            ctx.conversations?.setLatestArchive(conversation.conversationId, primaryArchive.path);
+          }
+        }
         ctx.conversations?.clearActivePid(pid);
       }
       return (res as { data?: unknown }).data;

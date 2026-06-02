@@ -4,8 +4,9 @@
  * Each human gets a 1:1 personal agent that is a real user account in the
  * Unix-like identity model: its own uid, its own private primary group
  * (gid = uid, User Private Group), and its own /home. The agent is the
- * run-as identity for the human's persistent `init` process, while the human
- * remains the process owner (routing, visibility, quotas).
+ * run-as identity for the human's default conversation (and other processes
+ * spawned without an explicit run-as), while the human remains the process
+ * owner (routing, visibility, quotas).
  *
  * Bidirectional group membership wires the relationship:
  *   - the agent joins the human's private group (so it can act on the human's
@@ -28,6 +29,7 @@ import type { RequestFrame } from "../protocol/frames";
 import { isLocked } from "../auth/shadow";
 import { sendFrameToProcess } from "../shared/utils";
 import type { KernelContext } from "./context";
+import type { ConversationRecord } from "./conversations";
 import type { AuthStore } from "./auth-store";
 import {
   accountIdentity,
@@ -269,25 +271,77 @@ function defaultPersonaContext(agentName: string, ownerUsername: string): string
 }
 
 /**
- * Ensure the human's persistent `init` process exists, running as their
- * personal agent. Provisions the agent account on first use. Returns the pid
- * (always `init:{ownerUid}`).
+ * Allocate or reuse the executor (Process DO) servicing a conversation.
+ *
+ * The executor is a fungible, PID-like runtime slot: if a live one is already
+ * bound to the conversation it is reused, otherwise a fresh uuid-named process
+ * is spawned, bound (`active_pid`), and told which conversation it serves —
+ * hydrating from the conversation's last archive when resuming. The durable
+ * transcript lives in the agent home, so any executor can serve the same
+ * conversation losslessly.
  */
-export async function ensurePersonalInitProcess(
+export async function resolveConversationExecutor(
+  ctx: KernelContext,
+  conversation: ConversationRecord,
+  agentIdentity: ProcessIdentity,
+  opts?: { interactive?: boolean; label?: string },
+): Promise<string> {
+  const conversations = ctx.conversations;
+  if (!conversations) {
+    throw new Error("conversation registry unavailable");
+  }
+
+  if (conversation.activePid && ctx.procs.get(conversation.activePid)) {
+    return conversation.activePid;
+  }
+
+  const interactive = opts?.interactive ?? true;
+  const pid = `proc:${crypto.randomUUID()}`;
+  ctx.procs.spawn(pid, agentIdentity, {
+    ownerUid: conversation.ownerUid,
+    interactive,
+    label: opts?.label,
+  });
+  conversations.setActivePid(conversation.conversationId, pid);
+
+  await sendFrameToProcess(pid, {
+    type: "req",
+    id: crypto.randomUUID(),
+    call: "proc.setidentity",
+    args: {
+      pid,
+      identity: agentIdentity,
+      interactive,
+      conversationId: conversation.conversationId,
+      ...(conversation.latestArchive ? { hydrateFrom: conversation.latestArchive } : {}),
+    },
+  } as RequestFrame);
+
+  return pid;
+}
+
+/**
+ * Resolve the executor for a human's default ("inbox") conversation with their
+ * personal agent — the stable surface that replaces the old `init:<owner>`
+ * process. Provisions the agent account and the default conversation on first
+ * use, then allocates/reuses a fungible executor for it.
+ */
+export async function ensureDefaultConversationExecutor(
   ctx: KernelContext,
   human: ProcessIdentity,
 ): Promise<string> {
-  const agent = await ensurePersonalAgent(ctx, human);
-  const { pid, created } = ctx.procs.ensureInit(human.uid, agent.identity);
-
-  if (created) {
-    await sendFrameToProcess(pid, {
-      type: "req",
-      id: crypto.randomUUID(),
-      call: "proc.setidentity",
-      args: { pid, identity: agent.identity, profile: "init" },
-    } as RequestFrame);
+  const conversations = ctx.conversations;
+  if (!conversations) {
+    throw new Error("conversation registry unavailable");
   }
-
-  return pid;
+  const agent = await ensurePersonalAgent(ctx, human);
+  const { record } = conversations.ensureDefault(
+    human.uid,
+    agent.identity.uid,
+    agent.identity.home,
+  );
+  return resolveConversationExecutor(ctx, record, agent.identity, {
+    interactive: true,
+    label: `${agent.identity.username} (${human.username})`,
+  });
 }

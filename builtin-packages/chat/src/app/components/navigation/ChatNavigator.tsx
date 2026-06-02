@@ -48,7 +48,8 @@ export function MobileProcessNav(props: {
   onOpenThread(pid: string): void;
 }) {
   const activePid = props.active?.pid ?? "";
-  const selectedValue = activePid.startsWith("init:")
+  const isHome = props.active?.isHome === true;
+  const selectedValue = isHome
     ? "home"
     : activePid
       ? `process:${activePid}`
@@ -135,6 +136,7 @@ function ThreadsPane(props: {
   onOpenThread(pid: string): void;
 }) {
   const activePid = props.active?.pid ?? "";
+  const isHome = props.active?.isHome === true;
   const status = props.loading
     ? "Refreshing..."
     : props.error || (props.threads.length === 0 ? "No task processes yet." : "Task processes");
@@ -168,7 +170,7 @@ function ThreadsPane(props: {
       </div>
 
       <nav class="thread-list" aria-label="Chat processes">
-        <button type="button" class={"thread-row" + (activePid.startsWith("init:") ? " is-active" : "")} onClick={props.onHome}>
+        <button type="button" class={"thread-row" + (isHome ? " is-active" : "")} onClick={props.onHome}>
           <span class="row-icon"><HomeIcon /></span>
           <span class="thread-row-title">Personal Agent</span>
           <span class="thread-row-meta">Persistent personal conversation</span>

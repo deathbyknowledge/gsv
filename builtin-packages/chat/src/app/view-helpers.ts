@@ -641,9 +641,9 @@ function renderMarkdownHtml(value: string): string {
 }
 
 // Map an account.list summary into a chat agent. Humans (self/other) are not
-// conversation targets and are dropped. The personal agent keeps id "init" so
-// it is spawned through the per-user singleton init mechanism; every other
-// agent is started with `runAs` against its account username.
+// conversation targets and are dropped. The personal agent uses id "personal"
+// and is reached through its default conversation (spawned with no run-as);
+// every other agent is started with `runAs` against its account username.
 function normalizeProfile(value: unknown): Profile | null {
   const record = asRecord(value);
   const username = asString(record?.username);
@@ -654,7 +654,7 @@ function normalizeProfile(value: unknown): Profile | null {
   const runnable = record?.runnable !== false;
   const isPersonal = relation === "personal-agent";
   return {
-    id: isPersonal ? "init" : username,
+    id: isPersonal ? "personal" : username,
     alias: isPersonal ? "personal" : undefined,
     displayName,
     description: isPersonal
@@ -664,7 +664,7 @@ function normalizeProfile(value: unknown): Profile | null {
     interactive: true,
     startable: runnable,
     background: false,
-    spawnMode: isPersonal ? "singleton" : "new",
+    spawnMode: isPersonal ? "default" : "new",
     runAs: isPersonal ? undefined : username,
   };
 }
@@ -682,6 +682,7 @@ function normalizeProcessEntry(value: unknown): ProcessEntry | null {
     state: asString(record?.state) || "running",
     cwd: asString(record?.cwd) || "",
     createdAt: normalizeTimestampMs(record?.createdAt) || Date.now(),
+    isDefaultConversation: record?.isDefaultConversation === true,
   };
 }
 
@@ -765,6 +766,7 @@ function normalizeThreadContext(value: unknown): ThreadContext | null {
     cwd,
     conversationId,
     conversationTitle: asString(record?.conversationTitle),
+    isHome: record?.isHome === true,
   };
 }
 
@@ -791,12 +793,12 @@ function setStoredThreadContext(context: ThreadContext | null): ThreadContext | 
 
 function fallbackProfiles(): Profile[] {
   return [
-    { id: "init", alias: "personal", displayName: "Personal Agent", description: "Your persistent personal agent.", kind: "personal-agent", interactive: true, startable: true, background: false, spawnMode: "singleton" },
+    { id: "personal", alias: "personal", displayName: "Personal Agent", description: "Your persistent personal agent.", kind: "personal-agent", interactive: true, startable: true, background: false, spawnMode: "default" },
   ];
 }
 
 function titleForActive(active: ThreadContext, conversation: ConversationRecord | null, threads: ProcessEntry[]): string {
-  if (active.pid.startsWith("init:")) {
+  if (active.isHome) {
     return active.conversationId === "default" ? "Personal Agent" : active.conversationTitle || conversation?.title || "Personal Branch";
   }
   if (active.conversationId !== "default") {
@@ -810,16 +812,16 @@ function activeMeta(active: ThreadContext, conversation: ConversationRecord | nu
   if (active.conversationId !== "default") {
     return `${conversation?.title || active.conversationTitle || active.conversationId} - ${active.cwd}`;
   }
-  return active.pid.startsWith("init:") ? "Persistent personal conversation" : active.cwd;
+  return active.isHome ? "Persistent personal conversation" : active.cwd;
 }
 
 function draftConversationTitle(profile: Profile): string {
-  if (!profile || profile.spawnMode === "singleton") return profile?.displayName || "Personal Agent";
+  if (!profile || profile.spawnMode === "default") return profile?.displayName || "Personal Agent";
   return `New ${profile.displayName}`;
 }
 
 function draftConversationMeta(profile: Profile): string {
-  if (!profile || profile.spawnMode === "singleton") {
+  if (!profile || profile.spawnMode === "default") {
     return `Send a message to ${profile?.displayName || "your Personal Agent"}.`;
   }
   return `Send a message to start a conversation as ${profile.displayName}.`;

@@ -33,8 +33,26 @@ function makeContext(
       isPersonalAgentUid: vi.fn(() => false),
     },
     procs: {
-      ensureInit: vi.fn(() => ({ pid: "pid-1", created: false })),
       get: vi.fn(() => ({ uid: 1000, ownerUid: 1000 })),
+      spawn: vi.fn(),
+    },
+    conversations: {
+      ensureDefault: vi.fn(() => ({
+        record: {
+          conversationId: "conv-1",
+          ownerUid: 1000,
+          agentUid: 1001,
+          title: null,
+          isDefault: true,
+          activePid: "pid-1",
+          archiveBase: "/home/agent/conversations/conv-1",
+          latestArchive: null,
+          createdAt: 0,
+          lastActiveAt: null,
+        },
+        created: false,
+      })),
+      setActivePid: vi.fn(),
     },
     adapters: {
       status,

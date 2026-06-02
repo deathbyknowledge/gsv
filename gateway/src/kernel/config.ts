@@ -53,7 +53,7 @@ const GSV_PROCESS_ORCHESTRATION = [
   "",
   "Use `crontab` and cron files for automation. `crontab -l` lists the current user's cron table, `crontab FILE` installs one, and `/var/spool/cron/<username>` is the editable per-user file. Each job is a five-field cron line followed by a shell command. Use `sched list`, `sched run`, `sched enable`, `sched disable`, and `sched remove` only for low-level schedule inspection and control.",
   "",
-  "Cron examples: `printf '0 4 * * * proc compact init:1000 --conversation default --keep-last 80 --generate-summary\\n' > /var/spool/cron/sam`, `printf '0 9 * * * proc spawn --label daily-brief \"Prepare the daily brief.\"\\n' > ~/daily.cron && crontab ~/daily.cron`, `crontab -l`.",
+  "Cron examples: `printf '0 9 * * * proc spawn --label daily-brief \"Prepare the daily brief.\"\\n' > ~/daily.cron && crontab ~/daily.cron`, `crontab -l`. Each scheduled `proc spawn` runs as your personal agent in its own process.",
   "",
   "Use `man proc`, `man crontab`, `man sched`, `proc --help`, `crontab --help`, and `sched --help` for exact syntax. Keep arbitrary device work on the same tool surface by choosing the correct `target` rather than inventing a new model-specific tool.",
 ].join("\n");

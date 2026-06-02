@@ -23,6 +23,8 @@ export type ConversationRecord = {
   isDefault: boolean;
   activePid: string | null;
   archiveBase: string;
+  /** Archive path a resuming executor hydrates from (set when archived on kill). */
+  latestArchive: string | null;
   createdAt: number;
   lastActiveAt: number | null;
 };
@@ -58,10 +60,14 @@ export class ConversationRegistry {
         is_default INTEGER NOT NULL DEFAULT 0,
         active_pid TEXT,
         archive_base TEXT NOT NULL,
+        latest_archive TEXT,
         created_at INTEGER NOT NULL,
         last_active_at INTEGER
       )
     `);
+    try {
+      this.sql.exec("ALTER TABLE conversations ADD COLUMN latest_archive TEXT");
+    } catch {}
     this.sql.exec(
       "CREATE INDEX IF NOT EXISTS conversations_owner ON conversations (owner_uid, agent_uid)",
     );
@@ -107,8 +113,8 @@ export class ConversationRegistry {
     const createdAt = Date.now();
     this.sql.exec(
       `INSERT OR REPLACE INTO conversations
-        (conversation_id, owner_uid, agent_uid, title, is_default, active_pid, archive_base, created_at, last_active_at)
-       VALUES (?, ?, ?, ?, ?, NULL, ?, ?, NULL)`,
+        (conversation_id, owner_uid, agent_uid, title, is_default, active_pid, archive_base, latest_archive, created_at, last_active_at)
+       VALUES (?, ?, ?, ?, ?, NULL, ?, NULL, ?, NULL)`,
       conversationId,
       opts.ownerUid,
       opts.agentUid,
@@ -125,6 +131,7 @@ export class ConversationRegistry {
       isDefault: opts.isDefault ?? false,
       activePid: null,
       archiveBase,
+      latestArchive: null,
       createdAt,
       lastActiveAt: null,
     };
@@ -181,6 +188,16 @@ export class ConversationRegistry {
     );
   }
 
+  /** Record the archive a resuming executor should hydrate from. */
+  setLatestArchive(conversationId: string, archivePath: string | null): boolean {
+    this.sql.exec(
+      "UPDATE conversations SET latest_archive = ? WHERE conversation_id = ?",
+      archivePath,
+      conversationId,
+    );
+    return this.get(conversationId) !== null;
+  }
+
   setTitle(conversationId: string, title: string | null): boolean {
     this.sql.exec(
       "UPDATE conversations SET title = ? WHERE conversation_id = ?",
@@ -214,6 +231,7 @@ type RowShape = {
   is_default: number;
   active_pid: string | null;
   archive_base: string;
+  latest_archive: string | null;
   created_at: number;
   last_active_at: number | null;
 };
@@ -227,6 +245,7 @@ function toRecord(row: RowShape): ConversationRecord {
     isDefault: row.is_default !== 0,
     activePid: row.active_pid,
     archiveBase: row.archive_base,
+    latestArchive: row.latest_archive,
     createdAt: row.created_at,
     lastActiveAt: row.last_active_at,
   };

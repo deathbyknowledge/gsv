@@ -5,8 +5,9 @@
  * build KernelContext for process-originated syscalls, and for listing
  * processes per user.
  *
- * Process ids still follow the `<type>:<id>` convention, but prompt/runtime
- * profile is now explicit metadata stored alongside the process record.
+ * Process ids are opaque, fungible handles (`proc:<uuid>`): an executor is
+ * allocated per running process and discarded on kill. Durable state lives in
+ * the run-as agent's home (conversation transcripts), not in the executor.
  */
 
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
@@ -160,33 +161,6 @@ export class ProcessRegistry {
       opts.label ?? null,
       Date.now(),
     );
-  }
-
-  /**
-   * Get the init process for a user. Returns null if not yet spawned.
-   */
-  getInit(uid: number): ProcessRecord | null {
-    const initId = `init:${uid}`;
-    return this.get(initId);
-  }
-
-  /**
-   * Ensure the user's init process exists. Spawns it if missing.
-   * Returns { pid, created } so the caller knows whether to initialize the DO.
-   */
-  ensureInit(
-    ownerUid: number,
-    identity: ProcessIdentity,
-  ): { pid: string; created: boolean } {
-    const initId = `init:${ownerUid}`;
-    const existing = this.get(initId);
-    if (existing) return { pid: initId, created: false };
-
-    this.spawn(initId, identity, {
-      label: `init (${identity.username})`,
-      ownerUid,
-    });
-    return { pid: initId, created: true };
   }
 
   /** Owner uid for routing/visibility (the human who owns the process). */

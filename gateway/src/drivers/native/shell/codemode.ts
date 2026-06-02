@@ -5,7 +5,7 @@ import { resolveUserPath } from "../../../fs";
 import type { KernelContext } from "../../../kernel/context";
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import { sendFrameToProcess } from "../../../shared/utils";
-import { ensurePersonalInitProcess } from "../../../kernel/agents";
+import { ensureDefaultConversationExecutor } from "../../../kernel/agents";
 import { CODEMODE_RUN } from "../../../syscalls/constants";
 import type { CodeModeRunResult } from "../../../syscalls/codemode";
 import { requireCommandCapability } from "./common";
@@ -164,7 +164,7 @@ async function ensureCodeModeProcess(
   identity: ProcessIdentity,
   ctx: KernelContext,
 ): Promise<string> {
-  return ensurePersonalInitProcess(ctx, identity);
+  return ensureDefaultConversationExecutor(ctx, identity);
 }
 
 function resolveCodeModeCwd(

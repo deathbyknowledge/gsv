@@ -22,12 +22,18 @@ export type ThreadContext = {
   cwd: string;
   conversationId: string;
   conversationTitle: string | null;
+  /**
+   * True when this is the viewer's personal-agent default conversation (home).
+   * The executor pid is ephemeral, so home is identified by this flag rather
+   * than by the pid.
+   */
+  isHome: boolean;
 };
 
 // An agent the viewer can run a conversation as. Sourced from account.list.
-// `id` is "init" for the viewer's personal agent (a per-user singleton spawned
-// via the init mechanism) and the account username for every other agent
-// (spawned with `runAs`).
+// `id` is "personal" for the viewer's personal agent (its default conversation
+// is the stable home, spawned with no run-as) and the account username for
+// every other agent (each conversation spawned with `runAs`).
 export type Profile = {
   id: string;
   alias?: string;
@@ -37,8 +43,8 @@ export type Profile = {
   interactive: boolean;
   startable: boolean;
   background: boolean;
-  spawnMode: "singleton" | "new" | string;
-  /** Account username to run as; absent for the personal-agent singleton. */
+  spawnMode: "default" | "new" | string;
+  /** Account username to run as; absent for the personal agent. */
   runAs?: string;
 };
 
@@ -51,6 +57,8 @@ export type ProcessEntry = {
   state: string;
   cwd: string;
   createdAt: number;
+  /** True when this process is the viewer's personal-agent default conversation. */
+  isDefaultConversation: boolean;
 };
 
 export type ConversationRecord = {

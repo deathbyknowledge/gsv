@@ -93,7 +93,7 @@ import {
 import type { AppClientSessionContext } from "../protocol/app-session";
 import { listLocalPublicPackages } from "./pkg";
 import { handleProcSpawn } from "./proc-handlers";
-import { ensurePersonalInitProcess } from "./agents";
+import { ensureDefaultConversationExecutor } from "./agents";
 import { handleShellExec } from "../drivers/native/shell";
 import type {
   ScheduleRecord,
@@ -2143,7 +2143,7 @@ export class Kernel extends Host<Env> {
 
     if (outcome.identity.role === "user") {
       const freshIdentity = outcome.identity.process;
-      await this.ensureUserInitProcess(ctx, freshIdentity);
+      await this.ensureUserDefaultExecutor(ctx, freshIdentity);
       this.reconcileOwnedIdentities(freshIdentity.uid);
     }
 
@@ -2254,7 +2254,7 @@ export class Kernel extends Host<Env> {
     try {
       const data = await handleKernelSetup(frame.args, ctx);
       const setup = data as SysSetupResult;
-      await this.ensureUserInitProcess(ctx, setup.user);
+      await this.ensureUserDefaultExecutor(ctx, setup.user);
       this.sendOk(connection, frame.id, data);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -2708,23 +2708,36 @@ export class Kernel extends Host<Env> {
   }
 
   private resolveScheduleIdentity(uid: number): ProcessIdentity {
-    const initIdentity = this.procs.getIdentity(`init:${uid}`);
-    if (initIdentity) {
-      return initIdentity;
+    // Schedules for a human run as that human's personal agent (the same
+    // run-as identity as their default conversation); fall back to the account
+    // itself for system/agent accounts without a personal agent.
+    const agentUid = this.auth.getPersonalAgentUid(uid) ?? uid;
+    const account = this.auth.getPasswdByUid(agentUid) ?? this.auth.getPasswdByUid(uid);
+    if (account) {
+      return {
+        uid: account.uid,
+        gid: account.gid,
+        gids: this.auth.resolveGids(account.username, account.gid),
+        username: account.username,
+        home: account.home,
+        cwd: account.home,
+      };
     }
 
-    const user = this.auth.getPasswdByUid(uid);
-    if (!user) {
-      throw new Error(`Cannot resolve schedule owner uid ${uid}`);
+    // Fallback: derive from a live process owned by the uid (e.g. when passwd
+    // is not directly resolvable in a minimal context).
+    const owned = this.procs.list(uid)[0];
+    if (owned) {
+      return {
+        uid: owned.uid,
+        gid: owned.gid,
+        gids: owned.gids,
+        username: owned.username,
+        home: owned.home,
+        cwd: owned.cwd,
+      };
     }
-    return {
-      uid: user.uid,
-      gid: user.gid,
-      gids: this.auth.resolveGids(user.username, user.gid),
-      username: user.username,
-      home: user.home,
-      cwd: user.home,
-    };
+    throw new Error(`Cannot resolve schedule owner uid ${uid}`);
   }
 
   private deliverToOrigin(origin: RouteOrigin, frame: ResponseFrame): void {
@@ -2998,11 +3011,11 @@ export class Kernel extends Host<Env> {
     this.purgeStaleProvidedTargets(onlineTargets);
   }
 
-  private async ensureUserInitProcess(
+  private async ensureUserDefaultExecutor(
     ctx: KernelContext,
     human: ProcessIdentity,
   ): Promise<string> {
-    return ensurePersonalInitProcess(ctx, human);
+    return ensureDefaultConversationExecutor(ctx, human);
   }
 
   private extractRunId(payload: unknown): string | null {

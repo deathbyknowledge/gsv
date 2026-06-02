@@ -477,6 +477,7 @@ export function App({ backend }: { backend: ChatBackend }) {
         pid: record.pid,
         cwd: record.cwd,
         conversationId: "default",
+        isHome: true,
       }));
     } catch (error) {
       appendSystem("home open failed: " + formatError(error));
@@ -553,6 +554,7 @@ export function App({ backend }: { backend: ChatBackend }) {
           pid: record.pid,
           cwd: record.cwd,
           conversationId: "default",
+          isHome: !draftProfile.runAs,
         });
         if (!target) {
           appendSystem("thread start failed: invalid process target");

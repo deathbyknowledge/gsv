@@ -612,6 +612,12 @@ export type ProcListEntry = {
   label: string | null;
   createdAt: number;
   cwd: string;
+  /**
+   * True when this process is the owner's default-conversation executor (the
+   * stable "home" inbox running as their personal agent). Clients surface this
+   * conversation as home rather than as a regular spawned thread.
+   */
+  isDefaultConversation?: boolean;
 };
 
 export type ProcListResult = {
@@ -625,6 +631,19 @@ export type ProcSetIdentityArgs = {
   identity: ProcessIdentity;
   interactive?: boolean;
   assignment?: ProcSpawnAssignment;
+  /**
+   * Kernel conversation id this executor's primary thread belongs to. The
+   * executor archives/reads its primary thread under
+   * `/home/<agent>/conversations/<conversationId>/...`, so transcripts are
+   * addressed by the durable conversation rather than the fungible pid.
+   */
+  conversationId?: string;
+  /**
+   * Archive path to hydrate the primary thread from on resume (a fresh executor
+   * picking up a conversation that was previously archived). Deterministic: the
+   * kernel records this pointer when the prior executor archived on kill.
+   */
+  hydrateFrom?: string;
 };
 
 export type ProcSetIdentityResult = {

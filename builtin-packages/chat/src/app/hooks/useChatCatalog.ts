@@ -13,7 +13,7 @@ import {
 
 export function useChatCatalog(backend: ChatBackend) {
   const [profiles, setProfiles] = useState<Profile[]>(() => fallbackProfiles());
-  const [draftProfileId, setDraftProfileId] = useState("init");
+  const [draftProfileId, setDraftProfileId] = useState("personal");
   const [viewerUsername, setViewerUsername] = useState("You");
   const [threads, setThreads] = useState<ProcessEntry[]>([]);
   const [threadsLoading, setThreadsLoading] = useState(false);
@@ -32,7 +32,7 @@ export function useChatCatalog(backend: ChatBackend) {
   );
   const draftProfile = useMemo(() => {
     return conversationProfiles.find((profile) => profile.id === draftProfileId || profile.alias === draftProfileId)
-      ?? conversationProfiles.find((profile) => profile.id === "init")
+      ?? conversationProfiles.find((profile) => profile.id === "personal")
       ?? newConversationProfiles[0]
       ?? conversationProfiles.find((profile) => profile.id === "task")
       ?? fallbackProfiles()[0];
@@ -67,10 +67,10 @@ export function useChatCatalog(backend: ChatBackend) {
       const processRows = Array.isArray(asRecord(result)?.processes) ? asRecord(result)?.processes as unknown[] : [];
       const normalized = processRows.map(normalizeProcessEntry).filter(Boolean) as ProcessEntry[];
       setThreads(normalized.filter((entry) => {
-        // The personal-agent (init) conversation is surfaced as the home draft,
+        // The personal-agent default conversation is surfaced as the home draft,
         // not a thread; otherwise show every interactive conversation the
         // viewer owns regardless of which agent it runs as.
-        if (entry.pid.startsWith("init:")) return false;
+        if (entry.isDefaultConversation) return false;
         return entry.interactive;
       }));
     } catch (error) {
@@ -113,7 +113,7 @@ export function useChatCatalog(backend: ChatBackend) {
 
   useEffect(() => {
     if (conversationProfiles.length > 0 && !conversationProfiles.some((profile) => profile.id === draftProfileId || profile.alias === draftProfileId)) {
-      setDraftProfileId(conversationProfiles.find((profile) => profile.id === "init")?.id ?? conversationProfiles[0].id);
+      setDraftProfileId(conversationProfiles.find((profile) => profile.id === "personal")?.id ?? conversationProfiles[0].id);
     }
   }, [conversationProfiles, draftProfileId]);
 

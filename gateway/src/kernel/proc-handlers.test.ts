@@ -22,6 +22,28 @@ const IDENTITY: ProcessIdentity = {
 
 const sendFrameToProcessMock = vi.mocked(sendFrameToProcess);
 
+// A parent process record (owned by the caller) used by parented-spawn tests,
+// so the run-as identity is inherited from the parent.
+const SPAWN_PARENT = {
+  processId: `init:${IDENTITY.uid}`,
+  parentPid: null,
+  uid: IDENTITY.uid,
+  ownerUid: IDENTITY.uid,
+  gid: IDENTITY.gid,
+  gids: IDENTITY.gids,
+  username: IDENTITY.username,
+  home: IDENTITY.home,
+  cwd: IDENTITY.cwd,
+  interactive: true,
+};
+
+function spawnConversationsMock() {
+  return {
+    create: vi.fn(() => ({ conversationId: "conv-1" })),
+    setActivePid: vi.fn(),
+  };
+}
+
 describe("proc handlers", () => {
   beforeEach(() => {
     vi.resetAllMocks();
@@ -87,13 +109,14 @@ describe("proc handlers", () => {
       id: "send-1",
       call: "proc.send",
       args: {
+        pid: "proc-1",
         message: "hello",
         origin: spoofedOrigin,
       },
     } as RequestFrame, ctx);
 
     expect(sendFrameToProcessMock).toHaveBeenCalledWith(
-      "init:1000",
+      "proc-1",
       expect.objectContaining({
         call: "proc.send",
         args: expect.objectContaining({
@@ -141,9 +164,10 @@ describe("proc handlers", () => {
         capabilities: ["*"],
       },
       procs: {
-        get: vi.fn(() => null),
+        get: vi.fn(() => SPAWN_PARENT),
         spawn: vi.fn(),
       },
+      conversations: spawnConversationsMock(),
       packages: {
         resolve: vi.fn((packageId: string) => {
           if (packageId === "pkg-a") return pkgA;
@@ -197,9 +221,10 @@ describe("proc handlers", () => {
         capabilities: ["*"],
       },
       procs: {
-        get: vi.fn(() => null),
+        get: vi.fn(() => SPAWN_PARENT),
         spawn: vi.fn(),
       },
+      conversations: spawnConversationsMock(),
       packages: {
         resolve: vi.fn((packageId: string) => {
           if (packageId === "pkg-a") return pkgA;
@@ -244,9 +269,10 @@ describe("proc handlers", () => {
         capabilities: ["*"],
       },
       procs: {
-        get: vi.fn(() => null),
+        get: vi.fn(() => SPAWN_PARENT),
         spawn: vi.fn(),
       },
+      conversations: spawnConversationsMock(),
       packages: {
         resolve: vi.fn(() => null),
         list: vi.fn(() => []),
@@ -272,9 +298,10 @@ describe("proc handlers", () => {
         capabilities: ["*"],
       },
       procs: {
-        get: vi.fn(() => null),
+        get: vi.fn(() => SPAWN_PARENT),
         spawn: vi.fn(),
       },
+      conversations: spawnConversationsMock(),
       packages: {
         resolve: vi.fn((packageId: string) => packageId === "pkg-a" ? pkg : null),
         list: vi.fn(() => [pkg]),
@@ -320,9 +347,10 @@ describe("proc handlers", () => {
         capabilities: ["*"],
       },
       procs: {
-        get: vi.fn(() => null),
+        get: vi.fn(() => SPAWN_PARENT),
         spawn: vi.fn(),
       },
+      conversations: spawnConversationsMock(),
       packages: {
         resolve: vi.fn((packageId: string) => packageId === "pkg-a" ? pkg : null),
         list: vi.fn(() => [pkg]),
@@ -368,9 +396,10 @@ describe("proc handlers", () => {
         capabilities: ["*"],
       },
       procs: {
-        get: vi.fn(() => null),
+        get: vi.fn(() => SPAWN_PARENT),
         spawn: vi.fn(),
       },
+      conversations: spawnConversationsMock(),
       packages: {
         resolve: vi.fn((packageId: string) => packageId === "pkg-a" ? pkg : null),
         list: vi.fn(() => [pkg]),

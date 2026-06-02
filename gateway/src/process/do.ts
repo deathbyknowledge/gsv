@@ -608,6 +608,15 @@ export class Process extends Host<Env> {
   }
 
   /**
+   * The kernel conversation id this executor's primary ("default") thread maps
+   * to, when assigned at spawn. Drives where the primary thread's transcripts
+   * are archived/hydrated under the agent home, decoupling them from the pid.
+   */
+  private get primaryConversationId(): string | null {
+    return this.store.getValue("primaryConversationId");
+  }
+
+  /**
    * Single entry point — called by the Kernel to deliver frames.
    */
   async recvFrame(frame: Frame) {
@@ -679,13 +688,21 @@ export class Process extends Host<Env> {
             identity: ProcessIdentity;
             interactive?: boolean;
             assignment?: ProcSpawnAssignment;
+            conversationId?: string;
+            hydrateFrom?: string;
           };
           this.store.setValue("pid", idArgs.pid);
           this.store.setValue("identity", JSON.stringify(idArgs.identity));
           if (idArgs.interactive !== undefined) {
             this.store.setValue("interactive", idArgs.interactive ? "1" : "0");
           }
+          if (idArgs.conversationId) {
+            this.store.setValue("primaryConversationId", idArgs.conversationId);
+          }
           this.store.setProcessContextFiles(idArgs.assignment?.contextFiles ?? []);
+          if (idArgs.hydrateFrom) {
+            await this.hydratePrimaryConversation(idArgs.hydrateFrom);
+          }
           let startedRunId: string | undefined;
           if (idArgs.assignment?.autoStart && !this.currentRun) {
             startedRunId = crypto.randomUUID();
@@ -2868,9 +2885,42 @@ export class Process extends Host<Env> {
    */
   private conversationArchiveDir(conversationId: string): string {
     const homeKey = this.identity.home.replace(/^\/+/, "").replace(/\/+$/, "");
-    return `${homeKey}/conversations/${encodeURIComponent(
-      normalizeConversationId(conversationId),
-    )}`;
+    const normalized = normalizeConversationId(conversationId);
+    // The primary ("default") thread is addressed by the durable kernel
+    // conversation id (e.g. default:<owner>:<agent>) when one is assigned, so
+    // transcripts live at a stable, executor-independent path. Ad-hoc threads
+    // (forks opened via proc.conversation.open) keep their local id.
+    const pathId = normalized === DEFAULT_CONVERSATION_ID && this.primaryConversationId
+      ? this.primaryConversationId
+      : normalized;
+    return `${homeKey}/conversations/${encodeURIComponent(pathId)}`;
+  }
+
+  /**
+   * Hydrate the primary ("default") thread from a previously-archived transcript
+   * when a fresh executor resumes a conversation. Lossless: the archive holds
+   * the working window as it was at kill (already incorporating any prior
+   * size-compaction summaries), so we restore exactly that window.
+   */
+  private async hydratePrimaryConversation(archivePath: string): Promise<void> {
+    if (this.store.messageCount(DEFAULT_CONVERSATION_ID) > 0) {
+      return; // Already has live messages; never double-hydrate.
+    }
+    let archived: ArchivedMessageRecord[];
+    try {
+      archived = await this.readArchivedMessageRecords(archivePath);
+    } catch (error) {
+      console.warn(
+        `[Process] Failed to hydrate conversation from ${archivePath}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return;
+    }
+    const conversation = this.store.ensureConversation(DEFAULT_CONVERSATION_ID);
+    for (const record of archived) {
+      this.appendRestoredArchivedMessage(record, DEFAULT_CONVERSATION_ID, conversation.generation);
+    }
   }
 
   private async archiveConversationMessages(

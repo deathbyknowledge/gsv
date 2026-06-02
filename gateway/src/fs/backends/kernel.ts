@@ -211,7 +211,7 @@ export class KernelMountBackend implements MountBackend {
 
     let pid = parts[0];
     if (pid === "self") {
-      pid = this.selfPid ?? `init:${this.identity.uid}`;
+      pid = this.selfProcessPid();
     }
 
     const attrParts = parts.slice(1);
@@ -482,10 +482,22 @@ export class KernelMountBackend implements MountBackend {
     return false;
   }
 
+  /**
+   * The pid `/proc/self` refers to: the current process when inside one,
+   * otherwise the caller's live default ("inbox") conversation executor (their
+   * personal agent). Returns "" when no executor is live, yielding ENOENT.
+   */
+  private selfProcessPid(): string {
+    if (this.selfPid) return this.selfPid;
+    if (!this.kernel) return "";
+    const agentUid = this.kernel.auth.getPersonalAgentUid(this.identity.uid) ?? this.identity.uid;
+    return this.kernel.conversations?.getDefault(this.identity.uid, agentUid)?.activePid ?? "";
+  }
+
   private resolveVisibleProcess(pidSegment: string) {
     if (!this.kernel) return null;
     const pid = pidSegment === "self"
-      ? this.selfPid ?? `init:${this.identity.uid}`
+      ? this.selfProcessPid()
       : pidSegment;
     const proc = this.kernel.procs.get(pid);
     if (!proc) return null;
@@ -820,7 +832,7 @@ export class KernelMountBackend implements MountBackend {
       if (parts.length === 2 && parts[1] === "context.d") {
         let pid = parts[0];
         if (pid === "self") {
-          pid = this.selfPid ?? `init:${this.identity.uid}`;
+          pid = this.selfProcessPid();
         }
         return this.kernel.procs.get(pid) !== null;
       }

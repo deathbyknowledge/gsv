@@ -59,7 +59,7 @@ export function renderManualPage(topic?: string): string | null {
         "EXAMPLES",
         "  crontab -l",
         "  crontab jobs.cron",
-        "  printf '0 4 * * * proc compact init:1000 --conversation default --keep-last 80 --generate-summary\\n' > /var/spool/cron/sam",
+        "  printf '0 9 * * * proc spawn --label daily-brief \"Prepare the daily brief.\"\\n' > /var/spool/cron/sam",
         "",
       ].join("\n");
 

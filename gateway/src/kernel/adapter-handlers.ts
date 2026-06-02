@@ -27,7 +27,7 @@ import type { RequestFrame } from "../protocol/frames";
 import { sendFrameToProcess } from "../shared/utils";
 import type { InteractionOrigin } from "../syscalls/interaction-origin";
 import { isVisibleAdapterTarget } from "./adapter-targets";
-import { ensurePersonalInitProcess } from "./agents";
+import { ensureDefaultConversationExecutor } from "./agents";
 
 type AdapterServiceBinding = Fetcher & Partial<AdapterWorkerInterface>;
 type ProcSendData = {
@@ -305,20 +305,11 @@ export async function handleAdapterInbound(
     return { ok: false, error: `Unknown local user uid=${uid}` };
   }
 
-  const initPid = await ensureUserInitProcess(userIdentity, ctx);
-  let pid =
-    ctx.adapters.surfaceRoutes.resolvePid(
-      adapter,
-      accountId,
-      message.surface.kind,
-      message.surface.id,
-      uid,
-    ) ?? initPid;
-
-  const target = ctx.procs.get(pid);
-  if (!target || target.uid !== uid) {
-    pid = initPid;
-  }
+  // All inbound channels feed the user's default ("inbox") conversation with
+  // their personal agent — the stable surface. Per-channel/topic splitting is
+  // a later, explicit action (agent-driven fork/bind), not the zero-config
+  // default. Allocates/reuses a fungible executor for that conversation.
+  const pid = await ensureUserDefaultExecutor(userIdentity, ctx);
 
   const pendingHil = await getPendingHil(pid);
   if (pendingHil) {
@@ -575,8 +566,8 @@ function identityForUid(uid: number, ctx: KernelContext): ProcessIdentity | null
   };
 }
 
-async function ensureUserInitProcess(identity: ProcessIdentity, ctx: KernelContext): Promise<string> {
-  return ensurePersonalInitProcess(ctx, identity);
+async function ensureUserDefaultExecutor(identity: ProcessIdentity, ctx: KernelContext): Promise<string> {
+  return ensureDefaultConversationExecutor(ctx, identity);
 }
 
 function resolveActorId(message: AdapterInboundMessage): string | null {
