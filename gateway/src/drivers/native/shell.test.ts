@@ -277,16 +277,31 @@ describe("targets native command", () => {
 });
 
 describe("proc native command", () => {
-  it("lists spawnable profiles", async () => {
+  it("lists runnable accounts", async () => {
+    const passwd = [
+      { username: "sam", uid: 1000, gid: 1000, gecos: "Sam", home: "/home/sam", shell: "/bin/init" },
+      { username: "sam-agent", uid: 1001, gid: 1001, gecos: "Sam's agent", home: "/home/sam-agent", shell: "/bin/init" },
+    ];
+    const auth = {
+      getPasswdByUid: vi.fn((uid: number) => passwd.find((u) => u.uid === uid) ?? null),
+      getPasswdEntries: vi.fn(() => passwd.map((u) => ({ ...u }))),
+      getPersonalAgentUid: vi.fn(() => 1001),
+      getGroupByGid: vi.fn((gid: number) => ({ name: passwd.find((u) => u.uid === gid)?.username ?? "g", gid, members: [] })),
+      getShadowByUsername: vi.fn((username: string) => ({ username, hash: username === "sam-agent" ? "!" : "x" })),
+    } as unknown as KernelContext["auth"];
+
     const result = await handleShellExec(
-      { input: "proc profiles" },
-      makeContext({ capabilities: ["proc.profile.list"] }),
+      { input: "proc agents" },
+      makeContext({
+        capabilities: ["account.list"],
+        auth,
+        procs: { getOwnerUid: () => 1000 } as unknown as KernelContext["procs"],
+      }),
     );
 
     expect(result.ok).toBe(true);
-    expect(result.stdout).toContain("init\tsystem\tyes\tno\tPersonal Agent");
-    expect(result.stdout).toContain("task\tsystem\tyes\tno\tWorker");
-    expect(result.stdout).toContain("cron\tsystem\tno\tyes\tCron");
+    expect(result.stdout).toContain("1000\tsam\tself\tSam");
+    expect(result.stdout).toContain("1001\tsam-agent\tpersonal-agent\tSam's agent");
   });
 
   it("routes spawn through the native proc command surface", async () => {

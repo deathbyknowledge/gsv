@@ -4,9 +4,9 @@ import type { KernelContext } from "../../../kernel/context";
 import {
   handleProcIpcCall,
   handleProcIpcSend,
-  handleProcProfileList,
   handleProcSpawn,
 } from "../../../kernel/proc-handlers";
+import { handleAccountList } from "../../../kernel/agents";
 import type { SyscallName } from "../../../syscalls";
 import type { ProcSpawnArgs } from "../../../syscalls/proc";
 import type { AiContextProfile } from "../../../syscalls/ai";
@@ -52,25 +52,24 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
       }
       return { stdout: `${lines.join("\n")}\n`, stderr: "", exitCode: 0 };
     }
-    case "profiles": {
-      requireCommandCapability(ctx, "proc.profile.list");
+    case "agents": {
+      requireCommandCapability(ctx, "account.list");
       const json = rest.includes("--json");
       const unexpected = rest.find((arg) => arg !== "--json");
       if (unexpected) {
         throw new Error(`unexpected argument: ${unexpected}`);
       }
-      const result = await handleProcProfileList({}, ctx);
+      const result = handleAccountList({}, ctx);
       if (json) {
         return { stdout: `${JSON.stringify(result, null, 2)}\n`, stderr: "", exitCode: 0 };
       }
-      const lines = ["ID\tKIND\tINTERACTIVE\tBACKGROUND\tNAME"];
-      for (const profile of result.profiles) {
+      const lines = ["UID\tUSERNAME\tRELATION\tNAME"];
+      for (const account of result.accounts) {
         lines.push([
-          profile.id,
-          profile.kind,
-          profile.interactive ? "yes" : "no",
-          profile.background ? "yes" : "no",
-          profile.displayName,
+          String(account.uid),
+          account.username,
+          account.relation,
+          account.displayName,
         ].join("\t"));
       }
       return { stdout: `${lines.join("\n")}\n`, stderr: "", exitCode: 0 };
@@ -256,6 +255,7 @@ async function runProcConversationSyscall(
 
 function parseProcSpawnCommand(args: string[]): ProcSpawnArgs {
   let profile: string | undefined;
+  let runAs: string | undefined;
   let label: string | undefined;
   let prompt: string | undefined;
   let parentPid: string | undefined;
@@ -272,6 +272,11 @@ function parseProcSpawnCommand(args: string[]): ProcSpawnArgs {
     if (current === "--profile") {
       index += 1;
       profile = requireShellOptionValue(args[index], current);
+      continue;
+    }
+    if (current === "--as" || current === "--run-as") {
+      index += 1;
+      runAs = requireShellOptionValue(args[index], current);
       continue;
     }
     if (current === "--label") {
@@ -311,6 +316,7 @@ function parseProcSpawnCommand(args: string[]): ProcSpawnArgs {
   const finalPrompt = prompt ?? (positionalPrompt || undefined);
   return {
     ...(profile ? { profile: profile as AiContextProfile } : {}),
+    ...(runAs ? { runAs } : {}),
     ...(label ? { label } : {}),
     ...(finalPrompt ? { prompt: finalPrompt } : {}),
     ...(parentPid ? { parentPid } : {}),
@@ -751,8 +757,8 @@ function procUsage(): string {
     "Usage:",
     "  proc self",
     "  proc list",
-    "  proc profiles [--json]",
-    "  proc spawn [--profile PROFILE] [--label LABEL] [--prompt TEXT] [--parent PID] [--cwd PATH] <prompt>",
+    "  proc agents [--json]",
+    "  proc spawn [--as ACCOUNT] [--label LABEL] [--prompt TEXT] [--parent PID] [--cwd PATH] <prompt>",
     "  proc spawn --json JSON",
     "  proc segments [--pid PID] [--conversation id]",
     "  proc policy [--pid PID] [--conversation id] [--overflow auto-compact|fail] [--compact-at N] [--keep-last N]",
