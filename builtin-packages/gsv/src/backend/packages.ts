@@ -398,7 +398,7 @@ function packageUpdateAvailable(
     return true;
   }
   const changedPaths = changedPathsByComparison.get(key);
-  if (changedPaths === null) {
+  if (!changedPaths) {
     return true;
   }
   return changedPaths.some((path) => pathIsInPackageSubdir(path, pkg.source.subdir));
