@@ -181,6 +181,8 @@ import type {
   SysLinkListResult,
   SysLinkConsumeArgs,
   SysLinkConsumeResult,
+  AccountCreateArgs,
+  AccountCreateResult,
 } from "@gsv/protocol/syscalls/system";
 import type {
   SchedulerListArgs,
@@ -364,6 +366,9 @@ export type SyscallDomains = {
   "sys.link.list": { args: SysLinkListArgs; result: SysLinkListResult };
   "sys.link.consume": { args: SysLinkConsumeArgs; result: SysLinkConsumeResult };
 
+  // Accounts (humans and agents)
+  "account.create": { args: AccountCreateArgs; result: AccountCreateResult };
+
   // Scheduler (cron)
   "sched.list": { args: SchedulerListArgs; result: SchedulerListResult };
   "sched.add": { args: SchedulerAddArgs; result: SchedulerAddResult };
@@ -413,7 +418,8 @@ type SyscallDomain =
   | "sched"
   | "notification"
   | "adapter"
-  | "signal";
+  | "signal"
+  | "account";
 
 function domainOf(syscall: SyscallName): SyscallDomain {
   return syscall.split(".")[0] as SyscallDomain;

@@ -71,6 +71,7 @@ const DEFAULT_CAPABILITIES: [number, string[]][] = [
     "sys.token.revoke",
     "sys.unlink",
     "sys.link.consume",
+    "account.create",
   ]],  // users
   [101, ["fs.*", "shell.*"]],                             // drivers
   [102, ["adapter.*"]],                                   // services

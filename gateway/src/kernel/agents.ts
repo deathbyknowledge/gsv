@@ -14,20 +14,22 @@
  *     agent's files and effectively "become" the agent)
  */
 
-import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
+import type {
+  AccountCreateArgs,
+  AccountCreateResult,
+  AccountKind,
+  ProcessIdentity,
+} from "@gsv/protocol/syscalls/system";
 import type { RequestFrame } from "../protocol/frames";
-import { makeShadowEntry } from "../auth/shadow";
 import { sendFrameToProcess } from "../shared/utils";
-import { ensureHomeStorageLayout } from "./home-knowledge";
-import { RipgitClient, type RipgitApplyOp } from "../fs/ripgit/client";
-import { homeKnowledgeRepoRef } from "../fs/ripgit/repos";
 import type { KernelContext } from "./context";
 import type { AuthStore } from "./auth-store";
-import type { PasswdEntry } from "../auth/passwd";
-
-const TEXT_ENCODER = new TextEncoder();
-
-const AGENT_USERNAME_RE = /^[a-z_][a-z0-9_-]{0,31}$/;
+import {
+  accountIdentity,
+  createAccount,
+  isUsernameAvailable,
+  normalizeAccountName,
+} from "./accounts";
 
 /**
  * Curated, tasteful default names for the personal agent. The first available
@@ -57,11 +59,7 @@ export type PersonalAgentProvision = {
  * name is malformed or already taken (caller may then fall back to a default).
  */
 export function normalizeAgentName(auth: AuthStore, value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const name = value.trim().toLowerCase();
-  if (!AGENT_USERNAME_RE.test(name)) return null;
-  if (auth.getPasswdByUsername(name) || auth.getGroupByName(name)) return null;
-  return name;
+  return normalizeAccountName(auth, value);
 }
 
 function pickAgentName(auth: AuthStore, preferred?: string): string {
@@ -69,7 +67,7 @@ function pickAgentName(auth: AuthStore, preferred?: string): string {
   if (normalizedPreferred) return normalizedPreferred;
 
   for (const name of AGENT_NAME_POOL) {
-    if (!auth.getPasswdByUsername(name) && !auth.getGroupByName(name)) {
+    if (isUsernameAvailable(auth, name)) {
       return name;
     }
   }
@@ -77,22 +75,11 @@ function pickAgentName(auth: AuthStore, preferred?: string): string {
   let suffix = 1;
   for (;;) {
     const name = `agent${suffix}`;
-    if (!auth.getPasswdByUsername(name) && !auth.getGroupByName(name)) {
+    if (isUsernameAvailable(auth, name)) {
       return name;
     }
     suffix += 1;
   }
-}
-
-function agentIdentity(auth: AuthStore, entry: PasswdEntry): ProcessIdentity {
-  return {
-    uid: entry.uid,
-    gid: entry.gid,
-    gids: auth.resolveGids(entry.username, entry.gid),
-    username: entry.username,
-    home: entry.home,
-    cwd: entry.home,
-  };
 }
 
 /**
@@ -104,7 +91,7 @@ export async function ensurePersonalAgent(
   human: ProcessIdentity,
   preferredName?: string,
 ): Promise<PersonalAgentProvision> {
-  const { auth, env } = ctx;
+  const { auth } = ctx;
 
   // System accounts (root, services; uid < 1000) and agent accounts themselves
   // do not get their own personal agent — their processes run as themselves.
@@ -116,80 +103,86 @@ export async function ensurePersonalAgent(
   if (existingUid !== null) {
     const entry = auth.getPasswdByUid(existingUid);
     if (entry) {
-      return { identity: agentIdentity(auth, entry), created: false };
+      return { identity: accountIdentity(auth, entry), created: false };
     }
     // Stale mapping (account removed) — fall through and recreate.
   }
 
   const agentName = pickAgentName(auth, preferredName);
-  const agentUid = auth.nextUid();
-  const agentGid = agentUid; // User Private Group
-  const home = `/home/${agentName}`;
-
-  auth.addUser({
+  return createAccount(ctx, {
+    kind: "agent",
     username: agentName,
-    uid: agentUid,
-    gid: agentGid,
     gecos: `${human.username}'s agent`,
-    home,
-    shell: "/bin/init",
+    ownerUid: human.uid,
+    shared: true,
+    crossMemberOwner: true,
+    personalAgentOf: human.uid,
+    persona: defaultPersonaContext(agentName, human.username),
   });
-  // Locked account: the agent is never logged into directly.
-  auth.setShadow(makeShadowEntry(agentName, "!"));
-
-  // Private primary group; the human is a member so they can act as the agent.
-  if (!auth.getGroupByName(agentName) && !auth.getGroupByGid(agentGid)) {
-    auth.addGroup({ name: agentName, gid: agentGid, members: [human.username] });
-  }
-
-  // Standard user capabilities.
-  const usersGroup = auth.getGroupByName("users");
-  if (usersGroup && !usersGroup.members.includes(agentName)) {
-    auth.updateGroupMembers("users", [...usersGroup.members, agentName]);
-  }
-
-  // Cross-membership: agent joins the human's private group.
-  const humanGroup = auth.getGroupByName(human.username);
-  if (humanGroup && !humanGroup.members.includes(agentName)) {
-    auth.updateGroupMembers(human.username, [...humanGroup.members, agentName]);
-  }
-
-  auth.setPersonalAgent(human.uid, agentUid);
-
-  const entry = auth.getPasswdByUid(agentUid)!;
-  const identity = agentIdentity(auth, entry);
-
-  await ensureHomeStorageLayout(env, identity);
-  await seedAgentPersona(env, identity, human.username);
-
-  return { identity, created: true };
 }
 
-async function seedAgentPersona(
-  env: Pick<Env, "STORAGE" | "RIPGIT">,
-  identity: ProcessIdentity,
-  ownerUsername: string,
-): Promise<void> {
-  if (!env.RIPGIT) return;
+/**
+ * Create an account on behalf of an authenticated caller. Humans are an
+ * administrative action (root only); agents are owned by the caller's human.
+ */
+export async function handleAccountCreate(
+  args: AccountCreateArgs,
+  ctx: KernelContext,
+): Promise<AccountCreateResult> {
+  const { auth } = ctx;
+  const caller = ctx.identity;
+  if (!caller) {
+    throw new Error("account.create requires an authenticated identity");
+  }
 
-  const client = new RipgitClient(env.RIPGIT);
-  const repo = homeKnowledgeRepoRef(identity.username);
-  const existing = await client.readPath(repo, "context.d/05-persona.md");
-  if (existing.kind !== "missing") return;
+  const kind: AccountKind = args.kind === "human" ? "human" : "agent";
+  const name = normalizeAccountName(auth, args.username);
+  if (!name) {
+    throw new Error(`Invalid or unavailable username: ${String(args.username)}`);
+  }
 
-  const ops: RipgitApplyOp[] = [{
-    type: "put",
-    path: "context.d/05-persona.md",
-    contentBytes: Array.from(TEXT_ENCODER.encode(defaultPersonaContext(identity.username, ownerUsername))),
-  }];
+  if (kind === "human") {
+    // Creating human accounts is an administrative action.
+    if (!caller.capabilities.includes("*")) {
+      throw new Error("Creating human accounts requires root");
+    }
+    const { identity } = await createAccount(ctx, {
+      kind: "human",
+      username: name,
+      password: args.password,
+      shared: true,
+    });
+    const agent = await ensurePersonalAgent(ctx, identity);
+    return { account: identity, kind, personalAgent: agent.identity };
+  }
 
-  await client.apply(
-    repo,
-    identity.username,
-    `${identity.username}@gsv.local`,
-    "gsv: scaffold agent persona",
-    ops,
-  );
+  const ownerUid = resolveCallerOwnerUid(ctx);
+  const ownerName = auth.getPasswdByUid(ownerUid)?.username ?? "user";
+  const persona = typeof args.persona === "string" && args.persona.trim()
+    ? args.persona
+    : defaultPersonaContext(name, ownerName);
+  const { identity } = await createAccount(ctx, {
+    kind: "agent",
+    username: name,
+    gecos: `${ownerName}'s agent`,
+    ownerUid,
+    shared: true,
+    crossMemberOwner: true,
+    persona,
+  });
+  return { account: identity, kind };
+}
+
+/**
+ * The human that owns the caller's processes: the process owner_uid when called
+ * from inside a process, otherwise the connecting identity's uid.
+ */
+function resolveCallerOwnerUid(ctx: KernelContext): number {
+  if (ctx.processId) {
+    const ownerUid = ctx.procs.getOwnerUid(ctx.processId);
+    if (ownerUid != null) return ownerUid;
+  }
+  return ctx.identity!.process.uid;
 }
 
 function defaultPersonaContext(agentName: string, ownerUsername: string): string {

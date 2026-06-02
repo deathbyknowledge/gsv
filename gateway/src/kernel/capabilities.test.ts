@@ -183,6 +183,7 @@ describe("CapabilityStore", () => {
 
     const userCaps = store.list(100);
     expect(userCaps.map((r) => r.capability)).toEqual([
+      "account.create",
       "adapter.connect",
       "adapter.disconnect",
       "adapter.status",

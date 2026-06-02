@@ -37,6 +37,7 @@ import {
   handleProcSpawn,
   forwardToProcess,
 } from "./proc-handlers";
+import { handleAccountCreate } from "./agents";
 import { handleSysConfigGet, handleSysConfigSet } from "./sys/config";
 import { handleSysDeviceGet, handleSysDeviceList, handleSysDeviceUpdate } from "./sys/device";
 import { handleSysBootstrap } from "./sys/bootstrap";
@@ -541,6 +542,11 @@ async function dispatchNative(
         break;
       case "sys.link.consume":
         data = handleSysLinkConsume(frame.args, ctx);
+        break;
+
+      // --- account.* ---
+      case "account.create":
+        data = await handleAccountCreate(frame.args, ctx);
         break;
 
       // --- sched.* ---

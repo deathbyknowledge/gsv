@@ -66,6 +66,34 @@ export type UserPermissions = {
   denials: string[];
 };
 
+/**
+ * Account kinds in the unified identity model.
+ * - `human`: a real person who logs in (password), member of `users`, gets a
+ *   1:1 personal agent and an init process.
+ * - `agent`: a non-login service identity owned by a human; runs *as* itself
+ *   while the owning human owns its processes.
+ */
+export type AccountKind = "human" | "agent";
+
+export type AccountCreateArgs = {
+  kind: AccountKind;
+  /** `^[a-z_][a-z0-9_-]{0,31}$`, globally unique across users and groups. */
+  username: string;
+  /** Required for `kind: "human"`; must be at least 8 characters. */
+  password?: string;
+  /** Optional GECOS/display string. */
+  gecos?: string;
+  /** Optional persona seed for `kind: "agent"` (written to context.d/05-persona.md). */
+  persona?: string;
+};
+
+export type AccountCreateResult = {
+  account: ProcessIdentity;
+  kind: AccountKind;
+  /** For `kind: "human"`: the provisioned 1:1 personal agent identity. */
+  personalAgent?: ProcessIdentity;
+};
+
 export type SysSetupArgs = {
   username: string;
   password: string;
