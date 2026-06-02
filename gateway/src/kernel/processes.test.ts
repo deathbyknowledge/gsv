@@ -23,6 +23,20 @@ function createMockSql() {
       return rows([] as T[]);
     }
 
+    if (q.startsWith("UPDATE processes SET owner_uid = uid")) {
+      for (const row of table.values()) {
+        if (row.owner_uid === null || row.owner_uid === undefined) row.owner_uid = row.uid;
+      }
+      return rows([] as T[]);
+    }
+
+    if (q.startsWith("UPDATE processes SET interactive = 0")) {
+      for (const row of table.values()) {
+        if (row.profile === "cron") row.interactive = 0;
+      }
+      return rows([] as T[]);
+    }
+
     if (q.startsWith("UPDATE processes SET cwd = home")) {
       for (const row of table.values()) {
         if (!row.cwd) row.cwd = row.home;
@@ -108,7 +122,9 @@ function createMockSql() {
         process_id,
         parent_pid,
         uid,
+        owner_uid,
         profile,
+        interactive,
         gid,
         gids,
         username,
@@ -122,7 +138,9 @@ function createMockSql() {
         string,
         string | null,
         number,
+        number,
         string,
+        number,
         number,
         string,
         string,
@@ -138,7 +156,9 @@ function createMockSql() {
         process_id,
         parent_pid,
         uid,
+        owner_uid,
         profile,
+        interactive,
         gid,
         gids,
         username,
@@ -163,6 +183,12 @@ function createMockSql() {
       return rows((row ? [row] : []) as T[]);
     }
 
+    if (q.startsWith("SELECT owner_uid, uid FROM processes WHERE process_id = ?")) {
+      const [processId] = bindings as [string];
+      const row = table.get(processId);
+      return rows((row ? [{ owner_uid: row.owner_uid ?? null, uid: row.uid }] : []) as T[]);
+    }
+
     if (q.startsWith("SELECT mounts FROM processes WHERE process_id = ?")) {
       const [processId] = bindings as [string];
       const row = table.get(processId);
@@ -175,9 +201,9 @@ function createMockSql() {
       return rows((row ? [row] : []) as T[]);
     }
 
-    if (q.startsWith("SELECT * FROM processes WHERE uid = ?")) {
-      const [uid] = bindings as [number];
-      const matches = [...table.values()].filter((row) => row.uid === uid);
+    if (q.startsWith("SELECT * FROM processes WHERE owner_uid = ?")) {
+      const [ownerUid] = bindings as [number];
+      const matches = [...table.values()].filter((row) => (row.owner_uid ?? row.uid) === ownerUid);
       return rows(matches as T[]);
     }
 

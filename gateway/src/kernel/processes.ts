@@ -39,7 +39,9 @@ export type ProcessRecord = {
   processId: string;
   parentPid: string | null;
   uid: number;
+  ownerUid: number;
   profile: AiContextProfile;
+  interactive: boolean;
   gid: number;
   gids: number[];
   username: string;
@@ -65,7 +67,9 @@ export class ProcessRegistry {
         process_id TEXT PRIMARY KEY,
         parent_pid TEXT,
         uid INTEGER NOT NULL,
+        owner_uid INTEGER,
         profile TEXT NOT NULL,
+        interactive INTEGER NOT NULL DEFAULT 1,
         gid INTEGER NOT NULL,
         gids TEXT NOT NULL,
         username TEXT NOT NULL,
@@ -82,6 +86,14 @@ export class ProcessRegistry {
         created_at INTEGER NOT NULL
       )
     `);
+
+    try {
+      this.sql.exec("ALTER TABLE processes ADD COLUMN owner_uid INTEGER");
+    } catch {}
+
+    try {
+      this.sql.exec("ALTER TABLE processes ADD COLUMN interactive INTEGER NOT NULL DEFAULT 1");
+    } catch {}
 
     try {
       this.sql.exec("ALTER TABLE processes ADD COLUMN cwd TEXT");
@@ -115,6 +127,8 @@ export class ProcessRegistry {
       this.sql.exec("ALTER TABLE processes ADD COLUMN last_active_at INTEGER");
     } catch {}
 
+    this.sql.exec("UPDATE processes SET owner_uid = uid WHERE owner_uid IS NULL");
+    this.sql.exec("UPDATE processes SET interactive = 0 WHERE profile = 'cron'");
     this.sql.exec("UPDATE processes SET cwd = home WHERE cwd IS NULL OR cwd = ''");
     this.sql.exec("UPDATE processes SET mounts = '[]' WHERE mounts IS NULL OR mounts = ''");
     this.sql.exec("UPDATE processes SET context_files_json = '[]' WHERE context_files_json IS NULL OR context_files_json = ''");
@@ -134,7 +148,9 @@ export class ProcessRegistry {
     identity: ProcessIdentity,
     opts: {
       parentPid?: string;
+      ownerUid?: number;
       profile: AiContextProfile;
+      interactive?: boolean;
       label?: string;
       cwd?: string;
       mounts?: ProcessMount[];
@@ -143,12 +159,14 @@ export class ProcessRegistry {
   ): void {
     this.sql.exec(
       `INSERT OR REPLACE INTO processes
-        (process_id, parent_pid, uid, profile, gid, gids, username, home, cwd, mounts, context_files_json, state, active_run_id, active_conversation_id, queued_count, last_active_at, label, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle', NULL, NULL, 0, NULL, ?, ?)`,
+        (process_id, parent_pid, uid, owner_uid, profile, interactive, gid, gids, username, home, cwd, mounts, context_files_json, state, active_run_id, active_conversation_id, queued_count, last_active_at, label, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle', NULL, NULL, 0, NULL, ?, ?)`,
       processId,
       opts.parentPid ?? null,
       identity.uid,
+      opts.ownerUid ?? identity.uid,
       opts.profile,
+      (opts.interactive ?? true) ? 1 : 0,
       identity.gid,
       JSON.stringify(identity.gids),
       identity.username,
@@ -173,13 +191,30 @@ export class ProcessRegistry {
    * Ensure the user's init process exists. Spawns it if missing.
    * Returns { pid, created } so the caller knows whether to initialize the DO.
    */
-  ensureInit(identity: ProcessIdentity): { pid: string; created: boolean } {
-    const initId = `init:${identity.uid}`;
+  ensureInit(
+    ownerUid: number,
+    identity: ProcessIdentity,
+  ): { pid: string; created: boolean } {
+    const initId = `init:${ownerUid}`;
     const existing = this.get(initId);
     if (existing) return { pid: initId, created: false };
 
-    this.spawn(initId, identity, { label: `init (${identity.username})`, profile: "init" });
+    this.spawn(initId, identity, {
+      label: `init (${identity.username})`,
+      profile: "init",
+      ownerUid,
+    });
     return { pid: initId, created: true };
+  }
+
+  /** Owner uid for routing/visibility (the human who owns the process). */
+  getOwnerUid(processId: string): number | null {
+    const rows = [...this.sql.exec<{ owner_uid: number | null; uid: number }>(
+      "SELECT owner_uid, uid FROM processes WHERE process_id = ?",
+      processId,
+    )];
+    if (rows.length === 0) return null;
+    return rows[0].owner_uid ?? rows[0].uid;
   }
 
   getIdentity(processId: string): ProcessIdentity | null {
@@ -317,11 +352,12 @@ export class ProcessRegistry {
     )].map(toRecord);
   }
 
-  list(uid?: number): ProcessRecord[] {
-    if (uid !== undefined) {
+  /** List processes owned by a uid (owner_uid), or all processes when omitted. */
+  list(ownerUid?: number): ProcessRecord[] {
+    if (ownerUid !== undefined) {
       return [...this.sql.exec<RowShape>(
-        "SELECT * FROM processes WHERE uid = ? ORDER BY created_at DESC",
-        uid,
+        "SELECT * FROM processes WHERE owner_uid = ? ORDER BY created_at DESC",
+        ownerUid,
       )].map(toRecord);
     }
 
@@ -340,7 +376,9 @@ type RowShape = {
   process_id: string;
   parent_pid: string | null;
   uid: number;
+  owner_uid: number | null;
   profile: AiContextProfile;
+  interactive: number | null;
   gid: number;
   gids: string;
   username: string;
@@ -362,7 +400,9 @@ function toRecord(row: RowShape): ProcessRecord {
     processId: row.process_id,
     parentPid: row.parent_pid,
     uid: row.uid,
+    ownerUid: row.owner_uid ?? row.uid,
     profile: row.profile,
+    interactive: row.interactive === null ? row.profile !== "cron" : row.interactive !== 0,
     gid: row.gid,
     gids: JSON.parse(row.gids),
     username: row.username,
