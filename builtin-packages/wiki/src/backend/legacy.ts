@@ -409,7 +409,7 @@ export async function startBuildFromDirectory(kernel: any, args: any): Promise<W
   }
 
   const spawn = await kernel.request("proc.spawn", {
-    profile: "wiki#builder",
+    runAs: "wiki#builder",
     label: `wiki build (${buildDbId})`,
   });
   if (!spawn?.ok) {
