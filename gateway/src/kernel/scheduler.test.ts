@@ -1061,24 +1061,25 @@ describe("scheduler", () => {
     const spawned = await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as unknown as {
         schedules: ScheduleStore;
-        procs: { listByProfile: (profile: "cron") => Array<{ processId: string; label: string | null }> };
+        procs: { get: (pid: string) => { processId: string; label: string | null; interactive: boolean } | null };
       };
       const history = k.schedules.history(scheduleId);
       const result = history[0]?.result as { pid?: string } | null | undefined;
       return {
         pid: result?.pid,
-        cronProcesses: k.procs.listByProfile("cron"),
+        cronProcess: result?.pid ? k.procs.get(result.pid) : null,
         schedule: k.schedules.get(scheduleId),
       };
     });
 
     expect(spawned.pid).toBeTruthy();
-    expect(spawned.cronProcesses).toEqual([
+    expect(spawned.cronProcess).toEqual(
       expect.objectContaining({
         processId: spawned.pid,
         label: "cron spawn",
+        interactive: false,
       }),
-    ]);
+    );
     expect(spawned.schedule?.state.lastStatus).toBe("ok");
 
     const cronProcess = await getProcessByPid(spawned.pid!);

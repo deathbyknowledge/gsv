@@ -466,7 +466,6 @@ export function App({ backend }: { backend: ChatBackend }) {
     setNotice("");
     try {
       const result = await backend.spawnProcess({
-        profile: "init",
         label: "Personal Agent",
       });
       const record = asRecord(result);
@@ -534,15 +533,16 @@ export function App({ backend }: { backend: ChatBackend }) {
     try {
       let target = activeRef.current;
       if (!target?.pid) {
-        // The personal agent is the per-user singleton spawned via init; every
-        // other agent starts a fresh process running as its account.
+        // The personal agent is the per-owner default-conversation executor:
+        // spawn with no runAs and it reuses/creates that persistent process.
+        // Every other agent starts a fresh process running as its account.
         const spawnResult = await backend.spawnProcess(
           draftProfile.runAs
             ? {
                 runAs: draftProfile.runAs,
                 label: deriveThreadLabel(message) || draftProfile.displayName,
               }
-            : { profile: "init", label: draftProfile.displayName },
+            : { label: draftProfile.displayName },
         );
         const record = asRecord(spawnResult);
         if (!record?.ok) {

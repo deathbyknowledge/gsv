@@ -4,7 +4,6 @@ import { resolvePromptProviders } from "./selection";
 export async function assembleSystemPrompt(
   input: PromptAssemblyInput,
   providers: PromptContextProvider[] = resolvePromptProviders(
-    input.profile,
     input.purpose,
   ),
 ): Promise<string> {

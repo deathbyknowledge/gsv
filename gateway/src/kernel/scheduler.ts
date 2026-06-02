@@ -1,7 +1,6 @@
 import type { ConnectionIdentity } from "@gsv/protocol/syscalls/system";
 import type { KernelContext } from "./context";
 import { hasCapability } from "./capabilities";
-import { isAiContextProfile } from "../syscalls/ai";
 import type {
   ScheduleExpression,
   SchedulePrincipal,
@@ -752,14 +751,10 @@ function normalizeScheduleTarget(target: ScheduleTarget): ScheduleTarget {
 
   if (target.kind === "process.spawn") {
     const prompt = normalizeRequiredText(target.prompt, "process.spawn prompt");
-    const profile = target.profile === "personal" ? "init" : target.profile ?? "cron";
-    if (!isAiContextProfile(profile)) {
-      throw new Error(`Invalid process profile: ${String(profile)}`);
-    }
     return {
       kind: "process.spawn",
-      profile,
       prompt,
+      ...(target.runAs ? { runAs: normalizeRequiredText(target.runAs, "process.spawn runAs") } : {}),
       ...(target.label ? { label: normalizeRequiredText(target.label, "process.spawn label") } : {}),
       ...(target.parentPid ? { parentPid: normalizeRequiredText(target.parentPid, "process.spawn parentPid") } : {}),
       ...(target.cwd ? { cwd: normalizeRequiredText(target.cwd, "process.spawn cwd") } : {}),

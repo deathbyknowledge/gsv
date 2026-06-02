@@ -23,12 +23,6 @@ import type {
   ProcSendArgs,
 } from "../syscalls/proc";
 import type { InteractionOrigin } from "../syscalls/interaction-origin";
-import {
-  isAiContextProfile,
-  isSystemAiContextProfile,
-  isUserAiContextProfile,
-  type AiContextProfile,
-} from "../syscalls/ai";
 import { sendFrameToProcess } from "../shared/utils";
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import type { ProcessMount } from "./processes";
@@ -40,10 +34,8 @@ import {
 import { resolveInstalledPackage } from "./pkg";
 import {
   type InstalledPackageRecord,
-  resolvePackageProfileReference,
   visiblePackageScopesForActor,
 } from "./packages";
-import { resolveUserAiProfile } from "./user-profiles";
 import { ensurePersonalAgent } from "./agents";
 import { accountIdentity } from "./accounts";
 import { resolvePackageAgentRunAs } from "./package-agents";
@@ -77,7 +69,6 @@ export function handleProcList(
   const processes: ProcListEntry[] = records.map((r) => ({
     pid: r.processId,
     uid: r.ownerUid,
-    profile: r.profile,
     username: r.username,
     interactive: r.interactive,
     parentPid: r.parentPid,
@@ -100,17 +91,26 @@ export async function handleProcSpawn(
 ): Promise<ProcSpawnResult> {
   const identity = ctx.identity!;
   const pid = crypto.randomUUID();
-  const profile = normalizeSpawnProfile(args.profile);
+  const explicitRunAs = typeof args.runAs === "string" && args.runAs.trim().length > 0;
 
-  if (!isAiContextProfile(profile)) {
-    return { ok: false, error: `Invalid process profile: ${String(profile)}` };
-  }
-  if (profile === "init") {
+  // Interim (Phase A) personal-agent routing: an interactive, top-level spawn
+  // with no explicit run-as targets the caller's persistent personal-agent
+  // executor (the per-owner default conversation). Background spawns
+  // (interactive === false, e.g. cron) and child spawns from a process get a
+  // fresh process instead. Phase B replaces this with conversation-addressed
+  // routing and removes the special init executor entirely.
+  const useDefaultExecutor =
+    !explicitRunAs &&
+    args.interactive !== false &&
+    !ctx.processId &&
+    !args.parentPid;
+
+  if (useDefaultExecutor) {
     const agent = await ensurePersonalAgent(ctx, identity.process);
     const ensured = ctx.procs.ensureInit(identity.process.uid, agent.identity);
     const initRecord = ctx.procs.get(ensured.pid);
     if (!initRecord) {
-      return { ok: false, error: "Failed to resolve init process" };
+      return { ok: false, error: "Failed to resolve personal-agent process" };
     }
 
     if (ensured.created) {
@@ -121,7 +121,6 @@ export async function handleProcSpawn(
         args: {
           pid: ensured.pid,
           identity: agent.identity,
-          profile: "init",
           interactive: true,
           assignment: args.assignment as ProcSpawnAssignment | undefined,
         },
@@ -146,31 +145,8 @@ export async function handleProcSpawn(
       ok: true,
       pid: initRecord.processId,
       label: initRecord.label ?? undefined,
-      profile: "init",
       cwd: initRecord.cwd,
     };
-  }
-  if (!isSystemAiContextProfile(profile) && !isUserAiContextProfile(profile)) {
-    try {
-      const resolved = resolvePackageProfileReference(
-        profile,
-        ctx.packages,
-        visiblePackageScopesForActor(identity.process),
-      );
-      if (!resolved) {
-        return { ok: false, error: `Unknown package profile: ${profile}` };
-      }
-    } catch (error) {
-      return {
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      };
-    }
-  } else if (isUserAiContextProfile(profile)) {
-    const userProfile = await resolveUserAiProfile(ctx, profile);
-    if (!userProfile) {
-      return { ok: false, error: `Unknown user profile: ${profile}` };
-    }
   }
 
   const callerOwnerUid = resolveCallerOwnerUid(ctx);
@@ -200,8 +176,8 @@ export async function handleProcSpawn(
       }
     : identity.process;
 
-  if (typeof args.runAs === "string" && args.runAs.trim()) {
-    const resolved = resolveRunAsIdentity(ctx, args.runAs, ownerUid);
+  if (explicitRunAs) {
+    const resolved = resolveRunAsIdentity(ctx, args.runAs!, ownerUid);
     if (!resolved.ok) {
       return { ok: false, error: resolved.error };
     }
@@ -219,12 +195,11 @@ export async function handleProcSpawn(
     cwd: resolveSpawnCwd(args.cwd, baseIdentity, hasRequestedMounts ? materializedMounts.mounts : []),
   };
 
-  const interactive = args.interactive ?? defaultInteractiveForProfile(profile);
+  const interactive = args.interactive ?? true;
 
   ctx.procs.spawn(pid, spawnIdentity, {
     parentPid,
     ownerUid,
-    profile,
     interactive,
     label: args.label,
     cwd: spawnIdentity.cwd,
@@ -239,7 +214,6 @@ export async function handleProcSpawn(
     args: {
       pid,
       identity: spawnIdentity,
-      profile,
       interactive,
       assignment: args.assignment as ProcSpawnAssignment | undefined,
     },
@@ -263,17 +237,8 @@ export async function handleProcSpawn(
     ok: true,
     pid,
     label: args.label,
-    profile,
     cwd: spawnIdentity.cwd,
   };
-}
-
-/**
- * Default interactivity for a spawn when not explicitly specified. Background
- * worker spawns (cron) cannot request human-in-the-loop approval.
- */
-function defaultInteractiveForProfile(profile: AiContextProfile): boolean {
-  return profile !== "cron";
 }
 
 /**
@@ -313,13 +278,6 @@ function resolveRunAsIdentity(
   }
 
   return { ok: true, identity: accountIdentity(auth, entry) };
-}
-
-function normalizeSpawnProfile(profile: ProcSpawnArgs["profile"] | undefined): AiContextProfile {
-  if (profile === "personal") {
-    return "init";
-  }
-  return profile ?? "task";
 }
 
 function withProcSendOrigin(frame: RequestFrame, ctx: KernelContext): RequestFrame {

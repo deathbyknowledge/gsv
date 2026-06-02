@@ -82,7 +82,7 @@ export async function handleSysSetupAssist(
     throw new Error("System already initialized");
   }
 
-  const config = await handleAiConfig({ profile: "app" }, ctx);
+  const config = await handleAiConfig({}, ctx);
   const generation = createGenerationService();
   const context: Context = {
     systemPrompt: SYSTEM_PROMPT,

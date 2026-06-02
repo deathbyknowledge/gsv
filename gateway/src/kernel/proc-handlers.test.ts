@@ -155,7 +155,7 @@ describe("proc handlers", () => {
     } as unknown as KernelContext;
 
     const result = await handleProcSpawn({
-      profile: "task",
+      parentPid: `init:${IDENTITY.uid}`,
       mounts: [
         { kind: "package-source", packageId: "pkg-a" },
         { kind: "package-source", packageId: "pkg-b" },
@@ -210,7 +210,7 @@ describe("proc handlers", () => {
       },
     } as unknown as KernelContext;
 
-    const result = await handleProcSpawn({ profile: "task" }, ctx);
+    const result = await handleProcSpawn({ parentPid: `init:${IDENTITY.uid}` }, ctx);
 
     expect(result).toMatchObject({
       ok: true,
@@ -236,7 +236,7 @@ describe("proc handlers", () => {
     );
   });
 
-  it("defaults host spawns to the bounded task worker profile", async () => {
+  it("spawns a fresh interactive worker for a parented spawn", async () => {
     const ctx = {
       env: {},
       identity: {
@@ -253,13 +253,13 @@ describe("proc handlers", () => {
       },
     } as unknown as KernelContext;
 
-    const result = await handleProcSpawn({}, ctx);
+    const result = await handleProcSpawn({ parentPid: `init:${IDENTITY.uid}` }, ctx);
 
-    expect(result).toMatchObject({ ok: true, profile: "task" });
+    expect(result).toMatchObject({ ok: true });
     expect(ctx.procs.spawn).toHaveBeenCalledWith(
       expect.any(String),
       expect.any(Object),
-      expect.objectContaining({ profile: "task" }),
+      expect.objectContaining({ interactive: true }),
     );
   });
 
@@ -282,7 +282,7 @@ describe("proc handlers", () => {
     } as unknown as KernelContext;
 
     const result = await handleProcSpawn({
-      profile: "task",
+      parentPid: `init:${IDENTITY.uid}`,
       mounts: [
         { kind: "package-source", packageId: "pkg-a" },
         { kind: "package-repo", packageId: "pkg-a" },
@@ -330,7 +330,7 @@ describe("proc handlers", () => {
     } as unknown as KernelContext;
 
     const result = await handleProcSpawn({
-      profile: "task",
+      parentPid: `init:${IDENTITY.uid}`,
       mounts: [
         { kind: "package-repo", packageId: "pkg-a" },
         { kind: "package-source", packageId: "pkg-a" },
@@ -378,7 +378,7 @@ describe("proc handlers", () => {
     } as unknown as KernelContext;
 
     const result = await handleProcSpawn({
-      profile: "task",
+      parentPid: `init:${IDENTITY.uid}`,
       mounts: [
         { kind: "package-source", packageId: "pkg-a", mountPath: "/src/custom/demo" },
       ],

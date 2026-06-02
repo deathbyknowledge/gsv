@@ -244,7 +244,6 @@ describe("Process DO — mechanical", () => {
       await runInDurableObject(stub, (instance: Process) => {
         expect(instance.identity.uid).toBe(1000);
         expect(instance.identity.username).toBe("alice");
-        expect((instance as any).profile).toBe("mcp");
       });
     });
   });
@@ -1490,7 +1489,7 @@ describe("Process DO — mechanical", () => {
         generation: 2,
         archivedMessages: 1,
       });
-      expect(resetData.archivedTo).toContain(`/var/sessions/root/${pid}/conversations/side/`);
+      expect(resetData.archivedTo).toContain(`/root/conversations/side/`);
 
       const archiveKey = resetData.archivedTo.replace(/^\//, "");
       const obj = await env.STORAGE.get(archiveKey);
@@ -1652,7 +1651,7 @@ describe("Process DO — mechanical", () => {
         },
       });
       expect(data.archivedTo).toMatch(
-        new RegExp(`/var/sessions/root/${pid}/conversations/thread/.+\\.jsonl\\.gz$`),
+        new RegExp(`/root/conversations/thread/.+\\.jsonl\\.gz$`),
       );
 
       const archiveKey = data.archivedTo.replace(/^\//, "");
@@ -2971,20 +2970,20 @@ describe("Process DO — mechanical", () => {
       const data = res.data as any;
       expect(data.ok).toBe(true);
       expect(data.archivedMessages).toBe(3);
-      expect(data.archivedTo).toContain("/var/sessions/root/");
+      expect(data.archivedTo).toContain("/root/conversations/");
       expect(data.archivedTo).toMatch(/\/$/);
       expect(data.archives).toEqual([
         expect.objectContaining({
           conversationId: "default",
           generation: 1,
           messages: 2,
-          path: expect.stringMatching(/\/default\.gen-1\.jsonl\.gz$/),
+          path: expect.stringMatching(/\/default\/.+\.default\.gen-1\.jsonl\.gz$/),
         }),
         expect.objectContaining({
           conversationId: "side",
           generation: 1,
           messages: 1,
-          path: expect.stringMatching(/\/side\.gen-1\.jsonl\.gz$/),
+          path: expect.stringMatching(/\/side\/.+\.side\.gen-1\.jsonl\.gz$/),
         }),
       ]);
 
@@ -3020,7 +3019,7 @@ describe("Process DO — mechanical", () => {
           expect.objectContaining({
             kind: "process-reset",
             messages: 2,
-            archivePath: expect.stringMatching(/\/default\.gen-1\.jsonl\.gz$/),
+            archivePath: expect.stringMatching(/\/default\/.+\.default\.gen-1\.jsonl\.gz$/),
           }),
         ],
         live: null,
@@ -3136,7 +3135,7 @@ describe("Process DO — mechanical", () => {
         pid,
         archivedMessages: 2,
       });
-      expect(data.archivedTo).toMatch(/\/var\/sessions\/root\/mech-kill-archive-all\/.+\/$/);
+      expect(data.archivedTo).toMatch(/\/root\/conversations\/$/);
       expect(data.archives.map((archive: any) => archive.conversationId)).toEqual([
         "build",
         "default",
@@ -3322,7 +3321,7 @@ describeIf(OPENAI_KEY)("Process DO — agent loop (real LLM)", () => {
     const kernel = await getKernelPtr();
     await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as any;
-      k.config.delete("config/ai/profile/task/tools/approval");
+      k.config.delete("config/ai/tools/approval");
       k.config.delete("users/0/ai/api_key");
     });
   });
@@ -3454,7 +3453,7 @@ describeIf(OPENAI_KEY)("Process DO — agent loop (real LLM)", () => {
     const kernel = await getKernelPtr();
     await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as any;
-      k.config.set("config/ai/profile/task/tools/approval", JSON.stringify({
+      k.config.set("config/ai/tools/approval", JSON.stringify({
         default: "auto",
         rules: [{ match: "fs.read", action: "ask" }],
       }));
@@ -3533,7 +3532,7 @@ describeIf(OPENAI_KEY)("Process DO — agent loop (real LLM)", () => {
     const kernel = await getKernelPtr();
     await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as any;
-      k.config.set("config/ai/profile/task/tools/approval", JSON.stringify({
+      k.config.set("config/ai/tools/approval", JSON.stringify({
         default: "auto",
         rules: [{ match: "fs.read", action: "ask" }],
       }));

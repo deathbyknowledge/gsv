@@ -333,7 +333,6 @@ describe("proc native command", () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(result.stdout).toContain("profile=task");
     expect(result.stdout).toContain("label=\"build\"");
     expect(result.stdout).toContain("cwd=\"/home/sam/src\"");
     expect(spawn).toHaveBeenCalledWith(
@@ -891,34 +890,6 @@ describe("pkg shell command", () => {
     expect(result.stdout).toContain("sched add --json JSON");
     expect(result.stdout).toContain("Use crontab");
     expect(result.stdout).toContain("sched run <id>");
-    expect(result.stderr).toBe("");
-  });
-
-  it("lists and shows profile skills through the skills command", async () => {
-    const skill = [
-      "---",
-      "name: demo-workflow",
-      "description: Demonstrates the skills command.",
-      "---",
-      "",
-      "# Demo Workflow",
-      "",
-      "Use this for tests.",
-    ].join("\n");
-
-    const result = await handleShellExec(
-      { input: "skills list && skills show demo-workflow" },
-      makeContext({
-        config: {
-          "config/ai/profile/task/skills.d/demo-workflow/SKILL.md": skill,
-        },
-      }),
-    );
-
-    expect(result.ok).toBe(true);
-    expect(result.stdout).toContain("demo-workflow\tprofile:task");
-    expect(result.stdout).toContain("path: /sys/config/ai/profile/task/skills.d/demo-workflow/SKILL.md");
-    expect(result.stdout).toContain("# Demo Workflow");
     expect(result.stderr).toBe("");
   });
 

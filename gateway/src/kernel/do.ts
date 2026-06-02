@@ -36,6 +36,7 @@ import { DeviceRegistry, type DeviceLifecycle, type DeviceRecord } from "./devic
 import { RoutingTable, type RouteOrigin } from "./routing";
 import { ShellSessionStore, type ShellSessionStatus } from "./shell-sessions";
 import { ProcessRegistry, type ProcessState } from "./processes";
+import { ConversationRegistry } from "./conversations";
 import { AdapterStore } from "./adapter-store";
 import { RunRouteStore, type AdapterRunRoute, type RunRoute } from "./run-routes";
 import { OAuthStore } from "./oauth-store";
@@ -194,6 +195,7 @@ export class Kernel extends Host<Env> {
   private readonly routes: RoutingTable;
   private readonly shellSessions: ShellSessionStore;
   private readonly procs: ProcessRegistry;
+  private readonly conversations: ConversationRegistry;
   private readonly adapters: AdapterStore;
   private readonly runRoutes: RunRouteStore;
   private readonly signalWatches: SignalWatchStore;
@@ -237,6 +239,9 @@ export class Kernel extends Host<Env> {
 
     this.procs = new ProcessRegistry(sql);
     this.procs.init();
+
+    this.conversations = new ConversationRegistry(sql);
+    this.conversations.init();
 
     this.adapters = new AdapterStore(sql);
     this.adapters.init();
@@ -1088,6 +1093,7 @@ export class Kernel extends Host<Env> {
       config: this.config,
       devices: this.devices,
       procs: this.procs,
+      conversations: this.conversations,
       packages: this.packages,
       oauth: this.oauth,
       mcp: this.mcp,
@@ -1164,6 +1170,7 @@ export class Kernel extends Host<Env> {
       config: this.config,
       devices: this.devices,
       procs: this.procs,
+      conversations: this.conversations,
       packages: this.packages,
       oauth: this.oauth,
       mcp: this.mcp,
@@ -1202,6 +1209,7 @@ export class Kernel extends Host<Env> {
       config: this.config,
       devices: this.devices,
       procs: this.procs,
+      conversations: this.conversations,
       packages: this.packages,
       oauth: this.oauth,
       mcp: this.mcp,
@@ -2603,7 +2611,6 @@ export class Kernel extends Host<Env> {
     if (target.kind === "process.spawn") {
       const ctx = this.buildScheduleContext(record);
       const result = await handleProcSpawn({
-        profile: target.profile ?? "cron",
         interactive: false,
         label: target.label ?? record.name,
         prompt: target.prompt,
@@ -2611,6 +2618,7 @@ export class Kernel extends Host<Env> {
         cwd: target.cwd,
         mounts: target.mounts,
         assignment: target.assignment,
+        ...(target.runAs ? { runAs: target.runAs } : {}),
       }, ctx);
       if (!result.ok) {
         throw new Error(result.error);
@@ -2618,7 +2626,6 @@ export class Kernel extends Host<Env> {
       return {
         kind: "process.spawn",
         pid: result.pid,
-        profile: result.profile,
       };
     }
 
@@ -2669,6 +2676,7 @@ export class Kernel extends Host<Env> {
       config: this.config,
       devices: this.devices,
       procs: this.procs,
+      conversations: this.conversations,
       packages: this.packages,
       oauth: this.oauth,
       mcp: this.mcp,

@@ -7,7 +7,6 @@
  */
 
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
-import type { AiContextProfile } from "./ai";
 import type { ProcMediaInput } from "@gsv/protocol/syscalls/proc";
 import type { InteractionOrigin } from "./interaction-origin";
 
@@ -26,7 +25,6 @@ export type ProcSpawnAssignment = {
 };
 
 export type ProcSpawnArgs = {
-  profile?: AiContextProfile;
   /**
    * Account to run the process as: a username, a uid string, or a `pkg#agent`
    * reference. Defaults to the caller's personal agent. The caller must own the
@@ -45,7 +43,7 @@ export type ProcSpawnArgs = {
 };
 
 export type ProcSpawnResult =
-  | { ok: true; pid: string; label?: string; profile: AiContextProfile; cwd: string }
+  | { ok: true; pid: string; label?: string; cwd: string }
   | { ok: false; error: string };
 
 export type ProcKillArgs = {
@@ -601,7 +599,6 @@ export type ProcListArgs = {
 export type ProcListEntry = {
   pid: string;
   uid: number;
-  profile: AiContextProfile;
   /** Username of the account the process runs as (its run-as identity). */
   username: string;
   /** Whether the process can hold an interactive (human-in-the-loop) conversation. */
@@ -626,7 +623,6 @@ export type ProcListResult = {
 export type ProcSetIdentityArgs = {
   pid: string;
   identity: ProcessIdentity;
-  profile: AiContextProfile;
   interactive?: boolean;
   assignment?: ProcSpawnAssignment;
 };

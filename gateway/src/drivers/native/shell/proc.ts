@@ -9,7 +9,6 @@ import {
 import { handleAccountList } from "../../../kernel/agents";
 import type { SyscallName } from "../../../syscalls";
 import type { ProcSpawnArgs } from "../../../syscalls/proc";
-import type { AiContextProfile } from "../../../syscalls/ai";
 import type { Frame } from "../../../protocol/frames";
 import { sendFrameToProcess } from "../../../shared/utils";
 import { parseDurationMs, requireCommandCapability, requireShellOptionValue } from "./common";
@@ -46,9 +45,9 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
     case "list": {
       requireCommandCapability(ctx, "proc.list");
       const list = ctx.procs.list(ctx.identity!.process.uid);
-      const lines = ["PID\tSTATE\tPROFILE\tLABEL"];
+      const lines = ["PID\tSTATE\tRUN-AS\tLABEL"];
       for (const proc of list) {
-        lines.push(`${proc.processId}\t${proc.state}\t${proc.profile}\t${proc.label ?? ""}`);
+        lines.push(`${proc.processId}\t${proc.state}\t${proc.username}\t${proc.label ?? ""}`);
       }
       return { stdout: `${lines.join("\n")}\n`, stderr: "", exitCode: 0 };
     }
@@ -84,7 +83,6 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
       return {
         stdout: [
           `pid=${result.pid}`,
-          `profile=${result.profile}`,
           result.label ? `label=${quoteShellField(result.label)}` : "",
           `cwd=${quoteShellField(result.cwd)}`,
         ].filter(Boolean).join(" ") + "\n",
@@ -254,7 +252,6 @@ async function runProcConversationSyscall(
 }
 
 function parseProcSpawnCommand(args: string[]): ProcSpawnArgs {
-  let profile: string | undefined;
   let runAs: string | undefined;
   let label: string | undefined;
   let prompt: string | undefined;
@@ -268,11 +265,6 @@ function parseProcSpawnCommand(args: string[]): ProcSpawnArgs {
     const current = args[index];
     if (current === "--json") {
       return JSON.parse(requireShellOptionValue(args[index + 1], current)) as ProcSpawnArgs;
-    }
-    if (current === "--profile") {
-      index += 1;
-      profile = requireShellOptionValue(args[index], current);
-      continue;
     }
     if (current === "--as" || current === "--run-as") {
       index += 1;
@@ -315,7 +307,6 @@ function parseProcSpawnCommand(args: string[]): ProcSpawnArgs {
   const positionalPrompt = positional.join(" ").trim();
   const finalPrompt = prompt ?? (positionalPrompt || undefined);
   return {
-    ...(profile ? { profile: profile as AiContextProfile } : {}),
     ...(runAs ? { runAs } : {}),
     ...(label ? { label } : {}),
     ...(finalPrompt ? { prompt: finalPrompt } : {}),

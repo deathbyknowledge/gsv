@@ -13,13 +13,12 @@ import {
   visiblePackageScopesForActor,
   type InstalledPackageRecord,
 } from "./packages";
-import { isPackageAiContextProfile, isSystemAiContextProfile, type AiContextProfile } from "../syscalls/ai";
 
 const TEXT_DECODER = new TextDecoder();
 const MAX_SKILL_WALK_DEPTH = 4;
 const MAX_DESCRIPTION_LENGTH = 220;
 
-export type SkillSourceKind = "profile" | "home" | "package";
+export type SkillSourceKind = "home" | "package";
 
 export type SkillSource = {
   kind: SkillSourceKind;
@@ -60,23 +59,20 @@ type FsReader = {
 
 export async function collectPromptSkillIndex(
   ctx: KernelContext,
-  profile: AiContextProfile | undefined,
 ): Promise<SkillIndexEntry[]> {
-  const docs = await collectKernelSkillDocuments(ctx, profile);
+  const docs = await collectKernelSkillDocuments(ctx);
   return docs.map(({ content: _content, path: _path, ...entry }) => entry);
 }
 
 export async function collectKernelSkillDocuments(
   ctx: KernelContext,
-  profile: AiContextProfile | undefined,
 ): Promise<SkillDocument[]> {
   const files: SkillFile[] = [];
-  files.push(...collectProfileConfigSkillFiles(ctx, profile));
 
   const ripgit = ctx.env.RIPGIT ? new RipgitClient(ctx.env.RIPGIT) : null;
   const identity = ctx.identity?.process;
   if (ripgit && identity) {
-    files.push(...await collectRipgitRuntimeSkillFiles(ripgit, ctx, identity, profile));
+    files.push(...await collectRipgitRuntimeSkillFiles(ripgit, ctx, identity));
   }
 
   return buildSkillDocuments(files);
@@ -181,67 +177,12 @@ export function renderSkillIndex(entries: SkillIndexEntry[]): string {
   return lines.join("\n");
 }
 
-function collectProfileConfigSkillFiles(
-  ctx: KernelContext,
-  profile: AiContextProfile | undefined,
-): SkillFile[] {
-  const resolvedProfile = profile ?? "task";
-  if (!isSystemAiContextProfile(resolvedProfile)) {
-    return [];
-  }
-
-  const prefix = `config/ai/profile/${resolvedProfile}/skills.d`;
-  const files = ctx.config.list(prefix)
-    .filter((entry) => isSkillMarkdownPath(entry.key.slice(`${prefix}/`.length)))
-    .map((entry): SkillFile => {
-      const name = entry.key.slice(`${prefix}/`.length);
-      return {
-        fallbackName: fallbackSkillName(name),
-        content: entry.value,
-        path: `/sys/${entry.key}`,
-        source: {
-          kind: "profile",
-          label: `profile:${resolvedProfile}`,
-          writable: ctx.identity?.process.uid === 0,
-        },
-      };
-    });
-  return files;
-}
-
 async function collectRipgitRuntimeSkillFiles(
   ripgit: RipgitClient,
   ctx: KernelContext,
   identity: ProcessIdentity,
-  profile: AiContextProfile | undefined,
 ): Promise<SkillFile[]> {
   const files: SkillFile[] = [];
-
-  if (isPackageAiContextProfile(profile)) {
-    const resolved = resolvePackageProfileReference(
-      profile,
-      ctx.packages,
-      visiblePackageScopesForActor(identity),
-    );
-    if (resolved) {
-      const packageRecords = ctx.packages.list({
-        enabled: true,
-        scopes: visiblePackageScopesForActor(identity),
-      });
-      const root = packageProfileSkillRoot(
-        resolved.record,
-        resolved.packageProfile.name,
-        packageSourcePathNameForRecord(resolved.record, packageRecords),
-      );
-      if (root) {
-        files.push(...await collectRipgitSkillFiles(ripgit, root.repo, root.path, {
-          kind: "profile",
-          label: `profile:${profile}`,
-          writable: packageSourceWritable(resolved.record, identity),
-        }, root.virtualPath));
-      }
-    }
-  }
 
   files.push(...await collectRipgitSkillFiles(
     ripgit,
@@ -281,40 +222,6 @@ function filesystemSkillRoots(
   identity: ProcessIdentity,
 ): SkillRoot[] {
   const roots: SkillRoot[] = [];
-  const profile = currentProcessProfile(ctx) ?? "task";
-
-  if (isSystemAiContextProfile(profile)) {
-    roots.push({
-      rootPath: `/sys/config/ai/profile/${profile}/skills.d`,
-      source: {
-        kind: "profile",
-        label: `profile:${profile}`,
-        writable: identity.uid === 0,
-      },
-    });
-  } else if (isPackageAiContextProfile(profile)) {
-    const resolved = resolvePackageProfileReference(
-      profile,
-      ctx.packages,
-      visiblePackageScopesForActor(identity),
-    );
-    if (resolved) {
-      const packageRecords = ctx.packages.list({
-        enabled: true,
-        scopes: visiblePackageScopesForActor(identity),
-      });
-      roots.push({
-        rootPath: `/src/packages/${
-          packageSourcePathNameForRecord(resolved.record, packageRecords)
-        }/profiles/${resolved.packageProfile.name}/skills.d`,
-        source: {
-          kind: "profile",
-          label: `profile:${profile}`,
-          writable: packageSourceWritable(resolved.record, identity),
-        },
-      });
-    }
-  }
 
   roots.push({
     rootPath: `${identity.home}/skills.d`,
@@ -608,19 +515,9 @@ function skillId(name: string, source: SkillSource, count: number, idPrefix?: st
 
 function sourceRank(kind: SkillSourceKind): number {
   switch (kind) {
-    case "profile": return 0;
-    case "home": return 1;
-    case "package": return 2;
+    case "home": return 0;
+    case "package": return 1;
   }
-}
-
-function currentProcessProfile(ctx: KernelContext): AiContextProfile | null {
-  if (!ctx.processId) {
-    return null;
-  }
-  const procs = ctx.procs as unknown as { get?: (processId: string) => { profile?: string } | null };
-  const proc = procs.get?.(ctx.processId);
-  return proc?.profile as AiContextProfile | null;
 }
 
 function packageTopLevelSkillRoot(record: InstalledPackageRecord, sourcePathName?: string): {

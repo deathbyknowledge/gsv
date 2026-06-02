@@ -10,7 +10,6 @@
  */
 
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
-import type { AiContextProfile } from "../syscalls/ai";
 import type { ProcContextFile } from "../syscalls/proc";
 import type { PackageInstallScope } from "./packages";
 
@@ -40,7 +39,6 @@ export type ProcessRecord = {
   parentPid: string | null;
   uid: number;
   ownerUid: number;
-  profile: AiContextProfile;
   interactive: boolean;
   gid: number;
   gids: number[];
@@ -68,7 +66,6 @@ export class ProcessRegistry {
         parent_pid TEXT,
         uid INTEGER NOT NULL,
         owner_uid INTEGER,
-        profile TEXT NOT NULL,
         interactive INTEGER NOT NULL DEFAULT 1,
         gid INTEGER NOT NULL,
         gids TEXT NOT NULL,
@@ -100,10 +97,6 @@ export class ProcessRegistry {
     } catch {}
 
     try {
-      this.sql.exec("ALTER TABLE processes ADD COLUMN profile TEXT");
-    } catch {}
-
-    try {
       this.sql.exec("ALTER TABLE processes ADD COLUMN mounts TEXT");
     } catch {}
 
@@ -128,19 +121,11 @@ export class ProcessRegistry {
     } catch {}
 
     this.sql.exec("UPDATE processes SET owner_uid = uid WHERE owner_uid IS NULL");
-    this.sql.exec("UPDATE processes SET interactive = 0 WHERE profile = 'cron'");
     this.sql.exec("UPDATE processes SET cwd = home WHERE cwd IS NULL OR cwd = ''");
     this.sql.exec("UPDATE processes SET mounts = '[]' WHERE mounts IS NULL OR mounts = ''");
     this.sql.exec("UPDATE processes SET context_files_json = '[]' WHERE context_files_json IS NULL OR context_files_json = ''");
     this.sql.exec("UPDATE processes SET queued_count = 0 WHERE queued_count IS NULL OR queued_count < 0");
     this.sql.exec("UPDATE processes SET state = 'idle' WHERE state IS NULL OR state = '' OR state IN ('paused', 'killed')");
-    this.sql.exec("UPDATE processes SET profile = 'init' WHERE (profile IS NULL OR profile = '') AND process_id LIKE 'init:%'");
-    this.sql.exec("UPDATE processes SET profile = 'task' WHERE (profile IS NULL OR profile = '') AND process_id LIKE 'task:%'");
-    this.sql.exec("UPDATE processes SET profile = 'review' WHERE (profile IS NULL OR profile = '') AND process_id LIKE 'review:%'");
-    this.sql.exec("UPDATE processes SET profile = 'cron' WHERE (profile IS NULL OR profile = '') AND process_id LIKE 'cron:%'");
-    this.sql.exec("UPDATE processes SET profile = 'mcp' WHERE (profile IS NULL OR profile = '') AND process_id LIKE 'mcp:%'");
-    this.sql.exec("UPDATE processes SET profile = 'app' WHERE (profile IS NULL OR profile = '') AND process_id LIKE 'app:%'");
-    this.sql.exec("UPDATE processes SET profile = 'task' WHERE profile IS NULL OR profile = ''");
   }
 
   spawn(
@@ -149,7 +134,6 @@ export class ProcessRegistry {
     opts: {
       parentPid?: string;
       ownerUid?: number;
-      profile: AiContextProfile;
       interactive?: boolean;
       label?: string;
       cwd?: string;
@@ -159,13 +143,12 @@ export class ProcessRegistry {
   ): void {
     this.sql.exec(
       `INSERT OR REPLACE INTO processes
-        (process_id, parent_pid, uid, owner_uid, profile, interactive, gid, gids, username, home, cwd, mounts, context_files_json, state, active_run_id, active_conversation_id, queued_count, last_active_at, label, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle', NULL, NULL, 0, NULL, ?, ?)`,
+        (process_id, parent_pid, uid, owner_uid, interactive, gid, gids, username, home, cwd, mounts, context_files_json, state, active_run_id, active_conversation_id, queued_count, last_active_at, label, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle', NULL, NULL, 0, NULL, ?, ?)`,
       processId,
       opts.parentPid ?? null,
       identity.uid,
       opts.ownerUid ?? identity.uid,
-      opts.profile,
       (opts.interactive ?? true) ? 1 : 0,
       identity.gid,
       JSON.stringify(identity.gids),
@@ -201,7 +184,6 @@ export class ProcessRegistry {
 
     this.spawn(initId, identity, {
       label: `init (${identity.username})`,
-      profile: "init",
       ownerUid,
     });
     return { pid: initId, created: true };
@@ -251,13 +233,6 @@ export class ProcessRegistry {
 
     if (rows.length === 0) return null;
     return toRecord(rows[0]);
-  }
-
-  listByProfile(profile: AiContextProfile): ProcessRecord[] {
-    return [...this.sql.exec<RowShape>(
-      "SELECT * FROM processes WHERE profile = ? ORDER BY created_at ASC",
-      profile,
-    )].map(toRecord);
   }
 
   getMounts(processId: string): ProcessMount[] {
@@ -377,7 +352,6 @@ type RowShape = {
   parent_pid: string | null;
   uid: number;
   owner_uid: number | null;
-  profile: AiContextProfile;
   interactive: number | null;
   gid: number;
   gids: string;
@@ -401,8 +375,7 @@ function toRecord(row: RowShape): ProcessRecord {
     parentPid: row.parent_pid,
     uid: row.uid,
     ownerUid: row.owner_uid ?? row.uid,
-    profile: row.profile,
-    interactive: row.interactive === null ? row.profile !== "cron" : row.interactive !== 0,
+    interactive: row.interactive === null ? true : row.interactive !== 0,
     gid: row.gid,
     gids: JSON.parse(row.gids),
     username: row.username,

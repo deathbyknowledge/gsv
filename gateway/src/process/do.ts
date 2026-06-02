@@ -23,10 +23,8 @@ import type { CodeModeExecArgs, CodeModeRunArgs, CodeModeRunResult } from "../sy
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import type {
   AiConfigResult,
-  AiContextProfile,
   AiToolsDevice,
 } from "../syscalls/ai";
-import { isAiContextProfile } from "../syscalls/ai";
 import type {
   ProcSendArgs,
   ProcSendResult,
@@ -208,10 +206,6 @@ const MAX_PROCESS_MEDIA_READ_BYTES = 25 * 1024 * 1024;
 const CODE_MODE_NESTED_SYSCALL_TIMEOUT_MS = 55_000;
 const CODE_MODE_APPROVAL_TIMEOUT_MS = 55_000;
 const COMPACTION_SUMMARY_WINDOW_CHARS = 24_000;
-
-function isNonInteractiveProfile(profile: AiContextProfile): boolean {
-  return profile === "cron";
-}
 
 function normalizeOptionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0
@@ -599,24 +593,14 @@ export class Process extends Host<Env> {
     return JSON.parse(raw);
   }
 
-  get profile(): AiContextProfile {
-    const raw = this.store.getValue("profile");
-    if (isAiContextProfile(raw)) {
-      return raw;
-    }
-    return "task";
-  }
-
   /**
    * Whether this process may request human-in-the-loop approval. Stored per
-   * process at spawn time; falls back to a profile-derived default for
-   * processes initialized before the flag existed.
+   * process at spawn time; defaults to interactive when unset.
    */
   get interactive(): boolean {
     const raw = this.store.getValue("interactive");
-    if (raw === "1") return true;
     if (raw === "0") return false;
-    return !isNonInteractiveProfile(this.profile);
+    return true;
   }
 
   get initialized(): boolean {
@@ -693,13 +677,11 @@ export class Process extends Host<Env> {
           const idArgs = frame.args as unknown as {
             pid: string;
             identity: ProcessIdentity;
-            profile: AiContextProfile;
             interactive?: boolean;
             assignment?: ProcSpawnAssignment;
           };
           this.store.setValue("pid", idArgs.pid);
           this.store.setValue("identity", JSON.stringify(idArgs.identity));
-          this.store.setValue("profile", idArgs.profile);
           if (idArgs.interactive !== undefined) {
             this.store.setValue("interactive", idArgs.interactive ? "1" : "0");
           }
@@ -1391,7 +1373,6 @@ export class Process extends Host<Env> {
     if (args.archive !== false && archivedMessages > 0) {
       const archiveId = crypto.randomUUID();
       const key = await this.archiveConversationMessages(
-        pid,
         conversationId,
         archiveId,
       );
@@ -1571,15 +1552,7 @@ export class Process extends Host<Env> {
     const fromMessageId = selected[0].id;
     const toMessageId = selected[selected.length - 1].id;
     const segmentId = crypto.randomUUID();
-    const archiveKey = [
-      "var",
-      "sessions",
-      this.identity.username,
-      pid,
-      "conversations",
-      encodeURIComponent(conversationId),
-      `${segmentId}.jsonl.gz`,
-    ].join("/");
+    const archiveKey = `${this.conversationArchiveDir(conversationId)}/${segmentId}.jsonl.gz`;
     await this.archiveMessageRecords(archiveKey, selected);
     if (activeRunStopped()) {
       return { ok: false, error: "Run stopped before compaction completed" };
@@ -2121,7 +2094,7 @@ export class Process extends Host<Env> {
     const totalMessages = this.store.totalMessageCount();
 
     const archive = totalMessages > 0
-      ? await this.archiveAllConversationMessages(pid, crypto.randomUUID(), "process-reset")
+      ? await this.archiveAllConversationMessages(crypto.randomUUID(), "process-reset")
       : emptyProcessArchive();
 
     await this.resetExecutionState("process.reset");
@@ -2147,7 +2120,7 @@ export class Process extends Host<Env> {
     const totalMessages = this.store.totalMessageCount();
 
     const archive = shouldArchive && totalMessages > 0
-      ? await this.archiveAllConversationMessages(pid, crypto.randomUUID(), "kill")
+      ? await this.archiveAllConversationMessages(crypto.randomUUID(), "kill")
       : emptyProcessArchive();
 
     await this.resetExecutionState("process.kill");
@@ -2355,9 +2328,7 @@ export class Process extends Host<Env> {
 
     // Step 3: Load config + tools (first tick only, cached on run state)
     if (!run.config) {
-      run.config = await this.kernelRpc("ai.config", {
-        profile: this.profile,
-      });
+      run.config = await this.kernelRpc("ai.config", {});
       if (await this.handleRunStopped(runId)) {
         return;
       }
@@ -2380,7 +2351,6 @@ export class Process extends Host<Env> {
     if (!run.systemPrompt) {
       run.systemPrompt = await assembleSystemPrompt({
         config: run.config!,
-        profile: this.profile,
         purpose: "chat.reply",
         identity: this.identity,
         ownerIdentity: run.config?.owner ?? undefined,
@@ -2879,17 +2849,27 @@ export class Process extends Host<Env> {
       return this.currentRun.config;
     }
     try {
-      return await this.kernelRpc("ai.config", {
-        profile: this.profile,
-      });
+      return await this.kernelRpc("ai.config", {});
     } catch (error) {
       console.warn("[Process] Failed to resolve AI config for compaction:", error);
       return null;
     }
   }
 
+  /**
+   * R2-key prefix where a conversation's transcript archives live, under the
+   * run-as agent's home: `home/<agent>/conversations/<id>`. Keyed by the agent
+   * identity + conversation, NOT the (fungible) executor pid, so transcripts
+   * survive across executors and can be hydrated on resume.
+   */
+  private conversationArchiveDir(conversationId: string): string {
+    const homeKey = this.identity.home.replace(/^\/+/, "").replace(/\/+$/, "");
+    return `${homeKey}/conversations/${encodeURIComponent(
+      normalizeConversationId(conversationId),
+    )}`;
+  }
+
   private async archiveConversationMessages(
-    pid: string,
     conversationId: string,
     archiveId: string,
   ): Promise<string | null> {
@@ -2897,26 +2877,16 @@ export class Process extends Host<Env> {
     const messages = this.store.allMessagesForArchive(normalizedConversationId);
     if (messages.length === 0) return null;
 
-    const key = [
-      "var",
-      "sessions",
-      this.identity.username,
-      pid,
-      "conversations",
-      encodeURIComponent(normalizedConversationId),
-      `${archiveId}.jsonl.gz`,
-    ].join("/");
+    const key = `${this.conversationArchiveDir(normalizedConversationId)}/${archiveId}.jsonl.gz`;
 
     await this.archiveMessageRecords(key, messages);
     return key;
   }
 
   private async archiveAllConversationMessages(
-    pid: string,
     archiveId: string,
     kind: ProcConversationArchiveKind,
   ): Promise<ProcessArchiveResult> {
-    const archiveDir = `var/sessions/${this.identity.username}/${pid}/${archiveId}/`;
     const archives: ProcArchiveEntry[] = [];
     let archivedMessages = 0;
 
@@ -2930,7 +2900,7 @@ export class Process extends Host<Env> {
         continue;
       }
 
-      const key = `${archiveDir}${conversationArchiveFilename(
+      const key = `${this.conversationArchiveDir(conversation.id)}/${archiveId}.${conversationArchiveFilename(
         conversation.id,
         conversation.generation,
       )}`;
@@ -2954,9 +2924,10 @@ export class Process extends Host<Env> {
       });
     }
 
+    const homeKey = this.identity.home.replace(/^\/+/, "").replace(/\/+$/, "");
     return {
       archivedMessages,
-      archivedTo: archivedMessages > 0 ? `/${archiveDir}` : undefined,
+      archivedTo: archivedMessages > 0 ? `/${homeKey}/conversations/` : undefined,
       archives,
     };
   }
@@ -3245,7 +3216,6 @@ export class Process extends Host<Env> {
           syscall,
           tc.arguments,
           this.identity,
-          this.profile,
         );
 
         if (approval.action === "deny") {
@@ -3436,7 +3406,6 @@ export class Process extends Host<Env> {
       call,
       args,
       this.identity,
-      this.profile,
     );
 
     if (approval.action === "deny") {
@@ -3702,7 +3671,6 @@ export class Process extends Host<Env> {
       pendingHil.syscall,
       pendingHil.args,
       this.identity,
-      this.profile,
     );
     return {
       match: pendingHil.syscall,

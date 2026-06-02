@@ -1,4 +1,3 @@
-import type { AiContextProfile } from "../../syscalls/ai";
 import { createHomeContextProvider } from "./providers/home";
 import { createOwnerContextProvider } from "./providers/owner";
 import { createProcessContextProvider } from "./providers/process";
@@ -19,10 +18,8 @@ const SKILLS_PROVIDER = createSkillIndexProvider();
 const PROCESS_PROVIDER = createProcessContextProvider();
 
 export function resolvePromptProviders(
-  profile: AiContextProfile,
   purpose: ContextPurpose,
 ): PromptContextProvider[] {
-  void profile;
   void purpose;
   return [
     SYSTEM_PROVIDER,

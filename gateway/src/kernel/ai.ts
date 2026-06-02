@@ -76,7 +76,6 @@ const SYSCALL_TOOLS: Record<string, ToolDefinition> = {
 
 const CODEMODE_MCP_TYPE_HINT_MAX_CHARS = 12_000;
 
-const PERSONAL_PROFILE_ALIAS = "personal";
 const DEFAULT_GENERATION_TIMEOUT_MS = 180_000;
 const DEFAULT_GENERATION_STREAMING = "auto";
 
@@ -122,12 +121,11 @@ export async function handleAiTools(
 }
 
 export async function handleAiConfig(
-  args: AiConfigArgs,
+  _args: AiConfigArgs,
   ctx: KernelContext,
 ): Promise<AiConfigResult> {
   const config = ctx.config;
   const uid = ctx.identity?.process.uid ?? 0;
-  const requestedProfile = args.profile === PERSONAL_PROFILE_ALIAS ? "init" : args.profile ?? "task";
   const owner = resolveOwnerIdentity(ctx);
 
   const provider =
@@ -175,10 +173,9 @@ export async function handleAiConfig(
 
   const systemContextFiles = listConfigContextFiles(config, "config/ai/context.d");
 
-  // Persona and context now come from the run-as account's home (the
-  // home.context provider reads /home/<account>/context.d), not from per-profile
-  // config keys. Tool approval is per account (keyed by the run-as uid).
-  const profile = requestedProfile;
+  // Persona and context come from the run-as account's home (the home.context
+  // provider reads /home/<account>/context.d). Tool approval is per account
+  // (keyed by the run-as uid).
   const profileContextFiles: ContextFile[] = [];
   const profileApprovalPolicy = resolveAccountApprovalPolicy(config, uid);
 
@@ -196,7 +193,7 @@ export async function handleAiConfig(
   const generationStreaming = normalizeGenerationStreaming(
     config.get("config/ai/generation/streaming"),
   );
-  const skillIndex = await collectPromptSkillIndex(ctx, profile).catch((error) => {
+  const skillIndex = await collectPromptSkillIndex(ctx).catch((error) => {
     console.warn(
       `[Prompt] failed to collect skills.d index: ${error instanceof Error ? error.message : String(error)}`,
     );
@@ -204,7 +201,6 @@ export async function handleAiConfig(
   });
 
   return {
-    profile,
     owner,
     provider,
     model,
@@ -380,13 +376,12 @@ function resolveOwnerIdentity(ctx: KernelContext): ProcessIdentity | null {
 
 /**
  * Tool approval policy for an account (keyed by run-as uid), falling back to
- * the global default and then the legacy task-profile default.
+ * the global default.
  */
 function resolveAccountApprovalPolicy(config: KernelContext["config"], uid: number): string | null {
   return (
     config.get(`users/${uid}/ai/tools/approval`) ??
     config.get("config/ai/tools/approval") ??
-    config.get("config/ai/profile/task/tools/approval") ??
     null
   );
 }

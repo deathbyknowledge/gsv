@@ -243,7 +243,7 @@ export class KernelMountBackend implements MountBackend {
           `Name:\t${proc.label ?? proc.processId}`,
           `Pid:\t${proc.processId}`,
           `PPid:\t${proc.parentPid ?? "0"}`,
-          `Profile:\t${proc.profile}`,
+          `RunAs:\t${proc.username}`,
           `State:\t${proc.state}`,
           `Uid:\t${proc.uid}`,
           `Gid:\t${proc.gid}`,
@@ -255,7 +255,6 @@ export class KernelMountBackend implements MountBackend {
           gid: proc.gid,
           gids: proc.gids,
           username: proc.username,
-          profile: proc.profile,
           home: proc.home,
           cwd: proc.cwd,
         }, null, 2) + "\n";

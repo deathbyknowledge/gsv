@@ -657,7 +657,6 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
 
   async function sendTextToPersonalAgent(message: string): Promise<PresenceSendResult> {
     const spawned = await gatewayClient.spawnProcess({
-      profile: "init",
       label: "Mind",
     });
     if (!spawned.ok) {

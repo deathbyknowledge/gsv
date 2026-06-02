@@ -43,7 +43,6 @@ function renderContextFiles(
 function renderContextTemplate(
   template: string,
   input: {
-    profile: string;
     identity: {
       uid: number;
       gid: number;
@@ -56,7 +55,6 @@ function renderContextTemplate(
   },
 ): string {
   const values = new Map<string, string>([
-    ["profile", input.profile],
     ["identity.uid", String(input.identity.uid)],
     ["identity.gid", String(input.identity.gid)],
     ["identity.username", input.identity.username],
