@@ -532,9 +532,10 @@ pub(crate) enum ProcAction {
 
     /// Spawn a child process
     Spawn {
-        /// Process profile to spawn (defaults to task; use personal for your init agent)
-        #[arg(long)]
-        profile: Option<String>,
+        /// Account to run the process as: a username, uid, or `package#agent`
+        /// (defaults to your personal agent)
+        #[arg(long = "as", visible_alias = "run-as")]
+        run_as: Option<String>,
 
         /// Optional process label
         #[arg(long)]
