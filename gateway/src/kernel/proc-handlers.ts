@@ -52,6 +52,7 @@ import {
 } from "./user-profiles";
 import { ensurePersonalAgent } from "./agents";
 import { accountIdentity } from "./accounts";
+import { resolvePackageAgentRunAs } from "./package-agents";
 
 /**
  * The owner uid for processes spawned in this context: the calling process's
@@ -403,8 +404,10 @@ function resolveRunAsIdentity(
 ): { ok: true; identity: ProcessIdentity } | { ok: false; error: string } {
   const auth = ctx.auth;
   const trimmed = runAs.trim();
+  const isRoot = ctx.identity!.process.uid === 0;
+
   if (trimmed.includes("#")) {
-    return { ok: false, error: `Package agent run-as is not yet supported: ${runAs}` };
+    return resolvePackageAgentRunAs(ctx, trimmed, ownerUid, isRoot);
   }
 
   const entry = /^\d+$/.test(trimmed)
@@ -414,7 +417,6 @@ function resolveRunAsIdentity(
     return { ok: false, error: `Unknown account: ${runAs}` };
   }
 
-  const isRoot = ctx.identity!.process.uid === 0;
   const isSelf = entry.uid === ownerUid;
   const isPersonalAgent = auth.getPersonalAgentUid(ownerUid) === entry.uid;
   const ownerName = auth.getPasswdByUid(ownerUid)?.username;

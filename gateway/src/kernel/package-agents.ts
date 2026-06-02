@@ -1,0 +1,161 @@
+/**
+ * Package-provisioned agent accounts.
+ *
+ * When a package is enabled, each profile it declares is provisioned as a shared
+ * agent account (one per `package#profile`, idempotent). The agent runs with the
+ * package-declared capabilities seeded on its own gid; enabling humans are added
+ * to a separate, capability-less access group that authorizes them to run as the
+ * agent without inheriting its capabilities. Spawned processes are owned by the
+ * enabling human (`owner_uid`), while the agent account supplies the run-as
+ * identity (uid/gid/home/caps).
+ */
+
+import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
+import { accountIdentity, createAccount } from "./accounts";
+import type { KernelContext } from "./context";
+import type { InstalledPackageRecord, PackageProfileManifest } from "./packages";
+
+/**
+ * Baseline capabilities every package agent receives. Intentionally empty:
+ * conversational loop syscalls (`ai.*`) are internal-only and always allowed, so
+ * an agent with no declared capabilities can converse but use no tools. Tools are
+ * unlocked only by the profile's declared capabilities.
+ */
+const PACKAGE_AGENT_BASELINE: readonly string[] = [];
+
+/** Deterministic, unique account name for a package profile's agent. */
+export function packageAgentUsername(packageName: string, profileName: string): string {
+  const slug = `${packageName}-${profileName}`
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+/, "")
+    .replace(/-+$/, "")
+    .slice(0, 32);
+  const safe = /^[a-z_]/.test(slug) ? slug : `p-${slug}`.slice(0, 32);
+  return safe.replace(/-+$/, "") || "p-agent";
+}
+
+/** Capability-less group whose members may run as the package agent. */
+export function packageAgentAccessGroup(username: string): string {
+  return `${username}-run`;
+}
+
+/**
+ * Provision (idempotently) the agent account for a package profile and grant the
+ * enabling human run-as rights via the access group. Returns the agent identity.
+ */
+export async function ensurePackageAgent(
+  ctx: KernelContext,
+  record: InstalledPackageRecord,
+  profile: PackageProfileManifest,
+  enablingHumanUid: number,
+): Promise<ProcessIdentity> {
+  const auth = ctx.auth;
+  const username = packageAgentUsername(record.manifest.name, profile.name);
+  const accessGroupName = packageAgentAccessGroup(username);
+
+  let entry = auth.getPasswdByUsername(username);
+  if (!entry) {
+    const created = await createAccount(ctx, {
+      kind: "agent",
+      username,
+      gecos: profile.displayName || username,
+      shared: false, // never join users(100): capabilities come only from the manifest
+      capabilities: [...PACKAGE_AGENT_BASELINE, ...(profile.capabilities ?? [])],
+      accessGroupName,
+      contextFiles: profile.contextFiles.map((file) => ({ name: file.name, text: file.text })),
+    });
+    entry = auth.getPasswdByUid(created.identity.uid)!;
+    if (profile.approvalPolicy) {
+      ctx.config.set(`users/${entry.uid}/ai/tools/approval`, profile.approvalPolicy);
+    }
+  } else if (!auth.getGroupByName(accessGroupName)) {
+    // Older provisioning without an access group: backfill it.
+    auth.addGroup({ name: accessGroupName, gid: auth.nextGid(), members: [] });
+  }
+
+  joinAccessGroup(ctx, accessGroupName, enablingHumanUid);
+  return accountIdentity(auth, entry);
+}
+
+/** Provision every profile of a package on enable for the enabling human. */
+export async function provisionPackageAgents(
+  ctx: KernelContext,
+  record: InstalledPackageRecord,
+  enablingHumanUid: number,
+): Promise<void> {
+  for (const profile of record.manifest.profiles ?? []) {
+    await ensurePackageAgent(ctx, record, profile, enablingHumanUid);
+  }
+}
+
+/** Revoke a human's run-as rights for a package's agents (on disable/remove). */
+export function revokePackageAgentAccess(
+  ctx: KernelContext,
+  record: InstalledPackageRecord,
+  humanUid: number,
+): void {
+  const auth = ctx.auth;
+  const human = auth.getPasswdByUid(humanUid);
+  if (!human) return;
+  for (const profile of record.manifest.profiles ?? []) {
+    const username = packageAgentUsername(record.manifest.name, profile.name);
+    const groupName = packageAgentAccessGroup(username);
+    const group = auth.getGroupByName(groupName);
+    if (group && group.members.includes(human.username)) {
+      auth.updateGroupMembers(
+        groupName,
+        group.members.filter((member) => member !== human.username),
+      );
+    }
+  }
+}
+
+/**
+ * Resolve a `package#profile` run-as reference to a provisioned agent identity,
+ * authorizing the owner human via the access group (root bypasses).
+ */
+export function resolvePackageAgentRunAs(
+  ctx: KernelContext,
+  reference: string,
+  ownerUid: number,
+  isRoot: boolean,
+): { ok: true; identity: ProcessIdentity } | { ok: false; error: string } {
+  const auth = ctx.auth;
+  const hash = reference.indexOf("#");
+  const packageName = reference.slice(0, hash).trim();
+  const profileName = reference.slice(hash + 1).trim();
+  if (!packageName || !profileName) {
+    return { ok: false, error: `Invalid package agent reference: ${reference}` };
+  }
+
+  const username = packageAgentUsername(packageName, profileName);
+  const entry = auth.getPasswdByUsername(username);
+  if (!entry) {
+    return {
+      ok: false,
+      error: `Package agent not provisioned: ${reference} (enable the package first)`,
+    };
+  }
+
+  if (!isRoot) {
+    const ownerName = auth.getPasswdByUid(ownerUid)?.username;
+    const group = auth.getGroupByName(packageAgentAccessGroup(username));
+    const authorized = !!ownerName && !!group && group.members.includes(ownerName);
+    if (!authorized) {
+      return { ok: false, error: `Permission denied: cannot run as ${reference}` };
+    }
+  }
+
+  return { ok: true, identity: accountIdentity(auth, entry) };
+}
+
+function joinAccessGroup(ctx: KernelContext, groupName: string, humanUid: number): void {
+  const auth = ctx.auth;
+  const human = auth.getPasswdByUid(humanUid);
+  if (!human) return;
+  const group = auth.getGroupByName(groupName);
+  if (group && !group.members.includes(human.username)) {
+    auth.updateGroupMembers(groupName, [...group.members, human.username]);
+  }
+}

@@ -400,13 +400,13 @@ async function dispatchNative(
         data = await handlePkgCheckout(frame.args, ctx);
         break;
       case "pkg.install":
-        data = handlePkgInstall(frame.args, ctx);
+        data = await handlePkgInstall(frame.args, ctx);
         break;
       case "pkg.review.approve":
         data = handlePkgReviewApprove(frame.args, ctx);
         break;
       case "pkg.remove":
-        data = handlePkgRemove(frame.args, ctx);
+        data = await handlePkgRemove(frame.args, ctx);
         break;
       case "pkg.remote.list":
         data = handlePkgRemoteList(frame.args, ctx);

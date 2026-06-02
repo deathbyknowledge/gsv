@@ -98,7 +98,7 @@ function makeRootIdentity() {
 }
 
 describe("pkg syscalls", () => {
-  it("prevents removing the consolidated GSV console package", () => {
+  it("prevents removing the consolidated GSV console package", async () => {
     const record = makeInstalledPackageRecord({
       packageId: "builtin:gsv@0.1.0",
       name: "gsv",
@@ -114,7 +114,7 @@ describe("pkg syscalls", () => {
       identity: makeRootIdentity(),
     } as unknown as KernelContext;
 
-    expect(() => handlePkgRemove({ packageId: record.packageId }, ctx)).toThrow(
+    await expect(handlePkgRemove({ packageId: record.packageId }, ctx)).rejects.toThrow(
       "Cannot remove the system console package",
     );
     expect(setEnabled).not.toHaveBeenCalled();

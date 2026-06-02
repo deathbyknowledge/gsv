@@ -1,4 +1,5 @@
 import type { KernelContext } from "./context";
+import { provisionPackageAgents, revokePackageAgentAccess } from "./package-agents";
 import type {
   PkgAddArgs,
   PkgAddResult,
@@ -103,10 +104,10 @@ export function handlePkgRemoteRemove(
   };
 }
 
-export function handlePkgInstall(
+export async function handlePkgInstall(
   args: PkgInstallArgs,
   ctx: KernelContext,
-): PkgInstallResult {
+): Promise<PkgInstallResult> {
   const record = requirePackage(args.packageId, ctx);
   assertMutablePackageAccess(record, ctx);
   if (record.reviewRequired && !record.reviewedAt) {
@@ -117,6 +118,13 @@ export function handlePkgInstall(
     if (!updated) {
       throw new Error(`Failed to enable package: ${record.packageId}`);
     }
+  }
+
+  // Provision the package's agent accounts and grant the enabling human run-as
+  // rights. Idempotent, so re-enabling for another human just adds them.
+  const enablingHumanUid = ctx.identity?.process.uid;
+  if (typeof enablingHumanUid === "number" && (record.manifest.profiles?.length ?? 0) > 0) {
+    await provisionPackageAgents(ctx, record, enablingHumanUid);
   }
 
   return {
@@ -420,10 +428,10 @@ export async function handlePkgCheckout(
   };
 }
 
-export function handlePkgRemove(
+export async function handlePkgRemove(
   args: PkgRemoveArgs,
   ctx: KernelContext,
-): PkgRemoveResult {
+): Promise<PkgRemoveResult> {
   const record = requirePackage(args.packageId, ctx);
   assertMutablePackageAccess(record, ctx);
   if (isRequiredSystemConsolePackage(record)) {
@@ -434,6 +442,12 @@ export function handlePkgRemove(
     if (!updated) {
       throw new Error(`Failed to disable package: ${record.packageId}`);
     }
+  }
+
+  // Revoke the disabling human's run-as rights for this package's agents.
+  const humanUid = ctx.identity?.process.uid;
+  if (typeof humanUid === "number" && (record.manifest.profiles?.length ?? 0) > 0) {
+    revokePackageAgentAccess(ctx, record, humanUid);
   }
 
   return {

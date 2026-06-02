@@ -306,13 +306,13 @@ async function runPkgCommand(args: string[], ctx: KernelContext, cwd: string): P
     case "enable": {
       requireCommandCapability(ctx, "pkg.install");
       const target = resolvePkgTarget(rest[0], ctx, cwd);
-      const result = handlePkgInstall({ packageId: target.packageId }, ctx);
+      const result = await handlePkgInstall({ packageId: target.packageId }, ctx);
       return { stdout: `${result.changed ? "enabled" : "already enabled"} ${result.package.name}\n`, stderr: "", exitCode: 0 };
     }
     case "disable": {
       requireCommandCapability(ctx, "pkg.remove");
       const target = resolvePkgTarget(rest[0], ctx, cwd);
-      const result = handlePkgRemove({ packageId: target.packageId }, ctx);
+      const result = await handlePkgRemove({ packageId: target.packageId }, ctx);
       return { stdout: `${result.changed ? "disabled" : "already disabled"} ${result.package.name}\n`, stderr: "", exitCode: 0 };
     }
     case "checkout": {

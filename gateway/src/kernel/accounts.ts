@@ -75,11 +75,26 @@ export interface CreateAccountInput {
   personalAgentOf?: number;
   /** Optional persona text seeded to context.d/05-persona.md. */
   persona?: string;
+  /**
+   * Capabilities granted on the account's own (cap) gid. Only the account is a
+   * member of this group, so these never leak to anyone authorized to run as it.
+   */
+  capabilities?: string[];
+  /** Extra context.d files seeded into the home (idempotent per file). */
+  contextFiles?: { name: string; text: string }[];
+  /**
+   * Create a separate, capability-less group used purely to authorize run-as.
+   * Humans join this group (not the cap gid), so they may run as the account
+   * without inheriting its capabilities. Returns its gid on the result.
+   */
+  accessGroupName?: string;
 }
 
 export interface CreatedAccount {
   identity: ProcessIdentity;
   created: boolean;
+  /** gid of the run-as access group, when `accessGroupName` was requested. */
+  accessGroupGid?: number;
 }
 
 /**
@@ -153,6 +168,24 @@ export async function createAccount(
     auth.setPersonalAgent(input.personalAgentOf, uid);
   }
 
+  // Capabilities live on the account's own gid (only the account is a member),
+  // so run-as authorization (granted via the access group below) never confers
+  // these capabilities on the authorized human.
+  for (const capability of input.capabilities ?? []) {
+    ctx.caps.grant(gid, capability);
+  }
+
+  let accessGroupGid: number | undefined;
+  if (input.accessGroupName) {
+    const existing = auth.getGroupByName(input.accessGroupName);
+    if (existing) {
+      accessGroupGid = existing.gid;
+    } else {
+      accessGroupGid = auth.nextGid();
+      auth.addGroup({ name: input.accessGroupName, gid: accessGroupGid, members: [] });
+    }
+  }
+
   const entry = auth.getPasswdByUid(uid)!;
   const identity = accountIdentity(auth, entry);
 
@@ -160,8 +193,11 @@ export async function createAccount(
   if (input.persona) {
     await seedPersona(env, identity, input.persona);
   }
+  for (const file of input.contextFiles ?? []) {
+    await seedContextFile(env, identity, file.name, file.text);
+  }
 
-  return { identity, created: true };
+  return { identity, created: true, accessGroupGid };
 }
 
 /**
@@ -173,24 +209,38 @@ export async function seedPersona(
   identity: ProcessIdentity,
   persona: string,
 ): Promise<void> {
+  await seedContextFile(env, identity, "05-persona.md", persona);
+}
+
+/**
+ * Seed a single context.d/<name> file in an account's home, idempotently (no-op
+ * if the file already exists).
+ */
+export async function seedContextFile(
+  env: Pick<Env, "STORAGE" | "RIPGIT">,
+  identity: ProcessIdentity,
+  name: string,
+  text: string,
+): Promise<void> {
   if (!env.RIPGIT) return;
 
+  const path = `context.d/${name}`;
   const client = new RipgitClient(env.RIPGIT);
   const repo = homeKnowledgeRepoRef(identity.username);
-  const existing = await client.readPath(repo, "context.d/05-persona.md");
+  const existing = await client.readPath(repo, path);
   if (existing.kind !== "missing") return;
 
   const ops: RipgitApplyOp[] = [{
     type: "put",
-    path: "context.d/05-persona.md",
-    contentBytes: Array.from(TEXT_ENCODER.encode(persona)),
+    path,
+    contentBytes: Array.from(TEXT_ENCODER.encode(text)),
   }];
 
   await client.apply(
     repo,
     identity.username,
     `${identity.username}@gsv.local`,
-    "gsv: scaffold persona",
+    `gsv: scaffold ${name}`,
     ops,
   );
 }
