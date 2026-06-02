@@ -70,6 +70,8 @@ export type SysSetupArgs = {
   username: string;
   password: string;
   rootPassword?: string;
+  /** Optional name for the user's 1:1 personal agent account (defaults to a curated name). */
+  agentName?: string;
   bootstrap?: {
     remoteUrl?: string;
     repo?: string;

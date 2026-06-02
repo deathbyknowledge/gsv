@@ -6,6 +6,7 @@ import { handleSysBootstrap } from "./bootstrap";
 import { ensureHomeStorageLayout } from "../home-knowledge";
 import { RipgitClient } from "../../fs";
 import { seedRepoSkillsToHome } from "./skills-seed";
+import { ensurePersonalAgent } from "../agents";
 
 const USERNAME_RE = /^[a-z_][a-z0-9_-]{0,31}$/;
 
@@ -148,6 +149,7 @@ export async function handleSysSetup(
   }
 
   const { username, password } = parseSetupIdentity(args);
+  const agentName = readOptionalString((args as Record<string, unknown>).agentName);
   const ai = parseAiConfig(args);
   const timezone = parseTimezone(args);
   const node = parseNodeConfig(args);
@@ -163,7 +165,9 @@ export async function handleSysSetup(
   }
 
   const uid = auth.nextUid();
-  const gid = 100;
+  // User Private Group (UPG): each user gets a unique primary group with gid = uid.
+  // Shared capabilities still flow through supplementary membership in `users` (gid 100).
+  const gid = uid;
   const home = `/home/${username}`;
   const bootstrapProcessIdentity: ProcessIdentity = {
     uid,
@@ -213,6 +217,11 @@ export async function handleSysSetup(
 
       const hashedPassword = await hashPassword(password);
       auth.setShadow(makeShadowEntry(username, hashedPassword));
+
+      // Private primary group (gid = uid) owned by this user.
+      if (!auth.getGroupByName(username) && !auth.getGroupByGid(gid)) {
+        auth.addGroup({ name: username, gid, members: [] });
+      }
 
       const usersGroup = auth.getGroupByName("users");
       if (usersGroup && !usersGroup.members.includes(username)) {
@@ -305,6 +314,10 @@ export async function handleSysSetup(
       home,
       cwd: home,
     };
+
+    await timeSetupStep(timings, "provision-personal-agent", async () => {
+      await ensurePersonalAgent(ctx, processIdentity, agentName);
+    });
 
     const rootShadow = auth.getShadowByUsername("root");
     const rootLocked = rootShadow ? isLocked(rootShadow) : true;

@@ -3,42 +3,61 @@ import type { KernelContext } from "../context";
 import { handleSysSetup } from "./setup";
 
 function createCtx(overrides?: { setupMode?: boolean }) {
-  const usersGroup = { name: "users", gid: 100, members: [] as string[] };
-  const passwd: Array<{ username: string; uid: number }> = [{ username: "root", uid: 0 }];
+  type PasswdRow = { username: string; uid: number; gid: number; gecos: string; home: string; shell: string };
+  type GroupRow = { name: string; gid: number; members: string[] };
+
+  const usersGroup: GroupRow = { name: "users", gid: 100, members: [] };
+  const passwd: PasswdRow[] = [
+    { username: "root", uid: 0, gid: 0, gecos: "root", home: "/root", shell: "/bin/init" },
+  ];
+  const groups: GroupRow[] = [usersGroup];
   const shadowRoot = { username: "root", hash: "!" };
+  const personalAgents = new Map<number, number>();
 
   const auth = {
     isSetupMode: vi.fn(() => overrides?.setupMode ?? true),
-    getPasswdEntries: vi.fn(() => passwd.map((u) => ({
-      username: u.username,
-      uid: u.uid,
-      gid: u.uid === 0 ? 0 : 100,
-      gecos: u.username,
-      home: u.uid === 0 ? "/root" : `/home/${u.username}`,
-      shell: "/bin/init",
-    }))),
-    getPasswdByUsername: vi.fn((username: string) =>
-      passwd.find((u) => u.username === username)
-        ? {
-            username,
-            uid: 1000,
-            gid: 100,
-            gecos: username,
-            home: `/home/${username}`,
-            shell: "/bin/init",
-          }
-        : null),
-    nextUid: vi.fn(() => 1000),
-    addUser: vi.fn((entry: { username: string; uid: number }) => passwd.push({
-      username: entry.username,
-      uid: entry.uid,
-    })),
+    getPasswdEntries: vi.fn(() => passwd.map((u) => ({ ...u }))),
+    getPasswdByUsername: vi.fn((username: string) => {
+      const found = passwd.find((u) => u.username === username);
+      return found ? { ...found } : null;
+    }),
+    getPasswdByUid: vi.fn((uid: number) => {
+      const found = passwd.find((u) => u.uid === uid);
+      return found ? { ...found } : null;
+    }),
+    nextUid: vi.fn(() => Math.max(999, ...passwd.map((u) => u.uid)) + 1),
+    addUser: vi.fn((entry: PasswdRow) => {
+      passwd.push({
+        username: entry.username,
+        uid: entry.uid,
+        gid: entry.gid,
+        gecos: entry.gecos ?? entry.username,
+        home: entry.home,
+        shell: entry.shell ?? "/bin/init",
+      });
+    }),
     setShadow: vi.fn(),
-    getGroupByName: vi.fn((name: string) => (name === "users" ? usersGroup : null)),
+    getGroupByName: vi.fn((name: string) => {
+      const found = groups.find((g) => g.name === name);
+      return found ? { ...found, members: [...found.members] } : null;
+    }),
+    getGroupByGid: vi.fn((gid: number) => {
+      const found = groups.find((g) => g.gid === gid);
+      return found ? { ...found, members: [...found.members] } : null;
+    }),
+    addGroup: vi.fn((entry: GroupRow) => {
+      groups.push({ name: entry.name, gid: entry.gid, members: [...entry.members] });
+    }),
     updateGroupMembers: vi.fn((name: string, members: string[]) => {
-      if (name === "users") usersGroup.members = members;
+      const group = groups.find((g) => g.name === name);
+      if (group) group.members = members;
       return true;
     }),
+    getPersonalAgentUid: vi.fn((ownerUid: number) => personalAgents.get(ownerUid) ?? null),
+    setPersonalAgent: vi.fn((ownerUid: number, agentUid: number) => {
+      personalAgents.set(ownerUid, agentUid);
+    }),
+    isPersonalAgentUid: vi.fn((uid: number) => [...personalAgents.values()].includes(uid)),
     setPassword: vi.fn(async () => true),
     issueToken: vi.fn(async () => ({
       tokenId: "tok-1",
@@ -52,7 +71,7 @@ function createCtx(overrides?: { setupMode?: boolean }) {
       createdAt: 1_700_000_000_000,
       expiresAt: null,
     })),
-    resolveGids: vi.fn(() => [100]),
+    resolveGids: vi.fn((_username: string, primaryGid: number) => [primaryGid]),
     getShadowByUsername: vi.fn((username: string) => (username === "root" ? shadowRoot : null)),
   };
 
@@ -103,7 +122,7 @@ describe("handleSysSetup", () => {
       expect.objectContaining({
         username: "alice",
         uid: 1000,
-        gid: 100,
+        gid: 1000,
         home: "/home/alice",
       }),
     );
