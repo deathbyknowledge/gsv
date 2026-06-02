@@ -24,11 +24,6 @@ import type {
   AiTranscriptionCreateResult,
   ContextFile,
 } from "../syscalls/ai";
-import {
-  isPackageAiContextProfile,
-  isSystemAiContextProfile,
-  isUserAiContextProfile,
-} from "../syscalls/ai";
 import type { ToolDefinition, SyscallName } from "../syscalls";
 import { intoSyscallTool, isRoutableSyscall } from "../syscalls";
 import {
@@ -36,11 +31,6 @@ import {
   buildCodeModeMcpTypeDeclarations,
   type CodeModeMcpToolSource,
 } from "../codemode/mcp";
-import {
-  resolvePackageProfileReference,
-  visiblePackageScopesForActor,
-} from "./packages";
-import { resolveUserAiProfile } from "./user-profiles";
 
 import { FS_READ_DEFINITION } from "../syscalls/read";
 import { FS_WRITE_DEFINITION } from "../syscalls/write";
@@ -185,50 +175,12 @@ export async function handleAiConfig(
 
   const systemContextFiles = listConfigContextFiles(config, "config/ai/context.d");
 
-  // Tool approval policy now lives per account (keyed by the run-as uid), with
-  // the legacy system/profile defaults as fallback.
-  const accountApprovalPolicy = resolveAccountApprovalPolicy(config, uid);
-
-  let profile = requestedProfile;
-  let profileContextFiles: ContextFile[] = [];
-  let profileApprovalPolicy: string | null = accountApprovalPolicy;
-
-  if (isPackageAiContextProfile(requestedProfile)) {
-    const resolved = resolvePackageProfileReference(
-      requestedProfile,
-      ctx.packages,
-      visiblePackageScopesForActor(ctx.identity?.process),
-    );
-    if (!resolved) {
-      throw new Error(`Unknown package profile: ${requestedProfile}`);
-    }
-    profileContextFiles = resolved.packageProfile.contextFiles
-      .filter((file) => file.text.trim().length > 0)
-      .sort((left, right) => left.name.localeCompare(right.name));
-    profileApprovalPolicy = resolved.packageProfile.approvalPolicy ?? accountApprovalPolicy;
-  } else if (isSystemAiContextProfile(requestedProfile)) {
-    profile = requestedProfile;
-    profileContextFiles = listConfigContextFiles(config, `config/ai/profile/${profile}/context.d`);
-    profileApprovalPolicy = accountApprovalPolicy;
-  } else if (isUserAiContextProfile(requestedProfile)) {
-    const userProfile = await resolveUserAiProfile(ctx, requestedProfile);
-    if (!userProfile) {
-      throw new Error(`Unknown user profile: ${requestedProfile}`);
-    }
-    profile = requestedProfile;
-    profileContextFiles = [
-      ...listConfigContextFiles(config, "config/ai/profile/task/context.d"),
-      ...userProfile.contextFiles.map((file) => ({
-        name: `${requestedProfile}/${file.name}`,
-        text: file.text,
-      })),
-    ];
-    profileApprovalPolicy = userProfile.approvalPolicy ?? accountApprovalPolicy;
-  } else {
-    profile = "task";
-    profileContextFiles = listConfigContextFiles(config, "config/ai/profile/task/context.d");
-    profileApprovalPolicy = accountApprovalPolicy;
-  }
+  // Persona and context now come from the run-as account's home (the
+  // home.context provider reads /home/<account>/context.d), not from per-profile
+  // config keys. Tool approval is per account (keyed by the run-as uid).
+  const profile = requestedProfile;
+  const profileContextFiles: ContextFile[] = [];
+  const profileApprovalPolicy = resolveAccountApprovalPolicy(config, uid);
 
   const maxContextBytes = parseInt(
     config.get(`users/${uid}/ai/max_context_bytes`) ??
