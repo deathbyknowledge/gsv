@@ -256,8 +256,10 @@ export class AuthStore {
   }
 
   nextUid(): number {
-    const rows = this.sql.exec<{ m: number | null }>("SELECT MAX(uid) as m FROM passwd").toArray();
-    const max = rows[0].m ?? 0;
+    // Allocate above both uids and group gids: User Private Groups use gid = uid,
+    // and standalone groups (e.g. package-agent access groups) take ids from the
+    // same space, so a fresh id must clear both tables to avoid later reuse.
+    const max = this.maxAllocatedId();
     return max < 1000 ? 1000 : max + 1;
   }
 
@@ -371,9 +373,16 @@ export class AuthStore {
   }
 
   nextGid(): number {
-    const rows = this.sql.exec<{ m: number | null }>("SELECT MAX(gid) as m FROM groups").toArray();
-    const max = rows[0].m ?? 0;
+    const max = this.maxAllocatedId();
     return max < 100 ? 100 : max + 1;
+  }
+
+  /** Highest id in use across passwd uids and group gids. */
+  private maxAllocatedId(): number {
+    const rows = this.sql.exec<{ m: number | null }>(
+      "SELECT MAX(m) as m FROM (SELECT MAX(uid) as m FROM passwd UNION ALL SELECT MAX(gid) as m FROM groups)",
+    ).toArray();
+    return rows[0]?.m ?? 0;
   }
 
   // ---------------------------------------------------------------------------
