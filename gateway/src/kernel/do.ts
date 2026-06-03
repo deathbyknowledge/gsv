@@ -707,7 +707,7 @@ export class Kernel extends Host<Env> {
     const ownerUid = this.procs.getOwnerUid(processId) ?? identity.uid;
 
     await this.dispatchSignalWatches(ownerUid, processId, frame);
-    await this.completeIpcCallsFromSignal(identity.uid, processId, frame, runId);
+    await this.completeIpcCallsFromSignal(ownerUid, processId, frame, runId);
 
     if (!frame.signal.startsWith("proc.run.")) return;
 
@@ -835,11 +835,12 @@ export class Kernel extends Host<Env> {
       return;
     }
     const runId = this.extractRunId(frame.payload);
-    await this.completeIpcCallsFromSignal(identity.uid, processId, frame, runId);
+    const ownerUid = this.procs.getOwnerUid(processId) ?? identity.uid;
+    await this.completeIpcCallsFromSignal(ownerUid, processId, frame, runId);
   }
 
   private async completeIpcCallsFromSignal(
-    uid: number,
+    ownerUid: number,
     processId: string,
     frame: SignalFrame,
     runId: string | null,
@@ -857,7 +858,7 @@ export class Kernel extends Host<Env> {
     };
     const error = typeof payload.error === "string" ? payload.error : null;
     const completed = this.ipcCalls.completeByRun({
-      uid,
+      uid: ownerUid,
       targetPid: processId,
       runId,
       response,
@@ -2614,6 +2615,7 @@ export class Kernel extends Host<Env> {
 
     if (target.kind === "process.spawn") {
       const ctx = this.buildScheduleContext(record);
+      const runAs = this.resolveScheduledSpawnRunAs(record, target.runAs);
       const result = await handleProcSpawn({
         interactive: false,
         label: target.label ?? record.name,
@@ -2622,7 +2624,7 @@ export class Kernel extends Host<Env> {
         cwd: target.cwd,
         mounts: target.mounts,
         assignment: target.assignment,
-        ...(target.runAs ? { runAs: target.runAs } : {}),
+        ...(runAs ? { runAs } : {}),
       }, ctx);
       if (!result.ok) {
         throw new Error(result.error);
@@ -2695,7 +2697,7 @@ export class Kernel extends Host<Env> {
       schedules: this.schedules,
       connection: null as unknown as Connection,
       identity,
-      processId: record.runAs.kind === "process" ? record.runAs.pid : undefined,
+      processId: undefined,
       callerOwnerUid: record.ownerUid,
       appFrame: undefined,
       serverVersion: SERVER_VERSION,
@@ -2753,6 +2755,18 @@ export class Kernel extends Host<Env> {
       };
     }
     throw new Error(`Cannot resolve schedule run-as uid ${uid}`);
+  }
+
+  private resolveScheduledSpawnRunAs(record: ScheduleRecord, targetRunAs?: string): string | undefined {
+    if (targetRunAs) {
+      return targetRunAs;
+    }
+    // A process-principal schedule records a run-as account and an origin pid.
+    // Execution must keep the account without depending on that pid still being
+    // alive as the spawn parent.
+    return record.runAs.kind === "process" || record.runAs.kind === "service"
+      ? record.runAs.username
+      : undefined;
   }
 
   private deliverToOrigin(origin: RouteOrigin, frame: ResponseFrame): void {

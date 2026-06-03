@@ -79,6 +79,58 @@ describe("proc handlers", () => {
     expect(ctx.scheduleIpcCallTimeout).not.toHaveBeenCalled();
   });
 
+  it("keys same-owner cross-agent IPC calls by owner uid", async () => {
+    sendFrameToProcessMock.mockResolvedValue({
+      type: "res",
+      id: "deliver",
+      ok: true,
+      data: {
+        ok: true,
+        status: "started",
+        pid: "target-process",
+        sourcePid: "source-process",
+        conversationId: "default",
+        runId: "run-1",
+      } satisfies ProcIpcSendResult,
+    } satisfies ResponseFrame);
+
+    const ownerUid = 1000;
+    const sourceIdentity = {
+      ...IDENTITY,
+      uid: 2000,
+      gid: 2000,
+      gids: [2000],
+      username: "sam-agent",
+      home: "/home/sam-agent",
+      cwd: "/home/sam-agent",
+    };
+    const { ctx, ipcCalls } = makeIpcCallContext({
+      identity: sourceIdentity,
+      source: { uid: sourceIdentity.uid, ownerUid },
+      target: { uid: 3000, ownerUid },
+    });
+
+    const result = await handleProcIpcCall({
+      pid: "target-process",
+      message: "bounded work",
+    }, ctx);
+
+    expect(result).toMatchObject({
+      ok: true,
+      status: "started",
+      pid: "target-process",
+      sourcePid: "source-process",
+      conversationId: "default",
+      runId: "run-1",
+    });
+    expect(ipcCalls.create).toHaveBeenCalledWith(expect.objectContaining({
+      uid: ownerUid,
+      sourcePid: "source-process",
+      targetPid: "target-process",
+    }));
+    expect(ipcCalls.attachRun).toHaveBeenCalledWith(expect.any(String), "run-1");
+  });
+
   it("derives client interaction origin for forwarded proc.send", async () => {
     sendFrameToProcessMock.mockResolvedValue({
       type: "res",
@@ -856,7 +908,14 @@ describe("proc handlers", () => {
   });
 });
 
-function makeIpcCallContext() {
+function makeIpcCallContext(options: {
+  identity?: ProcessIdentity;
+  source?: { uid: number; ownerUid: number };
+  target?: { uid: number; ownerUid: number };
+} = {}) {
+  const identity = options.identity ?? IDENTITY;
+  const source = options.source ?? { uid: identity.uid, ownerUid: identity.uid };
+  const target = options.target ?? { uid: identity.uid, ownerUid: identity.uid };
   const ipcCalls = {
     create: vi.fn(),
     remove: vi.fn(),
@@ -864,11 +923,11 @@ function makeIpcCallContext() {
   };
   const ctx = {
     processId: "source-process",
-    identity: { process: IDENTITY },
+    identity: { process: identity },
     procs: {
       get: vi.fn((pid: string) => {
-        if (pid === "source-process") return { uid: IDENTITY.uid };
-        if (pid === "target-process") return { uid: IDENTITY.uid };
+        if (pid === "source-process") return source;
+        if (pid === "target-process") return target;
         return undefined;
       }),
     },

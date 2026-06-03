@@ -426,7 +426,7 @@ export async function handleProcIpcCall(
 
   ctx.ipcCalls.create({
     callId,
-    uid: resolved.source.uid,
+    uid: resolved.source.ownerUid,
     sourcePid: resolved.sourcePid,
     targetPid: resolved.args.pid,
     deadlineAt,
@@ -596,8 +596,8 @@ type ResolvedSameOwnerIpc =
   | {
       ok: true;
       sourcePid: string;
-      source: { uid: number };
-      target: { uid: number };
+      source: { uid: number; ownerUid: number };
+      target: { uid: number; ownerUid: number };
       args: Extract<NormalizedIpcSendArgs, { ok: true }>;
     }
   | { ok: false; error: string };

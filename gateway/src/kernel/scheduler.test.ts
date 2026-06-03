@@ -1341,4 +1341,103 @@ describe("scheduler", () => {
       content: "Run the scheduled cron task.",
     }));
   });
+
+  it("runs process-principal spawn schedules after the creator process is gone", async () => {
+    const kernel = await getAgentByName<Env, Kernel>(
+      env.KERNEL,
+      `scheduler-dead-parent-spawn-test-${crypto.randomUUID()}`,
+    );
+    const runAs: SchedulePrincipal = {
+      kind: "process",
+      uid: CUSTOM_AGENT_IDENTITY.uid,
+      username: CUSTOM_AGENT_IDENTITY.username,
+      pid: "proc:dead-creator",
+    };
+    const scheduleId = await runInDurableObject(kernel, (instance: Kernel) => {
+      const k = instance as unknown as {
+        auth: {
+          addUser: (entry: {
+            username: string;
+            uid: number;
+            gid: number;
+            gecos: string;
+            home: string;
+            shell: string;
+          }) => void;
+          addGroup: (entry: { name: string; gid: number; members: string[] }) => void;
+        };
+        schedules: ScheduleStore;
+        ctx: DurableObjectState;
+      };
+      k.auth.addUser({
+        username: CUSTOM_AGENT_IDENTITY.username,
+        uid: CUSTOM_AGENT_IDENTITY.uid,
+        gid: CUSTOM_AGENT_IDENTITY.gid,
+        gecos: "Wiki Builder",
+        home: CUSTOM_AGENT_IDENTITY.home,
+        shell: "/bin/init",
+      });
+      k.auth.addGroup({ name: CUSTOM_AGENT_IDENTITY.username, gid: CUSTOM_AGENT_IDENTITY.gid, members: [] });
+
+      const now = Date.now();
+      const schedule = k.schedules.create({
+        ownerUid: USER_IDENTITY.uid,
+        creator: runAs,
+        runAs,
+        name: "agent cron spawn",
+        enabled: true,
+        expression: { kind: "every", everyMs: 60_000, anchorMs: now - 120_000 },
+        target: {
+          kind: "process.spawn",
+          label: "agent cron",
+          prompt: "Run the agent-owned cron task.",
+        },
+        now,
+      });
+      k.ctx.storage.sql.exec(
+        "UPDATE schedules SET next_run_at = ? WHERE schedule_id = ?",
+        now - 1_000,
+        schedule.id,
+      );
+      return schedule.id;
+    });
+
+    await runInDurableObject(kernel, (instance: Kernel) => instance.onScheduleDue(scheduleId));
+
+    const spawned = await runInDurableObject(kernel, (instance: Kernel) => {
+      const k = instance as unknown as {
+        schedules: ScheduleStore;
+        procs: {
+          get: (pid: string) => {
+            processId: string;
+            uid: number;
+            ownerUid: number;
+            label: string | null;
+            interactive: boolean;
+            parentPid: string | null;
+          } | null;
+        };
+      };
+      const history = k.schedules.history(scheduleId);
+      const result = history[0]?.result as { pid?: string } | null | undefined;
+      return {
+        pid: result?.pid,
+        cronProcess: result?.pid ? k.procs.get(result.pid) : null,
+        schedule: k.schedules.get(scheduleId),
+      };
+    });
+
+    expect(spawned.pid).toBeTruthy();
+    expect(spawned.schedule?.state.lastStatus).toBe("ok");
+    expect(spawned.cronProcess).toEqual(
+      expect.objectContaining({
+        processId: spawned.pid,
+        uid: CUSTOM_AGENT_IDENTITY.uid,
+        ownerUid: USER_IDENTITY.uid,
+        parentPid: null,
+        label: "agent cron",
+        interactive: false,
+      }),
+    );
+  });
 });
