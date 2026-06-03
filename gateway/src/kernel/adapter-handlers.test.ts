@@ -15,21 +15,47 @@ type FakeAdapterStatusStore = {
   upsert: ReturnType<typeof vi.fn>;
 };
 
+function makeStorageBucket() {
+  return {
+    head: vi.fn(async () => null),
+    put: vi.fn(async () => undefined),
+  };
+}
+
 function makeContext(
   env: Record<string, unknown>,
   status: FakeAdapterStatusStore,
 ): KernelContext {
+  const human = {
+    uid: 1000,
+    gid: 1000,
+    username: "sam",
+    gecos: "Sam",
+    home: "/home/sam",
+    shell: "/bin/init",
+  };
+  const personalAgent = {
+    uid: 1001,
+    gid: 1001,
+    username: "sam-agent",
+    gecos: "sam-agent",
+    home: "/home/sam-agent",
+    shell: "/bin/init",
+  };
+
   return {
-    env,
+    env: {
+      STORAGE: makeStorageBucket(),
+      ...env,
+    },
     auth: {
-      getPasswdByUid: vi.fn(() => ({
-        uid: 1000,
-        gid: 1000,
-        username: "sam",
-        home: "/home/sam",
-      })),
+      getPasswdByUid: vi.fn((uid: number) => {
+        if (uid === human.uid) return human;
+        if (uid === personalAgent.uid) return personalAgent;
+        return null;
+      }),
       resolveGids: vi.fn(() => [1000]),
-      getPersonalAgentUid: vi.fn(() => 1001),
+      getPersonalAgentUid: vi.fn(() => personalAgent.uid),
       isPersonalAgentUid: vi.fn(() => false),
     },
     procs: {

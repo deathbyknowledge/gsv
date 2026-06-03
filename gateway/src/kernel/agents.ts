@@ -104,7 +104,8 @@ function reconcilePersonalAgentDisplayName(
   entry: { username: string; uid: number; gecos: string },
   human: ProcessIdentity,
 ): { username: string; uid: number; gid: number; gecos: string; home: string; shell: string } | null {
-  if (entry.gecos.trim() !== legacyPersonalAgentDisplayName(human.username)) {
+  const displayName = typeof entry.gecos === "string" ? entry.gecos.trim() : "";
+  if (displayName !== legacyPersonalAgentDisplayName(human.username)) {
     return auth.getPasswdByUid(entry.uid);
   }
   auth.updateUser(entry.username, { gecos: entry.username });

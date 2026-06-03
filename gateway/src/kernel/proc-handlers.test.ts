@@ -45,6 +45,13 @@ function spawnConversationsMock() {
   };
 }
 
+function makeStorageBucket() {
+  return {
+    head: vi.fn(async () => null),
+    put: vi.fn(async () => undefined),
+  };
+}
+
 describe("proc handlers", () => {
   beforeEach(() => {
     vi.resetAllMocks();
@@ -445,7 +452,9 @@ describe("proc handlers", () => {
       shell: "/bin/init",
     };
     const ctx = {
-      env: {},
+      env: {
+        STORAGE: makeStorageBucket(),
+      },
       identity: {
         process: IDENTITY,
         capabilities: ["*"],
