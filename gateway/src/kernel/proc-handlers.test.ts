@@ -262,6 +262,78 @@ describe("proc handlers", () => {
     );
   });
 
+  it("spawns a fresh top-level process when mounts are requested", async () => {
+    const pkg = makePackage("pkg-a", "Demo Tool", "sam/demo-a");
+    const personalAgent = {
+      username: "sam-agent",
+      uid: 2000,
+      gid: 2000,
+      gecos: "sam agent",
+      home: "/home/sam-agent",
+      shell: "/bin/init",
+    };
+    const ctx = {
+      env: {},
+      identity: {
+        process: IDENTITY,
+        capabilities: ["*"],
+      },
+      auth: {
+        isPersonalAgentUid: vi.fn(() => false),
+        getPersonalAgentUid: vi.fn((uid: number) => uid === IDENTITY.uid ? personalAgent.uid : null),
+        getPasswdByUid: vi.fn((uid: number) => uid === personalAgent.uid ? personalAgent : null),
+        resolveGids: vi.fn((_username: string, gid: number) => [gid]),
+      },
+      procs: {
+        get: vi.fn(() => null),
+        spawn: vi.fn(),
+      },
+      conversations: spawnConversationsMock(),
+      packages: {
+        resolve: vi.fn((packageId: string) => packageId === "pkg-a" ? pkg : null),
+        list: vi.fn(() => [pkg]),
+      },
+    } as unknown as KernelContext;
+
+    const result = await handleProcSpawn({
+      label: "Review Demo Tool",
+      prompt: "Review this package.",
+      mounts: [
+        { kind: "package-source", packageId: "pkg-a" },
+      ],
+    }, ctx);
+
+    expect(result).toMatchObject({
+      ok: true,
+      cwd: "/src/packages/demo-tool",
+    });
+    expect(ctx.procs.spawn).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        uid: personalAgent.uid,
+        username: personalAgent.username,
+        cwd: "/src/packages/demo-tool",
+      }),
+      expect.objectContaining({
+        ownerUid: IDENTITY.uid,
+        label: "Review Demo Tool",
+        mounts: [
+          expect.objectContaining({
+            packageId: "pkg-a",
+            mountPath: "/src/packages/demo-tool",
+          }),
+        ],
+      }),
+    );
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      call: "proc.setidentity",
+    }));
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      call: "proc.send",
+      args: expect.objectContaining({ message: "Review this package." }),
+    }));
+  });
+
   it("spawns a fresh interactive worker for a parented spawn", async () => {
     const ctx = {
       env: {},

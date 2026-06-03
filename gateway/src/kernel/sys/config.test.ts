@@ -13,6 +13,11 @@ function makeContext(uid: number, entries: EntryMap, ownerUid?: number): KernelC
     set(key: string, value: string): void {
       map.set(key, value);
     },
+    delete(key: string): boolean {
+      const existed = map.has(key);
+      map.delete(key);
+      return existed;
+    },
     list(prefix: string): { key: string; value: string }[] {
       const normalized = prefix.trim();
       const keys = [...map.keys()].sort();
@@ -125,6 +130,21 @@ describe("sys.config.get", () => {
     }, ctx)).toEqual({ ok: true });
     expect(handleSysConfigGet({ key: "users/2001/ai/model" }, ctx)).toEqual({
       entries: [{ key: "users/2001/ai/model", value: "helper-model" }],
+    });
+  });
+
+  it("deletes blank user AI overrides so they inherit defaults", () => {
+    const ctx = makeContext(1000, {
+      ...baseEntries,
+      "users/2000/ai/model": "agent-model",
+    });
+
+    expect(handleSysConfigSet({
+      key: "users/2000/ai/model",
+      value: "   ",
+    }, ctx)).toEqual({ ok: true });
+    expect(handleSysConfigGet({ key: "users/2000/ai/model" }, ctx)).toEqual({
+      entries: [],
     });
   });
 

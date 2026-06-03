@@ -67,6 +67,13 @@ function canWrite(ctx: KernelContext, key: string): boolean {
   return canManageUserConfig(ctx, parsed.uid);
 }
 
+function shouldDeleteBlankUserOverride(key: string, value: string): boolean {
+  const parsed = parseUserConfigKey(key);
+  return parsed !== null &&
+    isUserOverridableConfigSubkey(parsed.sub) &&
+    value.trim().length === 0;
+}
+
 export function handleSysConfigGet(
   args: SysConfigGetArgs,
   ctx: KernelContext,
@@ -142,6 +149,12 @@ export function handleSysConfigSet(
     );
   }
 
-  ctx.config.set(args.key, String(args.value));
+  const value = String(args.value);
+  if (shouldDeleteBlankUserOverride(args.key, value)) {
+    ctx.config.delete(args.key);
+    return { ok: true };
+  }
+
+  ctx.config.set(args.key, value);
   return { ok: true };
 }

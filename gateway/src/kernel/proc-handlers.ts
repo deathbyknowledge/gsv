@@ -89,6 +89,10 @@ export async function handleProcSpawn(
   const identity = ctx.identity!;
   const pid = `proc:${crypto.randomUUID()}`;
   const explicitRunAs = typeof args.runAs === "string" && args.runAs.trim().length > 0;
+  const hasCustomSpawnOptions =
+    args.assignment !== undefined ||
+    args.cwd !== undefined ||
+    args.mounts !== undefined;
 
   // An interactive, top-level spawn with no explicit run-as targets the caller's
   // default ("inbox") conversation with their personal agent — the stable
@@ -96,6 +100,7 @@ export async function handleProcSpawn(
   // spawns from a process get their own fresh executor + conversation.
   const useDefaultExecutor =
     !explicitRunAs &&
+    !hasCustomSpawnOptions &&
     args.interactive !== false &&
     !ctx.processId &&
     !args.parentPid;
