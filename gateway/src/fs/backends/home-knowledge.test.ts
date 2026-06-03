@@ -149,29 +149,57 @@ describe("HomeKnowledgeMountBackend delegated routing", () => {
     await clearHomeStorage();
   });
 
-  it("delegates only target home-knowledge overlay paths", () => {
+  it("delegates target home root and home-knowledge overlay paths", () => {
     const backend = createDelegatingBackend();
 
+    expect(backend?.handles("/home/wiki-builder")).toBe(true);
     expect(backend?.handles("/home/wiki-builder/context.d/persona.md")).toBe(true);
     expect(backend?.handles("/home/wiki-builder/skills.d/workflow.md")).toBe(true);
     expect(backend?.handles("/home/wiki-builder/profiles.d/default/notes.md")).toBe(true);
     expect(backend?.handles("/home/wiki-builder/knowledge/inbox/item.md")).toBe(true);
 
-    expect(backend?.handles("/home/wiki-builder")).toBe(false);
     expect(backend?.handles("/home/wiki-builder/conversations/default/history")).toBe(false);
     expect(backend?.handles("/home/wiki-builder/notes.txt")).toBe(false);
   });
 
-  it("lets a personal agent reach its owner's home-knowledge overlay paths", () => {
+  it("lets a personal agent reach its owner's home root and home-knowledge overlay paths", () => {
     const backend = createPersonalAgentBackend();
 
+    expect(backend?.handles("/home/alice")).toBe(true);
     expect(backend?.handles("/home/alice/context.d/persona.md")).toBe(true);
     expect(backend?.handles("/home/alice/skills.d/workflow.md")).toBe(true);
     expect(backend?.handles("/home/alice/knowledge/inbox/item.md")).toBe(true);
 
-    expect(backend?.handles("/home/alice")).toBe(false);
     expect(backend?.handles("/home/alice/conversations/default/history")).toBe(false);
     expect(backend?.handles("/home/wiki-builder/context.d/persona.md")).toBe(true);
+  });
+
+  it("lists virtual overlay roots from an authorized agent home", async () => {
+    await env.STORAGE.put("home/wiki-builder/conversations/.dir", "", {
+      customMetadata: {
+        uid: String(PACKAGE_AGENT.uid),
+        gid: String(PACKAGE_AGENT.gid),
+        mode: "750",
+        dirmarker: "1",
+      },
+    });
+
+    const fs = new GsvFs(
+      env.STORAGE,
+      ALICE,
+      undefined,
+      undefined,
+      null,
+      createDelegatingBackend(),
+    );
+
+    await expect(fs.readdir("/home/wiki-builder")).resolves.toEqual([
+      "context.d",
+      "conversations",
+      "knowledge",
+      "profiles.d",
+      "skills.d",
+    ]);
   });
 
   it("does not read target R2-backed files through the delegated target identity", async () => {

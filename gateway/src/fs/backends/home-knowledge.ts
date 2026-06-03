@@ -605,10 +605,10 @@ class HomeKnowledgeMountBackend implements MountBackend {
 }
 
 /**
- * Routes another account's home-knowledge overlay dirs through a ripgit-backed
- * mount keyed on the target account when the viewer is authorized to manage
- * that agent. Non-overlay files in the target home stay on the viewer's normal
- * R2 permission path.
+ * Routes another account's home root and home-knowledge overlay dirs through a
+ * ripgit-backed mount keyed on the target account when the viewer is authorized
+ * to manage that agent. Non-overlay files in the target home stay on the
+ * viewer's normal R2 permission path.
  */
 class DelegatingHomeKnowledgeMountBackend implements MountBackend {
   private readonly delegates = new Map<string, HomeKnowledgeMountBackend>();
@@ -697,11 +697,12 @@ class DelegatingHomeKnowledgeMountBackend implements MountBackend {
   }
 
   private resolve(path: string): HomeKnowledgeMountBackend | null {
-    if (this.primary.handles(path)) {
+    const normalized = normalizePath(path);
+    if (this.primary.handles(normalized)) {
       return this.primary;
     }
 
-    const username = homeUsernameFromPath(path);
+    const username = homeUsernameFromPath(normalized);
     if (!username || username === this.viewerIdentity.username) {
       return null;
     }
@@ -716,20 +717,22 @@ class DelegatingHomeKnowledgeMountBackend implements MountBackend {
       return null;
     }
 
+    const entry = this.auth.getPasswdByUsername(username);
+    if (!entry) return null;
+
     let delegate = this.delegates.get(username);
     if (!delegate) {
-      const entry = this.auth.getPasswdByUsername(username);
-      if (!entry) return null;
       const targetIdentity = accountIdentity(this.auth, entry);
       delegate = new HomeKnowledgeMountBackend(
         this.client,
-        new R2MountBackend(this.bucket, targetIdentity),
+        new R2MountBackend(this.bucket, this.viewerIdentity),
         targetIdentity,
       );
       this.delegates.set(username, delegate);
     }
 
-    return delegate.handlesOverlayPath(path) ? delegate : null;
+    const targetHome = normalizePath(entry.home);
+    return normalized === targetHome || delegate.handlesOverlayPath(normalized) ? delegate : null;
   }
 }
 
