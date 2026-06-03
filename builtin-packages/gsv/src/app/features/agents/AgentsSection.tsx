@@ -283,6 +283,7 @@ function AgentWorkspace({
       {errorText ? <p class="gsv-inline-error">{errorText}</p> : null}
 
       <ContextEditor
+        key={agent.username}
         files={context}
         loading={contextLoading}
         busy={busy}

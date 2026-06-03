@@ -19,6 +19,8 @@ export function useAgents(backend: GsvBackend) {
   const [contextLoading, setContextLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const requestIdRef = useRef(0);
+  const contextRequestIdRef = useRef(0);
+  const selectedUsernameRef = useRef<string | null>(null);
 
   const loadState = useCallback(async () => {
     const requestId = ++requestIdRef.current;
@@ -45,27 +47,41 @@ export function useAgents(backend: GsvBackend) {
   }, [selectedUsername, state?.agents]);
 
   const loadContext = useCallback(async (username: string) => {
+    const requestId = ++contextRequestIdRef.current;
     setContextLoading(true);
     try {
       const result = await backend.loadAgentContext({ username });
+      if (requestId !== contextRequestIdRef.current || selectedUsernameRef.current !== username) {
+        return false;
+      }
       setContext(result.files);
       if (result.errorText) setErrorText(result.errorText);
+      return true;
     } catch (error) {
-      setErrorText(errorToText(error));
+      if (requestId === contextRequestIdRef.current && selectedUsernameRef.current === username) {
+        setErrorText(errorToText(error));
+      }
+      return false;
     } finally {
-      setContextLoading(false);
+      if (requestId === contextRequestIdRef.current && selectedUsernameRef.current === username) {
+        setContextLoading(false);
+      }
     }
   }, [backend]);
 
   const selectAgent = useCallback((agent: AgentDetail) => {
+    selectedUsernameRef.current = agent.username;
     setSelectedUsername(agent.username);
     setContext([]);
     void loadContext(agent.username);
   }, [loadContext]);
 
   const clearSelection = useCallback(() => {
+    selectedUsernameRef.current = null;
+    contextRequestIdRef.current += 1;
     setSelectedUsername(null);
     setContext([]);
+    setContextLoading(false);
   }, []);
 
   const saveContext = useCallback(async (username: string, name: string, text: string) => {
