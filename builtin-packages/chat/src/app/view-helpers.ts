@@ -641,9 +641,9 @@ function renderMarkdownHtml(value: string): string {
 }
 
 // Map an account.list summary into a chat agent. Humans (self/other) are not
-// conversation targets and are dropped. The personal agent uses id "personal"
-// and is reached through its default conversation (spawned with no run-as);
-// every other agent is started with `runAs` against its account username.
+// conversation targets and are dropped. The Home row reaches the personal
+// agent's default conversation with no run-as; profile starts always use runAs
+// so selecting any agent creates a fresh process.
 function normalizeProfile(value: unknown): Profile | null {
   const record = asRecord(value);
   const username = asString(record?.username);
@@ -664,8 +664,8 @@ function normalizeProfile(value: unknown): Profile | null {
     interactive: true,
     startable: runnable,
     background: false,
-    spawnMode: isPersonal ? "default" : "new",
-    runAs: isPersonal ? undefined : username,
+    spawnMode: "new",
+    runAs: username,
   };
 }
 

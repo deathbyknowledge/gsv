@@ -536,9 +536,9 @@ export function App({ backend }: { backend: ChatBackend }) {
     try {
       let target = activeRef.current;
       if (!target?.pid) {
-        // The personal agent is the per-owner default-conversation executor:
-        // spawn with no runAs and it reuses/creates that persistent process.
-        // Every other agent starts a fresh process running as its account.
+        // Draft profile sends start fresh processes. The persistent personal
+        // conversation is opened only through the Home row, which spawns with
+        // no runAs.
         const spawnResult = await backend.spawnProcess(
           draftProfile.runAs
             ? {
