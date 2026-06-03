@@ -37,9 +37,10 @@ Good examples:
 ```
 
 New human homes create the directory only. New agent homes seed a short style
-file and user identity file. Keep these files short and stable. Put durable
-reference material under `~/knowledge/` instead, where it can be searched and
-retrieved deliberately.
+file and user identity file. New personal agents also seed a one-time
+`00-boot.md` onboarding file, which the agent should delete after setup is
+done. Keep these files short and stable. Put durable reference material under
+`~/knowledge/` instead, where it can be searched and retrieved deliberately.
 
 ## Skills: `skills.d/`
 

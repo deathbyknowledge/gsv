@@ -11,6 +11,7 @@ export async function ensureHomeStorageLayout(
   options: {
     userContextUsername?: string;
     seedPromptContext?: boolean;
+    seedBootContext?: boolean;
     cleanupGeneratedPromptContext?: boolean;
   } = {},
 ): Promise<void> {
@@ -24,6 +25,7 @@ export async function ensureHomeStorageLayout(
   const repo = homeKnowledgeRepoRef(identity.username);
   const [
     contextDir,
+    bootContext,
     styleContext,
     constitutionContext,
     userContext,
@@ -32,6 +34,7 @@ export async function ensureHomeStorageLayout(
     inboxDir,
   ] = await Promise.all([
     client.readPath(repo, "context.d"),
+    client.readPath(repo, "context.d/00-boot.md"),
     client.readPath(repo, "context.d/00-style.md"),
     client.readPath(repo, "context.d/00-constitution.md"),
     client.readPath(repo, "context.d/10-user.md"),
@@ -50,6 +53,14 @@ export async function ensureHomeStorageLayout(
     });
   }
   if (options.seedPromptContext === true) {
+    if (options.seedBootContext === true) {
+      maybePutTextFile(
+        ops,
+        "context.d/00-boot.md",
+        bootContext,
+        defaultBootContext(),
+      );
+    }
     maybePutTextFile(
       ops,
       "context.d/00-style.md",
@@ -70,6 +81,12 @@ export async function ensureHomeStorageLayout(
       userContextUsername !== identity.username ? defaultUserContext(identity.username) : undefined,
     );
   } else if (options.cleanupGeneratedPromptContext === true) {
+    maybeDeleteGeneratedTextFile(
+      ops,
+      "context.d/00-boot.md",
+      bootContext,
+      [defaultBootContext()],
+    );
     maybeDeleteGeneratedTextFile(
       ops,
       "context.d/00-style.md",
@@ -181,6 +198,21 @@ function maybeDeleteGeneratedTextFile(
     type: "delete",
     path,
   });
+}
+
+function defaultBootContext(): string {
+  return [
+    "# Boot",
+    "",
+    "This GSV system was just created. Treat this as a one-time onboarding assignment.",
+    "",
+    "- Get to know the user enough to be useful: their name, how they like to work, current priorities, important tools, devices, and accounts.",
+    "- Help the user and your own agent account finish setting up GSV: connect useful devices or adapters, configure models and approvals, create useful agents or packages, and verify Chat, Files, Shell, and the GSV console.",
+    "- As you learn durable preferences or facts, update the relevant context files in your home, especially `~/context.d/10-user.md`, or add focused files under `~/context.d/`. Keep them short.",
+    "- Do not store secrets, credentials, tokens, or raw private data in context files.",
+    "- When the user says onboarding or setup is done, delete `~/context.d/00-boot.md` so this one-time assignment does not appear in future conversations.",
+    "",
+  ].join("\n");
 }
 
 function defaultStyleContext(): string {

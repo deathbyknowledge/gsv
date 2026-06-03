@@ -166,6 +166,9 @@ describe("handleAccountCreate", () => {
     expect(new TextDecoder().decode(new Uint8Array(styleContextOp?.contentBytes ?? [])))
       .toContain("Lead with the direct answer");
     expect(ops).not.toContainEqual(
+      expect.objectContaining({ type: "put", path: "context.d/00-boot.md" }),
+    );
+    expect(ops).not.toContainEqual(
       expect.objectContaining({ type: "put", path: "context.d/00-constitution.md" }),
     );
     expect(ripgitApplyBodies.flatMap((body) => body.ops)).toContainEqual(
@@ -201,6 +204,10 @@ describe("handleAccountCreate", () => {
     const agentOps = ripgitApplyBodies
       .filter((body) => body.owner === personalAgentUsername)
       .flatMap((body) => body.ops);
+    const bootContextOp = agentOps.find((op) => op.path === "context.d/00-boot.md");
+    expect(bootContextOp).toEqual(expect.objectContaining({ type: "put" }));
+    expect(new TextDecoder().decode(new Uint8Array(bootContextOp?.contentBytes ?? [])))
+      .toContain("delete `~/context.d/00-boot.md`");
     expect(agentOps).toContainEqual(
       expect.objectContaining({ type: "put", path: "context.d/00-style.md" }),
     );
@@ -309,8 +316,8 @@ describe("handleAccountCreate", () => {
       .toBe(result.personalAgent?.username);
   });
 
-  it("reconciles legacy personal agent display names", async () => {
-    const { ctxFor, auth, passwd, groups, personalAgents, shadow } = createCtx();
+  it("reconciles legacy personal agent display names without re-seeding boot context", async () => {
+    const { ctxFor, auth, passwd, groups, personalAgents, shadow, ripgitApplyBodies } = createCtx();
     passwd.push({
       username: "friday",
       uid: 2000,
@@ -322,13 +329,16 @@ describe("handleAccountCreate", () => {
     groups.push({ name: "friday", gid: 2000, members: ["alice"] });
     shadow.set("friday", "!");
     personalAgents.set(1000, 2000);
-    const ctx = ctxFor(userIdentity(1000, "alice", ["account.create"]));
+    const ctx = ctxFor(userIdentity(1000, "alice", ["account.create"]), { ripgit: true });
 
     const result = await ensurePersonalAgent(ctx, ctx.identity!.process);
 
     expect(result.created).toBe(false);
     expect(auth.updateUser).toHaveBeenCalledWith("friday", { gecos: "friday" });
     expect(passwd.find((u) => u.username === "friday")?.gecos).toBe("friday");
+    expect(ripgitApplyBodies.flatMap((body) => body.ops)).not.toContainEqual(
+      expect.objectContaining({ type: "put", path: "context.d/00-boot.md" }),
+    );
   });
 });
 
