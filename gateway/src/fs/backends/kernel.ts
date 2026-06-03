@@ -505,8 +505,20 @@ export class KernelMountBackend implements MountBackend {
     return proc;
   }
 
-  private canViewProcess(proc: { uid: number; ownerUid?: number | null }): boolean {
-    return this.identity.uid === 0 || (proc.ownerUid ?? proc.uid) === this.identity.uid;
+  private canViewProcess(proc: { processId?: string; uid: number; ownerUid?: number | null }): boolean {
+    if (this.identity.uid === 0) return true;
+    if (this.selfPid && proc.processId === this.selfPid) return true;
+    return (proc.ownerUid ?? proc.uid) === this.viewerOwnerUid();
+  }
+
+  private viewerOwnerUid(): number {
+    if (!this.kernel || !this.selfPid) return this.identity.uid;
+    if (typeof this.kernel.procs.getOwnerUid === "function") {
+      const ownerUid = this.kernel.procs.getOwnerUid(this.selfPid);
+      if (ownerUid !== null) return ownerUid;
+    }
+    const proc = this.kernel.procs.get(this.selfPid);
+    return proc ? proc.ownerUid ?? proc.uid : this.identity.uid;
   }
 
   private async processRequest<S extends ProcessViewCall>(
@@ -834,11 +846,7 @@ export class KernelMountBackend implements MountBackend {
     if (path.startsWith("/proc/")) {
       const parts = path.slice("/proc/".length).split("/");
       if (parts.length === 2 && parts[1] === "context.d") {
-        let pid = parts[0];
-        if (pid === "self") {
-          pid = this.selfProcessPid();
-        }
-        return this.kernel.procs.get(pid) !== null;
+        return this.resolveVisibleProcess(parts[0]) !== null;
       }
       if (parts.length === 2 && parts[1] === "conversations") {
         const proc = this.resolveVisibleProcess(parts[0]);
@@ -918,7 +926,7 @@ export class KernelMountBackend implements MountBackend {
     if (path === "/proc") {
       const procs = this.identity.uid === 0
         ? this.kernel.procs.list()
-        : this.kernel.procs.list(this.identity.uid);
+        : this.kernel.procs.list(this.viewerOwnerUid());
       const entries = procs.map((p) => p.processId);
       entries.push("self", "version", "uptime");
       return entries.sort();

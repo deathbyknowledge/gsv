@@ -31,6 +31,15 @@ const ALICE: ProcessIdentity = {
   cwd: "/home/alice",
 };
 
+const SAM_AGENT: ProcessIdentity = {
+  uid: 2000,
+  gid: 2000,
+  gids: [2000],
+  username: "sam-agent",
+  home: "/home/sam-agent",
+  cwd: "/home/sam-agent",
+};
+
 function putFile(
   path: string,
   content: string,
@@ -121,13 +130,13 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
   const personalAgentProcessRecord = {
     ...processRecord,
     processId: "task-personal",
-    uid: 2000,
+    uid: SAM_AGENT.uid,
     ownerUid: 1000,
-    gid: 2000,
-    gids: [2000],
-    username: "sam-agent",
-    home: "/home/sam-agent",
-    cwd: "/home/sam-agent",
+    gid: SAM_AGENT.gid,
+    gids: SAM_AGENT.gids,
+    username: SAM_AGENT.username,
+    home: SAM_AGENT.home,
+    cwd: SAM_AGENT.cwd,
   };
   const conversations = [
     {
@@ -370,14 +379,6 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
   const systemCrontabs = new Map<string, string>([
     ["daily", "0 5 * * * proc compact init:1000 --conversation default --keep-last 80\n"],
   ]);
-  const SAM_AGENT = {
-    uid: 2000,
-    gid: 2000,
-    gids: [2000],
-    username: "sam-agent",
-    home: "/home/sam-agent",
-    cwd: "/home/sam-agent",
-  };
   const passwdEntries = [ROOT, SAM, ALICE, SAM_AGENT].map((user) => ({
     username: user.username,
     uid: user.uid,
@@ -406,6 +407,9 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
         if (pid === "task-personal") return personalAgentProcessRecord;
         if (pid === "task-foreign") return otherProcessRecord;
         return null;
+      },
+      getOwnerUid(pid: string) {
+        return this.get(pid)?.ownerUid ?? null;
       },
       list(ownerUid?: number) {
         return [processRecord, personalAgentProcessRecord, otherProcessRecord]
@@ -1288,6 +1292,32 @@ describe("GsvFs Linux-like runtime views", () => {
     const status = await fs.readFile("/proc/self/status");
     expect(status).toContain("Pid:\ttask-personal");
     expect(status).toContain("Uid:\t2000");
+  });
+
+  it("keeps /proc/self visible inside a personal-agent executor", async () => {
+    const fs = makeRuntimeViewFs(SAM_AGENT, "task-personal");
+
+    await expect(fs.readdir("/proc")).resolves.toEqual([
+      "self",
+      "task-alpha",
+      "task-personal",
+      "uptime",
+      "version",
+    ]);
+    await expect(fs.readdir("/proc/self")).resolves.toEqual([
+      "context.d",
+      "conversations",
+      "identity",
+      "status",
+    ]);
+
+    const selfStatus = await fs.readFile("/proc/self/status");
+    expect(selfStatus).toContain("Pid:\ttask-personal");
+    expect(selfStatus).toContain("Uid:\t2000");
+
+    const siblingStatus = await fs.readFile("/proc/task-alpha/status");
+    expect(siblingStatus).toContain("Pid:\ttask-alpha");
+    await expect(fs.readdir("/proc/task-foreign")).rejects.toThrow("ENOENT");
   });
 
   it("hides another user's process conversation view from non-root users", async () => {
