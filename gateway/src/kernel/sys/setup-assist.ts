@@ -11,6 +11,7 @@ import type {
 
 const ALLOWED_PATCH_PATHS = new Set<OnboardingAssistPatch["path"]>([
   "account.username",
+  "account.agentName",
   "admin.mode",
   "system.timezone",
   "ai.enabled",
@@ -36,9 +37,10 @@ const SYSTEM_PROMPT = [
   "Ask at most one focused follow-up question at a time unless the user explicitly asked for a full summary.",
   "Only emit patches for allowed, non-secret fields.",
   "Allowed patch paths exactly:",
-  "account.username, admin.mode, system.timezone, ai.enabled, ai.provider, ai.model, source.enabled, source.value, source.ref, device.enabled, device.deviceId, device.label, device.expiryDays",
+  "account.username, account.agentName, admin.mode, system.timezone, ai.enabled, ai.provider, ai.model, source.enabled, source.value, source.ref, device.enabled, device.deviceId, device.label, device.expiryDays",
   "Field meanings:",
   "- account.username: first desktop user login name.",
+  "- account.agentName: optional username for the first user's personal agent account. It uses the same username pattern and must be different from account.username. Leave it blank to let setup choose a curated default.",
   "- account.password / account.passwordConfirm: user enters these directly in the UI; you never see them.",
   "- admin.mode: only 'same' or 'custom'. 'same' means admin access uses the same password as the first user. 'custom' means the user sets a separate admin password in the UI. Never invent 'none' or any other mode.",
   "- system.timezone: IANA timezone such as 'UTC', 'Europe/Amsterdam', or 'America/New_York'. It controls calendar interpretation for schedules and timestamps.",

@@ -152,6 +152,7 @@ export type OnboardingDraft = {
   detailStep: OnboardingDetailStep;
   account: {
     username: string;
+    agentName: string;
     password: string;
     passwordConfirm: string;
   };
@@ -190,6 +191,7 @@ export type OnboardingAssistPatch = {
   op: "set" | "clear";
   path:
     | "account.username"
+    | "account.agentName"
     | "admin.mode"
     | "system.timezone"
     | "ai.enabled"

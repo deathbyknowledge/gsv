@@ -140,6 +140,30 @@ describe("handleSysSetup", () => {
     expect(result.nodeToken?.allowedDeviceId).toBe("macbook");
   });
 
+  it("provisions the requested personal agent username", async () => {
+    const { ctx, auth } = createCtx();
+
+    await handleSysSetup(
+      {
+        username: "alice",
+        password: "password-123",
+        agentName: "mira",
+      },
+      ctx,
+    );
+
+    expect(auth.addUser).toHaveBeenCalledWith(
+      expect.objectContaining({
+        username: "mira",
+        uid: 1001,
+        gid: 1001,
+        gecos: "alice's agent",
+        home: "/home/mira",
+      }),
+    );
+    expect(auth.setPersonalAgent).toHaveBeenCalledWith(1000, 1001);
+  });
+
   it("rejects when setup mode is already completed", async () => {
     const { ctx } = createCtx({ setupMode: false });
 
@@ -162,6 +186,36 @@ describe("handleSysSetup", () => {
       },
       ctx,
     )).rejects.toThrow("username must match");
+  });
+
+  it("rejects a personal agent username that matches the first user", async () => {
+    const { ctx, auth } = createCtx();
+
+    await expect(handleSysSetup(
+      {
+        username: "alice",
+        password: "password-123",
+        agentName: "alice",
+      },
+      ctx,
+    )).rejects.toThrow("agentName must be different from username");
+
+    expect(auth.addUser).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unavailable personal agent username", async () => {
+    const { ctx, auth } = createCtx();
+
+    await expect(handleSysSetup(
+      {
+        username: "alice",
+        password: "password-123",
+        agentName: "root",
+      },
+      ctx,
+    )).rejects.toThrow("agentName is unavailable: root");
+
+    expect(auth.addUser).not.toHaveBeenCalled();
   });
 
   it("rejects an invalid timezone", async () => {

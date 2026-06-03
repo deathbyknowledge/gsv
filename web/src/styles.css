@@ -1861,6 +1861,15 @@ button:disabled {
   display: none;
 }
 
+.session-field-hint {
+  color: rgba(24, 49, 79, 0.64);
+  font-size: 0.76rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 1.35;
+  text-transform: none;
+}
+
 .session-field-grid input,
 .session-field-grid select {
   width: 100%;

@@ -87,6 +87,25 @@ function parseSetupIdentity(args: SysSetupArgs): { username: string; password: s
   return { username, password };
 }
 
+function parseSetupAgentName(
+  auth: KernelContext["auth"],
+  value: unknown,
+  username: string,
+): string | undefined {
+  const agentName = readOptionalString(value);
+  if (!agentName) return undefined;
+  if (!USERNAME_RE.test(agentName)) {
+    throw new Error("agentName must match ^[a-z_][a-z0-9_-]{0,31}$");
+  }
+  if (agentName === username) {
+    throw new Error("agentName must be different from username");
+  }
+  if (auth.getPasswdByUsername(agentName) || auth.getGroupByName(agentName)) {
+    throw new Error(`agentName is unavailable: ${agentName}`);
+  }
+  return agentName;
+}
+
 function parseAiConfig(args: SysSetupArgs): { provider?: string; model?: string; apiKey?: string } {
   const raw = args as Record<string, unknown>;
   if (!raw.ai || typeof raw.ai !== "object") {
@@ -149,7 +168,6 @@ export async function handleSysSetup(
   }
 
   const { username, password } = parseSetupIdentity(args);
-  const agentName = readOptionalString((args as Record<string, unknown>).agentName);
   const ai = parseAiConfig(args);
   const timezone = parseTimezone(args);
   const node = parseNodeConfig(args);
@@ -163,6 +181,7 @@ export async function handleSysSetup(
   if (auth.getPasswdByUsername(username)) {
     throw new Error(`User already exists: ${username}`);
   }
+  const agentName = parseSetupAgentName(auth, (args as Record<string, unknown>).agentName, username);
 
   const uid = auth.nextUid();
   // User Private Group (UPG): each user gets a unique primary group with gid = uid.

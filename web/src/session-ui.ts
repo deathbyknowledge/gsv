@@ -227,6 +227,7 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
   const setupNextNode = rootNode.querySelector<HTMLButtonElement>("[data-setup-next]");
   const setupSubmitNode = rootNode.querySelector<HTMLButtonElement>("[data-setup-submit]");
   const setupUsernameNode = rootNode.querySelector<HTMLInputElement>("[data-setup-username]");
+  const setupAgentNameNode = rootNode.querySelector<HTMLInputElement>("[data-setup-agent-name]");
   const setupPasswordNode = rootNode.querySelector<HTMLInputElement>("[data-setup-password]");
   const setupPasswordConfirmNode = rootNode.querySelector<HTMLInputElement>("[data-setup-password-confirm]");
   const setupAdminSameNode = rootNode.querySelector<HTMLInputElement>("[data-setup-admin-same]");
@@ -323,6 +324,7 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     !setupNextNode ||
     !setupSubmitNode ||
     !setupUsernameNode ||
+    !setupAgentNameNode ||
     !setupPasswordNode ||
     !setupPasswordConfirmNode ||
     !setupAdminSameNode ||
@@ -466,6 +468,7 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     const { draft } = onboardingSnapshot;
 
     if (setupUsernameNode.value !== draft.account.username) setupUsernameNode.value = draft.account.username;
+    if (setupAgentNameNode.value !== draft.account.agentName) setupAgentNameNode.value = draft.account.agentName;
     if (setupPasswordNode.value !== draft.account.password) setupPasswordNode.value = draft.account.password;
     if (setupPasswordConfirmNode.value !== draft.account.passwordConfirm) {
       setupPasswordConfirmNode.value = draft.account.passwordConfirm;
@@ -703,11 +706,18 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     for (const step of steps) {
       if (step === "account") {
         const username = draft.account.username.trim();
+        const agentName = draft.account.agentName.trim();
         if (!username) {
           return { message: "Username is required.", step };
         }
         if (!isValidUsername(username)) {
           return { message: "Username must match ^[a-z_][a-z0-9_-]{0,31}$.", step };
+        }
+        if (agentName && !isValidUsername(agentName)) {
+          return { message: "Personal agent username must match ^[a-z_][a-z0-9_-]{0,31}$.", step };
+        }
+        if (agentName && agentName === username) {
+          return { message: "Personal agent username must be different from the desktop username.", step };
         }
         if (draft.account.password.length < 8) {
           return { message: "Password must be at least 8 characters.", step };
@@ -794,10 +804,14 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
   const renderReviewSummary = (): void => {
     const meta = activeLaneMeta();
     const { draft } = onboardingSnapshot;
+    const username = draft.account.username.trim();
+    const agentName = draft.account.agentName.trim();
 
     setupSummaryLaneNode.textContent = meta.label;
     setupSummaryLaneCopyNode.textContent = meta.reviewCopy;
-    setupSummaryAccountNode.textContent = `${draft.account.username.trim()} · first desktop user`;
+    setupSummaryAccountNode.textContent = agentName
+      ? `${username} · agent ${agentName}`
+      : `${username} · default personal agent`;
     setupSummaryAdminNode.textContent = draft.admin.mode === "custom"
       ? "Separate admin password"
       : "Same as account password";
@@ -809,11 +823,16 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
 
   const buildSetupPayload = (): SessionSetupInput => {
     const { draft } = onboardingSnapshot;
+    const agentName = draft.account.agentName.trim();
     const payload: SessionSetupInput = {
       username: draft.account.username.trim(),
       password: draft.account.password,
       timezone: draft.system.timezone.trim(),
     };
+
+    if (agentName) {
+      payload.agentName = agentName;
+    }
 
     if (draft.admin.mode === "custom" && draft.admin.password.trim()) {
       payload.rootPassword = draft.admin.password.trim();
@@ -1227,6 +1246,15 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
       account: {
         ...draft.account,
         username: setupUsernameNode.value,
+      },
+    }));
+  });
+  setupAgentNameNode.addEventListener("input", () => {
+    updateDraft((draft) => ({
+      ...draft,
+      account: {
+        ...draft.account,
+        agentName: setupAgentNameNode.value,
       },
     }));
   });
