@@ -63,8 +63,8 @@ export function MobileProcessNav(props: {
     ? "Refreshing..."
     : props.threadsError
       || (props.threads.length === 0
-        ? "No task processes"
-        : `${props.threads.length} task process${props.threads.length === 1 ? "" : "es"}`);
+        ? "No extra processes"
+        : `${props.threads.length} process${props.threads.length === 1 ? "" : "es"}`);
 
   const switchProcess = (event: Event) => {
     const value = (event.currentTarget as HTMLSelectElement).value;
@@ -143,7 +143,7 @@ function ThreadsPane(props: {
   const isHome = props.active?.isHome === true;
   const status = props.loading
     ? "Refreshing..."
-    : props.error || (props.threads.length === 0 ? "No task processes yet." : "Task processes");
+    : props.error || (props.threads.length === 0 ? "No extra processes yet." : "Processes");
 
   return (
     <section class="nav-pane">
@@ -177,7 +177,7 @@ function ThreadsPane(props: {
         <button type="button" class={"thread-row" + (isHome ? " is-active" : "")} onClick={props.onHome}>
           <span class="row-icon"><HomeIcon /></span>
           <span class="thread-row-title">{props.homeLabel}</span>
-          <span class="thread-row-meta">Persistent personal conversation</span>
+          <span class="thread-row-meta">Default personal conversation</span>
         </button>
         {props.threads.map((thread) => (
           <button

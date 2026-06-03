@@ -542,8 +542,8 @@ export function App({ backend }: { backend: ChatBackend }) {
       let target = activeRef.current;
       if (!target?.pid) {
         const runAs = draftProfile.runAs ?? (forceNewProcess ? draftProfile.newProcessRunAs : undefined);
-        // Default personal-agent drafts use Home. Explicit New Process can still
-        // start a fresh process for the personal agent via newProcessRunAs.
+        // Default personal-agent drafts use the default conversation. Explicit
+        // New Process can still start a fresh personal-agent process.
         const spawnResult = await backend.spawnProcess(
           runAs
             ? {

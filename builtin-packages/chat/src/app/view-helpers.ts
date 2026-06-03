@@ -639,9 +639,9 @@ function renderMarkdownHtml(value: string): string {
 }
 
 // Map an account.list summary into a chat agent. Humans (self/other) are not
-// conversation targets and are dropped. The Home row reaches the personal
-// agent's default conversation with no run-as. Explicit New Process starts can
-// still use the personal-agent account through `newProcessRunAs`.
+// conversation targets and are dropped. The personal-agent row reaches the
+// default conversation with no run-as. Explicit New Process starts can still use
+// the personal-agent account through `newProcessRunAs`.
 function normalizeProfile(value: unknown): Profile | null {
   const record = asRecord(value);
   const username = asString(record?.username);
@@ -672,11 +672,12 @@ function normalizeProcessEntry(value: unknown): ProcessEntry | null {
   const record = asRecord(value);
   const pid = asString(record?.pid);
   if (!pid) return null;
+  const username = asString(record?.username) || "";
   return {
     pid,
     label: asString(record?.label) || undefined,
-    profile: asString(record?.profile) || "task",
-    username: asString(record?.username) || "",
+    profile: asString(record?.profile) || username || "process",
+    username,
     interactive: record?.interactive !== false,
     state: asString(record?.state) || "running",
     cwd: asString(record?.cwd) || "",
@@ -811,7 +812,7 @@ function activeMeta(active: ThreadContext, conversation: ConversationRecord | nu
   if (active.conversationId !== "default") {
     return `${conversation?.title || active.conversationTitle || active.conversationId} - ${active.cwd}`;
   }
-  return active.isHome ? "Persistent personal conversation" : active.cwd;
+  return active.isHome ? "Default personal conversation" : active.cwd;
 }
 
 function draftConversationTitle(profile: Profile): string {
