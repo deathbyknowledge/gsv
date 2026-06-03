@@ -25,7 +25,7 @@ const CONFIG: AiConfigResult = {
   profileContextFiles: [
     {
       name: "00-role.md",
-      text: "Task for {{identity.username}} in {{identity.cwd}}\n\nTargets:\n{{devices}}\n\nMCP:\n{{mcpServers}}",
+      text: "Task for {{identity.username}} in {{identity.cwd}}\nUser {{user.username}} at {{user.home}}\nProgram {{program.username}} at {{program.home}} cwd {{program.cwd}}\nOwner {{owner.username}} at {{owner.home}}\n\nTargets:\n{{devices}}\n\nMCP:\n{{mcpServers}}",
     },
   ],
   skillIndex: [
@@ -50,6 +50,15 @@ const IDENTITY: ProcessIdentity = {
   username: "root",
   home: "/root",
   cwd: "/root/projects/demo",
+};
+
+const OWNER_IDENTITY: ProcessIdentity = {
+  uid: 1000,
+  gid: 1000,
+  gids: [1000, 100],
+  username: "hank",
+  home: "/home/hank",
+  cwd: "/home/hank",
 };
 
 describe("assembleSystemPrompt", () => {
@@ -95,6 +104,7 @@ describe("createProfileInstructionsProvider", () => {
           },
         ],
         mcpServers: ["Linear", "Cloudflare"],
+        ownerIdentity: OWNER_IDENTITY,
       }),
     );
     expect(sections).toEqual([
@@ -103,6 +113,9 @@ describe("createProfileInstructionsProvider", () => {
       }),
     ]);
     expect(sections[0]?.text).toContain("Task for root in /root/projects/demo");
+    expect(sections[0]?.text).toContain("User hank at /home/hank");
+    expect(sections[0]?.text).toContain("Program root at /root cwd /root/projects/demo");
+    expect(sections[0]?.text).toContain("Owner hank at /home/hank");
     expect(sections[0]?.text).toContain("- gsv");
     expect(sections[0]?.text).toContain("- macbook: Work MacBook - Personal laptop (darwin)");
     expect(sections[0]?.text).toContain("- Cloudflare");

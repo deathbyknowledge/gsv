@@ -58,7 +58,7 @@ export async function ensureHomeStorageLayout(
         ops,
         "context.d/00-boot.md",
         bootContext,
-        defaultBootContext(),
+        defaultBootContext(identity.home),
       );
     }
     maybePutTextFile(
@@ -85,7 +85,7 @@ export async function ensureHomeStorageLayout(
       ops,
       "context.d/00-boot.md",
       bootContext,
-      [defaultBootContext()],
+      [defaultBootContext(identity.home)],
     );
     maybeDeleteGeneratedTextFile(
       ops,
@@ -200,11 +200,13 @@ function maybeDeleteGeneratedTextFile(
   });
 }
 
-function defaultBootContext(): string {
+function defaultBootContext(home: string): string {
   return [
     "# Boot",
     "",
     "This GSV system was just created. Treat this as a one-time onboarding assignment.",
+    "",
+    `Your program home is \`${home}\`. In Shell and filesystem tools, \`~\` resolves to \`${home}\`.`,
     "",
     "- Get to know the user enough to be useful: their name, how they like to work, current priorities, important tools, devices, and accounts.",
     "- Help the user and your own agent account finish setting up GSV: connect useful devices or adapters, configure models and approvals, create useful agents or packages, and verify Chat, Files, Shell, and the GSV console.",

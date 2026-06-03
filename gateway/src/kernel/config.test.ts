@@ -151,6 +151,13 @@ describe("ConfigStore", () => {
     expect(orchestration).not.toContain("proc profiles");
     expect(orchestration).not.toContain("~/profiles.d");
     expect(orchestration).not.toContain("SpawnProcess");
+    const runtimeFacts = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/10-runtime.md"];
+    expect(runtimeFacts).toContain("User: {{user.username}}");
+    expect(runtimeFacts).toContain("User home: {{user.home}}");
+    expect(runtimeFacts).toContain("Current program: {{program.username}}");
+    expect(runtimeFacts).toContain("Program home: {{program.home}}");
+    expect(runtimeFacts).toContain("Program current working directory: {{program.cwd}}");
+    expect(runtimeFacts).toContain("`~` resolves to the current program home");
 
     // Per-agent persona/context now lives in account homes, not in config.
     for (const profile of ["init", "task", "review", "cron", "mcp", "app"]) {

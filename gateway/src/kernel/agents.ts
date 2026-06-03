@@ -313,13 +313,14 @@ export function handleAccountList(
 }
 
 function defaultPersonaContext(agentName: string, ownerUsername: string): string {
+  const home = `/home/${agentName}`;
   return [
     "# Persona",
     "",
     `*You are **${agentName}**, the personal agent for ${ownerUsername}.*`,
     "",
-    "This home is yours. Your context, knowledge, and memories live here and",
-    "persist across sessions. The person you work for owns this process; their",
+    `Your program home is \`${home}\`. In Shell and filesystem tools, \`~\` resolves to \`${home}\`.`,
+    "Your context, knowledge, and memories live here and persist across sessions. The person you work for owns this process; their",
     "own context is layered in alongside yours.",
     "",
     "Grow into the role. Keep these files current. They are who you are.",

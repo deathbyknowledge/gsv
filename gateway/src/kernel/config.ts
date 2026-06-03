@@ -59,8 +59,14 @@ const GSV_PROCESS_ORCHESTRATION = [
 ].join("\n");
 
 const GSV_RUNTIME_FACTS = [
-  "Current working directory: {{identity.cwd}}",
-  "Home: {{identity.home}}",
+  "User: {{user.username}}",
+  "User home: {{user.home}}",
+  "",
+  "Current program: {{program.username}}",
+  "Program home: {{program.home}}",
+  "Program current working directory: {{program.cwd}}",
+  "",
+  "`~` resolves to the current program home (`{{program.home}}`). Durable context for this program lives under `~/context.d/`.",
   "",
   "Available targets:",
   "{{devices}}",

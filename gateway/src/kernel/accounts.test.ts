@@ -208,6 +208,8 @@ describe("handleAccountCreate", () => {
     expect(bootContextOp).toEqual(expect.objectContaining({ type: "put" }));
     expect(new TextDecoder().decode(new Uint8Array(bootContextOp?.contentBytes ?? [])))
       .toContain("delete `~/context.d/00-boot.md`");
+    expect(new TextDecoder().decode(new Uint8Array(bootContextOp?.contentBytes ?? [])))
+      .toContain(`Your program home is \`/home/${personalAgentUsername}\``);
     expect(agentOps).toContainEqual(
       expect.objectContaining({ type: "put", path: "context.d/00-style.md" }),
     );
@@ -215,6 +217,10 @@ describe("handleAccountCreate", () => {
     expect(userContextOp).toBeTruthy();
     expect(new TextDecoder().decode(new Uint8Array(userContextOp?.contentBytes ?? [])))
       .toContain("- **Username:** bob");
+    const personaOp = agentOps.find((op) => op.path === "context.d/05-persona.md");
+    expect(personaOp).toBeTruthy();
+    expect(new TextDecoder().decode(new Uint8Array(personaOp?.contentBytes ?? [])))
+      .toContain(`Your program home is \`/home/${personalAgentUsername}\``);
   });
 
   it("creates an agent owned by the caller, locked and cross-membered", async () => {
