@@ -246,7 +246,7 @@ export async function handleProcSpawn(
  * own account, their personal agent, an account whose private group they belong
  * to, or when the caller is root.
  */
-function resolveRunAsIdentity(
+export function resolveRunAsIdentity(
   ctx: KernelContext,
   runAs: string,
   ownerUid: number,
@@ -266,7 +266,12 @@ function resolveRunAsIdentity(
     return { ok: false, error: `Unknown account: ${runAs}` };
   }
 
-  const isSelf = entry.uid === ownerUid;
+  // "Self" is the caller's *actual* run-as identity, not the owning human.
+  // Otherwise an agent-backed process could pass runAs=<owner human> and assume
+  // the human's identity (and its `users` capabilities), escalating past the
+  // agent's least-privilege isolation. The owner's delegated run-as rights
+  // (personal agent, group-member agents) are still honored below.
+  const isSelf = entry.uid === ctx.identity!.process.uid;
   const isPersonalAgent = auth.getPersonalAgentUid(ownerUid) === entry.uid;
   const ownerName = auth.getPasswdByUid(ownerUid)?.username;
   const group = auth.getGroupByGid(entry.gid);

@@ -40,6 +40,11 @@ export function packageAgentAccessGroup(username: string): string {
   return `${username}-run`;
 }
 
+/** Config key recording which package owns a package-agent account. */
+function packageAgentOwnerKey(uid: number): string {
+  return `users/${uid}/pkg/owner`;
+}
+
 /**
  * Provision (idempotently) the agent account for a package profile and grant the
  * enabling human run-as rights via the access group. Returns the agent identity.
@@ -66,12 +71,32 @@ export async function ensurePackageAgent(
       contextFiles: profile.contextFiles.map((file) => ({ name: file.name, text: file.text })),
     });
     entry = auth.getPasswdByUid(created.identity.uid)!;
+    // Stamp the owning package so a later, different package that sanitizes to
+    // the same username cannot silently reuse (and hijack) this account.
+    ctx.config.set(packageAgentOwnerKey(entry.uid), record.packageId);
     if (profile.approvalPolicy) {
       ctx.config.set(`users/${entry.uid}/ai/tools/approval`, profile.approvalPolicy);
     }
-  } else if (!auth.getGroupByName(accessGroupName)) {
-    // Older provisioning without an access group: backfill it.
-    auth.addGroup({ name: accessGroupName, gid: auth.nextGid(), members: [] });
+  } else {
+    // Guard against cross-package collisions: the username derives from
+    // (sanitized, truncated) package + profile name, which is not globally
+    // unique. Reusing an account owned by a different package would skip its
+    // caps/policy/context and let it run as the wrong agent.
+    const ownerKey = packageAgentOwnerKey(entry.uid);
+    const stampedPackageId = ctx.config.get(ownerKey);
+    if (stampedPackageId && stampedPackageId !== record.packageId) {
+      throw new Error(
+        `Package agent name collision: "${username}" is owned by ${stampedPackageId}, cannot provision it for ${record.packageId}`,
+      );
+    }
+    if (!stampedPackageId) {
+      // Backfill for accounts provisioned before stamping existed.
+      ctx.config.set(ownerKey, record.packageId);
+    }
+    if (!auth.getGroupByName(accessGroupName)) {
+      // Older provisioning without an access group: backfill it.
+      auth.addGroup({ name: accessGroupName, gid: auth.nextGid(), members: [] });
+    }
   }
 
   joinAccessGroup(ctx, accessGroupName, enablingHumanUid);

@@ -138,6 +138,16 @@ describe("ensurePackageAgent", () => {
     expect(aliceGids).not.toContain(identity.gid);
   });
 
+  it("rejects reuse of a username owned by a different package", async () => {
+    const { ctx } = createCtx();
+    await ensurePackageAgent(ctx, record([BUILDER]), BUILDER, 1000);
+
+    // A different package whose name sanitizes to the same agent username must
+    // not silently reuse (hijack) the first package's agent account.
+    const other = { ...record([BUILDER]), packageId: "user:1000:wiki@9" } as InstalledPackageRecord;
+    await expect(ensurePackageAgent(ctx, other, BUILDER, 1000)).rejects.toThrow(/name collision/i);
+  });
+
   it("is idempotent across enabling humans (one shared account)", async () => {
     const { ctx, passwd, groups } = createCtx();
     const first = await ensurePackageAgent(ctx, record([BUILDER]), BUILDER, 1000);

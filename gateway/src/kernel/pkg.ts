@@ -450,8 +450,11 @@ export async function handlePkgRemove(
     }
   }
 
-  // Revoke the disabling human's run-as rights for this package's agents.
-  const humanUid = ctx.identity?.process.uid;
+  // Revoke the disabling human's run-as rights for this package's agents. Use
+  // the owning human (not the run-as account): from a personal-agent process,
+  // ctx.identity.process.uid is the agent, so revoking that would leave the
+  // human in the access group and still able to spawn the disabled agent.
+  const humanUid = ctx.identity ? resolveCallerOwnerUid(ctx) : undefined;
   if (typeof humanUid === "number" && (record.manifest.profiles?.length ?? 0) > 0) {
     revokePackageAgentAccess(ctx, record, humanUid);
   }

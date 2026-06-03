@@ -9,7 +9,7 @@ vi.mock("../shared/utils", () => ({
 }));
 
 import { sendFrameToProcess } from "../shared/utils";
-import { forwardToProcess, handleProcIpcCall, handleProcSpawn, handleProcList } from "./proc-handlers";
+import { forwardToProcess, handleProcIpcCall, handleProcSpawn, handleProcList, resolveRunAsIdentity } from "./proc-handlers";
 import { resolveCallerOwnerUid } from "./context";
 
 const IDENTITY: ProcessIdentity = {
@@ -472,6 +472,51 @@ describe("resolveCallerOwnerUid", () => {
       procs: { get: vi.fn(() => null) },
     } as unknown as KernelContext;
     expect(resolveCallerOwnerUid(ctx)).toBe(1000);
+  });
+});
+
+describe("resolveRunAsIdentity", () => {
+  // Owner human 1000 (alice); her personal agent 2000; a least-privilege
+  // package agent 3000 that alice is NOT authorized to act as.
+  const passwd: Record<number, { username: string; uid: number; gid: number; home: string }> = {
+    1000: { username: "alice", uid: 1000, gid: 1000, home: "/home/alice" },
+    2000: { username: "alice-agent", uid: 2000, gid: 2000, home: "/home/alice-agent" },
+    3000: { username: "wiki-builder", uid: 3000, gid: 3000, home: "/home/wiki-builder" },
+  };
+  const byName = Object.fromEntries(Object.values(passwd).map((p) => [p.username, p]));
+
+  function authMock() {
+    return {
+      getPasswdByUid: vi.fn((uid: number) => passwd[uid] ?? null),
+      getPasswdByUsername: vi.fn((name: string) => byName[name] ?? null),
+      getPersonalAgentUid: vi.fn((ownerUid: number) => (ownerUid === 1000 ? 2000 : null)),
+      // No one is listed in alice's primary group members here.
+      getGroupByGid: vi.fn((gid: number) => ({ name: `g${gid}`, gid, members: [] as string[] })),
+      resolveGids: vi.fn((_username: string, gid: number) => [gid]),
+    };
+  }
+
+  function ctxFor(runAsUid: number, processId?: string) {
+    return {
+      processId,
+      identity: { role: "user", process: { ...IDENTITY, uid: runAsUid }, capabilities: ["proc.spawn"] },
+      auth: authMock(),
+    } as unknown as KernelContext;
+  }
+
+  it("denies an agent-backed process from running as the owning human", () => {
+    // Caller runs as the package agent (3000); owner is the human (1000).
+    const res = resolveRunAsIdentity(ctxFor(3000, "proc:abc"), "alice", 1000);
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toMatch(/cannot run as alice/i);
+  });
+
+  it("still lets a human run as themselves and their personal agent", () => {
+    const self = resolveRunAsIdentity(ctxFor(1000), "alice", 1000);
+    expect(self.ok).toBe(true);
+    const agent = resolveRunAsIdentity(ctxFor(1000), "alice-agent", 1000);
+    expect(agent.ok).toBe(true);
+    if (agent.ok) expect(agent.identity.uid).toBe(2000);
   });
 });
 
