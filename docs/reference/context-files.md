@@ -16,7 +16,9 @@ The prompt lists skill ids and descriptions only. Use `skills list`,
 `skills search <query>`, and `skills show <skill>` to inspect full skill bodies.
 
 System context is operator-managed runtime guidance shared by every process.
-Agent and owner context files add account-specific behavior and preferences.
+Agent context files add account-specific behavior and preferences. Owner
+context is available for human-authored notes; human homes start with an empty
+`~/context.d/` directory.
 Context files may use template keys such as `identity.home`, `identity.cwd`,
 `devices`, and `mcpServers`.
 
@@ -24,17 +26,20 @@ Home context files are loaded lexically, include only non-empty `.md` files, and
 
 ## Home Context: `~/context.d/`
 
-Use `~/context.d/*.md` for small, curated user-global notes that should be available to most processes. This is for standing context, not raw logs or a private database.
+Use `~/context.d/*.md` for small, curated notes that should be available to most processes running as that account. This is for standing context, not raw logs or a private database.
 
 Good examples:
 
 ```text
-~/context.d/00-constitution.md
+~/context.d/00-style.md
 ~/context.d/10-user.md
 ~/context.d/20-current-priorities.md
 ```
 
-Keep these files short and stable. Put durable reference material under `~/knowledge/` instead, where it can be searched and retrieved deliberately.
+New human homes create the directory only. New agent homes seed a short style
+file and user identity file. Keep these files short and stable. Put durable
+reference material under `~/knowledge/` instead, where it can be searched and
+retrieved deliberately.
 
 ## Skills: `skills.d/`
 

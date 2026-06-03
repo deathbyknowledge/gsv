@@ -16,8 +16,6 @@ import type {
   ToolRow,
 } from "./types";
 
-const ACTIVE_THREAD_CONTEXT_KEY = "gsv.activeThreadContext.v1";
-
 type RunStreamEffect = "message" | "tool";
 
 function flattenHistory(messages: unknown[]): LogRow[] {
@@ -771,24 +769,11 @@ function normalizeThreadContext(value: unknown): ThreadContext | null {
 }
 
 function getStoredThreadContext(): ThreadContext | null {
-  try {
-    const raw = window.localStorage.getItem(ACTIVE_THREAD_CONTEXT_KEY);
-    return raw ? normalizeThreadContext(JSON.parse(raw)) : null;
-  } catch {
-    return null;
-  }
+  return null;
 }
 
 function setStoredThreadContext(context: ThreadContext | null): ThreadContext | null {
-  const normalized = normalizeThreadContext(context);
-  try {
-    if (normalized) {
-      window.localStorage.setItem(ACTIVE_THREAD_CONTEXT_KEY, JSON.stringify(normalized));
-    } else {
-      window.localStorage.removeItem(ACTIVE_THREAD_CONTEXT_KEY);
-    }
-  } catch {}
-  return normalized;
+  return normalizeThreadContext(context);
 }
 
 function fallbackProfiles(): Profile[] {

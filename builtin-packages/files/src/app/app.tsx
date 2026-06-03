@@ -72,43 +72,11 @@ function routeKey(route: FilesRoute) {
 }
 
 function defaultPathForTarget(target: string) {
-  return target === "gsv" ? "/" : ".";
-}
-
-function readActiveThreadContext() {
-  try {
-    const raw = window.localStorage.getItem("gsv.activeThreadContext.v1");
-    if (!raw) {
-      return null;
-    }
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") {
-      return null;
-    }
-    const cwd = typeof parsed.cwd === "string" ? parsed.cwd.trim() : "";
-    if (!cwd) {
-      return null;
-    }
-    return { cwd };
-  } catch {
-    return null;
-  }
+  return target === "gsv" ? "" : ".";
 }
 
 function readRouteFromUrl(): FilesRoute {
   const url = readLaunchUrl();
-  const hasExplicitState = url.searchParams.has("path") || url.searchParams.has("open") || url.searchParams.has("q") || url.searchParams.has("target");
-  if (!hasExplicitState) {
-    const thread = readActiveThreadContext();
-    if (thread) {
-      return {
-        target: "gsv",
-        path: thread.cwd,
-        q: "",
-        open: "",
-      };
-    }
-  }
   const target = url.searchParams.get("target")?.trim() || "gsv";
   const nextRoute = {
     target,

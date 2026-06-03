@@ -170,7 +170,10 @@ export async function ensurePersonalAgent(
     if (entry) {
       const reconciled = reconcilePersonalAgentDisplayName(auth, entry, human) ?? entry;
       const identity = accountIdentity(auth, reconciled);
-      await ensureHomeStorageLayout(ctx.env, identity, { userContextUsername: human.username });
+      await ensureHomeStorageLayout(ctx.env, identity, {
+        userContextUsername: human.username,
+        seedPromptContext: true,
+      });
       return { identity, created: false };
     }
     // Stale mapping (account removed) — fall through and recreate.

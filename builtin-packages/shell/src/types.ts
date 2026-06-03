@@ -23,6 +23,7 @@ export type ShellDevice = {
 
 export type ShellState = {
   devices: ShellDevice[];
+  defaultCwd: string;
 };
 
 export type TranscriptEntry = {

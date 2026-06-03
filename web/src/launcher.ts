@@ -1,3 +1,4 @@
+import { normalizeThreadContext } from "@gsv/app-link";
 import type { AppIcon, AppManifest } from "./apps";
 import { OPEN_APP_EVENT, resolveOpenAppDetail, type OpenAppEventDetail } from "./app-link";
 import {
@@ -7,7 +8,6 @@ import {
   queuePendingChatProcess,
   type TargetChatProcessEventDetail,
 } from "./chat-process-link";
-import { normalizeThreadContext, setActiveThreadContext } from "./thread-context";
 import type { WindowManager, WindowSummary } from "./window-manager";
 
 type LauncherOptions = {
@@ -1124,7 +1124,6 @@ export function createLauncher(options: LauncherOptions): LauncherController {
       return;
     }
 
-    setActiveThreadContext(normalized);
     queuePendingChatProcess(chatWindowId, normalized);
     const targetDetail: TargetChatProcessEventDetail = { ...normalized, windowId: chatWindowId };
     window.dispatchEvent(new CustomEvent<TargetChatProcessEventDetail>(TARGET_CHAT_PROCESS_EVENT, { detail: targetDetail }));
@@ -1157,10 +1156,6 @@ export function createLauncher(options: LauncherOptions): LauncherController {
     if (resolved.type === "chat-process") {
       openChatProcessContext(resolved.threadContext);
       return;
-    }
-
-    if (resolved.threadContext) {
-      setActiveThreadContext(resolved.threadContext);
     }
 
     const windowId = openWindowForApp(resolved.appId, resolved.route, {

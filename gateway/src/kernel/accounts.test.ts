@@ -18,6 +18,8 @@ function createCtx() {
   const shadow = new Map<string, string>([["root", "x"], ["alice", "x"]]);
   const personalAgents = new Map<number, number>();
   const ripgitApplyBodies: Array<{
+    owner: string;
+    repo: string;
     author: string;
     email: string;
     message: string;
@@ -87,7 +89,13 @@ function createCtx() {
     fetch: vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input));
       if (url.pathname.endsWith("/apply")) {
-        ripgitApplyBodies.push(JSON.parse(String(init?.body ?? "{}")));
+        const parts = url.pathname.split("/").filter(Boolean);
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        ripgitApplyBodies.push({
+          owner: decodeURIComponent(parts[2] ?? ""),
+          repo: decodeURIComponent(parts[3] ?? ""),
+          ...body,
+        });
         return new Response(JSON.stringify({ ok: true, head: "test-head" }), {
           headers: { "Content-Type": "application/json" },
         });
@@ -152,9 +160,54 @@ describe("handleAccountCreate", () => {
     expect(userContextOp).toBeTruthy();
     expect(new TextDecoder().decode(new Uint8Array(userContextOp?.contentBytes ?? [])))
       .toContain("- **Username:** alice");
+    const ops = ripgitApplyBodies.flatMap((body) => body.ops);
+    const styleContextOp = ops.find((op) => op.path === "context.d/00-style.md");
+    expect(styleContextOp).toEqual(expect.objectContaining({ type: "put" }));
+    expect(new TextDecoder().decode(new Uint8Array(styleContextOp?.contentBytes ?? [])))
+      .toContain("Lead with the direct answer");
+    expect(ops).not.toContainEqual(
+      expect.objectContaining({ type: "put", path: "context.d/00-constitution.md" }),
+    );
     expect(ripgitApplyBodies.flatMap((body) => body.ops)).toContainEqual(
       expect.objectContaining({ path: "context.d/20-brief.md" }),
     );
+  });
+
+  it("keeps human context empty while seeding the personal agent context", async () => {
+    const { ctxFor, passwd, ripgitApplyBodies } = createCtx();
+    const ctx = ctxFor(userIdentity(0, "root", ["*"]), { ripgit: true });
+
+    const result = await handleAccountCreate(
+      { kind: "human", username: "bob", password: "password-123" },
+      ctx,
+    );
+
+    const personalAgentUsername = passwd.find((u) => u.uid === result.personalAgent?.uid)?.username;
+    expect(personalAgentUsername).toBeTruthy();
+
+    const bobOps = ripgitApplyBodies
+      .filter((body) => body.owner === "bob")
+      .flatMap((body) => body.ops);
+    expect(bobOps).toContainEqual(
+      expect.objectContaining({ type: "put", path: "context.d/.dir" }),
+    );
+    expect(bobOps).not.toContainEqual(
+      expect.objectContaining({ type: "put", path: "context.d/00-style.md" }),
+    );
+    expect(bobOps).not.toContainEqual(
+      expect.objectContaining({ type: "put", path: "context.d/10-user.md" }),
+    );
+
+    const agentOps = ripgitApplyBodies
+      .filter((body) => body.owner === personalAgentUsername)
+      .flatMap((body) => body.ops);
+    expect(agentOps).toContainEqual(
+      expect.objectContaining({ type: "put", path: "context.d/00-style.md" }),
+    );
+    const userContextOp = agentOps.find((op) => op.path === "context.d/10-user.md");
+    expect(userContextOp).toBeTruthy();
+    expect(new TextDecoder().decode(new Uint8Array(userContextOp?.contentBytes ?? [])))
+      .toContain("- **Username:** bob");
   });
 
   it("creates an agent owned by the caller, locked and cross-membered", async () => {

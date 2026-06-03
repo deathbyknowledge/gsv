@@ -85,10 +85,11 @@ System and agent context can use runtime template variables such as
 `identity.username`, `identity.home`, `identity.cwd`, `devices`, and
 `mcpServers`.
 
-## Add Home Context
+## Add Owner Context
 
-Home context applies across an account's processes. The owning human's
-`~/context.d/*.md` is layered in separately as owner context:
+Agent context applies across processes running as that account. The owning
+human's `~/context.d/*.md` is layered in separately as owner context when those
+files exist:
 
 ```text
 ~/context.d/*.md

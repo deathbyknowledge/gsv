@@ -15,6 +15,12 @@ type KernelClient = {
   request(call: string, args: Record<string, unknown>): Promise<any>;
 };
 
+type FilesRuntime = {
+  viewer?: {
+    username?: string;
+  };
+};
+
 function detectPathStyle(path: string): "absolute" | "relative" {
   return String(path ?? "").trim().startsWith("/") ? "absolute" : "relative";
 }
@@ -24,8 +30,16 @@ function normalizeTarget(target: string) {
   return value.length > 0 ? value : "gsv";
 }
 
-function defaultPathForTarget(target: string) {
-  return normalizeTarget(target) === "gsv" ? "/" : ".";
+function viewerHome(runtime: FilesRuntime) {
+  const username = String(runtime.viewer?.username ?? "").trim();
+  if (!username || username === "root") {
+    return "/root";
+  }
+  return `/home/${username}`;
+}
+
+function defaultPathForTarget(target: string, runtime: FilesRuntime) {
+  return normalizeTarget(target) === "gsv" ? viewerHome(runtime) : ".";
 }
 
 function normalizePath(input: string, style: "absolute" | "relative" = detectPathStyle(input)) {
@@ -145,9 +159,11 @@ async function listDevices(kernel: KernelClient) {
   }
 }
 
-export async function loadState(kernel: KernelClient, input: FilesRoute): Promise<FilesState> {
+export async function loadState(kernel: KernelClient, input: FilesRoute, runtime: FilesRuntime = {}): Promise<FilesState> {
   let target = normalizeTarget(input.target ?? "gsv");
-  let currentPath = normalizePath(input.path ?? defaultPathForTarget(target), detectPathStyle(input.path ?? defaultPathForTarget(target)));
+  const defaultPath = defaultPathForTarget(target, runtime);
+  const requestedPath = String(input.path ?? "").trim() || defaultPath;
+  let currentPath = normalizePath(requestedPath, detectPathStyle(requestedPath));
   let pathStyle = detectPathStyle(currentPath);
   const searchQuery = String(input.q ?? "").trim();
   let filePath = String(input.open ?? "").trim() ? normalizePath(input.open, detectPathStyle(input.open)) : "";

@@ -304,8 +304,12 @@ export async function handleSysSetup(
       timings,
       "ensure-home-layout",
       async () => {
-        await ensureHomeStorageLayout(ctx.env, rootProcessIdentity);
-        await ensureHomeStorageLayout(ctx.env, bootstrapProcessIdentity);
+        await ensureHomeStorageLayout(ctx.env, rootProcessIdentity, {
+          cleanupGeneratedPromptContext: true,
+        });
+        await ensureHomeStorageLayout(ctx.env, bootstrapProcessIdentity, {
+          cleanupGeneratedPromptContext: true,
+        });
       },
     );
 

@@ -4,7 +4,7 @@ import { execCommand, loadState } from "./backend/api";
 export default class ShellBackend extends PackageBackendEntrypoint {
   async loadState(args: Record<string, never> = {}): Promise<unknown> {
     void args;
-    return loadState(this.kernel);
+    return loadState(this.kernel, this);
   }
 
   async execCommand(args: unknown): Promise<unknown> {

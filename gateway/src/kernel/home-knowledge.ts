@@ -8,7 +8,11 @@ const TEXT_DECODER = new TextDecoder();
 export async function ensureHomeStorageLayout(
   env: Pick<Env, "STORAGE" | "RIPGIT">,
   identity: ProcessIdentity,
-  options: { userContextUsername?: string } = {},
+  options: {
+    userContextUsername?: string;
+    seedPromptContext?: boolean;
+    cleanupGeneratedPromptContext?: boolean;
+  } = {},
 ): Promise<void> {
   await ensureHomeDir(env.STORAGE, identity.home, identity.uid, identity.gid);
 
@@ -19,12 +23,16 @@ export async function ensureHomeStorageLayout(
   const client = new RipgitClient(env.RIPGIT);
   const repo = homeKnowledgeRepoRef(identity.username);
   const [
+    contextDir,
+    styleContext,
     constitutionContext,
     userContext,
     skillsDir,
     knowledgeDir,
     inboxDir,
   ] = await Promise.all([
+    client.readPath(repo, "context.d"),
+    client.readPath(repo, "context.d/00-style.md"),
     client.readPath(repo, "context.d/00-constitution.md"),
     client.readPath(repo, "context.d/10-user.md"),
     client.readPath(repo, "skills.d"),
@@ -34,19 +42,53 @@ export async function ensureHomeStorageLayout(
 
   const ops: RipgitApplyOp[] = [];
   const userContextUsername = options.userContextUsername ?? identity.username;
-  maybePutTextFile(
-    ops,
-    "context.d/00-constitution.md",
-    constitutionContext,
-    defaultConstitutionContext(),
-  );
-  maybePutOrReplaceGeneratedTextFile(
-    ops,
-    "context.d/10-user.md",
-    userContext,
-    defaultUserContext(userContextUsername),
-    userContextUsername !== identity.username ? defaultUserContext(identity.username) : undefined,
-  );
+  if (contextDir.kind === "missing") {
+    ops.push({
+      type: "put" as const,
+      path: "context.d/.dir",
+      contentBytes: [],
+    });
+  }
+  if (options.seedPromptContext === true) {
+    maybePutTextFile(
+      ops,
+      "context.d/00-style.md",
+      styleContext,
+      defaultStyleContext(),
+    );
+    maybeDeleteGeneratedTextFile(
+      ops,
+      "context.d/00-constitution.md",
+      constitutionContext,
+      [defaultConstitutionContext()],
+    );
+    maybePutOrReplaceGeneratedTextFile(
+      ops,
+      "context.d/10-user.md",
+      userContext,
+      defaultUserContext(userContextUsername),
+      userContextUsername !== identity.username ? defaultUserContext(identity.username) : undefined,
+    );
+  } else if (options.cleanupGeneratedPromptContext === true) {
+    maybeDeleteGeneratedTextFile(
+      ops,
+      "context.d/00-style.md",
+      styleContext,
+      [defaultStyleContext()],
+    );
+    maybeDeleteGeneratedTextFile(
+      ops,
+      "context.d/00-constitution.md",
+      constitutionContext,
+      [defaultConstitutionContext()],
+    );
+    maybeDeleteGeneratedTextFile(
+      ops,
+      "context.d/10-user.md",
+      userContext,
+      [defaultUserContext(identity.username), defaultUserContext(userContextUsername)],
+    );
+  }
   if (skillsDir.kind === "missing") {
     ops.push({
       type: "put" as const,
@@ -120,6 +162,42 @@ function maybePutOrReplaceGeneratedTextFile(
       contentBytes: Array.from(TEXT_ENCODER.encode(content)),
     });
   }
+}
+
+function maybeDeleteGeneratedTextFile(
+  ops: RipgitApplyOp[],
+  path: string,
+  existing: Awaited<ReturnType<RipgitClient["readPath"]>>,
+  generatedContents: string[],
+): void {
+  if (existing.kind !== "file") {
+    return;
+  }
+  const text = TEXT_DECODER.decode(existing.bytes);
+  if (!generatedContents.some((content) => content === text)) {
+    return;
+  }
+  ops.push({
+    type: "delete",
+    path,
+  });
+}
+
+function defaultStyleContext(): string {
+  return [
+    "# Style",
+    "",
+    "Answer like a helpful human in the medium you're in. Lead with the direct answer or recommendation in 1-3 sentences. Only add detail when it changes the decision, explains the key reason, or the user asks for more. Avoid \"slop grenades\": long, generic, technically correct responses that force the reader to extract the point themselves.",
+    "",
+    "## Example",
+    "",
+    "User: \"Should we use Redis or Memcached?\"",
+    "",
+    "Bad: Great question! The choice between Redis and Memcached is a nuanced decision that requires careful consideration of multiple factors. Let me break down the key differences: Redis offers a rich set of data structures including strings, hashes, lists, sets, and sorted sets, which provide flexibility for various use cases. It supports persistence through RDB snapshots and AOF logs, enabling data durability...",
+    "",
+    "Good: Redis. We need pub/sub for the notifications feature.",
+    "",
+  ].join("\n");
 }
 
 function defaultConstitutionContext(): string {

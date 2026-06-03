@@ -48,6 +48,8 @@ export async function ensureKernelBootstrapped(ctx: KernelContext): Promise<void
     username: "root",
     home: "/root",
     cwd: "/root",
+  }, {
+    cleanupGeneratedPromptContext: true,
   });
 }
 

@@ -198,7 +198,11 @@ export async function createAccount(
     ? ownerUsername
     : identity.username;
 
-  await ensureHomeStorageLayout(env, identity, { userContextUsername });
+  await ensureHomeStorageLayout(env, identity, {
+    userContextUsername,
+    seedPromptContext: input.kind === "agent",
+    cleanupGeneratedPromptContext: input.kind !== "agent",
+  });
   if (input.persona) {
     await seedPersona(env, identity, input.persona);
   }
