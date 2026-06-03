@@ -25,7 +25,6 @@ const TEXT_ENCODER = new TextEncoder();
 
 type HomePathKind =
   | "home"
-  | "constitution"
   | "context-root"
   | "context-path"
   | "skills-root"
@@ -90,10 +89,6 @@ class HomeKnowledgeMountBackend implements MountBackend {
     return normalizePath(this.identity.home);
   }
 
-  private get constitutionPath() {
-    return normalizePath(`${this.identity.home}/CONSTITUTION.md`);
-  }
-
   private get contextRoot() {
     return normalizePath(`${this.identity.home}/context.d`);
   }
@@ -113,6 +108,11 @@ class HomeKnowledgeMountBackend implements MountBackend {
   handles(path: string): boolean {
     const normalized = normalizePath(path);
     return normalized === this.home || normalized.startsWith(`${this.home}/`);
+  }
+
+  handlesOverlayPath(path: string): boolean {
+    const kind = this.classify(normalizePath(path));
+    return kind !== "home" && kind !== "other";
   }
 
   async readFile(path: string): Promise<string> {
@@ -302,9 +302,6 @@ class HomeKnowledgeMountBackend implements MountBackend {
       entries.add("skills.d");
       entries.add("profiles.d");
       entries.add("knowledge");
-      if (await this.pathExistsInRepo("CONSTITUTION.md") || await this.fallback.exists(this.constitutionPath).catch(() => false)) {
-        entries.add("CONSTITUTION.md");
-      }
       return [...entries].sort();
     }
 
@@ -484,9 +481,6 @@ class HomeKnowledgeMountBackend implements MountBackend {
     if (path === this.home) {
       return "home";
     }
-    if (path === this.constitutionPath) {
-      return "constitution";
-    }
     if (path === this.contextRoot) {
       return "context-root";
     }
@@ -515,9 +509,6 @@ class HomeKnowledgeMountBackend implements MountBackend {
   }
 
   private relativePathForOverlay(path: string): string {
-    if (path === this.constitutionPath) {
-      return "CONSTITUTION.md";
-    }
     if (path.startsWith(`${this.home}/`)) {
       return path.slice(this.home.length + 1);
     }
@@ -525,8 +516,7 @@ class HomeKnowledgeMountBackend implements MountBackend {
   }
 
   private canFallbackToR2(path: string): boolean {
-    return path === this.constitutionPath
-      || path === this.contextRoot
+    return path === this.contextRoot
       || path.startsWith(`${this.contextRoot}/`)
       || path === this.skillsRoot
       || path.startsWith(`${this.skillsRoot}/`)
@@ -615,9 +605,10 @@ class HomeKnowledgeMountBackend implements MountBackend {
 }
 
 /**
- * Routes `/home/<agent>/context.d` (and sibling overlay dirs) through a
- * ripgit-backed mount keyed on the *target* account when the viewer is authorized
- * to manage that agent — not only the viewer's own home.
+ * Routes another account's home-knowledge overlay dirs through a ripgit-backed
+ * mount keyed on the target account when the viewer is authorized to manage
+ * that agent. Non-overlay files in the target home stay on the viewer's normal
+ * R2 permission path.
  */
 class DelegatingHomeKnowledgeMountBackend implements MountBackend {
   private readonly delegates = new Map<string, HomeKnowledgeMountBackend>();
@@ -738,7 +729,7 @@ class DelegatingHomeKnowledgeMountBackend implements MountBackend {
       this.delegates.set(username, delegate);
     }
 
-    return delegate.handles(path) ? delegate : null;
+    return delegate.handlesOverlayPath(path) ? delegate : null;
   }
 }
 
