@@ -197,7 +197,7 @@ describe("proc handlers", () => {
     expect(setLatestArchive).toHaveBeenCalledWith("default:1000:2000", null);
   });
 
-  it("updates or clears a default conversation archive pointer on proc.kill", async () => {
+  it("updates a default conversation archive pointer on proc.kill when a primary archive is returned", async () => {
     const setLatestArchive = vi.fn();
     const clearActivePid = vi.fn();
     const ctx = makeForwardContext({ setLatestArchive, clearActivePid });
@@ -230,7 +230,12 @@ describe("proc handlers", () => {
       "/home/sam-agent/conversations/default%3A1000%3A2000/kill.default.gen-1.jsonl.gz",
     );
     expect(clearActivePid).toHaveBeenCalledWith("proc-1");
+  });
 
+  it("preserves a default conversation archive pointer on proc.kill when no archive is returned", async () => {
+    const setLatestArchive = vi.fn();
+    const clearActivePid = vi.fn();
+    const ctx = makeForwardContext({ setLatestArchive, clearActivePid });
     sendFrameToProcessMock.mockResolvedValueOnce({
       type: "res",
       id: "kill-empty",
@@ -250,7 +255,8 @@ describe("proc handlers", () => {
       args: { pid: "proc-1" },
     } as RequestFrame, ctx);
 
-    expect(setLatestArchive).toHaveBeenLastCalledWith("default:1000:2000", null);
+    expect(setLatestArchive).not.toHaveBeenCalled();
+    expect(clearActivePid).toHaveBeenCalledWith("proc-1");
   });
 
   it("cleans up pending IPC call when delivery reports failure", async () => {

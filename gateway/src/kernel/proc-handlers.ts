@@ -542,7 +542,9 @@ export async function forwardToProcess(
           const primaryArchive = archived?.archives?.find((a) =>
             typeof a.path === "string" && a.path.replace(/^\/+/, "").startsWith(base),
           );
-          ctx.conversations?.setLatestArchive(conversation.conversationId, primaryArchive?.path ?? null);
+          if (primaryArchive?.path) {
+            ctx.conversations?.setLatestArchive(conversation.conversationId, primaryArchive.path);
+          }
         }
         ctx.conversations?.clearActivePid(pid);
       }
