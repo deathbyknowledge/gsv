@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { assembleSystemPrompt } from "./assembly";
 import { createHomeContextProvider } from "./providers/home";
-import { createProfileInstructionsProvider } from "./providers/profile";
+import { createSystemContextProvider } from "./providers/system";
 import { resolvePromptProviders } from "./selection";
 import type { PromptAssemblyInput, PromptContextProvider } from "./types";
 import type { AiConfigResult } from "../../syscalls/ai";
@@ -21,10 +21,8 @@ const CONFIG: AiConfigResult = {
       name: "00-gsv.md",
       text: "Running in GSV for {{identity.username}} at {{identity.cwd}}",
     },
-  ],
-  profileContextFiles: [
     {
-      name: "00-role.md",
+      name: "10-runtime.md",
       text: "Task for {{identity.username}} in {{identity.cwd}}\nUser {{user.username}} at {{user.home}}\nProgram {{program.username}} at {{program.home}} cwd {{program.cwd}}\nOwner {{owner.username}} at {{owner.home}}\n\nTargets:\n{{devices}}\n\nMCP:\n{{mcpServers}}",
     },
   ],
@@ -34,8 +32,8 @@ const CONFIG: AiConfigResult = {
       name: "package-development",
       description: "Build and update packages.",
       source: {
-        kind: "profile",
-        label: "profile:task",
+        kind: "home",
+        label: "home:package-development",
         writable: false,
       },
     },
@@ -89,9 +87,9 @@ describe("assembleSystemPrompt", () => {
   });
 });
 
-describe("createProfileInstructionsProvider", () => {
-  it("renders profile context files from config and runtime placeholders", async () => {
-    const provider = createProfileInstructionsProvider();
+describe("createSystemContextProvider", () => {
+  it("renders system context files from config and runtime placeholders", async () => {
+    const provider = createSystemContextProvider();
     const sections = await provider.collect(
       makeInput({
         devices: [
@@ -109,21 +107,26 @@ describe("createProfileInstructionsProvider", () => {
     );
     expect(sections).toEqual([
       expect.objectContaining({
-        name: "profile.context:00-role.md",
+        name: "system.context:00-gsv.md",
+      }),
+      expect.objectContaining({
+        name: "system.context:10-runtime.md",
       }),
     ]);
-    expect(sections[0]?.text).toContain("Task for root in /root/projects/demo");
-    expect(sections[0]?.text).toContain("User hank at /home/hank");
-    expect(sections[0]?.text).toContain("Program root at /root cwd /root/projects/demo");
-    expect(sections[0]?.text).toContain("Owner hank at /home/hank");
-    expect(sections[0]?.text).toContain("- gsv");
-    expect(sections[0]?.text).toContain("- macbook: Work MacBook - Personal laptop (darwin)");
-    expect(sections[0]?.text).toContain("- Cloudflare");
-    expect(sections[0]?.text).toContain("- Linear");
+    const text = sections.map((section) => section.text).join("\n");
+    expect(text).toContain("Running in GSV for root at /root/projects/demo");
+    expect(text).toContain("Task for root in /root/projects/demo");
+    expect(text).toContain("User hank at /home/hank");
+    expect(text).toContain("Program root at /root cwd /root/projects/demo");
+    expect(text).toContain("Owner hank at /home/hank");
+    expect(text).toContain("- gsv");
+    expect(text).toContain("- macbook: Work MacBook - Personal laptop (darwin)");
+    expect(text).toContain("- Cloudflare");
+    expect(text).toContain("- Linear");
   });
 
   it("bounds rendered target context and points to target discovery", async () => {
-    const provider = createProfileInstructionsProvider();
+    const provider = createSystemContextProvider();
     const sections = await provider.collect(
       makeInput({
         devices: Array.from({ length: 7 }, (_value, index) => ({
@@ -136,19 +139,19 @@ describe("createProfileInstructionsProvider", () => {
       }),
     );
 
-    expect(sections[0]?.text).toContain("- node-1: Node 1 - Worker 1 (linux)");
-    expect(sections[0]?.text).toContain("- node-5: Node 5 - Worker 5 (linux)");
-    expect(sections[0]?.text).not.toContain("node-6");
-    expect(sections[0]?.text).toContain("- ... 2 more targets. Run `targets list` in Shell to discover more.");
+    const text = sections.map((section) => section.text).join("\n");
+    expect(text).toContain("- node-1: Node 1 - Worker 1 (linux)");
+    expect(text).toContain("- node-5: Node 5 - Worker 5 (linux)");
+    expect(text).not.toContain("node-6");
+    expect(text).toContain("- ... 2 more targets. Run `targets list` in Shell to discover more.");
   });
 });
 
 describe("selection", () => {
-  it("includes profile instructions in the default task plan", () => {
-    const providers = resolvePromptProviders("task", "chat.reply");
+  it("includes context providers in the default task plan", () => {
+    const providers = resolvePromptProviders("task");
     expect(providers.map((provider) => provider.name)).toEqual([
       "system.context",
-      "profile.context",
       "home.context",
       "owner.context",
       "available.skills",
@@ -159,7 +162,7 @@ describe("selection", () => {
 
 describe("createSkillIndexProvider", () => {
   it("renders command-oriented skill discovery without source paths", async () => {
-    const providers = resolvePromptProviders("task", "chat.reply");
+    const providers = resolvePromptProviders("task");
     const prompt = await assembleSystemPrompt(makeInput(), providers);
 
     expect(prompt).toContain("[available.skills]");
@@ -222,7 +225,6 @@ describe("createHomeContextProvider", () => {
 function makeInput(overrides: Partial<PromptAssemblyInput> = {}): PromptAssemblyInput {
   return {
     config: CONFIG,
-    profile: "task",
     purpose: "chat.reply",
     identity: IDENTITY,
     devices: [],

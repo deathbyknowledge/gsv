@@ -40,6 +40,7 @@ import {
 } from "./accounts";
 import { canOwnerRunAsAccount } from "./account-access";
 import { ensureHomeStorageLayout } from "./home-knowledge";
+import { DEFAULT_PERSONA_CONTEXT_TEMPLATE } from "../prompts/persona";
 
 /**
  * Curated, tasteful default names for the personal agent. The first available
@@ -314,18 +315,10 @@ export function handleAccountList(
 
 function defaultPersonaContext(agentName: string, ownerUsername: string): string {
   const home = `/home/${agentName}`;
-  return [
-    "# Persona",
-    "",
-    `*You are **${agentName}**, the personal agent for ${ownerUsername}.*`,
-    "",
-    `Your program home is \`${home}\`. In Shell and filesystem tools, \`~\` resolves to \`${home}\`.`,
-    "Your context, knowledge, and memories live here and persist across sessions. The person you work for owns this process; their",
-    "own context is layered in alongside yours.",
-    "",
-    "Grow into the role. Keep these files current. They are who you are.",
-    "",
-  ].join("\n");
+  return DEFAULT_PERSONA_CONTEXT_TEMPLATE
+    .replaceAll("{{program.username}}", agentName)
+    .replaceAll("{{program.home}}", home)
+    .replaceAll("{{user.username}}", ownerUsername);
 }
 
 /**

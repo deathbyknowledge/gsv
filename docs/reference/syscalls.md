@@ -1162,7 +1162,7 @@ type AiSyscalls = {
 
   "ai.config": {
     args: Empty;
-    result: { owner?: ProcessIdentity | null; provider: string; model: string; apiKey: string; reasoning?: string; maxTokens: number; contextWindowTokens: number | null; contextWindowSource: "model" | "config" | "unknown"; systemContextFiles?: Array<{ name: string; text: string }>; skillIndex?: Array<{ id: string; name: string; description: string; source: { kind: "home" | "package"; label: string; writable: boolean } }>; maxContextBytes: number; generationTimeoutMs: number; generationStreaming?: "auto" | "off" };
+    result: { owner?: ProcessIdentity | null; provider: string; model: string; apiKey: string; reasoning?: string; maxTokens: number; contextWindowTokens: number | null; contextWindowSource: "model" | "config" | "unknown"; systemContextFiles?: Array<{ name: string; text: string }>; skillIndex?: Array<{ id: string; name: string; description: string; source: { kind: "home" | "package"; label: string; writable: boolean } }>; accountApprovalPolicy?: string | null; maxContextBytes: number; generationTimeoutMs: number; generationStreaming?: "auto" | "off" };
   };
 
   "ai.transcription.create": {

@@ -11,15 +11,6 @@ export function createSystemContextProvider(): PromptContextProvider {
   };
 }
 
-export function createProfileInstructionsProvider(): PromptContextProvider {
-  return {
-    name: "profile.context",
-    async collect(input) {
-      return renderContextFiles("profile.context", input.config.profileContextFiles, input);
-    },
-  };
-}
-
 function renderContextFiles(
   sectionPrefix: string,
   files: Array<{ name: string; text: string }> | undefined,

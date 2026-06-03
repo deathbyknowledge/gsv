@@ -70,9 +70,8 @@ export type AiConfigResult = {
   contextWindowTokens: number | null;
   contextWindowSource: "model" | "config" | "unknown";
   systemContextFiles?: ContextFile[];
-  profileContextFiles?: ContextFile[];
   skillIndex?: AiSkillIndexEntry[];
-  profileApprovalPolicy?: string | null;
+  accountApprovalPolicy?: string | null;
   maxContextBytes: number;
   generationTimeoutMs: number;
   generationStreaming?: "auto" | "off";

@@ -176,8 +176,7 @@ export async function handleAiConfig(
   // Persona and context come from the run-as account's home (the home.context
   // provider reads /home/<account>/context.d). Tool approval is per account
   // (keyed by the run-as uid).
-  const profileContextFiles: ContextFile[] = [];
-  const profileApprovalPolicy = resolveAccountApprovalPolicy(config, uid);
+  const accountApprovalPolicy = resolveAccountApprovalPolicy(config, uid);
 
   const maxContextBytes = parseInt(
     config.get(`users/${uid}/ai/max_context_bytes`) ??
@@ -210,9 +209,8 @@ export async function handleAiConfig(
     contextWindowTokens,
     contextWindowSource,
     systemContextFiles,
-    profileContextFiles,
     skillIndex,
-    profileApprovalPolicy,
+    accountApprovalPolicy,
     maxContextBytes,
     generationTimeoutMs,
     generationStreaming,

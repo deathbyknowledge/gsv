@@ -25,6 +25,7 @@ import type {
   AiConfigResult,
   AiToolsDevice,
 } from "../syscalls/ai";
+import { COMPACTION_SUMMARY_SYSTEM_PROMPT } from "../prompts/compaction";
 import type {
   ProcSendArgs,
   ProcSendResult,
@@ -500,12 +501,7 @@ function defaultConversationPolicy(conversationId: string): ProcConversationCont
 function buildCompactionSummaryContext(messages: MessageRecord[]): Context {
   const transcript = renderCompactionTranscriptWindow(messages, COMPACTION_SUMMARY_WINDOW_CHARS);
   return {
-    systemPrompt: [
-      "Summarize a compacted GSV process conversation segment.",
-      "Return concise markdown only.",
-      "Preserve facts needed to continue the conversation: user goals, decisions, constraints, tool results, process events, files, ids, and unresolved next steps.",
-      "Do not mention that you are an AI or that you summarized the transcript.",
-    ].join(" "),
+    systemPrompt: COMPACTION_SUMMARY_SYSTEM_PROMPT,
     messages: [
       {
         role: "user",
@@ -3689,13 +3685,13 @@ export class Process extends Host<Env> {
       return run.approvalPolicy;
     }
 
-    const profilePolicy = parseToolApprovalPolicy(run.config?.profileApprovalPolicy ?? null);
+    const accountPolicy = parseToolApprovalPolicy(run.config?.accountApprovalPolicy ?? null);
     const overrides = this.loadToolApprovalOverrides();
     run.approvalPolicy = {
-      default: profilePolicy.default,
+      default: accountPolicy.default,
       rules: [
         ...overrides,
-        ...profilePolicy.rules,
+        ...accountPolicy.rules,
       ],
     };
     this.currentRun = run;
