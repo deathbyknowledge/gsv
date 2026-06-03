@@ -10,16 +10,19 @@ describe("account-access", () => {
   const auth = {
     getPasswdByUid: (uid: number) => {
       if (uid === 1000) return { uid: 1000, gid: 1000, username: "alice", home: "/home/alice" };
+      if (uid === 1001) return { uid: 1001, gid: 100, username: "bob", home: "/home/bob" };
       if (uid === 3000) return { uid: 3000, gid: 3000, username: "wiki-builder", home: "/home/wiki-builder" };
       return null;
     },
     getPasswdByUsername: (name: string) => {
       if (name === "alice") return { uid: 1000, gid: 1000, username: "alice" };
+      if (name === "bob") return { uid: 1001, gid: 100, username: "bob" };
       if (name === "wiki-builder") return { uid: 3000, gid: 3000, username: "wiki-builder" };
       return null;
     },
     getPersonalAgentUid: (ownerUid: number) => (ownerUid === 1000 ? 2000 : null),
     getGroupByGid: (gid: number) => {
+      if (gid === 100) return { name: "users", gid: 100, members: ["alice", "bob"] };
       if (gid === 3000) return { name: "wiki-builder", gid: 3000, members: [] as string[] };
       return null;
     },
@@ -45,5 +48,11 @@ describe("account-access", () => {
   it("authorizes an owned agent viewer to access the owner's home overlay", () => {
     expect(canOwnerAccessHomeKnowledge(auth as never, 1000, "alice-agent", "alice", false)).toBe(true);
     expect(canOwnerAccessHomeKnowledge(auth as never, 1001, "alice-agent", "alice", false)).toBe(false);
+  });
+
+  it("does not authorize delegation through shared primary groups", () => {
+    const legacyHuman = { uid: 1001, gid: 100, username: "bob" };
+    expect(canOwnerDelegateRunAs(auth as never, 1000, legacyHuman)).toBe(false);
+    expect(canOwnerRunAsAccount(auth as never, 1000, legacyHuman, false)).toBe(false);
   });
 });

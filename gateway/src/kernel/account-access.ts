@@ -26,7 +26,7 @@ export function canOwnerDelegateRunAs(
   if (auth.getPersonalAgentUid(ownerUid) === target.uid) return true;
 
   const group = auth.getGroupByGid(target.gid);
-  if (group?.members.includes(ownerName)) return true;
+  if (group?.name === target.username && group.members.includes(ownerName)) return true;
 
   const accessGroup = auth.getGroupByName(packageAgentAccessGroup(target.username));
   if (accessGroup?.members.includes(ownerName)) return true;
