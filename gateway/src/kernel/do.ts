@@ -102,7 +102,7 @@ import type {
   SchedulerRunResult,
 } from "../syscalls/scheduler";
 
-const SERVER_VERSION = "0.2.1";
+const SERVER_VERSION = "0.2.2";
 const KERNEL_BINARY_DEVICE_ID = "__gsv_kernel__";
 
 type ConnectionState = {

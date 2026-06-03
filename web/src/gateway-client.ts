@@ -289,7 +289,7 @@ export class GatewayClient implements GatewayClientLike {
         protocol: 1,
         client: {
           id: "gsv-ui",
-          version: "0.2.1",
+          version: "0.2.2",
           platform: "browser",
           role: "user",
         },
@@ -399,7 +399,7 @@ export class GatewayClient implements GatewayClientLike {
         protocol: 1,
         client: {
           id: "gsv-ui-setup-probe",
-          version: "0.2.1",
+          version: "0.2.2",
           platform: "browser",
           role: "user",
         },
