@@ -204,12 +204,23 @@ export async function createAgent(
   if (!username) {
     return { ok: false, errorText: "username is required" };
   }
+  const contextFiles = new Map<string, AgentContextFile>();
+  if (Array.isArray(args.contextFiles)) {
+    for (const file of args.contextFiles) {
+      const name = normalizeContextFileName(file?.name);
+      if (!name) {
+        return { ok: false, errorText: "valid context file names are required" };
+      }
+      contextFiles.set(name, { name, text: String(file.text ?? "") });
+    }
+  }
   try {
     await kernel.request("account.create", {
       kind: "agent",
       username,
       gecos: String(args.gecos ?? "").trim() || undefined,
       persona: String(args.persona ?? "").trim() || undefined,
+      contextFiles: contextFiles.size > 0 ? [...contextFiles.values()] : undefined,
     });
     return { ok: true, errorText: "" };
   } catch (error) {

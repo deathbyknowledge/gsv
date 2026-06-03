@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { KernelContext } from "./context";
 import type { ConnectionIdentity, ProcessIdentity } from "@gsv/protocol/syscalls/system";
-import { handleAccountCreate, handleAccountList } from "./agents";
+import { ensurePersonalAgent, handleAccountCreate, handleAccountList } from "./agents";
 
 type PasswdRow = { username: string; uid: number; gid: number; gecos: string; home: string; shell: string };
 type GroupRow = { name: string; gid: number; members: string[] };
@@ -17,6 +17,12 @@ function createCtx() {
   ];
   const shadow = new Map<string, string>([["root", "x"], ["alice", "x"]]);
   const personalAgents = new Map<number, number>();
+  const ripgitApplyBodies: Array<{
+    author: string;
+    email: string;
+    message: string;
+    ops: Array<{ type: string; path: string; contentBytes?: number[] }>;
+  }> = [];
 
   const auth = {
     getPasswdByUsername: vi.fn((username: string) => {
@@ -30,6 +36,12 @@ function createCtx() {
     nextUid: vi.fn(() => Math.max(999, ...passwd.map((u) => u.uid)) + 1),
     addUser: vi.fn((entry: PasswdRow) => {
       passwd.push({ ...entry, gecos: entry.gecos ?? entry.username, shell: entry.shell ?? "/bin/init" });
+    }),
+    updateUser: vi.fn((username: string, fields: Partial<Omit<PasswdRow, "username">>) => {
+      const found = passwd.find((u) => u.username === username);
+      if (!found) return false;
+      Object.assign(found, fields);
+      return true;
     }),
     setShadow: vi.fn((entry: { username: string; hash: string }) => {
       shadow.set(entry.username, entry.hash);
@@ -71,16 +83,31 @@ function createCtx() {
     head: vi.fn(async () => null),
     put: vi.fn(async () => {}),
   };
+  const ripgit = {
+    fetch: vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/apply")) {
+        ripgitApplyBodies.push(JSON.parse(String(init?.body ?? "{}")));
+        return new Response(JSON.stringify({ ok: true, head: "test-head" }), {
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response("missing", { status: 404 });
+    }),
+  };
 
-  function ctxFor(identity: ConnectionIdentity): KernelContext {
+  function ctxFor(identity: ConnectionIdentity, options: { ripgit?: boolean } = {}): KernelContext {
     return {
       auth: auth as unknown as KernelContext["auth"],
-      env: { STORAGE: storage } as unknown as KernelContext["env"],
+      env: {
+        STORAGE: storage,
+        ...(options.ripgit ? { RIPGIT: ripgit } : {}),
+      } as unknown as KernelContext["env"],
       identity,
     } as KernelContext;
   }
 
-  return { ctxFor, auth, passwd, groups, shadow, personalAgents };
+  return { ctxFor, auth, passwd, groups, shadow, personalAgents, ripgitApplyBodies };
 }
 
 function userIdentity(uid: number, username: string, capabilities: string[]): ConnectionIdentity {
@@ -107,6 +134,27 @@ describe("handleAccountCreate", () => {
 
     await handleAccountCreate({ kind: "agent", username: "scout2" }, ctx);
     expect(passwd.find((u) => u.username === "scout2")?.gecos).toBe("alice's agent");
+  });
+
+  it("uses the owning human in generated agent user context", async () => {
+    const { ctxFor, ripgitApplyBodies } = createCtx();
+    const ctx = ctxFor(userIdentity(1000, "alice", ["account.create"]), { ripgit: true });
+
+    await handleAccountCreate({
+      kind: "agent",
+      username: "scout",
+      contextFiles: [{ name: "20-brief", text: "Scout briefing" }],
+    }, ctx);
+
+    const userContextOp = ripgitApplyBodies
+      .flatMap((body) => body.ops)
+      .find((op) => op.path === "context.d/10-user.md");
+    expect(userContextOp).toBeTruthy();
+    expect(new TextDecoder().decode(new Uint8Array(userContextOp?.contentBytes ?? [])))
+      .toContain("- **Username:** alice");
+    expect(ripgitApplyBodies.flatMap((body) => body.ops)).toContainEqual(
+      expect.objectContaining({ path: "context.d/20-brief.md" }),
+    );
   });
 
   it("creates an agent owned by the caller, locked and cross-membered", async () => {
@@ -193,6 +241,41 @@ describe("handleAccountCreate", () => {
     // A 1:1 personal agent was provisioned and mapped to the human.
     expect(result.personalAgent).toBeTruthy();
     expect(personalAgents.get(result.account.uid)).toBe(result.personalAgent?.uid);
+  });
+
+  it("uses the personal agent username as the display name", async () => {
+    const { ctxFor, passwd } = createCtx();
+    const ctx = ctxFor(userIdentity(0, "root", ["*"]));
+
+    const result = await handleAccountCreate(
+      { kind: "human", username: "bob", password: "password-123" },
+      ctx,
+    );
+
+    expect(passwd.find((u) => u.uid === result.personalAgent?.uid)?.gecos)
+      .toBe(result.personalAgent?.username);
+  });
+
+  it("reconciles legacy personal agent display names", async () => {
+    const { ctxFor, auth, passwd, groups, personalAgents, shadow } = createCtx();
+    passwd.push({
+      username: "friday",
+      uid: 2000,
+      gid: 2000,
+      gecos: "alice's agent",
+      home: "/home/friday",
+      shell: "/bin/init",
+    });
+    groups.push({ name: "friday", gid: 2000, members: ["alice"] });
+    shadow.set("friday", "!");
+    personalAgents.set(1000, 2000);
+    const ctx = ctxFor(userIdentity(1000, "alice", ["account.create"]));
+
+    const result = await ensurePersonalAgent(ctx, ctx.identity!.process);
+
+    expect(result.created).toBe(false);
+    expect(auth.updateUser).toHaveBeenCalledWith("friday", { gecos: "friday" });
+    expect(passwd.find((u) => u.username === "friday")?.gecos).toBe("friday");
   });
 });
 

@@ -59,6 +59,7 @@ import {
   normalizeContextState,
   normalizeHilRequest,
   normalizeThreadContext,
+  personalProfileLabel,
   readAttachmentFile,
   safeText,
   setStoredThreadContext,
@@ -162,7 +163,8 @@ export function App({ backend }: { backend: ChatBackend }) {
 
   const activeConversationId = active?.conversationId || "default";
   const activeConversation = conversations.find((conversation) => conversation.id === activeConversationId) ?? null;
-  const activeTitle = active ? titleForActive(active, activeConversation, threads) : draftConversationTitle(draftProfile);
+  const homeProfileLabel = personalProfileLabel(conversationProfiles);
+  const activeTitle = active ? titleForActive(active, activeConversation, threads, homeProfileLabel) : draftConversationTitle(draftProfile);
   const statusText = getStatusText({
     active,
     draftProfile,
@@ -466,7 +468,7 @@ export function App({ backend }: { backend: ChatBackend }) {
     setNotice("");
     try {
       const result = await backend.spawnProcess({
-        label: "Personal Agent",
+        label: homeProfileLabel,
       });
       const record = asRecord(result);
       if (!record?.ok) {
@@ -788,6 +790,7 @@ export function App({ backend }: { backend: ChatBackend }) {
         threadsLoading={threadsLoading}
         threadsError={threadsError}
         profiles={conversationProfiles}
+        homeLabel={homeProfileLabel}
         draftProfileId={draftProfile.id}
         onDraftProfileChange={setDraftProfileId}
         onHome={() => void openHome()}
@@ -804,6 +807,7 @@ export function App({ backend }: { backend: ChatBackend }) {
             threadsLoading={threadsLoading}
             threadsError={threadsError}
             profiles={conversationProfiles}
+            homeLabel={homeProfileLabel}
             draftProfileId={draftProfile.id}
             onDraftProfileChange={setDraftProfileId}
             onHome={() => void openHome()}

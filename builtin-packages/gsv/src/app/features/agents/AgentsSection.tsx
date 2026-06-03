@@ -12,9 +12,14 @@ import {
 import { useAgents } from "./useAgents";
 import type {
   AccountSummary,
+  AgentContextFile,
   AgentDetail,
   ApprovalPolicy,
+  CreateAgentArgs,
 } from "./types";
+
+const PERSONA_CONTEXT_FILE = "05-persona.md";
+const NEW_CONTEXT_FILE = "__new__";
 
 export function AgentsSection({ backend }: { backend: GsvBackend }) {
   const agents = useAgents(backend);
@@ -77,7 +82,7 @@ function AgentRoster({
   isRoot: boolean;
   onRefresh: () => void;
   onSelect: (agent: AgentDetail) => void;
-  onCreateAgent: (args: { username: string; gecos?: string; persona?: string }) => Promise<boolean>;
+  onCreateAgent: (args: CreateAgentArgs) => Promise<boolean>;
   onCreateHuman: (args: { username: string; password: string; gecos?: string }) => Promise<boolean>;
 }) {
   return (
@@ -145,12 +150,18 @@ function CreateAgentForm({
   onCreate,
 }: {
   busy: boolean;
-  onCreate: (args: { username: string; gecos?: string; persona?: string }) => Promise<boolean>;
+  onCreate: (args: CreateAgentArgs) => Promise<boolean>;
 }) {
   const [open, setOpen] = useState(false);
   const [username, setUsername] = useState("");
   const [gecos, setGecos] = useState("");
-  const [persona, setPersona] = useState("");
+  const [contextFiles, setContextFiles] = useState<AgentContextFile[]>(defaultCreateContextFiles);
+
+  function resetForm(): void {
+    setUsername("");
+    setGecos("");
+    setContextFiles(defaultCreateContextFiles());
+  }
 
   if (!open) {
     return (
@@ -165,11 +176,16 @@ function CreateAgentForm({
       class="gsv-agents-form"
       onSubmit={async (event) => {
         event.preventDefault();
-        const ok = await onCreate({ username, gecos: gecos || undefined, persona: persona || undefined });
+        const persona = contextFiles.find((file) => file.name === PERSONA_CONTEXT_FILE)?.text.trim() || undefined;
+        const extraContextFiles = contextFiles.filter((file) => file.name !== PERSONA_CONTEXT_FILE);
+        const ok = await onCreate({
+          username,
+          gecos: gecos || undefined,
+          persona,
+          contextFiles: extraContextFiles.length > 0 ? extraContextFiles : undefined,
+        });
         if (ok) {
-          setUsername("");
-          setGecos("");
-          setPersona("");
+          resetForm();
           setOpen(false);
         }
       }}
@@ -183,15 +199,150 @@ function CreateAgentForm({
         <span>Display name</span>
         <input value={gecos} onInput={(e) => setGecos(e.currentTarget.value)} placeholder="Research Bot" />
       </label>
-      <label class="gsv-field">
-        <span>Persona</span>
-        <textarea value={persona} onInput={(e) => setPersona(e.currentTarget.value)} placeholder="You are a focused research agent..." rows={4} />
-      </label>
+      <DraftContextFilesEditor files={contextFiles} onChange={setContextFiles} />
       <div class="gsv-detail-actions">
         <ActionButton type="submit" icon="check" label="Create agent" busyLabel="Creating" busy={busy} />
-        <ActionButton type="button" icon="x" label="Cancel" variant="ghost" onClick={() => setOpen(false)} />
+        <ActionButton
+          type="button"
+          icon="x"
+          label="Cancel"
+          variant="ghost"
+          onClick={() => {
+            resetForm();
+            setOpen(false);
+          }}
+        />
       </div>
     </form>
+  );
+}
+
+function defaultCreateContextFiles(): AgentContextFile[] {
+  return [{ name: PERSONA_CONTEXT_FILE, text: "" }];
+}
+
+function normalizeDraftContextFileName(value: string): string | null {
+  const raw = value.trim();
+  if (!raw || raw.includes("/") || raw.includes("\\") || raw.includes("\0")) {
+    return null;
+  }
+  const name = raw.endsWith(".md") ? raw : `${raw}.md`;
+  const base = name.slice(0, -3);
+  if (!base || base === "." || base === "..") {
+    return null;
+  }
+  return name;
+}
+
+function DraftContextFilesEditor({
+  files,
+  onChange,
+}: {
+  files: AgentContextFile[];
+  onChange: (files: AgentContextFile[]) => void;
+}) {
+  const [selected, setSelected] = useState(PERSONA_CONTEXT_FILE);
+  const [draftName, setDraftName] = useState("");
+  const [newDraft, setNewDraft] = useState("");
+
+  useEffect(() => {
+    if (selected === NEW_CONTEXT_FILE) return;
+    if (files.some((file) => file.name === selected)) return;
+    setSelected(files[0]?.name ?? PERSONA_CONTEXT_FILE);
+  }, [files, selected]);
+
+  function selectFile(name: string): void {
+    setSelected(name);
+    if (name === NEW_CONTEXT_FILE) {
+      setDraftName("");
+      setNewDraft("");
+    }
+  }
+
+  function updateExisting(name: string, text: string): void {
+    onChange(files.map((file) => file.name === name ? { ...file, text } : file));
+  }
+
+  function addDraftFile(): void {
+    const name = normalizeDraftContextFileName(draftName);
+    if (!name) return;
+    const next = files.some((file) => file.name === name)
+      ? files.map((file) => file.name === name ? { ...file, text: newDraft } : file)
+      : [...files, { name, text: newDraft }];
+    onChange(next);
+    setSelected(name);
+    setDraftName("");
+    setNewDraft("");
+  }
+
+  const active = files.find((file) => file.name === selected);
+  const normalizedDraftName = normalizeDraftContextFileName(draftName);
+
+  return (
+    <section class="gsv-agents-create-context" aria-label="Initial context files">
+      <header class="gsv-section-intro">
+        <span class="gsv-kicker">Context</span>
+        <h3>Persona &amp; context</h3>
+        <p>Initial markdown files for the agent's <code>context.d</code>.</p>
+      </header>
+
+      <div class="gsv-agents-context-tabs">
+        {files.map((file) => (
+          <button
+            key={file.name}
+            type="button"
+            class={`gsv-chip${selected === file.name ? " is-active" : ""}`}
+            onClick={() => selectFile(file.name)}
+          >
+            {file.name}
+          </button>
+        ))}
+        <button
+          type="button"
+          class={`gsv-chip${selected === NEW_CONTEXT_FILE ? " is-active" : ""}`}
+          onClick={() => selectFile(NEW_CONTEXT_FILE)}
+        >
+          + New file
+        </button>
+      </div>
+
+      {selected === NEW_CONTEXT_FILE ? (
+        <>
+          <label class="gsv-field">
+            <span>File name</span>
+            <input
+              value={draftName}
+              onInput={(e) => setDraftName(e.currentTarget.value)}
+              placeholder="20-style.md"
+            />
+          </label>
+          <textarea
+            class="gsv-agents-context-area"
+            value={newDraft}
+            onInput={(e) => setNewDraft(e.currentTarget.value)}
+            placeholder="Markdown context for this agent."
+            rows={8}
+          />
+          <div class="gsv-detail-actions">
+            <ActionButton
+              icon="file"
+              label={normalizedDraftName && files.some((file) => file.name === normalizedDraftName) ? "Update file" : "Add file"}
+              variant="ghost"
+              disabled={!normalizedDraftName}
+              onClick={addDraftFile}
+            />
+          </div>
+        </>
+      ) : (
+        <textarea
+          class="gsv-agents-context-area"
+          value={active?.text ?? ""}
+          onInput={(e) => updateExisting(selected, e.currentTarget.value)}
+          placeholder={selected === PERSONA_CONTEXT_FILE ? "You are a focused research agent..." : "Markdown context for this agent."}
+          rows={8}
+        />
+      )}
+    </section>
   );
 }
 

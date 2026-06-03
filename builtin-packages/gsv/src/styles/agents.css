@@ -51,6 +51,12 @@
   min-width: 0;
 }
 
+.gsv-agents-create-context {
+  display: grid;
+  gap: 0.55rem;
+  min-width: 0;
+}
+
 .gsv-field {
   display: grid;
   gap: 0.3rem;

@@ -797,9 +797,22 @@ function fallbackProfiles(): Profile[] {
   ];
 }
 
-function titleForActive(active: ThreadContext, conversation: ConversationRecord | null, threads: ProcessEntry[]): string {
+function personalProfileLabel(profiles: Profile[]): string {
+  return profiles.find((profile) =>
+    profile.spawnMode === "default" ||
+    profile.id === "personal" ||
+    profile.kind === "personal-agent"
+  )?.displayName || "Personal Agent";
+}
+
+function titleForActive(
+  active: ThreadContext,
+  conversation: ConversationRecord | null,
+  threads: ProcessEntry[],
+  homeLabel = "Personal Agent",
+): string {
   if (active.isHome) {
-    return active.conversationId === "default" ? "Personal Agent" : active.conversationTitle || conversation?.title || "Personal Branch";
+    return active.conversationId === "default" ? homeLabel : active.conversationTitle || conversation?.title || "Personal Branch";
   }
   if (active.conversationId !== "default") {
     return active.conversationTitle || conversation?.title || "Conversation Branch";
@@ -1277,6 +1290,7 @@ export {
   normalizeToolOutput,
   normalizeProcessEntry,
   prettyJson,
+  personalProfileLabel,
   readAttachmentBlob,
   readAttachmentFile,
   renderMarkdownHtml,

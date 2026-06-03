@@ -85,6 +85,8 @@ export type AccountCreateArgs = {
   gecos?: string;
   /** Optional persona seed for `kind: "agent"` (written to context.d/05-persona.md). */
   persona?: string;
+  /** Optional additional context.d files for `kind: "agent"`. */
+  contextFiles?: Array<{ name: string; text: string }>;
 };
 
 export type AccountCreateResult = {

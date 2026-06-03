@@ -3,10 +3,12 @@ import { homeKnowledgeRepoRef } from "../fs/ripgit/repos";
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 
 const TEXT_ENCODER = new TextEncoder();
+const TEXT_DECODER = new TextDecoder();
 
 export async function ensureHomeStorageLayout(
   env: Pick<Env, "STORAGE" | "RIPGIT">,
   identity: ProcessIdentity,
+  options: { userContextUsername?: string } = {},
 ): Promise<void> {
   await ensureHomeDir(env.STORAGE, identity.home, identity.uid, identity.gid);
 
@@ -31,17 +33,19 @@ export async function ensureHomeStorageLayout(
   ]);
 
   const ops: RipgitApplyOp[] = [];
+  const userContextUsername = options.userContextUsername ?? identity.username;
   maybePutTextFile(
     ops,
     "context.d/00-constitution.md",
     constitutionContext,
     defaultConstitutionContext(),
   );
-  maybePutTextFile(
+  maybePutOrReplaceGeneratedTextFile(
     ops,
     "context.d/10-user.md",
     userContext,
-    defaultUserContext(identity.username),
+    defaultUserContext(userContextUsername),
+    userContextUsername !== identity.username ? defaultUserContext(identity.username) : undefined,
   );
   if (skillsDir.kind === "missing") {
     ops.push({
@@ -92,6 +96,30 @@ function maybePutTextFile(
     path,
     contentBytes: Array.from(TEXT_ENCODER.encode(content)),
   });
+}
+
+function maybePutOrReplaceGeneratedTextFile(
+  ops: RipgitApplyOp[],
+  path: string,
+  existing: Awaited<ReturnType<RipgitClient["readPath"]>>,
+  content: string,
+  generatedPreviousContent?: string,
+): void {
+  if (existing.kind === "missing") {
+    maybePutTextFile(ops, path, existing, content);
+    return;
+  }
+  if (
+    generatedPreviousContent &&
+    existing.kind === "file" &&
+    TEXT_DECODER.decode(existing.bytes) === generatedPreviousContent
+  ) {
+    ops.push({
+      type: "put",
+      path,
+      contentBytes: Array.from(TEXT_ENCODER.encode(content)),
+    });
+  }
 }
 
 function defaultConstitutionContext(): string {

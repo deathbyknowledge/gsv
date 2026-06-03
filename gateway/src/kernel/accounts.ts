@@ -194,8 +194,11 @@ export async function createAccount(
 
   const entry = auth.getPasswdByUid(uid)!;
   const identity = accountIdentity(auth, entry);
+  const userContextUsername = input.kind === "agent" && ownerUsername
+    ? ownerUsername
+    : identity.username;
 
-  await ensureHomeStorageLayout(env, identity);
+  await ensureHomeStorageLayout(env, identity, { userContextUsername });
   if (input.persona) {
     await seedPersona(env, identity, input.persona);
   }

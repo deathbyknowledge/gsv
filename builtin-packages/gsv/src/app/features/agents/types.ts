@@ -59,6 +59,7 @@ export type CreateAgentArgs = {
   username: string;
   gecos?: string;
   persona?: string;
+  contextFiles?: AgentContextFile[];
 };
 
 export type CreateHumanArgs = {

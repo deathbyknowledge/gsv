@@ -39,6 +39,7 @@ import {
   normalizeAccountName,
 } from "./accounts";
 import { canOwnerRunAsAccount } from "./account-access";
+import { ensureHomeStorageLayout } from "./home-knowledge";
 
 /**
  * Curated, tasteful default names for the personal agent. The first available
@@ -57,6 +58,8 @@ const AGENT_NAME_POOL = [
   "vera",
   "ada",
 ];
+
+type AccountContextFile = { name: string; text: string };
 
 export type PersonalAgentProvision = {
   identity: ProcessIdentity;
@@ -91,6 +94,59 @@ function pickAgentName(auth: AuthStore, preferred?: string): string {
   }
 }
 
+function legacyPersonalAgentDisplayName(ownerUsername: string): string {
+  return `${ownerUsername}'s agent`;
+}
+
+function reconcilePersonalAgentDisplayName(
+  auth: AuthStore,
+  entry: { username: string; uid: number; gecos: string },
+  human: ProcessIdentity,
+): { username: string; uid: number; gid: number; gecos: string; home: string; shell: string } | null {
+  if (entry.gecos.trim() !== legacyPersonalAgentDisplayName(human.username)) {
+    return auth.getPasswdByUid(entry.uid);
+  }
+  auth.updateUser(entry.username, { gecos: entry.username });
+  return auth.getPasswdByUid(entry.uid);
+}
+
+function normalizeContextFileName(value: unknown): string | null {
+  const raw = String(value ?? "").trim();
+  if (!raw || raw.includes("/") || raw.includes("\\") || raw.includes("\0")) {
+    return null;
+  }
+  const name = raw.endsWith(".md") ? raw : `${raw}.md`;
+  const base = name.slice(0, -3);
+  if (!base || base === "." || base === "..") {
+    return null;
+  }
+  return name;
+}
+
+function normalizeAccountContextFiles(value: unknown): AccountContextFile[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) {
+    throw new Error("contextFiles must be an array");
+  }
+
+  const files = new Map<string, AccountContextFile>();
+  for (const item of value) {
+    if (!item || typeof item !== "object") {
+      throw new Error("contextFiles entries must be objects");
+    }
+    const record = item as { name?: unknown; text?: unknown };
+    const name = normalizeContextFileName(record.name);
+    if (!name) {
+      throw new Error("contextFiles entries require local markdown file names");
+    }
+    files.set(name, {
+      name,
+      text: typeof record.text === "string" ? record.text : String(record.text ?? ""),
+    });
+  }
+  return [...files.values()];
+}
+
 /**
  * Ensure the human's 1:1 personal agent account exists, returning its run-as
  * identity. Idempotent: returns the existing account when already provisioned.
@@ -112,7 +168,10 @@ export async function ensurePersonalAgent(
   if (existingUid !== null) {
     const entry = auth.getPasswdByUid(existingUid);
     if (entry) {
-      return { identity: accountIdentity(auth, entry), created: false };
+      const reconciled = reconcilePersonalAgentDisplayName(auth, entry, human) ?? entry;
+      const identity = accountIdentity(auth, reconciled);
+      await ensureHomeStorageLayout(ctx.env, identity, { userContextUsername: human.username });
+      return { identity, created: false };
     }
     // Stale mapping (account removed) — fall through and recreate.
   }
@@ -121,7 +180,7 @@ export async function ensurePersonalAgent(
   return createAccount(ctx, {
     kind: "agent",
     username: agentName,
-    gecos: `${human.username}'s agent`,
+    gecos: agentName,
     ownerUid: human.uid,
     shared: true,
     crossMemberOwner: true,
@@ -168,9 +227,15 @@ export async function handleAccountCreate(
 
   const ownerUid = resolveCallerOwnerUid(ctx);
   const ownerName = auth.getPasswdByUid(ownerUid)?.username ?? "user";
-  const persona = typeof args.persona === "string" && args.persona.trim()
+  const contextFiles = normalizeAccountContextFiles(args.contextFiles);
+  const personaFile = contextFiles.find((file) => file.name === "05-persona.md");
+  const explicitPersona = typeof args.persona === "string" && args.persona.trim()
     ? args.persona
-    : defaultPersonaContext(name, ownerName);
+    : undefined;
+  const persona = explicitPersona ?? (personaFile?.text.trim()
+    ? personaFile.text
+    : defaultPersonaContext(name, ownerName));
+  const extraContextFiles = contextFiles.filter((file) => file.name !== "05-persona.md");
   const { identity } = await createAccount(ctx, {
     kind: "agent",
     username: name,
@@ -179,6 +244,7 @@ export async function handleAccountCreate(
     shared: true,
     crossMemberOwner: true,
     persona,
+    contextFiles: extraContextFiles,
   });
   return { account: identity, kind };
 }

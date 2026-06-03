@@ -8,6 +8,7 @@ export function ChatNavigator(props: {
   threadsLoading: boolean;
   threadsError: string;
   profiles: Profile[];
+  homeLabel: string;
   draftProfileId: string;
   onDraftProfileChange(profileId: string): void;
   onHome(): void;
@@ -23,6 +24,7 @@ export function ChatNavigator(props: {
         loading={props.threadsLoading}
         error={props.threadsError}
         profiles={props.profiles}
+        homeLabel={props.homeLabel}
         draftProfileId={props.draftProfileId}
         onDraftProfileChange={props.onDraftProfileChange}
         onHome={props.onHome}
@@ -40,6 +42,7 @@ export function MobileProcessNav(props: {
   threadsLoading: boolean;
   threadsError: string;
   profiles: Profile[];
+  homeLabel: string;
   draftProfileId: string;
   onDraftProfileChange(profileId: string): void;
   onHome(): void;
@@ -83,7 +86,7 @@ export function MobileProcessNav(props: {
             {showDraftOption ? (
               <option value="draft">{props.active ? "Current process" : "New draft"}</option>
             ) : null}
-            <option value="home">Home</option>
+            <option value="home">{props.homeLabel}</option>
             {activePid && !hasActiveProcess ? (
               <option value={`process:${activePid}`}>Current process</option>
             ) : null}
@@ -128,6 +131,7 @@ function ThreadsPane(props: {
   loading: boolean;
   error: string;
   profiles: Profile[];
+  homeLabel: string;
   draftProfileId: string;
   onDraftProfileChange(profileId: string): void;
   onHome(): void;
@@ -172,7 +176,7 @@ function ThreadsPane(props: {
       <nav class="thread-list" aria-label="Chat processes">
         <button type="button" class={"thread-row" + (isHome ? " is-active" : "")} onClick={props.onHome}>
           <span class="row-icon"><HomeIcon /></span>
-          <span class="thread-row-title">Personal Agent</span>
+          <span class="thread-row-title">{props.homeLabel}</span>
           <span class="thread-row-meta">Persistent personal conversation</span>
         </button>
         {props.threads.map((thread) => (

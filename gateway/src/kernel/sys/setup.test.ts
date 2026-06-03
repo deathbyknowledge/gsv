@@ -192,7 +192,7 @@ describe("handleSysSetup", () => {
         username: "mira",
         uid: 1001,
         gid: 1001,
-        gecos: "alice's agent",
+        gecos: "mira",
         home: "/home/mira",
       }),
     );
