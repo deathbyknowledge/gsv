@@ -1,7 +1,5 @@
 import {
   AI_FIELDS,
-  AUTOMATION_FIELDS,
-  PROCESS_FIELDS,
   SERVER_FIELDS,
   SHELL_FIELDS,
 } from "./config-schema";
@@ -32,8 +30,6 @@ export function settingFieldsForRuntime(): SettingField[] {
   return [
     ...SHELL_FIELDS,
     ...SERVER_FIELDS,
-    ...PROCESS_FIELDS,
-    ...AUTOMATION_FIELDS,
   ];
 }
 
@@ -42,8 +38,6 @@ export function modeledConfigKeys(): Set<string> {
     ...AI_FIELDS,
     ...SHELL_FIELDS,
     ...SERVER_FIELDS,
-    ...PROCESS_FIELDS,
-    ...AUTOMATION_FIELDS,
   ].map((field) => field.key));
   return keys;
 }

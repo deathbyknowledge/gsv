@@ -319,7 +319,7 @@ export const SECTIONS: GsvSection[] = [
       },
       {
         label: "Runtime behavior",
-        description: "Process limits, shell defaults, automation, and server settings.",
+        description: "Shell defaults and server settings.",
         meta: "Config",
       },
       {

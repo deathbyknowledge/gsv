@@ -69,7 +69,7 @@ export function SettingsView({
       <aside class="gsv-admin-nav" aria-label="Settings sections">
         {([
           ["ai", "AI", "Provider, model, keys, and personal overrides"],
-          ["runtime", "Runtime", "Shell, server, process, and automation settings"],
+          ["runtime", "Runtime", "Shell defaults and server settings"],
           ["advanced", "Advanced", "Raw config for recovery and unmodeled keys"],
         ] as Array<[SettingsPanelId, string, string]>).map(([id, label, description]) => (
           <button key={id} type="button" class={panel === id ? "is-active" : ""} onClick={() => setPanel(id)}>
@@ -97,7 +97,7 @@ export function SettingsView({
       ) : panel === "runtime" ? (
         <SettingsForm
           title="Runtime behavior"
-          description="Operational limits and runtime metadata. Root access is required to change these settings."
+          description="Shell defaults and runtime metadata. Root access is required to change these settings."
           fields={settingFieldsForRuntime()}
           values={state.configValues}
           viewer={state.viewer}

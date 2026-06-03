@@ -88,12 +88,6 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   // Max output size in bytes for shell command results.
   "config/shell/max_output_bytes": "524288",
 
-  // -- Processes ---------------------------------------------------------------
-  // Default label format for init processes. {username} is replaced.
-  "config/process/init_label": "init ({username})",
-  // Max concurrent processes per user (0 = unlimited).
-  "config/process/max_per_user": "0",
-
   // Global default tool approval policy for agent tool execution. JSON object
   // with a default action and ordered rules matching exact syscalls or domain
   // wildcards. Per-account overrides live under `users/<uid>/ai/tools/approval`.

@@ -19,18 +19,6 @@ export const CONFIG_SECTIONS: ConfigSection[] = [
     label: "Server",
     description: "Instance identity and runtime metadata.",
   },
-  {
-    id: "processes",
-    panel: "runtime",
-    label: "Processes",
-    description: "Process naming and concurrency controls.",
-  },
-  {
-    id: "automation",
-    panel: "runtime",
-    label: "Automation",
-    description: "Background archivist and curator scheduling.",
-  },
 ];
 
 export const AI_FIELDS: SettingField[] = [
@@ -120,42 +108,6 @@ export const SERVER_FIELDS: SettingField[] = [
     label: "Version",
     description: "Current server version reported by the runtime.",
     kind: "readonly",
-  },
-];
-
-export const PROCESS_FIELDS: SettingField[] = [
-  {
-    key: "config/process/init_label",
-    label: "Init label template",
-    description: "Label template for init processes. {username} is substituted at runtime.",
-    kind: "text",
-  },
-  {
-    key: "config/process/max_per_user",
-    label: "Max processes per user",
-    description: "Concurrent process limit per user. Use 0 for unlimited.",
-    kind: "number",
-  },
-];
-
-export const AUTOMATION_FIELDS: SettingField[] = [
-  {
-    key: "config/automation/archivist/min_interval_ms",
-    label: "Archivist minimum interval (ms)",
-    description: "Minimum time between archivist jobs for the same scope.",
-    kind: "number",
-  },
-  {
-    key: "config/automation/curator/interval_ms",
-    label: "Curator interval (ms)",
-    description: "Periodic curator sweep interval. Use 0 to disable periodic runs.",
-    kind: "number",
-  },
-  {
-    key: "config/automation/curator/batch_size",
-    label: "Curator batch size",
-    description: "Maximum inbox candidates reviewed in a single sweep.",
-    kind: "number",
   },
 ];
 

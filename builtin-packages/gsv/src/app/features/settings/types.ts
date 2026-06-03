@@ -1,6 +1,6 @@
 export type AdministrationMode = "access" | "settings";
 export type SettingsPanelId = "ai" | "runtime" | "advanced";
-export type ConfigSectionId = "ai" | "shell" | "server" | "processes" | "automation";
+export type ConfigSectionId = "ai" | "shell" | "server";
 export type TokenKind = "node" | "service" | "user";
 export type SettingKind = "text" | "textarea" | "password" | "number" | "checkbox" | "select" | "readonly" | "json";
 
