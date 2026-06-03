@@ -46,7 +46,7 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   "config/ai/api_key": "",
   // Reasoning effort/mode hint passed to the model (off, low, medium, high).
   // Only applies to models that support extended thinking.
-  "config/ai/reasoning": "off",
+  "config/ai/reasoning": "medium",
   // Max tokens for LLM responses (model-dependent upper bound).
   "config/ai/max_tokens": "8192",
   // Fallback context window for providers that are not in the local model registry.
