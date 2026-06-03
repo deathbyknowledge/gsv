@@ -62,6 +62,11 @@ function packageAgentContextFilesKey(uid: number): string {
   return `users/${uid}/pkg/context_files`;
 }
 
+/** Config key recording the dedicated run-as access group for the package agent. */
+function packageAgentAccessGroupKey(uid: number): string {
+  return `users/${uid}/pkg/access_group`;
+}
+
 /**
  * Provision (idempotently) the agent account for a package profile and grant the
  * enabling human run-as rights via the access group. Returns the agent identity.
@@ -93,6 +98,7 @@ export async function ensurePackageAgent(
     ctx.config.set(packageAgentOwnerKey(entry.uid), record.packageId);
     ctx.config.set(packageAgentProfileKey(entry.uid), profile.name);
     ctx.config.set(packageAgentContextFilesKey(entry.uid), JSON.stringify(profileContextFileNames(profile)));
+    ctx.config.set(packageAgentAccessGroupKey(entry.uid), accessGroupName);
     if (profile.approvalPolicy) {
       ctx.config.set(`users/${entry.uid}/ai/tools/approval`, profile.approvalPolicy);
     }
@@ -123,13 +129,10 @@ export async function ensurePackageAgent(
     if (!stampedProfileName) {
       ctx.config.set(profileKey, profile.name);
     }
-    if (!auth.getGroupByName(accessGroupName)) {
-      // Older provisioning without an access group: backfill it.
-      auth.addGroup({ name: accessGroupName, gid: auth.nextGid(), members: [] });
-    }
     await reconcilePackageAgentProfile(ctx, entry, profile);
   }
 
+  ensurePackageAgentAccessGroup(ctx, entry.uid, accessGroupName);
   joinAccessGroup(ctx, accessGroupName, enablingHumanUid);
   return accountIdentity(auth, entry);
 }
@@ -257,6 +260,29 @@ function joinAccessGroup(ctx: KernelContext, groupName: string, humanUid: number
   if (group && !group.members.includes(human.username)) {
     auth.updateGroupMembers(groupName, [...group.members, human.username]);
   }
+}
+
+function ensurePackageAgentAccessGroup(ctx: KernelContext, agentUid: number, groupName: string): void {
+  const key = packageAgentAccessGroupKey(agentUid);
+  const stampedGroupName = ctx.config.get(key);
+  if (stampedGroupName && stampedGroupName !== groupName) {
+    throw new Error(
+      `Package agent access group collision: agent ${agentUid} is stamped for "${stampedGroupName}", cannot use "${groupName}"`,
+    );
+  }
+
+  const group = ctx.auth.getGroupByName(groupName);
+  if (group) {
+    if (stampedGroupName !== groupName) {
+      throw new Error(
+        `Package agent access group collision: "${groupName}" already exists and is not owned by package agent ${agentUid}`,
+      );
+    }
+    return;
+  }
+
+  ctx.auth.addGroup({ name: groupName, gid: ctx.auth.nextGid(), members: [] });
+  ctx.config.set(key, groupName);
 }
 
 async function reconcilePackageAgentProfile(

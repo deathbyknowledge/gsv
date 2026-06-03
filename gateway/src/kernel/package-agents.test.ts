@@ -147,10 +147,11 @@ describe("ensurePackageAgent", () => {
   });
 
   it("grants run-as via the access group without leaking caps to the human", async () => {
-    const { ctx, groups, caps } = createCtx();
+    const { ctx, groups, caps, config } = createCtx();
     const identity = await ensurePackageAgent(ctx, record([BUILDER]), BUILDER, 1000);
 
     const accessGroup = packageAgentAccessGroup(identity.username);
+    expect(config.get(`users/${identity.uid}/pkg/access_group`)).toBe(accessGroup);
     // The enabling human joins the access group...
     expect(groups.find((g) => g.name === accessGroup)?.members).toContain("alice");
     // ...which carries NO capabilities, and is NOT the cap gid.
@@ -203,6 +204,18 @@ describe("ensurePackageAgent", () => {
 
     await expect(ensurePackageAgent(ctx, record([BUILDER]), BUILDER, 1000))
       .rejects.toThrow(/already exists/);
+  });
+
+  it("rejects unstamped access-group collisions", async () => {
+    const { ctx, passwd, groups } = createCtx();
+    const username = packageAgentUsername("wiki", "builder");
+    const accessGroup = packageAgentAccessGroup(username);
+    groups.push({ name: accessGroup, gid: 2000, members: ["bob"] });
+
+    await expect(ensurePackageAgent(ctx, record([BUILDER]), BUILDER, 1000))
+      .rejects.toThrow(/access group/i);
+    expect(passwd.find((entry) => entry.username === username)).toBeUndefined();
+    expect(groups.find((group) => group.name === accessGroup)?.members).toEqual(["bob"]);
   });
 
   it("is idempotent across enabling humans (one shared account)", async () => {

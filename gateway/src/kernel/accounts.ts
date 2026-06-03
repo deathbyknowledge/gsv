@@ -85,7 +85,8 @@ export interface CreateAccountInput {
   /**
    * Create a separate, capability-less group used purely to authorize run-as.
    * Humans join this group (not the cap gid), so they may run as the account
-   * without inheriting its capabilities. Returns its gid on the result.
+   * without inheriting its capabilities. Must be a new group. Returns its gid
+   * on the result.
    */
   accessGroupName?: string;
 }
@@ -113,6 +114,9 @@ export async function createAccount(
   }
   if (auth.getPasswdByUsername(username)) {
     throw new Error(`User already exists: ${username}`);
+  }
+  if (input.accessGroupName && auth.getGroupByName(input.accessGroupName)) {
+    throw new Error(`Access group already exists: ${input.accessGroupName}`);
   }
 
   const ownerUsername = input.ownerUid != null
@@ -183,13 +187,8 @@ export async function createAccount(
 
   let accessGroupGid: number | undefined;
   if (input.accessGroupName) {
-    const existing = auth.getGroupByName(input.accessGroupName);
-    if (existing) {
-      accessGroupGid = existing.gid;
-    } else {
-      accessGroupGid = auth.nextGid();
-      auth.addGroup({ name: input.accessGroupName, gid: accessGroupGid, members: [] });
-    }
+    accessGroupGid = auth.nextGid();
+    auth.addGroup({ name: input.accessGroupName, gid: accessGroupGid, members: [] });
   }
 
   const entry = auth.getPasswdByUid(uid)!;
