@@ -313,8 +313,8 @@ export const SECTIONS: GsvSection[] = [
     tone: "neutral",
     localItems: [
       {
-        label: "AI and profiles",
-        description: "Model/provider defaults, profile policy, and runtime prompt settings.",
+        label: "AI defaults",
+        description: "Model/provider defaults, personal overrides, and prompt budgets.",
         meta: "Config",
       },
       {

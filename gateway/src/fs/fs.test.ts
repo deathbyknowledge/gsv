@@ -353,7 +353,7 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
     },
   ];
   const packageScopeKey = (scope: any) => scope.kind === "user" ? `user:${scope.uid}` : "global";
-  let samCrontab = "CRON_TZ=Europe/Amsterdam\n0 9 * * * proc spawn --profile cron \"Daily pulse\"\n";
+  let samCrontab = "CRON_TZ=Europe/Amsterdam\n0 9 * * * proc spawn --as sam-agent --non-interactive --label daily-pulse \"Daily pulse\"\n";
   const systemCrontabs = new Map<string, string>([
     ["daily", "0 5 * * * proc compact init:1000 --conversation default --keep-last 80\n"],
   ]);
@@ -1316,7 +1316,7 @@ describe("GsvFs Linux-like runtime views", () => {
 
     const crontab = await fs.readFile("/var/spool/cron/sam");
     expect(crontab).toContain("CRON_TZ=Europe/Amsterdam");
-    expect(crontab).toContain("proc spawn --profile cron");
+    expect(crontab).toContain("proc spawn --as sam-agent");
     const crontabStat = await fs.statExtended("/var/spool/cron/sam");
     expect(crontabStat).toMatchObject({
       isFile: true,

@@ -68,7 +68,7 @@ the command after the five time fields.
 
 ```bash
 gsv proc list [--uid UID]
-gsv proc spawn [--profile PROFILE] [--label LABEL] [--prompt TEXT] [--parent PID]
+gsv proc spawn [--as ACCOUNT] [--label LABEL] [--prompt TEXT] [--parent PID]
 gsv proc send MESSAGE [--pid PID]
 gsv proc history [--pid PID] [--limit N] [--offset N]
 gsv proc reset [--pid PID]
@@ -81,11 +81,9 @@ Processes are the agent-facing execution model. `spawn` creates a child process;
 process when `--pid` is omitted. `--uid` filters process lists and requires root
 when viewing another user.
 
-`spawn` defaults to the bounded `task` worker profile. Use `--profile personal`
-to target the persistent personal agent (`init`), `--profile cron` for
-non-interactive scheduled work, or a user profile from `~/profiles.d/<name>`.
-User profiles are directories; prompt instructions are loaded from
-`~/profiles.d/<name>/context.d/*.md`.
+`spawn` defaults to the caller's personal agent. Use `--as ACCOUNT` to run as a
+specific runnable account from `account.list`, such as a personal agent, custom
+agent, or package agent.
 
 ## Device Commands
 

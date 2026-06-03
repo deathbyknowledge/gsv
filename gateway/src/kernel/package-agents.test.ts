@@ -148,6 +148,23 @@ describe("ensurePackageAgent", () => {
     await expect(ensurePackageAgent(ctx, other, BUILDER, 1000)).rejects.toThrow(/name collision/i);
   });
 
+  it("rejects unstamped account-name collisions", async () => {
+    const { ctx, passwd, groups } = createCtx();
+    const username = packageAgentUsername("wiki", "builder");
+    passwd.push({
+      username,
+      uid: 2000,
+      gid: 2000,
+      gecos: "Existing Agent",
+      home: `/home/${username}`,
+      shell: "/bin/init",
+    });
+    groups.push({ name: username, gid: 2000, members: [] });
+
+    await expect(ensurePackageAgent(ctx, record([BUILDER]), BUILDER, 1000))
+      .rejects.toThrow(/already exists/);
+  });
+
   it("is idempotent across enabling humans (one shared account)", async () => {
     const { ctx, passwd, groups } = createCtx();
     const first = await ensurePackageAgent(ctx, record([BUILDER]), BUILDER, 1000);

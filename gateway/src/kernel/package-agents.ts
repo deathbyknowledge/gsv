@@ -90,8 +90,9 @@ export async function ensurePackageAgent(
       );
     }
     if (!stampedPackageId) {
-      // Backfill for accounts provisioned before stamping existed.
-      ctx.config.set(ownerKey, record.packageId);
+      throw new Error(
+        `Package agent name collision: "${username}" already exists and is not owned by package ${record.packageId}`,
+      );
     }
     if (!auth.getGroupByName(accessGroupName)) {
       // Older provisioning without an access group: backfill it.

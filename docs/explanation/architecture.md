@@ -37,10 +37,9 @@ should go.
 
 ### Agent Processes
 
-Agents are durable processes, not sessions. Each user has a long-lived init
-process, `init:{uid}`, and can spawn child processes with `proc.spawn`. A process
-has a PID, uid/gid identity, parent, profile, current working directory, state,
-and persistent message history.
+Agents are durable conversations served by process executors, not sessions.
+Each process has a PID, owning human uid, run-as uid/gid identity, parent,
+current working directory, state, and persistent message history.
 
 Process state lives in a Process Durable Object with its own SQLite database.
 That database stores active messages, pending tool calls, queued messages,
@@ -70,8 +69,9 @@ Different path families are backed by different stores:
 
 This split matters operationally, but it should be hidden from agents whenever
 possible. The filesystem is the stable interface. Prompt context follows the
-same rule: profile context, `~/context.d/*.md`, available skills, and current
-process context are ordinary inspectable files or explicit runtime providers.
+same rule: system context, account `~/context.d/*.md`, available skills, and
+current process context are ordinary inspectable files or explicit runtime
+providers.
 
 ### Devices
 

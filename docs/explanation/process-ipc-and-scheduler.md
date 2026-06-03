@@ -136,7 +136,7 @@ thing is a user message.
 
 When a runtime event is rendered into model context, it should be visibly marked
 as such. The current convention is a conversation message that starts with
-`[Process Event]:`. Profile context teaches agents that these entries are GSV
+`[Process Event]:`. Agent context teaches agents that these entries are GSV
 runtime events such as IPC replies, IPC timeouts, watched signals, compaction
 summaries, resets, or other process lifecycle changes.
 
@@ -394,7 +394,7 @@ Example target shape:
 
 These are scheduler target kinds, not syscall names. For example,
 `kind: "process.spawn"` dispatches through the `proc.spawn` syscall, and
-`profile` is one argument field on that spawn request.
+`runAs` selects the account for that spawned process.
 
 ```ts
 type ScheduleTarget =
@@ -406,7 +406,7 @@ type ScheduleTarget =
     }
   | {
       kind: "process.spawn";
-      profile?: "init" | "task" | "review" | "cron" | "mcp" | "app";
+      runAs?: string;
       label?: string;
       prompt: string;
       parentPid?: string;

@@ -103,10 +103,10 @@ against the device workspace, but absolute paths are used as-is on the device.
 Run device daemons as an unprivileged account and point their workspace at the
 smallest useful directory.
 
-Tool approval is a policy layer, not an isolation layer. Profiles can auto,
-deny, or ask for matching syscalls. The default interactive policy asks for
+Tool approval is a policy layer, not an isolation layer. Account policies can
+auto, deny, or ask for matching syscalls. The default interactive policy asks for
 risky destructive or privileged `shell.exec`, `fs.delete`, and `sys.mcp.call`.
-Non-interactive profiles cannot pause for human approval.
+Non-interactive background processes cannot pause for human approval.
 
 ## Devices
 

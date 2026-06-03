@@ -2,21 +2,22 @@
 
 ## Goal
 
-Define how long-lived `init` processes, focused `task` processes, and other profile-scoped processes should spawn, communicate, delegate work, and hand off user-facing conversations.
+Define how default conversations, focused worker processes, and agent accounts
+should spawn, communicate, delegate work, and hand off user-facing conversations.
 
 This note is intentionally separate from prompt/context and knowledge-system design. It defines process coordination semantics.
 
 ## Core principles
 
-1. `init` is the default point of contact.
-2. `task` is the focused worker profile for bounded execution.
+1. The personal agent's default conversation is the default point of contact.
+2. Focused workers are bounded process executors that run as an account.
 3. Inter-process control flow should not be modeled only as chat messages.
 4. Durable process history and provider-facing conversation arrays are different things.
 5. Routing ownership changes must be explicit.
 
-## Profiles
+## Agent Roles
 
-### `init`
+### Personal Agent
 
 - Main user-facing process.
 - Long-lived.
@@ -24,17 +25,17 @@ This note is intentionally separate from prompt/context and knowledge-system des
 - Handles simple asks directly.
 - Delegates bounded or tool-heavy work when focus or isolation is useful.
 
-### `task`
+### Focused Worker
 
 - Focused worker process.
 - Usually scoped by cwd, source mounts, and assignment context.
 - Created to complete a bounded objective.
 - Produces artifacts, summaries, or an explicit handoff.
 
-### Other profiles
+### Other Agents
 
-- `app`, `cron`, `review`, and `mcp` remain specialized.
-- They may also spawn or message other processes, but they are not the default user front door.
+- Package agents, scheduled workers, and app-owned workers may also spawn or
+  message other processes, but they are not the default user front door.
 
 ## Three distinct operations
 

@@ -308,7 +308,7 @@ describe("proc native command", () => {
   it("routes spawn through the native proc command surface", async () => {
     const spawn = vi.fn();
     const result = await handleShellExec(
-      { input: "proc spawn --cwd ~/src --label build" },
+      { input: "proc spawn --non-interactive --cwd ~/src --label build" },
       makeContext({
         capabilities: ["proc.spawn"],
         procs: {
@@ -341,10 +341,55 @@ describe("proc native command", () => {
       expect.any(String),
       expect.objectContaining({ cwd: "/home/sam/src" }),
       expect.objectContaining({
+        interactive: false,
         label: "build",
         cwd: "/home/sam/src",
       }),
     );
+  });
+
+  it("rejects legacy profile selection in proc spawn", async () => {
+    const result = await handleShellExec(
+      { input: 'proc spawn --profile cron "Daily brief"' },
+      makeContext({ capabilities: ["proc.spawn"] }),
+    );
+
+    expect(result.status).toBe("failed");
+    expect(result.stderr).toContain("--profile is no longer supported");
+  });
+
+  it("denies conversation commands for same run-as processes owned by another user", async () => {
+    const result = await handleShellExec(
+      { input: "proc segments --pid foreign-pid" },
+      makeContext({
+        capabilities: ["proc.conversation.segments"],
+        procs: {
+          getOwnerUid: vi.fn(() => IDENTITY.uid),
+          get: vi.fn((pid: string) => {
+            if (pid === "foreign-pid") {
+              return {
+                processId: "foreign-pid",
+                uid: 1001,
+                ownerUid: 1002,
+                gid: 1001,
+                gids: [1001],
+                username: "shared-agent",
+                home: "/home/shared-agent",
+                cwd: "/home/shared-agent",
+                state: "idle",
+                mounts: [],
+                contextFiles: [],
+                createdAt: 1,
+              };
+            }
+            return null;
+          }),
+        } as Partial<KernelContext["procs"]>,
+      }),
+    );
+
+    expect(result.status).toBe("failed");
+    expect(result.stderr).toContain("Permission denied: cannot access process foreign-pid");
   });
 });
 
@@ -1008,7 +1053,7 @@ describe("pkg shell command", () => {
     });
     await env.STORAGE.put(
       "home/sam/jobs.cron",
-      "CRON_TZ=Europe/Amsterdam\n0 9 * * * proc spawn --profile cron \"Daily brief\"\n",
+      "CRON_TZ=Europe/Amsterdam\n0 9 * * * proc spawn --as sam-agent --non-interactive --label daily-brief \"Daily brief\"\n",
     );
 
     const result = await handleShellExec(
@@ -1024,7 +1069,7 @@ describe("pkg shell command", () => {
       expression: { kind: "cron", expr: "0 9 * * *", timezone: "Europe/Amsterdam" },
       target: {
         kind: "command.exec",
-        command: "proc spawn --profile cron \"Daily brief\"",
+        command: "proc spawn --as sam-agent --non-interactive --label daily-brief \"Daily brief\"",
       },
     }));
     expect(wake).toHaveBeenCalledWith("sched-1", expect.any(Number));
@@ -1035,7 +1080,7 @@ describe("pkg shell command", () => {
       ctx,
     );
     expect(listed.ok).toBe(true);
-    expect(listed.stdout).toBe("CRON_TZ=Europe/Amsterdam\n0 9 * * * proc spawn --profile cron \"Daily brief\"\n");
+    expect(listed.stdout).toBe("CRON_TZ=Europe/Amsterdam\n0 9 * * * proc spawn --as sam-agent --non-interactive --label daily-brief \"Daily brief\"\n");
   });
 
   it("keeps sched add as a low-level JSON compatibility path", async () => {

@@ -62,58 +62,43 @@ Most AI runtime keys resolve per-user values first, then fall back to system def
 | `config/ai/speech/max_chars` | `users/{uid}/ai/speech/max_chars` | `4000` | Maximum normalized text length accepted for speech synthesis. |
 | `config/ai/speech/timeout_ms` | `users/{uid}/ai/speech/timeout_ms` | `30000` | Per-utterance speech synthesis timeout. |
 
-## System and Profile Context
+## System and Account Context
 
-All AI profiles load shared system context first:
+All agent runs load shared system context first:
 
 ```text
 config/ai/context.d/*.md
 ```
 
-Built-in AI profiles then load role-specific context from:
+The run-as account then contributes its home context:
 
 ```text
-config/ai/profile/{profile}/context.d/*.md
+~/context.d/*.md
 ```
 
-Supported built-in profiles are `init`, `task`, `review`, `cron`, `mcp`, and `app`. `init` is the persistent personal agent and can be addressed as `personal` by spawn surfaces. Files are sorted lexically, empty files are skipped, and Markdown content is concatenated into the corresponding context section.
+The owning human's `~/context.d/*.md` files are also layered in as owner
+context when a process runs as one of that human's agents. Files are sorted
+lexically, empty files are skipped, and Markdown content is concatenated into
+the corresponding context section.
 
 Use numeric prefixes to make ordering explicit:
 
 ```text
 config/ai/context.d/00-gsv.md
 config/ai/context.d/10-runtime.md
-config/ai/profile/task/context.d/00-role.md
+~/context.d/00-role.md
 ```
 
-System and profile context support runtime template variables such as `profile`, `identity.uid`, `identity.username`, `identity.home`, `identity.cwd`, `devices`, and `mcpServers`.
-
-User-defined worker profiles live under the user's home filesystem:
-
-```text
-~/profiles.d/{name}/profile.json
-~/profiles.d/{name}/description.md
-~/profiles.d/{name}/context.d/*.md
-~/profiles.d/{name}/tools/approval
-```
-
-User profile names use letters, numbers, `.`, `_`, `-`, or `:` and are spawned
-with `gsv proc spawn --profile <name>` or schedule targets. A user profile
-inherits the bounded `task` context and approval policy unless it provides
-additional context files or a profile-local approval policy. The profile
-directory may contain ordinary files or symlinks for that worker to use, but
-only non-empty Markdown files under `context.d/*.md` are added to the prompt;
-root-level files such as `00-role` are not prompt context. `profile.json` is
-optional and may set `displayName`, `description`, `icon`, `interactive`,
-`startable`, and `background`; without it, the display name is derived from the
-profile id.
+System and account context support runtime template variables such as
+`identity.uid`, `identity.username`, `identity.home`, `identity.cwd`, `devices`,
+and `mcpServers`.
 
 ## Tool Approval Policy
 
-Each built-in profile has a JSON policy at:
+Each account can have a JSON policy at:
 
 ```text
-config/ai/profile/{profile}/tools/approval
+users/{uid}/ai/tools/approval
 ```
 
 Policy shape:
@@ -130,15 +115,10 @@ Policy shape:
 }
 ```
 
-Actions are `auto`, `ask`, or `deny`. `match` accepts an exact syscall name or a domain wildcard such as `fs.*`. `when` can filter by `profile`, `anyProfile`, `anyTag`, `allTags`, `argEquals`, `argPrefix`, or `target` (`gsv` or `device`). Invalid or missing JSON falls back to the runtime default policy.
-
-Default policies:
-
-| Profiles | Default | Rules |
-|---|---|---|
-| `init` | `auto` | Ask for `shell.exec`, `fs.delete`, and `sys.mcp.call`. |
-| `task`, `review`, `app`, `mcp` | `auto` | Ask for destructive or privileged `shell.exec`, `fs.delete`, and `sys.mcp.call`. |
-| `cron` | `auto` | Deny `fs.delete` and `sys.mcp.call`; allow `shell.exec`. |
+Actions are `auto`, `ask`, or `deny`. `match` accepts an exact syscall name or
+a domain wildcard such as `fs.*`. `when` can filter by `anyTag`, `allTags`,
+`argEquals`, `argPrefix`, or `target` (`gsv` or `device`). Invalid or missing
+JSON falls back to the runtime default policy.
 
 ## Runtime Config Keys
 

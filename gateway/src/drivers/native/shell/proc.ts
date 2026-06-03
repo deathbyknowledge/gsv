@@ -234,7 +234,9 @@ async function runProcConversationSyscall(
   if (!proc) {
     throw new Error(`Process not found: ${pid}`);
   }
-  if (proc.uid !== identity.process.uid && identity.process.uid !== 0) {
+  const processOwnerUid = proc.ownerUid ?? proc.uid;
+  const callerOwnerUid = resolveCallerOwnerUid(ctx);
+  if (processOwnerUid !== callerOwnerUid && identity.process.uid !== 0) {
     throw new Error(`Permission denied: cannot access process ${pid}`);
   }
 
@@ -260,6 +262,7 @@ function parseProcSpawnCommand(args: string[]): ProcSpawnArgs {
   let prompt: string | undefined;
   let parentPid: string | undefined;
   let cwd: string | undefined;
+  let interactive: boolean | undefined;
   let assignment: ProcSpawnArgs["assignment"];
   let mounts: ProcSpawnArgs["mounts"];
   const positional: string[] = [];
@@ -272,6 +275,13 @@ function parseProcSpawnCommand(args: string[]): ProcSpawnArgs {
     if (current === "--as" || current === "--run-as") {
       index += 1;
       runAs = requireShellOptionValue(args[index], current);
+      continue;
+    }
+    if (current === "--profile") {
+      throw new Error("--profile is no longer supported; use --as ACCOUNT");
+    }
+    if (current === "--non-interactive" || current === "--background") {
+      interactive = false;
       continue;
     }
     if (current === "--label") {
@@ -315,6 +325,7 @@ function parseProcSpawnCommand(args: string[]): ProcSpawnArgs {
     ...(finalPrompt ? { prompt: finalPrompt } : {}),
     ...(parentPid ? { parentPid } : {}),
     ...(cwd ? { cwd } : {}),
+    ...(interactive !== undefined ? { interactive } : {}),
     ...(assignment ? { assignment } : {}),
     ...(mounts ? { mounts } : {}),
   };
@@ -752,7 +763,7 @@ function procUsage(): string {
     "  proc self",
     "  proc list",
     "  proc agents [--json]",
-    "  proc spawn [--as ACCOUNT] [--label LABEL] [--prompt TEXT] [--parent PID] [--cwd PATH] <prompt>",
+    "  proc spawn [--as ACCOUNT] [--non-interactive] [--label LABEL] [--prompt TEXT] [--parent PID] [--cwd PATH] <prompt>",
     "  proc spawn --json JSON",
     "  proc segments [--pid PID] [--conversation id]",
     "  proc policy [--pid PID] [--conversation id] [--overflow auto-compact|fail] [--compact-at N] [--keep-last N]",

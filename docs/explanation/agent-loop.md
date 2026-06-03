@@ -9,14 +9,14 @@ Process DO model.
 ## Process, Not Session
 
 Each agent process is a Durable Object with a SQLite-backed `ProcessStore`.
-Kernel SQLite stores process registry data such as PID, uid/gid, profile, cwd,
-parent, and state. Process SQLite stores the mutable run state:
+Kernel SQLite stores process registry data such as PID, owner uid, run-as
+uid/gid, cwd, parent, and state. Process SQLite stores the mutable run state:
 
 - `messages`: active conversation history.
 - `pending_tool_calls`: syscalls waiting for Kernel or device responses.
 - `message_queue`: FIFO messages received while a run is active.
 - `pending_hil`: human-in-the-loop tool approval state.
-- `process_kv`: process metadata such as identity, profile, current run, and
+- `process_kv`: process metadata such as identity, current run, and
   process-local context files.
 
 The Kernel delivers frames to the Process DO through `recvFrame`. `proc.send`
@@ -46,7 +46,7 @@ cleanly.
 
 On the first tick for a run, the process asks the Kernel for runtime inputs:
 
-- `ai.config` resolves provider, model, reasoning, output limit, system/profile context
+- `ai.config` resolves provider, model, reasoning, output limit, system/account context
   files, approval policy, and context byte budget.
 - `ai.tools` returns the syscall tool schemas visible to this process and the
   accessible online devices, including owner-authored device descriptions.
@@ -55,22 +55,21 @@ The process then assembles a system prompt from explicit context providers in
 this order:
 
 1. **System context** from `config/ai/context.d/*.md`.
-2. **Profile context** from `config/ai/profile/{profile}/context.d/*.md`, or
-   from a package profile when the profile is package-provided.
-3. **Home context** from `~/context.d/*.md`, backed by the user's ripgit home
-   repository with R2 fallback.
+2. **Agent home context** from the run-as account's `~/context.d/*.md`, backed
+   by ripgit home storage with R2 fallback.
+3. **Owner context** from the owning human's `~/context.d/*.md`.
 4. **Available skills** from layered `skills.d` directories. This is a compact
    command-oriented index only; full `SKILL.md` bodies are read explicitly with
    `skills show <skill>`.
 5. **Process context** supplied with the assignment or runtime.
 
 Each section is rendered as `[section.name]` and separated with `---`. System
-and profile context can template values such as `identity.username`, `identity.cwd`,
-`devices` and `mcpServers`. Home context is loaded lexically and bounded by
+and account context can template values such as `identity.username`,
+`identity.cwd`, `devices`, and `mcpServers`. Home context is loaded lexically and bounded by
 `config/ai/max_context_bytes`.
 
-Skill sources follow the same layered shape: profile `skills.d`, `~/skills.d`,
-and visible package `/src/packages/<package>/skills.d`.
+Skill sources are layered from `~/skills.d` and visible package
+`/src/packages/<package>/skills.d`.
 The prompt tells processes to use `skills list`, `skills search`, `skills show`,
 `skills files`, and `skills read` rather than embedding long source paths in the
 index.
@@ -147,8 +146,8 @@ raw output or error for clients.
 
 ## Human-in-the-Loop Approval
 
-Tool approval is profile-configured with JSON at
-`config/ai/profile/{profile}/tools/approval`. If no policy is configured, GSV
+Tool approval is account-configured with JSON at
+`users/{uid}/ai/tools/approval`. If no policy is configured, GSV
 defaults to:
 
 - Auto-allow most tools.
@@ -157,7 +156,7 @@ defaults to:
 - Ask before `sys.mcp.call`.
 
 Rules can match exact syscalls or wildcard domains and can inspect facts such as
-profile, target type, tags, paths, commands, and argument prefixes. The approval
+target type, tags, paths, commands, and argument prefixes. The approval
 engine tags risky operations, including destructive commands, hidden paths,
 paths outside cwd/home, remote device targets, privileged commands, and network
 commands.
@@ -169,8 +168,8 @@ Approval outcomes are:
 - `ask`: store `pending_hil` and emit `proc.run.hil.requested`.
 
 The run pauses while a HIL request is pending. A user or adapter reply resumes it
-through `proc.hil` with `approve` or `deny`. Non-interactive profiles such as
-`cron` cannot ask; an `ask` decision becomes a tool error.
+through `proc.hil` with `approve` or `deny`. Non-interactive background
+processes cannot ask; an `ask` decision becomes a tool error.
 
 ## Queueing and Abort
 
