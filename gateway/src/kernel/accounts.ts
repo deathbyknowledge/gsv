@@ -250,3 +250,50 @@ export async function seedContextFile(
     ops,
   );
 }
+
+/** Write/overwrite an account context.d/<name> file in home-knowledge storage. */
+export async function writeContextFile(
+  env: Pick<Env, "STORAGE" | "RIPGIT">,
+  identity: ProcessIdentity,
+  name: string,
+  text: string,
+): Promise<void> {
+  if (!env.RIPGIT) return;
+
+  const client = new RipgitClient(env.RIPGIT);
+  const repo = homeKnowledgeRepoRef(identity.username);
+  await client.apply(
+    repo,
+    identity.username,
+    `${identity.username}@gsv.local`,
+    `gsv: update ${name}`,
+    [{
+      type: "put",
+      path: `context.d/${name}`,
+      contentBytes: Array.from(TEXT_ENCODER.encode(text)),
+    }],
+  );
+}
+
+/** Remove an account context.d/<name> file when it exists in home-knowledge storage. */
+export async function removeContextFile(
+  env: Pick<Env, "STORAGE" | "RIPGIT">,
+  identity: ProcessIdentity,
+  name: string,
+): Promise<void> {
+  if (!env.RIPGIT) return;
+
+  const path = `context.d/${name}`;
+  const client = new RipgitClient(env.RIPGIT);
+  const repo = homeKnowledgeRepoRef(identity.username);
+  const existing = await client.readPath(repo, path);
+  if (existing.kind === "missing") return;
+
+  await client.apply(
+    repo,
+    identity.username,
+    `${identity.username}@gsv.local`,
+    `gsv: remove ${name}`,
+    [{ type: "delete", path }],
+  );
+}

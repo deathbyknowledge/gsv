@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { handlePkgCreate, handlePkgInstall, handlePkgRemove } from "./pkg";
+import { handlePkgCreate, handlePkgInstall, handlePkgList, handlePkgRemove } from "./pkg";
 import type { KernelContext } from "./context";
 
 type FetchCall = {
@@ -98,6 +98,43 @@ function makeRootIdentity() {
 }
 
 describe("pkg syscalls", () => {
+  it("surfaces profile capabilities in package summaries", () => {
+    const record = {
+      ...makeInstalledPackageRecord({
+        packageId: "builtin:wiki@1",
+        name: "wiki",
+        sourceSubdir: "builtin-packages/wiki",
+      }),
+      manifest: {
+        ...makeInstalledPackageRecord({
+          packageId: "builtin:wiki@1",
+          name: "wiki",
+          sourceSubdir: "builtin-packages/wiki",
+        }).manifest,
+        profiles: [{
+          name: "builder",
+          displayName: "Wiki Builder",
+          contextFiles: [],
+          capabilities: ["fs.*", "shell.exec"],
+        }],
+      },
+    };
+    const ctx = {
+      config: makeConfig(),
+      packages: {
+        list: vi.fn(() => [record]),
+      },
+      identity: makeRootIdentity(),
+    } as unknown as KernelContext;
+
+    expect(handlePkgList(undefined, ctx).packages[0].profiles).toEqual([
+      expect.objectContaining({
+        name: "builder",
+        capabilities: ["fs.*", "shell.exec"],
+      }),
+    ]);
+  });
+
   it("does not enable packages when package-agent provisioning fails", async () => {
     const record = {
       ...makeInstalledPackageRecord({
@@ -150,6 +187,56 @@ describe("pkg syscalls", () => {
     await expect(handlePkgInstall({ packageId: record.packageId }, ctx))
       .rejects.toThrow(/already exists/);
     expect(setEnabled).not.toHaveBeenCalled();
+  });
+
+  it("resolves user-scoped packages through the owning human for agent-backed installs", async () => {
+    let enabled = false;
+    const record = {
+      ...makeInstalledPackageRecord({
+        packageId: "user:1000:wiki@1",
+        name: "wiki",
+        sourceSubdir: "builtin-packages/wiki",
+      }),
+      scope: { kind: "user", uid: 1000 } as const,
+      enabled,
+    };
+    const resolve = vi.fn(() => ({ ...record, enabled }));
+    const setEnabled = vi.fn(() => {
+      enabled = true;
+      return true;
+    });
+    const ctx = {
+      config: makeConfig(),
+      packages: {
+        resolve,
+        setEnabled,
+      },
+      procs: {
+        getOwnerUid: vi.fn(() => 1000),
+      },
+      processId: "proc:agent",
+      identity: {
+        role: "user",
+        capabilities: ["pkg.install"],
+        process: {
+          uid: 2000,
+          gid: 2000,
+          gids: [2000],
+          username: "alice-agent",
+          home: "/home/alice-agent",
+          cwd: "/home/alice-agent",
+        },
+      },
+    } as unknown as KernelContext;
+
+    const result = await handlePkgInstall({ packageId: record.packageId }, ctx);
+
+    expect(resolve).toHaveBeenCalledWith(record.packageId, [
+      { kind: "user", uid: 1000 },
+      { kind: "global" },
+    ]);
+    expect(setEnabled).toHaveBeenCalledWith(record.packageId, true, record.scope);
+    expect(result.changed).toBe(true);
   });
 
   it("prevents removing the consolidated GSV console package", async () => {

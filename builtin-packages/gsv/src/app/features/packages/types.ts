@@ -16,6 +16,7 @@ export type PackageProfile = {
   displayName: string;
   description?: string;
   icon?: string;
+  capabilities?: string[];
 };
 
 export type PackageRecord = {

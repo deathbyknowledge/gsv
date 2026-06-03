@@ -515,6 +515,12 @@ function formatPkgCapabilities(pkg: InstalledPackageRecord): string {
   const declaredEgress = pkg.manifest.capabilities?.egress;
   const grantedEgress = pkg.grants?.egress;
   const entrypointSyscalls = Array.from(new Set(pkg.manifest.entrypoints.flatMap((entry) => entry.syscalls ?? [])));
+  const profileCapabilities = (pkg.manifest.profiles ?? [])
+    .map((profile) => ({
+      profile: profile.name,
+      capabilities: [...new Set(profile.capabilities ?? [])].sort(),
+    }))
+    .filter((entry) => entry.capabilities.length > 0);
   return [
     `package: ${pkg.manifest.name}`,
     "declared bindings:",
@@ -533,6 +539,12 @@ function formatPkgCapabilities(pkg: InstalledPackageRecord): string {
     formatPkgEgress(grantedEgress?.mode, grantedEgress?.allow),
     "entrypoint syscalls:",
     entrypointSyscalls.length > 0 ? `- ${entrypointSyscalls.join("\n- ")}` : "none",
+    "profile capabilities:",
+    profileCapabilities.length > 0
+      ? profileCapabilities.map((entry) =>
+        `- ${entry.profile}: ${entry.capabilities.join(", ")}`
+      ).join("\n")
+      : "none",
     "",
   ].join("\n");
 }

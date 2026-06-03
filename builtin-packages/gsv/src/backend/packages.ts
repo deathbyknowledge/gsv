@@ -430,14 +430,18 @@ function derivePackageView(
 ): DerivedPackageRecord {
   const sourceHealth = describeSourceHealth(pkg, refsByRepo, changedPathsByComparison);
   const entrypoints = asArray<PackageEntrypoint>(pkg.entrypoints);
-  const declaredSyscalls = unique(entrypoints.flatMap((entry) => asArray<string>(entry.syscalls)));
   const uiEntrypoints = entrypoints.filter((entry) => entry.kind === "ui" && asString(entry.route).length > 0);
   const profiles = asArray<Record<string, unknown>>(pkg.profiles).map((profile) => ({
     name: asString(profile.name),
     displayName: asString(profile.displayName),
     description: asString(profile.description) || undefined,
     icon: asString(profile.icon) || undefined,
+    capabilities: asArray<string>(profile.capabilities),
   }));
+  const declaredSyscalls = unique([
+    ...entrypoints.flatMap((entry) => asArray<string>(entry.syscalls)),
+    ...profiles.flatMap((profile) => profile.capabilities ?? []),
+  ]);
   const canMutate = canMutatePackage(pkg, viewer);
   const canChangeVisibility = viewer.isRoot || repoOwner(pkg.source.repo) === viewer.username;
   const canPullSource = canChangeVisibility && (isBuiltinRepo(pkg.source.repo) || pkg.review.required);
@@ -577,6 +581,7 @@ function normalizeCatalogEntries(value: unknown): CatalogEntry[] {
         displayName: asString(profile.displayName),
         description: asString(profile.description) || undefined,
         icon: asString(profile.icon) || undefined,
+        capabilities: asArray<string>(profile.capabilities),
       })),
       bindingNames: asArray<string>(entry.bindingNames),
     };

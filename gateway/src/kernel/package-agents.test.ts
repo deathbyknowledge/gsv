@@ -65,6 +65,17 @@ function createCtx() {
       capsTable.push({ gid, capability });
       return { ok: true };
     }),
+    revoke: vi.fn((gid: number, capability: string) => {
+      for (let i = capsTable.length - 1; i >= 0; i -= 1) {
+        if (capsTable[i].gid === gid && capsTable[i].capability === capability) {
+          capsTable.splice(i, 1);
+        }
+      }
+      return { ok: true };
+    }),
+    list: vi.fn((gid?: number) =>
+      capsTable.filter((entry) => gid === undefined || entry.gid === gid),
+    ),
     resolve: vi.fn((gids: number[]) =>
       [...new Set(capsTable.filter((c) => gids.includes(c.gid)).map((c) => c.capability))],
     ),
@@ -76,6 +87,7 @@ function createCtx() {
     config: {
       set: vi.fn((key: string, value: string) => config.set(key, value)),
       get: vi.fn((key: string) => config.get(key) ?? null),
+      delete: vi.fn((key: string) => config.delete(key)),
     } as unknown as KernelContext["config"],
     // STORAGE stub satisfies home layout; no RIPGIT so context seeding no-ops.
     env: { STORAGE: { head: vi.fn(async () => null), put: vi.fn(async () => {}) } } as unknown as KernelContext["env"],
@@ -191,6 +203,25 @@ describe("ensurePackageAgent", () => {
     expect(passwd.length).toBe(before); // no second account
     const accessGroup = packageAgentAccessGroup(first.username);
     expect(groups.find((g) => g.name === accessGroup)?.members).toEqual(["alice", "bob"]);
+  });
+
+  it("reconciles existing package agents to the current profile", async () => {
+    const { ctx, config, caps } = createCtx();
+    const identity = await ensurePackageAgent(ctx, record([BUILDER]), BUILDER, 1000);
+    const updatedProfile = {
+      ...BUILDER,
+      approvalPolicy: undefined,
+      capabilities: ["fs.write"],
+      contextFiles: [{ name: "00-role.md", text: "You now edit the wiki." }],
+    };
+
+    await ensurePackageAgent(ctx, record([updatedProfile]), updatedProfile, 1000);
+
+    expect(caps.revoke).toHaveBeenCalledWith(identity.gid, "repo.write");
+    expect(caps.revoke).toHaveBeenCalledWith(identity.gid, "fs.read");
+    expect(caps.grant).toHaveBeenCalledWith(identity.gid, "fs.write");
+    expect(ctx.caps.resolve([identity.gid])).toEqual(["fs.write"]);
+    expect(config.get(`users/${identity.uid}/ai/tools/approval`)).toBeUndefined();
   });
 });
 

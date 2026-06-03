@@ -11,7 +11,8 @@
  */
 
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
-import { accountIdentity, createAccount } from "./accounts";
+import type { PasswdEntry } from "../auth/passwd";
+import { accountIdentity, createAccount, removeContextFile, writeContextFile } from "./accounts";
 import type { KernelContext } from "./context";
 import type { InstalledPackageRecord, PackageProfileManifest } from "./packages";
 
@@ -50,6 +51,11 @@ function packageAgentProfileKey(uid: number): string {
   return `users/${uid}/pkg/profile`;
 }
 
+/** Config key recording context files managed by package-agent provisioning. */
+function packageAgentContextFilesKey(uid: number): string {
+  return `users/${uid}/pkg/context_files`;
+}
+
 /**
  * Provision (idempotently) the agent account for a package profile and grant the
  * enabling human run-as rights via the access group. Returns the agent identity.
@@ -80,6 +86,7 @@ export async function ensurePackageAgent(
     // the same username cannot silently reuse (and hijack) this account.
     ctx.config.set(packageAgentOwnerKey(entry.uid), record.packageId);
     ctx.config.set(packageAgentProfileKey(entry.uid), profile.name);
+    ctx.config.set(packageAgentContextFilesKey(entry.uid), JSON.stringify(profileContextFileNames(profile)));
     if (profile.approvalPolicy) {
       ctx.config.set(`users/${entry.uid}/ai/tools/approval`, profile.approvalPolicy);
     }
@@ -114,6 +121,7 @@ export async function ensurePackageAgent(
       // Older provisioning without an access group: backfill it.
       auth.addGroup({ name: accessGroupName, gid: auth.nextGid(), members: [] });
     }
+    await reconcilePackageAgentProfile(ctx, entry, profile);
   }
 
   joinAccessGroup(ctx, accessGroupName, enablingHumanUid);
@@ -199,5 +207,63 @@ function joinAccessGroup(ctx: KernelContext, groupName: string, humanUid: number
   const group = auth.getGroupByName(groupName);
   if (group && !group.members.includes(human.username)) {
     auth.updateGroupMembers(groupName, [...group.members, human.username]);
+  }
+}
+
+async function reconcilePackageAgentProfile(
+  ctx: KernelContext,
+  entry: PasswdEntry,
+  profile: PackageProfileManifest,
+): Promise<void> {
+  const desiredCapabilities = new Set([...PACKAGE_AGENT_BASELINE, ...(profile.capabilities ?? [])]);
+  const currentCapabilities = new Set(ctx.caps.list(entry.gid).map((row) => row.capability));
+
+  for (const capability of currentCapabilities) {
+    if (!desiredCapabilities.has(capability)) {
+      ctx.caps.revoke(entry.gid, capability);
+    }
+  }
+  for (const capability of desiredCapabilities) {
+    if (!currentCapabilities.has(capability)) {
+      ctx.caps.grant(entry.gid, capability);
+    }
+  }
+
+  const approvalKey = `users/${entry.uid}/ai/tools/approval`;
+  if (profile.approvalPolicy) {
+    ctx.config.set(approvalKey, profile.approvalPolicy);
+  } else {
+    ctx.config.delete(approvalKey);
+  }
+
+  const contextFilesKey = packageAgentContextFilesKey(entry.uid);
+  const previousNames = parseContextFileNames(ctx.config.get(contextFilesKey));
+  const nextNames = new Set(profileContextFileNames(profile));
+  const identity = accountIdentity(ctx.auth, entry);
+
+  for (const file of profile.contextFiles) {
+    await writeContextFile(ctx.env, identity, file.name, file.text);
+  }
+  for (const previousName of previousNames) {
+    if (!nextNames.has(previousName)) {
+      await removeContextFile(ctx.env, identity, previousName);
+    }
+  }
+  ctx.config.set(contextFilesKey, JSON.stringify([...nextNames].sort()));
+}
+
+function profileContextFileNames(profile: PackageProfileManifest): string[] {
+  return [...new Set(profile.contextFiles.map((file) => file.name))].sort();
+}
+
+function parseContextFileNames(value: string | null): string[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed)
+      ? parsed.filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
+      : [];
+  } catch {
+    return [];
   }
 }

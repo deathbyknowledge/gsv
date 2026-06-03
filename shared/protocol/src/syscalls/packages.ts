@@ -29,6 +29,7 @@ export type PkgProfileSummary = {
   displayName: string;
   description?: string;
   icon?: string;
+  capabilities?: string[];
 };
 
 export type PkgSummary = {

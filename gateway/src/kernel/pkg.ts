@@ -61,7 +61,7 @@ export function handlePkgList(
       enabled: typeof args?.enabled === "boolean" ? args.enabled : undefined,
       name: typeof args?.name === "string" && args.name.trim().length > 0 ? args.name.trim() : undefined,
       runtime: args?.runtime,
-      scopes: visiblePackageScopesForActor(ctx.identity?.process),
+      scopes: visiblePackageScopesForContext(ctx),
     }).map((record) => toPkgSummary(record, ctx)),
   };
 }
@@ -472,7 +472,7 @@ export function resolveInstalledPackage(packageId: string, ctx: KernelContext): 
     throw new Error("packageId is required");
   }
 
-  const scopes = visiblePackageScopesForActor(ctx.identity?.process);
+  const scopes = visiblePackageScopesForContext(ctx);
   const record = ctx.packages.resolve(normalizedPackageId, scopes);
   if (!record) {
     const candidates = ctx.packages.list({ scopes }).filter((candidate) => {
@@ -979,7 +979,7 @@ function requireIdentity(ctx: KernelContext): NonNullable<KernelContext["identit
 }
 
 function installScopeForActor(ctx: KernelContext): PackageInstallScope {
-  return defaultPackageInstallScopeForActor(requireIdentity(ctx).process);
+  return defaultPackageInstallScopeForActor(packageScopeOwnerForContext(ctx));
 }
 
 function assertMutablePackageAccess(record: InstalledPackageRecord, ctx: KernelContext): void {
@@ -987,10 +987,18 @@ function assertMutablePackageAccess(record: InstalledPackageRecord, ctx: KernelC
   if (identity.process.uid === 0 || (identity.capabilities ?? []).includes("*")) {
     return;
   }
-  if (packageScopeEquals(record.scope, { kind: "user", uid: identity.process.uid })) {
+  if (packageScopeEquals(record.scope, { kind: "user", uid: resolveCallerOwnerUid(ctx) })) {
     return;
   }
   throw new Error(`Forbidden: ${record.packageId} is not installed in your package scope`);
+}
+
+function visiblePackageScopesForContext(ctx: KernelContext): PackageInstallScope[] {
+  return visiblePackageScopesForActor(packageScopeOwnerForContext(ctx));
+}
+
+function packageScopeOwnerForContext(ctx: KernelContext): { uid: number } | undefined {
+  return ctx.identity ? { uid: resolveCallerOwnerUid(ctx) } : undefined;
 }
 
 export function listLocalPublicPackages(
@@ -1038,6 +1046,7 @@ function toPkgSummary(record: InstalledPackageRecord, ctx: KernelContext): PkgSu
       displayName: profile.displayName,
       description: profile.description,
       icon: profile.icon,
+      capabilities: profile.capabilities,
     })),
     bindingNames: (record.manifest.capabilities?.bindings ?? []).map((binding) => binding.binding),
     review: {
@@ -1076,6 +1085,7 @@ function toCatalogEntry(record: InstalledPackageRecord): PkgCatalogEntry {
       displayName: profile.displayName,
       description: profile.description,
       icon: profile.icon,
+      capabilities: profile.capabilities,
     })),
     bindingNames: (record.manifest.capabilities?.bindings ?? []).map((binding) => binding.binding),
   };
