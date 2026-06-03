@@ -76,8 +76,11 @@ export type KernelContext = {
  */
 export function resolveCallerOwnerUid(ctx: KernelContext): number {
   if (ctx.processId) {
-    const self = ctx.procs.get(ctx.processId);
-    if (self) return self.ownerUid;
+    const procs = ctx.procs;
+    const ownerUid = typeof procs.getOwnerUid === "function"
+      ? procs.getOwnerUid(ctx.processId)
+      : procs.get(ctx.processId)?.ownerUid ?? null;
+    if (ownerUid != null) return ownerUid;
   }
   return ctx.identity!.process.uid;
 }

@@ -1,6 +1,7 @@
 import { defineCommand } from "just-bash";
 import type { ExecResult } from "just-bash";
 import type { KernelContext } from "../../../kernel/context";
+import { resolveCallerOwnerUid } from "../../../kernel/context";
 import {
   handleProcIpcCall,
   handleProcIpcSend,
@@ -44,7 +45,9 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
     }
     case "list": {
       requireCommandCapability(ctx, "proc.list");
-      const list = ctx.procs.list(ctx.identity!.process.uid);
+      // Visibility is keyed on the owning human, not the run-as account: an
+      // agent-backed shell must list its owner's processes, not the agent uid's.
+      const list = ctx.procs.list(resolveCallerOwnerUid(ctx));
       const lines = ["PID\tSTATE\tRUN-AS\tLABEL"];
       for (const proc of list) {
         lines.push(`${proc.processId}\t${proc.state}\t${proc.username}\t${proc.label ?? ""}`);

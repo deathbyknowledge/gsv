@@ -29,6 +29,7 @@ import type { RequestFrame } from "../protocol/frames";
 import { isLocked } from "../auth/shadow";
 import { sendFrameToProcess } from "../shared/utils";
 import type { KernelContext } from "./context";
+import { resolveCallerOwnerUid } from "./context";
 import type { ConversationRecord } from "./conversations";
 import type { AuthStore } from "./auth-store";
 import {
@@ -37,6 +38,7 @@ import {
   isUsernameAvailable,
   normalizeAccountName,
 } from "./accounts";
+import { packageAgentAccessGroup } from "./package-agents";
 
 /**
  * Curated, tasteful default names for the personal agent. The first available
@@ -157,6 +159,7 @@ export async function handleAccountCreate(
       kind: "human",
       username: name,
       password: args.password,
+      gecos: args.gecos?.trim() || undefined,
       shared: true,
     });
     const agent = await ensurePersonalAgent(ctx, identity);
@@ -171,7 +174,7 @@ export async function handleAccountCreate(
   const { identity } = await createAccount(ctx, {
     kind: "agent",
     username: name,
-    gecos: `${ownerName}'s agent`,
+    gecos: args.gecos?.trim() || `${ownerName}'s agent`,
     ownerUid,
     shared: true,
     crossMemberOwner: true,
@@ -208,7 +211,12 @@ export function handleAccountList(
     const isPersonalAgent = personalAgentUid === entry.uid;
     const group = auth.getGroupByGid(entry.gid);
     const isGroupMember = !!ownerName && !!group && group.members.includes(ownerName);
-    const runnable = isRoot || isSelf || isPersonalAgent || isGroupMember;
+    // Package agents authorize run-as via a separate access group (the human is
+    // never in the agent's cap-bearing primary group), so honor that membership
+    // too — otherwise enabled package agents are missing from the picker.
+    const accessGroup = auth.getGroupByName(packageAgentAccessGroup(entry.username));
+    const isAccessMember = !!ownerName && !!accessGroup && accessGroup.members.includes(ownerName);
+    const runnable = isRoot || isSelf || isPersonalAgent || isGroupMember || isAccessMember;
     if (!runnable) continue;
 
     const shadow = auth.getShadowByUsername(entry.username);
@@ -241,18 +249,6 @@ export function handleAccountList(
   });
 
   return { accounts };
-}
-
-/**
- * The human that owns the caller's processes: the process owner_uid when called
- * from inside a process, otherwise the connecting identity's uid.
- */
-function resolveCallerOwnerUid(ctx: KernelContext): number {
-  if (ctx.processId) {
-    const ownerUid = ctx.procs.getOwnerUid(ctx.processId);
-    if (ownerUid != null) return ownerUid;
-  }
-  return ctx.identity!.process.uid;
 }
 
 function defaultPersonaContext(agentName: string, ownerUsername: string): string {

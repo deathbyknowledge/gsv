@@ -98,6 +98,17 @@ function userIdentity(uid: number, username: string, capabilities: string[]): Co
 describe("handleAccountCreate", () => {
   beforeEach(() => vi.clearAllMocks());
 
+  it("preserves a custom display name (gecos), defaulting to the owner's agent", async () => {
+    const { ctxFor, passwd } = createCtx();
+    const ctx = ctxFor(userIdentity(1000, "alice", ["account.create"]));
+
+    await handleAccountCreate({ kind: "agent", username: "scout", gecos: "Research Bot" }, ctx);
+    expect(passwd.find((u) => u.username === "scout")?.gecos).toBe("Research Bot");
+
+    await handleAccountCreate({ kind: "agent", username: "scout2" }, ctx);
+    expect(passwd.find((u) => u.username === "scout2")?.gecos).toBe("alice's agent");
+  });
+
   it("creates an agent owned by the caller, locked and cross-membered", async () => {
     const { ctxFor, auth, groups, shadow } = createCtx();
     const ctx = ctxFor(userIdentity(1000, "alice", ["account.create"]));
@@ -209,5 +220,30 @@ describe("handleAccountList", () => {
     expect(agent?.runnable).toBe(true);
     // "self" sorts first.
     expect(result.accounts[0].relation).toBe("self");
+  });
+
+  it("lists a package agent the caller can run via its access group", () => {
+    const { ctxFor, passwd, groups, shadow } = createCtx();
+    // A package agent: locked, the owner is NOT in its cap-bearing primary
+    // group, but IS in its `<username>-run` access group.
+    passwd.push({ username: "wiki-builder", uid: 2000, gid: 2000, gecos: "Wiki Builder", home: "/home/wiki-builder", shell: "/bin/init" });
+    groups.push({ name: "wiki-builder", gid: 2000, members: [] });
+    groups.push({ name: "wiki-builder-run", gid: 2001, members: ["alice"] });
+    shadow.set("wiki-builder", "!");
+
+    const result = handleAccountList({}, ctxFor(userIdentity(1000, "alice", ["account.list"])));
+    const agent = result.accounts.find((a) => a.username === "wiki-builder");
+
+    expect(agent).toBeTruthy();
+    expect(agent?.relation).toBe("agent");
+    expect(agent?.runnable).toBe(true);
+    expect(agent?.displayName).toBe("Wiki Builder");
+
+    // A different human who never enabled the package does not see it.
+    passwd.push({ username: "carol", uid: 1500, gid: 1500, gecos: "carol", home: "/home/carol", shell: "/bin/init" });
+    groups.push({ name: "carol", gid: 1500, members: [] });
+    shadow.set("carol", "x");
+    const carolView = handleAccountList({}, ctxFor(userIdentity(1500, "carol", ["account.list"])));
+    expect(carolView.accounts.find((a) => a.username === "wiki-builder")).toBeUndefined();
   });
 });

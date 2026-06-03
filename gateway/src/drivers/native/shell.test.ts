@@ -287,6 +287,7 @@ describe("proc native command", () => {
       getPasswdEntries: vi.fn(() => passwd.map((u) => ({ ...u }))),
       getPersonalAgentUid: vi.fn(() => 1001),
       getGroupByGid: vi.fn((gid: number) => ({ name: passwd.find((u) => u.uid === gid)?.username ?? "g", gid, members: [] })),
+      getGroupByName: vi.fn(() => null),
       getShadowByUsername: vi.fn((username: string) => ({ username, hash: username === "sam-agent" ? "!" : "x" })),
     } as unknown as KernelContext["auth"];
 
@@ -315,6 +316,7 @@ describe("proc native command", () => {
             return {
               processId: "init:1000",
               uid: IDENTITY.uid,
+              ownerUid: IDENTITY.uid,
               gid: IDENTITY.gid,
               gids: IDENTITY.gids,
               username: IDENTITY.username,
