@@ -70,9 +70,9 @@ export function handlePkgRemoteList(
   _args: PkgRemoteListArgs | undefined,
   ctx: KernelContext,
 ): PkgRemoteListResult {
-  const identity = requireIdentity(ctx);
+  const ownerUid = remoteConfigOwnerUid(ctx);
   return {
-    remotes: listPkgRemotes(ctx, identity.process.uid),
+    remotes: listPkgRemotes(ctx, ownerUid),
   };
 }
 
@@ -80,16 +80,16 @@ export function handlePkgRemoteAdd(
   args: PkgRemoteAddArgs,
   ctx: KernelContext,
 ): PkgRemoteAddResult {
-  const identity = requireIdentity(ctx);
+  const ownerUid = remoteConfigOwnerUid(ctx);
   const name = normalizeRemoteName(args.name);
   const baseUrl = normalizeRemoteBaseUrl(args.baseUrl);
-  const key = remoteConfigKey(identity.process.uid, name);
+  const key = remoteConfigKey(ownerUid, name);
   const existing = ctx.config.get(key);
   ctx.config.set(key, baseUrl);
   return {
     changed: existing !== baseUrl,
     remote: { name, baseUrl },
-    remotes: listPkgRemotes(ctx, identity.process.uid),
+    remotes: listPkgRemotes(ctx, ownerUid),
   };
 }
 
@@ -97,11 +97,11 @@ export function handlePkgRemoteRemove(
   args: PkgRemoteRemoveArgs,
   ctx: KernelContext,
 ): PkgRemoteRemoveResult {
-  const identity = requireIdentity(ctx);
-  const removed = ctx.config.delete(remoteConfigKey(identity.process.uid, normalizeRemoteName(args.name)));
+  const ownerUid = remoteConfigOwnerUid(ctx);
+  const removed = ctx.config.delete(remoteConfigKey(ownerUid, normalizeRemoteName(args.name)));
   return {
     removed,
-    remotes: listPkgRemotes(ctx, identity.process.uid),
+    remotes: listPkgRemotes(ctx, ownerUid),
   };
 }
 
@@ -169,7 +169,7 @@ export async function handlePkgPublicList(
   args: PkgPublicListArgs | undefined,
   ctx: KernelContext,
 ): Promise<PkgPublicListResult> {
-  const identity = requireIdentity(ctx);
+  requireIdentity(ctx);
   const requestedRemote = typeof args?.remote === "string" ? args.remote.trim() : "";
   if (!requestedRemote || requestedRemote === "local") {
     const serverName = configuredServerName(ctx);
@@ -180,7 +180,8 @@ export async function handlePkgPublicList(
     };
   }
 
-  const remote = resolvePkgRemote(ctx, identity.process.uid, requestedRemote);
+  const ownerUid = resolveCallerOwnerUid(ctx);
+  const remote = resolvePkgRemote(ctx, ownerUid, requestedRemote);
   const response = await fetch(`${remote.baseUrl}/public/packages`, {
     headers: { Accept: "application/json" },
   });
@@ -1010,6 +1011,11 @@ function visiblePackageScopesForContext(ctx: KernelContext): PackageInstallScope
 
 function packageScopeOwnerForContext(ctx: KernelContext): { uid: number } | undefined {
   return ctx.identity ? { uid: resolveCallerOwnerUid(ctx) } : undefined;
+}
+
+function remoteConfigOwnerUid(ctx: KernelContext): number {
+  requireIdentity(ctx);
+  return resolveCallerOwnerUid(ctx);
 }
 
 export function listLocalPublicPackages(

@@ -175,7 +175,7 @@ export async function handleProcSpawn(
   }
 
   const hasRequestedMounts = args.mounts !== undefined;
-  const materializedMounts = materializeSpawnMounts(args.mounts, ctx);
+  const materializedMounts = materializeSpawnMounts(args.mounts, ctx, ownerUid);
   if (!materializedMounts.ok) {
     return { ok: false, error: materializedMounts.error };
   }
@@ -687,10 +687,11 @@ type SpawnMountSpecWithRecord = {
 function materializeSpawnMounts(
   specs: ProcSpawnMountSpec[] | undefined,
   ctx: KernelContext,
+  ownerUid: number,
 ): SpawnMountOutcome {
   const mounts: ProcessMount[] = [];
   const seen = new Set<string>();
-  const sourcePackages = ctx.packages.list({ scopes: visiblePackageScopesForActor(ctx.identity?.process) });
+  const sourcePackages = ctx.packages.list({ scopes: visiblePackageScopesForActor({ uid: ownerUid }) });
   const specsToMount: SpawnMountSpecWithRecord[] = specs
     ? specs.map((spec) => ({ spec, record: resolveInstalledPackage(spec.packageId, ctx) }))
     : sourcePackages.map((record) => ({

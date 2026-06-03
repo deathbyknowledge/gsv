@@ -1,5 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
-import { handlePkgCreate, handlePkgInstall, handlePkgList, handlePkgRemove } from "./pkg";
+import {
+  handlePkgCreate,
+  handlePkgInstall,
+  handlePkgList,
+  handlePkgPublicList,
+  handlePkgRemoteAdd,
+  handlePkgRemoteList,
+  handlePkgRemoteRemove,
+  handlePkgRemove,
+} from "./pkg";
 import type { KernelContext } from "./context";
 
 type FetchCall = {
@@ -237,6 +246,75 @@ describe("pkg syscalls", () => {
     ]);
     expect(setEnabled).toHaveBeenCalledWith(record.packageId, true, record.scope);
     expect(result.changed).toBe(true);
+  });
+
+  it("uses the owning human's package remotes for agent-backed package calls", async () => {
+    const config = makeConfig();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("https://packages.example/public/packages");
+      expect(init).toEqual({ headers: { Accept: "application/json" } });
+      return Response.json({
+        serverName: "team packages",
+        packages: [],
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const ctx = {
+      config,
+      processId: "proc:agent",
+      procs: {
+        getOwnerUid: vi.fn(() => 1000),
+      },
+      packages: {
+        list: vi.fn(() => []),
+      },
+      identity: {
+        role: "user",
+        capabilities: ["pkg.remote.add", "pkg.remote.list", "pkg.remote.remove", "pkg.public.list"],
+        process: {
+          uid: 2000,
+          gid: 2000,
+          gids: [2000],
+          username: "alice-agent",
+          home: "/home/alice-agent",
+          cwd: "/home/alice-agent",
+        },
+      },
+    } as unknown as KernelContext;
+
+    try {
+      const added = handlePkgRemoteAdd({
+        name: "team",
+        baseUrl: "https://packages.example/",
+      }, ctx);
+
+      expect(added).toMatchObject({
+        changed: true,
+        remote: { name: "team", baseUrl: "https://packages.example" },
+        remotes: [{ name: "team", baseUrl: "https://packages.example" }],
+      });
+      expect(config.get("users/1000/pkg/remotes/team")).toBe("https://packages.example");
+      expect(config.get("users/2000/pkg/remotes/team")).toBeNull();
+      expect(handlePkgRemoteList(undefined, ctx).remotes).toEqual([
+        { name: "team", baseUrl: "https://packages.example" },
+      ]);
+
+      const publicList = await handlePkgPublicList({ remote: "team" }, ctx);
+      expect(publicList).toMatchObject({
+        serverName: "team packages",
+        source: { kind: "remote", name: "team", baseUrl: "https://packages.example" },
+        packages: [],
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      expect(handlePkgRemoteRemove({ name: "team" }, ctx)).toEqual({
+        removed: true,
+        remotes: [],
+      });
+      expect(config.get("users/1000/pkg/remotes/team")).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("prevents removing the consolidated GSV console package", async () => {

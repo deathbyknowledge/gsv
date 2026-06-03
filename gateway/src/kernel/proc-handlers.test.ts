@@ -375,6 +375,65 @@ describe("proc handlers", () => {
     );
   });
 
+  it("uses the owning human's package scopes for default spawned worker mounts", async () => {
+    const pkg = makePackage("pkg-a", "Demo Tool", "sam/demo-a");
+    const parent = {
+      ...SPAWN_PARENT,
+      uid: 2000,
+      ownerUid: IDENTITY.uid,
+      gid: 2000,
+      gids: [2000],
+      username: "sam-agent",
+      home: "/home/sam-agent",
+      cwd: "/home/sam-agent",
+    };
+    const list = vi.fn((args?: { scopes?: unknown }) => {
+      expect(args?.scopes).toEqual([
+        { kind: "user", uid: IDENTITY.uid },
+        { kind: "global" },
+      ]);
+      return [pkg];
+    });
+    const ctx = {
+      env: {},
+      processId: "proc:agent",
+      identity: {
+        process: { ...IDENTITY, uid: 2000, username: "sam-agent", home: "/home/sam-agent", cwd: "/home/sam-agent" },
+        capabilities: ["*"],
+      },
+      procs: {
+        get: vi.fn(() => parent),
+        spawn: vi.fn(),
+      },
+      conversations: spawnConversationsMock(),
+      packages: {
+        resolve: vi.fn((packageId: string) => packageId === "pkg-a" ? pkg : null),
+        list,
+      },
+    } as unknown as KernelContext;
+
+    const result = await handleProcSpawn({}, ctx);
+
+    expect(result).toMatchObject({
+      ok: true,
+      cwd: "/home/sam-agent",
+    });
+    expect(list).toHaveBeenCalled();
+    expect(ctx.procs.spawn).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ uid: 2000 }),
+      expect.objectContaining({
+        ownerUid: IDENTITY.uid,
+        mounts: [
+          expect.objectContaining({
+            packageId: "pkg-a",
+            mountPath: "/src/packages/demo-tool",
+          }),
+        ],
+      }),
+    );
+  });
+
   it("spawns a fresh top-level process when mounts are requested", async () => {
     const pkg = makePackage("pkg-a", "Demo Tool", "sam/demo-a");
     const personalAgent = {
