@@ -45,6 +45,11 @@ function packageAgentOwnerKey(uid: number): string {
   return `users/${uid}/pkg/owner`;
 }
 
+/** Config key recording which package profile owns a package-agent account. */
+function packageAgentProfileKey(uid: number): string {
+  return `users/${uid}/pkg/profile`;
+}
+
 /**
  * Provision (idempotently) the agent account for a package profile and grant the
  * enabling human run-as rights via the access group. Returns the agent identity.
@@ -74,6 +79,7 @@ export async function ensurePackageAgent(
     // Stamp the owning package so a later, different package that sanitizes to
     // the same username cannot silently reuse (and hijack) this account.
     ctx.config.set(packageAgentOwnerKey(entry.uid), record.packageId);
+    ctx.config.set(packageAgentProfileKey(entry.uid), profile.name);
     if (profile.approvalPolicy) {
       ctx.config.set(`users/${entry.uid}/ai/tools/approval`, profile.approvalPolicy);
     }
@@ -93,6 +99,16 @@ export async function ensurePackageAgent(
       throw new Error(
         `Package agent name collision: "${username}" already exists and is not owned by package ${record.packageId}`,
       );
+    }
+    const profileKey = packageAgentProfileKey(entry.uid);
+    const stampedProfileName = ctx.config.get(profileKey);
+    if (stampedProfileName && stampedProfileName !== profile.name) {
+      throw new Error(
+        `Package agent name collision: "${username}" is owned by ${record.packageId} profile ${stampedProfileName}, cannot provision it for profile ${profile.name}`,
+      );
+    }
+    if (!stampedProfileName) {
+      ctx.config.set(profileKey, profile.name);
     }
     if (!auth.getGroupByName(accessGroupName)) {
       // Older provisioning without an access group: backfill it.

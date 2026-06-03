@@ -2482,6 +2482,7 @@ export class Kernel extends Host<Env> {
   private async runSchedules(
     args: SchedulerRunArgs,
     identity?: ConnectionIdentity,
+    callerOwnerUid = identity?.process.uid,
   ): Promise<SchedulerRunResult> {
     const mode = args.mode ?? "due";
     if (mode === "force" && !args.id) {
@@ -2491,12 +2492,12 @@ export class Kernel extends Host<Env> {
     const now = Date.now();
     const records = args.id
       ? [this.schedules.get(args.id)].filter((record): record is ScheduleRecord => record !== null)
-      : this.schedules.listDue(now, identity && identity.process.uid !== 0 ? identity.process.uid : undefined);
+      : this.schedules.listDue(now, callerOwnerUid !== undefined && callerOwnerUid !== 0 ? callerOwnerUid : undefined);
 
     const results: ScheduleRunResult[] = [];
     for (const record of records) {
       if (identity) {
-        assertCanManageSchedule(identity, record);
+        assertCanManageSchedule(identity, record, callerOwnerUid);
       }
       results.push(await this.runScheduleRecord(record, mode));
     }
@@ -2634,7 +2635,7 @@ export class Kernel extends Host<Env> {
       if (!proc) {
         throw new Error(`Process not found: ${target.pid}`);
       }
-      if (proc.uid !== record.ownerUid && record.ownerUid !== 0) {
+      if (proc.ownerUid !== record.ownerUid && record.ownerUid !== 0) {
         throw new Error(`Permission denied: schedule ${record.id} cannot access process ${target.pid}`);
       }
 

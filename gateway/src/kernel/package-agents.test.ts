@@ -148,6 +148,22 @@ describe("ensurePackageAgent", () => {
     await expect(ensurePackageAgent(ctx, other, BUILDER, 1000)).rejects.toThrow(/name collision/i);
   });
 
+  it("rejects reuse of a username owned by a different profile in the same package", async () => {
+    const { ctx } = createCtx();
+    const collidingProfile = {
+      ...BUILDER,
+      name: "builder!",
+      displayName: "Wiki Builder Alt",
+      capabilities: ["fs.write"],
+    };
+    expect(packageAgentUsername("wiki", collidingProfile.name)).toBe(packageAgentUsername("wiki", BUILDER.name));
+
+    await ensurePackageAgent(ctx, record([BUILDER, collidingProfile]), BUILDER, 1000);
+
+    await expect(ensurePackageAgent(ctx, record([BUILDER, collidingProfile]), collidingProfile, 1000))
+      .rejects.toThrow(/name collision/i);
+  });
+
   it("rejects unstamped account-name collisions", async () => {
     const { ctx, passwd, groups } = createCtx();
     const username = packageAgentUsername("wiki", "builder");

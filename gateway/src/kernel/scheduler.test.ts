@@ -11,6 +11,7 @@ import {
   handleSchedulerAdd,
   handleSchedulerList,
   handleSchedulerRemove,
+  handleSchedulerRun,
   handleSchedulerUpdate,
   normalizeScheduleExpression,
   ScheduleStore,
@@ -28,6 +29,15 @@ const USER_IDENTITY: ProcessIdentity = {
   cwd: "/home/sam",
 };
 
+const PERSONAL_AGENT_IDENTITY: ProcessIdentity = {
+  uid: 2000,
+  gid: 2000,
+  gids: [2000],
+  username: "sam-agent",
+  home: "/home/sam-agent",
+  cwd: "/home/sam-agent",
+};
+
 function makeReq(call: string, args: unknown): RequestFrame {
   return { type: "req", id: crypto.randomUUID(), call, args } as RequestFrame;
 }
@@ -36,10 +46,11 @@ async function prepareScheduleTargetProcess(
   process: DurableObjectStub<Process>,
   pid: string,
   conversationId = "default",
+  identity: ProcessIdentity = USER_IDENTITY,
 ): Promise<void> {
   const setIdentity = await process.recvFrame(makeReq("proc.setidentity", {
     pid,
-    identity: USER_IDENTITY,
+    identity,
     profile: "task",
   }));
   expect(setIdentity?.type).toBe("res");
@@ -300,6 +311,31 @@ describe("scheduler", () => {
     });
   });
 
+  it("lists by the owning human for process-originated calls", () => {
+    const list = vi.fn(() => ({ records: [], count: 0 }));
+    const ctx = makeSchedulerContext({
+      identity: {
+        role: "user",
+        process: PERSONAL_AGENT_IDENTITY,
+        capabilities: ["*"],
+      },
+      processId: "proc:agent",
+      procs: {
+        getOwnerUid: vi.fn(() => USER_IDENTITY.uid),
+      } as unknown as KernelContext["procs"],
+      schedules: { list } as unknown as ScheduleStore,
+    });
+
+    handleSchedulerList({ includeDisabled: true }, ctx);
+
+    expect(list).toHaveBeenCalledWith({
+      ownerUid: USER_IDENTITY.uid,
+      includeDisabled: true,
+      limit: undefined,
+      offset: undefined,
+    });
+  });
+
   it("lets root list another owner's schedules", () => {
     const list = vi.fn(() => ({ records: [], count: 0 }));
     const ctx = makeSchedulerContext({
@@ -327,6 +363,81 @@ describe("scheduler", () => {
       limit: undefined,
       offset: undefined,
     });
+  });
+
+  it("creates process event schedules under the owning human for agent-backed callers", async () => {
+    const create = vi.fn((input) => makeScheduleRecord({
+      ownerUid: input.ownerUid,
+      creator: input.creator,
+      runAs: input.runAs,
+      enabled: input.enabled,
+      expression: input.expression,
+      target: input.target,
+    }));
+    const setWakeScheduleId = vi.fn();
+    const ctx = makeSchedulerContext({
+      identity: {
+        role: "user",
+        process: PERSONAL_AGENT_IDENTITY,
+        capabilities: ["*"],
+      },
+      processId: "proc:agent",
+      procs: {
+        getOwnerUid: vi.fn(() => USER_IDENTITY.uid),
+        get: vi.fn(() => ({
+          processId: "proc:target",
+          uid: PERSONAL_AGENT_IDENTITY.uid,
+          ownerUid: USER_IDENTITY.uid,
+        })),
+      } as unknown as KernelContext["procs"],
+      schedules: {
+        create,
+        setWakeScheduleId,
+      } as unknown as ScheduleStore,
+    });
+
+    const result = await handleSchedulerAdd({
+      name: "agent pulse",
+      enabled: false,
+      expression: { kind: "after", afterMs: 1_000 },
+      target: {
+        kind: "process.event",
+        pid: "proc:target",
+        message: "Run the pulse.",
+      },
+    }, ctx);
+
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      ownerUid: USER_IDENTITY.uid,
+      creator: expect.objectContaining({
+        kind: "process",
+        uid: PERSONAL_AGENT_IDENTITY.uid,
+        pid: "proc:agent",
+      }),
+    }));
+    expect(result.schedule.ownerUid).toBe(USER_IDENTITY.uid);
+    expect(setWakeScheduleId).toHaveBeenCalledWith("sched-1", null);
+  });
+
+  it("passes the caller owner uid when running schedules", async () => {
+    const runSchedules = vi.fn(async () => ({ ran: 0, results: [] }));
+    const ctx = makeSchedulerContext({
+      identity: {
+        role: "user",
+        process: PERSONAL_AGENT_IDENTITY,
+        capabilities: ["*"],
+      },
+      processId: "proc:agent",
+      procs: {
+        getOwnerUid: vi.fn(() => USER_IDENTITY.uid),
+      } as unknown as KernelContext["procs"],
+      runSchedules,
+    });
+    const args = { id: "sched-1", mode: "force" as const };
+
+    await handleSchedulerRun(args, ctx);
+
+    expect(runSchedules).toHaveBeenCalledWith(args, ctx.identity, USER_IDENTITY.uid);
   });
 
   it("rejects update and remove of another owner's schedule", async () => {
@@ -440,13 +551,14 @@ describe("scheduler", () => {
         };
       };
       k.caps.seed();
-      k.procs.spawn(pid, USER_IDENTITY, {
+      k.procs.spawn(pid, PERSONAL_AGENT_IDENTITY, {
+        ownerUid: USER_IDENTITY.uid,
         profile: "task",
         label: "scheduled target",
       });
     });
 
-    await prepareScheduleTargetProcess(process, pid, conversationId);
+    await prepareScheduleTargetProcess(process, pid, conversationId, PERSONAL_AGENT_IDENTITY);
 
     const scheduleId = await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as unknown as {
