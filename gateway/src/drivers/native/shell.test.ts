@@ -1416,6 +1416,149 @@ describe("pkg shell command", () => {
     });
   });
 
+  it("registers owner-scoped package commands for agent-backed shells", async () => {
+    const calls: Array<{ kind: "ensure" | "run"; value: unknown }> = [];
+    const runner = {
+      async ensureRuntime(input: unknown) {
+        calls.push({ kind: "ensure", value: input });
+      },
+      async runCommand(input: unknown) {
+        calls.push({ kind: "run", value: input });
+        return {
+          stdout: "human tool ran\n",
+          stderr: "",
+          exitCode: 0,
+        };
+      },
+    };
+    const humanPackage = makePackage({
+      packageId: "user:1000:human-tools",
+      scope: { kind: "user", uid: 1000 },
+      enabled: true,
+      reviewRequired: false,
+      manifest: {
+        ...makePackage().manifest,
+        name: "human-tools",
+        entrypoints: [{
+          name: "Human Tool",
+          kind: "command",
+          module: "index.js",
+          exportName: "GsvCommandEntrypoint",
+          command: "human-tool",
+        }],
+      },
+    });
+    const agentPackage = makePackage({
+      packageId: "user:2000:agent-tools",
+      scope: { kind: "user", uid: 2000 },
+      enabled: true,
+      reviewRequired: false,
+      manifest: {
+        ...makePackage().manifest,
+        name: "agent-tools",
+        entrypoints: [{
+          name: "Agent Tool",
+          kind: "command",
+          module: "index.js",
+          exportName: "GsvCommandEntrypoint",
+          command: "agent-tool",
+        }],
+      },
+    });
+
+    const result = await handleShellExec(
+      { input: "human-tool alpha" },
+      makeContext({
+        packages: [humanPackage, agentPackage],
+        identity: {
+          uid: 2000,
+          gid: 2000,
+          gids: [2000],
+          username: "sam-agent",
+          home: "/home/sam-agent",
+          cwd: "/home/sam-agent",
+        },
+        procs: {
+          getOwnerUid: vi.fn(() => 1000),
+        } as unknown as KernelContext["procs"],
+        getAppRunner() {
+          return runner;
+        },
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toBe("human tool ran\n");
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toEqual({
+      kind: "ensure",
+      value: expect.objectContaining({
+        packageId: "user:1000:human-tools",
+        appFrame: expect.objectContaining({
+          uid: 2000,
+          username: "sam-agent",
+        }),
+      }),
+    });
+    expect(calls[1]).toEqual({
+      kind: "run",
+      value: {
+        commandName: "human-tool",
+        args: ["alpha"],
+        cwd: "/home/sam-agent",
+        uid: 2000,
+        gid: 2000,
+        username: "sam-agent",
+      },
+    });
+  });
+
+  it("resolves current package source commands from the owning human scope", async () => {
+    const humanPackage = makePackage({
+      packageId: "user:1000:human-tools",
+      scope: { kind: "user", uid: 1000 },
+      enabled: true,
+      manifest: {
+        ...makePackage().manifest,
+        name: "human-tools",
+        entrypoints: [{ name: "Human Tool", kind: "command", command: "human-tool" }],
+      },
+    });
+    const agentPackage = makePackage({
+      packageId: "user:2000:agent-tools",
+      scope: { kind: "user", uid: 2000 },
+      enabled: true,
+      manifest: {
+        ...makePackage().manifest,
+        name: "agent-tools",
+        entrypoints: [{ name: "Agent Tool", kind: "command", command: "agent-tool" }],
+      },
+    });
+
+    const result = await handleShellExec(
+      { input: "pkg manifest", cwd: "/src/packages/human-tools" },
+      makeContext({
+        capabilities: ["pkg.list"],
+        packages: [humanPackage, agentPackage],
+        identity: {
+          uid: 2000,
+          gid: 2000,
+          gids: [2000],
+          username: "sam-agent",
+          home: "/home/sam-agent",
+          cwd: "/home/sam-agent",
+        },
+        procs: {
+          getOwnerUid: vi.fn(() => 1000),
+        } as unknown as KernelContext["procs"],
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain('"name": "human-tools"');
+    expect(result.stderr).toBe("");
+  });
+
   it("allows the builtin Wiki package to provide the wiki command", async () => {
     const calls: Array<{ kind: "ensure" | "run"; value: unknown }> = [];
     const runner = {

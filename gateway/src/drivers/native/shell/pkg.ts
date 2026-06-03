@@ -11,6 +11,7 @@ import {
   normalizePath,
 } from "../../../fs";
 import type { KernelContext } from "../../../kernel/context";
+import { resolveCallerOwnerUid } from "../../../kernel/context";
 import {
   handlePkgAdd,
   handlePkgCheckout,
@@ -95,7 +96,7 @@ export function buildPackageCommands(identity: ProcessIdentity, ctx: KernelConte
   ]);
   const packageRecords = ctx.packages.list({
     enabled: true,
-    scopes: visiblePackageScopesForActor(identity),
+    scopes: visiblePackageScopesForShellContext(ctx),
   });
 
   for (const record of packageRecords) {
@@ -344,7 +345,7 @@ function resolvePkgTarget(rawPackageId: string | undefined, ctx: KernelContext, 
 
 function currentSourcePackage(ctx: KernelContext, cwd: string): InstalledPackageRecord | null {
   const normalizedCwd = normalizePath(cwd);
-  const packages = ctx.packages.list({ scopes: visiblePackageScopesForActor(ctx.identity?.process) });
+  const packages = ctx.packages.list({ scopes: visiblePackageScopesForShellContext(ctx) });
   const match = normalizedCwd.match(/^\/src\/packages\/([^/]+)(?:\/|$)/);
   const packageName = match?.[1];
   if (packageName) {
@@ -446,7 +447,7 @@ function processSourceOptions(ctx: KernelContext) {
     identity,
     storage: ctx.env.STORAGE,
     ripgit: ctx.env.RIPGIT ? new RipgitClient(ctx.env.RIPGIT) : null,
-    packages: ctx.packages.list({ scopes: visiblePackageScopesForActor(identity) }),
+    packages: ctx.packages.list({ scopes: visiblePackageScopesForShellContext(ctx) }),
     mounts: ctx.processId ? ctx.procs.getMounts(ctx.processId) : null,
     processId: ctx.processId ?? null,
     config: ctx.config,
@@ -852,7 +853,7 @@ function resolvePkgPublicTarget(
     return { repo: currentPackage.manifest.source.repo };
   }
 
-  const found = ctx.packages.resolve(target, visiblePackageScopesForActor(ctx.identity?.process));
+  const found = ctx.packages.resolve(target, visiblePackageScopesForShellContext(ctx));
   if (found) {
     return { packageId: found.packageId };
   }
@@ -862,6 +863,13 @@ function resolvePkgPublicTarget(
   }
 
   return { packageId: resolveInstalledPackage(target, ctx).packageId };
+}
+
+function visiblePackageScopesForShellContext(ctx: KernelContext) {
+  if (!ctx.identity) {
+    return visiblePackageScopesForActor(undefined);
+  }
+  return visiblePackageScopesForActor({ uid: resolveCallerOwnerUid(ctx) });
 }
 
 function formatPkgScope(scope: { kind: "global" | "user"; uid?: number }): string {
