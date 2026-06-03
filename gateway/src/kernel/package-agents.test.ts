@@ -5,6 +5,8 @@ import {
   ensurePackageAgent,
   packageAgentAccessGroup,
   packageAgentUsername,
+  provisionEnabledPackageAgents,
+  provisionEnabledPackagesForCaller,
   resolvePackageAgentRunAs,
   revokePackageAgentAccess,
 } from "./package-agents";
@@ -249,6 +251,33 @@ describe("resolvePackageAgentRunAs", () => {
     const res = resolvePackageAgentRunAs(ctx, "wiki#builder", 1000, false);
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error).toMatch(/not provisioned/);
+  });
+});
+
+describe("provisionEnabledPackageAgents", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("provisions already-enabled package profiles and skips disabled records", async () => {
+    const { ctx, passwd, groups } = createCtx();
+    const username = packageAgentUsername("wiki", "builder");
+
+    await provisionEnabledPackageAgents(ctx, { ...record([BUILDER]), enabled: false }, 1000);
+    expect(passwd.find((entry) => entry.username === username)).toBeUndefined();
+
+    await provisionEnabledPackageAgents(ctx, { ...record([BUILDER]), enabled: true }, 1000);
+
+    expect(passwd.find((entry) => entry.username === username)).toBeTruthy();
+    expect(groups.find((group) => group.name === packageAgentAccessGroup(username))?.members).toEqual(["alice"]);
+  });
+
+  it("does not provision caller-scoped records before the owning human exists", async () => {
+    const { ctx, passwd } = createCtx();
+    ctx.identity!.process.uid = 3000;
+    ctx.identity!.process.username = "pending-user";
+
+    await provisionEnabledPackagesForCaller(ctx, [{ ...record([BUILDER]), enabled: true }]);
+
+    expect(passwd.find((entry) => entry.username === packageAgentUsername("wiki", "builder"))).toBeUndefined();
   });
 });
 

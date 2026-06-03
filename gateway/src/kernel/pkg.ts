@@ -1,6 +1,6 @@
 import type { KernelContext } from "./context";
 import { resolveCallerOwnerUid } from "./context";
-import { provisionPackageAgents, revokePackageAgentAccess } from "./package-agents";
+import { provisionEnabledPackagesForCaller, provisionPackageAgents, revokePackageAgentAccess } from "./package-agents";
 import type {
   PkgAddArgs,
   PkgAddResult,
@@ -268,6 +268,7 @@ export async function handlePkgAdd(
     installedAt: existing?.installedAt,
     updatedAt: Date.now(),
   });
+  await provisionEnabledPackageAgentsForCaller(ctx, updated);
 
   return {
     changed:
@@ -363,6 +364,7 @@ export async function handlePkgCreate(
     installedAt: existing?.installedAt,
     updatedAt: Date.now(),
   });
+  await provisionEnabledPackageAgentsForCaller(ctx, updated);
 
   return {
     changed:
@@ -387,6 +389,7 @@ export async function handlePkgSync(
 ): Promise<PkgSyncResult> {
   const builtinSeeds = await buildBuiltinPackageSeeds(ctx.env);
   const installed = await ctx.packages.seedBuiltinPackages(builtinSeeds);
+  await provisionEnabledPackagesForCaller(ctx, installed);
   return {
     packages: installed.map((record) => toPkgSummary(record, ctx)),
   };
@@ -425,6 +428,7 @@ export async function handlePkgCheckout(
     installedAt: record.installedAt,
     updatedAt: Date.now(),
   });
+  await provisionEnabledPackageAgentsForCaller(ctx, updated);
 
   return {
     changed:
@@ -511,6 +515,13 @@ function isRequiredSystemConsolePackage(record: InstalledPackageRecord): boolean
     && record.packageId.startsWith("builtin:gsv@")
     && record.manifest.source.repo === "root/gsv"
     && normalizeRepoPath(record.manifest.source.subdir) === "builtin-packages/gsv";
+}
+
+async function provisionEnabledPackageAgentsForCaller(
+  ctx: KernelContext,
+  record: InstalledPackageRecord,
+): Promise<void> {
+  await provisionEnabledPackagesForCaller(ctx, [record]);
 }
 
 function resolveUpstream(args: PkgAddArgs): { remoteUrl: string; ref: string; repoSlug: string | null } {

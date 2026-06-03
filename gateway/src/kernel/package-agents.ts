@@ -14,6 +14,7 @@ import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import type { PasswdEntry } from "../auth/passwd";
 import { accountIdentity, createAccount, removeContextFile, writeContextFile } from "./accounts";
 import type { KernelContext } from "./context";
+import { resolveCallerOwnerUid } from "./context";
 import type { InstalledPackageRecord, PackageProfileManifest } from "./packages";
 
 /**
@@ -136,6 +137,32 @@ export async function provisionPackageAgents(
 ): Promise<void> {
   for (const profile of record.manifest.profiles ?? []) {
     await ensurePackageAgent(ctx, record, profile, enablingHumanUid);
+  }
+}
+
+/** Provision package profile agents when a record is already enabled. */
+export async function provisionEnabledPackageAgents(
+  ctx: KernelContext,
+  record: InstalledPackageRecord,
+  enablingHumanUid: number,
+): Promise<void> {
+  if (!record.enabled || (record.manifest.profiles?.length ?? 0) === 0) {
+    return;
+  }
+  await provisionPackageAgents(ctx, record, enablingHumanUid);
+}
+
+/** Provision package profile agents for enabled records owned by the current caller. */
+export async function provisionEnabledPackagesForCaller(
+  ctx: KernelContext,
+  records: readonly InstalledPackageRecord[],
+): Promise<void> {
+  if (!ctx.identity) return;
+  if (!records.some((record) => record.enabled && (record.manifest.profiles?.length ?? 0) > 0)) return;
+  const humanUid = resolveCallerOwnerUid(ctx);
+  if (!ctx.auth?.getPasswdByUid?.(humanUid)) return;
+  for (const record of records) {
+    await provisionEnabledPackageAgents(ctx, record, humanUid);
   }
 }
 

@@ -246,4 +246,29 @@ describe("handleAccountList", () => {
     const carolView = handleAccountList({}, ctxFor(userIdentity(1500, "carol", ["account.list"])));
     expect(carolView.accounts.find((a) => a.username === "wiki-builder")).toBeUndefined();
   });
+
+  it("filters root targeted listings through the requested owner", () => {
+    const { ctxFor, passwd, groups, shadow } = createCtx();
+    passwd.push({ username: "bob", uid: 1500, gid: 1500, gecos: "bob", home: "/home/bob", shell: "/bin/init" });
+    groups.push({ name: "bob", gid: 1500, members: [] });
+    shadow.set("bob", "x");
+
+    passwd.push({ username: "wiki-builder", uid: 2000, gid: 2000, gecos: "Wiki Builder", home: "/home/wiki-builder", shell: "/bin/init" });
+    groups.push({ name: "wiki-builder", gid: 2000, members: [] });
+    groups.push({ name: "wiki-builder-run", gid: 2001, members: ["alice"] });
+    shadow.set("wiki-builder", "!");
+
+    passwd.push({ username: "bob-helper", uid: 2100, gid: 2100, gecos: "Bob Helper", home: "/home/bob-helper", shell: "/bin/init" });
+    groups.push({ name: "bob-helper", gid: 2100, members: [] });
+    groups.push({ name: "bob-helper-run", gid: 2101, members: ["bob"] });
+    shadow.set("bob-helper", "!");
+
+    const result = handleAccountList({ uid: 1000 }, ctxFor(userIdentity(0, "root", ["*"])));
+    const names = result.accounts.map((a) => a.username);
+
+    expect(names).toContain("alice");
+    expect(names).toContain("wiki-builder");
+    expect(names).not.toContain("bob");
+    expect(names).not.toContain("bob-helper");
+  });
 });

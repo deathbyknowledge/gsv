@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { KernelContext } from "../context";
+import type { InstalledPackageRecord } from "../packages";
 import { handleSysSetup } from "./setup";
 
-function createCtx(overrides?: { setupMode?: boolean }) {
+function createCtx(overrides?: { setupMode?: boolean; packages?: InstalledPackageRecord[] }) {
   type PasswdRow = { username: string; uid: number; gid: number; gecos: string; home: string; shell: string };
   type GroupRow = { name: string; gid: number; members: string[] };
 
@@ -13,6 +14,10 @@ function createCtx(overrides?: { setupMode?: boolean }) {
   const groups: GroupRow[] = [usersGroup];
   const shadowRoot = { username: "root", hash: "!" };
   const personalAgents = new Map<number, number>();
+  const configValues = new Map<string, string>();
+  const capsTable: { gid: number; capability: string }[] = [];
+
+  const maxId = () => Math.max(0, ...passwd.map((u) => u.uid), ...groups.map((g) => g.gid));
 
   const auth = {
     isSetupMode: vi.fn(() => overrides?.setupMode ?? true),
@@ -26,6 +31,7 @@ function createCtx(overrides?: { setupMode?: boolean }) {
       return found ? { ...found } : null;
     }),
     nextUid: vi.fn(() => Math.max(999, ...passwd.map((u) => u.uid)) + 1),
+    nextGid: vi.fn(() => Math.max(99, maxId()) + 1),
     addUser: vi.fn((entry: PasswdRow) => {
       passwd.push({
         username: entry.username,
@@ -76,7 +82,32 @@ function createCtx(overrides?: { setupMode?: boolean }) {
   };
 
   const config = {
-    set: vi.fn(),
+    get: vi.fn((key: string) => configValues.get(key) ?? null),
+    set: vi.fn((key: string, value: string) => {
+      configValues.set(key, value);
+    }),
+    delete: vi.fn((key: string) => configValues.delete(key)),
+  };
+
+  const caps = {
+    grant: vi.fn((gid: number, capability: string) => {
+      capsTable.push({ gid, capability });
+      return { ok: true };
+    }),
+    revoke: vi.fn((gid: number, capability: string) => {
+      for (let i = capsTable.length - 1; i >= 0; i -= 1) {
+        if (capsTable[i].gid === gid && capsTable[i].capability === capability) {
+          capsTable.splice(i, 1);
+        }
+      }
+      return { ok: true };
+    }),
+    list: vi.fn((gid?: number) =>
+      capsTable.filter((entry) => gid === undefined || entry.gid === gid),
+    ),
+    resolve: vi.fn((gids: number[]) =>
+      [...new Set(capsTable.filter((entry) => gids.includes(entry.gid)).map((entry) => entry.capability))],
+    ),
   };
 
   const storage = {
@@ -86,11 +117,15 @@ function createCtx(overrides?: { setupMode?: boolean }) {
 
   const ctx = {
     auth: auth as unknown as KernelContext["auth"],
+    caps: caps as unknown as KernelContext["caps"],
     config: config as unknown as KernelContext["config"],
     env: { STORAGE: storage } as unknown as KernelContext["env"],
+    packages: overrides?.packages
+      ? { list: vi.fn(() => overrides.packages ?? []) } as unknown as KernelContext["packages"]
+      : undefined,
   } as KernelContext;
 
-  return { ctx, auth, config, storage, usersGroup };
+  return { ctx, auth, config, storage, usersGroup, passwd, groups };
 }
 
 describe("handleSysSetup", () => {
@@ -162,6 +197,39 @@ describe("handleSysSetup", () => {
       }),
     );
     expect(auth.setPersonalAgent).toHaveBeenCalledWith(1000, 1001);
+  });
+
+  it("grants the first user access to enabled package profile agents", async () => {
+    const packageRecord = {
+      packageId: "builtin:wiki@1",
+      scope: { kind: "global" },
+      enabled: true,
+      manifest: {
+        name: "wiki",
+        profiles: [{
+          name: "builder",
+          displayName: "Wiki Builder",
+          contextFiles: [],
+          capabilities: ["fs.read"],
+        }],
+      },
+    } as InstalledPackageRecord;
+    const { ctx, passwd, groups } = createCtx({ packages: [packageRecord] });
+
+    await handleSysSetup(
+      {
+        username: "alice",
+        password: "password-123",
+        agentName: "mira",
+      },
+      ctx,
+    );
+
+    expect(passwd.find((entry) => entry.username === "wiki-builder")).toEqual(
+      expect.objectContaining({ uid: 1002, gid: 1002 }),
+    );
+    expect(new Set(passwd.map((entry) => entry.uid)).size).toBe(passwd.length);
+    expect(groups.find((group) => group.name === "wiki-builder-run")?.members).toEqual(["alice"]);
   });
 
   it("rejects when setup mode is already completed", async () => {

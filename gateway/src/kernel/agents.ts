@@ -198,6 +198,7 @@ export function handleAccountList(
   const ownerUid = isRoot && typeof args.uid === "number"
     ? args.uid
     : resolveCallerOwnerUid(ctx);
+  const useRootRunAsBypass = isRoot && ownerUid === caller.process.uid;
 
   const personalAgentUid = auth.getPersonalAgentUid(ownerUid);
 
@@ -206,7 +207,7 @@ export function handleAccountList(
     // System accounts (root, services) are not run-as targets.
     if (entry.uid !== 0 && entry.uid < 1000) continue;
 
-    if (!canOwnerRunAsAccount(auth, ownerUid, entry, isRoot)) continue;
+    if (!canOwnerRunAsAccount(auth, ownerUid, entry, useRootRunAsBypass)) continue;
 
     const shadow = auth.getShadowByUsername(entry.username);
     const isAgent = shadow ? isLocked(shadow) : false;
