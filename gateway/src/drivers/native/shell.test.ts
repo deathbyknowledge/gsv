@@ -1126,6 +1126,7 @@ describe("pkg shell command", () => {
         procs: {
           get: vi.fn(() => ({
             uid: IDENTITY.uid,
+            ownerUid: IDENTITY.uid,
           })),
         } as Partial<KernelContext["procs"]>,
         schedules: {

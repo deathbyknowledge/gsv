@@ -223,13 +223,13 @@ export class KernelMountBackend implements MountBackend {
     const proc = this.kernel.procs.get(pid);
 
     if (!attr) {
-      if (!proc) return undefined;
+      if (!proc || !this.canViewProcess(proc)) return undefined;
       return `${proc.processId}\n`;
     }
 
     if (!proc) return undefined;
 
-    if (this.identity.uid !== 0 && proc.uid !== this.identity.uid) {
+    if (!this.canViewProcess(proc)) {
       return undefined;
     }
 
@@ -501,8 +501,12 @@ export class KernelMountBackend implements MountBackend {
       : pidSegment;
     const proc = this.kernel.procs.get(pid);
     if (!proc) return null;
-    if (this.identity.uid !== 0 && proc.uid !== this.identity.uid) return null;
+    if (!this.canViewProcess(proc)) return null;
     return proc;
+  }
+
+  private canViewProcess(proc: { uid: number; ownerUid?: number | null }): boolean {
+    return this.identity.uid === 0 || (proc.ownerUid ?? proc.uid) === this.identity.uid;
   }
 
   private async processRequest<S extends ProcessViewCall>(
@@ -823,8 +827,8 @@ export class KernelMountBackend implements MountBackend {
 
     if (path.startsWith("/proc/") && !path.slice("/proc/".length).includes("/")) {
       const pid = path.slice("/proc/".length);
-      if (pid === "self") return true;
-      return this.kernel.procs.get(pid) !== null;
+      if (pid === "version" || pid === "uptime") return false;
+      return this.resolveVisibleProcess(pid) !== null;
     }
 
     if (path.startsWith("/proc/")) {
