@@ -20,6 +20,7 @@ import {
   requestProcessView,
 } from "../../fs";
 import type { KernelContext } from "../../kernel/context";
+import { resolveCallerOwnerUid } from "../../kernel/context";
 import { createCronFileService } from "../../kernel/crontab";
 import { visiblePackageScopesForActor } from "../../kernel/packages";
 import type { ShellExecArgs, ShellExecResult } from "../../syscalls/shell";
@@ -148,7 +149,11 @@ function createBash(
     },
     ctx.processId ?? undefined,
     sourceBackend,
-    createHomeKnowledgeBackend(ctx.env.STORAGE, ctx.env.RIPGIT, identity),
+    createHomeKnowledgeBackend(ctx.env.STORAGE, ctx.env.RIPGIT, identity, {
+      auth: ctx.auth,
+      ownerUid: resolveCallerOwnerUid(ctx),
+      isRoot: identity.uid === 0,
+    }),
     createPackageBackend(identity, ctx.packages),
   );
 

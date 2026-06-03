@@ -4,6 +4,12 @@ import type {
   RmOptions,
 } from "just-bash";
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
+import type { AuthStore } from "../../kernel/auth-store";
+import { accountIdentity } from "../../kernel/accounts";
+import {
+  canOwnerAccessHomeKnowledge,
+  homeUsernameFromPath,
+} from "../../kernel/account-access";
 import type { ExtendedMountStat, FsSearchBackendResult, MountBackend } from "../mount";
 import { R2MountBackend } from "./r2";
 import {
@@ -30,19 +36,42 @@ type HomePathKind =
   | "knowledge-path"
   | "other";
 
+export type HomeKnowledgeBackendOptions = {
+  auth?: AuthStore;
+  /** Owning human uid for delegated agent-home routing. Defaults to viewer uid. */
+  ownerUid?: number;
+  isRoot?: boolean;
+};
+
 export function createHomeKnowledgeBackend(
   bucket: R2Bucket,
   ripgitBinding: Fetcher | undefined,
   identity: ProcessIdentity,
+  options?: HomeKnowledgeBackendOptions,
 ): MountBackend | null {
   if (!ripgitBinding) {
     return null;
   }
 
-  return new HomeKnowledgeMountBackend(
-    new RipgitClient(ripgitBinding),
+  const client = new RipgitClient(ripgitBinding);
+  const primary = new HomeKnowledgeMountBackend(
+    client,
     new R2MountBackend(bucket, identity),
     identity,
+  );
+
+  if (!options?.auth) {
+    return primary;
+  }
+
+  return new DelegatingHomeKnowledgeMountBackend(
+    primary,
+    client,
+    bucket,
+    identity,
+    options.auth,
+    options.ownerUid ?? identity.uid,
+    options.isRoot ?? identity.uid === 0,
   );
 }
 
@@ -582,6 +611,134 @@ class HomeKnowledgeMountBackend implements MountBackend {
       uid: this.identity.uid,
       gid: this.identity.gid,
     };
+  }
+}
+
+/**
+ * Routes `/home/<agent>/context.d` (and sibling overlay dirs) through a
+ * ripgit-backed mount keyed on the *target* account when the viewer is authorized
+ * to manage that agent — not only the viewer's own home.
+ */
+class DelegatingHomeKnowledgeMountBackend implements MountBackend {
+  private readonly delegates = new Map<string, HomeKnowledgeMountBackend>();
+
+  constructor(
+    private readonly primary: HomeKnowledgeMountBackend,
+    private readonly client: RipgitClient,
+    private readonly bucket: R2Bucket,
+    private readonly viewerIdentity: ProcessIdentity,
+    private readonly auth: AuthStore,
+    private readonly ownerUid: number,
+    private readonly isRoot: boolean,
+  ) {}
+
+  handles(path: string): boolean {
+    return this.resolve(path) != null;
+  }
+
+  readFile(path: string): Promise<string> {
+    return this.require(path).readFile(path);
+  }
+
+  readFileBuffer(path: string): Promise<Uint8Array> {
+    return this.require(path).readFileBuffer(path);
+  }
+
+  writeFile(path: string, content: FileContent): Promise<void> {
+    return this.require(path).writeFile(path, content);
+  }
+
+  appendFile(path: string, content: FileContent): Promise<void> {
+    return this.require(path).appendFile(path, content);
+  }
+
+  exists(path: string): Promise<boolean> {
+    return this.require(path).exists(path);
+  }
+
+  stat(path: string): Promise<ExtendedMountStat> {
+    return this.require(path).stat(path);
+  }
+
+  lstat(path: string): Promise<ExtendedMountStat> {
+    const backend = this.require(path);
+    return backend.lstat ? backend.lstat(path) : backend.stat(path);
+  }
+
+  mkdir(path: string, options?: MkdirOptions): Promise<void> {
+    return this.require(path).mkdir(path, options);
+  }
+
+  readdir(path: string): Promise<string[]> {
+    return this.require(path).readdir(path);
+  }
+
+  rm(path: string, options?: RmOptions): Promise<void> {
+    return this.require(path).rm(path, options);
+  }
+
+  symlink(target: string, linkPath: string): Promise<void> {
+    const backend = this.require(linkPath);
+    if (!backend.symlink) {
+      throw new Error(`ENOSYS: symlink is unavailable for '${linkPath}'`);
+    }
+    return backend.symlink(target, linkPath);
+  }
+
+  readlink(path: string): Promise<string> {
+    const backend = this.require(path);
+    if (!backend.readlink) {
+      throw new Error(`ENOSYS: readlink is unavailable for '${path}'`);
+    }
+    return backend.readlink(path);
+  }
+
+  search(path: string, query: string, include?: string): Promise<FsSearchBackendResult> {
+    return this.require(path).search(path, query, include);
+  }
+
+  private require(path: string): HomeKnowledgeMountBackend {
+    const backend = this.resolve(path);
+    if (!backend) {
+      throw new Error(`ENOENT: no such file or directory, open '${normalizePath(path)}'`);
+    }
+    return backend;
+  }
+
+  private resolve(path: string): HomeKnowledgeMountBackend | null {
+    if (this.primary.handles(path)) {
+      return this.primary;
+    }
+
+    const username = homeUsernameFromPath(path);
+    if (!username || username === this.viewerIdentity.username) {
+      return null;
+    }
+
+    if (!canOwnerAccessHomeKnowledge(
+      this.auth,
+      this.ownerUid,
+      this.viewerIdentity.username,
+      username,
+      this.isRoot,
+    )) {
+      return null;
+    }
+
+    let delegate = this.delegates.get(username);
+    if (!delegate) {
+      const entry = this.auth.getPasswdByUsername(username);
+      if (!entry) return null;
+      const targetIdentity = accountIdentity(this.auth, entry);
+      delegate = new HomeKnowledgeMountBackend(
+        this.client,
+        new R2MountBackend(this.bucket, targetIdentity),
+        targetIdentity,
+      );
+      this.delegates.set(username, delegate);
+    }
+
+    return delegate.handles(path) ? delegate : null;
   }
 }
 

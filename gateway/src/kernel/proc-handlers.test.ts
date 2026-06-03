@@ -492,6 +492,7 @@ describe("resolveRunAsIdentity", () => {
       getPersonalAgentUid: vi.fn((ownerUid: number) => (ownerUid === 1000 ? 2000 : null)),
       // No one is listed in alice's primary group members here.
       getGroupByGid: vi.fn((gid: number) => ({ name: `g${gid}`, gid, members: [] as string[] })),
+      getGroupByName: vi.fn(() => null),
       resolveGids: vi.fn((_username: string, gid: number) => [gid]),
     };
   }
@@ -517,6 +518,32 @@ describe("resolveRunAsIdentity", () => {
     const agent = resolveRunAsIdentity(ctxFor(1000), "alice-agent", 1000);
     expect(agent.ok).toBe(true);
     if (agent.ok) expect(agent.identity.uid).toBe(2000);
+  });
+
+  it("allows runAs by package agent username when the owner is in the access group", () => {
+    const wikiBuilder = { username: "wiki-builder", uid: 3000, gid: 3000, home: "/home/wiki-builder" };
+    const auth = {
+      getPasswdByUid: vi.fn((uid: number) => (uid === 3000 ? wikiBuilder : passwd[uid] ?? null)),
+      getPasswdByUsername: vi.fn((name: string) => (name === "wiki-builder" ? wikiBuilder : byName[name] ?? null)),
+      getPersonalAgentUid: vi.fn((ownerUid: number) => (ownerUid === 1000 ? 2000 : null)),
+      getGroupByGid: vi.fn((gid: number) => {
+        if (gid === 3000) return { name: "wiki-builder", gid: 3000, members: [] };
+        return { name: `g${gid}`, gid, members: [] as string[] };
+      }),
+      getGroupByName: vi.fn((name: string) => {
+        if (name === "wiki-builder-run") return { name, gid: 3001, members: ["alice"] };
+        return null;
+      }),
+      resolveGids: vi.fn((_username: string, gid: number) => [gid]),
+    };
+    const ctx = {
+      identity: { role: "user", process: { ...IDENTITY, uid: 1000 }, capabilities: ["proc.spawn"] },
+      auth,
+    } as unknown as KernelContext;
+
+    const res = resolveRunAsIdentity(ctx, "wiki-builder", 1000);
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.identity.uid).toBe(3000);
   });
 });
 

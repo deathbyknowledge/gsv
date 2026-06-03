@@ -39,6 +39,7 @@ import {
 } from "./packages";
 import { ensureDefaultConversationExecutor, ensurePersonalAgent } from "./agents";
 import { accountIdentity } from "./accounts";
+import { canOwnerDelegateRunAs } from "./account-access";
 import { resolvePackageAgentRunAs } from "./package-agents";
 
 const DEFAULT_IPC_CALL_TIMEOUT_MS = 60_000;
@@ -272,12 +273,9 @@ export function resolveRunAsIdentity(
   // agent's least-privilege isolation. The owner's delegated run-as rights
   // (personal agent, group-member agents) are still honored below.
   const isSelf = entry.uid === ctx.identity!.process.uid;
-  const isPersonalAgent = auth.getPersonalAgentUid(ownerUid) === entry.uid;
-  const ownerName = auth.getPasswdByUid(ownerUid)?.username;
-  const group = auth.getGroupByGid(entry.gid);
-  const isGroupMember = !!ownerName && !!group && group.members.includes(ownerName);
+  const canDelegate = canOwnerDelegateRunAs(auth, ownerUid, entry);
 
-  if (!isRoot && !isSelf && !isPersonalAgent && !isGroupMember) {
+  if (!isRoot && !isSelf && !canDelegate) {
     return { ok: false, error: `Permission denied: cannot run as ${entry.username}` };
   }
 

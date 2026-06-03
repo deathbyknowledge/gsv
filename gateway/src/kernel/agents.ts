@@ -38,7 +38,7 @@ import {
   isUsernameAvailable,
   normalizeAccountName,
 } from "./accounts";
-import { packageAgentAccessGroup } from "./package-agents";
+import { canOwnerRunAsAccount } from "./account-access";
 
 /**
  * Curated, tasteful default names for the personal agent. The first available
@@ -199,7 +199,6 @@ export function handleAccountList(
     ? args.uid
     : resolveCallerOwnerUid(ctx);
 
-  const ownerName = auth.getPasswdByUid(ownerUid)?.username ?? null;
   const personalAgentUid = auth.getPersonalAgentUid(ownerUid);
 
   const accounts: AccountSummary[] = [];
@@ -207,20 +206,12 @@ export function handleAccountList(
     // System accounts (root, services) are not run-as targets.
     if (entry.uid !== 0 && entry.uid < 1000) continue;
 
-    const isSelf = entry.uid === ownerUid;
-    const isPersonalAgent = personalAgentUid === entry.uid;
-    const group = auth.getGroupByGid(entry.gid);
-    const isGroupMember = !!ownerName && !!group && group.members.includes(ownerName);
-    // Package agents authorize run-as via a separate access group (the human is
-    // never in the agent's cap-bearing primary group), so honor that membership
-    // too — otherwise enabled package agents are missing from the picker.
-    const accessGroup = auth.getGroupByName(packageAgentAccessGroup(entry.username));
-    const isAccessMember = !!ownerName && !!accessGroup && accessGroup.members.includes(ownerName);
-    const runnable = isRoot || isSelf || isPersonalAgent || isGroupMember || isAccessMember;
-    if (!runnable) continue;
+    if (!canOwnerRunAsAccount(auth, ownerUid, entry, isRoot)) continue;
 
     const shadow = auth.getShadowByUsername(entry.username);
     const isAgent = shadow ? isLocked(shadow) : false;
+    const isSelf = entry.uid === ownerUid;
+    const isPersonalAgent = personalAgentUid === entry.uid;
     let relation: AccountRelation;
     if (isSelf) relation = "self";
     else if (isPersonalAgent) relation = "personal-agent";
@@ -232,7 +223,7 @@ export function handleAccountList(
       username: entry.username,
       displayName: entry.gecos?.trim() || entry.username,
       relation,
-      runnable,
+      runnable: true,
       ...(entry.gecos ? { gecos: entry.gecos } : {}),
     });
   }
