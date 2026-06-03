@@ -41,6 +41,7 @@ import { ensureDefaultConversationExecutor, ensurePersonalAgent } from "./agents
 import { accountIdentity } from "./accounts";
 import { canOwnerDelegateRunAs } from "./account-access";
 import { resolvePackageAgentRunAs } from "./package-agents";
+import { DEFAULT_CONVERSATION_ID } from "../process/conversations";
 
 const DEFAULT_IPC_CALL_TIMEOUT_MS = 60_000;
 const MIN_IPC_CALL_TIMEOUT_MS = 1_000;
@@ -504,21 +505,26 @@ export async function forwardToProcess(
   if (response && response.type === "res") {
     const res = response as ResponseFrame;
     if (res.ok) {
-      if (frame.call === "proc.kill") {
+      const conversation = ctx.conversations?.getByActivePid(pid);
+      if (frame.call === "proc.reset") {
+        clearLatestArchiveForConversation(ctx, conversation);
+      } else if (frame.call === "proc.conversation.reset") {
+        const data = (res as { data?: { conversationId?: string } }).data;
+        if (data?.conversationId === DEFAULT_CONVERSATION_ID) {
+          clearLatestArchiveForConversation(ctx, conversation);
+        }
+      } else if (frame.call === "proc.kill") {
         ctx.procs.kill(pid);
         // The executor is gone. Record where its conversation's transcript was
         // archived (so a future executor hydrates from it), then detach so the
         // next delivery allocates a fresh executor.
-        const conversation = ctx.conversations?.getByActivePid(pid);
         if (conversation) {
           const archived = (res as { data?: { archives?: Array<{ path?: string }> } }).data;
           const base = conversation.archiveBase.replace(/^\/+/, "");
           const primaryArchive = archived?.archives?.find((a) =>
             typeof a.path === "string" && a.path.replace(/^\/+/, "").startsWith(base),
           );
-          if (primaryArchive?.path) {
-            ctx.conversations?.setLatestArchive(conversation.conversationId, primaryArchive.path);
-          }
+          ctx.conversations?.setLatestArchive(conversation.conversationId, primaryArchive?.path ?? null);
         }
         ctx.conversations?.clearActivePid(pid);
       }
@@ -529,6 +535,15 @@ export async function forwardToProcess(
   }
 
   return { ok: true, status: "delivered" };
+}
+
+function clearLatestArchiveForConversation(
+  ctx: KernelContext,
+  conversation: { conversationId: string } | null | undefined,
+): void {
+  if (conversation) {
+    ctx.conversations?.setLatestArchive(conversation.conversationId, null);
+  }
 }
 
 type NormalizedIpcSendArgs =

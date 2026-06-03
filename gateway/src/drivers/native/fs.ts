@@ -88,12 +88,14 @@ export type FsCopyDeviceTransport = {
 
 function makeFs(ctx: KernelContext): GsvFs {
   const identity = ctx.identity!.process;
+  const ownerUid = resolveCallerOwnerUid(ctx);
+  const packageScopeOwner = { uid: ownerUid };
   const sourceBackend = createProcessSourceBackend({
     identity,
     storage: ctx.env.STORAGE,
     ripgit: ctx.env.RIPGIT ? new RipgitClient(ctx.env.RIPGIT) : null,
     packages: ctx.packages.list({
-      scopes: visiblePackageScopesForActor(identity),
+      scopes: visiblePackageScopesForActor(packageScopeOwner),
     }),
     mounts: ctx.processId ? ctx.procs.getMounts(ctx.processId) : null,
     processId: ctx.processId ?? null,
@@ -118,10 +120,10 @@ function makeFs(ctx: KernelContext): GsvFs {
     sourceBackend,
     createHomeKnowledgeBackend(ctx.env.STORAGE, ctx.env.RIPGIT, identity, {
       auth: ctx.auth,
-      ownerUid: resolveCallerOwnerUid(ctx),
+      ownerUid,
       isRoot: identity.uid === 0,
     }),
-    createPackageBackend(identity, ctx.packages),
+    createPackageBackend(identity, ctx.packages, packageScopeOwner),
   );
 }
 

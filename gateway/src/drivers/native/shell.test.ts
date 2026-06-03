@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { env } from "cloudflare:test";
 import { handleShellExec } from "./shell";
-import { handleFsCopy, handleFsTransferReceive, handleFsTransferSend } from "./fs";
+import { handleFsCopy, handleFsRead, handleFsTransferReceive, handleFsTransferSend } from "./fs";
 import { parseBinaryFrame } from "@gsv/protocol/binary-frame";
 import type { KernelContext } from "../../kernel/context";
 import type { DeviceRecord } from "../../kernel/devices";
@@ -87,8 +87,10 @@ function makeContext(options?: {
   schedules?: KernelContext["schedules"];
   getAppRunner?: KernelContext["getAppRunner"];
   scheduleScheduleWake?: KernelContext["scheduleScheduleWake"];
+  identity?: ProcessIdentity;
 }): KernelContext {
   const records = [...(options?.packages ?? [options?.pkg ?? makePackage()])];
+  const identity = options?.identity ?? IDENTITY;
   const configValues = new Map<string, string>(Object.entries(options?.config ?? {}));
   const findRecord = (packageId: string, scope?: InstalledPackageRecord["scope"]) => {
     const index = records.findIndex((record) =>
@@ -126,7 +128,7 @@ function makeContext(options?: {
       get() {
         return {
           profile: "task",
-          uid: IDENTITY.uid,
+          uid: identity.uid,
         };
       },
       ...(options?.procs ?? {}),
@@ -172,7 +174,7 @@ function makeContext(options?: {
     connection: null as never,
     identity: {
       role: "user",
-      process: IDENTITY,
+      process: identity,
       capabilities: options?.capabilities ?? ["pkg.list", "repo.refs", "repo.log"],
     },
     processId: "task:pkg",
@@ -202,6 +204,67 @@ describe("native shell execution", () => {
     expect(result.exitCode).toBe(7);
     expect(result.stderr).toContain("real failure");
     expect(result.error).toContain("real failure");
+  });
+
+  it("uses the owning human's package scopes for agent-backed fs mounts", async () => {
+    const humanPackage = makePackage({
+      packageId: "user:1000:human-tools",
+      scope: { kind: "user", uid: 1000 },
+      enabled: true,
+      manifest: {
+        ...makePackage().manifest,
+        name: "human-tools",
+        entrypoints: [{ name: "Human Tool", kind: "command", command: "human-tool" }],
+      },
+    });
+    const agentPackage = makePackage({
+      packageId: "user:2000:agent-tools",
+      scope: { kind: "user", uid: 2000 },
+      enabled: true,
+      manifest: {
+        ...makePackage().manifest,
+        name: "agent-tools",
+        entrypoints: [{ name: "Agent Tool", kind: "command", command: "agent-tool" }],
+      },
+    });
+    const ctx = makeContext({
+      capabilities: ["fs.read"],
+      packages: [humanPackage, agentPackage],
+      identity: {
+        uid: 2000,
+        gid: 2000,
+        gids: [2000],
+        username: "sam-agent",
+        home: "/home/sam-agent",
+        cwd: "/home/sam-agent",
+      },
+      procs: {
+        getOwnerUid: vi.fn(() => 1000),
+        getMounts: vi.fn(() => [{
+          kind: "ripgit-source",
+          packageId: humanPackage.packageId,
+          mountPath: "/src/packages/human-tools",
+          repo: "root/pkg-test",
+          ref: "main",
+          subdir: ".",
+          resolvedCommit: "abc123",
+        }]),
+      } as unknown as KernelContext["procs"],
+    });
+
+    const sourceList = await handleFsRead({ path: "/src/packages" }, ctx);
+    expect(sourceList.ok).toBe(true);
+    if (sourceList.ok) {
+      expect(sourceList.directories).toContain("human-tools");
+      expect(sourceList.directories).not.toContain("agent-tools");
+    }
+
+    const binList = await handleFsRead({ path: "/usr/local/bin" }, ctx);
+    expect(binList.ok).toBe(true);
+    if (binList.ok) {
+      expect(binList.files).toContain("human-tool");
+      expect(binList.files).not.toContain("agent-tool");
+    }
   });
 });
 

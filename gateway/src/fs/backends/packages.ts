@@ -13,6 +13,7 @@ import type { ExtendedMountStat, MountBackend } from "../mount";
 import { normalizePath } from "../utils";
 
 const TEXT_ENCODER = new TextEncoder();
+type PackageScopeOwner = { uid: number } | null | undefined;
 
 type PackageCommandEntry = {
   command: string;
@@ -24,12 +25,13 @@ type PackageCommandEntry = {
 export function createPackageBackend(
   identity: ProcessIdentity,
   packages: PackageStore | undefined,
+  scopeOwner: PackageScopeOwner = identity,
 ): MountBackend | null {
   if (!packages) {
     return null;
   }
 
-  return new PackageMountBackend(identity, packages);
+  return new PackageMountBackend(identity, packages, scopeOwner);
 }
 
 export function isPackageMountPath(path: string): boolean {
@@ -45,6 +47,7 @@ class PackageMountBackend implements MountBackend {
   constructor(
     private readonly identity: ProcessIdentity,
     private readonly packages: PackageStore,
+    private readonly scopeOwner: PackageScopeOwner,
   ) {}
 
   handles(path: string): boolean {
@@ -165,7 +168,7 @@ class PackageMountBackend implements MountBackend {
 
     for (const record of this.packages.list({
       enabled: true,
-      scopes: visiblePackageScopesForActor(this.identity),
+      scopes: visiblePackageScopesForActor(this.scopeOwner),
     })) {
       for (const entrypoint of record.manifest.entrypoints) {
         if (!isCommandEntrypoint(entrypoint)) {

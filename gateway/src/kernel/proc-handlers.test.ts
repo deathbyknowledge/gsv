@@ -133,6 +133,119 @@ describe("proc handlers", () => {
     );
   });
 
+  it("clears a default conversation archive pointer after proc.reset", async () => {
+    sendFrameToProcessMock.mockResolvedValue({
+      type: "res",
+      id: "reset-1",
+      ok: true,
+      data: {
+        ok: true,
+        pid: "proc-1",
+        archivedMessages: 1,
+        archivedTo: "/home/sam-agent/conversations/",
+        archives: [{
+          conversationId: "default",
+          generation: 1,
+          messages: 1,
+          path: "/home/sam-agent/conversations/default%3A1000%3A2000/reset.default.gen-1.jsonl.gz",
+        }],
+      },
+    } satisfies ResponseFrame);
+    const setLatestArchive = vi.fn();
+    const ctx = makeForwardContext({ setLatestArchive });
+
+    await forwardToProcess({
+      type: "req",
+      id: "reset-1",
+      call: "proc.reset",
+      args: { pid: "proc-1" },
+    } as RequestFrame, ctx);
+
+    expect(setLatestArchive).toHaveBeenCalledWith("default:1000:2000", null);
+  });
+
+  it("clears a default conversation archive pointer after resetting the primary thread", async () => {
+    sendFrameToProcessMock.mockResolvedValue({
+      type: "res",
+      id: "conversation-reset-1",
+      ok: true,
+      data: {
+        ok: true,
+        pid: "proc-1",
+        conversationId: "default",
+        generation: 2,
+        archivedMessages: 1,
+      },
+    } satisfies ResponseFrame);
+    const setLatestArchive = vi.fn();
+    const ctx = makeForwardContext({ setLatestArchive });
+
+    await forwardToProcess({
+      type: "req",
+      id: "conversation-reset-1",
+      call: "proc.conversation.reset",
+      args: { pid: "proc-1" },
+    } as RequestFrame, ctx);
+
+    expect(setLatestArchive).toHaveBeenCalledWith("default:1000:2000", null);
+  });
+
+  it("updates or clears a default conversation archive pointer on proc.kill", async () => {
+    const setLatestArchive = vi.fn();
+    const clearActivePid = vi.fn();
+    const ctx = makeForwardContext({ setLatestArchive, clearActivePid });
+    sendFrameToProcessMock.mockResolvedValueOnce({
+      type: "res",
+      id: "kill-archive",
+      ok: true,
+      data: {
+        ok: true,
+        pid: "proc-1",
+        archivedMessages: 1,
+        archives: [{
+          conversationId: "default",
+          generation: 1,
+          messages: 1,
+          path: "/home/sam-agent/conversations/default%3A1000%3A2000/kill.default.gen-1.jsonl.gz",
+        }],
+      },
+    } satisfies ResponseFrame);
+
+    await forwardToProcess({
+      type: "req",
+      id: "kill-archive",
+      call: "proc.kill",
+      args: { pid: "proc-1" },
+    } as RequestFrame, ctx);
+
+    expect(setLatestArchive).toHaveBeenLastCalledWith(
+      "default:1000:2000",
+      "/home/sam-agent/conversations/default%3A1000%3A2000/kill.default.gen-1.jsonl.gz",
+    );
+    expect(clearActivePid).toHaveBeenCalledWith("proc-1");
+
+    sendFrameToProcessMock.mockResolvedValueOnce({
+      type: "res",
+      id: "kill-empty",
+      ok: true,
+      data: {
+        ok: true,
+        pid: "proc-1",
+        archivedMessages: 0,
+        archives: [],
+      },
+    } satisfies ResponseFrame);
+
+    await forwardToProcess({
+      type: "req",
+      id: "kill-empty",
+      call: "proc.kill",
+      args: { pid: "proc-1" },
+    } as RequestFrame, ctx);
+
+    expect(setLatestArchive).toHaveBeenLastCalledWith("default:1000:2000", null);
+  });
+
   it("cleans up pending IPC call when delivery reports failure", async () => {
     sendFrameToProcessMock.mockResolvedValue({
       type: "res",
@@ -526,6 +639,39 @@ function makeIpcCallContext() {
   } as unknown as KernelContext;
 
   return { ctx, ipcCalls };
+}
+
+function makeForwardContext(overrides?: {
+  setLatestArchive?: (conversationId: string, archivePath: string | null) => boolean;
+  clearActivePid?: (pid: string) => void;
+}): KernelContext {
+  return {
+    identity: {
+      role: "user",
+      process: IDENTITY,
+      capabilities: ["proc.reset", "proc.kill"],
+    },
+    procs: {
+      get: vi.fn(() => ({ uid: IDENTITY.uid, ownerUid: IDENTITY.uid })),
+      kill: vi.fn(),
+    },
+    conversations: {
+      getByActivePid: vi.fn(() => ({
+        conversationId: "default:1000:2000",
+        ownerUid: 1000,
+        agentUid: 2000,
+        title: null,
+        isDefault: true,
+        activePid: "proc-1",
+        archiveBase: "/home/sam-agent/conversations/default%3A1000%3A2000",
+        latestArchive: "/home/sam-agent/conversations/default%3A1000%3A2000/old.default.gen-1.jsonl.gz",
+        createdAt: 1,
+        lastActiveAt: 2,
+      })),
+      setLatestArchive: overrides?.setLatestArchive ?? vi.fn(),
+      clearActivePid: overrides?.clearActivePid ?? vi.fn(),
+    },
+  } as unknown as KernelContext;
 }
 
 describe("resolveCallerOwnerUid", () => {
