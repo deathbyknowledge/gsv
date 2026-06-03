@@ -2666,7 +2666,7 @@ export class Kernel extends Host<Env> {
   }
 
   private buildScheduleContext(record: ScheduleRecord): KernelContext {
-    const process = this.resolveScheduleIdentity(record.ownerUid);
+    const process = this.resolveScheduleIdentity(record);
     const identity: ConnectionIdentity = {
       role: "user",
       process,
@@ -2712,12 +2712,9 @@ export class Kernel extends Host<Env> {
     };
   }
 
-  private resolveScheduleIdentity(uid: number): ProcessIdentity {
-    // Schedules for a human run as that human's personal agent (the same
-    // run-as identity as their default conversation); fall back to the account
-    // itself for system/agent accounts without a personal agent.
-    const agentUid = this.auth.getPersonalAgentUid(uid) ?? uid;
-    const account = this.auth.getPasswdByUid(agentUid) ?? this.auth.getPasswdByUid(uid);
+  private resolveScheduleIdentity(record: ScheduleRecord): ProcessIdentity {
+    const uid = record.runAs.uid;
+    const account = this.auth.getPasswdByUid(uid);
     if (account) {
       return {
         uid: account.uid,
@@ -2729,9 +2726,22 @@ export class Kernel extends Host<Env> {
       };
     }
 
-    // Fallback: derive from a live process owned by the uid (e.g. when passwd
-    // is not directly resolvable in a minimal context).
-    const owned = this.procs.list(uid)[0];
+    // Fallback: derive from the recorded process when passwd is not directly
+    // resolvable in a minimal test context.
+    const process = record.runAs.kind === "process" && record.runAs.pid
+      ? this.procs.get(record.runAs.pid)
+      : null;
+    if (process && process.uid === uid) {
+      return {
+        uid: process.uid,
+        gid: process.gid,
+        gids: process.gids,
+        username: process.username,
+        home: process.home,
+        cwd: process.cwd,
+      };
+    }
+    const owned = this.procs.list(record.ownerUid).find((candidate) => candidate.uid === uid);
     if (owned) {
       return {
         uid: owned.uid,
@@ -2742,7 +2752,7 @@ export class Kernel extends Host<Env> {
         cwd: owned.cwd,
       };
     }
-    throw new Error(`Cannot resolve schedule owner uid ${uid}`);
+    throw new Error(`Cannot resolve schedule run-as uid ${uid}`);
   }
 
   private deliverToOrigin(origin: RouteOrigin, frame: ResponseFrame): void {

@@ -38,6 +38,15 @@ const PERSONAL_AGENT_IDENTITY: ProcessIdentity = {
   cwd: "/home/sam-agent",
 };
 
+const CUSTOM_AGENT_IDENTITY: ProcessIdentity = {
+  uid: 3000,
+  gid: 3000,
+  gids: [3000],
+  username: "wiki-builder",
+  home: "/home/wiki-builder",
+  cwd: "/home/wiki-builder",
+};
+
 function makeReq(call: string, args: unknown): RequestFrame {
   return { type: "req", id: crypto.randomUUID(), call, args } as RequestFrame;
 }
@@ -665,6 +674,101 @@ describe("scheduler", () => {
       command: "printf 'scheduled command\\n'",
       exitCode: 0,
       stdout: "scheduled command\n",
+    });
+  });
+
+  it("runs command schedules as the stored run-as account", async () => {
+    const kernel = await getAgentByName<Env, Kernel>(
+      env.KERNEL,
+      `scheduler-runas-test-${crypto.randomUUID()}`,
+    );
+    const runAs: SchedulePrincipal = {
+      kind: "process",
+      uid: CUSTOM_AGENT_IDENTITY.uid,
+      username: CUSTOM_AGENT_IDENTITY.username,
+      pid: "proc:wiki-builder",
+    };
+    const scheduleId = await runInDurableObject(kernel, (instance: Kernel) => {
+      const k = instance as unknown as {
+        auth: {
+          addUser: (entry: {
+            username: string;
+            uid: number;
+            gid: number;
+            gecos: string;
+            home: string;
+            shell: string;
+          }) => void;
+          addGroup: (entry: { name: string; gid: number; members: string[] }) => void;
+          setPersonalAgent: (ownerUid: number, agentUid: number) => void;
+        };
+        caps: {
+          seed: () => void;
+          grant: (gid: number, capability: string) => { ok: boolean; error?: string };
+        };
+        schedules: ScheduleStore;
+        ctx: DurableObjectState;
+      };
+      k.caps.seed();
+      k.auth.addUser({
+        username: PERSONAL_AGENT_IDENTITY.username,
+        uid: PERSONAL_AGENT_IDENTITY.uid,
+        gid: PERSONAL_AGENT_IDENTITY.gid,
+        gecos: "Sam Agent",
+        home: PERSONAL_AGENT_IDENTITY.home,
+        shell: "/bin/init",
+      });
+      k.auth.addGroup({ name: PERSONAL_AGENT_IDENTITY.username, gid: PERSONAL_AGENT_IDENTITY.gid, members: [] });
+      k.auth.setPersonalAgent(USER_IDENTITY.uid, PERSONAL_AGENT_IDENTITY.uid);
+      k.auth.addUser({
+        username: CUSTOM_AGENT_IDENTITY.username,
+        uid: CUSTOM_AGENT_IDENTITY.uid,
+        gid: CUSTOM_AGENT_IDENTITY.gid,
+        gecos: "Wiki Builder",
+        home: CUSTOM_AGENT_IDENTITY.home,
+        shell: "/bin/init",
+      });
+      k.auth.addGroup({ name: CUSTOM_AGENT_IDENTITY.username, gid: CUSTOM_AGENT_IDENTITY.gid, members: [] });
+      k.caps.grant(CUSTOM_AGENT_IDENTITY.gid, "shell.exec");
+
+      const now = Date.now();
+      const schedule = k.schedules.create({
+        ownerUid: USER_IDENTITY.uid,
+        creator: runAs,
+        runAs,
+        name: "agent command",
+        enabled: true,
+        expression: { kind: "every", everyMs: 60_000, anchorMs: now - 120_000 },
+        target: {
+          kind: "command.exec",
+          command: "whoami",
+        },
+        now,
+      });
+      k.ctx.storage.sql.exec(
+        "UPDATE schedules SET next_run_at = ? WHERE schedule_id = ?",
+        now - 1_000,
+        schedule.id,
+      );
+      return schedule.id;
+    });
+
+    await runInDurableObject(kernel, (instance: Kernel) => instance.onScheduleDue(scheduleId));
+
+    const state = await runInDurableObject(kernel, (instance: Kernel) => {
+      const k = instance as unknown as { schedules: ScheduleStore };
+      return {
+        schedule: k.schedules.get(scheduleId),
+        result: k.schedules.history(scheduleId)[0]?.result,
+      };
+    });
+
+    expect(state.schedule?.state.lastStatus).toBe("ok");
+    expect(state.result).toMatchObject({
+      kind: "command.exec",
+      command: "whoami",
+      exitCode: 0,
+      stdout: "wiki-builder\n",
     });
   });
 

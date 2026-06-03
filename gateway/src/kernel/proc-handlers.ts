@@ -138,12 +138,24 @@ export async function handleProcSpawn(
   const callerOwnerUid = resolveCallerOwnerUid(ctx);
   const parentPid = args.parentPid ?? ctx.processId;
   const parent = parentPid ? ctx.procs.get(parentPid) : null;
+  const parentIsCurrentCaller = !!parentPid && parentPid === ctx.processId;
+  const parentRunsAsCaller = !!parent && parent.uid === identity.process.uid;
 
   if (parentPid) {
     if (!parent || parent.ownerUid !== callerOwnerUid) {
       if (identity.process.uid !== 0) {
         return { ok: false, error: `Cannot spawn under foreign process: ${parentPid}` };
       }
+    }
+    if (
+      parent &&
+      args.parentPid &&
+      !parentIsCurrentCaller &&
+      !parentRunsAsCaller &&
+      !explicitRunAs &&
+      identity.process.uid !== 0
+    ) {
+      return { ok: false, error: `Cannot inherit run-as identity from unrelated parent process: ${parentPid}` };
     }
   }
 
@@ -152,7 +164,13 @@ export async function handleProcSpawn(
   // of an agent also run as that agent), or — for a parentless spawn — the
   // caller's personal agent (processes run as an agent, not the human).
   const ownerUid = parent ? parent.ownerUid : callerOwnerUid;
-  let baseIdentity: ProcessIdentity = parent
+  const inheritParentIdentity = parent && (
+    parentIsCurrentCaller ||
+    parentRunsAsCaller ||
+    !args.parentPid ||
+    identity.process.uid === 0
+  );
+  let baseIdentity: ProcessIdentity = inheritParentIdentity
     ? {
         uid: parent.uid,
         gid: parent.gid,

@@ -543,6 +543,78 @@ describe("proc handlers", () => {
     );
   });
 
+  it("rejects inheriting run-as identity from an explicit unrelated parent", async () => {
+    const packageAgent = {
+      ...IDENTITY,
+      uid: 3000,
+      gid: 3000,
+      gids: [3000],
+      username: "wiki-builder",
+      home: "/home/wiki-builder",
+      cwd: "/home/wiki-builder",
+    };
+    const personalAgent = {
+      ...IDENTITY,
+      uid: 2000,
+      gid: 2000,
+      gids: [2000],
+      username: "sam-agent",
+      home: "/home/sam-agent",
+      cwd: "/home/sam-agent",
+    };
+    const ctx = {
+      processId: "proc:package-agent",
+      callerOwnerUid: IDENTITY.uid,
+      env: {},
+      identity: {
+        process: packageAgent,
+        capabilities: ["proc.spawn"],
+      },
+      procs: {
+        get: vi.fn((pid: string) => {
+          if (pid === "proc:package-agent") {
+            return {
+              processId: pid,
+              uid: packageAgent.uid,
+              ownerUid: IDENTITY.uid,
+              gid: packageAgent.gid,
+              gids: packageAgent.gids,
+              username: packageAgent.username,
+              home: packageAgent.home,
+              cwd: packageAgent.cwd,
+            };
+          }
+          if (pid === "proc:personal-agent") {
+            return {
+              processId: pid,
+              uid: personalAgent.uid,
+              ownerUid: IDENTITY.uid,
+              gid: personalAgent.gid,
+              gids: personalAgent.gids,
+              username: personalAgent.username,
+              home: personalAgent.home,
+              cwd: personalAgent.cwd,
+            };
+          }
+          return null;
+        }),
+        spawn: vi.fn(),
+      },
+    } as unknown as KernelContext;
+
+    const result = await handleProcSpawn({
+      parentPid: "proc:personal-agent",
+      prompt: "Run under the other parent.",
+    }, ctx);
+
+    expect(result).toEqual({
+      ok: false,
+      error: "Cannot inherit run-as identity from unrelated parent process: proc:personal-agent",
+    });
+    expect(ctx.procs.spawn).not.toHaveBeenCalled();
+    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
+  });
+
   it("uses distinct default mount paths for package source and repo mounts", async () => {
     const pkg = makePackage("pkg-a", "Demo Tool", "sam/demo-a", "packages/demo-tool");
     const ctx = {
