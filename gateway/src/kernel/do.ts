@@ -701,15 +701,18 @@ export class Kernel extends Host<Env> {
     const runId = this.extractRunId(frame.payload);
     this.updateProcessRuntimeFromSignal(processId, frame, runId);
 
-    await this.dispatchSignalWatches(identity.uid, processId, frame);
+    // Signal watches are scoped to the process owner, not the run-as account.
+    // App runtimes register watches under the owning human uid, while the
+    // emitting process may run as a personal/package agent.
+    const ownerUid = this.procs.getOwnerUid(processId) ?? identity.uid;
+
+    await this.dispatchSignalWatches(ownerUid, processId, frame);
     await this.completeIpcCallsFromSignal(identity.uid, processId, frame, runId);
 
     if (!frame.signal.startsWith("proc.run.")) return;
 
     // Client-facing run signals route by the owning human (owner_uid), not the
     // run-as identity (which may be the personal agent account).
-    const ownerUid = this.procs.getOwnerUid(processId) ?? identity.uid;
-
     if (!runId) {
       this.broadcastToUid(ownerUid, frame.signal, frame.payload);
       return;
