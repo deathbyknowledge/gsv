@@ -342,7 +342,6 @@ describe("ProcessRegistry", () => {
     registry.init();
 
     registry.spawn("task:4", makeIdentity("/home/sam"), {
-      profile: "review",
       cwd: "/src/packages/pkg-test",
       mounts: [
         {

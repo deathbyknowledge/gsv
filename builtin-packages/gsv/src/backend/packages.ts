@@ -286,6 +286,21 @@ function buildReviewPrompt(pkg: PackageLike, packages: PackageLike[]): string {
   ].join("\n");
 }
 
+function buildReviewAssignmentContext(pkg: PackageLike, packages: PackageLike[]): string {
+  const sourcePath = `/src/packages/${packageSourcePathNameForPackage(pkg, packages)}`;
+  return [
+    "# Package Review",
+    "",
+    `You are reviewing the imported package "${pkg.name}".`,
+    `The package source is mounted at ${sourcePath}, and the process starts there.`,
+    "",
+    "Treat this as a focused code review for whether the package should be enabled.",
+    "Prioritize manifest, entrypoints, declared capabilities, host bridge usage, filesystem writes, shell execution, process spawning, network access, eval, and destructive actions.",
+    "Keep evidence concrete. If a command fails, note it briefly and continue with other review evidence.",
+    "Do not approve the package unless the reviewed source and requested capabilities match the user's intent.",
+  ].join("\n");
+}
+
 async function listPackages(kernel: KernelClientLike): Promise<PackageLike[]> {
   const result = asRecord(await kernel.request("pkg.list", {}));
   return asArray<PackageLike>(result?.packages);
@@ -750,9 +765,14 @@ export async function startPackageReview(
   }
 
   const spawned = asRecord(await kernel.request("proc.spawn", {
-    profile: "review",
     label: `Review ${target.name}`,
     prompt: buildReviewPrompt(target, packages),
+    assignment: {
+      contextFiles: [{
+        name: "20-package-review.md",
+        text: buildReviewAssignmentContext(target, packages),
+      }],
+    },
     mounts: [
       { kind: "package-source", packageId: target.packageId },
     ],
