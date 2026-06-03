@@ -107,7 +107,8 @@ export async function handleProcSpawn(
     !args.parentPid;
 
   if (useDefaultExecutor) {
-    const pidResolved = await ensureDefaultConversationExecutor(ctx, identity.process);
+    const human = resolveCallerOwnerIdentity(ctx, identity.process);
+    const pidResolved = await ensureDefaultConversationExecutor(ctx, human);
     const record = ctx.procs.get(pidResolved);
     if (!record) {
       return { ok: false, error: "Failed to resolve personal-agent executor" };
@@ -504,7 +505,10 @@ export async function forwardToProcess(
   // No explicit target → the caller's default ("inbox") conversation executor
   // (allocating/reusing one), which is the stable surface for their personal
   // agent.
-  const pid = args.pid ?? await ensureDefaultConversationExecutor(ctx, identity.process);
+  const pid = args.pid ?? await ensureDefaultConversationExecutor(
+    ctx,
+    resolveCallerOwnerIdentity(ctx, identity.process),
+  );
 
   const proc = ctx.procs.get(pid);
   if (!proc) {
@@ -564,6 +568,18 @@ function clearLatestArchiveForConversation(
   if (conversation) {
     ctx.conversations?.setLatestArchive(conversation.conversationId, null);
   }
+}
+
+function resolveCallerOwnerIdentity(ctx: KernelContext, fallback: ProcessIdentity): ProcessIdentity {
+  const ownerUid = resolveCallerOwnerUid(ctx);
+  if (ownerUid === fallback.uid) {
+    return fallback;
+  }
+  const entry = ctx.auth.getPasswdByUid(ownerUid);
+  if (!entry) {
+    throw new Error(`Cannot resolve caller owner uid ${ownerUid}`);
+  }
+  return accountIdentity(ctx.auth, entry);
 }
 
 type NormalizedIpcSendArgs =

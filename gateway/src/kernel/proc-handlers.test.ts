@@ -140,6 +140,98 @@ describe("proc handlers", () => {
     );
   });
 
+  it("routes untargeted proc calls through the caller owner's default conversation", async () => {
+    const human: ProcessIdentity = {
+      uid: 1000,
+      gid: 1000,
+      gids: [1000, 100],
+      username: "sam",
+      home: "/home/sam",
+      cwd: "/home/sam",
+    };
+    const agent: ProcessIdentity = {
+      uid: 2000,
+      gid: 2000,
+      gids: [2000, 1000, 100],
+      username: "friday",
+      home: "/home/friday",
+      cwd: "/home/friday",
+    };
+    const ensureDefault = vi.fn(() => ({
+      record: {
+        conversationId: "default:1000:2000",
+        ownerUid: human.uid,
+        agentUid: agent.uid,
+        agentHome: agent.home,
+        title: null,
+        isDefault: true,
+        activePid: "proc-home",
+        archiveBase: "/home/friday/conversations/default%3A1000%3A2000",
+        latestArchive: null,
+        createdAt: 1,
+        lastActiveAt: 2,
+      },
+      created: false,
+    }));
+    sendFrameToProcessMock.mockResolvedValue({
+      type: "res",
+      id: "history-1",
+      ok: true,
+      data: { ok: true, messages: [] },
+    } satisfies ResponseFrame);
+
+    const ctx = {
+      callerOwnerUid: human.uid,
+      identity: {
+        role: "user",
+        process: agent,
+        capabilities: ["proc.history"],
+      },
+      auth: {
+        getPasswdByUid: vi.fn((uid: number) => {
+          if (uid === human.uid) return { ...human, gecos: "sam", shell: "/bin/init" };
+          if (uid === agent.uid) return { ...agent, gecos: "friday", shell: "/bin/init" };
+          return null;
+        }),
+        getPersonalAgentUid: vi.fn((uid: number) => (uid === human.uid ? agent.uid : null)),
+        isPersonalAgentUid: vi.fn((uid: number) => uid === agent.uid),
+        resolveGids: vi.fn((username: string, primaryGid: number) =>
+          username === agent.username ? agent.gids : [primaryGid],
+        ),
+      },
+      env: {
+        STORAGE: {
+          head: vi.fn(async () => null),
+          put: vi.fn(async () => undefined),
+        },
+      },
+      procs: {
+        get: vi.fn((pid: string) =>
+          pid === "proc-home"
+            ? { processId: pid, uid: agent.uid, ownerUid: human.uid }
+            : null
+        ),
+      },
+      conversations: {
+        ensureDefault,
+        getByActivePid: vi.fn(() => null),
+      },
+    } as unknown as KernelContext;
+
+    await forwardToProcess({
+      type: "req",
+      id: "history-1",
+      call: "proc.history",
+      args: {},
+    } as RequestFrame, ctx);
+
+    expect(ensureDefault).toHaveBeenCalledWith(human.uid, agent.uid, agent.home);
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      "proc-home",
+      expect.objectContaining({ call: "proc.history" }),
+    );
+  });
+
   it("clears a default conversation archive pointer after proc.reset", async () => {
     sendFrameToProcessMock.mockResolvedValue({
       type: "res",
