@@ -41,4 +41,9 @@ describe("account-access", () => {
     expect(canOwnerAccessHomeKnowledge(auth as never, 1000, "alice", "wiki-builder", false)).toBe(true);
     expect(canOwnerAccessHomeKnowledge(auth as never, 1000, "alice", "bob", false)).toBe(false);
   });
+
+  it("authorizes an owned agent viewer to access the owner's home overlay", () => {
+    expect(canOwnerAccessHomeKnowledge(auth as never, 1000, "alice-agent", "alice", false)).toBe(true);
+    expect(canOwnerAccessHomeKnowledge(auth as never, 1001, "alice-agent", "alice", false)).toBe(false);
+  });
 });

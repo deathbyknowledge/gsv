@@ -63,7 +63,7 @@ export function canOwnerAccessHomeKnowledge(
   if (isRoot) return true;
   const entry = auth.getPasswdByUsername(targetUsername);
   if (!entry) return false;
-  return canOwnerDelegateRunAs(auth, ownerUid, entry);
+  return canOwnerRunAsAccount(auth, ownerUid, entry, false);
 }
 
 /** Parse `/home/<username>/...` when present. */

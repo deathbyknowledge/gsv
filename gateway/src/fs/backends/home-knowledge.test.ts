@@ -23,6 +23,15 @@ const PACKAGE_AGENT: ProcessIdentity = {
   cwd: "/home/wiki-builder",
 };
 
+const PERSONAL_AGENT: ProcessIdentity = {
+  uid: 2000,
+  gid: 2000,
+  gids: [2000],
+  username: "alice-agent",
+  home: "/home/alice-agent",
+  cwd: "/home/alice-agent",
+};
+
 const fakeRipgit = {
   fetch: async (_input: RequestInfo | URL, _init?: RequestInit) =>
     new Response("not found", { status: 404 }),
@@ -36,6 +45,16 @@ function getPasswdByUid(uid: number) {
       gid: ALICE.gid,
       gecos: ALICE.username,
       home: ALICE.home,
+      shell: "/bin/init",
+    };
+  }
+  if (uid === PERSONAL_AGENT.uid) {
+    return {
+      username: PERSONAL_AGENT.username,
+      uid: PERSONAL_AGENT.uid,
+      gid: PERSONAL_AGENT.gid,
+      gecos: PERSONAL_AGENT.username,
+      home: PERSONAL_AGENT.home,
       shell: "/bin/init",
     };
   }
@@ -56,17 +75,25 @@ const auth = {
   getPasswdByUid,
   getPasswdByUsername(username: string) {
     if (username === ALICE.username) return getPasswdByUid(ALICE.uid);
+    if (username === PERSONAL_AGENT.username) return getPasswdByUid(PERSONAL_AGENT.uid);
     if (username === PACKAGE_AGENT.username) return getPasswdByUid(PACKAGE_AGENT.uid);
     return null;
   },
-  getPersonalAgentUid() {
-    return null;
+  getPersonalAgentUid(ownerUid: number) {
+    return ownerUid === ALICE.uid ? PERSONAL_AGENT.uid : null;
   },
   getGroupByGid(gid: number) {
     if (gid === ALICE.gid) {
       return {
         name: ALICE.username,
         gid: ALICE.gid,
+        members: [],
+      };
+    }
+    if (gid === PERSONAL_AGENT.gid) {
+      return {
+        name: PERSONAL_AGENT.username,
+        gid: PERSONAL_AGENT.gid,
         members: [],
       };
     }
@@ -91,7 +118,7 @@ const auth = {
 };
 
 async function clearHomeStorage(): Promise<void> {
-  for (const prefix of ["home/alice", "home/wiki-builder"]) {
+  for (const prefix of ["home/alice", "home/alice-agent", "home/wiki-builder"]) {
     let cursor: string | undefined;
     do {
       const listed = await env.STORAGE.list({ prefix, cursor });
@@ -103,6 +130,14 @@ async function clearHomeStorage(): Promise<void> {
 
 function createDelegatingBackend() {
   return createHomeKnowledgeBackend(env.STORAGE, fakeRipgit, ALICE, {
+    auth: auth as never,
+    ownerUid: ALICE.uid,
+    isRoot: false,
+  });
+}
+
+function createPersonalAgentBackend() {
+  return createHomeKnowledgeBackend(env.STORAGE, fakeRipgit, PERSONAL_AGENT, {
     auth: auth as never,
     ownerUid: ALICE.uid,
     isRoot: false,
@@ -125,6 +160,18 @@ describe("HomeKnowledgeMountBackend delegated routing", () => {
     expect(backend?.handles("/home/wiki-builder")).toBe(false);
     expect(backend?.handles("/home/wiki-builder/conversations/default/history")).toBe(false);
     expect(backend?.handles("/home/wiki-builder/notes.txt")).toBe(false);
+  });
+
+  it("lets a personal agent reach its owner's home-knowledge overlay paths", () => {
+    const backend = createPersonalAgentBackend();
+
+    expect(backend?.handles("/home/alice/context.d/persona.md")).toBe(true);
+    expect(backend?.handles("/home/alice/skills.d/workflow.md")).toBe(true);
+    expect(backend?.handles("/home/alice/knowledge/inbox/item.md")).toBe(true);
+
+    expect(backend?.handles("/home/alice")).toBe(false);
+    expect(backend?.handles("/home/alice/conversations/default/history")).toBe(false);
+    expect(backend?.handles("/home/wiki-builder/context.d/persona.md")).toBe(true);
   });
 
   it("does not read target R2-backed files through the delegated target identity", async () => {
