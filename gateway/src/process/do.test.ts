@@ -21,6 +21,32 @@ function makeReq(call: string, args: unknown): RequestFrame {
   return { type: "req", id: crypto.randomUUID(), call, args } as RequestFrame;
 }
 
+async function stubGeneration(
+  stub: DurableObjectStub<Process>,
+  generate: (request: any) => string | Promise<string>,
+) {
+  await runInDurableObject(stub, (instance: Process) => {
+    const process = instance as any;
+    process.generation = {
+      async generate(request: any) {
+        const text = await generate(request);
+        return {
+          role: "assistant",
+          content: [{ type: "text", text }],
+          api: "test",
+          provider: "test",
+          model: "test",
+          stopReason: "stop",
+          timestamp: Date.now(),
+        };
+      },
+      async generateText() {
+        return "";
+      },
+    };
+  });
+}
+
 /**
  * Register a process in the Kernel's ProcessRegistry and seed capabilities.
  * Must be called before the Process DO can communicate with the kernel.
@@ -1281,6 +1307,81 @@ describe("Process DO — mechanical", () => {
         expect(reply).toBeTruthy();
         expect(reply.content).toContain("worker completed");
         (instance as any).currentRun = null;
+      });
+    });
+
+    it("drives a bounded IPC reply through the target and source agent loops", async () => {
+      const sourcePid = "mech-ipc-loop-source";
+      const targetPid = "mech-ipc-loop-target";
+      const token = "IPC_GREEN_E2E";
+      const source = await initProcess(sourcePid, ROOT_IDENTITY);
+      const target = await initProcess(targetPid, ROOT_IDENTITY);
+
+      await stubGeneration(target, (request) => {
+        const input = JSON.stringify(request.context.messages);
+        expect(input).toContain(`Message from process \`${sourcePid}\``);
+        expect(input).toContain(`Reply with exactly this token and nothing else: ${token}`);
+        return token;
+      });
+      await stubGeneration(source, (request) => {
+        const input = JSON.stringify(request.context.messages);
+        expect(input).toContain("IPC call");
+        expect(input).toContain("completed");
+        expect(input).toContain(token);
+        return token;
+      });
+
+      const kernel = await getKernelPtr();
+      const response = await runInDurableObject(kernel, (instance: Kernel) =>
+        instance.recvFrame(
+          sourcePid,
+          makeReq("proc.ipc.call", {
+            pid: targetPid,
+            conversationId: "ipc-real",
+            message: `Reply with exactly this token and nothing else: ${token}. Do not call tools.`,
+            timeoutMs: 60_000,
+          }),
+        ),
+      ) as ResponseOkFrame;
+
+      expect(response.ok).toBe(true);
+      const data = response.data as any;
+      expect(data).toMatchObject({
+        ok: true,
+        status: "started",
+        pid: targetPid,
+        sourcePid,
+        conversationId: "ipc-real",
+      });
+      expect(data.callId).toBeTruthy();
+      expect(data.runId).toBeTruthy();
+
+      await driveProcessUntilIdle(target, 10_000);
+
+      let replyMessage: any = null;
+      const deadline = Date.now() + 5_000;
+      while (Date.now() < deadline) {
+        replyMessage = await runInDurableObject(source, (instance: Process) => {
+          const messages = (instance as any).store.getMessages();
+          return messages.find((message: any) =>
+            message.role === "system"
+            && message.content.includes(`IPC call \`${data.callId}\` completed`)
+          ) ?? null;
+        });
+        if (replyMessage) break;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+
+      expect(replyMessage).toBeTruthy();
+      expect(replyMessage.content).toContain(token);
+
+      await driveProcessUntilIdle(source, 10_000);
+
+      await runInDurableObject(source, (instance: Process) => {
+        const messages = (instance as any).store.getMessages();
+        const assistant = messages.filter((message: any) => message.role === "assistant").pop();
+        expect(assistant).toBeDefined();
+        expect(assistant!.content).toContain(token);
       });
     });
 
@@ -3592,76 +3693,6 @@ describeIf(OPENAI_KEY)("Process DO — agent loop (real LLM)", () => {
       expect(lastAssistant!.content.toLowerCase()).toContain("denied");
     });
   }, 60_000);
-
-  it("bounded IPC call: real target reply reaches source and is consumed", async () => {
-    const sourcePid = "llm-ipc-call-source-1";
-    const targetPid = "llm-ipc-call-target-1";
-    const token = "IPC_GREEN_E2E";
-    const source = await initProcess(sourcePid, ROOT_IDENTITY);
-    const target = await initProcess(targetPid, ROOT_IDENTITY);
-
-    const kernel = await getKernelPtr();
-    const response = await runInDurableObject(kernel, (instance: Kernel) =>
-      instance.recvFrame(
-        sourcePid,
-        makeReq("proc.ipc.call", {
-          pid: targetPid,
-          conversationId: "ipc-real",
-          message: `Reply with exactly this token and nothing else: ${token}. Do not call tools.`,
-          timeoutMs: 60_000,
-        }),
-      ),
-    ) as ResponseOkFrame;
-
-    expect(response.ok).toBe(true);
-    const data = response.data as any;
-    expect(data).toMatchObject({
-      ok: true,
-      status: "started",
-      pid: targetPid,
-      sourcePid,
-      conversationId: "ipc-real",
-    });
-    expect(data.callId).toBeTruthy();
-    expect(data.runId).toBeTruthy();
-
-    await driveProcessUntilIdle(target, 60_000);
-
-    let replyMessage: any = null;
-    const deadline = Date.now() + 20_000;
-    while (Date.now() < deadline) {
-      replyMessage = await runInDurableObject(source, (instance: Process) => {
-        const messages = (instance as any).store.getMessages();
-        return messages.find((message: any) =>
-          message.role === "system"
-          && message.content.includes(`IPC call \`${data.callId}\` completed`)
-        ) ?? null;
-      });
-      if (replyMessage) break;
-      await new Promise((r) => setTimeout(r, 200));
-    }
-
-    expect(replyMessage).toBeTruthy();
-    expect(replyMessage.content).toContain(token);
-
-    await driveProcessUntilIdle(source, 60_000);
-
-    const followup = (await source.recvFrame(
-      makeReq("proc.send", {
-        message: "What exact token appeared in the most recent IPC reply response text? Reply with the token only.",
-      }),
-    )) as ResponseOkFrame;
-    expect(followup.ok).toBe(true);
-
-    await driveProcessUntilIdle(source, 60_000);
-
-    await runInDurableObject(source, (instance: Process) => {
-      const messages = (instance as any).store.getMessages();
-      const assistant = messages.filter((message: any) => message.role === "assistant").pop();
-      expect(assistant).toBeDefined();
-      expect(assistant!.content).toContain(token);
-    });
-  }, 90_000);
 
   it("handles invalid API key gracefully", async () => {
     const pid = "llm-error-1";
