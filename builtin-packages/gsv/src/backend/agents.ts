@@ -25,6 +25,8 @@ type AccountSummary = {
 
 type ConfigEntry = { key: string; value: string };
 
+const ACCOUNT_USERNAME_RE = /^[a-z_][a-z0-9_-]{0,31}$/;
+
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -40,6 +42,23 @@ function configValue(entries: ConfigEntry[], key: string): string | undefined {
 
 function contextDir(username: string): string {
   return `/home/${username}/context.d`;
+}
+
+function normalizeContextUsername(value: unknown): string | null {
+  const username = String(value ?? "").trim();
+  return ACCOUNT_USERNAME_RE.test(username) ? username : null;
+}
+
+function normalizeContextFileName(value: unknown): string | null {
+  const raw = String(value ?? "").trim();
+  if (!raw || raw.includes("/") || raw.includes("\\") || raw.includes("\0")) {
+    return null;
+  }
+  const base = raw.endsWith(".md") ? raw.slice(0, -3) : raw;
+  if (!base || base === "." || base === "..") {
+    return null;
+  }
+  return raw.endsWith(".md") ? raw : `${raw}.md`;
 }
 
 // fs.read returns text with a `<6-space-number>\t` prefix per line; strip it so
@@ -94,9 +113,9 @@ export async function loadAgentContext(
   kernel: KernelClientLike,
   args: LoadAgentContextArgs,
 ): Promise<AgentContextResult> {
-  const username = String(args.username ?? "").trim();
+  const username = normalizeContextUsername(args.username);
   if (!username) {
-    return { files: [], errorText: "username is required" };
+    return { files: [], errorText: "valid username is required" };
   }
   try {
     const dir = contextDir(username);
@@ -131,12 +150,11 @@ export async function saveAgentContext(
   kernel: KernelClientLike,
   args: SaveAgentContextArgs,
 ): Promise<AgentMutationResult> {
-  const username = String(args.username ?? "").trim();
-  const name = String(args.name ?? "").trim();
-  if (!username || !name) {
-    return { ok: false, errorText: "username and file name are required" };
+  const username = normalizeContextUsername(args.username);
+  const fileName = normalizeContextFileName(args.name);
+  if (!username || !fileName) {
+    return { ok: false, errorText: "valid username and file name are required" };
   }
-  const fileName = name.endsWith(".md") ? name : `${name}.md`;
   try {
     const result = await kernel.request("fs.write", {
       path: `${contextDir(username)}/${fileName}`,

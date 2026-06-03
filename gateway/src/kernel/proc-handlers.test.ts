@@ -457,6 +457,15 @@ function makeIpcCallContext() {
 }
 
 describe("resolveCallerOwnerUid", () => {
+  it("honors an explicit caller owner override", () => {
+    const ctx = {
+      callerOwnerUid: 1000,
+      identity: { role: "user", process: { ...IDENTITY, uid: 2000 }, capabilities: [] },
+      procs: { get: vi.fn(() => null) },
+    } as unknown as KernelContext;
+    expect(resolveCallerOwnerUid(ctx)).toBe(1000);
+  });
+
   it("resolves to the owning human of the calling process, not the run-as uid", () => {
     const ctx = {
       processId: "proc:abc",

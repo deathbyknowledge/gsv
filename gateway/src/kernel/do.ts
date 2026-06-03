@@ -2693,6 +2693,7 @@ export class Kernel extends Host<Env> {
       connection: null as unknown as Connection,
       identity,
       processId: record.runAs.kind === "process" ? record.runAs.pid : undefined,
+      callerOwnerUid: record.ownerUid,
       appFrame: undefined,
       serverVersion: SERVER_VERSION,
       broadcastToUid: this.broadcastToUid.bind(this),

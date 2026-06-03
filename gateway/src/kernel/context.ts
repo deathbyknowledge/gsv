@@ -52,6 +52,7 @@ export type KernelContext = {
   connection: Connection;
   identity?: ConnectionIdentity;
   processId?: string;
+  callerOwnerUid?: number;
   appFrame?: AppFrameContext;
   serverVersion: string;
   broadcastToUid?: (uid: number, signal: string, payload?: unknown) => void;
@@ -79,6 +80,9 @@ export type KernelContext = {
  * account.
  */
 export function resolveCallerOwnerUid(ctx: KernelContext): number {
+  if (typeof ctx.callerOwnerUid === "number" && Number.isFinite(ctx.callerOwnerUid)) {
+    return ctx.callerOwnerUid;
+  }
   if (ctx.processId) {
     const procs = ctx.procs;
     const ownerUid = typeof procs.getOwnerUid === "function"

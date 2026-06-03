@@ -114,12 +114,6 @@ export async function handlePkgInstall(
   if (record.reviewRequired && !record.reviewedAt) {
     throw new Error(`Package review approval required before enabling: ${record.manifest.name}`);
   }
-  if (!record.enabled) {
-    const updated = ctx.packages.setEnabled(record.packageId, true, record.scope);
-    if (!updated) {
-      throw new Error(`Failed to enable package: ${record.packageId}`);
-    }
-  }
 
   // Provision the package's agent accounts and grant the enabling human run-as
   // rights. The enabler is the owning human, not the run-as account: when
@@ -131,6 +125,13 @@ export async function handlePkgInstall(
   const enablingHumanUid = ctx.identity ? resolveCallerOwnerUid(ctx) : undefined;
   if (typeof enablingHumanUid === "number" && (record.manifest.profiles?.length ?? 0) > 0) {
     await provisionPackageAgents(ctx, record, enablingHumanUid);
+  }
+
+  if (!record.enabled) {
+    const updated = ctx.packages.setEnabled(record.packageId, true, record.scope);
+    if (!updated) {
+      throw new Error(`Failed to enable package: ${record.packageId}`);
+    }
   }
 
   return {

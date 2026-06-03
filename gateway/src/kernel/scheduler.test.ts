@@ -1134,12 +1134,34 @@ describe("scheduler", () => {
     );
     const scheduleId = await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as unknown as {
+        auth: {
+          addUser: (entry: {
+            username: string;
+            uid: number;
+            gid: number;
+            gecos: string;
+            home: string;
+            shell: string;
+          }) => void;
+          addGroup: (entry: { name: string; gid: number; members: string[] }) => void;
+          setPersonalAgent: (ownerUid: number, agentUid: number) => void;
+        };
         caps: { seed: () => void };
         procs: { spawn: typeof instance["procs"]["spawn"] };
         schedules: ScheduleStore;
         ctx: DurableObjectState;
       };
       k.caps.seed();
+      k.auth.addUser({
+        username: PERSONAL_AGENT_IDENTITY.username,
+        uid: PERSONAL_AGENT_IDENTITY.uid,
+        gid: PERSONAL_AGENT_IDENTITY.gid,
+        gecos: "Sam Agent",
+        home: PERSONAL_AGENT_IDENTITY.home,
+        shell: "/bin/init",
+      });
+      k.auth.addGroup({ name: PERSONAL_AGENT_IDENTITY.username, gid: PERSONAL_AGENT_IDENTITY.gid, members: [] });
+      k.auth.setPersonalAgent(USER_IDENTITY.uid, PERSONAL_AGENT_IDENTITY.uid);
       k.procs.spawn("init:1000", USER_IDENTITY, {
         profile: "init",
         label: "init",
@@ -1173,7 +1195,15 @@ describe("scheduler", () => {
     const spawned = await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as unknown as {
         schedules: ScheduleStore;
-        procs: { get: (pid: string) => { processId: string; label: string | null; interactive: boolean } | null };
+        procs: {
+          get: (pid: string) => {
+            processId: string;
+            uid: number;
+            ownerUid: number;
+            label: string | null;
+            interactive: boolean;
+          } | null;
+        };
       };
       const history = k.schedules.history(scheduleId);
       const result = history[0]?.result as { pid?: string } | null | undefined;
@@ -1188,6 +1218,8 @@ describe("scheduler", () => {
     expect(spawned.cronProcess).toEqual(
       expect.objectContaining({
         processId: spawned.pid,
+        uid: PERSONAL_AGENT_IDENTITY.uid,
+        ownerUid: USER_IDENTITY.uid,
         label: "cron spawn",
         interactive: false,
       }),

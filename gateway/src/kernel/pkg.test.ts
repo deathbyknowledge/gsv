@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { handlePkgCreate, handlePkgRemove } from "./pkg";
+import { handlePkgCreate, handlePkgInstall, handlePkgRemove } from "./pkg";
 import type { KernelContext } from "./context";
 
 type FetchCall = {
@@ -98,6 +98,60 @@ function makeRootIdentity() {
 }
 
 describe("pkg syscalls", () => {
+  it("does not enable packages when package-agent provisioning fails", async () => {
+    const record = {
+      ...makeInstalledPackageRecord({
+        packageId: "builtin:wiki@1",
+        name: "wiki",
+        sourceSubdir: "builtin-packages/wiki",
+      }),
+      enabled: false,
+      manifest: {
+        ...makeInstalledPackageRecord({
+          packageId: "builtin:wiki@1",
+          name: "wiki",
+          sourceSubdir: "builtin-packages/wiki",
+        }).manifest,
+        profiles: [{
+          name: "builder",
+          displayName: "Wiki Builder",
+          contextFiles: [],
+          capabilities: [],
+        }],
+      },
+    };
+    const setEnabled = vi.fn();
+    const ctx = {
+      config: {
+        ...makeConfig(),
+        get: vi.fn(() => null),
+      },
+      packages: {
+        resolve: vi.fn(() => record),
+        setEnabled,
+      },
+      auth: {
+        getPasswdByUsername: vi.fn((username: string) =>
+          username === "wiki-builder"
+            ? {
+                username,
+                uid: 2000,
+                gid: 2000,
+                gecos: "Existing Agent",
+                home: `/home/${username}`,
+                shell: "/bin/init",
+              }
+            : null,
+        ),
+      },
+      identity: makeRootIdentity(),
+    } as unknown as KernelContext;
+
+    await expect(handlePkgInstall({ packageId: record.packageId }, ctx))
+      .rejects.toThrow(/already exists/);
+    expect(setEnabled).not.toHaveBeenCalled();
+  });
+
   it("prevents removing the consolidated GSV console package", async () => {
     const record = makeInstalledPackageRecord({
       packageId: "builtin:gsv@0.1.0",
