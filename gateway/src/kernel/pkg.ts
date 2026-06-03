@@ -1,4 +1,5 @@
 import type { KernelContext } from "./context";
+import { resolveCallerOwnerUid } from "./context";
 import { provisionPackageAgents, revokePackageAgentAccess } from "./package-agents";
 import type {
   PkgAddArgs,
@@ -121,8 +122,13 @@ export async function handlePkgInstall(
   }
 
   // Provision the package's agent accounts and grant the enabling human run-as
-  // rights. Idempotent, so re-enabling for another human just adds them.
-  const enablingHumanUid = ctx.identity?.process.uid;
+  // rights. The enabler is the owning human, not the run-as account: when
+  // pkg.install runs from a process (the normal personal-agent path),
+  // ctx.identity.process.uid is the agent's uid, but proc.spawn authorizes the
+  // access group against the process owner — so the access group must be granted
+  // to the same human. Idempotent, so re-enabling for another human just adds
+  // them.
+  const enablingHumanUid = ctx.identity ? resolveCallerOwnerUid(ctx) : undefined;
   if (typeof enablingHumanUid === "number" && (record.manifest.profiles?.length ?? 0) > 0) {
     await provisionPackageAgents(ctx, record, enablingHumanUid);
   }

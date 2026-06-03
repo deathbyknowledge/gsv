@@ -8,6 +8,7 @@
 
 import type { RequestFrame, ResponseFrame } from "../protocol/frames";
 import type { KernelContext } from "./context";
+import { resolveCallerOwnerUid } from "./context";
 import type {
   ProcListArgs,
   ProcListResult,
@@ -40,18 +41,6 @@ import { ensureDefaultConversationExecutor, ensurePersonalAgent } from "./agents
 import { accountIdentity } from "./accounts";
 import { resolvePackageAgentRunAs } from "./package-agents";
 
-/**
- * The owner uid for processes spawned in this context: the calling process's
- * owner when invoked from a process, otherwise the connecting user.
- */
-function resolveCallerOwnerUid(ctx: KernelContext): number {
-  if (ctx.processId) {
-    const self = ctx.procs.get(ctx.processId);
-    if (self) return self.ownerUid;
-  }
-  return ctx.identity!.process.uid;
-}
-
 const DEFAULT_IPC_CALL_TIMEOUT_MS = 60_000;
 const MIN_IPC_CALL_TIMEOUT_MS = 1_000;
 const MAX_IPC_CALL_TIMEOUT_MS = 10 * 60 * 1000;
@@ -60,9 +49,12 @@ export function handleProcList(
   args: ProcListArgs,
   ctx: KernelContext,
 ): ProcListResult {
-  const identity = ctx.identity!;
-  const isRoot = identity.process.uid === 0;
-  const uid = args.uid ?? (isRoot ? undefined : identity.process.uid);
+  // Visibility is keyed on the owning human (owner_uid), not the run-as
+  // account. A personal agent listing its human's processes must resolve to the
+  // human owner, otherwise it filters on the agent's uid and sees nothing.
+  const callerOwnerUid = resolveCallerOwnerUid(ctx);
+  const isRoot = callerOwnerUid === 0;
+  const uid = args.uid ?? (isRoot ? undefined : callerOwnerUid);
 
   const records = ctx.procs.list(uid);
 

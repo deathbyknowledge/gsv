@@ -9,7 +9,8 @@ vi.mock("../shared/utils", () => ({
 }));
 
 import { sendFrameToProcess } from "../shared/utils";
-import { forwardToProcess, handleProcIpcCall, handleProcSpawn } from "./proc-handlers";
+import { forwardToProcess, handleProcIpcCall, handleProcSpawn, handleProcList } from "./proc-handlers";
+import { resolveCallerOwnerUid } from "./context";
 
 const IDENTITY: ProcessIdentity = {
   uid: 1000,
@@ -454,6 +455,70 @@ function makeIpcCallContext() {
 
   return { ctx, ipcCalls };
 }
+
+describe("resolveCallerOwnerUid", () => {
+  it("resolves to the owning human of the calling process, not the run-as uid", () => {
+    const ctx = {
+      processId: "proc:abc",
+      identity: { role: "user", process: { ...IDENTITY, uid: 2000 }, capabilities: [] },
+      procs: { get: vi.fn(() => ({ ownerUid: 1000 })) },
+    } as unknown as KernelContext;
+    expect(resolveCallerOwnerUid(ctx)).toBe(1000);
+  });
+
+  it("falls back to the connecting user when not invoked from a process", () => {
+    const ctx = {
+      identity: { role: "user", process: { ...IDENTITY, uid: 1000 }, capabilities: [] },
+      procs: { get: vi.fn(() => null) },
+    } as unknown as KernelContext;
+    expect(resolveCallerOwnerUid(ctx)).toBe(1000);
+  });
+});
+
+describe("handleProcList", () => {
+  it("filters by the owning human when an agent process lists its user's processes", () => {
+    const list = vi.fn(() => []);
+    const ctx = {
+      processId: "proc:abc",
+      // The process runs as the personal agent (uid 2000) but is owned by the
+      // human (uid 1000); listing must resolve to the human owner.
+      identity: { role: "user", process: { ...IDENTITY, uid: 2000 }, capabilities: ["proc.list"] },
+      procs: { get: vi.fn(() => ({ ownerUid: 1000 })), list },
+      conversations: { getByActivePid: vi.fn(() => null) },
+    } as unknown as KernelContext;
+
+    handleProcList({}, ctx);
+    expect(list).toHaveBeenCalledWith(1000);
+  });
+
+  it("lets a non-root connecting user see only their own processes", () => {
+    const list = vi.fn(() => []);
+    const ctx = {
+      identity: { role: "user", process: { ...IDENTITY, uid: 1000 }, capabilities: ["proc.list"] },
+      procs: { get: vi.fn(() => null), list },
+      conversations: { getByActivePid: vi.fn(() => null) },
+    } as unknown as KernelContext;
+
+    handleProcList({}, ctx);
+    expect(list).toHaveBeenCalledWith(1000);
+  });
+
+  it("lets root list all processes and honors an explicit uid filter", () => {
+    const list = vi.fn(() => []);
+    const ctx = {
+      identity: { role: "user", process: { ...IDENTITY, uid: 0, username: "root" }, capabilities: ["proc.list"] },
+      procs: { get: vi.fn(() => null), list },
+      conversations: { getByActivePid: vi.fn(() => null) },
+    } as unknown as KernelContext;
+
+    handleProcList({}, ctx);
+    expect(list).toHaveBeenCalledWith(undefined);
+
+    list.mockClear();
+    handleProcList({ uid: 1000 }, ctx);
+    expect(list).toHaveBeenCalledWith(1000);
+  });
+});
 
 function makePackage(packageId: string, name: string, repo: string, subdir = ".") {
   return {

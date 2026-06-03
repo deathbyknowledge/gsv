@@ -120,6 +120,20 @@ export async function createAccount(
     : null;
   const crossMember = (input.crossMemberOwner ?? input.ownerUid != null) && ownerUsername != null;
 
+  // Validate (and hash) before any auth-state mutation: a human account with a
+  // bad/missing password must not leave a half-created passwd row behind, which
+  // would also make the username unavailable on retry.
+  let shadowHash: string;
+  if (input.kind === "human") {
+    if (!input.password || input.password.length < MIN_PASSWORD_LENGTH) {
+      throw new Error(`password must be at least ${MIN_PASSWORD_LENGTH} characters`);
+    }
+    shadowHash = await hashPassword(input.password);
+  } else {
+    // Locked account: agents are never logged into directly.
+    shadowHash = "!";
+  }
+
   const uid = auth.nextUid();
   const gid = uid; // User Private Group
   const home = `/home/${username}`;
@@ -133,15 +147,7 @@ export async function createAccount(
     shell: "/bin/init",
   });
 
-  if (input.kind === "human") {
-    if (!input.password || input.password.length < MIN_PASSWORD_LENGTH) {
-      throw new Error(`password must be at least ${MIN_PASSWORD_LENGTH} characters`);
-    }
-    auth.setShadow(makeShadowEntry(username, await hashPassword(input.password)));
-  } else {
-    // Locked account: agents are never logged into directly.
-    auth.setShadow(makeShadowEntry(username, "!"));
-  }
+  auth.setShadow(makeShadowEntry(username, shadowHash));
 
   // Private primary group (gid = uid). The owner joins it so they can act as
   // this account.

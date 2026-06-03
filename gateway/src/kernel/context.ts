@@ -65,3 +65,19 @@ export type KernelContext = {
   refreshMcpServerConnection?: (serverId: string) => Promise<void>;
   callMcpTool?: (serverId: string, toolName: string, args: Record<string, unknown>) => Promise<unknown>;
 };
+
+/**
+ * The human owner uid for the caller: the owning human of the calling process
+ * when invoked from a process (so a personal agent acting on its human's behalf
+ * resolves to the human, not the agent's run-as uid), otherwise the connecting
+ * user. This is the uid that governs process ownership, visibility, and run-as
+ * authorization — distinct from `identity.process.uid`, which is the run-as
+ * account.
+ */
+export function resolveCallerOwnerUid(ctx: KernelContext): number {
+  if (ctx.processId) {
+    const self = ctx.procs.get(ctx.processId);
+    if (self) return self.ownerUid;
+  }
+  return ctx.identity!.process.uid;
+}

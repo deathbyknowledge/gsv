@@ -142,6 +142,27 @@ describe("handleAccountCreate", () => {
     ).rejects.toThrow(/root/i);
   });
 
+  it("rejects a weak human password without mutating auth state", async () => {
+    const { ctxFor, auth, passwd, shadow } = createCtx();
+    const ctx = ctxFor(userIdentity(0, "root", ["*"]));
+
+    await expect(
+      handleAccountCreate({ kind: "human", username: "bob", password: "short" }, ctx),
+    ).rejects.toThrow(/password must be at least/i);
+
+    // No half-created account: passwd row and shadow are untouched, and the
+    // username stays available for a corrected retry.
+    expect(auth.addUser).not.toHaveBeenCalled();
+    expect(passwd.find((u) => u.username === "bob")).toBeUndefined();
+    expect(shadow.has("bob")).toBe(false);
+
+    const retry = await handleAccountCreate(
+      { kind: "human", username: "bob", password: "password-123" },
+      ctx,
+    );
+    expect(retry.account.username).toBe("bob");
+  });
+
   it("creates a human (root) with login and a personal agent", async () => {
     const { ctxFor, shadow, groups, personalAgents } = createCtx();
     const ctx = ctxFor(userIdentity(0, "root", ["*"]));
