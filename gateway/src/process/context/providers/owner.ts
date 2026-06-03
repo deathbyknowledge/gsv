@@ -51,8 +51,14 @@ export function createOwnerContextProvider(): PromptContextProvider {
             }
             usedBytes += bytes;
             sections.push({
-              name: `owner.context:${name}`,
+              name,
               text,
+              contextRoot: {
+                key: "user",
+                label: "USER",
+                access: "editable",
+                location: `${owner.home}/context.d`,
+              },
             });
           }
 
@@ -91,8 +97,14 @@ export function createOwnerContextProvider(): PromptContextProvider {
         }
         usedBytes += bytes;
         sections.push({
-          name: `owner.context:${file.name}`,
+          name: file.name,
           text,
+          contextRoot: {
+            key: "user",
+            label: "USER",
+            access: "editable",
+            location: `${owner.home}/context.d`,
+          },
         });
       }
 

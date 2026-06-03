@@ -85,6 +85,90 @@ describe("assembleSystemPrompt", () => {
     const prompt = await assembleSystemPrompt(makeInput(), providers);
     expect(prompt).toBe("[one]\nfirst\n\n---\n\n[three]\nthird");
   });
+
+  it("groups context files by root and omits empty roots", async () => {
+    const providers: PromptContextProvider[] = [
+      {
+        name: "system.context",
+        async collect() {
+          return [
+            {
+              name: "00-gsv.md",
+              text: "system context",
+              contextRoot: {
+                key: "system",
+                label: "SYSTEM",
+                access: "read-only",
+                location: "/sys/config/ai/context.d",
+              },
+            },
+          ];
+        },
+      },
+      {
+        name: "program.context",
+        async collect() {
+          return [
+            {
+              name: "00-style.md",
+              text: "program context",
+              contextRoot: {
+                key: "program",
+                label: "PROGRAM",
+                access: "editable",
+                location: "/home/friday/context.d",
+              },
+            },
+          ];
+        },
+      },
+      {
+        name: "process.context",
+        async collect() {
+          return [
+            {
+              name: "20-empty.md",
+              text: "   ",
+              contextRoot: {
+                key: "process",
+                label: "PROCESS",
+                access: "read-only",
+                location: "current process assignment",
+              },
+            },
+          ];
+        },
+      },
+      {
+        name: "available.skills",
+        async collect() {
+          return [{ name: "available.skills", text: "skill index" }];
+        },
+      },
+    ];
+
+    const prompt = await assembleSystemPrompt(makeInput(), providers);
+    expect(prompt).toBe([
+      "[CONTEXT ROOTS]",
+      "SYSTEM read-only /sys/config/ai/context.d",
+      "PROGRAM editable /home/friday/context.d",
+      "",
+      "[SYSTEM]",
+      "[00-gsv.md]",
+      "system context",
+      "",
+      "[PROGRAM]",
+      "[00-style.md]",
+      "program context",
+      "",
+      "---",
+      "",
+      "[available.skills]",
+      "skill index",
+    ].join("\n"));
+    expect(prompt).not.toContain("[PROCESS]");
+    expect(prompt).not.toContain("20-empty.md");
+  });
 });
 
 describe("createSystemContextProvider", () => {
@@ -107,10 +191,20 @@ describe("createSystemContextProvider", () => {
     );
     expect(sections).toEqual([
       expect.objectContaining({
-        name: "system.context:00-gsv.md",
+        name: "00-gsv.md",
+        contextRoot: expect.objectContaining({
+          key: "system",
+          label: "SYSTEM",
+          location: "/sys/config/ai/context.d",
+        }),
       }),
       expect.objectContaining({
-        name: "system.context:10-runtime.md",
+        name: "10-runtime.md",
+        contextRoot: expect.objectContaining({
+          key: "system",
+          label: "SYSTEM",
+          location: "/sys/config/ai/context.d",
+        }),
       }),
     ]);
     const text = sections.map((section) => section.text).join("\n");
@@ -166,9 +260,13 @@ describe("createSkillIndexProvider", () => {
     const prompt = await assembleSystemPrompt(makeInput(), providers);
 
     expect(prompt).toContain("[available.skills]");
+    expect(prompt).toContain("[CONTEXT ROOTS]");
+    expect(prompt).toContain("[SYSTEM]");
+    expect(prompt).not.toContain("[PROCESS]");
     expect(prompt).toContain("Use `skills list`");
     expect(prompt).toContain("- package-development: Build and update packages.");
     expect(prompt).not.toContain("/src/packages/");
+    expect(prompt).not.toContain("system.context:");
   });
 });
 
@@ -214,8 +312,14 @@ describe("createHomeContextProvider", () => {
     );
 
     expect(sections.map((section) => section.name)).toEqual([
-      "home.context:a.md",
+      "a.md",
     ]);
+    expect(sections[0].contextRoot).toEqual({
+      key: "program",
+      label: "PROGRAM",
+      access: "editable",
+      location: "/root/context.d",
+    });
     expect(sections.map((section) => section.text)).toEqual([
       "alpha",
     ]);

@@ -1,4 +1,4 @@
-import type { PromptContextProvider } from "../types";
+import type { PromptContextProvider, PromptSection } from "../types";
 
 const MAX_RENDERED_TARGETS = 5;
 
@@ -6,29 +6,34 @@ export function createSystemContextProvider(): PromptContextProvider {
   return {
     name: "system.context",
     async collect(input) {
-      return renderContextFiles("system.context", input.config.systemContextFiles, input);
+      return renderContextFiles(input.config.systemContextFiles, input);
     },
   };
 }
 
 function renderContextFiles(
-  sectionPrefix: string,
   files: Array<{ name: string; text: string }> | undefined,
   input: Parameters<typeof renderContextTemplate>[1],
-): Array<{ name: string; text: string }> {
+): PromptSection[] {
   return [...(files ?? [])]
     .sort((left, right) => left.name.localeCompare(right.name))
-    .map((file) => {
+    .map((file): PromptSection | null => {
       const text = renderContextTemplate(file.text, input).trim();
       if (!text) {
         return null;
       }
       return {
-        name: `${sectionPrefix}:${file.name}`,
+        name: file.name,
         text,
+        contextRoot: {
+          key: "system",
+          label: "SYSTEM",
+          access: "read-only",
+          location: "/sys/config/ai/context.d",
+        },
       };
     })
-    .filter((section): section is { name: string; text: string } => section !== null);
+    .filter((section): section is PromptSection => section !== null);
 }
 
 function renderContextTemplate(

@@ -22,6 +22,12 @@ export type PromptAssemblyInput = {
 export type PromptSection = {
   name: string;
   text: string;
+  contextRoot?: {
+    key: "system" | "program" | "user" | "process";
+    label: string;
+    access: "read-only" | "editable";
+    location: string;
+  };
 };
 
 export type PromptContextProvider = {

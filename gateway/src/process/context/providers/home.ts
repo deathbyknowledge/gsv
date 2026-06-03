@@ -40,8 +40,14 @@ export function createHomeContextProvider(): PromptContextProvider {
             }
             usedBytes += bytes;
             sections.push({
-              name: `home.context:${name}`,
+              name,
               text,
+              contextRoot: {
+                key: "program",
+                label: "PROGRAM",
+                access: "editable",
+                location: `${input.identity.home}/context.d`,
+              },
             });
           }
 
@@ -80,8 +86,14 @@ export function createHomeContextProvider(): PromptContextProvider {
         }
         usedBytes += bytes;
         sections.push({
-          name: `home.context:${file.name}`,
+          name: file.name,
           text,
+          contextRoot: {
+            key: "program",
+            label: "PROGRAM",
+            access: "editable",
+            location: `${input.identity.home}/context.d`,
+          },
         });
       }
 
