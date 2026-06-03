@@ -1,8 +1,9 @@
 # How to Configure an Agent
 
-GSV agents run as processes. Their behavior comes from runtime config, profile
-context, home context, process history, assignment context, and available
-syscall tools. Configure the durable inputs rather than editing a hidden prompt.
+GSV agents run as accounts that own process behavior. Their behavior comes from
+runtime config, account home context, owner home context, process history,
+assignment context, and available syscall tools. Configure the durable inputs
+rather than editing a hidden prompt.
 
 ## Set AI Runtime Defaults
 
@@ -52,20 +53,18 @@ gsv config set config/ai/speech/encoding mp3
 gsv config set config/ai/speech/timeout_ms 30000
 ```
 
-## Edit System and Profile Context
+## Edit System and Agent Context
 
-System context applies to every process profile:
+System context applies to every agent run:
 
 ```text
 config/ai/context.d/*.md
 ```
 
-Profiles define role-level behavior for process types such as `init`, `task`,
-`review`, `cron`, `mcp`, and `app`. Profile context is stored as Markdown
-fragments:
+Agent-specific context is stored in the run-as account home:
 
 ```text
-config/ai/profile/{profile}/context.d/*.md
+~/context.d/*.md
 ```
 
 Use numeric prefixes to control order:
@@ -73,42 +72,24 @@ Use numeric prefixes to control order:
 ```bash
 gsv config set config/ai/context.d/50-local-runtime.md \
   "Use the native gsv target for files in the GSV cloud computer."
-
-gsv config set config/ai/profile/task/context.d/50-style.md \
-  "Be direct, inspect files before editing, and explain risky changes first."
 ```
 
-The user-facing default is the persistent personal agent, implemented by the
-`init` profile and accepted as `personal` by process spawning surfaces. Use
-`task` for bounded delegated workers rather than for the long-lived personal
-front door.
-
-Users can add worker specializations under their home profile directory:
-
-```text
-~/profiles.d/{name}/profile.json
-~/profiles.d/{name}/description.md
-~/profiles.d/{name}/context.d/*.md
-~/profiles.d/{name}/tools/approval
-```
-
-These profiles are filesystem-backed and can carry ordinary files or symbolic
-links. Put prompt instructions in non-empty Markdown files under `context.d`;
-root-level files are available to the worker but are not loaded as prompt
-context. `profile.json` is optional; if omitted, GSV derives the display name
-from the directory name. Spawn profiles directly:
+Use the GSV Agents section or normal filesystem tools to edit a runnable
+agent's `~/context.d/*.md` files. Spawn a process as a runnable account:
 
 ```bash
-gsv proc spawn --profile research --prompt "Audit the week of notes."
+gsv proc spawn --as research-agent --prompt "Audit the week of notes."
 ```
 
-System and profile context can use runtime template variables such as
-`identity.username`, `identity.home`, `identity.cwd`, `devices` and
+System and agent context can use runtime template variables such as
+`identity.username`, `identity.home`, `identity.cwd`, `devices`, and
 `mcpServers`.
 
-## Add Home Context
+## Add Owner Context
 
-Home context applies across a user's processes:
+Agent context applies across processes running as that account. The owning
+human's `~/context.d/*.md` is layered in separately as owner context when those
+files exist:
 
 ```text
 ~/context.d/*.md
@@ -117,28 +98,28 @@ Home context applies across a user's processes:
 Use home context for durable preferences and recurring operating notes. Put
 project-specific instructions, status, and handoff notes in explicit project
 files, package source, or process assignment context. Keep always-loaded context
-short and focused; the runtime loads home files lexically until
+short and focused; the runtime loads context files lexically until
 `config/ai/max_context_bytes` is reached.
 
 ## Configure Tool Approval
 
-Tool approval is profile-specific JSON:
+Tool approval is account-specific JSON:
 
 ```text
-config/ai/profile/{profile}/tools/approval
+users/{uid}/ai/tools/approval
 ```
 
 Example policy:
 
 ```bash
-gsv config set config/ai/profile/task/tools/approval \
+gsv config set users/1001/ai/tools/approval \
   '{"default":"auto","rules":[{"match":"shell.exec","when":{"anyTag":["destructive","privileged"]},"action":"ask"},{"match":"fs.delete","action":"ask"},{"match":"sys.mcp.call","action":"ask"},{"match":"fs.*","when":{"target":"device"},"action":"ask"}]}'
 ```
 
 Rules match exact syscalls or domain wildcards such as `fs.*`. Conditions can
-filter by profile, tags, argument prefixes, and target type (`gsv` or `device`).
-Interactive profiles can pause for approval; non-interactive profiles such as
-`cron` turn `ask` decisions into tool errors.
+filter by tags, argument prefixes, and target type (`gsv` or `device`).
+Interactive processes can pause for approval; non-interactive background
+processes turn `ask` decisions into tool errors.
 
 ## Expose Devices Deliberately
 
@@ -150,7 +131,8 @@ Give devices short notes in **GSV > Devices** so agents see why a target exists,
 not just its id and platform. For example, describe `rearden` as a Linux home
 server for GPU work or home automation if that is the routing intent.
 
-Use profile or home context to tell agents when a device should be used:
+Use system, owner, or agent home context to tell agents when a device should be
+used:
 
 ```markdown
 Use `target: "gsv"` for Kernel files and package state.
@@ -164,7 +146,7 @@ Useful checks while tuning behavior:
 ```bash
 gsv proc list
 gsv proc history --limit 20
-gsv config get config/ai/profile/task
+gsv config get users/1001/ai
 gsv chat "List your available devices and current working context."
 ```
 

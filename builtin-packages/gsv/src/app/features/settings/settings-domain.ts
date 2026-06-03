@@ -1,13 +1,7 @@
 import {
   AI_FIELDS,
-  AUTOMATION_FIELDS,
-  PROCESS_FIELDS,
-  PROFILE_CONTEXT_FIELDS,
-  PROFILE_OPTIONS,
   SERVER_FIELDS,
   SHELL_FIELDS,
-  buildProfileApprovalKey,
-  buildProfileContextKey,
 } from "./config-schema";
 import type { ConfigEntry, SettingField } from "./types";
 
@@ -36,8 +30,6 @@ export function settingFieldsForRuntime(): SettingField[] {
   return [
     ...SHELL_FIELDS,
     ...SERVER_FIELDS,
-    ...PROCESS_FIELDS,
-    ...AUTOMATION_FIELDS,
   ];
 }
 
@@ -46,15 +38,7 @@ export function modeledConfigKeys(): Set<string> {
     ...AI_FIELDS,
     ...SHELL_FIELDS,
     ...SERVER_FIELDS,
-    ...PROCESS_FIELDS,
-    ...AUTOMATION_FIELDS,
   ].map((field) => field.key));
-  for (const profile of PROFILE_OPTIONS) {
-    for (const contextField of PROFILE_CONTEXT_FIELDS) {
-      keys.add(buildProfileContextKey(profile.id, contextField.file));
-    }
-    keys.add(buildProfileApprovalKey(profile.id));
-  }
   return keys;
 }
 

@@ -1,0 +1,8 @@
+[
+  "shell.exec",
+  "codemode.exec",
+  "fs.read",
+  "fs.search",
+  "fs.write",
+  "fs.edit"
+]

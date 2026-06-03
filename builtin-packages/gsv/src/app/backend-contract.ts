@@ -60,6 +60,16 @@ import type {
   RemoveIdentityLinkArgs,
   RevokeAccessTokenArgs,
 } from "./features/settings/types";
+import type {
+  AgentContextResult,
+  AgentMutationResult,
+  AgentsState,
+  CreateAgentArgs,
+  CreateHumanArgs,
+  LoadAgentContextArgs,
+  SaveAgentContextArgs,
+  SetAgentBehaviorArgs,
+} from "./features/agents/types";
 
 export interface GsvBackend {
   loadAdministrationState(args?: Record<string, never>): Promise<AdministrationState>;
@@ -103,4 +113,10 @@ export interface GsvBackend {
   pullSourceRepo(args: PullSourceRepoArgs): Promise<unknown>;
   setSourceRepoPublic(args: SetSourceRepoPublicArgs): Promise<unknown>;
   createSourceRepo(args: CreateSourceRepoArgs): Promise<CreateSourceRepoResult>;
+  loadAgentsState(args?: Record<string, never>): Promise<AgentsState>;
+  loadAgentContext(args: LoadAgentContextArgs): Promise<AgentContextResult>;
+  saveAgentContext(args: SaveAgentContextArgs): Promise<AgentMutationResult>;
+  setAgentBehavior(args: SetAgentBehaviorArgs): Promise<AgentMutationResult>;
+  createAgent(args: CreateAgentArgs): Promise<AgentMutationResult>;
+  createHuman(args: CreateHumanArgs): Promise<AgentMutationResult>;
 }

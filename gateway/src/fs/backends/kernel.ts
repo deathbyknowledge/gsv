@@ -211,7 +211,7 @@ export class KernelMountBackend implements MountBackend {
 
     let pid = parts[0];
     if (pid === "self") {
-      pid = this.selfPid ?? `init:${this.identity.uid}`;
+      pid = this.selfProcessPid();
     }
 
     const attrParts = parts.slice(1);
@@ -223,13 +223,13 @@ export class KernelMountBackend implements MountBackend {
     const proc = this.kernel.procs.get(pid);
 
     if (!attr) {
-      if (!proc) return undefined;
+      if (!proc || !this.canViewProcess(proc)) return undefined;
       return `${proc.processId}\n`;
     }
 
     if (!proc) return undefined;
 
-    if (this.identity.uid !== 0 && proc.uid !== this.identity.uid) {
+    if (!this.canViewProcess(proc)) {
       return undefined;
     }
 
@@ -243,7 +243,7 @@ export class KernelMountBackend implements MountBackend {
           `Name:\t${proc.label ?? proc.processId}`,
           `Pid:\t${proc.processId}`,
           `PPid:\t${proc.parentPid ?? "0"}`,
-          `Profile:\t${proc.profile}`,
+          `RunAs:\t${proc.username}`,
           `State:\t${proc.state}`,
           `Uid:\t${proc.uid}`,
           `Gid:\t${proc.gid}`,
@@ -255,7 +255,6 @@ export class KernelMountBackend implements MountBackend {
           gid: proc.gid,
           gids: proc.gids,
           username: proc.username,
-          profile: proc.profile,
           home: proc.home,
           cwd: proc.cwd,
         }, null, 2) + "\n";
@@ -483,15 +482,43 @@ export class KernelMountBackend implements MountBackend {
     return false;
   }
 
+  /**
+   * The pid `/proc/self` refers to: the current process when inside one,
+   * otherwise the caller's live default ("inbox") conversation executor (their
+   * personal agent). Returns "" when no executor is live, yielding ENOENT.
+   */
+  private selfProcessPid(): string {
+    if (this.selfPid) return this.selfPid;
+    if (!this.kernel) return "";
+    const agentUid = this.kernel.auth.getPersonalAgentUid(this.identity.uid) ?? this.identity.uid;
+    return this.kernel.conversations?.getDefault(this.identity.uid, agentUid)?.activePid ?? "";
+  }
+
   private resolveVisibleProcess(pidSegment: string) {
     if (!this.kernel) return null;
     const pid = pidSegment === "self"
-      ? this.selfPid ?? `init:${this.identity.uid}`
+      ? this.selfProcessPid()
       : pidSegment;
     const proc = this.kernel.procs.get(pid);
     if (!proc) return null;
-    if (this.identity.uid !== 0 && proc.uid !== this.identity.uid) return null;
+    if (!this.canViewProcess(proc)) return null;
     return proc;
+  }
+
+  private canViewProcess(proc: { processId?: string; uid: number; ownerUid?: number | null }): boolean {
+    if (this.identity.uid === 0) return true;
+    if (this.selfPid && proc.processId === this.selfPid) return true;
+    return (proc.ownerUid ?? proc.uid) === this.viewerOwnerUid();
+  }
+
+  private viewerOwnerUid(): number {
+    if (!this.kernel || !this.selfPid) return this.identity.uid;
+    if (typeof this.kernel.procs.getOwnerUid === "function") {
+      const ownerUid = this.kernel.procs.getOwnerUid(this.selfPid);
+      if (ownerUid !== null) return ownerUid;
+    }
+    const proc = this.kernel.procs.get(this.selfPid);
+    return proc ? proc.ownerUid ?? proc.uid : this.identity.uid;
   }
 
   private async processRequest<S extends ProcessViewCall>(
@@ -812,18 +839,14 @@ export class KernelMountBackend implements MountBackend {
 
     if (path.startsWith("/proc/") && !path.slice("/proc/".length).includes("/")) {
       const pid = path.slice("/proc/".length);
-      if (pid === "self") return true;
-      return this.kernel.procs.get(pid) !== null;
+      if (pid === "version" || pid === "uptime") return false;
+      return this.resolveVisibleProcess(pid) !== null;
     }
 
     if (path.startsWith("/proc/")) {
       const parts = path.slice("/proc/".length).split("/");
       if (parts.length === 2 && parts[1] === "context.d") {
-        let pid = parts[0];
-        if (pid === "self") {
-          pid = this.selfPid ?? `init:${this.identity.uid}`;
-        }
-        return this.kernel.procs.get(pid) !== null;
+        return this.resolveVisibleProcess(parts[0]) !== null;
       }
       if (parts.length === 2 && parts[1] === "conversations") {
         const proc = this.resolveVisibleProcess(parts[0]);
@@ -903,7 +926,7 @@ export class KernelMountBackend implements MountBackend {
     if (path === "/proc") {
       const procs = this.identity.uid === 0
         ? this.kernel.procs.list()
-        : this.kernel.procs.list(this.identity.uid);
+        : this.kernel.procs.list(this.viewerOwnerUid());
       const entries = procs.map((p) => p.processId);
       entries.push("self", "version", "uptime");
       return entries.sort();

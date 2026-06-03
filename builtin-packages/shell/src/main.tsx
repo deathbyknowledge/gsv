@@ -1,7 +1,7 @@
 import { getBackend } from "@gsv/package/browser";
 import { FitAddon, init, Terminal } from "ghostty-web";
 import { mountShellLayout, setBootState, setStatus, showBootError, type ShellElements } from "./layout";
-import { readActiveThreadContext, readRouteParams, readWindowId } from "./route-context";
+import { readRouteParams, readWindowId } from "./route-context";
 import { createShellTerminalController } from "./terminal-controller";
 import { renderTargetOptions, setSelectedTarget } from "./targets";
 import type { ShellBackend } from "./types";
@@ -24,11 +24,8 @@ async function boot(): Promise<void> {
 
   if (route.cwd) {
     elements.cwdInput.value = route.cwd;
-  } else {
-    const activeThread = readActiveThreadContext();
-    if (activeThread && !elements.cwdInput.value.trim()) {
-      elements.cwdInput.value = activeThread.cwd;
-    }
+  } else if (state.defaultCwd) {
+    elements.cwdInput.value = state.defaultCwd;
   }
 
   if (route.target) {

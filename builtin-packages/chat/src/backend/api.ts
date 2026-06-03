@@ -43,8 +43,8 @@ function buildSignalWatchKey(sessionId: string, clientId: string, pid: string, s
   return `chat:${sessionId}:${clientId}:${pid}:${signal}`;
 }
 
-export async function listProfiles(kernel: KernelClient, input: unknown) {
-  return kernel.request("proc.profile.list", normalizeArgs(input));
+export async function listAgents(kernel: KernelClient, input: unknown) {
+  return kernel.request("account.list", normalizeArgs(input));
 }
 
 export async function listProcesses(kernel: KernelClient, input: unknown) {

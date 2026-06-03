@@ -29,7 +29,7 @@ function makeContext(overrides: Partial<KernelContext> = {}): KernelContext {
       removeByKey: vi.fn(() => 1),
     },
     procs: {
-      get: vi.fn(() => ({ uid: 1000 })),
+      get: vi.fn(() => ({ uid: 1000, ownerUid: 1000 })),
     },
     ...overrides,
   } as unknown as KernelContext;
@@ -134,6 +134,72 @@ describe("signal watch handlers", () => {
         appSessionId: "session-1",
         appClientId: "client-1",
       }),
+    }));
+  });
+
+  it("registers app watches for agent-run processes under the owner uid", () => {
+    const ctx = makeContext({
+      appFrame: {
+        packageId: "pkg-chat",
+        packageName: "chat",
+        entrypointName: "Chat",
+        routeBase: "/apps/chat",
+        uid: 1000,
+        username: "hank",
+        issuedAt: 1,
+        expiresAt: Date.now() + 60_000,
+      },
+      procs: {
+        get: vi.fn(() => ({ uid: 2000, ownerUid: 1000 })),
+      },
+    });
+
+    handleSignalWatch({
+      signal: "proc.run.stream",
+      processId: "proc-personal-agent",
+      key: "chat:proc-personal-agent:proc.run.stream",
+      once: false,
+    }, ctx);
+
+    expect(ctx.signalWatches.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      uid: 1000,
+      processId: "proc-personal-agent",
+    }));
+  });
+
+  it("registers process watches under the calling process owner uid", () => {
+    const ctx = makeContext({
+      processId: "proc-agent",
+      identity: {
+        role: "user",
+        process: {
+          uid: 2000,
+          gid: 2000,
+          gids: [2000],
+          username: "hank-agent",
+          home: "/home/hank-agent",
+          cwd: "/home/hank-agent",
+        },
+        capabilities: ["*"],
+      },
+      procs: {
+        get: vi.fn((pid: string) => ({
+          uid: 2000,
+          ownerUid: pid === "proc-agent" || pid === "proc-child" ? 1000 : 1001,
+        })),
+      },
+    });
+
+    handleSignalWatch({
+      signal: "proc.run.finished",
+      processId: "proc-child",
+      key: "agent:proc-child:finished",
+    }, ctx);
+
+    expect(ctx.signalWatches.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      uid: 1000,
+      processId: "proc-child",
+      target: { kind: "process", processId: "proc-agent" },
     }));
   });
 

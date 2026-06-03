@@ -88,7 +88,8 @@ export type ProcSendResult =
   | { ok: false; error: string };
 
 export type ProcSpawnArgs = {
-  profile?: string;
+  /** Account to run as: username, uid, or `package#agent`. Defaults to the caller's personal agent. */
+  runAs?: string;
   label?: string;
   prompt?: string;
   parentPid?: string;
@@ -100,7 +101,6 @@ export type ProcSpawnResult =
       ok: true;
       pid: string;
       label?: string;
-      profile: string;
       cwd: string;
     }
   | { ok: false; error: string };

@@ -135,6 +135,39 @@ export class AuthStore {
       CREATE INDEX IF NOT EXISTS idx_auth_tokens_uid
       ON auth_tokens(uid)
     `);
+
+    // Maps a human owner uid to their 1:1 personal agent account uid.
+    this.sql.exec(`
+      CREATE TABLE IF NOT EXISTS personal_agents (
+        owner_uid INTEGER PRIMARY KEY,
+        agent_uid INTEGER NOT NULL
+      )
+    `);
+  }
+
+  getPersonalAgentUid(ownerUid: number): number | null {
+    const rows = this.sql.exec<{ agent_uid: number }>(
+      "SELECT agent_uid FROM personal_agents WHERE owner_uid = ?",
+      ownerUid,
+    ).toArray();
+    return rows[0]?.agent_uid ?? null;
+  }
+
+  setPersonalAgent(ownerUid: number, agentUid: number): void {
+    this.sql.exec(
+      "INSERT OR REPLACE INTO personal_agents (owner_uid, agent_uid) VALUES (?, ?)",
+      ownerUid,
+      agentUid,
+    );
+  }
+
+  /** Whether the given uid is itself a personal agent account (not a human owner). */
+  isPersonalAgentUid(uid: number): boolean {
+    const rows = this.sql.exec<{ c: number }>(
+      "SELECT COUNT(*) as c FROM personal_agents WHERE agent_uid = ?",
+      uid,
+    ).toArray();
+    return (rows[0]?.c ?? 0) > 0;
   }
 
   // ---------------------------------------------------------------------------
@@ -223,8 +256,10 @@ export class AuthStore {
   }
 
   nextUid(): number {
-    const rows = this.sql.exec<{ m: number | null }>("SELECT MAX(uid) as m FROM passwd").toArray();
-    const max = rows[0].m ?? 0;
+    // Allocate above both uids and group gids: User Private Groups use gid = uid,
+    // and standalone groups (e.g. package-agent access groups) take ids from the
+    // same space, so a fresh id must clear both tables to avoid later reuse.
+    const max = this.maxAllocatedId();
     return max < 1000 ? 1000 : max + 1;
   }
 
@@ -338,9 +373,16 @@ export class AuthStore {
   }
 
   nextGid(): number {
-    const rows = this.sql.exec<{ m: number | null }>("SELECT MAX(gid) as m FROM groups").toArray();
-    const max = rows[0].m ?? 0;
+    const max = this.maxAllocatedId();
     return max < 100 ? 100 : max + 1;
+  }
+
+  /** Highest id in use across passwd uids and group gids. */
+  private maxAllocatedId(): number {
+    const rows = this.sql.exec<{ m: number | null }>(
+      "SELECT MAX(m) as m FROM (SELECT MAX(uid) as m FROM passwd UNION ALL SELECT MAX(gid) as m FROM groups)",
+    ).toArray();
+    return rows[0]?.m ?? 0;
   }
 
   // ---------------------------------------------------------------------------

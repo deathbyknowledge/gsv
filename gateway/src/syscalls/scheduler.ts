@@ -1,4 +1,3 @@
-import type { AiContextProfile } from "./ai";
 import type {
   ProcSpawnAssignment,
   ProcSpawnMountSpec,
@@ -19,7 +18,8 @@ export type ScheduleTarget =
     }
   | {
       kind: "process.spawn";
-      profile?: AiContextProfile;
+      /** Account to run the scheduled process as (username, uid, or `pkg#agent`). Defaults to the schedule's run-as principal. */
+      runAs?: string;
       label?: string;
       prompt: string;
       parentPid?: string;

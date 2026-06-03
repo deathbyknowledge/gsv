@@ -15,6 +15,7 @@ import {
   type PackageEntrypoint,
   type PackageRuntime,
 } from "../packages";
+import { provisionEnabledPackagesForCaller } from "../package-agents";
 import { seedRepoSkillsToHome } from "./skills-seed";
 
 const DEFAULT_GSV_UPSTREAM_URL = "https://github.com/deathbyknowledge/gsv";
@@ -168,7 +169,11 @@ export async function handleSysBootstrap(
       return await timeBootstrapStep(
         timings,
         "seed-builtin-packages",
-        () => ctx.packages.seedBuiltinPackages(builtinSeeds),
+        async () => {
+          const installed = await ctx.packages.seedBuiltinPackages(builtinSeeds);
+          await provisionEnabledPackagesForCaller(ctx, installed);
+          return installed;
+        },
       );
     });
 

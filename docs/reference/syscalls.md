@@ -32,9 +32,6 @@ These aliases are used below to keep each syscall signature readable.
 ```ts
 type Empty = Record<string, never>;
 type OperationError = { ok: false; error: string };
-type AiContextProfile =
-  | "init" | "task" | "review" | "cron" | "mcp" | "app"
-  | `${string}#${string}`;
 
 type ProcessIdentity = {
   uid: number;
@@ -560,11 +557,10 @@ Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `proc.list` | `handleProcList` | Reads the kernel process registry. Root defaults to all processes; non-root defaults to own uid, though an explicit `uid` is currently honored by the handler. Entries include activity state, active run/conversation ids, queued count, and last activity timestamp. |
-| `proc.profile.list` | `handleProcProfileList` | Returns system AI profiles plus enabled package-backed profiles visible to the caller. Package entries are sorted by package name and display name. |
-| `proc.spawn` | `handleProcSpawn` | Validates the AI profile, resolves package profiles, materializes package source mounts, registers the process with a cwd, sends kernel-only `proc.setidentity`, and optionally sends the initial prompt. `init` is singleton; other profiles get UUID pids. |
-| `proc.send` | Process DO `handleProcSend` | Defaults `pid` to `init:<uid>` when forwarded and `conversationId` to `default`. Stores media and trusted `InteractionOrigin` metadata, appends a user message, starts a run if idle, or queues the message if a run is active. The process runtime renders `[From: ...]` origin markers into model context only at source boundaries, without rewriting stored message content. Public callers do not supply trusted origin; the Kernel derives it. |
-| `proc.ipc.send` | `handleProcIpcSend` | Process-callable same-owner IPC. Validates that the caller is a registered process, the target exists, and source/target uids match, then sends kernel-only `proc.ipc.deliver` to the target Process DO. The target receives a visible user message envelope and starts or queues a run. |
+| `proc.list` | `handleProcList` | Reads the kernel process registry. Root defaults to all processes; non-root defaults to the owning human uid. Entries include owner uid, run-as username, interactivity, activity state, active run/conversation ids, queued count, and last activity timestamp. |
+| `proc.spawn` | `handleProcSpawn` | Resolves the run-as account from `runAs` or the caller's personal agent, materializes package source mounts, registers the process with owner uid and run-as identity, sends kernel-only `proc.setidentity`, and optionally sends the initial prompt. Top-level interactive spawns without `runAs` reuse the owner's default conversation executor. |
+| `proc.send` | Process DO `handleProcSend` | Defaults `pid` to the caller's default conversation executor when forwarded and `conversationId` to the executor's primary conversation. Stores media and trusted `InteractionOrigin` metadata, appends a user message, starts a run if idle, or queues the message if a run is active. The process runtime renders `[From: ...]` origin markers into model context only at source boundaries, without rewriting stored message content. Public callers do not supply trusted origin; the Kernel derives it. |
+| `proc.ipc.send` | `handleProcIpcSend` | Process-callable same-owner IPC. Validates that the caller is a registered process, the target exists, and source/target owner uids match, then sends kernel-only `proc.ipc.deliver` to the target Process DO. The target receives a visible user message envelope and starts or queues a run. |
 | `proc.ipc.call` | `handleProcIpcCall` | Process-callable bounded same-owner IPC. Creates a call id and deadline, delivers the request to the target process, and later sends either `ipc.reply` or `ipc.timeout` to the source process. The syscall returns after acceptance, not after the target replies. |
 | `proc.abort` | Process DO | Logical cancellation of the active run. Clears pending HIL and current run, emits `proc.run.finished` with `aborted: true`, and may promote the next queued run. In-flight external work can still resolve later but stale handling guards state. |
 | `proc.hil` | Process DO | Resolves a pending human-in-the-loop request. `approve` dispatches the original syscall; `deny` appends a synthetic error tool result. `remember: true` with `approve` stores a process-local allow override for the syscall and target class. |
@@ -583,7 +579,7 @@ Runtime behavior:
 | `proc.conversation.segments` | Process DO | Lists recorded lifecycle segments for `conversationId` or `default`, including archive paths and summary marker ids. |
 | `proc.reset` | Process DO | Archives every non-empty conversation under `/var/sessions/<username>/<pid>/<archiveId>/`, clears active execution state, queues, process media, and all conversation messages, then increments conversation generations. |
 | `proc.ipc.deliver` | Process DO direct path | Kernel-only through public dispatch. Delivers the validated IPC envelope from the kernel into the target conversation. |
-| `proc.setidentity` | Process DO direct path | Kernel-only through public dispatch. Stores pid, identity, profile, and assignment context; `assignment.autoStart` can create a run immediately. |
+| `proc.setidentity` | Process DO direct path | Kernel-only through public dispatch. Stores pid, run-as identity, interactivity, conversation id, hydration pointer, and assignment context; `assignment.autoStart` can create a run immediately. |
 
 ```ts
 type ProcContextFile = { name: string; text: string };
@@ -677,17 +673,12 @@ type ProcIpcCallResult =
 type ProcessSyscalls = {
   "proc.list": {
     args: { uid?: number };
-    result: { processes: Array<{ pid: string; uid: number; profile: AiContextProfile; parentPid: string | null; state: "idle" | "queued" | "running" | "waiting_tool" | "waiting_hil"; activeRunId: string | null; activeConversationId: string | null; queuedCount: number; lastActiveAt: number | null; label: string | null; createdAt: number; cwd: string }> };
-  };
-
-  "proc.profile.list": {
-    args: Empty;
-    result: { profiles: Array<{ id: AiContextProfile; alias?: string; kind: "system" | "package"; displayName: string; description?: string; interactive: boolean; startable: boolean; background: boolean; spawnMode: "singleton" | "new"; packageId?: string; packageName?: string }> };
+    result: { processes: Array<{ pid: string; uid: number; username: string; interactive: boolean; parentPid: string | null; state: "idle" | "queued" | "running" | "waiting_tool" | "waiting_hil"; activeRunId: string | null; activeConversationId: string | null; queuedCount: number; lastActiveAt: number | null; label: string | null; createdAt: number; cwd: string; isDefaultConversation?: boolean }> };
   };
 
   "proc.spawn": {
-    args: { profile: AiContextProfile; label?: string; prompt?: string; assignment?: ProcSpawnAssignment; parentPid?: string; cwd?: string; mounts?: ProcSpawnMountSpec[] };
-    result: { ok: true; pid: string; label?: string; profile: AiContextProfile; cwd: string } | OperationError;
+    args: { runAs?: string; interactive?: boolean; label?: string; prompt?: string; assignment?: ProcSpawnAssignment; parentPid?: string; cwd?: string; mounts?: ProcSpawnMountSpec[] };
+    result: { ok: true; pid: string; label?: string; cwd: string } | OperationError;
   };
 
   "proc.send": {
@@ -791,7 +782,7 @@ type ProcessSyscalls = {
   };
 
   "proc.setidentity": {
-    args: { pid: string; identity: ProcessIdentity; profile: AiContextProfile; assignment?: ProcSpawnAssignment };
+    args: { pid: string; identity: ProcessIdentity; interactive?: boolean; assignment?: ProcSpawnAssignment; conversationId?: string; hydrateFrom?: string };
     result: { ok: true; startedRunId?: string };
   };
 };
@@ -1156,7 +1147,7 @@ Runtime behavior:
 | Syscall | Handler | Behavior |
 |---|---|---|
 | `ai.tools` | `handleAiTools` | Process-internal. Lists online accessible devices and filters built-in tool definitions by caller capabilities. Routable filesystem and shell tools are wrapped with required `target`; CodeMode is exposed as a process-local programmable tool. MCP tools are used through CodeMode or shell, not expanded into this direct tool list. |
-| `ai.config` | `handleAiConfig` | Process-internal. Resolves user override then system AI config for user-tunable keys, plus system-only operational keys such as generation streaming. Defaults profile to `task`, provider to `workers-ai`, model to `@cf/nvidia/nemotron-3-120b-a12b`, max tokens to 8192, context window to provider/model metadata or configured fallback, streaming to `auto`, and context budget to 32768 bytes. Package profiles load manifest context files and approval policy. |
+| `ai.config` | `handleAiConfig` | Process-internal. Resolves account/user override then system AI config for model settings, plus system-only operational keys such as generation streaming. Context and tool approval are sourced from the run-as account, with owner context layered in when distinct. Defaults provider to `workers-ai`, model to `@cf/nvidia/nemotron-3-120b-a12b`, max tokens to 8192, context window to provider/model metadata or configured fallback, streaming to `auto`, and context budget to 32768 bytes. |
 | `ai.transcription.create` | `handleAiTranscriptionCreate` | User-callable. Accepts base64 audio data plus MIME type, transcribes or translates it through the configured transcription model, and returns normalized text plus optional language, duration, and segments. |
 | `ai.speech.create` | `handleAiSpeechCreate` | User-callable. Accepts text, normalizes Markdown to speech-friendly text by default, synthesizes speech through the configured Workers AI text-to-speech model, and returns a browser-playable audio data URL plus MIME type and size. |
 
@@ -1170,8 +1161,8 @@ type AiSyscalls = {
   };
 
   "ai.config": {
-    args: { profile?: AiContextProfile };
-    result: { profile?: AiContextProfile; provider: string; model: string; apiKey: string; reasoning?: string; maxTokens: number; contextWindowTokens: number | null; contextWindowSource: "model" | "config" | "unknown"; systemContextFiles?: Array<{ name: string; text: string }>; profileContextFiles?: Array<{ name: string; text: string }>; skillIndex?: Array<{ id: string; name: string; description: string; source: { kind: "profile" | "home" | "package"; label: string; writable: boolean } }>; profileApprovalPolicy?: string | null; maxContextBytes: number; generationTimeoutMs: number; generationStreaming?: "auto" | "off" };
+    args: Empty;
+    result: { owner?: ProcessIdentity | null; provider: string; model: string; apiKey: string; reasoning?: string; maxTokens: number; contextWindowTokens: number | null; contextWindowSource: "model" | "config" | "unknown"; systemContextFiles?: Array<{ name: string; text: string }>; skillIndex?: Array<{ id: string; name: string; description: string; source: { kind: "home" | "package"; label: string; writable: boolean } }>; accountApprovalPolicy?: string | null; maxContextBytes: number; generationTimeoutMs: number; generationStreaming?: "auto" | "off" };
   };
 
   "ai.transcription.create": {
@@ -1324,7 +1315,7 @@ type ScheduleExpression =
 
 type ScheduleTarget =
   | { kind: "command.exec"; command: string; cwd?: string; timeoutMs?: number }
-  | { kind: "process.spawn"; profile?: string; label?: string; prompt: string; parentPid?: string; cwd?: string; mounts?: unknown[]; assignment?: unknown }
+  | { kind: "process.spawn"; runAs?: string; label?: string; prompt: string; parentPid?: string; cwd?: string; mounts?: unknown[]; assignment?: unknown }
   | { kind: "process.event"; pid: string; conversationId?: string; message: string; data?: Record<string, unknown> };
 
 type ScheduleRecord = {

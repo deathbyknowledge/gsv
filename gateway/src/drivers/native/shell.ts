@@ -20,6 +20,7 @@ import {
   requestProcessView,
 } from "../../fs";
 import type { KernelContext } from "../../kernel/context";
+import { resolveCallerOwnerUid } from "../../kernel/context";
 import { createCronFileService } from "../../kernel/crontab";
 import { visiblePackageScopesForActor } from "../../kernel/packages";
 import type { ShellExecArgs, ShellExecResult } from "../../syscalls/shell";
@@ -123,11 +124,13 @@ function createBash(
   cwd: string,
   options?: NativeShellCommandOptions,
 ): Bash {
+  const ownerUid = resolveCallerOwnerUid(ctx);
+  const packageScopeOwner = { uid: ownerUid };
   const sourceBackend = createProcessSourceBackend({
     identity,
     storage: ctx.env.STORAGE,
     ripgit: ctx.env.RIPGIT ? new RipgitClient(ctx.env.RIPGIT) : null,
-    packages: ctx.packages.list({ scopes: visiblePackageScopesForActor(identity) }),
+    packages: ctx.packages.list({ scopes: visiblePackageScopesForActor(packageScopeOwner) }),
     mounts: ctx.processId ? ctx.procs.getMounts(ctx.processId) : null,
     processId: ctx.processId ?? null,
     config: ctx.config,
@@ -148,8 +151,12 @@ function createBash(
     },
     ctx.processId ?? undefined,
     sourceBackend,
-    createHomeKnowledgeBackend(ctx.env.STORAGE, ctx.env.RIPGIT, identity),
-    createPackageBackend(identity, ctx.packages),
+    createHomeKnowledgeBackend(ctx.env.STORAGE, ctx.env.RIPGIT, identity, {
+      auth: ctx.auth,
+      ownerUid,
+      isRoot: identity.uid === 0,
+    }),
+    createPackageBackend(identity, ctx.packages, packageScopeOwner),
   );
 
   const serverName = ctx.config.get("config/server/name") ?? "gsv";

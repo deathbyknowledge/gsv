@@ -108,12 +108,17 @@ export function renderDesktopShell(): string {
                 <section class="onboarding-section" data-setup-detail-step="account">
                   <div class="onboarding-section-head">
                     <h3>Account</h3>
-                    <p>Create the first account that signs into the desktop and owns the initial home directory.</p>
+                    <p>Create the first desktop account and optionally name the personal agent it owns.</p>
                   </div>
                   <div class="session-field-grid">
                     <label>
                       Username
                       <input data-setup-username type="text" autocomplete="username" placeholder="hank" />
+                    </label>
+                    <label>
+                      Personal agent username
+                      <input data-setup-agent-name type="text" autocomplete="off" placeholder="friday" />
+                      <small class="session-field-hint">Optional. Leave blank to use the next available default name.</small>
                     </label>
                     <label>
                       Password
@@ -255,7 +260,7 @@ export function renderDesktopShell(): string {
                   <article class="onboarding-summary-card">
                     <span>Account</span>
                     <strong data-setup-summary-account></strong>
-                    <p>First desktop user and home directory owner.</p>
+                    <p>First desktop user and personal agent account.</p>
                   </article>
                   <article class="onboarding-summary-card">
                     <span>Admin access</span>

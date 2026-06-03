@@ -286,6 +286,21 @@ function buildReviewPrompt(pkg: PackageLike, packages: PackageLike[]): string {
   ].join("\n");
 }
 
+function buildReviewAssignmentContext(pkg: PackageLike, packages: PackageLike[]): string {
+  const sourcePath = `/src/packages/${packageSourcePathNameForPackage(pkg, packages)}`;
+  return [
+    "# Package Review",
+    "",
+    `You are reviewing the imported package "${pkg.name}".`,
+    `The package source is mounted at ${sourcePath}, and the process starts there.`,
+    "",
+    "Treat this as a focused code review for whether the package should be enabled.",
+    "Prioritize manifest, entrypoints, declared capabilities, host bridge usage, filesystem writes, shell execution, process spawning, network access, eval, and destructive actions.",
+    "Keep evidence concrete. If a command fails, note it briefly and continue with other review evidence.",
+    "Do not approve the package unless the reviewed source and requested capabilities match the user's intent.",
+  ].join("\n");
+}
+
 async function listPackages(kernel: KernelClientLike): Promise<PackageLike[]> {
   const result = asRecord(await kernel.request("pkg.list", {}));
   return asArray<PackageLike>(result?.packages);
@@ -398,7 +413,7 @@ function packageUpdateAvailable(
     return true;
   }
   const changedPaths = changedPathsByComparison.get(key);
-  if (changedPaths === null) {
+  if (!changedPaths) {
     return true;
   }
   return changedPaths.some((path) => pathIsInPackageSubdir(path, pkg.source.subdir));
@@ -430,14 +445,18 @@ function derivePackageView(
 ): DerivedPackageRecord {
   const sourceHealth = describeSourceHealth(pkg, refsByRepo, changedPathsByComparison);
   const entrypoints = asArray<PackageEntrypoint>(pkg.entrypoints);
-  const declaredSyscalls = unique(entrypoints.flatMap((entry) => asArray<string>(entry.syscalls)));
   const uiEntrypoints = entrypoints.filter((entry) => entry.kind === "ui" && asString(entry.route).length > 0);
   const profiles = asArray<Record<string, unknown>>(pkg.profiles).map((profile) => ({
     name: asString(profile.name),
     displayName: asString(profile.displayName),
     description: asString(profile.description) || undefined,
     icon: asString(profile.icon) || undefined,
+    capabilities: asArray<string>(profile.capabilities),
   }));
+  const declaredSyscalls = unique([
+    ...entrypoints.flatMap((entry) => asArray<string>(entry.syscalls)),
+    ...profiles.flatMap((profile) => profile.capabilities ?? []),
+  ]);
   const canMutate = canMutatePackage(pkg, viewer);
   const canChangeVisibility = viewer.isRoot || repoOwner(pkg.source.repo) === viewer.username;
   const canPullSource = canChangeVisibility && (isBuiltinRepo(pkg.source.repo) || pkg.review.required);
@@ -577,6 +596,7 @@ function normalizeCatalogEntries(value: unknown): CatalogEntry[] {
         displayName: asString(profile.displayName),
         description: asString(profile.description) || undefined,
         icon: asString(profile.icon) || undefined,
+        capabilities: asArray<string>(profile.capabilities),
       })),
       bindingNames: asArray<string>(entry.bindingNames),
     };
@@ -745,9 +765,14 @@ export async function startPackageReview(
   }
 
   const spawned = asRecord(await kernel.request("proc.spawn", {
-    profile: "review",
     label: `Review ${target.name}`,
     prompt: buildReviewPrompt(target, packages),
+    assignment: {
+      contextFiles: [{
+        name: "20-package-review.md",
+        text: buildReviewAssignmentContext(target, packages),
+      }],
+    },
     mounts: [
       { kind: "package-source", packageId: target.packageId },
     ],

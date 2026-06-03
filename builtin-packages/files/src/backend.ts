@@ -3,7 +3,7 @@ import { createFile, deletePath, loadState, saveFile } from "./backend/api";
 
 export default class FilesBackend extends PackageBackendEntrypoint {
   async loadState(args: unknown): Promise<unknown> {
-    return loadState(this.kernel, args as never);
+    return loadState(this.kernel, args as never, this);
   }
 
   async saveFile(args: unknown): Promise<unknown> {

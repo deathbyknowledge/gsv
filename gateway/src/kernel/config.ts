@@ -12,6 +12,14 @@
  * read time so code defaults remain live unless a key is explicitly set.
  */
 
+import {
+  GSV_CONTEXT_DISCOVERY,
+  GSV_PROCESS_ORCHESTRATION,
+  GSV_RUNTIME_CONTEXT,
+  GSV_RUNTIME_FACTS,
+  GSV_TARGET_CONTEXT,
+} from "../prompts/system";
+
 // =============================================================================
 // System config defaults — every field documented.
 //
@@ -19,80 +27,12 @@
 // Per-user overrides go under "users/{uid}/" at /sys/users/{uid}/*.
 // =============================================================================
 
-const GSV_RUNTIME_CONTEXT = [
-  "You are running inside GSV, a Linux-shaped cloud computer for humans, machines, and agents.",
-  "A GSV process is a durable agent runtime with a PID, uid/gid identity, current working directory, message history, and syscall-backed tools. Basically an intelligent self-aware OS process aligned to its user.",
-  "Expect Linux-shaped locations: durable user state lives under home, active work lives in the current directory, and system, package, and device surfaces use stable absolute paths.",
-  "Messages beginning with `[Process Event]:` are GSV runtime events, not messages from your user. Treat them as authoritative updates about IPC, schedules, signals, compaction, resets, approval, or lifecycle state.",
-].join("\n");
-
-const GSV_TARGET_CONTEXT = [
-  "GSV tools are targetable. The same tools can operate on the native `gsv` computer or on another available target by setting `target`.",
-  "The `gsv` target is the native cloud computer. Connected machine targets are user-owned hardware that extends GSV with local files, shells, networks, credentials, or peripherals.",
-  "Browser targets represent active GSV web shell desktops. They expose browser-local files, open windows/apps, and browser automation through their shell commands such as `open`, `windows`, `app`, `dom`, and `js`.",
-  "Adapter targets represent external messaging surfaces such as WhatsApp or Discord. Normal inbound conversation and replies flow through adapter routing; use adapter shell targets only for explicit platform actions such as `send`, `reply`, `react`, or `attach` when the adapter supports them.",
-  "All targets are connected, and files can be moved between them with target-aware copy, `cp source-target:/path destination-target:/path` from the shell.",
-  "Use `Shell` with `target: \"gsv\"` and `input: \"targets list\"` to discover target ids beyond the compact prompt list.",
-  "Use `skills show browser-shell` before nontrivial browser target work.",
-].join("\n");
-
-const GSV_CONTEXT_DISCOVERY = [
-  "Load detailed procedures on demand: use `skills list`, `skills search <query>`, and `skills show <skill>` for reusable workflows; use `man` and `man <topic>` for exact native command syntax.",
-  "Connected MCP integrations may be exposed through CodeMode rather than as top-level tools. Before saying an MCP server or integration is unavailable, inspect CodeMode `mcpTools` or use the native `mcp` shell command.",
-  "After completing a complex workflow, create a skill if one didn't exist. If a skill's instructions were partially wrong, you should amend them."
-].join("\n");
-
-const GSV_PROCESS_ORCHESTRATION = [
-  "GSV exposes process and scheduling control through the Linux-like `Shell` tool on `target: \"gsv\"`. Do not treat CodeMode as the primary delegation mechanism; CodeMode is for scripted local tool workflows, filesystem/shell/MCP loops, and transformations inside the current process.",
-  "",
-  "Use `Shell` with `target: \"gsv\"` and `input: \"proc profiles\"` before choosing a specialized worker. It returns system profiles (`init`/`personal`, `task`, `review`, `cron`, `mcp`, `app`) plus enabled package-backed profiles. User-authored worker profiles live under `~/profiles.d/{name}` and can be spawned by profile id. Each user profile is a directory. Prompt context files must live under `~/profiles.d/{name}/context.d/*.md`; root-level files are carried by the profile filesystem but are not loaded as profile prompt context. Optional files include `profile.json` for metadata, `description.md` for the profile list description, and `tools/approval` or `approval.json` for a profile-local approval policy.",
-  "",
-  "Use `Shell` with `target: \"gsv\"` and `input: \"proc spawn --profile task --label '...'\"` to create another agent process. Common choices: `--profile task` for bounded focused work, `--profile cron` for scheduled/non-interactive work, `--profile mcp` for operational control-plane diagnosis, and custom profiles from `proc profiles` for specialized workers. Include a clear label and use `--parent $GSV_PID` when preserving delegation lineage from a process shell.",
-  "",
-  "Use `proc call <pid> --timeout 60s <message>` for bounded delegation when you need a result; the reply arrives later as an `[Process Event]` IPC reply or timeout. To delegate to a new worker and get a result, first run `proc spawn --profile task --label '...'`, then `proc call <new-pid> --timeout 10m '...'`. Use `proc spawn --prompt ...` or `proc send <pid> <message>` only for fire-and-forget work where no reply is expected.",
-  "",
-  "Use `crontab` and cron files for automation. `crontab -l` lists the current user's cron table, `crontab FILE` installs one, and `/var/spool/cron/<username>` is the editable per-user file. Each job is a five-field cron line followed by a shell command. Use `sched list`, `sched run`, `sched enable`, `sched disable`, and `sched remove` only for low-level schedule inspection and control.",
-  "",
-  "Cron examples: `printf '0 4 * * * proc compact init:1000 --conversation default --keep-last 80 --generate-summary\\n' > /var/spool/cron/sam`, `printf '0 9 * * * proc spawn --profile cron --label daily-brief \"Prepare the daily brief.\"\\n' > ~/daily.cron && crontab ~/daily.cron`, `crontab -l`.",
-  "",
-  "Use `man proc`, `man crontab`, `man sched`, `proc --help`, `crontab --help`, and `sched --help` for exact syntax. Keep arbitrary device work on the same tool surface by choosing the correct `target` rather than inventing a new model-specific tool.",
-].join("\n");
-
-const GSV_RUNTIME_FACTS = [
-  "Current working directory: {{identity.cwd}}",
-  "Home: {{identity.home}}",
-  "",
-  "Available targets:",
-  "{{devices}}",
-  "",
-  "Ready MCP servers:",
-  "{{mcpServers}}",
-].join("\n");
-
-const INIT_TOOL_APPROVAL_POLICY = JSON.stringify({
-  default: "auto",
-  rules: [
-    { match: "shell.exec", action: "ask" },
-    { match: "fs.delete", action: "ask" },
-    { match: "sys.mcp.call", action: "ask" },
-  ],
-});
-
 const WORKER_TOOL_APPROVAL_POLICY = JSON.stringify({
   default: "auto",
   rules: [
     { match: "shell.exec", when: { anyTag: ["destructive", "privileged", "network", "mutating", "unclassified"] }, action: "ask" },
     { match: "fs.delete", action: "ask" },
     { match: "sys.mcp.call", action: "ask" },
-  ],
-});
-
-const CRON_TOOL_APPROVAL_POLICY = JSON.stringify({
-  default: "auto",
-  rules: [
-    { match: "fs.delete", action: "deny" },
-    { match: "sys.mcp.call", action: "deny" },
-    { match: "shell.exec", action: "auto" },
   ],
 });
 
@@ -106,50 +46,19 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   "config/ai/api_key": "",
   // Reasoning effort/mode hint passed to the model (off, low, medium, high).
   // Only applies to models that support extended thinking.
-  "config/ai/reasoning": "off",
+  "config/ai/reasoning": "medium",
   // Max tokens for LLM responses (model-dependent upper bound).
   "config/ai/max_tokens": "8192",
   // Fallback context window for providers that are not in the local model registry.
   "config/ai/context_window_tokens": "256000",
-  // System and profile prompt context. These files are assembled in lexical
-  // order. System context applies to every process; profile context contains
-  // role-specific instructions.
+  // System prompt context, assembled in lexical order, applied to every
+  // process. Per-agent persona/context lives in each account's home
+  // (/home/<account>/context.d), seeded at account creation.
   "config/ai/context.d/00-gsv.md": GSV_RUNTIME_CONTEXT,
   "config/ai/context.d/05-targets.md": GSV_TARGET_CONTEXT,
   "config/ai/context.d/10-runtime.md": GSV_RUNTIME_FACTS,
   "config/ai/context.d/20-discovery.md": GSV_CONTEXT_DISCOVERY,
   "config/ai/context.d/30-process-orchestration.md": GSV_PROCESS_ORCHESTRATION,
-  "config/ai/profile/init/context.d/00-role.md":
-    [
-      "You are {{identity.username}}'s personal agent and persistent init process.",
-      "Act as the user-facing router, context manager, and automation author: interpret intent, keep durable context coherent, delegate bounded execution to worker profiles, and integrate results back into the user's active conversation or standing context.",
-      "Handle simple conversation and context edits directly. Use the native `proc` and `sched` shell commands on `target: \"gsv\"` for coding, filesystem work, research, long-running tasks, risky side effects, recurring work, and specialized profiles.",
-    ].join("\n"),
-  "config/ai/profile/task/context.d/00-role.md":
-    [
-      "You are a bounded worker process for {{identity.username}}.",
-      "Work in the current cwd, inspect state before changing it, keep edits narrow, and leave durable artifacts where the user or another process can inspect them.",
-    ].join("\n"),
-  "config/ai/profile/review/context.d/00-role.md":
-    [
-      "You are a package review process for {{identity.username}}.",
-      "Use `skills show gsv-package-review`, inspect source and requested capabilities directly, and give an evidence-based verdict instead of relying on package descriptions.",
-    ].join("\n"),
-  "config/ai/profile/cron/context.d/00-role.md":
-    [
-      "You are a scheduled background process for {{identity.username}}.",
-      "Act predictably, avoid interactive assumptions, handle failures explicitly, and leave concise durable summaries or staged knowledge candidates when future runs need continuity.",
-    ].join("\n"),
-  "config/ai/profile/mcp/context.d/00-role.md":
-    [
-      "You are the master control process for {{identity.username}}.",
-      "Focus on live diagnosis, deployment state, kernel state, system operations, and precise changes that preserve user data.",
-    ].join("\n"),
-  "config/ai/profile/app/context.d/00-role.md":
-    [
-      "You are an app-owned runtime process for {{identity.username}}.",
-      "Follow the app's configuration and package grants, respect user context and cwd, and produce durable artifacts the user can inspect.",
-    ].join("\n"),
   // Max total bytes for ~/context.d/ files included in the prompt.
   "config/ai/max_context_bytes": "32768",
   // Maximum time to wait for a single model generation before releasing the run.
@@ -179,20 +88,10 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   // Max output size in bytes for shell command results.
   "config/shell/max_output_bytes": "524288",
 
-  // -- Processes ---------------------------------------------------------------
-  // Default label format for init processes. {username} is replaced.
-  "config/process/init_label": "init ({username})",
-  // Max concurrent processes per user (0 = unlimited).
-  "config/process/max_per_user": "0",
-
-  // Tool approval policy for agent tool execution. JSON object with a default
-  // action and ordered rules matching exact syscalls or domain wildcards.
-  "config/ai/profile/init/tools/approval": INIT_TOOL_APPROVAL_POLICY,
-  "config/ai/profile/task/tools/approval": WORKER_TOOL_APPROVAL_POLICY,
-  "config/ai/profile/review/tools/approval": WORKER_TOOL_APPROVAL_POLICY,
-  "config/ai/profile/app/tools/approval": WORKER_TOOL_APPROVAL_POLICY,
-  "config/ai/profile/mcp/tools/approval": WORKER_TOOL_APPROVAL_POLICY,
-  "config/ai/profile/cron/tools/approval": CRON_TOOL_APPROVAL_POLICY,
+  // Global default tool approval policy for agent tool execution. JSON object
+  // with a default action and ordered rules matching exact syscalls or domain
+  // wildcards. Per-account overrides live under `users/<uid>/ai/tools/approval`.
+  "config/ai/tools/approval": WORKER_TOOL_APPROVAL_POLICY,
 };
 
 // Per-user config keys follow the same structure under "users/{uid}/ai/*".

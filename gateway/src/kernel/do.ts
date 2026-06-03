@@ -36,6 +36,7 @@ import { DeviceRegistry, type DeviceLifecycle, type DeviceRecord } from "./devic
 import { RoutingTable, type RouteOrigin } from "./routing";
 import { ShellSessionStore, type ShellSessionStatus } from "./shell-sessions";
 import { ProcessRegistry, type ProcessState } from "./processes";
+import { ConversationRegistry } from "./conversations";
 import { AdapterStore } from "./adapter-store";
 import { RunRouteStore, type AdapterRunRoute, type RunRoute } from "./run-routes";
 import { OAuthStore } from "./oauth-store";
@@ -92,6 +93,7 @@ import {
 import type { AppClientSessionContext } from "../protocol/app-session";
 import { listLocalPublicPackages } from "./pkg";
 import { handleProcSpawn } from "./proc-handlers";
+import { ensureDefaultConversationExecutor } from "./agents";
 import { handleShellExec } from "../drivers/native/shell";
 import type {
   ScheduleRecord,
@@ -193,6 +195,7 @@ export class Kernel extends Host<Env> {
   private readonly routes: RoutingTable;
   private readonly shellSessions: ShellSessionStore;
   private readonly procs: ProcessRegistry;
+  private readonly conversations: ConversationRegistry;
   private readonly adapters: AdapterStore;
   private readonly runRoutes: RunRouteStore;
   private readonly signalWatches: SignalWatchStore;
@@ -236,6 +239,9 @@ export class Kernel extends Host<Env> {
 
     this.procs = new ProcessRegistry(sql);
     this.procs.init();
+
+    this.conversations = new ConversationRegistry(sql);
+    this.conversations.init();
 
     this.adapters = new AdapterStore(sql);
     this.adapters.init();
@@ -695,29 +701,36 @@ export class Kernel extends Host<Env> {
     const runId = this.extractRunId(frame.payload);
     this.updateProcessRuntimeFromSignal(processId, frame, runId);
 
-    await this.dispatchSignalWatches(identity.uid, processId, frame);
-    await this.completeIpcCallsFromSignal(identity.uid, processId, frame, runId);
+    // Signal watches are scoped to the process owner, not the run-as account.
+    // App runtimes register watches under the owning human uid, while the
+    // emitting process may run as a personal/package agent.
+    const ownerUid = this.procs.getOwnerUid(processId) ?? identity.uid;
+
+    await this.dispatchSignalWatches(ownerUid, processId, frame);
+    await this.completeIpcCallsFromSignal(ownerUid, processId, frame, runId);
 
     if (!frame.signal.startsWith("proc.run.")) return;
 
+    // Client-facing run signals route by the owning human (owner_uid), not the
+    // run-as identity (which may be the personal agent account).
     if (!runId) {
-      this.broadcastToUid(identity.uid, frame.signal, frame.payload);
+      this.broadcastToUid(ownerUid, frame.signal, frame.payload);
       return;
     }
 
     const route = this.runRoutes.get(runId);
     if (!route) {
-      this.broadcastToUid(identity.uid, frame.signal, frame.payload);
+      this.broadcastToUid(ownerUid, frame.signal, frame.payload);
       return;
     }
 
-    if (route.uid !== identity.uid) {
+    if (route.uid !== ownerUid) {
       this.runRoutes.delete(runId);
       return;
     }
 
     if (route.kind === "connection") {
-      this.deliverSignalToConnection(route, frame, identity.uid);
+      this.deliverSignalToConnection(route, frame, ownerUid);
       if (frame.signal === "proc.run.finished") {
         this.runRoutes.delete(runId);
       }
@@ -822,11 +835,12 @@ export class Kernel extends Host<Env> {
       return;
     }
     const runId = this.extractRunId(frame.payload);
-    await this.completeIpcCallsFromSignal(identity.uid, processId, frame, runId);
+    const ownerUid = this.procs.getOwnerUid(processId) ?? identity.uid;
+    await this.completeIpcCallsFromSignal(ownerUid, processId, frame, runId);
   }
 
   private async completeIpcCallsFromSignal(
-    uid: number,
+    ownerUid: number,
     processId: string,
     frame: SignalFrame,
     runId: string | null,
@@ -844,7 +858,7 @@ export class Kernel extends Host<Env> {
     };
     const error = typeof payload.error === "string" ? payload.error : null;
     const completed = this.ipcCalls.completeByRun({
-      uid,
+      uid: ownerUid,
       targetPid: processId,
       runId,
       response,
@@ -1083,6 +1097,7 @@ export class Kernel extends Host<Env> {
       config: this.config,
       devices: this.devices,
       procs: this.procs,
+      conversations: this.conversations,
       packages: this.packages,
       oauth: this.oauth,
       mcp: this.mcp,
@@ -1159,6 +1174,7 @@ export class Kernel extends Host<Env> {
       config: this.config,
       devices: this.devices,
       procs: this.procs,
+      conversations: this.conversations,
       packages: this.packages,
       oauth: this.oauth,
       mcp: this.mcp,
@@ -1197,6 +1213,7 @@ export class Kernel extends Host<Env> {
       config: this.config,
       devices: this.devices,
       procs: this.procs,
+      conversations: this.conversations,
       packages: this.packages,
       oauth: this.oauth,
       mcp: this.mcp,
@@ -2130,8 +2147,8 @@ export class Kernel extends Host<Env> {
 
     if (outcome.identity.role === "user") {
       const freshIdentity = outcome.identity.process;
-      await this.ensureUserInitProcess(freshIdentity);
-      this.reconcileIdentity(freshIdentity);
+      await this.ensureUserDefaultExecutor(ctx, freshIdentity);
+      this.reconcileOwnedIdentities(freshIdentity.uid);
     }
 
     this.sendOk(connection, frame.id, outcome.result);
@@ -2241,7 +2258,7 @@ export class Kernel extends Host<Env> {
     try {
       const data = await handleKernelSetup(frame.args, ctx);
       const setup = data as SysSetupResult;
-      await this.ensureUserInitProcess(setup.user);
+      await this.ensureUserDefaultExecutor(ctx, setup.user);
       this.sendOk(connection, frame.id, data);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -2469,6 +2486,7 @@ export class Kernel extends Host<Env> {
   private async runSchedules(
     args: SchedulerRunArgs,
     identity?: ConnectionIdentity,
+    callerOwnerUid = identity?.process.uid,
   ): Promise<SchedulerRunResult> {
     const mode = args.mode ?? "due";
     if (mode === "force" && !args.id) {
@@ -2478,12 +2496,12 @@ export class Kernel extends Host<Env> {
     const now = Date.now();
     const records = args.id
       ? [this.schedules.get(args.id)].filter((record): record is ScheduleRecord => record !== null)
-      : this.schedules.listDue(now, identity && identity.process.uid !== 0 ? identity.process.uid : undefined);
+      : this.schedules.listDue(now, callerOwnerUid !== undefined && callerOwnerUid !== 0 ? callerOwnerUid : undefined);
 
     const results: ScheduleRunResult[] = [];
     for (const record of records) {
       if (identity) {
-        assertCanManageSchedule(identity, record);
+        assertCanManageSchedule(identity, record, callerOwnerUid);
       }
       results.push(await this.runScheduleRecord(record, mode));
     }
@@ -2597,14 +2615,16 @@ export class Kernel extends Host<Env> {
 
     if (target.kind === "process.spawn") {
       const ctx = this.buildScheduleContext(record);
+      const runAs = this.resolveScheduledSpawnRunAs(record, target.runAs);
       const result = await handleProcSpawn({
-        profile: target.profile ?? "cron",
+        interactive: false,
         label: target.label ?? record.name,
         prompt: target.prompt,
         parentPid: target.parentPid,
         cwd: target.cwd,
         mounts: target.mounts,
         assignment: target.assignment,
+        ...(runAs ? { runAs } : {}),
       }, ctx);
       if (!result.ok) {
         throw new Error(result.error);
@@ -2612,7 +2632,6 @@ export class Kernel extends Host<Env> {
       return {
         kind: "process.spawn",
         pid: result.pid,
-        profile: result.profile,
       };
     }
 
@@ -2621,7 +2640,7 @@ export class Kernel extends Host<Env> {
       if (!proc) {
         throw new Error(`Process not found: ${target.pid}`);
       }
-      if (proc.uid !== record.ownerUid && record.ownerUid !== 0) {
+      if (proc.ownerUid !== record.ownerUid && record.ownerUid !== 0) {
         throw new Error(`Permission denied: schedule ${record.id} cannot access process ${target.pid}`);
       }
 
@@ -2649,7 +2668,7 @@ export class Kernel extends Host<Env> {
   }
 
   private buildScheduleContext(record: ScheduleRecord): KernelContext {
-    const process = this.resolveScheduleIdentity(record.ownerUid);
+    const process = this.resolveScheduleIdentity(record);
     const identity: ConnectionIdentity = {
       role: "user",
       process,
@@ -2663,6 +2682,7 @@ export class Kernel extends Host<Env> {
       config: this.config,
       devices: this.devices,
       procs: this.procs,
+      conversations: this.conversations,
       packages: this.packages,
       oauth: this.oauth,
       mcp: this.mcp,
@@ -2677,7 +2697,8 @@ export class Kernel extends Host<Env> {
       schedules: this.schedules,
       connection: null as unknown as Connection,
       identity,
-      processId: record.runAs.kind === "process" ? record.runAs.pid : undefined,
+      processId: undefined,
+      callerOwnerUid: record.ownerUid,
       appFrame: undefined,
       serverVersion: SERVER_VERSION,
       broadcastToUid: this.broadcastToUid.bind(this),
@@ -2693,24 +2714,59 @@ export class Kernel extends Host<Env> {
     };
   }
 
-  private resolveScheduleIdentity(uid: number): ProcessIdentity {
-    const initIdentity = this.procs.getIdentity(`init:${uid}`);
-    if (initIdentity) {
-      return initIdentity;
+  private resolveScheduleIdentity(record: ScheduleRecord): ProcessIdentity {
+    const uid = record.runAs.uid;
+    const account = this.auth.getPasswdByUid(uid);
+    if (account) {
+      return {
+        uid: account.uid,
+        gid: account.gid,
+        gids: this.auth.resolveGids(account.username, account.gid),
+        username: account.username,
+        home: account.home,
+        cwd: account.home,
+      };
     }
 
-    const user = this.auth.getPasswdByUid(uid);
-    if (!user) {
-      throw new Error(`Cannot resolve schedule owner uid ${uid}`);
+    // Fallback: derive from the recorded process when passwd is not directly
+    // resolvable in a minimal test context.
+    const process = record.runAs.kind === "process" && record.runAs.pid
+      ? this.procs.get(record.runAs.pid)
+      : null;
+    if (process && process.uid === uid) {
+      return {
+        uid: process.uid,
+        gid: process.gid,
+        gids: process.gids,
+        username: process.username,
+        home: process.home,
+        cwd: process.cwd,
+      };
     }
-    return {
-      uid: user.uid,
-      gid: user.gid,
-      gids: this.auth.resolveGids(user.username, user.gid),
-      username: user.username,
-      home: user.home,
-      cwd: user.home,
-    };
+    const owned = this.procs.list(record.ownerUid).find((candidate) => candidate.uid === uid);
+    if (owned) {
+      return {
+        uid: owned.uid,
+        gid: owned.gid,
+        gids: owned.gids,
+        username: owned.username,
+        home: owned.home,
+        cwd: owned.cwd,
+      };
+    }
+    throw new Error(`Cannot resolve schedule run-as uid ${uid}`);
+  }
+
+  private resolveScheduledSpawnRunAs(record: ScheduleRecord, targetRunAs?: string): string | undefined {
+    if (targetRunAs) {
+      return targetRunAs;
+    }
+    // A process-principal schedule records a run-as account and an origin pid.
+    // Execution must keep the account without depending on that pid still being
+    // alive as the spawn parent.
+    return record.runAs.kind === "process" || record.runAs.kind === "service"
+      ? record.runAs.username
+      : undefined;
   }
 
   private deliverToOrigin(origin: RouteOrigin, frame: ResponseFrame): void {
@@ -2814,25 +2870,34 @@ export class Kernel extends Host<Env> {
   }
 
   /**
-   * Compare freshly-resolved identity from auth store against ProcessRegistry.
-   * If there's drift (groups changed, home changed, etc.), update the
-   * registry and send identity.changed signals to all processes for that uid.
+   * Reconcile the run-as identity of every process owned by `ownerUid` against
+   * the auth store. Each process keeps its run-as account (preserving the
+   * personal-agent split); only group/home/gid drift for that account is
+   * refreshed, and identity.changed is emitted when it changes.
    */
-  private reconcileIdentity(fresh: ProcessIdentity): void {
-    const existing = this.procs.getIdentity(`init:${fresh.uid}`);
-    if (!existing) return;
+  private reconcileOwnedIdentities(ownerUid: number): void {
+    for (const proc of this.procs.list(ownerUid)) {
+      const entry = this.auth.getPasswdByUsername(proc.username);
+      if (!entry) continue;
 
-    if (
-      existing.gid === fresh.gid &&
-      existing.home === fresh.home &&
-      existing.username === fresh.username &&
-      JSON.stringify(existing.gids) === JSON.stringify(fresh.gids)
-    ) {
-      return;
-    }
+      const fresh: ProcessIdentity = {
+        uid: entry.uid,
+        gid: entry.gid,
+        gids: this.auth.resolveGids(entry.username, entry.gid),
+        username: entry.username,
+        home: entry.home,
+        cwd: proc.cwd,
+      };
 
-    const processes = this.procs.list(fresh.uid);
-    for (const proc of processes) {
+      if (
+        proc.gid === fresh.gid &&
+        proc.home === fresh.home &&
+        proc.username === fresh.username &&
+        JSON.stringify(proc.gids) === JSON.stringify(fresh.gids)
+      ) {
+        continue;
+      }
+
       this.procs.updateIdentity(proc.processId, fresh);
 
       sendFrameToProcess(proc.processId, {
@@ -2975,19 +3040,11 @@ export class Kernel extends Host<Env> {
     this.purgeStaleProvidedTargets(onlineTargets);
   }
 
-  private async ensureUserInitProcess(identity: ProcessIdentity): Promise<string> {
-    const { pid, created } = this.procs.ensureInit(identity);
-
-    if (created) {
-      await sendFrameToProcess(pid, {
-        type: "req",
-        id: crypto.randomUUID(),
-        call: "proc.setidentity",
-        args: { pid, identity, profile: "init" },
-      } as RequestFrame);
-    }
-
-    return pid;
+  private async ensureUserDefaultExecutor(
+    ctx: KernelContext,
+    human: ProcessIdentity,
+  ): Promise<string> {
+    return ensureDefaultConversationExecutor(ctx, human);
   }
 
   private extractRunId(payload: unknown): string | null {

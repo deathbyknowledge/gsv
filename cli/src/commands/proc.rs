@@ -26,16 +26,14 @@ pub(crate) async fn run_proc(
             }
         }
         ProcAction::Spawn {
-            profile,
+            run_as,
             label,
             prompt,
             parent_pid,
         } => {
             let mut args = json!({});
-            if let Some(profile) = profile {
-                args["profile"] = json!(profile);
-            } else {
-                args["profile"] = json!("task");
+            if let Some(run_as) = run_as {
+                args["runAs"] = json!(run_as);
             }
             if let Some(label) = label {
                 args["label"] = json!(label);
@@ -56,11 +54,10 @@ pub(crate) async fn run_proc(
                             .into());
                     }
                     let pid = result.pid.unwrap_or_else(|| "<unknown>".to_string());
-                    let profile = result.profile.unwrap_or_else(|| "task".to_string());
                     if let Some(label) = result.label {
-                        println!("Spawned process {} [{}] ({})", pid, profile, label);
+                        println!("Spawned process {} ({})", pid, label);
                     } else {
-                        println!("Spawned process {} [{}]", pid, profile);
+                        println!("Spawned process {}", pid);
                     }
                 }
                 Err(_) => println!("{}", serde_json::to_string_pretty(&payload)?),
@@ -200,7 +197,6 @@ struct ProcListEntryPayload {
 struct ProcSpawnPayload {
     ok: bool,
     pid: Option<String>,
-    profile: Option<String>,
     label: Option<String>,
     error: Option<String>,
 }

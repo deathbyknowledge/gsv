@@ -1,8 +1,8 @@
 # How to Manage Processes
 
 GSV no longer models conversation state as sessions. Agents run as durable
-processes. Each user has an init process (`init:{uid}`), and additional task
-processes can be spawned for isolated work.
+conversations served by process executors. Additional processes can be spawned
+for isolated work.
 
 ## List Processes
 
@@ -16,8 +16,8 @@ Root can inspect another user's processes:
 gsv proc list --uid 1000
 ```
 
-The list shows process ids, labels, owners, profiles, state, current working
-directory, and source mounts when available.
+The list shows process ids, labels, owners, run-as accounts, state, current
+working directory, and source mounts when available.
 
 ## Chat With a Process
 

@@ -7,7 +7,6 @@
  */
 
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
-import type { AiContextProfile } from "./ai";
 import type { ProcMediaInput } from "@gsv/protocol/syscalls/proc";
 import type { InteractionOrigin } from "./interaction-origin";
 
@@ -26,7 +25,14 @@ export type ProcSpawnAssignment = {
 };
 
 export type ProcSpawnArgs = {
-  profile?: AiContextProfile;
+  /**
+   * Account to run the process as: a username, a uid string, or a `pkg#agent`
+   * reference. Defaults to the caller's personal agent. The caller must own the
+   * account or hold membership in its private group (root may run as anyone).
+   */
+  runAs?: string;
+  /** Whether the process can request human-in-the-loop approval. Background spawns set false. */
+  interactive?: boolean;
   label?: string;
   prompt?: string;
   assignment?: ProcSpawnAssignment;
@@ -37,7 +43,7 @@ export type ProcSpawnArgs = {
 };
 
 export type ProcSpawnResult =
-  | { ok: true; pid: string; label?: string; profile: AiContextProfile; cwd: string }
+  | { ok: true; pid: string; label?: string; cwd: string }
   | { ok: false; error: string };
 
 export type ProcKillArgs = {
@@ -593,7 +599,10 @@ export type ProcListArgs = {
 export type ProcListEntry = {
   pid: string;
   uid: number;
-  profile: AiContextProfile;
+  /** Username of the account the process runs as (its run-as identity). */
+  username: string;
+  /** Whether the process can hold an interactive (human-in-the-loop) conversation. */
+  interactive: boolean;
   parentPid: string | null;
   state: string;
   activeRunId: string | null;
@@ -603,31 +612,16 @@ export type ProcListEntry = {
   label: string | null;
   createdAt: number;
   cwd: string;
+  /**
+   * True when this process is the owner's default-conversation executor (the
+   * stable "home" inbox running as their personal agent). Clients surface this
+   * conversation as home rather than as a regular spawned thread.
+   */
+  isDefaultConversation?: boolean;
 };
 
 export type ProcListResult = {
   processes: ProcListEntry[];
-};
-
-export type ProcProfileListArgs = Record<string, never>;
-
-export type ProcProfileListEntry = {
-  id: AiContextProfile;
-  alias?: string;
-  kind: "system" | "user" | "package";
-  displayName: string;
-  description?: string;
-  icon?: string;
-  interactive: boolean;
-  startable: boolean;
-  background: boolean;
-  spawnMode: "singleton" | "new";
-  packageId?: string;
-  packageName?: string;
-};
-
-export type ProcProfileListResult = {
-  profiles: ProcProfileListEntry[];
 };
 
 // Kernel-only: sets process identity. Sent by the kernel to Process DOs
@@ -635,8 +629,21 @@ export type ProcProfileListResult = {
 export type ProcSetIdentityArgs = {
   pid: string;
   identity: ProcessIdentity;
-  profile: AiContextProfile;
+  interactive?: boolean;
   assignment?: ProcSpawnAssignment;
+  /**
+   * Kernel conversation id this executor's primary thread belongs to. The
+   * executor archives/reads its primary thread under
+   * `/home/<agent>/conversations/<conversationId>/...`, so transcripts are
+   * addressed by the durable conversation rather than the fungible pid.
+   */
+  conversationId?: string;
+  /**
+   * Archive path to hydrate the primary thread from on resume (a fresh executor
+   * picking up a conversation that was previously archived). Deterministic: the
+   * kernel records this pointer when the prior executor archived on kill.
+   */
+  hydrateFrom?: string;
 };
 
 export type ProcSetIdentityResult = {

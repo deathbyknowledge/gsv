@@ -116,7 +116,7 @@ function formatScheduleTarget(target: ScheduleTarget): string {
     return `cmd:${formatScheduleListText(target.command)}`;
   }
   if (target.kind === "process.spawn") {
-    return `spawn:${target.profile ?? "cron"}`;
+    return `spawn:${target.runAs ?? "personal-agent"}`;
   }
   return `event:${target.pid}`;
 }

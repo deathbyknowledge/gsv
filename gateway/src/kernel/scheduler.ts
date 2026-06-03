@@ -1,7 +1,7 @@
 import type { ConnectionIdentity } from "@gsv/protocol/syscalls/system";
 import type { KernelContext } from "./context";
+import { resolveCallerOwnerUid } from "./context";
 import { hasCapability } from "./capabilities";
-import { isAiContextProfile } from "../syscalls/ai";
 import type {
   ScheduleExpression,
   SchedulePrincipal,
@@ -516,8 +516,8 @@ export function handleSchedulerList(
   ctx: KernelContext,
 ): SchedulerListResult {
   const store = requireSchedulerStore(ctx);
-  const uid = ctx.identity!.process.uid;
-  const ownerUid = uid === 0 ? args.ownerUid : uid;
+  const callerOwnerUid = resolveCallerOwnerUid(ctx);
+  const ownerUid = callerOwnerUid === 0 ? args.ownerUid : callerOwnerUid;
   const listed = store.list({
     ownerUid,
     includeDisabled: args.includeDisabled,
@@ -538,8 +538,9 @@ export async function handleSchedulerAdd(
   validateScheduleTargetAccess(target, ctx);
 
   const principal = principalFromContext(ctx);
+  const ownerUid = resolveCallerOwnerUid(ctx);
   const schedule = store.create({
-    ownerUid: ctx.identity!.process.uid,
+    ownerUid,
     creator: principal,
     runAs: principal,
     name: normalizeRequiredText(args.name, "schedule name"),
@@ -563,7 +564,7 @@ export async function handleSchedulerUpdate(
   if (!existing) {
     throw new Error(`Schedule not found: ${args.id}`);
   }
-  assertCanManageSchedule(ctx.identity!, existing);
+  assertCanManageSchedule(ctx.identity!, existing, resolveCallerOwnerUid(ctx));
 
   const nextTarget = args.patch.target === undefined
     ? existing.target
@@ -605,7 +606,7 @@ export async function handleSchedulerRemove(
   if (!existing) {
     return { removed: false };
   }
-  assertCanManageSchedule(ctx.identity!, existing);
+  assertCanManageSchedule(ctx.identity!, existing, resolveCallerOwnerUid(ctx));
   const removed = store.remove(existing.id);
   if (removed?.wakeScheduleId && ctx.cancelScheduleWake) {
     await ctx.cancelScheduleWake(removed.wakeScheduleId);
@@ -620,7 +621,7 @@ export async function handleSchedulerRun(
   if (!ctx.runSchedules) {
     throw new Error("sched.run scheduler backend is not configured");
   }
-  return ctx.runSchedules(args, ctx.identity!);
+  return ctx.runSchedules(args, ctx.identity!, resolveCallerOwnerUid(ctx));
 }
 
 export function normalizeScheduleExpression(
@@ -682,8 +683,12 @@ export function computeNextRunAfterFinish(
   return { enabled: true, nextRunAtMs: computeNextRunAt(expression, finishedAtMs) };
 }
 
-export function assertCanManageSchedule(identity: ConnectionIdentity, record: ScheduleRecord): void {
-  if (identity.process.uid === 0 || identity.process.uid === record.ownerUid) {
+export function assertCanManageSchedule(
+  identity: ConnectionIdentity,
+  record: ScheduleRecord,
+  callerOwnerUid = identity.process.uid,
+): void {
+  if (callerOwnerUid === 0 || callerOwnerUid === record.ownerUid) {
     return;
   }
   throw new Error(`Permission denied: cannot access schedule ${record.id}`);
@@ -752,14 +757,10 @@ function normalizeScheduleTarget(target: ScheduleTarget): ScheduleTarget {
 
   if (target.kind === "process.spawn") {
     const prompt = normalizeRequiredText(target.prompt, "process.spawn prompt");
-    const profile = target.profile === "personal" ? "init" : target.profile ?? "cron";
-    if (!isAiContextProfile(profile)) {
-      throw new Error(`Invalid process profile: ${String(profile)}`);
-    }
     return {
       kind: "process.spawn",
-      profile,
       prompt,
+      ...(target.runAs ? { runAs: normalizeRequiredText(target.runAs, "process.spawn runAs") } : {}),
       ...(target.label ? { label: normalizeRequiredText(target.label, "process.spawn label") } : {}),
       ...(target.parentPid ? { parentPid: normalizeRequiredText(target.parentPid, "process.spawn parentPid") } : {}),
       ...(target.cwd ? { cwd: normalizeRequiredText(target.cwd, "process.spawn cwd") } : {}),
@@ -784,7 +785,7 @@ function normalizeScheduleTarget(target: ScheduleTarget): ScheduleTarget {
 }
 
 function validateScheduleTargetAccess(target: ScheduleTarget, ctx: KernelContext): void {
-  const uid = ctx.identity!.process.uid;
+  const ownerUid = resolveCallerOwnerUid(ctx);
   if (target.kind === "command.exec" && !hasCapability(ctx.identity?.capabilities ?? [], "shell.exec")) {
     throw new Error("Permission denied: shell.exec");
   }
@@ -793,7 +794,7 @@ function validateScheduleTargetAccess(target: ScheduleTarget, ctx: KernelContext
     if (!proc) {
       throw new Error(`Process not found: ${target.pid}`);
     }
-    if (uid !== 0 && proc.uid !== uid) {
+    if (ownerUid !== 0 && proc.ownerUid !== ownerUid) {
       throw new Error(`Permission denied: cannot schedule process ${target.pid}`);
     }
   }
@@ -802,7 +803,7 @@ function validateScheduleTargetAccess(target: ScheduleTarget, ctx: KernelContext
     if (!parent) {
       throw new Error(`Process not found: ${target.parentPid}`);
     }
-    if (uid !== 0 && parent.uid !== uid) {
+    if (ownerUid !== 0 && parent.ownerUid !== ownerUid) {
       throw new Error(`Permission denied: cannot schedule child under ${target.parentPid}`);
     }
   }

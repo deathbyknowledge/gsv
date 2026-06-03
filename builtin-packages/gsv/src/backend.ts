@@ -1,4 +1,12 @@
 import { PackageBackendEntrypoint } from "@gsv/package/backend";
+import {
+  createAgent,
+  createHuman,
+  loadAgentContext,
+  loadAgentsState,
+  saveAgentContext,
+  setAgentBehavior,
+} from "./backend/agents";
 import { connectAdapter, disconnectAdapter, loadAdaptersState } from "./backend/adapters";
 import {
   applyConfigEntries,
@@ -207,5 +215,30 @@ export default class GsvBackend extends PackageBackendEntrypoint {
 
   async createSourceRepo(args: unknown): Promise<unknown> {
     return createSourceRepo(this.kernel, args as never);
+  }
+
+  async loadAgentsState(args: Record<string, never> = {}): Promise<unknown> {
+    void args;
+    return loadAgentsState(this.kernel, this);
+  }
+
+  async loadAgentContext(args: unknown): Promise<unknown> {
+    return loadAgentContext(this.kernel, args as never);
+  }
+
+  async saveAgentContext(args: unknown): Promise<unknown> {
+    return saveAgentContext(this.kernel, args as never);
+  }
+
+  async setAgentBehavior(args: unknown): Promise<unknown> {
+    return setAgentBehavior(this.kernel, args as never);
+  }
+
+  async createAgent(args: unknown): Promise<unknown> {
+    return createAgent(this.kernel, args as never);
+  }
+
+  async createHuman(args: unknown): Promise<unknown> {
+    return createHuman(this.kernel, args as never);
   }
 }

@@ -11,6 +11,7 @@ import {
   normalizePath,
 } from "../../../fs";
 import type { KernelContext } from "../../../kernel/context";
+import { resolveCallerOwnerUid } from "../../../kernel/context";
 import {
   handlePkgAdd,
   handlePkgCheckout,
@@ -95,7 +96,7 @@ export function buildPackageCommands(identity: ProcessIdentity, ctx: KernelConte
   ]);
   const packageRecords = ctx.packages.list({
     enabled: true,
-    scopes: visiblePackageScopesForActor(identity),
+    scopes: visiblePackageScopesForShellContext(ctx),
   });
 
   for (const record of packageRecords) {
@@ -306,13 +307,13 @@ async function runPkgCommand(args: string[], ctx: KernelContext, cwd: string): P
     case "enable": {
       requireCommandCapability(ctx, "pkg.install");
       const target = resolvePkgTarget(rest[0], ctx, cwd);
-      const result = handlePkgInstall({ packageId: target.packageId }, ctx);
+      const result = await handlePkgInstall({ packageId: target.packageId }, ctx);
       return { stdout: `${result.changed ? "enabled" : "already enabled"} ${result.package.name}\n`, stderr: "", exitCode: 0 };
     }
     case "disable": {
       requireCommandCapability(ctx, "pkg.remove");
       const target = resolvePkgTarget(rest[0], ctx, cwd);
-      const result = handlePkgRemove({ packageId: target.packageId }, ctx);
+      const result = await handlePkgRemove({ packageId: target.packageId }, ctx);
       return { stdout: `${result.changed ? "disabled" : "already disabled"} ${result.package.name}\n`, stderr: "", exitCode: 0 };
     }
     case "checkout": {
@@ -344,7 +345,7 @@ function resolvePkgTarget(rawPackageId: string | undefined, ctx: KernelContext, 
 
 function currentSourcePackage(ctx: KernelContext, cwd: string): InstalledPackageRecord | null {
   const normalizedCwd = normalizePath(cwd);
-  const packages = ctx.packages.list({ scopes: visiblePackageScopesForActor(ctx.identity?.process) });
+  const packages = ctx.packages.list({ scopes: visiblePackageScopesForShellContext(ctx) });
   const match = normalizedCwd.match(/^\/src\/packages\/([^/]+)(?:\/|$)/);
   const packageName = match?.[1];
   if (packageName) {
@@ -446,7 +447,7 @@ function processSourceOptions(ctx: KernelContext) {
     identity,
     storage: ctx.env.STORAGE,
     ripgit: ctx.env.RIPGIT ? new RipgitClient(ctx.env.RIPGIT) : null,
-    packages: ctx.packages.list({ scopes: visiblePackageScopesForActor(identity) }),
+    packages: ctx.packages.list({ scopes: visiblePackageScopesForShellContext(ctx) }),
     mounts: ctx.processId ? ctx.procs.getMounts(ctx.processId) : null,
     processId: ctx.processId ?? null,
     config: ctx.config,
@@ -515,6 +516,12 @@ function formatPkgCapabilities(pkg: InstalledPackageRecord): string {
   const declaredEgress = pkg.manifest.capabilities?.egress;
   const grantedEgress = pkg.grants?.egress;
   const entrypointSyscalls = Array.from(new Set(pkg.manifest.entrypoints.flatMap((entry) => entry.syscalls ?? [])));
+  const profileCapabilities = (pkg.manifest.profiles ?? [])
+    .map((profile) => ({
+      profile: profile.name,
+      capabilities: [...new Set(profile.capabilities ?? [])].sort(),
+    }))
+    .filter((entry) => entry.capabilities.length > 0);
   return [
     `package: ${pkg.manifest.name}`,
     "declared bindings:",
@@ -533,6 +540,12 @@ function formatPkgCapabilities(pkg: InstalledPackageRecord): string {
     formatPkgEgress(grantedEgress?.mode, grantedEgress?.allow),
     "entrypoint syscalls:",
     entrypointSyscalls.length > 0 ? `- ${entrypointSyscalls.join("\n- ")}` : "none",
+    "profile capabilities:",
+    profileCapabilities.length > 0
+      ? profileCapabilities.map((entry) =>
+        `- ${entry.profile}: ${entry.capabilities.join(", ")}`
+      ).join("\n")
+      : "none",
     "",
   ].join("\n");
 }
@@ -840,7 +853,7 @@ function resolvePkgPublicTarget(
     return { repo: currentPackage.manifest.source.repo };
   }
 
-  const found = ctx.packages.resolve(target, visiblePackageScopesForActor(ctx.identity?.process));
+  const found = ctx.packages.resolve(target, visiblePackageScopesForShellContext(ctx));
   if (found) {
     return { packageId: found.packageId };
   }
@@ -850,6 +863,13 @@ function resolvePkgPublicTarget(
   }
 
   return { packageId: resolveInstalledPackage(target, ctx).packageId };
+}
+
+function visiblePackageScopesForShellContext(ctx: KernelContext) {
+  if (!ctx.identity) {
+    return visiblePackageScopesForActor(undefined);
+  }
+  return visiblePackageScopesForActor({ uid: resolveCallerOwnerUid(ctx) });
 }
 
 function formatPkgScope(scope: { kind: "global" | "user"; uid?: number }): string {

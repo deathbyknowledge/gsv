@@ -1,6 +1,7 @@
 import { openApp } from "@gsv/package/host";
 import { useEffect, useMemo, useState } from "preact/hooks";
 import type { GsvBackend } from "./backend-contract";
+import { AgentsSection } from "./features/agents/AgentsSection";
 import { DevicesSection } from "./features/devices/DevicesSection";
 import { IntegrationsSection } from "./features/integrations/IntegrationsSection";
 import { OverviewSection } from "./features/overview/OverviewSection";
@@ -75,6 +76,8 @@ export function App({ backend }: { backend: GsvBackend }) {
         <main class="gsv-main">
           {activeSection.id === "overview" ? (
             <OverviewSection backend={backend} onNavigate={navigate} onOpenPackage={openPackage} />
+          ) : activeSection.id === "agents" ? (
+            <AgentsSection backend={backend} />
           ) : activeSection.id === "runtime" ? (
             <RuntimeSection backend={backend} />
           ) : activeSection.id === "devices" ? (

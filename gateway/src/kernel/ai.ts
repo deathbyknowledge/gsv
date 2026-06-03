@@ -11,6 +11,7 @@
  */
 
 import type { KernelContext } from "./context";
+import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import { getModels, getProviders, type KnownProvider } from "@earendil-works/pi-ai";
 import type {
   AiToolsResult,
@@ -23,11 +24,6 @@ import type {
   AiTranscriptionCreateResult,
   ContextFile,
 } from "../syscalls/ai";
-import {
-  isPackageAiContextProfile,
-  isSystemAiContextProfile,
-  isUserAiContextProfile,
-} from "../syscalls/ai";
 import type { ToolDefinition, SyscallName } from "../syscalls";
 import { intoSyscallTool, isRoutableSyscall } from "../syscalls";
 import {
@@ -35,11 +31,6 @@ import {
   buildCodeModeMcpTypeDeclarations,
   type CodeModeMcpToolSource,
 } from "../codemode/mcp";
-import {
-  resolvePackageProfileReference,
-  visiblePackageScopesForActor,
-} from "./packages";
-import { resolveUserAiProfile } from "./user-profiles";
 
 import { FS_READ_DEFINITION } from "../syscalls/read";
 import { FS_WRITE_DEFINITION } from "../syscalls/write";
@@ -85,7 +76,6 @@ const SYSCALL_TOOLS: Record<string, ToolDefinition> = {
 
 const CODEMODE_MCP_TYPE_HINT_MAX_CHARS = 12_000;
 
-const PERSONAL_PROFILE_ALIAS = "personal";
 const DEFAULT_GENERATION_TIMEOUT_MS = 180_000;
 const DEFAULT_GENERATION_STREAMING = "auto";
 
@@ -131,12 +121,12 @@ export async function handleAiTools(
 }
 
 export async function handleAiConfig(
-  args: AiConfigArgs,
+  _args: AiConfigArgs,
   ctx: KernelContext,
 ): Promise<AiConfigResult> {
   const config = ctx.config;
   const uid = ctx.identity?.process.uid ?? 0;
-  const requestedProfile = args.profile === PERSONAL_PROFILE_ALIAS ? "init" : args.profile ?? "task";
+  const owner = resolveOwnerIdentity(ctx);
 
   const provider =
     config.get(`users/${uid}/ai/provider`) ??
@@ -183,53 +173,10 @@ export async function handleAiConfig(
 
   const systemContextFiles = listConfigContextFiles(config, "config/ai/context.d");
 
-  let profile = requestedProfile;
-  let profileContextFiles: ContextFile[] = [];
-  let profileApprovalPolicy: string | null = null;
-
-  if (isPackageAiContextProfile(requestedProfile)) {
-    const resolved = resolvePackageProfileReference(
-      requestedProfile,
-      ctx.packages,
-      visiblePackageScopesForActor(ctx.identity?.process),
-    );
-    if (!resolved) {
-      throw new Error(`Unknown package profile: ${requestedProfile}`);
-    }
-    profileContextFiles = resolved.packageProfile.contextFiles
-      .filter((file) => file.text.trim().length > 0)
-      .sort((left, right) => left.name.localeCompare(right.name));
-    profileApprovalPolicy = resolved.packageProfile.approvalPolicy ?? null;
-  } else if (isSystemAiContextProfile(requestedProfile)) {
-    profile = requestedProfile;
-    profileContextFiles = listConfigContextFiles(config, `config/ai/profile/${profile}/context.d`);
-    profileApprovalPolicy =
-      config.get(`config/ai/profile/${profile}/tools/approval`) ??
-      null;
-  } else if (isUserAiContextProfile(requestedProfile)) {
-    const userProfile = await resolveUserAiProfile(ctx, requestedProfile);
-    if (!userProfile) {
-      throw new Error(`Unknown user profile: ${requestedProfile}`);
-    }
-    profile = requestedProfile;
-    profileContextFiles = [
-      ...listConfigContextFiles(config, "config/ai/profile/task/context.d"),
-      ...userProfile.contextFiles.map((file) => ({
-        name: `${requestedProfile}/${file.name}`,
-        text: file.text,
-      })),
-    ];
-    profileApprovalPolicy =
-      userProfile.approvalPolicy ??
-      config.get("config/ai/profile/task/tools/approval") ??
-      null;
-  } else {
-    profile = "task";
-    profileContextFiles = listConfigContextFiles(config, "config/ai/profile/task/context.d");
-    profileApprovalPolicy =
-      config.get("config/ai/profile/task/tools/approval") ??
-      null;
-  }
+  // Persona and context come from the run-as account's home (the home.context
+  // provider reads /home/<account>/context.d). Tool approval is per account
+  // (keyed by the run-as uid).
+  const accountApprovalPolicy = resolveAccountApprovalPolicy(config, uid);
 
   const maxContextBytes = parseInt(
     config.get(`users/${uid}/ai/max_context_bytes`) ??
@@ -245,7 +192,7 @@ export async function handleAiConfig(
   const generationStreaming = normalizeGenerationStreaming(
     config.get("config/ai/generation/streaming"),
   );
-  const skillIndex = await collectPromptSkillIndex(ctx, profile).catch((error) => {
+  const skillIndex = await collectPromptSkillIndex(ctx).catch((error) => {
     console.warn(
       `[Prompt] failed to collect skills.d index: ${error instanceof Error ? error.message : String(error)}`,
     );
@@ -253,7 +200,7 @@ export async function handleAiConfig(
   });
 
   return {
-    profile,
+    owner,
     provider,
     model,
     apiKey,
@@ -262,9 +209,8 @@ export async function handleAiConfig(
     contextWindowTokens,
     contextWindowSource,
     systemContextFiles,
-    profileContextFiles,
     skillIndex,
-    profileApprovalPolicy,
+    accountApprovalPolicy,
     maxContextBytes,
     generationTimeoutMs,
     generationStreaming,
@@ -400,6 +346,42 @@ export async function handleAiSpeechCreate(
     ...(result.encoding ? { encoding: result.encoding } : {}),
     ...(result.container ? { container: result.container } : {}),
   };
+}
+
+/**
+ * Resolve the owning human's identity for the calling process, when it runs as
+ * a distinct agent account (owner_uid differs from the run-as uid). Returns null
+ * for processes that run as their own owner or for non-process callers.
+ */
+function resolveOwnerIdentity(ctx: KernelContext): ProcessIdentity | null {
+  if (!ctx.processId) return null;
+  const ownerUid = ctx.procs.getOwnerUid(ctx.processId);
+  if (ownerUid === null) return null;
+  const runAsUid = ctx.identity?.process.uid;
+  if (ownerUid === runAsUid) return null;
+
+  const entry = ctx.auth.getPasswdByUid(ownerUid);
+  if (!entry) return null;
+  return {
+    uid: entry.uid,
+    gid: entry.gid,
+    gids: ctx.auth.resolveGids(entry.username, entry.gid),
+    username: entry.username,
+    home: entry.home,
+    cwd: entry.home,
+  };
+}
+
+/**
+ * Tool approval policy for an account (keyed by run-as uid), falling back to
+ * the global default.
+ */
+function resolveAccountApprovalPolicy(config: KernelContext["config"], uid: number): string | null {
+  return (
+    config.get(`users/${uid}/ai/tools/approval`) ??
+    config.get("config/ai/tools/approval") ??
+    null
+  );
 }
 
 function listConfigContextFiles(config: KernelContext["config"], prefix: string): ContextFile[] {

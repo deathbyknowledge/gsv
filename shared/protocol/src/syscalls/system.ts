@@ -66,10 +66,64 @@ export type UserPermissions = {
   denials: string[];
 };
 
+/**
+ * Account kinds in the unified identity model.
+ * - `human`: a real person who logs in (password), member of `users`, gets a
+ *   1:1 personal agent and an init process.
+ * - `agent`: a non-login service identity owned by a human; runs *as* itself
+ *   while the owning human owns its processes.
+ */
+export type AccountKind = "human" | "agent";
+
+export type AccountCreateArgs = {
+  kind: AccountKind;
+  /** `^[a-z_][a-z0-9_-]{0,31}$`, globally unique across users and groups. */
+  username: string;
+  /** Required for `kind: "human"`; must be at least 8 characters. */
+  password?: string;
+  /** Optional GECOS/display string. */
+  gecos?: string;
+  /** Optional persona seed for `kind: "agent"` (written to context.d/05-persona.md). */
+  persona?: string;
+  /** Optional additional context.d files for `kind: "agent"`. */
+  contextFiles?: Array<{ name: string; text: string }>;
+};
+
+export type AccountCreateResult = {
+  account: ProcessIdentity;
+  kind: AccountKind;
+  /** For `kind: "human"`: the provisioned 1:1 personal agent identity. */
+  personalAgent?: ProcessIdentity;
+};
+
+/** How the listing caller relates to a listed account. */
+export type AccountRelation = "self" | "personal-agent" | "agent" | "human";
+
+export type AccountSummary = {
+  uid: number;
+  username: string;
+  displayName: string;
+  relation: AccountRelation;
+  /** Whether the caller may run processes as this account. */
+  runnable: boolean;
+  gecos?: string;
+};
+
+export type AccountListArgs = {
+  /** Owning human whose run-as-able accounts to list. Defaults to the caller. Root may target any uid. */
+  uid?: number;
+};
+
+export type AccountListResult = {
+  accounts: AccountSummary[];
+};
+
 export type SysSetupArgs = {
   username: string;
   password: string;
   rootPassword?: string;
+  /** Optional name for the user's 1:1 personal agent account (defaults to a curated name). */
+  agentName?: string;
   bootstrap?: {
     remoteUrl?: string;
     repo?: string;
@@ -100,6 +154,7 @@ export type OnboardingDraft = {
   detailStep: OnboardingDetailStep;
   account: {
     username: string;
+    agentName: string;
     password: string;
     passwordConfirm: string;
   };
@@ -138,6 +193,7 @@ export type OnboardingAssistPatch = {
   op: "set" | "clear";
   path:
     | "account.username"
+    | "account.agentName"
     | "admin.mode"
     | "system.timezone"
     | "ai.enabled"

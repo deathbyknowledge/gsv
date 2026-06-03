@@ -8,7 +8,7 @@ knowledge-specific behavior lives in the Wiki package app and CLI.
 
 | Layer | Location | Purpose |
 |---|---|---|
-| Home context | `~/context.d/` | Always-relevant user and system context loaded into agent prompts. |
+| Home context | `~/context.d/` | Always-relevant account context loaded into agent prompts. |
 | Durable knowledge | `~/knowledge/` | User-controlled markdown databases, pages, inbox notes, and source references. |
 | Repository substrate | `repo.*` | Versioned reads, writes, diffs, imports, and history over ripgit repositories. |
 | Filesystem substrate | `fs.*` | Linux-like file access across native GSV storage and routed devices. |
@@ -22,8 +22,10 @@ Home context is for information that should shape most agent sessions:
 - durable identity or operating constraints
 - small files that should always be prompt-visible
 
-New homes are seeded with `~/context.d/00-constitution.md` and
-`~/context.d/10-user.md` when those files are missing.
+New human homes create an empty `~/context.d/` directory. New agent homes seed
+`~/context.d/00-style.md` and `~/context.d/10-user.md` when those files are
+missing. New personal agents also get a one-time `~/context.d/00-boot.md`
+onboarding file that should be deleted after setup is done.
 
 Use `~/context.d/` for scoped snippets. Keep files short and specific. Large
 knowledge collections belong in `~/knowledge/`, not always-loaded context.

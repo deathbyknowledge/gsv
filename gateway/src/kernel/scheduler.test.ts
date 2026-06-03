@@ -11,6 +11,7 @@ import {
   handleSchedulerAdd,
   handleSchedulerList,
   handleSchedulerRemove,
+  handleSchedulerRun,
   handleSchedulerUpdate,
   normalizeScheduleExpression,
   ScheduleStore,
@@ -28,6 +29,24 @@ const USER_IDENTITY: ProcessIdentity = {
   cwd: "/home/sam",
 };
 
+const PERSONAL_AGENT_IDENTITY: ProcessIdentity = {
+  uid: 2000,
+  gid: 2000,
+  gids: [2000],
+  username: "sam-agent",
+  home: "/home/sam-agent",
+  cwd: "/home/sam-agent",
+};
+
+const CUSTOM_AGENT_IDENTITY: ProcessIdentity = {
+  uid: 3000,
+  gid: 3000,
+  gids: [3000],
+  username: "wiki-builder",
+  home: "/home/wiki-builder",
+  cwd: "/home/wiki-builder",
+};
+
 function makeReq(call: string, args: unknown): RequestFrame {
   return { type: "req", id: crypto.randomUUID(), call, args } as RequestFrame;
 }
@@ -36,10 +55,11 @@ async function prepareScheduleTargetProcess(
   process: DurableObjectStub<Process>,
   pid: string,
   conversationId = "default",
+  identity: ProcessIdentity = USER_IDENTITY,
 ): Promise<void> {
   const setIdentity = await process.recvFrame(makeReq("proc.setidentity", {
     pid,
-    identity: USER_IDENTITY,
+    identity,
     profile: "task",
   }));
   expect(setIdentity?.type).toBe("res");
@@ -300,6 +320,31 @@ describe("scheduler", () => {
     });
   });
 
+  it("lists by the owning human for process-originated calls", () => {
+    const list = vi.fn(() => ({ records: [], count: 0 }));
+    const ctx = makeSchedulerContext({
+      identity: {
+        role: "user",
+        process: PERSONAL_AGENT_IDENTITY,
+        capabilities: ["*"],
+      },
+      processId: "proc:agent",
+      procs: {
+        getOwnerUid: vi.fn(() => USER_IDENTITY.uid),
+      } as unknown as KernelContext["procs"],
+      schedules: { list } as unknown as ScheduleStore,
+    });
+
+    handleSchedulerList({ includeDisabled: true }, ctx);
+
+    expect(list).toHaveBeenCalledWith({
+      ownerUid: USER_IDENTITY.uid,
+      includeDisabled: true,
+      limit: undefined,
+      offset: undefined,
+    });
+  });
+
   it("lets root list another owner's schedules", () => {
     const list = vi.fn(() => ({ records: [], count: 0 }));
     const ctx = makeSchedulerContext({
@@ -327,6 +372,81 @@ describe("scheduler", () => {
       limit: undefined,
       offset: undefined,
     });
+  });
+
+  it("creates process event schedules under the owning human for agent-backed callers", async () => {
+    const create = vi.fn((input) => makeScheduleRecord({
+      ownerUid: input.ownerUid,
+      creator: input.creator,
+      runAs: input.runAs,
+      enabled: input.enabled,
+      expression: input.expression,
+      target: input.target,
+    }));
+    const setWakeScheduleId = vi.fn();
+    const ctx = makeSchedulerContext({
+      identity: {
+        role: "user",
+        process: PERSONAL_AGENT_IDENTITY,
+        capabilities: ["*"],
+      },
+      processId: "proc:agent",
+      procs: {
+        getOwnerUid: vi.fn(() => USER_IDENTITY.uid),
+        get: vi.fn(() => ({
+          processId: "proc:target",
+          uid: PERSONAL_AGENT_IDENTITY.uid,
+          ownerUid: USER_IDENTITY.uid,
+        })),
+      } as unknown as KernelContext["procs"],
+      schedules: {
+        create,
+        setWakeScheduleId,
+      } as unknown as ScheduleStore,
+    });
+
+    const result = await handleSchedulerAdd({
+      name: "agent pulse",
+      enabled: false,
+      expression: { kind: "after", afterMs: 1_000 },
+      target: {
+        kind: "process.event",
+        pid: "proc:target",
+        message: "Run the pulse.",
+      },
+    }, ctx);
+
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      ownerUid: USER_IDENTITY.uid,
+      creator: expect.objectContaining({
+        kind: "process",
+        uid: PERSONAL_AGENT_IDENTITY.uid,
+        pid: "proc:agent",
+      }),
+    }));
+    expect(result.schedule.ownerUid).toBe(USER_IDENTITY.uid);
+    expect(setWakeScheduleId).toHaveBeenCalledWith("sched-1", null);
+  });
+
+  it("passes the caller owner uid when running schedules", async () => {
+    const runSchedules = vi.fn(async () => ({ ran: 0, results: [] }));
+    const ctx = makeSchedulerContext({
+      identity: {
+        role: "user",
+        process: PERSONAL_AGENT_IDENTITY,
+        capabilities: ["*"],
+      },
+      processId: "proc:agent",
+      procs: {
+        getOwnerUid: vi.fn(() => USER_IDENTITY.uid),
+      } as unknown as KernelContext["procs"],
+      runSchedules,
+    });
+    const args = { id: "sched-1", mode: "force" as const };
+
+    await handleSchedulerRun(args, ctx);
+
+    expect(runSchedules).toHaveBeenCalledWith(args, ctx.identity, USER_IDENTITY.uid);
   });
 
   it("rejects update and remove of another owner's schedule", async () => {
@@ -440,13 +560,14 @@ describe("scheduler", () => {
         };
       };
       k.caps.seed();
-      k.procs.spawn(pid, USER_IDENTITY, {
+      k.procs.spawn(pid, PERSONAL_AGENT_IDENTITY, {
+        ownerUid: USER_IDENTITY.uid,
         profile: "task",
         label: "scheduled target",
       });
     });
 
-    await prepareScheduleTargetProcess(process, pid, conversationId);
+    await prepareScheduleTargetProcess(process, pid, conversationId, PERSONAL_AGENT_IDENTITY);
 
     const scheduleId = await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as unknown as {
@@ -553,6 +674,101 @@ describe("scheduler", () => {
       command: "printf 'scheduled command\\n'",
       exitCode: 0,
       stdout: "scheduled command\n",
+    });
+  });
+
+  it("runs command schedules as the stored run-as account", async () => {
+    const kernel = await getAgentByName<Env, Kernel>(
+      env.KERNEL,
+      `scheduler-runas-test-${crypto.randomUUID()}`,
+    );
+    const runAs: SchedulePrincipal = {
+      kind: "process",
+      uid: CUSTOM_AGENT_IDENTITY.uid,
+      username: CUSTOM_AGENT_IDENTITY.username,
+      pid: "proc:wiki-builder",
+    };
+    const scheduleId = await runInDurableObject(kernel, (instance: Kernel) => {
+      const k = instance as unknown as {
+        auth: {
+          addUser: (entry: {
+            username: string;
+            uid: number;
+            gid: number;
+            gecos: string;
+            home: string;
+            shell: string;
+          }) => void;
+          addGroup: (entry: { name: string; gid: number; members: string[] }) => void;
+          setPersonalAgent: (ownerUid: number, agentUid: number) => void;
+        };
+        caps: {
+          seed: () => void;
+          grant: (gid: number, capability: string) => { ok: boolean; error?: string };
+        };
+        schedules: ScheduleStore;
+        ctx: DurableObjectState;
+      };
+      k.caps.seed();
+      k.auth.addUser({
+        username: PERSONAL_AGENT_IDENTITY.username,
+        uid: PERSONAL_AGENT_IDENTITY.uid,
+        gid: PERSONAL_AGENT_IDENTITY.gid,
+        gecos: "Sam Agent",
+        home: PERSONAL_AGENT_IDENTITY.home,
+        shell: "/bin/init",
+      });
+      k.auth.addGroup({ name: PERSONAL_AGENT_IDENTITY.username, gid: PERSONAL_AGENT_IDENTITY.gid, members: [] });
+      k.auth.setPersonalAgent(USER_IDENTITY.uid, PERSONAL_AGENT_IDENTITY.uid);
+      k.auth.addUser({
+        username: CUSTOM_AGENT_IDENTITY.username,
+        uid: CUSTOM_AGENT_IDENTITY.uid,
+        gid: CUSTOM_AGENT_IDENTITY.gid,
+        gecos: "Wiki Builder",
+        home: CUSTOM_AGENT_IDENTITY.home,
+        shell: "/bin/init",
+      });
+      k.auth.addGroup({ name: CUSTOM_AGENT_IDENTITY.username, gid: CUSTOM_AGENT_IDENTITY.gid, members: [] });
+      k.caps.grant(CUSTOM_AGENT_IDENTITY.gid, "shell.exec");
+
+      const now = Date.now();
+      const schedule = k.schedules.create({
+        ownerUid: USER_IDENTITY.uid,
+        creator: runAs,
+        runAs,
+        name: "agent command",
+        enabled: true,
+        expression: { kind: "every", everyMs: 60_000, anchorMs: now - 120_000 },
+        target: {
+          kind: "command.exec",
+          command: "whoami",
+        },
+        now,
+      });
+      k.ctx.storage.sql.exec(
+        "UPDATE schedules SET next_run_at = ? WHERE schedule_id = ?",
+        now - 1_000,
+        schedule.id,
+      );
+      return schedule.id;
+    });
+
+    await runInDurableObject(kernel, (instance: Kernel) => instance.onScheduleDue(scheduleId));
+
+    const state = await runInDurableObject(kernel, (instance: Kernel) => {
+      const k = instance as unknown as { schedules: ScheduleStore };
+      return {
+        schedule: k.schedules.get(scheduleId),
+        result: k.schedules.history(scheduleId)[0]?.result,
+      };
+    });
+
+    expect(state.schedule?.state.lastStatus).toBe("ok");
+    expect(state.result).toMatchObject({
+      kind: "command.exec",
+      command: "whoami",
+      exitCode: 0,
+      stdout: "wiki-builder\n",
     });
   });
 
@@ -1022,12 +1238,34 @@ describe("scheduler", () => {
     );
     const scheduleId = await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as unknown as {
+        auth: {
+          addUser: (entry: {
+            username: string;
+            uid: number;
+            gid: number;
+            gecos: string;
+            home: string;
+            shell: string;
+          }) => void;
+          addGroup: (entry: { name: string; gid: number; members: string[] }) => void;
+          setPersonalAgent: (ownerUid: number, agentUid: number) => void;
+        };
         caps: { seed: () => void };
         procs: { spawn: typeof instance["procs"]["spawn"] };
         schedules: ScheduleStore;
         ctx: DurableObjectState;
       };
       k.caps.seed();
+      k.auth.addUser({
+        username: PERSONAL_AGENT_IDENTITY.username,
+        uid: PERSONAL_AGENT_IDENTITY.uid,
+        gid: PERSONAL_AGENT_IDENTITY.gid,
+        gecos: "Sam Agent",
+        home: PERSONAL_AGENT_IDENTITY.home,
+        shell: "/bin/init",
+      });
+      k.auth.addGroup({ name: PERSONAL_AGENT_IDENTITY.username, gid: PERSONAL_AGENT_IDENTITY.gid, members: [] });
+      k.auth.setPersonalAgent(USER_IDENTITY.uid, PERSONAL_AGENT_IDENTITY.uid);
       k.procs.spawn("init:1000", USER_IDENTITY, {
         profile: "init",
         label: "init",
@@ -1061,24 +1299,35 @@ describe("scheduler", () => {
     const spawned = await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as unknown as {
         schedules: ScheduleStore;
-        procs: { listByProfile: (profile: "cron") => Array<{ processId: string; label: string | null }> };
+        procs: {
+          get: (pid: string) => {
+            processId: string;
+            uid: number;
+            ownerUid: number;
+            label: string | null;
+            interactive: boolean;
+          } | null;
+        };
       };
       const history = k.schedules.history(scheduleId);
       const result = history[0]?.result as { pid?: string } | null | undefined;
       return {
         pid: result?.pid,
-        cronProcesses: k.procs.listByProfile("cron"),
+        cronProcess: result?.pid ? k.procs.get(result.pid) : null,
         schedule: k.schedules.get(scheduleId),
       };
     });
 
     expect(spawned.pid).toBeTruthy();
-    expect(spawned.cronProcesses).toEqual([
+    expect(spawned.cronProcess).toEqual(
       expect.objectContaining({
         processId: spawned.pid,
+        uid: PERSONAL_AGENT_IDENTITY.uid,
+        ownerUid: USER_IDENTITY.uid,
         label: "cron spawn",
+        interactive: false,
       }),
-    ]);
+    );
     expect(spawned.schedule?.state.lastStatus).toBe("ok");
 
     const cronProcess = await getProcessByPid(spawned.pid!);
@@ -1091,5 +1340,104 @@ describe("scheduler", () => {
       role: "user",
       content: "Run the scheduled cron task.",
     }));
+  });
+
+  it("runs process-principal spawn schedules after the creator process is gone", async () => {
+    const kernel = await getAgentByName<Env, Kernel>(
+      env.KERNEL,
+      `scheduler-dead-parent-spawn-test-${crypto.randomUUID()}`,
+    );
+    const runAs: SchedulePrincipal = {
+      kind: "process",
+      uid: CUSTOM_AGENT_IDENTITY.uid,
+      username: CUSTOM_AGENT_IDENTITY.username,
+      pid: "proc:dead-creator",
+    };
+    const scheduleId = await runInDurableObject(kernel, (instance: Kernel) => {
+      const k = instance as unknown as {
+        auth: {
+          addUser: (entry: {
+            username: string;
+            uid: number;
+            gid: number;
+            gecos: string;
+            home: string;
+            shell: string;
+          }) => void;
+          addGroup: (entry: { name: string; gid: number; members: string[] }) => void;
+        };
+        schedules: ScheduleStore;
+        ctx: DurableObjectState;
+      };
+      k.auth.addUser({
+        username: CUSTOM_AGENT_IDENTITY.username,
+        uid: CUSTOM_AGENT_IDENTITY.uid,
+        gid: CUSTOM_AGENT_IDENTITY.gid,
+        gecos: "Wiki Builder",
+        home: CUSTOM_AGENT_IDENTITY.home,
+        shell: "/bin/init",
+      });
+      k.auth.addGroup({ name: CUSTOM_AGENT_IDENTITY.username, gid: CUSTOM_AGENT_IDENTITY.gid, members: [] });
+
+      const now = Date.now();
+      const schedule = k.schedules.create({
+        ownerUid: USER_IDENTITY.uid,
+        creator: runAs,
+        runAs,
+        name: "agent cron spawn",
+        enabled: true,
+        expression: { kind: "every", everyMs: 60_000, anchorMs: now - 120_000 },
+        target: {
+          kind: "process.spawn",
+          label: "agent cron",
+          prompt: "Run the agent-owned cron task.",
+        },
+        now,
+      });
+      k.ctx.storage.sql.exec(
+        "UPDATE schedules SET next_run_at = ? WHERE schedule_id = ?",
+        now - 1_000,
+        schedule.id,
+      );
+      return schedule.id;
+    });
+
+    await runInDurableObject(kernel, (instance: Kernel) => instance.onScheduleDue(scheduleId));
+
+    const spawned = await runInDurableObject(kernel, (instance: Kernel) => {
+      const k = instance as unknown as {
+        schedules: ScheduleStore;
+        procs: {
+          get: (pid: string) => {
+            processId: string;
+            uid: number;
+            ownerUid: number;
+            label: string | null;
+            interactive: boolean;
+            parentPid: string | null;
+          } | null;
+        };
+      };
+      const history = k.schedules.history(scheduleId);
+      const result = history[0]?.result as { pid?: string } | null | undefined;
+      return {
+        pid: result?.pid,
+        cronProcess: result?.pid ? k.procs.get(result.pid) : null,
+        schedule: k.schedules.get(scheduleId),
+      };
+    });
+
+    expect(spawned.pid).toBeTruthy();
+    expect(spawned.schedule?.state.lastStatus).toBe("ok");
+    expect(spawned.cronProcess).toEqual(
+      expect.objectContaining({
+        processId: spawned.pid,
+        uid: CUSTOM_AGENT_IDENTITY.uid,
+        ownerUid: USER_IDENTITY.uid,
+        parentPid: null,
+        label: "agent cron",
+        interactive: false,
+      }),
+    );
   });
 });

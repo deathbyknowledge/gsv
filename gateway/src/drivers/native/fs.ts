@@ -20,6 +20,7 @@ import {
   inferContentType,
 } from "../../fs";
 import type { KernelContext } from "../../kernel/context";
+import { resolveCallerOwnerUid } from "../../kernel/context";
 import { createCronFileService } from "../../kernel/crontab";
 import { visiblePackageScopesForActor } from "../../kernel/packages";
 import type { FsReadArgs, FsReadResult } from "../../syscalls/read";
@@ -87,12 +88,14 @@ export type FsCopyDeviceTransport = {
 
 function makeFs(ctx: KernelContext): GsvFs {
   const identity = ctx.identity!.process;
+  const ownerUid = resolveCallerOwnerUid(ctx);
+  const packageScopeOwner = { uid: ownerUid };
   const sourceBackend = createProcessSourceBackend({
     identity,
     storage: ctx.env.STORAGE,
     ripgit: ctx.env.RIPGIT ? new RipgitClient(ctx.env.RIPGIT) : null,
     packages: ctx.packages.list({
-      scopes: visiblePackageScopesForActor(identity),
+      scopes: visiblePackageScopesForActor(packageScopeOwner),
     }),
     mounts: ctx.processId ? ctx.procs.getMounts(ctx.processId) : null,
     processId: ctx.processId ?? null,
@@ -104,6 +107,7 @@ function makeFs(ctx: KernelContext): GsvFs {
     {
       auth: ctx.auth,
       procs: ctx.procs,
+      conversations: ctx.conversations,
       devices: ctx.devices,
       caps: ctx.caps,
       config: ctx.config,
@@ -114,8 +118,12 @@ function makeFs(ctx: KernelContext): GsvFs {
     },
     ctx.processId ?? undefined,
     sourceBackend,
-    createHomeKnowledgeBackend(ctx.env.STORAGE, ctx.env.RIPGIT, identity),
-    createPackageBackend(identity, ctx.packages),
+    createHomeKnowledgeBackend(ctx.env.STORAGE, ctx.env.RIPGIT, identity, {
+      auth: ctx.auth,
+      ownerUid,
+      isRoot: identity.uid === 0,
+    }),
+    createPackageBackend(identity, ctx.packages, packageScopeOwner),
   );
 }
 

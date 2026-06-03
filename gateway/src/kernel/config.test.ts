@@ -142,33 +142,39 @@ describe("ConfigStore", () => {
     expect(targets).toContain("skills show browser-shell");
     const orchestration = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/30-process-orchestration.md"];
     expect(orchestration).toContain("target: \"gsv\"");
-    expect(orchestration).toContain("proc profiles");
+    expect(orchestration).toContain("proc agents");
     expect(orchestration).toContain("proc spawn");
+    expect(orchestration).toContain("--as <account>");
     expect(orchestration).toContain("crontab FILE");
     expect(orchestration).toContain("/var/spool/cron/<username>");
     expect(orchestration).toContain("sched list");
-    expect(orchestration).toContain("~/profiles.d/{name}");
-    expect(orchestration).toContain("~/profiles.d/{name}/context.d/*.md");
-    expect(orchestration).toContain("root-level files");
+    expect(orchestration).not.toContain("proc profiles");
+    expect(orchestration).not.toContain("~/profiles.d");
     expect(orchestration).not.toContain("SpawnProcess");
+    const runtimeFacts = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/10-runtime.md"];
+    expect(runtimeFacts).toContain("User: {{user.username}}");
+    expect(runtimeFacts).toContain("User home: {{user.home}}");
+    expect(runtimeFacts).toContain("Current program: {{program.username}}");
+    expect(runtimeFacts).toContain("Program home: {{program.home}}");
+    expect(runtimeFacts).toContain("Program current working directory: {{program.cwd}}");
+    expect(runtimeFacts).toContain("`~` resolves to the current program home");
 
+    // Per-agent persona/context now lives in account homes, not in config.
     for (const profile of ["init", "task", "review", "cron", "mcp", "app"]) {
-      expect(SYSTEM_CONFIG_DEFAULTS[`config/ai/profile/${profile}/context.d/00-role.md`]).toBeTruthy();
+      expect(SYSTEM_CONFIG_DEFAULTS[`config/ai/profile/${profile}/context.d/00-role.md`]).toBeUndefined();
     }
   });
 
-  it("keeps init approval conservative while workers can run ordinary shell commands", () => {
-    const initPolicy = JSON.parse(SYSTEM_CONFIG_DEFAULTS["config/ai/profile/init/tools/approval"]);
-    const taskPolicy = JSON.parse(SYSTEM_CONFIG_DEFAULTS["config/ai/profile/task/tools/approval"]);
-    const cronPolicy = JSON.parse(SYSTEM_CONFIG_DEFAULTS["config/ai/profile/cron/tools/approval"]);
+  it("defines a global default tool approval policy where workers can run ordinary shell commands", () => {
+    const policy = JSON.parse(SYSTEM_CONFIG_DEFAULTS["config/ai/tools/approval"]);
 
-    expect(initPolicy.rules).toContainEqual({ match: "shell.exec", action: "ask" });
-    expect(taskPolicy.rules).not.toContainEqual({ match: "shell.exec", action: "ask" });
-    expect(taskPolicy.rules).toContainEqual({
+    expect(policy.default).toBe("auto");
+    expect(policy.rules).not.toContainEqual({ match: "shell.exec", action: "ask" });
+    expect(policy.rules).toContainEqual({
       match: "shell.exec",
       when: { anyTag: ["destructive", "privileged", "network", "mutating", "unclassified"] },
       action: "ask",
     });
-    expect(cronPolicy.rules).toContainEqual({ match: "shell.exec", action: "auto" });
+    expect(policy.rules).toContainEqual({ match: "fs.delete", action: "ask" });
   });
 });

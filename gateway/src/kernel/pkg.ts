@@ -1,4 +1,6 @@
 import type { KernelContext } from "./context";
+import { resolveCallerOwnerUid } from "./context";
+import { provisionEnabledPackagesForCaller, provisionPackageAgents, revokePackageAgentAccess } from "./package-agents";
 import type {
   PkgAddArgs,
   PkgAddResult,
@@ -59,7 +61,7 @@ export function handlePkgList(
       enabled: typeof args?.enabled === "boolean" ? args.enabled : undefined,
       name: typeof args?.name === "string" && args.name.trim().length > 0 ? args.name.trim() : undefined,
       runtime: args?.runtime,
-      scopes: visiblePackageScopesForActor(ctx.identity?.process),
+      scopes: visiblePackageScopesForContext(ctx),
     }).map((record) => toPkgSummary(record, ctx)),
   };
 }
@@ -68,9 +70,9 @@ export function handlePkgRemoteList(
   _args: PkgRemoteListArgs | undefined,
   ctx: KernelContext,
 ): PkgRemoteListResult {
-  const identity = requireIdentity(ctx);
+  const ownerUid = remoteConfigOwnerUid(ctx);
   return {
-    remotes: listPkgRemotes(ctx, identity.process.uid),
+    remotes: listPkgRemotes(ctx, ownerUid),
   };
 }
 
@@ -78,16 +80,16 @@ export function handlePkgRemoteAdd(
   args: PkgRemoteAddArgs,
   ctx: KernelContext,
 ): PkgRemoteAddResult {
-  const identity = requireIdentity(ctx);
+  const ownerUid = remoteConfigOwnerUid(ctx);
   const name = normalizeRemoteName(args.name);
   const baseUrl = normalizeRemoteBaseUrl(args.baseUrl);
-  const key = remoteConfigKey(identity.process.uid, name);
+  const key = remoteConfigKey(ownerUid, name);
   const existing = ctx.config.get(key);
   ctx.config.set(key, baseUrl);
   return {
     changed: existing !== baseUrl,
     remote: { name, baseUrl },
-    remotes: listPkgRemotes(ctx, identity.process.uid),
+    remotes: listPkgRemotes(ctx, ownerUid),
   };
 }
 
@@ -95,23 +97,36 @@ export function handlePkgRemoteRemove(
   args: PkgRemoteRemoveArgs,
   ctx: KernelContext,
 ): PkgRemoteRemoveResult {
-  const identity = requireIdentity(ctx);
-  const removed = ctx.config.delete(remoteConfigKey(identity.process.uid, normalizeRemoteName(args.name)));
+  const ownerUid = remoteConfigOwnerUid(ctx);
+  const removed = ctx.config.delete(remoteConfigKey(ownerUid, normalizeRemoteName(args.name)));
   return {
     removed,
-    remotes: listPkgRemotes(ctx, identity.process.uid),
+    remotes: listPkgRemotes(ctx, ownerUid),
   };
 }
 
-export function handlePkgInstall(
+export async function handlePkgInstall(
   args: PkgInstallArgs,
   ctx: KernelContext,
-): PkgInstallResult {
+): Promise<PkgInstallResult> {
   const record = requirePackage(args.packageId, ctx);
   assertMutablePackageAccess(record, ctx);
   if (record.reviewRequired && !record.reviewedAt) {
     throw new Error(`Package review approval required before enabling: ${record.manifest.name}`);
   }
+
+  // Provision the package's agent accounts and grant the enabling human run-as
+  // rights. The enabler is the owning human, not the run-as account: when
+  // pkg.install runs from a process (the normal personal-agent path),
+  // ctx.identity.process.uid is the agent's uid, but proc.spawn authorizes the
+  // access group against the process owner — so the access group must be granted
+  // to the same human. Idempotent, so re-enabling for another human just adds
+  // them.
+  const enablingHumanUid = ctx.identity ? resolveCallerOwnerUid(ctx) : undefined;
+  if (typeof enablingHumanUid === "number" && (record.manifest.profiles?.length ?? 0) > 0) {
+    await provisionPackageAgents(ctx, record, enablingHumanUid);
+  }
+
   if (!record.enabled) {
     const updated = ctx.packages.setEnabled(record.packageId, true, record.scope);
     if (!updated) {
@@ -154,7 +169,7 @@ export async function handlePkgPublicList(
   args: PkgPublicListArgs | undefined,
   ctx: KernelContext,
 ): Promise<PkgPublicListResult> {
-  const identity = requireIdentity(ctx);
+  requireIdentity(ctx);
   const requestedRemote = typeof args?.remote === "string" ? args.remote.trim() : "";
   if (!requestedRemote || requestedRemote === "local") {
     const serverName = configuredServerName(ctx);
@@ -165,7 +180,8 @@ export async function handlePkgPublicList(
     };
   }
 
-  const remote = resolvePkgRemote(ctx, identity.process.uid, requestedRemote);
+  const ownerUid = resolveCallerOwnerUid(ctx);
+  const remote = resolvePkgRemote(ctx, ownerUid, requestedRemote);
   const response = await fetch(`${remote.baseUrl}/public/packages`, {
     headers: { Accept: "application/json" },
   });
@@ -253,6 +269,7 @@ export async function handlePkgAdd(
     installedAt: existing?.installedAt,
     updatedAt: Date.now(),
   });
+  await provisionEnabledPackageAgentsForCaller(ctx, updated);
 
   return {
     changed:
@@ -348,6 +365,7 @@ export async function handlePkgCreate(
     installedAt: existing?.installedAt,
     updatedAt: Date.now(),
   });
+  await provisionEnabledPackageAgentsForCaller(ctx, updated);
 
   return {
     changed:
@@ -372,6 +390,7 @@ export async function handlePkgSync(
 ): Promise<PkgSyncResult> {
   const builtinSeeds = await buildBuiltinPackageSeeds(ctx.env);
   const installed = await ctx.packages.seedBuiltinPackages(builtinSeeds);
+  await provisionEnabledPackagesForCaller(ctx, installed);
   return {
     packages: installed.map((record) => toPkgSummary(record, ctx)),
   };
@@ -410,6 +429,7 @@ export async function handlePkgCheckout(
     installedAt: record.installedAt,
     updatedAt: Date.now(),
   });
+  await provisionEnabledPackageAgentsForCaller(ctx, updated);
 
   return {
     changed:
@@ -420,10 +440,10 @@ export async function handlePkgCheckout(
   };
 }
 
-export function handlePkgRemove(
+export async function handlePkgRemove(
   args: PkgRemoveArgs,
   ctx: KernelContext,
-): PkgRemoveResult {
+): Promise<PkgRemoveResult> {
   const record = requirePackage(args.packageId, ctx);
   assertMutablePackageAccess(record, ctx);
   if (isRequiredSystemConsolePackage(record)) {
@@ -434,6 +454,15 @@ export function handlePkgRemove(
     if (!updated) {
       throw new Error(`Failed to disable package: ${record.packageId}`);
     }
+  }
+
+  // Revoke the disabling human's run-as rights for this package's agents. Use
+  // the owning human (not the run-as account): from a personal-agent process,
+  // ctx.identity.process.uid is the agent, so revoking that would leave the
+  // human in the access group and still able to spawn the disabled agent.
+  const humanUid = ctx.identity ? resolveCallerOwnerUid(ctx) : undefined;
+  if (typeof humanUid === "number" && (record.manifest.profiles?.length ?? 0) > 0) {
+    revokePackageAgentAccess(ctx, record, humanUid);
   }
 
   return {
@@ -448,7 +477,7 @@ export function resolveInstalledPackage(packageId: string, ctx: KernelContext): 
     throw new Error("packageId is required");
   }
 
-  const scopes = visiblePackageScopesForActor(ctx.identity?.process);
+  const scopes = visiblePackageScopesForContext(ctx);
   const record = ctx.packages.resolve(normalizedPackageId, scopes);
   if (!record) {
     const candidates = ctx.packages.list({ scopes }).filter((candidate) => {
@@ -487,6 +516,13 @@ function isRequiredSystemConsolePackage(record: InstalledPackageRecord): boolean
     && record.packageId.startsWith("builtin:gsv@")
     && record.manifest.source.repo === "root/gsv"
     && normalizeRepoPath(record.manifest.source.subdir) === "builtin-packages/gsv";
+}
+
+async function provisionEnabledPackageAgentsForCaller(
+  ctx: KernelContext,
+  record: InstalledPackageRecord,
+): Promise<void> {
+  await provisionEnabledPackagesForCaller(ctx, [record]);
 }
 
 function resolveUpstream(args: PkgAddArgs): { remoteUrl: string; ref: string; repoSlug: string | null } {
@@ -955,7 +991,7 @@ function requireIdentity(ctx: KernelContext): NonNullable<KernelContext["identit
 }
 
 function installScopeForActor(ctx: KernelContext): PackageInstallScope {
-  return defaultPackageInstallScopeForActor(requireIdentity(ctx).process);
+  return defaultPackageInstallScopeForActor(packageScopeOwnerForContext(ctx));
 }
 
 function assertMutablePackageAccess(record: InstalledPackageRecord, ctx: KernelContext): void {
@@ -963,10 +999,23 @@ function assertMutablePackageAccess(record: InstalledPackageRecord, ctx: KernelC
   if (identity.process.uid === 0 || (identity.capabilities ?? []).includes("*")) {
     return;
   }
-  if (packageScopeEquals(record.scope, { kind: "user", uid: identity.process.uid })) {
+  if (packageScopeEquals(record.scope, { kind: "user", uid: resolveCallerOwnerUid(ctx) })) {
     return;
   }
   throw new Error(`Forbidden: ${record.packageId} is not installed in your package scope`);
+}
+
+function visiblePackageScopesForContext(ctx: KernelContext): PackageInstallScope[] {
+  return visiblePackageScopesForActor(packageScopeOwnerForContext(ctx));
+}
+
+function packageScopeOwnerForContext(ctx: KernelContext): { uid: number } | undefined {
+  return ctx.identity ? { uid: resolveCallerOwnerUid(ctx) } : undefined;
+}
+
+function remoteConfigOwnerUid(ctx: KernelContext): number {
+  requireIdentity(ctx);
+  return resolveCallerOwnerUid(ctx);
 }
 
 export function listLocalPublicPackages(
@@ -1014,6 +1063,7 @@ function toPkgSummary(record: InstalledPackageRecord, ctx: KernelContext): PkgSu
       displayName: profile.displayName,
       description: profile.description,
       icon: profile.icon,
+      capabilities: profile.capabilities,
     })),
     bindingNames: (record.manifest.capabilities?.bindings ?? []).map((binding) => binding.binding),
     review: {
@@ -1052,6 +1102,7 @@ function toCatalogEntry(record: InstalledPackageRecord): PkgCatalogEntry {
       displayName: profile.displayName,
       description: profile.description,
       icon: profile.icon,
+      capabilities: profile.capabilities,
     })),
     bindingNames: (record.manifest.capabilities?.bindings ?? []).map((binding) => binding.binding),
   };

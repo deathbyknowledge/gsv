@@ -51,6 +51,7 @@ function defaultDraft(username = ""): OnboardingDraft {
     detailStep: "account",
     account: {
       username,
+      agentName: "",
       password: "",
       passwordConfirm: "",
     },
@@ -233,11 +234,15 @@ export function createOnboardingService(
         (next[section] as Record<string, unknown>)[key] = key === "enabled" ? false : "";
       } else if (section === "admin") {
         (next.admin as Record<string, unknown>)[key] = key === "mode" ? "same" : "";
-      } else if (section === "account" && key === "username") {
-        next.account.username = "";
+      } else if (section === "account" && (key === "username" || key === "agentName")) {
+        next.account[key] = "";
       } else if (section === "system" && key === "timezone") {
         next.system.timezone = defaultTimezone();
       }
+      return next;
+    }
+    if (section === "account" && (key === "username" || key === "agentName")) {
+      next.account[key] = typeof patch.value === "string" ? patch.value : String(patch.value ?? "");
       return next;
     }
     (next[section] as Record<string, unknown>)[key] = patch.value;

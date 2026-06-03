@@ -8,6 +8,9 @@ type ActionButtonProps = Omit<JSX.HTMLAttributes<HTMLButtonElement>, "size" | "i
   busy?: boolean;
   variant?: "default" | "primary" | "danger" | "ghost";
   size?: "icon" | "compact" | "full";
+  // preact's generic HTMLAttributes does not carry button-specific attributes.
+  disabled?: boolean;
+  type?: "button" | "submit" | "reset";
 };
 
 export function ActionButton({

@@ -23,10 +23,9 @@ import type { CodeModeExecArgs, CodeModeRunArgs, CodeModeRunResult } from "../sy
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import type {
   AiConfigResult,
-  AiContextProfile,
   AiToolsDevice,
 } from "../syscalls/ai";
-import { isAiContextProfile } from "../syscalls/ai";
+import { COMPACTION_SUMMARY_SYSTEM_PROMPT } from "../prompts/compaction";
 import type {
   ProcSendArgs,
   ProcSendResult,
@@ -208,10 +207,6 @@ const MAX_PROCESS_MEDIA_READ_BYTES = 25 * 1024 * 1024;
 const CODE_MODE_NESTED_SYSCALL_TIMEOUT_MS = 55_000;
 const CODE_MODE_APPROVAL_TIMEOUT_MS = 55_000;
 const COMPACTION_SUMMARY_WINDOW_CHARS = 24_000;
-
-function isNonInteractiveProfile(profile: AiContextProfile): boolean {
-  return profile === "cron";
-}
 
 function normalizeOptionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0
@@ -506,12 +501,7 @@ function defaultConversationPolicy(conversationId: string): ProcConversationCont
 function buildCompactionSummaryContext(messages: MessageRecord[]): Context {
   const transcript = renderCompactionTranscriptWindow(messages, COMPACTION_SUMMARY_WINDOW_CHARS);
   return {
-    systemPrompt: [
-      "Summarize a compacted GSV process conversation segment.",
-      "Return concise markdown only.",
-      "Preserve facts needed to continue the conversation: user goals, decisions, constraints, tool results, process events, files, ids, and unresolved next steps.",
-      "Do not mention that you are an AI or that you summarized the transcript.",
-    ].join(" "),
+    systemPrompt: COMPACTION_SUMMARY_SYSTEM_PROMPT,
     messages: [
       {
         role: "user",
@@ -599,16 +589,27 @@ export class Process extends Host<Env> {
     return JSON.parse(raw);
   }
 
-  get profile(): AiContextProfile {
-    const raw = this.store.getValue("profile");
-    if (isAiContextProfile(raw)) {
-      return raw;
-    }
-    return "task";
+  /**
+   * Whether this process may request human-in-the-loop approval. Stored per
+   * process at spawn time; defaults to interactive when unset.
+   */
+  get interactive(): boolean {
+    const raw = this.store.getValue("interactive");
+    if (raw === "0") return false;
+    return true;
   }
 
   get initialized(): boolean {
     return this.store.getValue("pid") !== null;
+  }
+
+  /**
+   * The kernel conversation id this executor's primary ("default") thread maps
+   * to, when assigned at spawn. Drives where the primary thread's transcripts
+   * are archived/hydrated under the agent home, decoupling them from the pid.
+   */
+  private get primaryConversationId(): string | null {
+    return this.store.getValue("primaryConversationId");
   }
 
   /**
@@ -681,13 +682,23 @@ export class Process extends Host<Env> {
           const idArgs = frame.args as unknown as {
             pid: string;
             identity: ProcessIdentity;
-            profile: AiContextProfile;
+            interactive?: boolean;
             assignment?: ProcSpawnAssignment;
+            conversationId?: string;
+            hydrateFrom?: string;
           };
           this.store.setValue("pid", idArgs.pid);
           this.store.setValue("identity", JSON.stringify(idArgs.identity));
-          this.store.setValue("profile", idArgs.profile);
+          if (idArgs.interactive !== undefined) {
+            this.store.setValue("interactive", idArgs.interactive ? "1" : "0");
+          }
+          if (idArgs.conversationId) {
+            this.store.setValue("primaryConversationId", idArgs.conversationId);
+          }
           this.store.setProcessContextFiles(idArgs.assignment?.contextFiles ?? []);
+          if (idArgs.hydrateFrom) {
+            await this.hydratePrimaryConversation(idArgs.hydrateFrom);
+          }
           let startedRunId: string | undefined;
           if (idArgs.assignment?.autoStart && !this.currentRun) {
             startedRunId = crypto.randomUUID();
@@ -1375,7 +1386,6 @@ export class Process extends Host<Env> {
     if (args.archive !== false && archivedMessages > 0) {
       const archiveId = crypto.randomUUID();
       const key = await this.archiveConversationMessages(
-        pid,
         conversationId,
         archiveId,
       );
@@ -1555,15 +1565,7 @@ export class Process extends Host<Env> {
     const fromMessageId = selected[0].id;
     const toMessageId = selected[selected.length - 1].id;
     const segmentId = crypto.randomUUID();
-    const archiveKey = [
-      "var",
-      "sessions",
-      this.identity.username,
-      pid,
-      "conversations",
-      encodeURIComponent(conversationId),
-      `${segmentId}.jsonl.gz`,
-    ].join("/");
+    const archiveKey = `${this.conversationArchiveDir(conversationId)}/${segmentId}.jsonl.gz`;
     await this.archiveMessageRecords(archiveKey, selected);
     if (activeRunStopped()) {
       return { ok: false, error: "Run stopped before compaction completed" };
@@ -2105,7 +2107,7 @@ export class Process extends Host<Env> {
     const totalMessages = this.store.totalMessageCount();
 
     const archive = totalMessages > 0
-      ? await this.archiveAllConversationMessages(pid, crypto.randomUUID(), "process-reset")
+      ? await this.archiveAllConversationMessages(crypto.randomUUID(), "process-reset")
       : emptyProcessArchive();
 
     await this.resetExecutionState("process.reset");
@@ -2131,14 +2133,18 @@ export class Process extends Host<Env> {
     const totalMessages = this.store.totalMessageCount();
 
     const archive = shouldArchive && totalMessages > 0
-      ? await this.archiveAllConversationMessages(pid, crypto.randomUUID(), "kill")
+      ? await this.archiveAllConversationMessages(crypto.randomUUID(), "kill")
       : emptyProcessArchive();
 
     await this.resetExecutionState("process.kill");
-
-    // A killed process should restart with a clean conversation and no queued work.
-    this.store.resetAllConversations();
     await deleteProcessMedia(this.env.STORAGE, this.identity.uid, pid);
+
+    // The executor is fungible: a killed process is gone. The durable
+    // transcript already lives in the agent home (archived above), so we wipe
+    // all live DO storage rather than keeping a reset stub around. A future
+    // executor gets a fresh DO (and hydrates from the home archive on resume).
+    await this.ctx.storage.deleteAll();
+    this.store.init();
 
     return {
       ok: true,
@@ -2339,9 +2345,7 @@ export class Process extends Host<Env> {
 
     // Step 3: Load config + tools (first tick only, cached on run state)
     if (!run.config) {
-      run.config = await this.kernelRpc("ai.config", {
-        profile: this.profile,
-      });
+      run.config = await this.kernelRpc("ai.config", {});
       if (await this.handleRunStopped(runId)) {
         return;
       }
@@ -2364,9 +2368,9 @@ export class Process extends Host<Env> {
     if (!run.systemPrompt) {
       run.systemPrompt = await assembleSystemPrompt({
         config: run.config!,
-        profile: this.profile,
         purpose: "chat.reply",
         identity: this.identity,
+        ownerIdentity: run.config?.owner ?? undefined,
         devices: run.devices ?? [],
         mcpServers: run.mcpServers ?? [],
         processContextFiles: this.store.getProcessContextFiles(),
@@ -2862,17 +2866,60 @@ export class Process extends Host<Env> {
       return this.currentRun.config;
     }
     try {
-      return await this.kernelRpc("ai.config", {
-        profile: this.profile,
-      });
+      return await this.kernelRpc("ai.config", {});
     } catch (error) {
       console.warn("[Process] Failed to resolve AI config for compaction:", error);
       return null;
     }
   }
 
+  /**
+   * R2-key prefix where a conversation's transcript archives live, under the
+   * run-as agent's home: `home/<agent>/conversations/<id>`. Keyed by the agent
+   * identity + conversation, NOT the (fungible) executor pid, so transcripts
+   * survive across executors and can be hydrated on resume.
+   */
+  private conversationArchiveDir(conversationId: string): string {
+    const homeKey = this.identity.home.replace(/^\/+/, "").replace(/\/+$/, "");
+    const normalized = normalizeConversationId(conversationId);
+    // The primary ("default") thread is addressed by the durable kernel
+    // conversation id (e.g. default:<owner>:<agent>) when one is assigned, so
+    // transcripts live at a stable, executor-independent path. Ad-hoc threads
+    // (forks opened via proc.conversation.open) keep their local id.
+    const pathId = normalized === DEFAULT_CONVERSATION_ID && this.primaryConversationId
+      ? this.primaryConversationId
+      : normalized;
+    return `${homeKey}/conversations/${encodeURIComponent(pathId)}`;
+  }
+
+  /**
+   * Hydrate the primary ("default") thread from a previously-archived transcript
+   * when a fresh executor resumes a conversation. Lossless: the archive holds
+   * the working window as it was at kill (already incorporating any prior
+   * size-compaction summaries), so we restore exactly that window.
+   */
+  private async hydratePrimaryConversation(archivePath: string): Promise<void> {
+    if (this.store.messageCount(DEFAULT_CONVERSATION_ID) > 0) {
+      return; // Already has live messages; never double-hydrate.
+    }
+    let archived: ArchivedMessageRecord[];
+    try {
+      archived = await this.readArchivedMessageRecords(archivePath);
+    } catch (error) {
+      console.warn(
+        `[Process] Failed to hydrate conversation from ${archivePath}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return;
+    }
+    const conversation = this.store.ensureConversation(DEFAULT_CONVERSATION_ID);
+    for (const record of archived) {
+      this.appendRestoredArchivedMessage(record, DEFAULT_CONVERSATION_ID, conversation.generation);
+    }
+  }
+
   private async archiveConversationMessages(
-    pid: string,
     conversationId: string,
     archiveId: string,
   ): Promise<string | null> {
@@ -2880,26 +2927,16 @@ export class Process extends Host<Env> {
     const messages = this.store.allMessagesForArchive(normalizedConversationId);
     if (messages.length === 0) return null;
 
-    const key = [
-      "var",
-      "sessions",
-      this.identity.username,
-      pid,
-      "conversations",
-      encodeURIComponent(normalizedConversationId),
-      `${archiveId}.jsonl.gz`,
-    ].join("/");
+    const key = `${this.conversationArchiveDir(normalizedConversationId)}/${archiveId}.jsonl.gz`;
 
     await this.archiveMessageRecords(key, messages);
     return key;
   }
 
   private async archiveAllConversationMessages(
-    pid: string,
     archiveId: string,
     kind: ProcConversationArchiveKind,
   ): Promise<ProcessArchiveResult> {
-    const archiveDir = `var/sessions/${this.identity.username}/${pid}/${archiveId}/`;
     const archives: ProcArchiveEntry[] = [];
     let archivedMessages = 0;
 
@@ -2913,7 +2950,7 @@ export class Process extends Host<Env> {
         continue;
       }
 
-      const key = `${archiveDir}${conversationArchiveFilename(
+      const key = `${this.conversationArchiveDir(conversation.id)}/${archiveId}.${conversationArchiveFilename(
         conversation.id,
         conversation.generation,
       )}`;
@@ -2937,9 +2974,10 @@ export class Process extends Host<Env> {
       });
     }
 
+    const homeKey = this.identity.home.replace(/^\/+/, "").replace(/\/+$/, "");
     return {
       archivedMessages,
-      archivedTo: archivedMessages > 0 ? `/${archiveDir}` : undefined,
+      archivedTo: archivedMessages > 0 ? `/${homeKey}/conversations/` : undefined,
       archives,
     };
   }
@@ -3228,7 +3266,6 @@ export class Process extends Host<Env> {
           syscall,
           tc.arguments,
           this.identity,
-          this.profile,
         );
 
         if (approval.action === "deny") {
@@ -3242,12 +3279,12 @@ export class Process extends Host<Env> {
         }
 
         if (approval.action === "ask") {
-          if (isNonInteractiveProfile(this.profile)) {
+          if (!this.interactive) {
             await this.appendSyntheticToolResult(
               runId,
               tc.id,
               syscall,
-              "Tool execution requires interactive approval, which is unavailable for this profile",
+              "Tool execution requires interactive approval, which is unavailable for this process",
             );
             continue;
           }
@@ -3419,7 +3456,6 @@ export class Process extends Host<Env> {
       call,
       args,
       this.identity,
-      this.profile,
     );
 
     if (approval.action === "deny") {
@@ -3427,9 +3463,9 @@ export class Process extends Host<Env> {
     }
 
     if (approval.action === "ask") {
-      if (isNonInteractiveProfile(this.profile)) {
+      if (!this.interactive) {
         throw new Error(
-          `Tool execution requires interactive approval, which is unavailable for this profile: ${call}`,
+          `Tool execution requires interactive approval, which is unavailable for this process: ${call}`,
         );
       }
       const approved = await this.waitForCodeModeApproval(
@@ -3649,13 +3685,13 @@ export class Process extends Host<Env> {
       return run.approvalPolicy;
     }
 
-    const profilePolicy = parseToolApprovalPolicy(run.config?.profileApprovalPolicy ?? null);
+    const accountPolicy = parseToolApprovalPolicy(run.config?.accountApprovalPolicy ?? null);
     const overrides = this.loadToolApprovalOverrides();
     run.approvalPolicy = {
-      default: profilePolicy.default,
+      default: accountPolicy.default,
       rules: [
         ...overrides,
-        ...profilePolicy.rules,
+        ...accountPolicy.rules,
       ],
     };
     this.currentRun = run;
@@ -3685,7 +3721,6 @@ export class Process extends Host<Env> {
       pendingHil.syscall,
       pendingHil.args,
       this.identity,
-      this.profile,
     );
     return {
       match: pendingHil.syscall,

@@ -1,15 +1,15 @@
 import { defineCommand } from "just-bash";
 import type { ExecResult } from "just-bash";
 import type { KernelContext } from "../../../kernel/context";
+import { resolveCallerOwnerUid } from "../../../kernel/context";
 import {
   handleProcIpcCall,
   handleProcIpcSend,
-  handleProcProfileList,
   handleProcSpawn,
 } from "../../../kernel/proc-handlers";
+import { handleAccountList } from "../../../kernel/agents";
 import type { SyscallName } from "../../../syscalls";
 import type { ProcSpawnArgs } from "../../../syscalls/proc";
-import type { AiContextProfile } from "../../../syscalls/ai";
 import type { Frame } from "../../../protocol/frames";
 import { sendFrameToProcess } from "../../../shared/utils";
 import { parseDurationMs, requireCommandCapability, requireShellOptionValue } from "./common";
@@ -45,32 +45,33 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
     }
     case "list": {
       requireCommandCapability(ctx, "proc.list");
-      const list = ctx.procs.list(ctx.identity!.process.uid);
-      const lines = ["PID\tSTATE\tPROFILE\tLABEL"];
+      // Visibility is keyed on the owning human, not the run-as account: an
+      // agent-backed shell must list its owner's processes, not the agent uid's.
+      const list = ctx.procs.list(resolveCallerOwnerUid(ctx));
+      const lines = ["PID\tSTATE\tRUN-AS\tLABEL"];
       for (const proc of list) {
-        lines.push(`${proc.processId}\t${proc.state}\t${proc.profile}\t${proc.label ?? ""}`);
+        lines.push(`${proc.processId}\t${proc.state}\t${proc.username}\t${proc.label ?? ""}`);
       }
       return { stdout: `${lines.join("\n")}\n`, stderr: "", exitCode: 0 };
     }
-    case "profiles": {
-      requireCommandCapability(ctx, "proc.profile.list");
+    case "agents": {
+      requireCommandCapability(ctx, "account.list");
       const json = rest.includes("--json");
       const unexpected = rest.find((arg) => arg !== "--json");
       if (unexpected) {
         throw new Error(`unexpected argument: ${unexpected}`);
       }
-      const result = await handleProcProfileList({}, ctx);
+      const result = handleAccountList({}, ctx);
       if (json) {
         return { stdout: `${JSON.stringify(result, null, 2)}\n`, stderr: "", exitCode: 0 };
       }
-      const lines = ["ID\tKIND\tINTERACTIVE\tBACKGROUND\tNAME"];
-      for (const profile of result.profiles) {
+      const lines = ["UID\tUSERNAME\tRELATION\tNAME"];
+      for (const account of result.accounts) {
         lines.push([
-          profile.id,
-          profile.kind,
-          profile.interactive ? "yes" : "no",
-          profile.background ? "yes" : "no",
-          profile.displayName,
+          String(account.uid),
+          account.username,
+          account.relation,
+          account.displayName,
         ].join("\t"));
       }
       return { stdout: `${lines.join("\n")}\n`, stderr: "", exitCode: 0 };
@@ -85,7 +86,6 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
       return {
         stdout: [
           `pid=${result.pid}`,
-          `profile=${result.profile}`,
           result.label ? `label=${quoteShellField(result.label)}` : "",
           `cwd=${quoteShellField(result.cwd)}`,
         ].filter(Boolean).join(" ") + "\n",
@@ -234,7 +234,9 @@ async function runProcConversationSyscall(
   if (!proc) {
     throw new Error(`Process not found: ${pid}`);
   }
-  if (proc.uid !== identity.process.uid && identity.process.uid !== 0) {
+  const processOwnerUid = proc.ownerUid ?? proc.uid;
+  const callerOwnerUid = resolveCallerOwnerUid(ctx);
+  if (processOwnerUid !== callerOwnerUid && identity.process.uid !== 0) {
     throw new Error(`Permission denied: cannot access process ${pid}`);
   }
 
@@ -255,11 +257,12 @@ async function runProcConversationSyscall(
 }
 
 function parseProcSpawnCommand(args: string[]): ProcSpawnArgs {
-  let profile: string | undefined;
+  let runAs: string | undefined;
   let label: string | undefined;
   let prompt: string | undefined;
   let parentPid: string | undefined;
   let cwd: string | undefined;
+  let interactive: boolean | undefined;
   let assignment: ProcSpawnArgs["assignment"];
   let mounts: ProcSpawnArgs["mounts"];
   const positional: string[] = [];
@@ -269,9 +272,16 @@ function parseProcSpawnCommand(args: string[]): ProcSpawnArgs {
     if (current === "--json") {
       return JSON.parse(requireShellOptionValue(args[index + 1], current)) as ProcSpawnArgs;
     }
-    if (current === "--profile") {
+    if (current === "--as" || current === "--run-as") {
       index += 1;
-      profile = requireShellOptionValue(args[index], current);
+      runAs = requireShellOptionValue(args[index], current);
+      continue;
+    }
+    if (current === "--profile") {
+      throw new Error("--profile is no longer supported; use --as ACCOUNT");
+    }
+    if (current === "--non-interactive" || current === "--background") {
+      interactive = false;
       continue;
     }
     if (current === "--label") {
@@ -310,11 +320,12 @@ function parseProcSpawnCommand(args: string[]): ProcSpawnArgs {
   const positionalPrompt = positional.join(" ").trim();
   const finalPrompt = prompt ?? (positionalPrompt || undefined);
   return {
-    ...(profile ? { profile: profile as AiContextProfile } : {}),
+    ...(runAs ? { runAs } : {}),
     ...(label ? { label } : {}),
     ...(finalPrompt ? { prompt: finalPrompt } : {}),
     ...(parentPid ? { parentPid } : {}),
     ...(cwd ? { cwd } : {}),
+    ...(interactive !== undefined ? { interactive } : {}),
     ...(assignment ? { assignment } : {}),
     ...(mounts ? { mounts } : {}),
   };
@@ -751,8 +762,8 @@ function procUsage(): string {
     "Usage:",
     "  proc self",
     "  proc list",
-    "  proc profiles [--json]",
-    "  proc spawn [--profile PROFILE] [--label LABEL] [--prompt TEXT] [--parent PID] [--cwd PATH] <prompt>",
+    "  proc agents [--json]",
+    "  proc spawn [--as ACCOUNT] [--non-interactive] [--label LABEL] [--prompt TEXT] [--parent PID] [--cwd PATH] <prompt>",
     "  proc spawn --json JSON",
     "  proc segments [--pid PID] [--conversation id]",
     "  proc policy [--pid PID] [--conversation id] [--overflow auto-compact|fail] [--compact-at N] [--keep-last N]",

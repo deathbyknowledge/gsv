@@ -8,6 +8,7 @@
 
 import type { RequestFrame, ResponseFrame } from "../protocol/frames";
 import type { KernelContext } from "./context";
+import { resolveCallerOwnerUid } from "./context";
 import type {
   ProcListArgs,
   ProcListResult,
@@ -16,9 +17,6 @@ import type {
   ProcIpcCallResult,
   ProcIpcSendArgs,
   ProcIpcSendResult,
-  ProcProfileListArgs,
-  ProcProfileListEntry,
-  ProcProfileListResult,
   ProcSpawnAssignment,
   ProcSpawnMountSpec,
   ProcSpawnArgs,
@@ -26,12 +24,6 @@ import type {
   ProcSendArgs,
 } from "../syscalls/proc";
 import type { InteractionOrigin } from "../syscalls/interaction-origin";
-import {
-  isAiContextProfile,
-  isSystemAiContextProfile,
-  isUserAiContextProfile,
-  type AiContextProfile,
-} from "../syscalls/ai";
 import { sendFrameToProcess } from "../shared/utils";
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import type { ProcessMount } from "./processes";
@@ -43,77 +35,13 @@ import {
 import { resolveInstalledPackage } from "./pkg";
 import {
   type InstalledPackageRecord,
-  resolvePackageProfileReference,
   visiblePackageScopesForActor,
 } from "./packages";
-import {
-  listUserAiProfiles,
-  resolveUserAiProfile,
-} from "./user-profiles";
-
-const SYSTEM_PROFILE_ENTRIES: ProcProfileListEntry[] = [
-  {
-    id: "init",
-    alias: "personal",
-    kind: "system",
-    displayName: "Personal Agent",
-    description: "The persistent user-facing agent that routes work, manages context, and coordinates automation.",
-    interactive: true,
-    startable: true,
-    background: false,
-    spawnMode: "singleton",
-  },
-  {
-    id: "task",
-    kind: "system",
-    displayName: "Worker",
-    description: "Generic bounded worker profile for delegated execution.",
-    interactive: true,
-    startable: true,
-    background: false,
-    spawnMode: "new",
-  },
-  {
-    id: "review",
-    kind: "system",
-    displayName: "Review",
-    description: "A skeptical review conversation for packages and changes.",
-    interactive: true,
-    startable: true,
-    background: false,
-    spawnMode: "new",
-  },
-  {
-    id: "mcp",
-    kind: "system",
-    displayName: "Master Control",
-    description: "Operational control-plane and diagnostics conversation.",
-    interactive: true,
-    startable: true,
-    background: false,
-    spawnMode: "new",
-  },
-  {
-    id: "app",
-    kind: "system",
-    displayName: "App Runtime",
-    description: "App-owned runtime profile.",
-    interactive: false,
-    startable: false,
-    background: false,
-    spawnMode: "new",
-  },
-  {
-    id: "cron",
-    kind: "system",
-    displayName: "Cron",
-    description: "Scheduled background worker.",
-    interactive: false,
-    startable: false,
-    background: true,
-    spawnMode: "new",
-  },
-];
+import { ensureDefaultConversationExecutor, ensurePersonalAgent } from "./agents";
+import { accountIdentity } from "./accounts";
+import { canOwnerDelegateRunAs } from "./account-access";
+import { resolvePackageAgentRunAs } from "./package-agents";
+import { DEFAULT_CONVERSATION_ID } from "../process/conversations";
 
 const DEFAULT_IPC_CALL_TIMEOUT_MS = 60_000;
 const MIN_IPC_CALL_TIMEOUT_MS = 1_000;
@@ -123,75 +51,36 @@ export function handleProcList(
   args: ProcListArgs,
   ctx: KernelContext,
 ): ProcListResult {
-  const identity = ctx.identity!;
-  const isRoot = identity.process.uid === 0;
-  const uid = args.uid ?? (isRoot ? undefined : identity.process.uid);
+  // Visibility is keyed on the owning human (owner_uid), not the run-as
+  // account. A personal agent listing its human's processes must resolve to the
+  // human owner, otherwise it filters on the agent's uid and sees nothing.
+  const callerOwnerUid = resolveCallerOwnerUid(ctx);
+  const isRoot = callerOwnerUid === 0;
+  const uid = args.uid ?? (isRoot ? undefined : callerOwnerUid);
 
   const records = ctx.procs.list(uid);
 
-  const processes: ProcListEntry[] = records.map((r) => ({
-    pid: r.processId,
-    uid: r.uid,
-    profile: r.profile,
-    parentPid: r.parentPid,
-    state: r.state,
-    activeRunId: r.activeRunId,
-    activeConversationId: r.activeConversationId,
-    queuedCount: r.queuedCount,
-    lastActiveAt: r.lastActiveAt,
-    label: r.label,
-    createdAt: r.createdAt,
-    cwd: r.cwd,
-  }));
+  const processes: ProcListEntry[] = records.map((r) => {
+    const conversation = ctx.conversations?.getByActivePid(r.processId);
+    return {
+      pid: r.processId,
+      uid: r.ownerUid,
+      username: r.username,
+      interactive: r.interactive,
+      parentPid: r.parentPid,
+      state: r.state,
+      activeRunId: r.activeRunId,
+      activeConversationId: r.activeConversationId,
+      queuedCount: r.queuedCount,
+      lastActiveAt: r.lastActiveAt,
+      label: r.label,
+      createdAt: r.createdAt,
+      cwd: r.cwd,
+      isDefaultConversation: conversation?.isDefault === true,
+    };
+  });
 
   return { processes };
-}
-
-export async function handleProcProfileList(
-  _args: ProcProfileListArgs,
-  ctx: KernelContext,
-): Promise<ProcProfileListResult> {
-  const scopes = visiblePackageScopesForActor(ctx.identity?.process);
-  const userProfiles = await listUserAiProfiles(ctx);
-  const userProfileEntries = userProfiles.map((profile): ProcProfileListEntry => ({
-    id: profile.id,
-    kind: "user",
-    displayName: profile.displayName,
-    ...(profile.description ? { description: profile.description } : {}),
-    ...(profile.icon ? { icon: profile.icon } : {}),
-    interactive: profile.interactive,
-    startable: profile.startable,
-    background: profile.background,
-    spawnMode: "new",
-  }));
-  const packageProfiles = ctx.packages
-    .list({ scopes })
-    .filter((record) => record.enabled)
-    .flatMap((record) => (record.manifest.profiles ?? []).map((profile): ProcProfileListEntry => ({
-      id: `${record.packageId}#${profile.name}`,
-      alias: `${record.manifest.name}#${profile.name}`,
-      kind: "package",
-      displayName: profile.displayName,
-      ...(profile.description ? { description: profile.description } : {}),
-      ...(profile.icon ? { icon: profile.icon } : {}),
-      interactive: true,
-      startable: true,
-      background: false,
-      spawnMode: "new",
-      packageId: record.packageId,
-      packageName: record.manifest.name,
-    })))
-    .sort((left, right) => {
-      const packageNameCompare = (left.packageName ?? "").localeCompare(right.packageName ?? "");
-      if (packageNameCompare !== 0) {
-        return packageNameCompare;
-      }
-      return left.displayName.localeCompare(right.displayName);
-    });
-
-  return {
-    profiles: [...SYSTEM_PROFILE_ENTRIES, ...userProfileEntries, ...packageProfiles],
-  };
 }
 
 export async function handleProcSpawn(
@@ -199,41 +88,40 @@ export async function handleProcSpawn(
   ctx: KernelContext,
 ): Promise<ProcSpawnResult> {
   const identity = ctx.identity!;
-  const pid = crypto.randomUUID();
-  const profile = normalizeSpawnProfile(args.profile);
+  const pid = `proc:${crypto.randomUUID()}`;
+  const explicitRunAs = typeof args.runAs === "string" && args.runAs.trim().length > 0;
+  const hasCustomSpawnOptions =
+    args.assignment !== undefined ||
+    args.cwd !== undefined ||
+    args.mounts !== undefined;
 
-  if (!isAiContextProfile(profile)) {
-    return { ok: false, error: `Invalid process profile: ${String(profile)}` };
-  }
-  if (profile === "init") {
-    const ensured = ctx.procs.ensureInit(identity.process);
-    const initRecord = ctx.procs.get(ensured.pid);
-    if (!initRecord) {
-      return { ok: false, error: "Failed to resolve init process" };
-    }
+  // An interactive, top-level spawn with no explicit run-as targets the caller's
+  // default ("inbox") conversation with their personal agent — the stable
+  // surface. Background spawns (interactive === false, e.g. cron) and child
+  // spawns from a process get their own fresh executor + conversation.
+  const useDefaultExecutor =
+    !explicitRunAs &&
+    !hasCustomSpawnOptions &&
+    args.interactive !== false &&
+    !ctx.processId &&
+    !args.parentPid;
 
-    if (ensured.created) {
-      await sendFrameToProcess(ensured.pid, {
-        type: "req",
-        id: crypto.randomUUID(),
-        call: "proc.setidentity",
-        args: {
-          pid: ensured.pid,
-          identity: identity.process,
-          profile: "init",
-          assignment: args.assignment as ProcSpawnAssignment | undefined,
-        },
-      });
+  if (useDefaultExecutor) {
+    const human = resolveCallerOwnerIdentity(ctx, identity.process);
+    const pidResolved = await ensureDefaultConversationExecutor(ctx, human);
+    const record = ctx.procs.get(pidResolved);
+    if (!record) {
+      return { ok: false, error: "Failed to resolve personal-agent executor" };
     }
 
     if (args.prompt) {
       const origin = interactionOriginForContext(ctx);
-      await sendFrameToProcess(ensured.pid, {
+      await sendFrameToProcess(pidResolved, {
         type: "req",
         id: crypto.randomUUID(),
         call: "proc.send",
         args: {
-          pid: ensured.pid,
+          pid: pidResolved,
           message: args.prompt,
           ...(origin ? { origin } : {}),
         },
@@ -242,47 +130,48 @@ export async function handleProcSpawn(
 
     return {
       ok: true,
-      pid: initRecord.processId,
-      label: initRecord.label ?? undefined,
-      profile: "init",
-      cwd: initRecord.cwd,
+      pid: record.processId,
+      label: record.label ?? undefined,
+      cwd: record.cwd,
     };
   }
-  if (!isSystemAiContextProfile(profile) && !isUserAiContextProfile(profile)) {
-    try {
-      const resolved = resolvePackageProfileReference(
-        profile,
-        ctx.packages,
-        visiblePackageScopesForActor(identity.process),
-      );
-      if (!resolved) {
-        return { ok: false, error: `Unknown package profile: ${profile}` };
-      }
-    } catch (error) {
-      return {
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      };
-    }
-  } else if (isUserAiContextProfile(profile)) {
-    const userProfile = await resolveUserAiProfile(ctx, profile);
-    if (!userProfile) {
-      return { ok: false, error: `Unknown user profile: ${profile}` };
-    }
-  }
 
-  const parentPid = args.parentPid ?? `init:${identity.process.uid}`;
-  const parent = ctx.procs.get(parentPid);
+  const callerOwnerUid = resolveCallerOwnerUid(ctx);
+  const parentPid = args.parentPid ?? ctx.processId;
+  const parent = parentPid ? ctx.procs.get(parentPid) : null;
+  const parentIsCurrentCaller = !!parentPid && parentPid === ctx.processId;
+  const parentRunsAsCaller = !!parent && parent.uid === identity.process.uid;
 
-  if (parentPid !== `init:${identity.process.uid}`) {
-    if (!parent || parent.uid !== identity.process.uid) {
+  if (parentPid) {
+    if (!parent || parent.ownerUid !== callerOwnerUid) {
       if (identity.process.uid !== 0) {
         return { ok: false, error: `Cannot spawn under foreign process: ${parentPid}` };
       }
     }
+    if (
+      parent &&
+      args.parentPid &&
+      !parentIsCurrentCaller &&
+      !parentRunsAsCaller &&
+      !explicitRunAs &&
+      identity.process.uid !== 0
+    ) {
+      return { ok: false, error: `Cannot inherit run-as identity from unrelated parent process: ${parentPid}` };
+    }
   }
 
-  const baseIdentity = parent
+  // The spawning human owns the process. The run-as identity is, in order of
+  // precedence: an explicit `runAs` account, the parent's identity (so children
+  // of an agent also run as that agent), or — for a parentless spawn — the
+  // caller's personal agent (processes run as an agent, not the human).
+  const ownerUid = parent ? parent.ownerUid : callerOwnerUid;
+  const inheritParentIdentity = parent && (
+    parentIsCurrentCaller ||
+    parentRunsAsCaller ||
+    !args.parentPid ||
+    identity.process.uid === 0
+  );
+  let baseIdentity: ProcessIdentity = inheritParentIdentity
     ? {
         uid: parent.uid,
         gid: parent.gid,
@@ -293,8 +182,19 @@ export async function handleProcSpawn(
       }
     : identity.process;
 
+  if (explicitRunAs) {
+    const resolved = resolveRunAsIdentity(ctx, args.runAs!, ownerUid);
+    if (!resolved.ok) {
+      return { ok: false, error: resolved.error };
+    }
+    baseIdentity = resolved.identity;
+  } else if (!parent) {
+    const agent = await ensurePersonalAgent(ctx, identity.process);
+    baseIdentity = agent.identity;
+  }
+
   const hasRequestedMounts = args.mounts !== undefined;
-  const materializedMounts = materializeSpawnMounts(args.mounts, ctx);
+  const materializedMounts = materializeSpawnMounts(args.mounts, ctx, ownerUid);
   if (!materializedMounts.ok) {
     return { ok: false, error: materializedMounts.error };
   }
@@ -304,14 +204,32 @@ export async function handleProcSpawn(
     cwd: resolveSpawnCwd(args.cwd, baseIdentity, hasRequestedMounts ? materializedMounts.mounts : []),
   };
 
+  const interactive = args.interactive ?? true;
+
   ctx.procs.spawn(pid, spawnIdentity, {
-    parentPid,
-    profile,
+    parentPid: parentPid ?? undefined,
+    ownerUid,
+    interactive,
     label: args.label,
     cwd: spawnIdentity.cwd,
     mounts: materializedMounts.mounts,
     contextFiles: args.assignment?.contextFiles ?? [],
   });
+
+  // Each spawned process gets its own durable conversation so its transcript
+  // persists in the run-as agent's home, addressable independent of this
+  // (fungible) executor.
+  let conversationId: string | undefined;
+  if (ctx.conversations) {
+    const conversation = ctx.conversations.create({
+      ownerUid,
+      agentUid: spawnIdentity.uid,
+      agentHome: spawnIdentity.home,
+      title: args.label ?? null,
+    });
+    conversationId = conversation.conversationId;
+    ctx.conversations.setActivePid(conversationId, pid);
+  }
 
   await sendFrameToProcess(pid, {
     type: "req",
@@ -320,8 +238,9 @@ export async function handleProcSpawn(
     args: {
       pid,
       identity: spawnIdentity,
-      profile,
+      interactive,
       assignment: args.assignment as ProcSpawnAssignment | undefined,
+      ...(conversationId ? { conversationId } : {}),
     },
   });
 
@@ -343,16 +262,49 @@ export async function handleProcSpawn(
     ok: true,
     pid,
     label: args.label,
-    profile,
     cwd: spawnIdentity.cwd,
   };
 }
 
-function normalizeSpawnProfile(profile: ProcSpawnArgs["profile"] | undefined): AiContextProfile {
-  if (profile === "personal") {
-    return "init";
+/**
+ * Resolve a `runAs` account selector (username or uid) to its run-as identity,
+ * authorizing the owning human. A human may run as an account when it is their
+ * own account, their personal agent, an account whose private group they belong
+ * to, or when the caller is root.
+ */
+export function resolveRunAsIdentity(
+  ctx: KernelContext,
+  runAs: string,
+  ownerUid: number,
+): { ok: true; identity: ProcessIdentity } | { ok: false; error: string } {
+  const auth = ctx.auth;
+  const trimmed = runAs.trim();
+  const isRoot = ctx.identity!.process.uid === 0;
+
+  if (trimmed.includes("#")) {
+    return resolvePackageAgentRunAs(ctx, trimmed, ownerUid, isRoot);
   }
-  return profile ?? "task";
+
+  const entry = /^\d+$/.test(trimmed)
+    ? auth.getPasswdByUid(Number(trimmed))
+    : auth.getPasswdByUsername(trimmed);
+  if (!entry) {
+    return { ok: false, error: `Unknown account: ${runAs}` };
+  }
+
+  // "Self" is the caller's *actual* run-as identity, not the owning human.
+  // Otherwise an agent-backed process could pass runAs=<owner human> and assume
+  // the human's identity (and its `users` capabilities), escalating past the
+  // agent's least-privilege isolation. The owner's delegated run-as rights
+  // (personal agent, group-member agents) are still honored below.
+  const isSelf = entry.uid === ctx.identity!.process.uid;
+  const canDelegate = canOwnerDelegateRunAs(auth, ownerUid, entry);
+
+  if (!isRoot && !isSelf && !canDelegate) {
+    return { ok: false, error: `Permission denied: cannot run as ${entry.username}` };
+  }
+
+  return { ok: true, identity: accountIdentity(auth, entry) };
 }
 
 function withProcSendOrigin(frame: RequestFrame, ctx: KernelContext): RequestFrame {
@@ -474,7 +426,7 @@ export async function handleProcIpcCall(
 
   ctx.ipcCalls.create({
     callId,
-    uid: resolved.source.uid,
+    uid: resolved.source.ownerUid,
     sourcePid: resolved.sourcePid,
     targetPid: resolved.args.pid,
     deadlineAt,
@@ -548,15 +500,22 @@ export async function forwardToProcess(
   ctx: KernelContext,
 ): Promise<unknown> {
   const identity = ctx.identity!;
+  const callerOwnerUid = resolveCallerOwnerUid(ctx);
   const args = frame.args as { pid?: string };
-  const pid = args.pid ?? `init:${identity.process.uid}`;
+  // No explicit target → the caller's default ("inbox") conversation executor
+  // (allocating/reusing one), which is the stable surface for their personal
+  // agent.
+  const pid = args.pid ?? await ensureDefaultConversationExecutor(
+    ctx,
+    resolveCallerOwnerIdentity(ctx, identity.process),
+  );
 
   const proc = ctx.procs.get(pid);
   if (!proc) {
     throw new Error(`Process not found: ${pid}`);
   }
 
-  if (proc.uid !== identity.process.uid && identity.process.uid !== 0) {
+  if (proc.ownerUid !== callerOwnerUid && identity.process.uid !== 0) {
     throw new Error(`Permission denied: cannot access process ${pid}`);
   }
 
@@ -568,8 +527,30 @@ export async function forwardToProcess(
   if (response && response.type === "res") {
     const res = response as ResponseFrame;
     if (res.ok) {
-      if (frame.call === "proc.kill") {
+      const conversation = ctx.conversations?.getByActivePid(pid);
+      if (frame.call === "proc.reset") {
+        clearLatestArchiveForConversation(ctx, conversation);
+      } else if (frame.call === "proc.conversation.reset") {
+        const data = (res as { data?: { conversationId?: string } }).data;
+        if (data?.conversationId === DEFAULT_CONVERSATION_ID) {
+          clearLatestArchiveForConversation(ctx, conversation);
+        }
+      } else if (frame.call === "proc.kill") {
         ctx.procs.kill(pid);
+        // The executor is gone. Record where its conversation's transcript was
+        // archived (so a future executor hydrates from it), then detach so the
+        // next delivery allocates a fresh executor.
+        if (conversation) {
+          const archived = (res as { data?: { archives?: Array<{ path?: string }> } }).data;
+          const base = conversation.archiveBase.replace(/^\/+/, "");
+          const primaryArchive = archived?.archives?.find((a) =>
+            typeof a.path === "string" && a.path.replace(/^\/+/, "").startsWith(base),
+          );
+          if (primaryArchive?.path) {
+            ctx.conversations?.setLatestArchive(conversation.conversationId, primaryArchive.path);
+          }
+        }
+        ctx.conversations?.clearActivePid(pid);
       }
       return (res as { data?: unknown }).data;
     } else {
@@ -578,6 +559,27 @@ export async function forwardToProcess(
   }
 
   return { ok: true, status: "delivered" };
+}
+
+function clearLatestArchiveForConversation(
+  ctx: KernelContext,
+  conversation: { conversationId: string } | null | undefined,
+): void {
+  if (conversation) {
+    ctx.conversations?.setLatestArchive(conversation.conversationId, null);
+  }
+}
+
+function resolveCallerOwnerIdentity(ctx: KernelContext, fallback: ProcessIdentity): ProcessIdentity {
+  const ownerUid = resolveCallerOwnerUid(ctx);
+  if (ownerUid === fallback.uid) {
+    return fallback;
+  }
+  const entry = ctx.auth.getPasswdByUid(ownerUid);
+  if (!entry) {
+    throw new Error(`Cannot resolve caller owner uid ${ownerUid}`);
+  }
+  return accountIdentity(ctx.auth, entry);
 }
 
 type NormalizedIpcSendArgs =
@@ -594,8 +596,8 @@ type ResolvedSameOwnerIpc =
   | {
       ok: true;
       sourcePid: string;
-      source: { uid: number };
-      target: { uid: number };
+      source: { uid: number; ownerUid: number };
+      target: { uid: number; ownerUid: number };
       args: Extract<NormalizedIpcSendArgs, { ok: true }>;
     }
   | { ok: false; error: string };
@@ -629,7 +631,7 @@ function resolveSameOwnerIpc(
     return { ok: false, error: `Source process identity mismatch: ${sourcePid}` };
   }
 
-  if (target.uid !== source.uid) {
+  if (target.ownerUid !== source.ownerUid) {
     return { ok: false, error: "Permission denied: target process belongs to another user" };
   }
 
@@ -721,10 +723,11 @@ type SpawnMountSpecWithRecord = {
 function materializeSpawnMounts(
   specs: ProcSpawnMountSpec[] | undefined,
   ctx: KernelContext,
+  ownerUid: number,
 ): SpawnMountOutcome {
   const mounts: ProcessMount[] = [];
   const seen = new Set<string>();
-  const sourcePackages = ctx.packages.list({ scopes: visiblePackageScopesForActor(ctx.identity?.process) });
+  const sourcePackages = ctx.packages.list({ scopes: visiblePackageScopesForActor({ uid: ownerUid }) });
   const specsToMount: SpawnMountSpecWithRecord[] = specs
     ? specs.map((spec) => ({ spec, record: resolveInstalledPackage(spec.packageId, ctx) }))
     : sourcePackages.map((record) => ({

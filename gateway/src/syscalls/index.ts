@@ -75,8 +75,6 @@ import type {
   ProcResetResult,
   ProcListArgs,
   ProcListResult,
-  ProcProfileListArgs,
-  ProcProfileListResult,
   ProcSetIdentityArgs,
   ProcSetIdentityResult,
 } from "./proc";
@@ -181,6 +179,10 @@ import type {
   SysLinkListResult,
   SysLinkConsumeArgs,
   SysLinkConsumeResult,
+  AccountCreateArgs,
+  AccountCreateResult,
+  AccountListArgs,
+  AccountListResult,
 } from "@gsv/protocol/syscalls/system";
 import type {
   SchedulerListArgs,
@@ -281,7 +283,6 @@ export type SyscallDomains = {
   "proc.spawn": { args: ProcSpawnArgs; result: ProcSpawnResult };
   "proc.kill": { args: ProcKillArgs; result: ProcKillResult };
   "proc.list": { args: ProcListArgs; result: ProcListResult };
-  "proc.profile.list": { args: ProcProfileListArgs; result: ProcProfileListResult };
   "proc.send": { args: ProcSendArgs; result: ProcSendResult };
   "proc.ipc.send": { args: ProcIpcSendArgs; result: ProcIpcSendResult };
   "proc.ipc.call": { args: ProcIpcCallArgs; result: ProcIpcCallResult };
@@ -364,6 +365,10 @@ export type SyscallDomains = {
   "sys.link.list": { args: SysLinkListArgs; result: SysLinkListResult };
   "sys.link.consume": { args: SysLinkConsumeArgs; result: SysLinkConsumeResult };
 
+  // Accounts (humans and agents)
+  "account.create": { args: AccountCreateArgs; result: AccountCreateResult };
+  "account.list": { args: AccountListArgs; result: AccountListResult };
+
   // Scheduler (cron)
   "sched.list": { args: SchedulerListArgs; result: SchedulerListResult };
   "sched.add": { args: SchedulerAddArgs; result: SchedulerAddResult };
@@ -413,7 +418,8 @@ type SyscallDomain =
   | "sched"
   | "notification"
   | "adapter"
-  | "signal";
+  | "signal"
+  | "account";
 
 function domainOf(syscall: SyscallName): SyscallDomain {
   return syscall.split(".")[0] as SyscallDomain;

@@ -4,6 +4,12 @@ import type {
   RmOptions,
 } from "just-bash";
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
+import type { AuthStore } from "../../kernel/auth-store";
+import { accountIdentity } from "../../kernel/accounts";
+import {
+  canOwnerAccessHomeKnowledge,
+  homeUsernameFromPath,
+} from "../../kernel/account-access";
 import type { ExtendedMountStat, FsSearchBackendResult, MountBackend } from "../mount";
 import { R2MountBackend } from "./r2";
 import {
@@ -19,7 +25,6 @@ const TEXT_ENCODER = new TextEncoder();
 
 type HomePathKind =
   | "home"
-  | "constitution"
   | "context-root"
   | "context-path"
   | "skills-root"
@@ -30,19 +35,42 @@ type HomePathKind =
   | "knowledge-path"
   | "other";
 
+export type HomeKnowledgeBackendOptions = {
+  auth?: AuthStore;
+  /** Owning human uid for delegated agent-home routing. Defaults to viewer uid. */
+  ownerUid?: number;
+  isRoot?: boolean;
+};
+
 export function createHomeKnowledgeBackend(
   bucket: R2Bucket,
   ripgitBinding: Fetcher | undefined,
   identity: ProcessIdentity,
+  options?: HomeKnowledgeBackendOptions,
 ): MountBackend | null {
   if (!ripgitBinding) {
     return null;
   }
 
-  return new HomeKnowledgeMountBackend(
-    new RipgitClient(ripgitBinding),
+  const client = new RipgitClient(ripgitBinding);
+  const primary = new HomeKnowledgeMountBackend(
+    client,
     new R2MountBackend(bucket, identity),
     identity,
+  );
+
+  if (!options?.auth) {
+    return primary;
+  }
+
+  return new DelegatingHomeKnowledgeMountBackend(
+    primary,
+    client,
+    bucket,
+    identity,
+    options.auth,
+    options.ownerUid ?? identity.uid,
+    options.isRoot ?? identity.uid === 0,
   );
 }
 
@@ -59,10 +87,6 @@ class HomeKnowledgeMountBackend implements MountBackend {
 
   private get home() {
     return normalizePath(this.identity.home);
-  }
-
-  private get constitutionPath() {
-    return normalizePath(`${this.identity.home}/CONSTITUTION.md`);
   }
 
   private get contextRoot() {
@@ -84,6 +108,11 @@ class HomeKnowledgeMountBackend implements MountBackend {
   handles(path: string): boolean {
     const normalized = normalizePath(path);
     return normalized === this.home || normalized.startsWith(`${this.home}/`);
+  }
+
+  handlesOverlayPath(path: string): boolean {
+    const kind = this.classify(normalizePath(path));
+    return kind !== "home" && kind !== "other";
   }
 
   async readFile(path: string): Promise<string> {
@@ -273,9 +302,6 @@ class HomeKnowledgeMountBackend implements MountBackend {
       entries.add("skills.d");
       entries.add("profiles.d");
       entries.add("knowledge");
-      if (await this.pathExistsInRepo("CONSTITUTION.md") || await this.fallback.exists(this.constitutionPath).catch(() => false)) {
-        entries.add("CONSTITUTION.md");
-      }
       return [...entries].sort();
     }
 
@@ -455,9 +481,6 @@ class HomeKnowledgeMountBackend implements MountBackend {
     if (path === this.home) {
       return "home";
     }
-    if (path === this.constitutionPath) {
-      return "constitution";
-    }
     if (path === this.contextRoot) {
       return "context-root";
     }
@@ -486,9 +509,6 @@ class HomeKnowledgeMountBackend implements MountBackend {
   }
 
   private relativePathForOverlay(path: string): string {
-    if (path === this.constitutionPath) {
-      return "CONSTITUTION.md";
-    }
     if (path.startsWith(`${this.home}/`)) {
       return path.slice(this.home.length + 1);
     }
@@ -496,8 +516,7 @@ class HomeKnowledgeMountBackend implements MountBackend {
   }
 
   private canFallbackToR2(path: string): boolean {
-    return path === this.constitutionPath
-      || path === this.contextRoot
+    return path === this.contextRoot
       || path.startsWith(`${this.contextRoot}/`)
       || path === this.skillsRoot
       || path.startsWith(`${this.skillsRoot}/`)
@@ -582,6 +601,138 @@ class HomeKnowledgeMountBackend implements MountBackend {
       uid: this.identity.uid,
       gid: this.identity.gid,
     };
+  }
+}
+
+/**
+ * Routes another account's home root and home-knowledge overlay dirs through a
+ * ripgit-backed mount keyed on the target account when the viewer is authorized
+ * to manage that agent. Non-overlay files in the target home stay on the
+ * viewer's normal R2 permission path.
+ */
+class DelegatingHomeKnowledgeMountBackend implements MountBackend {
+  private readonly delegates = new Map<string, HomeKnowledgeMountBackend>();
+
+  constructor(
+    private readonly primary: HomeKnowledgeMountBackend,
+    private readonly client: RipgitClient,
+    private readonly bucket: R2Bucket,
+    private readonly viewerIdentity: ProcessIdentity,
+    private readonly auth: AuthStore,
+    private readonly ownerUid: number,
+    private readonly isRoot: boolean,
+  ) {}
+
+  handles(path: string): boolean {
+    return this.resolve(path) != null;
+  }
+
+  readFile(path: string): Promise<string> {
+    return this.require(path).readFile(path);
+  }
+
+  readFileBuffer(path: string): Promise<Uint8Array> {
+    return this.require(path).readFileBuffer(path);
+  }
+
+  writeFile(path: string, content: FileContent): Promise<void> {
+    return this.require(path).writeFile(path, content);
+  }
+
+  appendFile(path: string, content: FileContent): Promise<void> {
+    return this.require(path).appendFile(path, content);
+  }
+
+  exists(path: string): Promise<boolean> {
+    return this.require(path).exists(path);
+  }
+
+  stat(path: string): Promise<ExtendedMountStat> {
+    return this.require(path).stat(path);
+  }
+
+  lstat(path: string): Promise<ExtendedMountStat> {
+    const backend = this.require(path);
+    return backend.lstat ? backend.lstat(path) : backend.stat(path);
+  }
+
+  mkdir(path: string, options?: MkdirOptions): Promise<void> {
+    return this.require(path).mkdir(path, options);
+  }
+
+  readdir(path: string): Promise<string[]> {
+    return this.require(path).readdir(path);
+  }
+
+  rm(path: string, options?: RmOptions): Promise<void> {
+    return this.require(path).rm(path, options);
+  }
+
+  symlink(target: string, linkPath: string): Promise<void> {
+    const backend = this.require(linkPath);
+    if (!backend.symlink) {
+      throw new Error(`ENOSYS: symlink is unavailable for '${linkPath}'`);
+    }
+    return backend.symlink(target, linkPath);
+  }
+
+  readlink(path: string): Promise<string> {
+    const backend = this.require(path);
+    if (!backend.readlink) {
+      throw new Error(`ENOSYS: readlink is unavailable for '${path}'`);
+    }
+    return backend.readlink(path);
+  }
+
+  search(path: string, query: string, include?: string): Promise<FsSearchBackendResult> {
+    return this.require(path).search(path, query, include);
+  }
+
+  private require(path: string): HomeKnowledgeMountBackend {
+    const backend = this.resolve(path);
+    if (!backend) {
+      throw new Error(`ENOENT: no such file or directory, open '${normalizePath(path)}'`);
+    }
+    return backend;
+  }
+
+  private resolve(path: string): HomeKnowledgeMountBackend | null {
+    const normalized = normalizePath(path);
+    if (this.primary.handles(normalized)) {
+      return this.primary;
+    }
+
+    const username = homeUsernameFromPath(normalized);
+    if (!username || username === this.viewerIdentity.username) {
+      return null;
+    }
+
+    if (!canOwnerAccessHomeKnowledge(
+      this.auth,
+      this.ownerUid,
+      this.viewerIdentity.username,
+      username,
+      this.isRoot,
+    )) {
+      return null;
+    }
+
+    const entry = this.auth.getPasswdByUsername(username);
+    if (!entry) return null;
+
+    let delegate = this.delegates.get(username);
+    if (!delegate) {
+      const targetIdentity = accountIdentity(this.auth, entry);
+      delegate = new HomeKnowledgeMountBackend(
+        this.client,
+        new R2MountBackend(this.bucket, this.viewerIdentity),
+        targetIdentity,
+      );
+      this.delegates.set(username, delegate);
+    }
+
+    const targetHome = normalizePath(entry.home);
+    return normalized === targetHome || delegate.handlesOverlayPath(normalized) ? delegate : null;
   }
 }
 

@@ -59,6 +59,7 @@ import {
   normalizeContextState,
   normalizeHilRequest,
   normalizeThreadContext,
+  personalProfileLabel,
   readAttachmentFile,
   safeText,
   setStoredThreadContext,
@@ -113,6 +114,7 @@ export function App({ backend }: { backend: ChatBackend }) {
   const [messageBusy, setMessageBusy] = useState(false);
   const [abortBusy, setAbortBusy] = useState(false);
   const [hilBusy, setHilBusy] = useState(false);
+  const [forceNewProcess, setForceNewProcess] = useState(false);
   const [compactBusy, setCompactBusy] = useState(false);
   const [branchBusy, setBranchBusy] = useState(false);
   const [hostError, setHostError] = useState("");
@@ -162,7 +164,8 @@ export function App({ backend }: { backend: ChatBackend }) {
 
   const activeConversationId = active?.conversationId || "default";
   const activeConversation = conversations.find((conversation) => conversation.id === activeConversationId) ?? null;
-  const activeTitle = active ? titleForActive(active, activeConversation, threads) : draftConversationTitle(draftProfile);
+  const homeProfileLabel = personalProfileLabel(conversationProfiles);
+  const activeTitle = active ? titleForActive(active, activeConversation, threads, homeProfileLabel) : draftConversationTitle(draftProfile);
   const statusText = getStatusText({
     active,
     draftProfile,
@@ -227,6 +230,9 @@ export function App({ backend }: { backend: ChatBackend }) {
     const processChanged = previous?.pid !== normalized?.pid;
     activeRef.current = normalized;
     setActiveState(normalized);
+    if (normalized) {
+      setForceNewProcess(false);
+    }
     if (!normalized) {
       setContextState(null);
       setPendingHil(null);
@@ -466,8 +472,7 @@ export function App({ backend }: { backend: ChatBackend }) {
     setNotice("");
     try {
       const result = await backend.spawnProcess({
-        profile: "init",
-        label: "Personal Agent",
+        label: homeProfileLabel,
       });
       const record = asRecord(result);
       if (!record?.ok) {
@@ -478,6 +483,7 @@ export function App({ backend }: { backend: ChatBackend }) {
         pid: record.pid,
         cwd: record.cwd,
         conversationId: "default",
+        isHome: true,
       }));
     } catch (error) {
       appendSystem("home open failed: " + formatError(error));
@@ -499,6 +505,7 @@ export function App({ backend }: { backend: ChatBackend }) {
 
   function resetToNewThread(): void {
     cancelVoiceRecording();
+    setForceNewProcess(true);
     setActive(null);
     setComposeText("");
     setAttachments((current) => {
@@ -534,10 +541,17 @@ export function App({ backend }: { backend: ChatBackend }) {
     try {
       let target = activeRef.current;
       if (!target?.pid) {
-        const spawnResult = await backend.spawnProcess({
-          profile: draftProfile.id || "task",
-          label: deriveThreadLabel(message) || draftProfile.displayName,
-        });
+        const runAs = draftProfile.runAs ?? (forceNewProcess ? draftProfile.newProcessRunAs : undefined);
+        // Default personal-agent drafts use the default conversation. Explicit
+        // New Process can still start a fresh personal-agent process.
+        const spawnResult = await backend.spawnProcess(
+          runAs
+            ? {
+                runAs,
+                label: deriveThreadLabel(message) || draftProfile.displayName,
+              }
+            : { label: draftProfile.displayName },
+        );
         const record = asRecord(spawnResult);
         if (!record?.ok) {
           appendSystem("thread start failed: " + safeText(record?.error || "unknown error"));
@@ -547,6 +561,7 @@ export function App({ backend }: { backend: ChatBackend }) {
           pid: record.pid,
           cwd: record.cwd,
           conversationId: "default",
+          isHome: !runAs,
         });
         if (!target) {
           appendSystem("thread start failed: invalid process target");
@@ -780,6 +795,7 @@ export function App({ backend }: { backend: ChatBackend }) {
         threadsLoading={threadsLoading}
         threadsError={threadsError}
         profiles={conversationProfiles}
+        homeLabel={homeProfileLabel}
         draftProfileId={draftProfile.id}
         onDraftProfileChange={setDraftProfileId}
         onHome={() => void openHome()}
@@ -796,6 +812,7 @@ export function App({ backend }: { backend: ChatBackend }) {
             threadsLoading={threadsLoading}
             threadsError={threadsError}
             profiles={conversationProfiles}
+            homeLabel={homeProfileLabel}
             draftProfileId={draftProfile.id}
             onDraftProfileChange={setDraftProfileId}
             onHome={() => void openHome()}

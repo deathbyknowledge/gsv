@@ -33,10 +33,10 @@ import {
   handleProcList,
   handleProcIpcCall,
   handleProcIpcSend,
-  handleProcProfileList,
   handleProcSpawn,
   forwardToProcess,
 } from "./proc-handlers";
+import { handleAccountCreate, handleAccountList } from "./agents";
 import { handleSysConfigGet, handleSysConfigSet } from "./sys/config";
 import { handleSysDeviceGet, handleSysDeviceList, handleSysDeviceUpdate } from "./sys/device";
 import { handleSysBootstrap } from "./sys/bootstrap";
@@ -342,9 +342,6 @@ async function dispatchNative(
       case "proc.list":
         data = handleProcList(frame.args, ctx);
         break;
-      case "proc.profile.list":
-        data = await handleProcProfileList(frame.args, ctx);
-        break;
       case "proc.spawn":
         data = await handleProcSpawn(frame.args, ctx);
         break;
@@ -399,13 +396,13 @@ async function dispatchNative(
         data = await handlePkgCheckout(frame.args, ctx);
         break;
       case "pkg.install":
-        data = handlePkgInstall(frame.args, ctx);
+        data = await handlePkgInstall(frame.args, ctx);
         break;
       case "pkg.review.approve":
         data = handlePkgReviewApprove(frame.args, ctx);
         break;
       case "pkg.remove":
-        data = handlePkgRemove(frame.args, ctx);
+        data = await handlePkgRemove(frame.args, ctx);
         break;
       case "pkg.remote.list":
         data = handlePkgRemoteList(frame.args, ctx);
@@ -541,6 +538,14 @@ async function dispatchNative(
         break;
       case "sys.link.consume":
         data = handleSysLinkConsume(frame.args, ctx);
+        break;
+
+      // --- account.* ---
+      case "account.create":
+        data = await handleAccountCreate(frame.args, ctx);
+        break;
+      case "account.list":
+        data = handleAccountList(frame.args, ctx);
         break;
 
       // --- sched.* ---

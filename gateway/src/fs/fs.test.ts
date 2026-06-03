@@ -31,6 +31,15 @@ const ALICE: ProcessIdentity = {
   cwd: "/home/alice",
 };
 
+const SAM_AGENT: ProcessIdentity = {
+  uid: 2000,
+  gid: 2000,
+  gids: [2000],
+  username: "sam-agent",
+  home: "/home/sam-agent",
+  cwd: "/home/sam-agent",
+};
+
 function putFile(
   path: string,
   content: string,
@@ -94,6 +103,7 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
     processId: "task-alpha",
     parentPid: "init:1000",
     uid: 1000,
+    ownerUid: 1000,
     profile: "task",
     gid: 1000,
     gids: [1000],
@@ -114,7 +124,19 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
     ...processRecord,
     processId: "task-foreign",
     uid: 1001,
+    ownerUid: 1001,
     username: "alice",
+  };
+  const personalAgentProcessRecord = {
+    ...processRecord,
+    processId: "task-personal",
+    uid: SAM_AGENT.uid,
+    ownerUid: 1000,
+    gid: SAM_AGENT.gid,
+    gids: SAM_AGENT.gids,
+    username: SAM_AGENT.username,
+    home: SAM_AGENT.home,
+    cwd: SAM_AGENT.cwd,
   };
   const conversations = [
     {
@@ -353,11 +375,11 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
     },
   ];
   const packageScopeKey = (scope: any) => scope.kind === "user" ? `user:${scope.uid}` : "global";
-  let samCrontab = "CRON_TZ=Europe/Amsterdam\n0 9 * * * proc spawn --profile cron \"Daily pulse\"\n";
+  let samCrontab = "CRON_TZ=Europe/Amsterdam\n0 9 * * * proc spawn --as sam-agent --non-interactive --label daily-pulse \"Daily pulse\"\n";
   const systemCrontabs = new Map<string, string>([
     ["daily", "0 5 * * * proc compact init:1000 --conversation default --keep-last 80\n"],
   ]);
-  const passwdEntries = [ROOT, SAM, ALICE].map((user) => ({
+  const passwdEntries = [ROOT, SAM, ALICE, SAM_AGENT].map((user) => ({
     username: user.username,
     uid: user.uid,
     gid: user.gid,
@@ -375,15 +397,30 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
       getPasswdByUid(uid: number) {
         return passwdEntries.find((entry) => entry.uid === uid) ?? null;
       },
+      getPersonalAgentUid(ownerUid: number) {
+        return ownerUid === SAM.uid ? SAM_AGENT.uid : null;
+      },
     } as never,
     procs: {
       get(pid: string) {
         if (pid === "task-alpha") return processRecord;
+        if (pid === "task-personal") return personalAgentProcessRecord;
         if (pid === "task-foreign") return otherProcessRecord;
         return null;
       },
-      list(uid?: number) {
-        return [processRecord, otherProcessRecord].filter((record) => uid === undefined || record.uid === uid);
+      getOwnerUid(pid: string) {
+        return this.get(pid)?.ownerUid ?? null;
+      },
+      list(ownerUid?: number) {
+        return [processRecord, personalAgentProcessRecord, otherProcessRecord]
+          .filter((record) => ownerUid === undefined || record.ownerUid === ownerUid);
+      },
+    } as never,
+    conversations: {
+      getDefault(ownerUid: number, agentUid: number) {
+        return ownerUid === SAM.uid && agentUid === SAM_AGENT.uid
+          ? { activePid: "task-personal" }
+          : null;
       },
     } as never,
     devices: null as never,
@@ -1234,6 +1271,55 @@ describe("GsvFs Linux-like runtime views", () => {
     });
   });
 
+  it("keeps /proc/self visible when it resolves to a personal-agent executor", async () => {
+    const fs = makeRuntimeViewFs(SAM);
+
+    await expect(fs.readdir("/proc")).resolves.toEqual([
+      "self",
+      "task-alpha",
+      "task-personal",
+      "uptime",
+      "version",
+    ]);
+    await expect(fs.readdir("/proc/self")).resolves.toEqual([
+      "context.d",
+      "conversations",
+      "identity",
+      "status",
+    ]);
+    await expect(fs.readdir("/proc/self/conversations")).resolves.toEqual(["build", "default"]);
+
+    const status = await fs.readFile("/proc/self/status");
+    expect(status).toContain("Pid:\ttask-personal");
+    expect(status).toContain("Uid:\t2000");
+  });
+
+  it("keeps /proc/self visible inside a personal-agent executor", async () => {
+    const fs = makeRuntimeViewFs(SAM_AGENT, "task-personal");
+
+    await expect(fs.readdir("/proc")).resolves.toEqual([
+      "self",
+      "task-alpha",
+      "task-personal",
+      "uptime",
+      "version",
+    ]);
+    await expect(fs.readdir("/proc/self")).resolves.toEqual([
+      "context.d",
+      "conversations",
+      "identity",
+      "status",
+    ]);
+
+    const selfStatus = await fs.readFile("/proc/self/status");
+    expect(selfStatus).toContain("Pid:\ttask-personal");
+    expect(selfStatus).toContain("Uid:\t2000");
+
+    const siblingStatus = await fs.readFile("/proc/task-alpha/status");
+    expect(siblingStatus).toContain("Pid:\ttask-alpha");
+    await expect(fs.readdir("/proc/task-foreign")).rejects.toThrow("ENOENT");
+  });
+
   it("hides another user's process conversation view from non-root users", async () => {
     const fs = makeRuntimeViewFs(SAM);
 
@@ -1316,7 +1402,7 @@ describe("GsvFs Linux-like runtime views", () => {
 
     const crontab = await fs.readFile("/var/spool/cron/sam");
     expect(crontab).toContain("CRON_TZ=Europe/Amsterdam");
-    expect(crontab).toContain("proc spawn --profile cron");
+    expect(crontab).toContain("proc spawn --as sam-agent");
     const crontabStat = await fs.statExtended("/var/spool/cron/sam");
     expect(crontabStat).toMatchObject({
       isFile: true,

@@ -11,8 +11,8 @@ Use package daemon schedules when a package backend needs to call one of its
 own RPC methods.
 
 Cron is an execution contract, not a separate natural-language interface. Use
-the personal agent (`init`/`personal`) to author or revise recurring intent, then
-run scheduled work through a stable shell command, timezone, and audit history.
+your personal agent to author or revise recurring intent, then run scheduled
+work through a stable shell command, timezone, and audit history.
 
 ## Add a User Crontab
 
@@ -21,19 +21,22 @@ User crontabs use the standard five-field cron format:
 From a GSV shell:
 
 ```bash
+proc agents
 cat > ~/daily.cron <<'EOF'
 CRON_TZ=Europe/Amsterdam
-0 9 * * * proc spawn --profile cron --label "daily ops check" "Check system health and summarize anything that needs attention."
+0 9 * * * proc spawn --as friday --non-interactive --label "daily ops check" "Check system health and summarize anything that needs attention."
 EOF
 crontab ~/daily.cron
 ```
+
+Replace `friday` with the agent account username listed by `proc agents`.
 
 The same file can be written directly:
 
 ```bash
 cat > /var/spool/cron/sam <<'EOF'
 CRON_TZ=Europe/Amsterdam
-0 9 * * * proc spawn --profile cron --label "daily ops check" "Check system health and summarize anything that needs attention."
+0 9 * * * proc spawn --as friday --non-interactive --label "daily ops check" "Check system health and summarize anything that needs attention."
 EOF
 ```
 
@@ -82,7 +85,7 @@ format, with a user field between the five time fields and the command:
 ```cron
 CRON_TZ=Europe/Amsterdam
 0 4 * * * root proc compact init:0 --conversation default --keep-last 80 --generate-summary
-30 8 * * 1-5 sam proc spawn --profile cron --label "morning brief" "Prepare morning brief."
+30 8 * * 1-5 sam proc spawn --as friday --non-interactive --label "morning brief" "Prepare morning brief."
 ```
 
 ## Manage Kernel Schedules

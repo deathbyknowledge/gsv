@@ -8,6 +8,7 @@ export function ChatNavigator(props: {
   threadsLoading: boolean;
   threadsError: string;
   profiles: Profile[];
+  homeLabel: string;
   draftProfileId: string;
   onDraftProfileChange(profileId: string): void;
   onHome(): void;
@@ -23,6 +24,7 @@ export function ChatNavigator(props: {
         loading={props.threadsLoading}
         error={props.threadsError}
         profiles={props.profiles}
+        homeLabel={props.homeLabel}
         draftProfileId={props.draftProfileId}
         onDraftProfileChange={props.onDraftProfileChange}
         onHome={props.onHome}
@@ -40,6 +42,7 @@ export function MobileProcessNav(props: {
   threadsLoading: boolean;
   threadsError: string;
   profiles: Profile[];
+  homeLabel: string;
   draftProfileId: string;
   onDraftProfileChange(profileId: string): void;
   onHome(): void;
@@ -48,7 +51,8 @@ export function MobileProcessNav(props: {
   onOpenThread(pid: string): void;
 }) {
   const activePid = props.active?.pid ?? "";
-  const selectedValue = activePid.startsWith("init:")
+  const isHome = props.active?.isHome === true;
+  const selectedValue = isHome
     ? "home"
     : activePid
       ? `process:${activePid}`
@@ -59,8 +63,8 @@ export function MobileProcessNav(props: {
     ? "Refreshing..."
     : props.threadsError
       || (props.threads.length === 0
-        ? "No task processes"
-        : `${props.threads.length} task process${props.threads.length === 1 ? "" : "es"}`);
+        ? "No extra processes"
+        : `${props.threads.length} process${props.threads.length === 1 ? "" : "es"}`);
 
   const switchProcess = (event: Event) => {
     const value = (event.currentTarget as HTMLSelectElement).value;
@@ -82,7 +86,7 @@ export function MobileProcessNav(props: {
             {showDraftOption ? (
               <option value="draft">{props.active ? "Current process" : "New draft"}</option>
             ) : null}
-            <option value="home">Home</option>
+            <option value="home">{props.homeLabel}</option>
             {activePid && !hasActiveProcess ? (
               <option value={`process:${activePid}`}>Current process</option>
             ) : null}
@@ -127,6 +131,7 @@ function ThreadsPane(props: {
   loading: boolean;
   error: string;
   profiles: Profile[];
+  homeLabel: string;
   draftProfileId: string;
   onDraftProfileChange(profileId: string): void;
   onHome(): void;
@@ -135,9 +140,10 @@ function ThreadsPane(props: {
   onOpenThread(pid: string): void;
 }) {
   const activePid = props.active?.pid ?? "";
+  const isHome = props.active?.isHome === true;
   const status = props.loading
     ? "Refreshing..."
-    : props.error || (props.threads.length === 0 ? "No task processes yet." : "Task processes");
+    : props.error || (props.threads.length === 0 ? "No extra processes yet." : "Processes");
 
   return (
     <section class="nav-pane">
@@ -168,10 +174,10 @@ function ThreadsPane(props: {
       </div>
 
       <nav class="thread-list" aria-label="Chat processes">
-        <button type="button" class={"thread-row" + (activePid.startsWith("init:") ? " is-active" : "")} onClick={props.onHome}>
+        <button type="button" class={"thread-row" + (isHome ? " is-active" : "")} onClick={props.onHome}>
           <span class="row-icon"><HomeIcon /></span>
-          <span class="thread-row-title">Personal Agent</span>
-          <span class="thread-row-meta">Persistent personal conversation</span>
+          <span class="thread-row-title">{props.homeLabel}</span>
+          <span class="thread-row-meta">Default personal conversation</span>
         </button>
         {props.threads.map((thread) => (
           <button

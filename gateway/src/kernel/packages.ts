@@ -150,6 +150,13 @@ export interface PackageProfileManifest {
   icon?: string;
   contextFiles: PackageProfileContextFile[];
   approvalPolicy?: string;
+  /**
+   * Syscall capabilities the profile's agent account requires (from
+   * `profiles/<name>/capabilities.json`, a JSON string array). These are granted
+   * on the agent's own gid at enable; declaring them is a privilege request that
+   * is surfaced at the package review gate.
+   */
+  capabilities?: string[];
 }
 
 type KernelAppStub = {
@@ -1281,6 +1288,7 @@ async function readPackageProfiles(
     const description = await readPackageProfileDescription(ripgit, repo, profileRoot);
     const approvalPolicy = await readPackageProfileApprovalPolicy(ripgit, repo, profileRoot);
     const icon = await readPackageProfileIconPath(ripgit, repo, profileRoot);
+    const capabilities = await readPackageProfileCapabilities(ripgit, repo, profileRoot);
     profiles.push({
       name,
       displayName: humanizeProfileName(name),
@@ -1288,6 +1296,7 @@ async function readPackageProfiles(
       ...(icon ? { icon } : {}),
       contextFiles,
       ...(approvalPolicy ? { approvalPolicy } : {}),
+      ...(capabilities.length > 0 ? { capabilities } : {}),
     });
   }
 
@@ -1324,6 +1333,26 @@ async function readPackageProfileApprovalPolicy(
     return JSON.stringify(parsed);
   } catch {
     return null;
+  }
+}
+
+async function readPackageProfileCapabilities(
+  ripgit: RipgitClient,
+  repo: RipgitRepoRef,
+  profileRoot: string,
+): Promise<string[]> {
+  const file = await ripgit.readPath(repo, joinRipgitPath(profileRoot, "capabilities.json"));
+  if (file.kind !== "file") {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(TEXT_DECODER.decode(file.bytes)) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return [...new Set(parsed.filter((c): c is string => typeof c === "string" && c.length > 0))];
+  } catch {
+    return [];
   }
 }
 

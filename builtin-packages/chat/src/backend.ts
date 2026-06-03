@@ -8,7 +8,7 @@ import {
   getViewer,
   listConversations,
   listConversationSegments,
-  listProfiles,
+  listAgents,
   listProcesses,
   readProcessMedia,
   readConversationSegment,
@@ -19,8 +19,8 @@ import {
 } from "./backend/api";
 
 export default class ChatBackend extends PackageBackendEntrypoint {
-  async listProfiles(args: unknown): Promise<unknown> {
-    return listProfiles(this.kernel, args);
+  async listAgents(args: unknown): Promise<unknown> {
+    return listAgents(this.kernel, args);
   }
 
   async listProcesses(args: unknown): Promise<unknown> {

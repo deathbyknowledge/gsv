@@ -1,4 +1,4 @@
-import type { AiConfigResult, AiContextProfile, AiToolsDevice } from "../../syscalls/ai";
+import type { AiConfigResult, AiToolsDevice } from "../../syscalls/ai";
 import type { ProcContextFile } from "../../syscalls/proc";
 import type { RipgitClient } from "../../fs/ripgit/client";
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
@@ -8,9 +8,10 @@ export type PromptRipgitClient = Pick<RipgitClient, "readPath">;
 
 export type PromptAssemblyInput = {
   config: AiConfigResult;
-  profile: AiContextProfile;
   purpose: "chat.reply" | "thread.resume";
   identity: ProcessIdentity;
+  /** Owning human's identity, when the process runs as a distinct agent account. */
+  ownerIdentity?: ProcessIdentity;
   devices: AiToolsDevice[];
   mcpServers: string[];
   processContextFiles?: ProcContextFile[];
@@ -21,6 +22,12 @@ export type PromptAssemblyInput = {
 export type PromptSection = {
   name: string;
   text: string;
+  contextRoot?: {
+    key: "system" | "program" | "user" | "process";
+    label: string;
+    access: "read-only" | "editable";
+    location: string;
+  };
 };
 
 export type PromptContextProvider = {

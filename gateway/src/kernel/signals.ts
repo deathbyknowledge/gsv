@@ -1,4 +1,5 @@
 import type { KernelContext } from "./context";
+import { resolveCallerOwnerUid } from "./context";
 import type { SignalWatchTargetInput } from "./signal-watches";
 import type { SignalUnwatchArgs, SignalUnwatchResult, SignalWatchArgs, SignalWatchResult } from "../syscalls/signal";
 
@@ -10,6 +11,7 @@ export function handleSignalWatch(
   ctx: KernelContext,
 ): SignalWatchResult {
   const target = resolveSignalWatchTarget(ctx, args);
+  const ownerUid = resolveCallerOwnerUid(ctx);
 
   const signal = args.signal.trim();
   if (!signal) {
@@ -21,7 +23,7 @@ export function handleSignalWatch(
     : null;
   if (processId) {
     const proc = ctx.procs.get(processId);
-    if (!proc || proc.uid !== ctx.identity?.process.uid) {
+    if (!proc || proc.ownerUid !== ownerUid) {
       throw new Error(`Unknown process: ${processId}`);
     }
   }
@@ -43,7 +45,7 @@ export function handleSignalWatch(
     : null;
 
   const { watch, created } = ctx.signalWatches.upsert({
-    uid: ctx.identity!.process.uid,
+    uid: ownerUid,
     target,
     signal,
     processId,
@@ -66,7 +68,7 @@ export function handleSignalUnwatch(
   ctx: KernelContext,
 ): SignalUnwatchResult {
   const target = resolveSignalWatchTarget(ctx, args);
-  const uid = ctx.identity!.process.uid;
+  const uid = resolveCallerOwnerUid(ctx);
 
   if ("watchId" in args) {
     if (typeof args.watchId !== "string") {

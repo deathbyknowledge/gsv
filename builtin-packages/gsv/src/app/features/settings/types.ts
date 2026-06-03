@@ -1,6 +1,6 @@
 export type AdministrationMode = "access" | "settings";
-export type SettingsPanelId = "ai" | "profiles" | "runtime" | "advanced";
-export type ConfigSectionId = "ai" | "profiles" | "shell" | "server" | "processes" | "automation";
+export type SettingsPanelId = "ai" | "runtime" | "advanced";
+export type ConfigSectionId = "ai" | "shell" | "server";
 export type TokenKind = "node" | "service" | "user";
 export type SettingKind = "text" | "textarea" | "password" | "number" | "checkbox" | "select" | "readonly" | "json";
 
@@ -122,13 +122,3 @@ export type ConfigSection = {
   label: string;
   description: string;
 };
-
-export type ProfileId =
-  | "init"
-  | "task"
-  | "review"
-  | "cron"
-  | "mcp"
-  | "app"
-  | "archivist"
-  | "curator";

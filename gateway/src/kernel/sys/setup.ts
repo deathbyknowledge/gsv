@@ -6,6 +6,8 @@ import { handleSysBootstrap } from "./bootstrap";
 import { ensureHomeStorageLayout } from "../home-knowledge";
 import { RipgitClient } from "../../fs";
 import { seedRepoSkillsToHome } from "./skills-seed";
+import { ensurePersonalAgent } from "../agents";
+import { provisionEnabledPackagesForCaller } from "../package-agents";
 
 const USERNAME_RE = /^[a-z_][a-z0-9_-]{0,31}$/;
 
@@ -86,6 +88,25 @@ function parseSetupIdentity(args: SysSetupArgs): { username: string; password: s
   return { username, password };
 }
 
+function parseSetupAgentName(
+  auth: KernelContext["auth"],
+  value: unknown,
+  username: string,
+): string | undefined {
+  const agentName = readOptionalString(value);
+  if (!agentName) return undefined;
+  if (!USERNAME_RE.test(agentName)) {
+    throw new Error("agentName must match ^[a-z_][a-z0-9_-]{0,31}$");
+  }
+  if (agentName === username) {
+    throw new Error("agentName must be different from username");
+  }
+  if (auth.getPasswdByUsername(agentName) || auth.getGroupByName(agentName)) {
+    throw new Error(`agentName is unavailable: ${agentName}`);
+  }
+  return agentName;
+}
+
 function parseAiConfig(args: SysSetupArgs): { provider?: string; model?: string; apiKey?: string } {
   const raw = args as Record<string, unknown>;
   if (!raw.ai || typeof raw.ai !== "object") {
@@ -161,9 +182,12 @@ export async function handleSysSetup(
   if (auth.getPasswdByUsername(username)) {
     throw new Error(`User already exists: ${username}`);
   }
+  const agentName = parseSetupAgentName(auth, (args as Record<string, unknown>).agentName, username);
 
   const uid = auth.nextUid();
-  const gid = 100;
+  // User Private Group (UPG): each user gets a unique primary group with gid = uid.
+  // Shared capabilities still flow through supplementary membership in `users` (gid 100).
+  const gid = uid;
   const home = `/home/${username}`;
   const bootstrapProcessIdentity: ProcessIdentity = {
     uid,
@@ -213,6 +237,11 @@ export async function handleSysSetup(
 
       const hashedPassword = await hashPassword(password);
       auth.setShadow(makeShadowEntry(username, hashedPassword));
+
+      // Private primary group (gid = uid) owned by this user.
+      if (!auth.getGroupByName(username) && !auth.getGroupByGid(gid)) {
+        auth.addGroup({ name: username, gid, members: [] });
+      }
 
       const usersGroup = auth.getGroupByName("users");
       if (usersGroup && !usersGroup.members.includes(username)) {
@@ -275,8 +304,12 @@ export async function handleSysSetup(
       timings,
       "ensure-home-layout",
       async () => {
-        await ensureHomeStorageLayout(ctx.env, rootProcessIdentity);
-        await ensureHomeStorageLayout(ctx.env, bootstrapProcessIdentity);
+        await ensureHomeStorageLayout(ctx.env, rootProcessIdentity, {
+          cleanupGeneratedPromptContext: true,
+        });
+        await ensureHomeStorageLayout(ctx.env, bootstrapProcessIdentity, {
+          cleanupGeneratedPromptContext: true,
+        });
       },
     );
 
@@ -305,6 +338,19 @@ export async function handleSysSetup(
       home,
       cwd: home,
     };
+
+    await timeSetupStep(timings, "provision-personal-agent", async () => {
+      await ensurePersonalAgent(ctx, processIdentity, agentName);
+    });
+
+    await timeSetupStep(timings, "provision-package-agents", async () => {
+      if (ctx.packages && typeof ctx.packages.list === "function") {
+        await provisionEnabledPackagesForCaller(
+          { ...ctx, identity: bootstrapIdentity } as KernelContext,
+          ctx.packages.list({ enabled: true }),
+        );
+      }
+    });
 
     const rootShadow = auth.getShadowByUsername("root");
     const rootLocked = rootShadow ? isLocked(rootShadow) : true;

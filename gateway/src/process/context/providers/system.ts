@@ -1,4 +1,4 @@
-import type { PromptContextProvider } from "../types";
+import type { PromptContextProvider, PromptSection } from "../types";
 
 const MAX_RENDERED_TARGETS = 5;
 
@@ -6,45 +6,47 @@ export function createSystemContextProvider(): PromptContextProvider {
   return {
     name: "system.context",
     async collect(input) {
-      return renderContextFiles("system.context", input.config.systemContextFiles, input);
-    },
-  };
-}
-
-export function createProfileInstructionsProvider(): PromptContextProvider {
-  return {
-    name: "profile.context",
-    async collect(input) {
-      return renderContextFiles("profile.context", input.config.profileContextFiles, input);
+      return renderContextFiles(input.config.systemContextFiles, input);
     },
   };
 }
 
 function renderContextFiles(
-  sectionPrefix: string,
   files: Array<{ name: string; text: string }> | undefined,
   input: Parameters<typeof renderContextTemplate>[1],
-): Array<{ name: string; text: string }> {
+): PromptSection[] {
   return [...(files ?? [])]
     .sort((left, right) => left.name.localeCompare(right.name))
-    .map((file) => {
+    .map((file): PromptSection | null => {
       const text = renderContextTemplate(file.text, input).trim();
       if (!text) {
         return null;
       }
       return {
-        name: `${sectionPrefix}:${file.name}`,
+        name: file.name,
         text,
+        contextRoot: {
+          key: "system",
+          label: "SYSTEM",
+          access: "read-only",
+          location: "/sys/config/ai/context.d",
+        },
       };
     })
-    .filter((section): section is { name: string; text: string } => section !== null);
+    .filter((section): section is PromptSection => section !== null);
 }
 
 function renderContextTemplate(
   template: string,
   input: {
-    profile: string;
     identity: {
+      uid: number;
+      gid: number;
+      username: string;
+      home: string;
+      cwd: string;
+    };
+    ownerIdentity?: {
       uid: number;
       gid: number;
       username: string;
@@ -55,13 +57,28 @@ function renderContextTemplate(
     mcpServers: string[];
   },
 ): string {
+  const user = input.ownerIdentity ?? input.identity;
   const values = new Map<string, string>([
-    ["profile", input.profile],
     ["identity.uid", String(input.identity.uid)],
     ["identity.gid", String(input.identity.gid)],
     ["identity.username", input.identity.username],
     ["identity.home", input.identity.home],
     ["identity.cwd", input.identity.cwd],
+    ["program.uid", String(input.identity.uid)],
+    ["program.gid", String(input.identity.gid)],
+    ["program.username", input.identity.username],
+    ["program.home", input.identity.home],
+    ["program.cwd", input.identity.cwd],
+    ["owner.uid", String(user.uid)],
+    ["owner.gid", String(user.gid)],
+    ["owner.username", user.username],
+    ["owner.home", user.home],
+    ["owner.cwd", user.cwd],
+    ["user.uid", String(user.uid)],
+    ["user.gid", String(user.gid)],
+    ["user.username", user.username],
+    ["user.home", user.home],
+    ["user.cwd", user.cwd],
     ["devices", formatDevices(input.devices)],
     ["mcpServers", formatMcpServers(input.mcpServers)],
   ]);

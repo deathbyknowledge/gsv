@@ -7,31 +7,40 @@ GSV assembles process prompts from explicit context providers, not from hidden a
 Prompt context is collected in provider order:
 
 1. **System context** from `config/ai/context.d/*.md`.
-2. **Profile context** from `config/ai/profile/{profile}/context.d/*.md` or a user profile under `~/profiles.d/{profile}/context.d/*.md`.
-3. **Home context** from `~/context.d/*.md`.
+2. **Agent home context** from the run-as account's `~/context.d/*.md`.
+3. **Owner context** from the owning human's `~/context.d/*.md` when distinct.
 4. **Process context** supplied by the current assignment or runtime.
 
 GSV also assembles a compact skill index from layered `skills.d` directories.
 The prompt lists skill ids and descriptions only. Use `skills list`,
 `skills search <query>`, and `skills show <skill>` to inspect full skill bodies.
 
-System context is operator-managed runtime guidance shared by every profile. Built-in profile files are operator-managed instructions for roles such as `init`/`personal`, `task`, `review`, `cron`, `mcp`, and `app`. User profile context files under `~/profiles.d/{name}/context.d/*.md` add filesystem-backed worker specializations that can be spawned directly or used by automation. Other files in `~/profiles.d/{name}` are available to the profile but are not loaded as profile prompt context. Context files may use template keys such as `identity.home`, `identity.cwd`, `devices`, and `mcpServers`.
+System context is operator-managed runtime guidance shared by every process.
+Agent context files add account-specific behavior and preferences. Owner
+context is available for human-authored notes; human homes start with an empty
+`~/context.d/` directory.
+Context files may use template keys such as `identity.home`, `identity.cwd`,
+`devices`, and `mcpServers`.
 
 Home context files are loaded lexically, include only non-empty `.md` files, and are bounded by `config/ai/max_context_bytes`.
 
 ## Home Context: `~/context.d/`
 
-Use `~/context.d/*.md` for small, curated user-global notes that should be available to most processes. This is for standing context, not raw logs or a private database.
+Use `~/context.d/*.md` for small, curated notes that should be available to most processes running as that account. This is for standing context, not raw logs or a private database.
 
 Good examples:
 
 ```text
-~/context.d/00-constitution.md
+~/context.d/00-style.md
 ~/context.d/10-user.md
 ~/context.d/20-current-priorities.md
 ```
 
-Keep these files short and stable. Put durable reference material under `~/knowledge/` instead, where it can be searched and retrieved deliberately.
+New human homes create the directory only. New agent homes seed a short style
+file and user identity file. New personal agents also seed a one-time
+`00-boot.md` onboarding file, which the agent should delete after setup is
+done. Keep these files short and stable. Put durable reference material under
+`~/knowledge/` instead, where it can be searched and retrieved deliberately.
 
 ## Skills: `skills.d/`
 
@@ -42,7 +51,6 @@ pitfalls to avoid.
 Skill sources are layered:
 
 ```text
-config/ai/profile/{profile}/skills.d/
 ~/skills.d/
 /src/packages/{package}/skills.d/
 ```

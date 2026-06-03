@@ -52,6 +52,20 @@ function normalizeTarget(raw: unknown): string {
   return trimmed.length > 0 ? trimmed : "gsv";
 }
 
+type ShellRuntime = {
+  viewer?: {
+    username?: string;
+  };
+};
+
+function viewerHome(runtime: ShellRuntime): string {
+  const username = String(runtime.viewer?.username ?? "").trim();
+  if (!username || username === "root") {
+    return "/root";
+  }
+  return `/home/${username}`;
+}
+
 function normalizeTranscriptEntry(payload: unknown, startedAt: number, target: string, command: string) {
   const completedAt = Date.now();
   const record = asRecord(payload);
@@ -117,7 +131,10 @@ function normalizeDevice(device: unknown) {
   };
 }
 
-export async function loadState(kernel: { request: (call: string, args: unknown) => Promise<unknown> }) {
+export async function loadState(
+  kernel: { request: (call: string, args: unknown) => Promise<unknown> },
+  runtime: ShellRuntime = {},
+) {
   let devices = [] as Array<{ deviceId: string; label: string; online: boolean }>;
   try {
     const listing = await kernel.request("sys.device.list", { includeOffline: true });
@@ -129,7 +146,7 @@ export async function loadState(kernel: { request: (call: string, args: unknown)
     devices = [];
   }
 
-  return { devices };
+  return { devices, defaultCwd: viewerHome(runtime) };
 }
 
 export async function execCommand(
