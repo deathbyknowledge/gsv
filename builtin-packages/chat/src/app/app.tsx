@@ -114,6 +114,7 @@ export function App({ backend }: { backend: ChatBackend }) {
   const [messageBusy, setMessageBusy] = useState(false);
   const [abortBusy, setAbortBusy] = useState(false);
   const [hilBusy, setHilBusy] = useState(false);
+  const [forceNewProcess, setForceNewProcess] = useState(false);
   const [compactBusy, setCompactBusy] = useState(false);
   const [branchBusy, setBranchBusy] = useState(false);
   const [hostError, setHostError] = useState("");
@@ -229,6 +230,9 @@ export function App({ backend }: { backend: ChatBackend }) {
     const processChanged = previous?.pid !== normalized?.pid;
     activeRef.current = normalized;
     setActiveState(normalized);
+    if (normalized) {
+      setForceNewProcess(false);
+    }
     if (!normalized) {
       setContextState(null);
       setPendingHil(null);
@@ -501,6 +505,7 @@ export function App({ backend }: { backend: ChatBackend }) {
 
   function resetToNewThread(): void {
     cancelVoiceRecording();
+    setForceNewProcess(true);
     setActive(null);
     setComposeText("");
     setAttachments((current) => {
@@ -536,13 +541,13 @@ export function App({ backend }: { backend: ChatBackend }) {
     try {
       let target = activeRef.current;
       if (!target?.pid) {
-        // Draft profile sends start fresh processes. The persistent personal
-        // conversation is opened only through the Home row, which spawns with
-        // no runAs.
+        const runAs = draftProfile.runAs ?? (forceNewProcess ? draftProfile.newProcessRunAs : undefined);
+        // Default personal-agent drafts use Home. Explicit New Process can still
+        // start a fresh process for the personal agent via newProcessRunAs.
         const spawnResult = await backend.spawnProcess(
-          draftProfile.runAs
+          runAs
             ? {
-                runAs: draftProfile.runAs,
+                runAs,
                 label: deriveThreadLabel(message) || draftProfile.displayName,
               }
             : { label: draftProfile.displayName },
@@ -556,7 +561,7 @@ export function App({ backend }: { backend: ChatBackend }) {
           pid: record.pid,
           cwd: record.cwd,
           conversationId: "default",
-          isHome: !draftProfile.runAs,
+          isHome: !runAs,
         });
         if (!target) {
           appendSystem("thread start failed: invalid process target");

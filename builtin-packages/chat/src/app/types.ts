@@ -46,6 +46,8 @@ export type Profile = {
   spawnMode: "default" | "new" | string;
   /** Account username to run as; absent for the personal agent. */
   runAs?: string;
+  /** Account username for an explicit fresh process when `runAs` is absent. */
+  newProcessRunAs?: string;
 };
 
 export type ProcessEntry = {

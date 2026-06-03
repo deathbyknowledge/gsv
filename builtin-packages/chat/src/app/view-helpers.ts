@@ -640,8 +640,8 @@ function renderMarkdownHtml(value: string): string {
 
 // Map an account.list summary into a chat agent. Humans (self/other) are not
 // conversation targets and are dropped. The Home row reaches the personal
-// agent's default conversation with no run-as; profile starts always use runAs
-// so selecting any agent creates a fresh process.
+// agent's default conversation with no run-as. Explicit New Process starts can
+// still use the personal-agent account through `newProcessRunAs`.
 function normalizeProfile(value: unknown): Profile | null {
   const record = asRecord(value);
   const username = asString(record?.username);
@@ -662,8 +662,9 @@ function normalizeProfile(value: unknown): Profile | null {
     interactive: true,
     startable: runnable,
     background: false,
-    spawnMode: "new",
-    runAs: username,
+    spawnMode: isPersonal ? "default" : "new",
+    runAs: isPersonal ? undefined : username,
+    newProcessRunAs: isPersonal ? username : undefined,
   };
 }
 

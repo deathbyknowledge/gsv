@@ -28,6 +28,7 @@ function createCtx() {
   const shadow = new Map<string, string>([["root", "x"], ["alice", "x"], ["bob", "x"]]);
   const config = new Map<string, string>();
   const capsTable: { gid: number; capability: string }[] = [];
+  const packageRecords: InstalledPackageRecord[] = [];
 
   const maxId = () => Math.max(0, ...passwd.map((u) => u.uid), ...groups.map((g) => g.gid));
 
@@ -91,19 +92,28 @@ function createCtx() {
       get: vi.fn((key: string) => config.get(key) ?? null),
       delete: vi.fn((key: string) => config.delete(key)),
     } as unknown as KernelContext["config"],
+    packages: {
+      resolve: vi.fn((packageId: string) => packageRecords.find((record) => record.packageId === packageId) ?? null),
+      list: vi.fn(() => packageRecords),
+    } as unknown as KernelContext["packages"],
     // STORAGE stub satisfies home layout; no RIPGIT so context seeding no-ops.
     env: { STORAGE: { head: vi.fn(async () => null), put: vi.fn(async () => {}) } } as unknown as KernelContext["env"],
     identity: { role: "user", process: { uid: 1000, gid: 1000, gids: [1000, 100], username: "alice", home: "/home/alice", cwd: "/home/alice" }, capabilities: ["*"] },
   } as unknown as KernelContext;
 
-  return { ctx, auth, groups, passwd, shadow, config, capsTable, caps };
+  return { ctx, auth, groups, passwd, shadow, config, capsTable, caps, packageRecords };
 }
 
 function record(profiles: InstalledPackageRecord["manifest"]["profiles"]): InstalledPackageRecord {
   return {
     packageId: "builtin:wiki@1",
     scope: { kind: "global" },
-    manifest: { name: "wiki", profiles } as InstalledPackageRecord["manifest"],
+    enabled: true,
+    manifest: {
+      name: "wiki",
+      source: { repo: "root/wiki", ref: "main", subdir: "." },
+      profiles,
+    } as InstalledPackageRecord["manifest"],
   } as InstalledPackageRecord;
 }
 
@@ -231,8 +241,10 @@ describe("resolvePackageAgentRunAs", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("authorizes a human in the access group and rejects others", async () => {
-    const { ctx } = createCtx();
-    const agent = await ensurePackageAgent(ctx, record([BUILDER]), BUILDER, 1000);
+    const { ctx, packageRecords } = createCtx();
+    const pkg = record([BUILDER]);
+    packageRecords.push(pkg);
+    const agent = await ensurePackageAgent(ctx, pkg, BUILDER, 1000);
 
     const ok = resolvePackageAgentRunAs(ctx, "wiki#builder", 1000, false);
     expect(ok.ok).toBe(true);
@@ -246,8 +258,21 @@ describe("resolvePackageAgentRunAs", () => {
     expect(resolvePackageAgentRunAs(ctx, "wiki#builder", 1001, true).ok).toBe(true);
   });
 
+  it("rejects disabled package agents even when access membership remains", async () => {
+    const { ctx, packageRecords } = createCtx();
+    const pkg = record([BUILDER]);
+    packageRecords.push(pkg);
+    await ensurePackageAgent(ctx, pkg, BUILDER, 1000);
+    packageRecords[0] = { ...pkg, enabled: false };
+
+    const res = resolvePackageAgentRunAs(ctx, "wiki#builder", 1000, false);
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toMatch(/enable the package first/);
+  });
+
   it("fails when the package agent is not provisioned", () => {
-    const { ctx } = createCtx();
+    const { ctx, packageRecords } = createCtx();
+    packageRecords.push(record([BUILDER]));
     const res = resolvePackageAgentRunAs(ctx, "wiki#builder", 1000, false);
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error).toMatch(/not provisioned/);

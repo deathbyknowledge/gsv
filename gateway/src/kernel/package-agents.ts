@@ -15,7 +15,12 @@ import type { PasswdEntry } from "../auth/passwd";
 import { accountIdentity, createAccount, removeContextFile, writeContextFile } from "./accounts";
 import type { KernelContext } from "./context";
 import { resolveCallerOwnerUid } from "./context";
-import type { InstalledPackageRecord, PackageProfileManifest } from "./packages";
+import {
+  resolvePackageProfileReference,
+  visiblePackageScopesForActor,
+  type InstalledPackageRecord,
+  type PackageProfileManifest,
+} from "./packages";
 
 /**
  * Baseline capabilities every package agent receives. Intentionally empty:
@@ -206,7 +211,24 @@ export function resolvePackageAgentRunAs(
     return { ok: false, error: `Invalid package agent reference: ${reference}` };
   }
 
-  const username = packageAgentUsername(packageName, profileName);
+  let resolved;
+  try {
+    resolved = resolvePackageProfileReference(
+      reference,
+      ctx.packages,
+      visiblePackageScopesForActor({ uid: ownerUid }),
+    );
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+  if (!resolved || !resolved.record.enabled) {
+    return {
+      ok: false,
+      error: `Package agent unavailable: ${reference} (enable the package first)`,
+    };
+  }
+
+  const username = packageAgentUsername(resolved.record.manifest.name, resolved.packageProfile.name);
   const entry = auth.getPasswdByUsername(username);
   if (!entry) {
     return {
