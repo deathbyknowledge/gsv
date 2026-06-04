@@ -49,8 +49,6 @@ export default defineConfig({
           items: [
             { text: "CLI Commands", link: "/reference/cli-commands" },
             { text: "Package SDK", link: "/reference/package-sdk" },
-            { text: "Builtin App Design", link: "/reference/builtin-app-design" },
-            { text: "Package Frontend Architecture", link: "/reference/package-frontend-architecture" },
             { text: "WebSocket Protocol", link: "/reference/websocket-protocol" },
             { text: "Syscalls", link: "/reference/syscalls" },
             { text: "Configuration", link: "/reference/configuration" },

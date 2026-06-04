@@ -426,7 +426,7 @@ Before coding a builtin app, be able to answer:
 Default to dense but readable desktop patterns: sidebars, split panes, tables, inspectors, direct manipulation, and clear primary actions.
 Avoid dumping raw syscall data, oversized dashboard cards, marketing spacing, and app-local workarounds for shared runtime seams.
 
-Detailed product guidance lives in `docs/reference/builtin-app-design.md`.
+Detailed product guidance lives in `engineering/builtin-app-design.md`.
 The consolidated `GSV` system console contract lives in `docs/gsv-system-console.md`.
 
 ## Package frontend architecture and refactoring
@@ -444,4 +444,4 @@ Once a package has more than one real surface, prefer feature-oriented structure
 When refactoring, preserve behavior first: split pure helpers, then components, then hooks, then CSS.
 Validate after each risky boundary and keep package CSS/assets aligned with `src/package.ts`.
 
-Detailed package architecture guidance lives in `docs/reference/package-frontend-architecture.md`.
+Detailed package architecture guidance lives in `engineering/package-frontend-architecture.md`.
