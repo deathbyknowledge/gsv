@@ -16,10 +16,7 @@ function createMockSql() {
   function exec<T = Row>(query: string, ...bindings: unknown[]) {
     const q = query.trim();
 
-    if (
-      q.startsWith("CREATE TABLE IF NOT EXISTS") ||
-      q.startsWith("ALTER TABLE processes ADD COLUMN")
-    ) {
+    if (q.startsWith("CREATE TABLE IF NOT EXISTS")) {
       return rows([] as T[]);
     }
 
