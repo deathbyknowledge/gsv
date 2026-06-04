@@ -98,30 +98,6 @@ export function computeRecurringNextRunAt(
 export class AppRpcScheduleStore {
   constructor(private readonly sql: SqlStorage) {}
 
-  init(): void {
-    this.sql.exec(`
-      CREATE TABLE IF NOT EXISTS app_rpc_schedules (
-        schedule_key     TEXT PRIMARY KEY,
-        rpc_method       TEXT NOT NULL,
-        schedule_json    TEXT NOT NULL,
-        payload_json     TEXT,
-        enabled          INTEGER NOT NULL DEFAULT 1,
-        version          INTEGER NOT NULL DEFAULT 1,
-        created_at       INTEGER NOT NULL,
-        updated_at       INTEGER NOT NULL,
-        next_run_at      INTEGER,
-        running_at       INTEGER,
-        last_run_at      INTEGER,
-        last_status      TEXT,
-        last_error       TEXT,
-        last_duration_ms INTEGER
-      )
-    `);
-    this.sql.exec(
-      "CREATE INDEX IF NOT EXISTS idx_app_rpc_schedules_due ON app_rpc_schedules (enabled, next_run_at, schedule_key)",
-    );
-  }
-
   get(key: string): AppRpcScheduleRecord | null {
     const normalizedKey = normalizeKey(key);
     const rows = this.sql.exec<AppRpcScheduleRow>(
