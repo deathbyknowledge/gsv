@@ -190,17 +190,22 @@ describe("handleAiTools", () => {
 });
 
 describe("handleAiConfig", () => {
-  function makeAiConfigContext(config: Record<string, string> = {}): KernelContext {
+  function makeAiConfigContext(
+    config: Record<string, string> = {},
+    options: { uid?: number; processId?: string; ownerUid?: number } = {},
+  ): KernelContext {
+    const uid = options.uid ?? 1000;
+    const ownerUid = options.ownerUid ?? uid;
     return {
       identity: {
         role: "user",
         process: {
-          uid: 1000,
-          gid: 1000,
-          gids: [1000],
-          username: "sam",
-          home: "/home/sam",
-          cwd: "/home/sam",
+          uid,
+          gid: uid,
+          gids: [uid],
+          username: uid === 2000 ? "friday" : "sam",
+          home: uid === 2000 ? "/home/friday" : "/home/sam",
+          cwd: uid === 2000 ? "/home/friday" : "/home/sam",
         },
         capabilities: ["*"],
       },
@@ -210,6 +215,23 @@ describe("handleAiConfig", () => {
           .filter(([key]) => key.startsWith(`${prefix.replace(/\/$/, "")}/`))
           .map(([key, value]) => ({ key, value }))),
       },
+      auth: {
+        getPasswdByUid: vi.fn((lookupUid: number) => lookupUid === ownerUid
+          ? {
+              uid: ownerUid,
+              gid: ownerUid,
+              username: "sam",
+              gecos: "sam",
+              home: "/home/sam",
+              shell: "/bin/init",
+            }
+          : null),
+        resolveGids: vi.fn((_username: string, gid: number) => [gid]),
+      },
+      procs: {
+        getOwnerUid: vi.fn(() => ownerUid),
+      },
+      processId: options.processId,
       env: {},
     } as unknown as KernelContext;
   }
@@ -223,6 +245,57 @@ describe("handleAiConfig", () => {
     await expect(handleAiConfig({}, makeAiConfigContext({
       "config/ai/generation/streaming": "invalid",
     }))).resolves.toMatchObject({ generationStreaming: "auto" });
+  });
+
+  it("falls back to the owning human's AI config for agent processes", async () => {
+    const result = await handleAiConfig({}, makeAiConfigContext({
+      "users/1000/ai/provider": "owner-provider",
+      "users/1000/ai/model": "owner-model",
+      "users/1000/ai/api_key": "owner-key",
+      "users/1000/ai/reasoning": "high",
+      "users/1000/ai/max_tokens": "1234",
+      "users/1000/ai/context_window_tokens": "2222",
+      "users/1000/ai/max_context_bytes": "4321",
+      "users/1000/ai/generation/timeout_ms": "90000",
+    }, {
+      uid: 2000,
+      ownerUid: 1000,
+      processId: "task-1",
+    }));
+
+    expect(result.owner).toMatchObject({
+      uid: 1000,
+      username: "sam",
+      home: "/home/sam",
+    });
+    expect(result.provider).toBe("owner-provider");
+    expect(result.model).toBe("owner-model");
+    expect(result.apiKey).toBe("owner-key");
+    expect(result.reasoning).toBe("high");
+    expect(result.maxTokens).toBe(1234);
+    expect(result.contextWindowTokens).toBe(2222);
+    expect(result.contextWindowSource).toBe("config");
+    expect(result.maxContextBytes).toBe(4321);
+    expect(result.generationTimeoutMs).toBe(90000);
+  });
+
+  it("prefers agent AI config over the owning human's config", async () => {
+    const result = await handleAiConfig({}, makeAiConfigContext({
+      "users/1000/ai/provider": "owner-provider",
+      "users/1000/ai/model": "owner-model",
+      "users/1000/ai/api_key": "owner-key",
+      "users/2000/ai/provider": "agent-provider",
+      "users/2000/ai/model": "agent-model",
+      "users/2000/ai/api_key": "agent-key",
+    }, {
+      uid: 2000,
+      ownerUid: 1000,
+      processId: "task-1",
+    }));
+
+    expect(result.provider).toBe("agent-provider");
+    expect(result.model).toBe("agent-model");
+    expect(result.apiKey).toBe("agent-key");
   });
 });
 

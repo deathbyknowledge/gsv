@@ -5,7 +5,7 @@
  * ai.config — reads model/provider/apiKey from /sys/ (kernel SQLite via ConfigStore).
  *
  * Config resolution order:
- *   /sys/config/ai/* (system defaults) → /sys/users/{uid}/ai/* (user overrides)
+ *   /sys/users/{run-as uid}/ai/* → /sys/users/{owner uid}/ai/* → /sys/config/ai/*
  *
  * Runtime reads are explicit SQLite overrides over code defaults.
  */
@@ -127,35 +127,36 @@ export async function handleAiConfig(
   const config = ctx.config;
   const uid = ctx.identity?.process.uid ?? 0;
   const owner = resolveOwnerIdentity(ctx);
+  const accountConfigUids = resolveAiConfigAccountUids(uid, owner);
 
   const provider =
-    config.get(`users/${uid}/ai/provider`) ??
+    resolveAiConfigValue(config, accountConfigUids, "provider") ??
     config.get("config/ai/provider") ??
     "workers-ai";
 
   const model =
-    config.get(`users/${uid}/ai/model`) ??
+    resolveAiConfigValue(config, accountConfigUids, "model") ??
     config.get("config/ai/model") ??
     "@cf/nvidia/nemotron-3-120b-a12b";
 
   const apiKey =
-    config.get(`users/${uid}/ai/api_key`) ??
+    resolveAiConfigValue(config, accountConfigUids, "api_key") ??
     config.get("config/ai/api_key") ??
     "";
 
   const reasoning =
-    config.get(`users/${uid}/ai/reasoning`) ??
+    resolveAiConfigValue(config, accountConfigUids, "reasoning") ??
     config.get("config/ai/reasoning") ??
     undefined;
 
   const maxTokens = parseInt(
-    config.get(`users/${uid}/ai/max_tokens`) ??
+    resolveAiConfigValue(config, accountConfigUids, "max_tokens") ??
     config.get("config/ai/max_tokens") ??
     "8192",
     10,
   );
   const contextWindowOverride = parsePositiveInt(
-    config.get(`users/${uid}/ai/context_window_tokens`),
+    resolveAiConfigValue(config, accountConfigUids, "context_window_tokens"),
   );
   const modelContextWindow = await resolveModelContextWindow(provider, model);
   const configuredContextWindow = parsePositiveInt(
@@ -179,13 +180,13 @@ export async function handleAiConfig(
   const accountApprovalPolicy = resolveAccountApprovalPolicy(config, uid);
 
   const maxContextBytes = parseInt(
-    config.get(`users/${uid}/ai/max_context_bytes`) ??
+    resolveAiConfigValue(config, accountConfigUids, "max_context_bytes") ??
     config.get("config/ai/max_context_bytes") ??
     "32768",
     10,
   );
   const generationTimeoutMs = parsePositiveInt(
-    config.get(`users/${uid}/ai/generation/timeout_ms`),
+    resolveAiConfigValue(config, accountConfigUids, "generation/timeout_ms"),
   ) ?? parsePositiveInt(
     config.get("config/ai/generation/timeout_ms"),
   ) ?? DEFAULT_GENERATION_TIMEOUT_MS;
@@ -370,6 +371,27 @@ function resolveOwnerIdentity(ctx: KernelContext): ProcessIdentity | null {
     home: entry.home,
     cwd: entry.home,
   };
+}
+
+function resolveAiConfigAccountUids(uid: number, owner: ProcessIdentity | null): number[] {
+  if (!owner || owner.uid === uid) {
+    return [uid];
+  }
+  return [uid, owner.uid];
+}
+
+function resolveAiConfigValue(
+  config: KernelContext["config"],
+  accountUids: number[],
+  key: string,
+): string | null {
+  for (const accountUid of accountUids) {
+    const value = config.get(`users/${accountUid}/ai/${key}`);
+    if (value !== null) {
+      return value;
+    }
+  }
+  return null;
 }
 
 /**
