@@ -233,7 +233,7 @@ describe("repo syscalls", () => {
       return Response.json({
         ok: true,
         head: "local123",
-        changed: true,
+        changed: false,
         remote_url: "https://github.com/example/demo",
         remote_ref: "main",
         tracking_ref: "refs/remotes/upstream/main",
@@ -254,7 +254,7 @@ describe("repo syscalls", () => {
       repo: "alice/demo",
       ref: "main",
       head: "local123",
-      changed: true,
+      changed: false,
       remoteUrl: "https://github.com/example/demo",
       remoteRef: "main",
       trackingRef: "refs/remotes/upstream/main",

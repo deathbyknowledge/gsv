@@ -392,7 +392,7 @@ pub async fn handle_import(sql: &SqlStorage, req: &mut Request) -> Result<Respon
     let response = ImportResponse {
         ok: true,
         head: local_head.as_deref(),
-        changed: local_changed || fetched.changed,
+        changed: local_changed,
         remote_url: remote_url.as_str(),
         remote_ref: remote_ref.as_str(),
         tracking_ref: tracking_ref.as_str(),
