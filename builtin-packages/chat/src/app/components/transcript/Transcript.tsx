@@ -169,6 +169,7 @@ export function Transcript(props: {
       <ThoughtsDrawer
         group={selectedRun}
         hilBusy={props.hilBusy}
+        now={now}
         onClose={() => setSelectedRunId(null)}
         onHilDecision={props.onHilDecision}
       />

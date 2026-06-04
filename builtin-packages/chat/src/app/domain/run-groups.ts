@@ -93,31 +93,31 @@ function buildRunGroup(
     const row = rows[index];
     startedAt = Math.min(startedAt, row.timestamp);
     updatedAt = Math.max(updatedAt, row.timestamp);
-    if (row.kind === "toolCall" || row.kind === "toolResult") {
+    if (row.kind === "message") {
+      if (row.role === "user") {
+        userRows.push(row);
+      } else if (row.role === "assistant") {
+        assistantRows.push(row);
+        for (const text of row.thinking?.filter(Boolean) ?? []) {
+          detailEntries.push({ kind: "thinking", text, timestamp: row.timestamp });
+        }
+        if (assistantTextIsInterim(rows, index)) {
+          interimAssistantRows.push(row);
+          if (row.text.trim()) {
+            detailEntries.push({ kind: "interimText", row });
+          }
+        } else {
+          finalAssistantRows.push(row);
+        }
+      } else {
+        systemRows.push(row);
+      }
+    } else {
       toolRows.push(row);
       detailEntries.push({ kind: "tool", row });
       if (pendingHil?.runId === runId && pendingHil.callId === row.callId) {
         detailEntries.push({ kind: "hil", request: pendingHil });
       }
-      continue;
-    }
-    if (row.role === "user") {
-      userRows.push(row);
-    } else if (row.role === "assistant") {
-      assistantRows.push(row);
-      for (const text of row.thinking?.filter(Boolean) ?? []) {
-        detailEntries.push({ kind: "thinking", text, timestamp: row.timestamp });
-      }
-      if (assistantTextIsInterim(rows, index)) {
-        interimAssistantRows.push(row);
-        if (row.text.trim()) {
-          detailEntries.push({ kind: "interimText", row });
-        }
-      } else {
-        finalAssistantRows.push(row);
-      }
-    } else {
-      systemRows.push(row);
     }
   }
 
