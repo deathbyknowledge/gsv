@@ -18,6 +18,7 @@ import {
   asNumber,
   asRecord,
   asString,
+  basenamePath,
   closeChatMenus,
   closeContainingChatMenu,
   describeHilSummary,
@@ -220,9 +221,11 @@ function ReasoningEntry({ text }: { text: string }) {
     <TrajectoryEntry
       tone="reasoning"
       icon={<ThoughtIcon />}
+      iconLabel="Reasoning"
       title="Reasoning"
-      body={<p>{truncateBlock(text, 420)}</p>}
-      details={text.length > 420 ? <pre>{text}</pre> : null}
+      details={<pre>{text}</pre>}
+      detailsLabel="Show"
+      detailsHideLabel="Hide"
     />
   );
 }
@@ -232,8 +235,9 @@ function InterimTextEntry({ row }: { row: MessageRow }) {
     <TrajectoryEntry
       tone="draft"
       icon={<MessageIcon />}
-      title="Interim response"
-      subtitle="Model text before tool work finished"
+      iconLabel="Draft reply"
+      title="Working draft"
+      subtitle="Text produced before tools finished"
       body={<div class="message-markdown" dangerouslySetInnerHTML={{ __html: renderMarkdownHtml(row.text) }} />}
     />
   );
@@ -243,16 +247,20 @@ function ToolTrajectoryEntry({ row }: { row: ToolRow }) {
   const syscall = inferToolSyscall(row.toolName, row.syscall);
   const card = describeToolCard(row.toolName, row.args, syscall);
   const result = toolResultSummary(row, syscall);
+  const display = toolTrajectoryDisplay(row, syscall, card, result);
   return (
     <TrajectoryEntry
       tone={result.tone}
       icon={toolEntryIcon(row, syscall)}
-      title={card.title}
-      subtitle={card.subtitle || card.target || syscall || undefined}
-      status={result.status}
-      meta={[syscall, card.target].filter((item): item is string => Boolean(item))}
-      body={<p class={result.tone === "error" ? "trajectory-error" : ""}>{result.preview}</p>}
-      details={<ToolTrajectoryDetails row={row} syscall={syscall} />}
+      iconLabel={display.iconLabel}
+      title={display.title}
+      subtitle={display.subtitle}
+      status={display.status}
+      meta={display.meta}
+      body={display.body}
+      details={display.details}
+      detailsLabel={display.detailsLabel}
+      detailsHideLabel={display.detailsHideLabel}
     />
   );
 }
@@ -271,6 +279,7 @@ function HilTrajectoryEntry({
     <TrajectoryEntry
       tone="waiting"
       icon={<ThoughtIcon />}
+      iconLabel="Waiting for approval"
       title="Approval required"
       subtitle={card.title}
       status="Waiting"
@@ -299,6 +308,7 @@ function HilTrajectoryEntry({
 function TrajectoryEntry({
   tone,
   icon,
+  iconLabel,
   title,
   subtitle,
   status,
@@ -306,9 +316,12 @@ function TrajectoryEntry({
   body,
   actions,
   details,
+  detailsLabel = "Details",
+  detailsHideLabel,
 }: {
   tone: TrajectoryTone;
   icon: ComponentChildren;
+  iconLabel: string;
   title: string;
   subtitle?: string;
   status?: string;
@@ -316,10 +329,12 @@ function TrajectoryEntry({
   body?: ComponentChildren;
   actions?: ComponentChildren;
   details?: ComponentChildren;
+  detailsLabel?: string;
+  detailsHideLabel?: string;
 }) {
   return (
     <article class={`trajectory-entry is-${tone}`}>
-      <div class="trajectory-marker" aria-hidden="true">{icon}</div>
+      <div class="trajectory-marker" role="img" aria-label={iconLabel} title={iconLabel}>{icon}</div>
       <div class="trajectory-panel">
         <div class="trajectory-title-row">
           <div>
@@ -337,7 +352,10 @@ function TrajectoryEntry({
         {actions}
         {details ? (
           <details class="trajectory-details">
-            <summary>Details</summary>
+            <summary>
+              <span class="trajectory-summary-show">{detailsLabel}</span>
+              <span class="trajectory-summary-hide">{detailsHideLabel ?? detailsLabel}</span>
+            </summary>
             <div class="trajectory-detail-body">{details}</div>
           </details>
         ) : null}
@@ -346,26 +364,154 @@ function TrajectoryEntry({
   );
 }
 
-function ToolTrajectoryDetails({ row, syscall }: { row: ToolRow; syscall: string | null }) {
+type ToolCardDescription = ReturnType<typeof describeToolCard>;
+type ToolResultDisplay = { tone: TrajectoryTone; status: string; preview: string };
+
+function toolTrajectoryDisplay(
+  row: ToolRow,
+  syscall: string | null,
+  card: ToolCardDescription,
+  result: ToolResultDisplay,
+): {
+  iconLabel: string;
+  title: string;
+  subtitle?: string;
+  status?: string;
+  meta?: string[];
+  body?: ComponentChildren;
+  details?: ComponentChildren;
+  detailsLabel?: string;
+  detailsHideLabel?: string;
+} {
+  const kind = fileToolKind(row, syscall);
+  const targetMeta = card.target ? [card.target] : undefined;
+  const details = toolDisclosureContent(row, syscall);
+  const isDelete = kind === "delete";
+  const showResultBody = row.kind === "toolCall"
+    || result.tone === "error" && !isDelete
+    || (!kind && result.preview.trim().length > 0);
+  return {
+    iconLabel: toolMarkerLabel(result),
+    title: toolTrajectoryTitle(row, syscall, card),
+    subtitle: card.subtitle || undefined,
+    status: result.tone === "ok" ? undefined : result.status,
+    meta: targetMeta,
+    body: showResultBody ? <p class={result.tone === "error" ? "trajectory-error" : ""}>{result.preview}</p> : undefined,
+    details,
+    detailsLabel: details ? "Show" : undefined,
+    detailsHideLabel: details ? "Hide" : undefined,
+  };
+}
+
+function toolMarkerLabel(result: ToolResultDisplay): string {
+  if (result.tone === "error") return result.preview ? `Error: ${result.preview}` : "Error";
+  return result.status;
+}
+
+function toolTrajectoryTitle(row: ToolRow, syscall: string | null, card: ToolCardDescription): string {
+  const kind = fileToolKind(row, syscall);
+  const path = asString(asRecord(row.args)?.path);
+  const subject = path ? basenamePath(path) : "file";
+  const ok = row.kind === "toolResult" && row.ok !== false;
+  const failed = row.kind === "toolResult" && row.ok === false;
+  if (kind === "read") return failed ? `Could not read ${subject}` : row.kind === "toolCall" ? `Reading ${subject}` : `Read ${subject}`;
+  if (kind === "write") return failed ? `Could not write ${subject}` : row.kind === "toolCall" ? `Writing ${subject}` : `Wrote ${subject}`;
+  if (kind === "edit") return failed ? `Could not edit ${subject}` : row.kind === "toolCall" ? `Editing ${subject}` : `Edited ${subject}`;
+  if (kind === "delete") return failed ? `Could not delete ${subject}` : row.kind === "toolCall" ? `Deleting ${subject}` : ok ? `Deleted ${subject}` : card.title;
+  if (row.toolName === "Shell" || syscall === "shell.exec") return failed ? "Command failed" : row.kind === "toolCall" ? "Running command" : "Ran command";
+  if (row.toolName === "Search" || syscall === "fs.search") return failed ? "Search failed" : row.kind === "toolCall" ? "Searching files" : "Searched files";
+  if (isCodeModeTool(row.toolName, syscall)) return failed ? "CodeMode failed" : row.kind === "toolCall" ? "Running CodeMode script" : "Ran CodeMode script";
+  return card.title;
+}
+
+function toolDisclosureContent(row: ToolRow, syscall: string | null): ComponentChildren | null {
+  const kind = fileToolKind(row, syscall);
+  const args = asRecord(row.args);
+  if (kind === "write") {
+    const content = asString(args?.content);
+    if (content === null) return null;
+    return content.length > 0
+      ? <pre>{clipBlock(content, 12000)}</pre>
+      : <p class="trajectory-muted">Empty file.</p>;
+  }
+  if (kind === "edit") {
+    const oldString = asString(args?.oldString);
+    const newString = asString(args?.newString);
+    if (oldString === null && newString === null) return null;
+    return <DiffPreview oldText={oldString ?? ""} newText={newString ?? ""} />;
+  }
+  if (kind === "read") {
+    if (row.kind !== "toolResult" || row.ok === false) return null;
+    return readToolDisclosure(row.output);
+  }
+  if (kind === "delete") {
+    return null;
+  }
+  if (row.kind !== "toolResult" || row.output === undefined) {
+    return null;
+  }
   const normalized = normalizeToolOutput(row.output);
-  return (
-    <div class="trajectory-detail-stack">
-      <dl>
-        <div><dt>call</dt><dd>{row.callId}</dd></div>
-        {syscall ? <div><dt>syscall</dt><dd>{syscall}</dd></div> : null}
-      </dl>
-      <section>
-        <h4>Input</h4>
-        <pre>{truncateBlock(prettyJson(row.args), 2400)}</pre>
-      </section>
-      {row.kind === "toolResult" && normalized !== undefined ? (
-        <section>
-          <h4>Output</h4>
-          <pre>{truncateBlock(typeof normalized === "string" ? normalized : prettyJson(normalized), 4000)}</pre>
-        </section>
-      ) : null}
-    </div>
-  );
+  return <pre>{clipBlock(formatToolOutputForDisclosure(row, syscall, normalized), 12000)}</pre>;
+}
+
+function readToolDisclosure(output: unknown): ComponentChildren | null {
+  const normalized = normalizeToolOutput(output);
+  const record = asRecord(normalized);
+  const content = record?.content;
+  if (typeof content === "string") {
+    return content.length > 0
+      ? <pre>{clipBlock(content, 12000)}</pre>
+      : <p class="trajectory-muted">No content.</p>;
+  }
+  if (Array.isArray(content)) {
+    return <pre>{clipBlock(prettyJson(content), 12000)}</pre>;
+  }
+  const directories = Array.isArray(record?.directories) ? record.directories : [];
+  const files = Array.isArray(record?.files) ? record.files : [];
+  if (directories.length || files.length) {
+    const listing = [
+      ...directories.map((item) => `${String(item)}/`),
+      ...files.map((item) => String(item)),
+    ].join("\n");
+    return <pre>{clipBlock(listing, 12000)}</pre>;
+  }
+  return null;
+}
+
+function formatToolOutputForDisclosure(row: ToolRow, syscall: string | null, output: unknown): string {
+  const record = asRecord(output);
+  if (row.toolName === "Shell" || syscall === "shell.exec") {
+    const stdout = asString(record?.stdout);
+    const stderr = asString(record?.stderr);
+    const parts = [stdout, stderr].filter((item): item is string => Boolean(item?.trim()));
+    return parts.length > 0 ? parts.join("\n") : prettyJson(output);
+  }
+  return typeof output === "string" ? output : prettyJson(output);
+}
+
+function DiffPreview({ oldText, newText }: { oldText: string; newText: string }) {
+  const removed = oldText.length > 0 ? oldText.split("\n") : [""];
+  const added = newText.length > 0 ? newText.split("\n") : [""];
+  const removedLines = removed.map((line, index) => (
+    <span key={`old:${index}`} class="trajectory-diff-line is-removed">- {line}</span>
+  ));
+  const addedLines = added.map((line, index) => (
+    <span key={`new:${index}`} class="trajectory-diff-line is-added">+ {line}</span>
+  ));
+  return <pre class="trajectory-diff">{removedLines}{addedLines}</pre>;
+}
+
+function fileToolKind(row: ToolRow, syscall: string | null): "read" | "write" | "edit" | "delete" | null {
+  if (row.toolName === "Read" || syscall === "fs.read") return "read";
+  if (row.toolName === "Write" || syscall === "fs.write") return "write";
+  if (row.toolName === "Edit" || syscall === "fs.edit") return "edit";
+  if (row.toolName === "Delete" || syscall === "fs.delete") return "delete";
+  return null;
+}
+
+function clipBlock(value: unknown, maxLength: number): string {
+  const text = String(value ?? "");
+  return text.length <= maxLength ? text : `${text.slice(0, maxLength)}\n...`;
 }
 
 function AssistantDocument({
@@ -461,7 +607,7 @@ function runDrawerSummary(
     ...(duration ? [{ label: duration }] : []),
     ...(tools ? [{ label: `${tools} ${tools === 1 ? "tool" : "tools"}` }] : []),
     ...(approvals ? [{ label: `${approvals} approval${approvals === 1 ? "" : "s"}`, tone: "waiting" as const }] : []),
-    ...(drafts ? [{ label: `${drafts} interim` }] : []),
+    ...(drafts ? [{ label: `${drafts} ${drafts === 1 ? "draft" : "drafts"}` }] : []),
     ...(reasoning ? [{ label: `${reasoning} reasoning` }] : []),
   ];
 }
@@ -484,7 +630,7 @@ function latestRunActivity(group: TranscriptRunGroup): string {
     return group.pendingAssistant === "tool" ? "Working" : "Thinking";
   }
   if (latest.kind === "thinking") return "Thinking";
-  if (latest.kind === "interimText") return "Drafting interim response";
+  if (latest.kind === "interimText") return "Drafting a reply";
   if (latest.kind !== "tool") return "Thinking";
   return toolActivity(latest.row);
 }
@@ -533,9 +679,9 @@ function planningToolStatus(toolName: string, syscall: string | null): string {
   if (toolName === "Shell" || syscall === "shell.exec") return "Running command.";
   if (toolName === "Read" || syscall === "fs.read") return "Reading file.";
   if (toolName === "Search" || syscall === "fs.search") return "Searching files.";
-  if (toolName === "Write" || syscall === "fs.write") return "Preparing file write.";
-  if (toolName === "Edit" || syscall === "fs.edit") return "Preparing edit.";
-  if (toolName === "Delete" || syscall === "fs.delete") return "Preparing delete.";
+  if (toolName === "Write" || syscall === "fs.write") return "Writing file.";
+  if (toolName === "Edit" || syscall === "fs.edit") return "Editing file.";
+  if (toolName === "Delete" || syscall === "fs.delete") return "Deleting file.";
   if (toolName === "CodeMode" || syscall === "codemode.exec" || syscall === "codemode.run") return "Running process-local script.";
   if (syscall === "sys.mcp.call") return "Calling MCP tool.";
   return `Using ${toolName}.`;
@@ -556,13 +702,24 @@ function completedToolPreview(row: ToolRow, syscall: string | null, output: unkn
   }
   if (row.toolName === "Read" || syscall === "fs.read") {
     const content = asString(record?.content);
-    if (content?.trim()) return truncateInline(content, 180);
     const directories = Array.isArray(record?.directories) ? record.directories : [];
     const files = Array.isArray(record?.files) ? record.files : [];
+    if (content?.trim()) return "Read file content.";
     if (directories.length || files.length) {
       return `Listed ${directories.length} dirs and ${files.length} files.`;
     }
     return "Read completed.";
+  }
+  if (row.toolName === "Write" || syscall === "fs.write") {
+    const size = asNumber(record?.size);
+    return size !== null ? `Wrote ${size} ${size === 1 ? "byte" : "bytes"}.` : "Wrote file.";
+  }
+  if (row.toolName === "Edit" || syscall === "fs.edit") {
+    const replacements = asNumber(record?.replacements);
+    return replacements !== null ? `${replacements} ${replacements === 1 ? "replacement" : "replacements"}.` : "Edited file.";
+  }
+  if (row.toolName === "Delete" || syscall === "fs.delete") {
+    return "Deleted file.";
   }
   if (row.toolName === "Search" || syscall === "fs.search") {
     const matches = Array.isArray(record?.matches) ? record.matches : [];
