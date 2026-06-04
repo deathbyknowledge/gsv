@@ -1,4 +1,4 @@
-import type { SqlMigration } from "../../kernel/schema/runner";
+import type { SqlMigration } from "../../schema/runner";
 
 // Current AppRunner Durable Object SQLite schema for fresh v1 installations.
 export const APP_RUNNER_V001_INITIAL_SCHEMA: SqlMigration = {

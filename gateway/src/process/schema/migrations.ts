@@ -1,4 +1,4 @@
-import { runSqlMigrations, type SqlMigration } from "../../kernel/schema/runner";
+import { runSqlMigrations, type SqlMigration } from "../../schema/runner";
 import { PROCESS_V001_INITIAL_SCHEMA } from "./v001_initial";
 
 // Used by Process DO startup before ProcessStore reads or writes rows.

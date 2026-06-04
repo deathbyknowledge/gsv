@@ -1,4 +1,4 @@
-import type { SqlMigration } from "./runner";
+import type { SqlMigration } from "../../schema/runner";
 
 // Current Kernel Durable Object SQLite schema for fresh v1 installations.
 export const KERNEL_V001_INITIAL_SCHEMA: SqlMigration = {
