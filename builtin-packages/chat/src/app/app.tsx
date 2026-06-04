@@ -109,6 +109,7 @@ export function App({ backend }: { backend: ChatBackend }) {
   const [historyWindow, setHistoryWindow] = useState<HistoryWindow>(EMPTY_HISTORY_WINDOW);
   const [contextState, setContextState] = useState<ContextState | null>(null);
   const [contextStatesByConversation, setContextStatesByConversation] = useState<Record<string, ContextState>>({});
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [pendingAssistant, setPendingAssistant] = useState<PendingAssistantState>(null);
   const [pendingHil, setPendingHil] = useState<HilRequest | null>(null);
   const [messageBusy, setMessageBusy] = useState(false);
@@ -248,6 +249,7 @@ export function App({ backend }: { backend: ChatBackend }) {
       setContextState(null);
       setPendingHil(null);
       setPendingAssistant(null);
+      setActiveRunId(null);
       setMessageCount(0);
       updateHistoryWindow(EMPTY_HISTORY_WINDOW);
       clearNewMessages();
@@ -257,6 +259,7 @@ export function App({ backend }: { backend: ChatBackend }) {
       setContextStatesByConversation({});
       setPendingHil(null);
       setPendingAssistant(null);
+      setActiveRunId(null);
       setMessageCount(0);
       updateHistoryWindow(EMPTY_HISTORY_WINDOW);
       clearNewMessages();
@@ -346,7 +349,9 @@ export function App({ backend }: { backend: ChatBackend }) {
         }
         return { ...current, [conversationId]: nextContext };
       });
-      setPendingHil(normalizeHilRequest(record.pendingHil));
+      const nextHil = normalizeHilRequest(record.pendingHil);
+      setPendingHil(nextHil);
+      setActiveRunId(nextHil?.runId ?? null);
       setPendingAssistant(null);
       setRows(flattened);
       clearNewMessages();
@@ -467,6 +472,7 @@ export function App({ backend }: { backend: ChatBackend }) {
     setContextState,
     setContextStatesByConversation,
     setMessageCount,
+    setActiveRunId,
     setPendingAssistant,
     setPendingHil,
     setRows,
@@ -587,12 +593,13 @@ export function App({ backend }: { backend: ChatBackend }) {
         appendSystem("thread start failed: missing process id");
         return;
       }
+      const optimisticTimestamp = Date.now();
       setRows((current) => dropEmptyPlaceholder(current).concat({
         kind: "message",
         role: "user",
         text: message,
         media,
-        timestamp: Date.now(),
+        timestamp: optimisticTimestamp,
       }));
       setComposeText("");
       setAttachments((current) => {
@@ -610,7 +617,23 @@ export function App({ backend }: { backend: ChatBackend }) {
         appendSystem("send failed: " + safeText(record?.error || "unknown error"));
         return;
       }
-      setPendingAssistant("thinking");
+      const runId = asString(record.runId);
+      if (runId) {
+        setRows((current) => current.map((row) => (
+          row.kind === "message"
+          && row.role === "user"
+          && row.timestamp === optimisticTimestamp
+          && !row.runId
+            ? { ...row, runId }
+            : row
+        )));
+        if (record.queued !== true) {
+          setActiveRunId(runId);
+        }
+      }
+      if (record.queued !== true) {
+        setPendingAssistant("thinking");
+      }
       if (record.queued === true) {
         appendSystem("message queued while process is busy");
       }
@@ -638,8 +661,10 @@ export function App({ backend }: { backend: ChatBackend }) {
         setPendingHil(null);
         if (record.continuedQueuedRunId) {
           setSuppressNextAbortedComplete(true);
+          setActiveRunId(asString(record.continuedQueuedRunId));
           setPendingAssistant("thinking");
         } else {
+          setActiveRunId(null);
           setPendingAssistant(null);
           appendSystem("run interrupted");
         }
@@ -666,6 +691,7 @@ export function App({ backend }: { backend: ChatBackend }) {
       }
       const nextHil = normalizeHilRequest(record.pendingHil);
       setPendingHil(nextHil);
+      setActiveRunId(nextHil?.runId ?? activeRunId);
       if (!nextHil) {
         setPendingAssistant("thinking");
       }
@@ -924,6 +950,7 @@ export function App({ backend }: { backend: ChatBackend }) {
               rows={rows}
               userLabel={viewerUsername}
               assistantLabel={assistantLabel}
+              activeRunId={activeRunId}
               pendingAssistant={pendingAssistant}
               pendingHil={pendingHil}
               hasOlderHistory={historyWindow.hasMoreBefore}

@@ -35,6 +35,7 @@ export function useProcessSignals({
   setContextState,
   setContextStatesByConversation,
   setMessageCount,
+  setActiveRunId,
   setPendingAssistant,
   setPendingHil,
   setRows,
@@ -53,6 +54,7 @@ export function useProcessSignals({
   setContextState: Setter<ContextState | null>;
   setContextStatesByConversation: Setter<Record<string, ContextState>>;
   setMessageCount: Setter<number>;
+  setActiveRunId: Setter<string | null>;
   setPendingAssistant: Setter<PendingAssistantState>;
   setPendingHil: Setter<HilRequest | null>;
   setRows: Setter<LogRow[]>;
@@ -109,9 +111,23 @@ export function useProcessSignals({
             void loadArchiveSegments(true);
           }
         }
+      } else if (signal === "proc.run.started") {
+        if (!signalMatchesActiveThread(payload, target)) {
+          return;
+        }
+        const runId = asString(asRecord(payload)?.runId);
+        if (runId) {
+          setActiveRunId(runId);
+        }
+        setPendingHil(null);
+        setPendingAssistant("thinking");
       } else if (signal === "proc.run.tool.started") {
         if (!signalMatchesActiveThread(payload, target)) {
           return;
+        }
+        const runId = asString(asRecord(payload)?.runId);
+        if (runId) {
+          setActiveRunId(runId);
         }
         prepareForLiveTranscriptActivity();
         setPendingHil(null);
@@ -121,6 +137,10 @@ export function useProcessSignals({
         if (!signalMatchesActiveThread(payload, target)) {
           return;
         }
+        const runId = asString(asRecord(payload)?.runId);
+        if (runId) {
+          setActiveRunId(runId);
+        }
         prepareForLiveTranscriptActivity();
         applyToolResultSignal(payload, target, setRows);
         setPendingAssistant("thinking");
@@ -128,12 +148,20 @@ export function useProcessSignals({
         if (!signalMatchesActiveThread(payload, target)) {
           return;
         }
+        const runId = asString(asRecord(payload)?.runId);
+        if (runId) {
+          setActiveRunId(runId);
+        }
         prepareForLiveTranscriptActivity();
         applyAssistantSignal(payload, target, setRows);
         setPendingAssistant(null);
       } else if (signal === "proc.run.stream") {
         if (!signalMatchesActiveThread(payload, target)) {
           return;
+        }
+        const runId = asString(asRecord(payload)?.runId);
+        if (runId) {
+          setActiveRunId(runId);
         }
         const effect = applyAssistantStreamSignal(payload, target, setRows);
         if (effect) {
@@ -145,6 +173,10 @@ export function useProcessSignals({
           return;
         }
         const record = asRecord(payload);
+        const runId = asString(record?.runId);
+        if (runId) {
+          setActiveRunId((current) => current === runId ? null : current);
+        }
         setPendingHil(null);
         setPendingAssistant((current) => {
           if (record?.aborted === true && suppressNextAbortedComplete) {
@@ -158,10 +190,15 @@ export function useProcessSignals({
         if (!signalMatchesActiveThread(payload, target)) {
           return;
         }
+        const runId = asString(asRecord(payload)?.runId);
+        if (runId) {
+          setActiveRunId(runId);
+        }
         prepareForLiveTranscriptActivity();
         setPendingAssistant(null);
         setPendingHil(normalizeHilRequest(payload));
       } else if (signal === "process.exit") {
+        setActiveRunId(null);
         setPendingAssistant(null);
         setPendingHil(null);
         setSuppressNextAbortedComplete(false);
@@ -180,6 +217,7 @@ export function useProcessSignals({
     setContextState,
     setContextStatesByConversation,
     setMessageCount,
+    setActiveRunId,
     setPendingAssistant,
     setPendingHil,
     setRows,

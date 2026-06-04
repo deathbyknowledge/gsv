@@ -25,10 +25,11 @@ function flattenHistory(messages: unknown[]): LogRow[] {
     const timestamp = normalizeTimestampMs(record?.timestamp) || Date.now();
     const messageId = asNumber(record?.id);
     const origin = normalizeInteractionOrigin(record?.origin);
+    const runId = asString(record?.runId);
     if (record?.role === "assistant") {
       const parsed = extractAssistantHistory(record.content);
       if ((parsed.text && parsed.text.trim()) || parsed.thinking.length > 0) {
-        rows.push({ kind: "message", role: "assistant", text: parsed.text, thinking: parsed.thinking, timestamp, messageId, origin });
+        rows.push({ kind: "message", role: "assistant", text: parsed.text, thinking: parsed.thinking, timestamp, messageId, origin, runId });
       }
       for (const toolCall of parsed.toolCalls) {
         rows.push({
@@ -38,6 +39,7 @@ function flattenHistory(messages: unknown[]): LogRow[] {
           args: toolCall.args,
           syscall: toolCall.syscall,
           timestamp,
+          runId,
         });
       }
       continue;
@@ -59,6 +61,7 @@ function flattenHistory(messages: unknown[]): LogRow[] {
             ok: parsed.ok,
             error: parsed.error,
             timestamp,
+            runId: runId ?? prior.runId,
           };
         } else {
           rows.push({
@@ -71,10 +74,11 @@ function flattenHistory(messages: unknown[]): LogRow[] {
             ok: parsed.ok,
             error: parsed.error,
             timestamp,
+            runId,
           });
         }
       } else {
-        rows.push({ kind: "message", role: "system", text: formatMessageContent(record.content), timestamp, messageId, origin });
+        rows.push({ kind: "message", role: "system", text: formatMessageContent(record.content), timestamp, messageId, origin, runId });
       }
       continue;
     }
@@ -84,7 +88,7 @@ function flattenHistory(messages: unknown[]): LogRow[] {
     const text = contentRecord && "text" in contentRecord
       ? asString(contentRecord.text) ?? ""
       : formatMessageContent(record?.content);
-    rows.push({ kind: "message", role, text, media, timestamp, messageId, origin });
+    rows.push({ kind: "message", role, text, media, timestamp, messageId, origin, runId });
   }
   return rows.length > 0 ? rows : systemRows("No messages yet. Send your first prompt.");
 }
@@ -112,6 +116,7 @@ function applyProcessMessageSignal(
       timestamp: asNumber(record?.timestamp) || Date.now(),
       messageId: messageId ?? null,
       origin: normalizeInteractionOrigin(record?.origin),
+      runId: asString(record?.runId),
     });
   });
   setPendingAssistant("thinking");

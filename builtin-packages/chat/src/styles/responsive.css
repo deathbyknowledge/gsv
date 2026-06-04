@@ -293,8 +293,20 @@
   }
 
   .message,
-  .tool-card {
+  .tool-card,
+  .assistant-document,
+  .run-thought-button {
     max-width: 100%;
+  }
+
+  .assistant-document {
+    width: 100%;
+  }
+
+  .thoughts-drawer {
+    left: 0;
+    width: 100%;
+    min-width: 0;
   }
 
   .tool-card-head {

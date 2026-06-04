@@ -192,6 +192,7 @@ type ProcessArchiveResult = {
 
 type ArchivedMessageRecord = {
   id?: number;
+  runId?: string;
   role: MessageRole;
   content: string;
   toolCalls?: ToolCall[];
@@ -874,6 +875,7 @@ export class Process extends Host<Env> {
 
     this.store.appendMessage("user", args.message, {
       conversationId,
+      runId,
       media: media ?? undefined,
       origin: origin ?? undefined,
     });
@@ -950,6 +952,7 @@ export class Process extends Host<Env> {
 
     this.store.appendMessage("user", renderedMessage, {
       conversationId,
+      runId,
       origin: origin ?? undefined,
     });
     this.currentRun = { runId, queued: false, conversationId };
@@ -1208,6 +1211,7 @@ export class Process extends Host<Env> {
 
     const messages: ProcHistoryMessage[] = records.map((r) => {
       const origin = parseInteractionOrigin(r.origin);
+      const run = r.runId ? { runId: r.runId } : {};
       if (r.role === "toolResult") {
         let meta: { toolName?: string; isError?: boolean } = {};
         if (r.toolCalls) {
@@ -1228,6 +1232,7 @@ export class Process extends Host<Env> {
             output: r.content,
           },
           timestamp: r.createdAt,
+          ...run,
           ...(origin ? { origin } : {}),
         };
       }
@@ -1243,6 +1248,7 @@ export class Process extends Host<Env> {
             toolCalls: meta.toolCalls ?? [],
           },
           timestamp: r.createdAt,
+          ...run,
           ...(origin ? { origin } : {}),
         };
       }
@@ -1257,6 +1263,7 @@ export class Process extends Host<Env> {
             media,
           },
           timestamp: r.createdAt,
+          ...run,
           ...(origin ? { origin } : {}),
         };
       }
@@ -1266,6 +1273,7 @@ export class Process extends Host<Env> {
         role: r.role,
         content: r.content,
         timestamp: r.createdAt,
+        ...run,
         ...(origin ? { origin } : {}),
       };
     });
@@ -1769,6 +1777,7 @@ export class Process extends Host<Env> {
       toolCallId: message.toolCallId,
       media: message.media === undefined ? undefined : JSON.stringify(message.media),
       origin: serializeInteractionOrigin(message.origin) ?? undefined,
+      runId: message.runId,
       createdAt: message.createdAt,
     });
   }
@@ -1785,6 +1794,7 @@ export class Process extends Host<Env> {
       toolCallId: message.toolCallId ?? undefined,
       media: message.media ?? undefined,
       origin: message.origin ?? undefined,
+      runId: message.runId ?? undefined,
       createdAt: message.createdAt,
     });
   }
@@ -1834,6 +1844,7 @@ export class Process extends Host<Env> {
   }
 
   private toProcHistoryMessageFromArchive(message: ArchivedMessageRecord): ProcHistoryMessage {
+    const run = message.runId ? { runId: message.runId } : {};
     if (message.role === "toolResult") {
       return {
         id: message.id,
@@ -1845,6 +1856,7 @@ export class Process extends Host<Env> {
           output: message.content,
         },
         timestamp: message.createdAt,
+        ...run,
         ...(message.origin ? { origin: message.origin } : {}),
       };
     }
@@ -1859,6 +1871,7 @@ export class Process extends Host<Env> {
           toolCalls: message.toolCalls ?? [],
         },
         timestamp: message.createdAt,
+        ...run,
         ...(message.origin ? { origin: message.origin } : {}),
       };
     }
@@ -1872,6 +1885,7 @@ export class Process extends Host<Env> {
           media: message.media,
         },
         timestamp: message.createdAt,
+        ...run,
         ...(message.origin ? { origin: message.origin } : {}),
       };
     }
@@ -1881,6 +1895,7 @@ export class Process extends Host<Env> {
       role: message.role,
       content: message.content,
       timestamp: message.createdAt,
+      ...run,
       ...(message.origin ? { origin: message.origin } : {}),
     };
   }
@@ -2214,12 +2229,13 @@ export class Process extends Host<Env> {
   private async appendRuntimeMessage(
     role: Extract<MessageRole, "system">,
     content: string,
-    opts?: { conversationId?: string },
+    opts?: { conversationId?: string; runId?: string },
   ): Promise<number> {
     const conversationId = normalizeConversationId(opts?.conversationId);
     const timestamp = Date.now();
     const messageId = this.store.appendMessage(role, content, {
       conversationId,
+      runId: opts?.runId,
       createdAt: timestamp,
     });
     try {
@@ -2229,6 +2245,7 @@ export class Process extends Host<Env> {
         role,
         content,
         timestamp,
+        ...(opts?.runId ? { runId: opts.runId } : {}),
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -2238,11 +2255,12 @@ export class Process extends Host<Env> {
   }
 
   private async handleWatchedSignalTriggered(signal: string, payload: unknown): Promise<void> {
+    const runId = this.currentRun ? undefined : crypto.randomUUID();
     await this.appendRuntimeMessage("system", formatWatchedSignalMessage(signal, payload), {
       conversationId: DEFAULT_CONVERSATION_ID,
+      runId,
     });
-    if (!this.currentRun) {
-      const runId = crypto.randomUUID();
+    if (!this.currentRun && runId) {
       this.currentRun = {
         runId,
         queued: false,
@@ -2254,11 +2272,12 @@ export class Process extends Host<Env> {
   }
 
   private async handleIpcSignal(signal: string, payload: unknown): Promise<void> {
+    const runId = this.currentRun ? undefined : crypto.randomUUID();
     await this.appendRuntimeMessage("system", formatIpcReplyMessage(signal, payload), {
       conversationId: DEFAULT_CONVERSATION_ID,
+      runId,
     });
-    if (!this.currentRun) {
-      const runId = crypto.randomUUID();
+    if (!this.currentRun && runId) {
       this.currentRun = {
         runId,
         queued: false,
@@ -2274,11 +2293,12 @@ export class Process extends Host<Env> {
       return;
     }
     const conversationId = normalizeConversationId(payload.conversationId);
+    const runId = this.currentRun ? undefined : crypto.randomUUID();
     await this.appendRuntimeMessage("system", formatScheduleEventMessage(payload), {
       conversationId,
+      runId,
     });
-    if (!this.currentRun) {
-      const runId = crypto.randomUUID();
+    if (!this.currentRun && runId) {
       this.currentRun = {
         runId,
         queued: false,
@@ -2327,6 +2347,7 @@ export class Process extends Host<Env> {
         this.store.appendMessage("user", qm.message, {
           conversationId: qm.conversationId,
           generation: qm.generation,
+          runId: qm.runId,
           media: qm.media ?? undefined,
           origin: qm.origin ?? undefined,
         });
@@ -2458,7 +2479,7 @@ export class Process extends Host<Env> {
       const errorMsg = e instanceof Error ? e.message : String(e);
       const displayError = formatGenerationFailure(errorMsg);
       console.error(`[Process] LLM call failed:`, e);
-      this.store.appendMessage("system", displayError, { conversationId });
+      this.store.appendMessage("system", displayError, { conversationId, runId });
       await this.emitProcChanged(["messages"], {
         conversationId,
         runId,
@@ -2486,7 +2507,7 @@ export class Process extends Host<Env> {
       const errorMsg = response.errorMessage ?? responseFailure;
       const displayError = formatGenerationFailure(errorMsg);
       console.error(`[Process] ${errorMsg}`);
-      this.store.appendMessage("system", displayError, { conversationId });
+      this.store.appendMessage("system", displayError, { conversationId, runId });
       await this.emitProcChanged(["messages"], {
         conversationId,
         runId,
@@ -2532,6 +2553,7 @@ export class Process extends Host<Env> {
 
     this.store.appendMessage("assistant", text, {
       conversationId,
+      runId,
       toolCalls: stringifyAssistantMessageMeta({
         thinking: thinkingBlocks,
         toolCalls,
@@ -2648,7 +2670,7 @@ export class Process extends Host<Env> {
         `Current estimate: ${Math.round(pressure * 100)}%.`,
         "Compact or reset the conversation before sending more work.",
       ].join("\n");
-      this.store.appendMessage("system", message, { conversationId });
+      this.store.appendMessage("system", message, { conversationId, runId });
       await this.emitProcChanged(["messages"], {
         conversationId,
         runId,
@@ -2677,7 +2699,7 @@ export class Process extends Host<Env> {
         `Policy keeps the newest ${policy.keepLast} messages live.`,
         "Lower the keep-last value, compact manually, or reset this conversation.",
       ].join("\n");
-      this.store.appendMessage("system", message, { conversationId });
+      this.store.appendMessage("system", message, { conversationId, runId });
       await this.emitProcChanged(["messages"], {
         conversationId,
         runId,
@@ -2710,7 +2732,7 @@ export class Process extends Host<Env> {
     }
     if (!result.ok) {
       const message = `Auto-compaction failed before model call: ${result.error}`;
-      this.store.appendMessage("system", message, { conversationId });
+      this.store.appendMessage("system", message, { conversationId, runId });
       await this.emitProcChanged(["messages"], {
         conversationId,
         runId,
@@ -3212,6 +3234,7 @@ export class Process extends Host<Env> {
         content,
         isError,
         conversationId,
+        runId,
       );
 
       await this.sendSignal("proc.run.tool.finished", {
@@ -3770,6 +3793,7 @@ export class Process extends Host<Env> {
       `Error: ${errorMessage}`,
       true,
       conversationId,
+      runId,
     );
     await this.sendSignal("proc.run.tool.finished", {
       name: SYSCALL_TOOL_NAMES[syscallName] ?? syscallName,
@@ -3819,6 +3843,7 @@ export class Process extends Host<Env> {
     this.store.appendMessage("user", next.message, {
       conversationId: next.conversationId,
       generation: next.generation,
+      runId: next.runId,
       media: next.media ?? undefined,
       origin: next.origin ?? undefined,
     });
@@ -3924,6 +3949,7 @@ function serializeArchivedMessage(message: MessageRecord): Record<string, unknow
       id: message.id,
       conversation_id: message.conversationId,
       generation: message.generation,
+      run_id: message.runId ?? undefined,
       role: message.role,
       content: message.content,
       tool_calls: meta.toolCalls,
@@ -3938,6 +3964,7 @@ function serializeArchivedMessage(message: MessageRecord): Record<string, unknow
     id: message.id,
     conversation_id: message.conversationId,
     generation: message.generation,
+    run_id: message.runId ?? undefined,
     role: message.role,
     content: message.content,
     media: message.media ? parseStoredProcessMedia(message.media) : undefined,
@@ -3964,10 +3991,14 @@ function parseArchivedMessageRecord(value: unknown): ArchivedMessageRecord {
   const id = typeof record.id === "number" && Number.isInteger(record.id) && record.id > 0
     ? record.id
     : undefined;
+  const runId = typeof record.run_id === "string" && record.run_id.trim().length > 0
+    ? record.run_id
+    : undefined;
   const origin = parseInteractionOriginRecord(record.origin);
 
   return {
     id,
+    runId,
     role,
     content,
     toolCalls: Array.isArray(record.tool_calls)

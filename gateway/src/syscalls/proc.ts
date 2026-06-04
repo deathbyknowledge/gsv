@@ -195,6 +195,7 @@ export type ProcHistoryArgs = {
 
 export type ProcHistoryMessage = {
   id?: number;
+  runId?: string;
   role: "user" | "assistant" | "system" | "toolResult";
   content: unknown;
   timestamp?: number;

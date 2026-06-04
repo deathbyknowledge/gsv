@@ -57,6 +57,7 @@ export type MessageRecord = {
   id: number;
   conversationId: string;
   generation: number;
+  runId?: string | null;
   role: MessageRole;
   content: string;
   toolCalls: string | null;
@@ -740,6 +741,7 @@ export class ProcessStore {
       toolCallId?: string;
       media?: string;
       origin?: string;
+      runId?: string;
       createdAt?: number;
     },
   ): number {
@@ -747,10 +749,11 @@ export class ProcessStore {
     const generation = opts?.generation ?? this.getConversationGeneration(conversationId);
     this.sql.exec(
       `INSERT INTO messages (
-        conversation_id, generation, role, content, tool_calls, tool_call_id, media_json, origin_json, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        conversation_id, generation, run_id, role, content, tool_calls, tool_call_id, media_json, origin_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       conversationId,
       generation,
+      opts?.runId ?? null,
       role,
       content,
       opts?.toolCalls ?? null,
@@ -800,6 +803,7 @@ export class ProcessStore {
       id: number;
       conversation_id: string;
       generation: number;
+      run_id: string | null;
       role: string;
       content: string;
       tool_calls: string | null;
@@ -820,6 +824,7 @@ export class ProcessStore {
       id: row.id,
       conversationId: row.conversation_id,
       generation: row.generation,
+      runId: row.run_id,
       role: row.role as MessageRole,
       content: row.content,
       toolCalls: row.tool_calls,
@@ -858,6 +863,7 @@ export class ProcessStore {
       id: number;
       conversation_id: string;
       generation: number;
+      run_id: string | null;
       role: string;
       content: string;
       tool_calls: string | null;
@@ -876,6 +882,7 @@ export class ProcessStore {
       id: row.id,
       conversationId: row.conversation_id,
       generation: row.generation,
+      runId: row.run_id,
       role: row.role as MessageRole,
       content: row.content,
       toolCalls: row.tool_calls,
@@ -909,6 +916,7 @@ export class ProcessStore {
       id: number;
       conversation_id: string;
       generation: number;
+      run_id: string | null;
       role: string;
       content: string;
       tool_calls: string | null;
@@ -928,6 +936,7 @@ export class ProcessStore {
       id: row.id,
       conversationId: row.conversation_id,
       generation: row.generation,
+      runId: row.run_id,
       role: row.role as MessageRole,
       content: row.content,
       toolCalls: row.tool_calls,
@@ -968,6 +977,7 @@ export class ProcessStore {
       id: number;
       conversation_id: string;
       generation: number;
+      run_id: string | null;
       role: string;
       content: string;
       tool_calls: string | null;
@@ -982,6 +992,7 @@ export class ProcessStore {
       id: row.id,
       conversationId: row.conversation_id,
       generation: row.generation,
+      runId: row.run_id,
       role: row.role as MessageRole,
       content: row.content,
       toolCalls: row.tool_calls,
@@ -1180,10 +1191,12 @@ export class ProcessStore {
     content: string,
     isError: boolean,
     conversationId: string = DEFAULT_CONVERSATION_ID,
+    runId?: string,
   ): number {
     const toolName = SYSCALL_TOOL_NAMES[syscallName] ?? syscallName;
     return this.appendMessage("toolResult", content, {
       conversationId,
+      runId,
       toolCallId,
       toolCalls: JSON.stringify({ toolName, isError }),
     });

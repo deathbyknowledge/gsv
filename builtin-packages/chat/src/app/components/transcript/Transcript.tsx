@@ -1,13 +1,18 @@
+import { useEffect, useMemo, useState } from "preact/hooks";
 import type { HilRequest, LogRow, MessageRow, PendingAssistantState } from "../../types";
+import type { TranscriptRunGroup } from "../../domain/run-groups";
+import { groupTranscriptRows } from "../../domain/run-groups";
 import { ArrowDownIcon } from "../../icons";
 import { HilCard } from "./HilCard";
 import { MessageBubble } from "./MessageBubble";
+import { RunGroupView, ThoughtsDrawer } from "./RunGroup";
 import { isHiddenInternalToolRow, ToolCard } from "./ToolCard";
 
 export function Transcript(props: {
   rows: LogRow[];
   userLabel: string;
   assistantLabel: string;
+  activeRunId?: string | null;
   pendingAssistant: PendingAssistantState;
   pendingHil: HilRequest | null;
   hasOlderHistory: boolean;
@@ -27,9 +32,43 @@ export function Transcript(props: {
   onLoadMediaSource(media: unknown): void;
   onRetryMediaSource(media: unknown): void;
 }) {
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  const items = useMemo(
+    () => groupTranscriptRows(props.rows, props.pendingAssistant, props.pendingHil, props.activeRunId),
+    [props.rows, props.pendingAssistant, props.pendingHil, props.activeRunId],
+  );
+  const selectedRun = useMemo(() => {
+    if (!selectedRunId) {
+      return null;
+    }
+    return items.find((item): item is TranscriptRunGroup => item.kind === "run" && item.runId === selectedRunId) ?? null;
+  }, [items, selectedRunId]);
   const hilRendered = props.pendingHil
-    ? props.rows.some((row) => row.kind === "toolCall" && row.callId === props.pendingHil?.callId)
+    ? items.some((item) => (
+        item.kind === "run"
+          ? item.pendingHil?.requestId === props.pendingHil?.requestId
+          : item.row.kind === "toolCall" && item.row.callId === props.pendingHil?.callId
+      ))
     : true;
+  const pendingRendered = items.some((item) =>
+    item.kind === "run" && (item.pendingAssistant !== null || item.pendingHil !== null)
+  );
+
+  useEffect(() => {
+    if (selectedRunId && !selectedRun) {
+      setSelectedRunId(null);
+    }
+  }, [selectedRun, selectedRunId]);
+
+  useEffect(() => {
+    if (!props.pendingAssistant && !props.pendingHil) {
+      return undefined;
+    }
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [props.pendingAssistant, props.pendingHil]);
+
   return (
     <div class="transcript-shell">
       <div
@@ -54,7 +93,30 @@ export function Transcript(props: {
             <span>{props.loadingOlderHistory ? "Loading older messages" : "Load older messages"}</span>
           </button>
         ) : null}
-        {props.rows.map((row, index) => {
+        {items.map((item, index) => {
+          if (item.kind === "run") {
+            return (
+              <RunGroupView
+                key={`run:${item.runId}:${index}`}
+                group={item}
+                now={now}
+                selected={selectedRunId === item.runId}
+                userLabel={props.userLabel}
+                assistantLabel={props.assistantLabel}
+                branchBusy={props.branchBusy}
+                hilBusy={props.hilBusy}
+                mediaSources={props.mediaSources}
+                mediaSourceErrors={props.mediaSourceErrors}
+                onCopy={props.onCopy}
+                onBranch={props.onBranch}
+                onHilDecision={props.onHilDecision}
+                onLoadMediaSource={props.onLoadMediaSource}
+                onRetryMediaSource={props.onRetryMediaSource}
+                onOpenThoughts={setSelectedRunId}
+              />
+            );
+          }
+          const row = item.row;
           if (row.kind === "toolCall" || row.kind === "toolResult") {
             if (props.pendingHil && row.kind === "toolCall" && row.callId === props.pendingHil.callId) {
               return (
@@ -91,7 +153,7 @@ export function Transcript(props: {
         {props.pendingHil && !hilRendered ? (
           <HilCard request={props.pendingHil} busy={props.hilBusy} onDecision={props.onHilDecision} />
         ) : null}
-        {props.pendingAssistant ? (
+        {props.pendingAssistant && !pendingRendered ? (
           <article class="message-pending">
             <span class="spinner" aria-hidden="true" />
             <span>{props.pendingAssistant === "tool" ? "Working..." : "Thinking..."}</span>
@@ -104,6 +166,12 @@ export function Transcript(props: {
           <span>New messages</span>
         </button>
       ) : null}
+      <ThoughtsDrawer
+        group={selectedRun}
+        hilBusy={props.hilBusy}
+        onClose={() => setSelectedRunId(null)}
+        onHilDecision={props.onHilDecision}
+      />
     </div>
   );
 }

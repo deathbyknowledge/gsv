@@ -2645,8 +2645,8 @@ describe("Process DO — mechanical", () => {
 
       await runInDurableObject(stub, (instance: Process) => {
         const store = (instance as any).store;
-        store.appendMessage("user", "What is 2+2?");
-        store.appendMessage("assistant", "4");
+        store.appendMessage("user", "What is 2+2?", { runId: "run-history-1" });
+        store.appendMessage("assistant", "4", { runId: "run-history-1" });
         store.appendMessage("user", "Thanks!");
       });
 
@@ -2662,8 +2662,11 @@ describe("Process DO — mechanical", () => {
       expect(data.messages).toHaveLength(3);
       expect(data.messages[0].role).toBe("user");
       expect(data.messages[0].content).toBe("What is 2+2?");
+      expect(data.messages[0].runId).toBe("run-history-1");
       expect(data.messages[1].role).toBe("assistant");
       expect(data.messages[1].content).toBe("4");
+      expect(data.messages[1].runId).toBe("run-history-1");
+      expect(data.messages[2].runId).toBeUndefined();
     });
 
     it("returns persisted interaction origin metadata", async () => {
@@ -2808,7 +2811,7 @@ describe("Process DO — mechanical", () => {
 
       await runInDurableObject(stub, (instance: Process) => {
         const store = (instance as any).store;
-        store.appendToolResult("call-1", "fs.read", "file contents here", false);
+        store.appendToolResult("call-1", "fs.read", "file contents here", false, "default", "run-history-tool");
       });
 
       const res = (await stub.recvFrame(
@@ -2820,6 +2823,7 @@ describe("Process DO — mechanical", () => {
       expect(data.ok).toBe(true);
       expect(data.messages).toHaveLength(1);
       expect(data.messages[0].role).toBe("toolResult");
+      expect(data.messages[0].runId).toBe("run-history-tool");
       expect(data.messages[0].content).toEqual({
         toolName: "Read",
         isError: false,
@@ -2835,6 +2839,7 @@ describe("Process DO — mechanical", () => {
       await runInDurableObject(stub, (instance: Process) => {
         const store = (instance as any).store;
         store.appendMessage("assistant", "Let me inspect that.", {
+          runId: "run-history-thinking",
           toolCalls: JSON.stringify({
             thinking: [
               { type: "thinking", thinking: "Need to inspect config before answering." },
@@ -2854,6 +2859,7 @@ describe("Process DO — mechanical", () => {
       const data = res.data as any;
       expect(data.messages).toHaveLength(1);
       expect(data.messages[0].role).toBe("assistant");
+      expect(data.messages[0].runId).toBe("run-history-thinking");
       expect(data.messages[0].content).toEqual({
         text: "Let me inspect that.",
         thinking: [

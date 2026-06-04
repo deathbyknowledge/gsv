@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { PROCESS_MIGRATIONS, PROCESS_SCHEMA_COMPONENT } from "./migrations";
+import { PROCESS_V001_INITIAL_SCHEMA } from "./v001_initial";
+import { PROCESS_V002_MESSAGE_RUN_ID } from "./v002_message_run_id";
 
 function normalizedStatements(): string[] {
   return PROCESS_MIGRATIONS.flatMap((migration) => migration.statements)
@@ -29,12 +31,16 @@ function createTableStatement(name: string): string {
 }
 
 describe("process schema migrations", () => {
-  it("starts the process component at a v1 baseline", () => {
+  it("starts the process component at a v1 baseline with ordered migrations", () => {
     expect(PROCESS_SCHEMA_COMPONENT).toBe("process");
-    expect(PROCESS_MIGRATIONS).toHaveLength(1);
+    expect(PROCESS_MIGRATIONS).toHaveLength(2);
     expect(PROCESS_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_process_schema",
+    });
+    expect(PROCESS_MIGRATIONS[1]).toMatchObject({
+      id: 2,
+      name: "add_message_run_id",
     });
   });
 
@@ -77,10 +83,20 @@ describe("process schema migrations", () => {
     expect(createdIndexes()).toEqual([
       "messages_conversation_id_id_idx",
       "conversation_archives_conversation_generation_idx",
+      "messages_run_id_idx",
     ]);
   });
 
   it("does not include ad hoc legacy column migrations in the v1 baseline", () => {
-    expect(normalizedStatements().some((statement) => statement.startsWith("ALTER TABLE "))).toBe(false);
+    expect(PROCESS_V001_INITIAL_SCHEMA.statements
+      .map((statement) => statement.trim().replace(/\s+/g, " "))
+      .some((statement) => statement.startsWith("ALTER TABLE "))).toBe(false);
+  });
+
+  it("adds run ids to persisted messages in v2", () => {
+    const statements = PROCESS_V002_MESSAGE_RUN_ID.statements
+      .map((statement) => statement.trim().replace(/\s+/g, " "));
+    expect(statements).toContain("ALTER TABLE messages ADD COLUMN run_id TEXT");
+    expect(statements).toContain("CREATE INDEX IF NOT EXISTS messages_run_id_idx ON messages (run_id)");
   });
 });
