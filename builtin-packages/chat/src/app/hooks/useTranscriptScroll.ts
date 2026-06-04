@@ -18,13 +18,17 @@ export function useTranscriptScroll() {
   const prepareForLiveTranscriptActivity = useCallback(() => {
     const node = transcriptRef.current;
     const atBottom = !node || isNearBottom(node);
-    stickToBottomRef.current = atBottom;
-    if (atBottom || hasNewMessagesRef.current) {
+    if (stickToBottomRef.current || atBottom) {
+      stickToBottomRef.current = true;
+      clearNewMessages();
+      return;
+    }
+    if (hasNewMessagesRef.current) {
       return;
     }
     hasNewMessagesRef.current = true;
     setHasNewMessages(true);
-  }, []);
+  }, [clearNewMessages]);
 
   const handleTranscriptScroll = useCallback((node: HTMLElement) => {
     const atBottom = isNearBottom(node);

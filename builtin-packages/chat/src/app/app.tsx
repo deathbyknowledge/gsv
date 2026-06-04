@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { openApp } from "@gsv/package/host";
 import type {
   Attachment,
@@ -464,9 +464,9 @@ export function App({ backend }: { backend: ChatBackend }) {
     stageView,
   });
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     scrollTranscript("near-bottom");
-  }, [rows.length, pendingAssistant, pendingHil, scrollTranscript]);
+  }, [rows, pendingAssistant, pendingHil, scrollTranscript]);
 
   async function openHome(): Promise<void> {
     setNotice("");
