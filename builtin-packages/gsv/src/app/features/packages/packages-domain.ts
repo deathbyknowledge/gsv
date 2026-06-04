@@ -149,7 +149,6 @@ export function buildPermissionSummary(pkg: PackageRecord): string[] {
   if (pkg.declaredSyscalls.some((syscall) => syscall.startsWith("fs."))) notes.add("Can read or modify files exposed through filesystem syscalls.");
   if (pkg.declaredSyscalls.includes("proc.spawn")) notes.add("Can spawn new processes and route work into more runtime contexts.");
   if (pkg.declaredSyscalls.some((syscall) => syscall.startsWith("pkg."))) notes.add("Can inspect or change package state, including install or update flows.");
-  if (pkg.declaredSyscalls.some((syscall) => syscall.startsWith("sys.config."))) notes.add("Can modify system configuration.");
   if (pkg.declaredSyscalls.some((syscall) => syscall.startsWith("sys.token."))) notes.add("Can issue or revoke access tokens.");
   if (pkg.declaredSyscalls.some((syscall) => syscall.startsWith("sys.link") || syscall.startsWith("sys.unlink"))) notes.add("Can modify identity links and trust relationships.");
   if (notes.size === 0) notes.add("No elevated bindings or syscall surfaces were declared in the package summary.");

@@ -39,7 +39,6 @@ export function setupRequiredDetails(): { setupMode: true; next: "sys.setup" } {
 export async function ensureKernelBootstrapped(ctx: KernelContext): Promise<void> {
   await ctx.auth.bootstrap();
   ctx.caps.seed();
-  migrateUserPrivateGroups(ctx);
   await ensurePublicAssetStorageLayout(ctx.env);
   await ensureHomeStorageLayout(ctx.env, {
     uid: 0,
@@ -51,32 +50,6 @@ export async function ensureKernelBootstrapped(ctx: KernelContext): Promise<void
   }, {
     cleanupGeneratedPromptContext: true,
   });
-}
-
-/**
- * Migrate legacy human accounts that were created before User Private Groups (UPG)
- * onto their own private primary group (gid = uid), while keeping `users` (gid 100)
- * membership so shared capabilities are preserved.
- *
- * Idempotent: accounts already off gid 100 (migrated humans and agent accounts,
- * which are created with gid = uid from the start) are skipped.
- */
-function migrateUserPrivateGroups(ctx: KernelContext): void {
-  const { auth } = ctx;
-  for (const entry of auth.getPasswdEntries()) {
-    if (entry.uid < 1000) continue;
-    if (entry.gid !== 100) continue;
-
-    if (!auth.getGroupByName(entry.username) && !auth.getGroupByGid(entry.uid)) {
-      auth.addGroup({ name: entry.username, gid: entry.uid, members: [] });
-    }
-    auth.updateUser(entry.username, { gid: entry.uid });
-
-    const usersGroup = auth.getGroupByName("users");
-    if (usersGroup && !usersGroup.members.includes(entry.username)) {
-      auth.updateGroupMembers("users", [...usersGroup.members, entry.username]);
-    }
-  }
 }
 
 export async function handleConnect(

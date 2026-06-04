@@ -14,7 +14,6 @@ describe("internal syscall exposure", () => {
     expect(isInternalOnlySyscall("ai.transcription.create")).toBe(false);
     expect(isInternalOnlySyscall("ai.speech.create")).toBe(false);
     expect(isInternalOnlySyscall("proc.ipc.send")).toBe(false);
-    expect(isInternalOnlySyscall("sys.config.get")).toBe(false);
     expect(isInternalOnlySyscall("proc.ipc.call")).toBe(false);
   });
 });

@@ -11,6 +11,7 @@ import type {
   SaveAgentContextArgs,
   SetAgentBehaviorArgs,
 } from "../app/features/agents/types";
+import { readConfigValue, writeConfigValue } from "./config-files";
 
 type AgentsRuntime = { viewer?: { uid?: number; username?: string } };
 
@@ -23,8 +24,6 @@ type AccountSummary = {
   gecos?: string;
 };
 
-type ConfigEntry = { key: string; value: string };
-
 const ACCOUNT_USERNAME_RE = /^[a-z_][a-z0-9_-]{0,31}$/;
 
 function errorText(error: unknown): string {
@@ -34,10 +33,6 @@ function errorText(error: unknown): string {
 function asAccounts(value: unknown): AccountSummary[] {
   const record = value && typeof value === "object" ? value as { accounts?: unknown } : {};
   return Array.isArray(record.accounts) ? record.accounts as AccountSummary[] : [];
-}
-
-function configValue(entries: ConfigEntry[], key: string): string | undefined {
-  return entries.find((entry) => entry.key === key)?.value;
 }
 
 function contextDir(username: string): string {
@@ -78,25 +73,25 @@ export async function loadAgentsState(
   const isRoot = viewerUid === 0;
 
   try {
-    const [accountsPayload, configPayload] = await Promise.all([
-      kernel.request("account.list", {}),
-      kernel.request("sys.config.get", {}) as Promise<{ entries?: unknown }>,
-    ]);
+    const accountsPayload = await kernel.request("account.list", {});
     const accounts = asAccounts(accountsPayload);
-    const entries = Array.isArray(configPayload.entries)
-      ? configPayload.entries as ConfigEntry[]
-      : [];
 
-    const agents: AgentDetail[] = accounts
+    const agents: AgentDetail[] = await Promise.all(accounts
       .filter((account) => account.relation === "personal-agent" || account.relation === "agent")
-      .map((account) => ({
-        uid: account.uid,
-        username: account.username,
-        displayName: account.displayName,
-        relation: account.relation,
-        runnable: account.runnable,
-        model: configValue(entries, `users/${account.uid}/ai/model`) ?? "",
-        approval: configValue(entries, `users/${account.uid}/ai/tools/approval`) ?? "",
+      .map(async (account) => {
+        const [model, approval] = await Promise.all([
+          readConfigValue(kernel, `users/${account.uid}/ai/model`),
+          readConfigValue(kernel, `users/${account.uid}/ai/tools/approval`),
+        ]);
+        return {
+          uid: account.uid,
+          username: account.username,
+          displayName: account.displayName,
+          relation: account.relation,
+          runnable: account.runnable,
+          model: model ?? "",
+          approval: approval ?? "",
+        };
       }));
 
     const humans: AccountSummary[] = accounts.filter(
@@ -179,16 +174,10 @@ export async function setAgentBehavior(
   }
   try {
     if (args.model !== undefined) {
-      await kernel.request("sys.config.set", {
-        key: `users/${uid}/ai/model`,
-        value: String(args.model).trim(),
-      });
+      await writeConfigValue(kernel, `users/${uid}/ai/model`, String(args.model).trim());
     }
     if (args.approval !== undefined) {
-      await kernel.request("sys.config.set", {
-        key: `users/${uid}/ai/tools/approval`,
-        value: String(args.approval).trim(),
-      });
+      await writeConfigValue(kernel, `users/${uid}/ai/tools/approval`, String(args.approval).trim());
     }
     return { ok: true, errorText: "" };
   } catch (error) {

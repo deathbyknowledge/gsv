@@ -25,7 +25,7 @@ The Kernel is responsible for:
   packages, adapter links, routes, notifications, and runtime config
   in Kernel SQLite.
 - Dispatching syscalls such as `fs.read`, `shell.exec`, `proc.spawn`,
-  `pkg.sync`, `sys.config.get`, `sys.oauth.start`, `sys.mcp.add`, and
+  `pkg.sync`, `sys.oauth.start`, `sys.mcp.add`, and
   `adapter.inbound`.
 - Routing requests between browser clients, the CLI, package apps, Process DOs,
   adapter workers, and connected devices.

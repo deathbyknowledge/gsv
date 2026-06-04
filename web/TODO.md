@@ -60,7 +60,7 @@
 - [x] Render assistant messages as sanitized Markdown.
 - [x] Add structured tool call/result cards with tool-specific output views.
 - [x] Migrate Chat to SDK component runtime (`gsv-chat-app`) while preserving behavior.
-- [x] Build real Control app config panel (`sys.config.get`/`sys.config.set`) with filter + edit workflow.
+- [x] Build real Control app config panel (`/sys/config` and `/sys/users`) with filter + edit workflow.
 - [x] Hook UI to real gateway websocket client.
 - [ ] Replace mock kernel status with live connection/session/process indicators.
 - [ ] Add first real apps: Chat, Shell, Process Monitor, Files.

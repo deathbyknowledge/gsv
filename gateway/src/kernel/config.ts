@@ -94,11 +94,6 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   "config/ai/tools/approval": WORKER_TOOL_APPROVAL_POLICY,
 };
 
-// Per-user config keys follow the same structure under "users/{uid}/ai/*".
-// e.g. "users/1000/ai/provider" overrides "config/ai/provider" for uid 1000.
-// Only AI config is user-overridable; server/shell/process config is system-only.
-export const USER_OVERRIDABLE_PREFIXES = ["ai/"] as const;
-
 export class ConfigStore {
   constructor(private readonly sql: SqlStorage) {}
 

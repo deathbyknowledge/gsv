@@ -2803,7 +2803,7 @@ export class Process extends Host<Env> {
 
   /**
    * Synchronous kernel RPC — for syscalls the kernel handles natively
-   * (ai.config, ai.tools, sys.config.get, etc.). Throws on error.
+   * (ai.config, ai.tools, proc.ipc.deliver, etc.). Throws on error.
    */
   private async kernelRpc<T extends SyscallName>(
     call: T,

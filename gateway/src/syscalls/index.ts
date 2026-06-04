@@ -137,10 +137,6 @@ import type {
   SysSetupResult,
   SysBootstrapArgs,
   SysBootstrapResult,
-  SysConfigGetArgs,
-  SysConfigGetResult,
-  SysConfigSetArgs,
-  SysConfigSetResult,
   SysDeviceListArgs,
   SysDeviceListResult,
   SysDeviceGetArgs,
@@ -343,8 +339,6 @@ export type SyscallDomains = {
   "sys.setup.assist": { args: SysSetupAssistArgs; result: SysSetupAssistResult };
   "sys.setup": { args: SysSetupArgs; result: SysSetupResult };
   "sys.bootstrap": { args: SysBootstrapArgs; result: SysBootstrapResult };
-  "sys.config.get": { args: SysConfigGetArgs; result: SysConfigGetResult };
-  "sys.config.set": { args: SysConfigSetArgs; result: SysConfigSetResult };
   "sys.device.list": { args: SysDeviceListArgs; result: SysDeviceListResult };
   "sys.device.get": { args: SysDeviceGetArgs; result: SysDeviceGetResult };
   "sys.device.update": { args: SysDeviceUpdateArgs; result: SysDeviceUpdateResult };

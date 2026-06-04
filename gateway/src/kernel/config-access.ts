@@ -26,17 +26,3 @@ export function isSensitiveConfigKey(key: string): boolean {
 
   return SENSITIVE_CONFIG_SUFFIXES.some((suffix) => field.endsWith(suffix));
 }
-
-export function canReadConfigKey(uid: number, key: string): boolean {
-  if (uid === 0) return true;
-
-  if (key.startsWith(`users/${uid}/`)) {
-    return true;
-  }
-
-  if (key.startsWith("config/")) {
-    return !isSensitiveConfigKey(key);
-  }
-
-  return false;
-}

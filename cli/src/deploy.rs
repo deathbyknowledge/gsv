@@ -1,5 +1,4 @@
 use crate::config::CliConfig;
-use crate::connection::Connection;
 use base64::Engine;
 use reqwest::{multipart, StatusCode};
 use serde::de::DeserializeOwned;
@@ -12,7 +11,6 @@ use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::time::sleep;
 use walkdir::WalkDir;
 
 const REPO_OWNER: &str = "deathbyknowledge";
@@ -524,15 +522,6 @@ struct WorkerModuleUpload {
 pub struct DeployApplyResult {
     pub gateway_url: Option<String>,
     pub gateway_existed_before_deploy: bool,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct GatewayBootstrapConfig {
-    pub auth_token: Option<String>,
-    pub llm_provider: Option<String>,
-    pub llm_model: Option<String>,
-    pub llm_api_key: Option<String>,
-    pub set_whatsapp_pairing: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -3132,146 +3121,6 @@ pub async fn print_deploy_status(
             storage_bucket_name,
             if bucket_exists { "exists" } else { "missing" }
         );
-    }
-
-    Ok(())
-}
-
-fn gateway_http_url_to_ws_url(gateway_url: &str) -> String {
-    let mut ws_url = if let Some(rest) = gateway_url.strip_prefix("https://") {
-        format!("wss://{}", rest)
-    } else if let Some(rest) = gateway_url.strip_prefix("http://") {
-        format!("ws://{}", rest)
-    } else {
-        gateway_url.to_string()
-    };
-
-    if !ws_url.ends_with("/ws") {
-        ws_url = ws_url.trim_end_matches('/').to_string();
-        ws_url.push_str("/ws");
-    }
-
-    ws_url
-}
-
-async fn connect_gateway_with_retry(
-    ws_url: &str,
-    auth_token: Option<&str>,
-) -> Result<Connection, Box<dyn std::error::Error>> {
-    let max_attempts = 8usize;
-    let delay = Duration::from_secs(5);
-    let mut last_error: Option<Box<dyn std::error::Error>> = None;
-
-    for attempt in 1..=max_attempts {
-        match Connection::connect(
-            crate::connection::ConnectOptions {
-                url: ws_url.to_string(),
-                role: "user".to_string(),
-                client_id: Some("deploy-bootstrap".to_string()),
-                implements: None,
-                auth_username: None,
-                auth_password: None,
-                auth_token: auth_token.map(|t| t.to_string()),
-            },
-            |_| {},
-        )
-        .await
-        {
-            Ok(conn) => return Ok(conn),
-            Err(error) => {
-                let error_message = error.to_string();
-                last_error = Some(error);
-                if attempt < max_attempts {
-                    println!(
-                        "Warning: failed to connect to gateway config endpoint (attempt {}/{}): {}. Retrying in {}s...",
-                        attempt,
-                        max_attempts,
-                        error_message,
-                        delay.as_secs()
-                    );
-                    sleep(delay).await;
-                }
-            }
-        }
-    }
-
-    Err(last_error.unwrap_or_else(|| "Failed to connect to gateway config endpoint".into()))
-}
-
-async fn gateway_config_set(
-    conn: &Connection,
-    key: &str,
-    value: Value,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let response = conn
-        .request(
-            "sys.config.set",
-            Some(json!({
-                "key": key,
-                "value": if let Some(text) = value.as_str() {
-                    text.to_string()
-                } else {
-                    value.to_string()
-                }
-            })),
-        )
-        .await?;
-
-    if response.ok {
-        Ok(())
-    } else {
-        let message = response
-            .error
-            .map(|err| err.message)
-            .unwrap_or_else(|| "Unknown sys.config.set failure".to_string());
-        Err(format!("sys.config.set {} failed: {}", key, message).into())
-    }
-}
-
-pub async fn bootstrap_gateway_config(
-    gateway_url: &str,
-    connect_auth_token: Option<&str>,
-    config: &GatewayBootstrapConfig,
-) -> Result<(), Box<dyn std::error::Error>> {
-    if config.auth_token.is_none()
-        && config.llm_provider.is_none()
-        && config.llm_model.is_none()
-        && config.llm_api_key.is_none()
-        && !config.set_whatsapp_pairing
-    {
-        return Ok(());
-    }
-
-    let ws_url = gateway_http_url_to_ws_url(gateway_url);
-    let conn = connect_gateway_with_retry(&ws_url, connect_auth_token).await?;
-
-    if let Some(auth_token) = config.auth_token.as_deref() {
-        gateway_config_set(&conn, "auth.token", json!(auth_token)).await?;
-        println!("Configured gateway auth token.");
-    }
-
-    if let Some(provider) = config.llm_provider.as_deref() {
-        gateway_config_set(&conn, "model.provider", json!(provider)).await?;
-        println!("Configured LLM provider: {}", provider);
-    }
-
-    if let Some(model) = config.llm_model.as_deref() {
-        gateway_config_set(&conn, "model.id", json!(model)).await?;
-        println!("Configured LLM model: {}", model);
-    }
-
-    if let Some(api_key) = config.llm_api_key.as_deref() {
-        let provider = config
-            .llm_provider
-            .as_deref()
-            .ok_or("LLM provider is required when setting llm_api_key")?;
-        gateway_config_set(&conn, &format!("apiKeys.{}", provider), json!(api_key)).await?;
-        println!("Configured API key for provider: {}", provider);
-    }
-
-    if config.set_whatsapp_pairing {
-        gateway_config_set(&conn, "channels.whatsapp.dmPolicy", json!("pairing")).await?;
-        println!("Configured WhatsApp DM policy: pairing");
     }
 
     Ok(())
