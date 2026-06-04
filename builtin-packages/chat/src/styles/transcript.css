@@ -10,6 +10,10 @@
   min-height: 0;
   overflow: auto;
   padding: 14px;
+}
+
+.transcript-content {
+  min-width: 0;
   display: grid;
   align-content: start;
   gap: 10px;
@@ -91,6 +95,10 @@
 .message-user {
   justify-self: end;
   background: linear-gradient(180deg, rgba(31, 92, 153, 0.08), rgba(31, 92, 153, 0.04)), var(--panel-strong);
+}
+
+.message-user.is-pretext-sized {
+  max-width: none;
 }
 
 .message-assistant,

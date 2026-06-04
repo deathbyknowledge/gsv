@@ -21,6 +21,7 @@ export function Transcript(props: {
   hilBusy: boolean;
   branchBusy: boolean;
   refNode: { current: HTMLDivElement | null };
+  onContentNode(node: HTMLDivElement | null): void;
   mediaSources: Record<string, string>;
   mediaSourceErrors: Record<string, string>;
   onCopy(text: string): void;
@@ -82,83 +83,85 @@ export function Transcript(props: {
           props.onViewedLatest(node);
         }}
       >
-        {props.hasOlderHistory || props.loadingOlderHistory ? (
-          <button
-            type="button"
-            class="history-loader"
-            disabled={props.loadingOlderHistory}
-            onClick={props.onLoadOlderHistory}
-          >
-            {props.loadingOlderHistory ? <span class="spinner" aria-hidden="true" /> : null}
-            <span>{props.loadingOlderHistory ? "Loading older messages" : "Load older messages"}</span>
-          </button>
-        ) : null}
-        {items.map((item, index) => {
-          if (item.kind === "run") {
+        <div class="transcript-content" ref={props.onContentNode}>
+          {props.hasOlderHistory || props.loadingOlderHistory ? (
+            <button
+              type="button"
+              class="history-loader"
+              disabled={props.loadingOlderHistory}
+              onClick={props.onLoadOlderHistory}
+            >
+              {props.loadingOlderHistory ? <span class="spinner" aria-hidden="true" /> : null}
+              <span>{props.loadingOlderHistory ? "Loading older messages" : "Load older messages"}</span>
+            </button>
+          ) : null}
+          {items.map((item, index) => {
+            if (item.kind === "run") {
+              return (
+                <RunGroupView
+                  key={`run:${item.runId}:${index}`}
+                  group={item}
+                  now={now}
+                  selected={selectedRunId === item.runId}
+                  userLabel={props.userLabel}
+                  assistantLabel={props.assistantLabel}
+                  branchBusy={props.branchBusy}
+                  hilBusy={props.hilBusy}
+                  mediaSources={props.mediaSources}
+                  mediaSourceErrors={props.mediaSourceErrors}
+                  onCopy={props.onCopy}
+                  onBranch={props.onBranch}
+                  onHilDecision={props.onHilDecision}
+                  onLoadMediaSource={props.onLoadMediaSource}
+                  onRetryMediaSource={props.onRetryMediaSource}
+                  onOpenThoughts={setSelectedRunId}
+                />
+              );
+            }
+            const row = item.row;
+            if (row.kind === "toolCall" || row.kind === "toolResult") {
+              if (props.pendingHil && row.kind === "toolCall" && row.callId === props.pendingHil.callId) {
+                return (
+                  <HilCard
+                    key={`${row.callId}:${index}`}
+                    request={{ ...props.pendingHil, toolName: row.toolName || props.pendingHil.toolName, syscall: row.syscall || props.pendingHil.syscall, args: row.args ?? props.pendingHil.args }}
+                    busy={props.hilBusy}
+                    onDecision={props.onHilDecision}
+                  />
+                );
+              }
+              if (isHiddenInternalToolRow(row, props.pendingHil)) {
+                return null;
+              }
+              return <ToolCard key={`${row.callId}:${index}`} row={row} />;
+            }
+            const messageRow = row as MessageRow;
             return (
-              <RunGroupView
-                key={`run:${item.runId}:${index}`}
-                group={item}
-                now={now}
-                selected={selectedRunId === item.runId}
+              <MessageBubble
+                key={`${messageRow.messageId ?? index}:${messageRow.timestamp}`}
+                row={messageRow}
                 userLabel={props.userLabel}
                 assistantLabel={props.assistantLabel}
                 branchBusy={props.branchBusy}
-                hilBusy={props.hilBusy}
                 mediaSources={props.mediaSources}
                 mediaSourceErrors={props.mediaSourceErrors}
                 onCopy={props.onCopy}
                 onBranch={props.onBranch}
-                onHilDecision={props.onHilDecision}
                 onLoadMediaSource={props.onLoadMediaSource}
                 onRetryMediaSource={props.onRetryMediaSource}
-                onOpenThoughts={setSelectedRunId}
               />
             );
-          }
-          const row = item.row;
-          if (row.kind === "toolCall" || row.kind === "toolResult") {
-            if (props.pendingHil && row.kind === "toolCall" && row.callId === props.pendingHil.callId) {
-              return (
-                <HilCard
-                  key={`${row.callId}:${index}`}
-                  request={{ ...props.pendingHil, toolName: row.toolName || props.pendingHil.toolName, syscall: row.syscall || props.pendingHil.syscall, args: row.args ?? props.pendingHil.args }}
-                  busy={props.hilBusy}
-                  onDecision={props.onHilDecision}
-                />
-              );
-            }
-            if (isHiddenInternalToolRow(row, props.pendingHil)) {
-              return null;
-            }
-            return <ToolCard key={`${row.callId}:${index}`} row={row} />;
-          }
-          const messageRow = row as MessageRow;
-          return (
-            <MessageBubble
-              key={`${messageRow.messageId ?? index}:${messageRow.timestamp}`}
-              row={messageRow}
-              userLabel={props.userLabel}
-              assistantLabel={props.assistantLabel}
-              branchBusy={props.branchBusy}
-              mediaSources={props.mediaSources}
-              mediaSourceErrors={props.mediaSourceErrors}
-              onCopy={props.onCopy}
-              onBranch={props.onBranch}
-              onLoadMediaSource={props.onLoadMediaSource}
-              onRetryMediaSource={props.onRetryMediaSource}
-            />
-          );
-        })}
-        {props.pendingHil && !hilRendered ? (
-          <HilCard request={props.pendingHil} busy={props.hilBusy} onDecision={props.onHilDecision} />
-        ) : null}
-        {props.pendingAssistant && !pendingRendered ? (
-          <article class="message-pending">
-            <span class="spinner" aria-hidden="true" />
-            <span>{props.pendingAssistant === "tool" ? "Working..." : "Thinking..."}</span>
-          </article>
-        ) : null}
+          })}
+          {props.pendingHil && !hilRendered ? (
+            <HilCard request={props.pendingHil} busy={props.hilBusy} onDecision={props.onHilDecision} />
+          ) : null}
+          {props.pendingAssistant && !pendingRendered ? (
+            <article class="message-pending">
+              <span class="spinner" aria-hidden="true" />
+              <span>{props.pendingAssistant === "tool" ? "Working..." : "Thinking..."}</span>
+            </article>
+          ) : null}
+        </div>
       </div>
       {props.hasNewMessages ? (
         <button type="button" class="new-messages-button" onClick={props.onJumpToLatest}>

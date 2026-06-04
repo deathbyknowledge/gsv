@@ -2,6 +2,7 @@ import type { MessageRow } from "../../types";
 import { BranchIcon, CopyIcon, MoreIcon } from "../../icons";
 import { closeChatMenus, closeContainingChatMenu, formatInteractionOriginLabel, formatTimestamp, labelForRole, renderMarkdownHtml } from "../../view-helpers";
 import { isAudioMedia, mediaFilename, mediaKind, mediaSourceErrorFor, mediaSourceFor, mediaSourceKey, mediaTranscription } from "../../domain/media";
+import { usePretextBubbleWidth } from "../../hooks/usePretextBubbleWidth";
 import { MediaAttachment } from "../media/MediaAttachment";
 import { VoiceMessage } from "../media/VoiceMessage";
 
@@ -35,13 +36,19 @@ export function MessageBubble({
   const voiceMedia = media.filter(isAudioMedia);
   const otherMedia = media.filter((item) => !isAudioMedia(item));
   const hasText = row.text.trim().length > 0;
+  const useTightBubble = row.role === "user" && hasText && media.length === 0;
+  const { bubbleRef, bubbleStyle } = usePretextBubbleWidth(row.text, useTightBubble);
   const originLabel = formatInteractionOriginLabel(row.origin);
   const mediaTranscript = media.map(mediaTranscription).filter(Boolean).join("\n\n");
   const copyValue = row.text.trim()
     || mediaTranscript
     || row.text;
   return (
-    <article class={`message message-${row.role}`}>
+    <article
+      ref={bubbleRef}
+      class={`message message-${row.role}${useTightBubble ? " is-pretext-sized" : ""}`}
+      style={bubbleStyle}
+    >
       <div class="message-head">
         <span class="message-role-label">{labelForRole(row.role, userLabel, assistantLabel)}</span>
         {originLabel ? <span class="message-origin-label" title={originLabel}>{originLabel}</span> : null}

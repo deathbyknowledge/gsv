@@ -132,6 +132,7 @@ export function App({ backend }: { backend: ChatBackend }) {
   const historyWindowRef = useRef<HistoryWindow>(EMPTY_HISTORY_WINDOW);
   const {
     transcriptRef,
+    setTranscriptContentNode,
     hasNewMessages,
     stickToBottomRef,
     clearNewMessages,
@@ -959,6 +960,7 @@ export function App({ backend }: { backend: ChatBackend }) {
               hilBusy={hilBusy}
               branchBusy={branchBusy}
               refNode={transcriptRef}
+              onContentNode={setTranscriptContentNode}
               mediaSources={mediaSources}
               mediaSourceErrors={mediaSourceErrors}
               onCopy={(text) => void copyText("message", text)}
