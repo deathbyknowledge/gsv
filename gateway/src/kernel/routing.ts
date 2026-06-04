@@ -28,8 +28,6 @@ const DEFAULT_TTL_MS = 60_000;
 export class RoutingTable {
   constructor(private readonly sql: SqlStorage) {}
 
-  init(): void {}
-
   register(
     id: string,
     call: SyscallName,

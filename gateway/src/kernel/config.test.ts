@@ -85,7 +85,6 @@ describe("ConfigStore", () => {
   beforeEach(() => {
     const sql = createMockSql();
     store = new ConfigStore(sql);
-    store.init();
     store.set("config/ai/provider", "anthropic");
     store.set("config/ai/model", "claude-sonnet-4-20250514");
     store.set("users/0/ai/model", "gpt-4.1");

@@ -55,8 +55,6 @@ type VerifiedSecret =
 export class AppSessionStore {
   constructor(private readonly sql: SqlStorage) {}
 
-  init(): void {}
-
   async issue(input: {
     uid: number;
     username: string;

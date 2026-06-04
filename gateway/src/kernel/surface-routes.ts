@@ -14,8 +14,6 @@ export type SurfaceRouteRecord = {
 export class SurfaceRouteStore {
   constructor(private readonly sql: SqlStorage) {}
 
-  init(): void {}
-
   setRoute(
     adapter: string,
     accountId: string,

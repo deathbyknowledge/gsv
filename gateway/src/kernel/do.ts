@@ -221,59 +221,41 @@ export class Kernel extends Host<Env> {
     runKernelSqlMigrations(ctx.storage);
 
     this.auth = new AuthStore(sql);
-    this.auth.init();
 
     this.caps = new CapabilityStore(sql);
-    this.caps.init();
     this.caps.seed();
 
     this.config = new ConfigStore(sql);
-    this.config.init();
 
     this.devices = new DeviceRegistry(sql);
-    this.devices.init();
 
     this.routes = new RoutingTable(sql);
-    this.routes.init();
 
     this.shellSessions = new ShellSessionStore(sql);
-    this.shellSessions.init();
 
     this.procs = new ProcessRegistry(sql);
-    this.procs.init();
 
     this.conversations = new ConversationRegistry(sql);
-    this.conversations.init();
 
     this.adapters = new AdapterStore(sql);
-    this.adapters.init();
 
     this.runRoutes = new RunRouteStore(sql);
-    this.runRoutes.init();
 
     this.signalWatches = new SignalWatchStore(sql);
-    this.signalWatches.init();
 
     this.ipcCalls = new IpcCallStore(sql);
-    this.ipcCalls.init();
 
     this.notifications = new NotificationStore(sql);
-    this.notifications.init();
 
     this.schedules = new ScheduleStore(sql);
-    this.schedules.init();
 
     this.appSessions = new AppSessionStore(sql);
-    this.appSessions.init();
 
     this.packages = new PackageStore(sql, env.STORAGE);
-    this.packages.init();
 
     this.oauth = new OAuthStore(sql);
-    this.oauth.init();
 
     this.mcpServers = new McpServerStore(sql);
-    this.mcpServers.init();
     this.mcp.configureOAuthCallback({
       customHandler: (result) => oauthCallbackHtmlResponse(
         result.authSuccess

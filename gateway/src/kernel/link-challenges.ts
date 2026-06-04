@@ -18,8 +18,6 @@ const DEFAULT_TTL_MS = 10 * 60 * 1000;
 export class LinkChallengeStore {
   constructor(private readonly sql: SqlStorage) {}
 
-  init(): void {}
-
   issue(input: {
     adapter: string;
     accountId: string;

@@ -102,8 +102,6 @@ export const USER_OVERRIDABLE_PREFIXES = ["ai/"] as const;
 export class ConfigStore {
   constructor(private readonly sql: SqlStorage) {}
 
-  init(): void {}
-
   get(key: string): string | null {
     return this.getExplicit(key) ?? SYSTEM_CONFIG_DEFAULTS[key] ?? null;
   }

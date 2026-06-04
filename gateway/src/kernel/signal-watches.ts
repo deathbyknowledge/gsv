@@ -42,8 +42,6 @@ export type SignalWatchRecord = {
 export class SignalWatchStore {
   constructor(private readonly sql: SqlStorage) {}
 
-  init(): void {}
-
   upsert(input: {
     uid: number;
     target: SignalWatchTargetInput;

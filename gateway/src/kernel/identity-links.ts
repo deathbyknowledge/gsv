@@ -11,8 +11,6 @@ export type IdentityLinkRecord = {
 export class IdentityLinkStore {
   constructor(private readonly sql: SqlStorage) {}
 
-  init(): void {}
-
   link(
     adapter: string,
     accountId: string,

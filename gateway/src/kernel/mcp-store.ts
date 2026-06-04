@@ -17,8 +17,6 @@ type McpServerRow = {
 export class McpServerStore {
   constructor(private readonly sql: SqlStorage) {}
 
-  init(): void {}
-
   upsert(input: {
     serverId: string;
     uid: number;

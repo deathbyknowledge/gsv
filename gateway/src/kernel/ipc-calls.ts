@@ -31,8 +31,6 @@ type IpcCallRow = {
 export class IpcCallStore {
   constructor(private readonly sql: SqlStorage) {}
 
-  init(): void {}
-
   create(input: {
     callId: string;
     uid: number;

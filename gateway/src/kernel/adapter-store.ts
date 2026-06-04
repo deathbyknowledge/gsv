@@ -15,11 +15,4 @@ export class AdapterStore {
     this.linkChallenges = new LinkChallengeStore(sql);
     this.status = new AdapterStatusStore(sql);
   }
-
-  init(): void {
-    this.identityLinks.init();
-    this.surfaceRoutes.init();
-    this.linkChallenges.init();
-    this.status.init();
-  }
 }

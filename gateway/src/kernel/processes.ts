@@ -60,8 +60,6 @@ export type ProcessRecord = {
 export class ProcessRegistry {
   constructor(private readonly sql: SqlStorage) {}
 
-  init(): void {}
-
   spawn(
     processId: string,
     identity: ProcessIdentity,

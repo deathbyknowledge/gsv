@@ -121,7 +121,6 @@ describe("RunRouteStore", () => {
 
     const sql = createMockSql();
     const store = new RunRouteStore(sql as unknown as SqlStorage);
-    store.init();
 
     store.setConnectionRoute("run-1", 1000, "conn-a", 5_000);
     const route = store.get("run-1");
@@ -140,7 +139,6 @@ describe("RunRouteStore", () => {
 
     const sql = createMockSql();
     const store = new RunRouteStore(sql as unknown as SqlStorage);
-    store.init();
 
     store.setAdapterRoute(
       "run-2",
@@ -170,7 +168,6 @@ describe("RunRouteStore", () => {
 
     const sql = createMockSql();
     const store = new RunRouteStore(sql as unknown as SqlStorage);
-    store.init();
 
     store.setConnectionRoute("run-expired", 1000, "conn-a", 10);
     expect(store.pruneExpired(10_010)).toBe(1);
@@ -182,7 +179,6 @@ describe("RunRouteStore", () => {
 
     const sql = createMockSql();
     const store = new RunRouteStore(sql as unknown as SqlStorage);
-    store.init();
 
     store.setConnectionRoute("run-c1", 1000, "conn-a");
     store.setConnectionRoute("run-c2", 1000, "conn-b");

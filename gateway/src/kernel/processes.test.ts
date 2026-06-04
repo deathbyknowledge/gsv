@@ -238,7 +238,6 @@ describe("ProcessRegistry", () => {
   it("stores cwd on spawn", () => {
     const sql = createMockSql();
     const registry = new ProcessRegistry(sql as unknown as SqlStorage);
-    registry.init();
 
     registry.spawn("task:1", makeIdentity("/home/sam"), {
       profile: "task",
@@ -259,7 +258,6 @@ describe("ProcessRegistry", () => {
   it("remaps cwd inside home when identity home changes", () => {
     const sql = createMockSql();
     const registry = new ProcessRegistry(sql as unknown as SqlStorage);
-    registry.init();
 
     registry.spawn("task:2", makeIdentity("/home/sam"), {
       profile: "task",
@@ -281,7 +279,6 @@ describe("ProcessRegistry", () => {
   it("preserves non-home cwd when auth identity changes", () => {
     const sql = createMockSql();
     const registry = new ProcessRegistry(sql as unknown as SqlStorage);
-    registry.init();
 
     registry.spawn("task:3", makeIdentity("/home/sam"), {
       profile: "task",
@@ -304,7 +301,6 @@ describe("ProcessRegistry", () => {
   it("tracks runtime activity fields separately from identity metadata", () => {
     const sql = createMockSql();
     const registry = new ProcessRegistry(sql as unknown as SqlStorage);
-    registry.init();
 
     registry.spawn("task:runtime", makeIdentity("/home/sam"), {
       profile: "task",
@@ -339,7 +335,6 @@ describe("ProcessRegistry", () => {
   it("stores and returns process mounts on spawn", () => {
     const sql = createMockSql();
     const registry = new ProcessRegistry(sql as unknown as SqlStorage);
-    registry.init();
 
     registry.spawn("task:4", makeIdentity("/home/sam"), {
       cwd: "/src/packages/pkg-test",

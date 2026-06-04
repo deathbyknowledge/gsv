@@ -94,8 +94,6 @@ type OAuthAccountRow = {
 export class OAuthStore {
   constructor(private readonly sql: SqlStorage) {}
 
-  init(): void {}
-
   createFlow(input: OAuthFlowCreateInput): OAuthFlowRecord {
     const flowId = input.flowId ?? crypto.randomUUID();
     this.sql.exec(

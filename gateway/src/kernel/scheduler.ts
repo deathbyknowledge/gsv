@@ -87,8 +87,6 @@ type StoredScheduleRecord = ScheduleRecord & {
 export class ScheduleStore {
   constructor(private readonly sql: SqlStorage) {}
 
-  init(): void {}
-
   create(input: {
     ownerUid: number;
     creator: SchedulePrincipal;

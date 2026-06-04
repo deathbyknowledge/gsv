@@ -8,8 +8,6 @@ export type AdapterStatusRecord = AdapterAccountStatus & {
 export class AdapterStatusStore {
   constructor(private readonly sql: SqlStorage) {}
 
-  init(): void {}
-
   upsert(adapter: string, accountId: string, status: AdapterAccountStatus): AdapterStatusRecord {
     const now = Date.now();
     this.sql.exec(

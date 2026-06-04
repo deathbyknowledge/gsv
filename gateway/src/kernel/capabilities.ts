@@ -85,8 +85,6 @@ export class CapabilityStore {
     this.sql = sql;
   }
 
-  init(): void {}
-
   seed(): void {
     for (const [gid, caps] of DEFAULT_CAPABILITIES) {
       for (const cap of caps) {

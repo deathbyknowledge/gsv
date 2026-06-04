@@ -46,8 +46,6 @@ type RawDeviceRow = Omit<DeviceRecord, "implements" | "online" | "label" | "desc
 export class DeviceRegistry {
   constructor(private sql: SqlStorage) { }
 
-  init(): void {}
-
   register(
     deviceId: string,
     ownerUid: number,

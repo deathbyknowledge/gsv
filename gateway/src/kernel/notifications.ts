@@ -37,8 +37,6 @@ type RowShape = {
 export class NotificationStore {
   constructor(private readonly sql: SqlStorage) {}
 
-  init(): void {}
-
   create(input: {
     uid: number;
     title: string;

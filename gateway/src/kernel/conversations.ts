@@ -50,8 +50,6 @@ export function conversationArchiveBase(agentHome: string, conversationId: strin
 export class ConversationRegistry {
   constructor(private readonly sql: SqlStorage) {}
 
-  init(): void {}
-
   /**
    * Ensure the well-known default conversation between `ownerUid` and the agent
    * (whose home is `agentHome`) exists. Returns the record and whether it was

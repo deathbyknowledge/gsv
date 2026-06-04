@@ -16,8 +16,6 @@ const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000;
 export class ShellSessionStore {
   constructor(private readonly sql: SqlStorage) {}
 
-  init(): void {}
-
   rememberDeviceSession(
     sessionId: string,
     deviceId: string,

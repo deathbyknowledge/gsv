@@ -621,8 +621,6 @@ export class PackageStore {
     private readonly bucket: R2Bucket,
   ) {}
 
-  init(): void {}
-
   async seedBuiltinPackages(
     builtinSeeds: readonly PackageSeed[],
     now: number = Date.now(),

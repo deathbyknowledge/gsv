@@ -79,8 +79,6 @@ type TokenAuthOptions = {
 export class AuthStore {
   constructor(private readonly sql: SqlStorage) {}
 
-  init(): void {}
-
   getPersonalAgentUid(ownerUid: number): number | null {
     const rows = this.sql.exec<{ agent_uid: number }>(
       "SELECT agent_uid FROM personal_agents WHERE owner_uid = ?",
