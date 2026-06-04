@@ -1,5 +1,5 @@
 import type { MessageRow } from "../../types";
-import type { TranscriptRunGroup } from "../../domain/run-groups";
+import type { RunDetailEntry, TranscriptRunGroup } from "../../domain/run-groups";
 import { runHasDetails } from "../../domain/run-groups";
 import { BranchIcon, ChevronRightIcon, CopyIcon, MoreIcon, ThoughtIcon, XIcon } from "../../icons";
 import {
@@ -49,7 +49,12 @@ export function RunGroupView({
   onOpenThoughts(runId: string): void;
 }) {
   const detailsAvailable = runHasDetails(group);
-  const responseRows = group.rows.filter((row) => !(row.kind === "message" && row.role === "user"));
+  const interimRows = new Set(group.interimAssistantRows);
+  const responseRows = group.rows.filter((row) => (
+    !(row.kind === "message" && row.role === "user")
+    && !(row.kind === "toolCall" || row.kind === "toolResult")
+    && !(row.kind === "message" && row.role === "assistant" && interimRows.has(row))
+  ));
   return (
     <section class={`run-group${selected ? " is-selected" : ""}`}>
       {group.userRows.map((row, index) => (
@@ -83,9 +88,6 @@ export function RunGroupView({
         <HilCard request={group.pendingHil} busy={hilBusy} onDecision={onHilDecision} />
       ) : null}
       {responseRows.map((row, index) => {
-        if (row.kind === "toolCall" || row.kind === "toolResult") {
-          return null;
-        }
         if (row.role === "assistant") {
           return (
             <AssistantDocument
@@ -132,9 +134,9 @@ export function ThoughtsDrawer({
   if (!group) {
     return null;
   }
-  const thinkingBlocks = group.assistantRows.flatMap((row) => row.thinking?.filter(Boolean) ?? []);
-  const visibleToolRows = group.toolRows.filter((row) => !isHiddenInternalToolRow(row, group.pendingHil));
-  const hasDetails = thinkingBlocks.length > 0 || visibleToolRows.length > 0 || group.pendingHil !== null;
+  const visibleEntries = group.detailEntries.filter((entry) => (
+    entry.kind !== "tool" || !isHiddenInternalToolRow(entry.row, group.pendingHil)
+  ));
   return (
     <aside class="thoughts-drawer" aria-label="Thoughts">
       <header class="thoughts-drawer-head">
@@ -147,26 +149,60 @@ export function ThoughtsDrawer({
         </button>
       </header>
       <div class="thoughts-drawer-body">
-        {thinkingBlocks.map((text, index) => (
-          <article class="thought-entry" key={`thinking:${index}`}>
-            <div class="thought-entry-head">
-              <ThoughtIcon />
-              <span>Reasoning</span>
-            </div>
-            <p>{text}</p>
-          </article>
+        {visibleEntries.map((entry, index) => (
+          <ThoughtDrawerEntry
+            key={`${entry.kind}:${entry.kind === "tool" ? entry.row.callId : index}`}
+            entry={entry}
+            hilBusy={hilBusy}
+            onHilDecision={onHilDecision}
+          />
         ))}
-        {group.pendingHil ? (
-          <HilCard request={group.pendingHil} busy={hilBusy} onDecision={onHilDecision} />
-        ) : null}
-        {visibleToolRows.map((row, index) => (
-          <ToolCard key={`${row.callId}:${index}`} row={row} />
-        ))}
-        {!hasDetails ? (
+        {visibleEntries.length === 0 ? (
           <p class="thought-empty">No tool activity</p>
         ) : null}
       </div>
     </aside>
+  );
+}
+
+function ThoughtDrawerEntry({
+  entry,
+  hilBusy,
+  onHilDecision,
+}: {
+  entry: RunDetailEntry;
+  hilBusy: boolean;
+  onHilDecision(requestId: string, decision: "approve" | "deny", remember?: boolean): void;
+}) {
+  if (entry.kind === "tool") {
+    return <ToolCard row={entry.row} />;
+  }
+  if (entry.kind === "hil") {
+    return <HilCard request={entry.request} busy={hilBusy} onDecision={onHilDecision} />;
+  }
+  if (entry.kind === "interimText") {
+    return <InterimTextEntry row={entry.row} />;
+  }
+  return (
+    <article class="thought-entry">
+      <div class="thought-entry-head">
+        <ThoughtIcon />
+        <span>Reasoning</span>
+      </div>
+      <p>{entry.text}</p>
+    </article>
+  );
+}
+
+function InterimTextEntry({ row }: { row: MessageRow }) {
+  return (
+    <article class="thought-entry thought-entry-text">
+      <div class="thought-entry-head">
+        <ThoughtIcon />
+        <span>Interim response</span>
+      </div>
+      <div class="message-markdown" dangerouslySetInnerHTML={{ __html: renderMarkdownHtml(row.text) }} />
+    </article>
   );
 }
 
@@ -232,7 +268,7 @@ function runThoughtLabel(group: TranscriptRunGroup, now: number): string {
     return duration ? `Waiting for approval · ${duration}` : "Waiting for approval";
   }
   if (group.status === "running") {
-    const activity = group.pendingAssistant === "tool" ? latestToolActivity(group) : "Thinking";
+    const activity = latestRunActivity(group);
     return duration ? `${activity} · ${duration}` : activity;
   }
   return duration ? `Thought for ${duration}` : "Thought";
@@ -240,26 +276,34 @@ function runThoughtLabel(group: TranscriptRunGroup, now: number): string {
 
 function runDrawerSubtitle(group: TranscriptRunGroup): string {
   if (group.status === "waiting") return "Waiting for approval";
-  if (group.status === "running") return latestToolActivity(group);
+  if (group.status === "running") return latestRunActivity(group);
   return group.toolRows.length > 0
     ? `${group.toolRows.length} ${group.toolRows.length === 1 ? "tool event" : "tool events"}`
     : "Reasoning";
 }
 
-function latestToolActivity(group: TranscriptRunGroup): string {
-  const latest = group.toolRows[group.toolRows.length - 1];
-  if (!latest) return "Thinking";
-  const syscall = inferToolSyscall(latest.toolName, latest.syscall);
-  if (latest.kind === "toolResult") {
-    return latest.ok === false ? "Tool failed" : "Tool finished";
+function latestRunActivity(group: TranscriptRunGroup): string {
+  const latest = [...group.detailEntries].reverse().find((entry) => entry.kind !== "hil");
+  if (!latest) {
+    return group.pendingAssistant === "tool" ? "Working" : "Thinking";
   }
-  if (latest.toolName === "Shell" || syscall === "shell.exec") return "Using shell";
-  if (latest.toolName === "Read" || syscall === "fs.read") return "Reading file";
-  if (latest.toolName === "Search" || syscall === "fs.search") return "Searching files";
-  if (latest.toolName === "Write" || syscall === "fs.write") return "Writing file";
-  if (latest.toolName === "Edit" || syscall === "fs.edit") return "Editing file";
-  if (latest.toolName === "CodeMode" || syscall === "codemode.exec" || syscall === "codemode.run") return "Using CodeMode";
-  return `Using ${latest.toolName}`;
+  if (latest.kind === "thinking") return "Thinking";
+  if (latest.kind === "interimText") return "Drafting interim response";
+  return toolActivity(latest.row);
+}
+
+function toolActivity(row: Extract<RunDetailEntry, { kind: "tool" }>["row"]): string {
+  const syscall = inferToolSyscall(row.toolName, row.syscall);
+  if (row.kind === "toolResult") {
+    return row.ok === false ? "Tool failed" : "Tool finished";
+  }
+  if (row.toolName === "Shell" || syscall === "shell.exec") return "Using shell";
+  if (row.toolName === "Read" || syscall === "fs.read") return "Reading file";
+  if (row.toolName === "Search" || syscall === "fs.search") return "Searching files";
+  if (row.toolName === "Write" || syscall === "fs.write") return "Writing file";
+  if (row.toolName === "Edit" || syscall === "fs.edit") return "Editing file";
+  if (row.toolName === "CodeMode" || syscall === "codemode.exec" || syscall === "codemode.run") return "Using CodeMode";
+  return `Using ${row.toolName}`;
 }
 
 function formatRunDuration(start: number, end: number): string {

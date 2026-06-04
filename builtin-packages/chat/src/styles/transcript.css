@@ -426,6 +426,13 @@
   white-space: pre-wrap;
 }
 
+.thought-entry-text .message-markdown {
+  margin-top: 8px;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
 .thought-empty {
   margin: 0;
   padding: 10px;
