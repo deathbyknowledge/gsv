@@ -8,27 +8,7 @@ export type AdapterStatusRecord = AdapterAccountStatus & {
 export class AdapterStatusStore {
   constructor(private readonly sql: SqlStorage) {}
 
-  init(): void {
-    this.sql.exec(`
-      CREATE TABLE IF NOT EXISTS adapter_status (
-        adapter        TEXT NOT NULL,
-        account_id     TEXT NOT NULL,
-        connected      INTEGER NOT NULL,
-        authenticated  INTEGER NOT NULL,
-        mode           TEXT,
-        last_activity  INTEGER,
-        error          TEXT,
-        extra_json     TEXT,
-        updated_at     INTEGER NOT NULL,
-        PRIMARY KEY (adapter, account_id)
-      )
-    `);
-
-    this.sql.exec(`
-      CREATE INDEX IF NOT EXISTS idx_adapter_status_adapter
-      ON adapter_status(adapter)
-    `);
-  }
+  init(): void {}
 
   upsert(adapter: string, accountId: string, status: AdapterAccountStatus): AdapterStatusRecord {
     const now = Date.now();

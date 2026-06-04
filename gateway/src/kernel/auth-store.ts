@@ -79,71 +79,7 @@ type TokenAuthOptions = {
 export class AuthStore {
   constructor(private readonly sql: SqlStorage) {}
 
-  init(): void {
-    this.sql.exec(`
-      CREATE TABLE IF NOT EXISTS passwd (
-        username TEXT PRIMARY KEY,
-        uid      INTEGER NOT NULL UNIQUE,
-        gid      INTEGER NOT NULL,
-        gecos    TEXT NOT NULL DEFAULT '',
-        home     TEXT NOT NULL,
-        shell    TEXT NOT NULL DEFAULT '/bin/init'
-      )
-    `);
-
-    this.sql.exec(`
-      CREATE TABLE IF NOT EXISTS shadow (
-        username    TEXT PRIMARY KEY,
-        hash        TEXT NOT NULL DEFAULT '!',
-        lastchanged TEXT NOT NULL DEFAULT '',
-        min         TEXT NOT NULL DEFAULT '0',
-        max         TEXT NOT NULL DEFAULT '99999',
-        warn        TEXT NOT NULL DEFAULT '7',
-        inactive    TEXT NOT NULL DEFAULT '',
-        expire      TEXT NOT NULL DEFAULT '',
-        reserved    TEXT NOT NULL DEFAULT ''
-      )
-    `);
-
-    this.sql.exec(`
-      CREATE TABLE IF NOT EXISTS groups (
-        name    TEXT PRIMARY KEY,
-        gid     INTEGER NOT NULL UNIQUE,
-        members TEXT NOT NULL DEFAULT ''
-      )
-    `);
-
-    this.sql.exec(`
-      CREATE TABLE IF NOT EXISTS auth_tokens (
-        token_id           TEXT PRIMARY KEY,
-        uid                INTEGER NOT NULL,
-        kind               TEXT NOT NULL,
-        label              TEXT,
-        token_hash         TEXT NOT NULL UNIQUE,
-        token_prefix       TEXT NOT NULL,
-        allowed_role       TEXT,
-        allowed_device_id  TEXT,
-        created_at         INTEGER NOT NULL,
-        last_used_at       INTEGER,
-        expires_at         INTEGER,
-        revoked_at         INTEGER,
-        revoked_reason     TEXT
-      )
-    `);
-
-    this.sql.exec(`
-      CREATE INDEX IF NOT EXISTS idx_auth_tokens_uid
-      ON auth_tokens(uid)
-    `);
-
-    // Maps a human owner uid to their 1:1 personal agent account uid.
-    this.sql.exec(`
-      CREATE TABLE IF NOT EXISTS personal_agents (
-        owner_uid INTEGER PRIMARY KEY,
-        agent_uid INTEGER NOT NULL
-      )
-    `);
-  }
+  init(): void {}
 
   getPersonalAgentUid(ownerUid: number): number | null {
     const rows = this.sql.exec<{ agent_uid: number }>(

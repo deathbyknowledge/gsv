@@ -60,74 +60,7 @@ export type ProcessRecord = {
 export class ProcessRegistry {
   constructor(private readonly sql: SqlStorage) {}
 
-  init(): void {
-    this.sql.exec(`
-      CREATE TABLE IF NOT EXISTS processes (
-        process_id TEXT PRIMARY KEY,
-        parent_pid TEXT,
-        uid INTEGER NOT NULL,
-        owner_uid INTEGER,
-        interactive INTEGER NOT NULL DEFAULT 1,
-        gid INTEGER NOT NULL,
-        gids TEXT NOT NULL,
-        username TEXT NOT NULL,
-        home TEXT NOT NULL,
-        cwd TEXT NOT NULL,
-        mounts TEXT NOT NULL DEFAULT '[]',
-        context_files_json TEXT NOT NULL DEFAULT '[]',
-        state TEXT NOT NULL DEFAULT 'idle',
-        active_run_id TEXT,
-        active_conversation_id TEXT,
-        queued_count INTEGER NOT NULL DEFAULT 0,
-        last_active_at INTEGER,
-        label TEXT,
-        created_at INTEGER NOT NULL
-      )
-    `);
-
-    try {
-      this.sql.exec("ALTER TABLE processes ADD COLUMN owner_uid INTEGER");
-    } catch {}
-
-    try {
-      this.sql.exec("ALTER TABLE processes ADD COLUMN interactive INTEGER NOT NULL DEFAULT 1");
-    } catch {}
-
-    try {
-      this.sql.exec("ALTER TABLE processes ADD COLUMN cwd TEXT");
-    } catch {}
-
-    try {
-      this.sql.exec("ALTER TABLE processes ADD COLUMN mounts TEXT");
-    } catch {}
-
-    try {
-      this.sql.exec("ALTER TABLE processes ADD COLUMN context_files_json TEXT");
-    } catch {}
-
-    try {
-      this.sql.exec("ALTER TABLE processes ADD COLUMN active_run_id TEXT");
-    } catch {}
-
-    try {
-      this.sql.exec("ALTER TABLE processes ADD COLUMN active_conversation_id TEXT");
-    } catch {}
-
-    try {
-      this.sql.exec("ALTER TABLE processes ADD COLUMN queued_count INTEGER NOT NULL DEFAULT 0");
-    } catch {}
-
-    try {
-      this.sql.exec("ALTER TABLE processes ADD COLUMN last_active_at INTEGER");
-    } catch {}
-
-    this.sql.exec("UPDATE processes SET owner_uid = uid WHERE owner_uid IS NULL");
-    this.sql.exec("UPDATE processes SET cwd = home WHERE cwd IS NULL OR cwd = ''");
-    this.sql.exec("UPDATE processes SET mounts = '[]' WHERE mounts IS NULL OR mounts = ''");
-    this.sql.exec("UPDATE processes SET context_files_json = '[]' WHERE context_files_json IS NULL OR context_files_json = ''");
-    this.sql.exec("UPDATE processes SET queued_count = 0 WHERE queued_count IS NULL OR queued_count < 0");
-    this.sql.exec("UPDATE processes SET state = 'idle' WHERE state IS NULL OR state = '' OR state IN ('paused', 'killed')");
-  }
+  init(): void {}
 
   spawn(
     processId: string,

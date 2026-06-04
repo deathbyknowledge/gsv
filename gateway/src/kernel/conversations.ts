@@ -50,31 +50,7 @@ export function conversationArchiveBase(agentHome: string, conversationId: strin
 export class ConversationRegistry {
   constructor(private readonly sql: SqlStorage) {}
 
-  init(): void {
-    this.sql.exec(`
-      CREATE TABLE IF NOT EXISTS conversations (
-        conversation_id TEXT PRIMARY KEY,
-        owner_uid INTEGER NOT NULL,
-        agent_uid INTEGER NOT NULL,
-        title TEXT,
-        is_default INTEGER NOT NULL DEFAULT 0,
-        active_pid TEXT,
-        archive_base TEXT NOT NULL,
-        latest_archive TEXT,
-        created_at INTEGER NOT NULL,
-        last_active_at INTEGER
-      )
-    `);
-    try {
-      this.sql.exec("ALTER TABLE conversations ADD COLUMN latest_archive TEXT");
-    } catch {}
-    this.sql.exec(
-      "CREATE INDEX IF NOT EXISTS conversations_owner ON conversations (owner_uid, agent_uid)",
-    );
-    this.sql.exec(
-      "CREATE INDEX IF NOT EXISTS conversations_active_pid ON conversations (active_pid)",
-    );
-  }
+  init(): void {}
 
   /**
    * Ensure the well-known default conversation between `ownerUid` and the agent

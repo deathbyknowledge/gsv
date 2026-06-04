@@ -28,20 +28,7 @@ const DEFAULT_TTL_MS = 60_000;
 export class RoutingTable {
   constructor(private readonly sql: SqlStorage) {}
 
-  init(): void {
-    this.sql.exec(`
-      CREATE TABLE IF NOT EXISTS routing_table (
-        id TEXT PRIMARY KEY,
-        call TEXT NOT NULL,
-        origin_type TEXT NOT NULL,
-        origin_id TEXT NOT NULL,
-        device_id TEXT NOT NULL,
-        created_at INTEGER NOT NULL,
-        expires_at INTEGER,
-        schedule_id TEXT
-      )
-    `);
-  }
+  init(): void {}
 
   register(
     id: string,

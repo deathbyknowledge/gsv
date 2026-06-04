@@ -37,30 +37,7 @@ type RowShape = {
 export class NotificationStore {
   constructor(private readonly sql: SqlStorage) {}
 
-  init(): void {
-    this.sql.exec(`
-      CREATE TABLE IF NOT EXISTS notifications (
-        notification_id TEXT PRIMARY KEY,
-        uid INTEGER NOT NULL,
-        title TEXT NOT NULL,
-        body TEXT,
-        level TEXT NOT NULL,
-        source_json TEXT NOT NULL,
-        actions_json TEXT NOT NULL,
-        created_at INTEGER NOT NULL,
-        read_at INTEGER,
-        dismissed_at INTEGER,
-        expires_at INTEGER
-      )
-    `);
-
-    this.sql.exec(
-      "CREATE INDEX IF NOT EXISTS idx_notifications_uid_created ON notifications (uid, created_at DESC)",
-    );
-    this.sql.exec(
-      "CREATE INDEX IF NOT EXISTS idx_notifications_uid_expires ON notifications (uid, expires_at)",
-    );
-  }
+  init(): void {}
 
   create(input: {
     uid: number;

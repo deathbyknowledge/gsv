@@ -11,25 +11,7 @@ export type IdentityLinkRecord = {
 export class IdentityLinkStore {
   constructor(private readonly sql: SqlStorage) {}
 
-  init(): void {
-    this.sql.exec(`
-      CREATE TABLE IF NOT EXISTS identity_links (
-        adapter       TEXT NOT NULL,
-        account_id    TEXT NOT NULL,
-        actor_id      TEXT NOT NULL,
-        uid           INTEGER NOT NULL,
-        created_at    INTEGER NOT NULL,
-        linked_by_uid INTEGER NOT NULL,
-        metadata_json TEXT,
-        PRIMARY KEY (adapter, account_id, actor_id)
-      )
-    `);
-
-    this.sql.exec(`
-      CREATE INDEX IF NOT EXISTS idx_identity_links_uid
-      ON identity_links(uid)
-    `);
-  }
+  init(): void {}
 
   link(
     adapter: string,

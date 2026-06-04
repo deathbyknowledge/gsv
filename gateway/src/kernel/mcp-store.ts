@@ -17,21 +17,7 @@ type McpServerRow = {
 export class McpServerStore {
   constructor(private readonly sql: SqlStorage) {}
 
-  init(): void {
-    this.sql.exec(`
-      CREATE TABLE IF NOT EXISTS user_mcp_servers (
-        server_id    TEXT PRIMARY KEY NOT NULL,
-        uid          INTEGER NOT NULL,
-        display_name TEXT NOT NULL,
-        created_at   INTEGER NOT NULL,
-        updated_at   INTEGER NOT NULL
-      )
-    `);
-    this.sql.exec(`
-      CREATE INDEX IF NOT EXISTS idx_user_mcp_servers_uid
-      ON user_mcp_servers(uid)
-    `);
-  }
+  init(): void {}
 
   upsert(input: {
     serverId: string;

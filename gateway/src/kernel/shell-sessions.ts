@@ -16,25 +16,7 @@ const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000;
 export class ShellSessionStore {
   constructor(private readonly sql: SqlStorage) {}
 
-  init(): void {
-    this.sql.exec(`
-      CREATE TABLE IF NOT EXISTS shell_sessions (
-        session_id TEXT PRIMARY KEY,
-        device_id TEXT NOT NULL,
-        status TEXT NOT NULL,
-        exit_code INTEGER,
-        error TEXT,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL,
-        expires_at INTEGER
-      )
-    `);
-
-    this.sql.exec(`
-      CREATE INDEX IF NOT EXISTS shell_sessions_device_idx
-      ON shell_sessions (device_id)
-    `);
-  }
+  init(): void {}
 
   rememberDeviceSession(
     sessionId: string,

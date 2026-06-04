@@ -31,33 +31,7 @@ type IpcCallRow = {
 export class IpcCallStore {
   constructor(private readonly sql: SqlStorage) {}
 
-  init(): void {
-    this.sql.exec(`
-      CREATE TABLE IF NOT EXISTS ipc_calls (
-        call_id TEXT PRIMARY KEY,
-        uid INTEGER NOT NULL,
-        source_pid TEXT NOT NULL,
-        target_pid TEXT NOT NULL,
-        target_run_id TEXT,
-        status TEXT NOT NULL,
-        deadline_at INTEGER NOT NULL,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL,
-        response_json TEXT NOT NULL DEFAULT 'null',
-        error TEXT
-      )
-    `);
-
-    this.sql.exec(`
-      CREATE INDEX IF NOT EXISTS idx_ipc_calls_target_run
-      ON ipc_calls(uid, target_pid, target_run_id, status)
-    `);
-
-    this.sql.exec(`
-      CREATE INDEX IF NOT EXISTS idx_ipc_calls_deadline
-      ON ipc_calls(status, deadline_at)
-    `);
-  }
+  init(): void {}
 
   create(input: {
     callId: string;

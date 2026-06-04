@@ -29,28 +29,7 @@ const DEFAULT_TTL_MS = 30 * 60 * 1000;
 export class RunRouteStore {
   constructor(private readonly sql: SqlStorage) {}
 
-  init(): void {
-    this.sql.exec(`
-      CREATE TABLE IF NOT EXISTS run_routes (
-        run_id        TEXT PRIMARY KEY,
-        route_kind    TEXT NOT NULL,
-        uid           INTEGER NOT NULL,
-        connection_id TEXT,
-        adapter       TEXT,
-        account_id    TEXT,
-        surface_kind  TEXT,
-        surface_id    TEXT,
-        thread_id     TEXT,
-        created_at    INTEGER NOT NULL,
-        expires_at    INTEGER NOT NULL
-      )
-    `);
-
-    this.sql.exec(`
-      CREATE INDEX IF NOT EXISTS idx_run_routes_expires
-      ON run_routes(expires_at)
-    `);
-  }
+  init(): void {}
 
   setConnectionRoute(runId: string, uid: number, connectionId: string, ttlMs = DEFAULT_TTL_MS): ConnectionRunRoute {
     const now = Date.now();

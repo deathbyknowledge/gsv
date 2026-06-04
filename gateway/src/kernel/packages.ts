@@ -622,43 +622,7 @@ export class PackageStore {
   ) {}
 
   init(): void {
-    this.sql.exec(`
-      CREATE TABLE IF NOT EXISTS packages (
-        package_id         TEXT    NOT NULL,
-        scope_key          TEXT    NOT NULL,
-        scope_kind         TEXT    NOT NULL,
-        scope_uid          INTEGER,
-        scope_workspace_id TEXT,
-        name               TEXT    NOT NULL,
-        version            TEXT    NOT NULL,
-        runtime            TEXT    NOT NULL,
-        enabled            INTEGER NOT NULL DEFAULT 1,
-        manifest_json      TEXT    NOT NULL,
-        artifact_hash      TEXT,
-        artifact_meta_json TEXT,
-        artifact_json      TEXT    NOT NULL DEFAULT '',
-        grants_json        TEXT,
-        installed_at       INTEGER NOT NULL,
-        updated_at         INTEGER NOT NULL,
-        review_required    INTEGER NOT NULL DEFAULT 0,
-        reviewed_at        INTEGER,
-        UNIQUE(package_id, scope_key)
-      )
-    `);
-
-    this.#ensureColumn("packages", "artifact_hash", "TEXT");
-    this.#ensureColumn("packages", "artifact_meta_json", "TEXT");
     this.sql.exec("DELETE FROM packages WHERE scope_kind = 'workspace'");
-
-    this.sql.exec(
-      "CREATE INDEX IF NOT EXISTS idx_packages_name_runtime ON packages (name, runtime, updated_at DESC)",
-    );
-    this.sql.exec(
-      "CREATE INDEX IF NOT EXISTS idx_packages_enabled ON packages (enabled, name, updated_at DESC)",
-    );
-    this.sql.exec(
-      "CREATE INDEX IF NOT EXISTS idx_packages_scope_name_runtime ON packages (scope_key, name, runtime, updated_at DESC)",
-    );
   }
 
   async migrateArtifacts(): Promise<void> {
@@ -898,12 +862,6 @@ export class PackageStore {
     return true;
   }
 
-  #ensureColumn(table: string, column: string, definition: string): void {
-    const columns = this.sql.exec<{ name: string }>(`PRAGMA table_info(${table})`).toArray();
-    if (!columns.some((candidate) => candidate.name === column)) {
-      this.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
-    }
-  }
 }
 
 type RowShape = {

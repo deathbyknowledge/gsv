@@ -14,26 +14,7 @@ export type SurfaceRouteRecord = {
 export class SurfaceRouteStore {
   constructor(private readonly sql: SqlStorage) {}
 
-  init(): void {
-    this.sql.exec(`
-      CREATE TABLE IF NOT EXISTS surface_routes (
-        adapter        TEXT NOT NULL,
-        account_id     TEXT NOT NULL,
-        surface_kind   TEXT NOT NULL,
-        surface_id     TEXT NOT NULL,
-        uid            INTEGER NOT NULL,
-        pid            TEXT NOT NULL,
-        updated_at     INTEGER NOT NULL,
-        updated_by_uid INTEGER NOT NULL,
-        PRIMARY KEY (adapter, account_id, surface_kind, surface_id)
-      )
-    `);
-
-    this.sql.exec(`
-      CREATE INDEX IF NOT EXISTS idx_surface_routes_uid
-      ON surface_routes(uid)
-    `);
-  }
+  init(): void {}
 
   setRoute(
     adapter: string,
