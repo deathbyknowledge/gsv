@@ -51,6 +51,11 @@ type SkillRoot = {
   idPrefix?: string;
 };
 
+type SkillHomeLayer = {
+  identity: ProcessIdentity;
+  label: string;
+};
+
 type FsReader = {
   readdir(path: string): Promise<string[]>;
   stat(path: string): Promise<{ isFile: boolean; isDirectory: boolean }>;
@@ -70,9 +75,14 @@ export async function collectKernelSkillDocuments(
   const files: SkillFile[] = [];
 
   const ripgit = ctx.env.RIPGIT ? new RipgitClient(ctx.env.RIPGIT) : null;
-  const identity = ctx.identity?.process;
-  if (ripgit && identity) {
-    files.push(...await collectRipgitRuntimeSkillFiles(ripgit, ctx, identity));
+  const runAsIdentity = ctx.identity?.process;
+  if (ripgit && runAsIdentity) {
+    files.push(...await collectRipgitRuntimeSkillFiles(
+      ripgit,
+      ctx,
+      runAsIdentity,
+      resolveSkillHomeLayers(ctx, runAsIdentity),
+    ));
   }
 
   return buildSkillDocuments(files);
@@ -83,7 +93,7 @@ export async function collectFilesystemSkillDocuments(
   ctx: KernelContext,
   identity: ProcessIdentity,
 ): Promise<SkillDocument[]> {
-  const roots = filesystemSkillRoots(ctx, identity);
+  const roots = filesystemSkillRoots(ctx, identity, resolveSkillHomeLayers(ctx, identity));
   const files: SkillFile[] = [];
   for (const root of roots) {
     files.push(...await collectFsSkillFiles(fs, root.rootPath, root.source, root.idPrefix));
@@ -180,25 +190,29 @@ export function renderSkillIndex(entries: SkillIndexEntry[]): string {
 async function collectRipgitRuntimeSkillFiles(
   ripgit: RipgitClient,
   ctx: KernelContext,
-  identity: ProcessIdentity,
+  runAsIdentity: ProcessIdentity,
+  homeLayers: SkillHomeLayer[],
 ): Promise<SkillFile[]> {
   const files: SkillFile[] = [];
 
-  files.push(...await collectRipgitSkillFiles(
-    ripgit,
-    homeKnowledgeRepoRef(identity.username),
-    "skills.d",
-    {
-      kind: "home",
-      label: "home",
-      writable: true,
-    },
-    `${identity.home}/skills.d`,
-  ));
+  for (const layer of homeLayers) {
+    files.push(...await collectRipgitSkillFiles(
+      ripgit,
+      homeKnowledgeRepoRef(layer.identity.username),
+      "skills.d",
+      {
+        kind: "home",
+        label: layer.label,
+        writable: true,
+      },
+      `${layer.identity.home}/skills.d`,
+    ));
+  }
 
+  const packageScopeIdentity = homeLayers[0]?.identity ?? runAsIdentity;
   const packageRecords = ctx.packages.list({
     enabled: true,
-    scopes: visiblePackageScopesForActor(identity),
+    scopes: visiblePackageScopesForActor(packageScopeIdentity),
   });
   const packagePathNames = packageSourcePathNameMap(packageRecords);
   for (const record of packageRecords) {
@@ -210,7 +224,7 @@ async function collectRipgitRuntimeSkillFiles(
     files.push(...await collectRipgitSkillFiles(ripgit, root.repo, root.path, {
       kind: "package",
       label: `pkg:${record.manifest.name}`,
-      writable: packageSourceWritable(record, identity),
+      writable: packageSourceWritable(record, runAsIdentity),
     }, root.virtualPath, sourcePathName));
   }
 
@@ -219,22 +233,26 @@ async function collectRipgitRuntimeSkillFiles(
 
 function filesystemSkillRoots(
   ctx: KernelContext,
-  identity: ProcessIdentity,
+  runAsIdentity: ProcessIdentity,
+  homeLayers: SkillHomeLayer[],
 ): SkillRoot[] {
   const roots: SkillRoot[] = [];
 
-  roots.push({
-    rootPath: `${identity.home}/skills.d`,
-    source: {
-      kind: "home",
-      label: "home",
-      writable: true,
-    },
-  });
+  for (const layer of homeLayers) {
+    roots.push({
+      rootPath: `${layer.identity.home}/skills.d`,
+      source: {
+        kind: "home",
+        label: layer.label,
+        writable: true,
+      },
+    });
+  }
 
+  const packageScopeIdentity = homeLayers[0]?.identity ?? runAsIdentity;
   const packageRecords = ctx.packages.list({
     enabled: true,
-    scopes: visiblePackageScopesForActor(identity),
+    scopes: visiblePackageScopesForActor(packageScopeIdentity),
   });
   const packagePathNames = packageSourcePathNameMap(packageRecords);
   for (const record of packageRecords) {
@@ -244,13 +262,56 @@ function filesystemSkillRoots(
       source: {
         kind: "package",
         label: `pkg:${record.manifest.name}`,
-        writable: packageSourceWritable(record, identity),
+        writable: packageSourceWritable(record, runAsIdentity),
       },
       idPrefix: sourcePathName,
     });
   }
 
   return roots;
+}
+
+function resolveSkillHomeLayers(ctx: KernelContext, runAsIdentity: ProcessIdentity): SkillHomeLayer[] {
+  const ownerUid = resolveSkillOwnerUid(ctx, runAsIdentity);
+  if (ownerUid === runAsIdentity.uid) {
+    return [{ identity: runAsIdentity, label: "home" }];
+  }
+
+  const entry = ctx.auth?.getPasswdByUid(ownerUid);
+  if (!entry) {
+    return [{ identity: runAsIdentity, label: "home" }];
+  }
+
+  const ownerIdentity: ProcessIdentity = {
+    uid: entry.uid,
+    gid: entry.gid,
+    gids: ctx.auth.resolveGids(entry.username, entry.gid),
+    username: entry.username,
+    home: entry.home,
+    cwd: entry.home,
+  };
+
+  return [
+    { identity: ownerIdentity, label: "user" },
+    { identity: runAsIdentity, label: "agent" },
+  ];
+}
+
+function resolveSkillOwnerUid(ctx: KernelContext, runAsIdentity: ProcessIdentity): number {
+  if (typeof ctx.callerOwnerUid === "number" && Number.isFinite(ctx.callerOwnerUid)) {
+    return ctx.callerOwnerUid;
+  }
+
+  if (ctx.processId) {
+    const ownerUid = typeof ctx.procs?.getOwnerUid === "function"
+      ? ctx.procs.getOwnerUid(ctx.processId)
+      : ctx.procs?.get(ctx.processId)?.ownerUid ?? null;
+    if (ownerUid != null) {
+      return ownerUid;
+    }
+  }
+
+  return runAsIdentity.uid;
 }
 
 async function collectFsSkillFiles(
@@ -476,7 +537,7 @@ function buildSkillDocuments(files: SkillFile[]): SkillDocument[] {
     })
     .filter((file): file is SkillFile & { name: string; description: string } => file !== null)
     .sort((left, right) => {
-      const source = sourceRank(left.source.kind) - sourceRank(right.source.kind);
+      const source = sourceRank(left.source) - sourceRank(right.source);
       if (source !== 0) {
         return source;
       }
@@ -510,14 +571,19 @@ function skillId(name: string, source: SkillSource, count: number, idPrefix?: st
   if (source.kind === "package") {
     return `${idPrefix ?? source.label.slice("pkg:".length)}:${name}`;
   }
-  return `${source.kind}:${name}`;
+  return `${normalizeSkillSourceLabel(source.label)}:${name}`;
 }
 
-function sourceRank(kind: SkillSourceKind): number {
-  switch (kind) {
-    case "home": return 0;
-    case "package": return 1;
+function sourceRank(source: SkillSource): number {
+  if (source.kind === "home") {
+    switch (source.label) {
+      case "home": return 0;
+      case "user": return 0;
+      case "agent": return 1;
+      default: return 2;
+    }
   }
+  return 3;
 }
 
 function packageTopLevelSkillRoot(record: InstalledPackageRecord, sourcePathName?: string): {
@@ -633,6 +699,10 @@ function normalizeSkillName(value: string): string {
 
 function normalizeLookup(value: string): string {
   return value.trim().toLowerCase();
+}
+
+function normalizeSkillSourceLabel(value: string): string {
+  return normalizeLookup(value).replace(/[^a-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "") || "home";
 }
 
 function truncateDescription(value: string): string {
