@@ -145,6 +145,7 @@ import {
   type ProcessConversationRecord,
   type ProcessConversationSegmentRecord,
 } from "./conversations";
+import { runProcessSqlMigrations } from "./schema/migrations";
 
 type RunState = {
   runId: string;
@@ -542,8 +543,9 @@ export class Process extends Host<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    runProcessSqlMigrations(ctx.storage);
     this.store = new ProcessStore(ctx.storage.sql);
-    this.store.init();
+    this.store.ensureConversation(DEFAULT_CONVERSATION_ID);
     this.ripgit = env.RIPGIT
       ? new RipgitClient(env.RIPGIT)
       : null;
@@ -2144,7 +2146,8 @@ export class Process extends Host<Env> {
     // all live DO storage rather than keeping a reset stub around. A future
     // executor gets a fresh DO (and hydrates from the home archive on resume).
     await this.ctx.storage.deleteAll();
-    this.store.init();
+    runProcessSqlMigrations(this.ctx.storage);
+    this.store.ensureConversation(DEFAULT_CONVERSATION_ID);
 
     return {
       ok: true,
