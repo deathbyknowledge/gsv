@@ -1,12 +1,28 @@
-import { useEffect, useMemo, useState } from "preact/hooks";
+import type { ComponentChildren } from "preact";
+import { useCallback, useEffect, useMemo, useState } from "preact/hooks";
 import type { HilRequest, LogRow, MessageRow, PendingAssistantState } from "../../types";
-import type { TranscriptRunGroup } from "../../domain/run-groups";
+import type { TranscriptItem, TranscriptRunGroup } from "../../domain/run-groups";
 import { groupTranscriptRows } from "../../domain/run-groups";
+import {
+  useVirtualTranscript,
+  type VirtualTranscriptItem,
+  type VirtualTranscriptSource,
+} from "../../hooks/useVirtualTranscript";
 import { ArrowDownIcon } from "../../icons";
 import { HilCard } from "./HilCard";
 import { MessageBubble } from "./MessageBubble";
 import { RunGroupView, ThoughtsDrawer } from "./RunGroup";
 import { isHiddenInternalToolRow, ToolCard } from "./ToolCard";
+
+type TranscriptEntryBase = VirtualTranscriptSource & {
+  kind: "history" | "item" | "pendingHil" | "pendingAssistant";
+};
+
+type TranscriptEntry =
+  | (TranscriptEntryBase & { kind: "history" })
+  | (TranscriptEntryBase & { item: TranscriptItem; kind: "item" })
+  | (TranscriptEntryBase & { kind: "pendingHil"; request: HilRequest })
+  | (TranscriptEntryBase & { kind: "pendingAssistant"; pendingAssistant: PendingAssistantState });
 
 export function Transcript(props: {
   rows: LogRow[];
@@ -35,6 +51,8 @@ export function Transcript(props: {
 }) {
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const [transcriptNode, setTranscriptNode] = useState<HTMLDivElement | null>(null);
+  const [viewport, setViewport] = useState({ height: 0, scrollTop: 0 });
   const items = useMemo(
     () => groupTranscriptRows(props.rows, props.pendingAssistant, props.pendingHil, props.activeRunId),
     [props.rows, props.pendingAssistant, props.pendingHil, props.activeRunId],
@@ -55,6 +73,32 @@ export function Transcript(props: {
   const pendingRendered = items.some((item) =>
     item.kind === "run" && (item.pendingAssistant !== null || item.pendingHil !== null)
   );
+  const entries = useMemo(() => buildTranscriptEntries({
+    hasHistoryLoader: props.hasOlderHistory || props.loadingOlderHistory,
+    hilRendered,
+    items,
+    pendingAssistant: props.pendingAssistant,
+    pendingHil: props.pendingHil,
+    pendingRendered,
+  }), [
+    hilRendered,
+    items,
+    pendingRendered,
+    props.hasOlderHistory,
+    props.loadingOlderHistory,
+    props.pendingAssistant,
+    props.pendingHil,
+  ]);
+  const virtual = useVirtualTranscript({
+    entries,
+    scrollTop: viewport.scrollTop,
+    viewportHeight: viewport.height,
+  });
+
+  const setTranscriptRef = useCallback((node: HTMLDivElement | null) => {
+    props.refNode.current = node;
+    setTranscriptNode(node);
+  }, [props.refNode]);
 
   useEffect(() => {
     if (selectedRunId && !selectedRun) {
@@ -70,97 +114,78 @@ export function Transcript(props: {
     return () => window.clearInterval(id);
   }, [props.pendingAssistant, props.pendingHil]);
 
+  useEffect(() => {
+    if (!transcriptNode) {
+      return undefined;
+    }
+    const updateViewport = () => {
+      setViewport((current) => {
+        const nextHeight = transcriptNode.clientHeight;
+        const nextScrollTop = transcriptNode.scrollTop;
+        return current.height === nextHeight && current.scrollTop === nextScrollTop
+          ? current
+          : { height: nextHeight, scrollTop: nextScrollTop };
+      });
+    };
+    updateViewport();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", updateViewport);
+      return () => window.removeEventListener("resize", updateViewport);
+    }
+    const observer = new ResizeObserver(updateViewport);
+    observer.observe(transcriptNode);
+    return () => observer.disconnect();
+  }, [transcriptNode]);
+
   return (
     <div class="transcript-shell">
       <div
         class="transcript"
-        ref={(node) => { props.refNode.current = node; }}
+        ref={setTranscriptRef}
         onScroll={(event) => {
           const node = event.currentTarget;
+          setViewport((current) => current.scrollTop === node.scrollTop
+            ? current
+            : { ...current, scrollTop: node.scrollTop });
           if (props.hasOlderHistory && !props.loadingOlderHistory && node.scrollTop <= 96) {
             props.onLoadOlderHistory();
           }
           props.onViewedLatest(node);
         }}
       >
-        <div class="transcript-content" ref={props.onContentNode}>
-          {props.hasOlderHistory || props.loadingOlderHistory ? (
-            <button
-              type="button"
-              class="history-loader"
-              disabled={props.loadingOlderHistory}
-              onClick={props.onLoadOlderHistory}
+        <div
+          class="transcript-content is-virtualized"
+          ref={props.onContentNode}
+          style={{ height: `${virtual.totalHeight}px` }}
+        >
+          {virtual.items.map((item) => (
+            <VirtualTranscriptRow
+              key={item.entry.key}
+              item={item}
+              setItemNode={virtual.setItemNode}
             >
-              {props.loadingOlderHistory ? <span class="spinner" aria-hidden="true" /> : null}
-              <span>{props.loadingOlderHistory ? "Loading older messages" : "Load older messages"}</span>
-            </button>
-          ) : null}
-          {items.map((item, index) => {
-            if (item.kind === "run") {
-              return (
-                <RunGroupView
-                  key={`run:${item.runId}:${index}`}
-                  group={item}
-                  now={now}
-                  selected={selectedRunId === item.runId}
-                  userLabel={props.userLabel}
-                  assistantLabel={props.assistantLabel}
-                  branchBusy={props.branchBusy}
-                  hilBusy={props.hilBusy}
-                  mediaSources={props.mediaSources}
-                  mediaSourceErrors={props.mediaSourceErrors}
-                  onCopy={props.onCopy}
-                  onBranch={props.onBranch}
-                  onHilDecision={props.onHilDecision}
-                  onLoadMediaSource={props.onLoadMediaSource}
-                  onRetryMediaSource={props.onRetryMediaSource}
-                  onOpenThoughts={setSelectedRunId}
-                />
-              );
-            }
-            const row = item.row;
-            if (row.kind === "toolCall" || row.kind === "toolResult") {
-              if (props.pendingHil && row.kind === "toolCall" && row.callId === props.pendingHil.callId) {
-                return (
-                  <HilCard
-                    key={`${row.callId}:${index}`}
-                    request={{ ...props.pendingHil, toolName: row.toolName || props.pendingHil.toolName, syscall: row.syscall || props.pendingHil.syscall, args: row.args ?? props.pendingHil.args }}
-                    busy={props.hilBusy}
-                    onDecision={props.onHilDecision}
-                  />
-                );
-              }
-              if (isHiddenInternalToolRow(row, props.pendingHil)) {
-                return null;
-              }
-              return <ToolCard key={`${row.callId}:${index}`} row={row} />;
-            }
-            const messageRow = row as MessageRow;
-            return (
-              <MessageBubble
-                key={`${messageRow.messageId ?? index}:${messageRow.timestamp}`}
-                row={messageRow}
+              <TranscriptEntryView
+                entry={item.entry}
+                now={now}
+                selectedRunId={selectedRunId}
                 userLabel={props.userLabel}
                 assistantLabel={props.assistantLabel}
                 branchBusy={props.branchBusy}
+                hilBusy={props.hilBusy}
+                loadingOlderHistory={props.loadingOlderHistory}
+                pendingHil={props.pendingHil}
                 mediaSources={props.mediaSources}
                 mediaSourceErrors={props.mediaSourceErrors}
                 onCopy={props.onCopy}
                 onBranch={props.onBranch}
+                onHilDecision={props.onHilDecision}
+                onLoadOlderHistory={props.onLoadOlderHistory}
                 onLoadMediaSource={props.onLoadMediaSource}
                 onRetryMediaSource={props.onRetryMediaSource}
+                onOpenThoughts={setSelectedRunId}
               />
-            );
-          })}
-          {props.pendingHil && !hilRendered ? (
-            <HilCard request={props.pendingHil} busy={props.hilBusy} onDecision={props.onHilDecision} />
-          ) : null}
-          {props.pendingAssistant && !pendingRendered ? (
-            <article class="message-pending">
-              <span class="spinner" aria-hidden="true" />
-              <span>{props.pendingAssistant === "tool" ? "Working..." : "Thinking..."}</span>
-            </article>
-          ) : null}
+            </VirtualTranscriptRow>
+          ))}
         </div>
       </div>
       {props.hasNewMessages ? (
@@ -178,4 +203,246 @@ export function Transcript(props: {
       />
     </div>
   );
+}
+
+function VirtualTranscriptRow({
+  children,
+  item,
+  setItemNode,
+}: {
+  children: ComponentChildren;
+  item: VirtualTranscriptItem<TranscriptEntry>;
+  setItemNode(key: string, node: HTMLElement | null): void;
+}) {
+  const setNode = useCallback((node: HTMLElement | null) => {
+    setItemNode(item.entry.key, node);
+  }, [item.entry.key, setItemNode]);
+  return (
+    <div
+      class="transcript-virtual-item"
+      ref={setNode}
+      style={{ transform: `translateY(${item.top}px)` }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function TranscriptEntryView({
+  entry,
+  now,
+  selectedRunId,
+  userLabel,
+  assistantLabel,
+  branchBusy,
+  hilBusy,
+  loadingOlderHistory,
+  pendingHil,
+  mediaSources,
+  mediaSourceErrors,
+  onCopy,
+  onBranch,
+  onHilDecision,
+  onLoadOlderHistory,
+  onLoadMediaSource,
+  onRetryMediaSource,
+  onOpenThoughts,
+}: {
+  entry: TranscriptEntry;
+  now: number;
+  selectedRunId: string | null;
+  userLabel: string;
+  assistantLabel: string;
+  branchBusy: boolean;
+  hilBusy: boolean;
+  loadingOlderHistory: boolean;
+  pendingHil: HilRequest | null;
+  mediaSources: Record<string, string>;
+  mediaSourceErrors: Record<string, string>;
+  onCopy(text: string): void;
+  onBranch(messageId: number): void;
+  onHilDecision(requestId: string, decision: "approve" | "deny", remember?: boolean): void;
+  onLoadOlderHistory(): void;
+  onLoadMediaSource(media: unknown): void;
+  onRetryMediaSource(media: unknown): void;
+  onOpenThoughts(runId: string): void;
+}) {
+  if (entry.kind === "history") {
+    return (
+      <button
+        type="button"
+        class="history-loader"
+        disabled={loadingOlderHistory}
+        onClick={onLoadOlderHistory}
+      >
+        {loadingOlderHistory ? <span class="spinner" aria-hidden="true" /> : null}
+        <span>{loadingOlderHistory ? "Loading older messages" : "Load older messages"}</span>
+      </button>
+    );
+  }
+
+  if (entry.kind === "pendingHil") {
+    return <HilCard request={entry.request} busy={hilBusy} onDecision={onHilDecision} />;
+  }
+
+  if (entry.kind === "pendingAssistant") {
+    return (
+      <article class="message-pending">
+        <span class="spinner" aria-hidden="true" />
+        <span>{entry.pendingAssistant === "tool" ? "Working..." : "Thinking..."}</span>
+      </article>
+    );
+  }
+
+  const item = entry.item;
+  if (item.kind === "run") {
+    return (
+      <RunGroupView
+        group={item}
+        now={now}
+        selected={selectedRunId === item.runId}
+        userLabel={userLabel}
+        assistantLabel={assistantLabel}
+        branchBusy={branchBusy}
+        hilBusy={hilBusy}
+        mediaSources={mediaSources}
+        mediaSourceErrors={mediaSourceErrors}
+        onCopy={onCopy}
+        onBranch={onBranch}
+        onHilDecision={onHilDecision}
+        onLoadMediaSource={onLoadMediaSource}
+        onRetryMediaSource={onRetryMediaSource}
+        onOpenThoughts={onOpenThoughts}
+      />
+    );
+  }
+
+  const row = item.row;
+  if (row.kind === "toolCall" || row.kind === "toolResult") {
+    if (pendingHil && row.kind === "toolCall" && row.callId === pendingHil.callId) {
+      return (
+        <HilCard
+          request={{ ...pendingHil, toolName: row.toolName || pendingHil.toolName, syscall: row.syscall || pendingHil.syscall, args: row.args ?? pendingHil.args }}
+          busy={hilBusy}
+          onDecision={onHilDecision}
+        />
+      );
+    }
+    if (isHiddenInternalToolRow(row, pendingHil)) {
+      return null;
+    }
+    return <ToolCard row={row} />;
+  }
+
+  const messageRow = row as MessageRow;
+  return (
+    <MessageBubble
+      row={messageRow}
+      userLabel={userLabel}
+      assistantLabel={assistantLabel}
+      branchBusy={branchBusy}
+      mediaSources={mediaSources}
+      mediaSourceErrors={mediaSourceErrors}
+      onCopy={onCopy}
+      onBranch={onBranch}
+      onLoadMediaSource={onLoadMediaSource}
+      onRetryMediaSource={onRetryMediaSource}
+    />
+  );
+}
+
+function buildTranscriptEntries({
+  hasHistoryLoader,
+  hilRendered,
+  items,
+  pendingAssistant,
+  pendingHil,
+  pendingRendered,
+}: {
+  hasHistoryLoader: boolean;
+  hilRendered: boolean;
+  items: TranscriptItem[];
+  pendingAssistant: PendingAssistantState;
+  pendingHil: HilRequest | null;
+  pendingRendered: boolean;
+}): TranscriptEntry[] {
+  const entries: TranscriptEntry[] = [];
+  if (hasHistoryLoader) {
+    entries.push({
+      estimateHeight: 36,
+      key: "history-loader",
+      kind: "history",
+    });
+  }
+  items.forEach((item, index) => {
+    entries.push({
+      alwaysRender: item.kind === "run" && item.status !== "completed",
+      estimateHeight: estimateTranscriptItemHeight(item),
+      item,
+      key: keyForTranscriptItem(item, index),
+      kind: "item",
+    });
+  });
+  if (pendingHil && !hilRendered) {
+    entries.push({
+      alwaysRender: true,
+      estimateHeight: 132,
+      key: `pending-hil:${pendingHil.requestId}`,
+      kind: "pendingHil",
+      request: pendingHil,
+    });
+  }
+  if (pendingAssistant && !pendingRendered) {
+    entries.push({
+      alwaysRender: true,
+      estimateHeight: 34,
+      key: `pending-assistant:${pendingAssistant}`,
+      kind: "pendingAssistant",
+      pendingAssistant,
+    });
+  }
+  return entries;
+}
+
+function keyForTranscriptItem(item: TranscriptItem, index: number): string {
+  if (item.kind === "run") {
+    return `run:${item.runId}`;
+  }
+  const row = item.row;
+  if (row.kind === "toolCall" || row.kind === "toolResult") {
+    return `tool:${row.kind}:${row.callId}:${row.timestamp}`;
+  }
+  if (row.kind === "message") {
+    return `message:${row.messageId ?? `${row.role}:${row.timestamp}:${index}`}`;
+  }
+  return `row:${index}`;
+}
+
+function estimateTranscriptItemHeight(item: TranscriptItem): number {
+  if (item.kind === "run") {
+    const userHeight = item.userRows.reduce((sum, row) => sum + estimateMessageHeight(row), 0);
+    const detailHeight = item.pendingAssistant || item.pendingHil || item.detailEntries.length > 0 ? 40 : 0;
+    const hilHeight = item.pendingHil ? 132 : 0;
+    const responseRows = item.finalAssistantRows.concat(item.systemRows);
+    const responseHeight = responseRows.reduce((sum, row) => sum + estimateMessageHeight(row), 0);
+    const rowCount = item.userRows.length + responseRows.length + (detailHeight > 0 ? 1 : 0) + (hilHeight > 0 ? 1 : 0);
+    return Math.max(42, userHeight + detailHeight + hilHeight + responseHeight + Math.max(0, rowCount - 1) * 10);
+  }
+  const row = item.row;
+  if (row.kind === "toolCall" || row.kind === "toolResult") {
+    return row.kind === "toolCall" ? 86 : 112;
+  }
+  if (row.kind === "message") {
+    return estimateMessageHeight(row);
+  }
+  return 72;
+}
+
+function estimateMessageHeight(row: MessageRow): number {
+  const base = row.role === "assistant" ? 46 : 58;
+  const charsPerLine = row.role === "assistant" ? 84 : 54;
+  const lineHeight = row.role === "assistant" ? 24 : 19;
+  const textLines = Math.max(1, Math.ceil(row.text.length / charsPerLine));
+  const mediaCount = row.media?.length ?? 0;
+  return base + textLines * lineHeight + mediaCount * 72;
 }

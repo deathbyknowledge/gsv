@@ -19,6 +19,22 @@
   gap: 10px;
 }
 
+.transcript-content.is-virtualized {
+  position: relative;
+  display: block;
+  gap: 0;
+}
+
+.transcript-virtual-item {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  min-width: 0;
+  display: grid;
+  align-content: start;
+}
+
 .history-loader {
   justify-self: center;
   min-height: 34px;
@@ -192,6 +208,139 @@
   color: var(--text);
   font-size: 15px;
   line-height: 1.62;
+}
+
+.assistant-markdown-measure {
+  min-width: 0;
+  color: var(--text);
+}
+
+.assistant-markdown-frame {
+  position: relative;
+  max-width: 100%;
+}
+
+.assistant-frame-block {
+  position: absolute;
+  right: 0;
+  left: 0;
+}
+
+.assistant-frame-line {
+  position: absolute;
+  right: 0;
+  color: var(--text);
+  font-size: 15px;
+  line-height: 24px;
+  white-space: pre;
+}
+
+.assistant-fragment {
+  letter-spacing: 0;
+}
+
+.assistant-fragment-heading-1 {
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 30px;
+}
+
+.assistant-fragment-heading-2 {
+  font-size: 17px;
+  font-weight: 800;
+  line-height: 27px;
+}
+
+.assistant-fragment-heading-3 {
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 24px;
+}
+
+.assistant-fragment-body {
+  font-size: 15px;
+  line-height: 24px;
+}
+
+.assistant-fragment.is-strong {
+  font-weight: 700;
+}
+
+.assistant-fragment.is-em {
+  font-style: italic;
+}
+
+.assistant-fragment.is-del {
+  text-decoration: line-through;
+}
+
+.assistant-fragment.is-link {
+  color: var(--blue);
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.assistant-fragment.is-link:hover {
+  text-decoration: underline;
+}
+
+.assistant-fragment-code,
+.assistant-fragment-chip {
+  border-radius: 6px;
+  padding: 1px 6px;
+  background: var(--panel-soft);
+  font: 500 12px/18px var(--mono);
+}
+
+.assistant-fragment-chip {
+  color: var(--muted);
+  font: 700 11px/18px var(--ui);
+}
+
+.assistant-frame-code {
+  position: absolute;
+  top: 0;
+  max-width: 100%;
+  border-radius: 8px;
+  background: var(--panel-soft);
+  overflow: auto hidden;
+}
+
+.assistant-frame-code-line {
+  position: absolute;
+  min-width: max-content;
+  color: var(--text);
+  font: 500 12px/18px var(--mono);
+  white-space: pre;
+}
+
+.assistant-frame-rule {
+  position: absolute;
+  height: 1px;
+  background: var(--line-strong);
+}
+
+.assistant-quote-rail {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  border-radius: 999px;
+  background: rgba(31, 92, 153, 0.18);
+}
+
+.assistant-block-marker {
+  position: absolute;
+  color: var(--muted);
+  font: 700 12px/1 var(--mono);
+  white-space: nowrap;
+}
+
+.assistant-markdown-plain {
+  margin: 0;
+  color: var(--text);
+  font: 15px/1.62 var(--ui);
+  white-space: pre-wrap;
 }
 
 .message-head {

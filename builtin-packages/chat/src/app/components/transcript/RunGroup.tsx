@@ -4,13 +4,10 @@ import type { HilRequest, MessageRow, ToolRow } from "../../types";
 import type { RunDetailEntry, TranscriptRunGroup } from "../../domain/run-groups";
 import { runHasDetails } from "../../domain/run-groups";
 import {
-  BranchIcon,
   CheckIcon,
   ChevronRightIcon,
-  CopyIcon,
   FileIcon,
   MessageIcon,
-  MoreIcon,
   TerminalIcon,
   ThoughtIcon,
   XIcon,
@@ -20,20 +17,16 @@ import {
   asRecord,
   asString,
   basenamePath,
-  closeChatMenus,
-  closeContainingChatMenu,
   describeHilSummary,
   describeToolCard,
-  formatInteractionOriginLabel,
-  formatTimestamp,
   inferToolSyscall,
-  labelForRole,
   normalizeToolOutput,
   prettyJson,
   renderMarkdownHtml,
   truncateBlock,
   truncateInline,
 } from "../../view-helpers";
+import { AssistantDocument } from "./AssistantDocument";
 import { HilCard } from "./HilCard";
 import { MessageBubble } from "./MessageBubble";
 import { isHiddenInternalToolRow } from "./ToolCard";
@@ -536,61 +529,6 @@ function fileToolKind(row: ToolRow, syscall: string | null): "read" | "write" | 
 function clipBlock(value: unknown, maxLength: number): string {
   const text = String(value ?? "");
   return text.length <= maxLength ? text : `${text.slice(0, maxLength)}\n...`;
-}
-
-function AssistantDocument({
-  row,
-  assistantLabel,
-  branchBusy,
-  onCopy,
-  onBranch,
-}: {
-  row: MessageRow;
-  assistantLabel: string;
-  branchBusy: boolean;
-  onCopy(text: string): void;
-  onBranch(messageId: number): void;
-}) {
-  const hasText = row.text.trim().length > 0;
-  if (!hasText) {
-    return null;
-  }
-  const originLabel = formatInteractionOriginLabel(row.origin);
-  return (
-    <article class={`assistant-document${row.streaming ? " is-live" : ""}`}>
-      <div class="message-head">
-        <span class="message-role-label">{labelForRole("assistant", "You", assistantLabel)}</span>
-        {originLabel ? <span class="message-origin-label" title={originLabel}>{originLabel}</span> : null}
-        <span class="message-spacer" />
-        <span>{formatTimestamp(row.timestamp)}</span>
-        <details class="message-menu">
-          <summary class="message-action" title="Message actions" aria-label="Message actions" onClick={(event) => {
-            closeChatMenus((event.currentTarget as HTMLElement).closest("details") as HTMLDetailsElement | null);
-          }}>
-            <MoreIcon />
-          </summary>
-          <div class="message-menu-popover">
-            <button type="button" class="menu-action" onClick={(event) => { closeContainingChatMenu(event.currentTarget); onCopy(row.text); }}>
-              <CopyIcon />
-              <span>Copy</span>
-            </button>
-            {row.messageId ? (
-              <button
-                type="button"
-                class="menu-action"
-                disabled={branchBusy}
-                onClick={(event) => { closeContainingChatMenu(event.currentTarget); onBranch(row.messageId as number); }}
-              >
-                <BranchIcon />
-                <span>Branch</span>
-              </button>
-            ) : null}
-          </div>
-        </details>
-      </div>
-      <div class="message-body message-markdown" dangerouslySetInnerHTML={{ __html: renderMarkdownHtml(row.text) }} />
-    </article>
-  );
 }
 
 function runThoughtLabel(group: TranscriptRunGroup, now: number): string {
