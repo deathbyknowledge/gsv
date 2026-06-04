@@ -101,6 +101,7 @@ import type {
   SchedulerRunArgs,
   SchedulerRunResult,
 } from "../syscalls/scheduler";
+import { runKernelSqlMigrations } from "./schema/migrations";
 
 const SERVER_VERSION = "0.2.2";
 const KERNEL_BINARY_DEVICE_ID = "__gsv_kernel__";
@@ -217,6 +218,7 @@ export class Kernel extends Host<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     const sql = ctx.storage.sql;
+    runKernelSqlMigrations(ctx.storage);
 
     this.auth = new AuthStore(sql);
     this.auth.init();
