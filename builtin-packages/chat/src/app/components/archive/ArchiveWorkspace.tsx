@@ -7,6 +7,7 @@ import { isHiddenInternalToolRow, ToolCard } from "../transcript/ToolCard";
 export function ArchiveWorkspace(props: {
   archive: ArchiveState;
   userLabel: string;
+  assistantLabel: string;
   mediaSources: Record<string, string>;
   mediaSourceErrors: Record<string, string>;
   onRefresh(): void;
@@ -55,6 +56,7 @@ export function ArchiveWorkspace(props: {
                   key={`${row.kind}:${row.kind === "message" ? row.messageId ?? index : row.callId}:${index}`}
                   row={row}
                   userLabel={props.userLabel}
+                  assistantLabel={props.assistantLabel}
                   mediaSources={props.mediaSources}
                   mediaSourceErrors={props.mediaSourceErrors}
                   onLoadMediaSource={props.onLoadMediaSource}
@@ -78,6 +80,7 @@ export function ArchiveWorkspace(props: {
 function ArchiveRow({
   row,
   userLabel,
+  assistantLabel,
   mediaSources,
   mediaSourceErrors,
   onLoadMediaSource,
@@ -85,6 +88,7 @@ function ArchiveRow({
 }: {
   row: LogRow;
   userLabel: string;
+  assistantLabel: string;
   mediaSources: Record<string, string>;
   mediaSourceErrors: Record<string, string>;
   onLoadMediaSource(media: unknown): void;
@@ -100,6 +104,7 @@ function ArchiveRow({
     <MessageBubble
       row={row as MessageRow}
       userLabel={userLabel}
+      assistantLabel={assistantLabel}
       branchBusy={false}
       branchable={false}
       mediaSources={mediaSources}

@@ -7,6 +7,7 @@ import { isHiddenInternalToolRow, ToolCard } from "./ToolCard";
 export function Transcript(props: {
   rows: LogRow[];
   userLabel: string;
+  assistantLabel: string;
   pendingAssistant: PendingAssistantState;
   pendingHil: HilRequest | null;
   hasOlderHistory: boolean;
@@ -76,6 +77,7 @@ export function Transcript(props: {
               key={`${messageRow.messageId ?? index}:${messageRow.timestamp}`}
               row={messageRow}
               userLabel={props.userLabel}
+              assistantLabel={props.assistantLabel}
               branchBusy={props.branchBusy}
               mediaSources={props.mediaSources}
               mediaSourceErrors={props.mediaSourceErrors}

@@ -8,6 +8,7 @@ import { VoiceMessage } from "../media/VoiceMessage";
 export function MessageBubble({
   row,
   userLabel,
+  assistantLabel,
   branchBusy,
   branchable = true,
   mediaSources,
@@ -19,6 +20,7 @@ export function MessageBubble({
 }: {
   row: MessageRow;
   userLabel: string;
+  assistantLabel: string;
   branchBusy: boolean;
   branchable?: boolean;
   mediaSources: Record<string, string>;
@@ -41,7 +43,7 @@ export function MessageBubble({
   return (
     <article class={`message message-${row.role}`}>
       <div class="message-head">
-        <span class="message-role-label">{labelForRole(row.role, userLabel)}</span>
+        <span class="message-role-label">{labelForRole(row.role, userLabel, assistantLabel)}</span>
         {originLabel ? <span class="message-origin-label" title={originLabel}>{originLabel}</span> : null}
         <span class="message-spacer" />
         <span>{formatTimestamp(row.timestamp)}</span>

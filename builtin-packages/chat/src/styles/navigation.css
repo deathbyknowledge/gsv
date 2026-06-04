@@ -93,6 +93,24 @@
   stroke-linejoin: round;
 }
 
+.agent-avatar {
+  grid-row: span 2;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: rgba(24, 32, 40, 0.05);
+}
+
+.agent-avatar img {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
 .thread-row:hover,
 .conversation-row:hover,
 .archive-row:hover {

@@ -3,6 +3,8 @@
   "version": "0.2.3",
   "type": "module",
   "dependencies": {
+    "@dicebear/bottts-neutral": "^9.4.2",
+    "@dicebear/core": "^9.4.2",
     "@gsv/package": "file:../../shared/package",
     "dompurify": "^3.4.2",
     "marked": "^16.4.2",

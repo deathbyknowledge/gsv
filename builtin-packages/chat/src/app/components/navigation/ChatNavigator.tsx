@@ -1,6 +1,7 @@
 import type { ProcessEntry, Profile, ThreadContext } from "../../types";
-import { HomeIcon, MessageIcon, PlusIcon, RefreshIcon, ThreadsIcon } from "../../icons";
+import { PlusIcon, RefreshIcon, ThreadsIcon } from "../../icons";
 import { displayThreadLabel, formatRelativeTime } from "../../view-helpers";
+import { AgentAvatar } from "./AgentAvatar";
 
 export function ChatNavigator(props: {
   active: ThreadContext | null;
@@ -141,6 +142,12 @@ function ThreadsPane(props: {
 }) {
   const activePid = props.active?.pid ?? "";
   const isHome = props.active?.isHome === true;
+  const homeProfile = props.profiles.find((profile) =>
+    profile.spawnMode === "default" ||
+    profile.id === "personal" ||
+    profile.kind === "personal-agent"
+  );
+  const homeSeed = homeProfile?.newProcessRunAs || homeProfile?.runAs || homeProfile?.id || props.homeLabel;
   const status = props.loading
     ? "Refreshing..."
     : props.error || (props.threads.length === 0 ? "No extra processes yet." : "Processes");
@@ -175,7 +182,7 @@ function ThreadsPane(props: {
 
       <nav class="thread-list" aria-label="Chat processes">
         <button type="button" class={"thread-row" + (isHome ? " is-active" : "")} onClick={props.onHome}>
-          <span class="row-icon"><HomeIcon /></span>
+          <AgentAvatar seed={homeSeed} label={props.homeLabel} />
           <span class="thread-row-title">{props.homeLabel}</span>
           <span class="thread-row-meta">Default personal conversation</span>
         </button>
@@ -186,7 +193,7 @@ function ThreadsPane(props: {
             class={"thread-row" + (activePid === thread.pid ? " is-active" : "")}
             onClick={() => props.onOpenThread(thread.pid)}
           >
-            <span class="row-icon"><MessageIcon /></span>
+            <AgentAvatar seed={thread.username || thread.profile || thread.pid} label={thread.username || thread.profile || displayThreadLabel(thread)} />
             <span class="thread-row-title">{displayThreadLabel(thread)}</span>
             <span class="thread-row-meta">
               {thread.profile}

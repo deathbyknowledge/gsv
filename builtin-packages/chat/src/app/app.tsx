@@ -165,7 +165,18 @@ export function App({ backend }: { backend: ChatBackend }) {
   const activeConversationId = active?.conversationId || "default";
   const activeConversation = conversations.find((conversation) => conversation.id === activeConversationId) ?? null;
   const homeProfileLabel = personalProfileLabel(conversationProfiles);
+  const homeProfile = conversationProfiles.find((profile) =>
+    profile.spawnMode === "default" ||
+    profile.id === "personal" ||
+    profile.kind === "personal-agent"
+  ) ?? null;
+  const activeThread = active ? threads.find((thread) => thread.pid === active.pid) ?? null : null;
   const activeTitle = active ? titleForActive(active, activeConversation, threads, homeProfileLabel) : draftConversationTitle(draftProfile);
+  const assistantLabel = active
+    ? active.isHome
+      ? homeProfile?.newProcessRunAs || homeProfile?.runAs || homeProfile?.displayName || homeProfileLabel
+      : activeThread?.username || activeThread?.profile || activeThread?.label || activeTitle
+    : draftProfile.runAs || draftProfile.newProcessRunAs || draftProfile.displayName;
   const statusText = getStatusText({
     active,
     draftProfile,
@@ -899,6 +910,7 @@ export function App({ backend }: { backend: ChatBackend }) {
           <ArchiveWorkspace
             archive={archive}
             userLabel={viewerUsername}
+            assistantLabel={assistantLabel}
             mediaSources={mediaSources}
             mediaSourceErrors={mediaSourceErrors}
             onRefresh={() => void loadArchiveSegments(true)}
@@ -911,6 +923,7 @@ export function App({ backend }: { backend: ChatBackend }) {
             <Transcript
               rows={rows}
               userLabel={viewerUsername}
+              assistantLabel={assistantLabel}
               pendingAssistant={pendingAssistant}
               pendingHil={pendingHil}
               hasOlderHistory={historyWindow.hasMoreBefore}
