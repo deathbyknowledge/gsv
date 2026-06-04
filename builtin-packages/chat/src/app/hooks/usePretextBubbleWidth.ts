@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { computeUserBubbleWidth } from "../domain/pretext-layout";
 
-export function usePretextBubbleWidth(text: string, enabled: boolean) {
+export function usePretextBubbleWidth(text: string, enabled: boolean, headerParts: string[]) {
   const bubbleRef = useRef<HTMLElement | null>(null);
   const [containerWidth, setContainerWidth] = useState(0);
+  const headerKey = headerParts.join("\0");
   const [fontsReady, setFontsReady] = useState(() => (
     typeof document === "undefined" || !document.fonts ? true : document.fonts.status === "loaded"
   ));
@@ -48,8 +49,8 @@ export function usePretextBubbleWidth(text: string, enabled: boolean) {
   }, [enabled]);
 
   const width = useMemo(() => (
-    enabled && fontsReady ? computeUserBubbleWidth(text, containerWidth) : null
-  ), [containerWidth, enabled, fontsReady, text]);
+    enabled && fontsReady ? computeUserBubbleWidth(text, containerWidth, headerParts) : null
+  ), [containerWidth, enabled, fontsReady, headerKey, text]);
 
   return {
     bubbleRef,

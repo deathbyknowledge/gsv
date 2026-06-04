@@ -36,9 +36,11 @@ export function MessageBubble({
   const voiceMedia = media.filter(isAudioMedia);
   const otherMedia = media.filter((item) => !isAudioMedia(item));
   const hasText = row.text.trim().length > 0;
-  const useTightBubble = row.role === "user" && hasText && media.length === 0;
-  const { bubbleRef, bubbleStyle } = usePretextBubbleWidth(row.text, useTightBubble);
   const originLabel = formatInteractionOriginLabel(row.origin);
+  const roleLabel = labelForRole(row.role, userLabel, assistantLabel);
+  const timestampLabel = formatTimestamp(row.timestamp);
+  const useTightBubble = row.role === "user" && hasText && media.length === 0 && !originLabel;
+  const { bubbleRef, bubbleStyle } = usePretextBubbleWidth(row.text, useTightBubble, [roleLabel, timestampLabel]);
   const mediaTranscript = media.map(mediaTranscription).filter(Boolean).join("\n\n");
   const copyValue = row.text.trim()
     || mediaTranscript
@@ -50,10 +52,10 @@ export function MessageBubble({
       style={bubbleStyle}
     >
       <div class="message-head">
-        <span class="message-role-label">{labelForRole(row.role, userLabel, assistantLabel)}</span>
+        <span class="message-role-label">{roleLabel}</span>
         {originLabel ? <span class="message-origin-label" title={originLabel}>{originLabel}</span> : null}
         <span class="message-spacer" />
-        <span>{formatTimestamp(row.timestamp)}</span>
+        <span>{timestampLabel}</span>
         <details class="message-menu">
           <summary class="message-action" title="Message actions" aria-label="Message actions" onClick={(event) => {
             closeChatMenus((event.currentTarget as HTMLElement).closest("details") as HTMLDetailsElement | null);
