@@ -34,7 +34,11 @@ export function RepoWorkspace({
   const refOptions = refs ? [
     ...Object.keys(refs.heads).sort((left, right) => left.localeCompare(right)),
     ...Object.keys(refs.tags).sort((left, right) => left.localeCompare(right)),
+    ...Object.keys(refs.remotes ?? {})
+      .sort((left, right) => left.localeCompare(right))
+      .map((remote) => `refs/remotes/${remote}`),
   ] : [runtime.ref || "main"];
+  const remoteRefSelected = runtime.ref.startsWith("refs/remotes/");
   const pullAction = `source:pull:${repo.repo}`;
   const publicAction = `source:public:${repo.repo}`;
 
@@ -56,7 +60,8 @@ export function RepoWorkspace({
             label="Pull"
             busyLabel="Pulling"
             busy={runtime.pendingAction === pullAction}
-            disabled={!repo.writable || runtime.pendingAction !== null}
+            disabled={!repo.writable || remoteRefSelected || runtime.pendingAction !== null}
+            title={remoteRefSelected ? "Choose a local branch or tag before pulling upstream." : "Pull"}
             onClick={() => void runtime.pullRepo()}
           />
           <ActionButton

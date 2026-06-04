@@ -37,7 +37,7 @@ function RepoToolbar({ runtime, refOptions }: { runtime: SourcesRuntime; refOpti
     <header class="gsv-source-toolbar">
       <div class="gsv-source-ref-row">
         <label>
-          <span>Branch or tag</span>
+          <span>Ref</span>
           <select
             value={runtime.ref}
             disabled={runtime.loading}
