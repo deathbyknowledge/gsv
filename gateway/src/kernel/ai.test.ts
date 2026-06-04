@@ -49,8 +49,6 @@ function makeContext(connectionState: string): KernelContext {
         serverId: "server-1",
         uid: 1000,
         name: "Search",
-        url: "https://mcp.example.com/mcp",
-        transport: "auto",
         createdAt: 1,
         updatedAt: 2,
       }]),

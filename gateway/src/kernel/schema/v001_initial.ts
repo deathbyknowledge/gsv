@@ -566,23 +566,17 @@ export const KERNEL_V001_INITIAL_SCHEMA: SqlMigration = {
       ON oauth_accounts(uid)
     `,
     `
-      CREATE TABLE IF NOT EXISTS mcp_servers (
-        server_id  TEXT PRIMARY KEY NOT NULL,
-        uid        INTEGER NOT NULL,
-        name       TEXT NOT NULL,
-        url        TEXT NOT NULL,
-        transport  TEXT NOT NULL DEFAULT 'auto',
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
+      CREATE TABLE IF NOT EXISTS user_mcp_servers (
+        server_id    TEXT PRIMARY KEY NOT NULL,
+        uid          INTEGER NOT NULL,
+        display_name TEXT NOT NULL,
+        created_at   INTEGER NOT NULL,
+        updated_at   INTEGER NOT NULL
       )
     `,
     `
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_mcp_servers_uid_name_url
-      ON mcp_servers(uid, name, url)
-    `,
-    `
-      CREATE INDEX IF NOT EXISTS idx_mcp_servers_uid
-      ON mcp_servers(uid)
+      CREATE INDEX IF NOT EXISTS idx_user_mcp_servers_uid
+      ON user_mcp_servers(uid)
     `,
   ],
 };

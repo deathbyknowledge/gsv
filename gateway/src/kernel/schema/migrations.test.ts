@@ -71,7 +71,7 @@ describe("kernel schema migrations", () => {
       "packages",
       "oauth_flows",
       "oauth_accounts",
-      "mcp_servers",
+      "user_mcp_servers",
     ]);
   });
 
@@ -93,7 +93,7 @@ describe("kernel schema migrations", () => {
       "idx_signal_watches_target_key",
       "idx_packages_scope_name_runtime",
       "idx_oauth_accounts_identity",
-      "idx_mcp_servers_uid_name_url",
+      "idx_user_mcp_servers_uid",
     ]));
   });
 });
