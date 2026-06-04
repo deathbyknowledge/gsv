@@ -120,7 +120,7 @@ impl DurableObject for Repository {
     fn new(state: State, env: Env) -> Self {
         let state = state;
         let sql = state.storage().sql();
-        schema::init(&sql);
+        schema::init(&sql).expect("initialize repository schema");
         Self { sql, env, state }
     }
 
