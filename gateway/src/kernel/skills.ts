@@ -70,9 +70,10 @@ export async function collectKernelSkillDocuments(
   const files: SkillFile[] = [];
 
   const ripgit = ctx.env.RIPGIT ? new RipgitClient(ctx.env.RIPGIT) : null;
-  const identity = ctx.identity?.process;
-  if (ripgit && identity) {
-    files.push(...await collectRipgitRuntimeSkillFiles(ripgit, ctx, identity));
+  const runAsIdentity = ctx.identity?.process;
+  if (ripgit && runAsIdentity) {
+    const homeIdentity = resolveSkillHomeIdentity(ctx, runAsIdentity);
+    files.push(...await collectRipgitRuntimeSkillFiles(ripgit, ctx, runAsIdentity, homeIdentity));
   }
 
   return buildSkillDocuments(files);
@@ -83,7 +84,7 @@ export async function collectFilesystemSkillDocuments(
   ctx: KernelContext,
   identity: ProcessIdentity,
 ): Promise<SkillDocument[]> {
-  const roots = filesystemSkillRoots(ctx, identity);
+  const roots = filesystemSkillRoots(ctx, identity, resolveSkillHomeIdentity(ctx, identity));
   const files: SkillFile[] = [];
   for (const root of roots) {
     files.push(...await collectFsSkillFiles(fs, root.rootPath, root.source, root.idPrefix));
@@ -180,25 +181,26 @@ export function renderSkillIndex(entries: SkillIndexEntry[]): string {
 async function collectRipgitRuntimeSkillFiles(
   ripgit: RipgitClient,
   ctx: KernelContext,
-  identity: ProcessIdentity,
+  runAsIdentity: ProcessIdentity,
+  homeIdentity: ProcessIdentity,
 ): Promise<SkillFile[]> {
   const files: SkillFile[] = [];
 
   files.push(...await collectRipgitSkillFiles(
     ripgit,
-    homeKnowledgeRepoRef(identity.username),
+    homeKnowledgeRepoRef(homeIdentity.username),
     "skills.d",
     {
       kind: "home",
       label: "home",
       writable: true,
     },
-    `${identity.home}/skills.d`,
+    `${homeIdentity.home}/skills.d`,
   ));
 
   const packageRecords = ctx.packages.list({
     enabled: true,
-    scopes: visiblePackageScopesForActor(identity),
+    scopes: visiblePackageScopesForActor(homeIdentity),
   });
   const packagePathNames = packageSourcePathNameMap(packageRecords);
   for (const record of packageRecords) {
@@ -210,7 +212,7 @@ async function collectRipgitRuntimeSkillFiles(
     files.push(...await collectRipgitSkillFiles(ripgit, root.repo, root.path, {
       kind: "package",
       label: `pkg:${record.manifest.name}`,
-      writable: packageSourceWritable(record, identity),
+      writable: packageSourceWritable(record, runAsIdentity),
     }, root.virtualPath, sourcePathName));
   }
 
@@ -219,12 +221,13 @@ async function collectRipgitRuntimeSkillFiles(
 
 function filesystemSkillRoots(
   ctx: KernelContext,
-  identity: ProcessIdentity,
+  runAsIdentity: ProcessIdentity,
+  homeIdentity: ProcessIdentity,
 ): SkillRoot[] {
   const roots: SkillRoot[] = [];
 
   roots.push({
-    rootPath: `${identity.home}/skills.d`,
+    rootPath: `${homeIdentity.home}/skills.d`,
     source: {
       kind: "home",
       label: "home",
@@ -234,7 +237,7 @@ function filesystemSkillRoots(
 
   const packageRecords = ctx.packages.list({
     enabled: true,
-    scopes: visiblePackageScopesForActor(identity),
+    scopes: visiblePackageScopesForActor(homeIdentity),
   });
   const packagePathNames = packageSourcePathNameMap(packageRecords);
   for (const record of packageRecords) {
@@ -244,13 +247,51 @@ function filesystemSkillRoots(
       source: {
         kind: "package",
         label: `pkg:${record.manifest.name}`,
-        writable: packageSourceWritable(record, identity),
+        writable: packageSourceWritable(record, runAsIdentity),
       },
       idPrefix: sourcePathName,
     });
   }
 
   return roots;
+}
+
+function resolveSkillHomeIdentity(ctx: KernelContext, runAsIdentity: ProcessIdentity): ProcessIdentity {
+  const ownerUid = resolveSkillOwnerUid(ctx, runAsIdentity);
+  if (ownerUid === runAsIdentity.uid) {
+    return runAsIdentity;
+  }
+
+  const entry = ctx.auth?.getPasswdByUid(ownerUid);
+  if (!entry) {
+    return runAsIdentity;
+  }
+
+  return {
+    uid: entry.uid,
+    gid: entry.gid,
+    gids: ctx.auth.resolveGids(entry.username, entry.gid),
+    username: entry.username,
+    home: entry.home,
+    cwd: entry.home,
+  };
+}
+
+function resolveSkillOwnerUid(ctx: KernelContext, runAsIdentity: ProcessIdentity): number {
+  if (typeof ctx.callerOwnerUid === "number" && Number.isFinite(ctx.callerOwnerUid)) {
+    return ctx.callerOwnerUid;
+  }
+
+  if (ctx.processId) {
+    const ownerUid = typeof ctx.procs?.getOwnerUid === "function"
+      ? ctx.procs.getOwnerUid(ctx.processId)
+      : ctx.procs?.get(ctx.processId)?.ownerUid ?? null;
+    if (ownerUid != null) {
+      return ownerUid;
+    }
+  }
+
+  return runAsIdentity.uid;
 }
 
 async function collectFsSkillFiles(
