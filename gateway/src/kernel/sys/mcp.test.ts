@@ -11,11 +11,29 @@ import {
 
 type FakeMcpServers = {
   records: Map<string, McpServerRecord>;
+  sdkServers: Map<string, SdkMcpServerRow>;
   upsert: ReturnType<typeof vi.fn>;
   get: ReturnType<typeof vi.fn>;
-  findByUidNameUrl: ReturnType<typeof vi.fn>;
+  findByUidName: ReturnType<typeof vi.fn>;
   list: ReturnType<typeof vi.fn>;
   delete: ReturnType<typeof vi.fn>;
+  addSdkServer: (input: {
+    serverId: string;
+    uid: number;
+    name: string;
+    url: string;
+    transport?: string;
+  }) => void;
+};
+
+type SdkMcpServerRow = {
+  id: string;
+  name: string;
+  server_url: string;
+  client_id: string | null;
+  auth_url: string | null;
+  callback_url: string;
+  server_options: string | null;
 };
 
 function makeContext(uid: number, mcpServers: FakeMcpServers): KernelContext {
@@ -35,15 +53,24 @@ function makeContext(uid: number, mcpServers: FakeMcpServers): KernelContext {
     mcpServers,
     mcp: {
       mcpConnections: {},
-      listServers: vi.fn(() => []),
+      listServers: vi.fn(() => [...mcpServers.sdkServers.values()]),
       listTools: vi.fn(() => []),
       listResources: vi.fn(() => []),
       listPrompts: vi.fn(() => []),
     },
-    addMcpServerConnection: vi.fn(async () => ({
-      id: "server-1",
-      state: "ready",
-    })),
+    addMcpServerConnection: vi.fn(async (input) => {
+      mcpServers.addSdkServer({
+        serverId: "server-1",
+        uid: input.uid,
+        name: input.name,
+        url: input.url,
+        transport: input.transport.type,
+      });
+      return {
+        id: "server-1",
+        state: "ready",
+      };
+    }),
     removeMcpServerConnection: vi.fn(async () => undefined),
     callMcpTool: vi.fn(async () => ({
       content: [{ type: "text", text: "ok" }],
@@ -54,6 +81,7 @@ function makeContext(uid: number, mcpServers: FakeMcpServers): KernelContext {
 function createFakeMcpServers(): FakeMcpServers {
   const fake: FakeMcpServers = {
     records: new Map(),
+    sdkServers: new Map(),
     upsert: vi.fn((input) => {
       const existing = fake.records.get(input.serverId);
       const now = input.now ?? 1_700_000_000_000;
@@ -61,8 +89,6 @@ function createFakeMcpServers(): FakeMcpServers {
         serverId: input.serverId,
         uid: input.uid,
         name: input.name,
-        url: input.url,
-        transport: input.transport,
         createdAt: existing?.createdAt ?? now,
         updatedAt: now,
       };
@@ -70,10 +96,10 @@ function createFakeMcpServers(): FakeMcpServers {
       return record;
     }),
     get: vi.fn((serverId) => fake.records.get(serverId) ?? null),
-    findByUidNameUrl: vi.fn((uid, name, url) =>
-      [...fake.records.values()].find((record) =>
-        record.uid === uid && record.name === name && record.url === url
-      ) ?? null
+    findByUidName: vi.fn((uid, name) =>
+      [...fake.records.values()].filter((record) =>
+        record.uid === uid && record.name === name
+      )
     ),
     list: vi.fn((uid) =>
       [...fake.records.values()].filter((record) => uid === undefined || record.uid === uid)
@@ -83,6 +109,21 @@ function createFakeMcpServers(): FakeMcpServers {
       if (!record || (uid !== undefined && record.uid !== uid)) return false;
       return fake.records.delete(serverId);
     }),
+    addSdkServer: (input) => {
+      fake.sdkServers.set(input.serverId, {
+        id: input.serverId,
+        name: `u${input.uid}:${input.name}`,
+        server_url: new URL(input.url).href,
+        client_id: null,
+        auth_url: null,
+        callback_url: "",
+        server_options: JSON.stringify({
+          transport: {
+            type: input.transport ?? "auto",
+          },
+        }),
+      });
+    },
   };
   return fake;
 }
@@ -124,8 +165,12 @@ describe("sys.mcp handlers", () => {
       serverId: "server-1",
       uid: 1000,
       name: "GitHub",
+    });
+    mcpServers.addSdkServer({
+      serverId: "server-1",
+      uid: 1000,
+      name: "GitHub",
       url: "https://mcp.example.com/mcp",
-      transport: "auto",
     });
 
     const existing = await handleSysMcpAdd({
@@ -177,15 +222,23 @@ describe("sys.mcp handlers", () => {
       serverId: "server-1",
       uid: 1000,
       name: "Owned",
+    });
+    mcpServers.addSdkServer({
+      serverId: "server-1",
+      uid: 1000,
+      name: "Owned",
       url: "https://owned.example.com/mcp",
-      transport: "auto",
     });
     mcpServers.upsert({
       serverId: "server-2",
       uid: 1001,
       name: "Other",
+    });
+    mcpServers.addSdkServer({
+      serverId: "server-2",
+      uid: 1001,
+      name: "Other",
       url: "https://other.example.com/mcp",
-      transport: "auto",
     });
 
     expect(handleSysMcpList({}, ctx).servers.map((server) => server.serverId)).toEqual(["server-1"]);
@@ -200,8 +253,6 @@ describe("sys.mcp handlers", () => {
       serverId: "server-1",
       uid: 1000,
       name: "Owned",
-      url: "https://owned.example.com/mcp",
-      transport: "auto",
     });
 
     const result = await handleSysMcpCall({

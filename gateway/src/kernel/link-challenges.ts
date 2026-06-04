@@ -18,33 +18,6 @@ const DEFAULT_TTL_MS = 10 * 60 * 1000;
 export class LinkChallengeStore {
   constructor(private readonly sql: SqlStorage) {}
 
-  init(): void {
-    this.sql.exec(`
-      CREATE TABLE IF NOT EXISTS link_challenges (
-        code         TEXT PRIMARY KEY,
-        adapter      TEXT NOT NULL,
-        account_id   TEXT NOT NULL,
-        actor_id     TEXT NOT NULL,
-        surface_kind TEXT NOT NULL,
-        surface_id   TEXT NOT NULL,
-        created_at   INTEGER NOT NULL,
-        expires_at   INTEGER NOT NULL,
-        used_at      INTEGER,
-        used_by_uid  INTEGER
-      )
-    `);
-
-    this.sql.exec(`
-      CREATE INDEX IF NOT EXISTS idx_link_challenges_lookup
-      ON link_challenges(adapter, account_id, actor_id)
-    `);
-
-    this.sql.exec(`
-      CREATE INDEX IF NOT EXISTS idx_link_challenges_expires
-      ON link_challenges(expires_at)
-    `);
-  }
-
   issue(input: {
     adapter: string;
     accountId: string;

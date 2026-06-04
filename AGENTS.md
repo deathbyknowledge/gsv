@@ -350,6 +350,24 @@ Pay attention to:
 - `proc.reset` for conversation reset with process survival
 - `proc.kill` for process teardown
 
+## Schema migrations
+
+Durable Object SQLite schemas are managed through versioned migrations.
+
+Current migration owners:
+- gateway kernel: `gateway/src/kernel/schema/*`
+- process runtime: `gateway/src/process/schema/*`
+- app runner: `gateway/src/app-runner/schema/*`
+- shared TypeScript runner: `gateway/src/schema/runner.ts`
+- ripgit repository worker: `ripgit/src/schema.rs`
+
+Rules:
+- do not create tables, indexes, or ad hoc `ensureColumn` migrations from store constructors
+- do not edit a migration that has shipped in a release; add the next numbered migration instead
+- only collapse schema into a new `v001` baseline before a release or at an explicit major-version reset
+- keep old migrations long enough for supported upgrade paths; pruning belongs to an intentional major-version policy
+- after schema changes, validate the owning surface and migration tests, not just the store logic
+
 ## Adapter and channel guidelines
 
 - gateway should see stable adapter actor/surface semantics
@@ -392,316 +410,38 @@ When you change something:
 
 ## App product and UX decision-making
 
-When designing or rewriting a builtin app, do not start from the current code shape or from whatever UI happens to exist today.
-Start from the product job of the app.
+Builtin apps are operational desktop tools, not generic dashboards.
+Start from the app's product job and the user decisions it must support.
 
-The standard to hold is:
-- builtin apps are operational tools inside a desktop environment
-- they should make the important system state and actions obvious
-- they should not feel like generic web admin dashboards
-- they should not dump raw data unless the app is explicitly an advanced/debug surface
-
-### Before writing code, define the app's job
-
-Write down, at least briefly:
+Before coding a builtin app, be able to answer:
 - what job the app owns
-- what questions it should answer at a glance
-- what primary actions it must make easy
-- what belongs somewhere else and should not be duplicated here
+- what state should be visible at a glance
+- what the top actions are
+- what belongs in another app instead
+- what layout shape fits the work
+- what data belongs in the curated surface versus `Advanced`
+- what permissions change what is editable
+- whether behavior is intentionally changing or only being refactored
 
-If you cannot state the app's job clearly, you are not ready to implement it.
+Default to dense but readable desktop patterns: sidebars, split panes, tables, inspectors, direct manipulation, and clear primary actions.
+Avoid dumping raw syscall data, oversized dashboard cards, marketing spacing, and app-local workarounds for shared runtime seams.
 
-Examples:
-- `Files` is for browsing and editing target filesystems, not for process management
-- `Processes` is for inspecting and controlling process lifecycle, not for raw system config
-- `Devices` should manage execution targets, health, trust, and routing, not be a metadata dump
-- `Control` is for system settings and access, with raw config only as an escape hatch
-
-### Design from user decisions, not from available syscalls
-
-Do not build the UI by dumping every field returned by a syscall.
-A syscall shape is an implementation detail, not a product design.
-
-Instead:
-- identify the decisions the user needs to make
-- identify the state they need in order to make those decisions confidently
-- design the UI around those decisions
-- then map the design to the backend/syscalls
-
-Bad pattern:
-- render every config key because `sys.config.get` returned them
-
-Good pattern:
-- surface the curated settings people actually need
-- keep unknown or low-confidence data in an `Advanced` escape hatch
-
-### Prefer task-oriented surfaces over raw data dumps
-
-Most apps should be organized around tasks, not raw records.
-
-Good examples:
-- pair a device
-- open a workspace on a target
-- inspect a process and stop it
-- rotate a token
-- save a profile prompt policy
-
-Avoid:
-- giant key/value tables as the main UI
-- pages that only mirror backend objects without interpretation
-- generic forms that expose every field with no explanation
-
-### Make the important state visible at a glance
-
-Every app should make the most important state immediately obvious.
-Ask:
-- what must the user be able to see in under five seconds?
-- what should be sortable, grouped, or highlighted first?
-- what deserves a dedicated summary instead of being buried in detail?
-
-Examples:
-- `Devices`: online/offline, platform, owner, last seen, capability readiness
-- `Processes`: running/completed/error, label, owner, workspace, last activity
-- `Files`: current target, current path, dirty state, preview type
-
-### Use strong scope boundaries between apps
-
-Do not casually merge responsibilities because the data is nearby.
-If a concern belongs to another app, link to that app instead of re-implementing it.
-
-Examples:
-- `Devices` can link to `Files`, `Shell`, or `Processes`, but should not replace them
-- `Control` can expose token and access flows, but should not become a device fleet manager
-- `Processes` can open a conversation in `Chat`, but should not become the chat app
-
-A builtin app should have a clear center of gravity.
-
-### Default to desktop UI patterns, not dashboard/web-app patterns
-
-GSV apps live inside a desktop shell.
-Design them like operational desktop tools.
-
-Prefer:
-- split panes
-- sidebars/rails
-- detail panes
-- tables where appropriate
-- dense but readable layouts
-- direct manipulation and clear primary actions
-
-Avoid by default:
-- stacked rounded cards for every section
-- flashy dashboard tiles
-- oversized marketing spacing
-- layouts that waste vertical space on repeated explanatory chrome
-
-The app should feel like a serious workstation tool.
-
-### Design consolidated system surfaces like native app shells
-
-The consolidated `GSV` builtin is the system console for operating and configuring a GSV installation.
-It should feel like system software inside the desktop shell, not like a responsive website.
-
-Use `docs/gsv-system-console.md` as the product and navigation contract.
-
-The core rules:
-- global navigation chooses the kind of work; local navigation chooses object state
-- desktop uses persistent grouped navigation
-- mobile uses a focused screen, top bar/back/action chrome, and grouped bottom navigation
-- `Overview` is an attention inbox, not a dashboard
-- prefer native-feeling lists, panes, inspectors, queues, and navigation stacks
-- avoid hero sections, large stat-card grids, decorative gradients, and marketing spacing
-- keep `Chat`, `Files`, `Shell`, and `Wiki` as standalone work surfaces
-- keep `Processes`, `Devices`, and message adapter management inside `GSV`
-- show permission state before actions, especially because `GSV` is a high-privilege first-party console
-
-### Use the right control for the job
-
-Do not use one generic input type everywhere.
-Match the control to the data and the action.
-
-Examples:
-- boolean: checkbox or toggle
-- enum: select
-- short scalar: text or number input
-- long prompt/policy text: textarea
-- structured but advanced policy: dedicated JSON editor only when needed
-- destructive action: explicit button with clear label
-
-If a field is important but hard to understand, add a short description.
-If a field is low-confidence or too raw, move it to `Advanced`.
-
-### Curate the main UX; keep raw power in `Advanced`
-
-For apps that need a power-user escape hatch:
-- keep the main surface curated and intentional
-- keep raw/unmodeled state in `Advanced`
-- do not let `Advanced` dictate the structure of the main app
-
-`Advanced` is for:
-- unmodeled keys
-- raw JSON
-- low-level policy artifacts
-- debugging and recovery
-
-It is not the design center of the app.
-
-### Permissions are product, not just backend validation
-
-Do not render an editable UI and wait for save-time permission errors.
-If a user cannot edit something:
-- make it read-only in the UI
-- show the lock state clearly
-- explain the restriction with a concise tooltip or inline note when needed
-
-If a user has a personal override surface:
-- show that as a first-class path
-- do not force them through a system-admin flow that will fail later
-
-### Raise architecture debt instead of normalizing ad hoc seams
-
-When a bug or awkward workflow points to a shared runtime, host, SDK, routing, or cross-app contract problem, call that out explicitly.
-Do not keep layering app-local patches over the same seam.
-
-Examples:
-- if multiple apps have to know another app's private route schema, the app-launch contract is wrong
-- if one app works only through a special side channel while others hand-build URLs, the runtime boundary is wrong
-- if the same host or RPC workaround keeps appearing, raise it as architecture debt before adding another copy
-
-The standard is:
-- identify whether the issue is local product/UI work or a shared systems seam
-- if it is a shared seam, say so directly
-- prefer one runtime/host/API fix over several ad hoc app patches
-
-### Preserve behavior unless there is explicit product intent to change it
-
-A migration to SPA, RPC, or a new runtime is not permission to redesign the product.
-If you are changing:
-- architecture
-- rendering model
-- state management
-- transport
-
-then preserve:
-- the app's job
-- the user's primary workflows
-- the established visual direction
-
-Only change product behavior when there is an explicit reason to do so.
-
-### For a new or draft app, write a short product spec first
-
-Before implementing a new app or turning a mock into a real product, write down:
-- app job
-- primary user questions
-- primary actions
-- main views/panes/tabs
-- what is intentionally out of scope
-
-This does not need to be long.
-But it should exist before implementation starts.
-
-### Minimum checklist before implementation
-
-Before coding a builtin app, be able to answer all of these:
-- What job does this app own?
-- What should be visible at a glance?
-- What are the top three user actions?
-- What belongs in another app instead?
-- What is the main layout shape: split pane, list/detail, editor, table, or wizard?
-- Which data deserves a curated surface, and which belongs in `Advanced`?
-- What permissions should change what is editable?
-- Are we preserving the existing product behavior, or intentionally changing it?
-
-If these answers are weak, stop and design first.
+Detailed product guidance lives in `engineering/builtin-app-design.md`.
+The consolidated `GSV` system console contract lives in `docs/gsv-system-console.md`.
 
 ## Package frontend architecture and refactoring
 
-Builtin packages are examples for future user-authored packages. Hold their frontend structure to a high standard.
+Builtin packages are examples for future user-authored packages. Keep frontend structure understandable as apps grow.
 
-Do not let a package grow into a few huge files such as:
-- `app.tsx` owning backend loading, subscriptions, media lifecycle, dialogs, and all JSX
-- `components.tsx` containing every component in the app
-- `view-helpers.ts` mixing domain reducers, payload normalization, DOM helpers, storage, markdown, and formatters
-- one `styles.css` with thousands of lines
+Once a package has more than one real surface, prefer feature-oriented structure:
+- `app.tsx` for composition and cross-feature wiring
+- `components/*` for rendering and local interaction
+- `hooks/*` for backend loading, subscriptions, timers, refs, media lifecycle, browser APIs, and host bridge state
+- `domain/*` for pure transformations, reducers, normalization, and model rules
+- `utils/*` for generic formatting, guards, markdown, clipboard, storage, and DOM helpers
+- `backend/*` for package backend wrappers and syscall argument normalization
 
-Prefer a feature-oriented hierarchy once an app has more than one real surface:
+When refactoring, preserve behavior first: split pure helpers, then components, then hooks, then CSS.
+Validate after each risky boundary and keep package CSS/assets aligned with `src/package.ts`.
 
-```text
-src/app/
-├── main.tsx
-├── app.tsx                 # composition and cross-feature wiring only
-├── types.ts                # shared app model types
-├── components/
-│   ├── layout/
-│   ├── navigation/
-│   ├── <feature>/
-│   └── ui/
-├── hooks/                  # stateful runtime behavior and browser APIs
-├── domain/                 # pure reducers, normalization, model rules
-└── utils/                  # generic formatters, guards, storage, clipboard
-```
-
-Use these responsibility boundaries:
-- `app.tsx`: compose layout, wire feature hooks, pass callbacks, handle truly cross-feature actions
-- `components/*`: render UI and local interaction; avoid backend calls except through callbacks
-- `hooks/*`: own backend loading, subscriptions, timers, refs, media lifecycle, browser APIs, and host bridge state
-- `domain/*`: pure transformations, reducers, payload normalization, model rules, and feature-specific helpers
-- `utils/*`: generic formatting, type guards, markdown, clipboard, storage, and DOM helpers
-- `backend/*`: package backend wrappers and syscall argument normalization
-
-Common hook seams:
-- catalog/list loading, such as profiles, workspaces, devices, processes, conversations
-- history pagination and scroll anchoring
-- live process/app signal reconciliation
-- media source loading, object URL/data URL state, retry errors, and cleanup
-- file attachments and previews
-- browser recording APIs such as `MediaRecorder`
-- desktop-shell or host bridge target events
-- selection, filters, and persisted UI state
-
-Split components by product surface, not by generic UI category alone.
-
-Good folders include:
-- `navigation/`
-- `conversation/` or another domain feature name
-- `transcript/`
-- `media/`
-- `composer/`
-- `archive/`
-- `ui/` for truly shared primitives only
-
-For CSS, keep `src/styles.css` as the asset entrypoint and split feature CSS under `src/styles/*`:
-
-```css
-@import "./styles/base.css";
-@import "./styles/navigation.css";
-@import "./styles/<feature>.css";
-@import "./styles/responsive.css";
-```
-
-If `src/package.ts` declares explicit `browser.assets`, list every imported CSS partial there. The runtime can only serve assets it knows about.
-
-When refactoring an existing app, preserve behavior first:
-1. inventory file sizes and symbols
-2. split pure/domain helpers first
-3. split feature components second
-4. extract coherent stateful hooks third
-5. reduce `app.tsx` to integration and composition
-6. split CSS last without changing selectors
-7. validate after each risky seam
-
-Useful inspection commands:
-
-```bash
-find builtin-packages/<app>/src -maxdepth 4 -type f -print0 | xargs -0 wc -l | sort -nr
-rg -n "^(export\\s+)?(function|const|type|interface)\\s+" builtin-packages/<app>/src
-```
-
-For frontend-only package refactors, a useful import-graph check is:
-
-```bash
-npx esbuild builtin-packages/<app>/src/app/main.tsx --bundle --platform=browser --format=esm --jsx=automatic --jsx-import-source=preact --external:@gsv/package/* --outfile=/tmp/gsv-<app>-main.js
-```
-
-If the app uses a different browser entry, read `src/package.ts` and use that path. Do not rely on a repo-wide builtin TypeScript check if it is already failing for unrelated package/module-resolution reasons.
+Detailed package architecture guidance lives in `engineering/package-frontend-architecture.md`.

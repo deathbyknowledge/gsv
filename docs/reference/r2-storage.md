@@ -38,7 +38,7 @@ Kernel SQLite is the authoritative control-plane store. Important tables include
 |---|---|
 | `passwd`, `shadow`, `groups`, `auth_tokens` | Users, passwords, groups, and issued auth tokens. |
 | `oauth_accounts`, `oauth_flows` | Stored generic OAuth account credentials and pending authorization-code + PKCE flows. |
-| `mcp_servers`, `cf_agents_mcp_servers` | User-owned MCP server metadata plus the Agent MCP client manager's connection/OAuth state. |
+| `user_mcp_servers`, `cf_agents_mcp_servers` | User-owned MCP server metadata plus the Agent MCP client manager's connection/OAuth state. |
 | `config_kv` | Runtime configuration exposed under `/sys/config` and `/sys/users`. |
 | `group_capabilities` | Capability grants by group id. |
 | `devices`, `device_access` | Registered devices and group access. |

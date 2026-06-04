@@ -85,16 +85,6 @@ export class CapabilityStore {
     this.sql = sql;
   }
 
-  init(): void {
-    this.sql.exec(`
-      CREATE TABLE IF NOT EXISTS group_capabilities (
-        gid        INTEGER NOT NULL,
-        capability TEXT    NOT NULL,
-        PRIMARY KEY (gid, capability)
-      )
-    `);
-  }
-
   seed(): void {
     for (const [gid, caps] of DEFAULT_CAPABILITIES) {
       for (const cap of caps) {

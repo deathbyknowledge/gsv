@@ -35,6 +35,16 @@ export type McpAddConnectionResult = {
   authUrl?: string;
 };
 
+type SdkMcpServerRow = {
+  id: string;
+  name: string;
+  server_url: string;
+  client_id: string | null;
+  auth_url: string | null;
+  callback_url: string;
+  server_options: string | null;
+};
+
 const MCP_TRANSPORT_TYPES = new Set<SysMcpTransportType>(["auto", "streamable-http", "sse"]);
 
 export function canRediscoverMcpConnectionState(input: unknown): boolean {
@@ -52,7 +62,7 @@ export async function handleSysMcpAdd(
   const callbackHost = parseOptionalCallbackHost(args.callbackHost);
   const transport = parseTransport(args.transport);
 
-  const existing = ctx.mcpServers.findByUidNameUrl(effectiveUid, name, url);
+  const existing = findUserMcpServerByNameUrl(ctx, effectiveUid, name, url);
   if (existing) {
     return { server: summarizeServer(existing, ctx) };
   }
@@ -73,8 +83,6 @@ export async function handleSysMcpAdd(
     serverId: connection.id,
     uid: effectiveUid,
     name,
-    url,
-    transport: transport.type,
   });
   return { server: summarizeServer(record, ctx) };
 }
@@ -159,7 +167,7 @@ export async function handleSysMcpCall(
 }
 
 export function summarizeServer(record: McpServerRecord, ctx: KernelContext): SysMcpServerSummary {
-  const server = ctx.mcp.listServers().find((item) => item.id === record.serverId);
+  const server = findSdkMcpServer(ctx, record.serverId);
   const connection = ctx.mcp.mcpConnections[record.serverId];
   const tools = ctx.mcp.listTools({ serverId: record.serverId }) as Tool[];
   const resources = ctx.mcp.listResources({ serverId: record.serverId });
@@ -169,8 +177,8 @@ export function summarizeServer(record: McpServerRecord, ctx: KernelContext): Sy
     serverId: record.serverId,
     uid: record.uid,
     name: record.name,
-    url: record.url,
-    transport: record.transport,
+    url: server?.server_url ?? "",
+    transport: parseSdkServerTransport(server),
     state: connection
       ? parseConnectionState(connection.connectionState)
       : server?.auth_url ? "authenticating" : "not-connected",
@@ -184,6 +192,44 @@ export function summarizeServer(record: McpServerRecord, ctx: KernelContext): Sy
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
   };
+}
+
+function findUserMcpServerByNameUrl(
+  ctx: KernelContext,
+  uid: number,
+  name: string,
+  url: string,
+): McpServerRecord | null {
+  for (const record of ctx.mcpServers.findByUidName(uid, name)) {
+    const server = findSdkMcpServer(ctx, record.serverId);
+    if (server?.server_url === url) {
+      return record;
+    }
+  }
+  return null;
+}
+
+function findSdkMcpServer(ctx: KernelContext, serverId: string): SdkMcpServerRow | undefined {
+  return (ctx.mcp.listServers() as SdkMcpServerRow[])
+    .find((item) => item.id === serverId);
+}
+
+function parseSdkServerTransport(server: SdkMcpServerRow | undefined): SysMcpTransportType {
+  if (!server?.server_options) {
+    return "auto";
+  }
+  try {
+    const options = JSON.parse(server.server_options) as unknown;
+    if (!isRecord(options) || !isRecord(options.transport)) {
+      return "auto";
+    }
+    const type = options.transport.type;
+    return typeof type === "string" && MCP_TRANSPORT_TYPES.has(type as SysMcpTransportType)
+      ? type as SysMcpTransportType
+      : "auto";
+  } catch {
+    return "auto";
+  }
 }
 
 function summarizeTool(tool: Tool): SysMcpToolSummary {

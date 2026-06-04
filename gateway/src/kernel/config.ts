@@ -102,15 +102,6 @@ export const USER_OVERRIDABLE_PREFIXES = ["ai/"] as const;
 export class ConfigStore {
   constructor(private readonly sql: SqlStorage) {}
 
-  init(): void {
-    this.sql.exec(`
-      CREATE TABLE IF NOT EXISTS config_kv (
-        key   TEXT PRIMARY KEY,
-        value TEXT NOT NULL
-      )
-    `);
-  }
-
   get(key: string): string | null {
     return this.getExplicit(key) ?? SYSTEM_CONFIG_DEFAULTS[key] ?? null;
   }

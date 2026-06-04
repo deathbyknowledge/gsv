@@ -46,44 +46,6 @@ type RawDeviceRow = Omit<DeviceRecord, "implements" | "online" | "label" | "desc
 export class DeviceRegistry {
   constructor(private sql: SqlStorage) { }
 
-  init(): void {
-    this.sql.exec(`
-      CREATE TABLE IF NOT EXISTS devices (
-        device_id        TEXT    PRIMARY KEY,
-        owner_uid        INTEGER NOT NULL,
-        label            TEXT    NOT NULL DEFAULT '',
-        description      TEXT    NOT NULL DEFAULT '',
-        implements       TEXT    NOT NULL DEFAULT '[]',
-        platform         TEXT    NOT NULL DEFAULT '',
-        version          TEXT    NOT NULL DEFAULT '',
-        lifecycle        TEXT    NOT NULL DEFAULT 'persistent',
-        online           INTEGER NOT NULL DEFAULT 0,
-        first_seen_at    INTEGER NOT NULL,
-        last_seen_at     INTEGER NOT NULL,
-        connected_at     INTEGER,
-        disconnected_at  INTEGER
-      )
-    `);
-
-    try {
-      this.sql.exec("ALTER TABLE devices ADD COLUMN description TEXT NOT NULL DEFAULT ''");
-    } catch {}
-    try {
-      this.sql.exec("ALTER TABLE devices ADD COLUMN label TEXT NOT NULL DEFAULT ''");
-    } catch {}
-    try {
-      this.sql.exec("ALTER TABLE devices ADD COLUMN lifecycle TEXT NOT NULL DEFAULT 'persistent'");
-    } catch {}
-
-    this.sql.exec(`
-      CREATE TABLE IF NOT EXISTS device_access (
-        device_id TEXT    NOT NULL,
-        gid       INTEGER NOT NULL,
-        PRIMARY KEY (device_id, gid)
-      )
-    `);
-  }
-
   register(
     deviceId: string,
     ownerUid: number,

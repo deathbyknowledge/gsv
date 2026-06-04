@@ -313,7 +313,6 @@ describe("AppSessionStore", () => {
     vi.spyOn(Date, "now").mockReturnValue(10_000);
 
     const store = new AppSessionStore(createMockSql() as unknown as SqlStorage);
-    store.init();
 
     const issued = await store.issue({
       uid: 1000,
@@ -342,7 +341,6 @@ describe("AppSessionStore", () => {
     vi.spyOn(Date, "now").mockReturnValue(100_000);
 
     const store = new AppSessionStore(createMockSql() as unknown as SqlStorage);
-    store.init();
 
     const issued = await store.issue({
       uid: 1000,
@@ -368,7 +366,6 @@ describe("AppSessionStore", () => {
     vi.spyOn(Date, "now").mockReturnValue(200_000);
 
     const store = new AppSessionStore(createMockSql() as unknown as SqlStorage);
-    store.init();
 
     const issued = await store.issue({
       uid: 1000,
@@ -416,7 +413,6 @@ describe("AppSessionStore", () => {
     vi.spyOn(Date, "now").mockReturnValue(300_000);
 
     const store = new AppSessionStore(createMockSql() as unknown as SqlStorage);
-    store.init();
 
     const issued = await store.issue({
       uid: 1000,

@@ -170,7 +170,6 @@ describe("CapabilityStore", () => {
   beforeEach(() => {
     const sql = createMockSql();
     store = new CapabilityStore(sql);
-    store.init();
   });
 
   it("seed populates the table with default capabilities", () => {

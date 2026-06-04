@@ -621,85 +621,6 @@ export class PackageStore {
     private readonly bucket: R2Bucket,
   ) {}
 
-  init(): void {
-    this.sql.exec(`
-      CREATE TABLE IF NOT EXISTS packages (
-        package_id         TEXT    NOT NULL,
-        scope_key          TEXT    NOT NULL,
-        scope_kind         TEXT    NOT NULL,
-        scope_uid          INTEGER,
-        scope_workspace_id TEXT,
-        name               TEXT    NOT NULL,
-        version            TEXT    NOT NULL,
-        runtime            TEXT    NOT NULL,
-        enabled            INTEGER NOT NULL DEFAULT 1,
-        manifest_json      TEXT    NOT NULL,
-        artifact_hash      TEXT,
-        artifact_meta_json TEXT,
-        artifact_json      TEXT    NOT NULL DEFAULT '',
-        grants_json        TEXT,
-        installed_at       INTEGER NOT NULL,
-        updated_at         INTEGER NOT NULL,
-        review_required    INTEGER NOT NULL DEFAULT 0,
-        reviewed_at        INTEGER,
-        UNIQUE(package_id, scope_key)
-      )
-    `);
-
-    this.#ensureColumn("packages", "artifact_hash", "TEXT");
-    this.#ensureColumn("packages", "artifact_meta_json", "TEXT");
-    this.sql.exec("DELETE FROM packages WHERE scope_kind = 'workspace'");
-
-    this.sql.exec(
-      "CREATE INDEX IF NOT EXISTS idx_packages_name_runtime ON packages (name, runtime, updated_at DESC)",
-    );
-    this.sql.exec(
-      "CREATE INDEX IF NOT EXISTS idx_packages_enabled ON packages (enabled, name, updated_at DESC)",
-    );
-    this.sql.exec(
-      "CREATE INDEX IF NOT EXISTS idx_packages_scope_name_runtime ON packages (scope_key, name, runtime, updated_at DESC)",
-    );
-  }
-
-  async migrateArtifacts(): Promise<void> {
-    const rows = this.sql.exec<RowShape>(
-      `SELECT * FROM packages
-       WHERE artifact_hash IS NULL
-          OR artifact_hash = ''
-          OR artifact_meta_json IS NULL
-          OR artifact_meta_json = ''
-          OR artifact_json <> ''`,
-    ).toArray();
-
-    for (const row of rows) {
-      const legacyArtifact = row.artifact_json.trim().length > 0
-        ? parseJson<PackageArtifact>(row.artifact_json)
-        : null;
-      const artifactHash = legacyArtifact?.hash ?? (row.artifact_hash?.trim() || null);
-      if (!artifactHash) {
-        throw new Error(`Package ${row.package_id} is missing artifact data`);
-      }
-      const artifact = legacyArtifact ?? await loadPackageArtifact(this.bucket, artifactHash);
-      const manifest = normalizeStoredManifest(
-        parseJson<StoredPackageManifest>(row.manifest_json),
-        artifact,
-      );
-      const artifactMetadata = artifactMetadataFromArtifact(artifact);
-      await storePackageArtifact(this.bucket, artifact);
-
-      this.sql.exec(
-        `UPDATE packages
-         SET manifest_json = ?, artifact_hash = ?, artifact_meta_json = ?, artifact_json = ''
-         WHERE package_id = ? AND scope_key = ?`,
-        JSON.stringify(manifest),
-        artifactMetadata.hash,
-        JSON.stringify(artifactMetadata),
-        row.package_id,
-        row.scope_key,
-      );
-    }
-  }
-
   async seedBuiltinPackages(
     builtinSeeds: readonly PackageSeed[],
     now: number = Date.now(),
@@ -743,13 +664,12 @@ export class PackageStore {
 
     this.sql.exec(
       `INSERT OR REPLACE INTO packages
-        (package_id, scope_key, scope_kind, scope_uid, scope_workspace_id, name, version, runtime, enabled, manifest_json, artifact_hash, artifact_meta_json, artifact_json, grants_json, installed_at, updated_at, review_required, reviewed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (package_id, scope_key, scope_kind, scope_uid, name, version, runtime, enabled, manifest_json, artifact_hash, artifact_meta_json, grants_json, installed_at, updated_at, review_required, reviewed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       record.packageId,
       packageScopeKey(record.scope),
       record.scope.kind,
       record.scope.kind === "user" ? record.scope.uid : null,
-      null,
       record.manifest.name,
       record.manifest.version,
       record.manifest.runtime,
@@ -757,7 +677,6 @@ export class PackageStore {
       JSON.stringify(record.manifest),
       record.artifact.hash,
       JSON.stringify(record.artifact),
-      "",
       record.grants ? JSON.stringify(record.grants) : null,
       record.installedAt,
       record.updatedAt,
@@ -898,12 +817,6 @@ export class PackageStore {
     return true;
   }
 
-  #ensureColumn(table: string, column: string, definition: string): void {
-    const columns = this.sql.exec<{ name: string }>(`PRAGMA table_info(${table})`).toArray();
-    if (!columns.some((candidate) => candidate.name === column)) {
-      this.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
-    }
-  }
 }
 
 type RowShape = {
@@ -911,11 +824,9 @@ type RowShape = {
   scope_key: string;
   scope_kind: string;
   scope_uid: number | null;
-  scope_workspace_id: string | null;
   manifest_json: string;
-  artifact_hash: string | null;
-  artifact_meta_json: string | null;
-  artifact_json: string;
+  artifact_hash: string;
+  artifact_meta_json: string;
   grants_json: string | null;
   enabled: number;
   installed_at: number;
@@ -925,23 +836,12 @@ type RowShape = {
 };
 
 function toRecord(row: RowShape): InstalledPackageRecord {
-  const legacyArtifact = row.artifact_json.trim().length > 0
-    ? parseJson<PackageArtifact>(row.artifact_json)
-    : null;
-  const artifact = row.artifact_meta_json
-    ? parseJson<PackageArtifactMetadata>(row.artifact_meta_json)
-    : legacyArtifact
-      ? artifactMetadataFromArtifact(legacyArtifact)
-      : null;
-  if (!artifact) {
-    throw new Error(`Invalid package row: missing artifact metadata for ${row.package_id}`);
-  }
+  const artifact = parseJson<PackageArtifactMetadata>(row.artifact_meta_json);
   return {
     packageId: row.package_id,
     scope: scopeFromRow(row),
     manifest: normalizeStoredManifest(
       parseJson<StoredPackageManifest>(row.manifest_json),
-      legacyArtifact,
     ),
     artifact,
     grants: row.grants_json ? parseJson<PackageGrantSet>(row.grants_json) : undefined,
@@ -953,15 +853,17 @@ function toRecord(row: RowShape): InstalledPackageRecord {
   };
 }
 
-function scopeFromRow(row: Pick<RowShape, "scope_kind" | "scope_uid" | "scope_workspace_id">): PackageInstallScope {
+function scopeFromRow(row: Pick<RowShape, "scope_kind" | "scope_uid">): PackageInstallScope {
   switch (row.scope_kind) {
     case "user":
       if (typeof row.scope_uid !== "number") {
         throw new Error("Invalid package row: user scope missing uid");
       }
       return { kind: "user", uid: row.scope_uid };
-    default:
+    case "global":
       return { kind: "global" };
+    default:
+      throw new Error(`Invalid package row: unsupported scope ${row.scope_kind}`);
   }
 }
 

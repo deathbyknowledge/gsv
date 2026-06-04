@@ -101,6 +101,7 @@ import type {
   SchedulerRunArgs,
   SchedulerRunResult,
 } from "../syscalls/scheduler";
+import { runKernelSqlMigrations } from "./schema/migrations";
 
 const SERVER_VERSION = "0.2.2";
 const KERNEL_BINARY_DEVICE_ID = "__gsv_kernel__";
@@ -217,61 +218,44 @@ export class Kernel extends Host<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     const sql = ctx.storage.sql;
+    runKernelSqlMigrations(ctx.storage);
 
     this.auth = new AuthStore(sql);
-    this.auth.init();
 
     this.caps = new CapabilityStore(sql);
-    this.caps.init();
     this.caps.seed();
 
     this.config = new ConfigStore(sql);
-    this.config.init();
 
     this.devices = new DeviceRegistry(sql);
-    this.devices.init();
 
     this.routes = new RoutingTable(sql);
-    this.routes.init();
 
     this.shellSessions = new ShellSessionStore(sql);
-    this.shellSessions.init();
 
     this.procs = new ProcessRegistry(sql);
-    this.procs.init();
 
     this.conversations = new ConversationRegistry(sql);
-    this.conversations.init();
 
     this.adapters = new AdapterStore(sql);
-    this.adapters.init();
 
     this.runRoutes = new RunRouteStore(sql);
-    this.runRoutes.init();
 
     this.signalWatches = new SignalWatchStore(sql);
-    this.signalWatches.init();
 
     this.ipcCalls = new IpcCallStore(sql);
-    this.ipcCalls.init();
 
     this.notifications = new NotificationStore(sql);
-    this.notifications.init();
 
     this.schedules = new ScheduleStore(sql);
-    this.schedules.init();
 
     this.appSessions = new AppSessionStore(sql);
-    this.appSessions.init();
 
     this.packages = new PackageStore(sql, env.STORAGE);
-    this.packages.init();
 
     this.oauth = new OAuthStore(sql);
-    this.oauth.init();
 
     this.mcpServers = new McpServerStore(sql);
-    this.mcpServers.init();
     this.mcp.configureOAuthCallback({
       customHandler: (result) => oauthCallbackHtmlResponse(
         result.authSuccess
@@ -289,7 +273,7 @@ export class Kernel extends Host<Env> {
       ),
     });
 
-    this.ready = this.initialize();
+    this.ready = Promise.resolve();
 
     this.rehydrateConnections();
   }
@@ -369,10 +353,6 @@ export class Kernel extends Host<Env> {
       name: toolName,
       arguments: args,
     });
-  }
-
-  private async initialize(): Promise<void> {
-    await this.packages.migrateArtifacts();
   }
 
   shouldSendProtocolMessages(_: Connection, __: ConnectionContext): boolean {

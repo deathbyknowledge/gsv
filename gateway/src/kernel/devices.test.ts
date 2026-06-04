@@ -233,7 +233,6 @@ describe("DeviceRegistry", () => {
   beforeEach(() => {
     const sql = createMockSql();
     registry = new DeviceRegistry(sql);
-    registry.init();
   });
 
   it("registers a new device", () => {

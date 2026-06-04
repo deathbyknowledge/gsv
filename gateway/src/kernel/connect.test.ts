@@ -333,19 +333,14 @@ const mockConnection = {
 
 function makeCtx(sql: ReturnType<typeof createMockSql>): KernelContext {
   const auth = new AuthStore(sql as any);
-  auth.init();
 
   const caps = new CapabilityStore(sql as any);
-  caps.init();
 
   const config = new ConfigStore(sql as any);
-  config.init();
 
   const devices = new DeviceRegistry(sql as any);
-  devices.init();
 
   const procs = new ProcessRegistry(sql as any);
-  procs.init();
 
   return {
     env: env as any,

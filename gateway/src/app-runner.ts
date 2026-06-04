@@ -16,6 +16,7 @@ import {
   type AppRpcScheduleRecord,
   type AppRpcScheduleUpsertInput,
 } from "./app-daemons";
+import { runAppRunnerSqlMigrations } from "./app-runner/schema/migrations";
 
 type AppRunnerProps = {
   packageId: string;
@@ -284,8 +285,8 @@ export class AppRunner extends DurableObject<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    runAppRunnerSqlMigrations(ctx.storage);
     this.daemonSchedules = new AppRpcScheduleStore(ctx.storage.sql);
-    this.daemonSchedules.init();
     this.#restoreAppClients();
   }
 

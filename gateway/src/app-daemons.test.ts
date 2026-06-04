@@ -144,7 +144,6 @@ describe("app daemon schedule helpers", () => {
 describe("AppRpcScheduleStore", () => {
   it("upserts schedules and surfaces the earliest alarm time", () => {
     const store = new AppRpcScheduleStore(createMockSql() as unknown as SqlStorage);
-    store.init();
 
     const first = store.upsert({
       key: "curator:personal",
@@ -168,7 +167,6 @@ describe("AppRpcScheduleStore", () => {
 
   it("disables one-shot schedules after they run", () => {
     const store = new AppRpcScheduleStore(createMockSql() as unknown as SqlStorage);
-    store.init();
 
     const created = store.upsert({
       key: "wiki:once",
@@ -195,7 +193,6 @@ describe("AppRpcScheduleStore", () => {
 
   it("preserves a newer reschedule when a running job finishes", () => {
     const store = new AppRpcScheduleStore(createMockSql() as unknown as SqlStorage);
-    store.init();
 
     const original = store.upsert({
       key: "wiki:loop",

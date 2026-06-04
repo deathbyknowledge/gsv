@@ -96,7 +96,6 @@ describe("ShellSessionStore", () => {
   it("remembers the owning device for a running session", () => {
     vi.spyOn(Date, "now").mockReturnValue(1_000);
     const store = new ShellSessionStore(createMockSql() as unknown as SqlStorage);
-    store.init();
 
     store.rememberDeviceSession("sh_1", "macbook");
 
@@ -110,7 +109,6 @@ describe("ShellSessionStore", () => {
   it("rejects expired sessions during lookup", () => {
     const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
     const store = new ShellSessionStore(createMockSql() as unknown as SqlStorage);
-    store.init();
     store.rememberDeviceSession("sh_1", "macbook", "running", { ttlMs: 10 });
 
     now.mockReturnValue(1_010);
@@ -121,7 +119,6 @@ describe("ShellSessionStore", () => {
 
   it("marks active sessions failed when a device disconnects", () => {
     const store = new ShellSessionStore(createMockSql() as unknown as SqlStorage);
-    store.init();
     store.rememberDeviceSession("sh_1", "macbook");
 
     store.failForDevice("macbook", "Device disconnected");

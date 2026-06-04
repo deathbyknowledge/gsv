@@ -42,66 +42,6 @@ export type SignalWatchRecord = {
 export class SignalWatchStore {
   constructor(private readonly sql: SqlStorage) {}
 
-  init(): void {
-    this.sql.exec(`
-      CREATE TABLE IF NOT EXISTS signal_watches (
-        watch_id TEXT PRIMARY KEY,
-        uid INTEGER NOT NULL,
-        package_id TEXT NOT NULL,
-        package_name TEXT NOT NULL,
-        entrypoint_name TEXT NOT NULL,
-        route_base TEXT NOT NULL,
-        signal TEXT NOT NULL,
-        process_id TEXT,
-        dedupe_key TEXT,
-        state_json TEXT NOT NULL DEFAULT 'null',
-        once_only INTEGER NOT NULL DEFAULT 1,
-        status TEXT NOT NULL DEFAULT 'active',
-        error TEXT,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL,
-        expires_at INTEGER
-      )
-    `);
-
-    this.ensureColumn(
-      "signal_watches",
-      "target_type",
-      "ALTER TABLE signal_watches ADD COLUMN target_type TEXT NOT NULL DEFAULT 'app'",
-    );
-    this.ensureColumn(
-      "signal_watches",
-      "target_process_id",
-      "ALTER TABLE signal_watches ADD COLUMN target_process_id TEXT",
-    );
-    this.ensureColumn(
-      "signal_watches",
-      "app_session_id",
-      "ALTER TABLE signal_watches ADD COLUMN app_session_id TEXT",
-    );
-    this.ensureColumn(
-      "signal_watches",
-      "app_client_id",
-      "ALTER TABLE signal_watches ADD COLUMN app_client_id TEXT",
-    );
-    this.sql.exec(
-      "UPDATE signal_watches SET target_type = 'app' WHERE target_type IS NULL OR target_type = ''",
-    );
-
-    this.sql.exec(
-      "CREATE INDEX IF NOT EXISTS idx_signal_watches_active ON signal_watches (uid, signal, status, process_id, expires_at)",
-    );
-    this.sql.exec(
-      "CREATE INDEX IF NOT EXISTS idx_signal_watches_key ON signal_watches (uid, package_id, entrypoint_name, dedupe_key, status)",
-    );
-    this.sql.exec(
-      "CREATE INDEX IF NOT EXISTS idx_signal_watches_target_key ON signal_watches (uid, target_type, target_process_id, package_id, entrypoint_name, dedupe_key, status)",
-    );
-    this.sql.exec(
-      "CREATE INDEX IF NOT EXISTS idx_signal_watches_app_owner ON signal_watches (uid, app_session_id, app_client_id, status)",
-    );
-  }
-
   upsert(input: {
     uid: number;
     target: SignalWatchTargetInput;
@@ -425,12 +365,6 @@ export class SignalWatchStore {
     return rows[0] ? toSignalWatchRecord(rows[0]) : null;
   }
 
-  private ensureColumn(table: string, column: string, statement: string): void {
-    const rows = [...this.sql.exec<{ name: string }>(`PRAGMA table_info(${table})`)];
-    if (!rows.some((row) => row.name === column)) {
-      this.sql.exec(statement);
-    }
-  }
 }
 
 type RowShape = {

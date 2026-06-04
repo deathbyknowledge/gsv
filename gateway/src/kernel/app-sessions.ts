@@ -55,60 +55,6 @@ type VerifiedSecret =
 export class AppSessionStore {
   constructor(private readonly sql: SqlStorage) {}
 
-  init(): void {
-    this.sql.exec("DROP TABLE IF EXISTS app_client_session_keys");
-    this.sql.exec("DROP TABLE IF EXISTS app_client_sessions");
-    this.sql.exec(`
-      CREATE TABLE IF NOT EXISTS app_sessions (
-        session_id TEXT PRIMARY KEY,
-        uid INTEGER NOT NULL,
-        username TEXT NOT NULL,
-        package_id TEXT NOT NULL,
-        package_name TEXT NOT NULL,
-        entrypoint_name TEXT NOT NULL,
-        route_base TEXT NOT NULL,
-        created_at INTEGER NOT NULL,
-        last_used_at INTEGER,
-        expires_at INTEGER NOT NULL,
-        closed_at INTEGER
-      )
-    `);
-    this.sql.exec(
-      "CREATE INDEX IF NOT EXISTS idx_app_sessions_uid_pkg ON app_sessions (uid, package_id, created_at DESC)",
-    );
-    this.sql.exec(
-      "CREATE INDEX IF NOT EXISTS idx_app_sessions_expires ON app_sessions (expires_at)",
-    );
-    this.sql.exec(`
-      CREATE TABLE IF NOT EXISTS app_session_clients (
-        session_id TEXT NOT NULL,
-        client_id TEXT NOT NULL,
-        created_at INTEGER NOT NULL,
-        last_used_at INTEGER,
-        expires_at INTEGER NOT NULL,
-        closed_at INTEGER,
-        PRIMARY KEY (session_id, client_id)
-      )
-    `);
-    this.sql.exec(
-      "CREATE INDEX IF NOT EXISTS idx_app_session_clients_session ON app_session_clients (session_id, expires_at)",
-    );
-    this.sql.exec(`
-      CREATE TABLE IF NOT EXISTS app_session_client_keys (
-        key_id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL,
-        client_id TEXT NOT NULL,
-        secret_hash TEXT NOT NULL,
-        created_at INTEGER NOT NULL,
-        expires_at INTEGER NOT NULL,
-        revoked_at INTEGER
-      )
-    `);
-    this.sql.exec(
-      "CREATE INDEX IF NOT EXISTS idx_app_session_client_keys_session ON app_session_client_keys (session_id, client_id, expires_at)",
-    );
-  }
-
   async issue(input: {
     uid: number;
     username: string;
