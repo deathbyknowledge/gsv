@@ -291,7 +291,7 @@ export class Kernel extends Host<Env> {
       ),
     });
 
-    this.ready = this.initialize();
+    this.ready = Promise.resolve();
 
     this.rehydrateConnections();
   }
@@ -371,10 +371,6 @@ export class Kernel extends Host<Env> {
       name: toolName,
       arguments: args,
     });
-  }
-
-  private async initialize(): Promise<void> {
-    await this.packages.migrateArtifacts();
   }
 
   shouldSendProtocolMessages(_: Connection, __: ConnectionContext): boolean {
