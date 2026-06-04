@@ -528,6 +528,15 @@
   min-width: 0;
 }
 
+.trajectory-title-actions {
+  flex: 0 0 auto;
+  max-width: 46%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
 .trajectory-title-row h3 {
   margin: 0;
   color: var(--text);
@@ -685,33 +694,40 @@
   color: var(--red);
 }
 
-.trajectory-details {
-  min-width: 0;
-  margin-top: 8px;
-}
-
-.trajectory-details summary {
+.trajectory-disclosure {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 6px;
+  padding: 0;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--muted);
   cursor: pointer;
-  color: var(--blue);
-  font-size: 12px;
-  font-weight: 800;
-  line-height: 1.35;
-  list-style: none;
 }
 
-.trajectory-details summary::-webkit-details-marker {
-  display: none;
+.trajectory-disclosure:hover,
+.trajectory-disclosure.is-open {
+  background: rgba(24, 32, 40, 0.06);
+  color: var(--text);
 }
 
-.trajectory-summary-hide,
-.trajectory-details[open] .trajectory-summary-show {
-  display: none;
+.trajectory-disclosure svg {
+  width: 15px;
+  height: 15px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 120ms ease;
 }
 
-.trajectory-details[open] .trajectory-summary-hide {
-  display: inline;
+.trajectory-disclosure.is-open svg {
+  transform: rotate(90deg);
 }
 
 .trajectory-detail-body {
@@ -719,7 +735,7 @@
   margin-top: 8px;
 }
 
-.trajectory-details pre {
+.trajectory-detail-body pre {
   max-width: 100%;
   margin: 0;
   border: 1px solid rgba(24, 32, 40, 0.07);

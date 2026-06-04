@@ -1,4 +1,5 @@
 import type { ComponentChildren } from "preact";
+import { useState } from "preact/hooks";
 import type { HilRequest, MessageRow, ToolRow } from "../../types";
 import type { RunDetailEntry, TranscriptRunGroup } from "../../domain/run-groups";
 import { runHasDetails } from "../../domain/run-groups";
@@ -224,8 +225,8 @@ function ReasoningEntry({ text }: { text: string }) {
       iconLabel="Reasoning"
       title="Reasoning"
       details={<pre>{text}</pre>}
-      detailsLabel="Show"
-      detailsHideLabel="Hide"
+      detailsLabel="Expand reasoning"
+      detailsHideLabel="Collapse reasoning"
     />
   );
 }
@@ -332,6 +333,8 @@ function TrajectoryEntry({
   detailsLabel?: string;
   detailsHideLabel?: string;
 }) {
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const disclosureLabel = detailsOpen ? detailsHideLabel ?? detailsLabel : detailsLabel;
   return (
     <article class={`trajectory-entry is-${tone}`}>
       <div class="trajectory-marker" role="img" aria-label={iconLabel} title={iconLabel}>{icon}</div>
@@ -341,7 +344,21 @@ function TrajectoryEntry({
             <h3>{title}</h3>
             {subtitle ? <p>{subtitle}</p> : null}
           </div>
-          {status ? <span class={`trajectory-status is-${tone}`}>{status}</span> : null}
+          <div class="trajectory-title-actions">
+            {status ? <span class={`trajectory-status is-${tone}`}>{status}</span> : null}
+            {details ? (
+              <button
+                type="button"
+                class={`trajectory-disclosure${detailsOpen ? " is-open" : ""}`}
+                title={disclosureLabel}
+                aria-label={disclosureLabel}
+                aria-expanded={detailsOpen}
+                onClick={() => setDetailsOpen((open) => !open)}
+              >
+                <ChevronRightIcon />
+              </button>
+            ) : null}
+          </div>
         </div>
         {meta && meta.length > 0 ? (
           <div class="trajectory-meta">
@@ -350,15 +367,7 @@ function TrajectoryEntry({
         ) : null}
         {body ? <div class="trajectory-body">{body}</div> : null}
         {actions}
-        {details ? (
-          <details class="trajectory-details">
-            <summary>
-              <span class="trajectory-summary-show">{detailsLabel}</span>
-              <span class="trajectory-summary-hide">{detailsHideLabel ?? detailsLabel}</span>
-            </summary>
-            <div class="trajectory-detail-body">{details}</div>
-          </details>
-        ) : null}
+        {details && detailsOpen ? <div class="trajectory-detail-body">{details}</div> : null}
       </div>
     </article>
   );
@@ -386,6 +395,7 @@ function toolTrajectoryDisplay(
   const kind = fileToolKind(row, syscall);
   const targetMeta = card.target ? [card.target] : undefined;
   const details = toolDisclosureContent(row, syscall);
+  const disclosureLabels = toolDisclosureLabels(row, syscall);
   const isDelete = kind === "delete";
   const showResultBody = row.kind === "toolCall"
     || result.tone === "error" && !isDelete
@@ -398,8 +408,8 @@ function toolTrajectoryDisplay(
     meta: targetMeta,
     body: showResultBody ? <p class={result.tone === "error" ? "trajectory-error" : ""}>{result.preview}</p> : undefined,
     details,
-    detailsLabel: details ? "Show" : undefined,
-    detailsHideLabel: details ? "Hide" : undefined,
+    detailsLabel: details ? disclosureLabels.expand : undefined,
+    detailsHideLabel: details ? disclosureLabels.collapse : undefined,
   };
 }
 
@@ -452,6 +462,20 @@ function toolDisclosureContent(row: ToolRow, syscall: string | null): ComponentC
   }
   const normalized = normalizeToolOutput(row.output);
   return <pre>{clipBlock(formatToolOutputForDisclosure(row, syscall, normalized), 12000)}</pre>;
+}
+
+function toolDisclosureLabels(row: ToolRow, syscall: string | null): { expand: string; collapse: string } {
+  const kind = fileToolKind(row, syscall);
+  if (kind === "read" || kind === "write") {
+    return { expand: "Expand content", collapse: "Collapse content" };
+  }
+  if (kind === "edit") {
+    return { expand: "Expand diff", collapse: "Collapse diff" };
+  }
+  if (row.toolName === "Shell" || syscall === "shell.exec") {
+    return { expand: "Expand command output", collapse: "Collapse command output" };
+  }
+  return { expand: "Expand output", collapse: "Collapse output" };
 }
 
 function readToolDisclosure(output: unknown): ComponentChildren | null {
