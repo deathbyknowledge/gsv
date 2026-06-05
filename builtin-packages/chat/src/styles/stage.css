@@ -53,42 +53,30 @@
   gap: 4px;
 }
 
-.conversation-chip-group.is-active {
-  padding: 2px;
-  border-radius: 999px;
-  background: rgba(31, 92, 153, 0.06);
-}
-
-.conversation-chip,
-.archive-toggle {
+.conversation-chip {
   height: 28px;
   border: 1px solid var(--line);
   border-radius: 999px;
+  max-width: 220px;
+  padding: 0 9px;
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   gap: 6px;
   color: var(--muted);
   background: rgba(255, 255, 255, 0.68);
+  font-size: 12px;
+  font-weight: 700;
   cursor: pointer;
 }
 
-.conversation-chip {
-  max-width: 220px;
-  padding: 0 9px;
-  flex: 0 0 auto;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.conversation-chip:hover,
-.archive-toggle:hover {
+.conversation-chip:hover {
   color: var(--text);
   border-color: var(--line-strong);
   background: var(--panel-strong);
 }
 
-.conversation-chip.is-active,
-.archive-toggle.is-active {
+.conversation-chip.is-active {
   color: var(--text);
   border-color: rgba(31, 92, 153, 0.3);
   background: var(--blue-soft);
@@ -101,14 +89,12 @@
   text-overflow: ellipsis;
 }
 
-.conversation-chip small,
-.archive-toggle span {
+.conversation-chip small {
   color: var(--soft);
   font: 10px/1 var(--mono);
 }
 
-.conversation-chip svg,
-.archive-toggle svg {
+.conversation-chip svg {
   flex: 0 0 auto;
   width: 14px;
   height: 14px;
@@ -118,23 +104,6 @@
   stroke-linecap: round;
   stroke-linejoin: round;
   pointer-events: none;
-}
-
-.conversation-bar-empty {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.conversation-bar-actions {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.archive-toggle {
-  padding: 0 8px;
-  font-weight: 800;
 }
 
 .conversation-overflow {
@@ -191,6 +160,34 @@
 .chat-stage-actions {
   flex: 0 0 auto;
   justify-content: flex-end;
+}
+
+.stage-archive-toggle {
+  position: relative;
+}
+
+.stage-archive-toggle.is-active {
+  color: var(--blue);
+  border-color: rgba(31, 92, 153, 0.3);
+  background: var(--blue-soft);
+}
+
+.stage-action-badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 16px;
+  height: 16px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  background: var(--panel-strong);
+  font: 10px/1 var(--mono);
+  pointer-events: none;
 }
 
 .run-status {
@@ -319,14 +316,6 @@
   stroke-linecap: round;
   stroke-linejoin: round;
   pointer-events: none;
-}
-
-.connection-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 999px;
-  background: var(--green);
-  border: 1px solid rgba(45, 124, 85, 0.2);
 }
 
 .chat-notice-row {

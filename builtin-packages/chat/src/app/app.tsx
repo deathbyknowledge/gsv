@@ -23,6 +23,7 @@ import {
   Transcript,
 } from "./components";
 import {
+  ArchiveIcon,
   CompactIcon,
   FolderIcon,
   MoreIcon,
@@ -143,8 +144,6 @@ export function App({ backend }: { backend: ChatBackend }) {
   } = useTranscriptScroll();
   const {
     conversations,
-    conversationsLoading,
-    conversationError,
     conversationProfiles,
     draftProfile,
     loadConversations,
@@ -793,6 +792,15 @@ export function App({ backend }: { backend: ChatBackend }) {
     }
   }
 
+  function toggleArchiveView(): void {
+    if (stageView === "archive") {
+      setStageView("chat");
+      return;
+    }
+    setStageView("archive");
+    void loadArchiveSegments(true);
+  }
+
   async function copyText(label: string, text: string): Promise<void> {
     try {
       await copyTextToClipboard(text);
@@ -870,27 +878,25 @@ export function App({ backend }: { backend: ChatBackend }) {
               active={active}
               activeConversationId={activeConversationId}
               conversations={conversations}
-              loading={conversationsLoading}
-              error={conversationError}
-              archiveCount={archive.segments.length}
-              archiveActive={stageView === "archive"}
               onSelect={(conversation) => void switchConversation(conversation)}
-              onRefresh={() => active?.pid ? void loadConversations(active.pid) : undefined}
-              onArchiveToggle={() => {
-                if (stageView === "archive") {
-                  setStageView("chat");
-                  return;
-                }
-                setStageView("archive");
-                void loadArchiveSegments(true);
-              }}
             />
           </div>
           <div class="chat-stage-actions">
             <span class={"run-status " + runStateClass} title={`${runStateLabel}: ${statusText}`} aria-label={`${runStateLabel}: ${statusText}`}>
               <TerminalIcon />
             </span>
-            <span class="connection-dot is-connected" title="connected" aria-label="connected" />
+            {active ? (
+              <button
+                class={"icon-button stage-archive-toggle" + (stageView === "archive" ? " is-active" : "")}
+                type="button"
+                title={stageView === "archive" ? "Return to live conversation" : "Open conversation archive"}
+                aria-label={stageView === "archive" ? "Return to live conversation" : "Open conversation archive"}
+                onClick={toggleArchiveView}
+              >
+                <ArchiveIcon />
+                {archive.segments.length > 0 ? <span class="stage-action-badge">{archive.segments.length}</span> : null}
+              </button>
+            ) : null}
             <details class="process-menu">
               <summary class="icon-button" title="Process actions" aria-label="Process actions" onClick={(event) => {
                 closeChatMenus((event.currentTarget as HTMLElement).closest("details") as HTMLDetailsElement | null);

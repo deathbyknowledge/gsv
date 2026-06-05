@@ -1,18 +1,12 @@
 import type { ConversationRecord, ThreadContext } from "../../types";
-import { ArchiveIcon, BranchIcon, RefreshIcon } from "../../icons";
+import { BranchIcon } from "../../icons";
 import { shortId } from "../../view-helpers";
 
 export function ConversationBar(props: {
   active: ThreadContext | null;
   activeConversationId: string;
   conversations: ConversationRecord[];
-  loading: boolean;
-  error: string;
-  archiveCount: number;
-  archiveActive: boolean;
   onSelect(conversation: ConversationRecord): void;
-  onRefresh(): void;
-  onArchiveToggle(): void;
 }) {
   if (!props.active) {
     return null;
@@ -42,6 +36,9 @@ export function ConversationBar(props: {
     pushVisible(conversation);
   }
   const overflow = props.conversations.filter((conversation) => !seen.has(conversation.id));
+  if (visible.length + overflow.length <= 1) {
+    return null;
+  }
   const selectOverflow = (event: Event) => {
     const select = event.currentTarget as HTMLSelectElement;
     const conversation = props.conversations.find((candidate) => candidate.id === select.value);
@@ -57,7 +54,7 @@ export function ConversationBar(props: {
         {visible.map((conversation) => (
           <span
             key={conversation.id}
-            class={"conversation-chip-group" + (conversation.id === props.activeConversationId ? " is-active" : "")}
+            class="conversation-chip-group"
           >
             <button
               type="button"
@@ -69,18 +66,6 @@ export function ConversationBar(props: {
               <span>{conversation.title || (conversation.id === "default" ? "Default" : shortId(conversation.id))}</span>
               {conversation.messageCount > 0 ? <small>{conversation.messageCount}</small> : null}
             </button>
-            {conversation.id === props.activeConversationId ? (
-              <button
-                class={"archive-toggle" + (props.archiveActive ? " is-active" : "")}
-                type="button"
-                title={props.archiveActive ? "Return to live conversation" : "Open conversation archive"}
-                aria-label={props.archiveActive ? "Return to live conversation" : "Open conversation archive"}
-                onClick={props.onArchiveToggle}
-              >
-                <ArchiveIcon />
-                {props.archiveCount > 0 ? <span>{props.archiveCount}</span> : null}
-              </button>
-            ) : null}
           </span>
         ))}
         {overflow.length > 0 ? (
@@ -96,14 +81,6 @@ export function ConversationBar(props: {
             </select>
           </label>
         ) : null}
-        {props.conversations.length === 0 && visible.length === 0 ? (
-          <span class="conversation-bar-empty">{props.loading ? "Loading branches..." : props.error || "No branches"}</span>
-        ) : null}
-      </div>
-      <div class="conversation-bar-actions">
-        <button class="icon-button small" type="button" title="Refresh branches" aria-label="Refresh branches" onClick={props.onRefresh}>
-          <RefreshIcon />
-        </button>
       </div>
     </div>
   );

@@ -14,6 +14,7 @@
 }
 
 .transcript-content {
+  --chat-document-measure: 820px;
   min-width: 0;
   display: grid;
   align-content: start;
@@ -111,6 +112,7 @@
 
 .message-user {
   justify-self: end;
+  margin-right: max(0px, calc((100% - var(--chat-document-measure)) / 2));
   background: linear-gradient(180deg, rgba(31, 92, 153, 0.08), rgba(31, 92, 153, 0.04)), var(--panel-strong);
 }
 
@@ -138,7 +140,8 @@
 
 .run-thought-button {
   justify-self: start;
-  max-width: min(88%, 820px);
+  max-width: min(100%, var(--chat-document-measure));
+  margin-left: max(0px, calc((100% - var(--chat-document-measure)) / 2));
   min-height: 30px;
   border: 0;
   border-radius: 7px;
@@ -189,19 +192,36 @@
 }
 
 .assistant-document {
-  justify-self: start;
+  justify-self: stretch;
   min-width: 0;
-  width: min(88%, 820px);
-  max-width: min(88%, 820px);
+  width: 100%;
+  display: grid;
+  justify-items: center;
   padding: 2px 0 8px;
   overflow-wrap: anywhere;
 }
 
-.assistant-document .message-head {
-  margin-bottom: 8px;
+.assistant-document-inner,
+.assistant-document-footer {
+  min-width: 0;
+  width: min(100%, var(--chat-document-measure));
+}
+
+.assistant-document-footer {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--soft);
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
 }
 
 .assistant-document .message-role-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   text-transform: none;
 }
 
@@ -484,6 +504,11 @@
 .message-action:hover:not(:disabled) {
   color: var(--blue);
   background: var(--blue-soft);
+}
+
+.message-action:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .message-action::-webkit-details-marker {

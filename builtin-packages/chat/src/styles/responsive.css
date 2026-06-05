@@ -241,18 +241,12 @@
   }
 
   .conversation-chip,
-  .archive-toggle,
   .conversation-overflow {
     height: 36px;
   }
 
   .conversation-chip {
     max-width: 148px;
-  }
-
-  .conversation-bar-actions {
-    width: auto;
-    justify-content: flex-end;
   }
 
   .archive-workspace {
