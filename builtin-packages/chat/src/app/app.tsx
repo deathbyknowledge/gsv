@@ -148,6 +148,7 @@ export function App({ backend }: { backend: ChatBackend }) {
     jumpToLatest,
   } = useTranscriptScroll();
   const {
+    applyProcessCatalogSignal,
     conversations,
     conversationProfiles,
     draftProfile,
@@ -505,6 +506,7 @@ export function App({ backend }: { backend: ChatBackend }) {
   useTargetProcessEvent(setActive);
   useProcessCatalogSignals({
     backend,
+    applySignal: applyProcessCatalogSignal,
     loadThreads,
     onError: setHostError,
   });

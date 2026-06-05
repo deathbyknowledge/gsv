@@ -13,10 +13,12 @@ const CATALOG_SIGNALS = new Set([
 
 export function useProcessCatalogSignals({
   backend,
+  applySignal,
   loadThreads,
   onError,
 }: {
   backend: ChatBackend;
+  applySignal(signal: string, payload: unknown): boolean;
   loadThreads(): Promise<void>;
   onError(message: string): void;
 }) {
@@ -36,8 +38,8 @@ export function useProcessCatalogSignals({
       }, 150);
     };
 
-    const unsubscribe = onAppEvent((signal) => {
-      if (CATALOG_SIGNALS.has(signal)) {
+    const unsubscribe = onAppEvent((signal, payload) => {
+      if (CATALOG_SIGNALS.has(signal) && !applySignal(signal, payload)) {
         refreshSoon();
       }
     });
@@ -56,5 +58,5 @@ export function useProcessCatalogSignals({
       }
       void backend.unwatchProcessSignals({ scope: "owner" }).catch(() => {});
     };
-  }, [backend, loadThreads, onError]);
+  }, [applySignal, backend, loadThreads, onError]);
 }
