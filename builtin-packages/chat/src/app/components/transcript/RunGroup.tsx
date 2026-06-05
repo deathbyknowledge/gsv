@@ -390,9 +390,10 @@ function toolTrajectoryDisplay(
   const details = toolDisclosureContent(row, syscall);
   const disclosureLabels = toolDisclosureLabels(row, syscall);
   const isDelete = kind === "delete";
+  const isShell = row.toolName === "Shell" || syscall === "shell.exec";
   const showResultBody = row.kind === "toolCall"
     || result.tone === "error" && !isDelete
-    || (!kind && result.preview.trim().length > 0);
+    || (!isShell && !kind && result.preview.trim().length > 0);
   return {
     iconLabel: toolMarkerLabel(result),
     title: toolTrajectoryTitle(row, syscall, card),
@@ -421,7 +422,12 @@ function toolTrajectoryTitle(row: ToolRow, syscall: string | null, card: ToolCar
   if (kind === "write") return failed ? `Could not write ${subject}` : row.kind === "toolCall" ? `Writing ${subject}` : `Wrote ${subject}`;
   if (kind === "edit") return failed ? `Could not edit ${subject}` : row.kind === "toolCall" ? `Editing ${subject}` : `Edited ${subject}`;
   if (kind === "delete") return failed ? `Could not delete ${subject}` : row.kind === "toolCall" ? `Deleting ${subject}` : ok ? `Deleted ${subject}` : card.title;
-  if (row.toolName === "Shell" || syscall === "shell.exec") return failed ? "Command failed" : row.kind === "toolCall" ? "Running command" : "Ran command";
+  if (row.toolName === "Shell" || syscall === "shell.exec") {
+    const input = shellInputText(row);
+    if (failed) return input ? `Failed ${truncateInline(input, 96)}` : "Command failed";
+    if (row.kind === "toolCall") return input ? `Running ${truncateInline(input, 96)}` : "Running command";
+    return input ? `Ran ${truncateInline(input, 96)}` : "Ran shell input";
+  }
   if (row.toolName === "Search" || syscall === "fs.search") return failed ? "Search failed" : row.kind === "toolCall" ? "Searching files" : "Searched files";
   if (isCodeModeTool(row.toolName, syscall)) return failed ? "CodeMode failed" : row.kind === "toolCall" ? "Running CodeMode script" : "Ran CodeMode script";
   return card.title;
@@ -655,12 +661,7 @@ function completedToolPreview(row: ToolRow, syscall: string | null, output: unkn
     return describeCodeModeOutput(record, output);
   }
   if (row.toolName === "Shell" || syscall === "shell.exec") {
-    const exitCode = asNumber(record?.exitCode);
-    const stdout = asString(record?.stdout);
-    const stderr = asString(record?.stderr);
-    if (stdout?.trim()) return truncateInline(stdout, 180);
-    if (stderr?.trim()) return truncateInline(stderr, 180);
-    return exitCode !== null ? `Command exited ${exitCode}.` : "Command completed.";
+    return shellInputPreview(row);
   }
   if (row.toolName === "Read" || syscall === "fs.read") {
     const content = asString(record?.content);
@@ -692,6 +693,15 @@ function completedToolPreview(row: ToolRow, syscall: string | null, output: unkn
     return output.trim() ? truncateInline(output, 180) : "Completed with empty output.";
   }
   return summarizeObject(output);
+}
+
+function shellInputPreview(row: ToolRow): string {
+  const input = shellInputText(row);
+  return input?.trim() ? truncateInline(input, 180) : "Shell input completed.";
+}
+
+function shellInputText(row: ToolRow): string | null {
+  return asString(asRecord(row.args)?.input);
 }
 
 function describeCodeModeOutput(record: Record<string, unknown> | null, output: unknown): string {
