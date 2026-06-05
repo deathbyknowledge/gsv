@@ -16,6 +16,7 @@ export function useChatCatalog(backend: ChatBackend) {
   const [draftProfileId, setDraftProfileId] = useState("personal");
   const [viewerUsername, setViewerUsername] = useState("You");
   const [threads, setThreads] = useState<ProcessEntry[]>([]);
+  const [homeThread, setHomeThread] = useState<ProcessEntry | null>(null);
   const [threadsLoading, setThreadsLoading] = useState(false);
   const [threadsError, setThreadsError] = useState("");
   const [conversations, setConversations] = useState<ConversationRecord[]>([]);
@@ -66,6 +67,7 @@ export function useChatCatalog(backend: ChatBackend) {
       const result = await backend.listProcesses({});
       const processRows = Array.isArray(asRecord(result)?.processes) ? asRecord(result)?.processes as unknown[] : [];
       const normalized = processRows.map(normalizeProcessEntry).filter(Boolean) as ProcessEntry[];
+      setHomeThread(normalized.find((entry) => entry.isDefaultConversation) ?? null);
       setThreads(normalized.filter((entry) => {
         // The personal-agent default conversation is surfaced as the home draft,
         // not a thread; otherwise show every interactive conversation the
@@ -74,6 +76,7 @@ export function useChatCatalog(backend: ChatBackend) {
         return entry.interactive;
       }));
     } catch (error) {
+      setHomeThread(null);
       setThreads([]);
       setThreadsError(formatError(error));
     } finally {
@@ -125,6 +128,7 @@ export function useChatCatalog(backend: ChatBackend) {
     draftProfileId,
     loadConversations,
     loadThreads,
+    homeThread,
     conversationProfiles,
     newConversationProfiles,
     setDraftProfileId,

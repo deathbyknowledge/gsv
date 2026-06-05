@@ -13,16 +13,25 @@ type AppBinding = {
   clientId?: string;
 };
 
-const CHAT_RUNTIME_SIGNALS = [
-  "proc.changed",
+const CHAT_TRANSCRIPT_SIGNALS = [
   "proc.run.tool.started",
   "proc.run.tool.finished",
   "proc.run.stream",
   "proc.run.output",
+];
+
+const CHAT_CATALOG_SIGNALS = [
+  "proc.changed",
+  "proc.run.started",
   "proc.run.finished",
   "proc.run.hil.requested",
   "process.exit",
 ];
+
+const CHAT_PROCESS_UNWATCH_SIGNALS = Array.from(new Set([
+  ...CHAT_TRANSCRIPT_SIGNALS,
+  ...CHAT_CATALOG_SIGNALS,
+]));
 function normalizeArgs(value: unknown) {
   return value && typeof value === "object" ? value as Record<string, unknown> : {};
 }
@@ -41,6 +50,10 @@ function normalizeLimit(value: unknown, fallback = 50) {
 
 function buildSignalWatchKey(sessionId: string, clientId: string, pid: string, signal: string) {
   return `chat:${sessionId}:${clientId}:${pid}:${signal}`;
+}
+
+function buildOwnerSignalWatchKey(sessionId: string, clientId: string, signal: string) {
+  return `chat:${sessionId}:${clientId}:owner:${signal}`;
 }
 
 export async function listAgents(kernel: KernelClient, input: unknown) {
@@ -207,8 +220,10 @@ export async function decideHil(kernel: KernelClient, input: unknown) {
 }
 
 export async function watchProcessSignals(kernel: KernelClient, app: AppBinding | undefined, input: unknown) {
-  const pid = normalizePid(normalizeArgs(input).pid);
-  if (!pid) {
+  const args = normalizeArgs(input);
+  const scope = args.scope === "owner" ? "owner" : "process";
+  const pid = normalizePid(args.pid);
+  if (scope === "process" && !pid) {
     throw new Error("pid is required");
   }
   const sessionId = normalizeClientId(app?.sessionId);
@@ -216,23 +231,29 @@ export async function watchProcessSignals(kernel: KernelClient, app: AppBinding 
   if (!sessionId || !clientId) {
     throw new Error("client signal watch requires an app session");
   }
-  await Promise.all(CHAT_RUNTIME_SIGNALS.map((signal) => kernel.request("signal.watch", {
+  const signals = scope === "owner" ? CHAT_CATALOG_SIGNALS : CHAT_TRANSCRIPT_SIGNALS;
+  await Promise.all(signals.map((signal) => kernel.request("signal.watch", {
     signal,
-    processId: pid,
-    key: buildSignalWatchKey(sessionId, clientId, pid, signal),
+    ...(scope === "process" ? { processId: pid } : {}),
+    key: scope === "owner"
+      ? buildOwnerSignalWatchKey(sessionId, clientId, signal)
+      : buildSignalWatchKey(sessionId, clientId, pid, signal),
     owner: { appSessionId: sessionId, clientId },
-    state: { appSessionId: sessionId, clientId, pid },
+    state: { appSessionId: sessionId, clientId, scope, ...(pid ? { pid } : {}) },
     once: false,
   })));
   return {
-    pid,
-    watched: CHAT_RUNTIME_SIGNALS.length,
+    scope,
+    ...(pid ? { pid } : {}),
+    watched: signals.length,
   };
 }
 
 export async function unwatchProcessSignals(kernel: KernelClient, app: AppBinding | undefined, input: unknown) {
-  const pid = normalizePid(normalizeArgs(input).pid);
-  if (!pid) {
+  const args = normalizeArgs(input);
+  const scope = args.scope === "owner" ? "owner" : "process";
+  const pid = normalizePid(args.pid);
+  if (scope === "process" && !pid) {
     return { pid: "", removed: 0 };
   }
   const sessionId = normalizeClientId(app?.sessionId);
@@ -241,9 +262,12 @@ export async function unwatchProcessSignals(kernel: KernelClient, app: AppBindin
     return { pid, removed: 0 };
   }
   let removed = 0;
-  await Promise.all(CHAT_RUNTIME_SIGNALS.map(async (signal) => {
+  const signals = scope === "owner" ? CHAT_CATALOG_SIGNALS : CHAT_PROCESS_UNWATCH_SIGNALS;
+  await Promise.all(signals.map(async (signal) => {
     const result = await kernel.request("signal.unwatch", {
-      key: buildSignalWatchKey(sessionId, clientId, pid, signal),
+      key: scope === "owner"
+        ? buildOwnerSignalWatchKey(sessionId, clientId, signal)
+        : buildSignalWatchKey(sessionId, clientId, pid, signal),
       owner: { appSessionId: sessionId, clientId },
     });
     const count = result && typeof result === "object" && "removed" in result && typeof result.removed === "number"
@@ -251,7 +275,7 @@ export async function unwatchProcessSignals(kernel: KernelClient, app: AppBindin
       : 0;
     removed += count;
   }));
-  return { pid, removed };
+  return { scope, ...(pid ? { pid } : {}), removed };
 }
 
 export function getViewer(runtime: ViewerRuntime) {

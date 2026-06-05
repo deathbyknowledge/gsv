@@ -29,7 +29,6 @@ export function useProcessSignals({
   loadArchiveSegments,
   loadConversations,
   loadHistory,
-  loadThreads,
   onContextMessageId,
   prepareForLiveTranscriptActivity,
   setContextState,
@@ -48,7 +47,6 @@ export function useProcessSignals({
   loadArchiveSegments(preserveSelection?: boolean): Promise<void>;
   loadConversations(pid: string): Promise<void>;
   loadHistory(target?: ThreadContext | null): Promise<void>;
-  loadThreads(): Promise<void>;
   onContextMessageId(target: ThreadContext, messageId: number): void;
   prepareForLiveTranscriptActivity(): void;
   setContextState: Setter<ContextState | null>;
@@ -185,7 +183,6 @@ export function useProcessSignals({
           return null;
         });
         setSuppressNextAbortedComplete(false);
-        void loadThreads();
       } else if (signal === "proc.run.hil.requested") {
         if (!signalMatchesActiveThread(payload, target)) {
           return;
@@ -202,7 +199,6 @@ export function useProcessSignals({
         setPendingAssistant(null);
         setPendingHil(null);
         setSuppressNextAbortedComplete(false);
-        void loadThreads();
       }
     });
   }, [
@@ -211,7 +207,6 @@ export function useProcessSignals({
     loadArchiveSegments,
     loadConversations,
     loadHistory,
-    loadThreads,
     onContextMessageId,
     prepareForLiveTranscriptActivity,
     setContextState,

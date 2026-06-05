@@ -36,6 +36,7 @@ import {
 import { useArchive } from "./hooks/useArchive";
 import { useChatCatalog } from "./hooks/useChatCatalog";
 import { useMediaSources } from "./hooks/useMediaSources";
+import { useProcessCatalogSignals } from "./hooks/useProcessCatalogSignals";
 import { useProcessSignals } from "./hooks/useProcessSignals";
 import { useTargetProcessEvent } from "./hooks/useTargetProcessEvent";
 import { useTranscriptScroll } from "./hooks/useTranscriptScroll";
@@ -150,6 +151,7 @@ export function App({ backend }: { backend: ChatBackend }) {
     conversations,
     conversationProfiles,
     draftProfile,
+    homeThread,
     loadConversations,
     loadThreads,
     setDraftProfileId,
@@ -501,6 +503,11 @@ export function App({ backend }: { backend: ChatBackend }) {
   }, []);
 
   useTargetProcessEvent(setActive);
+  useProcessCatalogSignals({
+    backend,
+    loadThreads,
+    onError: setHostError,
+  });
 
   useEffect(() => {
     if (active || forceNewProcess || hostError || autoHomeOpenRef.current) {
@@ -522,7 +529,6 @@ export function App({ backend }: { backend: ChatBackend }) {
     loadArchiveSegments,
     loadConversations,
     loadHistory,
-    loadThreads,
     onContextMessageId: updateNewestHistoryMessageId,
     prepareForLiveTranscriptActivity,
     setContextState,
@@ -883,6 +889,7 @@ export function App({ backend }: { backend: ChatBackend }) {
       <ChatNavigator
         active={active}
         threads={threads}
+        homeThread={homeThread}
         threadsLoading={threadsLoading}
         threadsError={threadsError}
         profiles={conversationProfiles}
@@ -899,6 +906,7 @@ export function App({ backend }: { backend: ChatBackend }) {
           <MobileProcessNav
             active={active}
             threads={threads}
+            homeThread={homeThread}
             threadsLoading={threadsLoading}
             threadsError={threadsError}
             profiles={conversationProfiles}

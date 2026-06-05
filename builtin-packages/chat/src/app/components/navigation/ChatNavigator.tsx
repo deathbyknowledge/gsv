@@ -6,6 +6,7 @@ import { AgentAvatar } from "./AgentAvatar";
 export function ChatNavigator(props: {
   active: ThreadContext | null;
   threads: ProcessEntry[];
+  homeThread: ProcessEntry | null;
   threadsLoading: boolean;
   threadsError: string;
   profiles: Profile[];
@@ -21,6 +22,7 @@ export function ChatNavigator(props: {
       <ThreadsPane
         active={props.active}
         threads={props.threads}
+        homeThread={props.homeThread}
         loading={props.threadsLoading}
         error={props.threadsError}
         profiles={props.profiles}
@@ -38,6 +40,7 @@ export function ChatNavigator(props: {
 export function MobileProcessNav(props: {
   active: ThreadContext | null;
   threads: ProcessEntry[];
+  homeThread: ProcessEntry | null;
   threadsLoading: boolean;
   threadsError: string;
   profiles: Profile[];
@@ -123,6 +126,7 @@ export function MobileProcessNav(props: {
 function ThreadsPane(props: {
   active: ThreadContext | null;
   threads: ProcessEntry[];
+  homeThread: ProcessEntry | null;
   loading: boolean;
   error: string;
   profiles: Profile[];
@@ -196,8 +200,12 @@ function ThreadsPane(props: {
         <button type="button" class={"thread-row" + (isHome ? " is-active" : "")} onClick={props.onHome}>
           <AgentAvatar seed={homeSeed} label={props.homeLabel} />
           <span class="thread-row-title">{props.homeLabel}</span>
-          <span class="thread-row-meta">Default chat</span>
-          <span class="thread-row-status is-ready" title="Ready" aria-label="Ready" />
+          <span class="thread-row-meta">{props.homeThread ? threadMeta(props.homeThread) : "Default chat"}</span>
+          <span
+            class={`thread-row-status ${props.homeThread ? threadStatusClass(props.homeThread) : "is-ready"}`}
+            title={props.homeThread ? threadStatusLabel(props.homeThread) : "Ready"}
+            aria-label={props.homeThread ? threadStatusLabel(props.homeThread) : "Ready"}
+          />
         </button>
         {listNotice ? <div class="thread-list-notice">{listNotice}</div> : null}
         {props.threads.map((thread) => (
