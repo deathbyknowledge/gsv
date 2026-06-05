@@ -1979,6 +1979,29 @@ button:disabled {
   overflow: hidden;
 }
 
+.onboarding-deploying-panel {
+  background:
+    linear-gradient(90deg, rgba(242, 246, 251, 0.66) 0%, rgba(235, 242, 249, 0.74) 100%);
+  -webkit-backdrop-filter: blur(28px) saturate(1.08);
+  backdrop-filter: blur(28px) saturate(1.08);
+}
+
+.onboarding-complete-panel {
+  background:
+    linear-gradient(90deg, rgba(242, 246, 251, 0.66) 0%, rgba(235, 242, 249, 0.74) 100%);
+  -webkit-backdrop-filter: blur(28px) saturate(1.08);
+  backdrop-filter: blur(28px) saturate(1.08);
+}
+
+.onboarding-complete-panel .onboarding-sidebar {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.onboarding-status-panel .onboarding-step-list {
+  opacity: 1;
+  pointer-events: auto;
+}
+
 .onboarding-layout {
   width: 100%;
   height: 100%;
@@ -2541,6 +2564,107 @@ button:disabled {
 .onboarding-primary-actions .session-btn-secondary {
   min-height: 42px;
   font-size: 0.92rem;
+}
+
+.onboarding-status-main {
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+.onboarding-status-stage {
+  gap: 22px;
+}
+
+.onboarding-deploy-status {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  align-items: center;
+  gap: 16px;
+  padding: 16px 18px;
+  border: 1px solid rgba(24, 49, 79, 0.14);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.onboarding-deploy-status strong {
+  display: block;
+  margin-bottom: 4px;
+  color: #172f4c;
+  font-size: 0.94rem;
+}
+
+.onboarding-deploy-status p {
+  margin: 0;
+  color: rgba(24, 49, 79, 0.72);
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+.onboarding-deploy-spinner {
+  width: 42px;
+  height: 42px;
+  border-radius: 999px;
+  border: 3px solid rgba(24, 49, 79, 0.14);
+  border-top-color: rgba(24, 49, 79, 0.72);
+  animation: session-spin 0.85s linear infinite;
+}
+
+.onboarding-deploy-steps {
+  display: grid;
+  gap: 13px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.onboarding-deploy-steps li {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.onboarding-deploy-steps li > span {
+  position: relative;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: 1px solid rgba(24, 49, 79, 0.24);
+  background: rgba(255, 255, 255, 0.26);
+}
+
+.onboarding-deploy-steps li > span::after {
+  content: "";
+  position: absolute;
+  inset: 6px;
+  border-radius: inherit;
+  background: rgba(24, 49, 79, 0.48);
+}
+
+.onboarding-deploy-steps strong {
+  color: #172f4c;
+  font-size: 0.9rem;
+}
+
+.onboarding-deploy-steps p {
+  margin: 3px 0 0;
+  color: rgba(24, 49, 79, 0.68);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.onboarding-complete-copy h2 {
+  font-size: clamp(1.8rem, 4vw, 2.6rem);
+}
+
+.onboarding-status-stage .session-result-grid {
+  margin-top: 0;
+}
+
+.onboarding-status-stage .session-token-panel {
+  margin-top: 0;
+  border: 1px solid rgba(24, 49, 79, 0.14);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.2);
 }
 
 .session-result-grid {
@@ -7356,57 +7480,8 @@ button:disabled {
     transition: none !important;
   }
 
-}
-
-.session-progress-shell {
-  display: grid;
-  gap: 16px;
-}
-
-.session-progress-bar {
-  position: relative;
-  width: 100%;
-  height: 10px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.12);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
-}
-
-.session-progress-bar > span {
-  position: absolute;
-  inset: 0 auto 0 -28%;
-  width: 28%;
-  border-radius: inherit;
-  background: linear-gradient(90deg, rgba(138, 224, 255, 0.12), rgba(138, 224, 255, 0.92), rgba(230, 244, 249, 0.18));
-  animation: session-progress-slide 1.1s ease-in-out infinite;
-}
-
-.session-progress-note {
-  display: grid;
-  gap: 6px;
-  padding: 14px 16px;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.session-progress-note strong {
-  font-size: 0.96rem;
-}
-
-.session-progress-note p {
-  margin: 0;
-  color: var(--shell-muted, rgba(230, 244, 249, 0.72));
-}
-
-@keyframes session-progress-slide {
-  0% {
-    transform: translateX(0%);
-  }
-
-  100% {
-    transform: translateX(460%);
+  .onboarding-deploy-spinner {
+    animation: none !important;
   }
 }
 

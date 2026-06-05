@@ -47,7 +47,7 @@ export function renderDesktopShell(): string {
                   </li>
                   <li class="onboarding-stage-pill" data-setup-stage-pill="review" data-setup-rail-step="review">
                     <span>3</span>
-                    <strong>Review and deploy</strong>
+                    <strong>Review and start</strong>
                   </li>
                 </ol>
               </aside>
@@ -59,12 +59,12 @@ export function renderDesktopShell(): string {
                       <button type="button" class="onboarding-mode-card" data-setup-lane="quick">
                         <span class="onboarding-mode-kicker">Recommended</span>
                         <strong>Quick start</strong>
-                        <p>Create the first account, keep the default AI path, and use the official system source.</p>
+                        <p>Create the first account, keep the default AI path, and use the official system files.</p>
                       </button>
                       <button type="button" class="onboarding-mode-card" data-setup-lane="customize">
                         <span class="onboarding-mode-kicker">More control</span>
                         <strong>Custom</strong>
-                        <p>Choose AI defaults, system source, and optional node bootstrap settings before first boot.</p>
+                        <p>Choose AI defaults, system files, and optional device setup before first start.</p>
                       </button>
                     </div>
                   </section>
@@ -100,7 +100,7 @@ export function renderDesktopShell(): string {
                       </div>
                       <div class="onboarding-field-note">
                         <strong>Keep this password safe.</strong>
-                        <p>GSV does not store a recoverable copy. Losing it can lock you out of this gateway.</p>
+                        <p>GSV does not store a recoverable copy. Losing it can lock you out of this workspace.</p>
                       </div>
                     </section>
 
@@ -149,7 +149,7 @@ export function renderDesktopShell(): string {
                       <div class="onboarding-custom-options" data-setup-ai-section hidden>
                         <div class="onboarding-section-head">
                           <h3>AI defaults</h3>
-                          <p>Keep the gateway default AI path, or choose a provider and model from the start.</p>
+                          <p>Keep the default AI path, or choose the AI service and model from the start.</p>
                         </div>
                         <div class="session-field-grid">
                           <label class="session-toggle">
@@ -157,11 +157,11 @@ export function renderDesktopShell(): string {
                             <input data-setup-ai-enabled type="checkbox" />
                           </label>
                           <label data-setup-ai-provider-row hidden>
-                            Provider
+                            AI service
                             <input data-setup-ai-provider type="text" placeholder="openai" autocomplete="off" />
                           </label>
                           <label data-setup-ai-model-row hidden>
-                            Model
+                            AI model
                             <input data-setup-ai-model type="text" placeholder="gpt-5.4" autocomplete="off" />
                           </label>
                           <label data-setup-ai-key-row hidden>
@@ -173,20 +173,20 @@ export function renderDesktopShell(): string {
 
                       <div class="onboarding-custom-options" data-setup-source-section hidden>
                         <div class="onboarding-section-head">
-                          <h3>System source</h3>
-                          <p>Use the official source, or point first boot at a repository and ref you control.</p>
+                          <h3>System files</h3>
+                          <p>Use the official system files, or choose a repository and version you control.</p>
                         </div>
                         <div class="session-field-grid">
                           <label class="session-toggle">
-                            <span>Use a custom source</span>
+                            <span>Use custom system files</span>
                             <input data-setup-source-enabled type="checkbox" />
                           </label>
                           <label data-setup-source-row hidden>
-                            Repository or remote URL
+                            System files location
                             <input data-setup-bootstrap-source type="text" autocomplete="off" placeholder="deathbyknowledge/gsv" />
                           </label>
                           <label data-setup-source-ref-row hidden>
-                            Ref
+                            Version
                             <input data-setup-bootstrap-ref type="text" autocomplete="off" placeholder="main" />
                           </label>
                         </div>
@@ -194,12 +194,12 @@ export function renderDesktopShell(): string {
 
                       <div class="onboarding-custom-options" data-setup-node-section hidden>
                         <div class="onboarding-section-head">
-                          <h3>Device token</h3>
-                          <p>Issue a node token now if you want a machine to connect immediately after setup.</p>
+                          <h3>Device setup</h3>
+                          <p>Create a setup key now if you want another machine to connect immediately.</p>
                         </div>
                         <div class="session-field-grid">
                           <label class="session-toggle">
-                            <span>Issue a node token now</span>
+                            <span>Create a device setup key now</span>
                             <input data-setup-node-enabled type="checkbox" />
                           </label>
                           <label data-setup-node-device-row hidden>
@@ -221,11 +221,11 @@ export function renderDesktopShell(): string {
 
                   <section class="onboarding-stage onboarding-stage-review" data-setup-stage="review" hidden>
                     <div class="onboarding-lane-banner">
-                      <span>Review and deploy</span>
+                      <span>Review and start</span>
                     </div>
                     <div class="setup-step-copy">
-                      <h2>First-boot plan</h2>
-                      <p class="session-copy">This is the first-boot plan that will be applied to the gateway.</p>
+                      <h2>Setup plan</h2>
+                      <p class="session-copy">This is the setup plan that will be applied before the desktop opens.</p>
                     </div>
                     <div class="onboarding-summary-grid">
                       <article class="onboarding-summary-card">
@@ -239,9 +239,9 @@ export function renderDesktopShell(): string {
                         <p>First desktop user and personal agent account.</p>
                       </article>
                       <article class="onboarding-summary-card">
-                        <span>Admin access</span>
+                        <span>Admin security</span>
                         <strong data-setup-summary-admin></strong>
-                        <p>System-level recovery and administration path.</p>
+                        <p>How sensitive admin actions are protected.</p>
                       </article>
                       <article class="onboarding-summary-card">
                         <span>Timezone</span>
@@ -251,27 +251,27 @@ export function renderDesktopShell(): string {
                       <article class="onboarding-summary-card">
                         <span>AI</span>
                         <strong data-setup-summary-ai></strong>
-                        <p>Initial model/provider behavior for the gateway.</p>
+                        <p>Initial AI service and model behavior.</p>
                       </article>
                       <article class="onboarding-summary-card">
-                        <span>System source</span>
+                        <span>System files</span>
                         <strong data-setup-summary-source></strong>
-                        <p>The source imported into <code>root/gsv</code> during setup.</p>
+                        <p>The system files loaded during setup.</p>
                       </article>
                       <article class="onboarding-summary-card">
-                        <span>Device token</span>
+                        <span>Device setup</span>
                         <strong data-setup-summary-device></strong>
-                        <p>Optional node bootstrap credentials issued during setup.</p>
+                        <p>Optional setup key for connecting another machine.</p>
                       </article>
                     </div>
                     <aside class="onboarding-review-notes">
                       <div>
                         <strong>You can change this later</strong>
-                        <p>AI defaults and package settings can be adjusted from the desktop after provisioning.</p>
+                        <p>AI defaults and system settings can be adjusted from the desktop after setup.</p>
                       </div>
                       <div>
-                        <strong>What does the system source mean?</strong>
-                        <p>The source controls the initial GSV package set synced into <code>root/gsv</code>.</p>
+                        <strong>What are system files?</strong>
+                        <p>They define the built-in apps and settings GSV starts with.</p>
                       </div>
                     </aside>
                   </section>
@@ -282,7 +282,7 @@ export function renderDesktopShell(): string {
                     <button type="button" class="runtime-btn session-btn-secondary" data-setup-back hidden>Back</button>
                     <div class="onboarding-primary-actions">
                       <button type="button" class="runtime-btn" data-setup-next hidden>Next</button>
-                      <button type="submit" class="runtime-btn" data-setup-submit hidden>Deploy</button>
+                      <button type="submit" class="runtime-btn" data-setup-submit hidden>Start setup</button>
                       <button type="button" class="runtime-btn session-btn-secondary" data-setup-guide-toggle hidden>Ask the guide</button>
                     </div>
                   </div>
@@ -307,72 +307,158 @@ export function renderDesktopShell(): string {
             </form>
           </div>
 
-          <div class="session-panel" data-session-provisioning-view hidden>
-            <div class="session-panel-head">
-              <p class="session-kicker">Provisioning</p>
-              <h1 data-session-provisioning-title>Provisioning gateway</h1>
-              <p class="session-copy" data-session-provisioning-copy>Importing the system source, mirroring CLI binaries, and finalizing first-boot state.</p>
-            </div>
-            <div class="session-progress-shell">
-              <div class="session-progress-bar" aria-hidden="true">
-                <span></span>
-              </div>
-              <div class="session-progress-note">
-                <strong>Keep this tab open</strong>
-                <p>First boot can take a few seconds while the gateway prepares the system source and local download artifacts.</p>
+          <div class="session-panel session-panel-wide onboarding-panel onboarding-status-panel onboarding-deploying-panel" data-session-provisioning-view hidden>
+            <div class="session-setup-form onboarding-layout">
+              <aside class="onboarding-sidebar">
+                <div class="session-panel-head">
+                  <p class="session-kicker">First-time setup</p>
+                  <h1>Setting things up</h1>
+                  <p class="session-copy">The desktop is almost ready.</p>
+                </div>
+                <ol class="onboarding-step-list">
+                  <li class="onboarding-stage-pill is-complete">
+                    <span>1</span>
+                    <strong>Login credentials</strong>
+                  </li>
+                  <li class="onboarding-stage-pill is-complete">
+                    <span>2</span>
+                    <strong>Preferences</strong>
+                  </li>
+                  <li class="onboarding-stage-pill is-active">
+                    <span>3</span>
+                    <strong>Review and start</strong>
+                  </li>
+                </ol>
+              </aside>
+              <div class="onboarding-workspace">
+                <main class="onboarding-main onboarding-status-main">
+                  <section class="onboarding-stage onboarding-status-stage">
+                    <div class="onboarding-lane-banner">
+                      <span>Setting things up</span>
+                    </div>
+                    <div class="setup-step-copy">
+                      <h2 data-session-provisioning-title>Setting up your workspace</h2>
+                      <p class="session-copy" data-session-provisioning-copy>Creating your account, preparing system files, and opening the desktop.</p>
+                    </div>
+                    <div class="onboarding-deploy-status">
+                      <div class="onboarding-deploy-spinner" aria-hidden="true"></div>
+                      <div>
+                        <strong>Keep this tab open</strong>
+                        <p>This can take a few seconds while GSV prepares your workspace.</p>
+                      </div>
+                    </div>
+                    <ol class="onboarding-deploy-steps" aria-label="Setup progress">
+                      <li>
+                        <span></span>
+                        <div>
+                          <strong>Creating account</strong>
+                          <p>Securing your account and admin settings.</p>
+                        </div>
+                      </li>
+                      <li>
+                        <span></span>
+                        <div>
+                          <strong>Preparing system files</strong>
+                          <p>Loading the built-in apps and starter settings.</p>
+                        </div>
+                      </li>
+                      <li>
+                        <span></span>
+                        <div>
+                          <strong>Opening desktop</strong>
+                          <p>Getting the first session ready.</p>
+                        </div>
+                      </li>
+                    </ol>
+                  </section>
+                </main>
               </div>
             </div>
           </div>
 
-          <div class="session-panel" data-session-setup-complete hidden>
-            <div class="session-panel-head">
-              <p class="session-kicker">Gateway ready</p>
-              <h1>Provisioning complete</h1>
-              <p class="session-copy">The control plane, first account, and system source are ready. Install the CLI on the next machine from this deployment, then bring a device online when you are ready.</p>
-            </div>
-            <div class="session-result-grid">
-              <div class="session-result-card">
-                <span>First user</span>
-                <strong data-setup-result-username></strong>
-              </div>
-              <div class="session-result-card">
-                <span>Admin access</span>
-                <strong data-setup-result-root></strong>
-              </div>
-              <div class="session-result-card">
-                <span>System source</span>
-                <strong data-setup-result-source></strong>
-              </div>
-              <div class="session-result-card">
-                <span>Source ref</span>
-                <strong data-setup-result-ref></strong>
-              </div>
-            </div>
-            <div class="session-token-panel">
-              <div class="session-token-head">
-                <div>
-                  <p class="session-kicker">CLI install</p>
-                  <h2 data-setup-result-cli-label>Install on this machine</h2>
+          <div class="session-panel session-panel-wide onboarding-panel onboarding-status-panel onboarding-complete-panel" data-session-setup-complete hidden>
+            <div class="session-setup-form onboarding-layout">
+              <aside class="onboarding-sidebar">
+                <div class="session-panel-head">
+                  <p class="session-kicker">First-time setup</p>
+                  <h1>Complete</h1>
+                  <p class="session-copy">Your workspace is ready.</p>
                 </div>
-                <button type="button" class="runtime-btn session-btn-secondary" data-setup-copy-cli>Copy install command</button>
+                <ol class="onboarding-step-list">
+                  <li class="onboarding-stage-pill is-complete">
+                    <span>1</span>
+                    <strong>Login credentials</strong>
+                  </li>
+                  <li class="onboarding-stage-pill is-complete">
+                    <span>2</span>
+                    <strong>Preferences</strong>
+                  </li>
+                  <li class="onboarding-stage-pill is-complete">
+                    <span>3</span>
+                    <strong>Review and start</strong>
+                  </li>
+                </ol>
+              </aside>
+              <div class="onboarding-workspace">
+                <main class="onboarding-main onboarding-status-main">
+                  <section class="onboarding-stage onboarding-status-stage">
+                    <div class="onboarding-lane-banner">
+                      <span>Complete</span>
+                    </div>
+                    <div class="setup-step-copy onboarding-complete-copy">
+                      <h2>Your workspace is ready</h2>
+                      <p class="session-copy">Your account and system files are ready. Open the desktop now; command line tools and device setup are available below.</p>
+                    </div>
+                    <div class="session-result-grid">
+                      <div class="session-result-card">
+                        <span>Account</span>
+                        <strong data-setup-result-username></strong>
+                      </div>
+                      <div class="session-result-card">
+                        <span>Admin security</span>
+                        <strong data-setup-result-root></strong>
+                      </div>
+                      <div class="session-result-card">
+                        <span>System files</span>
+                        <strong data-setup-result-source></strong>
+                      </div>
+                      <div class="session-result-card">
+                        <span>Version</span>
+                        <strong data-setup-result-ref></strong>
+                      </div>
+                    </div>
+                    <div class="session-token-panel">
+                      <div class="session-token-head">
+                        <div>
+                          <p class="session-kicker">Command line tools</p>
+                          <h2 data-setup-result-cli-label>Tools for this machine</h2>
+                        </div>
+                        <button type="button" class="runtime-btn session-btn-secondary" data-setup-copy-cli>Copy command</button>
+                      </div>
+                      <textarea class="session-token-value" data-setup-result-cli-command readonly></textarea>
+                      <p class="session-token-meta" data-setup-result-cli-meta></p>
+                    </div>
+                    <div class="session-token-panel" data-setup-node-result hidden>
+                      <div class="session-token-head">
+                        <div>
+                          <p class="session-kicker">Device setup</p>
+                          <h2 data-setup-result-node-label>Connect a device</h2>
+                        </div>
+                        <button type="button" class="runtime-btn session-btn-secondary" data-setup-copy-token>Copy setup steps</button>
+                      </div>
+                      <textarea class="session-token-value" data-setup-result-node-token readonly></textarea>
+                      <p class="session-token-meta" data-setup-result-node-meta></p>
+                    </div>
+                  </section>
+                  <p class="session-error onboarding-alert" data-session-setup-complete-error role="alert" hidden></p>
+                  <div class="session-actions onboarding-actions">
+                    <div></div>
+                    <div class="onboarding-primary-actions">
+                      <button type="button" class="runtime-btn" data-session-setup-continue>Open desktop</button>
+                    </div>
+                  </div>
+                </main>
               </div>
-              <textarea class="session-token-value" data-setup-result-cli-command readonly></textarea>
-              <p class="session-token-meta" data-setup-result-cli-meta></p>
-            </div>
-            <div class="session-token-panel" data-setup-node-result hidden>
-              <div class="session-token-head">
-                <div>
-                  <p class="session-kicker">New device</p>
-                  <h2 data-setup-result-node-label>Bootstrap device</h2>
-                </div>
-                <button type="button" class="runtime-btn session-btn-secondary" data-setup-copy-token>Copy device steps</button>
-              </div>
-              <textarea class="session-token-value" data-setup-result-node-token readonly></textarea>
-              <p class="session-token-meta" data-setup-result-node-meta></p>
-            </div>
-            <p class="session-error" data-session-setup-complete-error hidden></p>
-            <div class="session-actions">
-              <button type="button" class="runtime-btn" data-session-setup-continue>Enter desktop</button>
             </div>
           </div>
         </div>

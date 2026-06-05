@@ -35,32 +35,32 @@ type ValidationResult = {
 
 type InstallPlatform = "macos" | "linux" | "windows";
 
-const DEFAULT_SOURCE_LABEL = "Configured default upstream";
-const DEFAULT_SOURCE_REF = "Configured default ref";
+const DEFAULT_SOURCE_LABEL = "Official system files";
+const DEFAULT_SOURCE_REF = "Default version";
 
 const SETUP_LANE_META: Record<OnboardingLane, SetupLaneMeta> = {
   quick: {
     label: "Quick start",
     kicker: "Quick start",
     title: "Create the first operator",
-    description: "Use the default system source and the default AI path. You only need the account and admin credentials.",
-    reviewCopy: "Fastest path with the default system source and default AI configuration.",
+    description: "Use the official system files and the default AI path. You only need the account and admin credentials.",
+    reviewCopy: "Fastest path with the official system files and default AI configuration.",
     estimate: "expected time to completion: 1 min",
   },
   customize: {
     label: "Custom",
     kicker: "Custom",
     title: "Tune the parts that matter",
-    description: "Adjust AI defaults, first-boot system source, and optional device bootstrap without dealing with every low-level detail.",
-    reviewCopy: "Custom setup with optional AI, source, and device customization.",
+    description: "Adjust AI defaults, system files, and optional device setup without dealing with every low-level detail.",
+    reviewCopy: "Custom setup with optional AI, system files, and device customization.",
     estimate: "expected time to completion: 3 min",
   },
   advanced: {
     label: "Custom",
     kicker: "Custom",
     title: "Take full control from first boot",
-    description: "Choose the exact source and ref up front, configure AI explicitly, and issue node credentials during provisioning if needed.",
-    reviewCopy: "Full-control setup with explicit first-boot source and runtime choices.",
+    description: "Choose the exact system files and version up front, configure AI explicitly, and create a device setup key if needed.",
+    reviewCopy: "Full-control setup with explicit system files and detailed choices.",
     estimate: "expected time to completion: 3 min",
   },
 };
@@ -72,9 +72,9 @@ function statusText(snapshot: SessionSnapshot): string {
     case "setup":
       return "session: setup required";
     case "setup-complete":
-      return "session: provisioning complete";
+      return "session: setup complete";
     case "authenticating":
-      return "session: provisioning...";
+      return "session: setting up...";
     default:
       return "session: locked";
   }
@@ -535,7 +535,7 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
         setupLaneTitleNode.textContent = "Preferences";
         setupLaneDescriptionNode.textContent = onboardingSnapshot.draft.lane === "quick"
           ? "Confirm timezone and decide whether admin actions need a separate password."
-          : "Confirm timezone, admin security, and any custom AI, source, or device settings.";
+          : "Confirm timezone, admin security, and any custom AI, system files, or device settings.";
       } else {
         setupLaneKickerNode.textContent = "Login credentials";
         setupLaneTitleNode.textContent = "Desktop account";
@@ -543,9 +543,9 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
       }
     } else if (stage === "review") {
       setupDetailCopyNode.hidden = true;
-      setupLaneKickerNode.textContent = "Review and deploy";
-      setupLaneTitleNode.textContent = "Review and deploy";
-      setupLaneDescriptionNode.textContent = "Confirm the first-boot plan before provisioning the gateway.";
+      setupLaneKickerNode.textContent = "Review and start";
+      setupLaneTitleNode.textContent = "Review and start";
+      setupLaneDescriptionNode.textContent = "Confirm the setup plan before GSV opens the desktop.";
     } else {
       setupDetailCopyNode.hidden = true;
     }
@@ -604,7 +604,7 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
       title.textContent = "Ask for setup help";
 
       const copy = document.createElement("p");
-      copy.textContent = "Source, model, timezone, and device bootstrap can be adjusted here. Secrets stay in the form.";
+      copy.textContent = "System files, AI model, timezone, and device setup can be adjusted here. Secrets stay in the form.";
 
       empty.append(title, copy);
       setupGuideLogNode.appendChild(empty);
@@ -768,18 +768,18 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
         }
         if (advancedSectionsVisible() && draft.ai.enabled) {
           if (!draft.ai.provider.trim()) {
-            return { message: "AI provider is required when customizing AI settings.", step };
+            return { message: "AI service is required when customizing AI settings.", step };
           }
           if (!draft.ai.model.trim()) {
             return { message: "AI model is required when customizing AI settings.", step };
           }
         }
         if (advancedSectionsVisible() && draft.source.enabled && !draft.source.value.trim()) {
-          return { message: "Repository or remote URL is required for a custom system source.", step };
+          return { message: "System files location is required when using custom system files.", step };
         }
         if (advancedSectionsVisible() && draft.device.enabled) {
           if (!draft.device.deviceId.trim()) {
-            return { message: "Device ID is required when issuing a node token.", step };
+            return { message: "Device ID is required when creating a device setup key.", step };
           }
           const expiry = draft.device.expiryDays.trim();
           if (expiry && !isPositiveNumber(expiry)) {
@@ -808,7 +808,7 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
   const buildAiSummary = (): string => {
     const { draft } = onboardingSnapshot;
     if (!advancedSectionsVisible() || !draft.ai.enabled) {
-      return "Use gateway default AI";
+      return "Use default AI";
     }
     const provider = draft.ai.provider.trim();
     const model = draft.ai.model.trim();
@@ -818,10 +818,10 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
   const buildDeviceSummary = (): string => {
     const { draft } = onboardingSnapshot;
     if (!advancedSectionsVisible() || !draft.device.enabled) {
-      return "Do not issue a node token during setup";
+      return "Do not create a device setup key";
     }
     const deviceId = draft.device.deviceId.trim();
-    return deviceId ? `Issue token for ${deviceId}` : "Issue node token";
+    return deviceId ? `Create setup key for ${deviceId}` : "Create device setup key";
   };
 
   const renderReviewSummary = (): void => {
@@ -900,11 +900,11 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     const origin = gatewayOrigin();
     const platform = detectBrowserInstallPlatform();
     const defaultChannel = result?.bootstrap?.cli.defaultChannel ?? "stable";
-    setupResultCliLabelNode.textContent = `Install on ${installPlatformLabel(platform)}`;
+    setupResultCliLabelNode.textContent = `Tools for ${installPlatformLabel(platform)}`;
     setupResultCliCommandNode.value = cliInstallCommand(origin, platform);
     setupResultCliMetaNode.textContent = platform === "windows"
-      ? `Uses the ${defaultChannel} channel from this deployment. The PowerShell installer will report clearly if Windows binaries are not mirrored yet.`
-      : `Uses the ${defaultChannel} channel from this deployment and auto-detects the correct binary for this machine.`;
+      ? `Uses the ${defaultChannel} release channel. The PowerShell installer will report clearly if Windows tools are not available yet.`
+      : `Uses the ${defaultChannel} release channel and picks the right tools for this machine.`;
     if (!result) {
       setupResultUsernameNode.textContent = snapshot.username || "Unknown";
       setupResultRootNode.textContent = adminMode === "custom" ? "Extra admin security layer" : "Account password";
@@ -937,7 +937,7 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     setupNodeResultNode.hidden = false;
     setupResultNodeLabelNode.textContent = result.nodeToken.label ?? deviceId;
     setupResultNodeTokenNode.value = bootstrapCommand;
-    setupResultNodeMetaNode.textContent = `${deviceId} · ${expiresLabel} · ${installPlatformLabel(platform)} steps shown`;
+    setupResultNodeMetaNode.textContent = `${deviceId} · ${expiresLabel} · ${installPlatformLabel(platform)} setup steps shown`;
   };
 
   const resolveVisibleView = (snapshot: SessionSnapshot): "login" | "setup" | "provisioning" | "complete" | "desktop" => {
@@ -991,13 +991,13 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     setupCompleteNode.hidden = visibleView !== "complete";
 
     if (pendingAction === "setup") {
-      provisioningTitleNode.textContent = "Provisioning gateway";
-      provisioningCopyNode.textContent = "Importing the system source, mirroring CLI binaries, and finalizing first-boot state.";
+      provisioningTitleNode.textContent = "Setting up your workspace";
+      provisioningCopyNode.textContent = "Creating your account, preparing system files, and opening the desktop.";
     } else if (pendingAction === "continue") {
       provisioningTitleNode.textContent = "Opening desktop";
-      provisioningCopyNode.textContent = "Finalizing the first session and loading the desktop.";
+      provisioningCopyNode.textContent = "Loading your desktop.";
     } else {
-      provisioningTitleNode.textContent = "Provisioning gateway";
+      provisioningTitleNode.textContent = "Setting up your workspace";
       provisioningCopyNode.textContent = "Preparing the first session.";
     }
 
