@@ -37,7 +37,7 @@ const EMPTY_VIEWPORT: TranscriptViewport = {
   scrollTop: 0,
 };
 
-const ASSISTANT_DOCUMENT_MAX_WIDTH = 820;
+const ASSISTANT_DOCUMENT_MAX_WIDTH = 900;
 const ASSISTANT_DOCUMENT_MAX_RATIO = 0.88;
 const ASSISTANT_DOCUMENT_CHROME_HEIGHT = 44;
 const MOBILE_CONTENT_WIDTH_BREAKPOINT = 740;
@@ -473,6 +473,9 @@ function estimateTranscriptItemHeight(item: TranscriptItem, viewportWidth: numbe
 }
 
 function estimateMessageHeight(row: MessageRow, viewportWidth: number): number {
+  if (row.role === "system") {
+    return estimateSystemMessageHeight(row, viewportWidth);
+  }
   if (row.role === "assistant" && !row.streaming) {
     return estimateAssistantDocumentHeight(row, viewportWidth);
   }
@@ -517,6 +520,13 @@ function estimateFallbackMessageHeight(row: MessageRow): number {
   const textLines = Math.max(1, Math.ceil(row.text.length / charsPerLine));
   const mediaCount = row.media?.length ?? 0;
   return base + textLines * lineHeight + mediaCount * 72;
+}
+
+function estimateSystemMessageHeight(row: MessageRow, viewportWidth: number): number {
+  const width = assistantDocumentBodyWidth(viewportWidth);
+  const charsPerLine = width > 0 ? Math.max(36, Math.floor(width / 7.2)) : 90;
+  const textLines = Math.max(1, Math.ceil(row.text.length / charsPerLine));
+  return 14 + textLines * 18;
 }
 
 function assistantDocumentBodyWidth(viewportWidth: number): number {

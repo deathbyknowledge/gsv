@@ -1,5 +1,5 @@
 import type { MessageRow } from "../../types";
-import { BranchIcon, CopyIcon, MoreIcon } from "../../icons";
+import { BranchIcon, CopyIcon, MessageIcon, MoreIcon } from "../../icons";
 import { closeChatMenus, closeContainingChatMenu, formatInteractionOriginLabel, formatTimestamp, labelForRole, renderMarkdownHtml } from "../../view-helpers";
 import { isAudioMedia, mediaFilename, mediaKind, mediaSourceErrorFor, mediaSourceFor, mediaSourceKey, mediaTranscription } from "../../domain/media";
 import { usePretextBubbleWidth } from "../../hooks/usePretextBubbleWidth";
@@ -45,42 +45,24 @@ export function MessageBubble({
   const copyValue = row.text.trim()
     || mediaTranscript
     || row.text;
-  return (
-    <article
-      ref={bubbleRef}
-      class={`message message-${row.role}${useTightBubble ? " is-pretext-sized" : ""}`}
-      style={bubbleStyle}
-    >
-      <div class="message-head">
-        <span class="message-role-label">{roleLabel}</span>
-        {originLabel ? <span class="message-origin-label" title={originLabel}>{originLabel}</span> : null}
-        <span class="message-spacer" />
-        <span>{timestampLabel}</span>
-        <details class="message-menu">
-          <summary class="message-action" title="Message actions" aria-label="Message actions" onClick={(event) => {
-            closeChatMenus((event.currentTarget as HTMLElement).closest("details") as HTMLDetailsElement | null);
-          }}>
-            <MoreIcon />
-          </summary>
-          <div class="message-menu-popover">
-            <button type="button" class="menu-action" onClick={(event) => { closeContainingChatMenu(event.currentTarget); onCopy(copyValue); }}>
-              <CopyIcon />
-              <span>Copy</span>
-            </button>
-            {branchable && row.messageId ? (
-              <button
-                type="button"
-                class="menu-action"
-                disabled={branchBusy}
-                onClick={(event) => { closeContainingChatMenu(event.currentTarget); onBranch(row.messageId as number); }}
-              >
-                <BranchIcon />
-                <span>Branch</span>
-              </button>
-            ) : null}
-          </div>
-        </details>
-      </div>
+
+  if (row.role === "system") {
+    return (
+      <article class={`system-message${systemMessageTone(row.text)}`}>
+        <span class="system-message-icon" aria-hidden="true">
+          <MessageIcon />
+        </span>
+        <pre class="system-message-body">{row.text}</pre>
+        <span class="system-message-time">{timestampLabel}</span>
+        <button type="button" class="message-action system-message-action" title="Copy" aria-label="Copy" onClick={() => onCopy(copyValue)}>
+          <CopyIcon />
+        </button>
+      </article>
+    );
+  }
+
+  const messageBody = (
+    <>
       {thinking.length > 0 ? (
         <details class={`message-thinking${row.streaming ? " is-live" : ""}`} open={row.streaming}>
           <summary>{row.streaming ? "Reasoning..." : "Reasoning"}</summary>
@@ -120,6 +102,83 @@ export function MessageBubble({
           ))}
         </div>
       ) : null}
+    </>
+  );
+
+  if (row.role === "user") {
+    return (
+      <article
+        ref={bubbleRef}
+        class={`message message-${row.role}${useTightBubble ? " is-pretext-sized" : ""}`}
+        style={bubbleStyle}
+      >
+        <div class="message-content">{messageBody}</div>
+        <footer class="message-foot">
+          <span class="message-role-label">{roleLabel}</span>
+          {originLabel ? <span class="message-origin-label" title={originLabel}>{originLabel}</span> : null}
+          <span class="message-spacer" />
+          <span>{timestampLabel}</span>
+          <button type="button" class="message-action" title="Copy" aria-label="Copy" onClick={() => onCopy(copyValue)}>
+            <CopyIcon />
+          </button>
+          {branchable && row.messageId ? (
+            <button
+              type="button"
+              class="message-action"
+              title="Branch"
+              aria-label="Branch"
+              disabled={branchBusy}
+              onClick={() => onBranch(row.messageId as number)}
+            >
+              <BranchIcon />
+            </button>
+          ) : null}
+        </footer>
+      </article>
+    );
+  }
+
+  return (
+    <article
+      ref={bubbleRef}
+      class={`message message-${row.role}${useTightBubble ? " is-pretext-sized" : ""}`}
+      style={bubbleStyle}
+    >
+      <div class="message-head">
+        <span class="message-role-label">{roleLabel}</span>
+        {originLabel ? <span class="message-origin-label" title={originLabel}>{originLabel}</span> : null}
+        <span class="message-spacer" />
+        <span>{timestampLabel}</span>
+        <details class="message-menu">
+          <summary class="message-action" title="Message actions" aria-label="Message actions" onClick={(event) => {
+            closeChatMenus((event.currentTarget as HTMLElement).closest("details") as HTMLDetailsElement | null);
+          }}>
+            <MoreIcon />
+          </summary>
+          <div class="message-menu-popover">
+            <button type="button" class="menu-action" onClick={(event) => { closeContainingChatMenu(event.currentTarget); onCopy(copyValue); }}>
+              <CopyIcon />
+              <span>Copy</span>
+            </button>
+            {branchable && row.messageId ? (
+              <button
+                type="button"
+                class="menu-action"
+                disabled={branchBusy}
+                onClick={(event) => { closeContainingChatMenu(event.currentTarget); onBranch(row.messageId as number); }}
+              >
+                <BranchIcon />
+                <span>Branch</span>
+              </button>
+            ) : null}
+          </div>
+        </details>
+      </div>
+      {messageBody}
     </article>
   );
+}
+
+function systemMessageTone(text: string): string {
+  return /\b(error|failed|denied|aborted|invalid)\b/i.test(text) ? " is-warning" : "";
 }

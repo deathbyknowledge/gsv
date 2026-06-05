@@ -7,7 +7,7 @@ const USER_BUBBLE_PADDING_X = 24;
 const USER_BUBBLE_MIN_WIDTH = 156;
 const USER_BUBBLE_MAX_WIDTH = 820;
 const USER_BUBBLE_MAX_RATIO = 0.88;
-const USER_BUBBLE_HEADER_ACTION_WIDTH = 25;
+const USER_BUBBLE_ACTION_WIDTH = 58;
 const USER_BUBBLE_HEADER_GAP = 10;
 const USER_BUBBLE_HEADER_BUFFER = 10;
 
@@ -50,7 +50,7 @@ function measureUserBubbleHeaderWidth(parts: string[]): number {
   }, 0);
   return Math.ceil(
     labelsWidth
-    + USER_BUBBLE_HEADER_ACTION_WIDTH
+    + USER_BUBBLE_ACTION_WIDTH
     + USER_BUBBLE_HEADER_GAP * (labels.length + 1)
     + USER_BUBBLE_PADDING_X
     + USER_BUBBLE_HEADER_BUFFER,
