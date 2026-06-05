@@ -41,7 +41,6 @@ export function AssistantDocument({
         <span class="message-role-label">{roleLabel}</span>
         {originLabel ? <span class="message-origin-label" title={originLabel}>{originLabel}</span> : null}
         <span class="message-spacer" />
-        <span>{timestampLabel}</span>
         <button type="button" class="message-action" title="Copy" aria-label="Copy" onClick={() => onCopy(row.text)}>
           <CopyIcon />
         </button>
@@ -57,6 +56,7 @@ export function AssistantDocument({
             <BranchIcon />
           </button>
         ) : null}
+        <span>{timestampLabel}</span>
       </footer>
     </article>
   );

@@ -53,10 +53,6 @@ export function MessageBubble({
           <MessageIcon />
         </span>
         <pre class="system-message-body">{row.text}</pre>
-        <span class="system-message-time">{timestampLabel}</span>
-        <button type="button" class="message-action system-message-action" title="Copy" aria-label="Copy" onClick={() => onCopy(copyValue)}>
-          <CopyIcon />
-        </button>
       </article>
     );
   }
@@ -117,7 +113,6 @@ export function MessageBubble({
           <span class="message-role-label">{roleLabel}</span>
           {originLabel ? <span class="message-origin-label" title={originLabel}>{originLabel}</span> : null}
           <span class="message-spacer" />
-          <span>{timestampLabel}</span>
           <button type="button" class="message-action" title="Copy" aria-label="Copy" onClick={() => onCopy(copyValue)}>
             <CopyIcon />
           </button>
@@ -133,6 +128,7 @@ export function MessageBubble({
               <BranchIcon />
             </button>
           ) : null}
+          <span>{timestampLabel}</span>
         </footer>
       </article>
     );
@@ -148,7 +144,6 @@ export function MessageBubble({
         <span class="message-role-label">{roleLabel}</span>
         {originLabel ? <span class="message-origin-label" title={originLabel}>{originLabel}</span> : null}
         <span class="message-spacer" />
-        <span>{timestampLabel}</span>
         <details class="message-menu">
           <summary class="message-action" title="Message actions" aria-label="Message actions" onClick={(event) => {
             closeChatMenus((event.currentTarget as HTMLElement).closest("details") as HTMLDetailsElement | null);
@@ -173,6 +168,7 @@ export function MessageBubble({
             ) : null}
           </div>
         </details>
+        <span>{timestampLabel}</span>
       </div>
       {messageBody}
     </article>
