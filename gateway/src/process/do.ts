@@ -1208,6 +1208,7 @@ export class Process extends Host<Env> {
     const hasMoreAfter = lastMessageId === null
       ? false
       : this.store.hasMessageAfter(conversationId, lastMessageId);
+    const activeRun = this.currentRun;
 
     const messages: ProcHistoryMessage[] = records.map((r) => {
       const origin = parseInteractionOrigin(r.origin);
@@ -1287,6 +1288,8 @@ export class Process extends Host<Env> {
       truncated: cursorCount > 0 ? hasMoreBefore || hasMoreAfter : offset + messages.length < total,
       hasMoreBefore,
       hasMoreAfter,
+      activeRunId: activeRun?.runId ?? null,
+      activeConversationId: activeRun?.conversationId ?? null,
       pendingHil: this.toProcHilRequest(this.store.getPendingHil()),
       context: await this.getContextStateForHistory(conversationId),
     };

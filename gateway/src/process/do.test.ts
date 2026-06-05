@@ -2805,6 +2805,29 @@ describe("Process DO — mechanical", () => {
       expect(sideData.messages[0].content).toBe("side message");
     });
 
+    it("exposes active run metadata for restore-time controls", async () => {
+      const pid = "mech-history-active-run";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, (instance: Process) => {
+        const process = instance as any;
+        process.currentRun = {
+          runId: "run-history-active",
+          queued: false,
+          conversationId: "side",
+        };
+      });
+
+      const res = (await stub.recvFrame(
+        makeReq("proc.history", { conversationId: "side" }),
+      )) as ResponseOkFrame;
+
+      expect(res.ok).toBe(true);
+      const data = res.data as any;
+      expect(data.activeRunId).toBe("run-history-active");
+      expect(data.activeConversationId).toBe("side");
+    });
+
     it("includes full toolResult payload (metadata + output)", async () => {
       const pid = "mech-history-toolresult";
       const stub = await initProcess(pid, ROOT_IDENTITY);

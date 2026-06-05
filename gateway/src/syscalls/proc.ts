@@ -241,6 +241,8 @@ export type ProcHistoryResult =
       truncated?: boolean;
       hasMoreBefore?: boolean;
       hasMoreAfter?: boolean;
+      activeRunId?: string | null;
+      activeConversationId?: string | null;
       pendingHil?: ProcHilRequest | null;
       context?: ProcContextState | null;
     }

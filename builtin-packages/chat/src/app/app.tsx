@@ -242,7 +242,7 @@ export function App({ backend }: { backend: ChatBackend }) {
   });
   const hasDraft = composeText.trim().length > 0 || attachments.length > 0;
   const voiceActive = voice.status !== "idle";
-  const runActive = pendingAssistant !== null || pendingHil !== null;
+  const runActive = activeRunId !== null || pendingAssistant !== null || pendingHil !== null;
   const runStateClass = hostError ? "is-error" : pendingHil ? "is-waiting" : runActive ? "is-running" : "is-ready";
   const runStateLabel = hostError ? "Error" : pendingHil ? "Approval" : runActive ? "Running" : "Ready";
   const canSend = interactive && !messageBusy && hasDraft && !voiceActive;
@@ -385,10 +385,16 @@ export function App({ backend }: { backend: ChatBackend }) {
         }
         return { ...current, [conversationId]: nextContext };
       });
+      const targetConversationId = target.conversationId || "default";
       const nextHil = normalizeHilRequest(record.pendingHil);
-      setPendingHil(nextHil);
-      setActiveRunId(nextHil?.runId ?? null);
-      setPendingAssistant(null);
+      const targetHil = nextHil?.conversationId === targetConversationId ? nextHil : null;
+      const historyActiveRunId = asString(record.activeRunId);
+      const historyActiveConversationId = asString(record.activeConversationId) || "default";
+      const activeRunMatchesTarget = Boolean(historyActiveRunId)
+        && historyActiveConversationId === targetConversationId;
+      setPendingHil(targetHil);
+      setActiveRunId(targetHil?.runId ?? (activeRunMatchesTarget ? historyActiveRunId : null));
+      setPendingAssistant(targetHil ? null : activeRunMatchesTarget ? "thinking" : null);
       setRows(flattened);
       clearNewMessages();
       requestAnimationFrame(() => scrollTranscript("bottom"));
