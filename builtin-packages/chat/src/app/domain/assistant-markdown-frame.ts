@@ -34,8 +34,11 @@ const H1_LINE_HEIGHT = 30;
 const H2_LINE_HEIGHT = 27;
 const H3_LINE_HEIGHT = 24;
 export const ASSISTANT_CODE_LINE_HEIGHT = 18;
+export const ASSISTANT_CODE_HEADER_HEIGHT = 30;
 export const ASSISTANT_CODE_PADDING_X = 12;
 export const ASSISTANT_CODE_PADDING_Y = 9;
+export const ASSISTANT_TABLE_CELL_PADDING_X = 10;
+export const ASSISTANT_TABLE_CELL_PADDING_Y = 8;
 const BLOCK_GAP = 10;
 const HARD_BREAK_GAP = 4;
 const LIST_ITEM_GAP = 5;
@@ -43,6 +46,10 @@ const LIST_NESTING_INDENT = 20;
 const BLOCKQUOTE_INDENT = 18;
 const LIST_MARKER_GAP = 9;
 const RULE_HEIGHT = 18;
+const TABLE_LINE_HEIGHT = 20;
+const CODE_MIN_WIDTH = 176;
+const TABLE_MIN_COLUMN_WIDTH = 96;
+const TABLE_MIN_ROW_HEIGHT = 34;
 const RAIL_OFFSET = 5;
 const INLINE_CODE_EXTRA_WIDTH = 12;
 const IMAGE_EXTRA_WIDTH = 14;
@@ -89,8 +96,23 @@ type PreparedInlineBlock = PreparedBlockBase & {
 
 type PreparedCodeBlock = PreparedBlockBase & {
   kind: "code";
+  language: string | null;
   lineHeight: number;
   prepared: PreparedTextWithSegments;
+  text: string;
+};
+
+type PreparedTableCell = {
+  align: "center" | "left" | "right" | null;
+  classNames: string[];
+  flow: PreparedRichInline;
+  hrefs: Array<string | null>;
+  isHeader: boolean;
+};
+
+type PreparedTableBlock = PreparedBlockBase & {
+  kind: "table";
+  rows: PreparedTableCell[][];
 };
 
 type PreparedRuleBlock = PreparedBlockBase & {
@@ -98,7 +120,7 @@ type PreparedRuleBlock = PreparedBlockBase & {
   height: number;
 };
 
-type PreparedBlock = PreparedInlineBlock | PreparedCodeBlock | PreparedRuleBlock;
+type PreparedBlock = PreparedInlineBlock | PreparedCodeBlock | PreparedTableBlock | PreparedRuleBlock;
 
 type BlockFrameBase = {
   contentLeft: number;
@@ -122,12 +144,19 @@ type CodeBlockFrame = BlockFrameBase & {
   width: number;
 };
 
+type TableBlockFrame = BlockFrameBase & {
+  columnWidths: number[];
+  kind: "table";
+  rowHeights: number[];
+  width: number;
+};
+
 type RuleBlockFrame = BlockFrameBase & {
   kind: "rule";
   width: number;
 };
 
-type BlockFrame = InlineBlockFrame | CodeBlockFrame | RuleBlockFrame;
+type BlockFrame = InlineBlockFrame | CodeBlockFrame | TableBlockFrame | RuleBlockFrame;
 
 export type AssistantInlineFragmentLayout = {
   className: string;
@@ -156,7 +185,32 @@ export type AssistantMarkdownBlockLayout =
       contentLeft: number;
       height: number;
       kind: "code";
+      language: string | null;
       lines: LayoutLine[];
+      markerClassName: string | null;
+      markerLeft: number | null;
+      markerText: string | null;
+      quoteRailLefts: number[];
+      text: string;
+      top: number;
+      width: number;
+    }
+  | {
+      cells: Array<{
+        align: "center" | "left" | "right" | null;
+        height: number;
+        isHeader: boolean;
+        left: number;
+        lines: Array<{
+          fragments: AssistantInlineFragmentLayout[];
+          width: number;
+        }>;
+        top: number;
+        width: number;
+      }>;
+      contentLeft: number;
+      height: number;
+      kind: "table";
       markerClassName: string | null;
       markerLeft: number | null;
       markerText: string | null;
@@ -247,7 +301,7 @@ function parseBlockTokens(tokens: readonly Token[], ctx: ParseContext): Prepared
         continue;
 
       case "code":
-        appendBlockGroup(blocks, [buildCodeBlock(tokenText(token), ctx)], BLOCK_GAP);
+        appendBlockGroup(blocks, [buildCodeBlock(tokenText(token), ctx, tokenLang(token))], BLOCK_GAP);
         continue;
 
       case "list":
@@ -267,7 +321,7 @@ function parseBlockTokens(tokens: readonly Token[], ctx: ParseContext): Prepared
         continue;
 
       case "table":
-        appendBlockGroup(blocks, [buildCodeBlock(formatTable(token as Tokens.Table), ctx)], BLOCK_GAP);
+        appendBlockGroup(blocks, [buildTableBlock(token as Tokens.Table, ctx)], BLOCK_GAP);
         continue;
 
       case "html": {
@@ -379,12 +433,49 @@ function buildPreparedInlineBlock(pieces: InlinePiece[], variant: InlineVariant,
   };
 }
 
-function buildCodeBlock(text: string, ctx: ParseContext): PreparedCodeBlock {
+function buildCodeBlock(text: string, ctx: ParseContext, language: string | null = null): PreparedCodeBlock {
+  const strippedText = stripSingleTrailingNewline(text);
   return {
     ...createBlockBase(ctx),
     kind: "code",
+    language,
     lineHeight: ASSISTANT_CODE_LINE_HEIGHT,
-    prepared: prepareWithSegments(stripSingleTrailingNewline(text), CODE_FONT, { whiteSpace: "pre-wrap" }),
+    prepared: prepareWithSegments(strippedText, CODE_FONT, { whiteSpace: "pre-wrap" }),
+    text: strippedText,
+  };
+}
+
+function buildTableBlock(token: Tokens.Table, ctx: ParseContext): PreparedTableBlock {
+  const align = Array.isArray(token.align) ? token.align : [];
+  const rows = [
+    token.header.map((cell, index) => buildTableCell(cell.tokens, true, normalizeTableAlign(align[index]))),
+    ...token.rows.map((row) => row.map((cell, index) => buildTableCell(cell.tokens, false, normalizeTableAlign(align[index])))),
+  ];
+  return {
+    ...createBlockBase(ctx),
+    kind: "table",
+    rows,
+  };
+}
+
+function buildTableCell(tokens: readonly Token[], isHeader: boolean, align: "center" | "left" | "right" | null): PreparedTableCell {
+  const variant = isHeader ? "heading-3" : "body";
+  const lines = collectInlinePieceLines(tokens, variant);
+  const pieces = lines.flat();
+  const fallbackPieces = pieces.length > 0
+    ? pieces
+    : [{ breakMode: "normal", className: resolveTextClassName("body", EMPTY_MARK_STATE), extraWidth: 0, font: BODY_FONT, href: null, text: "" } satisfies InlinePiece];
+  return {
+    align,
+    classNames: fallbackPieces.map((piece) => piece.className),
+    flow: prepareRichInline(fallbackPieces.map((piece) => ({
+      break: piece.breakMode,
+      extraWidth: piece.extraWidth,
+      font: piece.font,
+      text: piece.text,
+    }))),
+    hrefs: fallbackPieces.map((piece) => piece.href),
+    isHeader,
   };
 }
 
@@ -649,7 +740,7 @@ function layoutBlockFrame(block: PreparedBlock, contentWidth: number, top: numbe
     const { lineCount, maxLineWidth } = measureLineStats(block.prepared, innerWidth);
     return {
       contentLeft: block.contentLeft,
-      height: Math.max(1, lineCount) * block.lineHeight + ASSISTANT_CODE_PADDING_Y * 2,
+      height: ASSISTANT_CODE_HEADER_HEIGHT + Math.max(1, lineCount) * block.lineHeight + ASSISTANT_CODE_PADDING_Y * 2,
       kind: "code",
       lineHeight: block.lineHeight,
       markerClassName: block.markerClassName,
@@ -657,8 +748,11 @@ function layoutBlockFrame(block: PreparedBlock, contentWidth: number, top: numbe
       markerText: block.markerText,
       quoteRailLefts: block.quoteRailLefts,
       top,
-      width: Math.min(boxWidth, Math.max(1, maxLineWidth + ASSISTANT_CODE_PADDING_X * 2)),
+      width: Math.min(boxWidth, Math.max(CODE_MIN_WIDTH, maxLineWidth + ASSISTANT_CODE_PADDING_X * 2)),
     };
+  }
+  if (block.kind === "table") {
+    return layoutTableFrame(block, contentWidth, top);
   }
   return {
     contentLeft: block.contentLeft,
@@ -709,14 +803,19 @@ function materializeBlockLayout(block: PreparedBlock, frame: BlockFrame, content
       contentLeft: frame.contentLeft,
       height: frame.height,
       kind: "code",
+      language: block.language,
       lines: layoutWithLines(block.prepared, innerWidth, frame.lineHeight).lines,
       markerClassName: frame.markerClassName,
       markerLeft: frame.markerLeft,
       markerText: frame.markerText,
       quoteRailLefts: frame.quoteRailLefts,
+      text: block.text,
       top: frame.top,
       width: frame.width,
     };
+  }
+  if (frame.kind === "table" && block.kind === "table") {
+    return materializeTableLayout(block, frame);
   }
   if (frame.kind === "rule") {
     return {
@@ -734,6 +833,97 @@ function materializeBlockLayout(block: PreparedBlock, frame: BlockFrame, content
   throw new Error("Assistant markdown block/frame mismatch");
 }
 
+function layoutTableFrame(block: PreparedTableBlock, contentWidth: number, top: number): TableBlockFrame {
+  const columnCount = tableColumnCount(block);
+  const tableWidth = Math.max(1, contentWidth - block.contentLeft);
+  const columnWidth = Math.max(TABLE_MIN_COLUMN_WIDTH, Math.floor(tableWidth / Math.max(1, columnCount)));
+  const columnWidths = Array.from({ length: columnCount }, () => columnWidth);
+  const rowHeights = block.rows.map((row) => {
+    let rowHeight = TABLE_MIN_ROW_HEIGHT;
+    for (let index = 0; index < columnCount; index += 1) {
+      const cell = row[index];
+      if (!cell) {
+        continue;
+      }
+      const cellWidth = Math.max(1, columnWidths[index] as number);
+      const contentCellWidth = Math.max(1, cellWidth - ASSISTANT_TABLE_CELL_PADDING_X * 2);
+      const { lineCount } = measureRichInlineStats(cell.flow, contentCellWidth);
+      rowHeight = Math.max(rowHeight, Math.max(1, lineCount) * TABLE_LINE_HEIGHT + ASSISTANT_TABLE_CELL_PADDING_Y * 2);
+    }
+    return rowHeight;
+  });
+  return {
+    columnWidths,
+    contentLeft: block.contentLeft,
+    height: rowHeights.reduce((sum, height) => sum + height, 0),
+    kind: "table",
+    markerClassName: block.markerClassName,
+    markerLeft: block.markerLeft,
+    markerText: block.markerText,
+    quoteRailLefts: block.quoteRailLefts,
+    rowHeights,
+    top,
+    width: columnWidths.reduce((sum, width) => sum + width, 0),
+  };
+}
+
+function materializeTableLayout(block: PreparedTableBlock, frame: TableBlockFrame): AssistantMarkdownBlockLayout {
+  const cells: Extract<AssistantMarkdownBlockLayout, { kind: "table" }>["cells"] = [];
+  let top = 0;
+  for (let rowIndex = 0; rowIndex < block.rows.length; rowIndex += 1) {
+    const row = block.rows[rowIndex] as PreparedTableCell[];
+    const rowHeight = frame.rowHeights[rowIndex] ?? TABLE_MIN_ROW_HEIGHT;
+    let left = 0;
+    for (let columnIndex = 0; columnIndex < frame.columnWidths.length; columnIndex += 1) {
+      const width = frame.columnWidths[columnIndex] as number;
+      const cell = row[columnIndex];
+      if (cell) {
+        const lineWidth = Math.max(1, width - ASSISTANT_TABLE_CELL_PADDING_X * 2);
+        const lines: Array<{ fragments: AssistantInlineFragmentLayout[]; width: number }> = [];
+        walkRichInlineLineRanges(cell.flow, lineWidth, (range) => {
+          const line = materializeRichInlineLineRange(cell.flow, range);
+          lines.push({
+            fragments: line.fragments.map((fragment) => ({
+              className: cell.classNames[fragment.itemIndex] as string,
+              href: cell.hrefs[fragment.itemIndex] ?? null,
+              leadingGap: fragment.gapBefore,
+              text: fragment.text,
+            })),
+            width: line.width,
+          });
+        });
+        cells.push({
+          align: cell.align,
+          height: rowHeight,
+          isHeader: cell.isHeader,
+          left,
+          lines,
+          top,
+          width,
+        });
+      }
+      left += width;
+    }
+    top += rowHeight;
+  }
+  return {
+    cells,
+    contentLeft: frame.contentLeft,
+    height: frame.height,
+    kind: "table",
+    markerClassName: frame.markerClassName,
+    markerLeft: frame.markerLeft,
+    markerText: frame.markerText,
+    quoteRailLefts: frame.quoteRailLefts,
+    top: frame.top,
+    width: frame.width,
+  };
+}
+
+function tableColumnCount(block: PreparedTableBlock): number {
+  return Math.max(1, ...block.rows.map((row) => row.length));
+}
+
 function parseMarkdownHref(href: string | null | undefined): string | null {
   if (!href) {
     return null;
@@ -744,36 +934,6 @@ function parseMarkdownHref(href: string | null | undefined): string | null {
   } catch {
     return null;
   }
-}
-
-function formatTable(token: Tokens.Table): string {
-  const header = token.header.map((cell) => inlineTokensToPlainText(cell.tokens)).join(" | ");
-  const divider = token.header.map(() => "---").join(" | ");
-  const rows = token.rows.map((row) => row.map((cell) => inlineTokensToPlainText(cell.tokens)).join(" | "));
-  return [header, divider, ...rows].join("\n");
-}
-
-function inlineTokensToPlainText(tokens: readonly Token[]): string {
-  return tokens.map((token) => {
-    switch (token.type) {
-      case "strong":
-      case "em":
-      case "del":
-      case "link":
-        return inlineTokensToPlainText(tokenTokens(token));
-      case "codespan":
-      case "escape":
-      case "text":
-      case "html":
-        return tokenText(token);
-      case "br":
-        return "\n";
-      case "image":
-        return tokenText(token);
-      default:
-        return fallbackTextForToken(token);
-    }
-  }).join("");
 }
 
 function fallbackTextForToken(token: Token): string {
@@ -804,6 +964,11 @@ function tokenHref(token: Token): string | null {
   return typeof href === "string" ? href : null;
 }
 
+function tokenLang(token: Token): string | null {
+  const lang = (token as { lang?: unknown }).lang;
+  return typeof lang === "string" && lang.trim() ? lang.trim().split(/\s+/)[0] as string : null;
+}
+
 function tokenChecked(token: Token): boolean {
   return (token as { checked?: unknown }).checked === true;
 }
@@ -811,4 +976,8 @@ function tokenChecked(token: Token): boolean {
 function tokenDepth(token: Token): number {
   const depth = (token as { depth?: unknown }).depth;
   return typeof depth === "number" ? depth : 0;
+}
+
+function normalizeTableAlign(value: unknown): "center" | "left" | "right" | null {
+  return value === "center" || value === "left" || value === "right" ? value : null;
 }

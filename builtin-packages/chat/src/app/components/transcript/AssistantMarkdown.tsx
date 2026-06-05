@@ -1,14 +1,18 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import {
+  ASSISTANT_CODE_HEADER_HEIGHT,
   ASSISTANT_CODE_LINE_HEIGHT,
   ASSISTANT_CODE_PADDING_X,
   ASSISTANT_CODE_PADDING_Y,
+  ASSISTANT_TABLE_CELL_PADDING_X,
+  ASSISTANT_TABLE_CELL_PADDING_Y,
   layoutAssistantMarkdown,
   prepareAssistantMarkdown,
   type AssistantMarkdownBlockLayout,
   type AssistantMarkdownFrame,
   type AssistantInlineFragmentLayout,
 } from "../../domain/assistant-markdown-frame";
+import { copyTextToClipboard } from "../../view-helpers";
 
 export function AssistantMarkdown({ text }: { text: string }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -81,6 +85,9 @@ function AssistantMarkdownBlock({ block }: { block: AssistantMarkdownBlockLayout
   if (block.kind === "code") {
     return <AssistantCodeBlock block={block} />;
   }
+  if (block.kind === "table") {
+    return <AssistantTableBlock block={block} />;
+  }
   return <AssistantRuleBlock block={block} />;
 }
 
@@ -111,6 +118,7 @@ function AssistantInlineBlock({ block }: { block: Extract<AssistantMarkdownBlock
 }
 
 function AssistantCodeBlock({ block }: { block: Extract<AssistantMarkdownBlockLayout, { kind: "code" }> }) {
+  const language = block.language || "code";
   return (
     <div
       class="assistant-frame-block assistant-frame-code-shell"
@@ -125,16 +133,78 @@ function AssistantCodeBlock({ block }: { block: Extract<AssistantMarkdownBlockLa
           width: `${block.width}px`,
         }}
       >
+        <div class="assistant-frame-code-head">
+          <span>{language}</span>
+          <button
+            type="button"
+            title="Copy code"
+            aria-label="Copy code"
+            onClick={() => { void copyTextToClipboard(block.text).catch(() => {}); }}
+          >
+            Copy
+          </button>
+        </div>
         {block.lines.map((line, index) => (
           <div
             key={index}
             class="assistant-frame-code-line"
             style={{
               left: `${ASSISTANT_CODE_PADDING_X}px`,
-              top: `${ASSISTANT_CODE_PADDING_Y + index * ASSISTANT_CODE_LINE_HEIGHT}px`,
+              top: `${ASSISTANT_CODE_HEADER_HEIGHT + ASSISTANT_CODE_PADDING_Y + index * ASSISTANT_CODE_LINE_HEIGHT}px`,
             }}
           >
             {line.text}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AssistantTableBlock({ block }: { block: Extract<AssistantMarkdownBlockLayout, { kind: "table" }> }) {
+  return (
+    <div
+      class="assistant-frame-block assistant-frame-table-shell"
+      style={{ height: `${block.height}px`, top: `${block.top}px` }}
+    >
+      <AssistantBlockChrome block={block} />
+      <div
+        class="assistant-frame-table"
+        role="table"
+        style={{
+          height: `${block.height}px`,
+          left: `${block.contentLeft}px`,
+          width: `${block.width}px`,
+        }}
+      >
+        {block.cells.map((cell, cellIndex) => (
+          <div
+            key={cellIndex}
+            class={`assistant-frame-table-cell${cell.isHeader ? " is-header" : ""}${cell.align ? ` is-${cell.align}` : ""}`}
+            role={cell.isHeader ? "columnheader" : "cell"}
+            style={{
+              height: `${cell.height}px`,
+              left: `${cell.left}px`,
+              top: `${cell.top}px`,
+              width: `${cell.width}px`,
+            }}
+          >
+            {cell.lines.map((line, lineIndex) => (
+              <div
+                key={lineIndex}
+                class="assistant-frame-table-line"
+                style={{
+                  height: "20px",
+                  left: `${ASSISTANT_TABLE_CELL_PADDING_X}px`,
+                  right: `${ASSISTANT_TABLE_CELL_PADDING_X}px`,
+                  top: `${ASSISTANT_TABLE_CELL_PADDING_Y + lineIndex * 20}px`,
+                }}
+              >
+                {line.fragments.map((fragment, fragmentIndex) => (
+                  <AssistantInlineFragment key={fragmentIndex} fragment={fragment} />
+                ))}
+              </div>
+            ))}
           </div>
         ))}
       </div>
