@@ -2350,7 +2350,7 @@ export class Process extends Host<Env> {
         this.store.appendMessage("user", qm.message, {
           conversationId: qm.conversationId,
           generation: qm.generation,
-          runId: qm.runId,
+          runId,
           media: qm.media ?? undefined,
           origin: qm.origin ?? undefined,
         });

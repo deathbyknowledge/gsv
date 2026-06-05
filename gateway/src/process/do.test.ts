@@ -3563,6 +3563,8 @@ describeIf(OPENAI_KEY)("Process DO — agent loop (real LLM)", () => {
         m.content.includes("1 + 1"),
       );
       expect(queuedMsg).toBeDefined();
+      expect(queuedMsg.runId).toBe((res1.data as any).runId);
+      expect(queuedMsg.runId).not.toBe((res2.data as any).runId);
     });
   }, 60_000);
 
