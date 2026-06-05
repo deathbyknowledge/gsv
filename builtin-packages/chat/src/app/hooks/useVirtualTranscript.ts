@@ -36,7 +36,7 @@ export function useVirtualTranscript<T extends VirtualTranscriptSource>({
   const heightCacheRef = useRef<Map<string, CachedHeight>>(new Map());
   const observersRef = useRef<Map<string, ResizeObserver>>(new Map());
   const nodesRef = useRef<Map<string, HTMLElement>>(new Map());
-  const [, setMeasureVersion] = useState(0);
+  const [measureVersion, setMeasureVersion] = useState(0);
   const entryKey = useMemo(() => entries.map((entry) => entry.key).join("\n"), [entries]);
 
   const geometry = useMemo(() => {
@@ -57,7 +57,7 @@ export function useVirtualTranscript<T extends VirtualTranscriptSource>({
       items,
       totalHeight: cursor,
     };
-  }, [entries, entryKey]);
+  }, [entries, entryKey, measureVersion]);
 
   const visibleItems = useMemo(() => {
     const minY = Math.max(0, scrollTop - TRANSCRIPT_OVERSCAN_PX);

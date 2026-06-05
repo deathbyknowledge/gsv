@@ -440,7 +440,7 @@ function estimateKeyForTranscriptEntry(entry: TranscriptEntry): string {
 
 function keyForTranscriptItem(item: TranscriptItem, index: number): string {
   if (item.kind === "run") {
-    return `run:${item.runId}`;
+    return `run:${item.runId}:${index}`;
   }
   const row = item.row;
   if (row.kind === "toolCall" || row.kind === "toolResult") {
