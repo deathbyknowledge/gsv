@@ -145,6 +145,10 @@
     grid-row: 2;
   }
 
+  .chat-stage-actions .context-track {
+    width: 68px;
+  }
+
   .chat-stage-title h1,
   .chat-stage-title p {
     overflow: hidden;
@@ -172,11 +176,15 @@
   }
 
   .transcript {
-    padding: 10px;
+    padding: 10px 10px calc(var(--chat-composer-inset, 0px) + 20px);
+  }
+
+  .composer-dock {
+    padding-bottom: 10px;
   }
 
   .new-messages-button {
-    bottom: 10px;
+    bottom: calc(var(--chat-composer-inset, 0px) + 10px);
   }
 
   .composer {
@@ -241,18 +249,12 @@
   }
 
   .conversation-chip,
-  .archive-toggle,
   .conversation-overflow {
     height: 36px;
   }
 
   .conversation-chip {
     max-width: 148px;
-  }
-
-  .conversation-bar-actions {
-    width: auto;
-    justify-content: flex-end;
   }
 
   .archive-workspace {
@@ -293,8 +295,20 @@
   }
 
   .message,
-  .tool-card {
+  .tool-card,
+  .assistant-document,
+  .run-thought-button {
     max-width: 100%;
+  }
+
+  .assistant-document {
+    width: 100%;
+  }
+
+  .thoughts-drawer {
+    left: 0;
+    width: 100%;
+    min-width: 0;
   }
 
   .tool-card-head {

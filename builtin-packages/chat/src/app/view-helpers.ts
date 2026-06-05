@@ -25,10 +25,11 @@ function flattenHistory(messages: unknown[]): LogRow[] {
     const timestamp = normalizeTimestampMs(record?.timestamp) || Date.now();
     const messageId = asNumber(record?.id);
     const origin = normalizeInteractionOrigin(record?.origin);
+    const runId = asString(record?.runId);
     if (record?.role === "assistant") {
       const parsed = extractAssistantHistory(record.content);
       if ((parsed.text && parsed.text.trim()) || parsed.thinking.length > 0) {
-        rows.push({ kind: "message", role: "assistant", text: parsed.text, thinking: parsed.thinking, timestamp, messageId, origin });
+        rows.push({ kind: "message", role: "assistant", text: parsed.text, thinking: parsed.thinking, timestamp, messageId, origin, runId });
       }
       for (const toolCall of parsed.toolCalls) {
         rows.push({
@@ -38,6 +39,7 @@ function flattenHistory(messages: unknown[]): LogRow[] {
           args: toolCall.args,
           syscall: toolCall.syscall,
           timestamp,
+          runId,
         });
       }
       continue;
@@ -59,6 +61,7 @@ function flattenHistory(messages: unknown[]): LogRow[] {
             ok: parsed.ok,
             error: parsed.error,
             timestamp,
+            runId: runId ?? prior.runId,
           };
         } else {
           rows.push({
@@ -71,10 +74,11 @@ function flattenHistory(messages: unknown[]): LogRow[] {
             ok: parsed.ok,
             error: parsed.error,
             timestamp,
+            runId,
           });
         }
       } else {
-        rows.push({ kind: "message", role: "system", text: formatMessageContent(record.content), timestamp, messageId, origin });
+        rows.push({ kind: "message", role: "system", text: formatMessageContent(record.content), timestamp, messageId, origin, runId });
       }
       continue;
     }
@@ -84,7 +88,7 @@ function flattenHistory(messages: unknown[]): LogRow[] {
     const text = contentRecord && "text" in contentRecord
       ? asString(contentRecord.text) ?? ""
       : formatMessageContent(record?.content);
-    rows.push({ kind: "message", role, text, media, timestamp, messageId, origin });
+    rows.push({ kind: "message", role, text, media, timestamp, messageId, origin, runId });
   }
   return rows.length > 0 ? rows : systemRows("No messages yet. Send your first prompt.");
 }
@@ -112,6 +116,7 @@ function applyProcessMessageSignal(
       timestamp: asNumber(record?.timestamp) || Date.now(),
       messageId: messageId ?? null,
       origin: normalizeInteractionOrigin(record?.origin),
+      runId: asString(record?.runId),
     });
   });
   setPendingAssistant("thinking");
@@ -680,6 +685,9 @@ function normalizeProcessEntry(value: unknown): ProcessEntry | null {
     username,
     interactive: record?.interactive !== false,
     state: asString(record?.state) || "running",
+    activeRunId: asString(record?.activeRunId),
+    activeConversationId: asString(record?.activeConversationId),
+    queuedCount: asNumber(record?.queuedCount) || 0,
     cwd: asString(record?.cwd) || "",
     createdAt: normalizeTimestampMs(record?.createdAt) || Date.now(),
     isDefaultConversation: record?.isDefaultConversation === true,
@@ -771,11 +779,34 @@ function normalizeThreadContext(value: unknown): ThreadContext | null {
 }
 
 function getStoredThreadContext(): ThreadContext | null {
-  return null;
+  if (typeof localStorage === "undefined") {
+    return null;
+  }
+  try {
+    const raw = localStorage.getItem(STORED_THREAD_CONTEXT_KEY);
+    if (!raw) {
+      return null;
+    }
+    const context = normalizeThreadContext(JSON.parse(raw));
+    if (!context) {
+      localStorage.removeItem(STORED_THREAD_CONTEXT_KEY);
+    }
+    return context;
+  } catch {
+    return null;
+  }
 }
 
 function setStoredThreadContext(context: ThreadContext | null): ThreadContext | null {
-  return normalizeThreadContext(context);
+  const normalized = normalizeThreadContext(context);
+  if (normalized && typeof localStorage !== "undefined") {
+    try {
+      localStorage.setItem(STORED_THREAD_CONTEXT_KEY, JSON.stringify(normalized));
+    } catch {
+      // Local storage is only a restore convenience; failures should not block chat.
+    }
+  }
+  return normalized;
 }
 
 function fallbackProfiles(): Profile[] {
@@ -866,9 +897,9 @@ function deriveThreadLabel(message: string): string | undefined {
   return firstLine.length > 72 ? firstLine.slice(0, 69) + "..." : firstLine;
 }
 
-function labelForRole(role: string, userLabel = "You"): string {
+function labelForRole(role: string, userLabel = "You", assistantLabel = "Assistant"): string {
   if (role === "user") return userLabel.trim() || "You";
-  if (role === "assistant") return "Assistant";
+  if (role === "assistant") return assistantLabel.trim() || "Assistant";
   return "System";
 }
 
@@ -1035,19 +1066,6 @@ function normalizeToolOutput(value: unknown): unknown {
   }
 }
 
-function formatContextPressure(state: ContextState): string {
-  if (!state.availableInputTokens || state.pressure === null) return "context unknown";
-  const percent = Math.round(state.pressure * 100);
-  return `${percent}% context - ${formatCompactTokens(state.inputTokens)}/${formatCompactTokens(state.availableInputTokens)}`;
-}
-
-function formatCompactTokens(value: number | null): string {
-  if (!value || !Number.isFinite(value)) return "0";
-  if (value >= 1000000) return (value / 1000000).toFixed(value >= 10000000 ? 0 : 1).replace(/\.0$/, "") + "M";
-  if (value >= 1000) return (value / 1000).toFixed(value >= 10000 ? 0 : 1).replace(/\.0$/, "") + "k";
-  return String(Math.round(value));
-}
-
 function basenamePath(path: string): string {
   const normalized = String(path ?? "").replace(/\/+$/g, "");
   if (!normalized) return path;
@@ -1085,6 +1103,7 @@ function isNearBottom(node: HTMLElement, thresholdPx = 96): boolean {
 }
 
 const CHAT_MENU_SELECTOR = "details.process-menu, details.message-menu";
+const STORED_THREAD_CONTEXT_KEY = "gsv.chat.activeThread";
 
 function closeChatMenus(except?: HTMLDetailsElement | null): void {
   if (typeof document === "undefined") {
@@ -1253,7 +1272,6 @@ export {
   flattenHistory,
   formatAttachmentDuration,
   formatAttachmentSize,
-  formatContextPressure,
   formatError,
   formatInteractionOriginLabel,
   formatMessageContent,

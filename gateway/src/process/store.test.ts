@@ -225,6 +225,17 @@ describe("ProcessStore", () => {
       });
     });
 
+    it("appendMessage stores optional run ids", async () => {
+      const stub = await getProcessByPid("msg-crud-run-id");
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        store.appendMessage("user", "hello from a run", { runId: "run-message-1" });
+        const msgs = store.getMessages();
+        expect(msgs).toHaveLength(1);
+        expect(msgs[0].runId).toBe("run-message-1");
+      });
+    });
+
     it("appendMessage stores assistant message with tool calls", async () => {
       const stub = await getProcessByPid("msg-crud-2");
       await runInDurableObject(stub, (instance: Process) => {
@@ -366,12 +377,13 @@ describe("ProcessStore", () => {
       const stub = await getProcessByPid("tool-result-1");
       await runInDurableObject(stub, (instance: Process) => {
         const store = (instance as any).store;
-        store.appendToolResult("call_1", "fs.read", "file contents here", false);
+        store.appendToolResult("call_1", "fs.read", "file contents here", false, "default", "run-tool-1");
         const msgs = store.getMessages();
         expect(msgs).toHaveLength(1);
         expect(msgs[0].role).toBe("toolResult");
         expect(msgs[0].content).toBe("file contents here");
         expect(msgs[0].toolCallId).toBe("call_1");
+        expect(msgs[0].runId).toBe("run-tool-1");
         const meta = JSON.parse(msgs[0].toolCalls!);
         expect(meta.toolName).toBe("Read");
         expect(meta.isError).toBe(false);

@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "preact/hooks";
-import { openApp } from "@gsv/package/host";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type {
   Attachment,
   ChatBackend,
@@ -22,9 +21,10 @@ import {
   MobileProcessNav,
   Transcript,
 } from "./components";
+import { AgentAvatar } from "./components/navigation/AgentAvatar";
 import {
+  ArchiveIcon,
   CompactIcon,
-  FolderIcon,
   MoreIcon,
   TerminalIcon,
 } from "./icons";
@@ -36,6 +36,7 @@ import {
 import { useArchive } from "./hooks/useArchive";
 import { useChatCatalog } from "./hooks/useChatCatalog";
 import { useMediaSources } from "./hooks/useMediaSources";
+import { useProcessCatalogSignals } from "./hooks/useProcessCatalogSignals";
 import { useProcessSignals } from "./hooks/useProcessSignals";
 import { useTargetProcessEvent } from "./hooks/useTargetProcessEvent";
 import { useTranscriptScroll } from "./hooks/useTranscriptScroll";
@@ -44,6 +45,7 @@ import {
   asNumber,
   asRecord,
   asString,
+  activeMeta,
   closeChatMenus,
   closeContainingChatMenu,
   copyTextToClipboard,
@@ -70,6 +72,7 @@ import {
 } from "./view-helpers";
 
 const HISTORY_PAGE_SIZE = 50;
+const DEFAULT_COMPOSER_DOCK_HEIGHT = 104;
 
 function historyTargetKey(target: Pick<ThreadContext, "pid" | "conversationId">): string {
   return `${target.pid}\n${target.conversationId || "default"}`;
@@ -109,6 +112,7 @@ export function App({ backend }: { backend: ChatBackend }) {
   const [historyWindow, setHistoryWindow] = useState<HistoryWindow>(EMPTY_HISTORY_WINDOW);
   const [contextState, setContextState] = useState<ContextState | null>(null);
   const [contextStatesByConversation, setContextStatesByConversation] = useState<Record<string, ContextState>>({});
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [pendingAssistant, setPendingAssistant] = useState<PendingAssistantState>(null);
   const [pendingHil, setPendingHil] = useState<HilRequest | null>(null);
   const [messageBusy, setMessageBusy] = useState(false);
@@ -117,6 +121,8 @@ export function App({ backend }: { backend: ChatBackend }) {
   const [forceNewProcess, setForceNewProcess] = useState(false);
   const [compactBusy, setCompactBusy] = useState(false);
   const [branchBusy, setBranchBusy] = useState(false);
+  const [composerDockNode, setComposerDockNode] = useState<HTMLDivElement | null>(null);
+  const [composerDockHeight, setComposerDockHeight] = useState(DEFAULT_COMPOSER_DOCK_HEIGHT);
   const [hostError, setHostError] = useState("");
   const [composeText, setComposeText] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -128,9 +134,11 @@ export function App({ backend }: { backend: ChatBackend }) {
   const attachmentsRef = useRef(attachments);
   const previewUrlsRef = useRef<Set<string>>(new Set());
   const skipNextHistoryLoadRef = useRef<string | null>(null);
+  const autoHomeOpenRef = useRef(false);
   const historyWindowRef = useRef<HistoryWindow>(EMPTY_HISTORY_WINDOW);
   const {
     transcriptRef,
+    setTranscriptContentNode,
     hasNewMessages,
     stickToBottomRef,
     clearNewMessages,
@@ -140,11 +148,11 @@ export function App({ backend }: { backend: ChatBackend }) {
     jumpToLatest,
   } = useTranscriptScroll();
   const {
+    applyProcessCatalogSignal,
     conversations,
-    conversationsLoading,
-    conversationError,
     conversationProfiles,
     draftProfile,
+    homeThread,
     loadConversations,
     loadThreads,
     setDraftProfileId,
@@ -162,10 +170,53 @@ export function App({ backend }: { backend: ChatBackend }) {
     attachmentsRef.current = attachments;
   }, [attachments]);
 
+  useLayoutEffect(() => {
+    const node = composerDockNode;
+    if (!node) {
+      return undefined;
+    }
+    const updateHeight = () => {
+      const nextHeight = Math.ceil(node.getBoundingClientRect().height);
+      if (nextHeight > 0) {
+        setComposerDockHeight((current) => current === nextHeight ? current : nextHeight);
+      }
+    };
+    updateHeight();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", updateHeight);
+      return () => window.removeEventListener("resize", updateHeight);
+    }
+    const observer = new ResizeObserver(updateHeight);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [composerDockNode]);
+
+  useLayoutEffect(() => {
+    scrollTranscript("near-bottom");
+  }, [composerDockHeight, scrollTranscript]);
+
   const activeConversationId = active?.conversationId || "default";
   const activeConversation = conversations.find((conversation) => conversation.id === activeConversationId) ?? null;
   const homeProfileLabel = personalProfileLabel(conversationProfiles);
+  const homeProfile = conversationProfiles.find((profile) =>
+    profile.spawnMode === "default" ||
+    profile.id === "personal" ||
+    profile.kind === "personal-agent"
+  ) ?? null;
+  const activeThread = active ? threads.find((thread) => thread.pid === active.pid) ?? null : null;
   const activeTitle = active ? titleForActive(active, activeConversation, threads, homeProfileLabel) : draftConversationTitle(draftProfile);
+  const assistantLabel = active
+    ? active.isHome
+      ? homeProfile?.newProcessRunAs || homeProfile?.runAs || homeProfile?.displayName || homeProfileLabel
+      : activeThread?.username || activeThread?.profile || activeThread?.label || activeTitle
+    : draftProfile.runAs || draftProfile.newProcessRunAs || draftProfile.displayName;
+  const stageAgentLabel = assistantLabel || activeTitle;
+  const stageAgentSeed = active
+    ? active.isHome
+      ? homeProfile?.newProcessRunAs || homeProfile?.runAs || homeProfile?.id || stageAgentLabel
+      : activeThread?.username || activeThread?.profile || active.pid
+    : draftProfile.newProcessRunAs || draftProfile.runAs || draftProfile.id || stageAgentLabel;
+  const stageProcessLabel = active ? activeMeta(active, activeConversation) : draftConversationMeta(draftProfile);
   const statusText = getStatusText({
     active,
     draftProfile,
@@ -194,7 +245,7 @@ export function App({ backend }: { backend: ChatBackend }) {
   });
   const hasDraft = composeText.trim().length > 0 || attachments.length > 0;
   const voiceActive = voice.status !== "idle";
-  const runActive = pendingAssistant !== null || pendingHil !== null;
+  const runActive = activeRunId !== null || pendingAssistant !== null || pendingHil !== null;
   const runStateClass = hostError ? "is-error" : pendingHil ? "is-waiting" : runActive ? "is-running" : "is-ready";
   const runStateLabel = hostError ? "Error" : pendingHil ? "Approval" : runActive ? "Running" : "Ready";
   const canSend = interactive && !messageBusy && hasDraft && !voiceActive;
@@ -237,6 +288,7 @@ export function App({ backend }: { backend: ChatBackend }) {
       setContextState(null);
       setPendingHil(null);
       setPendingAssistant(null);
+      setActiveRunId(null);
       setMessageCount(0);
       updateHistoryWindow(EMPTY_HISTORY_WINDOW);
       clearNewMessages();
@@ -246,6 +298,7 @@ export function App({ backend }: { backend: ChatBackend }) {
       setContextStatesByConversation({});
       setPendingHil(null);
       setPendingAssistant(null);
+      setActiveRunId(null);
       setMessageCount(0);
       updateHistoryWindow(EMPTY_HISTORY_WINDOW);
       clearNewMessages();
@@ -335,8 +388,16 @@ export function App({ backend }: { backend: ChatBackend }) {
         }
         return { ...current, [conversationId]: nextContext };
       });
-      setPendingHil(normalizeHilRequest(record.pendingHil));
-      setPendingAssistant(null);
+      const targetConversationId = target.conversationId || "default";
+      const nextHil = normalizeHilRequest(record.pendingHil);
+      const targetHil = nextHil?.conversationId === targetConversationId ? nextHil : null;
+      const historyActiveRunId = asString(record.activeRunId);
+      const historyActiveConversationId = asString(record.activeConversationId) || "default";
+      const activeRunMatchesTarget = Boolean(historyActiveRunId)
+        && historyActiveConversationId === targetConversationId;
+      setPendingHil(targetHil);
+      setActiveRunId(targetHil?.runId ?? (activeRunMatchesTarget ? historyActiveRunId : null));
+      setPendingAssistant(targetHil ? null : activeRunMatchesTarget ? "thinking" : null);
       setRows(flattened);
       clearNewMessages();
       requestAnimationFrame(() => scrollTranscript("bottom"));
@@ -443,6 +504,26 @@ export function App({ backend }: { backend: ChatBackend }) {
   }, []);
 
   useTargetProcessEvent(setActive);
+  useProcessCatalogSignals({
+    backend,
+    applySignal: applyProcessCatalogSignal,
+    loadThreads,
+    onError: setHostError,
+  });
+
+  useEffect(() => {
+    if (active || forceNewProcess || hostError || autoHomeOpenRef.current) {
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      if (activeRef.current || forceNewProcess || autoHomeOpenRef.current) {
+        return;
+      }
+      autoHomeOpenRef.current = true;
+      void openHome();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [active, forceNewProcess, hostError, homeProfileLabel]);
 
   useProcessSignals({
     activeRef,
@@ -450,12 +531,12 @@ export function App({ backend }: { backend: ChatBackend }) {
     loadArchiveSegments,
     loadConversations,
     loadHistory,
-    loadThreads,
     onContextMessageId: updateNewestHistoryMessageId,
     prepareForLiveTranscriptActivity,
     setContextState,
     setContextStatesByConversation,
     setMessageCount,
+    setActiveRunId,
     setPendingAssistant,
     setPendingHil,
     setRows,
@@ -464,9 +545,9 @@ export function App({ backend }: { backend: ChatBackend }) {
     stageView,
   });
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     scrollTranscript("near-bottom");
-  }, [rows.length, pendingAssistant, pendingHil, scrollTranscript]);
+  }, [rows, pendingAssistant, pendingHil, scrollTranscript]);
 
   async function openHome(): Promise<void> {
     setNotice("");
@@ -576,12 +657,13 @@ export function App({ backend }: { backend: ChatBackend }) {
         appendSystem("thread start failed: missing process id");
         return;
       }
+      const optimisticTimestamp = Date.now();
       setRows((current) => dropEmptyPlaceholder(current).concat({
         kind: "message",
         role: "user",
         text: message,
         media,
-        timestamp: Date.now(),
+        timestamp: optimisticTimestamp,
       }));
       setComposeText("");
       setAttachments((current) => {
@@ -599,7 +681,23 @@ export function App({ backend }: { backend: ChatBackend }) {
         appendSystem("send failed: " + safeText(record?.error || "unknown error"));
         return;
       }
-      setPendingAssistant("thinking");
+      const runId = asString(record.runId);
+      if (runId) {
+        setRows((current) => current.map((row) => (
+          row.kind === "message"
+          && row.role === "user"
+          && row.timestamp === optimisticTimestamp
+          && !row.runId
+            ? { ...row, runId }
+            : row
+        )));
+        if (record.queued !== true) {
+          setActiveRunId(runId);
+        }
+      }
+      if (record.queued !== true) {
+        setPendingAssistant("thinking");
+      }
       if (record.queued === true) {
         appendSystem("message queued while process is busy");
       }
@@ -627,8 +725,10 @@ export function App({ backend }: { backend: ChatBackend }) {
         setPendingHil(null);
         if (record.continuedQueuedRunId) {
           setSuppressNextAbortedComplete(true);
+          setActiveRunId(asString(record.continuedQueuedRunId));
           setPendingAssistant("thinking");
         } else {
+          setActiveRunId(null);
           setPendingAssistant(null);
           appendSystem("run interrupted");
         }
@@ -655,6 +755,7 @@ export function App({ backend }: { backend: ChatBackend }) {
       }
       const nextHil = normalizeHilRequest(record.pendingHil);
       setPendingHil(nextHil);
+      setActiveRunId(nextHil?.runId ?? activeRunId);
       if (!nextHil) {
         setPendingAssistant("thinking");
       }
@@ -663,17 +764,6 @@ export function App({ backend }: { backend: ChatBackend }) {
     } finally {
       setHilBusy(false);
     }
-  }
-
-  function openCompanion(target: "files" | "shell"): void {
-    if (!active) {
-      return;
-    }
-    if (target === "files") {
-      openApp({ target: "files", payload: { path: active.cwd, context: active } });
-      return;
-    }
-    openApp({ target: "shell", payload: { cwd: active.cwd, context: active } });
   }
 
   function openCompactDialog(): void {
@@ -755,6 +845,15 @@ export function App({ backend }: { backend: ChatBackend }) {
     }
   }
 
+  function toggleArchiveView(): void {
+    if (stageView === "archive") {
+      setStageView("chat");
+      return;
+    }
+    setStageView("archive");
+    void loadArchiveSegments(true);
+  }
+
   async function copyText(label: string, text: string): Promise<void> {
     try {
       await copyTextToClipboard(text);
@@ -792,6 +891,7 @@ export function App({ backend }: { backend: ChatBackend }) {
       <ChatNavigator
         active={active}
         threads={threads}
+        homeThread={homeThread}
         threadsLoading={threadsLoading}
         threadsError={threadsError}
         profiles={conversationProfiles}
@@ -800,7 +900,6 @@ export function App({ backend }: { backend: ChatBackend }) {
         onDraftProfileChange={setDraftProfileId}
         onHome={() => void openHome()}
         onNew={resetToNewThread}
-        onRefreshThreads={() => void loadThreads()}
         onOpenThread={(pid) => void openThread(pid)}
       />
 
@@ -809,6 +908,7 @@ export function App({ backend }: { backend: ChatBackend }) {
           <MobileProcessNav
             active={active}
             threads={threads}
+            homeThread={homeThread}
             threadsLoading={threadsLoading}
             threadsError={threadsError}
             profiles={conversationProfiles}
@@ -817,42 +917,28 @@ export function App({ backend }: { backend: ChatBackend }) {
             onDraftProfileChange={setDraftProfileId}
             onHome={() => void openHome()}
             onNew={resetToNewThread}
-            onRefreshThreads={() => void loadThreads()}
             onOpenThread={(pid) => void openThread(pid)}
           />
           <div class="chat-stage-title">
-            <h1>{activeTitle}</h1>
-            {!active ? (
-              <div class="identity-icons is-draft">
-                <span class="draft-meta">{draftConversationMeta(draftProfile)}</span>
+            <AgentAvatar seed={stageAgentSeed} label={stageAgentLabel} />
+            <div class="chat-stage-title-main">
+              <div class="chat-stage-title-line">
+                <h1>{stageAgentLabel}</h1>
+                <span class={"stage-run-state " + runStateClass} title={`${runStateLabel}: ${statusText}`} aria-label={`${runStateLabel}: ${statusText}`}>
+                  {runStateClass !== "is-ready" ? <span>{runStateLabel}</span> : null}
+                </span>
               </div>
-            ) : null}
-            <ContextMeter state={active ? contextState : null} />
+              <p class="stage-process-label">{stageProcessLabel}</p>
+            </div>
             <ConversationBar
               active={active}
               activeConversationId={activeConversationId}
               conversations={conversations}
-              loading={conversationsLoading}
-              error={conversationError}
-              archiveCount={archive.segments.length}
-              archiveActive={stageView === "archive"}
               onSelect={(conversation) => void switchConversation(conversation)}
-              onRefresh={() => active?.pid ? void loadConversations(active.pid) : undefined}
-              onArchiveToggle={() => {
-                if (stageView === "archive") {
-                  setStageView("chat");
-                  return;
-                }
-                setStageView("archive");
-                void loadArchiveSegments(true);
-              }}
             />
           </div>
           <div class="chat-stage-actions">
-            <span class={"run-status " + runStateClass} title={`${runStateLabel}: ${statusText}`} aria-label={`${runStateLabel}: ${statusText}`}>
-              <TerminalIcon />
-            </span>
-            <span class="connection-dot is-connected" title="connected" aria-label="connected" />
+            <ContextMeter state={active ? contextState : null} />
             <details class="process-menu">
               <summary class="icon-button" title="Process actions" aria-label="Process actions" onClick={(event) => {
                 closeChatMenus((event.currentTarget as HTMLElement).closest("details") as HTMLDetailsElement | null);
@@ -860,13 +946,9 @@ export function App({ backend }: { backend: ChatBackend }) {
                 <MoreIcon />
               </summary>
               <div class="process-menu-popover">
-                <button type="button" class="menu-action" disabled={!active} onClick={(event) => { closeContainingChatMenu(event.currentTarget); openCompanion("files"); }}>
-                  <FolderIcon />
-                  <span>Files</span>
-                </button>
-                <button type="button" class="menu-action" disabled={!active} onClick={(event) => { closeContainingChatMenu(event.currentTarget); openCompanion("shell"); }}>
-                  <TerminalIcon />
-                  <span>Shell</span>
+                <button type="button" class="menu-action" disabled={!active} onClick={(event) => { closeContainingChatMenu(event.currentTarget); toggleArchiveView(); }}>
+                  <ArchiveIcon />
+                  <span>{stageView === "archive" ? "Return to chat" : archive.segments.length > 0 ? `Open archive (${archive.segments.length})` : "Open archive"}</span>
                 </button>
                 <button type="button" class="menu-action" disabled={!active} onClick={(event) => {
                   closeContainingChatMenu(event.currentTarget);
@@ -874,13 +956,6 @@ export function App({ backend }: { backend: ChatBackend }) {
                 }}>
                   <TerminalIcon />
                   <span>Copy process ID</span>
-                </button>
-                <button type="button" class="menu-action" disabled={!active} onClick={(event) => {
-                  closeContainingChatMenu(event.currentTarget);
-                  if (active) void copyText("current directory", active.cwd);
-                }}>
-                  <FolderIcon />
-                  <span>Copy cwd</span>
                 </button>
                 <button type="button" class="menu-action" disabled={!canActOnConversation || compactBusy} onClick={(event) => { closeContainingChatMenu(event.currentTarget); openCompactDialog(); }}>
                   <CompactIcon />
@@ -899,6 +974,7 @@ export function App({ backend }: { backend: ChatBackend }) {
           <ArchiveWorkspace
             archive={archive}
             userLabel={viewerUsername}
+            assistantLabel={assistantLabel}
             mediaSources={mediaSources}
             mediaSourceErrors={mediaSourceErrors}
             onRefresh={() => void loadArchiveSegments(true)}
@@ -907,10 +983,15 @@ export function App({ backend }: { backend: ChatBackend }) {
             onRetryMediaSource={retryMediaSource}
           />
         ) : (
-          <>
+          <div
+            class="chat-live-area"
+            style={`--chat-composer-inset: ${composerDockHeight}px;`}
+          >
             <Transcript
               rows={rows}
               userLabel={viewerUsername}
+              assistantLabel={assistantLabel}
+              activeRunId={activeRunId}
               pendingAssistant={pendingAssistant}
               pendingHil={pendingHil}
               hasOlderHistory={historyWindow.hasMoreBefore}
@@ -919,6 +1000,7 @@ export function App({ backend }: { backend: ChatBackend }) {
               hilBusy={hilBusy}
               branchBusy={branchBusy}
               refNode={transcriptRef}
+              onContentNode={setTranscriptContentNode}
               mediaSources={mediaSources}
               mediaSourceErrors={mediaSourceErrors}
               onCopy={(text) => void copyText("message", text)}
@@ -931,26 +1013,28 @@ export function App({ backend }: { backend: ChatBackend }) {
               onRetryMediaSource={retryMediaSource}
             />
 
-            <Composer
-              value={composeText}
-              attachments={attachments}
-              disabled={!interactive || messageBusy}
-              canSend={canSend}
-              canStop={canStop}
-              stopBusy={abortBusy}
-              voice={voice}
-              canRecord={interactive && !messageBusy}
-              onValueChange={setComposeText}
-              onSubmit={() => void sendMessage()}
-              onStop={() => void abortActiveRun()}
-              onFiles={(files) => void readAttachments(files)}
-              onRemoveAttachment={removeAttachment}
-              onStartVoice={() => void startVoiceRecording()}
-              onStopVoice={stopVoiceRecording}
-              onCancelVoice={cancelVoiceRecording}
-              onClearVoiceError={clearVoiceError}
-            />
-          </>
+            <div class="composer-dock" ref={setComposerDockNode}>
+              <Composer
+                value={composeText}
+                attachments={attachments}
+                disabled={!interactive || messageBusy}
+                canSend={canSend}
+                canStop={canStop}
+                stopBusy={abortBusy}
+                voice={voice}
+                canRecord={interactive && !messageBusy}
+                onValueChange={setComposeText}
+                onSubmit={() => void sendMessage()}
+                onStop={() => void abortActiveRun()}
+                onFiles={(files) => void readAttachments(files)}
+                onRemoveAttachment={removeAttachment}
+                onStartVoice={() => void startVoiceRecording()}
+                onStopVoice={stopVoiceRecording}
+                onCancelVoice={cancelVoiceRecording}
+                onClearVoiceError={clearVoiceError}
+              />
+            </div>
+          </div>
         )}
       </section>
 
