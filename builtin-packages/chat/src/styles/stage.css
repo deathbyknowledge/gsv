@@ -103,11 +103,6 @@
   background: var(--red);
 }
 
-.chat-stage-title-line .context-meter {
-  flex: 0 1 auto;
-  min-width: 0;
-}
-
 .chat-stage-title > .conversation-bar {
   grid-column: 2;
 }
@@ -249,32 +244,6 @@
   justify-content: flex-end;
 }
 
-.stage-archive-toggle {
-  position: relative;
-}
-
-.stage-archive-toggle.is-active {
-  color: var(--blue);
-}
-
-.stage-action-badge {
-  position: absolute;
-  top: -5px;
-  right: -5px;
-  min-width: 16px;
-  height: 16px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 0 4px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--muted);
-  background: var(--panel-strong);
-  font: 10px/1 var(--mono);
-  pointer-events: none;
-}
-
 .process-menu,
 .message-menu {
   position: relative;
@@ -288,6 +257,12 @@
 .process-menu > summary::-webkit-details-marker,
 .message-menu > summary::-webkit-details-marker {
   display: none;
+}
+
+.process-menu > summary svg {
+  stroke-width: 4px;
+  transform: rotate(90deg);
+  transform-origin: center;
 }
 
 .process-menu-popover,
@@ -401,27 +376,20 @@
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   color: var(--muted);
   font-size: 11px;
 }
 
-.context-meter > svg {
-  width: 14px;
-  height: 14px;
-  stroke: currentColor;
-  fill: none;
-  stroke-width: 1.9;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+.chat-stage-actions .context-meter {
+  flex: 0 1 auto;
 }
 
 .context-track {
   position: relative;
   display: inline-block;
-  width: 126px;
-  height: 5px;
-  border-radius: 999px;
+  width: 118px;
+  height: 8px;
   overflow: hidden;
   background: rgba(24, 32, 40, 0.12);
 }
@@ -429,7 +397,6 @@
 .context-track span {
   position: absolute;
   inset: 0 auto 0 0;
-  border-radius: inherit;
   background: var(--green);
 }
 

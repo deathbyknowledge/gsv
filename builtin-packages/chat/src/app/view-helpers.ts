@@ -1063,19 +1063,6 @@ function normalizeToolOutput(value: unknown): unknown {
   }
 }
 
-function formatContextPressure(state: ContextState): string {
-  if (!state.availableInputTokens || state.pressure === null) return "context unknown";
-  const percent = Math.round(state.pressure * 100);
-  return `${percent}% context - ${formatCompactTokens(state.inputTokens)}/${formatCompactTokens(state.availableInputTokens)}`;
-}
-
-function formatCompactTokens(value: number | null): string {
-  if (!value || !Number.isFinite(value)) return "0";
-  if (value >= 1000000) return (value / 1000000).toFixed(value >= 10000000 ? 0 : 1).replace(/\.0$/, "") + "M";
-  if (value >= 1000) return (value / 1000).toFixed(value >= 10000 ? 0 : 1).replace(/\.0$/, "") + "k";
-  return String(Math.round(value));
-}
-
 function basenamePath(path: string): string {
   const normalized = String(path ?? "").replace(/\/+$/g, "");
   if (!normalized) return path;
@@ -1282,7 +1269,6 @@ export {
   flattenHistory,
   formatAttachmentDuration,
   formatAttachmentSize,
-  formatContextPressure,
   formatError,
   formatInteractionOriginLabel,
   formatMessageContent,

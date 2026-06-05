@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import { openApp } from "@gsv/package/host";
 import type {
   Attachment,
   ChatBackend,
@@ -26,7 +25,6 @@ import { AgentAvatar } from "./components/navigation/AgentAvatar";
 import {
   ArchiveIcon,
   CompactIcon,
-  FolderIcon,
   MoreIcon,
   TerminalIcon,
 } from "./icons";
@@ -754,17 +752,6 @@ export function App({ backend }: { backend: ChatBackend }) {
     }
   }
 
-  function openCompanion(target: "files" | "shell"): void {
-    if (!active) {
-      return;
-    }
-    if (target === "files") {
-      openApp({ target: "files", payload: { path: active.cwd, context: active } });
-      return;
-    }
-    openApp({ target: "shell", payload: { cwd: active.cwd, context: active } });
-  }
-
   function openCompactDialog(): void {
     const suggested = suggestKeepLast(messageCount, contextState);
     setCompactDialog({ keepLast: String(suggested), suggested });
@@ -926,7 +913,6 @@ export function App({ backend }: { backend: ChatBackend }) {
                 <span class={"stage-run-state " + runStateClass} title={`${runStateLabel}: ${statusText}`} aria-label={`${runStateLabel}: ${statusText}`}>
                   {runStateClass !== "is-ready" ? <span>{runStateLabel}</span> : null}
                 </span>
-                <ContextMeter state={active ? contextState : null} />
               </div>
               <p class="stage-process-label">{stageProcessLabel}</p>
             </div>
@@ -938,18 +924,7 @@ export function App({ backend }: { backend: ChatBackend }) {
             />
           </div>
           <div class="chat-stage-actions">
-            {active ? (
-              <button
-                class={"icon-button stage-archive-toggle" + (stageView === "archive" ? " is-active" : "")}
-                type="button"
-                title={stageView === "archive" ? "Return to live conversation" : "Open conversation archive"}
-                aria-label={stageView === "archive" ? "Return to live conversation" : "Open conversation archive"}
-                onClick={toggleArchiveView}
-              >
-                <ArchiveIcon />
-                {archive.segments.length > 0 ? <span class="stage-action-badge">{archive.segments.length}</span> : null}
-              </button>
-            ) : null}
+            <ContextMeter state={active ? contextState : null} />
             <details class="process-menu">
               <summary class="icon-button" title="Process actions" aria-label="Process actions" onClick={(event) => {
                 closeChatMenus((event.currentTarget as HTMLElement).closest("details") as HTMLDetailsElement | null);
@@ -957,13 +932,9 @@ export function App({ backend }: { backend: ChatBackend }) {
                 <MoreIcon />
               </summary>
               <div class="process-menu-popover">
-                <button type="button" class="menu-action" disabled={!active} onClick={(event) => { closeContainingChatMenu(event.currentTarget); openCompanion("files"); }}>
-                  <FolderIcon />
-                  <span>Files</span>
-                </button>
-                <button type="button" class="menu-action" disabled={!active} onClick={(event) => { closeContainingChatMenu(event.currentTarget); openCompanion("shell"); }}>
-                  <TerminalIcon />
-                  <span>Shell</span>
+                <button type="button" class="menu-action" disabled={!active} onClick={(event) => { closeContainingChatMenu(event.currentTarget); toggleArchiveView(); }}>
+                  <ArchiveIcon />
+                  <span>{stageView === "archive" ? "Return to chat" : archive.segments.length > 0 ? `Open archive (${archive.segments.length})` : "Open archive"}</span>
                 </button>
                 <button type="button" class="menu-action" disabled={!active} onClick={(event) => {
                   closeContainingChatMenu(event.currentTarget);
@@ -971,13 +942,6 @@ export function App({ backend }: { backend: ChatBackend }) {
                 }}>
                   <TerminalIcon />
                   <span>Copy process ID</span>
-                </button>
-                <button type="button" class="menu-action" disabled={!active} onClick={(event) => {
-                  closeContainingChatMenu(event.currentTarget);
-                  if (active) void copyText("current directory", active.cwd);
-                }}>
-                  <FolderIcon />
-                  <span>Copy cwd</span>
                 </button>
                 <button type="button" class="menu-action" disabled={!canActOnConversation || compactBusy} onClick={(event) => { closeContainingChatMenu(event.currentTarget); openCompactDialog(); }}>
                   <CompactIcon />

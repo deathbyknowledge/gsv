@@ -145,12 +145,8 @@
     grid-row: 2;
   }
 
-  .chat-stage-title-line .context-meter > span:last-child {
-    display: none;
-  }
-
-  .chat-stage-title-line .context-track {
-    width: 72px;
+  .chat-stage-actions .context-track {
+    width: 68px;
   }
 
   .chat-stage-title h1,
