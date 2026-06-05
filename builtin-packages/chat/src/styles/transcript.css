@@ -357,9 +357,9 @@
   position: absolute;
   top: 0;
   max-width: 100%;
-  border: 1px solid var(--line);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.54);
+  box-shadow: inset 0 0 0 1px var(--line);
   overflow: auto hidden;
 }
 
