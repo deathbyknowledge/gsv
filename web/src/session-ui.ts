@@ -25,6 +25,7 @@ type SetupLaneMeta = {
   title: string;
   description: string;
   reviewCopy: string;
+  estimate: string;
 };
 
 type ValidationResult = {
@@ -44,20 +45,23 @@ const SETUP_LANE_META: Record<OnboardingLane, SetupLaneMeta> = {
     title: "Create the first operator",
     description: "Use the default system source and the default AI path. You only need the account and admin credentials.",
     reviewCopy: "Fastest path with the default system source and default AI configuration.",
+    estimate: "expected time to completion: 1 min",
   },
   customize: {
-    label: "Customize",
-    kicker: "Customize",
+    label: "Custom",
+    kicker: "Custom",
     title: "Tune the parts that matter",
     description: "Adjust AI defaults, first-boot system source, and optional device bootstrap without dealing with every low-level detail.",
-    reviewCopy: "Guided setup with optional AI, source, and device customization.",
+    reviewCopy: "Custom setup with optional AI, source, and device customization.",
+    estimate: "expected time to completion: 3 min",
   },
   advanced: {
-    label: "Advanced",
-    kicker: "Advanced",
+    label: "Custom",
+    kicker: "Custom",
     title: "Take full control from first boot",
     description: "Choose the exact source and ref up front, configure AI explicitly, and issue node credentials during provisioning if needed.",
     reviewCopy: "Full-control setup with explicit first-boot source and runtime choices.",
+    estimate: "expected time to completion: 3 min",
   },
 };
 
@@ -221,6 +225,7 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
   const setupReviewNode = rootNode.querySelector<HTMLElement>("[data-setup-stage='review']");
   const setupLaneButtons = Array.from(rootNode.querySelectorAll<HTMLButtonElement>("[data-setup-lane]"));
   const setupLaneKickerNode = rootNode.querySelector<HTMLElement>("[data-setup-lane-kicker]");
+  const setupDetailCopyNode = rootNode.querySelector<HTMLElement>("[data-setup-detail-copy]");
   const setupLaneTitleNode = rootNode.querySelector<HTMLElement>("[data-setup-lane-title]");
   const setupLaneDescriptionNode = rootNode.querySelector<HTMLElement>("[data-setup-lane-description]");
   const setupBackNode = rootNode.querySelector<HTMLButtonElement>("[data-setup-back]");
@@ -230,10 +235,11 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
   const setupAgentNameNode = rootNode.querySelector<HTMLInputElement>("[data-setup-agent-name]");
   const setupPasswordNode = rootNode.querySelector<HTMLInputElement>("[data-setup-password]");
   const setupPasswordConfirmNode = rootNode.querySelector<HTMLInputElement>("[data-setup-password-confirm]");
-  const setupAdminSameNode = rootNode.querySelector<HTMLInputElement>("[data-setup-admin-same]");
   const setupAdminCustomNode = rootNode.querySelector<HTMLInputElement>("[data-setup-admin-custom]");
   const setupRootRowNode = rootNode.querySelector<HTMLElement>("[data-setup-root-row]");
+  const setupRootConfirmRowNode = rootNode.querySelector<HTMLElement>("[data-setup-root-confirm-row]");
   const setupRootPasswordNode = rootNode.querySelector<HTMLInputElement>("[data-setup-root-password]");
+  const setupRootPasswordConfirmNode = rootNode.querySelector<HTMLInputElement>("[data-setup-root-password-confirm]");
   const setupTimeZoneNode = rootNode.querySelector<HTMLSelectElement>("[data-setup-timezone]");
   const setupAiSectionNode = rootNode.querySelector<HTMLElement>("[data-setup-ai-section]");
   const setupAiEnabledNode = rootNode.querySelector<HTMLInputElement>("[data-setup-ai-enabled]");
@@ -257,15 +263,13 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
   const setupNodeDeviceIdNode = rootNode.querySelector<HTMLInputElement>("[data-setup-node-device-id]");
   const setupNodeLabelNode = rootNode.querySelector<HTMLInputElement>("[data-setup-node-label]");
   const setupNodeExpiryNode = rootNode.querySelector<HTMLInputElement>("[data-setup-node-expiry]");
-  const setupAssistToggleNode = rootNode.querySelector<HTMLElement>("[data-setup-assist-toggle]");
-  const setupModeManualNode = rootNode.querySelector<HTMLInputElement>("[data-setup-mode-manual]");
-  const setupModeGuidedNode = rootNode.querySelector<HTMLInputElement>("[data-setup-mode-guided]");
   const setupGuidePanelNode = rootNode.querySelector<HTMLElement>("[data-setup-guide-panel]");
   const setupGuideLogNode = rootNode.querySelector<HTMLElement>("[data-setup-guide-log]");
   const setupGuideErrorNode = rootNode.querySelector<HTMLElement>("[data-setup-guide-error]");
   const setupGuideFormNode = rootNode.querySelector<HTMLElement>("[data-setup-guide-form]");
-  const setupGuideInputNode = rootNode.querySelector<HTMLInputElement>("[data-setup-guide-input]");
+  const setupGuideInputNode = rootNode.querySelector<HTMLTextAreaElement>("[data-setup-guide-input]");
   const setupGuideSendNode = rootNode.querySelector<HTMLButtonElement>("[data-setup-guide-send]");
+  const setupGuideToggleNode = rootNode.querySelector<HTMLButtonElement>("[data-setup-guide-toggle]");
   const setupSummaryLaneNode = rootNode.querySelector<HTMLElement>("[data-setup-summary-lane]");
   const setupSummaryLaneCopyNode = rootNode.querySelector<HTMLElement>("[data-setup-summary-lane-copy]");
   const setupSummaryAccountNode = rootNode.querySelector<HTMLElement>("[data-setup-summary-account]");
@@ -318,6 +322,7 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     !setupReviewNode ||
     setupLaneButtons.length === 0 ||
     !setupLaneKickerNode ||
+    !setupDetailCopyNode ||
     !setupLaneTitleNode ||
     !setupLaneDescriptionNode ||
     !setupBackNode ||
@@ -327,10 +332,11 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     !setupAgentNameNode ||
     !setupPasswordNode ||
     !setupPasswordConfirmNode ||
-    !setupAdminSameNode ||
     !setupAdminCustomNode ||
     !setupRootRowNode ||
+    !setupRootConfirmRowNode ||
     !setupRootPasswordNode ||
+    !setupRootPasswordConfirmNode ||
     !setupTimeZoneNode ||
     !setupAiSectionNode ||
     !setupAiEnabledNode ||
@@ -354,15 +360,13 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     !setupNodeDeviceIdNode ||
     !setupNodeLabelNode ||
     !setupNodeExpiryNode ||
-    !setupAssistToggleNode ||
-    !setupModeManualNode ||
-    !setupModeGuidedNode ||
     !setupGuidePanelNode ||
     !setupGuideLogNode ||
     !setupGuideErrorNode ||
     !setupGuideFormNode ||
     !setupGuideInputNode ||
     !setupGuideSendNode ||
+    !setupGuideToggleNode ||
     !setupSummaryLaneNode ||
     !setupSummaryLaneCopyNode ||
     !setupSummaryAccountNode ||
@@ -435,13 +439,16 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
   };
 
   const detailStepsForLane = (lane = onboardingSnapshot.draft.lane): OnboardingDetailStep[] => {
-    if (lane === "quick") return ["account", "admin", "system"];
-    return ["account", "admin", "system", "ai", "source", "device"];
+    void lane;
+    return ["account", "system"];
   };
 
   const currentDetailStep = (): OnboardingDetailStep => {
     const steps = detailStepsForLane();
     const current = onboardingSnapshot.draft.detailStep;
+    if ((current === "admin" || current === "ai" || current === "source" || current === "device") && steps.includes("system")) {
+      return "system";
+    }
     return steps.includes(current) ? current : steps[0] ?? "account";
   };
 
@@ -473,9 +480,11 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     if (setupPasswordConfirmNode.value !== draft.account.passwordConfirm) {
       setupPasswordConfirmNode.value = draft.account.passwordConfirm;
     }
-    setupAdminSameNode.checked = draft.admin.mode === "same";
     setupAdminCustomNode.checked = draft.admin.mode === "custom";
     if (setupRootPasswordNode.value !== draft.admin.password) setupRootPasswordNode.value = draft.admin.password;
+    if (setupRootPasswordConfirmNode.value !== draft.admin.passwordConfirm) {
+      setupRootPasswordConfirmNode.value = draft.admin.passwordConfirm;
+    }
     ensureTimeZoneOption(draft.system.timezone);
     if (setupTimeZoneNode.value !== draft.system.timezone) setupTimeZoneNode.value = draft.system.timezone;
 
@@ -493,8 +502,6 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     if (setupNodeLabelNode.value !== draft.device.label) setupNodeLabelNode.value = draft.device.label;
     if (setupNodeExpiryNode.value !== draft.device.expiryDays) setupNodeExpiryNode.value = draft.device.expiryDays;
 
-    setupModeManualNode.checked = draft.mode === "manual";
-    setupModeGuidedNode.checked = draft.mode === "guided";
   };
 
   const applyDetailSections = (): void => {
@@ -512,39 +519,35 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     const { stage } = onboardingSnapshot.draft;
 
     if (stage === "welcome") {
-      setupHeadingNode.textContent = "Bring this gateway online";
-      setupCopyNode.textContent = "Choose how much control you want, then review the exact plan before provisioning.";
+      setupHeadingNode.textContent = "Create account";
+      setupCopyNode.textContent = "Choose a setup path.";
       setupLaneKickerNode.textContent = meta.kicker;
     } else {
-      setupHeadingNode.textContent = meta.label;
-      setupCopyNode.textContent = meta.description;
-      setupLaneKickerNode.textContent = meta.kicker;
+      setupHeadingNode.textContent = "Create account";
+      setupCopyNode.textContent = meta.estimate;
     }
 
     if (stage === "details") {
       const detailStep = currentDetailStep();
-      if (detailStep === "admin") {
-        setupLaneTitleNode.textContent = "Set admin access";
-        setupLaneDescriptionNode.textContent = "Choose whether admin access should use the same password as the first user or a separate password.";
-      } else if (detailStep === "ai") {
-        setupLaneTitleNode.textContent = "Configure AI defaults";
-        setupLaneDescriptionNode.textContent = "Keep the default provider path or customize the initial AI provider, model, and API key.";
-      } else if (detailStep === "system") {
-        setupLaneTitleNode.textContent = "Set system timezone";
-        setupLaneDescriptionNode.textContent = "Choose the timezone used for calendar schedules and timestamp displays.";
-      } else if (detailStep === "source") {
-        setupLaneTitleNode.textContent = "Choose the system source";
-        setupLaneDescriptionNode.textContent = "The system source is bootstrapped during first setup. Leave it on the default upstream or point at a custom repository and ref.";
-      } else if (detailStep === "device") {
-        setupLaneTitleNode.textContent = "Bootstrap a device";
-        setupLaneDescriptionNode.textContent = "Issue a node token now if you want a machine to connect immediately after setup.";
+      setupDetailCopyNode.hidden = detailStep === "system";
+      if (detailStep === "system") {
+        setupLaneKickerNode.textContent = "Preferences";
+        setupLaneTitleNode.textContent = "Preferences";
+        setupLaneDescriptionNode.textContent = onboardingSnapshot.draft.lane === "quick"
+          ? "Confirm timezone and decide whether admin actions need a separate password."
+          : "Confirm timezone, admin security, and any custom AI, source, or device settings.";
       } else {
-        setupLaneTitleNode.textContent = meta.title;
-        setupLaneDescriptionNode.textContent = meta.description;
+        setupLaneKickerNode.textContent = "Login credentials";
+        setupLaneTitleNode.textContent = "Desktop account";
+        setupLaneDescriptionNode.textContent = "Create the first desktop account and secure it with a password.";
       }
+    } else if (stage === "review") {
+      setupDetailCopyNode.hidden = true;
+      setupLaneKickerNode.textContent = "Review and deploy";
+      setupLaneTitleNode.textContent = "Review and deploy";
+      setupLaneDescriptionNode.textContent = "Confirm the first-boot plan before provisioning the gateway.";
     } else {
-      setupLaneTitleNode.textContent = meta.title;
-      setupLaneDescriptionNode.textContent = meta.description;
+      setupDetailCopyNode.hidden = true;
     }
 
     for (const button of setupLaneButtons) {
@@ -560,8 +563,11 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     const showNodeRows = showAdvanced && draft.device.enabled;
 
     setupRootRowNode.hidden = draft.admin.mode !== "custom";
+    setupRootConfirmRowNode.hidden = draft.admin.mode !== "custom";
     setupRootPasswordNode.disabled = draft.admin.mode !== "custom";
+    setupRootPasswordConfirmNode.disabled = draft.admin.mode !== "custom";
 
+    setupAiSectionNode.hidden = !showAdvanced;
     setupAiEnabledNode.disabled = !showAdvanced;
     setupAiProviderRowNode.hidden = !showAiRows;
     setupAiModelRowNode.hidden = !showAiRows;
@@ -570,12 +576,14 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     setupAiModelNode.disabled = !showAiRows;
     setupAiKeyNode.disabled = !showAiRows;
 
+    setupSourceSectionNode.hidden = !showAdvanced;
     setupSourceEnabledNode.disabled = !showAdvanced;
     setupSourceRowNode.hidden = !showSourceRows;
     setupSourceRefRowNode.hidden = !showSourceRows;
     setupBootstrapSourceNode.disabled = !showSourceRows;
     setupBootstrapRefNode.disabled = !showSourceRows;
 
+    setupNodeSectionNode.hidden = !showAdvanced;
     setupNodeEnabledNode.disabled = !showAdvanced;
     setupNodeDeviceRowNode.hidden = !showNodeRows;
     setupNodeLabelRowNode.hidden = !showNodeRows;
@@ -589,9 +597,16 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     setupGuideLogNode.replaceChildren();
 
     if (onboardingSnapshot.messages.length === 0 && !onboardingSnapshot.busy) {
-      const empty = document.createElement("p");
-      empty.className = "session-copy";
-      empty.textContent = "Describe the setup you want. The guide will patch only non-secret fields like source, model, and device settings.";
+      const empty = document.createElement("div");
+      empty.className = "onboarding-guide-empty";
+
+      const title = document.createElement("strong");
+      title.textContent = "Ask for setup help";
+
+      const copy = document.createElement("p");
+      copy.textContent = "Source, model, timezone, and device bootstrap can be adjusted here. Secrets stay in the form.";
+
+      empty.append(title, copy);
       setupGuideLogNode.appendChild(empty);
       return;
     }
@@ -600,9 +615,9 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     for (const entry of onboardingSnapshot.messages) {
       const message = document.createElement("article");
       message.className = `onboarding-guide-message onboarding-guide-message-${entry.role}`;
+      message.dataset.role = entry.role;
 
       const role = document.createElement("span");
-      role.className = "session-kicker";
       role.textContent = entry.role === "user" ? "You" : "Guide";
 
       const body = document.createElement("p");
@@ -614,14 +629,14 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
 
     if (onboardingSnapshot.busy) {
       const pending = document.createElement("article");
-      pending.className = "onboarding-guide-message onboarding-guide-message-assistant";
+      pending.className = "onboarding-guide-message onboarding-guide-message-assistant is-pending";
+      pending.dataset.role = "assistant";
 
       const role = document.createElement("span");
-      role.className = "session-kicker";
       role.textContent = "Guide";
 
       const body = document.createElement("p");
-      body.textContent = "Thinking...";
+      body.textContent = "Working on it";
 
       pending.append(role, body);
       fragment.appendChild(pending);
@@ -632,10 +647,11 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
   };
 
   const renderGuidePanel = (): void => {
-    const showToggle = onboardingSnapshot.draft.stage === "details" && onboardingSnapshot.draft.lane !== "advanced";
+    const showToggle = onboardingSnapshot.draft.stage !== "welcome";
     const showPanel = showToggle && onboardingSnapshot.draft.mode === "guided";
 
-    setupAssistToggleNode.hidden = !showToggle;
+    setupGuideToggleNode.hidden = !showToggle;
+    setupGuideToggleNode.textContent = showPanel ? "Hide guide" : "Ask the guide";
     setupGuidePanelNode.hidden = !showPanel;
     setVisibleError(setupGuideErrorNode, showPanel ? onboardingSnapshot.error : null);
     setupGuideInputNode.disabled = !showPanel || onboardingSnapshot.busy || sessionSnapshot.phase === "authenticating";
@@ -651,8 +667,9 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
   const applySetupStage = (): void => {
     const { stage } = onboardingSnapshot.draft;
     const detailSteps = detailStepsForLane();
-    const lastDetailStep = detailSteps[detailSteps.length - 1];
+    const detailStep = currentDetailStep();
 
+    setupFormNode.dataset.setupStage = stage;
     setupWelcomeNode.hidden = stage !== "welcome";
     setupDetailsNode.hidden = stage !== "details";
     setupReviewNode.hidden = stage !== "review";
@@ -660,20 +677,27 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
 
     for (const pill of setupStagePills) {
       const pillStage = pill.dataset.setupStagePill as OnboardingStage | undefined;
-      pill.classList.toggle("is-active", pillStage === stage);
-      pill.classList.toggle(
-        "is-complete",
-        (stage === "details" && pillStage === "welcome") ||
-          (stage === "review" && (pillStage === "welcome" || pillStage === "details")),
-      );
+      const railStep = pill.dataset.setupRailStep;
+      const active =
+        stage === "review"
+          ? railStep === "review"
+          : stage === "details" && (
+            (railStep === "account" && detailStep === "account") ||
+            (railStep === "preferences" && detailStep !== "account")
+          );
+      const complete =
+        stage === "review"
+          ? railStep === "account" || railStep === "preferences"
+          : stage === "details" && railStep === "account" && detailStep !== "account";
+      pill.classList.toggle("is-active", active || (stage === "welcome" && railStep === "account"));
+      pill.classList.toggle("is-complete", complete);
+      pill.classList.toggle("is-muted", pillStage !== stage && !active && !complete);
     }
 
     setupBackNode.hidden = stage === "welcome";
     setupNextNode.hidden = stage !== "details";
     setupSubmitNode.hidden = stage !== "review";
-    setupNextNode.textContent = guideShortcutReady() || currentDetailStep() === lastDetailStep
-      ? "Review plan"
-      : "Continue";
+    setupNextNode.textContent = "Next";
   };
 
   const focusLoginField = (): void => {
@@ -695,8 +719,8 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
       return;
     }
     const activeSection = setupDetailSections.find((section) => !section.hidden);
-      const firstVisible = activeSection?.querySelector<HTMLElement>("input:not([disabled]):not([type='hidden']), select:not([disabled])");
-      firstVisible?.focus();
+    const firstVisible = activeSection?.querySelector<HTMLElement>("input:not([disabled]):not([type='hidden']), select:not([disabled])");
+    firstVisible?.focus();
   };
 
   const validateSetupDetails = (validateAll = false): ValidationResult => {
@@ -727,12 +751,6 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
         }
       }
 
-      if (step === "admin") {
-        if (draft.admin.mode === "custom" && draft.admin.password.trim().length < 8) {
-          return { message: "Admin password must be at least 8 characters.", step };
-        }
-      }
-
       if (step === "system") {
         if (!draft.system.timezone.trim()) {
           return { message: "Timezone is required.", step };
@@ -740,28 +758,33 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
         if (!isValidTimeZone(draft.system.timezone.trim())) {
           return { message: "Timezone must be a valid IANA timezone.", step };
         }
-      }
-
-      if (step === "ai" && advancedSectionsVisible() && draft.ai.enabled) {
-        if (!draft.ai.provider.trim()) {
-          return { message: "AI provider is required when customizing AI settings.", step };
+        if (draft.admin.mode === "custom") {
+          if (draft.admin.password.trim().length < 8) {
+            return { message: "Admin password must be at least 8 characters.", step };
+          }
+          if (draft.admin.password !== draft.admin.passwordConfirm) {
+            return { message: "Admin passwords do not match.", step };
+          }
         }
-        if (!draft.ai.model.trim()) {
-          return { message: "AI model is required when customizing AI settings.", step };
+        if (advancedSectionsVisible() && draft.ai.enabled) {
+          if (!draft.ai.provider.trim()) {
+            return { message: "AI provider is required when customizing AI settings.", step };
+          }
+          if (!draft.ai.model.trim()) {
+            return { message: "AI model is required when customizing AI settings.", step };
+          }
         }
-      }
-
-      if (step === "source" && advancedSectionsVisible() && draft.source.enabled && !draft.source.value.trim()) {
-        return { message: "Repository or remote URL is required for a custom system source.", step };
-      }
-
-      if (step === "device" && advancedSectionsVisible() && draft.device.enabled) {
-        if (!draft.device.deviceId.trim()) {
-          return { message: "Device ID is required when issuing a node token.", step };
+        if (advancedSectionsVisible() && draft.source.enabled && !draft.source.value.trim()) {
+          return { message: "Repository or remote URL is required for a custom system source.", step };
         }
-        const expiry = draft.device.expiryDays.trim();
-        if (expiry && !isPositiveNumber(expiry)) {
-          return { message: "Expiry must be a positive number of days.", step };
+        if (advancedSectionsVisible() && draft.device.enabled) {
+          if (!draft.device.deviceId.trim()) {
+            return { message: "Device ID is required when issuing a node token.", step };
+          }
+          const expiry = draft.device.expiryDays.trim();
+          if (expiry && !isPositiveNumber(expiry)) {
+            return { message: "Expiry must be a positive number of days.", step };
+          }
         }
       }
     }
@@ -813,8 +836,8 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
       ? `${username} · agent ${agentName}`
       : `${username} · default personal agent`;
     setupSummaryAdminNode.textContent = draft.admin.mode === "custom"
-      ? "Separate admin password"
-      : "Same as account password";
+      ? "Extra admin security layer configured"
+      : "Account password protects admin tasks";
     setupSummaryTimeZoneNode.textContent = draft.system.timezone.trim() || browserTimeZone();
     setupSummaryAiNode.textContent = buildAiSummary();
     setupSummarySourceNode.textContent = buildSourceSummary();
@@ -884,7 +907,7 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
       : `Uses the ${defaultChannel} channel from this deployment and auto-detects the correct binary for this machine.`;
     if (!result) {
       setupResultUsernameNode.textContent = snapshot.username || "Unknown";
-      setupResultRootNode.textContent = adminMode === "custom" ? "Separate admin password" : "Same as account password";
+      setupResultRootNode.textContent = adminMode === "custom" ? "Extra admin security layer" : "Account password";
       setupResultSourceNode.textContent = DEFAULT_SOURCE_LABEL;
       setupResultRefNode.textContent = DEFAULT_SOURCE_REF;
       setupNodeResultNode.hidden = true;
@@ -894,7 +917,7 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     }
 
     setupResultUsernameNode.textContent = result.user.username;
-    setupResultRootNode.textContent = adminMode === "custom" ? "Separate admin password" : "Same as account password";
+    setupResultRootNode.textContent = adminMode === "custom" ? "Extra admin security layer" : "Account password";
     setupResultSourceNode.textContent = result.bootstrap?.remoteUrl ?? DEFAULT_SOURCE_LABEL;
     setupResultRefNode.textContent = result.bootstrap?.ref ?? DEFAULT_SOURCE_REF;
 
@@ -1201,6 +1224,15 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     session.lock();
   };
 
+  const onGuideToggleClick = (): void => {
+    clearSetupError();
+    const nextMode = onboardingSnapshot.draft.mode === "guided" ? "manual" : "guided";
+    onboarding.setMode(nextMode);
+    if (nextMode === "guided") {
+      window.setTimeout(() => setupGuideInputNode.focus(), 0);
+    }
+  };
+
   const onGuideSend = async (): Promise<void> => {
     const message = setupGuideInputNode.value.trim();
     if (!message || onboardingSnapshot.busy) {
@@ -1208,11 +1240,12 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     }
     setupGuideInputNode.value = "";
     await onboarding.assist(message);
-    focusSetupField();
+    setupGuideInputNode.focus();
   };
 
   const onGuideInputKeyDown = (event: KeyboardEvent): void => {
     if (event.key !== "Enter") return;
+    if (event.shiftKey) return;
     event.preventDefault();
     void onGuideSend();
   };
@@ -1276,23 +1309,12 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
       },
     }));
   });
-  setupAdminSameNode.addEventListener("change", () => {
-    if (!setupAdminSameNode.checked) return;
-    updateDraft((draft) => ({
-      ...draft,
-      admin: {
-        ...draft.admin,
-        mode: "same",
-      },
-    }));
-  });
   setupAdminCustomNode.addEventListener("change", () => {
-    if (!setupAdminCustomNode.checked) return;
     updateDraft((draft) => ({
       ...draft,
       admin: {
         ...draft.admin,
-        mode: "custom",
+        mode: setupAdminCustomNode.checked ? "custom" : "same",
       },
     }));
   });
@@ -1302,6 +1324,15 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
       admin: {
         ...draft.admin,
         password: setupRootPasswordNode.value,
+      },
+    }));
+  });
+  setupRootPasswordConfirmNode.addEventListener("input", () => {
+    updateDraft((draft) => ({
+      ...draft,
+      admin: {
+        ...draft.admin,
+        passwordConfirm: setupRootPasswordConfirmNode.value,
       },
     }));
   });
@@ -1413,16 +1444,7 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
       },
     }));
   });
-  setupModeManualNode.addEventListener("change", () => {
-    if (!setupModeManualNode.checked) return;
-    clearSetupError();
-    onboarding.setMode("manual");
-  });
-  setupModeGuidedNode.addEventListener("change", () => {
-    if (!setupModeGuidedNode.checked) return;
-    clearSetupError();
-    onboarding.setMode("guided");
-  });
+  setupGuideToggleNode.addEventListener("click", onGuideToggleClick);
   setupGuideSendNode.addEventListener("click", onGuideSendClick);
   setupGuideInputNode.addEventListener("keydown", onGuideInputKeyDown);
 
@@ -1457,6 +1479,7 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
       usernameInputNode.removeEventListener("input", onLoginFieldInput);
       passwordInputNode.removeEventListener("input", onLoginFieldInput);
       tokenInputNode.removeEventListener("input", onLoginFieldInput);
+      setupGuideToggleNode.removeEventListener("click", onGuideToggleClick);
       setupGuideSendNode.removeEventListener("click", onGuideSendClick);
       setupGuideInputNode.removeEventListener("keydown", onGuideInputKeyDown);
     },

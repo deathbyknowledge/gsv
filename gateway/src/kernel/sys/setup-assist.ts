@@ -125,6 +125,7 @@ function redactDraft(draft: OnboardingDraft): OnboardingDraft {
     admin: {
       ...draft.admin,
       password: "",
+      passwordConfirm: "",
     },
     ai: {
       ...draft.ai,
