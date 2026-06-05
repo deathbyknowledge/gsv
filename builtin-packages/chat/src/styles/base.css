@@ -149,13 +149,13 @@ textarea {
 .icon-button {
   width: 34px;
   height: 34px;
-  border: 1px solid var(--line);
+  border: 0;
   border-radius: 8px;
   padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: rgba(255, 255, 255, 0.76);
+  background: transparent;
   color: var(--text);
   cursor: pointer;
 }
@@ -166,8 +166,7 @@ textarea {
 }
 
 .icon-button:hover:not(:disabled) {
-  border-color: var(--line-strong);
-  background: var(--panel-strong);
+  color: var(--blue);
 }
 
 .icon-button:disabled,

@@ -32,9 +32,7 @@
 }
 
 .icon-button.voice.is-recording {
-  border-color: rgba(170, 68, 56, 0.28);
   color: var(--red);
-  background: rgba(170, 68, 56, 0.08);
 }
 
 .icon-button.attach input {

@@ -115,9 +115,8 @@
   margin-right: max(0px, calc((100% - var(--chat-document-measure)) / 2));
   border-color: rgba(31, 92, 153, 0.16);
   border-radius: 8px 8px 3px 8px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(242, 247, 251, 0.96)),
-    var(--panel-strong);
+  padding-bottom: 6px;
+  background: var(--panel-strong);
   box-shadow: 0 8px 22px rgba(31, 92, 153, 0.07);
 }
 
@@ -131,12 +130,7 @@
 
 .message-user .message-foot {
   margin-top: 8px;
-  padding-top: 7px;
-  border-top: 1px solid rgba(31, 92, 153, 0.1);
-}
-
-.message-user .message-action {
-  background: rgba(255, 255, 255, 0.78);
+  padding-top: 0;
 }
 
 .message-assistant,
@@ -304,7 +298,6 @@
   gap: 8px;
   color: var(--soft);
   font-size: 11px;
-  font-weight: 800;
   white-space: nowrap;
 }
 
@@ -558,7 +551,6 @@
   gap: 8px;
   color: var(--soft);
   font-size: 11px;
-  font-weight: 800;
   white-space: nowrap;
 }
 
@@ -587,7 +579,6 @@
 
 .message-menu[open] .message-action {
   color: var(--blue);
-  background: var(--blue-soft);
 }
 
 .message-action {
@@ -599,7 +590,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: rgba(24, 32, 40, 0.05);
+  background: transparent;
   color: var(--soft);
   cursor: pointer;
   list-style: none;
@@ -607,7 +598,6 @@
 
 .message-action:hover:not(:disabled) {
   color: var(--blue);
-  background: var(--blue-soft);
 }
 
 .message-action:disabled {

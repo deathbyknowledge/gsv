@@ -168,8 +168,6 @@
 
 .stage-archive-toggle.is-active {
   color: var(--blue);
-  border-color: rgba(31, 92, 153, 0.3);
-  background: var(--blue-soft);
 }
 
 .stage-action-badge {
