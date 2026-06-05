@@ -145,6 +145,14 @@
     grid-row: 2;
   }
 
+  .chat-stage-title-line .context-meter > span:last-child {
+    display: none;
+  }
+
+  .chat-stage-title-line .context-track {
+    width: 72px;
+  }
+
   .chat-stage-title h1,
   .chat-stage-title p {
     overflow: hidden;
@@ -172,11 +180,15 @@
   }
 
   .transcript {
-    padding: 10px;
+    padding: 10px 10px calc(var(--chat-composer-inset, 0px) + 20px);
+  }
+
+  .composer-dock {
+    padding-bottom: 10px;
   }
 
   .new-messages-button {
-    bottom: 10px;
+    bottom: calc(var(--chat-composer-inset, 0px) + 10px);
   }
 
   .composer {

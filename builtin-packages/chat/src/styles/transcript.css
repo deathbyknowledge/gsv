@@ -10,7 +10,7 @@
   min-height: 0;
   overflow: auto;
   overflow-anchor: none;
-  padding: 14px;
+  padding: 14px 14px calc(var(--chat-composer-inset, 0px) + 26px);
 }
 
 .transcript-content {
@@ -67,7 +67,7 @@
   position: absolute;
   z-index: 14;
   right: 50%;
-  bottom: 14px;
+  bottom: calc(var(--chat-composer-inset, 0px) + 14px);
   transform: translateX(50%);
   min-height: 36px;
   border: 1px solid rgba(31, 92, 153, 0.26);

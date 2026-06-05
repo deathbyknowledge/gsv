@@ -1,7 +1,7 @@
 .chat-stage {
   position: relative;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto minmax(0, 1fr);
   background: var(--panel);
 }
 
@@ -22,7 +22,94 @@
   flex: 1 1 auto;
   min-width: 0;
   display: grid;
-  gap: 4px;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 4px 10px;
+}
+
+.chat-stage-title > .agent-avatar {
+  grid-row: 1 / span 2;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+}
+
+.chat-stage-title-main {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.chat-stage-title-line {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chat-stage-title-line h1 {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stage-process-label {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stage-run-state {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.stage-run-state::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--green);
+}
+
+.stage-run-state.is-running {
+  color: var(--blue);
+}
+
+.stage-run-state.is-running::before {
+  background: var(--blue);
+  box-shadow: 0 0 0 4px rgba(31, 92, 153, 0.1);
+}
+
+.stage-run-state.is-waiting::before {
+  background: var(--yellow);
+}
+
+.stage-run-state.is-error {
+  color: var(--red);
+}
+
+.stage-run-state.is-error::before {
+  background: var(--red);
+}
+
+.chat-stage-title-line .context-meter {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.chat-stage-title > .conversation-bar {
+  grid-column: 2;
 }
 
 .conversation-bar {
@@ -188,62 +275,6 @@
   pointer-events: none;
 }
 
-.run-status {
-  position: relative;
-  width: 28px;
-  height: 28px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--muted);
-  background: rgba(255, 255, 255, 0.68);
-}
-
-.run-status::after {
-  content: "";
-  position: absolute;
-  right: 4px;
-  bottom: 4px;
-  width: 7px;
-  height: 7px;
-  border: 1px solid var(--panel-strong);
-  border-radius: 999px;
-  background: var(--green);
-}
-
-.run-status svg {
-  width: 14px;
-  height: 14px;
-  stroke: currentColor;
-  fill: none;
-  stroke-width: 1.9;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.run-status.is-running {
-  color: var(--blue);
-}
-
-.run-status.is-running::after {
-  background: var(--blue);
-  box-shadow: 0 0 0 4px rgba(31, 92, 153, 0.1);
-}
-
-.run-status.is-waiting::after {
-  background: var(--yellow);
-}
-
-.run-status.is-error {
-  color: var(--red);
-}
-
-.run-status.is-error::after {
-  background: var(--red);
-}
-
 .process-menu,
 .message-menu {
   position: relative;
@@ -339,7 +370,35 @@
   font-weight: 700;
 }
 
+.chat-live-area {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.chat-live-area > .transcript-shell {
+  height: 100%;
+}
+
+.composer-dock {
+  position: absolute;
+  z-index: 12;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  padding: 0 0 14px;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.composer-dock .composer {
+  pointer-events: auto;
+}
+
 .context-meter {
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 7px;
@@ -372,6 +431,13 @@
   inset: 0 auto 0 0;
   border-radius: inherit;
   background: var(--green);
+}
+
+.context-meter > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .context-meter.is-warn .context-track span {

@@ -22,6 +22,7 @@ import {
   MobileProcessNav,
   Transcript,
 } from "./components";
+import { AgentAvatar } from "./components/navigation/AgentAvatar";
 import {
   ArchiveIcon,
   CompactIcon,
@@ -45,6 +46,7 @@ import {
   asNumber,
   asRecord,
   asString,
+  activeMeta,
   closeChatMenus,
   closeContainingChatMenu,
   copyTextToClipboard,
@@ -71,6 +73,7 @@ import {
 } from "./view-helpers";
 
 const HISTORY_PAGE_SIZE = 50;
+const DEFAULT_COMPOSER_DOCK_HEIGHT = 104;
 
 function historyTargetKey(target: Pick<ThreadContext, "pid" | "conversationId">): string {
   return `${target.pid}\n${target.conversationId || "default"}`;
@@ -119,6 +122,8 @@ export function App({ backend }: { backend: ChatBackend }) {
   const [forceNewProcess, setForceNewProcess] = useState(false);
   const [compactBusy, setCompactBusy] = useState(false);
   const [branchBusy, setBranchBusy] = useState(false);
+  const [composerDockNode, setComposerDockNode] = useState<HTMLDivElement | null>(null);
+  const [composerDockHeight, setComposerDockHeight] = useState(DEFAULT_COMPOSER_DOCK_HEIGHT);
   const [hostError, setHostError] = useState("");
   const [composeText, setComposeText] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -130,6 +135,7 @@ export function App({ backend }: { backend: ChatBackend }) {
   const attachmentsRef = useRef(attachments);
   const previewUrlsRef = useRef<Set<string>>(new Set());
   const skipNextHistoryLoadRef = useRef<string | null>(null);
+  const autoHomeOpenRef = useRef(false);
   const historyWindowRef = useRef<HistoryWindow>(EMPTY_HISTORY_WINDOW);
   const {
     transcriptRef,
@@ -163,6 +169,31 @@ export function App({ backend }: { backend: ChatBackend }) {
     attachmentsRef.current = attachments;
   }, [attachments]);
 
+  useLayoutEffect(() => {
+    const node = composerDockNode;
+    if (!node) {
+      return undefined;
+    }
+    const updateHeight = () => {
+      const nextHeight = Math.ceil(node.getBoundingClientRect().height);
+      if (nextHeight > 0) {
+        setComposerDockHeight((current) => current === nextHeight ? current : nextHeight);
+      }
+    };
+    updateHeight();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", updateHeight);
+      return () => window.removeEventListener("resize", updateHeight);
+    }
+    const observer = new ResizeObserver(updateHeight);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [composerDockNode]);
+
+  useLayoutEffect(() => {
+    scrollTranscript("near-bottom");
+  }, [composerDockHeight, scrollTranscript]);
+
   const activeConversationId = active?.conversationId || "default";
   const activeConversation = conversations.find((conversation) => conversation.id === activeConversationId) ?? null;
   const homeProfileLabel = personalProfileLabel(conversationProfiles);
@@ -178,6 +209,13 @@ export function App({ backend }: { backend: ChatBackend }) {
       ? homeProfile?.newProcessRunAs || homeProfile?.runAs || homeProfile?.displayName || homeProfileLabel
       : activeThread?.username || activeThread?.profile || activeThread?.label || activeTitle
     : draftProfile.runAs || draftProfile.newProcessRunAs || draftProfile.displayName;
+  const stageAgentLabel = assistantLabel || activeTitle;
+  const stageAgentSeed = active
+    ? active.isHome
+      ? homeProfile?.newProcessRunAs || homeProfile?.runAs || homeProfile?.id || stageAgentLabel
+      : activeThread?.username || activeThread?.profile || active.pid
+    : draftProfile.newProcessRunAs || draftProfile.runAs || draftProfile.id || stageAgentLabel;
+  const stageProcessLabel = active ? activeMeta(active, activeConversation) : draftConversationMeta(draftProfile);
   const statusText = getStatusText({
     active,
     draftProfile,
@@ -459,6 +497,20 @@ export function App({ backend }: { backend: ChatBackend }) {
   }, []);
 
   useTargetProcessEvent(setActive);
+
+  useEffect(() => {
+    if (active || forceNewProcess || hostError || autoHomeOpenRef.current) {
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      if (activeRef.current || forceNewProcess || autoHomeOpenRef.current) {
+        return;
+      }
+      autoHomeOpenRef.current = true;
+      void openHome();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [active, forceNewProcess, hostError, homeProfileLabel]);
 
   useProcessSignals({
     activeRef,
@@ -867,13 +919,17 @@ export function App({ backend }: { backend: ChatBackend }) {
             onOpenThread={(pid) => void openThread(pid)}
           />
           <div class="chat-stage-title">
-            <h1>{activeTitle}</h1>
-            {!active ? (
-              <div class="identity-icons is-draft">
-                <span class="draft-meta">{draftConversationMeta(draftProfile)}</span>
+            <AgentAvatar seed={stageAgentSeed} label={stageAgentLabel} />
+            <div class="chat-stage-title-main">
+              <div class="chat-stage-title-line">
+                <h1>{stageAgentLabel}</h1>
+                <span class={"stage-run-state " + runStateClass} title={`${runStateLabel}: ${statusText}`} aria-label={`${runStateLabel}: ${statusText}`}>
+                  {runStateClass !== "is-ready" ? <span>{runStateLabel}</span> : null}
+                </span>
+                <ContextMeter state={active ? contextState : null} />
               </div>
-            ) : null}
-            <ContextMeter state={active ? contextState : null} />
+              <p class="stage-process-label">{stageProcessLabel}</p>
+            </div>
             <ConversationBar
               active={active}
               activeConversationId={activeConversationId}
@@ -882,9 +938,6 @@ export function App({ backend }: { backend: ChatBackend }) {
             />
           </div>
           <div class="chat-stage-actions">
-            <span class={"run-status " + runStateClass} title={`${runStateLabel}: ${statusText}`} aria-label={`${runStateLabel}: ${statusText}`}>
-              <TerminalIcon />
-            </span>
             {active ? (
               <button
                 class={"icon-button stage-archive-toggle" + (stageView === "archive" ? " is-active" : "")}
@@ -952,7 +1005,10 @@ export function App({ backend }: { backend: ChatBackend }) {
             onRetryMediaSource={retryMediaSource}
           />
         ) : (
-          <>
+          <div
+            class="chat-live-area"
+            style={`--chat-composer-inset: ${composerDockHeight}px;`}
+          >
             <Transcript
               rows={rows}
               userLabel={viewerUsername}
@@ -979,26 +1035,28 @@ export function App({ backend }: { backend: ChatBackend }) {
               onRetryMediaSource={retryMediaSource}
             />
 
-            <Composer
-              value={composeText}
-              attachments={attachments}
-              disabled={!interactive || messageBusy}
-              canSend={canSend}
-              canStop={canStop}
-              stopBusy={abortBusy}
-              voice={voice}
-              canRecord={interactive && !messageBusy}
-              onValueChange={setComposeText}
-              onSubmit={() => void sendMessage()}
-              onStop={() => void abortActiveRun()}
-              onFiles={(files) => void readAttachments(files)}
-              onRemoveAttachment={removeAttachment}
-              onStartVoice={() => void startVoiceRecording()}
-              onStopVoice={stopVoiceRecording}
-              onCancelVoice={cancelVoiceRecording}
-              onClearVoiceError={clearVoiceError}
-            />
-          </>
+            <div class="composer-dock" ref={setComposerDockNode}>
+              <Composer
+                value={composeText}
+                attachments={attachments}
+                disabled={!interactive || messageBusy}
+                canSend={canSend}
+                canStop={canStop}
+                stopBusy={abortBusy}
+                voice={voice}
+                canRecord={interactive && !messageBusy}
+                onValueChange={setComposeText}
+                onSubmit={() => void sendMessage()}
+                onStop={() => void abortActiveRun()}
+                onFiles={(files) => void readAttachments(files)}
+                onRemoveAttachment={removeAttachment}
+                onStartVoice={() => void startVoiceRecording()}
+                onStopVoice={stopVoiceRecording}
+                onCancelVoice={cancelVoiceRecording}
+                onClearVoiceError={clearVoiceError}
+              />
+            </div>
+          </div>
         )}
       </section>
 

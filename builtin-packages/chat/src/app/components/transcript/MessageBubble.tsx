@@ -116,18 +116,6 @@ export function MessageBubble({
           <button type="button" class="message-action" title="Copy" aria-label="Copy" onClick={() => onCopy(copyValue)}>
             <CopyIcon />
           </button>
-          {branchable && row.messageId ? (
-            <button
-              type="button"
-              class="message-action"
-              title="Branch"
-              aria-label="Branch"
-              disabled={branchBusy}
-              onClick={() => onBranch(row.messageId as number)}
-            >
-              <BranchIcon />
-            </button>
-          ) : null}
           <span>{timestampLabel}</span>
         </footer>
       </article>

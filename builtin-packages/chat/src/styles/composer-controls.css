@@ -13,6 +13,10 @@
   backdrop-filter: blur(12px);
 }
 
+.composer-dock .composer {
+  margin: 0 auto;
+}
+
 .composer:focus-within {
   border-color: rgba(31, 92, 153, 0.45);
   box-shadow: 0 18px 40px rgba(24, 32, 40, 0.16), 0 0 0 3px rgba(31, 92, 153, 0.1);

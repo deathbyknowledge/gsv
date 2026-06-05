@@ -776,11 +776,34 @@ function normalizeThreadContext(value: unknown): ThreadContext | null {
 }
 
 function getStoredThreadContext(): ThreadContext | null {
-  return null;
+  if (typeof localStorage === "undefined") {
+    return null;
+  }
+  try {
+    const raw = localStorage.getItem(STORED_THREAD_CONTEXT_KEY);
+    if (!raw) {
+      return null;
+    }
+    const context = normalizeThreadContext(JSON.parse(raw));
+    if (!context) {
+      localStorage.removeItem(STORED_THREAD_CONTEXT_KEY);
+    }
+    return context;
+  } catch {
+    return null;
+  }
 }
 
 function setStoredThreadContext(context: ThreadContext | null): ThreadContext | null {
-  return normalizeThreadContext(context);
+  const normalized = normalizeThreadContext(context);
+  if (normalized && typeof localStorage !== "undefined") {
+    try {
+      localStorage.setItem(STORED_THREAD_CONTEXT_KEY, JSON.stringify(normalized));
+    } catch {
+      // Local storage is only a restore convenience; failures should not block chat.
+    }
+  }
+  return normalized;
 }
 
 function fallbackProfiles(): Profile[] {
@@ -1090,6 +1113,7 @@ function isNearBottom(node: HTMLElement, thresholdPx = 96): boolean {
 }
 
 const CHAT_MENU_SELECTOR = "details.process-menu, details.message-menu";
+const STORED_THREAD_CONTEXT_KEY = "gsv.chat.activeThread";
 
 function closeChatMenus(except?: HTMLDetailsElement | null): void {
   if (typeof document === "undefined") {
