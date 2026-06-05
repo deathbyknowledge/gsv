@@ -1,34 +1,137 @@
 .new-thread-strip {
-  padding: 10px 14px;
+  position: relative;
+  padding: 10px 12px 12px;
   border-bottom: 1px solid var(--line);
 }
 
-.new-thread-strip label {
-  display: grid;
-  gap: 5px;
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 700;
+.agent-select-label {
+  display: block;
+  margin: 0 0 6px 2px;
+  color: var(--soft);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
-.new-thread-strip select {
+.agent-dropdown {
+  position: relative;
+}
+
+.agent-dropdown summary {
+  list-style: none;
+}
+
+.agent-dropdown summary::-webkit-details-marker {
+  display: none;
+}
+
+.agent-dropdown-trigger {
   width: 100%;
   min-width: 0;
+  height: 46px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 8px 9px;
+  padding: 7px 8px;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) 16px;
+  align-items: center;
+  column-gap: 8px;
   color: var(--text);
-  background: var(--panel-strong);
-  text-transform: none;
-  font-weight: 600;
+  background: rgba(255, 255, 255, 0.74);
+  cursor: pointer;
+}
+
+.agent-dropdown-trigger:hover {
+  border-color: var(--line-strong);
+}
+
+.agent-dropdown-copy,
+.agent-dropdown-name,
+.agent-dropdown-meta,
+.agent-option span {
+  min-width: 0;
+}
+
+.agent-dropdown-copy,
+.agent-option > span {
+  display: grid;
+  gap: 1px;
+}
+
+.agent-dropdown-name,
+.agent-option-name {
+  font-weight: 700;
+  line-height: 1.2;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.agent-dropdown-meta,
+.agent-option-meta {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.2;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.agent-dropdown-trigger svg {
+  width: 15px;
+  height: 15px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+  transition: transform 120ms ease;
+}
+
+.agent-dropdown[open] .agent-dropdown-trigger svg {
+  transform: rotate(180deg);
+}
+
+.agent-menu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  max-height: 280px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 5px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 14px 36px rgba(23, 32, 42, 0.16);
+}
+
+.agent-option {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  border-radius: 8px;
+  padding: 7px;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  column-gap: 8px;
+  color: var(--text);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.agent-option:hover,
+.agent-option.is-active {
+  background: var(--blue-soft);
 }
 
 .thread-list {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
-  padding: 6px 0;
+  padding: 8px;
 }
 
 .thread-row,
@@ -36,7 +139,7 @@
 .archive-row {
   width: 100%;
   border: 0;
-  border-bottom: 1px solid rgba(24, 32, 40, 0.06);
+  border-radius: 8px;
   background: transparent;
   color: inherit;
   text-align: left;
@@ -52,8 +155,10 @@
 }
 
 .thread-row {
-  padding: 11px 14px;
+  padding: 9px 8px;
   display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) 10px;
+  column-gap: 10px;
   gap: 4px;
 }
 
@@ -95,8 +200,8 @@
 
 .agent-avatar {
   grid-row: span 2;
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   border-radius: 7px;
   display: inline-flex;
   align-items: center;
@@ -114,13 +219,14 @@
 .thread-row:hover,
 .conversation-row:hover,
 .archive-row:hover {
-  background: rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.72);
 }
 
 .thread-row.is-active,
 .conversation-row.is-active,
 .archive-row.is-active {
-  background: var(--blue-soft);
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
 }
 
 .thread-row-title,
@@ -138,6 +244,39 @@
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+.thread-row-status {
+  grid-column: 3;
+  grid-row: 1 / span 2;
+  align-self: center;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(23, 32, 42, 0.22);
+}
+
+.thread-row-status.is-ready {
+  background: rgba(23, 32, 42, 0.2);
+}
+
+.thread-row-status.is-running {
+  background: var(--green);
+  box-shadow: 0 0 0 3px rgba(45, 124, 85, 0.12);
+}
+
+.thread-row-status.is-queued {
+  background: var(--yellow);
+}
+
+.thread-row-status.is-muted {
+  background: rgba(23, 32, 42, 0.14);
+}
+
+.thread-list-notice {
+  padding: 8px 8px 10px 40px;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .conversation-list,

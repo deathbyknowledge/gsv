@@ -57,6 +57,9 @@ export type ProcessEntry = {
   username: string;
   interactive: boolean;
   state: string;
+  activeRunId?: string | null;
+  activeConversationId?: string | null;
+  queuedCount: number;
   cwd: string;
   createdAt: number;
   /** True when this process is the viewer's personal-agent default conversation. */

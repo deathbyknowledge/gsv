@@ -891,7 +891,6 @@ export function App({ backend }: { backend: ChatBackend }) {
         onDraftProfileChange={setDraftProfileId}
         onHome={() => void openHome()}
         onNew={resetToNewThread}
-        onRefreshThreads={() => void loadThreads()}
         onOpenThread={(pid) => void openThread(pid)}
       />
 
@@ -908,7 +907,6 @@ export function App({ backend }: { backend: ChatBackend }) {
             onDraftProfileChange={setDraftProfileId}
             onHome={() => void openHome()}
             onNew={resetToNewThread}
-            onRefreshThreads={() => void loadThreads()}
             onOpenThread={(pid) => void openThread(pid)}
           />
           <div class="chat-stage-title">
