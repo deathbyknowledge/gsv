@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import {
   ASSISTANT_CODE_LINE_HEIGHT,
   ASSISTANT_CODE_PADDING_X,
@@ -37,7 +37,7 @@ export function AssistantMarkdown({ text }: { text: string }) {
     };
   }, []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const node = containerRef.current;
     if (!node) {
       return undefined;

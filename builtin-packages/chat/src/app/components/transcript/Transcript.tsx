@@ -8,6 +8,7 @@ import {
   type VirtualTranscriptItem,
   type VirtualTranscriptSource,
 } from "../../hooks/useVirtualTranscript";
+import { layoutAssistantMarkdown, prepareAssistantMarkdown } from "../../domain/assistant-markdown-frame";
 import { ArrowDownIcon } from "../../icons";
 import { HilCard } from "./HilCard";
 import { MessageBubble } from "./MessageBubble";
@@ -23,6 +24,24 @@ type TranscriptEntry =
   | (TranscriptEntryBase & { item: TranscriptItem; kind: "item" })
   | (TranscriptEntryBase & { kind: "pendingHil"; request: HilRequest })
   | (TranscriptEntryBase & { kind: "pendingAssistant"; pendingAssistant: PendingAssistantState });
+
+type TranscriptViewport = {
+  contentWidth: number;
+  height: number;
+  scrollTop: number;
+};
+
+const EMPTY_VIEWPORT: TranscriptViewport = {
+  contentWidth: 0,
+  height: 0,
+  scrollTop: 0,
+};
+
+const ASSISTANT_DOCUMENT_MAX_WIDTH = 820;
+const ASSISTANT_DOCUMENT_MAX_RATIO = 0.88;
+const ASSISTANT_DOCUMENT_CHROME_HEIGHT = 44;
+const MOBILE_CONTENT_WIDTH_BREAKPOINT = 740;
+const assistantMarkdownHeightCache = new Map<string, number>();
 
 export function Transcript(props: {
   rows: LogRow[];
@@ -52,7 +71,7 @@ export function Transcript(props: {
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [transcriptNode, setTranscriptNode] = useState<HTMLDivElement | null>(null);
-  const [viewport, setViewport] = useState({ height: 0, scrollTop: 0 });
+  const [viewport, setViewport] = useState<TranscriptViewport>(EMPTY_VIEWPORT);
   const items = useMemo(
     () => groupTranscriptRows(props.rows, props.pendingAssistant, props.pendingHil, props.activeRunId),
     [props.rows, props.pendingAssistant, props.pendingHil, props.activeRunId],
@@ -80,6 +99,7 @@ export function Transcript(props: {
     pendingAssistant: props.pendingAssistant,
     pendingHil: props.pendingHil,
     pendingRendered,
+    viewportWidth: viewport.contentWidth,
   }), [
     hilRendered,
     items,
@@ -88,6 +108,7 @@ export function Transcript(props: {
     props.loadingOlderHistory,
     props.pendingAssistant,
     props.pendingHil,
+    viewport.contentWidth,
   ]);
   const virtual = useVirtualTranscript({
     entries,
@@ -120,11 +141,10 @@ export function Transcript(props: {
     }
     const updateViewport = () => {
       setViewport((current) => {
-        const nextHeight = transcriptNode.clientHeight;
-        const nextScrollTop = transcriptNode.scrollTop;
-        return current.height === nextHeight && current.scrollTop === nextScrollTop
+        const next = readTranscriptViewport(transcriptNode);
+        return sameViewport(current, next)
           ? current
-          : { height: nextHeight, scrollTop: nextScrollTop };
+          : next;
       });
     };
     updateViewport();
@@ -358,6 +378,7 @@ function buildTranscriptEntries({
   pendingAssistant,
   pendingHil,
   pendingRendered,
+  viewportWidth,
 }: {
   hasHistoryLoader: boolean;
   hilRendered: boolean;
@@ -365,6 +386,7 @@ function buildTranscriptEntries({
   pendingAssistant: PendingAssistantState;
   pendingHil: HilRequest | null;
   pendingRendered: boolean;
+  viewportWidth: number;
 }): TranscriptEntry[] {
   const entries: TranscriptEntry[] = [];
   if (hasHistoryLoader) {
@@ -377,7 +399,7 @@ function buildTranscriptEntries({
   items.forEach((item, index) => {
     entries.push({
       alwaysRender: item.kind === "run" && item.status !== "completed",
-      estimateHeight: estimateTranscriptItemHeight(item),
+      estimateHeight: estimateTranscriptItemHeight(item, viewportWidth),
       item,
       key: keyForTranscriptItem(item, index),
       kind: "item",
@@ -418,13 +440,13 @@ function keyForTranscriptItem(item: TranscriptItem, index: number): string {
   return `row:${index}`;
 }
 
-function estimateTranscriptItemHeight(item: TranscriptItem): number {
+function estimateTranscriptItemHeight(item: TranscriptItem, viewportWidth: number): number {
   if (item.kind === "run") {
-    const userHeight = item.userRows.reduce((sum, row) => sum + estimateMessageHeight(row), 0);
+    const userHeight = item.userRows.reduce((sum, row) => sum + estimateMessageHeight(row, viewportWidth), 0);
     const detailHeight = item.pendingAssistant || item.pendingHil || item.detailEntries.length > 0 ? 40 : 0;
     const hilHeight = item.pendingHil ? 132 : 0;
     const responseRows = item.finalAssistantRows.concat(item.systemRows);
-    const responseHeight = responseRows.reduce((sum, row) => sum + estimateMessageHeight(row), 0);
+    const responseHeight = responseRows.reduce((sum, row) => sum + estimateMessageHeight(row, viewportWidth), 0);
     const rowCount = item.userRows.length + responseRows.length + (detailHeight > 0 ? 1 : 0) + (hilHeight > 0 ? 1 : 0);
     return Math.max(42, userHeight + detailHeight + hilHeight + responseHeight + Math.max(0, rowCount - 1) * 10);
   }
@@ -433,16 +455,85 @@ function estimateTranscriptItemHeight(item: TranscriptItem): number {
     return row.kind === "toolCall" ? 86 : 112;
   }
   if (row.kind === "message") {
-    return estimateMessageHeight(row);
+    return estimateMessageHeight(row, viewportWidth);
   }
   return 72;
 }
 
-function estimateMessageHeight(row: MessageRow): number {
+function estimateMessageHeight(row: MessageRow, viewportWidth: number): number {
+  if (row.role === "assistant" && !row.streaming) {
+    return estimateAssistantDocumentHeight(row, viewportWidth);
+  }
   const base = row.role === "assistant" ? 46 : 58;
   const charsPerLine = row.role === "assistant" ? 84 : 54;
   const lineHeight = row.role === "assistant" ? 24 : 19;
   const textLines = Math.max(1, Math.ceil(row.text.length / charsPerLine));
   const mediaCount = row.media?.length ?? 0;
   return base + textLines * lineHeight + mediaCount * 72;
+}
+
+function estimateAssistantDocumentHeight(row: MessageRow, viewportWidth: number): number {
+  const text = row.text.trim();
+  if (!text) {
+    return 0;
+  }
+  const width = assistantDocumentBodyWidth(viewportWidth);
+  if (width <= 0) {
+    return estimateFallbackMessageHeight(row);
+  }
+  const cacheKey = `${width}\0${text}`;
+  const cached = assistantMarkdownHeightCache.get(cacheKey);
+  if (cached !== undefined) {
+    return cached;
+  }
+  try {
+    const height = ASSISTANT_DOCUMENT_CHROME_HEIGHT + layoutAssistantMarkdown(prepareAssistantMarkdown(text), width).height;
+    if (assistantMarkdownHeightCache.size > 300) {
+      assistantMarkdownHeightCache.clear();
+    }
+    assistantMarkdownHeightCache.set(cacheKey, height);
+    return height;
+  } catch {
+    return estimateFallbackMessageHeight(row);
+  }
+}
+
+function estimateFallbackMessageHeight(row: MessageRow): number {
+  const base = row.role === "assistant" ? 46 : 58;
+  const charsPerLine = row.role === "assistant" ? 84 : 54;
+  const lineHeight = row.role === "assistant" ? 24 : 19;
+  const textLines = Math.max(1, Math.ceil(row.text.length / charsPerLine));
+  const mediaCount = row.media?.length ?? 0;
+  return base + textLines * lineHeight + mediaCount * 72;
+}
+
+function assistantDocumentBodyWidth(viewportWidth: number): number {
+  if (!Number.isFinite(viewportWidth) || viewportWidth <= 0) {
+    return 0;
+  }
+  return Math.max(
+    1,
+    Math.floor(
+      viewportWidth <= MOBILE_CONTENT_WIDTH_BREAKPOINT
+        ? viewportWidth
+        : Math.min(ASSISTANT_DOCUMENT_MAX_WIDTH, viewportWidth * ASSISTANT_DOCUMENT_MAX_RATIO),
+    ),
+  );
+}
+
+function readTranscriptViewport(node: HTMLDivElement): TranscriptViewport {
+  const style = window.getComputedStyle(node);
+  const paddingLeft = Number.parseFloat(style.paddingLeft) || 0;
+  const paddingRight = Number.parseFloat(style.paddingRight) || 0;
+  return {
+    contentWidth: Math.max(0, node.clientWidth - paddingLeft - paddingRight),
+    height: node.clientHeight,
+    scrollTop: node.scrollTop,
+  };
+}
+
+function sameViewport(a: TranscriptViewport, b: TranscriptViewport): boolean {
+  return a.contentWidth === b.contentWidth
+    && a.height === b.height
+    && a.scrollTop === b.scrollTop;
 }
