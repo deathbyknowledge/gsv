@@ -81,9 +81,9 @@ gsv auth login --username admin
 gsv chat "hello"
 ```
 
-## Upgrade
+## Update
 
-Upgrade deployed components from the selected release channel:
+Update deployed components from the selected release channel:
 
 ```bash
 gsv infra upgrade --all
@@ -100,7 +100,7 @@ For local bundle testing:
 gsv infra deploy --bundle-dir ./release/local --version local-dev --all --force-fetch
 ```
 
-## Destroy
+## Remove
 
 Remove deployed workers:
 
