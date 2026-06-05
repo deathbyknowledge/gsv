@@ -1,5 +1,5 @@
 import type { ComponentChildren } from "preact";
-import { useCallback, useEffect, useMemo, useState } from "preact/hooks";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "preact/hooks";
 import type { HilRequest, LogRow, MessageRow, PendingAssistantState } from "../../types";
 import type { TranscriptItem, TranscriptRunGroup } from "../../domain/run-groups";
 import { groupTranscriptRows } from "../../domain/run-groups";
@@ -116,10 +116,20 @@ export function Transcript(props: {
     viewportHeight: viewport.height,
   });
 
+  const updateViewportForNode = useCallback((node: HTMLDivElement) => {
+    setViewport((current) => {
+      const next = readTranscriptViewport(node);
+      return sameViewport(current, next) ? current : next;
+    });
+  }, []);
+
   const setTranscriptRef = useCallback((node: HTMLDivElement | null) => {
     props.refNode.current = node;
     setTranscriptNode(node);
-  }, [props.refNode]);
+    if (node) {
+      updateViewportForNode(node);
+    }
+  }, [props.refNode, updateViewportForNode]);
 
   useEffect(() => {
     if (selectedRunId && !selectedRun) {
@@ -135,18 +145,11 @@ export function Transcript(props: {
     return () => window.clearInterval(id);
   }, [props.pendingAssistant, props.pendingHil]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!transcriptNode) {
       return undefined;
     }
-    const updateViewport = () => {
-      setViewport((current) => {
-        const next = readTranscriptViewport(transcriptNode);
-        return sameViewport(current, next)
-          ? current
-          : next;
-      });
-    };
+    const updateViewport = () => updateViewportForNode(transcriptNode);
     updateViewport();
     if (typeof ResizeObserver === "undefined") {
       window.addEventListener("resize", updateViewport);
@@ -155,7 +158,7 @@ export function Transcript(props: {
     const observer = new ResizeObserver(updateViewport);
     observer.observe(transcriptNode);
     return () => observer.disconnect();
-  }, [transcriptNode]);
+  }, [transcriptNode, updateViewportForNode]);
 
   return (
     <div class="transcript-shell">
@@ -232,11 +235,11 @@ function VirtualTranscriptRow({
 }: {
   children: ComponentChildren;
   item: VirtualTranscriptItem<TranscriptEntry>;
-  setItemNode(key: string, node: HTMLElement | null): void;
+  setItemNode(key: string, estimateKey: string, node: HTMLElement | null): void;
 }) {
   const setNode = useCallback((node: HTMLElement | null) => {
-    setItemNode(item.entry.key, node);
-  }, [item.entry.key, setItemNode]);
+    setItemNode(item.entry.key, estimateKeyForTranscriptEntry(item.entry), node);
+  }, [item.entry, setItemNode]);
   return (
     <div
       class="transcript-virtual-item"
@@ -392,14 +395,17 @@ function buildTranscriptEntries({
   if (hasHistoryLoader) {
     entries.push({
       estimateHeight: 36,
+      estimateKey: "history-loader",
       key: "history-loader",
       kind: "history",
     });
   }
   items.forEach((item, index) => {
+    const estimateHeight = estimateTranscriptItemHeight(item, viewportWidth);
     entries.push({
       alwaysRender: item.kind === "run" && item.status !== "completed",
-      estimateHeight: estimateTranscriptItemHeight(item, viewportWidth),
+      estimateHeight,
+      estimateKey: `${Math.round(viewportWidth)}:${Math.round(estimateHeight)}`,
       item,
       key: keyForTranscriptItem(item, index),
       kind: "item",
@@ -409,6 +415,7 @@ function buildTranscriptEntries({
     entries.push({
       alwaysRender: true,
       estimateHeight: 132,
+      estimateKey: "pending-hil",
       key: `pending-hil:${pendingHil.requestId}`,
       kind: "pendingHil",
       request: pendingHil,
@@ -418,12 +425,17 @@ function buildTranscriptEntries({
     entries.push({
       alwaysRender: true,
       estimateHeight: 34,
+      estimateKey: `pending-assistant:${pendingAssistant}`,
       key: `pending-assistant:${pendingAssistant}`,
       kind: "pendingAssistant",
       pendingAssistant,
     });
   }
   return entries;
+}
+
+function estimateKeyForTranscriptEntry(entry: TranscriptEntry): string {
+  return entry.estimateKey ?? String(Math.round(entry.estimateHeight));
 }
 
 function keyForTranscriptItem(item: TranscriptItem, index: number): string {

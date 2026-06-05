@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks"
 export type VirtualTranscriptSource = {
   alwaysRender?: boolean;
   estimateHeight: number;
+  estimateKey?: string;
   key: string;
 };
 
@@ -18,6 +19,11 @@ const TRANSCRIPT_ITEM_GAP = 10;
 const TRANSCRIPT_OVERSCAN_PX = 900;
 const HEIGHT_EPSILON = 0.5;
 
+type CachedHeight = {
+  estimateKey: string;
+  height: number;
+};
+
 export function useVirtualTranscript<T extends VirtualTranscriptSource>({
   entries,
   scrollTop,
@@ -27,7 +33,7 @@ export function useVirtualTranscript<T extends VirtualTranscriptSource>({
   scrollTop: number;
   viewportHeight: number;
 }) {
-  const heightCacheRef = useRef<Map<string, number>>(new Map());
+  const heightCacheRef = useRef<Map<string, CachedHeight>>(new Map());
   const observersRef = useRef<Map<string, ResizeObserver>>(new Map());
   const nodesRef = useRef<Map<string, HTMLElement>>(new Map());
   const [, setMeasureVersion] = useState(0);
@@ -38,7 +44,9 @@ export function useVirtualTranscript<T extends VirtualTranscriptSource>({
     let cursor = 0;
     for (let index = 0; index < entries.length; index += 1) {
       const entry = entries[index] as T;
-      const cachedHeight = heightCacheRef.current.get(entry.key);
+      const entryEstimateKey = estimateKeyForEntry(entry);
+      const cached = heightCacheRef.current.get(entry.key);
+      const cachedHeight = cached?.estimateKey === entryEstimateKey ? cached.height : undefined;
       const height = Math.max(1, cachedHeight ?? entry.estimateHeight);
       const top = cursor;
       const bottom = top + height;
@@ -59,7 +67,7 @@ export function useVirtualTranscript<T extends VirtualTranscriptSource>({
     ));
   }, [geometry, scrollTop, viewportHeight]);
 
-  const setItemNode = useCallback((key: string, node: HTMLElement | null) => {
+  const setItemNode = useCallback((key: string, estimateKey: string, node: HTMLElement | null) => {
     const priorObserver = observersRef.current.get(key);
     if (priorObserver) {
       priorObserver.disconnect();
@@ -78,10 +86,13 @@ export function useVirtualTranscript<T extends VirtualTranscriptSource>({
         return;
       }
       const currentHeight = heightCacheRef.current.get(key);
-      if (currentHeight !== undefined && Math.abs(currentHeight - nextHeight) < HEIGHT_EPSILON) {
+      if (
+        currentHeight?.estimateKey === estimateKey
+        && Math.abs(currentHeight.height - nextHeight) < HEIGHT_EPSILON
+      ) {
         return;
       }
-      heightCacheRef.current.set(key, nextHeight);
+      heightCacheRef.current.set(key, { estimateKey, height: nextHeight });
       setMeasureVersion((version) => version + 1);
     };
 
@@ -125,4 +136,8 @@ export function useVirtualTranscript<T extends VirtualTranscriptSource>({
     setItemNode,
     totalHeight: geometry.totalHeight,
   };
+}
+
+function estimateKeyForEntry(entry: VirtualTranscriptSource): string {
+  return entry.estimateKey ?? String(Math.round(entry.estimateHeight));
 }
