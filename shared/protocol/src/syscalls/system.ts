@@ -161,6 +161,7 @@ export type OnboardingDraft = {
   admin: {
     mode: "same" | "custom";
     password: string;
+    passwordConfirm: string;
   };
   system: {
     timezone: string;

@@ -46,7 +46,7 @@ function defaultTimezone(): string {
 function defaultDraft(username = ""): OnboardingDraft {
   return {
     lane: "quick",
-    mode: "guided",
+    mode: "manual",
     stage: "welcome",
     detailStep: "account",
     account: {
@@ -58,6 +58,7 @@ function defaultDraft(username = ""): OnboardingDraft {
     admin: {
       mode: "same",
       password: "",
+      passwordConfirm: "",
     },
     system: {
       timezone: defaultTimezone(),
@@ -93,6 +94,7 @@ function sanitizeDraftForStorage(draft: OnboardingDraft): OnboardingDraft {
     admin: {
       ...draft.admin,
       password: "",
+      passwordConfirm: "",
     },
     ai: {
       ...draft.ai,
@@ -269,13 +271,12 @@ export function createOnboardingService(
       });
     },
     setLane: (lane) => {
-      const mode: OnboardingMode = lane === "advanced" ? "manual" : lane === "quick" ? "guided" : state.draft.mode;
       setState({
         ...state,
         draft: {
           ...state.draft,
           lane,
-          mode,
+          mode: "manual",
           stage: "details",
           detailStep: "account",
         },
