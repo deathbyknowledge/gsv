@@ -759,7 +759,7 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
           return { message: "Timezone must be a valid IANA timezone.", step };
         }
         if (draft.admin.mode === "custom") {
-          if (draft.admin.password.trim().length < 8) {
+          if (draft.admin.password.length < 8) {
             return { message: "Admin password must be at least 8 characters.", step };
           }
           if (draft.admin.password !== draft.admin.passwordConfirm) {
@@ -857,8 +857,8 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
       payload.agentName = agentName;
     }
 
-    if (draft.admin.mode === "custom" && draft.admin.password.trim()) {
-      payload.rootPassword = draft.admin.password.trim();
+    if (draft.admin.mode === "custom" && draft.admin.password) {
+      payload.rootPassword = draft.admin.password;
     }
 
     if (advancedSectionsVisible() && draft.ai.enabled) {
