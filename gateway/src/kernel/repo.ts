@@ -126,11 +126,15 @@ export async function handleRepoRefs(
   const repo = parseRepoSlug(args.repo);
   assertCanReadRepo(repo, ctx);
   const refs = await requireRipgitClient(ctx).refs(repo);
-  return {
+  const result: RepoRefsResult = {
     repo: repoSlug(repo),
     heads: refs.heads ?? {},
     tags: refs.tags ?? {},
   };
+  if (refs.remotes && Object.keys(refs.remotes).length > 0) {
+    result.remotes = refs.remotes;
+  }
+  return result;
 }
 
 export async function handleRepoRead(
@@ -338,7 +342,7 @@ export async function handleRepoImport(
     remoteRef,
   );
   registerRepo(ctx, repo);
-  return {
+  const result: RepoImportResult = {
     repo: repoSlug(repo),
     ref,
     head: imported.head ?? null,
@@ -346,6 +350,12 @@ export async function handleRepoImport(
     remoteUrl: imported.remoteUrl,
     remoteRef: imported.remoteRef,
   };
+  if (imported.trackingRef) result.trackingRef = imported.trackingRef;
+  if (imported.upstreamHead) result.upstreamHead = imported.upstreamHead;
+  if (typeof imported.upstreamChanged === "boolean") result.upstreamChanged = imported.upstreamChanged;
+  if (typeof imported.localChanged === "boolean") result.localChanged = imported.localChanged;
+  if (typeof imported.diverged === "boolean") result.diverged = imported.diverged;
+  return result;
 }
 
 function requireIdentity(ctx: KernelContext): NonNullable<KernelContext["identity"]> {

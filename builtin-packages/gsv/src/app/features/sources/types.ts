@@ -25,6 +25,7 @@ export type SourceRefs = {
   activeRef: string;
   heads: Record<string, string>;
   tags: Record<string, string>;
+  remotes?: Record<string, string>;
 };
 
 export type SourceTreeEntry = {

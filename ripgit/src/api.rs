@@ -23,6 +23,7 @@ pub fn handle_refs(sql: &SqlStorage) -> Result<Response> {
 
     let mut heads = serde_json::Map::new();
     let mut tags = serde_json::Map::new();
+    let mut remotes = serde_json::Map::new();
 
     for r in &rows {
         let value = serde_json::Value::String(r.commit_hash.clone());
@@ -30,12 +31,15 @@ pub fn handle_refs(sql: &SqlStorage) -> Result<Response> {
             heads.insert(branch.to_string(), value);
         } else if let Some(tag) = r.name.strip_prefix("refs/tags/") {
             tags.insert(tag.to_string(), value);
+        } else if let Some(remote) = r.name.strip_prefix("refs/remotes/") {
+            remotes.insert(remote.to_string(), value);
         }
     }
 
     Response::from_json(&serde_json::json!({
         "heads": heads,
         "tags": tags,
+        "remotes": remotes,
     }))
 }
 

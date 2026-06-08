@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
 import type { GsvBackend } from "../../backend-contract";
 import { errorToText } from "../../utils/format";
+import { describeUpstreamPull } from "../../utils/upstream";
 import { parentPath, visibleRepos } from "./sources-domain";
 import type {
   CreateSourceRepoResult,
@@ -342,8 +343,14 @@ export function useSources(backend: GsvBackend): SourcesRuntime {
   async function pullRepo(): Promise<void> {
     if (!repo) return;
     await runMutation(`source:pull:${repo}`, async () => {
-      await backend.pullSourceRepo({ repo, ref: ref || undefined });
-      setNotice(`Pulled upstream changes for ${repo}.`);
+      const result = await backend.pullSourceRepo({ repo, ref: ref || undefined });
+      setNotice(describeUpstreamPull(result, {
+        repo,
+        ref: ref || undefined,
+        success: `Pulled upstream changes for ${repo}.`,
+        unchanged: `No upstream changes for ${repo}.`,
+        divergedAction: "Merge upstream before using the local branch.",
+      }));
       await refresh();
     });
   }

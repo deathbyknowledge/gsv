@@ -63,6 +63,11 @@ struct ImportResponse<'a> {
     changed: bool,
     remote_url: &'a str,
     remote_ref: &'a str,
+    tracking_ref: &'a str,
+    upstream_head: &'a str,
+    upstream_changed: bool,
+    local_changed: bool,
+    diverged: bool,
 }
 
 pub fn check_internal_access(_req: &Request, _env: &Env) -> Option<Result<Response>> {
@@ -346,18 +351,67 @@ pub async fn handle_import(sql: &SqlStorage, req: &mut Request) -> Result<Respon
         .or_else(|| store::get_config(sql, "upstream.remote_ref").ok().flatten())
         .unwrap_or_else(|| "main".to_string());
     let ref_name = workspace_ref_name(import.default_branch.as_deref().unwrap_or("main"));
+    let tracking_ref = upstream_tracking_ref_name(&remote_ref)?;
+    let local_head_before = api::resolve_ref(sql, &ref_name)?;
+    let previous_upstream_head = api::resolve_ref(sql, &tracking_ref)?;
     store::set_config(sql, "upstream.remote_url", &remote_url)?;
     store::set_config(sql, "upstream.remote_ref", &remote_ref)?;
+    store::set_config(sql, "upstream.tracking_ref", &tracking_ref)?;
     store::set_config(sql, "upstream.source", "git-upload-pack")?;
 
-    let fetched = git::fetch_remote_ref(sql, &remote_url, &remote_ref, &ref_name).await?;
+    let fetched = git::fetch_remote_ref_with_options(
+        sql,
+        &remote_url,
+        &remote_ref,
+        &tracking_ref,
+        git::RemoteFetchOptions {
+            update_default_branch: false,
+            rebuild_fts: false,
+        },
+    )
+    .await?;
+
+    let mut local_head = local_head_before.clone();
+    let mut local_changed = false;
+    let mut diverged = false;
+    let can_update_local = match local_head_before.as_deref() {
+        None => true,
+        Some(head) if head == fetched.head.as_str() => false,
+        Some(head) if previous_upstream_head.as_deref() == Some(head) => true,
+        Some(head) => is_ancestor(sql, head, &fetched.head)?,
+    };
+
+    if can_update_local && local_head_before.as_deref() != Some(fetched.head.as_str()) {
+        store::update_ref(
+            sql,
+            &ref_name,
+            local_head_before.as_deref().unwrap_or(store::ZERO_HASH),
+            &fetched.head,
+        )?;
+        store::set_config(sql, "default_branch", &ref_name)?;
+        store::rebuild_fts_index(sql, &fetched.head)?;
+        local_head = Some(fetched.head.clone());
+        local_changed = true;
+    } else if local_head_before
+        .as_deref()
+        .is_some_and(|head| head != fetched.head.as_str())
+    {
+        diverged = true;
+    } else if store::get_config(sql, "default_branch")?.is_none() {
+        store::set_config(sql, "default_branch", &ref_name)?;
+    }
 
     let response = ImportResponse {
         ok: true,
-        head: Some(fetched.head.as_str()),
-        changed: fetched.changed,
+        head: local_head.as_deref(),
+        changed: local_changed,
         remote_url: remote_url.as_str(),
         remote_ref: remote_ref.as_str(),
+        tracking_ref: tracking_ref.as_str(),
+        upstream_head: fetched.head.as_str(),
+        upstream_changed: fetched.changed,
+        local_changed,
+        diverged,
     };
     Response::from_json(&response)
 }
@@ -395,6 +449,63 @@ fn workspace_ref_name(default_branch: &str) -> String {
     } else {
         format!("refs/heads/{}", default_branch)
     }
+}
+
+fn upstream_tracking_ref_name(remote_ref: &str) -> Result<String> {
+    let normalized = remote_ref.trim();
+    if normalized.is_empty() || normalized.contains("..") || normalized.contains('\0') {
+        return Err(Error::RustError(format!(
+            "invalid remote ref: {}",
+            remote_ref
+        )));
+    }
+
+    let tracking_name = normalized
+        .strip_prefix("refs/heads/")
+        .or_else(|| normalized.strip_prefix("refs/remotes/"))
+        .or_else(|| normalized.strip_prefix("refs/"))
+        .unwrap_or(normalized)
+        .trim_start_matches('/');
+    if tracking_name.is_empty() {
+        return Err(Error::RustError(format!(
+            "invalid remote ref: {}",
+            remote_ref
+        )));
+    }
+    Ok(format!("refs/remotes/upstream/{}", tracking_name))
+}
+
+fn is_ancestor(sql: &SqlStorage, ancestor_hash: &str, descendant_hash: &str) -> Result<bool> {
+    if ancestor_hash == descendant_hash {
+        return Ok(true);
+    }
+
+    #[derive(serde::Deserialize)]
+    struct ParentRow {
+        parent_hash: String,
+    }
+
+    let mut stack = vec![descendant_hash.to_string()];
+    let mut seen = HashSet::new();
+    while let Some(hash) = stack.pop() {
+        if !seen.insert(hash.clone()) {
+            continue;
+        }
+        let parents: Vec<ParentRow> = sql
+            .exec(
+                "SELECT parent_hash FROM commit_parents WHERE commit_hash = ?",
+                vec![SqlStorageValue::from(hash)],
+            )?
+            .to_array()?;
+        for parent in parents {
+            if parent.parent_hash == ancestor_hash {
+                return Ok(true);
+            }
+            stack.push(parent.parent_hash);
+        }
+    }
+
+    Ok(false)
 }
 
 fn now_secs() -> i64 {
@@ -673,4 +784,35 @@ fn serialize_commit_content(
     content.push('\n');
     content.push_str(message);
     content.into_bytes()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::upstream_tracking_ref_name;
+
+    #[test]
+    fn upstream_tracking_ref_uses_branch_tail() {
+        assert_eq!(
+            upstream_tracking_ref_name("main").unwrap(),
+            "refs/remotes/upstream/main",
+        );
+        assert_eq!(
+            upstream_tracking_ref_name("refs/heads/feature/bootstrap").unwrap(),
+            "refs/remotes/upstream/feature/bootstrap",
+        );
+    }
+
+    #[test]
+    fn upstream_tracking_ref_names_non_head_refs_under_upstream() {
+        assert_eq!(
+            upstream_tracking_ref_name("refs/tags/v0.1.6").unwrap(),
+            "refs/remotes/upstream/tags/v0.1.6",
+        );
+    }
+
+    #[test]
+    fn upstream_tracking_ref_rejects_unsafe_refs() {
+        assert!(upstream_tracking_ref_name("../main").is_err());
+        assert!(upstream_tracking_ref_name("").is_err());
+    }
 }

@@ -728,7 +728,7 @@ export async function pullPackage(kernel: KernelClientLike, args: PackageIdArgs)
 export async function pullPackageSource(
   kernel: KernelClientLike,
   args: PullPackageSourceArgs,
-): Promise<{ ok: boolean }> {
+): Promise<{ ok: boolean; imports: unknown[] }> {
   const repo = asString(args?.repo);
   if (!repo) {
     throw new Error("repo is required");
@@ -739,10 +739,11 @@ export async function pullPackageSource(
     throw new Error(`Unknown source: ${repo}`);
   }
   const refs = unique(sourcePackages.map((pkg) => pkg.source.ref));
+  const imports: unknown[] = [];
   for (const ref of refs) {
-    await kernel.request("repo.import", { repo, ref, remoteRef: ref });
+    imports.push(await kernel.request("repo.import", { repo, ref, remoteRef: ref }));
   }
-  return { ok: true };
+  return { ok: true, imports };
 }
 
 export async function setPackagePublic(kernel: KernelClientLike, args: SetPackagePublicArgs): Promise<unknown> {

@@ -223,6 +223,44 @@ describe("repo syscalls", () => {
     expect(body.remoteRef).toBeUndefined();
   });
 
+  it("surfaces upstream tracking details from ripgit imports", async () => {
+    const fetcher = makeFetcher((url) => {
+      expect(url.pathname).toBe("/hyperspace/repos/alice/demo/import");
+      return Response.json({
+        ok: true,
+        head: "local123",
+        changed: false,
+        remote_url: "https://github.com/example/demo",
+        remote_ref: "main",
+        tracking_ref: "refs/remotes/upstream/main",
+        upstream_head: "upstream456",
+        upstream_changed: true,
+        local_changed: false,
+        diverged: true,
+      });
+    });
+    const ctx = makeContext(fetcher);
+
+    const result = await handleRepoImport({
+      repo: "alice/demo",
+      ref: "main",
+    }, ctx);
+
+    expect(result).toMatchObject({
+      repo: "alice/demo",
+      ref: "main",
+      head: "local123",
+      changed: false,
+      remoteUrl: "https://github.com/example/demo",
+      remoteRef: "main",
+      trackingRef: "refs/remotes/upstream/main",
+      upstreamHead: "upstream456",
+      upstreamChanged: true,
+      localChanged: false,
+      diverged: true,
+    });
+  });
+
   it("denies private repos owned by another user", async () => {
     const ctx = makeContext(makeFetcher(() => {
       throw new Error("ripgit should not be called");

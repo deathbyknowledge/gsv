@@ -170,6 +170,12 @@ git push <remote> HEAD:main
 gsv packages sync
 ```
 
+To bring upstream GSV changes into a deployed `root/gsv`, use the GSV console's
+source/package **Pull upstream** action or call `repo.import` for `root/gsv`.
+The pull records `refs/remotes/upstream/<ref>` and fast-forwards the local branch
+only when it is safe; if local commits diverged, merge upstream first and then
+sync packages.
+
 If you changed the package runtime, SDK, assembler, or Gateway code, redeploy the
 infrastructure first:
 

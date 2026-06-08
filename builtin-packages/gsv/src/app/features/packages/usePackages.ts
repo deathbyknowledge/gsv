@@ -6,6 +6,7 @@ import {
   readPackagesViewFromLocation,
 } from "../../navigation/route-state";
 import { errorToText } from "../../utils/format";
+import { describeUpstreamPull } from "../../utils/upstream";
 import { filteredPackages } from "./packages-domain";
 import type {
   AddCatalogRemoteArgs,
@@ -155,16 +156,26 @@ export function usePackages(backend: GsvBackend): PackagesRuntime {
 
   async function pullPackage(packageId: string): Promise<void> {
     await runMutation(`package:pull:${packageId}`, async () => {
-      await backend.pullPackage({ packageId });
-      setNotice("Pulled upstream changes. Rebuild the package to install them.");
+      const target = state?.packages.find((pkg) => pkg.packageId === packageId) ?? null;
+      const result = await backend.pullPackage({ packageId });
+      setNotice(describeUpstreamPull(result, {
+        repo: target?.source.repo ?? "source",
+        ref: target?.source.ref,
+        success: "Pulled upstream changes. Rebuild the package to install them.",
+        unchanged: "Source already up to date.",
+      }));
       await refresh(packageId);
     });
   }
 
   async function pullPackageSource(repo: string): Promise<void> {
     await runMutation(`source:pull:${repo}`, async () => {
-      await backend.pullPackageSource({ repo });
-      setNotice(`Pulled upstream changes for ${repo}. Rebuild packages to install them.`);
+      const result = await backend.pullPackageSource({ repo });
+      setNotice(describeUpstreamPull(result, {
+        repo,
+        success: `Pulled upstream changes for ${repo}. Rebuild packages to install them.`,
+        unchanged: `No upstream changes for ${repo}.`,
+      }));
       await refresh();
     });
   }

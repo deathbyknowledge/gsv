@@ -242,6 +242,11 @@ export async function handlePkgAdd(
     upstream.remoteUrl,
     upstream.ref,
   );
+  if (imported.diverged) {
+    throw new Error(
+      `Package source ${repoSlug(repo)}#${ref} has local commits; fetched upstream into ${imported.trackingRef ?? "the upstream tracking ref"} but did not move the local branch.`,
+    );
+  }
 
   const resolved = await resolvePackageFromRipgitSource(ctx.env, {
     repo: `${repo.owner}/${repo.repo}`,

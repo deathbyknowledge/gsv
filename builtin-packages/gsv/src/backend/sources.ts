@@ -174,7 +174,7 @@ export async function diffSourceRepo(
 
 export async function pullSourceRepo(kernel: KernelClientLike, args: PullSourceRepoArgs): Promise<unknown> {
   const repo = asString(args?.repo);
-  const ref = asString(args?.ref) || "main";
+  const ref = normalizePullRef(asString(args?.ref) || "main");
   if (!repo) throw new Error("repo is required");
   return kernel.request("repo.import", {
     repo,
@@ -218,11 +218,13 @@ async function loadSourceRefs(kernel: KernelClientLike, repo: string, requestedR
   const result = asRecord(await kernel.request("repo.refs", { repo }));
   const heads = asStringRecord(result?.heads);
   const tags = asStringRecord(result?.tags);
+  const remotes = asStringRecord(result?.remotes);
   return {
     repo: asString(result?.repo) || repo,
-    activeRef: chooseRef(requestedRef, heads, tags),
+    activeRef: chooseRef(requestedRef, heads, tags, remotes),
     heads,
     tags,
+    ...(Object.keys(remotes).length > 0 ? { remotes } : {}),
   };
 }
 
@@ -351,15 +353,31 @@ function normalizeDiffLineTag(value: unknown): "context" | "add" | "delete" | "b
   return value === "add" || value === "delete" || value === "binary" ? value : "context";
 }
 
-function chooseRef(requestedRef: string, heads: Record<string, string>, tags: Record<string, string>): string {
+function chooseRef(
+  requestedRef: string,
+  heads: Record<string, string>,
+  tags: Record<string, string>,
+  remotes: Record<string, string>,
+): string {
+  const requestedRemote = requestedRef.startsWith("refs/remotes/")
+    ? requestedRef.slice("refs/remotes/".length)
+    : requestedRef;
   if (requestedRef && (heads[requestedRef] || tags[requestedRef])) {
     return requestedRef;
   }
+  if (requestedRef && remotes[requestedRemote]) return `refs/remotes/${requestedRemote}`;
   if (heads.main) return "main";
   const [firstHead] = Object.keys(heads).sort((left, right) => left.localeCompare(right));
   if (firstHead) return firstHead;
   const [firstTag] = Object.keys(tags).sort((left, right) => left.localeCompare(right));
   return firstTag ?? "main";
+}
+
+function normalizePullRef(ref: string): string {
+  if (ref.startsWith("refs/remotes/")) {
+    throw new Error("Choose a local branch or tag before pulling upstream.");
+  }
+  return ref;
 }
 
 function normalizeRepoPath(path: string | undefined): string {

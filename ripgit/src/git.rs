@@ -346,11 +346,27 @@ pub struct RemoteFetchResult {
     pub changed: bool,
 }
 
-pub async fn fetch_remote_ref(
+#[derive(Clone, Copy)]
+pub struct RemoteFetchOptions {
+    pub update_default_branch: bool,
+    pub rebuild_fts: bool,
+}
+
+impl Default for RemoteFetchOptions {
+    fn default() -> Self {
+        Self {
+            update_default_branch: true,
+            rebuild_fts: true,
+        }
+    }
+}
+
+pub async fn fetch_remote_ref_with_options(
     sql: &SqlStorage,
     remote_url: &str,
     remote_ref: &str,
     local_ref: &str,
+    options: RemoteFetchOptions,
 ) -> Result<RemoteFetchResult> {
     let remote = normalize_remote_base_url(remote_url)?;
     let advertised = fetch_advertised_refs(&remote).await?;
@@ -387,8 +403,12 @@ pub async fn fetch_remote_ref(
         current_head.as_deref().unwrap_or(store::ZERO_HASH),
         &wanted_hash,
     )?;
-    store::set_config(sql, "default_branch", local_ref)?;
-    store::rebuild_fts_index(sql, &wanted_hash)?;
+    if options.update_default_branch {
+        store::set_config(sql, "default_branch", local_ref)?;
+    }
+    if options.rebuild_fts {
+        store::rebuild_fts_index(sql, &wanted_hash)?;
+    }
 
     Ok(RemoteFetchResult {
         head: wanted_hash,

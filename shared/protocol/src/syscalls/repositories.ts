@@ -38,6 +38,7 @@ export type RepoRefsResult = {
   repo: string;
   heads: Record<string, string>;
   tags: Record<string, string>;
+  remotes?: Record<string, string>;
 };
 
 export type RepoTreeEntry = {
@@ -231,4 +232,9 @@ export type RepoImportResult = {
   changed: boolean;
   remoteUrl: string;
   remoteRef: string;
+  trackingRef?: string;
+  upstreamHead?: string;
+  upstreamChanged?: boolean;
+  localChanged?: boolean;
+  diverged?: boolean;
 };
