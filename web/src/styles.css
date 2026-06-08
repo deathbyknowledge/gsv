@@ -2249,14 +2249,25 @@ button:disabled {
   top: 0;
 }
 
+.onboarding-custom-options .onboarding-help {
+  right: -58px;
+  top: 18px;
+}
+
 .onboarding-help {
   position: absolute;
   right: -58px;
   top: 76px;
   z-index: 3;
+  width: 34px;
+  height: 34px;
 }
 
-.onboarding-help summary {
+.onboarding-help:focus-visible {
+  outline: none;
+}
+
+.onboarding-help-trigger {
   display: grid;
   place-items: center;
   width: 34px;
@@ -2265,15 +2276,14 @@ button:disabled {
   background: #172234;
   color: #fff;
   font-weight: 800;
-  cursor: pointer;
-  list-style: none;
+  cursor: help;
 }
 
-.onboarding-help summary::-webkit-details-marker {
-  display: none;
+.onboarding-help:focus-visible .onboarding-help-trigger {
+  box-shadow: 0 0 0 3px rgba(74, 123, 181, 0.24);
 }
 
-.onboarding-help div {
+.onboarding-help-popover {
   position: absolute;
   right: 44px;
   top: -12px;
@@ -2284,6 +2294,23 @@ button:disabled {
   background: rgba(255, 255, 255, 0.92);
   box-shadow: 0 18px 36px rgba(12, 32, 58, 0.14);
   color: #24364d;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(4px);
+  pointer-events: none;
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease,
+    visibility 120ms ease;
+}
+
+.onboarding-help:hover .onboarding-help-popover,
+.onboarding-help:focus-visible .onboarding-help-popover,
+.onboarding-help:focus-within .onboarding-help-popover {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+  pointer-events: auto;
 }
 
 .onboarding-help strong {
@@ -2736,10 +2763,24 @@ button:disabled {
 }
 
 .session-token-head {
+  position: relative;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+}
+
+.session-token-head .onboarding-help {
+  position: relative;
+  right: auto;
+  top: auto;
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.session-token-head .onboarding-help-popover {
+  right: 44px;
+  top: -12px;
 }
 
 .session-token-value {
@@ -5808,13 +5849,24 @@ button:disabled {
   }
 
   .onboarding-help {
-    position: static;
+    position: relative;
+    right: auto;
+    top: auto;
+    margin-top: 10px;
   }
 
-  .onboarding-help div {
-    position: static;
-    width: auto;
-    margin-top: 10px;
+  .onboarding-help-popover {
+    left: 0;
+    right: auto;
+    top: 42px;
+    width: min(300px, calc(100vw - 56px));
+    margin-top: 0;
+  }
+
+  .session-token-head .onboarding-help-popover {
+    left: auto;
+    right: 0;
+    top: 42px;
   }
 
   .onboarding-guide-panel {

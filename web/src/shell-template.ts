@@ -124,13 +124,13 @@ export function renderDesktopShell(): string {
                             <input data-setup-root-password-confirm type="password" autocomplete="new-password" />
                           </label>
                         </div>
-                        <details class="onboarding-help">
-                          <summary aria-label="Explain admin security">?</summary>
-                          <div>
+                        <div class="onboarding-help" tabindex="0" aria-label="Explain admin security" aria-describedby="setup-help-admin">
+                          <span class="onboarding-help-trigger" aria-hidden="true">?</span>
+                          <div id="setup-help-admin" class="onboarding-help-popover" role="tooltip">
                             <strong>Why?</strong>
                             <p>A separate admin password adds a second check for sensitive system actions.</p>
                           </div>
-                        </details>
+                        </div>
                       </div>
 
                       <div class="onboarding-preference-group">
@@ -150,6 +150,13 @@ export function renderDesktopShell(): string {
                         <div class="onboarding-section-head">
                           <h3>AI defaults</h3>
                           <p>Keep the default AI path, or choose the AI service and model from the start.</p>
+                        </div>
+                        <div class="onboarding-help" tabindex="0" aria-label="Explain AI defaults" aria-describedby="setup-help-ai">
+                          <span class="onboarding-help-trigger" aria-hidden="true">?</span>
+                          <div id="setup-help-ai" class="onboarding-help-popover" role="tooltip">
+                            <strong>What does this change?</strong>
+                            <p>These settings choose the default AI service GSV uses after setup. You can change them later from settings.</p>
+                          </div>
                         </div>
                         <div class="session-field-grid">
                           <label class="session-toggle">
@@ -176,6 +183,13 @@ export function renderDesktopShell(): string {
                           <h3>System files</h3>
                           <p>Use the official system files, or choose a repository and version you control.</p>
                         </div>
+                        <div class="onboarding-help" tabindex="0" aria-label="Explain system files" aria-describedby="setup-help-source">
+                          <span class="onboarding-help-trigger" aria-hidden="true">?</span>
+                          <div id="setup-help-source" class="onboarding-help-popover" role="tooltip">
+                            <strong>For advanced setup</strong>
+                            <p>System files are the built-in apps and settings GSV starts with. Advanced users can point this at a Git repository or remote URL; Version can be a branch, tag, or commit.</p>
+                          </div>
+                        </div>
                         <div class="session-field-grid">
                           <label class="session-toggle">
                             <span>Use custom system files</span>
@@ -196,6 +210,13 @@ export function renderDesktopShell(): string {
                         <div class="onboarding-section-head">
                           <h3>Device setup</h3>
                           <p>Create a setup key now if you want another machine to connect immediately.</p>
+                        </div>
+                        <div class="onboarding-help" tabindex="0" aria-label="Explain device setup" aria-describedby="setup-help-node">
+                          <span class="onboarding-help-trigger" aria-hidden="true">?</span>
+                          <div id="setup-help-node" class="onboarding-help-popover" role="tooltip">
+                            <strong>Setup key</strong>
+                            <p>A setup key lets another machine connect to this workspace. Only create one now if you are ready to connect a device.</p>
+                          </div>
                         </div>
                         <div class="session-field-grid">
                           <label class="session-toggle">
@@ -432,6 +453,13 @@ export function renderDesktopShell(): string {
                         <div>
                           <p class="session-kicker">Command line tools</p>
                           <h2 data-setup-result-cli-label>Tools for this machine</h2>
+                        </div>
+                        <div class="onboarding-help" tabindex="0" aria-label="Explain command line tools" aria-describedby="setup-help-cli">
+                          <span class="onboarding-help-trigger" aria-hidden="true">?</span>
+                          <div id="setup-help-cli" class="onboarding-help-popover" role="tooltip">
+                            <strong>For terminal use</strong>
+                            <p>These commands install GSV tools on this machine so you can manage or connect to the workspace from a terminal.</p>
+                          </div>
                         </div>
                         <button type="button" class="runtime-btn session-btn-secondary" data-setup-copy-cli>Copy command</button>
                       </div>
