@@ -73,7 +73,7 @@ export class GatewayClient {
       maxProtocol: 1,
       client: {
         id: this.options.accountId,
-        version: "0.2.3",
+        version: "0.2.4",
         platform: "cloudflare-workers",
         mode: "channel",
         channel: "whatsapp",
