@@ -1,6 +1,10 @@
+import type { AssistantMessage } from "@earendil-works/pi-ai";
+import { isContextOverflow } from "@earendil-works/pi-ai";
+
 export type ProviderErrorContext = {
   provider?: string;
   model?: string;
+  contextWindowTokens?: number | null;
 };
 
 export const NON_STANDARD_PROVIDER_ERROR =
@@ -114,6 +118,99 @@ export function formatProviderErrorMessage(
   }
 
   return normalized;
+}
+
+export function isProviderContextOverflow(
+  message: AssistantMessage,
+  contextWindowTokens?: number | null,
+): boolean {
+  if (requiresUsageForOverflowDetection(message) && !hasAssistantUsage(message)) {
+    return false;
+  }
+  return isContextOverflow(message, normalizeContextWindowTokens(contextWindowTokens));
+}
+
+export function isProviderContextOverflowErrorMessage(
+  message: string,
+  context?: ProviderErrorContext,
+): boolean {
+  return isProviderContextOverflow(
+    buildProviderErrorAssistantMessage(message, context),
+    context?.contextWindowTokens,
+  );
+}
+
+export function formatProviderContextOverflowMessage(
+  providerMessage: string | undefined,
+  context?: ProviderErrorContext,
+): string {
+  const source = formatProviderModelLabel(context);
+  const lines = [
+    source
+      ? `Context limit reached for ${source}.`
+      : "Context limit reached at the AI provider.",
+    "The provider reported that this request exceeds the model context window.",
+    "Compact or reset the conversation, remove attachments, or switch to a model with a larger context window.",
+  ];
+  const normalized = providerMessage
+    ? formatProviderErrorMessage(providerMessage, context)
+    : "";
+  if (normalized) {
+    lines.push("", `Provider message: ${normalized}`);
+  }
+  return lines.join("\n");
+}
+
+function requiresUsageForOverflowDetection(message: AssistantMessage): boolean {
+  return message.stopReason === "stop" || message.stopReason === "length";
+}
+
+function hasAssistantUsage(message: AssistantMessage): boolean {
+  const usage = (message as { usage?: unknown }).usage;
+  return !!usage && typeof usage === "object";
+}
+
+function buildProviderErrorAssistantMessage(
+  errorMessage: string,
+  context: ProviderErrorContext | undefined,
+): AssistantMessage {
+  return {
+    role: "assistant",
+    content: [],
+    api: "gsv-provider-error",
+    provider: context?.provider ?? "unknown",
+    model: context?.model ?? "unknown",
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        total: 0,
+      },
+    },
+    stopReason: "error",
+    errorMessage,
+    timestamp: Date.now(),
+  };
+}
+
+function normalizeContextWindowTokens(value: number | null | undefined): number | undefined {
+  return typeof value === "number" && value > 0 ? value : undefined;
+}
+
+function formatProviderModelLabel(context: ProviderErrorContext | undefined): string {
+  const provider = context?.provider?.trim();
+  const model = context?.model?.trim();
+  if (provider && model) {
+    return `${provider}/${model}`;
+  }
+  return provider || model || "";
 }
 
 function normalizeErrorText(message: string): string {

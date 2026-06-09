@@ -101,6 +101,9 @@ import { createGenerationService } from "../inference/service";
 import {
   errorMessageFromUnknown,
   formatProviderErrorMessage,
+  formatProviderContextOverflowMessage,
+  isProviderContextOverflow,
+  isProviderContextOverflowErrorMessage,
 } from "../inference/errors";
 import {
   ProcessStore,
@@ -213,6 +216,7 @@ const MAX_PROCESS_MEDIA_READ_BYTES = 25 * 1024 * 1024;
 const CODE_MODE_NESTED_SYSCALL_TIMEOUT_MS = 55_000;
 const CODE_MODE_APPROVAL_TIMEOUT_MS = 55_000;
 const COMPACTION_SUMMARY_WINDOW_CHARS = 24_000;
+const CONTEXT_PROVIDER_OVERFLOW_REASON = "context.provider_overflow";
 
 function normalizeOptionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0
@@ -2501,7 +2505,21 @@ export class Process extends Host<Env> {
       if (await this.handleRunStopped(runId)) {
         return;
       }
-      const errorMsg = e instanceof Error ? e.message : String(e);
+      const errorMsg = errorMessageFromUnknown(e);
+      if (isProviderContextOverflowErrorMessage(errorMsg, {
+        provider: run.config!.provider,
+        model: run.config!.model,
+        contextWindowTokens: run.config!.contextWindowTokens,
+      })) {
+        console.error(`[Process] LLM context overflow:`, e);
+        await this.finishProviderContextOverflowRun(
+          runId,
+          conversationId,
+          run.config!,
+          errorMsg,
+        );
+        return;
+      }
       const displayError = formatGenerationFailure(errorMsg, {
         provider: run.config?.provider,
         model: run.config?.model,
@@ -2527,6 +2545,21 @@ export class Process extends Host<Env> {
     }
 
     if (!response) {
+      return;
+    }
+
+    if (isProviderContextOverflow(response, run.config!.contextWindowTokens)) {
+      await this.updateContextState(runId, conversationId, run.config!, context, response.usage);
+      if (await this.handleRunStopped(runId)) {
+        return;
+      }
+      const errorMsg = response.errorMessage ?? describeAssistantResponseFailure(response) ?? undefined;
+      await this.finishProviderContextOverflowRun(
+        runId,
+        conversationId,
+        run.config!,
+        errorMsg,
+      );
       return;
     }
 
@@ -2676,6 +2709,34 @@ export class Process extends Host<Env> {
       await this.emitRunFinished(run, options);
     }
     await this.promoteNextQueuedRun();
+  }
+
+  private async finishProviderContextOverflowRun(
+    runId: string,
+    conversationId: string,
+    config: AiConfigResult,
+    providerMessage?: string,
+  ): Promise<void> {
+    const message = formatProviderContextOverflowMessage(providerMessage, {
+      provider: config.provider,
+      model: config.model,
+    });
+    this.store.appendMessage("system", message, { conversationId, runId });
+    await this.emitProcChanged(["messages"], {
+      conversationId,
+      runId,
+      role: "system",
+      content: message,
+    });
+    if (await this.handleRunStopped(runId)) {
+      return;
+    }
+    await this.finishRun({
+      reason: CONTEXT_PROVIDER_OVERFLOW_REASON,
+      status: "error",
+      text: null,
+      error: message,
+    });
   }
 
   private async applyConversationContextPolicy(
