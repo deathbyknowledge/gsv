@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   errorMessageFromUnknown,
   formatProviderErrorMessage,
+  NON_STANDARD_PROVIDER_ERROR,
 } from "./errors";
 
 describe("formatProviderErrorMessage", () => {
@@ -41,5 +42,39 @@ describe("formatProviderErrorMessage", () => {
 describe("errorMessageFromUnknown", () => {
   it("extracts Error messages", () => {
     expect(errorMessageFromUnknown(new Error("provider failed"))).toBe("provider failed");
+  });
+
+  it("extracts nested provider error messages", () => {
+    expect(errorMessageFromUnknown({
+      error: {
+        message: "insufficient funds",
+      },
+    })).toBe("insufficient funds");
+  });
+
+  it("extracts provider detail fields", () => {
+    expect(errorMessageFromUnknown({
+      detail: "quota exceeded",
+    })).toBe("quota exceeded");
+  });
+
+  it("does not expose raw JSON for unknown structured errors", () => {
+    expect(errorMessageFromUnknown({
+      status: 402,
+      code: "balance_low",
+    })).toBe(NON_STANDARD_PROVIDER_ERROR);
+  });
+
+  it("returns a generic message for values JSON.stringify cannot render as text", () => {
+    expect(errorMessageFromUnknown(undefined)).toBe(NON_STANDARD_PROVIDER_ERROR);
+    expect(errorMessageFromUnknown(Symbol("provider"))).toBe(NON_STANDARD_PROVIDER_ERROR);
+    expect(errorMessageFromUnknown(() => "provider failed")).toBe(NON_STANDARD_PROVIDER_ERROR);
+  });
+
+  it("handles cyclic objects without exposing raw JSON", () => {
+    const error: { self?: unknown } = {};
+    error.self = error;
+
+    expect(errorMessageFromUnknown(error)).toBe(NON_STANDARD_PROVIDER_ERROR);
   });
 });

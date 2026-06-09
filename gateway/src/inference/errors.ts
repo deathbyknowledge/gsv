@@ -3,23 +3,69 @@ export type ProviderErrorContext = {
   model?: string;
 };
 
+export const NON_STANDARD_PROVIDER_ERROR =
+  "Provider returned a non-standard error response.";
+
 const BILLING_ERROR_PATTERN =
   /\b(?:insufficient\s+(?:funds|credits|balance)|out\s+of\s+(?:credits?|quota)|no\s+(?:credits?|quota)|billing|payment|balance|credits?|quota\s+exceeded|exceeded\s+quota)\b/i;
 const RATE_LIMIT_ERROR_PATTERN =
   /\b(?:rate\s*limit(?:ed)?|too\s+many\s+requests|http\s*429|429)\b/i;
 
 export function errorMessageFromUnknown(error: unknown): string {
+  return extractErrorText(error, new Set()) ?? NON_STANDARD_PROVIDER_ERROR;
+}
+
+function extractErrorText(error: unknown, seen: Set<object>): string | null {
   if (error instanceof Error) {
-    return error.message;
+    return normalizeOptionalErrorText(error.message) ??
+      extractErrorText((error as { cause?: unknown }).cause, seen);
   }
   if (typeof error === "string") {
-    return error;
+    return normalizeOptionalErrorText(error);
   }
-  try {
-    return JSON.stringify(error);
-  } catch {
-    return String(error);
+  if (!error || typeof error !== "object") {
+    return null;
   }
+
+  if (seen.has(error)) {
+    return null;
+  }
+  seen.add(error);
+
+  const record = error as Record<string, unknown>;
+  for (const field of ["message", "detail", "error_description", "errorDescription"]) {
+    const text = normalizeOptionalErrorText(record[field]);
+    if (text) {
+      return text;
+    }
+  }
+
+  const nestedError = record.error;
+  if (typeof nestedError === "string") {
+    const text = normalizeOptionalErrorText(nestedError);
+    if (text) {
+      return text;
+    }
+  }
+  const nested = extractErrorText(nestedError, seen) ??
+    extractErrorText(record.cause, seen) ??
+    extractErrorText(record.response, seen) ??
+    extractErrorText(record.data, seen);
+  if (nested) {
+    return nested;
+  }
+
+  const errors = record.errors;
+  if (Array.isArray(errors)) {
+    for (const item of errors) {
+      const text = extractErrorText(item, seen);
+      if (text) {
+        return text;
+      }
+    }
+  }
+
+  return null;
 }
 
 export function formatProviderErrorMessage(
@@ -58,6 +104,12 @@ export function formatProviderErrorMessage(
 
 function normalizeErrorText(message: string): string {
   return message.trim().replace(/\s+/g, " ");
+}
+
+function normalizeOptionalErrorText(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : null;
 }
 
 function formatProviderSource(context: ProviderErrorContext | undefined): string {
