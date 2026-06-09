@@ -11,6 +11,10 @@ import { completeSimple, getModels, getProviders, streamSimple } from "@earendil
 import type { AiConfigResult } from "../syscalls/ai";
 import { completeWithWorkersAi, isWorkersAiProvider, streamWithWorkersAi } from "./workers-ai";
 import { withTimeout } from "./timeout";
+import {
+  errorMessageFromUnknown,
+  formatProviderErrorMessage,
+} from "./errors";
 
 type GenerationPurpose =
   | "chat.reply"
@@ -115,12 +119,26 @@ export function createGenerationService(): GenerationService {
     generate,
     stream,
     async generateText(request: GenerateRequest): Promise<string> {
-      const response = await generate(request);
+      let response: AssistantMessage;
+      try {
+        response = await generate(request);
+      } catch (error) {
+        const message = errorMessageFromUnknown(error);
+        const formatted = formatProviderErrorMessage(message, {
+          provider: request.config.provider,
+          model: request.config.model,
+        });
+        if (!formatted || formatted === message) {
+          throw error;
+        }
+        throw new Error(formatted);
+      }
+
       const text = extractGeneratedText(response);
       if (text) {
         return text;
       }
-      throw new Error(`Generation for ${request.purpose} returned no text`);
+      throw new Error(describeGeneratedTextFailure(request, response));
     },
   };
 }
@@ -149,6 +167,25 @@ export function extractGeneratedText(response: AssistantMessage): string {
     .map((block) => block.thinking)
     .join("")
     .trim();
+}
+
+export function describeGeneratedTextFailure(
+  request: {
+    purpose: string;
+    config: Pick<AiConfigResult, "provider" | "model">;
+  },
+  response: AssistantMessage,
+): string {
+  if (
+    (response.stopReason === "error" || response.stopReason === "aborted") &&
+    response.errorMessage
+  ) {
+    return formatProviderErrorMessage(response.errorMessage, {
+      provider: request.config.provider,
+      model: request.config.model,
+    });
+  }
+  return `Generation for ${request.purpose} returned no text`;
 }
 
 export function resolveGenerationOptions(
