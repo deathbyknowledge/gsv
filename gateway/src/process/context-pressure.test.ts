@@ -36,6 +36,27 @@ describe("context pressure", () => {
     expect(estimateContextInputTokens(context)).toBeGreaterThan(0);
   });
 
+  it("does not count image bytes as text tokens", () => {
+    const contextWithImageData = (data: string): Context => ({
+      systemPrompt: "You are a test process.",
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "Describe this image." },
+            { type: "image", mimeType: "image/png", data },
+          ],
+          timestamp: 1,
+        },
+      ],
+    });
+
+    const smallImageEstimate = estimateContextInputTokens(contextWithImageData("AQID"));
+    const largeImageEstimate = estimateContextInputTokens(contextWithImageData("A".repeat(1_000_000)));
+
+    expect(largeImageEstimate - smallImageEstimate).toBeLessThan(10);
+  });
+
   it("reserves configured output tokens when calculating pressure", () => {
     const state = buildProcContextState({
       conversationId: "default",

@@ -3,17 +3,39 @@ import type { ProcContextPressureLevel, ProcContextState } from "../syscalls/pro
 
 const TOKEN_ESTIMATE_CHARS_PER_TOKEN = 4;
 const TOKEN_ESTIMATE_SAFETY_FACTOR = 1.15;
+const IMAGE_DATA_ESTIMATE_PLACEHOLDER = "[image omitted from estimate]";
 const WARN_PRESSURE = 0.75;
 const CRITICAL_PRESSURE = 0.9;
 
 export function estimateContextInputTokens(context: Context): number {
-  const serialized = JSON.stringify(context);
+  const serialized = JSON.stringify(context, estimateContextReplacer);
   if (!serialized || serialized.length === 0) {
     return 0;
   }
   return Math.ceil(
     (serialized.length / TOKEN_ESTIMATE_CHARS_PER_TOKEN) * TOKEN_ESTIMATE_SAFETY_FACTOR,
   );
+}
+
+function estimateContextReplacer(_: string, value: unknown): unknown {
+  if (isImageContent(value)) {
+    return {
+      type: "image",
+      mimeType: value.mimeType,
+      data: IMAGE_DATA_ESTIMATE_PLACEHOLDER,
+    };
+  }
+  return value;
+}
+
+function isImageContent(value: unknown): value is { type: "image"; data: string; mimeType: string } {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  return candidate.type === "image"
+    && typeof candidate.data === "string"
+    && typeof candidate.mimeType === "string";
 }
 
 export function buildProcContextState(input: {
