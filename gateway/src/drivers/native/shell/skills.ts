@@ -41,7 +41,12 @@ async function runSkillsCommand(
     case "list":
     case "ls": {
       const docs = await collectFilesystemSkillDocuments(fs, ctx, identity);
-      return { stdout: formatSkillsList(docs), stderr: "", exitCode: 0 };
+      return { stdout: formatSkillsList(docs, rest[0]), stderr: "", exitCode: 0 };
+    }
+    case "tree":
+    case "topics": {
+      const docs = await collectFilesystemSkillDocuments(fs, ctx, identity);
+      return { stdout: formatSkillsTree(docs, rest[0]), stderr: "", exitCode: 0 };
     }
     case "search": {
       const query = rest.join(" ").trim();
@@ -49,7 +54,7 @@ async function runSkillsCommand(
         throw new Error("Usage: skills search <query>");
       }
       const docs = await collectFilesystemSkillDocuments(fs, ctx, identity);
-      return { stdout: formatSkillsList(searchSkills(docs, query)), stderr: "", exitCode: 0 };
+      return { stdout: formatSkillRows(searchSkills(docs, query)), stderr: "", exitCode: 0 };
     }
     case "show": {
       const docs = await collectFilesystemSkillDocuments(fs, ctx, identity);
@@ -57,7 +62,7 @@ async function runSkillsCommand(
       if (!resolved.ok) {
         throw new Error(resolved.error);
       }
-      return { stdout: formatSkillDocument(resolved.doc), stderr: "", exitCode: 0 };
+      return { stdout: formatSkillDocument(resolved.doc, docs), stderr: "", exitCode: 0 };
     }
     case "files": {
       const docs = await collectFilesystemSkillDocuments(fs, ctx, identity);
@@ -93,15 +98,37 @@ async function runSkillsCommand(
   }
 }
 
-function formatSkillsList(docs: SkillDocument[]): string {
-  if (docs.length === 0) {
+function formatSkillsList(docs: SkillDocument[], parentId?: string): string {
+  return formatSkillRows(filterSkillListRows(docs, parentId));
+}
+
+function formatSkillRows(rows: SkillDocument[]): string {
+  if (rows.length === 0) {
     return "No skills available.\n";
   }
   const lines = ["NAME\tSOURCE\tWRITABLE\tDESCRIPTION"];
-  for (const doc of docs) {
-    lines.push(`${doc.id}\t${doc.source.label}\t${doc.source.writable ? "yes" : "no"}\t${doc.description}`);
+  for (const doc of rows) {
+    lines.push([
+      doc.id,
+      doc.source.label,
+      doc.source.writable ? "yes" : "no",
+      doc.description,
+    ].join("\t"));
   }
   return `${lines.join("\n")}\n`;
+}
+
+function filterSkillListRows(docs: SkillDocument[], parentId?: string): SkillDocument[] {
+  const parent = parentId?.trim();
+  if (!parent) {
+    return docs.filter((doc) => doc.depth === 0);
+  }
+  const resolved = resolveSkillDocument(docs, parent);
+  if (!resolved.ok) {
+    return [];
+  }
+  const parentKey = normalizeLookup(resolved.doc.id);
+  return docs.filter((doc) => normalizeLookup(doc.parentId ?? "") === parentKey);
 }
 
 function searchSkills(docs: SkillDocument[], query: string): SkillDocument[] {
@@ -110,18 +137,115 @@ function searchSkills(docs: SkillDocument[], query: string): SkillDocument[] {
     doc.id.toLowerCase().includes(needle)
     || doc.name.toLowerCase().includes(needle)
     || doc.description.toLowerCase().includes(needle)
+    || (doc.parentId ?? "").toLowerCase().includes(needle)
+    || doc.aliases.some((alias) => alias.toLowerCase().includes(needle))
     || doc.content.toLowerCase().includes(needle)
   );
 }
 
-function formatSkillDocument(doc: SkillDocument): string {
-  return [
+function formatSkillDocument(doc: SkillDocument, docs: SkillDocument[]): string {
+  const metadata = [
     `path: ${doc.path}`,
     `writable: ${doc.source.writable ? "yes" : "no"}`,
+    ...(doc.parentId ? [`parent: ${doc.parentId}`] : []),
+    ...(doc.aliases.length > 0 ? [`aliases: ${doc.aliases.join(", ")}`] : []),
     "",
+  ];
+  return [
+    ...metadata,
     doc.content,
+    ...childSkillSummary(doc, docs),
     "",
   ].join("\n");
+}
+
+function childSkillSummary(doc: SkillDocument, docs: SkillDocument[]): string[] {
+  const children = docs
+    .filter((candidate) => normalizeLookup(candidate.parentId ?? "") === normalizeLookup(doc.id))
+    .sort(compareSkillTreeEntries);
+  if (children.length === 0) {
+    return [];
+  }
+  return [
+    "",
+    "Nested skills:",
+    ...children.map((child) => `- ${child.id}: ${child.description || "No description."}`),
+  ];
+}
+
+function formatSkillsTree(docs: SkillDocument[], parentId?: string): string {
+  if (docs.length === 0) {
+    return "No skills available.\n";
+  }
+
+  const children = new Map<string, SkillDocument[]>();
+  const roots: SkillDocument[] = [];
+  const parent = parentId?.trim();
+  let rootDoc: SkillDocument | null = null;
+
+  if (parent) {
+    const resolved = resolveSkillDocument(docs, parent);
+    if (!resolved.ok) {
+      return `No skills available under ${parent}.\n`;
+    }
+    rootDoc = resolved.doc;
+  }
+
+  for (const doc of docs) {
+    if (doc.parentId) {
+      const parentKey = normalizeLookup(doc.parentId);
+      const bucket = children.get(parentKey) ?? [];
+      bucket.push(doc);
+      children.set(parentKey, bucket);
+    } else if (!rootDoc) {
+      roots.push(doc);
+    }
+  }
+
+  for (const bucket of children.values()) {
+    bucket.sort(compareSkillTreeEntries);
+  }
+  roots.sort(compareSkillTreeEntries);
+
+  const lines = ["GSV skill map"];
+  const visited = new Set<string>();
+  if (rootDoc) {
+    appendSkillTree(lines, rootDoc, children, visited, 0);
+  } else {
+    for (const root of roots) {
+      appendSkillTree(lines, root, children, visited, 0);
+    }
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function appendSkillTree(
+  lines: string[],
+  doc: SkillDocument,
+  children: Map<string, SkillDocument[]>,
+  visited: Set<string>,
+  depth: number,
+): void {
+  const key = normalizeLookup(doc.id);
+  if (visited.has(key)) {
+    return;
+  }
+  visited.add(key);
+
+  const indent = "  ".repeat(depth);
+  lines.push(`${indent}- ${doc.id}: ${doc.description || "No description."}`);
+
+  for (const child of children.get(key) ?? []) {
+    appendSkillTree(lines, child, children, visited, depth + 1);
+  }
+}
+
+function compareSkillTreeEntries(left: SkillDocument, right: SkillDocument): number {
+  return left.id.localeCompare(right.id);
+}
+
+function normalizeLookup(value: string): string {
+  return value.trim().toLowerCase();
 }
 
 function formatSkillFiles(doc: SkillDocument, files: string[]): string {
@@ -142,14 +266,16 @@ function skillsUsage(): string {
   return [
     "Usage: skills <subcommand> [args]",
     "",
-    "  skills list",
+    "  skills list [skill]",
+    "  skills tree [skill]",
     "  skills search <query>",
     "  skills show <skill>",
     "  skills files <skill>",
     "  skills read <skill> <file>",
     "",
-    "Skill names come from layered skills.d directories. Use `skills show`",
-    "to load the full SKILL.md and see the backing source path.",
+    "Skill names come from layered skills.d directories. `skills list`",
+    "shows top-level skills; `skills list <skill>` and `skills tree <skill>`",
+    "disclose nested skills under a parent.",
     "",
   ].join("\n");
 }

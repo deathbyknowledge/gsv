@@ -11,10 +11,12 @@ GSV assembles process context from explicit, inspectable sources:
 
 1. Profile context from `config/ai/profile/{profile}/context.d/*.md` or a user profile under `~/profiles.d/{profile}/context.d/*.md`.
 2. Home context from `~/context.d/*.md`.
-3. A compact index of available skills from layered `skills.d` directories.
+3. A compact top-level index of available skills from layered `skills.d` directories.
 4. Process context supplied by the current assignment or runtime.
 
-The skill index contains ids and descriptions only. It does not include full bodies or long source paths.
+The skill index is for progressive disclosure. It shows only top-level skills, not full bodies, nested child skills, or long source paths. Use `skills list <skill>` or `skills tree <skill>` to disclose children under a parent, then `skills show <skill>` to read the relevant page.
+
+Prompt context roots render as prompt-markup tags like `<system path="/sys/config/ai/context.d/">`, `<user path="/home/alice/context.d/">`, and `<program path="/home/agent/context.d/">`. The available skill catalog renders as `<available_skills>` containing top-level `<skill>` entries with `<name>` and `<description>`.
 
 Tool and integration metadata is not the same thing as prompt context. The outer chat tool list may show only generic tools such as Shell, Read, and CodeMode, while connected MCP servers are mounted inside CodeMode as `mcpTools` metadata and generated async functions. Do not conclude that an MCP server is unavailable just because there is no top-level tool namespace for it.
 
@@ -23,7 +25,9 @@ Tool and integration metadata is not the same thing as prompt context. The outer
 Use the native shell:
 
 ```bash
+skills tree
 skills list
+skills list <skill>
 skills search <query>
 skills show <skill>
 skills files <skill>
@@ -31,6 +35,8 @@ skills read <skill> <file>
 ```
 
 Read `skills show <skill>` before relying on a workflow. Use `skills files` and `skills read` for supporting references, templates, or examples.
+
+A parent skill should describe the system area and point to narrower nested skills under its own `skills.d/`. Concrete child skills should describe one repeatable action. Do not turn one skill into a full encyclopedia of GSV.
 
 ## Where Information Belongs
 

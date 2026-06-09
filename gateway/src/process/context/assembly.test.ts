@@ -83,7 +83,7 @@ describe("assembleSystemPrompt", () => {
     ];
 
     const prompt = await assembleSystemPrompt(makeInput(), providers);
-    expect(prompt).toBe("[one]\nfirst\n\n---\n\n[three]\nthird");
+    expect(prompt).toBe("<one>\nfirst\n</one>\n\n<three>\nthird\n</three>");
   });
 
   it("groups context files by root and omits empty roots", async () => {
@@ -149,24 +149,23 @@ describe("assembleSystemPrompt", () => {
 
     const prompt = await assembleSystemPrompt(makeInput(), providers);
     expect(prompt).toBe([
-      "[CONTEXT ROOTS]",
-      "SYSTEM read-only /sys/config/ai/context.d",
-      "PROGRAM editable /home/friday/context.d",
-      "",
-      "[SYSTEM]",
-      "[00-gsv.md]",
+      "<system path=\"/sys/config/ai/context.d/\">",
+      "<00-gsv.md>",
       "system context",
+      "</00-gsv.md>",
+      "</system>",
       "",
-      "[PROGRAM]",
-      "[00-style.md]",
+      "<program path=\"/home/friday/context.d/\">",
+      "<00-style.md>",
       "program context",
+      "</00-style.md>",
+      "</program>",
       "",
-      "---",
-      "",
-      "[available.skills]",
+      "<available_skills>",
       "skill index",
+      "</available_skills>",
     ].join("\n"));
-    expect(prompt).not.toContain("[PROCESS]");
+    expect(prompt).not.toContain("<process");
     expect(prompt).not.toContain("20-empty.md");
   });
 });
@@ -259,12 +258,13 @@ describe("createSkillIndexProvider", () => {
     const providers = resolvePromptProviders("task");
     const prompt = await assembleSystemPrompt(makeInput(), providers);
 
-    expect(prompt).toContain("[available.skills]");
-    expect(prompt).toContain("[CONTEXT ROOTS]");
-    expect(prompt).toContain("[SYSTEM]");
-    expect(prompt).not.toContain("[PROCESS]");
-    expect(prompt).toContain("Use `skills list`");
-    expect(prompt).toContain("- package-development: Build and update packages.");
+    expect(prompt).toContain("<available_skills>");
+    expect(prompt).toContain("<system path=\"/sys/config/ai/context.d/\">");
+    expect(prompt).not.toContain("<process");
+    expect(prompt).toContain("Use `skills list <skill>`");
+    expect(prompt).toContain("<skill>");
+    expect(prompt).toContain("<name>package-development</name>");
+    expect(prompt).toContain("<description>Build and update packages.</description>");
     expect(prompt).not.toContain("/src/packages/");
     expect(prompt).not.toContain("system.context:");
   });

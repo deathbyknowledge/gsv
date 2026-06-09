@@ -59,20 +59,24 @@ this order:
    by ripgit home storage with R2 fallback.
 3. **Owner context** from the owning human's `~/context.d/*.md`.
 4. **Available skills** from layered `skills.d` directories. This is a compact
-   command-oriented index only; full `SKILL.md` bodies are read explicitly with
-   `skills show <skill>`.
+   top-level index only. Full `SKILL.md` bodies and nested child workflows are
+   read explicitly with `skills list <skill>`, `skills tree <skill>`,
+   `skills search <query>`, and `skills show <skill>`.
 5. **Process context** supplied with the assignment or runtime.
 
-Each section is rendered as `[section.name]` and separated with `---`. System
-and account context can template values such as `identity.username`,
-`identity.cwd`, `devices`, and `mcpServers`. Home context is loaded lexically and bounded by
-`config/ai/max_context_bytes`.
+Context roots are rendered with prompt-markup tags such as
+`<system path="/sys/config/ai/context.d/">`, `<user path="/home/alice/context.d/">`,
+and `<program path="/home/agent/context.d/">`. Each context file is rendered
+inside a filename tag. System and account context can template values such as
+`identity.username`, `identity.cwd`, `devices`, and `mcpServers`. Home context
+is loaded lexically and bounded by `config/ai/max_context_bytes`.
 
 Skill sources are layered from `~/skills.d` and visible package
 `/src/packages/<package>/skills.d`.
-The prompt tells processes to use `skills list`, `skills search`, `skills show`,
-`skills files`, and `skills read` rather than embedding long source paths in the
-index.
+The prompt renders top-level skills inside `<available_skills>` as `<skill>`
+entries with `<name>` and `<description>`. It tells processes to use
+`skills list <skill>`, `skills tree <skill>`, and `skills show <skill>` rather
+than embedding long source paths or every detailed workflow in the index.
 
 System-provided skills live in the root GSV source tree under `skills/` and are
 seeded into user home `skills.d` during bootstrap when missing.

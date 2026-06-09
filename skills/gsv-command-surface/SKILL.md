@@ -10,12 +10,12 @@ description: Guide on which GSV command surface to use for a task and when to us
 1. Use native shell commands on `target: "gsv"` for GSV OS work.
 2. Use package-provided commands when an installed package owns the workflow.
 3. Use `man` for exact native shell syntax.
-4. Use `skills show <skill>` before a nontrivial reusable workflow.
+4. Use `skills list <skill>` or `skills tree <skill>` to disclose nested workflows, and `skills show <skill>` before a nontrivial reusable workflow.
 5. Use host `gsv ...` commands only when operating from a connected machine, deployment environment, or user instruction.
 6. Use a device target only when data or execution must happen on that external machine.
 7. Do not treat the outer chat tool list as the full integration inventory. Connected MCP servers may only be visible inside CodeMode.
 
-Do not confuse the native `skills` command with a host `gsv skills` command. Skills are read inside the Gateway shell with `skills list`, `skills search`, `skills show`, `skills files`, and `skills read`.
+Do not confuse the native `skills` command with a host `gsv skills` command. Skills are read inside the Gateway shell with `skills list`, `skills list <skill>`, `skills tree`, `skills tree <skill>`, `skills search`, `skills show`, `skills files`, and `skills read`.
 
 ## Native Gateway Shell
 
@@ -24,7 +24,7 @@ Native shell runs through `shell.exec` on `target: "gsv"` inside the Gateway env
 Core commands:
 
 - `man [topic]`: list or read built-in manuals.
-- `skills list|search|show|files|read`: discover reusable workflows.
+- `skills list|tree|search|show|files|read`: discover reusable workflows.
 - `pkg ...`: inspect packages, create packages, checkout refs, manage source edits, approve/review packages, public visibility, and sync.
 - `proc ...`: inspect processes, send same-owner IPC mail/calls, compact/fork/reset conversations where supported.
 - `sched ...`: manage kernel schedules.
