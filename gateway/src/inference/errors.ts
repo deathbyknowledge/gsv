@@ -7,7 +7,7 @@ export const NON_STANDARD_PROVIDER_ERROR =
   "Provider returned a non-standard error response.";
 
 const BILLING_ERROR_PATTERN =
-  /\b(?:insufficient\s+(?:funds|credits|balance)|out\s+of\s+(?:credits?|quota)|no\s+(?:credits?|quota)|billing|payment|balance|credits?|quota\s+exceeded|exceeded\s+quota)\b/i;
+  /\b(?:http\s*402|error\s*code:\s*402|402|payment[\s_-]+required|insufficient[\s_-]+(?:funds|credits|balance|quota)|out[\s_-]+of[\s_-]+(?:credits?|quota)|no[\s_-]+(?:credits?|quota)|billing|payment|balance(?:[\s_-]+low)?|credits?|quota[\s_-]+exceeded|exceeded[\s_-]+quota)\b/i;
 const RATE_LIMIT_ERROR_PATTERN =
   /\b(?:rate\s*limit(?:ed)?|too\s+many\s+requests|http\s*429|429)\b/i;
 
@@ -65,6 +65,11 @@ function extractErrorText(error: unknown, seen: Set<object>): string | null {
     }
   }
 
+  const statusOrCode = extractStatusOrCodeText(record);
+  if (statusOrCode) {
+    return statusOrCode;
+  }
+
   return null;
 }
 
@@ -110,6 +115,38 @@ function normalizeOptionalErrorText(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0
     ? value.trim()
     : null;
+}
+
+function extractStatusOrCodeText(record: Record<string, unknown>): string | null {
+  for (const field of ["code", "type"]) {
+    const text = normalizeOptionalErrorText(record[field]);
+    if (text && isRecognizedProviderStatusOrCode(text)) {
+      return text;
+    }
+  }
+
+  for (const field of ["status", "statusCode"]) {
+    const status = providerStatusCode(record[field]);
+    if (status) {
+      return `HTTP ${status}`;
+    }
+  }
+
+  return null;
+}
+
+function isRecognizedProviderStatusOrCode(text: string): boolean {
+  return BILLING_ERROR_PATTERN.test(text) || RATE_LIMIT_ERROR_PATTERN.test(text);
+}
+
+function providerStatusCode(value: unknown): 402 | 429 | null {
+  const status = typeof value === "number"
+    ? value
+    : typeof value === "string" && /^\d+$/.test(value.trim())
+      ? Number(value.trim())
+      : null;
+
+  return status === 402 || status === 429 ? status : null;
 }
 
 function formatProviderSource(context: ProviderErrorContext | undefined): string {

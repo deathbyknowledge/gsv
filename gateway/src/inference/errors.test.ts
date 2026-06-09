@@ -16,6 +16,17 @@ describe("formatProviderErrorMessage", () => {
     ].join("\n"));
   });
 
+  it("adds account guidance for payment and quota codes", () => {
+    for (const message of ["HTTP 402", "Error code: 402", "insufficient_quota", "quota_exceeded"]) {
+      expect(formatProviderErrorMessage(message, {
+        provider: "openai-compatible",
+      })).toBe([
+        `Provider account issue from openai-compatible: ${message}`,
+        "Check credits, quota, or billing for the configured AI provider.",
+      ].join("\n"));
+    }
+  });
+
   it("adds retry guidance for provider rate limits", () => {
     expect(formatProviderErrorMessage("Too many requests", {
       provider: "openrouter",
@@ -58,10 +69,21 @@ describe("errorMessageFromUnknown", () => {
     })).toBe("quota exceeded");
   });
 
-  it("does not expose raw JSON for unknown structured errors", () => {
+  it("extracts recognized provider status and code fields", () => {
+    expect(errorMessageFromUnknown({
+      error: {
+        code: "insufficient_quota",
+      },
+    })).toBe("insufficient_quota");
     expect(errorMessageFromUnknown({
       status: 402,
-      code: "balance_low",
+    })).toBe("HTTP 402");
+  });
+
+  it("does not expose raw JSON for unknown structured errors", () => {
+    expect(errorMessageFromUnknown({
+      status: 500,
+      code: "internal_error",
     })).toBe(NON_STANDARD_PROVIDER_ERROR);
   });
 
