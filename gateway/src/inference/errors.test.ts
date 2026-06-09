@@ -55,6 +55,22 @@ describe("errorMessageFromUnknown", () => {
     expect(errorMessageFromUnknown(new Error("provider failed"))).toBe("provider failed");
   });
 
+  it("extracts recognized provider causes from generic Error wrappers", () => {
+    expect(errorMessageFromUnknown(new Error("request failed", {
+      cause: {
+        status: 402,
+      },
+    }))).toBe("HTTP 402");
+  });
+
+  it("keeps Error messages when causes are not recognized provider failures", () => {
+    expect(errorMessageFromUnknown(new Error("request failed", {
+      cause: {
+        status: 500,
+      },
+    }))).toBe("request failed");
+  });
+
   it("extracts nested provider error messages", () => {
     expect(errorMessageFromUnknown({
       error: {
@@ -98,5 +114,12 @@ describe("errorMessageFromUnknown", () => {
     error.self = error;
 
     expect(errorMessageFromUnknown(error)).toBe(NON_STANDARD_PROVIDER_ERROR);
+  });
+
+  it("handles cyclic Error causes", () => {
+    const error = new Error("request failed") as Error & { cause?: unknown };
+    error.cause = error;
+
+    expect(errorMessageFromUnknown(error)).toBe("request failed");
   });
 });

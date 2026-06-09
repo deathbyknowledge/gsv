@@ -17,8 +17,17 @@ export function errorMessageFromUnknown(error: unknown): string {
 
 function extractErrorText(error: unknown, seen: Set<object>): string | null {
   if (error instanceof Error) {
-    return normalizeOptionalErrorText(error.message) ??
-      extractErrorText((error as { cause?: unknown }).cause, seen);
+    if (seen.has(error)) {
+      return null;
+    }
+    seen.add(error);
+
+    const text = normalizeOptionalErrorText(error.message);
+    const causeText = extractErrorText((error as { cause?: unknown }).cause, seen);
+    if (causeText && (!text || isRecognizedProviderErrorText(causeText))) {
+      return causeText;
+    }
+    return text ?? causeText;
   }
   if (typeof error === "string") {
     return normalizeOptionalErrorText(error);
@@ -136,6 +145,10 @@ function extractStatusOrCodeText(record: Record<string, unknown>): string | null
 }
 
 function isRecognizedProviderStatusOrCode(text: string): boolean {
+  return isRecognizedProviderErrorText(text);
+}
+
+function isRecognizedProviderErrorText(text: string): boolean {
   return BILLING_ERROR_PATTERN.test(text) || RATE_LIMIT_ERROR_PATTERN.test(text);
 }
 
