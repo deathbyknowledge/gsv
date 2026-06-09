@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { extractGeneratedText, resolveGenerationOptions, resolveGenerationTimeoutMs } from "./service";
+import {
+  describeGeneratedTextFailure,
+  extractGeneratedText,
+  resolveGenerationOptions,
+  resolveGenerationTimeoutMs,
+} from "./service";
 import type { AiConfigResult } from "../syscalls/ai";
 import type { AssistantMessage, Context } from "@earendil-works/pi-ai";
 
@@ -87,6 +92,35 @@ describe("extractGeneratedText", () => {
 
   it("returns empty string when there is neither text nor reasoning", () => {
     expect(extractGeneratedText(assistantMessage([]))).toBe("");
+  });
+});
+
+describe("describeGeneratedTextFailure", () => {
+  it("preserves provider billing errors from empty error responses", () => {
+    const message = assistantMessage([]);
+    message.stopReason = "error";
+    message.errorMessage = "insufficient funds";
+
+    expect(describeGeneratedTextFailure({
+      purpose: "compaction.summary",
+      config: {
+        provider: "deepseek",
+        model: "deepseek-chat",
+      },
+    }, message)).toBe([
+      "Provider account issue from deepseek/deepseek-chat: insufficient funds",
+      "Check credits, quota, or billing for the configured AI provider.",
+    ].join("\n"));
+  });
+
+  it("falls back to the generic no-text message when there is no provider error", () => {
+    expect(describeGeneratedTextFailure({
+      purpose: "compaction.summary",
+      config: {
+        provider: "test",
+        model: "test",
+      },
+    }, assistantMessage([]))).toBe("Generation for compaction.summary returned no text");
   });
 });
 

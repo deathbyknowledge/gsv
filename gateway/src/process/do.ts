@@ -99,6 +99,10 @@ import type {
 } from "@earendil-works/pi-ai";
 import { createGenerationService } from "../inference/service";
 import {
+  errorMessageFromUnknown,
+  formatProviderErrorMessage,
+} from "../inference/errors";
+import {
   ProcessStore,
   parseAssistantMessageMeta,
   stringifyAssistantMessageMeta,
@@ -1567,8 +1571,20 @@ export class Process extends Host<Env> {
       try {
         summary = await this.generateConversationCompactionSummary(selected);
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        return { ok: false, error: `Failed to generate compaction summary: ${message}` };
+        const message = errorMessageFromUnknown(error);
+        const formatted = formatProviderErrorMessage(message);
+        if (
+          formatted &&
+          (formatted !== message ||
+            formatted.startsWith("Provider account issue") ||
+            formatted.startsWith("Provider rate limit"))
+        ) {
+          return { ok: false, error: formatted };
+        }
+        return {
+          ok: false,
+          error: `Failed to generate compaction summary: ${formatted || message}`,
+        };
       }
     }
     if (activeRunStopped()) {
@@ -1641,6 +1657,12 @@ export class Process extends Host<Env> {
       config,
       context: buildCompactionSummaryContext(messages),
       sessionAffinityKey: `${this.pid}:compaction`,
+    }).catch((error: unknown) => {
+      const message = errorMessageFromUnknown(error);
+      throw new Error(formatProviderErrorMessage(message, {
+        provider: config.provider,
+        model: config.model,
+      }) || message);
     });
     const summary = generated.trim();
     if (!summary) {
@@ -2480,7 +2502,10 @@ export class Process extends Host<Env> {
         return;
       }
       const errorMsg = e instanceof Error ? e.message : String(e);
-      const displayError = formatGenerationFailure(errorMsg);
+      const displayError = formatGenerationFailure(errorMsg, {
+        provider: run.config?.provider,
+        model: run.config?.model,
+      });
       console.error(`[Process] LLM call failed:`, e);
       this.store.appendMessage("system", displayError, { conversationId, runId });
       await this.emitProcChanged(["messages"], {
@@ -2508,7 +2533,10 @@ export class Process extends Host<Env> {
     const responseFailure = describeAssistantResponseFailure(response);
     if (responseFailure) {
       const errorMsg = response.errorMessage ?? responseFailure;
-      const displayError = formatGenerationFailure(errorMsg);
+      const displayError = formatGenerationFailure(errorMsg, {
+        provider: run.config?.provider,
+        model: run.config?.model,
+      });
       console.error(`[Process] ${errorMsg}`);
       this.store.appendMessage("system", displayError, { conversationId, runId });
       await this.emitProcChanged(["messages"], {
@@ -4254,8 +4282,11 @@ function parseArchivedMessageRole(value: unknown): MessageRole {
   throw new Error(`invalid archived message role: ${String(value)}`);
 }
 
-function formatGenerationFailure(message: string): string {
-  const normalized = message.trim();
+function formatGenerationFailure(
+  message: string,
+  context?: { provider?: string; model?: string },
+): string {
+  const normalized = formatProviderErrorMessage(message, context);
   if (!normalized) {
     return "Generation failed.";
   }

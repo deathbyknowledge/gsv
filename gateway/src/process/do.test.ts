@@ -2338,6 +2338,88 @@ describe("Process DO — mechanical", () => {
       ]);
     });
 
+    it("surfaces provider account failures during auto-compaction", async () => {
+      const pid = "mech-conversation-auto-compact-provider-billing";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const emitted: Array<{ signal: string; payload: unknown }> = [];
+        process.sendSignal = async (signal: string, payload: unknown) => {
+          emitted.push({ signal, payload });
+        };
+        process.generation = {
+          async generate() {
+            throw new Error("chat generation should not run after compaction failure");
+          },
+          async generateText(request: any) {
+            expect(request.purpose).toBe("compaction.summary");
+            throw new Error("insufficient funds");
+          },
+        };
+
+        process.store.appendMessage("user", "old context A");
+        process.store.appendMessage("assistant", "old context B");
+        process.store.appendMessage("user", "Context that must stay live.");
+        process.store.setValue("conversationPolicy:default", JSON.stringify({
+          conversationId: "default",
+          overflow: "auto-compact",
+          compactAtPressure: 0.01,
+          keepLast: 1,
+          updatedAt: Date.now(),
+        }));
+        process.currentRun = {
+          runId: "run-auto-compact-provider-billing",
+          queued: false,
+          conversationId: "default",
+          config: {
+            profile: "task",
+            provider: "deepseek",
+            model: "deepseek-chat",
+            apiKey: "test-key",
+            reasoning: "off",
+            maxTokens: 100,
+            contextWindowTokens: 1000,
+            contextWindowSource: "config",
+            maxContextBytes: 32768,
+          },
+          tools: [],
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+        await process.continueAgentLoop("run-auto-compact-provider-billing");
+        return {
+          emitted,
+          currentRun: process.currentRun,
+          messages: process.store.getMessages(),
+          segments: process.store.listConversationSegments(),
+        };
+      });
+
+      expect(result.currentRun).toBeNull();
+      expect(result.segments).toHaveLength(0);
+      const systemMessage = result.messages.find((message: any) => message.role === "system");
+      expect(systemMessage?.content).toContain("Auto-compaction failed before model call");
+      expect(systemMessage?.content).toContain(
+        "Provider account issue from deepseek/deepseek-chat: insufficient funds",
+      );
+      expect(systemMessage?.content).toContain(
+        "Check credits, quota, or billing for the configured AI provider.",
+      );
+      expect(systemMessage?.content).not.toContain("returned no text");
+      expect(result.emitted).toEqual(expect.arrayContaining([
+        {
+          signal: "proc.run.finished",
+          payload: expect.objectContaining({
+            status: "error",
+            reason: "context.auto_compact.failed",
+            runId: "run-auto-compact-provider-billing",
+          }),
+        },
+      ]));
+    });
+
     it("does not apply auto-compaction after the run is aborted during summary generation", async () => {
       const pid = "mech-conversation-auto-compact-abort";
       const stub = await initProcess(pid, ROOT_IDENTITY);
