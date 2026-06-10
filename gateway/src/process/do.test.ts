@@ -45,6 +45,23 @@ function visibleAssistantText(messages: Array<{ role: string; content: string }>
     .join("\n");
 }
 
+function testUsage(input = 0, output = 0) {
+  return {
+    input,
+    output,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: input + output,
+    cost: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      total: 0,
+    },
+  };
+}
+
 async function stubGeneration(
   stub: DurableObjectStub<Process>,
   generate: (request: any) => string | Promise<string>,
@@ -787,6 +804,207 @@ describe("Process DO — mechanical", () => {
         reason: "generation.empty",
         error: "Generation failed: LLM returned reasoning but no final response",
       });
+    });
+
+    it("surfaces thrown provider context overflow separately from generation errors", async () => {
+      const pid = "mech-chat-provider-context-overflow-throw";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const emitted: Array<{ signal: string; payload: unknown }> = [];
+        process.sendSignal = async (signal: string, payload: unknown) => {
+          emitted.push({ signal, payload });
+        };
+        process.generation = {
+          async generate() {
+            throw new Error("Your input exceeds the context window of this model");
+          },
+          async generateText() {
+            return "";
+          },
+        };
+
+        process.store.appendMessage("user", "overflow please");
+        process.currentRun = {
+          runId: "run-chat-provider-context-overflow-throw",
+          queued: false,
+          conversationId: "default",
+          config: {
+            profile: "task",
+            provider: "openai",
+            model: "gpt-test",
+            apiKey: "test-key",
+            reasoning: "off",
+            maxTokens: 8192,
+            contextWindowTokens: 128000,
+            contextWindowSource: "config",
+            maxContextBytes: 32768,
+          },
+          tools: [],
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+        await process.continueAgentLoop("run-chat-provider-context-overflow-throw");
+        return {
+          emitted,
+          currentRun: process.currentRun,
+          messages: process.store.getMessages(),
+        };
+      });
+
+      expect(result.currentRun).toBeNull();
+      const systemMessage = result.messages.find((message: any) => message.role === "system");
+      expect(systemMessage?.content).toContain("Context limit reached for openai/gpt-test.");
+      expect(systemMessage?.content).toContain("Provider message: Your input exceeds the context window of this model");
+      expect(systemMessage?.content).not.toContain("Generation failed:");
+      expect(result.emitted).toEqual(expect.arrayContaining([
+        {
+          signal: "proc.run.finished",
+          payload: expect.objectContaining({
+            status: "error",
+            reason: "context.provider_overflow",
+            runId: "run-chat-provider-context-overflow-throw",
+          }),
+        },
+      ]));
+    });
+
+    it("surfaces nested thrown provider context overflow separately from generation errors", async () => {
+      const pid = "mech-chat-provider-context-overflow-nested";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.sendSignal = async () => {};
+        process.generation = {
+          async generate() {
+            throw new Error("request failed", {
+              cause: {
+                error: {
+                  message: "Your input exceeds the context window of this model",
+                },
+              },
+            });
+          },
+          async generateText() {
+            return "";
+          },
+        };
+
+        process.store.appendMessage("user", "overflow please");
+        process.currentRun = {
+          runId: "run-chat-provider-context-overflow-nested",
+          queued: false,
+          conversationId: "default",
+          config: {
+            profile: "task",
+            provider: "openai",
+            model: "gpt-test",
+            apiKey: "test-key",
+            reasoning: "off",
+            maxTokens: 8192,
+            contextWindowTokens: 128000,
+            contextWindowSource: "config",
+            maxContextBytes: 32768,
+          },
+          tools: [],
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+        await process.continueAgentLoop("run-chat-provider-context-overflow-nested");
+        return {
+          currentRun: process.currentRun,
+          messages: process.store.getMessages(),
+        };
+      });
+
+      expect(result.currentRun).toBeNull();
+      const systemMessage = result.messages.find((message: any) => message.role === "system");
+      expect(systemMessage?.content).toContain("Context limit reached for openai/gpt-test.");
+      expect(systemMessage?.content).toContain("Provider message: Your input exceeds the context window of this model");
+      expect(systemMessage?.content).not.toContain("Generation failed:");
+    });
+
+    it("surfaces returned provider context overflow and records provider usage", async () => {
+      const pid = "mech-chat-provider-context-overflow-response";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const emitted: Array<{ signal: string; payload: unknown }> = [];
+        process.sendSignal = async (signal: string, payload: unknown) => {
+          emitted.push({ signal, payload });
+        };
+        process.generation = {
+          async generate() {
+            return {
+              role: "assistant",
+              content: [],
+              api: "test",
+              provider: "google",
+              model: "gemini-test",
+              usage: testUsage(1_196_265, 0),
+              stopReason: "error",
+              errorMessage: "The input token count (1196265) exceeds the maximum number of tokens allowed (1048575)",
+              timestamp: Date.now(),
+            };
+          },
+          async generateText() {
+            return "";
+          },
+        };
+
+        process.store.appendMessage("user", "overflow please");
+        process.currentRun = {
+          runId: "run-chat-provider-context-overflow-response",
+          queued: false,
+          conversationId: "default",
+          config: {
+            profile: "task",
+            provider: "google",
+            model: "gemini-test",
+            apiKey: "test-key",
+            reasoning: "off",
+            maxTokens: 8192,
+            contextWindowTokens: 1_048_575,
+            contextWindowSource: "config",
+            maxContextBytes: 32768,
+          },
+          tools: [],
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+        await process.continueAgentLoop("run-chat-provider-context-overflow-response");
+        return {
+          emitted,
+          contextState: process.store.getContextState("default"),
+          messages: process.store.getMessages(),
+        };
+      });
+
+      const systemMessage = result.messages.find((message: any) => message.role === "system");
+      expect(systemMessage?.content).toContain("Context limit reached for google/gemini-test.");
+      expect(systemMessage?.content).toContain("Provider message: The input token count");
+      expect(systemMessage?.content).not.toContain("Generation failed:");
+      expect(result.contextState).toMatchObject({
+        inputTokens: 1196265,
+        source: "provider",
+        level: "full",
+      });
+      expect(result.emitted).toEqual(expect.arrayContaining([
+        {
+          signal: "proc.run.finished",
+          payload: expect.objectContaining({
+            status: "error",
+            reason: "context.provider_overflow",
+            runId: "run-chat-provider-context-overflow-response",
+          }),
+        },
+      ]));
     });
 
     it("mirrors provider stream events as proc.run.stream signals", async () => {

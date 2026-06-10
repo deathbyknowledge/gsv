@@ -2,8 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   errorMessageFromUnknown,
   formatProviderErrorMessage,
+  formatProviderContextOverflowMessage,
+  isProviderContextOverflow,
+  isProviderContextOverflowErrorMessage,
   NON_STANDARD_PROVIDER_ERROR,
 } from "./errors";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
 
 describe("formatProviderErrorMessage", () => {
   it("adds account guidance for billing and credit failures", () => {
@@ -50,6 +54,43 @@ describe("formatProviderErrorMessage", () => {
   });
 });
 
+describe("provider context overflow errors", () => {
+  it("detects provider overflow error text", () => {
+    expect(isProviderContextOverflowErrorMessage(
+      "Your input exceeds the context window of this model",
+      {
+        provider: "openai",
+        model: "gpt-test",
+        contextWindowTokens: 128000,
+      },
+    )).toBe(true);
+  });
+
+  it("does not read missing usage for usage-based overflow detection", () => {
+    const message = {
+      role: "assistant",
+      content: [],
+      api: "test",
+      provider: "test",
+      model: "test",
+      stopReason: "stop",
+      timestamp: Date.now(),
+    } as unknown as AssistantMessage;
+
+    expect(isProviderContextOverflow(message, 1000)).toBe(false);
+  });
+
+  it("formats a specific context overflow message", () => {
+    expect(formatProviderContextOverflowMessage(
+      "Your input exceeds the context window of this model",
+      {
+        provider: "openai",
+        model: "gpt-test",
+      },
+    )).toContain("Context limit reached for openai/gpt-test.");
+  });
+});
+
 describe("errorMessageFromUnknown", () => {
   it("extracts Error messages", () => {
     expect(errorMessageFromUnknown(new Error("provider failed"))).toBe("provider failed");
@@ -61,6 +102,16 @@ describe("errorMessageFromUnknown", () => {
         status: 402,
       },
     }))).toBe("HTTP 402");
+  });
+
+  it("extracts nested context overflow causes from generic Error wrappers", () => {
+    expect(errorMessageFromUnknown(new Error("request failed", {
+      cause: {
+        error: {
+          message: "Your input exceeds the context window of this model",
+        },
+      },
+    }))).toBe("Your input exceeds the context window of this model");
   });
 
   it("keeps Error messages when causes are not recognized provider failures", () => {
