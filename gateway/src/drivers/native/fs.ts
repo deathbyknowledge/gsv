@@ -23,6 +23,7 @@ import type { KernelContext } from "../../kernel/context";
 import { resolveCallerOwnerUid } from "../../kernel/context";
 import { createCronFileService } from "../../kernel/crontab";
 import { visiblePackageScopesForActor } from "../../kernel/packages";
+import { handleRepoList } from "../../kernel/repo";
 import type { FsReadArgs, FsReadResult } from "../../syscalls/read";
 import type { FsWriteArgs, FsWriteResult } from "../../syscalls/write";
 import type { FsEditArgs, FsEditResult } from "../../syscalls/edit";
@@ -97,6 +98,7 @@ function makeFs(ctx: KernelContext): GsvFs {
     packages: ctx.packages.list({
       scopes: visiblePackageScopesForActor(packageScopeOwner),
     }),
+    repos: handleRepoList(undefined, ctx).repos,
     mounts: ctx.processId ? ctx.procs.getMounts(ctx.processId) : null,
     processId: ctx.processId ?? null,
     config: ctx.config,

@@ -52,6 +52,14 @@ class InMemoryKnowledgeClient {
     }
   }
 
+  setWritable(repo: string, writable: boolean): void {
+    const summary = this.summaries.get(repo);
+    if (!summary) {
+      throw new Error(`Repository not found: ${repo}`);
+    }
+    this.summaries.set(repo, { ...summary, writable });
+  }
+
   readCount(repo: string, path: string): number {
     return this.readCounts.get(`${repo}:${path}`) ?? 0;
   }
@@ -692,6 +700,74 @@ describe("WikiKnowledgeStore", () => {
 });
 
 describe("Wiki CLI", () => {
+  it("prints collection info with repo access and a title-based tree", async () => {
+    const client = new InMemoryKnowledgeClient(undefined, {
+      "hank/gsv-manual": wikiRepo("gsv-manual", "GSV Manual", {
+        "index.md": [
+          "# GSV Manual",
+          "",
+          "## Pages",
+          "- pages/connect.md",
+          "- pages/setup/install-cli.md",
+          "- pages/whatsapp.md",
+          "",
+        ].join("\n"),
+        "pages/connect.md": [
+          "# Connect Devices",
+          "",
+          "Connect native shell devices to the workspace.",
+          "",
+        ].join("\n"),
+        "pages/setup/install-cli.md": [
+          "# Install CLI",
+          "",
+          "Install and pair the local command line.",
+          "",
+        ].join("\n"),
+        "pages/whatsapp.md": [
+          "# WhatsApp Adapter",
+          "",
+          "Pair messages with the channel adapter.",
+          "",
+        ].join("\n"),
+        "inbox/.dir": "",
+      }),
+    });
+    client.setWritable("hank/gsv-manual", false);
+
+    const output = await runWikiCommand(commandContext(client, ["info", "gsv-manual"]));
+
+    expect(output).toBe([
+      "id: gsv-manual",
+      "title: GSV Manual",
+      "repo: hank/gsv-manual",
+      "access: read-only",
+      "tree:",
+      "- GSV Manual (index.md)",
+      "- pages/",
+      "  - setup/",
+      "    - Install CLI (pages/setup/install-cli.md)",
+      "  - Connect Devices (pages/connect.md)",
+      "  - WhatsApp Adapter (pages/whatsapp.md)",
+      "",
+    ].join("\n"));
+    expect(output).not.toContain("wiki.json");
+    expect(output).not.toContain(".dir");
+    expect(output).not.toContain("inbox/");
+  });
+
+  it("reports a missing wiki for info", async () => {
+    const client = new InMemoryKnowledgeClient(undefined, {
+      "hank/gsv": wikiRepo("gsv", "GSV Manual", {
+        "pages/connect.md": "# Connect Devices\n",
+      }),
+    });
+
+    await expect(runWikiCommand(commandContext(client, ["info", "missing"]))).rejects.toThrow(
+      "Wiki collection 'missing' does not exist",
+    );
+  });
+
   it("parses multi-word search queries and emits JSON search results", async () => {
     const client = new InMemoryKnowledgeClient(undefined, {
       "hank/gsv": wikiRepo("gsv", "GSV Manual", {

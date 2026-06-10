@@ -4,6 +4,7 @@ import type {
   RmOptions,
 } from "just-bash";
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
+import type { RepoSummary } from "@gsv/protocol/syscalls/repositories";
 import type { InstalledPackageRecord } from "../../kernel/packages";
 import type { ProcessMount } from "../../kernel/processes";
 import type { ExtendedMountStat, FsSearchBackendResult, MountBackend } from "../mount";
@@ -16,6 +17,7 @@ import { normalizePath } from "../utils";
 
 const TEXT_DECODER = new TextDecoder();
 const TEXT_ENCODER = new TextEncoder();
+const DEFAULT_REPO_REF = "main";
 
 type SourceConfig = {
   get(key: string): string | null;
@@ -27,6 +29,7 @@ export type ProcessSourceBackendOptions = {
   storage?: R2Bucket | null;
   ripgit: RipgitClient | null;
   packages: InstalledPackageRecord[];
+  repos?: RepoSummary[] | null;
   mounts?: ProcessMount[] | null;
   processId?: string | null;
   config?: SourceConfig | null;
@@ -41,6 +44,14 @@ type SourcePackage = {
   sourceSubdir: string;
   resolvedCommit: string | null;
   writable: boolean;
+};
+
+type SourceRepo = {
+  owner: string;
+  name: string;
+  repo: string;
+  mountPath: string;
+  ref: string;
 };
 
 type SourceBranchState = {
@@ -165,6 +176,7 @@ class ProcessSourceMountBackend implements MountBackend {
   private readonly storage: R2Bucket | null;
   private readonly ripgit: RipgitClient;
   private readonly packages: SourcePackage[];
+  private readonly repos: SourceRepo[];
   private readonly processId: string | null;
   private readonly config: SourceConfig | null;
 
@@ -175,6 +187,7 @@ class ProcessSourceMountBackend implements MountBackend {
     this.processId = options.processId ?? null;
     this.config = options.config ?? null;
     this.packages = visibleSourcePackages(options.packages, options.identity, options.mounts);
+    this.repos = visibleSourceRepos(options.repos);
   }
 
   handles(path: string): boolean {
@@ -187,7 +200,22 @@ class ProcessSourceMountBackend implements MountBackend {
   }
 
   async readFileBuffer(path: string): Promise<Uint8Array> {
-    const resolved = this.resolvePackagePath(path);
+    const resolved = this.resolvePackagePathOrNull(path);
+    if (resolved) {
+      return this.readPackageFileBuffer(resolved);
+    }
+    const repoResolved = this.resolveRepoPathOrNull(path);
+    if (repoResolved) {
+      return this.readRepoFileBuffer(repoResolved);
+    }
+    throwMissingSourcePath(path);
+  }
+
+  private async readPackageFileBuffer(resolved: {
+    pkg: SourcePackage;
+    relativePath: string;
+    normalizedPath: string;
+  }): Promise<Uint8Array> {
     if (!resolved.relativePath) {
       throw new Error(`EISDIR: illegal operation on a directory, read '${resolved.normalizedPath}'`);
     }
@@ -203,6 +231,28 @@ class ProcessSourceMountBackend implements MountBackend {
     const result = await this.ripgit.readPath(
       this.repoRefForPackage(resolved.pkg),
       joinRepoPath(resolved.pkg.sourceSubdir, resolved.relativePath),
+    );
+    if (result.kind === "missing") {
+      throw new Error(`ENOENT: no such file or directory, open '${resolved.normalizedPath}'`);
+    }
+    if (result.kind === "tree") {
+      throw new Error(`EISDIR: illegal operation on a directory, read '${resolved.normalizedPath}'`);
+    }
+    return result.bytes;
+  }
+
+  private async readRepoFileBuffer(resolved: {
+    repo: SourceRepo;
+    relativePath: string;
+    normalizedPath: string;
+  }): Promise<Uint8Array> {
+    if (!resolved.relativePath) {
+      throw new Error(`EISDIR: illegal operation on a directory, read '${resolved.normalizedPath}'`);
+    }
+
+    const result = await this.ripgit.readPath(
+      this.repoRefForSourceRepo(resolved.repo),
+      resolved.relativePath,
     );
     if (result.kind === "missing") {
       throw new Error(`ENOENT: no such file or directory, open '${resolved.normalizedPath}'`);
@@ -243,7 +293,23 @@ class ProcessSourceMountBackend implements MountBackend {
       return makeDirectoryStat(this.identity.uid, this.identity.gid, true);
     }
 
-    const resolved = this.resolvePackagePath(normalizedPath);
+    const resolved = this.resolvePackagePathOrNull(normalizedPath);
+    if (resolved) {
+      return this.statPackagePath(resolved);
+    }
+
+    const repoResolved = this.resolveRepoPathOrNull(normalizedPath);
+    if (repoResolved) {
+      return this.statRepoPath(repoResolved);
+    }
+    throwMissingSourcePath(normalizedPath);
+  }
+
+  private async statPackagePath(resolved: {
+    pkg: SourcePackage;
+    relativePath: string;
+    normalizedPath: string;
+  }): Promise<ExtendedMountStat> {
     const overlay = await this.readOverlay(resolved.pkg);
     if (!resolved.relativePath) {
       return makeDirectoryStat(this.identity.uid, this.identity.gid, resolved.pkg.writable);
@@ -256,7 +322,7 @@ class ProcessSourceMountBackend implements MountBackend {
       return makeDirectoryStat(this.identity.uid, this.identity.gid, resolved.pkg.writable);
     }
     if (isDeletedByOverlay(overlay, resolved.relativePath)) {
-      throw new Error(`ENOENT: no such file or directory, stat '${normalizedPath}'`);
+      throw new Error(`ENOENT: no such file or directory, stat '${resolved.normalizedPath}'`);
     }
 
     const result = await this.ripgit.readPath(
@@ -264,12 +330,34 @@ class ProcessSourceMountBackend implements MountBackend {
       joinRepoPath(resolved.pkg.sourceSubdir, resolved.relativePath),
     );
     if (result.kind === "missing") {
-      throw new Error(`ENOENT: no such file or directory, stat '${normalizedPath}'`);
+      throw new Error(`ENOENT: no such file or directory, stat '${resolved.normalizedPath}'`);
     }
     if (result.kind === "tree") {
       return makeDirectoryStat(this.identity.uid, this.identity.gid, resolved.pkg.writable);
     }
     return makeFileStat(this.identity.uid, this.identity.gid, result.size, resolved.pkg.writable);
+  }
+
+  private async statRepoPath(resolved: {
+    repo: SourceRepo;
+    relativePath: string;
+    normalizedPath: string;
+  }): Promise<ExtendedMountStat> {
+    if (!resolved.relativePath) {
+      return makeDirectoryStat(this.identity.uid, this.identity.gid, false);
+    }
+
+    const result = await this.ripgit.readPath(
+      this.repoRefForSourceRepo(resolved.repo),
+      resolved.relativePath,
+    );
+    if (result.kind === "missing") {
+      throw new Error(`ENOENT: no such file or directory, stat '${resolved.normalizedPath}'`);
+    }
+    if (result.kind === "tree") {
+      return makeDirectoryStat(this.identity.uid, this.identity.gid, false);
+    }
+    return makeFileStat(this.identity.uid, this.identity.gid, result.size, false);
   }
 
   async mkdir(path: string, _options?: MkdirOptions): Promise<void> {
@@ -289,16 +377,32 @@ class ProcessSourceMountBackend implements MountBackend {
       return virtualEntries;
     }
 
-    const resolved = this.resolvePackagePath(normalizedPath);
+    const resolved = this.resolvePackagePathOrNull(normalizedPath);
+    if (resolved) {
+      return this.readdirPackagePath(resolved);
+    }
+
+    const repoResolved = this.resolveRepoPathOrNull(normalizedPath);
+    if (repoResolved) {
+      return this.readdirRepoPath(repoResolved);
+    }
+    throwMissingSourcePath(normalizedPath);
+  }
+
+  private async readdirPackagePath(resolved: {
+    pkg: SourcePackage;
+    relativePath: string;
+    normalizedPath: string;
+  }): Promise<string[]> {
     const overlay = await this.readOverlay(resolved.pkg);
     const putChange = overlay.changes[resolved.relativePath];
     if (putChange?.type === "put") {
-      throw new Error(`ENOTDIR: not a directory, scandir '${normalizedPath}'`);
+      throw new Error(`ENOTDIR: not a directory, scandir '${resolved.normalizedPath}'`);
     }
     const deletedByOverlay = isDeletedByOverlay(overlay, resolved.relativePath);
     const hasStagedChildren = hasOverlayDescendant(overlay, resolved.relativePath);
     if (deletedByOverlay && !hasStagedChildren) {
-      throw new Error(`ENOENT: no such file or directory, scandir '${normalizedPath}'`);
+      throw new Error(`ENOENT: no such file or directory, scandir '${resolved.normalizedPath}'`);
     }
 
     const entries = new Set<string>();
@@ -308,10 +412,10 @@ class ProcessSourceMountBackend implements MountBackend {
         joinRepoPath(resolved.pkg.sourceSubdir, resolved.relativePath),
       );
       if (result.kind === "missing" && !hasStagedChildren) {
-        throw new Error(`ENOENT: no such file or directory, scandir '${normalizedPath}'`);
+        throw new Error(`ENOENT: no such file or directory, scandir '${resolved.normalizedPath}'`);
       }
       if (result.kind !== "missing" && result.kind !== "tree") {
-        throw new Error(`ENOTDIR: not a directory, scandir '${normalizedPath}'`);
+        throw new Error(`ENOTDIR: not a directory, scandir '${resolved.normalizedPath}'`);
       }
       if (result.kind === "tree") {
         for (const entry of result.entries) {
@@ -321,6 +425,27 @@ class ProcessSourceMountBackend implements MountBackend {
     }
     mergeOverlayDirectoryEntries(entries, overlay, resolved.relativePath);
     return [...entries].sort();
+  }
+
+  private async readdirRepoPath(resolved: {
+    repo: SourceRepo;
+    relativePath: string;
+    normalizedPath: string;
+  }): Promise<string[]> {
+    const result = await this.ripgit.readPath(
+      this.repoRefForSourceRepo(resolved.repo),
+      resolved.relativePath,
+    );
+    if (result.kind === "missing") {
+      if (!resolved.relativePath) {
+        return [];
+      }
+      throw new Error(`ENOENT: no such file or directory, scandir '${resolved.normalizedPath}'`);
+    }
+    if (result.kind !== "tree") {
+      throw new Error(`ENOTDIR: not a directory, scandir '${resolved.normalizedPath}'`);
+    }
+    return result.entries.map((entry) => entry.name).sort();
   }
 
   async rm(path: string, options?: RmOptions): Promise<void> {
@@ -351,19 +476,32 @@ class ProcessSourceMountBackend implements MountBackend {
   async search(path: string, query: string): Promise<FsSearchBackendResult> {
     const normalizedPath = normalizePath(path);
     const virtualPackages = this.virtualDirectoryPackages(normalizedPath);
-    if (virtualPackages) {
+    const virtualRepos = this.virtualDirectoryRepos(normalizedPath);
+    if (virtualPackages || virtualRepos) {
       const matches = [];
       let truncated = false;
-      for (const pkg of virtualPackages) {
+      for (const pkg of virtualPackages ?? []) {
         const result = await this.searchPackage(pkg, "", query);
+        matches.push(...result.matches);
+        truncated = truncated || result.truncated === true;
+      }
+      for (const repo of virtualRepos ?? []) {
+        const result = await this.searchRepo(repo, "", query);
         matches.push(...result.matches);
         truncated = truncated || result.truncated === true;
       }
       return { matches, truncated };
     }
 
-    const resolved = this.resolvePackagePath(normalizedPath);
-    return this.searchPackage(resolved.pkg, resolved.relativePath, query);
+    const resolved = this.resolvePackagePathOrNull(normalizedPath);
+    if (resolved) {
+      return this.searchPackage(resolved.pkg, resolved.relativePath, query);
+    }
+    const repoResolved = this.resolveRepoPathOrNull(normalizedPath);
+    if (repoResolved) {
+      return this.searchRepo(repoResolved.repo, repoResolved.relativePath, query);
+    }
+    throwMissingSourcePath(normalizedPath);
   }
 
   private async searchPackage(
@@ -403,11 +541,43 @@ class ProcessSourceMountBackend implements MountBackend {
     };
   }
 
+  private async searchRepo(
+    repo: SourceRepo,
+    relativePath: string,
+    query: string,
+  ): Promise<FsSearchBackendResult> {
+    const result = await this.ripgit.search(
+      this.repoRefForSourceRepo(repo),
+      query,
+      relativePath || undefined,
+    );
+    return {
+      truncated: result.truncated,
+      matches: result.matches.map((match) => ({
+        path: `${repo.mountPath}/${match.path}`.replace(/\/+$/g, ""),
+        line: match.line,
+        content: match.content,
+      })),
+    };
+  }
+
   private resolvePackagePath(path: string): {
     pkg: SourcePackage;
     relativePath: string;
     normalizedPath: string;
   } {
+    const resolved = this.resolvePackagePathOrNull(path);
+    if (!resolved) {
+      throw new Error(`ENOENT: no such package source '${normalizePath(path)}'`);
+    }
+    return resolved;
+  }
+
+  private resolvePackagePathOrNull(path: string): {
+    pkg: SourcePackage;
+    relativePath: string;
+    normalizedPath: string;
+  } | null {
     const normalizedPath = normalizePath(path);
     let pkg: SourcePackage | null = null;
     for (const candidate of this.packages) {
@@ -419,7 +589,7 @@ class ProcessSourceMountBackend implements MountBackend {
       }
     }
     if (!pkg) {
-      throw new Error(`ENOENT: no such package source '${normalizedPath}'`);
+      return null;
     }
     return {
       pkg,
@@ -430,14 +600,56 @@ class ProcessSourceMountBackend implements MountBackend {
     };
   }
 
+  private resolveRepoPathOrNull(path: string): {
+    repo: SourceRepo;
+    relativePath: string;
+    normalizedPath: string;
+  } | null {
+    const normalizedPath = normalizePath(path);
+    const repo = this.repos.find((candidate) =>
+      normalizedPath === candidate.mountPath || normalizedPath.startsWith(`${candidate.mountPath}/`)
+    );
+    if (!repo) {
+      return null;
+    }
+    return {
+      repo,
+      relativePath: normalizedPath === repo.mountPath
+        ? ""
+        : normalizeRepoPath(normalizedPath.slice(repo.mountPath.length + 1)),
+      normalizedPath,
+    };
+  }
+
   private virtualDirectoryEntries(path: string): string[] | null {
     const normalizedPath = normalizePath(path);
     if (normalizedPath !== "/src" && !normalizedPath.startsWith("/src/")) {
       return null;
     }
+    if (this.packages.some((pkg) => pkg.mountPath === normalizedPath) ||
+      this.repos.some((repo) => repo.mountPath === normalizedPath)) {
+      return null;
+    }
     const entries = new Set<string>();
     if (normalizedPath === "/src") {
       entries.add("packages");
+      if (this.repos.length > 0) {
+        entries.add("repos");
+      }
+    }
+    if (normalizedPath === "/src/repos") {
+      for (const repo of this.repos) {
+        entries.add(repo.owner);
+      }
+    } else {
+      const ownerMatch = normalizedPath.match(/^\/src\/repos\/([^/]+)$/);
+      if (ownerMatch) {
+        for (const repo of this.repos) {
+          if (repo.owner === ownerMatch[1]) {
+            entries.add(repo.name);
+          }
+        }
+      }
     }
     for (const pkg of this.packages) {
       if (!pkg.mountPath.startsWith(`${normalizedPath}/`)) {
@@ -449,7 +661,12 @@ class ProcessSourceMountBackend implements MountBackend {
         entries.add(entry);
       }
     }
-    if (normalizedPath === "/src" || normalizedPath === "/src/packages" || entries.size > 0) {
+    if (
+      normalizedPath === "/src" ||
+      normalizedPath === "/src/packages" ||
+      normalizedPath === "/src/repos" ||
+      entries.size > 0
+    ) {
       return [...entries].sort();
     }
     return null;
@@ -462,6 +679,25 @@ class ProcessSourceMountBackend implements MountBackend {
       return null;
     }
     return this.packages.filter((pkg) => normalizedPath === "/src" || pkg.mountPath.startsWith(`${normalizedPath}/`));
+  }
+
+  private virtualDirectoryRepos(path: string): SourceRepo[] | null {
+    const normalizedPath = normalizePath(path);
+    const entries = this.virtualDirectoryEntries(normalizedPath);
+    if (!entries) {
+      return null;
+    }
+    if (normalizedPath === "/src") {
+      return this.repos;
+    }
+    if (normalizedPath === "/src/repos") {
+      return this.repos;
+    }
+    const ownerMatch = normalizedPath.match(/^\/src\/repos\/([^/]+)$/);
+    if (ownerMatch) {
+      return this.repos.filter((repo) => repo.owner === ownerMatch[1]);
+    }
+    return [];
   }
 
   private resolveWritablePackagePath(path: string, operation: string): {
@@ -527,6 +763,14 @@ class ProcessSourceMountBackend implements MountBackend {
     return {
       ...repo,
       branch: state?.branch ?? pkg.resolvedCommit ?? pkg.sourceRef,
+    };
+  }
+
+  private repoRefForSourceRepo(repo: SourceRepo): RipgitRepoRef {
+    return {
+      owner: repo.owner,
+      repo: repo.name,
+      branch: repo.ref,
     };
   }
 
@@ -878,6 +1122,44 @@ function visibleSourcePackages(
     packages.push(sourcePackageForRecord(record, identity, name));
   }
   return packages.sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function visibleSourceRepos(summaries?: RepoSummary[] | null): SourceRepo[] {
+  const repos = new Map<string, SourceRepo>();
+  for (const summary of summaries ?? []) {
+    const parsed = sourceRepoForSummary(summary);
+    if (!parsed) {
+      continue;
+    }
+    repos.set(parsed.repo, parsed);
+  }
+  return [...repos.values()].sort((left, right) => {
+    const owner = left.owner.localeCompare(right.owner);
+    return owner !== 0 ? owner : left.name.localeCompare(right.name);
+  });
+}
+
+function sourceRepoForSummary(summary: RepoSummary): SourceRepo | null {
+  try {
+    const parsed = parseRepoSlug(summary.repo || `${summary.owner}/${summary.name}`);
+    return {
+      owner: parsed.owner,
+      name: parsed.repo,
+      repo: `${parsed.owner}/${parsed.repo}`,
+      mountPath: `/src/repos/${parsed.owner}/${parsed.repo}`,
+      ref: DEFAULT_REPO_REF,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function throwMissingSourcePath(path: string): never {
+  const normalizedPath = normalizePath(path);
+  if (normalizedPath === "/src/repos" || normalizedPath.startsWith("/src/repos/")) {
+    throw new Error(`ENOENT: no such source repo '${normalizedPath}'`);
+  }
+  throw new Error(`ENOENT: no such package source '${normalizedPath}'`);
 }
 
 function canWritePackageSource(

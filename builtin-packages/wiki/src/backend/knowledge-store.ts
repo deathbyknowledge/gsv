@@ -51,6 +51,9 @@ import type {
   RepoNode,
   SearchMatch,
   WikiCollection,
+  WikiInfoArgs,
+  WikiInfoResult,
+  WikiInfoTreeEntry,
   WikiKernelClient,
 } from "./knowledge-types";
 
@@ -67,6 +70,9 @@ export type {
   KnowledgeSourceRef,
   KnowledgeWriteArgs,
   WikiCollection,
+  WikiInfoArgs,
+  WikiInfoResult,
+  WikiInfoTreeEntry,
   WikiKernelClient,
 } from "./knowledge-types";
 
@@ -97,6 +103,21 @@ export class WikiKnowledgeStore {
           id: collection.id,
           title: collection.title,
         })),
+    };
+  }
+
+  async info(args: WikiInfoArgs): Promise<WikiInfoResult> {
+    const id = normalizeDbId(args.id);
+    const collection = await this.findCollection(id);
+    if (!collection) {
+      throw new Error(`Wiki collection '${id}' does not exist`);
+    }
+    return {
+      id: collection.id,
+      title: collection.title,
+      repo: collection.repo,
+      writable: collection.writable,
+      tree: await this.collectInfoTree(collection),
     };
   }
 
@@ -572,6 +593,61 @@ export class WikiKnowledgeStore {
       }
     }
     return files;
+  }
+
+  private async collectInfoTree(collection: WikiCollection): Promise<WikiInfoTreeEntry[]> {
+    const root = await this.readPath(collection, "");
+    if (root.kind !== "tree") {
+      return [];
+    }
+
+    const entries: WikiInfoTreeEntry[] = [];
+    await this.collectInfoTreeEntries(collection, "", root, entries);
+    return entries;
+  }
+
+  private async collectInfoTreeEntries(
+    collection: WikiCollection,
+    path: string,
+    node: Extract<RepoNode, { kind: "tree" }>,
+    entries: WikiInfoTreeEntry[],
+  ): Promise<void> {
+    for (const entry of [...node.entries].sort((a, b) => a.name.localeCompare(b.name))) {
+      if (entry.name === DIR_MARKER || entry.name === WIKI_MANIFEST_PATH) {
+        continue;
+      }
+
+      const childPath = joinPath(path, entry.name);
+      if (entry.type === "tree") {
+        const before = entries.length;
+        entries.push({ path: childPath, kind: "dir" });
+        const childNode = await this.readPath(collection, childPath);
+        if (childNode.kind === "tree") {
+          await this.collectInfoTreeEntries(collection, childPath, childNode, entries);
+        }
+        if (entries.length === before + 1) {
+          entries.splice(before, 1);
+        }
+        continue;
+      }
+
+      entries.push(await this.infoFileEntry(collection, childPath));
+    }
+  }
+
+  private async infoFileEntry(collection: WikiCollection, path: string): Promise<WikiInfoTreeEntry> {
+    if (!/\.md$/i.test(path)) {
+      return { path, kind: "file" };
+    }
+    const node = await this.readPath(collection, path);
+    if (node.kind !== "file" || node.isBinary) {
+      return { path, kind: "file", title: deriveTitle(path) };
+    }
+    return {
+      path,
+      kind: "file",
+      title: parseKnowledgeDoc(node.content ?? "", path).title,
+    };
   }
 
   private async dbIndexUpdateOps(collection: WikiCollection, db: string, pageEntries: string[]): Promise<RepoApplyOp[]> {

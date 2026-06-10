@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { commitProcessSourceChanges, createProcessSourceBackend, getProcessSourceStatus } from "./index";
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
+import type { RepoSummary } from "@gsv/protocol/syscalls/repositories";
 import type { InstalledPackageRecord } from "../kernel/packages";
 
 const IDENTITY: ProcessIdentity = {
@@ -37,6 +38,19 @@ function makePackage(partial?: Partial<InstalledPackageRecord>): InstalledPackag
     updatedAt: 2,
     ...partial,
   } as InstalledPackageRecord;
+}
+
+function makeRepo(repo: string, partial?: Partial<RepoSummary>): RepoSummary {
+  const [owner = "", name = ""] = repo.split("/");
+  return {
+    repo,
+    owner,
+    name,
+    kind: "user",
+    writable: owner === IDENTITY.username,
+    public: false,
+    ...partial,
+  };
 }
 
 function makeConfig() {
@@ -93,6 +107,180 @@ function makeBucket() {
 }
 
 describe("createProcessSourceBackend", () => {
+  it("lists visible ripgit repo owners and repos under /src/repos", async () => {
+    const backend = createProcessSourceBackend({
+      identity: IDENTITY,
+      storage: makeBucket(),
+      packages: [],
+      repos: [
+        makeRepo("sam/docs"),
+        makeRepo("sam/tools"),
+        makeRepo("root/gsv-manual", { public: true, writable: false }),
+        makeRepo("bob/public", { public: true, writable: false }),
+      ],
+      processId: "task:source",
+      config: makeConfig(),
+      ripgit: {
+        readPath: async () => {
+          throw new Error("readPath should not be called for virtual repo dirs");
+        },
+      } as any,
+    });
+
+    expect(backend).not.toBeNull();
+    await expect(backend!.readdir("/src")).resolves.toEqual(["packages", "repos"]);
+    await expect(backend!.readdir("/src/repos")).resolves.toEqual(["bob", "root", "sam"]);
+    await expect(backend!.readdir("/src/repos/sam")).resolves.toEqual(["docs", "tools"]);
+    await expect(backend!.stat("/src/repos/sam/docs")).resolves.toMatchObject({
+      isDirectory: true,
+      mode: 0o555,
+    });
+  });
+
+  it("reads and searches non-package repo content through /src/repos/owner/repo", async () => {
+    const calls: Array<{ repo: { owner: string; repo: string; branch?: string }; path: string }> = [];
+    const searchCalls: Array<{ repo: { owner: string; repo: string; branch?: string }; query: string; prefix?: string }> = [];
+    const backend = createProcessSourceBackend({
+      identity: IDENTITY,
+      storage: makeBucket(),
+      packages: [makePackage()],
+      repos: [makeRepo("sam/docs")],
+      processId: "task:source",
+      config: makeConfig(),
+      ripgit: {
+        readPath: async (repo: { owner: string; repo: string; branch?: string }, path: string) => {
+          calls.push({ repo, path });
+          if (path === "") {
+            return {
+              kind: "tree",
+              entries: [{ name: "README.md", mode: "100644", hash: "readme", type: "blob" }],
+            };
+          }
+          if (repo.owner === "sam" && repo.repo === "docs" && path === "README.md") {
+            return {
+              kind: "file",
+              bytes: new TextEncoder().encode("# Docs\nvisible repo file\n"),
+              size: 25,
+            };
+          }
+          if (path === "packages/sample-console/src/index.ts") {
+            return {
+              kind: "file",
+              bytes: new TextEncoder().encode("export const packageSourceStillWorks = true;\n"),
+              size: 44,
+            };
+          }
+          return { kind: "missing" };
+        },
+        search: async (repo: { owner: string; repo: string; branch?: string }, query: string, prefix?: string) => {
+          searchCalls.push({ repo, query, prefix });
+          return {
+            truncated: false,
+            matches: [{ path: "README.md", line: 2, content: "visible repo file" }],
+          };
+        },
+      } as any,
+    });
+
+    await expect(backend!.readdir("/src/repos/sam/docs")).resolves.toEqual(["README.md"]);
+    await expect(backend!.readFile("/src/repos/sam/docs/README.md")).resolves.toContain("visible repo file");
+    await expect(backend!.readFile("/src/packages/sample-console/src/index.ts"))
+      .resolves.toContain("packageSourceStillWorks");
+    await expect(backend!.search("/src/repos/sam/docs", "visible")).resolves.toMatchObject({
+      matches: [{
+        path: "/src/repos/sam/docs/README.md",
+        line: 2,
+        content: "visible repo file",
+      }],
+    });
+
+    expect(calls).toEqual([
+      {
+        repo: { owner: "sam", repo: "docs", branch: "main" },
+        path: "",
+      },
+      {
+        repo: { owner: "sam", repo: "docs", branch: "main" },
+        path: "README.md",
+      },
+      {
+        repo: { owner: "sam", repo: "pkg-test", branch: "base123" },
+        path: "packages/sample-console/src/index.ts",
+      },
+    ]);
+    expect(searchCalls).toEqual([{
+      repo: { owner: "sam", repo: "docs", branch: "main" },
+      query: "visible",
+      prefix: undefined,
+    }]);
+  });
+
+  it("exposes public manual repos supplied by repo visibility and hides absent private repos", async () => {
+    const backend = createProcessSourceBackend({
+      identity: IDENTITY,
+      storage: makeBucket(),
+      packages: [],
+      repos: [
+        makeRepo("root/gsv-manual", { kind: "user", public: true, writable: false }),
+        makeRepo("bob/public", { public: true, writable: false }),
+      ],
+      processId: "task:source",
+      config: makeConfig(),
+      ripgit: {
+        readPath: async (repo: { owner: string; repo: string; branch?: string }, path: string) => {
+          if (repo.owner === "root" && repo.repo === "gsv-manual" && path === "README.md") {
+            return {
+              kind: "file",
+              bytes: new TextEncoder().encode("manual\n"),
+              size: 7,
+            };
+          }
+          return { kind: "missing" };
+        },
+      } as any,
+    });
+
+    await expect(backend!.readdir("/src/repos/root")).resolves.toEqual(["gsv-manual"]);
+    await expect(backend!.readdir("/src/repos/bob")).resolves.toEqual(["public"]);
+    await expect(backend!.readFile("/src/repos/root/gsv-manual/README.md")).resolves.toBe("manual\n");
+    await expect(backend!.readFile("/src/repos/bob/private/README.md")).rejects.toThrow("no such source repo");
+  });
+
+  it("preserves exact package source repo mounts when generic repo owners overlap", async () => {
+    const backend = createProcessSourceBackend({
+      identity: IDENTITY,
+      storage: makeBucket(),
+      packages: [makePackage()],
+      repos: [makeRepo("legacy/notes")],
+      mounts: [{
+        kind: "ripgit-source",
+        packageId: "import:sam/pkg-test:packages/sample-console",
+        mountPath: "/src/repos/legacy",
+        repo: "sam/pkg-test",
+        ref: "main",
+        subdir: "packages/sample-console",
+        resolvedCommit: "base123",
+      }],
+      processId: "task:source",
+      config: makeConfig(),
+      ripgit: {
+        readPath: async (repo: { owner: string; repo: string; branch?: string }, path: string) => {
+          if (repo.owner === "sam" && repo.repo === "pkg-test" && path === "packages/sample-console/package.json") {
+            return {
+              kind: "file",
+              bytes: new TextEncoder().encode("{\"name\":\"sample-console\"}\n"),
+              size: 26,
+            };
+          }
+          return { kind: "missing" };
+        },
+      } as any,
+    });
+
+    await expect(backend!.readFile("/src/repos/legacy/package.json")).resolves.toContain("sample-console");
+    await expect(backend!.readdir("/src/repos")).resolves.toEqual(["legacy"]);
+  });
+
   it("mounts visible package source under /src/packages", async () => {
     const calls: Array<{ repo: { owner: string; repo: string; branch?: string }; path: string }> = [];
     const backend = createProcessSourceBackend({

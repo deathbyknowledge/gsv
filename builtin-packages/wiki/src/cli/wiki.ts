@@ -7,6 +7,7 @@ import type {
   KnowledgePromoteArgs,
   KnowledgeSourceRef,
   KnowledgeWriteArgs,
+  WikiInfoResult,
   WikiKernelClient,
 } from "../backend/knowledge-store";
 
@@ -33,6 +34,15 @@ export async function runWikiCommand(ctx: CommandContext): Promise<string> {
 
     case "db":
       return runDbCommand(store, rest);
+
+    case "info": {
+      const id = String(firstPositional(rest) ?? "").trim();
+      if (!id) {
+        throw new Error("Usage: wiki info <wiki-id> [--json]");
+      }
+      const result = await store.info({ id });
+      return hasFlag(rest, "--json") ? formatJson(result) : formatWikiInfo(result);
+    }
 
     case "list": {
       const prefix = firstPositional(rest, ["--limit"]);
@@ -289,6 +299,109 @@ function formatKnowledgeList(entries: Array<{ path: string; kind: "file" | "dir"
   return `${lines.join("\n")}\n`;
 }
 
+function formatWikiInfo(info: WikiInfoResult): string {
+  const lines = [
+    `id: ${info.id}`,
+    `title: ${info.title ?? ""}`,
+    `repo: ${info.repo}`,
+    `access: ${info.writable ? "writable" : "read-only"}`,
+    "tree:",
+  ];
+  const tree = formatWikiInfoTree(info.tree);
+  lines.push(...(tree.length > 0 ? tree : ["  (empty)"]));
+  return `${lines.join("\n")}\n`;
+}
+
+type WikiInfoTreeNode = {
+  name: string;
+  path: string;
+  kind: "file" | "dir";
+  title?: string;
+  children: WikiInfoTreeNode[];
+};
+
+function formatWikiInfoTree(entries: WikiInfoResult["tree"]): string[] {
+  const root: WikiInfoTreeNode = { name: "", path: "", kind: "dir", children: [] };
+  const folders = new Map<string, WikiInfoTreeNode>([["", root]]);
+
+  for (const entry of entries) {
+    const parts = entry.path.split("/").filter(Boolean);
+    let parent = root;
+    let parentPath = "";
+    for (const part of parts.slice(0, -1)) {
+      const folderPath = parentPath ? `${parentPath}/${part}` : part;
+      let folder = folders.get(folderPath);
+      if (!folder) {
+        folder = { name: part, path: folderPath, kind: "dir", children: [] };
+        folders.set(folderPath, folder);
+        parent.children.push(folder);
+      }
+      parent = folder;
+      parentPath = folderPath;
+    }
+
+    const name = parts[parts.length - 1] ?? entry.path;
+    const existing = entry.kind === "dir" ? folders.get(entry.path) : undefined;
+    if (existing) {
+      existing.title = entry.title;
+      continue;
+    }
+    const node: WikiInfoTreeNode = {
+      name,
+      path: entry.path,
+      kind: entry.kind,
+      title: entry.title,
+      children: [],
+    };
+    parent.children.push(node);
+    if (entry.kind === "dir") {
+      folders.set(entry.path, node);
+    }
+  }
+
+  sortWikiInfoTree(root);
+  return renderWikiInfoTree(root.children, 0);
+}
+
+function sortWikiInfoTree(node: WikiInfoTreeNode): void {
+  node.children.sort((left, right) => {
+    const leftRank = wikiInfoTreeRank(left);
+    const rightRank = wikiInfoTreeRank(right);
+    if (leftRank !== rightRank) {
+      return leftRank - rightRank;
+    }
+    return wikiInfoTreeLabel(left).localeCompare(wikiInfoTreeLabel(right)) || left.path.localeCompare(right.path);
+  });
+  node.children.forEach(sortWikiInfoTree);
+}
+
+function wikiInfoTreeRank(node: WikiInfoTreeNode): number {
+  if (node.kind === "file" && /^index\.md$/i.test(node.name)) {
+    return 0;
+  }
+  return node.kind === "dir" ? 1 : 2;
+}
+
+function renderWikiInfoTree(nodes: WikiInfoTreeNode[], depth: number): string[] {
+  const lines: string[] = [];
+  const indent = "  ".repeat(depth);
+  for (const node of nodes) {
+    lines.push(`${indent}- ${wikiInfoTreeLabel(node)}`);
+    if (node.children.length > 0) {
+      lines.push(...renderWikiInfoTree(node.children, depth + 1));
+    }
+  }
+  return lines;
+}
+
+function wikiInfoTreeLabel(node: WikiInfoTreeNode): string {
+  if (node.kind === "dir") {
+    return `${node.name}/`;
+  }
+  const title = node.title?.trim();
+  return title ? `${title} (${node.path})` : node.path;
+}
+
 function formatKnowledgeSearch(matches: Array<{ path: string; title?: string; snippet: string }>): string {
   const lines = ["PATH\tTITLE\tSNIPPET"];
   for (const match of matches) {
@@ -448,6 +561,9 @@ function wikiHelp(topic?: string): string {
   if (normalized === "source") {
     return "wiki source add <path> --source target:/absolute/path[::Title] [--source ...]\n\nAttach live source refs to an existing note.\n";
   }
+  if (normalized === "info") {
+    return "wiki info <wiki-id> [--json]\n\nPrint collection metadata and a compact tree of wiki files.\n";
+  }
   if (normalized === "ingest") {
     return "wiki ingest <db> --source target:/absolute/path[::Title] [--source ...] [--title TITLE] [--summary TEXT] [--path PATH] [--mode inbox|page]\n\nCreate a new note from one or more live source refs.\n";
   }
@@ -467,6 +583,7 @@ function wikiHelp(topic?: string): string {
     "  wiki db list [--limit N] [--json]",
     "  wiki db init <db> [--title TITLE] [--description TEXT]",
     "  wiki db delete <db>",
+    "  wiki info <wiki-id> [--json]",
     "  wiki list [prefix] [--recursive] [--limit N] [--json]",
     "  wiki read <path> [--json]",
     "  wiki write <path> [--text TEXT]",
@@ -481,6 +598,7 @@ function wikiHelp(topic?: string): string {
     "",
     "Examples:",
     "  wiki db init product --title \"Product Knowledge\"",
+    "  wiki info product",
     "  wiki write product/pages/auth.md --text \"# Auth\"",
     "  wiki search connect whatsapp --prefix product --json",
     "",
