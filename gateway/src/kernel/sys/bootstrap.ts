@@ -17,17 +17,25 @@ import {
 } from "../packages";
 import { provisionEnabledPackagesForCaller } from "../package-agents";
 import { seedRepoSkillsToHome } from "./skills-seed";
-import { seedRepoKnowledgeToHome } from "./knowledge-seed";
 
 const DEFAULT_GSV_UPSTREAM_URL = "https://github.com/deathbyknowledge/gsv";
 const DEFAULT_GSV_UPSTREAM_REF = "main";
+const DEFAULT_GSV_MANUAL_UPSTREAM_URL = "https://github.com/deathbyknowledge/gsv-manual";
+const DEFAULT_GSV_MANUAL_UPSTREAM_REF = "main";
 const GSV_BOOTSTRAP_UPSTREAM_ENV = "GSV_BOOTSTRAP_UPSTREAM";
 const GSV_BOOTSTRAP_REF_ENV = "GSV_BOOTSTRAP_REF";
+const GSV_MANUAL_BOOTSTRAP_UPSTREAM_ENV = "GSV_MANUAL_BOOTSTRAP_UPSTREAM";
+const GSV_MANUAL_BOOTSTRAP_REF_ENV = "GSV_MANUAL_BOOTSTRAP_REF";
 const BOOTSTRAP_OUTBOUND_SLOTS = 5;
 const BOOTSTRAP_PACKAGE_SLOTS = 2;
 const ROOT_GSV_REPO: RipgitRepoRef = {
   owner: "root",
   repo: "gsv",
+  branch: "main",
+};
+const ROOT_GSV_MANUAL_REPO: RipgitRepoRef = {
+  owner: "root",
+  repo: "gsv-manual",
   branch: "main",
 };
 
@@ -124,6 +132,7 @@ export async function handleSysBootstrap(
   }
 
   const { remoteUrl, ref } = resolveBootstrapUpstream(args, ctx.env);
+  const { remoteUrl: manualRemoteUrl, ref: manualRef } = resolveManualBootstrapUpstream(ctx.env);
 
   const ripgit = new RipgitClient(ctx.env.RIPGIT);
   if (!ctx.identity) {
@@ -134,14 +143,37 @@ export async function handleSysBootstrap(
   const timings: BootstrapTiming[] = [];
 
   try {
-    const imported = await timeBootstrapStep(timings, "import-upstream", () => ripgit.importFromUpstream(
-      ROOT_GSV_REPO,
-      actorName,
-      `${actorName}@gsv.local`,
-      `bootstrap root/gsv from ${remoteUrl}#${ref}`,
-      remoteUrl,
-      ref,
-    ));
+    const limitBootstrap = createBootstrapLimiter(BOOTSTRAP_OUTBOUND_SLOTS);
+    const rootImportPromise = limitBootstrap(1, () =>
+      timeBootstrapStep(timings, "import-root-gsv", () => ripgit.importFromUpstream(
+        ROOT_GSV_REPO,
+        actorName,
+        `${actorName}@gsv.local`,
+        `bootstrap root/gsv from ${remoteUrl}#${ref}`,
+        remoteUrl,
+        ref,
+      ))
+    );
+    const manualImportPromise = limitBootstrap(1, async () => {
+      const importedManual = await timeBootstrapStep(timings, "import-gsv-manual", () => ripgit.importFromUpstream(
+        ROOT_GSV_MANUAL_REPO,
+        actorName,
+        `${actorName}@gsv.local`,
+        `bootstrap root/gsv-manual from ${manualRemoteUrl}#${manualRef}`,
+        manualRemoteUrl,
+        manualRef,
+      ));
+      registerBootstrapRepo(ctx, ROOT_GSV_MANUAL_REPO, "GSV Manual");
+      setPublicRepo(ctx, ROOT_GSV_MANUAL_REPO);
+      return importedManual;
+    });
+    let imported: Awaited<typeof rootImportPromise>;
+    try {
+      imported = await rootImportPromise;
+    } catch (error) {
+      await Promise.allSettled([manualImportPromise]);
+      throw error;
+    }
     const defaultCliChannel = inferDefaultCliChannel(imported.remoteRef);
     if (!ctx.env.STORAGE) {
       throw new Error("STORAGE binding is required for CLI bootstrap");
@@ -151,7 +183,6 @@ export async function handleSysBootstrap(
       ...ROOT_GSV_REPO,
       branch: imported.head ?? imported.remoteRef,
     };
-    const limitBootstrap = createBootstrapLimiter(BOOTSTRAP_OUTBOUND_SLOTS);
 
     const seedSkillsPromise = limitBootstrap(1, () =>
       timeBootstrapStep(timings, "seed-skills", () => seedRepoSkillsToHome(
@@ -159,19 +190,6 @@ export async function handleSysBootstrap(
         importedRepo,
         ctx.identity!.process,
       ))
-    );
-    const seedKnowledgePromise = timeBootstrapStep(
-      timings,
-      "seed-knowledge",
-      () => seedRepoKnowledgeToHome(
-        ripgit,
-        importedRepo,
-        ctx.identity!.process,
-        {
-          concurrency: BOOTSTRAP_OUTBOUND_SLOTS,
-          schedule: (run) => limitBootstrap(1, run),
-        },
-      ),
     );
 
     const installPackagesPromise = limitBootstrap(BOOTSTRAP_PACKAGE_SLOTS, async () => {
@@ -229,12 +247,12 @@ export async function handleSysBootstrap(
       ),
     );
 
-    const [, , installed, mirroredChannels] = await allSettledOrThrow([
+    const [, installed, mirroredChannels, , importedManual] = await allSettledOrThrow([
       seedSkillsPromise,
-      seedKnowledgePromise,
       installPackagesPromise,
       mirrorCliPromise,
       seedPiperPromise,
+      manualImportPromise,
     ]);
 
     console.info(
@@ -247,6 +265,13 @@ export async function handleSysBootstrap(
       ref: imported.remoteRef,
       head: imported.head ?? null,
       changed: imported.changed,
+      manual: {
+        repo: "root/gsv-manual",
+        remoteUrl: importedManual.remoteUrl,
+        ref: importedManual.remoteRef,
+        head: importedManual.head ?? null,
+        changed: importedManual.changed,
+      },
       cli: {
         defaultChannel: defaultCliChannel,
         mirroredChannels,
@@ -325,6 +350,39 @@ function resolveBootstrapUpstream(
     ?? DEFAULT_GSV_UPSTREAM_REF;
 
   return { remoteUrl, ref };
+}
+
+function resolveManualBootstrapUpstream(env: Env): { remoteUrl: string; ref: string } {
+  const configuredUpstream = readEnvString(env, GSV_MANUAL_BOOTSTRAP_UPSTREAM_ENV);
+  const configured = configuredUpstream ? parseConfiguredUpstream(configuredUpstream) : undefined;
+  return {
+    remoteUrl: configured?.remoteUrl ?? DEFAULT_GSV_MANUAL_UPSTREAM_URL,
+    ref: readEnvString(env, GSV_MANUAL_BOOTSTRAP_REF_ENV)
+      ?? configured?.ref
+      ?? DEFAULT_GSV_MANUAL_UPSTREAM_REF,
+  };
+}
+
+function registerBootstrapRepo(
+  ctx: KernelContext,
+  repo: Pick<RipgitRepoRef, "owner" | "repo">,
+  description: string,
+): void {
+  const now = String(Date.now());
+  const createdKey = repoConfigKey(repo, "created_at");
+  if (ctx.config.get(createdKey) === null) {
+    ctx.config.set(createdKey, now);
+  }
+  ctx.config.set(repoConfigKey(repo, "updated_at"), now);
+  ctx.config.set(repoConfigKey(repo, "description"), description);
+}
+
+function setPublicRepo(ctx: KernelContext, repo: Pick<RipgitRepoRef, "owner" | "repo">): void {
+  ctx.config.set(`config/pkg/public-repos/${repo.owner}/${repo.repo}`, "true");
+}
+
+function repoConfigKey(repo: Pick<RipgitRepoRef, "owner" | "repo">, field: string): string {
+  return `repos/${repo.owner}/${repo.repo}/${field}`;
 }
 
 function parseConfiguredUpstream(value: string): { remoteUrl: string; ref?: string } {

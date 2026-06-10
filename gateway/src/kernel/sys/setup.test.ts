@@ -2,10 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { KernelContext } from "../context";
 import type { InstalledPackageRecord } from "../packages";
 
-const { handleSysBootstrapMock, seedRepoSkillsToHomeMock, seedRepoKnowledgeToHomeMock } = vi.hoisted(() => ({
+const { handleSysBootstrapMock, seedRepoSkillsToHomeMock } = vi.hoisted(() => ({
   handleSysBootstrapMock: vi.fn(),
   seedRepoSkillsToHomeMock: vi.fn(),
-  seedRepoKnowledgeToHomeMock: vi.fn(),
 }));
 
 vi.mock("./bootstrap", () => ({
@@ -14,10 +13,6 @@ vi.mock("./bootstrap", () => ({
 
 vi.mock("./skills-seed", () => ({
   seedRepoSkillsToHome: seedRepoSkillsToHomeMock,
-}));
-
-vi.mock("./knowledge-seed", () => ({
-  seedRepoKnowledgeToHome: seedRepoKnowledgeToHomeMock,
 }));
 
 import { handleSysSetup } from "./setup";
@@ -159,6 +154,13 @@ describe("handleSysSetup", () => {
       ref: "main",
       head: "abc123",
       changed: true,
+      manual: {
+        repo: "root/gsv-manual",
+        remoteUrl: "https://github.com/deathbyknowledge/gsv-manual",
+        ref: "main",
+        head: "manual123",
+        changed: true,
+      },
       cli: {
         defaultChannel: "dev",
         mirroredChannels: ["stable", "dev"],
@@ -167,7 +169,6 @@ describe("handleSysSetup", () => {
       packages: [],
     });
     seedRepoSkillsToHomeMock.mockResolvedValue({ username: "root", copied: 0, skipped: 0 });
-    seedRepoKnowledgeToHomeMock.mockResolvedValue({ username: "root", copied: 0, skipped: 0 });
   });
 
   it("creates first user, ai config, and node token", async () => {
@@ -269,7 +270,7 @@ describe("handleSysSetup", () => {
     expect(groups.find((group) => group.name === "wiki-builder-run")?.members).toEqual(["alice"]);
   });
 
-  it("seeds shipped knowledge into root home after first setup bootstrap", async () => {
+  it("seeds shipped skills into root home after first setup bootstrap", async () => {
     const ripgit = {
       fetch: vi.fn(async (input: RequestInfo | URL) => {
         const url = new URL(String(input));
@@ -300,11 +301,6 @@ describe("handleSysSetup", () => {
       }),
     );
     expect(seedRepoSkillsToHomeMock).toHaveBeenCalledWith(
-      expect.any(Object),
-      { owner: "root", repo: "gsv", branch: "abc123" },
-      expect.objectContaining({ username: "root", home: "/root" }),
-    );
-    expect(seedRepoKnowledgeToHomeMock).toHaveBeenCalledWith(
       expect.any(Object),
       { owner: "root", repo: "gsv", branch: "abc123" },
       expect.objectContaining({ username: "root", home: "/root" }),

@@ -46,7 +46,7 @@ New human homes create the directory only. New agent homes seed a short style
 file and user identity file. New personal agents also seed a one-time
 `00-boot.md` onboarding file, which the agent should delete after setup is
 done. Keep these files short and stable. Put durable reference material under
-`~/knowledge/` instead, where it can be searched and retrieved deliberately.
+Wiki instead, where it can be searched and retrieved deliberately.
 
 ## Skills: `skills.d/`
 
@@ -99,4 +99,4 @@ Use the GSV target for GSV filesystem paths. Use a device target only when inten
 
 ## What Belongs Where
 
-Use `~/context.d/` for concise standing context. Use `skills.d/` for reusable procedures. Use `~/knowledge/` for durable, searchable reference material. Use process context for the current assignment only.
+Use `~/context.d/` for concise standing context. Use `skills.d/` for reusable procedures. Use Wiki for durable, searchable reference material. Use process context for the current assignment only.

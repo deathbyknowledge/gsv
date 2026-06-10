@@ -255,6 +255,13 @@ export type SysBootstrapResult = {
   ref: string;
   head: string | null;
   changed: boolean;
+  manual: {
+    repo: string;
+    remoteUrl: string;
+    ref: string;
+    head: string | null;
+    changed: boolean;
+  };
   cli: {
     defaultChannel: SysCliReleaseChannel;
     mirroredChannels: SysCliReleaseChannel[];

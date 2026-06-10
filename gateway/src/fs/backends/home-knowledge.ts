@@ -31,8 +31,6 @@ type HomePathKind =
   | "skills-path"
   | "profiles-root"
   | "profiles-path"
-  | "knowledge-root"
-  | "knowledge-path"
   | "other";
 
 export type HomeKnowledgeBackendOptions = {
@@ -101,10 +99,6 @@ class HomeKnowledgeMountBackend implements MountBackend {
     return normalizePath(`${this.identity.home}/profiles.d`);
   }
 
-  private get knowledgeRoot() {
-    return normalizePath(`${this.identity.home}/knowledge`);
-  }
-
   handles(path: string): boolean {
     const normalized = normalizePath(path);
     return normalized === this.home || normalized.startsWith(`${this.home}/`);
@@ -152,7 +146,7 @@ class HomeKnowledgeMountBackend implements MountBackend {
       return;
     }
 
-    if (kind === "context-root" || kind === "skills-root" || kind === "profiles-root" || kind === "knowledge-root") {
+    if (kind === "context-root" || kind === "skills-root" || kind === "profiles-root") {
       throw new Error(`EISDIR: illegal operation on a directory, write '${normalized}'`);
     }
 
@@ -172,7 +166,7 @@ class HomeKnowledgeMountBackend implements MountBackend {
       return;
     }
 
-    if (kind === "context-root" || kind === "skills-root" || kind === "profiles-root" || kind === "knowledge-root") {
+    if (kind === "context-root" || kind === "skills-root" || kind === "profiles-root") {
       throw new Error(`EISDIR: illegal operation on a directory, append '${normalized}'`);
     }
 
@@ -195,7 +189,7 @@ class HomeKnowledgeMountBackend implements MountBackend {
     if (kind === "other") {
       return this.fallback.exists(normalized);
     }
-    if (kind === "context-root" || kind === "skills-root" || kind === "profiles-root" || kind === "knowledge-root") {
+    if (kind === "context-root" || kind === "skills-root" || kind === "profiles-root") {
       return true;
     }
 
@@ -225,7 +219,7 @@ class HomeKnowledgeMountBackend implements MountBackend {
     if (kind === "other") {
       return this.fallback.stat(normalized);
     }
-    if (kind === "context-root" || kind === "skills-root" || kind === "profiles-root" || kind === "knowledge-root") {
+    if (kind === "context-root" || kind === "skills-root" || kind === "profiles-root") {
       return this.makeDirectoryStat();
     }
 
@@ -271,7 +265,7 @@ class HomeKnowledgeMountBackend implements MountBackend {
     const normalized = normalizePath(path);
     const kind = this.classify(normalized);
 
-    if (kind === "home" || kind === "context-root" || kind === "skills-root" || kind === "profiles-root" || kind === "knowledge-root") {
+    if (kind === "home" || kind === "context-root" || kind === "skills-root" || kind === "profiles-root") {
       return;
     }
     if (kind === "other") {
@@ -301,7 +295,6 @@ class HomeKnowledgeMountBackend implements MountBackend {
       entries.add("context.d");
       entries.add("skills.d");
       entries.add("profiles.d");
-      entries.add("knowledge");
       return [...entries].sort();
     }
 
@@ -324,7 +317,7 @@ class HomeKnowledgeMountBackend implements MountBackend {
     }
 
     if (entries.size === 0) {
-      if (kind === "context-root" || kind === "skills-root" || kind === "profiles-root" || kind === "knowledge-root") {
+      if (kind === "context-root" || kind === "skills-root" || kind === "profiles-root") {
         return [];
       }
       throw new Error(`ENOENT: no such file or directory, scandir '${normalized}'`);
@@ -344,7 +337,7 @@ class HomeKnowledgeMountBackend implements MountBackend {
       await this.fallback.rm(normalized, options);
       return;
     }
-    if (kind === "context-root" || kind === "skills-root" || kind === "profiles-root" || kind === "knowledge-root") {
+    if (kind === "context-root" || kind === "skills-root" || kind === "profiles-root") {
       const entries = await this.readdir(normalized);
       if (entries.length > 0 && !options?.recursive) {
         throw new Error(`ENOTEMPTY: directory not empty, rmdir '${normalized}'`);
@@ -434,7 +427,7 @@ class HomeKnowledgeMountBackend implements MountBackend {
       await this.fallback.symlink(target, normalized);
       return;
     }
-    if (kind === "context-root" || kind === "skills-root" || kind === "profiles-root" || kind === "knowledge-root") {
+    if (kind === "context-root" || kind === "skills-root" || kind === "profiles-root") {
       throw new Error(`EISDIR: illegal operation on a directory, symlink '${normalized}'`);
     }
 
@@ -499,12 +492,6 @@ class HomeKnowledgeMountBackend implements MountBackend {
     if (path.startsWith(`${this.profilesRoot}/`)) {
       return "profiles-path";
     }
-    if (path === this.knowledgeRoot) {
-      return "knowledge-root";
-    }
-    if (path.startsWith(`${this.knowledgeRoot}/`)) {
-      return "knowledge-path";
-    }
     return "other";
   }
 
@@ -512,7 +499,7 @@ class HomeKnowledgeMountBackend implements MountBackend {
     if (path.startsWith(`${this.home}/`)) {
       return path.slice(this.home.length + 1);
     }
-    throw new Error(`Path is not part of the home knowledge overlay: ${path}`);
+    throw new Error(`Path is not part of the home repo overlay: ${path}`);
   }
 
   private canFallbackToR2(path: string): boolean {
@@ -605,7 +592,7 @@ class HomeKnowledgeMountBackend implements MountBackend {
 }
 
 /**
- * Routes another account's home root and home-knowledge overlay dirs through a
+ * Routes another account's home root and home repo overlay dirs through a
  * ripgit-backed mount keyed on the target account when the viewer is authorized
  * to manage that agent. Non-overlay files in the target home stay on the
  * viewer's normal R2 permission path.

@@ -84,6 +84,7 @@ function makeInstalledPackage() {
 }
 
 function makeContext(): KernelContext {
+  const configValues = new Map<string, string>();
   return {
     env: {
       RIPGIT: {} as Fetcher,
@@ -104,6 +105,17 @@ function makeContext(): KernelContext {
     packages: {
       seedBuiltinPackages: vi.fn(() => [makeInstalledPackage()]),
     } as unknown as KernelContext["packages"],
+    config: {
+      get: vi.fn((key: string) => configValues.get(key) ?? null),
+      set: vi.fn((key: string, value: string) => {
+        configValues.set(key, value);
+      }),
+      list: vi.fn((prefix: string) =>
+        [...configValues.entries()]
+          .filter(([key]) => key.startsWith(prefix))
+          .map(([key, value]) => ({ key, value }))
+      ),
+    } as unknown as KernelContext["config"],
   } as KernelContext;
 }
 
@@ -154,19 +166,6 @@ describe("handleSysBootstrap", () => {
           size: 80,
         };
       }
-      if (repo.owner === "root" && repo.repo === "gsv" && path === "knowledge/gsv") {
-        return {
-          kind: "tree",
-          entries: [{ name: "manual.md", type: "blob", mode: "100644", hash: "c" }],
-        };
-      }
-      if (repo.owner === "root" && repo.repo === "gsv" && path === "knowledge/gsv/manual.md") {
-        return {
-          kind: "file",
-          bytes: new TextEncoder().encode("# GSV Manual\n"),
-          size: 13,
-        };
-      }
       return { kind: "missing" };
     });
     applyMock.mockResolvedValue({ head: "home123" });
@@ -191,6 +190,14 @@ describe("handleSysBootstrap", () => {
       "https://github.com/deathbyknowledge/gsv",
       "main",
     );
+    expect(importFromUpstreamMock).toHaveBeenCalledWith(
+      { owner: "root", repo: "gsv-manual", branch: "main" },
+      "root",
+      "root@gsv.local",
+      "bootstrap root/gsv-manual from https://github.com/deathbyknowledge/gsv-manual#main",
+      "https://github.com/deathbyknowledge/gsv-manual",
+      "main",
+    );
     expect(buildBuiltinPackageSeedsMock).toHaveBeenCalledWith(ctx.env);
     expect(applyMock).toHaveBeenCalledWith(
       { owner: "root", repo: "home" },
@@ -210,29 +217,8 @@ describe("handleSysBootstrap", () => {
         },
       ],
     );
-    expect(applyMock).toHaveBeenCalledWith(
-      { owner: "root", repo: "home" },
-      "root",
-      "root@gsv.local",
-      "gsv: seed bootstrap knowledge",
-      [
-        {
-          type: "put",
-          path: "knowledge/.dir",
-          contentBytes: [],
-        },
-        {
-          type: "put",
-          path: "knowledge/gsv/.dir",
-          contentBytes: [],
-        },
-        {
-          type: "put",
-          path: "knowledge/gsv/manual.md",
-          contentBytes: Array.from(new TextEncoder().encode("# GSV Manual\n")),
-        },
-      ],
-    );
+    expect(ctx.config.set).toHaveBeenCalledWith("repos/root/gsv-manual/description", "GSV Manual");
+    expect(ctx.config.set).toHaveBeenCalledWith("config/pkg/public-repos/root/gsv-manual", "true");
     expect(ctx.packages.seedBuiltinPackages).toHaveBeenCalledWith([{ name: "chat-seed" }]);
     expect(inferDefaultCliChannelMock).toHaveBeenCalledWith("main");
     expect(mirrorCliChannelMock).toHaveBeenCalledTimes(2);
@@ -245,6 +231,13 @@ describe("handleSysBootstrap", () => {
       ref: "main",
       head: "abc123",
       changed: true,
+      manual: {
+        repo: "root/gsv-manual",
+        remoteUrl: "https://github.com/deathbyknowledge/gsv-manual",
+        ref: "main",
+        head: "abc123",
+        changed: true,
+      },
       cli: {
         defaultChannel: "dev",
         mirroredChannels: ["stable", "dev"],

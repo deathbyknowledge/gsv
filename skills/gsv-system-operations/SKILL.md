@@ -94,9 +94,11 @@ Use explicit setup/bootstrap args when available, or configure worker dev vars s
 ```text
 GSV_BOOTSTRAP_UPSTREAM=deathbyknowledge/gsv#my-branch
 GSV_BOOTSTRAP_REF=my-branch
+GSV_MANUAL_BOOTSTRAP_UPSTREAM=deathbyknowledge/gsv-manual#my-branch
+GSV_MANUAL_BOOTSTRAP_REF=my-branch
 ```
 
-If both are set, explicit request args win, then environment, then the default `https://github.com/deathbyknowledge/gsv#main`.
+For `root/gsv`, explicit request args win, then environment, then the default `https://github.com/deathbyknowledge/gsv#main`. The manual is imported separately into `root/gsv-manual`; use `GSV_MANUAL_BOOTSTRAP_UPSTREAM` and `GSV_MANUAL_BOOTSTRAP_REF` when testing manual changes.
 
 ## Operational Distinctions
 

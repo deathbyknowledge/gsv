@@ -43,9 +43,9 @@ Use these paths as an orientation map before deciding which tool or target to us
 - `/home/<user>`: the user's durable home tree.
 - `~/context.d/*.md`: short standing context loaded into process prompts.
 - `~/skills.d/*`: reusable process skills; use `skills show <skill>` before relying on one.
-- `~/knowledge/`: durable reference notes and knowledge pages; not loaded automatically.
+- Wiki repos: durable reference notes and knowledge pages; not loaded automatically. Use `wiki list`, `wiki read`, and `wiki search`.
 
-Put durable conclusions, artifacts, and handoff notes in files, package source, repositories, or knowledge. Do not treat active conversation history as the artifact of record.
+Put durable conclusions, artifacts, and handoff notes in files, package source, repositories, or Wiki. Do not treat active conversation history as the artifact of record.
 
 ### Work and Source Trees
 

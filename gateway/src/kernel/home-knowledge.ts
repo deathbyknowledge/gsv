@@ -36,8 +36,6 @@ export async function ensureHomeStorageLayout(
     constitutionContext,
     userContext,
     skillsDir,
-    knowledgeDir,
-    inboxDir,
   ] = await Promise.all([
     client.readPath(repo, "context.d"),
     client.readPath(repo, "context.d/00-boot.md"),
@@ -45,8 +43,6 @@ export async function ensureHomeStorageLayout(
     client.readPath(repo, "context.d/00-constitution.md"),
     client.readPath(repo, "context.d/10-user.md"),
     client.readPath(repo, "skills.d"),
-    client.readPath(repo, "knowledge"),
-    client.readPath(repo, "knowledge/inbox"),
   ]);
 
   const ops: RipgitApplyOp[] = [];
@@ -119,21 +115,6 @@ export async function ensureHomeStorageLayout(
       contentBytes: [],
     });
   }
-  if (knowledgeDir.kind === "missing") {
-    ops.push({
-      type: "put" as const,
-      path: "knowledge/.dir",
-      contentBytes: [],
-    });
-  }
-  if (inboxDir.kind === "missing") {
-    ops.push({
-      type: "put" as const,
-      path: "knowledge/inbox/.dir",
-      contentBytes: [],
-    });
-  }
-
   if (ops.length === 0) {
     return;
   }
@@ -142,7 +123,7 @@ export async function ensureHomeStorageLayout(
     repo,
     identity.username,
     `${identity.username}@gsv.local`,
-    "gsv: scaffold home knowledge",
+    "gsv: scaffold home layout",
     ops,
   );
 }

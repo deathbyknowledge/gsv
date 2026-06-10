@@ -45,7 +45,7 @@ A parent skill should describe the system area and point to narrower nested skil
 - `~/context.d/*.md`: concise user-global standing context useful to most processes.
 - `~/skills.d/`: reusable user-level process workflows.
 - `/src/packages/{package}/skills.d/`: workflows shipped by visible package source.
-- `~/knowledge/`: durable searchable reference material, not always-loaded prompt context.
+- Wiki repos: durable searchable reference material, not always-loaded prompt context.
 - Explicit project files or repositories: task-local continuity, decisions, open loops, and handoff state.
 - Process assignment context: current task instructions, temporary handoff notes, and files attached to a spawned process.
 
@@ -56,7 +56,7 @@ Repo-root `skills/` in `root/gsv` is only a distribution source. Bootstrap copie
 1. Read the current file before editing.
 2. Keep context files short and curated.
 3. Put reusable procedures in skills, not profile or home context.
-4. Put raw reference material in knowledge or a skill reference file, not always-loaded context.
+4. Put raw reference material in Wiki or a skill reference file, not always-loaded context.
 5. Preserve user-authored structure and do not overwrite local skills just because a seeded source exists.
 6. After a repeated correction or reusable workflow, update the relevant writable skill source.
 
