@@ -1,5 +1,4 @@
 import { WikiHeader } from "./components/header/wiki-header";
-import { WikiInspector } from "./components/navigation/wiki-inspector";
 import { WikiRail } from "./components/navigation/wiki-rail";
 import { BrowsePane } from "./components/panes/browse-pane";
 import { BuildPane } from "./components/panes/build-pane";
@@ -28,18 +27,18 @@ export function App({ backend, routeBase }: { backend: WikiBackend; routeBase: s
   return (
     <div class="wiki-shell">
       <WikiHeader
-        mode={wiki.mode}
         activeDb={wiki.activeDb}
         selectedDb={wiki.selectedDb}
-        selectedPath={wiki.state.selectedPath}
-        currentTitle={wiki.currentTitle}
-        pageCount={wiki.state.pages.length}
-        inboxCount={wiki.state.inbox.length}
         searchDraft={wiki.searchDraft}
         searchQuery={wiki.state.searchQuery}
-        searchMatchCount={wiki.state.searchMatches?.length ?? null}
+        searchMatches={wiki.state.searchMatches}
+        searchOpen={wiki.searchOpen}
+        searching={wiki.searching}
         onSearchDraftChange={wiki.setSearchDraft}
+        onSearchFocus={() => wiki.setSearchOpen(true)}
         onApplySearch={wiki.applySearch}
+        onClearSearch={wiki.clearSearch}
+        onOpenMatch={wiki.openSearchMatch}
       />
 
       <div class="wiki-layout">
@@ -48,9 +47,7 @@ export function App({ backend, routeBase }: { backend: WikiBackend; routeBase: s
           routeBase={routeBase}
           onChangeMode={wiki.changeMode}
           state={wiki.state}
-          route={wiki.route}
           selectedDb={wiki.selectedDb}
-          activeDb={wiki.activeDb}
           visiblePages={wiki.visiblePages}
           selectedInboxPath={wiki.selectedInboxPath}
           mutating={wiki.mutating}
@@ -81,8 +78,7 @@ export function App({ backend, routeBase }: { backend: WikiBackend; routeBase: s
                   currentTitle={wiki.currentTitle}
                   routeBase={routeBase}
                   selectedDb={wiki.selectedDb}
-                  searchQuery={wiki.state.searchQuery}
-                  searchMatchCount={wiki.state.searchMatches?.length ?? null}
+                  pageHeadings={wiki.pageHeadings}
                   onOpenPage={wiki.openPage}
                   onEditPage={() => wiki.setMode("edit")}
                   onPreviewOpen={handleArticlePreviewOpen}
@@ -166,12 +162,6 @@ export function App({ backend, routeBase }: { backend: WikiBackend; routeBase: s
           ) : null}
         </main>
 
-        <WikiInspector
-          pageHeadings={wiki.pageHeadings}
-          currentTitle={wiki.currentTitle}
-          selectedDb={wiki.selectedDb}
-          selectedPath={wiki.state.selectedPath}
-        />
       </div>
 
       {previewRect ? (

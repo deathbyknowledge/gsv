@@ -323,16 +323,18 @@ export async function handleSysSetup(
         repo: "gsv",
         branch: bootstrapResult.head ?? bootstrapResult.ref,
       };
-      await timeSetupStep(
-        timings,
-        "seed-root-skills",
-        () => seedRepoSkillsToHome(ripgit, sourceRepo, rootProcessIdentity),
-      );
-      await timeSetupStep(
-        timings,
-        "seed-root-knowledge",
-        () => seedRepoKnowledgeToHome(ripgit, sourceRepo, rootProcessIdentity),
-      );
+      await Promise.all([
+        timeSetupStep(
+          timings,
+          "seed-root-skills",
+          () => seedRepoSkillsToHome(ripgit, sourceRepo, rootProcessIdentity),
+        ),
+        timeSetupStep(
+          timings,
+          "seed-root-knowledge",
+          () => seedRepoKnowledgeToHome(ripgit, sourceRepo, rootProcessIdentity),
+        ),
+      ]);
     }
 
     const processIdentity: ProcessIdentity = {

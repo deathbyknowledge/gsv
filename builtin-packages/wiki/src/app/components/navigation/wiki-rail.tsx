@@ -1,7 +1,6 @@
-import { buildWikiHref, type WikiRoute } from "../../domain/route";
 import { displayTitleFromPath } from "../../domain/wiki-model";
 import { buildEntryHref } from "../../markdown";
-import type { WikiDb, WikiEntry, WikiMode, WikiWorkspaceState } from "../../types";
+import type { WikiEntry, WikiMode, WikiWorkspaceState } from "../../types";
 import { WikiIcon, type WikiIconName } from "../ui/wiki-icon";
 
 type Props = {
@@ -9,9 +8,7 @@ type Props = {
   routeBase: string;
   onChangeMode(mode: WikiMode): void;
   state: WikiWorkspaceState;
-  route: WikiRoute;
   selectedDb: string;
-  activeDb: WikiDb | undefined;
   visiblePages: WikiEntry[];
   selectedInboxPath: string;
   mutating: boolean;
@@ -37,8 +34,6 @@ const AUTHORING_MODES: Array<{ id: WikiMode; label: string; icon: WikiIconName; 
 ];
 
 export function WikiRail(props: Props) {
-  const collectionTitle = props.activeDb?.title || props.selectedDb || "No collection";
-  const pageHeading = props.state.searchMatches ? "Search results" : "Pages";
   const pageCount = props.visiblePages.length;
   const authoringDetailsProps = props.mode !== "browse" ? { open: true } : {};
 
@@ -89,34 +84,23 @@ export function WikiRail(props: Props) {
             </div>
           </form>
         ) : null}
-        {props.selectedDb ? (
-          <a
-            class="wiki-current-context"
-            href={buildWikiHref(props.mode, { ...props.route, db: props.selectedDb, path: props.state.selectedPath || `${props.selectedDb}/index.md` })}
-            onClick={(event) => event.preventDefault()}
-          >
-            <span>{collectionTitle}</span>
-            <code title={props.state.selectedPath || props.selectedDb}>{props.state.selectedPath || "Collection home"}</code>
-          </a>
-        ) : (
-          <div class="wiki-empty wiki-empty--compact">Select or create a collection to start reading.</div>
-        )}
+        {!props.selectedDb ? <div class="wiki-empty wiki-empty--compact">Select or create a collection to start reading.</div> : null}
       </section>
 
       <section class="wiki-nav-block wiki-nav-block--list">
         <div class="wiki-nav-heading">
-          <span>{pageHeading}<em>{pageCount}</em></span>
+          <span>Pages<em>{pageCount}</em></span>
           <button type="button" class="wiki-inline-icon-button" onClick={props.onNewPage} title="Create page" aria-label="Create page">
             <WikiIcon name="plus" />
           </button>
         </div>
-        <PageList
+        <PageTree
           entries={props.visiblePages}
           routeBase={props.routeBase}
           selectedPath={props.state.selectedPath}
           selectedDb={props.selectedDb}
           onOpenPage={props.onOpenPage}
-          emptyText={props.state.searchMatches ? "No matching pages." : props.selectedDb ? "No pages in this collection yet." : "No collection selected."}
+          emptyText={props.selectedDb ? "No pages in this collection yet." : "No collection selected."}
         />
       </section>
 
@@ -135,7 +119,7 @@ export function WikiRail(props: Props) {
               <WikiIcon name="build" />
             </button>
           </div>
-          <PageList
+          <PageTree
             entries={props.state.inbox}
             routeBase={props.routeBase}
             selectedPath={props.selectedInboxPath}
@@ -184,7 +168,15 @@ export function WikiRail(props: Props) {
   );
 }
 
-function PageList({
+type PageTreeNode = {
+  key: string;
+  name: string;
+  children: PageTreeNode[];
+  entry?: WikiEntry;
+  count: number;
+};
+
+function PageTree({
   entries,
   routeBase,
   selectedPath,
@@ -203,25 +195,151 @@ function PageList({
     return <div class="wiki-empty wiki-empty--compact">{emptyText}</div>;
   }
 
+  const tree = buildPageTree(entries, selectedDb);
+
   return (
-    <div class="wiki-entry-list">
-      {entries.map((entry) => (
-        <a
-          key={entry.path}
-          href={buildEntryHref(routeBase, selectedDb, entry.path)}
-          class={`wiki-entry-row${selectedPath === entry.path ? " is-active" : ""}`}
-          onClick={(event) => {
-            event.preventDefault();
-            onOpenPage(entry.path);
-          }}
-        >
-          <WikiIcon name={entry.path.includes("/inbox/") ? "inbox" : "file"} />
-          <span>
-            <strong title={entry.title || displayTitleFromPath(entry.path)}>{entry.title || displayTitleFromPath(entry.path)}</strong>
-            <small title={entry.path}>{entry.snippet || entry.path}</small>
-          </span>
-        </a>
+    <div class="wiki-page-tree">
+      {tree.children.map((node) => (
+        <PageTreeBranch
+          key={node.key}
+          node={node}
+          routeBase={routeBase}
+          selectedPath={selectedPath}
+          selectedDb={selectedDb}
+          onOpenPage={onOpenPage}
+          level={0}
+        />
       ))}
     </div>
   );
+}
+
+function PageTreeBranch({
+  node,
+  routeBase,
+  selectedPath,
+  selectedDb,
+  onOpenPage,
+  level,
+}: {
+  node: PageTreeNode;
+  routeBase: string;
+  selectedPath: string;
+  selectedDb: string;
+  onOpenPage(path: string): void;
+  level: number;
+}) {
+  if (node.entry) {
+    const label = node.entry.title || displayTitleFromPath(node.entry.path);
+    return (
+      <a
+        href={buildEntryHref(routeBase, selectedDb, node.entry.path)}
+        class={`wiki-tree-file${selectedPath === node.entry.path ? " is-active" : ""}`}
+        style={`--tree-level: ${level}`}
+        onClick={(event) => {
+          event.preventDefault();
+          onOpenPage(node.entry!.path);
+        }}
+      >
+        <WikiIcon name={node.entry.path.includes("/inbox/") ? "inbox" : "file"} />
+        <span title={label}>{label}</span>
+      </a>
+    );
+  }
+
+  const selectedInside = containsSelectedPath(node, selectedPath);
+  return (
+    <details class="wiki-tree-folder" open={level === 0 || selectedInside}>
+      <summary style={`--tree-level: ${level}`}>
+        <WikiIcon name="folder" />
+        <span title={node.name}>{displayFolderName(node.name)}</span>
+        <em>{node.count}</em>
+      </summary>
+      <div class="wiki-tree-children">
+        {node.children.map((child) => (
+          <PageTreeBranch
+            key={child.key}
+            node={child}
+            routeBase={routeBase}
+            selectedPath={selectedPath}
+            selectedDb={selectedDb}
+            onOpenPage={onOpenPage}
+            level={level + 1}
+          />
+        ))}
+      </div>
+    </details>
+  );
+}
+
+function buildPageTree(entries: WikiEntry[], selectedDb: string): PageTreeNode {
+  const root: PageTreeNode = { key: "root", name: "root", children: [], count: 0 };
+  const folders = new Map<string, PageTreeNode>([["", root]]);
+
+  for (const entry of entries) {
+    const segments = displayPathSegments(entry.path, selectedDb);
+    let parent = root;
+    let parentKey = "";
+    for (const segment of segments.slice(0, -1)) {
+      const key = parentKey ? `${parentKey}/${segment}` : segment;
+      let folder = folders.get(key);
+      if (!folder) {
+        folder = { key, name: segment, children: [], count: 0 };
+        folders.set(key, folder);
+        parent.children.push(folder);
+      }
+      folder.count += 1;
+      parent = folder;
+      parentKey = key;
+    }
+    root.count += 1;
+    parent.children.push({
+      key: entry.path,
+      name: segments[segments.length - 1] || entry.path,
+      children: [],
+      entry,
+      count: 1,
+    });
+  }
+
+  sortPageTree(root);
+  return root;
+}
+
+function sortPageTree(node: PageTreeNode): void {
+  node.children.sort((left, right) => {
+    if (Boolean(left.entry) !== Boolean(right.entry)) {
+      return left.entry ? 1 : -1;
+    }
+    return left.name.localeCompare(right.name);
+  });
+  node.children.forEach(sortPageTree);
+}
+
+function displayPathSegments(path: string, selectedDb: string): string[] {
+  let relativePath = path;
+  const dbPrefix = selectedDb ? `${selectedDb}/` : "";
+  if (dbPrefix && relativePath.startsWith(dbPrefix)) {
+    relativePath = relativePath.slice(dbPrefix.length);
+  }
+  if (relativePath.startsWith("pages/")) {
+    relativePath = relativePath.slice("pages/".length);
+  } else if (relativePath.startsWith("inbox/")) {
+    relativePath = relativePath.slice("inbox/".length);
+  }
+  return relativePath.split("/").filter(Boolean);
+}
+
+function displayFolderName(name: string): string {
+  return name.replace(/[-_]+/g, " ");
+}
+
+function containsSelectedPath(node: PageTreeNode, selectedPath: string): boolean {
+  if (!selectedPath) {
+    return false;
+  }
+  if (node.entry?.path === selectedPath) {
+    return true;
+  }
+  return node.children.some((child) => containsSelectedPath(child, selectedPath));
 }

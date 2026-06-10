@@ -160,12 +160,18 @@ export async function handleSysBootstrap(
         ctx.identity!.process,
       ))
     );
-    const seedKnowledgePromise = limitBootstrap(1, () =>
-      timeBootstrapStep(timings, "seed-knowledge", () => seedRepoKnowledgeToHome(
+    const seedKnowledgePromise = timeBootstrapStep(
+      timings,
+      "seed-knowledge",
+      () => seedRepoKnowledgeToHome(
         ripgit,
         importedRepo,
         ctx.identity!.process,
-      ))
+        {
+          concurrency: BOOTSTRAP_OUTBOUND_SLOTS,
+          schedule: (run) => limitBootstrap(1, run),
+        },
+      ),
     );
 
     const installPackagesPromise = limitBootstrap(BOOTSTRAP_PACKAGE_SLOTS, async () => {

@@ -1,75 +1,98 @@
-import type { WikiMode } from "../../types";
 import type { WikiDb } from "../../types";
+import type { WikiEntry } from "../../types";
+import { displayTitleFromPath } from "../../domain/wiki-model";
 import { WikiIcon } from "../ui/wiki-icon";
 
 type Props = {
-  mode: WikiMode;
   activeDb: WikiDb | undefined;
   selectedDb: string;
-  selectedPath: string;
-  currentTitle: string;
-  pageCount: number;
-  inboxCount: number;
   searchDraft: string;
   searchQuery: string;
-  searchMatchCount: number | null;
+  searchMatches: WikiEntry[] | null;
+  searchOpen: boolean;
+  searching: boolean;
   onSearchDraftChange(value: string): void;
+  onSearchFocus(): void;
   onApplySearch(event: Event): void;
+  onClearSearch(): void;
+  onOpenMatch(path: string): void;
 };
 
 export function WikiHeader(props: Props) {
-  const scope = props.activeDb?.title || props.selectedDb || "No collection";
-  const detail = props.selectedPath || labelForMode(props.mode);
-  const resultText = resultLabel(props.searchQuery, props.searchMatchCount);
+  const scope = props.activeDb?.title || props.selectedDb || "wiki";
+  const matches = props.searchMatches ?? [];
+  const showDropdown = props.searchOpen && props.searchDraft.trim().length > 0;
 
   return (
     <header class="wiki-header">
-      <div class="wiki-app-title">
-        <span class="wiki-app-mark"><WikiIcon name="book" /></span>
-        <div>
-          <h1>Wiki</h1>
-          <p title={scope}>{scope}</p>
-        </div>
-      </div>
-
-      <form class="wiki-global-search" onSubmit={props.onApplySearch} role="search">
-        <WikiIcon name="search" />
-        <input
-          value={props.searchDraft}
-          onInput={(event) => props.onSearchDraftChange((event.currentTarget as HTMLInputElement).value)}
-          placeholder={props.selectedDb ? `Search ${scope}` : "Search pages"}
-          type="search"
-          title="Search pages"
-          aria-label="Search pages"
-        />
-        <button type="submit" title="Search pages">
+      <div class="wiki-search-wrap">
+        <form class="wiki-global-search" onSubmit={props.onApplySearch} role="search">
           <WikiIcon name="search" />
-          <span>Search</span>
-        </button>
-      </form>
+          <input
+            value={props.searchDraft}
+            onInput={(event) => props.onSearchDraftChange((event.currentTarget as HTMLInputElement).value)}
+            onFocus={props.onSearchFocus}
+            placeholder={props.selectedDb ? `Search ${scope}` : "Search pages"}
+            type="search"
+            title="Search pages"
+            aria-label="Search pages"
+            autoComplete="off"
+          />
+          {props.searchDraft ? (
+            <button type="button" class="wiki-search-icon-button" title="Clear search" aria-label="Clear search" onClick={props.onClearSearch}>
+              <WikiIcon name="close" />
+            </button>
+          ) : null}
+          <button type="submit" class="wiki-search-icon-button" title="Open first match" aria-label="Open first match">
+            <WikiIcon name="search" />
+          </button>
+        </form>
 
-      <div class="wiki-header-context">
-        <span title={props.currentTitle || undefined}>{props.currentTitle || labelForMode(props.mode)}</span>
-        <code title={detail}>{detail}</code>
-        <p title={resultText || undefined}>
-          {resultText || `${props.pageCount} pages${props.inboxCount ? `, ${props.inboxCount} inbox` : ""}`}
-        </p>
+        {showDropdown ? (
+          <div class="wiki-search-popover" role="listbox" aria-label="Search matches">
+            {props.searching ? <div class="wiki-search-state">Searching...</div> : null}
+            {!props.searching && matches.length === 0 ? <div class="wiki-search-state">No matching pages.</div> : null}
+            {!props.searching ? matches.map((match) => (
+              <button
+                key={match.path}
+                type="button"
+                class="wiki-search-result"
+                onClick={() => props.onOpenMatch(match.path)}
+              >
+                <strong>
+                  <HighlightedText text={match.title || displayTitleFromPath(match.path)} query={props.searchQuery || props.searchDraft} />
+                </strong>
+                {match.snippet ? (
+                  <span>
+                    <HighlightedText text={match.snippet} query={props.searchQuery || props.searchDraft} />
+                  </span>
+                ) : null}
+              </button>
+            )) : null}
+          </div>
+        ) : null}
       </div>
     </header>
   );
 }
 
-function resultLabel(query: string, count: number | null): string {
-  if (!query || count === null) {
-    return "";
+function HighlightedText({ text, query }: { text: string; query: string }) {
+  const terms = query.trim().split(/\s+/).filter(Boolean);
+  if (terms.length === 0) {
+    return <>{text}</>;
   }
-  return `${count} ${count === 1 ? "match" : "matches"} for ${query}`;
+  const pattern = new RegExp(`(${terms.map(escapeRegExp).join("|")})`, "ig");
+  const parts = text.split(pattern);
+  return (
+    <>
+      {parts.map((part, index) => {
+        const highlighted = terms.some((term) => part.toLowerCase() === term.toLowerCase());
+        return highlighted ? <mark key={`${part}-${index}`}>{part}</mark> : <span key={`${part}-${index}`}>{part}</span>;
+      })}
+    </>
+  );
 }
 
-function labelForMode(mode: WikiMode): string {
-  if (mode === "browse") return "Read";
-  if (mode === "edit") return "Edit page";
-  if (mode === "build") return "Build manual";
-  if (mode === "ingest") return "Add to inbox";
-  return "Inbox";
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

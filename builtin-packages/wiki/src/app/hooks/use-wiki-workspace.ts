@@ -50,10 +50,12 @@ export function useWikiWorkspace(backend: WikiBackend) {
   const [ingestSourceTitle, setIngestSourceTitle] = useState("");
   const [ingestSummary, setIngestSummary] = useState("");
   const [ingestDb, setIngestDb] = useState("");
+  const [searchOpen, setSearchOpen] = useState(Boolean(route.q));
+  const [searching, setSearching] = useState(false);
 
   const currentTitle = state.selectedNote ? extractTitle(state.selectedNote.markdown || "", state.selectedPath || "Untitled") : "";
   const pageHeadings = useMemo(() => state.selectedNote ? extractHeadings(state.selectedNote.markdown || "") : [], [state.selectedNote]);
-  const visiblePages = state.searchMatches ?? state.pages;
+  const visiblePages = state.pages;
   const selectedDb = state.selectedDb || state.dbs[0]?.id || "";
   const activeDb = state.dbs.find((db) => db.id === selectedDb);
   const selectedInboxPath = mode === "inbox" ? (route.path || state.inbox[0]?.path || "") : "";
@@ -85,6 +87,61 @@ export function useWikiWorkspace(backend: WikiBackend) {
   useEffect(() => {
     setSearchDraft(route.q || "");
   }, [route.q]);
+
+  useEffect(() => {
+    const query = searchDraft.trim();
+    if (!query) {
+      setSearching(false);
+      setState((current) => current.searchQuery || current.searchMatches
+        ? { ...current, searchQuery: "", searchMatches: null }
+        : current);
+      return undefined;
+    }
+    if (!selectedDb) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    setSearchOpen(true);
+    setSearching(true);
+    const timeout = window.setTimeout(() => {
+      void backend.loadWorkspace({
+        ...route,
+        db: selectedDb,
+        path: state.selectedPath || route.path,
+        q: query,
+      })
+        .then((next) => {
+          if (cancelled) {
+            return;
+          }
+          setState((current) => ({
+            ...current,
+            searchQuery: next.searchQuery,
+            searchMatches: next.searchMatches ?? [],
+            errorText: next.errorText || current.errorText,
+          }));
+          if (next.errorText) {
+            setError(next.errorText);
+          }
+        })
+        .catch((cause) => {
+          if (!cancelled) {
+            setError(formatError(cause));
+          }
+        })
+        .finally(() => {
+          if (!cancelled) {
+            setSearching(false);
+          }
+        });
+    }, 260);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+    };
+  }, [backend, route.db, route.path, searchDraft, selectedDb, state.selectedPath]);
 
   useEffect(() => {
     if (state.selectedNote) {
@@ -136,6 +193,8 @@ export function useWikiWorkspace(backend: WikiBackend) {
   const openDb = useCallback((db: string): void => {
     const nextRoute = { ...route, db, path: db ? `${db}/index.md` : undefined };
     setMode("browse");
+    setSearchDraft("");
+    setSearchOpen(false);
     setRoute(nextRoute);
     void refresh(nextRoute);
   }, [refresh, route]);
@@ -157,6 +216,13 @@ export function useWikiWorkspace(backend: WikiBackend) {
     openPage(path);
   }, [openPage]);
 
+  const openSearchMatch = useCallback((path: string): void => {
+    setSearchDraft("");
+    setSearchOpen(false);
+    setMode("browse");
+    openPage(path);
+  }, [openPage]);
+
   function changeMode(next: WikiMode): void {
     setMode(next);
     if (next === "inbox" && state.inbox[0]?.path) {
@@ -168,10 +234,22 @@ export function useWikiWorkspace(backend: WikiBackend) {
 
   function applySearch(event: Event): void {
     event.preventDefault();
-    const nextRoute = { ...route, q: searchDraft.trim() || undefined };
+    const firstMatch = state.searchMatches?.[0];
+    if (firstMatch) {
+      openSearchMatch(firstMatch.path);
+      return;
+    }
     setMode("browse");
-    setRoute(nextRoute);
-    void refresh(nextRoute);
+    setSearchOpen(true);
+  }
+
+  function clearSearch(): void {
+    setSearchDraft("");
+    setSearchOpen(false);
+    setSearching(false);
+    setState((current) => current.searchQuery || current.searchMatches
+      ? { ...current, searchQuery: "", searchMatches: null }
+      : current);
   }
 
   async function createDatabaseFlow(event: Event): Promise<void> {
@@ -294,6 +372,8 @@ export function useWikiWorkspace(backend: WikiBackend) {
     error,
     notice,
     searchDraft,
+    searchOpen,
+    searching,
     editorPath,
     editorMarkdown,
     newPageTitle,
@@ -324,7 +404,9 @@ export function useWikiWorkspace(backend: WikiBackend) {
     openPage,
     openInboxNote,
     openPageAndBrowse,
+    openSearchMatch,
     applySearch,
+    clearSearch,
     createDatabaseFlow,
     saveCurrentPage,
     createPage,
@@ -333,6 +415,7 @@ export function useWikiWorkspace(backend: WikiBackend) {
     compileSelectedInbox,
     setMode,
     setSearchDraft,
+    setSearchOpen,
     setEditorPath,
     setEditorMarkdown,
     setNewPageTitle,

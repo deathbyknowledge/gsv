@@ -1,5 +1,6 @@
 import { escapeHtml, renderPreviewBodyHtml } from "./markdown";
 import type { WikiPreviewPayload } from "./types";
+import { WikiIcon } from "./components/ui/wiki-icon";
 
 type Props = {
   anchorRect: DOMRect;
@@ -33,19 +34,8 @@ function positionFromRect(rect: DOMRect) {
 export function PreviewCard(props: Props) {
   const position = positionFromRect(props.anchorRect);
   let title = "Preview";
-  const meta: string[] = [];
   if (props.payload && props.payload.ok) {
     title = props.payload.title || props.payload.path || title;
-    if (props.payload.kind === "source") {
-      if (props.payload.target) {
-        meta.push(props.payload.target);
-      }
-      if (props.payload.path) {
-        meta.push(props.payload.path);
-      }
-    } else if (props.payload.path) {
-      meta.push(props.payload.path);
-    }
   }
   const html = props.loading
     ? '<div class="preview-empty">Loading preview…</div>'
@@ -79,13 +69,14 @@ export function PreviewCard(props: Props) {
                 }
               }}
             >
-              Open
+              <WikiIcon name="open" />
             </button>
           ) : null}
-          <button type="button" class="preview-close" title="Close preview" aria-label="Close preview" onClick={props.onDismiss}>Close</button>
+          <button type="button" class="preview-close" title="Close preview" aria-label="Close preview" onClick={props.onDismiss}>
+            <WikiIcon name="close" />
+          </button>
         </div>
       </div>
-      {meta.length > 0 ? <div class="preview-meta">{meta.join(" · ")}</div> : null}
       <div class="preview-body" dangerouslySetInnerHTML={{ __html: html }} />
     </div>
   );

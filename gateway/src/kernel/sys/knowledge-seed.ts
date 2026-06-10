@@ -18,12 +18,23 @@ export type BootstrapKnowledgeSeedResult = {
   skipped: number;
 };
 
+type KnowledgeSeedOptions = {
+  concurrency?: number;
+  schedule?: <T>(run: () => T | Promise<T>) => Promise<T>;
+};
+
+type KnowledgeSeedFileResult =
+  | { status: "copy"; path: string; contentBytes: number[] }
+  | { status: "skip" };
+
 export async function seedRepoKnowledgeToHome(
   ripgit: RipgitClient,
   sourceRepo: RipgitRepoRef,
   identity: ProcessIdentity,
+  options: KnowledgeSeedOptions = {},
 ): Promise<BootstrapKnowledgeSeedResult> {
-  const sourceFiles = await listSourceKnowledgeFiles(ripgit, sourceRepo, SOURCE_KNOWLEDGE_ROOT);
+  const schedule = options.schedule ?? ((run) => Promise.resolve().then(run));
+  const sourceFiles = await listSourceKnowledgeFiles(ripgit, sourceRepo, SOURCE_KNOWLEDGE_ROOT, schedule);
   if (sourceFiles.length === 0) {
     return {
       username: identity.username,
@@ -37,8 +48,8 @@ export async function seedRepoKnowledgeToHome(
   let skipped = 0;
 
   const [knowledgeDir, gsvKnowledgeDir] = await Promise.all([
-    ripgit.readPath(homeRepo, "knowledge"),
-    ripgit.readPath(homeRepo, TARGET_KNOWLEDGE_ROOT),
+    schedule(() => ripgit.readPath(homeRepo, "knowledge")),
+    schedule(() => ripgit.readPath(homeRepo, TARGET_KNOWLEDGE_ROOT)),
   ]);
   if (knowledgeDir.kind === "missing") {
     ops.push({
@@ -55,36 +66,50 @@ export async function seedRepoKnowledgeToHome(
     });
   }
 
-  for (const sourcePath of sourceFiles) {
-    const relativePath = sourcePath.slice(`${SOURCE_KNOWLEDGE_ROOT}/`.length);
-    const targetPath = `${TARGET_KNOWLEDGE_ROOT}/${relativePath}`;
-    const existing = await ripgit.readPath(homeRepo, targetPath);
-    if (existing.kind !== "missing") {
-      skipped += 1;
-      continue;
-    }
+  const fileResults = await mapWithConcurrency(
+    sourceFiles,
+    options.concurrency ?? 5,
+    async (sourcePath): Promise<KnowledgeSeedFileResult> => {
+      const relativePath = sourcePath.slice(`${SOURCE_KNOWLEDGE_ROOT}/`.length);
+      const targetPath = `${TARGET_KNOWLEDGE_ROOT}/${relativePath}`;
+      const existing = await schedule(() => ripgit.readPath(homeRepo, targetPath));
+      if (existing.kind !== "missing") {
+        return { status: "skip" };
+      }
 
-    const source = await ripgit.readPath(sourceRepo, sourcePath);
-    if (source.kind !== "file") {
-      skipped += 1;
-      continue;
-    }
+      const source = await schedule(() => ripgit.readPath(sourceRepo, sourcePath));
+      if (source.kind !== "file") {
+        return { status: "skip" };
+      }
 
-    ops.push({
-      type: "put",
-      path: targetPath,
-      contentBytes: Array.from(source.bytes),
-    });
+      return {
+        status: "copy",
+        path: targetPath,
+        contentBytes: Array.from(source.bytes),
+      };
+    },
+  );
+
+  for (const result of fileResults) {
+    if (result.status === "skip") {
+      skipped += 1;
+    } else {
+      ops.push({
+        type: "put",
+        path: result.path,
+        contentBytes: result.contentBytes,
+      });
+    }
   }
 
   if (ops.length > 0) {
-    await ripgit.apply(
+    await schedule(() => ripgit.apply(
       homeRepo,
       identity.username,
       `${identity.username}@gsv.local`,
       "gsv: seed bootstrap knowledge",
       ops,
-    );
+    ));
   }
 
   return {
@@ -102,14 +127,15 @@ async function listSourceKnowledgeFiles(
   ripgit: RipgitClient,
   repo: RipgitRepoRef,
   root: string,
+  schedule: <T>(run: () => T | Promise<T>) => Promise<T>,
 ): Promise<string[]> {
-  const tree = await ripgit.readPath(repo, root);
+  const tree = await schedule(() => ripgit.readPath(repo, root));
   if (tree.kind !== "tree") {
     return [];
   }
 
   const files: string[] = [];
-  await walkSourceKnowledgeFiles(ripgit, repo, root, tree.entries, files, 0);
+  await walkSourceKnowledgeFiles(ripgit, repo, root, tree.entries, files, 0, schedule);
   return files.sort((left, right) => left.localeCompare(right));
 }
 
@@ -120,6 +146,7 @@ async function walkSourceKnowledgeFiles(
   entries: RipgitTreeEntry[],
   files: string[],
   depth: number,
+  schedule: <T>(run: () => T | Promise<T>) => Promise<T>,
 ): Promise<void> {
   if (depth > 12) {
     return;
@@ -135,10 +162,34 @@ async function walkSourceKnowledgeFiles(
       continue;
     }
     if (entry.type === "tree") {
-      const tree = await ripgit.readPath(repo, child);
+      const tree = await schedule(() => ripgit.readPath(repo, child));
       if (tree.kind === "tree") {
-        await walkSourceKnowledgeFiles(ripgit, repo, child, tree.entries, files, depth + 1);
+        await walkSourceKnowledgeFiles(ripgit, repo, child, tree.entries, files, depth + 1, schedule);
       }
     }
   }
+}
+
+async function mapWithConcurrency<T, R>(
+  values: T[],
+  concurrency: number,
+  mapper: (value: T) => Promise<R>,
+): Promise<R[]> {
+  const limit = Math.max(1, Math.floor(concurrency));
+  const results = new Array<R>(values.length);
+  let nextIndex = 0;
+
+  async function worker(): Promise<void> {
+    for (;;) {
+      const index = nextIndex;
+      nextIndex += 1;
+      if (index >= values.length) {
+        return;
+      }
+      results[index] = await mapper(values[index]);
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(limit, values.length) }, () => worker()));
+  return results;
 }
