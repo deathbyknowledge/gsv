@@ -8,6 +8,7 @@ import {
   startBuildFromDirectory as legacyStartBuildFromDirectory,
   writePage as legacyWritePage,
 } from "./legacy";
+import type { PackageStorageBinding } from "@gsv/package/context";
 import type {
   BuildStartArgs,
   IngestSourceArgs,
@@ -20,23 +21,43 @@ import type {
 
 export { handleAppSignal };
 
-export async function loadWorkspace(kernel: any, args: WikiLoadArgs): Promise<WikiWorkspaceState> {
-  return legacyLoadState(kernel, args) as Promise<WikiWorkspaceState>;
+export async function loadWorkspace(
+  kernel: any,
+  args: WikiLoadArgs,
+  storage?: PackageStorageBinding,
+): Promise<WikiWorkspaceState> {
+  return legacyLoadState(kernel, args, storage) as Promise<WikiWorkspaceState>;
 }
 
-export async function previewContent(kernel: any, args: WikiPreviewRequest): Promise<WikiPreviewPayload> {
-  return legacyGetPreview(kernel, args) as Promise<WikiPreviewPayload>;
+export async function previewContent(
+  kernel: any,
+  args: WikiPreviewRequest,
+  storage?: PackageStorageBinding,
+): Promise<WikiPreviewPayload> {
+  return legacyGetPreview(kernel, args, storage) as Promise<WikiPreviewPayload>;
 }
 
-export async function createDatabase(kernel: any, args: { dbId: string; dbTitle?: string }): Promise<WikiMutationResult> {
-  return legacyCreateDatabase(kernel, args) as Promise<WikiMutationResult>;
+export async function createDatabase(
+  kernel: any,
+  args: { dbId: string; dbTitle?: string },
+  storage?: PackageStorageBinding,
+): Promise<WikiMutationResult> {
+  return legacyCreateDatabase(kernel, args, storage) as Promise<WikiMutationResult>;
 }
 
-export async function savePage(kernel: any, args: { db: string; path: string; markdown: string }): Promise<WikiMutationResult> {
-  return legacyWritePage(kernel, args) as Promise<WikiMutationResult>;
+export async function savePage(
+  kernel: any,
+  args: { db: string; path: string; markdown: string },
+  storage?: PackageStorageBinding,
+): Promise<WikiMutationResult> {
+  return legacyWritePage(kernel, args, storage) as Promise<WikiMutationResult>;
 }
 
-export async function ingestSource(kernel: any, args: IngestSourceArgs): Promise<WikiMutationResult> {
+export async function ingestSource(
+  kernel: any,
+  args: IngestSourceArgs,
+  storage?: PackageStorageBinding,
+): Promise<WikiMutationResult> {
   const target = String(args.sourceTarget || "gsv").trim() || "gsv";
   const sourcePath = String(args.sourcePath || "").trim();
   if (!sourcePath) {
@@ -50,18 +71,26 @@ export async function ingestSource(kernel: any, args: IngestSourceArgs): Promise
     title: title || undefined,
     summary: summary || undefined,
     sources: sourceSpec,
-  }) as Promise<WikiMutationResult>;
+  }, storage) as Promise<WikiMutationResult>;
 }
 
-export async function compileInboxNote(kernel: any, args: { db: string; sourcePath: string; targetPath?: string }): Promise<WikiMutationResult> {
-  return legacyCompileInboxNote(kernel, args) as Promise<WikiMutationResult>;
+export async function compileInboxNote(
+  kernel: any,
+  args: { db: string; sourcePath: string; targetPath?: string },
+  storage?: PackageStorageBinding,
+): Promise<WikiMutationResult> {
+  return legacyCompileInboxNote(kernel, args, storage) as Promise<WikiMutationResult>;
 }
 
-export async function startBuild(kernel: any, args: BuildStartArgs): Promise<WikiMutationResult> {
+export async function startBuild(
+  kernel: any,
+  args: BuildStartArgs,
+  storage?: PackageStorageBinding,
+): Promise<WikiMutationResult> {
   return legacyStartBuildFromDirectory(kernel, {
     buildTarget: args.sourceTarget,
     buildSourcePath: args.sourcePath,
     buildDbId: args.dbId,
     buildDbTitle: args.dbTitle,
-  }) as Promise<WikiMutationResult>;
+  }, storage) as Promise<WikiMutationResult>;
 }

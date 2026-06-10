@@ -14,6 +14,7 @@ type CommandContext = {
   kernel: WikiKernelClient;
   argv: string[];
   stdin?: PackageCommandContext["stdin"];
+  storage?: PackageCommandContext["storage"];
 };
 
 export default defineCommand(async (ctx) => {
@@ -22,7 +23,7 @@ export default defineCommand(async (ctx) => {
 
 export async function runWikiCommand(ctx: CommandContext): Promise<string> {
   const [subcommand = "help", ...rest] = ctx.argv;
-  const store = new WikiKnowledgeStore(ctx.kernel);
+  const store = new WikiKnowledgeStore(ctx.kernel, ctx.storage);
 
   switch (subcommand) {
     case "help":
@@ -460,7 +461,7 @@ function wikiHelp(topic?: string): string {
     return "wiki brief <query> [--prefix PREFIX] [--limit N]\n\nPrint compact search snippets for quick agent retrieval.\n";
   }
   return [
-    "wiki - durable markdown knowledge over ~/knowledge",
+    "wiki - durable markdown knowledge in git-backed wiki repos",
     "",
     "Usage:",
     "  wiki db list [--limit N] [--json]",

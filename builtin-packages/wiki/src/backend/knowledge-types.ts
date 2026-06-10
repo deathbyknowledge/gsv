@@ -4,6 +4,14 @@ export type WikiKernelClient = {
   request<T = unknown>(name: string, args: unknown): Promise<T>;
 };
 
+export type WikiCollection = {
+  id: string;
+  title?: string;
+  repo: string;
+  prefix: string;
+  writable: boolean;
+};
+
 export type KnowledgeSourceRef = { target: string; path: string; title?: string };
 
 export type KnowledgeWriteArgs = {
