@@ -33,7 +33,7 @@ export function WikiHeader(props: Props) {
             onInput={(event) => props.onSearchDraftChange((event.currentTarget as HTMLInputElement).value)}
             onFocus={props.onSearchFocus}
             placeholder={props.selectedDb ? `Search ${scope}` : "Search pages"}
-            type="search"
+            type="text"
             title="Search pages"
             aria-label="Search pages"
             autoComplete="off"
@@ -59,11 +59,11 @@ export function WikiHeader(props: Props) {
                 class="wiki-search-result"
                 onClick={() => props.onOpenMatch(match.path)}
               >
-                <strong>
+                <strong class="wiki-search-title">
                   <HighlightedText text={match.title || displayTitleFromPath(match.path)} query={props.searchQuery || props.searchDraft} />
                 </strong>
                 {match.snippet ? (
-                  <span>
+                  <span class="wiki-search-snippet">
                     <HighlightedText text={match.snippet} query={props.searchQuery || props.searchDraft} />
                   </span>
                 ) : null}
@@ -87,7 +87,7 @@ function HighlightedText({ text, query }: { text: string; query: string }) {
     <>
       {parts.map((part, index) => {
         const highlighted = terms.some((term) => part.toLowerCase() === term.toLowerCase());
-        return highlighted ? <mark key={`${part}-${index}`}>{part}</mark> : <span key={`${part}-${index}`}>{part}</span>;
+        return highlighted ? <mark key={`${part}-${index}`}>{part}</mark> : part;
       })}
     </>
   );

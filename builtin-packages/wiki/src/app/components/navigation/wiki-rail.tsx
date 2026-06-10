@@ -230,7 +230,7 @@ function PageTreeBranch({
   level: number;
 }) {
   if (node.entry) {
-    const label = node.entry.title || displayTitleFromPath(node.entry.path);
+    const label = displayEntryTitle(node.entry);
     return (
       <a
         href={buildEntryHref(routeBase, selectedDb, node.entry.path)}
@@ -249,7 +249,7 @@ function PageTreeBranch({
 
   const selectedInside = containsSelectedPath(node, selectedPath);
   return (
-    <details class="wiki-tree-folder" open={level === 0 || selectedInside}>
+    <details class="wiki-tree-folder" open={selectedInside}>
       <summary style={`--tree-level: ${level}`}>
         <WikiIcon name="folder" />
         <span title={node.name}>{displayFolderName(node.name)}</span>
@@ -331,7 +331,35 @@ function displayPathSegments(path: string, selectedDb: string): string[] {
 }
 
 function displayFolderName(name: string): string {
-  return name.replace(/[-_]+/g, " ");
+  return titleCaseLabel(name.replace(/[-_]+/g, " "));
+}
+
+function displayEntryTitle(entry: WikiEntry): string {
+  const fileName = entry.path.split("/").pop() || entry.path;
+  if (/^index\.md$/i.test(fileName)) {
+    return "Overview";
+  }
+  return titleCaseLabel(entry.title || displayTitleFromPath(entry.path));
+}
+
+function titleCaseLabel(value: string): string {
+  const acronyms = new Map([
+    ["ai", "AI"],
+    ["api", "API"],
+    ["cli", "CLI"],
+    ["gsv", "GSV"],
+    ["mcp", "MCP"],
+    ["oauth", "OAuth"],
+    ["pdf", "PDF"],
+  ]);
+  return value
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => {
+      const normalized = word.toLowerCase();
+      return acronyms.get(normalized) ?? `${word.slice(0, 1).toUpperCase()}${word.slice(1)}`;
+    })
+    .join(" ");
 }
 
 function containsSelectedPath(node: PageTreeNode, selectedPath: string): boolean {

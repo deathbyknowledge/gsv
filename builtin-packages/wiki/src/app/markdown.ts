@@ -142,21 +142,40 @@ function resolveRelativeWikiPath(rawHref: string, selectedPath: string): string 
   return resolved ? normalizePath(resolved) : null;
 }
 
-function resolveInternalPath(rawHref: string, selectedDb: string, selectedPath: string): string | null {
+export function resolveWikiPath(rawHref: string, selectedDb: string, selectedPath: string): string | null {
   const href = String(rawHref ?? "").trim();
   if (!href || /^(https?:|mailto:|#)/i.test(href) || /^[a-z0-9._-]+:\/\//i.test(href)) {
     return null;
   }
-  const trimmedHref = href.replace(/^\.\//, "");
+  const cleanHref = href.split("#")[0]?.split("?")[0]?.trim() || "";
+  if (!cleanHref) {
+    return null;
+  }
+  const trimmedHref = cleanHref.replace(/^\.\//, "");
+
+  if (
+    selectedDb
+    && (
+      trimmedHref === `${selectedDb}/index.md`
+      || trimmedHref.startsWith(`${selectedDb}/pages/`)
+      || trimmedHref.startsWith(`${selectedDb}/inbox/`)
+    )
+  ) {
+    return normalizePath(trimmedHref);
+  }
+
+  if (selectedPath && !cleanHref.startsWith("/")) {
+    return resolveRelativeWikiPath(href, selectedPath);
+  }
+
+  if (!selectedPath && selectedDb && (trimmedHref === "index.md" || trimmedHref.startsWith("pages/") || trimmedHref.startsWith("inbox/"))) {
+    return normalizeDbScopedPath(trimmedHref, selectedDb);
+  }
+
   if (/^[a-z0-9._-]+\/(pages|inbox)\//i.test(trimmedHref) || /^[a-z0-9._-]+\/index\.md$/i.test(trimmedHref)) {
     return normalizePath(trimmedHref);
   }
-  if (selectedDb && (trimmedHref === "index.md" || trimmedHref.startsWith("pages/") || trimmedHref.startsWith("inbox/"))) {
-    return normalizeDbScopedPath(trimmedHref, selectedDb);
-  }
-  if (/^(\.\.\/|\.\/|[^/]+\.md(?:[#?].*)?$)/i.test(href)) {
-    return resolveRelativeWikiPath(href, selectedPath);
-  }
+
   return null;
 }
 
@@ -220,7 +239,7 @@ export function renderArticleInto(container: HTMLElement, options: RenderOptions
 
   container.querySelectorAll<HTMLAnchorElement>("a[href]").forEach((anchor) => {
     const href = anchor.getAttribute("href") || "";
-    const internalPath = resolveInternalPath(href, options.selectedDb, options.selectedPath);
+    const internalPath = resolveWikiPath(href, options.selectedDb, options.selectedPath);
     if (internalPath) {
       anchor.href = buildEntryHref(options.routeBase, options.selectedDb, internalPath);
       anchor.dataset.previewKind = "page";

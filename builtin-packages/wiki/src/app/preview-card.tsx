@@ -1,4 +1,5 @@
-import { escapeHtml, renderPreviewBodyHtml } from "./markdown";
+import { useEffect, useRef } from "preact/hooks";
+import { buildEntryHref, escapeHtml, renderPreviewBodyHtml, resolveWikiPath } from "./markdown";
 import type { WikiPreviewPayload } from "./types";
 import { WikiIcon } from "./components/ui/wiki-icon";
 
@@ -8,6 +9,8 @@ type Props = {
   payload: WikiPreviewPayload | null;
   error: string;
   pinned: boolean;
+  routeBase: string;
+  selectedDb: string;
   onDismiss(): void;
   onMouseEnter(): void;
   onMouseLeave(): void;
@@ -32,6 +35,7 @@ function positionFromRect(rect: DOMRect) {
 }
 
 export function PreviewCard(props: Props) {
+  const bodyRef = useRef<HTMLDivElement>(null);
   const position = positionFromRect(props.anchorRect);
   let title = "Preview";
   if (props.payload && props.payload.ok) {
@@ -43,6 +47,36 @@ export function PreviewCard(props: Props) {
       ? `<div class="preview-empty">${escapeHtml(props.error)}</div>`
       : renderPreviewBodyHtml(props.payload || { ok: false, error: "Preview unavailable." });
   const canOpenPage = props.payload?.ok === true && props.payload.kind === "page" && Boolean(props.payload.path);
+
+  useEffect(() => {
+    const body = bodyRef.current;
+    const payload = props.payload;
+    if (!body || payload?.ok !== true || payload.kind !== "page") {
+      return undefined;
+    }
+
+    const cleanups: Array<() => void> = [];
+    body.querySelectorAll<HTMLAnchorElement>("a[href]").forEach((anchor) => {
+      const href = anchor.getAttribute("href") || "";
+      const internalPath = resolveWikiPath(href, props.selectedDb, payload.path);
+      if (internalPath) {
+        anchor.href = buildEntryHref(props.routeBase, props.selectedDb, internalPath);
+        const onClick = (event: MouseEvent) => {
+          event.preventDefault();
+          props.onOpenPage(internalPath);
+        };
+        anchor.addEventListener("click", onClick);
+        cleanups.push(() => anchor.removeEventListener("click", onClick));
+        return;
+      }
+      if (/^(https?:|mailto:)/i.test(href)) {
+        anchor.target = "_blank";
+        anchor.rel = "noreferrer";
+      }
+    });
+
+    return () => cleanups.forEach((cleanup) => cleanup());
+  }, [props.payload, props.routeBase, props.selectedDb, props.onOpenPage]);
 
   return (
     <div
@@ -77,7 +111,7 @@ export function PreviewCard(props: Props) {
           </button>
         </div>
       </div>
-      <div class="preview-body" dangerouslySetInnerHTML={{ __html: html }} />
+      <div class="preview-body" ref={bodyRef} dangerouslySetInnerHTML={{ __html: html }} />
     </div>
   );
 }

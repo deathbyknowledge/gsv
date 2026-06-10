@@ -161,7 +161,7 @@ summary:focus-visible {
 
 .wiki-global-search {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) repeat(2, 34px);
+  grid-template-columns: 18px minmax(0, 1fr) max-content max-content;
   align-items: center;
   gap: 8px;
   width: 100%;
@@ -241,19 +241,19 @@ summary:focus-visible {
   background: #edf2f8;
 }
 
-.wiki-search-result strong,
-.wiki-search-result span {
+.wiki-search-title,
+.wiki-search-snippet {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.wiki-search-result strong {
+.wiki-search-title {
   font-size: 13px;
   white-space: nowrap;
 }
 
-.wiki-search-result span {
+.wiki-search-snippet {
   display: -webkit-box;
   color: var(--wiki-muted);
   font-size: 12px;
@@ -262,7 +262,8 @@ summary:focus-visible {
   -webkit-line-clamp: 2;
 }
 
-.wiki-search-result mark {
+.wiki-search-title mark,
+.wiki-search-snippet mark {
   border-radius: 3px;
   background: rgba(49, 111, 209, 0.16);
   color: inherit;

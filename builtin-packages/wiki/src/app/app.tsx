@@ -171,6 +171,8 @@ export function App({ backend, routeBase }: { backend: WikiBackend; routeBase: s
           payload={previewPayload}
           error={previewError}
           pinned={previewPinned}
+          routeBase={routeBase}
+          selectedDb={wiki.selectedDb}
           onDismiss={() => hidePreview(true)}
           onMouseEnter={keepPreviewOpen}
           onMouseLeave={() => hidePreview(false)}
