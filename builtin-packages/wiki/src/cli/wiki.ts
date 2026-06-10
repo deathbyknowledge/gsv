@@ -1,4 +1,4 @@
-import { defineCommand } from "@gsv/package/cli";
+import { defineCommand, type PackageCommandContext } from "@gsv/package/cli";
 import { WikiKnowledgeStore } from "../backend/knowledge-store";
 import type {
   KnowledgeCompileArgs,
@@ -13,7 +13,7 @@ import type {
 type CommandContext = {
   kernel: WikiKernelClient;
   argv: string[];
-  stdout: { write(text: string): Promise<void> };
+  stdin?: PackageCommandContext["stdin"];
 };
 
 export default defineCommand(async (ctx) => {
@@ -34,33 +34,36 @@ export async function runWikiCommand(ctx: CommandContext): Promise<string> {
       return runDbCommand(store, rest);
 
     case "list": {
-      const prefix = firstPositional(rest);
+      const prefix = firstPositional(rest, ["--limit"]);
       const recursive = hasFlag(rest, "--recursive") || hasFlag(rest, "-r");
       const limit = parseOptionalInteger(findFlagValue(rest, "--limit"));
       const result = await store.list({ prefix, recursive, limit });
-      return formatKnowledgeList(result.entries);
+      return hasFlag(rest, "--json") ? formatJson(result) : formatKnowledgeList(result.entries);
     }
 
     case "read": {
-      const path = String(rest[0] ?? "").trim();
+      const path = String(firstPositional(rest) ?? "").trim();
       if (!path) {
-        throw new Error("Usage: wiki read <path>");
+        throw new Error("Usage: wiki read <path> [--json]");
       }
       const result = await store.read({ path });
       if (!result.exists) {
         throw new Error(`Knowledge note '${path}' does not exist`);
       }
+      if (hasFlag(rest, "--json")) {
+        return formatJson(result);
+      }
       return `${result.markdown ?? ""}${result.markdown?.endsWith("\n") ? "" : "\n"}`;
     }
 
     case "write": {
-      const path = String(rest[0] ?? "").trim();
+      const path = String(firstPositional(rest, ["--text"]) ?? "").trim();
       if (!path) {
-        throw new Error("Usage: wiki write <path> --text TEXT");
+        throw new Error("Usage: wiki write <path> [--text TEXT]");
       }
       const result = await store.write({
         path,
-        markdown: requireFlagValue(rest.slice(1), "--text", "wiki write requires --text"),
+        markdown: await readTextFlagOrStdin(ctx, rest, "wiki write requires --text or stdin"),
         create: true,
       });
       if (!result.ok) {
@@ -76,16 +79,29 @@ export async function runWikiCommand(ctx: CommandContext): Promise<string> {
       return runSourceCommand(store, rest);
 
     case "search": {
-      const query = String(rest[0] ?? "").trim();
+      const query = queryFromArgs(rest, ["--prefix", "--limit"]);
       if (!query) {
-        throw new Error("Usage: wiki search <query> [--prefix PREFIX] [--limit N]");
+        throw new Error("Usage: wiki search <query> [--prefix PREFIX] [--limit N] [--json]");
       }
       const result = await store.search({
         query,
-        prefix: findFlagValue(rest.slice(1), "--prefix"),
-        limit: parseOptionalInteger(findFlagValue(rest.slice(1), "--limit")),
+        prefix: findFlagValue(rest, "--prefix"),
+        limit: parseOptionalInteger(findFlagValue(rest, "--limit")),
       });
-      return formatKnowledgeSearch(result.matches);
+      return hasFlag(rest, "--json") ? formatJson(result) : formatKnowledgeSearch(result.matches);
+    }
+
+    case "brief": {
+      const query = queryFromArgs(rest, ["--prefix", "--limit"]);
+      if (!query) {
+        throw new Error("Usage: wiki brief <query> [--prefix PREFIX] [--limit N]");
+      }
+      const result = await store.search({
+        query,
+        prefix: findFlagValue(rest, "--prefix"),
+        limit: parseOptionalInteger(findFlagValue(rest, "--limit")),
+      });
+      return formatKnowledgeBrief(result.matches);
     }
 
     case "ingest": {
@@ -117,7 +133,7 @@ export async function runWikiCommand(ctx: CommandContext): Promise<string> {
       const args: KnowledgeCompileArgs = {
         db,
         sourcePath,
-        targetPath: positionalAfterFlags(rest.slice(2))[0],
+        targetPath: positionalAfterFlags(rest.slice(2), ["--title"])[0],
         title: findFlagValue(rest.slice(2), "--title"),
         keepSource: hasFlag(rest.slice(2), "--keep-source"),
       };
@@ -153,7 +169,7 @@ export async function runWikiCommand(ctx: CommandContext): Promise<string> {
 
     case "promote": {
       const args: KnowledgePromoteArgs = {
-        source: { kind: "text", text: requireFlagValue(rest, "--text", "wiki promote requires --text") },
+        source: { kind: "text", text: await readTextFlagOrStdin(ctx, rest, "wiki promote requires --text or stdin") },
         targetPath: findFlagValue(rest, "--to"),
         mode: parseMode(findFlagValue(rest, "--mode"), ["inbox", "direct"]) as "inbox" | "direct" | undefined,
       };
@@ -174,7 +190,7 @@ async function runDbCommand(store: WikiKnowledgeStore, args: string[]): Promise<
   const [dbCommand = "list", ...dbArgs] = args;
   if (dbCommand === "list") {
     const result = await store.listDbs({ limit: parseOptionalInteger(findFlagValue(dbArgs, "--limit")) });
-    return formatDbList(result.dbs);
+    return hasFlag(dbArgs, "--json") ? formatJson(result) : formatDbList(result.dbs);
   }
   if (dbCommand === "init") {
     const db = String(dbArgs[0] ?? "").trim();
@@ -280,23 +296,64 @@ function formatKnowledgeSearch(matches: Array<{ path: string; title?: string; sn
   return `${lines.join("\n")}\n`;
 }
 
-function firstPositional(args: string[]): string | undefined {
-  for (let index = 0; index < args.length; index += 1) {
-    const current = args[index];
-    if (!current.startsWith("--")) {
-      return current;
-    }
-    index += 1;
+function formatKnowledgeBrief(matches: Array<{ path: string; title?: string; snippet: string }>): string {
+  if (matches.length === 0) {
+    return "No matches\n";
   }
-  return undefined;
+  const lines: string[] = [];
+  for (const [index, match] of matches.entries()) {
+    if (index > 0) {
+      lines.push("");
+    }
+    lines.push(`${index + 1}. ${match.title ?? match.path}`);
+    lines.push(`path: ${match.path}`);
+    lines.push(match.snippet.replace(/\s+/g, " ").trim());
+  }
+  return `${lines.join("\n")}\n`;
 }
 
-function positionalAfterFlags(args: string[]): string[] {
+function formatJson(value: unknown): string {
+  return `${JSON.stringify(value, null, 2)}\n`;
+}
+
+function firstPositional(args: string[], valueFlags: string[] = []): string | undefined {
+  return positionalAfterFlags(args, valueFlags)[0];
+}
+
+function queryFromArgs(args: string[], valueFlags: string[]): string {
+  return positionalAfterFlags(args, valueFlags).join(" ").trim();
+}
+
+async function readTextFlagOrStdin(ctx: CommandContext, args: string[], message: string): Promise<string> {
+  if (hasFlag(args, "--text")) {
+    const value = findFlagValue(args, "--text");
+    if (typeof value === "string" && value.trim()) {
+      return value;
+    }
+    throw new Error(message);
+  }
+  const stdin = await ctx.stdin?.text();
+  if (typeof stdin === "string" && stdin.trim()) {
+    return stdin;
+  }
+  throw new Error(message);
+}
+
+function isFlag(arg: string): boolean {
+  return arg.startsWith("-") && arg !== "-";
+}
+
+function positionalAfterFlags(args: string[], valueFlags: string[] = []): string[] {
+  const valueFlagSet = new Set(valueFlags);
   const out: string[] = [];
   for (let index = 0; index < args.length; index += 1) {
     const current = args[index];
-    if (current.startsWith("--")) {
-      if (index + 1 < args.length && !args[index + 1].startsWith("--")) {
+    if (current === "--") {
+      out.push(...args.slice(index + 1));
+      break;
+    }
+    if (isFlag(current)) {
+      if (valueFlagSet.has(current) && index + 1 < args.length) {
         index += 1;
       }
       continue;
@@ -382,7 +439,7 @@ function parseSourceSpec(spec: string): KnowledgeSourceRef {
 function wikiHelp(topic?: string): string {
   const normalized = topic?.trim().toLowerCase();
   if (normalized === "write") {
-    return "wiki write <path> --text TEXT\n\nReplace or create a knowledge note with arbitrary markdown.\n";
+    return "wiki write <path> [--text TEXT]\n\nReplace or create a knowledge note with arbitrary markdown. Reads stdin when --text is omitted.\n";
   }
   if (normalized === "section") {
     return "wiki section <set|append|delete> <path> <heading> [--text TEXT]\n\nEdit one markdown section in a knowledge note.\n";
@@ -399,28 +456,32 @@ function wikiHelp(topic?: string): string {
   if (normalized === "merge") {
     return "wiki merge <source> <target> [--mode union|prefer-target|prefer-source] [--keep-source]\n\nMerge duplicate notes into a canonical target.\n";
   }
+  if (normalized === "brief") {
+    return "wiki brief <query> [--prefix PREFIX] [--limit N]\n\nPrint compact search snippets for quick agent retrieval.\n";
+  }
   return [
     "wiki - durable markdown knowledge over ~/knowledge",
     "",
     "Usage:",
-    "  wiki db list [--limit N]",
+    "  wiki db list [--limit N] [--json]",
     "  wiki db init <db> [--title TITLE] [--description TEXT]",
     "  wiki db delete <db>",
-    "  wiki list [prefix] [--recursive] [--limit N]",
-    "  wiki read <path>",
-    "  wiki write <path> --text TEXT",
+    "  wiki list [prefix] [--recursive] [--limit N] [--json]",
+    "  wiki read <path> [--json]",
+    "  wiki write <path> [--text TEXT]",
     "  wiki section <set|append|delete> <path> <heading> [--text TEXT]",
     "  wiki source add <path> --source target:/absolute/path[::Title] [--source ...]",
-    "  wiki search <query> [--prefix PREFIX] [--limit N]",
+    "  wiki search <query> [--prefix PREFIX] [--limit N] [--json]",
+    "  wiki brief <query> [--prefix PREFIX] [--limit N]",
     "  wiki ingest <db> --source target:/absolute/path[::Title] [--source ...]",
     "  wiki compile <db> <source-path> [target-path] [--title TITLE] [--keep-source]",
     "  wiki merge <source> <target> [--mode union|prefer-target|prefer-source] [--keep-source]",
-    "  wiki promote --text TEXT [--to PATH] [--mode inbox|direct]",
+    "  wiki promote [--text TEXT] [--to PATH] [--mode inbox|direct]",
     "",
     "Examples:",
     "  wiki db init product --title \"Product Knowledge\"",
     "  wiki write product/pages/auth.md --text \"# Auth\"",
-    "  wiki search auth --prefix product",
+    "  wiki search connect whatsapp --prefix product --json",
     "",
   ].join("\n");
 }

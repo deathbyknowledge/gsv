@@ -1,9 +1,28 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { KernelContext } from "../context";
 import type { InstalledPackageRecord } from "../packages";
+
+const { handleSysBootstrapMock, seedRepoSkillsToHomeMock, seedRepoKnowledgeToHomeMock } = vi.hoisted(() => ({
+  handleSysBootstrapMock: vi.fn(),
+  seedRepoSkillsToHomeMock: vi.fn(),
+  seedRepoKnowledgeToHomeMock: vi.fn(),
+}));
+
+vi.mock("./bootstrap", () => ({
+  handleSysBootstrap: handleSysBootstrapMock,
+}));
+
+vi.mock("./skills-seed", () => ({
+  seedRepoSkillsToHome: seedRepoSkillsToHomeMock,
+}));
+
+vi.mock("./knowledge-seed", () => ({
+  seedRepoKnowledgeToHome: seedRepoKnowledgeToHomeMock,
+}));
+
 import { handleSysSetup } from "./setup";
 
-function createCtx(overrides?: { setupMode?: boolean; packages?: InstalledPackageRecord[] }) {
+function createCtx(overrides?: { setupMode?: boolean; packages?: InstalledPackageRecord[]; ripgit?: Fetcher }) {
   type PasswdRow = { username: string; uid: number; gid: number; gecos: string; home: string; shell: string };
   type GroupRow = { name: string; gid: number; members: string[] };
 
@@ -119,7 +138,10 @@ function createCtx(overrides?: { setupMode?: boolean; packages?: InstalledPackag
     auth: auth as unknown as KernelContext["auth"],
     caps: caps as unknown as KernelContext["caps"],
     config: config as unknown as KernelContext["config"],
-    env: { STORAGE: storage } as unknown as KernelContext["env"],
+    env: {
+      STORAGE: storage,
+      ...(overrides?.ripgit ? { RIPGIT: overrides.ripgit } : {}),
+    } as unknown as KernelContext["env"],
     packages: overrides?.packages
       ? { list: vi.fn(() => overrides.packages ?? []) } as unknown as KernelContext["packages"]
       : undefined,
@@ -131,6 +153,21 @@ function createCtx(overrides?: { setupMode?: boolean; packages?: InstalledPackag
 describe("handleSysSetup", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    handleSysBootstrapMock.mockResolvedValue({
+      repo: "root/gsv",
+      remoteUrl: "https://github.com/deathbyknowledge/gsv",
+      ref: "main",
+      head: "abc123",
+      changed: true,
+      cli: {
+        defaultChannel: "dev",
+        mirroredChannels: ["stable", "dev"],
+        assets: ["gsv-linux-x64"],
+      },
+      packages: [],
+    });
+    seedRepoSkillsToHomeMock.mockResolvedValue({ username: "root", copied: 0, skipped: 0 });
+    seedRepoKnowledgeToHomeMock.mockResolvedValue({ username: "root", copied: 0, skipped: 0 });
   });
 
   it("creates first user, ai config, and node token", async () => {
@@ -230,6 +267,48 @@ describe("handleSysSetup", () => {
     );
     expect(new Set(passwd.map((entry) => entry.uid)).size).toBe(passwd.length);
     expect(groups.find((group) => group.name === "wiki-builder-run")?.members).toEqual(["alice"]);
+  });
+
+  it("seeds shipped knowledge into root home after first setup bootstrap", async () => {
+    const ripgit = {
+      fetch: vi.fn(async (input: RequestInfo | URL) => {
+        const url = new URL(String(input));
+        if (url.pathname.endsWith("/apply")) {
+          return new Response(JSON.stringify({ ok: true, head: "home123" }), {
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        return new Response("missing", { status: 404 });
+      }),
+    } as Fetcher;
+    const { ctx } = createCtx({ ripgit, packages: [] });
+
+    await handleSysSetup(
+      {
+        username: "alice",
+        password: "password-123",
+      },
+      ctx,
+    );
+
+    expect(handleSysBootstrapMock).toHaveBeenCalledWith(
+      undefined,
+      expect.objectContaining({
+        identity: expect.objectContaining({
+          process: expect.objectContaining({ username: "alice" }),
+        }),
+      }),
+    );
+    expect(seedRepoSkillsToHomeMock).toHaveBeenCalledWith(
+      expect.any(Object),
+      { owner: "root", repo: "gsv", branch: "abc123" },
+      expect.objectContaining({ username: "root", home: "/root" }),
+    );
+    expect(seedRepoKnowledgeToHomeMock).toHaveBeenCalledWith(
+      expect.any(Object),
+      { owner: "root", repo: "gsv", branch: "abc123" },
+      expect.objectContaining({ username: "root", home: "/root" }),
+    );
   });
 
   it("rejects when setup mode is already completed", async () => {

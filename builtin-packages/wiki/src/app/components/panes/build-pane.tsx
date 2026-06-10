@@ -1,4 +1,5 @@
 import type { WikiWorkspaceState } from "../../types";
+import { WikiIcon } from "../ui/wiki-icon";
 
 type TargetMode = "gsv" | "custom";
 type DestinationMode = "existing" | "new";
@@ -29,8 +30,8 @@ export function BuildPane(props: Props) {
     <section class="wiki-pane">
       <div class="wiki-pane-head">
         <div>
-          <h2>Build from directory</h2>
-          <p>Turn a source directory into a first draft wiki without hand-writing database ids and raw prompts.</p>
+          <h2>Build manual</h2>
+          <p>Create a first draft collection from a source directory.</p>
         </div>
       </div>
       <form class="wiki-workflow" onSubmit={(event) => void props.onStartBuild(event)}>
@@ -38,18 +39,18 @@ export function BuildPane(props: Props) {
           <legend>Source</legend>
           <div class="wiki-form-grid">
             <label>
-              <span>Source target</span>
+              <span>Source location</span>
               <select value={props.buildTargetMode} onChange={(event) => props.onBuildTargetModeChange((event.currentTarget as HTMLSelectElement).value as TargetMode)}>
-                <option value="gsv">Control plane (gsv)</option>
+                <option value="gsv">GSV workspace</option>
                 <option value="custom">Other target</option>
               </select>
             </label>
             {props.buildTargetMode === "custom" ? (
               <label>
-                <span>Target id</span>
-                <input value={props.buildTargetCustom} onInput={(event) => props.onBuildTargetCustomChange((event.currentTarget as HTMLInputElement).value)} placeholder="device id" />
+                <span>Device or target</span>
+                <input value={props.buildTargetCustom} onInput={(event) => props.onBuildTargetCustomChange((event.currentTarget as HTMLInputElement).value)} placeholder="macbook or browser:..." />
               </label>
-            ) : <div class="wiki-form-placeholder">Build reads from the control plane by default.</div>}
+            ) : <div class="wiki-form-placeholder">Build reads from the GSV workspace by default.</div>}
             <label class="wiki-field-span-2">
               <span>Source directory</span>
               <input value={props.buildSourcePath} onInput={(event) => props.onBuildSourcePathChange((event.currentTarget as HTMLInputElement).value)} placeholder="/home/alice/projects/docs" />
@@ -60,33 +61,36 @@ export function BuildPane(props: Props) {
         <fieldset>
           <legend>Destination</legend>
           <div class="wiki-toggle-group">
-            <button type="button" class={props.buildDestinationMode === "existing" ? "is-active" : ""} onClick={() => props.onBuildDestinationModeChange("existing")}>Use existing database</button>
-            <button type="button" class={props.buildDestinationMode === "new" ? "is-active" : ""} onClick={() => props.onBuildDestinationModeChange("new")}>Create new database</button>
+            <button type="button" class={props.buildDestinationMode === "existing" ? "is-active" : ""} onClick={() => props.onBuildDestinationModeChange("existing")}>Use existing collection</button>
+            <button type="button" class={props.buildDestinationMode === "new" ? "is-active" : ""} onClick={() => props.onBuildDestinationModeChange("new")}>Create new collection</button>
           </div>
           {props.buildDestinationMode === "existing" ? (
             <label>
-              <span>Database</span>
+              <span>Collection</span>
               <select value={props.buildSelectedDb || props.selectedDb} onChange={(event) => props.onBuildSelectedDbChange((event.currentTarget as HTMLSelectElement).value)}>
-                <option value="">Select a database</option>
+                <option value="">Select collection</option>
                 {props.state.dbs.map((db) => <option key={db.id} value={db.id}>{db.title || db.id}</option>)}
               </select>
             </label>
           ) : (
             <div class="wiki-form-grid">
               <label>
-                <span>Database title</span>
-                <input value={props.buildDbTitle} onInput={(event) => props.onBuildDbTitleChange((event.currentTarget as HTMLInputElement).value)} placeholder="Product Alpha" />
+                <span>Collection title</span>
+                <input value={props.buildDbTitle} onInput={(event) => props.onBuildDbTitleChange((event.currentTarget as HTMLInputElement).value)} placeholder="Product manual" />
               </label>
               <label>
-                <span>Database id</span>
-                <input value={props.buildDbId} onInput={(event) => props.onBuildDbIdChange((event.currentTarget as HTMLInputElement).value)} placeholder="product-alpha" />
+                <span>Short id</span>
+                <input value={props.buildDbId} onInput={(event) => props.onBuildDbIdChange((event.currentTarget as HTMLInputElement).value)} placeholder="product-manual" />
               </label>
             </div>
           )}
         </fieldset>
 
         <div class="wiki-inline-actions">
-          <button type="submit" disabled={props.mutating} title="Start background build" aria-label="Start background build">Start build</button>
+          <button type="submit" disabled={props.mutating} title="Start background build" aria-label="Start background build">
+            <WikiIcon name="build" />
+            <span>Start build</span>
+          </button>
         </div>
       </form>
     </section>

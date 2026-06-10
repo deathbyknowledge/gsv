@@ -22,11 +22,11 @@ export function WikiInspector(props: Props) {
             <dd title={props.currentTitle || undefined}>{props.currentTitle || "No page selected"}</dd>
           </div>
           <div>
-            <dt>Database</dt>
+            <dt>Collection</dt>
             <dd title={props.selectedDb || undefined}>{props.selectedDb || "None"}</dd>
           </div>
           <div>
-            <dt>Path</dt>
+            <dt>Page path</dt>
             <dd title={props.selectedPath || undefined}>{props.selectedPath || "None"}</dd>
           </div>
         </dl>

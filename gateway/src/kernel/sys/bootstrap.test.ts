@@ -154,6 +154,19 @@ describe("handleSysBootstrap", () => {
           size: 80,
         };
       }
+      if (repo.owner === "root" && repo.repo === "gsv" && path === "knowledge/gsv") {
+        return {
+          kind: "tree",
+          entries: [{ name: "manual.md", type: "blob", mode: "100644", hash: "c" }],
+        };
+      }
+      if (repo.owner === "root" && repo.repo === "gsv" && path === "knowledge/gsv/manual.md") {
+        return {
+          kind: "file",
+          bytes: new TextEncoder().encode("# GSV Manual\n"),
+          size: 13,
+        };
+      }
       return { kind: "missing" };
     });
     applyMock.mockResolvedValue({ head: "home123" });
@@ -194,6 +207,29 @@ describe("handleSysBootstrap", () => {
           type: "put",
           path: "skills.d/gsv-package-development/SKILL.md",
           contentBytes: Array.from(new TextEncoder().encode("---\nname: gsv-package-development\ndescription: Package work.\n---\n\n# Package Work\n")),
+        },
+      ],
+    );
+    expect(applyMock).toHaveBeenCalledWith(
+      { owner: "root", repo: "home" },
+      "root",
+      "root@gsv.local",
+      "gsv: seed bootstrap knowledge",
+      [
+        {
+          type: "put",
+          path: "knowledge/.dir",
+          contentBytes: [],
+        },
+        {
+          type: "put",
+          path: "knowledge/gsv/.dir",
+          contentBytes: [],
+        },
+        {
+          type: "put",
+          path: "knowledge/gsv/manual.md",
+          contentBytes: Array.from(new TextEncoder().encode("# GSV Manual\n")),
         },
       ],
     );

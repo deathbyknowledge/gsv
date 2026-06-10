@@ -5,6 +5,7 @@ import type {
   RepoSummary,
   RepoTreeEntry,
 } from "@gsv/protocol/syscalls/repositories";
+import { runWikiCommand } from "../../../../builtin-packages/wiki/src/cli/wiki";
 import { WikiKnowledgeStore } from "../../../../builtin-packages/wiki/src/backend/knowledge-store";
 
 class InMemoryKnowledgeClient {
@@ -123,6 +124,18 @@ class InMemoryKnowledgeClient {
 
 function createStore(initial?: Record<string, string>): WikiKnowledgeStore {
   return new WikiKnowledgeStore(new InMemoryKnowledgeClient(initial));
+}
+
+function commandContext(client: InMemoryKnowledgeClient, argv: string[], stdin = "") {
+  return {
+    kernel: client,
+    argv,
+    stdin: {
+      async text() {
+        return stdin;
+      },
+    },
+  };
 }
 
 describe("WikiKnowledgeStore", () => {
@@ -397,5 +410,135 @@ describe("WikiKnowledgeStore", () => {
       },
     ]);
     expect(search.matches[0]?.snippet).toContain("Project Alpha");
+  });
+});
+
+describe("Wiki CLI", () => {
+  it("parses multi-word search queries and emits JSON search results", async () => {
+    const client = new InMemoryKnowledgeClient({
+      "knowledge/.dir": "",
+      "knowledge/gsv/index.md": [
+        "# GSV Manual",
+        "",
+        "## Pages",
+        "- pages/connect.md",
+        "- pages/whatsapp.md",
+        "",
+      ].join("\n"),
+      "knowledge/gsv/pages/connect.md": [
+        "# Connect Devices",
+        "",
+        "Connect native shell devices to the workspace.",
+        "",
+      ].join("\n"),
+      "knowledge/gsv/pages/whatsapp.md": [
+        "# WhatsApp Adapter",
+        "",
+        "Pair messages with the channel adapter.",
+        "",
+      ].join("\n"),
+    });
+
+    const output = await runWikiCommand(commandContext(client, [
+      "search",
+      "connect",
+      "whatsapp",
+      "--prefix",
+      "gsv",
+      "--json",
+    ]));
+    const parsed = JSON.parse(output) as { matches: Array<{ path: string }> };
+    expect(parsed.matches.map((match) => match.path)).toContain("gsv/pages/whatsapp.md");
+
+    const quotedOutput = await runWikiCommand(commandContext(client, [
+      "search",
+      "connect whatsapp",
+      "--prefix",
+      "gsv",
+      "--json",
+    ]));
+    const quoted = JSON.parse(quotedOutput) as { matches: Array<{ path: string }> };
+    expect(quoted.matches.map((match) => match.path)).toContain("gsv/pages/whatsapp.md");
+
+    const brief = await runWikiCommand(commandContext(client, [
+      "brief",
+      "connect",
+      "whatsapp",
+      "--prefix",
+      "gsv",
+      "--limit",
+      "1",
+    ]));
+    expect(brief).toContain("1. ");
+    expect(brief).toContain("path: gsv/pages/");
+  });
+
+  it("emits JSON for db list, list, and read", async () => {
+    const client = new InMemoryKnowledgeClient({
+      "knowledge/.dir": "",
+      "knowledge/gsv/index.md": [
+        "# GSV Manual",
+        "",
+        "## Pages",
+        "- pages/whatsapp.md",
+        "",
+      ].join("\n"),
+      "knowledge/gsv/pages/whatsapp.md": [
+        "# WhatsApp Adapter",
+        "",
+        "Pair messages with the channel adapter.",
+        "",
+      ].join("\n"),
+    });
+
+    const dbList = JSON.parse(await runWikiCommand(commandContext(client, ["db", "list", "--json"]))) as {
+      dbs: Array<{ id: string; title?: string }>;
+    };
+    expect(dbList.dbs).toEqual([{ id: "gsv", title: "GSV Manual" }]);
+
+    const list = JSON.parse(await runWikiCommand(commandContext(client, ["list", "gsv/pages", "--json"]))) as {
+      entries: Array<{ path: string; kind: "file" | "dir"; title?: string }>;
+    };
+    expect(list.entries).toContainEqual({
+      path: "gsv/pages/whatsapp.md",
+      kind: "file",
+      title: "whatsapp",
+    });
+
+    const read = JSON.parse(await runWikiCommand(commandContext(client, [
+      "read",
+      "gsv/pages/whatsapp.md",
+      "--json",
+    ]))) as { path: string; exists: boolean; title?: string; markdown?: string };
+    expect(read).toMatchObject({
+      path: "gsv/pages/whatsapp.md",
+      exists: true,
+      title: "WhatsApp Adapter",
+    });
+    expect(read.markdown).toContain("Pair messages");
+  });
+
+  it("uses stdin for write and promote text", async () => {
+    const client = new InMemoryKnowledgeClient({ "knowledge/.dir": "" });
+
+    const written = await runWikiCommand(commandContext(
+      client,
+      ["write", "gsv/pages/stdin.md"],
+      "# From stdin\n\nConnect WhatsApp from piped text.\n",
+    ));
+    expect(written).toBe("created gsv/pages/stdin.md\n");
+
+    const readWritten = await runWikiCommand(commandContext(client, ["read", "gsv/pages/stdin.md"]));
+    expect(readWritten).toContain("Connect WhatsApp from piped text.");
+
+    const promoted = await runWikiCommand(commandContext(
+      client,
+      ["promote", "--to", "personal/pages/alice.md", "--mode", "direct"],
+      "Alice prefers concise replies.\n",
+    ));
+    expect(promoted).toBe("promoted personal/pages/alice.md\n");
+
+    const readPromoted = await runWikiCommand(commandContext(client, ["read", "personal/pages/alice.md"]));
+    expect(readPromoted).toContain("Alice prefers concise replies.");
   });
 });

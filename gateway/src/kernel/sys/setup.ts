@@ -6,6 +6,7 @@ import { handleSysBootstrap } from "./bootstrap";
 import { ensureHomeStorageLayout } from "../home-knowledge";
 import { RipgitClient } from "../../fs";
 import { seedRepoSkillsToHome } from "./skills-seed";
+import { seedRepoKnowledgeToHome } from "./knowledge-seed";
 import { ensurePersonalAgent } from "../agents";
 import { provisionEnabledPackagesForCaller } from "../package-agents";
 
@@ -315,18 +316,22 @@ export async function handleSysSetup(
 
     const bootstrapResult = bootstrap;
     if (bootstrapResult && ctx.env.RIPGIT) {
+      // handleSysBootstrap seeds the first setup user's home; seed root explicitly too.
+      const ripgit = new RipgitClient(ctx.env.RIPGIT);
+      const sourceRepo = {
+        owner: "root",
+        repo: "gsv",
+        branch: bootstrapResult.head ?? bootstrapResult.ref,
+      };
       await timeSetupStep(
         timings,
         "seed-root-skills",
-        () => seedRepoSkillsToHome(
-          new RipgitClient(ctx.env.RIPGIT!),
-          {
-            owner: "root",
-            repo: "gsv",
-            branch: bootstrapResult.head ?? bootstrapResult.ref,
-          },
-          rootProcessIdentity,
-        ),
+        () => seedRepoSkillsToHome(ripgit, sourceRepo, rootProcessIdentity),
+      );
+      await timeSetupStep(
+        timings,
+        "seed-root-knowledge",
+        () => seedRepoKnowledgeToHome(ripgit, sourceRepo, rootProcessIdentity),
       );
     }
 

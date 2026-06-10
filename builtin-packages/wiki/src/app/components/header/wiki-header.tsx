@@ -10,11 +10,17 @@ type Props = {
   currentTitle: string;
   pageCount: number;
   inboxCount: number;
+  searchDraft: string;
+  searchQuery: string;
+  searchMatchCount: number | null;
+  onSearchDraftChange(value: string): void;
+  onApplySearch(event: Event): void;
 };
 
 export function WikiHeader(props: Props) {
-  const scope = props.activeDb?.title || props.selectedDb || "No database";
+  const scope = props.activeDb?.title || props.selectedDb || "No collection";
   const detail = props.selectedPath || labelForMode(props.mode);
+  const resultText = resultLabel(props.searchQuery, props.searchMatchCount);
 
   return (
     <header class="wiki-header">
@@ -22,25 +28,48 @@ export function WikiHeader(props: Props) {
         <span class="wiki-app-mark"><WikiIcon name="book" /></span>
         <div>
           <h1>Wiki</h1>
-          <p>{scope}</p>
+          <p title={scope}>{scope}</p>
         </div>
       </div>
+
+      <form class="wiki-global-search" onSubmit={props.onApplySearch} role="search">
+        <WikiIcon name="search" />
+        <input
+          value={props.searchDraft}
+          onInput={(event) => props.onSearchDraftChange((event.currentTarget as HTMLInputElement).value)}
+          placeholder={props.selectedDb ? `Search ${scope}` : "Search pages"}
+          type="search"
+          title="Search pages"
+          aria-label="Search pages"
+        />
+        <button type="submit" title="Search pages">
+          <WikiIcon name="search" />
+          <span>Search</span>
+        </button>
+      </form>
+
       <div class="wiki-header-context">
-        <span>{props.currentTitle || labelForMode(props.mode)}</span>
+        <span title={props.currentTitle || undefined}>{props.currentTitle || labelForMode(props.mode)}</span>
         <code title={detail}>{detail}</code>
-      </div>
-      <div class="wiki-header-counts" aria-label="Wiki counts">
-        <span title={`${props.pageCount} pages`}>{props.pageCount} pages</span>
-        <span title={`${props.inboxCount} inbox notes`}>{props.inboxCount} inbox</span>
+        <p title={resultText || undefined}>
+          {resultText || `${props.pageCount} pages${props.inboxCount ? `, ${props.inboxCount} inbox` : ""}`}
+        </p>
       </div>
     </header>
   );
 }
 
+function resultLabel(query: string, count: number | null): string {
+  if (!query || count === null) {
+    return "";
+  }
+  return `${count} ${count === 1 ? "match" : "matches"} for ${query}`;
+}
+
 function labelForMode(mode: WikiMode): string {
-  if (mode === "browse") return "Browse";
-  if (mode === "edit") return "Edit";
-  if (mode === "build") return "Build";
-  if (mode === "ingest") return "Ingest";
+  if (mode === "browse") return "Read";
+  if (mode === "edit") return "Edit page";
+  if (mode === "build") return "Build manual";
+  if (mode === "ingest") return "Add to inbox";
   return "Inbox";
 }

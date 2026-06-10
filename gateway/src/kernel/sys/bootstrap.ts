@@ -17,6 +17,7 @@ import {
 } from "../packages";
 import { provisionEnabledPackagesForCaller } from "../package-agents";
 import { seedRepoSkillsToHome } from "./skills-seed";
+import { seedRepoKnowledgeToHome } from "./knowledge-seed";
 
 const DEFAULT_GSV_UPSTREAM_URL = "https://github.com/deathbyknowledge/gsv";
 const DEFAULT_GSV_UPSTREAM_REF = "main";
@@ -159,6 +160,13 @@ export async function handleSysBootstrap(
         ctx.identity!.process,
       ))
     );
+    const seedKnowledgePromise = limitBootstrap(1, () =>
+      timeBootstrapStep(timings, "seed-knowledge", () => seedRepoKnowledgeToHome(
+        ripgit,
+        importedRepo,
+        ctx.identity!.process,
+      ))
+    );
 
     const installPackagesPromise = limitBootstrap(BOOTSTRAP_PACKAGE_SLOTS, async () => {
       const builtinSeeds = await timeBootstrapStep(
@@ -215,8 +223,9 @@ export async function handleSysBootstrap(
       ),
     );
 
-    const [, installed, mirroredChannels] = await allSettledOrThrow([
+    const [, , installed, mirroredChannels] = await allSettledOrThrow([
       seedSkillsPromise,
+      seedKnowledgePromise,
       installPackagesPromise,
       mirrorCliPromise,
       seedPiperPromise,

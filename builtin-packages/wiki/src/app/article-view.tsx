@@ -24,7 +24,7 @@ export function ArticleView(props: Props) {
   }, [props.markdown, props.articleTitle, props.routeBase, props.selectedDb, props.selectedPath, props.onNavigate, props.onPreviewOpen, props.onPreviewHide]);
 
   if (!props.markdown) {
-    return <div class="empty-article">Open a page from navigation, create a new page, or stage source material into an inbox note.</div>;
+    return <div class="empty-article">Choose a page from the library or search for a topic.</div>;
   }
 
   return <div class="article-body" ref={bodyRef} />;
