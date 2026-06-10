@@ -15,6 +15,17 @@ const BILLING_ERROR_PATTERN =
 const RATE_LIMIT_ERROR_PATTERN =
   /\b(?:rate\s*limit(?:ed)?|too\s+many\s+requests|http\s*429|429)\b/i;
 
+type ProviderErrorClassifier = {
+  name: string;
+  matches: (text: string) => boolean;
+};
+
+const PROMOTABLE_PROVIDER_ERROR_CLASSIFIERS: ProviderErrorClassifier[] = [
+  { name: "account", matches: isProviderAccountErrorText },
+  { name: "rate-limit", matches: isProviderRateLimitErrorText },
+  { name: "context-overflow", matches: isProviderContextOverflowErrorText },
+];
+
 export function errorMessageFromUnknown(error: unknown): string {
   return extractErrorText(error, new Set()) ?? NON_STANDARD_PROVIDER_ERROR;
 }
@@ -103,14 +114,14 @@ export function formatProviderErrorMessage(
 
   const normalized = normalizeErrorText(trimmed);
   const source = formatProviderSource(context);
-  if (BILLING_ERROR_PATTERN.test(normalized)) {
+  if (isProviderAccountErrorText(normalized)) {
     return [
       `Provider account issue${source}: ${normalized}`,
       "Check credits, quota, or billing for the configured AI provider.",
     ].join("\n");
   }
 
-  if (RATE_LIMIT_ERROR_PATTERN.test(normalized)) {
+  if (isProviderRateLimitErrorText(normalized)) {
     return [
       `Provider rate limit${source}: ${normalized}`,
       "Wait and retry, or switch to another configured AI provider or model.",
@@ -246,7 +257,19 @@ function isRecognizedProviderStatusOrCode(text: string): boolean {
 }
 
 function isRecognizedProviderErrorText(text: string): boolean {
-  return BILLING_ERROR_PATTERN.test(text) || RATE_LIMIT_ERROR_PATTERN.test(text);
+  return PROMOTABLE_PROVIDER_ERROR_CLASSIFIERS.some((classifier) => classifier.matches(text));
+}
+
+function isProviderAccountErrorText(text: string): boolean {
+  return BILLING_ERROR_PATTERN.test(text);
+}
+
+function isProviderRateLimitErrorText(text: string): boolean {
+  return RATE_LIMIT_ERROR_PATTERN.test(text);
+}
+
+function isProviderContextOverflowErrorText(text: string): boolean {
+  return isProviderContextOverflowErrorMessage(text);
 }
 
 function providerStatusCode(value: unknown): 402 | 429 | null {

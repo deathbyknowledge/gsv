@@ -104,6 +104,16 @@ describe("errorMessageFromUnknown", () => {
     }))).toBe("HTTP 402");
   });
 
+  it("extracts nested context overflow causes from generic Error wrappers", () => {
+    expect(errorMessageFromUnknown(new Error("request failed", {
+      cause: {
+        error: {
+          message: "Your input exceeds the context window of this model",
+        },
+      },
+    }))).toBe("Your input exceeds the context window of this model");
+  });
+
   it("keeps Error messages when causes are not recognized provider failures", () => {
     expect(errorMessageFromUnknown(new Error("request failed", {
       cause: {
