@@ -640,6 +640,15 @@ render(<App />, root);"#
     );
     assert!(wrapper
         .contains("src=\\\"/public/gsv/packages/__GSV_ARTIFACT_HASH__/browser/src/main.js\\\""));
+    assert!(wrapper.contains(
+        "rel=\\\"modulepreload\\\" href=\\\"/public/gsv/packages/__GSV_ARTIFACT_HASH__/browser/src/app/app.js\\\""
+    ));
+    assert!(wrapper.contains(
+        "rel=\\\"modulepreload\\\" href=\\\"/public/lib/npm/preact/10.24.1/dist/preact.module.js\\\""
+    ));
+    assert!(wrapper.contains(
+        "rel=\\\"modulepreload\\\" href=\\\"/public/lib/npm/preact/10.24.1/jsx-runtime/dist/jsxRuntime.module.js\\\""
+    ));
 
     let browser_assets = artifact
         .public_files
@@ -734,6 +743,19 @@ export default wasmUrl;"#
         .value
         .expect("artifact");
 
+    let wrapper = artifact
+        .modules
+        .iter()
+        .find(|module| module.path == "__gsv__/main.ts")
+        .expect("wrapper module")
+        .content
+        .as_str();
+    assert!(wrapper.contains(
+        "rel=\\\"modulepreload\\\" href=\\\"/public/lib/npm/wasm-lib/1.0.0/index.js\\\""
+    ));
+    assert!(wrapper
+        .contains("src=\\\"/public/gsv/packages/__GSV_ARTIFACT_HASH__/browser/src/main.js\\\""));
+
     let wasm = artifact
         .public_files
         .iter()
@@ -817,6 +839,20 @@ export async function init() {
     let artifact = finalize_artifact(&request.analysis, &runtime)
         .value
         .expect("artifact");
+
+    let wrapper = artifact
+        .modules
+        .iter()
+        .find(|module| module.path == "__gsv__/main.ts")
+        .expect("wrapper module")
+        .content
+        .as_str();
+    assert!(wrapper.contains(
+        "rel=\\\"modulepreload\\\" href=\\\"/public/lib/npm/ghostty-web/0.4.0/dist/ghostty-web.js\\\""
+    ));
+    assert!(!wrapper.contains(
+        "rel=\\\"modulepreload\\\" href=\\\"/public/lib/npm/ghostty-web/0.4.0/dist/__vite-browser-external-2447137e.js\\\""
+    ));
 
     let wasm = artifact
         .public_files
