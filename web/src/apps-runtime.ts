@@ -212,13 +212,21 @@ function createWebAppInstance(manifest: AppManifest, gatewayClient: GatewayClien
     mount: async (container, context) => {
       const generation = ++mountGeneration;
       activeLoader?.destroy();
-      activeLoader = createAppLaunchLoader({
+      const loader = createAppLaunchLoader({
         appName: manifest.name,
         route: context.route,
         seed: `${manifest.id}:${context.windowId}:${context.route}`,
       });
-      activeLoader.setPhase("session", "Allocating app session");
-      container.replaceChildren(activeLoader.element);
+      activeLoader = loader;
+      loader.setPhase("session", "Allocating app session");
+      container.replaceChildren(loader.element);
+
+      const destroyLoader = (): void => {
+        loader.destroy();
+        if (activeLoader === loader) {
+          activeLoader = null;
+        }
+      };
 
       let launch: AppLaunchResult;
       try {
@@ -227,26 +235,24 @@ function createWebAppInstance(manifest: AppManifest, gatewayClient: GatewayClien
           appOpenArgsFromRoute(context.route, context.windowId),
         );
       } catch (error) {
-        activeLoader.fail(toErrorMessage(error));
+        loader.fail(toErrorMessage(error));
         throw error;
       }
       if (generation !== mountGeneration) {
-        activeLoader?.destroy();
-        activeLoader = null;
+        destroyLoader();
         closeSession(launch.sessionId);
         return;
       }
       try {
-        activeLoader.setPhase("session", "Authorizing launch token");
+        loader.setPhase("session", "Authorizing launch token");
         await establishAppLaunchSession(launch);
       } catch (error) {
-        activeLoader.fail(toErrorMessage(error));
+        loader.fail(toErrorMessage(error));
         closeSession(launch.sessionId);
         throw error;
       }
       if (generation !== mountGeneration) {
-        activeLoader?.destroy();
-        activeLoader = null;
+        destroyLoader();
         closeSession(launch.sessionId);
         return;
       }
@@ -267,8 +273,8 @@ function createWebAppInstance(manifest: AppManifest, gatewayClient: GatewayClien
       bridge?.destroy();
       focusController?.destroy();
       runtimeStatusController?.destroy();
-      activeLoader.setPhase("frame", "Preparing secure frame");
-      runtimeStatusController = attachIframeRuntimeStatus(iframe, activeLoader);
+      loader.setPhase("frame", "Preparing secure frame");
+      runtimeStatusController = attachIframeRuntimeStatus(iframe, loader);
       focusController = attachIframeInteractionFocus(iframe, context.requestFocus);
       bridge = attachHostBridge(iframe, gatewayClient, {
         setTitle: context.setTitle,
@@ -276,7 +282,7 @@ function createWebAppInstance(manifest: AppManifest, gatewayClient: GatewayClien
         setDirty: context.setDirty,
         requestNewWindow: context.requestNewWindow,
       });
-      activeLoader.attachIframe(iframe);
+      loader.attachIframe(iframe);
       iframe.src = launch.launchUrl;
     },
     terminate: () => {
