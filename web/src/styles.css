@@ -5048,83 +5048,13 @@ button:disabled {
   border: 0;
 }
 
-.app-launch-kicker {
-  margin: 0;
-  color: #8d5f18;
-  font-family: var(--font-mono);
-  font-size: 0.68rem;
-  font-weight: 700;
-  line-height: 1;
-  letter-spacing: 0;
-  text-transform: uppercase;
-}
-
-.app-launch-title {
-  max-width: 100%;
-  margin: 0;
-  color: #1f3340;
-  font-size: 1.14rem;
-  font-weight: 700;
-  line-height: 1.15;
-  letter-spacing: 0;
-  overflow-wrap: anywhere;
-}
-
-.app-launch-stage {
-  max-width: 100%;
-  min-height: 1.2em;
-  margin: 0;
-  color: rgba(49, 75, 91, 0.82);
-  font-family: var(--font-mono);
-  font-size: 0.76rem;
-  line-height: 1.35;
-  letter-spacing: 0;
-  overflow-wrap: anywhere;
-}
-
-.app-launch-phase-rail {
-  display: none;
-}
-
-.app-launch-phase-rail span {
-  min-width: 0;
-  border-radius: 999px;
-  background: rgba(41, 91, 116, 0.14);
-  box-shadow: inset 0 0 0 1px rgba(41, 91, 116, 0.08);
-  transition: background-color 180ms ease, box-shadow 180ms ease;
-}
-
-.app-launch-host[data-app-launch-phase="opening"] .app-launch-phase-rail span:nth-child(1),
-.app-launch-host[data-app-launch-phase="session"] .app-launch-phase-rail span:nth-child(1),
-.app-launch-host[data-app-launch-phase="frame"] .app-launch-phase-rail span:nth-child(-n + 2),
-.app-launch-host[data-app-launch-phase="runtime"] .app-launch-phase-rail span:nth-child(-n + 3),
-.app-launch-host[data-app-launch-phase="ready"] .app-launch-phase-rail span,
-.app-launch-host[data-app-launch-phase="error"] .app-launch-phase-rail span {
-  background: rgba(21, 146, 118, 0.62);
-  box-shadow:
-    inset 0 0 0 1px rgba(246, 255, 252, 0.62),
-    0 0 14px rgba(21, 146, 118, 0.16);
-}
-
-.app-launch-host[data-app-launch-phase="error"] .app-launch-phase-rail span {
-  background: rgba(190, 52, 48, 0.72);
-  box-shadow:
-    inset 0 0 0 1px rgba(255, 230, 226, 0.58),
-    0 0 14px rgba(190, 52, 48, 0.18);
-}
-
 .app-launch-host.is-error .app-launch-blackhole-frame {
   color: #8f302b;
 }
 
-.app-launch-host.is-error .app-launch-kicker {
-  color: #a7352f;
-}
-
 @media (prefers-reduced-motion: reduce) {
   .app-launch-overlay,
-  .app-launch-iframe-stage,
-  .app-launch-phase-rail span {
+  .app-launch-iframe-stage {
     transition: none;
   }
 }
@@ -5140,10 +5070,6 @@ button:disabled {
 
   .app-launch-visual {
     min-height: 0;
-  }
-
-  .app-launch-title {
-    font-size: 1rem;
   }
 }
 

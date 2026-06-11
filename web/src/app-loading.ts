@@ -497,26 +497,17 @@ export function createAppLaunchLoader(options: { appName: string; route: string;
   const visual = createElement("div", "app-launch-visual");
   const pre = createElement("pre", "app-launch-blackhole-frame");
   const copy = createElement("div", "app-launch-copy");
-  const kicker = createElement("p", "app-launch-kicker");
-  const title = createElement("h1", "app-launch-title");
-  const stage = createElement("p", "app-launch-stage");
-  const rail = createElement("div", "app-launch-phase-rail");
+  const status = createElement("span", "app-launch-status");
 
-  host.dataset.appLaunchPhase = "opening";
   overlay.setAttribute("role", "status");
   overlay.setAttribute("aria-live", "polite");
   overlay.setAttribute("aria-atomic", "true");
   pre.setAttribute("aria-hidden", "true");
-  kicker.textContent = "launch sequence";
-  title.textContent = options.appName;
-  stage.textContent = "Opening app";
-  rail.setAttribute("aria-hidden", "true");
-  for (let index = 0; index < 4; index += 1) {
-    rail.append(document.createElement("span"));
-  }
+  status.textContent = `${options.appName}: Opening app`;
+  overlay.setAttribute("aria-label", status.textContent);
 
   visual.append(pre);
-  copy.append(kicker, title, stage, rail);
+  copy.append(status);
   layout.append(visual, copy);
   overlay.append(layout);
   host.append(frameStage, overlay);
@@ -584,9 +575,9 @@ export function createAppLaunchLoader(options: { appName: string; route: string;
     if (destroyed || ((completionScheduled || completed) && phase !== "error")) {
       return;
     }
-    host.dataset.appLaunchPhase = phase;
-    stage.textContent = message;
-    overlay.setAttribute("aria-label", `${options.appName}: ${message}`);
+    const label = `${options.appName}: ${message}`;
+    status.textContent = label;
+    overlay.setAttribute("aria-label", label);
   };
 
   const complete = (): void => {
