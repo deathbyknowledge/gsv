@@ -128,11 +128,17 @@ function appSessionLaunchEndpoint(sessionId: string): string {
 
 const RUNTIME_STATUS_FALLBACK_MS = 3000;
 
+function shouldUseRuntimeStatusFallback(state: string | null): boolean {
+  return state === null || (state !== "loading" && state !== "ready" && state !== "error");
+}
+
 function attachIframeRuntimeStatus(
   iframe: HTMLIFrameElement,
   loader: AppLaunchLoader,
 ): { destroy: () => void } {
   let fallbackTimer: number | null = null;
+  let loaded = false;
+  let latestRuntimeState: string | null = null;
 
   const clearFallbackTimer = (): void => {
     if (fallbackTimer === null) {
@@ -142,12 +148,23 @@ function attachIframeRuntimeStatus(
     fallbackTimer = null;
   };
 
-  const onLoad = (): void => {
-    loader.setPhase("runtime", "Starting app runtime");
+  const scheduleFallbackTimer = (): void => {
+    clearFallbackTimer();
     fallbackTimer = window.setTimeout(() => {
       fallbackTimer = null;
       loader.complete();
     }, RUNTIME_STATUS_FALLBACK_MS);
+  };
+
+  const onLoad = (): void => {
+    loaded = true;
+    if (!shouldUseRuntimeStatusFallback(latestRuntimeState)) {
+      return;
+    }
+    if (latestRuntimeState === null) {
+      loader.setPhase("runtime", "Starting app runtime");
+    }
+    scheduleFallbackTimer();
   };
 
   const onMessage = (event: MessageEvent<unknown>): void => {
@@ -162,8 +179,12 @@ function attachIframeRuntimeStatus(
     if (!state) {
       return;
     }
+    latestRuntimeState = state;
     clearFallbackTimer();
     loader.setRuntimeStatus(state, asString(record.message) ?? undefined);
+    if (loaded && shouldUseRuntimeStatusFallback(latestRuntimeState)) {
+      scheduleFallbackTimer();
+    }
   };
 
   iframe.addEventListener("load", onLoad, { once: true });
