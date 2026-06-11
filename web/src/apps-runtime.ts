@@ -126,12 +126,28 @@ function appSessionLaunchEndpoint(sessionId: string): string {
   return `/apps/sessions/${encodeURIComponent(sessionId)}/launch`;
 }
 
+const RUNTIME_STATUS_FALLBACK_MS = 3000;
+
 function attachIframeRuntimeStatus(
   iframe: HTMLIFrameElement,
   loader: AppLaunchLoader,
 ): { destroy: () => void } {
+  let fallbackTimer: number | null = null;
+
+  const clearFallbackTimer = (): void => {
+    if (fallbackTimer === null) {
+      return;
+    }
+    window.clearTimeout(fallbackTimer);
+    fallbackTimer = null;
+  };
+
   const onLoad = (): void => {
     loader.setPhase("runtime", "Starting app runtime");
+    fallbackTimer = window.setTimeout(() => {
+      fallbackTimer = null;
+      loader.complete();
+    }, RUNTIME_STATUS_FALLBACK_MS);
   };
 
   const onMessage = (event: MessageEvent<unknown>): void => {
@@ -146,6 +162,7 @@ function attachIframeRuntimeStatus(
     if (!state) {
       return;
     }
+    clearFallbackTimer();
     loader.setRuntimeStatus(state, asString(record.message) ?? undefined);
   };
 
@@ -154,6 +171,7 @@ function attachIframeRuntimeStatus(
 
   return {
     destroy: () => {
+      clearFallbackTimer();
       iframe.removeEventListener("load", onLoad);
       window.removeEventListener("message", onMessage);
     },
