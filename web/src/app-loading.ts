@@ -46,13 +46,17 @@ const TOTAL_FRAMES = FORMING_FRAMES + CONSUMING_FRAMES + COLLAPSING_FRAMES + EXP
 const FRAME_MS = 30;
 const EXIT_MS = 260;
 const TERMINAL_COLS = 80;
-const TERMINAL_ROWS = 30;
+const TERMINAL_ROWS = 42;
 const CELL_WIDTH_RATIO = 0.62;
 const LINE_HEIGHT_RATIO = 1.08;
 const MEASURE_FONT_SIZE = 100;
 const MEASURE_SAMPLE_CHARS = 40;
+const AMBIENT_STAR_DENSITY = 0.018;
+const MIN_AMBIENT_STARS = 72;
+const MAX_AMBIENT_STARS = 220;
 const STAR_GLYPHS = ["*", ".", "'", "`"] as const;
 const RING_GLYPHS = [".", "o", "O", "@", "O", "o"] as const;
+// Inspired by the terminaltexteffects blackhole: https://github.com/ChrisBuilds/terminaltexteffects
 const DEFAULT_TERMINAL_TEXT_LINES = [
   "",
   "             ________________________________________________",
@@ -188,6 +192,36 @@ function createTextParticles(
   return particles;
 }
 
+function createAmbientStarParticles(
+  cols: number,
+  rows: number,
+  rng: () => number,
+  orderOffset: number,
+): BlackholeParticle[] {
+  const count = clamp(
+    Math.round(cols * rows * AMBIENT_STAR_DENSITY),
+    MIN_AMBIENT_STARS,
+    MAX_AMBIENT_STARS,
+  );
+  const particles: BlackholeParticle[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const start = randomCanvasPoint(cols, rows, rng);
+    const explosionAngle = randomRange(rng, 0, Math.PI * 2);
+    particles.push({
+      finalGlyph: null,
+      starGlyph: pick(STAR_GLYPHS, rng),
+      start,
+      final: start,
+      burst: circlePoint(start, 3, explosionAngle),
+      angle: 0,
+      consumeDelay: Math.floor(randomRange(rng, 0, 18)),
+      order: orderOffset + index,
+      ring: false,
+    });
+  }
+  return particles;
+}
+
 function createBlackholeState(cols: number, rows: number, seed: string): BlackholeState {
   const stateSeed = hashSeed(`${seed}:${cols}:${rows}`);
   const rng = createRng(stateSeed);
@@ -197,6 +231,7 @@ function createBlackholeState(cols: number, rows: number, seed: string): Blackho
   };
   const radius = Math.max(Math.min(Math.round(cols * 0.3), Math.round(rows * 0.2)), 3);
   const textParticles = createTextParticles(cols, rows, rng);
+  const ambientParticles = createAmbientStarParticles(cols, rows, rng, textParticles.length);
   const shuffledIndices = textParticles.map((_, index) => index);
   for (let index = shuffledIndices.length - 1; index > 0; index -= 1) {
     const swapIndex = Math.floor(rng() * (index + 1));
@@ -220,7 +255,7 @@ function createBlackholeState(cols: number, rows: number, seed: string): Blackho
     rows,
     center,
     radius,
-    particles: textParticles,
+    particles: [...textParticles, ...ambientParticles],
     textParticles,
     ringParticles,
   };
@@ -261,16 +296,20 @@ function particlePoint(from: Point, to: Point, amount: number): Point {
   };
 }
 
-function renderStarfield(state: BlackholeState, grid: { chars: string[][]; priority: number[][] }, frame: number): void {
+function shouldRenderLooseParticle(particle: BlackholeParticle): boolean {
+  return !particle.ring && (!particle.finalGlyph || particle.order % 3 === 0);
+}
+
+function looseParticleGlyph(particle: BlackholeParticle): string {
+  return particle.finalGlyph ? "." : particle.starGlyph;
+}
+
+function renderStarfield(state: BlackholeState, grid: { chars: string[][]; priority: number[][] }): void {
   for (const particle of state.particles) {
-    if (particle.ring) {
+    if (!shouldRenderLooseParticle(particle)) {
       continue;
     }
-    const twinkle = (frame + particle.order * 5) % 17;
-    if (twinkle === 0 || twinkle > 13) {
-      continue;
-    }
-    plot(grid, particle.start, twinkle > 10 ? "." : particle.starGlyph, 1);
+    plot(grid, particle.start, looseParticleGlyph(particle), 1);
   }
 }
 
@@ -288,7 +327,7 @@ function renderBlackholeFrame(state: BlackholeState, rawFrame: number): string {
 
   if (frame < FORMING_FRAMES) {
     const globalT = frame / Math.max(FORMING_FRAMES - 1, 1);
-    renderStarfield(state, grid, frame);
+    renderStarfield(state, grid);
     for (let slot = 0; slot < state.ringParticles.length; slot += 1) {
       const particle = state.ringParticles[slot];
       if (!particle) {
@@ -310,7 +349,7 @@ function renderBlackholeFrame(state: BlackholeState, rawFrame: number): string {
       plot(grid, circlePoint(state.center, state.radius, angle), "*", 4);
     }
     for (const particle of state.particles) {
-      if (particle.ring) {
+      if (!shouldRenderLooseParticle(particle)) {
         continue;
       }
       const delay = particle.consumeDelay / 20;
@@ -318,7 +357,7 @@ function renderBlackholeFrame(state: BlackholeState, rawFrame: number): string {
       if (amount >= 0.94) {
         continue;
       }
-      plot(grid, particlePoint(particle.start, state.center, inExpo(amount)), particle.starGlyph, 2);
+      plot(grid, particlePoint(particle.start, state.center, inExpo(amount)), looseParticleGlyph(particle), 2);
     }
   } else if (frame < FORMING_FRAMES + CONSUMING_FRAMES + COLLAPSING_FRAMES) {
     const local = frame - FORMING_FRAMES - CONSUMING_FRAMES;
