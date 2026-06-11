@@ -1,4 +1,4 @@
-// Used by ensureHomeStorageLayout to seed context.d/00-boot.md for new personal agents.
+// Used by ensureAccountHomeLayout to seed context.d/00-boot.md for new personal agents.
 export const DEFAULT_BOOT_CONTEXT_TEMPLATE =
   "# Boot\n" +
   "\n" +
@@ -12,7 +12,7 @@ export const DEFAULT_BOOT_CONTEXT_TEMPLATE =
   "- Do not store secrets, credentials, tokens, or raw private data in context files.\n" +
   "- When the user says onboarding or setup is done, delete `~/context.d/00-boot.md` so this one-time assignment does not appear in future conversations.\n";
 
-// Used by ensureHomeStorageLayout to seed context.d/00-style.md for agent accounts.
+// Used by ensureAccountHomeLayout to seed context.d/00-style.md for agent accounts.
 export const DEFAULT_STYLE_CONTEXT =
   "# Style\n" +
   "\n" +
@@ -26,7 +26,7 @@ export const DEFAULT_STYLE_CONTEXT =
   "\n" +
   "Good: Redis. We need pub/sub for the notifications feature.\n";
 
-// Used by ensureHomeStorageLayout only to delete exact legacy generated context.d/00-constitution.md files.
+// Used by ensureAccountHomeLayout only to delete exact legacy generated context.d/00-constitution.md files.
 export const LEGACY_DEFAULT_CONSTITUTION_CONTEXT =
   "# Constitution\n" +
   "\n" +
@@ -62,7 +62,7 @@ export const LEGACY_DEFAULT_CONSTITUTION_CONTEXT =
   "\n" +
   "If you change this file, tell the user. It defines your baseline.\n";
 
-// Used by ensureHomeStorageLayout to seed context.d/10-user.md for agent accounts.
+// Used by ensureAccountHomeLayout to seed context.d/10-user.md for agent accounts.
 export const DEFAULT_USER_CONTEXT_TEMPLATE =
   "# User\n" +
   "\n" +

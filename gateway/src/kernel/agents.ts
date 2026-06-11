@@ -39,7 +39,7 @@ import {
   normalizeAccountName,
 } from "./accounts";
 import { canOwnerRunAsAccount } from "./account-access";
-import { ensureHomeStorageLayout } from "./home-knowledge";
+import { ensureAccountHomeLayout } from "./account-home";
 import { DEFAULT_PERSONA_CONTEXT_TEMPLATE } from "../prompts/persona";
 
 /**
@@ -172,7 +172,7 @@ export async function ensurePersonalAgent(
     if (entry) {
       const reconciled = reconcilePersonalAgentDisplayName(auth, entry, human) ?? entry;
       const identity = accountIdentity(auth, reconciled);
-      await ensureHomeStorageLayout(ctx.env, identity, {
+      await ensureAccountHomeLayout(ctx.env, identity, {
         userContextUsername: human.username,
         seedPromptContext: true,
       });

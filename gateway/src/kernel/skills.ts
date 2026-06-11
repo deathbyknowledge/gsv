@@ -1,6 +1,6 @@
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import {
-  homeKnowledgeRepoRef,
+  accountHomeRepoRef,
   packageSourcePathNameForRecord,
   packageSourcePathNameMap,
   packageSourcePathName,
@@ -30,25 +30,37 @@ export type SkillDocument = {
   id: string;
   name: string;
   description: string;
+  aliases: string[];
+  parentId?: string;
+  depth: number;
   content: string;
   path: string;
   source: SkillSource;
 };
 
-export type SkillIndexEntry = Omit<SkillDocument, "content" | "path">;
+export type SkillIndexEntry = Pick<SkillDocument, "id" | "name" | "description" | "source">;
 
 type SkillFile = {
+  idBase: string;
   fallbackName: string;
   content: string;
   path: string;
   source: SkillSource;
+  parentId?: string;
+  depth: number;
   idPrefix?: string;
 };
+
+type ParsedSkillFile = SkillFile & ReturnType<typeof parseSkillMarkdown>;
 
 type SkillRoot = {
   rootPath: string;
   source: SkillSource;
   idPrefix?: string;
+};
+
+type SkillCollectionOptions = {
+  includeNested: boolean;
 };
 
 type SkillHomeLayer = {
@@ -65,12 +77,13 @@ type FsReader = {
 export async function collectPromptSkillIndex(
   ctx: KernelContext,
 ): Promise<SkillIndexEntry[]> {
-  const docs = await collectKernelSkillDocuments(ctx);
-  return docs.map(({ content: _content, path: _path, ...entry }) => entry);
+  const docs = await collectKernelSkillDocuments(ctx, { includeNested: false });
+  return docs.map(({ id, name, description, source }) => ({ id, name, description, source }));
 }
 
 export async function collectKernelSkillDocuments(
   ctx: KernelContext,
+  options: SkillCollectionOptions = { includeNested: true },
 ): Promise<SkillDocument[]> {
   const files: SkillFile[] = [];
 
@@ -82,6 +95,7 @@ export async function collectKernelSkillDocuments(
       ctx,
       runAsIdentity,
       resolveSkillHomeLayers(ctx, runAsIdentity),
+      options,
     ));
   }
 
@@ -92,11 +106,12 @@ export async function collectFilesystemSkillDocuments(
   fs: FsReader,
   ctx: KernelContext,
   identity: ProcessIdentity,
+  options: SkillCollectionOptions = { includeNested: true },
 ): Promise<SkillDocument[]> {
   const roots = filesystemSkillRoots(ctx, identity, resolveSkillHomeLayers(ctx, identity));
   const files: SkillFile[] = [];
   for (const root of roots) {
-    files.push(...await collectFsSkillFiles(fs, root.rootPath, root.source, root.idPrefix));
+    files.push(...await collectFsSkillFiles(fs, root.rootPath, root.source, root.idPrefix, options));
   }
   return buildSkillDocuments(files);
 }
@@ -126,6 +141,17 @@ export function resolveSkillDocument(
     };
   }
 
+  const byAlias = docs.filter((doc) => doc.aliases.some((alias) => normalizeLookup(alias) === query));
+  if (byAlias.length === 1) {
+    return { ok: true, doc: byAlias[0] };
+  }
+  if (byAlias.length > 1) {
+    return {
+      ok: false,
+      error: `ambiguous skill alias '${rawName}'. Use one of: ${byAlias.map((doc) => doc.id).join(", ")}`,
+    };
+  }
+
   return {
     ok: false,
     error: `skill '${rawName}' not found`,
@@ -150,41 +176,55 @@ export async function listSkillFiles(
 export function parseSkillMarkdown(content: string, fallbackName: string): {
   name: string;
   description: string;
+  aliases: string[];
 } {
   const { frontmatter, body } = parseFrontmatter(content);
   const name = normalizeSkillName(frontmatter.get("name") ?? fallbackName);
   const description = truncateDescription(
     frontmatter.get("description") ?? firstBodyDescription(body),
   );
+  const aliases = parseAliases(frontmatter.get("aliases"));
   return {
     name,
     description,
+    aliases,
   };
 }
 
 export function renderSkillIndex(entries: SkillIndexEntry[]): string {
   if (entries.length === 0) {
     return [
-      "Skill command surface:",
-      "- Use `skills list` to discover reusable process skills.",
-      "- Use `skills search <query>` and `skills show <skill>` before relying on a workflow you do not already know.",
-      "- Use `skills files <skill>` and `skills read <skill> <file>` for supporting references and templates.",
+      "Available skills are top-level only. Use `skills list <skill>` or `skills tree <skill>` to inspect nested skills.",
+      "Use `skills show <skill>` before relying on a reusable workflow.",
     ].join("\n");
   }
 
   const lines = [
-    "Skill command surface:",
-    "- Use `skills list` to discover reusable process skills.",
-    "- Use `skills search <query>` and `skills show <skill>` before relying on a workflow you do not already know.",
-    "- Use `skills files <skill>` and `skills read <skill> <file>` for supporting references and templates.",
-    "- After a difficult reusable workflow or a correction to an existing workflow, read the relevant skill and update its source file if it is writable.",
+    "Available skills are top-level only. Use `skills list <skill>` or `skills tree <skill>` to inspect nested skills.",
+    "Use `skills show <skill>` before relying on a reusable workflow.",
     "",
-    "Available skills:",
   ];
-  for (const entry of entries) {
-    lines.push(`- ${entry.id}: ${entry.description || "No description."}`);
-  }
+  appendPromptEntries(lines, entries, entries.length);
   return lines.join("\n");
+}
+
+function appendPromptEntries(
+  lines: string[],
+  entries: SkillIndexEntry[],
+  limit: number,
+): void {
+  for (const entry of entries.slice(0, limit)) {
+    lines.push(formatPromptSkillEntry(entry));
+  }
+}
+
+function formatPromptSkillEntry(entry: SkillIndexEntry): string {
+  return [
+    "<skill>",
+    `<name>${escapePromptText(entry.id)}</name>`,
+    `<description>${escapePromptText(entry.description || "No description.")}</description>`,
+    "</skill>",
+  ].join("\n");
 }
 
 async function collectRipgitRuntimeSkillFiles(
@@ -192,13 +232,14 @@ async function collectRipgitRuntimeSkillFiles(
   ctx: KernelContext,
   runAsIdentity: ProcessIdentity,
   homeLayers: SkillHomeLayer[],
+  options: SkillCollectionOptions,
 ): Promise<SkillFile[]> {
   const files: SkillFile[] = [];
 
   for (const layer of homeLayers) {
     files.push(...await collectRipgitSkillFiles(
       ripgit,
-      homeKnowledgeRepoRef(layer.identity.username),
+      accountHomeRepoRef(layer.identity.username),
       "skills.d",
       {
         kind: "home",
@@ -206,6 +247,8 @@ async function collectRipgitRuntimeSkillFiles(
         writable: true,
       },
       `${layer.identity.home}/skills.d`,
+      undefined,
+      options,
     ));
   }
 
@@ -225,7 +268,7 @@ async function collectRipgitRuntimeSkillFiles(
       kind: "package",
       label: `pkg:${record.manifest.name}`,
       writable: packageSourceWritable(record, runAsIdentity),
-    }, root.virtualPath, sourcePathName));
+    }, root.virtualPath, sourcePathName, options));
   }
 
   return files;
@@ -319,9 +362,20 @@ async function collectFsSkillFiles(
   rootPath: string,
   source: SkillSource,
   idPrefix?: string,
+  options: SkillCollectionOptions = { includeNested: true },
 ): Promise<SkillFile[]> {
   const files: SkillFile[] = [];
-  await walkFsSkillRoot(fs, rootPath.replace(/\/+$/, ""), "", source, files, 0, idPrefix);
+  await walkFsSkillRoot(
+    fs,
+    rootPath.replace(/\/+$/, ""),
+    "",
+    source,
+    files,
+    undefined,
+    0,
+    idPrefix,
+    options,
+  );
   return files;
 }
 
@@ -331,8 +385,10 @@ async function walkFsSkillRoot(
   relativePath: string,
   source: SkillSource,
   files: SkillFile[],
+  parentId: string | undefined,
   depth: number,
   idPrefix?: string,
+  options: SkillCollectionOptions = { includeNested: true },
 ): Promise<void> {
   if (depth > MAX_SKILL_WALK_DEPTH) {
     return;
@@ -345,21 +401,6 @@ async function walkFsSkillRoot(
     return;
   }
 
-  if (names.includes("SKILL.md") && relativePath) {
-    const path = `${absolutePath}/SKILL.md`;
-    const content = await readFsText(fs, path);
-    if (content !== null) {
-      files.push({
-        fallbackName: fallbackSkillName(`${relativePath}/SKILL.md`),
-        content,
-        path,
-        source,
-        idPrefix,
-      });
-    }
-    return;
-  }
-
   for (const name of names.sort((left, right) => left.localeCompare(right))) {
     const path = `${absolutePath}/${name}`;
     const rel = relativePath ? `${relativePath}/${name}` : name;
@@ -369,21 +410,58 @@ async function walkFsSkillRoot(
     } catch {
       continue;
     }
-    if (stat.isFile && depth === 0 && name.endsWith(".md") && name !== "DESCRIPTION.md") {
+    if (stat.isFile && name.endsWith(".md") && name !== "DESCRIPTION.md" && name !== "SKILL.md") {
       const content = await readFsText(fs, path);
       if (content !== null) {
-        files.push({
+        const file = createSkillFile({
           fallbackName: fallbackSkillName(rel),
           content,
           path,
           source,
+          parentId,
+          depth,
           idPrefix,
         });
+        if (file) {
+          files.push(file);
+        }
       }
       continue;
     }
     if (stat.isDirectory) {
-      await walkFsSkillRoot(fs, path, rel, source, files, depth + 1, idPrefix);
+      const skillPath = `${path}/SKILL.md`;
+      const content = await readFsText(fs, skillPath);
+      if (content === null) {
+        continue;
+      }
+
+      const file = createSkillFile({
+        fallbackName: fallbackSkillName(`${rel}/SKILL.md`),
+        content,
+        path: skillPath,
+        source,
+        parentId,
+        depth,
+        idPrefix,
+      });
+      if (!file) {
+        continue;
+      }
+      files.push(file);
+
+      if (options.includeNested) {
+        await walkFsSkillRoot(
+          fs,
+          `${path}/skills.d`,
+          `${rel}/skills.d`,
+          source,
+          files,
+          file.idBase,
+          depth + 1,
+          idPrefix,
+          options,
+        );
+      }
     }
   }
 }
@@ -395,6 +473,7 @@ async function collectRipgitSkillFiles(
   source: SkillSource,
   virtualRoot: string,
   idPrefix?: string,
+  options: SkillCollectionOptions = { includeNested: true },
 ): Promise<SkillFile[]> {
   const files: SkillFile[] = [];
   await walkRipgitSkillRoot(
@@ -405,8 +484,10 @@ async function collectRipgitSkillFiles(
     source,
     trimTrailingSlash(virtualRoot),
     files,
+    undefined,
     0,
     idPrefix,
+    options,
   );
   return files;
 }
@@ -419,8 +500,10 @@ async function walkRipgitSkillRoot(
   source: SkillSource,
   virtualRoot: string,
   files: SkillFile[],
+  parentId: string | undefined,
   depth: number,
   idPrefix?: string,
+  options: SkillCollectionOptions = { includeNested: true },
 ): Promise<void> {
   if (depth > MAX_SKILL_WALK_DEPTH) {
     return;
@@ -431,46 +514,70 @@ async function walkRipgitSkillRoot(
     return;
   }
 
-  const skillEntry = tree.entries.find((entry) => entry.type === "blob" && entry.name === "SKILL.md");
-  if (skillEntry && relativePath) {
-    const path = joinPath(absolutePath, "SKILL.md");
-    const file = await ripgit.readPath(repo, path).catch(() => ({ kind: "missing" as const }));
-    if (file.kind === "file") {
-      const content = decodeTextFile(file.bytes);
-      if (content !== null) {
-        files.push({
-          fallbackName: fallbackSkillName(`${relativePath}/SKILL.md`),
-          content,
-          path: `${virtualRoot}/${relativePath}/SKILL.md`,
-          source,
-          idPrefix,
-        });
-      }
-    }
-    return;
-  }
-
   for (const entry of tree.entries.sort((left, right) => left.name.localeCompare(right.name))) {
     const path = joinPath(absolutePath, entry.name);
     const rel = relativePath ? `${relativePath}/${entry.name}` : entry.name;
-    if (entry.type === "blob" && depth === 0 && entry.name.endsWith(".md") && entry.name !== "DESCRIPTION.md") {
+    if (entry.type === "blob" && entry.name.endsWith(".md") && entry.name !== "DESCRIPTION.md" && entry.name !== "SKILL.md") {
       const file = await ripgit.readPath(repo, path).catch(() => ({ kind: "missing" as const }));
       if (file.kind === "file") {
         const content = decodeTextFile(file.bytes);
         if (content !== null) {
-          files.push({
+          const skillFile = createSkillFile({
             fallbackName: fallbackSkillName(rel),
             content,
-            path: `${virtualRoot}/${entry.name}`,
+            path: `${virtualRoot}/${rel}`,
             source,
+            parentId,
+            depth,
             idPrefix,
           });
+          if (skillFile) {
+            files.push(skillFile);
+          }
         }
       }
       continue;
     }
     if (entry.type === "tree") {
-      await walkRipgitSkillRoot(ripgit, repo, path, rel, source, virtualRoot, files, depth + 1, idPrefix);
+      const skillPath = joinPath(path, "SKILL.md");
+      const file = await ripgit.readPath(repo, skillPath).catch(() => ({ kind: "missing" as const }));
+      if (file.kind !== "file") {
+        continue;
+      }
+      const content = decodeTextFile(file.bytes);
+      if (content === null) {
+        continue;
+      }
+
+      const skillFile = createSkillFile({
+        fallbackName: fallbackSkillName(`${rel}/SKILL.md`),
+        content,
+        path: `${virtualRoot}/${rel}/SKILL.md`,
+        source,
+        parentId,
+        depth,
+        idPrefix,
+      });
+      if (!skillFile) {
+        continue;
+      }
+      files.push(skillFile);
+
+      if (options.includeNested) {
+        await walkRipgitSkillRoot(
+          ripgit,
+          repo,
+          joinPath(path, "skills.d"),
+          `${rel}/skills.d`,
+          source,
+          virtualRoot,
+          files,
+          skillFile.idBase,
+          depth + 1,
+          idPrefix,
+          options,
+        );
+      }
     }
   }
 }
@@ -494,7 +601,7 @@ async function walkFsSupportingFiles(
   }
 
   for (const name of names.sort((left, right) => left.localeCompare(right))) {
-    if (name === "SKILL.md") {
+    if (name === "SKILL.md" || name === "skills.d") {
       continue;
     }
     const childRel = rel ? `${rel}/${name}` : name;
@@ -522,42 +629,66 @@ async function readFsText(fs: FsReader, path: string): Promise<string | null> {
   }
 }
 
+function createSkillFile(args: Omit<SkillFile, "idBase">): SkillFile | null {
+  const skill = parseSkillMarkdown(args.content, args.fallbackName);
+  if (!skill.name) {
+    return null;
+  }
+  return {
+    ...args,
+    idBase: args.parentId ? `${args.parentId}/${skill.name}` : skill.name,
+  };
+}
+
 function buildSkillDocuments(files: SkillFile[]): SkillDocument[] {
-  const parsed = files
-    .map((file) => {
-      const skill = parseSkillMarkdown(file.content, file.fallbackName);
-      if (!skill.name) {
-        return null;
-      }
-      return {
-        ...file,
-        name: skill.name,
-        description: skill.description,
-      };
-    })
-    .filter((file): file is SkillFile & { name: string; description: string } => file !== null)
-    .sort((left, right) => {
-      const source = sourceRank(left.source) - sourceRank(right.source);
-      if (source !== 0) {
-        return source;
-      }
-      const label = left.source.label.localeCompare(right.source.label);
-      if (label !== 0) {
-        return label;
-      }
-      return left.name.localeCompare(right.name);
+  const parsed: ParsedSkillFile[] = [];
+  for (const file of files) {
+    const skill = parseSkillMarkdown(file.content, file.fallbackName);
+    if (!skill.name) {
+      continue;
+    }
+    parsed.push({
+      ...file,
+      name: skill.name,
+      description: skill.description,
+      aliases: skill.aliases,
     });
+  }
+
+  parsed.sort((left, right) => {
+    const source = sourceRank(left.source) - sourceRank(right.source);
+    if (source !== 0) {
+      return source;
+    }
+    const label = left.source.label.localeCompare(right.source.label);
+    if (label !== 0) {
+      return label;
+    }
+    return left.name.localeCompare(right.name);
+  });
 
   const counts = new Map<string, number>();
   for (const file of parsed) {
-    const key = normalizeLookup(file.name);
+    const key = normalizeLookup(file.idBase);
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
 
-  return parsed.map((file) => ({
-    id: skillId(file.name, file.source, counts.get(normalizeLookup(file.name)) ?? 0, file.idPrefix),
+  const documents = parsed.map((file) => ({
+    file,
+    id: skillId(file.idBase, file.source, counts.get(normalizeLookup(file.idBase)) ?? 0, file.idPrefix),
+  }));
+  const idsBySourceSkill = new Map<string, string>();
+  for (const document of documents) {
+    idsBySourceSkill.set(sourceSkillKey(document.file), document.id);
+  }
+
+  return documents.map(({ file, id }) => ({
+    id,
     name: file.name,
     description: file.description,
+    aliases: file.aliases,
+    ...(file.parentId ? { parentId: idsBySourceSkill.get(sourceSkillKey(file, file.parentId)) ?? file.parentId } : {}),
+    depth: file.depth,
     content: file.content.trimEnd(),
     path: file.path,
     source: file.source,
@@ -572,6 +703,15 @@ function skillId(name: string, source: SkillSource, count: number, idPrefix?: st
     return `${idPrefix ?? source.label.slice("pkg:".length)}:${name}`;
   }
   return `${normalizeSkillSourceLabel(source.label)}:${name}`;
+}
+
+function sourceSkillKey(file: SkillFile, idBase = file.idBase): string {
+  return [
+    file.source.kind,
+    file.source.label,
+    file.idPrefix ?? "",
+    normalizeLookup(idBase),
+  ].join("\0");
 }
 
 function sourceRank(source: SkillSource): number {
@@ -699,6 +839,25 @@ function normalizeSkillName(value: string): string {
 
 function normalizeLookup(value: string): string {
   return value.trim().toLowerCase();
+}
+
+function parseAliases(value: string | undefined): string[] {
+  if (!value) {
+    return [];
+  }
+  return [...new Set(
+    value
+      .split(/[,\n]/g)
+      .map((alias) => alias.trim())
+      .filter((alias) => alias.length > 0),
+  )];
+}
+
+function escapePromptText(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 function normalizeSkillSourceLabel(value: string): string {

@@ -1,4 +1,4 @@
-import { homeKnowledgeRepoRef } from "../../../fs/ripgit/repos";
+import { accountHomeRepoRef } from "../../../fs/ripgit/repos";
 import type { PromptContextProvider, PromptSection } from "../types";
 
 const TEXT_ENCODER = new TextEncoder();
@@ -9,7 +9,7 @@ export function createHomeContextProvider(): PromptContextProvider {
     name: "home.context",
     async collect(input) {
       const sections: PromptSection[] = [];
-      const repo = homeKnowledgeRepoRef(input.identity.username);
+      const repo = accountHomeRepoRef(input.identity.username);
 
       if (input.ripgit) {
         const contextTree = await input.ripgit.readPath(repo, "context.d");

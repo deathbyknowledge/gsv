@@ -64,7 +64,7 @@ Different path families are backed by different stores:
 - Process SQLite backs active conversation and run state.
 - R2 stores ordinary bytes, process media, archives, package artifacts, and CLI
   download mirrors.
-- ripgit stores versioned home knowledge, package source, and repository
+- ripgit stores versioned home context/skills, wiki repos, package source, and repository
   content.
 
 This split matters operationally, but it should be hidden from agents whenever
@@ -122,8 +122,9 @@ imports.
 
 GSV uses repositories for more than source control:
 
-- `{username}/home` stores user-global knowledge and context.
+- `{username}/home` stores account context and skills.
 - `root/gsv` can mirror the deployed GSV source.
+- `root/gsv-manual` stores the shipped GSV manual as a repo-backed wiki.
 - Package source repositories provide installable apps and CLI commands.
 
 This is how GSV can host its own source, install packages from repos, and expose

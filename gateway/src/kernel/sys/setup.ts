@@ -3,7 +3,7 @@ import type { KernelContext } from "../context";
 import type { PasswdEntry } from "../../auth/passwd";
 import type { ProcessIdentity, SysSetupArgs, SysSetupResult, UserIdentity } from "@gsv/protocol/syscalls/system";
 import { handleSysBootstrap } from "./bootstrap";
-import { ensureHomeStorageLayout } from "../home-knowledge";
+import { ensureAccountHomeLayout } from "../account-home";
 import { RipgitClient } from "../../fs";
 import { seedRepoSkillsToHome } from "./skills-seed";
 import { ensurePersonalAgent } from "../agents";
@@ -304,10 +304,10 @@ export async function handleSysSetup(
       timings,
       "ensure-home-layout",
       async () => {
-        await ensureHomeStorageLayout(ctx.env, rootProcessIdentity, {
+        await ensureAccountHomeLayout(ctx.env, rootProcessIdentity, {
           cleanupGeneratedPromptContext: true,
         });
-        await ensureHomeStorageLayout(ctx.env, bootstrapProcessIdentity, {
+        await ensureAccountHomeLayout(ctx.env, bootstrapProcessIdentity, {
           cleanupGeneratedPromptContext: true,
         });
       },
@@ -315,18 +315,17 @@ export async function handleSysSetup(
 
     const bootstrapResult = bootstrap;
     if (bootstrapResult && ctx.env.RIPGIT) {
+      // handleSysBootstrap seeds the first setup user's skills; seed root explicitly too.
+      const ripgit = new RipgitClient(ctx.env.RIPGIT);
+      const sourceRepo = {
+        owner: "root",
+        repo: "gsv",
+        branch: bootstrapResult.head ?? bootstrapResult.ref,
+      };
       await timeSetupStep(
         timings,
         "seed-root-skills",
-        () => seedRepoSkillsToHome(
-          new RipgitClient(ctx.env.RIPGIT!),
-          {
-            owner: "root",
-            repo: "gsv",
-            branch: bootstrapResult.head ?? bootstrapResult.ref,
-          },
-          rootProcessIdentity,
-        ),
+        () => seedRepoSkillsToHome(ripgit, sourceRepo, rootProcessIdentity),
       );
     }
 

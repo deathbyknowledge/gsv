@@ -20,7 +20,7 @@ import type { AuthTokenRole } from "./auth-store";
 import type { CapabilityStore } from "./capabilities";
 import { isValidCapability } from "./capabilities";
 import type { KernelContext } from "./context";
-import { ensureHomeStorageLayout } from "./home-knowledge";
+import { ensureAccountHomeLayout } from "./account-home";
 import { ensurePublicAssetStorageLayout } from "../public-assets";
 
 export type ConnectOutcome =
@@ -41,7 +41,7 @@ export async function ensureKernelBootstrapped(ctx: KernelContext): Promise<void
   ctx.caps.seed();
   migrateUserPrivateGroups(ctx);
   await ensurePublicAssetStorageLayout(ctx.env);
-  await ensureHomeStorageLayout(ctx.env, {
+  await ensureAccountHomeLayout(ctx.env, {
     uid: 0,
     gid: 0,
     gids: [0],

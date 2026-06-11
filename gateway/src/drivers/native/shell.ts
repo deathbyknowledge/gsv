@@ -12,7 +12,7 @@ import { Bash } from "just-bash";
 import type { BashExecResult } from "just-bash";
 import { GsvFs } from "../../fs/gsv-fs";
 import {
-  createHomeKnowledgeBackend,
+  createAccountHomeBackend,
   createPackageBackend,
   createProcessSourceBackend,
   RipgitClient,
@@ -23,6 +23,7 @@ import type { KernelContext } from "../../kernel/context";
 import { resolveCallerOwnerUid } from "../../kernel/context";
 import { createCronFileService } from "../../kernel/crontab";
 import { visiblePackageScopesForActor } from "../../kernel/packages";
+import { handleRepoList } from "../../kernel/repo";
 import type { ShellExecArgs, ShellExecResult } from "../../syscalls/shell";
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import {
@@ -131,6 +132,7 @@ function createBash(
     storage: ctx.env.STORAGE,
     ripgit: ctx.env.RIPGIT ? new RipgitClient(ctx.env.RIPGIT) : null,
     packages: ctx.packages.list({ scopes: visiblePackageScopesForActor(packageScopeOwner) }),
+    repos: handleRepoList(undefined, ctx).repos,
     mounts: ctx.processId ? ctx.procs.getMounts(ctx.processId) : null,
     processId: ctx.processId ?? null,
     config: ctx.config,
@@ -151,7 +153,7 @@ function createBash(
     },
     ctx.processId ?? undefined,
     sourceBackend,
-    createHomeKnowledgeBackend(ctx.env.STORAGE, ctx.env.RIPGIT, identity, {
+    createAccountHomeBackend(ctx.env.STORAGE, ctx.env.RIPGIT, identity, {
       auth: ctx.auth,
       ownerUid,
       isRoot: identity.uid === 0,

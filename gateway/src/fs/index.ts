@@ -12,7 +12,7 @@ export type {
   FsSearchBackendResult,
 } from "./mount";
 export { KernelMountBackend } from "./backends/kernel";
-export { createHomeKnowledgeBackend } from "./backends/home-knowledge";
+export { createAccountHomeBackend } from "./backends/account-home";
 export { createPackageBackend, isPackageMountPath } from "./backends/packages";
 export {
   commitProcessSourceChanges,
@@ -39,7 +39,7 @@ export type {
   RipgitTreeEntry,
 } from "./ripgit/client";
 export {
-  homeKnowledgeRepoRef,
+  accountHomeRepoRef,
 } from "./ripgit/repos";
 export {
   resolveUserPath,

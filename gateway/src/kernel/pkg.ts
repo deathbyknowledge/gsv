@@ -47,7 +47,10 @@ import {
   resolvePackageFromRipgitSource,
   visiblePackageScopesForActor,
 } from "./packages";
+import { isRepoPublic, setRepoVisibility } from "./repo-visibility";
 import { RipgitClient, type RipgitRepoRef } from "../fs/ripgit/client";
+
+export { isRepoPublic } from "./repo-visibility";
 
 const DEFAULT_PACKAGE_CREATE_REF = "main";
 const TEXT_ENCODER = new TextEncoder();
@@ -209,14 +212,9 @@ export function handlePkgPublicSet(
   const identity = requireIdentity(ctx);
   const repo = resolvePublicRepoTarget(args, ctx);
   assertRepoOwnerOrRoot(repo, identity);
-  const key = publicRepoConfigKey(repo);
   const nextPublic = args.public === true;
-  const wasPublic = ctx.config.get(key) === "true";
-  if (nextPublic) {
-    ctx.config.set(key, "true");
-  } else {
-    ctx.config.delete(key);
-  }
+  const wasPublic = isRepoPublic(repo, ctx.config);
+  setRepoVisibility(repo, nextPublic ? "public" : "private", ctx.config);
   return {
     changed: wasPublic !== nextPublic,
     repo,
@@ -1129,14 +1127,6 @@ function normalizeRepoPath(path: string | undefined): string {
 function configuredServerName(ctx: KernelContext): string {
   const configured = ctx.config.get("config/server/name")?.trim();
   return configured && configured.length > 0 ? configured : "gsv";
-}
-
-function publicRepoConfigKey(repo: string): string {
-  return `config/pkg/public-repos/${repo}`;
-}
-
-export function isRepoPublic(repo: string, config: KernelContext["config"]): boolean {
-  return config.get(publicRepoConfigKey(repo)) === "true";
 }
 
 function listPkgRemotes(ctx: KernelContext, uid: number): PkgRemoteEntry[] {

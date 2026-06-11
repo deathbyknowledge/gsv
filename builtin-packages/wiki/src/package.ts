@@ -3,7 +3,7 @@ import { definePackage } from "@gsv/package/manifest";
 export default definePackage({
   meta: {
     displayName: "Wiki",
-    description: "Knowledge databases, pages, inbox review, and guided wiki-building workflows.",
+    description: "Git-backed wiki collections, pages, inbox review, and guided wiki-building workflows.",
     icon: "icon.svg",
     window: {
       width: 1220,
@@ -18,6 +18,7 @@ export default definePackage({
         "proc.spawn",
         "proc.send",
         "repo.apply",
+        "repo.create",
         "repo.list",
         "repo.read",
         "signal.watch",

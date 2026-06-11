@@ -253,7 +253,7 @@ types need different awareness, tools, and retrieval behavior.
 - [x] Introduce the first provider-based prompt assembly pipeline
   - base system prompt provider
   - profile instructions provider
-  - home knowledge provider (`CONSTITUTION`, `context.d`)
+  - home repo provider (`CONSTITUTION`, `context.d`)
 - [ ] Add retrieval/live-state providers to the pipeline
   - live process history provider
   - archived/session retrieval provider later
@@ -291,7 +291,7 @@ those records while keeping `GsvFs` as the operational filesystem for live files
   - good fits: `context.d/*`, memory notes, archived sessions, skills/app packages later
   - bad fits: `/sys`, `/proc`, `/dev`, auth/config runtime truth, active process state, scratch files
 - [ ] Repo granularity decision:
-  - one repo per user for home knowledge (`context.d/`, memory notes)
+  - one repo per user for home context/skills (`context.d/`, memory notes)
   - separate repo per user for session archives if transcript volume/search churn warrants it
 - [ ] Keep semantic helpers above kernel primitives; do not add app-shaped syscall domains
 - [ ] Migrate prompt assembly from raw R2 `context.d/*.md` reads to repo-backed retrieval

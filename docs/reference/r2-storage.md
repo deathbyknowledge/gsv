@@ -10,7 +10,7 @@ GSV uses several storage planes. The Kernel chooses the plane based on whether t
 | Process SQLite | Process Durable Object SQL | Active messages, pending tool calls, message queue, HIL state, process-local metadata. |
 | AppRunner SQLite/KV | AppRunner Durable Object storage | Package runtime SQL, daemon schedules, loaded package runtime props. |
 | R2 `STORAGE` bucket | Cloudflare R2 | Ordinary virtual filesystem files, process media, process archives, package artifacts, CLI download mirrors. |
-| ripgit | `RIPGIT` binding | Versioned home knowledge, package source repositories, mounted source trees. |
+| ripgit | `RIPGIT` binding | Versioned home context/skills, wiki repos, package source repositories, mounted source trees. |
 
 ## Virtual Filesystem Mapping
 
@@ -22,7 +22,6 @@ The native `fs.*` and `shell.exec` handlers use `GsvFs`, a Linux-like virtual fi
 | `/etc/passwd`, `/etc/shadow`, `/etc/group` | Kernel auth tables | Overlaid on top of regular `/etc` storage. |
 | `~/context.d/*` | ripgit home repo, with R2 fallback | Account prompt context. Human homes start empty; agent homes seed style and user files. Personal agents also get a one-time boot file. |
 | `~/skills.d/*` | ripgit home repo, with R2 fallback | User-global reusable process skills. |
-| `~/knowledge/*` | ripgit home repo | Durable knowledge databases. |
 | Other home files | R2 | Stored as ordinary objects with uid/gid/mode metadata. |
 | `/src/packages/{packageName}` | ripgit package source plus R2 overlay | Visible installed package source. Writable owned sources stage process-local edits in R2 until explicit commit. |
 | `/usr/local/bin/*` | package mount | Read-only package command shims. |
@@ -89,7 +88,8 @@ ripgit stores versioned content. It is used anywhere history, diffs, search, or 
 
 | Repository | Ref Helper | Mounted At | Purpose |
 |---|---|---|---|
-| `{username}/home` | `homeKnowledgeRepoRef(username)` | `~/context.d`, `~/skills.d`, `~/knowledge` | Home context, skills, and knowledge databases. |
+| `{username}/home` | `accountHomeRepoRef(username)` | `~/context.d`, `~/skills.d` | Home context and account-local skills. |
+| Wiki repos, for example `root/gsv-manual` or `{owner}/{wiki}` | repo manifest `wiki.json` | Wiki app and `repo.*` | Durable markdown knowledge databases. |
 | Package source repos, for example `root/gsv` or `{owner}/{repo}` | package manifest `source.repo` | `/src/packages/{packageName}`, `repo.*` | Installed package source, review context, and generic repo operations. |
 
 The `root/gsv` repository may contain a top-level `skills/` directory. Bootstrap
@@ -99,7 +99,7 @@ upstream ref under `refs/remotes/upstream/<ref>` and uses that tracking ref for
 later pulls. The local branch is moved only when it can be updated without
 dropping local commits.
 
-Package source mounts are always visible for installed packages the process identity can see. Sources owned by the current user are writable through a process-local R2 overlay; `pkg source status`, `pkg source diff`, `pkg source commit`, and `pkg source discard` make commit/discard explicit. Other package sources are read-only. Home knowledge repos are writable through the filesystem; generic repository operations use `repo.*`, and Wiki-specific behavior uses the higher-level knowledge interface.
+Package source mounts are always visible for installed packages the process identity can see. Sources owned by the current user are writable through a process-local R2 overlay; `pkg source status`, `pkg source diff`, `pkg source commit`, and `pkg source discard` make commit/discard explicit. Other package sources are read-only. Wiki repos use generic repository operations through `repo.*`, and Wiki-specific behavior uses the higher-level Wiki app and CLI.
 
 ## Package Runtime Storage
 
@@ -112,5 +112,5 @@ AppRunner also stores runtime props in Durable Object KV and daemon schedules in
 - Use Kernel SQLite for authoritative control-plane state.
 - Use Process SQLite for active conversation and run state.
 - Use R2 for opaque bytes, archives, media, and default filesystem files.
-- Use ripgit for user-editable/versioned documents, knowledge, and package source.
+- Use ripgit for user-editable/versioned documents, wiki repos, and package source.
 - Prefer filesystem paths in agent prompts; the mount layer hides the backing store.

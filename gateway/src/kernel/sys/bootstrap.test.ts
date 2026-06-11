@@ -84,6 +84,7 @@ function makeInstalledPackage() {
 }
 
 function makeContext(): KernelContext {
+  const configValues = new Map<string, string>();
   return {
     env: {
       RIPGIT: {} as Fetcher,
@@ -104,6 +105,17 @@ function makeContext(): KernelContext {
     packages: {
       seedBuiltinPackages: vi.fn(() => [makeInstalledPackage()]),
     } as unknown as KernelContext["packages"],
+    config: {
+      get: vi.fn((key: string) => configValues.get(key) ?? null),
+      set: vi.fn((key: string, value: string) => {
+        configValues.set(key, value);
+      }),
+      list: vi.fn((prefix: string) =>
+        [...configValues.entries()]
+          .filter(([key]) => key.startsWith(prefix))
+          .map(([key, value]) => ({ key, value }))
+      ),
+    } as unknown as KernelContext["config"],
   } as KernelContext;
 }
 
@@ -178,6 +190,14 @@ describe("handleSysBootstrap", () => {
       "https://github.com/deathbyknowledge/gsv",
       "main",
     );
+    expect(importFromUpstreamMock).toHaveBeenCalledWith(
+      { owner: "root", repo: "gsv-manual", branch: "main" },
+      "root",
+      "root@gsv.local",
+      "bootstrap root/gsv-manual from https://github.com/deathbyknowledge/gsv-manual#main",
+      "https://github.com/deathbyknowledge/gsv-manual",
+      "main",
+    );
     expect(buildBuiltinPackageSeedsMock).toHaveBeenCalledWith(ctx.env);
     expect(applyMock).toHaveBeenCalledWith(
       { owner: "root", repo: "home" },
@@ -197,6 +217,8 @@ describe("handleSysBootstrap", () => {
         },
       ],
     );
+    expect(ctx.config.set).toHaveBeenCalledWith("repos/root/gsv-manual/description", "GSV Manual");
+    expect(ctx.config.set).toHaveBeenCalledWith("repos/root/gsv-manual/visibility", "public");
     expect(ctx.packages.seedBuiltinPackages).toHaveBeenCalledWith([{ name: "chat-seed" }]);
     expect(inferDefaultCliChannelMock).toHaveBeenCalledWith("main");
     expect(mirrorCliChannelMock).toHaveBeenCalledTimes(2);
@@ -209,6 +231,13 @@ describe("handleSysBootstrap", () => {
       ref: "main",
       head: "abc123",
       changed: true,
+      manual: {
+        repo: "root/gsv-manual",
+        remoteUrl: "https://github.com/deathbyknowledge/gsv-manual",
+        ref: "main",
+        head: "abc123",
+        changed: true,
+      },
       cli: {
         defaultChannel: "dev",
         mirroredChannels: ["stable", "dev"],

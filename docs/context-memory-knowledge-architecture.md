@@ -9,7 +9,7 @@ knowledge-specific behavior lives in the Wiki package app and CLI.
 | Layer | Location | Purpose |
 |---|---|---|
 | Home context | `~/context.d/` | Always-relevant account context loaded into agent prompts. |
-| Durable knowledge | `~/knowledge/` | User-controlled markdown databases, pages, inbox notes, and source references. |
+| Durable knowledge | Wiki repos with `wiki.json` | User-controlled markdown databases, pages, inbox notes, and source references. |
 | Repository substrate | `repo.*` | Versioned reads, writes, diffs, imports, and history over ripgit repositories. |
 | Filesystem substrate | `fs.*` | Linux-like file access across native GSV storage and routed devices. |
 
@@ -28,40 +28,41 @@ missing. New personal agents also get a one-time `~/context.d/00-boot.md`
 onboarding file that should be deleted after setup is done.
 
 Use `~/context.d/` for scoped snippets. Keep files short and specific. Large
-knowledge collections belong in `~/knowledge/`, not always-loaded context.
+knowledge collections belong in Wiki repos, not always-loaded context.
 
 ## Durable Knowledge
 
-Durable knowledge is stored under:
+Durable knowledge is stored in normal ripgit repositories that contain a root
+`wiki.json` manifest:
 
 ```text
-~/knowledge/
+wiki.json
+index.md
+pages/
+inbox/
 ```
 
-The conventional layout is:
+Example manifest:
 
-```text
-~/knowledge/
-  personal/
-    index.md
-    pages/
-    inbox/
-  product/
-    index.md
-    pages/
-    inbox/
+```json
+{
+  "kind": "gsv.wiki",
+  "version": 1,
+  "id": "personal",
+  "title": "Personal Wiki"
+}
 ```
 
-Each database is just markdown in the user's home repo. `index.md` is the
-database landing page. `pages/` contains canonical notes. `inbox/` contains
-staged notes that should be reviewed before becoming canonical.
+Each wiki is just markdown in a repository. `index.md` is the landing page.
+`pages/` contains canonical notes. `inbox/` contains staged notes that should be
+reviewed before becoming canonical.
 
 ## Wiki Semantics
 
 The Wiki package app and `wiki` CLI command provide semantic operations over
-`~/knowledge/`:
+wiki repos:
 
-- list and initialize databases
+- list and initialize wiki collections
 - read and write markdown pages
 - search and query notes
 - ingest live source references
@@ -69,7 +70,7 @@ The Wiki package app and `wiki` CLI command provide semantic operations over
 - merge or annotate existing notes
 
 These are product and CLI behaviors, not kernel syscalls. The implementation
-uses generic repository operations against the home repo, so other apps can build
+uses generic repository operations against wiki repos, so other apps can build
 their own knowledge workflows without depending on a special kernel domain.
 
 ## Source References
@@ -90,7 +91,7 @@ the home repo.
 
 ## Retrieval Model
 
-`~/knowledge/` is not loaded wholesale into prompts. Agents should use the Wiki
+Wiki repos are not loaded wholesale into prompts. Agents should use the Wiki
 surface, shell tools, `fs.*`, or `repo.*` to inspect it deliberately.
 
 This keeps the prompt small and makes retrieval visible:

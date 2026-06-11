@@ -3,7 +3,7 @@ import { env } from "cloudflare:test";
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import { packageAgentAccessGroup } from "../../kernel/package-agents";
 import { GsvFs } from "../gsv-fs";
-import { createHomeKnowledgeBackend } from "./home-knowledge";
+import { createAccountHomeBackend } from "./account-home";
 
 const ALICE: ProcessIdentity = {
   uid: 1000,
@@ -129,7 +129,7 @@ async function clearHomeStorage(): Promise<void> {
 }
 
 function createDelegatingBackend() {
-  return createHomeKnowledgeBackend(env.STORAGE, fakeRipgit, ALICE, {
+  return createAccountHomeBackend(env.STORAGE, fakeRipgit, ALICE, {
     auth: auth as never,
     ownerUid: ALICE.uid,
     isRoot: false,
@@ -137,39 +137,39 @@ function createDelegatingBackend() {
 }
 
 function createPersonalAgentBackend() {
-  return createHomeKnowledgeBackend(env.STORAGE, fakeRipgit, PERSONAL_AGENT, {
+  return createAccountHomeBackend(env.STORAGE, fakeRipgit, PERSONAL_AGENT, {
     auth: auth as never,
     ownerUid: ALICE.uid,
     isRoot: false,
   });
 }
 
-describe("HomeKnowledgeMountBackend delegated routing", () => {
+describe("AccountHomeMountBackend delegated routing", () => {
   beforeEach(async () => {
     await clearHomeStorage();
   });
 
-  it("delegates target home root and home-knowledge overlay paths", () => {
+  it("delegates target home root and home repo overlay paths", () => {
     const backend = createDelegatingBackend();
 
     expect(backend?.handles("/home/wiki-builder")).toBe(true);
     expect(backend?.handles("/home/wiki-builder/context.d/persona.md")).toBe(true);
     expect(backend?.handles("/home/wiki-builder/skills.d/workflow.md")).toBe(true);
-    expect(backend?.handles("/home/wiki-builder/profiles.d/default/notes.md")).toBe(true);
-    expect(backend?.handles("/home/wiki-builder/knowledge/inbox/item.md")).toBe(true);
 
+    expect(backend?.handles("/home/wiki-builder/profiles.d/default/notes.md")).toBe(false);
+    expect(backend?.handles("/home/wiki-builder/knowledge/inbox/item.md")).toBe(false);
     expect(backend?.handles("/home/wiki-builder/conversations/default/history")).toBe(false);
     expect(backend?.handles("/home/wiki-builder/notes.txt")).toBe(false);
   });
 
-  it("lets a personal agent reach its owner's home root and home-knowledge overlay paths", () => {
+  it("lets a personal agent reach its owner's home root and home repo overlay paths", () => {
     const backend = createPersonalAgentBackend();
 
     expect(backend?.handles("/home/alice")).toBe(true);
     expect(backend?.handles("/home/alice/context.d/persona.md")).toBe(true);
     expect(backend?.handles("/home/alice/skills.d/workflow.md")).toBe(true);
-    expect(backend?.handles("/home/alice/knowledge/inbox/item.md")).toBe(true);
 
+    expect(backend?.handles("/home/alice/knowledge/inbox/item.md")).toBe(false);
     expect(backend?.handles("/home/alice/conversations/default/history")).toBe(false);
     expect(backend?.handles("/home/wiki-builder/context.d/persona.md")).toBe(true);
   });
@@ -196,8 +196,6 @@ describe("HomeKnowledgeMountBackend delegated routing", () => {
     await expect(fs.readdir("/home/wiki-builder")).resolves.toEqual([
       "context.d",
       "conversations",
-      "knowledge",
-      "profiles.d",
       "skills.d",
     ]);
   });

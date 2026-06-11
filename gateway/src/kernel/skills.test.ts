@@ -2,7 +2,15 @@ import { describe, expect, it } from "vitest";
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import type { InstalledPackageRecord } from "./packages";
 import type { KernelContext } from "./context";
-import { collectFilesystemSkillDocuments, collectKernelSkillDocuments, resolveSkillDocument } from "./skills";
+import {
+  collectFilesystemSkillDocuments,
+  collectKernelSkillDocuments,
+  collectPromptSkillIndex,
+  listSkillFiles,
+  parseSkillMarkdown,
+  renderSkillIndex,
+  resolveSkillDocument,
+} from "./skills";
 
 const IDENTITY: ProcessIdentity = {
   uid: 1000,
@@ -168,9 +176,156 @@ describe("collectFilesystemSkillDocuments", () => {
       ],
     });
   });
+
+  it("discovers nested skills.d children without exposing them in top-level-only collection", async () => {
+    const ctx = {
+      packages: {
+        list: () => [],
+      },
+    } as unknown as KernelContext;
+    const fs = makeSkillFs({
+      "/home/sam/skills.d": ["device-management"],
+      "/home/sam/skills.d/device-management": ["SKILL.md", "notes.md", "skills.d"],
+      "/home/sam/skills.d/device-management/SKILL.md": [
+        "---",
+        "name: device-management",
+        "description: Manage devices and targets.",
+        "aliases: devices, targets",
+        "---",
+        "",
+        "# Devices",
+        "",
+      ].join("\n"),
+      "/home/sam/skills.d/device-management/notes.md": "supporting notes",
+      "/home/sam/skills.d/device-management/skills.d": ["adding-devices"],
+      "/home/sam/skills.d/device-management/skills.d/adding-devices": ["SKILL.md"],
+      "/home/sam/skills.d/device-management/skills.d/adding-devices/SKILL.md": [
+        "---",
+        "name: adding-devices",
+        "description: Add device workflow.",
+        "aliases: node install",
+        "---",
+        "",
+        "# Adding Devices",
+        "",
+      ].join("\n"),
+    });
+
+    const docs = await collectFilesystemSkillDocuments(fs, ctx, IDENTITY);
+    const topLevelOnly = await collectFilesystemSkillDocuments(fs, ctx, IDENTITY, { includeNested: false });
+
+    expect(docs.find((doc) => doc.id === "device-management")).toMatchObject({
+      depth: 0,
+      aliases: ["devices", "targets"],
+    });
+    expect(docs.find((doc) => doc.id === "device-management/adding-devices")).toMatchObject({
+      depth: 1,
+      parentId: "device-management",
+      aliases: ["node install"],
+    });
+    expect(resolveSkillDocument(docs, "node install")).toMatchObject({
+      ok: true,
+      doc: {
+        id: "device-management/adding-devices",
+      },
+    });
+    expect(topLevelOnly.map((doc) => doc.id)).toEqual(["device-management"]);
+    await expect(listSkillFiles(fs, docs.find((doc) => doc.id === "device-management")!)).resolves.toEqual(["notes.md"]);
+  });
+
+  it("links nested children to the final deduped parent skill id", async () => {
+    const ctx = makeAgentOwnedContext();
+    const fs = makeSkillFs({
+      "/home/sam/skills.d": ["device-management"],
+      "/home/sam/skills.d/device-management": ["SKILL.md", "skills.d"],
+      "/home/sam/skills.d/device-management/SKILL.md": skillMarkdown("device-management", "User device manual."),
+      "/home/sam/skills.d/device-management/skills.d": ["adding-devices"],
+      "/home/sam/skills.d/device-management/skills.d/adding-devices": ["SKILL.md"],
+      "/home/sam/skills.d/device-management/skills.d/adding-devices/SKILL.md": skillMarkdown("adding-devices", "User add device workflow."),
+      "/home/friday/skills.d": ["device-management"],
+      "/home/friday/skills.d/device-management": ["SKILL.md", "skills.d"],
+      "/home/friday/skills.d/device-management/SKILL.md": skillMarkdown("device-management", "Agent device manual."),
+      "/home/friday/skills.d/device-management/skills.d": ["adding-devices"],
+      "/home/friday/skills.d/device-management/skills.d/adding-devices": ["SKILL.md"],
+      "/home/friday/skills.d/device-management/skills.d/adding-devices/SKILL.md": skillMarkdown("adding-devices", "Agent add device workflow."),
+    });
+
+    const docs = await collectFilesystemSkillDocuments(fs, ctx, AGENT_IDENTITY);
+
+    expect(docs.map((doc) => doc.id).sort()).toEqual([
+      "agent:device-management",
+      "agent:device-management/adding-devices",
+      "user:device-management",
+      "user:device-management/adding-devices",
+    ]);
+    expect(docs.find((doc) => doc.id === "user:device-management/adding-devices")?.parentId)
+      .toBe("user:device-management");
+    expect(docs.find((doc) => doc.id === "agent:device-management/adding-devices")?.parentId)
+      .toBe("agent:device-management");
+  });
+});
+
+describe("parseSkillMarkdown", () => {
+  it("parses the prompt-visible metadata without hierarchy frontmatter", () => {
+    expect(parseSkillMarkdown("# Package Development\n\nBuild packages.", "package-development")).toEqual({
+      name: "package-development",
+      description: "Build packages.",
+      aliases: [],
+    });
+  });
+});
+
+describe("renderSkillIndex", () => {
+  it("renders top-level skills as the prompt-visible manual index", () => {
+    const index = renderSkillIndex([
+      {
+        id: "device-management",
+        name: "device-management",
+        description: "Manage devices and targets.",
+        source: { kind: "home", label: "home", writable: true },
+      },
+    ]);
+
+    expect(index).toContain("Available skills are top-level only.");
+    expect(index).toContain("skills list <skill>");
+    expect(index).toContain("<skill>");
+    expect(index).toContain("<name>device-management</name>");
+    expect(index).toContain("<description>Manage devices and targets.</description>");
+  });
 });
 
 describe("collectKernelSkillDocuments", () => {
+  it("keeps nested child skills out of the prompt skill index", async () => {
+    const readKeys: string[] = [];
+    const ctx = {
+      identity: {
+        role: "user",
+        process: IDENTITY,
+        capabilities: ["*"],
+      },
+      packages: {
+        list: () => [],
+      },
+      env: {
+        RIPGIT: makeRipgitFetcher({
+          "sam/home:skills.d": [
+            { name: "device-management", mode: "040000", hash: "parent", type: "tree" },
+          ],
+          "sam/home:skills.d/device-management/SKILL.md": skillMarkdown("device-management", "Manage devices."),
+          "sam/home:skills.d/device-management/skills.d": [
+            { name: "adding-devices", mode: "040000", hash: "child", type: "tree" },
+          ],
+          "sam/home:skills.d/device-management/skills.d/adding-devices/SKILL.md": skillMarkdown("adding-devices", "Add devices."),
+        }, readKeys),
+      },
+    } as unknown as KernelContext;
+
+    const index = await collectPromptSkillIndex(ctx);
+
+    expect(index.map((entry) => entry.id)).toEqual(["device-management"]);
+    expect(readKeys).not.toContain("sam/home:skills.d/device-management/skills.d");
+  });
+
   it("uses both owning human and agent ripgit home repos for prompt skills", async () => {
     const readKeys: string[] = [];
     const ctx = makeAgentOwnedContext({

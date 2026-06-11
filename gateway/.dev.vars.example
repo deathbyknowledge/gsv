@@ -8,3 +8,7 @@
 # Or keep source and ref separate:
 # GSV_BOOTSTRAP_UPSTREAM=deathbyknowledge/gsv
 # GSV_BOOTSTRAP_REF=my-dev-branch
+#
+# The shipped GSV Manual is imported separately into root/gsv-manual:
+# GSV_MANUAL_BOOTSTRAP_UPSTREAM=deathbyknowledge/gsv-manual
+# GSV_MANUAL_BOOTSTRAP_REF=main

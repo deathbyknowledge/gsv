@@ -1,6 +1,7 @@
 import { ArticleView } from "../../article-view";
 import { extractTitle } from "../../markdown";
 import type { WikiPreviewRequest, WikiWorkspaceState } from "../../types";
+import { WikiIcon } from "../ui/wiki-icon";
 
 type Props = {
   state: WikiWorkspaceState;
@@ -19,11 +20,14 @@ export function InboxPane(props: Props) {
     <section class="wiki-pane">
       <div class="wiki-pane-head">
         <div>
-          <h2>Inbox review</h2>
-          <p>Preview staged notes and compile them into canonical pages when they are ready.</p>
+          <h2>Inbox</h2>
+          <p>Review staged material and compile it into a page when it is ready.</p>
         </div>
         <div class="wiki-pane-actions">
-          <button type="button" onClick={() => void props.onCompileSelectedInbox()} disabled={props.mutating || !props.selectedInboxPath} title="Compile inbox note into a page" aria-label="Compile inbox note into a page">Compile</button>
+          <button type="button" onClick={() => void props.onCompileSelectedInbox()} disabled={props.mutating || !props.selectedInboxPath} title="Compile inbox item into a page" aria-label="Compile inbox item into a page">
+            <WikiIcon name="build" />
+            <span>Compile</span>
+          </button>
         </div>
       </div>
       {props.state.selectedNote ? (
@@ -37,7 +41,7 @@ export function InboxPane(props: Props) {
           onPreviewOpen={props.onPreviewOpen}
           onPreviewHide={props.onPreviewHide}
         />
-      ) : <div class="wiki-empty">Select an inbox note from navigation.</div>}
+      ) : <div class="wiki-empty">Select an inbox item from the library.</div>}
     </section>
   );
 }

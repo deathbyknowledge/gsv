@@ -12,8 +12,9 @@ Prompt context is collected in provider order:
 4. **Process context** supplied by the current assignment or runtime.
 
 GSV also assembles a compact skill index from layered `skills.d` directories.
-The prompt lists skill ids and descriptions only. Use `skills list`,
-`skills search <query>`, and `skills show <skill>` to inspect full skill bodies.
+The prompt lists top-level skill descriptions only. Nested skills are disclosed
+on demand with `skills list <skill>`, `skills tree <skill>`,
+`skills search <query>`, and `skills show <skill>`.
 
 System context is operator-managed runtime guidance shared by every process.
 Agent context files add account-specific behavior and preferences. Owner
@@ -21,6 +22,11 @@ context is available for human-authored notes; human homes start with an empty
 `~/context.d/` directory.
 Context files may use template keys such as `identity.home`, `identity.cwd`,
 `devices`, and `mcpServers`.
+
+Prompt context roots are rendered with prompt-markup tags such as
+`<system path="/sys/config/ai/context.d/">`, `<user path="/home/alice/context.d/">`,
+and `<program path="/home/agent/context.d/">`. Each context file is rendered
+inside a filename tag.
 
 Home context files are loaded lexically, include only non-empty `.md` files, and are bounded by `config/ai/max_context_bytes`.
 
@@ -40,7 +46,7 @@ New human homes create the directory only. New agent homes seed a short style
 file and user identity file. New personal agents also seed a one-time
 `00-boot.md` onboarding file, which the agent should delete after setup is
 done. Keep these files short and stable. Put durable reference material under
-`~/knowledge/` instead, where it can be searched and retrieved deliberately.
+Wiki instead, where it can be searched and retrieved deliberately.
 
 ## Skills: `skills.d/`
 
@@ -64,6 +70,7 @@ Supported forms:
 ```text
 skills.d/package-development.md
 skills.d/package-development/SKILL.md
+skills.d/package-development/skills.d/create-package/SKILL.md
 skills.d/package-development/references/details.md
 ```
 
@@ -71,6 +78,11 @@ Processes should use `skills show <skill>` before relying on a workflow.
 That command prints the full `SKILL.md`, source path, and whether the source is
 writable. Package skills follow package source rules: writable package edits are
 staged until `pkg source commit`.
+
+Nested skills live under a parent skill's own `skills.d/`. The parent
+`SKILL.md` is prompt-visible; its nested children are not included in prompt
+assembly and must be loaded explicitly. Frontmatter supports `name`,
+`description`, and optional `aliases`; hierarchy comes from the filesystem.
 
 ## Editing Guidance
 
@@ -87,4 +99,4 @@ Use the GSV target for GSV filesystem paths. Use a device target only when inten
 
 ## What Belongs Where
 
-Use `~/context.d/` for concise standing context. Use `skills.d/` for reusable procedures. Use `~/knowledge/` for durable, searchable reference material. Use process context for the current assignment only.
+Use `~/context.d/` for concise standing context. Use `skills.d/` for reusable procedures. Use Wiki for durable, searchable reference material. Use process context for the current assignment only.

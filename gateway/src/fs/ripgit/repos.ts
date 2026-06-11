@@ -1,6 +1,6 @@
 import type { RipgitRepoRef } from "./client";
 
-export function homeKnowledgeRepoRef(
+export function accountHomeRepoRef(
   ownerUsername: string,
 ): RipgitRepoRef {
   return {

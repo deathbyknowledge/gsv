@@ -29,11 +29,12 @@ export async function assembleSystemPrompt(
     ...(contextSections.length > 0 ? [renderContextSections(contextSections)] : []),
     ...regularParts,
   ];
-  return parts.join("\n\n---\n\n");
+  return parts.join("\n\n");
 }
 
 function renderSection(name: string, text: string): string {
-  return `[${name}]\n${text}`;
+  const tag = sectionTagName(name);
+  return `<${tag}>\n${text}\n</${tag}>`;
 }
 
 function renderContextSections(sections: PromptSection[]): string {
@@ -49,20 +50,45 @@ function renderContextSections(sections: PromptSection[]): string {
     }
   }
 
-  const lines: string[] = ["[CONTEXT ROOTS]"];
-  for (const { root } of roots.values()) {
-    lines.push(`${root.label} ${root.access} ${root.location}`);
-  }
-
+  const lines: string[] = [];
   for (const { root, sections: rootSections } of roots.values()) {
-    lines.push("", `[${root.label}]`);
+    const tag = contextRootTagName(root.key);
+    lines.push(`<${tag} path="${escapeAttribute(normalizePromptPath(root.location))}">`);
     for (const section of rootSections) {
-      lines.push(`[${section.name}]`, section.text.trim(), "");
+      lines.push(`<${section.name}>`, section.text.trim(), `</${section.name}>`, "");
     }
     while (lines[lines.length - 1] === "") {
       lines.pop();
     }
+    lines.push(`</${tag}>`, "");
+  }
+  while (lines[lines.length - 1] === "") {
+    lines.pop();
   }
 
   return lines.join("\n");
+}
+
+function contextRootTagName(key: NonNullable<PromptSection["contextRoot"]>["key"]): string {
+  return key;
+}
+
+function sectionTagName(name: string): string {
+  return name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "section";
+}
+
+function normalizePromptPath(location: string): string {
+  const trimmed = location.trim();
+  if (trimmed.startsWith("/") && !trimmed.endsWith("/")) {
+    return `${trimmed}/`;
+  }
+  return trimmed;
+}
+
+function escapeAttribute(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }

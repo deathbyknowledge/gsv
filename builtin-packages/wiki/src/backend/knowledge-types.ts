@@ -4,6 +4,14 @@ export type WikiKernelClient = {
   request<T = unknown>(name: string, args: unknown): Promise<T>;
 };
 
+export type WikiCollection = {
+  id: string;
+  title?: string;
+  repo: string;
+  prefix: string;
+  writable: boolean;
+};
+
 export type KnowledgeSourceRef = { target: string; path: string; title?: string };
 
 export type KnowledgeWriteArgs = {
@@ -53,6 +61,21 @@ export type KnowledgeListArgs = { prefix?: string; recursive?: boolean; limit?: 
 export type KnowledgeMergeArgs = { sourcePath: string; targetPath: string; mode?: "prefer-target" | "prefer-source" | "union"; keepSource?: boolean };
 export type KnowledgeReadArgs = { path: string };
 export type KnowledgeSearchArgs = { query: string; prefix?: string; limit?: number };
+export type WikiInfoArgs = { id: string };
+
+export type WikiInfoTreeEntry = {
+  path: string;
+  kind: "file" | "dir";
+  title?: string;
+};
+
+export type WikiInfoResult = {
+  id: string;
+  title?: string;
+  repo: string;
+  writable: boolean;
+  tree: WikiInfoTreeEntry[];
+};
 
 export type KnowledgeDoc = {
   frontmatter: Record<string, unknown>;

@@ -1,4 +1,3 @@
-export const KNOWLEDGE_ROOT = "knowledge";
 export const DIR_MARKER = ".dir";
 export const DEFAULT_LIMIT = 100;
 
@@ -24,11 +23,6 @@ export function normalizeDbId(input: string): string {
   return db;
 }
 
-export function toRepoPath(relPath: string): string {
-  const normalized = normalizeKnowledgePath(relPath);
-  return normalized ? `${KNOWLEDGE_ROOT}/${normalized}` : KNOWLEDGE_ROOT;
-}
-
 export function parseDbPagePath(path: string): { db: string; pageEntry: string } | null {
   const parts = path.split("/");
   if (parts.length < 3 || parts[1] !== "pages") {
@@ -40,11 +34,6 @@ export function parseDbPagePath(path: string): { db: string; pageEntry: string }
 export function deriveTitle(path: string): string {
   const leaf = path.split("/").filter(Boolean).pop() ?? "knowledge";
   return leaf.replace(/\.md$/i, "").replace(/[-_]+/g, " ").trim() || "knowledge";
-}
-
-export function deriveDbTitleFromIndex(markdown: string, db: string): string {
-  const line = markdown.replace(/\r\n/g, "\n").split("\n").find((entry) => entry.startsWith("# "));
-  return line?.slice(2).trim() || deriveTitle(db);
 }
 
 export function buildDbNotePath(db: string, mode: "inbox" | "page", seed: string): string {

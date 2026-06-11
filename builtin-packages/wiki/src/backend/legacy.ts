@@ -3,6 +3,7 @@ import type {
   WikiPreviewPayload,
   WikiWorkspaceState as WikiState,
 } from "../app/types";
+import type { PackageStorageBinding } from "@gsv/package/context";
 import { WikiKnowledgeStore } from "./knowledge-store";
 
 function normalizePath(value: unknown): string {
@@ -114,8 +115,8 @@ async function loadSelectedNote(knowledge: WikiKnowledgeStore, path: string) {
   };
 }
 
-export async function loadState(kernel: any, args: any): Promise<WikiState> {
-  const knowledge = new WikiKnowledgeStore(kernel);
+export async function loadState(kernel: any, args: any, storage?: PackageStorageBinding): Promise<WikiState> {
+  const knowledge = new WikiKnowledgeStore(kernel, storage);
   let errorText = "";
   let selectedDb = String(args?.db ?? "").trim();
   let selectedPath = normalizeDbScopedPath(args?.path ?? "", selectedDb);
@@ -203,8 +204,8 @@ export async function loadState(kernel: any, args: any): Promise<WikiState> {
   };
 }
 
-export async function getPreview(kernel: any, args: any): Promise<WikiPreviewPayload> {
-  const knowledge = new WikiKnowledgeStore(kernel);
+export async function getPreview(kernel: any, args: any, storage?: PackageStorageBinding): Promise<WikiPreviewPayload> {
+  const knowledge = new WikiKnowledgeStore(kernel, storage);
   try {
     const kind = String(args?.kind ?? "").trim();
     if (kind === "page") {
@@ -296,8 +297,8 @@ export async function getPreview(kernel: any, args: any): Promise<WikiPreviewPay
   }
 }
 
-export async function createDatabase(kernel: any, args: any): Promise<WikiMutationResult> {
-  const knowledge = new WikiKnowledgeStore(kernel);
+export async function createDatabase(kernel: any, args: any, storage?: PackageStorageBinding): Promise<WikiMutationResult> {
+  const knowledge = new WikiKnowledgeStore(kernel, storage);
   const dbId = String(args?.dbId ?? "").trim();
   const dbTitle = String(args?.dbTitle ?? "").trim();
   if (!dbId) {
@@ -317,8 +318,8 @@ export async function createDatabase(kernel: any, args: any): Promise<WikiMutati
   };
 }
 
-export async function writePage(kernel: any, args: any): Promise<WikiMutationResult> {
-  const knowledge = new WikiKnowledgeStore(kernel);
+export async function writePage(kernel: any, args: any, storage?: PackageStorageBinding): Promise<WikiMutationResult> {
+  const knowledge = new WikiKnowledgeStore(kernel, storage);
   const selectedDb = String(args?.db ?? "").trim();
   const path = normalizeDbScopedPath(args?.path ?? "", selectedDb);
   const markdown = String(args?.markdown ?? "");
@@ -341,8 +342,8 @@ export async function writePage(kernel: any, args: any): Promise<WikiMutationRes
   };
 }
 
-export async function ingestSourcesToInbox(kernel: any, args: any): Promise<WikiMutationResult> {
-  const knowledge = new WikiKnowledgeStore(kernel);
+export async function ingestSourcesToInbox(kernel: any, args: any, storage?: PackageStorageBinding): Promise<WikiMutationResult> {
+  const knowledge = new WikiKnowledgeStore(kernel, storage);
   const selectedDb = String(args?.db ?? "").trim();
   const title = String(args?.title ?? "").trim();
   const summary = String(args?.summary ?? "").trim();
@@ -368,8 +369,8 @@ export async function ingestSourcesToInbox(kernel: any, args: any): Promise<Wiki
   };
 }
 
-export async function compileInboxNote(kernel: any, args: any): Promise<WikiMutationResult> {
-  const knowledge = new WikiKnowledgeStore(kernel);
+export async function compileInboxNote(kernel: any, args: any, storage?: PackageStorageBinding): Promise<WikiMutationResult> {
+  const knowledge = new WikiKnowledgeStore(kernel, storage);
   const selectedDb = String(args?.db ?? "").trim();
   const sourcePath = normalizeDbScopedPath(args?.sourcePath ?? "", selectedDb);
   const targetPath = normalizeDbScopedPath(args?.targetPath ?? "", selectedDb);
@@ -396,7 +397,11 @@ export async function compileInboxNote(kernel: any, args: any): Promise<WikiMuta
   };
 }
 
-export async function startBuildFromDirectory(kernel: any, args: any): Promise<WikiMutationResult> {
+export async function startBuildFromDirectory(
+  kernel: any,
+  args: any,
+  _storage?: PackageStorageBinding,
+): Promise<WikiMutationResult> {
   const buildTarget = String(args?.buildTarget ?? "gsv").trim() || "gsv";
   const buildSourcePath = String(args?.buildSourcePath ?? "").trim();
   const buildDbId = String(args?.buildDbId ?? "").trim();
@@ -433,17 +438,17 @@ export async function startBuildFromDirectory(kernel: any, args: any): Promise<W
     "Build a knowledge wiki from a directory.",
     `Source target: ${buildTarget}`,
     `Source directory: ${buildSourcePath}`,
-    `Target database: ${buildDbId}`,
-    ...(buildDbTitle ? [`Database title: ${buildDbTitle}`] : []),
+    `Target wiki: ${buildDbId}`,
+    ...(buildDbTitle ? [`Wiki title: ${buildDbTitle}`] : []),
     "",
     "Requirements:",
-    "- The source directory may be on a device target, but the wiki itself must be created on gsv under ~/knowledge.",
+    "- The source directory may be on a device target, but the wiki itself must be created on gsv as a wiki repo.",
     "- Treat the source target as read-only. Do not create wiki files, support files, or scratch files there.",
     "- Use the `wiki` CLI on gsv for all wiki writes; do not hand-create page files in the source directory or on the source target.",
     "- Use normal filesystem/shell tools only to inspect the source corpus.",
-    "- Initialize the target database if it does not exist.",
+    "- Initialize the target wiki if it does not exist.",
     "- Inspect the source directory conservatively and ignore obvious junk such as build output, vendor directories, and caches unless they are clearly relevant.",
-    "- Create a readable `index.md` homepage for the database.",
+    "- Create a readable `index.md` homepage for the wiki.",
     "- Create canonical pages under `<db>/pages/` with meaningful boundaries instead of one giant dump.",
     "- Add links between related pages.",
     "- Keep live source references back to the original files and directories.",

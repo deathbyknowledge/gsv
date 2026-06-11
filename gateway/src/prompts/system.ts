@@ -34,7 +34,7 @@ export const GSV_RUNTIME_FACTS =
 
 // Used by ConfigStore defaults for config/ai/context.d/20-discovery.md.
 export const GSV_CONTEXT_DISCOVERY =
-  "Load detailed procedures on demand: use `skills list`, `skills search <query>`, and `skills show <skill>` for reusable workflows; use `man` and `man <topic>` for exact native command syntax.\n" +
+  "Load detailed procedures on demand: use `skills list` for top-level skills, `skills list <skill>` or `skills tree <skill>` for nested skills, then `skills search <query>` and `skills show <skill>` for reusable workflows; use `man` and `man <topic>` for exact native command syntax.\n" +
   "Connected MCP integrations may be exposed through CodeMode rather than as top-level tools. Before saying an MCP server or integration is unavailable, inspect CodeMode `mcpTools` or use the native `mcp` shell command.\n" +
   "After completing a complex workflow, create a skill if one didn't exist. If a skill's instructions were partially wrong, you should amend them.";
 
