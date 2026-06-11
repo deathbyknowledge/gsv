@@ -1,5 +1,6 @@
 import type { AppManifest } from "./apps";
 import type { AppInstance, AppRuntimeRegistry } from "./app-runtime";
+import { createAppLaunchLoader, type AppLaunchLoader } from "./app-loading";
 import type { GatewayClientLike } from "./gateway-client";
 import { attachHostBridge } from "./host-bridge";
 import type { AppLaunchResult, AppOpenArgs } from "@gsv/protocol/syscalls/apps";
@@ -40,6 +41,21 @@ function canonicalizeAppRoute(route: string): string {
     url.pathname = `${url.pathname}/`;
   }
   return `${url.pathname}${url.search}${url.hash}`;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function asString(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function toErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function appOpenArgsFromRoute(route: string, windowId: string): AppOpenArgs {
@@ -110,6 +126,40 @@ function appSessionLaunchEndpoint(sessionId: string): string {
   return `/apps/sessions/${encodeURIComponent(sessionId)}/launch`;
 }
 
+function attachIframeRuntimeStatus(
+  iframe: HTMLIFrameElement,
+  loader: AppLaunchLoader,
+): { destroy: () => void } {
+  const onLoad = (): void => {
+    loader.setPhase("runtime", "Starting app runtime");
+  };
+
+  const onMessage = (event: MessageEvent<unknown>): void => {
+    if (event.origin !== window.location.origin || event.source !== iframe.contentWindow) {
+      return;
+    }
+    const record = asRecord(event.data);
+    if (!record || record.type !== "gsv-app-runtime-status") {
+      return;
+    }
+    const state = asString(record.state);
+    if (!state) {
+      return;
+    }
+    loader.setRuntimeStatus(state, asString(record.message) ?? undefined);
+  };
+
+  iframe.addEventListener("load", onLoad, { once: true });
+  window.addEventListener("message", onMessage);
+
+  return {
+    destroy: () => {
+      iframe.removeEventListener("load", onLoad);
+      window.removeEventListener("message", onMessage);
+    },
+  };
+}
+
 async function establishAppLaunchSession(launch: AppLaunchResult): Promise<void> {
   const response = await fetch(appSessionLaunchEndpoint(launch.sessionId), {
     method: "POST",
@@ -130,6 +180,8 @@ async function establishAppLaunchSession(launch: AppLaunchResult): Promise<void>
 function createWebAppInstance(manifest: AppManifest, gatewayClient: GatewayClientLike): AppInstance {
   let bridge: ReturnType<typeof attachHostBridge> | null = null;
   let focusController: ReturnType<typeof attachIframeInteractionFocus> | null = null;
+  let runtimeStatusController: ReturnType<typeof attachIframeRuntimeStatus> | null = null;
+  let activeLoader: AppLaunchLoader | null = null;
   let mountGeneration = 0;
   let activeSessionId: string | null = null;
   let activeClientId: string | null = null;
@@ -159,21 +211,42 @@ function createWebAppInstance(manifest: AppManifest, gatewayClient: GatewayClien
   return {
     mount: async (container, context) => {
       const generation = ++mountGeneration;
-      const launch = await gatewayClient.call<AppLaunchResult>(
-        "app.open",
-        appOpenArgsFromRoute(context.route, context.windowId),
-      );
+      activeLoader?.destroy();
+      activeLoader = createAppLaunchLoader({
+        appName: manifest.name,
+        route: context.route,
+        seed: `${manifest.id}:${context.windowId}:${context.route}`,
+      });
+      activeLoader.setPhase("session", "Allocating app session");
+      container.replaceChildren(activeLoader.element);
+
+      let launch: AppLaunchResult;
+      try {
+        launch = await gatewayClient.call<AppLaunchResult>(
+          "app.open",
+          appOpenArgsFromRoute(context.route, context.windowId),
+        );
+      } catch (error) {
+        activeLoader.fail(toErrorMessage(error));
+        throw error;
+      }
       if (generation !== mountGeneration) {
+        activeLoader?.destroy();
+        activeLoader = null;
         closeSession(launch.sessionId);
         return;
       }
       try {
+        activeLoader.setPhase("session", "Authorizing launch token");
         await establishAppLaunchSession(launch);
       } catch (error) {
+        activeLoader.fail(toErrorMessage(error));
         closeSession(launch.sessionId);
         throw error;
       }
       if (generation !== mountGeneration) {
+        activeLoader?.destroy();
+        activeLoader = null;
         closeSession(launch.sessionId);
         return;
       }
@@ -183,7 +256,6 @@ function createWebAppInstance(manifest: AppManifest, gatewayClient: GatewayClien
       activeClientId = launch.clientId;
 
       const iframe = document.createElement("iframe");
-      iframe.src = launch.launchUrl;
       iframe.title = manifest.name;
       iframe.loading = "eager";
       iframe.style.width = "100%";
@@ -194,6 +266,9 @@ function createWebAppInstance(manifest: AppManifest, gatewayClient: GatewayClien
 
       bridge?.destroy();
       focusController?.destroy();
+      runtimeStatusController?.destroy();
+      activeLoader.setPhase("frame", "Preparing secure frame");
+      runtimeStatusController = attachIframeRuntimeStatus(iframe, activeLoader);
       focusController = attachIframeInteractionFocus(iframe, context.requestFocus);
       bridge = attachHostBridge(iframe, gatewayClient, {
         setTitle: context.setTitle,
@@ -201,11 +276,16 @@ function createWebAppInstance(manifest: AppManifest, gatewayClient: GatewayClien
         setDirty: context.setDirty,
         requestNewWindow: context.requestNewWindow,
       });
-      container.replaceChildren(iframe);
+      activeLoader.attachIframe(iframe);
+      iframe.src = launch.launchUrl;
     },
     terminate: () => {
       mountGeneration += 1;
       detachActiveClient();
+      activeLoader?.destroy();
+      activeLoader = null;
+      runtimeStatusController?.destroy();
+      runtimeStatusController = null;
       focusController?.destroy();
       focusController = null;
       bridge?.destroy();
