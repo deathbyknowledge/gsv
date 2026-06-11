@@ -6,7 +6,7 @@ import type {
   RepoTreeEntry,
 } from "@gsv/protocol/syscalls/repositories";
 import type { PackageStorageBinding } from "@gsv/package/context";
-import { runWikiCommand } from "../../../../builtin-packages/wiki/src/cli/wiki";
+import { runWikiCommand } from "../../../../builtin-packages/wiki/src/cli/wiki-runner";
 import { WikiKnowledgeStore } from "../../../../builtin-packages/wiki/src/backend/knowledge-store";
 
 class InMemoryKnowledgeClient {
