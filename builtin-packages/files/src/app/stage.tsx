@@ -1,4 +1,5 @@
-import type { FilesContentItem, FilesDirectoryResult, FilesFileResult, FilesSearchResult } from "./types";
+import { resolveChildPath } from "./domain/paths";
+import type { FilesContentItem, FilesDirectoryResult, FilesFileResult, FilesMutationPending, FilesSearchResult } from "./types";
 
 type Props = {
   currentPath: string;
@@ -9,22 +10,17 @@ type Props = {
   searchResult: FilesSearchResult;
   editorContent: string;
   isDirty: boolean;
+  pendingEntryPath: string;
+  pendingEntryKind: "directory" | "file" | "search" | "";
+  backToFolderPending: boolean;
+  pendingMutation: FilesMutationPending | null;
   onEditorChange(value: string): void;
   onOpenDirectory(path: string): void;
+  onBackToFolder(): void;
   onOpenFile(path: string): void;
   onSave(): void;
   onDelete(path: string): void;
 };
-
-function resolveChildPath(base: string, name: string) {
-  if (base === "/") {
-    return `/${name}`;
-  }
-  if (base === ".") {
-    return name;
-  }
-  return `${base}/${name}`;
-}
 
 function formatBytes(size: number | undefined) {
   const bytes = Number(size);
@@ -86,6 +82,14 @@ function renderIcon(kind: string) {
   return <span class="files-entry-icon" dangerouslySetInnerHTML={{ __html: iconSvg(kind) }} />;
 }
 
+function renderSpinner() {
+  return <span class="files-spinner" aria-hidden="true" />;
+}
+
+function renderPendingEntryIcon() {
+  return <span class="files-entry-icon is-pending-spinner">{renderSpinner()}</span>;
+}
+
 function renderImageContent(contentItems: FilesContentItem[]) {
   for (const item of contentItems) {
     if (item && item.type === "image") {
@@ -105,46 +109,58 @@ function renderImageContent(contentItems: FilesContentItem[]) {
   );
 }
 
-function DirectoryStage(props: Pick<Props, "currentPath" | "searchQuery" | "directoryResult" | "onOpenDirectory" | "onOpenFile">) {
+function DirectoryStage(props: Pick<Props, "currentPath" | "searchQuery" | "directoryResult" | "pendingEntryPath" | "pendingEntryKind" | "onOpenDirectory" | "onOpenFile">) {
   const directories = [...props.directoryResult.directories].sort((a, b) => a.localeCompare(b));
   const files = [...props.directoryResult.files].sort((a, b) => a.localeCompare(b));
 
   if (directories.length === 0 && files.length === 0) {
     return (
-      <div class="files-empty">
-        <h3>Directory is empty</h3>
-        <p>Create a file or open a different folder.</p>
-      </div>
+      <section class="files-directory-stage">
+        <div class="files-empty">
+          <h3>Directory is empty</h3>
+          <p>Create a file or open a different folder.</p>
+        </div>
+      </section>
     );
   }
 
   return (
     <section class="files-directory-stage">
       <div class="files-entry-grid">
-        {directories.map((name) => (
-          <button type="button" class="files-entry-row is-directory" aria-label={`Open folder ${name}`} title={`Open folder ${name}`} onClick={() => props.onOpenDirectory(resolveChildPath(props.currentPath, name))}>
-            {renderIcon("folder")}
-            <span class="files-entry-name">{name}<span class="files-directory-affordance" aria-hidden="true">/</span></span>
-          </button>
-        ))}
-        {files.map((name) => (
-          <button type="button" class="files-entry-row" title={name} onClick={() => props.onOpenFile(resolveChildPath(props.currentPath, name))}>
-            {renderIcon(fileIconVariant(name, false))}
-            <span class="files-entry-name">{name}</span>
-          </button>
-        ))}
+        {directories.map((name) => {
+          const path = resolveChildPath(props.currentPath, name);
+          const isPending = props.pendingEntryKind === "directory" && props.pendingEntryPath === path;
+          return (
+            <button type="button" class={`files-entry-row is-directory${isPending ? " is-pending" : ""}`} aria-label={`Open folder ${name}`} title={`Open folder ${name}`} disabled={isPending} onClick={() => props.onOpenDirectory(path)}>
+              {isPending ? renderPendingEntryIcon() : renderIcon("folder")}
+              <span class="files-entry-name">{name}<span class="files-directory-affordance" aria-hidden="true">/</span></span>
+            </button>
+          );
+        })}
+        {files.map((name) => {
+          const path = resolveChildPath(props.currentPath, name);
+          const isPending = props.pendingEntryKind === "file" && props.pendingEntryPath === path;
+          return (
+            <button type="button" class={`files-entry-row${isPending ? " is-pending" : ""}`} title={name} disabled={isPending} onClick={() => props.onOpenFile(path)}>
+              {isPending ? renderPendingEntryIcon() : renderIcon(fileIconVariant(name, false))}
+              <span class="files-entry-name">{name}</span>
+            </button>
+          );
+        })}
       </div>
     </section>
   );
 }
 
-function SearchStage(props: Pick<Props, "searchResult" | "onOpenFile">) {
+function SearchStage(props: Pick<Props, "searchResult" | "pendingEntryPath" | "pendingEntryKind" | "onOpenFile">) {
   if (props.searchResult.matches.length === 0) {
     return (
-      <div class="files-empty">
-        <h3>No matches</h3>
-        <p>Try a different query inside this folder.</p>
-      </div>
+      <section class="files-search-view">
+        <div class="files-empty">
+          <h3>No matches</h3>
+          <p>Try a different query inside this folder.</p>
+        </div>
+      </section>
     );
   }
 
@@ -160,13 +176,14 @@ function SearchStage(props: Pick<Props, "searchResult" | "onOpenFile">) {
         {props.searchResult.matches.map((match) => {
           const line = Number(match.line ?? 0);
           const content = String(match.content ?? "");
+          const isPending = props.pendingEntryKind === "file" && props.pendingEntryPath === match.path;
           return (
-            <button type="button" class="files-search-row" title={`${match.path}:${line}`} onClick={() => props.onOpenFile(match.path)}>
+            <button type="button" class={`files-search-row${isPending ? " is-pending" : ""}`} title={`${match.path}:${line}`} disabled={isPending} onClick={() => props.onOpenFile(match.path)}>
               <span class="files-search-row-main">
                 <strong>{match.path}</strong>
                 <code>{content}</code>
               </span>
-              <span class="files-search-line">:{line}</span>
+              <span class="files-search-line">{isPending ? <span class="files-spinner is-small" aria-hidden="true" /> : `:${line}`}</span>
             </button>
           );
         })}
@@ -175,19 +192,22 @@ function SearchStage(props: Pick<Props, "searchResult" | "onOpenFile">) {
   );
 }
 
-function FileStage(props: Pick<Props, "currentPath" | "searchQuery" | "filePath" | "fileResult" | "editorContent" | "isDirty" | "onEditorChange" | "onOpenDirectory" | "onSave" | "onDelete">) {
+function FileStage(props: Pick<Props, "currentPath" | "searchQuery" | "filePath" | "fileResult" | "editorContent" | "isDirty" | "backToFolderPending" | "pendingMutation" | "onEditorChange" | "onBackToFolder" | "onSave" | "onDelete">) {
   if (!props.fileResult) {
     return null;
   }
   const sizeLabel = formatBytes(props.fileResult.size);
   const isBinaryPreview = Array.isArray(props.fileResult.content);
   const name = baseName(props.filePath);
+  const isSaving = props.pendingMutation?.kind === "save" && props.pendingMutation.path === props.filePath;
+  const isDeleting = props.pendingMutation?.kind === "delete" && props.pendingMutation.path === props.filePath;
+  const mutationPending = Boolean(props.pendingMutation);
 
   return (
     <section class="files-file-stage">
       <header class="files-content-toolbar files-file-toolbar">
-        <button type="button" class="files-back-link" aria-label="Back to folder" title="Back to folder" onClick={() => props.onOpenDirectory(props.currentPath)}>
-          ←
+        <button type="button" class="files-back-link" aria-label={props.backToFolderPending ? "Opening folder" : "Back to folder"} title={props.backToFolderPending ? "Opening folder" : "Back to folder"} disabled={props.backToFolderPending} onClick={props.onBackToFolder}>
+          {props.backToFolderPending ? <span class="files-spinner is-small" aria-hidden="true" /> : "←"}
         </button>
         <div class="files-file-context">
           <strong class="files-file-name" title={name}>{name}</strong>
@@ -199,17 +219,17 @@ function FileStage(props: Pick<Props, "currentPath" | "searchQuery" | "filePath"
         </div>
         {isBinaryPreview ? (
           <div class="files-file-actions">
-            <button type="button" class="files-icon-btn files-btn-danger" aria-label="Delete file" title="Delete file" onClick={() => props.onDelete(props.filePath)}>
-              ⌫
+            <button type="button" class="files-icon-btn files-btn-danger" aria-label={isDeleting ? "Deleting file" : "Delete file"} title={isDeleting ? "Deleting file" : "Delete file"} disabled={mutationPending} onClick={() => props.onDelete(props.filePath)}>
+              {isDeleting ? <span class="files-spinner is-small" aria-hidden="true" /> : "⌫"}
             </button>
           </div>
         ) : (
           <div class="files-file-actions">
-            <button type="button" class="files-icon-btn" aria-label="Save file" title="Save file" onClick={props.onSave}>
-              ↓
+            <button type="button" class="files-icon-btn" aria-label={isSaving ? "Saving file" : "Save file"} title={isSaving ? "Saving file" : "Save file"} disabled={mutationPending} onClick={props.onSave}>
+              {isSaving ? <span class="files-spinner is-small" aria-hidden="true" /> : "↓"}
             </button>
-            <button type="button" class="files-icon-btn files-btn-danger" aria-label="Delete file" title="Delete file" onClick={() => props.onDelete(props.filePath)}>
-              ⌫
+            <button type="button" class="files-icon-btn files-btn-danger" aria-label={isDeleting ? "Deleting file" : "Delete file"} title={isDeleting ? "Deleting file" : "Delete file"} disabled={mutationPending} onClick={() => props.onDelete(props.filePath)}>
+              {isDeleting ? <span class="files-spinner is-small" aria-hidden="true" /> : "⌫"}
             </button>
           </div>
         )}
@@ -218,7 +238,7 @@ function FileStage(props: Pick<Props, "currentPath" | "searchQuery" | "filePath"
         <section class="files-file-body is-image">{renderImageContent(props.fileResult.content as FilesContentItem[])}</section>
       ) : (
         <form class="files-editor-form" onSubmit={(event) => { event.preventDefault(); props.onSave(); }}>
-          <textarea class="files-editor" spellcheck={false} value={props.editorContent} onInput={(event) => props.onEditorChange((event.currentTarget as HTMLTextAreaElement).value)} />
+          <textarea class="files-editor" spellcheck={false} disabled={mutationPending} value={props.editorContent} onInput={(event) => props.onEditorChange((event.currentTarget as HTMLTextAreaElement).value)} />
         </form>
       )}
     </section>

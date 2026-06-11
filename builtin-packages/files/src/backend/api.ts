@@ -2,13 +2,18 @@ import type {
   FilesCreateArgs,
   FilesDeleteArgs,
   FilesDevice,
+  FilesDeviceListResult,
+  FilesDirectoryLoadArgs,
+  FilesDirectoryLoadResult,
   FilesDirectoryResult,
+  FilesFileLoadArgs,
+  FilesFileLoadResult,
   FilesFileResult,
   FilesMutationResult,
-  FilesRoute,
+  FilesSearchLoadArgs,
+  FilesSearchLoadResult,
   FilesSearchResult,
   FilesSaveArgs,
-  FilesState,
 } from "../app/types";
 
 type KernelClient = {
@@ -124,6 +129,10 @@ function isFileResult(value: any): value is FilesFileResult {
   return value && value.ok === true && "content" in value;
 }
 
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
 async function readPathWithFallback(kernel: KernelClient, target: string, path: string) {
   const result = await kernel.request("fs.read", withTarget(target, { path }));
   if (!result?.ok && target !== "gsv") {
@@ -148,45 +157,30 @@ function normalizeFileResult(fileResult: FilesFileResult | null) {
   };
 }
 
-async function listDevices(kernel: KernelClient) {
+export async function listDevices(kernel: KernelClient): Promise<FilesDeviceListResult> {
   try {
     const payload = await kernel.request("sys.device.list", { includeOffline: true });
     const devices = Array.isArray(payload?.devices) ? payload.devices as FilesDevice[] : [];
     devices.sort((left, right) => String(left?.deviceId ?? "").localeCompare(String(right?.deviceId ?? "")));
-    return { ok: true, devices } as const;
-  } catch {
-    return { ok: false, devices: [] as FilesDevice[] } as const;
+    return { devices, errorText: "" };
+  } catch (error) {
+    return { devices: [], errorText: errorMessage(error) };
   }
 }
 
-export async function loadState(kernel: KernelClient, input: FilesRoute, runtime: FilesRuntime = {}): Promise<FilesState> {
-  let target = normalizeTarget(input.target ?? "gsv");
+export async function loadDirectory(
+  kernel: KernelClient,
+  input: FilesDirectoryLoadArgs,
+  runtime: FilesRuntime = {},
+): Promise<FilesDirectoryLoadResult> {
+  const target = normalizeTarget(input.target ?? "gsv");
   const defaultPath = defaultPathForTarget(target, runtime);
   const requestedPath = String(input.path ?? "").trim() || defaultPath;
   let currentPath = normalizePath(requestedPath, detectPathStyle(requestedPath));
   let pathStyle = detectPathStyle(currentPath);
-  const searchQuery = String(input.q ?? "").trim();
-  let filePath = String(input.open ?? "").trim() ? normalizePath(input.open, detectPathStyle(input.open)) : "";
+  let filePath = "";
   let errorText = "";
-  const deviceListing = await listDevices(kernel);
-  const devices = deviceListing.devices;
-  console.debug("[files] backend loadState input", {
-    input,
-    resolvedTarget: target,
-    currentPath,
-    devices: devices.map((device) => device.deviceId),
-  });
-
-  if (target !== "gsv" && deviceListing.ok && !devices.some((device) => String(device?.deviceId ?? "") === target)) {
-    console.warn("[files] requested target missing from current device list; attempting route anyway", {
-      requestedTarget: target,
-      devices: devices.map((device) => device.deviceId),
-    });
-  }
-
   let directoryResult: FilesDirectoryResult | null = null;
-  let fileResult: FilesFileResult | null = null;
-  let searchResult: FilesSearchResult = { ok: true, matches: [], truncated: false };
 
   try {
     const directoryRead = await readPathWithFallback(kernel, target, currentPath);
@@ -202,55 +196,14 @@ export async function loadState(kernel: KernelClient, input: FilesRoute, runtime
       const parentRead = await readPathWithFallback(kernel, target, currentPath);
       if (isDirectoryResult(parentRead.result)) {
         directoryResult = parentRead.result;
+      } else {
+        errorText = parentRead.result?.error || `Unable to open ${currentPath}`;
       }
     } else {
       errorText = directoryRead.result?.error || `Unable to open ${currentPath}`;
     }
   } catch (error) {
-    errorText = error instanceof Error ? error.message : String(error);
-  }
-
-  if (searchQuery) {
-    try {
-      const result = await kernel.request("fs.search", withTarget(target, {
-        path: currentPath,
-        query: searchQuery,
-      }));
-      if (result?.ok) {
-        searchResult = result;
-      } else if (!errorText) {
-        errorText = result?.error || "Search failed";
-      }
-    } catch (error) {
-      if (!errorText) {
-        errorText = error instanceof Error ? error.message : String(error);
-      }
-    }
-  }
-
-  if (filePath) {
-    try {
-      const fileRead = await readPathWithFallback(kernel, target, filePath);
-      if (isFileResult(fileRead.result)) {
-        filePath = normalizePath(fileRead.result.path ?? fileRead.path, detectPathStyle(fileRead.result.path ?? fileRead.path));
-        fileResult = normalizeFileResult(fileRead.result);
-      } else if (isDirectoryResult(fileRead.result)) {
-        currentPath = normalizePath(fileRead.result.path ?? fileRead.path, detectPathStyle(fileRead.result.path ?? fileRead.path));
-        pathStyle = detectPathStyle(currentPath);
-        directoryResult = fileRead.result;
-        filePath = "";
-      } else {
-        if (!errorText) {
-          errorText = fileRead.result?.error || `Unable to open ${filePath}`;
-        }
-        filePath = "";
-      }
-    } catch (error) {
-      if (!errorText) {
-        errorText = error instanceof Error ? error.message : String(error);
-      }
-      filePath = "";
-    }
+    errorText = errorMessage(error);
   }
 
   if (!directoryResult) {
@@ -259,16 +212,95 @@ export async function loadState(kernel: KernelClient, input: FilesRoute, runtime
 
   return {
     target,
-    devices,
     currentPath,
     pathStyle,
-    searchQuery,
     directoryResult,
     filePath,
-    fileResult,
-    searchResult,
     errorText,
   };
+}
+
+export async function loadFile(kernel: KernelClient, input: FilesFileLoadArgs): Promise<FilesFileLoadResult> {
+  const target = normalizeTarget(input.target);
+  const requestedPath = String(input.path ?? "").trim();
+  const normalizedPath = normalizePath(requestedPath, detectPathStyle(requestedPath));
+  let filePath = normalizedPath;
+  let fileResult: FilesFileResult | null = null;
+  let directoryPath = parentPath(normalizedPath, detectPathStyle(normalizedPath));
+  let directoryResult: FilesDirectoryResult | null = null;
+  let pathStyle = detectPathStyle(directoryPath);
+  let errorText = "";
+
+  if (!requestedPath) {
+    return {
+      target,
+      filePath: "",
+      fileResult: null,
+      directoryPath: "",
+      directoryResult: null,
+      pathStyle: "relative",
+      errorText: "",
+    };
+  }
+
+  try {
+    const fileRead = await readPathWithFallback(kernel, target, normalizedPath);
+    if (isFileResult(fileRead.result)) {
+      filePath = normalizePath(fileRead.result.path ?? fileRead.path, detectPathStyle(fileRead.result.path ?? fileRead.path));
+      directoryPath = parentPath(filePath, detectPathStyle(filePath));
+      pathStyle = detectPathStyle(directoryPath);
+      fileResult = normalizeFileResult(fileRead.result);
+    } else if (isDirectoryResult(fileRead.result)) {
+      directoryPath = normalizePath(fileRead.result.path ?? fileRead.path, detectPathStyle(fileRead.result.path ?? fileRead.path));
+      pathStyle = detectPathStyle(directoryPath);
+      directoryResult = fileRead.result;
+      filePath = "";
+    } else {
+      errorText = fileRead.result?.error || `Unable to open ${normalizedPath}`;
+      filePath = "";
+    }
+  } catch (error) {
+    errorText = errorMessage(error);
+    filePath = "";
+  }
+
+  return {
+    target,
+    filePath,
+    fileResult,
+    directoryPath,
+    directoryResult,
+    pathStyle,
+    errorText,
+  };
+}
+
+export async function searchFiles(kernel: KernelClient, input: FilesSearchLoadArgs): Promise<FilesSearchLoadResult> {
+  const target = normalizeTarget(input.target);
+  const path = normalizePath(input.path, detectPathStyle(input.path));
+  const q = String(input.q ?? "").trim();
+  let searchResult: FilesSearchResult = { ok: true, matches: [], truncated: false };
+  let errorText = "";
+
+  if (!q) {
+    return { target, path, q, searchResult, errorText };
+  }
+
+  try {
+    const result = await kernel.request("fs.search", withTarget(target, {
+      path,
+      query: q,
+    }));
+    if (result?.ok) {
+      searchResult = result;
+    } else {
+      errorText = result?.error || "Search failed";
+    }
+  } catch (error) {
+    errorText = errorMessage(error);
+  }
+
+  return { target, path, q, searchResult, errorText };
 }
 
 export async function saveFile(kernel: KernelClient, args: FilesSaveArgs): Promise<FilesMutationResult> {
@@ -304,7 +336,7 @@ export async function saveFile(kernel: KernelClient, args: FilesSaveArgs): Promi
       q: String(args.q ?? "").trim(),
       open: path,
       statusText: "",
-      errorText: error instanceof Error ? error.message : String(error),
+      errorText: errorMessage(error),
     };
   }
 }
@@ -339,7 +371,7 @@ export async function deletePath(kernel: KernelClient, args: FilesDeleteArgs): P
       q: String(args.q ?? "").trim(),
       open: path,
       statusText: "",
-      errorText: error instanceof Error ? error.message : String(error),
+      errorText: errorMessage(error),
     };
   }
 }
@@ -388,7 +420,7 @@ export async function createFile(kernel: KernelClient, args: FilesCreateArgs): P
       q: String(args.q ?? "").trim(),
       open: "",
       statusText: "",
-      errorText: error instanceof Error ? error.message : String(error),
+      errorText: errorMessage(error),
     };
   }
 }
