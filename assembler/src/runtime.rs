@@ -769,6 +769,17 @@ fn generate_browser_runtime_assets(
         return StageOutcome::failure(diagnostics);
     }
 
+    let stylesheet_paths = installed
+        .asset_paths
+        .iter()
+        .filter_map(|asset_path| {
+            let artifact_path = relativize_to_root(asset_path, &analysis.package_root);
+            artifact_path.ends_with(".css").then_some(format!(
+                "/public/gsv/packages/__GSV_ARTIFACT_HASH__/{artifact_path}"
+            ))
+        })
+        .collect::<Vec<_>>();
+
     let mut public_files = Vec::new();
     for module in &browser_graph.modules {
         let public_path = browser_public_file_path(&module.path, analysis, installed);
@@ -825,21 +836,27 @@ fn generate_browser_runtime_assets(
         return StageOutcome::failure(diagnostics);
     }
 
+    let modulepreload_paths = browser_graph
+        .modules
+        .iter()
+        .filter(|module| {
+            module.path != browser_graph.main_module
+                && matches!(
+                    module.kind,
+                    PackageAssemblyArtifactModuleKind::SourceModule
+                        | PackageAssemblyArtifactModuleKind::Json
+                )
+        })
+        .filter_map(|module| route_map.get(&module.path).cloned())
+        .collect::<Vec<_>>();
+
     let shell_html = build_browser_shell_html(
         route_map
             .get(&browser_graph.main_module)
             .map(String::as_str)
             .unwrap_or_default(),
-        &installed
-            .asset_paths
-            .iter()
-            .filter_map(|asset_path| {
-                let artifact_path = relativize_to_root(asset_path, &analysis.package_root);
-                artifact_path.ends_with(".css").then_some(format!(
-                    "/public/gsv/packages/__GSV_ARTIFACT_HASH__/{artifact_path}"
-                ))
-            })
-            .collect::<Vec<_>>(),
+        &stylesheet_paths,
+        &modulepreload_paths,
     );
 
     StageOutcome::success(
@@ -987,7 +1004,21 @@ fn artifact_module_path(module_path: &str, package_root: &str) -> String {
     }
 }
 
-fn build_browser_shell_html(browser_entry: &str, stylesheet_paths: &[String]) -> String {
+fn build_browser_shell_html(
+    browser_entry: &str,
+    stylesheet_paths: &[String],
+    modulepreload_paths: &[String],
+) -> String {
+    let modulepreload_links = modulepreload_paths
+        .iter()
+        .map(|path| {
+            format!(
+                r#"<link rel="modulepreload" href={} />"#,
+                serde_json::to_string(path).unwrap()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
     let stylesheet_links = stylesheet_paths
         .iter()
         .map(|path| {
@@ -998,14 +1029,22 @@ fn build_browser_shell_html(browser_entry: &str, stylesheet_paths: &[String]) ->
         })
         .collect::<Vec<_>>()
         .join("\n");
+    let mut head_links = Vec::new();
+    if !modulepreload_links.is_empty() {
+        head_links.push(modulepreload_links);
+    }
+    if !stylesheet_links.is_empty() {
+        head_links.push(stylesheet_links);
+    }
+    let head_links = head_links.join("\n");
     let entry_src = serde_json::to_string(browser_entry).unwrap();
-    if stylesheet_links.is_empty() {
+    if head_links.is_empty() {
         format!(
             "<!doctype html>\n<html>\n<head>\n<meta charset=\"utf-8\" />\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n</head>\n<body>\n<div id=\"root\"></div>\n<script type=\"module\" src={entry_src}></script>\n</body>\n</html>\n"
         )
     } else {
         format!(
-            "<!doctype html>\n<html>\n<head>\n<meta charset=\"utf-8\" />\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n{stylesheet_links}\n</head>\n<body>\n<div id=\"root\"></div>\n<script type=\"module\" src={entry_src}></script>\n</body>\n</html>\n"
+            "<!doctype html>\n<html>\n<head>\n<meta charset=\"utf-8\" />\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n{head_links}\n</head>\n<body>\n<div id=\"root\"></div>\n<script type=\"module\" src={entry_src}></script>\n</body>\n</html>\n"
         )
     }
 }
