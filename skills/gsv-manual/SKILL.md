@@ -1,13 +1,13 @@
 ---
 name: gsv-manual
-description: Route GSV operating-model and user-facing questions to the repo-backed GSV Manual through the wiki CLI.
+description: Use the GSV Manual for questions about GSV's operating model, user workflows, settings, devices, users and agents, packages, automation, integrations, filesystem, desktop, updates, and source/debug orientation.
 ---
 
 # GSV Manual
 
-Use this skill when answering questions about how GSV works, how users should operate it, or which product/runtime surface owns a workflow.
+Use this skill when answering questions about how GSV works, how users should operate it, or where to do things.
 
-Prefer the repo-backed manual for operating-model and user-facing answers. Use repository source only when you are changing code, debugging implementation behavior, or the manual is missing or contradicted by current source.
+Prefer the GSV Manual wiki for operating-model and user-facing answers. Use repository source only when you are changing code, debugging implementation behavior, or the manual is missing or contradicted by current source.
 
 Start with the manual overview:
 
@@ -27,4 +27,4 @@ Search when the page path is not obvious:
 wiki search <query> --prefix gsv-manual
 ```
 
-Keep answers grounded in the retrieved manual pages. Do not recreate the manual taxonomy inside this skill.
+Keep answers grounded in the retrieved manual pages.
