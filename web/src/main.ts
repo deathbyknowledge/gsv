@@ -94,6 +94,10 @@ gatewayClient.onStatus((status) => {
     return;
   }
 
+  if (sessionService.snapshot().phase === "ready") {
+    return;
+  }
+
   launcher.setApps([]);
   windowManager.setAppRegistry([]);
 });

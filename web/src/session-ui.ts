@@ -65,21 +65,6 @@ const SETUP_LANE_META: Record<OnboardingLane, SetupLaneMeta> = {
   },
 };
 
-function statusText(snapshot: SessionSnapshot): string {
-  switch (snapshot.phase) {
-    case "ready":
-      return "session: connected";
-    case "setup":
-      return "session: setup required";
-    case "setup-complete":
-      return "session: setup complete";
-    case "authenticating":
-      return "session: setting up...";
-    default:
-      return "session: locked";
-  }
-}
-
 function isValidUsername(value: string): boolean {
   return /^[a-z_][a-z0-9_-]{0,31}$/.test(value);
 }
@@ -211,8 +196,6 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
   const loginErrorNode = rootNode.querySelector<HTMLElement>("[data-session-login-error]");
   const setupErrorNode = rootNode.querySelector<HTMLElement>("[data-session-setup-error]");
   const submitNode = rootNode.querySelector<HTMLButtonElement>("[data-session-submit]");
-  const statusNode = rootNode.querySelector<HTMLElement>("[data-session-status]");
-  const dotNode = rootNode.querySelector<HTMLElement>("[data-session-dot]");
   const lockNode = rootNode.querySelector<HTMLButtonElement>("[data-session-lock]");
   const mobileHomeUsernameNode = rootNode.querySelector<HTMLElement>("[data-mobile-home-username]");
   const mobileHomeDateNode = rootNode.querySelector<HTMLElement>("[data-mobile-home-date]");
@@ -311,7 +294,6 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     !loginErrorNode ||
     !setupErrorNode ||
     !submitNode ||
-    !dotNode ||
     !lockNode ||
     !setupHeadingNode ||
     !setupCopyNode ||
@@ -963,9 +945,6 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
   };
 
   const render = (): void => {
-    if (statusNode) {
-      statusNode.textContent = statusText(sessionSnapshot);
-    }
     if (mobileHomeUsernameNode) {
       mobileHomeUsernameNode.textContent = sessionSnapshot.username || "operator";
     }
@@ -1007,10 +986,6 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     setupSubmitNode.disabled = sessionSnapshot.phase === "authenticating";
     setupContinueNode.disabled = sessionSnapshot.phase === "authenticating";
     lockNode.disabled = sessionSnapshot.phase !== "ready";
-
-    dotNode.classList.toggle("is-online", sessionSnapshot.phase === "ready");
-    dotNode.classList.toggle("is-pending", sessionSnapshot.phase === "authenticating");
-    dotNode.classList.toggle("is-offline", sessionSnapshot.phase !== "ready" && sessionSnapshot.phase !== "authenticating");
 
     setVisibleError(
       loginErrorNode,

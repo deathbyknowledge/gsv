@@ -183,6 +183,16 @@ function normalizeMessage(value: unknown): string {
   return "Gateway request failed";
 }
 
+function errorMessage(value: unknown, fallback: string): string {
+  if (value instanceof Error && value.message.trim().length > 0) {
+    return value.message;
+  }
+  if (typeof value === "string" && value.trim().length > 0) {
+    return value;
+  }
+  return fallback;
+}
+
 function requestTimeoutMs(call: string): number {
   return REQUEST_TIMEOUTS_MS[call] ?? DEFAULT_REQUEST_TIMEOUT_MS;
 }
@@ -199,6 +209,7 @@ async function normalizeBinaryMessage(raw: unknown): Promise<ArrayBuffer | Array
 
 export class GatewayClient implements GatewayClientLike {
   private socket: WebSocket | null = null;
+  private socketEpoch = 0;
   private pending = new Map<string, PendingRequest>();
   private pendingBinaryStreams = new Map<number, PendingBinaryStream>();
   private signalListeners = new Set<(signal: string, payload: unknown) => void>();
@@ -271,6 +282,7 @@ export class GatewayClient implements GatewayClientLike {
     }
 
     this.disconnect();
+    const socketEpoch = ++this.socketEpoch;
     this.setStatus({
       state: "connecting",
       url,
@@ -279,7 +291,29 @@ export class GatewayClient implements GatewayClientLike {
       message: "Opening WebSocket...",
     });
 
-    const socket = await this.openSocket(url);
+    let socket: WebSocket;
+    try {
+      socket = await this.openSocket(url);
+    } catch (error) {
+      if (this.socketEpoch === socketEpoch) {
+        this.setStatus({
+          state: "disconnected",
+          url,
+          username,
+          connectionId: null,
+          message: errorMessage(error, "WebSocket connection failed"),
+        });
+      }
+      throw error;
+    }
+
+    if (this.socketEpoch !== socketEpoch) {
+      if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+        socket.close(1000, "connection cancelled");
+      }
+      throw new Error("Connection cancelled");
+    }
+
     this.socket = socket;
     this.attachSocket(socket);
 
@@ -299,8 +333,17 @@ export class GatewayClient implements GatewayClientLike {
         },
       })) as GatewayConnectResult;
     } catch (error) {
-      this.disconnect();
+      if (this.socketEpoch === socketEpoch) {
+        this.disconnect();
+      }
       throw error;
+    }
+
+    if (this.socketEpoch !== socketEpoch || this.socket !== socket) {
+      if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+        socket.close(1000, "connection cancelled");
+      }
+      throw new Error("Connection cancelled");
     }
 
     this.setStatus({
@@ -315,6 +358,7 @@ export class GatewayClient implements GatewayClientLike {
   }
 
   disconnect(): void {
+    this.socketEpoch += 1;
     const socket = this.socket;
     this.socket = null;
 

@@ -413,10 +413,6 @@ button:disabled {
     0 0 0 3px rgba(26, 75, 132, 0.14);
 }
 
-.topbar-session {
-  gap: 9px;
-}
-
 .pill {
   display: inline-flex;
   align-items: center;
@@ -452,25 +448,6 @@ button:disabled {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: var(--accent);
-}
-
-.status-dot.is-online {
-  background: var(--ok);
-}
-
-.status-dot.is-pending {
-  background: var(--warn);
-}
-
-.status-dot.is-offline {
-  background: var(--danger);
 }
 
 .session-lock-btn {
