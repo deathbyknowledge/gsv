@@ -840,6 +840,20 @@ export async function init() {
         .value
         .expect("artifact");
 
+    let wrapper = artifact
+        .modules
+        .iter()
+        .find(|module| module.path == "__gsv__/main.ts")
+        .expect("wrapper module")
+        .content
+        .as_str();
+    assert!(wrapper.contains(
+        "rel=\\\"modulepreload\\\" href=\\\"/public/lib/npm/ghostty-web/0.4.0/dist/ghostty-web.js\\\""
+    ));
+    assert!(!wrapper.contains(
+        "rel=\\\"modulepreload\\\" href=\\\"/public/lib/npm/ghostty-web/0.4.0/dist/__vite-browser-external-2447137e.js\\\""
+    ));
+
     let wasm = artifact
         .public_files
         .iter()

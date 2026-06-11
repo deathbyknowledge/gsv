@@ -48,6 +48,7 @@ pub struct ResolvedModule {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParsedModuleDependencies {
     pub requested_modules: Vec<String>,
+    pub static_requested_modules: Vec<String>,
     pub has_module_syntax: bool,
 }
 
@@ -62,6 +63,7 @@ pub struct ModuleRequestSpan {
 pub struct TransformedModuleSource {
     pub content: String,
     pub requested_modules: Vec<String>,
+    pub static_requested_modules: Vec<String>,
     pub has_module_syntax: bool,
 }
 
@@ -385,6 +387,7 @@ pub fn parse_module_dependencies_with_oxc(
     }
     Ok(ParsedModuleDependencies {
         requested_modules: collect_requested_modules(&parsed.module_record, source_text),
+        static_requested_modules: collect_static_requested_modules(&parsed.module_record),
         has_module_syntax: parsed.module_record.has_module_syntax,
     })
 }
@@ -496,6 +499,7 @@ fn transform_module_source_with_oxc_options(
     Ok(TransformedModuleSource {
         content,
         requested_modules: transformed_dependencies.requested_modules,
+        static_requested_modules: transformed_dependencies.static_requested_modules,
         has_module_syntax: transformed_dependencies.has_module_syntax,
     })
 }
@@ -531,11 +535,7 @@ fn collect_directories(files: &VirtualFileTree) -> BTreeSet<String> {
 }
 
 fn collect_requested_modules(module_record: &ModuleRecord<'_>, source_text: &str) -> Vec<String> {
-    let mut requested = module_record
-        .requested_modules
-        .keys()
-        .map(ToString::to_string)
-        .collect::<Vec<_>>();
+    let mut requested = collect_static_requested_modules(module_record);
     requested.extend(
         collect_import_meta_url_request_spans(source_text)
             .into_iter()
@@ -546,6 +546,17 @@ fn collect_requested_modules(module_record: &ModuleRecord<'_>, source_text: &str
             .into_iter()
             .map(|span| span.specifier),
     );
+    requested.sort();
+    requested.dedup();
+    requested
+}
+
+fn collect_static_requested_modules(module_record: &ModuleRecord<'_>) -> Vec<String> {
+    let mut requested = module_record
+        .requested_modules
+        .keys()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
     requested.sort();
     requested.dedup();
     requested

@@ -1,10 +1,11 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine};
 
 use crate::diagnostics::{has_errors, PackageAssemblyDiagnostic};
 use crate::graph::{
     build_module_graph_for_browser_entry, build_module_graph_for_entry, ModuleGraph,
+    ModuleGraphDependencyKind,
 };
 use crate::model::{
     PackageAssemblyAnalysis, PackageAssemblyArtifactModule, PackageAssemblyArtifactModuleKind,
@@ -836,11 +837,13 @@ fn generate_browser_runtime_assets(
         return StageOutcome::failure(diagnostics);
     }
 
+    let static_module_paths = static_browser_module_paths(browser_graph);
     let modulepreload_paths = browser_graph
         .modules
         .iter()
         .filter(|module| {
             module.path != browser_graph.main_module
+                && static_module_paths.contains(&module.path)
                 && matches!(
                     module.kind,
                     PackageAssemblyArtifactModuleKind::SourceModule
@@ -866,6 +869,21 @@ fn generate_browser_runtime_assets(
         },
         diagnostics,
     )
+}
+
+fn static_browser_module_paths(browser_graph: &ModuleGraph) -> BTreeSet<String> {
+    let mut static_paths = BTreeSet::from([browser_graph.main_module.clone()]);
+    let mut queue = VecDeque::from([browser_graph.main_module.clone()]);
+    while let Some(importer) = queue.pop_front() {
+        for dependency in browser_graph.dependencies.iter().filter(|dependency| {
+            dependency.importer == importer && dependency.kind == ModuleGraphDependencyKind::Static
+        }) {
+            if static_paths.insert(dependency.imported.clone()) {
+                queue.push_back(dependency.imported.clone());
+            }
+        }
+    }
+    static_paths
 }
 
 fn rewrite_browser_module_source(

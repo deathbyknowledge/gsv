@@ -16,6 +16,20 @@ use crate::virtual_fs::extension;
 pub struct ModuleGraph {
     pub main_module: String,
     pub modules: Vec<PackageAssemblyArtifactModule>,
+    pub dependencies: Vec<ModuleGraphDependency>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ModuleGraphDependencyKind {
+    Static,
+    Runtime,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModuleGraphDependency {
+    pub importer: String,
+    pub imported: String,
+    pub kind: ModuleGraphDependencyKind,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -76,6 +90,7 @@ fn build_module_graph_for_entry_with_resolver(
     }]);
     let mut visited = BTreeSet::new();
     let mut emitted = BTreeMap::new();
+    let mut dependencies = Vec::new();
 
     while let Some(entry) = queue.pop_front() {
         let path = entry.path;
@@ -101,6 +116,11 @@ fn build_module_graph_for_entry_with_resolver(
                 };
                 match transformed_result {
                     Ok(transformed) => {
+                        let requested_modules = transformed.requested_modules;
+                        let static_requested_modules = transformed
+                            .static_requested_modules
+                            .into_iter()
+                            .collect::<BTreeSet<_>>();
                         emitted.insert(
                             path.clone(),
                             PackageAssemblyArtifactModule {
@@ -109,7 +129,7 @@ fn build_module_graph_for_entry_with_resolver(
                                 content: transformed.content,
                             },
                         );
-                        for requested in transformed.requested_modules {
+                        for requested in requested_modules {
                             match resolver.resolve_specifier(&path, &requested) {
                                 Ok(resolved) => {
                                     let resolved_kind = infer_module_kind(
@@ -118,6 +138,17 @@ fn build_module_graph_for_entry_with_resolver(
                                     );
                                     match resolved_kind {
                                         Some(_) => {
+                                            dependencies.push(ModuleGraphDependency {
+                                                importer: path.clone(),
+                                                imported: resolved.repo_path.clone(),
+                                                kind: if static_requested_modules
+                                                    .contains(&requested)
+                                                {
+                                                    ModuleGraphDependencyKind::Static
+                                                } else {
+                                                    ModuleGraphDependencyKind::Runtime
+                                                },
+                                            });
                                             queue.push_back(QueueEntry {
                                                 path: resolved.repo_path,
                                                 module_type: resolved.module_type,
@@ -194,6 +225,7 @@ fn build_module_graph_for_entry_with_resolver(
         ModuleGraph {
             main_module,
             modules: emitted.into_values().collect(),
+            dependencies,
         },
         diagnostics,
     )

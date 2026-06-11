@@ -129,7 +129,7 @@ function appSessionLaunchEndpoint(sessionId: string): string {
 const RUNTIME_STATUS_FALLBACK_MS = 3000;
 
 function shouldUseRuntimeStatusFallback(state: string | null): boolean {
-  return state === null || (state !== "loading" && state !== "ready" && state !== "error");
+  return state === null || state === "booting" || state === "connected";
 }
 
 function attachIframeRuntimeStatus(
