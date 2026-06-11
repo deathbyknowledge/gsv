@@ -134,7 +134,7 @@ Capabilities are NOT hardcoded — root can modify them. Stored in kernel DO SQL
 - [x] Design the `group_capabilities` table schema
 - [x] Seed default capabilities on first boot:
   - gid 0 (root) → `["*"]`
-  - gid 100 (users) → `["fs.*", "shell.*", "proc.*", "sched.*", "sys.config.get", "sys.config.set", "sys.token.create", "sys.token.list", "sys.token.revoke", "sys.link", "sys.unlink", "sys.link.list", "sys.link.consume"]`
+  - gid 100 (users) → `["fs.*", "shell.*", "proc.*", "sched.*", "sys.token.create", "sys.token.list", "sys.token.revoke", "sys.link", "sys.unlink", "sys.link.list", "sys.link.consume"]`
   - gid 101 (drivers) → `["fs.*", "shell.*"]`
   - gid 102 (services) → `["adapter.*"]`
 - [x] Implement `resolve(gids)` — union of all capabilities across groups
@@ -451,16 +451,15 @@ are seed files loaded on first connect (like `sysctl -p` loading `/etc/sysctl.co
 - [x] `seed(defaults)` — populate defaults on first boot
 - [x] Add to `KernelContext`, initialize in Kernel DO alongside other registries
 - [x] Explicit `SYSTEM_CONFIG_DEFAULTS` with documented fields (ai, server, shell, process)
-- [x] `USER_OVERRIDABLE_PREFIXES` restricts which config keys users can override
+- [x] `/sys/users/{uid}/*` uses uid/gid/mode checks for user-owned config
 - [x] Kernel seeds defaults on init (INSERT OR IGNORE — never overwrites)
-- ~~Reconciliation~~ — removed; `/sys/config/*` + `sys.config.set` are the config interfaces, no need for `/etc/gsv/config` dotfile duplication
-- [x] `sys.config.get` / `sys.config.set` syscall handlers
+- ~~Reconciliation~~ — removed; `/sys/config/*` and `/sys/users/*` are the config interfaces, no need for `/etc/gsv/config` dotfile duplication
 
-## System config (`sys.config.*`)
+## System config (`/sys/config/*`)
 
-- [x] `sys.config.get` / `sys.config.set` handlers — thin wrappers around `ConfigStore` + permission checks
-- [x] Key-level permission model: root full access; non-root reads `config/*` + own `users/{uid}/*`; writes only `users/{uid}/{overridable}/*`
-- [x] Users group granted `sys.config.get` + `sys.config.set` capabilities (fine-grained check in handler)
+- [x] `/sys/config/*` and `/sys/users/*` virtual files backed by `ConfigStore`
+- [x] Unix-style virtual metadata: root-owned system config, user/group-owned user config
+- [x] Users group granted `fs.*`; uid/gid/mode checks handle config reads and writes
 
 ## File transfer (`fs.transfer`)
 

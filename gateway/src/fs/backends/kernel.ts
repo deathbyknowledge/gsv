@@ -4,7 +4,7 @@ import type {
   RmOptions,
 } from "just-bash";
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
-import { canReadConfigKey } from "../../kernel/config-access";
+import { isSensitiveConfigKey } from "../../kernel/config-access";
 import type { KernelRefs, ProcessViewCall } from "../refs";
 import type { ArgsOf, ResultOf } from "../../syscalls";
 import type {
@@ -28,6 +28,18 @@ const TEXT_ENCODER = new TextEncoder();
 const PROC_HISTORY_PAGE_SIZE = 500;
 const SCHEDULER_VIEW_PAGE_SIZE = 500;
 const SCHEDULER_LOG_HISTORY_LIMIT = 50;
+const READ_BIT = 4;
+const WRITE_BIT = 2;
+const PACKAGE_AGENT_ACCESS_GROUP_SUBKEY = "pkg/access_group";
+const KERNEL_MANAGED_USER_CONFIG_PREFIX = "pkg";
+
+type VirtualNodeKind = "file" | "directory";
+type VirtualNodeMeta = {
+  uid: number;
+  gid: number;
+  mode: number;
+  kind: VirtualNodeKind;
+};
 
 export class KernelMountBackend implements MountBackend {
   constructor(
@@ -138,6 +150,9 @@ export class KernelMountBackend implements MountBackend {
   async stat(path: string): Promise<ExtendedMountStat> {
     const p = normalizePath(path);
 
+    const configStat = this.statConfigPath(p);
+    if (configStat) return configStat;
+
     if (await this.isVirtualDir(p) || p === "/etc") {
       return { isFile: false, isDirectory: true, isSymbolicLink: false, mode: 0o755, size: 0, mtime: new Date(), uid: 0, gid: 0 };
     }
@@ -175,8 +190,11 @@ export class KernelMountBackend implements MountBackend {
     throw new Error(`ENOENT: no such file or directory, scandir '${p}'`);
   }
 
-  async rm(path: string, _options?: RmOptions): Promise<void> {
+  async rm(path: string, options?: RmOptions): Promise<void> {
     const p = normalizePath(path);
+    if (this.removeConfigPath(p, options)) {
+      return;
+    }
     if (isCronWritablePath(p)) {
       const removed = await this.removeCronFile(p);
       if (removed) return;
@@ -332,13 +350,164 @@ export class KernelMountBackend implements MountBackend {
     }
   }
 
-  private listReadableConfig(prefix: string): { key: string; value: string }[] {
-    if (!this.kernel) return [];
+  private statConfigPath(path: string): ExtendedMountStat | null {
+    if (!this.kernel) return null;
 
-    const entries = this.kernel.config.list(prefix);
-    if (this.identity.uid === 0) return entries;
+    if (path === "/sys/config") {
+      return statFromVirtualMeta(this.configMetaForKey("config", "directory")!);
+    }
 
-    return entries.filter((entry) => canReadConfigKey(this.identity.uid, entry.key));
+    if (path.startsWith("/sys/config/")) {
+      return this.statConfigKey(`config/${path.slice("/sys/config/".length)}`);
+    }
+
+    if (path === "/sys/users") {
+      return statFromVirtualMeta(this.configMetaForKey("users", "directory")!);
+    }
+
+    if (path.startsWith("/sys/users/")) {
+      return this.statConfigKey(`users/${path.slice("/sys/users/".length)}`);
+    }
+
+    return null;
+  }
+
+  private statConfigKey(key: string): ExtendedMountStat | null {
+    if (!this.kernel) return null;
+
+    const value = this.kernel.config.get(key);
+    if (value !== null) {
+      const meta = this.configMetaForKey(key, "file");
+      return meta
+        ? statFromVirtualMeta(meta, TEXT_ENCODER.encode(value).byteLength)
+        : null;
+    }
+
+    const entries = this.kernel.config.list(key);
+    if (entries.length > 0 || this.configDirectoryExists(key)) {
+      const meta = this.configMetaForKey(key, "directory");
+      return meta ? statFromVirtualMeta(meta) : null;
+    }
+
+    return null;
+  }
+
+  private configDirectoryExists(key: string): boolean {
+    if (!this.kernel) return false;
+    if (key === "config" || key === "users") return true;
+    if (key.startsWith("config/")) return this.kernel.config.list(key).length > 0;
+    const parsed = parseUserConfigPathKey(key);
+    if (!parsed) return false;
+    if (!this.kernel.auth.getPasswdByUid(parsed.uid)) return false;
+    return parsed.sub.length === 0 || this.kernel.config.list(key).length > 0;
+  }
+
+  private readConfigValue(key: string): string | undefined {
+    if (!this.kernel) return undefined;
+    const value = this.kernel.config.get(key);
+    if (value === null) return undefined;
+    const meta = this.configMetaForKey(key, "file");
+    if (!meta) return undefined;
+    assertVirtualMode(this.identity, meta, READ_BIT, key);
+    return value;
+  }
+
+  private writeConfigValue(key: string, content: string): void {
+    if (!this.kernel) throw new Error("EPERM: /sys is not available");
+    const meta = this.configMetaForKey(key, "file");
+    if (!meta) {
+      if (this.configDirectoryExists(key)) {
+        throw new Error(`EISDIR: illegal operation on a directory, open '/sys/${key}'`);
+      }
+      throw new Error(`ENOENT: no such config key namespace '/sys/${key}'`);
+    }
+    assertVirtualMode(this.identity, meta, WRITE_BIT, key);
+
+    if (key.startsWith("users/") && content.trim().length === 0) {
+      this.kernel.config.delete(key);
+      return;
+    }
+    this.kernel.config.set(key, content);
+  }
+
+  private removeConfigPath(path: string, options?: RmOptions): boolean {
+    if (!this.kernel) return false;
+
+    const key = path === "/sys/config"
+      ? "config"
+      : path.startsWith("/sys/config/")
+        ? `config/${path.slice("/sys/config/".length)}`
+        : path === "/sys/users"
+          ? "users"
+          : path.startsWith("/sys/users/")
+            ? `users/${path.slice("/sys/users/".length)}`
+            : null;
+    if (!key) return false;
+
+    const meta = this.configMetaForKey(key, "file");
+    if (meta && this.kernel.config.get(key) !== null) {
+      assertVirtualMode(this.identity, meta, WRITE_BIT, key);
+      this.kernel.config.delete(key);
+      return true;
+    }
+
+    if (this.configDirectoryExists(key)) {
+      throw new Error(`EISDIR: illegal operation on a directory, unlink '${path}'`);
+    }
+
+    if (!options?.force) {
+      throw new Error(`ENOENT: no such file or directory, unlink '${path}'`);
+    }
+    return true;
+  }
+
+  private assertConfigDirReadable(key: string, path: string): void {
+    const meta = this.configMetaForKey(key, "directory");
+    if (!meta) {
+      throw new Error(`ENOENT: no such directory, scandir '${path}'`);
+    }
+    assertVirtualMode(this.identity, meta, READ_BIT, key);
+  }
+
+  private configMetaForKey(key: string, kind: VirtualNodeKind): VirtualNodeMeta | null {
+    if (key === "config" || key.startsWith("config/")) {
+      if (kind === "file" && key === "config") return null;
+      return {
+        uid: 0,
+        gid: 0,
+        mode: kind === "directory"
+          ? 0o755
+          : isSensitiveConfigKey(key) ? 0o600 : 0o644,
+        kind,
+      };
+    }
+
+    if (key === "users") {
+      if (kind === "file") return null;
+      return { uid: 0, gid: 0, mode: 0o755, kind };
+    }
+
+    const parsed = parseUserConfigPathKey(key);
+    if (!parsed || !this.kernel) return null;
+    const user = this.kernel.auth.getPasswdByUid(parsed.uid);
+    if (!user) return null;
+    if (kind === "file" && parsed.sub.length === 0) return null;
+    const packageAccessGroup = this.configPackageAgentAccessGroupGid(user.uid);
+    const readOnly = isKernelManagedUserConfigSubkey(parsed.sub);
+
+    return {
+      uid: user.uid,
+      gid: packageAccessGroup ?? user.gid,
+      mode: userConfigMode(kind, readOnly),
+      kind,
+    };
+  }
+
+  private configPackageAgentAccessGroupGid(uid: number): number | null {
+    if (!this.kernel) return null;
+    const groupName = this.kernel.config.get(`users/${uid}/${PACKAGE_AGENT_ACCESS_GROUP_SUBKEY}`);
+    if (!groupName) return null;
+    return this.kernel.auth.getGroupByName(groupName.trim())?.gid ?? null;
   }
 
   private readSys(path: string): string | undefined {
@@ -346,24 +515,11 @@ export class KernelMountBackend implements MountBackend {
     const rel = path.slice("/sys/".length);
 
     if (rel.startsWith("config/")) {
-      const configKey = rel;
-      if (!canReadConfigKey(this.identity.uid, configKey)) return undefined;
-      const value = this.kernel.config.get(configKey);
-      if (value !== null) return value + "\n";
-      return undefined;
+      return this.readConfigValue(rel);
     }
 
     if (rel.startsWith("users/")) {
-      const userKey = rel;
-      const uidStr = rel.split("/")[1];
-      const uid = parseInt(uidStr, 10);
-      if (isNaN(uid)) return undefined;
-
-      if (!canReadConfigKey(this.identity.uid, userKey)) return undefined;
-
-      const value = this.kernel.config.get(userKey);
-      if (value !== null) return value + "\n";
-      return undefined;
+      return this.readConfigValue(rel);
     }
 
     if (rel.startsWith("devices/")) {
@@ -432,19 +588,12 @@ export class KernelMountBackend implements MountBackend {
     const rel = path.slice("/sys/".length);
 
     if (rel.startsWith("config/")) {
-      if (this.identity.uid !== 0) throw new Error("EPERM: only root can write to /sys/config/");
-      this.kernel.config.set(rel, content.trim());
+      this.writeConfigValue(rel, content);
       return;
     }
 
     if (rel.startsWith("users/")) {
-      const uidStr = rel.split("/")[1];
-      const uid = parseInt(uidStr, 10);
-      if (isNaN(uid)) throw new Error(`EINVAL: invalid uid in path '${path}'`);
-      if (this.identity.uid !== 0 && this.identity.uid !== uid) {
-        throw new Error(`EPERM: permission denied, '${path}'`);
-      }
-      this.kernel.config.set(rel, content.trim());
+      this.writeConfigValue(rel, content);
       return;
     }
 
@@ -891,14 +1040,13 @@ export class KernelMountBackend implements MountBackend {
     if (path.startsWith("/sys/users/") && !path.slice("/sys/users/".length).includes("/")) {
       const uid = parseInt(path.slice("/sys/users/".length), 10);
       if (isNaN(uid)) return false;
-      if (this.identity.uid !== 0 && this.identity.uid !== uid) return false;
-      return true;
+      return this.configMetaForKey(`users/${uid}`, "directory") !== null;
     }
 
     if (path.startsWith("/sys/config/")) {
       const rel = path.slice("/sys/config/".length);
       if (rel) {
-        const nested = this.listReadableConfig(`config/${rel}`);
+        const nested = this.kernel?.config.list(`config/${rel}`) ?? [];
         if (nested.length > 0) return true;
       }
     }
@@ -909,9 +1057,8 @@ export class KernelMountBackend implements MountBackend {
       if (parts.length >= 2) {
         const uid = parseInt(parts[0], 10);
         if (!isNaN(uid)) {
-          if (this.identity.uid !== 0 && this.identity.uid !== uid) return false;
           const suffix = parts.slice(1).join("/");
-          const nested = this.listReadableConfig(`users/${uid}/${suffix}`);
+          const nested = this.kernel?.config.list(`users/${uid}/${suffix}`) ?? [];
           if (nested.length > 0) return true;
         }
       }
@@ -941,23 +1088,23 @@ export class KernelMountBackend implements MountBackend {
     }
 
     if (path === "/sys/config") {
-      return uniquePrefixes(this.listReadableConfig("config/"), "config/");
+      this.assertConfigDirReadable("config", path);
+      return uniquePrefixes(this.kernel.config.list("config/"), "config/");
     }
 
     if (path.startsWith("/sys/config/")) {
       const rel = path.slice("/sys/config/".length);
       if (!rel) return undefined;
       const prefix = `config/${rel}`;
-      const entries = this.listReadableConfig(prefix);
+      this.assertConfigDirReadable(prefix, path);
+      const entries = this.kernel.config.list(prefix);
       if (entries.length === 0) return undefined;
       return uniquePrefixes(entries, `${prefix}/`);
     }
 
     if (path === "/sys/users") {
-      if (this.identity.uid === 0) {
-        return uniquePrefixes(this.listReadableConfig("users/"), "users/");
-      }
-      return [String(this.identity.uid)];
+      this.assertConfigDirReadable("users", path);
+      return uniquePrefixes(this.kernel.config.list("users/"), "users/");
     }
 
     if (path.startsWith("/sys/users/")) {
@@ -966,17 +1113,19 @@ export class KernelMountBackend implements MountBackend {
       if (parts.length >= 1) {
         const uid = parseInt(parts[0], 10);
         if (isNaN(uid)) return undefined;
-        if (this.identity.uid !== 0 && this.identity.uid !== uid) return undefined;
 
         if (parts.length === 1) {
-          const entries = this.listReadableConfig(`users/${uid}`);
+          const prefix = `users/${uid}`;
+          this.assertConfigDirReadable(prefix, path);
+          const entries = this.kernel.config.list(prefix);
           if (entries.length === 0) return [];
-          return uniquePrefixes(entries, `users/${uid}/`);
+          return uniquePrefixes(entries, `${prefix}/`);
         }
 
         const suffix = parts.slice(1).join("/");
         const prefix = `users/${uid}/${suffix}`;
-        const entries = this.listReadableConfig(prefix);
+        this.assertConfigDirReadable(prefix, path);
+        const entries = this.kernel.config.list(prefix);
         if (entries.length === 0) return undefined;
         return uniquePrefixes(entries, `${prefix}/`);
       }
@@ -1102,6 +1251,60 @@ function isVarViewPath(path: string): boolean {
     path.startsWith("/var/spool/") ||
     path === "/var/log" ||
     path.startsWith("/var/log/");
+}
+
+function parseUserConfigPathKey(key: string): { uid: number; sub: string } | null {
+  const match = /^users\/(\d+)(?:\/(.*))?$/.exec(key);
+  if (!match) return null;
+  const uid = Number(match[1]);
+  if (!Number.isSafeInteger(uid) || uid < 0) return null;
+  return { uid, sub: match[2] ?? "" };
+}
+
+function isKernelManagedUserConfigSubkey(sub: string): boolean {
+  return sub === KERNEL_MANAGED_USER_CONFIG_PREFIX ||
+    sub.startsWith(`${KERNEL_MANAGED_USER_CONFIG_PREFIX}/`);
+}
+
+function userConfigMode(kind: VirtualNodeKind, readOnly: boolean): number {
+  if (kind === "directory") return readOnly ? 0o550 : 0o770;
+  return readOnly ? 0o440 : 0o660;
+}
+
+function assertVirtualMode(
+  identity: ProcessIdentity,
+  meta: VirtualNodeMeta,
+  bit: number,
+  path: string,
+): void {
+  if (identity.uid === 0) return;
+
+  const owner = (meta.mode >> 6) & 0b111;
+  const group = (meta.mode >> 3) & 0b111;
+  const other = meta.mode & 0b111;
+
+  if (identity.uid === meta.uid) {
+    if ((owner & bit) !== 0) return;
+  } else if (identity.gids.includes(meta.gid)) {
+    if ((group & bit) !== 0) return;
+  } else if ((other & bit) !== 0) {
+    return;
+  }
+
+  throw new Error(`EACCES: permission denied, '${path}'`);
+}
+
+function statFromVirtualMeta(meta: VirtualNodeMeta, size = 0): ExtendedMountStat {
+  return {
+    isFile: meta.kind === "file",
+    isDirectory: meta.kind === "directory",
+    isSymbolicLink: false,
+    mode: meta.mode,
+    size,
+    mtime: new Date(),
+    uid: meta.uid,
+    gid: meta.gid,
+  };
 }
 
 function encodePathSegment(segment: string): string {

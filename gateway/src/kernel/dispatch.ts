@@ -37,7 +37,6 @@ import {
   forwardToProcess,
 } from "./proc-handlers";
 import { handleAccountCreate, handleAccountList } from "./agents";
-import { handleSysConfigGet, handleSysConfigSet } from "./sys/config";
 import { handleSysDeviceGet, handleSysDeviceList, handleSysDeviceUpdate } from "./sys/device";
 import { handleSysBootstrap } from "./sys/bootstrap";
 import { handleSysSetupAssist } from "./sys/setup-assist";
@@ -476,12 +475,6 @@ async function dispatchNative(
         return errFrame(frame.id, 400, "sys.setup handled separately");
       case "sys.bootstrap":
         data = await handleSysBootstrap(frame.args, ctx);
-        break;
-      case "sys.config.get":
-        data = handleSysConfigGet(frame.args, ctx);
-        break;
-      case "sys.config.set":
-        data = handleSysConfigSet(frame.args, ctx);
         break;
       case "sys.device.list":
         data = handleSysDeviceList(frame.args, ctx);

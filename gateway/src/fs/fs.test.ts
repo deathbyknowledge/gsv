@@ -24,8 +24,8 @@ const SAM: ProcessIdentity = {
 
 const ALICE: ProcessIdentity = {
   uid: 1001,
-  gid: 100,
-  gids: [100],
+  gid: 1001,
+  gids: [1001, 100],
   username: "alice",
   home: "/home/alice",
   cwd: "/home/alice",
@@ -38,6 +38,17 @@ const SAM_AGENT: ProcessIdentity = {
   username: "sam-agent",
   home: "/home/sam-agent",
   cwd: "/home/sam-agent",
+};
+
+const PACKAGE_AGENT_ACCESS_GID = 3001;
+
+const PACKAGE_AGENT: ProcessIdentity = {
+  uid: 3000,
+  gid: 3000,
+  gids: [3000],
+  username: "wiki-builder",
+  home: "/home/wiki-builder",
+  cwd: "/home/wiki-builder",
 };
 
 function putFile(
@@ -76,6 +87,11 @@ function makeConfigBackedFs(
     set(key: string, value: string): void {
       entries.set(key, value);
     },
+    delete(key: string): boolean {
+      const existed = entries.has(key);
+      entries.delete(key);
+      return existed;
+    },
     list(prefix: string): { key: string; value: string }[] {
       const normalized = prefix.trim();
       const keys = [...entries.keys()].sort();
@@ -88,9 +104,36 @@ function makeConfigBackedFs(
         .map((key) => ({ key, value: entries.get(key)! }));
     },
   };
+  const passwdEntries = [ROOT, SAM, ALICE, SAM_AGENT, PACKAGE_AGENT].map((user) => ({
+    username: user.username,
+    uid: user.uid,
+    gid: user.gid,
+    gecos: user.username,
+    home: user.home,
+    shell: "/bin/sh",
+  }));
+  const groupEntries = [
+    { name: "root", gid: 0, members: ["root"] },
+    { name: "users", gid: 100, members: ["sam", "alice"] },
+    { name: "sam", gid: SAM.gid, members: ["sam-agent"] },
+    { name: "alice", gid: ALICE.gid, members: [] },
+    { name: "sam-agent", gid: SAM_AGENT.gid, members: ["sam"] },
+    { name: "wiki-builder", gid: PACKAGE_AGENT.gid, members: [] },
+    { name: "wiki-builder-run", gid: PACKAGE_AGENT_ACCESS_GID, members: ["sam"] },
+  ];
 
   return new GsvFs(env.STORAGE, identity, {
-    auth: null as never,
+    auth: {
+      getPasswdByUid(uid: number) {
+        return passwdEntries.find((entry) => entry.uid === uid) ?? null;
+      },
+      getPasswdByUsername(username: string) {
+        return passwdEntries.find((entry) => entry.username === username) ?? null;
+      },
+      getGroupByName(name: string) {
+        return groupEntries.find((entry) => entry.name === name) ?? null;
+      },
+    } as never,
     procs: null as never,
     devices: null as never,
     caps: null as never,
@@ -1152,7 +1195,7 @@ describe("GsvFs virtual /sys config tree", () => {
     expect(stat.isDirectory).toBe(true);
 
     const provider = await fs.readFile("/sys/config/ai/provider");
-    expect(provider).toBe("anthropic\n");
+    expect(provider).toBe("anthropic");
   });
 
   it("lists nested /sys/users/{uid} directories based on user config key prefixes", async () => {
@@ -1179,7 +1222,7 @@ describe("GsvFs virtual /sys config tree", () => {
     await expect(fs.readdir("/sys/config/missing")).rejects.toThrow("ENOENT");
   });
 
-  it("hides sensitive system config keys for non-root users", async () => {
+  it("uses Unix-like mode bits for sensitive system config keys", async () => {
     const fs = makeConfigBackedFs(SAM, {
       "config/ai/provider": "anthropic",
       "config/ai/model": "claude-sonnet-4-20250514",
@@ -1187,21 +1230,90 @@ describe("GsvFs virtual /sys config tree", () => {
     });
 
     const entries = await fs.readdir("/sys/config/ai");
-    expect(entries).toEqual(["model", "provider"]);
+    expect(entries).toEqual(["api_key", "model", "provider"]);
 
-    await expect(fs.readFile("/sys/config/ai/api_key")).rejects.toThrow("ENOENT");
+    const stat = await fs.statExtended("/sys/config/ai/api_key");
+    expect(stat).toMatchObject({ uid: 0, gid: 0, mode: 0o600 });
+
+    await expect(fs.readFile("/sys/config/ai/api_key")).rejects.toThrow("EACCES");
   });
 
-  it("shows only own user namespace under /sys/users for non-root users", async () => {
+  it("uses user-private-group permissions for /sys/users config", async () => {
     const fs = makeConfigBackedFs(SAM, {
       "users/1000/ai/model": "gpt-4.1-mini",
       "users/1001/ai/model": "gpt-4.1",
     });
 
     const users = await fs.readdir("/sys/users");
-    expect(users).toEqual(["1000"]);
+    expect(users).toEqual(["1000", "1001"]);
 
-    await expect(fs.readdir("/sys/users/1001")).rejects.toThrow("ENOENT");
+    const stat = await fs.statExtended("/sys/users/1000/ai/model");
+    expect(stat).toMatchObject({ uid: 1000, gid: 1000, mode: 0o660 });
+
+    await expect(fs.readdir("/sys/users/1001")).rejects.toThrow("EACCES");
+    await expect(fs.readFile("/sys/users/1001/ai/model")).rejects.toThrow("EACCES");
+  });
+
+  it("lets cross-membered humans manage agent user config", async () => {
+    const samWithAgentGroup = { ...SAM, gids: [...SAM.gids, SAM_AGENT.gid] };
+    const fs = makeConfigBackedFs(samWithAgentGroup, {
+      "users/2000/ai/model": "gpt-4.1-mini",
+    });
+
+    await expect(fs.readFile("/sys/users/2000/ai/model")).resolves.toBe("gpt-4.1-mini");
+    await fs.writeFile("/sys/users/2000/ai/model", "gpt-4.1");
+    await expect(fs.readFile("/sys/users/2000/ai/model")).resolves.toBe("gpt-4.1");
+
+    await fs.writeFile("/sys/users/2000/ai/model", "   ");
+    await expect(fs.readFile("/sys/users/2000/ai/model")).rejects.toThrow("ENOENT");
+  });
+
+  it("honors package-agent access groups for user config", async () => {
+    const samWithPackageAgentAccess = {
+      ...SAM,
+      gids: [...SAM.gids, PACKAGE_AGENT_ACCESS_GID],
+    };
+    const fs = makeConfigBackedFs(samWithPackageAgentAccess, {
+      "users/3000/pkg/access_group": "wiki-builder-run",
+      "users/3000/ai/model": "gpt-4.1-mini",
+    });
+
+    const stat = await fs.statExtended("/sys/users/3000/ai/model");
+    expect(stat).toMatchObject({ uid: 3000, gid: PACKAGE_AGENT_ACCESS_GID, mode: 0o660 });
+    const metadataStat = await fs.statExtended("/sys/users/3000/pkg/access_group");
+    expect(metadataStat).toMatchObject({ uid: 3000, gid: PACKAGE_AGENT_ACCESS_GID, mode: 0o440 });
+
+    await expect(fs.readdir("/sys/users/3000")).resolves.toEqual(["ai", "pkg"]);
+    await expect(fs.readFile("/sys/users/3000/pkg/access_group")).resolves.toBe("wiki-builder-run");
+    await expect(fs.writeFile("/sys/users/3000/pkg/access_group", "other-run")).rejects.toThrow("EACCES");
+    await expect(fs.rm("/sys/users/3000/pkg/access_group")).rejects.toThrow("EACCES");
+
+    await expect(fs.readFile("/sys/users/3000/ai/model")).resolves.toBe("gpt-4.1-mini");
+    await fs.writeFile("/sys/users/3000/ai/model", "gpt-4.1");
+    await expect(fs.readFile("/sys/users/3000/ai/model")).resolves.toBe("gpt-4.1");
+
+    const packageAgentFs = makeConfigBackedFs(PACKAGE_AGENT, {
+      "users/3000/pkg/access_group": "wiki-builder-run",
+    });
+    await expect(packageAgentFs.writeFile("/sys/users/3000/pkg/access_group", "other-run")).rejects.toThrow("EACCES");
+
+    const aliceFs = makeConfigBackedFs(ALICE, {
+      "users/3000/pkg/access_group": "wiki-builder-run",
+      "users/3000/ai/model": "gpt-4.1-mini",
+    });
+    await expect(aliceFs.readFile("/sys/users/3000/ai/model")).rejects.toThrow("EACCES");
+  });
+
+  it("preserves whitespace when writing config files", async () => {
+    const fs = makeConfigBackedFs(ROOT, {});
+    const content = "  indented first line\n```\n  code block\n```\n\n";
+
+    await fs.writeFile("/sys/config/ai/context.d/custom.md", content);
+
+    await expect(fs.readFile("/sys/config/ai/context.d/custom.md")).resolves.toBe(content);
+    await expect(fs.statExtended("/sys/config/ai/context.d/custom.md")).resolves.toMatchObject({
+      size: new TextEncoder().encode(content).byteLength,
+    });
   });
 });
 

@@ -49,8 +49,6 @@ const DEFAULT_CAPABILITIES: [number, string[]][] = [
     "adapter.connect",
     "adapter.disconnect",
     "adapter.status",
-    "sys.config.get",
-    "sys.config.set",
     "sys.bootstrap",
     "sys.device.get",
     "sys.device.list",

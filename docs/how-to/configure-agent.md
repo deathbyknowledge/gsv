@@ -17,7 +17,8 @@ gsv config set config/ai/model openai/gpt-4.1
 gsv config set config/ai/api_key "$OPENROUTER_API_KEY"
 ```
 
-Non-root users can set only their own `users/{uid}/ai/*` keys:
+Non-root users can set their own `/sys/users/{uid}/*` config files. For AI
+runtime overrides, use `users/{uid}/ai/*` keys:
 
 ```bash
 gsv config set users/1000/ai/model gpt-4.1-mini

@@ -6,17 +6,16 @@ The same store is exposed through:
 
 - `/sys/config/*` for system configuration.
 - `/sys/users/{uid}/*` for user-scoped configuration.
-- `sys.config.get` and `sys.config.set` for syscall clients.
 
 Code defaults are overlaid at read time. An explicit SQLite value wins; deleting that explicit value reveals the code default again. Prefix reads include both explicit values and matching defaults, with explicit values overriding default entries of the same key.
 
 ## Access Model
 
-Root (`uid 0`) can read and write all configuration. Non-root users can read their own `users/{uid}/*` keys and non-sensitive `config/*` keys. Sensitive system keys are hidden from non-root reads, including prefix listings.
+Root (`uid 0`) can read and write all configuration. `/sys/config/*` is owned by `uid 0`, `gid 0`; directories are mode `0755`, non-sensitive files are `0644`, and sensitive files are `0600`. `/sys/users/{uid}/*` is owned by that user and group; directories are `0770` and files are `0660`.
 
 Sensitive final path segments include `api_key`, `secret`, `token`, `password`, `access_token`, `refresh_token`, and `client_secret`. Suffixes such as `_api_key`, `_secret`, `_token`, and `_password` are also treated as sensitive.
 
-`sys.config.set` lets non-root users write only their own `users/{uid}/ai/*` keys. System writes under `/sys/config/*` require root.
+Access is enforced with the same uid/gid/mode checks used by the filesystem. A human that is in an agent account's private group can manage that agent's `/sys/users/{agent_uid}/*` overrides through group permissions.
 
 ## Reading and Writing
 
@@ -28,17 +27,17 @@ cat /sys/users/1000/ai/model
 printf '%s\n' openai > /sys/users/1000/ai/provider
 ```
 
-From an API or WebSocket client, use syscalls:
+From an API or WebSocket client, use filesystem syscalls:
 
 ```json
-{ "key": "config/ai" }
+{ "path": "/sys/config/ai/provider" }
 ```
 
 ```json
-{ "key": "users/1000/ai/model", "value": "gpt-4.1-mini" }
+{ "path": "/sys/users/1000/ai/model", "content": "gpt-4.1-mini" }
 ```
 
-Reading a prefix returns every readable key below that prefix. Reading an exact key returns that key's value or fails if access is denied.
+Reading a directory returns its child files and directories. Reading an exact file returns that key's value or fails if access is denied.
 
 ## AI Model Config
 

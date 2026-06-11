@@ -120,33 +120,6 @@ impl KernelClient {
         Ok(response.data.unwrap_or_else(|| json!({})))
     }
 
-    pub async fn sys_config_get(
-        &self,
-        key: Option<&str>,
-    ) -> Result<Value, Box<dyn std::error::Error>> {
-        let args = key
-            .map(|key| json!({ "key": key }))
-            .unwrap_or_else(|| json!({}));
-        self.request_ok("sys.config.get", Some(args)).await
-    }
-
-    pub async fn sys_config_set(
-        &self,
-        key: &str,
-        value: &str,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let _ = self
-            .request_ok(
-                "sys.config.set",
-                Some(json!({
-                    "key": key,
-                    "value": value,
-                })),
-            )
-            .await?;
-        Ok(())
-    }
-
     pub async fn proc_send(
         &self,
         pid: Option<&str>,

@@ -19,8 +19,6 @@ export default definePackage({
         "account.create",
         "fs.read",
         "fs.write",
-        "sys.config.get",
-        "sys.config.set",
         "sys.device.list",
         "sys.device.get",
         "sys.device.update",

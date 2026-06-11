@@ -69,7 +69,7 @@ trust as part of the secret boundary.
 ## Authorization
 
 Capabilities are group based. The Kernel stores grants such as `fs.*`,
-`shell.*`, `proc.*`, `sys.config.get`, or `*` in `group_capabilities`. Every
+`shell.*`, `proc.*`, `sys.token.create`, or `*` in `group_capabilities`. Every
 normal syscall is rejected unless the caller's resolved capabilities match the
 exact syscall, the syscall domain wildcard, or `*`.
 
@@ -83,11 +83,11 @@ Default groups are intentionally OS-like:
 - `services` (`gid 102`) receives `adapter.*`.
 
 Capabilities are necessary but not always sufficient. Handlers also enforce
-object ownership. Non-root users can access only their own processes and
-owned filesystem paths. Non-root config reads include their own `users/{uid}/...` keys and
-non-sensitive `config/...` keys; sensitive key names such as `api_key`,
-`secret`, `token`, and `password` are hidden. Non-root config writes are limited
-to user-overridable `users/{uid}/ai/...` keys.
+object ownership. Non-root users can access only their own processes and owned
+filesystem paths. Config access goes through `/sys/config/*` and
+`/sys/users/{uid}/*`, where the virtual file metadata is checked with the same
+uid/gid/mode rules as the rest of the filesystem. Sensitive system config files
+such as `api_key`, `secret`, `token`, and `password` are root-readable only.
 
 ## Files and Shell
 

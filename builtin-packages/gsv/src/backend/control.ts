@@ -15,13 +15,10 @@ import type {
   RevokeAccessTokenArgs,
   TokenKind,
 } from "../app/features/settings/types";
+import { loadConfigEntries, writeConfigValue } from "./config-files";
 
 type ViewerRuntime = {
   viewer?: PackageViewerBinding;
-};
-
-type ConfigPayload = {
-  entries?: Array<Record<string, unknown>>;
 };
 
 type TokenListPayload = {
@@ -41,11 +38,11 @@ export async function loadAdministrationState(
   runtime: ViewerRuntime,
 ): Promise<AdministrationState> {
   const [configResult, tokenResult, linkResult] = await Promise.all([
-    kernel.request("sys.config.get", {}) as Promise<ConfigPayload>,
+    loadConfigEntries(kernel),
     kernel.request("sys.token.list", {}) as Promise<TokenListPayload>,
     kernel.request("sys.link.list", {}) as Promise<LinkListPayload>,
   ]);
-  const configEntries = normalizeConfigEntries(Array.isArray(configResult.entries) ? configResult.entries : []);
+  const configEntries = normalizeConfigEntries(configResult);
   return {
     viewer: resolveViewer(runtime),
     configEntries,
@@ -65,10 +62,7 @@ export async function applyConfigEntries(
   args: ApplyConfigArgs,
 ): Promise<AdministrationState> {
   for (const entry of args.entries ?? []) {
-    await kernel.request("sys.config.set", {
-      key: normalizeRequired(entry.key, "key"),
-      value: entry.value ?? "",
-    });
+    await writeConfigValue(kernel, normalizeRequired(entry.key, "key"), entry.value ?? "");
   }
   return loadAdministrationState(kernel, runtime);
 }
@@ -155,7 +149,7 @@ function resolveViewer(runtime: ViewerRuntime): AdministrationViewer {
   };
 }
 
-function normalizeConfigEntries(entries: Array<Record<string, unknown>>): ConfigEntry[] {
+function normalizeConfigEntries(entries: Array<{ key?: unknown; value?: unknown }>): ConfigEntry[] {
   return entries
     .map((entry) => ({
       key: String(entry.key ?? ""),

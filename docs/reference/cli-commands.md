@@ -160,7 +160,8 @@ gsv config --local get KEY
 gsv config --local set KEY VALUE
 ```
 
-Without `--local`, commands use Kernel `sys.config.get` and `sys.config.set`.
+Without `--local`, commands use Kernel `fs.read` and `fs.write` against
+`/sys/config/*` and `/sys/users/*`.
 Keys use ConfigStore paths, for example:
 
 ```bash
@@ -169,8 +170,8 @@ gsv config set users/1000/ai/model gpt-4.1-mini
 ```
 
 Omit `KEY` on remote `get` to list visible entries. Sensitive remote values are
-masked for non-root users. Non-root writes are limited to their own user
-overrides, currently `users/{uid}/ai/*`.
+masked by the CLI when readable. Remote access follows the virtual file modes
+on `/sys/config/*` and `/sys/users/*`.
 
 With `--local`, commands edit `~/.config/gsv/config.toml`. Supported local keys:
 `gateway.url`, `gateway.username`, `gateway.token`, `gateway.session_token`,
