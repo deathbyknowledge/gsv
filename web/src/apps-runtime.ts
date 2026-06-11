@@ -208,10 +208,22 @@ function createWebAppInstance(manifest: AppManifest, gatewayClient: GatewayClien
     }
   };
 
+  const destroyActiveFrameControllers = (): void => {
+    runtimeStatusController?.destroy();
+    runtimeStatusController = null;
+    focusController?.destroy();
+    focusController = null;
+    bridge?.destroy();
+    bridge = null;
+  };
+
   return {
     mount: async (container, context) => {
       const generation = ++mountGeneration;
       activeLoader?.destroy();
+      activeLoader = null;
+      detachActiveClient();
+      destroyActiveFrameControllers();
       const loader = createAppLaunchLoader({
         appName: manifest.name,
         route: context.route,
@@ -257,7 +269,6 @@ function createWebAppInstance(manifest: AppManifest, gatewayClient: GatewayClien
         return;
       }
 
-      detachActiveClient();
       activeSessionId = launch.sessionId;
       activeClientId = launch.clientId;
 
@@ -270,9 +281,7 @@ function createWebAppInstance(manifest: AppManifest, gatewayClient: GatewayClien
       iframe.style.display = "block";
       iframe.setAttribute("allow", "clipboard-read; clipboard-write");
 
-      bridge?.destroy();
-      focusController?.destroy();
-      runtimeStatusController?.destroy();
+      destroyActiveFrameControllers();
       loader.setPhase("frame", "Preparing secure frame");
       runtimeStatusController = attachIframeRuntimeStatus(iframe, loader);
       focusController = attachIframeInteractionFocus(iframe, context.requestFocus);
@@ -290,12 +299,7 @@ function createWebAppInstance(manifest: AppManifest, gatewayClient: GatewayClien
       detachActiveClient();
       activeLoader?.destroy();
       activeLoader = null;
-      runtimeStatusController?.destroy();
-      runtimeStatusController = null;
-      focusController?.destroy();
-      focusController = null;
-      bridge?.destroy();
-      bridge = null;
+      destroyActiveFrameControllers();
       void manifest;
     },
   };
