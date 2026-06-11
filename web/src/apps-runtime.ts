@@ -330,8 +330,8 @@ function createWebAppInstance(manifest: AppManifest, gatewayClient: GatewayClien
         setDirty: context.setDirty,
         requestNewWindow: context.requestNewWindow,
       });
-      loader.attachIframe(iframe);
       iframe.src = launch.launchUrl;
+      loader.attachIframe(iframe);
     },
     terminate: () => {
       mountGeneration += 1;
