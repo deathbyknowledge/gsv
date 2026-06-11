@@ -4,6 +4,7 @@ import {
   handlePkgInstall,
   handlePkgList,
   handlePkgPublicList,
+  handlePkgPublicSet,
   handlePkgRemoteAdd,
   handlePkgRemoteList,
   handlePkgRemoteRemove,
@@ -107,6 +108,28 @@ function makeRootIdentity() {
 }
 
 describe("pkg syscalls", () => {
+  it("stores public repo state as repo visibility metadata", () => {
+    const config = makeConfig();
+    const ctx = {
+      config,
+      identity: makeRootIdentity(),
+    } as unknown as KernelContext;
+
+    expect(handlePkgPublicSet({ repo: "alice/weather", public: true }, ctx)).toEqual({
+      changed: true,
+      repo: "alice/weather",
+      public: true,
+    });
+    expect(config.get("repos/alice/weather/visibility")).toBe("public");
+
+    expect(handlePkgPublicSet({ repo: "alice/weather", public: false }, ctx)).toEqual({
+      changed: true,
+      repo: "alice/weather",
+      public: false,
+    });
+    expect(config.get("repos/alice/weather/visibility")).toBeNull();
+  });
+
   it("surfaces profile capabilities in package summaries", () => {
     const record = {
       ...makeInstalledPackageRecord({

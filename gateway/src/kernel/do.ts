@@ -92,6 +92,7 @@ import {
 } from "../protocol/app-frame";
 import type { AppClientSessionContext } from "../protocol/app-session";
 import { listLocalPublicPackages } from "./pkg";
+import { isRepoPublic } from "./repo-visibility";
 import { handleProcSpawn } from "./proc-handlers";
 import { ensureDefaultConversationExecutor } from "./agents";
 import { handleShellExec } from "../drivers/native/shell";
@@ -598,7 +599,7 @@ export class Kernel extends Host<Env> {
     const repo = input.repo.trim();
     const username = input.username?.trim() ?? "";
     const credential = input.credential?.trim() ?? "";
-    const isPublicRead = !input.write && this.config.get(`config/pkg/public-repos/${owner}/${repo}`) === "true";
+    const isPublicRead = !input.write && isRepoPublic({ owner, repo }, this.config);
 
     if (!owner || !repo) {
       return { ok: false, status: 401, message: "Authentication required" };

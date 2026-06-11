@@ -218,7 +218,7 @@ describe("handleSysBootstrap", () => {
       ],
     );
     expect(ctx.config.set).toHaveBeenCalledWith("repos/root/gsv-manual/description", "GSV Manual");
-    expect(ctx.config.set).toHaveBeenCalledWith("config/pkg/public-repos/root/gsv-manual", "true");
+    expect(ctx.config.set).toHaveBeenCalledWith("repos/root/gsv-manual/visibility", "public");
     expect(ctx.packages.seedBuiltinPackages).toHaveBeenCalledWith([{ name: "chat-seed" }]);
     expect(inferDefaultCliChannelMock).toHaveBeenCalledWith("main");
     expect(mirrorCliChannelMock).toHaveBeenCalledTimes(2);

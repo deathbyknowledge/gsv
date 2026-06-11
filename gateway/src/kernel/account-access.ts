@@ -49,10 +49,10 @@ export function canOwnerRunAsAccount(
 }
 
 /**
- * Whether `ownerUid` may use the home-knowledge (ripgit) overlay for `targetUsername`'s
+ * Whether `ownerUid` may use the account-home (ripgit) overlay for `targetUsername`'s
  * home tree. Used when a human edits another account's `~/context.d` via fs.*.
  */
-export function canOwnerAccessHomeKnowledge(
+export function canOwnerAccessAccountHome(
   auth: AuthStore,
   ownerUid: number,
   viewerUsername: string,

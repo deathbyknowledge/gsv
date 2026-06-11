@@ -14,9 +14,9 @@
 
 import type { AccountKind, ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import { hashPassword, makeShadowEntry } from "../auth/shadow";
-import { ensureHomeStorageLayout } from "./home-knowledge";
+import { ensureAccountHomeLayout } from "./account-home";
 import { RipgitClient, type RipgitApplyOp } from "../fs/ripgit/client";
-import { homeKnowledgeRepoRef } from "../fs/ripgit/repos";
+import { accountHomeRepoRef } from "../fs/ripgit/repos";
 import type { KernelContext } from "./context";
 import type { AuthStore } from "./auth-store";
 import type { PasswdEntry } from "../auth/passwd";
@@ -197,7 +197,7 @@ export async function createAccount(
     ? ownerUsername
     : identity.username;
 
-  await ensureHomeStorageLayout(env, identity, {
+  await ensureAccountHomeLayout(env, identity, {
     userContextUsername,
     seedPromptContext: input.kind === "agent",
     seedBootContext: input.personalAgentOf != null,
@@ -239,7 +239,7 @@ export async function seedContextFile(
 
   const path = `context.d/${name}`;
   const client = new RipgitClient(env.RIPGIT);
-  const repo = homeKnowledgeRepoRef(identity.username);
+  const repo = accountHomeRepoRef(identity.username);
   const existing = await client.readPath(repo, path);
   if (existing.kind !== "missing") return;
 
@@ -258,7 +258,7 @@ export async function seedContextFile(
   );
 }
 
-/** Write/overwrite an account context.d/<name> file in home-knowledge storage. */
+/** Write/overwrite an account context.d/<name> file in account-home storage. */
 export async function writeContextFile(
   env: Pick<Env, "STORAGE" | "RIPGIT">,
   identity: ProcessIdentity,
@@ -268,7 +268,7 @@ export async function writeContextFile(
   if (!env.RIPGIT) return;
 
   const client = new RipgitClient(env.RIPGIT);
-  const repo = homeKnowledgeRepoRef(identity.username);
+  const repo = accountHomeRepoRef(identity.username);
   await client.apply(
     repo,
     identity.username,
@@ -282,7 +282,7 @@ export async function writeContextFile(
   );
 }
 
-/** Remove an account context.d/<name> file when it exists in home-knowledge storage. */
+/** Remove an account context.d/<name> file when it exists in account-home storage. */
 export async function removeContextFile(
   env: Pick<Env, "STORAGE" | "RIPGIT">,
   identity: ProcessIdentity,
@@ -292,7 +292,7 @@ export async function removeContextFile(
 
   const path = `context.d/${name}`;
   const client = new RipgitClient(env.RIPGIT);
-  const repo = homeKnowledgeRepoRef(identity.username);
+  const repo = accountHomeRepoRef(identity.username);
   const existing = await client.readPath(repo, path);
   if (existing.kind === "missing") return;
 

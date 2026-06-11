@@ -6,7 +6,7 @@ import { resolvePromptProviders } from "./selection";
 import type { PromptAssemblyInput, PromptContextProvider } from "./types";
 import type { AiConfigResult } from "../../syscalls/ai";
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
-import { homeKnowledgeRepoRef } from "../../fs";
+import { accountHomeRepoRef } from "../../fs";
 
 const CONFIG: AiConfigResult = {
   provider: "anthropic",
@@ -273,7 +273,7 @@ describe("createSkillIndexProvider", () => {
 describe("createHomeContextProvider", () => {
   it("loads sorted context files within budget", async () => {
     const provider = createHomeContextProvider();
-    const homeRepo = homeKnowledgeRepoRef(IDENTITY.username);
+    const homeRepo = accountHomeRepoRef(IDENTITY.username);
     const sections = await provider.collect(
       makeInput({
         config: { ...CONFIG, maxContextBytes: 20 },

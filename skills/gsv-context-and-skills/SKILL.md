@@ -9,10 +9,11 @@ description: Guide on how context and skills work in GSV and how to add/edit the
 
 GSV assembles process context from explicit, inspectable sources:
 
-1. Profile context from `config/ai/profile/{profile}/context.d/*.md` or a user profile under `~/profiles.d/{profile}/context.d/*.md`.
-2. Home context from `~/context.d/*.md`.
+1. System context from `/sys/config/ai/context.d/*.md`.
+2. Account context from `~/context.d/*.md`.
 3. A compact top-level index of available skills from layered `skills.d` directories.
-4. Process context supplied by the current assignment or runtime.
+4. Package profile context for package-provisioned agent accounts, when a package profile owns the run-as account.
+5. Process context supplied by the current assignment or runtime.
 
 The skill index is for progressive disclosure. It shows only top-level skills, not full bodies, nested child skills, or long source paths. Use `skills list <skill>` or `skills tree <skill>` to disclose children under a parent, then `skills show <skill>` to read the relevant page.
 
@@ -40,10 +41,9 @@ A parent skill should describe the system area and point to narrower nested skil
 
 ## Where Information Belongs
 
-- `config/ai/profile/{profile}/context.d/*.md`: short operator-managed role and runtime guidance.
-- `~/profiles.d/{profile}/context.d/*.md`: user-authored worker profile specialization, available through spawn and schedules.
 - `~/context.d/*.md`: concise user-global standing context useful to most processes.
 - `~/skills.d/`: reusable user-level process workflows.
+- Package `profiles/<name>/context.d/*.md`: package-owned context for package profile agent accounts.
 - `/src/packages/{package}/skills.d/`: workflows shipped by visible package source.
 - Wiki repos: durable searchable reference material, not always-loaded prompt context.
 - Explicit project files or repositories: task-local continuity, decisions, open loops, and handoff state.

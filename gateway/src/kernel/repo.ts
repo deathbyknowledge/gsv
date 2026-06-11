@@ -23,8 +23,9 @@ import type {
 } from "@gsv/protocol/syscalls/repositories";
 import type { KernelContext } from "./context";
 import { RipgitClient, type RipgitApplyOp, type RipgitRepoRef } from "../fs/ripgit/client";
-import { homeKnowledgeRepoRef } from "../fs/ripgit/repos";
+import { accountHomeRepoRef } from "../fs/ripgit/repos";
 import { visiblePackageScopesForActor } from "./packages";
+import { isRepoPublic } from "./repo-visibility";
 
 const TEXT_DECODER = new TextDecoder();
 const STRICT_TEXT_DECODER = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
@@ -62,7 +63,7 @@ export function handleRepoList(
     });
   };
 
-  add(toSummary(homeKnowledgeRepoRef(identity.process.username), "home", ctx));
+  add(toSummary(accountHomeRepoRef(identity.process.username), "home", ctx));
 
   for (const record of ctx.packages.list({ scopes: visiblePackageScopesForActor(identity.process) })) {
     const repo = parseRepoSlug(record.manifest.source.repo);
@@ -389,7 +390,7 @@ function canReadRepo(rawRepo: string, ctx: KernelContext): boolean {
   if (canWriteRepo(repoSlug(repo), ctx)) {
     return true;
   }
-  if (isRepoPublic(repoSlug(repo), ctx)) {
+  if (isRepoPublic(repoSlug(repo), ctx.config)) {
     return true;
   }
   const scopes = visiblePackageScopesForActor(ctx.identity?.process);
@@ -417,7 +418,7 @@ function toSummary(
     name: repo.repo,
     kind,
     writable: canWriteRepo(slug, ctx),
-    public: isRepoPublic(slug, ctx),
+    public: isRepoPublic(slug, ctx.config),
   };
 }
 
@@ -630,10 +631,6 @@ function clampContext(context: number | undefined): number {
     return 3;
   }
   return Math.max(0, Math.min(20, Math.trunc(context)));
-}
-
-function isRepoPublic(repo: string, ctx: KernelContext): boolean {
-  return ctx.config.get(`config/pkg/public-repos/${repo}`) === "true";
 }
 
 function registerRepo(

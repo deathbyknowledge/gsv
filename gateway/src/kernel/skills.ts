@@ -1,6 +1,6 @@
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import {
-  homeKnowledgeRepoRef,
+  accountHomeRepoRef,
   packageSourcePathNameForRecord,
   packageSourcePathNameMap,
   packageSourcePathName,
@@ -239,7 +239,7 @@ async function collectRipgitRuntimeSkillFiles(
   for (const layer of homeLayers) {
     files.push(...await collectRipgitSkillFiles(
       ripgit,
-      homeKnowledgeRepoRef(layer.identity.username),
+      accountHomeRepoRef(layer.identity.username),
       "skills.d",
       {
         kind: "home",

@@ -133,14 +133,14 @@ JSON falls back to the runtime default policy.
 | `config/process/init_label` | `init ({username})` | Default init process label template. |
 | `config/process/max_per_user` | `0` | Maximum processes per user. `0` means unlimited. |
 
-## Package Config
+## Package and Repo Config
 
-Package-related config is also stored in the same key/value store:
+Package remotes and repo metadata are also stored in the same key/value store:
 
 | Key Pattern | Description |
 |---|---|
 | `users/{uid}/pkg/remotes/{name}` | User package catalog remotes managed by `pkg.remote.*`. |
-| `config/pkg/public-repos/{owner}/{repo}` | Public package repo allowlist managed by `pkg.public.*`. |
+| `repos/{owner}/{repo}/visibility` | Repo visibility metadata. Missing means private; `public` allows read-only public access. |
 
 ## Practical Notes
 

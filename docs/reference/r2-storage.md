@@ -88,7 +88,7 @@ ripgit stores versioned content. It is used anywhere history, diffs, search, or 
 
 | Repository | Ref Helper | Mounted At | Purpose |
 |---|---|---|---|
-| `{username}/home` | `homeKnowledgeRepoRef(username)` | `~/context.d`, `~/skills.d` | Home context and account-local skills. |
+| `{username}/home` | `accountHomeRepoRef(username)` | `~/context.d`, `~/skills.d` | Home context and account-local skills. |
 | Wiki repos, for example `root/gsv-manual` or `{owner}/{wiki}` | repo manifest `wiki.json` | Wiki app and `repo.*` | Durable markdown knowledge databases. |
 | Package source repos, for example `root/gsv` or `{owner}/{repo}` | package manifest `source.repo` | `/src/packages/{packageName}`, `repo.*` | Installed package source, review context, and generic repo operations. |
 

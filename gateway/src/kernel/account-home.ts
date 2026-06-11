@@ -1,5 +1,5 @@
 import { RipgitClient, type RipgitApplyOp } from "../fs/ripgit/client";
-import { homeKnowledgeRepoRef } from "../fs/ripgit/repos";
+import { accountHomeRepoRef } from "../fs/ripgit/repos";
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import {
   DEFAULT_BOOT_CONTEXT_TEMPLATE,
@@ -11,7 +11,7 @@ import {
 const TEXT_ENCODER = new TextEncoder();
 const TEXT_DECODER = new TextDecoder();
 
-export async function ensureHomeStorageLayout(
+export async function ensureAccountHomeLayout(
   env: Pick<Env, "STORAGE" | "RIPGIT">,
   identity: ProcessIdentity,
   options: {
@@ -28,7 +28,7 @@ export async function ensureHomeStorageLayout(
   }
 
   const client = new RipgitClient(env.RIPGIT);
-  const repo = homeKnowledgeRepoRef(identity.username);
+  const repo = accountHomeRepoRef(identity.username);
   const [
     contextDir,
     bootContext,

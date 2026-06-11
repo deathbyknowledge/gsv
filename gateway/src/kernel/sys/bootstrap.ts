@@ -17,6 +17,7 @@ import {
 } from "../packages";
 import { provisionEnabledPackagesForCaller } from "../package-agents";
 import { seedRepoSkillsToHome } from "./skills-seed";
+import { setRepoVisibility } from "../repo-visibility";
 
 const DEFAULT_GSV_UPSTREAM_URL = "https://github.com/deathbyknowledge/gsv";
 const DEFAULT_GSV_UPSTREAM_REF = "main";
@@ -378,7 +379,7 @@ function registerBootstrapRepo(
 }
 
 function setPublicRepo(ctx: KernelContext, repo: Pick<RipgitRepoRef, "owner" | "repo">): void {
-  ctx.config.set(`config/pkg/public-repos/${repo.owner}/${repo.repo}`, "true");
+  setRepoVisibility(repo, "public", ctx.config);
 }
 
 function repoConfigKey(repo: Pick<RipgitRepoRef, "owner" | "repo">, field: string): string {

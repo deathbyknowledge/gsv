@@ -7,7 +7,7 @@ import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import type { AuthStore } from "../../kernel/auth-store";
 import { accountIdentity } from "../../kernel/accounts";
 import {
-  canOwnerAccessHomeKnowledge,
+  canOwnerAccessAccountHome,
   homeUsernameFromPath,
 } from "../../kernel/account-access";
 import type { ExtendedMountStat, FsSearchBackendResult, MountBackend } from "../mount";
@@ -16,7 +16,7 @@ import {
   RipgitClient,
   type RipgitPathResult,
 } from "../ripgit/client";
-import { homeKnowledgeRepoRef } from "../ripgit/repos";
+import { accountHomeRepoRef } from "../ripgit/repos";
 import { normalizePath } from "../utils";
 
 const DIRECTORY_MARKER = ".dir";
@@ -29,29 +29,27 @@ type HomePathKind =
   | "context-path"
   | "skills-root"
   | "skills-path"
-  | "profiles-root"
-  | "profiles-path"
   | "other";
 
-export type HomeKnowledgeBackendOptions = {
+export type AccountHomeBackendOptions = {
   auth?: AuthStore;
   /** Owning human uid for delegated agent-home routing. Defaults to viewer uid. */
   ownerUid?: number;
   isRoot?: boolean;
 };
 
-export function createHomeKnowledgeBackend(
+export function createAccountHomeBackend(
   bucket: R2Bucket,
   ripgitBinding: Fetcher | undefined,
   identity: ProcessIdentity,
-  options?: HomeKnowledgeBackendOptions,
+  options?: AccountHomeBackendOptions,
 ): MountBackend | null {
   if (!ripgitBinding) {
     return null;
   }
 
   const client = new RipgitClient(ripgitBinding);
-  const primary = new HomeKnowledgeMountBackend(
+  const primary = new AccountHomeMountBackend(
     client,
     new R2MountBackend(bucket, identity),
     identity,
@@ -61,7 +59,7 @@ export function createHomeKnowledgeBackend(
     return primary;
   }
 
-  return new DelegatingHomeKnowledgeMountBackend(
+  return new DelegatingAccountHomeMountBackend(
     primary,
     client,
     bucket,
@@ -72,7 +70,7 @@ export function createHomeKnowledgeBackend(
   );
 }
 
-class HomeKnowledgeMountBackend implements MountBackend {
+class AccountHomeMountBackend implements MountBackend {
   constructor(
     private readonly client: RipgitClient,
     private readonly fallback: R2MountBackend,
@@ -80,7 +78,7 @@ class HomeKnowledgeMountBackend implements MountBackend {
   ) {}
 
   private get repo() {
-    return homeKnowledgeRepoRef(this.identity.username);
+    return accountHomeRepoRef(this.identity.username);
   }
 
   private get home() {
@@ -93,10 +91,6 @@ class HomeKnowledgeMountBackend implements MountBackend {
 
   private get skillsRoot() {
     return normalizePath(`${this.identity.home}/skills.d`);
-  }
-
-  private get profilesRoot() {
-    return normalizePath(`${this.identity.home}/profiles.d`);
   }
 
   handles(path: string): boolean {
@@ -146,7 +140,7 @@ class HomeKnowledgeMountBackend implements MountBackend {
       return;
     }
 
-    if (kind === "context-root" || kind === "skills-root" || kind === "profiles-root") {
+    if (kind === "context-root" || kind === "skills-root") {
       throw new Error(`EISDIR: illegal operation on a directory, write '${normalized}'`);
     }
 
@@ -166,7 +160,7 @@ class HomeKnowledgeMountBackend implements MountBackend {
       return;
     }
 
-    if (kind === "context-root" || kind === "skills-root" || kind === "profiles-root") {
+    if (kind === "context-root" || kind === "skills-root") {
       throw new Error(`EISDIR: illegal operation on a directory, append '${normalized}'`);
     }
 
@@ -189,7 +183,7 @@ class HomeKnowledgeMountBackend implements MountBackend {
     if (kind === "other") {
       return this.fallback.exists(normalized);
     }
-    if (kind === "context-root" || kind === "skills-root" || kind === "profiles-root") {
+    if (kind === "context-root" || kind === "skills-root") {
       return true;
     }
 
@@ -219,7 +213,7 @@ class HomeKnowledgeMountBackend implements MountBackend {
     if (kind === "other") {
       return this.fallback.stat(normalized);
     }
-    if (kind === "context-root" || kind === "skills-root" || kind === "profiles-root") {
+    if (kind === "context-root" || kind === "skills-root") {
       return this.makeDirectoryStat();
     }
 
@@ -265,7 +259,7 @@ class HomeKnowledgeMountBackend implements MountBackend {
     const normalized = normalizePath(path);
     const kind = this.classify(normalized);
 
-    if (kind === "home" || kind === "context-root" || kind === "skills-root" || kind === "profiles-root") {
+    if (kind === "home" || kind === "context-root" || kind === "skills-root") {
       return;
     }
     if (kind === "other") {
@@ -294,7 +288,6 @@ class HomeKnowledgeMountBackend implements MountBackend {
       }
       entries.add("context.d");
       entries.add("skills.d");
-      entries.add("profiles.d");
       return [...entries].sort();
     }
 
@@ -317,7 +310,7 @@ class HomeKnowledgeMountBackend implements MountBackend {
     }
 
     if (entries.size === 0) {
-      if (kind === "context-root" || kind === "skills-root" || kind === "profiles-root") {
+      if (kind === "context-root" || kind === "skills-root") {
         return [];
       }
       throw new Error(`ENOENT: no such file or directory, scandir '${normalized}'`);
@@ -337,7 +330,7 @@ class HomeKnowledgeMountBackend implements MountBackend {
       await this.fallback.rm(normalized, options);
       return;
     }
-    if (kind === "context-root" || kind === "skills-root" || kind === "profiles-root") {
+    if (kind === "context-root" || kind === "skills-root") {
       const entries = await this.readdir(normalized);
       if (entries.length > 0 && !options?.recursive) {
         throw new Error(`ENOTEMPTY: directory not empty, rmdir '${normalized}'`);
@@ -427,7 +420,7 @@ class HomeKnowledgeMountBackend implements MountBackend {
       await this.fallback.symlink(target, normalized);
       return;
     }
-    if (kind === "context-root" || kind === "skills-root" || kind === "profiles-root") {
+    if (kind === "context-root" || kind === "skills-root") {
       throw new Error(`EISDIR: illegal operation on a directory, symlink '${normalized}'`);
     }
 
@@ -486,12 +479,6 @@ class HomeKnowledgeMountBackend implements MountBackend {
     if (path.startsWith(`${this.skillsRoot}/`)) {
       return "skills-path";
     }
-    if (path === this.profilesRoot) {
-      return "profiles-root";
-    }
-    if (path.startsWith(`${this.profilesRoot}/`)) {
-      return "profiles-path";
-    }
     return "other";
   }
 
@@ -506,9 +493,7 @@ class HomeKnowledgeMountBackend implements MountBackend {
     return path === this.contextRoot
       || path.startsWith(`${this.contextRoot}/`)
       || path === this.skillsRoot
-      || path.startsWith(`${this.skillsRoot}/`)
-      || path === this.profilesRoot
-      || path.startsWith(`${this.profilesRoot}/`);
+      || path.startsWith(`${this.skillsRoot}/`);
   }
 
   private async readOverlay(path: string): Promise<RipgitPathResult> {
@@ -529,11 +514,6 @@ class HomeKnowledgeMountBackend implements MountBackend {
       return null;
     }
     return result.entries.find((entry) => entry.name === name) ?? null;
-  }
-
-  private async pathExistsInRepo(relativePath: string): Promise<boolean> {
-    const result = await this.client.readPath(this.repo, relativePath);
-    return result.kind !== "missing";
   }
 
   private async searchRepo(query: string, prefix?: string): Promise<FsSearchBackendResult["matches"]> {
@@ -597,11 +577,11 @@ class HomeKnowledgeMountBackend implements MountBackend {
  * to manage that agent. Non-overlay files in the target home stay on the
  * viewer's normal R2 permission path.
  */
-class DelegatingHomeKnowledgeMountBackend implements MountBackend {
-  private readonly delegates = new Map<string, HomeKnowledgeMountBackend>();
+class DelegatingAccountHomeMountBackend implements MountBackend {
+  private readonly delegates = new Map<string, AccountHomeMountBackend>();
 
   constructor(
-    private readonly primary: HomeKnowledgeMountBackend,
+    private readonly primary: AccountHomeMountBackend,
     private readonly client: RipgitClient,
     private readonly bucket: R2Bucket,
     private readonly viewerIdentity: ProcessIdentity,
@@ -675,7 +655,7 @@ class DelegatingHomeKnowledgeMountBackend implements MountBackend {
     return this.require(path).search(path, query, include);
   }
 
-  private require(path: string): HomeKnowledgeMountBackend {
+  private require(path: string): AccountHomeMountBackend {
     const backend = this.resolve(path);
     if (!backend) {
       throw new Error(`ENOENT: no such file or directory, open '${normalizePath(path)}'`);
@@ -683,7 +663,7 @@ class DelegatingHomeKnowledgeMountBackend implements MountBackend {
     return backend;
   }
 
-  private resolve(path: string): HomeKnowledgeMountBackend | null {
+  private resolve(path: string): AccountHomeMountBackend | null {
     const normalized = normalizePath(path);
     if (this.primary.handles(normalized)) {
       return this.primary;
@@ -694,7 +674,7 @@ class DelegatingHomeKnowledgeMountBackend implements MountBackend {
       return null;
     }
 
-    if (!canOwnerAccessHomeKnowledge(
+    if (!canOwnerAccessAccountHome(
       this.auth,
       this.ownerUid,
       this.viewerIdentity.username,
@@ -710,7 +690,7 @@ class DelegatingHomeKnowledgeMountBackend implements MountBackend {
     let delegate = this.delegates.get(username);
     if (!delegate) {
       const targetIdentity = accountIdentity(this.auth, entry);
-      delegate = new HomeKnowledgeMountBackend(
+      delegate = new AccountHomeMountBackend(
         this.client,
         new R2MountBackend(this.bucket, this.viewerIdentity),
         targetIdentity,

@@ -1,6 +1,6 @@
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import {
-  homeKnowledgeRepoRef,
+  accountHomeRepoRef,
   RipgitClient,
   type RipgitApplyOp,
   type RipgitRepoRef,
@@ -22,7 +22,7 @@ export async function seedRepoSkillsToHome(
   identity: ProcessIdentity,
 ): Promise<BootstrapSkillSeedResult> {
   const sourceFiles = await listSourceSkillFiles(ripgit, sourceRepo, SOURCE_SKILLS_ROOT);
-  const homeRepo = homeKnowledgeRepoRef(identity.username);
+  const homeRepo = accountHomeRepoRef(identity.username);
   const ops: RipgitApplyOp[] = [];
   let skipped = 0;
 

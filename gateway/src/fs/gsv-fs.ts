@@ -51,7 +51,7 @@ export class GsvFs implements IFileSystem {
   private readonly r2Backend: MountBackend;
   private readonly kernelBackend: MountBackend;
   private readonly sourceMountBackend: MountBackend | null;
-  private readonly homeKnowledgeBackend: MountBackend | null;
+  private readonly accountHomeBackend: MountBackend | null;
   private readonly packageBackend: MountBackend | null;
 
   constructor(
@@ -60,7 +60,7 @@ export class GsvFs implements IFileSystem {
     kernel?: KernelRefs,
     selfPid?: string,
     sourceMountBackend?: MountBackend | null,
-    homeKnowledgeBackend?: MountBackend | null,
+    accountHomeBackend?: MountBackend | null,
     packageBackend?: MountBackend | null,
   ) {
     this.identity = identity;
@@ -68,7 +68,7 @@ export class GsvFs implements IFileSystem {
     this.r2Backend = new R2MountBackend(bucket, identity);
     this.kernelBackend = new KernelMountBackend(identity, this.kernel, selfPid ?? null);
     this.sourceMountBackend = sourceMountBackend ?? null;
-    this.homeKnowledgeBackend = homeKnowledgeBackend ?? null;
+    this.accountHomeBackend = accountHomeBackend ?? null;
     this.packageBackend = packageBackend ?? null;
   }
 
@@ -422,8 +422,8 @@ export class GsvFs implements IFileSystem {
       return this.sourceMountBackend;
     }
 
-    if (this.homeKnowledgeBackend?.handles(path)) {
-      return this.homeKnowledgeBackend;
+    if (this.accountHomeBackend?.handles(path)) {
+      return this.accountHomeBackend;
     }
 
     if (isPackageMountPath(path)) {
@@ -455,7 +455,7 @@ export class GsvFs implements IFileSystem {
       entries.add("var");
     }
 
-    if (this.homeKnowledgeBackend) {
+    if (this.accountHomeBackend) {
       const homeRoot = this.identity.home.replace(/^\/+/, "").split("/", 1)[0];
       if (homeRoot) {
         entries.add(homeRoot);

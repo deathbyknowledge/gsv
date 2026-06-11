@@ -9,7 +9,7 @@
 
 import { GsvFs } from "../../fs/gsv-fs";
 import {
-  createHomeKnowledgeBackend,
+  createAccountHomeBackend,
   createPackageBackend,
   createProcessSourceBackend,
   RipgitClient,
@@ -120,7 +120,7 @@ function makeFs(ctx: KernelContext): GsvFs {
     },
     ctx.processId ?? undefined,
     sourceBackend,
-    createHomeKnowledgeBackend(ctx.env.STORAGE, ctx.env.RIPGIT, identity, {
+    createAccountHomeBackend(ctx.env.STORAGE, ctx.env.RIPGIT, identity, {
       auth: ctx.auth,
       ownerUid,
       isRoot: identity.uid === 0,

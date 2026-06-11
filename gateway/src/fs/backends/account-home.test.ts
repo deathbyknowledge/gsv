@@ -3,7 +3,7 @@ import { env } from "cloudflare:test";
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import { packageAgentAccessGroup } from "../../kernel/package-agents";
 import { GsvFs } from "../gsv-fs";
-import { createHomeKnowledgeBackend } from "./home-knowledge";
+import { createAccountHomeBackend } from "./account-home";
 
 const ALICE: ProcessIdentity = {
   uid: 1000,
@@ -129,7 +129,7 @@ async function clearHomeStorage(): Promise<void> {
 }
 
 function createDelegatingBackend() {
-  return createHomeKnowledgeBackend(env.STORAGE, fakeRipgit, ALICE, {
+  return createAccountHomeBackend(env.STORAGE, fakeRipgit, ALICE, {
     auth: auth as never,
     ownerUid: ALICE.uid,
     isRoot: false,
@@ -137,14 +137,14 @@ function createDelegatingBackend() {
 }
 
 function createPersonalAgentBackend() {
-  return createHomeKnowledgeBackend(env.STORAGE, fakeRipgit, PERSONAL_AGENT, {
+  return createAccountHomeBackend(env.STORAGE, fakeRipgit, PERSONAL_AGENT, {
     auth: auth as never,
     ownerUid: ALICE.uid,
     isRoot: false,
   });
 }
 
-describe("HomeKnowledgeMountBackend delegated routing", () => {
+describe("AccountHomeMountBackend delegated routing", () => {
   beforeEach(async () => {
     await clearHomeStorage();
   });
@@ -155,8 +155,8 @@ describe("HomeKnowledgeMountBackend delegated routing", () => {
     expect(backend?.handles("/home/wiki-builder")).toBe(true);
     expect(backend?.handles("/home/wiki-builder/context.d/persona.md")).toBe(true);
     expect(backend?.handles("/home/wiki-builder/skills.d/workflow.md")).toBe(true);
-    expect(backend?.handles("/home/wiki-builder/profiles.d/default/notes.md")).toBe(true);
 
+    expect(backend?.handles("/home/wiki-builder/profiles.d/default/notes.md")).toBe(false);
     expect(backend?.handles("/home/wiki-builder/knowledge/inbox/item.md")).toBe(false);
     expect(backend?.handles("/home/wiki-builder/conversations/default/history")).toBe(false);
     expect(backend?.handles("/home/wiki-builder/notes.txt")).toBe(false);
@@ -196,7 +196,6 @@ describe("HomeKnowledgeMountBackend delegated routing", () => {
     await expect(fs.readdir("/home/wiki-builder")).resolves.toEqual([
       "context.d",
       "conversations",
-      "profiles.d",
       "skills.d",
     ]);
   });

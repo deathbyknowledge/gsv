@@ -321,7 +321,7 @@ describe("repo syscalls", () => {
       });
     });
     const ctx = makeContext(fetcher, {
-      "config/pkg/public-repos/bob/public": "true",
+      "repos/bob/public/visibility": "public",
     });
 
     await expect(handleRepoRead({
