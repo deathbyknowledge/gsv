@@ -1,5 +1,6 @@
 import type { ComponentChildren } from "preact";
-import type { FilesDevice } from "./types";
+import { normalizePath, normalizeTarget } from "./domain/paths";
+import type { FilesDevice, FilesMutationPending, FilesPendingNavigation } from "./types";
 
 type Props = {
   targetDraft: string;
@@ -9,6 +10,10 @@ type Props = {
   currentPath: string;
   pathStyle: "absolute" | "relative";
   canGoUp: boolean;
+  pendingNavigation: FilesPendingNavigation | null;
+  pendingMutation: FilesMutationPending | null;
+  openPathDisabled: boolean;
+  searchDisabled: boolean;
   onTargetDraftChange(value: string): void;
   onPathDraftChange(value: string): void;
   onSearchDraftChange(value: string): void;
@@ -20,47 +25,39 @@ type Props = {
   onNavigate(path: string): void;
 };
 
-function normalizeTarget(target: string) {
-  const value = String(target ?? "").trim();
-  return value.length > 0 ? value : "gsv";
-}
-
-function normalizePath(input: string, style: "absolute" | "relative") {
-  const raw = String(input ?? "").replaceAll("\\", "/").trim();
-  const normalized: string[] = [];
-  for (const part of raw.split("/")) {
-    if (!part || part === ".") {
-      continue;
-    }
-    if (part === "..") {
-      normalized.pop();
-      continue;
-    }
-    normalized.push(part);
-  }
-  if (style === "absolute") {
-    return normalized.length > 0 ? `/${normalized.join("/")}` : "/";
-  }
-  return normalized.length > 0 ? normalized.join("/") : ".";
-}
-
 function renderTargetLabel(device: FilesDevice) {
   const suffix = device.online === false ? " · offline" : " · online";
   return `${device.deviceId}${suffix}`;
 }
 
-function renderBreadcrumbButtons(currentPath: string, pathStyle: "absolute" | "relative", onNavigate: (path: string) => void) {
+function renderSpinner() {
+  return <span class="files-spinner is-small" aria-hidden="true" />;
+}
+
+function isPendingBreadcrumb(path: string, pendingNavigation: FilesPendingNavigation | null) {
+  return pendingNavigation?.kind === "directory" && pendingNavigation.entryKind === "directory" && pendingNavigation.path === path;
+}
+
+function renderCrumb(path: string, label: string, title: string, isCurrent: boolean, pendingNavigation: FilesPendingNavigation | null, onNavigate: (path: string) => void) {
+  const isPending = isPendingBreadcrumb(path, pendingNavigation);
+  return (
+    <button type="button" class={`files-crumb${isCurrent ? " is-current" : ""}${isPending ? " is-pending" : ""}`} title={title} disabled={isPending} onClick={() => onNavigate(path)}>
+      {isPending ? renderSpinner() : null}
+      <span class="files-crumb-label">{label}</span>
+    </button>
+  );
+}
+
+function renderBreadcrumbButtons(currentPath: string, pathStyle: "absolute" | "relative", pendingNavigation: FilesPendingNavigation | null, onNavigate: (path: string) => void) {
   const normalized = normalizePath(currentPath, pathStyle);
   const nodes: ComponentChildren[] = [];
 
   if (pathStyle === "absolute") {
     if (normalized === "/") {
-      return <button type="button" class="files-crumb is-current" title="/">/</button>;
+      return renderCrumb("/", "/", "/", true, pendingNavigation, onNavigate);
     }
 
-    nodes.push(
-      <button type="button" class="files-crumb" title="/" onClick={() => onNavigate("/")}>/</button>,
-    );
+    nodes.push(renderCrumb("/", "/", "/", false, pendingNavigation, onNavigate));
 
     let current = "";
     for (const [index, segment] of normalized.split("/").filter(Boolean).entries()) {
@@ -68,33 +65,23 @@ function renderBreadcrumbButtons(currentPath: string, pathStyle: "absolute" | "r
       const nextPath = current;
       const isLast = nextPath === normalized;
       nodes.push(<span class="files-crumb-sep">›</span>);
-      nodes.push(
-        <button type="button" class={`files-crumb${isLast ? " is-current" : ""}`} title={segment} onClick={() => onNavigate(nextPath)}>
-          {segment}
-        </button>,
-      );
+      nodes.push(renderCrumb(nextPath, segment, segment, isLast, pendingNavigation, onNavigate));
     }
     return nodes;
   }
 
   if (normalized === ".") {
-    return <button type="button" class="files-crumb is-current" title="cwd">cwd</button>;
+    return renderCrumb(".", "cwd", "cwd", true, pendingNavigation, onNavigate);
   }
 
-  nodes.push(
-    <button type="button" class="files-crumb" title="cwd" onClick={() => onNavigate(".")}>cwd</button>,
-  );
+  nodes.push(renderCrumb(".", "cwd", "cwd", false, pendingNavigation, onNavigate));
   let current = "";
   for (const segment of normalized.split("/").filter(Boolean)) {
     current = current ? `${current}/${segment}` : segment;
     const nextPath = current;
     const isLast = nextPath === normalized;
     nodes.push(<span class="files-crumb-sep">›</span>);
-    nodes.push(
-      <button type="button" class={`files-crumb${isLast ? " is-current" : ""}`} title={segment} onClick={() => onNavigate(nextPath)}>
-        {segment}
-      </button>,
-    );
+    nodes.push(renderCrumb(nextPath, segment, segment, isLast, pendingNavigation, onNavigate));
   }
   return nodes;
 }
@@ -102,6 +89,12 @@ function renderBreadcrumbButtons(currentPath: string, pathStyle: "absolute" | "r
 export function Toolbar(props: Props) {
   const normalizedTarget = normalizeTarget(props.targetDraft);
   const hasSelectedTarget = normalizedTarget === "gsv" || props.devices.some((device) => device.deviceId === normalizedTarget);
+  const isOpeningPath = props.pendingNavigation?.kind === "path" || props.pendingNavigation?.kind === "target";
+  const isSearching = props.pendingNavigation?.kind === "search";
+  const isCreating = props.pendingMutation?.kind === "create";
+  const hasPendingNavigation = Boolean(props.pendingNavigation);
+  const openPathDisabled = props.openPathDisabled || hasPendingNavigation;
+  const searchDisabled = props.searchDisabled || hasPendingNavigation;
 
   return (
     <section class="files-toolbar">
@@ -138,12 +131,16 @@ export function Toolbar(props: Props) {
         </div>
         <div class="files-toolbar-actions">
           <div class="files-inline-actions">
-            <button type="submit" class="files-icon-btn" aria-label="Open path" title="Open path">↩</button>
+            <button type="submit" class="files-icon-btn" aria-label={isOpeningPath ? "Opening path" : "Open path"} title={isOpeningPath ? "Opening path" : "Open path"} disabled={openPathDisabled}>
+              {isOpeningPath ? renderSpinner() : "↩"}
+            </button>
             <button type="button" class={`files-icon-btn${props.canGoUp ? "" : " is-disabled"}`} aria-label="Go up" title="Go up" onClick={() => props.canGoUp && props.onGoUp()}>
               ↑
             </button>
           </div>
-          <button type="button" class="files-icon-btn" aria-label="Create file" title="Create file" onClick={props.onCreateFile}>＋</button>
+          <button type="button" class="files-icon-btn" aria-label={isCreating ? "Creating file" : "Create file"} title={isCreating ? "Creating file" : "Create file"} disabled={Boolean(props.pendingMutation)} onClick={props.onCreateFile}>
+            {isCreating ? renderSpinner() : "＋"}
+          </button>
         </div>
       </form>
       <form
@@ -168,12 +165,14 @@ export function Toolbar(props: Props) {
         </div>
         <div class="files-toolbar-actions">
           <div class="files-inline-actions">
-            <button type="submit" class="files-icon-btn" aria-label="Search" title="Search">⌕</button>
+            <button type="submit" class="files-icon-btn" aria-label={isSearching ? "Searching" : "Search"} title={isSearching ? "Searching" : "Search"} disabled={searchDisabled}>
+              {isSearching ? renderSpinner() : "⌕"}
+            </button>
             <button type="button" class="files-icon-btn" aria-label="Clear search" title="Clear search" onClick={props.onClearSearch}>✕</button>
           </div>
         </div>
       </form>
-      <nav class="files-breadcrumbs">{renderBreadcrumbButtons(props.currentPath, props.pathStyle, props.onNavigate)}</nav>
+      <nav class="files-breadcrumbs">{renderBreadcrumbButtons(props.currentPath, props.pathStyle, props.pendingNavigation, props.onNavigate)}</nav>
     </section>
   );
 }

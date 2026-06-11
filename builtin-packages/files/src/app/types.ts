@@ -40,15 +40,50 @@ export type FilesSearchResult = {
   truncated?: boolean;
 };
 
-export type FilesState = {
-  target: string;
+export type FilesDeviceListResult = {
   devices: FilesDevice[];
+  errorText: string;
+};
+
+export type FilesDirectoryLoadArgs = {
+  target: string;
+  path: string;
+};
+
+export type FilesDirectoryLoadResult = {
+  target: string;
   currentPath: string;
   pathStyle: "absolute" | "relative";
-  searchQuery: string;
   directoryResult: FilesDirectoryResult;
   filePath: string;
+  errorText: string;
+};
+
+export type FilesFileLoadArgs = {
+  target: string;
+  path: string;
+};
+
+export type FilesFileLoadResult = {
+  target: string;
+  filePath: string;
   fileResult: FilesFileResult | null;
+  directoryPath: string;
+  directoryResult: FilesDirectoryResult | null;
+  pathStyle: "absolute" | "relative";
+  errorText: string;
+};
+
+export type FilesSearchLoadArgs = {
+  target: string;
+  path: string;
+  q: string;
+};
+
+export type FilesSearchLoadResult = {
+  target: string;
+  path: string;
+  q: string;
   searchResult: FilesSearchResult;
   errorText: string;
 };
@@ -84,8 +119,24 @@ export type FilesCreateArgs = {
   q: string;
 };
 
+export type FilesMutationPending = {
+  kind: "save" | "delete" | "create";
+  path: string;
+  label: string;
+};
+
+export type FilesPendingNavigation = {
+  kind: "directory" | "file" | "search" | "path" | "target";
+  entryKind: "directory" | "file" | "search" | "";
+  path: string;
+  label: string;
+};
+
 export interface FilesBackend {
-  loadState(route: FilesRoute): Promise<FilesState>;
+  listDevices(): Promise<FilesDeviceListResult>;
+  loadDirectory(args: FilesDirectoryLoadArgs): Promise<FilesDirectoryLoadResult>;
+  loadFile(args: FilesFileLoadArgs): Promise<FilesFileLoadResult>;
+  searchFiles(args: FilesSearchLoadArgs): Promise<FilesSearchLoadResult>;
   saveFile(args: FilesSaveArgs): Promise<FilesMutationResult>;
   deletePath(args: FilesDeleteArgs): Promise<FilesMutationResult>;
   createFile(args: FilesCreateArgs): Promise<FilesMutationResult>;

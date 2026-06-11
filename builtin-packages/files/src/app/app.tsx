@@ -1,215 +1,149 @@
-import { consumePendingAppOpen, getAppClientId } from "@gsv/package/host";
-import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useMemo, useState } from "preact/hooks";
+import { detectPathStyle, defaultPathForTarget, normalizePath } from "./domain/paths";
+import { sameRoute } from "./domain/route";
+import { useDevices } from "./hooks/useDevices";
+import { useDirectoryResource } from "./hooks/useDirectoryResource";
+import { useFileMutations } from "./hooks/useFileMutations";
+import { useFileResource } from "./hooks/useFileResource";
+import { useFilesRoute } from "./hooks/useFilesRoute";
+import { useSearchResource } from "./hooks/useSearchResource";
 import { Stage } from "./stage";
 import { Toolbar } from "./toolbar";
-import type { FilesBackend, FilesMutationResult, FilesRoute, FilesState } from "./types";
+import type { FilesBackend, FilesDirectoryResult, FilesMutationResult, FilesPendingNavigation, FilesRoute, FilesSearchResult } from "./types";
 
 type Props = {
   backend: FilesBackend;
 };
 
-function readFrameLaunchUrl(): URL | null {
-  try {
-    const frame = window.frameElement;
-    if (!(frame instanceof HTMLIFrameElement)) {
-      return null;
-    }
-    const raw = frame.getAttribute("src")?.trim() || frame.src?.trim() || "";
-    if (!raw) {
-      return null;
-    }
-    return new URL(raw, window.location.origin);
-  } catch {
-    return null;
+const EMPTY_DIRECTORY: FilesDirectoryResult = {
+  ok: true,
+  files: [],
+  directories: [],
+};
+
+const EMPTY_SEARCH: FilesSearchResult = {
+  ok: true,
+  matches: [],
+  truncated: false,
+};
+
+function formatOpenLabel(kind: FilesPendingNavigation["kind"]) {
+  if (kind === "target") {
+    return "Switching target...";
   }
-}
-
-function readLaunchUrl(): URL {
-  const current = new URL(window.location.href);
-  const frame = readFrameLaunchUrl();
-  if (!frame) {
-    return current;
+  if (kind === "search") {
+    return "Searching...";
   }
-
-  const currentHasExplicitState =
-    current.searchParams.has("path")
-    || current.searchParams.has("open")
-    || current.searchParams.has("q")
-    || current.searchParams.has("target");
-  if (currentHasExplicitState) {
-    return current;
+  if (kind === "file") {
+    return "Opening file...";
   }
-
-  const frameHasExplicitState =
-    frame.searchParams.has("path")
-    || frame.searchParams.has("open")
-    || frame.searchParams.has("q")
-    || frame.searchParams.has("target");
-  if (!frameHasExplicitState) {
-    return current;
+  if (kind === "path") {
+    return "Opening path...";
   }
-
-  return frame;
+  return "Opening folder...";
 }
 
-const WINDOW_ID = getAppClientId();
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
-}
-
-function readTrimmedString(value: unknown): string | null {
-  const normalized = typeof value === "string" ? value.trim() : "";
-  return normalized || null;
-}
-
-function readRequestedTarget(payload: Record<string, unknown> | null): string | null {
-  return readTrimmedString(payload?.device) ?? readTrimmedString(payload?.deviceId) ?? readTrimmedString(payload?.target);
-}
-
-function routeKey(route: FilesRoute) {
-  return JSON.stringify(route);
-}
-
-function defaultPathForTarget(target: string) {
-  return target === "gsv" ? "" : ".";
-}
-
-function readRouteFromUrl(): FilesRoute {
-  const url = readLaunchUrl();
-  const target = url.searchParams.get("target")?.trim() || "gsv";
-  const nextRoute = {
-    target,
-    path: url.searchParams.get("path")?.trim() || defaultPathForTarget(target),
-    q: url.searchParams.get("q")?.trim() || "",
-    open: url.searchParams.get("open")?.trim() || "",
-  };
-  console.debug("[files] using url route", {
-    windowId: WINDOW_ID,
-    route: nextRoute,
-    href: window.location.href,
-    launchHref: url.toString(),
-  });
-  return nextRoute;
-}
-
-function readRoute(): FilesRoute {
-  const nextFromUrl = readRouteFromUrl();
-  const pending = consumePendingAppOpen(WINDOW_ID);
-  if (pending?.target !== "files") {
-    return nextFromUrl;
+function routeMatchesVisibleView(currentRoute: FilesRoute, nextRoute: FilesRoute, currentPath: string) {
+  if (sameRoute(currentRoute, nextRoute)) {
+    return true;
   }
-
-  const payload = asRecord(pending.payload);
-  const context = asRecord(payload?.context);
-  const target = readRequestedTarget(payload) ?? nextFromUrl.target;
-  const nextRoute = {
-    target,
-    path: readTrimmedString(payload?.path) ?? readTrimmedString(context?.cwd) ?? nextFromUrl.path,
-    q: readTrimmedString(payload?.q) ?? nextFromUrl.q,
-    open: readTrimmedString(payload?.open) ?? nextFromUrl.open,
-  };
-  console.debug("[files] consumed pending app open", {
-    windowId: WINDOW_ID,
-    pending,
-    route: nextRoute,
-  });
-  return nextRoute;
-}
-
-function writeRoute(route: FilesRoute, replace = false) {
-  const url = new URL(window.location.href);
-  for (const key of ["target", "path", "q", "open"] as const) {
-    const value = route[key];
-    if (value) {
-      url.searchParams.set(key, value);
-    } else {
-      url.searchParams.delete(key);
-    }
+  if (currentRoute.target !== nextRoute.target || currentRoute.open || nextRoute.open || currentRoute.q !== nextRoute.q) {
+    return false;
   }
-  window.history[replace ? "replaceState" : "pushState"](null, "", `${url.pathname}${url.search}${url.hash}`);
-}
-
-function sameRoute(left: FilesRoute, right: FilesRoute) {
-  return left.target === right.target && left.path === right.path && left.q === right.q && left.open === right.open;
+  const currentPathRoute = currentRoute.path.trim();
+  if (!currentPathRoute || normalizePath(currentPathRoute, detectPathStyle(currentPathRoute)) !== currentPath) {
+    return false;
+  }
+  const requestedPath = nextRoute.path.trim();
+  if (!requestedPath) {
+    return false;
+  }
+  return normalizePath(requestedPath, detectPathStyle(requestedPath)) === currentPath;
 }
 
 export function App({ backend }: Props) {
-  const [route, setRoute] = useState<FilesRoute>(() => readRoute());
-  const [state, setState] = useState<FilesState | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [statusText, setStatusText] = useState("");
-  const [errorText, setErrorText] = useState("");
+  const { route, navigate } = useFilesRoute();
+  const devices = useDevices(backend);
+  const directory = useDirectoryResource(backend, route.target, route.path);
+  const directoryIsCurrent = directory.loadedKey === directory.key && Boolean(directory.data);
+  const currentPath = directoryIsCurrent
+    ? directory.data?.currentPath ?? route.path
+    : (directory.data?.currentPath ?? route.path) || defaultPathForTarget(route.target);
+  const pathStyle = directoryIsCurrent ? directory.data?.pathStyle ?? detectPathStyle(currentPath) : detectPathStyle(currentPath);
+  const effectiveOpenPath = directoryIsCurrent ? route.open || directory.data?.filePath || "" : route.open;
+  const fileEnabled = Boolean(effectiveOpenPath);
+  const file = useFileResource(backend, route.target, effectiveOpenPath, fileEnabled);
+  const fileIsCurrent = fileEnabled && file.loadedKey === file.key;
+  const showSearch = Boolean(route.q.trim()) && !effectiveOpenPath;
+  const searchEnabled = showSearch && directoryIsCurrent;
+  const search = useSearchResource(backend, route.target, currentPath, route.q, searchEnabled);
+  const searchIsCurrent = searchEnabled && search.loadedKey === search.key;
+  const mutations = useFileMutations();
   const [dirty, setDirty] = useState(false);
   const [editorContent, setEditorContent] = useState("");
   const [targetDraft, setTargetDraft] = useState(route.target);
   const [pathDraft, setPathDraft] = useState(route.path);
   const [searchDraft, setSearchDraft] = useState(route.q);
-  const loadRequestId = useRef(0);
-  const skipLoadKeyRef = useRef<string | null>(null);
+  const [pendingNavigation, setPendingNavigation] = useState<FilesPendingNavigation | null>(null);
 
-  const loadRoute = useCallback(async (nextRoute: FilesRoute) => {
-    const requestId = ++loadRequestId.current;
-    console.debug("[files] loading route", { requestId, route: nextRoute });
-    setLoading(true);
-    try {
-      const nextState = await backend.loadState(nextRoute);
-      if (requestId !== loadRequestId.current) {
-        return;
-      }
-      console.debug("[files] loaded state", {
-        requestId,
-        requestedRoute: nextRoute,
-        target: nextState.target,
-        currentPath: nextState.currentPath,
-        devices: nextState.devices.map((device) => device.deviceId),
-      });
-      setState(nextState);
-      setErrorText(nextState.errorText || "");
-    } catch (error) {
-      if (requestId !== loadRequestId.current) {
-        return;
-      }
-      console.debug("[files] failed to load route", {
-        requestId,
-        requestedRoute: nextRoute,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      setErrorText(error instanceof Error ? error.message : String(error));
-    } finally {
-      if (requestId === loadRequestId.current) {
-        setLoading(false);
-      }
+  const directoryPending = !directoryIsCurrent || directory.loading;
+  const filePending = fileEnabled && (!fileIsCurrent || file.loading);
+  const searchPending = searchEnabled && (!searchIsCurrent || search.loading);
+  const viewPending = directoryPending || filePending || searchPending;
+  const visibleDirectory = directory.data?.directoryResult ?? EMPTY_DIRECTORY;
+  const visibleSearch = searchIsCurrent ? search.data?.searchResult ?? EMPTY_SEARCH : EMPTY_SEARCH;
+  const visibleFileResult = fileIsCurrent ? file.data?.fileResult ?? null : null;
+  const visibleFilePath = visibleFileResult ? file.data?.filePath ?? effectiveOpenPath : "";
+  const backToFolderPending = pendingNavigation?.kind === "directory" && pendingNavigation.entryKind === "" && pendingNavigation.path === currentPath;
+  const openPathRoute = useMemo<FilesRoute>(() => {
+    const target = targetDraft.trim() || "gsv";
+    return {
+      target,
+      path: pathDraft || defaultPathForTarget(target),
+      q: searchDraft.trim(),
+      open: "",
+    };
+  }, [pathDraft, searchDraft, targetDraft]);
+  const searchRoute = useMemo<FilesRoute>(() => ({
+    target: route.target,
+    path: currentPath,
+    q: searchDraft.trim(),
+    open: "",
+  }), [currentPath, route.target, searchDraft]);
+  const openPathDisabled = routeMatchesVisibleView(route, openPathRoute, currentPath);
+  const searchDisabled = routeMatchesVisibleView(route, searchRoute, currentPath);
+
+  useEffect(() => {
+    if (!viewPending) {
+      setPendingNavigation(null);
     }
-  }, [backend]);
+  }, [viewPending]);
 
   useEffect(() => {
-    const onPopState = () => setRoute(readRoute());
-    window.addEventListener("popstate", onPopState);
-    return () => window.removeEventListener("popstate", onPopState);
-  }, []);
-
-  useEffect(() => {
-    const key = routeKey(route);
-    if (skipLoadKeyRef.current === key) {
-      skipLoadKeyRef.current = null;
+    const loadedDirectory = fileIsCurrent ? file.data?.directoryResult : null;
+    if (!route.open || !loadedDirectory || !file.data?.directoryPath) {
       return;
     }
-    void loadRoute(route);
-  }, [route, loadRoute]);
+    navigate({
+      target: route.target,
+      path: file.data.directoryPath,
+      q: route.q,
+      open: "",
+    }, true);
+  }, [file.data?.directoryPath, file.data?.directoryResult, fileIsCurrent, navigate, route.open, route.q, route.target]);
 
   useEffect(() => {
-    if (!state) {
+    if (!directoryIsCurrent || !directory.data) {
       return;
     }
-    setTargetDraft(state.target);
-    setPathDraft(state.currentPath);
-    setSearchDraft(state.searchQuery);
-  }, [state?.target, state?.currentPath, state?.searchQuery]);
+    setTargetDraft(directory.data.target);
+    setPathDraft(directory.data.currentPath);
+    setSearchDraft(route.q);
+  }, [directory.data, directoryIsCurrent, route.q]);
 
   useEffect(() => {
-    if (state?.fileResult && typeof state.fileResult.content === "string") {
-      setEditorContent(state.fileResult.content);
+    if (visibleFileResult && typeof visibleFileResult.content === "string") {
+      setEditorContent(visibleFileResult.content);
       setDirty(false);
       document.body.dataset.dirty = "false";
       return;
@@ -217,7 +151,7 @@ export function App({ backend }: Props) {
     setEditorContent("");
     setDirty(false);
     document.body.dataset.dirty = "false";
-  }, [state?.filePath, state?.fileResult]);
+  }, [visibleFilePath, visibleFileResult]);
 
   useEffect(() => {
     document.body.dataset.dirty = dirty ? "true" : "false";
@@ -242,39 +176,23 @@ export function App({ backend }: Props) {
     return window.confirm("Discard unsaved changes to the current file?");
   }, [dirty]);
 
-  const navigate = useCallback((nextRoute: FilesRoute, replace = false) => {
-    writeRoute(nextRoute, replace);
-    setRoute(nextRoute);
-  }, []);
-
-  const navigateSafely = useCallback((nextRoute: FilesRoute, replace = false) => {
+  const navigateWithPending = useCallback((nextRoute: FilesRoute, pending: FilesPendingNavigation, replace = false) => {
+    if (routeMatchesVisibleView(route, nextRoute, currentPath)) {
+      setPendingNavigation(null);
+      return false;
+    }
     if (!confirmDiscard()) {
-      return;
+      return false;
     }
-    navigate(nextRoute, replace);
-  }, [confirmDiscard, navigate]);
-
-  const changeTarget = useCallback((nextTarget: string) => {
-    const normalizedTarget = nextTarget.trim() || "gsv";
-    const nextPath = defaultPathForTarget(normalizedTarget);
-    setTargetDraft(normalizedTarget);
-    setPathDraft(nextPath);
-    setSearchDraft("");
-    navigateSafely({
-      target: normalizedTarget,
-      path: nextPath,
-      q: "",
-      open: "",
+    setPendingNavigation({
+      ...pending,
+      label: pending.label || formatOpenLabel(pending.kind),
     });
-  }, [navigateSafely]);
+    navigate(nextRoute, replace);
+    return true;
+  }, [confirmDiscard, currentPath, navigate, route]);
 
-  const runMutation = useCallback(async (operation: Promise<FilesMutationResult>) => {
-    const result = await operation;
-    setStatusText(result.statusText);
-    setErrorText(result.errorText);
-    if (result.errorText) {
-      return;
-    }
+  const handleMutationSuccess = useCallback((result: FilesMutationResult) => {
     setDirty(false);
     const nextRoute: FilesRoute = {
       target: result.target,
@@ -282,51 +200,222 @@ export function App({ backend }: Props) {
       q: result.q,
       open: result.open,
     };
-    skipLoadKeyRef.current = routeKey(nextRoute);
-    if (!sameRoute(route, nextRoute)) {
-      writeRoute(nextRoute);
-      setRoute(nextRoute);
-    }
-    await loadRoute(nextRoute);
-  }, [loadRoute, route]);
-
-  const canGoUp = useMemo(() => {
-    if (!state) {
-      return false;
-    }
-    return state.pathStyle === "absolute" ? state.currentPath !== "/" : state.currentPath !== ".";
-  }, [state]);
-
-  const openDirectory = useCallback((path: string) => {
-    if (!state) {
+    void directory.reload();
+    if (sameRoute(route, nextRoute)) {
+      if (result.open) {
+        void file.reload();
+      }
+      if (result.q && !result.open) {
+        void search.reload();
+      }
       return;
     }
-    navigateSafely({
-      target: state.target,
+    setPendingNavigation({
+      kind: result.open ? "file" : "directory",
+      entryKind: result.open ? "file" : "directory",
+      path: result.open || result.path,
+      label: result.open ? "Opening file..." : "Opening folder...",
+    });
+    navigate(nextRoute);
+  }, [directory, file, navigate, route, search]);
+
+  const canGoUp = useMemo(() => {
+    return pathStyle === "absolute" ? currentPath !== "/" : currentPath !== ".";
+  }, [currentPath, pathStyle]);
+
+  const openDirectory = useCallback((path: string) => {
+    navigateWithPending({
+      target: route.target,
       path,
       q: searchDraft.trim(),
       open: "",
+    }, {
+      kind: "directory",
+      entryKind: "directory",
+      path,
+      label: "Opening folder...",
     });
-  }, [navigateSafely, searchDraft, state]);
+  }, [navigateWithPending, route.target, searchDraft]);
 
   const openFile = useCallback((path: string) => {
-    if (!state) {
+    navigateWithPending({
+      target: route.target,
+      path: currentPath,
+      q: route.q,
+      open: path,
+    }, {
+      kind: "file",
+      entryKind: "file",
+      path,
+      label: "Opening file...",
+    });
+  }, [currentPath, navigateWithPending, route.q, route.target]);
+
+  const backToFolder = useCallback(() => {
+    navigateWithPending({
+      target: route.target,
+      path: currentPath,
+      q: route.q,
+      open: "",
+    }, {
+      kind: "directory",
+      entryKind: "",
+      path: currentPath,
+      label: "Opening folder...",
+    });
+  }, [currentPath, navigateWithPending, route.q, route.target]);
+
+  const changeTarget = useCallback((nextTarget: string) => {
+    const normalizedTarget = nextTarget.trim() || "gsv";
+    const nextPath = defaultPathForTarget(normalizedTarget);
+    const didNavigate = navigateWithPending({
+      target: normalizedTarget,
+      path: nextPath,
+      q: "",
+      open: "",
+    }, {
+      kind: "target",
+      entryKind: "",
+      path: nextPath,
+      label: "Switching target...",
+    });
+    if (!didNavigate) {
       return;
     }
-    navigateSafely({
-      target: state.target,
-      path: state.currentPath,
-      q: state.searchQuery,
-      open: path,
-    });
-  }, [navigateSafely, state]);
+    setTargetDraft(normalizedTarget);
+    setPathDraft(nextPath);
+    setSearchDraft("");
+  }, [navigateWithPending]);
 
-  if (!state && loading) {
-    return <section class="files-shell"><section class="files-stage"><div class="files-empty"><h3>Loading</h3><p>Opening files…</p></div></section></section>;
+  const goUp = useCallback(() => {
+    const parts = currentPath.split("/").filter(Boolean);
+    parts.pop();
+    const nextPath = pathStyle === "absolute" ? (parts.length ? `/${parts.join("/")}` : "/") : (parts.length ? parts.join("/") : ".");
+    openDirectory(nextPath);
+  }, [currentPath, openDirectory, pathStyle]);
+
+  const submitNav = useCallback(() => {
+    navigateWithPending(openPathRoute, {
+      kind: "path",
+      entryKind: "",
+      path: openPathRoute.path,
+      label: "Opening path...",
+    });
+  }, [navigateWithPending, openPathRoute]);
+
+  const submitSearch = useCallback(() => {
+    navigateWithPending(searchRoute, {
+      kind: "search",
+      entryKind: "search",
+      path: currentPath,
+      label: "Searching...",
+    });
+  }, [currentPath, navigateWithPending, searchRoute]);
+
+  const clearSearch = useCallback(() => {
+    setSearchDraft("");
+    navigateWithPending({
+      target: route.target,
+      path: currentPath,
+      q: "",
+      open: "",
+    }, {
+      kind: "directory",
+      entryKind: "",
+      path: currentPath,
+      label: "Opening folder...",
+    });
+  }, [currentPath, navigateWithPending, route.target]);
+
+  const createFile = useCallback(() => {
+    const name = window.prompt("New file name", "untitled.txt");
+    if (!name || !name.trim()) {
+      return;
+    }
+    void mutations.runMutation({
+      pending: {
+        kind: "create",
+        path: name.trim(),
+        label: "Creating file...",
+      },
+      operation: () => backend.createFile({
+        target: route.target,
+        currentPath,
+        name: name.trim(),
+        q: route.q,
+      }),
+      onSuccess: handleMutationSuccess,
+    });
+  }, [backend, currentPath, handleMutationSuccess, mutations, route.q, route.target]);
+
+  const saveFile = useCallback(() => {
+    if (!visibleFilePath) {
+      return;
+    }
+    void mutations.runMutation({
+      pending: {
+        kind: "save",
+        path: visibleFilePath,
+        label: "Saving file...",
+      },
+      operation: () => backend.saveFile({
+        target: route.target,
+        path: visibleFilePath,
+        currentPath,
+        q: route.q,
+        content: editorContent,
+      }),
+      onSuccess: handleMutationSuccess,
+    });
+  }, [backend, currentPath, editorContent, handleMutationSuccess, mutations, route.q, route.target, visibleFilePath]);
+
+  const deletePath = useCallback((path: string) => {
+    void mutations.runMutation({
+      pending: {
+        kind: "delete",
+        path,
+        label: "Deleting file...",
+      },
+      operation: () => backend.deletePath({
+        target: route.target,
+        path,
+        currentPath,
+        q: route.q,
+      }),
+      onSuccess: handleMutationSuccess,
+    });
+  }, [backend, currentPath, handleMutationSuccess, mutations, route.q, route.target]);
+
+  const errorText = mutations.errorText
+    || directory.errorText
+    || (fileIsCurrent ? file.errorText : "")
+    || (searchIsCurrent ? search.errorText : "");
+
+  if (!directory.data && directoryPending) {
+    return (
+      <section class="files-shell">
+        <section class="files-stage">
+          <div class="files-empty files-initial-loading" role="status" aria-live="polite">
+            <span class="files-spinner" aria-hidden="true" />
+            <h3>Opening files</h3>
+            <p>Loading the current folder...</p>
+          </div>
+        </section>
+      </section>
+    );
   }
 
-  if (!state) {
-    return <section class="files-shell"><section class="files-stage"><div class="files-empty"><h3>Files unavailable</h3><p>{errorText || "Unable to load files."}</p></div></section></section>;
+  if (!directory.data) {
+    return (
+      <section class="files-shell">
+        <section class="files-stage">
+          <div class="files-empty">
+            <h3>Files unavailable</h3>
+            <p>{errorText || "Unable to load files."}</p>
+          </div>
+        </section>
+      </section>
+    );
   }
 
   return (
@@ -335,80 +424,49 @@ export function App({ backend }: Props) {
         targetDraft={targetDraft}
         pathDraft={pathDraft}
         searchDraft={searchDraft}
-        devices={state.devices}
-        currentPath={state.currentPath}
-        pathStyle={state.pathStyle}
+        devices={devices.devices}
+        currentPath={currentPath}
+        pathStyle={pathStyle}
         canGoUp={canGoUp}
+        pendingNavigation={pendingNavigation}
+        pendingMutation={mutations.pending}
+        openPathDisabled={openPathDisabled}
+        searchDisabled={searchDisabled}
         onTargetDraftChange={changeTarget}
         onPathDraftChange={setPathDraft}
         onSearchDraftChange={setSearchDraft}
-        onSubmitNav={() => navigateSafely({ target: targetDraft, path: pathDraft || defaultPathForTarget(targetDraft), q: searchDraft.trim(), open: "" })}
-        onSubmitSearch={() => navigateSafely({ target: state.target, path: state.currentPath, q: searchDraft.trim(), open: "" })}
-        onClearSearch={() => {
-          setSearchDraft("");
-          navigateSafely({ target: state.target, path: state.currentPath, q: "", open: "" });
-        }}
-        onGoUp={() => {
-          if (!state) {
-            return;
-          }
-          const nextPath = state.pathStyle === "absolute"
-            ? (state.currentPath === "/" ? "/" : state.currentPath.split("/").filter(Boolean).slice(0, -1).length ? `/${state.currentPath.split("/").filter(Boolean).slice(0, -1).join("/")}` : "/")
-            : (state.currentPath === "." ? "." : state.currentPath.split("/").filter(Boolean).slice(0, -1).join("/") || ".");
-          navigateSafely({ target: state.target, path: nextPath, q: state.searchQuery, open: "" });
-        }}
-        onCreateFile={() => {
-          const name = window.prompt("New file name", "untitled.txt");
-          if (!name || !name.trim()) {
-            return;
-          }
-          void runMutation(backend.createFile({
-            target: state.target,
-            currentPath: state.currentPath,
-            name: name.trim(),
-            q: state.searchQuery,
-          }));
-        }}
+        onSubmitNav={submitNav}
+        onSubmitSearch={submitSearch}
+        onClearSearch={clearSearch}
+        onGoUp={goUp}
+        onCreateFile={createFile}
         onNavigate={(path) => openDirectory(path)}
       />
       <section class="files-stage">
-        {statusText ? <section class="files-status-line"><p>{statusText}</p></section> : null}
+        {mutations.statusText ? <section class="files-status-line"><p>{mutations.statusText}</p></section> : null}
         {errorText ? <section class="files-status-line is-error"><p>{errorText}</p></section> : null}
         <Stage
-          currentPath={state.currentPath}
-          searchQuery={state.searchQuery}
-          directoryResult={state.directoryResult}
-          filePath={state.filePath}
-          fileResult={state.fileResult}
-          searchResult={state.searchResult}
+          currentPath={currentPath}
+          searchQuery={showSearch ? route.q : ""}
+          directoryResult={visibleDirectory}
+          filePath={visibleFilePath}
+          fileResult={visibleFileResult}
+          searchResult={visibleSearch}
           editorContent={editorContent}
           isDirty={dirty}
+          pendingEntryPath={pendingNavigation?.path ?? ""}
+          pendingEntryKind={pendingNavigation?.entryKind ?? ""}
+          backToFolderPending={backToFolderPending}
+          pendingMutation={mutations.pending}
           onEditorChange={(value) => {
             setEditorContent(value);
             setDirty(true);
           }}
           onOpenDirectory={openDirectory}
+          onBackToFolder={backToFolder}
           onOpenFile={openFile}
-          onSave={() => {
-            if (!state.filePath) {
-              return;
-            }
-            void runMutation(backend.saveFile({
-              target: state.target,
-              path: state.filePath,
-              currentPath: state.currentPath,
-              q: state.searchQuery,
-              content: editorContent,
-            }));
-          }}
-          onDelete={(path) => {
-            void runMutation(backend.deletePath({
-              target: state.target,
-              path,
-              currentPath: state.currentPath,
-              q: state.searchQuery,
-            }));
-          }}
+          onSave={saveFile}
+          onDelete={deletePath}
         />
       </section>
     </section>
