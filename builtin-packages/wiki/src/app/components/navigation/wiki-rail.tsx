@@ -94,6 +94,20 @@ export function WikiRail(props: Props) {
             <WikiIcon name="plus" />
           </button>
         </div>
+        {props.selectedDb ? (
+          <a
+            href={buildEntryHref(props.routeBase, props.selectedDb, `${props.selectedDb}/index.md`)}
+            class={`wiki-tree-file wiki-tree-overview${props.state.selectedPath === `${props.selectedDb}/index.md` ? " is-active" : ""}`}
+            style="--tree-level: 0"
+            onClick={(event) => {
+              event.preventDefault();
+              props.onOpenPage(`${props.selectedDb}/index.md`);
+            }}
+          >
+            <WikiIcon name="book" />
+            <span title="Collection overview">Overview</span>
+          </a>
+        ) : null}
         <PageTree
           entries={props.visiblePages}
           routeBase={props.routeBase}

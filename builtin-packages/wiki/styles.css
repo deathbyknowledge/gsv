@@ -550,6 +550,10 @@ summary:focus-visible {
   font-size: 13px;
 }
 
+.wiki-tree-overview {
+  margin-bottom: 3px;
+}
+
 .wiki-tree-folder summary:hover,
 .wiki-tree-file:hover,
 .wiki-tree-file.is-active {
