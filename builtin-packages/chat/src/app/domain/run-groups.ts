@@ -135,6 +135,11 @@ function buildRunGroup(
     }
   }
 
+  if (!Number.isFinite(startedAt) && userStartedAt !== null) {
+    startedAt = userStartedAt;
+    updatedAt = Math.max(updatedAt, userStartedAt);
+  }
+
   const groupPendingHil = pendingHil?.runId === runId ? pendingHil : null;
   if (groupPendingHil && !detailEntries.some((entry) => entry.kind === "hil" && entry.request.requestId === groupPendingHil.requestId)) {
     startedAt = Math.min(startedAt, userStartedAt ?? groupPendingHil.createdAt);
