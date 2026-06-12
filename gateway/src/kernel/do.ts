@@ -104,7 +104,7 @@ import type {
 } from "../syscalls/scheduler";
 import { runKernelSqlMigrations } from "./schema/migrations";
 
-const SERVER_VERSION = "0.2.4";
+const SERVER_VERSION = "0.2.5";
 const KERNEL_BINARY_DEVICE_ID = "__gsv_kernel__";
 
 type ConnectionState = {
