@@ -88,14 +88,24 @@ function buildRunGroup(
   const detailEntries: RunDetailEntry[] = [];
   let startedAt = Number.POSITIVE_INFINITY;
   let updatedAt = 0;
+  const userStartedAt = firstUserTimestamp(rows);
+  const firstExplicitAssistantStartIndex = rows.findIndex((row) =>
+    row.kind === "message" &&
+    row.role === "assistant" &&
+    typeof row.startedAt === "number" &&
+    Number.isFinite(row.startedAt)
+  );
 
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
+    const fallbackStartedAt = firstExplicitAssistantStartIndex < 0 || index < firstExplicitAssistantStartIndex
+      ? userStartedAt ?? row.timestamp
+      : row.timestamp;
     if (row.kind === "message") {
       if (row.role === "user") {
         userRows.push(row);
       } else if (row.role === "assistant") {
-        startedAt = Math.min(startedAt, row.startedAt ?? row.timestamp);
+        startedAt = Math.min(startedAt, row.startedAt ?? fallbackStartedAt);
         updatedAt = Math.max(updatedAt, row.timestamp);
         assistantRows.push(row);
         for (const text of row.thinking?.filter(Boolean) ?? []) {
@@ -110,12 +120,12 @@ function buildRunGroup(
           finalAssistantRows.push(row);
         }
       } else {
-        startedAt = Math.min(startedAt, row.startedAt ?? row.timestamp);
+        startedAt = Math.min(startedAt, row.startedAt ?? fallbackStartedAt);
         updatedAt = Math.max(updatedAt, row.timestamp);
         systemRows.push(row);
       }
     } else {
-      startedAt = Math.min(startedAt, row.timestamp);
+      startedAt = Math.min(startedAt, fallbackStartedAt);
       updatedAt = Math.max(updatedAt, row.timestamp);
       toolRows.push(row);
       detailEntries.push({ kind: "tool", row });
@@ -127,7 +137,7 @@ function buildRunGroup(
 
   const groupPendingHil = pendingHil?.runId === runId ? pendingHil : null;
   if (groupPendingHil && !detailEntries.some((entry) => entry.kind === "hil" && entry.request.requestId === groupPendingHil.requestId)) {
-    startedAt = Math.min(startedAt, groupPendingHil.createdAt);
+    startedAt = Math.min(startedAt, userStartedAt ?? groupPendingHil.createdAt);
     updatedAt = Math.max(updatedAt, groupPendingHil.createdAt);
     detailEntries.push({ kind: "hil", request: groupPendingHil });
   }
@@ -175,6 +185,15 @@ function lastRunId(rows: LogRow[]): string | null {
     const runId = normalizeRunId(rows[index].runId);
     if (runId) {
       return runId;
+    }
+  }
+  return null;
+}
+
+function firstUserTimestamp(rows: LogRow[]): number | null {
+  for (const row of rows) {
+    if (row.kind === "message" && row.role === "user") {
+      return row.timestamp;
     }
   }
   return null;
