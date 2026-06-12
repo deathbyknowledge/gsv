@@ -270,9 +270,23 @@ function finishStreamingAssistantRows(rows: LogRow[], runId: string): LogRow[] {
 }
 
 function clearTransientAssistantRowsForRun(rows: LogRow[], runId: string): LogRow[] {
+  let latestToolIndex = -1;
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    if ((row.kind === "toolCall" || row.kind === "toolResult") && row.runId === runId) {
+      latestToolIndex = index;
+    }
+  }
+
   let changed = false;
-  const next = rows.filter((row) => {
-    if (row.kind === "message" && row.role === "assistant" && row.runId === runId && !row.messageId) {
+  const next = rows.filter((row, index) => {
+    if (
+      index > latestToolIndex &&
+      row.kind === "message" &&
+      row.role === "assistant" &&
+      row.runId === runId &&
+      !row.messageId
+    ) {
       changed = true;
       return false;
     }
