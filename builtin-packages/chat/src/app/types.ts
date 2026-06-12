@@ -161,6 +161,7 @@ export type MessageRow = {
   role: "user" | "assistant" | "system";
   text: string;
   timestamp: number;
+  startedAt?: number;
   messageId?: number | null;
   origin?: InteractionOrigin;
   thinking?: string[];

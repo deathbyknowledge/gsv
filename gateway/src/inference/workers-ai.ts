@@ -1108,7 +1108,9 @@ export function normalizeWorkersAiResponse(
     stopReason = "toolUse";
   } else if (!text) {
     stopReason = "error";
-    errorMessage = "Workers AI returned an empty response";
+    errorMessage = thinking
+      ? "Workers AI returned reasoning but no final response"
+      : "Workers AI returned an empty response";
   }
 
   return {

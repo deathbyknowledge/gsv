@@ -164,7 +164,9 @@ export function useProcessSignals({
         const effect = applyAssistantStreamSignal(payload, target, setRows);
         if (effect) {
           prepareForLiveTranscriptActivity();
-          setPendingAssistant(effect === "tool" ? "tool" : null);
+          setPendingAssistant(
+            effect === "tool" ? "tool" : effect === "thinking" ? "thinking" : null,
+          );
         }
       } else if (signal === "proc.run.finished") {
         if (!signalMatchesActiveThread(payload, target)) {

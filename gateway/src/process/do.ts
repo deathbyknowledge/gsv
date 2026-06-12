@@ -178,6 +178,10 @@ type RunFinishOptions = {
   usage?: unknown;
 };
 
+type StreamSeqCounter = {
+  value: number;
+};
+
 type CodeModeResponseWaiter = {
   runId: string | null;
   resolve: (frame: ResponseFrame) => void;
@@ -217,6 +221,7 @@ const CODE_MODE_NESTED_SYSCALL_TIMEOUT_MS = 55_000;
 const CODE_MODE_APPROVAL_TIMEOUT_MS = 55_000;
 const COMPACTION_SUMMARY_WINDOW_CHARS = 24_000;
 const CONTEXT_PROVIDER_OVERFLOW_REASON = "context.provider_overflow";
+const MAX_RETRYABLE_GENERATION_ATTEMPTS = 3;
 
 function normalizeOptionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0
@@ -2481,67 +2486,105 @@ export class Process extends Host<Env> {
     }
 
     // Step 6: Call LLM
-    let response: AssistantMessage | null;
-    try {
-      this.activeRunPhase = { runId, phase: "generation" };
-      response = await this.generateAssistantResponse({
-        runId,
-        conversationId,
-        purpose: "chat.reply",
-        config: run.config!,
-        context,
-        sessionAffinityKey: this.pid,
-      });
-      if (this.activeRunPhase?.runId === runId && this.activeRunPhase.phase === "generation") {
-        this.activeRunPhase = null;
-      }
-      if (await this.handleRunStopped(runId)) {
-        return;
-      }
-    } catch (e) {
-      if (this.activeRunPhase?.runId === runId && this.activeRunPhase.phase === "generation") {
-        this.activeRunPhase = null;
-      }
-      if (await this.handleRunStopped(runId)) {
-        return;
-      }
-      const errorMsg = errorMessageFromUnknown(e);
-      if (isProviderContextOverflowErrorMessage(errorMsg, {
-        provider: run.config!.provider,
-        model: run.config!.model,
-        contextWindowTokens: run.config!.contextWindowTokens,
-      })) {
-        console.error(`[Process] LLM context overflow:`, e);
-        await this.finishProviderContextOverflowRun(
+    let response: AssistantMessage | null = null;
+    const streamSeq: StreamSeqCounter = { value: 0 };
+    for (let attempt = 1; attempt <= MAX_RETRYABLE_GENERATION_ATTEMPTS; attempt += 1) {
+      try {
+        this.activeRunPhase = { runId, phase: "generation" };
+        response = await this.generateAssistantResponse({
           runId,
           conversationId,
-          run.config!,
-          errorMsg,
-        );
+          purpose: "chat.reply",
+          config: run.config!,
+          context,
+          sessionAffinityKey: this.pid,
+          streamSeq,
+        });
+        if (this.activeRunPhase?.runId === runId && this.activeRunPhase.phase === "generation") {
+          this.activeRunPhase = null;
+        }
+        if (await this.handleRunStopped(runId)) {
+          return;
+        }
+      } catch (e) {
+        if (this.activeRunPhase?.runId === runId && this.activeRunPhase.phase === "generation") {
+          this.activeRunPhase = null;
+        }
+        if (await this.handleRunStopped(runId)) {
+          return;
+        }
+        const errorMsg = errorMessageFromUnknown(e);
+        if (isProviderContextOverflowErrorMessage(errorMsg, {
+          provider: run.config!.provider,
+          model: run.config!.model,
+          contextWindowTokens: run.config!.contextWindowTokens,
+        })) {
+          console.error(`[Process] LLM context overflow:`, e);
+          await this.finishProviderContextOverflowRun(
+            runId,
+            conversationId,
+            run.config!,
+            errorMsg,
+          );
+          return;
+        }
+        if (
+          isRetryableGenerationErrorMessage(errorMsg) &&
+          attempt < MAX_RETRYABLE_GENERATION_ATTEMPTS
+        ) {
+          console.warn(
+            `[Process] Retrying LLM generation after retryable provider error ` +
+            `(${attempt}/${MAX_RETRYABLE_GENERATION_ATTEMPTS}): ${errorMsg}`,
+          );
+          if (await this.handleRunStopped(runId)) {
+            return;
+          }
+          continue;
+        }
+        const displayError = formatGenerationFailure(errorMsg, {
+          provider: run.config?.provider,
+          model: run.config?.model,
+        });
+        console.error(`[Process] LLM call failed:`, e);
+        this.store.appendMessage("system", displayError, { conversationId, runId });
+        await this.emitProcChanged(["messages"], {
+          conversationId,
+          runId,
+          role: "system",
+          content: displayError,
+        });
+        if (await this.handleRunStopped(runId)) {
+          return;
+        }
+        await this.finishRun({
+          reason: "generation.error",
+          status: "error",
+          text: null,
+          error: displayError,
+        });
         return;
       }
-      const displayError = formatGenerationFailure(errorMsg, {
-        provider: run.config?.provider,
-        model: run.config?.model,
-      });
-      console.error(`[Process] LLM call failed:`, e);
-      this.store.appendMessage("system", displayError, { conversationId, runId });
-      await this.emitProcChanged(["messages"], {
-        conversationId,
-        runId,
-        role: "system",
-        content: displayError,
-      });
+
+      if (!response || isProviderContextOverflow(response, run.config!.contextWindowTokens)) {
+        break;
+      }
+
+      const responseFailure = describeAssistantResponseFailure(response);
+      if (
+        !responseFailure ||
+        !isRetryableAssistantResponseFailure(response, responseFailure) ||
+        attempt >= MAX_RETRYABLE_GENERATION_ATTEMPTS
+      ) {
+        break;
+      }
+
+      console.warn(
+        `[Process] Retrying LLM generation after empty assistant response ` +
+        `(${attempt}/${MAX_RETRYABLE_GENERATION_ATTEMPTS}): ${responseFailure}`,
+      );
       if (await this.handleRunStopped(runId)) {
         return;
       }
-      await this.finishRun({
-        reason: "generation.error",
-        status: "error",
-        text: null,
-        error: displayError,
-      });
-      return;
     }
 
     if (!response) {
@@ -2660,6 +2703,7 @@ export class Process extends Host<Env> {
     config: AiConfigResult;
     context: Context;
     sessionAffinityKey?: string;
+    streamSeq?: StreamSeqCounter;
   }): Promise<AssistantMessage | null> {
     const stream = options.config.generationStreaming !== "off" &&
       typeof this.generation.stream === "function"
@@ -2680,10 +2724,13 @@ export class Process extends Host<Env> {
       });
     }
 
-    let seq = 0;
+    let seq = options.streamSeq?.value ?? 0;
     let response: AssistantMessage | null = null;
     for await (const event of stream) {
       seq += 1;
+      if (options.streamSeq) {
+        options.streamSeq.value = seq;
+      }
       await this.emitRunStreamEvent(options.runId, options.conversationId, seq, event);
       if (event.type === "done") {
         response = event.message;
@@ -3961,14 +4008,57 @@ function describeAssistantResponseFailure(response: AssistantMessage): string | 
   if (!response.content || response.content.length === 0) {
     return "LLM returned empty response";
   }
-  const hasVisibleText = response.content.some(
-    (block) => block.type === "text" && block.text.trim().length > 0,
-  );
-  const hasToolCall = response.content.some((block) => block.type === "toolCall");
-  if (!hasVisibleText && !hasToolCall) {
+  if (!hasAssistantVisibleOutput(response)) {
     return "LLM returned reasoning but no final response";
   }
   return null;
+}
+
+function isRetryableAssistantResponseFailure(
+  response: AssistantMessage,
+  failure: string,
+): boolean {
+  if (response.stopReason === "aborted") {
+    return false;
+  }
+
+  const failureText = `${response.errorMessage ?? ""}\n${failure}`;
+  if (isRetryableGenerationErrorMessage(failureText)) {
+    return true;
+  }
+
+  if (response.stopReason === "error" && response.errorMessage) {
+    return false;
+  }
+
+  const content = assistantContentBlocks(response);
+  return !hasAssistantVisibleOutput(response) &&
+    (content.length === 0 || hasAssistantThinking(response));
+}
+
+function hasAssistantVisibleOutput(response: AssistantMessage): boolean {
+  return assistantContentBlocks(response).some((block) => (
+    block.type === "toolCall" ||
+    (block.type === "text" && block.text.trim().length > 0)
+  ));
+}
+
+function hasAssistantThinking(response: AssistantMessage): boolean {
+  return assistantContentBlocks(response).some((block) =>
+    block.type === "thinking" && block.thinking.trim().length > 0
+  );
+}
+
+function assistantContentBlocks(response: AssistantMessage): AssistantMessage["content"] {
+  return Array.isArray(response.content) ? response.content : [];
+}
+
+function isRetryableGenerationErrorMessage(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return normalized.includes("reasoning but no final response") ||
+    normalized.includes("returned an empty response") ||
+    normalized.includes("returned empty response") ||
+    normalized.includes("empty response body");
 }
 
 function orderMessagesForProvider(messages: Message[]): Message[] {

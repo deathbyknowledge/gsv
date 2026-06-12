@@ -16,7 +16,7 @@ import type {
   ToolRow,
 } from "./types";
 
-type RunStreamEffect = "message" | "tool";
+type RunStreamEffect = "message" | "thinking" | "tool";
 
 function flattenHistory(messages: unknown[]): LogRow[] {
   const rows: LogRow[] = [];
@@ -131,12 +131,17 @@ function applyAssistantSignal(payload: unknown, active: ThreadContext, setRows: 
   const runId = asString(record?.runId);
   setRows((current) => {
     const next = current.slice();
-    const row: MessageRow = { kind: "message", role: "assistant", text, thinking, timestamp: Date.now(), runId, streaming: false };
+    const now = Date.now();
+    const row: MessageRow = { kind: "message", role: "assistant", text, thinking, timestamp: now, runId, streaming: false };
     const existingIndex = runId
       ? findLastIndex(next, (candidate) => candidate.kind === "message" && candidate.role === "assistant" && candidate.runId === runId && !candidate.messageId)
       : -1;
     if (existingIndex >= 0) {
-      next[existingIndex] = row;
+      const existing = next[existingIndex] as MessageRow;
+      next[existingIndex] = {
+        ...row,
+        startedAt: existing.startedAt ?? existing.timestamp,
+      };
     } else {
       next.push(row);
     }
@@ -151,6 +156,10 @@ function applyAssistantStreamSignal(payload: unknown, active: ThreadContext, set
   const eventType = asString(event?.type);
   const runId = asString(record?.runId);
   if (!runId) return null;
+
+  if (eventType === "start" || eventType === "thinking_start") {
+    return "thinking";
+  }
 
   if (eventType === "text_delta") {
     const delta = asString(event?.delta) ?? "";
@@ -198,16 +207,19 @@ function appendAssistantDelta(rows: LogRow[], runId: string, delta: string): Log
     next[next.length - 1] = {
       ...last,
       text: `${last.text}${delta}`,
+      startedAt: last.startedAt ?? last.timestamp,
       streaming: true,
     };
     return next;
   }
 
+  const now = Date.now();
   next.push({
     kind: "message",
     role: "assistant",
     text: delta,
-    timestamp: Date.now(),
+    timestamp: now,
+    startedAt: now,
     runId,
     streaming: true,
   });
@@ -225,17 +237,20 @@ function appendAssistantThinkingDelta(rows: LogRow[], runId: string, delta: stri
     next[next.length - 1] = {
       ...last,
       thinking,
+      startedAt: last.startedAt ?? last.timestamp,
       streaming: true,
     };
     return next;
   }
 
+  const now = Date.now();
   next.push({
     kind: "message",
     role: "assistant",
     text: "",
     thinking: [delta],
-    timestamp: Date.now(),
+    timestamp: now,
+    startedAt: now,
     runId,
     streaming: true,
   });

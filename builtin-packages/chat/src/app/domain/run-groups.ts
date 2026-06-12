@@ -91,12 +91,12 @@ function buildRunGroup(
 
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
-    startedAt = Math.min(startedAt, row.timestamp);
-    updatedAt = Math.max(updatedAt, row.timestamp);
     if (row.kind === "message") {
       if (row.role === "user") {
         userRows.push(row);
       } else if (row.role === "assistant") {
+        startedAt = Math.min(startedAt, row.startedAt ?? row.timestamp);
+        updatedAt = Math.max(updatedAt, row.timestamp);
         assistantRows.push(row);
         for (const text of row.thinking?.filter(Boolean) ?? []) {
           detailEntries.push({ kind: "thinking", text, timestamp: row.timestamp });
@@ -110,9 +110,13 @@ function buildRunGroup(
           finalAssistantRows.push(row);
         }
       } else {
+        startedAt = Math.min(startedAt, row.startedAt ?? row.timestamp);
+        updatedAt = Math.max(updatedAt, row.timestamp);
         systemRows.push(row);
       }
     } else {
+      startedAt = Math.min(startedAt, row.timestamp);
+      updatedAt = Math.max(updatedAt, row.timestamp);
       toolRows.push(row);
       detailEntries.push({ kind: "tool", row });
       if (pendingHil?.runId === runId && pendingHil.callId === row.callId) {
@@ -123,12 +127,13 @@ function buildRunGroup(
 
   const groupPendingHil = pendingHil?.runId === runId ? pendingHil : null;
   if (groupPendingHil && !detailEntries.some((entry) => entry.kind === "hil" && entry.request.requestId === groupPendingHil.requestId)) {
+    startedAt = Math.min(startedAt, groupPendingHil.createdAt);
+    updatedAt = Math.max(updatedAt, groupPendingHil.createdAt);
     detailEntries.push({ kind: "hil", request: groupPendingHil });
   }
   const groupPendingAssistant = activeRunId === runId ? pendingAssistant : null;
   const isRunning = groupPendingAssistant !== null
-    || assistantRows.some((row) => row.streaming === true)
-    || toolRows.some((row) => row.kind === "toolCall");
+    || assistantRows.some((row) => row.streaming === true);
   return {
     kind: "run",
     runId,
@@ -141,7 +146,7 @@ function buildRunGroup(
     toolRows,
     detailEntries,
     startedAt: Number.isFinite(startedAt) ? startedAt : Date.now(),
-    updatedAt,
+    updatedAt: updatedAt > 0 ? updatedAt : Number.isFinite(startedAt) ? startedAt : Date.now(),
     status: groupPendingHil ? "waiting" : isRunning ? "running" : "completed",
     pendingAssistant: groupPendingAssistant,
     pendingHil: groupPendingHil,
