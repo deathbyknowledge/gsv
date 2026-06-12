@@ -269,24 +269,32 @@ function finishStreamingAssistantRows(rows: LogRow[], runId: string): LogRow[] {
   return changed ? next : rows;
 }
 
-function clearTransientAssistantRowsForRun(rows: LogRow[], runId: string): LogRow[] {
-  let latestToolIndex = -1;
+function clearTransientAttemptRowsForRun(rows: LogRow[], runId: string): LogRow[] {
+  let latestDurableToolIndex = -1;
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
-    if ((row.kind === "toolCall" || row.kind === "toolResult") && row.runId === runId) {
-      latestToolIndex = index;
+    if (
+      row.runId === runId &&
+      (row.kind === "toolResult" || (row.kind === "toolCall" && row.phase !== "planning"))
+    ) {
+      latestDurableToolIndex = index;
     }
   }
 
   let changed = false;
   const next = rows.filter((row, index) => {
+    if (index <= latestDurableToolIndex || row.runId !== runId) {
+      return true;
+    }
     if (
-      index > latestToolIndex &&
       row.kind === "message" &&
       row.role === "assistant" &&
-      row.runId === runId &&
       !row.messageId
     ) {
+      changed = true;
+      return false;
+    }
+    if (row.kind === "toolCall" && row.phase === "planning") {
       changed = true;
       return false;
     }
@@ -1298,7 +1306,7 @@ export {
   asRecord,
   asString,
   basenamePath,
-  clearTransientAssistantRowsForRun,
+  clearTransientAttemptRowsForRun,
   closeChatMenus,
   closeContainingChatMenu,
   copyTextToClipboard,

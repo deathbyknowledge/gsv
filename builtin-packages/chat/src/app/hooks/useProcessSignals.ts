@@ -16,7 +16,7 @@ import {
   applyToolResultSignal,
   asRecord,
   asString,
-  clearTransientAssistantRowsForRun,
+  clearTransientAttemptRowsForRun,
   normalizeContextSignal,
   normalizeHilRequest,
   signalMatchesActiveThread,
@@ -176,7 +176,7 @@ export function useProcessSignals({
         const runId = asString(asRecord(payload)?.runId);
         if (runId) {
           setActiveRunId(runId);
-          setRows((current) => clearTransientAssistantRowsForRun(current, runId));
+          setRows((current) => clearTransientAttemptRowsForRun(current, runId));
         }
         prepareForLiveTranscriptActivity();
         setPendingHil(null);
