@@ -1,5 +1,5 @@
 # GSV
-![gsv](https://github.com/user-attachments/assets/2b51a9e7-27be-4c8c-a234-7cf8f4dfb218)
+![gsv](https://github.com/user-attachments/assets/fd40032c-d551-44e4-ba77-7808d29cc0a1)
 > ***A distributed operating system for humans, machines, and agents.***
 
 Imagine a personal cloud computer where AI is built directly into the kernel. **GSV (General Systems Vehicle)** unifies your laptops, servers, and phones into a single cohesive system where agents operate as native background processes.
