@@ -2539,6 +2539,16 @@ export class Process extends Host<Env> {
           if (await this.handleRunStopped(runId)) {
             return;
           }
+          await this.emitRunRetrying(
+            runId,
+            conversationId,
+            attempt,
+            MAX_RETRYABLE_GENERATION_ATTEMPTS,
+            errorMsg,
+          );
+          if (await this.handleRunStopped(runId)) {
+            return;
+          }
           continue;
         }
         const displayError = formatGenerationFailure(errorMsg, {
@@ -2581,6 +2591,16 @@ export class Process extends Host<Env> {
       console.warn(
         `[Process] Retrying LLM generation after empty assistant response ` +
         `(${attempt}/${MAX_RETRYABLE_GENERATION_ATTEMPTS}): ${responseFailure}`,
+      );
+      if (await this.handleRunStopped(runId)) {
+        return;
+      }
+      await this.emitRunRetrying(
+        runId,
+        conversationId,
+        attempt,
+        MAX_RETRYABLE_GENERATION_ATTEMPTS,
+        responseFailure,
       );
       if (await this.handleRunStopped(runId)) {
         return;
@@ -2992,6 +3012,25 @@ export class Process extends Host<Env> {
       conversationId: normalizeConversationId(conversationId),
       seq,
       event: snapshotAssistantMessageEvent(event),
+      timestamp: Date.now(),
+    });
+  }
+
+  private async emitRunRetrying(
+    runId: string,
+    conversationId: string,
+    attempt: number,
+    maxAttempts: number,
+    reason: string,
+  ): Promise<void> {
+    await this.sendSignal("proc.run.retrying", {
+      pid: this.pid,
+      runId,
+      conversationId: normalizeConversationId(conversationId),
+      attempt,
+      nextAttempt: attempt + 1,
+      maxAttempts,
+      reason,
       timestamp: Date.now(),
     });
   }

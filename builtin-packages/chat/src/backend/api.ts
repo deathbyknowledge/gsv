@@ -17,6 +17,7 @@ const CHAT_TRANSCRIPT_SIGNALS = [
   "proc.run.tool.started",
   "proc.run.tool.finished",
   "proc.run.stream",
+  "proc.run.retrying",
   "proc.run.output",
 ];
 

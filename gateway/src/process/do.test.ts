@@ -178,6 +178,19 @@ describe("Process DO — mechanical", () => {
 
       await k.handleProcessSignal(pid, {
         type: "sig",
+        signal: "proc.run.retrying",
+        payload: {
+          pid,
+          runId: "run-activity",
+          conversationId: "thread",
+          queuedCount: 1,
+          timestamp: 1050,
+        },
+      });
+      const retrying = k.procs.get(pid);
+
+      await k.handleProcessSignal(pid, {
+        type: "sig",
         signal: "proc.run.hil.requested",
         payload: {
           pid,
@@ -202,7 +215,7 @@ describe("Process DO — mechanical", () => {
       });
       const idle = k.procs.get(pid);
 
-      return { running, waiting, idle };
+      return { running, retrying, waiting, idle };
     });
 
     expect(state.running).toMatchObject({
@@ -211,6 +224,13 @@ describe("Process DO — mechanical", () => {
       activeConversationId: "thread",
       queuedCount: 1,
       lastActiveAt: 1000,
+    });
+    expect(state.retrying).toMatchObject({
+      state: "running",
+      activeRunId: "run-activity",
+      activeConversationId: "thread",
+      queuedCount: 1,
+      lastActiveAt: 1050,
     });
     expect(state.waiting).toMatchObject({
       state: "waiting_hil",
@@ -1389,6 +1409,149 @@ describe("Process DO — mechanical", () => {
       ]);
       const outputSignal = result.emitted.find((entry) => entry.signal === "proc.run.output")?.payload as any;
       expect(outputSignal?.text).toBe("visible retry");
+    });
+
+    it("emits a retrying signal before a streamed retry succeeds with only tool calls", async () => {
+      const pid = "mech-chat-stream-retry-tool-only";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const emitted: Array<{ signal: string; payload: unknown }> = [];
+        let calls = 0;
+        process.sendSignal = async (signal: string, payload: unknown) => {
+          emitted.push({ signal, payload });
+        };
+        process.generation = {
+          stream() {
+            calls += 1;
+            const stream = createAssistantMessageEventStream();
+            const base = {
+              role: "assistant",
+              content: [],
+              api: "test",
+              provider: "test",
+              model: "test",
+              usage: testUsage(),
+              stopReason: "stop",
+              timestamp: Date.now(),
+            } as any;
+            stream.push({ type: "start", partial: base });
+
+            if (calls === 1) {
+              const partial = { ...base, content: [{ type: "thinking", thinking: "" }] };
+              stream.push({ type: "thinking_start", contentIndex: 0, partial });
+              partial.content[0].thinking = "abandoned reasoning";
+              stream.push({ type: "thinking_delta", contentIndex: 0, delta: "abandoned reasoning", partial });
+              stream.push({ type: "thinking_end", contentIndex: 0, content: "abandoned reasoning", partial });
+              stream.push({
+                type: "error",
+                reason: "error",
+                error: {
+                  ...partial,
+                  stopReason: "error",
+                  errorMessage: "Workers AI returned reasoning but no final response",
+                },
+              });
+              return stream;
+            }
+
+            const toolCall = {
+              type: "toolCall",
+              id: "call-retry-read",
+              name: "Read",
+              arguments: { path: "/root/retry.txt" },
+            };
+            const partial = { ...base, content: [toolCall], stopReason: "toolUse" };
+            stream.push({ type: "toolcall_start", contentIndex: 0, partial });
+            stream.push({
+              type: "toolcall_delta",
+              contentIndex: 0,
+              delta: "{\"path\":\"/root/retry.txt\"}",
+              partial,
+            });
+            stream.push({ type: "toolcall_end", contentIndex: 0, toolCall, partial });
+            stream.push({
+              type: "done",
+              reason: "toolUse",
+              message: partial,
+            });
+            return stream;
+          },
+          async generate() {
+            throw new Error("non-stream generation should not be used");
+          },
+          async generateText() {
+            return "";
+          },
+        };
+
+        process.store.appendMessage("user", "stream retry to tool please");
+        process.currentRun = {
+          runId: "run-chat-stream-retry-tool-only",
+          queued: false,
+          conversationId: "default",
+          config: {
+            profile: "task",
+            provider: "workers-ai",
+            model: "@cf/nvidia/nemotron-3-120b-a12b",
+            apiKey: "",
+            reasoning: "high",
+            maxTokens: 8192,
+            contextWindowTokens: 256000,
+            contextWindowSource: "config",
+            maxContextBytes: 32768,
+          },
+          tools: [],
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: {
+            default: "auto",
+            rules: [{ match: "fs.read", action: "ask" }],
+          },
+        };
+        await process.continueAgentLoop("run-chat-stream-retry-tool-only");
+        return {
+          calls,
+          emitted,
+          messages: process.store.getMessages(),
+          pendingHil: process.store.getPendingHilForRun("run-chat-stream-retry-tool-only"),
+        };
+      });
+
+      expect(result.calls).toBe(2);
+      expect(result.messages.map((message: any) => [message.role, message.content])).toEqual([
+        ["user", "stream retry to tool please"],
+        ["assistant", ""],
+      ]);
+      const retrySignalIndex = result.emitted.findIndex((entry) => entry.signal === "proc.run.retrying");
+      const firstErrorIndex = result.emitted.findIndex((entry) =>
+        entry.signal === "proc.run.stream" && (entry.payload as any).event.type === "error"
+      );
+      const secondStartIndex = result.emitted.findIndex((entry, index) =>
+        index > retrySignalIndex &&
+        entry.signal === "proc.run.stream" &&
+        (entry.payload as any).event.type === "start"
+      );
+      expect(firstErrorIndex).toBeGreaterThanOrEqual(0);
+      expect(retrySignalIndex).toBeGreaterThan(firstErrorIndex);
+      expect(secondStartIndex).toBeGreaterThan(retrySignalIndex);
+      expect(result.emitted[retrySignalIndex]?.payload).toMatchObject({
+        pid,
+        runId: "run-chat-stream-retry-tool-only",
+        conversationId: "default",
+        attempt: 1,
+        nextAttempt: 2,
+        maxAttempts: 3,
+        reason: "Workers AI returned reasoning but no final response",
+      });
+      expect(result.emitted.some((entry) => entry.signal === "proc.run.output")).toBe(false);
+      expect(result.pendingHil).toMatchObject({
+        runId: "run-chat-stream-retry-tool-only",
+        toolCallId: "call-retry-read",
+        toolName: "Read",
+        syscall: "fs.read",
+      });
     });
 
     it("uses non-streaming generation when generation streaming is disabled", async () => {

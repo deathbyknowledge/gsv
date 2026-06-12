@@ -1305,6 +1305,17 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
     }
     markRunActivity(run, signal);
 
+    if (signal === "proc.run.retrying") {
+      run.status = "Working";
+      run.updatedAt = Date.now();
+      latestRunId = runId;
+      updatePresenceLog(run.row, "Working");
+      note = "Mind is retrying";
+      showPresenceActivity("Working", run.answer || run.prompt);
+      setState(state);
+      return;
+    }
+
     if (signal === "proc.run.stream") {
       const delta = signalPayloadStreamTextDelta(payload);
       if (delta) {
@@ -1821,6 +1832,7 @@ function isPresenceRunSignal(signal: string): boolean {
     || signal === "chat.hil"
     || signal === "chat.complete"
     || signal === "proc.run.stream"
+    || signal === "proc.run.retrying"
     || signal === "proc.run.output"
     || signal === "proc.run.tool.started"
     || signal === "proc.run.tool.finished"

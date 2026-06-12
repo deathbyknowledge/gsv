@@ -269,6 +269,18 @@ function finishStreamingAssistantRows(rows: LogRow[], runId: string): LogRow[] {
   return changed ? next : rows;
 }
 
+function clearTransientAssistantRowsForRun(rows: LogRow[], runId: string): LogRow[] {
+  let changed = false;
+  const next = rows.filter((row) => {
+    if (row.kind === "message" && row.role === "assistant" && row.runId === runId && !row.messageId) {
+      changed = true;
+      return false;
+    }
+    return true;
+  });
+  return changed ? next : rows;
+}
+
 function extractStreamToolCall(event: Record<string, unknown> | null, runId: string): {
   toolName: string;
   callId: string;
@@ -1272,6 +1284,7 @@ export {
   asRecord,
   asString,
   basenamePath,
+  clearTransientAssistantRowsForRun,
   closeChatMenus,
   closeContainingChatMenu,
   copyTextToClipboard,
