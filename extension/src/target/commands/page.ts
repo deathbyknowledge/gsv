@@ -5,6 +5,11 @@ import {
   getTab,
   type TabSummary,
 } from "../../shared/chrome";
+import {
+  acquireDebugger,
+  releaseDebugger,
+  sendDebuggerCommand,
+} from "../../shared/debugger";
 import type { BrowserCommand, CommandContext, CommandResult } from "../types";
 import { commandError, commandOk } from "../types";
 import { hasHelpFlag, parseInteger, splitOption } from "./args";
@@ -39,7 +44,6 @@ const PAGE_JS_USAGE = "Usage: page js [--tab <tabId>] <source>";
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5_000;
 const MAX_WAIT_TIMEOUT_MS = 120_000;
-const DEBUGGER_PROTOCOL_VERSION = "1.3";
 const DEBUGGER_EVALUATE_TIMEOUT_MS = 30_000;
 
 type RuntimeRemoteObject = {
@@ -438,14 +442,11 @@ async function runJavaScript(args: string[]): Promise<CommandResult> {
 }
 
 async function evaluateJavaScriptWithDebugger(tabId: number, source: string): Promise<InjectedResult<unknown>> {
-  const target: chrome.debugger.DebuggerSession = { tabId };
-  let attached = false;
+  let target: chrome.debugger.DebuggerSession | null = null;
 
   try {
-    const debuggerApi = requireDebuggerApi();
-    await debuggerApi.attach(target, DEBUGGER_PROTOCOL_VERSION);
-    attached = true;
-    await debuggerApi.sendCommand(target, "Runtime.enable");
+    target = await acquireDebugger(tabId);
+    await sendDebuggerCommand(target, "Runtime.enable");
 
     let result = await runtimeEvaluate(target, source);
     if (isSyntaxException(result.exceptionDetails)) {
@@ -481,9 +482,9 @@ async function evaluateJavaScriptWithDebugger(tabId: number, source: string): Pr
   } catch (error) {
     return { ok: false, error: errorMessage(error) };
   } finally {
-    if (attached) {
+    if (target) {
       try {
-        await requireDebuggerApi().detach(target);
+        await releaseDebugger(tabId);
       } catch (error) {
         console.warn("GSV browser target failed to detach debugger", error);
       }
@@ -495,7 +496,7 @@ async function runtimeEvaluate(
   target: chrome.debugger.DebuggerSession,
   expression: string,
 ): Promise<RuntimeEvaluateResult> {
-  return await requireDebuggerApi().sendCommand(target, "Runtime.evaluate", {
+  return await sendDebuggerCommand<RuntimeEvaluateResult>(target, "Runtime.evaluate", {
     expression,
     awaitPromise: true,
     returnByValue: false,
@@ -515,7 +516,7 @@ async function serializeRuntimeRemoteObject(
   }
 
   try {
-    const raw = await requireDebuggerApi().sendCommand(target, "Runtime.callFunctionOn", {
+    const raw = await sendDebuggerCommand<RuntimeEvaluateResult>(target, "Runtime.callFunctionOn", {
       objectId: remote.objectId,
       functionDeclaration: DEBUGGER_SERIALIZER_FUNCTION,
       returnByValue: true,
@@ -533,7 +534,7 @@ async function serializeRuntimeRemoteObject(
     return raw.result ? remoteObjectLiteral(raw.result) : remoteObjectLiteral(remote);
   } finally {
     try {
-      await requireDebuggerApi().sendCommand(target, "Runtime.releaseObject", {
+      await sendDebuggerCommand(target, "Runtime.releaseObject", {
         objectId: remote.objectId,
       });
     } catch {
@@ -583,13 +584,6 @@ function isSyntaxException(details: RuntimeExceptionDetails | undefined): boolea
   return remote?.className === "SyntaxError"
     || remote?.description?.startsWith("SyntaxError") === true
     || String(remote?.value ?? details?.text ?? "").startsWith("SyntaxError");
-}
-
-function requireDebuggerApi(): typeof chrome.debugger {
-  if (typeof chrome === "undefined" || !chrome.debugger) {
-    throw new Error("chrome.debugger is unavailable; check the debugger permission.");
-  }
-  return chrome.debugger;
 }
 
 function normalizeInjectedResult<T>(value: unknown, command: string): InjectedResult<T> {

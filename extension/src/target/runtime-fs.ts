@@ -9,6 +9,11 @@ import {
   type TabSummary,
   type WindowSummary,
 } from "../shared/chrome";
+import {
+  networkEventsJsonl,
+  networkRequestsSnapshot,
+  networkStatusSnapshot,
+} from "./network-recorder";
 
 type DirectoryListing = { files: string[]; directories: string[] };
 
@@ -104,6 +109,14 @@ const README = [
   "  bookmarks delete <bookmarkId>",
   "  bookmarks delete-tree <folderId>",
   "",
+  "  network start [--tab <tabId>] [--bodies] [--persist] [--body-limit bytes]",
+  "  network stop [--tab <tabId>]",
+  "  network status [--tab <tabId>]",
+  "  network events [--tab <tabId>] [--limit n] [--url text]",
+  "  network get <requestId> [--body]",
+  "  network clear [--tab <tabId>]",
+  "  network export har [--tab <tabId>] [--path path]",
+  "",
   "just-bash commands:",
   "  echo, cat, printf, ls, mkdir, rmdir, touch, rm, cp, mv, ln, chmod, pwd,",
   "  readlink, head, tail, wc, stat, grep, fgrep, egrep, rg, sed, awk, sort,",
@@ -117,6 +130,7 @@ const README = [
   "Notes:",
   "  curl is enabled with full browser fetch access.",
   "  page js uses chrome.debugger and briefly attaches to the target tab.",
+  "  network start uses chrome.debugger and stays attached until network stop.",
   "  The browser history command shadows just-bash shell history.",
   "  clipboard read/write currently need an offscreen document bridge.",
   "  downloads open may fail if the browser requires a user gesture.",
@@ -127,6 +141,7 @@ const README = [
   "  /tmp",
   "  /home/browser",
   "  /home/browser/screenshots",
+  "  /home/browser/network",
   "",
   "Runtime files:",
   "  /README.txt",
@@ -134,6 +149,9 @@ const README = [
   "  /proc/tabs.json",
   "  /proc/tabs/<tabId>/meta.json",
   "  /proc/tabs/<tabId>/text.txt",
+  "  /proc/network/status.json",
+  "  /proc/network/events.jsonl",
+  "  /proc/network/requests.json",
   "  /proc/windows.json",
   "  /proc/windows/<windowId>/meta.json",
   "  /dev/active-tab",
@@ -143,6 +161,7 @@ const README = [
   "  /home",
   "  /home/browser",
   "  /home/browser/screenshots",
+  "  /proc/network",
   "  /proc/tabs",
   "  /proc/windows",
   "",
@@ -298,6 +317,10 @@ export class RuntimeFileSystem implements TargetFileSystem {
       "/dev/active-tab",
       "/proc",
       "/proc/browser.json",
+      "/proc/network",
+      "/proc/network/events.jsonl",
+      "/proc/network/requests.json",
+      "/proc/network/status.json",
       "/proc/tabs",
       "/proc/tabs.json",
       "/proc/windows",
@@ -330,6 +353,18 @@ export class RuntimeFileSystem implements TargetFileSystem {
     if (path === "/proc/windows.json") {
       return jsonFile({ windows: await listWindows() });
     }
+    if (path === "/proc/network/status.json") {
+      return jsonFile(networkStatusSnapshot());
+    }
+    if (path === "/proc/network/events.jsonl") {
+      return {
+        contentType: "application/x-ndjson; charset=utf-8",
+        read: async () => textBytes(networkEventsJsonl()),
+      };
+    }
+    if (path === "/proc/network/requests.json") {
+      return jsonFile(networkRequestsSnapshot());
+    }
     if (path === "/dev/active-tab") {
       return textFile(await activeTabPath());
     }
@@ -359,6 +394,9 @@ export class RuntimeFileSystem implements TargetFileSystem {
     if (
       path === "/README.txt"
       || path === "/proc/browser.json"
+      || path === "/proc/network/events.jsonl"
+      || path === "/proc/network/requests.json"
+      || path === "/proc/network/status.json"
       || path === "/proc/tabs.json"
       || path === "/proc/windows.json"
       || path === "/dev/active-tab"
@@ -388,8 +426,14 @@ export class RuntimeFileSystem implements TargetFileSystem {
     }
     if (path === "/proc") {
       return {
-        directories: ["tabs", "windows"],
+        directories: ["network", "tabs", "windows"],
         files: ["browser.json", "tabs.json", "windows.json"],
+      };
+    }
+    if (path === "/proc/network") {
+      return {
+        directories: [],
+        files: ["events.jsonl", "requests.json", "status.json"],
       };
     }
     if (path === "/proc/tabs") {
