@@ -64,6 +64,23 @@ export function isDebuggerAttached(tabId: number): boolean {
   return sessions.has(tabId);
 }
 
+export function debuggerTabs(): number[] {
+  return Array.from(sessions.keys()).sort((left, right) => left - right);
+}
+
+export async function releaseAllDebuggers(): Promise<number[]> {
+  const tabIds = debuggerTabs();
+  await Promise.all(tabIds.map(async (tabId) => {
+    const existing = sessions.get(tabId);
+    sessions.delete(tabId);
+    if (!existing) {
+      return;
+    }
+    await requireDebuggerApi().detach(existing.target).catch(() => undefined);
+  }));
+  return tabIds;
+}
+
 function ensureChromeListeners(): void {
   if (registeredChromeListeners) {
     return;

@@ -16,6 +16,7 @@
     "downloads.open",
     "history",
     "notifications",
+    "sidePanel",
     "scripting",
     "storage",
     "tabs",
@@ -30,7 +31,11 @@
     "type": "module"
   },
   "options_page": "options.html",
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
   "action": {
-    "default_title": "GSV Browser Target"
+    "default_title": "GSV Browser Target",
+    "default_popup": "popup.html"
   }
 }

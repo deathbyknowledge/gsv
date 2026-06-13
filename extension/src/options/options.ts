@@ -1,16 +1,6 @@
 import "./options.css";
 import type { ExtensionConfig } from "../shared/config";
-
-type StatusResponse = {
-  ok: boolean;
-  config?: ExtensionConfig;
-  status?: {
-    state: string;
-    connectionId: string | null;
-    message: string | null;
-  };
-  error?: string;
-};
+import type { RuntimeResponse } from "../shared/ui-state";
 
 const app = document.querySelector<HTMLElement>("#app");
 if (!app) {
@@ -82,28 +72,26 @@ app.addEventListener("click", (event) => {
 void refresh();
 
 async function refresh(): Promise<void> {
-  const response = await sendMessage<StatusResponse>({ type: "status" });
-  if (!response.ok) {
-    renderStatus(response);
-    return;
-  }
-  if (response.config) {
-    setFormConfig(response.config);
+  const response = await sendMessage<RuntimeResponse>({ type: "status" });
+  const state = response.state;
+  if (state) {
+    setFormConfig(state.config);
   }
   renderStatus(response);
 }
 
 async function save(): Promise<void> {
   const config = getFormConfig();
-  const response = await sendMessage<StatusResponse>({ type: "save-config", config });
-  if (response.config) {
-    setFormConfig(response.config);
+  const response = await sendMessage<RuntimeResponse>({ type: "save-config", config });
+  const state = response.state;
+  if (state) {
+    setFormConfig(state.config);
   }
   renderStatus(response);
 }
 
 async function send(type: "connect" | "disconnect"): Promise<void> {
-  const response = await sendMessage<StatusResponse>({ type });
+  const response = await sendMessage<RuntimeResponse>({ type });
   renderStatus(response);
 }
 
@@ -128,14 +116,15 @@ function getFormConfig(): ExtensionConfig {
   };
 }
 
-function renderStatus(response: StatusResponse): void {
-  statusEl.textContent = response.ok
+function renderStatus(response: RuntimeResponse): void {
+  const state = response.state;
+  statusEl.textContent = response.ok && state
     ? [
-        `state: ${response.status?.state ?? "unknown"}`,
-        `connection: ${response.status?.connectionId ?? "-"}`,
-        `message: ${response.status?.message ?? "-"}`,
+        `state: ${state.connection.state}`,
+        `connection: ${state.connection.connectionId ?? "-"}`,
+        `message: ${state.connection.message ?? "-"}`,
       ].join("\n")
-    : `error: ${response.error ?? "unknown error"}`;
+    : `error: ${response.ok ? "unknown error" : response.error ?? "unknown error"}`;
 }
 
 function getInput(name: string): string {
