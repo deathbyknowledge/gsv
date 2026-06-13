@@ -16,6 +16,7 @@ import {
   applyToolResultSignal,
   asRecord,
   asString,
+  clearTransientAttemptRowsForRun,
   normalizeContextSignal,
   normalizeHilRequest,
   signalMatchesActiveThread,
@@ -164,8 +165,22 @@ export function useProcessSignals({
         const effect = applyAssistantStreamSignal(payload, target, setRows);
         if (effect) {
           prepareForLiveTranscriptActivity();
-          setPendingAssistant(effect === "tool" ? "tool" : null);
+          setPendingAssistant(
+            effect === "tool" ? "tool" : effect === "thinking" ? "thinking" : null,
+          );
         }
+      } else if (signal === "proc.run.retrying") {
+        if (!signalMatchesActiveThread(payload, target)) {
+          return;
+        }
+        const runId = asString(asRecord(payload)?.runId);
+        if (runId) {
+          setActiveRunId(runId);
+          setRows((current) => clearTransientAttemptRowsForRun(current, runId));
+        }
+        prepareForLiveTranscriptActivity();
+        setPendingHil(null);
+        setPendingAssistant("thinking");
       } else if (signal === "proc.run.finished") {
         if (!signalMatchesActiveThread(payload, target)) {
           return;

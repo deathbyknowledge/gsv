@@ -447,6 +447,33 @@ describe("normalizeWorkersAiResponse", () => {
     ]);
   });
 
+  it("marks reasoning-only responses as missing a final response", () => {
+    const response = normalizeWorkersAiResponse(
+      {
+        choices: [
+          {
+            message: {
+              role: "assistant",
+              reasoning_content: "I found the answer but did not emit it.",
+            },
+          },
+        ],
+      },
+      DEFAULT_WORKERS_AI_MODEL,
+    );
+
+    expect(response).toMatchObject({
+      stopReason: "error",
+      errorMessage: "Workers AI returned reasoning but no final response",
+    });
+    expect(response.content).toEqual([
+      {
+        type: "thinking",
+        thinking: "I found the answer but did not emit it.",
+      },
+    ]);
+  });
+
   it("reads reasoning content and multiple tool calls from choices output", () => {
     const response = normalizeWorkersAiResponse(
       {

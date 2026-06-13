@@ -76,6 +76,9 @@ export function Transcript(props: {
     () => groupTranscriptRows(props.rows, props.pendingAssistant, props.pendingHil, props.activeRunId),
     [props.rows, props.pendingAssistant, props.pendingHil, props.activeRunId],
   );
+  const hasLiveTranscriptActivity = props.pendingAssistant !== null ||
+    props.pendingHil !== null ||
+    items.some((item) => item.kind === "run" && item.status !== "completed");
   const selectedRun = useMemo(() => {
     if (!selectedRunId) {
       return null;
@@ -138,12 +141,13 @@ export function Transcript(props: {
   }, [selectedRun, selectedRunId]);
 
   useEffect(() => {
-    if (!props.pendingAssistant && !props.pendingHil) {
+    if (!hasLiveTranscriptActivity) {
       return undefined;
     }
+    setNow(Date.now());
     const id = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(id);
-  }, [props.pendingAssistant, props.pendingHil]);
+  }, [hasLiveTranscriptActivity]);
 
   useLayoutEffect(() => {
     if (!transcriptNode) {

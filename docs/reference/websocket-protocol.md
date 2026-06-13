@@ -241,6 +241,7 @@ Current role defaults from `buildSignalList()`:
 - `proc.changed`
 - `proc.run.started`
 - `proc.run.stream`
+- `proc.run.retrying`
 - `proc.run.output`
 - `proc.run.tool.started`
 - `proc.run.tool.finished`
@@ -289,6 +290,10 @@ The nested `event.type` values are `start`, `text_start`, `text_delta`,
 `toolcall_start`, `toolcall_delta`, `toolcall_end`, `done`, and `error`.
 Consumers should use `contentIndex` for block identity; different block streams
 are not guaranteed to be contiguous.
+
+`proc.run.retrying` is emitted after a retryable generation failure and before
+the next model attempt. Its payload includes `runId`, `conversationId`,
+`attempt`, `nextAttempt`, `maxAttempts`, `reason`, and `timestamp`.
 
 ---
 
