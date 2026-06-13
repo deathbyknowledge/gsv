@@ -270,37 +270,37 @@ function finishStreamingAssistantRows(rows: LogRow[], runId: string): LogRow[] {
 }
 
 function clearTransientAttemptRowsForRun(rows: LogRow[], runId: string): LogRow[] {
-  let latestDurableToolIndex = -1;
-  for (let index = 0; index < rows.length; index += 1) {
-    const row = rows[index];
-    if (
-      row.runId === runId &&
-      (row.kind === "toolResult" || (row.kind === "toolCall" && row.phase !== "planning"))
-    ) {
-      latestDurableToolIndex = index;
-    }
-  }
+  const latestDurableToolIndex = findLastIndex(rows, (row) => isDurableToolRow(row, runId));
 
   let changed = false;
   const next = rows.filter((row, index) => {
     if (index <= latestDurableToolIndex || row.runId !== runId) {
       return true;
     }
-    if (
-      row.kind === "message" &&
-      row.role === "assistant" &&
-      !row.messageId
-    ) {
-      changed = true;
-      return false;
-    }
-    if (row.kind === "toolCall" && row.phase === "planning") {
+    if (isTransientAttemptRow(row)) {
       changed = true;
       return false;
     }
     return true;
   });
   return changed ? next : rows;
+}
+
+function isDurableToolRow(row: LogRow, runId: string): boolean {
+  return row.runId === runId &&
+    (row.kind === "toolResult" || (row.kind === "toolCall" && row.phase !== "planning"));
+}
+
+function isTransientAttemptRow(row: LogRow): boolean {
+  return isUnsavedAssistantRow(row) || isPlanningToolRow(row);
+}
+
+function isUnsavedAssistantRow(row: LogRow): boolean {
+  return row.kind === "message" && row.role === "assistant" && row.messageId == null;
+}
+
+function isPlanningToolRow(row: LogRow): boolean {
+  return row.kind === "toolCall" && row.phase === "planning";
 }
 
 function extractStreamToolCall(event: Record<string, unknown> | null, runId: string): {

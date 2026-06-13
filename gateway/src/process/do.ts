@@ -2532,21 +2532,15 @@ export class Process extends Host<Env> {
           isRetryableGenerationErrorMessage(errorMsg) &&
           attempt < MAX_RETRYABLE_GENERATION_ATTEMPTS
         ) {
-          console.warn(
-            `[Process] Retrying LLM generation after retryable provider error ` +
-            `(${attempt}/${MAX_RETRYABLE_GENERATION_ATTEMPTS}): ${errorMsg}`,
-          );
-          if (await this.handleRunStopped(runId)) {
-            return;
-          }
-          await this.emitRunRetrying(
+          const retryState = await this.beginGenerationRetry({
             runId,
             conversationId,
             attempt,
-            MAX_RETRYABLE_GENERATION_ATTEMPTS,
-            errorMsg,
-          );
-          if (await this.handleRunStopped(runId)) {
+            maxAttempts: MAX_RETRYABLE_GENERATION_ATTEMPTS,
+            reason: errorMsg,
+            cause: "retryable provider error",
+          });
+          if (retryState === "stopped") {
             return;
           }
           continue;
@@ -2588,23 +2582,18 @@ export class Process extends Host<Env> {
         break;
       }
 
-      console.warn(
-        `[Process] Retrying LLM generation after empty assistant response ` +
-        `(${attempt}/${MAX_RETRYABLE_GENERATION_ATTEMPTS}): ${responseFailure}`,
-      );
-      if (await this.handleRunStopped(runId)) {
-        return;
-      }
-      await this.emitRunRetrying(
+      const retryState = await this.beginGenerationRetry({
         runId,
         conversationId,
         attempt,
-        MAX_RETRYABLE_GENERATION_ATTEMPTS,
-        responseFailure,
-      );
-      if (await this.handleRunStopped(runId)) {
+        maxAttempts: MAX_RETRYABLE_GENERATION_ATTEMPTS,
+        reason: responseFailure,
+        cause: "empty assistant response",
+      });
+      if (retryState === "stopped") {
         return;
       }
+      continue;
     }
 
     if (!response) {
@@ -3033,6 +3022,31 @@ export class Process extends Host<Env> {
       reason,
       timestamp: Date.now(),
     });
+  }
+
+  private async beginGenerationRetry(options: {
+    runId: string;
+    conversationId: string;
+    attempt: number;
+    maxAttempts: number;
+    reason: string;
+    cause: string;
+  }): Promise<"retry" | "stopped"> {
+    console.warn(
+      `[Process] Retrying LLM generation after ${options.cause} ` +
+      `(${options.attempt}/${options.maxAttempts}): ${options.reason}`,
+    );
+    if (await this.handleRunStopped(options.runId)) {
+      return "stopped";
+    }
+    await this.emitRunRetrying(
+      options.runId,
+      options.conversationId,
+      options.attempt,
+      options.maxAttempts,
+      options.reason,
+    );
+    return await this.handleRunStopped(options.runId) ? "stopped" : "retry";
   }
 
   private async emitRunFinished(run: RunState, options: RunFinishOptions): Promise<void> {

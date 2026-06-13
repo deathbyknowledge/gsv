@@ -30,6 +30,13 @@ export type TranscriptItem =
   | { kind: "row"; row: LogRow }
   | TranscriptRunGroup;
 
+type RunTiming = {
+  promptStartedAt: number | null;
+  firstAssistantStartIndex: number;
+  startedAt: number;
+  updatedAt: number;
+};
+
 export function groupTranscriptRows(
   rows: LogRow[],
   pendingAssistant: PendingAssistantState,
@@ -86,27 +93,15 @@ function buildRunGroup(
   const systemRows: MessageRow[] = [];
   const toolRows: ToolRow[] = [];
   const detailEntries: RunDetailEntry[] = [];
-  let startedAt = Number.POSITIVE_INFINITY;
-  let updatedAt = 0;
-  const userStartedAt = firstUserTimestamp(rows);
-  const firstExplicitAssistantStartIndex = rows.findIndex((row) =>
-    row.kind === "message" &&
-    row.role === "assistant" &&
-    typeof row.startedAt === "number" &&
-    Number.isFinite(row.startedAt)
-  );
+  const timing = createRunTiming(rows);
 
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
-    const fallbackStartedAt = firstExplicitAssistantStartIndex < 0 || index < firstExplicitAssistantStartIndex
-      ? userStartedAt ?? row.timestamp
-      : row.timestamp;
     if (row.kind === "message") {
       if (row.role === "user") {
         userRows.push(row);
       } else if (row.role === "assistant") {
-        startedAt = Math.min(startedAt, row.startedAt ?? fallbackStartedAt);
-        updatedAt = Math.max(updatedAt, row.timestamp);
+        recordRunActivity(timing, row, index);
         assistantRows.push(row);
         for (const text of row.thinking?.filter(Boolean) ?? []) {
           detailEntries.push({ kind: "thinking", text, timestamp: row.timestamp });
@@ -120,13 +115,11 @@ function buildRunGroup(
           finalAssistantRows.push(row);
         }
       } else {
-        startedAt = Math.min(startedAt, row.startedAt ?? fallbackStartedAt);
-        updatedAt = Math.max(updatedAt, row.timestamp);
+        recordRunActivity(timing, row, index);
         systemRows.push(row);
       }
     } else {
-      startedAt = Math.min(startedAt, fallbackStartedAt);
-      updatedAt = Math.max(updatedAt, row.timestamp);
+      recordRunActivity(timing, row, index);
       toolRows.push(row);
       detailEntries.push({ kind: "tool", row });
       if (pendingHil?.runId === runId && pendingHil.callId === row.callId) {
@@ -135,20 +128,17 @@ function buildRunGroup(
     }
   }
 
-  if (!Number.isFinite(startedAt) && userStartedAt !== null) {
-    startedAt = userStartedAt;
-    updatedAt = Math.max(updatedAt, userStartedAt);
-  }
+  recordPromptOnlyRun(timing);
 
   const groupPendingHil = pendingHil?.runId === runId ? pendingHil : null;
   if (groupPendingHil && !detailEntries.some((entry) => entry.kind === "hil" && entry.request.requestId === groupPendingHil.requestId)) {
-    startedAt = Math.min(startedAt, userStartedAt ?? groupPendingHil.createdAt);
-    updatedAt = Math.max(updatedAt, groupPendingHil.createdAt);
+    recordPendingHil(timing, groupPendingHil);
     detailEntries.push({ kind: "hil", request: groupPendingHil });
   }
   const groupPendingAssistant = activeRunId === runId ? pendingAssistant : null;
   const isRunning = groupPendingAssistant !== null
     || assistantRows.some((row) => row.streaming === true);
+  const { startedAt, updatedAt } = finishRunTiming(timing);
   return {
     kind: "run",
     runId,
@@ -160,12 +150,71 @@ function buildRunGroup(
     systemRows,
     toolRows,
     detailEntries,
-    startedAt: Number.isFinite(startedAt) ? startedAt : Date.now(),
-    updatedAt: updatedAt > 0 ? updatedAt : Number.isFinite(startedAt) ? startedAt : Date.now(),
+    startedAt,
+    updatedAt,
     status: groupPendingHil ? "waiting" : isRunning ? "running" : "completed",
     pendingAssistant: groupPendingAssistant,
     pendingHil: groupPendingHil,
   };
+}
+
+function createRunTiming(rows: LogRow[]): RunTiming {
+  return {
+    promptStartedAt: firstUserTimestamp(rows),
+    firstAssistantStartIndex: rows.findIndex(isAssistantRowWithStartedAt),
+    startedAt: Number.POSITIVE_INFINITY,
+    updatedAt: 0,
+  };
+}
+
+function recordRunActivity(timing: RunTiming, row: LogRow, index: number): void {
+  const startedAt = rowActivityStartedAt(timing, row, index);
+  timing.startedAt = Math.min(timing.startedAt, startedAt);
+  timing.updatedAt = Math.max(timing.updatedAt, row.timestamp);
+}
+
+function rowActivityStartedAt(timing: RunTiming, row: LogRow, index: number): number {
+  if (row.kind === "message" && isFiniteNumber(row.startedAt)) {
+    return row.startedAt;
+  }
+  return shouldAnchorToPrompt(timing, index)
+    ? timing.promptStartedAt ?? row.timestamp
+    : row.timestamp;
+}
+
+function shouldAnchorToPrompt(timing: RunTiming, index: number): boolean {
+  return timing.firstAssistantStartIndex < 0 || index < timing.firstAssistantStartIndex;
+}
+
+function recordPromptOnlyRun(timing: RunTiming): void {
+  if (Number.isFinite(timing.startedAt) || timing.promptStartedAt === null) {
+    return;
+  }
+  timing.startedAt = timing.promptStartedAt;
+  timing.updatedAt = Math.max(timing.updatedAt, timing.promptStartedAt);
+}
+
+function recordPendingHil(timing: RunTiming, request: HilRequest): void {
+  timing.startedAt = Math.min(timing.startedAt, timing.promptStartedAt ?? request.createdAt);
+  timing.updatedAt = Math.max(timing.updatedAt, request.createdAt);
+}
+
+function finishRunTiming(timing: RunTiming): { startedAt: number; updatedAt: number } {
+  const startedAt = Number.isFinite(timing.startedAt) ? timing.startedAt : Date.now();
+  return {
+    startedAt,
+    updatedAt: timing.updatedAt > 0 ? timing.updatedAt : startedAt,
+  };
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function isAssistantRowWithStartedAt(row: LogRow): boolean {
+  return row.kind === "message" &&
+    row.role === "assistant" &&
+    isFiniteNumber(row.startedAt);
 }
 
 function assistantTextIsInterim(rows: LogRow[], index: number): boolean {
