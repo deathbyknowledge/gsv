@@ -5,6 +5,7 @@
   "workspaces": [
     "assembler",
     "builtin-packages/*",
+    "extension",
     "gateway",
     "web",
     "packages/*"
