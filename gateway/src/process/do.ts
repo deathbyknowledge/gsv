@@ -4061,13 +4061,15 @@ function isRetryableAssistantResponseFailure(
     return false;
   }
 
+  if (response.stopReason === "error") {
+    return typeof response.errorMessage === "string" &&
+      response.errorMessage.trim().length > 0 &&
+      isRetryableGenerationErrorMessage(response.errorMessage);
+  }
+
   const failureText = `${response.errorMessage ?? ""}\n${failure}`;
   if (isRetryableGenerationErrorMessage(failureText)) {
     return true;
-  }
-
-  if (response.stopReason === "error" && response.errorMessage) {
-    return false;
   }
 
   const content = assistantContentBlocks(response);

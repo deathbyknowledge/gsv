@@ -991,6 +991,79 @@ describe("Process DO — mechanical", () => {
       });
     });
 
+    it("does not retry explicit returned provider errors with empty content", async () => {
+      const pid = "mech-chat-provider-error-response";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const emitted: Array<{ signal: string; payload: unknown }> = [];
+        let calls = 0;
+        process.sendSignal = async (signal: string, payload: unknown) => {
+          emitted.push({ signal, payload });
+        };
+        process.generation = {
+          async generate() {
+            calls += 1;
+            return {
+              role: "assistant",
+              content: [],
+              api: "test",
+              provider: "workers-ai",
+              model: "test",
+              stopReason: "error",
+              errorMessage: "Workers AI binding is not configured for this worker",
+              timestamp: Date.now(),
+            };
+          },
+          async generateText() {
+            return "unused";
+          },
+        };
+
+        process.store.appendMessage("user", "fail once please");
+        process.currentRun = {
+          runId: "run-chat-provider-error-response",
+          queued: false,
+          conversationId: "default",
+          config: {
+            profile: "task",
+            provider: "workers-ai",
+            model: "@cf/nvidia/nemotron-3-120b-a12b",
+            apiKey: "",
+            reasoning: "high",
+            maxTokens: 8192,
+            contextWindowTokens: 256000,
+            contextWindowSource: "config",
+            maxContextBytes: 32768,
+          },
+          tools: [],
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+        await process.continueAgentLoop("run-chat-provider-error-response");
+        return {
+          calls,
+          emitted,
+          messages: process.store.getMessages(),
+        };
+      });
+
+      expect(result.calls).toBe(1);
+      expect(result.emitted.some((entry) => entry.signal === "proc.run.retrying")).toBe(false);
+      expect(result.messages.map((message: any) => [message.role, message.content])).toEqual([
+        ["user", "fail once please"],
+        ["system", "Generation failed: Workers AI binding is not configured for this worker"],
+      ]);
+      const finished = result.emitted.find((entry) => entry.signal === "proc.run.finished")?.payload as any;
+      expect(finished).toMatchObject({
+        status: "error",
+        reason: "generation.empty",
+        error: "Generation failed: Workers AI binding is not configured for this worker",
+      });
+    });
+
     it("surfaces thrown provider context overflow separately from generation errors", async () => {
       const pid = "mech-chat-provider-context-overflow-throw";
       const stub = await initProcess(pid, ROOT_IDENTITY);
