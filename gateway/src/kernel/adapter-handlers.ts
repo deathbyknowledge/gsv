@@ -28,6 +28,9 @@ import { sendFrameToProcess } from "../shared/utils";
 import type { InteractionOrigin } from "../syscalls/interaction-origin";
 import { isVisibleAdapterTarget } from "./adapter-targets";
 import { ensureDefaultConversationExecutor } from "./agents";
+import { canOwnerRunAsAccount } from "./account-access";
+import { isLocked } from "../auth/shadow";
+import { DEFAULT_CONVERSATION_ID } from "../process/conversations";
 
 type AdapterServiceBinding = Fetcher & Partial<AdapterWorkerInterface>;
 type ProcSendData = {
@@ -35,6 +38,17 @@ type ProcSendData = {
   status?: string;
   runId?: string;
   queued?: boolean;
+};
+type AdapterCommandResult = {
+  handled: boolean;
+  reply?: {
+    text: string;
+    replyToId?: string;
+  };
+};
+type HilDecision = {
+  decision: "approve" | "deny";
+  remember: boolean;
 };
 
 function traceIdFromConfig(config: Record<string, unknown> | undefined): string {
@@ -305,11 +319,21 @@ export async function handleAdapterInbound(
     return { ok: false, error: `Unknown local user uid=${uid}` };
   }
 
-  // All inbound channels feed the user's default ("inbox") conversation with
-  // their personal agent — the stable surface. Per-channel/topic splitting is
-  // a later, explicit action (agent-driven fork/bind), not the zero-config
-  // default. Allocates/reuses a fungible executor for that conversation.
-  const pid = await ensureUserDefaultExecutor(userIdentity, ctx);
+  const command = await handleAdapterCommand({
+    adapter,
+    accountId,
+    message,
+    uid,
+    ctx,
+  });
+  if (command.handled) {
+    return {
+      ok: true,
+      ...(command.reply ? { reply: command.reply } : {}),
+    };
+  }
+
+  const pid = await resolveAdapterRoute(adapter, accountId, message.surface, uid, userIdentity, ctx);
 
   const pendingHil = await getPendingHil(pid);
   if (pendingHil) {
@@ -331,7 +355,12 @@ export async function handleAdapterInbound(
       type: "req",
       id: crypto.randomUUID(),
       call: "proc.hil",
-      args: { pid, requestId: pendingHil.requestId, decision },
+      args: {
+        pid,
+        requestId: pendingHil.requestId,
+        decision: decision.decision,
+        ...(decision.remember ? { remember: true } : {}),
+      },
     } as RequestFrame);
 
     if (!hilResponse || hilResponse.type !== "res") {
@@ -364,7 +393,11 @@ export async function handleAdapterInbound(
           }
         : {
             reply: {
-              text: decision === "approve" ? "Approved. Continuing." : "Denied. Continuing.",
+              text: decision.decision === "approve"
+                ? decision.remember
+                  ? "Approved. I will remember this for this conversation."
+                  : "Approved. Continuing."
+                : "Denied. Continuing.",
               replyToId: message.messageId,
             },
           }),
@@ -570,6 +603,355 @@ async function ensureUserDefaultExecutor(identity: ProcessIdentity, ctx: KernelC
   return ensureDefaultConversationExecutor(ctx, identity);
 }
 
+async function resolveAdapterRoute(
+  adapter: string,
+  accountId: string,
+  surface: AdapterSurface,
+  uid: number,
+  userIdentity: ProcessIdentity,
+  ctx: KernelContext,
+): Promise<string> {
+  const routedPid = ctx.adapters.surfaceRoutes.resolvePid(
+    adapter,
+    accountId,
+    surface.kind,
+    surface.id,
+    uid,
+  );
+  if (routedPid) {
+    const routedProcess = ctx.procs.get(routedPid);
+    if (routedProcess && routedProcess.ownerUid === uid && routedProcess.interactive) {
+      return routedPid;
+    }
+    ctx.adapters.surfaceRoutes.clearRoute(adapter, accountId, surface.kind, surface.id);
+  }
+
+  return ensureUserDefaultExecutor(userIdentity, ctx);
+}
+
+async function handleAdapterCommand(args: {
+  adapter: string;
+  accountId: string;
+  message: AdapterInboundMessage;
+  uid: number;
+  ctx: KernelContext;
+}): Promise<AdapterCommandResult> {
+  const { adapter, accountId, message, uid, ctx } = args;
+  if (message.surface.kind !== "dm") {
+    return { handled: false };
+  }
+
+  const text = message.text.trim();
+  if (!text.startsWith("/")) {
+    return { handled: false };
+  }
+
+  const [rawCommand, ...rest] = text.split(/\s+/);
+  const command = rawCommand.toLowerCase();
+  const selector = rest.join(" ").trim();
+
+  if (command === "/help") {
+    return replyToAdapterCommand(message, renderAdapterCommandHelp());
+  }
+
+  if (command === "/where") {
+    const routed = resolveExistingAdapterRoute(adapter, accountId, message.surface, uid, ctx);
+    return replyToAdapterCommand(
+      message,
+      routed
+        ? `This chat is routed to ${describeProcessRoute(routed)}. Use /use personal to return to your personal conversation.`
+        : "This chat is using your personal conversation. Use /list to see routable agents and processes.",
+    );
+  }
+
+  if (command === "/list") {
+    return replyToAdapterCommand(message, renderAdapterRouteList(uid, ctx));
+  }
+
+  if (command === "/use") {
+    if (!selector) {
+      return replyToAdapterCommand(message, "Usage: /use personal, /use <process-id>, or /use <agent-name>.");
+    }
+
+    const normalized = selector.toLowerCase();
+    if (normalized === "personal" || normalized === "default" || normalized === "home") {
+      const cleared = ctx.adapters.surfaceRoutes.clearRoute(adapter, accountId, message.surface.kind, message.surface.id);
+      return replyToAdapterCommand(
+        message,
+        cleared
+          ? "This chat now uses your personal conversation."
+          : "This chat is already using your personal conversation.",
+      );
+    }
+
+    const processMatch = findProcessForSelector(selector, uid, ctx);
+    if (processMatch.kind === "ambiguous") {
+      return replyToAdapterCommand(message, `More than one process matches "${selector}". Use a longer process id from /list.`);
+    }
+    if (processMatch.kind === "found") {
+      ctx.adapters.surfaceRoutes.setRoute(
+        adapter,
+        accountId,
+        message.surface.kind,
+        message.surface.id,
+        uid,
+        processMatch.record.processId,
+        uid,
+      );
+      return replyToAdapterCommand(message, `This chat now uses ${describeProcessRoute(processMatch.record)}.`);
+    }
+
+    const agent = findRunnableAgent(selector, uid, ctx);
+    if (!agent) {
+      return replyToAdapterCommand(message, `I could not find a process or agent named "${selector}". Use /list to see available targets.`);
+    }
+
+    const pid = await spawnAdapterAgentProcess(agent, uid, message.surface, ctx);
+    ctx.adapters.surfaceRoutes.setRoute(
+      adapter,
+      accountId,
+      message.surface.kind,
+      message.surface.id,
+      uid,
+      pid,
+      uid,
+    );
+    return replyToAdapterCommand(message, `This chat now uses ${agent.username}.`);
+  }
+
+  return replyToAdapterCommand(message, `Unknown command: ${rawCommand}\n\n${renderAdapterCommandHelp()}`);
+}
+
+function resolveExistingAdapterRoute(
+  adapter: string,
+  accountId: string,
+  surface: AdapterSurface,
+  uid: number,
+  ctx: KernelContext,
+): NonNullable<ReturnType<KernelContext["procs"]["get"]>> | null {
+  const routedPid = ctx.adapters.surfaceRoutes.resolvePid(
+    adapter,
+    accountId,
+    surface.kind,
+    surface.id,
+    uid,
+  );
+  if (!routedPid) {
+    return null;
+  }
+  const routedProcess = ctx.procs.get(routedPid);
+  if (routedProcess && routedProcess.ownerUid === uid && routedProcess.interactive) {
+    return routedProcess;
+  }
+  ctx.adapters.surfaceRoutes.clearRoute(adapter, accountId, surface.kind, surface.id);
+  return null;
+}
+
+function replyToAdapterCommand(message: AdapterInboundMessage, text: string): AdapterCommandResult {
+  return {
+    handled: true,
+    reply: {
+      text,
+      replyToId: message.messageId,
+    },
+  };
+}
+
+function renderAdapterCommandHelp(): string {
+  return [
+    "Adapter commands:",
+    "/list - show available agents and active processes",
+    "/where - show where this chat is routed",
+    "/use personal - route back to your personal conversation",
+    "/use <process-id> - route this chat to an active process",
+    "/use <agent-name> - start and route this chat to an agent",
+    "",
+    "When approval is pending, reply approve, deny, or approve always.",
+  ].join("\n");
+}
+
+function renderAdapterRouteList(uid: number, ctx: KernelContext): string {
+  const agents = listRunnableAgents(uid, ctx);
+  const processes = ctx.procs.list(uid).filter((record) => record.interactive);
+  const lines = ["Available routes:"];
+
+  lines.push("", "Agents:");
+  if (agents.length === 0) {
+    lines.push("- none");
+  } else {
+    for (const agent of agents.slice(0, 8)) {
+      lines.push(`- ${agent.username}${agent.label ? ` (${agent.label})` : ""}`);
+    }
+  }
+
+  lines.push("", "Processes:");
+  if (processes.length === 0) {
+    lines.push("- none");
+  } else {
+    for (const process of processes.slice(0, 8)) {
+      lines.push(`- ${shortProcessId(process.processId)} ${process.label || process.username} [${process.state}]`);
+    }
+  }
+
+  lines.push("", "Use /use personal, /use <agent-name>, or /use <process-id>.");
+  return lines.join("\n");
+}
+
+type ProcessSelectorResult =
+  | { kind: "found"; record: NonNullable<ReturnType<KernelContext["procs"]["get"]>> }
+  | { kind: "ambiguous" }
+  | { kind: "missing" };
+
+function findProcessForSelector(selector: string, uid: number, ctx: KernelContext): ProcessSelectorResult {
+  const normalized = selector.trim().toLowerCase();
+  if (!normalized) {
+    return { kind: "missing" };
+  }
+
+  const processes = ctx.procs.list(uid).filter((record) => record.interactive);
+  const exact = processes.find((record) => record.processId.toLowerCase() === normalized);
+  if (exact) {
+    return { kind: "found", record: exact };
+  }
+
+  const matches = processes.filter((record) => {
+    const pid = record.processId.toLowerCase();
+    const shortPid = shortProcessId(record.processId).toLowerCase();
+    const label = record.label?.trim().toLowerCase();
+    return pid.startsWith(normalized)
+      || shortPid === normalized
+      || shortPid.startsWith(normalized)
+      || label === normalized;
+  });
+
+  if (matches.length === 1) {
+    return { kind: "found", record: matches[0] };
+  }
+  if (matches.length > 1) {
+    return { kind: "ambiguous" };
+  }
+  return { kind: "missing" };
+}
+
+type RunnableAgent = {
+  uid: number;
+  username: string;
+  label: string;
+  identity: ProcessIdentity;
+};
+
+function findRunnableAgent(selector: string, ownerUid: number, ctx: KernelContext): RunnableAgent | null {
+  const normalized = selector.trim().toLowerCase();
+  return listRunnableAgents(ownerUid, ctx).find((agent) => (
+    agent.username.toLowerCase() === normalized
+    || agent.label.toLowerCase() === normalized
+  )) ?? null;
+}
+
+function listRunnableAgents(ownerUid: number, ctx: KernelContext): RunnableAgent[] {
+  const entries = typeof ctx.auth.getPasswdEntries === "function"
+    ? ctx.auth.getPasswdEntries()
+    : [];
+  const personalAgentUid = ctx.auth.getPersonalAgentUid(ownerUid);
+  const agents: RunnableAgent[] = [];
+
+  for (const entry of entries) {
+    if (entry.uid !== personalAgentUid) {
+      const shadow = typeof ctx.auth.getShadowByUsername === "function"
+        ? ctx.auth.getShadowByUsername(entry.username)
+        : null;
+      if (!shadow || !isLocked(shadow)) {
+        continue;
+      }
+    }
+    if (entry.uid < 1000 && entry.uid !== personalAgentUid) {
+      continue;
+    }
+    if (!canOwnerRunAsAccount(ctx.auth, ownerUid, entry, false)) {
+      continue;
+    }
+
+    agents.push({
+      uid: entry.uid,
+      username: entry.username,
+      label: entry.gecos?.trim() || entry.username,
+      identity: {
+        uid: entry.uid,
+        gid: entry.gid,
+        gids: ctx.auth.resolveGids(entry.username, entry.gid),
+        username: entry.username,
+        home: entry.home,
+        cwd: entry.home,
+      },
+    });
+  }
+
+  agents.sort((left, right) => {
+    if (left.uid === personalAgentUid) return -1;
+    if (right.uid === personalAgentUid) return 1;
+    return left.username.localeCompare(right.username);
+  });
+  return agents;
+}
+
+async function spawnAdapterAgentProcess(
+  agent: RunnableAgent,
+  ownerUid: number,
+  surface: AdapterSurface,
+  ctx: KernelContext,
+): Promise<string> {
+  const pid = `proc:${crypto.randomUUID()}`;
+  const label = `adapter ${describeAdapterSurface(surface)} (${agent.username})`;
+  ctx.procs.spawn(pid, agent.identity, {
+    ownerUid,
+    interactive: true,
+    label,
+    cwd: agent.identity.cwd,
+  });
+
+  let conversationId: string | undefined;
+  if (ctx.conversations) {
+    const conversation = ctx.conversations.create({
+      ownerUid,
+      agentUid: agent.identity.uid,
+      agentHome: agent.identity.home,
+      title: label,
+    });
+    conversationId = conversation.conversationId;
+    ctx.conversations.setActivePid(conversationId, pid);
+  }
+
+  await sendFrameToProcess(pid, {
+    type: "req",
+    id: crypto.randomUUID(),
+    call: "proc.setidentity",
+    args: {
+      pid,
+      identity: agent.identity,
+      interactive: true,
+      conversationId: conversationId ?? DEFAULT_CONVERSATION_ID,
+    },
+  } as RequestFrame);
+
+  return pid;
+}
+
+function describeProcessRoute(record: NonNullable<ReturnType<KernelContext["procs"]["get"]>>): string {
+  return `${shortProcessId(record.processId)} ${record.label || record.username}`;
+}
+
+function shortProcessId(pid: string): string {
+  if (pid.startsWith("proc:")) {
+    return pid.slice(0, 13);
+  }
+  return pid.length > 13 ? pid.slice(0, 13) : pid;
+}
+
+function describeAdapterSurface(surface: AdapterSurface): string {
+  const label = surface.name?.trim() || surface.handle?.trim() || surface.id;
+  return surface.kind === "dm" ? "dm" : `${surface.kind} ${label}`;
+}
+
 function resolveActorId(message: AdapterInboundMessage): string | null {
   const actor = message.actor?.id?.trim();
   if (actor) return actor;
@@ -649,13 +1031,16 @@ function normalizePendingHil(value: unknown): PendingHilSummary | null {
   };
 }
 
-function parseHilDecision(text: string): "approve" | "deny" | null {
+function parseHilDecision(text: string): HilDecision | null {
   const normalized = text.trim().toLowerCase().replace(/[.!?]+$/g, "");
+  if (["approve always", "allow always", "yes always", "always approve", "always allow"].includes(normalized)) {
+    return { decision: "approve", remember: true };
+  }
   if (["approve", "allow", "yes"].includes(normalized)) {
-    return "approve";
+    return { decision: "approve", remember: false };
   }
   if (["deny", "reject", "no"].includes(normalized)) {
-    return "deny";
+    return { decision: "deny", remember: false };
   }
   return null;
 }
@@ -666,7 +1051,7 @@ function renderAdapterHilReminder(
 ): string {
   const action = summarizePendingHil(pendingHil);
   const responseLine = surfaceKind === "dm"
-    ? 'Reply "approve" or "deny" to continue.'
+    ? 'Reply "approve", "deny", or "approve always" to continue.'
     : "Open Chat to approve or deny this action.";
   return [
     "I’m waiting for confirmation before I can continue.",

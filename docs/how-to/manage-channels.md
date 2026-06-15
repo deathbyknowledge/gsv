@@ -130,12 +130,31 @@ gsv auth unlink --adapter discord --account-id default --actor-id discord:user:1
 1. The adapter Worker receives a platform message.
 2. The Worker calls the Kernel with `adapter.inbound` using a service identity.
 3. The Kernel resolves the adapter/account/actor link to a local uid.
-4. The message is delivered to the surface-routed process or `init:{uid}`.
+4. The message is delivered to the surface-routed process or the user's default
+   personal conversation.
 5. The Process DO runs the agent loop and emits `proc.run.*` signals.
 6. The Kernel sends replies back through `adapter.send`.
 
+Linked DMs also accept gateway-level adapter commands before the message reaches
+the agent:
+
+```text
+/list
+/where
+/use personal
+/use <process-id>
+/use <agent-name>
+/help
+```
+
+`/use <process-id>` binds the DM surface to an active process through
+`surface_routes`. `/use <agent-name>` starts a new interactive process for that
+agent and binds the DM to it. `/use personal` clears the route so the DM falls
+back to the default personal conversation.
+
 Pending human-in-the-loop approvals can be approved or denied from a linked DM
-surface. Non-DM messages from unlinked actors are dropped.
+surface. Use `approve always` to approve and store a process-local allow rule
+for the syscall/target class. Non-DM messages from unlinked actors are dropped.
 
 ## Troubleshooting
 

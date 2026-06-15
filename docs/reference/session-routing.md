@@ -102,13 +102,19 @@ Inbound behavior:
 - Unlinked DM actor: return a link challenge such as `gsv auth link CODE`.
 - Unlinked non-DM actor: drop the message as `unlinked_actor`.
 
-The default delivery target is the user's `init:{uid}` process. A `surface_routes` entry can override this for a specific adapter account and surface:
+The default delivery target is the user's default personal conversation. A `surface_routes` entry can override this for a specific adapter account and surface:
 
 ```text
 adapter + accountId + surface.kind + surface.id -> pid
 ```
 
-Human-in-the-loop replies are routed specially. If the target process has a pending HIL request, a DM reply of approval or denial resumes `proc.hil` instead of starting a new chat turn.
+Linked DMs can manage their route with gateway-level commands before the message
+is delivered to a process: `/list`, `/where`, `/use personal`,
+`/use <process-id>`, `/use <agent-name>`, and `/help`. These commands are
+handled by the Kernel, not by individual adapter workers. Non-DM surfaces do not
+accept route commands.
+
+Human-in-the-loop replies are routed specially. If the target process has a pending HIL request, a DM reply of approval or denial resumes `proc.hil` instead of starting a new chat turn. `approve always` resumes with `remember: true`, storing a process-local allow override for that syscall and target class.
 
 ## Package App Routing
 
