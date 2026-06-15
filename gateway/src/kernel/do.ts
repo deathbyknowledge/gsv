@@ -1008,7 +1008,7 @@ export class Kernel extends Host<Env> {
   ): string {
     const summary = this.summarizeHilRequest(request);
     const actionLine = surfaceKind === "dm"
-      ? 'Reply "approve" to continue or "deny" to stop this action.'
+      ? 'Reply "approve" to continue, "approve always" to remember it for this conversation, or "deny" to stop this action.'
       : "Open Chat to approve or deny this action.";
     return [
       "I need your confirmation before I can continue.",

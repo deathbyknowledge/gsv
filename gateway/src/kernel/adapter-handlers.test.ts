@@ -14,6 +14,9 @@ vi.mock("../shared/utils", () => ({
 type FakeAdapterStatusStore = {
   upsert: ReturnType<typeof vi.fn>;
 };
+type MakeContextOptions = {
+  routePid?: string | null;
+};
 
 function makeStorageBucket() {
   return {
@@ -25,6 +28,7 @@ function makeStorageBucket() {
 function makeContext(
   env: Record<string, unknown>,
   status: FakeAdapterStatusStore,
+  options: MakeContextOptions = {},
 ): KernelContext {
   const human = {
     uid: 1000,
@@ -42,6 +46,35 @@ function makeContext(
     home: "/home/sam-agent",
     shell: "/bin/init",
   };
+  const processRecord = {
+    processId: "pid-1",
+    uid: personalAgent.uid,
+    ownerUid: human.uid,
+    interactive: true,
+    gid: personalAgent.gid,
+    gids: [human.gid],
+    username: personalAgent.username,
+    home: personalAgent.home,
+    cwd: personalAgent.home,
+    state: "idle",
+    activeRunId: null,
+    activeConversationId: null,
+    queuedCount: 0,
+    lastActiveAt: null,
+    label: "sam-agent (sam)",
+    parentPid: null,
+    createdAt: 1,
+    mounts: [],
+    contextFiles: [],
+  };
+  const helperAgent = {
+    uid: 1002,
+    gid: 1002,
+    username: "helper",
+    gecos: "Helper",
+    home: "/home/helper",
+    shell: "/bin/init",
+  };
 
   return {
     env: {
@@ -52,14 +85,35 @@ function makeContext(
       getPasswdByUid: vi.fn((uid: number) => {
         if (uid === human.uid) return human;
         if (uid === personalAgent.uid) return personalAgent;
+        if (uid === helperAgent.uid) return helperAgent;
         return null;
       }),
+      getPasswdEntries: vi.fn(() => [human, personalAgent, helperAgent]),
+      getPasswdByUsername: vi.fn((username: string) => {
+        if (username === human.username) return human;
+        if (username === personalAgent.username) return personalAgent;
+        if (username === helperAgent.username) return helperAgent;
+        return null;
+      }),
+      getShadowByUsername: vi.fn((username: string) => (
+        username === personalAgent.username || username === helperAgent.username
+          ? { username, hash: "!", lastchanged: "", min: "", max: "", warn: "", inactive: "", expire: "", reserved: "" }
+          : { username, hash: "$hash", lastchanged: "", min: "", max: "", warn: "", inactive: "", expire: "", reserved: "" }
+      )),
+      getGroupByGid: vi.fn((gid: number) => {
+        if (gid === personalAgent.gid) return { name: personalAgent.username, gid, members: [human.username] };
+        if (gid === helperAgent.gid) return { name: helperAgent.username, gid, members: [human.username] };
+        if (gid === human.gid) return { name: human.username, gid, members: [personalAgent.username, helperAgent.username] };
+        return null;
+      }),
+      getGroupByName: vi.fn(() => null),
       resolveGids: vi.fn(() => [1000]),
       getPersonalAgentUid: vi.fn(() => personalAgent.uid),
-      isPersonalAgentUid: vi.fn(() => false),
+      isPersonalAgentUid: vi.fn((uid: number) => uid === personalAgent.uid),
     },
     procs: {
-      get: vi.fn(() => ({ uid: 1000, ownerUid: 1000 })),
+      get: vi.fn((pid: string) => pid === "pid-1" ? processRecord : null),
+      list: vi.fn(() => [processRecord]),
       spawn: vi.fn(),
     },
     conversations: {
@@ -78,6 +132,18 @@ function makeContext(
         },
         created: false,
       })),
+      create: vi.fn(() => ({
+        conversationId: "conv-agent",
+        ownerUid: 1000,
+        agentUid: 1002,
+        title: "helper",
+        isDefault: false,
+        activePid: null,
+        archiveBase: "/home/helper/conversations/conv-agent",
+        latestArchive: null,
+        createdAt: 0,
+        lastActiveAt: null,
+      })),
       setActivePid: vi.fn(),
     },
     adapters: {
@@ -92,7 +158,9 @@ function makeContext(
         })),
       },
       surfaceRoutes: {
-        resolvePid: vi.fn(() => "pid-1"),
+        resolvePid: vi.fn(() => options.routePid === undefined ? "pid-1" : options.routePid),
+        setRoute: vi.fn(),
+        clearRoute: vi.fn(() => Boolean(options.routePid === undefined ? "pid-1" : options.routePid)),
       },
     },
     runRoutes: {
@@ -280,7 +348,7 @@ describe("adapter lifecycle handlers", () => {
         replyToId: "msg-1",
       },
     });
-    expect(result.reply?.text).toContain('Reply "approve" or "deny"');
+    expect(result.reply?.text).toContain('"approve always"');
     expect(sendFrameToProcessMock).toHaveBeenCalledTimes(1);
   });
 
@@ -426,5 +494,253 @@ describe("adapter lifecycle handlers", () => {
       { kind: "typing", active: true },
     );
     expect(sendFrameToProcessMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("adapter.inbound accepts approve always with remembered approval", async () => {
+    const service = {
+      adapterSetActivity: vi.fn(async () => ({ ok: true as const })),
+    };
+    sendFrameToProcessMock
+      .mockResolvedValueOnce({
+        type: "res",
+        id: "history-1",
+        ok: true,
+        data: {
+          pendingHil: {
+            requestId: "hil-3",
+            toolName: "Read",
+            syscall: "fs.read",
+            args: { path: "~/secret.txt", target: "gsv" },
+          },
+        },
+      } as any)
+      .mockResolvedValueOnce({
+        type: "res",
+        id: "hil-3",
+        ok: true,
+        data: {
+          ok: true,
+          pid: "pid-1",
+          requestId: "hil-3",
+          decision: "approve",
+          resumed: true,
+          remembered: true,
+          pendingHil: null,
+        },
+      } as any);
+
+    const status = { upsert: vi.fn() };
+    const ctx = makeContext(
+      {
+        CHANNEL_WHATSAPP: service,
+      },
+      status,
+    );
+
+    const result = await handleAdapterInbound(
+      {
+        adapter: "whatsapp",
+        accountId: "primary",
+        message: {
+          messageId: "msg-4",
+          surface: { kind: "dm", id: "dm-1" },
+          actor: { id: "wa:+123" },
+          text: "approve always",
+        },
+      },
+      ctx,
+    );
+
+    expect(result.reply?.text).toContain("remember");
+    expect(sendFrameToProcessMock).toHaveBeenNthCalledWith(
+      2,
+      "pid-1",
+      expect.objectContaining({
+        call: "proc.hil",
+        args: expect.objectContaining({
+          requestId: "hil-3",
+          decision: "approve",
+          remember: true,
+        }),
+      }),
+    );
+  });
+
+  it("adapter.inbound routes normal messages through a surface route", async () => {
+    sendFrameToProcessMock
+      .mockResolvedValueOnce({
+        type: "res",
+        id: "history-1",
+        ok: true,
+        data: { pendingHil: null },
+      } as any)
+      .mockResolvedValueOnce({
+        type: "res",
+        id: "send-1",
+        ok: true,
+        data: {
+          ok: true,
+          status: "started",
+          runId: "run-routed",
+          queued: false,
+        },
+      } as any);
+
+    const service = {
+      adapterSetActivity: vi.fn(async () => ({ ok: true as const })),
+    };
+    const status = { upsert: vi.fn() };
+    const ctx = makeContext(
+      {
+        CHANNEL_WHATSAPP: service,
+      },
+      status,
+      { routePid: "pid-1" },
+    );
+
+    await handleAdapterInbound(
+      {
+        adapter: "whatsapp",
+        accountId: "primary",
+        message: {
+          messageId: "msg-5",
+          surface: { kind: "dm", id: "dm-1" },
+          actor: { id: "wa:+123" },
+          text: "hello routed process",
+        },
+      },
+      ctx,
+    );
+
+    expect(ctx.adapters.surfaceRoutes.resolvePid).toHaveBeenCalledWith("whatsapp", "primary", "dm", "dm-1", 1000);
+    expect(sendFrameToProcessMock).toHaveBeenNthCalledWith(
+      2,
+      "pid-1",
+      expect.objectContaining({
+        call: "proc.send",
+        args: expect.objectContaining({ message: "hello routed process" }),
+      }),
+    );
+  });
+
+  it("adapter.inbound clears the route with /use personal", async () => {
+    const status = { upsert: vi.fn() };
+    const ctx = makeContext({}, status, { routePid: "pid-1" });
+
+    const result = await handleAdapterInbound(
+      {
+        adapter: "whatsapp",
+        accountId: "primary",
+        message: {
+          messageId: "msg-6",
+          surface: { kind: "dm", id: "dm-1" },
+          actor: { id: "wa:+123" },
+          text: "/use personal",
+        },
+      },
+      ctx,
+    );
+
+    expect(result.reply?.text).toContain("personal conversation");
+    expect(ctx.adapters.surfaceRoutes.clearRoute).toHaveBeenCalledWith("whatsapp", "primary", "dm", "dm-1");
+    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
+  });
+
+  it("adapter.inbound routes a dm to a listed process with /use", async () => {
+    const status = { upsert: vi.fn() };
+    const ctx = makeContext({}, status, { routePid: null });
+
+    const result = await handleAdapterInbound(
+      {
+        adapter: "whatsapp",
+        accountId: "primary",
+        message: {
+          messageId: "msg-7",
+          surface: { kind: "dm", id: "dm-1" },
+          actor: { id: "wa:+123" },
+          text: "/use pid-1",
+        },
+      },
+      ctx,
+    );
+
+    expect(result.reply?.text).toContain("pid-1");
+    expect(ctx.adapters.surfaceRoutes.setRoute).toHaveBeenCalledWith(
+      "whatsapp",
+      "primary",
+      "dm",
+      "dm-1",
+      1000,
+      "pid-1",
+      1000,
+    );
+    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
+  });
+
+  it("adapter.inbound reports current route with /where", async () => {
+    const status = { upsert: vi.fn() };
+    const ctx = makeContext({}, status, { routePid: "pid-1" });
+
+    const result = await handleAdapterInbound(
+      {
+        adapter: "whatsapp",
+        accountId: "primary",
+        message: {
+          messageId: "msg-8",
+          surface: { kind: "dm", id: "dm-1" },
+          actor: { id: "wa:+123" },
+          text: "/where",
+        },
+      },
+      ctx,
+    );
+
+    expect(result.reply?.text).toContain("routed to");
+    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
+  });
+
+  it("adapter.inbound starts and routes to an agent with /use agent-name", async () => {
+    const status = { upsert: vi.fn() };
+    const ctx = makeContext({}, status, { routePid: null });
+
+    const result = await handleAdapterInbound(
+      {
+        adapter: "whatsapp",
+        accountId: "primary",
+        message: {
+          messageId: "msg-9",
+          surface: { kind: "dm", id: "dm-1" },
+          actor: { id: "wa:+123" },
+          text: "/use helper",
+        },
+      },
+      ctx,
+    );
+
+    expect(result.reply?.text).toContain("helper");
+    expect(ctx.procs.spawn).toHaveBeenCalledWith(
+      expect.stringMatching(/^proc:/),
+      expect.objectContaining({ username: "helper" }),
+      expect.objectContaining({ ownerUid: 1000, interactive: true }),
+    );
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      expect.stringMatching(/^proc:/),
+      expect.objectContaining({
+        call: "proc.setidentity",
+        args: expect.objectContaining({
+          identity: expect.objectContaining({ username: "helper" }),
+          conversationId: "conv-agent",
+        }),
+      }),
+    );
+    expect(ctx.adapters.surfaceRoutes.setRoute).toHaveBeenCalledWith(
+      "whatsapp",
+      "primary",
+      "dm",
+      "dm-1",
+      1000,
+      expect.stringMatching(/^proc:/),
+      1000,
+    );
   });
 });
