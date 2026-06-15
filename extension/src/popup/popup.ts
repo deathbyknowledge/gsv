@@ -93,8 +93,8 @@ function render(): void {
     <section class="popup">
       <header class="top">
         <div>
-          <div class="product">GSV Browser Target</div>
-          <div class="target" title="${escapeHtml(state.config.gatewayUrl)}">${escapeHtml(state.targetId)}</div>
+          <span class="kicker">Browser target</span>
+          <div class="product">GSV</div>
         </div>
         <div class="status status--${escapeHtml(state.connection.state)}">
           <span class="dot"></span>
@@ -105,11 +105,13 @@ function render(): void {
       <section class="state state--${escapeHtml(stateTone(state))}">
         <span>${escapeHtml(stateEyebrow(state))}</span>
         <h1>${escapeHtml(stateHeadline(state))}</h1>
-        <p>${escapeHtml(stateDescription(state))}</p>
+        <p title="${escapeHtml(state.config.gatewayUrl)}">${escapeHtml(stateDescription(state))}</p>
       </section>
 
-      <section class="last">
-        <span>Last agent action</span>
+      <section class="last" aria-label="Last agent action">
+        <span class="mark mark--${escapeHtml(eventTone(latest))}"></span>
+        <div>
+          <span class="kicker">Last agent action</span>
         ${latest ? `
           <strong>${escapeHtml(friendlyEventLabel(latest))}</strong>
           <p title="${escapeHtml(latest.detail)}">${escapeHtml(friendlyEventDetail(latest))}</p>
@@ -118,9 +120,11 @@ function render(): void {
           <strong>No activity yet</strong>
           <p>Agents have not used this browser target in this session.</p>
         `}
+        </div>
       </section>
 
       <div class="facts">
+        ${fact("Auto-connect", state.config.autoConnect ? "On" : "Off", state.config.autoConnect ? "Startup + reconnect" : "Manual")}
         ${fact("Live access", liveAccessText(state))}
         ${fact("Saved files", savedFilesText(state))}
       </div>
@@ -165,7 +169,7 @@ function stateDescription(state: ExtensionUiState): string {
   if (state.connection.state === "connected") {
     return "Ready and waiting for agent requests.";
   }
-  return state.connection.message || "No active GSV connection.";
+  return state.connection.message || `${state.targetId} is not connected.`;
 }
 
 function stateTone(state: ExtensionUiState): string {
@@ -244,11 +248,28 @@ function connectionEventLabel(entry: ActivityEntry): string {
   return entry.label;
 }
 
-function fact(label: string, value: string): string {
+function eventTone(entry: ActivityEntry | null): string {
+  if (!entry) {
+    return "neutral";
+  }
+  if (entry.status === "error") {
+    return "danger";
+  }
+  if (entry.status === "active") {
+    return "warning";
+  }
+  if (entry.kind === "connection" && entry.label !== "connected") {
+    return "neutral";
+  }
+  return "good";
+}
+
+function fact(label: string, value: string, detail = ""): string {
   return `
     <div class="fact">
       <span>${escapeHtml(label)}</span>
       <strong title="${escapeHtml(value)}">${escapeHtml(value)}</strong>
+      ${detail ? `<small>${escapeHtml(detail)}</small>` : ""}
     </div>
   `;
 }

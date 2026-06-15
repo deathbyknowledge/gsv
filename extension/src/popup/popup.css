@@ -5,24 +5,24 @@
 body {
   width: 376px;
   margin: 0;
-  background: #f6f7f9;
-  color: #17191f;
-  font: 13px/1.4 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #f5f6f8;
+  color: #15191f;
+  font: 13px/1.4 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
 button {
-  min-height: 36px;
-  border: 1px solid #c4cad4;
-  border-radius: 7px;
+  min-height: 2.35rem;
+  border: 1px solid #cfd6e1;
+  border-radius: 6px;
   background: #fff;
-  color: #17191f;
+  color: #253043;
   font: inherit;
-  font-weight: 650;
+  font-weight: 750;
   cursor: pointer;
 }
 
 button:hover {
-  background: #f0f2f5;
+  background: #f4f7fb;
 }
 
 button:disabled {
@@ -31,23 +31,23 @@ button:disabled {
 }
 
 button.primary {
-  border-color: #1f3a5f;
-  background: #1f3a5f;
+  border-color: #1f883d;
+  background: #1f883d;
   color: #fff;
 }
 
 button.primary:hover {
-  background: #172f50;
+  background: #1a7f37;
 }
 
 button.danger {
-  border-color: #b42318;
-  background: #b42318;
-  color: #fff;
+  border-color: #e6c5c5;
+  background: #fff;
+  color: #9f2f2f;
 }
 
 button.danger:hover {
-  background: #912018;
+  background: #fff5f5;
 }
 
 button.quiet {
@@ -56,8 +56,8 @@ button.quiet {
 
 .popup {
   display: grid;
-  gap: 12px;
-  padding: 14px;
+  gap: 0.75rem;
+  padding: 0.75rem;
 }
 
 .loading {
@@ -69,163 +69,196 @@ button.quiet {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
+  gap: 0.8rem;
+  padding: 0.1rem 0.15rem 0;
 }
 
 .product {
-  font-weight: 750;
-}
-
-.target {
-  overflow: hidden;
-  max-width: 210px;
-  margin-top: 2px;
-  color: #697386;
-  font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  margin-top: 0.16rem;
+  color: #15191f;
+  font-size: 1.08rem;
+  font-weight: 760;
+  line-height: 1.1;
 }
 
 .status {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  min-height: 24px;
-  padding: 3px 8px;
-  border: 1px solid #d7dce4;
+  gap: 0.45rem;
+  min-height: 1.75rem;
+  padding: 0.28rem 0.5rem;
+  border: 1px solid #d9dee7;
   border-radius: 999px;
   background: #fff;
-  color: #4f5968;
-  font-size: 12px;
-  font-weight: 700;
+  color: #3f4856;
+  font-size: 0.78rem;
+  font-weight: 650;
   white-space: nowrap;
 }
 
-.dot {
-  width: 8px;
-  height: 8px;
+.dot,
+.mark {
+  width: 0.55rem;
+  height: 0.55rem;
+  flex: 0 0 auto;
   border-radius: 50%;
-  background: #98a2b3;
+  background: #9aa4b2;
 }
 
 .status--connected .dot {
-  background: #138a45;
+  background: #16845f;
 }
 
 .status--connecting .dot {
-  background: #b76e00;
+  background: #b7791f;
+}
+
+.mark--good {
+  background: #16845f;
+}
+
+.mark--warning {
+  background: #b7791f;
+}
+
+.mark--danger {
+  background: #bd3b3b;
 }
 
 .state {
   display: grid;
-  gap: 5px;
-  padding: 14px;
-  border: 1px solid #d9dee7;
-  border-left-width: 4px;
+  gap: 0.32rem;
+  padding: 0.75rem;
+  border: 1px solid #dce2ea;
   border-radius: 8px;
   background: #fff;
 }
 
 .state--connected {
-  border-left-color: #138a45;
+  border-color: #bfdfd0;
 }
 
 .state--connecting,
 .state--active {
-  border-left-color: #b76e00;
+  border-color: #ecd18c;
 }
 
 .state--disconnected {
-  border-left-color: #98a2b3;
+  border-color: #dce2ea;
 }
 
 .state span,
-.last span,
+.kicker,
 .fact span {
-  color: #667085;
-  font-size: 11px;
+  color: #687384;
+  font-size: 0.72rem;
   font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1;
   text-transform: uppercase;
 }
 
 .state h1 {
   margin: 0;
-  font-size: 18px;
-  line-height: 1.2;
+  color: #1b2028;
+  font-size: 1rem;
+  line-height: 1.25;
   letter-spacing: 0;
 }
 
 .state p,
 .last p {
   margin: 0;
-  color: #4f5968;
+  color: #687384;
+  font-size: 0.82rem;
+  line-height: 1.45;
 }
 
 .last {
-  position: relative;
   display: grid;
-  gap: 4px;
-  padding: 12px;
-  border: 1px solid #d9dee7;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.7rem;
+  min-width: 0;
+  min-height: 4.1rem;
+  padding: 0.78rem 0.85rem;
+  border: 1px solid #dce2ea;
   border-radius: 8px;
   background: #fff;
 }
 
+.last > div {
+  display: grid;
+  min-width: 0;
+  gap: 0.18rem;
+}
+
 .last strong {
   overflow: hidden;
-  font-size: 14px;
+  color: #1b2028;
+  font-size: 0.9rem;
+  line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .last p {
   overflow: hidden;
-  font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .last time {
-  position: absolute;
-  top: 12px;
-  right: 12px;
-  color: #667085;
-  font-size: 12px;
+  color: #525d6c;
+  font-size: 0.72rem;
+  font-weight: 700;
 }
 
 .facts {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.45rem;
 }
 
 .fact {
   min-width: 0;
-  padding: 10px 11px;
-  border: 1px solid #d9dee7;
-  border-radius: 8px;
+  padding: 0.58rem 0.65rem;
+  border: 1px solid #dce2ea;
+  border-radius: 6px;
   background: #fff;
 }
 
 .fact strong {
   display: block;
   overflow: hidden;
-  margin-top: 4px;
-  font-size: 14px;
+  margin-top: 0.22rem;
+  color: #1b2028;
+  font-size: 0.84rem;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fact small {
+  display: block;
+  overflow: hidden;
+  margin-top: 0.18rem;
+  color: #687384;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .error {
-  padding: 9px 10px;
-  border: 1px solid #f2b8b5;
-  border-radius: 7px;
-  background: #fff5f5;
-  color: #912018;
+  margin: 0 0.25rem;
+  color: #a73232;
+  font-size: 0.8rem;
 }
 
 .actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px;
+  gap: 0.5rem;
 }

@@ -130,7 +130,8 @@ function renderHeader(state: ExtensionUiState): string {
   return `
     <header class="header">
       <div class="title-block">
-        <strong>GSV Browser Target</strong>
+        <span class="kicker">Browser target</span>
+        <strong>GSV</strong>
         <span title="${escapeHtml(state.config.gatewayUrl)}">${escapeHtml(state.targetId)}</span>
       </div>
       <div class="header-right">
@@ -138,7 +139,7 @@ function renderHeader(state: ExtensionUiState): string {
           <span class="dot"></span>
           <span>${escapeHtml(connectionText(state))}</span>
         </div>
-        <button data-action="${escapeHtml(mainAction)}" ${busyAttr(mainAction)}>${escapeHtml(mainLabel)}</button>
+        <button data-action="${escapeHtml(mainAction)}" class="${connected ? "" : "primary"}" ${busyAttr(mainAction)}>${escapeHtml(mainLabel)}</button>
       </div>
     </header>
   `;
