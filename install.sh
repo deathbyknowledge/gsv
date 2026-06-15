@@ -6,6 +6,9 @@
 # Usage:
 #   curl -sSL https://install.gsv.space | bash
 #
+# Windows:
+#   irm https://install.gsv.space/install.ps1 | iex
+#
 # Environment variables:
 #   GSV_INSTALL_DIR  - Where to install CLI (default: /usr/local/bin)
 #   GSV_CHANNEL      - Release channel: stable or dev (default: stable)
@@ -81,8 +84,9 @@ detect_platform() {
         linux) OS="linux" ;;
         darwin) OS="darwin" ;;
         msys*|mingw*|cygwin*) 
-            error "Windows is not currently supported."
-            error "Please use WSL2 (Windows Subsystem for Linux) instead."
+            error "This bash installer is for Linux and macOS."
+            error "On Windows, run this from PowerShell instead:"
+            error "  irm https://install.gsv.space/install.ps1 | iex"
             exit 1 
             ;;
         *) error "Unsupported OS: $OS"; exit 1 ;;
@@ -268,8 +272,8 @@ ensure_config_file() {
     cat > "${config_file}" <<'EOF'
 # GSV CLI configuration
 # Set values explicitly when ready, e.g.:
-#   gsv local-config set gateway.url wss://<your-gateway>.workers.dev/ws
-#   gsv local-config set gateway.token <your-auth-token>
+#   gsv config --local set gateway.url wss://<your-gateway>.workers.dev/ws
+#   gsv auth login
 EOF
 
     if [ -z "$VERSION" ]; then
@@ -296,7 +300,7 @@ persist_release_channel() {
         return
     fi
 
-    if "$gsv_bin" local-config set release.channel "$CHANNEL" >/dev/null 2>&1; then
+    if "$gsv_bin" config --local set release.channel "$CHANNEL" >/dev/null 2>&1; then
         success "Saved default release channel (${CHANNEL})"
     else
         warn "Could not persist release.channel in local config"
@@ -337,10 +341,10 @@ main() {
     echo "  Config:  ${CONFIG_DIR}/config.toml"
     echo ""
     echo "  Next steps:"
-    echo "    gsv setup                      # Deploy + configure local node"
-    echo "    gsv local-config set gateway.url wss://<your-gateway>.workers.dev/ws"
-    echo "    gsv local-config set gateway.token <your-auth-token>"
-    echo "    gsv client \"Hello!\"     # Start chatting"
+    echo "    gsv config --local set gateway.url wss://<your-gateway>.workers.dev/ws"
+    echo "    gsv auth setup"
+    echo "    gsv auth login"
+    echo "    gsv chat \"Hello!\""
     echo ""
     
     echo "  For help: gsv --help"
