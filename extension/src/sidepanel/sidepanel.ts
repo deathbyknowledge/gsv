@@ -2,21 +2,20 @@ import "./sidepanel.css";
 import {
   connectionText,
   escapeHtml,
-  renderActivityEntry,
+  formatDuration,
   sendUiMessage,
   timeAgo,
   truncateMiddle,
 } from "../shared/ui-client";
-import type { ExtensionUiState, RuntimeResponse } from "../shared/ui-state";
+import type { ActivityEntry, ExtensionUiState, RuntimeResponse } from "../shared/ui-state";
 
-type ViewId = "activity" | "sensitive" | "artifacts" | "network" | "runtime";
+type ViewId = "overview" | "activity" | "data" | "advanced";
 
 const views: Array<{ id: ViewId; label: string }> = [
+  { id: "overview", label: "Overview" },
   { id: "activity", label: "Activity" },
-  { id: "sensitive", label: "Sensitive" },
-  { id: "artifacts", label: "Artifacts" },
-  { id: "network", label: "Network" },
-  { id: "runtime", label: "Runtime" },
+  { id: "data", label: "Data" },
+  { id: "advanced", label: "Advanced" },
 ];
 
 const app = document.querySelector<HTMLElement>("#app");
@@ -26,7 +25,7 @@ if (!app) {
 const appEl = app;
 
 let currentState: ExtensionUiState | null = null;
-let activeView: ViewId = "activity";
+let activeView: ViewId = "overview";
 let busyAction: string | null = null;
 let lastError: string | null = null;
 
@@ -117,9 +116,9 @@ function render(): void {
           </button>
         `).join("")}
       </nav>
-      <section class="content">
+      <main class="content">
         ${renderView(state)}
-      </section>
+      </main>
     </section>
   `;
 }
@@ -127,20 +126,19 @@ function render(): void {
 function renderHeader(state: ExtensionUiState): string {
   const connected = state.connection.state === "connected";
   const mainAction = connected ? "disconnect" : "connect";
-  const mainLabel = connected ? "Disconnect" : "Reconnect";
+  const mainLabel = connected ? "Disconnect" : state.connection.state === "connecting" ? "Connecting" : "Connect";
   return `
     <header class="header">
-      <div class="identity">
+      <div class="title-block">
+        <strong>GSV Browser Target</strong>
+        <span title="${escapeHtml(state.config.gatewayUrl)}">${escapeHtml(state.targetId)}</span>
+      </div>
+      <div class="header-right">
         <div class="status status--${escapeHtml(state.connection.state)}">
           <span class="dot"></span>
           <span>${escapeHtml(connectionText(state))}</span>
         </div>
-        <div class="target" title="${escapeHtml(state.config.gatewayUrl)}">${escapeHtml(state.targetId)}</div>
-      </div>
-      <div class="header-actions">
-        <button data-action="stop-all" class="danger" ${busyAttr("stop-all")}>Stop All</button>
         <button data-action="${escapeHtml(mainAction)}" ${busyAttr(mainAction)}>${escapeHtml(mainLabel)}</button>
-        <button data-action="options" ${busyAttr("options")}>Options</button>
       </div>
     </header>
   `;
@@ -148,155 +146,306 @@ function renderHeader(state: ExtensionUiState): string {
 
 function renderView(state: ExtensionUiState): string {
   switch (activeView) {
+    case "overview":
+      return renderOverview(state);
     case "activity":
       return renderActivity(state);
-    case "sensitive":
-      return renderSensitive(state);
-    case "artifacts":
-      return renderArtifacts(state);
-    case "network":
-      return renderNetwork(state);
-    case "runtime":
-      return renderRuntime(state);
+    case "data":
+      return renderData(state);
+    case "advanced":
+      return renderAdvanced(state);
   }
 }
 
+function renderOverview(state: ExtensionUiState): string {
+  const latest = latestAgentEvent(state);
+  return `
+    <section class="hero hero--${escapeHtml(stateTone(state))}">
+      <div>
+        <span>${escapeHtml(stateEyebrow(state))}</span>
+        <h1>${escapeHtml(stateHeadline(state))}</h1>
+        <p>${escapeHtml(stateDescription(state))}</p>
+      </div>
+      <div class="hero-actions">
+        <button data-action="stop-all" class="danger" ${busyAttr("stop-all")}>Stop All</button>
+        <button data-action="options" ${busyAttr("options")}>Settings</button>
+      </div>
+    </section>
+
+    <section class="summary-grid">
+      ${summaryCard("Connection", connectionText(state), state.connection.message ?? state.connection.connectionId ?? state.gatewayHost)}
+      ${summaryCard("Live browser access", liveAccessText(state), liveAccessDetail(state))}
+      ${summaryCard("Last action", latest ? friendlyEventLabel(latest) : "None", latest ? timeAgo(latest.at) : "No events")}
+      ${summaryCard("Saved data", savedFilesText(state), `${state.artifact.networkSessions} network sessions`)}
+    </section>
+
+    <section class="section">
+      <header class="section-title">
+        <h2>Recent Activity</h2>
+        <button data-view="activity">View all</button>
+      </header>
+      <div class="event-list">
+        ${state.activity.length > 0 ? state.activity.slice(0, 6).map(renderEventRow).join("") : "<p class=\"empty\">No activity yet</p>"}
+      </div>
+    </section>
+  `;
+}
+
 function renderActivity(state: ExtensionUiState): string {
-  const entries = state.activity.slice(0, 48);
+  const agentEvents = state.activity.filter((entry) => entry.kind !== "connection");
   return `
-    <div class="metrics">
-      ${metric("Events", state.activity.length)}
-      ${metric("Errors", state.activity.filter((entry) => entry.status === "error").length)}
-      ${metric("Last", timeAgo(state.activity[0]?.at ?? null))}
-    </div>
-    <ul class="activity-list">
-      ${entries.length > 0 ? entries.map(renderActivityEntry).join("") : "<li class=\"empty\">No events yet</li>"}
-    </ul>
+    <section class="summary-grid">
+      ${summaryCard("Agent actions", agentEvents.length, "This session")}
+      ${summaryCard("Errors", state.activity.filter((entry) => entry.status === "error").length, "Failed calls")}
+      ${summaryCard("Last activity", timeAgo(state.activity[0]?.at ?? null), state.activity[0]?.label ?? "None")}
+    </section>
+    <section class="section">
+      <header class="section-title">
+        <h2>Activity</h2>
+        <button data-action="refresh" ${busyAttr("refresh")}>Refresh</button>
+      </header>
+      <div class="event-list event-list--full">
+        ${state.activity.length > 0 ? state.activity.slice(0, 64).map(renderEventRow).join("") : "<p class=\"empty\">No activity yet</p>"}
+      </div>
+    </section>
   `;
 }
 
-function renderSensitive(state: ExtensionUiState): string {
-  const debuggerTabs = state.sensitive.debuggerTabs.length > 0
-    ? state.sensitive.debuggerTabs.map((tabId) => `<code>tab ${escapeHtml(tabId)}</code>`).join("")
-    : "<span class=\"muted\">none</span>";
+function renderData(state: ExtensionUiState): string {
   return `
-    <div class="metrics">
-      ${metric("Network", state.sensitive.networkCaptures)}
-      ${metric("Debugger", state.sensitive.debuggerTabs.length)}
-      ${metric("Last", timeAgo(state.sensitive.lastSensitiveAt))}
-    </div>
-    <div class="rows">
-      ${row("Connection", connectionText(state), state.connection.message ?? state.connection.connectionId ?? "-")}
-      ${row("Debugger tabs", debuggerTabs, "Held by page js or network capture")}
-      ${row("Network captures", String(state.sensitive.networkCaptures), "Persistent captures keep debugger attached")}
-      ${row("Stop path", "<button data-action=\"stop-all\" class=\"danger inline\">Stop All</button>", "Disconnects and releases browser handles")}
+    <section class="summary-grid">
+      ${summaryCard("Files", state.artifact.files, "Created in target storage")}
+      ${summaryCard("Screenshots", state.artifact.screenshots, "/home/browser/screenshots")}
+      ${summaryCard("Network captures", state.network.captures.length, activeCaptureDetail(state))}
+    </section>
+
+    <section class="section">
+      <header class="section-title">
+        <h2>Active Captures</h2>
+      </header>
+      <div class="capture-list">
+        ${state.network.captures.length > 0 ? state.network.captures.map(renderCapture).join("") : "<p class=\"empty\">No active captures</p>"}
+      </div>
+    </section>
+
+    <section class="section">
+      <header class="section-title">
+        <h2>Target Storage</h2>
+      </header>
+      <div class="path-list">
+        ${pathRow("/home/browser/screenshots", "Screenshots")}
+        ${pathRow("/home/browser/network/sessions", "Network capture files")}
+        ${pathRow("/home/browser", "Persistent browser target files")}
+        ${pathRow("/tmp", "Temporary files")}
+      </div>
+    </section>
+  `;
+}
+
+function renderAdvanced(state: ExtensionUiState): string {
+  return `
+    <section class="summary-grid">
+      ${summaryCard("Target id", state.targetId, state.gatewayHost)}
+      ${summaryCard("Auto-connect", state.config.autoConnect ? "On" : "Off", "Startup behavior")}
+      ${summaryCard("Token", state.config.token ? "Set" : "Missing", state.config.username || "No username")}
+    </section>
+
+    <section class="section">
+      <header class="section-title">
+        <h2>Session</h2>
+        <button data-action="refresh" ${busyAttr("refresh")}>Refresh</button>
+      </header>
+      <div class="detail-list">
+        ${detailRow("Connection id", state.connection.connectionId ?? "-")}
+        ${detailRow("Gateway", state.gatewayHost)}
+        ${detailRow("Message", state.connection.message ?? "-")}
+        ${detailRow("Updated", state.updatedAt)}
+        ${detailRow("Debugger tabs", state.sensitive.debuggerTabs.length > 0 ? state.sensitive.debuggerTabs.join(", ") : "None")}
+      </div>
+    </section>
+  `;
+}
+
+function renderEventRow(entry: ActivityEntry): string {
+  const duration = formatDuration(entry.durationMs);
+  return `
+    <article class="event event--${escapeHtml(entry.status)}">
+      <div class="event-main">
+        <strong>${escapeHtml(friendlyEventLabel(entry))}</strong>
+        <span title="${escapeHtml(entry.detail)}">${escapeHtml(friendlyEventDetail(entry))}</span>
+      </div>
+      <div class="event-meta">
+        <span title="${escapeHtml(entry.at)}">${escapeHtml(timeAgo(entry.at))}</span>
+        ${duration ? `<span>${escapeHtml(duration)}</span>` : ""}
+      </div>
+    </article>
+  `;
+}
+
+function renderCapture(capture: ExtensionUiState["network"]["captures"][number]): string {
+  return `
+    <article class="capture">
+      <div>
+        <strong>Tab ${escapeHtml(capture.tabId)}</strong>
+        <span>${escapeHtml(`${capture.requestCount} requests, ${capture.eventCount} events`)}</span>
+      </div>
+      <div>
+        <span>${escapeHtml(capture.persist ? "Persisting" : "In memory")}</span>
+        <span>${escapeHtml(capture.bodies ? "Bodies on" : "Headers only")}</span>
+      </div>
+      ${capture.sessionPath ? `<code title="${escapeHtml(capture.sessionPath)}">${escapeHtml(truncateMiddle(capture.sessionPath, 54))}</code>` : ""}
+    </article>
+  `;
+}
+
+function summaryCard(label: string, value: string | number, detail: string): string {
+  return `
+    <article class="summary-card">
+      <span>${escapeHtml(label)}</span>
+      <strong title="${escapeHtml(value)}">${escapeHtml(value)}</strong>
+      <em title="${escapeHtml(detail)}">${escapeHtml(detail)}</em>
+    </article>
+  `;
+}
+
+function pathRow(path: string, label: string): string {
+  return `
+    <div class="path-row">
+      <strong>${escapeHtml(label)}</strong>
+      <code>${escapeHtml(path)}</code>
     </div>
   `;
 }
 
-function renderArtifacts(state: ExtensionUiState): string {
+function detailRow(label: string, value: string): string {
   return `
-    <div class="metrics">
-      ${metric("Files", state.artifact.files)}
-      ${metric("Screenshots", state.artifact.screenshots)}
-      ${metric("Network", state.artifact.networkSessions)}
-    </div>
-    <div class="path-grid">
-      ${pathRow("/home/browser/screenshots", "PNG captures from page screenshot")}
-      ${pathRow("/home/browser/network/sessions", "Persisted request metadata and bodies")}
-      ${pathRow("/home/browser", "Long-lived writable target storage")}
-      ${pathRow("/tmp", "Scratch writable target storage")}
-    </div>
-  `;
-}
-
-function renderNetwork(state: ExtensionUiState): string {
-  const captures = state.network.captures;
-  return `
-    <div class="metrics">
-      ${metric("Captures", captures.length)}
-      ${metric("Requests", captures.reduce((sum, capture) => sum + capture.requestCount, 0))}
-      ${metric("Events", captures.reduce((sum, capture) => sum + capture.eventCount, 0))}
-    </div>
-    <div class="capture-list">
-      ${captures.length > 0 ? captures.map((capture) => `
-        <div class="capture">
-          <div>
-            <strong>tab ${escapeHtml(capture.tabId)}</strong>
-            <span>${escapeHtml(timeAgo(capture.startedAt))} / ${escapeHtml(capture.persist ? "persist" : "memory")} / ${escapeHtml(capture.bodies ? "bodies" : "headers")}</span>
-          </div>
-          <div class="numbers">
-            <span>${escapeHtml(capture.requestCount)} req</span>
-            <span>${escapeHtml(capture.eventCount)} events</span>
-          </div>
-          ${capture.sessionPath ? `<code title="${escapeHtml(capture.sessionPath)}">${escapeHtml(truncateMiddle(capture.sessionPath, 44))}</code>` : ""}
-        </div>
-      `).join("") : "<p class=\"empty\">No active captures</p>"}
-    </div>
-    <div class="command-grid">
-      ${command("network start --tab <id> --persist --bodies")}
-      ${command("network status")}
-      ${command("network events --limit 50")}
-      ${command("network export har --path /home/browser/network/latest.har")}
-      ${command("network stop")}
-    </div>
-  `;
-}
-
-function renderRuntime(state: ExtensionUiState): string {
-  const safeConfig = {
-    gateway: state.gatewayHost,
-    username: state.config.username || "-",
-    token: state.config.token ? "set" : "missing",
-    autoConnect: state.config.autoConnect,
-    connectionId: state.connection.connectionId ?? "-",
-    message: state.connection.message ?? "-",
-    updated: state.updatedAt,
-  };
-  return `
-    <div class="metrics">
-      ${metric("State", connectionText(state))}
-      ${metric("Target", state.targetId)}
-      ${metric("Updated", timeAgo(state.updatedAt))}
-    </div>
-    <pre class="runtime-json">${escapeHtml(JSON.stringify(safeConfig, null, 2))}</pre>
-    <div class="footer-actions">
-      <button data-action="refresh" ${busyAttr("refresh")}>Refresh</button>
-      <button data-action="options" ${busyAttr("options")}>Options</button>
-    </div>
-  `;
-}
-
-function metric(label: string, value: string | number): string {
-  return `
-    <div class="metric">
+    <div class="detail-row">
       <span>${escapeHtml(label)}</span>
       <strong title="${escapeHtml(value)}">${escapeHtml(value)}</strong>
     </div>
   `;
 }
 
-function row(label: string, value: string, detail: string): string {
-  return `
-    <div class="row">
-      <span>${escapeHtml(label)}</span>
-      <strong>${value}</strong>
-      <em>${escapeHtml(detail)}</em>
-    </div>
-  `;
+function stateEyebrow(state: ExtensionUiState): string {
+  if (liveAccessCount(state) > 0) {
+    return "Active";
+  }
+  return state.connection.state === "connected" ? "Ready" : "Offline";
 }
 
-function pathRow(path: string, detail: string): string {
-  return `
-    <div class="path-row">
-      <code>${escapeHtml(path)}</code>
-      <span>${escapeHtml(detail)}</span>
-    </div>
-  `;
+function stateHeadline(state: ExtensionUiState): string {
+  if (liveAccessCount(state) > 0) {
+    return "Agent access is live";
+  }
+  if (state.connection.state === "connected") {
+    return "Ready for agent requests";
+  }
+  if (state.connection.state === "connecting") {
+    return "Connecting";
+  }
+  return "Disconnected";
 }
 
-function command(value: string): string {
-  return `<code class="command">${escapeHtml(value)}</code>`;
+function stateDescription(state: ExtensionUiState): string {
+  const liveCount = liveAccessCount(state);
+  if (liveCount > 0) {
+    return `${liveCount} browser handle${liveCount === 1 ? "" : "s"} active.`;
+  }
+  if (state.connection.state === "connected") {
+    return "No live browser handles.";
+  }
+  return state.connection.message || "No active GSV connection.";
+}
+
+function stateTone(state: ExtensionUiState): string {
+  if (liveAccessCount(state) > 0) {
+    return "active";
+  }
+  return state.connection.state;
+}
+
+function liveAccessCount(state: ExtensionUiState): number {
+  return state.sensitive.networkCaptures + state.sensitive.debuggerTabs.length;
+}
+
+function liveAccessText(state: ExtensionUiState): string {
+  const liveCount = liveAccessCount(state);
+  return liveCount === 0 ? "None" : `${liveCount} active`;
+}
+
+function liveAccessDetail(state: ExtensionUiState): string {
+  const parts: string[] = [];
+  if (state.sensitive.networkCaptures > 0) {
+    parts.push(`${state.sensitive.networkCaptures} network`);
+  }
+  if (state.sensitive.debuggerTabs.length > 0) {
+    parts.push(`${state.sensitive.debuggerTabs.length} debugger`);
+  }
+  return parts.length > 0 ? parts.join(", ") : "Idle";
+}
+
+function savedFilesText(state: ExtensionUiState): string {
+  if (state.artifact.files === 0) {
+    return "None";
+  }
+  return `${state.artifact.files} files`;
+}
+
+function activeCaptureDetail(state: ExtensionUiState): string {
+  const requests = state.network.captures.reduce((sum, capture) => sum + capture.requestCount, 0);
+  return requests === 1 ? "1 request" : `${requests} requests`;
+}
+
+function latestAgentEvent(state: ExtensionUiState): ActivityEntry | null {
+  return state.activity.find((entry) => entry.kind !== "connection") ?? state.activity[0] ?? null;
+}
+
+function friendlyEventLabel(entry: ActivityEntry): string {
+  if (entry.label === "page screenshot") {
+    return "Saved screenshot";
+  }
+  if (entry.label === "page js") {
+    return "Ran page script";
+  }
+  if (entry.label === "page text") {
+    return "Read page text";
+  }
+  if (entry.label === "page snapshot") {
+    return "Captured page snapshot";
+  }
+  if (entry.label.startsWith("network ")) {
+    return `Network ${entry.label.replace("network ", "")}`;
+  }
+  if (entry.label.startsWith("fs.")) {
+    return "File operation";
+  }
+  if (entry.kind === "connection") {
+    return connectionEventLabel(entry);
+  }
+  return entry.label;
+}
+
+function friendlyEventDetail(entry: ActivityEntry): string {
+  if (entry.status === "error") {
+    return `Failed: ${entry.detail}`;
+  }
+  if (!entry.detail || entry.detail === "(no path)") {
+    return "Completed";
+  }
+  return entry.detail;
+}
+
+function connectionEventLabel(entry: ActivityEntry): string {
+  if (entry.label === "connected") {
+    return "Connected";
+  }
+  if (entry.label === "disconnected") {
+    return "Disconnected";
+  }
+  if (entry.label === "connecting") {
+    return "Connecting";
+  }
+  return entry.label;
 }
 
 function busyAttr(action: string): string {
