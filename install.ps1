@@ -95,7 +95,7 @@ function Ensure-ConfigFile {
 # GSV CLI configuration
 # Set values explicitly when ready, e.g.:
 #   gsv config --local set gateway.url wss://<your-gateway>.workers.dev/ws
-#   gsv config --local set gateway.token <your-auth-token>
+#   gsv auth login
 
 [release]
 # Preferred default upgrade/setup channel (`stable` or `dev`)
@@ -106,7 +106,7 @@ function Ensure-ConfigFile {
 # GSV CLI configuration
 # Set values explicitly when ready, e.g.:
 #   gsv config --local set gateway.url wss://<your-gateway>.workers.dev/ws
-#   gsv config --local set gateway.token <your-auth-token>
+#   gsv auth login
 
 [release]
 channel = "$Channel"
@@ -212,9 +212,9 @@ Write-Host "  CLI installed."
 Write-Host "  Config:  $(Join-Path $ConfigDir 'config.toml')"
 Write-Host ""
 Write-Host "  Next steps:"
-Write-Host "    gsv setup"
 Write-Host "    gsv config --local set gateway.url wss://<your-gateway>.workers.dev/ws"
-Write-Host "    gsv config --local set gateway.token <your-auth-token>"
+Write-Host "    gsv auth setup"
+Write-Host "    gsv auth login"
 Write-Host "    gsv chat `"Hello!`""
 Write-Host ""
 Write-Host "  Docs: https://github.com/$Repo"

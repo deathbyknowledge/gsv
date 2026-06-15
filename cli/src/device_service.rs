@@ -427,16 +427,29 @@ fn windows_task_registration_script(
     format!(
         "$ErrorActionPreference = 'Stop'\n\
 Import-Module ScheduledTasks -ErrorAction Stop\n\
-$action = New-ScheduledTaskAction -Execute {exe_path} -Argument {args}\n\
-$trigger = New-ScheduledTaskTrigger -AtLogOn -User {user_id}\n\
-	$principal = New-ScheduledTaskPrincipal -UserId {user_id} -LogonType Interactive -RunLevel Limited\n\
-$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew\n\
-$task = New-ScheduledTask -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description {description}\n\
-$task.Settings.AllowStartOnDemand = $true\n\
-$task.Settings.ExecutionTimeLimit = 'PT0S'\n\
-$task.Settings.Enabled = $true\n\
-$task.Settings.Hidden = $false\n\
-Register-ScheduledTask -TaskName {task_name} -InputObject $task -Force | Out-Null\n"
+$TaskName = {task_name}\n\
+$UserId = {user_id}\n\
+$Action = New-ScheduledTaskAction -Execute {exe_path} -Argument {args}\n\
+$Principal = New-ScheduledTaskPrincipal -UserId $UserId -LogonType Interactive -RunLevel Limited\n\
+$Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew\n\
+$Settings.AllowStartOnDemand = $true\n\
+$Settings.ExecutionTimeLimit = 'PT0S'\n\
+$Settings.Enabled = $true\n\
+$Settings.Hidden = $false\n\
+function Register-GsvTask($Trigger) {{\n\
+  $Task = New-ScheduledTask -Action $Action -Trigger $Trigger -Principal $Principal -Settings $Settings -Description {description}\n\
+  Register-ScheduledTask -TaskName $TaskName -InputObject $Task -Force | Out-Null\n\
+}}\n\
+try {{\n\
+  Register-GsvTask (New-ScheduledTaskTrigger -AtLogOn -User $UserId)\n\
+}} catch {{\n\
+  $ScopedTriggerError = $_.Exception.Message\n\
+  try {{\n\
+    Register-GsvTask (New-ScheduledTaskTrigger -AtLogOn)\n\
+  }} catch {{\n\
+    throw \"Could not register scheduled task '$TaskName' for '$UserId'. User-scoped logon trigger failed: $ScopedTriggerError. Generic logon trigger failed: $($_.Exception.Message)\"\n\
+  }}\n\
+}}\n"
     )
 }
 
@@ -881,6 +894,15 @@ impl DeviceServiceManager for WindowsTaskServiceManager {
 
 #[cfg(target_os = "windows")]
 fn current_windows_user_id() -> String {
+    if let Ok(output) = Command::new("whoami").output() {
+        if output.status.success() {
+            let user_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !user_id.is_empty() {
+                return user_id;
+            }
+        }
+    }
+
     let username = std::env::var("USERNAME")
         .ok()
         .filter(|value| !value.trim().is_empty())
@@ -983,16 +1005,23 @@ mod tests {
         spec.exe_path = PathBuf::from(r"C:\Program Files\GSV\gsv.exe");
         let script = windows_task_registration_script("gsvd", r"ACME\hank", &spec);
 
-        assert!(script.contains("$trigger = New-ScheduledTaskTrigger -AtLogOn -User 'ACME\\hank'"));
+        assert!(script.contains("$UserId = 'ACME\\hank'"));
+        assert!(
+            script.contains("Register-GsvTask (New-ScheduledTaskTrigger -AtLogOn -User $UserId)")
+        );
+        assert!(script.contains("Register-GsvTask (New-ScheduledTaskTrigger -AtLogOn)"));
         assert!(script.contains(
-            "$principal = New-ScheduledTaskPrincipal -UserId 'ACME\\hank' -LogonType Interactive -RunLevel Limited"
+            "$Principal = New-ScheduledTaskPrincipal -UserId $UserId -LogonType Interactive -RunLevel Limited"
         ));
         assert!(script.contains(
-            "$action = New-ScheduledTaskAction -Execute 'C:\\Program Files\\GSV\\gsv.exe' -Argument 'device run'"
+            "$Action = New-ScheduledTaskAction -Execute 'C:\\Program Files\\GSV\\gsv.exe' -Argument 'device run'"
         ));
-        assert!(script.contains("$task.Settings.ExecutionTimeLimit = 'PT0S'"));
+        assert!(script.contains("$Settings.ExecutionTimeLimit = 'PT0S'"));
         assert!(script.contains(
-            "Register-ScheduledTask -TaskName 'gsvd' -InputObject $task -Force | Out-Null"
+            "Register-ScheduledTask -TaskName $TaskName -InputObject $Task -Force | Out-Null"
+        ));
+        assert!(script.contains(
+            "User-scoped logon trigger failed: $ScopedTriggerError. Generic logon trigger failed:"
         ));
     }
 }
