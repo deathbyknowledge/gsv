@@ -276,59 +276,99 @@ function statusColor(node: SystemMapCanvasNode): Rgb {
   return node.kind === "category" ? COLORS.cyan : COLORS.green;
 }
 
-function drawSurveyField(ctx: CanvasRenderingContext2D, width: number, height: number, time: number): void {
+function drawDitherArc(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  rx: number,
+  ry: number,
+  start: number,
+  end: number,
+  color: Rgb,
+  seed: number,
+): void {
+  const steps = 96;
+  let previous: [number, number] | null = null;
+
+  for (let i = 0; i <= steps; i += 1) {
+    const t = start + ((end - start) * i) / steps;
+    const x = cx + Math.cos(t) * rx;
+    const y = cy + Math.sin(t) * ry;
+
+    if (previous && hash2(i, seed, 63) > 0.12) {
+      drawBrokenLine(ctx, previous[0], previous[1], x, y, color, seed + i, 0.34, 5, 0.18);
+    }
+
+    previous = [x, y];
+  }
+}
+
+function drawStarChartField(ctx: CanvasRenderingContext2D, width: number, height: number, time: number): void {
   ctx.fillStyle = rgba(COLORS.bg);
   ctx.fillRect(0, 0, width, height);
 
-  const tileW = Math.max(76, Math.round(width / 5));
-  const tileH = Math.max(54, Math.round(height / 4));
+  const tileW = Math.max(92, Math.round(width / 6));
+  const tileH = Math.max(72, Math.round(height / 5));
 
   for (let x = 0; x <= width; x += tileW) {
-    ctx.fillStyle = rgba(COLORS.traceDim, 0.28);
+    ctx.fillStyle = rgba(COLORS.traceDim, 0.18);
     ctx.fillRect(x, 0, 1, height);
   }
 
   for (let y = 0; y <= height; y += tileH) {
-    ctx.fillStyle = rgba(COLORS.traceDim, 0.3);
+    ctx.fillStyle = rgba(COLORS.traceDim, 0.16);
     ctx.fillRect(0, y, width, 1);
   }
 
-  for (let y = 0; y < height; y += 3) {
-    for (let x = 0; x < width; x += 3) {
+  const clouds = [
+    { x: 0.2, y: 0.28, rx: 0.2, ry: 0.16, color: COLORS.blue, seed: 4 },
+    { x: 0.68, y: 0.18, rx: 0.18, ry: 0.12, color: COLORS.traceDim, seed: 9 },
+    { x: 0.76, y: 0.72, rx: 0.22, ry: 0.18, color: COLORS.cyan, seed: 15 },
+  ];
+
+  for (let y = 1; y < height; y += 3) {
+    for (let x = 1; x < width; x += 3) {
       const nx = x / width;
       const ny = y / height;
-      const ridge =
-        Math.sin(nx * 24 + ny * 7.5 + 0.2) +
-        Math.sin(nx * 8.5 - ny * 19) +
-        Math.sin((nx + ny) * 31);
-      const water = x > width * (0.58 + Math.sin(ny * 9) * 0.06);
       const grain = hash2(x, y, 11);
 
-      if (water && grain > 0.48) {
-        plot(ctx, x, y, COLORS.blue, 0.1);
-        continue;
-      }
+      clouds.forEach((cloud) => {
+        const dx = (nx - cloud.x) / cloud.rx;
+        const dy = (ny - cloud.y) / cloud.ry;
+        const falloff = Math.max(0, 1 - dx * dx - dy * dy);
 
-      if (Math.abs(ridge) < 0.08 && grain > 0.32) {
-        plot(ctx, x, y, COLORS.traceDim, 0.16, grain > 0.94 ? 2 : 1, 1);
-      } else if (ridge > 1.24 && grain > 0.6) {
-        plot(ctx, x, y, COLORS.traceDim, 0.12);
+        if (falloff > 0 && grain > 1 - falloff * 0.18) {
+          const alpha = 0.06 + falloff * 0.1;
+          plot(ctx, x, y, cloud.color, alpha, grain > 0.98 ? 2 : 1, 1);
+        }
+      });
+
+      if (grain > 0.994) {
+        plot(ctx, x, y, COLORS.white, 0.5, 1, 1);
+      } else if (grain > 0.986) {
+        plot(ctx, x, y, COLORS.cyan, 0.2, 1, 1);
+      } else if (grain > 0.974) {
+        plot(ctx, x, y, COLORS.traceDim, 0.18, 1, 1);
       }
     }
   }
 
-  for (let i = 0; i < 9; i += 1) {
-    const x1 = (hash2(i, 1, 40) * width) - width * 0.1;
+  for (let i = 0; i < 7; i += 1) {
+    const x1 = hash2(i, 1, 40) * width;
     const y1 = hash2(i, 2, 41) * height;
-    const x2 = x1 + (hash2(i, 3, 42) - 0.2) * width * 0.58;
-    const y2 = y1 + (hash2(i, 4, 43) - 0.5) * height * 0.38;
-    drawBrokenLine(ctx, x1, y1, x2, y2, COLORS.traceDim, i + Math.floor(time * 3), 0.16, 4, 0.28);
+    const x2 = x1 + (hash2(i, 3, 42) - 0.5) * width * 0.34;
+    const y2 = y1 + (hash2(i, 4, 43) - 0.5) * height * 0.24;
+    drawBrokenLine(ctx, x1, y1, x2, y2, COLORS.traceDim, i + Math.floor(time * 3), 0.18, 6, 0.18);
   }
 
-  for (let y = 34; y < height; y += 62) {
-    for (let x = 42; x < width; x += 120) {
-      plot(ctx, x - 3, y, COLORS.traceDim, 0.4, 7, 1);
-      plot(ctx, x, y - 3, COLORS.traceDim, 0.4, 1, 7);
+  drawDitherArc(ctx, width * 0.43, height * 0.46, width * 0.34, height * 0.2, -0.2, Math.PI * 1.1, COLORS.traceDim, 80);
+  drawDitherArc(ctx, width * 0.62, height * 0.6, width * 0.24, height * 0.32, Math.PI * 0.9, Math.PI * 1.92, COLORS.blue, 94);
+
+  for (let y = 36; y < height; y += 78) {
+    for (let x = 44; x < width; x += 128) {
+      const alpha = hash2(x, y, 72) > 0.28 ? 0.34 : 0.14;
+      plot(ctx, x - 3, y, COLORS.traceDim, alpha, 7, 1);
+      plot(ctx, x, y - 3, COLORS.traceDim, alpha, 1, 7);
     }
   }
 }
@@ -443,7 +483,7 @@ function backgroundImage(width: number, height: number): ImageData {
   }
 
   layerCtx.imageSmoothingEnabled = false;
-  drawSurveyField(layerCtx, width, height, 0);
+  drawStarChartField(layerCtx, width, height, 0);
   applyInstrumentPostProcess(layerCtx, width, height, COLORS);
 
   backgroundCache = {
