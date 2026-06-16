@@ -16,11 +16,16 @@ type SystemMapNode = {
   id: string;
   label: string;
   kind: SystemMapNodeKind;
-  icon: "ship" | "machine" | "messenger" | "integration" | "assistant" | "app" | "files" | "terminal" | "settings" | "plus";
+  icon: "ship" | "machine" | "messenger" | "integration" | "plus";
   x: number;
   y: number;
   status?: SystemMapStatus;
   note?: string;
+};
+
+type SystemMapApp = {
+  id: string;
+  label: string;
 };
 
 type SystemMapLink = {
@@ -167,42 +172,22 @@ const DETAIL_NODES: Record<Exclude<SystemMapSelection, "root" | null>, SystemMap
   ],
 };
 
-const APP_NODES: SystemMapNode[] = [
+const APP_NODES: SystemMapApp[] = [
   {
     id: "apps",
     label: "Applications",
-    kind: "app",
-    icon: "app",
-    note: "pkg index",
-    x: 0,
-    y: 0,
   },
   {
     id: "files",
     label: "Files",
-    kind: "app",
-    icon: "files",
-    note: "mount",
-    x: 0,
-    y: 0,
   },
   {
     id: "terminal",
     label: "Terminal",
-    kind: "app",
-    icon: "terminal",
-    note: "pty",
-    x: 0,
-    y: 0,
   },
   {
     id: "settings",
     label: "Settings",
-    kind: "app",
-    icon: "settings",
-    note: "crew",
-    x: 0,
-    y: 0,
   },
 ];
 
@@ -229,96 +214,6 @@ function detailLinks(selection: SystemMapSelection): SystemMapLink[] {
     from: category,
     to: node,
   }));
-}
-
-function Icon({ icon }: { icon: SystemMapNode["icon"] }) {
-  if (icon === "ship") {
-    return (
-      <svg viewBox="0 0 48 48" aria-hidden="true">
-        <path d="M24 4 16 14v17h16V14L24 4Zm-4 12h8v11h-8V16Z" />
-        <path d="M13 28 5 37v7h13V31l-5-3Zm22 0-5 3v13h13v-7l-8-9ZM20 36h8v8h-8v-8Z" />
-      </svg>
-    );
-  }
-
-  if (icon === "machine") {
-    return (
-      <svg viewBox="0 0 48 48" aria-hidden="true">
-        <path d="M11 10c0-3 2-5 5-5h16c3 0 5 2 5 5v13H11V10Zm0 18h26v10H11V28Zm6 5a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm15 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4Z" />
-      </svg>
-    );
-  }
-
-  if (icon === "messenger") {
-    return (
-      <svg viewBox="0 0 48 48" aria-hidden="true">
-        <path d="M10 8h28c3 0 5 2 5 5v17c0 3-2 5-5 5H24l-11 8v-8h-3c-3 0-5-2-5-5V13c0-3 2-5 5-5Z" />
-      </svg>
-    );
-  }
-
-  if (icon === "integration") {
-    return (
-      <svg viewBox="0 0 48 48" aria-hidden="true">
-        <path d="M18 31a9 9 0 0 1 0-13l5-5a9 9 0 0 1 13 13l-3 3-5-5 3-3a2 2 0 0 0-3-3l-5 5a2 2 0 0 0 0 3l1 1-5 5-1-1Z" />
-        <path d="M12 35a9 9 0 0 1 0-13l3-3 5 5-3 3a2 2 0 0 0 3 3l5-5a2 2 0 0 0 0-3l-1-1 5-5 1 1a9 9 0 0 1 0 13l-5 5a9 9 0 0 1-13 0Z" />
-      </svg>
-    );
-  }
-
-  if (icon === "files") {
-    return (
-      <svg viewBox="0 0 48 48" aria-hidden="true">
-        <path d="M6 14c0-3 2-5 5-5h11l4 5h11c3 0 5 2 5 5v18c0 3-2 5-5 5H11c-3 0-5-2-5-5V14Z" />
-      </svg>
-    );
-  }
-
-  if (icon === "terminal") {
-    return (
-      <svg viewBox="0 0 48 48" aria-hidden="true">
-        <path d="M8 8h32c2 0 4 2 4 4v24c0 2-2 4-4 4H8c-2 0-4-2-4-4V12c0-2 2-4 4-4Zm5 10 6 6-6 6 3 3 9-9-9-9-3 3Zm15 11v4h10v-4H28Z" />
-      </svg>
-    );
-  }
-
-  if (icon === "settings") {
-    return (
-      <svg viewBox="0 0 48 48" aria-hidden="true">
-        <path d="m27 4 2 6 6 2 5-3 4 7-5 4 1 4-1 4 5 4-4 7-5-3-6 2-2 6h-8l-2-6-6-2-5 3-4-7 5-4-1-4 1-4-5-4 4-7 5 3 6-2 2-6h8Zm-4 15a5 5 0 1 0 0 10 5 5 0 0 0 0-10Z" />
-      </svg>
-    );
-  }
-
-  if (icon === "plus") {
-    return (
-      <svg viewBox="0 0 48 48" aria-hidden="true">
-        <path d="M20 6h8v14h14v8H28v14h-8V28H6v-8h14V6Z" />
-      </svg>
-    );
-  }
-
-  if (icon === "assistant") {
-    return (
-      <svg viewBox="0 0 48 48" aria-hidden="true">
-        <path d="M21 5h6v7h7v4h6v17h-5v8H13v-8H8V16h6v-4h7V5Zm-5 17h16v8H16v-8Zm2 2v4h4v-4h-4Zm8 0v4h4v-4h-4Zm-7 11v2h10v-2H19Z" />
-      </svg>
-    );
-  }
-
-  if (icon === "app") {
-    return (
-      <svg viewBox="0 0 48 48" aria-hidden="true">
-        <path d="M8 8h13v13H8V8Zm19 0h13v13H27V8ZM8 27h13v13H8V27Zm19 0h13v13H27V27Z" />
-      </svg>
-    );
-  }
-
-  return (
-    <svg viewBox="0 0 48 48" aria-hidden="true">
-      <path d="m24 4 5 14h15l-12 9 5 15-13-9-13 9 5-15-12-9h15l5-14Z" />
-    </svg>
-  );
 }
 
 function MapNode({
@@ -434,34 +329,19 @@ function AssistantPanel({ open, onToggle }: { open: boolean; onToggle: () => voi
   return (
     <section class={`system-assistant${open ? " is-open" : ""}`} aria-label="Assistant">
       <button type="button" class="system-assistant-summary" onClick={onToggle} aria-expanded={open}>
-        <span class="system-assistant-avatar" aria-hidden="true">
-          <Icon icon="assistant" />
-        </span>
         <span class="system-assistant-copy">
-          <span class="system-assistant-unit" aria-hidden="true">AGT-03</span>
           <strong>Xanadu</strong>
-          <small>
-            <span>NEMOTRON 3</span>
-            <span>2 tasks running</span>
-          </small>
-        </span>
-        <span class="system-assistant-signal" aria-hidden="true">
-          <span>LINK</span>
-          <span>RUN 02</span>
+          <small>NEMOTRON 3 / 2 tasks running</small>
         </span>
       </button>
       <div class="system-assistant-panel" hidden={!open}>
         <header class="system-assistant-header">
-          <span class="system-assistant-avatar" aria-hidden="true">
-            <Icon icon="assistant" />
-          </span>
           <div>
-            <span class="system-assistant-unit" aria-hidden="true">AGENT // NATIVE</span>
             <strong>Xanadu</strong>
             <p>NEMOTRON 3 / reasoning low</p>
             <em>creating crew member</em>
           </div>
-          <button type="button" onClick={onToggle} aria-label="Collapse assistant">MIN</button>
+          <button type="button" onClick={onToggle} aria-label="Collapse assistant">Close</button>
         </header>
         <div class="system-assistant-meters" aria-label="Assistant status">
           <span><strong>context</strong><em>50%</em></span>
@@ -475,7 +355,7 @@ function AssistantPanel({ open, onToggle }: { open: boolean; onToggle: () => voi
         <form class="system-assistant-composer" onSubmit={(event) => event.preventDefault()}>
           <button type="button" aria-label="Attach file">+</button>
           <input type="text" aria-label="Message Xanadu" />
-          <button type="button" aria-label="Send message">TX</button>
+          <button type="button" aria-label="Send message">Send</button>
         </form>
       </div>
     </section>
@@ -684,14 +564,9 @@ export function SystemMap() {
         </div>
       </div>
       <div class="system-map-app-shelf" hidden={selection !== "root"}>
-        {APP_NODES.map((node, index) => (
+        {APP_NODES.map((node) => (
           <button type="button" class="system-map-app" key={node.id}>
-            <span class="system-map-app-index" aria-hidden="true">{String(index + 1).padStart(2, "0")}</span>
-            <span class="system-map-icon" data-icon={node.icon}>
-              <Icon icon={node.icon} />
-            </span>
-            <span class="system-map-app-label">{node.label}</span>
-            <span class="system-map-app-readout" aria-hidden="true">{node.note ?? "ready"}</span>
+            {node.label}
           </button>
         ))}
       </div>
