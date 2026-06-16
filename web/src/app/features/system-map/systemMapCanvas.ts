@@ -1,3 +1,16 @@
+import {
+  GSV_INSTRUMENT_PALETTE,
+  applyInstrumentPostProcess,
+  clamp,
+  drawBrokenLine,
+  drawDotCircle,
+  drawText,
+  hash2,
+  plot,
+  rgba,
+  type Rgb,
+} from "../../rendering/instrumentRaster";
+
 export type SystemMapCanvasNodeKind = "root" | "category" | "object" | "app";
 export type SystemMapCanvasStatus = "online" | "offline" | "warning" | "busy" | "neutral";
 
@@ -25,66 +38,12 @@ export type SystemMapCanvasOptions = {
   time: number;
 };
 
-type Rgb = [number, number, number];
+const COLORS = GSV_INSTRUMENT_PALETTE;
 
-const COLORS = {
-  bg: [3, 9, 7] as Rgb,
-  bgDark: [0, 3, 2] as Rgb,
-  grid: [15, 62, 49] as Rgb,
-  redDim: [22, 92, 69] as Rgb,
-  red: [255, 79, 99] as Rgb,
-  orange: [76, 241, 255] as Rgb,
-  amber: [255, 208, 90] as Rgb,
-  green: [54, 255, 120] as Rgb,
-  cyan: [119, 239, 255] as Rgb,
-  blue: [76, 141, 255] as Rgb,
-  white: [239, 255, 244] as Rgb,
-};
-
-const BAYER_4 = [
-  0, 8, 2, 10,
-  12, 4, 14, 6,
-  3, 11, 1, 9,
-  15, 7, 13, 5,
-];
-
-function rgba([r, g, b]: Rgb, alpha = 1): string {
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-}
-
-function hash2(x: number, y: number, seed: number): number {
-  const n = Math.sin(x * 12.9898 + y * 78.233 + seed * 37.719) * 43758.5453;
-  return n - Math.floor(n);
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value));
-}
+let backgroundCache: { key: string; image: ImageData } | null = null;
 
 function drawingScale(width: number, height: number): number {
   return clamp(Math.min(width, height) / 520, 1, 1.55);
-}
-
-function mix(a: Rgb, b: Rgb, amount: number): Rgb {
-  const t = clamp(amount, 0, 1);
-  return [
-    Math.round(a[0] + (b[0] - a[0]) * t),
-    Math.round(a[1] + (b[1] - a[1]) * t),
-    Math.round(a[2] + (b[2] - a[2]) * t),
-  ];
-}
-
-function plot(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  color: Rgb,
-  alpha = 1,
-  width = 1,
-  height = 1,
-): void {
-  ctx.fillStyle = rgba(color, alpha);
-  ctx.fillRect(Math.round(x), Math.round(y), width, height);
 }
 
 function point(node: Pick<SystemMapCanvasNode, "x" | "y">, width: number, height: number): [number, number] {
@@ -92,73 +51,6 @@ function point(node: Pick<SystemMapCanvasNode, "x" | "y">, width: number, height
     Math.round((node.x / 100) * width),
     Math.round((node.y / 100) * height),
   ];
-}
-
-function drawBrokenLine(
-  ctx: CanvasRenderingContext2D,
-  x1: number,
-  y1: number,
-  x2: number,
-  y2: number,
-  color: Rgb,
-  seed: number,
-  density = 0.74,
-  step = 3,
-): void {
-  const dx = x2 - x1;
-  const dy = y2 - y1;
-  const length = Math.max(1, Math.hypot(dx, dy));
-  const count = Math.max(1, Math.floor(length / step));
-
-  for (let i = 0; i <= count; i += 1) {
-    const t = i / count;
-    const x = x1 + dx * t;
-    const y = y1 + dy * t;
-    const jitter = hash2(i, seed, 2) - 0.5;
-
-    if (hash2(i, seed, 5) < density) {
-      plot(ctx, x + jitter, y - jitter, color, 0.9, i % 3 === 0 ? 2 : 1, 1);
-    }
-  }
-}
-
-function drawText(
-  ctx: CanvasRenderingContext2D,
-  text: string,
-  x: number,
-  y: number,
-  color: Rgb,
-  size: number,
-  align: CanvasTextAlign = "center",
-): void {
-  ctx.save();
-  ctx.font = `700 ${size}px "IBM Plex Mono", Menlo, monospace`;
-  ctx.textAlign = align;
-  ctx.textBaseline = "middle";
-  ctx.fillStyle = rgba(color, 0.95);
-  ctx.fillText(text, Math.round(x), Math.round(y));
-  ctx.restore();
-}
-
-function drawDotCircle(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  radius: number,
-  color: Rgb,
-  seed: number,
-  density = 0.84,
-): void {
-  const steps = Math.max(18, Math.round(radius * 5));
-
-  for (let i = 0; i < steps; i += 1) {
-    if (hash2(i, seed, 9) > density) {
-      continue;
-    }
-
-    const angle = (i / steps) * Math.PI * 2;
-    plot(ctx, x + Math.cos(angle) * radius, y + Math.sin(angle) * radius, color, 0.92);
-  }
 }
 
 function drawGlyph(
@@ -169,31 +61,35 @@ function drawGlyph(
   color: Rgb,
   scale: number,
 ): void {
-  const s = scale;
+  const s = scale * 1.25;
+  const unit = Math.max(2, Math.round(2 * scale));
+
+  const rect = (left: number, top: number, width: number, height: number, alpha = 0.92): void => {
+    plot(ctx, x + left * s, y + top * s, color, alpha, Math.max(unit, Math.round(width * s)), Math.max(unit, Math.round(height * s)));
+  };
 
   if (node.icon === "machine") {
-    drawBrokenLine(ctx, x - 7 * s, y - 7 * s, x + 7 * s, y - 7 * s, color, x + y, 0.9, 2);
-    drawBrokenLine(ctx, x - 7 * s, y - 7 * s, x - 7 * s, y + 7 * s, color, x + y + 2, 0.9, 2);
-    drawBrokenLine(ctx, x + 7 * s, y - 7 * s, x + 7 * s, y + 7 * s, color, x + y + 3, 0.9, 2);
-    drawBrokenLine(ctx, x - 7 * s, y + 7 * s, x + 7 * s, y + 7 * s, color, x + y + 4, 0.9, 2);
-    plot(ctx, x - 4 * s, y + 3 * s, color, 0.9, Math.max(2, Math.round(2 * s)), Math.max(2, Math.round(2 * s)));
-    plot(ctx, x + 4 * s, y + 3 * s, color, 0.9, Math.max(2, Math.round(2 * s)), Math.max(2, Math.round(2 * s)));
+    rect(-8, -9, 16, 10);
+    rect(-9, 3, 18, 7);
+    rect(-5, 5, 3, 3, 0.98);
+    rect(3, 5, 3, 3, 0.98);
+    drawBrokenLine(ctx, x - 9 * s, y + 1 * s, x + 9 * s, y + 1 * s, color, x + y, 0.72, 2);
     return;
   }
 
   if (node.icon === "messenger") {
-    drawBrokenLine(ctx, x - 8 * s, y - 6 * s, x + 8 * s, y - 6 * s, color, x + y, 0.9, 2);
-    drawBrokenLine(ctx, x - 8 * s, y - 6 * s, x - 8 * s, y + 5 * s, color, x + y + 1, 0.9, 2);
-    drawBrokenLine(ctx, x + 8 * s, y - 6 * s, x + 8 * s, y + 5 * s, color, x + y + 2, 0.9, 2);
-    drawBrokenLine(ctx, x - 8 * s, y + 5 * s, x + 3 * s, y + 5 * s, color, x + y + 3, 0.9, 2);
-    drawBrokenLine(ctx, x + 3 * s, y + 5 * s, x - 4 * s, y + 11 * s, color, x + y + 4, 0.9, 2);
+    rect(-10, -8, 20, 13);
+    rect(-6, 4, 8, 5);
+    rect(-7, -4, 3, 3, 0.98);
+    rect(-1, -4, 3, 3, 0.98);
+    rect(5, -4, 3, 3, 0.98);
     return;
   }
 
   if (node.icon === "integration") {
-    drawDotCircle(ctx, x - 5 * s, y, 6 * s, color, x + y, 0.92);
-    drawDotCircle(ctx, x + 5 * s, y, 6 * s, color, x + y + 1, 0.92);
-    drawBrokenLine(ctx, x - 2 * s, y, x + 2 * s, y, color, x + y + 2, 0.95, 2);
+    drawDotCircle(ctx, x - 6 * s, y, 6 * s, color, x + y, 0.96);
+    drawDotCircle(ctx, x + 6 * s, y, 6 * s, color, x + y + 1, 0.96);
+    drawBrokenLine(ctx, x - 2 * s, y, x + 2 * s, y, color, x + y + 2, 0.98, 2);
     return;
   }
 
@@ -204,12 +100,12 @@ function drawGlyph(
   }
 
   if (node.icon === "ship") {
-    drawBrokenLine(ctx, x, y - 14 * s, x - 8 * s, y + 9 * s, color, x + y, 0.96, 2);
-    drawBrokenLine(ctx, x, y - 14 * s, x + 8 * s, y + 9 * s, color, x + y + 1, 0.96, 2);
-    drawBrokenLine(ctx, x - 8 * s, y + 9 * s, x + 8 * s, y + 9 * s, color, x + y + 2, 0.96, 2);
-    drawBrokenLine(ctx, x - 3 * s, y - 2 * s, x + 3 * s, y - 2 * s, color, x + y + 3, 0.95, 2);
-    drawBrokenLine(ctx, x - 11 * s, y + 7 * s, x - 16 * s, y + 15 * s, color, x + y + 4, 0.9, 2);
-    drawBrokenLine(ctx, x + 11 * s, y + 7 * s, x + 16 * s, y + 15 * s, color, x + y + 5, 0.9, 2);
+    rect(-4, -14, 8, 21);
+    rect(-8, 4, 16, 7);
+    rect(-14, 9, 7, 8);
+    rect(7, 9, 7, 8);
+    rect(-2, -8, 4, 5, 0.98);
+    drawBrokenLine(ctx, x - 14 * s, y + 18 * s, x + 14 * s, y + 18 * s, color, x + y, 0.68, 2);
     return;
   }
 
@@ -224,7 +120,7 @@ function statusColor(node: SystemMapCanvasNode): Rgb {
   }
 
   if (node.status === "offline") {
-    return COLORS.red;
+    return COLORS.alert;
   }
 
   if (node.status === "warning") {
@@ -246,12 +142,12 @@ function drawSurveyField(ctx: CanvasRenderingContext2D, width: number, height: n
   const tileH = Math.max(54, Math.round(height / 4));
 
   for (let x = 0; x <= width; x += tileW) {
-    ctx.fillStyle = rgba(COLORS.grid, 0.4);
+    ctx.fillStyle = rgba(COLORS.traceDim, 0.28);
     ctx.fillRect(x, 0, 1, height);
   }
 
   for (let y = 0; y <= height; y += tileH) {
-    ctx.fillStyle = rgba(COLORS.grid, 0.42);
+    ctx.fillStyle = rgba(COLORS.traceDim, 0.3);
     ctx.fillRect(0, y, width, 1);
   }
 
@@ -267,14 +163,14 @@ function drawSurveyField(ctx: CanvasRenderingContext2D, width: number, height: n
       const grain = hash2(x, y, 11);
 
       if (water && grain > 0.44) {
-        plot(ctx, x, y, COLORS.blue, 0.42);
+        plot(ctx, x, y, COLORS.blue, 0.16);
         continue;
       }
 
       if (Math.abs(ridge) < 0.1 && grain > 0.18) {
-        plot(ctx, x, y, COLORS.redDim, 0.72, grain > 0.92 ? 2 : 1, 1);
+        plot(ctx, x, y, COLORS.traceDim, 0.24, grain > 0.92 ? 2 : 1, 1);
       } else if (ridge > 1.18 && grain > 0.52) {
-        plot(ctx, x, y, COLORS.redDim, 0.55);
+        plot(ctx, x, y, COLORS.traceDim, 0.18);
       }
     }
   }
@@ -284,13 +180,13 @@ function drawSurveyField(ctx: CanvasRenderingContext2D, width: number, height: n
     const y1 = hash2(i, 2, 41) * height;
     const x2 = x1 + (hash2(i, 3, 42) - 0.2) * width * 0.58;
     const y2 = y1 + (hash2(i, 4, 43) - 0.5) * height * 0.38;
-    drawBrokenLine(ctx, x1, y1, x2, y2, COLORS.redDim, i + Math.floor(time * 3), 0.5, 3);
+    drawBrokenLine(ctx, x1, y1, x2, y2, COLORS.traceDim, i + Math.floor(time * 3), 0.22, 4);
   }
 
   for (let y = 34; y < height; y += 62) {
     for (let x = 42; x < width; x += 120) {
-      plot(ctx, x - 3, y, COLORS.redDim, 0.65, 7, 1);
-      plot(ctx, x, y - 3, COLORS.redDim, 0.65, 1, 7);
+      plot(ctx, x - 3, y, COLORS.traceDim, 0.4, 7, 1);
+      plot(ctx, x, y - 3, COLORS.traceDim, 0.4, 1, 7);
     }
   }
 }
@@ -359,57 +255,35 @@ function drawHudRaster(ctx: CanvasRenderingContext2D, width: number, height: num
   drawText(ctx, "GSV SYSTEM MAP", 15 * scale, 16 * scale, COLORS.green, 8 * scale, "left");
   drawText(ctx, selection === "overview" ? "SYSTEM" : selection.toUpperCase(), 15 * scale, 31 * scale, COLORS.cyan, 11 * scale, "left");
   drawText(ctx, "MICROFORM LINK 07", width - 14 * scale, 16 * scale, COLORS.green, 7 * scale, "right");
-  drawText(ctx, "NATIVE RUNTIME", width - 14 * scale, 28 * scale, COLORS.redDim, 7 * scale, "right");
+  drawText(ctx, "NATIVE RUNTIME", width - 14 * scale, 28 * scale, COLORS.traceDim, 7 * scale, "right");
 }
 
-function applyMicrofichePostProcess(ctx: CanvasRenderingContext2D, width: number, height: number, time: number): void {
-  const image = ctx.getImageData(0, 0, width, height);
-  const { data } = image;
-  const flicker = Math.sin(time * 13) * 2;
+function backgroundImage(width: number, height: number): ImageData {
+  const key = `${width}x${height}`;
 
-  for (let y = 0; y < height; y += 1) {
-    const scan = y % 3 === 0 ? 0.78 : y % 3 === 1 ? 1 : 0.9;
-
-    for (let x = 0; x < width; x += 1) {
-      const index = (y * width + x) * 4;
-      const r = data[index];
-      const g = data[index + 1];
-      const b = data[index + 2];
-      const max = Math.max(r, g, b);
-      const min = Math.min(r, g, b);
-      const bayer = BAYER_4[(x & 3) + ((y & 3) * 4)] - 7.5;
-      const noise = (hash2(x, y, 0) - 0.5) * 14;
-      const threshold = 44 + bayer * 4 + noise + flicker;
-      const backgroundNoise = hash2(x, y, 100);
-
-      let color = mix(COLORS.bgDark, COLORS.bg, backgroundNoise * 0.65);
-
-      if (max + (max - min) * 0.35 > threshold) {
-        const intensity = clamp((max - 35) / 185, 0.35, 1);
-
-        if (g > r * 1.08 && b > r * 1.08 && b > g * 0.82) {
-          color = mix(COLORS.bg, COLORS.cyan, intensity);
-        } else if (g > r * 1.08 && g > b * 1.02) {
-          color = mix(COLORS.bg, COLORS.green, intensity);
-        } else if (b > r * 0.85 && b > g * 0.92) {
-          color = mix(COLORS.bg, COLORS.blue, intensity * 0.78);
-        } else if (r > 185 && g > 110) {
-          color = mix(COLORS.bg, COLORS.amber, intensity);
-        } else if (r > 165 && g > 130 && b > 120) {
-          color = mix(COLORS.bg, COLORS.white, intensity * 0.85);
-        } else {
-          color = mix(COLORS.bg, COLORS.orange, intensity);
-        }
-      }
-
-      data[index] = Math.round(color[0] * scan);
-      data[index + 1] = Math.round(color[1] * scan);
-      data[index + 2] = Math.round(color[2] * scan);
-      data[index + 3] = 255;
-    }
+  if (backgroundCache?.key === key) {
+    return backgroundCache.image;
   }
 
-  ctx.putImageData(image, 0, 0);
+  const layer = document.createElement("canvas");
+  layer.width = width;
+  layer.height = height;
+
+  const layerCtx = layer.getContext("2d", { willReadFrequently: true });
+  if (!layerCtx) {
+    throw new Error("Unable to create system map background layer");
+  }
+
+  layerCtx.imageSmoothingEnabled = false;
+  drawSurveyField(layerCtx, width, height, 0);
+  applyInstrumentPostProcess(layerCtx, width, height, COLORS);
+
+  backgroundCache = {
+    key,
+    image: layerCtx.getImageData(0, 0, width, height),
+  };
+
+  return backgroundCache.image;
 }
 
 export function renderSystemMapCanvas(
@@ -420,10 +294,9 @@ export function renderSystemMapCanvas(
 ): void {
   ctx.save();
   ctx.imageSmoothingEnabled = false;
-  drawSurveyField(ctx, width, height, options.time);
+  ctx.putImageData(backgroundImage(width, height), 0, 0);
   drawLinks(ctx, options.links, width, height);
   drawNodes(ctx, options.nodes, options.selection, width, height, options.time);
   drawHudRaster(ctx, width, height, options.selection);
-  applyMicrofichePostProcess(ctx, width, height, options.time);
   ctx.restore();
 }

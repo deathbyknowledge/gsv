@@ -320,8 +320,8 @@ function useSystemMapRaster(
 
     const paint = (): void => {
       const rect = canvas.getBoundingClientRect();
-      const width = Math.max(420, Math.round(rect.width / 1.45));
-      const height = Math.max(300, Math.round(rect.height / 1.45));
+      const width = Math.max(420, Math.round(rect.width / 1.7));
+      const height = Math.max(300, Math.round(rect.height / 1.7));
 
       if (canvas.width !== width || canvas.height !== height) {
         canvas.width = width;
