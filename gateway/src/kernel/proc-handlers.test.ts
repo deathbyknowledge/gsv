@@ -148,8 +148,8 @@ describe("proc handlers", () => {
       connection: {
         id: "conn-1",
         state: {
-          clientId: "browser-shell",
-          clientPlatform: "web",
+          clientId: "browser-extension",
+          clientPlatform: "browser",
         },
       },
       procs: {
@@ -184,8 +184,8 @@ describe("proc handlers", () => {
           origin: {
             kind: "client",
             connectionId: "conn-1",
-            clientId: "browser-shell",
-            platform: "web",
+            clientId: "browser-extension",
+            platform: "browser",
           },
         }),
       }),

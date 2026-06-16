@@ -324,8 +324,6 @@ export type SysDeviceListArgs = {
   includeOffline?: boolean;
 };
 
-export type SysDeviceLifecycle = "persistent" | "ephemeral";
-
 export type SysDeviceSummary = {
   deviceId: string;
   ownerUid: number;
@@ -334,7 +332,6 @@ export type SysDeviceSummary = {
   description: string;
   platform: string;
   version: string;
-  lifecycle: SysDeviceLifecycle;
   online: boolean;
   lastSeenAt: number;
 };
@@ -366,19 +363,6 @@ export type SysDeviceUpdateArgs = {
 
 export type SysDeviceUpdateResult = {
   device: SysDeviceDetail | null;
-};
-
-export type SysTargetRegisterArgs = {
-  label?: string;
-  description?: string;
-  platform?: string;
-  version?: string;
-  implements: string[];
-};
-
-export type SysTargetRegisterResult = {
-  targetId: string;
-  device: SysDeviceDetail;
 };
 
 export type SysOAuthConnectionKind = "ai-provider" | "mcp-server" | "generic";

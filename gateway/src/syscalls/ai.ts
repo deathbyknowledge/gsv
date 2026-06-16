@@ -32,7 +32,6 @@ export type AiToolsDevice = {
   label?: string;
   description?: string;
   platform?: string;
-  lifecycle?: "persistent" | "ephemeral";
 };
 
 export type AiToolsResult = {

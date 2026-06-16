@@ -148,7 +148,6 @@ function normalizeDeviceSummary(device: DeviceSummary): DeviceSummary {
     description: device.description ?? "",
     platform: typeof device.platform === "string" ? device.platform : "",
     version: typeof device.version === "string" ? device.version : "",
-    lifecycle: device.lifecycle === "ephemeral" ? "ephemeral" : "persistent",
     online: device.online,
     lastSeenAt: device.lastSeenAt,
   };

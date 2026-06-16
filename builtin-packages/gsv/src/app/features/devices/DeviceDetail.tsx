@@ -169,7 +169,6 @@ function DeviceOverview({
       <div class="gsv-device-facts" aria-label="Target overview">
         <FactChip icon="activity" label="Status" value={device.online ? "Ready" : "Offline"} tone={device.online ? "good" : "warning"} />
         <FactChip icon="device" label="Kind" value={targetKindLabel(targetKind(device))} />
-        <FactChip icon="shield" label="Lifecycle" value={device.lifecycle} />
         <FactChip icon="server" label="Platform" value={device.platform || "Unknown"} />
         <FactChip icon="code" label="Version" value={device.version || "Unknown"} />
         <FactChip icon="user" label="Owner" value={formatOwner(device)} />

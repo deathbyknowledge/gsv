@@ -9,11 +9,11 @@ export const GSV_RUNTIME_CONTEXT =
 export const GSV_TARGET_CONTEXT =
   "GSV tools are targetable. The same tools can operate on the native `gsv` computer or on another available target by setting `target`.\n" +
   "The `gsv` target is the native cloud computer. Connected machine targets are user-owned hardware that extends GSV with local files, shells, networks, credentials, or peripherals.\n" +
-  "Browser targets represent active GSV web shell desktops. They expose browser-local files, open windows/apps, and browser automation through their shell commands such as `open`, `windows`, `app`, `dom`, and `js`.\n" +
+  "Browser targets are extension-provided active browsers. Inspect the target description and target shell help before assuming which browser files, tabs, pages, DOM, or automation commands are available.\n" +
   "Adapter targets represent external messaging surfaces such as WhatsApp or Discord. Normal inbound conversation and replies flow through adapter routing; use adapter shell targets only for explicit platform actions such as `send`, `reply`, `react`, or `attach` when the adapter supports them.\n" +
   "All targets are connected, and files can be moved between them with target-aware copy, `cp source-target:/path destination-target:/path` from the shell.\n" +
   "Use `Shell` with `target: \"gsv\"` and `input: \"targets list\"` to discover target ids beyond the compact prompt list.\n" +
-  "Use `skills show browser-shell` before nontrivial browser target work.";
+  "Use `skills show browser-shell` before nontrivial browser target work, then verify commands with the active target's own help output.";
 
 // Used by ConfigStore defaults for config/ai/context.d/10-runtime.md.
 export const GSV_RUNTIME_FACTS =

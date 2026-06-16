@@ -542,17 +542,6 @@ export function renderDesktopShell(): string {
               </span>
               <span class="notification-badge" data-notifications-badge hidden>0</span>
             </button>
-            <div class="notifications-panel" id="notifications-panel" data-notifications-panel hidden>
-              <header class="notifications-panel-head">
-                <div>
-                  <strong>Notifications</strong>
-                  <span data-notifications-delivery-state>In-shell alerts</span>
-                </div>
-                <button type="button" class="notifications-system-enable" data-notifications-system-enable hidden>Enable system</button>
-              </header>
-              <p class="windows-empty muted" data-notifications-empty>No notifications</p>
-              <ul class="notifications-list" data-notifications-list hidden></ul>
-            </div>
           </div>
           <div class="topbar-section topbar-session">
             <button type="button" class="session-lock-btn" data-session-lock aria-label="Lock">
@@ -609,7 +598,6 @@ export function renderDesktopShell(): string {
           <button type="button" class="mobile-home-handle" data-mobile-home-button aria-label="Home"></button>
         </section>
         <div class="dock-reveal-zone" data-dock-reveal-zone aria-hidden="true"></div>
-        <div class="notification-toasts" data-notification-toasts aria-live="polite" aria-atomic="false"></div>
         <button type="button" class="presence-activity" data-presence-activity aria-live="polite" aria-atomic="false" aria-controls="presence-panel" aria-expanded="false">
           <span class="presence-activity-head">
             <span class="presence-activity-pulse" aria-hidden="true"></span>

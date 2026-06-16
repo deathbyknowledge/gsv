@@ -12,7 +12,6 @@ import type { Frame, RequestFrame, ResponseFrame, SignalFrame } from "../protoco
 import type {
   ConnectionIdentity,
   ProcessIdentity,
-  SysTargetRegisterResult,
   SysSetupResult,
 } from "@gsv/protocol/syscalls/system";
 import {
@@ -32,7 +31,7 @@ import type {
 import { AuthStore } from "./auth-store";
 import { CapabilityStore, hasCapability } from "./capabilities";
 import { ConfigStore } from "./config";
-import { DeviceRegistry, type DeviceLifecycle, type DeviceRecord } from "./devices";
+import { DeviceRegistry } from "./devices";
 import { RoutingTable, type RouteOrigin } from "./routing";
 import { ShellSessionStore, type ShellSessionStatus } from "./shell-sessions";
 import { ProcessRegistry, type ProcessState } from "./processes";
@@ -112,11 +111,6 @@ type ConnectionState = {
   identity?: ConnectionIdentity;
   clientId?: string;
   clientPlatform?: string;
-  providedTargets?: ProvidedTarget[];
-};
-
-type ProvidedTarget = {
-  targetId: string;
 };
 
 type BinaryRoute = {
@@ -377,10 +371,6 @@ export class Kernel extends Host<Env> {
       this.devices.setOnline(identity.device, false);
       this.broadcastDeviceStatus(identity.device, "disconnected");
       this.failRoutesForDevice(identity.device);
-    }
-
-    for (const target of state.providedTargets ?? []) {
-      this.removeProvidedTarget(target.targetId);
     }
 
     this.failRoutesForConnection(connection.id);
@@ -1649,9 +1639,6 @@ export class Kernel extends Host<Env> {
       if (state?.identity?.role === "driver" && state.identity.device === deviceId) {
         return conn;
       }
-      if (state?.providedTargets?.some((target) => target.targetId === deviceId)) {
-        return conn;
-      }
     }
     return null;
   }
@@ -1661,7 +1648,7 @@ export class Kernel extends Host<Env> {
     if (state?.identity?.role === "driver" && state.identity.device === deviceId) {
       return true;
     }
-    return state?.providedTargets?.some((target) => target.targetId === deviceId) === true;
+    return false;
   }
 
   private async scheduleIpcCallTimeout(callId: string, delayMs: number): Promise<string> {
@@ -1731,11 +1718,6 @@ export class Kernel extends Host<Env> {
 
     if (!hasCapability(state.identity.capabilities, frame.call)) {
       this.sendError(connection, frame.id, 403, `Permission denied: ${frame.call}`);
-      return;
-    }
-
-    if (frame.call === "sys.target.register") {
-      await this.handleSysTargetRegister(connection, frame as RequestFrame<"sys.target.register">);
       return;
     }
 
@@ -2138,89 +2120,6 @@ export class Kernel extends Host<Env> {
     this.sendOk(connection, frame.id, outcome.result);
   }
 
-  private async handleSysTargetRegister(
-    connection: Connection<ConnectionState>,
-    frame: RequestFrame<"sys.target.register">,
-  ): Promise<void> {
-    const state = connection.state as ConnectionState | undefined;
-    const identity = state?.identity;
-    if (!identity || identity.role !== "user") {
-      this.sendError(connection, frame.id, 403, "Only user clients can register targets");
-      return;
-    }
-
-    const raw = asRecord(frame.args) ?? {};
-    const implementsList = Array.isArray(raw.implements)
-      ? Array.from(new Set(raw.implements
-        .filter((item): item is string => typeof item === "string")
-        .map((item) => item.trim())
-        .filter(Boolean)))
-      : [];
-    if (implementsList.length === 0) {
-      this.sendError(connection, frame.id, 400, "sys.target.register requires implements");
-      return;
-    }
-
-    const platform = normalizeTargetText(raw.platform, "browser-shell", 64);
-    const version = normalizeTargetText(raw.version, SERVER_VERSION, 64);
-    const label = normalizeTargetText(raw.label, "Browser Shell", 120);
-    const description = normalizeTargetText(
-      raw.description,
-      `${label} target for ${identity.process.username}`,
-      500,
-    );
-    const lifecycle: DeviceLifecycle = "ephemeral";
-    const targetId = `browser:${connection.id}`;
-    const registered = this.devices.register(
-      targetId,
-      identity.process.uid,
-      identity.process.gid,
-      implementsList,
-      platform,
-      version,
-      { label, description, lifecycle },
-    );
-    if (!registered.ok) {
-      this.sendError(connection, frame.id, 400, registered.error ?? "Failed to register target");
-      return;
-    }
-
-    const nextTargets = [
-      ...(state.providedTargets ?? []).filter((target) => target.targetId !== targetId),
-      { targetId },
-    ];
-    connection.setState({ ...state, providedTargets: nextTargets });
-    this.connections.set(connection.id, connection);
-    this.broadcastDeviceStatus(targetId, "connected");
-
-    const device = this.devices.get(targetId);
-    if (!device) {
-      this.sendError(connection, frame.id, 500, "Registered target was not persisted");
-      return;
-    }
-
-    const result: SysTargetRegisterResult = {
-      targetId,
-      device: {
-        deviceId: device.device_id,
-        ownerUid: device.owner_uid,
-        ownerUsername: this.auth.getPasswdByUid(device.owner_uid)?.username ?? null,
-        label: device.label,
-        description: device.description,
-        platform: device.platform,
-        version: device.version,
-        lifecycle: device.lifecycle,
-        online: device.online,
-        lastSeenAt: device.last_seen_at,
-        implements: device.implements,
-        firstSeenAt: device.first_seen_at,
-        connectedAt: device.connected_at,
-        disconnectedAt: device.disconnected_at,
-      },
-    };
-    this.sendOk(connection, frame.id, result);
-  }
-
   private async handleSysSetup(
     connection: Connection<ConnectionState>,
     frame: RequestFrame<"sys.setup">,
@@ -2382,7 +2281,7 @@ export class Kernel extends Host<Env> {
     const state = connection.state as ConnectionState | undefined;
     const targetId = state?.identity?.role === "driver"
       ? state.identity.device
-      : state?.providedTargets?.[0]?.targetId;
+      : null;
     if (!targetId) {
       return;
     }
@@ -2819,30 +2718,6 @@ export class Kernel extends Host<Env> {
     }
   }
 
-  private removeProvidedTarget(targetId: string): void {
-    const existing = this.devices.get(targetId);
-    if (!existing) {
-      return;
-    }
-
-    this.devices.setOnline(targetId, false);
-    this.broadcastDeviceStatus(targetId, "disconnected");
-    this.failRoutesForDevice(targetId);
-    this.devices.remove(targetId);
-  }
-
-  private purgeStaleProvidedTargets(liveTargets = new Set<string>()): void {
-    for (const device of this.devices.listForUser(0, [0])) {
-      if (!isEphemeralDevice(device)) {
-        continue;
-      }
-      if (liveTargets.has(device.device_id)) {
-        continue;
-      }
-      this.removeProvidedTarget(device.device_id);
-    }
-  }
-
   private failRoutesForConnection(connectionId: string): void {
     const failed = this.routes.failForConnection(connectionId);
     for (const entry of failed) {
@@ -2953,7 +2828,6 @@ export class Kernel extends Host<Env> {
           description: device.description,
           platform: device.platform,
           version: device.version,
-          lifecycle: device.lifecycle,
           online: device.online,
           firstSeenAt: device.first_seen_at,
           lastSeenAt: device.last_seen_at,
@@ -3003,25 +2877,15 @@ export class Kernel extends Host<Env> {
         onlineTargets.add(state.identity.device);
         this.devices.setOnline(state.identity.device, true);
       }
-      for (const target of state.providedTargets ?? []) {
-        onlineTargets.add(target.targetId);
-        this.devices.setOnline(target.targetId, true);
-      }
     }
 
     // Reconcile registered device online flags with live rehydrated sockets.
     for (const device of this.devices.listOnline()) {
       if (!onlineTargets.has(device.device_id)) {
-        if (isEphemeralDevice(device)) {
-          this.removeProvidedTarget(device.device_id);
-        } else {
-          this.devices.setOnline(device.device_id, false);
-          this.broadcastDeviceStatus(device.device_id, "disconnected");
-        }
+        this.devices.setOnline(device.device_id, false);
+        this.broadcastDeviceStatus(device.device_id, "disconnected");
       }
     }
-
-    this.purgeStaleProvidedTargets(onlineTargets);
   }
 
   private async ensureUserDefaultExecutor(
@@ -3095,18 +2959,6 @@ function errFrame(id: string, code: number, message: string): ResponseFrame {
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" ? value as Record<string, unknown> : null;
-}
-
-function normalizeTargetText(value: unknown, fallback: string, maxLength: number): string {
-  if (typeof value !== "string") {
-    return fallback;
-  }
-  const trimmed = value.trim();
-  return trimmed ? trimmed.slice(0, maxLength) : fallback;
-}
-
-function isEphemeralDevice(device: DeviceRecord): boolean {
-  return device.lifecycle === "ephemeral";
 }
 
 function ceilToSecondMs(value: number): number {

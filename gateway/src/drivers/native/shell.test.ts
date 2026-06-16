@@ -66,7 +66,6 @@ function makeDevice(partial: Partial<DeviceRecord> & { device_id: string }): Dev
     implements: partial.implements ?? ["shell.exec"],
     platform: partial.platform ?? "linux",
     version: partial.version ?? "1.0.0",
-    lifecycle: partial.lifecycle ?? "persistent",
     online: partial.online ?? true,
     first_seen_at: partial.first_seen_at ?? now,
     last_seen_at: partial.last_seen_at ?? now,
@@ -282,7 +281,6 @@ describe("targets native command", () => {
         device_id: "browser:abc",
         label: "Browser",
         platform: "browser",
-        lifecycle: "ephemeral",
         implements: ["shell.exec", "fs.*"],
       }),
     ];
@@ -296,9 +294,9 @@ describe("targets native command", () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(result.stdout).toContain("TARGET\tKIND\tSTATE\tLIFE\tPLATFORM\tCAPS\tLABEL");
-    expect(result.stdout).toContain("gsv\tgsv\tonline\tpersistent\tcloudflare-worker");
-    expect(result.stdout).toContain("browser:abc\tbrowser\tonline\tephemeral\tbrowser");
+    expect(result.stdout).toContain("TARGET\tKIND\tSTATE\tPLATFORM\tCAPS\tLABEL");
+    expect(result.stdout).toContain("gsv\tgsv\tonline\tcloudflare-worker");
+    expect(result.stdout).toContain("browser:abc\tbrowser\tonline\tbrowser");
     expect(result.stdout).toContain("Showing 1-2 of 3");
 
     const alias = await handleShellExec(
@@ -306,7 +304,7 @@ describe("targets native command", () => {
       makeContext({ capabilities: ["sys.device.list"], devices }),
     );
     expect(alias.ok).toBe(true);
-    expect(alias.stdout).toContain("macbook\tnative-device\tonline\tpersistent\tdarwin");
+    expect(alias.stdout).toContain("macbook\tnative-device\tonline\tdarwin");
   });
 
   it("shows target details", async () => {

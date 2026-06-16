@@ -27,7 +27,6 @@ export function filterDevices(
       device.platform,
       device.version,
       targetKindLabel(targetKind(device)),
-      device.lifecycle,
       device.ownerUsername ?? "",
       String(device.ownerUid),
     ].some((part) => part.toLowerCase().includes(normalizedQuery));

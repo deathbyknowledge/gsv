@@ -3521,8 +3521,8 @@ describe("Process DO — mechanical", () => {
       const origin = {
         kind: "client",
         connectionId: "conn-1",
-        clientId: "browser-shell",
-        platform: "web",
+        clientId: "browser-extension",
+        platform: "browser",
       };
 
       await runInDurableObject(stub, (instance: Process) => {

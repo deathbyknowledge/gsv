@@ -1,100 +1,85 @@
 ---
 name: browser-shell
-description: Use active GSV web shell browser targets to inspect windows/apps, run browser JS, open files, and move files across targets.
+description: Use extension-provided browser targets to inspect and operate active browser state through the target's advertised filesystem and shell commands.
 ---
 
-# Browser Shell Targets
+# Browser Targets
 
-Use this skill when a target id starts with `browser:` or when the user asks you to act on the active GSV web shell desktop.
+Use this skill when a target id starts with `browser:` or when the user asks you to act on an active browser target.
 
 ## Model
 
-- Browser targets are active GSV web shell desktop sessions, not generic Linux machines.
-- Use normal file tools with `target: "browser:..."` for browser-local files.
-- Use the `Shell` tool with `target: "browser:..."` for desktop/browser commands.
-- The browser shell runs just-bash plus GSV commands: `open`, `cp`, `windows`, `window`, `apps`, `app`, `dom`, `js`, `clipboard`, and `notify`.
-- Browser shell commands accept `-h` and `--help` for usage.
-- Writable browser-local paths include persistent `/home/browser` and ephemeral in-memory `/tmp`.
-- Live metadata is exposed under the read-only `/run/gsv` mount, including `/run/gsv/desktop/windows.json`, `/run/gsv/desktop/active-window`, `/run/gsv/apps.json`, `/run/gsv/apps/<appId>/manifest.json`, `/run/gsv/apps/<appId>/windows.json`, `/run/gsv/windows/<windowId>/meta.json`, and `/run/gsv/windows/<windowId>/{app,mode,route,title}.txt`.
+- Browser targets are active browser environments registered by the browser extension, not generic Linux machines.
+- Use normal file tools with `target: "browser:..."` only for paths the target advertises.
+- Use the `Shell` tool with `target: "browser:..."` for browser commands, but discover the available command set from the active target before acting.
+- Browser targets may expose tabs, pages, DOM inspection, JavaScript evaluation, clipboard, screenshots, downloads, or browser-local files depending on the extension version and permissions.
+- Treat target descriptions and `--help` output as authoritative.
 
-## Discover the Desktop
+## Discover Capabilities
 
 Start with small inspection commands before acting:
 
 ```bash
 cat /README.txt
-windows list
-apps list
-cat /run/gsv/desktop/windows.json
-cat /run/gsv/apps.json
+help
+targets show browser:abc123
 ```
 
-`dom` and `js` use the active window by default. Pass `--window <windowId>` when you need a specific window.
-
-## Open Files and Previews
-
-Use `open` for files that should appear in a desktop preview window:
+Then inspect command-specific help:
 
 ```bash
-open /tmp/report.pdf
-open macbook:/tmp/hello.txt
-open rearden:/home/hank/image.png
-open [browser:abc123]:/tmp/page.html
-open --title "Report" /tmp/report.pdf
+tabs --help
+pages --help
+dom --help
+js --help
+screenshot --help
 ```
 
-Target-qualified paths use `target:/absolute/path`. Plain target ids such as `macbook` or `rearden` do not need brackets. Target ids containing `:` must be bracketed, such as `[browser:abc123]:/tmp/page.html`.
+Do not assume commands beyond what the active target advertises. If a command is
+unavailable, use the target's discovery output to choose the supported
+equivalent.
 
-Use `open --as` or stdin for generated previews. Prefer `open` for all previews.
+## Browser Files and Downloads
 
-```bash
-printf '%s\n' '<!doctype html><h1>Hello</h1>' | open --as html --title "Preview"
-open --as html --title "Preview" /tmp/preview.html
-```
-
-The preview window is internal to the web shell; it is not a package and does not appear in `apps list`.
-
-## Move Files Between Targets
-
-Use target-aware `cp` when you need a browser-local copy; do not base64 large files through model output. If you only need to inspect a file, `open target:/path` can preview it directly without copying first. Browser target ids contain `:`, so bracket them when they appear in shell paths.
+Use target-qualified paths when moving files to or from a browser target:
 
 ```bash
 cp rearden:/home/hank/report.pdf [browser:abc123]:/tmp/report.pdf
 cp [browser:abc123]:/tmp/report.pdf gsv:/home/hank/report.pdf
-cp gsv:/home/hank/report.pdf rearden:/home/hank/report.pdf
 ```
 
-After copying a file into the browser, open the browser-local copy:
+Target-qualified paths use `target:/absolute/path`. Plain target ids such as `macbook` or `rearden` do not need brackets. Target ids containing `:` must be bracketed, such as `[browser:abc123]:/tmp/page.html`.
 
-```bash
-open /tmp/report.pdf
-```
+Use target-aware `cp` for large files. Do not base64 large files through model
+output.
 
 ## DOM and JavaScript
 
-Use DOM commands for structured inspection and simple interaction:
+Use DOM commands for structured inspection and simple interaction when the
+target advertises them:
 
 ```bash
 dom snapshot
-dom snapshot --window <windowId>
+dom snapshot --page <pageId>
 dom query 'button'
 dom click 'button' 0
-dom click --xy 120 80
 dom focus 'input[name=email]'
 dom input 'input[name=email]' 'hank@example.com'
-dom input --window <windowId> --selector 'input[name=email]' --text 'hank@example.com' --index 0
 ```
 
-Selector clicks are the default. Coordinate clicks use document/client coordinates inside the selected window content.
+Selector clicks are preferable to coordinate clicks. If multiple tabs or pages
+are open, pass the target's page/tab selector option rather than relying on the
+active page.
 
-Use `js run` for direct browser-side evaluation in an app window:
+Use JavaScript evaluation only when DOM commands cannot express the task:
 
 ```bash
 js run 'return document.title'
-js run --window <windowId> 'return Array.from(document.querySelectorAll("button")).map((button) => button.textContent)'
+js run --page <pageId> 'return Array.from(document.querySelectorAll("button")).map((button) => button.textContent)'
 ```
 
-Prefer `dom` for inspection/clicking and `js run` when you need app-specific browser state or a concise script.
+Prefer DOM commands for inspection/clicking and JavaScript only for concise
+page-specific state inspection.
 
 ## Clipboard and Notifications
 
@@ -108,7 +93,7 @@ printf '%s\n' "copied text" | clipboard write
 
 Clipboard reads may be blocked by browser permissions.
 
-Use `notify` to create a GSV desktop notification through the active shell:
+Use notification commands only when the target advertises them:
 
 ```bash
 notify "Done" "Task finished"

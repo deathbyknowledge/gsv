@@ -86,7 +86,7 @@ export function renderManualPage(topic?: string): string | null {
         "KINDS",
         "  gsv            Native cloud target.",
         "  native-device  User-owned machines and nodes.",
-        "  browser        Active web shell desktops.",
+        "  browser        Extension-provided active browser targets.",
         "  adapter        External messaging surfaces such as WhatsApp or Discord.",
         "",
         "EXAMPLES",

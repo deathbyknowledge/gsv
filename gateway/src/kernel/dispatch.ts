@@ -492,8 +492,6 @@ async function dispatchNative(
       case "sys.device.update":
         data = handleSysDeviceUpdate(frame.args, ctx);
         break;
-      case "sys.target.register":
-        return errFrame(frame.id, 400, "sys.target.register is connection-only");
       case "sys.oauth.start":
         data = await handleSysOAuthStart(frame.args, ctx);
         break;
@@ -776,12 +774,8 @@ function findDeviceConnection(
   for (const [, conn] of connections) {
     const state = conn.state as {
       identity?: { role: string; device?: string };
-      providedTargets?: Array<{ targetId: string }>;
     } | undefined;
     if (state?.identity?.role === "driver" && state.identity.device === deviceId) {
-      return conn;
-    }
-    if (state?.providedTargets?.some((target) => target.targetId === deviceId)) {
       return conn;
     }
   }

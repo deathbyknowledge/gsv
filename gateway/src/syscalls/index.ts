@@ -147,8 +147,6 @@ import type {
   SysDeviceGetResult,
   SysDeviceUpdateArgs,
   SysDeviceUpdateResult,
-  SysTargetRegisterArgs,
-  SysTargetRegisterResult,
   SysOAuthStartArgs,
   SysOAuthStartResult,
   SysOAuthListArgs,
@@ -348,7 +346,6 @@ export type SyscallDomains = {
   "sys.device.list": { args: SysDeviceListArgs; result: SysDeviceListResult };
   "sys.device.get": { args: SysDeviceGetArgs; result: SysDeviceGetResult };
   "sys.device.update": { args: SysDeviceUpdateArgs; result: SysDeviceUpdateResult };
-  "sys.target.register": { args: SysTargetRegisterArgs; result: SysTargetRegisterResult };
   "sys.oauth.start": { args: SysOAuthStartArgs; result: SysOAuthStartResult };
   "sys.oauth.list": { args: SysOAuthListArgs; result: SysOAuthListResult };
   "sys.oauth.forget": { args: SysOAuthForgetArgs; result: SysOAuthForgetResult };
