@@ -68,6 +68,28 @@ export function plot(
   ctx.fillRect(Math.round(x), Math.round(y), width, height);
 }
 
+export function drawLine(
+  ctx: CanvasRenderingContext2D,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  color: Rgb,
+  alpha = 0.92,
+  width = 1,
+): void {
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(Math.round(x1) + 0.5, Math.round(y1) + 0.5);
+  ctx.lineTo(Math.round(x2) + 0.5, Math.round(y2) + 0.5);
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.lineWidth = width;
+  ctx.strokeStyle = rgba(color, alpha);
+  ctx.stroke();
+  ctx.restore();
+}
+
 export function drawBrokenLine(
   ctx: CanvasRenderingContext2D,
   x1: number,
@@ -78,6 +100,7 @@ export function drawBrokenLine(
   seed: number,
   density = 0.74,
   step = 3,
+  alpha = 0.9,
 ): void {
   const dx = x2 - x1;
   const dy = y2 - y1;
@@ -91,7 +114,7 @@ export function drawBrokenLine(
     const jitter = hash2(i, seed, 2) - 0.5;
 
     if (hash2(i, seed, 5) < density) {
-      plot(ctx, x + jitter, y - jitter, color, 0.9, i % 3 === 0 ? 2 : 1, 1);
+      plot(ctx, x + jitter, y - jitter, color, alpha, i % 3 === 0 ? 2 : 1, 1);
     }
   }
 }
@@ -122,6 +145,7 @@ export function drawDotCircle(
   color: Rgb,
   seed: number,
   density = 0.84,
+  alpha = 0.92,
 ): void {
   const steps = Math.max(18, Math.round(radius * 5));
 
@@ -131,8 +155,75 @@ export function drawDotCircle(
     }
 
     const angle = (i / steps) * Math.PI * 2;
-    plot(ctx, x + Math.cos(angle) * radius, y + Math.sin(angle) * radius, color, 0.92);
+    plot(ctx, x + Math.cos(angle) * radius, y + Math.sin(angle) * radius, color, alpha);
   }
+}
+
+export function drawCircle(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  radius: number,
+  color: Rgb,
+  alpha = 0.86,
+  width = 1,
+): void {
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(Math.round(x) + 0.5, Math.round(y) + 0.5, radius, 0, Math.PI * 2);
+  ctx.lineWidth = width;
+  ctx.strokeStyle = rgba(color, alpha);
+  ctx.stroke();
+  ctx.restore();
+}
+
+export function applyInstrumentDisplayResponse(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  palette: InstrumentPalette,
+  seed = 0,
+): void {
+  ctx.save();
+
+  ctx.globalCompositeOperation = "multiply";
+  for (let y = 0; y < height; y += 3) {
+    ctx.fillStyle = rgba(palette.bgDark, y % 6 === 0 ? 0.2 : 0.08);
+    ctx.fillRect(0, y, width, 1);
+  }
+
+  ctx.globalCompositeOperation = "screen";
+  for (let y = 1; y < height; y += 5) {
+    ctx.fillStyle = rgba(palette.cyan, 0.018);
+    ctx.fillRect(0, y, width, 1);
+  }
+
+  for (let y = 0; y < height; y += 4) {
+    for (let x = 0; x < width; x += 4) {
+      const grain = hash2(x, y, seed + 400);
+      if (grain > 0.975) {
+        plot(ctx, x, y, palette.white, 0.07);
+      } else if (grain < 0.018) {
+        plot(ctx, x, y, palette.traceDim, 0.05);
+      }
+    }
+  }
+
+  ctx.globalCompositeOperation = "source-over";
+  const vignette = ctx.createRadialGradient(
+    width * 0.5,
+    height * 0.48,
+    Math.min(width, height) * 0.12,
+    width * 0.5,
+    height * 0.5,
+    Math.max(width, height) * 0.72,
+  );
+  vignette.addColorStop(0, "rgba(0, 0, 0, 0)");
+  vignette.addColorStop(1, rgba(palette.bgDark, 0.46));
+  ctx.fillStyle = vignette;
+  ctx.fillRect(0, 0, width, height);
+
+  ctx.restore();
 }
 
 export function applyInstrumentPostProcess(

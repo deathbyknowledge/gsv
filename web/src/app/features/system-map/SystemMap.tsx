@@ -338,7 +338,7 @@ function useSystemMapRaster(
 ): void {
   useEffect(() => {
     const canvas = canvasRef.current;
-    const context = canvas?.getContext("2d", { willReadFrequently: true });
+    const context = canvas?.getContext("2d");
 
     if (!canvas || !context) {
       return undefined;
@@ -349,8 +349,8 @@ function useSystemMapRaster(
 
     const paint = (): void => {
       const rect = canvas.getBoundingClientRect();
-      const width = Math.max(420, Math.round(rect.width / 1.7));
-      const height = Math.max(300, Math.round(rect.height / 1.7));
+      const width = Math.max(420, Math.round(rect.width));
+      const height = Math.max(300, Math.round(rect.height));
       const cssWidth = Math.round(rect.width);
       const cssHeight = Math.round(rect.height);
 

@@ -108,8 +108,7 @@
   height: 100%;
   display: block;
   background: #020604;
-  image-rendering: pixelated;
-  image-rendering: crisp-edges;
+  image-rendering: auto;
 }
 
 .system-map-hit-layer {
