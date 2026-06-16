@@ -52,7 +52,13 @@ const COLORS = GSV_INSTRUMENT_PALETTE;
 
 let backgroundCache: { key: string; image: ImageData } | null = null;
 let foregroundLayer: { canvas: HTMLCanvasElement; context: CanvasRenderingContext2D } | null = null;
-const iconPathCache = new Map<string, Path2D>();
+type IconMask = {
+  size: number;
+  alpha: Uint8ClampedArray;
+};
+
+const ICON_MASK_SIZE = 96;
+const iconMaskCache = new Map<string, IconMask>();
 const ICON_PATHS: Record<string, string[]> = {
   ship: [
     "M24 4 16 14v17h16V14L24 4Zm-4 12h8v11h-8V16Z",
@@ -73,16 +79,40 @@ const ICON_PATHS: Record<string, string[]> = {
   ],
 };
 
-function iconPath(icon: string, paths: string[]): Path2D {
-  const cached = iconPathCache.get(icon);
+function iconMask(icon: string, paths: string[]): IconMask {
+  const cached = iconMaskCache.get(icon);
   if (cached) {
     return cached;
   }
 
+  const canvas = document.createElement("canvas");
+  canvas.width = ICON_MASK_SIZE;
+  canvas.height = ICON_MASK_SIZE;
+
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) {
+    throw new Error("Unable to create system map icon mask");
+  }
+
   const combined = new Path2D();
   paths.forEach((path) => combined.addPath(new Path2D(path)));
-  iconPathCache.set(icon, combined);
-  return combined;
+
+  context.save();
+  context.scale(ICON_MASK_SIZE / 48, ICON_MASK_SIZE / 48);
+  context.fillStyle = "#fff";
+  context.fill(combined);
+  context.restore();
+
+  const image = context.getImageData(0, 0, ICON_MASK_SIZE, ICON_MASK_SIZE);
+  const alpha = new Uint8ClampedArray(ICON_MASK_SIZE * ICON_MASK_SIZE);
+
+  for (let i = 0; i < alpha.length; i += 1) {
+    alpha[i] = image.data[i * 4 + 3];
+  }
+
+  const mask = { size: ICON_MASK_SIZE, alpha };
+  iconMaskCache.set(icon, mask);
+  return mask;
 }
 
 function foregroundContext(width: number, height: number): CanvasRenderingContext2D {
@@ -121,33 +151,68 @@ export function projectSystemMapPoint(
   ];
 }
 
-function drawGlyphTexture(ctx: CanvasRenderingContext2D, path: Path2D, color: Rgb, seed: number): void {
-  ctx.save();
-  ctx.clip(path);
+function maskAlpha(mask: IconMask, x: number, y: number): number {
+  if (x < 0 || y < 0 || x >= mask.size || y >= mask.size) {
+    return 0;
+  }
 
-  for (let y = 2; y < 48; y += 3) {
-    if (hash2(y, seed, 50) > 0.18) {
-      ctx.fillStyle = rgba(COLORS.bgDark, 0.2 + hash2(y, seed, 51) * 0.12);
-      ctx.fillRect(0, y, 48, 0.82);
+  return mask.alpha[(y * mask.size) + x] / 255;
+}
+
+function drawDitherGlyph(
+  ctx: CanvasRenderingContext2D,
+  mask: IconMask,
+  x: number,
+  y: number,
+  size: number,
+  color: Rgb,
+  seed: number,
+): void {
+  const left = x - size / 2;
+  const top = y - size / 2;
+  const unit = size / mask.size;
+  const phase = Math.abs(Math.floor(seed)) % 7;
+
+  for (let my = 1; my < mask.size - 1; my += 2) {
+    let runStart = -1;
+
+    for (let mx = 0; mx <= mask.size; mx += 1) {
+      const alpha = mx < mask.size ? maskAlpha(mask, mx, my) : 0;
+      const ordered = ((mx + my * 2 + phase) % 6) < 4;
+      const scan = my % 8 === 1 ? 0.68 : my % 4 === 1 ? 0.78 : 0.9;
+      const inside = alpha > 0.34 && (alpha > 0.78 || ordered);
+
+      if (inside && runStart === -1) {
+        runStart = mx;
+        continue;
+      }
+
+      if (!inside && runStart !== -1) {
+        const runEnd = mx - 1;
+        plot(
+          ctx,
+          left + runStart * unit,
+          top + my * unit,
+          color,
+          0.48 * scan,
+          Math.max(1, Math.round((runEnd - runStart + 1) * unit)),
+          Math.max(1, unit * 1.1),
+        );
+        runStart = -1;
+      }
     }
   }
 
-  for (let y = 4; y < 48; y += 7) {
-    if (hash2(y, seed, 52) > 0.52) {
-      ctx.fillStyle = rgba(color, 0.16);
-      ctx.fillRect(0, y, 48, 0.62);
+  for (let my = 1; my < mask.size - 1; my += 4) {
+    for (let mx = 1; mx < mask.size - 1; mx += 4) {
+      const alpha = maskAlpha(mask, mx, my);
+      if (alpha < 0.5 || ((mx * 3 + my + phase) % 8) > 2) {
+        continue;
+      }
+
+      plot(ctx, left + mx * unit, top + my * unit, COLORS.white, 0.08, Math.max(1, unit * 1.6), 1);
     }
   }
-
-  for (let i = 0; i < 58; i += 1) {
-    const x = hash2(i, seed, 53) * 48;
-    const y = hash2(i, seed, 54) * 48;
-    const dark = hash2(i, seed, 55) > 0.55;
-    ctx.fillStyle = dark ? rgba(COLORS.bgDark, 0.32) : rgba(COLORS.white, 0.1);
-    ctx.fillRect(x, y, 0.9, 0.9);
-  }
-
-  ctx.restore();
 }
 
 function drawInstrumentTrace(
@@ -160,10 +225,10 @@ function drawInstrumentTrace(
   seed: number,
   scale: number,
 ): void {
-  drawLine(ctx, x1, y1, x2, y2, color, 0.1, Math.max(1, 0.7 * scale));
-  drawBrokenLine(ctx, x1, y1, x2, y2, color, seed, 0.78, Math.max(2, Math.round(2.1 * scale)), 0.52);
-  drawBrokenLine(ctx, x1, y1, x2, y2, COLORS.green, seed + 7, 0.2, Math.max(4, Math.round(4 * scale)), 0.18);
-  drawBrokenLine(ctx, x1, y1, x2, y2, COLORS.white, seed + 11, 0.12, Math.max(5, Math.round(5 * scale)), 0.16);
+  drawLine(ctx, x1, y1, x2, y2, color, 0.2, Math.max(1, 0.75 * scale));
+  drawBrokenLine(ctx, x1, y1, x2, y2, color, seed, 0.94, Math.max(2, Math.round(2 * scale)), 0.34);
+  drawBrokenLine(ctx, x1, y1, x2, y2, COLORS.green, seed + 7, 0.28, Math.max(4, Math.round(4 * scale)), 0.12);
+  drawBrokenLine(ctx, x1, y1, x2, y2, COLORS.white, seed + 11, 0.18, Math.max(5, Math.round(5 * scale)), 0.1);
 }
 
 function drawGlyph(
@@ -178,22 +243,9 @@ function drawGlyph(
 
   if (paths) {
     const size = (node.kind === "root" ? 40 : node.kind === "category" ? 34 : 28) * scale;
-    const path = iconPath(node.icon, paths);
+    const mask = iconMask(node.icon, paths);
 
-    ctx.save();
-    ctx.translate(x - size / 2, y - size / 2);
-    ctx.scale(size / 48, size / 48);
-    ctx.fillStyle = rgba(color, 0.68);
-    ctx.fill(path);
-    drawGlyphTexture(ctx, path, color, x + y);
-    ctx.lineWidth = 1.2;
-    ctx.strokeStyle = rgba(color, 0.34);
-    ctx.stroke(path);
-    ctx.lineWidth = 0.55;
-    ctx.strokeStyle = rgba(COLORS.white, 0.08);
-    ctx.stroke(path);
-    ctx.restore();
-
+    drawDitherGlyph(ctx, mask, x, y, size, color, x + y);
     drawDotCircle(ctx, x, y, size * 0.47, color, x + y + 43, 0.18, 0.38);
     return;
   }
