@@ -87,7 +87,8 @@ function renderContextTemplate(
     ["user.username", user.username],
     ["user.home", user.home],
     ["user.cwd", user.cwd],
-    ["devices", formatDevices(input.devices)],
+    ["targets", formatTargets(input.devices)],
+    ["devices", formatTargets(input.devices)],
     ["mcpServers", formatMcpServers(input.mcpServers)],
   ]);
 
@@ -119,18 +120,18 @@ function formatCurrentDate(timezone: string): string {
   return `${year}-${month}-${day}`;
 }
 
-function formatDevices(
+function formatTargets(
   devices: Array<{ id: string; label?: string; implements: string[]; description?: string; platform?: string }>,
 ): string {
   if (devices.length === 0) {
     return "- gsv";
   }
-  const sortedDevices = [...devices].sort((left, right) => left.id.localeCompare(right.id));
-  const renderedDevices = sortedDevices.slice(0, MAX_RENDERED_TARGETS);
-  const remaining = sortedDevices.length - renderedDevices.length;
+  const sortedTargets = [...devices].sort((left, right) => left.id.localeCompare(right.id));
+  const renderedTargets = sortedTargets.slice(0, MAX_RENDERED_TARGETS);
+  const remaining = sortedTargets.length - renderedTargets.length;
   const lines = [
     "- gsv",
-    ...renderedDevices.map(formatDeviceLine),
+    ...renderedTargets.map(formatTargetLine),
   ];
   if (remaining > 0) {
     lines.push(`- ... ${remaining} more ${remaining === 1 ? "target" : "targets"}. Run \`targets list\` in Shell to discover more.`);
@@ -138,7 +139,7 @@ function formatDevices(
   return lines.join("\n");
 }
 
-function formatDeviceLine(device: {
+function formatTargetLine(device: {
   id: string;
   label?: string;
   description?: string;

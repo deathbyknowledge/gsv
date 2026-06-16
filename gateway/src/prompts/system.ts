@@ -30,7 +30,7 @@ export const GSV_RUNTIME_FACTS =
   "`~` resolves to the current program home (`{{program.home}}`). Compact standing context for this program lives under `~/context.d/`.\n" +
   "\n" +
   "Available targets:\n" +
-  "{{devices}}\n" +
+  "{{targets}}\n" +
   "\n" +
   "Ready MCP servers:\n" +
   "{{mcpServers}}";
