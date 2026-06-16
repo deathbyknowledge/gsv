@@ -1,4 +1,5 @@
-import { useMemo, useState } from "preact/hooks";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { renderSystemMapCanvas } from "./systemMapCanvas";
 import "./systemMap.css";
 
 type SystemMapNodeKind = "root" | "category" | "object" | "app";
@@ -275,14 +276,6 @@ function Icon({ icon }: { icon: SystemMapNode["icon"] }) {
   );
 }
 
-function StatusDot({ status }: { status?: SystemMapStatus }) {
-  if (!status) {
-    return null;
-  }
-
-  return <span class={`system-map-status is-${status}`} aria-hidden="true" />;
-}
-
 function MapNode({
   node,
   selected,
@@ -299,18 +292,82 @@ function MapNode({
       data-node-id={node.id}
       data-status={node.status ?? "none"}
       style={{ left: `${node.x}%`, top: `${node.y}%` }}
+      aria-label={node.note ? `${node.label}: ${node.note}` : node.label}
       aria-pressed={selected}
       onClick={() => onSelect(node)}
     >
-      <span class="system-map-node-halo" aria-hidden="true" />
-      <span class="system-map-icon">
-        <Icon icon={node.icon} />
-        <StatusDot status={node.status} />
-      </span>
-      <span class="system-map-label">{node.label}</span>
-      {node.note ? <span class="system-map-note">{node.note}</span> : null}
+      <span class="system-map-hit-label">{node.label}</span>
     </button>
   );
+}
+
+function useSystemMapRaster(
+  canvasRef: { current: HTMLCanvasElement | null },
+  nodes: SystemMapNode[],
+  links: SystemMapLink[],
+  selection: SystemMapSelection,
+): void {
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const context = canvas?.getContext("2d");
+
+    if (!canvas || !context) {
+      return undefined;
+    }
+
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    let frame = 0;
+    let lastPaint = 0;
+    let observer: ResizeObserver | undefined;
+
+    const paint = (now: number): void => {
+      const rect = canvas.getBoundingClientRect();
+      const width = Math.max(320, Math.round(rect.width / 2.2));
+      const height = Math.max(220, Math.round(rect.height / 2.2));
+
+      if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width;
+        canvas.height = height;
+      }
+
+      renderSystemMapCanvas(context, width, height, {
+        nodes,
+        links,
+        selection: selection ?? "overview",
+        time: now / 1000,
+      });
+    };
+
+    const tick = (now: number): void => {
+      if (now - lastPaint > 90) {
+        paint(now);
+        lastPaint = now;
+      }
+
+      if (!reducedMotion) {
+        frame = window.requestAnimationFrame(tick);
+      }
+    };
+
+    if ("ResizeObserver" in window) {
+      observer = new ResizeObserver(() => paint(performance.now()));
+      observer.observe(canvas);
+    }
+
+    paint(performance.now());
+
+    if (!reducedMotion) {
+      frame = window.requestAnimationFrame(tick);
+    }
+
+    return () => {
+      observer?.disconnect();
+
+      if (frame) {
+        window.cancelAnimationFrame(frame);
+      }
+    };
+  }, [canvasRef, links, nodes, selection]);
 }
 
 function AssistantPanel({ open, onToggle }: { open: boolean; onToggle: () => void }) {
@@ -358,13 +415,23 @@ function AssistantPanel({ open, onToggle }: { open: boolean; onToggle: () => voi
 }
 
 export function SystemMap() {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const [selection, setSelection] = useState<SystemMapSelection>(null);
   const [assistantOpen, setAssistantOpen] = useState(false);
   const links = useMemo(() => [...baseLinks(), ...detailLinks(selection)], [selection]);
-  const detailNodes = selection && selection !== "root" ? DETAIL_NODES[selection] : [];
+  const detailNodes = useMemo(
+    () => selection && selection !== "root" ? DETAIL_NODES[selection] : [],
+    [selection],
+  );
+  const mapNodes = useMemo(
+    () => [ROOT_NODE, ...CATEGORY_NODES, ...detailNodes],
+    [detailNodes],
+  );
   const selectionLabel = selection
     ? selection.toUpperCase()
     : "SYSTEM";
+
+  useSystemMapRaster(canvasRef, mapNodes, links, selection);
 
   const selectNode = (node: SystemMapNode): void => {
     if (node.id === "root") {
@@ -390,38 +457,21 @@ export function SystemMap() {
         <span>runtime native</span>
       </div>
       <div class="system-map-canvas">
-        <svg class="system-map-links" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-          <defs>
-            <filter id="system-map-line-glow" x="-40%" y="-40%" width="180%" height="180%">
-              <feGaussianBlur stdDeviation="1.2" result="blur" />
-              <feMerge>
-                <feMergeNode in="blur" />
-                <feMergeNode in="SourceGraphic" />
-              </feMerge>
-            </filter>
-          </defs>
-          {links.map((link) => (
-            <line
-              key={link.id}
-              x1={link.from.x}
-              y1={link.from.y}
-              x2={link.to.x}
-              y2={link.to.y}
+        <canvas ref={canvasRef} class="system-map-raster" aria-hidden="true" />
+        <div class="system-map-hit-layer">
+          <MapNode node={ROOT_NODE} selected={selection === "root"} onSelect={selectNode} />
+          {CATEGORY_NODES.map((node) => (
+            <MapNode
+              key={node.id}
+              node={node}
+              selected={selection === node.id}
+              onSelect={selectNode}
             />
           ))}
-        </svg>
-        <MapNode node={ROOT_NODE} selected={selection === "root"} onSelect={selectNode} />
-        {CATEGORY_NODES.map((node) => (
-          <MapNode
-            key={node.id}
-            node={node}
-            selected={selection === node.id}
-            onSelect={selectNode}
-          />
-        ))}
-        {detailNodes.map((node) => (
-          <MapNode key={node.id} node={node} selected={false} onSelect={selectNode} />
-        ))}
+          {detailNodes.map((node) => (
+            <MapNode key={node.id} node={node} selected={false} onSelect={selectNode} />
+          ))}
+        </div>
       </div>
       <div class="system-map-app-shelf" hidden={selection !== "root"}>
         {APP_NODES.map((node) => (
