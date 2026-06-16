@@ -2,13 +2,14 @@ import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { createAppRuntime } from "../../../apps-runtime";
 import { createLauncher } from "../../../launcher";
 import { createPresenceControl } from "../../../presence";
-import { createSessionUi } from "../../../session-ui";
 import { createWindowManager, type WindowManager } from "../../../window-manager";
 import type { AppManifest } from "../../../apps";
+import type { SessionService, SessionSnapshot } from "../../../session-service";
 import { useGateway } from "../../services/gateway/GatewayProvider";
 import { useSession } from "../../services/session/SessionProvider";
 import { NotificationsPanel } from "../notifications/NotificationsPanel";
 import { usePackageApps } from "../packages/usePackageApps";
+import { SessionScreens } from "../session/SessionScreens";
 import { DesktopShellFrame } from "./DesktopShellFrame";
 
 type StandaloneNavigator = Navigator & {
@@ -35,6 +36,53 @@ function syncDesktopApps(
   }
   runtime.windowManager.setAppRegistry(apps);
   runtime.launcher.setApps(apps);
+}
+
+function syncSessionFrame(
+  shellNode: HTMLElement,
+  snapshot: SessionSnapshot,
+): void {
+  const ready = snapshot.phase === "ready";
+  const desktopRootNode = shellNode.querySelector<HTMLElement>("[data-desktop-root]");
+  const lockNode = shellNode.querySelector<HTMLButtonElement>("[data-session-lock]");
+  const mobileHomeUsernameNode = shellNode.querySelector<HTMLElement>("[data-mobile-home-username]");
+  const mobileHomeDateNode = shellNode.querySelector<HTMLElement>("[data-mobile-home-date]");
+
+  if (desktopRootNode) {
+    desktopRootNode.hidden = !ready;
+  }
+  if (lockNode) {
+    lockNode.disabled = !ready;
+  }
+  if (mobileHomeUsernameNode) {
+    mobileHomeUsernameNode.textContent = snapshot.username || "operator";
+  }
+  if (mobileHomeDateNode) {
+    mobileHomeDateNode.textContent = new Intl.DateTimeFormat(undefined, {
+      weekday: "long",
+      month: "short",
+      day: "numeric",
+    }).format(new Date());
+  }
+}
+
+function bindSessionLock(
+  shellNode: HTMLElement,
+  sessionService: SessionService,
+): () => void {
+  const lockNode = shellNode.querySelector<HTMLButtonElement>("[data-session-lock]");
+  if (!lockNode) {
+    return () => {};
+  }
+
+  const onLockClick = (): void => {
+    sessionService.lock();
+  };
+
+  lockNode.addEventListener("click", onLockClick);
+  return () => {
+    lockNode.removeEventListener("click", onLockClick);
+  };
 }
 
 export function LegacyDesktopShell() {
@@ -74,10 +122,7 @@ export function LegacyDesktopShell() {
       rootNode: shellEl,
       windowManager,
     });
-    const sessionUi = createSessionUi({
-      rootNode: shellEl,
-      session: sessionService,
-    });
+    const unbindSessionLock = bindSessionLock(shellEl, sessionService);
 
     runtimeRef.current = {
       windowManager,
@@ -89,13 +134,20 @@ export function LegacyDesktopShell() {
 
     return () => {
       runtimeRef.current = null;
-      sessionUi.destroy();
+      unbindSessionLock();
       launcher.destroy();
       presenceControl.destroy();
       windowManager.destroy();
       document.documentElement.classList.remove("is-standalone");
     };
   }, [gatewayClient, sessionService, standalone]);
+
+  useEffect(() => {
+    if (!shellRootNode) {
+      return;
+    }
+    syncSessionFrame(shellRootNode, sessionSnapshot);
+  }, [shellRootNode, sessionSnapshot]);
 
   useEffect(() => {
     if (!connected && sessionSnapshot.phase !== "ready") {
@@ -120,7 +172,9 @@ export function LegacyDesktopShell() {
           shellRef={shellRef}
           windowsLayerRef={windowsLayerRef}
           standalone={standalone}
-        />
+        >
+          <SessionScreens session={sessionService} snapshot={sessionSnapshot} />
+        </DesktopShellFrame>
       </div>
       {shellRootNode ? <NotificationsPanel rootNode={shellRootNode} /> : null}
     </>

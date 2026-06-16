@@ -1,10 +1,10 @@
-import { Component, type RefObject } from "preact";
-import { renderLegacySessionScreenContent } from "../../../shell-template";
+import { Component, type ComponentChildren, type RefObject } from "preact";
 
 type DesktopShellFrameProps = {
   shellRef: RefObject<HTMLDivElement>;
   windowsLayerRef: RefObject<HTMLElement>;
   standalone: boolean;
+  children?: ComponentChildren;
 };
 
 function MicrophoneIcon() {
@@ -51,16 +51,6 @@ function CloseIcon() {
       <path d="M18 6 6 18" />
       <path d="m6 6 12 12" />
     </svg>
-  );
-}
-
-function LegacySessionScreen() {
-  return (
-    <section
-      class="session-screen"
-      data-session-screen
-      dangerouslySetInnerHTML={{ __html: renderLegacySessionScreenContent() }}
-    />
   );
 }
 
@@ -277,7 +267,7 @@ function CommandPalette() {
 
 function DesktopRoot({ windowsLayerRef }: { windowsLayerRef: RefObject<HTMLElement> }) {
   return (
-    <div class="desktop-root" data-desktop-root>
+    <div class="desktop-root" data-desktop-root hidden>
       <Topbar />
       <Workspace windowsLayerRef={windowsLayerRef} />
       <MobileShell />
@@ -289,17 +279,26 @@ function DesktopRoot({ windowsLayerRef }: { windowsLayerRef: RefObject<HTMLEleme
   );
 }
 
-export class DesktopShellFrame extends Component<DesktopShellFrameProps> {
+class StaticDesktopRoot extends Component<{ windowsLayerRef: RefObject<HTMLElement> }> {
   shouldComponentUpdate(): boolean {
     return false;
   }
 
-  render({ shellRef, windowsLayerRef, standalone }: DesktopShellFrameProps) {
-    return (
-      <div class={`desktop-shell${standalone ? " is-standalone" : ""}`} ref={shellRef}>
-        <LegacySessionScreen />
-        <DesktopRoot windowsLayerRef={windowsLayerRef} />
-      </div>
-    );
+  render({ windowsLayerRef }: { windowsLayerRef: RefObject<HTMLElement> }) {
+    return <DesktopRoot windowsLayerRef={windowsLayerRef} />;
   }
+}
+
+export function DesktopShellFrame({
+  shellRef,
+  windowsLayerRef,
+  standalone,
+  children,
+}: DesktopShellFrameProps) {
+  return (
+    <div class={`desktop-shell${standalone ? " is-standalone" : ""}`} ref={shellRef}>
+      {children}
+      <StaticDesktopRoot windowsLayerRef={windowsLayerRef} />
+    </div>
+  );
 }
