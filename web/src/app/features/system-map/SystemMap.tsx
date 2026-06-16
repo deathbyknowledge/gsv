@@ -1,5 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { renderSystemMapCanvas } from "./systemMapCanvas";
+import type { JSX } from "preact";
+import type { Dispatch, StateUpdater } from "preact/hooks";
+import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
+import {
+  projectSystemMapPoint,
+  renderSystemMapCanvas,
+  type SystemMapCanvasCamera,
+} from "./systemMapCanvas";
 import "./systemMap.css";
 
 type SystemMapNodeKind = "root" | "category" | "object" | "app";
@@ -21,6 +27,25 @@ type SystemMapLink = {
   id: string;
   from: Pick<SystemMapNode, "x" | "y">;
   to: Pick<SystemMapNode, "x" | "y">;
+};
+
+type ViewportSize = {
+  width: number;
+  height: number;
+};
+
+type MapDragState = {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  startCamera: SystemMapCanvasCamera;
+  moved: boolean;
+};
+
+const INITIAL_CAMERA: SystemMapCanvasCamera = {
+  x: 50,
+  y: 50,
+  zoom: 1,
 };
 
 const ROOT_NODE: SystemMapNode = {
@@ -279,10 +304,12 @@ function Icon({ icon }: { icon: SystemMapNode["icon"] }) {
 function MapNode({
   node,
   selected,
+  position,
   onSelect,
 }: {
   node: SystemMapNode;
   selected: boolean;
+  position: { x: number; y: number };
   onSelect: (node: SystemMapNode) => void;
 }) {
   return (
@@ -291,7 +318,7 @@ function MapNode({
       class={`system-map-node system-map-node-${node.kind}${selected ? " is-selected" : ""}`}
       data-node-id={node.id}
       data-status={node.status ?? "none"}
-      style={{ left: `${node.x}%`, top: `${node.y}%` }}
+      style={{ left: `${position.x}px`, top: `${position.y}px` }}
       aria-label={node.note ? `${node.label}: ${node.note}` : node.label}
       aria-pressed={selected}
       onClick={() => onSelect(node)}
@@ -306,6 +333,8 @@ function useSystemMapRaster(
   nodes: SystemMapNode[],
   links: SystemMapLink[],
   selection: SystemMapSelection,
+  camera: SystemMapCanvasCamera,
+  setViewportSize: Dispatch<StateUpdater<ViewportSize>>,
 ): void {
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -322,6 +351,14 @@ function useSystemMapRaster(
       const rect = canvas.getBoundingClientRect();
       const width = Math.max(420, Math.round(rect.width / 1.7));
       const height = Math.max(300, Math.round(rect.height / 1.7));
+      const cssWidth = Math.round(rect.width);
+      const cssHeight = Math.round(rect.height);
+
+      setViewportSize((current) => (
+        current.width === cssWidth && current.height === cssHeight
+          ? current
+          : { width: cssWidth, height: cssHeight }
+      ));
 
       if (canvas.width !== width || canvas.height !== height) {
         canvas.width = width;
@@ -332,6 +369,7 @@ function useSystemMapRaster(
         nodes,
         links,
         selection: selection ?? "overview",
+        camera,
         time: 0,
       });
     };
@@ -361,7 +399,15 @@ function useSystemMapRaster(
         window.cancelAnimationFrame(frame);
       }
     };
-  }, [canvasRef, links, nodes, selection]);
+  }, [camera, canvasRef, links, nodes, selection, setViewportSize]);
+}
+
+function clampCamera(camera: SystemMapCanvasCamera): SystemMapCanvasCamera {
+  return {
+    x: Math.max(-20, Math.min(120, camera.x)),
+    y: Math.max(-20, Math.min(120, camera.y)),
+    zoom: Math.max(0.65, Math.min(2.6, camera.zoom)),
+  };
 }
 
 function AssistantPanel({ open, onToggle }: { open: boolean; onToggle: () => void }) {
@@ -410,8 +456,13 @@ function AssistantPanel({ open, onToggle }: { open: boolean; onToggle: () => voi
 
 export function SystemMap() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const dragRef = useRef<MapDragState | null>(null);
+  const ignoreNextClickRef = useRef(false);
   const [selection, setSelection] = useState<SystemMapSelection>(null);
   const [assistantOpen, setAssistantOpen] = useState(false);
+  const [camera, setCamera] = useState<SystemMapCanvasCamera>(INITIAL_CAMERA);
+  const [viewportSize, setViewportSize] = useState<ViewportSize>({ width: 0, height: 0 });
+  const [dragging, setDragging] = useState(false);
   const links = useMemo(() => [...baseLinks(), ...detailLinks(selection)], [selection]);
   const detailNodes = useMemo(
     () => selection && selection !== "root" ? DETAIL_NODES[selection] : [],
@@ -425,9 +476,113 @@ export function SystemMap() {
     ? selection.toUpperCase()
     : "SYSTEM";
 
-  useSystemMapRaster(canvasRef, mapNodes, links, selection);
+  useSystemMapRaster(canvasRef, mapNodes, links, selection, camera, setViewportSize);
+
+  const nodePositions = useMemo(() => {
+    const positions = new Map<string, { x: number; y: number }>();
+
+    if (viewportSize.width === 0 || viewportSize.height === 0) {
+      return positions;
+    }
+
+    mapNodes.forEach((node) => {
+      const [x, y] = projectSystemMapPoint(node, viewportSize.width, viewportSize.height, camera);
+      positions.set(node.id, { x, y });
+    });
+
+    return positions;
+  }, [camera, mapNodes, viewportSize]);
+
+  const handlePointerDown = useCallback((event: JSX.TargetedPointerEvent<HTMLDivElement>): void => {
+    if (event.button !== 0 || viewportSize.width === 0 || viewportSize.height === 0) {
+      return;
+    }
+
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      startCamera: camera,
+      moved: false,
+    };
+    setDragging(true);
+  }, [camera, viewportSize]);
+
+  const handlePointerMove = useCallback((event: JSX.TargetedPointerEvent<HTMLDivElement>): void => {
+    const drag = dragRef.current;
+
+    if (!drag || drag.pointerId !== event.pointerId) {
+      return;
+    }
+
+    const deltaX = event.clientX - drag.startX;
+    const deltaY = event.clientY - drag.startY;
+
+    if (Math.abs(deltaX) > 3 || Math.abs(deltaY) > 3) {
+      drag.moved = true;
+    }
+
+    setCamera(clampCamera({
+      x: drag.startCamera.x - (deltaX * 100) / (viewportSize.width * drag.startCamera.zoom),
+      y: drag.startCamera.y - (deltaY * 100) / (viewportSize.height * drag.startCamera.zoom),
+      zoom: drag.startCamera.zoom,
+    }));
+  }, [viewportSize]);
+
+  const handlePointerUp = useCallback((event: JSX.TargetedPointerEvent<HTMLDivElement>): void => {
+    const drag = dragRef.current;
+
+    if (!drag || drag.pointerId !== event.pointerId) {
+      return;
+    }
+
+    if (drag.moved) {
+      ignoreNextClickRef.current = true;
+      window.setTimeout(() => {
+        ignoreNextClickRef.current = false;
+      }, 0);
+    }
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+
+    dragRef.current = null;
+    setDragging(false);
+  }, []);
+
+  const handleWheel = useCallback((event: JSX.TargetedWheelEvent<HTMLDivElement>): void => {
+    if (viewportSize.width === 0 || viewportSize.height === 0) {
+      return;
+    }
+
+    event.preventDefault();
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const screenX = event.clientX - rect.left;
+    const screenY = event.clientY - rect.top;
+    const localX = (screenX / viewportSize.width) * 100 - 50;
+    const localY = (screenY / viewportSize.height) * 100 - 50;
+
+    setCamera((current) => {
+      const nextZoom = Math.max(0.65, Math.min(2.6, current.zoom * Math.exp(-event.deltaY * 0.0012)));
+      const worldX = current.x + localX / current.zoom;
+      const worldY = current.y + localY / current.zoom;
+
+      return clampCamera({
+        x: worldX - localX / nextZoom,
+        y: worldY - localY / nextZoom,
+        zoom: nextZoom,
+      });
+    });
+  }, [viewportSize]);
 
   const selectNode = (node: SystemMapNode): void => {
+    if (ignoreNextClickRef.current) {
+      return;
+    }
+
     if (node.id === "root") {
       setSelection((current) => current === "root" ? null : "root");
       return;
@@ -439,7 +594,7 @@ export function SystemMap() {
   };
 
   return (
-    <section class={`system-map${assistantOpen ? " is-assistant-open" : ""}`} data-selection={selection ?? "overview"} aria-label="System map">
+    <section class={`system-map${assistantOpen ? " is-assistant-open" : ""}${dragging ? " is-dragging" : ""}`} data-selection={selection ?? "overview"} aria-label="System map">
       <div class="system-map-backdrop" aria-hidden="true" />
       <div class="system-map-hud system-map-hud-primary" aria-hidden="true">
         <strong>GSV SYSTEM MAP</strong>
@@ -450,20 +605,39 @@ export function SystemMap() {
         <span>nodes {CATEGORY_NODES.length + detailNodes.length + 1}</span>
         <span>runtime native</span>
       </div>
-      <div class="system-map-canvas">
+      <div
+        class="system-map-canvas"
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
+        onWheel={handleWheel}
+      >
         <canvas ref={canvasRef} class="system-map-raster" aria-hidden="true" />
         <div class="system-map-hit-layer">
-          <MapNode node={ROOT_NODE} selected={selection === "root"} onSelect={selectNode} />
+          <MapNode
+            node={ROOT_NODE}
+            selected={selection === "root"}
+            position={nodePositions.get(ROOT_NODE.id) ?? { x: 0, y: 0 }}
+            onSelect={selectNode}
+          />
           {CATEGORY_NODES.map((node) => (
             <MapNode
               key={node.id}
               node={node}
               selected={selection === node.id}
+              position={nodePositions.get(node.id) ?? { x: 0, y: 0 }}
               onSelect={selectNode}
             />
           ))}
           {detailNodes.map((node) => (
-            <MapNode key={node.id} node={node} selected={false} onSelect={selectNode} />
+            <MapNode
+              key={node.id}
+              node={node}
+              selected={false}
+              position={nodePositions.get(node.id) ?? { x: 0, y: 0 }}
+              onSelect={selectNode}
+            />
           ))}
         </div>
       </div>

@@ -88,7 +88,13 @@
   z-index: 2;
   overflow: hidden;
   background: #020604;
+  cursor: grab;
+  touch-action: none;
   transition: right 180ms ease;
+}
+
+.system-map.is-dragging .system-map-canvas {
+  cursor: grabbing;
 }
 
 .system-map.is-assistant-open .system-map-canvas {
@@ -124,6 +130,10 @@
   cursor: pointer;
   font: inherit;
   padding: 0;
+}
+
+.system-map.is-dragging .system-map-node {
+  cursor: grabbing;
 }
 
 .system-map-node-root {

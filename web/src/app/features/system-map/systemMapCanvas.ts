@@ -31,25 +31,99 @@ export type SystemMapCanvasLink = {
   to: Pick<SystemMapCanvasNode, "x" | "y">;
 };
 
+export type SystemMapCanvasCamera = {
+  x: number;
+  y: number;
+  zoom: number;
+};
+
 export type SystemMapCanvasOptions = {
   nodes: SystemMapCanvasNode[];
   links: SystemMapCanvasLink[];
   selection: string;
+  camera: SystemMapCanvasCamera;
   time: number;
 };
 
 const COLORS = GSV_INSTRUMENT_PALETTE;
 
 let backgroundCache: { key: string; image: ImageData } | null = null;
+type IconMask = {
+  size: number;
+  alpha: Uint8ClampedArray;
+};
+
+const ICON_MASK_SIZE = 48;
+const iconMaskCache = new Map<string, IconMask>();
+const ICON_PATHS: Record<string, string[]> = {
+  ship: [
+    "M24 4 16 14v17h16V14L24 4Zm-4 12h8v11h-8V16Z",
+    "M13 28 5 37v7h13V31l-5-3Zm22 0-5 3v13h13v-7l-8-9ZM20 36h8v8h-8v-8Z",
+  ],
+  machine: [
+    "M11 10c0-3 2-5 5-5h16c3 0 5 2 5 5v13H11V10Zm0 18h26v10H11V28Zm6 5a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm15 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4Z",
+  ],
+  messenger: [
+    "M10 8h28c3 0 5 2 5 5v17c0 3-2 5-5 5H24l-11 8v-8h-3c-3 0-5-2-5-5V13c0-3 2-5 5-5Z",
+  ],
+  integration: [
+    "M18 31a9 9 0 0 1 0-13l5-5a9 9 0 0 1 13 13l-3 3-5-5 3-3a2 2 0 0 0-3-3l-5 5a2 2 0 0 0 0 3l1 1-5 5-1-1Z",
+    "M12 35a9 9 0 0 1 0-13l3-3 5 5-3 3a2 2 0 0 0 3 3l5-5a2 2 0 0 0 0-3l-1-1 5-5 1 1a9 9 0 0 1 0 13l-5 5a9 9 0 0 1-13 0Z",
+  ],
+  plus: [
+    "M20 6h8v14h14v8H28v14h-8V28H6v-8h14V6Z",
+  ],
+};
+
+function iconPath(paths: string[]): Path2D {
+  const combined = new Path2D();
+  paths.forEach((path) => combined.addPath(new Path2D(path)));
+  return combined;
+}
+
+function iconMask(icon: string, paths: string[]): IconMask {
+  const cached = iconMaskCache.get(icon);
+  if (cached) {
+    return cached;
+  }
+
+  const layer = document.createElement("canvas");
+  layer.width = ICON_MASK_SIZE;
+  layer.height = ICON_MASK_SIZE;
+
+  const layerCtx = layer.getContext("2d", { willReadFrequently: true });
+  if (!layerCtx) {
+    throw new Error("Unable to create system map icon mask");
+  }
+
+  layerCtx.fillStyle = "#fff";
+  layerCtx.fill(iconPath(paths));
+
+  const image = layerCtx.getImageData(0, 0, ICON_MASK_SIZE, ICON_MASK_SIZE);
+  const alpha = new Uint8ClampedArray(ICON_MASK_SIZE * ICON_MASK_SIZE);
+
+  for (let i = 0; i < alpha.length; i += 1) {
+    alpha[i] = image.data[i * 4 + 3];
+  }
+
+  const mask = { size: ICON_MASK_SIZE, alpha };
+  iconMaskCache.set(icon, mask);
+  return mask;
+}
 
 function drawingScale(width: number, height: number): number {
   return clamp(Math.min(width, height) / 520, 1, 1.55);
 }
 
-function point(node: Pick<SystemMapCanvasNode, "x" | "y">, width: number, height: number): [number, number] {
+export function projectSystemMapPoint(
+  node: Pick<SystemMapCanvasNode, "x" | "y">,
+  width: number,
+  height: number,
+  camera: SystemMapCanvasCamera,
+): [number, number] {
   return [
-    Math.round((node.x / 100) * width),
-    Math.round((node.y / 100) * height),
+    Math.round((((node.x - camera.x) * camera.zoom + 50) / 100) * width),
+    Math.round((((node.y - camera.y) * camera.zoom + 50) / 100) * height),
   ];
 }
 
@@ -61,54 +135,80 @@ function drawGlyph(
   color: Rgb,
   scale: number,
 ): void {
+  const paths = ICON_PATHS[node.icon];
+
+  if (paths) {
+    const size = (node.kind === "root" ? 40 : node.kind === "category" ? 34 : 28) * scale;
+    const mask = iconMask(node.icon, paths);
+    const left = x - size / 2;
+    const top = y - size / 2;
+    const unit = size / mask.size;
+
+    for (let my = 1; my < mask.size - 1; my += 2) {
+      let runStart = -1;
+
+      for (let mx = 0; mx <= mask.size; mx += 1) {
+        const inside = mx < mask.size && mask.alpha[my * mask.size + mx] > 16;
+
+        if (inside && runStart === -1) {
+          runStart = mx;
+          continue;
+        }
+
+        if (!inside && runStart !== -1) {
+          const runEnd = mx - 1;
+          const runLength = runEnd - runStart;
+          if (runLength > 1 && hash2(my, runStart + x, 13) > 0.18) {
+            drawBrokenLine(
+              ctx,
+              left + runStart * unit,
+              top + my * unit,
+              left + runEnd * unit,
+              top + my * unit,
+              color,
+              x + y + my,
+              0.8,
+              Math.max(1, Math.round(1.35 * scale)),
+            );
+          }
+          runStart = -1;
+        }
+      }
+    }
+
+    for (let my = 0; my < mask.size; my += 3) {
+      for (let mx = 0; mx < mask.size; mx += 3) {
+        if (mask.alpha[my * mask.size + mx] <= 16 || hash2(mx + x, my + y, 17) < 0.68) {
+          continue;
+        }
+
+        plot(
+          ctx,
+          left + mx * unit,
+          top + my * unit,
+          color,
+          0.76,
+          Math.max(1, Math.round(unit * 1.2)),
+          1,
+        );
+      }
+    }
+
+    for (let i = 0; i < Math.round(size * 0.72); i += 1) {
+      const mx = Math.floor(hash2(i, y, 19) * mask.size);
+      const my = Math.floor(hash2(i, x, 23) * mask.size);
+      if (mask.alpha[my * mask.size + mx] > 16 && hash2(mx, my, 29) > 0.42) {
+        plot(ctx, left + mx * unit, top + my * unit, COLORS.bgDark, 0.88, 1, 1);
+      }
+    }
+
+    const tearY = y + size * 0.28;
+    drawBrokenLine(ctx, x - size * 0.38, tearY, x + size * 0.38, tearY, color, x + y, 0.5, 2);
+    drawDotCircle(ctx, x, y, size * 0.45, color, x + y + 43, 0.32);
+    return;
+  }
+
   const s = scale * 1.25;
-  const unit = Math.max(2, Math.round(2 * scale));
-
-  const rect = (left: number, top: number, width: number, height: number, alpha = 0.92): void => {
-    plot(ctx, x + left * s, y + top * s, color, alpha, Math.max(unit, Math.round(width * s)), Math.max(unit, Math.round(height * s)));
-  };
-
-  if (node.icon === "machine") {
-    rect(-8, -9, 16, 10);
-    rect(-9, 3, 18, 7);
-    rect(-5, 5, 3, 3, 0.98);
-    rect(3, 5, 3, 3, 0.98);
-    drawBrokenLine(ctx, x - 9 * s, y + 1 * s, x + 9 * s, y + 1 * s, color, x + y, 0.72, 2);
-    return;
-  }
-
-  if (node.icon === "messenger") {
-    rect(-10, -8, 20, 13);
-    rect(-6, 4, 8, 5);
-    rect(-7, -4, 3, 3, 0.98);
-    rect(-1, -4, 3, 3, 0.98);
-    rect(5, -4, 3, 3, 0.98);
-    return;
-  }
-
-  if (node.icon === "integration") {
-    drawDotCircle(ctx, x - 6 * s, y, 6 * s, color, x + y, 0.96);
-    drawDotCircle(ctx, x + 6 * s, y, 6 * s, color, x + y + 1, 0.96);
-    drawBrokenLine(ctx, x - 2 * s, y, x + 2 * s, y, color, x + y + 2, 0.98, 2);
-    return;
-  }
-
-  if (node.icon === "plus") {
-    drawBrokenLine(ctx, x - 8 * s, y, x + 8 * s, y, color, x + y, 0.95, 2);
-    drawBrokenLine(ctx, x, y - 8 * s, x, y + 8 * s, color, x + y + 1, 0.95, 2);
-    return;
-  }
-
-  if (node.icon === "ship") {
-    rect(-4, -14, 8, 21);
-    rect(-8, 4, 16, 7);
-    rect(-14, 9, 7, 8);
-    rect(7, 9, 7, 8);
-    rect(-2, -8, 4, 5, 0.98);
-    drawBrokenLine(ctx, x - 14 * s, y + 18 * s, x + 14 * s, y + 18 * s, color, x + y, 0.68, 2);
-    return;
-  }
-
   drawDotCircle(ctx, x, y, 8 * s, color, x + y, 0.92);
   drawBrokenLine(ctx, x - 7 * s, y, x + 7 * s, y, color, x + y + 1, 0.9, 2);
   drawBrokenLine(ctx, x, y - 7 * s, x, y + 7 * s, color, x + y + 2, 0.9, 2);
@@ -196,10 +296,11 @@ function drawLinks(
   links: SystemMapCanvasLink[],
   width: number,
   height: number,
+  camera: SystemMapCanvasCamera,
 ): void {
   links.forEach((link, index) => {
-    const [x1, y1] = point(link.from, width, height);
-    const [x2, y2] = point(link.to, width, height);
+    const [x1, y1] = projectSystemMapPoint(link.from, width, height, camera);
+    const [x2, y2] = projectSystemMapPoint(link.to, width, height, camera);
     drawBrokenLine(ctx, x1, y1, x2, y2, COLORS.cyan, index + 90, 0.72, 3);
     drawBrokenLine(ctx, x1, y1, x2, y2, COLORS.green, index + 95, 0.22, 6);
     drawBrokenLine(ctx, x1, y1, x2, y2, COLORS.white, index + 120, 0.16, 6);
@@ -212,12 +313,13 @@ function drawNodes(
   selection: string,
   width: number,
   height: number,
+  camera: SystemMapCanvasCamera,
   time: number,
 ): void {
   const scale = drawingScale(width, height);
 
   nodes.forEach((node, index) => {
-    const [x, y] = point(node, width, height);
+    const [x, y] = projectSystemMapPoint(node, width, height, camera);
     const selected = node.id === selection;
     const color = statusColor(node);
     const pulse = selected ? 1 + Math.sin(time * 4) * 0.04 : 1;
@@ -295,8 +397,8 @@ export function renderSystemMapCanvas(
   ctx.save();
   ctx.imageSmoothingEnabled = false;
   ctx.putImageData(backgroundImage(width, height), 0, 0);
-  drawLinks(ctx, options.links, width, height);
-  drawNodes(ctx, options.nodes, options.selection, width, height, options.time);
+  drawLinks(ctx, options.links, width, height, options.camera);
+  drawNodes(ctx, options.nodes, options.selection, width, height, options.camera, options.time);
   drawHudRaster(ctx, width, height, options.selection);
   ctx.restore();
 }
