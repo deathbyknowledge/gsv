@@ -1,0 +1,51 @@
+import type { RefObject } from "preact";
+import { useEffect } from "preact/hooks";
+import type { AppManifest } from "../../../apps";
+import type { SessionSnapshot } from "../../../session-service";
+import type { DesktopRuntime } from "./useDesktopRuntime";
+
+type UseDesktopAppsSyncOptions = {
+  runtimeRef: RefObject<DesktopRuntime | null>;
+  runtimeRevision: number;
+  apps: readonly AppManifest[] | undefined;
+  connected: boolean;
+  appLoadFailed: boolean;
+  sessionPhase: SessionSnapshot["phase"];
+};
+
+function syncDesktopApps(
+  runtimeRef: RefObject<DesktopRuntime | null>,
+  apps: readonly AppManifest[],
+): void {
+  const runtime = runtimeRef.current;
+  if (!runtime) {
+    return;
+  }
+  runtime.windowManager.setAppRegistry(apps);
+  runtime.launcher.setApps(apps);
+}
+
+export function useDesktopAppsSync({
+  runtimeRef,
+  runtimeRevision,
+  apps,
+  connected,
+  appLoadFailed,
+  sessionPhase,
+}: UseDesktopAppsSyncOptions): void {
+  useEffect(() => {
+    if (!connected && sessionPhase !== "ready") {
+      syncDesktopApps(runtimeRef, []);
+      return;
+    }
+
+    if (connected && appLoadFailed) {
+      syncDesktopApps(runtimeRef, []);
+      return;
+    }
+
+    if (apps) {
+      syncDesktopApps(runtimeRef, apps);
+    }
+  }, [apps, appLoadFailed, connected, runtimeRef, runtimeRevision, sessionPhase]);
+}
