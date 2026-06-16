@@ -1,35 +1,23 @@
 import type { AppManifest } from "./apps";
 import { queuePendingAppOpen, type OpenAppRequest } from "./app-link";
 import type { AppInstance, AppRuntimeContext, AppRuntimeRegistry } from "./app-runtime";
+import {
+  readPersistedDesktopLayout,
+  selectRestoredActiveWindowId,
+  serializeDesktopLayout,
+  writePersistedDesktopLayout,
+  type DesktopVisibleWindowMode,
+  type DesktopWindowMode,
+  type PersistedDesktopWindow,
+  type SerializableDesktopWindow,
+} from "./app/features/desktop/domain/windowLayout";
 import { mountPreviewWindow, type PreviewWindowContent } from "./preview-window";
 
-type WindowMode = "normal" | "minimized" | "maximized";
+type WindowMode = DesktopWindowMode;
 type ResizeDirection = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
 type SnapTarget = "left" | "right" | "maximize" | null;
 type LifecyclePhase = "mount" | "suspend" | "resume" | "terminate";
-
-type PersistedWindow = {
-  appId: string;
-  route?: string;
-  title?: string;
-  mode: WindowMode;
-  lastVisibleMode: Exclude<WindowMode, "minimized">;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  restoreX: number;
-  restoreY: number;
-  restoreWidth: number;
-  restoreHeight: number;
-  zIndex: number;
-};
-
-type PersistedLayout = {
-  version: 1;
-  activeAppId: string | null;
-  windows: PersistedWindow[];
-};
+type PersistedWindow = PersistedDesktopWindow;
 
 type AppRuntimeState = {
   instance: AppInstance;
@@ -49,7 +37,7 @@ type WindowRecord = {
   badge: string | null;
   dirty: boolean;
   mode: WindowMode;
-  lastVisibleMode: Exclude<WindowMode, "minimized">;
+  lastVisibleMode: DesktopVisibleWindowMode;
   x: number;
   y: number;
   width: number;
@@ -191,7 +179,6 @@ const WINDOW_OFFSET_X = 28;
 const WINDOW_OFFSET_Y = 22;
 const WINDOW_STAGGER_STEPS = 8;
 const SNAP_THRESHOLD = 30;
-const LAYOUT_STORAGE_KEY = "gsv.desktop.layout.v1";
 const PREVIEW_APP: AppManifest = {
   id: "preview",
   name: "Preview",
@@ -283,53 +270,6 @@ function createWindowNode(app: AppManifest, route: string): HTMLElement {
   return container;
 }
 
-function readPersistedLayout(): PersistedLayout | null {
-  try {
-    const raw = window.localStorage.getItem(LAYOUT_STORAGE_KEY);
-    if (!raw) {
-      return null;
-    }
-
-    const parsed = JSON.parse(raw) as Partial<PersistedLayout>;
-    if (parsed.version !== 1 || !Array.isArray(parsed.windows)) {
-      return null;
-    }
-
-    const windows = parsed.windows.filter((item): item is PersistedWindow => {
-      return (
-        typeof item?.appId === "string" &&
-        (item.mode === "normal" || item.mode === "minimized" || item.mode === "maximized") &&
-        (item.lastVisibleMode === "normal" || item.lastVisibleMode === "maximized") &&
-        typeof item.x === "number" &&
-        typeof item.y === "number" &&
-        typeof item.width === "number" &&
-        typeof item.height === "number" &&
-        typeof item.restoreX === "number" &&
-        typeof item.restoreY === "number" &&
-        typeof item.restoreWidth === "number" &&
-        typeof item.restoreHeight === "number" &&
-        typeof item.zIndex === "number"
-      );
-    });
-
-    return {
-      version: 1,
-      activeAppId: typeof parsed.activeAppId === "string" ? parsed.activeAppId : null,
-      windows,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function writePersistedLayout(layout: PersistedLayout): void {
-  try {
-    window.localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(layout));
-  } catch {
-    // Ignore storage failures and keep runtime behavior.
-  }
-}
-
 function normalizeChromeText(value: string | null, maxLength = 80): string | null {
   const normalized = value?.trim() ?? "";
   if (!normalized) {
@@ -350,6 +290,28 @@ function summarizeWindowRecord(record: WindowRecord, activeWindowId: string | nu
     badge: record.badge,
     dirty: record.dirty,
     zIndex: record.zIndex,
+  };
+}
+
+function toSerializableDesktopWindow(record: WindowRecord): SerializableDesktopWindow {
+  return {
+    windowId: record.windowId,
+    appId: record.app.id,
+    appName: record.app.name,
+    route: record.route,
+    title: record.title,
+    mode: record.mode,
+    lastVisibleMode: record.lastVisibleMode,
+    x: record.x,
+    y: record.y,
+    width: record.width,
+    height: record.height,
+    restoreX: record.restoreX,
+    restoreY: record.restoreY,
+    restoreWidth: record.restoreWidth,
+    restoreHeight: record.restoreHeight,
+    zIndex: record.zIndex,
+    persist: record.persist,
   };
 }
 
@@ -646,7 +608,7 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
   const windows = new Map<string, WindowRecord>();
   let appById = new Map(appRegistry.map((app) => [app.id, app]));
   const listeners = new Set<(summaries: WindowSummary[]) => void>();
-  const pendingPersistedLayout = readPersistedLayout();
+  const pendingPersistedLayout = readPersistedDesktopLayout();
 
   const snapOverlayNode = document.createElement("div");
   snapOverlayNode.className = "window-snap-overlay";
@@ -768,33 +730,11 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
   };
 
   const persistLayout = (): void => {
-    const ordered = [...windows.values()].sort((left, right) => left.zIndex - right.zIndex);
-    const persistent = ordered.filter((record) => record.persist);
-    const activeRecord = activeWindowId ? windows.get(activeWindowId) ?? null : null;
-    const activeAppId = activeRecord?.persist ? activeRecord.app.id : null;
-
-    const layout: PersistedLayout = {
-      version: 1,
-      activeAppId,
-      windows: persistent.map((record) => ({
-        appId: record.app.id,
-        route: record.route,
-        title: record.title === record.app.name ? undefined : record.title,
-        mode: record.mode,
-        lastVisibleMode: record.lastVisibleMode,
-        x: record.x,
-        y: record.y,
-        width: record.width,
-        height: record.height,
-        restoreX: record.restoreX,
-        restoreY: record.restoreY,
-        restoreWidth: record.restoreWidth,
-        restoreHeight: record.restoreHeight,
-        zIndex: record.zIndex,
-      })),
-    };
-
-    writePersistedLayout(layout);
+    const layout = serializeDesktopLayout(
+      [...windows.values()].map(toSerializableDesktopWindow),
+      activeWindowId,
+    );
+    writePersistedDesktopLayout(layout);
   };
 
   const emit = (): void => {
@@ -1500,19 +1440,16 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
       zCounter = Math.max(zCounter, record.zIndex);
     }
 
-    if (pendingPersistedLayout.activeAppId) {
-      const activeRecord = [...windows.values()]
-        .filter((record) => record.app.id === pendingPersistedLayout.activeAppId && record.mode !== "minimized")
-        .sort((left, right) => right.zIndex - left.zIndex)[0];
-      activeWindowId = activeRecord?.windowId ?? activeWindowId;
-    }
-
-    if (!activeWindowId) {
-      const visibleTop = [...windows.values()]
-        .filter((record) => record.mode !== "minimized")
-        .sort((left, right) => right.zIndex - left.zIndex)[0];
-      activeWindowId = visibleTop?.windowId ?? null;
-    }
+    activeWindowId = selectRestoredActiveWindowId(
+      [...windows.values()].map((record) => ({
+        windowId: record.windowId,
+        appId: record.app.id,
+        mode: record.mode,
+        zIndex: record.zIndex,
+      })),
+      pendingPersistedLayout.activeAppId,
+      activeWindowId,
+    );
 
     for (const record of windows.values()) {
       if (record.mode !== "minimized") {
