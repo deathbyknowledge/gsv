@@ -332,7 +332,7 @@ function useSystemMapRaster(
   canvasRef: { current: HTMLCanvasElement | null },
   nodes: SystemMapNode[],
   links: SystemMapLink[],
-  selection: SystemMapSelection,
+  canvasSelection: string,
   camera: SystemMapCanvasCamera,
   setViewportSize: Dispatch<StateUpdater<ViewportSize>>,
 ): void {
@@ -368,7 +368,7 @@ function useSystemMapRaster(
       renderSystemMapCanvas(context, width, height, {
         nodes,
         links,
-        selection: selection ?? "overview",
+        selection: canvasSelection,
         camera,
         time: 0,
       });
@@ -399,7 +399,7 @@ function useSystemMapRaster(
         window.cancelAnimationFrame(frame);
       }
     };
-  }, [camera, canvasRef, links, nodes, selection, setViewportSize]);
+  }, [camera, canvasRef, canvasSelection, links, nodes, setViewportSize]);
 }
 
 function clampCamera(camera: SystemMapCanvasCamera): SystemMapCanvasCamera {
@@ -459,6 +459,7 @@ export function SystemMap() {
   const dragRef = useRef<MapDragState | null>(null);
   const ignoreNextClickRef = useRef(false);
   const [selection, setSelection] = useState<SystemMapSelection>(null);
+  const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [camera, setCamera] = useState<SystemMapCanvasCamera>(INITIAL_CAMERA);
   const [viewportSize, setViewportSize] = useState<ViewportSize>({ width: 0, height: 0 });
@@ -472,11 +473,18 @@ export function SystemMap() {
     () => [ROOT_NODE, ...CATEGORY_NODES, ...detailNodes],
     [detailNodes],
   );
-  const selectionLabel = selection
-    ? selection.toUpperCase()
-    : "SYSTEM";
+  const activeNode = useMemo(
+    () => mapNodes.find((node) => node.id === activeNodeId) ?? null,
+    [activeNodeId, mapNodes],
+  );
+  const canvasSelection = activeNodeId ?? selection ?? "overview";
+  const selectionLabel = activeNode
+    ? activeNode.label.toUpperCase()
+    : selection
+      ? selection.toUpperCase()
+      : "SYSTEM";
 
-  useSystemMapRaster(canvasRef, mapNodes, links, selection, camera, setViewportSize);
+  useSystemMapRaster(canvasRef, mapNodes, links, canvasSelection, camera, setViewportSize);
 
   const nodePositions = useMemo(() => {
     const positions = new Map<string, { x: number; y: number }>();
@@ -495,6 +503,10 @@ export function SystemMap() {
 
   const handlePointerDown = useCallback((event: JSX.TargetedPointerEvent<HTMLDivElement>): void => {
     if (event.button !== 0 || viewportSize.width === 0 || viewportSize.height === 0) {
+      return;
+    }
+
+    if (event.target instanceof Element && event.target.closest(".system-map-node")) {
       return;
     }
 
@@ -583,6 +595,8 @@ export function SystemMap() {
       return;
     }
 
+    setActiveNodeId(node.id);
+
     if (node.id === "root") {
       setSelection((current) => current === "root" ? null : "root");
       return;
@@ -617,7 +631,7 @@ export function SystemMap() {
         <div class="system-map-hit-layer">
           <MapNode
             node={ROOT_NODE}
-            selected={selection === "root"}
+            selected={activeNodeId === ROOT_NODE.id}
             position={nodePositions.get(ROOT_NODE.id) ?? { x: 0, y: 0 }}
             onSelect={selectNode}
           />
@@ -625,7 +639,7 @@ export function SystemMap() {
             <MapNode
               key={node.id}
               node={node}
-              selected={selection === node.id}
+              selected={activeNodeId === node.id}
               position={nodePositions.get(node.id) ?? { x: 0, y: 0 }}
               onSelect={selectNode}
             />
@@ -634,7 +648,7 @@ export function SystemMap() {
             <MapNode
               key={node.id}
               node={node}
-              selected={false}
+              selected={activeNodeId === node.id}
               position={nodePositions.get(node.id) ?? { x: 0, y: 0 }}
               onSelect={selectNode}
             />
