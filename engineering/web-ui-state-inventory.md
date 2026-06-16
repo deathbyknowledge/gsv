@@ -41,7 +41,7 @@ notifications, session, recorder state, and settings together.
 | Session/auth | `session-service.ts`, `session-ui.ts`, `onboarding-service.ts` | Token persistence, reconnect timers, setup mode, setup draft | Keep as `SessionProvider` plus `features/session` and `features/onboarding`; not Query except setup/bootstrap mutations. |
 | Package app registry | `main.ts`, `package-apps.ts` | `pkg.list` derived into shell app manifests | TanStack Query key `["packages", "list", filters]`; derive app manifests with pure domain helper; invalidate on `pkg.changed`. |
 | App sessions and iframes | `apps-runtime.ts`, `host-bridge.ts`, `app-loading.ts` | `app.open`, `app.detach`, iframe lifecycle, host bridge, loader animation | Use Query mutations for `app.open`/detach/close if helpful; keep iframe lifecycle in `features/apps` hooks/services. |
-| Desktop windows | `window-manager.ts`, `launcher.ts` | Open windows, focus, z-index, drag, resize, persisted layout, command palette | Local reducer/store owned by `features/desktop`; persist layout via utility. Not Query. |
+| Desktop windows | `app/features/desktop/DesktopShellFrame.tsx`, `window-manager.ts`, `launcher.ts` | Static desktop frame, open windows, focus, z-index, drag, resize, persisted layout, command palette | Keep the shell frame in Preact. Keep window state local to `features/desktop`; persist layout via utility. Not Query. |
 | Notifications | `app/features/notifications/NotificationsPanel.tsx`, `service-worker.ts` | `notification.list`, mark read/dismiss mutations, pushed updates, toasts, permission state | TanStack Query for list and mutations; signal updater for `notification.created/updated/dismissed`; local state for panel open, toast timers, browser notification permission. |
 | Presence/voice | `presence.ts`, `local-tts.ts`, `local-tts-worker.ts`, `local-tts-assets.ts` | recorder state, VAD, run signal buffering, transcription, speech synthesis/playback, preferences | Split into `features/presence` hooks. Use mutations for `ai.transcription.create` and `ai.speech.create`; keep media/audio/run-stream state local. |
 | Process chat/run state | `presence.ts`, `gateway-client.ts` helpers | `proc.send`, `proc.run.*` streams, HIL, latest activity | For full chat/process UI, use Query for `proc.list`, `proc.history`, `proc.conversation.*`; use signal reducer for active run streams. |
@@ -121,15 +121,17 @@ query hooks directly for server state.
 3. Extract Gateway transport without changing behavior.
 4. Move `pkg.list` app registry to a package query and keep the existing
    window/launcher code temporarily.
-5. Convert notifications to Query and JSX components. This is a contained
+5. Convert the static desktop shell frame to Preact while preserving legacy
+   window, launcher, session, and presence managers.
+6. Convert notifications to Query and JSX components. This is a contained
    server-state feature and a good proving ground.
-6. Move session/onboarding to components and hooks, preserving the current
+7. Move session/onboarding to components and hooks, preserving the current
    setup flow.
-7. Split desktop/window/launcher state into a reducer-backed feature.
-8. Keep browser targeting out of the web shell; the browser extension owns that
+8. Split desktop/window/launcher state into a reducer-backed feature.
+9. Keep browser targeting out of the web shell; the browser extension owns that
    target surface.
-9. Split presence into recorder, transcription, speech, and run-activity hooks.
-10. Split CSS by feature after markup ownership is stable.
+10. Split presence into recorder, transcription, speech, and run-activity hooks.
+11. Split CSS by feature after markup ownership is stable.
 
 ## Open Decisions
 
