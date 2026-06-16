@@ -1,4 +1,5 @@
 import { Component, type ComponentChildren, type RefObject } from "preact";
+import { SystemMap } from "../system-map/SystemMap";
 
 type DesktopShellFrameProps = {
   shellRef: RefObject<HTMLDivElement>;
@@ -112,6 +113,7 @@ function Topbar() {
 function Workspace({ windowsLayerRef }: { windowsLayerRef: RefObject<HTMLElement> }) {
   return (
     <main class="workspace" role="presentation">
+      <SystemMap />
       <nav class="desktop-icons" data-desktop-icons aria-label="Desktop applications" />
       <section class="windows-layer" data-windows-layer ref={windowsLayerRef} />
     </main>
@@ -267,7 +269,7 @@ function CommandPalette() {
 
 function DesktopRoot({ windowsLayerRef }: { windowsLayerRef: RefObject<HTMLElement> }) {
   return (
-    <div class="desktop-root" data-desktop-root hidden>
+    <div class="desktop-root is-system-map" data-desktop-root hidden>
       <Topbar />
       <Workspace windowsLayerRef={windowsLayerRef} />
       <MobileShell />
