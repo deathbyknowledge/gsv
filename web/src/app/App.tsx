@@ -1,10 +1,10 @@
 import { AppProviders } from "./providers/AppProviders";
-import { LegacyDesktopShell } from "./features/desktop/LegacyDesktopShell";
+import { DesktopShell } from "./features/desktop/DesktopShell";
 
 export function App() {
   return (
     <AppProviders>
-      <LegacyDesktopShell />
+      <DesktopShell />
     </AppProviders>
   );
 }

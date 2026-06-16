@@ -19,7 +19,7 @@ function isStandaloneDisplay(): boolean {
     || (navigator as StandaloneNavigator).standalone === true;
 }
 
-export function LegacyDesktopShell() {
+export function DesktopShell() {
   const shellRef = useRef<HTMLDivElement>(null);
   const windowsLayerRef = useRef<HTMLElement>(null);
   const { client: gatewayClient, connected } = useGateway();
