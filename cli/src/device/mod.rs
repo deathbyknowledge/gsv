@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use gsv::config::CliConfig;
 use gsv::connection::{Connection, GatewayRpcError};
-use gsv::device_service;
+use gsv::node_service;
 use gsv::kernel_client::{GatewayAuth, KernelClient};
 use gsv::logger::{self, NodeLogger};
 use gsv::protocol::{
@@ -15,7 +15,7 @@ use gsv::protocol::{
 use gsv::tools::{all_tools_with_workspace_for_device, subscribe_exec_events, Tool};
 use serde_json::json;
 
-use crate::cli::DeviceServiceAction;
+use crate::cli::NodeServiceAction;
 
 mod transfer;
 
@@ -130,14 +130,14 @@ fn persist_gateway_overrides(
 }
 
 pub(crate) fn run_node_service(
-    action: DeviceServiceAction,
+    action: NodeServiceAction,
     cfg: &CliConfig,
     gateway_url_override: Option<&str>,
     gateway_username_override: Option<&str>,
     gateway_token_override: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match action {
-        DeviceServiceAction::Install { id, workspace } => {
+        NodeServiceAction::Install { id, workspace } => {
             let gateway_overrides_changed = persist_gateway_overrides(
                 gateway_url_override,
                 gateway_username_override,
@@ -146,10 +146,10 @@ pub(crate) fn run_node_service(
             let (node_id, workspace, node_defaults_changed) =
                 persist_node_defaults(cfg, id, workspace)?;
 
-            device_service::install_node_service()?;
+            node_service::install_node_service()?;
 
             if gateway_overrides_changed || node_defaults_changed {
-                device_service::restart_node_service()?;
+                node_service::restart_node_service()?;
             }
 
             println!("Device daemon installed and started.");
@@ -166,12 +166,12 @@ pub(crate) fn run_node_service(
             println!("View logs:");
             println!("  gsv device logs --follow");
         }
-        DeviceServiceAction::Uninstall => {
-            device_service::uninstall_node_service()?;
+        NodeServiceAction::Uninstall => {
+            node_service::uninstall_node_service()?;
 
             println!("Device daemon uninstalled.");
         }
-        DeviceServiceAction::Start => {
+        NodeServiceAction::Start => {
             let gateway_overrides_changed = persist_gateway_overrides(
                 gateway_url_override,
                 gateway_username_override,
@@ -179,26 +179,26 @@ pub(crate) fn run_node_service(
             )?;
 
             if gateway_overrides_changed {
-                device_service::restart_node_service()?;
+                node_service::restart_node_service()?;
                 println!("Saved gateway connection overrides to local config.");
                 println!("Device daemon restarted.");
                 return Ok(());
             }
 
-            device_service::start_node_service()?;
+            node_service::start_node_service()?;
 
             println!("Device daemon started.");
         }
-        DeviceServiceAction::Stop => {
-            device_service::stop_node_service()?;
+        NodeServiceAction::Stop => {
+            node_service::stop_node_service()?;
 
             println!("Device daemon stopped.");
         }
-        DeviceServiceAction::Status => {
-            device_service::status_node_service()?;
+        NodeServiceAction::Status => {
+            node_service::status_node_service()?;
         }
-        DeviceServiceAction::Logs { lines, follow } => {
-            device_service::show_node_service_logs(lines, follow)?;
+        NodeServiceAction::Logs { lines, follow } => {
+            node_service::show_node_service_logs(lines, follow)?;
         }
     }
 

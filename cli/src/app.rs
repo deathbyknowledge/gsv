@@ -6,7 +6,7 @@ use crate::auth_flow::{
     run_with_auto_setup_and_login_retry, run_with_auto_setup_retry, AuthSetupOptions,
 };
 use crate::cli::{
-    AuthAction, Cli, Commands, ConfigAction, DeviceAction, DeviceServiceAction, LocalConfigAction,
+    AuthAction, Cli, Commands, ConfigAction, DeviceAction, NodeServiceAction, LocalConfigAction,
 };
 use crate::commands;
 use crate::device::{
@@ -183,35 +183,35 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 .await
             }
             DeviceAction::Install { id, workspace } => run_node_service(
-                DeviceServiceAction::Install { id, workspace },
+                NodeServiceAction::Install { id, workspace },
                 &cfg,
                 cli_url_override.as_deref(),
                 cli_user_override.as_deref(),
                 cli_token_override.as_deref(),
             ),
             DeviceAction::Start => run_node_service(
-                DeviceServiceAction::Start,
+                NodeServiceAction::Start,
                 &cfg,
                 cli_url_override.as_deref(),
                 cli_user_override.as_deref(),
                 cli_token_override.as_deref(),
             ),
             DeviceAction::Stop => run_node_service(
-                DeviceServiceAction::Stop,
+                NodeServiceAction::Stop,
                 &cfg,
                 cli_url_override.as_deref(),
                 cli_user_override.as_deref(),
                 cli_token_override.as_deref(),
             ),
             DeviceAction::Status => run_node_service(
-                DeviceServiceAction::Status,
+                NodeServiceAction::Status,
                 &cfg,
                 cli_url_override.as_deref(),
                 cli_user_override.as_deref(),
                 cli_token_override.as_deref(),
             ),
             DeviceAction::Logs { lines, follow } => run_node_service(
-                DeviceServiceAction::Logs { lines, follow },
+                NodeServiceAction::Logs { lines, follow },
                 &cfg,
                 cli_url_override.as_deref(),
                 cli_user_override.as_deref(),
