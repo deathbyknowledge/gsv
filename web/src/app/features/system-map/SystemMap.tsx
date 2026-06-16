@@ -16,7 +16,7 @@ type SystemMapNode = {
   id: string;
   label: string;
   kind: SystemMapNodeKind;
-  icon: "ship" | "machine" | "messenger" | "integration" | "app" | "files" | "terminal" | "settings" | "plus";
+  icon: "ship" | "machine" | "messenger" | "integration" | "assistant" | "app" | "files" | "terminal" | "settings" | "plus";
   x: number;
   y: number;
   status?: SystemMapStatus;
@@ -173,6 +173,7 @@ const APP_NODES: SystemMapNode[] = [
     label: "Applications",
     kind: "app",
     icon: "app",
+    note: "pkg index",
     x: 0,
     y: 0,
   },
@@ -181,6 +182,7 @@ const APP_NODES: SystemMapNode[] = [
     label: "Files",
     kind: "app",
     icon: "files",
+    note: "mount",
     x: 0,
     y: 0,
   },
@@ -189,6 +191,7 @@ const APP_NODES: SystemMapNode[] = [
     label: "Terminal",
     kind: "app",
     icon: "terminal",
+    note: "pty",
     x: 0,
     y: 0,
   },
@@ -197,6 +200,7 @@ const APP_NODES: SystemMapNode[] = [
     label: "Settings",
     kind: "app",
     icon: "settings",
+    note: "crew",
     x: 0,
     y: 0,
   },
@@ -290,6 +294,22 @@ function Icon({ icon }: { icon: SystemMapNode["icon"] }) {
     return (
       <svg viewBox="0 0 48 48" aria-hidden="true">
         <path d="M20 6h8v14h14v8H28v14h-8V28H6v-8h14V6Z" />
+      </svg>
+    );
+  }
+
+  if (icon === "assistant") {
+    return (
+      <svg viewBox="0 0 48 48" aria-hidden="true">
+        <path d="M21 5h6v7h7v4h6v17h-5v8H13v-8H8V16h6v-4h7V5Zm-5 17h16v8H16v-8Zm2 2v4h4v-4h-4Zm8 0v4h4v-4h-4Zm-7 11v2h10v-2H19Z" />
+      </svg>
+    );
+  }
+
+  if (icon === "app") {
+    return (
+      <svg viewBox="0 0 48 48" aria-hidden="true">
+        <path d="M8 8h13v13H8V8Zm19 0h13v13H27V8ZM8 27h13v13H8V27Zm19 0h13v13H27V27Z" />
       </svg>
     );
   }
@@ -415,20 +435,28 @@ function AssistantPanel({ open, onToggle }: { open: boolean; onToggle: () => voi
     <section class={`system-assistant${open ? " is-open" : ""}`} aria-label="Assistant">
       <button type="button" class="system-assistant-summary" onClick={onToggle} aria-expanded={open}>
         <span class="system-assistant-avatar" aria-hidden="true">
-          <Icon icon="app" />
+          <Icon icon="assistant" />
         </span>
         <span class="system-assistant-copy">
+          <span class="system-assistant-unit" aria-hidden="true">AGT-03</span>
           <strong>Xanadu</strong>
-          <small>NEMOTRON 3 / 2 tasks running</small>
+          <small>
+            <span>NEMOTRON 3</span>
+            <span>2 tasks running</span>
+          </small>
         </span>
-        <span class="system-assistant-signal" aria-hidden="true">LINK</span>
+        <span class="system-assistant-signal" aria-hidden="true">
+          <span>LINK</span>
+          <span>RUN 02</span>
+        </span>
       </button>
       <div class="system-assistant-panel" hidden={!open}>
         <header class="system-assistant-header">
           <span class="system-assistant-avatar" aria-hidden="true">
-            <Icon icon="app" />
+            <Icon icon="assistant" />
           </span>
           <div>
+            <span class="system-assistant-unit" aria-hidden="true">AGENT // NATIVE</span>
             <strong>Xanadu</strong>
             <p>NEMOTRON 3 / reasoning low</p>
             <em>creating crew member</em>
@@ -436,9 +464,9 @@ function AssistantPanel({ open, onToggle }: { open: boolean; onToggle: () => voi
           <button type="button" onClick={onToggle} aria-label="Collapse assistant">MIN</button>
         </header>
         <div class="system-assistant-meters" aria-label="Assistant status">
-          <span>context 50%</span>
-          <span>signal nominal</span>
-          <span>cost 0.04$</span>
+          <span><strong>context</strong><em>50%</em></span>
+          <span><strong>signal</strong><em>nominal</em></span>
+          <span><strong>cost</strong><em>0.04$</em></span>
         </div>
         <div class="system-assistant-feed" aria-live="polite">
           <p><span>SYS</span> ready to work with the selected system context.</p>
@@ -447,7 +475,7 @@ function AssistantPanel({ open, onToggle }: { open: boolean; onToggle: () => voi
         <form class="system-assistant-composer" onSubmit={(event) => event.preventDefault()}>
           <button type="button" aria-label="Attach file">+</button>
           <input type="text" aria-label="Message Xanadu" />
-          <button type="button" aria-label="Send message">Send</button>
+          <button type="button" aria-label="Send message">TX</button>
         </form>
       </div>
     </section>
@@ -656,12 +684,14 @@ export function SystemMap() {
         </div>
       </div>
       <div class="system-map-app-shelf" hidden={selection !== "root"}>
-        {APP_NODES.map((node) => (
+        {APP_NODES.map((node, index) => (
           <button type="button" class="system-map-app" key={node.id}>
-            <span class="system-map-icon">
+            <span class="system-map-app-index" aria-hidden="true">{String(index + 1).padStart(2, "0")}</span>
+            <span class="system-map-icon" data-icon={node.icon}>
               <Icon icon={node.icon} />
             </span>
-            <span>{node.label}</span>
+            <span class="system-map-app-label">{node.label}</span>
+            <span class="system-map-app-readout" aria-hidden="true">{node.note ?? "ready"}</span>
           </button>
         ))}
       </div>
