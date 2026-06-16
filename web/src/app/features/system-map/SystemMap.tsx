@@ -296,10 +296,13 @@ function MapNode({
     <button
       type="button"
       class={`system-map-node system-map-node-${node.kind}${selected ? " is-selected" : ""}`}
+      data-node-id={node.id}
+      data-status={node.status ?? "none"}
       style={{ left: `${node.x}%`, top: `${node.y}%` }}
       aria-pressed={selected}
       onClick={() => onSelect(node)}
     >
+      <span class="system-map-node-halo" aria-hidden="true" />
       <span class="system-map-icon">
         <Icon icon={node.icon} />
         <StatusDot status={node.status} />
@@ -319,8 +322,9 @@ function AssistantPanel({ open, onToggle }: { open: boolean; onToggle: () => voi
         </span>
         <span class="system-assistant-copy">
           <strong>Xanadu</strong>
-          <small>2 tasks running</small>
+          <small>NEMOTRON 3 / 2 tasks running</small>
         </span>
+        <span class="system-assistant-signal" aria-hidden="true">LINK</span>
       </button>
       <div class="system-assistant-panel" hidden={!open}>
         <header class="system-assistant-header">
@@ -329,13 +333,19 @@ function AssistantPanel({ open, onToggle }: { open: boolean; onToggle: () => voi
           </span>
           <div>
             <strong>Xanadu</strong>
-            <p>NEMOTRON 3 low</p>
+            <p>NEMOTRON 3 / reasoning low</p>
             <em>creating crew member</em>
           </div>
-          <button type="button" onClick={onToggle} aria-label="Collapse assistant">Collapse</button>
+          <button type="button" onClick={onToggle} aria-label="Collapse assistant">MIN</button>
         </header>
+        <div class="system-assistant-meters" aria-label="Assistant status">
+          <span>context 50%</span>
+          <span>signal nominal</span>
+          <span>cost 0.04$</span>
+        </div>
         <div class="system-assistant-feed" aria-live="polite">
-          <p>Ready to work with the selected system context.</p>
+          <p><span>SYS</span> ready to work with the selected system context.</p>
+          <p><span>TASK</span> creating crew member / updating contacts</p>
         </div>
         <form class="system-assistant-composer" onSubmit={(event) => event.preventDefault()}>
           <button type="button" aria-label="Attach file">+</button>
@@ -352,6 +362,9 @@ export function SystemMap() {
   const [assistantOpen, setAssistantOpen] = useState(false);
   const links = useMemo(() => [...baseLinks(), ...detailLinks(selection)], [selection]);
   const detailNodes = selection && selection !== "root" ? DETAIL_NODES[selection] : [];
+  const selectionLabel = selection
+    ? selection.toUpperCase()
+    : "SYSTEM";
 
   const selectNode = (node: SystemMapNode): void => {
     if (node.id === "root") {
@@ -365,9 +378,28 @@ export function SystemMap() {
   };
 
   return (
-    <section class={`system-map${assistantOpen ? " is-assistant-open" : ""}`} aria-label="System map">
+    <section class={`system-map${assistantOpen ? " is-assistant-open" : ""}`} data-selection={selection ?? "overview"} aria-label="System map">
+      <div class="system-map-backdrop" aria-hidden="true" />
+      <div class="system-map-hud system-map-hud-primary" aria-hidden="true">
+        <strong>GSV SYSTEM MAP</strong>
+        <span>{selectionLabel}</span>
+        <small>link 07 / active scan</small>
+      </div>
+      <div class="system-map-hud system-map-hud-secondary" aria-hidden="true">
+        <span>nodes {CATEGORY_NODES.length + detailNodes.length + 1}</span>
+        <span>runtime native</span>
+      </div>
       <div class="system-map-canvas">
         <svg class="system-map-links" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+          <defs>
+            <filter id="system-map-line-glow" x="-40%" y="-40%" width="180%" height="180%">
+              <feGaussianBlur stdDeviation="1.2" result="blur" />
+              <feMerge>
+                <feMergeNode in="blur" />
+                <feMergeNode in="SourceGraphic" />
+              </feMerge>
+            </filter>
+          </defs>
           {links.map((link) => (
             <line
               key={link.id}
