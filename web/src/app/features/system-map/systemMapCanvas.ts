@@ -121,6 +121,51 @@ export function projectSystemMapPoint(
   ];
 }
 
+function drawGlyphTexture(ctx: CanvasRenderingContext2D, path: Path2D, color: Rgb, seed: number): void {
+  ctx.save();
+  ctx.clip(path);
+
+  for (let y = 2; y < 48; y += 3) {
+    if (hash2(y, seed, 50) > 0.18) {
+      ctx.fillStyle = rgba(COLORS.bgDark, 0.2 + hash2(y, seed, 51) * 0.12);
+      ctx.fillRect(0, y, 48, 0.82);
+    }
+  }
+
+  for (let y = 4; y < 48; y += 7) {
+    if (hash2(y, seed, 52) > 0.52) {
+      ctx.fillStyle = rgba(color, 0.16);
+      ctx.fillRect(0, y, 48, 0.62);
+    }
+  }
+
+  for (let i = 0; i < 58; i += 1) {
+    const x = hash2(i, seed, 53) * 48;
+    const y = hash2(i, seed, 54) * 48;
+    const dark = hash2(i, seed, 55) > 0.55;
+    ctx.fillStyle = dark ? rgba(COLORS.bgDark, 0.32) : rgba(COLORS.white, 0.1);
+    ctx.fillRect(x, y, 0.9, 0.9);
+  }
+
+  ctx.restore();
+}
+
+function drawInstrumentTrace(
+  ctx: CanvasRenderingContext2D,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  color: Rgb,
+  seed: number,
+  scale: number,
+): void {
+  drawLine(ctx, x1, y1, x2, y2, color, 0.1, Math.max(1, 0.7 * scale));
+  drawBrokenLine(ctx, x1, y1, x2, y2, color, seed, 0.78, Math.max(2, Math.round(2.1 * scale)), 0.52);
+  drawBrokenLine(ctx, x1, y1, x2, y2, COLORS.green, seed + 7, 0.2, Math.max(4, Math.round(4 * scale)), 0.18);
+  drawBrokenLine(ctx, x1, y1, x2, y2, COLORS.white, seed + 11, 0.12, Math.max(5, Math.round(5 * scale)), 0.16);
+}
+
 function drawGlyph(
   ctx: CanvasRenderingContext2D,
   node: SystemMapCanvasNode,
@@ -138,10 +183,14 @@ function drawGlyph(
     ctx.save();
     ctx.translate(x - size / 2, y - size / 2);
     ctx.scale(size / 48, size / 48);
-    ctx.fillStyle = rgba(color, 0.82);
+    ctx.fillStyle = rgba(color, 0.68);
     ctx.fill(path);
+    drawGlyphTexture(ctx, path, color, x + y);
     ctx.lineWidth = 1.2;
-    ctx.strokeStyle = rgba(COLORS.white, 0.14);
+    ctx.strokeStyle = rgba(color, 0.34);
+    ctx.stroke(path);
+    ctx.lineWidth = 0.55;
+    ctx.strokeStyle = rgba(COLORS.white, 0.08);
     ctx.stroke(path);
     ctx.restore();
 
@@ -244,9 +293,7 @@ function drawLinks(
   links.forEach((link, index) => {
     const [x1, y1] = projectSystemMapPoint(link.from, width, height, camera);
     const [x2, y2] = projectSystemMapPoint(link.to, width, height, camera);
-    drawLine(ctx, x1, y1, x2, y2, COLORS.cyan, 0.38, Math.max(1, 1.2 * scale));
-    drawBrokenLine(ctx, x1, y1, x2, y2, COLORS.green, index + 95, 0.2, 6, 0.24);
-    drawBrokenLine(ctx, x1, y1, x2, y2, COLORS.white, index + 120, 0.12, 8, 0.22);
+    drawInstrumentTrace(ctx, x1, y1, x2, y2, COLORS.cyan, index + 90, scale);
   });
 }
 
