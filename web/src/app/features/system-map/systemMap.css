@@ -7,7 +7,7 @@
 .desktop-root.is-system-map .workspace {
   inset: 0;
   overflow: hidden;
-  background: #120b10;
+  background: #020604;
 }
 
 .desktop-root.is-system-map .desktop-icons {
@@ -19,16 +19,16 @@
 }
 
 .system-map {
-  --fiche-bg: #120b10;
-  --fiche-panel: #1f0d11;
-  --fiche-panel-dark: #10070b;
-  --fiche-line: #6b281f;
-  --fiche-line-hot: #f04a22;
-  --fiche-amber: #f5b51a;
-  --fiche-green: #3add54;
-  --fiche-blue: #1b5d7c;
-  --fiche-paper: #dacbc2;
-  --fiche-muted: #8b6258;
+  --fiche-bg: #020604;
+  --fiche-panel: #06130e;
+  --fiche-panel-dark: #010302;
+  --fiche-line: #135c49;
+  --fiche-line-hot: #36ff78;
+  --fiche-amber: #ffd05a;
+  --fiche-cyan: #77efff;
+  --fiche-blue: #4c8dff;
+  --fiche-paper: #effff4;
+  --fiche-muted: #81a696;
   position: absolute;
   inset: 0;
   z-index: 10;
@@ -48,8 +48,8 @@
   background:
     repeating-linear-gradient(
       180deg,
-      rgba(255, 107, 45, 0.055) 0,
-      rgba(255, 107, 45, 0.055) 1px,
+      rgba(119, 239, 255, 0.045) 0,
+      rgba(119, 239, 255, 0.045) 1px,
       transparent 1px,
       transparent 4px
     );
@@ -64,7 +64,7 @@
   z-index: 21;
   pointer-events: none;
   box-shadow:
-    inset 0 0 0 1px rgba(107, 40, 31, 0.65),
+    inset 0 0 0 1px rgba(19, 92, 73, 0.65),
     inset 0 0 0 5px rgba(0, 0, 0, 0.16);
 }
 
@@ -74,8 +74,8 @@
   z-index: 0;
   pointer-events: none;
   background:
-    repeating-linear-gradient(90deg, rgba(107, 40, 31, 0.18) 0 1px, transparent 1px 128px),
-    repeating-linear-gradient(180deg, rgba(107, 40, 31, 0.18) 0 1px, transparent 1px 88px);
+    repeating-linear-gradient(90deg, rgba(19, 92, 73, 0.22) 0 1px, transparent 1px 128px),
+    repeating-linear-gradient(180deg, rgba(19, 92, 73, 0.22) 0 1px, transparent 1px 88px);
 }
 
 .system-map-hud {
@@ -87,7 +87,7 @@
   inset: 0;
   z-index: 2;
   overflow: hidden;
-  background: #210d11;
+  background: #020604;
   transition: right 180ms ease;
 }
 
@@ -101,7 +101,7 @@
   width: 100%;
   height: 100%;
   display: block;
-  background: #210d11;
+  background: #020604;
   image-rendering: pixelated;
   image-rendering: crisp-edges;
 }
@@ -139,18 +139,18 @@
 .system-map-node:hover,
 .system-map-node:focus-visible {
   outline: none;
-  border-color: rgba(240, 74, 34, 0.78);
+  border-color: rgba(54, 255, 120, 0.78);
   background:
-    repeating-linear-gradient(90deg, rgba(240, 74, 34, 0.16) 0 2px, transparent 2px 6px);
+    repeating-linear-gradient(90deg, rgba(54, 255, 120, 0.12) 0 2px, transparent 2px 6px);
 }
 
 .system-map-node.is-selected {
-  border-color: rgba(245, 181, 26, 0.86);
+  border-color: rgba(255, 208, 90, 0.86);
 }
 
 .system-map-node:focus-visible {
   box-shadow:
-    inset 0 0 0 1px rgba(218, 203, 194, 0.78),
+    inset 0 0 0 1px rgba(239, 255, 244, 0.78),
     0 0 0 2px rgba(16, 7, 11, 0.8);
 }
 
@@ -171,11 +171,11 @@
   padding: 18px 14px 14px;
   border: 1px solid var(--fiche-line);
   background:
-    repeating-linear-gradient(180deg, rgba(240, 74, 34, 0.06) 0 1px, transparent 1px 4px),
+    repeating-linear-gradient(180deg, rgba(54, 255, 120, 0.05) 0 1px, transparent 1px 4px),
     var(--fiche-panel-dark);
   box-shadow:
     inset 0 0 0 1px rgba(0, 0, 0, 0.72),
-    0 0 0 1px rgba(240, 74, 34, 0.12);
+    0 0 0 1px rgba(54, 255, 120, 0.12);
 }
 
 .system-map-app-shelf::before {
@@ -201,10 +201,10 @@
   place-items: center;
   gap: 6px;
   padding: 18px 8px 9px;
-  border: 1px solid rgba(107, 40, 31, 0.88);
+  border: 1px solid rgba(19, 92, 73, 0.88);
   background:
-    repeating-linear-gradient(90deg, rgba(240, 74, 34, 0.07) 0 1px, transparent 1px 5px),
-    #15090d;
+    repeating-linear-gradient(90deg, rgba(54, 255, 120, 0.06) 0 1px, transparent 1px 5px),
+    #010302;
   color: var(--fiche-line-hot);
   appearance: none;
   font-family: var(--font-mono);
@@ -222,7 +222,7 @@
   bottom: 6px;
   height: 3px;
   background:
-    linear-gradient(90deg, var(--fiche-line-hot) 0 58%, #3b1715 58% 100%);
+    linear-gradient(90deg, var(--fiche-line-hot) 0 58%, #0d2e24 58% 100%);
 }
 
 .system-map-app:hover,
@@ -231,12 +231,12 @@
   border-color: var(--fiche-amber);
   color: var(--fiche-amber);
   background:
-    repeating-linear-gradient(90deg, rgba(245, 181, 26, 0.1) 0 1px, transparent 1px 5px),
-    #190b0f;
+    repeating-linear-gradient(90deg, rgba(255, 208, 90, 0.1) 0 1px, transparent 1px 5px),
+    #06130e;
 }
 
 .system-map-app:focus-visible {
-  box-shadow: 0 0 0 2px rgba(218, 203, 194, 0.82);
+  box-shadow: 0 0 0 2px rgba(239, 255, 244, 0.82);
 }
 
 .system-map-icon {
@@ -279,8 +279,8 @@
   border-bottom: 0;
   border-radius: 0;
   background:
-    repeating-linear-gradient(180deg, rgba(240, 74, 34, 0.08) 0 1px, transparent 1px 4px),
-    #10070b;
+    repeating-linear-gradient(180deg, rgba(54, 255, 120, 0.06) 0 1px, transparent 1px 4px),
+    #010302;
   color: inherit;
   appearance: none;
   padding: 16px 16px 16px 20px;
@@ -305,7 +305,7 @@
 }
 
 .system-assistant-summary:focus-visible {
-  box-shadow: inset 0 0 0 2px rgba(218, 203, 194, 0.82);
+  box-shadow: inset 0 0 0 2px rgba(239, 255, 244, 0.82);
 }
 
 .system-assistant.is-open > .system-assistant-summary {
@@ -320,8 +320,8 @@
   place-items: center;
   border: 1px solid var(--fiche-line);
   background:
-    repeating-linear-gradient(90deg, rgba(240, 74, 34, 0.08) 0 1px, transparent 1px 4px),
-    #170a0e;
+    repeating-linear-gradient(90deg, rgba(119, 239, 255, 0.06) 0 1px, transparent 1px 4px),
+    #06130e;
   color: var(--fiche-line-hot);
 }
 
@@ -332,7 +332,7 @@
   top: 6px;
   width: 7px;
   height: 7px;
-  background: var(--fiche-green);
+  background: var(--fiche-line-hot);
 }
 
 .system-assistant-avatar svg {
@@ -366,7 +366,7 @@
   align-self: end;
   padding: 4px 6px;
   border: 1px solid var(--fiche-line);
-  color: var(--fiche-green);
+  color: var(--fiche-line-hot);
   font-size: 0.62rem;
   font-weight: 800;
 }
@@ -384,8 +384,8 @@
   padding: 18px 14px 14px;
   border-left: 1px solid var(--fiche-line);
   background:
-    repeating-linear-gradient(180deg, rgba(240, 74, 34, 0.08) 0 1px, transparent 1px 4px),
-    #10070b;
+    repeating-linear-gradient(180deg, rgba(54, 255, 120, 0.06) 0 1px, transparent 1px 4px),
+    #010302;
 }
 
 .system-assistant-panel[hidden] {
@@ -429,14 +429,14 @@
 }
 
 .system-assistant-header em {
-  color: var(--fiche-green);
+  color: var(--fiche-line-hot);
 }
 
 .system-assistant-header button {
   min-width: 42px;
   min-height: 32px;
   border: 1px solid var(--fiche-line);
-  background: #170a0e;
+  background: #06130e;
   color: var(--fiche-line-hot);
   appearance: none;
   font-family: var(--font-mono);
@@ -453,7 +453,7 @@
 }
 
 .system-assistant-header button:focus-visible {
-  box-shadow: 0 0 0 2px rgba(218, 203, 194, 0.82);
+  box-shadow: 0 0 0 2px rgba(239, 255, 244, 0.82);
 }
 
 .system-assistant-meters {
@@ -466,8 +466,8 @@
   position: relative;
   min-height: 40px;
   padding: 8px 7px 12px;
-  border: 1px solid rgba(107, 40, 31, 0.86);
-  background: #16090d;
+  border: 1px solid rgba(19, 92, 73, 0.86);
+  background: #06130e;
   color: var(--fiche-muted);
   font-size: 0.62rem;
   font-weight: 800;
@@ -484,7 +484,7 @@
   bottom: 7px;
   height: 3px;
   background:
-    repeating-linear-gradient(90deg, var(--fiche-line-hot) 0 7px, #351512 7px 12px);
+    repeating-linear-gradient(90deg, var(--fiche-line-hot) 0 7px, #0d2e24 7px 12px);
 }
 
 .system-assistant-feed {
@@ -500,7 +500,7 @@
   margin: 0 0 8px;
   padding: 9px 10px;
   border-left: 2px solid var(--fiche-line-hot);
-  background: #15090d;
+  background: #06130e;
 }
 
 .system-assistant-feed p span {
@@ -516,7 +516,7 @@
   align-items: center;
   min-height: 46px;
   border: 1px solid var(--fiche-line);
-  background: #16090d;
+  background: #06130e;
   color: var(--fiche-paper);
 }
 
@@ -538,7 +538,7 @@
 .system-assistant-composer button {
   height: 40px;
   border: 0;
-  border-right: 1px solid rgba(107, 40, 31, 0.82);
+  border-right: 1px solid rgba(19, 92, 73, 0.82);
   background: transparent;
   color: var(--fiche-line-hot);
   appearance: none;
@@ -550,20 +550,20 @@
 
 .system-assistant-composer button:last-child {
   border-right: 0;
-  border-left: 1px solid rgba(107, 40, 31, 0.82);
+  border-left: 1px solid rgba(19, 92, 73, 0.82);
   color: var(--fiche-amber);
 }
 
 .system-assistant-composer button:hover,
 .system-assistant-composer button:focus-visible {
   outline: none;
-  background: #210d11;
+  background: #0d2e24;
   color: var(--fiche-paper);
 }
 
 .system-assistant-composer button:focus-visible,
 .system-assistant-composer input:focus-visible {
-  box-shadow: inset 0 0 0 2px rgba(218, 203, 194, 0.82);
+  box-shadow: inset 0 0 0 2px rgba(239, 255, 244, 0.82);
 }
 
 @media (max-width: 980px) {

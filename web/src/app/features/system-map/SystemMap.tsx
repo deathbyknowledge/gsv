@@ -309,21 +309,19 @@ function useSystemMapRaster(
 ): void {
   useEffect(() => {
     const canvas = canvasRef.current;
-    const context = canvas?.getContext("2d");
+    const context = canvas?.getContext("2d", { willReadFrequently: true });
 
     if (!canvas || !context) {
       return undefined;
     }
 
-    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     let frame = 0;
-    let lastPaint = 0;
     let observer: ResizeObserver | undefined;
 
-    const paint = (now: number): void => {
+    const paint = (): void => {
       const rect = canvas.getBoundingClientRect();
-      const width = Math.max(320, Math.round(rect.width / 2.2));
-      const height = Math.max(220, Math.round(rect.height / 2.2));
+      const width = Math.max(420, Math.round(rect.width / 1.45));
+      const height = Math.max(300, Math.round(rect.height / 1.45));
 
       if (canvas.width !== width || canvas.height !== height) {
         canvas.width = width;
@@ -334,31 +332,27 @@ function useSystemMapRaster(
         nodes,
         links,
         selection: selection ?? "overview",
-        time: now / 1000,
+        time: 0,
       });
     };
 
-    const tick = (now: number): void => {
-      if (now - lastPaint > 90) {
-        paint(now);
-        lastPaint = now;
+    const schedulePaint = (): void => {
+      if (frame) {
+        window.cancelAnimationFrame(frame);
       }
 
-      if (!reducedMotion) {
-        frame = window.requestAnimationFrame(tick);
-      }
+      frame = window.requestAnimationFrame(() => {
+        paint();
+        frame = 0;
+      });
     };
 
     if ("ResizeObserver" in window) {
-      observer = new ResizeObserver(() => paint(performance.now()));
+      observer = new ResizeObserver(schedulePaint);
       observer.observe(canvas);
     }
 
-    paint(performance.now());
-
-    if (!reducedMotion) {
-      frame = window.requestAnimationFrame(tick);
-    }
+    schedulePaint();
 
     return () => {
       observer?.disconnect();
