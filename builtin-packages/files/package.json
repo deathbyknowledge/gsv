@@ -3,7 +3,7 @@
   "version": "0.2.6",
   "type": "module",
   "dependencies": {
-    "@humansandmachines/gsv": "file:../../packages/gsv",
+    "@humansandmachines/gsv": "0.0.2",
     "preact": "^10.27.2"
   }
 }

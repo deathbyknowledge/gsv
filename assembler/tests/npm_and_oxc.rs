@@ -357,7 +357,10 @@ export default definePackage;"#,
 
     let tarball_url = "https://registry.example/@humansandmachines/gsv/-/gsv-0.0.1.tgz";
     let client = MockNpmRegistryClient::default()
-        .with_package("@humansandmachines/gsv", packument(&[("0.0.1", tarball_url)]))
+        .with_package(
+            "@humansandmachines/gsv",
+            packument(&[("0.0.1", tarball_url)]),
+        )
         .with_tarball(
             tarball_url,
             tarball(&[

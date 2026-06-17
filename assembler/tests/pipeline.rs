@@ -362,7 +362,7 @@ fn install_plan_prefers_lockfile_versions() {
 }
 
 #[test]
-fn install_plan_skips_local_file_workspace_and_dev_dependencies() {
+fn install_plan_skips_explicit_local_specs_and_dev_dependencies() {
     let mut request = base_request();
     request.analysis.package_json.dependencies.extend(
         [
@@ -407,7 +407,7 @@ fn install_plan_skips_local_file_workspace_and_dev_dependencies() {
         .map(|item| item.name.as_str())
         .collect();
 
-    assert_eq!(names, vec!["react"]);
+    assert_eq!(names, vec!["@humansandmachines/gsv", "react"]);
 }
 
 #[test]

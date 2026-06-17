@@ -12,7 +12,7 @@
     "test:run": "vitest run"
   },
   "dependencies": {
-    "@humansandmachines/gsv": "file:../packages/gsv",
+    "@humansandmachines/gsv": "0.0.2",
     "@mintplex-labs/piper-tts-web": "^1.0.4",
     "@tanstack/preact-query": "^5.101.0",
     "preact": "^10.29.2"
