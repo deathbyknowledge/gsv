@@ -27,7 +27,7 @@ type PersistedSessionToken = {
   expiresAt: number | null;
 };
 
-export type SessionPhase = "setup" | "setup-complete" | "locked" | "authenticating" | "ready";
+export type SessionPhase = "booting" | "setup" | "setup-complete" | "locked" | "authenticating" | "ready";
 
 export type SessionSnapshot = {
   phase: SessionPhase;
@@ -197,16 +197,17 @@ function waitFor(ms: number): Promise<void> {
 export function createSessionService(client: GatewayClient): SessionService {
   const listeners = new Set<(snapshot: SessionSnapshot) => void>();
 
+  let currentSessionToken: PersistedSessionToken | null = readPersistedToken();
+
   let snapshot: SessionSnapshot = {
-    phase: "locked",
+    phase: "booting",
     url: deriveGatewayUrlFromOrigin(),
-    username: readStored(STORAGE_USERNAME) ?? "",
+    username: currentSessionToken?.username ?? readStored(STORAGE_USERNAME) ?? "",
     connectionId: null,
-    message: null,
+    message: currentSessionToken ? "Restoring session..." : "Starting GSV...",
     setupResult: null,
   };
 
-  let currentSessionToken: PersistedSessionToken | null = readPersistedToken();
   let pendingRevokes = Array.from(new Set(readPersistedRevokes()));
   let refreshTimerId: number | null = null;
   let reconnectTimerId: number | null = null;
@@ -761,6 +762,15 @@ export function createSessionService(client: GatewayClient): SessionService {
           message: null,
           setupResult: null,
         });
+      } else {
+        setSnapshot({
+          phase: "locked",
+          url,
+          username: snapshot.username,
+          connectionId: null,
+          message: null,
+          setupResult: null,
+        });
       }
       return;
     }
@@ -777,12 +787,21 @@ export function createSessionService(client: GatewayClient): SessionService {
           message: null,
           setupResult: null,
         });
+      } else {
+        setSnapshot({
+          phase: "locked",
+          url,
+          username: persisted.username,
+          connectionId: null,
+          message: "Session expired. Sign in again.",
+          setupResult: null,
+        });
       }
       return;
     }
 
     setSnapshot({
-      phase: "authenticating",
+      phase: "booting",
       url,
       username: persisted.username,
       connectionId: null,

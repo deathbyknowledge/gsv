@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { OnboardingDraft, OnboardingLane } from "@gsv/protocol/syscalls/system";
 import { createOnboardingService, type OnboardingSnapshot } from "../../../onboarding-service";
 import type { SessionService, SessionSnapshot } from "../../../session-service";
+import { BootScreen } from "./BootScreen";
 import { LoginScreen } from "./LoginScreen";
 import { ProvisioningScreen } from "./ProvisioningScreen";
 import { SetupCompleteScreen } from "./SetupCompleteScreen";
@@ -247,8 +248,12 @@ export function SessionScreens({ session, snapshot }: SessionScreensProps) {
   };
 
   return (
-    <section class="session-screen" data-session-screen hidden={visibleView === "desktop"} ref={screenRef}>
-      <div class="session-stage">
+    <section class="session-screen" data-session-screen data-session-view={visibleView} hidden={visibleView === "desktop"} ref={screenRef}>
+      <div class={`session-stage${visibleView === "booting" ? " session-stage-booting" : ""}`}>
+        <BootScreen
+          visible={visibleView === "booting"}
+          message={snapshot.message}
+        />
         <LoginScreen
           visible={visibleView === "login"}
           busy={busy}

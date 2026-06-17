@@ -11,7 +11,7 @@ export function useSessionFocus(
 ) {
   useEffect(() => {
     const root = screenRef.current;
-    if (!root || visibleView === "desktop" || visibleView === "provisioning") {
+    if (!root || visibleView === "booting" || visibleView === "desktop" || visibleView === "provisioning") {
       return;
     }
 

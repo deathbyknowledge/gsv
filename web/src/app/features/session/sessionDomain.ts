@@ -7,7 +7,7 @@ import type { SessionSnapshot, SessionSetupInput } from "../../../session-servic
 
 export type PendingAction = "login" | "setup" | "continue" | null;
 export type AdminMode = "same" | "custom";
-export type SessionView = "login" | "setup" | "provisioning" | "complete" | "desktop";
+export type SessionView = "booting" | "login" | "setup" | "provisioning" | "complete" | "desktop";
 export type InstallPlatform = "macos" | "linux" | "windows";
 
 export type SetupLaneMeta = {
@@ -361,6 +361,9 @@ export function resolveVisibleView(
 ): SessionView {
   if (snapshot.phase === "ready") {
     return "desktop";
+  }
+  if (snapshot.phase === "booting") {
+    return "booting";
   }
   if (pendingAction === "setup" && snapshot.phase !== "setup-complete") {
     return "provisioning";
