@@ -1,5 +1,5 @@
 import { useEffect } from "preact/hooks";
-import type { SessionService, SessionSnapshot } from "../../../session-service";
+import type { SessionService, SessionSnapshot } from "../../services/session/sessionService";
 
 type UseSessionFrameBridgeOptions = {
   shellRootNode: HTMLElement | null;

@@ -1,5 +1,5 @@
 import type { RefObject } from "preact";
-import type { SessionSnapshot } from "../../../session-service";
+import type { SessionSnapshot } from "../../services/session/sessionService";
 import { CompleteStageRail, OnboardingHelp, SessionError } from "./SessionChrome";
 import { setupResultViewModel, type AdminMode } from "./sessionDomain";
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { SessionPhase, SessionSnapshot } from "../../../session-service";
+import type { SessionPhase, SessionSnapshot } from "../../services/session/sessionService";
 import { resolveVisibleView, type PendingAction } from "./sessionDomain";
 
 function snapshot(phase: SessionPhase): SessionSnapshot {

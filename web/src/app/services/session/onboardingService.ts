@@ -1,4 +1,4 @@
-import type { GatewayClient } from "./gateway-client";
+import type { GatewayClient } from "../../../gateway-client";
 import type {
   OnboardingDetailStep,
   OnboardingAssistMessage,

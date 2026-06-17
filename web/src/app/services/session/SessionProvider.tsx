@@ -1,7 +1,7 @@
 import type { ComponentChildren } from "preact";
 import { createContext } from "preact";
 import { useContext, useEffect, useState } from "preact/hooks";
-import { createSessionService, type SessionService, type SessionSnapshot } from "../../../session-service";
+import { createSessionService, type SessionService, type SessionSnapshot } from "./sessionService";
 import { useGateway } from "../gateway/GatewayProvider";
 
 type SessionContextValue = {

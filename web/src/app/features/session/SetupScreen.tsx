@@ -4,8 +4,8 @@ import type {
   OnboardingDraft,
   OnboardingLane,
 } from "@gsv/protocol/syscalls/system";
-import type { OnboardingSnapshot } from "../../../onboarding-service";
-import type { SessionSnapshot } from "../../../session-service";
+import type { OnboardingSnapshot } from "../../services/session/onboardingService";
+import type { SessionSnapshot } from "../../services/session/sessionService";
 import { OnboardingHelp, SessionError, SetupStageRail } from "./SessionChrome";
 import {
   SETUP_LANE_META,

@@ -1,4 +1,4 @@
-import type { SessionService, SessionSnapshot } from "../../../session-service";
+import type { SessionService, SessionSnapshot } from "../../services/session/sessionService";
 import { BootScreen } from "./BootScreen";
 import { LoginScreen } from "./LoginScreen";
 import { ProvisioningScreen } from "./ProvisioningScreen";

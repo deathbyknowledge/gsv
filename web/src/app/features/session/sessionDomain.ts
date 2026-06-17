@@ -3,7 +3,7 @@ import type {
   OnboardingDraft,
   OnboardingLane,
 } from "@gsv/protocol/syscalls/system";
-import type { SessionSnapshot, SessionSetupInput } from "../../../session-service";
+import type { SessionSnapshot, SessionSetupInput } from "../../services/session/sessionService";
 
 export type PendingAction = "login" | "setup" | "continue" | null;
 export type AdminMode = "same" | "custom";

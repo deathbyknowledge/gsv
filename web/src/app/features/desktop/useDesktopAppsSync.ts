@@ -1,7 +1,7 @@
 import type { RefObject } from "preact";
 import { useEffect } from "preact/hooks";
 import type { AppManifest } from "../../../apps";
-import type { SessionSnapshot } from "../../../session-service";
+import type { SessionSnapshot } from "../../services/session/sessionService";
 import type { DesktopRuntime } from "./useDesktopRuntime";
 
 type UseDesktopAppsSyncOptions = {
