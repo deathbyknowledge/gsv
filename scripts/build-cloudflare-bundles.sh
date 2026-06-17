@@ -14,17 +14,22 @@ install_dir() {
   npm ci --prefix "$dir" --workspaces=false
 }
 
-install_workspace() {
-  local workspace="$1"
+install_workspaces() {
+  local args=()
+  local workspace
+  for workspace in "$@"; do
+    args+=(--workspace "$workspace")
+  done
   (
     cd "${ROOT_DIR}"
-    npm ci --workspace "$workspace" --include-workspace-root=false
+    npm ci "${args[@]}" --include-workspace-root=false --ignore-scripts
   )
 }
 
 echo "==> Installing dependencies"
-install_workspace "assembler"
-install_workspace "packages/gsv"
+# Keep these root workspaces in one npm ci call; separate workspace installs prune
+# root node_modules and can remove either assembler's wrangler or the SDK deps.
+install_workspaces "assembler" "packages/gsv"
 npm run build --workspace packages/gsv
 install_dir "${ROOT_DIR}/gateway"
 install_dir "${ROOT_DIR}/web"
