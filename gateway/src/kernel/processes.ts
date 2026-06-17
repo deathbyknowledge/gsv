@@ -10,7 +10,7 @@
  * the run-as agent's home (conversation transcripts), not in the executor.
  */
 
-import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
+import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { ProcContextFile } from "../syscalls/proc";
 import type { PackageInstallScope } from "./packages";
 

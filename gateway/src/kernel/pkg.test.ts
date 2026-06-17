@@ -398,7 +398,7 @@ describe("pkg syscalls", () => {
             name: "@alice/weather",
             version: "0.1.0",
             type: "module",
-            dependencies: { "@gsv/package": "^0.1.0" },
+            dependencies: { "@humansandmachines/gsv": "0.0.1" },
             dev_dependencies: {},
           },
           definition: {
@@ -586,7 +586,7 @@ describe("pkg syscalls", () => {
             name: "@alice/weather",
             version: "0.1.0",
             type: "module",
-            dependencies: { "@gsv/package": "^0.1.0" },
+            dependencies: { "@humansandmachines/gsv": "0.0.1" },
             dev_dependencies: {},
           },
           definition: {
@@ -751,7 +751,7 @@ describe("pkg syscalls", () => {
             name: "@alice/weather",
             version: "0.1.0",
             type: "module",
-            dependencies: { "@gsv/package": "^0.1.0" },
+            dependencies: { "@humansandmachines/gsv": "0.0.1" },
             dev_dependencies: {},
           },
           definition: {

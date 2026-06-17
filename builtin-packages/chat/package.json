@@ -6,7 +6,7 @@
     "@chenglou/pretext": "^0.0.7",
     "@dicebear/bottts-neutral": "^9.4.2",
     "@dicebear/core": "^9.4.2",
-    "@gsv/package": "file:../../shared/package",
+    "@humansandmachines/gsv": "file:../../packages/gsv",
     "dompurify": "^3.4.2",
     "marked": "^16.4.2",
     "preact": "^10.27.2"

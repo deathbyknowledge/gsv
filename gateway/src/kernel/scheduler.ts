@@ -1,4 +1,4 @@
-import type { ConnectionIdentity } from "@gsv/protocol/syscalls/system";
+import type { ConnectionIdentity } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "./context";
 import { resolveCallerOwnerUid } from "./context";
 import { hasCapability } from "./capabilities";

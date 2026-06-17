@@ -1,4 +1,4 @@
-import type { RepoReadResult } from "@gsv/protocol/syscalls/repositories";
+import type { RepoReadResult } from "@humansandmachines/gsv/protocol";
 
 export type WikiKernelClient = {
   request<T = unknown>(name: string, args: unknown): Promise<T>;

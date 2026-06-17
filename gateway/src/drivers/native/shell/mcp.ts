@@ -17,7 +17,7 @@ import type {
   SysMcpServerSummary,
   SysMcpToolSummary,
   SysMcpTransportType,
-} from "@gsv/protocol/syscalls/system";
+} from "@humansandmachines/gsv/protocol";
 import {
   SYS_MCP_ADD,
   SYS_MCP_CALL,

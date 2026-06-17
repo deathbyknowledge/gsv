@@ -1,4 +1,4 @@
-import { consumePendingAppOpen, getAppClientId } from "@gsv/package/host";
+import { consumePendingAppOpen, getAppClientId } from "@humansandmachines/gsv/sdk/host";
 import type { ShellRoute } from "./types";
 
 export function readLaunchUrl(): URL {

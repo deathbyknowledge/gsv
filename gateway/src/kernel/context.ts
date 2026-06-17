@@ -7,7 +7,7 @@
 
 import type { Connection } from "agents";
 import type { MCPClientManager } from "agents/mcp/client";
-import type { ConnectionIdentity } from "@gsv/protocol/syscalls/system";
+import type { ConnectionIdentity } from "@humansandmachines/gsv/protocol";
 import type { AuthStore } from "./auth-store";
 import type { CapabilityStore } from "./capabilities";
 import type { ConfigStore } from "./config";

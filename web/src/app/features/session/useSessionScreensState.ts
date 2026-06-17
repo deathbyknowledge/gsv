@@ -1,6 +1,6 @@
 import type { RefObject } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import type { OnboardingDraft, OnboardingLane } from "@gsv/protocol/syscalls/system";
+import type { OnboardingDraft, OnboardingLane } from "@humansandmachines/gsv/protocol";
 import { createOnboardingService, type OnboardingSnapshot } from "../../services/session/onboardingService";
 import type { SessionService, SessionSnapshot } from "../../services/session/sessionService";
 import {

@@ -24,7 +24,7 @@ import type {
   AccountRelation,
   AccountSummary,
   ProcessIdentity,
-} from "@gsv/protocol/syscalls/system";
+} from "@humansandmachines/gsv/protocol";
 import type { RequestFrame } from "../protocol/frames";
 import { isLocked } from "../auth/shadow";
 import { sendFrameToProcess } from "../shared/utils";

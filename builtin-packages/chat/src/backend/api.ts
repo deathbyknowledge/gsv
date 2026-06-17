@@ -1,4 +1,4 @@
-import type { PackageViewerBinding } from "@gsv/package/backend";
+import type { PackageViewerBinding } from "@humansandmachines/gsv/sdk/backend";
 
 type KernelClient = {
   request(call: string, args: Record<string, unknown>): Promise<any>;

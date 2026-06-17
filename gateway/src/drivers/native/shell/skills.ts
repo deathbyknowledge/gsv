@@ -8,7 +8,7 @@ import {
   resolveSkillDocument,
   type SkillDocument,
 } from "../../../kernel/skills";
-import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
+import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 
 export function buildSkillsCommand(fs: GsvFs, ctx: KernelContext, identity: ProcessIdentity) {
   return defineCommand("skills", async (args): Promise<ExecResult> => {

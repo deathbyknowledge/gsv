@@ -3,7 +3,7 @@ import type {
   OnboardingDetailStep,
   OnboardingDraft,
   OnboardingLane,
-} from "@gsv/protocol/syscalls/system";
+} from "@humansandmachines/gsv/protocol";
 import type { OnboardingSnapshot } from "../../services/session/onboardingService";
 import type { SessionSnapshot } from "../../services/session/sessionService";
 import { OnboardingHelp, SessionError, SetupStageRail } from "./SessionChrome";

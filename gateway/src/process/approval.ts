@@ -6,7 +6,7 @@ import {
   type StatementNode,
   type WordNode,
 } from "just-bash";
-import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
+import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 
 export type ToolApprovalAction = "auto" | "ask" | "deny";
 

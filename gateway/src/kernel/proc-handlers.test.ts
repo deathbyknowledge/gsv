@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
+import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { RequestFrame, ResponseFrame } from "../protocol/frames";
 import type { ProcIpcSendResult } from "../syscalls/proc";
 import type { KernelContext } from "./context";

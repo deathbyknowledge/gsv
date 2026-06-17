@@ -1,4 +1,4 @@
-import type { AppLaunchResult, AppOpenArgs } from "@gsv/protocol/syscalls/apps";
+import type { AppLaunchResult, AppOpenArgs } from "@humansandmachines/gsv/protocol";
 import type { AppManifest } from "../../../../apps";
 import type { GatewayClientLike } from "../../../services/gateway/gatewayClient";
 import { attachHostBridge } from "../../../../host-bridge";

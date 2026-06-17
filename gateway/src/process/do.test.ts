@@ -3,7 +3,7 @@ import { env, runInDurableObject, runDurableObjectAlarm } from "cloudflare:test"
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import type { Process } from "./do";
 import { Kernel } from "../kernel/do";
-import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
+import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { RequestFrame, ResponseFrame, ResponseOkFrame } from "../protocol/frames";
 import { getProcessByPid, getKernelPtr } from "../shared/utils";
 

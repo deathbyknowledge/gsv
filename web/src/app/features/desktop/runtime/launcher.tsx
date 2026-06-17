@@ -1,4 +1,4 @@
-import { normalizeThreadContext } from "@gsv/app-link";
+import { normalizeThreadContext } from "@humansandmachines/gsv/sdk/host";
 import { render as renderPreact } from "preact";
 import type { AppIcon, AppManifest } from "../../../../apps";
 import { OPEN_APP_EVENT, resolveOpenAppDetail, type OpenAppEventDetail } from "../../../../app-link";

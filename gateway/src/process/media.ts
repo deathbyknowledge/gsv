@@ -1,6 +1,6 @@
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 
-import type { ProcMediaInput } from "@gsv/protocol/syscalls/proc";
+import type { ProcMediaInput } from "@humansandmachines/gsv/protocol";
 import {
   DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
   DEFAULT_MAX_AUDIO_TRANSCRIPTION_BYTES,

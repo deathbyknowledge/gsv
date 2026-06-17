@@ -8,10 +8,6 @@ use crate::diagnostics::{has_errors, PackageAssemblyDiagnostic};
 use crate::model::{
     PackageAssemblyRequest, PackageAssemblyTarget, PackageDefinition, PackageJsonDefinition,
 };
-use crate::sdk_fallback::{
-    GSV_APP_LINK_FALLBACK_FILES, GSV_APP_LINK_NAME, GSV_PACKAGE_SDK_FALLBACK_FILES,
-    GSV_PACKAGE_SDK_NAME,
-};
 use crate::virtual_fs::{dirname, extension, join_posix, resolve_from_root, VirtualFileTree};
 
 const SUPPORTED_BROWSER_ENTRY_EXTENSIONS: &[&str] =
@@ -397,8 +393,6 @@ pub fn prepare_sources(validated: &ValidatedRequest) -> StageOutcome<PreparedSou
         }
     }
 
-    inject_builtin_sdk_files(&mut files);
-
     let root_package = build_root_package(
         &validated.request.analysis.package_root,
         &validated.request.analysis.package_json,
@@ -575,30 +569,6 @@ fn collect_workspace_packages(
     }
 
     packages
-}
-
-fn inject_builtin_sdk_files(files: &mut VirtualFileTree) {
-    if !repo_declares_package(files, GSV_APP_LINK_NAME) {
-        for (path, content) in GSV_APP_LINK_FALLBACK_FILES {
-            files.insert_if_missing(path, content);
-        }
-    }
-
-    if !repo_declares_package(files, GSV_PACKAGE_SDK_NAME) {
-        for (path, content) in GSV_PACKAGE_SDK_FALLBACK_FILES {
-            files.insert_if_missing(path, content);
-        }
-    }
-}
-
-fn repo_declares_package(files: &VirtualFileTree, package_name: &str) -> bool {
-    files
-        .iter()
-        .filter(|(path, _)| path.ends_with("/package.json") || path.as_str() == "package.json")
-        .filter_map(|(_, content)| {
-            serde_json::from_str::<WorkspacePackageManifestFile>(content).ok()
-        })
-        .any(|manifest| manifest.name == package_name)
 }
 
 fn collect_locked_dependency_versions(

@@ -73,7 +73,7 @@ fn request() -> PackageAssemblyRequest {
         files: [
             (
                 "apps/demo/src/package.ts".to_string(),
-                r#"import { definePackage } from "@gsv/package/manifest";
+                r#"import { definePackage } from "@humansandmachines/gsv/sdk";
 export default definePackage({
   meta: { displayName: "Demo" },
   browser: { entry: "./src/main.tsx", assets: ["./src/styles.css"] },
@@ -103,6 +103,22 @@ export default definePackage({
             (
                 "apps/demo/src/styles.css".to_string(),
                 "body { color: red; }".to_string(),
+            ),
+            (
+                "packages/gsv/package.json".to_string(),
+                r#"{
+  "name": "@humansandmachines/gsv",
+  "version": "0.0.1",
+  "type": "module",
+  "exports": {
+    "./sdk": "./dist/sdk.js"
+  }
+}"#
+                .to_string(),
+            ),
+            (
+                "packages/gsv/dist/sdk.js".to_string(),
+                "export function definePackage(definition) { return definition; }".to_string(),
             ),
         ]
         .into_iter()

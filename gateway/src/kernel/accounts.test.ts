@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { KernelContext } from "./context";
-import type { ConnectionIdentity, ProcessIdentity } from "@gsv/protocol/syscalls/system";
+import type { ConnectionIdentity, ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { ensurePersonalAgent, handleAccountCreate, handleAccountList } from "./agents";
 
 type PasswdRow = { username: string; uid: number; gid: number; gecos: string; home: string; shell: string };

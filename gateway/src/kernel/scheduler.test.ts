@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { env, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { getAgentByName } from "agents";
-import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
+import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { getProcessByPid } from "../shared/utils";
 import type { RequestFrame } from "../protocol/frames";
 import { Kernel } from "./do";

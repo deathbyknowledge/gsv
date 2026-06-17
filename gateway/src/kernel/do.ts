@@ -13,7 +13,7 @@ import type {
   ConnectionIdentity,
   ProcessIdentity,
   SysSetupResult,
-} from "@gsv/protocol/syscalls/system";
+} from "@humansandmachines/gsv/protocol";
 import {
   BINARY_FRAME_DATA,
   BINARY_FRAME_END,
@@ -21,10 +21,10 @@ import {
   buildBinaryFrame,
   parseBinaryFrame,
   type BinaryFrame,
-} from "@gsv/protocol/binary-frame";
+} from "@humansandmachines/gsv/protocol";
 import type { ProcHilRequest } from "../syscalls/proc";
 import type { SyscallName } from "../syscalls";
-import type { PkgPublicListResult } from "@gsv/protocol/syscalls/packages";
+import type { PkgPublicListResult } from "@humansandmachines/gsv/protocol";
 import type {
   AdapterOutboundMessage,
 } from "../adapter-interface";

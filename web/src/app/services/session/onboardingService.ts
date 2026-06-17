@@ -7,7 +7,7 @@ import type {
   OnboardingLane,
   OnboardingMode,
   OnboardingStage,
-} from "@gsv/protocol/syscalls/system";
+} from "@humansandmachines/gsv/protocol";
 
 const STORAGE_ONBOARDING = "gsv.ui.onboarding.v1";
 

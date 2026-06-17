@@ -1,3 +1,5 @@
+import type { ArgsOf, ResultOf, SyscallName } from "@humansandmachines/gsv/protocol";
+
 type GatewayErrorShape = {
   code: number;
   message: string;
@@ -69,6 +71,11 @@ export type GatewayClientIdentity = {
 
 export type GatewayRpcClientOptions = {
   client?: Partial<GatewayClientIdentity>;
+};
+
+export type GatewayClientCall = {
+  <S extends SyscallName>(call: S, args: ArgsOf<S>): Promise<ResultOf<S>>;
+  <T = unknown>(call: string, args?: unknown): Promise<T>;
 };
 
 type PendingRequest = {
@@ -282,14 +289,22 @@ export class GatewayRpcClient {
     });
   }
 
-  async call<T = unknown>(call: string, args: unknown = {}): Promise<T> {
-    return (await this.request(call, args)) as T;
+  async call<S extends SyscallName>(call: S, args: ArgsOf<S>): Promise<ResultOf<S>>;
+  async call<T = unknown>(call: string, args?: unknown): Promise<T>;
+  async call(call: string, args: unknown = {}): Promise<unknown> {
+    return await this.request(call, args);
   }
 
-  protected async callWithoutConnect<T>(url: string, call: string, args: unknown): Promise<T> {
+  protected async callWithoutConnect<S extends SyscallName>(
+    url: string,
+    call: S,
+    args: ArgsOf<S>,
+  ): Promise<ResultOf<S>>;
+  protected async callWithoutConnect<T>(url: string, call: string, args: unknown): Promise<T>;
+  protected async callWithoutConnect(url: string, call: string, args: unknown): Promise<unknown> {
     const socket = await this.openSocket(url);
     try {
-      return await this.requestOverSocket<T>(socket, call, args);
+      return await this.requestOverSocket(socket, call, args);
     } finally {
       if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
         socket.close(1000, "request complete");

@@ -11,7 +11,7 @@ The current protocol is syscall-based:
 The source of truth is:
 
 - `gateway/src/protocol/frames.ts`
-- `shared/protocol/src/syscalls/system.ts`
+- `packages/gsv/src/protocol/syscalls/system.ts`
 - `gateway/src/kernel/connect.ts`
 - `gateway/src/kernel/dispatch.ts`
 

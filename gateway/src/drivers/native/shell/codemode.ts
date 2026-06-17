@@ -3,7 +3,7 @@ import type { ExecResult } from "just-bash";
 import { GsvFs } from "../../../fs/gsv-fs";
 import { resolveUserPath } from "../../../fs";
 import type { KernelContext } from "../../../kernel/context";
-import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
+import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { sendFrameToProcess } from "../../../shared/utils";
 import { ensureDefaultConversationExecutor } from "../../../kernel/agents";
 import { CODEMODE_RUN } from "../../../syscalls/constants";

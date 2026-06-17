@@ -9,7 +9,7 @@ import type {
   SysLinkResult,
   SysUnlinkArgs,
   SysUnlinkResult,
-} from "@gsv/protocol/syscalls/system";
+} from "@humansandmachines/gsv/protocol";
 
 export function handleSysLinkConsume(
   args: SysLinkConsumeArgs,

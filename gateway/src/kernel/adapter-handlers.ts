@@ -22,7 +22,7 @@ import type {
   AdapterStatusResult,
 } from "../syscalls/adapter";
 import type { KernelContext } from "./context";
-import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
+import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { RequestFrame } from "../protocol/frames";
 import { sendFrameToProcess } from "../shared/utils";
 import type { InteractionOrigin } from "../syscalls/interaction-origin";

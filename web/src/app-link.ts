@@ -4,7 +4,7 @@ import {
   type OpenAppEventDetail,
   type OpenAppRequest,
   type ResolvedOpenAppDetail,
-} from "@gsv/app-link";
+} from "@humansandmachines/gsv/sdk/host";
 
 const PENDING_APP_OPEN_KEY = "__gsvPendingAppOpenRequests";
 
@@ -26,7 +26,7 @@ export type {
   ShellOpenPayload,
   ThreadContext,
   WikiOpenPayload,
-} from "@gsv/app-link";
+} from "@humansandmachines/gsv/sdk/host";
 
 function getPendingStore(): PendingAppOpenStore {
   const existing = window[PENDING_APP_OPEN_KEY];

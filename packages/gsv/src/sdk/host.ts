@@ -2,33 +2,37 @@ import {
   OPEN_APP_EVENT,
   buildOpenAppRoute,
   type OpenAppRequest,
-} from "@gsv/app-link";
+} from "./app-link";
 import { getAppBoot, hasAppBoot } from "./browser";
 
 export type HostStatus = {
   connected: boolean;
 };
 
-export type HostSignalHandler = (signal: string, payload: unknown) => void;
 export type HostStatusHandler = (status: HostStatus) => void;
 
 export type {
   ChatOpenPayload,
   FilesOpenPayload,
+  OpenAppEventDetail,
   OpenAppRequest,
+  ResolvedOpenAppDetail,
   ShellOpenPayload,
   ThreadContext,
   WikiOpenPayload,
-} from "@gsv/app-link";
+} from "./app-link";
+
+export {
+  OPEN_APP_EVENT,
+  buildOpenAppRoute,
+  normalizeThreadContext,
+  resolveOpenAppDetail,
+  resolveOpenAppRequest,
+} from "./app-link";
 
 export type HostClient = {
   getStatus(): HostStatus;
-  onSignal(listener: HostSignalHandler): () => void;
   onStatus(listener: HostStatusHandler): () => void;
-  request<T = unknown>(call: string, args?: unknown): Promise<T>;
-  spawnProcess(args: unknown): Promise<unknown>;
-  sendMessage(message: string, pid?: string): Promise<unknown>;
-  getHistory(limit: number, pid?: string, offset?: number): Promise<unknown>;
   setTitle(title: string | null): Promise<void>;
   setBadge(badge: string | null): Promise<void>;
   setDirty(dirty: boolean): Promise<void>;
@@ -38,8 +42,7 @@ export type HostClient = {
 type HostPortMessage =
   | { type: "rpc-result"; id: string; ok: true; data?: unknown }
   | { type: "rpc-result"; id: string; ok: false; error: string }
-  | { type: "status"; status: { state?: string } }
-  | { type: "signal"; signal: string; payload?: unknown };
+  | { type: "status"; status: { state?: string } };
 
 const PENDING_APP_OPEN_KEY = "__gsvPendingAppOpenRequests";
 const HOST_CONNECT_REQUEST = "gsv-host-connect-request";
@@ -153,7 +156,6 @@ async function createHostClient(): Promise<HostClient> {
   let sequence = 0;
   let latestStatus: HostStatus = { connected: false };
   const pending = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
-  const signalListeners = new Set<HostSignalHandler>();
   const statusListeners = new Set<HostStatusHandler>();
 
   const rpc = <T>(method: string, payload?: unknown): Promise<T> => {
@@ -195,22 +197,12 @@ async function createHostClient(): Promise<HostClient> {
       return;
     }
 
-    if (message.type === "signal") {
-      for (const listener of signalListeners) {
-        listener(message.signal, message.payload);
-      }
-    }
+    void message;
   };
   port.start();
 
   return {
     getStatus: () => latestStatus,
-    onSignal: (listener) => {
-      signalListeners.add(listener);
-      return () => {
-        signalListeners.delete(listener);
-      };
-    },
     onStatus: (listener) => {
       statusListeners.add(listener);
       listener(latestStatus);
@@ -218,10 +210,6 @@ async function createHostClient(): Promise<HostClient> {
         statusListeners.delete(listener);
       };
     },
-    request: (call, args = {}) => rpc("call", { call, args }),
-    spawnProcess: (args) => rpc("spawnProcess", args),
-    sendMessage: (message, pid) => rpc("sendMessage", { message, pid }),
-    getHistory: (limit, pid, offset) => rpc("getHistory", { limit, pid, offset }),
     setTitle: async (title) => {
       await rpc("setTitle", { title });
     },

@@ -13,7 +13,7 @@ import type {
   SysMcpServerSummary,
   SysMcpToolSummary,
   SysMcpTransportType,
-} from "@gsv/protocol/syscalls/system";
+} from "@humansandmachines/gsv/protocol";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import type { KernelContext } from "../context";
 import type { McpServerRecord } from "../mcp-store";

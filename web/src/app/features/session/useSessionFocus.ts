@@ -1,6 +1,6 @@
 import type { RefObject } from "preact";
 import { useEffect } from "preact/hooks";
-import type { OnboardingDraft } from "@gsv/protocol/syscalls/system";
+import type { OnboardingDraft } from "@humansandmachines/gsv/protocol";
 import type { SessionView } from "./sessionDomain";
 
 export function useSessionFocus(

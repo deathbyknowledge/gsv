@@ -3,8 +3,8 @@ import type {
   MkdirOptions,
   RmOptions,
 } from "just-bash";
-import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
-import type { RepoSummary } from "@gsv/protocol/syscalls/repositories";
+import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
+import type { RepoSummary } from "@humansandmachines/gsv/protocol";
 import type { InstalledPackageRecord } from "../../kernel/packages";
 import type { ProcessMount } from "../../kernel/processes";
 import type { ExtendedMountStat, FsSearchBackendResult, MountBackend } from "../mount";

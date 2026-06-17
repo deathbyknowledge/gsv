@@ -1,6 +1,6 @@
 import type { ExtendedStat } from "../../../fs/gsv-fs";
 import type { KernelContext } from "../../../kernel/context";
-import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
+import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 
 // Remove this once https://github.com/vercel-labs/just-bash/pull/150 is merged
 export function formatMode(mode: number, isDirectory: boolean): string {

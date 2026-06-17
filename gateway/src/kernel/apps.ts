@@ -9,7 +9,7 @@ import type {
   AppListResult,
   AppOpenArgs,
   AppSessionSummary,
-} from "@gsv/protocol/syscalls/apps";
+} from "@humansandmachines/gsv/protocol";
 import {
   buildAppClientRouteBase,
   type AppSessionContext,

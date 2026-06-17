@@ -3,7 +3,7 @@ import type {
   MkdirOptions,
   RmOptions,
 } from "just-bash";
-import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
+import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { canReadConfigKey } from "../../kernel/config-access";
 import type { KernelRefs, ProcessViewCall } from "../refs";
 import type { ArgsOf, ResultOf } from "../../syscalls";

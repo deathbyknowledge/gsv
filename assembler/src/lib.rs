@@ -6,7 +6,6 @@ pub mod npm;
 pub mod oxc;
 pub mod pipeline;
 pub mod runtime;
-pub mod sdk_fallback;
 pub mod service;
 pub mod virtual_fs;
 

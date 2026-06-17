@@ -229,7 +229,7 @@ export default function App() {
 #[test]
 fn installs_scoped_package_and_resolves_export_subpath() {
     let mut request = base_request(
-        r#"import { definePackage } from "@gsv/package/manifest";
+        r#"import { definePackage } from "@humansandmachines/gsv/sdk";
 import worker from "@scope/demo/worker";
 export default worker;"#,
     );
@@ -344,25 +344,57 @@ fn browser_resolver_prefers_import_export_over_require_export() {
 }
 
 #[test]
-fn oxc_resolver_resolves_injected_gsv_sdk_packages() {
-    let request = base_request(
-        r#"import { definePackage } from "@gsv/package/manifest";
+fn oxc_resolver_resolves_installed_gsv_sdk_package() {
+    let mut request = base_request(
+        r#"import { definePackage } from "@humansandmachines/gsv/sdk";
 export default definePackage;"#,
     );
+    request
+        .analysis
+        .package_json
+        .dependencies
+        .insert("@humansandmachines/gsv".to_string(), "0.0.1".to_string());
+
+    let tarball_url = "https://registry.example/@humansandmachines/gsv/-/gsv-0.0.1.tgz";
+    let client = MockNpmRegistryClient::default()
+        .with_package("@humansandmachines/gsv", packument(&[("0.0.1", tarball_url)]))
+        .with_tarball(
+            tarball_url,
+            tarball(&[
+                (
+                    "package.json",
+                    br#"{
+  "name": "@humansandmachines/gsv",
+  "version": "0.0.1",
+  "type": "module",
+  "exports": {
+    "./sdk": "./dist/sdk.js"
+  }
+}"#,
+                ),
+                (
+                    "dist/sdk.js",
+                    br#"export function definePackage(definition) { return definition; }"#,
+                ),
+            ]),
+        );
 
     let planned = prepare_request(&request).value.expect("planned request");
-    let resolver = OxcResolver::new(planned.files.clone());
+    let installed = install_registry_dependencies(&planned, &client)
+        .value
+        .expect("installed dependencies");
+    let resolver = OxcResolver::new(installed.files.clone());
     let resolved = resolver
-        .resolve_specifier("apps/demo/src/main.tsx", "@gsv/package/manifest")
-        .expect("resolve injected sdk");
+        .resolve_specifier("apps/demo/src/main.tsx", "@humansandmachines/gsv/sdk")
+        .expect("resolve installed sdk");
 
     assert_eq!(
         resolved.repo_path,
-        "node_modules/@gsv/package/src/manifest.ts"
+        "node_modules/@humansandmachines/gsv/dist/sdk.js"
     );
     assert_eq!(
         resolved.package_json_path.as_deref(),
-        Some("node_modules/@gsv/package/package.json")
+        Some("node_modules/@humansandmachines/gsv/package.json")
     );
 }
 

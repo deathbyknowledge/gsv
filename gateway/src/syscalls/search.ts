@@ -25,18 +25,8 @@ export const FS_SEARCH_DEFINITION: ToolDefinition = {
   },
 };
 
-export type FsSearchArgs = {
-  query: string;
-  path?: string;
-  include?: string;
-};
-
-export type FsSearchMatch = {
-  path: string;
-  line: number;
-  content: string;
-};
-
-export type FsSearchResult =
-  | { ok: true; matches: FsSearchMatch[]; count: number; truncated?: boolean }
-  | { ok: false; error: string };
+export type {
+  FsSearchArgs,
+  FsSearchMatch,
+  FsSearchResult,
+} from "@humansandmachines/gsv/protocol";

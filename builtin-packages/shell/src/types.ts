@@ -1,5 +1,5 @@
 export type FitAddonLike = {
-  activate: (terminal: unknown) => void;
+  activate: (terminal: never) => void;
   dispose: () => void;
   fit: () => void;
 };

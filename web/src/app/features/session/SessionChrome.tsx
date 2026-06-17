@@ -1,5 +1,5 @@
 import type { JSX } from "preact";
-import type { OnboardingDetailStep, OnboardingStage } from "@gsv/protocol/syscalls/system";
+import type { OnboardingDetailStep, OnboardingStage } from "@humansandmachines/gsv/protocol";
 
 type SetupStageRailProps = {
   stage: OnboardingStage;

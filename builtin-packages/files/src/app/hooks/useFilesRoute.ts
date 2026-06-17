@@ -1,4 +1,4 @@
-import { consumePendingAppOpen, getAppClientId } from "@gsv/package/host";
+import { consumePendingAppOpen, getAppClientId } from "@humansandmachines/gsv/sdk/host";
 import { useCallback, useEffect, useState } from "preact/hooks";
 import { defaultPathForTarget } from "../domain/paths";
 import type { FilesRoute } from "../types";

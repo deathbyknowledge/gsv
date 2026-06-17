@@ -1,4 +1,4 @@
-import { defineCommand } from "@gsv/package/cli";
+import { defineCommand } from "@humansandmachines/gsv/sdk/cli";
 import { runWikiCommand } from "./wiki-runner";
 
 export default defineCommand(async (ctx) => {

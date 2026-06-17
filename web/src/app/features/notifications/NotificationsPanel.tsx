@@ -6,7 +6,7 @@ import type {
   NotificationListResult,
   NotificationMarkReadResult,
   NotificationRecord,
-} from "@gsv/protocol/syscalls/notification";
+} from "@humansandmachines/gsv/protocol";
 import {
   canUseServiceWorker as canUseServiceWorkerNotifications,
   registerGsvServiceWorker,

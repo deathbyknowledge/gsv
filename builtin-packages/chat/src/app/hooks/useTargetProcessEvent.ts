@@ -1,4 +1,4 @@
-import { getAppClientId } from "@gsv/package/host";
+import { getAppClientId } from "@humansandmachines/gsv/sdk/host";
 import { useEffect } from "preact/hooks";
 import type { ThreadContext } from "../types";
 import { asRecord, asString, normalizeThreadContext } from "../view-helpers";

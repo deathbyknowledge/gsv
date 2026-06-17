@@ -5,8 +5,15 @@ import type {
   SysBootstrapResult,
   SysSetupArgs,
   SysSetupResult,
-} from "@gsv/protocol/syscalls/system";
-import type { ProcMediaInput } from "@gsv/protocol/syscalls/proc";
+} from "@humansandmachines/gsv/protocol";
+import type {
+  GsvAccountNamespace,
+  GsvClientCall,
+  GsvFsNamespace,
+  GsvPkgNamespace,
+  GsvProcNamespace,
+} from "@humansandmachines/gsv/client";
+import { createGsvClient } from "@humansandmachines/gsv/client";
 import {
   GatewayRpcClient,
   type GatewayClientStatus,
@@ -21,6 +28,13 @@ export type {
   GatewayConnectResult,
   GatewayRpcClientOptions,
 } from "./gatewayRpcClient";
+export type {
+  ProcHistoryResult,
+  ProcMediaInput,
+  ProcSendResult,
+  ProcSpawnArgs,
+  ProcSpawnResult,
+} from "@humansandmachines/gsv/protocol";
 
 export type UserSessionToken = {
   tokenId: string;
@@ -28,79 +42,32 @@ export type UserSessionToken = {
   expiresAt: number | null;
 };
 
-export type ProcSendResult =
-  | { ok: true; status: "started"; runId: string; queued?: boolean }
-  | { ok: false; error: string };
-
-export type ProcSpawnArgs = {
-  /** Account to run as: username, uid, or `package#agent`. Defaults to the caller's personal agent. */
-  runAs?: string;
-  label?: string;
-  prompt?: string;
-  parentPid?: string;
-  cwd?: string;
-};
-
-export type ProcSpawnResult =
-  | {
-      ok: true;
-      pid: string;
-      label?: string;
-      cwd: string;
-    }
-  | { ok: false; error: string };
-
-export type ProcHistoryResult =
-  | {
-      ok: true;
-      pid: string;
-      messages: Array<{
-        role: "user" | "assistant" | "system" | "toolResult";
-        content: unknown;
-        timestamp?: number;
-      }>;
-      messageCount: number;
-      truncated?: boolean;
-    }
-  | { ok: false; error: string };
+export type GatewayAccountNamespace = GsvAccountNamespace;
+export type GatewayFsNamespace = GsvFsNamespace;
+export type GatewayPkgNamespace = GsvPkgNamespace;
+export type GatewayProcNamespace = GsvProcNamespace;
 
 export type GatewayClientLike = {
   getStatus: () => GatewayClientStatus;
   isConnected: () => boolean;
   onSignal: (listener: (signal: string, payload: unknown) => void) => () => void;
   onStatus: (listener: (status: GatewayClientStatus) => void) => () => void;
-  call: <T = unknown>(call: string, args?: unknown) => Promise<T>;
-  spawnProcess: (args: ProcSpawnArgs) => Promise<ProcSpawnResult>;
-  sendMessage: (message: string, pid?: string, media?: ProcMediaInput[]) => Promise<ProcSendResult>;
-  getHistory: (limit?: number, pid?: string, offset?: number) => Promise<ProcHistoryResult>;
+  call: GsvClientCall;
+  account: GatewayAccountNamespace;
+  fs: GatewayFsNamespace;
+  pkg: GatewayPkgNamespace;
+  proc: GatewayProcNamespace;
   probeSetupMode: (url: string) => Promise<boolean>;
   setupSystem: (url: string, args: SysSetupArgs) => Promise<SysSetupResult>;
   bootstrapSystem: (args?: SysBootstrapArgs) => Promise<SysBootstrapResult>;
 };
 
 export class GatewayClient extends GatewayRpcClient implements GatewayClientLike {
-  async sendMessage(message: string, pid?: string, media?: ProcMediaInput[]): Promise<ProcSendResult> {
-    const result = (await this.call("proc.send", {
-      message,
-      ...(pid ? { pid } : {}),
-      ...(media && media.length > 0 ? { media } : {}),
-    })) as ProcSendResult;
-    return result;
-  }
-
-  async spawnProcess(args: ProcSpawnArgs): Promise<ProcSpawnResult> {
-    const result = (await this.call("proc.spawn", args)) as ProcSpawnResult;
-    return result;
-  }
-
-  async getHistory(limit = 50, pid?: string, offset?: number): Promise<ProcHistoryResult> {
-    const result = (await this.call("proc.history", {
-      limit,
-      ...(typeof offset === "number" ? { offset } : {}),
-      ...(pid ? { pid } : {}),
-    })) as ProcHistoryResult;
-    return result;
-  }
+  private readonly gsvClient = createGsvClient(this);
+  readonly account: GatewayAccountNamespace = this.gsvClient.account;
+  readonly fs: GatewayFsNamespace = this.gsvClient.fs;
+  readonly pkg: GatewayPkgNamespace = this.gsvClient.pkg;
+  readonly proc: GatewayProcNamespace = this.gsvClient.proc;
 
   async createUserSessionToken(expiresAt: number): Promise<UserSessionToken> {
     const raw = (await this.call("sys.token.create", {
@@ -169,15 +136,15 @@ export class GatewayClient extends GatewayRpcClient implements GatewayClientLike
   }
 
   async setupSystem(url: string, args: SysSetupArgs): Promise<SysSetupResult> {
-    return await this.callWithoutConnect<SysSetupResult>(url, "sys.setup", args);
+    return await this.callWithoutConnect(url, "sys.setup", args);
   }
 
   async setupAssist(url: string, args: SysSetupAssistArgs): Promise<SysSetupAssistResult> {
-    return await this.callWithoutConnect<SysSetupAssistResult>(url, "sys.setup.assist", args);
+    return await this.callWithoutConnect(url, "sys.setup.assist", args);
   }
 
   async bootstrapSystem(args: SysBootstrapArgs = {}): Promise<SysBootstrapResult> {
-    return await this.call<SysBootstrapResult>("sys.bootstrap", args);
+    return await this.call("sys.bootstrap", args);
   }
 }
 

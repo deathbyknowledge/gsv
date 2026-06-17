@@ -1,4 +1,4 @@
-import { openApp } from "@gsv/package/host";
+import { openApp } from "@humansandmachines/gsv/sdk/host";
 import { ActionButton } from "../../components/ui/ActionButton";
 import { Icon, type IconName } from "../../components/ui/Icon";
 import { formatRelativeTime } from "../../utils/format";

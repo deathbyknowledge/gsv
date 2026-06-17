@@ -1,4 +1,4 @@
-import type { ThreadContext } from "@gsv/app-link";
+import type { ThreadContext } from "@humansandmachines/gsv/sdk/host";
 
 export const OPEN_CHAT_PROCESS_EVENT = "gsv:open-chat-process";
 export const TARGET_CHAT_PROCESS_EVENT = "gsv:target-chat-process";

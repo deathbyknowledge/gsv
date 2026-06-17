@@ -1,6 +1,6 @@
 import { RipgitClient, type RipgitApplyOp } from "../fs/ripgit/client";
 import { accountHomeRepoRef } from "../fs/ripgit/repos";
-import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
+import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import {
   DEFAULT_BOOT_CONTEXT_TEMPLATE,
   DEFAULT_STYLE_CONTEXT,

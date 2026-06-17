@@ -1,5 +1,5 @@
-import { normalizeSpeechText } from "@gsv/protocol/speech-text";
-import type { AiSpeechCreateResult, AiTranscriptionCreateResult } from "@gsv/protocol/syscalls/ai";
+import { normalizeSpeechText } from "@humansandmachines/gsv/protocol";
+import type { AiSpeechCreateResult, AiTranscriptionCreateResult } from "@humansandmachines/gsv/protocol";
 import type { GatewayClientLike } from "./app/services/gateway/gatewayClient";
 import {
   localSpeechSupported,
@@ -656,13 +656,16 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
   }
 
   async function sendTextToPersonalAgent(message: string): Promise<PresenceSendResult> {
-    const spawned = await gatewayClient.spawnProcess({
+    const spawned = await gatewayClient.proc.spawn({
       label: "Mind",
     });
     if (!spawned.ok) {
       throw new Error(spawned.error);
     }
-    const result = await gatewayClient.sendMessage(message, spawned.pid);
+    const result = await gatewayClient.proc.send({
+      message,
+      pid: spawned.pid,
+    });
     if (!result.ok) {
       throw new Error(result.error);
     }

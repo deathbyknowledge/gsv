@@ -2,7 +2,7 @@ import type {
   OnboardingDetailStep,
   OnboardingDraft,
   OnboardingLane,
-} from "@gsv/protocol/syscalls/system";
+} from "@humansandmachines/gsv/protocol";
 import type { SessionSnapshot, SessionSetupInput } from "../../services/session/sessionService";
 
 export type PendingAction = "login" | "setup" | "continue" | null;

@@ -1,4 +1,4 @@
-import { getBackend } from "@gsv/package/browser";
+import { getBackend } from "@humansandmachines/gsv/sdk/browser";
 import { FitAddon, init, Terminal } from "ghostty-web";
 import { mountShellLayout, setBootState, setStatus, showBootError, type ShellElements } from "./layout";
 import { readRouteParams, readWindowId } from "./route-context";

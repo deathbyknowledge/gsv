@@ -47,7 +47,7 @@ import {
   BINARY_FRAME_END,
   BINARY_FRAME_ERROR,
   buildBinaryFrame,
-} from "@gsv/protocol/binary-frame";
+} from "@humansandmachines/gsv/protocol";
 
 const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
 const TRANSFER_SEND_CHUNK_SIZE = 512 * 1024;

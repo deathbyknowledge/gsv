@@ -2,10 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import { env } from "cloudflare:test";
 import { handleShellExec } from "./shell";
 import { handleFsCopy, handleFsRead, handleFsTransferReceive, handleFsTransferSend } from "./fs";
-import { parseBinaryFrame } from "@gsv/protocol/binary-frame";
+import { parseBinaryFrame } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "../../kernel/context";
 import type { DeviceRecord } from "../../kernel/devices";
-import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
+import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { InstalledPackageRecord } from "../../kernel/packages";
 
 const IDENTITY: ProcessIdentity = {

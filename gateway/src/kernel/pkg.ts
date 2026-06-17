@@ -32,7 +32,7 @@ import type {
   PkgPublicSetResult,
   PkgCatalogEntry,
   PkgSummary,
-} from "@gsv/protocol/syscalls/packages";
+} from "@humansandmachines/gsv/protocol";
 import type {
   InstalledPackageRecord,
   PackageBindingGrant,
@@ -728,7 +728,7 @@ function buildBasePackageJson(packageName: string): string {
     version: "0.1.0",
     type: "module",
     dependencies: {
-      "@gsv/package": "^0.1.0",
+      "@humansandmachines/gsv": "0.0.1",
     },
   }, null, 2)}\n`;
 }
@@ -741,7 +741,7 @@ function buildWebUiPackageScaffold(input: {
   return {
     "package.json": buildBasePackageJson(input.packageName),
     "src/package.ts": [
-      'import { definePackage } from "@gsv/package/manifest";',
+      'import { definePackage } from "@humansandmachines/gsv/sdk";',
       "",
       "export default definePackage({",
       "  meta: {",
@@ -762,7 +762,7 @@ function buildWebUiPackageScaffold(input: {
       "",
     ].join("\n"),
     "src/main.ts": [
-      'import { getAppBoot } from "@gsv/package/browser";',
+      'import { getAppBoot } from "@humansandmachines/gsv/sdk";',
       "",
       "const boot = getAppBoot();",
       'const root = document.createElement("main");',
@@ -861,7 +861,7 @@ function buildCommandPackageScaffold(input: {
   return {
     "package.json": buildBasePackageJson(input.packageName),
     "src/package.ts": [
-      'import { definePackage } from "@gsv/package/manifest";',
+      'import { definePackage } from "@humansandmachines/gsv/sdk";',
       "",
       "export default definePackage({",
       "  meta: {",
@@ -877,7 +877,7 @@ function buildCommandPackageScaffold(input: {
       "",
     ].join("\n"),
     [commandPath]: [
-      'import { defineCommand } from "@gsv/package/cli";',
+      'import { defineCommand } from "@humansandmachines/gsv/sdk";',
       "",
       "export default defineCommand(async (ctx) => {",
       '  const subject = ctx.argv.length > 0 ? ctx.argv.join(" ") : ctx.meta.packageName;',

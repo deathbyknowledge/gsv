@@ -1,9 +1,0 @@
-{
-  "name": "@gsv/app-link",
-  "version": "0.2.6",
-  "private": true,
-  "type": "module",
-  "exports": {
-    ".": "./src/index.ts"
-  }
-}

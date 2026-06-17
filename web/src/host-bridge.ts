@@ -1,17 +1,9 @@
 import type {
   GatewayClientLike,
   GatewayClientStatus,
-  ProcHistoryResult,
-  ProcSendResult,
-  ProcSpawnArgs,
-  ProcSpawnResult,
 } from "./app/services/gateway/gatewayClient";
 
 type HostRpcMethod =
-  | "call"
-  | "spawnProcess"
-  | "sendMessage"
-  | "getHistory"
   | "setTitle"
   | "setBadge"
   | "setDirty"
@@ -43,18 +35,12 @@ type HostStatusMessage = {
   status: GatewayClientStatus;
 };
 
-type HostSignalMessage = {
-  type: "signal";
-  signal: string;
-  payload?: unknown;
-};
-
 type HostConnectMessage = {
   type: "gsv-host-connect";
   requestId?: string;
 };
 
-type HostPortMessage = HostRpcMessage | HostRpcResultMessage | HostStatusMessage | HostSignalMessage;
+type HostPortMessage = HostRpcMessage | HostRpcResultMessage | HostStatusMessage;
 
 export type HostBridgeController = {
   destroy: () => void;
@@ -91,35 +77,10 @@ function postMessage(port: MessagePort, message: HostPortMessage): void {
 }
 
 async function handleRpc(
-  gatewayClient: GatewayClientLike,
   chrome: HostChromeController | null,
   message: HostRpcMessage,
 ): Promise<unknown> {
   switch (message.method) {
-    case "call": {
-      const payload = asRecord(message.payload);
-      const call = asString(payload?.call);
-      if (!call) {
-        throw new Error("HOST.call requires a syscall name");
-      }
-      return gatewayClient.call(call, payload?.args ?? {});
-    }
-    case "spawnProcess":
-      return gatewayClient.spawnProcess((message.payload ?? {}) as ProcSpawnArgs);
-    case "sendMessage": {
-      const payload = asRecord(message.payload);
-      const text = asString(payload?.message) ?? "";
-      const pid = asString(payload?.pid) ?? undefined;
-      const media = Array.isArray(payload?.media) ? payload.media : undefined;
-      return gatewayClient.sendMessage(text, pid, media as Parameters<GatewayClientLike["sendMessage"]>[2]);
-    }
-    case "getHistory": {
-      const payload = asRecord(message.payload);
-      const limit = typeof payload?.limit === "number" ? payload.limit : 50;
-      const pid = asString(payload?.pid) ?? undefined;
-      const offset = typeof payload?.offset === "number" ? payload.offset : undefined;
-      return gatewayClient.getHistory(limit, pid, offset);
-    }
     case "setTitle": {
       const payload = asRecord(message.payload);
       chrome?.setTitle(asString(payload?.title));
@@ -141,6 +102,8 @@ async function handleRpc(
       return { windowId: chrome?.requestNewWindow(route) ?? null };
     }
   }
+
+  throw new Error(`Unsupported host RPC method: ${String(message.method)}`);
 }
 
 export function attachHostBridge(
@@ -150,7 +113,6 @@ export function attachHostBridge(
 ): HostBridgeController {
   let port: MessagePort | null = null;
   let unsubscribeStatus: (() => void) | null = null;
-  let unsubscribeSignal: (() => void) | null = null;
   let iframeLoaded = false;
   let pendingConnectRequestId: string | undefined;
   let destroyed = false;
@@ -158,8 +120,6 @@ export function attachHostBridge(
   const cleanup = (): void => {
     unsubscribeStatus?.();
     unsubscribeStatus = null;
-    unsubscribeSignal?.();
-    unsubscribeSignal = null;
     port?.close();
     port = null;
   };
@@ -180,7 +140,7 @@ export function attachHostBridge(
         return;
       }
 
-      void handleRpc(gatewayClient, chrome, message as HostRpcMessage)
+      void handleRpc(chrome, message as HostRpcMessage)
         .then((data) => {
           postMessage(channel.port1, {
             type: "rpc-result",
@@ -213,13 +173,6 @@ export function attachHostBridge(
       postMessage(channel.port1, {
         type: "status",
         status,
-      });
-    });
-    unsubscribeSignal = gatewayClient.onSignal((signal, payload) => {
-      postMessage(channel.port1, {
-        type: "signal",
-        signal,
-        payload,
       });
     });
   };

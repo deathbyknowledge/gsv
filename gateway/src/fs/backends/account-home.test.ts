@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { env } from "cloudflare:test";
-import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
+import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { packageAgentAccessGroup } from "../../kernel/package-agents";
 import { GsvFs } from "../gsv-fs";
 import { createAccountHomeBackend } from "./account-home";

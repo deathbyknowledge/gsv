@@ -1,4 +1,4 @@
-import { openApp } from "@gsv/package/host";
+import { openApp } from "@humansandmachines/gsv/sdk/host";
 import { useEffect, useMemo, useState } from "preact/hooks";
 import type { GsvBackend } from "./backend-contract";
 import { AgentsSection } from "./features/agents/AgentsSection";

@@ -3,7 +3,7 @@
   "version": "0.2.6",
   "type": "module",
   "dependencies": {
-    "@gsv/package": "file:../../shared/package",
+    "@humansandmachines/gsv": "file:../../packages/gsv",
     "preact": "^10.27.2",
     "qrcode-generator": "^2.0.4"
   }

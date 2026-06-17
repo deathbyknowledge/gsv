@@ -4,7 +4,7 @@ import type {
   PackageAssemblerInterface,
   PackageAssemblyAnalysis,
   PackageAssemblyResponse,
-} from "@gsv/protocol/package-assembly";
+} from "@humansandmachines/gsv/protocol";
 import {
   RipgitClient,
   type RipgitPackageAnalyzeResponse,

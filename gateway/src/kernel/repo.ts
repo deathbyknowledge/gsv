@@ -20,7 +20,7 @@ import type {
   RepoSearchArgs,
   RepoSearchResult,
   RepoSummary,
-} from "@gsv/protocol/syscalls/repositories";
+} from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "./context";
 import { RipgitClient, type RipgitApplyOp, type RipgitRepoRef } from "../fs/ripgit/client";
 import { accountHomeRepoRef } from "../fs/ripgit/repos";

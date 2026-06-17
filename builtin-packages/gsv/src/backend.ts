@@ -1,4 +1,4 @@
-import { PackageBackendEntrypoint } from "@gsv/package/backend";
+import { PackageBackendEntrypoint } from "@humansandmachines/gsv/sdk/backend";
 import {
   createAgent,
   createHuman,

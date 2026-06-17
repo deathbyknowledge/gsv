@@ -10,7 +10,7 @@
  * identity (uid/gid/home/caps).
  */
 
-import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
+import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { PasswdEntry } from "../auth/passwd";
 import { accountIdentity, createAccount, removeContextFile, writeContextFile } from "./accounts";
 import type { KernelContext } from "./context";

@@ -1,4 +1,4 @@
-import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
+import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import {
   accountHomeRepoRef,
   packageSourcePathNameForRecord,

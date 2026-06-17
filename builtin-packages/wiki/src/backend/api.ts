@@ -8,7 +8,7 @@ import {
   startBuildFromDirectory as legacyStartBuildFromDirectory,
   writePage as legacyWritePage,
 } from "./legacy";
-import type { PackageStorageBinding } from "@gsv/package/context";
+import type { PackageStorageBinding } from "@humansandmachines/gsv/sdk/context";
 import type {
   BuildStartArgs,
   IngestSourceArgs,

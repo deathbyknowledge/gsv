@@ -1,6 +1,6 @@
 import { defineAppManifest } from "./app-sdk";
 import type { AppIcon, AppManifest, AppWindowDefaults } from "./app-sdk";
-import type { PkgSummary } from "@gsv/protocol/syscalls/packages";
+import type { PkgSummary } from "@humansandmachines/gsv/protocol";
 
 const DEFAULT_WINDOW_DEFAULTS: AppWindowDefaults = {
   width: 1040,
