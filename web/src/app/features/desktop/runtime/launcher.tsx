@@ -10,7 +10,13 @@ import {
   type TargetChatProcessEventDetail,
 } from "./host/chatTarget";
 import type { DesktopApp, DesktopAppIcon } from "../domain/desktopApp";
-import { DesktopAppIcons, MobileAppGrid, MobileWindowStack, TaskbarWindows } from "../components/DesktopLauncherViews";
+import {
+  DesktopAppIcons,
+  MobileAppGrid,
+  MobileWindowStack,
+  TaskbarWindows,
+  type MobileAppActivationInput,
+} from "../components/DesktopLauncherViews";
 import {
   centeredMobileRotorIndex,
   mobileRotorMetrics as calculateMobileRotorMetrics,
@@ -138,6 +144,10 @@ export function createLauncher(options: LauncherOptions): LauncherController {
         apps={apps}
         activeAppId={activeAppId}
         selectedAppId={selectedAppId}
+        onSelectApp={setSelectedIcon}
+        onOpenApp={(appId, openOptions) => {
+          activateApp(appId, openOptions);
+        }}
       />,
       iconsNode,
     );
@@ -148,7 +158,19 @@ export function createLauncher(options: LauncherOptions): LauncherController {
       return;
     }
 
-    renderPreact(<TaskbarWindows summaries={summaries} />, taskbarWindowsNode);
+    renderPreact(
+      <TaskbarWindows
+        summaries={summaries}
+        onActivateWindow={(windowId) => {
+          const summary = latestSummaries.find((item) => item.windowId === windowId);
+          if (summary) {
+            activateWindowSummary(summary);
+          }
+        }}
+        onCloseWindow={(windowId) => windowManager.closeWindow(windowId)}
+      />,
+      taskbarWindowsNode,
+    );
   };
 
   const renderMobileApps = (): void => {
@@ -156,7 +178,14 @@ export function createLauncher(options: LauncherOptions): LauncherController {
       return;
     }
 
-    renderPreact(<MobileAppGrid apps={apps} />, mobileAppsNode);
+    renderPreact(
+      <MobileAppGrid
+        apps={apps}
+        onActivateApp={(input) => activateMobileAppFromGrid(input)}
+        onNavigate={(direction) => navigateMobileRotor(direction)}
+      />,
+      mobileAppsNode,
+    );
     mobileAppNodes = Array.from(mobileAppsNode.querySelectorAll<HTMLButtonElement>(".mobile-app-icon[data-app-id]"));
     mobileAppIndexById = new Map(apps.map((appItem, index) => [appItem.id, index]));
     mobileRotorMetrics = null;
@@ -628,101 +657,8 @@ export function createLauncher(options: LauncherOptions): LauncherController {
     void openWindowForApp(appId, route);
   };
 
-  const getAppIdFromEvent = (event: Event): string | null => {
-    const target = event.target;
-    if (!(target instanceof HTMLElement)) {
-      return null;
-    }
-
-    const button = target.closest<HTMLButtonElement>(".desktop-icon[data-app-id]");
-    if (!button || !iconsNode.contains(button)) {
-      return null;
-    }
-
-    const appId = button.dataset.appId;
-    return appId ?? null;
-  };
-
-  const onIconClick = (event: MouseEvent): void => {
-    const appId = getAppIdFromEvent(event);
-    if (!appId) {
-      return;
-    }
-
-    setSelectedIcon(appId);
-  };
-
-  const onIconDoubleClick = (event: MouseEvent): void => {
-    const appId = getAppIdFromEvent(event);
-    if (!appId) {
-      return;
-    }
-
-    activateApp(appId, { forceNew: event.shiftKey });
-  };
-
-  const onIconKeyDown = (event: KeyboardEvent): void => {
-    const appId = getAppIdFromEvent(event);
-    if (!appId) {
-      return;
-    }
-
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      activateApp(appId, { forceNew: event.shiftKey });
-    }
-  };
-
-  const onIconFocus = (event: FocusEvent): void => {
-    const appId = getAppIdFromEvent(event);
-    if (!appId) {
-      return;
-    }
-
-    setSelectedIcon(appId);
-  };
-
-  const onTaskbarClick = (event: MouseEvent): void => {
-    const target = event.target;
-    if (!(target instanceof HTMLElement)) {
-      return;
-    }
-
-    const button = target.closest<HTMLButtonElement>(".taskbar-window[data-window-id]");
-    if (!button || !taskbarWindowsNode?.contains(button)) {
-      return;
-    }
-
-    const windowId = button.dataset.windowId;
-    const summary = latestSummaries.find((item) => item.windowId === windowId);
-    if (!summary) {
-      return;
-    }
-
-    activateWindowSummary(summary);
-  };
-
-  const onTaskbarAuxClick = (event: MouseEvent): void => {
-    if (event.button !== 1) {
-      return;
-    }
-    const target = event.target;
-    if (!(target instanceof HTMLElement)) {
-      return;
-    }
-    const button = target.closest<HTMLButtonElement>(".taskbar-window[data-window-id]");
-    if (!button || !taskbarWindowsNode?.contains(button)) {
-      return;
-    }
-    const windowId = button.dataset.windowId;
-    if (!windowId) {
-      return;
-    }
-    event.preventDefault();
-    windowManager.closeWindow(windowId);
-  };
-
-  const handleMobileStackClick = (event: MouseEvent, target: HTMLElement, appButton: HTMLButtonElement, appId: string): boolean => {
+  const handleMobileStackClick = (input: MobileAppActivationInput): boolean => {
+    const { appId, button: appButton, target } = input;
     const stackNode = target.closest<HTMLElement>(".mobile-window-stack");
     if (!stackNode || !appButton.contains(stackNode) || !appButton.classList.contains("is-centered")) {
       return false;
@@ -733,8 +669,8 @@ export function createLauncher(options: LauncherOptions): LauncherController {
       return false;
     }
 
-    event.preventDefault();
-    event.stopPropagation();
+    input.preventDefault();
+    input.stopPropagation();
     clearMobileRotorMomentum();
     clearMobileRotorSnapTimer();
 
@@ -772,46 +708,42 @@ export function createLauncher(options: LauncherOptions): LauncherController {
     return true;
   };
 
-  const onMobileAppsClick = (event: MouseEvent): void => {
+  const activateMobileAppFromGrid = (input: MobileAppActivationInput): void => {
     if (mobileRotorDidDrag) {
-      event.preventDefault();
+      input.preventDefault();
       mobileRotorDidDrag = false;
       return;
     }
 
-    const target = event.target;
-    if (!(target instanceof HTMLElement)) {
+    if (handleMobileStackClick(input)) {
       return;
     }
 
-    const button = target.closest<HTMLButtonElement>(".mobile-app-icon[data-app-id]");
-    if (!button || !mobileAppsNode?.contains(button)) {
-      return;
-    }
-
-    const appId = button.dataset.appId;
-    if (!appId) {
-      return;
-    }
-
-    if (handleMobileStackClick(event, target, button, appId)) {
-      return;
-    }
-
-    const index = getMobileRotorIndexForButton(button);
+    const index = getMobileRotorIndexForButton(input.button);
     if (index >= 0 && index !== getCenteredMobileRotorIndex()) {
-      event.preventDefault();
+      input.preventDefault();
       clearMobileRotorMomentum();
       clearMobileRotorSnapTimer();
       setMobileRotorIndex(index);
-      button.focus();
+      input.button.focus();
       return;
     }
 
     clearMobileRotorMomentum();
     clearMobileRotorSnapTimer();
     startMobileLaunchTransition();
-    activateMobileApp(appId);
+    activateMobileApp(input.appId);
+  };
+
+  const navigateMobileRotor = (direction: "next" | "previous"): void => {
+    if (mobileShellState !== "home" || apps.length <= 1) {
+      return;
+    }
+    clearMobileRotorMomentum();
+    clearMobileRotorSnapTimer();
+    const offset = direction === "next" ? 1 : -1;
+    setMobileRotorIndex((getCenteredMobileRotorIndex() + offset + apps.length) % apps.length);
+    focusMobileRotorIndex(getCenteredMobileRotorIndex());
   };
 
   const onMobileAppsWheel = (event: WheelEvent): void => {
@@ -881,29 +813,6 @@ export function createLauncher(options: LauncherOptions): LauncherController {
       window.setTimeout(() => {
         mobileRotorDidDrag = false;
       }, 0);
-    }
-  };
-
-  const onMobileAppsKeyDown = (event: KeyboardEvent): void => {
-    if (mobileShellState !== "home" || apps.length <= 1) {
-      return;
-    }
-
-    if (event.key === "ArrowDown") {
-      event.preventDefault();
-      clearMobileRotorMomentum();
-      clearMobileRotorSnapTimer();
-      setMobileRotorIndex((getCenteredMobileRotorIndex() + 1) % apps.length);
-      focusMobileRotorIndex(getCenteredMobileRotorIndex());
-      return;
-    }
-
-    if (event.key === "ArrowUp") {
-      event.preventDefault();
-      clearMobileRotorMomentum();
-      clearMobileRotorSnapTimer();
-      setMobileRotorIndex((getCenteredMobileRotorIndex() - 1 + apps.length) % apps.length);
-      focusMobileRotorIndex(getCenteredMobileRotorIndex());
     }
   };
 
@@ -1140,19 +1049,11 @@ export function createLauncher(options: LauncherOptions): LauncherController {
     scheduleDockHide();
   };
 
-  iconsNode.addEventListener("click", onIconClick);
-  iconsNode.addEventListener("dblclick", onIconDoubleClick);
-  iconsNode.addEventListener("keydown", onIconKeyDown);
-  iconsNode.addEventListener("focusin", onIconFocus as EventListener);
-  taskbarWindowsNode?.addEventListener("click", onTaskbarClick);
-  taskbarWindowsNode?.addEventListener("auxclick", onTaskbarAuxClick);
-  mobileAppsNode?.addEventListener("click", onMobileAppsClick);
   mobileAppsNode?.addEventListener("wheel", onMobileAppsWheel, { passive: false });
   mobileAppsNode?.addEventListener("pointerdown", onMobileAppsPointerDown);
   mobileAppsNode?.addEventListener("pointermove", onMobileAppsPointerMove);
   mobileAppsNode?.addEventListener("pointerup", finishMobileRotorDrag);
   mobileAppsNode?.addEventListener("pointercancel", finishMobileRotorDrag);
-  mobileAppsNode?.addEventListener("keydown", onMobileAppsKeyDown);
   mobileHomeButtonNode?.addEventListener("click", onMobileHomeButtonClick);
   mobileHomeButtonNode?.addEventListener("pointerdown", onMobileHomeGesturePointerDown);
   mobileHomeButtonNode?.addEventListener("pointermove", onMobileHomeGesturePointerMove);
@@ -1199,19 +1100,11 @@ export function createLauncher(options: LauncherOptions): LauncherController {
     setApps,
     destroy: () => {
       unsubscribe();
-      iconsNode.removeEventListener("click", onIconClick);
-      iconsNode.removeEventListener("dblclick", onIconDoubleClick);
-      iconsNode.removeEventListener("keydown", onIconKeyDown);
-      iconsNode.removeEventListener("focusin", onIconFocus as EventListener);
-      taskbarWindowsNode?.removeEventListener("click", onTaskbarClick);
-      taskbarWindowsNode?.removeEventListener("auxclick", onTaskbarAuxClick);
-      mobileAppsNode?.removeEventListener("click", onMobileAppsClick);
       mobileAppsNode?.removeEventListener("wheel", onMobileAppsWheel);
       mobileAppsNode?.removeEventListener("pointerdown", onMobileAppsPointerDown);
       mobileAppsNode?.removeEventListener("pointermove", onMobileAppsPointerMove);
       mobileAppsNode?.removeEventListener("pointerup", finishMobileRotorDrag);
       mobileAppsNode?.removeEventListener("pointercancel", finishMobileRotorDrag);
-      mobileAppsNode?.removeEventListener("keydown", onMobileAppsKeyDown);
       mobileHomeButtonNode?.removeEventListener("click", onMobileHomeButtonClick);
       mobileHomeButtonNode?.removeEventListener("pointerdown", onMobileHomeGesturePointerDown);
       mobileHomeButtonNode?.removeEventListener("pointermove", onMobileHomeGesturePointerMove);

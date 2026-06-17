@@ -5,18 +5,32 @@ type DesktopAppIconsProps = {
   apps: readonly DesktopApp[];
   activeAppId: string | null;
   selectedAppId: string | null;
+  onSelectApp: (appId: string) => void;
+  onOpenApp: (appId: string, options?: { forceNew?: boolean }) => void;
 };
 
 type TaskbarWindowsProps = {
   summaries: readonly WindowSummary[];
+  onActivateWindow: (windowId: string) => void;
+  onCloseWindow: (windowId: string) => void;
 };
 
 type MobileAppGridProps = {
   apps: readonly DesktopApp[];
+  onActivateApp: (input: MobileAppActivationInput) => void;
+  onNavigate: (direction: "next" | "previous") => void;
 };
 
 type MobileWindowStackProps = {
   summaries: readonly WindowSummary[];
+};
+
+export type MobileAppActivationInput = {
+  appId: string;
+  button: HTMLButtonElement;
+  target: HTMLElement;
+  preventDefault: () => void;
+  stopPropagation: () => void;
 };
 
 function iconClassName(appId: string, activeAppId: string | null, selectedAppId: string | null): string {
@@ -97,6 +111,8 @@ export function DesktopAppIcons({
   apps,
   activeAppId,
   selectedAppId,
+  onSelectApp,
+  onOpenApp,
 }: DesktopAppIconsProps) {
   return (
     <>
@@ -106,6 +122,16 @@ export function DesktopAppIcons({
           type="button"
           class={iconClassName(app.id, activeAppId, selectedAppId)}
           data-app-id={app.id}
+          onClick={() => onSelectApp(app.id)}
+          onDblClick={(event) => onOpenApp(app.id, { forceNew: event.shiftKey })}
+          onFocus={() => onSelectApp(app.id)}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter" && event.key !== " ") {
+              return;
+            }
+            event.preventDefault();
+            onOpenApp(app.id, { forceNew: event.shiftKey });
+          }}
         >
           <DesktopAppIconGlyph icon={app.icon} />
           <span class="desktop-label">{app.name}</span>
@@ -115,7 +141,11 @@ export function DesktopAppIcons({
   );
 }
 
-export function MobileAppGrid({ apps }: MobileAppGridProps) {
+export function MobileAppGrid({
+  apps,
+  onActivateApp,
+  onNavigate,
+}: MobileAppGridProps) {
   return (
     <>
       {apps.map((app) => (
@@ -124,6 +154,30 @@ export function MobileAppGrid({ apps }: MobileAppGridProps) {
           type="button"
           class="mobile-app-icon"
           data-app-id={app.id}
+          onClick={(event) => {
+            const target = event.target;
+            if (!(target instanceof HTMLElement)) {
+              return;
+            }
+            onActivateApp({
+              appId: app.id,
+              button: event.currentTarget,
+              target,
+              preventDefault: () => event.preventDefault(),
+              stopPropagation: () => event.stopPropagation(),
+            });
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowDown") {
+              event.preventDefault();
+              onNavigate("next");
+              return;
+            }
+            if (event.key === "ArrowUp") {
+              event.preventDefault();
+              onNavigate("previous");
+            }
+          }}
         >
           <DesktopAppIconGlyph icon={app.icon} />
           <span class="mobile-app-copy">
@@ -154,7 +208,11 @@ export function MobileWindowStack({ summaries }: MobileWindowStackProps) {
   );
 }
 
-export function TaskbarWindows({ summaries }: TaskbarWindowsProps) {
+export function TaskbarWindows({
+  summaries,
+  onActivateWindow,
+  onCloseWindow,
+}: TaskbarWindowsProps) {
   return (
     <>
       {summaries
@@ -167,6 +225,14 @@ export function TaskbarWindows({ summaries }: TaskbarWindowsProps) {
             class={taskbarClassName(summary)}
             data-window-id={summary.windowId}
             title={`${summary.title} - ${summary.route}`}
+            onClick={() => onActivateWindow(summary.windowId)}
+            onAuxClick={(event) => {
+              if (event.button !== 1) {
+                return;
+              }
+              event.preventDefault();
+              onCloseWindow(summary.windowId);
+            }}
           >
             <span class="taskbar-window-title">{summary.title}</span>
             {summary.dirty ? <span class="taskbar-dirty" aria-label="Unsaved changes" /> : null}
