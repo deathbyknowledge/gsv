@@ -9,7 +9,6 @@ import { SessionScreens } from "../session/SessionScreens";
 import { DesktopShellFrame } from "./DesktopShellFrame";
 import { useDesktopAppsSync } from "./useDesktopAppsSync";
 import { useDesktopRuntime } from "./useDesktopRuntime";
-import { useSessionFrameBridge } from "./useSessionFrameBridge";
 
 type StandaloneNavigator = Navigator & {
   standalone?: boolean;
@@ -19,6 +18,14 @@ function isStandaloneDisplay(): boolean {
   return window.matchMedia("(display-mode: standalone)").matches
     || window.matchMedia("(display-mode: fullscreen)").matches
     || (navigator as StandaloneNavigator).standalone === true;
+}
+
+function formatMobileHomeDate(): string {
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: "long",
+    month: "short",
+    day: "numeric",
+  }).format(new Date());
 }
 
 export function DesktopShell() {
@@ -32,23 +39,22 @@ export function DesktopShell() {
   }>({ open: false, anchor: null });
   const [notificationUnreadCount, setNotificationUnreadCount] = useState(0);
   const standalone = useMemo(isStandaloneDisplay, []);
+  const mobileHomeDate = useMemo(formatMobileHomeDate, []);
   const presenceController = useMemo(() => new PresenceController(gatewayClient), [gatewayClient]);
   const packageApps = usePackageApps({
     gatewayClient,
     enabled: connected,
   });
-  const { runtimeRef, runtimeRevision, shellRootNode } = useDesktopRuntime({
+  const { runtimeRef, runtimeRevision } = useDesktopRuntime({
     shellRef,
     windowsLayerRef,
     gatewayClient,
     standalone,
   });
 
-  useSessionFrameBridge({
-    shellRootNode,
-    sessionService,
-    snapshot: sessionSnapshot,
-  });
+  useEffect(() => {
+    void sessionService.start();
+  }, [sessionService]);
   useDesktopAppsSync({
     runtimeRef,
     runtimeRevision,
@@ -61,6 +67,8 @@ export function DesktopShell() {
   const notificationOpenSurface = notificationPanel.open
     ? notificationPanel.anchor?.surface ?? null
     : null;
+  const desktopVisible = sessionSnapshot.phase === "ready";
+  const sessionUsername = sessionSnapshot.username || "operator";
   const toggleNotifications = useCallback((surface: NotificationSurface, node: HTMLButtonElement): void => {
     setNotificationPanel((current) => {
       const sameAnchor = current.anchor?.surface === surface && current.anchor.node === node;
@@ -76,6 +84,9 @@ export function DesktopShell() {
   const openNotifications = useCallback((): void => {
     setNotificationPanel((current) => ({ ...current, open: true }));
   }, []);
+  const lockSession = useCallback((): void => {
+    sessionService.lock();
+  }, [sessionService]);
 
   return (
     <>
@@ -87,6 +98,10 @@ export function DesktopShell() {
           notificationOpenSurface={notificationOpenSurface}
           notificationUnreadCount={notificationUnreadCount}
           onNotificationsToggle={toggleNotifications}
+          desktopVisible={desktopVisible}
+          sessionUsername={sessionUsername}
+          mobileHomeDate={mobileHomeDate}
+          onLockSession={lockSession}
           standalone={standalone}
         >
           <SessionScreens session={sessionService} snapshot={sessionSnapshot} />

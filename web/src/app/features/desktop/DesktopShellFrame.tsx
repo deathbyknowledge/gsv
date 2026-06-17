@@ -15,6 +15,10 @@ type DesktopShellFrameProps = {
   notificationOpenSurface: NotificationSurface | null;
   notificationUnreadCount: number;
   onNotificationsToggle: (surface: NotificationSurface, node: HTMLButtonElement) => void;
+  desktopVisible: boolean;
+  sessionUsername: string;
+  mobileHomeDate: string;
+  onLockSession: () => void;
   standalone: boolean;
   children?: ComponentChildren;
 };
@@ -25,6 +29,10 @@ type DesktopRootProps = {
   notificationOpenSurface: NotificationSurface | null;
   notificationUnreadCount: number;
   onNotificationsToggle: (surface: NotificationSurface, node: HTMLButtonElement) => void;
+  desktopVisible: boolean;
+  sessionUsername: string;
+  mobileHomeDate: string;
+  onLockSession: () => void;
 };
 
 function BellIcon() {
@@ -67,11 +75,15 @@ function Topbar({
   notificationOpenSurface,
   notificationUnreadCount,
   onNotificationsToggle,
+  desktopVisible,
+  onLockSession,
 }: {
   presenceController: PresenceController;
   notificationOpenSurface: NotificationSurface | null;
   notificationUnreadCount: number;
   onNotificationsToggle: (surface: NotificationSurface, node: HTMLButtonElement) => void;
+  desktopVisible: boolean;
+  onLockSession: () => void;
 }) {
   return (
     <header class="topbar">
@@ -99,7 +111,13 @@ function Topbar({
         </button>
       </div>
       <div class="topbar-section topbar-session">
-        <button type="button" class="session-lock-btn" data-session-lock aria-label="Lock">
+        <button
+          type="button"
+          class="session-lock-btn"
+          aria-label="Lock"
+          disabled={!desktopVisible}
+          onClick={onLockSession}
+        >
           <span class="topbar-icon" aria-hidden="true">
             <PowerIcon />
           </span>
@@ -123,18 +141,22 @@ function MobileShell({
   notificationOpenSurface,
   notificationUnreadCount,
   onNotificationsToggle,
+  sessionUsername,
+  mobileHomeDate,
 }: {
   presenceController: PresenceController;
   notificationOpenSurface: NotificationSurface | null;
   notificationUnreadCount: number;
   onNotificationsToggle: (surface: NotificationSurface, node: HTMLButtonElement) => void;
+  sessionUsername: string;
+  mobileHomeDate: string;
 }) {
   return (
     <section class="mobile-shell" data-mobile-shell aria-label="Mobile shell">
       <section class="mobile-home" data-mobile-home>
         <header class="mobile-home-header" aria-label="Home">
-          <p class="mobile-home-date" data-mobile-home-date />
-          <h1>Hello, <span data-mobile-home-username>operator</span></h1>
+          <p class="mobile-home-date">{mobileHomeDate}</p>
+          <h1>Hello, <span>{sessionUsername}</span></h1>
           <div class="mobile-home-actions">
             <button
               type="button"
@@ -175,14 +197,20 @@ function DesktopRoot({
   notificationOpenSurface,
   notificationUnreadCount,
   onNotificationsToggle,
+  desktopVisible,
+  sessionUsername,
+  mobileHomeDate,
+  onLockSession,
 }: DesktopRootProps) {
   return (
-    <div class="desktop-root" data-desktop-root hidden>
+    <div class="desktop-root" hidden={!desktopVisible}>
       <Topbar
         presenceController={presenceController}
         notificationOpenSurface={notificationOpenSurface}
         notificationUnreadCount={notificationUnreadCount}
         onNotificationsToggle={onNotificationsToggle}
+        desktopVisible={desktopVisible}
+        onLockSession={onLockSession}
       />
       <Workspace windowsLayerRef={windowsLayerRef} />
       <MobileShell
@@ -190,6 +218,8 @@ function DesktopRoot({
         notificationOpenSurface={notificationOpenSurface}
         notificationUnreadCount={notificationUnreadCount}
         onNotificationsToggle={onNotificationsToggle}
+        sessionUsername={sessionUsername}
+        mobileHomeDate={mobileHomeDate}
       />
       <div class="dock-reveal-zone" data-dock-reveal-zone aria-hidden="true" />
       <PresenceActivity controller={presenceController} />
@@ -204,7 +234,11 @@ class StaticDesktopRoot extends Component<DesktopRootProps> {
     return nextProps.presenceController !== this.props.presenceController
       || nextProps.notificationOpenSurface !== this.props.notificationOpenSurface
       || nextProps.notificationUnreadCount !== this.props.notificationUnreadCount
-      || nextProps.onNotificationsToggle !== this.props.onNotificationsToggle;
+      || nextProps.onNotificationsToggle !== this.props.onNotificationsToggle
+      || nextProps.desktopVisible !== this.props.desktopVisible
+      || nextProps.sessionUsername !== this.props.sessionUsername
+      || nextProps.mobileHomeDate !== this.props.mobileHomeDate
+      || nextProps.onLockSession !== this.props.onLockSession;
   }
 
   render(props: DesktopRootProps) {
@@ -219,6 +253,10 @@ export function DesktopShellFrame({
   notificationOpenSurface,
   notificationUnreadCount,
   onNotificationsToggle,
+  desktopVisible,
+  sessionUsername,
+  mobileHomeDate,
+  onLockSession,
   standalone,
   children,
 }: DesktopShellFrameProps) {
@@ -231,6 +269,10 @@ export function DesktopShellFrame({
         notificationOpenSurface={notificationOpenSurface}
         notificationUnreadCount={notificationUnreadCount}
         onNotificationsToggle={onNotificationsToggle}
+        desktopVisible={desktopVisible}
+        sessionUsername={sessionUsername}
+        mobileHomeDate={mobileHomeDate}
+        onLockSession={onLockSession}
       />
     </div>
   );
