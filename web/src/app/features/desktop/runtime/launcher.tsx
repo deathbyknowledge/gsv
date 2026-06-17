@@ -9,7 +9,7 @@ import {
   queuePendingChatProcess,
   type TargetChatProcessEventDetail,
 } from "../../../../chat-process-link";
-import { CommandPaletteItems, DesktopAppIcons, TaskbarWindows } from "../components/DesktopLauncherViews";
+import { CommandPaletteItems, DesktopAppIcons, MobileAppGrid, MobileWindowStack, TaskbarWindows } from "../components/DesktopLauncherViews";
 import {
   centeredMobileRotorIndex,
   filterLauncherPaletteItems,
@@ -192,20 +192,7 @@ export function createLauncher(options: LauncherOptions): LauncherController {
       return;
     }
 
-    mobileAppsNode.innerHTML = apps
-      .map((appItem) => {
-        return `
-          <button type="button" class="mobile-app-icon" data-app-id="${escapeHtml(appItem.id)}">
-            ${renderDesktopIcon(appItem.icon)}
-            <span class="mobile-app-copy">
-              <strong>${escapeHtml(appItem.name)}</strong>
-              <small>${escapeHtml(appItem.description)}</small>
-            </span>
-            <span class="mobile-window-stack" data-mobile-window-stack aria-hidden="true"></span>
-          </button>
-        `;
-      })
-      .join("");
+    renderPreact(<MobileAppGrid apps={apps} />, mobileAppsNode);
     mobileAppNodes = Array.from(mobileAppsNode.querySelectorAll<HTMLButtonElement>(".mobile-app-icon[data-app-id]"));
     mobileAppIndexById = new Map(apps.map((appItem, index) => [appItem.id, index]));
     mobileRotorMetrics = null;
@@ -382,7 +369,7 @@ export function createLauncher(options: LauncherOptions): LauncherController {
 
         if (!shouldRenderStack) {
           stackNode.dataset.stackKey = "";
-          stackNode.innerHTML = "";
+          renderPreact(null, stackNode);
           continue;
         }
 
@@ -396,29 +383,7 @@ export function createLauncher(options: LauncherOptions): LauncherController {
         }
 
         stackNode.dataset.stackKey = stackKey;
-        stackNode.innerHTML = orderedSummaries
-          .map((summary, index) => {
-            const activeClass = summary.active && summary.mode !== "minimized" ? " is-active-window" : "";
-            const pausedClass = summary.mode === "minimized" ? " is-paused-window" : "";
-            const visibleClass = summary.mode === "minimized" ? "" : " is-visible-window";
-            const frontClass = index === 0 ? " is-front-window" : "";
-            const pausedDepth = summary.mode === "minimized" ? 1 : 0;
-            const depthIndex = index + pausedDepth;
-            const depthX = `${18 + depthIndex * 9}px`;
-            const depthY = `${16 + depthIndex * 8}px`;
-            const depthZ = `${depthIndex * -42}px`;
-            const depthScale = Math.max(0.74, 1 - depthIndex * 0.055).toFixed(3);
-            const layerOpacity = (summary.mode === "minimized" ? Math.max(0.24, 0.62 - index * 0.1) : Math.max(0.44, 0.95 - index * 0.12)).toFixed(3);
-            const compactDepthX = `${12 + depthIndex * 5}px`;
-            const compactDepthY = `${14 + depthIndex * 7}px`;
-            const layerZIndex = String(20 - index);
-            return `
-              <span class="mobile-window-layer${frontClass}${visibleClass}${activeClass}${pausedClass}" data-window-id="${escapeHtml(summary.windowId)}" style="--window-depth-index: ${index}; --window-depth-x: ${depthX}; --window-depth-y: ${depthY}; --window-depth-z: ${depthZ}; --window-depth-scale: ${depthScale}; --window-layer-opacity: ${layerOpacity}; --window-depth-compact-x: ${compactDepthX}; --window-depth-compact-y: ${compactDepthY}; --window-layer-z-index: ${layerZIndex};">
-                <span class="mobile-window-layer-title">${escapeHtml(summary.title)}</span>
-              </span>
-            `;
-          })
-          .join("");
+        renderPreact(<MobileWindowStack summaries={orderedSummaries} />, stackNode);
       }
     }
   };
@@ -1441,6 +1406,9 @@ export function createLauncher(options: LauncherOptions): LauncherController {
       }
       if (commandPaletteListNode) {
         renderPreact(null, commandPaletteListNode);
+      }
+      if (mobileAppsNode) {
+        renderPreact(null, mobileAppsNode);
       }
       dockRevealZoneNode?.removeEventListener("pointerenter", onDockRevealPointerEnter);
       dockRevealZoneNode?.removeEventListener("pointerleave", onDockRevealPointerLeave);
