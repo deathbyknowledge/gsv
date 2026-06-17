@@ -19,6 +19,9 @@ type DesktopShellFrameProps = {
   sessionUsername: string;
   mobileHomeDate: string;
   onLockSession: () => void;
+  onOpenCommandPalette: () => void;
+  onRevealDock: () => void;
+  onHideDockSoon: () => void;
   standalone: boolean;
   children?: ComponentChildren;
 };
@@ -33,6 +36,9 @@ type DesktopRootProps = {
   sessionUsername: string;
   mobileHomeDate: string;
   onLockSession: () => void;
+  onOpenCommandPalette: () => void;
+  onRevealDock: () => void;
+  onHideDockSoon: () => void;
 };
 
 function BellIcon() {
@@ -77,6 +83,9 @@ function Topbar({
   onNotificationsToggle,
   desktopVisible,
   onLockSession,
+  onOpenCommandPalette,
+  onRevealDock,
+  onHideDockSoon,
 }: {
   presenceController: PresenceController;
   notificationOpenSurface: NotificationSurface | null;
@@ -84,11 +93,33 @@ function Topbar({
   onNotificationsToggle: (surface: NotificationSurface, node: HTMLButtonElement) => void;
   desktopVisible: boolean;
   onLockSession: () => void;
+  onOpenCommandPalette: () => void;
+  onRevealDock: () => void;
+  onHideDockSoon: () => void;
 }) {
   return (
-    <header class="topbar">
+    <header
+      class="topbar"
+      onPointerEnter={onRevealDock}
+      onPointerLeave={onHideDockSoon}
+      onFocusIn={onRevealDock}
+      onFocusOut={(event) => {
+        const nextTarget = event.relatedTarget;
+        if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) {
+          return;
+        }
+        onHideDockSoon();
+      }}
+    >
       <div class="topbar-section">
-        <button type="button" class="pill topbar-launcher" data-command-launcher aria-label="Open command palette">GSV</button>
+        <button
+          type="button"
+          class="pill topbar-launcher"
+          aria-label="Open command palette"
+          onClick={onOpenCommandPalette}
+        >
+          GSV
+        </button>
       </div>
       <nav class="taskbar-windows" data-taskbar-windows aria-label="Open windows" />
       <div class="topbar-section topbar-presence">
@@ -143,6 +174,7 @@ function MobileShell({
   onNotificationsToggle,
   sessionUsername,
   mobileHomeDate,
+  onOpenCommandPalette,
 }: {
   presenceController: PresenceController;
   notificationOpenSurface: NotificationSurface | null;
@@ -150,6 +182,7 @@ function MobileShell({
   onNotificationsToggle: (surface: NotificationSurface, node: HTMLButtonElement) => void;
   sessionUsername: string;
   mobileHomeDate: string;
+  onOpenCommandPalette: () => void;
 }) {
   return (
     <section class="mobile-shell" data-mobile-shell aria-label="Mobile shell">
@@ -173,7 +206,12 @@ function MobileShell({
               <NotificationBadge unreadCount={notificationUnreadCount} />
             </button>
             <PresenceMobileToggle controller={presenceController} />
-            <button type="button" class="mobile-home-action" data-mobile-command-launcher aria-label="Search apps and windows">
+            <button
+              type="button"
+              class="mobile-home-action"
+              aria-label="Search apps and windows"
+              onClick={onOpenCommandPalette}
+            >
               <span aria-hidden="true">
                 <SearchIcon />
               </span>
@@ -201,6 +239,9 @@ function DesktopRoot({
   sessionUsername,
   mobileHomeDate,
   onLockSession,
+  onOpenCommandPalette,
+  onRevealDock,
+  onHideDockSoon,
 }: DesktopRootProps) {
   return (
     <div class="desktop-root" hidden={!desktopVisible}>
@@ -211,6 +252,9 @@ function DesktopRoot({
         onNotificationsToggle={onNotificationsToggle}
         desktopVisible={desktopVisible}
         onLockSession={onLockSession}
+        onOpenCommandPalette={onOpenCommandPalette}
+        onRevealDock={onRevealDock}
+        onHideDockSoon={onHideDockSoon}
       />
       <Workspace windowsLayerRef={windowsLayerRef} />
       <MobileShell
@@ -220,8 +264,14 @@ function DesktopRoot({
         onNotificationsToggle={onNotificationsToggle}
         sessionUsername={sessionUsername}
         mobileHomeDate={mobileHomeDate}
+        onOpenCommandPalette={onOpenCommandPalette}
       />
-      <div class="dock-reveal-zone" data-dock-reveal-zone aria-hidden="true" />
+      <div
+        class="dock-reveal-zone"
+        aria-hidden="true"
+        onPointerEnter={onRevealDock}
+        onPointerLeave={onHideDockSoon}
+      />
       <PresenceActivity controller={presenceController} />
       <PresencePanel controller={presenceController} />
       <CommandPalette />
@@ -238,7 +288,10 @@ class StaticDesktopRoot extends Component<DesktopRootProps> {
       || nextProps.desktopVisible !== this.props.desktopVisible
       || nextProps.sessionUsername !== this.props.sessionUsername
       || nextProps.mobileHomeDate !== this.props.mobileHomeDate
-      || nextProps.onLockSession !== this.props.onLockSession;
+      || nextProps.onLockSession !== this.props.onLockSession
+      || nextProps.onOpenCommandPalette !== this.props.onOpenCommandPalette
+      || nextProps.onRevealDock !== this.props.onRevealDock
+      || nextProps.onHideDockSoon !== this.props.onHideDockSoon;
   }
 
   render(props: DesktopRootProps) {
@@ -257,6 +310,9 @@ export function DesktopShellFrame({
   sessionUsername,
   mobileHomeDate,
   onLockSession,
+  onOpenCommandPalette,
+  onRevealDock,
+  onHideDockSoon,
   standalone,
   children,
 }: DesktopShellFrameProps) {
@@ -273,6 +329,9 @@ export function DesktopShellFrame({
         sessionUsername={sessionUsername}
         mobileHomeDate={mobileHomeDate}
         onLockSession={onLockSession}
+        onOpenCommandPalette={onOpenCommandPalette}
+        onRevealDock={onRevealDock}
+        onHideDockSoon={onHideDockSoon}
       />
     </div>
   );

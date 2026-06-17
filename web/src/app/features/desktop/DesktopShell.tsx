@@ -87,6 +87,15 @@ export function DesktopShell() {
   const lockSession = useCallback((): void => {
     sessionService.lock();
   }, [sessionService]);
+  const openCommandPalette = useCallback((): void => {
+    runtimeRef.current?.launcher.openCommandPalette();
+  }, [runtimeRef]);
+  const revealDock = useCallback((): void => {
+    runtimeRef.current?.launcher.revealDock();
+  }, [runtimeRef]);
+  const hideDockSoon = useCallback((): void => {
+    runtimeRef.current?.launcher.hideDockSoon();
+  }, [runtimeRef]);
 
   return (
     <>
@@ -102,6 +111,9 @@ export function DesktopShell() {
           sessionUsername={sessionUsername}
           mobileHomeDate={mobileHomeDate}
           onLockSession={lockSession}
+          onOpenCommandPalette={openCommandPalette}
+          onRevealDock={revealDock}
+          onHideDockSoon={hideDockSoon}
           standalone={standalone}
         >
           <SessionScreens session={sessionService} snapshot={sessionSnapshot} />

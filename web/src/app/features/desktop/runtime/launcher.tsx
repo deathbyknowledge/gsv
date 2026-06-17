@@ -36,6 +36,9 @@ type LauncherOptions = {
 
 type LauncherController = {
   openApp: (appId: string, route?: string) => void;
+  openCommandPalette: () => void;
+  revealDock: (options?: { temporary?: boolean }) => void;
+  hideDockSoon: () => void;
   setApps: (apps: readonly DesktopApp[]) => void;
   destroy: () => void;
 };
@@ -46,13 +49,9 @@ export function createLauncher(options: LauncherOptions): LauncherController {
   const { rootNode, windowManager, initialAppId } = options;
   const iconsNode = rootNode.querySelector<HTMLElement>("[data-desktop-icons]");
   const taskbarWindowsNode = rootNode.querySelector<HTMLElement>("[data-taskbar-windows]");
-  const topbarNode = rootNode.querySelector<HTMLElement>(".topbar");
-  const commandLauncherNode = rootNode.querySelector<HTMLButtonElement>("[data-command-launcher]");
-  const mobileCommandLauncherNode = rootNode.querySelector<HTMLButtonElement>("[data-mobile-command-launcher]");
   const mobileAppsNode = rootNode.querySelector<HTMLElement>("[data-mobile-apps]");
   const mobileHomeNode = rootNode.querySelector<HTMLElement>("[data-mobile-home]");
   const mobileHomeButtonNode = rootNode.querySelector<HTMLButtonElement>("[data-mobile-home-button]");
-  const dockRevealZoneNode = rootNode.querySelector<HTMLElement>("[data-dock-reveal-zone]");
   const commandPaletteRootNode = rootNode.querySelector<HTMLElement>("[data-command-palette-root]");
 
   if (!iconsNode) {
@@ -1013,42 +1012,6 @@ export function createLauncher(options: LauncherOptions): LauncherController {
     }
   };
 
-  const onCommandLauncherClick = (): void => {
-    commandPalette.open();
-  };
-
-  const onMobileCommandLauncherClick = (): void => {
-    commandPalette.open();
-  };
-
-  const onDockRevealPointerEnter = (): void => {
-    setDockRevealed(true);
-  };
-
-  const onDockRevealPointerLeave = (): void => {
-    scheduleDockHide();
-  };
-
-  const onTopbarPointerEnter = (): void => {
-    setDockRevealed(true);
-  };
-
-  const onTopbarPointerLeave = (): void => {
-    scheduleDockHide();
-  };
-
-  const onTopbarFocusIn = (): void => {
-    setDockRevealed(true);
-  };
-
-  const onTopbarFocusOut = (event: FocusEvent): void => {
-    const nextTarget = event.relatedTarget;
-    if (nextTarget instanceof Node && topbarNode?.contains(nextTarget)) {
-      return;
-    }
-    scheduleDockHide();
-  };
-
   mobileAppsNode?.addEventListener("wheel", onMobileAppsWheel, { passive: false });
   mobileAppsNode?.addEventListener("pointerdown", onMobileAppsPointerDown);
   mobileAppsNode?.addEventListener("pointermove", onMobileAppsPointerMove);
@@ -1059,15 +1022,7 @@ export function createLauncher(options: LauncherOptions): LauncherController {
   mobileHomeButtonNode?.addEventListener("pointermove", onMobileHomeGesturePointerMove);
   mobileHomeButtonNode?.addEventListener("pointerup", finishMobileHomeGesture);
   mobileHomeButtonNode?.addEventListener("pointercancel", cancelMobileHomeGesture);
-  commandLauncherNode?.addEventListener("click", onCommandLauncherClick);
-  mobileCommandLauncherNode?.addEventListener("click", onMobileCommandLauncherClick);
   document.addEventListener("keydown", onDocumentKeyDown);
-  dockRevealZoneNode?.addEventListener("pointerenter", onDockRevealPointerEnter);
-  dockRevealZoneNode?.addEventListener("pointerleave", onDockRevealPointerLeave);
-  topbarNode?.addEventListener("pointerenter", onTopbarPointerEnter);
-  topbarNode?.addEventListener("pointerleave", onTopbarPointerLeave);
-  topbarNode?.addEventListener("focusin", onTopbarFocusIn);
-  topbarNode?.addEventListener("focusout", onTopbarFocusOut);
   window.addEventListener("resize", onMobileHomeResize);
 
   window.addEventListener(OPEN_APP_EVENT, onOpenApp as EventListener);
@@ -1097,6 +1052,13 @@ export function createLauncher(options: LauncherOptions): LauncherController {
 
   return {
     openApp,
+    openCommandPalette: () => {
+      commandPalette.open();
+    },
+    revealDock: (options?: { temporary?: boolean }) => {
+      setDockRevealed(true, options);
+    },
+    hideDockSoon: scheduleDockHide,
     setApps,
     destroy: () => {
       unsubscribe();
@@ -1110,8 +1072,6 @@ export function createLauncher(options: LauncherOptions): LauncherController {
       mobileHomeButtonNode?.removeEventListener("pointermove", onMobileHomeGesturePointerMove);
       mobileHomeButtonNode?.removeEventListener("pointerup", finishMobileHomeGesture);
       mobileHomeButtonNode?.removeEventListener("pointercancel", cancelMobileHomeGesture);
-      commandLauncherNode?.removeEventListener("click", onCommandLauncherClick);
-      mobileCommandLauncherNode?.removeEventListener("click", onMobileCommandLauncherClick);
       document.removeEventListener("keydown", onDocumentKeyDown);
       commandPalette.destroy();
       renderPreact(null, iconsNode);
@@ -1121,12 +1081,6 @@ export function createLauncher(options: LauncherOptions): LauncherController {
       if (mobileAppsNode) {
         renderPreact(null, mobileAppsNode);
       }
-      dockRevealZoneNode?.removeEventListener("pointerenter", onDockRevealPointerEnter);
-      dockRevealZoneNode?.removeEventListener("pointerleave", onDockRevealPointerLeave);
-      topbarNode?.removeEventListener("pointerenter", onTopbarPointerEnter);
-      topbarNode?.removeEventListener("pointerleave", onTopbarPointerLeave);
-      topbarNode?.removeEventListener("focusin", onTopbarFocusIn);
-      topbarNode?.removeEventListener("focusout", onTopbarFocusOut);
       clearDockRevealTimer();
       clearMobileLaunchTimer();
       clearMobileReturnTimer();
