@@ -27,7 +27,7 @@ export type PresenceSendResult = {
 };
 
 export type PresenceRun = {
-  row: HTMLElement | null;
+  logId: string | null;
   prompt: string;
   answer: string;
   status: PresenceLogStatus;
@@ -77,7 +77,7 @@ export type VoiceTimingChunk = {
 };
 
 export type PendingInterimSpeech = {
-  timer: number;
+  timer: ReturnType<typeof setTimeout>;
   text: string;
   key: string;
 };

@@ -1,7 +1,6 @@
 import type { RefObject } from "preact";
 import type { GSVClient } from "@humansandmachines/gsv/client";
 import { useEffect, useRef, useState } from "preact/hooks";
-import { createPresenceControl } from "../presence/presenceControl";
 import { createAppRuntime } from "./runtime/appsRuntime";
 import { createLauncher } from "./runtime/launcher";
 import { createWindowManager, type WindowManager } from "./runtime/windowManager";
@@ -50,10 +49,6 @@ export function useDesktopRuntime({
       appRegistry: [],
       appRuntime,
     });
-    const presenceControl = createPresenceControl({
-      rootNode: shellEl,
-      gatewayClient,
-    });
     const launcher = createLauncher({
       rootNode: shellEl,
       windowManager,
@@ -70,7 +65,6 @@ export function useDesktopRuntime({
     return () => {
       runtimeRef.current = null;
       launcher.destroy();
-      presenceControl.destroy();
       windowManager.destroy();
       document.documentElement.classList.remove("is-standalone");
     };

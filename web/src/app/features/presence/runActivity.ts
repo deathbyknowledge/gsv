@@ -4,7 +4,6 @@ import {
   MAX_BUFFERED_RUN_SIGNALS,
   RUN_SIGNAL_BUFFER_TTL_MS,
 } from "./constants";
-import { updatePresenceLog } from "./display";
 import {
   isPresenceRunSignal,
   runIdFromSignalPayload,
@@ -39,6 +38,7 @@ type PresenceRunActivityOptions = {
   setState(state: PresenceState): void;
   setNote(note: string): void;
   ambientIdleNote(): string;
+  updatePresenceLog(logId: string | null, status: PresenceLogStatus, text?: string): void;
   showPresenceActivity(status: PresenceLogStatus, body: string, tone?: string): void;
   renderIdlePresenceActivity(): void;
   speechOutput: Pick<PresenceSpeechOutput, "finalizeRunSpeech" | "queueRunSpeechFromAnswer" | "speakReply">;
@@ -50,7 +50,7 @@ export type PresenceRunActivity = {
   hasRun(runId: string): boolean;
   trackRun(
     runId: string,
-    row: HTMLElement | null,
+    logId: string | null,
     prompt: string,
     status?: PresenceLogStatus,
     timing?: VoiceTimingTrace,
@@ -61,7 +61,7 @@ export type PresenceRunActivity = {
 
 export function createPresenceRunActivity(options: PresenceRunActivityOptions): PresenceRunActivity {
   let latestRunId: string | null = null;
-  let activityHideTimer: number | null = null;
+  let activityHideTimer: ReturnType<typeof setTimeout> | null = null;
   let lastInterimSpeechKey = "";
   let lastInterimSpeechAt = 0;
   const activeRuns = new Map<string, PresenceRun>();
@@ -82,7 +82,7 @@ export function createPresenceRunActivity(options: PresenceRunActivityOptions): 
 
   function trackRun(
     runId: string,
-    row: HTMLElement | null,
+    logId: string | null,
     prompt: string,
     status: PresenceLogStatus = "Working",
     timing?: VoiceTimingTrace,
@@ -91,7 +91,7 @@ export function createPresenceRunActivity(options: PresenceRunActivityOptions): 
       timing.runId = runId;
     }
     activeRuns.set(runId, {
-      row,
+      logId,
       prompt,
       answer: "",
       status,
@@ -122,7 +122,7 @@ export function createPresenceRunActivity(options: PresenceRunActivityOptions): 
       run.status = "Working";
       run.updatedAt = Date.now();
       latestRunId = runId;
-      updatePresenceLog(run.row, "Working");
+      options.updatePresenceLog(run.logId, "Working");
       options.setNote("Mind is retrying");
       showPresenceActivity("Working", run.answer || run.prompt);
       options.setState(options.getState());
@@ -137,7 +137,7 @@ export function createPresenceRunActivity(options: PresenceRunActivityOptions): 
         run.updatedAt = Date.now();
         run.answer = `${run.answer}${delta}`;
         latestRunId = runId;
-        updatePresenceLog(run.row, "Responding");
+        options.updatePresenceLog(run.logId, "Responding");
         options.setNote("Mind is responding");
         showPresenceActivity("Responding", run.answer || run.prompt);
         clearPendingInterimSpeech(runId);
@@ -152,7 +152,7 @@ export function createPresenceRunActivity(options: PresenceRunActivityOptions): 
         run.status = "Using tools";
         run.updatedAt = Date.now();
         latestRunId = runId;
-        updatePresenceLog(run.row, "Using tools");
+        options.updatePresenceLog(run.logId, "Using tools");
         options.setNote(`Mind is using ${toolLabel}`);
         showPresenceActivity("Using tools", `Using ${toolLabel}`);
         if (!hasPendingInterimSpeech(runId)) {
@@ -171,7 +171,7 @@ export function createPresenceRunActivity(options: PresenceRunActivityOptions): 
       run.updatedAt = Date.now();
       run.answer = signalPayloadText(payload) ?? run.answer;
       latestRunId = runId;
-      updatePresenceLog(run.row, "Responding");
+      options.updatePresenceLog(run.logId, "Responding");
       options.setNote("Mind is responding");
       showPresenceActivity("Responding", run.answer || run.prompt);
       if (run.answer) {
@@ -187,7 +187,7 @@ export function createPresenceRunActivity(options: PresenceRunActivityOptions): 
       run.updatedAt = Date.now();
       run.answer = signalPayloadText(payload) ?? run.answer;
       latestRunId = runId;
-      updatePresenceLog(run.row, "Responding");
+      options.updatePresenceLog(run.logId, "Responding");
       options.setNote("Mind is responding");
       showPresenceActivity("Responding", run.answer || run.prompt);
       options.setState(options.getState());
@@ -200,7 +200,7 @@ export function createPresenceRunActivity(options: PresenceRunActivityOptions): 
       run.status = "Using tools";
       run.updatedAt = Date.now();
       latestRunId = runId;
-      updatePresenceLog(run.row, "Using tools");
+      options.updatePresenceLog(run.logId, "Using tools");
       options.setNote(toolLabel ? `Mind is using ${toolLabel}` : "Mind is using tools");
       showPresenceActivity("Using tools", toolLabel ? `Using ${toolLabel}` : run.answer || run.prompt);
       if (!hasPendingInterimSpeech(runId)) {
@@ -214,7 +214,7 @@ export function createPresenceRunActivity(options: PresenceRunActivityOptions): 
       run.status = "Working";
       run.updatedAt = Date.now();
       latestRunId = runId;
-      updatePresenceLog(run.row, "Working");
+      options.updatePresenceLog(run.logId, "Working");
       options.setNote("Mind is working");
       showPresenceActivity("Working", run.answer || run.prompt);
       options.setState(options.getState());
@@ -226,7 +226,7 @@ export function createPresenceRunActivity(options: PresenceRunActivityOptions): 
       run.status = "Needs approval";
       run.updatedAt = Date.now();
       latestRunId = runId;
-      updatePresenceLog(run.row, "Needs approval");
+      options.updatePresenceLog(run.logId, "Needs approval");
       options.setNote("Mind needs approval");
       showPresenceActivity("Needs approval", run.answer || run.prompt, "needs-approval");
       clearPendingInterimSpeech(runId);
@@ -245,7 +245,7 @@ export function createPresenceRunActivity(options: PresenceRunActivityOptions): 
       }
       clearPendingInterimSpeech(runId);
       const finalStatus = error ? "Failed" : aborted ? "Stopped" : "Done";
-      updatePresenceLog(run.row, finalStatus, error ?? undefined);
+      options.updatePresenceLog(run.logId, finalStatus, error ?? undefined);
       activeRuns.delete(runId);
       options.setNote(
         error
@@ -345,7 +345,7 @@ export function createPresenceRunActivity(options: PresenceRunActivityOptions): 
 
   function clearActivityHideTimer(): void {
     if (activityHideTimer !== null) {
-      window.clearTimeout(activityHideTimer);
+      globalThis.clearTimeout(activityHideTimer);
       activityHideTimer = null;
     }
   }
@@ -378,7 +378,7 @@ export function createPresenceRunActivity(options: PresenceRunActivityOptions): 
   function scheduleActivityAfterCompletion(completedRunId: string): void {
     latestRunId = latestRunId === completedRunId ? newestActiveRunId() : latestRunId;
     clearActivityHideTimer();
-    activityHideTimer = window.setTimeout(() => {
+    activityHideTimer = globalThis.setTimeout(() => {
       activityHideTimer = null;
       renderLatestActiveActivity();
     }, activeRuns.size > 0 ? 4500 : 12000);
@@ -393,7 +393,7 @@ export function createPresenceRunActivity(options: PresenceRunActivityOptions): 
       return;
     }
     clearPendingInterimSpeech(runId);
-    const timer = window.setTimeout(() => {
+    const timer = globalThis.setTimeout(() => {
       pendingInterimSpeech.delete(runId);
       speakInterimStatus(normalized, key);
     }, INTERIM_SPEECH_DELAY_MS);
@@ -404,13 +404,13 @@ export function createPresenceRunActivity(options: PresenceRunActivityOptions): 
     if (runId) {
       const pending = pendingInterimSpeech.get(runId);
       if (pending) {
-        window.clearTimeout(pending.timer);
+        globalThis.clearTimeout(pending.timer);
         pendingInterimSpeech.delete(runId);
       }
       return;
     }
     for (const pending of pendingInterimSpeech.values()) {
-      window.clearTimeout(pending.timer);
+      globalThis.clearTimeout(pending.timer);
     }
     pendingInterimSpeech.clear();
   }

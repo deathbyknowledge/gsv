@@ -23,50 +23,6 @@ export function transcriptionNote(result: AiTranscriptionCreateResult): string {
   return parts.length > 0 ? `Transcribed ${parts.join(" / ")}` : "";
 }
 
-export function addPresenceLog(
-  log: HTMLElement | null,
-  status: PresenceLogStatus,
-  text: string,
-  timestamp: number,
-): HTMLElement | null {
-  if (!log) {
-    return null;
-  }
-  log.hidden = false;
-  const row = document.createElement("div");
-  row.className = "presence-log-row";
-  row.dataset.timestamp = String(timestamp);
-  const meta = document.createElement("span");
-  meta.className = "presence-log-meta";
-  const body = document.createElement("p");
-  body.textContent = text;
-  row.append(meta, body);
-  updatePresenceLog(row, status);
-  log.prepend(row);
-  while (log.children.length > 6) {
-    log.lastElementChild?.remove();
-  }
-  return row;
-}
-
-export function updatePresenceLog(row: HTMLElement | null, status: PresenceLogStatus, text?: string): void {
-  if (!row) {
-    return;
-  }
-  const timestamp = Number(row.dataset.timestamp) || Date.now();
-  row.dataset.status = statusKey(status);
-  const meta = row.querySelector<HTMLElement>(".presence-log-meta");
-  if (meta) {
-    meta.textContent = `${formatClock(timestamp)} ${status}`;
-  }
-  if (typeof text === "string") {
-    const body = row.querySelector<HTMLParagraphElement>("p");
-    if (body) {
-      body.textContent = text;
-    }
-  }
-}
-
 export function statusKey(status: PresenceLogStatus): string {
   return status.toLowerCase().replace(/\s+/g, "-");
 }
@@ -115,11 +71,4 @@ export function compactPresenceStatus(state: PresenceState, connected: boolean, 
     case "error": return "Attention";
     default: return "Paused";
   }
-}
-
-function formatClock(timestamp: number): string {
-  return new Intl.DateTimeFormat(undefined, {
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(timestamp));
 }

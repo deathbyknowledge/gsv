@@ -1,22 +1,19 @@
 import { Component, type ComponentChildren, type RefObject } from "preact";
+import {
+  PresenceActivity,
+  PresenceMobileToggle,
+  PresencePanel,
+  PresenceTopbarToggle,
+} from "../presence/Presence";
+import type { PresenceController } from "../presence/presenceController";
 
 type DesktopShellFrameProps = {
   shellRef: RefObject<HTMLDivElement>;
   windowsLayerRef: RefObject<HTMLElement>;
+  presenceController: PresenceController;
   standalone: boolean;
   children?: ComponentChildren;
 };
-
-function MicrophoneIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 3a3 3 0 0 0-3 3v5a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z" />
-      <path d="M19 10v1a7 7 0 0 1-14 0v-1" />
-      <path d="M12 18v3" />
-      <path d="M8 21h8" />
-    </svg>
-  );
-}
 
 function BellIcon() {
   return (
@@ -54,7 +51,7 @@ function CloseIcon() {
   );
 }
 
-function Topbar() {
+function Topbar({ presenceController }: { presenceController: PresenceController }) {
   return (
     <header class="topbar">
       <div class="topbar-section">
@@ -62,25 +59,7 @@ function Topbar() {
       </div>
       <nav class="taskbar-windows" data-taskbar-windows aria-label="Open windows" />
       <div class="topbar-section topbar-presence">
-        <button
-          type="button"
-          class="presence-toggle"
-          data-presence-toggle
-          data-state="idle"
-          aria-label="Mind"
-          aria-haspopup="dialog"
-          aria-expanded="false"
-          aria-controls="presence-panel"
-        >
-          <span class="topbar-icon" aria-hidden="true">
-            <MicrophoneIcon />
-          </span>
-          <span class="presence-toggle-light" aria-hidden="true" />
-          <span class="presence-toggle-copy">
-            <span class="presence-toggle-label">Mind</span>
-            <span class="presence-toggle-status" data-presence-compact-status>Paused</span>
-          </span>
-        </button>
+        <PresenceTopbarToggle controller={presenceController} />
       </div>
       <div class="topbar-section topbar-notifications">
         <button
@@ -118,7 +97,7 @@ function Workspace({ windowsLayerRef }: { windowsLayerRef: RefObject<HTMLElement
   );
 }
 
-function MobileShell() {
+function MobileShell({ presenceController }: { presenceController: PresenceController }) {
   return (
     <section class="mobile-shell" data-mobile-shell aria-label="Mobile shell">
       <section class="mobile-home" data-mobile-home>
@@ -140,20 +119,7 @@ function MobileShell() {
               </span>
               <span class="notification-badge" data-notifications-badge hidden>0</span>
             </button>
-            <button
-              type="button"
-              class="mobile-home-action presence-toggle"
-              data-presence-toggle
-              data-state="idle"
-              aria-label="Mind"
-              aria-haspopup="dialog"
-              aria-expanded="false"
-              aria-controls="presence-panel"
-            >
-              <span aria-hidden="true">
-                <MicrophoneIcon />
-              </span>
-            </button>
+            <PresenceMobileToggle controller={presenceController} />
             <button type="button" class="mobile-home-action" data-mobile-command-launcher aria-label="Search apps and windows">
               <span aria-hidden="true">
                 <SearchIcon />
@@ -164,89 +130,6 @@ function MobileShell() {
         <nav class="mobile-app-grid" data-mobile-apps aria-label="Applications" />
       </section>
       <button type="button" class="mobile-home-handle" data-mobile-home-button aria-label="Home" />
-    </section>
-  );
-}
-
-function PresenceActivity() {
-  return (
-    <button
-      type="button"
-      class="presence-activity"
-      data-presence-activity
-      aria-live="polite"
-      aria-atomic="false"
-      aria-controls="presence-panel"
-      aria-expanded="false"
-    >
-      <span class="presence-activity-head">
-        <span class="presence-activity-pulse" aria-hidden="true" />
-        <span>
-          <strong>Mind</strong>
-          <small data-presence-activity-status>Ready</small>
-        </span>
-      </span>
-      <span class="presence-activity-body" data-presence-activity-body />
-    </button>
-  );
-}
-
-function PresencePanel() {
-  return (
-    <section class="presence-panel" id="presence-panel" data-presence-panel role="dialog" aria-label="Mind" hidden>
-      <header class="presence-panel-head">
-        <div class="presence-panel-brand">
-          <span class="presence-panel-mark" aria-hidden="true">GSV</span>
-          <span class="presence-panel-copy">
-            <strong data-presence-title>Mind</strong>
-          </span>
-        </div>
-        <button type="button" class="presence-panel-close" data-presence-close aria-label="Close Mind">
-          <CloseIcon />
-        </button>
-      </header>
-      <section class="presence-current" aria-live="polite">
-        <span class="presence-current-orb" aria-hidden="true" />
-        <div>
-          <strong data-presence-status>Paused</strong>
-          <span class="presence-interim" data-presence-interim />
-        </div>
-      </section>
-      <div class="presence-actions presence-actions-main">
-        <button type="button" class="presence-primary" data-presence-listen>Listen</button>
-      </div>
-      <div class="presence-log" data-presence-log hidden />
-      <details class="presence-section presence-manual">
-        <summary>Manual</summary>
-        <div class="presence-mode" role="group" aria-label="Mind input mode">
-          <button type="button" data-presence-mode="ambient" aria-pressed="true">Ambient</button>
-          <button type="button" data-presence-mode="push" aria-pressed="false">Manual</button>
-        </div>
-        <textarea
-          class="presence-transcript"
-          data-presence-transcript
-          rows={4}
-          autoComplete="off"
-          spellcheck={true}
-          aria-label="Message to Mind"
-          placeholder="Talk or type to Mind"
-        />
-        <div class="presence-actions">
-          <button type="button" class="presence-secondary" data-presence-send disabled>Send</button>
-          <button type="button" class="presence-secondary" data-presence-clear disabled>Clear</button>
-        </div>
-      </details>
-      <details class="presence-section presence-voice">
-        <summary>Voice</summary>
-        <div class="presence-speech-controls">
-          <label class="presence-speech-toggle">
-            <span>Read replies</span>
-            <input type="checkbox" data-presence-speak defaultChecked />
-          </label>
-          <button type="button" data-presence-speak-test>Preview voice</button>
-        </div>
-        <div class="presence-speech-status" data-presence-speech-status />
-      </details>
     </section>
   );
 }
@@ -265,40 +148,56 @@ function CommandPalette() {
   );
 }
 
-function DesktopRoot({ windowsLayerRef }: { windowsLayerRef: RefObject<HTMLElement> }) {
+function DesktopRoot({
+  windowsLayerRef,
+  presenceController,
+}: {
+  windowsLayerRef: RefObject<HTMLElement>;
+  presenceController: PresenceController;
+}) {
   return (
     <div class="desktop-root" data-desktop-root hidden>
-      <Topbar />
+      <Topbar presenceController={presenceController} />
       <Workspace windowsLayerRef={windowsLayerRef} />
-      <MobileShell />
+      <MobileShell presenceController={presenceController} />
       <div class="dock-reveal-zone" data-dock-reveal-zone aria-hidden="true" />
-      <PresenceActivity />
-      <PresencePanel />
+      <PresenceActivity controller={presenceController} />
+      <PresencePanel controller={presenceController} />
       <CommandPalette />
     </div>
   );
 }
 
-class StaticDesktopRoot extends Component<{ windowsLayerRef: RefObject<HTMLElement> }> {
-  shouldComponentUpdate(): boolean {
-    return false;
+class StaticDesktopRoot extends Component<{
+  windowsLayerRef: RefObject<HTMLElement>;
+  presenceController: PresenceController;
+}> {
+  shouldComponentUpdate(nextProps: { presenceController: PresenceController }): boolean {
+    return nextProps.presenceController !== this.props.presenceController;
   }
 
-  render({ windowsLayerRef }: { windowsLayerRef: RefObject<HTMLElement> }) {
-    return <DesktopRoot windowsLayerRef={windowsLayerRef} />;
+  render({
+    windowsLayerRef,
+    presenceController,
+  }: {
+    windowsLayerRef: RefObject<HTMLElement>;
+    presenceController: PresenceController;
+  }) {
+    return <DesktopRoot windowsLayerRef={windowsLayerRef} presenceController={presenceController} />;
   }
 }
 
 export function DesktopShellFrame({
   shellRef,
   windowsLayerRef,
+  presenceController,
   standalone,
   children,
 }: DesktopShellFrameProps) {
   return (
     <div class={`desktop-shell${standalone ? " is-standalone" : ""}`} ref={shellRef}>
       {children}
-      <StaticDesktopRoot windowsLayerRef={windowsLayerRef} />
+      <StaticDesktopRoot windowsLayerRef={windowsLayerRef} presenceController={presenceController} />
     </div>
   );
 }
