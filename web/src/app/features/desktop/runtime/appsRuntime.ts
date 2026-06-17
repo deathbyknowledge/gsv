@@ -1,6 +1,6 @@
 import type { AppLaunchResult, AppOpenArgs } from "@gsv/protocol/syscalls/apps";
 import type { AppManifest } from "../../../../apps";
-import type { GatewayClientLike } from "../../../../gateway-client";
+import type { GatewayClientLike } from "../../../services/gateway/gatewayClient";
 import { attachHostBridge } from "../../../../host-bridge";
 import { createAppLaunchLoader, type AppLaunchLoader } from "./appLoading";
 import type { AppInstance, AppRuntimeRegistry } from "./appRuntime";

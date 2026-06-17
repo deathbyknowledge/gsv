@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/preact-query";
 import type { PkgListResult } from "@gsv/protocol/syscalls/packages";
 import type { AppManifest } from "../../../apps";
-import type { GatewayClientLike } from "../../../gateway-client";
+import type { GatewayClientLike } from "../../services/gateway/gatewayClient";
 import { packageToAppManifests } from "../../../package-apps";
 
 export const packageAppsQueryKey = ["packages", "list", { runtime: "web-ui" }] as const;

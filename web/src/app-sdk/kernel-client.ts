@@ -5,7 +5,7 @@ import type {
   ProcSendResult,
   ProcSpawnArgs,
   ProcSpawnResult,
-} from "../gateway-client";
+} from "../app/services/gateway/gatewayClient";
 import type { ProcMediaInput } from "@gsv/protocol/syscalls/proc";
 import type { AppManifest } from "./manifest";
 

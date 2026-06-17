@@ -1,6 +1,6 @@
 import { normalizeSpeechText } from "@gsv/protocol/speech-text";
 import type { AiSpeechCreateResult, AiTranscriptionCreateResult } from "@gsv/protocol/syscalls/ai";
-import type { GatewayClientLike } from "./gateway-client";
+import type { GatewayClientLike } from "./app/services/gateway/gatewayClient";
 import {
   localSpeechSupported,
   synthesizeLocalSpeech,

@@ -5,7 +5,7 @@ import {
   createGatewayClient,
   type GatewayClient,
   type GatewayClientStatus,
-} from "../../../gateway-client";
+} from "./gatewayClient";
 
 type GatewayContextValue = {
   client: GatewayClient;

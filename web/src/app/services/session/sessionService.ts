@@ -3,7 +3,7 @@ import type {
   GatewayConnectOptions,
   GatewayConnectResult,
   UserSessionToken,
-} from "../../../gateway-client";
+} from "../gateway/gatewayClient";
 import type {
   SysBootstrapArgs,
   SysBootstrapResult,
