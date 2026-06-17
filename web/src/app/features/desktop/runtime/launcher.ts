@@ -1,14 +1,14 @@
 import { normalizeThreadContext } from "@gsv/app-link";
-import type { AppIcon, AppManifest } from "./apps";
-import { OPEN_APP_EVENT, resolveOpenAppDetail, type OpenAppEventDetail } from "./app-link";
+import type { AppIcon, AppManifest } from "../../../../apps";
+import { OPEN_APP_EVENT, resolveOpenAppDetail, type OpenAppEventDetail } from "../../../../app-link";
 import {
   OPEN_CHAT_PROCESS_EVENT,
   TARGET_CHAT_PROCESS_EVENT,
   normalizeProcessId,
   queuePendingChatProcess,
   type TargetChatProcessEventDetail,
-} from "./chat-process-link";
-import type { WindowManager, WindowSummary } from "./app/features/desktop/runtime/windowManager";
+} from "../../../../chat-process-link";
+import type { WindowManager, WindowSummary } from "./windowManager";
 
 type LauncherOptions = {
   rootNode: HTMLElement;
