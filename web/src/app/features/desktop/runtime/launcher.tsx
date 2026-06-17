@@ -9,7 +9,7 @@ import {
   queuePendingChatProcess,
   type TargetChatProcessEventDetail,
 } from "../../../../chat-process-link";
-import { DesktopAppIcons, TaskbarWindows } from "../components/DesktopLauncherViews";
+import { CommandPaletteItems, DesktopAppIcons, TaskbarWindows } from "../components/DesktopLauncherViews";
 import {
   centeredMobileRotorIndex,
   filterLauncherPaletteItems,
@@ -1186,25 +1186,13 @@ export function createLauncher(options: LauncherOptions): LauncherController {
     paletteItems = filteredPaletteItems();
     paletteSelection = Math.min(paletteSelection, Math.max(paletteItems.length - 1, 0));
 
-    if (paletteItems.length === 0) {
-      commandPaletteListNode.innerHTML = `<li class="command-palette-empty">No results</li>`;
-      return;
-    }
-
-    commandPaletteListNode.innerHTML = paletteItems
-      .map((item, index) => {
-        const activeClass = index === paletteSelection ? " is-active" : "";
-        return `
-          <li>
-            <button type="button" class="command-palette-item${activeClass}" data-command-index="${index}">
-              <span class="command-palette-icon">${item.icon}</span>
-              <span class="command-palette-label">${escapeHtml(item.label)}</span>
-              <small>${escapeHtml(item.meta)}</small>
-            </button>
-          </li>
-        `;
-      })
-      .join("");
+    renderPreact(
+      <CommandPaletteItems
+        items={paletteItems}
+        selectedIndex={paletteSelection}
+      />,
+      commandPaletteListNode,
+    );
 
     commandPaletteListNode
       .querySelector<HTMLElement>(`[data-command-index="${paletteSelection}"]`)
@@ -1450,6 +1438,9 @@ export function createLauncher(options: LauncherOptions): LauncherController {
       renderPreact(null, iconsNode);
       if (taskbarWindowsNode) {
         renderPreact(null, taskbarWindowsNode);
+      }
+      if (commandPaletteListNode) {
+        renderPreact(null, commandPaletteListNode);
       }
       dockRevealZoneNode?.removeEventListener("pointerenter", onDockRevealPointerEnter);
       dockRevealZoneNode?.removeEventListener("pointerleave", onDockRevealPointerLeave);
