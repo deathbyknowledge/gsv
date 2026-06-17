@@ -55,6 +55,7 @@ type BackendConnection = {
   backend: RemoteBackend;
   socket: WebSocket;
   broken: boolean;
+  reconnectOnClose: boolean;
   pending: Map<string, PendingBackendRequest>;
   request<T = unknown>(call: string, args?: unknown): Promise<T>;
 };
@@ -105,6 +106,9 @@ let backendRequestSeq = 0;
 const appEventListeners = new Set<AppEventListener>();
 const APP_SESSION_REFRESH_LEEWAY_MS = 60_000;
 const APP_SESSION_REFRESH_RETRY_MS = 30_000;
+const BACKEND_RECONNECT_DELAYS_MS = [0, 500, 1_000, 2_000, 5_000, 10_000, 30_000] as const;
+let backendReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let backendReconnectAttempts = 0;
 const CONNECTED_READY_FALLBACK_MS = 650;
 
 function formatErrorMessage(error: unknown): string {
@@ -142,6 +146,13 @@ function clearAppSessionRefreshTimer(): void {
   if (appSessionRefreshTimer !== null) {
     clearTimeout(appSessionRefreshTimer);
     appSessionRefreshTimer = null;
+  }
+}
+
+function clearBackendReconnectTimer(): void {
+  if (backendReconnectTimer !== null) {
+    clearTimeout(backendReconnectTimer);
+    backendReconnectTimer = null;
   }
 }
 
@@ -246,11 +257,13 @@ function resetBackendConnection(): void {
   const previousConnection = backendConnectionPromise;
   backendConnectionPromise = null;
   clearAppSessionRefreshTimer();
+  clearBackendReconnectTimer();
   if (globalThis.window) {
     globalThis.window.__GSV_BACKEND_READY__ = undefined;
   }
   void previousConnection
     ?.then((connection) => {
+      connection.reconnectOnClose = false;
       connection.broken = true;
       rejectPendingBackendRequests(connection, new BackendTransportClosedError("client reconnect"));
       closeBackendSocket(connection.socket);
@@ -268,6 +281,32 @@ function shouldRetryBackendCall(connection: BackendConnection | null, error: unk
   return error instanceof BackendTransportClosedError
     || Boolean(connection?.broken)
     || Boolean(connection && connection.socket.readyState !== WebSocket.OPEN);
+}
+
+function shouldMaintainBackendConnection(): boolean {
+  return Boolean(backendProxy) || appEventListeners.size > 0;
+}
+
+function scheduleBackendReconnect(): void {
+  if (backendReconnectTimer !== null || !shouldMaintainBackendConnection()) {
+    return;
+  }
+  const delay = BACKEND_RECONNECT_DELAYS_MS[
+    Math.min(backendReconnectAttempts, BACKEND_RECONNECT_DELAYS_MS.length - 1)
+  ];
+  backendReconnectAttempts += 1;
+  setRuntimeStatus(appRuntimeReady ? "reconnecting" : "connecting");
+  backendReconnectTimer = setTimeout(() => {
+    backendReconnectTimer = null;
+    void connectBackendTransport()
+      .then(() => {
+        backendReconnectAttempts = 0;
+      })
+      .catch((error) => {
+        console.warn("[gsv-package] backend reconnect failed", error);
+        scheduleBackendReconnect();
+      });
+  }, delay);
 }
 
 function createRequestId(): string {
@@ -537,6 +576,7 @@ async function connectBackendTransport(): Promise<BackendConnection> {
     },
     socket,
     broken: socket.readyState === WebSocket.CLOSING || socket.readyState === WebSocket.CLOSED,
+    reconnectOnClose: true,
     pending: new Map(),
     request<T = unknown>(call: string, args?: unknown): Promise<T> {
       return sendBackendRequest<T>(connection, call, args);
@@ -545,6 +585,7 @@ async function connectBackendTransport(): Promise<BackendConnection> {
   let ready: Promise<BackendConnection>;
   const isCurrentConnection = () => backendConnectionPromise === ready;
   const markTransportBroken = (cause: unknown) => {
+    const shouldReconnect = connection.reconnectOnClose && shouldMaintainBackendConnection();
     connection.broken = true;
     if (isCurrentConnection()) {
       clearAppSessionRefreshTimer();
@@ -552,6 +593,9 @@ async function connectBackendTransport(): Promise<BackendConnection> {
     rejectPendingBackendRequests(connection, new BackendTransportClosedError(cause));
     if (backendConnectionPromise === ready) {
       resetBackendConnection();
+      if (shouldReconnect) {
+        scheduleBackendReconnect();
+      }
     }
   };
   socket.addEventListener("message", (event) => {
@@ -565,6 +609,8 @@ async function connectBackendTransport(): Promise<BackendConnection> {
   ready = (async () => {
     await waitForSocketOpen(socket);
     setRuntimeStatus("connected");
+    backendReconnectAttempts = 0;
+    clearBackendReconnectTimer();
     scheduleAppSessionRefresh(connection, boot, isCurrentConnection);
     if (!appRuntimeReady) {
       scheduleConnectedReadyFallback();

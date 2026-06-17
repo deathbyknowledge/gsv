@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
@@ -39,6 +39,9 @@ function listPackageJsonFiles() {
   ];
   for (const group of ["shared", "adapters", "builtin-packages"]) {
     const groupDir = join(ROOT, group);
+    if (!existsSync(groupDir)) {
+      continue;
+    }
     for (const entry of readdirSync(groupDir, { withFileTypes: true })) {
       if (!entry.isDirectory()) {
         continue;
@@ -145,19 +148,14 @@ function syncSourceVersions(version) {
     `serverVersion: "${version}",`,
   );
   replaceInFile(
-    "web/src/gateway-client.ts",
-    /id: "gsv-ui",\n\s+version: "[^"]+",/,
-    `id: "gsv-ui",\n          version: "${version}",`,
+    "web/src/app/services/gateway/GatewayProvider.tsx",
+    /(id: "gsv-ui",\n\s+version: ")[^"]+(")/,
+    `$1${version}$2`,
   );
   replaceInFile(
-    "web/src/gateway-client.ts",
-    /id: "gsv-ui-setup-probe",\n\s+version: "[^"]+",/,
-    `id: "gsv-ui-setup-probe",\n          version: "${version}",`,
-  );
-  replaceInFile(
-    "adapters/whatsapp/src/gateway-client.ts",
-    /version: "[^"]+",/,
-    `version: "${version}",`,
+    "web/src/app/services/session/sessionService.ts",
+    /(id: "gsv-ui-setup-probe",\n\s+version: ")[^"]+(")/,
+    `$1${version}$2`,
   );
   replaceInFile(
     "ripgit/src/lib.rs",
@@ -232,8 +230,8 @@ function managedFiles() {
     "gateway/src/kernel/do.ts",
     "gateway/src/kernel/config.ts",
     "gateway/src/drivers/native/shell.test.ts",
-    "web/src/gateway-client.ts",
-    "adapters/whatsapp/src/gateway-client.ts",
+    "web/src/app/services/gateway/GatewayProvider.tsx",
+    "web/src/app/services/session/sessionService.ts",
     "ripgit/src/lib.rs",
   ]);
   for (const file of listPackageJsonFiles()) {
