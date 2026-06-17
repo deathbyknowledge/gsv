@@ -10,6 +10,15 @@ import {
   type TargetChatProcessEventDetail,
 } from "../../../../chat-process-link";
 import { DesktopAppIcons, TaskbarWindows } from "../components/DesktopLauncherViews";
+import {
+  centeredMobileRotorIndex,
+  filterLauncherPaletteItems,
+  mobileRotorMetrics as calculateMobileRotorMetrics,
+  normalizeMobileRotorPosition as normalizeRotorPosition,
+  orderMobileWindowStack,
+  shortestMobileRotorDelta as shortestRotorDelta,
+  type MobileRotorMetrics,
+} from "../domain/launcherState";
 import type { WindowManager, WindowSummary } from "./windowManager";
 
 type LauncherOptions = {
@@ -34,16 +43,6 @@ type PaletteItem = {
 };
 
 type MobileShellState = "home" | "app" | "search";
-
-type MobileRotorMetrics = {
-  radius: number;
-  depthRadius: number;
-  angleStep: number;
-  activeRadius: number;
-};
-
-const MOBILE_ROTOR_MAX_VISUAL_ITEMS = 11;
-const MOBILE_ROTOR_MAX_ACTIVE_RADIUS = 4;
 
 function escapeHtml(value: string): string {
   return value
@@ -220,18 +219,11 @@ export function createLauncher(options: LauncherOptions): LauncherController {
   };
 
   const normalizeMobileRotorPosition = (position: number): number => {
-    if (apps.length === 0) {
-      return 0;
-    }
-    return ((position % apps.length) + apps.length) % apps.length;
+    return normalizeRotorPosition(position, apps.length);
   };
 
   const shortestMobileRotorDelta = (index: number, position: number): number => {
-    if (apps.length === 0) {
-      return 0;
-    }
-    const halfCount = apps.length / 2;
-    return ((index - position + halfCount + apps.length) % apps.length) - halfCount;
+    return shortestRotorDelta(index, position, apps.length);
   };
 
   const setMobileRotorPosition = (position: number): void => {
@@ -247,10 +239,7 @@ export function createLauncher(options: LauncherOptions): LauncherController {
   };
 
   const getCenteredMobileRotorIndex = (): number => {
-    if (apps.length === 0) {
-      return -1;
-    }
-    return ((Math.round(mobileRotorPosition) % apps.length) + apps.length) % apps.length;
+    return centeredMobileRotorIndex(mobileRotorPosition, apps.length);
   };
 
   const getMobileRotorIndexForButton = (button: HTMLButtonElement): number => {
@@ -339,28 +328,7 @@ export function createLauncher(options: LauncherOptions): LauncherController {
 
   const orderedMobileWindowStack = (appId: string, appSummaries: WindowSummary[], options?: { useSelection?: boolean }): WindowSummary[] => {
     const selectedWindowId = options?.useSelection === false ? null : mobileStackSelections.get(appId) ?? null;
-    return appSummaries
-      .slice()
-      .sort((left, right) => {
-        if (selectedWindowId) {
-          const leftSelected = left.windowId === selectedWindowId;
-          const rightSelected = right.windowId === selectedWindowId;
-          if (leftSelected !== rightSelected) {
-            return leftSelected ? -1 : 1;
-          }
-        }
-        const leftActive = left.active && left.mode !== "minimized";
-        const rightActive = right.active && right.mode !== "minimized";
-        if (leftActive !== rightActive) {
-          return leftActive ? -1 : 1;
-        }
-        const leftVisible = left.mode !== "minimized";
-        const rightVisible = right.mode !== "minimized";
-        if (leftVisible !== rightVisible) {
-          return leftVisible ? -1 : 1;
-        }
-        return right.zIndex - left.zIndex;
-      });
+    return orderMobileWindowStack(appSummaries, selectedWindowId);
   };
 
   const syncMobileAppState = (summaries: WindowSummary[] = latestSummaries): void => {
@@ -467,15 +435,11 @@ export function createLauncher(options: LauncherOptions): LauncherController {
 
     if (!mobileRotorMetrics) {
       const listHeight = mobileAppsNode.clientHeight || mobileAppsNode.getBoundingClientRect().height;
-      if (listHeight <= 0) {
+      const nextMetrics = calculateMobileRotorMetrics(listHeight, items.length);
+      if (!nextMetrics) {
         return;
       }
-      mobileRotorMetrics = {
-        radius: Math.min(Math.max(listHeight * 0.36, 190), 285),
-        depthRadius: Math.min(Math.max(listHeight * 0.34, 180), 300),
-        angleStep: (Math.PI * 2) / Math.min(items.length, MOBILE_ROTOR_MAX_VISUAL_ITEMS),
-        activeRadius: Math.min(MOBILE_ROTOR_MAX_ACTIVE_RADIUS, Math.floor(items.length / 2)),
-      };
+      mobileRotorMetrics = nextMetrics;
     }
 
     const centeredIndex = getCenteredMobileRotorIndex();
@@ -1212,13 +1176,7 @@ export function createLauncher(options: LauncherOptions): LauncherController {
   const filteredPaletteItems = (): PaletteItem[] => {
     const query = commandPaletteInputNode?.value.trim().toLowerCase() ?? "";
     const items = buildPaletteItems();
-    if (!query) {
-      return items.slice(0, 12);
-    }
-    const parts = query.split(/\s+/g).filter(Boolean);
-    return items
-      .filter((item) => parts.every((part) => item.search.toLowerCase().includes(part)))
-      .slice(0, 12);
+    return filterLauncherPaletteItems(items, query);
   };
 
   const renderPalette = (): void => {
