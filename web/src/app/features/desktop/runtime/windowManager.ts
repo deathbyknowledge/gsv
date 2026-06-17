@@ -1,6 +1,6 @@
-import type { AppManifest } from "./apps";
-import { queuePendingAppOpen, type OpenAppRequest } from "./app-link";
-import type { AppInstance, AppRuntimeContext, AppRuntimeRegistry } from "./app-runtime";
+import type { AppManifest } from "../../../../apps";
+import { queuePendingAppOpen, type OpenAppRequest } from "../../../../app-link";
+import type { AppInstance, AppRuntimeContext, AppRuntimeRegistry } from "../../../../app-runtime";
 import {
   readPersistedDesktopLayout,
   selectRestoredActiveWindowId,
@@ -10,13 +10,13 @@ import {
   type DesktopWindowMode,
   type PersistedDesktopWindow,
   type SerializableDesktopWindow,
-} from "./app/features/desktop/domain/windowLayout";
+} from "../domain/windowLayout";
 import {
   reduceDesktopWindowState,
   type DesktopWindowState,
   type DesktopWindowStateAction,
   type DesktopWindowStateRecord,
-} from "./app/features/desktop/domain/windowState";
+} from "../domain/windowState";
 import {
   detectWindowSnapTarget,
   fitWindowSizeToWorkspace,
@@ -27,8 +27,8 @@ import {
   clampWindowPositionToWorkspace,
   type DesktopResizeDirection,
   type DesktopWorkspaceBounds,
-} from "./app/features/desktop/domain/windowGeometry";
-import { mountPreviewWindow, type PreviewWindowContent } from "./preview-window";
+} from "../domain/windowGeometry";
+import { mountPreviewWindow, type PreviewWindowContent } from "../../../../preview-window";
 
 type WindowMode = DesktopWindowMode;
 type ResizeDirection = DesktopResizeDirection;

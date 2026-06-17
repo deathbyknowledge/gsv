@@ -3,8 +3,8 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { createAppRuntime } from "../../../apps-runtime";
 import { createLauncher } from "../../../launcher";
 import { createPresenceControl } from "../../../presence";
-import { createWindowManager, type WindowManager } from "../../../window-manager";
 import type { GatewayClient } from "../../../gateway-client";
+import { createWindowManager, type WindowManager } from "./runtime/windowManager";
 
 export type DesktopRuntime = {
   windowManager: WindowManager;

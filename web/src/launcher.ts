@@ -8,7 +8,7 @@ import {
   queuePendingChatProcess,
   type TargetChatProcessEventDetail,
 } from "./chat-process-link";
-import type { WindowManager, WindowSummary } from "./window-manager";
+import type { WindowManager, WindowSummary } from "./app/features/desktop/runtime/windowManager";
 
 type LauncherOptions = {
   rootNode: HTMLElement;
