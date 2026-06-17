@@ -1,12 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
 import type { JSX } from "preact";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import type {
-  NotificationDismissResult,
-  NotificationListResult,
-  NotificationMarkReadResult,
-  NotificationRecord,
-} from "@humansandmachines/gsv/protocol";
+import type { NotificationRecord } from "@humansandmachines/gsv/protocol";
 import {
   canUseServiceWorker as canUseServiceWorkerNotifications,
   registerGsvServiceWorker,
@@ -102,7 +97,7 @@ export function NotificationsPanel({ rootNode }: NotificationsPanelProps) {
     queryKey: notificationListQueryKey,
     enabled: connected,
     queryFn: async () => {
-      const result = await gatewayClient.call<NotificationListResult>("notification.list", {
+      const result = await gatewayClient.notification.list({
         includeRead: true,
         includeDismissed: false,
         limit: 100,
@@ -129,7 +124,7 @@ export function NotificationsPanel({ rootNode }: NotificationsPanelProps) {
 
   const markReadMutation = useMutation({
     mutationFn: async (notificationId: string) => {
-      return await gatewayClient.call<NotificationMarkReadResult>("notification.mark_read", { notificationId });
+      return await gatewayClient.notification.mark_read({ notificationId });
     },
     onSuccess: (result) => {
       updateNotificationCache(result.notification);
@@ -138,7 +133,7 @@ export function NotificationsPanel({ rootNode }: NotificationsPanelProps) {
 
   const dismissMutation = useMutation({
     mutationFn: async (notificationId: string) => {
-      return await gatewayClient.call<NotificationDismissResult>("notification.dismiss", { notificationId });
+      return await gatewayClient.notification.dismiss({ notificationId });
     },
     onSuccess: (result, notificationId) => {
       if (result.notification) {

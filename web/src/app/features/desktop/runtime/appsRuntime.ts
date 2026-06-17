@@ -1,6 +1,6 @@
+import type { GSVClient } from "@humansandmachines/gsv/client";
 import type { AppLaunchResult, AppOpenArgs } from "@humansandmachines/gsv/protocol";
 import type { AppManifest } from "../../../../apps";
-import type { GatewayClientLike } from "../../../services/gateway/gatewayClient";
 import { attachHostBridge } from "../../../../host-bridge";
 import { createAppLaunchLoader, type AppLaunchLoader } from "./appLoading";
 import type { AppInstance, AppRuntimeRegistry } from "./appRuntime";
@@ -216,7 +216,9 @@ async function establishAppLaunchSession(launch: AppLaunchResult): Promise<void>
   throw new Error(message || `Failed to launch app session (${response.status})`);
 }
 
-function createWebAppInstance(manifest: AppManifest, gatewayClient: GatewayClientLike): AppInstance {
+type AppRuntimeGsvClient = Pick<GSVClient, "app" | "onStatus">;
+
+function createWebAppInstance(manifest: AppManifest, gatewayClient: AppRuntimeGsvClient): AppInstance {
   let bridge: ReturnType<typeof attachHostBridge> | null = null;
   let focusController: ReturnType<typeof attachIframeInteractionFocus> | null = null;
   let runtimeStatusController: ReturnType<typeof attachIframeRuntimeStatus> | null = null;
@@ -226,13 +228,13 @@ function createWebAppInstance(manifest: AppManifest, gatewayClient: GatewayClien
   let activeClientId: string | null = null;
 
   const closeSession = (sessionId: string): void => {
-    void gatewayClient.call("app.close", { sessionId }).catch(() => {
+    void gatewayClient.app.close({ sessionId }).catch(() => {
       // The server may already have expired the session or the host may be disconnecting.
     });
   };
 
   const detachClient = (sessionId: string, clientId: string): void => {
-    void gatewayClient.call("app.detach", { sessionId, clientId }).catch(() => {
+    void gatewayClient.app.detach({ sessionId, clientId }).catch(() => {
       // The server may already have expired the session or the host may be disconnecting.
     });
   };
@@ -281,10 +283,7 @@ function createWebAppInstance(manifest: AppManifest, gatewayClient: GatewayClien
 
       let launch: AppLaunchResult;
       try {
-        launch = await gatewayClient.call<AppLaunchResult>(
-          "app.open",
-          appOpenArgsFromRoute(context.route, context.windowId),
-        );
+        launch = await gatewayClient.app.open(appOpenArgsFromRoute(context.route, context.windowId));
       } catch (error) {
         loader.fail(toErrorMessage(error));
         throw error;
@@ -344,7 +343,7 @@ function createWebAppInstance(manifest: AppManifest, gatewayClient: GatewayClien
   };
 }
 
-export function createAppRuntime(gatewayClient: GatewayClientLike): AppRuntimeRegistry {
+export function createAppRuntime(gatewayClient: AppRuntimeGsvClient): AppRuntimeRegistry {
   return {
     createInstance: (manifest) => {
       if (manifest.entrypoint.kind === "web") {

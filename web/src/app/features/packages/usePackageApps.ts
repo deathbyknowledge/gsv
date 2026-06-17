@@ -1,13 +1,12 @@
 import { useQuery } from "@tanstack/preact-query";
-import type { PkgListResult } from "@humansandmachines/gsv/protocol";
+import type { GSVClient } from "@humansandmachines/gsv/client";
 import type { AppManifest } from "../../../apps";
-import type { GatewayClientLike } from "../../services/gateway/gatewayClient";
 import { packageToAppManifests } from "../../../package-apps";
 
 export const packageAppsQueryKey = ["packages", "list", { runtime: "web-ui" }] as const;
 
 type UsePackageAppsOptions = {
-  gatewayClient: GatewayClientLike;
+  gatewayClient: Pick<GSVClient, "pkg">;
   enabled: boolean;
 };
 
@@ -16,7 +15,7 @@ export function usePackageApps({ gatewayClient, enabled }: UsePackageAppsOptions
     queryKey: packageAppsQueryKey,
     enabled,
     queryFn: async () => {
-      const payload = await gatewayClient.call<PkgListResult>("pkg.list", {
+      const payload = await gatewayClient.pkg.list({
         runtime: "web-ui",
       });
       const packages = Array.isArray(payload.packages) ? payload.packages : [];

@@ -1,14 +1,16 @@
 import { normalizeSpeechText } from "@humansandmachines/gsv/protocol";
 import type { AiSpeechCreateResult, AiTranscriptionCreateResult } from "@humansandmachines/gsv/protocol";
-import type { GatewayClientLike } from "./app/services/gateway/gatewayClient";
+import type { GSVClient } from "@humansandmachines/gsv/client";
 import {
   localSpeechSupported,
   synthesizeLocalSpeech,
 } from "./local-tts";
 
+type PresenceGsvClient = Pick<GSVClient, "ai" | "isConnected" | "onSignal" | "onStatus" | "proc">;
+
 type PresenceOptions = {
   rootNode: HTMLElement;
-  gatewayClient: GatewayClientLike;
+  gatewayClient: PresenceGsvClient;
 };
 
 type PresenceMode = "ambient" | "push";
@@ -640,7 +642,7 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
 
   async function transcribeBlob(blob: Blob, mimeType: string, startedAt = Date.now()): Promise<AiTranscriptionCreateResult> {
     const data = await blobToDataUrl(blob);
-    const result = await gatewayClient.call<AiTranscriptionCreateResult>("ai.transcription.create", {
+    const result = await gatewayClient.ai.transcription.create({
       audio: {
         data,
         mimeType,
@@ -1219,7 +1221,7 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
       }
     }
 
-    const result = await gatewayClient.call<AiSpeechCreateResult>("ai.speech.create", {
+    const result = await gatewayClient.ai.speech.create({
       text: chunk.text,
     });
     recordVoiceTimingChunkReady(timing, chunk, requestedAt, result);

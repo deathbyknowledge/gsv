@@ -1,4 +1,4 @@
-import type { GatewayClient } from "../gateway/gatewayClient";
+import type { GSVClient } from "@humansandmachines/gsv/client";
 import type {
   OnboardingDetailStep,
   OnboardingAssistMessage,
@@ -209,7 +209,7 @@ function detailStepFromPatchPath(path: OnboardingAssistPatch["path"]): Onboardin
 }
 
 export function createOnboardingService(
-  client: GatewayClient,
+  client: GSVClient,
   initialUsername = "",
 ): OnboardingService {
   const listeners = new Set<(snapshot: OnboardingSnapshot) => void>();
@@ -352,7 +352,7 @@ export function createOnboardingService(
       });
 
       try {
-        const result = await client.setupAssist(url, {
+        const result = await client.requestOnce(url, "sys.setup.assist", {
           lane: currentState.draft.lane,
           draft: sanitizeDraftForStorage(currentState.draft),
           messages: nextMessages,

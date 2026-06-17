@@ -1,10 +1,6 @@
+import type { GSVClient, GsvConnectOptions } from "@humansandmachines/gsv/client";
 import type {
-  GatewayClient,
-  GatewayConnectOptions,
-  GatewayConnectResult,
-  UserSessionToken,
-} from "../gateway/gatewayClient";
-import type {
+  ConnectResult,
   SysBootstrapArgs,
   SysBootstrapResult,
   SysSetupArgs,
@@ -22,6 +18,12 @@ const SESSION_RECONNECT_STABLE_MS = 10_000;
 
 type PersistedSessionToken = {
   username: string;
+  tokenId: string;
+  token: string;
+  expiresAt: number | null;
+};
+
+type UserSessionToken = {
   tokenId: string;
   token: string;
   expiresAt: number | null;
@@ -47,13 +49,13 @@ export type SessionLoginInput = {
 export type SessionSetupInput = SysSetupArgs;
 
 export type SessionService = {
-  client: GatewayClient;
+  client: GSVClient;
   snapshot: () => SessionSnapshot;
   subscribe: (listener: (snapshot: SessionSnapshot) => void) => () => void;
-  login: (input: SessionLoginInput) => Promise<GatewayConnectResult>;
+  login: (input: SessionLoginInput) => Promise<ConnectResult>;
   setup: (input: SessionSetupInput) => Promise<SysSetupResult>;
   initializeFromUpstream: (args?: SysBootstrapArgs) => Promise<SysBootstrapResult>;
-  continueFromSetup: () => Promise<GatewayConnectResult>;
+  continueFromSetup: () => Promise<ConnectResult>;
   lock: (reason?: string) => void;
   start: () => Promise<void>;
 };
@@ -194,7 +196,50 @@ function waitFor(ms: number): Promise<void> {
   });
 }
 
-export function createSessionService(client: GatewayClient): SessionService {
+async function createUserSessionToken(client: GSVClient, expiresAt: number): Promise<UserSessionToken> {
+  const result = await client.sys.token.create({
+    kind: "user",
+    label: "gsv-ui-session",
+    allowedRole: "user",
+    expiresAt,
+  });
+
+  return {
+    tokenId: result.token.tokenId,
+    token: result.token.token,
+    expiresAt: result.token.expiresAt,
+  };
+}
+
+async function revokeSessionToken(client: GSVClient, tokenId: string, reason: string): Promise<boolean> {
+  const result = await client.sys.token.revoke({
+    tokenId,
+    reason,
+  });
+  return result.revoked === true;
+}
+
+async function probeSetupMode(client: GSVClient, url: string): Promise<boolean> {
+  try {
+    await client.requestOnce(url, "sys.connect", {
+      protocol: 1,
+      client: {
+        id: "gsv-ui-setup-probe",
+        version: "0.2.6",
+        platform: "browser",
+        role: "user",
+      },
+    });
+    return false;
+  } catch (error) {
+    if (isSetupRequiredError(error)) {
+      return true;
+    }
+    return false;
+  }
+}
+
+export function createSessionService(client: GSVClient): SessionService {
   const listeners = new Set<(snapshot: SessionSnapshot) => void>();
 
   let currentSessionToken: PersistedSessionToken | null = readPersistedToken();
@@ -291,7 +336,7 @@ export function createSessionService(client: GatewayClient): SessionService {
     const remaining: string[] = [];
     for (const tokenId of pendingRevokes) {
       try {
-        const revoked = await client.revokeToken(tokenId, reason);
+        const revoked = await revokeSessionToken(client, tokenId, reason);
         if (!revoked) {
           remaining.push(tokenId);
         }
@@ -335,7 +380,7 @@ export function createSessionService(client: GatewayClient): SessionService {
 
     let nextToken: UserSessionToken;
     try {
-      nextToken = await client.createUserSessionToken(nextExpiry);
+      nextToken = await createUserSessionToken(client, nextExpiry);
     } catch {
       if (reason === "scheduled" && currentSessionToken?.expiresAt && currentSessionToken.expiresAt <= Date.now()) {
         clearStoredSessionToken();
@@ -416,7 +461,7 @@ export function createSessionService(client: GatewayClient): SessionService {
     });
 
     try {
-      await client.connectUser({
+      await client.connect({
         url: deriveGatewayUrlFromOrigin(),
         username: token.username,
         token: token.token,
@@ -546,7 +591,7 @@ export function createSessionService(client: GatewayClient): SessionService {
     }
   });
 
-  const login = async (input: SessionLoginInput): Promise<GatewayConnectResult> => {
+  const login = async (input: SessionLoginInput): Promise<ConnectResult> => {
     cancelSilentReconnect();
     const url = deriveGatewayUrlFromOrigin();
     const username = input.username.trim();
@@ -562,14 +607,14 @@ export function createSessionService(client: GatewayClient): SessionService {
       setupResult: null,
     });
 
-    const options: GatewayConnectOptions = {
+    const options: GsvConnectOptions = {
       url,
       username,
       ...(token ? { token } : { password }),
     };
 
     try {
-      const result = await client.connectUser(options);
+      const result = await client.connect(options);
       storeValue(STORAGE_USERNAME, username);
       pendingSetupLogin = null;
 
@@ -629,7 +674,7 @@ export function createSessionService(client: GatewayClient): SessionService {
     });
 
     try {
-      const result = await client.setupSystem(url, input);
+      const result = await client.requestOnce(url, "sys.setup", input);
       pendingSetupLogin = { username, password };
       storeValue(STORAGE_USERNAME, username);
 
@@ -656,7 +701,7 @@ export function createSessionService(client: GatewayClient): SessionService {
     }
   };
 
-  const continueFromSetup = async (): Promise<GatewayConnectResult> => {
+  const continueFromSetup = async (): Promise<ConnectResult> => {
     if (!pendingSetupLogin) {
       throw new Error("Setup credentials are no longer available. Sign in manually.");
     }
@@ -689,7 +734,7 @@ export function createSessionService(client: GatewayClient): SessionService {
       if (!wasConnected) {
         await continueFromSetup();
       }
-      const result = await client.bootstrapSystem(args);
+      const result = await client.sys.bootstrap(args);
       holdReadyUntilBootstrap = false;
       const status = client.getStatus();
       setSnapshot({
@@ -752,7 +797,7 @@ export function createSessionService(client: GatewayClient): SessionService {
     const persisted = currentSessionToken;
 
     if (!persisted) {
-      const setupRequired = await client.probeSetupMode(url);
+      const setupRequired = await probeSetupMode(client, url);
       if (setupRequired) {
         setSnapshot({
           phase: "setup",
@@ -777,7 +822,7 @@ export function createSessionService(client: GatewayClient): SessionService {
 
     if (persisted.expiresAt !== null && persisted.expiresAt <= Date.now()) {
       clearStoredSessionToken();
-      const setupRequired = await client.probeSetupMode(url);
+      const setupRequired = await probeSetupMode(client, url);
       if (setupRequired) {
         setSnapshot({
           phase: "setup",
@@ -810,7 +855,7 @@ export function createSessionService(client: GatewayClient): SessionService {
     });
 
     try {
-      const result = await client.connectUser({
+      const result = await client.connect({
         url,
         username: persisted.username,
         token: persisted.token,

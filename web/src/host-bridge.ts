@@ -1,7 +1,4 @@
-import type {
-  GatewayClientLike,
-  GatewayClientStatus,
-} from "./app/services/gateway/gatewayClient";
+import type { GsvClientStatus } from "@humansandmachines/gsv/client";
 
 type HostRpcMethod =
   | "setTitle"
@@ -32,7 +29,7 @@ type HostRpcResultMessage =
 
 type HostStatusMessage = {
   type: "status";
-  status: GatewayClientStatus;
+  status: GsvClientStatus;
 };
 
 type HostConnectMessage = {
@@ -51,6 +48,10 @@ type HostChromeController = {
   setBadge: (badge: string | null) => void;
   setDirty: (dirty: boolean) => void;
   requestNewWindow: (route?: string) => string;
+};
+
+type HostStatusClient = {
+  onStatus: (listener: (status: GsvClientStatus) => void) => () => void;
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -108,7 +109,7 @@ async function handleRpc(
 
 export function attachHostBridge(
   iframe: HTMLIFrameElement,
-  gatewayClient: GatewayClientLike,
+  gatewayClient: HostStatusClient,
   chrome: HostChromeController | null = null,
 ): HostBridgeController {
   let port: MessagePort | null = null;

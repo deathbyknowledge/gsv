@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { GsvClientStatus } from "@humansandmachines/gsv/client";
 import { attachHostBridge } from "./host-bridge";
-import type { GatewayClientLike } from "./app/services/gateway/gatewayClient";
 
 type IframeMock = HTMLIFrameElement & {
   dispatchLoad(): void;
@@ -25,18 +25,9 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function createGatewayClient(): GatewayClientLike {
+function createHostStatusClient() {
   return {
-    getStatus: () => ({
-      state: "connected",
-      url: "ws://gateway.test",
-      username: "alice",
-      connectionId: "conn",
-      message: null,
-    }),
-    isConnected: () => true,
-    onSignal: () => () => {},
-    onStatus: (listener) => {
+    onStatus: (listener: (status: GsvClientStatus) => void) => {
       listener({
         state: "connected",
         url: "ws://gateway.test",
@@ -47,34 +38,11 @@ function createGatewayClient(): GatewayClientLike {
       return () => {};
     },
     call: vi.fn(),
-    account: {
-      create: vi.fn(),
-      list: vi.fn(),
-    },
-    fs: {
-      copy: vi.fn(),
-    },
-    pkg: {
-      create: vi.fn(),
-    },
     proc: {
       spawn: vi.fn(),
       send: vi.fn(),
       history: vi.fn(),
-      media: {
-        read: vi.fn(),
-      },
-      conversation: {
-        timeline: vi.fn(),
-        generations: vi.fn(),
-        generation: {
-          manifest: vi.fn(),
-        },
-      },
     },
-    probeSetupMode: vi.fn(),
-    setupSystem: vi.fn(),
-    bootstrapSystem: vi.fn(),
   };
 }
 
@@ -107,7 +75,7 @@ function createIframeMock(
 }
 
 async function connectBridge(
-  gatewayClient: GatewayClientLike,
+  gatewayClient: Parameters<typeof attachHostBridge>[1],
 ): Promise<{ controller: ReturnType<typeof attachHostBridge>; port: MessagePort }> {
   let hostMessage: unknown = null;
   let hostPorts: readonly MessagePort[] = [];
@@ -148,7 +116,7 @@ function rpc(port: MessagePort, method: string, payload?: unknown): Promise<unkn
 
 describe("attachHostBridge", () => {
   it("rejects removed syscall bridge methods without calling the gateway client", async () => {
-    const gatewayClient = createGatewayClient();
+    const gatewayClient = createHostStatusClient();
     const { controller, port } = await connectBridge(gatewayClient);
 
     for (const method of ["call", "spawnProcess", "sendMessage", "getHistory"]) {
@@ -170,7 +138,7 @@ describe("attachHostBridge", () => {
   });
 
   it("still handles window chrome RPCs", async () => {
-    const gatewayClient = createGatewayClient();
+    const gatewayClient = createHostStatusClient();
     const chrome = {
       setTitle: vi.fn(),
       setBadge: vi.fn(),

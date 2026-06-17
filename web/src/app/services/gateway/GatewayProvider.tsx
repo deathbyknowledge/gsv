@@ -1,15 +1,11 @@
 import type { ComponentChildren } from "preact";
 import { createContext } from "preact";
 import { useContext, useEffect, useState } from "preact/hooks";
-import {
-  createGatewayClient,
-  type GatewayClient,
-  type GatewayClientStatus,
-} from "./gatewayClient";
+import { GSVClient, type GsvClientStatus } from "@humansandmachines/gsv/client";
 
 type GatewayContextValue = {
-  client: GatewayClient;
-  status: GatewayClientStatus;
+  client: GSVClient;
+  status: GsvClientStatus;
   connected: boolean;
 };
 
@@ -19,9 +15,20 @@ type GatewayProviderProps = {
   children: ComponentChildren;
 };
 
+function createWebGsvClient(): GSVClient {
+  return new GSVClient({
+    client: {
+      id: "gsv-ui",
+      version: "0.2.6",
+      platform: "browser",
+      role: "user",
+    },
+  });
+}
+
 export function GatewayProvider({ children }: GatewayProviderProps) {
-  const [client] = useState(createGatewayClient);
-  const [status, setStatus] = useState<GatewayClientStatus>(() => client.getStatus());
+  const [client] = useState(createWebGsvClient);
+  const [status, setStatus] = useState<GsvClientStatus>(() => client.getStatus());
 
   useEffect(() => {
     return client.onStatus(setStatus);

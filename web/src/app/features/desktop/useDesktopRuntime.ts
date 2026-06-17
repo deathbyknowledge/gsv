@@ -1,7 +1,7 @@
 import type { RefObject } from "preact";
+import type { GSVClient } from "@humansandmachines/gsv/client";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { createPresenceControl } from "../../../presence";
-import type { GatewayClient } from "../../services/gateway/gatewayClient";
 import { createAppRuntime } from "./runtime/appsRuntime";
 import { createLauncher } from "./runtime/launcher";
 import { createWindowManager, type WindowManager } from "./runtime/windowManager";
@@ -14,7 +14,7 @@ export type DesktopRuntime = {
 type UseDesktopRuntimeOptions = {
   shellRef: RefObject<HTMLDivElement>;
   windowsLayerRef: RefObject<HTMLElement>;
-  gatewayClient: GatewayClient;
+  gatewayClient: GSVClient;
   standalone: boolean;
 };
 
