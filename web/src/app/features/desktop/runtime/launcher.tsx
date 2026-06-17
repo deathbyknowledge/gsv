@@ -1,4 +1,5 @@
 import { normalizeThreadContext } from "@gsv/app-link";
+import { render as renderPreact } from "preact";
 import type { AppIcon, AppManifest } from "../../../../apps";
 import { OPEN_APP_EVENT, resolveOpenAppDetail, type OpenAppEventDetail } from "../../../../app-link";
 import {
@@ -8,6 +9,7 @@ import {
   queuePendingChatProcess,
   type TargetChatProcessEventDetail,
 } from "../../../../chat-process-link";
+import { DesktopAppIcons, TaskbarWindows } from "../components/DesktopLauncherViews";
 import type { WindowManager, WindowSummary } from "./windowManager";
 
 type LauncherOptions = {
@@ -122,10 +124,6 @@ export function createLauncher(options: LauncherOptions): LauncherController {
   let mobileHomeGestureProgress = 0;
   let mobileHomeGestureSuppressClick = false;
 
-  const getIconNodes = (): HTMLButtonElement[] => {
-    return Array.from(iconsNode.querySelectorAll<HTMLButtonElement>(".desktop-icon[data-app-id]"));
-  };
-
   const summariesForApp = (appId: string): WindowSummary[] => {
     return latestSummaries
       .filter((summary) => summary.appId === appId)
@@ -168,43 +166,26 @@ export function createLauncher(options: LauncherOptions): LauncherController {
     return activateApp(appId);
   };
 
-  const renderIcons = (): void => {
-    iconsNode.innerHTML = apps
-      .map((appItem) => {
-        return `
-          <button type="button" class="desktop-icon" data-app-id="${escapeHtml(appItem.id)}">
-            ${renderDesktopIcon(appItem.icon)}
-            <span class="desktop-label">${escapeHtml(appItem.name)}</span>
-          </button>
-        `;
-      })
-      .join("");
+  const renderDesktopIcons = (summaries: WindowSummary[] = latestSummaries): void => {
+    const activeSummary = summaries.find((summary) => summary.active && summary.mode !== "minimized");
+    const activeAppId = activeSummary?.appId ?? null;
 
-    syncIconState();
+    renderPreact(
+      <DesktopAppIcons
+        apps={apps}
+        activeAppId={activeAppId}
+        selectedAppId={selectedAppId}
+      />,
+      iconsNode,
+    );
   };
 
-  const renderTaskbarWindows = (summaries: WindowSummary[] = latestSummaries): void => {
+  const renderTaskbarWindows = (summaries: readonly WindowSummary[] = latestSummaries): void => {
     if (!taskbarWindowsNode) {
       return;
     }
 
-    taskbarWindowsNode.innerHTML = summaries
-      .slice()
-      .sort((left, right) => right.zIndex - left.zIndex)
-      .map((summary) => {
-        const modeClass = summary.mode === "minimized" ? " is-minimized" : "";
-        const activeClass = summary.active ? " is-active" : "";
-        const dirty = summary.dirty ? `<span class="taskbar-dirty" aria-label="Unsaved changes"></span>` : "";
-        const badge = summary.badge ? `<span class="taskbar-badge">${escapeHtml(summary.badge)}</span>` : "";
-        return `
-          <button type="button" class="taskbar-window${modeClass}${activeClass}" data-window-id="${escapeHtml(summary.windowId)}" title="${escapeHtml(`${summary.title} - ${summary.route}`)}">
-            <span class="taskbar-window-title">${escapeHtml(summary.title)}</span>
-            ${dirty}
-            ${badge}
-          </button>
-        `;
-      })
-      .join("");
+    renderPreact(<TaskbarWindows summaries={summaries} />, taskbarWindowsNode);
   };
 
   const renderMobileApps = (): void => {
@@ -729,17 +710,7 @@ export function createLauncher(options: LauncherOptions): LauncherController {
   };
 
   const syncIconState = (summaries: WindowSummary[] = latestSummaries): void => {
-    const activeSummary = summaries.find((summary) => summary.active && summary.mode !== "minimized");
-    const activeAppId = activeSummary?.appId ?? null;
-
-    for (const iconNode of getIconNodes()) {
-      const appId = iconNode.dataset.appId;
-      const isActive = appId !== undefined && appId === activeAppId;
-      const isSelected = appId !== undefined && appId === selectedAppId;
-      iconNode.classList.toggle("is-active", isActive);
-      iconNode.classList.toggle("is-selected", isSelected);
-    }
-
+    renderDesktopIcons(summaries);
     renderTaskbarWindows(summaries);
     syncDockAutoHide(summaries);
     syncMobileState(summaries);
@@ -1480,7 +1451,6 @@ export function createLauncher(options: LauncherOptions): LauncherController {
     if (selectedAppId && !appById.has(selectedAppId)) {
       selectedAppId = null;
     }
-    renderIcons();
     renderMobileApps();
     syncIconState();
     if (initialAppId && !openedInitialApp && appById.has(initialAppId)) {
@@ -1519,6 +1489,10 @@ export function createLauncher(options: LauncherOptions): LauncherController {
       commandPaletteListNode?.removeEventListener("click", onPaletteClick);
       commandPaletteNode?.removeEventListener("click", onPaletteBackdropClick);
       commandPaletteCloseNode?.removeEventListener("click", onCommandPaletteCloseClick);
+      renderPreact(null, iconsNode);
+      if (taskbarWindowsNode) {
+        renderPreact(null, taskbarWindowsNode);
+      }
       dockRevealZoneNode?.removeEventListener("pointerenter", onDockRevealPointerEnter);
       dockRevealZoneNode?.removeEventListener("pointerleave", onDockRevealPointerLeave);
       topbarNode?.removeEventListener("pointerenter", onTopbarPointerEnter);
