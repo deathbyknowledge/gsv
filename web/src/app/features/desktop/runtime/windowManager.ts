@@ -1,6 +1,6 @@
 import type { AppManifest } from "../../../../apps";
 import { queuePendingAppOpen, type OpenAppRequest } from "../../../../app-link";
-import type { AppInstance, AppRuntimeContext, AppRuntimeRegistry } from "../../../../app-runtime";
+import type { AppInstance, AppRuntimeContext, AppRuntimeRegistry } from "./appRuntime";
 import {
   readPersistedDesktopLayout,
   selectRestoredActiveWindowId,
@@ -28,7 +28,7 @@ import {
   type DesktopResizeDirection,
   type DesktopWorkspaceBounds,
 } from "../domain/windowGeometry";
-import { mountPreviewWindow, type PreviewWindowContent } from "../../../../preview-window";
+import { mountPreviewWindow, type PreviewWindowContent } from "./previewWindow";
 
 type WindowMode = DesktopWindowMode;
 type ResizeDirection = DesktopResizeDirection;

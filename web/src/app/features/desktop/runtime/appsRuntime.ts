@@ -1,9 +1,9 @@
-import type { AppManifest } from "./apps";
-import type { AppInstance, AppRuntimeRegistry } from "./app-runtime";
-import { createAppLaunchLoader, type AppLaunchLoader } from "./app-loading";
-import type { GatewayClientLike } from "./gateway-client";
-import { attachHostBridge } from "./host-bridge";
 import type { AppLaunchResult, AppOpenArgs } from "@gsv/protocol/syscalls/apps";
+import type { AppManifest } from "../../../../apps";
+import type { GatewayClientLike } from "../../../../gateway-client";
+import { attachHostBridge } from "../../../../host-bridge";
+import { createAppLaunchLoader, type AppLaunchLoader } from "./appLoading";
+import type { AppInstance, AppRuntimeRegistry } from "./appRuntime";
 
 function escapeHtml(value: string): string {
   return value

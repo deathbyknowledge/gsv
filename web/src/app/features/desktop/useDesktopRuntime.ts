@@ -1,8 +1,8 @@
 import type { RefObject } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
-import { createAppRuntime } from "../../../apps-runtime";
 import { createPresenceControl } from "../../../presence";
 import type { GatewayClient } from "../../../gateway-client";
+import { createAppRuntime } from "./runtime/appsRuntime";
 import { createLauncher } from "./runtime/launcher";
 import { createWindowManager, type WindowManager } from "./runtime/windowManager";
 

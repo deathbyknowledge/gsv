@@ -1,4 +1,4 @@
-import type { AppManifest } from "./apps";
+import type { AppManifest } from "../../../../apps";
 
 export type AppRuntimeContext = {
   windowId: string;
