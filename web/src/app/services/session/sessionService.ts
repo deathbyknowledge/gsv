@@ -204,7 +204,7 @@ export function createSessionService(client: GatewayClient): SessionService {
     url: deriveGatewayUrlFromOrigin(),
     username: currentSessionToken?.username ?? readStored(STORAGE_USERNAME) ?? "",
     connectionId: null,
-    message: currentSessionToken ? "Restoring session..." : "Starting GSV...",
+    message: "Booting up...",
     setupResult: null,
   };
 
@@ -805,7 +805,7 @@ export function createSessionService(client: GatewayClient): SessionService {
       url,
       username: persisted.username,
       connectionId: null,
-      message: "Restoring session...",
+      message: "Booting up...",
       setupResult: null,
     });
 
