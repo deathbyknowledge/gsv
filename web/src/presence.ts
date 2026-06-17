@@ -1,10 +1,6 @@
 import { normalizeSpeechText } from "@humansandmachines/gsv/protocol";
 import type { AiSpeechCreateResult, AiTranscriptionCreateResult } from "@humansandmachines/gsv/protocol";
 import type { GSVClient } from "@humansandmachines/gsv/client";
-import {
-  localSpeechSupported,
-  synthesizeLocalSpeech,
-} from "./local-tts";
 
 type PresenceGsvClient = Pick<GSVClient, "ai" | "isConnected" | "onSignal" | "onStatus" | "proc">;
 
@@ -279,9 +275,6 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
     }
     if (speakTestNode) {
       speakTestNode.disabled = !connected;
-    }
-    if (speechStatusNode && speakReplies && !localSpeechSupported()) {
-      speechStatusNode.textContent = "Local speech unavailable; using gateway voice";
     }
     if (activeRuns.size === 0 && activityHideTimer === null) {
       renderIdlePresenceActivity();
@@ -1191,36 +1184,7 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
       throw new Error("Speech cancelled");
     }
     const requestedAt = Date.now();
-    markVoiceTiming(timing, chunk.index === 0 ? "tts_first_chunk_requested" : "tts_chunk_requested");
-    if (localSpeechSupported()) {
-      try {
-        const audio = await synthesizeLocalSpeech(chunk.text, {
-          onProgress(progress) {
-            if (attempt === speechAttempt) {
-              setSpeechStatus(progress.message);
-            }
-          },
-        });
-        const result: AiSpeechCreateResult = {
-          audio: {
-            data: URL.createObjectURL(audio),
-            mimeType: audio.type || "audio/wav",
-            size: audio.size,
-          },
-          provider: "local-piper",
-          model: "piper",
-        };
-        recordVoiceTimingChunkReady(timing, chunk, requestedAt, result);
-        return result;
-      } catch (error) {
-        if (attempt !== speechAttempt) {
-          throw error;
-        }
-        markVoiceTiming(timing, "tts_local_fallback");
-        setSpeechStatus(`Local speech failed: ${formatError(error)}. Trying gateway voice.`);
-      }
-    }
-
+    markVoiceTiming(timing, chunk.index === 0 ? "speech_first_chunk_requested" : "speech_chunk_requested");
     const result = await gatewayClient.ai.speech.create({
       text: chunk.text,
     });
@@ -1604,7 +1568,7 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
   setState(state);
   setSpeechStatus(
     speakReplies
-      ? localSpeechSupported() ? "Speak replies on" : "Local speech unavailable; using gateway voice"
+      ? "Speak replies on"
       : "Speech off",
   );
 
@@ -1993,7 +1957,7 @@ function recordVoiceTimingChunkReady(
   entry.provider = result.provider;
   entry.model = result.model;
   if (chunk.index === 0) {
-    markVoiceTiming(timing, "tts_first_audio_ready", entry.audioReadyAt);
+    markVoiceTiming(timing, "speech_first_audio_ready", entry.audioReadyAt);
   }
 }
 
@@ -2005,7 +1969,7 @@ function recordVoiceTimingChunkPlaybackStart(timing: VoiceTimingTrace | undefine
   const entry = ensureVoiceTimingChunk(timing, chunk, now);
   entry.playbackStartedAt = now;
   if (chunk.index === 0) {
-    markVoiceTiming(timing, "tts_first_audio_playing", now);
+    markVoiceTiming(timing, "speech_first_audio_playing", now);
   }
   if (typeof timing.lastChunkEndedAt === "number") {
     entry.gapMs = Math.max(0, now - timing.lastChunkEndedAt);
@@ -2021,7 +1985,7 @@ function recordVoiceTimingChunkPlaybackEnd(timing: VoiceTimingTrace | undefined,
   entry.playbackEndedAt = now;
   timing.lastChunkEndedAt = now;
   if (chunk.index === chunk.total - 1) {
-    markVoiceTiming(timing, "tts_done", now);
+    markVoiceTiming(timing, "speech_done", now);
   }
 }
 
@@ -2085,10 +2049,10 @@ function voiceTimingSummary(timing: VoiceTimingTrace, reason: string): Record<st
     agentDispatchMs: durationMs(marks.agent_send_started, marks.agent_send_done),
     agentWaitFirstActivityMs: durationMs(marks.agent_send_done, marks.agent_first_activity),
     agentTotalMs: durationMs(marks.agent_send_done, marks.agent_complete),
-    replyToFirstAudioReadyMs: durationMs(marks.agent_complete, marks.tts_first_audio_ready),
-    replyToFirstAudioPlayingMs: durationMs(marks.agent_complete, marks.tts_first_audio_playing),
-    firstChunkSynthesisMs: durationMs(marks.tts_first_chunk_requested, marks.tts_first_audio_ready),
-    speechPlaybackMs: durationMs(marks.tts_first_audio_playing, marks.tts_done),
+    replyToFirstAudioReadyMs: durationMs(marks.agent_complete, marks.speech_first_audio_ready),
+    replyToFirstAudioPlayingMs: durationMs(marks.agent_complete, marks.speech_first_audio_playing),
+    firstChunkSynthesisMs: durationMs(marks.speech_first_chunk_requested, marks.speech_first_audio_ready),
+    speechPlaybackMs: durationMs(marks.speech_first_audio_playing, marks.speech_done),
     maxSpeechGapMs: chunkGaps.length > 0 ? Math.max(...chunkGaps) : undefined,
     chunkCount: timing.chunks.length,
     chunks,
