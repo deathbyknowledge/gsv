@@ -1,5 +1,7 @@
+import { render as renderPreact } from "preact";
 import { defineDesktopApp, type DesktopApp } from "../domain/desktopApp";
 import type { AppInstance, AppRuntimeContext, AppRuntimeRegistry } from "./appRuntime";
+import { DesktopWindowFrame } from "../components/DesktopWindowViews";
 import {
   readPersistedDesktopLayout,
   selectRestoredActiveWindowId,
@@ -246,34 +248,7 @@ function createWindowNode(app: DesktopApp, route: string): HTMLElement {
   container.setAttribute("role", "dialog");
   container.setAttribute("aria-label", app.name);
 
-  container.innerHTML = `
-    <div class="window-titlebar" data-window-drag-handle>
-      <div class="window-controls">
-        <button type="button" class="dot red" data-window-action="close" aria-label="Close window"></button>
-        <button type="button" class="dot amber" data-window-action="minimize" aria-label="Minimize window"></button>
-        <button type="button" class="dot green" data-window-action="maximize" aria-label="Maximize or restore window"></button>
-      </div>
-      <span class="window-title">
-        <span data-window-title>${escapeHtml(app.name)}</span>
-        <span class="window-dirty-dot" data-window-dirty hidden aria-label="Unsaved changes"></span>
-      </span>
-      <span class="window-chrome-meta">
-        <span class="window-badge" data-window-badge hidden></span>
-        <span class="window-meta" data-window-route>${escapeHtml(route)}</span>
-      </span>
-    </div>
-
-    <div class="window-content" data-window-content></div>
-
-    <div class="window-resize-handle handle-n" data-window-resize="n"></div>
-    <div class="window-resize-handle handle-s" data-window-resize="s"></div>
-    <div class="window-resize-handle handle-e" data-window-resize="e"></div>
-    <div class="window-resize-handle handle-w" data-window-resize="w"></div>
-    <div class="window-resize-handle handle-ne" data-window-resize="ne"></div>
-    <div class="window-resize-handle handle-nw" data-window-resize="nw"></div>
-    <div class="window-resize-handle handle-se" data-window-resize="se"></div>
-    <div class="window-resize-handle handle-sw" data-window-resize="sw"></div>
-  `;
+  renderPreact(DesktopWindowFrame({ app, route }), container);
 
   return container;
 }
@@ -1068,6 +1043,7 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
     });
 
     detachRuntime(record);
+    renderPreact(null, record.node);
     record.node.remove();
     windows.delete(windowId);
     applyWindowState(nextState);
@@ -1951,6 +1927,7 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
 
       for (const record of windows.values()) {
         detachRuntime(record);
+        renderPreact(null, record.node);
         record.node.remove();
       }
 
