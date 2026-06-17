@@ -4,33 +4,21 @@ import {
   blobToDataUrl,
   canUseAmbientMode,
   canUseBrowserVoiceRecorder,
-  createAudioContext,
-  currentRms,
   presenceRecordingFilename,
-  requestVoiceStream,
-  selectVoiceRecorderMimeType,
   totalBlobSize,
 } from "./audio";
 import {
-  AMBIENT_END_SILENCE_MS,
   AMBIENT_MIN_SEGMENT_BYTES,
   AMBIENT_MIN_SEGMENT_MS,
-  AMBIENT_RMS_THRESHOLD,
-  AMBIENT_SAMPLE_MS,
-  AMBIENT_START_MS,
   INTERIM_SPEECH_COOLDOWN_MS,
   INTERIM_SPEECH_DELAY_MS,
-  MAX_AMBIENT_SEGMENT_MS,
   MAX_BUFFERED_RUN_SIGNALS,
-  MAX_PUSH_RECORDING_MS,
   RUN_SIGNAL_BUFFER_TTL_MS,
-  VOICE_AUDIO_BITS_PER_SECOND,
 } from "./constants";
 import {
   addPresenceLog,
   appendTranscript,
   compactPresenceStatus,
-  formatElapsed,
   formatError,
   statusKey,
   statusText,
@@ -45,6 +33,7 @@ import {
   savePresenceModePreference,
   saveSpeakRepliesPreference,
 } from "./preferences";
+import { createPresenceRecorder, type AmbientSegment } from "./recording";
 import {
   isPresenceRunSignal,
   runIdFromSignalPayload,
@@ -129,32 +118,34 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
   const activeRuns = new Map<string, PresenceRun>();
   const bufferedRunSignals = new Map<string, BufferedRunSignal[]>();
   const pendingInterimSpeech = new Map<string, PendingInterimSpeech>();
-
-  let pushRecorder: MediaRecorder | null = null;
-  let pushStream: MediaStream | null = null;
-  let pushChunks: Blob[] = [];
-  let pushStartedAt = 0;
-  let pushTimer: number | null = null;
-
-  let ambientStream: MediaStream | null = null;
-  let ambientMimeType = "audio/webm";
-  let ambientContext: AudioContext | null = null;
-  let ambientSource: MediaStreamAudioSourceNode | null = null;
-  let ambientAnalyser: AnalyserNode | null = null;
-  let ambientSamples: Float32Array<ArrayBuffer> | null = null;
-  let ambientTimer: number | null = null;
-  let ambientSegmentRecorder: MediaRecorder | null = null;
-  let ambientSegmentChunks: Blob[] = [];
-  let ambientSpeechActive = false;
-  let ambientSpeechMs = 0;
-  let ambientLastVoiceAt = 0;
-  let ambientSegmentStartedAt = 0;
   let ambientPendingJobs = 0;
   const speechOutput = createPresenceSpeechOutput({
     gatewayClient,
     getSpeakReplies: () => speakReplies,
     isDestroyed: () => destroyed,
     setSpeechStatus,
+  });
+  const recorder = createPresenceRecorder({
+    isConnected: () => gatewayClient.isConnected(),
+    isDestroyed: () => destroyed,
+    isSpeechOutputPlaying: () => speechOutput.isPlaying(),
+    cancelSpeechOutput: () => speechOutput.cancel(),
+    activeRunCount: () => activeRuns.size,
+    hasAmbientPendingJobs: () => ambientPendingJobs > 0,
+    ambientIdleNote,
+    setPanelOpen,
+    setNote: (nextNote) => {
+      note = nextNote;
+    },
+    getState: () => state,
+    setState,
+    transcribe: transcribeBlob,
+    onPushTranscribed: (result) => {
+      transcriptInputNode.value = appendTranscript(transcriptInputNode.value, result.text);
+      note = transcriptionNote(result);
+      setState("idle", "Transcribed");
+    },
+    onAmbientSegment: queueAmbientSegment,
   });
 
   function setPanelOpen(open: boolean): void {
@@ -177,10 +168,10 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
       return;
     }
     if (state === "recording") {
-      stopPushRecording();
+      recorder.stopPushRecording();
     }
-    if (ambientStream) {
-      stopAmbient();
+    if (recorder.isAmbientActive()) {
+      recorder.stopAmbient();
     }
     mode = nextMode;
     savePresenceModePreference(mode);
@@ -212,7 +203,7 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
     }
     listenNode.textContent = listenButtonText();
     listenNode.disabled = mode === "ambient"
-      ? !connected || !ambientAvailable || (!ambientStream && (next === "sending" || next === "transcribing"))
+      ? !connected || !ambientAvailable || (!recorder.isAmbientActive() && (next === "sending" || next === "transcribing"))
       : next === "sending" || next === "transcribing" || !connected || !recorderAvailable;
     sendNode.disabled = next === "sending" || next === "transcribing" || !connected || !hasTranscript;
     clearNode.disabled = next === "sending" || next === "transcribing" || (!hasTranscript && !note && !lastSentText);
@@ -243,323 +234,45 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
 
   function listenButtonText(): string {
     if (mode === "ambient") {
-      return ambientStream ? "Pause" : "Listen";
+      return recorder.isAmbientActive() ? "Pause" : "Listen";
     }
     return state === "recording" ? "Stop" : "Record";
   }
 
-  async function startPushRecording(): Promise<void> {
-    if (!canUseBrowserVoiceRecorder() || !gatewayClient.isConnected()) {
-      setState(canUseBrowserVoiceRecorder() ? "idle" : "unsupported");
-      return;
-    }
-    speechOutput.cancel();
-    cleanupPushRecorder();
-    setPanelOpen(true);
-    note = "";
-    setState("recording", "Requesting microphone");
-    try {
-      const stream = await requestVoiceStream();
-      if (destroyed) {
-        stream.getTracks().forEach((track) => track.stop());
-        return;
-      }
-      const mimeType = selectVoiceRecorderMimeType();
-      const recorderOptions: MediaRecorderOptions = { audioBitsPerSecond: VOICE_AUDIO_BITS_PER_SECOND };
-      if (mimeType) {
-        recorderOptions.mimeType = mimeType;
-      }
-      pushRecorder = new MediaRecorder(stream, recorderOptions);
-      pushStream = stream;
-      pushChunks = [];
-      pushStartedAt = Date.now();
-
-      pushRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          pushChunks.push(event.data);
-        }
-      };
-      pushRecorder.onerror = () => {
-        cleanupPushRecorder();
-        note = "";
-        setState("error", "Voice recording failed");
-      };
-      pushRecorder.onstop = () => {
-        void finishPushRecording();
-      };
-      pushRecorder.start(1000);
-      pushTimer = window.setInterval(() => {
-        const elapsedMs = Date.now() - pushStartedAt;
-        note = `Recording ${formatElapsed(elapsedMs)}`;
-        setState("recording");
-        if (elapsedMs >= MAX_PUSH_RECORDING_MS && pushRecorder?.state === "recording") {
-          stopPushRecording();
-        }
-      }, 250);
-      note = "Recording 0:00";
-      setState("recording");
-    } catch (error) {
-      cleanupPushRecorder();
-      note = "";
-      setState("error", "Microphone failed: " + formatError(error));
-    }
-  }
-
-  function stopPushRecording(): void {
-    const current = pushRecorder;
-    if (!current || current.state === "inactive") {
-      cleanupPushRecorder();
-      setState("idle");
-      return;
-    }
-    clearPushTimer();
-    note = "Transcribing";
-    setState("transcribing");
-    current.stop();
-  }
-
-  async function finishPushRecording(): Promise<void> {
-    clearPushTimer();
-    const chunks = pushChunks.slice();
-    const mimeType = pushRecorder?.mimeType || chunks.find((chunk) => chunk.type)?.type || "audio/webm";
-    cleanupPushRecorder();
-    if (destroyed) {
-      return;
-    }
-    const blob = new Blob(chunks, { type: mimeType });
-    if (blob.size === 0) {
-      note = "";
-      setState("error", "No audio was captured");
-      return;
-    }
-
-    note = "Transcribing";
-    setState("transcribing");
-    try {
-      const result = await transcribeBlob(blob, mimeType);
-      transcriptInputNode.value = appendTranscript(transcriptInputNode.value, result.text);
-      note = transcriptionNote(result);
-      setState("idle", "Transcribed");
-    } catch (error) {
-      note = "";
-      setState("error", "Transcription failed: " + formatError(error));
-    }
-  }
-
-  async function startAmbient(): Promise<void> {
-    if (!canUseAmbientMode() || !gatewayClient.isConnected()) {
-      setState(canUseBrowserVoiceRecorder() ? "idle" : "unsupported");
-      return;
-    }
-    stopAmbient();
-    setPanelOpen(true);
-    note = "Requesting microphone";
-    setState("listening");
-    try {
-      const stream = await requestVoiceStream();
-      if (destroyed) {
-        stream.getTracks().forEach((track) => track.stop());
-        return;
-      }
-      const mimeType = selectVoiceRecorderMimeType();
-      ambientStream = stream;
-      ambientMimeType = mimeType || "audio/webm";
-      ambientContext = createAudioContext();
-      ambientSource = ambientContext.createMediaStreamSource(stream);
-      ambientAnalyser = ambientContext.createAnalyser();
-      ambientAnalyser.fftSize = 2048;
-      ambientSource.connect(ambientAnalyser);
-      ambientSamples = new Float32Array(ambientAnalyser.fftSize) as Float32Array<ArrayBuffer>;
-
-      ambientTimer = window.setInterval(tickAmbientVad, AMBIENT_SAMPLE_MS);
-      note = "Mind is listening";
-      setState("listening", "Listening");
-    } catch (error) {
-      stopAmbient();
-      note = "";
-      setState("error", "Microphone failed: " + formatError(error));
-    }
-  }
-
-  function stopAmbient(): void {
-    speechOutput.cancel();
-    clearAmbientTimer();
-    stopAmbientSegment("stop");
-    ambientSpeechActive = false;
-    ambientSpeechMs = 0;
-    ambientLastVoiceAt = 0;
-    ambientSegmentStartedAt = 0;
-
-    ambientSource?.disconnect();
-    ambientSource = null;
-    ambientAnalyser?.disconnect();
-    ambientAnalyser = null;
-    ambientSamples = null;
-    const context = ambientContext;
-    ambientContext = null;
-    void context?.close().catch(() => {});
-    const stream = ambientStream;
-    ambientStream = null;
-    stream?.getTracks().forEach((track) => track.stop());
-    if (state === "listening" || state === "capturing" || state === "transcribing" || state === "sending") {
-      note = activeRuns.size > 0 ? ambientIdleNote() : "";
-      setState("idle", activeRuns.size > 0 ? "Mind working" : "Listening paused");
-    }
-  }
-
-  function tickAmbientVad(): void {
-    if (!ambientAnalyser || !ambientSamples || !ambientStream) {
-      return;
-    }
-    const now = Date.now();
-    const rms = currentRms(ambientAnalyser, ambientSamples);
-    const speechNow = rms >= AMBIENT_RMS_THRESHOLD;
-
-    if (speechOutput.isPlaying()) {
-      ambientSpeechMs = 0;
-      if (!ambientSpeechActive) {
-        note = "Speaking";
-        setState("listening");
-        return;
-      }
-    }
-
-    if (speechNow) {
-      ambientSpeechMs += AMBIENT_SAMPLE_MS;
-      ambientLastVoiceAt = now;
-      if (!ambientSpeechActive && ambientSpeechMs >= AMBIENT_START_MS) {
-        startAmbientSegment(now - ambientSpeechMs);
-      }
-    } else {
-      ambientSpeechMs = 0;
-    }
-
-    if (!ambientSpeechActive) {
-      note = ambientIdleNote();
-      setState(ambientPendingJobs > 0 ? "transcribing" : "listening");
-      return;
-    }
-
-    const segmentMs = now - ambientSegmentStartedAt;
-    const silenceMs = now - ambientLastVoiceAt;
-    note = `Capturing ${formatElapsed(segmentMs)}`;
-    setState("capturing");
-    if (silenceMs >= AMBIENT_END_SILENCE_MS || segmentMs >= MAX_AMBIENT_SEGMENT_MS) {
-      stopAmbientSegment(silenceMs >= AMBIENT_END_SILENCE_MS ? "silence" : "max");
-    }
-  }
-
-  function startAmbientSegment(startedAt: number): void {
-    if (!ambientStream || ambientSegmentRecorder) {
-      return;
-    }
-    speechOutput.cancel();
-    const recorderOptions: MediaRecorderOptions = { audioBitsPerSecond: VOICE_AUDIO_BITS_PER_SECOND };
-    if (ambientMimeType) {
-      recorderOptions.mimeType = ambientMimeType;
-    }
-    const recorder = new MediaRecorder(ambientStream, recorderOptions);
-    ambientSegmentRecorder = recorder;
-    ambientSegmentChunks = [];
-    ambientSegmentStartedAt = startedAt;
-    ambientSpeechActive = true;
-    recorder.ondataavailable = (event) => {
-      if (event.data.size > 0) {
-        ambientSegmentChunks.push(event.data);
-      }
-    };
-    recorder.onerror = () => {
-      ambientSegmentRecorder = null;
-      ambientSegmentChunks = [];
-      ambientSpeechActive = false;
-      note = "";
-      setState("error", "Ambient recording failed");
-    };
-    recorder.onstop = () => {
-      const chunks = ambientSegmentChunks.slice();
-      const mimeType = recorder.mimeType || ambientMimeType;
-      const segmentStartedAt = ambientSegmentStartedAt || Date.now();
-      const segmentStoppedAt = Date.now();
-      const lastVoiceAt = ambientLastVoiceAt || segmentStoppedAt;
-      ambientSegmentRecorder = null;
-      ambientSegmentChunks = [];
-      ambientSegmentStartedAt = 0;
-      void queueAmbientSegment(chunks, mimeType, segmentStartedAt, lastVoiceAt, segmentStoppedAt);
-    };
-    recorder.start(250);
-    note = "Capturing speech";
-    setState("capturing");
-  }
-
-  function stopAmbientSegment(reason: "silence" | "max" | "stop"): void {
-    const recorder = ambientSegmentRecorder;
-    ambientSpeechActive = false;
-    ambientSpeechMs = 0;
-    if (!recorder || recorder.state === "inactive") {
-      return;
-    }
-    if (reason === "max") {
-      note = "Segment reached time limit";
-    } else if (reason === "stop") {
-      note = "Stopping ambient";
-    } else {
-      note = "Speech ended";
-    }
-    setState("transcribing");
-    try {
-      recorder.stop();
-    } catch {
-      ambientSegmentRecorder = null;
-      ambientSegmentChunks = [];
-    }
-  }
-
-  async function queueAmbientSegment(
-    chunks: Blob[],
-    mimeType: string,
-    startedAt: number,
-    lastVoiceAt: number,
-    stoppedAt: number,
-  ): Promise<void> {
-    const durationMs = Date.now() - startedAt;
-    if (durationMs < AMBIENT_MIN_SEGMENT_MS || totalBlobSize(chunks) < AMBIENT_MIN_SEGMENT_BYTES) {
+  async function queueAmbientSegment(segment: AmbientSegment): Promise<void> {
+    const durationMs = Date.now() - segment.startedAt;
+    if (durationMs < AMBIENT_MIN_SEGMENT_MS || totalBlobSize(segment.chunks) < AMBIENT_MIN_SEGMENT_BYTES) {
       note = ambientIdleNote();
       setState("listening");
       return;
     }
-    await processAmbientSegment(chunks, mimeType, startedAt, lastVoiceAt, stoppedAt);
+    await processAmbientSegment(segment);
   }
 
-  async function processAmbientSegment(
-    chunks: Blob[],
-    mimeType: string,
-    startedAt: number,
-    lastVoiceAt: number,
-    stoppedAt: number,
-  ): Promise<void> {
+  async function processAmbientSegment(segment: AmbientSegment): Promise<void> {
     ambientPendingJobs += 1;
-    const timing = createVoiceTimingTrace("ambient", startedAt);
-    markVoiceTiming(timing, "speech_started", startedAt);
-    markVoiceTiming(timing, "speech_last_voice", lastVoiceAt);
-    markVoiceTiming(timing, "segment_stopped", stoppedAt);
-    const blob = new Blob(chunks, { type: mimeType });
+    const timing = createVoiceTimingTrace("ambient", segment.startedAt);
+    markVoiceTiming(timing, "speech_started", segment.startedAt);
+    markVoiceTiming(timing, "speech_last_voice", segment.lastVoiceAt);
+    markVoiceTiming(timing, "segment_stopped", segment.stoppedAt);
+    const blob = new Blob(segment.chunks, { type: segment.mimeType });
     let logRow: HTMLElement | null = null;
     note = "Transcribing speech";
-    if (!ambientSpeechActive) {
+    if (!recorder.isAmbientCapturing()) {
       setState("transcribing");
     }
     try {
       markVoiceTiming(timing, "transcription_started");
-      const result = await transcribeBlob(blob, mimeType, startedAt);
+      const result = await transcribeBlob(blob, segment.mimeType, segment.startedAt);
       markVoiceTiming(timing, "transcription_done");
       const text = result.text.trim();
       if (!text) {
         throw new Error("No speech was transcribed");
       }
       timing.promptChars = text.length;
-      logRow = addPresenceLog(logNode, "Sending", text, startedAt);
+      logRow = addPresenceLog(logNode, "Sending", text, segment.startedAt);
       note = "Sending ambient segment";
-      if (!ambientSpeechActive) {
+      if (!recorder.isAmbientCapturing()) {
         setState("sending");
       }
       markVoiceTiming(timing, "agent_send_started");
@@ -582,11 +295,11 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
       if (logRow) {
         updatePresenceLog(logRow, "Failed", message);
       } else {
-        addPresenceLog(logNode, "Failed", message, startedAt);
+        addPresenceLog(logNode, "Failed", message, segment.startedAt);
       }
     } finally {
       ambientPendingJobs = Math.max(0, ambientPendingJobs - 1);
-      if (!destroyed && ambientStream && !ambientSpeechActive && state !== "error") {
+      if (!destroyed && recorder.isAmbientActive() && !recorder.isAmbientCapturing() && state !== "error") {
         note = ambientIdleNote();
         setState(ambientPendingJobs > 0 ? "transcribing" : "listening");
       }
@@ -628,41 +341,6 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
       runId: result.runId,
       queued: result.queued,
     };
-  }
-
-  function cleanupPushRecorder(): void {
-    clearPushTimer();
-    const current = pushRecorder;
-    pushRecorder = null;
-    pushChunks = [];
-    pushStartedAt = 0;
-    if (current && current.state !== "inactive") {
-      current.ondataavailable = null;
-      current.onerror = null;
-      current.onstop = null;
-      try {
-        current.stop();
-      } catch {
-        // Recorder state can change between the state check and stop call.
-      }
-    }
-    const stream = pushStream;
-    pushStream = null;
-    stream?.getTracks().forEach((track) => track.stop());
-  }
-
-  function clearPushTimer(): void {
-    if (pushTimer !== null) {
-      window.clearInterval(pushTimer);
-      pushTimer = null;
-    }
-  }
-
-  function clearAmbientTimer(): void {
-    if (ambientTimer !== null) {
-      window.clearInterval(ambientTimer);
-      ambientTimer = null;
-    }
   }
 
   function ambientIdleNote(): string {
@@ -1106,7 +784,7 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
       return;
     }
     if (state === "recording") {
-      stopPushRecording();
+      recorder.stopPushRecording();
       return;
     }
     setState("sending", "Sending to Mind");
@@ -1124,7 +802,7 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
       updatePresenceLog(logRow, sent.queued ? "Queued" : "Working");
       trackRun(sent.runId, logRow, message, sent.queued ? "Queued" : "Working", timing);
       if (activeRuns.has(sent.runId)) {
-        setState(ambientStream ? "listening" : "idle", note);
+        setState(recorder.isAmbientActive() ? "listening" : "idle", note);
       }
     } catch (error) {
       const errorMessage = formatError(error);
@@ -1161,33 +839,33 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
 
   const onClose = () => {
     if (state === "recording") {
-      stopPushRecording();
+      recorder.stopPushRecording();
     }
     setPanelOpen(false);
   };
   const onListen = () => {
     if (mode === "ambient") {
-      if (ambientStream) {
-        stopAmbient();
+      if (recorder.isAmbientActive()) {
+        recorder.stopAmbient();
         return;
       }
-      void startAmbient();
+      void recorder.startAmbient();
       return;
     }
     if (state === "recording") {
-      stopPushRecording();
+      recorder.stopPushRecording();
       return;
     }
-    void startPushRecording();
+    void recorder.startPushRecording();
   };
   const onSend = () => void sendManualTextToPersonalAgent();
   const onClear = () => {
     transcriptInputNode.value = "";
-    note = ambientStream
+    note = recorder.isAmbientActive()
       ? ambientIdleNote()
       : activeRuns.size > 0 ? "Mind is working" : mode === "ambient" ? "Mind is ready" : "";
     lastSentText = "";
-    setState(ambientStream ? "listening" : canUseBrowserVoiceRecorder() ? "idle" : "unsupported");
+    setState(recorder.isAmbientActive() ? "listening" : canUseBrowserVoiceRecorder() ? "idle" : "unsupported");
   };
   const onActivityClick = () => {
     const nextOpen = !panelOpen;
@@ -1231,9 +909,9 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
     gatewayClient.onSignal(handleRunSignal),
     gatewayClient.onStatus((status) => {
       if (status.state !== "connected") {
-        cleanupPushRecorder();
+        recorder.cleanupPushRecorder();
         speechOutput.cancel("Speech unavailable while disconnected");
-        stopAmbient();
+        recorder.stopAmbient();
         setState(state === "unsupported" ? "unsupported" : "idle");
         return;
       }
@@ -1255,8 +933,7 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
       clearActivityHideTimer();
       clearPendingInterimSpeech();
       speechOutput.cancel();
-      cleanupPushRecorder();
-      stopAmbient();
+      recorder.destroy();
       for (const remove of listeners) {
         remove();
       }
