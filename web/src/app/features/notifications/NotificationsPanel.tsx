@@ -7,9 +7,14 @@ import {
   registerGsvServiceWorker,
 } from "../../../service-worker";
 import { useGateway } from "../../services/gateway/GatewayProvider";
+import type { NotificationAnchor } from "./types";
 
 type NotificationsPanelProps = {
-  rootNode: HTMLElement;
+  anchor: NotificationAnchor | null;
+  open: boolean;
+  onClose: () => void;
+  onOpen: () => void;
+  onUnreadCountChange: (count: number) => void;
 };
 
 type ToastRecord = {
@@ -81,14 +86,17 @@ function removeNotification(
   return (notifications ?? []).filter((entry) => entry.notificationId !== notificationId);
 }
 
-export function NotificationsPanel({ rootNode }: NotificationsPanelProps) {
+export function NotificationsPanel({
+  anchor,
+  open,
+  onClose,
+  onOpen,
+  onUnreadCountChange,
+}: NotificationsPanelProps) {
   const { client: gatewayClient, connected } = useGateway();
   const queryClient = useQueryClient();
   const panelRef = useRef<HTMLElement>(null);
-  const activeToggleRef = useRef<HTMLButtonElement | null>(null);
   const toastTimers = useRef(new Map<string, number>());
-  const [open, setOpen] = useState(false);
-  const [activeToggle, setActiveToggle] = useState<HTMLButtonElement | null>(null);
   const [panelStyle, setPanelStyle] = useState<JSX.CSSProperties>({});
   const [permission, setPermission] = useState<NotificationPermission | "unsupported">(systemPermission);
   const [toasts, setToasts] = useState<ToastRecord[]>([]);
@@ -111,6 +119,7 @@ export function NotificationsPanel({ rootNode }: NotificationsPanelProps) {
     () => notifications.filter((notification) => !notification.readAt).length,
     [notifications],
   );
+  const activeToggle = anchor?.node ?? null;
 
   const updateNotificationCache = useCallback((notification: NotificationRecord | null): void => {
     if (!notification) {
@@ -149,7 +158,7 @@ export function NotificationsPanel({ rootNode }: NotificationsPanelProps) {
   });
 
   const positionPanel = useCallback((): void => {
-    if (!open || !activeToggle) {
+    if (!open) {
       return;
     }
 
@@ -161,6 +170,18 @@ export function NotificationsPanel({ rootNode }: NotificationsPanelProps) {
         right: "max(10px, env(safe-area-inset-right))",
         top: "max(72px, calc(env(safe-area-inset-top) + 62px))",
         bottom: "max(14px, env(safe-area-inset-bottom))",
+      });
+      return;
+    }
+
+    if (!activeToggle) {
+      setPanelStyle({
+        position: "fixed",
+        zIndex: 260,
+        right: 12,
+        top: 58,
+        left: "auto",
+        bottom: "auto",
       });
       return;
     }
@@ -253,47 +274,8 @@ export function NotificationsPanel({ rootNode }: NotificationsPanelProps) {
   }, []);
 
   useEffect(() => {
-    const toggles = Array.from(rootNode.querySelectorAll<HTMLButtonElement>("[data-notifications-toggle]"));
-    const badges = Array.from(rootNode.querySelectorAll<HTMLElement>("[data-notifications-badge]"));
-
-    const onToggleClick = (event: MouseEvent): void => {
-      const toggle = event.currentTarget;
-      if (!(toggle instanceof HTMLButtonElement)) {
-        return;
-      }
-      const sameToggle = activeToggleRef.current === toggle;
-      activeToggleRef.current = toggle;
-      setActiveToggle(toggle);
-      setOpen((current) => !(current && sameToggle));
-    };
-
-    for (const toggle of toggles) {
-      toggle.addEventListener("click", onToggleClick);
-    }
-
-    return () => {
-      activeToggleRef.current = null;
-      for (const toggle of toggles) {
-        toggle.removeEventListener("click", onToggleClick);
-        toggle.setAttribute("aria-expanded", "false");
-      }
-      for (const badge of badges) {
-        badge.hidden = true;
-      }
-    };
-  }, [rootNode]);
-
-  useEffect(() => {
-    const toggles = Array.from(rootNode.querySelectorAll<HTMLButtonElement>("[data-notifications-toggle]"));
-    const badges = Array.from(rootNode.querySelectorAll<HTMLElement>("[data-notifications-badge]"));
-    for (const toggle of toggles) {
-      toggle.setAttribute("aria-expanded", open ? "true" : "false");
-    }
-    for (const badge of badges) {
-      badge.hidden = unreadCount === 0;
-      badge.textContent = unreadCount > 9 ? "9+" : String(unreadCount);
-    }
-  }, [open, rootNode, unreadCount]);
+    onUnreadCountChange(unreadCount);
+  }, [onUnreadCountChange, unreadCount]);
 
   useEffect(() => {
     if (!open) {
@@ -328,16 +310,15 @@ export function NotificationsPanel({ rootNode }: NotificationsPanelProps) {
       if (panelRef.current?.contains(target)) {
         return;
       }
-      const toggles = Array.from(rootNode.querySelectorAll("[data-notifications-toggle]"));
-      if (toggles.some((toggle) => toggle.contains(target))) {
+      if (activeToggle?.contains(target)) {
         return;
       }
-      setOpen(false);
+      onClose();
     };
 
     const onDocumentKeyDown = (event: KeyboardEvent): void => {
       if (event.key === "Escape") {
-        setOpen(false);
+        onClose();
       }
     };
 
@@ -347,7 +328,7 @@ export function NotificationsPanel({ rootNode }: NotificationsPanelProps) {
       document.removeEventListener("click", onDocumentClick);
       document.removeEventListener("keydown", onDocumentKeyDown);
     };
-  }, [open, rootNode]);
+  }, [activeToggle, onClose, open]);
 
   useEffect(() => {
     return gatewayClient.onSignal((signal, payload) => {
@@ -380,14 +361,14 @@ export function NotificationsPanel({ rootNode }: NotificationsPanelProps) {
       if (notificationId) {
         markReadMutation.mutate(notificationId);
       }
-      setOpen(true);
+      onOpen();
     };
 
     navigator.serviceWorker?.addEventListener("message", onServiceWorkerMessage);
     return () => {
       navigator.serviceWorker?.removeEventListener("message", onServiceWorkerMessage);
     };
-  }, [markReadMutation]);
+  }, [markReadMutation, onOpen]);
 
   useEffect(() => {
     setPermission(systemPermission());

@@ -6,13 +6,25 @@ import {
   PresenceTopbarToggle,
 } from "../presence/Presence";
 import type { PresenceController } from "../presence/presenceController";
+import type { NotificationSurface } from "../notifications/types";
 
 type DesktopShellFrameProps = {
   shellRef: RefObject<HTMLDivElement>;
   windowsLayerRef: RefObject<HTMLElement>;
   presenceController: PresenceController;
+  notificationOpenSurface: NotificationSurface | null;
+  notificationUnreadCount: number;
+  onNotificationsToggle: (surface: NotificationSurface, node: HTMLButtonElement) => void;
   standalone: boolean;
   children?: ComponentChildren;
+};
+
+type DesktopRootProps = {
+  windowsLayerRef: RefObject<HTMLElement>;
+  presenceController: PresenceController;
+  notificationOpenSurface: NotificationSurface | null;
+  notificationUnreadCount: number;
+  onNotificationsToggle: (surface: NotificationSurface, node: HTMLButtonElement) => void;
 };
 
 function BellIcon() {
@@ -42,7 +54,25 @@ function SearchIcon() {
   );
 }
 
-function Topbar({ presenceController }: { presenceController: PresenceController }) {
+function NotificationBadge({ unreadCount }: { unreadCount: number }) {
+  return (
+    <span class="notification-badge" hidden={unreadCount === 0}>
+      {unreadCount > 9 ? "9+" : unreadCount}
+    </span>
+  );
+}
+
+function Topbar({
+  presenceController,
+  notificationOpenSurface,
+  notificationUnreadCount,
+  onNotificationsToggle,
+}: {
+  presenceController: PresenceController;
+  notificationOpenSurface: NotificationSurface | null;
+  notificationUnreadCount: number;
+  onNotificationsToggle: (surface: NotificationSurface, node: HTMLButtonElement) => void;
+}) {
   return (
     <header class="topbar">
       <div class="topbar-section">
@@ -56,16 +86,16 @@ function Topbar({ presenceController }: { presenceController: PresenceController
         <button
           type="button"
           class="notifications-toggle"
-          data-notifications-toggle
           aria-label="Notifications"
           aria-haspopup="menu"
-          aria-expanded="false"
+          aria-expanded={notificationOpenSurface === "topbar" ? "true" : "false"}
           aria-controls="notifications-panel"
+          onClick={(event) => onNotificationsToggle("topbar", event.currentTarget)}
         >
           <span class="topbar-icon" aria-hidden="true">
             <BellIcon />
           </span>
-          <span class="notification-badge" data-notifications-badge hidden>0</span>
+          <NotificationBadge unreadCount={notificationUnreadCount} />
         </button>
       </div>
       <div class="topbar-section topbar-session">
@@ -88,7 +118,17 @@ function Workspace({ windowsLayerRef }: { windowsLayerRef: RefObject<HTMLElement
   );
 }
 
-function MobileShell({ presenceController }: { presenceController: PresenceController }) {
+function MobileShell({
+  presenceController,
+  notificationOpenSurface,
+  notificationUnreadCount,
+  onNotificationsToggle,
+}: {
+  presenceController: PresenceController;
+  notificationOpenSurface: NotificationSurface | null;
+  notificationUnreadCount: number;
+  onNotificationsToggle: (surface: NotificationSurface, node: HTMLButtonElement) => void;
+}) {
   return (
     <section class="mobile-shell" data-mobile-shell aria-label="Mobile shell">
       <section class="mobile-home" data-mobile-home>
@@ -99,16 +139,16 @@ function MobileShell({ presenceController }: { presenceController: PresenceContr
             <button
               type="button"
               class="mobile-home-action"
-              data-notifications-toggle
               aria-label="Notifications"
               aria-haspopup="menu"
-              aria-expanded="false"
+              aria-expanded={notificationOpenSurface === "mobile" ? "true" : "false"}
               aria-controls="notifications-panel"
+              onClick={(event) => onNotificationsToggle("mobile", event.currentTarget)}
             >
               <span aria-hidden="true">
                 <BellIcon />
               </span>
-              <span class="notification-badge" data-notifications-badge hidden>0</span>
+              <NotificationBadge unreadCount={notificationUnreadCount} />
             </button>
             <PresenceMobileToggle controller={presenceController} />
             <button type="button" class="mobile-home-action" data-mobile-command-launcher aria-label="Search apps and windows">
@@ -132,15 +172,25 @@ function CommandPalette() {
 function DesktopRoot({
   windowsLayerRef,
   presenceController,
-}: {
-  windowsLayerRef: RefObject<HTMLElement>;
-  presenceController: PresenceController;
-}) {
+  notificationOpenSurface,
+  notificationUnreadCount,
+  onNotificationsToggle,
+}: DesktopRootProps) {
   return (
     <div class="desktop-root" data-desktop-root hidden>
-      <Topbar presenceController={presenceController} />
+      <Topbar
+        presenceController={presenceController}
+        notificationOpenSurface={notificationOpenSurface}
+        notificationUnreadCount={notificationUnreadCount}
+        onNotificationsToggle={onNotificationsToggle}
+      />
       <Workspace windowsLayerRef={windowsLayerRef} />
-      <MobileShell presenceController={presenceController} />
+      <MobileShell
+        presenceController={presenceController}
+        notificationOpenSurface={notificationOpenSurface}
+        notificationUnreadCount={notificationUnreadCount}
+        onNotificationsToggle={onNotificationsToggle}
+      />
       <div class="dock-reveal-zone" data-dock-reveal-zone aria-hidden="true" />
       <PresenceActivity controller={presenceController} />
       <PresencePanel controller={presenceController} />
@@ -149,22 +199,16 @@ function DesktopRoot({
   );
 }
 
-class StaticDesktopRoot extends Component<{
-  windowsLayerRef: RefObject<HTMLElement>;
-  presenceController: PresenceController;
-}> {
-  shouldComponentUpdate(nextProps: { presenceController: PresenceController }): boolean {
-    return nextProps.presenceController !== this.props.presenceController;
+class StaticDesktopRoot extends Component<DesktopRootProps> {
+  shouldComponentUpdate(nextProps: DesktopRootProps): boolean {
+    return nextProps.presenceController !== this.props.presenceController
+      || nextProps.notificationOpenSurface !== this.props.notificationOpenSurface
+      || nextProps.notificationUnreadCount !== this.props.notificationUnreadCount
+      || nextProps.onNotificationsToggle !== this.props.onNotificationsToggle;
   }
 
-  render({
-    windowsLayerRef,
-    presenceController,
-  }: {
-    windowsLayerRef: RefObject<HTMLElement>;
-    presenceController: PresenceController;
-  }) {
-    return <DesktopRoot windowsLayerRef={windowsLayerRef} presenceController={presenceController} />;
+  render(props: DesktopRootProps) {
+    return <DesktopRoot {...props} />;
   }
 }
 
@@ -172,13 +216,22 @@ export function DesktopShellFrame({
   shellRef,
   windowsLayerRef,
   presenceController,
+  notificationOpenSurface,
+  notificationUnreadCount,
+  onNotificationsToggle,
   standalone,
   children,
 }: DesktopShellFrameProps) {
   return (
     <div class={`desktop-shell${standalone ? " is-standalone" : ""}`} ref={shellRef}>
       {children}
-      <StaticDesktopRoot windowsLayerRef={windowsLayerRef} presenceController={presenceController} />
+      <StaticDesktopRoot
+        windowsLayerRef={windowsLayerRef}
+        presenceController={presenceController}
+        notificationOpenSurface={notificationOpenSurface}
+        notificationUnreadCount={notificationUnreadCount}
+        onNotificationsToggle={onNotificationsToggle}
+      />
     </div>
   );
 }
