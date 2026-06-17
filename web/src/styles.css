@@ -2144,6 +2144,12 @@ button:disabled {
   pointer-events: none;
 }
 
+.managed-windows-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
 .window-snap-overlay {
   position: absolute;
   top: 0;

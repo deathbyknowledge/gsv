@@ -1,7 +1,7 @@
 import { render as renderPreact } from "preact";
 import { defineDesktopApp, type DesktopApp } from "../domain/desktopApp";
 import type { AppInstance, AppRuntimeContext, AppRuntimeRegistry } from "./appRuntime";
-import { DesktopWindowFrame } from "../components/DesktopWindowViews";
+import { DesktopWindowLayer, type DesktopWindowView } from "../components/DesktopWindowViews";
 import {
   readPersistedDesktopLayout,
   selectRestoredActiveWindowId,
@@ -242,14 +242,8 @@ function formatRuntimeError(error: unknown): string {
   }
 }
 
-function createWindowNode(app: DesktopApp, route: string): HTMLElement {
+function createWindowNode(): HTMLElement {
   const container = document.createElement("section");
-  container.className = "mock-window managed-window";
-  container.setAttribute("role", "dialog");
-  container.setAttribute("aria-label", app.name);
-
-  renderPreact(DesktopWindowFrame({ app, route }), container);
-
   return container;
 }
 
@@ -637,6 +631,9 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
   snapOverlayNode.className = "window-snap-overlay";
   snapOverlayNode.hidden = true;
   layerNode.appendChild(snapOverlayNode);
+  const windowRenderHostNode = document.createElement("div");
+  windowRenderHostNode.className = "managed-windows-layer";
+  layerNode.appendChild(windowRenderHostNode);
 
   let dragState: DragState | null = null;
   let resizeState: ResizeState | null = null;
@@ -685,6 +682,81 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
     record.y = nextPosition.y;
   };
 
+  const prepareWindowRecordForRender = (record: WindowRecord, bounds: DesktopWorkspaceBounds): void => {
+    if (record.mode !== "normal") {
+      return;
+    }
+    const fitted = fitWindowSizeToWorkspace(
+      record.app.windowDefaults,
+      bounds,
+      record,
+    );
+    record.width = fitted.width;
+    record.height = fitted.height;
+    const nextPosition = clampWindowPositionToWorkspace(bounds, record);
+    record.x = nextPosition.x;
+    record.y = nextPosition.y;
+  };
+
+  const windowView = (record: WindowRecord, bounds: DesktopWorkspaceBounds): DesktopWindowView => {
+    prepareWindowRecordForRender(record, bounds);
+    return {
+      windowId: record.windowId,
+      app: record.app,
+      route: record.route,
+      title: record.title,
+      badge: record.badge,
+      dirty: record.dirty,
+      mode: record.mode,
+      active: activeWindowId === record.windowId,
+      x: record.x,
+      y: record.y,
+      width: record.mode === "maximized" ? bounds.width : record.width,
+      height: record.mode === "maximized" ? bounds.height : record.height,
+      zIndex: record.zIndex,
+    };
+  };
+
+  const onWindowMount = (windowId: string, node: HTMLElement | null): void => {
+    const record = windows.get(windowId);
+    if (!record || !node) {
+      return;
+    }
+    const dragHandleNode = node.querySelector<HTMLElement>("[data-window-drag-handle]");
+    if (!dragHandleNode) {
+      throw new Error("Window drag handle is missing");
+    }
+    record.node = node;
+    record.dragHandleNode = dragHandleNode;
+  };
+
+  const onWindowContentMount = (windowId: string, node: HTMLElement | null): void => {
+    const record = windows.get(windowId);
+    if (!record || !node) {
+      return;
+    }
+    record.contentNode = node;
+  };
+
+  const renderWindowLayer = (): void => {
+    const bounds = workspaceBounds();
+    // Preserve DOM insertion order: moving iframes between siblings can reload app content.
+    const views = [...windows.values()].map((record) => windowView(record, bounds));
+
+    renderPreact(DesktopWindowLayer({
+      windows: views,
+      workspaceWidth: bounds.width,
+      workspaceHeight: bounds.height,
+      onWindowMount,
+      onContentMount: onWindowContentMount,
+      onWindowPointerDown,
+      onWindowClick,
+      onDragPointerDown,
+      onDragDoubleClick,
+      onResizePointerDown,
+    }), windowRenderHostNode);
+  };
+
   const applyWindowChrome = (record: WindowRecord): void => {
     const titleNode = record.node.querySelector<HTMLElement>("[data-window-title]");
     const dirtyNode = record.node.querySelector<HTMLElement>("[data-window-dirty]");
@@ -711,7 +783,6 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
   };
 
   const applyWindowFrame = (record: WindowRecord): void => {
-    applyWindowChrome(record);
     record.node.style.zIndex = String(record.zIndex);
     record.node.classList.toggle("is-active", activeWindowId === record.windowId);
 
@@ -771,9 +842,7 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
   };
 
   const repaintAll = (): void => {
-    for (const record of windows.values()) {
-      applyWindowFrame(record);
-    }
+    renderWindowLayer();
   };
 
   const hideSnapOverlay = (): void => {
@@ -1043,8 +1112,6 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
     });
 
     detachRuntime(record);
-    renderPreact(null, record.node);
-    record.node.remove();
     windows.delete(windowId);
     applyWindowState(nextState);
     repaintAll();
@@ -1190,6 +1257,118 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
     }
   };
 
+  function onWindowPointerDown(windowId: string, event: PointerEvent): void {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      focusWindow(windowId);
+      return;
+    }
+    const actionNode = target.closest<HTMLElement>("[data-window-action]");
+    if (!actionNode) {
+      focusWindow(windowId);
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    if (dragState?.windowId === windowId) {
+      stopDragging();
+    }
+    if (resizeState?.windowId === windowId) {
+      stopResizing();
+    }
+    focusWindow(windowId);
+  }
+
+  function onWindowClick(windowId: string, event: MouseEvent): void {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+
+    const actionNode = target.closest<HTMLElement>("[data-window-action]");
+    if (actionNode) {
+      event.stopPropagation();
+      const action = actionNode.dataset.windowAction;
+      if (action) {
+        onWindowAction(windowId, action);
+      }
+      return;
+    }
+
+    const runtimeActionNode = target.closest<HTMLElement>("[data-runtime-action]");
+    if (!runtimeActionNode) {
+      return;
+    }
+
+    event.stopPropagation();
+    const action = runtimeActionNode.dataset.runtimeAction;
+    if (!action) {
+      return;
+    }
+
+    onRuntimeAction(windowId, action);
+  }
+
+  function onDragPointerDown(windowId: string, event: PointerEvent): void {
+    const record = windows.get(windowId);
+    if (!record || record.mode !== "normal") {
+      return;
+    }
+
+    if (event.button !== 0) {
+      return;
+    }
+
+    const target = event.target;
+    if (target instanceof HTMLElement && target.closest(".window-controls")) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    focusWindow(record.windowId);
+
+    dragState = {
+      windowId: record.windowId,
+      pointerId: event.pointerId,
+      offsetX: event.clientX - record.x,
+      offsetY: event.clientY - record.y,
+      snapTarget: null,
+    };
+
+    record.node.classList.add("dragging");
+    record.dragHandleNode.setPointerCapture(event.pointerId);
+    document.body.classList.add("is-dragging-window");
+    document.addEventListener("selectstart", blockSelection);
+    window.addEventListener("dragstart", blockSelection);
+  }
+
+  function onDragDoubleClick(windowId: string, event: MouseEvent): void {
+    const target = event.target;
+    if (target instanceof HTMLElement && target.closest(".window-controls")) {
+      return;
+    }
+    event.preventDefault();
+    maximizeWindow(windowId);
+  }
+
+  function onResizePointerDown(
+    windowId: string,
+    direction: ResizeDirection,
+    handleNode: HTMLElement,
+    event: PointerEvent,
+  ): void {
+    if (event.button !== 0) {
+      return;
+    }
+    event.stopPropagation();
+    const record = windows.get(windowId);
+    if (!record) {
+      return;
+    }
+    beginResize(record, handleNode, direction, event);
+  }
+
   const beginResize = (record: WindowRecord, handleNode: HTMLElement, direction: ResizeDirection, event: PointerEvent): void => {
     if (record.mode !== "normal") {
       return;
@@ -1218,128 +1397,11 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
     window.addEventListener("dragstart", blockSelection);
   };
 
-  const attachWindowListeners = (record: WindowRecord): void => {
-    record.node.addEventListener("pointerdown", () => {
-      focusWindow(record.windowId);
-    });
-
-    record.node.addEventListener("click", (event) => {
-      const target = event.target;
-      if (!(target instanceof HTMLElement)) {
-        return;
-      }
-
-      const actionNode = target.closest<HTMLElement>("[data-window-action]");
-      if (actionNode) {
-        event.stopPropagation();
-        const action = actionNode.dataset.windowAction;
-        if (action) {
-          onWindowAction(record.windowId, action);
-        }
-        return;
-      }
-
-      const runtimeActionNode = target.closest<HTMLElement>("[data-runtime-action]");
-      if (!runtimeActionNode) {
-        return;
-      }
-
-      event.stopPropagation();
-      const action = runtimeActionNode.dataset.runtimeAction;
-      if (!action) {
-        return;
-      }
-
-      onRuntimeAction(record.windowId, action);
-    });
-
-    record.node.addEventListener("pointerdown", (event) => {
-      const target = event.target;
-      if (!(target instanceof HTMLElement)) {
-        return;
-      }
-      const actionNode = target.closest<HTMLElement>("[data-window-action]");
-      if (!actionNode) {
-        return;
-      }
-      event.preventDefault();
-      event.stopPropagation();
-      if (dragState?.windowId === record.windowId) {
-        stopDragging();
-      }
-      if (resizeState?.windowId === record.windowId) {
-        stopResizing();
-      }
-      focusWindow(record.windowId);
-    });
-
-    record.dragHandleNode.addEventListener("pointerdown", (event) => {
-      if (record.mode !== "normal") {
-        return;
-      }
-
-      if (event.button !== 0) {
-        return;
-      }
-
-      const target = event.target;
-      if (target instanceof HTMLElement && target.closest(".window-controls")) {
-        return;
-      }
-
-      event.preventDefault();
-      focusWindow(record.windowId);
-
-      dragState = {
-        windowId: record.windowId,
-        pointerId: event.pointerId,
-        offsetX: event.clientX - record.x,
-        offsetY: event.clientY - record.y,
-        snapTarget: null,
-      };
-
-      record.node.classList.add("dragging");
-      record.dragHandleNode.setPointerCapture(event.pointerId);
-      document.body.classList.add("is-dragging-window");
-      document.addEventListener("selectstart", blockSelection);
-      window.addEventListener("dragstart", blockSelection);
-    });
-
-    record.dragHandleNode.addEventListener("dblclick", (event) => {
-      const target = event.target;
-      if (target instanceof HTMLElement && target.closest(".window-controls")) {
-        return;
-      }
-      event.preventDefault();
-      maximizeWindow(record.windowId);
-    });
-
-    const resizeHandles = Array.from(record.node.querySelectorAll<HTMLElement>("[data-window-resize]"));
-    for (const handleNode of resizeHandles) {
-      handleNode.addEventListener("pointerdown", (event) => {
-        if (event.button !== 0) {
-          return;
-        }
-
-        const direction = handleNode.dataset.windowResize;
-        if (!direction) {
-          return;
-        }
-
-        beginResize(record, handleNode, direction as ResizeDirection, event);
-      });
-    }
-  };
-
   const createRecord = (app: DesktopApp, persisted?: PersistedWindow, route?: string): WindowRecord => {
     const resolvedRoute = route ?? persisted?.route ?? app.routeBase;
-    const node = createWindowNode(app, resolvedRoute);
-    const dragHandleNode = node.querySelector<HTMLElement>("[data-window-drag-handle]");
-    const contentNode = node.querySelector<HTMLElement>("[data-window-content]");
-
-    if (!dragHandleNode || !contentNode) {
-      throw new Error("Window markup is incomplete");
-    }
+    const node = createWindowNode();
+    const dragHandleNode = document.createElement("div");
+    const contentNode = document.createElement("div");
 
     const stagger = openCounter % WINDOW_STAGGER_STEPS;
     openCounter += 1;
@@ -1407,9 +1469,7 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
       }
 
       const record = createRecord(app, snapshot);
-      attachWindowListeners(record);
       windows.set(record.windowId, record);
-      layerNode.appendChild(record.node);
       zCounter = Math.max(zCounter, record.zIndex);
     }
 
@@ -1424,13 +1484,13 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
       activeWindowId,
     );
 
+    repaintAll();
+
     for (const record of windows.values()) {
       if (record.mode !== "minimized") {
         attachRuntime(record);
       }
     }
-
-    repaintAll();
   };
 
   const setAppRegistry = (apps: readonly DesktopApp[]): void => {
@@ -1486,13 +1546,11 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
     }
 
     const record = createRecord(app, undefined, requestedRoute);
-    attachWindowListeners(record);
     windows.set(record.windowId, record);
-    layerNode.appendChild(record.node);
-
-    attachRuntime(record);
     activeWindowId = record.windowId;
     repaintAll();
+
+    attachRuntime(record);
     emit();
 
     return record.windowId;
@@ -1515,15 +1573,12 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
     const record = createRecord(PREVIEW_APP, undefined, route);
     record.title = normalizeChromeText(preview.title) ?? PREVIEW_APP.name;
     record.persist = false;
+    windows.set(record.windowId, record);
+    activeWindowId = record.windowId;
+    repaintAll();
     record.preview = {
       dispose: mountPreviewWindow(record.contentNode, preview),
     };
-    attachWindowListeners(record);
-    windows.set(record.windowId, record);
-    layerNode.appendChild(record.node);
-
-    activeWindowId = record.windowId;
-    repaintAll();
     emit();
 
     return record.windowId;
@@ -1927,10 +1982,10 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
 
       for (const record of windows.values()) {
         detachRuntime(record);
-        renderPreact(null, record.node);
-        record.node.remove();
       }
 
+      renderPreact(null, windowRenderHostNode);
+      windowRenderHostNode.remove();
       snapOverlayNode.remove();
       windows.clear();
       listeners.clear();
