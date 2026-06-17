@@ -104,10 +104,12 @@ It owns:
 - app/window orchestration
 
 Key files:
-- `web/src/session-ui.ts`
-- `web/src/session-service.ts`
-- `web/src/host-bridge.ts`
-- `web/src/gateway-client.ts`
+- `web/src/app/App.tsx`
+- `web/src/app/features/desktop/DesktopShell.tsx`
+- `web/src/app/features/session/SessionScreens.tsx`
+- `web/src/app/services/session/sessionService.ts`
+- `web/src/app/services/gateway/GatewayProvider.tsx`
+- `web/src/app/features/desktop/runtime/host/hostBridge.ts`
 
 ### Builtin apps
 

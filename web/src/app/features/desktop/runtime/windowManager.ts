@@ -1,5 +1,4 @@
-import type { AppManifest } from "../../../../apps";
-import { queuePendingAppOpen, type OpenAppRequest } from "../../../../app-link";
+import { defineDesktopApp, type DesktopApp } from "../domain/desktopApp";
 import type { AppInstance, AppRuntimeContext, AppRuntimeRegistry } from "./appRuntime";
 import {
   readPersistedDesktopLayout,
@@ -48,7 +47,7 @@ type PreviewRuntimeState = {
 
 type WindowRecord = {
   windowId: string;
-  app: AppManifest;
+  app: DesktopApp;
   route: string;
   title: string;
   badge: string | null;
@@ -156,7 +155,7 @@ export type WindowJsRunResult = {
 };
 
 export type WindowManager = {
-  openApp: (app: AppManifest, route?: string, options?: { pendingAppOpenRequest?: OpenAppRequest | null; forceRestart?: boolean; forceNew?: boolean }) => string;
+  openApp: (app: DesktopApp, route?: string, options?: { forceRestart?: boolean; forceNew?: boolean }) => string;
   openAppById: (appId: string, route?: string, options?: { forceRestart?: boolean; forceNew?: boolean }) => string | null;
   openPreview: (preview: PreviewWindowContent) => string;
   focusWindow: (windowId: string) => void;
@@ -164,11 +163,11 @@ export type WindowManager = {
   minimizeWindow: (windowId: string) => void;
   maximizeWindow: (windowId: string) => void;
   closeWindow: (windowId: string) => void;
-  setAppRegistry: (apps: readonly AppManifest[]) => void;
+  setAppRegistry: (apps: readonly DesktopApp[]) => void;
   setWindowTitle: (windowId: string, title: string | null) => void;
   setWindowBadge: (windowId: string, badge: string | null) => void;
   setWindowDirty: (windowId: string, dirty: boolean) => void;
-  listApps: () => AppManifest[];
+  listApps: () => DesktopApp[];
   listWindows: () => WindowSummary[];
   snapshotWindowDom: (windowId: string, selector?: string | null) => WindowDomSnapshot | null;
   queryWindowDom: (windowId: string, selector: string) => WindowDomQueryMatch[] | null;
@@ -183,7 +182,7 @@ export type WindowManager = {
 
 type WindowManagerOptions = {
   layerNode: HTMLElement;
-  appRegistry: readonly AppManifest[];
+  appRegistry: readonly DesktopApp[];
   appRuntime: AppRuntimeRegistry;
 };
 
@@ -192,13 +191,13 @@ const WINDOW_START_Y = 92;
 const WINDOW_OFFSET_X = 28;
 const WINDOW_OFFSET_Y = 22;
 const WINDOW_STAGGER_STEPS = 8;
-const PREVIEW_APP: AppManifest = {
+const PREVIEW_APP: DesktopApp = defineDesktopApp({
   id: "preview",
   name: "Preview",
   description: "Transient file and blob preview window.",
   icon: { kind: "fallback", label: "PV" },
-  entrypoint: { kind: "web", route: "/internal/preview" },
-  permissions: [],
+  routeBase: "/internal/preview",
+  launch: { kind: "internal" },
   syscalls: [],
   windowDefaults: {
     width: 980,
@@ -206,7 +205,7 @@ const PREVIEW_APP: AppManifest = {
     minWidth: 360,
     minHeight: 280,
   },
-};
+});
 
 const blockSelection = (event: Event): void => {
   event.preventDefault();
@@ -241,7 +240,7 @@ function formatRuntimeError(error: unknown): string {
   }
 }
 
-function createWindowNode(app: AppManifest, route: string): HTMLElement {
+function createWindowNode(app: DesktopApp, route: string): HTMLElement {
   const container = document.createElement("section");
   container.className = "mock-window managed-window";
   container.setAttribute("role", "dialog");
@@ -962,7 +961,7 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
 
     const context: AppRuntimeContext = {
       windowId: record.windowId,
-      manifest: record.app,
+      app: record.app,
       route: record.route,
       requestFocus: () => focusWindow(record.windowId),
       setTitle: (title) => setWindowTitle(record.windowId, title),
@@ -1356,8 +1355,8 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
     }
   };
 
-  const createRecord = (app: AppManifest, persisted?: PersistedWindow, route?: string): WindowRecord => {
-    const resolvedRoute = route ?? persisted?.route ?? app.entrypoint.route;
+  const createRecord = (app: DesktopApp, persisted?: PersistedWindow, route?: string): WindowRecord => {
+    const resolvedRoute = route ?? persisted?.route ?? app.routeBase;
     const node = createWindowNode(app, resolvedRoute);
     const dragHandleNode = node.querySelector<HTMLElement>("[data-window-drag-handle]");
     const contentNode = node.querySelector<HTMLElement>("[data-window-content]");
@@ -1458,7 +1457,7 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
     repaintAll();
   };
 
-  const setAppRegistry = (apps: readonly AppManifest[]): void => {
+  const setAppRegistry = (apps: readonly DesktopApp[]): void => {
     const shouldDeferEmptyRegistry = apps.length === 0 && windows.size === 0 && !!pendingPersistedLayout && !restoredPersistedLayout;
     appById = new Map(apps.map((app) => [app.id, app]));
 
@@ -1483,7 +1482,7 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
     emit();
   };
 
-  const findReusableWindow = (app: AppManifest, route?: string): WindowRecord | null => {
+  const findReusableWindow = (app: DesktopApp, route?: string): WindowRecord | null => {
     const candidates = [...windows.values()]
       .filter((record) => record.app.id === app.id)
       .sort((left, right) => right.zIndex - left.zIndex);
@@ -1495,13 +1494,10 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
     return candidates[0] ?? null;
   };
 
-  const openApp = (app: AppManifest, route?: string, options?: { pendingAppOpenRequest?: OpenAppRequest | null; forceRestart?: boolean; forceNew?: boolean }): string => {
-    const requestedRoute = route ?? app.entrypoint.route;
+  const openApp = (app: DesktopApp, route?: string, options?: { forceRestart?: boolean; forceNew?: boolean }): string => {
+    const requestedRoute = route ?? app.routeBase;
     const existing = options?.forceNew ? null : findReusableWindow(app, route);
     if (existing) {
-      if (options?.pendingAppOpenRequest) {
-        queuePendingAppOpen(existing.windowId, options.pendingAppOpenRequest);
-      }
       if (options?.forceRestart) {
         restartRuntime(existing);
       }
@@ -1518,9 +1514,6 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
     windows.set(record.windowId, record);
     layerNode.appendChild(record.node);
 
-    if (options?.pendingAppOpenRequest) {
-      queuePendingAppOpen(record.windowId, options.pendingAppOpenRequest);
-    }
     attachRuntime(record);
     activeWindowId = record.windowId;
     repaintAll();

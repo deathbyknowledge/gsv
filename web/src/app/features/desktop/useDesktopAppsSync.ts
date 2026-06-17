@@ -1,13 +1,13 @@
 import type { RefObject } from "preact";
 import { useEffect } from "preact/hooks";
-import type { AppManifest } from "../../../apps";
+import type { DesktopApp } from "./domain/desktopApp";
 import type { SessionSnapshot } from "../../services/session/sessionService";
 import type { DesktopRuntime } from "./useDesktopRuntime";
 
 type UseDesktopAppsSyncOptions = {
   runtimeRef: RefObject<DesktopRuntime | null>;
   runtimeRevision: number;
-  apps: readonly AppManifest[] | undefined;
+  apps: readonly DesktopApp[] | undefined;
   connected: boolean;
   appLoadFailed: boolean;
   sessionPhase: SessionSnapshot["phase"];
@@ -15,7 +15,7 @@ type UseDesktopAppsSyncOptions = {
 
 function syncDesktopApps(
   runtimeRef: RefObject<DesktopRuntime | null>,
-  apps: readonly AppManifest[],
+  apps: readonly DesktopApp[],
 ): void {
   const runtime = runtimeRef.current;
   if (!runtime) {

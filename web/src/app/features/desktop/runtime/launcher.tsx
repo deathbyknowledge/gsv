@@ -1,14 +1,15 @@
-import { normalizeThreadContext } from "@humansandmachines/gsv/sdk/host";
-import { render as renderPreact } from "preact";
-import type { AppIcon, AppManifest } from "../../../../apps";
-import { OPEN_APP_EVENT, resolveOpenAppDetail, type OpenAppEventDetail } from "../../../../app-link";
 import {
-  OPEN_CHAT_PROCESS_EVENT,
+  OPEN_APP_EVENT,
+  resolveOpenAppDetail,
+  type OpenAppEventDetail,
+} from "@humansandmachines/gsv/sdk/host";
+import { render as renderPreact } from "preact";
+import {
   TARGET_CHAT_PROCESS_EVENT,
-  normalizeProcessId,
   queuePendingChatProcess,
   type TargetChatProcessEventDetail,
-} from "../../../../chat-process-link";
+} from "./host/chatTarget";
+import type { DesktopApp, DesktopAppIcon } from "../domain/desktopApp";
 import { CommandPaletteItems, DesktopAppIcons, MobileAppGrid, MobileWindowStack, TaskbarWindows } from "../components/DesktopLauncherViews";
 import {
   centeredMobileRotorIndex,
@@ -29,7 +30,7 @@ type LauncherOptions = {
 
 type LauncherController = {
   openApp: (appId: string, route?: string) => void;
-  setApps: (apps: readonly AppManifest[]) => void;
+  setApps: (apps: readonly DesktopApp[]) => void;
   destroy: () => void;
 };
 
@@ -53,7 +54,7 @@ function escapeHtml(value: string): string {
     .replaceAll("'", "&#39;");
 }
 
-function renderDesktopIcon(icon: AppIcon): string {
+function renderDesktopIcon(icon: DesktopAppIcon): string {
   if (icon.kind === "svg") {
     return `
       <span class="desktop-glyph is-package-svg" aria-hidden="true">
@@ -89,8 +90,8 @@ export function createLauncher(options: LauncherOptions): LauncherController {
     throw new Error("Desktop icon layer is missing");
   }
 
-  let apps: readonly AppManifest[] = [];
-  let appById = new Map<string, AppManifest>();
+  let apps: readonly DesktopApp[] = [];
+  let appById = new Map<string, DesktopApp>();
   let selectedAppId: string | null = null;
   let latestSummaries: WindowSummary[] = [];
   let paletteOpen = false;
@@ -650,7 +651,7 @@ export function createLauncher(options: LauncherOptions): LauncherController {
     syncIconState();
   };
 
-  const openWindowForApp = (appId: string, route?: string, options?: { pendingAppOpenRequest?: OpenAppEventDetail["request"] | null; forceRestart?: boolean; forceNew?: boolean }): string | null => {
+  const openWindowForApp = (appId: string, route?: string, options?: { forceRestart?: boolean; forceNew?: boolean }): string | null => {
     const app = appById.get(appId);
     if (!app) {
       return null;
@@ -1029,24 +1030,10 @@ export function createLauncher(options: LauncherOptions): LauncherController {
     window.dispatchEvent(new CustomEvent<TargetChatProcessEventDetail>(TARGET_CHAT_PROCESS_EVENT, { detail: targetDetail }));
   };
 
-  const onOpenChatProcess = (event: Event): void => {
-    const rawDetail = (event as Event & { detail?: { pid?: unknown; cwd?: unknown } | null }).detail ?? null;
-    const pid = normalizeProcessId(rawDetail?.pid);
-    const normalized = normalizeThreadContext({
-      pid,
-      cwd: rawDetail?.cwd,
-    });
-    if (!normalized) {
-      return;
-    }
-
-    openChatProcessContext(normalized);
-  };
-
   const onOpenApp = (event: Event): void => {
     const detail = ((event as Event & { detail?: OpenAppEventDetail | null }).detail) ?? null;
     console.debug("[gsv-open] launcher received open request", detail);
-    const resolved = resolveOpenAppDetail(detail);
+    const resolved = resolveOpenAppDetail(detail, window.location.href);
     if (!resolved) {
       console.debug("[gsv-open] launcher dropped unresolved request", detail);
       return;
@@ -1059,7 +1046,6 @@ export function createLauncher(options: LauncherOptions): LauncherController {
     }
 
     const windowId = openWindowForApp(resolved.appId, resolved.route, {
-      pendingAppOpenRequest: detail?.request ?? null,
       forceRestart: !!detail?.request,
     });
     console.debug("[gsv-open] launcher opened window", {
@@ -1087,13 +1073,6 @@ export function createLauncher(options: LauncherOptions): LauncherController {
       onOpenApp({
         detail: data.detail as OpenAppEventDetail | null,
       } as Event & { detail?: OpenAppEventDetail | null });
-      return;
-    }
-
-    if (data.type === OPEN_CHAT_PROCESS_EVENT) {
-      onOpenChatProcess({
-        detail: data.detail as { pid?: unknown; cwd?: unknown } | null,
-      } as Event & { detail?: { pid?: unknown; cwd?: unknown } | null });
     }
   };
 
@@ -1343,7 +1322,6 @@ export function createLauncher(options: LauncherOptions): LauncherController {
   topbarNode?.addEventListener("focusout", onTopbarFocusOut);
   window.addEventListener("resize", onMobileHomeResize);
 
-  window.addEventListener(OPEN_CHAT_PROCESS_EVENT, onOpenChatProcess as EventListener);
   window.addEventListener(OPEN_APP_EVENT, onOpenApp as EventListener);
   window.addEventListener("message", onWindowMessage);
 
@@ -1355,7 +1333,7 @@ export function createLauncher(options: LauncherOptions): LauncherController {
     }
   });
 
-  const setApps = (nextApps: readonly AppManifest[]): void => {
+  const setApps = (nextApps: readonly DesktopApp[]): void => {
     apps = [...nextApps];
     appById = new Map(apps.map((app) => [app.id, app]));
     mobileRotorPosition = normalizeMobileRotorPosition(mobileRotorPosition);
@@ -1427,7 +1405,6 @@ export function createLauncher(options: LauncherOptions): LauncherController {
         mobileHomeDepthRaf = null;
       }
       window.removeEventListener("resize", onMobileHomeResize);
-      window.removeEventListener(OPEN_CHAT_PROCESS_EVENT, onOpenChatProcess as EventListener);
       window.removeEventListener(OPEN_APP_EVENT, onOpenApp as EventListener);
       window.removeEventListener("message", onWindowMessage);
     },

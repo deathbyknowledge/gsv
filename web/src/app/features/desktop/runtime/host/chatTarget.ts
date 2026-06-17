@@ -1,6 +1,5 @@
 import type { ThreadContext } from "@humansandmachines/gsv/sdk/host";
 
-export const OPEN_CHAT_PROCESS_EVENT = "gsv:open-chat-process";
 export const TARGET_CHAT_PROCESS_EVENT = "gsv:target-chat-process";
 
 const PENDING_TARGETS_KEY = "__gsvPendingChatProcessTargets";
@@ -13,14 +12,7 @@ declare global {
   }
 }
 
-export type OpenChatProcessEventDetail = {
-  pid: string;
-  cwd: string;
-};
-
-export type TargetChatProcessEventDetail = {
-  pid: string;
-  cwd: string;
+export type TargetChatProcessEventDetail = ThreadContext & {
   windowId: string;
 };
 
@@ -35,24 +27,6 @@ function getPendingStore(): PendingTargetStore {
   return created;
 }
 
-export function normalizeProcessId(value: unknown): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
 export function queuePendingChatProcess(windowId: string, detail: ThreadContext): void {
   getPendingStore().set(windowId, detail);
-}
-
-export function consumePendingChatProcess(windowId: string): ThreadContext | null {
-  const store = getPendingStore();
-  const detail = store.get(windowId) ?? null;
-  if (detail !== null) {
-    store.delete(windowId);
-  }
-  return detail;
 }

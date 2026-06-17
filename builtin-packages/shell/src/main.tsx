@@ -1,7 +1,7 @@
 import { getBackend } from "@humansandmachines/gsv/sdk/browser";
 import { FitAddon, init, Terminal } from "ghostty-web";
 import { mountShellLayout, setBootState, setStatus, showBootError, type ShellElements } from "./layout";
-import { readRouteParams, readWindowId } from "./route-context";
+import { readRouteParams } from "./route-context";
 import { createShellTerminalController } from "./terminal-controller";
 import { renderTargetOptions, setSelectedTarget } from "./targets";
 import type { ShellBackend } from "./types";
@@ -16,8 +16,7 @@ async function boot(): Promise<void> {
   await init();
 
   setBootState(elements, "Connecting shell", "Loading targets and launch context...");
-  const windowId = readWindowId();
-  const route = readRouteParams(windowId);
+  const route = readRouteParams();
   const backend = await getBackend<ShellBackend>();
   const state = await backend.loadState({});
   renderTargetOptions(elements.targetSelect, state.devices, route.target);

@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/preact-query";
 import type { GSVClient } from "@humansandmachines/gsv/client";
-import type { AppManifest } from "../../../apps";
-import { packageToAppManifests } from "../../../package-apps";
+import type { DesktopApp } from "../desktop/domain/desktopApp";
+import { packageToDesktopApps } from "./packageApps";
 
 export const packageAppsQueryKey = ["packages", "list", { runtime: "web-ui" }] as const;
 
@@ -11,7 +11,7 @@ type UsePackageAppsOptions = {
 };
 
 export function usePackageApps({ gatewayClient, enabled }: UsePackageAppsOptions) {
-  return useQuery<readonly AppManifest[]>({
+  return useQuery<readonly DesktopApp[]>({
     queryKey: packageAppsQueryKey,
     enabled,
     queryFn: async () => {
@@ -19,7 +19,7 @@ export function usePackageApps({ gatewayClient, enabled }: UsePackageAppsOptions
         runtime: "web-ui",
       });
       const packages = Array.isArray(payload.packages) ? payload.packages : [];
-      return packages.flatMap(packageToAppManifests);
+      return packages.flatMap(packageToDesktopApps);
     },
   });
 }

@@ -39,15 +39,15 @@ notifications, session, recorder state, and settings together.
 |---|---|---|---|
 | Gateway transport | `gateway-client.ts` | WebSocket, pending requests, and signals | Keep as a single focused `client.ts`/client service while the app migrates; expose through `GatewayProvider`. |
 | Session/auth | `session-service.ts`, `session-ui.ts`, `onboarding-service.ts` | Token persistence, reconnect timers, setup mode, setup draft | Keep as `SessionProvider` plus `features/session` and `features/onboarding`; not Query except setup/bootstrap mutations. |
-| Package app registry | `main.ts`, `package-apps.ts` | `pkg.list` derived into shell app manifests | TanStack Query key `["packages", "list", filters]`; derive app manifests with pure domain helper; invalidate on `pkg.changed`. |
-| App sessions and iframes | `apps-runtime.ts`, `host-bridge.ts`, `app-loading.ts` | `app.open`, `app.detach`, iframe lifecycle, host bridge, loader animation | Use Query mutations for `app.open`/detach/close if helpful; keep iframe lifecycle in `features/apps` hooks/services. |
+| Package app registry | `app/features/packages/usePackageApps.ts`, `app/features/packages/packageApps.ts`, `app/features/desktop/domain/desktopApp.ts` | `pkg.list` derived into shell desktop apps | TanStack Query key `["packages", "list", filters]`; derive desktop apps with pure domain helper; invalidate on `pkg.changed`. |
+| App sessions and iframes | `app/features/desktop/runtime/appsRuntime.ts`, `app/features/desktop/runtime/host/hostBridge.ts`, `app/features/desktop/runtime/appLoading.ts` | `app.open`, `app.detach`, iframe lifecycle, host bridge, loader animation | Use Query mutations for `app.open`/detach/close if helpful; keep iframe lifecycle in desktop runtime services. |
 | Desktop windows | `app/features/desktop/DesktopShellFrame.tsx`, `window-manager.ts`, `launcher.ts` | Static desktop frame, open windows, focus, z-index, drag, resize, persisted layout, command palette | Keep the shell frame in Preact. Keep window state local to `features/desktop`; persist layout via utility. Not Query. |
 | Notifications | `app/features/notifications/NotificationsPanel.tsx`, `service-worker.ts` | `notification.list`, mark read/dismiss mutations, pushed updates, toasts, permission state | TanStack Query for list and mutations; signal updater for `notification.created/updated/dismissed`; local state for panel open, toast timers, browser notification permission. |
 | Presence/voice | `presence.ts`, `local-tts.ts`, `local-tts-worker.ts`, `local-tts-assets.ts` | recorder state, VAD, run signal buffering, transcription, speech synthesis/playback, preferences | Split into `features/presence` hooks. Use mutations for `ai.transcription.create` and `ai.speech.create`; keep media/audio/run-stream state local. |
 | Process chat/run state | `presence.ts`, `gateway-client.ts` helpers | `proc.send`, `proc.run.*` streams, HIL, latest activity | For full chat/process UI, use Query for `proc.list`, `proc.history`, `proc.conversation.*`; use signal reducer for active run streams. |
 | Browser target | removed | In-site target registration, browser filesystem, window automation, transfer syscalls | Removed from the web shell. Whole-browser targeting belongs to the browser extension. |
 | Preview windows | `preview-window.ts`, `window-manager.ts` | Object URLs and transient preview content | Keep local to desktop/window feature; ensure object URL cleanup. |
-| Package app SDK shim | `app-sdk/*`, `apps.ts` | Local manifest and kernel client wrapper for legacy/in-shell apps | Reassess after package app hosting direction is settled. Installed package iframes should use platform app sessions. |
+| Package app SDK shim | removed | Old local manifest shim for legacy/in-shell apps | Installed package iframes use platform app sessions. Package-author SDKs live in `@humansandmachines/gsv/sdk`. |
 
 ## Query Candidates
 
@@ -142,5 +142,3 @@ query hooks directly for server state.
   app, or both.
 - Whether app-host networking should move to a dedicated browser worker after
   the transport boundary is clean.
-- Whether package app SDK shims in `web/src/app-sdk` are still needed once all
-  package UI uses app sessions.

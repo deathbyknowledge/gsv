@@ -1,8 +1,8 @@
-import type { AppManifest } from "../../../../apps";
+import type { DesktopApp } from "../domain/desktopApp";
 
 export type AppRuntimeContext = {
   windowId: string;
-  manifest: AppManifest;
+  app: DesktopApp;
   route: string;
   requestFocus: () => void;
   setTitle: (title: string | null) => void;
@@ -19,5 +19,5 @@ export type AppInstance = {
 };
 
 export type AppRuntimeRegistry = {
-  createInstance: (manifest: AppManifest) => AppInstance;
+  createInstance: (app: DesktopApp) => AppInstance;
 };

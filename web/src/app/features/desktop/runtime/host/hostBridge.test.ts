@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GsvClientStatus } from "@humansandmachines/gsv/client";
-import { attachHostBridge } from "./host-bridge";
+import { attachHostBridge } from "./hostBridge";
 
 type IframeMock = HTMLIFrameElement & {
   dispatchLoad(): void;

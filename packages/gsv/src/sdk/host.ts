@@ -44,41 +44,10 @@ type HostPortMessage =
   | { type: "rpc-result"; id: string; ok: false; error: string }
   | { type: "status"; status: { state?: string } };
 
-const PENDING_APP_OPEN_KEY = "__gsvPendingAppOpenRequests";
 const HOST_CONNECT_REQUEST = "gsv-host-connect-request";
 const HOST_CONNECT_RESPONSE = "gsv-host-connect";
 
-type PendingAppOpenStore = Map<string, OpenAppRequest>;
-
 let hostClientPromise: Promise<HostClient> | null = null;
-
-declare global {
-  interface Window {
-    [PENDING_APP_OPEN_KEY]?: PendingAppOpenStore;
-  }
-}
-
-export function consumePendingAppOpen(windowId?: string): OpenAppRequest | null {
-  const normalizedWindowId = windowId?.trim() || getAppClientId();
-  if (!normalizedWindowId) {
-    return null;
-  }
-
-  try {
-    const store = window.parent?.[PENDING_APP_OPEN_KEY];
-    if (store instanceof Map) {
-      const request = store.get(normalizedWindowId) ?? null;
-      if (request) {
-        store.delete(normalizedWindowId);
-      }
-      return request as OpenAppRequest | null;
-    }
-  } catch {
-    // Ignore cross-window access failures outside the shell host.
-  }
-
-  return null;
-}
 
 export function getAppClientId(): string {
   try {

@@ -1,8 +1,8 @@
-import type { AppIcon, AppManifest } from "../../../../apps";
+import type { DesktopApp, DesktopAppIcon } from "../domain/desktopApp";
 import type { WindowSummary } from "../runtime/windowManager";
 
 type DesktopAppIconsProps = {
-  apps: readonly AppManifest[];
+  apps: readonly DesktopApp[];
   activeAppId: string | null;
   selectedAppId: string | null;
 };
@@ -24,7 +24,7 @@ type CommandPaletteItemsProps = {
 };
 
 type MobileAppGridProps = {
-  apps: readonly AppManifest[];
+  apps: readonly DesktopApp[];
 };
 
 type MobileWindowStackProps = {
@@ -53,7 +53,7 @@ function taskbarClassName(summary: WindowSummary): string {
   return classes.join(" ");
 }
 
-function DesktopAppIconGlyph({ icon }: { icon: AppIcon }) {
+function DesktopAppIconGlyph({ icon }: { icon: DesktopAppIcon }) {
   if (icon.kind === "svg") {
     return (
       <span

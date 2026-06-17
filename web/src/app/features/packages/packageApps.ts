@@ -1,12 +1,17 @@
-import { defineAppManifest } from "./app-sdk";
-import type { AppIcon, AppManifest, AppWindowDefaults } from "./app-sdk";
-import type { PkgSummary } from "@humansandmachines/gsv/protocol";
+import type { PkgEntrypointSummary, PkgSummary } from "@humansandmachines/gsv/protocol";
+import { defineDesktopApp } from "../desktop/domain/desktopApp";
+import type { DesktopApp, DesktopAppIcon, DesktopAppWindowDefaults } from "../desktop/domain/desktopApp";
 
-const DEFAULT_WINDOW_DEFAULTS: AppWindowDefaults = {
+const DEFAULT_WINDOW_DEFAULTS: DesktopAppWindowDefaults = {
   width: 1040,
   height: 720,
   minWidth: 760,
   minHeight: 520,
+};
+
+type UiEntrypointSummary = PkgEntrypointSummary & {
+  kind: "ui";
+  route: string;
 };
 
 function toDisplayName(name: string): string {
@@ -17,10 +22,15 @@ function toDisplayName(name: string): string {
   return trimmed.slice(0, 1).toUpperCase() + trimmed.slice(1);
 }
 
-function coerceAppIcon(
-  value: PkgSummary["entrypoints"][number]["icon"] | undefined,
+function fallbackIconLabel(name: string): string {
+  const letters = toDisplayName(name).replace(/[^a-z0-9]/gi, "").slice(0, 2).toUpperCase();
+  return letters || "AP";
+}
+
+function coerceDesktopAppIcon(
+  value: PkgEntrypointSummary["icon"] | undefined,
   fallbackName: string,
-): AppIcon {
+): DesktopAppIcon {
   if (value?.kind === "svg" && value.svg.trim().length > 0) {
     return {
       kind: "svg",
@@ -34,17 +44,12 @@ function coerceAppIcon(
   };
 }
 
-function fallbackIconLabel(name: string): string {
-  const letters = toDisplayName(name).replace(/[^a-z0-9]/gi, "").slice(0, 2).toUpperCase();
-  return letters || "AP";
-}
-
 function coerceWindowDefaults(value: {
   width?: number;
   height?: number;
   minWidth?: number;
   minHeight?: number;
-} | undefined): AppWindowDefaults {
+} | undefined): DesktopAppWindowDefaults {
   if (!value) {
     return DEFAULT_WINDOW_DEFAULTS;
   }
@@ -69,15 +74,16 @@ function makeAppId(pkg: PkgSummary, entrypointName: string, totalUiEntrypoints: 
   return `${pkg.name}-${entrypointName}`;
 }
 
-export function packageToAppManifests(pkg: PkgSummary): AppManifest[] {
+function isLaunchableUiEntrypoint(entrypoint: PkgEntrypointSummary): entrypoint is UiEntrypointSummary {
+  return entrypoint.kind === "ui" && typeof entrypoint.route === "string" && entrypoint.route.trim().length > 0;
+}
+
+export function packageToDesktopApps(pkg: PkgSummary): DesktopApp[] {
   if (!pkg.enabled || pkg.runtime !== "web-ui") {
     return [];
   }
 
-  const uiEntrypoints = pkg.entrypoints.filter((entrypoint) => {
-    return entrypoint.kind === "ui" && !!entrypoint.route;
-  });
-
+  const uiEntrypoints = pkg.entrypoints.filter(isLaunchableUiEntrypoint);
   if (uiEntrypoints.length === 0) {
     return [];
   }
@@ -85,16 +91,17 @@ export function packageToAppManifests(pkg: PkgSummary): AppManifest[] {
   return uiEntrypoints.map((entrypoint) => {
     const appId = makeAppId(pkg, entrypoint.name, uiEntrypoints.length);
 
-    return defineAppManifest({
+    return defineDesktopApp({
       id: appId,
       name: toDisplayName(entrypoint.name),
       description: pkg.description,
-      icon: coerceAppIcon(entrypoint.icon, pkg.name),
-      entrypoint: {
-        kind: "web",
-        route: entrypoint.route!,
+      icon: coerceDesktopAppIcon(entrypoint.icon, pkg.name),
+      routeBase: entrypoint.route,
+      launch: {
+        kind: "package",
+        packageName: pkg.name,
+        entrypointName: entrypoint.name,
       },
-      permissions: [],
       syscalls: Array.isArray(entrypoint.syscalls) ? entrypoint.syscalls : [],
       windowDefaults: coerceWindowDefaults(entrypoint.windowDefaults),
     });

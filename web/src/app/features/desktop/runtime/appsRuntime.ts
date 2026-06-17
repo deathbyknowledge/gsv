@@ -1,9 +1,9 @@
 import type { GSVClient } from "@humansandmachines/gsv/client";
 import type { AppLaunchResult, AppOpenArgs } from "@humansandmachines/gsv/protocol";
-import type { AppManifest } from "../../../../apps";
-import { attachHostBridge } from "../../../../host-bridge";
+import type { DesktopApp } from "../domain/desktopApp";
 import { createAppLaunchLoader, type AppLaunchLoader } from "./appLoading";
 import type { AppInstance, AppRuntimeRegistry } from "./appRuntime";
+import { attachHostBridge } from "./host/hostBridge";
 
 function escapeHtml(value: string): string {
   return value
@@ -14,33 +14,38 @@ function escapeHtml(value: string): string {
     .replaceAll("'", "&#39;");
 }
 
-function createUnsupportedAppInstance(manifest: AppManifest): AppInstance {
+function createUnsupportedAppInstance(app: DesktopApp): AppInstance {
   return {
     mount: (container) => {
       container.innerHTML = `
         <section class="app-grid">
           <p class="eyebrow">Unsupported runtime</p>
-          <h1>${escapeHtml(manifest.name)}</h1>
-          <p>${escapeHtml(manifest.description)}</p>
+          <h1>${escapeHtml(app.name)}</h1>
+          <p>${escapeHtml(app.description)}</p>
           <div class="app-tag-row">
-            <span class="app-tag">route ${escapeHtml(manifest.entrypoint.route)}</span>
-            <span class="app-tag">kind ${escapeHtml(manifest.entrypoint.kind)}</span>
+            <span class="app-tag">route ${escapeHtml(app.routeBase)}</span>
+            <span class="app-tag">kind ${escapeHtml(app.launch.kind)}</span>
           </div>
         </section>
       `;
     },
     terminate: () => {
-      void manifest;
+      void app;
     },
   };
 }
 
-function canonicalizeAppRoute(route: string): string {
+function canonicalizeDesktopRoute(route: string): string {
   const url = new URL(route, window.location.origin);
   if (/^\/apps\/[^/]+$/.test(url.pathname)) {
     url.pathname = `${url.pathname}/`;
   }
   return `${url.pathname}${url.search}${url.hash}`;
+}
+
+function normalizeRouteBasePath(routeBase: string): string {
+  const url = new URL(routeBase, window.location.origin);
+  return url.pathname.endsWith("/") ? url.pathname : `${url.pathname}/`;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -58,18 +63,25 @@ function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function appOpenArgsFromRoute(route: string, windowId: string): AppOpenArgs {
-  const url = new URL(canonicalizeAppRoute(route), window.location.origin);
-  const parts = url.pathname.split("/").filter(Boolean);
-  if (parts.length < 2 || parts[0] !== "apps" || parts[1] === "sessions") {
+function appOpenArgsFromRoute(app: DesktopApp, route: string, windowId: string): AppOpenArgs {
+  if (app.launch.kind !== "package") {
+    throw new Error(`Unsupported app launch target: ${app.id}`);
+  }
+
+  const url = new URL(canonicalizeDesktopRoute(route), window.location.origin);
+  const routeBasePath = normalizeRouteBasePath(app.routeBase);
+  if (url.pathname !== routeBasePath.slice(0, -1) && !url.pathname.startsWith(routeBasePath)) {
     throw new Error(`Unsupported app route: ${route}`);
   }
 
-  const suffixParts = parts.slice(2);
+  const suffixPath = url.pathname === routeBasePath.slice(0, -1)
+    ? "/"
+    : `/${url.pathname.slice(routeBasePath.length)}`;
   return {
-    packageName: parts[1],
+    packageName: app.launch.packageName,
+    entrypointName: app.launch.entrypointName,
     clientId: windowId,
-    suffix: suffixParts.length > 0 ? `/${suffixParts.join("/")}` : "/",
+    suffix: suffixPath,
     search: url.search,
     hash: url.hash,
   };
@@ -218,7 +230,7 @@ async function establishAppLaunchSession(launch: AppLaunchResult): Promise<void>
 
 type AppRuntimeGsvClient = Pick<GSVClient, "app" | "onStatus">;
 
-function createWebAppInstance(manifest: AppManifest, gatewayClient: AppRuntimeGsvClient): AppInstance {
+function createPackageAppInstance(app: DesktopApp, gatewayClient: AppRuntimeGsvClient): AppInstance {
   let bridge: ReturnType<typeof attachHostBridge> | null = null;
   let focusController: ReturnType<typeof attachIframeInteractionFocus> | null = null;
   let runtimeStatusController: ReturnType<typeof attachIframeRuntimeStatus> | null = null;
@@ -266,9 +278,9 @@ function createWebAppInstance(manifest: AppManifest, gatewayClient: AppRuntimeGs
       detachActiveClient();
       destroyActiveFrameControllers();
       const loader = createAppLaunchLoader({
-        appName: manifest.name,
+        appName: app.name,
         route: context.route,
-        seed: `${manifest.id}:${context.windowId}:${context.route}`,
+        seed: `${app.id}:${context.windowId}:${context.route}`,
       });
       activeLoader = loader;
       loader.setPhase("session", "Allocating app session");
@@ -283,7 +295,7 @@ function createWebAppInstance(manifest: AppManifest, gatewayClient: AppRuntimeGs
 
       let launch: AppLaunchResult;
       try {
-        launch = await gatewayClient.app.open(appOpenArgsFromRoute(context.route, context.windowId));
+        launch = await gatewayClient.app.open(appOpenArgsFromRoute(app, context.route, context.windowId));
       } catch (error) {
         loader.fail(toErrorMessage(error));
         throw error;
@@ -311,7 +323,7 @@ function createWebAppInstance(manifest: AppManifest, gatewayClient: AppRuntimeGs
       activeClientId = launch.clientId;
 
       const iframe = document.createElement("iframe");
-      iframe.title = manifest.name;
+      iframe.title = app.name;
       iframe.loading = "eager";
       iframe.style.width = "100%";
       iframe.style.height = "100%";
@@ -338,19 +350,19 @@ function createWebAppInstance(manifest: AppManifest, gatewayClient: AppRuntimeGs
       activeLoader?.destroy();
       activeLoader = null;
       destroyActiveFrameControllers();
-      void manifest;
+      void app;
     },
   };
 }
 
 export function createAppRuntime(gatewayClient: AppRuntimeGsvClient): AppRuntimeRegistry {
   return {
-    createInstance: (manifest) => {
-      if (manifest.entrypoint.kind === "web") {
-        return createWebAppInstance(manifest, gatewayClient);
+    createInstance: (app) => {
+      if (app.launch.kind === "package") {
+        return createPackageAppInstance(app, gatewayClient);
       }
 
-      return createUnsupportedAppInstance(manifest);
+      return createUnsupportedAppInstance(app);
     },
   };
 }
