@@ -1,6 +1,85 @@
 import { normalizeSpeechText } from "@humansandmachines/gsv/protocol";
 import type { AiSpeechCreateResult, AiTranscriptionCreateResult } from "@humansandmachines/gsv/protocol";
 import type { GSVClient } from "@humansandmachines/gsv/client";
+import {
+  blobToDataUrl,
+  canUseAmbientMode,
+  canUseBrowserVoiceRecorder,
+  createAudioContext,
+  currentRms,
+  presenceRecordingFilename,
+  requestVoiceStream,
+  selectVoiceRecorderMimeType,
+  totalBlobSize,
+} from "./audio";
+import {
+  AMBIENT_END_SILENCE_MS,
+  AMBIENT_MIN_SEGMENT_BYTES,
+  AMBIENT_MIN_SEGMENT_MS,
+  AMBIENT_RMS_THRESHOLD,
+  AMBIENT_SAMPLE_MS,
+  AMBIENT_START_MS,
+  INTERIM_SPEECH_COOLDOWN_MS,
+  INTERIM_SPEECH_DELAY_MS,
+  MAX_AMBIENT_SEGMENT_MS,
+  MAX_BUFFERED_RUN_SIGNALS,
+  MAX_PUSH_RECORDING_MS,
+  RUN_SIGNAL_BUFFER_TTL_MS,
+  SPEECH_PREFETCH_CONCURRENCY,
+  VOICE_AUDIO_BITS_PER_SECOND,
+} from "./constants";
+import {
+  addPresenceLog,
+  appendTranscript,
+  compactPresenceStatus,
+  formatElapsed,
+  formatError,
+  statusKey,
+  statusText,
+  transcriptionNote,
+  truncateActivityText,
+  updatePresenceLog,
+} from "./display";
+import {
+  loadPresenceModePreference,
+  loadSpeakRepliesPreference,
+  normalizePresenceMode,
+  savePresenceModePreference,
+  saveSpeakRepliesPreference,
+} from "./preferences";
+import {
+  isPresenceRunSignal,
+  runIdFromSignalPayload,
+  signalPayloadAborted,
+  signalPayloadError,
+  signalPayloadStreamTextDelta,
+  signalPayloadStreamToolLabel,
+  signalPayloadText,
+  signalPayloadToolLabel,
+} from "./signals";
+import { chunkSpeechText, normalizeInterimSpeechText, selectSpeechPrefix } from "./speechText";
+import type {
+  BufferedRunSignal,
+  PendingInterimSpeech,
+  PresenceLogStatus,
+  PresenceMode,
+  PresenceRun,
+  PresenceSendResult,
+  PresenceState,
+  SpeechChunk,
+  VoiceTimingTrace,
+} from "./types";
+import {
+  createVoiceTimingTrace,
+  logVoiceTimingTrace,
+  markRunActivity,
+  markVoiceTiming,
+  markVoiceTimingOnce,
+  recordVoiceTimingChunkPlaybackEnd,
+  recordVoiceTimingChunkPlaybackStart,
+  recordVoiceTimingChunkReady,
+  recordVoiceTimingFailure,
+} from "./voiceTiming";
 
 type PresenceGsvClient = Pick<GSVClient, "ai" | "isConnected" | "onSignal" | "onStatus" | "proc">;
 
@@ -8,122 +87,6 @@ type PresenceOptions = {
   rootNode: HTMLElement;
   gatewayClient: PresenceGsvClient;
 };
-
-type PresenceMode = "ambient" | "push";
-type PresenceState =
-  | "idle"
-  | "listening"
-  | "capturing"
-  | "recording"
-  | "transcribing"
-  | "sending"
-  | "unsupported"
-  | "error";
-
-type PresenceLogStatus =
-  | "Sending"
-  | "Queued"
-  | "Working"
-  | "Responding"
-  | "Using tools"
-  | "Needs approval"
-  | "Done"
-  | "Stopped"
-  | "Failed";
-
-type PresenceSendResult = {
-  runId: string;
-  queued?: boolean;
-};
-
-type PresenceRun = {
-  row: HTMLElement | null;
-  prompt: string;
-  answer: string;
-  status: PresenceLogStatus;
-  updatedAt: number;
-  timing?: VoiceTimingTrace;
-  speechCursor?: number;
-  speechChunkIndex?: number;
-  speechStarted?: boolean;
-};
-
-type BufferedRunSignal = {
-  signal: string;
-  payload: unknown;
-  receivedAt: number;
-};
-
-type SpeechChunk = {
-  text: string;
-  index: number;
-  total: number;
-};
-
-type VoiceTimingTrace = {
-  id: string;
-  source: "ambient" | "manual";
-  createdAt: number;
-  marks: Record<string, number>;
-  chunks: VoiceTimingChunk[];
-  runId?: string;
-  promptChars?: number;
-  answerChars?: number;
-  error?: string;
-  lastChunkEndedAt?: number;
-  logged?: boolean;
-};
-
-type VoiceTimingChunk = {
-  index: number;
-  chars: number;
-  requestStartedAt: number;
-  audioReadyAt?: number;
-  playbackStartedAt?: number;
-  playbackEndedAt?: number;
-  provider?: string;
-  model?: string;
-  gapMs?: number;
-};
-
-type PendingInterimSpeech = {
-  timer: number;
-  text: string;
-  key: string;
-};
-
-type AudioWindow = Window & {
-  webkitAudioContext?: typeof AudioContext;
-};
-
-const VOICE_AUDIO_BITS_PER_SECOND = 128000;
-const MAX_PUSH_RECORDING_MS = 2 * 60 * 1000;
-const MAX_AMBIENT_SEGMENT_MS = 45 * 1000;
-const AMBIENT_SAMPLE_MS = 100;
-const AMBIENT_START_MS = 100;
-const AMBIENT_END_SILENCE_MS = 1100;
-const AMBIENT_MIN_SEGMENT_MS = 450;
-const AMBIENT_MIN_SEGMENT_BYTES = 900;
-const AMBIENT_RMS_THRESHOLD = 0.018;
-const SPEECH_FIRST_CHUNK_MIN_CHARS = 48;
-const SPEECH_FIRST_CHUNK_TARGET_CHARS = 90;
-const SPEECH_FIRST_CHUNK_MAX_CHARS = 120;
-const SPEECH_CHUNK_MAX_CHARS = 420;
-const SPEECH_PREFETCH_CONCURRENCY = 3;
-const INTERIM_SPEECH_DELAY_MS = 650;
-const INTERIM_SPEECH_MAX_CHARS = 220;
-const INTERIM_SPEECH_COOLDOWN_MS = 7000;
-const RUN_SIGNAL_BUFFER_TTL_MS = 60 * 1000;
-const MAX_BUFFERED_RUN_SIGNALS = 64;
-const PRESENCE_MODE_STORAGE_KEY = "gsv.presence.mode";
-const SPEAK_REPLIES_STORAGE_KEY = "gsv.presence.speakReplies";
-const PRESENCE_RECORDER_MIME_TYPES = [
-  "audio/webm;codecs=opus",
-  "audio/ogg;codecs=opus",
-  "audio/mp4;codecs=mp4a.40.2",
-  "audio/mp4",
-  "audio/webm",
-];
 
 export function createPresenceControl(options: PresenceOptions): { destroy(): void } {
   const { rootNode, gatewayClient } = options;
@@ -1585,753 +1548,4 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
       }
     },
   };
-}
-
-function loadPresenceModePreference(): PresenceMode {
-  try {
-    const mode = normalizePresenceMode(window.localStorage.getItem(PRESENCE_MODE_STORAGE_KEY));
-    if (mode === "ambient" && !canUseAmbientMode()) {
-      return "push";
-    }
-    return mode ?? defaultPresenceMode();
-  } catch {
-    return defaultPresenceMode();
-  }
-}
-
-function savePresenceModePreference(mode: PresenceMode): void {
-  try {
-    window.localStorage.setItem(PRESENCE_MODE_STORAGE_KEY, mode);
-  } catch {
-    // Ignore unavailable storage; the in-memory state still applies for this session.
-  }
-}
-
-function defaultPresenceMode(): PresenceMode {
-  return canUseAmbientMode() ? "ambient" : "push";
-}
-
-function loadSpeakRepliesPreference(): boolean {
-  try {
-    return window.localStorage.getItem(SPEAK_REPLIES_STORAGE_KEY) !== "false";
-  } catch {
-    return true;
-  }
-}
-
-function saveSpeakRepliesPreference(enabled: boolean): void {
-  try {
-    window.localStorage.setItem(SPEAK_REPLIES_STORAGE_KEY, enabled ? "true" : "false");
-  } catch {
-    // Ignore unavailable storage; the in-memory state still applies for this session.
-  }
-}
-
-function canUseBrowserVoiceRecorder(): boolean {
-  return typeof navigator !== "undefined"
-    && Boolean(navigator.mediaDevices?.getUserMedia)
-    && typeof MediaRecorder !== "undefined";
-}
-
-function canUseAmbientMode(): boolean {
-  return canUseBrowserVoiceRecorder() && Boolean(resolveAudioContext());
-}
-
-async function requestVoiceStream(): Promise<MediaStream> {
-  try {
-    return await navigator.mediaDevices.getUserMedia({
-      audio: {
-        autoGainControl: true,
-        channelCount: 1,
-        echoCancellation: true,
-        noiseSuppression: true,
-      },
-    });
-  } catch (error) {
-    if (error instanceof DOMException && error.name === "OverconstrainedError") {
-      return navigator.mediaDevices.getUserMedia({ audio: true });
-    }
-    throw error;
-  }
-}
-
-function resolveAudioContext(): typeof AudioContext | null {
-  const audioWindow = window as AudioWindow;
-  return window.AudioContext ?? audioWindow.webkitAudioContext ?? null;
-}
-
-function createAudioContext(): AudioContext {
-  const AudioContextConstructor = resolveAudioContext();
-  if (!AudioContextConstructor) {
-    throw new Error("Audio analysis is unavailable in this browser");
-  }
-  return new AudioContextConstructor();
-}
-
-function selectVoiceRecorderMimeType(): string {
-  if (typeof MediaRecorder === "undefined" || typeof MediaRecorder.isTypeSupported !== "function") {
-    return "";
-  }
-  return PRESENCE_RECORDER_MIME_TYPES.find((mimeType) => MediaRecorder.isTypeSupported(mimeType)) || "";
-}
-
-function extensionForVoiceMimeType(mimeType: string): string {
-  const normalized = mimeType.split(";")[0].trim().toLowerCase();
-  if (normalized === "audio/ogg") return "ogg";
-  if (normalized === "audio/mp4" || normalized === "audio/aac") return "m4a";
-  if (normalized === "audio/wav" || normalized === "audio/wave" || normalized === "audio/x-wav") return "wav";
-  if (normalized === "audio/mpeg") return "mp3";
-  return "webm";
-}
-
-function presenceRecordingFilename(mimeType: string, timestamp = Date.now()): string {
-  const stamp = new Date(timestamp).toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
-  return `presence-${stamp}.${extensionForVoiceMimeType(mimeType)}`;
-}
-
-function appendTranscript(current: string, addition: string): string {
-  return `${current.trim()} ${addition.trim()}`.trim();
-}
-
-function blobToDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(reader.error ?? new Error("Failed to read audio"));
-    reader.onload = () => {
-      if (typeof reader.result === "string") {
-        resolve(reader.result);
-        return;
-      }
-      reject(new Error("Failed to read audio"));
-    };
-    reader.readAsDataURL(blob);
-  });
-}
-
-function currentRms(analyser: AnalyserNode, samples: Float32Array<ArrayBuffer>): number {
-  analyser.getFloatTimeDomainData(samples);
-  let sum = 0;
-  for (let index = 0; index < samples.length; index += 1) {
-    sum += samples[index] * samples[index];
-  }
-  return Math.sqrt(sum / samples.length);
-}
-
-function totalBlobSize(blobs: Blob[]): number {
-  return blobs.reduce((sum, blob) => sum + blob.size, 0);
-}
-
-function normalizePresenceMode(value: unknown): PresenceMode | null {
-  return value === "ambient" || value === "push" ? value : null;
-}
-
-function formatElapsed(ms: number): string {
-  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
-}
-
-function transcriptionNote(result: AiTranscriptionCreateResult): string {
-  const parts: string[] = [];
-  if (typeof result.language === "string" && result.language.trim()) {
-    parts.push(result.language.trim());
-  }
-  if (typeof result.duration === "number" && Number.isFinite(result.duration) && result.duration > 0) {
-    parts.push(`${Math.round(result.duration)}s`);
-  }
-  return parts.length > 0 ? `Transcribed ${parts.join(" / ")}` : "";
-}
-
-function addPresenceLog(
-  log: HTMLElement | null,
-  status: PresenceLogStatus,
-  text: string,
-  timestamp: number,
-): HTMLElement | null {
-  if (!log) {
-    return null;
-  }
-  log.hidden = false;
-  const row = document.createElement("div");
-  row.className = "presence-log-row";
-  row.dataset.timestamp = String(timestamp);
-  const meta = document.createElement("span");
-  meta.className = "presence-log-meta";
-  const body = document.createElement("p");
-  body.textContent = text;
-  row.append(meta, body);
-  updatePresenceLog(row, status);
-  log.prepend(row);
-  while (log.children.length > 6) {
-    log.lastElementChild?.remove();
-  }
-  return row;
-}
-
-function updatePresenceLog(row: HTMLElement | null, status: PresenceLogStatus, text?: string): void {
-  if (!row) {
-    return;
-  }
-  const timestamp = Number(row.dataset.timestamp) || Date.now();
-  row.dataset.status = statusKey(status);
-  const meta = row.querySelector<HTMLElement>(".presence-log-meta");
-  if (meta) {
-    meta.textContent = `${formatClock(timestamp)} ${status}`;
-  }
-  if (typeof text === "string") {
-    const body = row.querySelector<HTMLParagraphElement>("p");
-    if (body) {
-      body.textContent = text;
-    }
-  }
-}
-
-function runIdFromSignalPayload(payload: unknown): string | null {
-  if (!isRecord(payload)) {
-    return null;
-  }
-  return typeof payload.runId === "string" && payload.runId.length > 0 ? payload.runId : null;
-}
-
-function isPresenceRunSignal(signal: string): boolean {
-  return signal === "chat.text"
-    || signal === "chat.tool_call"
-    || signal === "chat.tool_result"
-    || signal === "chat.hil"
-    || signal === "chat.complete"
-    || signal === "proc.run.stream"
-    || signal === "proc.run.retrying"
-    || signal === "proc.run.output"
-    || signal === "proc.run.tool.started"
-    || signal === "proc.run.tool.finished"
-    || signal === "proc.run.hil.requested"
-    || signal === "proc.run.finished";
-}
-
-function signalPayloadError(payload: unknown): string | null {
-  if (!isRecord(payload) || typeof payload.error !== "string") {
-    return null;
-  }
-  const error = payload.error.trim();
-  return error.length > 0 ? error : null;
-}
-
-function signalPayloadAborted(payload: unknown): boolean {
-  return isRecord(payload) && payload.aborted === true;
-}
-
-function signalPayloadText(payload: unknown): string | null {
-  if (!isRecord(payload) || typeof payload.text !== "string") {
-    return null;
-  }
-  const text = payload.text.trim();
-  return text.length > 0 ? text : null;
-}
-
-function signalPayloadToolLabel(payload: unknown): string | null {
-  if (!isRecord(payload)) {
-    return null;
-  }
-  const name = typeof payload.name === "string" ? payload.name.trim() : "";
-  const syscall = typeof payload.syscall === "string" ? payload.syscall.trim() : "";
-  const label = name || syscall;
-  return label.length > 0 ? label : null;
-}
-
-function signalPayloadStreamTextDelta(payload: unknown): string | null {
-  const event = signalPayloadStreamEvent(payload);
-  if (!event || event.type !== "text_delta" || typeof event.delta !== "string") {
-    return null;
-  }
-  return event.delta.length > 0 ? event.delta : null;
-}
-
-function signalPayloadStreamToolLabel(payload: unknown): string | null {
-  const event = signalPayloadStreamEvent(payload);
-  if (!event) {
-    return null;
-  }
-  const type = typeof event.type === "string" ? event.type : "";
-  if (type !== "toolcall_start" && type !== "toolcall_delta" && type !== "toolcall_end") {
-    return null;
-  }
-  const toolCall = isRecord(event.toolCall) ? event.toolCall : streamToolCallBlock(event);
-  if (!toolCall) {
-    return null;
-  }
-  const name = typeof toolCall.name === "string" ? toolCall.name.trim() : "";
-  const syscall = typeof toolCall.syscall === "string" ? toolCall.syscall.trim() : "";
-  const label = name || syscall;
-  return label.length > 0 ? label : null;
-}
-
-function signalPayloadStreamEvent(payload: unknown): Record<string, unknown> | null {
-  if (!isRecord(payload) || !isRecord(payload.event)) {
-    return null;
-  }
-  return payload.event;
-}
-
-function streamToolCallBlock(event: Record<string, unknown>): Record<string, unknown> | null {
-  if (typeof event.contentIndex !== "number") {
-    return null;
-  }
-  const partial = isRecord(event.partial) ? event.partial : null;
-  const content = Array.isArray(partial?.content) ? partial.content : [];
-  const block = content[event.contentIndex];
-  return isRecord(block) && block.type === "toolCall" ? block : null;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function statusKey(status: PresenceLogStatus): string {
-  return status.toLowerCase().replace(/\s+/g, "-");
-}
-
-function formatClock(timestamp: number): string {
-  return new Intl.DateTimeFormat(undefined, {
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(timestamp));
-}
-
-function formatError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function createVoiceTimingTrace(source: VoiceTimingTrace["source"], createdAt = Date.now()): VoiceTimingTrace {
-  return {
-    id: createTimingId(),
-    source,
-    createdAt,
-    marks: {},
-    chunks: [],
-  };
-}
-
-function markVoiceTiming(timing: VoiceTimingTrace | undefined, mark: string, at = Date.now()): void {
-  if (!timing) {
-    return;
-  }
-  timing.marks[mark] = at;
-}
-
-function markVoiceTimingOnce(timing: VoiceTimingTrace | undefined, mark: string, at = Date.now()): void {
-  if (!timing || timing.marks[mark] !== undefined) {
-    return;
-  }
-  timing.marks[mark] = at;
-}
-
-function recordVoiceTimingFailure(
-  timing: VoiceTimingTrace | undefined,
-  error: string,
-  mark = "failed",
-): void {
-  if (!timing) {
-    return;
-  }
-  timing.error = error;
-  markVoiceTiming(timing, mark);
-}
-
-function markRunActivity(run: PresenceRun, signal: string): void {
-  markVoiceTimingOnce(run.timing, "agent_first_activity");
-  markVoiceTimingOnce(run.timing, `agent_first_${signal.replace(/\W+/g, "_")}`);
-}
-
-function recordVoiceTimingChunkReady(
-  timing: VoiceTimingTrace | undefined,
-  chunk: SpeechChunk,
-  requestedAt: number,
-  result: AiSpeechCreateResult,
-): void {
-  if (!timing) {
-    return;
-  }
-  const entry = ensureVoiceTimingChunk(timing, chunk, requestedAt);
-  entry.audioReadyAt = Date.now();
-  entry.provider = result.provider;
-  entry.model = result.model;
-  if (chunk.index === 0) {
-    markVoiceTiming(timing, "speech_first_audio_ready", entry.audioReadyAt);
-  }
-}
-
-function recordVoiceTimingChunkPlaybackStart(timing: VoiceTimingTrace | undefined, chunk: SpeechChunk): void {
-  if (!timing) {
-    return;
-  }
-  const now = Date.now();
-  const entry = ensureVoiceTimingChunk(timing, chunk, now);
-  entry.playbackStartedAt = now;
-  if (chunk.index === 0) {
-    markVoiceTiming(timing, "speech_first_audio_playing", now);
-  }
-  if (typeof timing.lastChunkEndedAt === "number") {
-    entry.gapMs = Math.max(0, now - timing.lastChunkEndedAt);
-  }
-}
-
-function recordVoiceTimingChunkPlaybackEnd(timing: VoiceTimingTrace | undefined, chunk: SpeechChunk): void {
-  if (!timing) {
-    return;
-  }
-  const now = Date.now();
-  const entry = ensureVoiceTimingChunk(timing, chunk, now);
-  entry.playbackEndedAt = now;
-  timing.lastChunkEndedAt = now;
-  if (chunk.index === chunk.total - 1) {
-    markVoiceTiming(timing, "speech_done", now);
-  }
-}
-
-function logVoiceTimingTrace(timing: VoiceTimingTrace | undefined, reason: string): void {
-  if (!timing || timing.logged) {
-    return;
-  }
-  timing.logged = true;
-  console.debug("[presence voice timing]", voiceTimingSummary(timing, reason));
-}
-
-function ensureVoiceTimingChunk(
-  timing: VoiceTimingTrace,
-  chunk: SpeechChunk,
-  requestedAt: number,
-): VoiceTimingChunk {
-  let entry = timing.chunks.find((candidate) => candidate.index === chunk.index);
-  if (!entry) {
-    entry = {
-      index: chunk.index,
-      chars: chunk.text.length,
-      requestStartedAt: requestedAt,
-    };
-    timing.chunks.push(entry);
-  }
-  entry.requestStartedAt = Math.min(entry.requestStartedAt, requestedAt);
-  return entry;
-}
-
-function voiceTimingSummary(timing: VoiceTimingTrace, reason: string): Record<string, unknown> {
-  const marks = timing.marks;
-  const chunkGaps = timing.chunks
-    .map((chunk) => chunk.gapMs)
-    .filter((gap): gap is number => typeof gap === "number" && Number.isFinite(gap));
-  const chunks = timing.chunks
-    .slice()
-    .sort((left, right) => left.index - right.index)
-    .map((chunk) => ({
-      index: chunk.index,
-      chars: chunk.chars,
-      provider: chunk.provider,
-      model: chunk.model,
-      synthMs: durationMs(chunk.requestStartedAt, chunk.audioReadyAt),
-      gapMs: chunk.gapMs,
-      playbackMs: durationMs(chunk.playbackStartedAt, chunk.playbackEndedAt),
-    }));
-
-  return {
-    id: timing.id,
-    reason,
-    source: timing.source,
-    runId: timing.runId,
-    error: timing.error,
-    promptChars: timing.promptChars,
-    answerChars: timing.answerChars,
-    vadSilenceMs: durationMs(marks.speech_last_voice, marks.segment_stopped),
-    lastVoiceToTranscriptionStartMs: durationMs(marks.speech_last_voice, marks.transcription_started),
-    recordingStopToTranscriptionStartMs: durationMs(marks.segment_stopped, marks.transcription_started),
-    transcriptionMs: durationMs(marks.transcription_started, marks.transcription_done),
-    transcriptionToAgentSendMs: durationMs(marks.transcription_done, marks.agent_send_started),
-    agentDispatchMs: durationMs(marks.agent_send_started, marks.agent_send_done),
-    agentWaitFirstActivityMs: durationMs(marks.agent_send_done, marks.agent_first_activity),
-    agentTotalMs: durationMs(marks.agent_send_done, marks.agent_complete),
-    replyToFirstAudioReadyMs: durationMs(marks.agent_complete, marks.speech_first_audio_ready),
-    replyToFirstAudioPlayingMs: durationMs(marks.agent_complete, marks.speech_first_audio_playing),
-    firstChunkSynthesisMs: durationMs(marks.speech_first_chunk_requested, marks.speech_first_audio_ready),
-    speechPlaybackMs: durationMs(marks.speech_first_audio_playing, marks.speech_done),
-    maxSpeechGapMs: chunkGaps.length > 0 ? Math.max(...chunkGaps) : undefined,
-    chunkCount: timing.chunks.length,
-    chunks,
-  };
-}
-
-function durationMs(start: number | undefined, end: number | undefined): number | undefined {
-  if (typeof start !== "number" || typeof end !== "number") {
-    return undefined;
-  }
-  return Math.max(0, Math.round(end - start));
-}
-
-function createTimingId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-  return `voice-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
-
-function normalizeInterimSpeechText(text: string): string {
-  if (text.includes("```") || text.includes("\n|")) {
-    return "";
-  }
-  const normalized = text.replace(/\s+/g, " ").trim();
-  if (!normalized || normalized.length > INTERIM_SPEECH_MAX_CHARS) {
-    return "";
-  }
-  return /[.!?:;)]$/.test(normalized) ? normalized : `${normalized}.`;
-}
-
-function selectSpeechPrefix(
-  pending: string,
-  final: boolean,
-  firstChunk: boolean,
-): { text: string; consumed: number } | null {
-  const leading = pending.match(/^\s*/)?.[0].length ?? 0;
-  const body = pending.slice(leading);
-  if (!body.trim()) {
-    return null;
-  }
-
-  const minChars = SPEECH_FIRST_CHUNK_MIN_CHARS;
-  const maxChars = firstChunk ? SPEECH_FIRST_CHUNK_MAX_CHARS : SPEECH_CHUNK_MAX_CHARS;
-  const sentenceEnd = sentenceEndAfter(body, minChars);
-  let end = sentenceEnd;
-
-  if (end === null || end > maxChars) {
-    if (!final && body.length < maxChars) {
-      return null;
-    }
-    end = wordBoundaryAt(body, maxChars);
-  }
-
-  if (final && body.length <= maxChars && (sentenceEnd === null || sentenceEnd > body.length)) {
-    end = body.length;
-  }
-
-  const text = body.slice(0, end).trim();
-  return text ? { text, consumed: leading + end } : null;
-}
-
-function sentenceEndAfter(text: string, minChars: number): number | null {
-  const matcher = /[.!?](?:["')\]]+)?(?:\s+|$)/g;
-  for (;;) {
-    const match = matcher.exec(text);
-    if (!match) {
-      return null;
-    }
-    const end = match.index + match[0].length;
-    if (end >= minChars) {
-      return end;
-    }
-  }
-}
-
-function wordBoundaryAt(text: string, maxChars: number): number {
-  if (text.length <= maxChars) {
-    return text.length;
-  }
-  for (let index = Math.min(maxChars, text.length - 1); index > 0; index -= 1) {
-    if (/\s/.test(text[index])) {
-      return index;
-    }
-  }
-  return Math.min(maxChars, text.length);
-}
-
-function chunkSpeechText(text: string): SpeechChunk[] {
-  const chunks: string[] = [];
-
-  for (const block of speechBlocks(text)) {
-    if (isMarkdownStructuralBlock(block)) {
-      flushSpeechChunk(chunks, block);
-      continue;
-    }
-    for (const sentence of splitSpeechSentences(block)) {
-      const maxChars = chunks.length === 0 ? SPEECH_FIRST_CHUNK_MAX_CHARS : SPEECH_CHUNK_MAX_CHARS;
-      for (const part of splitLongSpeechPart(sentence, maxChars)) {
-        flushSpeechChunk(chunks, part);
-      }
-    }
-  }
-
-  const balanced = balanceSpeechChunks(chunks);
-  return balanced.map((chunk, index) => ({
-    text: chunk,
-    index,
-    total: balanced.length,
-  }));
-}
-
-function balanceSpeechChunks(chunks: string[]): string[] {
-  if (chunks.length <= 1 || chunks[0].length >= SPEECH_FIRST_CHUNK_MIN_CHARS) {
-    return chunks;
-  }
-
-  const balanced = chunks.slice();
-  while (balanced.length > 1 && balanced[0].length < SPEECH_FIRST_CHUNK_MIN_CHARS) {
-    const merged = `${balanced[0]} ${balanced[1]}`.trim();
-    if (merged.length <= SPEECH_FIRST_CHUNK_TARGET_CHARS) {
-      balanced.splice(0, 2, merged);
-      continue;
-    }
-
-    const availableChars = SPEECH_FIRST_CHUNK_TARGET_CHARS - balanced[0].length - 1;
-    const [head, tail] = splitSpeechPrefix(balanced[1], availableChars);
-    if (!head) {
-      break;
-    }
-    balanced[0] = `${balanced[0]} ${head}`.trim();
-    if (tail) {
-      balanced[1] = tail;
-    } else {
-      balanced.splice(1, 1);
-    }
-    break;
-  }
-  return balanced;
-}
-
-function splitSpeechPrefix(text: string, maxChars: number): [string, string] {
-  if (maxChars <= 0 || text.length <= maxChars) {
-    return [text.trim(), ""];
-  }
-
-  const words = text.split(/\s+/).filter(Boolean);
-  let consumed = 0;
-  let prefix = "";
-  for (const word of words) {
-    const next = prefix ? `${prefix} ${word}` : word;
-    if (next.length > maxChars) {
-      break;
-    }
-    prefix = next;
-    consumed += 1;
-  }
-  return [prefix, words.slice(consumed).join(" ")];
-}
-
-function speechBlocks(text: string): string[] {
-  return text
-    .replace(/\r/g, "")
-    .split(/\n{2,}/)
-    .flatMap((block) => splitSpeechMarkdownBlock(block))
-    .map((line) => punctuateSpeechLine(line.trim()))
-    .filter(Boolean);
-}
-
-function splitSpeechMarkdownBlock(block: string): string[] {
-  const trimmed = block.trim();
-  if (!trimmed) {
-    return [];
-  }
-  if (isMarkdownStructuralBlock(trimmed)) {
-    return [trimmed];
-  }
-  return trimmed.split(/\n+/);
-}
-
-function isMarkdownStructuralBlock(block: string): boolean {
-  const lines = block.split(/\n+/).map((line) => line.trim()).filter(Boolean);
-  if (lines.length === 0) {
-    return false;
-  }
-  const first = lines[0];
-  if (first.startsWith("```") || first.startsWith("~~~")) {
-    return true;
-  }
-  return lines.length >= 2 && lines.every((line) => line.startsWith("|"));
-}
-
-function punctuateSpeechLine(line: string): string {
-  if (!line) {
-    return "";
-  }
-  if (isMarkdownStructuralBlock(line)) {
-    return line;
-  }
-  const cleaned = line.replace(/^[-*+]\s+/, "").replace(/^\d+[.)]\s+/, "").trim();
-  if (!cleaned) {
-    return "";
-  }
-  return /[.!?:;)]$/.test(cleaned) ? cleaned : `${cleaned}.`;
-}
-
-function splitSpeechSentences(text: string): string[] {
-  return (text.match(/[^.!?]+[.!?]+(?:["')\]]+)?|[^.!?]+$/g) ?? [text])
-    .map((part) => part.trim())
-    .filter(Boolean);
-}
-
-function splitLongSpeechPart(text: string, maxChars: number): string[] {
-  if (text.length <= maxChars) {
-    return [text];
-  }
-  const chunks: string[] = [];
-  let current = "";
-  for (const word of text.split(/\s+/)) {
-    if (!word) {
-      continue;
-    }
-    const next = current ? `${current} ${word}` : word;
-    if (next.length <= maxChars) {
-      current = next;
-      continue;
-    }
-    flushSpeechChunk(chunks, current);
-    current = word;
-  }
-  flushSpeechChunk(chunks, current);
-  return chunks;
-}
-
-function flushSpeechChunk(chunks: string[], value: string): void {
-  const normalized = value.trim();
-  if (normalized) {
-    chunks.push(normalized);
-  }
-}
-
-function truncateActivityText(text: string): string {
-  return text.length > 420 ? `${text.slice(0, 419).trimEnd()}...` : text;
-}
-
-function statusText(state: PresenceState, connected: boolean, activeRuns = 0): string {
-  if (!connected) {
-    return "Disconnected";
-  }
-  if (activeRuns > 0 && (state === "idle" || state === "listening")) {
-    return activeRuns === 1 ? "Mind working" : `${activeRuns} Mind jobs`;
-  }
-  switch (state) {
-    case "listening": return "Listening";
-    case "capturing": return "Capturing speech";
-    case "recording": return "Recording";
-    case "transcribing": return "Transcribing";
-    case "sending": return "Sending";
-    case "unsupported": return "Mind unavailable; type instead";
-    case "error": return "Needs attention";
-    default: return "Paused";
-  }
-}
-
-function compactPresenceStatus(state: PresenceState, connected: boolean, activeRuns = 0): string {
-  if (!connected) {
-    return "Offline";
-  }
-  if (activeRuns > 0) {
-    return activeRuns === 1 ? "Working" : `${activeRuns} jobs`;
-  }
-  switch (state) {
-    case "listening": return "Listening";
-    case "capturing": return "Heard";
-    case "recording": return "Recording";
-    case "transcribing": return "Transcribing";
-    case "sending": return "Sending";
-    case "unsupported": return "Text only";
-    case "error": return "Attention";
-    default: return "Paused";
-  }
 }
