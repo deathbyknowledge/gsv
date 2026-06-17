@@ -426,16 +426,19 @@ fn windows_task_registration_script(
 
     format!(
         "$ErrorActionPreference = 'Stop'\n\
+$ProgressPreference = 'SilentlyContinue'\n\
 Import-Module ScheduledTasks -ErrorAction Stop\n\
 $TaskName = {task_name}\n\
 $UserId = {user_id}\n\
 $Action = New-ScheduledTaskAction -Execute {exe_path} -Argument {args}\n\
 $Principal = New-ScheduledTaskPrincipal -UserId $UserId -LogonType Interactive -RunLevel Limited\n\
-$Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew\n\
-$Settings.AllowStartOnDemand = $true\n\
-$Settings.ExecutionTimeLimit = 'PT0S'\n\
-$Settings.Enabled = $true\n\
-$Settings.Hidden = $false\n\
+$Settings = $null\n\
+try {{\n\
+  $Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::Zero)\n\
+}} catch {{\n\
+  $Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew\n\
+}}\n\
+try {{ $Settings.ExecutionTimeLimit = 'PT0S' }} catch {{}}\n\
 function Register-GsvTask($Trigger) {{\n\
   $Task = New-ScheduledTask -Action $Action -Trigger $Trigger -Principal $Principal -Settings $Settings -Description {description}\n\
   Register-ScheduledTask -TaskName $TaskName -InputObject $Task -Force | Out-Null\n\
@@ -1006,6 +1009,7 @@ mod tests {
         let script = windows_task_registration_script("gsvd", r"ACME\hank", &spec);
 
         assert!(script.contains("$UserId = 'ACME\\hank'"));
+        assert!(script.contains("$ProgressPreference = 'SilentlyContinue'"));
         assert!(
             script.contains("Register-GsvTask (New-ScheduledTaskTrigger -AtLogOn -User $UserId)")
         );
@@ -1016,7 +1020,18 @@ mod tests {
         assert!(script.contains(
             "$Action = New-ScheduledTaskAction -Execute 'C:\\Program Files\\GSV\\gsv.exe' -Argument 'device run'"
         ));
+        assert!(!script.contains("AllowStartOnDemand"));
+        assert!(script.contains("-ExecutionTimeLimit ([TimeSpan]::Zero)"));
         assert!(script.contains("$Settings.ExecutionTimeLimit = 'PT0S'"));
+        let fallback_settings = script
+            .find("New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew\n")
+            .expect("fallback settings constructor");
+        let explicit_infinite_limit = script
+            .find("$Settings.ExecutionTimeLimit = 'PT0S'")
+            .expect("explicit infinite execution time assignment");
+        assert!(explicit_infinite_limit > fallback_settings);
+        assert!(!script.contains("$Settings.Enabled"));
+        assert!(!script.contains("$Settings.Hidden"));
         assert!(script.contains(
             "Register-ScheduledTask -TaskName $TaskName -InputObject $Task -Force | Out-Null"
         ));
