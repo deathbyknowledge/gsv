@@ -17,10 +17,21 @@ import {
   type DesktopWindowStateAction,
   type DesktopWindowStateRecord,
 } from "./app/features/desktop/domain/windowState";
+import {
+  detectWindowSnapTarget,
+  fitWindowSizeToWorkspace,
+  minimumWindowSizeForWorkspace,
+  normalizeWorkspaceBounds,
+  resizeWindowRect,
+  snapOverlayRect,
+  clampWindowPositionToWorkspace,
+  type DesktopResizeDirection,
+  type DesktopWorkspaceBounds,
+} from "./app/features/desktop/domain/windowGeometry";
 import { mountPreviewWindow, type PreviewWindowContent } from "./preview-window";
 
 type WindowMode = DesktopWindowMode;
-type ResizeDirection = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
+type ResizeDirection = DesktopResizeDirection;
 type SnapTarget = "left" | "right" | "maximize" | null;
 type LifecyclePhase = "mount" | "suspend" | "resume" | "terminate";
 type PersistedWindow = PersistedDesktopWindow;
@@ -176,15 +187,11 @@ type WindowManagerOptions = {
   appRuntime: AppRuntimeRegistry;
 };
 
-const WINDOW_MARGIN = 8;
-const MIN_WINDOW_WIDTH = 320;
-const MIN_WINDOW_HEIGHT = 240;
 const WINDOW_START_X = 96;
 const WINDOW_START_Y = 92;
 const WINDOW_OFFSET_X = 28;
 const WINDOW_OFFSET_Y = 22;
 const WINDOW_STAGGER_STEPS = 8;
-const SNAP_THRESHOLD = 30;
 const PREVIEW_APP: AppManifest = {
   id: "preview",
   name: "Preview",
@@ -204,10 +211,6 @@ const PREVIEW_APP: AppManifest = {
 const blockSelection = (event: Event): void => {
   event.preventDefault();
 };
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(Math.max(value, min), max);
-}
 
 function escapeHtml(value: string): string {
   return value
@@ -697,46 +700,15 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
     return true;
   };
 
-  const workspaceBounds = () => {
+  const workspaceBounds = (): DesktopWorkspaceBounds => {
     const rect = layerNode.getBoundingClientRect();
-    return {
-      left: rect.left,
-      top: rect.top,
-      width: Math.max(rect.width, MIN_WINDOW_WIDTH + WINDOW_MARGIN * 2),
-      height: Math.max(rect.height, MIN_WINDOW_HEIGHT + WINDOW_MARGIN * 2),
-    };
-  };
-
-  const fitSizeToWorkspace = (app: AppManifest, width: number, height: number) => {
-    const bounds = workspaceBounds();
-    const maxWidth = Math.max(bounds.width - WINDOW_MARGIN * 2, 200);
-    const maxHeight = Math.max(bounds.height - WINDOW_MARGIN * 2, 180);
-    const minWidth = Math.min(Math.max(app.windowDefaults.minWidth, MIN_WINDOW_WIDTH), maxWidth);
-    const minHeight = Math.min(Math.max(app.windowDefaults.minHeight, MIN_WINDOW_HEIGHT), maxHeight);
-
-    return {
-      width: Math.min(Math.max(width, minWidth), maxWidth),
-      height: Math.min(Math.max(height, minHeight), maxHeight),
-    };
-  };
-
-  const minSizeForWorkspace = (app: AppManifest) => {
-    const bounds = workspaceBounds();
-    const maxWidth = Math.max(bounds.width - WINDOW_MARGIN * 2, 200);
-    const maxHeight = Math.max(bounds.height - WINDOW_MARGIN * 2, 180);
-    return {
-      width: Math.min(Math.max(app.windowDefaults.minWidth, MIN_WINDOW_WIDTH), maxWidth),
-      height: Math.min(Math.max(app.windowDefaults.minHeight, MIN_WINDOW_HEIGHT), maxHeight),
-    };
+    return normalizeWorkspaceBounds(rect);
   };
 
   const clampNormalPosition = (record: WindowRecord): void => {
-    const bounds = workspaceBounds();
-    const maxX = Math.max(bounds.width - record.width - WINDOW_MARGIN, WINDOW_MARGIN);
-    const maxY = Math.max(bounds.height - record.height - WINDOW_MARGIN, WINDOW_MARGIN);
-
-    record.x = clamp(record.x, WINDOW_MARGIN, maxX);
-    record.y = clamp(record.y, WINDOW_MARGIN, maxY);
+    const nextPosition = clampWindowPositionToWorkspace(workspaceBounds(), record);
+    record.x = nextPosition.x;
+    record.y = nextPosition.y;
   };
 
   const applyWindowChrome = (record: WindowRecord): void => {
@@ -788,7 +760,11 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
     }
 
     record.node.classList.remove("is-maximized");
-    const fitted = fitSizeToWorkspace(record.app, record.width, record.height);
+    const fitted = fitWindowSizeToWorkspace(
+      record.app.windowDefaults,
+      workspaceBounds(),
+      record,
+    );
     record.width = fitted.width;
     record.height = fitted.height;
     clampNormalPosition(record);
@@ -832,19 +808,7 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
   };
 
   const showSnapOverlay = (target: Exclude<SnapTarget, null>): void => {
-    const bounds = workspaceBounds();
-
-    let x = 0;
-    let y = 0;
-    let width = bounds.width;
-    let height = bounds.height;
-
-    if (target === "left") {
-      width = Math.floor(bounds.width / 2);
-    } else if (target === "right") {
-      width = Math.floor(bounds.width / 2);
-      x = bounds.width - width;
-    }
+    const { x, y, width, height } = snapOverlayRect(workspaceBounds(), target);
 
     snapOverlayNode.style.transform = `translate3d(${x}px, ${y}px, 0)`;
     snapOverlayNode.style.width = `${width}px`;
@@ -854,24 +818,7 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
   };
 
   const detectSnapTarget = (clientX: number, clientY: number): SnapTarget => {
-    const bounds = workspaceBounds();
-    const leftEdge = bounds.left;
-    const rightEdge = bounds.left + bounds.width;
-    const topEdge = bounds.top;
-
-    if (clientY <= topEdge + SNAP_THRESHOLD) {
-      return "maximize";
-    }
-
-    if (clientX <= leftEdge + SNAP_THRESHOLD) {
-      return "left";
-    }
-
-    if (clientX >= rightEdge - SNAP_THRESHOLD) {
-      return "right";
-    }
-
-    return null;
+    return detectWindowSnapTarget(workspaceBounds(), clientX, clientY);
   };
 
   const stopResizing = (): void => {
@@ -1424,9 +1371,17 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
 
     const baseWidth = persisted?.width ?? app.windowDefaults.width;
     const baseHeight = persisted?.height ?? app.windowDefaults.height;
-    const fitted = fitSizeToWorkspace(app, baseWidth, baseHeight);
+    const fitted = fitWindowSizeToWorkspace(
+      app.windowDefaults,
+      workspaceBounds(),
+      { width: baseWidth, height: baseHeight },
+    );
     const fittedRestore = persisted
-      ? fitSizeToWorkspace(app, persisted.restoreWidth, persisted.restoreHeight)
+      ? fitWindowSizeToWorkspace(
+        app.windowDefaults,
+        workspaceBounds(),
+        { width: persisted.restoreWidth, height: persisted.restoreHeight },
+      )
       : fitted;
 
     const record: WindowRecord = {
@@ -1802,39 +1757,18 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
       event.preventDefault();
 
       const bounds = workspaceBounds();
-      const minSize = minSizeForWorkspace(record.app);
-      const startRight = resizeState.startX + resizeState.startWidth;
-      const startBottom = resizeState.startY + resizeState.startHeight;
-      const deltaX = event.clientX - resizeState.startClientX;
-      const deltaY = event.clientY - resizeState.startClientY;
+      const resized = resizeWindowRect(
+        bounds,
+        minimumWindowSizeForWorkspace(record.app.windowDefaults, bounds),
+        resizeState,
+        event.clientX,
+        event.clientY,
+      );
 
-      let nextX = resizeState.startX;
-      let nextY = resizeState.startY;
-      let nextWidth = resizeState.startWidth;
-      let nextHeight = resizeState.startHeight;
-
-      if (resizeState.direction.includes("w")) {
-        const maxX = startRight - minSize.width;
-        nextX = clamp(resizeState.startX + deltaX, WINDOW_MARGIN, maxX);
-        nextWidth = startRight - nextX;
-      } else if (resizeState.direction.includes("e")) {
-        const maxWidth = Math.max(bounds.width - WINDOW_MARGIN - resizeState.startX, minSize.width);
-        nextWidth = clamp(resizeState.startWidth + deltaX, minSize.width, maxWidth);
-      }
-
-      if (resizeState.direction.includes("n")) {
-        const maxY = startBottom - minSize.height;
-        nextY = clamp(resizeState.startY + deltaY, WINDOW_MARGIN, maxY);
-        nextHeight = startBottom - nextY;
-      } else if (resizeState.direction.includes("s")) {
-        const maxHeight = Math.max(bounds.height - WINDOW_MARGIN - resizeState.startY, minSize.height);
-        nextHeight = clamp(resizeState.startHeight + deltaY, minSize.height, maxHeight);
-      }
-
-      record.x = nextX;
-      record.y = nextY;
-      record.width = nextWidth;
-      record.height = nextHeight;
+      record.x = resized.x;
+      record.y = resized.y;
+      record.width = resized.width;
+      record.height = resized.height;
       applyWindowFrame(record);
       return;
     }
