@@ -1,4 +1,5 @@
 import "../styles.css";
+import "./features/desktop/commandPalette.css";
 import "./features/presence/presence.css";
 import { render } from "preact";
 import { App } from "./App";

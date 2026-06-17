@@ -11,18 +11,6 @@ type TaskbarWindowsProps = {
   summaries: readonly WindowSummary[];
 };
 
-type CommandPaletteItem = {
-  id: string;
-  label: string;
-  meta: string;
-  icon: string;
-};
-
-type CommandPaletteItemsProps = {
-  items: readonly CommandPaletteItem[];
-  selectedIndex: number;
-};
-
 type MobileAppGridProps = {
   apps: readonly DesktopApp[];
 };
@@ -53,7 +41,7 @@ function taskbarClassName(summary: WindowSummary): string {
   return classes.join(" ");
 }
 
-function DesktopAppIconGlyph({ icon }: { icon: DesktopAppIcon }) {
+export function DesktopAppIconGlyph({ icon }: { icon: DesktopAppIcon }) {
   if (icon.kind === "svg") {
     return (
       <span
@@ -185,36 +173,6 @@ export function TaskbarWindows({ summaries }: TaskbarWindowsProps) {
             {summary.badge ? <span class="taskbar-badge">{summary.badge}</span> : null}
           </button>
         ))}
-    </>
-  );
-}
-
-export function CommandPaletteItems({
-  items,
-  selectedIndex,
-}: CommandPaletteItemsProps) {
-  if (items.length === 0) {
-    return <li class="command-palette-empty">No results</li>;
-  }
-
-  return (
-    <>
-      {items.map((item, index) => (
-        <li key={item.id}>
-          <button
-            type="button"
-            class={index === selectedIndex ? "command-palette-item is-active" : "command-palette-item"}
-            data-command-index={index}
-          >
-            <span
-              class="command-palette-icon"
-              dangerouslySetInnerHTML={{ __html: item.icon }}
-            />
-            <span class="command-palette-label">{item.label}</span>
-            <small>{item.meta}</small>
-          </button>
-        </li>
-      ))}
     </>
   );
 }

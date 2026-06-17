@@ -42,15 +42,6 @@ function SearchIcon() {
   );
 }
 
-function CloseIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round">
-      <path d="M18 6 6 18" />
-      <path d="m6 6 12 12" />
-    </svg>
-  );
-}
-
 function Topbar({ presenceController }: { presenceController: PresenceController }) {
   return (
     <header class="topbar">
@@ -135,17 +126,7 @@ function MobileShell({ presenceController }: { presenceController: PresenceContr
 }
 
 function CommandPalette() {
-  return (
-    <section class="command-palette" data-command-palette role="dialog" aria-label="Command palette" hidden>
-      <div class="command-palette-panel">
-        <input data-command-palette-input type="text" autoComplete="off" placeholder="Search apps and windows" />
-        <button type="button" class="command-palette-close" data-command-palette-close aria-label="Close search">
-          <CloseIcon />
-        </button>
-        <ul class="command-palette-list" data-command-palette-list />
-      </div>
-    </section>
-  );
+  return <div data-command-palette-root />;
 }
 
 function DesktopRoot({

@@ -10,16 +10,16 @@ import {
   type TargetChatProcessEventDetail,
 } from "./host/chatTarget";
 import type { DesktopApp, DesktopAppIcon } from "../domain/desktopApp";
-import { CommandPaletteItems, DesktopAppIcons, MobileAppGrid, MobileWindowStack, TaskbarWindows } from "../components/DesktopLauncherViews";
+import { DesktopAppIcons, MobileAppGrid, MobileWindowStack, TaskbarWindows } from "../components/DesktopLauncherViews";
 import {
   centeredMobileRotorIndex,
-  filterLauncherPaletteItems,
   mobileRotorMetrics as calculateMobileRotorMetrics,
   normalizeMobileRotorPosition as normalizeRotorPosition,
   orderMobileWindowStack,
   shortestMobileRotorDelta as shortestRotorDelta,
   type MobileRotorMetrics,
 } from "../domain/launcherState";
+import { createCommandPalette, type CommandPaletteActionItem } from "./commandPalette";
 import type { WindowManager, WindowSummary } from "./windowManager";
 
 type LauncherOptions = {
@@ -34,41 +34,7 @@ type LauncherController = {
   destroy: () => void;
 };
 
-type PaletteItem = {
-  id: string;
-  label: string;
-  meta: string;
-  search: string;
-  icon: string;
-  run: () => void;
-};
-
 type MobileShellState = "home" | "app" | "search";
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll("\"", "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
-function renderDesktopIcon(icon: DesktopAppIcon): string {
-  if (icon.kind === "svg") {
-    return `
-      <span class="desktop-glyph is-package-svg" aria-hidden="true">
-        ${icon.svg}
-      </span>
-    `;
-  }
-
-  return `
-    <span class="desktop-glyph is-fallback" aria-hidden="true">
-      <span>${escapeHtml(icon.label)}</span>
-    </span>
-  `;
-}
 
 export function createLauncher(options: LauncherOptions): LauncherController {
   const { rootNode, windowManager, initialAppId } = options;
@@ -81,22 +47,19 @@ export function createLauncher(options: LauncherOptions): LauncherController {
   const mobileHomeNode = rootNode.querySelector<HTMLElement>("[data-mobile-home]");
   const mobileHomeButtonNode = rootNode.querySelector<HTMLButtonElement>("[data-mobile-home-button]");
   const dockRevealZoneNode = rootNode.querySelector<HTMLElement>("[data-dock-reveal-zone]");
-  const commandPaletteNode = rootNode.querySelector<HTMLElement>("[data-command-palette]");
-  const commandPaletteInputNode = rootNode.querySelector<HTMLInputElement>("[data-command-palette-input]");
-  const commandPaletteListNode = rootNode.querySelector<HTMLElement>("[data-command-palette-list]");
-  const commandPaletteCloseNode = rootNode.querySelector<HTMLButtonElement>("[data-command-palette-close]");
+  const commandPaletteRootNode = rootNode.querySelector<HTMLElement>("[data-command-palette-root]");
 
   if (!iconsNode) {
     throw new Error("Desktop icon layer is missing");
+  }
+  if (!commandPaletteRootNode) {
+    throw new Error("Command palette root is missing");
   }
 
   let apps: readonly DesktopApp[] = [];
   let appById = new Map<string, DesktopApp>();
   let selectedAppId: string | null = null;
   let latestSummaries: WindowSummary[] = [];
-  let paletteOpen = false;
-  let paletteSelection = 0;
-  let paletteItems: PaletteItem[] = [];
   let openedInitialApp = false;
   let dockRevealTimer: number | null = null;
   let mobileLaunchTimer: number | null = null;
@@ -1076,25 +1039,27 @@ export function createLauncher(options: LauncherOptions): LauncherController {
     }
   };
 
-  const closePalette = (): void => {
-    if (!commandPaletteNode) {
-      return;
-    }
-    paletteOpen = false;
-    commandPaletteNode.hidden = true;
-    commandPaletteInputNode?.blur();
+  const onCommandPaletteOpen = (): void => {
+    resetMobileHomeGesture();
+    clearMobileRotorMomentum();
+    clearMobileRotorSnapTimer();
+    setMobileShellState("search");
+    setDockRevealed(true, { temporary: true });
+  };
+
+  const onCommandPaletteClose = (): void => {
     if (mobileShellState === "search") {
       setMobileShellState(getBaseMobileShellState());
     }
   };
 
-  const buildPaletteItems = (): PaletteItem[] => {
-    const appItems = apps.map((appItem): PaletteItem => ({
+  const buildPaletteItems = (): CommandPaletteActionItem[] => {
+    const appItems = apps.map((appItem): CommandPaletteActionItem => ({
       id: `app:${appItem.id}`,
       label: appItem.name,
       meta: "Open app",
       search: `${appItem.name} ${appItem.description} app`,
-      icon: renderDesktopIcon(appItem.icon),
+      icon: appItem.icon,
       run: () => {
         activateApp(appItem.id);
       },
@@ -1103,12 +1068,12 @@ export function createLauncher(options: LauncherOptions): LauncherController {
     const windowItems = latestSummaries
       .slice()
       .sort((left, right) => right.zIndex - left.zIndex)
-      .map((summary): PaletteItem => ({
+      .map((summary): CommandPaletteActionItem => ({
         id: `window:${summary.windowId}`,
         label: summary.title,
         meta: summary.mode === "minimized" ? "Restore window" : `Focus ${summary.appName}`,
         search: `${summary.title} ${summary.appName} ${summary.route} window`,
-        icon: renderDesktopIcon(appById.get(summary.appId)?.icon ?? { kind: "fallback", label: "AP" }),
+        icon: appById.get(summary.appId)?.icon ?? { kind: "fallback", label: "AP" },
         run: () => {
           activateWindowSummary(summary);
         },
@@ -1117,60 +1082,12 @@ export function createLauncher(options: LauncherOptions): LauncherController {
     return [...windowItems, ...appItems];
   };
 
-  const filteredPaletteItems = (): PaletteItem[] => {
-    const query = commandPaletteInputNode?.value.trim().toLowerCase() ?? "";
-    const items = buildPaletteItems();
-    return filterLauncherPaletteItems(items, query);
-  };
-
-  const renderPalette = (): void => {
-    if (!commandPaletteListNode) {
-      return;
-    }
-    paletteItems = filteredPaletteItems();
-    paletteSelection = Math.min(paletteSelection, Math.max(paletteItems.length - 1, 0));
-
-    renderPreact(
-      <CommandPaletteItems
-        items={paletteItems}
-        selectedIndex={paletteSelection}
-      />,
-      commandPaletteListNode,
-    );
-
-    commandPaletteListNode
-      .querySelector<HTMLElement>(`[data-command-index="${paletteSelection}"]`)
-      ?.scrollIntoView({ block: "nearest", inline: "nearest" });
-  };
-
-  const openPalette = (): void => {
-    if (!commandPaletteNode || !commandPaletteInputNode) {
-      return;
-    }
-    resetMobileHomeGesture();
-    clearMobileRotorMomentum();
-    clearMobileRotorSnapTimer();
-    setMobileShellState("search");
-    setDockRevealed(true, { temporary: true });
-    paletteOpen = true;
-    paletteSelection = 0;
-    commandPaletteNode.hidden = false;
-    commandPaletteInputNode.value = "";
-    renderPalette();
-    requestAnimationFrame(() => {
-      commandPaletteInputNode.focus();
-      commandPaletteInputNode.select();
-    });
-  };
-
-  const runSelectedPaletteItem = (): void => {
-    const item = paletteItems[paletteSelection];
-    if (!item) {
-      return;
-    }
-    closePalette();
-    item.run();
-  };
+  const commandPalette = createCommandPalette({
+    rootNode: commandPaletteRootNode,
+    getItems: buildPaletteItems,
+    onOpen: onCommandPaletteOpen,
+    onClose: onCommandPaletteClose,
+  });
 
   const onDocumentKeyDown = (event: KeyboardEvent): void => {
     if (event.altKey && event.key === "Tab") {
@@ -1183,82 +1100,16 @@ export function createLauncher(options: LauncherOptions): LauncherController {
 
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
       event.preventDefault();
-      if (paletteOpen) {
-        closePalette();
-      } else {
-        openPalette();
-      }
-      return;
-    }
-
-    if (!paletteOpen) {
-      return;
-    }
-
-    if (event.key === "Escape") {
-      event.preventDefault();
-      closePalette();
-      return;
-    }
-
-    if (event.key === "ArrowDown") {
-      event.preventDefault();
-      paletteSelection = Math.min(paletteSelection + 1, Math.max(paletteItems.length - 1, 0));
-      renderPalette();
-      return;
-    }
-
-    if (event.key === "ArrowUp") {
-      event.preventDefault();
-      paletteSelection = Math.max(paletteSelection - 1, 0);
-      renderPalette();
-      return;
-    }
-
-    if (event.key === "Enter") {
-      event.preventDefault();
-      runSelectedPaletteItem();
-    }
-  };
-
-  const onPaletteInput = (): void => {
-    paletteSelection = 0;
-    renderPalette();
-  };
-
-  const onPaletteClick = (event: MouseEvent): void => {
-    const target = event.target;
-    if (!(target instanceof HTMLElement)) {
-      return;
-    }
-    const button = target.closest<HTMLButtonElement>("[data-command-index]");
-    if (!button || !commandPaletteListNode?.contains(button)) {
-      return;
-    }
-    const index = Number(button.dataset.commandIndex);
-    if (!Number.isInteger(index)) {
-      return;
-    }
-    paletteSelection = index;
-    runSelectedPaletteItem();
-  };
-
-  const onPaletteBackdropClick = (event: MouseEvent): void => {
-    if (event.target === commandPaletteNode) {
-      closePalette();
+      commandPalette.toggle();
     }
   };
 
   const onCommandLauncherClick = (): void => {
-    openPalette();
+    commandPalette.open();
   };
 
   const onMobileCommandLauncherClick = (): void => {
-    openPalette();
-  };
-
-  const onCommandPaletteCloseClick = (): void => {
-    closePalette();
+    commandPalette.open();
   };
 
   const onDockRevealPointerEnter = (): void => {
@@ -1310,10 +1161,6 @@ export function createLauncher(options: LauncherOptions): LauncherController {
   commandLauncherNode?.addEventListener("click", onCommandLauncherClick);
   mobileCommandLauncherNode?.addEventListener("click", onMobileCommandLauncherClick);
   document.addEventListener("keydown", onDocumentKeyDown);
-  commandPaletteInputNode?.addEventListener("input", onPaletteInput);
-  commandPaletteListNode?.addEventListener("click", onPaletteClick);
-  commandPaletteNode?.addEventListener("click", onPaletteBackdropClick);
-  commandPaletteCloseNode?.addEventListener("click", onCommandPaletteCloseClick);
   dockRevealZoneNode?.addEventListener("pointerenter", onDockRevealPointerEnter);
   dockRevealZoneNode?.addEventListener("pointerleave", onDockRevealPointerLeave);
   topbarNode?.addEventListener("pointerenter", onTopbarPointerEnter);
@@ -1328,9 +1175,7 @@ export function createLauncher(options: LauncherOptions): LauncherController {
   const unsubscribe = windowManager.subscribe((summaries) => {
     latestSummaries = summaries;
     syncIconState(summaries);
-    if (paletteOpen) {
-      renderPalette();
-    }
+    commandPalette.refresh();
   });
 
   const setApps = (nextApps: readonly DesktopApp[]): void => {
@@ -1342,6 +1187,7 @@ export function createLauncher(options: LauncherOptions): LauncherController {
     }
     renderMobileApps();
     syncIconState();
+    commandPalette.refresh();
     if (initialAppId && !openedInitialApp && appById.has(initialAppId)) {
       openedInitialApp = true;
       openApp(initialAppId);
@@ -1374,16 +1220,10 @@ export function createLauncher(options: LauncherOptions): LauncherController {
       commandLauncherNode?.removeEventListener("click", onCommandLauncherClick);
       mobileCommandLauncherNode?.removeEventListener("click", onMobileCommandLauncherClick);
       document.removeEventListener("keydown", onDocumentKeyDown);
-      commandPaletteInputNode?.removeEventListener("input", onPaletteInput);
-      commandPaletteListNode?.removeEventListener("click", onPaletteClick);
-      commandPaletteNode?.removeEventListener("click", onPaletteBackdropClick);
-      commandPaletteCloseNode?.removeEventListener("click", onCommandPaletteCloseClick);
+      commandPalette.destroy();
       renderPreact(null, iconsNode);
       if (taskbarWindowsNode) {
         renderPreact(null, taskbarWindowsNode);
-      }
-      if (commandPaletteListNode) {
-        renderPreact(null, commandPaletteListNode);
       }
       if (mobileAppsNode) {
         renderPreact(null, mobileAppsNode);
