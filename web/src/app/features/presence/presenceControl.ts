@@ -1,5 +1,4 @@
-import { normalizeSpeechText } from "@humansandmachines/gsv/protocol";
-import type { AiSpeechCreateResult, AiTranscriptionCreateResult } from "@humansandmachines/gsv/protocol";
+import type { AiTranscriptionCreateResult } from "@humansandmachines/gsv/protocol";
 import type { GSVClient } from "@humansandmachines/gsv/client";
 import {
   blobToDataUrl,
@@ -25,7 +24,6 @@ import {
   MAX_BUFFERED_RUN_SIGNALS,
   MAX_PUSH_RECORDING_MS,
   RUN_SIGNAL_BUFFER_TTL_MS,
-  SPEECH_PREFETCH_CONCURRENCY,
   VOICE_AUDIO_BITS_PER_SECOND,
 } from "./constants";
 import {
@@ -57,7 +55,8 @@ import {
   signalPayloadText,
   signalPayloadToolLabel,
 } from "./signals";
-import { chunkSpeechText, normalizeInterimSpeechText, selectSpeechPrefix } from "./speechText";
+import { createPresenceSpeechOutput } from "./speechOutput";
+import { normalizeInterimSpeechText } from "./speechText";
 import type {
   BufferedRunSignal,
   PendingInterimSpeech,
@@ -66,7 +65,6 @@ import type {
   PresenceRun,
   PresenceSendResult,
   PresenceState,
-  SpeechChunk,
   VoiceTimingTrace,
 } from "./types";
 import {
@@ -75,9 +73,6 @@ import {
   markRunActivity,
   markVoiceTiming,
   markVoiceTimingOnce,
-  recordVoiceTimingChunkPlaybackEnd,
-  recordVoiceTimingChunkPlaybackStart,
-  recordVoiceTimingChunkReady,
   recordVoiceTimingFailure,
 } from "./voiceTiming";
 
@@ -129,10 +124,6 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
   let latestRunId: string | null = null;
   let activityHideTimer: number | null = null;
   let speakReplies = loadSpeakRepliesPreference();
-  let speechAttempt = 0;
-  let speechAudio: HTMLAudioElement | null = null;
-  let speechPlaybackCancel: (() => void) | null = null;
-  let speechQueue: Promise<void> = Promise.resolve();
   let lastInterimSpeechKey = "";
   let lastInterimSpeechAt = 0;
   const activeRuns = new Map<string, PresenceRun>();
@@ -159,6 +150,12 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
   let ambientLastVoiceAt = 0;
   let ambientSegmentStartedAt = 0;
   let ambientPendingJobs = 0;
+  const speechOutput = createPresenceSpeechOutput({
+    gatewayClient,
+    getSpeakReplies: () => speakReplies,
+    isDestroyed: () => destroyed,
+    setSpeechStatus,
+  });
 
   function setPanelOpen(open: boolean): void {
     panelOpen = open;
@@ -256,7 +253,7 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
       setState(canUseBrowserVoiceRecorder() ? "idle" : "unsupported");
       return;
     }
-    cancelSpeechOutput();
+    speechOutput.cancel();
     cleanupPushRecorder();
     setPanelOpen(true);
     note = "";
@@ -385,7 +382,7 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
   }
 
   function stopAmbient(): void {
-    cancelSpeechOutput();
+    speechOutput.cancel();
     clearAmbientTimer();
     stopAmbientSegment("stop");
     ambientSpeechActive = false;
@@ -418,7 +415,7 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
     const rms = currentRms(ambientAnalyser, ambientSamples);
     const speechNow = rms >= AMBIENT_RMS_THRESHOLD;
 
-    if (isSpeechOutputPlaying()) {
+    if (speechOutput.isPlaying()) {
       ambientSpeechMs = 0;
       if (!ambientSpeechActive) {
         note = "Speaking";
@@ -456,7 +453,7 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
     if (!ambientStream || ambientSegmentRecorder) {
       return;
     }
-    cancelSpeechOutput();
+    speechOutput.cancel();
     const recorderOptions: MediaRecorderOptions = { audioBitsPerSecond: VOICE_AUDIO_BITS_PER_SECOND };
     if (ambientMimeType) {
       recorderOptions.mimeType = ambientMimeType;
@@ -894,202 +891,6 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
     }
   }
 
-  function isSpeechOutputPlaying(): boolean {
-    return speechAudio !== null && !speechAudio.paused && !speechAudio.ended;
-  }
-
-  function cancelSpeechOutput(message?: string): void {
-    speechAttempt += 1;
-    const cancelPlayback = speechPlaybackCancel;
-    speechPlaybackCancel = null;
-    const audio = speechAudio;
-    speechAudio = null;
-    if (audio) {
-      audio.onplay = null;
-      audio.onended = null;
-      audio.onerror = null;
-      audio.pause();
-      if (audio.src.startsWith("blob:")) {
-        URL.revokeObjectURL(audio.src);
-      }
-      audio.removeAttribute("src");
-      audio.load();
-    }
-    cancelPlayback?.();
-    if (message) {
-      setSpeechStatus(message);
-    }
-  }
-
-  async function speakReply(
-    text: string,
-    options?: { force?: boolean; interrupt?: boolean; timing?: VoiceTimingTrace },
-  ): Promise<void> {
-    if (!options?.force && !speakReplies) {
-      logVoiceTimingTrace(options?.timing, "speech-disabled");
-      return;
-    }
-    const normalized = text.trim();
-    if (!normalized) {
-      return;
-    }
-    if (!gatewayClient.isConnected()) {
-      setSpeechStatus("Speech unavailable while disconnected");
-      return;
-    }
-    const speechText = normalizeSpeechText(normalized);
-    if (!speechText) {
-      logVoiceTimingTrace(options?.timing, "speech-empty");
-      return;
-    }
-    const chunks = chunkSpeechText(speechText);
-    if (chunks.length === 0) {
-      logVoiceTimingTrace(options?.timing, "speech-empty");
-      return;
-    }
-    if (options?.interrupt === false && isSpeechOutputPlaying()) {
-      return;
-    }
-    if (options?.interrupt !== false) {
-      cancelSpeechOutput();
-    }
-    const attempt = ++speechAttempt;
-
-    try {
-      const pendingSpeech = new Map<number, Promise<AiSpeechCreateResult>>();
-      let nextRequestIndex = 0;
-      const ensurePrefetch = () => {
-        while (
-          nextRequestIndex < chunks.length
-          && pendingSpeech.size < SPEECH_PREFETCH_CONCURRENCY
-        ) {
-          const chunk = chunks[nextRequestIndex];
-          pendingSpeech.set(chunk.index, requestSpeechChunk(chunk, attempt, options?.timing));
-          nextRequestIndex += 1;
-        }
-      };
-      ensurePrefetch();
-      for (let index = 0; index < chunks.length; index += 1) {
-        const chunk = chunks[index];
-        if (attempt !== speechAttempt) {
-          return;
-        }
-        setSpeechStatus(speechChunkStatus("Generating speech", chunk));
-        const result = await pendingSpeech.get(chunk.index);
-        if (attempt !== speechAttempt) {
-          return;
-        }
-        if (!result) {
-          throw new Error("Speech generation was not queued");
-        }
-        pendingSpeech.delete(chunk.index);
-        ensurePrefetch();
-        await playSpeechChunk(result, chunk, attempt, options?.timing);
-      }
-      if (attempt === speechAttempt) {
-        setSpeechStatus(speakReplies ? "Speak replies on" : "Speech off");
-        logVoiceTimingTrace(options?.timing, "speech-complete");
-      }
-    } catch (error) {
-      if (attempt !== speechAttempt) {
-        return;
-      }
-      speechAudio = null;
-      const message = formatError(error);
-      setSpeechStatus("Speech failed: " + message);
-      recordVoiceTimingFailure(options?.timing, message, "speech_failed");
-      logVoiceTimingTrace(options?.timing, "speech-failed");
-    }
-  }
-
-  function queueRunSpeechFromAnswer(run: PresenceRun, final: boolean): boolean {
-    if (!speakReplies || !run.answer.trim()) {
-      return false;
-    }
-    let queued = false;
-    for (;;) {
-      const segment = nextRunSpeechSegment(run, final);
-      if (!segment) {
-        break;
-      }
-      const speechText = normalizeSpeechText(segment.text);
-      if (!speechText) {
-        continue;
-      }
-      const chunkIndex = run.speechChunkIndex ?? 0;
-      run.speechChunkIndex = chunkIndex + 1;
-      run.speechStarted = true;
-      queued = true;
-      enqueueSpeechChunk({
-        text: speechText,
-        index: chunkIndex,
-        total: chunkIndex + 1,
-      }, run.timing);
-    }
-    return queued;
-  }
-
-  function finalizeRunSpeech(run: PresenceRun): boolean {
-    const queued = queueRunSpeechFromAnswer(run, true);
-    if (!run.speechStarted) {
-      return queued;
-    }
-    const timing = run.timing;
-    speechQueue = speechQueue
-      .catch(() => {})
-      .then(() => logVoiceTimingTrace(timing, "speech-complete"));
-    void speechQueue;
-    return true;
-  }
-
-  function nextRunSpeechSegment(run: PresenceRun, final: boolean): { text: string } | null {
-    const cursor = run.speechCursor ?? 0;
-    const pending = run.answer.slice(cursor);
-    const prefix = selectSpeechPrefix(pending, final, !run.speechStarted);
-    if (!prefix) {
-      return null;
-    }
-    run.speechCursor = cursor + prefix.consumed;
-    return { text: prefix.text };
-  }
-
-  function enqueueSpeechChunk(chunk: SpeechChunk, timing?: VoiceTimingTrace): void {
-    speechQueue = speechQueue
-      .catch(() => {})
-      .then(() => speakQueuedSpeechChunk(chunk, timing));
-    void speechQueue;
-  }
-
-  async function speakQueuedSpeechChunk(chunk: SpeechChunk, timing?: VoiceTimingTrace): Promise<void> {
-    if (destroyed || !speakReplies) {
-      return;
-    }
-    if (!gatewayClient.isConnected()) {
-      setSpeechStatus("Speech unavailable while disconnected");
-      return;
-    }
-    const attempt = ++speechAttempt;
-    try {
-      setSpeechStatus(speechChunkStatus("Generating speech", chunk));
-      const result = await requestSpeechChunk(chunk, attempt, timing);
-      if (attempt !== speechAttempt) {
-        return;
-      }
-      await playSpeechChunk(result, chunk, attempt, timing);
-      if (attempt === speechAttempt) {
-        setSpeechStatus(speakReplies ? "Speak replies on" : "Speech off");
-      }
-    } catch (error) {
-      if (attempt !== speechAttempt) {
-        return;
-      }
-      speechAudio = null;
-      const message = formatError(error);
-      setSpeechStatus("Speech failed: " + message);
-      recordVoiceTimingFailure(timing, message, "speech_failed");
-    }
-  }
-
   function scheduleInterimSpeech(runId: string, text: string, key: string): void {
     if (!speakReplies) {
       return;
@@ -1135,94 +936,7 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
     }
     lastInterimSpeechKey = key;
     lastInterimSpeechAt = now;
-    void speakReply(text, { interrupt: false });
-  }
-
-  async function requestSpeechChunk(
-    chunk: SpeechChunk,
-    attempt: number,
-    timing?: VoiceTimingTrace,
-  ): Promise<AiSpeechCreateResult> {
-    if (attempt !== speechAttempt) {
-      throw new Error("Speech cancelled");
-    }
-    const requestedAt = Date.now();
-    markVoiceTiming(timing, chunk.index === 0 ? "speech_first_chunk_requested" : "speech_chunk_requested");
-    const result = await gatewayClient.ai.speech.create({
-      text: chunk.text,
-    });
-    recordVoiceTimingChunkReady(timing, chunk, requestedAt, result);
-    return result;
-  }
-
-  function playSpeechChunk(
-    result: AiSpeechCreateResult,
-    chunk: SpeechChunk,
-    attempt: number,
-    timing?: VoiceTimingTrace,
-  ): Promise<void> {
-    return new Promise((resolve, reject) => {
-      if (attempt !== speechAttempt) {
-        resolve();
-        return;
-      }
-      if (result.skipped || result.audio.size <= 0 || !result.audio.data) {
-        resolve();
-        return;
-      }
-
-      const audio = new Audio(result.audio.data);
-      let settled = false;
-      let cancelPlayback: (() => void) | null = null;
-      const cleanup = () => {
-        audio.onplay = null;
-        audio.onended = null;
-        audio.onerror = null;
-        if (speechAudio === audio) {
-          speechAudio = null;
-        }
-        if (audio.src.startsWith("blob:")) {
-          URL.revokeObjectURL(audio.src);
-        }
-        if (speechPlaybackCancel === cancelPlayback) {
-          speechPlaybackCancel = null;
-        }
-      };
-      const finish = (error?: Error) => {
-        if (settled) {
-          return;
-        }
-        settled = true;
-        cleanup();
-        if (error) {
-          reject(error);
-          return;
-        }
-        resolve();
-      };
-      cancelPlayback = () => finish();
-      speechAudio = audio;
-      speechPlaybackCancel = cancelPlayback;
-      audio.onplay = () => {
-        if (attempt === speechAttempt) {
-          recordVoiceTimingChunkPlaybackStart(timing, chunk);
-          setSpeechStatus(speechChunkStatus("Speaking", chunk));
-        }
-      };
-      audio.onended = () => {
-        recordVoiceTimingChunkPlaybackEnd(timing, chunk);
-        finish();
-      };
-      audio.onerror = () => finish(new Error("Speech playback failed"));
-      setSpeechStatus(speechChunkStatus("Starting speech", chunk));
-      void audio.play().catch((error: unknown) => {
-        finish(error instanceof Error ? error : new Error(String(error)));
-      });
-    });
-  }
-
-  function speechChunkStatus(prefix: string, chunk: SpeechChunk): string {
-    return chunk.total > 1 ? `${prefix} ${chunk.index + 1}/${chunk.total}` : prefix;
+    void speechOutput.speakReply(text, { interrupt: false });
   }
 
   function handleRunSignal(signal: string, payload: unknown): void {
@@ -1260,7 +974,7 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
         note = "Mind is responding";
         showPresenceActivity("Responding", run.answer || run.prompt);
         clearPendingInterimSpeech(runId);
-        queueRunSpeechFromAnswer(run, false);
+        speechOutput.queueRunSpeechFromAnswer(run, false);
         setState(state);
         return;
       }
@@ -1375,8 +1089,8 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
         finalStatus === "Failed" ? "failed" : finalStatus === "Stopped" ? "stopped" : "done",
       );
       if (!error && !aborted && run.answer) {
-        if (!finalizeRunSpeech(run)) {
-          void speakReply(run.answer, { timing: run.timing });
+        if (!speechOutput.finalizeRunSpeech(run)) {
+          void speechOutput.speakReply(run.answer, { timing: run.timing });
         }
       } else if (run.timing) {
         logVoiceTimingTrace(run.timing, finalStatus.toLowerCase());
@@ -1486,14 +1200,14 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
     speakReplies = speakNode?.checked === true;
     saveSpeakRepliesPreference(speakReplies);
     if (!speakReplies) {
-      cancelSpeechOutput("Speech off");
+      speechOutput.cancel("Speech off");
     } else {
-      void speakReply("Mind voice is on.", { force: true });
+      void speechOutput.speakReply("Mind voice is on.", { force: true });
     }
     setState(state);
   };
   const onSpeakTest = () => {
-    void speakReply("This is Mind.", { force: true });
+    void speechOutput.speakReply("This is Mind.", { force: true });
   };
   const onTranscriptInput = () => setState(state);
 
@@ -1518,7 +1232,7 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
     gatewayClient.onStatus((status) => {
       if (status.state !== "connected") {
         cleanupPushRecorder();
-        cancelSpeechOutput("Speech unavailable while disconnected");
+        speechOutput.cancel("Speech unavailable while disconnected");
         stopAmbient();
         setState(state === "unsupported" ? "unsupported" : "idle");
         return;
@@ -1540,7 +1254,7 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
       destroyed = true;
       clearActivityHideTimer();
       clearPendingInterimSpeech();
-      cancelSpeechOutput();
+      speechOutput.cancel();
       cleanupPushRecorder();
       stopAmbient();
       for (const remove of listeners) {
