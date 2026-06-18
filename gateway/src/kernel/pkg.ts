@@ -33,6 +33,7 @@ import type {
   PkgCatalogEntry,
   PkgSummary,
 } from "@humansandmachines/gsv/protocol";
+import gsvPackageInfo from "@humansandmachines/gsv/package.json";
 import type {
   InstalledPackageRecord,
   PackageBindingGrant,
@@ -53,6 +54,7 @@ import { RipgitClient, type RipgitRepoRef } from "../fs/ripgit/client";
 export { isRepoPublic } from "./repo-visibility";
 
 const DEFAULT_PACKAGE_CREATE_REF = "main";
+const GSV_SDK_PACKAGE_VERSION = gsvPackageInfo.version;
 const TEXT_ENCODER = new TextEncoder();
 
 export function handlePkgList(
@@ -728,7 +730,7 @@ function buildBasePackageJson(packageName: string): string {
     version: "0.1.0",
     type: "module",
     dependencies: {
-      "@humansandmachines/gsv": "0.0.1",
+      "@humansandmachines/gsv": GSV_SDK_PACKAGE_VERSION,
     },
   }, null, 2)}\n`;
 }
