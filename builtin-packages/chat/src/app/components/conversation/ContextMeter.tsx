@@ -32,7 +32,7 @@ export function ConversationCost({ state }: { state: ContextState | null }) {
   ].join(" · ");
   return (
     <div class="conversation-cost" title={title} aria-label={title}>
-      {label}
+      $
     </div>
   );
 }
