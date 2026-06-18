@@ -90,6 +90,7 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
     await this.ensureLoaded();
     const normalized = normalizePath(path);
     this.assertWritable(normalized);
+    await this.assertNotDirectory(normalized);
     await this.ensureDirectory(dirname(normalized));
     this.files.set(normalized, copyBytes(content));
     await this.persistEntry({
@@ -103,6 +104,7 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
   async append(path: string, content: Uint8Array): Promise<void> {
     await this.ensureLoaded();
     const normalized = normalizePath(path);
+    await this.assertNotDirectory(normalized);
     const current = await this.exists(normalized) ? await this.read(normalized) : new Uint8Array();
     const next = new Uint8Array(current.byteLength + content.byteLength);
     next.set(current, 0);
@@ -364,6 +366,18 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
     const normalized = normalizePath(path);
     if (!isWritablePath(normalized)) {
       throw new Error(`Read-only path: ${normalized}`);
+    }
+  }
+
+  private async assertNotDirectory(path: string): Promise<void> {
+    let stat: FileStat;
+    try {
+      stat = await this.stat(path);
+    } catch {
+      return;
+    }
+    if (stat.isDirectory) {
+      throw new Error(`Is a directory: ${path}`);
     }
   }
 }

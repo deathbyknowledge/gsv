@@ -244,6 +244,10 @@ async function saveConfigFromForm(options: { connect?: boolean } = {}): Promise<
     setNotice("info", options.connect ? "Saved settings" : "Saved settings");
 
     if (options.connect) {
+      if (response.state.connection.state === "connected" || response.state.connection.state === "connecting") {
+        setNotice("info", response.state.connection.state === "connected" ? "Connected" : "Connecting");
+        return;
+      }
       response = await sendUiMessage({ type: "connect" });
       handleResponse(response);
       setNotice(response.ok ? "info" : "error", response.ok ? "Connected" : response.error);
