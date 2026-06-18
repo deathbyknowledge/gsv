@@ -427,6 +427,8 @@ function AgentWorkspace({
 
       {errorText ? <p class="gsv-inline-error">{errorText}</p> : null}
 
+      <BehaviorEditor agent={agent} busy={busy} onSave={onSaveBehavior} />
+
       <ContextEditor
         key={agent.username}
         files={context}
@@ -434,8 +436,6 @@ function AgentWorkspace({
         busy={busy}
         onSave={onSaveContext}
       />
-
-      <BehaviorEditor agent={agent} busy={busy} onSave={onSaveBehavior} />
     </section>
   );
 }
@@ -582,9 +582,9 @@ function BehaviorEditor({
   return (
     <section class="gsv-agents-panel" aria-label="Behavior">
       <header class="gsv-section-intro">
-        <span class="gsv-kicker">Behavior</span>
-        <h3>Model &amp; approvals</h3>
-        <p>Overrides applied whenever this agent runs. Leave the model blank to inherit the system default.</p>
+        <span class="gsv-kicker">Permissions</span>
+        <h3>Model &amp; tool permissions</h3>
+        <p>Interactive policy for this agent. Leave the model blank to inherit the system default.</p>
       </header>
 
       <label class="gsv-field">

@@ -1,5 +1,5 @@
 import { buildCrewAgents, buildTaskGroups, type CrewTask } from "../../domain/crew";
-import { ConsoleCard, DisclosureLine, ObjectHeader } from "../../components/ui/ConsoleCard";
+import { ConsoleCard, ObjectHeader } from "../../components/ui/ConsoleCard";
 import { Icon } from "../../components/ui/Icon";
 import type { AgentDetail, AgentModelProfile } from "../agents/types";
 import type { ProcessEntry } from "./types";
@@ -45,7 +45,7 @@ export function TaskBoard({
           <div class="gsv-task-list">
             {group.tasks.length === 0 ? (
               <ConsoleCard class="gsv-task-card is-idle">
-                <DisclosureLine label="Idle" muted />
+                <p class="gsv-task-idle">Idle</p>
               </ConsoleCard>
             ) : group.tasks.map((task) => (
               <TaskCard key={task.pid} task={task} onSelect={() => onSelect(task.process)} />

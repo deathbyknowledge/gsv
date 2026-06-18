@@ -2,9 +2,6 @@ import { buildCrewAgents } from "../../domain/crew";
 import { ActionButton } from "../../components/ui/ActionButton";
 import {
   ConsoleCard,
-  DisclosureLine,
-  MetadataItem,
-  MetadataStack,
   ObjectHeader,
 } from "../../components/ui/ConsoleCard";
 import type { ProcessEntry } from "../runtime/types";
@@ -41,13 +38,6 @@ export function CrewOverview({
         ) : models.map((model) => (
           <ModelCard key={model.id} model={model} />
         ))}
-        <ConsoleCard class="gsv-create-card">
-          <div class="gsv-create-card-copy">
-            <strong>Add new model</strong>
-            <span>Model profile</span>
-          </div>
-          <ActionButton icon="plus" label="Add model" size="icon" disabled />
-        </ConsoleCard>
       </section>
 
       <section class="gsv-crew-agents" aria-label="Crew members">
@@ -92,18 +82,12 @@ function ModelCard({ model }: { model: AgentModelProfile }) {
         status={model.default ? "good" : "neutral"}
         compact
       />
-      <MetadataStack>
-        <MetadataItem label="Provider" value={model.provider} />
-        <MetadataItem label="Model" value={model.model} />
-        <MetadataItem label="Reasoning" value={model.reasoning} />
-        <MetadataItem label="Max tokens" value={model.maxTokens} />
-        <MetadataItem label="Context" value={model.maxContext} />
-      </MetadataStack>
+      <div class="gsv-model-summary">
+        <span>{model.provider}</span>
+        <strong>{model.model}</strong>
+      </div>
       {model.default ? (
-        <label class="gsv-model-default">
-          <input type="checkbox" checked disabled />
-          <span>Default model</span>
-        </label>
+        <span class="gsv-model-default">Default model</span>
       ) : null}
     </ConsoleCard>
   );
@@ -134,31 +118,48 @@ function AgentObjectCard({
 
       {expanded ? (
         <>
-          <div class="gsv-agent-card-lines">
-            <DisclosureLine label="Model" detail={agent.modelLabel} open />
-            <DisclosureLine label={agent.modelDetail} muted />
-            <DisclosureLine
-              label={`Active tasks (${agent.activeTasks.length})`}
-              open={firstTasks.length > 0}
-              tone={agent.activeTasks.length > 0 ? "good" : "neutral"}
-            />
+          <div class="gsv-card-facts">
+            <CardFact label="Model" value={agent.modelLabel} detail={agent.modelDetail} />
+            <CardFact label="Active tasks" value={String(agent.activeTasks.length)} />
             {firstTasks.length === 0 ? (
-              <DisclosureLine label="Idle" muted />
+              <p class="gsv-agent-idle">Idle</p>
             ) : firstTasks.map((task) => (
-              <DisclosureLine key={task.pid} label={task.title} muted tone={task.tone} />
+              <p key={task.pid} class={`gsv-agent-task-line is-${task.tone}`}>{task.title}</p>
             ))}
-            <DisclosureLine label="Permissions" detail={agent.permissionLabel} open />
           </div>
+          <PermissionAction label={agent.permissionLabel} onManage={onManage} />
           <div class="gsv-card-actions">
             <button type="button" class="gsv-text-action" onClick={onManage}>Manage &gt;</button>
           </div>
         </>
       ) : (
         <div class="gsv-card-actions">
-          <span class="gsv-agent-compact-meta">{agent.activeTasks.length} active</span>
+          <span class="gsv-agent-compact-meta">{agent.permissionLabel} / {agent.activeTasks.length} active</span>
           <button type="button" class="gsv-text-action" onClick={onManage}>Manage &gt;</button>
         </div>
       )}
     </ConsoleCard>
+  );
+}
+
+function CardFact({ label, value, detail }: { label: string; value: string; detail?: string }) {
+  return (
+    <div class="gsv-card-fact">
+      <span>{label}</span>
+      <strong>{value}</strong>
+      {detail ? <small>{detail}</small> : null}
+    </div>
+  );
+}
+
+function PermissionAction({ label, onManage }: { label: string; onManage: () => void }) {
+  return (
+    <div class="gsv-permission-action">
+      <div>
+        <span>Permissions</span>
+        <strong>{label}</strong>
+      </div>
+      <button type="button" class="gsv-text-action" onClick={onManage}>Manage permissions &gt;</button>
+    </div>
   );
 }
