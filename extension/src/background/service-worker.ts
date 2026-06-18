@@ -30,6 +30,7 @@ const diagnosticsReady = loadDiagnostics().then((stored) => {
 let diagnosticsWrite: Promise<void> = Promise.resolve();
 let lastConnectionStatus = "";
 let connectPromise: Promise<void> | null = null;
+let manualReconnectSuppressed = false;
 
 const browserTarget = createBrowserTargetDriver(addActivity);
 driver.implement("shell.exec", browserTarget.handle);
@@ -81,9 +82,11 @@ async function handleRuntimeMessage(message: RuntimeMessage): Promise<RuntimeRes
       case "status":
         return await stateResponse();
       case "connect":
+        manualReconnectSuppressed = false;
         await connectNow();
         return await stateResponse();
       case "disconnect":
+        manualReconnectSuppressed = true;
         driver.disconnect();
         return await stateResponse();
       case "stop-all":
@@ -98,6 +101,7 @@ async function handleRuntimeMessage(message: RuntimeMessage): Promise<RuntimeRes
           detail: `${config.deviceId} (${gatewayHost(config.gatewayUrl)})`,
           status: "info",
         });
+        manualReconnectSuppressed = false;
         if (config.autoConnect && configReady(config)) {
           await connectNow(config);
         }
@@ -124,7 +128,12 @@ async function handleRuntimeMessage(message: RuntimeMessage): Promise<RuntimeRes
 
 async function maybeConnect(): Promise<void> {
   const config = await loadConfig();
-  if (!config.autoConnect || !configReady(config) || client.getStatus().state !== "disconnected") {
+  if (
+    manualReconnectSuppressed
+    || !config.autoConnect
+    || !configReady(config)
+    || client.getStatus().state !== "disconnected"
+  ) {
     return;
   }
   await connectNow(config).catch(() => {});
@@ -151,6 +160,7 @@ async function connectNow(config?: ExtensionConfig): Promise<void> {
 async function stopAll(): Promise<RuntimeResponse> {
   const stoppedCaptures = await stopNetworkCapture();
   const detachedTabs = await releaseAllDebuggers();
+  manualReconnectSuppressed = true;
   driver.disconnect("stop all");
   addActivity({
     kind: "sensitive",

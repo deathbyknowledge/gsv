@@ -159,9 +159,7 @@ export async function startNetworkCapture(options: NetworkCaptureOptions): Promi
   ensureNetworkListener();
   const existing = captures.get(options.tabId);
   if (existing) {
-    existing.bodies = options.bodies;
-    existing.persist = options.persist;
-    existing.bodyLimit = options.bodyLimit;
+    assertSameCaptureOptions(existing, options);
     return captureStatus(existing);
   }
 
@@ -197,6 +195,19 @@ export async function startNetworkCapture(options: NetworkCaptureOptions): Promi
     await releaseDebugger(options.tabId).catch(() => undefined);
     throw error;
   }
+}
+
+function assertSameCaptureOptions(existing: CaptureState, options: NetworkCaptureOptions): void {
+  if (
+    existing.bodies === options.bodies
+    && existing.persist === options.persist
+    && existing.bodyLimit === options.bodyLimit
+  ) {
+    return;
+  }
+  throw new Error(
+    `Network capture already active for tab ${options.tabId}. Stop it before changing --bodies, --persist, or --body-limit.`,
+  );
 }
 
 export async function stopNetworkCapture(tabId?: number): Promise<NetworkCaptureStatus[]> {
