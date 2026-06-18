@@ -385,6 +385,25 @@
   flex: 0 1 auto;
 }
 
+.conversation-cost {
+  flex: 0 0 auto;
+  min-width: 62px;
+  max-width: 88px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.62);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .context-track {
   position: relative;
   display: inline-block;

@@ -9,6 +9,7 @@ import {
   completeWithWorkersAi,
   contextToWorkersAiMessages,
   extractWorkersAiContextWindow,
+  hasWorkersAiModelPricing,
   normalizeWorkersAiResponse,
   streamWithWorkersAi,
 } from "./workers-ai";
@@ -421,6 +422,27 @@ describe("normalizeWorkersAiResponse", () => {
     expect(response.usage.output).toBe(200);
     expect(response.usage.totalTokens).toBe(1200);
     expect(response.usage.cost.total).toBeGreaterThan(0);
+  });
+
+  it("leaves cost unknown for Workers AI models without pi-ai pricing", () => {
+    expect(hasWorkersAiModelPricing(DEFAULT_WORKERS_AI_MODEL)).toBe(true);
+    expect(hasWorkersAiModelPricing("@cf/example/not-priced")).toBe(false);
+
+    const response = normalizeWorkersAiResponse(
+      {
+        response: "hello",
+        usage: {
+          prompt_tokens: 1000,
+          completion_tokens: 200,
+          total_tokens: 1200,
+        },
+      },
+      "@cf/example/not-priced",
+    );
+
+    expect(response.usage.input).toBe(1000);
+    expect(response.usage.output).toBe(200);
+    expect(response.usage.cost.total).toBe(0);
   });
 
   it("normalizes legacy tool call payloads without ids", () => {

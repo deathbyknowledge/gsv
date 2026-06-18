@@ -149,6 +149,11 @@
     width: 68px;
   }
 
+  .chat-stage-actions .conversation-cost {
+    min-width: 54px;
+    max-width: 64px;
+  }
+
   .chat-stage-title h1,
   .chat-stage-title p {
     overflow: hidden;

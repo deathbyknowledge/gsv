@@ -79,6 +79,8 @@ import type {
   ProcConversationLiveGeneration,
   ProcArchiveEntry,
   ProcContextState,
+  ProcUsageCostSource,
+  ProcUsageState,
   ProcResetResult,
   ProcKillResult,
   ProcSpawnAssignment,
@@ -108,8 +110,11 @@ import {
 import {
   ProcessStore,
   parseAssistantMessageMeta,
+  parseMessageMetadata,
+  normalizeMessageMetadata,
   stringifyAssistantMessageMeta,
   type MessageRole,
+  type MessageMetadata,
   type MessageRecord,
   type PendingHilRecord,
 } from "./store";
@@ -133,6 +138,10 @@ import {
   buildProcContextState,
   estimateContextInputTokens,
 } from "./context-pressure";
+import {
+  hasWorkersAiModelPricing,
+  isWorkersAiProvider,
+} from "../inference/workers-ai";
 import { assembleSystemPrompt } from "./context";
 import { sendFrameToKernel } from "../shared/utils";
 import {
@@ -211,6 +220,7 @@ type ArchivedMessageRecord = {
   toolCallId?: string;
   media?: unknown;
   origin?: InteractionOrigin;
+  metadata?: MessageMetadata;
   createdAt?: number;
 };
 
@@ -239,6 +249,112 @@ function normalizeStringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.map((item) => String(item))
     : [];
+}
+
+function buildAssistantMessageMetadata(
+  response: AssistantMessage,
+  config: AiConfigResult,
+): MessageMetadata | undefined {
+  const usage = assistantUsageToProcUsageState(
+    response.usage,
+    resolveUsageCostSource(response, config),
+  );
+  const metadata = normalizeMessageMetadata({
+    provider: {
+      api: response.api,
+      provider: response.provider || config.provider,
+      model: response.model || config.model,
+      responseModel: response.responseModel,
+      responseId: response.responseId,
+      stopReason: response.stopReason,
+    },
+    usage,
+  });
+  return metadata ?? undefined;
+}
+
+function assistantUsageToProcUsageState(
+  usage: AssistantMessage["usage"] | undefined,
+  costSource: ProcUsageCostSource | null,
+): ProcUsageState | undefined {
+  if (!usage) {
+    return undefined;
+  }
+  const inputTokens = normalizeNonNegativeNumber(usage.input) ?? 0;
+  const outputTokens = normalizeNonNegativeNumber(usage.output) ?? 0;
+  const cacheReadTokens = normalizeNonNegativeNumber(usage.cacheRead) ?? 0;
+  const cacheWriteTokens = normalizeNonNegativeNumber(usage.cacheWrite) ?? 0;
+  const totalTokens = normalizeNonNegativeNumber(usage.totalTokens) ?? inputTokens + outputTokens;
+  const cost = costSource
+    ? {
+        input: normalizeNonNegativeNumber(usage.cost?.input) ?? 0,
+        output: normalizeNonNegativeNumber(usage.cost?.output) ?? 0,
+        cacheRead: normalizeNonNegativeNumber(usage.cost?.cacheRead) ?? 0,
+        cacheWrite: normalizeNonNegativeNumber(usage.cost?.cacheWrite) ?? 0,
+        total: normalizeNonNegativeNumber(usage.cost?.total)
+          ?? (normalizeNonNegativeNumber(usage.cost?.input) ?? 0)
+            + (normalizeNonNegativeNumber(usage.cost?.output) ?? 0)
+            + (normalizeNonNegativeNumber(usage.cost?.cacheRead) ?? 0)
+            + (normalizeNonNegativeNumber(usage.cost?.cacheWrite) ?? 0),
+        currency: "USD" as const,
+        source: costSource,
+      }
+    : null;
+  return {
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheWriteTokens,
+    totalTokens,
+    cost,
+    ...(costSource ? {} : { costIncomplete: true }),
+    updatedAt: Date.now(),
+  };
+}
+
+function resolveUsageCostSource(
+  response: AssistantMessage,
+  config: AiConfigResult,
+): ProcUsageCostSource | null {
+  if (isWorkersAiProvider(config.provider) || isWorkersAiProvider(response.provider)) {
+    const pricedModel = [response.model, response.responseModel, config.model]
+      .filter((model): model is string => typeof model === "string" && model.length > 0)
+      .some((model) => hasWorkersAiModelPricing(model));
+    return pricedModel || usageCostHasValue(response.usage) ? "model-pricing" : null;
+  }
+  return usageCostHasValue(response.usage) || !usageHasPositiveTokens(response.usage)
+    ? "provider"
+    : null;
+}
+
+function usageCostHasValue(usage: AssistantMessage["usage"] | undefined): boolean {
+  if (!usage) {
+    return false;
+  }
+  return [
+    usage.cost?.input,
+    usage.cost?.output,
+    usage.cost?.cacheRead,
+    usage.cost?.cacheWrite,
+    usage.cost?.total,
+  ].some((value) => typeof value === "number" && Number.isFinite(value) && value > 0);
+}
+
+function usageHasPositiveTokens(usage: AssistantMessage["usage"] | undefined): boolean {
+  if (!usage) {
+    return false;
+  }
+  return [
+    usage.input,
+    usage.output,
+    usage.cacheRead,
+    usage.cacheWrite,
+    usage.totalTokens,
+  ].some((value) => typeof value === "number" && Number.isFinite(value) && value > 0);
+}
+
+function normalizeNonNegativeNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
 }
 
 function isProcessIdentity(value: unknown): value is ProcessIdentity {
@@ -1225,7 +1341,9 @@ export class Process extends Host<Env> {
 
     const messages: ProcHistoryMessage[] = records.map((r) => {
       const origin = parseInteractionOrigin(r.origin);
+      const metadata = parseMessageMetadata(r.metadata);
       const run = r.runId ? { runId: r.runId } : {};
+      const metadataPart = metadata ? { metadata } : {};
       if (r.role === "toolResult") {
         let meta: { toolName?: string; isError?: boolean } = {};
         if (r.toolCalls) {
@@ -1248,6 +1366,7 @@ export class Process extends Host<Env> {
           timestamp: r.createdAt,
           ...run,
           ...(origin ? { origin } : {}),
+          ...metadataPart,
         };
       }
 
@@ -1264,6 +1383,7 @@ export class Process extends Host<Env> {
           timestamp: r.createdAt,
           ...run,
           ...(origin ? { origin } : {}),
+          ...metadataPart,
         };
       }
 
@@ -1279,6 +1399,7 @@ export class Process extends Host<Env> {
           timestamp: r.createdAt,
           ...run,
           ...(origin ? { origin } : {}),
+          ...metadataPart,
         };
       }
 
@@ -1289,6 +1410,7 @@ export class Process extends Host<Env> {
         timestamp: r.createdAt,
         ...run,
         ...(origin ? { origin } : {}),
+        ...metadataPart,
       };
     });
 
@@ -1811,6 +1933,7 @@ export class Process extends Host<Env> {
       toolCallId: message.toolCallId,
       media: message.media === undefined ? undefined : JSON.stringify(message.media),
       origin: serializeInteractionOrigin(message.origin) ?? undefined,
+      metadata: message.metadata,
       runId: message.runId,
       createdAt: message.createdAt,
     });
@@ -1828,6 +1951,7 @@ export class Process extends Host<Env> {
       toolCallId: message.toolCallId ?? undefined,
       media: message.media ?? undefined,
       origin: message.origin ?? undefined,
+      metadata: message.metadata,
       runId: message.runId ?? undefined,
       createdAt: message.createdAt,
     });
@@ -1879,6 +2003,7 @@ export class Process extends Host<Env> {
 
   private toProcHistoryMessageFromArchive(message: ArchivedMessageRecord): ProcHistoryMessage {
     const run = message.runId ? { runId: message.runId } : {};
+    const metadataPart = message.metadata ? { metadata: message.metadata } : {};
     if (message.role === "toolResult") {
       return {
         id: message.id,
@@ -1892,6 +2017,7 @@ export class Process extends Host<Env> {
         timestamp: message.createdAt,
         ...run,
         ...(message.origin ? { origin: message.origin } : {}),
+        ...metadataPart,
       };
     }
 
@@ -1907,6 +2033,7 @@ export class Process extends Host<Env> {
         timestamp: message.createdAt,
         ...run,
         ...(message.origin ? { origin: message.origin } : {}),
+        ...metadataPart,
       };
     }
 
@@ -1921,6 +2048,7 @@ export class Process extends Host<Env> {
         timestamp: message.createdAt,
         ...run,
         ...(message.origin ? { origin: message.origin } : {}),
+        ...metadataPart,
       };
     }
 
@@ -1931,6 +2059,7 @@ export class Process extends Host<Env> {
       timestamp: message.createdAt,
       ...run,
       ...(message.origin ? { origin: message.origin } : {}),
+      ...metadataPart,
     };
   }
 
@@ -2601,7 +2730,8 @@ export class Process extends Host<Env> {
     }
 
     if (isProviderContextOverflow(response, run.config!.contextWindowTokens)) {
-      await this.updateContextState(runId, conversationId, run.config!, context, response.usage);
+      const overflowMetadata = buildAssistantMessageMetadata(response, run.config!);
+      await this.updateContextState(runId, conversationId, run.config!, context, response.usage, overflowMetadata?.usage);
       if (await this.handleRunStopped(runId)) {
         return;
       }
@@ -2667,6 +2797,7 @@ export class Process extends Host<Env> {
       }
     }
 
+    const assistantMetadata = buildAssistantMessageMetadata(response, run.config!);
     this.store.appendMessage("assistant", text, {
       conversationId,
       runId,
@@ -2674,6 +2805,7 @@ export class Process extends Host<Env> {
         thinking: thinkingBlocks,
         toolCalls,
       }),
+      metadata: assistantMetadata,
     });
 
     piMessages = await this.buildContextMessages(conversationId);
@@ -2682,7 +2814,7 @@ export class Process extends Host<Env> {
       messages: piMessages,
       tools: tools.length > 0 ? tools : undefined,
     };
-    await this.updateContextState(runId, conversationId, run.config!, context, response.usage);
+    await this.updateContextState(runId, conversationId, run.config!, context, response.usage, assistantMetadata?.usage);
     if (await this.handleRunStopped(runId)) {
       return;
     }
@@ -2919,6 +3051,7 @@ export class Process extends Host<Env> {
     config: AiConfigResult,
     context: Context,
     usage?: AssistantMessage["usage"],
+    usageState?: ProcUsageState,
   ): Promise<ProcContextState> {
     const { count: messageCount, lastMessageId } = this.store.messageStats(conversationId);
     const state = buildProcContextState({
@@ -2932,6 +3065,8 @@ export class Process extends Host<Env> {
       maxOutputTokens: config.maxTokens,
       estimatedInputTokens: estimateContextInputTokens(context),
       usage,
+      usageState,
+      conversationUsage: this.store.getConversationUsage(conversationId),
     });
     this.store.setContextState(state);
     await this.emitProcChanged(["context"], {
@@ -4180,6 +4315,7 @@ function assistantToolCallIds(message: Message): string[] {
 
 function serializeArchivedMessage(message: MessageRecord): Record<string, unknown> {
   const origin = parseInteractionOrigin(message.origin);
+  const metadata = parseMessageMetadata(message.metadata) ?? undefined;
   if (message.role === "assistant") {
     const meta = parseAssistantMessageMeta(message.toolCalls);
     return {
@@ -4193,6 +4329,7 @@ function serializeArchivedMessage(message: MessageRecord): Record<string, unknow
       thinking: meta.thinking,
       tool_call_id: message.toolCallId ?? undefined,
       origin,
+      metadata,
       ts: message.createdAt,
     };
   }
@@ -4208,6 +4345,7 @@ function serializeArchivedMessage(message: MessageRecord): Record<string, unknow
     tool_calls: message.toolCalls ? JSON.parse(message.toolCalls) : undefined,
     tool_call_id: message.toolCallId ?? undefined,
     origin,
+    metadata,
     ts: message.createdAt,
   };
 }
@@ -4232,6 +4370,7 @@ function parseArchivedMessageRecord(value: unknown): ArchivedMessageRecord {
     ? record.run_id
     : undefined;
   const origin = parseInteractionOriginRecord(record.origin);
+  const metadata = normalizeMessageMetadata(record.metadata) ?? undefined;
 
   return {
     id,
@@ -4247,6 +4386,7 @@ function parseArchivedMessageRecord(value: unknown): ArchivedMessageRecord {
     toolCallId,
     media: record.media,
     origin,
+    metadata,
     createdAt,
   };
 }

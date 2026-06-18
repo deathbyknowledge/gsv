@@ -3545,6 +3545,55 @@ describe("Process DO — mechanical", () => {
       });
     });
 
+    it("returns assistant usage metadata", async () => {
+      const pid = "mech-history-usage-metadata";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        store.appendMessage("assistant", "priced reply", {
+          metadata: {
+            provider: {
+              api: "workers-ai-binding",
+              provider: "workers-ai",
+              model: "@cf/nvidia/nemotron-3-120b-a12b",
+            },
+            usage: {
+              inputTokens: 100,
+              outputTokens: 25,
+              cacheReadTokens: 0,
+              cacheWriteTokens: 0,
+              totalTokens: 125,
+              cost: {
+                input: 0.00005,
+                output: 0.0000375,
+                cacheRead: 0,
+                cacheWrite: 0,
+                total: 0.0000875,
+                currency: "USD",
+                source: "model-pricing",
+              },
+            },
+          },
+        });
+      });
+
+      const res = (await stub.recvFrame(
+        makeReq("proc.history", {}),
+      )) as ResponseOkFrame;
+
+      expect(res.ok).toBe(true);
+      const data = res.data as any;
+      expect(data.messages[0].metadata).toMatchObject({
+        provider: { provider: "workers-ai" },
+        usage: {
+          inputTokens: 100,
+          outputTokens: 25,
+          cost: { total: 0.0000875, source: "model-pricing" },
+        },
+      });
+    });
+
     it("respects limit and offset", async () => {
       const pid = "mech-history-2";
       const stub = await initProcess(pid, ROOT_IDENTITY);

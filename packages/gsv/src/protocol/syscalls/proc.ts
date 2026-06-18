@@ -210,6 +210,7 @@ export type ProcHistoryMessage = {
   content: unknown;
   timestamp?: number;
   origin?: InteractionOrigin;
+  metadata?: ProcMessageMetadata;
 };
 
 export type ProcContextPressureLevel =
@@ -220,6 +221,47 @@ export type ProcContextPressureLevel =
   | "full";
 
 export type ProcContextUsageSource = "estimate" | "provider";
+
+export type ProcUsageCostSource =
+  | "provider"
+  | "model-pricing"
+  | "mixed";
+
+export type ProcUsageCost = {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  total: number;
+  currency: "USD";
+  source: ProcUsageCostSource;
+};
+
+export type ProcUsageState = {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  totalTokens: number;
+  cost: ProcUsageCost | null;
+  generations?: number;
+  costIncomplete?: boolean;
+  updatedAt?: number;
+};
+
+export type ProcMessageProviderMetadata = {
+  api?: string;
+  provider?: string;
+  model?: string;
+  responseModel?: string;
+  responseId?: string;
+  stopReason?: string;
+};
+
+export type ProcMessageMetadata = {
+  provider?: ProcMessageProviderMetadata;
+  usage?: ProcUsageState;
+};
 
 export type ProcContextState = {
   conversationId: string;
@@ -234,6 +276,8 @@ export type ProcContextState = {
   inputTokens: number;
   outputTokens?: number;
   totalTokens?: number;
+  usage?: ProcUsageState;
+  conversationUsage?: ProcUsageState;
   availableInputTokens: number | null;
   pressure: number | null;
   level: ProcContextPressureLevel;
