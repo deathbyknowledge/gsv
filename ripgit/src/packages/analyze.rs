@@ -15,7 +15,10 @@ use super::{
     PackageSourceLocator, ResolvedPackageSource,
 };
 
-const DEFINE_PACKAGE_IMPORT_SOURCES: [&str; 1] = ["@gsv/package/manifest"];
+const DEFINE_PACKAGE_IMPORT_SOURCES: [&str; 2] = [
+    "@humansandmachines/gsv/sdk",
+    "@humansandmachines/gsv/sdk/manifest",
+];
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ExtractedHandlerReferenceKind {
@@ -139,10 +142,14 @@ pub(crate) fn analyze_package(
     let package_json_path = join_package_path(&source.subdir, "package.json");
     let package_module_path = join_package_path(&source.subdir, "src/package.ts");
 
-    let package_json_text = read_utf8_file_at_commit(sql, &source.resolved_commit, &package_json_path)?
-        .ok_or_else(|| Error::RustError(format!("missing package file: {}", package_json_path)))?;
-    let package_module_text = read_utf8_file_at_commit(sql, &source.resolved_commit, &package_module_path)?
-        .ok_or_else(|| Error::RustError(format!("missing package file: {}", package_module_path)))?;
+    let package_json_text =
+        read_utf8_file_at_commit(sql, &source.resolved_commit, &package_json_path)?.ok_or_else(
+            || Error::RustError(format!("missing package file: {}", package_json_path)),
+        )?;
+    let package_module_text =
+        read_utf8_file_at_commit(sql, &source.resolved_commit, &package_module_path)?.ok_or_else(
+            || Error::RustError(format!("missing package file: {}", package_module_path)),
+        )?;
 
     analyze_package_source(source, package_json_text, package_module_text)
 }
@@ -198,7 +205,11 @@ pub(crate) fn analyze_package_source(
     })
 }
 
-fn read_utf8_file_at_commit(sql: &SqlStorage, commit_hash: &str, path: &str) -> Result<Option<String>> {
+fn read_utf8_file_at_commit(
+    sql: &SqlStorage,
+    commit_hash: &str,
+    path: &str,
+) -> Result<Option<String>> {
     let blob_hash = resolve_blob_hash_at_commit(sql, commit_hash, path)?;
     let Some(blob_hash) = blob_hash else {
         return Ok(None);
@@ -211,7 +222,11 @@ fn read_utf8_file_at_commit(sql: &SqlStorage, commit_hash: &str, path: &str) -> 
     Ok(Some(text))
 }
 
-fn resolve_blob_hash_at_commit(sql: &SqlStorage, commit_hash: &str, path: &str) -> Result<Option<String>> {
+fn resolve_blob_hash_at_commit(
+    sql: &SqlStorage,
+    commit_hash: &str,
+    path: &str,
+) -> Result<Option<String>> {
     #[derive(Deserialize)]
     struct CommitRow {
         tree_hash: String,
@@ -234,7 +249,10 @@ fn resolve_blob_hash_at_commit(sql: &SqlStorage, commit_hash: &str, path: &str) 
         return Ok(None);
     };
 
-    let segments: Vec<&str> = path.split('/').filter(|segment| !segment.is_empty()).collect();
+    let segments: Vec<&str> = path
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect();
     if segments.is_empty() {
         return Ok(None);
     }
@@ -273,7 +291,9 @@ fn resolve_blob_hash_at_commit(sql: &SqlStorage, commit_hash: &str, path: &str) 
     Ok(None)
 }
 
-fn extract_definition(source_text: &str) -> (Option<ExtractedPackageDefinition>, Vec<PackageDiagnostic>) {
+fn extract_definition(
+    source_text: &str,
+) -> (Option<ExtractedPackageDefinition>, Vec<PackageDiagnostic>) {
     let allocator = Allocator::default();
     let source_type = SourceType::from_path("src/package.ts").unwrap_or(SourceType::ts());
     let parser_return = Parser::new(&allocator, source_text, source_type).parse();
@@ -309,7 +329,9 @@ fn extract_definition(source_text: &str) -> (Option<ExtractedPackageDefinition>,
                 if let Some(specifiers) = import_decl.specifiers.as_ref() {
                     for specifier in specifiers.iter() {
                         if let ImportDeclarationSpecifier::ImportSpecifier(spec) = specifier {
-                            if spec.imported.name() == "definePackage" && spec.local.name.as_str() == "definePackage" {
+                            if spec.imported.name() == "definePackage"
+                                && spec.local.name.as_str() == "definePackage"
+                            {
                                 has_define_package_import = true;
                             }
                         }
@@ -356,7 +378,8 @@ fn extract_definition(source_text: &str) -> (Option<ExtractedPackageDefinition>,
         diagnostics.push(simple_diagnostic(
             PackageDiagnosticSeverity::Error,
             "missing-define-package-import",
-            "src/package.ts must import definePackage directly from @gsv/package/manifest".to_string(),
+            "src/package.ts must import definePackage directly from @humansandmachines/gsv/sdk"
+                .to_string(),
             "src/package.ts",
             None,
             source_text,
@@ -424,8 +447,16 @@ fn extract_definition(source_text: &str) -> (Option<ExtractedPackageDefinition>,
         return (None, diagnostics);
     };
 
-    let definition = extract_package_object(package_object, source_text, &local_identifiers, &mut diagnostics);
-    if diagnostics.iter().any(|diagnostic| diagnostic.severity == PackageDiagnosticSeverity::Error) {
+    let definition = extract_package_object(
+        package_object,
+        source_text,
+        &local_identifiers,
+        &mut diagnostics,
+    );
+    if diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.severity == PackageDiagnosticSeverity::Error)
+    {
         (None, diagnostics)
     } else {
         (definition, diagnostics)
@@ -491,7 +522,13 @@ fn extract_package_object(
         match key.as_str() {
             "meta" => meta_expr = Some(&prop.value),
             "commands" => {
-                commands = extract_named_handlers(&prop.value, local_identifiers, source_text, diagnostics, "command")
+                commands = extract_named_handlers(
+                    &prop.value,
+                    local_identifiers,
+                    source_text,
+                    diagnostics,
+                    "command",
+                )
             }
             "browser" => {
                 browser = extract_browser_definition(&prop.value, source_text, diagnostics);
@@ -504,15 +541,21 @@ fn extract_package_object(
                 commands.extend(extracted);
             }
             "tasks" => {
-                tasks = extract_named_handlers(&prop.value, local_identifiers, source_text, diagnostics, "task")
-                    .into_iter()
-                    .filter_map(|entry| {
-                        entry.handler.map(|handler| ExtractedTaskDefinition {
-                            name: entry.name,
-                            handler,
-                        })
+                tasks = extract_named_handlers(
+                    &prop.value,
+                    local_identifiers,
+                    source_text,
+                    diagnostics,
+                    "task",
+                )
+                .into_iter()
+                .filter_map(|entry| {
+                    entry.handler.map(|handler| ExtractedTaskDefinition {
+                        name: entry.name,
+                        handler,
                     })
-                    .collect();
+                })
+                .collect();
             }
             other => diagnostics.push(simple_diagnostic(
                 PackageDiagnosticSeverity::Error,
@@ -772,7 +815,9 @@ fn extract_named_handlers(
         let Some(name) = static_property_name(prop, source_text) else {
             continue;
         };
-        let Some(handler) = extract_handler_reference(&prop.value, local_identifiers, source_text, diagnostics) else {
+        let Some(handler) =
+            extract_handler_reference(&prop.value, local_identifiers, source_text, diagnostics)
+        else {
             continue;
         };
         entries.push(ExtractedCommandDefinition {
@@ -1075,7 +1120,10 @@ fn extract_handler_reference(
                 diagnostics.push(simple_diagnostic(
                     PackageDiagnosticSeverity::Error,
                     "unknown-handler-identifier",
-                    format!("handler identifier is not declared in src/package.ts: {}", name),
+                    format!(
+                        "handler identifier is not declared in src/package.ts: {}",
+                        name
+                    ),
                     "src/package.ts",
                     Some(expr.span()),
                     source_text,
@@ -1115,17 +1163,26 @@ fn get_object_expr<'a>(expr: &'a Expression<'a>) -> Option<&'a oxc_ast::ast::Obj
 }
 
 fn static_property_name(prop: &ObjectProperty<'_>, source_text: &str) -> Option<String> {
-    prop.key.static_name().map(|name| name.to_string()).or_else(|| {
-        let span = prop.key.span();
-        let slice = slice_span(source_text, span).trim();
-        if let Some(stripped) = slice.strip_prefix('"').and_then(|value| value.strip_suffix('"')) {
-            return Some(stripped.to_string());
-        }
-        if let Some(stripped) = slice.strip_prefix('\'').and_then(|value| value.strip_suffix('\'')) {
-            return Some(stripped.to_string());
-        }
-        None
-    })
+    prop.key
+        .static_name()
+        .map(|name| name.to_string())
+        .or_else(|| {
+            let span = prop.key.span();
+            let slice = slice_span(source_text, span).trim();
+            if let Some(stripped) = slice
+                .strip_prefix('"')
+                .and_then(|value| value.strip_suffix('"'))
+            {
+                return Some(stripped.to_string());
+            }
+            if let Some(stripped) = slice
+                .strip_prefix('\'')
+                .and_then(|value| value.strip_suffix('\''))
+            {
+                return Some(stripped.to_string());
+            }
+            None
+        })
 }
 
 fn extract_string_literal(expr: &Expression<'_>) -> Option<String> {
@@ -1216,7 +1273,10 @@ mod tests {
     #[test]
     fn normalize_subdir_rejects_parent_segments() {
         assert!(normalize_subdir("../bad").is_err());
-        assert_eq!(normalize_subdir("./packages//example-tools").unwrap(), "packages/example-tools");
+        assert_eq!(
+            normalize_subdir("./packages//example-tools").unwrap(),
+            "packages/example-tools"
+        );
     }
 
     #[test]
@@ -1227,7 +1287,7 @@ mod tests {
           "type": "module"
         }"#;
         let package_ts = r#"
-          import { definePackage } from "@gsv/package/manifest";
+          import { definePackage } from "@humansandmachines/gsv/sdk";
 
           export default definePackage({
             meta: {
@@ -1251,7 +1311,12 @@ mod tests {
           });
         "#;
 
-        let analysis = analyze_package_source(sample_source(), package_json.to_string(), package_ts.to_string()).unwrap();
+        let analysis = analyze_package_source(
+            sample_source(),
+            package_json.to_string(),
+            package_ts.to_string(),
+        )
+        .unwrap();
         assert!(analysis.ok);
         let definition = analysis.definition.unwrap();
         assert_eq!(definition.meta.display_name, "Example Tools");
@@ -1265,7 +1330,7 @@ mod tests {
     fn analyze_package_source_supports_local_const_export() {
         let package_json = r#"{ "name": "@gsv/example" }"#;
         let package_ts = r#"
-          import { definePackage } from "@gsv/package/manifest";
+          import { definePackage } from "@humansandmachines/gsv/sdk";
           const pkg = definePackage({
             meta: { displayName: "Example" },
             browser: {
@@ -1279,15 +1344,26 @@ mod tests {
           export default pkg;
         "#;
 
-        let analysis = analyze_package_source(sample_source(), package_json.to_string(), package_ts.to_string()).unwrap();
+        let analysis = analyze_package_source(
+            sample_source(),
+            package_json.to_string(),
+            package_ts.to_string(),
+        )
+        .unwrap();
         assert!(analysis.ok);
         let definition = analysis.definition.unwrap();
         assert_eq!(
-            definition.browser.as_ref().map(|browser| browser.entry.as_str()),
+            definition
+                .browser
+                .as_ref()
+                .map(|browser| browser.entry.as_str()),
             Some("./src/main.tsx")
         );
         assert_eq!(
-            definition.backend.as_ref().map(|backend| backend.entry.as_str()),
+            definition
+                .backend
+                .as_ref()
+                .map(|backend| backend.entry.as_str()),
             Some("./src/backend.ts")
         );
     }
@@ -1296,17 +1372,25 @@ mod tests {
     fn analyze_package_source_accepts_manifest_import_path() {
         let package_json = r#"{ "name": "@gsv/example" }"#;
         let package_ts = r#"
-          import { definePackage } from "@gsv/package/manifest";
+          import { definePackage } from "@humansandmachines/gsv/sdk/manifest";
 
           export default definePackage({
             meta: { displayName: "Example" },
           });
         "#;
 
-        let analysis = analyze_package_source(sample_source(), package_json.to_string(), package_ts.to_string()).unwrap();
+        let analysis = analyze_package_source(
+            sample_source(),
+            package_json.to_string(),
+            package_ts.to_string(),
+        )
+        .unwrap();
         assert!(analysis.ok);
         assert_eq!(
-            analysis.definition.as_ref().map(|definition| definition.meta.display_name.as_str()),
+            analysis
+                .definition
+                .as_ref()
+                .map(|definition| definition.meta.display_name.as_str()),
             Some("Example")
         );
     }
@@ -1315,7 +1399,7 @@ mod tests {
     fn analyze_package_source_extracts_declarative_browser_backend_and_cli() {
         let package_json = r#"{ "name": "@gsv/example" }"#;
         let package_ts = r#"
-          import { definePackage } from "@gsv/package/manifest";
+          import { definePackage } from "@humansandmachines/gsv/sdk";
 
           export default definePackage({
             meta: { displayName: "Example" },
@@ -1335,19 +1419,33 @@ mod tests {
           });
         "#;
 
-        let analysis = analyze_package_source(sample_source(), package_json.to_string(), package_ts.to_string()).unwrap();
+        let analysis = analyze_package_source(
+            sample_source(),
+            package_json.to_string(),
+            package_ts.to_string(),
+        )
+        .unwrap();
         assert!(analysis.ok);
         let definition = analysis.definition.unwrap();
         assert_eq!(
-            definition.browser.as_ref().map(|browser| browser.entry.as_str()),
+            definition
+                .browser
+                .as_ref()
+                .map(|browser| browser.entry.as_str()),
             Some("./src/main.tsx")
         );
         assert_eq!(
-            definition.browser.as_ref().map(|browser| browser.assets.as_slice()),
+            definition
+                .browser
+                .as_ref()
+                .map(|browser| browser.assets.as_slice()),
             Some(vec!["./src/styles.css".to_string()].as_slice())
         );
         assert_eq!(
-            definition.backend.as_ref().map(|backend| backend.entry.as_str()),
+            definition
+                .backend
+                .as_ref()
+                .map(|backend| backend.entry.as_str()),
             Some("./src/backend.ts")
         );
         assert_eq!(
@@ -1359,7 +1457,10 @@ mod tests {
         );
         assert_eq!(definition.commands.len(), 1);
         assert_eq!(definition.commands[0].name, "sync");
-        assert_eq!(definition.commands[0].entry.as_deref(), Some("./src/cli/sync.ts"));
+        assert_eq!(
+            definition.commands[0].entry.as_deref(),
+            Some("./src/cli/sync.ts")
+        );
         assert!(definition.commands[0].handler.is_none());
     }
 
@@ -1372,7 +1473,12 @@ mod tests {
           });
         "#;
 
-        let analysis = analyze_package_source(sample_source(), package_json.to_string(), package_ts.to_string()).unwrap();
+        let analysis = analyze_package_source(
+            sample_source(),
+            package_json.to_string(),
+            package_ts.to_string(),
+        )
+        .unwrap();
         assert!(!analysis.ok);
         assert!(analysis
             .diagnostics
@@ -1384,7 +1490,7 @@ mod tests {
     fn analyze_package_source_reports_non_literal_display_name() {
         let package_json = r#"{ "name": "@gsv/example" }"#;
         let package_ts = r#"
-          import { definePackage } from "@gsv/package/manifest";
+          import { definePackage } from "@humansandmachines/gsv/sdk";
           const title = "Example";
           export default definePackage({
             meta: {
@@ -1393,7 +1499,12 @@ mod tests {
           });
         "#;
 
-        let analysis = analyze_package_source(sample_source(), package_json.to_string(), package_ts.to_string()).unwrap();
+        let analysis = analyze_package_source(
+            sample_source(),
+            package_json.to_string(),
+            package_ts.to_string(),
+        )
+        .unwrap();
         assert!(!analysis.ok);
         assert!(analysis
             .diagnostics

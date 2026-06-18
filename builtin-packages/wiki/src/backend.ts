@@ -1,4 +1,4 @@
-import { PackageBackendEntrypoint, type PackageSignalContext } from "@gsv/package/backend";
+import { PackageBackendEntrypoint, type PackageSignalContext } from "@humansandmachines/gsv/sdk/backend";
 import {
   compileInboxNote,
   createDatabase,

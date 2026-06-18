@@ -145,7 +145,7 @@ fn request() -> PackageAssemblyRequest {
         files: [
             (
                 "apps/demo/src/package.ts".to_string(),
-                r#"import { definePackage } from "@gsv/package/manifest";
+                r#"import { definePackage } from "@humansandmachines/gsv/sdk";
 export default definePackage({
   meta: { displayName: "Demo" },
   browser: { entry: "./src/main.tsx", assets: ["./src/styles.css"] }
@@ -159,6 +159,22 @@ export default definePackage({
             (
                 "apps/demo/src/styles.css".to_string(),
                 "body { color: red; }".to_string(),
+            ),
+            (
+                "packages/gsv/package.json".to_string(),
+                r#"{
+  "name": "@humansandmachines/gsv",
+  "version": "0.0.1",
+  "type": "module",
+  "exports": {
+    "./sdk": "./dist/sdk.js"
+  }
+}"#
+                .to_string(),
+            ),
+            (
+                "packages/gsv/dist/sdk.js".to_string(),
+                "export function definePackage(definition) { return definition; }".to_string(),
             ),
         ]
         .into_iter()
@@ -192,7 +208,7 @@ fn declarative_request() -> PackageAssemblyRequest {
     });
     req.files.insert(
         "apps/demo/src/package.ts".to_string(),
-        r#"import { definePackage } from "@gsv/package/manifest";
+        r#"import { definePackage } from "@humansandmachines/gsv/sdk";
 export default definePackage({
   meta: { displayName: "Demo" },
   browser: { entry: "./src/main.tsx", assets: ["./src/styles.css"] },
@@ -240,7 +256,7 @@ fn command_only_request() -> PackageAssemblyRequest {
     req.files.remove("apps/demo/src/styles.css");
     req.files.insert(
         "apps/demo/src/package.ts".to_string(),
-        r#"import { definePackage } from "@gsv/package/manifest";
+        r#"import { definePackage } from "@humansandmachines/gsv/sdk";
 export default definePackage({
   meta: { displayName: "Demo" },
   cli: { commands: { sync: "./src/cli/sync.ts" } }
@@ -313,8 +329,8 @@ fn builds_runtime_artifact_with_wrapper_and_hash() {
         "const BROWSER_ENTRY = \"/public/gsv/packages/__GSV_ARTIFACT_HASH__/browser/src/main.js\";"
     ));
     assert!(wrapper.contains("const APP_SHELL_HTML = \"<!doctype html>"));
-    assert!(!package_definition.contains("\"@gsv/package/manifest\""));
-    assert!(package_definition.contains("\"../node_modules/@gsv/package/src/manifest.ts\""));
+    assert!(!package_definition.contains("\"@humansandmachines/gsv/sdk\""));
+    assert!(package_definition.contains("\"../node_modules/@humansandmachines/gsv/dist/sdk.js\""));
 }
 
 #[test]
@@ -459,7 +475,7 @@ fn runtime_artifact_transforms_typescript_and_jsx_modules() {
         .insert("preact".to_string(), "10.24.1".to_string());
     request.files.insert(
         "apps/demo/src/package.ts".to_string(),
-        r#"import { definePackage } from "@gsv/package/manifest";
+        r#"import { definePackage } from "@humansandmachines/gsv/sdk";
 
 const publicRoutes: string[] = ["/webhooks/github"];
 

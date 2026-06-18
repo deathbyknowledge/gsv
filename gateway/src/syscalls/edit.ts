@@ -30,13 +30,7 @@ export const FS_EDIT_DEFINITION: ToolDefinition = {
   },
 };
 
-export type FsEditArgs = {
-  path: string;
-  oldString: string;
-  newString: string;
-  replaceAll?: boolean;
-};
-
-export type FsEditResult =
-  | { ok: true; path: string; replacements: number }
-  | { ok: false; error: string };
+export type {
+  FsEditArgs,
+  FsEditResult,
+} from "@humansandmachines/gsv/protocol";

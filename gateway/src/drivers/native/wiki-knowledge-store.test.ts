@@ -4,8 +4,8 @@ import type {
   RepoReadResult,
   RepoSummary,
   RepoTreeEntry,
-} from "@gsv/protocol/syscalls/repositories";
-import type { PackageStorageBinding } from "@gsv/package/context";
+} from "@humansandmachines/gsv/protocol";
+import type { PackageStorageBinding } from "@humansandmachines/gsv/sdk/context";
 import { runWikiCommand } from "../../../../builtin-packages/wiki/src/cli/wiki-runner";
 import { WikiKnowledgeStore } from "../../../../builtin-packages/wiki/src/backend/knowledge-store";
 

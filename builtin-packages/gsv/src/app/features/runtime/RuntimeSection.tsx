@@ -1,4 +1,4 @@
-import { openApp } from "@gsv/package/host";
+import { openApp } from "@humansandmachines/gsv/sdk/host";
 import type { GsvBackend } from "../../backend-contract";
 import { ActionButton } from "../../components/ui/ActionButton";
 import { formatTimestampMs } from "../../utils/format";

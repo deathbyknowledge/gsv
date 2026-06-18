@@ -33,7 +33,7 @@ type PackageDefinition = {
 };
 ```
 
-Import the manifest helper from `@gsv/package/manifest`.
+Import the manifest helper from `@humansandmachines/gsv/sdk`.
 
 `meta.capabilities.kernel` is the package's syscall grant list. Declare only the
 calls the backend or CLI entrypoints actually need. Use `repo.*` when a package
@@ -50,7 +50,7 @@ capabilities: {
 
 ## Backend
 
-Import the backend base class from `@gsv/package/backend`.
+Import the backend base class from `@humansandmachines/gsv/sdk`.
 
 ```ts
 export default class ExampleBackend extends PackageBackendEntrypoint {
@@ -88,7 +88,7 @@ Every other public method is exposed as backend RPC.
 
 ## Browser helpers
 
-Import browser helpers from `@gsv/package/browser`.
+Import browser helpers from `@humansandmachines/gsv/sdk`.
 
 ### `getAppBoot()`
 
@@ -141,7 +141,7 @@ backend RPC.
 
 ## CLI
 
-Import CLI helpers from `@gsv/package/cli`.
+Import CLI helpers from `@humansandmachines/gsv/sdk`.
 
 ```ts
 type PackageCommandContext = {

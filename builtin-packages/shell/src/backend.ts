@@ -1,4 +1,4 @@
-import { PackageBackendEntrypoint } from "@gsv/package/backend";
+import { PackageBackendEntrypoint } from "@humansandmachines/gsv/sdk/backend";
 import { execCommand, loadState } from "./backend/api";
 
 export default class ShellBackend extends PackageBackendEntrypoint {

@@ -6,7 +6,7 @@ Source of truth:
 
 - `gateway/src/syscalls/index.ts`
 - `gateway/src/kernel/dispatch.ts`
-- `shared/protocol/src/syscalls/*.ts`
+- `packages/gsv/src/protocol/syscalls/*.ts`
 
 ## Calling Convention
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { KernelContext } from "../../../kernel/context";
 import type { GsvFs } from "../../../fs/gsv-fs";
-import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
+import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { buildSkillsCommand } from "./skills";
 
 const IDENTITY: ProcessIdentity = {

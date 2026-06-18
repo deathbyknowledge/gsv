@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { commitProcessSourceChanges, createProcessSourceBackend, getProcessSourceStatus } from "./index";
-import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
-import type { RepoSummary } from "@gsv/protocol/syscalls/repositories";
+import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
+import type { RepoSummary } from "@humansandmachines/gsv/protocol";
 import type { InstalledPackageRecord } from "../kernel/packages";
 
 const IDENTITY: ProcessIdentity = {

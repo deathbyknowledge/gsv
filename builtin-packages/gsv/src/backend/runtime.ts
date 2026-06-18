@@ -1,4 +1,4 @@
-import type { KernelClientLike } from "@gsv/package/backend";
+import type { KernelClientLike } from "@humansandmachines/gsv/sdk/backend";
 import type {
   KillRuntimeProcessArgs,
   KillRuntimeProcessResult,

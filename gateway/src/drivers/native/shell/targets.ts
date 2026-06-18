@@ -18,7 +18,6 @@ type TargetListEntry = {
   description: string;
   platform: string;
   version: string;
-  lifecycle: "persistent" | "ephemeral";
   online: boolean;
   implements: string[];
   firstSeenAt: number | null;
@@ -118,13 +117,12 @@ function listTargets(options: ListOptions, ctx: KernelContext): ExecResult {
     };
   }
 
-  const lines = ["TARGET\tKIND\tSTATE\tLIFE\tPLATFORM\tCAPS\tLABEL"];
+  const lines = ["TARGET\tKIND\tSTATE\tPLATFORM\tCAPS\tLABEL"];
   for (const entry of page) {
     lines.push([
       entry.id,
       entry.kind,
       entry.online ? "online" : "offline",
-      entry.lifecycle,
       entry.platform || "-",
       summarizeCapabilities(entry.implements),
       entry.label || "-",
@@ -163,7 +161,6 @@ function showTarget(args: string[], ctx: KernelContext, commandName: "targets" |
     `kind: ${entry.kind}`,
     `provider: ${entry.provider}`,
     `state: ${entry.online ? "online" : "offline"}`,
-    `lifecycle: ${entry.lifecycle}`,
     `owner: ${entry.owner}`,
     `platform: ${entry.platform || "-"}`,
     `version: ${entry.version || "-"}`,
@@ -314,7 +311,6 @@ function targetToEntry(target: TargetDescriptor): TargetListEntry {
     description: target.description,
     platform: target.platform,
     version: target.version,
-    lifecycle: target.lifecycle,
     online: target.online,
     implements: target.implements,
     firstSeenAt: target.firstSeenAt,
@@ -339,7 +335,6 @@ function gsvTarget(ctx: KernelContext): TargetListEntry {
     description: "Native GSV cloud target.",
     platform: "cloudflare-worker",
     version: ctx.config.get("config/server/version") ?? ctx.serverVersion ?? "",
-    lifecycle: "persistent",
     online: true,
     implements: ["fs.*", "shell.exec", "codemode.exec"],
     firstSeenAt: now,

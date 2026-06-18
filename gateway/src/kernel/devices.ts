@@ -5,18 +5,15 @@
  * and implement syscall interfaces. Think /dev/ in Linux.
  *
  * Tables:
- *   devices        — persistent device catalog (survives disconnects)
+ *   devices        — device catalog (survives disconnects)
  *   device_access  — ACL: which groups can use which devices
  */
 
 import { hasCapability, isValidCapability } from "./capabilities";
 
-export type DeviceLifecycle = "persistent" | "ephemeral";
-
 export type DeviceRegisterOptions = {
   label?: string;
   description?: string;
-  lifecycle?: DeviceLifecycle;
 };
 
 export type DeviceRecord = {
@@ -27,7 +24,6 @@ export type DeviceRecord = {
   implements: string[];
   platform: string;
   version: string;
-  lifecycle: DeviceLifecycle;
   online: boolean;
   first_seen_at: number;
   last_seen_at: number;
@@ -35,12 +31,11 @@ export type DeviceRecord = {
   disconnected_at: number | null;
 };
 
-type RawDeviceRow = Omit<DeviceRecord, "implements" | "online" | "label" | "description" | "lifecycle"> & {
+type RawDeviceRow = Omit<DeviceRecord, "implements" | "online" | "label" | "description"> & {
   implements: string;
   online: number;
   label?: string | null;
   description?: string | null;
-  lifecycle?: string | null;
 };
 
 export class DeviceRegistry {
@@ -71,14 +66,10 @@ export class DeviceRegistry {
     const description = normalizeDeviceDescription(
       options.description ?? (sameOwner ? existing?.description : undefined) ?? "",
     );
-    const lifecycle = normalizeDeviceLifecycle(
-      options.lifecycle ?? (sameOwner ? existing?.lifecycle : undefined),
-    );
-
     if (existing) {
       this.sql.exec(
         `UPDATE devices SET
-          owner_uid = ?, label = ?, description = ?, implements = ?, platform = ?, version = ?, lifecycle = ?,
+          owner_uid = ?, label = ?, description = ?, implements = ?, platform = ?, version = ?,
           online = 1, last_seen_at = ?, connected_at = ?, disconnected_at = NULL
         WHERE device_id = ?`,
         ownerUid,
@@ -87,7 +78,6 @@ export class DeviceRegistry {
         JSON.stringify(impl),
         platform,
         version,
-        lifecycle,
         now,
         now,
         deviceId,
@@ -95,8 +85,8 @@ export class DeviceRegistry {
     } else {
       this.sql.exec(
         `INSERT INTO devices
-          (device_id, owner_uid, label, description, implements, platform, version, lifecycle, online, first_seen_at, last_seen_at, connected_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
+          (device_id, owner_uid, label, description, implements, platform, version, online, first_seen_at, last_seen_at, connected_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
         deviceId,
         ownerUid,
         label,
@@ -104,7 +94,6 @@ export class DeviceRegistry {
         JSON.stringify(impl),
         platform,
         version,
-        lifecycle,
         now,
         now,
         now,
@@ -314,7 +303,6 @@ function toDeviceRecord(row: RawDeviceRow): DeviceRecord {
     label: normalizeDeviceLabel(row.label ?? "", row.device_id),
     description: row.description ?? "",
     implements: JSON.parse(row.implements),
-    lifecycle: normalizeDeviceLifecycle(row.lifecycle),
     online: row.online === 1,
   };
 }
@@ -326,8 +314,4 @@ function normalizeDeviceLabel(value: string | undefined, fallback: string): stri
 
 function normalizeDeviceDescription(value: string): string {
   return value.trim().slice(0, 500);
-}
-
-function normalizeDeviceLifecycle(value: unknown): DeviceLifecycle {
-  return value === "ephemeral" ? "ephemeral" : "persistent";
 }

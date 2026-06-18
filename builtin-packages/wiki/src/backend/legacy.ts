@@ -3,7 +3,7 @@ import type {
   WikiPreviewPayload,
   WikiWorkspaceState as WikiState,
 } from "../app/types";
-import type { PackageStorageBinding } from "@gsv/package/context";
+import type { PackageStorageBinding } from "@humansandmachines/gsv/sdk/context";
 import { WikiKnowledgeStore } from "./knowledge-store";
 
 function normalizePath(value: unknown): string {

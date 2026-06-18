@@ -2,8 +2,8 @@ import type {
   RepoApplyOp,
   RepoReadResult,
   RepoSummary,
-} from "@gsv/protocol/syscalls/repositories";
-import type { PackageStorageBinding } from "@gsv/package/context";
+} from "@humansandmachines/gsv/protocol";
+import type { PackageStorageBinding } from "@humansandmachines/gsv/sdk/context";
 import {
   applyKnowledgePatch,
   createEmptyDoc,

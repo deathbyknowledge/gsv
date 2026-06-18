@@ -22,7 +22,7 @@ import type {
   CpOptions,
   BufferEncoding,
 } from "just-bash";
-import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
+import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { KernelRefs } from "./refs";
 import type {
   MountBackend,

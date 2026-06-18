@@ -135,7 +135,7 @@ describe("ConfigStore", () => {
     expect(context).toContain("[Process Event]:");
     const targets = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/05-targets.md"];
     expect(targets).toContain("GSV tools are targetable");
-    expect(targets).toContain("Browser targets represent active GSV web shell desktops");
+    expect(targets).toContain("Browser targets are extension-provided active browsers");
     expect(targets).toContain("target-aware copy");
     expect(targets).toContain("cp source-target:/path destination-target:/path");
     expect(targets).toContain("skills show browser-shell");

@@ -76,7 +76,6 @@ R2 remains the byte store. The current runtime uses these key families:
 | `public/gsv/downloads/cli/{channel}/{asset}.sha256` | `sys.bootstrap` CLI mirroring | CLI checksums served through `/public/*`. |
 | `public/gsv/downloads/cli/default-channel.txt` | `sys.bootstrap` | Default CLI release channel. |
 | `public/gsv/downloads/cli/install.{sh,ps1}` | `sys.bootstrap` | Static CLI install scripts served through `/public/*`. |
-| `public/gsv/assets/tts/**` | `sys.bootstrap` Piper asset seeding | Browser-local TTS runtime, WASM, and default voice assets served through `/public/*`. |
 | `process-source-overlays/{pid}/{packageId}/manifest.json` | Package source mount, `pkg source` | Manifest of staged package source edits for one process/package. |
 | `process-source-overlays/{pid}/{packageId}/files/{path}` | Package source mount, `pkg source` | Staged file content for package source puts. |
 

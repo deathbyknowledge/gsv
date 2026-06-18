@@ -1,0 +1,214 @@
+import type { GsvClientStatus } from "@humansandmachines/gsv/client";
+
+type HostRpcMethod =
+  | "setTitle"
+  | "setBadge"
+  | "setDirty"
+  | "requestNewWindow";
+
+type HostRpcMessage = {
+  type: "rpc";
+  id: string;
+  method: HostRpcMethod;
+  payload?: unknown;
+};
+
+type HostRpcResultMessage =
+  | {
+      type: "rpc-result";
+      id: string;
+      ok: true;
+      data?: unknown;
+    }
+  | {
+      type: "rpc-result";
+      id: string;
+      ok: false;
+      error: string;
+    };
+
+type HostStatusMessage = {
+  type: "status";
+  status: GsvClientStatus;
+};
+
+type HostConnectMessage = {
+  type: "gsv-host-connect";
+  requestId?: string;
+};
+
+type HostPortMessage = HostRpcMessage | HostRpcResultMessage | HostStatusMessage;
+
+export type HostBridgeController = {
+  destroy: () => void;
+};
+
+type HostChromeController = {
+  setTitle: (title: string | null) => void;
+  setBadge: (badge: string | null) => void;
+  setDirty: (dirty: boolean) => void;
+  requestNewWindow: (route?: string) => string;
+};
+
+type HostStatusClient = {
+  onStatus: (listener: (status: GsvClientStatus) => void) => () => void;
+};
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function asString(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function asBoolean(value: unknown): boolean {
+  return value === true;
+}
+
+function toErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function postMessage(port: MessagePort, message: HostPortMessage): void {
+  port.postMessage(message);
+}
+
+async function handleRpc(
+  chrome: HostChromeController | null,
+  message: HostRpcMessage,
+): Promise<unknown> {
+  switch (message.method) {
+    case "setTitle": {
+      const payload = asRecord(message.payload);
+      chrome?.setTitle(asString(payload?.title));
+      return { ok: true };
+    }
+    case "setBadge": {
+      const payload = asRecord(message.payload);
+      chrome?.setBadge(asString(payload?.badge));
+      return { ok: true };
+    }
+    case "setDirty": {
+      const payload = asRecord(message.payload);
+      chrome?.setDirty(asBoolean(payload?.dirty));
+      return { ok: true };
+    }
+    case "requestNewWindow": {
+      const payload = asRecord(message.payload);
+      const route = asString(payload?.route) ?? undefined;
+      return { windowId: chrome?.requestNewWindow(route) ?? null };
+    }
+  }
+
+  throw new Error(`Unsupported host RPC method: ${String(message.method)}`);
+}
+
+export function attachHostBridge(
+  iframe: HTMLIFrameElement,
+  gatewayClient: HostStatusClient,
+  chrome: HostChromeController | null = null,
+): HostBridgeController {
+  let port: MessagePort | null = null;
+  let unsubscribeStatus: (() => void) | null = null;
+  let iframeLoaded = false;
+  let pendingConnectRequestId: string | undefined;
+  let destroyed = false;
+
+  const cleanup = (): void => {
+    unsubscribeStatus?.();
+    unsubscribeStatus = null;
+    port?.close();
+    port = null;
+  };
+
+  const connect = (requestId?: string): void => {
+    if (destroyed || !iframe.contentWindow) {
+      return;
+    }
+
+    cleanup();
+
+    const channel = new MessageChannel();
+    port = channel.port1;
+    port.onmessage = (event: MessageEvent<unknown>) => {
+      const message = event.data;
+      const record = asRecord(message);
+      if (!record || record.type !== "rpc") {
+        return;
+      }
+
+      void handleRpc(chrome, message as HostRpcMessage)
+        .then((data) => {
+          postMessage(channel.port1, {
+            type: "rpc-result",
+            id: String(record.id ?? ""),
+            ok: true,
+            data,
+          });
+        })
+        .catch((error) => {
+          postMessage(channel.port1, {
+            type: "rpc-result",
+            id: String(record.id ?? ""),
+            ok: false,
+            error: toErrorMessage(error),
+          });
+        });
+    };
+    port.start();
+
+    iframe.contentWindow.postMessage(
+      {
+        type: "gsv-host-connect",
+        requestId,
+      } satisfies HostConnectMessage,
+      window.location.origin,
+      [channel.port2],
+    );
+
+    unsubscribeStatus = gatewayClient.onStatus((status) => {
+      postMessage(channel.port1, {
+        type: "status",
+        status,
+      });
+    });
+  };
+
+  const onLoad = (): void => {
+    iframeLoaded = true;
+    connect(pendingConnectRequestId);
+    pendingConnectRequestId = undefined;
+  };
+
+  const onConnectRequest = (event: MessageEvent<unknown>): void => {
+    if (destroyed || event.origin !== window.location.origin || event.source !== iframe.contentWindow) {
+      return;
+    }
+    const record = asRecord(event.data);
+    if (!record || record.type !== "gsv-host-connect-request") {
+      return;
+    }
+    const requestId = asString(record.requestId) ?? undefined;
+    if (!iframeLoaded) {
+      pendingConnectRequestId = requestId;
+      return;
+    }
+    connect(requestId);
+  };
+
+  iframe.addEventListener("load", onLoad, { once: true });
+  window.addEventListener("message", onConnectRequest);
+
+  return {
+    destroy: () => {
+      destroyed = true;
+      iframe.removeEventListener("load", onLoad);
+      window.removeEventListener("message", onConnectRequest);
+      cleanup();
+    },
+  };
+}

@@ -1,5 +1,5 @@
 import { render } from "preact";
-import { getBackend } from "@gsv/package/browser";
+import { getBackend } from "@humansandmachines/gsv/sdk/browser";
 import { App } from "./app/App";
 import type { GsvBackend } from "./app/backend-contract";
 

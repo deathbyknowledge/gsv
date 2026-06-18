@@ -18,7 +18,6 @@ export type DeviceSummary = {
   description: string;
   platform: string;
   version: string;
-  lifecycle: "persistent" | "ephemeral";
   online: boolean;
   lastSeenAt: number;
 };

@@ -18,7 +18,6 @@ function makeDevice(partial: Partial<DeviceRecord> & { device_id: string }): Dev
     implements: partial.implements ?? ["shell.exec"],
     platform: partial.platform ?? "linux",
     version: partial.version ?? "1.0.0",
-    lifecycle: partial.lifecycle ?? "persistent",
     online: partial.online ?? true,
     first_seen_at: partial.first_seen_at ?? now,
     last_seen_at: partial.last_seen_at ?? now,

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
+import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { RequestFrame, ResponseFrame } from "../protocol/frames";
 import type { ProcIpcSendResult } from "../syscalls/proc";
 import type { KernelContext } from "./context";
@@ -148,8 +148,8 @@ describe("proc handlers", () => {
       connection: {
         id: "conn-1",
         state: {
-          clientId: "browser-shell",
-          clientPlatform: "web",
+          clientId: "browser-extension",
+          clientPlatform: "browser",
         },
       },
       procs: {
@@ -184,8 +184,8 @@ describe("proc handlers", () => {
           origin: {
             kind: "client",
             connectionId: "conn-1",
-            clientId: "browser-shell",
-            platform: "web",
+            clientId: "browser-extension",
+            platform: "browser",
           },
         }),
       }),

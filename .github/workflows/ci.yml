@@ -21,6 +21,35 @@ jobs:
       - name: Verify synced versions
         run: npm run version:check
 
+  workspace-check:
+    name: Workspace Checks
+    runs-on: ubuntu-latest
+    needs: [version-check]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check GSV package
+        run: npm run gsv:check
+
+      - name: Check builtin packages
+        run: npm run builtins:check
+
+      - name: Check web shell
+        run: npm run check --workspace web
+
+      - name: Build web shell
+        run: npm run build --workspace web
+
   assembler-build:
     name: Assembler Build
     runs-on: ubuntu-latest
@@ -42,6 +71,10 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Run Rust unit tests
+        working-directory: assembler
+        run: cargo test
 
       - name: Rust check
         working-directory: assembler
@@ -66,21 +99,18 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
           cache: 'npm'
-          cache-dependency-path: gateway/package-lock.json
+          cache-dependency-path: package-lock.json
       
       - name: Install dependencies
-        working-directory: gateway
         run: npm ci
       
       - name: Type check
-        working-directory: gateway
-        run: npm exec -- tsc --noEmit
+        run: npm exec --workspace gateway -- tsc --noEmit
       
       - name: Run unit tests
-        working-directory: gateway
-        run: npm test
+        run: npm run test:run --workspace gateway
 
   ripgit-test:
     name: Ripgit Tests

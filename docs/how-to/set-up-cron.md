@@ -120,7 +120,7 @@ Schedules live in the package AppRunner Durable Object, not in the Kernel
 scheduler table.
 
 ```ts
-import { PackageBackendEntrypoint } from "@gsv/package/backend";
+import { PackageBackendEntrypoint } from "@humansandmachines/gsv/sdk";
 
 export default class ReportsBackend extends PackageBackendEntrypoint {
   async enableDailyReport() {

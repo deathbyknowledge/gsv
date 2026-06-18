@@ -1,6 +1,6 @@
 # Target Tools Reference
 
-GSV exposes one targetable tool interface to AI processes. The same tool names are used for the native cloud target, connected devices, active browser clients, and adapter command targets; the `target` argument chooses where the syscall runs.
+GSV exposes one targetable tool interface to AI processes. The same tool names are used for the native cloud target, connected devices, extension-provided browser targets, and adapter command targets; the `target` argument chooses where the syscall runs.
 
 This is the important rule for agents: choose `target: "gsv"` for Gateway-native work, and choose a device target only when the file, command, network, or hardware dependency lives on that device.
 
@@ -10,7 +10,7 @@ This is the important rule for agents: choose `target: "gsv"` for Gateway-native
 |---|---|
 | `gsv` | Native Gateway target running in the Cloudflare Worker sandbox. |
 | `<deviceId>` | A connected native device, such as `macbook` or `server`. |
-| `browser:<id>` | An active web shell desktop target. |
+| `browser:<id>` | An active browser target, usually registered by the browser extension. |
 | `adapter:<adapter>:<account>` | An adapter command target, such as WhatsApp or Discord. |
 
 The prompt includes a compact sample of accessible online targets. Use `targets list` in the native shell for paginated discovery, or `targets show <target-id>` for details. The lower-level syscall surface is still `sys.device.list`/`sys.device.get`, and device-like entries also appear in the native filesystem under `/sys/devices`.
@@ -63,7 +63,7 @@ running results.
 
 ## Target Descriptors
 
-Native devices register with the Gateway as driver connections. Browser clients and adapter accounts are normalized into the same target descriptor model. A descriptor records identity, online state, and implemented syscall patterns.
+Native devices register with the Gateway as driver connections. Browser extension targets and adapter accounts are normalized into the same target descriptor model. A descriptor records identity, online state, and implemented syscall patterns.
 
 ```json
 {

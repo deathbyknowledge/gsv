@@ -1,5 +1,5 @@
 import type { PasswdEntry } from "../auth/passwd";
-import type { ConnectionIdentity, ProcessIdentity } from "@gsv/protocol/syscalls/system";
+import type { ConnectionIdentity, ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { hasCapability } from "./capabilities";
 import type { KernelContext } from "./context";
 import {

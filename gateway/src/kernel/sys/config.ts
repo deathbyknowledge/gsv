@@ -23,7 +23,7 @@ import type {
   SysConfigSetArgs,
   SysConfigSetResult,
   SysConfigEntry,
-} from "@gsv/protocol/syscalls/system";
+} from "@humansandmachines/gsv/protocol";
 import { USER_OVERRIDABLE_PREFIXES } from "../config";
 import { canOwnerRunAsAccount } from "../account-access";
 import { canReadConfigKey } from "../config-access";

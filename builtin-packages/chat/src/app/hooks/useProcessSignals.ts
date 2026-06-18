@@ -1,5 +1,5 @@
 import { useEffect } from "preact/hooks";
-import { onAppEvent } from "@gsv/package/browser";
+import { onAppEvent } from "@humansandmachines/gsv/sdk/browser";
 import type {
   ContextState,
   HilRequest,

@@ -1,16 +1,21 @@
 {
-  "name": "gsv-app-runtime",
+  "name": "gsv",
   "version": "0.2.6",
   "private": true,
   "workspaces": [
     "assembler",
+    "builtin-packages/*",
     "gateway",
     "web",
-    "shared/*"
+    "packages/*"
   ],
   "scripts": {
+    "postinstall": "npm run gsv:build",
     "setup": "bash ./scripts/setup-deps.sh",
     "dev": "bash ./scripts/dev-stack.sh",
+    "builtins:check": "tsc --noEmit -p builtin-packages/tsconfig.check.json",
+    "gsv:build": "npm run build --workspace packages/gsv",
+    "gsv:check": "npm run typecheck --workspace packages/gsv && npm run gsv:build",
     "version:show": "node ./scripts/version.mjs show",
     "version:check": "node ./scripts/version.mjs check",
     "version:sync": "node ./scripts/version.mjs sync",

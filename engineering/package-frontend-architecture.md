@@ -95,7 +95,7 @@ rg -n "^(export\\s+)?(function|const|type|interface)\\s+" builtin-packages/<app>
 For frontend-only package refactors, a useful import-graph check is:
 
 ```bash
-npx esbuild builtin-packages/<app>/src/app/main.tsx --bundle --platform=browser --format=esm --jsx=automatic --jsx-import-source=preact --external:@gsv/package/* --outfile=/tmp/gsv-<app>-main.js
+npx esbuild builtin-packages/<app>/src/app/main.tsx --bundle --platform=browser --format=esm --jsx=automatic --jsx-import-source=preact --external:@humansandmachines/gsv --external:@humansandmachines/gsv/* --outfile=/tmp/gsv-<app>-main.js
 ```
 
 If the app uses a different browser entry, read `src/package.ts` and use that path. Do not rely on a repo-wide builtin TypeScript check if it is already failing for unrelated package/module-resolution reasons.

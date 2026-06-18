@@ -1,5 +1,5 @@
 import type { KernelContext } from "../context";
-import type { SysBootstrapArgs, SysBootstrapResult } from "@gsv/protocol/syscalls/system";
+import type { SysBootstrapArgs, SysBootstrapResult } from "@humansandmachines/gsv/protocol";
 import { RipgitClient, type RipgitRepoRef } from "../../fs/ripgit/client";
 import {
   CLI_BINARY_ASSETS,
@@ -9,7 +9,6 @@ import {
   storeCliInstallScripts,
   storeDefaultCliChannel,
 } from "../../downloads/cli";
-import { seedPiperPublicAssets } from "../../downloads/piper-assets";
 import {
   buildBuiltinPackageSeeds,
   type PackageEntrypoint,
@@ -239,20 +238,10 @@ export async function handleSysBootstrap(
       return mirroredChannels;
     })();
 
-    const seedPiperPromise = limitBootstrap(
-      1,
-      () => timeBootstrapStep(
-        timings,
-        "seed-piper-assets",
-        () => seedPiperPublicAssets(storage),
-      ),
-    );
-
-    const [, installed, mirroredChannels, , importedManual] = await allSettledOrThrow([
+    const [, installed, mirroredChannels, importedManual] = await allSettledOrThrow([
       seedSkillsPromise,
       installPackagesPromise,
       mirrorCliPromise,
-      seedPiperPromise,
       manualImportPromise,
     ]);
 

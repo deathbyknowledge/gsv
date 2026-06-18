@@ -70,8 +70,7 @@ export function inferContentType(path: string): string {
     sh: "text/x-shellscript", py: "text/x-python",
     png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg",
     gif: "image/gif", webp: "image/webp", svg: "image/svg+xml",
-    wasm: "application/wasm", onnx: "application/octet-stream",
-    data: "application/octet-stream", map: "application/json",
+    wasm: "application/wasm", data: "application/octet-stream", map: "application/json",
     mp3: "audio/mpeg", wav: "audio/wav", ogg: "audio/ogg",
   };
   return (ext && map[ext]) || "text/plain";

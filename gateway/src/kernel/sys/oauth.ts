@@ -8,7 +8,7 @@ import type {
   SysOAuthListResult,
   SysOAuthStartArgs,
   SysOAuthStartResult,
-} from "@gsv/protocol/syscalls/system";
+} from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "../context";
 import type {
   OAuthAccountRecord,

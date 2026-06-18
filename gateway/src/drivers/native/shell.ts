@@ -25,7 +25,7 @@ import { createCronFileService } from "../../kernel/crontab";
 import { visiblePackageScopesForActor } from "../../kernel/packages";
 import { handleRepoList } from "../../kernel/repo";
 import type { ShellExecArgs, ShellExecResult } from "../../syscalls/shell";
-import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
+import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import {
   buildCustomCommands,
   type NativeShellCommandOptions,

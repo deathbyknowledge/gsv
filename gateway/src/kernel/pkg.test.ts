@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import gsvPackageInfo from "@humansandmachines/gsv/package.json";
 import {
   handlePkgCreate,
   handlePkgInstall,
@@ -11,6 +12,8 @@ import {
   handlePkgRemove,
 } from "./pkg";
 import type { KernelContext } from "./context";
+
+const GSV_SDK_PACKAGE_VERSION = gsvPackageInfo.version;
 
 type FetchCall = {
   url: string;
@@ -49,6 +52,20 @@ function makeConfig() {
     },
     values,
   };
+}
+
+function parsePutPackageJson(applyBody: { ops?: unknown }): Record<string, unknown> {
+  const ops = Array.isArray(applyBody.ops) ? applyBody.ops : [];
+  const packageJsonOp = ops.find((op): op is { path: string; contentBytes: number[] } => (
+    !!op &&
+    typeof op === "object" &&
+    (op as { path?: unknown }).path === "package.json" &&
+    Array.isArray((op as { contentBytes?: unknown }).contentBytes)
+  ));
+  if (!packageJsonOp) {
+    throw new Error("package.json scaffold op is missing");
+  }
+  return JSON.parse(new TextDecoder().decode(new Uint8Array(packageJsonOp.contentBytes))) as Record<string, unknown>;
 }
 
 function makeInstalledPackageRecord({
@@ -398,7 +415,7 @@ describe("pkg syscalls", () => {
             name: "@alice/weather",
             version: "0.1.0",
             type: "module",
-            dependencies: { "@gsv/package": "^0.1.0" },
+            dependencies: { "@humansandmachines/gsv": GSV_SDK_PACKAGE_VERSION },
             dev_dependencies: {},
           },
           definition: {
@@ -541,6 +558,11 @@ describe("pkg syscalls", () => {
     const applyBody = JSON.parse(String(applyCall?.init?.body));
     expect(applyBody.message).toBe("pkg: create @alice/weather");
     expect(applyBody.ops.map((op: { path: string }) => op.path)).toContain("src/package.ts");
+    expect(parsePutPackageJson(applyBody)).toMatchObject({
+      dependencies: {
+        "@humansandmachines/gsv": GSV_SDK_PACKAGE_VERSION,
+      },
+    });
     expect(applyBody.baseRef).toBeUndefined();
     expect(config.get("repos/alice/weather/description")).toBe("Weather command center.");
     expect(install).toHaveBeenCalledWith(expect.objectContaining({
@@ -586,7 +608,7 @@ describe("pkg syscalls", () => {
             name: "@alice/weather",
             version: "0.1.0",
             type: "module",
-            dependencies: { "@gsv/package": "^0.1.0" },
+            dependencies: { "@humansandmachines/gsv": GSV_SDK_PACKAGE_VERSION },
             dev_dependencies: {},
           },
           definition: {
@@ -751,7 +773,7 @@ describe("pkg syscalls", () => {
             name: "@alice/weather",
             version: "0.1.0",
             type: "module",
-            dependencies: { "@gsv/package": "^0.1.0" },
+            dependencies: { "@humansandmachines/gsv": GSV_SDK_PACKAGE_VERSION },
             dev_dependencies: {},
           },
           definition: {

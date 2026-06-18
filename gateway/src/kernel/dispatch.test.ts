@@ -12,7 +12,6 @@ function deviceRecord(deviceId: string, online: boolean) {
     implements: ["fs.*", "shell.*"],
     platform: "browser",
     version: "test",
-    lifecycle: "persistent" as const,
     online,
     first_seen_at: 1,
     last_seen_at: 2,
@@ -40,7 +39,7 @@ function makeContext(): KernelContext {
 }
 
 describe("dispatch", () => {
-  it("routes target syscalls to user-provided browser targets", async () => {
+  it("routes target syscalls to browser driver targets", async () => {
     const send = vi.fn();
     const cancelRoute = vi.fn();
     const registerRoute = vi.fn(async () => ({ cancel: cancelRoute }));
@@ -49,11 +48,12 @@ describe("dispatch", () => {
         ["conn_1", {
           state: {
             identity: {
-              role: "user",
+              role: "driver",
               process: { uid: 1000, gid: 1000, gids: [1000], username: "sam", home: "/home/sam" },
               capabilities: ["*"],
+              device: "browser:conn_1",
+              implements: ["fs.*", "shell.*"],
             },
-            providedTargets: [{ targetId: "browser:conn_1" }],
           },
           send,
         }],
@@ -112,11 +112,12 @@ describe("dispatch", () => {
         ["conn_1", {
           state: {
             identity: {
-              role: "user",
+              role: "driver",
               process: { uid: 1000, gid: 1000, gids: [1000], username: "sam", home: "/home/sam" },
               capabilities: ["*"],
+              device: "browser:conn_1",
+              implements: ["fs.*", "shell.*"],
             },
-            providedTargets: [{ targetId: "browser:conn_1" }],
           },
           send,
         }],
@@ -174,11 +175,12 @@ describe("dispatch", () => {
         ["conn_1", {
           state: {
             identity: {
-              role: "user",
+              role: "driver",
               process: { uid: 1000, gid: 1000, gids: [1000], username: "sam", home: "/home/sam" },
               capabilities: ["*"],
+              device: "browser:conn_1",
+              implements: ["fs.*", "shell.*"],
             },
-            providedTargets: [{ targetId: "browser:conn_1" }],
           },
           send,
         }],
@@ -250,11 +252,12 @@ describe("dispatch", () => {
         ["conn_1", {
           state: {
             identity: {
-              role: "user",
+              role: "driver",
               process: { uid: 1000, gid: 1000, gids: [1000], username: "sam", home: "/home/sam" },
               capabilities: ["*"],
+              device: "browser:conn_1",
+              implements: ["fs.*", "shell.*"],
             },
-            providedTargets: [{ targetId: "browser:conn_1" }],
           },
           send,
         }],

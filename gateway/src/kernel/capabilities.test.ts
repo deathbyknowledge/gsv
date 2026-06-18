@@ -234,7 +234,6 @@ describe("CapabilityStore", () => {
       "sys.oauth.forget",
       "sys.oauth.list",
       "sys.oauth.start",
-      "sys.target.register",
       "sys.token.create",
       "sys.token.list",
       "sys.token.revoke",

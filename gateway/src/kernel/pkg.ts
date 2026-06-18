@@ -32,7 +32,8 @@ import type {
   PkgPublicSetResult,
   PkgCatalogEntry,
   PkgSummary,
-} from "@gsv/protocol/syscalls/packages";
+} from "@humansandmachines/gsv/protocol";
+import gsvPackageInfo from "@humansandmachines/gsv/package.json";
 import type {
   InstalledPackageRecord,
   PackageBindingGrant,
@@ -53,6 +54,7 @@ import { RipgitClient, type RipgitRepoRef } from "../fs/ripgit/client";
 export { isRepoPublic } from "./repo-visibility";
 
 const DEFAULT_PACKAGE_CREATE_REF = "main";
+const GSV_SDK_PACKAGE_VERSION = gsvPackageInfo.version;
 const TEXT_ENCODER = new TextEncoder();
 
 export function handlePkgList(
@@ -728,7 +730,7 @@ function buildBasePackageJson(packageName: string): string {
     version: "0.1.0",
     type: "module",
     dependencies: {
-      "@gsv/package": "^0.1.0",
+      "@humansandmachines/gsv": GSV_SDK_PACKAGE_VERSION,
     },
   }, null, 2)}\n`;
 }
@@ -741,7 +743,7 @@ function buildWebUiPackageScaffold(input: {
   return {
     "package.json": buildBasePackageJson(input.packageName),
     "src/package.ts": [
-      'import { definePackage } from "@gsv/package/manifest";',
+      'import { definePackage } from "@humansandmachines/gsv/sdk";',
       "",
       "export default definePackage({",
       "  meta: {",
@@ -762,7 +764,7 @@ function buildWebUiPackageScaffold(input: {
       "",
     ].join("\n"),
     "src/main.ts": [
-      'import { getAppBoot } from "@gsv/package/browser";',
+      'import { getAppBoot } from "@humansandmachines/gsv/sdk";',
       "",
       "const boot = getAppBoot();",
       'const root = document.createElement("main");',
@@ -861,7 +863,7 @@ function buildCommandPackageScaffold(input: {
   return {
     "package.json": buildBasePackageJson(input.packageName),
     "src/package.ts": [
-      'import { definePackage } from "@gsv/package/manifest";',
+      'import { definePackage } from "@humansandmachines/gsv/sdk";',
       "",
       "export default definePackage({",
       "  meta: {",
@@ -877,7 +879,7 @@ function buildCommandPackageScaffold(input: {
       "",
     ].join("\n"),
     [commandPath]: [
-      'import { defineCommand } from "@gsv/package/cli";',
+      'import { defineCommand } from "@humansandmachines/gsv/sdk";',
       "",
       "export default defineCommand(async (ctx) => {",
       '  const subject = ctx.argv.length > 0 ? ctx.argv.join(" ") : ctx.meta.packageName;',

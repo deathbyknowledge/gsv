@@ -1,4 +1,4 @@
-import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
+import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { GsvFs } from "./fs/gsv-fs";
 import { inferContentType, normalizePath } from "./fs/utils";
 import type { OpenFileOptions, OpenFileRangeRequest, OpenFileResult } from "./fs/mount";

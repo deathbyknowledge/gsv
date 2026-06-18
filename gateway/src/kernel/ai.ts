@@ -11,7 +11,7 @@
  */
 
 import type { KernelContext } from "./context";
-import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
+import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { getModels, getProviders, type KnownProvider } from "@earendil-works/pi-ai";
 import type {
   AiToolsResult,
@@ -60,7 +60,7 @@ import {
 import {
   normalizeSpeechText,
   normalizeSpeechTextFormat,
-} from "@gsv/protocol/speech-text";
+} from "@humansandmachines/gsv/protocol";
 import { collectPromptSkillIndex } from "./skills";
 import { listVisibleTargets, targetToAiDevice } from "./targets";
 

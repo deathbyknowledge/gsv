@@ -1,4 +1,4 @@
-import type { SysDeviceDetail, SysDeviceSummary } from "@gsv/protocol/syscalls/system";
+import type { SysDeviceDetail, SysDeviceSummary } from "@humansandmachines/gsv/protocol";
 import type { AiToolsDevice } from "../syscalls/ai";
 import type { AdapterTarget } from "./adapter-targets";
 import { getVisibleAdapterTarget, listVisibleAdapterTargets } from "./adapter-targets";
@@ -23,7 +23,6 @@ export type TargetDescriptor = {
   description: string;
   platform: string;
   version: string;
-  lifecycle: "persistent" | "ephemeral";
   online: boolean;
   implements: string[];
   firstSeenAt: number;
@@ -166,7 +165,6 @@ export function targetToAiDevice(target: TargetDescriptor): AiToolsDevice {
     label: target.label,
     ...(target.description ? { description: target.description } : {}),
     platform: target.platform || undefined,
-    lifecycle: target.lifecycle,
   };
 }
 
@@ -179,7 +177,6 @@ export function targetToDeviceSummary(target: TargetDescriptor): SysDeviceSummar
     description: target.description,
     platform: target.platform,
     version: target.version,
-    lifecycle: target.lifecycle,
     online: target.online,
     lastSeenAt: target.lastSeenAt,
   };
@@ -206,7 +203,6 @@ function deviceRecordToTarget(ctx: KernelContext, record: DeviceRecord): TargetD
     description: record.description,
     platform: record.platform,
     version: record.version,
-    lifecycle: record.lifecycle,
     online: record.online,
     implements: record.implements,
     firstSeenAt: record.first_seen_at,
@@ -231,7 +227,6 @@ function adapterTargetToDescriptor(ctx: KernelContext, target: AdapterTarget): T
     description: target.description,
     platform: "adapter",
     version: "",
-    lifecycle: "persistent",
     online,
     implements: ["shell.exec"],
     firstSeenAt: target.status.updatedAt,
