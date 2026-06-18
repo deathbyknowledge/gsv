@@ -85,7 +85,7 @@ export function renderManualPage(topic?: string): string | null {
         "",
         "KINDS",
         "  gsv            Native cloud target.",
-        "  native-device  User-owned machines running the GSV node daemon.",
+        "  native-device  User-owned machines running the GSV device daemon.",
         "  browser        Active web shell desktops.",
         "  adapter        External messaging surfaces such as WhatsApp or Discord.",
         "",

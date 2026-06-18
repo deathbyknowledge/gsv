@@ -125,7 +125,7 @@ fn platform_service_manager() -> Option<Box<dyn NodeServiceManager>> {
 }
 
 fn unsupported_message() -> &'static str {
-    "node daemon management is currently supported on Linux, macOS, and Windows only"
+    "device daemon management is currently supported on Linux, macOS, and Windows only"
 }
 
 fn print_log_tail(path: &Path, lines: usize) -> Result<(), DynError> {
@@ -536,7 +536,7 @@ impl NodeServiceManager for SystemdUserServiceManager {
                     println!();
                     println!("⚠️  Could not enable linger: {}", err);
                     println!();
-                    println!("Without linger, the GSV node daemon will stop when you log out.");
+                    println!("Without linger, the device daemon will stop when you log out.");
                     println!("Run this once with sudo:");
                     println!("  sudo loginctl enable-linger {}", whoami::username());
                 }

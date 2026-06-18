@@ -1,6 +1,6 @@
 # CLI Command Reference
 
-The `gsv` binary controls a GSV gateway, local node daemon, process tree, adapters,
+The `gsv` binary controls a GSV gateway, local device daemon, process tree, adapters,
 packages, and Cloudflare infrastructure. Most commands talk to the Kernel syscall
 surface over WebSocket; `infra` talks directly to Cloudflare.
 
@@ -96,7 +96,7 @@ gsv device status
 gsv device logs [-l N] [--follow]
 ```
 
-The GSV node daemon (gsvd) exposes local hardware-style capabilities to the Kernel:
+The device daemon exposes local hardware-style capabilities to the Kernel:
 `fs.*` and `shell.exec`. The gateway always sees the same syscall/tool surface;
 the device ID selects which implementation receives a driver request.
 

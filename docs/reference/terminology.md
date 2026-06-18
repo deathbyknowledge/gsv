@@ -19,7 +19,7 @@ Target kinds:
 | Kind | What it is | Example |
 |---|---|---|
 | `gsv` | The native GSV cloud computer. Always present. | `gsv` |
-| `native-device` | A user-owned machine running the GSV node daemon (gsvd). Extends GSV with local files, shells, and peripherals. | `laptop` |
+| `native-device` | A user-owned machine running the GSV device daemon (gsvd). Extends GSV with local files, shells, and peripherals. | `laptop` |
 | `browser` | An active GSV web shell desktop. Exposes browser-local files, open windows, and browser automation. | `browser:wmEwFV...` |
 | `adapter` | An external messaging surface (WhatsApp, Discord, Telegram). Used for explicit platform actions like `send`, `reply`, `react`. | `adapter:whatsapp:personal` |
 
@@ -29,26 +29,21 @@ same output. In context file templates, use `{{targets}}` (preferred) or
 
 ## Device
 
-A **device** is the gateway-side record for a machine that has connected
-to GSV. It is stored in the `devices` SQL table. Each device has an owner,
-a set of implemented syscall interfaces (like `fs.*`, `shell.exec`), and an
-online/offline state.
-
-Devices are registered when the node daemon (gsvd) running on a user's
-machine connects to the gateway. The gateway maps devices to the
-`native-device` or `browser` target kinds that agents see.
-
-## Node (Node Daemon)
-
-A **node** is the local daemon process (`gsvd`) that runs on a user's
-machine and connects it to GSV as a device. The node daemon:
+A **device** is a user-owned machine connected to GSV. Each device
+runs a local daemon process (`gsvd`) that:
 
 - Runs as a system service (systemd on Linux, launchd on macOS, Scheduled Task on Windows)
 - Connects to the GSV gateway via WebSocket
 - Implements syscalls (filesystem operations, shell execution) locally
 - Subscribes to exec events and forwards results
 
-The CLI command `gsv device` manages the node daemon (install, start,
+When the device daemon connects, the gateway creates a **device record**
+in the `devices` SQL table. Each record has an owner, a set of implemented
+syscall interfaces (like `fs.*`, `shell.exec`), and an online/offline state.
+The gateway maps devices to the `native-device` or `browser` target kinds
+that agents see.
+
+The CLI command `gsv device` manages the device daemon (install, start,
 stop, status, logs). The internal module is `node_service`.
 
 ## Adapter
@@ -85,7 +80,7 @@ cron (`crontab`).
 
 ## Gateway
 
-The **gateway** is GSV's central server. It authenticates users and nodes,
+The **gateway** is GSV's central server. It authenticates users and devices,
 routes messages between agents and targets, stores device records and
 durable state, and runs the kernel that dispatches syscalls. Everything
 connects to the gateway via WebSocket.
@@ -93,12 +88,12 @@ connects to the gateway via WebSocket.
 ## Summary
 
 ```
-User's laptop ──gsvd (node daemon)──▶ Gateway ──▶ Device record ──▶ Agent sees as "target"
+User's laptop ──gsvd (device daemon)──▶ Gateway ──▶ Device record ──▶ Agent sees as "target"
 
 WhatsApp ──adapter Worker──▶ Gateway ──▶ Adapter target ──▶ Agent sees as "target"
 
 Browser ──web shell──▶ Gateway ──▶ Device record ──▶ Agent sees as "target"
 ```
 
-The rule: **agents see targets**. Everything else — devices, nodes, adapters,
+The rule: **agents see targets**. Everything else — devices, adapters,
 channels — are implementation details of how those targets are provisioned.

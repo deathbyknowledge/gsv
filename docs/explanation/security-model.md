@@ -100,7 +100,7 @@ and other mode bits where the backend supports them.
 Device file tools and shell tools are not a sandbox. Relative paths resolve
 against the device workspace, but absolute paths are used as-is on the device.
 `shell.exec` runs with the OS permissions of the user running `gsv device`.
-Run GSV node daemons as an unprivileged account and point their workspace at the
+Run device daemons as an unprivileged account and point their workspace at the
 smallest useful directory.
 
 Tool approval is a policy layer, not an isolation layer. Account policies can
