@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { GsvBackend } from "../../backend-contract";
 import { errorToText } from "../../utils/format";
+import type { AgentDetail, AgentModelProfile } from "../agents/types";
 import { filterProcesses } from "./runtime-domain";
 import type { ProcessEntry, RuntimeState } from "./types";
 
 export function useRuntimeProcesses(backend: GsvBackend) {
   const [state, setState] = useState<RuntimeState | null>(null);
+  const [agents, setAgents] = useState<AgentDetail[]>([]);
+  const [models, setModels] = useState<AgentModelProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [errorText, setErrorText] = useState("");
   const [query, setQueryState] = useState(readRuntimeQuery);
@@ -17,11 +20,16 @@ export function useRuntimeProcesses(backend: GsvBackend) {
     const requestId = ++requestIdRef.current;
     setLoading(true);
     try {
-      const nextState = await backend.loadRuntimeState();
+      const [nextState, nextAgents] = await Promise.all([
+        backend.loadRuntimeState(),
+        backend.loadAgentsState(),
+      ]);
       if (requestId !== requestIdRef.current) {
         return;
       }
       setState(nextState);
+      setAgents(nextAgents.agents);
+      setModels(nextAgents.modelProfiles);
       setErrorText(nextState.errorText);
     } catch (error) {
       if (requestId === requestIdRef.current) {
@@ -99,6 +107,8 @@ export function useRuntimeProcesses(backend: GsvBackend) {
     loading,
     errorText,
     query,
+    agents,
+    models,
     selectedProcess,
     filteredProcesses,
     killingPid,

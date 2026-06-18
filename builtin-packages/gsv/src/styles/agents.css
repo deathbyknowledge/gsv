@@ -16,6 +16,127 @@
   gap: 0.5rem;
 }
 
+.gsv-crew-layout {
+  display: grid;
+  grid-template-columns: minmax(14rem, 18rem) minmax(0, 1fr);
+  align-items: start;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.gsv-crew-models,
+.gsv-crew-agents {
+  display: grid;
+  align-content: start;
+  gap: 0.65rem;
+  min-width: 0;
+}
+
+.gsv-crew-column-head {
+  padding: 0 0.1rem;
+}
+
+.gsv-crew-agent-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
+  align-items: start;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.gsv-model-card {
+  gap: 0.65rem;
+}
+
+.gsv-model-default {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: #253043;
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+.gsv-model-default input {
+  width: 1rem;
+  height: 1rem;
+  accent-color: #3867d6;
+}
+
+.gsv-agent-card {
+  min-height: 10rem;
+}
+
+.gsv-agent-card-lines {
+  display: grid;
+  gap: 0.42rem;
+  min-width: 0;
+}
+
+.gsv-card-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.gsv-text-action {
+  border: 0;
+  background: transparent;
+  color: #315fbd;
+  cursor: pointer;
+  font-size: 0.76rem;
+  font-weight: 800;
+  line-height: 1;
+  text-decoration: underline;
+  text-underline-offset: 0.12rem;
+  text-transform: uppercase;
+}
+
+.gsv-text-action:focus-visible {
+  outline: 2px solid #3867d6;
+  outline-offset: 2px;
+}
+
+.gsv-agent-compact-meta,
+.gsv-crew-card-note {
+  color: #687384;
+  font-size: 0.8rem;
+}
+
+.gsv-crew-card-note {
+  margin: 0;
+  line-height: 1.45;
+}
+
+.gsv-create-card {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  min-height: 3.6rem;
+  padding: 0.8rem 0.95rem;
+}
+
+.gsv-create-card-copy {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.55rem;
+  min-width: 0;
+}
+
+.gsv-create-card-copy strong {
+  color: #161b22;
+  font-size: 1rem;
+  line-height: 1.2;
+}
+
+.gsv-create-card-copy span {
+  color: #3d4756;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+}
+
 .gsv-runtime-row.is-static {
   cursor: default;
   text-align: left;
@@ -148,4 +269,10 @@
   grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 0.45rem;
+}
+
+@media (max-width: 860px) {
+  .gsv-crew-layout {
+    grid-template-columns: 1fr;
+  }
 }

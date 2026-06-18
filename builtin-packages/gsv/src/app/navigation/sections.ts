@@ -9,8 +9,8 @@ export const GROUPS: GsvGroup[] = [
   },
   {
     id: "agents",
-    label: "Agents",
-    shortLabel: "Agents",
+    label: "Crew",
+    shortLabel: "Crew",
     sections: ["agents"],
   },
   {
@@ -78,15 +78,15 @@ export const SECTIONS: GsvSection[] = [
   {
     id: "agents",
     groupId: "agents",
-    label: "Agents",
-    shortLabel: "Agents",
-    title: "Agents",
-    summary: "Manage agent accounts, their context, and runtime behavior.",
-    statusLabel: "Agents",
+    label: "Crew",
+    shortLabel: "Crew",
+    title: "Crew",
+    summary: "Manage agent accounts, their model choices, tasks, context, and runtime behavior.",
+    statusLabel: "Crew",
     tone: "accent",
     localItems: [
       {
-        label: "Your agents",
+        label: "Crew roster",
         description: "Your personal agent and any custom agents you can run.",
         meta: "Accounts",
       },
@@ -106,25 +106,25 @@ export const SECTIONS: GsvSection[] = [
   {
     id: "runtime",
     groupId: "operations",
-    label: "Runtime",
-    shortLabel: "Runtime",
-    title: "Runtime",
-    summary: "Inspect and control running agent processes.",
+    label: "Tasks",
+    shortLabel: "Tasks",
+    title: "Tasks",
+    summary: "Inspect and control runtime work grouped by crew member.",
     statusLabel: "Operations",
     tone: "neutral",
     localItems: [
       {
-        label: "Process list",
+        label: "Task board",
         description: "Search by pid, label, profile, owner, or path.",
         meta: "Queue",
       },
       {
-        label: "Process detail",
+        label: "Task detail",
         description: "Open the conversation, inspect metadata, or stop the process.",
         meta: "Inspector",
       },
       {
-        label: "Runtime anomalies",
+        label: "Task anomalies",
         description: "Long-running, stale, failed, or attention-worthy process state.",
         meta: "Attention",
         tone: "warning",
@@ -132,8 +132,8 @@ export const SECTIONS: GsvSection[] = [
     ],
     handoffs: [
       {
-        label: "Open Runtime",
-        description: "Inspect and control running processes in GSV.",
+        label: "Open Tasks",
+        description: "Inspect and control running work in GSV.",
         sectionId: "runtime",
       },
     ],

@@ -7,6 +7,9 @@ export type ProcessEntry = {
   queuedCount?: number | string | null;
   lastActiveAt?: number | string | null;
   profile?: string | null;
+  username?: string | null;
+  interactive?: boolean | null;
+  isDefaultConversation?: boolean | null;
   uid?: number | string | null;
   parentPid?: string | number | null;
   cwd?: string | null;

@@ -144,10 +144,7 @@
 .gsv-runtime-list {
   display: grid;
   min-width: 0;
-  border: 1px solid #dce2ea;
-  border-radius: 8px;
-  overflow: hidden;
-  background: #ffffff;
+  overflow: visible;
 }
 
 .gsv-runtime-row {
@@ -243,4 +240,73 @@
 .gsv-empty-state h3,
 .gsv-empty-state p {
   margin: 0;
+}
+
+.gsv-task-board {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  align-items: start;
+  gap: 1.2rem;
+  min-width: 0;
+  padding-top: 0.35rem;
+}
+
+.gsv-task-group {
+  display: grid;
+  align-content: start;
+  gap: 0.65rem;
+  min-width: 0;
+}
+
+.gsv-task-list {
+  display: grid;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.gsv-task-card {
+  min-height: 3.1rem;
+  padding: 0.65rem 0.75rem;
+  gap: 0.38rem;
+}
+
+.gsv-task-card.is-idle {
+  color: #687384;
+}
+
+.gsv-task-card-main {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.gsv-task-card-main strong {
+  overflow: hidden;
+  color: #161b22;
+  font-size: 0.82rem;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gsv-task-card-main .gsv-icon {
+  color: #7b8492;
+}
+
+.gsv-task-card-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.65rem;
+  min-width: 0;
+  padding-left: 1.05rem;
+  color: #687384;
+  font-size: 0.72rem;
+}
+
+.gsv-task-card-meta span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

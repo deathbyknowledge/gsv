@@ -5,9 +5,9 @@ import { formatTimestampMs } from "../../utils/format";
 import {
   canOpenChat,
   processState,
-  processStateTone,
   processTitle,
 } from "./runtime-domain";
+import { TaskBoard } from "./TaskBoard";
 import { useRuntimeProcesses } from "./useRuntimeProcesses";
 import type { ProcessEntry } from "./types";
 
@@ -16,8 +16,8 @@ export function RuntimeSection({ backend }: { backend: GsvBackend }) {
   const hasFilter = runtime.query.trim().length > 0;
   const selectedProcess = runtime.selectedProcess;
   const statusText = runtime.loading
-    ? `Refreshing. Showing ${runtime.filteredProcesses.length} of ${runtime.totalCount} processes.`
-    : `Showing ${runtime.filteredProcesses.length} of ${runtime.totalCount} processes.`;
+    ? `Refreshing. Showing ${runtime.filteredProcesses.length} of ${runtime.totalCount} tasks.`
+    : `Showing ${runtime.filteredProcesses.length} of ${runtime.totalCount} tasks.`;
 
   if (selectedProcess) {
     return (
@@ -34,7 +34,7 @@ export function RuntimeSection({ backend }: { backend: GsvBackend }) {
 
   return (
     <section class="gsv-runtime">
-      <section class="gsv-runtime-list-pane" aria-label="Runtime processes">
+      <section class="gsv-runtime-list-pane" aria-label="Runtime tasks">
         <form
           class="gsv-runtime-toolbar"
           onSubmit={(event) => {
@@ -70,48 +70,21 @@ export function RuntimeSection({ backend }: { backend: GsvBackend }) {
         <div class="gsv-runtime-list" aria-busy={runtime.loading ? "true" : "false"}>
           {runtime.filteredProcesses.length === 0 ? (
             <section class="gsv-empty-state">
-              <h3>{hasFilter ? "No matching processes" : "No running processes"}</h3>
-              <p>{hasFilter ? "Change the filter or clear search." : "Refresh to check for newly started processes."}</p>
+              <h3>{hasFilter ? "No matching tasks" : "No runtime tasks"}</h3>
+              <p>{hasFilter ? "Change the filter or clear search." : "Refresh to check for newly started work."}</p>
             </section>
-          ) : runtime.filteredProcesses.map((process) => (
-            <ProcessRow
-              key={process.pid}
-              process={process}
-              selected={false}
-              onSelect={() => runtime.selectProcess(process)}
+          ) : (
+            <TaskBoard
+              agents={runtime.agents}
+              models={runtime.models}
+              processes={runtime.filteredProcesses}
+              loading={runtime.loading}
+              onSelect={runtime.selectProcess}
             />
-          ))}
+          )}
         </div>
       </section>
     </section>
-  );
-}
-
-function ProcessRow({
-  process,
-  selected,
-  onSelect,
-}: {
-  process: ProcessEntry;
-  selected: boolean;
-  onSelect: () => void;
-}) {
-  const title = processTitle(process);
-  const state = processState(process);
-  const tone = processStateTone(process);
-  const cwd = String(process.cwd ?? "").trim() || "No cwd";
-  const queue = Number(process.queuedCount ?? 0);
-  const stateLabel = Number.isFinite(queue) && queue > 0 ? `${state} +${queue}` : state;
-
-  return (
-    <button class={`gsv-runtime-row${selected ? " is-selected" : ""}`} type="button" onClick={onSelect}>
-      <span class={`gsv-mark is-${tone}`} aria-hidden="true"></span>
-      <span class="gsv-row-copy">
-        <strong>{title}</strong>
-        <span>{stateLabel} / {cwd}</span>
-      </span>
-      <span class="gsv-row-meta">{String(process.profile ?? "profile")}</span>
-    </button>
   );
 }
 
@@ -143,11 +116,11 @@ function ProcessDetail({
   const killPending = killingPid === pid;
 
   return (
-    <section class="gsv-runtime-detail" aria-label="Process detail">
+    <section class="gsv-runtime-detail" aria-label="Task detail">
       <header class="gsv-runtime-detail-head">
-        <ActionButton icon="arrow-left" label="Processes" onClick={onBack} />
+        <ActionButton icon="arrow-left" label="Tasks" onClick={onBack} />
         <div>
-          <span class="gsv-kicker">Process detail</span>
+          <span class="gsv-kicker">Task detail</span>
           <h3>{title}</h3>
           <p>{pid}</p>
         </div>
@@ -193,8 +166,8 @@ function ProcessDetail({
         />
         <ActionButton
           icon="trash"
-          label="Kill Process"
-          busyLabel="Killing"
+          label="Cancel Task"
+          busyLabel="Canceling"
           busy={killPending}
           variant="danger"
           size="full"

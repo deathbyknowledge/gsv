@@ -13,6 +13,7 @@ export type AgentDetail = {
   uid: number;
   username: string;
   displayName: string;
+  gecos?: string;
   relation: AgentRelation;
   runnable: boolean;
   /** Per-agent model override (config key users/<uid>/ai/model); empty = inherit default. */
@@ -21,9 +22,22 @@ export type AgentDetail = {
   approval: string;
 };
 
+export type AgentModelProfile = {
+  id: string;
+  label: string;
+  provider: string;
+  model: string;
+  reasoning: string;
+  maxTokens: string;
+  maxContext: string;
+  default: boolean;
+  source: "system" | "agent";
+};
+
 export type AgentsState = {
   agents: AgentDetail[];
   humans: AccountSummary[];
+  modelProfiles: AgentModelProfile[];
   viewerUid: number;
   isRoot: boolean;
   errorText: string;

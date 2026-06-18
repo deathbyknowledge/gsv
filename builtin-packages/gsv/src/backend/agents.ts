@@ -3,6 +3,7 @@ import type {
   AgentContextFile,
   AgentContextResult,
   AgentDetail,
+  AgentModelProfile,
   AgentMutationResult,
   AgentsState,
   CreateAgentArgs,
@@ -38,6 +39,66 @@ function asAccounts(value: unknown): AccountSummary[] {
 
 function configValue(entries: ConfigEntry[], key: string): string | undefined {
   return entries.find((entry) => entry.key === key)?.value;
+}
+
+function configValueOrDefault(entries: ConfigEntry[], key: string, fallback: string): string {
+  const value = configValue(entries, key)?.trim();
+  return value || fallback;
+}
+
+function modelLabel(model: string): string {
+  const cleaned = model
+    .replace(/^@cf\//, "")
+    .split("/")
+    .pop()
+    ?.replace(/[-_]+/g, " ")
+    .trim() || model;
+  return cleaned
+    .split(/\s+/)
+    .map((part) => part.length > 3 ? `${part.charAt(0).toUpperCase()}${part.slice(1)}` : part.toUpperCase())
+    .join(" ");
+}
+
+function modelId(model: string): string {
+  return model.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "model";
+}
+
+function buildModelProfiles(entries: ConfigEntry[], agents: AgentDetail[]): AgentModelProfile[] {
+  const defaultProvider = configValueOrDefault(entries, "config/ai/provider", "workers-ai");
+  const defaultModel = configValueOrDefault(entries, "config/ai/model", "@cf/nvidia/nemotron-3-120b-a12b");
+  const defaultProfile: AgentModelProfile = {
+    id: "default",
+    label: `${modelLabel(defaultModel)} (Default)`,
+    provider: defaultProvider,
+    model: defaultModel,
+    reasoning: configValueOrDefault(entries, "config/ai/reasoning", "off"),
+    maxTokens: configValueOrDefault(entries, "config/ai/max_tokens", "8192"),
+    maxContext: configValueOrDefault(entries, "config/ai/max_context_bytes", "32768"),
+    default: true,
+    source: "system",
+  };
+
+  const seen = new Set<string>([defaultModel]);
+  const overrides = agents.flatMap((agent) => {
+    const model = agent.model.trim();
+    if (!model || seen.has(model)) {
+      return [];
+    }
+    seen.add(model);
+    return [{
+      id: modelId(model),
+      label: modelLabel(model),
+      provider: defaultProvider,
+      model,
+      reasoning: defaultProfile.reasoning,
+      maxTokens: defaultProfile.maxTokens,
+      maxContext: defaultProfile.maxContext,
+      default: false,
+      source: "agent" as const,
+    }];
+  });
+
+  return [defaultProfile, ...overrides];
 }
 
 function contextDir(username: string): string {
@@ -93,6 +154,7 @@ export async function loadAgentsState(
         uid: account.uid,
         username: account.username,
         displayName: account.displayName,
+        gecos: account.gecos,
         relation: account.relation,
         runnable: account.runnable,
         model: configValue(entries, `users/${account.uid}/ai/model`) ?? "",
@@ -103,9 +165,9 @@ export async function loadAgentsState(
       (account) => account.relation === "human" || account.relation === "self",
     );
 
-    return { agents, humans, viewerUid, isRoot, errorText: "" };
+    return { agents, humans, modelProfiles: buildModelProfiles(entries, agents), viewerUid, isRoot, errorText: "" };
   } catch (error) {
-    return { agents: [], humans: [], viewerUid, isRoot, errorText: errorText(error) };
+    return { agents: [], humans: [], modelProfiles: [], viewerUid, isRoot, errorText: errorText(error) };
   }
 }
 

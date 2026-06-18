@@ -1,12 +1,11 @@
 import { useEffect, useState } from "preact/hooks";
 import type { GsvBackend } from "../../backend-contract";
 import { ActionButton } from "../../components/ui/ActionButton";
+import { CrewOverview } from "./CrewCards";
 import {
   APPROVAL_ACTION_OPTIONS,
-  approvalSummary,
   parseApprovalPolicy,
   relationLabel,
-  relationTone,
   serializeApprovalPolicy,
 } from "./agents-domain";
 import { useAgents } from "./useAgents";
@@ -14,9 +13,11 @@ import type {
   AccountSummary,
   AgentContextFile,
   AgentDetail,
+  AgentModelProfile,
   ApprovalPolicy,
   CreateAgentArgs,
 } from "./types";
+import type { ProcessEntry } from "../runtime/types";
 
 const PERSONA_CONTEXT_FILE = "05-persona.md";
 const NEW_CONTEXT_FILE = "__new__";
@@ -49,6 +50,8 @@ export function AgentsSection({ backend }: { backend: GsvBackend }) {
         errorText={agents.errorText}
         agents={agents.state?.agents ?? []}
         humans={agents.state?.humans ?? []}
+        models={agents.state?.modelProfiles ?? []}
+        processes={agents.processes}
         viewerUid={agents.state?.viewerUid ?? 0}
         isRoot={agents.state?.isRoot ?? false}
         onRefresh={() => void agents.loadState()}
@@ -66,6 +69,8 @@ function AgentRoster({
   errorText,
   agents,
   humans,
+  models,
+  processes,
   viewerUid,
   isRoot,
   onRefresh,
@@ -78,6 +83,8 @@ function AgentRoster({
   errorText: string;
   agents: AgentDetail[];
   humans: AccountSummary[];
+  models: AgentModelProfile[];
+  processes: ProcessEntry[];
   viewerUid: number;
   isRoot: boolean;
   onRefresh: () => void;
@@ -85,8 +92,10 @@ function AgentRoster({
   onCreateAgent: (args: CreateAgentArgs) => Promise<boolean>;
   onCreateHuman: (args: { username: string; password: string; gecos?: string }) => Promise<boolean>;
 }) {
+  const [createAgentOpen, setCreateAgentOpen] = useState(false);
+
   return (
-    <section class="gsv-agents-roster" aria-label="Agents">
+    <section class="gsv-agents-roster" aria-label="Crew">
       <div class="gsv-agents-toolbar">
         <p class="gsv-runtime-meta" aria-live="polite">
           {loading ? "Loading agents." : `${agents.length} agent${agents.length === 1 ? "" : "s"} you can run.`}
@@ -95,30 +104,16 @@ function AgentRoster({
       </div>
       {errorText ? <p class="gsv-inline-error">{errorText}</p> : null}
 
-      <div class="gsv-agents-list">
-        {agents.length === 0 ? (
-          <section class="gsv-empty-state">
-            <h3>No agents yet</h3>
-            <p>Create a custom agent or check that your personal agent is provisioned.</p>
-          </section>
-        ) : agents.map((agent) => (
-          <button
-            key={agent.username}
-            class="gsv-runtime-row"
-            type="button"
-            onClick={() => onSelect(agent)}
-          >
-            <span class={`gsv-mark is-${relationTone(agent.relation)}`} aria-hidden="true"></span>
-            <span class="gsv-row-copy">
-              <strong>{agent.displayName}</strong>
-              <span>{relationLabel(agent.relation)} / {agent.model || "default model"} / {approvalSummary(agent.approval)}</span>
-            </span>
-            <span class="gsv-row-meta">{agent.username}</span>
-          </button>
-        ))}
-      </div>
+      <CrewOverview
+        agents={agents}
+        models={models}
+        processes={processes}
+        loading={loading}
+        onSelect={onSelect}
+        onCreateAgent={() => setCreateAgentOpen(true)}
+      />
 
-      <CreateAgentForm busy={busy} onCreate={onCreateAgent} />
+      <CreateAgentForm open={createAgentOpen} busy={busy} onOpenChange={setCreateAgentOpen} onCreate={onCreateAgent} />
 
       {isRoot ? (
         <section class="gsv-agents-humans" aria-label="Human users">
@@ -146,13 +141,16 @@ function AgentRoster({
 }
 
 function CreateAgentForm({
+  open,
   busy,
+  onOpenChange,
   onCreate,
 }: {
+  open: boolean;
   busy: boolean;
+  onOpenChange: (open: boolean) => void;
   onCreate: (args: CreateAgentArgs) => Promise<boolean>;
 }) {
-  const [open, setOpen] = useState(false);
   const [username, setUsername] = useState("");
   const [gecos, setGecos] = useState("");
   const [contextFiles, setContextFiles] = useState<AgentContextFile[]>(defaultCreateContextFiles);
@@ -164,11 +162,7 @@ function CreateAgentForm({
   }
 
   if (!open) {
-    return (
-      <div class="gsv-agents-create-toggle">
-        <ActionButton icon="user" label="New agent" onClick={() => setOpen(true)} />
-      </div>
-    );
+    return null;
   }
 
   return (
@@ -186,7 +180,7 @@ function CreateAgentForm({
         });
         if (ok) {
           resetForm();
-          setOpen(false);
+          onOpenChange(false);
         }
       }}
     >
@@ -209,7 +203,7 @@ function CreateAgentForm({
           variant="ghost"
           onClick={() => {
             resetForm();
-            setOpen(false);
+            onOpenChange(false);
           }}
         />
       </div>
@@ -423,7 +417,7 @@ function AgentWorkspace({
   return (
     <section class="gsv-agents-workspace" aria-label="Agent detail">
       <header class="gsv-runtime-detail-head">
-        <ActionButton icon="arrow-left" label="Agents" onClick={onBack} />
+        <ActionButton icon="arrow-left" label="Crew" onClick={onBack} />
         <div>
           <span class="gsv-kicker">{relationLabel(agent.relation)}</span>
           <h3>{agent.displayName}</h3>

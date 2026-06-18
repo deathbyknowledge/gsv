@@ -19,6 +19,7 @@ export type IconName =
   | "lock"
   | "package"
   | "plug"
+  | "plus"
   | "refresh"
   | "search"
   | "server"
@@ -59,6 +60,7 @@ function iconPath(name: IconName) {
   if (name === "lock") return <><rect x="5" y="10" width="14" height="10" rx="2"></rect><path d="M8 10V7.5a4 4 0 0 1 8 0V10"></path></>;
   if (name === "package") return <><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9Z"></path><path d="m4 7.5 8 4.5 8-4.5"></path><path d="M12 12v9"></path></>;
   if (name === "plug") return <><path d="M8 3v5"></path><path d="M16 3v5"></path><path d="M6 8h12v3a6 6 0 0 1-12 0z"></path><path d="M12 17v4"></path></>;
+  if (name === "plus") return <><path d="M12 5v14"></path><path d="M5 12h14"></path></>;
   if (name === "refresh") return <><path d="M20 6v5h-5"></path><path d="M4 18v-5h5"></path><path d="M18 10a6.5 6.5 0 0 0-11-3l-3 3"></path><path d="M6 14a6.5 6.5 0 0 0 11 3l3-3"></path></>;
   if (name === "search") return <><circle cx="10.5" cy="10.5" r="6"></circle><path d="m15 15 5 5"></path></>;
   if (name === "server") return <><rect x="4" y="4" width="16" height="6" rx="1.5"></rect><rect x="4" y="14" width="16" height="6" rx="1.5"></rect><path d="M8 7h.01"></path><path d="M8 17h.01"></path></>;
