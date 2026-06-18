@@ -23,7 +23,7 @@ export default defineConfig({
           text: "Tutorials",
           items: [
             { text: "Getting Started", link: "/tutorials/getting-started" },
-            { text: "Connecting Adapters", link: "/tutorials/setting-up-a-channel" },
+            { text: "Connecting Adapters", link: "/tutorials/setting-up-an-adapter" },
           ],
         },
       ],

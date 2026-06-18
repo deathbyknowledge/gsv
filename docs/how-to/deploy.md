@@ -148,5 +148,5 @@ gsv infra upgrade --instance gsv-work --all
 gsv infra destroy --instance gsv-work --all --delete-bucket --purge-bucket
 ```
 
-By default, destroy also tries to uninstall the local device daemon. Use
+By default, destroy also tries to uninstall the local node daemon. Use
 `--keep-node` to leave it installed.

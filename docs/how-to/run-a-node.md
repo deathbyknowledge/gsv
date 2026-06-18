@@ -42,7 +42,7 @@ device.
 
 ## Install as a Service
 
-For a persistent device daemon:
+For a persistent node daemon:
 
 ```bash
 gsv device install --id macbook --workspace ~/projects

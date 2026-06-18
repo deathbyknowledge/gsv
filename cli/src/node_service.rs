@@ -536,7 +536,7 @@ impl NodeServiceManager for SystemdUserServiceManager {
                     println!();
                     println!("⚠️  Could not enable linger: {}", err);
                     println!();
-                    println!("Without linger, the device daemon will stop when you log out.");
+                    println!("Without linger, the GSV node daemon will stop when you log out.");
                     println!("Run this once with sudo:");
                     println!("  sudo loginctl enable-linger {}", whoami::username());
                 }

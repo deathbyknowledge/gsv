@@ -356,13 +356,13 @@ async fn run_destroy_command(
     .await?;
 
     if keep_node {
-        println!("Skipped device daemon uninstall (--keep-node).");
+        println!("Skipped node daemon uninstall (--keep-node).");
         return Ok(());
     }
 
     if !node_service::node_service_management_supported() {
         println!(
-            "Device daemon management is unsupported on this OS. Local device teardown was skipped."
+            "Node daemon management is unsupported on this OS. Local node teardown was skipped."
         );
         return Ok(());
     }

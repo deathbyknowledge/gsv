@@ -1179,7 +1179,7 @@ type AiSyscalls = {
 
 ## Adapters: `adapter.*`
 
-`adapter.*` is the control plane for external chat or channel connectors.
+`adapter.*` is the control plane for external chat or adapter connectors.
 
 Runtime behavior:
 

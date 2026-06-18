@@ -60,7 +60,7 @@ impl Tool for CopyTool {
         ToolDefinition {
             name: "Copy".to_string(),
             description:
-                "Copy a file on this device. Paths are relative to the workspace unless absolute."
+                "Copy a file on this target. Paths are relative to the workspace unless absolute."
                     .to_string(),
             input_schema: json!({
                 "type": "object",

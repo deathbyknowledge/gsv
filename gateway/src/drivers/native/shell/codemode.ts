@@ -225,7 +225,7 @@ function codeModeUsage(): string {
     "codemode -e <code> [options] [-- argv...]",
     "",
     "Options:",
-    "  --target <device>   default target for shell/fs calls",
+    "  --target <target>   default target for shell/fs calls",
     "  --cwd <path>        default cwd for shell calls and relative fs paths",
     "  --json              print the full CodeMode result envelope",
     "  --arg key=value     expose scalar args[key] to the script",

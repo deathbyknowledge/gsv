@@ -24,7 +24,8 @@ Target kinds:
 | `adapter` | An external messaging surface (WhatsApp, Discord, Telegram). Used for explicit platform actions like `send`, `reply`, `react`. | `adapter:whatsapp:personal` |
 
 The shell commands `targets` and `devices` are aliases — they produce the
-same output.
+same output. In context file templates, use `{{targets}}` (preferred) or
+`{{devices}}` (backward-compatible alias).
 
 ## Device
 
@@ -71,12 +72,23 @@ account has a home directory (`/home/<agent>`) with durable context
 files under `context.d/`. Agents are invoked via `proc spawn --as <agent>`
 and see the world through their context files and the system prompt.
 
+In context file templates, the running agent's identity is available under
+the `program` key (`program.username`, `program.home`, `program.cwd`).
+"Program" and "agent" refer to the same thing: the current AI identity.
+
 ## Process
 
 A **process** is a running instance of an agent loop. Each process has a
 PID, uid/gid identity, current working directory, and message history.
 Processes communicate via IPC (`proc call`) and can be scheduled with
 cron (`crontab`).
+
+## Gateway
+
+The **gateway** is GSV's central server. It authenticates users and nodes,
+routes messages between agents and targets, stores device records and
+durable state, and runs the kernel that dispatches syscalls. Everything
+connects to the gateway via WebSocket.
 
 ## Summary
 

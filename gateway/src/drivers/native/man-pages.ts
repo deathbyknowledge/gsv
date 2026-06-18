@@ -273,7 +273,7 @@ export function renderManualPage(topic?: string): string | null {
         "  freely, and use an explicit return statement for the value to print.",
         "",
         "OPTIONS",
-        "  --target <device>   Default target for shell and filesystem calls.",
+        "  --target <target>   Default target for shell and filesystem calls.",
         "  --cwd <path>        Default cwd for shell calls and relative filesystem paths.",
         "  --json              Print the full result envelope.",
         "  --arg key=value     Expose scalar args[key] to the script.",

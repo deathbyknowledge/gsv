@@ -5,7 +5,7 @@ use std::path::PathBuf;
 #[command(
     name = "gsv",
     version = gsv::build_info::BUILD_VERSION,
-    about = "GSV CLI - Chat, Device, and Infrastructure Control Plane"
+    about = "GSV CLI - Chat, Node, and Infrastructure Control Plane"
 )]
 pub(crate) struct Cli {
     /// Gateway URL (overrides config file)
@@ -61,7 +61,7 @@ pub(crate) enum Commands {
         action: AuthAction,
     },
 
-    /// Run and manage the device daemon
+    /// Run and manage the GSV node daemon (gsvd)
     Device {
         #[command(subcommand)]
         action: DeviceAction,
@@ -95,9 +95,9 @@ pub(crate) enum Commands {
 
 #[derive(Subcommand)]
 pub(crate) enum DeviceAction {
-    /// Run the device in the foreground
+    /// Run the GSV node daemon in the foreground
     Run {
-        /// Device ID (default: hostname)
+        /// Node ID (default: hostname)
         #[arg(long)]
         id: Option<String>,
 
@@ -106,9 +106,9 @@ pub(crate) enum DeviceAction {
         workspace: Option<PathBuf>,
     },
 
-    /// Install and start device daemon service
+    /// Install and start GSV node daemon service
     Install {
-        /// Device ID (saved to local config during install)
+        /// Node ID (saved to local config during install)
         #[arg(long)]
         id: Option<String>,
 
@@ -117,16 +117,16 @@ pub(crate) enum DeviceAction {
         workspace: Option<PathBuf>,
     },
 
-    /// Start device daemon service
+    /// Start GSV node daemon service
     Start,
 
-    /// Stop device daemon service
+    /// Stop GSV node daemon service
     Stop,
 
-    /// Show device daemon service status
+    /// Show GSV node daemon service status
     Status,
 
-    /// Show device daemon service logs
+    /// Show GSV node daemon service logs
     Logs {
         /// Number of lines to show
         #[arg(short, long, default_value = "100")]
@@ -226,7 +226,7 @@ pub(crate) enum InfraAction {
         telegram_bot_token: Option<String>,
     },
 
-    /// Destroy deployed infrastructure and optionally keep local device daemon
+    /// Destroy deployed infrastructure and optionally keep local node daemon
     Destroy {
         /// Component to remove (repeat for multiple). Defaults to all when omitted.
         #[arg(short = 'c', long = "component")]
@@ -260,7 +260,7 @@ pub(crate) enum InfraAction {
         #[arg(long, env = "CF_ACCOUNT_ID")]
         account_id: Option<String>,
 
-        /// Keep local device daemon installed
+        /// Keep local node daemon installed
         #[arg(long)]
         keep_node: bool,
     },
@@ -274,7 +274,7 @@ pub(crate) enum PackagesAction {
 
 #[derive(Subcommand)]
 pub(crate) enum NodeServiceAction {
-    /// Install and start device daemon service
+    /// Install and start GSV node daemon service
     Install {
         /// Node ID (saved to local config during install)
         #[arg(long)]
@@ -285,19 +285,19 @@ pub(crate) enum NodeServiceAction {
         workspace: Option<PathBuf>,
     },
 
-    /// Uninstall and stop device daemon service
+    /// Uninstall and stop GSV node daemon service
     Uninstall,
 
-    /// Start device daemon service
+    /// Start GSV node daemon service
     Start,
 
-    /// Stop device daemon service
+    /// Stop GSV node daemon service
     Stop,
 
-    /// Show device daemon service status
+    /// Show GSV node daemon service status
     Status,
 
-    /// Show device daemon service logs
+    /// Show GSV node daemon service logs
     Logs {
         /// Number of lines to show
         #[arg(short, long, default_value = "100")]
