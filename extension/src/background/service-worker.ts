@@ -1,5 +1,15 @@
 import { GSVClient } from "@humansandmachines/gsv/client";
 import { configReady, loadConfig, saveConfig, type ExtensionConfig } from "../shared/config";
+import {
+  clearDiagnostics as clearStoredDiagnostics,
+  emptyDiagnostics,
+  loadDiagnostics,
+  mergeDiagnostics,
+  recordDiagnosticActivity,
+  recordDiagnosticArtifactPaths,
+  saveDiagnostics,
+  type ExtensionDiagnostics,
+} from "../shared/diagnostics";
 import { debuggerTabs, releaseAllDebuggers } from "../shared/debugger";
 import type { ActivityEntry, ExtensionUiState, RuntimeMessage, RuntimeResponse } from "../shared/ui-state";
 import { networkStatus, stopNetworkCapture } from "../target/network-recorder";
@@ -11,8 +21,13 @@ const driver = client.driver({
   version: "0.2.6",
   keepalive: { intervalMs: 25_000 },
 });
-const activity: ActivityEntry[] = [];
-const artifactPaths = new Set<string>();
+let diagnostics: ExtensionDiagnostics = emptyDiagnostics();
+const diagnosticsReady = loadDiagnostics().then((stored) => {
+  diagnostics = mergeDiagnostics(stored, diagnostics);
+}).catch((error) => {
+  console.warn("GSV browser target diagnostics unavailable", error);
+});
+let diagnosticsWrite: Promise<void> = Promise.resolve();
 let lastConnectionStatus = "";
 let connectPromise: Promise<void> | null = null;
 
@@ -25,10 +40,13 @@ client.onStatus((status) => {
     return;
   }
   lastConnectionStatus = key;
+  const detail = status.state === "connected"
+    ? status.connectionId ?? status.message ?? "gateway"
+    : status.message ?? status.connectionId ?? "gateway";
   addActivity({
     kind: "connection",
     label: status.state,
-    detail: status.message ?? status.connectionId ?? "gateway",
+    detail,
     status: status.state === "connected" ? "ok" : status.state === "connecting" ? "active" : "info",
   });
 });
@@ -70,6 +88,8 @@ async function handleRuntimeMessage(message: RuntimeMessage): Promise<RuntimeRes
         return await stateResponse();
       case "stop-all":
         return await stopAll();
+      case "clear-diagnostics":
+        return await clearDiagnosticsState();
       case "save-config": {
         const config = await saveConfig(message.config);
         addActivity({
@@ -91,9 +111,10 @@ async function handleRuntimeMessage(message: RuntimeMessage): Promise<RuntimeRes
     }
   } catch (error) {
     const messageText = errorMessage(error);
+    const connectionRequest = message.type === "connect" || message.type === "save-config";
     addActivity({
-      kind: "error",
-      label: "runtime",
+      kind: connectionRequest ? "connection" : "error",
+      label: connectionRequest ? "connect failed" : "runtime",
       detail: messageText,
       status: "error",
     });
@@ -140,6 +161,13 @@ async function stopAll(): Promise<RuntimeResponse> {
   return await stateResponse();
 }
 
+async function clearDiagnosticsState(): Promise<RuntimeResponse> {
+  await diagnosticsReady;
+  diagnostics = emptyDiagnostics();
+  await clearStoredDiagnostics();
+  return await stateResponse();
+}
+
 async function openSidePanel(windowId?: number): Promise<void> {
   if (!chrome.sidePanel?.open) {
     throw new Error("chrome.sidePanel is unavailable; check the sidePanel permission.");
@@ -160,6 +188,7 @@ async function stateResponse(): Promise<RuntimeResponse> {
 }
 
 async function buildUiState(): Promise<ExtensionUiState> {
+  await diagnosticsReady;
   const config = await loadConfig();
   const status = client.getStatus();
   const connection = {
@@ -169,6 +198,8 @@ async function buildUiState(): Promise<ExtensionUiState> {
   };
   const captures = networkStatus();
   const tabs = debuggerTabs();
+  const activity = diagnostics.activity;
+  const artifactPaths = diagnostics.artifactPaths;
   const sensitiveActivity = activity.find((entry) => entry.kind === "sensitive" || entry.kind === "network");
 
   return {
@@ -187,10 +218,23 @@ async function buildUiState(): Promise<ExtensionUiState> {
       captures,
     },
     artifact: {
-      screenshots: Array.from(artifactPaths).filter((path) => path.startsWith("/home/browser/screenshots/")).length,
+      screenshots: artifactPaths.filter((path) => path.startsWith("/home/browser/screenshots/")).length,
       networkSessions: captures.filter((capture) => Boolean(capture.sessionPath)).length
-        + Array.from(artifactPaths).filter((path) => path.startsWith("/home/browser/network/sessions/")).length,
-      files: artifactPaths.size,
+        + artifactPaths.filter((path) => path.startsWith("/home/browser/network/sessions/")).length,
+      files: artifactPaths.length,
+    },
+    diagnostics: {
+      lastConnectAttemptAt: diagnostics.lastConnectAttemptAt,
+      lastConnectedAt: diagnostics.lastConnectedAt,
+      lastDisconnectedAt: diagnostics.lastDisconnectedAt,
+      lastSuccessfulConnectionId: diagnostics.lastSuccessfulConnectionId,
+      lastConnectionErrorAt: diagnostics.lastConnectionErrorAt,
+      lastConnectionError: diagnostics.lastConnectionError,
+      lastErrorAt: diagnostics.lastErrorAt,
+      lastError: diagnostics.lastError,
+      activityCount: diagnostics.activity.length,
+      artifactPathCount: diagnostics.artifactPaths.length,
+      updatedAt: diagnostics.updatedAt,
     },
     updatedAt: new Date().toISOString(),
   };
@@ -202,17 +246,29 @@ function addActivity(input: BrowserTargetActivity): void {
     at: new Date().toISOString(),
     ...input,
   };
-  activity.unshift(entry);
-  if (activity.length > 80) {
-    activity.splice(80);
-  }
-  recordArtifactPaths(entry.detail);
+  diagnostics = recordDiagnosticActivity(diagnostics, entry);
+  diagnostics = recordDiagnosticArtifactPaths(diagnostics, artifactPathsFromDetail(entry.detail));
+  queueDiagnosticsSave();
 }
 
-function recordArtifactPaths(detail: string): void {
+function artifactPathsFromDetail(detail: string): string[] {
+  const paths: string[] = [];
   for (const match of detail.matchAll(/\/(?:home\/browser|tmp)\/[^\s"',}]+/g)) {
-    artifactPaths.add(match[0].replace(/[),.;:]+$/, ""));
+    paths.push(match[0].replace(/[),.;:]+$/, ""));
   }
+  return paths;
+}
+
+function queueDiagnosticsSave(): void {
+  diagnosticsWrite = diagnosticsWrite
+    .catch(() => undefined)
+    .then(async () => {
+      await diagnosticsReady;
+      await saveDiagnostics(diagnostics);
+    })
+    .catch((error) => {
+      console.warn("GSV browser target diagnostics save failed", error);
+    });
 }
 
 function gatewayHost(gatewayUrl: string): string {

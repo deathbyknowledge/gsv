@@ -1,6 +1,6 @@
 import "./popup.css";
 import { connectionText, escapeHtml, sendUiMessage, timeAgo } from "../shared/ui-client";
-import type { ActivityEntry, ExtensionUiState, RuntimeResponse } from "../shared/ui-state";
+import type { ExtensionUiState, RuntimeResponse } from "../shared/ui-state";
 
 const app = document.querySelector<HTMLElement>("#app");
 if (!app) {
@@ -31,7 +31,7 @@ setInterval(() => {
 
 async function refresh(showLoading = true): Promise<void> {
   if (showLoading && !currentState) {
-    appEl.innerHTML = `<div class="popup"><p class="loading">Loading...</p></div>`;
+    appEl.innerHTML = `<section class="popup"><p class="loading">Loading target...</p></section>`;
   }
   handleResponse(await sendUiMessage({ type: "status" }));
 }
@@ -80,96 +80,76 @@ function handleResponse(response: RuntimeResponse): void {
 function render(): void {
   const state = currentState;
   if (!state) {
-    appEl.innerHTML = `<div class="popup"><p class="loading">Loading...</p></div>`;
+    appEl.innerHTML = `<section class="popup"><p class="loading">Loading target...</p></section>`;
     return;
   }
 
   const connected = state.connection.state === "connected";
+  const liveCount = liveAccessCount(state);
   const mainAction = connected ? "disconnect" : "connect";
   const mainLabel = connected ? "Disconnect" : state.connection.state === "connecting" ? "Connecting" : "Connect";
-  const latest = latestAgentEvent(state);
 
   appEl.innerHTML = `
     <section class="popup">
-      <header class="top">
+      <header class="topline">
         <div>
-          <span class="kicker">Browser target</span>
-          <div class="product">GSV</div>
+          <span class="eyebrow">GSV Browser Target</span>
+          <strong>${escapeHtml(state.targetId)}</strong>
         </div>
-        <div class="status status--${escapeHtml(state.connection.state)}">
-          <span class="dot"></span>
-          <span>${escapeHtml(connectionText(state))}</span>
-        </div>
+        <span class="status status--${escapeHtml(state.connection.state)}">${escapeHtml(connectionText(state))}</span>
       </header>
 
-      <section class="state state--${escapeHtml(stateTone(state))}">
-        <span>${escapeHtml(stateEyebrow(state))}</span>
-        <h1>${escapeHtml(stateHeadline(state))}</h1>
-        <p title="${escapeHtml(state.config.gatewayUrl)}">${escapeHtml(stateDescription(state))}</p>
+      <section class="plate plate--${escapeHtml(stateTone(state))}">
+        <span class="plate-label">${escapeHtml(state.connection.state)}</span>
+        <h1>${escapeHtml(headline(state))}</h1>
+        <p title="${escapeHtml(state.config.gatewayUrl)}">${escapeHtml(detail(state))}</p>
       </section>
 
-      <section class="last" aria-label="Last agent action">
-        <span class="mark mark--${escapeHtml(eventTone(latest))}"></span>
-        <div>
-          <span class="kicker">Last agent action</span>
-        ${latest ? `
-          <strong>${escapeHtml(friendlyEventLabel(latest))}</strong>
-          <p title="${escapeHtml(latest.detail)}">${escapeHtml(friendlyEventDetail(latest))}</p>
-          <time title="${escapeHtml(latest.at)}">${escapeHtml(timeAgo(latest.at))}</time>
-        ` : `
-          <strong>No activity yet</strong>
-          <p>Agents have not used this browser target in this session.</p>
-        `}
-        </div>
-      </section>
-
-      <div class="facts">
-        ${fact("Auto-connect", state.config.autoConnect ? "On" : "Off", state.config.autoConnect ? "Startup + reconnect" : "Manual")}
-        ${fact("Live access", liveAccessText(state))}
-        ${fact("Saved files", savedFilesText(state))}
-      </div>
+      ${liveCount > 0 ? `
+        <section class="access">
+          <strong>Agent access is live</strong>
+          <span>${escapeHtml(liveAccessText(state))}</span>
+        </section>
+      ` : ""}
 
       ${lastError ? `<div class="error">${escapeHtml(lastError)}</div>` : ""}
 
       <footer class="actions">
-        <button data-action="side-panel" class="primary" ${busyAttr("side-panel")}>Open Monitor</button>
+        <button data-action="${escapeHtml(mainAction)}" class="primary" ${busyAttr(mainAction)}>${escapeHtml(mainLabel)}</button>
         <button data-action="stop-all" class="danger" ${busyAttr("stop-all")}>Stop All</button>
-        <button data-action="${escapeHtml(mainAction)}" ${busyAttr(mainAction)}>${escapeHtml(mainLabel)}</button>
-        <button data-action="options" class="quiet" ${busyAttr("options")}>Settings</button>
+        <button data-action="side-panel" ${busyAttr("side-panel")}>Monitor</button>
+        <button data-action="options" ${busyAttr("options")}>Settings</button>
       </footer>
+
+      <div class="footnote">
+        <span>${escapeHtml(state.gatewayHost)}</span>
+        <span>${escapeHtml(lastSeen(state))}</span>
+      </div>
     </section>
   `;
 }
 
-function stateEyebrow(state: ExtensionUiState): string {
+function headline(state: ExtensionUiState): string {
   if (liveAccessCount(state) > 0) {
-    return "Active browser access";
-  }
-  return state.connection.state === "connected" ? "Ready" : "Not connected";
-}
-
-function stateHeadline(state: ExtensionUiState): string {
-  if (liveAccessCount(state) > 0) {
-    return "An agent is using browser capabilities";
+    return "Agent using this browser";
   }
   if (state.connection.state === "connected") {
-    return "Agents can use this browser";
+    return "Ready";
   }
   if (state.connection.state === "connecting") {
-    return "Connecting to GSV";
+    return "Connecting";
   }
-  return "Browser target is offline";
+  return "Offline";
 }
 
-function stateDescription(state: ExtensionUiState): string {
-  const liveCount = liveAccessCount(state);
-  if (liveCount > 0) {
-    return `${liveCount} live browser handle${liveCount === 1 ? "" : "s"} active.`;
+function detail(state: ExtensionUiState): string {
+  if (liveAccessCount(state) > 0) {
+    return "Use Stop All to detach debugger and network capture.";
   }
   if (state.connection.state === "connected") {
-    return "Ready and waiting for agent requests.";
+    return "Agents can reach this browser through shell.exec and fs.*.";
   }
-  return state.connection.message || `${state.targetId} is not connected.`;
+  return state.connection.message || "Connect this browser to make it available.";
 }
 
 function stateTone(state: ExtensionUiState): string {
@@ -186,92 +166,17 @@ function liveAccessCount(state: ExtensionUiState): number {
 function liveAccessText(state: ExtensionUiState): string {
   const parts: string[] = [];
   if (state.sensitive.networkCaptures > 0) {
-    parts.push(`${state.sensitive.networkCaptures} network`);
+    parts.push(`${state.sensitive.networkCaptures} network capture${state.sensitive.networkCaptures === 1 ? "" : "s"}`);
   }
   if (state.sensitive.debuggerTabs.length > 0) {
-    parts.push(`${state.sensitive.debuggerTabs.length} tab`);
+    parts.push(`${state.sensitive.debuggerTabs.length} debugger tab${state.sensitive.debuggerTabs.length === 1 ? "" : "s"}`);
   }
-  return parts.length > 0 ? parts.join(", ") : "None";
+  return parts.join(" / ");
 }
 
-function savedFilesText(state: ExtensionUiState): string {
-  if (state.artifact.files === 0) {
-    return "None";
-  }
-  const screenshots = state.artifact.screenshots === 1 ? "1 screenshot" : `${state.artifact.screenshots} screenshots`;
-  return `${state.artifact.files} total, ${screenshots}`;
-}
-
-function latestAgentEvent(state: ExtensionUiState): ActivityEntry | null {
-  return state.activity.find((entry) => entry.kind !== "connection") ?? state.activity[0] ?? null;
-}
-
-function friendlyEventLabel(entry: ActivityEntry): string {
-  if (entry.label === "page screenshot") {
-    return "Saved a screenshot";
-  }
-  if (entry.label === "page js") {
-    return "Ran a page script";
-  }
-  if (entry.label === "page text") {
-    return "Read page text";
-  }
-  if (entry.label.startsWith("network ")) {
-    return `Network ${entry.label.replace("network ", "")}`;
-  }
-  if (entry.label.startsWith("fs.")) {
-    return "Updated browser files";
-  }
-  if (entry.kind === "connection") {
-    return connectionEventLabel(entry);
-  }
-  return entry.label;
-}
-
-function friendlyEventDetail(entry: ActivityEntry): string {
-  if (entry.status === "error") {
-    return `Failed: ${entry.detail}`;
-  }
-  if (!entry.detail || entry.detail === "(no path)") {
-    return "Completed";
-  }
-  return entry.detail;
-}
-
-function connectionEventLabel(entry: ActivityEntry): string {
-  if (entry.label === "connected") {
-    return "Connected to GSV";
-  }
-  if (entry.label === "disconnected") {
-    return "Disconnected from GSV";
-  }
-  return entry.label;
-}
-
-function eventTone(entry: ActivityEntry | null): string {
-  if (!entry) {
-    return "neutral";
-  }
-  if (entry.status === "error") {
-    return "danger";
-  }
-  if (entry.status === "active") {
-    return "warning";
-  }
-  if (entry.kind === "connection" && entry.label !== "connected") {
-    return "neutral";
-  }
-  return "good";
-}
-
-function fact(label: string, value: string, detail = ""): string {
-  return `
-    <div class="fact">
-      <span>${escapeHtml(label)}</span>
-      <strong title="${escapeHtml(value)}">${escapeHtml(value)}</strong>
-      ${detail ? `<small>${escapeHtml(detail)}</small>` : ""}
-    </div>
-  `;
+function lastSeen(state: ExtensionUiState): string {
+  const latest = state.activity.find((entry) => entry.kind !== "connection") ?? state.activity[0];
+  return latest ? `last ${timeAgo(latest.at)}` : "no activity";
 }
 
 function busyAttr(action: string): string {

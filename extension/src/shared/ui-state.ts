@@ -51,6 +51,19 @@ export type ExtensionUiState = {
     networkSessions: number;
     files: number;
   };
+  diagnostics: {
+    lastConnectAttemptAt: string | null;
+    lastConnectedAt: string | null;
+    lastDisconnectedAt: string | null;
+    lastSuccessfulConnectionId: string | null;
+    lastConnectionErrorAt: string | null;
+    lastConnectionError: string | null;
+    lastErrorAt: string | null;
+    lastError: string | null;
+    activityCount: number;
+    artifactPathCount: number;
+    updatedAt: string | null;
+  };
   updatedAt: string;
 };
 
@@ -59,6 +72,7 @@ export type RuntimeMessage =
   | { type: "connect" }
   | { type: "disconnect" }
   | { type: "stop-all" }
+  | { type: "clear-diagnostics" }
   | { type: "save-config"; config: ExtensionConfig }
   | { type: "open-side-panel"; windowId?: number };
 
