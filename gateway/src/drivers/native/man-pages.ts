@@ -93,7 +93,7 @@ export function renderManualPage(topic?: string): string | null {
         "  targets list",
         "  targets list --kind browser",
         "  targets search whatsapp",
-        "  targets show browser:abc123",
+        "  targets show rearden:brave",
         "",
       ].join("\n");
 
