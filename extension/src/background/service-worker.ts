@@ -11,6 +11,7 @@ import {
   type ExtensionDiagnostics,
 } from "../shared/diagnostics";
 import { debuggerTabs, releaseAllDebuggers } from "../shared/debugger";
+import { loadRuntimeState, saveRuntimeState } from "../shared/runtime-state";
 import type { ActivityEntry, ExtensionUiState, RuntimeMessage, RuntimeResponse } from "../shared/ui-state";
 import { networkStatus, stopNetworkCapture } from "../target/network-recorder";
 import { createBrowserTargetDriver, type BrowserTargetActivity } from "./driver";
@@ -31,6 +32,11 @@ let diagnosticsWrite: Promise<void> = Promise.resolve();
 let lastConnectionStatus = "";
 let connectPromise: Promise<void> | null = null;
 let manualReconnectSuppressed = false;
+const runtimeStateReady = loadRuntimeState().then((state) => {
+  manualReconnectSuppressed = state.manualReconnectSuppressed;
+}).catch((error) => {
+  console.warn("GSV browser target runtime state unavailable", error);
+});
 
 const browserTarget = createBrowserTargetDriver(addActivity);
 driver.implement("shell.exec", browserTarget.handle);
@@ -82,11 +88,11 @@ async function handleRuntimeMessage(message: RuntimeMessage): Promise<RuntimeRes
       case "status":
         return await stateResponse();
       case "connect":
-        manualReconnectSuppressed = false;
+        await setManualReconnectSuppressed(false);
         await connectNow();
         return await stateResponse();
       case "disconnect":
-        manualReconnectSuppressed = true;
+        await setManualReconnectSuppressed(true);
         driver.disconnect();
         return await stateResponse();
       case "stop-all":
@@ -101,7 +107,7 @@ async function handleRuntimeMessage(message: RuntimeMessage): Promise<RuntimeRes
           detail: `${config.deviceId} (${gatewayHost(config.gatewayUrl)})`,
           status: "info",
         });
-        manualReconnectSuppressed = false;
+        await setManualReconnectSuppressed(false);
         if (config.autoConnect && configReady(config)) {
           await connectNow(config);
         }
@@ -127,6 +133,7 @@ async function handleRuntimeMessage(message: RuntimeMessage): Promise<RuntimeRes
 }
 
 async function maybeConnect(): Promise<void> {
+  await runtimeStateReady;
   const config = await loadConfig();
   if (
     manualReconnectSuppressed
@@ -140,6 +147,7 @@ async function maybeConnect(): Promise<void> {
 }
 
 async function connectNow(config?: ExtensionConfig): Promise<void> {
+  await runtimeStateReady;
   config = config ?? await loadConfig();
   if (!configReady(config)) {
     throw new Error("Configure gateway URL, username, token, and device id first");
@@ -160,7 +168,7 @@ async function connectNow(config?: ExtensionConfig): Promise<void> {
 async function stopAll(): Promise<RuntimeResponse> {
   const stoppedCaptures = await stopNetworkCapture();
   const detachedTabs = await releaseAllDebuggers();
-  manualReconnectSuppressed = true;
+  await setManualReconnectSuppressed(true);
   driver.disconnect("stop all");
   addActivity({
     kind: "sensitive",
@@ -169,6 +177,12 @@ async function stopAll(): Promise<RuntimeResponse> {
     status: "info",
   });
   return await stateResponse();
+}
+
+async function setManualReconnectSuppressed(value: boolean): Promise<void> {
+  await runtimeStateReady;
+  manualReconnectSuppressed = value;
+  await saveRuntimeState({ manualReconnectSuppressed: value });
 }
 
 async function clearDiagnosticsState(): Promise<RuntimeResponse> {

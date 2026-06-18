@@ -1168,7 +1168,9 @@ export class GSVDriver {
     }
 
     this.ensureClientHandlers();
-    this.abortController = new AbortController();
+    this.stopKeepalive();
+    this.connection = null;
+    this.abortController.abort();
 
     const {
       deviceId: _deviceId,
@@ -1193,6 +1195,7 @@ export class GSVDriver {
       },
     });
 
+    this.abortController = new AbortController();
     this.connection = result;
     this.locked = true;
     this.startKeepalive();
