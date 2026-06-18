@@ -8,7 +8,7 @@ import { createBrowserTargetDriver, type BrowserTargetActivity } from "./driver"
 const client = new GSVClient();
 const driver = client.driver({
   platform: "browser-extension",
-  version: "0.2.5",
+  version: "0.2.6",
   keepalive: { intervalMs: 25_000 },
 });
 const activity: ActivityEntry[] = [];

@@ -50,6 +50,12 @@ jobs:
       - name: Build web shell
         run: npm run build --workspace web
 
+      - name: Check browser extension
+        run: npm run extension:check
+
+      - name: Build browser extension
+        run: npm run extension:build
+
   assembler-build:
     name: Assembler Build
     runs-on: ubuntu-latest
