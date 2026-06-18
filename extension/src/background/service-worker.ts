@@ -1,17 +1,24 @@
+import { GSVClient } from "@humansandmachines/gsv/client";
 import { configReady, loadConfig, saveConfig, type ExtensionConfig } from "../shared/config";
 import { debuggerTabs, releaseAllDebuggers } from "../shared/debugger";
 import type { ActivityEntry, ExtensionUiState, RuntimeMessage, RuntimeResponse } from "../shared/ui-state";
 import { networkStatus, stopNetworkCapture } from "../target/network-recorder";
 import { createBrowserTargetDriver, type BrowserTargetActivity } from "./driver";
-import { GatewayDriverClient } from "./gateway-client";
 
-const client = new GatewayDriverClient();
+const client = new GSVClient();
+const driver = client.driver({
+  platform: "browser-extension",
+  version: "0.2.5",
+  keepalive: { intervalMs: 25_000 },
+});
 const activity: ActivityEntry[] = [];
 const artifactPaths = new Set<string>();
 let lastConnectionStatus = "";
+let connectPromise: Promise<void> | null = null;
 
-const driver = createBrowserTargetDriver(client, addActivity);
-client.setRequestHandler(driver.handle);
+const browserTarget = createBrowserTargetDriver(addActivity);
+driver.implement("shell.exec", browserTarget.handle);
+driver.implement("fs.*", browserTarget.handle);
 client.onStatus((status) => {
   const key = `${status.state}:${status.connectionId ?? ""}:${status.message ?? ""}`;
   if (key === lastConnectionStatus) {
@@ -59,7 +66,7 @@ async function handleRuntimeMessage(message: RuntimeMessage): Promise<RuntimeRes
         await connectNow();
         return await stateResponse();
       case "disconnect":
-        client.disconnect();
+        driver.disconnect();
         return await stateResponse();
       case "stop-all":
         return await stopAll();
@@ -96,7 +103,7 @@ async function handleRuntimeMessage(message: RuntimeMessage): Promise<RuntimeRes
 
 async function maybeConnect(): Promise<void> {
   const config = await loadConfig();
-  if (!config.autoConnect || !configReady(config) || client.getStatus().state === "connected") {
+  if (!config.autoConnect || !configReady(config) || client.getStatus().state !== "disconnected") {
     return;
   }
   await connectNow(config).catch(() => {});
@@ -107,13 +114,23 @@ async function connectNow(config?: ExtensionConfig): Promise<void> {
   if (!configReady(config)) {
     throw new Error("Configure gateway URL, username, token, and device id first");
   }
-  await client.connect(config);
+  if (!connectPromise) {
+    connectPromise = driver.connect({
+      url: config.gatewayUrl,
+      username: config.username,
+      token: config.token,
+      deviceId: config.deviceId,
+    }).then(() => undefined).finally(() => {
+      connectPromise = null;
+    });
+  }
+  await connectPromise;
 }
 
 async function stopAll(): Promise<RuntimeResponse> {
   const stoppedCaptures = await stopNetworkCapture();
   const detachedTabs = await releaseAllDebuggers();
-  client.disconnect("stop all");
+  driver.disconnect("stop all");
   addActivity({
     kind: "sensitive",
     label: "stop all",
@@ -144,7 +161,12 @@ async function stateResponse(): Promise<RuntimeResponse> {
 
 async function buildUiState(): Promise<ExtensionUiState> {
   const config = await loadConfig();
-  const connection = client.getStatus();
+  const status = client.getStatus();
+  const connection = {
+    state: status.state,
+    connectionId: status.connectionId,
+    message: status.message,
+  };
   const captures = networkStatus();
   const tabs = debuggerTabs();
   const sensitiveActivity = activity.find((entry) => entry.kind === "sensitive" || entry.kind === "network");

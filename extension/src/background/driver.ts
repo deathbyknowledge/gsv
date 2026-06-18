@@ -1,7 +1,5 @@
-import type { GatewayDriverClient } from "./gateway-client";
-import type { GatewayRequestFrame } from "../shared/frames";
+import type { GsvDriverHandler, GsvDriverRequest } from "@humansandmachines/gsv/client";
 import type { ActivityEntry, ActivityKind, ActivityStatus } from "../shared/ui-state";
-import type { DriverHandler } from "../target/types";
 import { createBrowserCommands } from "../target/commands";
 import { BrowserFsDriver, BrowserTargetFileSystem } from "../target/fs";
 import { createRuntimeFileSystem } from "../target/runtime-fs";
@@ -11,29 +9,28 @@ export type BrowserTargetActivity = Omit<ActivityEntry, "id" | "at">;
 export type BrowserTargetActivityObserver = (activity: BrowserTargetActivity) => void;
 
 export type BrowserTargetDriver = {
-  handle: DriverHandler;
+  handle: GsvDriverHandler;
 };
 
 export function createBrowserTargetDriver(
-  client: GatewayDriverClient,
   observeActivity?: BrowserTargetActivityObserver,
 ): BrowserTargetDriver {
   const fs = new BrowserTargetFileSystem(createRuntimeFileSystem());
-  const fsDriver = new BrowserFsDriver(fs, client);
+  const fsDriver = new BrowserFsDriver(fs);
   const shell = new BrowserTargetShell(fs, createBrowserCommands());
 
   return {
-    async handle(frame: GatewayRequestFrame): Promise<unknown> {
+    async handle(request, context): Promise<unknown> {
       const startedAt = Date.now();
-      const baseActivity = activityForFrame(frame);
+      const baseActivity = activityForFrame(request);
       try {
         let result: unknown;
-        if (frame.call === "shell.exec") {
-          result = await shell.exec(frame.args);
-        } else if (frame.call.startsWith("fs.")) {
-          result = await fsDriver.handle(frame.call, frame.args);
+        if (request.call === "shell.exec") {
+          result = await shell.exec(request.args);
+        } else if (request.call.startsWith("fs.")) {
+          result = await fsDriver.handle(request.call, request.args, context.binary);
         } else {
-          throw new Error(`Unsupported browser target syscall: ${frame.call}`);
+          throw new Error(`Unsupported browser target syscall: ${request.call}`);
         }
         observeActivity?.({
           ...baseActivity,
@@ -56,7 +53,7 @@ export function createBrowserTargetDriver(
   };
 }
 
-function activityForFrame(frame: GatewayRequestFrame): BrowserTargetActivity {
+function activityForFrame(frame: GsvDriverRequest): BrowserTargetActivity {
   if (frame.call === "shell.exec") {
     const input = shellInput(frame.args);
     const command = firstShellCommand(input);

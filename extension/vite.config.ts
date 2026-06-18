@@ -4,6 +4,11 @@ import { defineConfig } from "vite";
 export default defineConfig({
   root: __dirname,
   publicDir: "public",
+  resolve: {
+    alias: {
+      "@humansandmachines/gsv/client": resolve(__dirname, "../packages/gsv/src/client.ts"),
+    },
+  },
   build: {
     outDir: "dist",
     emptyOutDir: true,

@@ -1,4 +1,4 @@
-import type { GatewayRequestFrame } from "../shared/frames";
+import type { GsvDriverHandler } from "@humansandmachines/gsv/client";
 
 export type CommandResult = {
   stdout: string;
@@ -23,7 +23,7 @@ export type CommandContext = {
   now: () => number;
 };
 
-export type DriverHandler = (frame: GatewayRequestFrame) => Promise<unknown>;
+export type DriverHandler = GsvDriverHandler;
 
 export type FileStat = {
   path: string;
@@ -39,7 +39,7 @@ export type TargetFileSystem = {
   append(path: string, content: Uint8Array): Promise<void>;
   delete(path: string): Promise<void>;
   mkdir(path: string): Promise<void>;
-  copy(source: string, destination: string): Promise<void>;
+  copy(source: string, destination: string): Promise<string>;
   move(source: string, destination: string): Promise<void>;
   list(path: string): Promise<{ files: string[]; directories: string[] }>;
   stat(path: string): Promise<FileStat>;

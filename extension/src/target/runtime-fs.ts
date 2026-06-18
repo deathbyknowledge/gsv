@@ -217,7 +217,7 @@ export class RuntimeFileSystem implements TargetFileSystem {
     throw readOnly(normalized);
   }
 
-  async copy(source: string, _destination: string): Promise<void> {
+  async copy(source: string, _destination: string): Promise<string> {
     throw readOnly(source);
   }
 
