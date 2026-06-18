@@ -157,6 +157,8 @@ export async function loadAgentsState(
         gecos: account.gecos,
         relation: account.relation,
         runnable: account.runnable,
+        configEditable: true,
+        contextEditable: true,
         model: configValue(entries, `users/${account.uid}/ai/model`) ?? "",
         approval: configValue(entries, `users/${account.uid}/ai/tools/approval`) ?? "",
       }));

@@ -103,8 +103,8 @@ function ProcessDetail({
     return (
       <section class="gsv-runtime-detail">
         <div class="gsv-empty-state">
-          <h3>No process selected</h3>
-          <p>Select a process to inspect its profile, cwd, and actions.</p>
+          <h3>No task selected</h3>
+          <p>Select a task to inspect its agent, workspace, and actions.</p>
         </div>
       </section>
     );
@@ -132,7 +132,7 @@ function ProcessDetail({
           <dd>{processState(process)}</dd>
         </div>
         <div>
-          <dt>Profile</dt>
+          <dt>Agent</dt>
           <dd>{String(process.profile ?? "unknown")}</dd>
         </div>
         <div>
@@ -140,11 +140,11 @@ function ProcessDetail({
           <dd>uid {String(process.uid ?? "?")}</dd>
         </div>
         <div>
-          <dt>Parent</dt>
+          <dt>Parent task</dt>
           <dd>{process.parentPid == null ? "none" : String(process.parentPid)}</dd>
         </div>
         <div>
-          <dt>Cwd</dt>
+          <dt>Workspace</dt>
           <dd><code>{cwd || "none"}</code></dd>
         </div>
         <div>
@@ -173,7 +173,7 @@ function ProcessDetail({
           size="full"
           disabled={!pid || Boolean(killingPid)}
           onClick={() => {
-            if (window.confirm(`Kill process ${title}?\n\nThis stops the process immediately.`)) {
+            if (window.confirm(`Cancel task ${title}?\n\nThis stops the runtime work immediately.`)) {
               onKill(pid);
             }
           }}

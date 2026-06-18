@@ -16,6 +16,8 @@ export type AgentDetail = {
   gecos?: string;
   relation: AgentRelation;
   runnable: boolean;
+  configEditable: boolean;
+  contextEditable: boolean;
   /** Per-agent model override (config key users/<uid>/ai/model); empty = inherit default. */
   model: string;
   /** Per-agent tool approval policy as a JSON string; empty = inherit default. */

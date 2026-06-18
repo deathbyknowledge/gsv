@@ -1,4 +1,5 @@
-import { approvalSummary, relationLabel, relationTone } from "../features/agents/agents-domain";
+import { relationLabel, relationTone } from "../features/agents/agents-domain";
+import { summarizePermissions, type PermissionSummary } from "../features/agents/permissions-domain";
 import type { AgentDetail, AgentModelProfile } from "../features/agents/types";
 import { processState, processStateTone, processTitle } from "../features/runtime/runtime-domain";
 import type { ProcessEntry } from "../features/runtime/types";
@@ -25,7 +26,7 @@ export type CrewAgent = {
   description: string;
   modelLabel: string;
   modelDetail: string;
-  permissionLabel: string;
+  permissions: PermissionSummary;
   tone: "accent" | "good" | "neutral";
   tasks: CrewTask[];
   activeTasks: CrewTask[];
@@ -79,7 +80,7 @@ export function buildCrewAgents(
       description: agentDescription(agent),
       modelLabel: model ? modelDisplayLabel(model) : "At default",
       modelDetail: model || defaultModel?.model || "System default",
-      permissionLabel: approvalSummary(agent.approval),
+      permissions: summarizePermissions(agent.approval, agent.configEditable),
       tone: relationTone(agent.relation),
       tasks: agentTasks,
       activeTasks: agentTasks.filter((task) => task.state !== "idle"),

@@ -3,6 +3,7 @@
 @import "./styles/sections.css";
 @import "./styles/object-cards.css";
 @import "./styles/runtime.css";
+@import "./styles/agents.css";
 @import "./styles/devices.css";
 @import "./styles/integrations.css";
 @import "./styles/packages.css";

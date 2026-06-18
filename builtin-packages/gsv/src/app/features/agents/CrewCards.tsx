@@ -5,6 +5,7 @@ import {
   ObjectHeader,
 } from "../../components/ui/ConsoleCard";
 import type { ProcessEntry } from "../runtime/types";
+import type { PermissionTone } from "./permissions-domain";
 import type { AgentDetail, AgentModelProfile } from "./types";
 
 export function CrewOverview({
@@ -127,14 +128,20 @@ function AgentObjectCard({
               <p key={task.pid} class={`gsv-agent-task-line is-${task.tone}`}>{task.title}</p>
             ))}
           </div>
-          <PermissionAction label={agent.permissionLabel} onManage={onManage} />
+          <PermissionAction
+            headline={agent.permissions.headline}
+            detail={agent.permissions.detail}
+            tone={agent.permissions.tone}
+            lockLabel={agent.permissions.lockLabel}
+            onManage={onManage}
+          />
           <div class="gsv-card-actions">
             <button type="button" class="gsv-text-action" onClick={onManage}>Manage &gt;</button>
           </div>
         </>
       ) : (
         <div class="gsv-card-actions">
-          <span class="gsv-agent-compact-meta">{agent.permissionLabel} / {agent.activeTasks.length} active</span>
+          <span class="gsv-agent-compact-meta">{agent.permissions.headline} / {agent.activeTasks.length} active</span>
           <button type="button" class="gsv-text-action" onClick={onManage}>Manage &gt;</button>
         </div>
       )}
@@ -152,12 +159,25 @@ function CardFact({ label, value, detail }: { label: string; value: string; deta
   );
 }
 
-function PermissionAction({ label, onManage }: { label: string; onManage: () => void }) {
+function PermissionAction({
+  headline,
+  detail,
+  tone,
+  lockLabel,
+  onManage,
+}: {
+  headline: string;
+  detail: string;
+  tone: PermissionTone;
+  lockLabel: string;
+  onManage: () => void;
+}) {
   return (
-    <div class="gsv-permission-action">
+    <div class={`gsv-permission-action is-${tone}`}>
       <div>
-        <span>Permissions</span>
-        <strong>{label}</strong>
+        <span>Permissions / {lockLabel}</span>
+        <strong>{headline}</strong>
+        <small>{detail}</small>
       </div>
       <button type="button" class="gsv-text-action" onClick={onManage}>Manage permissions &gt;</button>
     </div>

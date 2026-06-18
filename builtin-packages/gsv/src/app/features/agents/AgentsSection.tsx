@@ -1,6 +1,7 @@
 import { useEffect, useState } from "preact/hooks";
 import type { GsvBackend } from "../../backend-contract";
 import { ActionButton } from "../../components/ui/ActionButton";
+import { buildCrewAgents } from "../../domain/crew";
 import { CrewOverview } from "./CrewCards";
 import {
   APPROVAL_ACTION_OPTIONS,
@@ -8,6 +9,7 @@ import {
   relationLabel,
   serializeApprovalPolicy,
 } from "./agents-domain";
+import { actionLabel, ruleLabel, summarizePermissions } from "./permissions-domain";
 import { useAgents } from "./useAgents";
 import type {
   AccountSummary,
@@ -31,6 +33,8 @@ export function AgentsSection({ backend }: { backend: GsvBackend }) {
         <AgentWorkspace
           agent={agents.selectedAgent}
           context={agents.context}
+          models={agents.state?.modelProfiles ?? []}
+          processes={agents.processes}
           contextLoading={agents.contextLoading}
           busy={agents.busy}
           errorText={agents.errorText}
@@ -398,6 +402,8 @@ function CreateHumanForm({
 function AgentWorkspace({
   agent,
   context,
+  models,
+  processes,
   contextLoading,
   busy,
   errorText,
@@ -407,6 +413,8 @@ function AgentWorkspace({
 }: {
   agent: AgentDetail;
   context: { name: string; text: string }[];
+  models: AgentModelProfile[];
+  processes: ProcessEntry[];
   contextLoading: boolean;
   busy: boolean;
   errorText: string;
@@ -414,6 +422,9 @@ function AgentWorkspace({
   onSaveContext: (name: string, text: string) => Promise<boolean>;
   onSaveBehavior: (model: string, approval: string) => Promise<boolean>;
 }) {
+  const crewAgent = buildCrewAgents([agent], processes, models)[0] ?? null;
+  const tasks = crewAgent?.tasks ?? [];
+
   return (
     <section class="gsv-agents-workspace" aria-label="Agent detail">
       <header class="gsv-runtime-detail-head">
@@ -427,15 +438,79 @@ function AgentWorkspace({
 
       {errorText ? <p class="gsv-inline-error">{errorText}</p> : null}
 
-      <BehaviorEditor agent={agent} busy={busy} onSave={onSaveBehavior} />
+      <div class="gsv-agent-detail-grid">
+        <PermissionsEditor agent={agent} busy={busy} onSave={onSaveBehavior} />
 
-      <ContextEditor
-        key={agent.username}
-        files={context}
-        loading={contextLoading}
-        busy={busy}
-        onSave={onSaveContext}
-      />
+        <AgentTasksPanel tasks={tasks} />
+
+        <ContextEditor
+          key={agent.username}
+          files={context}
+          loading={contextLoading}
+          busy={busy}
+          editable={agent.contextEditable}
+          onSave={onSaveContext}
+        />
+
+        <AgentAdvancedPanel agent={agent} />
+      </div>
+    </section>
+  );
+}
+
+function AgentTasksPanel({ tasks }: { tasks: NonNullable<ReturnType<typeof buildCrewAgents>[number]>["tasks"] }) {
+  return (
+    <section class="gsv-agents-panel" aria-label="Current tasks">
+      <header class="gsv-section-intro">
+        <span class="gsv-kicker">Tasks</span>
+        <h3>Current work</h3>
+        <p>Runtime work currently associated with this crew member.</p>
+      </header>
+      {tasks.length === 0 ? (
+        <p class="gsv-agent-panel-note">No active or idle runtime work is currently associated with this agent.</p>
+      ) : (
+        <div class="gsv-agent-task-list">
+          {tasks.map((task) => (
+            <div class={`gsv-agent-task-item is-${task.tone}`} key={task.pid}>
+              <span class={`gsv-mark is-${task.tone}`} aria-hidden="true"></span>
+              <div>
+                <strong>{task.title}</strong>
+                <span>{task.stateLabel} / {task.pid}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function AgentAdvancedPanel({ agent }: { agent: AgentDetail }) {
+  return (
+    <section class="gsv-agents-panel" aria-label="Advanced agent metadata">
+      <header class="gsv-section-intro">
+        <span class="gsv-kicker">Advanced</span>
+        <h3>Identity</h3>
+        <p>Low-level account fields used for routing and configuration.</p>
+      </header>
+      <dl class="gsv-agent-advanced-list">
+        <div>
+          <dt>Username</dt>
+          <dd>{agent.username}</dd>
+        </div>
+        <div>
+          <dt>UID</dt>
+          <dd>{agent.uid}</dd>
+        </div>
+        <div>
+          <dt>Relation</dt>
+          <dd>{relationLabel(agent.relation)}</dd>
+        </div>
+        <div>
+          <dt>Config</dt>
+          <dd>{agent.configEditable ? "Editable" : "Read-only"}</dd>
+        </div>
+      </dl>
     </section>
   );
 }
@@ -444,11 +519,13 @@ function ContextEditor({
   files,
   loading,
   busy,
+  editable,
   onSave,
 }: {
   files: { name: string; text: string }[];
   loading: boolean;
   busy: boolean;
+  editable: boolean;
   onSave: (name: string, text: string) => Promise<boolean>;
 }) {
   const NEW_FILE = "__new__";
@@ -509,6 +586,7 @@ function ContextEditor({
           <span>File name</span>
           <input
             value={draftName}
+            disabled={!editable}
             onInput={(e) => setDraftName(e.currentTarget.value)}
             placeholder="20-style.md"
           />
@@ -519,8 +597,9 @@ function ContextEditor({
         class="gsv-agents-context-area"
         value={draft}
         disabled={loading || (files.length === 0 && selected !== NEW_FILE)}
+        readOnly={!editable}
         onInput={(e) => setDraft(e.currentTarget.value)}
-        placeholder={loading ? "Loading..." : "Markdown context for this agent."}
+        placeholder={loading ? "Loading..." : editable ? "Markdown context for this agent." : "Context is read-only for this viewer."}
         rows={12}
       />
 
@@ -530,7 +609,7 @@ function ContextEditor({
           label="Save context"
           busyLabel="Saving"
           busy={busy}
-          disabled={!targetName.trim() || loading}
+          disabled={!editable || !targetName.trim() || loading}
           onClick={async () => {
             const ok = await onSave(targetName.trim(), draft);
             if (ok && selected === NEW_FILE) {
@@ -543,7 +622,7 @@ function ContextEditor({
   );
 }
 
-function BehaviorEditor({
+function PermissionsEditor({
   agent,
   busy,
   onSave,
@@ -554,6 +633,7 @@ function BehaviorEditor({
 }) {
   const [model, setModel] = useState(agent.model);
   const [policy, setPolicy] = useState<ApprovalPolicy>(() => parseApprovalPolicy(agent.approval));
+  const summary = summarizePermissions(serializeApprovalPolicy(policy), agent.configEditable);
 
   useEffect(() => {
     setModel(agent.model);
@@ -580,16 +660,34 @@ function BehaviorEditor({
   }
 
   return (
-    <section class="gsv-agents-panel" aria-label="Behavior">
+    <section class="gsv-agents-panel is-permissions" aria-label="Permissions">
       <header class="gsv-section-intro">
         <span class="gsv-kicker">Permissions</span>
         <h3>Model &amp; tool permissions</h3>
-        <p>Interactive policy for this agent. Leave the model blank to inherit the system default.</p>
+        <p>{agent.configEditable ? "Interactive policy for this agent. Leave fields blank to inherit the system default." : "This policy is read-only for the current viewer."}</p>
       </header>
+
+      <div class={`gsv-permission-summary is-${summary.tone}`}>
+        <div>
+          <span>{summary.mode === "inherited" ? "Inherited policy" : "Custom policy"} / {summary.lockLabel}</span>
+          <strong>{summary.headline}</strong>
+          <p>{summary.detail}</p>
+        </div>
+        <div class="gsv-permission-counts" aria-label="Permission rule counts">
+          <span>{summary.askCount} ask</span>
+          <span>{summary.denyCount} deny</span>
+          <span>{summary.autoCount} allow</span>
+        </div>
+      </div>
 
       <label class="gsv-field">
         <span>Model override</span>
-        <input value={model} onInput={(e) => setModel(e.currentTarget.value)} placeholder="inherit default" />
+        <input
+          value={model}
+          disabled={!agent.configEditable}
+          onInput={(e) => setModel(e.currentTarget.value)}
+          placeholder="inherit default"
+        />
       </label>
 
       <div class="gsv-field">
@@ -600,43 +698,65 @@ function BehaviorEditor({
               key={action}
               type="button"
               class={`gsv-segment${policy.default === action ? " is-active" : ""}`}
+              disabled={!agent.configEditable}
               onClick={() => setDefault(action)}
             >
-              {action}
+              {actionLabel(action)}
             </button>
           ))}
         </div>
       </div>
 
       <div class="gsv-agents-rules">
+        <div class="gsv-agents-rules-head">
+          <span>Tool rules</span>
+          <small>{summary.ruleCount === 0 ? "No custom rules." : `${summary.ruleCount} custom rule${summary.ruleCount === 1 ? "" : "s"}.`}</small>
+        </div>
         {policy.rules.map((rule, index) => (
           <div class="gsv-agents-rule" key={index}>
             <input
               class="gsv-agents-rule-match"
               value={rule.match}
+              disabled={!agent.configEditable}
               onInput={(e) => updateRule(index, { match: e.currentTarget.value })}
               placeholder="fs.delete"
             />
             <select
               value={rule.action}
+              disabled={!agent.configEditable}
               onChange={(e) => updateRule(index, { action: e.currentTarget.value as ApprovalPolicy["default"] })}
             >
               {APPROVAL_ACTION_OPTIONS.map((action) => (
-                <option key={action} value={action}>{action}</option>
+                <option key={action} value={action}>{actionLabel(action)}</option>
               ))}
             </select>
-            <ActionButton icon="x" label="Remove" size="icon" variant="ghost" onClick={() => removeRule(index)} />
+            <ActionButton
+              icon="x"
+              label={`Remove ${ruleLabel(rule)}`}
+              size="icon"
+              variant="ghost"
+              disabled={!agent.configEditable}
+              onClick={() => removeRule(index)}
+            />
           </div>
         ))}
-        <ActionButton icon="file" label="Add rule" variant="ghost" onClick={addRule} />
+        {summary.riskyRules.length > 0 ? (
+          <div class="gsv-permission-risk-list" aria-label="Sensitive permission rules">
+            {summary.riskyRules.slice(0, 3).map((rule) => (
+              <span key={`${rule.match}:${rule.action}`}>{ruleLabel(rule)}</span>
+            ))}
+          </div>
+        ) : null}
+        <ActionButton icon="file" label="Add rule" variant="ghost" disabled={!agent.configEditable} onClick={addRule} />
       </div>
 
       <div class="gsv-detail-actions">
         <ActionButton
           icon="check"
-          label="Save behavior"
+          label="Save permissions"
           busyLabel="Saving"
           busy={busy}
+          disabled={!agent.configEditable}
           onClick={() => void onSave(model.trim(), serializeApprovalPolicy(policy))}
         />
       </div>
