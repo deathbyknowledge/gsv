@@ -1,4 +1,4 @@
-import type { GsvDriverHandler, GsvDriverRequest } from "@humansandmachines/gsv/client";
+import type { GsvDriverContext, GsvDriverHandler, GsvDriverRequest } from "@humansandmachines/gsv/client";
 import type { ActivityEntry, ActivityKind, ActivityStatus } from "../shared/ui-state";
 import { createBrowserCommands } from "../target/commands";
 import { BrowserFsDriver, BrowserTargetFileSystem } from "../target/fs";
@@ -26,7 +26,14 @@ export function createBrowserTargetDriver(
       try {
         let result: unknown;
         if (request.call === "shell.exec") {
-          result = await shell.exec(request.args);
+          result = await shell.exec(request.args, {
+            currentTargetId: currentTargetId(context),
+            abortSignal: context.abortSignal,
+            copyTargetFile: async (source, destination) => await context.client.call("fs.copy", {
+              source,
+              destination,
+            }),
+          });
         } else if (request.call.startsWith("fs.")) {
           result = await fsDriver.handle(request.call, request.args, context.binary);
         } else {
@@ -103,6 +110,9 @@ function shellLabel(command: string): string {
   if (parts[0] === "network" && parts[1]) {
     return `network ${parts[1]}`;
   }
+  if (parts[0] === "media" && parts[1]) {
+    return parts[2] ? `media ${parts[1]} ${parts[2]}` : `media ${parts[1]}`;
+  }
   return parts[0];
 }
 
@@ -111,10 +121,16 @@ function classifyShellCommand(command: string): ActivityKind {
   if (first === "network") {
     return "network";
   }
-  if (["bookmarks", "clipboard", "cookies", "downloads", "history", "page", "storage"].includes(first)) {
+  if (["bookmarks", "clipboard", "cookies", "downloads", "history", "media", "page", "storage"].includes(first)) {
     return "sensitive";
   }
   return "shell";
+}
+
+function currentTargetId(context: GsvDriverContext): string | undefined {
+  return context.connection.identity.role === "driver"
+    ? context.connection.identity.device
+    : undefined;
 }
 
 function classifyFsCall(call: string): ActivityKind {

@@ -144,7 +144,7 @@ function headline(state: ExtensionUiState): string {
 
 function detail(state: ExtensionUiState): string {
   if (liveAccessCount(state) > 0) {
-    return "Use Stop All to detach debugger and network capture.";
+    return "Use Stop All to release active browser capture.";
   }
   if (state.connection.state === "connected") {
     return "Agents can reach this browser through shell.exec and fs.*.";
@@ -160,13 +160,18 @@ function stateTone(state: ExtensionUiState): string {
 }
 
 function liveAccessCount(state: ExtensionUiState): number {
-  return state.sensitive.networkCaptures + state.sensitive.debuggerTabs.length;
+  return state.sensitive.networkCaptures
+    + state.sensitive.mediaRecordings
+    + state.sensitive.debuggerTabs.length;
 }
 
 function liveAccessText(state: ExtensionUiState): string {
   const parts: string[] = [];
   if (state.sensitive.networkCaptures > 0) {
     parts.push(`${state.sensitive.networkCaptures} network capture${state.sensitive.networkCaptures === 1 ? "" : "s"}`);
+  }
+  if (state.sensitive.mediaRecordings > 0) {
+    parts.push(`${state.sensitive.mediaRecordings} media recording${state.sensitive.mediaRecordings === 1 ? "" : "s"}`);
   }
   if (state.sensitive.debuggerTabs.length > 0) {
     parts.push(`${state.sensitive.debuggerTabs.length} debugger tab${state.sensitive.debuggerTabs.length === 1 ? "" : "s"}`);

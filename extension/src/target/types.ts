@@ -16,11 +16,19 @@ export type BrowserCommand = {
   run(args: string[], ctx: CommandContext): Promise<CommandResult> | CommandResult;
 };
 
+export type TargetCopyEndpoint = {
+  target: string;
+  path: string;
+};
+
 export type CommandContext = {
   cwd: string;
   stdin: string;
   fs: TargetFileSystem;
   now: () => number;
+  currentTargetId?: string;
+  abortSignal?: AbortSignal;
+  copyTargetFile?: (source: TargetCopyEndpoint, destination: TargetCopyEndpoint) => Promise<unknown>;
 };
 
 export type DriverHandler = GsvDriverHandler;

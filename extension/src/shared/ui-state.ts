@@ -16,6 +16,7 @@ export type ActivityEntry = {
 export type SensitiveState = {
   connected: boolean;
   networkCaptures: number;
+  mediaRecordings: number;
   debuggerTabs: number[];
   lastSensitiveAt: string | null;
 };

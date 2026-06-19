@@ -16,9 +16,11 @@
     "downloads.open",
     "history",
     "notifications",
+    "offscreen",
     "sidePanel",
     "scripting",
     "storage",
+    "tabCapture",
     "tabs",
     "unlimitedStorage",
     "webNavigation"
@@ -29,6 +31,9 @@
   "background": {
     "service_worker": "service-worker.js",
     "type": "module"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; style-src 'self'; img-src 'self' blob: data:; media-src 'self' blob: data:; frame-src 'self' blob: data:;"
   },
   "options_page": "options.html",
   "side_panel": {

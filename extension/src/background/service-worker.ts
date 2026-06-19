@@ -13,6 +13,7 @@ import {
 import { debuggerTabs, releaseAllDebuggers } from "../shared/debugger";
 import { loadRuntimeState, saveRuntimeState } from "../shared/runtime-state";
 import type { ActivityEntry, ExtensionUiState, RuntimeMessage, RuntimeResponse } from "../shared/ui-state";
+import { mediaRecordingStatus, stopAllMediaRecordings } from "../target/media-recorder";
 import { networkStatus, stopNetworkCapture } from "../target/network-recorder";
 import { createBrowserTargetDriver, type BrowserTargetActivity } from "./driver";
 
@@ -167,13 +168,14 @@ async function connectNow(config?: ExtensionConfig): Promise<void> {
 
 async function stopAll(): Promise<RuntimeResponse> {
   const stoppedCaptures = await stopNetworkCapture();
+  const stoppedRecordings = await stopAllMediaRecordings();
   const detachedTabs = await releaseAllDebuggers();
   await setManualReconnectSuppressed(true);
   driver.disconnect("stop all");
   addActivity({
     kind: "sensitive",
     label: "stop all",
-    detail: `stopped ${stoppedCaptures.length} network capture(s), detached ${detachedTabs.length} debugger tab(s)`,
+    detail: `stopped ${stoppedCaptures.length} network capture(s), ${stoppedRecordings.length} media recording(s), detached ${detachedTabs.length} debugger tab(s)`,
     status: "info",
   });
   return await stateResponse();
@@ -221,6 +223,7 @@ async function buildUiState(): Promise<ExtensionUiState> {
     message: status.message,
   };
   const captures = networkStatus();
+  const mediaRecordings = await mediaRecordingStatus().catch(() => []);
   const tabs = debuggerTabs();
   const activity = diagnostics.activity;
   const artifactPaths = diagnostics.artifactPaths;
@@ -235,6 +238,7 @@ async function buildUiState(): Promise<ExtensionUiState> {
     sensitive: {
       connected: connection.state === "connected",
       networkCaptures: captures.length,
+      mediaRecordings: mediaRecordings.filter((recording) => recording.active).length,
       debuggerTabs: tabs,
       lastSensitiveAt: sensitiveActivity?.at ?? null,
     },

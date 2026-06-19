@@ -646,6 +646,9 @@ function liveAccessText(state: ExtensionUiState): string {
   if (state.sensitive.networkCaptures > 0) {
     parts.push(`${state.sensitive.networkCaptures} network`);
   }
+  if (state.sensitive.mediaRecordings > 0) {
+    parts.push(`${state.sensitive.mediaRecordings} media`);
+  }
   if (state.sensitive.debuggerTabs.length > 0) {
     parts.push(`${state.sensitive.debuggerTabs.length} debugger`);
   }

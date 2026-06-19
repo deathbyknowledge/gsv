@@ -1,21 +1,49 @@
 import { Bash, defineCommand, type BashExecResult } from "just-bash/browser";
 import { JustBashFileSystemAdapter } from "./fs-adapter";
-import type { BrowserCommand, CommandContext, ShellResult, TargetFileSystem } from "./types";
+import type {
+  BrowserCommand,
+  CommandContext,
+  ShellResult,
+  TargetCopyEndpoint,
+  TargetFileSystem,
+} from "./types";
 import { commandError } from "./types";
 import { helpText } from "./commands";
 
 type BrowserBash = InstanceType<typeof Bash>;
 
+export type BrowserShellExecContext = {
+  currentTargetId?: string;
+  abortSignal?: AbortSignal;
+  copyTargetFile?: (source: TargetCopyEndpoint, destination: TargetCopyEndpoint) => Promise<unknown>;
+};
+
 export class BrowserTargetShell {
   private bash: BrowserBash | null = null;
   private ready: Promise<void> | null = null;
+  private activeExecContext: BrowserShellExecContext = {};
+  private execQueue: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly fs: TargetFileSystem,
     private readonly commands: BrowserCommand[],
   ) {}
 
-  async exec(args: unknown): Promise<ShellResult> {
+  async exec(args: unknown, context: BrowserShellExecContext = {}): Promise<ShellResult> {
+    const previous = this.execQueue;
+    let release!: () => void;
+    this.execQueue = new Promise((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      return await this.execLocked(args, context);
+    } finally {
+      release();
+    }
+  }
+
+  private async execLocked(args: unknown, context: BrowserShellExecContext): Promise<ShellResult> {
     const record = asRecord(args);
     const input = typeof record.input === "string" ? record.input : "";
     const cwd = typeof record.cwd === "string" && record.cwd.trim() ? this.fs.resolvePath("/", record.cwd) : "/";
@@ -33,7 +61,8 @@ export class BrowserTargetShell {
       if (!(await this.fs.exists(cwd))) {
         await this.fs.mkdir(cwd);
       }
-      const result = await this.requireBash().exec(input, { cwd });
+      this.activeExecContext = context;
+      const result = await this.requireBash().exec(input, { cwd, signal: context.abortSignal });
       return toShellResult(result);
     } catch (error) {
       return {
@@ -41,6 +70,8 @@ export class BrowserTargetShell {
         output: "",
         error: error instanceof Error ? error.message : String(error),
       };
+    } finally {
+      this.activeExecContext = {};
     }
   }
 
@@ -66,6 +97,9 @@ export class BrowserTargetShell {
             stdin: ctx.stdin,
             fs: this.fs,
             now: () => Date.now(),
+            currentTargetId: this.activeExecContext.currentTargetId,
+            abortSignal: this.activeExecContext.abortSignal,
+            copyTargetFile: this.activeExecContext.copyTargetFile,
           };
           try {
             return await command.run(args, commandContext);

@@ -134,6 +134,7 @@ function render(): void {
           ${fact("Auto-connect", state.config.autoConnect ? "On" : "Off")}
           ${fact("Debugger", state.sensitive.debuggerTabs.length > 0 ? state.sensitive.debuggerTabs.join(", ") : "None")}
           ${fact("Network", state.sensitive.networkCaptures === 0 ? "None" : String(state.sensitive.networkCaptures))}
+          ${fact("Media", state.sensitive.mediaRecordings === 0 ? "None" : String(state.sensitive.mediaRecordings))}
         </section>
 
         <section class="activity">
@@ -180,7 +181,7 @@ function headline(state: ExtensionUiState): string {
 
 function detail(state: ExtensionUiState): string {
   if (liveAccessCount(state) > 0) {
-    return "Use Stop All to release debugger tabs and network captures.";
+    return "Use Stop All to release active browser capture.";
   }
   if (state.connection.state === "connected") {
     return "This browser is available as a Unix-shaped GSV target.";
@@ -196,13 +197,18 @@ function stateTone(state: ExtensionUiState): string {
 }
 
 function liveAccessCount(state: ExtensionUiState): number {
-  return state.sensitive.networkCaptures + state.sensitive.debuggerTabs.length;
+  return state.sensitive.networkCaptures
+    + state.sensitive.mediaRecordings
+    + state.sensitive.debuggerTabs.length;
 }
 
 function liveAccessText(state: ExtensionUiState): string {
   const parts: string[] = [];
   if (state.sensitive.networkCaptures > 0) {
     parts.push(`${state.sensitive.networkCaptures} network capture${state.sensitive.networkCaptures === 1 ? "" : "s"}`);
+  }
+  if (state.sensitive.mediaRecordings > 0) {
+    parts.push(`${state.sensitive.mediaRecordings} media recording${state.sensitive.mediaRecordings === 1 ? "" : "s"}`);
   }
   if (state.sensitive.debuggerTabs.length > 0) {
     parts.push(`${state.sensitive.debuggerTabs.length} debugger tab${state.sensitive.debuggerTabs.length === 1 ? "" : "s"}`);
