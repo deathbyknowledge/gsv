@@ -76,6 +76,28 @@ export type ConversationRecord = {
   updatedAt: number;
 };
 
+export type UsageCost = {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  total: number;
+  currency: "USD";
+  source: "provider" | "model-pricing" | "mixed";
+};
+
+export type UsageState = {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  totalTokens: number;
+  cost: UsageCost | null;
+  generations?: number;
+  costIncomplete?: boolean;
+  updatedAt?: number;
+};
+
 export type ContextState = {
   conversationId: string;
   runId?: string;
@@ -89,6 +111,8 @@ export type ContextState = {
   inputTokens: number;
   outputTokens: number | null;
   totalTokens: number | null;
+  usage: UsageState | null;
+  conversationUsage: UsageState | null;
   availableInputTokens: number | null;
   pressure: number | null;
   level: "ok" | "warn" | "critical" | "full" | "unknown";

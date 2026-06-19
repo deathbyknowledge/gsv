@@ -17,6 +17,7 @@ import {
   CompactDialog,
   Composer,
   ConversationBar,
+  ConversationCost,
   ContextMeter,
   MobileProcessNav,
   Transcript,
@@ -938,6 +939,7 @@ export function App({ backend }: { backend: ChatBackend }) {
             />
           </div>
           <div class="chat-stage-actions">
+            <ConversationCost state={active ? contextState : null} />
             <ContextMeter state={active ? contextState : null} />
             <details class="process-menu">
               <summary class="icon-button" title="Process actions" aria-label="Process actions" onClick={(event) => {

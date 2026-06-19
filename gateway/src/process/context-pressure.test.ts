@@ -93,6 +93,54 @@ describe("context pressure", () => {
     expect(state.source).toBe("provider");
   });
 
+  it("includes normalized usage totals when provided", () => {
+    const usageState = {
+      inputTokens: 920,
+      outputTokens: 80,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      totalTokens: 1000,
+      cost: {
+        input: 0.00046,
+        output: 0.00012,
+        cacheRead: 0,
+        cacheWrite: 0,
+        total: 0.00058,
+        currency: "USD" as const,
+        source: "model-pricing" as const,
+      },
+    };
+    const conversationUsage = {
+      ...usageState,
+      inputTokens: 1840,
+      outputTokens: 160,
+      totalTokens: 2000,
+      cost: {
+        ...usageState.cost,
+        input: 0.00092,
+        output: 0.00024,
+        total: 0.00116,
+      },
+      generations: 2,
+    };
+    const state = buildProcContextState({
+      conversationId: "default",
+      provider: "workers-ai",
+      model: "@cf/test",
+      contextWindowTokens: 4000,
+      maxOutputTokens: 100,
+      estimatedInputTokens: 100,
+      usage: USAGE,
+      usageState,
+      conversationUsage,
+      updatedAt: 1,
+    });
+
+    expect(state.usage?.cost?.total).toBe(0.00058);
+    expect(state.conversationUsage?.cost?.total).toBe(0.00116);
+    expect(state.conversationUsage?.generations).toBe(2);
+  });
+
   it("keeps pressure unknown without a context window", () => {
     const state = buildProcContextState({
       conversationId: "default",

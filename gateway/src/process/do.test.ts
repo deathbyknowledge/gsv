@@ -779,6 +779,16 @@ describe("Process DO — mechanical", () => {
                 api: "test",
                 provider: "test",
                 model: "test",
+                usage: {
+                  ...testUsage(100, 0),
+                  cost: {
+                    input: 0.00005,
+                    output: 0,
+                    cacheRead: 0,
+                    cacheWrite: 0,
+                    total: 0.00005,
+                  },
+                },
                 stopReason: "stop",
                 timestamp: Date.now(),
               };
@@ -791,6 +801,16 @@ describe("Process DO — mechanical", () => {
               api: "test",
               provider: "test",
               model: "test",
+              usage: {
+                ...testUsage(50, 10),
+                cost: {
+                  input: 0.000025,
+                  output: 0.000015,
+                  cacheRead: 0,
+                  cacheWrite: 0,
+                  total: 0.00004,
+                },
+              },
               stopReason: "stop",
               timestamp: Date.now(),
             };
@@ -825,6 +845,8 @@ describe("Process DO — mechanical", () => {
         return {
           calls,
           emitted,
+          contextState: process.store.getContextState("default"),
+          conversationUsage: process.store.getConversationUsage("default"),
           messages: process.store.getMessages(),
         };
       });
@@ -834,6 +856,18 @@ describe("Process DO — mechanical", () => {
         ["user", "answer visibly"],
         ["assistant", "visible answer"],
       ]);
+      expect(result.conversationUsage).toMatchObject({
+        inputTokens: 150,
+        outputTokens: 10,
+        totalTokens: 160,
+        cost: { total: 0.00009, source: "model-pricing" },
+        generations: 2,
+      });
+      expect(result.contextState?.conversationUsage).toMatchObject({
+        inputTokens: 150,
+        outputTokens: 10,
+        cost: { total: 0.00009, source: "model-pricing" },
+      });
       const output = result.emitted.find((entry) => entry.signal === "proc.run.output")?.payload as any;
       expect(output?.text).toBe("visible answer");
       const finished = result.emitted.find((entry) => entry.signal === "proc.run.finished")?.payload as any;
@@ -1204,7 +1238,16 @@ describe("Process DO — mechanical", () => {
               api: "test",
               provider: "google",
               model: "gemini-test",
-              usage: testUsage(1_196_265, 0),
+              usage: {
+                ...testUsage(1_196_265, 0),
+                cost: {
+                  input: 0.12,
+                  output: 0,
+                  cacheRead: 0,
+                  cacheWrite: 0,
+                  total: 0.12,
+                },
+              },
               stopReason: "error",
               errorMessage: "The input token count (1196265) exceeds the maximum number of tokens allowed (1048575)",
               timestamp: Date.now(),
@@ -1240,6 +1283,7 @@ describe("Process DO — mechanical", () => {
         return {
           emitted,
           contextState: process.store.getContextState("default"),
+          conversationUsage: process.store.getConversationUsage("default"),
           messages: process.store.getMessages(),
         };
       });
@@ -1252,6 +1296,16 @@ describe("Process DO — mechanical", () => {
         inputTokens: 1196265,
         source: "provider",
         level: "full",
+      });
+      expect(result.conversationUsage).toMatchObject({
+        inputTokens: 1196265,
+        totalTokens: 1196265,
+        cost: { total: 0.12, source: "provider" },
+        generations: 1,
+      });
+      expect(result.contextState?.conversationUsage).toMatchObject({
+        inputTokens: 1196265,
+        cost: { total: 0.12, source: "provider" },
       });
       expect(result.emitted).toEqual(expect.arrayContaining([
         {
@@ -3542,6 +3596,55 @@ describe("Process DO — mechanical", () => {
         role: "user",
         content: "from the browser",
         origin,
+      });
+    });
+
+    it("returns assistant usage metadata", async () => {
+      const pid = "mech-history-usage-metadata";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        store.appendMessage("assistant", "priced reply", {
+          metadata: {
+            provider: {
+              api: "workers-ai-binding",
+              provider: "workers-ai",
+              model: "@cf/nvidia/nemotron-3-120b-a12b",
+            },
+            usage: {
+              inputTokens: 100,
+              outputTokens: 25,
+              cacheReadTokens: 0,
+              cacheWriteTokens: 0,
+              totalTokens: 125,
+              cost: {
+                input: 0.00005,
+                output: 0.0000375,
+                cacheRead: 0,
+                cacheWrite: 0,
+                total: 0.0000875,
+                currency: "USD",
+                source: "model-pricing",
+              },
+            },
+          },
+        });
+      });
+
+      const res = (await stub.recvFrame(
+        makeReq("proc.history", {}),
+      )) as ResponseOkFrame;
+
+      expect(res.ok).toBe(true);
+      const data = res.data as any;
+      expect(data.messages[0].metadata).toMatchObject({
+        provider: { provider: "workers-ai" },
+        usage: {
+          inputTokens: 100,
+          outputTokens: 25,
+          cost: { total: 0.0000875, source: "model-pricing" },
+        },
       });
     });
 
