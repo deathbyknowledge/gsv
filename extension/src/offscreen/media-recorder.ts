@@ -156,10 +156,14 @@ async function stopRecording(message: OffscreenMediaStopMessage): Promise<MediaR
   }
 
   const states = Array.from(activeRecordings.values());
+  const completed = Array.from(completedRecordings.values());
   for (const state of states) {
     stopState(state, "stopped");
   }
-  return await Promise.all(states.map((state) => state.completion));
+  return [
+    ...completed,
+    ...await Promise.all(states.map((state) => state.completion)),
+  ].sort((left, right) => left.startedAt.localeCompare(right.startedAt));
 }
 
 function recordingStatus(message: OffscreenMediaStatusMessage): MediaRecordingStatus[] {

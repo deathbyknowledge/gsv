@@ -86,11 +86,8 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
     if (await this.runtime.exists(normalized)) {
       return await this.runtime.read(normalized);
     }
-    let value = this.files.get(normalized);
-    if (!value) {
-      await this.refreshPersistedEntry(normalized);
-      value = this.files.get(normalized);
-    }
+    await this.refreshPersistedEntry(normalized);
+    const value = this.files.get(normalized);
     if (!value) {
       throw new Error(`No such file: ${normalized}`);
     }
@@ -233,11 +230,8 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
     if (this.directories.has(normalized)) {
       return { path: normalized, isFile: false, isDirectory: true, size: 0 };
     }
-    let value = this.files.get(normalized);
-    if (value === undefined) {
-      await this.refreshPersistedEntry(normalized);
-      value = this.files.get(normalized);
-    }
+    await this.refreshPersistedEntry(normalized);
+    const value = this.files.get(normalized);
     if (value !== undefined) {
       return {
         path: normalized,
