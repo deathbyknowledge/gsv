@@ -77,6 +77,7 @@ export function RuntimeSection({ backend }: { backend: GsvBackend }) {
             <TaskBoard
               agents={runtime.agents}
               models={runtime.models}
+              systemAiValues={runtime.systemAiValues}
               processes={runtime.filteredProcesses}
               loading={runtime.loading}
               onSelect={runtime.selectProcess}

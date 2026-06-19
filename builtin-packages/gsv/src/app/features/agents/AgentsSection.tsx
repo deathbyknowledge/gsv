@@ -1,7 +1,7 @@
 import { useEffect, useState } from "preact/hooks";
 import type { GsvBackend } from "../../backend-contract";
 import { ActionButton } from "../../components/ui/ActionButton";
-import { buildCrewAgents } from "../../domain/crew";
+import { buildCrewAgents, findMatchingStackProfile, stackDetail } from "../../domain/crew";
 import { CrewOverview } from "./CrewCards";
 import {
   APPROVAL_ACTION_OPTIONS,
@@ -23,6 +23,8 @@ import type { ProcessEntry } from "../runtime/types";
 
 const PERSONA_CONTEXT_FILE = "05-persona.md";
 const NEW_CONTEXT_FILE = "__new__";
+const INHERIT_STACK = "__inherit__";
+const CUSTOM_STACK = "__custom__";
 
 export function AgentsSection({ backend }: { backend: GsvBackend }) {
   const agents = useAgents(backend);
@@ -34,13 +36,14 @@ export function AgentsSection({ backend }: { backend: GsvBackend }) {
           agent={agents.selectedAgent}
           context={agents.context}
           models={agents.state?.modelProfiles ?? []}
+          systemAiValues={agents.state?.systemAiValues ?? {}}
           processes={agents.processes}
           contextLoading={agents.contextLoading}
           busy={agents.busy}
           errorText={agents.errorText}
           onBack={agents.clearSelection}
           onSaveContext={(name, text) => agents.saveContext(agents.selectedAgent!.username, name, text)}
-          onSaveBehavior={(model, approval) => agents.setBehavior({ uid: agents.selectedAgent!.uid, model, approval })}
+          onSaveBehavior={(aiValues, approval) => agents.setBehavior({ uid: agents.selectedAgent!.uid, aiValues, approval })}
         />
       </section>
     );
@@ -55,6 +58,7 @@ export function AgentsSection({ backend }: { backend: GsvBackend }) {
         agents={agents.state?.agents ?? []}
         humans={agents.state?.humans ?? []}
         models={agents.state?.modelProfiles ?? []}
+        systemAiValues={agents.state?.systemAiValues ?? {}}
         processes={agents.processes}
         viewerUid={agents.state?.viewerUid ?? 0}
         isRoot={agents.state?.isRoot ?? false}
@@ -74,6 +78,7 @@ function AgentRoster({
   agents,
   humans,
   models,
+  systemAiValues,
   processes,
   viewerUid,
   isRoot,
@@ -88,6 +93,7 @@ function AgentRoster({
   agents: AgentDetail[];
   humans: AccountSummary[];
   models: AgentModelProfile[];
+  systemAiValues: Record<string, string>;
   processes: ProcessEntry[];
   viewerUid: number;
   isRoot: boolean;
@@ -111,6 +117,7 @@ function AgentRoster({
       <CrewOverview
         agents={agents}
         models={models}
+        systemAiValues={systemAiValues}
         processes={processes}
         loading={loading}
         onSelect={onSelect}
@@ -403,6 +410,7 @@ function AgentWorkspace({
   agent,
   context,
   models,
+  systemAiValues,
   processes,
   contextLoading,
   busy,
@@ -414,15 +422,16 @@ function AgentWorkspace({
   agent: AgentDetail;
   context: { name: string; text: string }[];
   models: AgentModelProfile[];
+  systemAiValues: Record<string, string>;
   processes: ProcessEntry[];
   contextLoading: boolean;
   busy: boolean;
   errorText: string;
   onBack: () => void;
   onSaveContext: (name: string, text: string) => Promise<boolean>;
-  onSaveBehavior: (model: string, approval: string) => Promise<boolean>;
+  onSaveBehavior: (aiValues: Record<string, string> | undefined, approval: string) => Promise<boolean>;
 }) {
-  const crewAgent = buildCrewAgents([agent], processes, models)[0] ?? null;
+  const crewAgent = buildCrewAgents([agent], processes, models, systemAiValues)[0] ?? null;
   const tasks = crewAgent?.tasks ?? [];
 
   return (
@@ -439,7 +448,13 @@ function AgentWorkspace({
       {errorText ? <p class="gsv-inline-error">{errorText}</p> : null}
 
       <div class="gsv-agent-detail-grid">
-        <PermissionsEditor agent={agent} busy={busy} onSave={onSaveBehavior} />
+        <PermissionsEditor
+          agent={agent}
+          models={models}
+          systemAiValues={systemAiValues}
+          busy={busy}
+          onSave={onSaveBehavior}
+        />
 
         <AgentTasksPanel tasks={tasks} />
 
@@ -624,21 +639,28 @@ function ContextEditor({
 
 function PermissionsEditor({
   agent,
+  models,
+  systemAiValues,
   busy,
   onSave,
 }: {
   agent: AgentDetail;
+  models: AgentModelProfile[];
+  systemAiValues: Record<string, string>;
   busy: boolean;
-  onSave: (model: string, approval: string) => Promise<boolean>;
+  onSave: (aiValues: Record<string, string> | undefined, approval: string) => Promise<boolean>;
 }) {
-  const [model, setModel] = useState(agent.model);
+  const [stackSelection, setStackSelection] = useState(() => stackSelectionForAgent(agent, models));
   const [policy, setPolicy] = useState<ApprovalPolicy>(() => parseApprovalPolicy(agent.approval));
   const summary = summarizePermissions(serializeApprovalPolicy(policy), agent.configEditable);
+  const stackSummary = stackSummaryForSelection(stackSelection, agent, models, systemAiValues);
+  const hasCustomStack = stackSelectionForAgent(agent, models) === CUSTOM_STACK;
+  const customSelected = stackSelection === CUSTOM_STACK;
 
   useEffect(() => {
-    setModel(agent.model);
+    setStackSelection(stackSelectionForAgent(agent, models));
     setPolicy(parseApprovalPolicy(agent.approval));
-  }, [agent.uid, agent.model, agent.approval]);
+  }, [agent.uid, agent.approval, agent.aiValues, models]);
 
   function setDefault(action: ApprovalPolicy["default"]): void {
     setPolicy((prev) => ({ ...prev, default: action }));
@@ -663,8 +685,8 @@ function PermissionsEditor({
     <section class="gsv-agents-panel is-permissions" aria-label="Permissions">
       <header class="gsv-section-intro">
         <span class="gsv-kicker">Permissions</span>
-        <h3>Model &amp; tool permissions</h3>
-        <p>{agent.configEditable ? "Interactive policy for this agent. Leave fields blank to inherit the system default." : "This policy is read-only for the current viewer."}</p>
+        <h3>AI stack &amp; tool permissions</h3>
+        <p>{agent.configEditable ? "Choose the account-level AI stack for future runs, then set tool approval policy." : "This policy is read-only for the current viewer."}</p>
       </header>
 
       <div class={`gsv-permission-summary is-${summary.tone}`}>
@@ -681,14 +703,28 @@ function PermissionsEditor({
       </div>
 
       <label class="gsv-field">
-        <span>Model override</span>
-        <input
-          value={model}
+        <span>AI stack</span>
+        <select
+          class="gsv-stack-select"
+          value={stackSelection}
           disabled={!agent.configEditable}
-          onInput={(e) => setModel(e.currentTarget.value)}
-          placeholder="inherit default"
-        />
+          onChange={(e) => setStackSelection(e.currentTarget.value)}
+        >
+          <option value={INHERIT_STACK}>Inherit system defaults</option>
+          {models.map((profile) => (
+            <option key={profile.id} value={profile.id}>{profile.name}</option>
+          ))}
+          {hasCustomStack || customSelected ? <option value={CUSTOM_STACK}>Custom account overrides</option> : null}
+        </select>
       </label>
+      <div class="gsv-ai-stack-summary">
+        <span>{stackSummary.kind}</span>
+        <strong>{stackSummary.label}</strong>
+        <p>{stackSummary.detail}</p>
+      </div>
+      {models.length === 0 ? (
+        <p class="gsv-agent-panel-note">No saved AI stack profiles are available for this account yet.</p>
+      ) : null}
 
       <div class="gsv-field">
         <span>Default tool approval</span>
@@ -753,13 +789,60 @@ function PermissionsEditor({
       <div class="gsv-detail-actions">
         <ActionButton
           icon="check"
-          label="Save permissions"
+          label="Save stack & permissions"
           busyLabel="Saving"
           busy={busy}
           disabled={!agent.configEditable}
-          onClick={() => void onSave(model.trim(), serializeApprovalPolicy(policy))}
+          onClick={() => void onSave(aiValuesForStackSelection(stackSelection, models), serializeApprovalPolicy(policy))}
         />
       </div>
     </section>
   );
+}
+
+function stackSelectionForAgent(agent: AgentDetail, profiles: AgentModelProfile[]): string {
+  if (Object.keys(agent.aiValues).length === 0) {
+    return INHERIT_STACK;
+  }
+  return findMatchingStackProfile(profiles, agent.aiValues)?.id ?? CUSTOM_STACK;
+}
+
+function aiValuesForStackSelection(selection: string, profiles: AgentModelProfile[]): Record<string, string> | undefined {
+  if (selection === INHERIT_STACK) {
+    return {};
+  }
+  if (selection === CUSTOM_STACK) {
+    return undefined;
+  }
+  return profiles.find((profile) => profile.id === selection)?.values;
+}
+
+function stackSummaryForSelection(
+  selection: string,
+  agent: AgentDetail,
+  profiles: AgentModelProfile[],
+  systemAiValues: Record<string, string>,
+): { kind: string; label: string; detail: string } {
+  if (selection === INHERIT_STACK) {
+    return {
+      kind: "Inherited stack",
+      label: "System defaults",
+      detail: stackDetail(systemAiValues),
+    };
+  }
+
+  const profile = profiles.find((candidate) => candidate.id === selection);
+  if (profile) {
+    return {
+      kind: "Saved stack",
+      label: profile.name,
+      detail: stackDetail(profile.values),
+    };
+  }
+
+  return {
+    kind: "Custom stack",
+    label: "Account overrides",
+    detail: stackDetail(agent.effectiveAiValues),
+  };
 }

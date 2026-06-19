@@ -55,19 +55,29 @@
 }
 
 .gsv-model-summary span,
+.gsv-model-summary small,
 .gsv-model-default {
   color: #687384;
   font-size: 0.78rem;
   font-weight: 650;
 }
 
-.gsv-model-summary strong {
+.gsv-model-summary strong,
+.gsv-model-summary small {
   overflow: hidden;
-  color: #253043;
-  font-size: 0.8rem;
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.gsv-model-summary strong {
+  color: #253043;
+  font-size: 0.8rem;
+}
+
+.gsv-model-summary small {
+  font-size: 0.74rem;
+  font-weight: 500;
 }
 
 .gsv-model-default {
@@ -337,6 +347,7 @@
 }
 
 .gsv-field input,
+.gsv-field select,
 .gsv-field textarea,
 .gsv-agents-context-area,
 .gsv-agents-rule input,
@@ -351,6 +362,7 @@
 }
 
 .gsv-field input:disabled,
+.gsv-field select:disabled,
 .gsv-field textarea:disabled,
 .gsv-agents-context-area[readonly],
 .gsv-agents-rule input:disabled,
@@ -358,6 +370,42 @@
   color: #687384;
   background: #f2f5f9;
   cursor: not-allowed;
+}
+
+.gsv-ai-stack-summary {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+  padding: 0.65rem;
+  border: 1px solid #dce2ea;
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+
+.gsv-ai-stack-summary span {
+  color: #687384;
+  font-size: 0.72rem;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+
+.gsv-ai-stack-summary strong,
+.gsv-ai-stack-summary p {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gsv-ai-stack-summary strong {
+  color: #253043;
+  font-size: 0.86rem;
+}
+
+.gsv-ai-stack-summary p {
+  margin: 0;
+  color: #687384;
+  font-size: 0.78rem;
 }
 
 .gsv-agents-context-area,

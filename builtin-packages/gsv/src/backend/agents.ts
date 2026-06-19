@@ -1,9 +1,10 @@
 import type { KernelClientLike } from "@humansandmachines/gsv/sdk/backend";
+import { AI_FIELDS, buildUserAiOverrideKey } from "../app/features/settings/config-schema";
+import { profileValuesFromDrafts, readModelProfiles } from "../app/features/settings/model-profiles-domain";
 import type {
   AgentContextFile,
   AgentContextResult,
   AgentDetail,
-  AgentModelProfile,
   AgentMutationResult,
   AgentsState,
   CreateAgentArgs,
@@ -41,68 +42,27 @@ function configValue(entries: ConfigEntry[], key: string): string | undefined {
   return entries.find((entry) => entry.key === key)?.value;
 }
 
-function configValueOrDefault(entries: ConfigEntry[], key: string, fallback: string): string {
-  const value = configValue(entries, key)?.trim();
-  return value || fallback;
-}
-
-function modelLabel(model: string): string {
-  const cleaned = model
-    .replace(/^@cf\//, "")
-    .split("/")
-    .pop()
-    ?.replace(/[-_]+/g, " ")
-    .trim() || model;
-  return cleaned
-    .split(/\s+/)
-    .map((part) => part.length > 3 ? `${part.charAt(0).toUpperCase()}${part.slice(1)}` : part.toUpperCase())
-    .join(" ");
-}
-
-function modelId(model: string): string {
-  return model.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "model";
-}
-
-function buildModelProfiles(entries: ConfigEntry[], agents: AgentDetail[]): AgentModelProfile[] {
-  const defaultProvider = configValueOrDefault(entries, "config/ai/provider", "workers-ai");
-  const defaultModel = configValueOrDefault(entries, "config/ai/model", "@cf/nvidia/nemotron-3-120b-a12b");
-  const defaultProfile: AgentModelProfile = {
-    id: "default",
-    label: `${modelLabel(defaultModel)} (Default)`,
-    provider: defaultProvider,
-    model: defaultModel,
-    reasoning: configValueOrDefault(entries, "config/ai/reasoning", "off"),
-    maxTokens: configValueOrDefault(entries, "config/ai/max_tokens", "8192"),
-    maxContext: configValueOrDefault(entries, "config/ai/max_context_bytes", "32768"),
-    default: true,
-    source: "system",
-  };
-
-  const seen = new Set<string>([defaultModel]);
-  const overrides = agents.flatMap((agent) => {
-    const model = agent.model.trim();
-    if (!model || seen.has(model)) {
-      return [];
-    }
-    seen.add(model);
-    return [{
-      id: modelId(model),
-      label: modelLabel(model),
-      provider: defaultProvider,
-      model,
-      reasoning: defaultProfile.reasoning,
-      maxTokens: defaultProfile.maxTokens,
-      maxContext: defaultProfile.maxContext,
-      default: false,
-      source: "agent" as const,
-    }];
-  });
-
-  return [defaultProfile, ...overrides];
-}
-
 function contextDir(username: string): string {
   return `/home/${username}/context.d`;
+}
+
+function configValues(entries: ConfigEntry[]): Record<string, string> {
+  return Object.fromEntries(entries.map((entry) => [entry.key, entry.value]));
+}
+
+function agentAiOverrides(values: Record<string, string>, uid: number): Record<string, string> {
+  const overrides: Record<string, string> = {};
+  for (const field of AI_FIELDS) {
+    const value = values[buildUserAiOverrideKey(uid, field.key)];
+    if (value !== undefined) {
+      overrides[field.key] = value;
+    }
+  }
+  return overrides;
+}
+
+function effectiveAgentAiValues(systemAiValues: Record<string, string>, overrides: Record<string, string>): Record<string, string> {
+  return profileValuesFromDrafts({ ...systemAiValues, ...overrides });
 }
 
 function normalizeContextUsername(value: unknown): string | null {
@@ -147,29 +107,44 @@ export async function loadAgentsState(
     const entries = Array.isArray(configPayload.entries)
       ? configPayload.entries as ConfigEntry[]
       : [];
+    const values = configValues(entries);
+    const systemAiValues = profileValuesFromDrafts(values);
 
     const agents: AgentDetail[] = accounts
       .filter((account) => account.relation === "personal-agent" || account.relation === "agent")
-      .map((account) => ({
-        uid: account.uid,
-        username: account.username,
-        displayName: account.displayName,
-        gecos: account.gecos,
-        relation: account.relation,
-        runnable: account.runnable,
-        configEditable: true,
-        contextEditable: true,
-        model: configValue(entries, `users/${account.uid}/ai/model`) ?? "",
-        approval: configValue(entries, `users/${account.uid}/ai/tools/approval`) ?? "",
-      }));
+      .map((account) => {
+        const aiValues = agentAiOverrides(values, account.uid);
+        return {
+          uid: account.uid,
+          username: account.username,
+          displayName: account.displayName,
+          gecos: account.gecos,
+          relation: account.relation,
+          runnable: account.runnable,
+          configEditable: true,
+          contextEditable: true,
+          model: aiValues["config/ai/model"] ?? "",
+          aiValues,
+          effectiveAiValues: effectiveAgentAiValues(systemAiValues, aiValues),
+          approval: configValue(entries, `users/${account.uid}/ai/tools/approval`) ?? "",
+        };
+      });
 
     const humans: AccountSummary[] = accounts.filter(
       (account) => account.relation === "human" || account.relation === "self",
     );
 
-    return { agents, humans, modelProfiles: buildModelProfiles(entries, agents), viewerUid, isRoot, errorText: "" };
+    return {
+      agents,
+      humans,
+      modelProfiles: readModelProfiles(values, viewerUid),
+      systemAiValues,
+      viewerUid,
+      isRoot,
+      errorText: "",
+    };
   } catch (error) {
-    return { agents: [], humans: [], modelProfiles: [], viewerUid, isRoot, errorText: errorText(error) };
+    return { agents: [], humans: [], modelProfiles: [], systemAiValues: {}, viewerUid, isRoot, errorText: errorText(error) };
   }
 }
 
@@ -242,7 +217,14 @@ export async function setAgentBehavior(
     return { ok: false, errorText: "uid is required" };
   }
   try {
-    if (args.model !== undefined) {
+    if (args.aiValues !== undefined) {
+      for (const field of AI_FIELDS) {
+        await kernel.request("sys.config.set", {
+          key: buildUserAiOverrideKey(uid, field.key),
+          value: String(args.aiValues[field.key] ?? "").trim(),
+        });
+      }
+    } else if (args.model !== undefined) {
       await kernel.request("sys.config.set", {
         key: `users/${uid}/ai/model`,
         value: String(args.model).trim(),

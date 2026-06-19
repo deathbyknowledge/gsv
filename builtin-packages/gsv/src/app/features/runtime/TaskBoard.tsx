@@ -7,17 +7,19 @@ import type { ProcessEntry } from "./types";
 export function TaskBoard({
   agents,
   models,
+  systemAiValues,
   processes,
   loading,
   onSelect,
 }: {
   agents: AgentDetail[];
   models: AgentModelProfile[];
+  systemAiValues: Record<string, string>;
   processes: ProcessEntry[];
   loading: boolean;
   onSelect: (process: ProcessEntry) => void;
 }) {
-  const crew = buildCrewAgents(agents, processes, models);
+  const crew = buildCrewAgents(agents, processes, models, systemAiValues);
   const groups = buildTaskGroups(crew, processes);
   const hasTasks = groups.some((group) => group.tasks.length > 0);
 

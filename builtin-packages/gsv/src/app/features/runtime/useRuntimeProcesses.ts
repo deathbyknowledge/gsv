@@ -9,6 +9,7 @@ export function useRuntimeProcesses(backend: GsvBackend) {
   const [state, setState] = useState<RuntimeState | null>(null);
   const [agents, setAgents] = useState<AgentDetail[]>([]);
   const [models, setModels] = useState<AgentModelProfile[]>([]);
+  const [systemAiValues, setSystemAiValues] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [errorText, setErrorText] = useState("");
   const [query, setQueryState] = useState(readRuntimeQuery);
@@ -30,6 +31,7 @@ export function useRuntimeProcesses(backend: GsvBackend) {
       setState(nextState);
       setAgents(nextAgents.agents);
       setModels(nextAgents.modelProfiles);
+      setSystemAiValues(nextAgents.systemAiValues);
       setErrorText(nextState.errorText);
     } catch (error) {
       if (requestId === requestIdRef.current) {
@@ -109,6 +111,7 @@ export function useRuntimeProcesses(backend: GsvBackend) {
     query,
     agents,
     models,
+    systemAiValues,
     selectedProcess,
     filteredProcesses,
     killingPid,

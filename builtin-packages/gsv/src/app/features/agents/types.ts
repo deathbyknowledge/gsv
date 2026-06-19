@@ -1,3 +1,5 @@
+import type { ModelProfile } from "../settings/types";
+
 export type AgentRelation = "self" | "personal-agent" | "agent" | "human";
 
 export type AccountSummary = {
@@ -20,26 +22,21 @@ export type AgentDetail = {
   contextEditable: boolean;
   /** Per-agent model override (config key users/<uid>/ai/model); empty = inherit default. */
   model: string;
+  /** Sparse per-agent AI stack overrides keyed by config/ai/* field names. */
+  aiValues: Record<string, string>;
+  /** Effective AI stack values after applying visible account overrides over system defaults. */
+  effectiveAiValues: Record<string, string>;
   /** Per-agent tool approval policy as a JSON string; empty = inherit default. */
   approval: string;
 };
 
-export type AgentModelProfile = {
-  id: string;
-  label: string;
-  provider: string;
-  model: string;
-  reasoning: string;
-  maxTokens: string;
-  maxContext: string;
-  default: boolean;
-  source: "system" | "agent";
-};
+export type AgentModelProfile = ModelProfile;
 
 export type AgentsState = {
   agents: AgentDetail[];
   humans: AccountSummary[];
   modelProfiles: AgentModelProfile[];
+  systemAiValues: Record<string, string>;
   viewerUid: number;
   isRoot: boolean;
   errorText: string;
@@ -67,6 +64,7 @@ export type SaveAgentContextArgs = {
 
 export type SetAgentBehaviorArgs = {
   uid: number;
+  aiValues?: Record<string, string>;
   model?: string;
   approval?: string;
 };

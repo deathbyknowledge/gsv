@@ -3,6 +3,16 @@ import { summarizePermissions, type PermissionSummary } from "../features/agents
 import type { AgentDetail, AgentModelProfile } from "../features/agents/types";
 import { processState, processStateTone, processTitle } from "../features/runtime/runtime-domain";
 import type { ProcessEntry } from "../features/runtime/types";
+import {
+  modelProfileMatches,
+  profileValuesFromDrafts,
+} from "../features/settings/model-profiles-domain";
+
+const CHAT_PROVIDER_KEY = "config/ai/provider";
+const CHAT_MODEL_KEY = "config/ai/model";
+const CHAT_REASONING_KEY = "config/ai/reasoning";
+const MAX_TOKENS_KEY = "config/ai/max_tokens";
+const MAX_CONTEXT_KEY = "config/ai/max_context_bytes";
 
 export type CrewTaskState = "idle" | "queued" | "running" | "waiting_tool" | "waiting_hil" | "unknown";
 
@@ -31,6 +41,19 @@ export type CrewAgent = {
   tasks: CrewTask[];
   activeTasks: CrewTask[];
   agent: AgentDetail;
+};
+
+export type CrewStackCard = {
+  id: string;
+  label: string;
+  provider: string;
+  model: string;
+  reasoning: string;
+  maxTokens: string;
+  maxContext: string;
+  detail: string;
+  default: boolean;
+  profile?: AgentModelProfile;
 };
 
 export type CrewTaskGroup = {
@@ -64,22 +87,22 @@ export function buildCrewTasks(processes: ProcessEntry[]): CrewTask[] {
 export function buildCrewAgents(
   agents: AgentDetail[],
   processes: ProcessEntry[],
-  models: AgentModelProfile[],
+  profiles: AgentModelProfile[],
+  systemAiValues: Record<string, string> = {},
 ): CrewAgent[] {
   const tasks = buildCrewTasks(processes);
-  const defaultModel = models.find((model) => model.default);
 
   return agents.map((agent) => {
     const agentTasks = tasks.filter((task) => taskBelongsToAgent(task, agent));
-    const model = agent.model.trim();
+    const stack = agentStackSummary(agent, profiles, systemAiValues);
     return {
       uid: agent.uid,
       username: agent.username,
       displayName: agent.displayName,
       roleLabel: relationLabel(agent.relation),
       description: agentDescription(agent),
-      modelLabel: model ? modelDisplayLabel(model) : "At default",
-      modelDetail: model || defaultModel?.model || "System default",
+      modelLabel: stack.label,
+      modelDetail: stack.detail,
       permissions: summarizePermissions(agent.approval, agent.configEditable),
       tone: relationTone(agent.relation),
       tasks: agentTasks,
@@ -87,6 +110,41 @@ export function buildCrewAgents(
       agent,
     };
   });
+}
+
+export function buildCrewStackCards(
+  systemAiValues: Record<string, string>,
+  profiles: AgentModelProfile[],
+): CrewStackCard[] {
+  const systemValues = profileValuesFromDrafts(systemAiValues);
+  return [
+    {
+      id: "system-default",
+      label: `${modelDisplayLabel(aiValue(systemValues, CHAT_MODEL_KEY, "System model"))} (Default)`,
+      provider: aiValue(systemValues, CHAT_PROVIDER_KEY, "provider"),
+      model: aiValue(systemValues, CHAT_MODEL_KEY, "System default"),
+      reasoning: aiValue(systemValues, CHAT_REASONING_KEY, "medium"),
+      maxTokens: aiValue(systemValues, MAX_TOKENS_KEY, "default"),
+      maxContext: aiValue(systemValues, MAX_CONTEXT_KEY, "default"),
+      detail: stackDetail(systemValues),
+      default: true,
+    },
+    ...profiles.map((profile) => {
+      const values = profileValuesFromDrafts(profile.values);
+      return {
+        id: profile.id,
+        label: profile.name,
+        provider: aiValue(values, CHAT_PROVIDER_KEY, "provider"),
+        model: aiValue(values, CHAT_MODEL_KEY, "model"),
+        reasoning: aiValue(values, CHAT_REASONING_KEY, "default"),
+        maxTokens: aiValue(values, MAX_TOKENS_KEY, "default"),
+        maxContext: aiValue(values, MAX_CONTEXT_KEY, "default"),
+        detail: stackDetail(values),
+        default: false,
+        profile,
+      };
+    }),
+  ];
 }
 
 export function buildTaskGroups(agents: CrewAgent[], processes: ProcessEntry[]): CrewTaskGroup[] {
@@ -133,6 +191,64 @@ export function modelDisplayLabel(model: string): string {
     .split(/\s+/)
     .map((part) => part.length > 3 ? `${part.charAt(0).toUpperCase()}${part.slice(1)}` : part.toUpperCase())
     .join(" ");
+}
+
+export function findMatchingStackProfile(
+  profiles: AgentModelProfile[],
+  values: Record<string, string>,
+): AgentModelProfile | null {
+  const normalized = profileValuesFromDrafts(values);
+  return profiles.find((profile) => modelProfileMatches(profile, normalized)) ?? null;
+}
+
+export function stackDetail(values: Record<string, string>): string {
+  const provider = aiValue(values, CHAT_PROVIDER_KEY, "provider");
+  const model = aiValue(values, CHAT_MODEL_KEY, "model");
+  const reasoning = aiValue(values, CHAT_REASONING_KEY, "default");
+  return `${provider} / ${shortModelName(model)} / reasoning ${reasoning}`;
+}
+
+export function shortModelName(value: string): string {
+  const normalized = normalizedString(value);
+  if (!normalized) {
+    return "";
+  }
+  if (normalized.startsWith("@cf/")) {
+    const parts = normalized.split("/").filter(Boolean);
+    return parts[parts.length - 1] || normalized;
+  }
+  return normalized;
+}
+
+function agentStackSummary(
+  agent: AgentDetail,
+  profiles: AgentModelProfile[],
+  systemAiValues: Record<string, string>,
+): { label: string; detail: string } {
+  if (Object.keys(agent.aiValues).length === 0) {
+    return {
+      label: "At default",
+      detail: stackDetail(profileValuesFromDrafts(systemAiValues)),
+    };
+  }
+
+  const matched = findMatchingStackProfile(profiles, agent.aiValues);
+  if (matched) {
+    return {
+      label: matched.name,
+      detail: stackDetail(matched.values),
+    };
+  }
+
+  return {
+    label: "Custom stack",
+    detail: stackDetail(profileValuesFromDrafts(agent.effectiveAiValues)),
+  };
+}
+
+function aiValue(values: Record<string, string>, key: string, fallback: string): string {
+  const value = normalizedString(values[key]);
+  return value || fallback;
 }
 
 function normalizeTaskState(value: string): CrewTaskState {

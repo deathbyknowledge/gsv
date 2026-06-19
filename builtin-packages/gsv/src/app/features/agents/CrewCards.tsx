@@ -1,4 +1,4 @@
-import { buildCrewAgents } from "../../domain/crew";
+import { buildCrewAgents, buildCrewStackCards, type CrewStackCard } from "../../domain/crew";
 import { ActionButton } from "../../components/ui/ActionButton";
 import {
   ConsoleCard,
@@ -11,6 +11,7 @@ import type { AgentDetail, AgentModelProfile } from "./types";
 export function CrewOverview({
   agents,
   models,
+  systemAiValues,
   processes,
   loading,
   onSelect,
@@ -18,25 +19,27 @@ export function CrewOverview({
 }: {
   agents: AgentDetail[];
   models: AgentModelProfile[];
+  systemAiValues: Record<string, string>;
   processes: ProcessEntry[];
   loading: boolean;
   onSelect: (agent: AgentDetail) => void;
   onCreateAgent: () => void;
 }) {
-  const crew = buildCrewAgents(agents, processes, models);
+  const crew = buildCrewAgents(agents, processes, models, systemAiValues);
+  const stacks = buildCrewStackCards(systemAiValues, models);
 
   return (
     <div class="gsv-crew-layout">
-      <section class="gsv-crew-models" aria-label="Available LLM models">
+      <section class="gsv-crew-models" aria-label="Available AI stacks">
         <header class="gsv-crew-column-head">
-          <span class="gsv-kicker">Available LLM models</span>
+          <span class="gsv-kicker">Available AI stacks</span>
         </header>
-        {models.length === 0 ? (
+        {stacks.length === 0 ? (
           <ConsoleCard>
             <ObjectHeader title="No model data" eyebrow="Configuration" icon="settings" status="neutral" />
             <p class="gsv-crew-card-note">{loading ? "Loading model configuration." : "Model configuration is not visible to this account."}</p>
           </ConsoleCard>
-        ) : models.map((model) => (
+        ) : stacks.map((model) => (
           <ModelCard key={model.id} model={model} />
         ))}
       </section>
@@ -72,12 +75,12 @@ export function CrewOverview({
   );
 }
 
-function ModelCard({ model }: { model: AgentModelProfile }) {
+function ModelCard({ model }: { model: CrewStackCard }) {
   return (
     <ConsoleCard class="gsv-model-card" tone={model.default ? "accent" : "neutral"}>
       <ObjectHeader
         title={model.label}
-        eyebrow={model.default ? "Default" : "Available"}
+        eyebrow={model.default ? "System default" : "Saved stack"}
         icon="server"
         tone={model.default ? "accent" : "neutral"}
         status={model.default ? "good" : "neutral"}
@@ -86,9 +89,10 @@ function ModelCard({ model }: { model: AgentModelProfile }) {
       <div class="gsv-model-summary">
         <span>{model.provider}</span>
         <strong>{model.model}</strong>
+        <small>{model.detail}</small>
       </div>
       {model.default ? (
-        <span class="gsv-model-default">Default model</span>
+        <span class="gsv-model-default">System default</span>
       ) : null}
     </ConsoleCard>
   );
@@ -120,7 +124,7 @@ function AgentObjectCard({
       {expanded ? (
         <>
           <div class="gsv-card-facts">
-            <CardFact label="Model" value={agent.modelLabel} detail={agent.modelDetail} />
+            <CardFact label="AI stack" value={agent.modelLabel} detail={agent.modelDetail} />
             <CardFact label="Active tasks" value={String(agent.activeTasks.length)} />
             {firstTasks.length === 0 ? (
               <p class="gsv-agent-idle">Idle</p>
