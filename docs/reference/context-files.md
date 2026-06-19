@@ -42,11 +42,24 @@ Good examples:
 ~/context.d/20-current-priorities.md
 ```
 
-New human homes create the directory only. New agent homes seed a short style
-file and user identity file. New personal agents also seed a one-time
+New human homes create the directory only. New agent homes seed short style,
+memory, and user identity files. New personal agents also seed a one-time
 `00-boot.md` onboarding file, which the agent should delete after setup is
-done. Keep these files short and stable. Put durable reference material under
-Wiki instead, where it can be searched and retrieved deliberately.
+done. Keep these files short and stable.
+
+Agent long-term memory belongs in a repo-backed wiki, conventionally the
+agent-owned `memory` wiki. After creation it is available as normal markdown
+under:
+
+```text
+/src/repos/<agent>/memory/index.md
+/src/repos/<agent>/memory/pages/
+/src/repos/<agent>/memory/pages/journal/YYYY/MM/YYYY-MM-DD.md
+```
+
+Create the wiki with `wiki db init memory --title "<agent> Memory"`, then use
+filesystem search/read/write/edit for page work. Put durable reference material
+there, where it can be searched and retrieved deliberately.
 
 ## Skills: `skills.d/`
 
@@ -99,4 +112,4 @@ Use the GSV target for GSV filesystem paths. Use a device target only when inten
 
 ## What Belongs Where
 
-Use `~/context.d/` for concise standing context. Use `skills.d/` for reusable procedures. Use Wiki for durable, searchable reference material. Use process context for the current assignment only.
+Use `~/context.d/` for concise standing context. Use `skills.d/` for reusable procedures. Use Wiki for durable, searchable reference material and agent memory. Use process context for the current assignment only.

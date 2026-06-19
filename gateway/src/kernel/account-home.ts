@@ -3,6 +3,7 @@ import { accountHomeRepoRef } from "../fs/ripgit/repos";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import {
   DEFAULT_BOOT_CONTEXT_TEMPLATE,
+  DEFAULT_MEMORY_CONTEXT_TEMPLATE,
   DEFAULT_STYLE_CONTEXT,
   DEFAULT_USER_CONTEXT_TEMPLATE,
   LEGACY_DEFAULT_CONSTITUTION_CONTEXT,
@@ -33,6 +34,7 @@ export async function ensureAccountHomeLayout(
     contextDir,
     bootContext,
     styleContext,
+    memoryContext,
     constitutionContext,
     userContext,
     skillsDir,
@@ -40,6 +42,7 @@ export async function ensureAccountHomeLayout(
     client.readPath(repo, "context.d"),
     client.readPath(repo, "context.d/00-boot.md"),
     client.readPath(repo, "context.d/00-style.md"),
+    client.readPath(repo, "context.d/15-memory.md"),
     client.readPath(repo, "context.d/00-constitution.md"),
     client.readPath(repo, "context.d/10-user.md"),
     client.readPath(repo, "skills.d"),
@@ -60,7 +63,7 @@ export async function ensureAccountHomeLayout(
         ops,
         "context.d/00-boot.md",
         bootContext,
-        renderBootContext(identity.home),
+        renderBootContext(identity),
       );
     }
     maybePutTextFile(
@@ -68,6 +71,12 @@ export async function ensureAccountHomeLayout(
       "context.d/00-style.md",
       styleContext,
       DEFAULT_STYLE_CONTEXT,
+    );
+    maybePutTextFile(
+      ops,
+      "context.d/15-memory.md",
+      memoryContext,
+      renderMemoryContext(identity.username),
     );
     maybeDeleteGeneratedTextFile(
       ops,
@@ -87,13 +96,19 @@ export async function ensureAccountHomeLayout(
       ops,
       "context.d/00-boot.md",
       bootContext,
-      [renderBootContext(identity.home)],
+      [renderBootContext(identity)],
     );
     maybeDeleteGeneratedTextFile(
       ops,
       "context.d/00-style.md",
       styleContext,
       [DEFAULT_STYLE_CONTEXT],
+    );
+    maybeDeleteGeneratedTextFile(
+      ops,
+      "context.d/15-memory.md",
+      memoryContext,
+      [renderMemoryContext(identity.username)],
     );
     maybeDeleteGeneratedTextFile(
       ops,
@@ -187,15 +202,22 @@ function maybeDeleteGeneratedTextFile(
   });
 }
 
-function renderBootContext(home: string): string {
+function renderBootContext(identity: Pick<ProcessIdentity, "home" | "username">): string {
   return renderPromptTemplate(DEFAULT_BOOT_CONTEXT_TEMPLATE, {
-    "program.home": home,
+    "program.home": identity.home,
+    "program.username": identity.username,
   });
 }
 
 function renderUserContext(username: string): string {
   return renderPromptTemplate(DEFAULT_USER_CONTEXT_TEMPLATE, {
     "user.username": username,
+  });
+}
+
+function renderMemoryContext(username: string): string {
+  return renderPromptTemplate(DEFAULT_MEMORY_CONTEXT_TEMPLATE, {
+    "program.username": username,
   });
 }
 
