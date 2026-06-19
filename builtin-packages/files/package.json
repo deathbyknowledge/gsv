@@ -1,6 +1,6 @@
 {
   "name": "@gsv/files",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "type": "module",
   "dependencies": {
     "@humansandmachines/gsv": "0.0.3",
