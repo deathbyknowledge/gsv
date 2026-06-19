@@ -149,11 +149,11 @@ export function ProcessControlHeader(props: {
             <details class="process-menu process-inline-menu model-switcher">
               <summary
                 class="process-inline-summary"
-                title={`${providerLabel}/${modelLabel} - reasoning ${reasoningLabel}`}
+                title={`${providerLabel}/${modelLabel} - reasoning ${formatReasoningLevel(reasoningLabel)}`}
                 onClick={(event) => closeChatMenus((event.currentTarget as HTMLElement).closest("details") as HTMLDetailsElement | null)}
               >
                 <span class="process-model-name">{modelLabel}</span>
-                <span class="process-model-reasoning">{reasoningLabel}</span>
+                <span class="process-model-reasoning">{formatReasoningLevel(reasoningLabel)}</span>
                 <ChevronDownIcon />
               </summary>
               <div class="process-menu-popover model-menu-popover">
@@ -292,7 +292,7 @@ function ModelMenu(props: {
                 props.onSetReasoning(level);
               }}
             >
-              <span>{capitalize(level)}</span>
+              <span>{formatReasoningLevel(level)}</span>
               {processAiReasoningIsActive(props.state, level) ? <CheckIcon /> : null}
             </button>
           ))}
@@ -581,4 +581,11 @@ function contextPercentLabel(state: ContextState | null): string {
 
 function capitalize(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function formatReasoningLevel(value: string): string {
+  if (value === "xhigh") {
+    return "Extra High";
+  }
+  return capitalize(value);
 }

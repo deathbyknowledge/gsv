@@ -10,7 +10,7 @@ import { completeSimple, streamSimple } from "@earendil-works/pi-ai";
 import type { AiConfigResult } from "../syscalls/ai";
 import { completeWithWorkersAi, isWorkersAiProvider, streamWithWorkersAi } from "./workers-ai";
 import { withTimeout } from "./timeout";
-import { resolvePiAiModel } from "./model-registry";
+import { resolveModelThinkingLevel, resolvePiAiModel } from "./model-registry";
 import {
   errorMessageFromUnknown,
   formatProviderErrorMessage,
@@ -193,9 +193,8 @@ export function resolveGenerationOptions(
 ): ResolvedGenerationOptions {
   const { config, purpose } = request;
   const baseReasoning: ThinkingLevel | undefined =
-    config.reasoning && config.reasoning !== "off"
-      ? (config.reasoning as ThinkingLevel)
-      : undefined;
+    generationReasoningFromLevel(resolveModelThinkingLevel(config.provider, config.model, config.reasoning))
+      ?? undefined;
 
   switch (purpose) {
     case "thread.title":
@@ -239,6 +238,10 @@ export function resolveGenerationTimeoutMs(config: AiConfigResult): number {
   return typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0
     ? timeoutMs
     : DEFAULT_GENERATION_TIMEOUT_MS;
+}
+
+function generationReasoningFromLevel(level: ReturnType<typeof resolveModelThinkingLevel>): ThinkingLevel | null {
+  return level && level !== "off" ? level : null;
 }
 
 function generationTimeoutMessage(timeoutMs: number): string {

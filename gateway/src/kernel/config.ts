@@ -44,7 +44,7 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   "config/ai/model": "@cf/nvidia/nemotron-3-120b-a12b",
   // API key for the LLM provider. Empty is valid for local providers such as Workers AI.
   "config/ai/api_key": "",
-  // Reasoning effort/mode hint passed to the model (off, low, medium, high).
+  // Reasoning effort/mode hint passed to the model (off, minimal, low, medium, high, xhigh).
   // Only applies to models that support extended thinking.
   "config/ai/reasoning": "medium",
   // Max tokens for LLM responses (model-dependent upper bound).

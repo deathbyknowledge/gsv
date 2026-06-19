@@ -49,9 +49,11 @@ export const AI_FIELDS: SettingField[] = [
     kind: "select",
     options: [
       { value: "off", label: "Off" },
+      { value: "minimal", label: "Minimal" },
       { value: "low", label: "Low" },
       { value: "medium", label: "Medium" },
       { value: "high", label: "High" },
+      { value: "xhigh", label: "Extra High" },
     ],
   },
   {

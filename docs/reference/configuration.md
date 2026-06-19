@@ -49,7 +49,7 @@ Most AI runtime keys resolve per-user values first, then fall back to system def
 | `config/ai/provider` | `users/{uid}/ai/provider` | `workers-ai` | Provider adapter. |
 | `config/ai/model` | `users/{uid}/ai/model` | `@cf/nvidia/nemotron-3-120b-a12b` | Provider model identifier. |
 | `config/ai/api_key` | `users/{uid}/ai/api_key` | empty | Provider credential. Sensitive. |
-| `config/ai/reasoning` | `users/{uid}/ai/reasoning` | `medium` | Reasoning mode hint. |
+| `config/ai/reasoning` | `users/{uid}/ai/reasoning` | `medium` | Reasoning mode hint: `off`, `minimal`, `low`, `medium`, `high`, or `xhigh`. Unsupported values are clamped to the nearest model-supported level at generation time. |
 | `config/ai/max_tokens` | `users/{uid}/ai/max_tokens` | `8192` | Maximum output tokens. |
 | `config/ai/max_context_bytes` | `users/{uid}/ai/max_context_bytes` | `32768` | Prompt context budget before messages. |
 | `config/ai/generation/timeout_ms` | `users/{uid}/ai/generation/timeout_ms` | `180000` | Maximum time to wait for a single model generation before releasing the run with an error. |

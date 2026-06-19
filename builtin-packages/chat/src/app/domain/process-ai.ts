@@ -11,7 +11,7 @@ export const CHAT_PROVIDER_KEY = "config/ai/provider";
 export const CHAT_MODEL_KEY = "config/ai/model";
 export const CHAT_REASONING_KEY = "config/ai/reasoning";
 
-export const PROCESS_AI_REASONING_LEVELS = ["low", "medium", "high"] as const;
+export const PROCESS_AI_REASONING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
 
 export type ProcessAiReasoningLevel = typeof PROCESS_AI_REASONING_LEVELS[number];
 
