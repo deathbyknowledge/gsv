@@ -24,7 +24,7 @@ const TABS_USAGE = [
   "       tabs list",
   "       tabs active",
   "       tabs get <tabId>",
-  "       tabs open [--mime type] <url|path|target:/path|->",
+  "       tabs open [--mime type] <url|path|->",
   "       tabs focus <tabId>",
   "       tabs close <tabId>",
   "       tabs reload <tabId>",
@@ -34,8 +34,8 @@ const TABS_LIST_USAGE = "Usage: tabs list";
 const TABS_ACTIVE_USAGE = "Usage: tabs active";
 const TABS_GET_USAGE = "Usage: tabs get <tabId>";
 const TABS_OPEN_USAGE = [
-  "Usage: tabs open [--mime type] <url|path|target:/path|->",
-  "Paths may be local browser target paths, gsv:/path, target:/path, or [target-with-colons]:/path.",
+  "Usage: tabs open [--mime type] <url|path|->",
+  "Paths must be browser-local paths. Use native cp to copy remote target files into the browser target first.",
   "Use - to render stdin.",
 ].join("\n");
 const TABS_FOCUS_USAGE = "Usage: tabs focus <tabId>";
@@ -313,10 +313,15 @@ async function renderableFromTargetEndpoint(
   const inferredType = contentType ?? inferContentType(endpoint.path);
   const destination = tempRenderPath(basename(endpoint.path), extensionForPathOrType(endpoint.path, inferredType));
   await ctx.fs.mkdir("/tmp/render");
-  const copy = await ctx.copyTargetFile(endpoint, {
-    target: ctx.currentTargetId,
-    path: destination,
-  });
+  let copy: unknown;
+  try {
+    copy = await ctx.copyTargetFile(endpoint, {
+      target: ctx.currentTargetId,
+      path: destination,
+    });
+  } catch (error) {
+    throw new Error(remoteCopyErrorMessage(error));
+  }
   const copyRecord = asRecord(copy);
   if (copyRecord.ok === false) {
     throw new Error(typeof copyRecord.error === "string" ? copyRecord.error : "fs.copy failed");
@@ -464,6 +469,14 @@ function copyContentType(value: unknown): string | null {
   return typeof record.contentType === "string" && record.contentType.trim()
     ? record.contentType.trim()
     : null;
+}
+
+function remoteCopyErrorMessage(error: unknown): string {
+  const message = errorMessage(error);
+  if (message.includes("Permission denied: fs.copy")) {
+    return "remote file open is unavailable from this browser shell; copy the file to this browser target with native cp first";
+  }
+  return message;
 }
 
 function normalizeContentType(contentType: string): string {

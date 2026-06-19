@@ -207,6 +207,9 @@ cp [rearden:brave]:/home/browser/screenshots/tab-123.png gsv:/home/alice/tab-123
 cp gsv:/home/alice/input.json [rearden:brave]:/tmp/input.json
 ```
 
+Run target-qualified `cp` from the native GSV shell or target-aware filesystem
+tools. The browser target's just-bash `cp` is local to the browser filesystem.
+
 Use the native `gsv` target to discover and inspect browser targets:
 
 ```bash
@@ -230,8 +233,8 @@ Current extension targets expose browser commands for tabs, windows, page
 snapshots/text/screenshots/clicks/typing/keyboard/scroll/wait/JavaScript,
 clipboard, cookies, `chrome.storage.local`, downloads, history, bookmarks, and
 network capture. Newer extension targets can also record tab audio/video and open
-URLs, files, target-qualified files, or stdin in viewer tabs through
-`tabs open [--mime type] <url|path|target:/path|->`. The exact command set
+URLs, browser-local files, or stdin in viewer tabs through
+`tabs open [--mime type] <url|path|->`. The exact command set
 depends on extension version and browser permissions, so `/README.txt`, `help`,
 and `<command> --help` are authoritative.
 

@@ -584,7 +584,7 @@ describe("fs copy", () => {
       async requestDevice(deviceId, call, args) {
         expect(deviceId).toBe("rearden");
         if (call === "fs.transfer.stat") {
-          return { ok: false, error: "not found" };
+          throw new Error("No such file or directory: /tmp/device-destination.txt");
         }
         throw new Error(`unexpected call ${call}`);
       },

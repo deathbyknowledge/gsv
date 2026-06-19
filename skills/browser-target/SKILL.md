@@ -74,8 +74,9 @@ Target-qualified paths use `target:/absolute/path`. Plain target ids such as
 `macbook` do not need brackets. Target ids containing `:` must be bracketed,
 such as `[rearden:brave]:/tmp/page.html`.
 
-Use target-aware `cp` for large files. Do not base64 large files through model
-output.
+Run target-qualified `cp` from the native GSV shell or target-aware filesystem
+tools. The browser target's just-bash `cp` is local to the browser filesystem.
+Use target-aware `cp` for large files. Do not base64 large files through model output.
 
 ## Pages and Tabs
 
@@ -109,19 +110,19 @@ page js --tab <tabId> 'Array.from(document.querySelectorAll("button")).map((butt
 Prefer selector clicks to coordinates. If multiple tabs are open, pass `--tab`
 rather than relying on the active tab.
 
-Use `tabs open` when the user wants to see a website, browser-local file,
-target-qualified file, or generated content in a real browser tab:
+Use `tabs open` when the user wants to see a website, browser-local file, or
+generated content in a real browser tab:
 
 ```bash
 tabs open https://example.com
 tabs open /home/browser/screenshots/tab-123.png
-tabs open [server]:/tmp/demo.mp4
 printf '<h1>Report</h1>' | tabs open --mime text/html -
 ```
 
-For target-qualified files, `tabs open` copies the file into the browser
-target's `/tmp/render/...` area and opens a viewer tab. Use `--mime` when stdin
-or an extensionless file needs an explicit content type.
+For a remote file, first copy it into `/tmp` or `/tmp/render` on the browser
+target from the native GSV shell, then run `tabs open` on the browser-local
+path. Use `--mime` when stdin or an extensionless file needs an explicit
+content type.
 
 ## Profile Data
 
@@ -185,8 +186,8 @@ supported and can grow quickly, so set `--max-bytes` explicitly for longer
 captures. Tab capture may require asking the user to focus the tab and click
 Grant Recording in the GSV extension UI first; each grant can start one
 recording. By default, captured tab audio remains audible; use `--monitor off`
-only when the task calls for disabling playback. `--path [target]:/path`
-records locally first and then copies the finished file through `fs.copy`.
+only when the task calls for disabling playback. To move a finished recording
+to another target, copy it from the native GSV shell after recording stops.
 
 ## Clipboard
 
