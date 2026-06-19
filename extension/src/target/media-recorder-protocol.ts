@@ -54,10 +54,18 @@ export type OffscreenMediaStatusMessage = {
   recordingId?: string;
 };
 
+export type OffscreenMediaCopyCompleteMessage = {
+  target: typeof OFFSCREEN_MEDIA_RECORDER_TARGET;
+  type: "copy-complete";
+  recordingId: string;
+  copy?: unknown;
+};
+
 export type OffscreenMediaMessage =
   | OffscreenMediaStartMessage
   | OffscreenMediaStopMessage
-  | OffscreenMediaStatusMessage;
+  | OffscreenMediaStatusMessage
+  | OffscreenMediaCopyCompleteMessage;
 
 export type OffscreenMediaResponse<T> =
   | { ok: true; value: T }

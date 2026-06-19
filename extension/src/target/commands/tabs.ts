@@ -272,11 +272,15 @@ async function renderableFromPath(input: string, ctx: CommandContext, contentTyp
   const destination = tempRenderPath(basename(path), extensionForPathOrType(path, resolvedType));
   await ctx.fs.mkdir("/tmp/render");
   await ctx.fs.write(destination, await ctx.fs.read(path));
+  return localRenderable(destination, path, path, resolvedType);
+}
+
+function localRenderable(path: string, source: string, label: string, contentType: string): Renderable {
   return {
-    path: destination,
-    source: path,
-    label: path,
-    contentType: resolvedType,
+    path,
+    source,
+    label,
+    contentType,
   };
 }
 
@@ -289,12 +293,15 @@ async function renderableFromTargetEndpoint(
   if (ctx.currentTargetId && endpoint.target === ctx.currentTargetId) {
     const path = normalizePath(endpoint.path);
     const stat = await requireFile(ctx, path);
-    return {
-      path,
-      source: sourceText,
-      label: sourceText,
-      contentType: contentType ?? stat.contentType ?? inferContentType(path),
-    };
+    const resolvedType = contentType ?? stat.contentType ?? inferContentType(path);
+    if (isDirectViewerPath(path)) {
+      return localRenderable(path, sourceText, sourceText, resolvedType);
+    }
+
+    const destination = tempRenderPath(basename(path), extensionForPathOrType(path, resolvedType));
+    await ctx.fs.mkdir("/tmp/render");
+    await ctx.fs.write(destination, await ctx.fs.read(path));
+    return localRenderable(destination, sourceText, sourceText, resolvedType);
   }
   if (!ctx.currentTargetId) {
     throw new Error("current browser target id is unavailable");

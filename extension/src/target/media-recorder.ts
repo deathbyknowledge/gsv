@@ -218,6 +218,9 @@ async function copyCompletedRecording(
   };
   try {
     const copy = await ctx.copyTargetFile(source, status.destination);
+    if (copySucceeded(copy)) {
+      await acknowledgeRecordingCopy(status.id, copy).catch(() => undefined);
+    }
     return { ...status, copy };
   } catch (error) {
     return {
@@ -225,6 +228,29 @@ async function copyCompletedRecording(
       copy: { ok: false, error: error instanceof Error ? error.message : String(error) },
     };
   }
+}
+
+async function acknowledgeRecordingCopy(recordingId: string, copy: unknown): Promise<void> {
+  if (!(await hasOffscreenDocument())) {
+    return;
+  }
+  await sendOffscreenMessage<MediaRecordingStatus | null>({
+    target: OFFSCREEN_MEDIA_RECORDER_TARGET,
+    type: "copy-complete",
+    recordingId,
+    copy,
+  });
+}
+
+function copySucceeded(copy: unknown): boolean {
+  const record = asRecord(copy);
+  return record.ok !== false;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
 }
 
 async function activeTabId(): Promise<number> {

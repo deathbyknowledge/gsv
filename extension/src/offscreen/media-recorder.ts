@@ -10,6 +10,7 @@ import {
   type MediaRecordingStatus,
   type MediaRecordingStopReason,
   type OffscreenMediaMessage,
+  type OffscreenMediaCopyCompleteMessage,
   type OffscreenMediaResponse,
   type OffscreenMediaStartMessage,
   type OffscreenMediaStatusMessage,
@@ -81,6 +82,8 @@ async function handleMessage(message: OffscreenMediaMessage): Promise<unknown> {
       return await stopRecording(message);
     case "status":
       return recordingStatus(message);
+    case "copy-complete":
+      return completeRecordingCopy(message);
   }
 }
 
@@ -156,14 +159,29 @@ async function stopRecording(message: OffscreenMediaStopMessage): Promise<MediaR
   }
 
   const states = Array.from(activeRecordings.values());
-  const completed = Array.from(completedRecordings.values());
+  const pendingCompleted = Array.from(completedRecordings.values()).filter((status) => Boolean(status.destination));
   for (const state of states) {
     stopState(state, "stopped");
   }
   return [
-    ...completed,
+    ...pendingCompleted,
     ...await Promise.all(states.map((state) => state.completion)),
   ].sort((left, right) => left.startedAt.localeCompare(right.startedAt));
+}
+
+function completeRecordingCopy(message: OffscreenMediaCopyCompleteMessage): MediaRecordingStatus | null {
+  const completed = completedRecordings.get(message.recordingId);
+  if (!completed) {
+    return null;
+  }
+  const { destination: _destination, ...withoutDestination } = completed;
+  void _destination;
+  const next: MediaRecordingStatus = {
+    ...withoutDestination,
+    copy: message.copy,
+  };
+  completedRecordings.set(message.recordingId, next);
+  return next;
 }
 
 function recordingStatus(message: OffscreenMediaStatusMessage): MediaRecordingStatus[] {
