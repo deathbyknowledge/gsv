@@ -105,6 +105,46 @@ export type AiTranscriptionCreateResult = {
   model: string;
 };
 
+export type AiImageReadArgs = {
+  image: {
+    data: string;
+    mimeType: string;
+    filename?: string;
+    size?: number;
+  };
+  prompt?: string;
+  model?: string;
+  inputFormat?: "auto" | "chat" | "image";
+  maxTokens?: number;
+};
+
+export type AiImageReadResult = {
+  text: string;
+  provider: string;
+  model: string;
+};
+
+export type AiImageGenerateArgs = {
+  prompt: string;
+  model?: string;
+  size?: string;
+  quality?: string;
+  format?: string;
+  timeoutMs?: number;
+};
+
+export type AiImageGenerateResult = {
+  image: {
+    data: string;
+    mimeType: string;
+    size: number;
+  };
+  provider: string;
+  model: string;
+  revisedPrompt?: string;
+  url?: string;
+};
+
 export type AiSpeechCreateArgs = {
   text: string;
   textFormat?: "markdown" | "plain";

@@ -28,7 +28,14 @@ import {
   handleFsTransferReceive,
 } from "../drivers/native/fs";
 import { handleShellExec } from "../drivers/native/shell";
-import { handleAiTools, handleAiConfig, handleAiSpeechCreate, handleAiTranscriptionCreate } from "./ai";
+import {
+  handleAiConfig,
+  handleAiImageGenerate,
+  handleAiImageRead,
+  handleAiSpeechCreate,
+  handleAiTools,
+  handleAiTranscriptionCreate,
+} from "./ai";
 import {
   handleProcList,
   handleProcIpcCall,
@@ -463,6 +470,12 @@ async function dispatchNative(
         break;
       case "ai.transcription.create":
         data = await handleAiTranscriptionCreate(frame.args, ctx);
+        break;
+      case "ai.image.read":
+        data = await handleAiImageRead(frame.args, ctx);
+        break;
+      case "ai.image.generate":
+        data = await handleAiImageGenerate(frame.args, ctx);
         break;
       case "ai.speech.create":
         data = await handleAiSpeechCreate(frame.args, ctx);

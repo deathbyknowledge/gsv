@@ -17,6 +17,10 @@ import type {
   AiToolsDevice,
   AiConfigArgs,
   AiConfigResult,
+  AiImageGenerateArgs,
+  AiImageGenerateResult,
+  AiImageReadArgs,
+  AiImageReadResult,
   AiSpeechCreateArgs,
   AiSpeechCreateResult,
   AiTranscriptionCreateArgs,
@@ -56,6 +60,8 @@ import {
   DEFAULT_IMAGE_READING_TIMEOUT_MS,
   DEFAULT_MAX_IMAGE_READING_BYTES,
   normalizeImageReadingInputFormat,
+  readImageWithPiAi,
+  readImageWithWorkersAi,
 } from "../inference/image-reading";
 import {
   DEFAULT_AUDIO_SPEECH_ENCODING,
@@ -69,6 +75,7 @@ import {
   DEFAULT_OPENAI_SPEECH_MODEL,
   DEFAULT_OPENAI_SPEECH_VOICE,
   DEFAULT_OPENAI_TRANSCRIPTION_MODEL,
+  generateImage,
   synthesizeSpeech,
   transcribeAudio,
 } from "../inference/capabilities";
@@ -294,6 +301,95 @@ export async function handleAiTranscriptionCreate(
   }
 
   return result;
+}
+
+export async function handleAiImageRead(
+  args: AiImageReadArgs,
+  ctx: KernelContext,
+): Promise<AiImageReadResult> {
+  const input = args && typeof args === "object" ? args : ({} as AiImageReadArgs);
+  const media = resolveAiMediaConfigForContext(ctx);
+  const image = input.image;
+  if (!image || typeof image !== "object") {
+    throw new Error("image is required");
+  }
+  if (typeof image.data !== "string" || image.data.trim().length === 0) {
+    throw new Error("image.data is required");
+  }
+  if (typeof image.mimeType !== "string" || !image.mimeType.trim().toLowerCase().startsWith("image/")) {
+    throw new Error("image.mimeType must be an image MIME type");
+  }
+
+  const base64 = normalizeBase64Data(image.data.trim());
+  const byteLength = base64DecodedLength(base64);
+  const maxBytes = media.imageReadingMaxBytes;
+  if (byteLength <= 0) {
+    throw new Error("image.data is empty");
+  }
+  if (byteLength > maxBytes) {
+    throw new Error(`image.data exceeds image reading limit (${maxBytes} bytes)`);
+  }
+
+  const model = normalizeOptionalString(input.model) ?? media.imageReadingModel;
+  const request = {
+    data: base64,
+    provider: media.imageReadingProvider,
+    apiKey: media.imageReadingApiKey,
+    model,
+    mimeType: image.mimeType,
+    prompt: normalizeOptionalString(input.prompt) ?? media.imageReadingPrompt,
+    inputFormat: normalizeImageReadingInputFormat(input.inputFormat) ?? media.imageReadingInputFormat,
+    maxTokens: normalizePositiveNumber(input.maxTokens) ?? media.imageReadingMaxTokens,
+    timeoutMs: media.imageReadingTimeoutMs,
+  };
+  const result = isWorkersAiProvider(media.imageReadingProvider)
+    ? await readImageWithWorkersAi(ctx.env.AI, request)
+    : await readImageWithPiAi(request);
+  if (!result) {
+    throw new Error("Image reading unavailable");
+  }
+
+  return result;
+}
+
+export async function handleAiImageGenerate(
+  args: AiImageGenerateArgs,
+  ctx: KernelContext,
+): Promise<AiImageGenerateResult> {
+  const input = args && typeof args === "object" ? args : ({} as AiImageGenerateArgs);
+  const media = resolveAiMediaConfigForContext(ctx);
+  const prompt = normalizeOptionalString(input.prompt);
+  if (!prompt) {
+    throw new Error("prompt is required");
+  }
+
+  const result = await generateImage({
+    workersAi: ctx.env.AI,
+  }, {
+    provider: media.imageGenerationProvider,
+    apiKey: media.imageGenerationApiKey,
+    model: normalizeOptionalString(input.model) ?? media.imageGenerationModel,
+    prompt,
+    size: normalizeOptionalString(input.size),
+    quality: normalizeOptionalString(input.quality),
+    format: normalizeOptionalString(input.format),
+    timeoutMs: normalizePositiveNumber(input.timeoutMs),
+  });
+  if (!result) {
+    throw new Error("Image generation unavailable");
+  }
+
+  return {
+    image: {
+      data: result.data,
+      mimeType: result.mimeType,
+      size: result.size,
+    },
+    provider: result.provider,
+    model: result.model,
+    ...(result.revisedPrompt ? { revisedPrompt: result.revisedPrompt } : {}),
+    ...(result.url ? { url: result.url } : {}),
+  };
 }
 
 export async function handleAiSpeechCreate(

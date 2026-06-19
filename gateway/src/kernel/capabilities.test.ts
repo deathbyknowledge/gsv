@@ -187,6 +187,8 @@ describe("CapabilityStore", () => {
       "adapter.connect",
       "adapter.disconnect",
       "adapter.status",
+      "ai.image.generate",
+      "ai.image.read",
       "ai.speech.create",
       "ai.transcription.create",
       "app.*",

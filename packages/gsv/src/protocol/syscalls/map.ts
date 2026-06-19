@@ -215,6 +215,10 @@ import type {
 import type {
   AiConfigArgs,
   AiConfigResult,
+  AiImageGenerateArgs,
+  AiImageGenerateResult,
+  AiImageReadArgs,
+  AiImageReadResult,
   AiSpeechCreateArgs,
   AiSpeechCreateResult,
   AiToolsArgs,
@@ -370,6 +374,8 @@ export type SyscallDomains = {
   "ai.tools": { args: AiToolsArgs; result: AiToolsResult };
   "ai.config": { args: AiConfigArgs; result: AiConfigResult };
   "ai.transcription.create": { args: AiTranscriptionCreateArgs; result: AiTranscriptionCreateResult };
+  "ai.image.read": { args: AiImageReadArgs; result: AiImageReadResult };
+  "ai.image.generate": { args: AiImageGenerateArgs; result: AiImageGenerateResult };
   "ai.speech.create": { args: AiSpeechCreateArgs; result: AiSpeechCreateResult };
 
   "adapter.connect": { args: AdapterConnectArgs; result: AdapterConnectResult };

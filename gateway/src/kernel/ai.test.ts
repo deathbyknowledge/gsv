@@ -1,7 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import type { KernelContext } from "./context";
 import type { DeviceRecord } from "./devices";
-import { handleAiConfig, handleAiSpeechCreate, handleAiTools, handleAiTranscriptionCreate } from "./ai";
+import {
+  handleAiConfig,
+  handleAiImageGenerate,
+  handleAiImageRead,
+  handleAiSpeechCreate,
+  handleAiTools,
+  handleAiTranscriptionCreate,
+} from "./ai";
 import { DEFAULT_AUDIO_TRANSCRIPTION_MODEL } from "../inference/transcription";
 import {
   DEFAULT_AUDIO_SPEECH_MODEL,
@@ -9,9 +16,11 @@ import {
 } from "../inference/speech";
 import {
   DEFAULT_IMAGE_READING_INPUT_FORMAT,
+  DEFAULT_IMAGE_READING_MAX_TOKENS,
   DEFAULT_IMAGE_READING_MODEL,
   DEFAULT_IMAGE_READING_PROMPT,
 } from "../inference/image-reading";
+import { DEFAULT_IMAGE_GENERATION_MODEL } from "../inference/capabilities";
 
 function makeDevice(partial: Partial<DeviceRecord> & { device_id: string }): DeviceRecord {
   const now = 1_800_000_000_000;
@@ -554,6 +563,137 @@ describe("handleAiTranscriptionCreate", () => {
         mimeType: "text/plain",
       },
     }, ctx)).rejects.toThrow("audio MIME type");
+  });
+});
+
+describe("handleAiImageRead", () => {
+  function makeImageReadContext(options: {
+    config?: Record<string, string>;
+    response?: unknown;
+  } = {}): KernelContext {
+    const config = options.config ?? {};
+    return {
+      identity: {
+        role: "user",
+        process: {
+          uid: 1000,
+          gid: 1000,
+          gids: [1000],
+          username: "sam",
+          home: "/home/sam",
+          cwd: "/home/sam",
+        },
+        capabilities: ["*"],
+      },
+      config: {
+        get: vi.fn((key: string) => config[key] ?? null),
+        getExplicit: vi.fn((key: string) => config[key] ?? null),
+      },
+      env: {
+        AI: {
+          run: vi.fn(async () => options.response ?? ({
+            response: "A small terminal window with green text.",
+          })),
+        },
+      },
+    } as unknown as KernelContext;
+  }
+
+  it("reads images through the configured Workers AI vision path", async () => {
+    const ctx = makeImageReadContext();
+
+    const result = await handleAiImageRead({
+      image: {
+        data: "data:image/png;base64,AQID",
+        mimeType: "image/png",
+      },
+      prompt: "read this screenshot",
+    }, ctx);
+
+    expect(result.text).toBe("A small terminal window with green text.");
+    expect(result.model).toBe(DEFAULT_IMAGE_READING_MODEL);
+    expect(ctx.env.AI.run).toHaveBeenCalledWith(
+      DEFAULT_IMAGE_READING_MODEL,
+      expect.objectContaining({
+        max_completion_tokens: DEFAULT_IMAGE_READING_MAX_TOKENS,
+        messages: expect.any(Array),
+      }),
+    );
+  });
+
+  it("uses image read byte limits and rejects non-image payloads", async () => {
+    const ctx = makeImageReadContext({
+      config: {
+        "config/ai/image/read/max_bytes": "2",
+      },
+    });
+
+    await expect(handleAiImageRead({
+      image: {
+        data: "AQID",
+        mimeType: "image/png",
+      },
+    }, ctx)).rejects.toThrow("exceeds image reading limit");
+
+    await expect(handleAiImageRead({
+      image: {
+        data: "AQ==",
+        mimeType: "text/plain",
+      },
+    }, makeImageReadContext())).rejects.toThrow("image MIME type");
+  });
+});
+
+describe("handleAiImageGenerate", () => {
+  function makeImageGenerateContext(options: {
+    config?: Record<string, string>;
+    response?: unknown;
+  } = {}): KernelContext {
+    const config = options.config ?? {};
+    return {
+      identity: {
+        role: "user",
+        process: {
+          uid: 1000,
+          gid: 1000,
+          gids: [1000],
+          username: "sam",
+          home: "/home/sam",
+          cwd: "/home/sam",
+        },
+        capabilities: ["*"],
+      },
+      config: {
+        get: vi.fn((key: string) => config[key] ?? null),
+        getExplicit: vi.fn((key: string) => config[key] ?? null),
+      },
+      env: {
+        AI: {
+          run: vi.fn(async () => options.response ?? ({ image: "AQID" })),
+        },
+      },
+    } as unknown as KernelContext;
+  }
+
+  it("generates images through the configured Workers AI path", async () => {
+    const ctx = makeImageGenerateContext();
+
+    const result = await handleAiImageGenerate({ prompt: "a green terminal" }, ctx);
+
+    expect(result.image).toEqual({
+      data: "data:image/png;base64,AQID",
+      mimeType: "image/png",
+      size: 3,
+    });
+    expect(result.model).toBe(DEFAULT_IMAGE_GENERATION_MODEL);
+    expect(ctx.env.AI.run).toHaveBeenCalledWith(
+      DEFAULT_IMAGE_GENERATION_MODEL,
+      { prompt: "a green terminal" },
+    );
+  });
+
+  it("requires a prompt", async () => {
+    await expect(handleAiImageGenerate({ prompt: "" }, makeImageGenerateContext())).rejects.toThrow("prompt is required");
   });
 });
 

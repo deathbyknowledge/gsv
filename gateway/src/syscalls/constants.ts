@@ -90,6 +90,8 @@ export const SCHED_RUN = "sched.run";
 export const AI_TOOLS = "ai.tools";
 export const AI_CONFIG = "ai.config";
 export const AI_TRANSCRIPTION_CREATE = "ai.transcription.create";
+export const AI_IMAGE_READ = "ai.image.read";
+export const AI_IMAGE_GENERATE = "ai.image.generate";
 export const AI_SPEECH_CREATE = "ai.speech.create";
 
 // Adapter transport (external connectors)
