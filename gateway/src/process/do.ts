@@ -32,6 +32,10 @@ import type {
   ProcIpcDeliverArgs,
   ProcIpcDeliverResult,
   ProcAbortResult,
+  ProcAiConfigGetArgs,
+  ProcAiConfigGetResult,
+  ProcAiConfigSetArgs,
+  ProcAiConfigSetResult,
   ProcHilArgs,
   ProcHilResult,
   ProcHilRequest,
@@ -128,6 +132,7 @@ import {
   parseStoredProcessMedia,
   processMediaPrefix,
   storeIncomingProcessMedia,
+  type StoreIncomingProcessMediaOptions,
 } from "./media";
 import {
   buildProcContextState,
@@ -152,6 +157,11 @@ import {
   type ProcessConversationRecord,
   type ProcessConversationSegmentRecord,
 } from "./conversations";
+import {
+  createProcessAiConfigSnapshot,
+  isProcessAiConfigKey,
+  redactProcessAiConfigSnapshot,
+} from "./ai-config";
 import { runProcessSqlMigrations } from "./schema/migrations";
 
 type RunState = {
@@ -757,6 +767,16 @@ export class Process extends Host<Env> {
             frame.args as ProcHistoryArgs,
           );
           break;
+        case "proc.ai.config.get":
+          data = this.handleProcAiConfigGet(
+            (frame.args ?? {}) as ProcAiConfigGetArgs,
+          );
+          break;
+        case "proc.ai.config.set":
+          data = await this.handleProcAiConfigSet(
+            (frame.args ?? {}) as ProcAiConfigSetArgs,
+          );
+          break;
         case "proc.media.read":
           data = await this.handleProcMediaRead(
             frame.args as ProcMediaReadArgs,
@@ -876,7 +896,7 @@ export class Process extends Host<Env> {
       this.identity.uid,
       this.pid,
       args.media,
-      { ai: this.env.AI },
+      await this.resolveMediaProcessingOptions(args.media),
     );
     const origin = serializeInteractionOrigin(args.origin);
 
@@ -897,6 +917,93 @@ export class Process extends Host<Env> {
     this.scheduleTick(runId);
 
     return { ok: true, status: "started", runId };
+  }
+
+  private async resolveMediaProcessingOptions(
+    media: ProcSendArgs["media"],
+  ): Promise<StoreIncomingProcessMediaOptions> {
+    if (!media || media.length === 0) {
+      return { ai: this.env.AI };
+    }
+
+    const config = await this.resolveAiConfig();
+    return {
+      ai: this.env.AI,
+      audioTranscriptionProvider: config.media?.transcriptionProvider,
+      audioTranscriptionModel: config.media?.transcriptionModel,
+      audioTranscriptionApiKey: config.media?.transcriptionApiKey,
+      maxTranscriptionBytes: config.media?.transcriptionMaxBytes,
+      imageReadingProvider: config.media?.imageReadingProvider,
+      imageReadingModel: config.media?.imageReadingModel,
+      imageReadingApiKey: config.media?.imageReadingApiKey,
+      imageReadingPrompt: config.media?.imageReadingPrompt,
+      imageReadingInputFormat: config.media?.imageReadingInputFormat,
+      imageReadingMaxBytes: config.media?.imageReadingMaxBytes,
+      imageReadingMaxTokens: config.media?.imageReadingMaxTokens,
+      imageReadingTimeoutMs: config.media?.imageReadingTimeoutMs,
+    };
+  }
+
+  private handleProcAiConfigGet(args: ProcAiConfigGetArgs): ProcAiConfigGetResult {
+    const snapshot = this.store.getAiConfigSnapshot();
+    return {
+      ok: true,
+      pid: this.pid,
+      config: args.redacted === false ? snapshot : redactProcessAiConfigSnapshot(snapshot),
+    };
+  }
+
+  private async handleProcAiConfigSet(args: ProcAiConfigSetArgs): Promise<ProcAiConfigSetResult> {
+    if (!args || typeof args !== "object") {
+      return { ok: false, error: "proc.ai.config.set requires arguments" };
+    }
+
+    if ("clear" in args && args.clear === true) {
+      this.store.clearAiConfigSnapshot();
+      await this.emitProcChanged(["ai.config"], { aiConfig: null });
+      return { ok: true, pid: this.pid, config: null };
+    }
+
+    if ("values" in args && args.values && typeof args.values === "object" && !Array.isArray(args.values)) {
+      const snapshot = createProcessAiConfigSnapshot(args.values, args.profile);
+      if (Object.keys(snapshot.values).length === 0) {
+        this.store.clearAiConfigSnapshot();
+        await this.emitProcChanged(["ai.config"], { aiConfig: null });
+        return { ok: true, pid: this.pid, config: null };
+      }
+      this.store.setAiConfigSnapshot(snapshot);
+      const redacted = redactProcessAiConfigSnapshot(snapshot);
+      await this.emitProcChanged(["ai.config"], { aiConfig: redacted });
+      return { ok: true, pid: this.pid, config: redacted };
+    }
+
+    if ("key" in args && typeof args.key === "string" && "value" in args) {
+      if (!isProcessAiConfigKey(args.key)) {
+        return { ok: false, error: `Unsupported AI config key: ${args.key}` };
+      }
+      const current = this.store.getAiConfigSnapshot();
+      const values = { ...(current?.values ?? {}) };
+      const value = String(args.value ?? "").trim();
+      if (value) {
+        values[args.key] = value;
+      } else {
+        delete values[args.key];
+      }
+
+      if (Object.keys(values).length === 0) {
+        this.store.clearAiConfigSnapshot();
+        await this.emitProcChanged(["ai.config"], { aiConfig: null });
+        return { ok: true, pid: this.pid, config: null };
+      }
+
+      const snapshot = createProcessAiConfigSnapshot(values);
+      this.store.setAiConfigSnapshot(snapshot);
+      const redacted = redactProcessAiConfigSnapshot(snapshot);
+      await this.emitProcChanged(["ai.config"], { aiConfig: redacted });
+      return { ok: true, pid: this.pid, config: redacted };
+    }
+
+    return { ok: false, error: "proc.ai.config.set requires clear, values, or key/value" };
   }
 
   private async handleProcIpcDeliver(args: ProcIpcDeliverArgs): Promise<ProcIpcDeliverResult> {
@@ -2403,7 +2510,7 @@ export class Process extends Host<Env> {
 
     // Step 3: Load config + tools (first tick only, cached on run state)
     if (!run.config) {
-      run.config = await this.kernelRpc("ai.config", {});
+      run.config = await this.resolveAiConfig();
       if (await this.handleRunStopped(runId)) {
         return;
       }
@@ -2967,6 +3074,19 @@ export class Process extends Host<Env> {
     return response.data as ResultOf<T>;
   }
 
+  private async resolveAiConfig(): Promise<AiConfigResult> {
+    const overrides = this.aiConfigProcessOverrides();
+    return await this.kernelRpc("ai.config", overrides ? { processOverrides: overrides } : {});
+  }
+
+  private aiConfigProcessOverrides(): Record<string, string> | undefined {
+    const snapshot = this.store.getAiConfigSnapshot();
+    if (!snapshot || Object.keys(snapshot.values).length === 0) {
+      return undefined;
+    }
+    return snapshot.values;
+  }
+
   /**
    * Send a signal frame to the kernel for relay to client connections.
    */
@@ -3083,7 +3203,7 @@ export class Process extends Host<Env> {
       return this.currentRun.config;
     }
     try {
-      return await this.kernelRpc("ai.config", {});
+      return await this.resolveAiConfig();
     } catch (error) {
       console.warn("[Process] Failed to resolve AI config for compaction:", error);
       return null;
@@ -3323,9 +3443,19 @@ export class Process extends Host<Env> {
 
     for (const item of media) {
       if (item.type === "image" && item.key) {
+        const described = item.description && item.description.trim().length > 0;
+        if (item.description && item.description.trim().length > 0) {
+          content.push({
+            type: "text",
+            text: describeStoredProcessMedia(item),
+          });
+        }
         const data = await this.loadProcessMedia(item.key);
         if (data) {
           content.push(buildImageBlock(data, item.mimeType));
+          continue;
+        }
+        if (described) {
           continue;
         }
       }

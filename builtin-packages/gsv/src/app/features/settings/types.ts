@@ -4,6 +4,14 @@ export type ConfigSectionId = "ai" | "shell" | "server";
 export type TokenKind = "node" | "service" | "user";
 export type SettingKind = "text" | "textarea" | "password" | "number" | "checkbox" | "select" | "readonly" | "json";
 
+export type ModelProfile = {
+  id: string;
+  name: string;
+  values: Record<string, string>;
+  createdAt: number;
+  updatedAt: number;
+};
+
 export type ConfigEntry = {
   key: string;
   value: string;

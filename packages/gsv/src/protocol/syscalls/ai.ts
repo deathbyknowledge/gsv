@@ -33,7 +33,9 @@ export type AiSkillIndexEntry = {
   };
 };
 
-export type AiConfigArgs = Record<string, never>;
+export type AiConfigArgs = {
+  processOverrides?: Record<string, string>;
+};
 
 export type ContextFile = {
   name: string;
@@ -56,6 +58,30 @@ export type AiConfigResult = {
   maxContextBytes: number;
   generationTimeoutMs: number;
   generationStreaming?: "auto" | "off";
+  media?: {
+    transcriptionProvider: string;
+    transcriptionModel: string;
+    transcriptionApiKey: string;
+    transcriptionMaxBytes: number;
+    imageReadingProvider: string;
+    imageReadingModel: string;
+    imageReadingApiKey: string;
+    imageReadingInputFormat: "auto" | "chat" | "image";
+    imageReadingMaxBytes: number;
+    imageReadingMaxTokens: number;
+    imageReadingTimeoutMs: number;
+    imageReadingPrompt: string;
+    imageGenerationProvider: string;
+    imageGenerationModel: string;
+    imageGenerationApiKey: string;
+    speechProvider: string;
+    speechModel: string;
+    speechApiKey: string;
+    speechSpeaker: string;
+    speechEncoding: string;
+    speechMaxChars: number;
+    speechTimeoutMs: number;
+  };
 };
 
 export type AiTranscriptionCreateArgs = {
@@ -77,6 +103,46 @@ export type AiTranscriptionCreateResult = {
   segments?: unknown[];
   provider: string;
   model: string;
+};
+
+export type AiImageReadArgs = {
+  image: {
+    data: string;
+    mimeType: string;
+    filename?: string;
+    size?: number;
+  };
+  prompt?: string;
+  model?: string;
+  inputFormat?: "auto" | "chat" | "image";
+  maxTokens?: number;
+};
+
+export type AiImageReadResult = {
+  text: string;
+  provider: string;
+  model: string;
+};
+
+export type AiImageGenerateArgs = {
+  prompt: string;
+  model?: string;
+  size?: string;
+  quality?: string;
+  format?: string;
+  timeoutMs?: number;
+};
+
+export type AiImageGenerateResult = {
+  image: {
+    data: string;
+    mimeType: string;
+    size: number;
+  };
+  provider: string;
+  model: string;
+  revisedPrompt?: string;
+  url?: string;
 };
 
 export type AiSpeechCreateArgs = {

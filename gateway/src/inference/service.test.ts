@@ -57,6 +57,51 @@ describe("resolveGenerationOptions", () => {
     expect(result.maxTokens).toBe(4096);
   });
 
+  it("clamps unsupported reasoning for Workers AI models", () => {
+    const result = resolveGenerationOptions({
+      purpose: "chat.reply",
+      config: {
+        ...CONFIG,
+        provider: "workers-ai",
+        model: "@cf/nvidia/nemotron-3-120b-a12b",
+        reasoning: "xhigh",
+      },
+      context: CONTEXT,
+    });
+
+    expect(result.reasoning).toBe("high");
+  });
+
+  it("clamps unsupported reasoning for pi-ai models", () => {
+    const result = resolveGenerationOptions({
+      purpose: "chat.reply",
+      config: {
+        ...CONFIG,
+        provider: "google",
+        model: "gemini-3-pro-preview",
+        reasoning: "medium",
+      },
+      context: CONTEXT,
+    });
+
+    expect(result.reasoning).toBe("high");
+  });
+
+  it("uses the closest supported reasoning when a model cannot turn reasoning off", () => {
+    const result = resolveGenerationOptions({
+      purpose: "chat.reply",
+      config: {
+        ...CONFIG,
+        provider: "openai",
+        model: "gpt-5",
+        reasoning: "off",
+      },
+      context: CONTEXT,
+    });
+
+    expect(result.reasoning).toBe("minimal");
+  });
+
   it("disables reasoning and constrains tokens for compaction summaries", () => {
     const result = resolveGenerationOptions({
       purpose: "compaction.summary",

@@ -4,6 +4,8 @@ const INTERNAL_ONLY_SYSCALLS = new Set<SyscallName>([
   "ai.config",
   "ai.tools",
   "codemode.exec",
+  "proc.ai.config.get",
+  "proc.ai.config.set",
   "proc.ipc.deliver",
 ]);
 

@@ -1,8 +1,4 @@
 @media (max-width: 1040px) {
-  .chat-app {
-    grid-template-columns: minmax(258px, 29vw) minmax(0, 1fr);
-  }
-
   .thread-row {
     padding-inline: 12px;
   }
@@ -13,10 +9,6 @@
 }
 
 @media (min-width: 761px) and (max-width: 900px) {
-  .chat-app {
-    grid-template-columns: minmax(232px, 27vw) minmax(0, 1fr);
-  }
-
   .nav-pane-header {
     padding-inline: 10px;
   }
@@ -142,7 +134,7 @@
 
   .chat-stage-title {
     grid-column: 1;
-    grid-row: 2;
+    grid-row: 1;
   }
 
   .chat-stage-actions .context-track {
@@ -158,7 +150,7 @@
 
   .chat-stage-actions {
     grid-column: 2;
-    grid-row: 2;
+    grid-row: 1;
     justify-self: end;
     justify-content: flex-end;
   }
@@ -168,6 +160,12 @@
     left: auto;
     width: min(220px, calc(100vw - 20px));
     max-width: calc(100vw - 20px);
+  }
+
+  .agent-card-menu .process-menu-popover {
+    right: auto;
+    left: 0;
+    width: min(300px, calc(100vw - 20px));
   }
 
   .message-menu-popover {

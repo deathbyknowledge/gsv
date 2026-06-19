@@ -87,6 +87,7 @@ function makeContext(options?: {
   getAppRunner?: KernelContext["getAppRunner"];
   scheduleScheduleWake?: KernelContext["scheduleScheduleWake"];
   identity?: ProcessIdentity;
+  aiRun?: (model: string, input: Record<string, unknown>) => Promise<unknown>;
 }): KernelContext {
   const records = [...(options?.packages ?? [options?.pkg ?? makePackage()])];
   const identity = options?.identity ?? IDENTITY;
@@ -102,6 +103,7 @@ function makeContext(options?: {
       STORAGE: env.STORAGE,
       RIPGIT: {} as Fetcher,
       LOADER: { get() { throw new Error("LOADER should not be used in pkg shell tests"); } },
+      ...(options?.aiRun ? { AI: { run: vi.fn(options.aiRun) } } : {}),
     } as unknown as Env,
     auth: options?.auth ?? null as never,
     caps: options?.caps ?? null as never,
@@ -129,6 +131,9 @@ function makeContext(options?: {
           profile: "task",
           uid: identity.uid,
         };
+      },
+      getOwnerUid() {
+        return identity.uid;
       },
       ...(options?.procs ?? {}),
     } as never,
@@ -264,6 +269,61 @@ describe("native shell execution", () => {
       expect(binList.files).toContain("human-tool");
       expect(binList.files).not.toContain("agent-tool");
     }
+  });
+});
+
+describe("media native commands", () => {
+  it("runs standalone media commands through the configured AI media paths", async () => {
+    const result = await handleShellExec(
+      {
+        input: [
+          "printf 'image-bytes' > media.png",
+          "printf 'audio-bytes' > sample.mp3",
+          "img2txt media.png",
+          "stt sample.mp3",
+          "printf 'green square' | txt2img -o out.png",
+          "printf 'hello voice' | tts -o speech.mp3",
+          "ls out.png speech.mp3",
+        ].join("; "),
+      },
+      makeContext({
+        capabilities: [
+          "ai.image.read",
+          "ai.image.generate",
+          "ai.transcription.create",
+          "ai.speech.create",
+        ],
+        aiRun: vi.fn(async (_model, input) => {
+          if (Array.isArray(input.messages)) {
+            return { response: "terminal screenshot" };
+          }
+          if (typeof input.audio === "string") {
+            return { text: "hello audio" };
+          }
+          if (typeof input.text === "string") {
+            return new ReadableStream({
+              start(controller) {
+                controller.enqueue(new Uint8Array([4, 5, 6]));
+                controller.close();
+              },
+            });
+          }
+          if (typeof input.prompt === "string") {
+            return { image: "AQID" };
+          }
+          return null;
+        }),
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("terminal screenshot");
+    expect(result.stdout).toContain("hello audio");
+    expect(result.stdout).toContain("/home/sam/out.png");
+    expect(result.stdout).toContain("/home/sam/speech.mp3");
+    expect(result.stdout).toContain("out.png");
+    expect(result.stdout).toContain("speech.mp3");
   });
 });
 

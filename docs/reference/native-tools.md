@@ -96,7 +96,8 @@ Important native paths:
 - `/home` and the user's home directory contain durable user context.
 - `/etc` contains operator docs and system manuals.
 - `/sys` exposes live kernel configuration, devices, users, and capabilities.
-- `/proc` exposes process inspection surfaces.
+- `/proc` exposes process inspection surfaces, including
+  `/proc/<pid>/ai` for process-local AI stack selection.
 - `/dev` exposes device-like virtual endpoints.
 
 Native shell commands run in the Worker sandbox. They are useful for GSV control-plane work, virtual filesystem inspection, package commands, and HTTP/network operations allowed by the runtime. They do not run on the user's laptop.

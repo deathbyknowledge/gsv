@@ -39,6 +39,10 @@ import type {
 import type {
   ProcAbortArgs,
   ProcAbortResult,
+  ProcAiConfigGetArgs,
+  ProcAiConfigGetResult,
+  ProcAiConfigSetArgs,
+  ProcAiConfigSetResult,
   ProcConversationCloseArgs,
   ProcConversationCloseResult,
   ProcConversationCompactArgs,
@@ -211,6 +215,10 @@ import type {
 import type {
   AiConfigArgs,
   AiConfigResult,
+  AiImageGenerateArgs,
+  AiImageGenerateResult,
+  AiImageReadArgs,
+  AiImageReadResult,
   AiSpeechCreateArgs,
   AiSpeechCreateResult,
   AiToolsArgs,
@@ -281,6 +289,8 @@ export type SyscallDomains = {
   "proc.abort": { args: ProcAbortArgs; result: ProcAbortResult };
   "proc.hil": { args: ProcHilArgs; result: ProcHilResult };
   "proc.history": { args: ProcHistoryArgs; result: ProcHistoryResult };
+  "proc.ai.config.get": { args: ProcAiConfigGetArgs; result: ProcAiConfigGetResult };
+  "proc.ai.config.set": { args: ProcAiConfigSetArgs; result: ProcAiConfigSetResult };
   "proc.media.read": { args: ProcMediaReadArgs; result: ProcMediaReadResult };
   "proc.conversation.open": { args: ProcConversationOpenArgs; result: ProcConversationOpenResult };
   "proc.conversation.list": { args: ProcConversationListArgs; result: ProcConversationListResult };
@@ -364,6 +374,8 @@ export type SyscallDomains = {
   "ai.tools": { args: AiToolsArgs; result: AiToolsResult };
   "ai.config": { args: AiConfigArgs; result: AiConfigResult };
   "ai.transcription.create": { args: AiTranscriptionCreateArgs; result: AiTranscriptionCreateResult };
+  "ai.image.read": { args: AiImageReadArgs; result: AiImageReadResult };
+  "ai.image.generate": { args: AiImageGenerateArgs; result: AiImageGenerateResult };
   "ai.speech.create": { args: AiSpeechCreateArgs; result: AiSpeechCreateResult };
 
   "adapter.connect": { args: AdapterConnectArgs; result: AdapterConnectResult };

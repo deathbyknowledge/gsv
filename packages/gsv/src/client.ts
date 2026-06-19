@@ -137,6 +137,8 @@ const DEFAULT_REQUEST_TIMEOUTS_MS: Record<string, number> = {
   "fs.transfer.send": LONG_RUNNING_REQUEST_TIMEOUT_MS,
   "fs.transfer.receive": LONG_RUNNING_REQUEST_TIMEOUT_MS,
   "ai.transcription.create": LONG_RUNNING_REQUEST_TIMEOUT_MS,
+  "ai.image.read": LONG_RUNNING_REQUEST_TIMEOUT_MS,
+  "ai.image.generate": LONG_RUNNING_REQUEST_TIMEOUT_MS,
   "ai.speech.create": LONG_RUNNING_REQUEST_TIMEOUT_MS,
 };
 
@@ -175,6 +177,8 @@ const SYSCALL_NAMES = [
   "proc.abort",
   "proc.hil",
   "proc.history",
+  "proc.ai.config.get",
+  "proc.ai.config.set",
   "proc.media.read",
   "proc.conversation.open",
   "proc.conversation.list",
@@ -249,6 +253,8 @@ const SYSCALL_NAMES = [
   "ai.tools",
   "ai.config",
   "ai.transcription.create",
+  "ai.image.read",
+  "ai.image.generate",
   "ai.speech.create",
   "adapter.connect",
   "adapter.disconnect",

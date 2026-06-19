@@ -723,5 +723,43 @@ describe("ProcessStore", () => {
         expect(store.getValue("key")).toBe("v2");
       });
     });
+
+    it("persists process-local AI config snapshots", async () => {
+      const stub = await getProcessByPid("kv-ai-config");
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        expect(store.getAiConfigSnapshot()).toBeNull();
+
+        store.setAiConfigSnapshot({
+          version: 1,
+          values: {
+            "config/ai/provider": "openai",
+            "config/ai/model": "gpt-4.1-mini",
+            "config/ai/api_key": "sk-test",
+          },
+          profile: {
+            id: "fast",
+            name: "Fast",
+            appliedAt: 1000,
+          },
+          updatedAt: 1000,
+        });
+
+        expect(store.getAiConfigSnapshot()).toMatchObject({
+          values: {
+            "config/ai/provider": "openai",
+            "config/ai/model": "gpt-4.1-mini",
+            "config/ai/api_key": "sk-test",
+          },
+          profile: {
+            id: "fast",
+            name: "Fast",
+          },
+        });
+
+        store.clearAiConfigSnapshot();
+        expect(store.getAiConfigSnapshot()).toBeNull();
+      });
+    });
   });
 });
