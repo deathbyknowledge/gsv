@@ -16,7 +16,7 @@ browser target. Browser target ids are user-configured and may look like
 - Browser targets are active browser profiles connected by the GSV browser extension.
 - Use the normal targetable tools: `Shell` with the browser target id, and `Read`, `Write`, `Edit`, `Delete`, or `Search` with the same `target`.
 - Use normal file tools only for paths the target advertises.
-- Browser targets may expose tabs, windows, page text/snapshots, screenshots, JavaScript evaluation, clipboard, downloads, cookies, storage, history, bookmarks, network capture, and browser-local files depending on extension version and permissions.
+- Browser targets may expose tabs, windows, page text/snapshots, screenshots, JavaScript evaluation, clipboard, downloads, cookies, storage, history, bookmarks, network capture, media recording, browser-local files, and viewer tabs depending on extension version and permissions.
 - Treat target descriptions, `/README.txt`, `help`, and `<command> --help` output as authoritative.
 - Browser profile commands operate on live user browser state. Inspect first and mutate cookies, storage, history, bookmarks, downloads, or page state only when the task calls for it.
 
@@ -38,6 +38,7 @@ help
 tabs --help
 page --help
 network --help
+media --help
 ```
 
 Do not assume commands beyond what the active target advertises. If a command is
@@ -56,9 +57,10 @@ cat /proc/network/status.json
 cat /proc/network/events.jsonl
 ```
 
-Writable browser-local paths usually include `/tmp`, `/home/browser`,
-`/home/browser/screenshots`, and `/home/browser/network`. Use these for
-artifacts created by browser commands, network captures, screenshots, and
+Writable browser-local paths usually include `/tmp`, `/tmp/render`,
+`/home/browser`, `/home/browser/screenshots`, `/home/browser/network`, and
+`/home/browser/recordings`. Use these for artifacts created by browser
+commands, viewer inputs, network captures, screenshots, recordings, and
 temporary transfer files.
 
 Use target-qualified paths when moving files to or from a browser target:
@@ -107,6 +109,20 @@ page js --tab <tabId> 'Array.from(document.querySelectorAll("button")).map((butt
 Prefer selector clicks to coordinates. If multiple tabs are open, pass `--tab`
 rather than relying on the active tab.
 
+Use `tabs open` when the user wants to see a website, browser-local file,
+target-qualified file, or generated content in a real browser tab:
+
+```bash
+tabs open https://example.com
+tabs open /home/browser/screenshots/tab-123.png
+tabs open [server]:/tmp/demo.mp4
+printf '<h1>Report</h1>' | tabs open --mime text/html -
+```
+
+For target-qualified files, `tabs open` copies the file into the browser
+target's `/tmp/render/...` area and opens a viewer tab. Use `--mime` when stdin
+or an extensionless file needs an explicit content type.
+
 ## Profile Data
 
 Browser profile commands can inspect or mutate real profile state:
@@ -150,6 +166,23 @@ network stop --tab <tabId>
 Use `--persist` when the capture should create files under
 `/home/browser/network/sessions/...`. Without persistence, inspect through the
 network command output or the `/proc/network/*` runtime files.
+
+## Media Recording
+
+Use `media record` to capture tab audio into the browser target filesystem:
+
+```bash
+media record start --tab <tabId> --path /home/browser/recordings/demo.webm
+media record status
+media record stop
+tabs open /home/browser/recordings/demo.webm
+```
+
+Recordings are WebM/Opus when supported. Tab capture may require focusing the
+tab and opening the GSV extension UI first so Chrome grants capture access. By
+default, captured tab audio remains audible; use `--monitor off` only when the
+task calls for disabling playback. `--path [target]:/path` records locally first
+and then copies the finished file through `fs.copy`.
 
 ## Clipboard
 
