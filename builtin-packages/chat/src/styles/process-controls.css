@@ -1,10 +1,6 @@
 .process-stage-title {
-  grid-template-columns: 42px minmax(0, 1fr);
-  gap: 0 11px;
-}
-
-.process-stage-title > .process-avatar-stack {
-  grid-row: 1 / span 2;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
 }
 
 .process-avatar-stack {
@@ -49,9 +45,72 @@
   gap: 3px;
 }
 
+.process-card-menu {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.process-card-summary {
+  min-width: 0;
+  max-width: 100%;
+  list-style: none;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 0 11px;
+  cursor: pointer;
+}
+
+.process-card-summary::-webkit-details-marker {
+  display: none;
+}
+
+.process-card-summary:hover h1,
+.process-card-summary:hover .process-card-task-line {
+  color: var(--blue);
+}
+
+.process-card-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
 .process-title-line h1 {
   max-width: 100%;
   font-size: 16px;
+}
+
+.process-card-task-line {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--green);
+  font: italic 12px/1.2 var(--ui);
+}
+
+.process-card-task-line span {
+  min-width: 0;
+  max-width: min(460px, 46vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.process-card-task-line svg {
+  flex: 0 0 auto;
+  width: 13px;
+  height: 13px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.process-title-secondary {
+  margin-left: 53px;
 }
 
 .process-model-row,
@@ -95,8 +154,7 @@
   stroke-linejoin: round;
 }
 
-.process-model-name,
-.process-task-summary span {
+.process-model-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -125,15 +183,6 @@
   font: 11px/1 var(--mono);
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.process-task-summary {
-  color: var(--green);
-  font: italic 12px/1.2 var(--ui);
-}
-
-.process-task-summary span {
-  max-width: min(460px, 46vw);
 }
 
 .process-branch-controls {
@@ -435,8 +484,7 @@
 
 @media (max-width: 760px) {
   .process-stage-title {
-    grid-template-columns: 34px minmax(0, 1fr);
-    gap: 0 9px;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .process-avatar-stack {
@@ -453,8 +501,17 @@
     font-size: 15px;
   }
 
+  .process-card-summary {
+    grid-template-columns: 34px minmax(0, 1fr);
+    gap: 0 9px;
+  }
+
+  .process-title-secondary {
+    margin-left: 43px;
+  }
+
   .process-model-name,
-  .process-task-summary span {
+  .process-card-task-line span {
     max-width: 44vw;
   }
 

@@ -78,18 +78,46 @@ export function ProcessControlHeader(props: {
   return (
     <>
       <div class="chat-stage-title process-stage-title">
-        <span class="process-avatar-stack">
-          <AgentAvatar seed={props.agentSeed} label={props.agentLabel} />
-          <span class={`process-avatar-status ${props.runStateClass}`} title={`${props.runStateLabel}: ${props.statusText}`} aria-label={`${props.runStateLabel}: ${props.statusText}`} />
-        </span>
-        <div class="chat-stage-title-main process-title-main">
-          <div class="chat-stage-title-line process-title-line">
-            <h1>{props.agentLabel}</h1>
-            <span class={"stage-run-state " + props.runStateClass} title={`${props.runStateLabel}: ${props.statusText}`} aria-label={`${props.runStateLabel}: ${props.statusText}`}>
-              {props.runStateClass !== "is-ready" ? <span>{props.runStateLabel}</span> : null}
+        <details class="process-menu process-card-menu task-switcher">
+          <summary
+            class="process-card-summary"
+            title={props.active?.pid ? `${props.processLabel} (${props.active.pid})` : props.processLabel}
+            onClick={(event) => closeChatMenus((event.currentTarget as HTMLElement).closest("details") as HTMLDetailsElement | null)}
+          >
+            <span class="process-avatar-stack">
+              <AgentAvatar seed={props.agentSeed} label={props.agentLabel} />
+              <span class={`process-avatar-status ${props.runStateClass}`} title={`${props.runStateLabel}: ${props.statusText}`} aria-label={`${props.runStateLabel}: ${props.statusText}`} />
             </span>
+            <span class="process-card-copy">
+              <span class="chat-stage-title-line process-title-line">
+                <h1>{props.agentLabel}</h1>
+                <span class={"stage-run-state " + props.runStateClass} title={`${props.runStateLabel}: ${props.statusText}`} aria-label={`${props.runStateLabel}: ${props.statusText}`}>
+                  {props.runStateClass !== "is-ready" ? <span>{props.runStateLabel}</span> : null}
+                </span>
+              </span>
+              <span class="process-card-task-line">
+                <span>{props.processLabel}</span>
+                <ChevronDownIcon />
+              </span>
+            </span>
+          </summary>
+          <div class="process-menu-popover task-menu-popover">
+            <TaskMenu
+              active={props.active}
+              activeThread={props.activeThread}
+              activeTitle={props.activeTitle}
+              threads={props.threads}
+              homeThread={props.homeThread}
+              homeLabel={props.homeLabel}
+              onHome={props.onHome}
+              onOpenThread={props.onOpenThread}
+              onNewTask={props.onNewTask}
+              onCopyTaskId={props.onCopyTaskId}
+            />
           </div>
+        </details>
 
+        <div class="chat-stage-title-main process-title-main process-title-secondary">
           <div class="process-model-row">
             <details class="process-menu process-inline-menu model-switcher">
               <summary
@@ -115,33 +143,6 @@ export function ProcessControlHeader(props: {
               </div>
             </details>
             <span class="process-model-provider">{providerLabel}</span>
-          </div>
-
-          <div class="process-task-row">
-            <details class="process-menu process-inline-menu task-switcher">
-              <summary
-                class="process-inline-summary process-task-summary"
-                title={props.active?.pid ? `${props.processLabel} (${props.active.pid})` : props.processLabel}
-                onClick={(event) => closeChatMenus((event.currentTarget as HTMLElement).closest("details") as HTMLDetailsElement | null)}
-              >
-                <span>{props.processLabel}</span>
-                <ChevronDownIcon />
-              </summary>
-              <div class="process-menu-popover task-menu-popover">
-                <TaskMenu
-                  active={props.active}
-                  activeThread={props.activeThread}
-                  activeTitle={props.activeTitle}
-                  threads={props.threads}
-                  homeThread={props.homeThread}
-                  homeLabel={props.homeLabel}
-                  onHome={props.onHome}
-                  onOpenThread={props.onOpenThread}
-                  onNewTask={props.onNewTask}
-                  onCopyTaskId={props.onCopyTaskId}
-                />
-              </div>
-            </details>
           </div>
 
           {props.conversationControls ? (

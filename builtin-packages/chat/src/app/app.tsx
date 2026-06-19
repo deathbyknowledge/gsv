@@ -13,11 +13,9 @@ import type {
 } from "./types";
 import {
   ArchiveWorkspace,
-  ChatNavigator,
   CompactDialog,
   Composer,
   ConversationBar,
-  MobileProcessNav,
   ProcessControlHeader,
   Transcript,
 } from "./components";
@@ -148,10 +146,7 @@ export function App({ backend }: { backend: ChatBackend }) {
     homeThread,
     loadConversations,
     loadThreads,
-    setDraftProfileId,
     threads,
-    threadsError,
-    threadsLoading,
     viewerUsername,
   } = useChatCatalog(backend);
 
@@ -900,37 +895,8 @@ export function App({ backend }: { backend: ChatBackend }) {
 
   return (
     <main class="chat-app">
-      <ChatNavigator
-        active={active}
-        threads={threads}
-        homeThread={homeThread}
-        threadsLoading={threadsLoading}
-        threadsError={threadsError}
-        profiles={conversationProfiles}
-        homeLabel={homeProfileLabel}
-        draftProfileId={draftProfile.id}
-        onDraftProfileChange={setDraftProfileId}
-        onHome={() => void openHome()}
-        onNew={resetToNewThread}
-        onOpenThread={(pid) => void openThread(pid)}
-      />
-
       <section class={"chat-stage" + (stageView === "archive" ? " is-archive" : "")}>
         <header class="chat-stage-head">
-          <MobileProcessNav
-            active={active}
-            threads={threads}
-            homeThread={homeThread}
-            threadsLoading={threadsLoading}
-            threadsError={threadsError}
-            profiles={conversationProfiles}
-            homeLabel={homeProfileLabel}
-            draftProfileId={draftProfile.id}
-            onDraftProfileChange={setDraftProfileId}
-            onHome={() => void openHome()}
-            onNew={resetToNewThread}
-            onOpenThread={(pid) => void openThread(pid)}
-          />
           <ProcessControlHeader
             active={active}
             activeThread={activeThread}
