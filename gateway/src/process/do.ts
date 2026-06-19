@@ -2731,7 +2731,11 @@ export class Process extends Host<Env> {
 
     if (isProviderContextOverflow(response, run.config!.contextWindowTokens)) {
       const overflowMetadata = buildAssistantMessageMetadata(response, run.config!);
-      await this.updateContextState(runId, conversationId, run.config!, context, response.usage, overflowMetadata?.usage);
+      const overflowUsage = overflowMetadata?.usage;
+      if (overflowUsage) {
+        this.store.addConversationUsage(conversationId, overflowUsage);
+      }
+      await this.updateContextState(runId, conversationId, run.config!, context, response.usage, overflowUsage);
       if (await this.handleRunStopped(runId)) {
         return;
       }

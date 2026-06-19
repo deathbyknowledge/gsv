@@ -1204,7 +1204,16 @@ describe("Process DO — mechanical", () => {
               api: "test",
               provider: "google",
               model: "gemini-test",
-              usage: testUsage(1_196_265, 0),
+              usage: {
+                ...testUsage(1_196_265, 0),
+                cost: {
+                  input: 0.12,
+                  output: 0,
+                  cacheRead: 0,
+                  cacheWrite: 0,
+                  total: 0.12,
+                },
+              },
               stopReason: "error",
               errorMessage: "The input token count (1196265) exceeds the maximum number of tokens allowed (1048575)",
               timestamp: Date.now(),
@@ -1240,6 +1249,7 @@ describe("Process DO — mechanical", () => {
         return {
           emitted,
           contextState: process.store.getContextState("default"),
+          conversationUsage: process.store.getConversationUsage("default"),
           messages: process.store.getMessages(),
         };
       });
@@ -1252,6 +1262,16 @@ describe("Process DO — mechanical", () => {
         inputTokens: 1196265,
         source: "provider",
         level: "full",
+      });
+      expect(result.conversationUsage).toMatchObject({
+        inputTokens: 1196265,
+        totalTokens: 1196265,
+        cost: { total: 0.12, source: "provider" },
+        generations: 1,
+      });
+      expect(result.contextState?.conversationUsage).toMatchObject({
+        inputTokens: 1196265,
+        cost: { total: 0.12, source: "provider" },
       });
       expect(result.emitted).toEqual(expect.arrayContaining([
         {
