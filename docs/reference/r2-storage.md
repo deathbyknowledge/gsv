@@ -88,8 +88,8 @@ ripgit stores versioned content. It is used anywhere history, diffs, search, or 
 | Repository | Ref Helper | Mounted At | Purpose |
 |---|---|---|---|
 | `{username}/home` | `accountHomeRepoRef(username)` | `~/context.d`, `~/skills.d` | Home context and account-local skills. |
-| Wiki repos, for example `root/gsv-manual` or `{owner}/{wiki}` | repo manifest `wiki.json` | Wiki app and `repo.*` | Durable markdown knowledge databases. |
-| Package source repos, for example `root/gsv` or `{owner}/{repo}` | package manifest `source.repo` | `/src/packages/{packageName}`, `repo.*` | Installed package source, review context, and generic repo operations. |
+| Wiki repos, for example `root/gsv-manual` or `{owner}/{wiki}` | repo manifest `wiki.json` | Wiki app, `/src/repos/{owner}/{wiki}`, `repo.*` | Durable markdown knowledge databases. |
+| Package source repos, for example `root/gsv` or `{owner}/{repo}` | package manifest `source.repo` | `/src/packages/{packageName}`, `/src/repos/{owner}/{repo}`, `repo.*` | Installed package source, review context, and generic repo operations. |
 
 The `root/gsv` repository may contain a top-level `skills/` directory. Bootstrap
 copies those files into user home repos under `skills.d/` when they are missing.
@@ -98,7 +98,7 @@ upstream ref under `refs/remotes/upstream/<ref>` and uses that tracking ref for
 later pulls. The local branch is moved only when it can be updated without
 dropping local commits.
 
-Package source mounts are always visible for installed packages the process identity can see. Sources owned by the current user are writable through a process-local R2 overlay; `pkg source status`, `pkg source diff`, `pkg source commit`, and `pkg source discard` make commit/discard explicit. Other package sources are read-only. Wiki repos use generic repository operations through `repo.*`, and Wiki-specific behavior uses the higher-level Wiki app and CLI.
+Generic visible repos are mounted under `/src/repos/{owner}/{repo}`. Repos writable by the process identity accept direct `fs.write`, `fs.edit`, and `fs.delete` operations that commit to ripgit immediately; read-only visible repos still support read and search. Package source mounts under `/src/packages/{packageName}` keep their process-local R2 overlay behavior; `pkg source status`, `pkg source diff`, `pkg source commit`, and `pkg source discard` make package source commit/discard explicit. Other package sources are read-only from the package-source path. Wiki-specific behavior uses the higher-level Wiki app and CLI on top of the same repo storage.
 
 ## Package Runtime Storage
 

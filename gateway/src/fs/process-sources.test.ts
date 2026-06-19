@@ -133,6 +133,10 @@ describe("createProcessSourceBackend", () => {
     await expect(backend!.readdir("/src/repos/sam")).resolves.toEqual(["docs", "tools"]);
     await expect(backend!.stat("/src/repos/sam/docs")).resolves.toMatchObject({
       isDirectory: true,
+      mode: 0o755,
+    });
+    await expect(backend!.stat("/src/repos/root/gsv-manual")).resolves.toMatchObject({
+      isDirectory: true,
       mode: 0o555,
     });
   });
@@ -213,6 +217,102 @@ describe("createProcessSourceBackend", () => {
       query: "visible",
       prefix: undefined,
     }]);
+  });
+
+  it("writes owned non-package repos directly through ripgit", async () => {
+    const files = new Map<string, string>([
+      ["notes.md", "old\n"],
+      ["old.md", "remove me\n"],
+    ]);
+    const applyCalls: any[] = [];
+    const backend = createProcessSourceBackend({
+      identity: IDENTITY,
+      storage: makeBucket(),
+      packages: [makePackage()],
+      repos: [makeRepo("sam/docs")],
+      processId: "task:source",
+      config: makeConfig(),
+      ripgit: {
+        readPath: async (_repo: unknown, path: string) => {
+          const content = files.get(path);
+          if (content !== undefined) {
+            return {
+              kind: "file",
+              bytes: new TextEncoder().encode(content),
+              size: content.length,
+            };
+          }
+          return { kind: "missing" };
+        },
+        apply: async (...args: any[]) => {
+          applyCalls.push(args);
+          const ops = args[4] as Array<{ type: string; path: string; contentBytes?: number[] }>;
+          for (const op of ops) {
+            if (op.type === "put" && op.contentBytes) {
+              files.set(op.path, new TextDecoder().decode(new Uint8Array(op.contentBytes)));
+            } else if (op.type === "delete") {
+              files.delete(op.path);
+            }
+          }
+          return { head: `repohead${applyCalls.length}` };
+        },
+      } as any,
+    });
+
+    await backend!.writeFile("/src/repos/sam/docs/new.md", "created\n");
+    await backend!.appendFile("/src/repos/sam/docs/notes.md", "more\n");
+    await backend!.rm("/src/repos/sam/docs/old.md");
+
+    expect(files.get("new.md")).toBe("created\n");
+    expect(files.get("notes.md")).toBe("old\nmore\n");
+    expect(files.has("old.md")).toBe(false);
+    expect(applyCalls).toHaveLength(3);
+    expect(applyCalls[0][0]).toEqual({ owner: "sam", repo: "docs", branch: "main" });
+    expect(applyCalls[0][3]).toBe("gsv: write new.md");
+    expect(applyCalls[0][4]).toEqual([{
+      type: "put",
+      path: "new.md",
+      contentBytes: Array.from(new TextEncoder().encode("created\n")),
+    }]);
+    expect(applyCalls[1][3]).toBe("gsv: append notes.md");
+    expect(applyCalls[1][4]).toEqual([{
+      type: "put",
+      path: "notes.md",
+      contentBytes: Array.from(new TextEncoder().encode("old\nmore\n")),
+    }]);
+    expect(applyCalls[2][3]).toBe("gsv: rm old.md");
+    expect(applyCalls[2][4]).toEqual([{
+      type: "delete",
+      path: "old.md",
+      recursive: false,
+    }]);
+  });
+
+  it("keeps public non-owned repos read-only through /src/repos", async () => {
+    const applyCalls: any[] = [];
+    const backend = createProcessSourceBackend({
+      identity: IDENTITY,
+      storage: makeBucket(),
+      packages: [],
+      repos: [makeRepo("root/gsv-manual", { public: true, writable: false })],
+      processId: "task:source",
+      config: makeConfig(),
+      ripgit: {
+        readPath: async () => ({ kind: "missing" }),
+        apply: async (...args: any[]) => {
+          applyCalls.push(args);
+          return { head: "repohead123" };
+        },
+      } as any,
+    });
+
+    await expect(backend!.writeFile("/src/repos/root/gsv-manual/README.md", "x"))
+      .rejects.toThrow("read-only");
+    await expect(backend!.appendFile("/src/repos/root/gsv-manual/README.md", "x"))
+      .rejects.toThrow("read-only");
+    await expect(backend!.rm("/src/repos/root/gsv-manual/README.md", { force: true }))
+      .rejects.toThrow("read-only");
+    expect(applyCalls).toHaveLength(0);
   });
 
   it("exposes public manual repos supplied by repo visibility and hides absent private repos", async () => {
