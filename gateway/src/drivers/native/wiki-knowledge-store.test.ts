@@ -584,6 +584,52 @@ describe("WikiKnowledgeStore", () => {
     expect(log.exists).toBe(false);
   });
 
+  it("derives untitled ingest pages from source paths", async () => {
+    const store = createStore();
+
+    const first = await store.ingest({
+      db: "personal",
+      sources: [{ target: "gsv", path: "/home/alice/notes/source-a.md" }],
+    });
+    const second = await store.ingest({
+      db: "personal",
+      sources: [{ target: "gsv", path: "/home/alice/notes/source-b.md" }],
+    });
+
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    if (!first.ok || !second.ok) {
+      throw new Error("expected ingest to succeed");
+    }
+    expect(first.path).toBe("personal/pages/home-alice-notes-source-a.md");
+    expect(second.path).toBe("personal/pages/home-alice-notes-source-b.md");
+
+    const firstPage = await store.read({ path: first.path });
+    const secondPage = await store.read({ path: second.path });
+    expect(firstPage.exists).toBe(true);
+    expect(secondPage.exists).toBe(true);
+  });
+
+  it("indexes db-relative ingest paths", async () => {
+    const store = createStore();
+
+    const ingest = await store.ingest({
+      db: "personal",
+      path: "pages/source-note.md",
+      sources: [{ target: "gsv", path: "/home/alice/source.md" }],
+    });
+
+    expect(ingest.ok).toBe(true);
+    if (!ingest.ok) {
+      throw new Error("expected ingest to succeed");
+    }
+    expect(ingest.path).toBe("personal/pages/source-note.md");
+
+    const index = await store.read({ path: "personal/index.md" });
+    expect(index.exists).toBe(true);
+    expect(index.markdown).toContain("pages/source-note.md");
+  });
+
   it("merges duplicate notes into the target and removes the source by default", async () => {
     const store = createStore(undefined, {
       "hank/people": wikiRepo("people", "People", {

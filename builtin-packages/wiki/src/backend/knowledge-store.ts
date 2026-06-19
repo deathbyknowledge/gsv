@@ -21,7 +21,6 @@ import {
   mergeDbIndexPages,
   normalizeDbId,
   normalizeKnowledgePath,
-  parseDbPagePath,
   renderDbIndex,
 } from "./knowledge-paths";
 import { buildSnippet, normalizeQueryTerms, scoreMatch } from "./knowledge-search";
@@ -228,7 +227,6 @@ export class WikiKnowledgeStore {
     if (!target) {
       return { ok: false, error: `Knowledge note '${path}' does not exist` };
     }
-    const pageRef = parseDbPagePath(path);
     const existing = await this.readPath(target.collection, target.path);
     const created = existing.kind === "missing";
     if (!created && existing.kind !== "file") {
@@ -250,8 +248,9 @@ export class WikiKnowledgeStore {
     }
 
     const ops: RepoApplyOp[] = [{ type: "put", path: this.repoPath(target.collection, target.path), content: markdown }];
-    if (pageRef && target.collection.id === pageRef.db) {
-      ops.push(...await this.dbIndexUpdateOps(target.collection, pageRef.db, [pageRef.pageEntry]));
+    const pageEntry = pageEntryForCollectionPath(target.path);
+    if (pageEntry) {
+      ops.push(...await this.dbIndexUpdateOps(target.collection, target.collection.id, [pageEntry]));
     }
     await this.apply(target.collection, `wiki: update ${path}`, ops);
     return { ok: true, path, created, updated: !created };
@@ -311,8 +310,9 @@ export class WikiKnowledgeStore {
     }
     const path = args.path
       ? normalizeKnowledgePath(args.path)
-      : buildDbNotePath(db, args.title ?? args.sources[0]?.title ?? "source");
+      : buildDbNotePath(db, args.title ?? args.sources[0]?.title ?? args.sources[0]?.path ?? "source");
     const target = this.pathInCollection(collection, path);
+    const storedPath = `${collection.id}/${target.path}`.replace(/\/+$/g, "");
     const existing = await this.readPath(collection, target.path);
     const created = existing.kind === "missing";
     const markdown = renderKnowledgeDoc({
@@ -320,7 +320,7 @@ export class WikiKnowledgeStore {
         db,
         created_at: new Date().toISOString(),
       },
-      title: args.title?.trim() || deriveTitle(path),
+      title: args.title?.trim() || deriveTitle(storedPath),
       summary: args.summary?.trim() ? [args.summary.trim()] : [],
       facts: [],
       preferences: [],
@@ -333,12 +333,12 @@ export class WikiKnowledgeStore {
     });
 
     const ops: RepoApplyOp[] = [{ type: "put", path: this.repoPath(collection, target.path), content: markdown }];
-    const pageRef = parseDbPagePath(path);
-    if (pageRef && collection.id === pageRef.db) {
-      ops.push(...await this.dbIndexUpdateOps(collection, pageRef.db, [pageRef.pageEntry]));
+    const pageEntry = pageEntryForCollectionPath(target.path);
+    if (pageEntry) {
+      ops.push(...await this.dbIndexUpdateOps(collection, collection.id, [pageEntry]));
     }
-    await this.apply(collection, `wiki: ingest ${path}`, ops);
-    return { ok: true, db, path, created };
+    await this.apply(collection, `wiki: ingest ${storedPath}`, ops);
+    return { ok: true, db, path: storedPath, created };
   }
 
   async deleteDb(args: KnowledgeDbDeleteArgs) {
@@ -757,6 +757,15 @@ export class WikiKnowledgeStore {
     this.homeRepo = home.repo;
     return home.repo;
   }
+}
+
+function pageEntryForCollectionPath(path: string): string | null {
+  const normalized = normalizeKnowledgePath(path);
+  const parts = normalized.split("/");
+  if (parts.length < 2 || parts[0] !== "pages" || parts[parts.length - 1] === DIR_MARKER) {
+    return null;
+  }
+  return normalized;
 }
 
 function joinPath(left: string, right: string): string {
