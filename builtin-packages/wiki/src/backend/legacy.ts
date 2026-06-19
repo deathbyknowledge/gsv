@@ -15,7 +15,7 @@ function normalizeDbScopedPath(value: unknown, db: string): string {
   if (!path) {
     return "";
   }
-  if (db && (path === "index.md" || path.startsWith("pages/") || path.startsWith("inbox/"))) {
+  if (db && (path === "index.md" || path.startsWith("pages/"))) {
     return `${db}/${path}`;
   }
   return path;
@@ -124,7 +124,6 @@ export async function loadState(kernel: any, args: any, storage?: PackageStorage
 
   let dbs: WikiState["dbs"] = [];
   let pages: WikiState["pages"] = [];
-  let inbox: WikiState["inbox"] = [];
   let selectedNote: WikiState["selectedNote"] = null;
   let searchMatches: WikiState["searchMatches"] = null;
 
@@ -146,17 +145,6 @@ export async function loadState(kernel: any, args: any, storage?: PackageStorage
         limit: 200,
       });
       pages = Array.isArray(pageList?.entries) ? pageList.entries.filter((entry: any) => entry.kind === "file") : [];
-    } catch (error) {
-      errorText ||= error instanceof Error ? error.message : String(error);
-    }
-
-    try {
-      const inboxList = await knowledge.list({
-        prefix: `${selectedDb}/inbox`,
-        recursive: true,
-        limit: 200,
-      });
-      inbox = Array.isArray(inboxList?.entries) ? inboxList.entries.filter((entry: any) => entry.kind === "file") : [];
     } catch (error) {
       errorText ||= error instanceof Error ? error.message : String(error);
     }
@@ -196,7 +184,6 @@ export async function loadState(kernel: any, args: any, storage?: PackageStorage
     selectedPath,
     dbs,
     pages,
-    inbox,
     selectedNote,
     searchQuery,
     searchMatches,
@@ -342,7 +329,7 @@ export async function writePage(kernel: any, args: any, storage?: PackageStorage
   };
 }
 
-export async function ingestSourcesToInbox(kernel: any, args: any, storage?: PackageStorageBinding): Promise<WikiMutationResult> {
+export async function ingestSourcesToPage(kernel: any, args: any, storage?: PackageStorageBinding): Promise<WikiMutationResult> {
   const knowledge = new WikiKnowledgeStore(kernel, storage);
   const selectedDb = String(args?.db ?? "").trim();
   const title = String(args?.title ?? "").trim();
@@ -356,44 +343,15 @@ export async function ingestSourcesToInbox(kernel: any, args: any, storage?: Pac
     sources,
     title: title || undefined,
     summary: summary || undefined,
-    mode: "inbox",
   });
   if (!result?.ok) {
     throw new Error(result?.error || "Failed to ingest sources");
   }
-  const resultPath = result.path ?? `${selectedDb}/inbox`;
+  const resultPath = result.path ?? `${selectedDb}/pages`;
   return {
     db: selectedDb,
     openPath: resultPath,
-    statusText: `Staged ${resultPath}`,
-  };
-}
-
-export async function compileInboxNote(kernel: any, args: any, storage?: PackageStorageBinding): Promise<WikiMutationResult> {
-  const knowledge = new WikiKnowledgeStore(kernel, storage);
-  const selectedDb = String(args?.db ?? "").trim();
-  const sourcePath = normalizeDbScopedPath(args?.sourcePath ?? "", selectedDb);
-  const targetPath = normalizeDbScopedPath(args?.targetPath ?? "", selectedDb);
-  if (!selectedDb) {
-    throw new Error("Select a database before compiling inbox notes.");
-  }
-  if (!sourcePath.startsWith(`${selectedDb}/inbox/`)) {
-    throw new Error("Only inbox notes can be compiled.");
-  }
-  const result = await knowledge.compile({
-    db: selectedDb,
-    sourcePath,
-    targetPath: targetPath || undefined,
-  });
-  if (!result?.ok) {
-    throw new Error(result?.error || "Failed to compile inbox note");
-  }
-  const resultPath = result.path ?? targetPath;
-  const resultSourcePath = result.sourcePath ?? sourcePath;
-  return {
-    db: selectedDb,
-    openPath: resultPath,
-    statusText: `Compiled ${resultSourcePath} into ${resultPath}`,
+    statusText: result.created ? `Created ${resultPath}` : `Updated ${resultPath}`,
   };
 }
 
@@ -444,8 +402,8 @@ export async function startBuildFromDirectory(
     "Requirements:",
     "- The source directory may be on a device target, but the wiki itself must be created on gsv as a wiki repo.",
     "- Treat the source target as read-only. Do not create wiki files, support files, or scratch files there.",
-    "- Use the `wiki` CLI on gsv for all wiki writes; do not hand-create page files in the source directory or on the source target.",
-    "- Use normal filesystem/shell tools only to inspect the source corpus.",
+    "- Use `wiki db init` on gsv to create the wiki if needed, then edit wiki pages under `/src/repos/<owner>/<wiki>`.",
+    "- Use normal filesystem/shell tools to inspect the source corpus and edit the wiki repo. Do not write into the source corpus.",
     "- Initialize the target wiki if it does not exist.",
     "- Inspect the source directory conservatively and ignore obvious junk such as build output, vendor directories, and caches unless they are clearly relevant.",
     "- Create a readable `index.md` homepage for the wiki.",
@@ -504,7 +462,7 @@ export async function handleAppSignal(ctx: any) {
     title: error ? `Wiki build failed: ${state.db}` : `Wiki build finished: ${state.db}`,
     body: error
       ? `${state.sourceTarget}:${state.sourcePath} failed with: ${error}`
-      : `${state.sourceTarget}:${state.sourcePath} was compiled into the ${state.db} wiki.`,
+      : `${state.sourceTarget}:${state.sourcePath} was built into the ${state.db} wiki.`,
     level: error ? "error" : "success",
     actions: [
       {

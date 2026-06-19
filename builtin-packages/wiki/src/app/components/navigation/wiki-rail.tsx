@@ -10,15 +10,12 @@ type Props = {
   state: WikiWorkspaceState;
   selectedDb: string;
   visiblePages: WikiEntry[];
-  selectedInboxPath: string;
   mutating: boolean;
   newDatabaseOpen: boolean;
   newDatabaseTitle: string;
   newDatabaseId: string;
   onOpenDb(db: string): void;
   onOpenPage(path: string): void;
-  onOpenInboxNote(path: string): void;
-  onCompileSelectedInbox(): Promise<void> | void;
   onNewPage(): void;
   onToggleCreateDatabase(): void;
   onCreateDatabase(event: Event): void;
@@ -28,8 +25,7 @@ type Props = {
 
 const AUTHORING_MODES: Array<{ id: WikiMode; label: string; icon: WikiIconName; description: string }> = [
   { id: "edit", label: "Edit", icon: "edit", description: "Write or create pages" },
-  { id: "inbox", label: "Inbox", icon: "inbox", description: "Review staged notes" },
-  { id: "ingest", label: "Capture", icon: "folder", description: "Add source material to inbox" },
+  { id: "ingest", label: "Capture", icon: "folder", description: "Create a source-backed page" },
   { id: "build", label: "Build", icon: "build", description: "Build a manual from a folder" },
 ];
 
@@ -118,37 +114,10 @@ export function WikiRail(props: Props) {
         />
       </section>
 
-      {props.mode === "inbox" ? (
-        <section class="wiki-nav-block wiki-nav-block--list">
-          <div class="wiki-nav-heading">
-            <span>Inbox<em>{props.state.inbox.length}</em></span>
-            <button
-              type="button"
-              class="wiki-inline-icon-button"
-              onClick={() => void props.onCompileSelectedInbox()}
-              disabled={props.mutating || !props.selectedInboxPath}
-              title="Compile inbox item into a page"
-              aria-label="Compile inbox item into a page"
-            >
-              <WikiIcon name="build" />
-            </button>
-          </div>
-          <PageTree
-            entries={props.state.inbox}
-            routeBase={props.routeBase}
-            selectedPath={props.selectedInboxPath}
-            selectedDb={props.selectedDb}
-            onOpenPage={props.onOpenInboxNote}
-            emptyText="Inbox is empty."
-          />
-        </section>
-      ) : null}
-
       <section class="wiki-nav-block wiki-authoring-block">
         <details class="wiki-authoring-details" {...authoringDetailsProps}>
           <summary>
             <span><WikiIcon name="settings" /> Authoring</span>
-            {props.state.inbox.length > 0 ? <em>{props.state.inbox.length}</em> : null}
           </summary>
           <nav class="wiki-mode-list wiki-mode-list--authoring" aria-label="Authoring tools">
             <button
@@ -172,7 +141,6 @@ export function WikiRail(props: Props) {
               >
                 <WikiIcon name={item.icon} />
                 <span>{item.label}</span>
-                {item.id === "inbox" && props.state.inbox.length > 0 ? <em>{props.state.inbox.length}</em> : null}
               </button>
             ))}
           </nav>
@@ -255,7 +223,7 @@ function PageTreeBranch({
           onOpenPage(node.entry!.path);
         }}
       >
-        <WikiIcon name={node.entry.path.includes("/inbox/") ? "inbox" : "file"} />
+        <WikiIcon name="file" />
         <span title={label}>{label}</span>
       </a>
     );
@@ -338,8 +306,6 @@ function displayPathSegments(path: string, selectedDb: string): string[] {
   }
   if (relativePath.startsWith("pages/")) {
     relativePath = relativePath.slice("pages/".length);
-  } else if (relativePath.startsWith("inbox/")) {
-    relativePath = relativePath.slice("inbox/".length);
   }
   return relativePath.split("/").filter(Boolean);
 }

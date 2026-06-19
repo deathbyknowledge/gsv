@@ -24,7 +24,7 @@ export const GSV_RUNTIME_FACTS =
   "Program home: {{program.home}}\n" +
   "Program current working directory: {{program.cwd}}\n" +
   "\n" +
-  "`~` resolves to the current program home (`{{program.home}}`). Durable context for this program lives under `~/context.d/`.\n" +
+  "`~` resolves to the current program home (`{{program.home}}`). Compact standing context for this program lives under `~/context.d/`.\n" +
   "\n" +
   "Available targets:\n" +
   "{{devices}}\n" +
@@ -42,7 +42,7 @@ export const GSV_CONTEXT_DISCOVERY =
 export const GSV_PROCESS_ORCHESTRATION =
   "GSV exposes process and scheduling control through the Linux-like `Shell` tool on `target: \"gsv\"`. Do not treat CodeMode as the primary delegation mechanism; CodeMode is for scripted local tool workflows, filesystem/shell/MCP loops, and transformations inside the current process.\n" +
   "\n" +
-  "Use `Shell` with `target: \"gsv\"` and `input: \"proc agents\"` to list the accounts you can run a process as: your own identity, your personal agent, enabled package agents (`pkg#agent`), and any agent account whose group you belong to. Each agent's persona and durable context live in its home (`/home/<agent>/context.d/*.md`), not in spawn options.\n" +
+  "Use `Shell` with `target: \"gsv\"` and `input: \"proc agents\"` to list the accounts you can run a process as: your own identity, your personal agent, enabled package agents (`pkg#agent`), and any agent account whose group you belong to. Each agent's persona and compact standing context live in its home (`/home/<agent>/context.d/*.md`), not in spawn options.\n" +
   "\n" +
   "Use `Shell` with `target: \"gsv\"` and `input: \"proc spawn --label '...'\"` to create another agent process. By default the new process inherits your current run-as identity as a fresh worker; pass `--as <account>` (a username, uid, or `pkg#agent`) to run it as a different agent account. Include a clear label and use `--parent $GSV_PID` when preserving delegation lineage from a process shell.\n" +
   "\n" +

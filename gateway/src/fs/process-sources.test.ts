@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { commitProcessSourceChanges, createProcessSourceBackend, getProcessSourceStatus } from "./index";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { RepoSummary } from "@humansandmachines/gsv/protocol";
@@ -133,6 +133,10 @@ describe("createProcessSourceBackend", () => {
     await expect(backend!.readdir("/src/repos/sam")).resolves.toEqual(["docs", "tools"]);
     await expect(backend!.stat("/src/repos/sam/docs")).resolves.toMatchObject({
       isDirectory: true,
+      mode: 0o755,
+    });
+    await expect(backend!.stat("/src/repos/root/gsv-manual")).resolves.toMatchObject({
+      isDirectory: true,
       mode: 0o555,
     });
   });
@@ -213,6 +217,119 @@ describe("createProcessSourceBackend", () => {
       query: "visible",
       prefix: undefined,
     }]);
+  });
+
+  it("writes owned non-package repos directly through ripgit", async () => {
+    const files = new Map<string, string>([
+      ["notes.md", "old\n"],
+      ["old.md", "remove me\n"],
+    ]);
+    const applyCalls: any[] = [];
+    const config = makeConfig();
+    const now = vi.spyOn(Date, "now")
+      .mockReturnValueOnce(1000)
+      .mockReturnValueOnce(2000)
+      .mockReturnValueOnce(3000);
+    const backend = createProcessSourceBackend({
+      identity: IDENTITY,
+      storage: makeBucket(),
+      packages: [makePackage()],
+      repos: [makeRepo("sam/docs")],
+      processId: "task:source",
+      config,
+      ripgit: {
+        readPath: async (_repo: unknown, path: string) => {
+          const content = files.get(path);
+          if (content !== undefined) {
+            return {
+              kind: "file",
+              bytes: new TextEncoder().encode(content),
+              size: content.length,
+            };
+          }
+          return { kind: "missing" };
+        },
+        apply: async (...args: any[]) => {
+          applyCalls.push(args);
+          const ops = args[4] as Array<{ type: string; path: string; contentBytes?: number[] }>;
+          for (const op of ops) {
+            if (op.type === "put" && op.contentBytes) {
+              files.set(op.path, new TextDecoder().decode(new Uint8Array(op.contentBytes)));
+            } else if (op.type === "delete") {
+              files.delete(op.path);
+            }
+          }
+          return { head: `repohead${applyCalls.length}` };
+        },
+      } as any,
+    });
+
+    try {
+      await backend!.writeFile("/src/repos/sam/docs/new.md", "created\n");
+      expect(config.values.get("repos/sam/docs/created_at")).toBe("1000");
+      expect(config.values.get("repos/sam/docs/updated_at")).toBe("1000");
+
+      await backend!.appendFile("/src/repos/sam/docs/notes.md", "more\n");
+      expect(config.values.get("repos/sam/docs/created_at")).toBe("1000");
+      expect(config.values.get("repos/sam/docs/updated_at")).toBe("2000");
+
+      await backend!.rm("/src/repos/sam/docs/old.md");
+      expect(config.values.get("repos/sam/docs/created_at")).toBe("1000");
+      expect(config.values.get("repos/sam/docs/updated_at")).toBe("3000");
+
+      expect(files.get("new.md")).toBe("created\n");
+      expect(files.get("notes.md")).toBe("old\nmore\n");
+      expect(files.has("old.md")).toBe(false);
+      expect(applyCalls).toHaveLength(3);
+      expect(applyCalls[0][0]).toEqual({ owner: "sam", repo: "docs", branch: "main" });
+      expect(applyCalls[0][3]).toBe("gsv: write new.md");
+      expect(applyCalls[0][4]).toEqual([{
+        type: "put",
+        path: "new.md",
+        contentBytes: Array.from(new TextEncoder().encode("created\n")),
+      }]);
+      expect(applyCalls[1][3]).toBe("gsv: append notes.md");
+      expect(applyCalls[1][4]).toEqual([{
+        type: "put",
+        path: "notes.md",
+        contentBytes: Array.from(new TextEncoder().encode("old\nmore\n")),
+      }]);
+      expect(applyCalls[2][3]).toBe("gsv: rm old.md");
+      expect(applyCalls[2][4]).toEqual([{
+        type: "delete",
+        path: "old.md",
+        recursive: false,
+      }]);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("keeps public non-owned repos read-only through /src/repos", async () => {
+    const applyCalls: any[] = [];
+    const backend = createProcessSourceBackend({
+      identity: IDENTITY,
+      storage: makeBucket(),
+      packages: [],
+      repos: [makeRepo("root/gsv-manual", { public: true, writable: false })],
+      processId: "task:source",
+      config: makeConfig(),
+      ripgit: {
+        readPath: async () => ({ kind: "missing" }),
+        apply: async (...args: any[]) => {
+          applyCalls.push(args);
+          return { head: "repohead123" };
+        },
+      } as any,
+    });
+
+    await expect(backend!.writeFile("/src/repos/root/gsv-manual/README.md", "x"))
+      .rejects.toThrow("read-only");
+    await expect(backend!.appendFile("/src/repos/root/gsv-manual/README.md", "x"))
+      .rejects.toThrow("read-only");
+    await expect(backend!.rm("/src/repos/root/gsv-manual/README.md", { force: true }))
+      .rejects.toThrow("read-only");
+    expect(applyCalls).toHaveLength(0);
   });
 
   it("exposes public manual repos supplied by repo visibility and hides absent private repos", async () => {
@@ -330,6 +447,10 @@ describe("createProcessSourceBackend", () => {
       identity: IDENTITY,
       storage: makeBucket(),
       packages: [makePackage()],
+      repos: [
+        makeRepo("sam/pkg-test"),
+        makeRepo("sam/docs"),
+      ],
       mounts: [],
       processId: "task:source",
       config: makeConfig(),
@@ -342,8 +463,81 @@ describe("createProcessSourceBackend", () => {
 
     expect(backend).not.toBeNull();
     await expect(backend!.readdir("/src/packages")).resolves.toEqual([]);
+    await expect(backend!.readdir("/src/repos/sam")).resolves.toEqual(["docs"]);
     await expect(backend!.readFile("/src/packages/sample-console/src/index.ts"))
       .rejects.toThrow("no such package source");
+    await expect(backend!.readFile("/src/repos/sam/pkg-test/README.md"))
+      .rejects.toThrow("no such source repo");
+  });
+
+  it("hides unmounted package repos from generic repo mounts", async () => {
+    const app = makePackage({
+      packageId: "import:sam/mono:packages/app",
+      manifest: {
+        ...makePackage().manifest,
+        name: "Demo App",
+        source: {
+          repo: "sam/mono",
+          ref: "main",
+          subdir: "packages/app",
+          resolvedCommit: "base123",
+        },
+      },
+    });
+    const other = makePackage({
+      packageId: "import:sam/mono:packages/other",
+      manifest: {
+        ...makePackage().manifest,
+        name: "Other Tool",
+        source: {
+          repo: "sam/mono",
+          ref: "main",
+          subdir: "packages/other",
+          resolvedCommit: "otherbase123",
+        },
+      },
+    });
+    const readCalls: Array<{ repo: { owner: string; repo: string; branch?: string }; path: string }> = [];
+    const backend = createProcessSourceBackend({
+      identity: IDENTITY,
+      storage: makeBucket(),
+      packages: [app, other],
+      repos: [makeRepo("sam/mono")],
+      mounts: [{
+        kind: "ripgit-source",
+        mountPath: "/src/packages/demo-app",
+        packageId: app.packageId,
+        repo: "sam/mono",
+        ref: "main",
+        resolvedCommit: "base123",
+        subdir: "packages/app",
+      }],
+      processId: "task:source",
+      config: makeConfig(),
+      ripgit: {
+        readPath: async (repo: { owner: string; repo: string; branch?: string }, path: string) => {
+          readCalls.push({ repo, path });
+          if (path === "packages/app/index.ts") {
+            return {
+              kind: "file",
+              bytes: new TextEncoder().encode("export const app = true;\n"),
+              size: 25,
+            };
+          }
+          return { kind: "missing" };
+        },
+      } as any,
+    });
+
+    await expect(backend!.readFile("/src/packages/demo-app/index.ts")).resolves.toContain("app = true");
+    await expect(backend!.readFile("/src/packages/other-tool/index.ts"))
+      .rejects.toThrow("no such package source");
+    await expect(backend!.readFile("/src/repos/sam/mono/packages/other/index.ts"))
+      .rejects.toThrow("no such source repo");
+    expect(readCalls).toEqual([{
+      repo: { owner: "sam", repo: "mono", branch: "base123" },
+      path: "packages/app/index.ts",
+    }]);
   });
 
   it("stages package source edits and commits them explicitly", async () => {

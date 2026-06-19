@@ -8,7 +8,7 @@ export type WikiRoute = {
 
 export function readMode(): WikiMode {
   const value = new URL(window.location.href).searchParams.get("mode");
-  return value === "edit" || value === "build" || value === "ingest" || value === "inbox" ? value : "browse";
+  return value === "edit" || value === "build" || value === "ingest" ? value : "browse";
 }
 
 export function readRoute(): WikiRoute {

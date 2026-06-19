@@ -3,7 +3,7 @@ import { definePackage } from "@humansandmachines/gsv/sdk/manifest";
 export default definePackage({
   meta: {
     displayName: "Wiki",
-    description: "Git-backed wiki collections, pages, inbox review, and guided wiki-building workflows.",
+    description: "Git-backed wiki collections, markdown pages, search, and source references.",
     icon: "icon.svg",
     window: {
       width: 1220,

@@ -31,7 +31,7 @@ export function normalizeDbScopedPath(value: unknown, db: string): string {
   if (!path) {
     return "";
   }
-  if (db && (path === "index.md" || path.startsWith("pages/") || path.startsWith("inbox/"))) {
+  if (db && (path === "index.md" || path.startsWith("pages/"))) {
     return `${db}/${path}`;
   }
   return path;
@@ -158,7 +158,6 @@ export function resolveWikiPath(rawHref: string, selectedDb: string, selectedPat
     && (
       trimmedHref === `${selectedDb}/index.md`
       || trimmedHref.startsWith(`${selectedDb}/pages/`)
-      || trimmedHref.startsWith(`${selectedDb}/inbox/`)
     )
   ) {
     return normalizePath(trimmedHref);
@@ -168,11 +167,11 @@ export function resolveWikiPath(rawHref: string, selectedDb: string, selectedPat
     return resolveRelativeWikiPath(href, selectedPath);
   }
 
-  if (!selectedPath && selectedDb && (trimmedHref === "index.md" || trimmedHref.startsWith("pages/") || trimmedHref.startsWith("inbox/"))) {
+  if (!selectedPath && selectedDb && (trimmedHref === "index.md" || trimmedHref.startsWith("pages/"))) {
     return normalizeDbScopedPath(trimmedHref, selectedDb);
   }
 
-  if (/^[a-z0-9._-]+\/(pages|inbox)\//i.test(trimmedHref) || /^[a-z0-9._-]+\/index\.md$/i.test(trimmedHref)) {
+  if (/^[a-z0-9._-]+\/pages\//i.test(trimmedHref) || /^[a-z0-9._-]+\/index\.md$/i.test(trimmedHref)) {
     return normalizePath(trimmedHref);
   }
 

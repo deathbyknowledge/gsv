@@ -1,9 +1,7 @@
 import { WikiKnowledgeStore } from "../backend/knowledge-store";
 import type {
-  KnowledgeCompileArgs,
   KnowledgeIngestArgs,
   KnowledgeMergeArgs,
-  KnowledgePromoteArgs,
   KnowledgeSourceRef,
   KnowledgeWriteArgs,
   WikiInfoResult,
@@ -123,33 +121,12 @@ export async function runWikiCommand(ctx: CommandContext): Promise<string> {
         title: findFlagValue(rest.slice(1), "--title"),
         summary: findFlagValue(rest.slice(1), "--summary"),
         path: findFlagValue(rest.slice(1), "--path"),
-        mode: parseMode(findFlagValue(rest.slice(1), "--mode"), ["inbox", "page"]) as "inbox" | "page" | undefined,
       };
       const result = await store.ingest(args);
       if (!result.ok) {
         throw new Error(result.error ?? "ingest failed");
       }
-      return `${result.requiresReview ? "staged" : "created"} ${result.path}\n`;
-    }
-
-    case "compile": {
-      const db = String(rest[0] ?? "").trim();
-      const sourcePath = String(rest[1] ?? "").trim();
-      if (!db || !sourcePath) {
-        throw new Error("Usage: wiki compile <db> <source-path> [target-path] [--title TITLE] [--keep-source]");
-      }
-      const args: KnowledgeCompileArgs = {
-        db,
-        sourcePath,
-        targetPath: positionalAfterFlags(rest.slice(2), ["--title"])[0],
-        title: findFlagValue(rest.slice(2), "--title"),
-        keepSource: hasFlag(rest.slice(2), "--keep-source"),
-      };
-      const result = await store.compile(args);
-      if (!result.ok) {
-        throw new Error(result.error ?? "compile failed");
-      }
-      return `compiled ${result.sourcePath} -> ${result.path}\n`;
+      return `${result.created ? "created" : "updated"} ${result.path}\n`;
     }
 
     case "merge": {
@@ -173,20 +150,6 @@ export async function runWikiCommand(ctx: CommandContext): Promise<string> {
         throw new Error(result.error ?? "merge failed");
       }
       return `merged ${result.sourcePath} -> ${result.targetPath}\n`;
-    }
-
-    case "promote": {
-      const args: KnowledgePromoteArgs = {
-        source: { kind: "text", text: await readTextFlagOrStdin(ctx, rest, "wiki promote requires --text or stdin") },
-        targetPath: findFlagValue(rest, "--to"),
-        mode: parseMode(findFlagValue(rest, "--mode"), ["inbox", "direct"]) as "inbox" | "direct" | undefined,
-      };
-      const result = await store.promote(args);
-      if (!result.ok) {
-        throw new Error(resultError(result, "promote failed"));
-      }
-      const promoted = result as { path?: string; requiresReview?: boolean };
-      return `${promoted.requiresReview ? "staged" : "promoted"} ${promoted.path}\n`;
     }
 
     default:
@@ -271,13 +234,6 @@ async function runSourceCommand(store: WikiKnowledgeStore, args: string[]): Prom
     throw new Error(result.error ?? "source add failed");
   }
   return `added sources to ${result.path}\n`;
-}
-
-function resultError(result: unknown, fallback: string): string {
-  if (result && typeof result === "object" && "error" in result && typeof result.error === "string") {
-    return result.error;
-  }
-  return fallback;
 }
 
 function formatDbList(dbs: Array<{ id: string; title?: string }>): string {
@@ -550,7 +506,7 @@ function parseSourceSpec(spec: string): KnowledgeSourceRef {
 function wikiHelp(topic?: string): string {
   const normalized = topic?.trim().toLowerCase();
   if (normalized === "write") {
-    return "wiki write <path> [--text TEXT]\n\nReplace or create a knowledge note with arbitrary markdown. Reads stdin when --text is omitted.\n";
+    return "wiki write <path> [--text TEXT]\n\nReplace or create a knowledge note with arbitrary markdown. Reads stdin when --text is omitted. For normal page work, prefer filesystem write/edit under /src/repos/<owner>/<wiki> after wiki db init.\n";
   }
   if (normalized === "section") {
     return "wiki section <set|append|delete> <path> <heading> [--text TEXT]\n\nEdit one markdown section in a knowledge note.\n";
@@ -562,10 +518,7 @@ function wikiHelp(topic?: string): string {
     return "wiki info <wiki-id> [--json]\n\nPrint collection metadata and a compact tree of wiki files.\n";
   }
   if (normalized === "ingest") {
-    return "wiki ingest <db> --source target:/absolute/path[::Title] [--source ...] [--title TITLE] [--summary TEXT] [--path PATH] [--mode inbox|page]\n\nCreate a new note from one or more live source refs.\n";
-  }
-  if (normalized === "compile") {
-    return "wiki compile <db> <source-path> [target-path] [--title TITLE] [--keep-source]\n\nMove a reviewed inbox note into a canonical db page.\n";
+    return "wiki ingest <db> --source target:/absolute/path[::Title] [--source ...] [--title TITLE] [--summary TEXT] [--path PATH]\n\nCreate or update a page from one or more live source refs.\n";
   }
   if (normalized === "merge") {
     return "wiki merge <source> <target> [--mode union|prefer-target|prefer-source] [--keep-source]\n\nMerge duplicate notes into a canonical target.\n";
@@ -575,6 +528,10 @@ function wikiHelp(topic?: string): string {
   }
   return [
     "wiki - durable markdown knowledge in git-backed wiki repos",
+    "",
+    "Create wiki repos with `wiki db init`. After that, wiki pages are normal markdown",
+    "files under `/src/repos/<owner>/<wiki>`; prefer filesystem search/read/write/edit",
+    "for day-to-day page work.",
     "",
     "Usage:",
     "  wiki db list [--limit N] [--json]",
@@ -589,15 +546,13 @@ function wikiHelp(topic?: string): string {
     "  wiki search <query> [--prefix PREFIX] [--limit N] [--json]",
     "  wiki brief <query> [--prefix PREFIX] [--limit N]",
     "  wiki ingest <db> --source target:/absolute/path[::Title] [--source ...]",
-    "  wiki compile <db> <source-path> [target-path] [--title TITLE] [--keep-source]",
     "  wiki merge <source> <target> [--mode union|prefer-target|prefer-source] [--keep-source]",
-    "  wiki promote [--text TEXT] [--to PATH] [--mode inbox|direct]",
     "",
     "Examples:",
-    "  wiki db init product --title \"Product Knowledge\"",
-    "  wiki info product",
-    "  wiki write product/pages/auth.md --text \"# Auth\"",
-    "  wiki search connect whatsapp --prefix product --json",
+    "  wiki db init memory --title \"Agent Memory\"",
+    "  wiki info memory",
+    "  wiki search connect whatsapp --prefix memory --json",
+    "  # edit /src/repos/<agent>/memory/index.md with filesystem tools",
     "",
   ].join("\n");
 }

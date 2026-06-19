@@ -36,24 +36,9 @@ export function deriveTitle(path: string): string {
   return leaf.replace(/\.md$/i, "").replace(/[-_]+/g, " ").trim() || "knowledge";
 }
 
-export function buildDbNotePath(db: string, mode: "inbox" | "page", seed: string): string {
+export function buildDbNotePath(db: string, seed: string): string {
   const stem = slugify(seed).slice(0, 64) || "note";
-  if (mode === "page") {
-    return `${db}/pages/${stem}.md`;
-  }
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  return `${db}/inbox/${stamp}-${stem}.md`;
-}
-
-export function defaultCompiledPath(db: string, sourcePath: string, title: string): string {
-  if (sourcePath.startsWith(`${db}/pages/`)) {
-    return sourcePath;
-  }
-  return `${db}/pages/${slugify(title || basename(sourcePath)).slice(0, 64) || "note"}.md`;
-}
-
-export function basename(path: string): string {
-  return path.split("/").pop() ?? path;
+  return `${db}/pages/${stem}.md`;
 }
 
 export function renderDbIndex(_db: string, title: string, description?: string, pages?: string[]): string {
@@ -80,22 +65,6 @@ export function mergeDbIndexPages(markdown: string, pageEntries: string[]): stri
     .filter((line) => line && line !== "_No pages yet._");
   const merged = dedupeKeepOrder([...existingPages, ...pageEntries.map((entry) => entry.trim()).filter(Boolean)]).sort();
   return renderDbIndex("", title, descriptionLines.join("\n"), merged);
-}
-
-export function buildInboxPath(targetPath: string | undefined, sourceText: string): string {
-  const slugBase = targetPath ? targetPath.split("/").pop() ?? targetPath : sourceText;
-  const slug = slugify(slugBase).slice(0, 48) || "candidate";
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const pageRef = targetPath ? parseDbPagePath(targetPath) : null;
-  return pageRef ? `${pageRef.db}/inbox/${stamp}-${slug}.md` : `inbox/${stamp}-${slug}.md`;
-}
-
-export function buildCandidateTitle(targetPath: string | undefined, sourceText: string): string {
-  if (targetPath) {
-    return `Candidate for ${normalizeKnowledgePath(targetPath)}`;
-  }
-  const sentence = sourceText.split(/\n+/)[0]?.trim() ?? "Candidate knowledge";
-  return sentence.slice(0, 80) || "Candidate knowledge";
 }
 
 export function clampLimit(limit: number | undefined, fallback: number): number {
