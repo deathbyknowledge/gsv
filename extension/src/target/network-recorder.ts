@@ -1,6 +1,8 @@
 import {
   acquireDebugger,
+  addDebuggerDetachListener,
   addDebuggerEventListener,
+  isDebuggerAttached,
   releaseDebugger,
   sendDebuggerCommand,
 } from "../shared/debugger";
@@ -153,14 +155,23 @@ type ResponseBodyResult = {
 
 const captures = new Map<number, CaptureState>();
 const MAX_EVENTS_PER_TAB = 2_000;
-let removeDebuggerListener: (() => void) | null = null;
+let removeDebuggerEventListener: (() => void) | null = null;
+let removeDebuggerDetachListener: (() => void) | null = null;
+let removeTabRemovedListener: (() => void) | null = null;
 
 export async function startNetworkCapture(options: NetworkCaptureOptions): Promise<NetworkCaptureStatus> {
   ensureNetworkListener();
   const existing = captures.get(options.tabId);
   if (existing) {
-    assertSameCaptureOptions(existing, options);
-    return captureStatus(existing);
+    if (isDebuggerAttached(existing.tabId)) {
+      assertSameCaptureOptions(existing, options);
+      return captureStatus(existing);
+    }
+    removeCapture(existing.tabId, {
+      type: "captureDetached",
+      errorText: "debugger session is no longer attached",
+    });
+    ensureNetworkListener();
   }
 
   const target = await acquireDebugger(options.tabId);
@@ -211,9 +222,7 @@ function assertSameCaptureOptions(existing: CaptureState, options: NetworkCaptur
 }
 
 export async function stopNetworkCapture(tabId?: number): Promise<NetworkCaptureStatus[]> {
-  const states = tabId === undefined
-    ? Array.from(captures.values())
-    : captures.has(tabId) ? [captures.get(tabId) as CaptureState] : [];
+  const states = captureStates(tabId);
   const statuses: NetworkCaptureStatus[] = [];
 
   for (const state of states) {
@@ -228,18 +237,12 @@ export async function stopNetworkCapture(tabId?: number): Promise<NetworkCapture
 }
 
 export function networkStatus(tabId?: number): NetworkCaptureStatus[] {
-  const states = tabId === undefined
-    ? Array.from(captures.values())
-    : captures.has(tabId) ? [captures.get(tabId) as CaptureState] : [];
-  return states.map(captureStatus);
+  return captureStates(tabId).map(captureStatus);
 }
 
 export function networkEvents(options: { tabId?: number; limit: number; url?: string }): NetworkEventRecord[] {
-  const states = options.tabId === undefined
-    ? Array.from(captures.values())
-    : captures.has(options.tabId) ? [captures.get(options.tabId) as CaptureState] : [];
   const urlFilter = options.url?.toLowerCase();
-  return states
+  return captureStates(options.tabId)
     .flatMap((state) => state.events)
     .filter((event) => !urlFilter || (event.url ?? "").toLowerCase().includes(urlFilter))
     .sort((left, right) => left.at.localeCompare(right.at) || left.seq - right.seq)
@@ -258,9 +261,7 @@ export async function networkRequest(requestId: string, includeBody: boolean): P
 }
 
 export function clearNetworkCapture(tabId?: number): number {
-  const states = tabId === undefined
-    ? Array.from(captures.values())
-    : captures.has(tabId) ? [captures.get(tabId) as CaptureState] : [];
+  const states = captureStates(tabId);
   let cleared = 0;
   for (const state of states) {
     cleared += state.events.length + state.requests.size;
@@ -273,17 +274,11 @@ export function clearNetworkCapture(tabId?: number): number {
 }
 
 export function networkRequests(tabId?: number): NetworkRequestRecord[] {
-  const states = tabId === undefined
-    ? Array.from(captures.values())
-    : captures.has(tabId) ? [captures.get(tabId) as CaptureState] : [];
-  return states.flatMap((state) => Array.from(state.requests.values()).map(cloneRequest));
+  return captureStates(tabId).flatMap((state) => Array.from(state.requests.values()).map(cloneRequest));
 }
 
 export function networkEventsJsonl(tabId?: number): string {
-  const states = tabId === undefined
-    ? Array.from(captures.values())
-    : captures.has(tabId) ? [captures.get(tabId) as CaptureState] : [];
-  return `${states.flatMap((state) => state.events).map((event) => JSON.stringify(event)).join("\n")}\n`;
+  return `${captureStates(tabId).flatMap((state) => state.events).map((event) => JSON.stringify(event)).join("\n")}\n`;
 }
 
 export function networkStatusSnapshot(): unknown {
@@ -371,27 +366,78 @@ export async function networkHar(tabId?: number): Promise<unknown> {
 }
 
 function ensureNetworkListener(): void {
-  if (removeDebuggerListener) {
-    return;
+  if (!removeDebuggerEventListener) {
+    removeDebuggerEventListener = addDebuggerEventListener((source, method, params) => {
+      if (typeof source.tabId !== "number") {
+        return;
+      }
+      const state = captures.get(source.tabId);
+      if (!state) {
+        return;
+      }
+      void handleNetworkEvent(state, method, params ?? {});
+    });
   }
-  removeDebuggerListener = addDebuggerEventListener((source, method, params) => {
-    if (typeof source.tabId !== "number") {
-      return;
-    }
-    const state = captures.get(source.tabId);
-    if (!state) {
-      return;
-    }
-    void handleNetworkEvent(state, method, params ?? {});
-  });
+
+  if (!removeDebuggerDetachListener) {
+    removeDebuggerDetachListener = addDebuggerDetachListener((source, reason) => {
+      if (typeof source.tabId !== "number") {
+        return;
+      }
+      removeCapture(source.tabId, {
+        type: "captureDetached",
+        errorText: reason,
+      });
+    });
+  }
+
+  if (!removeTabRemovedListener && typeof chrome !== "undefined" && chrome.tabs?.onRemoved) {
+    const listener = (tabId: number): void => {
+      if (removeCapture(tabId, { type: "captureTabRemoved" })) {
+        void releaseDebugger(tabId).catch(() => undefined);
+      }
+    };
+    chrome.tabs.onRemoved.addListener(listener);
+    removeTabRemovedListener = () => chrome.tabs.onRemoved.removeListener(listener);
+  }
 }
 
 function maybeRemoveNetworkListener(): void {
-  if (captures.size > 0 || !removeDebuggerListener) {
+  if (captures.size > 0) {
     return;
   }
-  removeDebuggerListener();
-  removeDebuggerListener = null;
+  removeDebuggerEventListener?.();
+  removeDebuggerEventListener = null;
+  removeDebuggerDetachListener?.();
+  removeDebuggerDetachListener = null;
+  removeTabRemovedListener?.();
+  removeTabRemovedListener = null;
+}
+
+function removeCapture(tabId: number, event: Omit<NetworkEventRecord, "seq" | "tabId" | "at">): boolean {
+  const state = captures.get(tabId);
+  if (!state) {
+    return false;
+  }
+  captures.delete(tabId);
+  recordEvent(state, event);
+  maybeRemoveNetworkListener();
+  return true;
+}
+
+function captureStates(tabId?: number): CaptureState[] {
+  const states = tabId === undefined
+    ? Array.from(captures.values())
+    : captures.has(tabId) ? [captures.get(tabId) as CaptureState] : [];
+  for (const state of states) {
+    if (!isDebuggerAttached(state.tabId)) {
+      removeCapture(state.tabId, {
+        type: "captureDetached",
+        errorText: "debugger session is no longer attached",
+      });
+    }
+  }
+  return states.filter((state) => captures.get(state.tabId) === state);
 }
 
 async function handleNetworkEvent(state: CaptureState, method: string, raw: object): Promise<void> {
@@ -642,7 +688,7 @@ function captureStatus(state: CaptureState): NetworkCaptureStatus {
 }
 
 function findRequest(requestId: string): { state: CaptureState; requestId: string; request: NetworkRequestRecord } | null {
-  for (const state of captures.values()) {
+  for (const state of captureStates()) {
     const request = state.requests.get(requestId);
     if (request) {
       return { state, requestId, request };

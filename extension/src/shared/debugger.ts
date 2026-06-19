@@ -6,6 +6,11 @@ type DebuggerEventListener = (
   params?: object,
 ) => void;
 
+type DebuggerDetachListener = (
+  source: chrome.debugger.Debuggee,
+  reason: `${chrome.debugger.DetachReason}`,
+) => void;
+
 type DebuggerSessionRecord = {
   target: chrome.debugger.DebuggerSession;
   refCount: number;
@@ -13,6 +18,7 @@ type DebuggerSessionRecord = {
 
 const sessions = new Map<number, DebuggerSessionRecord>();
 const eventListeners = new Set<DebuggerEventListener>();
+const detachListeners = new Set<DebuggerDetachListener>();
 let registeredChromeListeners = false;
 
 export async function acquireDebugger(tabId: number): Promise<chrome.debugger.DebuggerSession> {
@@ -60,6 +66,14 @@ export function addDebuggerEventListener(listener: DebuggerEventListener): () =>
   };
 }
 
+export function addDebuggerDetachListener(listener: DebuggerDetachListener): () => void {
+  ensureChromeListeners();
+  detachListeners.add(listener);
+  return () => {
+    detachListeners.delete(listener);
+  };
+}
+
 export function isDebuggerAttached(tabId: number): boolean {
   return sessions.has(tabId);
 }
@@ -93,9 +107,12 @@ function ensureChromeListeners(): void {
     }
   });
 
-  requireDebuggerApi().onDetach.addListener((source) => {
+  requireDebuggerApi().onDetach.addListener((source, reason) => {
     if (typeof source.tabId === "number") {
       sessions.delete(source.tabId);
+    }
+    for (const listener of detachListeners) {
+      listener(source, reason);
     }
   });
 }
