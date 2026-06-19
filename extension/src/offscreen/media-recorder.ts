@@ -413,7 +413,12 @@ function isOffscreenMediaMessage(value: unknown): value is OffscreenMediaMessage
   }
   const record = value as Record<string, unknown>;
   return record.target === OFFSCREEN_MEDIA_RECORDER_TARGET
-    && (record.type === "start" || record.type === "stop" || record.type === "status");
+    && (
+      record.type === "start"
+      || record.type === "stop"
+      || record.type === "status"
+      || record.type === "copy-complete"
+    );
 }
 
 function promiseWithResolvers<T>(): {
