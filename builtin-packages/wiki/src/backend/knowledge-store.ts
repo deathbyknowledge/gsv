@@ -8,7 +8,6 @@ import {
   applyKnowledgePatch,
   createEmptyDoc,
   dedupeSourceRefs,
-  extractSummaryText,
   mergeKnowledgeDocs,
   parseKnowledgeDoc,
   renderKnowledgeDoc,
@@ -16,12 +15,8 @@ import {
 import {
   DEFAULT_LIMIT,
   DIR_MARKER,
-  basename,
-  buildCandidateTitle,
   buildDbNotePath,
-  buildInboxPath,
   clampLimit,
-  defaultCompiledPath,
   deriveTitle,
   mergeDbIndexPages,
   normalizeDbId,
@@ -37,14 +32,11 @@ import {
   type WikiCacheManifest,
 } from "./wiki-cache";
 import type {
-  KnowledgeCompileArgs,
   KnowledgeDbDeleteArgs,
   KnowledgeDbInitArgs,
-  KnowledgeDoc,
   KnowledgeIngestArgs,
   KnowledgeListArgs,
   KnowledgeMergeArgs,
-  KnowledgePromoteArgs,
   KnowledgeReadArgs,
   KnowledgeSearchArgs,
   KnowledgeWriteArgs,
@@ -58,13 +50,11 @@ import type {
 } from "./knowledge-types";
 
 export type {
-  KnowledgeCompileArgs,
   KnowledgeDbDeleteArgs,
   KnowledgeDbInitArgs,
   KnowledgeIngestArgs,
   KnowledgeListArgs,
   KnowledgeMergeArgs,
-  KnowledgePromoteArgs,
   KnowledgeReadArgs,
   KnowledgeSearchArgs,
   KnowledgeSourceRef,
@@ -136,9 +126,6 @@ export class WikiKnowledgeStore {
       }
       if ((await this.readPath(existing, "pages")).kind === "missing") {
         ops.push({ type: "put", path: "pages/.dir", content: "" });
-      }
-      if ((await this.readPath(existing, "inbox")).kind === "missing") {
-        ops.push({ type: "put", path: "inbox/.dir", content: "" });
       }
       if (ops.length > 0) {
         await this.apply(existing, `wiki: init ${db}`, ops);
@@ -316,117 +303,15 @@ export class WikiKnowledgeStore {
     return { ok: true, sourcePath, targetPath, removedSource };
   }
 
-  async promote(args: KnowledgePromoteArgs) {
-    const mode = args.mode ?? (args.targetPath ? "direct" : "inbox");
-    const now = new Date().toISOString();
-    const targetPath = args.targetPath ? normalizeKnowledgePath(args.targetPath) : undefined;
-    const targetPageRef = targetPath ? parseDbPagePath(targetPath) : null;
-
-    if (targetPageRef) {
-      const init = await this.initDb({ id: targetPageRef.db });
-      if (!init.ok) {
-        return { ok: false, error: "Failed to initialize database" };
-      }
-    }
-
-    if (args.source.kind === "candidate") {
-      const sourcePath = normalizeKnowledgePath(args.source.path);
-      if (mode === "inbox") {
-        return { ok: true, path: sourcePath, created: false, requiresReview: true };
-      }
-      if (!targetPath) {
-        return { ok: false, error: "Direct promotion requires a targetPath" };
-      }
-      const candidate = await this.read({ path: sourcePath });
-      if (!candidate.exists || !candidate.markdown) {
-        return { ok: false, error: `Candidate note '${sourcePath}' does not exist` };
-      }
-      const direct = await this.write({
-        path: targetPath,
-        mode: "append",
-        patch: {
-          summary: extractSummaryText(candidate.markdown, sourcePath),
-          addEvidence: [`Promoted from candidate ${sourcePath} on ${now}`],
-        },
-        create: true,
-      });
-      return direct.ok
-        ? { ok: true, path: direct.path, created: direct.created, requiresReview: false }
-        : direct;
-    }
-
-    if (args.source.kind === "process") {
-      return { ok: false, error: "Process promotion is not wired yet; use direct text promotion or a candidate note first" };
-    }
-
-    const sourceText = args.source.text.trim();
-    if (!sourceText) {
-      return { ok: false, error: "Promotion source text cannot be empty" };
-    }
-
-    if (mode === "direct") {
-      if (!targetPath) {
-        return { ok: false, error: "Direct promotion requires a targetPath" };
-      }
-      const direct = await this.write({
-        path: targetPath,
-        mode: "append",
-        patch: {
-          summary: sourceText,
-          addEvidence: [`Promoted from text on ${now}`],
-        },
-        create: true,
-      });
-      return direct.ok
-        ? { ok: true, path: direct.path, created: direct.created, requiresReview: false }
-        : direct;
-    }
-
-    if (!targetPath) {
-      return { ok: false, error: "Inbox promotion requires a targetPath" };
-    }
-
-    const candidatePath = buildInboxPath(targetPath, sourceText);
-    const candidateMarkdown = renderKnowledgeDoc({
-      frontmatter: {
-        proposed_target: targetPath,
-        created_at: now,
-      },
-      title: buildCandidateTitle(targetPath, sourceText),
-      summary: [sourceText],
-      facts: [],
-      preferences: [],
-      evidence: [
-        `Promoted from text on ${now}`,
-        ...(targetPath ? [`Suggested target: ${targetPath}`] : []),
-      ],
-      aliases: [],
-      tags: ["candidate"],
-      links: [],
-      sources: [],
-      otherSections: [],
-    });
-
-    const candidateTarget = await this.resolveWritablePath(candidatePath, { createDb: false });
-    if (!candidateTarget) {
-      return { ok: false, error: `Knowledge note '${candidatePath}' does not exist` };
-    }
-    await this.apply(candidateTarget.collection, `wiki: promote candidate ${candidatePath}`, [
-      { type: "put", path: this.repoPath(candidateTarget.collection, candidateTarget.path), content: candidateMarkdown },
-    ]);
-    return { ok: true, path: candidatePath, created: true, requiresReview: true };
-  }
-
   async ingest(args: KnowledgeIngestArgs) {
     const db = normalizeDbId(args.db);
     const collection = await this.resolveCollection(db, { create: true });
     if (!Array.isArray(args.sources) || args.sources.length === 0) {
       return { ok: false, error: "Knowledge ingest requires at least one source" };
     }
-    const mode = args.mode ?? "inbox";
     const path = args.path
       ? normalizeKnowledgePath(args.path)
-      : buildDbNotePath(db, mode, args.title ?? args.sources[0]?.title ?? "source");
+      : buildDbNotePath(db, args.title ?? args.sources[0]?.title ?? "source");
     const target = this.pathInCollection(collection, path);
     const existing = await this.readPath(collection, target.path);
     const created = existing.kind === "missing";
@@ -441,61 +326,19 @@ export class WikiKnowledgeStore {
       preferences: [],
       evidence: [],
       aliases: [],
-      tags: mode === "inbox" ? ["candidate"] : [],
+      tags: [],
       links: [],
       sources: dedupeSourceRefs(args.sources),
       otherSections: [],
     });
 
     const ops: RepoApplyOp[] = [{ type: "put", path: this.repoPath(collection, target.path), content: markdown }];
-    if (mode === "page") {
-      const pageRef = parseDbPagePath(path);
-      ops.push(...await this.dbIndexUpdateOps(collection, db, pageRef ? [pageRef.pageEntry] : [`pages/${basename(path)}`]));
+    const pageRef = parseDbPagePath(path);
+    if (pageRef && collection.id === pageRef.db) {
+      ops.push(...await this.dbIndexUpdateOps(collection, pageRef.db, [pageRef.pageEntry]));
     }
     await this.apply(collection, `wiki: ingest ${path}`, ops);
-    return { ok: true, db, path, created, requiresReview: mode !== "page" };
-  }
-
-  async compile(args: KnowledgeCompileArgs) {
-    const db = normalizeDbId(args.db);
-    const sourcePath = normalizeKnowledgePath(args.sourcePath);
-    const source = await this.read({ path: sourcePath });
-    if (!source.exists || !source.markdown) {
-      return { ok: false, error: `Knowledge note '${sourcePath}' does not exist` };
-    }
-
-    const sourceDoc = parseKnowledgeDoc(source.markdown, sourcePath);
-    const targetPath = args.targetPath
-      ? normalizeKnowledgePath(args.targetPath)
-      : defaultCompiledPath(db, sourcePath, sourceDoc.title);
-    let removedSource = false;
-    const compiledDoc: KnowledgeDoc = {
-      ...sourceDoc,
-      frontmatter: {
-        ...sourceDoc.frontmatter,
-        db,
-        compiled_at: new Date().toISOString(),
-      },
-      title: args.title?.trim() || sourceDoc.title,
-      tags: sourceDoc.tags.filter((tag) => tag.toLowerCase() !== "candidate"),
-    };
-
-    const targetStorage = await this.resolveWritablePath(targetPath, { createDb: true });
-    if (!targetStorage) {
-      return { ok: false, error: `Knowledge note '${targetPath}' does not exist` };
-    }
-    const ops: RepoApplyOp[] = [{ type: "put", path: this.repoPath(targetStorage.collection, targetStorage.path), content: renderKnowledgeDoc(compiledDoc) }];
-    if (args.keepSource !== true && sourcePath !== targetPath) {
-      const sourceStorage = await this.resolveExistingPath(sourcePath);
-      if (sourceStorage && sourceStorage.collection.repo === targetStorage.collection.repo) {
-        ops.push({ type: "delete", path: this.repoPath(sourceStorage.collection, sourceStorage.path) });
-        removedSource = true;
-      }
-    }
-    const pageRef = parseDbPagePath(targetPath);
-    ops.push(...await this.dbIndexUpdateOps(targetStorage.collection, db, pageRef ? [pageRef.pageEntry] : [`pages/${basename(targetPath)}`]));
-    await this.apply(targetStorage.collection, `wiki: compile ${sourcePath}`, ops);
-    return { ok: true, db, path: targetPath, sourcePath, removedSource };
+    return { ok: true, db, path, created };
   }
 
   async deleteDb(args: KnowledgeDbDeleteArgs) {
@@ -508,7 +351,6 @@ export class WikiKnowledgeStore {
       { type: "delete", path: WIKI_MANIFEST_PATH },
       { type: "delete", path: "index.md" },
       { type: "delete", path: "pages", recursive: true },
-      { type: "delete", path: "inbox", recursive: true },
     ]);
     this.collections = null;
     this.repoList = null;
@@ -839,9 +681,6 @@ export class WikiKnowledgeStore {
     }
     if ((await this.readPath(collection, "pages")).kind === "missing") {
       ops.push({ type: "put", path: "pages/.dir", content: "" });
-    }
-    if ((await this.readPath(collection, "inbox")).kind === "missing") {
-      ops.push({ type: "put", path: "inbox/.dir", content: "" });
     }
     await this.apply(collection, `wiki: init ${db}`, ops);
     return created;

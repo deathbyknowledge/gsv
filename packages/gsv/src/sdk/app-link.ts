@@ -31,7 +31,7 @@ export type ChatOpenPayload = {
 export type WikiOpenPayload = {
   db?: string;
   path?: string;
-  mode?: "browse" | "edit" | "build" | "ingest" | "inbox";
+  mode?: "browse" | "edit" | "build" | "ingest";
 };
 
 export type OpenAppRequest =
