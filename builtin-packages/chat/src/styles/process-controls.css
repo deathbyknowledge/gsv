@@ -1,10 +1,17 @@
 .process-stage-title {
-  grid-template-columns: minmax(0, 1fr);
-  gap: 0;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: start;
+  gap: 0 11px;
+}
+
+.agent-card-menu {
+  width: 42px;
+  grid-row: 1 / span 2;
 }
 
 .process-avatar-stack {
   position: relative;
+  z-index: 1;
   width: 42px;
   height: 42px;
   display: inline-flex;
@@ -48,16 +55,58 @@
 .process-card-menu {
   min-width: 0;
   max-width: 100%;
+  grid-column: 2;
+}
+
+.agent-card-summary {
+  position: relative;
+  width: 42px;
+  height: 42px;
+  border: 0;
+  padding: 0;
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  cursor: pointer;
+}
+
+.agent-card-summary::before,
+.agent-card-summary::after {
+  content: "";
+  position: absolute;
+  width: 33px;
+  height: 33px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.agent-card-summary::before {
+  left: -4px;
+  top: -4px;
+}
+
+.agent-card-summary::after {
+  left: 2px;
+  top: 2px;
+}
+
+.agent-card-summary::-webkit-details-marker {
+  display: none;
+}
+
+.agent-card-summary:hover::before,
+.agent-card-summary:hover::after {
+  border-color: var(--line-strong);
 }
 
 .process-card-summary {
   min-width: 0;
   max-width: 100%;
   list-style: none;
-  display: grid;
-  grid-template-columns: 42px minmax(0, 1fr);
-  align-items: center;
-  gap: 0 11px;
+  display: block;
   cursor: pointer;
 }
 
@@ -110,7 +159,8 @@
 }
 
 .process-title-secondary {
-  margin-left: 53px;
+  grid-column: 2;
+  margin-left: 0;
 }
 
 .process-model-row,
@@ -201,10 +251,15 @@
   font-size: 11px;
 }
 
+.agent-menu-popover,
 .model-menu-popover,
 .task-menu-popover {
   right: auto;
   left: 0;
+}
+
+.agent-menu-popover {
+  width: min(300px, 72vw);
 }
 
 .model-menu-popover {
@@ -219,6 +274,7 @@
   width: 236px;
 }
 
+.agent-menu-content,
 .model-menu-content,
 .task-menu-content {
   display: grid;
@@ -245,6 +301,7 @@
 
 .model-reasoning-option,
 .model-profile-option,
+.agent-option,
 .task-option,
 .model-menu-link {
   border: 0;
@@ -267,6 +324,7 @@
 
 .model-reasoning-option:hover:not(:disabled),
 .model-profile-option:hover:not(:disabled),
+.agent-option:hover:not(:disabled),
 .task-option:hover:not(:disabled),
 .model-menu-link:hover:not(:disabled) {
   background: var(--panel-soft);
@@ -274,12 +332,14 @@
 
 .model-reasoning-option.is-active,
 .model-profile-option.is-active,
+.agent-option.is-active,
 .task-option.is-active {
   background: var(--blue-soft);
 }
 
 .model-reasoning-option:disabled,
 .model-profile-option:disabled,
+.agent-option:disabled,
 .task-option:disabled,
 .model-menu-link:disabled {
   opacity: 0.5;
@@ -287,7 +347,8 @@
 }
 
 .model-reasoning-option svg,
-.model-profile-option svg {
+.model-profile-option svg,
+.agent-option svg {
   flex: 0 0 auto;
   width: 14px;
   height: 14px;
@@ -299,6 +360,7 @@
 }
 
 .model-profile-list,
+.agent-option-list,
 .task-option-list {
   max-height: 238px;
   display: grid;
@@ -307,6 +369,7 @@
 }
 
 .model-profile-option,
+.agent-option,
 .task-option {
   min-width: 0;
   width: 100%;
@@ -321,7 +384,13 @@
   grid-template-columns: minmax(0, 1fr) 16px;
 }
 
+.agent-option {
+  grid-template-columns: 28px minmax(0, 1fr) 16px;
+  column-gap: 8px;
+}
+
 .model-profile-option > span,
+.agent-option > span,
 .task-option > span:last-child {
   min-width: 0;
   display: grid;
@@ -329,8 +398,10 @@
 }
 
 .model-profile-option strong,
+.agent-option-name,
 .task-option strong,
 .model-profile-option small,
+.agent-option-meta,
 .task-option small {
   min-width: 0;
   overflow: hidden;
@@ -339,11 +410,14 @@
 }
 
 .model-profile-option strong,
+.agent-option-name,
 .task-option strong {
   font-size: 12px;
+  font-weight: 700;
 }
 
 .model-profile-option small,
+.agent-option-meta,
 .task-option small {
   color: var(--muted);
   font: 11px/1.25 var(--mono);
@@ -484,7 +558,14 @@
 
 @media (max-width: 760px) {
   .process-stage-title {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: 34px minmax(0, 1fr);
+    gap: 0 9px;
+  }
+
+  .agent-card-menu,
+  .agent-card-summary {
+    width: 34px;
+    height: 34px;
   }
 
   .process-avatar-stack {
@@ -502,12 +583,11 @@
   }
 
   .process-card-summary {
-    grid-template-columns: 34px minmax(0, 1fr);
-    gap: 0 9px;
+    display: block;
   }
 
   .process-title-secondary {
-    margin-left: 43px;
+    margin-left: 0;
   }
 
   .process-model-name,
@@ -521,6 +601,7 @@
     display: none;
   }
 
+  .agent-menu-popover,
   .model-menu-popover,
   .task-menu-popover {
     width: min(340px, calc(100vw - 20px));

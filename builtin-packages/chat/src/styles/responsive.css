@@ -162,6 +162,12 @@
     max-width: calc(100vw - 20px);
   }
 
+  .agent-card-menu .process-menu-popover {
+    right: auto;
+    left: 0;
+    width: min(300px, calc(100vw - 20px));
+  }
+
   .message-menu-popover {
     width: min(150px, calc(100vw - 20px));
     max-width: calc(100vw - 20px);

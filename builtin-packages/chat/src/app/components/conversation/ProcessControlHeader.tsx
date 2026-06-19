@@ -4,6 +4,7 @@ import type {
   ContextState,
   ProcessAiState,
   ProcessEntry,
+  Profile,
   ThreadContext,
 } from "../../types";
 import {
@@ -47,6 +48,8 @@ export function ProcessControlHeader(props: {
   runStateClass: string;
   runStateLabel: string;
   statusText: string;
+  profiles: Profile[];
+  draftProfileId: string;
   threads: ProcessEntry[];
   homeThread: ProcessEntry | null;
   homeLabel: string;
@@ -60,6 +63,7 @@ export function ProcessControlHeader(props: {
   canFreeContext: boolean;
   compactBusy: boolean;
   onHome(): void;
+  onDraftProfileChange(profileId: string): void;
   onOpenThread(pid: string): void;
   onNewTask(): void;
   onCopyTaskId(): void;
@@ -74,20 +78,43 @@ export function ProcessControlHeader(props: {
   const providerLabel = processAiProviderLabel(props.processAiState, props.contextState);
   const reasoningLabel = processAiReasoningLabel(props.processAiState);
   const contextLabel = contextPercentLabel(props.contextState);
+  const selectedProfileId = selectedAgentProfileId(props.profiles, props.draftProfileId, props.active, props.activeThread);
 
   return (
     <>
       <div class="chat-stage-title process-stage-title">
-        <details class="process-menu process-card-menu task-switcher">
+        <details class="process-menu agent-card-menu">
           <summary
-            class="process-card-summary"
-            title={props.active?.pid ? `${props.processLabel} (${props.active.pid})` : props.processLabel}
+            class="agent-card-summary"
+            title={`Select agent: ${props.agentLabel}`}
+            aria-label={`Select agent: ${props.agentLabel}`}
             onClick={(event) => closeChatMenus((event.currentTarget as HTMLElement).closest("details") as HTMLDetailsElement | null)}
           >
             <span class="process-avatar-stack">
               <AgentAvatar seed={props.agentSeed} label={props.agentLabel} />
               <span class={`process-avatar-status ${props.runStateClass}`} title={`${props.runStateLabel}: ${props.statusText}`} aria-label={`${props.runStateLabel}: ${props.statusText}`} />
             </span>
+          </summary>
+          <div class="process-menu-popover agent-menu-popover">
+            <AgentMenu
+              profiles={props.profiles}
+              selectedProfileId={selectedProfileId}
+              onSelectProfile={(profileId) => {
+                props.onDraftProfileChange(profileId);
+                if (props.active || !profileIsSelectedById(props.profiles, props.draftProfileId, profileId)) {
+                  props.onNewTask();
+                }
+              }}
+            />
+          </div>
+        </details>
+
+        <details class="process-menu process-card-menu task-switcher">
+          <summary
+            class="process-card-summary"
+            title={props.active?.pid ? `${props.processLabel} (${props.active.pid})` : props.processLabel}
+            onClick={(event) => closeChatMenus((event.currentTarget as HTMLElement).closest("details") as HTMLDetailsElement | null)}
+          >
             <span class="process-card-copy">
               <span class="chat-stage-title-line process-title-line">
                 <h1>{props.agentLabel}</h1>
@@ -196,6 +223,45 @@ export function ProcessControlHeader(props: {
         </button>
       </div>
     </>
+  );
+}
+
+function AgentMenu(props: {
+  profiles: Profile[];
+  selectedProfileId: string;
+  onSelectProfile(profileId: string): void;
+}) {
+  return (
+    <div class="agent-menu-content" role="listbox" aria-label="Agent">
+      <span class="process-menu-kicker">Agent</span>
+      <div class="agent-option-list">
+        {props.profiles.length > 0 ? props.profiles.map((profile) => {
+          const active = isSelectedProfile(profile, props.selectedProfileId);
+          return (
+            <button
+              key={profile.id}
+              class={"agent-option" + (active ? " is-active" : "")}
+              type="button"
+              role="option"
+              aria-selected={active}
+              onClick={(event) => {
+                closeContainingChatMenu(event.currentTarget);
+                props.onSelectProfile(profile.id);
+              }}
+            >
+              <AgentAvatar seed={profileSeed(profile)} label={profile.displayName} />
+              <span>
+                <span class="agent-option-name">{profile.displayName}</span>
+                <span class="agent-option-meta">{profileMeta(profile)}</span>
+              </span>
+              {active ? <CheckIcon /> : null}
+            </button>
+          );
+        }) : (
+          <div class="process-menu-note">No agents.</div>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -427,6 +493,63 @@ function displayTaskLabel(active: ThreadContext, activeThread: ProcessEntry | nu
     return homeLabel;
   }
   return activeThread ? displayThreadLabel(activeThread) : activeTitle || "Current task";
+}
+
+function selectedAgentProfileId(
+  profiles: Profile[],
+  draftProfileId: string,
+  active: ThreadContext | null,
+  activeThread: ProcessEntry | null,
+): string {
+  if (!active) {
+    return draftProfileId;
+  }
+  if (active.isHome) {
+    return profiles.find((profile) =>
+      profile.spawnMode === "default" ||
+      profile.id === "personal" ||
+      profile.kind === "personal-agent"
+    )?.id ?? draftProfileId;
+  }
+  const activeProfile = findProfileForThread(profiles, activeThread);
+  return activeProfile?.id ?? draftProfileId;
+}
+
+function findProfileForThread(profiles: Profile[], thread: ProcessEntry | null): Profile | null {
+  if (!thread) {
+    return null;
+  }
+  const markers = [thread.username, thread.profile, thread.label].filter((value): value is string => Boolean(value));
+  return profiles.find((profile) => markers.some((marker) => profileMatches(profile, marker))) ?? null;
+}
+
+function profileMatches(profile: Profile, marker: string): boolean {
+  return profile.id === marker ||
+    profile.alias === marker ||
+    profile.runAs === marker ||
+    profile.newProcessRunAs === marker ||
+    profile.displayName === marker;
+}
+
+function profileIsSelectedById(profiles: Profile[], selectedId: string, profileId: string): boolean {
+  const profile = profiles.find((candidate) => candidate.id === profileId);
+  return profile ? isSelectedProfile(profile, selectedId) : selectedId === profileId;
+}
+
+function isSelectedProfile(profile: Profile, selectedId: string): boolean {
+  return profile.id === selectedId || profile.alias === selectedId;
+}
+
+function profileSeed(profile: Profile | undefined): string {
+  return profile?.newProcessRunAs || profile?.runAs || profile?.id || profile?.displayName || "agent";
+}
+
+function profileMeta(profile: Profile | undefined): string {
+  if (!profile) return "Available agent";
+  if (profile.spawnMode === "default" || profile.id === "personal" || profile.kind === "personal-agent") {
+    return "Personal agent";
+  }
+  return profile.runAs || profile.newProcessRunAs || profile.kind || "Agent";
 }
 
 function taskMeta(thread: ProcessEntry): string {

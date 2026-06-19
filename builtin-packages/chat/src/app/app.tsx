@@ -143,9 +143,11 @@ export function App({ backend }: { backend: ChatBackend }) {
     conversations,
     conversationProfiles,
     draftProfile,
+    draftProfileId,
     homeThread,
     loadConversations,
     loadThreads,
+    setDraftProfileId,
     threads,
     viewerUsername,
   } = useChatCatalog(backend);
@@ -907,6 +909,8 @@ export function App({ backend }: { backend: ChatBackend }) {
             runStateClass={runStateClass}
             runStateLabel={runStateLabel}
             statusText={statusText}
+            profiles={conversationProfiles}
+            draftProfileId={draftProfileId}
             threads={threads}
             homeThread={homeThread}
             homeLabel={homeProfileLabel}
@@ -937,6 +941,7 @@ export function App({ backend }: { backend: ChatBackend }) {
             onClearModelOverride={() => void clearProcessAiOverride()}
             onFreeContext={openCompactDialog}
             onOpenArchive={openArchiveView}
+            onDraftProfileChange={setDraftProfileId}
             onToggleFullscreen={() => void toggleFullscreen()}
           />
         </header>
