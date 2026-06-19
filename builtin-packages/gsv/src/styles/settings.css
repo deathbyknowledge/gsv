@@ -16,6 +16,7 @@
 
 .gsv-admin-toolbar h3,
 .gsv-admin-panel-head h4,
+.gsv-admin-subhead h5,
 .gsv-admin-profile-strip strong,
 .gsv-admin-nav strong {
   margin: 0;
@@ -29,6 +30,7 @@
 
 .gsv-admin-toolbar p,
 .gsv-admin-panel-head p,
+.gsv-admin-subhead p,
 .gsv-admin-note,
 .gsv-admin-setting p,
 .gsv-admin-profile-strip span,
@@ -68,6 +70,12 @@
   line-height: 1.25;
 }
 
+.gsv-admin-subhead h5 {
+  color: #202938;
+  font-size: 0.86rem;
+  line-height: 1.2;
+}
+
 .gsv-admin-form-grid,
 .gsv-admin-settings-grid {
   display: grid;
@@ -96,6 +104,7 @@
 .gsv-admin-setting input,
 .gsv-admin-setting select,
 .gsv-admin-setting textarea,
+.gsv-admin-profile-create input,
 .gsv-admin-inline-form input {
   width: 100%;
   min-width: 0;
@@ -109,6 +118,7 @@
 .gsv-admin-form-grid select,
 .gsv-admin-setting input,
 .gsv-admin-setting select,
+.gsv-admin-profile-create input,
 .gsv-admin-inline-form input {
   height: 2.35rem;
   padding: 0 0.65rem;
@@ -142,6 +152,95 @@
   margin-right: auto;
   color: #687384;
   font-size: 0.78rem;
+}
+
+.gsv-admin-model-profiles {
+  display: grid;
+  gap: 0.6rem;
+  min-width: 0;
+  padding: 0.75rem;
+  border: 1px solid #edf0f4;
+  border-radius: 8px;
+  background: #fbfcfd;
+}
+
+.gsv-admin-subhead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.gsv-admin-profile-create {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.gsv-admin-profile-list {
+  display: grid;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.gsv-admin-profile {
+  display: grid;
+  gap: 0.4rem;
+  min-width: 0;
+  padding: 0.65rem;
+  border: 1px solid #dce2ea;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.gsv-admin-profile.is-active {
+  border-color: #9fb7dc;
+  background: #f6f9ff;
+}
+
+.gsv-admin-profile > div:first-child {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.gsv-admin-profile strong,
+.gsv-admin-profile span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.gsv-admin-profile strong {
+  color: #202938;
+  font-size: 0.86rem;
+}
+
+.gsv-admin-profile span {
+  color: #687384;
+  font-size: 0.78rem;
+}
+
+.gsv-admin-profile .gsv-admin-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.25rem;
+  padding: 0 0.45rem;
+  border: 1px solid #b6cae8;
+  border-radius: 999px;
+  background: #eaf2ff;
+  color: #284a78;
+  font-size: 0.68rem;
+  font-weight: 750;
+}
+
+.gsv-admin-profile-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  min-width: 0;
 }
 
 .gsv-admin-list {
@@ -400,6 +499,10 @@
   }
 
   .gsv-admin-inline-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .gsv-admin-profile-create {
     grid-template-columns: minmax(0, 1fr);
   }
 

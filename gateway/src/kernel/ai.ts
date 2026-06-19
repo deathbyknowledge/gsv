@@ -47,22 +47,38 @@ import {
   DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
   DEFAULT_MAX_AUDIO_TRANSCRIPTION_BYTES,
   normalizeBase64Data,
-  transcribeAudioWithWorkersAi,
 } from "../inference/transcription";
+import {
+  DEFAULT_IMAGE_READING_MAX_TOKENS,
+  DEFAULT_IMAGE_READING_INPUT_FORMAT,
+  DEFAULT_IMAGE_READING_MODEL,
+  DEFAULT_IMAGE_READING_PROMPT,
+  DEFAULT_IMAGE_READING_TIMEOUT_MS,
+  DEFAULT_MAX_IMAGE_READING_BYTES,
+  normalizeImageReadingInputFormat,
+} from "../inference/image-reading";
 import {
   DEFAULT_AUDIO_SPEECH_ENCODING,
   DEFAULT_AUDIO_SPEECH_MODEL,
   DEFAULT_AUDIO_SPEECH_SPEAKER,
   DEFAULT_AUDIO_SPEECH_TIMEOUT_MS,
   DEFAULT_MAX_AUDIO_SPEECH_CHARS,
-  synthesizeSpeechWithWorkersAi,
 } from "../inference/speech";
+import {
+  DEFAULT_IMAGE_GENERATION_MODEL,
+  DEFAULT_OPENAI_SPEECH_MODEL,
+  DEFAULT_OPENAI_SPEECH_VOICE,
+  DEFAULT_OPENAI_TRANSCRIPTION_MODEL,
+  synthesizeSpeech,
+  transcribeAudio,
+} from "../inference/capabilities";
 import {
   normalizeSpeechText,
   normalizeSpeechTextFormat,
 } from "@humansandmachines/gsv/protocol";
 import { collectPromptSkillIndex } from "./skills";
 import { listVisibleTargets, targetToAiDevice } from "./targets";
+import { normalizeProcessAiConfigValues } from "../process/ai-config";
 
 const SYSCALL_TOOLS: Record<string, ToolDefinition> = {
   "fs.read": FS_READ_DEFINITION,
@@ -121,41 +137,48 @@ export async function handleAiTools(
 }
 
 export async function handleAiConfig(
-  _args: AiConfigArgs,
+  args: AiConfigArgs,
   ctx: KernelContext,
 ): Promise<AiConfigResult> {
   const config = ctx.config;
   const uid = ctx.identity?.process.uid ?? 0;
   const owner = resolveOwnerIdentity(ctx);
   const accountConfigUids = resolveAiConfigAccountUids(uid, owner);
+  const processOverrides = normalizeProcessAiConfigValues(args?.processOverrides ?? {});
 
   const provider =
+    resolveAiProcessConfigValue(processOverrides, "provider") ??
     resolveAiConfigValue(config, accountConfigUids, "provider") ??
     config.get("config/ai/provider") ??
     "workers-ai";
 
   const model =
+    resolveAiProcessConfigValue(processOverrides, "model") ??
     resolveAiConfigValue(config, accountConfigUids, "model") ??
     config.get("config/ai/model") ??
     "@cf/nvidia/nemotron-3-120b-a12b";
 
   const apiKey =
+    resolveAiProcessConfigValue(processOverrides, "api_key") ??
     resolveAiConfigValue(config, accountConfigUids, "api_key") ??
     config.get("config/ai/api_key") ??
     "";
 
   const reasoning =
+    resolveAiProcessConfigValue(processOverrides, "reasoning") ??
     resolveAiConfigValue(config, accountConfigUids, "reasoning") ??
     config.get("config/ai/reasoning") ??
     undefined;
 
   const maxTokens = parseInt(
+    resolveAiProcessConfigValue(processOverrides, "max_tokens") ??
     resolveAiConfigValue(config, accountConfigUids, "max_tokens") ??
     config.get("config/ai/max_tokens") ??
     "8192",
     10,
   );
   const contextWindowOverride = parsePositiveInt(
+    resolveAiProcessConfigValue(processOverrides, "context_window_tokens") ??
     resolveAiConfigValue(config, accountConfigUids, "context_window_tokens"),
   );
   const modelContextWindow = await resolveModelContextWindow(provider, model);
@@ -180,19 +203,24 @@ export async function handleAiConfig(
   const accountApprovalPolicy = resolveAccountApprovalPolicy(config, uid);
 
   const maxContextBytes = parseInt(
+    resolveAiProcessConfigValue(processOverrides, "max_context_bytes") ??
     resolveAiConfigValue(config, accountConfigUids, "max_context_bytes") ??
     config.get("config/ai/max_context_bytes") ??
     "32768",
     10,
   );
   const generationTimeoutMs = parsePositiveInt(
+    resolveAiProcessConfigValue(processOverrides, "generation/timeout_ms"),
+  ) ?? parsePositiveInt(
     resolveAiConfigValue(config, accountConfigUids, "generation/timeout_ms"),
   ) ?? parsePositiveInt(
     config.get("config/ai/generation/timeout_ms"),
   ) ?? DEFAULT_GENERATION_TIMEOUT_MS;
   const generationStreaming = normalizeGenerationStreaming(
+    resolveAiProcessConfigValue(processOverrides, "generation/streaming") ??
     config.get("config/ai/generation/streaming"),
   );
+  const media = resolveAiMediaConfig(config, accountConfigUids, apiKey, processOverrides);
   const skillIndex = await collectPromptSkillIndex(ctx).catch((error) => {
     console.warn(
       `[Prompt] failed to collect skills.d index: ${error instanceof Error ? error.message : String(error)}`,
@@ -215,6 +243,7 @@ export async function handleAiConfig(
     maxContextBytes,
     generationTimeoutMs,
     generationStreaming,
+    media,
   };
 }
 
@@ -222,7 +251,7 @@ export async function handleAiTranscriptionCreate(
   args: AiTranscriptionCreateArgs,
   ctx: KernelContext,
 ): Promise<AiTranscriptionCreateResult> {
-  const uid = ctx.identity?.process.uid ?? 0;
+  const media = resolveAiMediaConfigForContext(ctx);
   const audio = args.audio;
   if (!audio || typeof audio !== "object") {
     throw new Error("audio is required");
@@ -236,11 +265,7 @@ export async function handleAiTranscriptionCreate(
 
   const base64 = normalizeBase64Data(audio.data.trim());
   const byteLength = base64DecodedLength(base64);
-  const maxBytes = parsePositiveInt(
-    ctx.config.get(`users/${uid}/ai/transcription/max_bytes`),
-  ) ?? parsePositiveInt(
-    ctx.config.get("config/ai/transcription/max_bytes"),
-  ) ?? DEFAULT_MAX_AUDIO_TRANSCRIPTION_BYTES;
+  const maxBytes = media.transcriptionMaxBytes;
   if (byteLength <= 0) {
     throw new Error("audio.data is empty");
   }
@@ -248,14 +273,16 @@ export async function handleAiTranscriptionCreate(
     throw new Error(`audio.data exceeds transcription limit (${maxBytes} bytes)`);
   }
 
-  const model =
-    ctx.config.get(`users/${uid}/ai/transcription/model`) ??
-    ctx.config.get("config/ai/transcription/model") ??
-    DEFAULT_AUDIO_TRANSCRIPTION_MODEL;
   const mode = args.mode === "translate" ? "translate" : "transcribe";
-  const result = await transcribeAudioWithWorkersAi(ctx.env.AI, {
+  const result = await transcribeAudio({
+    workersAi: ctx.env.AI,
+  }, {
     data: base64,
-    model,
+    provider: media.transcriptionProvider,
+    apiKey: media.transcriptionApiKey,
+    model: media.transcriptionModel,
+    mimeType: audio.mimeType,
+    filename: audio.filename,
     mode,
     language: normalizeOptionalString(args.language),
     prompt: normalizeOptionalString(args.prompt),
@@ -274,7 +301,7 @@ export async function handleAiSpeechCreate(
   ctx: KernelContext,
 ): Promise<AiSpeechCreateResult> {
   const input = args && typeof args === "object" ? args : ({} as AiSpeechCreateArgs);
-  const uid = ctx.identity?.process.uid ?? 0;
+  const media = resolveAiMediaConfigForContext(ctx);
   const rawText = normalizeOptionalString(input.text);
   if (!rawText) {
     throw new Error("text is required");
@@ -293,34 +320,24 @@ export async function handleAiSpeechCreate(
     };
   }
 
-  const maxChars = parsePositiveInt(
-    ctx.config.get(`users/${uid}/ai/speech/max_chars`),
-  ) ?? parsePositiveInt(
-    ctx.config.get("config/ai/speech/max_chars"),
-  ) ?? DEFAULT_MAX_AUDIO_SPEECH_CHARS;
+  const maxChars = media.speechMaxChars;
   if (text.length > maxChars) {
     throw new Error(`text exceeds speech limit (${maxChars} chars)`);
   }
 
   const model = normalizeOptionalString(input.model)
-    ?? normalizeOptionalString(ctx.config.get(`users/${uid}/ai/speech/model`))
-    ?? normalizeOptionalString(ctx.config.get("config/ai/speech/model"))
-    ?? DEFAULT_AUDIO_SPEECH_MODEL;
+    ?? media.speechModel;
   const voice = normalizeOptionalString(input.voice)
-    ?? normalizeOptionalString(ctx.config.get(`users/${uid}/ai/speech/speaker`))
-    ?? normalizeOptionalString(ctx.config.get("config/ai/speech/speaker"))
-    ?? DEFAULT_AUDIO_SPEECH_SPEAKER;
+    ?? media.speechSpeaker;
   const encoding = normalizeOptionalString(input.encoding)
-    ?? normalizeOptionalString(ctx.config.get(`users/${uid}/ai/speech/encoding`))
-    ?? normalizeOptionalString(ctx.config.get("config/ai/speech/encoding"))
-    ?? DEFAULT_AUDIO_SPEECH_ENCODING;
-  const timeoutMs = parsePositiveInt(
-    ctx.config.get(`users/${uid}/ai/speech/timeout_ms`),
-  ) ?? parsePositiveInt(
-    ctx.config.get("config/ai/speech/timeout_ms"),
-  ) ?? DEFAULT_AUDIO_SPEECH_TIMEOUT_MS;
+    ?? media.speechEncoding;
+  const timeoutMs = media.speechTimeoutMs;
 
-  const result = await synthesizeSpeechWithWorkersAi(ctx.env.AI, {
+  const result = await synthesizeSpeech({
+    workersAi: ctx.env.AI,
+  }, {
+    provider: media.speechProvider,
+    apiKey: media.speechApiKey,
     text,
     model,
     voice,
@@ -392,6 +409,239 @@ function resolveAiConfigValue(
     }
   }
   return null;
+}
+
+function resolveAiProcessConfigValue(
+  processOverrides: Record<string, string>,
+  key: string,
+): string | null {
+  const fullKey = `config/ai/${key}`;
+  return Object.prototype.hasOwnProperty.call(processOverrides, fullKey)
+    ? processOverrides[fullKey]
+    : null;
+}
+
+function resolveAiMediaConfigForContext(ctx: KernelContext): NonNullable<AiConfigResult["media"]> {
+  const uid = ctx.identity?.process.uid ?? 0;
+  const owner = resolveOwnerIdentity(ctx);
+  const accountConfigUids = resolveAiConfigAccountUids(uid, owner);
+  const apiKey =
+    resolveAiConfigValue(ctx.config, accountConfigUids, "api_key") ??
+    ctx.config.get("config/ai/api_key") ??
+    "";
+  return resolveAiMediaConfig(ctx.config, accountConfigUids, apiKey, {});
+}
+
+function resolveAiMediaConfig(
+  config: KernelContext["config"],
+  accountUids: number[],
+  defaultApiKey: string,
+  processOverrides: Record<string, string>,
+): NonNullable<AiConfigResult["media"]> {
+  const transcriptionProvider =
+    normalizeProviderName(resolveAiProcessConfigValue(processOverrides, "transcription/provider")) ??
+    normalizeProviderName(resolveAiConfigValue(config, accountUids, "transcription/provider")) ??
+    normalizeProviderName(getExplicitConfigValue(config, "config/ai/transcription/provider")) ??
+    "workers-ai";
+  const transcriptionModel =
+    resolveAiProcessConfigValue(processOverrides, "transcription/model") ??
+    resolveAiConfigValue(config, accountUids, "transcription/model") ??
+    getExplicitConfigValue(config, "config/ai/transcription/model") ??
+    defaultTranscriptionModelForProvider(transcriptionProvider);
+  const transcriptionApiKey =
+    normalizeOptionalString(resolveAiProcessConfigValue(processOverrides, "transcription/api_key")) ??
+    normalizeOptionalString(resolveAiConfigValue(config, accountUids, "transcription/api_key")) ??
+    normalizeOptionalString(getExplicitConfigValue(config, "config/ai/transcription/api_key")) ??
+    defaultApiKey;
+  const transcriptionMaxBytes =
+    parsePositiveInt(resolveAiProcessConfigValue(processOverrides, "transcription/max_bytes")) ??
+    parsePositiveInt(resolveAiConfigValue(config, accountUids, "transcription/max_bytes")) ??
+    parsePositiveInt(config.get("config/ai/transcription/max_bytes")) ??
+    DEFAULT_MAX_AUDIO_TRANSCRIPTION_BYTES;
+  const imageReadingProvider =
+    normalizeProviderName(resolveAiProcessConfigValue(processOverrides, "image/read/provider")) ??
+    normalizeProviderName(resolveAiConfigValue(config, accountUids, "image/read/provider")) ??
+    normalizeProviderName(getExplicitConfigValue(config, "config/ai/image/read/provider")) ??
+    "workers-ai";
+  const imageReadingModel =
+    resolveAiProcessConfigValue(processOverrides, "image/read/model") ??
+    resolveAiConfigValue(config, accountUids, "image/read/model") ??
+    getExplicitConfigValue(config, "config/ai/image/read/model") ??
+    defaultImageReadingModelForProvider(imageReadingProvider);
+  const imageReadingApiKey =
+    normalizeOptionalString(resolveAiProcessConfigValue(processOverrides, "image/read/api_key")) ??
+    normalizeOptionalString(resolveAiConfigValue(config, accountUids, "image/read/api_key")) ??
+    normalizeOptionalString(getExplicitConfigValue(config, "config/ai/image/read/api_key")) ??
+    defaultApiKey;
+  const imageReadingInputFormat =
+    normalizeImageReadingInputFormat(resolveAiProcessConfigValue(processOverrides, "image/read/input_format")) ??
+    normalizeImageReadingInputFormat(resolveAiConfigValue(config, accountUids, "image/read/input_format")) ??
+    normalizeImageReadingInputFormat(config.get("config/ai/image/read/input_format")) ??
+    DEFAULT_IMAGE_READING_INPUT_FORMAT;
+  const imageReadingMaxBytes =
+    parsePositiveInt(resolveAiProcessConfigValue(processOverrides, "image/read/max_bytes")) ??
+    parsePositiveInt(resolveAiConfigValue(config, accountUids, "image/read/max_bytes")) ??
+    parsePositiveInt(config.get("config/ai/image/read/max_bytes")) ??
+    DEFAULT_MAX_IMAGE_READING_BYTES;
+  const imageReadingMaxTokens =
+    parsePositiveInt(resolveAiProcessConfigValue(processOverrides, "image/read/max_tokens")) ??
+    parsePositiveInt(resolveAiConfigValue(config, accountUids, "image/read/max_tokens")) ??
+    parsePositiveInt(config.get("config/ai/image/read/max_tokens")) ??
+    DEFAULT_IMAGE_READING_MAX_TOKENS;
+  const imageReadingTimeoutMs =
+    parsePositiveInt(resolveAiProcessConfigValue(processOverrides, "image/read/timeout_ms")) ??
+    parsePositiveInt(resolveAiConfigValue(config, accountUids, "image/read/timeout_ms")) ??
+    parsePositiveInt(config.get("config/ai/image/read/timeout_ms")) ??
+    DEFAULT_IMAGE_READING_TIMEOUT_MS;
+  const imageReadingPrompt =
+    resolveAiProcessConfigValue(processOverrides, "image/read/prompt") ??
+    resolveAiConfigValue(config, accountUids, "image/read/prompt") ??
+    config.get("config/ai/image/read/prompt") ??
+    DEFAULT_IMAGE_READING_PROMPT;
+  const imageGenerationProvider =
+    normalizeProviderName(resolveAiProcessConfigValue(processOverrides, "image/generation/provider")) ??
+    normalizeProviderName(resolveAiConfigValue(config, accountUids, "image/generation/provider")) ??
+    normalizeProviderName(getExplicitConfigValue(config, "config/ai/image/generation/provider")) ??
+    "workers-ai";
+  const imageGenerationModel =
+    resolveAiProcessConfigValue(processOverrides, "image/generation/model") ??
+    resolveAiConfigValue(config, accountUids, "image/generation/model") ??
+    getExplicitConfigValue(config, "config/ai/image/generation/model") ??
+    defaultImageGenerationModelForProvider(imageGenerationProvider);
+  const imageGenerationApiKey =
+    normalizeOptionalString(resolveAiProcessConfigValue(processOverrides, "image/generation/api_key")) ??
+    normalizeOptionalString(resolveAiConfigValue(config, accountUids, "image/generation/api_key")) ??
+    normalizeOptionalString(getExplicitConfigValue(config, "config/ai/image/generation/api_key")) ??
+    defaultApiKey;
+  const speechProvider =
+    normalizeProviderName(resolveAiProcessConfigValue(processOverrides, "speech/provider")) ??
+    normalizeProviderName(resolveAiConfigValue(config, accountUids, "speech/provider")) ??
+    normalizeProviderName(getExplicitConfigValue(config, "config/ai/speech/provider")) ??
+    "workers-ai";
+  const speechModel =
+    resolveAiProcessConfigValue(processOverrides, "speech/model") ??
+    resolveAiConfigValue(config, accountUids, "speech/model") ??
+    getExplicitConfigValue(config, "config/ai/speech/model") ??
+    defaultSpeechModelForProvider(speechProvider);
+  const speechApiKey =
+    normalizeOptionalString(resolveAiProcessConfigValue(processOverrides, "speech/api_key")) ??
+    normalizeOptionalString(resolveAiConfigValue(config, accountUids, "speech/api_key")) ??
+    normalizeOptionalString(getExplicitConfigValue(config, "config/ai/speech/api_key")) ??
+    defaultApiKey;
+  const speechSpeaker =
+    resolveAiProcessConfigValue(processOverrides, "speech/speaker") ??
+    resolveAiConfigValue(config, accountUids, "speech/speaker") ??
+    getExplicitConfigValue(config, "config/ai/speech/speaker") ??
+    defaultSpeechSpeakerForProvider(speechProvider);
+  const speechEncoding =
+    resolveAiProcessConfigValue(processOverrides, "speech/encoding") ??
+    resolveAiConfigValue(config, accountUids, "speech/encoding") ??
+    config.get("config/ai/speech/encoding") ??
+    DEFAULT_AUDIO_SPEECH_ENCODING;
+  const speechMaxChars =
+    parsePositiveInt(resolveAiProcessConfigValue(processOverrides, "speech/max_chars")) ??
+    parsePositiveInt(resolveAiConfigValue(config, accountUids, "speech/max_chars")) ??
+    parsePositiveInt(config.get("config/ai/speech/max_chars")) ??
+    DEFAULT_MAX_AUDIO_SPEECH_CHARS;
+  const speechTimeoutMs =
+    parsePositiveInt(resolveAiProcessConfigValue(processOverrides, "speech/timeout_ms")) ??
+    parsePositiveInt(resolveAiConfigValue(config, accountUids, "speech/timeout_ms")) ??
+    parsePositiveInt(config.get("config/ai/speech/timeout_ms")) ??
+    DEFAULT_AUDIO_SPEECH_TIMEOUT_MS;
+
+  return {
+    transcriptionProvider,
+    transcriptionModel,
+    transcriptionApiKey,
+    transcriptionMaxBytes,
+    imageReadingProvider,
+    imageReadingModel,
+    imageReadingApiKey,
+    imageReadingInputFormat,
+    imageReadingMaxBytes,
+    imageReadingMaxTokens,
+    imageReadingTimeoutMs,
+    imageReadingPrompt,
+    imageGenerationProvider,
+    imageGenerationModel,
+    imageGenerationApiKey,
+    speechProvider,
+    speechModel,
+    speechApiKey,
+    speechSpeaker,
+    speechEncoding,
+    speechMaxChars,
+    speechTimeoutMs,
+  };
+}
+
+function getExplicitConfigValue(config: KernelContext["config"], key: string): string | null {
+  const withExplicit = config as KernelContext["config"] & {
+    getExplicit?: (key: string) => string | null;
+  };
+  return typeof withExplicit.getExplicit === "function"
+    ? withExplicit.getExplicit(key)
+    : config.get(key);
+}
+
+function normalizeProviderName(value: string | null | undefined): string | null {
+  const normalized = normalizeOptionalString(value)?.toLowerCase();
+  return normalized ?? null;
+}
+
+function defaultImageReadingModelForProvider(provider: string): string {
+  if (isWorkersAiProvider(provider)) {
+    return DEFAULT_IMAGE_READING_MODEL;
+  }
+  if (isOpenAiConfigProvider(provider)) {
+    return "gpt-4o";
+  }
+  return "";
+}
+
+function defaultImageGenerationModelForProvider(provider: string): string {
+  if (isWorkersAiProvider(provider)) {
+    return DEFAULT_IMAGE_GENERATION_MODEL;
+  }
+  if (isOpenAiConfigProvider(provider)) {
+    return "gpt-image-1.5";
+  }
+  return "";
+}
+
+function defaultTranscriptionModelForProvider(provider: string): string {
+  if (isWorkersAiProvider(provider)) {
+    return DEFAULT_AUDIO_TRANSCRIPTION_MODEL;
+  }
+  if (isOpenAiConfigProvider(provider)) {
+    return DEFAULT_OPENAI_TRANSCRIPTION_MODEL;
+  }
+  return "";
+}
+
+function defaultSpeechModelForProvider(provider: string): string {
+  if (isWorkersAiProvider(provider)) {
+    return DEFAULT_AUDIO_SPEECH_MODEL;
+  }
+  if (isOpenAiConfigProvider(provider)) {
+    return DEFAULT_OPENAI_SPEECH_MODEL;
+  }
+  return "";
+}
+
+function defaultSpeechSpeakerForProvider(provider: string): string {
+  if (isWorkersAiProvider(provider)) {
+    return DEFAULT_AUDIO_SPEECH_SPEAKER;
+  }
+  if (isOpenAiConfigProvider(provider)) {
+    return DEFAULT_OPENAI_SPEECH_VOICE;
+  }
+  return "";
+}
+
+function isOpenAiConfigProvider(provider: string): boolean {
+  const normalized = provider.trim().toLowerCase();
+  return normalized === "openai";
 }
 
 /**

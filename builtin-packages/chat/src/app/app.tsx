@@ -17,17 +17,10 @@ import {
   CompactDialog,
   Composer,
   ConversationBar,
-  ContextMeter,
   MobileProcessNav,
+  ProcessControlHeader,
   Transcript,
 } from "./components";
-import { AgentAvatar } from "./components/navigation/AgentAvatar";
-import {
-  ArchiveIcon,
-  CompactIcon,
-  MoreIcon,
-  TerminalIcon,
-} from "./icons";
 import {
   cleanupAttachmentPreview,
   revokeAttachmentPreview,
@@ -36,6 +29,7 @@ import {
 import { useArchive } from "./hooks/useArchive";
 import { useChatCatalog } from "./hooks/useChatCatalog";
 import { useMediaSources } from "./hooks/useMediaSources";
+import { useProcessAiConfig } from "./hooks/useProcessAiConfig";
 import { useProcessCatalogSignals } from "./hooks/useProcessCatalogSignals";
 import { useProcessSignals } from "./hooks/useProcessSignals";
 import { useTargetProcessEvent } from "./hooks/useTargetProcessEvent";
@@ -47,7 +41,6 @@ import {
   asString,
   activeMeta,
   closeChatMenus,
-  closeContainingChatMenu,
   copyTextToClipboard,
   deriveThreadLabel,
   dropEmptyPlaceholder,
@@ -323,6 +316,16 @@ export function App({ backend }: { backend: ChatBackend }) {
     loadMediaSource,
     retryMediaSource,
   } = useMediaSources({ backend, activeRef, mountedRef, appendSystem });
+  const {
+    processAiState,
+    processAiLoading,
+    processAiPendingAction,
+    processAiError,
+    reloadProcessAiConfig,
+    applyProcessAiProfile,
+    clearProcessAiOverride,
+    setProcessAiReasoning,
+  } = useProcessAiConfig({ backend, active });
 
   useEffect(() => {
     return () => {
@@ -531,6 +534,7 @@ export function App({ backend }: { backend: ChatBackend }) {
     loadArchiveSegments,
     loadConversations,
     loadHistory,
+    onAiConfigChanged: () => void reloadProcessAiConfig(),
     onContextMessageId: updateNewestHistoryMessageId,
     prepareForLiveTranscriptActivity,
     setContextState,
@@ -845,13 +849,21 @@ export function App({ backend }: { backend: ChatBackend }) {
     }
   }
 
-  function toggleArchiveView(): void {
-    if (stageView === "archive") {
-      setStageView("chat");
-      return;
-    }
+  function openArchiveView(): void {
     setStageView("archive");
     void loadArchiveSegments(true);
+  }
+
+  async function toggleFullscreen(): Promise<void> {
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+        return;
+      }
+      await document.documentElement.requestFullscreen();
+    } catch (error) {
+      appendSystem("fullscreen failed: " + formatError(error));
+    }
   }
 
   async function copyText(label: string, text: string): Promise<void> {
@@ -919,51 +931,48 @@ export function App({ backend }: { backend: ChatBackend }) {
             onNew={resetToNewThread}
             onOpenThread={(pid) => void openThread(pid)}
           />
-          <div class="chat-stage-title">
-            <AgentAvatar seed={stageAgentSeed} label={stageAgentLabel} />
-            <div class="chat-stage-title-main">
-              <div class="chat-stage-title-line">
-                <h1>{stageAgentLabel}</h1>
-                <span class={"stage-run-state " + runStateClass} title={`${runStateLabel}: ${statusText}`} aria-label={`${runStateLabel}: ${statusText}`}>
-                  {runStateClass !== "is-ready" ? <span>{runStateLabel}</span> : null}
-                </span>
-              </div>
-              <p class="stage-process-label">{stageProcessLabel}</p>
-            </div>
-            <ConversationBar
-              active={active}
-              activeConversationId={activeConversationId}
-              conversations={conversations}
-              onSelect={(conversation) => void switchConversation(conversation)}
-            />
-          </div>
-          <div class="chat-stage-actions">
-            <ContextMeter state={active ? contextState : null} />
-            <details class="process-menu">
-              <summary class="icon-button" title="Process actions" aria-label="Process actions" onClick={(event) => {
-                closeChatMenus((event.currentTarget as HTMLElement).closest("details") as HTMLDetailsElement | null);
-              }}>
-                <MoreIcon />
-              </summary>
-              <div class="process-menu-popover">
-                <button type="button" class="menu-action" disabled={!active} onClick={(event) => { closeContainingChatMenu(event.currentTarget); toggleArchiveView(); }}>
-                  <ArchiveIcon />
-                  <span>{stageView === "archive" ? "Return to chat" : archive.segments.length > 0 ? `Open archive (${archive.segments.length})` : "Open archive"}</span>
-                </button>
-                <button type="button" class="menu-action" disabled={!active} onClick={(event) => {
-                  closeContainingChatMenu(event.currentTarget);
-                  if (active) void copyText("process id", active.pid);
-                }}>
-                  <TerminalIcon />
-                  <span>Copy process ID</span>
-                </button>
-                <button type="button" class="menu-action" disabled={!canActOnConversation || compactBusy} onClick={(event) => { closeContainingChatMenu(event.currentTarget); openCompactDialog(); }}>
-                  <CompactIcon />
-                  <span>{compactBusy ? "Compacting..." : "Compact"}</span>
-                </button>
-              </div>
-            </details>
-          </div>
+          <ProcessControlHeader
+            active={active}
+            activeThread={activeThread}
+            activeTitle={activeTitle}
+            agentLabel={stageAgentLabel}
+            agentSeed={stageAgentSeed}
+            processLabel={stageProcessLabel}
+            runStateClass={runStateClass}
+            runStateLabel={runStateLabel}
+            statusText={statusText}
+            threads={threads}
+            homeThread={homeThread}
+            homeLabel={homeProfileLabel}
+            contextState={active ? contextState : null}
+            archiveCount={archive.segments.length}
+            conversationControls={(
+              <ConversationBar
+                active={active}
+                activeConversationId={activeConversationId}
+                conversations={conversations}
+                onSelect={(conversation) => void switchConversation(conversation)}
+              />
+            )}
+            processAiState={processAiState}
+            processAiLoading={processAiLoading}
+            processAiPendingAction={processAiPendingAction}
+            processAiError={processAiError}
+            canFreeContext={canActOnConversation}
+            compactBusy={compactBusy}
+            onHome={() => void openHome()}
+            onOpenThread={(pid) => void openThread(pid)}
+            onNewTask={resetToNewThread}
+            onCopyTaskId={() => {
+              if (active) void copyText("task id", active.pid);
+            }}
+            onSetReasoning={(reasoning) => void setProcessAiReasoning(reasoning)}
+            onApplyProfile={(profileId) => void applyProcessAiProfile(profileId)}
+            onClearModelOverride={() => void clearProcessAiOverride()}
+            onFreeContext={openCompactDialog}
+            onOpenArchive={openArchiveView}
+            onToggleFullscreen={() => void toggleFullscreen()}
+          />
         </header>
 
         <div class={"chat-notice-row" + (!notice ? " is-empty" : "")}>

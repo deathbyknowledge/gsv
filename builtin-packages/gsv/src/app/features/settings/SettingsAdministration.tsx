@@ -4,6 +4,7 @@ import {
   AI_FIELDS,
   buildUserAiOverrideKey,
 } from "./config-schema";
+import { ModelProfiles } from "./ModelProfiles";
 import {
   buildDrafts,
   isWideField,
@@ -68,7 +69,7 @@ export function SettingsView({
     <section class="gsv-admin-settings">
       <aside class="gsv-admin-nav" aria-label="Settings sections">
         {([
-          ["ai", "AI", "Provider, model, keys, and personal overrides"],
+          ["ai", "AI", "Chat, media, speech, and personal overrides"],
           ["runtime", "Runtime", "Shell defaults and server settings"],
           ["advanced", "Advanced", "Raw config for recovery and unmodeled keys"],
         ] as Array<[SettingsPanelId, string, string]>).map(([id, label, description]) => (
@@ -82,7 +83,7 @@ export function SettingsView({
       {panel === "ai" ? (
         <SettingsForm
           title="AI defaults"
-          description="Root edits system defaults. Non-root users save personal AI overrides."
+          description="Root edits system defaults. Non-root users save personal AI stack overrides."
           fields={AI_FIELDS}
           values={state.configValues}
           viewer={state.viewer}
@@ -90,9 +91,11 @@ export function SettingsView({
           initialDrafts={initialDrafts}
           pendingAction={pendingAction}
           overrideAiForUser={!state.viewer.canEditSystemConfig}
+          showModelProfiles={true}
           onChange={updateDraft}
           onReset={resetKeys}
           onSave={saveEntries}
+          onClientError={onClientError}
         />
       ) : panel === "runtime" ? (
         <SettingsForm
@@ -105,9 +108,11 @@ export function SettingsView({
           initialDrafts={initialDrafts}
           pendingAction={pendingAction}
           overrideAiForUser={false}
+          showModelProfiles={false}
           onChange={updateDraft}
           onReset={resetKeys}
           onSave={saveEntries}
+          onClientError={onClientError}
         />
       ) : (
         <AdvancedConfig
@@ -132,9 +137,11 @@ function SettingsForm({
   initialDrafts,
   pendingAction,
   overrideAiForUser,
+  showModelProfiles,
   onChange,
   onReset,
   onSave,
+  onClientError,
 }: {
   title: string;
   description: string;
@@ -145,9 +152,11 @@ function SettingsForm({
   initialDrafts: Record<string, string>;
   pendingAction: string | null;
   overrideAiForUser: boolean;
+  showModelProfiles: boolean;
   onChange: (key: string, value: string) => void;
   onReset: (keys: string[]) => void;
   onSave: (actionId: string, entries: SaveConfigEntry[]) => Promise<void>;
+  onClientError: (message: string | null) => void;
 }) {
   const rows = fields.map((field) => {
     const editableKey = overrideAiForUser ? buildUserAiOverrideKey(viewer.uid, field.key) : field.key;
@@ -167,6 +176,8 @@ function SettingsForm({
   const editableRows = rows.filter((row) => !row.disabled && row.field.kind !== "readonly");
   const dirty = editableRows.some((row) => row.dirty);
   const actionId = `save:${title}`;
+  const draftValues = Object.fromEntries(rows.map((row) => [row.field.key, row.value]));
+  const activeValues = Object.fromEntries(rows.map((row) => [row.field.key, row.baseline]));
 
   return (
     <section class="gsv-admin-panel">
@@ -176,6 +187,18 @@ function SettingsForm({
           <p>{description}</p>
         </div>
       </header>
+      {showModelProfiles ? (
+        <ModelProfiles
+          viewer={viewer}
+          values={values}
+          draftValues={draftValues}
+          activeValues={activeValues}
+          overrideAiForUser={overrideAiForUser}
+          pendingAction={pendingAction}
+          onSave={onSave}
+          onClientError={onClientError}
+        />
+      ) : null}
       <div class="gsv-admin-settings-grid">
         {rows.map((row) => (
           <SettingBlock key={row.editableKey} row={row} onChange={onChange} />
@@ -264,8 +287,10 @@ type SettingRow = {
   field: SettingField;
   editableKey: string;
   value: string;
+  baseline: string;
   disabled: boolean;
   note: string | null;
+  dirty: boolean;
 };
 
 function SettingBlock({ row, onChange }: { row: SettingRow; onChange: (key: string, value: string) => void }) {

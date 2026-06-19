@@ -12,6 +12,8 @@ import type { ArgsOf, ResultOf } from "../syscalls";
 import type { ScheduleRecord, ScheduleRunHistoryEntry } from "../syscalls/scheduler";
 
 export type ProcessViewCall =
+  | "proc.ai.config.get"
+  | "proc.ai.config.set"
   | "proc.conversation.get"
   | "proc.conversation.generation.manifest"
   | "proc.conversation.generations"

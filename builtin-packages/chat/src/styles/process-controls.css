@@ -1,0 +1,480 @@
+.process-stage-title {
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 0 11px;
+}
+
+.process-stage-title > .process-avatar-stack {
+  grid-row: 1 / span 2;
+}
+
+.process-avatar-stack {
+  position: relative;
+  width: 42px;
+  height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.process-avatar-stack .agent-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+}
+
+.process-avatar-status {
+  position: absolute;
+  right: -1px;
+  top: 2px;
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--panel-strong);
+  border-radius: 999px;
+  background: var(--green);
+}
+
+.process-avatar-status.is-running {
+  background: var(--blue);
+}
+
+.process-avatar-status.is-waiting {
+  background: var(--yellow);
+}
+
+.process-avatar-status.is-error {
+  background: var(--red);
+}
+
+.process-title-main {
+  gap: 3px;
+}
+
+.process-title-line h1 {
+  max-width: 100%;
+  font-size: 16px;
+}
+
+.process-model-row,
+.process-task-row {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.process-inline-menu {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.process-inline-summary {
+  min-width: 0;
+  max-width: 100%;
+  height: 22px;
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.process-inline-summary::-webkit-details-marker,
+.context-menu-trigger::-webkit-details-marker {
+  display: none;
+}
+
+.process-inline-summary svg {
+  flex: 0 0 auto;
+  width: 13px;
+  height: 13px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.process-model-name,
+.process-task-summary span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.process-model-name {
+  max-width: min(420px, 42vw);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.process-model-reasoning {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font: 11px/1 var(--mono);
+  text-transform: uppercase;
+}
+
+.process-model-provider {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--soft);
+  font: 11px/1 var(--mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.process-task-summary {
+  color: var(--green);
+  font: italic 12px/1.2 var(--ui);
+}
+
+.process-task-summary span {
+  max-width: min(460px, 46vw);
+}
+
+.process-branch-controls {
+  min-width: 0;
+  margin-top: 1px;
+}
+
+.process-branch-controls .conversation-bar {
+  margin-top: 0;
+}
+
+.process-branch-controls .conversation-chip,
+.process-branch-controls .conversation-overflow {
+  height: 24px;
+  border-radius: 7px;
+  font-size: 11px;
+}
+
+.model-menu-popover,
+.task-menu-popover {
+  right: auto;
+  left: 0;
+}
+
+.model-menu-popover {
+  width: min(360px, 72vw);
+}
+
+.task-menu-popover {
+  width: min(342px, 72vw);
+}
+
+.context-menu-popover {
+  width: 236px;
+}
+
+.model-menu-content,
+.task-menu-content {
+  display: grid;
+  gap: 8px;
+}
+
+.model-menu-section {
+  display: grid;
+  gap: 6px;
+}
+
+.process-menu-kicker {
+  color: var(--soft);
+  font: 800 10px/1 var(--mono);
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.model-reasoning-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.model-reasoning-option,
+.model-profile-option,
+.task-option,
+.model-menu-link {
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.model-reasoning-option {
+  min-width: 0;
+  height: 31px;
+  padding: 0 7px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  font: 12px/1 var(--mono);
+}
+
+.model-reasoning-option:hover:not(:disabled),
+.model-profile-option:hover:not(:disabled),
+.task-option:hover:not(:disabled),
+.model-menu-link:hover:not(:disabled) {
+  background: var(--panel-soft);
+}
+
+.model-reasoning-option.is-active,
+.model-profile-option.is-active,
+.task-option.is-active {
+  background: var(--blue-soft);
+}
+
+.model-reasoning-option:disabled,
+.model-profile-option:disabled,
+.task-option:disabled,
+.model-menu-link:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.model-reasoning-option svg,
+.model-profile-option svg {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.model-profile-list,
+.task-option-list {
+  max-height: 238px;
+  display: grid;
+  gap: 3px;
+  overflow: auto;
+}
+
+.model-profile-option,
+.task-option {
+  min-width: 0;
+  width: 100%;
+  padding: 8px;
+  display: grid;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+}
+
+.model-profile-option {
+  grid-template-columns: minmax(0, 1fr) 16px;
+}
+
+.model-profile-option > span,
+.task-option > span:last-child {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.model-profile-option strong,
+.task-option strong,
+.model-profile-option small,
+.task-option small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-profile-option strong,
+.task-option strong {
+  font-size: 12px;
+}
+
+.model-profile-option small,
+.task-option small {
+  color: var(--muted);
+  font: 11px/1.25 var(--mono);
+}
+
+.model-menu-link {
+  justify-self: start;
+  padding: 5px 7px;
+  color: var(--blue);
+  font: 800 11px/1 var(--mono);
+  text-transform: uppercase;
+}
+
+.process-menu-note,
+.process-menu-error {
+  padding: 7px 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.process-menu-error {
+  color: var(--red);
+}
+
+.task-menu-head {
+  min-width: 0;
+  padding: 4px 4px 1px;
+  display: grid;
+  gap: 3px;
+}
+
+.task-menu-head small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font: 11px/1 var(--mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-option {
+  grid-template-columns: 12px minmax(0, 1fr);
+}
+
+.task-status-dot {
+  width: 9px;
+  height: 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--green);
+}
+
+.task-status-dot.is-running {
+  background: var(--blue);
+}
+
+.task-status-dot.is-queued {
+  background: var(--yellow);
+}
+
+.task-status-dot.is-muted {
+  background: var(--soft);
+}
+
+.context-menu-trigger {
+  height: 34px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 0 8px;
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.context-menu-trigger:hover {
+  color: var(--blue);
+  background: rgba(255, 255, 255, 0.68);
+  border-color: var(--line);
+}
+
+.context-menu-trigger svg,
+.context-popover-head svg {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.context-trigger-copy {
+  display: grid;
+  gap: 1px;
+  line-height: 1;
+}
+
+.context-trigger-copy span {
+  color: var(--soft);
+  font: 800 9px/1 var(--mono);
+  text-transform: uppercase;
+}
+
+.context-trigger-copy strong {
+  color: var(--text);
+  font: 800 11px/1 var(--mono);
+}
+
+.context-popover-head {
+  padding: 5px 6px 3px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font: 800 12px/1 var(--mono);
+  text-transform: uppercase;
+}
+
+.context-popover-head strong {
+  margin-left: auto;
+}
+
+.context-menu-popover .context-meter {
+  padding: 5px 6px 7px;
+}
+
+.context-menu-popover .context-track {
+  width: 132px;
+}
+
+.fullscreen-action svg {
+  width: 18px;
+  height: 18px;
+}
+
+@media (max-width: 760px) {
+  .process-stage-title {
+    grid-template-columns: 34px minmax(0, 1fr);
+    gap: 0 9px;
+  }
+
+  .process-avatar-stack {
+    width: 34px;
+    height: 34px;
+  }
+
+  .process-avatar-stack .agent-avatar {
+    width: 34px;
+    height: 34px;
+  }
+
+  .process-title-line h1 {
+    font-size: 15px;
+  }
+
+  .process-model-name,
+  .process-task-summary span {
+    max-width: 44vw;
+  }
+
+  .process-model-provider,
+  .context-trigger-copy,
+  .fullscreen-action {
+    display: none;
+  }
+
+  .model-menu-popover,
+  .task-menu-popover {
+    width: min(340px, calc(100vw - 20px));
+  }
+
+  .context-menu-popover {
+    width: min(236px, calc(100vw - 20px));
+  }
+
+  .process-branch-controls .conversation-chip,
+  .process-branch-controls .conversation-overflow {
+    height: 32px;
+  }
+}

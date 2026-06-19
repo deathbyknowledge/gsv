@@ -33,7 +33,9 @@ export type AiSkillIndexEntry = {
   };
 };
 
-export type AiConfigArgs = Record<string, never>;
+export type AiConfigArgs = {
+  processOverrides?: Record<string, string>;
+};
 
 export type ContextFile = {
   name: string;
@@ -56,6 +58,30 @@ export type AiConfigResult = {
   maxContextBytes: number;
   generationTimeoutMs: number;
   generationStreaming?: "auto" | "off";
+  media?: {
+    transcriptionProvider: string;
+    transcriptionModel: string;
+    transcriptionApiKey: string;
+    transcriptionMaxBytes: number;
+    imageReadingProvider: string;
+    imageReadingModel: string;
+    imageReadingApiKey: string;
+    imageReadingInputFormat: "auto" | "chat" | "image";
+    imageReadingMaxBytes: number;
+    imageReadingMaxTokens: number;
+    imageReadingTimeoutMs: number;
+    imageReadingPrompt: string;
+    imageGenerationProvider: string;
+    imageGenerationModel: string;
+    imageGenerationApiKey: string;
+    speechProvider: string;
+    speechModel: string;
+    speechApiKey: string;
+    speechSpeaker: string;
+    speechEncoding: string;
+    speechMaxChars: number;
+    speechTimeoutMs: number;
+  };
 };
 
 export type AiTranscriptionCreateArgs = {

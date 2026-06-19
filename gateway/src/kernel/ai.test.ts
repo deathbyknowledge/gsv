@@ -7,6 +7,11 @@ import {
   DEFAULT_AUDIO_SPEECH_MODEL,
   DEFAULT_AUDIO_SPEECH_SPEAKER,
 } from "../inference/speech";
+import {
+  DEFAULT_IMAGE_READING_INPUT_FORMAT,
+  DEFAULT_IMAGE_READING_MODEL,
+  DEFAULT_IMAGE_READING_PROMPT,
+} from "../inference/image-reading";
 
 function makeDevice(partial: Partial<DeviceRecord> & { device_id: string }): DeviceRecord {
   const now = 1_800_000_000_000;
@@ -210,6 +215,7 @@ describe("handleAiConfig", () => {
       },
       config: {
         get: vi.fn((key: string) => config[key] ?? null),
+        getExplicit: vi.fn((key: string) => config[key] ?? null),
         list: vi.fn((prefix: string) => Object.entries(config)
           .filter(([key]) => key.startsWith(`${prefix.replace(/\/$/, "")}/`))
           .map(([key, value]) => ({ key, value }))),
@@ -296,6 +302,170 @@ describe("handleAiConfig", () => {
     expect(result.model).toBe("agent-model");
     expect(result.apiKey).toBe("agent-key");
   });
+
+  it("prefers process AI config overrides over account and system config", async () => {
+    const result = await handleAiConfig({
+      processOverrides: {
+        "config/ai/provider": "openai",
+        "config/ai/model": "gpt-4.1-mini",
+        "config/ai/api_key": "process-chat-key",
+        "config/ai/reasoning": "low",
+        "config/ai/max_tokens": "2048",
+        "config/ai/context_window_tokens": "64000",
+        "config/ai/max_context_bytes": "12000",
+        "config/ai/generation/timeout_ms": "45000",
+        "config/ai/image/read/provider": "openai",
+        "config/ai/image/read/model": "gpt-4o-mini",
+        "config/ai/image/read/api_key": "process-image-key",
+        "config/ai/image/read/input_format": "chat",
+        "config/ai/image/read/max_tokens": "777",
+        "config/ai/image/generation/provider": "openai",
+        "config/ai/image/generation/model": "gpt-image-1",
+        "config/ai/transcription/provider": "openai",
+        "config/ai/transcription/model": "gpt-4o-transcribe",
+        "config/ai/speech/provider": "openai",
+        "config/ai/speech/model": "gpt-4o-mini-tts",
+        "config/ai/speech/speaker": "alloy",
+      },
+    }, makeAiConfigContext({
+      "users/1000/ai/provider": "owner-provider",
+      "users/1000/ai/model": "owner-model",
+      "users/1000/ai/api_key": "owner-key",
+      "config/ai/provider": "system-provider",
+      "config/ai/model": "system-model",
+      "config/ai/api_key": "system-key",
+    }));
+
+    expect(result.provider).toBe("openai");
+    expect(result.model).toBe("gpt-4.1-mini");
+    expect(result.apiKey).toBe("process-chat-key");
+    expect(result.reasoning).toBe("low");
+    expect(result.maxTokens).toBe(2048);
+    expect(result.contextWindowTokens).toBe(64000);
+    expect(result.contextWindowSource).toBe("config");
+    expect(result.maxContextBytes).toBe(12000);
+    expect(result.generationTimeoutMs).toBe(45000);
+    expect(result.media).toMatchObject({
+      imageReadingProvider: "openai",
+      imageReadingModel: "gpt-4o-mini",
+      imageReadingApiKey: "process-image-key",
+      imageReadingInputFormat: "chat",
+      imageReadingMaxTokens: 777,
+      imageGenerationProvider: "openai",
+      imageGenerationModel: "gpt-image-1",
+      imageGenerationApiKey: "process-chat-key",
+      transcriptionProvider: "openai",
+      transcriptionModel: "gpt-4o-transcribe",
+      transcriptionApiKey: "process-chat-key",
+      speechProvider: "openai",
+      speechModel: "gpt-4o-mini-tts",
+      speechApiKey: "process-chat-key",
+      speechSpeaker: "alloy",
+    });
+  });
+
+  it("resolves the media model stack with owner fallback", async () => {
+    const result = await handleAiConfig({}, makeAiConfigContext({
+      "users/1000/ai/transcription/model": "@cf/openai/whisper-tiny-en",
+      "users/1000/ai/transcription/api_key": "owner-transcription-key",
+      "users/1000/ai/api_key": "owner-chat-key",
+      "users/1000/ai/image/read/model": "@cf/owner/vision",
+      "users/1000/ai/image/read/api_key": "owner-reader-key",
+      "users/1000/ai/image/read/input_format": "chat",
+      "users/1000/ai/image/read/max_bytes": "12345",
+      "users/1000/ai/image/read/max_tokens": "321",
+      "users/1000/ai/image/read/timeout_ms": "9876",
+      "users/1000/ai/image/read/prompt": "Read the screenshot.",
+      "users/1000/ai/image/generation/provider": "openai",
+      "users/1000/ai/image/generation/model": "@cf/owner/image",
+      "users/1000/ai/image/generation/api_key": "owner-image-key",
+      "users/1000/ai/speech/provider": "openai",
+      "users/1000/ai/speech/model": "@cf/owner/speech",
+      "users/1000/ai/speech/api_key": "owner-speech-key",
+      "users/2000/ai/image/read/model": "@cf/agent/vision",
+    }, {
+      uid: 2000,
+      ownerUid: 1000,
+      processId: "task-1",
+    }));
+
+    expect(result.media).toMatchObject({
+      transcriptionProvider: "workers-ai",
+      transcriptionModel: "@cf/openai/whisper-tiny-en",
+      transcriptionApiKey: "owner-transcription-key",
+      imageReadingProvider: "workers-ai",
+      imageReadingModel: "@cf/agent/vision",
+      imageReadingApiKey: "owner-reader-key",
+      imageReadingInputFormat: "chat",
+      imageReadingMaxBytes: 12345,
+      imageReadingMaxTokens: 321,
+      imageReadingTimeoutMs: 9876,
+      imageReadingPrompt: "Read the screenshot.",
+      imageGenerationProvider: "openai",
+      imageGenerationModel: "@cf/owner/image",
+      imageGenerationApiKey: "owner-image-key",
+      speechProvider: "openai",
+      speechModel: "@cf/owner/speech",
+      speechApiKey: "owner-speech-key",
+    });
+  });
+
+  it("falls back the image reader API key to the resolved chat API key", async () => {
+    const result = await handleAiConfig({}, makeAiConfigContext({
+      "users/1000/ai/api_key": "owner-chat-key",
+      "users/1000/ai/image/read/provider": "openai",
+      "users/1000/ai/image/read/model": "gpt-4o",
+    }, {
+      uid: 2000,
+      ownerUid: 1000,
+      processId: "task-1",
+    }));
+
+    expect(result.apiKey).toBe("owner-chat-key");
+    expect(result.media?.imageReadingApiKey).toBe("owner-chat-key");
+  });
+
+  it("includes default media stack values", async () => {
+    const result = await handleAiConfig({}, makeAiConfigContext());
+
+    expect(result.media?.imageReadingProvider).toBe("workers-ai");
+    expect(result.media?.imageReadingModel).toBe(DEFAULT_IMAGE_READING_MODEL);
+    expect(result.media?.imageReadingApiKey).toBe("");
+    expect(result.media?.imageReadingInputFormat).toBe(DEFAULT_IMAGE_READING_INPUT_FORMAT);
+    expect(result.media?.imageReadingPrompt).toBe(DEFAULT_IMAGE_READING_PROMPT);
+    expect(result.media?.speechProvider).toBe("workers-ai");
+    expect(result.media?.speechModel).toBe(DEFAULT_AUDIO_SPEECH_MODEL);
+    expect(result.media?.speechApiKey).toBe("");
+    expect(result.media?.transcriptionProvider).toBe("workers-ai");
+    expect(result.media?.transcriptionModel).toBe(DEFAULT_AUDIO_TRANSCRIPTION_MODEL);
+    expect(result.media?.transcriptionApiKey).toBe("");
+  });
+
+  it("uses provider-specific media defaults when only the provider changes", async () => {
+    const result = await handleAiConfig({}, makeAiConfigContext({
+      "config/ai/api_key": "system-chat-key",
+      "config/ai/transcription/provider": "openai",
+      "config/ai/speech/provider": "openai",
+      "config/ai/image/read/provider": "openai",
+      "config/ai/image/generation/provider": "openai",
+    }));
+
+    expect(result.media).toMatchObject({
+      transcriptionProvider: "openai",
+      transcriptionModel: "gpt-4o-transcribe",
+      transcriptionApiKey: "system-chat-key",
+      imageReadingProvider: "openai",
+      imageReadingModel: "gpt-4o",
+      imageReadingApiKey: "system-chat-key",
+      imageGenerationProvider: "openai",
+      imageGenerationModel: "gpt-image-1.5",
+      imageGenerationApiKey: "system-chat-key",
+      speechProvider: "openai",
+      speechModel: "gpt-4o-mini-tts",
+      speechApiKey: "system-chat-key",
+      speechSpeaker: "alloy",
+    });
+  });
 });
 
 describe("handleAiTranscriptionCreate", () => {
@@ -319,6 +489,7 @@ describe("handleAiTranscriptionCreate", () => {
       },
       config: {
         get: vi.fn((key: string) => config[key] ?? null),
+        getExplicit: vi.fn((key: string) => config[key] ?? null),
       },
       env: {
         AI: {
@@ -407,6 +578,7 @@ describe("handleAiSpeechCreate", () => {
       },
       config: {
         get: vi.fn((key: string) => config[key] ?? null),
+        getExplicit: vi.fn((key: string) => config[key] ?? null),
       },
       env: {
         AI: {

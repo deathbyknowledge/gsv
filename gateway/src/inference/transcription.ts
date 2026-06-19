@@ -7,6 +7,11 @@ export type TranscriptionMode = "transcribe" | "translate";
 export type AudioTranscriptionRequest = {
   data: string;
   model?: string;
+  provider?: string;
+  apiKey?: string;
+  mimeType?: string;
+  filename?: string;
+  timeoutMs?: number;
   language?: string;
   prompt?: string;
   mode?: TranscriptionMode;
@@ -19,7 +24,7 @@ export type AudioTranscriptionResult = {
   duration?: number;
   language?: string;
   segments?: unknown[];
-  provider: "workers-ai";
+  provider: string;
   model: string;
 };
 

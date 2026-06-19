@@ -335,6 +335,52 @@ describe("Process DO — mechanical", () => {
     });
   });
 
+  describe("proc.ai.config", () => {
+    it("stores snapshots, redacts reads by default, patches fields, and clears", async () => {
+      const pid = "mech-ai-config";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const setResponse = await stub.recvFrame(makeReq("proc.ai.config.set", {
+        values: {
+          "config/ai/provider": "openai",
+          "config/ai/model": "gpt-4.1-mini",
+          "config/ai/api_key": "sk-process",
+        },
+        profile: {
+          id: "fast",
+          name: "Fast",
+        },
+      })) as ResponseOkFrame;
+      expect(setResponse.ok).toBe(true);
+      expect((setResponse.data as any).config).toMatchObject({
+        profile: { id: "fast", name: "Fast" },
+        values: {
+          "config/ai/provider": "openai",
+          "config/ai/model": "gpt-4.1-mini",
+          "config/ai/api_key": "redacted",
+        },
+      });
+
+      const redactedGet = await stub.recvFrame(makeReq("proc.ai.config.get", {})) as ResponseOkFrame;
+      expect((redactedGet.data as any).config.values["config/ai/api_key"]).toBe("redacted");
+
+      const rawGet = await stub.recvFrame(makeReq("proc.ai.config.get", { redacted: false })) as ResponseOkFrame;
+      expect((rawGet.data as any).config.values["config/ai/api_key"]).toBe("sk-process");
+
+      const patchResponse = await stub.recvFrame(makeReq("proc.ai.config.set", {
+        key: "config/ai/model",
+        value: "gpt-4.2",
+      })) as ResponseOkFrame;
+      expect((patchResponse.data as any).config.profile).toBeUndefined();
+      expect((patchResponse.data as any).config.values["config/ai/model"]).toBe("gpt-4.2");
+
+      const clearResponse = await stub.recvFrame(makeReq("proc.ai.config.set", { clear: true })) as ResponseOkFrame;
+      expect((clearResponse.data as any).config).toBeNull();
+      const afterClear = await stub.recvFrame(makeReq("proc.ai.config.get", {})) as ResponseOkFrame;
+      expect((afterClear.data as any).config).toBeNull();
+    });
+  });
+
   describe("model context", () => {
     it("includes process system messages as model-visible events", async () => {
       const pid = "mech-system-context-1";

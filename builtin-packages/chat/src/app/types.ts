@@ -6,6 +6,9 @@ export type ChatBackend = {
   sendMessage(args: unknown): Promise<unknown>;
   getHistory(args: unknown): Promise<unknown>;
   readProcessMedia(args: unknown): Promise<unknown>;
+  getProcessAiConfig(args: unknown): Promise<unknown>;
+  setProcessAiProfile(args: unknown): Promise<unknown>;
+  setProcessAiField(args: unknown): Promise<unknown>;
   listConversations(args: unknown): Promise<unknown>;
   compactConversation(args: unknown): Promise<unknown>;
   listConversationSegments(args: unknown): Promise<unknown>;
@@ -94,6 +97,39 @@ export type ContextState = {
   level: "ok" | "warn" | "critical" | "full" | "unknown";
   source: "provider" | "estimate";
   updatedAt: number;
+};
+
+export type ProcessAiProfileRef = {
+  id?: string;
+  name?: string;
+  appliedAt?: number;
+};
+
+export type ProcessAiSnapshot = {
+  version?: number;
+  profile?: ProcessAiProfileRef | null;
+  values: Record<string, string>;
+  updatedAt?: number;
+};
+
+export type ProcessAiEffectiveState = {
+  profile: ProcessAiProfileRef | null;
+  values: Record<string, string>;
+};
+
+export type ProcessAiModelProfile = {
+  id: string;
+  name: string;
+  values: Record<string, string>;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type ProcessAiState = {
+  profile: string;
+  effective: ProcessAiEffectiveState;
+  local: ProcessAiSnapshot | null;
+  profiles: ProcessAiModelProfile[];
 };
 
 export type Attachment = {

@@ -6,6 +6,8 @@ describe("internal syscall exposure", () => {
     expect(isInternalOnlySyscall("ai.config")).toBe(true);
     expect(isInternalOnlySyscall("ai.tools")).toBe(true);
     expect(isInternalOnlySyscall("codemode.exec")).toBe(true);
+    expect(isInternalOnlySyscall("proc.ai.config.get")).toBe(true);
+    expect(isInternalOnlySyscall("proc.ai.config.set")).toBe(true);
     expect(isInternalOnlySyscall("proc.ipc.deliver")).toBe(true);
   });
 

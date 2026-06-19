@@ -175,6 +175,8 @@ const SYSCALL_NAMES = [
   "proc.abort",
   "proc.hil",
   "proc.history",
+  "proc.ai.config.get",
+  "proc.ai.config.set",
   "proc.media.read",
   "proc.conversation.open",
   "proc.conversation.list",

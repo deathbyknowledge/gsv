@@ -39,6 +39,10 @@ import type {
 import type {
   ProcAbortArgs,
   ProcAbortResult,
+  ProcAiConfigGetArgs,
+  ProcAiConfigGetResult,
+  ProcAiConfigSetArgs,
+  ProcAiConfigSetResult,
   ProcConversationCloseArgs,
   ProcConversationCloseResult,
   ProcConversationCompactArgs,
@@ -281,6 +285,8 @@ export type SyscallDomains = {
   "proc.abort": { args: ProcAbortArgs; result: ProcAbortResult };
   "proc.hil": { args: ProcHilArgs; result: ProcHilResult };
   "proc.history": { args: ProcHistoryArgs; result: ProcHistoryResult };
+  "proc.ai.config.get": { args: ProcAiConfigGetArgs; result: ProcAiConfigGetResult };
+  "proc.ai.config.set": { args: ProcAiConfigSetArgs; result: ProcAiConfigSetResult };
   "proc.media.read": { args: ProcMediaReadArgs; result: ProcMediaReadResult };
   "proc.conversation.open": { args: ProcConversationOpenArgs; result: ProcConversationOpenResult };
   "proc.conversation.list": { args: ProcConversationListArgs; result: ProcConversationListResult };
