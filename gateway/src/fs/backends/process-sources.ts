@@ -892,6 +892,7 @@ class ProcessSourceMountBackend implements MountBackend {
         },
       ],
     );
+    this.refreshRepoMetadata(repo);
   }
 
   private async applyRepoDelete(repo: SourceRepo, relativePath: string, recursive: boolean): Promise<void> {
@@ -908,6 +909,19 @@ class ProcessSourceMountBackend implements MountBackend {
         },
       ],
     );
+    this.refreshRepoMetadata(repo);
+  }
+
+  private refreshRepoMetadata(repo: SourceRepo): void {
+    if (!this.config) {
+      return;
+    }
+    const now = String(Date.now());
+    const createdKey = sourceRepoConfigKey(repo, "created_at");
+    if (this.config.get(createdKey) === null) {
+      this.config.set(createdKey, now);
+    }
+    this.config.set(sourceRepoConfigKey(repo, "updated_at"), now);
   }
 
   private async readOverlay(pkg: SourcePackage): Promise<SourceOverlayManifest> {
@@ -1310,6 +1324,10 @@ function sourceRepoForSummary(summary: RepoSummary): SourceRepo | null {
   } catch {
     return null;
   }
+}
+
+function sourceRepoConfigKey(repo: SourceRepo, field: string): string {
+  return `repos/${repo.owner}/${repo.name}/${field}`;
 }
 
 function throwMissingSourcePath(path: string): never {

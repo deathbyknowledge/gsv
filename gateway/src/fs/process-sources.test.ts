@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { commitProcessSourceChanges, createProcessSourceBackend, getProcessSourceStatus } from "./index";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { RepoSummary } from "@humansandmachines/gsv/protocol";
@@ -225,13 +225,18 @@ describe("createProcessSourceBackend", () => {
       ["old.md", "remove me\n"],
     ]);
     const applyCalls: any[] = [];
+    const config = makeConfig();
+    const now = vi.spyOn(Date, "now")
+      .mockReturnValueOnce(1000)
+      .mockReturnValueOnce(2000)
+      .mockReturnValueOnce(3000);
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage: makeBucket(),
       packages: [makePackage()],
       repos: [makeRepo("sam/docs")],
       processId: "task:source",
-      config: makeConfig(),
+      config,
       ripgit: {
         readPath: async (_repo: unknown, path: string) => {
           const content = files.get(path);
@@ -259,33 +264,45 @@ describe("createProcessSourceBackend", () => {
       } as any,
     });
 
-    await backend!.writeFile("/src/repos/sam/docs/new.md", "created\n");
-    await backend!.appendFile("/src/repos/sam/docs/notes.md", "more\n");
-    await backend!.rm("/src/repos/sam/docs/old.md");
+    try {
+      await backend!.writeFile("/src/repos/sam/docs/new.md", "created\n");
+      expect(config.values.get("repos/sam/docs/created_at")).toBe("1000");
+      expect(config.values.get("repos/sam/docs/updated_at")).toBe("1000");
 
-    expect(files.get("new.md")).toBe("created\n");
-    expect(files.get("notes.md")).toBe("old\nmore\n");
-    expect(files.has("old.md")).toBe(false);
-    expect(applyCalls).toHaveLength(3);
-    expect(applyCalls[0][0]).toEqual({ owner: "sam", repo: "docs", branch: "main" });
-    expect(applyCalls[0][3]).toBe("gsv: write new.md");
-    expect(applyCalls[0][4]).toEqual([{
-      type: "put",
-      path: "new.md",
-      contentBytes: Array.from(new TextEncoder().encode("created\n")),
-    }]);
-    expect(applyCalls[1][3]).toBe("gsv: append notes.md");
-    expect(applyCalls[1][4]).toEqual([{
-      type: "put",
-      path: "notes.md",
-      contentBytes: Array.from(new TextEncoder().encode("old\nmore\n")),
-    }]);
-    expect(applyCalls[2][3]).toBe("gsv: rm old.md");
-    expect(applyCalls[2][4]).toEqual([{
-      type: "delete",
-      path: "old.md",
-      recursive: false,
-    }]);
+      await backend!.appendFile("/src/repos/sam/docs/notes.md", "more\n");
+      expect(config.values.get("repos/sam/docs/created_at")).toBe("1000");
+      expect(config.values.get("repos/sam/docs/updated_at")).toBe("2000");
+
+      await backend!.rm("/src/repos/sam/docs/old.md");
+      expect(config.values.get("repos/sam/docs/created_at")).toBe("1000");
+      expect(config.values.get("repos/sam/docs/updated_at")).toBe("3000");
+
+      expect(files.get("new.md")).toBe("created\n");
+      expect(files.get("notes.md")).toBe("old\nmore\n");
+      expect(files.has("old.md")).toBe(false);
+      expect(applyCalls).toHaveLength(3);
+      expect(applyCalls[0][0]).toEqual({ owner: "sam", repo: "docs", branch: "main" });
+      expect(applyCalls[0][3]).toBe("gsv: write new.md");
+      expect(applyCalls[0][4]).toEqual([{
+        type: "put",
+        path: "new.md",
+        contentBytes: Array.from(new TextEncoder().encode("created\n")),
+      }]);
+      expect(applyCalls[1][3]).toBe("gsv: append notes.md");
+      expect(applyCalls[1][4]).toEqual([{
+        type: "put",
+        path: "notes.md",
+        contentBytes: Array.from(new TextEncoder().encode("old\nmore\n")),
+      }]);
+      expect(applyCalls[2][3]).toBe("gsv: rm old.md");
+      expect(applyCalls[2][4]).toEqual([{
+        type: "delete",
+        path: "old.md",
+        recursive: false,
+      }]);
+    } finally {
+      now.mockRestore();
+    }
   });
 
   it("keeps public non-owned repos read-only through /src/repos", async () => {
