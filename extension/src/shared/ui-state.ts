@@ -33,6 +33,14 @@ export type NetworkCaptureUiState = {
   sessionPath?: string;
 };
 
+export type MediaCaptureGrantUiState = {
+  tabId: number;
+  title: string | null;
+  url: string | null;
+  grantedAt: string;
+  expiresAt: string;
+};
+
 export type ExtensionUiState = {
   config: ExtensionConfig;
   connection: {
@@ -46,6 +54,9 @@ export type ExtensionUiState = {
   sensitive: SensitiveState;
   network: {
     captures: NetworkCaptureUiState[];
+  };
+  media: {
+    captureGrant: MediaCaptureGrantUiState | null;
   };
   artifact: {
     screenshots: number;
@@ -73,6 +84,7 @@ export type RuntimeMessage =
   | { type: "connect" }
   | { type: "disconnect" }
   | { type: "stop-all" }
+  | { type: "grant-media-capture"; tabId?: number }
   | { type: "clear-diagnostics" }
   | { type: "save-config"; config: ExtensionConfig }
   | { type: "open-side-panel"; windowId?: number };

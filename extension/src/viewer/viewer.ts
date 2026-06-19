@@ -19,7 +19,8 @@ void renderViewer(app).catch((error) => {
 
 async function renderViewer(root: HTMLElement): Promise<void> {
   const state = parseState();
-  root.innerHTML = renderShell(state);
+  document.title = basename(state.label || state.path);
+  root.innerHTML = renderShell();
   const stage = root.querySelector<HTMLElement>("[data-stage]");
   if (!stage) {
     throw new Error("Missing viewer stage");
@@ -31,6 +32,7 @@ async function renderViewer(root: HTMLElement): Promise<void> {
   const objectUrl = URL.createObjectURL(blob);
 
   window.addEventListener("pagehide", () => URL.revokeObjectURL(objectUrl), { once: true });
+  stage.classList.add(`stage--${viewerKind(contentType)}`);
   stage.replaceChildren(renderContent({
     objectUrl,
     bytes,
@@ -68,16 +70,9 @@ async function readPersistedFile(path: string): Promise<Uint8Array> {
   }
 }
 
-function renderShell(state: ViewerState): string {
+function renderShell(): string {
   return `
     <main class="viewer">
-      <header class="viewer-header">
-        <div>
-          <span>GSV Viewer</span>
-          <strong title="${escapeHtml(state.label)}">${escapeHtml(basename(state.label))}</strong>
-        </div>
-        <code title="${escapeHtml(state.path)}">${escapeHtml(state.path)}</code>
-      </header>
       <section class="stage" data-stage>
         <p class="loading">Loading...</p>
       </section>
@@ -144,15 +139,28 @@ function renderContent(options: {
 }
 
 function renderError(message: string): string {
+  document.title = "Could not open file";
   return `
     <main class="viewer">
-      <section class="error">
-        <span>GSV Viewer</span>
-        <strong>Could not open file</strong>
-        <p>${escapeHtml(message)}</p>
+      <section class="stage">
+        <div class="error">
+          <span>GSV Viewer</span>
+          <strong>Could not open file</strong>
+          <p>${escapeHtml(message)}</p>
+        </div>
       </section>
     </main>
   `;
+}
+
+function viewerKind(contentType: string): string {
+  const type = normalizeContentType(contentType);
+  if (type.startsWith("image/")) return "image";
+  if (type.startsWith("audio/")) return "audio";
+  if (type.startsWith("video/")) return "video";
+  if (type === "text/html" || type === "application/pdf") return "frame";
+  if (isTextContentType(type)) return "text";
+  return "fallback";
 }
 
 function inferContentType(path: string): string {

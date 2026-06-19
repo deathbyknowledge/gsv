@@ -2,6 +2,8 @@ import type { TargetCopyEndpoint } from "./types";
 
 export const OFFSCREEN_MEDIA_RECORDER_TARGET = "gsv-media-recorder-offscreen";
 
+export type MediaRecordingMode = "audio" | "video";
+
 export type MediaRecordingStopReason =
   | "stopped"
   | "max-duration"
@@ -13,6 +15,7 @@ export type MediaRecordingStatus = {
   id: string;
   tabId: number;
   active: boolean;
+  mode: MediaRecordingMode;
   path: string;
   localPath: string;
   requestedPath: string;
@@ -33,6 +36,7 @@ export type OffscreenMediaStartMessage = {
   recordingId: string;
   tabId: number;
   streamId: string;
+  mode: MediaRecordingMode;
   path: string;
   requestedPath: string;
   destination?: TargetCopyEndpoint;

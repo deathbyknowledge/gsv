@@ -7,6 +7,7 @@ import {
 } from "../target/fs-persistence";
 import {
   OFFSCREEN_MEDIA_RECORDER_TARGET,
+  type MediaRecordingMode,
   type MediaRecordingStatus,
   type MediaRecordingStopReason,
   type OffscreenMediaMessage,
@@ -22,6 +23,7 @@ type TimerHandle = ReturnType<typeof setTimeout>;
 type RecordingState = {
   id: string;
   tabId: number;
+  mode: MediaRecordingMode;
   path: string;
   requestedPath: string;
   destination?: MediaRecordingStatus["destination"];
@@ -90,20 +92,21 @@ async function handleMessage(message: OffscreenMediaMessage): Promise<unknown> {
 async function startRecording(message: OffscreenMediaStartMessage): Promise<MediaRecordingStatus> {
   const existingForTab = Array.from(activeRecordings.values()).find((state) => state.tabId === message.tabId);
   if (existingForTab) {
-    throw new Error(`tab audio recording already active for tab ${message.tabId}: ${existingForTab.id}`);
+    throw new Error(`tab media recording already active for tab ${message.tabId}: ${existingForTab.id}`);
   }
   const normalizedPath = normalizePath(message.path);
   await assertWritableRecordingPath(normalizedPath);
 
-  const stream = await navigator.mediaDevices.getUserMedia(tabAudioConstraints(message.streamId));
+  const stream = await navigator.mediaDevices.getUserMedia(tabMediaConstraints(message.streamId, message.mode));
   let state: RecordingState | null = null;
   try {
-    const mimeType = preferredAudioMimeType();
+    const mimeType = preferredMediaMimeType(message.mode);
     const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
     const completion = promiseWithResolvers<MediaRecordingStatus>();
     state = {
       id: message.recordingId,
       tabId: message.tabId,
+      mode: message.mode,
       path: normalizedPath,
       requestedPath: message.requestedPath,
       destination: message.destination,
@@ -111,7 +114,7 @@ async function startRecording(message: OffscreenMediaStartMessage): Promise<Medi
       maxBytes: message.maxBytes,
       maxDurationMs: message.maxDurationMs,
       monitor: message.monitor,
-      mimeType: recorder.mimeType || mimeType || "audio/webm",
+      mimeType: recorder.mimeType || mimeType || fallbackMimeType(message.mode),
       stream,
       recorder,
       chunks: [],
@@ -200,7 +203,7 @@ function recordingStatus(message: OffscreenMediaStatusMessage): MediaRecordingSt
 }
 
 function configureMonitoring(state: RecordingState): void {
-  if (!state.monitor) {
+  if (!state.monitor || state.stream.getAudioTracks().length === 0) {
     return;
   }
   const audioContext = new AudioContext();
@@ -270,6 +273,7 @@ async function finalizeRecording(state: RecordingState): Promise<void> {
       id: state.id,
       tabId: state.tabId,
       active: false,
+      mode: state.mode,
       path: state.path,
       localPath: state.path,
       requestedPath: state.requestedPath,
@@ -311,6 +315,7 @@ async function persistRecordingBlob(path: string, blob: Blob): Promise<void> {
     await putPersistedEntry(db, {
       path: normalized,
       kind: "file",
+      contentType: blob.type || undefined,
       content,
       updatedAt: Date.now(),
     });
@@ -374,6 +379,7 @@ function activeStatus(state: RecordingState): MediaRecordingStatus {
     id: state.id,
     tabId: state.tabId,
     active: true,
+    mode: state.mode,
     path: state.path,
     localPath: state.path,
     requestedPath: state.requestedPath,
@@ -385,26 +391,38 @@ function activeStatus(state: RecordingState): MediaRecordingStatus {
   };
 }
 
-function tabAudioConstraints(streamId: string): MediaStreamConstraints {
+function tabMediaConstraints(streamId: string, mode: MediaRecordingMode): MediaStreamConstraints {
+  const tabSource = {
+    mandatory: {
+      chromeMediaSource: "tab",
+      chromeMediaSourceId: streamId,
+    },
+  } as unknown as MediaTrackConstraints;
   return {
-    audio: {
-      mandatory: {
-        chromeMediaSource: "tab",
-        chromeMediaSourceId: streamId,
-      },
-    } as unknown as MediaTrackConstraints,
-    video: false,
+    audio: tabSource,
+    video: mode === "video" ? tabSource : false,
   };
 }
 
-function preferredAudioMimeType(): string {
-  const candidates = [
-    "audio/webm;codecs=opus",
-    "audio/webm",
-    "audio/ogg;codecs=opus",
-    "audio/ogg",
-  ];
+function preferredMediaMimeType(mode: MediaRecordingMode): string {
+  const candidates = mode === "video"
+    ? [
+        "video/webm;codecs=vp9,opus",
+        "video/webm;codecs=vp8,opus",
+        "video/webm;codecs=h264,opus",
+        "video/webm",
+      ]
+    : [
+        "audio/webm;codecs=opus",
+        "audio/webm",
+        "audio/ogg;codecs=opus",
+        "audio/ogg",
+      ];
   return candidates.find((candidate) => MediaRecorder.isTypeSupported(candidate)) ?? "";
+}
+
+function fallbackMimeType(mode: MediaRecordingMode): string {
+  return mode === "video" ? "video/webm" : "audio/webm";
 }
 
 function isOffscreenMediaMessage(value: unknown): value is OffscreenMediaMessage {

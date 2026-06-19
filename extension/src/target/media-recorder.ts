@@ -2,6 +2,7 @@ import { activeTab, getTab } from "../shared/chrome";
 import { basename, normalizePath } from "../shared/paths";
 import {
   OFFSCREEN_MEDIA_RECORDER_TARGET,
+  type MediaRecordingMode,
   type MediaRecordingStatus,
   type OffscreenMediaMessage,
   type OffscreenMediaResponse,
@@ -10,8 +11,25 @@ import type { CommandContext, TargetCopyEndpoint, TargetFileSystem } from "./typ
 
 export const DEFAULT_RECORDING_MAX_DURATION_MS = 10 * 60 * 1000;
 export const MAX_RECORDING_DURATION_MS = 4 * 60 * 60 * 1000;
-export const DEFAULT_RECORDING_MAX_BYTES = 100 * 1024 * 1024;
+export const DEFAULT_AUDIO_RECORDING_MAX_BYTES = 100 * 1024 * 1024;
+export const DEFAULT_VIDEO_RECORDING_MAX_BYTES = 256 * 1024 * 1024;
+export const DEFAULT_RECORDING_MAX_BYTES = DEFAULT_AUDIO_RECORDING_MAX_BYTES;
 export const MAX_RECORDING_BYTES = 512 * 1024 * 1024;
+const MEDIA_CAPTURE_GRANT_TTL_MS = 5 * 60 * 1000;
+
+export type MediaCaptureGrantStatus = {
+  tabId: number;
+  title: string | null;
+  url: string | null;
+  grantedAt: string;
+  expiresAt: string;
+};
+
+type MediaCaptureGrant = MediaCaptureGrantStatus & {
+  streamId: string;
+};
+
+let mediaCaptureGrant: MediaCaptureGrant | null = null;
 
 export type StartMediaRecordingOptions = {
   tabId?: number;
@@ -19,6 +37,7 @@ export type StartMediaRecordingOptions = {
   cwd: string;
   fs: TargetFileSystem;
   currentTargetId?: string;
+  mode: MediaRecordingMode;
   maxDurationMs: number;
   maxBytes: number;
   monitor: boolean;
@@ -44,13 +63,14 @@ export async function startMediaRecording(options: StartMediaRecordingOptions): 
   await assertLocalWritableFile(options.fs, output.localPath);
 
   await ensureOffscreenDocument();
-  const streamId = await getTabMediaStreamId(tabId);
+  const streamId = takeGrantedMediaStreamId(tabId) ?? await getTabMediaStreamId(tabId);
   return await sendOffscreenMessage<MediaRecordingStatus>({
     target: OFFSCREEN_MEDIA_RECORDER_TARGET,
     type: "start",
     recordingId,
     tabId,
     streamId,
+    mode: options.mode,
     path: output.localPath,
     requestedPath: output.requestedPath,
     destination: output.destination,
@@ -59,6 +79,35 @@ export async function startMediaRecording(options: StartMediaRecordingOptions): 
     monitor: options.monitor,
     startedAt,
   });
+}
+
+export async function grantMediaCapture(tabId?: number): Promise<MediaCaptureGrantStatus> {
+  const streamId = await getTabMediaStreamId(tabId);
+  const tab = typeof tabId === "number" ? await getTab(tabId) : await activeTab();
+  if (!tab) {
+    throw new Error(typeof tabId === "number" ? `tab not found: ${tabId}` : "no active tab");
+  }
+  const grantedAtMs = Date.now();
+  mediaCaptureGrant = {
+    tabId: tab.id,
+    title: tab.title,
+    url: tab.url,
+    streamId,
+    grantedAt: new Date(grantedAtMs).toISOString(),
+    expiresAt: new Date(grantedAtMs + MEDIA_CAPTURE_GRANT_TTL_MS).toISOString(),
+  };
+  return publicMediaCaptureGrant(mediaCaptureGrant);
+}
+
+export function mediaCaptureGrantStatus(now = Date.now()): MediaCaptureGrantStatus | null {
+  if (!mediaCaptureGrant) {
+    return null;
+  }
+  if (Date.parse(mediaCaptureGrant.expiresAt) <= now) {
+    mediaCaptureGrant = null;
+    return null;
+  }
+  return publicMediaCaptureGrant(mediaCaptureGrant);
 }
 
 export async function stopMediaRecording(
@@ -261,15 +310,37 @@ async function activeTabId(): Promise<number> {
   return tab.id;
 }
 
-async function getTabMediaStreamId(tabId: number): Promise<string> {
+function takeGrantedMediaStreamId(tabId: number): string | null {
+  const grant = mediaCaptureGrantStatus();
+  if (!grant || grant.tabId !== tabId || !mediaCaptureGrant) {
+    return null;
+  }
+  const streamId = mediaCaptureGrant.streamId;
+  mediaCaptureGrant = null;
+  return streamId;
+}
+
+function publicMediaCaptureGrant(grant: MediaCaptureGrant): MediaCaptureGrantStatus {
+  return {
+    tabId: grant.tabId,
+    title: grant.title,
+    url: grant.url,
+    grantedAt: grant.grantedAt,
+    expiresAt: grant.expiresAt,
+  };
+}
+
+async function getTabMediaStreamId(tabId?: number): Promise<string> {
   try {
-    return await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
+    return await chrome.tabCapture.getMediaStreamId(typeof tabId === "number" ? { targetTabId: tabId } : {});
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error([
-      `Unable to start tab audio capture for tab ${tabId}.`,
+      typeof tabId === "number"
+        ? `Unable to start tab media capture for tab ${tabId}.`
+        : "Unable to start tab media capture for the active tab.",
       "Chrome only grants tab capture after the extension has been invoked for the tab.",
-      "Focus the tab, open the GSV extension UI, then retry.",
+      "Focus the tab, click Grant Recording in the GSV extension UI, then retry; each grant can start one recording.",
       message,
     ].filter(Boolean).join(" "));
   }
@@ -289,7 +360,7 @@ async function ensureOffscreenDocument(): Promise<void> {
       chrome.offscreen.Reason.AUDIO_PLAYBACK,
       chrome.offscreen.Reason.BLOBS,
     ],
-    justification: "Record tab audio requested by the GSV browser target.",
+    justification: "Record tab media requested by the GSV browser target.",
   });
 }
 
@@ -303,7 +374,7 @@ async function hasOffscreenDocument(): Promise<boolean> {
 async function sendOffscreenMessage<T>(message: OffscreenMediaMessage): Promise<T> {
   const response = await chrome.runtime.sendMessage(message) as OffscreenMediaResponse<T> | undefined;
   if (!response) {
-    throw new Error("No response from tab audio recorder");
+    throw new Error("No response from tab media recorder");
   }
   if (!response.ok) {
     throw new Error(response.error);

@@ -169,20 +169,24 @@ network command output or the `/proc/network/*` runtime files.
 
 ## Media Recording
 
-Use `media record` to capture tab audio into the browser target filesystem:
+Use `media record` to capture tab audio or video into the browser target filesystem:
 
 ```bash
 media record start --tab <tabId> --path /home/browser/recordings/demo.webm
+media record start --tab <tabId> --video --path /home/browser/recordings/demo-video.webm
 media record status
 media record stop
 tabs open /home/browser/recordings/demo.webm
 ```
 
-Recordings are WebM/Opus when supported. Tab capture may require focusing the
-tab and opening the GSV extension UI first so Chrome grants capture access. By
-default, captured tab audio remains audible; use `--monitor off` only when the
-task calls for disabling playback. `--path [target]:/path` records locally first
-and then copies the finished file through `fs.copy`.
+Audio recordings are WebM/Opus when supported. Use `--video` or
+`--mode video` for tab video with audio; video recordings are WebM when
+supported and can grow quickly, so set `--max-bytes` explicitly for longer
+captures. Tab capture may require asking the user to focus the tab and click
+Grant Recording in the GSV extension UI first; each grant can start one
+recording. By default, captured tab audio remains audible; use `--monitor off`
+only when the task calls for disabling playback. `--path [target]:/path`
+records locally first and then copies the finished file through `fs.copy`.
 
 ## Clipboard
 

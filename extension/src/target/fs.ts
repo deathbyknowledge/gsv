@@ -74,6 +74,7 @@ const DEFAULT_DIRECTORIES = [
 
 export class BrowserTargetFileSystem implements TargetFileSystem {
   private files = new Map<string, Uint8Array>();
+  private contentTypes = new Map<string, string>();
   private directories = new Set<string>(DEFAULT_DIRECTORIES);
   private loadPromise: Promise<void> | null = null;
   private backend: FsPersistenceBackend = { kind: "memory" };
@@ -94,17 +95,20 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
     return value;
   }
 
-  async write(path: string, content: Uint8Array): Promise<void> {
+  async write(path: string, content: Uint8Array, contentType?: string): Promise<void> {
     await this.ensureLoaded();
     const normalized = normalizePath(path);
     this.assertWritable(normalized);
     await this.assertNotDirectory(normalized);
     await this.ensureDirectory(dirname(normalized));
     this.files.set(normalized, copyBytes(content));
+    const resolvedContentType = contentType ?? inferContentType(normalized);
+    this.contentTypes.set(normalized, resolvedContentType);
     await this.persistEntry({
       path: normalized,
       kind: "file",
       content: bytesToArrayBuffer(content),
+      contentType: resolvedContentType,
       updatedAt: Date.now(),
     });
   }
@@ -129,6 +133,7 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
       throw new Error("Refusing to delete /");
     }
     if (this.files.delete(normalized)) {
+      this.contentTypes.delete(normalized);
       await this.deletePersistedEntries([normalized]);
       return;
     }
@@ -137,6 +142,7 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
       for (const file of Array.from(this.files.keys())) {
         if (file.startsWith(`${normalized}/`)) {
           this.files.delete(file);
+          this.contentTypes.delete(file);
           deletedPaths.push(file);
         }
       }
@@ -175,7 +181,7 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
         finalDestination = joinPath(destinationPath, basename(sourcePath));
       }
     }
-    await this.write(finalDestination, await this.read(sourcePath));
+    await this.write(finalDestination, await this.read(sourcePath), sourceStat.contentType);
     return finalDestination;
   }
 
@@ -238,7 +244,7 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
         isFile: true,
         isDirectory: false,
         size: value.byteLength,
-        contentType: inferContentType(normalized),
+        contentType: this.contentTypes.get(normalized) ?? inferContentType(normalized),
       };
     }
     throw new Error(`No such file or directory: ${normalized}`);
@@ -348,10 +354,17 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
     const path = normalizePath(entry.path);
     if (entry.kind === "directory") {
       this.directories.add(path);
+      this.files.delete(path);
+      this.contentTypes.delete(path);
       return;
     }
     this.ensureDirectorySync(dirname(path));
     this.files.set(path, bytesFromStoredContent(entry.content));
+    if (entry.contentType) {
+      this.contentTypes.set(path, entry.contentType);
+    } else {
+      this.contentTypes.delete(path);
+    }
   }
 
   private async ensureDirectory(path: string): Promise<void> {
@@ -584,6 +597,7 @@ export class BrowserFsDriver {
       return { ok: false, error: "fs.transfer.send requires streamId" };
     }
     const bytes = await this.fs.read(path);
+    const stat = await this.fs.stat(path);
     try {
       const bytesSent = await binary.sendStream(streamId, bytes, { chunkSize: MAX_TRANSFER_CHUNK_BYTES });
       return {
@@ -591,7 +605,7 @@ export class BrowserFsDriver {
         path,
         size: bytes.byteLength,
         bytesSent,
-        contentType: inferContentType(path),
+        contentType: stat.contentType ?? inferContentType(path),
       };
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
@@ -613,12 +627,13 @@ export class BrowserFsDriver {
     const receive = binary.receive(streamId, { timeoutMs: 120_000, maxBytes: expectedSize });
     try {
       const bytes = await readStream(receive.stream, expectedSize);
-      await this.fs.write(path, bytes);
+      const contentType = typeof args.contentType === "string" ? args.contentType : inferContentType(path);
+      await this.fs.write(path, bytes, contentType);
       return {
         ok: true,
         path,
         bytesWritten: bytes.byteLength,
-        contentType: typeof args.contentType === "string" ? args.contentType : inferContentType(path),
+        contentType,
       };
     } catch (error) {
       receive.cancel(error instanceof Error ? error.message : "Binary transfer failed");

@@ -13,7 +13,12 @@ import {
 import { debuggerTabs, releaseAllDebuggers } from "../shared/debugger";
 import { loadRuntimeState, saveRuntimeState } from "../shared/runtime-state";
 import type { ActivityEntry, ExtensionUiState, RuntimeMessage, RuntimeResponse } from "../shared/ui-state";
-import { mediaRecordingStatus, stopAllMediaRecordings } from "../target/media-recorder";
+import {
+  grantMediaCapture,
+  mediaCaptureGrantStatus,
+  mediaRecordingStatus,
+  stopAllMediaRecordings,
+} from "../target/media-recorder";
 import { networkStatus, stopNetworkCapture } from "../target/network-recorder";
 import { createBrowserTargetDriver, type BrowserTargetActivity } from "./driver";
 
@@ -98,6 +103,8 @@ async function handleRuntimeMessage(message: RuntimeMessage): Promise<RuntimeRes
         return await stateResponse();
       case "stop-all":
         return await stopAll();
+      case "grant-media-capture":
+        return await grantMediaCaptureAccess(message.tabId);
       case "clear-diagnostics":
         return await clearDiagnosticsState();
       case "save-config": {
@@ -196,6 +203,17 @@ async function stopAll(): Promise<RuntimeResponse> {
   return await stateResponse();
 }
 
+async function grantMediaCaptureAccess(tabId?: number): Promise<RuntimeResponse> {
+  const grant = await grantMediaCapture(tabId);
+  addActivity({
+    kind: "sensitive",
+    label: "recording access",
+    detail: grant.title || grant.url || `tab ${grant.tabId}`,
+    status: "info",
+  });
+  return await stateResponse();
+}
+
 async function setManualReconnectSuppressed(value: boolean): Promise<void> {
   await runtimeStateReady;
   manualReconnectSuppressed = value;
@@ -259,6 +277,9 @@ async function buildUiState(): Promise<ExtensionUiState> {
     },
     network: {
       captures,
+    },
+    media: {
+      captureGrant: mediaCaptureGrantStatus(),
     },
     artifact: {
       screenshots: artifactPaths.filter((path) => path.startsWith("/home/browser/screenshots/")).length,

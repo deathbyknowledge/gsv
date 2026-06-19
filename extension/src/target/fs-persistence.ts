@@ -6,7 +6,7 @@ const textEncoder = new TextEncoder();
 
 export type StoredFsEntry =
   | { path: string; kind: "directory"; updatedAt: number }
-  | { path: string; kind: "file"; content: ArrayBuffer; updatedAt: number };
+  | { path: string; kind: "file"; content: ArrayBuffer; contentType?: string; updatedAt: number };
 
 export type FsPersistenceBackend =
   | { kind: "indexeddb"; db: IDBDatabase }

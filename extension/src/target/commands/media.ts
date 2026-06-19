@@ -2,20 +2,23 @@ import type { BrowserCommand, CommandContext, CommandResult } from "../types";
 import { commandError, commandJson, commandOk } from "../types";
 import { hasHelpFlag, parseInteger, splitOption } from "./args";
 import {
-  DEFAULT_RECORDING_MAX_BYTES,
+  DEFAULT_AUDIO_RECORDING_MAX_BYTES,
   DEFAULT_RECORDING_MAX_DURATION_MS,
+  DEFAULT_VIDEO_RECORDING_MAX_BYTES,
   MAX_RECORDING_BYTES,
   MAX_RECORDING_DURATION_MS,
   mediaRecordingStatus,
   startMediaRecording,
   stopMediaRecording,
 } from "../media-recorder";
+import type { MediaRecordingMode } from "../media-recorder-protocol";
 
 type Parsed<T> = { ok: true; value: T } | { ok: false; error: string };
 
 type StartOptions = {
   tabId?: number;
   path?: string;
+  mode: MediaRecordingMode;
   maxDurationMs: number;
   maxBytes: number;
   monitor: boolean;
@@ -23,20 +26,20 @@ type StartOptions = {
 
 const MEDIA_USAGE = [
   "Usage: media record <start|stop|status|list> [args]",
-  "       media record start [--tab <tabId>] [--path path] [--max-duration 10m] [--max-bytes 100MiB] [--monitor on|off]",
+  "       media record start [--tab <tabId>] [--path path] [--mode audio|video] [--video] [--max-duration 10m] [--max-bytes bytes] [--monitor on|off]",
   "       media record stop [recordingId]",
   "       media record status [recordingId]",
   "       media record list",
 ].join("\n");
 
-const MEDIA_RECORD_START_USAGE = "Usage: media record start [--tab <tabId>] [--path path] [--max-duration 10m] [--max-bytes 100MiB] [--monitor on|off]";
+const MEDIA_RECORD_START_USAGE = "Usage: media record start [--tab <tabId>] [--path path] [--mode audio|video] [--video] [--max-duration 10m] [--max-bytes bytes] [--monitor on|off]";
 const MEDIA_RECORD_STOP_USAGE = "Usage: media record stop [recordingId]";
 const MEDIA_RECORD_STATUS_USAGE = "Usage: media record status [recordingId]";
 const MEDIA_RECORD_LIST_USAGE = "Usage: media record list";
 
 export const mediaCommand: BrowserCommand = {
   name: "media",
-  summary: "Record tab audio to the browser target filesystem.",
+  summary: "Record tab audio or video to the browser target filesystem.",
   async run(args: string[], ctx: CommandContext): Promise<CommandResult> {
     return await runMediaCommand(args, ctx);
   },
@@ -118,7 +121,14 @@ async function runList(args: string[]): Promise<CommandResult> {
 }
 
 function parseStartOptions(args: string[]): Parsed<StartOptions> {
-  const tabSplit = splitOption(args, "--tab");
+  const videoSplit = splitFlag(args, "--video");
+  const modeSplit = splitOption(videoSplit.rest, "--mode");
+  const mode = parseMode(modeSplit.value, videoSplit.found);
+  if (!mode.ok) {
+    return { ok: false, error: mode.error };
+  }
+
+  const tabSplit = splitOption(modeSplit.rest, "--tab");
   const pathSplit = splitOption(tabSplit.rest, "--path");
   const durationSplit = splitOption(pathSplit.rest, "--max-duration");
   const bytesSplit = splitOption(durationSplit.rest, "--max-bytes");
@@ -132,7 +142,7 @@ function parseStartOptions(args: string[]): Parsed<StartOptions> {
   if (!maxDurationMs.ok) {
     return { ok: false, error: maxDurationMs.error };
   }
-  const maxBytes = parseOptionalBytes(bytesSplit.value);
+  const maxBytes = parseOptionalBytes(bytesSplit.value, mode.value);
   if (!maxBytes.ok) {
     return { ok: false, error: maxBytes.error };
   }
@@ -149,11 +159,39 @@ function parseStartOptions(args: string[]): Parsed<StartOptions> {
     value: {
       tabId: tabId.value ?? undefined,
       path: pathSplit.value ?? undefined,
+      mode: mode.value,
       maxDurationMs: maxDurationMs.value,
       maxBytes: maxBytes.value,
       monitor: monitor.value,
     },
   };
+}
+
+function splitFlag(args: string[], name: string): { found: boolean; rest: string[] } {
+  const rest: string[] = [];
+  let found = false;
+  for (const arg of args) {
+    if (arg === name) {
+      found = true;
+      continue;
+    }
+    rest.push(arg);
+  }
+  return { found, rest };
+}
+
+function parseMode(value: string | null, videoFlag: boolean): Parsed<MediaRecordingMode> {
+  const normalized = value?.trim().toLowerCase() ?? "";
+  if (!normalized) {
+    return { ok: true, value: videoFlag ? "video" : "audio" };
+  }
+  if (normalized !== "audio" && normalized !== "video") {
+    return { ok: false, error: `${MEDIA_RECORD_START_USAGE}\nmode must be audio or video` };
+  }
+  if (videoFlag && normalized !== "video") {
+    return { ok: false, error: `${MEDIA_RECORD_START_USAGE}\n--video cannot be combined with --mode audio` };
+  }
+  return { ok: true, value: normalized };
 }
 
 function parseOptionalPositiveInteger(
@@ -188,9 +226,12 @@ function parseOptionalDuration(rest: string[], value: string | null): Parsed<num
   return { ok: true, value: parsed };
 }
 
-function parseOptionalBytes(value: string | null): Parsed<number> {
+function parseOptionalBytes(value: string | null, mode: MediaRecordingMode): Parsed<number> {
   if (value === null) {
-    return { ok: true, value: DEFAULT_RECORDING_MAX_BYTES };
+    return {
+      ok: true,
+      value: mode === "video" ? DEFAULT_VIDEO_RECORDING_MAX_BYTES : DEFAULT_AUDIO_RECORDING_MAX_BYTES,
+    };
   }
   const parsed = parseBytes(value);
   if (parsed === null || parsed <= 0 || parsed > MAX_RECORDING_BYTES) {

@@ -43,7 +43,7 @@ export type FileStat = {
 
 export type TargetFileSystem = {
   read(path: string): Promise<Uint8Array>;
-  write(path: string, content: Uint8Array): Promise<void>;
+  write(path: string, content: Uint8Array, contentType?: string): Promise<void>;
   append(path: string, content: Uint8Array): Promise<void>;
   delete(path: string): Promise<void>;
   mkdir(path: string): Promise<void>;

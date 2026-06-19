@@ -229,7 +229,7 @@ media --help
 Current extension targets expose browser commands for tabs, windows, page
 snapshots/text/screenshots/clicks/typing/keyboard/scroll/wait/JavaScript,
 clipboard, cookies, `chrome.storage.local`, downloads, history, bookmarks, and
-network capture. Newer extension targets can also record tab audio and open
+network capture. Newer extension targets can also record tab audio/video and open
 URLs, files, target-qualified files, or stdin in viewer tabs through
 `tabs open [--mime type] <url|path|target:/path|->`. The exact command set
 depends on extension version and browser permissions, so `/README.txt`, `help`,
@@ -252,8 +252,11 @@ Writable browser-local paths usually include `/tmp`, `/tmp/render`,
 `/home/browser`, `/home/browser/screenshots`, `/home/browser/network`, and
 `/home/browser/recordings`. Network captures started with
 `network start --persist` write session artifacts under
-`/home/browser/network/sessions/...`; tab audio recordings write under
-`/home/browser/recordings` unless another path is requested.
+`/home/browser/network/sessions/...`; tab media recordings write under
+`/home/browser/recordings` unless another path is requested. Use
+`media record start --video` or `--mode video` for video capture. Chrome may
+require the user to focus the tab and click Grant Recording in the extension UI
+before recording starts; each grant can start one recording.
 
 ## CLI Device Targets
 

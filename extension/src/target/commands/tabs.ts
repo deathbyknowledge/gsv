@@ -242,7 +242,7 @@ async function renderableFromStdin(ctx: CommandContext, contentType?: string): P
   const resolvedType = contentType ?? "text/plain; charset=utf-8";
   const path = tempRenderPath("stdin", extensionForContentType(resolvedType));
   await ctx.fs.mkdir("/tmp/render");
-  await ctx.fs.write(path, new TextEncoder().encode(ctx.stdin));
+  await ctx.fs.write(path, new TextEncoder().encode(ctx.stdin), resolvedType);
   return {
     path,
     source: "stdin",
@@ -271,7 +271,7 @@ async function renderableFromPath(input: string, ctx: CommandContext, contentTyp
 
   const destination = tempRenderPath(basename(path), extensionForPathOrType(path, resolvedType));
   await ctx.fs.mkdir("/tmp/render");
-  await ctx.fs.write(destination, await ctx.fs.read(path));
+  await ctx.fs.write(destination, await ctx.fs.read(path), resolvedType);
   return localRenderable(destination, path, path, resolvedType);
 }
 
@@ -300,7 +300,7 @@ async function renderableFromTargetEndpoint(
 
     const destination = tempRenderPath(basename(path), extensionForPathOrType(path, resolvedType));
     await ctx.fs.mkdir("/tmp/render");
-    await ctx.fs.write(destination, await ctx.fs.read(path));
+    await ctx.fs.write(destination, await ctx.fs.read(path), resolvedType);
     return localRenderable(destination, sourceText, sourceText, resolvedType);
   }
   if (!ctx.currentTargetId) {

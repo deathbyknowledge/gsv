@@ -196,12 +196,23 @@ button.text-button {
   background: #fff8df;
 }
 
-.access strong {
+.grant {
+  display: grid;
+  gap: 0.22rem;
+  padding: 0.62rem 0.72rem;
+  border: 1px solid var(--blue);
+  border-radius: 3px;
+  background: #eef3ff;
+}
+
+.access strong,
+.grant strong {
   color: var(--ink);
   font-size: 0.86rem;
 }
 
-.access span {
+.access span,
+.grant span {
   color: var(--muted);
   font-size: 0.78rem;
 }
@@ -211,6 +222,10 @@ button.text-button {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.45rem;
+}
+
+.wide {
+  grid-column: 1 / -1;
 }
 
 .fact {

@@ -47,6 +47,8 @@ async function runAction(action: string): Promise<void> {
       response = await sendUiMessage({ type: "disconnect" });
     } else if (action === "stop-all") {
       response = await sendUiMessage({ type: "stop-all" });
+    } else if (action === "grant-media-capture") {
+      response = await sendUiMessage({ type: "grant-media-capture" });
     } else if (action === "side-panel") {
       const window = await chrome.windows.getCurrent();
       response = await sendUiMessage({ type: "open-side-panel", windowId: window.id });
@@ -112,9 +114,17 @@ function render(): void {
         </section>
       ` : ""}
 
+      ${state.media.captureGrant ? `
+        <section class="grant">
+          <strong>One recording grant ready</strong>
+          <span>${escapeHtml(recordingGrantText(state))}</span>
+        </section>
+      ` : ""}
+
       ${lastError ? `<div class="error">${escapeHtml(lastError)}</div>` : ""}
 
       <footer class="actions">
+        <button data-action="grant-media-capture" class="wide" ${busyAttr("grant-media-capture")}>Grant Recording</button>
         <button data-action="${escapeHtml(mainAction)}" class="primary" ${busyAttr(mainAction)}>${escapeHtml(mainLabel)}</button>
         <button data-action="stop-all" class="danger" ${busyAttr("stop-all")}>Stop All</button>
         <button data-action="side-panel" ${busyAttr("side-panel")}>Monitor</button>
@@ -179,6 +189,15 @@ function liveAccessText(state: ExtensionUiState): string {
   return parts.join(" / ");
 }
 
+function recordingGrantText(state: ExtensionUiState): string {
+  const grant = state.media.captureGrant;
+  if (!grant) {
+    return "";
+  }
+  const label = grant.title || grant.url || `tab ${grant.tabId}`;
+  return `${label} / ${timeUntil(grant.expiresAt)}`;
+}
+
 function lastSeen(state: ExtensionUiState): string {
   const latest = state.activity.find((entry) => entry.kind !== "connection") ?? state.activity[0];
   return latest ? `last ${timeAgo(latest.at)}` : "no activity";
@@ -186,4 +205,19 @@ function lastSeen(state: ExtensionUiState): string {
 
 function busyAttr(action: string): string {
   return busyAction === action ? "disabled" : "";
+}
+
+function timeUntil(iso: string): string {
+  const then = Date.parse(iso);
+  if (!Number.isFinite(then)) {
+    return "expires soon";
+  }
+  const seconds = Math.max(0, Math.ceil((then - Date.now()) / 1000));
+  if (seconds <= 0) {
+    return "expired";
+  }
+  if (seconds < 60) {
+    return `${seconds}s left`;
+  }
+  return `${Math.ceil(seconds / 60)}m left`;
 }
