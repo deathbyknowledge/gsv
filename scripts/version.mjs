@@ -33,6 +33,7 @@ function listPackageJsonFiles() {
   const files = [
     "package.json",
     "assembler/package.json",
+    "extension/package.json",
     "gateway/package.json",
     "web/package.json",
     "ripgit/package.json",
@@ -158,6 +159,21 @@ function syncSourceVersions(version) {
     `$1${version}$2`,
   );
   replaceInFile(
+    "extension/public/manifest.json",
+    /("version": ")[^"]+(")/,
+    `$1${version}$2`,
+  );
+  replaceInFile(
+    "extension/src/background/service-worker.ts",
+    /(version: ")[^"]+(")/,
+    `$1${version}$2`,
+  );
+  replaceInFile(
+    "extension/src/target/network-recorder.ts",
+    /(name: "gsv-browser-extension",\n\s+version: ")[^"]+(")/,
+    `$1${version}$2`,
+  );
+  replaceInFile(
     "ripgit/src/lib.rs",
     /"name": "ripgit",\n\s+"version": "[^"]+"/,
     `"name": "ripgit",\n        "version": "${version}"`,
@@ -232,6 +248,9 @@ function managedFiles() {
     "gateway/src/drivers/native/shell.test.ts",
     "web/src/app/services/gateway/GatewayProvider.tsx",
     "web/src/app/services/session/sessionService.ts",
+    "extension/public/manifest.json",
+    "extension/src/background/service-worker.ts",
+    "extension/src/target/network-recorder.ts",
     "ripgit/src/lib.rs",
   ]);
   for (const file of listPackageJsonFiles()) {

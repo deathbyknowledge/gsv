@@ -278,9 +278,9 @@ describe("targets native command", () => {
         implements: ["shell.exec", "fs.read"],
       }),
       makeDevice({
-        device_id: "browser:abc",
+        device_id: "rearden:brave",
         label: "Browser",
-        platform: "browser",
+        platform: "browser-extension",
         implements: ["shell.exec", "fs.*"],
       }),
     ];
@@ -296,8 +296,14 @@ describe("targets native command", () => {
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("TARGET\tKIND\tSTATE\tPLATFORM\tCAPS\tLABEL");
     expect(result.stdout).toContain("gsv\tgsv\tonline\tcloudflare-worker");
-    expect(result.stdout).toContain("browser:abc\tbrowser\tonline\tbrowser");
     expect(result.stdout).toContain("Showing 1-2 of 3");
+
+    const browserList = await handleShellExec(
+      { input: "targets list --kind browser" },
+      makeContext({ capabilities: ["sys.device.list"], devices }),
+    );
+    expect(browserList.ok).toBe(true);
+    expect(browserList.stdout).toContain("rearden:brave\tbrowser\tonline\tbrowser-extension");
 
     const alias = await handleShellExec(
       { input: "devices search macbook" },

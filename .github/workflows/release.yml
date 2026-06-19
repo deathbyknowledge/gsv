@@ -215,9 +215,34 @@ jobs:
             release/gsv-cloudflare-channel-telegram.tar.gz
             release/cloudflare-checksums.txt
 
+  build-browser-extension:
+    needs: [resolve]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build browser extension package
+        run: npm run extension:package -- "$GITHUB_WORKSPACE/release"
+
+      - name: Upload browser extension package
+        uses: actions/upload-artifact@v4
+        with:
+          name: gsv-browser-extension
+          path: release/gsv-browser-extension.zip
+
   # Create GitHub Release with all artifacts
   release:
-    needs: [resolve, build-cli, build-cloudflare-bundles]
+    needs: [resolve, build-cli, build-cloudflare-bundles, build-browser-extension]
     runs-on: ubuntu-latest
     env:
       KIND: ${{ needs.resolve.outputs.kind }}
@@ -252,6 +277,9 @@ jobs:
           cp artifacts/gsv-cloudflare-bundles/gsv-cloudflare-channel-discord.tar.gz release/
           cp artifacts/gsv-cloudflare-bundles/gsv-cloudflare-channel-telegram.tar.gz release/
           cp artifacts/gsv-cloudflare-bundles/cloudflare-checksums.txt release/
+
+          # Browser extension
+          cp artifacts/gsv-browser-extension/gsv-browser-extension.zip release/
 
           # Make binaries executable
           chmod +x release/gsv-*
@@ -322,6 +350,10 @@ jobs:
           - \`gsv-cloudflare-channel-discord.tar.gz\`
           - \`gsv-cloudflare-channel-telegram.tar.gz\`
 
+          ### Browser Extension
+
+          Download \`gsv-browser-extension.zip\`, unzip it, and load the extracted directory as an unpacked extension from the browser extensions page.
+
           ### Manual Installation
 
           Download the binary for your platform:
@@ -382,6 +414,7 @@ jobs:
             release/gsv-cloudflare-channel-discord.tar.gz
             release/gsv-cloudflare-channel-telegram.tar.gz
             release/cloudflare-checksums.txt
+            release/gsv-browser-extension.zip
             release/install.sh
             release/install.ps1
             release/checksums.txt
