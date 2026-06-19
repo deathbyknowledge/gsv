@@ -10,7 +10,11 @@ const STORAGE_USAGE = [
   "Usage: storage local get [key]",
   "       storage local set <key> <json-or-string>",
   "       storage local delete <key>",
+  "",
+  "Reserved extension state keys are hidden.",
 ].join("\n");
+
+const RESERVED_EXTENSION_STORAGE_PREFIX = "gsvExtension";
 
 export const storageCommand: BrowserCommand = {
   name: "storage",
@@ -57,10 +61,13 @@ async function storageGet(args: string[]): Promise<CommandResult> {
     if (!parsed.ok) {
       return commandError(parsed.error);
     }
+    if (isReservedExtensionStorageKey(parsed.value)) {
+      return commandError(`reserved extension storage key is not exposed: ${parsed.value}`);
+    }
   }
 
   const items = await requireLocalStorage().get<Record<string, unknown>>(key ?? null);
-  return commandJson(items);
+  return commandJson(filterReservedExtensionStorage(items));
 }
 
 async function storageSet(args: string[]): Promise<CommandResult> {
@@ -71,6 +78,9 @@ async function storageSet(args: string[]): Promise<CommandResult> {
   const key = validateStorageKey(args[0]);
   if (!key.ok) {
     return commandError(key.error);
+  }
+  if (isReservedExtensionStorageKey(key.value)) {
+    return commandError(`reserved extension storage key cannot be modified: ${key.value}`);
   }
 
   const value = parseJsonOrString(args.slice(1).join(" "));
@@ -86,6 +96,9 @@ async function storageDelete(args: string[]): Promise<CommandResult> {
   const key = validateStorageKey(args[0]);
   if (!key.ok) {
     return commandError(key.error);
+  }
+  if (isReservedExtensionStorageKey(key.value)) {
+    return commandError(`reserved extension storage key cannot be deleted: ${key.value}`);
   }
 
   await requireLocalStorage().remove<Record<string, unknown>>(key.value);
@@ -108,6 +121,16 @@ function validateStorageKey(input: string | undefined): ParseResult<string> {
     return { ok: false, error: "storage key must not contain control characters" };
   }
   return { ok: true, value: key };
+}
+
+function filterReservedExtensionStorage(items: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(items).filter(([key]) => !isReservedExtensionStorageKey(key)),
+  );
+}
+
+function isReservedExtensionStorageKey(key: string): boolean {
+  return key.startsWith(RESERVED_EXTENSION_STORAGE_PREFIX);
 }
 
 function parseJsonOrString(input: string): unknown {
