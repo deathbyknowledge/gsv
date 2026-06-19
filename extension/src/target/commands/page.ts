@@ -280,7 +280,7 @@ async function runScreenshot(args: string[], ctx: CommandContext): Promise<Comma
     capturedAt.replace(/\D/g, "").slice(0, 14),
     ".png",
   ].join("");
-  await ctx.fs.write(path, png);
+  await ctx.fs.write(path, png, "image/png");
 
   return commandCompactJson({
     tabId: tab.id,

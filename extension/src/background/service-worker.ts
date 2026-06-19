@@ -13,6 +13,12 @@ import {
 import { debuggerTabs, releaseAllDebuggers } from "../shared/debugger";
 import { loadRuntimeState, saveRuntimeState } from "../shared/runtime-state";
 import type { ActivityEntry, ExtensionUiState, RuntimeMessage, RuntimeResponse } from "../shared/ui-state";
+import {
+  grantMediaCapture,
+  mediaCaptureGrantStatus,
+  mediaRecordingStatus,
+  stopAllMediaRecordings,
+} from "../target/media-recorder";
 import { networkStatus, stopNetworkCapture } from "../target/network-recorder";
 import { createBrowserTargetDriver, type BrowserTargetActivity } from "./driver";
 
@@ -97,6 +103,8 @@ async function handleRuntimeMessage(message: RuntimeMessage): Promise<RuntimeRes
         return await stateResponse();
       case "stop-all":
         return await stopAll();
+      case "grant-media-capture":
+        return await grantMediaCaptureAccess(message.tabId);
       case "clear-diagnostics":
         return await clearDiagnosticsState();
       case "save-config": {
@@ -166,14 +174,41 @@ async function connectNow(config?: ExtensionConfig): Promise<void> {
 }
 
 async function stopAll(): Promise<RuntimeResponse> {
-  const stoppedCaptures = await stopNetworkCapture();
-  const detachedTabs = await releaseAllDebuggers();
-  await setManualReconnectSuppressed(true);
+  const cleanupErrors: string[] = [];
+  const stoppedCaptures = await stopNetworkCapture().catch((error) => {
+    cleanupErrors.push(`network: ${errorMessage(error)}`);
+    return [];
+  });
+  const stoppedRecordings = await stopAllMediaRecordings().catch((error) => {
+    cleanupErrors.push(`media: ${errorMessage(error)}`);
+    return [];
+  });
+  const detachedTabs = await releaseAllDebuggers().catch((error) => {
+    cleanupErrors.push(`debugger: ${errorMessage(error)}`);
+    return [];
+  });
+  await setManualReconnectSuppressed(true).catch((error) => {
+    cleanupErrors.push(`runtime state: ${errorMessage(error)}`);
+  });
   driver.disconnect("stop all");
   addActivity({
-    kind: "sensitive",
+    kind: cleanupErrors.length > 0 ? "error" : "sensitive",
     label: "stop all",
-    detail: `stopped ${stoppedCaptures.length} network capture(s), detached ${detachedTabs.length} debugger tab(s)`,
+    detail: [
+      `stopped ${stoppedCaptures.length} network capture(s), ${stoppedRecordings.length} media recording(s), detached ${detachedTabs.length} debugger tab(s)`,
+      ...cleanupErrors.map((error) => `cleanup error: ${error}`),
+    ].join("; "),
+    status: cleanupErrors.length > 0 ? "error" : "info",
+  });
+  return await stateResponse();
+}
+
+async function grantMediaCaptureAccess(tabId?: number): Promise<RuntimeResponse> {
+  const grant = await grantMediaCapture(tabId);
+  addActivity({
+    kind: "sensitive",
+    label: "recording access",
+    detail: grant.title || grant.url || `tab ${grant.tabId}`,
     status: "info",
   });
   return await stateResponse();
@@ -221,6 +256,7 @@ async function buildUiState(): Promise<ExtensionUiState> {
     message: status.message,
   };
   const captures = networkStatus();
+  const mediaRecordings = await mediaRecordingStatus().catch(() => []);
   const tabs = debuggerTabs();
   const activity = diagnostics.activity;
   const artifactPaths = diagnostics.artifactPaths;
@@ -235,11 +271,15 @@ async function buildUiState(): Promise<ExtensionUiState> {
     sensitive: {
       connected: connection.state === "connected",
       networkCaptures: captures.length,
+      mediaRecordings: mediaRecordings.filter((recording) => recording.active).length,
       debuggerTabs: tabs,
       lastSensitiveAt: sensitiveActivity?.at ?? null,
     },
     network: {
       captures,
+    },
+    media: {
+      captureGrant: mediaCaptureGrantStatus(),
     },
     artifact: {
       screenshots: artifactPaths.filter((path) => path.startsWith("/home/browser/screenshots/")).length,

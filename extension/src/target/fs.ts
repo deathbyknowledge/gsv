@@ -1,5 +1,16 @@
 import type { GsvBinaryTransport } from "@humansandmachines/gsv/client";
 import { basename, dirname, joinPath, normalizePath } from "../shared/paths";
+import {
+  bytesFromStoredContent,
+  bytesToArrayBuffer,
+  deletePersistedEntries,
+  getPersistedEntries,
+  getPersistedEntry,
+  openPersistenceBackend,
+  putPersistedEntry,
+  type FsPersistenceBackend,
+  type StoredFsEntry,
+} from "./fs-persistence";
 import type { FileStat, TargetFileSystem } from "./types";
 
 type FsReadArgs = {
@@ -52,21 +63,18 @@ const textDecoder = new TextDecoder();
 const MAX_TEXT_READ_BYTES = 2 * 1024 * 1024;
 const MAX_TRANSFER_CHUNK_BYTES = 1024 * 1024;
 const MAX_SEARCH_MATCHES = 200;
-const FS_DB_NAME = "gsv-extension-target-fs";
-const FS_DB_VERSION = 1;
-const FS_ENTRY_STORE = "entries";
-const DEFAULT_DIRECTORIES = ["/", "/home", "/home/browser", "/home/browser/screenshots", "/tmp"];
-
-type StoredFsEntry =
-  | { path: string; kind: "directory"; updatedAt: number }
-  | { path: string; kind: "file"; content: ArrayBuffer; updatedAt: number };
-
-type FsPersistenceBackend =
-  | { kind: "indexeddb"; db: IDBDatabase }
-  | { kind: "memory" };
+const DEFAULT_DIRECTORIES = [
+  "/",
+  "/home",
+  "/home/browser",
+  "/home/browser/recordings",
+  "/home/browser/screenshots",
+  "/tmp",
+];
 
 export class BrowserTargetFileSystem implements TargetFileSystem {
   private files = new Map<string, Uint8Array>();
+  private contentTypes = new Map<string, string>();
   private directories = new Set<string>(DEFAULT_DIRECTORIES);
   private loadPromise: Promise<void> | null = null;
   private backend: FsPersistenceBackend = { kind: "memory" };
@@ -79,6 +87,7 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
     if (await this.runtime.exists(normalized)) {
       return await this.runtime.read(normalized);
     }
+    await this.refreshPersistedEntry(normalized);
     const value = this.files.get(normalized);
     if (!value) {
       throw new Error(`No such file: ${normalized}`);
@@ -86,17 +95,20 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
     return value;
   }
 
-  async write(path: string, content: Uint8Array): Promise<void> {
+  async write(path: string, content: Uint8Array, contentType?: string): Promise<void> {
     await this.ensureLoaded();
     const normalized = normalizePath(path);
     this.assertWritable(normalized);
     await this.assertNotDirectory(normalized);
     await this.ensureDirectory(dirname(normalized));
     this.files.set(normalized, copyBytes(content));
+    const resolvedContentType = contentType ?? inferContentType(normalized);
+    this.contentTypes.set(normalized, resolvedContentType);
     await this.persistEntry({
       path: normalized,
       kind: "file",
       content: bytesToArrayBuffer(content),
+      contentType: resolvedContentType,
       updatedAt: Date.now(),
     });
   }
@@ -116,10 +128,12 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
     await this.ensureLoaded();
     const normalized = normalizePath(path);
     this.assertWritable(normalized);
+    await this.refreshPersistedEntries();
     if (normalized === "/") {
       throw new Error("Refusing to delete /");
     }
     if (this.files.delete(normalized)) {
+      this.contentTypes.delete(normalized);
       await this.deletePersistedEntries([normalized]);
       return;
     }
@@ -128,6 +142,7 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
       for (const file of Array.from(this.files.keys())) {
         if (file.startsWith(`${normalized}/`)) {
           this.files.delete(file);
+          this.contentTypes.delete(file);
           deletedPaths.push(file);
         }
       }
@@ -166,7 +181,7 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
         finalDestination = joinPath(destinationPath, basename(sourcePath));
       }
     }
-    await this.write(finalDestination, await this.read(sourcePath));
+    await this.write(finalDestination, await this.read(sourcePath), sourceStat.contentType);
     return finalDestination;
   }
 
@@ -177,6 +192,7 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
 
   async list(path: string): Promise<{ files: string[]; directories: string[] }> {
     await this.ensureLoaded();
+    await this.refreshPersistedEntries();
     const normalized = normalizePath(path);
     const mergedFiles = new Set<string>();
     const mergedDirectories = new Set<string>();
@@ -220,6 +236,7 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
     if (this.directories.has(normalized)) {
       return { path: normalized, isFile: false, isDirectory: true, size: 0 };
     }
+    await this.refreshPersistedEntry(normalized);
     const value = this.files.get(normalized);
     if (value !== undefined) {
       return {
@@ -227,7 +244,7 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
         isFile: true,
         isDirectory: false,
         size: value.byteLength,
-        contentType: inferContentType(normalized),
+        contentType: this.contentTypes.get(normalized) ?? inferContentType(normalized),
       };
     }
     throw new Error(`No such file or directory: ${normalized}`);
@@ -236,7 +253,11 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
   async exists(path: string): Promise<boolean> {
     await this.ensureLoaded();
     const normalized = normalizePath(path);
-    return this.files.has(normalized) || this.directories.has(normalized) || await this.runtime.exists(normalized);
+    if (this.files.has(normalized) || this.directories.has(normalized) || await this.runtime.exists(normalized)) {
+      return true;
+    }
+    await this.refreshPersistedEntry(normalized);
+    return this.files.has(normalized) || this.directories.has(normalized);
   }
 
   async search(path: string, query: string, include?: string): Promise<Array<{ path: string; line: number; content: string }>> {
@@ -282,6 +303,7 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
 
   async getAllPaths(): Promise<string[]> {
     await this.ensureLoaded();
+    await this.refreshPersistedEntries();
     return Array.from(new Set([
       ...this.directories,
       ...this.files.keys(),
@@ -302,18 +324,46 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
       return;
     }
 
+    await this.refreshPersistedEntries();
+  }
+
+  private async refreshPersistedEntries(): Promise<void> {
+    if (this.backend.kind !== "indexeddb") {
+      return;
+    }
     const entries = await getPersistedEntries(this.backend.db);
     for (const entry of entries) {
-      const path = normalizePath(entry.path);
-      if (entry.kind === "directory") {
-        this.directories.add(path);
-      } else {
-        this.ensureDirectorySync(dirname(path));
-        this.files.set(path, bytesFromStoredContent(entry.content));
-      }
+      this.applyPersistedEntry(entry);
     }
     for (const directory of DEFAULT_DIRECTORIES) {
       this.directories.add(directory);
+    }
+  }
+
+  private async refreshPersistedEntry(path: string): Promise<void> {
+    if (this.backend.kind !== "indexeddb") {
+      return;
+    }
+    const entry = await getPersistedEntry(this.backend.db, normalizePath(path));
+    if (entry) {
+      this.applyPersistedEntry(entry);
+    }
+  }
+
+  private applyPersistedEntry(entry: StoredFsEntry): void {
+    const path = normalizePath(entry.path);
+    if (entry.kind === "directory") {
+      this.directories.add(path);
+      this.files.delete(path);
+      this.contentTypes.delete(path);
+      return;
+    }
+    this.ensureDirectorySync(dirname(path));
+    this.files.set(path, bytesFromStoredContent(entry.content));
+    if (entry.contentType) {
+      this.contentTypes.set(path, entry.contentType);
+    } else {
+      this.contentTypes.delete(path);
     }
   }
 
@@ -389,101 +439,8 @@ function isWritablePath(path: string): boolean {
     || path.startsWith("/home/browser/");
 }
 
-async function openPersistenceBackend(): Promise<FsPersistenceBackend> {
-  if (typeof indexedDB === "undefined") {
-    return { kind: "memory" };
-  }
-  try {
-    return { kind: "indexeddb", db: await openFsDatabase() };
-  } catch (error) {
-    console.warn("GSV browser target IndexedDB filesystem unavailable, using memory", error);
-    return { kind: "memory" };
-  }
-}
-
-function openFsDatabase(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(FS_DB_NAME, FS_DB_VERSION);
-    request.onupgradeneeded = () => {
-      const db = request.result;
-      if (!db.objectStoreNames.contains(FS_ENTRY_STORE)) {
-        db.createObjectStore(FS_ENTRY_STORE, { keyPath: "path" });
-      }
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error ?? new Error("Unable to open IndexedDB filesystem"));
-    request.onblocked = () => reject(new Error("IndexedDB filesystem open blocked"));
-  });
-}
-
-async function getPersistedEntries(db: IDBDatabase): Promise<StoredFsEntry[]> {
-  return await withStore<StoredFsEntry[]>(db, "readonly", (store) => requestToPromise(store.getAll()));
-}
-
-async function putPersistedEntry(db: IDBDatabase, entry: StoredFsEntry): Promise<void> {
-  await withStore<void>(db, "readwrite", async (store) => {
-    await requestToPromise(store.put(entry));
-  });
-}
-
-async function deletePersistedEntries(db: IDBDatabase, paths: string[]): Promise<void> {
-  await withStore<void>(db, "readwrite", async (store) => {
-    await Promise.all(paths.map((path) => requestToPromise(store.delete(path))));
-  });
-}
-
-function withStore<T>(
-  db: IDBDatabase,
-  mode: IDBTransactionMode,
-  run: (store: IDBObjectStore) => Promise<T>,
-): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(FS_ENTRY_STORE, mode);
-    const store = transaction.objectStore(FS_ENTRY_STORE);
-    let result: T;
-
-    transaction.oncomplete = () => resolve(result);
-    transaction.onerror = () => reject(transaction.error ?? new Error("IndexedDB filesystem transaction failed"));
-    transaction.onabort = () => reject(transaction.error ?? new Error("IndexedDB filesystem transaction aborted"));
-
-    run(store).then((value) => {
-      result = value;
-    }).catch((error) => {
-      transaction.abort();
-      reject(error);
-    });
-  });
-}
-
-function requestToPromise<T>(request: IDBRequest<T>): Promise<T> {
-  return new Promise((resolve, reject) => {
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error ?? new Error("IndexedDB filesystem request failed"));
-  });
-}
-
 function copyBytes(bytes: Uint8Array): Uint8Array {
   return new Uint8Array(bytes);
-}
-
-function bytesToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
-  const copy = new Uint8Array(bytes.byteLength);
-  copy.set(bytes);
-  return copy.buffer;
-}
-
-function bytesFromStoredContent(content: unknown): Uint8Array {
-  if (content instanceof Uint8Array) {
-    return copyBytes(content);
-  }
-  if (content instanceof ArrayBuffer) {
-    return new Uint8Array(content.slice(0));
-  }
-  if (ArrayBuffer.isView(content)) {
-    const view = new Uint8Array(content.buffer, content.byteOffset, content.byteLength);
-    return copyBytes(view);
-  }
-  return textEncoder.encode(String(content ?? ""));
 }
 
 export class BrowserFsDriver {
@@ -640,6 +597,7 @@ export class BrowserFsDriver {
       return { ok: false, error: "fs.transfer.send requires streamId" };
     }
     const bytes = await this.fs.read(path);
+    const stat = await this.fs.stat(path);
     try {
       const bytesSent = await binary.sendStream(streamId, bytes, { chunkSize: MAX_TRANSFER_CHUNK_BYTES });
       return {
@@ -647,7 +605,7 @@ export class BrowserFsDriver {
         path,
         size: bytes.byteLength,
         bytesSent,
-        contentType: inferContentType(path),
+        contentType: stat.contentType ?? inferContentType(path),
       };
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
@@ -669,12 +627,13 @@ export class BrowserFsDriver {
     const receive = binary.receive(streamId, { timeoutMs: 120_000, maxBytes: expectedSize });
     try {
       const bytes = await readStream(receive.stream, expectedSize);
-      await this.fs.write(path, bytes);
+      const contentType = typeof args.contentType === "string" ? args.contentType : inferContentType(path);
+      await this.fs.write(path, bytes, contentType);
       return {
         ok: true,
         path,
         bytesWritten: bytes.byteLength,
-        contentType: typeof args.contentType === "string" ? args.contentType : inferContentType(path),
+        contentType,
       };
     } catch (error) {
       receive.cancel(error instanceof Error ? error.message : "Binary transfer failed");
@@ -749,6 +708,11 @@ function inferContentType(path: string): string {
   if (lower.endsWith(".gif")) return "image/gif";
   if (lower.endsWith(".webp")) return "image/webp";
   if (lower.endsWith(".svg")) return "image/svg+xml";
+  if (lower.endsWith(".webm")) return "audio/webm";
+  if (lower.endsWith(".ogg")) return "audio/ogg";
+  if (lower.endsWith(".wav")) return "audio/wav";
+  if (lower.endsWith(".mp3")) return "audio/mpeg";
+  if (lower.endsWith(".m4a")) return "audio/mp4";
   if (lower.endsWith(".json")) return "application/json";
   if (lower.endsWith(".html") || lower.endsWith(".htm")) return "text/html";
   if (lower.endsWith(".css")) return "text/css";

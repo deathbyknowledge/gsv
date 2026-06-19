@@ -4,6 +4,7 @@ import { clipboardCommand } from "./clipboard";
 import { cookiesCommand } from "./cookies";
 import { downloadsCommand } from "./downloads";
 import { historyCommand } from "./history";
+import { mediaCommand } from "./media";
 import { networkCommand } from "./network";
 import { pageCommand } from "./page";
 import { storageCommand } from "./storage";
@@ -22,6 +23,7 @@ export function createBrowserCommands(): BrowserCommand[] {
     historyCommand,
     bookmarksCommand,
     networkCommand,
+    mediaCommand,
   ];
 }
 

@@ -16,11 +16,19 @@ export type BrowserCommand = {
   run(args: string[], ctx: CommandContext): Promise<CommandResult> | CommandResult;
 };
 
+export type TargetCopyEndpoint = {
+  target: string;
+  path: string;
+};
+
 export type CommandContext = {
   cwd: string;
   stdin: string;
   fs: TargetFileSystem;
   now: () => number;
+  currentTargetId?: string;
+  abortSignal?: AbortSignal;
+  copyTargetFile?: (source: TargetCopyEndpoint, destination: TargetCopyEndpoint) => Promise<unknown>;
 };
 
 export type DriverHandler = GsvDriverHandler;
@@ -35,7 +43,7 @@ export type FileStat = {
 
 export type TargetFileSystem = {
   read(path: string): Promise<Uint8Array>;
-  write(path: string, content: Uint8Array): Promise<void>;
+  write(path: string, content: Uint8Array, contentType?: string): Promise<void>;
   append(path: string, content: Uint8Array): Promise<void>;
   delete(path: string): Promise<void>;
   mkdir(path: string): Promise<void>;
