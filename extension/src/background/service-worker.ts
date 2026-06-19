@@ -167,16 +167,31 @@ async function connectNow(config?: ExtensionConfig): Promise<void> {
 }
 
 async function stopAll(): Promise<RuntimeResponse> {
-  const stoppedCaptures = await stopNetworkCapture();
-  const stoppedRecordings = await stopAllMediaRecordings();
-  const detachedTabs = await releaseAllDebuggers();
-  await setManualReconnectSuppressed(true);
+  const cleanupErrors: string[] = [];
+  const stoppedCaptures = await stopNetworkCapture().catch((error) => {
+    cleanupErrors.push(`network: ${errorMessage(error)}`);
+    return [];
+  });
+  const stoppedRecordings = await stopAllMediaRecordings().catch((error) => {
+    cleanupErrors.push(`media: ${errorMessage(error)}`);
+    return [];
+  });
+  const detachedTabs = await releaseAllDebuggers().catch((error) => {
+    cleanupErrors.push(`debugger: ${errorMessage(error)}`);
+    return [];
+  });
+  await setManualReconnectSuppressed(true).catch((error) => {
+    cleanupErrors.push(`runtime state: ${errorMessage(error)}`);
+  });
   driver.disconnect("stop all");
   addActivity({
-    kind: "sensitive",
+    kind: cleanupErrors.length > 0 ? "error" : "sensitive",
     label: "stop all",
-    detail: `stopped ${stoppedCaptures.length} network capture(s), ${stoppedRecordings.length} media recording(s), detached ${detachedTabs.length} debugger tab(s)`,
-    status: "info",
+    detail: [
+      `stopped ${stoppedCaptures.length} network capture(s), ${stoppedRecordings.length} media recording(s), detached ${detachedTabs.length} debugger tab(s)`,
+      ...cleanupErrors.map((error) => `cleanup error: ${error}`),
+    ].join("; "),
+    status: cleanupErrors.length > 0 ? "error" : "info",
   });
   return await stateResponse();
 }

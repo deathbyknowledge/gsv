@@ -127,6 +127,7 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
     await this.ensureLoaded();
     const normalized = normalizePath(path);
     this.assertWritable(normalized);
+    await this.refreshPersistedEntries();
     if (normalized === "/") {
       throw new Error("Refusing to delete /");
     }
