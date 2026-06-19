@@ -39,16 +39,23 @@ export function resolveModelThinkingLevel(
   if (!requested) {
     return null;
   }
-  const model = findModelForCapabilities(provider, modelName);
+  const model = resolveModelMetadata(provider, modelName);
   return model ? clampThinkingLevel(model, requested) : requested;
 }
 
-function findModelForCapabilities(provider: string, modelName: string) {
+export function resolveModelMetadata(provider: string, modelName: string) {
   const registryProvider = registryProviderFor(provider);
   if (!isKnownPiAiProvider(registryProvider)) {
     return null;
   }
   return getModels(registryProvider).find((candidate) => candidate.id === modelName) ?? null;
+}
+
+export function resolveModelContextWindowFromRegistry(provider: string, modelName: string): number | null {
+  const model = resolveModelMetadata(provider, modelName);
+  return Number.isSafeInteger(model?.contextWindow) && model!.contextWindow > 0
+    ? model!.contextWindow
+    : null;
 }
 
 function registryProviderFor(provider: string): string {

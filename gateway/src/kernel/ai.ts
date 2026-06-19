@@ -12,7 +12,6 @@
 
 import type { KernelContext } from "./context";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
-import { getModels, getProviders, type KnownProvider } from "@earendil-works/pi-ai";
 import type {
   AiToolsResult,
   AiToolsDevice,
@@ -43,6 +42,7 @@ import {
   isWorkersAiProvider,
   resolveWorkersAiModelContextWindow,
 } from "../inference/workers-ai";
+import { resolveModelContextWindowFromRegistry } from "../inference/model-registry";
 import {
   DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
   DEFAULT_MAX_AUDIO_TRANSCRIPTION_BYTES,
@@ -774,6 +774,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 async function resolveModelContextWindow(provider: string, model: string): Promise<number | null> {
+  const registryContextWindow = resolveModelContextWindowFromRegistry(provider, model);
+  if (registryContextWindow !== null) {
+    return registryContextWindow;
+  }
+
   if (isWorkersAiProvider(provider)) {
     const workersAiContextWindow = await resolveWorkersAiModelContextWindow(model);
     if (workersAiContextWindow !== null) {
@@ -781,15 +786,5 @@ async function resolveModelContextWindow(provider: string, model: string): Promi
     }
   }
 
-  if (!isKnownProvider(provider)) {
-    return null;
-  }
-  const resolved = getModels(provider).find((candidate) => candidate.id === model);
-  return Number.isSafeInteger(resolved?.contextWindow) && resolved!.contextWindow > 0
-    ? resolved!.contextWindow
-    : null;
-}
-
-function isKnownProvider(provider: string): provider is KnownProvider {
-  return getProviders().includes(provider as KnownProvider);
+  return null;
 }
