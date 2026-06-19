@@ -1,6 +1,6 @@
 {
   "name": "@gsv/chat",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "type": "module",
   "dependencies": {
     "@chenglou/pretext": "^0.0.7",

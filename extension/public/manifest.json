@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "GSV Browser Target",
   "description": "Expose this browser profile as a Unix-looking GSV target.",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "minimum_chrome_version": "116",
   "permissions": [
     "activeTab",
