@@ -2711,6 +2711,7 @@ export class Process extends Host<Env> {
         break;
       }
 
+      this.recordUnpersistedAssistantUsage(conversationId, response, run.config!);
       const retryState = await this.beginGenerationRetry({
         runId,
         conversationId,
@@ -2730,11 +2731,7 @@ export class Process extends Host<Env> {
     }
 
     if (isProviderContextOverflow(response, run.config!.contextWindowTokens)) {
-      const overflowMetadata = buildAssistantMessageMetadata(response, run.config!);
-      const overflowUsage = overflowMetadata?.usage;
-      if (overflowUsage) {
-        this.store.addConversationUsage(conversationId, overflowUsage);
-      }
+      const overflowUsage = this.recordUnpersistedAssistantUsage(conversationId, response, run.config!);
       await this.updateContextState(runId, conversationId, run.config!, context, response.usage, overflowUsage);
       if (await this.handleRunStopped(runId)) {
         return;
@@ -2751,6 +2748,7 @@ export class Process extends Host<Env> {
 
     const responseFailure = describeAssistantResponseFailure(response);
     if (responseFailure) {
+      this.recordUnpersistedAssistantUsage(conversationId, response, run.config!);
       const errorMsg = response.errorMessage ?? responseFailure;
       const displayError = formatGenerationFailure(errorMsg, {
         provider: run.config?.provider,
@@ -2888,6 +2886,18 @@ export class Process extends Host<Env> {
     }
 
     return response ?? await stream.result();
+  }
+
+  private recordUnpersistedAssistantUsage(
+    conversationId: string,
+    response: AssistantMessage,
+    config: AiConfigResult,
+  ): ProcUsageState | undefined {
+    const usage = buildAssistantMessageMetadata(response, config)?.usage;
+    if (usage) {
+      this.store.addConversationUsage(conversationId, usage);
+    }
+    return usage;
   }
 
   private async finishRun(options: RunFinishOptions): Promise<void> {

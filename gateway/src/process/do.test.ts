@@ -779,6 +779,16 @@ describe("Process DO — mechanical", () => {
                 api: "test",
                 provider: "test",
                 model: "test",
+                usage: {
+                  ...testUsage(100, 0),
+                  cost: {
+                    input: 0.00005,
+                    output: 0,
+                    cacheRead: 0,
+                    cacheWrite: 0,
+                    total: 0.00005,
+                  },
+                },
                 stopReason: "stop",
                 timestamp: Date.now(),
               };
@@ -791,6 +801,16 @@ describe("Process DO — mechanical", () => {
               api: "test",
               provider: "test",
               model: "test",
+              usage: {
+                ...testUsage(50, 10),
+                cost: {
+                  input: 0.000025,
+                  output: 0.000015,
+                  cacheRead: 0,
+                  cacheWrite: 0,
+                  total: 0.00004,
+                },
+              },
               stopReason: "stop",
               timestamp: Date.now(),
             };
@@ -825,6 +845,8 @@ describe("Process DO — mechanical", () => {
         return {
           calls,
           emitted,
+          contextState: process.store.getContextState("default"),
+          conversationUsage: process.store.getConversationUsage("default"),
           messages: process.store.getMessages(),
         };
       });
@@ -834,6 +856,18 @@ describe("Process DO — mechanical", () => {
         ["user", "answer visibly"],
         ["assistant", "visible answer"],
       ]);
+      expect(result.conversationUsage).toMatchObject({
+        inputTokens: 150,
+        outputTokens: 10,
+        totalTokens: 160,
+        cost: { total: 0.00009, source: "model-pricing" },
+        generations: 2,
+      });
+      expect(result.contextState?.conversationUsage).toMatchObject({
+        inputTokens: 150,
+        outputTokens: 10,
+        cost: { total: 0.00009, source: "model-pricing" },
+      });
       const output = result.emitted.find((entry) => entry.signal === "proc.run.output")?.payload as any;
       expect(output?.text).toBe("visible answer");
       const finished = result.emitted.find((entry) => entry.signal === "proc.run.finished")?.payload as any;
