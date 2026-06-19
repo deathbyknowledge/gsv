@@ -430,6 +430,10 @@ describe("createProcessSourceBackend", () => {
       identity: IDENTITY,
       storage: makeBucket(),
       packages: [makePackage()],
+      repos: [
+        makeRepo("sam/pkg-test"),
+        makeRepo("sam/docs"),
+      ],
       mounts: [],
       processId: "task:source",
       config: makeConfig(),
@@ -442,8 +446,81 @@ describe("createProcessSourceBackend", () => {
 
     expect(backend).not.toBeNull();
     await expect(backend!.readdir("/src/packages")).resolves.toEqual([]);
+    await expect(backend!.readdir("/src/repos/sam")).resolves.toEqual(["docs"]);
     await expect(backend!.readFile("/src/packages/sample-console/src/index.ts"))
       .rejects.toThrow("no such package source");
+    await expect(backend!.readFile("/src/repos/sam/pkg-test/README.md"))
+      .rejects.toThrow("no such source repo");
+  });
+
+  it("hides unmounted package repos from generic repo mounts", async () => {
+    const app = makePackage({
+      packageId: "import:sam/mono:packages/app",
+      manifest: {
+        ...makePackage().manifest,
+        name: "Demo App",
+        source: {
+          repo: "sam/mono",
+          ref: "main",
+          subdir: "packages/app",
+          resolvedCommit: "base123",
+        },
+      },
+    });
+    const other = makePackage({
+      packageId: "import:sam/mono:packages/other",
+      manifest: {
+        ...makePackage().manifest,
+        name: "Other Tool",
+        source: {
+          repo: "sam/mono",
+          ref: "main",
+          subdir: "packages/other",
+          resolvedCommit: "otherbase123",
+        },
+      },
+    });
+    const readCalls: Array<{ repo: { owner: string; repo: string; branch?: string }; path: string }> = [];
+    const backend = createProcessSourceBackend({
+      identity: IDENTITY,
+      storage: makeBucket(),
+      packages: [app, other],
+      repos: [makeRepo("sam/mono")],
+      mounts: [{
+        kind: "ripgit-source",
+        mountPath: "/src/packages/demo-app",
+        packageId: app.packageId,
+        repo: "sam/mono",
+        ref: "main",
+        resolvedCommit: "base123",
+        subdir: "packages/app",
+      }],
+      processId: "task:source",
+      config: makeConfig(),
+      ripgit: {
+        readPath: async (repo: { owner: string; repo: string; branch?: string }, path: string) => {
+          readCalls.push({ repo, path });
+          if (path === "packages/app/index.ts") {
+            return {
+              kind: "file",
+              bytes: new TextEncoder().encode("export const app = true;\n"),
+              size: 25,
+            };
+          }
+          return { kind: "missing" };
+        },
+      } as any,
+    });
+
+    await expect(backend!.readFile("/src/packages/demo-app/index.ts")).resolves.toContain("app = true");
+    await expect(backend!.readFile("/src/packages/other-tool/index.ts"))
+      .rejects.toThrow("no such package source");
+    await expect(backend!.readFile("/src/repos/sam/mono/packages/other/index.ts"))
+      .rejects.toThrow("no such source repo");
+    expect(readCalls).toEqual([{
+      repo: { owner: "sam", repo: "mono", branch: "base123" },
+      path: "packages/app/index.ts",
+    }]);
   });
 
   it("stages package source edits and commits them explicitly", async () => {
