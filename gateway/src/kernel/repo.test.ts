@@ -5,6 +5,7 @@ import {
   handleRepoCompare,
   handleRepoCreate,
   handleRepoImport,
+  handleRepoList,
   handleRepoRead,
 } from "./repo";
 
@@ -70,6 +71,25 @@ function makeContext(
         home: "/home/alice",
         cwd: "/home/alice",
       },
+    },
+    auth: {
+      getPasswdByUid: (uid: number) => {
+        if (uid === 1000) return { uid: 1000, gid: 1000, username: "alice", home: "/home/alice" };
+        if (uid === 2000) return { uid: 2000, gid: 2000, username: "scout", home: "/home/scout" };
+        return null;
+      },
+      getPasswdByUsername: (username: string) => {
+        if (username === "alice") return { uid: 1000, gid: 1000, username: "alice", home: "/home/alice" };
+        if (username === "scout") return { uid: 2000, gid: 2000, username: "scout", home: "/home/scout" };
+        return null;
+      },
+      getPersonalAgentUid: () => null,
+      getGroupByGid: (gid: number) => {
+        if (gid === 2000) return { name: "scout", gid: 2000, members: ["alice"] };
+        if (gid === 1000) return { name: "alice", gid: 1000, members: [] };
+        return null;
+      },
+      getGroupByName: () => null,
     },
     packages: {
       list: () => packages,
@@ -270,6 +290,74 @@ describe("repo syscalls", () => {
       repo: "bob/private",
       path: "README.md",
     }, ctx)).rejects.toThrow("Forbidden: cannot read repo bob/private");
+  });
+
+  it("lets the owning human list and write repos owned by their agent", async () => {
+    const fetcher = makeFetcher((url, init) => {
+      expect(url.pathname).toBe("/hyperspace/repos/scout/memory/apply");
+      expect(init?.method).toBe("POST");
+      return Response.json({ ok: true, head: "agent123", conflict: false });
+    });
+    const ctx = makeContext(fetcher, {
+      "repos/scout/memory/created_at": "100",
+      "repos/scout/memory/description": "Agent memory",
+    });
+
+    expect(handleRepoList({}, ctx).repos).toContainEqual({
+      repo: "scout/memory",
+      owner: "scout",
+      name: "memory",
+      kind: "user",
+      writable: true,
+      public: false,
+      description: "Agent memory",
+      updatedAt: 100,
+    });
+
+    await expect(handleRepoApply({
+      repo: "scout/memory",
+      message: "memory: update",
+      ops: [{ type: "put", path: "index.md", content: "# Memory\n" }],
+    }, ctx)).resolves.toMatchObject({
+      ok: true,
+      repo: "scout/memory",
+      head: "agent123",
+    });
+  });
+
+  it("lets an owner-backed agent process write the owning human's repos", async () => {
+    const fetcher = makeFetcher((url, init) => {
+      expect(url.pathname).toBe("/hyperspace/repos/alice/private/apply");
+      expect(init?.method).toBe("POST");
+      return Response.json({ ok: true, head: "owner123", conflict: false });
+    });
+    const ctx = makeContext(fetcher);
+    ctx.identity = {
+      role: "user",
+      capabilities: ["repo.apply"],
+      process: {
+        uid: 2000,
+        gid: 2000,
+        gids: [2000, 1000],
+        username: "scout",
+        home: "/home/scout",
+        cwd: "/home/scout",
+      },
+    };
+    ctx.processId = "proc:scout";
+    ctx.procs = {
+      getOwnerUid: () => 1000,
+    } as KernelContext["procs"];
+
+    await expect(handleRepoApply({
+      repo: "alice/private",
+      message: "owner: update",
+      ops: [{ type: "put", path: "notes.md", content: "secret\n" }],
+    }, ctx)).resolves.toMatchObject({
+      ok: true,
+      repo: "alice/private",
+      head: "owner123",
+    });
   });
 
   it("denies root-owned repos unless they are explicitly visible", async () => {

@@ -22,10 +22,12 @@ import type {
   RepoSummary,
 } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "./context";
+import { resolveCallerOwnerUid } from "./context";
 import { RipgitClient, type RipgitApplyOp, type RipgitRepoRef } from "../fs/ripgit/client";
 import { accountHomeRepoRef } from "../fs/ripgit/repos";
 import { visiblePackageScopesForActor } from "./packages";
 import { isRepoPublic } from "./repo-visibility";
+import { canOwnerDelegateRunAs } from "./account-access";
 
 const TEXT_DECODER = new TextDecoder();
 const STRICT_TEXT_DECODER = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
@@ -403,7 +405,27 @@ function canWriteRepo(rawRepo: string, ctx: KernelContext): boolean {
   if (identity.process.uid === 0 || identity.capabilities.includes("*")) {
     return true;
   }
-  return repo.owner === identity.process.username;
+  if (repo.owner === identity.process.username) {
+    return true;
+  }
+  const ownerUid = resolveCallerOwnerUid(ctx);
+  if (!ctx.auth || typeof ctx.auth.getPasswdByUsername !== "function") {
+    return false;
+  }
+  const owner = ctx.auth.getPasswdByUid(ownerUid);
+  if (
+    owner &&
+    owner.username === repo.owner &&
+    ownerUid !== identity.process.uid &&
+    canOwnerDelegateRunAs(ctx.auth, ownerUid, identity.process)
+  ) {
+    return true;
+  }
+  if (ownerUid !== identity.process.uid) {
+    return false;
+  }
+  const target = ctx.auth.getPasswdByUsername(repo.owner);
+  return !!target && canOwnerDelegateRunAs(ctx.auth, ownerUid, target);
 }
 
 function toSummary(

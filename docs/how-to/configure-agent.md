@@ -101,8 +101,9 @@ After initialization, pages are normal markdown files in the agent-owned repo:
 ```
 
 Agents should search and edit those files for durable facts, decisions,
-preferences, journal entries, and open loops. Use `context.d` only for material
-that must be loaded into every prompt.
+preferences, journal entries, closed-loop history, and supporting evidence. Keep
+active commitments, unresolved questions, blockers, and follow-ups in
+`~/context.d/20-open-loops.md` when they must be loaded into every prompt.
 
 ## Add Owner Context
 

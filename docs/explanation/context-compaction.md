@@ -95,10 +95,9 @@ pages/people/
 pages/projects/
 pages/preferences/
 pages/decisions/
-pages/open-loops.md
 ```
 
-Chronological journal entries are a good default capture path. Stable facts should be promoted into topical pages so search finds the canonical source instead of many duplicate daily notes.
+Chronological journal entries are a good default capture path. Stable facts should be promoted into topical pages so search finds the canonical source instead of many duplicate daily notes. Active open loops belong in `~/context.d/20-open-loops.md` so they are loaded into every prompt; the wiki can keep closed-loop history and supporting evidence.
 
 ## Session Reset and Archival
 

@@ -4,9 +4,11 @@ import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import {
   DEFAULT_BOOT_CONTEXT_TEMPLATE,
   DEFAULT_MEMORY_CONTEXT_TEMPLATE,
+  DEFAULT_OPEN_LOOPS_CONTEXT,
   DEFAULT_STYLE_CONTEXT,
   DEFAULT_USER_CONTEXT_TEMPLATE,
   LEGACY_DEFAULT_CONSTITUTION_CONTEXT,
+  LEGACY_MEMORY_CONTEXT_TEMPLATE,
 } from "../prompts/agent-home";
 
 const TEXT_ENCODER = new TextEncoder();
@@ -37,6 +39,7 @@ export async function ensureAccountHomeLayout(
     memoryContext,
     constitutionContext,
     userContext,
+    openLoopsContext,
     skillsDir,
   ] = await Promise.all([
     client.readPath(repo, "context.d"),
@@ -45,6 +48,7 @@ export async function ensureAccountHomeLayout(
     client.readPath(repo, "context.d/15-memory.md"),
     client.readPath(repo, "context.d/00-constitution.md"),
     client.readPath(repo, "context.d/10-user.md"),
+    client.readPath(repo, "context.d/20-open-loops.md"),
     client.readPath(repo, "skills.d"),
   ]);
 
@@ -72,11 +76,18 @@ export async function ensureAccountHomeLayout(
       styleContext,
       DEFAULT_STYLE_CONTEXT,
     );
-    maybePutTextFile(
+    maybePutOrReplaceGeneratedTextFile(
       ops,
       "context.d/15-memory.md",
       memoryContext,
       renderMemoryContext(identity.username),
+      renderLegacyMemoryContext(identity.username),
+    );
+    maybePutTextFile(
+      ops,
+      "context.d/20-open-loops.md",
+      openLoopsContext,
+      DEFAULT_OPEN_LOOPS_CONTEXT,
     );
     maybeDeleteGeneratedTextFile(
       ops,
@@ -108,13 +119,19 @@ export async function ensureAccountHomeLayout(
       ops,
       "context.d/15-memory.md",
       memoryContext,
-      [renderMemoryContext(identity.username)],
+      [renderMemoryContext(identity.username), renderLegacyMemoryContext(identity.username)],
     );
     maybeDeleteGeneratedTextFile(
       ops,
       "context.d/00-constitution.md",
       constitutionContext,
       [LEGACY_DEFAULT_CONSTITUTION_CONTEXT],
+    );
+    maybeDeleteGeneratedTextFile(
+      ops,
+      "context.d/20-open-loops.md",
+      openLoopsContext,
+      [DEFAULT_OPEN_LOOPS_CONTEXT],
     );
     maybeDeleteGeneratedTextFile(
       ops,
@@ -217,6 +234,12 @@ function renderUserContext(username: string): string {
 
 function renderMemoryContext(username: string): string {
   return renderPromptTemplate(DEFAULT_MEMORY_CONTEXT_TEMPLATE, {
+    "program.username": username,
+  });
+}
+
+function renderLegacyMemoryContext(username: string): string {
+  return renderPromptTemplate(LEGACY_MEMORY_CONTEXT_TEMPLATE, {
     "program.username": username,
   });
 }

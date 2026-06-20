@@ -169,6 +169,12 @@ describe("handleAccountCreate", () => {
     expect(memoryContextOp).toEqual(expect.objectContaining({ type: "put" }));
     expect(new TextDecoder().decode(new Uint8Array(memoryContextOp?.contentBytes ?? [])))
       .toContain("/src/repos/scout/memory");
+    expect(new TextDecoder().decode(new Uint8Array(memoryContextOp?.contentBytes ?? [])))
+      .toContain("Active open loops belong in `~/context.d/20-open-loops.md`");
+    const openLoopsContextOp = ops.find((op) => op.path === "context.d/20-open-loops.md");
+    expect(openLoopsContextOp).toEqual(expect.objectContaining({ type: "put" }));
+    expect(new TextDecoder().decode(new Uint8Array(openLoopsContextOp?.contentBytes ?? [])))
+      .toContain("# Open Loops");
     expect(ops).not.toContainEqual(
       expect.objectContaining({ type: "put", path: "context.d/00-boot.md" }),
     );
@@ -221,6 +227,10 @@ describe("handleAccountCreate", () => {
     expect(memoryContextOp).toBeTruthy();
     expect(new TextDecoder().decode(new Uint8Array(memoryContextOp?.contentBytes ?? [])))
       .toContain(`/src/repos/${personalAgentUsername}/memory`);
+    const openLoopsContextOp = agentOps.find((op) => op.path === "context.d/20-open-loops.md");
+    expect(openLoopsContextOp).toBeTruthy();
+    expect(new TextDecoder().decode(new Uint8Array(openLoopsContextOp?.contentBytes ?? [])))
+      .toContain("Track active commitments");
     const userContextOp = agentOps.find((op) => op.path === "context.d/10-user.md");
     expect(userContextOp).toBeTruthy();
     expect(new TextDecoder().decode(new Uint8Array(userContextOp?.contentBytes ?? [])))
