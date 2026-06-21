@@ -1025,6 +1025,110 @@ describe("Process DO — mechanical", () => {
       });
     });
 
+    it("retries raw tool-call markup returned as final text", async () => {
+      const pid = "mech-chat-tool-markup-text";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const emitted: Array<{ signal: string; payload: unknown }> = [];
+        let calls = 0;
+        process.sendSignal = async (signal: string, payload: unknown) => {
+          emitted.push({ signal, payload });
+        };
+        process.generation = {
+          async generate() {
+            calls += 1;
+            if (calls === 1) {
+              return {
+                role: "assistant",
+                content: [{
+                  type: "text",
+                  text: "<tool_call>Shell<arg_key>input</arg_key><arg_value>pwd</arg_value><arg_key>target</arg_key><arg_value>gsv</arg_value></tool_call>",
+                }],
+                api: "test",
+                provider: "test",
+                model: "test",
+                stopReason: "stop",
+                timestamp: Date.now(),
+              };
+            }
+            return {
+              role: "assistant",
+              content: [{
+                type: "toolCall",
+                id: "call-retry-shell",
+                name: "Shell",
+                arguments: { input: "pwd", target: "gsv" },
+              }],
+              api: "test",
+              provider: "test",
+              model: "test",
+              stopReason: "toolUse",
+              timestamp: Date.now(),
+            };
+          },
+          async generateText() {
+            return "unused";
+          },
+        };
+
+        process.store.appendMessage("user", "run pwd");
+        process.currentRun = {
+          runId: "run-chat-tool-markup-text",
+          queued: false,
+          conversationId: "default",
+          config: {
+            profile: "task",
+            provider: "openai",
+            model: "gpt-test",
+            apiKey: "test-key",
+            reasoning: "high",
+            maxTokens: 8192,
+            contextWindowTokens: 128000,
+            contextWindowSource: "config",
+            maxContextBytes: 32768,
+          },
+          tools: [],
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: {
+            default: "auto",
+            rules: [{ match: "shell.exec", action: "ask" }],
+          },
+        };
+        await process.continueAgentLoop("run-chat-tool-markup-text");
+        return {
+          calls,
+          emitted,
+          messages: process.store.getMessages(),
+          pendingHil: process.store.getPendingHilForRun("run-chat-tool-markup-text"),
+        };
+      });
+
+      expect(result.calls).toBe(2);
+      expect(result.messages.map((message: any) => [message.role, message.content])).toEqual([
+        ["user", "run pwd"],
+        ["assistant", ""],
+      ]);
+      const retry = result.emitted.find((entry) => entry.signal === "proc.run.retrying")?.payload as any;
+      expect(retry).toMatchObject({
+        pid,
+        runId: "run-chat-tool-markup-text",
+        conversationId: "default",
+        attempt: 1,
+        nextAttempt: 2,
+        maxAttempts: 3,
+        reason: "LLM returned malformed tool call markup as final text",
+      });
+      expect(result.pendingHil).toMatchObject({
+        runId: "run-chat-tool-markup-text",
+        toolCallId: "call-retry-shell",
+        toolName: "Shell",
+        syscall: "shell.exec",
+      });
+    });
+
     it("does not retry explicit returned provider errors with empty content", async () => {
       const pid = "mech-chat-provider-error-response";
       const stub = await initProcess(pid, ROOT_IDENTITY);

@@ -2718,7 +2718,9 @@ export class Process extends Host<Env> {
         attempt,
         maxAttempts: MAX_RETRYABLE_GENERATION_ATTEMPTS,
         reason: responseFailure,
-        cause: "empty assistant response",
+        cause: hasRawToolCallMarkupOutput(response)
+          ? "malformed assistant response"
+          : "empty assistant response",
       });
       if (retryState === "stopped") {
         return;
@@ -4213,6 +4215,9 @@ function describeAssistantResponseFailure(response: AssistantMessage): string | 
   if (!hasAssistantVisibleOutput(response)) {
     return "LLM returned reasoning but no final response";
   }
+  if (hasRawToolCallMarkupOutput(response)) {
+    return "LLM returned malformed tool call markup as final text";
+  }
   return null;
 }
 
@@ -4234,6 +4239,9 @@ function isRetryableAssistantResponseFailure(
   if (isRetryableGenerationErrorMessage(failureText)) {
     return true;
   }
+  if (hasRawToolCallMarkupOutput(response)) {
+    return true;
+  }
 
   const content = assistantContentBlocks(response);
   return !hasAssistantVisibleOutput(response) &&
@@ -4253,6 +4261,19 @@ function hasAssistantThinking(response: AssistantMessage): boolean {
   );
 }
 
+function hasRawToolCallMarkupOutput(response: AssistantMessage): boolean {
+  const content = assistantContentBlocks(response);
+  if (content.some((block) => block.type === "toolCall")) {
+    return false;
+  }
+  const text = content
+    .filter((block): block is TextContent => block.type === "text")
+    .map((block) => block.text)
+    .join("")
+    .trim();
+  return /^<tool_call(?:\s|>)/.test(text) && /<\/tool_call>$/.test(text);
+}
+
 function assistantContentBlocks(response: AssistantMessage): AssistantMessage["content"] {
   return Array.isArray(response.content) ? response.content : [];
 }
@@ -4260,6 +4281,7 @@ function assistantContentBlocks(response: AssistantMessage): AssistantMessage["c
 function isRetryableGenerationErrorMessage(message: string): boolean {
   const normalized = message.toLowerCase();
   return normalized.includes("reasoning but no final response") ||
+    normalized.includes("malformed tool call markup") ||
     normalized.includes("returned an empty response") ||
     normalized.includes("returned empty response") ||
     normalized.includes("empty response body");
