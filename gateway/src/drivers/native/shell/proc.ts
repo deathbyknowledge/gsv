@@ -95,6 +95,44 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
         exitCode: 0,
       };
     }
+    case "delegate": {
+      requireCommandCapability(ctx, "proc.spawn");
+      requireCommandCapability(ctx, "proc.ipc.call");
+      const parsed = parseProcDelegateCommand(rest, ctx);
+      const label = parsed.label ?? summarizeDelegateLabel(parsed.message);
+      const spawned = await handleProcSpawn({
+        ...(parsed.runAs ? { runAs: parsed.runAs } : {}),
+        interactive: false,
+        label,
+        ...(parsed.parentPid ? { parentPid: parsed.parentPid } : {}),
+        ...(parsed.cwd ? { cwd: parsed.cwd } : {}),
+      }, ctx);
+      if (!spawned.ok) {
+        return { stdout: "", stderr: `proc delegate: ${spawned.error}\n`, exitCode: 1 };
+      }
+      const result = await handleProcIpcCall({
+        pid: spawned.pid,
+        message: parsed.message,
+        ...(parsed.conversationId ? { conversationId: parsed.conversationId } : {}),
+        ...(parsed.timeoutMs !== undefined ? { timeoutMs: parsed.timeoutMs } : {}),
+      }, ctx);
+      if (!result.ok) {
+        return { stdout: "", stderr: `proc delegate: ${result.error}\n`, exitCode: 1 };
+      }
+      return {
+        stdout: [
+          "status=in_progress",
+          `task=${result.callId}`,
+          `pid=${result.pid}`,
+          `run_id=${result.runId}`,
+          `queued=${result.queued === true}`,
+          `deadline=${new Date(result.deadlineAt).toISOString()}`,
+          `label=${quoteShellField(label)}`,
+        ].join(" ") + "\n",
+        stderr: "",
+        exitCode: 0,
+      };
+    }
     case "segments": {
       requireCommandCapability(ctx, "proc.conversation.segments");
       const parsed = parseProcSegmentsCommand(rest, ctx);
@@ -323,7 +361,7 @@ function parseProcSpawnCommand(args: string[]): ProcSpawnArgs {
     }
     if (current === "--parent" || current === "--parent-pid") {
       index += 1;
-      parentPid = requireShellOptionValue(args[index], current);
+      parentPid = normalizeProcPid(requireShellOptionValue(args[index], current));
       continue;
     }
     if (current === "--cwd") {
@@ -826,12 +864,91 @@ function parseProcMessageCommand(args: string[], allowTimeout: boolean): {
     throw new Error("missing message");
   }
   return {
-    pid,
+    pid: normalizeProcPid(pid),
     message,
     ...(conversationId ? { conversationId } : {}),
     ...(metadata ? { metadata } : {}),
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
   };
+}
+
+function parseProcDelegateCommand(args: string[], ctx: KernelContext): {
+  runAs?: string;
+  label?: string;
+  parentPid?: string;
+  cwd?: string;
+  conversationId?: string;
+  timeoutMs?: number;
+  message: string;
+} {
+  let runAs: string | undefined;
+  let label: string | undefined;
+  let parentPid: string | undefined = ctx.processId;
+  let cwd: string | undefined;
+  let conversationId: string | undefined;
+  let timeoutMs: number | undefined;
+  const positional: string[] = [];
+
+  for (let index = 0; index < args.length; index += 1) {
+    const current = args[index];
+    if (current === "--as" || current === "--run-as") {
+      index += 1;
+      runAs = requireShellOptionValue(args[index], current);
+      continue;
+    }
+    if (current === "--label") {
+      index += 1;
+      label = requireShellOptionValue(args[index], current);
+      continue;
+    }
+    if (current === "--parent" || current === "--parent-pid") {
+      index += 1;
+      parentPid = normalizeProcPid(requireShellOptionValue(args[index], current));
+      continue;
+    }
+    if (current === "--cwd") {
+      index += 1;
+      cwd = requireShellOptionValue(args[index], current);
+      continue;
+    }
+    if (current === "--conversation") {
+      index += 1;
+      conversationId = requireShellOptionValue(args[index], current);
+      continue;
+    }
+    if (current === "--timeout") {
+      index += 1;
+      timeoutMs = parseDurationMs(requireShellOptionValue(args[index], current));
+      continue;
+    }
+    positional.push(current);
+  }
+
+  const message = positional.join(" ").trim();
+  if (!message) {
+    throw new Error("missing delegated task");
+  }
+  return {
+    ...(runAs ? { runAs } : {}),
+    ...(label ? { label } : {}),
+    ...(parentPid ? { parentPid } : {}),
+    ...(cwd ? { cwd } : {}),
+    ...(conversationId ? { conversationId } : {}),
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+    message,
+  };
+}
+
+function normalizeProcPid(pid: string): string {
+  const trimmed = pid.trim();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trimmed)
+    ? `proc:${trimmed}`
+    : trimmed;
+}
+
+function summarizeDelegateLabel(message: string): string {
+  const firstLine = message.split(/\r?\n/, 1)[0]?.trim() ?? "";
+  return firstLine.length <= 48 ? firstLine || "delegated task" : `${firstLine.slice(0, 45)}...`;
 }
 
 function formatProcSegmentReadResult(result: any, json: boolean | undefined): string {
@@ -931,6 +1048,7 @@ function procUsage(): string {
     "  proc agents [--json]",
     "  proc spawn [--as ACCOUNT] [--non-interactive] [--label LABEL] [--prompt TEXT] [--parent PID] [--cwd PATH] <prompt>",
     "  proc spawn --json JSON",
+    "  proc delegate [--as ACCOUNT] [--label LABEL] [--parent PID] [--cwd PATH] [--timeout 10m] <task>",
     "  proc segments [--pid PID] [--conversation id]",
     "  proc policy [--pid PID] [--conversation id] [--overflow auto-compact|fail] [--compact-at N] [--keep-last N]",
     "  proc history [--pid PID] [--conversation id] [--tail] [--limit N] [--offset N] [--json] [--full]",
@@ -945,8 +1063,9 @@ function procUsage(): string {
     "proc fork branches a conversation from a message or restores a compacted segment.",
     "proc history reads the live transcript for this process or another visible process.",
     "",
-    "proc send is asynchronous mail. proc call is bounded: the caller receives",
-    "an ipc.reply or ipc.timeout message in its default conversation.",
+    "proc delegate creates a child process for bounded work and returns a task",
+    "handle immediately. proc send is asynchronous mail. proc call sends bounded",
+    "work to an existing process; replies arrive as delegated task events.",
     "",
   ].join("\n");
 }

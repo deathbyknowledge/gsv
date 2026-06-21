@@ -99,7 +99,9 @@ function makeContext(options?: {
   auth?: KernelContext["auth"];
   caps?: KernelContext["caps"];
   schedules?: KernelContext["schedules"];
+  ipcCalls?: KernelContext["ipcCalls"];
   getAppRunner?: KernelContext["getAppRunner"];
+  scheduleIpcCallTimeout?: KernelContext["scheduleIpcCallTimeout"];
   scheduleScheduleWake?: KernelContext["scheduleScheduleWake"];
   identity?: ProcessIdentity;
 }): KernelContext {
@@ -185,6 +187,7 @@ function makeContext(options?: {
     adapters: null as never,
     runRoutes: null as never,
     schedules: options?.schedules,
+    ipcCalls: options?.ipcCalls,
     connection: null as never,
     identity: {
       role: "user",
@@ -194,6 +197,7 @@ function makeContext(options?: {
     processId: "task:pkg",
     serverVersion: "0.2.8",
     getAppRunner: options?.getAppRunner,
+    scheduleIpcCallTimeout: options?.scheduleIpcCallTimeout,
     scheduleScheduleWake: options?.scheduleScheduleWake,
   } as KernelContext;
 }
@@ -428,6 +432,115 @@ describe("proc native command", () => {
         cwd: "/home/sam/src",
       }),
     );
+  });
+
+  it("delegates bounded work through a new child process", async () => {
+    const spawnedPids: string[] = [];
+    const parent = {
+      processId: "task:pkg",
+      uid: IDENTITY.uid,
+      ownerUid: IDENTITY.uid,
+      gid: IDENTITY.gid,
+      gids: IDENTITY.gids,
+      username: IDENTITY.username,
+      home: IDENTITY.home,
+      cwd: IDENTITY.cwd,
+      profile: "task",
+      state: "running",
+      mounts: [],
+      contextFiles: [],
+      createdAt: 1,
+    };
+    const spawn = vi.fn((pid: string) => {
+      spawnedPids.push(pid);
+    });
+    const ipcCalls = {
+      create: vi.fn(),
+      remove: vi.fn(),
+      attachRun: vi.fn(),
+    };
+    const scheduleIpcCallTimeout = vi.fn(async () => "timeout-schedule");
+
+    sendFrameToProcessMock.mockImplementation(async (pid, frame) => {
+      const req = frame as any;
+      if (req.call === "proc.setidentity") {
+        return { type: "res", id: req.id, ok: true, data: { ok: true } };
+      }
+      if (req.call === "proc.ipc.deliver") {
+        expect(pid).toBe(spawnedPids[0]);
+        expect(req.args.message).toBe("write a migration plan");
+        expect(req.args.metadata).toBeUndefined();
+        expect(req.args.call).toEqual(expect.objectContaining({
+          callId: expect.any(String),
+          replyToPid: "task:pkg",
+          deadlineAt: expect.any(Number),
+        }));
+        return {
+          type: "res",
+          id: req.id,
+          ok: true,
+          data: {
+            ok: true,
+            status: "started",
+            pid,
+            sourcePid: "task:pkg",
+            conversationId: "default",
+            runId: "child-run",
+          },
+        };
+      }
+      throw new Error(`unexpected process frame: ${req.call}`);
+    });
+
+    const result = await handleShellExec(
+      { input: "proc delegate --label planning --timeout 10m write a migration plan" },
+      makeContext({
+        capabilities: ["proc.spawn", "proc.ipc.call"],
+        procs: {
+          get(pid: string) {
+            if (pid === "task:pkg") return parent;
+            if (pid === spawnedPids[0]) {
+              return {
+                ...parent,
+                processId: pid,
+                parentPid: "task:pkg",
+                interactive: false,
+                label: "planning",
+              };
+            }
+            return null;
+          },
+          getOwnerUid: vi.fn(() => IDENTITY.uid),
+          getMounts: vi.fn(() => []),
+          spawn,
+        } as unknown as KernelContext["procs"],
+        ipcCalls: ipcCalls as unknown as KernelContext["ipcCalls"],
+        scheduleIpcCallTimeout,
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("status=in_progress");
+    expect(result.stdout).toContain("run_id=child-run");
+    expect(result.stdout).toContain("queued=false");
+    expect(result.stdout).toContain('label="planning"');
+    expect(spawn).toHaveBeenCalledWith(
+      spawnedPids[0],
+      expect.objectContaining({ username: "sam" }),
+      expect.objectContaining({
+        parentPid: "task:pkg",
+        interactive: false,
+        label: "planning",
+      }),
+    );
+    expect(ipcCalls.create).toHaveBeenCalledWith(expect.objectContaining({
+      sourcePid: "task:pkg",
+      targetPid: spawnedPids[0],
+      uid: IDENTITY.uid,
+    }));
+    const callId = ipcCalls.create.mock.calls[0]?.[0]?.callId;
+    expect(ipcCalls.attachRun).toHaveBeenCalledWith(callId, "child-run");
+    expect(scheduleIpcCallTimeout).toHaveBeenCalledWith(callId, 600_000);
   });
 
   it("rejects legacy profile selection in proc spawn", async () => {

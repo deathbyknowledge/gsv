@@ -342,14 +342,14 @@ describe("Process DO — mechanical", () => {
 
       await runInDurableObject(stub, async (instance: Process) => {
         const process = instance as any;
-        process.store.appendMessage("system", "IPC call completed with result GREEN.");
+        process.store.appendMessage("system", "Delegated task finished with result GREEN.");
         process.store.appendMessage("user", "What was the result?");
 
         const messages = await process.buildContextMessages("default");
         expect(messages).toHaveLength(2);
         expect(messages[0]).toMatchObject({ role: "user" });
         expect((messages[0] as any).content).toContain("[Process Event]:");
-        expect((messages[0] as any).content).toContain("IPC call completed with result GREEN.");
+        expect((messages[0] as any).content).toContain("Delegated task finished with result GREEN.");
         expect(messages[1]).toMatchObject({
           role: "user",
           content: "What was the result?",
@@ -377,7 +377,7 @@ describe("Process DO — mechanical", () => {
         });
         process.store.appendMessage(
           "system",
-          "IPC call `abc` completed from process `worker`.",
+          "Delegated task from process `worker` finished.",
         );
         process.store.appendToolResult(
           "call_shell",
@@ -394,7 +394,7 @@ describe("Process DO — mechanical", () => {
         ]);
         expect((messages[1] as any).toolCallId).toBe("call_shell");
         expect((messages[2] as any).content).toContain("[Process Event]:");
-        expect((messages[2] as any).content).toContain("IPC call `abc` completed");
+        expect((messages[2] as any).content).toContain("Delegated task from process `worker` finished");
       });
     });
 
@@ -2036,7 +2036,7 @@ describe("Process DO — mechanical", () => {
         expect(messages).toHaveLength(0);
         expect(store.queueSize("mail")).toBe(1);
         const queued = store.drainQueue("mail");
-        expect(queued[0].message).toContain(`Message from process \`${sourcePid}\``);
+        expect(queued[0].message).toContain(`Message from sam (${sourcePid}).`);
         expect(queued[0].message).toContain("Please summarize the current build status.");
         expect(queued[0].message).toContain('"kind": "delegation"');
         expect(process.currentRun).toMatchObject({
@@ -2142,8 +2142,11 @@ describe("Process DO — mechanical", () => {
         const store = (instance as any).store;
         const queued = store.drainQueue("mail");
         expect(queued).toHaveLength(1);
-        expect(queued[0].message).toContain(`Call id: \`${data.callId}\``);
-        expect(queued[0].message).toContain("Complete this run before the deadline.");
+        expect(queued[0].message).toContain(`Delegated task from sam (${sourcePid}).`);
+        expect(queued[0].message).toContain("Please complete this task before");
+        expect(queued[0].message).toContain("Your final answer will be returned to the caller automatically.");
+        expect(queued[0].message).not.toContain("Call id:");
+        expect(queued[0].message).not.toContain("Reply target:");
         store.enqueue(data.runId, queued[0].message, undefined, undefined, "mail");
       });
 
@@ -2165,7 +2168,8 @@ describe("Process DO — mechanical", () => {
         const messages = store.getMessages();
         expect(messages).toHaveLength(1);
         expect(messages[0].role).toBe("system");
-        expect(messages[0].content).toContain(`IPC call \`${data.callId}\` completed`);
+        expect(messages[0].content).toContain(`Delegated task from process \`${targetPid}\` finished.`);
+        expect(messages[0].content).toContain(`Task id: \`${data.callId}\`.`);
         expect(messages[0].content).toContain("status is green");
         expect(process.currentRun).toMatchObject({
           conversationId: "default",
@@ -2224,12 +2228,183 @@ describe("Process DO — mechanical", () => {
         const messages = (instance as any).store.getMessages();
         const reply = messages.find((message: any) =>
           message.role === "system"
-          && message.content.includes(`IPC call \`${data.callId}\` completed`)
+          && message.content.includes(`Task id: \`${data.callId}\``)
         );
         expect(reply).toBeTruthy();
         expect(reply.content).toContain("worker completed");
         (instance as any).currentRun = null;
       });
+    });
+
+    it("defers the fallback wake run until a busy source run finishes", async () => {
+      const sourcePid = "mech-ipc-busy-source";
+      const targetPid = "mech-ipc-busy-target";
+      const source = await initProcess(sourcePid, ROOT_IDENTITY);
+
+      await runInDurableObject(source, (instance: Process) => {
+        const process = instance as any;
+        process.scheduleTick = vi.fn();
+        process.currentRun = {
+          runId: "active-source-run",
+          queued: false,
+          conversationId: "default",
+        };
+      });
+
+      await source.recvFrame({
+        type: "sig",
+        signal: "ipc.reply",
+        payload: {
+          callId: "busy-call",
+          sourcePid,
+          targetPid,
+          runId: "target-run",
+          deadlineAt: Date.now() + 30_000,
+          status: "completed",
+          response: { text: "busy result", usage: null },
+        },
+      });
+
+      await runInDurableObject(source, (instance: Process) => {
+        const process = instance as any;
+        const messages = process.store.getMessages();
+        expect(messages).toHaveLength(1);
+        expect(messages[0].role).toBe("system");
+        expect(messages[0].content).toContain(`Delegated task from process \`${targetPid}\` finished.`);
+        expect(messages[0].content).toContain("busy result");
+        expect(process.currentRun).toMatchObject({
+          runId: "active-source-run",
+          pendingRuntimeEvents: 1,
+        });
+        expect(process.store.queueSize("default")).toBe(0);
+        expect(process.scheduleTick).not.toHaveBeenCalled();
+      });
+
+      await runInDurableObject(source, async (instance: Process) => {
+        const process = instance as any;
+        await process.finishRun({
+          reason: "turn.complete",
+          status: "ok",
+          text: "parent finished before reading the event",
+        });
+      });
+
+      await runInDurableObject(source, (instance: Process) => {
+        const process = instance as any;
+        const userMessages = process.store.getMessages()
+          .filter((message: any) => message.role === "user");
+        expect(userMessages.at(-1)?.content).toContain("A delegated task event arrived while you were busy.");
+        expect(process.store.queueSize("default")).toBe(0);
+        expect(process.currentRun?.runId).not.toBe("active-source-run");
+        expect(process.currentRun).toMatchObject({ conversationId: "default" });
+        process.currentRun = null;
+      });
+    });
+
+    it("uses a busy bounded IPC reply on the next tool-result turn", async () => {
+      const sourcePid = "mech-ipc-next-turn-source";
+      const targetPid = "mech-ipc-next-turn-target";
+      const source = await initProcess(sourcePid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(source, async (instance: Process) => {
+        const process = instance as any;
+        const generatedInputs: string[] = [];
+        process.sendSignal = async () => {};
+        process.generation = {
+          async generate(request: any) {
+            generatedInputs.push(JSON.stringify(request.context.messages));
+            return {
+              role: "assistant",
+              content: [{ type: "text", text: "used delegated result" }],
+              api: "test",
+              provider: "test",
+              model: "test",
+              stopReason: "stop",
+              timestamp: Date.now(),
+            };
+          },
+          async generateText() {
+            return "";
+          },
+        };
+        process.store.appendMessage("user", "Wait for delegated work.", {
+          runId: "active-source-turn",
+        });
+        process.store.appendMessage("assistant", "Waiting on a command.", {
+          runId: "active-source-turn",
+          toolCalls: JSON.stringify({
+            toolCalls: [
+              {
+                type: "toolCall",
+                id: "call_shell",
+                name: "Shell",
+                arguments: { input: "sleep 10", target: "gsv" },
+              },
+            ],
+          }),
+        });
+        process.store.register("call_shell", "active-source-turn", "shell.exec", {
+          input: "sleep 10",
+          target: "gsv",
+        });
+        process.store.resolve("call_shell", { ok: true, stdout: "done" });
+        process.currentRun = {
+          runId: "active-source-turn",
+          queued: false,
+          conversationId: "default",
+          config: {
+            profile: "task",
+            provider: "workers-ai",
+            model: "@cf/test/model",
+            apiKey: "",
+            reasoning: "off",
+            maxTokens: 8192,
+          },
+          tools: [],
+          devices: [],
+          mcpServers: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+
+        await process.recvFrame({
+          type: "sig",
+          signal: "ipc.reply",
+          payload: {
+            callId: "next-turn-call",
+            sourcePid,
+            targetPid,
+            runId: "target-run",
+            deadlineAt: Date.now() + 30_000,
+            status: "completed",
+            response: { text: "next-turn result", usage: null },
+          },
+        });
+
+        expect(process.currentRun).toMatchObject({
+          runId: "active-source-turn",
+          pendingRuntimeEvents: 1,
+        });
+        expect(process.store.queueSize("default")).toBe(0);
+
+        await process.continueAgentLoop("active-source-turn");
+
+        return {
+          generatedInputs,
+          queueSize: process.store.queueSize("default"),
+          currentRun: process.currentRun,
+          messages: process.store.getMessages(),
+        };
+      });
+
+      expect(result.generatedInputs).toHaveLength(1);
+      expect(result.generatedInputs[0]).toContain("next-turn result");
+      expect(result.queueSize).toBe(0);
+      expect(result.currentRun).toBeNull();
+      const assistant = result.messages
+        .filter((message: any) => message.role === "assistant")
+        .pop();
+      expect(assistant?.content).toContain("used delegated result");
     });
 
     it("drives a bounded IPC reply through the target and source agent loops", async () => {
@@ -2241,14 +2416,14 @@ describe("Process DO — mechanical", () => {
 
       await stubGeneration(target, (request) => {
         const input = JSON.stringify(request.context.messages);
-        expect(input).toContain(`Message from process \`${sourcePid}\``);
+        expect(input).toContain(`Delegated task from root (${sourcePid}).`);
         expect(input).toContain(`Reply with exactly this token and nothing else: ${token}`);
         return token;
       });
       await stubGeneration(source, (request) => {
         const input = JSON.stringify(request.context.messages);
-        expect(input).toContain("IPC call");
-        expect(input).toContain("completed");
+        expect(input).toContain("Delegated task");
+        expect(input).toContain("finished");
         expect(input).toContain(token);
         return token;
       });
@@ -2287,7 +2462,7 @@ describe("Process DO — mechanical", () => {
           const messages = (instance as any).store.getMessages();
           return messages.find((message: any) =>
             message.role === "system"
-            && message.content.includes(`IPC call \`${data.callId}\` completed`)
+            && message.content.includes(`Task id: \`${data.callId}\``)
           ) ?? null;
         });
         if (replyMessage) break;
@@ -2345,7 +2520,8 @@ describe("Process DO — mechanical", () => {
         const messages = process.store.getMessages();
         expect(messages).toHaveLength(1);
         expect(messages[0].role).toBe("system");
-        expect(messages[0].content).toContain(`IPC call \`${data.callId}\` to process \`${targetPid}\` timed out.`);
+        expect(messages[0].content).toContain(`Delegated task to process \`${targetPid}\` timed out.`);
+        expect(messages[0].content).toContain(`Task id: \`${data.callId}\`.`);
         process.currentRun = null;
       });
     });
