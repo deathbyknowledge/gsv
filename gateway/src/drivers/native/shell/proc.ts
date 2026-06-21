@@ -14,6 +14,8 @@ import type { Frame } from "../../../protocol/frames";
 import { sendFrameToProcess } from "../../../shared/utils";
 import { parseDurationMs, requireCommandCapability, requireShellOptionValue } from "./common";
 
+const DEFAULT_HISTORY_CONTENT_CHARS = 4000;
+
 export function buildProcCommand(ctx: KernelContext) {
   return defineCommand("proc", async (args): Promise<ExecResult> => {
     try {
@@ -134,6 +136,31 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
           `compact_at=${policy.compactAtPressure}`,
           `keep_last=${policy.keepLast}`,
         ].join(" ") + "\n",
+        stderr: "",
+        exitCode: 0,
+      };
+    }
+    case "history": {
+      requireCommandCapability(ctx, "proc.history");
+      const parsed = parseProcHistoryCommand(rest, ctx);
+      const result = await runProcConversationSyscall(ctx, parsed.pid, "proc.history", {
+        pid: parsed.pid,
+        ...(parsed.conversationId ? { conversationId: parsed.conversationId } : {}),
+        ...(parsed.limit !== undefined ? { limit: parsed.limit } : {}),
+        ...(parsed.offset !== undefined ? { offset: parsed.offset } : {}),
+        ...(parsed.beforeMessageId !== undefined ? { beforeMessageId: parsed.beforeMessageId } : {}),
+        ...(parsed.afterMessageId !== undefined ? { afterMessageId: parsed.afterMessageId } : {}),
+        ...(parsed.tail ? { tail: true } : {}),
+      });
+      if (!result.ok) {
+        return { stdout: "", stderr: `proc history: ${result.error}\n`, exitCode: 1 };
+      }
+      return {
+        stdout: formatProcHistoryResult(result, {
+          json: parsed.json,
+          full: parsed.full,
+          maxContentChars: parsed.maxContentChars,
+        }),
         stderr: "",
         exitCode: 0,
       };
@@ -465,6 +492,95 @@ function parseProcSegmentReadCommand(args: string[], ctx: KernelContext): {
   };
 }
 
+function parseProcHistoryCommand(args: string[], ctx: KernelContext): {
+  pid: string;
+  conversationId?: string;
+  limit?: number;
+  offset?: number;
+  beforeMessageId?: number;
+  afterMessageId?: number;
+  tail?: boolean;
+  json?: boolean;
+  full?: boolean;
+  maxContentChars: number;
+} {
+  let pid: string | undefined;
+  let conversationId: string | undefined;
+  let limit: number | undefined;
+  let offset: number | undefined;
+  let beforeMessageId: number | undefined;
+  let afterMessageId: number | undefined;
+  let tail = false;
+  let json = false;
+  let full = false;
+  let maxContentChars = DEFAULT_HISTORY_CONTENT_CHARS;
+
+  for (let index = 0; index < args.length; index += 1) {
+    const current = args[index];
+    if (current === "--pid") {
+      index += 1;
+      pid = requireShellOptionValue(args[index], current);
+      continue;
+    }
+    if (current === "--conversation") {
+      index += 1;
+      conversationId = requireShellOptionValue(args[index], current);
+      continue;
+    }
+    if (current === "--limit") {
+      index += 1;
+      limit = parsePositiveShellInteger(requireShellOptionValue(args[index], current), current);
+      continue;
+    }
+    if (current === "--offset") {
+      index += 1;
+      offset = parseNonNegativeShellInteger(requireShellOptionValue(args[index], current), current);
+      continue;
+    }
+    if (current === "--before-message-id") {
+      index += 1;
+      beforeMessageId = parsePositiveShellInteger(requireShellOptionValue(args[index], current), current);
+      continue;
+    }
+    if (current === "--after-message-id") {
+      index += 1;
+      afterMessageId = parsePositiveShellInteger(requireShellOptionValue(args[index], current), current);
+      continue;
+    }
+    if (current === "--tail") {
+      tail = true;
+      continue;
+    }
+    if (current === "--json") {
+      json = true;
+      continue;
+    }
+    if (current === "--full") {
+      full = true;
+      continue;
+    }
+    if (current === "--max-content-chars") {
+      index += 1;
+      maxContentChars = parsePositiveShellInteger(requireShellOptionValue(args[index], current), current);
+      continue;
+    }
+    throw new Error(`unexpected argument: ${current}`);
+  }
+
+  return {
+    pid: pid ?? requireCurrentProcessId(ctx),
+    ...(conversationId ? { conversationId } : {}),
+    ...(limit !== undefined ? { limit } : {}),
+    ...(offset !== undefined ? { offset } : {}),
+    ...(beforeMessageId !== undefined ? { beforeMessageId } : {}),
+    ...(afterMessageId !== undefined ? { afterMessageId } : {}),
+    ...(tail ? { tail } : {}),
+    ...(json ? { json } : {}),
+    ...(full ? { full } : {}),
+    maxContentChars,
+  };
+}
+
 function parseProcCompactCommand(args: string[], ctx: KernelContext): {
   pid: string;
   conversationId?: string;
@@ -741,13 +857,56 @@ function formatProcSegmentReadResult(result: any, json: boolean | undefined): st
   return `${lines.join("\n")}\n`;
 }
 
+function formatProcHistoryResult(
+  result: any,
+  options: { json?: boolean; full?: boolean; maxContentChars: number },
+): string {
+  if (options.json) {
+    return `${JSON.stringify(result, null, 2)}\n`;
+  }
+
+  const lines = [
+    `History ${result.pid}`,
+    `Conversation: ${result.conversationId ?? "default"}`,
+    `Messages: ${result.messages.length}/${result.messageCount}${result.truncated ? " (truncated)" : ""}`,
+  ];
+  if (result.activeRunId) {
+    lines.push(`Active run: ${result.activeRunId} (${result.activeConversationId ?? "default"})`);
+  }
+  if (result.pendingHil) {
+    lines.push(`Pending HIL: ${result.pendingHil.requestId} ${result.pendingHil.toolName}`);
+  }
+  if (result.context) {
+    const context = result.context;
+    const pressure = typeof context.pressure === "number"
+      ? `${Math.round(context.pressure * 100)}%`
+      : "unknown";
+    lines.push(`Context: ${context.level ?? "unknown"} pressure=${pressure}`);
+  }
+  lines.push("");
+
+  for (let index = 0; index < result.messages.length; index += 1) {
+    const message = result.messages[index];
+    const timestamp = typeof message.timestamp === "number"
+      ? new Date(message.timestamp).toISOString()
+      : "-";
+    const id = message.id === undefined ? String(index + 1) : `#${message.id}`;
+    const run = typeof message.runId === "string" ? ` run=${message.runId}` : "";
+    lines.push(`[${id}] ${message.role} ${timestamp}${run}`);
+    const content = formatProcHistoryContent(message.content);
+    lines.push(options.full ? content : truncateProcHistoryContent(content, options.maxContentChars));
+    lines.push("");
+  }
+  return `${lines.join("\n")}\n`;
+}
+
 function formatProcHistoryContent(content: unknown): string {
   if (typeof content === "string") {
     return content;
   }
   if (content && typeof content === "object") {
     const record = content as Record<string, unknown>;
-    if (typeof record.text === "string") {
+    if (typeof record.text === "string" && record.text.trim()) {
       return record.text;
     }
     if (typeof record.output === "string") {
@@ -755,6 +914,13 @@ function formatProcHistoryContent(content: unknown): string {
     }
   }
   return JSON.stringify(content, null, 2);
+}
+
+function truncateProcHistoryContent(content: string, maxChars: number): string {
+  if (content.length <= maxChars) {
+    return content;
+  }
+  return `${content.slice(0, maxChars)}\n...[truncated ${content.length - maxChars} chars; use --full or --json to inspect all content]`;
 }
 
 function procUsage(): string {
@@ -767,6 +933,7 @@ function procUsage(): string {
     "  proc spawn --json JSON",
     "  proc segments [--pid PID] [--conversation id]",
     "  proc policy [--pid PID] [--conversation id] [--overflow auto-compact|fail] [--compact-at N] [--keep-last N]",
+    "  proc history [--pid PID] [--conversation id] [--tail] [--limit N] [--offset N] [--json] [--full]",
     "  proc segment <segment-id> [--pid PID] [--conversation id] [--limit N] [--offset N] [--json]",
     "  proc compact [--pid PID] [--conversation id] (--keep-last N | --through-message-id ID) [--summary TEXT | --generate-summary]",
     "  proc fork (<segment-id> | --message-id ID) [--pid PID] [--conversation id] [--target id] [--title TITLE] [--segment-only]",
@@ -776,6 +943,7 @@ function procUsage(): string {
     "proc compact archives a conversation prefix and records a segment. Without",
     "--summary, it asks the process model to generate the visible summary.",
     "proc fork branches a conversation from a message or restores a compacted segment.",
+    "proc history reads the live transcript for this process or another visible process.",
     "",
     "proc send is asynchronous mail. proc call is bounded: the caller receives",
     "an ipc.reply or ipc.timeout message in its default conversation.",

@@ -50,6 +50,7 @@ export const GSV_PROCESS_ORCHESTRATION =
   "Use `Shell` with `target: \"gsv\"` and `input: \"proc spawn --label '...'\"` to create another agent process. By default the new process inherits your current run-as identity as a fresh worker; pass `--as <account>` (a username, uid, or `pkg#agent`) to run it as a different agent account. Include a clear label and use `--parent $GSV_PID` when preserving delegation lineage from a process shell.\n" +
   "\n" +
   "Use `proc call <pid> --timeout 60s <message>` for bounded delegation when you need a result; the reply arrives later as an `[Process Event]` IPC reply or timeout. To delegate to a new worker and get a result, first run `proc spawn --label '...'`, then `proc call <new-pid> --timeout 10m '...'`. Use `proc spawn --prompt ...` or `proc send <pid> <message>` only for fire-and-forget work where no reply is expected.\n" +
+  "Use `proc history --pid <pid> --tail --limit 20` to inspect a delegated process's live transcript, including model errors, tool results, and whether it produced an answer. Add `--full` or `--json` only when you need untruncated content.\n" +
   "\n" +
   "Use `crontab` and cron files for automation. `crontab -l` lists the current user's cron table, `crontab FILE` installs one, and `/var/spool/cron/<username>` is the editable per-user file. Each job is a five-field cron line followed by a shell command. Use `sched list`, `sched run`, `sched enable`, `sched disable`, and `sched remove` only for low-level schedule inspection and control.\n" +
   "\n" +

@@ -1,12 +1,27 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { env } from "cloudflare:test";
 import { handleShellExec } from "./shell";
 import { handleFsCopy, handleFsRead, handleFsTransferReceive, handleFsTransferSend } from "./fs";
 import { parseBinaryFrame } from "@humansandmachines/gsv/protocol";
+import { sendFrameToProcess } from "../../shared/utils";
 import type { KernelContext } from "../../kernel/context";
 import type { DeviceRecord } from "../../kernel/devices";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { InstalledPackageRecord } from "../../kernel/packages";
+
+vi.mock("../../shared/utils", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../shared/utils")>();
+  return {
+    ...actual,
+    sendFrameToProcess: vi.fn(),
+  };
+});
+
+const sendFrameToProcessMock = vi.mocked(sendFrameToProcess);
+
+beforeEach(() => {
+  sendFrameToProcessMock.mockReset();
+});
 
 const IDENTITY: ProcessIdentity = {
   uid: 1000,
@@ -457,6 +472,94 @@ describe("proc native command", () => {
 
     expect(result.status).toBe("failed");
     expect(result.stderr).toContain("Permission denied: cannot access process foreign-pid");
+  });
+
+  it("reads live process history from the native proc command surface", async () => {
+    sendFrameToProcessMock.mockResolvedValueOnce({
+      type: "res",
+      id: "history-1",
+      ok: true,
+      data: {
+        ok: true,
+        pid: "proc:child",
+        conversationId: "default",
+        messages: [
+          {
+            id: 1,
+            role: "user",
+            content: "please investigate",
+            timestamp: 1_800_000_000_000,
+          },
+          {
+            id: 2,
+            role: "toolResult",
+            content: {
+              toolName: "Shell",
+              isError: false,
+              output: "x".repeat(40),
+            },
+            timestamp: 1_800_000_001_000,
+            runId: "run-child",
+          },
+        ],
+        messageCount: 2,
+        truncated: false,
+        hasMoreBefore: false,
+        hasMoreAfter: false,
+        activeRunId: null,
+        activeConversationId: null,
+        pendingHil: null,
+        context: {
+          level: "ok",
+          pressure: 0.2,
+        },
+      },
+    });
+
+    const result = await handleShellExec(
+      { input: "proc history --pid proc:child --tail --limit 2 --max-content-chars 12" },
+      makeContext({
+        capabilities: ["proc.history"],
+        procs: {
+          getOwnerUid: vi.fn(() => IDENTITY.uid),
+          get: vi.fn((pid: string) => {
+            if (pid === "proc:child" || pid === "task:pkg") {
+              return {
+                processId: pid,
+                uid: IDENTITY.uid,
+                ownerUid: IDENTITY.uid,
+                gid: IDENTITY.gid,
+                gids: IDENTITY.gids,
+                username: IDENTITY.username,
+                home: IDENTITY.home,
+                cwd: IDENTITY.cwd,
+                state: "idle",
+                mounts: [],
+                contextFiles: [],
+                createdAt: 1,
+              };
+            }
+            return null;
+          }),
+        } as Partial<KernelContext["procs"]>,
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("History proc:child");
+    expect(result.stdout).toContain("Messages: 2/2");
+    expect(result.stdout).toContain("please inves");
+    expect(result.stdout).toContain("[truncated 6 chars; use --full or --json to inspect all content]");
+    expect(result.stdout).toContain("xxxxxxxxxxxx");
+    expect(result.stdout).toContain("[truncated 28 chars; use --full or --json to inspect all content]");
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith("proc:child", expect.objectContaining({
+      call: "proc.history",
+      args: {
+        pid: "proc:child",
+        limit: 2,
+        tail: true,
+      },
+    }));
   });
 });
 
