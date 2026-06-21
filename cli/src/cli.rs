@@ -566,6 +566,10 @@ pub(crate) enum ProcAction {
         #[arg(long)]
         pid: Option<String>,
 
+        /// Read the newest messages instead of the oldest page
+        #[arg(long)]
+        tail: bool,
+
         /// Maximum number of messages
         #[arg(long)]
         limit: Option<u32>,
