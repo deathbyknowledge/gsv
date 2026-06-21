@@ -51,6 +51,9 @@ export type AiConfigResult = {
   contextWindowTokens: number | null;
   contextWindowSource: "model" | "config" | "unknown";
   systemContextFiles?: ContextFile[];
+  system?: {
+    timezone: string;
+  };
   skillIndex?: AiSkillIndexEntry[];
   accountApprovalPolicy?: string | null;
   maxContextBytes: number;

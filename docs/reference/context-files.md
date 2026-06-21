@@ -21,7 +21,7 @@ Agent context files add account-specific behavior and preferences. Owner
 context is available for human-authored notes; human homes start with an empty
 `~/context.d/` directory.
 Context files may use template keys such as `identity.home`, `identity.cwd`,
-`devices`, and `mcpServers`.
+`current.date`, `current.timezone`, `devices`, and `mcpServers`.
 
 Prompt context roots are rendered with prompt-markup tags such as
 `<system path="/sys/config/ai/context.d/">`, `<user path="/home/alice/context.d/">`,

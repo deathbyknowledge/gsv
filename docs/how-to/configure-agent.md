@@ -82,8 +82,8 @@ gsv proc spawn --as research-agent --prompt "Audit the week of notes."
 ```
 
 System and agent context can use runtime template variables such as
-`identity.username`, `identity.home`, `identity.cwd`, `devices`, and
-`mcpServers`.
+`current.date`, `current.timezone`, `identity.username`, `identity.home`,
+`identity.cwd`, `devices`, and `mcpServers`.
 
 Keep `context.d` concise. For long-term searchable memory, create or use the
 agent's repo-backed `memory` wiki:

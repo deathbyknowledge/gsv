@@ -20,6 +20,9 @@ export const GSV_RUNTIME_FACTS =
   "User: {{user.username}}\n" +
   "User home: {{user.home}}\n" +
   "\n" +
+  "Current date: {{current.date}}\n" +
+  "Current timezone: {{current.timezone}}\n" +
+  "\n" +
   "Current program: {{program.username}}\n" +
   "Program home: {{program.home}}\n" +
   "Program current working directory: {{program.cwd}}\n" +
