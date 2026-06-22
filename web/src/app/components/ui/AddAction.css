@@ -1,4 +1,6 @@
 /* Ported from AddAction.dc.html — hover rule transcribed verbatim. */
-.aa:hover {
+.aa[data-clickable="true"]:hover,
+.aa[data-clickable="true"]:focus-visible {
   background: var(--hover) !important;
+  outline: none;
 }

@@ -1,4 +1,6 @@
 /* Ported from ListRow.dc.html — hover rule transcribed verbatim. */
-.lr:hover {
+.lr[data-clickable="true"]:hover,
+.lr[data-clickable="true"]:focus-visible {
   background: var(--hover) !important;
+  outline: none;
 }

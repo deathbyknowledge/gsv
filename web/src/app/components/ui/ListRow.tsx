@@ -1,7 +1,7 @@
 import type { JSX } from "preact";
 import "./ListRow.css";
 
-export type ListRowStatus = "online" | "error" | "idle" | "none";
+export type ListRowStatus = "online" | "error" | "idle" | "live" | "none" | "update" | "warn";
 
 export interface ListRowProps {
   label?: string;
@@ -18,12 +18,18 @@ const STATUS_TEXT: Record<Exclude<ListRowStatus, "none">, string> = {
   online: "var(--online)",
   error: "var(--error)",
   idle: "#9a95cf",
+  live: "var(--live)",
+  update: "var(--update)",
+  warn: "var(--warn)",
 };
 
 const DOT_COLOR: Record<Exclude<ListRowStatus, "none">, string> = {
   online: "var(--online)",
   error: "var(--error)",
   idle: "var(--idle)",
+  live: "var(--live)",
+  update: "var(--update)",
+  warn: "var(--warn)",
 };
 
 /** ListRow — full-width clickable row with status, optional tag/status text, and chevron. */
@@ -43,14 +49,20 @@ export function ListRow({
   const dc = DOT_COLOR[dotKey];
 
   const rootStyle: JSX.CSSProperties = {
+    width: "100%",
+    appearance: "none",
+    border: 0,
+    background: active ? "var(--active)" : "transparent",
+    color: "inherit",
     display: "flex",
     alignItems: "center",
     gap: "14px",
     padding: "15px 20px",
-    cursor: "pointer",
+    cursor: onClick ? "pointer" : "default",
     transition: "background .12s",
+    font: "inherit",
     fontFamily: "var(--gsv-font-mono)",
-    ...(active ? { background: "var(--active)" } : {}),
+    textAlign: "left",
   };
 
   const dotStyle: JSX.CSSProperties = {
@@ -62,17 +74,18 @@ export function ListRow({
     ...(st === "idle" ? {} : { boxShadow: `0 0 7px ${dc}` }),
   };
 
-  return (
-    <div onClick={onClick} class="lr" style={rootStyle}>
-      {hasDot ? <span style={dotStyle} /> : null}
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: "12.5px", letterSpacing: ".04em", color: "var(--text)" }}>{label}</div>
+  const content = (
+    <>
+      {hasDot ? <span class="lr-dot" style={dotStyle} /> : null}
+      <div class="lr-main" style={{ flex: 1, minWidth: 0 }}>
+        <div class="lr-label" style={{ fontSize: "12.5px", letterSpacing: ".04em", color: "var(--text)" }}>{label}</div>
         {sub ? (
-          <div style={{ fontSize: "10px", letterSpacing: ".04em", color: "#8c86c8", marginTop: "6px" }}>{sub}</div>
+          <div class="lr-sub" style={{ fontSize: "10px", letterSpacing: ".04em", color: "#8c86c8", marginTop: "6px" }}>{sub}</div>
         ) : null}
       </div>
       {tag ? (
         <span
+          class="lr-tag"
           style={{
             flex: "none",
             fontSize: "8.5px",
@@ -86,17 +99,27 @@ export function ListRow({
         </span>
       ) : null}
       {statusLabel ? (
-        <span style={{ flex: "none", fontSize: "9px", letterSpacing: ".12em", color: STATUS_TEXT[dotKey] }}>
+        <span class="lr-status" style={{ flex: "none", fontSize: "9px", letterSpacing: ".12em", color: STATUS_TEXT[dotKey] }}>
           {statusLabel}
         </span>
       ) : null}
       {chevron ? (
-        <span style={{ display: "inline-flex", flex: "none", alignItems: "center" }}>
+        <span class="lr-chevron" style={{ display: "inline-flex", flex: "none", alignItems: "center" }}>
           <svg width="9" height="12" viewBox="0 0 9 12" style={{ filter: "drop-shadow(0 0 3px rgba(150,140,255,.5))" }}>
             <path d="M0 0 L9 6 L0 12 Z" fill="var(--accent)" />
           </svg>
         </span>
       ) : null}
+    </>
+  );
+
+  return onClick ? (
+    <button type="button" onClick={onClick} class="lr" data-clickable="true" style={rootStyle}>
+      {content}
+    </button>
+  ) : (
+    <div class="lr" style={rootStyle}>
+      {content}
     </div>
   );
 }

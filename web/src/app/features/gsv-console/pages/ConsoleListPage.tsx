@@ -1,9 +1,11 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
+import { AddAction } from "../../../components/ui/AddAction";
 import { Icon } from "../../../components/ui/Icon";
+import { ListRow, type ListRowStatus } from "../../../components/ui/ListRow";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
 import { StatusDot, type StatusTone } from "../../../components/ui/StatusDot";
-import { Tag, type TagTone } from "../../../components/ui/Tag";
+import type { TagTone } from "../../../components/ui/Tag";
 import { isNativeWebPackageName } from "../../packages/nativePackages";
 import {
   useConsoleAdapters,
@@ -569,65 +571,34 @@ function SettingsListPanel({
 }
 
 function SettingsListRowView({ row }: { row: SettingsListRow }) {
-  const content = (
-    <>
-      <span class="gsv-console-settings-row-mark">
-        <StatusDot tone={row.tone} size={8} />
-      </span>
-      <span class="gsv-console-settings-row-copy">
-        <strong>{row.label}</strong>
-        <small>{row.sub}</small>
-      </span>
-      {row.tag ? (
-        <span class="gsv-console-settings-row-tag">
-          <Tag label={row.tag.label} tone={row.tag.tone} boxed />
-        </span>
-      ) : null}
-      <span class={`gsv-console-settings-row-status is-${row.tone}`}>
-        <StatusDot tone={row.tone} size={7} />
-        <span>{row.statusLabel}</span>
-      </span>
-      <span class="gsv-console-settings-row-open" aria-hidden="true" />
-    </>
+  return (
+    <div class="gsv-console-settings-list-row">
+      <ListRow
+        label={row.label}
+        sub={row.sub}
+        status={listRowStatusForTone(row.tone)}
+        statusLabel={row.statusLabel}
+        tag={row.tag?.label}
+        chevron={Boolean(row.onOpen)}
+        onClick={row.onOpen}
+      />
+    </div>
   );
-
-  if (row.onOpen) {
-    return (
-      <button type="button" class="gsv-console-settings-row" onClick={row.onOpen}>
-        {content}
-      </button>
-    );
-  }
-
-  return <div class="gsv-console-settings-row">{content}</div>;
 }
 
 function SettingsListActionRow({ action }: { action: SettingsListAction }) {
-  const content = (
-    <>
-      <span class="gsv-console-settings-row-mark is-action">
-        <Icon name="plus" size={18} />
-      </span>
-      <span class="gsv-console-settings-row-copy">
-        <strong>{action.label}</strong>
-      </span>
-      <span class="gsv-console-settings-row-open" aria-hidden="true" />
-    </>
-  );
-
-  if (action.onClick) {
-    return (
-      <button type="button" class="gsv-console-settings-row is-action" onClick={action.onClick}>
-        {content}
-      </button>
-    );
-  }
-
   return (
-    <div class="gsv-console-settings-row is-action is-disabled" aria-disabled="true">
-      {content}
+    <div class={`gsv-console-settings-action${action.onClick ? "" : " is-disabled"}`} aria-disabled={action.onClick ? undefined : "true"}>
+      <AddAction variant="row" label={action.label} onClick={action.onClick} />
     </div>
   );
+}
+
+function listRowStatusForTone(tone: StatusTone): ListRowStatus {
+  if (tone === "online" || tone === "error" || tone === "idle" || tone === "live" || tone === "update" || tone === "warn") {
+    return tone;
+  }
+  return "online";
 }
 
 function RuntimeConsoleSection({
