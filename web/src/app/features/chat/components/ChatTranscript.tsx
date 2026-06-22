@@ -1,5 +1,6 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
+import { SystemMessage } from "../../../components/ui/SystemMessage";
 
 export type ChatDockMessageRole = "assistant" | "system" | "tool" | "toolResult" | "user";
 
@@ -280,6 +281,21 @@ function ProcessMessage({
         copied={copied}
         failed={failed}
         message={message}
+        onCopy={onCopy}
+      />
+    );
+  }
+
+  if (messageRole === "assistant" && !message.meta) {
+    return (
+      <SystemMessage
+        text={message.text}
+        time={message.time}
+        copyLabel={copyButtonLabel(copied, failed)}
+        copyDisabled={!message.text.trim()}
+        copyFailed={failed}
+        copyTitle={copied ? "Copied" : "Copy message"}
+        copyAriaLabel={copied ? "Copied assistant message" : "Copy assistant message"}
         onCopy={onCopy}
       />
     );

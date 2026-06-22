@@ -3,11 +3,21 @@ import "./SystemMessage.css";
 export interface SystemMessageProps {
   text?: string;
   time?: string;
+  copyAriaLabel?: string;
+  copyDisabled?: boolean;
+  copyLabel?: string;
+  copyTitle?: string;
+  copyFailed?: boolean;
   onCopy?: () => void;
 }
 
 /** SystemMessage — avatar + message bubble with a meta row for timestamp/copy actions. */
 export function SystemMessage({
+  copyAriaLabel,
+  copyDisabled = false,
+  copyFailed = false,
+  copyLabel = "COPY",
+  copyTitle = "Copy message",
   text = "",
   time = "",
   onCopy,
@@ -29,15 +39,22 @@ export function SystemMessage({
         <div class="gsv-sm-text">{text}</div>
         <div class="gsv-sm-meta">
           {time ? <span>{time}</span> : null}
-          <span class="gsv-sm-copy" onClick={onCopy}>
+          <button
+            type="button"
+            class={`gsv-sm-copy${copyFailed ? " is-failed" : ""}`}
+            disabled={copyDisabled}
+            aria-label={copyAriaLabel}
+            title={copyTitle}
+            onClick={onCopy}
+          >
             <svg width="10" height="10" viewBox="0 0 16 16">
               <g fill="none" stroke="currentColor" stroke-width="1.5">
                 <rect x="3" y="3" width="7" height="7" />
                 <rect x="6" y="6" width="7" height="7" />
               </g>
             </svg>
-            COPY
-          </span>
+            {copyLabel}
+          </button>
         </div>
       </div>
     </div>
