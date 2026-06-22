@@ -47,6 +47,15 @@ export type CreateConsoleAgentResult = {
   displayName: string;
 };
 
+export type SaveConsoleAgentContextInput = {
+  username: string;
+  files: readonly ConsoleAgentContextFileDraft[];
+};
+
+export type SaveConsoleAgentContextResult = {
+  written: number;
+};
+
 export type LoadConsoleOverviewOptions = {
   adapters?: readonly string[];
   includeConfig?: boolean;
@@ -141,6 +150,37 @@ export async function createConsoleAgent(
     username: account.username || username,
     displayName,
   };
+}
+
+export async function saveConsoleAgentContext(
+  client: Pick<GSVClient, "call">,
+  input: SaveConsoleAgentContextInput,
+): Promise<SaveConsoleAgentContextResult> {
+  const username = normalizeContextUsername(input.username);
+  if (!username) {
+    throw new Error("valid username is required");
+  }
+
+  let written = 0;
+  for (const file of input.files) {
+    if (!isChangedContextFile(file)) {
+      continue;
+    }
+    const name = normalizeContextFileName(file.name ?? file.label);
+    if (!name) {
+      throw new Error("valid context file names are required");
+    }
+    const result = await client.call("fs.write", {
+      path: `${contextDir(username)}/${name}`,
+      content: file.content,
+    }) as { ok?: boolean; error?: string };
+    if (result.ok === false) {
+      throw new Error(result.error || `failed to write ${name}`);
+    }
+    written += 1;
+  }
+
+  return { written };
 }
 
 export async function loadConsoleAdapterAccounts(

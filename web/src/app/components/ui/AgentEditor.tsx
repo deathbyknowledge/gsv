@@ -24,6 +24,8 @@ export interface AgentEditorProps {
   files?: AgentEditorFile[];
   tasks?: AgentEditorTask[];
   readOnly?: boolean;
+  generalReadOnly?: boolean;
+  filesReadOnly?: boolean;
   onCreate?: (draft: AgentEditorDraft) => Promise<void> | void;
   onSave?: (draft: AgentEditorDraft) => Promise<void> | void;
   onBack?: () => void;
@@ -139,6 +141,8 @@ export function AgentEditor(props: AgentEditorProps) {
   const mode: AgentEditorMode = props.mode ?? "new";
   const isNew = mode !== "manage";
   const readOnly = props.readOnly === true;
+  const generalReadOnly = props.generalReadOnly ?? readOnly;
+  const filesReadOnly = props.filesReadOnly ?? readOnly;
   const modelOptions = props.models && props.models.length > 0 ? props.models : MODELS;
 
   const metaRef = useRef<Defaults>(defaults(mode, props));
@@ -221,19 +225,19 @@ export function AgentEditor(props: AgentEditorProps) {
 
   // ---- handlers ----
   const onContent = (e: Event) => {
-    if (!readOnly) {
+    if (!filesReadOnly) {
       setFileContent((e.target as HTMLTextAreaElement).value);
     }
   };
   const onAddFile = () => {
-    if (readOnly) return;
+    if (filesReadOnly) return;
     setFiles((s) => [...s, { label: "UNTITLED", content: "# Untitled\n\n", orig: "# Untitled\n\n" }]);
     setFileIdx(files.length);
     setFlash("");
     setFormError("");
   };
   const onReset = () => {
-    if (readOnly) return;
+    if (filesReadOnly) return;
     setFiles((s) =>
       s.map((f, i) => (i === fileIdx ? { ...f, content: f.orig != null ? f.orig : f.content } : f)),
     );
@@ -257,7 +261,7 @@ export function AgentEditor(props: AgentEditorProps) {
     handler: ((draft: AgentEditorDraft) => Promise<void> | void) | undefined,
     successMessage: string,
   ) => {
-    if (readOnly || pendingAction !== null) return;
+    if (pendingAction !== null) return;
     if (!handler) {
       setFlashMsg(successMessage);
       return;
@@ -281,7 +285,7 @@ export function AgentEditor(props: AgentEditorProps) {
     void runAction("create", props.onCreate, "✓ AGENT CREATED");
   };
   const onResetGeneral = () => {
-    if (readOnly) return;
+    if (generalReadOnly) return;
     setName(meta.name);
     setRole(meta.role);
     setDesc(meta.desc);
@@ -295,11 +299,11 @@ export function AgentEditor(props: AgentEditorProps) {
   const delName = curFile.label;
   const stopProp = (e: Event) => e.stopPropagation();
   const onDelete = () => {
-    if (!readOnly) setDeleteOpen(true);
+    if (!filesReadOnly) setDeleteOpen(true);
   };
   const onCancelDelete = () => setDeleteOpen(false);
   const onConfirmDelete = () => {
-    if (readOnly) return;
+    if (filesReadOnly) return;
     setFiles((s) => {
       const next = s.filter((_, i) => i !== fileIdx);
       setFileIdx((idx) => Math.max(0, Math.min(idx, next.length - 1)));
@@ -334,7 +338,7 @@ export function AgentEditor(props: AgentEditorProps) {
   return (
     <div
       class="gsv-ae"
-      data-readonly={readOnly ? "true" : undefined}
+      data-readonly={generalReadOnly && filesReadOnly ? "true" : undefined}
       style="position:relative;min-height:100vh;background:var(--void);font-family:var(--gsv-font-mono);color:#cdd2e0;padding:0;overflow:visible;"
     >
       {/* glyph universe texture */}
@@ -396,11 +400,11 @@ export function AgentEditor(props: AgentEditorProps) {
                     <TextInput
                       key={`ti-name-${formNonce}`}
                       value={name}
-                      onChange={readOnly ? undefined : setName}
+                      onChange={generalReadOnly ? undefined : setName}
                       placeholder="Name your agent"
                       size="large"
                       label="NAME"
-                      readonly={readOnly}
+                      readonly={generalReadOnly}
                     />
                   </div>
 
@@ -409,11 +413,11 @@ export function AgentEditor(props: AgentEditorProps) {
                     <TextInput
                       key={`ti-role-${formNonce}`}
                       value={role}
-                      onChange={readOnly ? undefined : setRole}
+                      onChange={generalReadOnly ? undefined : setRole}
                       placeholder="e.g. PERSONAL AGENT"
                       size="medium"
                       label="ROLE"
-                      readonly={readOnly}
+                      readonly={generalReadOnly}
                     />
                   </div>
 
@@ -422,12 +426,12 @@ export function AgentEditor(props: AgentEditorProps) {
                     <TextArea
                       key={`ta-desc-${formNonce}`}
                       value={desc}
-                      onChange={readOnly ? undefined : setDesc}
+                      onChange={generalReadOnly ? undefined : setDesc}
                       placeholder="What is this agent for? A line or two."
                       rows={3}
                       size="medium"
                       label="DESCRIPTION"
-                      readonly={readOnly}
+                      readonly={generalReadOnly}
                     />
                   </div>
 
@@ -445,9 +449,9 @@ export function AgentEditor(props: AgentEditorProps) {
                       key={`sel-model-${formNonce}`}
                       options={modelOptions}
                       value={model}
-                      onChange={readOnly ? undefined : setModel}
+                      onChange={generalReadOnly ? undefined : setModel}
                       width={420}
-                      disabled={readOnly}
+                      disabled={generalReadOnly}
                     />
                   </div>
 
@@ -458,15 +462,15 @@ export function AgentEditor(props: AgentEditorProps) {
                     l1="ASK"
                     l2="DENY"
                     value={permVal}
-                    onChange={readOnly ? undefined : (i) => setPerm(PERMS[i] || "ask")}
+                    onChange={generalReadOnly ? undefined : (i) => setPerm(PERMS[i] || "ask")}
                     width={segWidth}
                     label="TOOL PERMISSIONS"
-                    disabled={readOnly}
+                    disabled={generalReadOnly}
                   />
 
                   {/* GENERAL actions */}
                   <div style="display:flex;align-items:center;gap:12px;margin-top:42px;">
-                    {readOnly ? (
+                    {generalReadOnly ? (
                       <span class="gsv-ae-readonly-note">READ ONLY</span>
                     ) : formError ? (
                       <span style="font-size:10px;letter-spacing:.12em;color:var(--error);">{formError}</span>
@@ -479,16 +483,16 @@ export function AgentEditor(props: AgentEditorProps) {
                         variant="primary"
                         label={pendingAction === "create" ? "CREATING" : "CREATE AGENT"}
                         onClick={onCreate}
-                        disabled={readOnly || pendingAction !== null}
+                        disabled={generalReadOnly || pendingAction !== null}
                       />
                     ) : (
                       <div style="display:flex;gap:12px;">
-                        <Button variant="secondary" label="RESET" onClick={onResetGeneral} disabled={readOnly || pendingAction !== null} />
+                        <Button variant="secondary" label="RESET" onClick={onResetGeneral} disabled={generalReadOnly || pendingAction !== null} />
                         <Button
                           variant="primary"
                           label={pendingAction === "save" ? "SAVING" : "SAVE"}
                           onClick={onSave}
-                          disabled={readOnly || pendingAction !== null}
+                          disabled={generalReadOnly || pendingAction !== null}
                         />
                       </div>
                     )}
@@ -548,7 +552,7 @@ export function AgentEditor(props: AgentEditorProps) {
                   ))}
                   <div
                     onClick={onAddFile}
-                    class={`gsv-ae-newfile${readOnly ? " is-disabled" : ""}`}
+                    class={`gsv-ae-newfile${filesReadOnly ? " is-disabled" : ""}`}
                     style="display:flex;flex-direction:column;align-items:center;gap:9px;cursor:pointer;width:78px;text-align:center;"
                   >
                     <svg width="34" height="30" viewBox="0 0 16 14" shape-rendering="crispEdges" fill="none" stroke="var(--dashed)" stroke-width="1">
@@ -568,20 +572,24 @@ export function AgentEditor(props: AgentEditorProps) {
                   value={curFile.content}
                   onInput={onContent}
                   spellcheck={false}
-                  readOnly={readOnly}
+                  readOnly={filesReadOnly}
                 />
 
                 {/* actions */}
                 <div style="display:flex;align-items:center;gap:12px;margin-top:16px;">
-                  <span class={`gsv-ae-delete${readOnly ? " is-disabled" : ""}`} onClick={readOnly ? undefined : onDelete}>DELETE</span>
+                  <span class={`gsv-ae-delete${filesReadOnly ? " is-disabled" : ""}`} onClick={filesReadOnly ? undefined : onDelete}>DELETE</span>
                   <span style="flex:1;" />
-                  {readOnly ? (
+                  {filesReadOnly ? (
                     <span class="gsv-ae-readonly-note">READ ONLY</span>
+                  ) : formError ? (
+                    <span style="font-size:10px;letter-spacing:.12em;color:var(--error);">{formError}</span>
+                  ) : pendingAction === "save" ? (
+                    <span style="font-size:10px;letter-spacing:.14em;color:var(--accent);">SAVING</span>
                   ) : flash ? (
                     <span style="font-size:10px;letter-spacing:.14em;color:var(--online);">{flash}</span>
                   ) : null}
-                  <span class={`gsv-ae-reset${readOnly ? " is-disabled" : ""}`} onClick={readOnly ? undefined : onReset}>RESET</span>
-                  <span class={`gsv-ae-save${readOnly ? " is-disabled" : ""}`} onClick={readOnly ? undefined : onSave}>SAVE</span>
+                  <span class={`gsv-ae-reset${filesReadOnly || pendingAction !== null ? " is-disabled" : ""}`} onClick={filesReadOnly || pendingAction !== null ? undefined : onReset}>RESET</span>
+                  <span class={`gsv-ae-save${filesReadOnly || pendingAction !== null ? " is-disabled" : ""}`} onClick={filesReadOnly || pendingAction !== null ? undefined : onSave}>SAVE</span>
                 </div>
               </div>
             ) : null}

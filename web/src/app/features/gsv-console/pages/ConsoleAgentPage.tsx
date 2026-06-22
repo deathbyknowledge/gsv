@@ -29,6 +29,7 @@ import {
   useConsoleConfig,
   useConsoleProcesses,
   useCreateConsoleAgent,
+  useSaveConsoleAgentContext,
 } from "../hooks/useConsoleData";
 import "./ConsoleAgentPage.css";
 
@@ -106,6 +107,10 @@ function AgentEditorSurface({
   const [width, setWidth] = useState(0);
   const processes = (processResource.data ?? []).filter((process) => ownsProcess(account, process));
   const context = useConsoleAgentContext(account.username);
+  const saveContext = useSaveConsoleAgentContext();
+  const contextEditable = context.files.length > 0
+    && !context.resource.isLoading
+    && !context.resource.isError;
   const files = editorFilesForAccount({
     account,
     contextFiles: context.files,
@@ -145,7 +150,14 @@ function AgentEditorSurface({
         models={modelLabels}
         tasks={tasksForProcesses(processes)}
         files={files}
-        readOnly
+        generalReadOnly
+        filesReadOnly={!contextEditable}
+        onSave={contextEditable ? async (draft) => {
+          await saveContext.mutateAsync({
+            username: account.username,
+            files: draft.files,
+          });
+        } : undefined}
         onBack={onBackToCrew}
       />
     </section>

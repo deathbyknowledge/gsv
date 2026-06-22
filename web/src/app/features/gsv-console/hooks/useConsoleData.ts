@@ -12,10 +12,13 @@ import {
   loadConsolePackages,
   loadConsoleProcesses,
   loadConsoleTargets,
+  saveConsoleAgentContext,
   type LoadConsoleOverviewOptions,
   type CreateConsoleAgentInput,
   type CreateConsoleAgentResult,
   type ConsoleAgentContextFile,
+  type SaveConsoleAgentContextInput,
+  type SaveConsoleAgentContextResult,
 } from "../backend/consoleService";
 import { summarizeConsoleOverview } from "../domain/consoleNormalization";
 import type {
@@ -210,6 +213,18 @@ export function useCreateConsoleAgent() {
         queryClient.invalidateQueries({ queryKey: consoleAgentContextQueryKey }),
         queryClient.invalidateQueries({ queryKey: consoleOverviewQueryKey }),
       ]);
+    },
+  });
+}
+
+export function useSaveConsoleAgentContext() {
+  const { client } = useGateway();
+  const queryClient = useQueryClient();
+
+  return useMutation<SaveConsoleAgentContextResult, Error, SaveConsoleAgentContextInput>({
+    mutationFn: (input) => saveConsoleAgentContext(client, input),
+    onSuccess: async (_result, input) => {
+      await queryClient.invalidateQueries({ queryKey: [...consoleAgentContextQueryKey, input.username] });
     },
   });
 }
