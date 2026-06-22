@@ -226,28 +226,24 @@ export function GsvShell({
         class={`gsv-shell-viewport${shell.chatOpen ? " has-chat" : ""}${shell.chatDragging ? " is-chat-dragging" : ""}`}
       >
         <main
-          class={`gsv-shell-world${shell.activeTab ? " has-page" : ""}${shell.desktopCollapsed ? " is-desktop-collapsed" : ""}${shell.railCollapsed ? " is-rail-collapsed" : ""} is-rail-mode-${shell.railMode}`}
+          class={`gsv-shell-world${shell.activeSurface !== "desktop" ? " has-page" : ""}${shell.desktopCollapsed ? " is-desktop-collapsed" : ""}${shell.railCollapsed ? " is-rail-collapsed" : ""}`}
           style={{ "--gsv-rail-width": `${shell.showRail ? (shell.railCollapsed ? 64 : 262) : 0}px` }}
         >
           {shell.showRail ? (
             <ShellRail
               desktopObjects={desktopObjects}
               collapsed={shell.railCollapsed}
-              railMode={shell.railMode}
-              activeTabKey={shell.activeTabKey}
               onToggleCollapsed={shell.toggleRailCollapsed}
-              onSetRailMode={shell.setRailMode}
               onBackToDesktop={shell.desktopCollapsed ? shell.revealDesktop : shell.backToDesktop}
               onOpenPicker={shell.openPicker}
               onOpenControlMenu={shell.openControlMenu}
-              onOpenSurface={shell.openSurface}
             />
           ) : null}
 
           <section class="gsv-shell-canvas" aria-label={shellSurfaceLabel(shell.activeSurface)}>
-            {shell.activeTab ? (
+            {shell.activeSurface !== "desktop" ? (
               <GsvConsole
-                activeSurface={shell.activeTab.surface}
+                activeSurface={shell.activeSurface}
                 onBackToDesktop={shell.backToDesktop}
                 onOpenSurface={shell.openSurface}
               />

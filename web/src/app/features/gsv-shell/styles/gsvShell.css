@@ -693,10 +693,6 @@
   box-shadow: 0 0 16px rgba(150, 140, 255, 0.45);
 }
 
-.gsv-rail-gsv[aria-expanded="true"] {
-  background: rgba(150, 140, 255, 0.08);
-}
-
 .gsv-rail-gsv .gsv-rail-row-copy > span {
   color: var(--text-hi);
   font-size: 16px;
@@ -707,37 +703,6 @@
 
 .gsv-rail-gsv .gsv-rail-row-copy > small {
   color: var(--accent);
-}
-
-.gsv-rail-subnav {
-  display: flex;
-  flex-direction: column;
-  padding: 6px 0 0;
-}
-
-.gsv-rail-subnav button {
-  min-height: 36px;
-  border: 0;
-  background: transparent;
-  color: #9d98d8;
-  display: flex;
-  align-items: center;
-  padding: 10px 20px 10px 74px;
-  font-size: 12px;
-  letter-spacing: 0.16em;
-  text-align: left;
-  cursor: pointer;
-}
-
-.gsv-rail-subnav button:hover,
-.gsv-rail-subnav button:focus-visible,
-.gsv-rail-subnav button.is-active {
-  background: var(--hover-nav);
-  color: var(--text-hi);
-}
-
-.gsv-rail-subnav button.is-active {
-  box-shadow: inset 2px 0 0 var(--accent-bright);
 }
 
 .gsv-shell-rail footer {
