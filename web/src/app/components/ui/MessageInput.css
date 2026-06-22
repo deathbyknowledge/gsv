@@ -1,4 +1,3 @@
-/* Ported from MessageInput.dc.html — values transcribed verbatim. */
 @keyframes gsvPop {
   0% {
     opacity: 0;
@@ -54,11 +53,22 @@
 .gsv-mi-send {
   display: flex;
   flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  padding: 0;
+  background: transparent;
+  border: 0;
   cursor: pointer;
   color: #b6b1ff;
 }
 .gsv-mi-send:hover {
   color: #e6e4ff;
+}
+.gsv-mi-send:disabled {
+  cursor: default;
+  color: #565178;
 }
 
 .gsv-mi-meta {

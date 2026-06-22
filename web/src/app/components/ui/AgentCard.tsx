@@ -36,10 +36,7 @@ const PERMS = ["allow", "ask", "deny"];
 
 const DEFAULT_MODELS = ["Nemotron 3", "Claude Opus 4", "GPT-5", "Llama 4 Maverick"];
 const DEFAULT_TASKS: AgentTask[] = [
-  { name: "Polishing silverware", status: "running" },
-  { name: "Indexing the library", status: "running" },
-  { name: "Telegram sync", status: "error" },
-  { name: "Archiving old logs", status: "idle" },
+  { name: "No active tasks", status: "idle" },
 ];
 
 const MONO = "var(--gsv-font-mono)";
@@ -65,13 +62,13 @@ function colFor(st: string): string {
  *  inline tasks dropdown that renders per-row status dots. */
 export function AgentCard(props: AgentCardProps) {
   const {
-    agentName = "Xanadu",
-    agentRole = "PERSONAL AGENT",
-    description = "Default agent — first crew of GSV. Your right hand, here for whatever you need.",
-    imgSrc = "img/agent-0.png",
+    agentName = "Agent",
+    agentRole = "AGENT",
+    description = "No agent details available.",
+    imgSrc = "/img/agent-0.png",
     status = "online",
     modelIsDefault = true,
-    tasksTotal = 23,
+    tasksTotal,
     active = true,
     showActions = true,
     saved = false,
@@ -113,6 +110,8 @@ export function AgentCard(props: AgentCardProps) {
 
   const showSwitch = !active && showActions;
   const showClose = active && showActions;
+  const visibleTasks = tasks.length > 0 ? tasks : DEFAULT_TASKS;
+  const resolvedTasksTotal = tasksTotal ?? (tasks.length > 0 ? tasks.length : 0);
 
   const headerStyle: preact.JSX.CSSProperties = {
     display: "flex",
@@ -138,7 +137,7 @@ export function AgentCard(props: AgentCardProps) {
     flashSaved();
   };
 
-  const cur = tasks[task] || tasks[0];
+  const cur = visibleTasks[task] || visibleTasks[0];
   const isSaved = savedFlash || saved;
 
   return (
@@ -273,7 +272,7 @@ export function AgentCard(props: AgentCardProps) {
         {/* tasks */}
         <div>
           <div style={{ marginBottom: "9px", fontFamily: MONO, fontSize: "10px", letterSpacing: ".18em", color: "var(--label)" }}>
-            TASKS ({tasksTotal})
+            TASKS ({resolvedTasksTotal})
           </div>
           <div style={{ position: "relative" }}>
             <div
@@ -314,7 +313,7 @@ export function AgentCard(props: AgentCardProps) {
                   overflowY: "auto",
                 }}
               >
-                {tasks.map((t, i) => (
+                {visibleTasks.map((t, i) => (
                   <div
                     onClick={() => {
                       setTask(i);

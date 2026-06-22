@@ -11,7 +11,7 @@ const story: Story = {
         <div class="ds-label">System</div>
         <div style={{ width: 440 }}>
           <SystemMessage
-            text="Scaffold's live. What should we call them — and how should they behave?"
+            text="Process is ready. Send an instruction to start the next run."
             time="14:22"
           />
         </div>
@@ -20,7 +20,7 @@ const story: Story = {
         <div class="ds-label">Assistant</div>
         <div style={{ width: 440 }}>
           <SystemMessage
-            text="Done. I've named the agent Xanadu and given it a curious, terse temperament. Ready for the next instruction."
+            text="Done. The process history has been updated and is ready for the next instruction."
             time="14:23"
           />
         </div>

@@ -16,7 +16,7 @@ const story: Story = {
       <div class="ds-cell">
         <div class="ds-label">Custom values</div>
         <div class="ds-row" style={{ width: "760px", maxWidth: "100%" }}>
-          <StatusBar model="XANADU" context="CTX 92%" clock="03:14:00" power="2.4kW" />
+          <StatusBar model="DEFAULT MODEL" context="CTX 92%" clock="03:14:00" power="2.4kW" />
         </div>
       </div>
     </div>

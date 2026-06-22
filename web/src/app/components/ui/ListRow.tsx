@@ -26,11 +26,9 @@ const DOT_COLOR: Record<Exclude<ListRowStatus, "none">, string> = {
   idle: "var(--idle)",
 };
 
-/** ListRow — ported from ListRow.dc.html. Full-width clickable row with status
- *  dot, primary label + optional sub-label, optional tag/status text, chevron,
- *  active skin and a hover state (real CSS). */
+/** ListRow — full-width clickable row with status, optional tag/status text, and chevron. */
 export function ListRow({
-  label = "<HANK-LINUX>",
+  label = "Item",
   status = "online",
   statusLabel = "",
   sub = "",

@@ -12,7 +12,7 @@ const story: Story = {
         <div class="ds-label">Glyph fallback</div>
         <div class="ds-row">
           <ObjectCard
-            label="<HANK-LINUX>"
+            label="PRIMARY NODE"
             type="COMPUTE HOST"
             glyph="machines"
             status="online"
@@ -30,8 +30,8 @@ const story: Story = {
       <div class="ds-cell">
         <div class="ds-label">Status</div>
         <div class="ds-row">
-          <ObjectCard label="<DELL-TOWER>" type="COMPUTE HOST" status="error" blurb="Lost contact 4m ago. Last heartbeat failed." />
-          <ObjectCard label="<RPI-EDGE>" type="EDGE NODE" status="idle" blurb="Powered down overnight. Wakes on schedule." />
+          <ObjectCard label="BUILD NODE" type="COMPUTE HOST" status="error" blurb="Lost contact 4m ago. Last heartbeat failed." />
+          <ObjectCard label="EDGE NODE" type="EDGE NODE" status="idle" blurb="Powered down overnight. Wakes on schedule." />
         </div>
       </div>
       <div class="ds-cell">
