@@ -510,11 +510,9 @@
 
 .gsv-chat-agent-panel {
   position: absolute;
-  inset: 112px 12px 12px;
+  inset: 0;
   z-index: 80;
-  background: #0c0a22;
-  border: 1px solid var(--border-raised);
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.62);
+  background: var(--node-bg);
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -524,7 +522,6 @@
 
 .gsv-chat-agent-panel-card {
   flex: none;
-  border-bottom: 1px solid var(--border);
 }
 
 .gsv-chat-agent-panel-crew {
@@ -539,6 +536,7 @@
   display: flex;
   min-width: 0;
   overflow-x: auto;
+  overflow-y: hidden;
   border-bottom: 1px solid var(--border);
 }
 
@@ -577,7 +575,6 @@
 }
 
 .gsv-chat-agent-crew-name,
-.gsv-chat-agent-crew-role,
 .gsv-chat-agent-crew-status {
   max-width: 100%;
   overflow: hidden;
@@ -593,38 +590,10 @@
   color: var(--text);
 }
 
-.gsv-chat-agent-crew-role {
-  font-size: 8.5px;
-  letter-spacing: 0.12em;
-  color: var(--text-dim);
-}
-
 .gsv-chat-agent-crew-status {
   font-size: 9px;
   letter-spacing: 0.05em;
   color: #a8a2dc;
-}
-
-.gsv-chat-agent-open-crew {
-  width: 100%;
-  border: 0;
-  border-top: 1px solid var(--rule-inner);
-  background: transparent;
-  color: #9a94ff;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 14px;
-  cursor: pointer;
-  font-size: 10px;
-  letter-spacing: 0.12em;
-  text-decoration: underline;
-}
-
-.gsv-chat-agent-open-crew:hover,
-.gsv-chat-agent-open-crew:focus-visible {
-  color: var(--accent-bright);
-  outline: none;
 }
 
 .gsv-chat-user-message {
@@ -1196,10 +1165,6 @@
 
   .gsv-shell-root .gsv-chat-context-control .gsv-pr {
     display: none;
-  }
-
-  .gsv-chat-agent-panel {
-    inset: 100px 10px 10px;
   }
 
   .gsv-chat-hil-head,
