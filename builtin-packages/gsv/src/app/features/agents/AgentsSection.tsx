@@ -7,6 +7,7 @@ import {
   buildCrewAgents,
   buildCrewStackCards,
   findMatchingStackProfile,
+  modelDisplayLabel,
   stackDetail,
   type CrewAgent,
   type CrewStackCard,
@@ -1095,7 +1096,7 @@ function PermissionsEditor({
           onChange={(e) => setStackSelection(e.currentTarget.value)}
         >
           <option value={INHERIT_STACK}>Inherit default</option>
-          <option value={CURRENT_DEFAULT_STACK}>Current default</option>
+          <option value={CURRENT_DEFAULT_STACK}>{currentDefaultOptionLabel(systemAiValues, models)}</option>
           {models.map((profile) => (
             <option key={profile.id} value={profile.id}>{profile.name}</option>
           ))}
@@ -1226,7 +1227,7 @@ function stackSummaryForSelection(
   if (selection === INHERIT_STACK) {
     return {
       kind: "Inherited preset",
-      label: "Default",
+      label: currentDefaultModelLabel(systemAiValues, profiles),
       detail: stackDetail(systemAiValues),
     };
   }
@@ -1234,7 +1235,7 @@ function stackSummaryForSelection(
   if (selection === CURRENT_DEFAULT_STACK) {
     return {
       kind: "Fixed preset",
-      label: "Current default",
+      label: currentDefaultModelLabel(systemAiValues, profiles),
       detail: stackDetail(systemAiValues),
     };
   }
@@ -1259,4 +1260,23 @@ function profileValuesMatch(left: Record<string, string>, right: Record<string, 
   const normalizedLeft = profileValuesFromDrafts(left);
   const normalizedRight = profileValuesFromDrafts(right);
   return AI_FIELDS.every((field) => (normalizedLeft[field.key] ?? "") === (normalizedRight[field.key] ?? ""));
+}
+
+function currentDefaultOptionLabel(
+  systemAiValues: Record<string, string>,
+  profiles: AgentModelProfile[],
+): string {
+  return `${currentDefaultModelLabel(systemAiValues, profiles)} (current default)`;
+}
+
+function currentDefaultModelLabel(
+  systemAiValues: Record<string, string>,
+  profiles: AgentModelProfile[],
+): string {
+  const profile = findMatchingStackProfile(profiles, systemAiValues);
+  if (profile) {
+    return profile.name;
+  }
+  const model = profileValuesFromDrafts(systemAiValues)["config/ai/model"]?.trim();
+  return model ? modelDisplayLabel(model) : "Default model";
 }
