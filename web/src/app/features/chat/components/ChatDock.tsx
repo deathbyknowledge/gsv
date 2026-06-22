@@ -39,6 +39,7 @@ type ChatDockProps = {
   onToggleOpen: () => void;
   onToggleMax: () => void;
   onOpenCrew: () => void;
+  onOpenModels?: () => void;
   onOpenTasks?: () => void;
   onSendMessage?: (message: string) => void;
   onSelectAgent?: (agentId: string) => void;
@@ -217,6 +218,7 @@ export function ChatDock({
   onToggleOpen,
   onToggleMax,
   onOpenCrew,
+  onOpenModels,
   onOpenTasks,
   onSendMessage,
   onSelectAgent,
@@ -478,6 +480,17 @@ export function ChatDock({
                 <strong>{shortId(context.runId)}</strong>
               </div>
             ) : null}
+            <button
+              type="button"
+              class="gsv-chat-popover-action"
+              onClick={() => {
+                setOpenPopover(null);
+                (onOpenModels ?? onOpenCrew)();
+              }}
+            >
+              <Icon name="stars" size={12} />
+              <span>MANAGE MODELS</span>
+            </button>
           </div>
         ) : null}
 
