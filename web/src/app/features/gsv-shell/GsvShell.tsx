@@ -278,7 +278,11 @@ export function GsvShell({
 
           <section class="gsv-shell-canvas" aria-label={shellSurfaceLabel(shell.activeSurface)}>
             {shell.activeTab ? (
-              <GsvConsole activeSurface={shell.activeTab.surface} onBackToDesktop={shell.backToDesktop} />
+              <GsvConsole
+                activeSurface={shell.activeTab.surface}
+                onBackToDesktop={shell.backToDesktop}
+                onOpenSurface={shell.openSurface}
+              />
             ) : shell.desktopCollapsed ? (
               <CollapsedDesktop
                 desktopObjects={desktopObjects}

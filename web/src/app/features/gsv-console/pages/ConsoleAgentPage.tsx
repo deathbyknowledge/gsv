@@ -1,0 +1,214 @@
+import { useLayoutEffect, useRef, useState } from "preact/hooks";
+import {
+  AgentEditor,
+  type AgentEditorFile,
+  type AgentEditorTask,
+} from "../../../components/ui/AgentEditor";
+import type { AvatarStatus } from "../../../components/ui/Avatar";
+import {
+  ConsolePage,
+  ConsolePageState,
+  ConsoleResourceBoundary,
+} from "../components/ConsolePageTemplate";
+import type {
+  ConsoleAccount,
+  ConsoleAccountRelation,
+  ConsoleProcess,
+  ConsoleResourceState,
+} from "../domain/consoleModels";
+import {
+  useConsoleAccounts,
+  useConsoleProcesses,
+} from "../hooks/useConsoleData";
+import "./ConsoleAgentPage.css";
+
+type ConsoleAgentPageProps = {
+  accountUid: number | null;
+  onBackToCrew: () => void;
+};
+
+const RELATION_LABEL: Record<ConsoleAccountRelation, string> = {
+  self: "OPERATOR",
+  "personal-agent": "PERSONAL AGENT",
+  agent: "AGENT",
+  human: "HUMAN",
+  unknown: "ACCOUNT",
+};
+
+const DEFAULT_MODELS = ["GATEWAY DEFAULT"];
+
+export function ConsoleAgentPage({
+  accountUid,
+  onBackToCrew,
+}: ConsoleAgentPageProps) {
+  const accounts = useConsoleAccounts();
+  const processes = useConsoleProcesses();
+
+  return (
+    <ConsolePage>
+      <ConsoleResourceBoundary
+        resource={accounts.resource}
+        emptyLabel="NO AGENT ACCOUNT"
+        errorLabel="AGENT"
+        render={(data) => {
+          const account = selectAccount(data, accountUid);
+          if (!account) {
+            return <ConsolePageState kind="empty" label="NO AGENT ACCOUNT" />;
+          }
+          return (
+            <AgentEditorSurface
+              account={account}
+              processResource={processes.resource}
+              onBackToCrew={onBackToCrew}
+            />
+          );
+        }}
+      />
+    </ConsolePage>
+  );
+}
+
+function AgentEditorSurface({
+  account,
+  processResource,
+  onBackToCrew,
+}: {
+  account: ConsoleAccount;
+  processResource: ConsoleResourceState<ConsoleProcess[]>;
+  onBackToCrew: () => void;
+}) {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(0);
+  const processes = (processResource.data ?? []).filter((process) => ownsProcess(account, process));
+
+  useLayoutEffect(() => {
+    const node = rootRef.current;
+    if (!node) return;
+    const update = () => setWidth(node.clientWidth);
+    update();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", update);
+      return () => window.removeEventListener("resize", update);
+    }
+    const observer = new ResizeObserver(update);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <section class="gsv-console-agent" ref={rootRef}>
+      <AgentEditor
+        key={account.uid}
+        mode="manage"
+        avatarSrc={`/img/agent-${Math.abs(account.uid) % 3}.png`}
+        containerWidth={width || undefined}
+        initialName={account.displayName}
+        initialRole={RELATION_LABEL[account.relation]}
+        initialDescription={accountDescription(account)}
+        createdLabel={String(account.uid)}
+        metaLabel="UID:"
+        status={avatarStatusForProcesses(account, processes)}
+        models={DEFAULT_MODELS}
+        tasks={tasksForProcesses(processes)}
+        files={filesForAccount(account, processes, processResource)}
+        readOnly
+        onBack={onBackToCrew}
+      />
+    </section>
+  );
+}
+
+function selectAccount(accounts: readonly ConsoleAccount[], accountUid: number | null): ConsoleAccount | null {
+  if (accountUid !== null) {
+    const selected = accounts.find((account) => account.uid === accountUid);
+    if (selected) return selected;
+  }
+  return accounts.find((account) => account.relation === "personal-agent")
+    ?? accounts.find((account) => account.relation === "agent")
+    ?? accounts.find((account) => account.relation === "self")
+    ?? accounts[0]
+    ?? null;
+}
+
+function ownsProcess(account: ConsoleAccount, process: ConsoleProcess): boolean {
+  return process.uid === account.uid || process.username === account.username;
+}
+
+function isRunningProcess(process: ConsoleProcess): boolean {
+  return process.state === "running" || process.activeRunId !== null;
+}
+
+function isQueuedProcess(process: ConsoleProcess): boolean {
+  return process.state === "queued" || process.queuedCount > 0;
+}
+
+function avatarStatusForProcesses(account: ConsoleAccount, processes: readonly ConsoleProcess[]): AvatarStatus {
+  if (processes.some((process) => process.state === "unknown")) return "error";
+  if (processes.some((process) => isRunningProcess(process) || isQueuedProcess(process))) return "live";
+  return account.runnable ? "idle" : "idle";
+}
+
+function tasksForProcesses(processes: readonly ConsoleProcess[]): AgentEditorTask[] {
+  if (processes.length === 0) {
+    return [{ name: "No process activity", status: "idle" }];
+  }
+  return processes.map((process) => ({
+    name: process.label || process.pid,
+    status: process.state === "unknown" ? "error" : isRunningProcess(process) || isQueuedProcess(process) ? "running" : "idle",
+  }));
+}
+
+function filesForAccount(
+  account: ConsoleAccount,
+  processes: readonly ConsoleProcess[],
+  processResource: ConsoleResourceState<ConsoleProcess[]>,
+): AgentEditorFile[] {
+  return [
+    {
+      label: "ACCOUNT",
+      content: [
+        `# ${account.displayName}`,
+        "",
+        `username: ${account.username}`,
+        `uid: ${account.uid}`,
+        `relation: ${account.relation}`,
+        `runnable: ${account.runnable ? "yes" : "no"}`,
+        account.gecos ? `gecos: ${account.gecos}` : "",
+      ].filter(Boolean).join("\n"),
+    },
+    {
+      label: "PROCESSES",
+      content: processFileContent(processes, processResource),
+    },
+  ];
+}
+
+function processFileContent(
+  processes: readonly ConsoleProcess[],
+  processResource: ConsoleResourceState<ConsoleProcess[]>,
+): string {
+  if (processResource.isLoading) return "# Processes\n\nLoading process telemetry.";
+  if (processResource.isUnavailable) return "# Processes\n\nProcess telemetry is offline.";
+  if (processResource.isError) return `# Processes\n\n${processResource.errorText || "Process telemetry failed."}`;
+  if (processes.length === 0) return "# Processes\n\nNo process activity.";
+  return [
+    "# Processes",
+    "",
+    ...processes.map((process) => [
+      `- ${process.label || process.pid}`,
+      `  pid: ${process.pid}`,
+      `  state: ${process.rawState || process.state}`,
+      process.cwd ? `  cwd: ${process.cwd}` : "",
+      process.activeRunId ? `  activeRunId: ${process.activeRunId}` : "",
+      process.activeConversationId ? `  conversation: ${process.activeConversationId}` : "",
+      process.queuedCount > 0 ? `  queued: ${process.queuedCount}` : "",
+    ].filter(Boolean).join("\n")),
+  ].join("\n");
+}
+
+function accountDescription(account: ConsoleAccount): string {
+  if (account.gecos.trim().length > 0) {
+    return account.gecos;
+  }
+  return `${account.username} / ${RELATION_LABEL[account.relation]}`;
+}

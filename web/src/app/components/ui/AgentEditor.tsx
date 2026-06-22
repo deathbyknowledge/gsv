@@ -13,18 +13,28 @@ export interface AgentEditorProps {
   mode?: AgentEditorMode;
   avatarSrc?: string;
   containerWidth?: number;
+  initialName?: string;
+  initialRole?: string;
+  initialDescription?: string;
+  createdLabel?: string;
+  metaLabel?: string;
+  status?: AvatarStatus;
+  models?: string[];
+  files?: AgentEditorFile[];
+  tasks?: AgentEditorTask[];
+  readOnly?: boolean;
   onBack?: () => void;
 }
 
 type TaskStatus = "running" | "error" | "idle" | "online";
 
-interface FileDef {
+export interface AgentEditorFile {
   label: string;
   content: string;
   orig?: string;
 }
 
-interface TaskDef {
+export interface AgentEditorTask {
   name: string;
   status: TaskStatus;
 }
@@ -34,27 +44,32 @@ interface Defaults {
   role: string;
   desc: string;
   created: string;
+  metaLabel: string;
   status: AvatarStatus;
   model: number;
   perm: string;
-  files: FileDef[];
-  tasks: TaskDef[];
+  files: AgentEditorFile[];
+  tasks: AgentEditorTask[];
 }
 
 const MODELS = ["INHERIT DEFAULT", "NEMOTRON 3", "CLAUDE OPUS 4", "GPT-5", "LLAMA 4 MAVERICK"];
 const PERMS = ["allow", "ask", "deny"];
 
-function defaults(mode: AgentEditorMode): Defaults {
+function defaults(mode: AgentEditorMode, props: AgentEditorProps): Defaults {
+  const files = props.files && props.files.length > 0 ? props.files : null;
+  const tasks = props.tasks && props.tasks.length > 0 ? props.tasks : null;
+
   if (mode === "manage") {
     return {
-      name: "Primary Agent",
-      role: "PRIMARY AGENT",
-      desc: "Primary GSV crew member. Manage identity, operating notes, model, and tool permissions here.",
-      created: "ACTIVE",
-      status: "online",
+      name: props.initialName ?? "Primary Agent",
+      role: props.initialRole ?? "PRIMARY AGENT",
+      desc: props.initialDescription ?? "Primary GSV crew member. Manage identity, operating notes, model, and tool permissions here.",
+      created: props.createdLabel ?? "ACTIVE",
+      metaLabel: props.metaLabel ?? "CREATED:",
+      status: props.status ?? "online",
       model: 0,
       perm: "ask",
-      files: [
+      files: files ?? [
         {
           label: "PERSONA",
           content:
@@ -71,20 +86,21 @@ function defaults(mode: AgentEditorMode): Defaults {
             "# Active projects\n\nTrack projects this agent is expected to support.",
         },
       ],
-      tasks: [
+      tasks: tasks ?? [
         { name: "No active task data", status: "idle" },
       ],
     };
   }
   return {
-    name: "",
-    role: "",
-    desc: "",
-    created: "—",
-    status: "idle",
+    name: props.initialName ?? "",
+    role: props.initialRole ?? "",
+    desc: props.initialDescription ?? "",
+    created: props.createdLabel ?? "-",
+    metaLabel: props.metaLabel ?? "CREATED:",
+    status: props.status ?? "idle",
     model: 0,
     perm: "ask",
-    files: [
+    files: files ?? [
       {
         label: "PERSONA",
         content:
@@ -96,7 +112,7 @@ function defaults(mode: AgentEditorMode): Defaults {
           "# About the user\n\nWho they are, how they like to work, and anything the agent should always keep in mind.",
       },
     ],
-    tasks: [],
+    tasks: tasks ?? [],
   };
 }
 
@@ -108,8 +124,10 @@ export function AgentEditor(props: AgentEditorProps) {
   const { avatarSrc, containerWidth, onBack } = props;
   const mode: AgentEditorMode = props.mode ?? "new";
   const isNew = mode !== "manage";
+  const readOnly = props.readOnly === true;
+  const modelOptions = props.models && props.models.length > 0 ? props.models : MODELS;
 
-  const metaRef = useRef<Defaults>(defaults(mode));
+  const metaRef = useRef<Defaults>(defaults(mode, props));
   const meta = metaRef.current;
 
   const [tab, setTab] = useState<"general" | "files" | "tasks">("general");
@@ -119,7 +137,7 @@ export function AgentEditor(props: AgentEditorProps) {
   const [name, setName] = useState(meta.name);
   const [role, setRole] = useState(meta.role);
   const [desc, setDesc] = useState(meta.desc);
-  const [files, setFiles] = useState<FileDef[]>(meta.files.map((f) => ({ ...f, orig: f.content })));
+  const [files, setFiles] = useState<AgentEditorFile[]>(meta.files.map((f) => ({ ...f, orig: f.orig ?? f.content })));
   const [flash, setFlash] = useState("");
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [w, setW] = useState(0);
@@ -179,21 +197,32 @@ export function AgentEditor(props: AgentEditorProps) {
   const segWidth = narrow ? 600 : 300;
 
   // ---- handlers ----
-  const onContent = (e: Event) => setFileContent((e.target as HTMLTextAreaElement).value);
+  const onContent = (e: Event) => {
+    if (!readOnly) {
+      setFileContent((e.target as HTMLTextAreaElement).value);
+    }
+  };
   const onAddFile = () => {
+    if (readOnly) return;
     setFiles((s) => [...s, { label: "UNTITLED", content: "# Untitled\n\n", orig: "# Untitled\n\n" }]);
     setFileIdx(files.length);
     setFlash("");
   };
   const onReset = () => {
+    if (readOnly) return;
     setFiles((s) =>
       s.map((f, i) => (i === fileIdx ? { ...f, content: f.orig != null ? f.orig : f.content } : f)),
     );
     setFlash("");
   };
-  const onSave = () => setFlashMsg("✓ SAVED");
-  const onCreate = () => setFlashMsg("✓ AGENT CREATED");
+  const onSave = () => {
+    if (!readOnly) setFlashMsg("✓ SAVED");
+  };
+  const onCreate = () => {
+    if (!readOnly) setFlashMsg("✓ AGENT CREATED");
+  };
   const onResetGeneral = () => {
+    if (readOnly) return;
     setName(meta.name);
     setRole(meta.role);
     setDesc(meta.desc);
@@ -204,9 +233,12 @@ export function AgentEditor(props: AgentEditorProps) {
 
   const delName = curFile.label;
   const stopProp = (e: Event) => e.stopPropagation();
-  const onDelete = () => setDeleteOpen(true);
+  const onDelete = () => {
+    if (!readOnly) setDeleteOpen(true);
+  };
   const onCancelDelete = () => setDeleteOpen(false);
   const onConfirmDelete = () => {
+    if (readOnly) return;
     setFiles((s) => {
       const next = s.filter((_, i) => i !== fileIdx);
       setFileIdx((idx) => Math.max(0, Math.min(idx, next.length - 1)));
@@ -240,6 +272,7 @@ export function AgentEditor(props: AgentEditorProps) {
   return (
     <div
       class="gsv-ae"
+      data-readonly={readOnly ? "true" : undefined}
       style="position:relative;min-height:100vh;background:var(--void);font-family:var(--gsv-font-mono);color:#cdd2e0;padding:0;overflow:visible;"
     >
       {/* glyph universe texture */}
@@ -304,10 +337,11 @@ export function AgentEditor(props: AgentEditorProps) {
                     <TextInput
                       key={`ti-name-${formNonce}`}
                       value={name}
-                      onChange={setName}
+                      onChange={readOnly ? undefined : setName}
                       placeholder="Name your agent"
                       size="large"
                       label="NAME"
+                      readonly={readOnly}
                     />
                   </div>
 
@@ -316,10 +350,11 @@ export function AgentEditor(props: AgentEditorProps) {
                     <TextInput
                       key={`ti-role-${formNonce}`}
                       value={role}
-                      onChange={setRole}
+                      onChange={readOnly ? undefined : setRole}
                       placeholder="e.g. PERSONAL AGENT"
                       size="medium"
                       label="ROLE"
+                      readonly={readOnly}
                     />
                   </div>
 
@@ -328,11 +363,12 @@ export function AgentEditor(props: AgentEditorProps) {
                     <TextArea
                       key={`ta-desc-${formNonce}`}
                       value={desc}
-                      onChange={setDesc}
+                      onChange={readOnly ? undefined : setDesc}
                       placeholder="What is this agent for? A line or two."
                       rows={3}
                       size="medium"
                       label="DESCRIPTION"
+                      readonly={readOnly}
                     />
                   </div>
 
@@ -348,10 +384,11 @@ export function AgentEditor(props: AgentEditorProps) {
                   <div style="max-width:420px;margin-bottom:30px;">
                     <Select
                       key={`sel-model-${formNonce}`}
-                      options={MODELS}
+                      options={modelOptions}
                       value={model}
-                      onChange={setModel}
+                      onChange={readOnly ? undefined : setModel}
                       width={420}
+                      disabled={readOnly}
                     />
                   </div>
 
@@ -362,23 +399,26 @@ export function AgentEditor(props: AgentEditorProps) {
                     l1="ASK"
                     l2="DENY"
                     value={permVal}
-                    onChange={(i) => setPerm(PERMS[i] || "ask")}
+                    onChange={readOnly ? undefined : (i) => setPerm(PERMS[i] || "ask")}
                     width={segWidth}
                     label="TOOL PERMISSIONS"
+                    disabled={readOnly}
                   />
 
                   {/* GENERAL actions */}
                   <div style="display:flex;align-items:center;gap:12px;margin-top:42px;">
-                    {flash ? (
+                    {readOnly ? (
+                      <span class="gsv-ae-readonly-note">READ ONLY</span>
+                    ) : flash ? (
                       <span style="font-size:10px;letter-spacing:.14em;color:var(--online);">{flash}</span>
                     ) : null}
                     <span style="flex:1;" />
                     {isNew ? (
-                      <Button variant="primary" label="CREATE AGENT" onClick={onCreate} />
+                      <Button variant="primary" label="CREATE AGENT" onClick={onCreate} disabled={readOnly} />
                     ) : (
                       <div style="display:flex;gap:12px;">
-                        <Button variant="secondary" label="RESET" onClick={onResetGeneral} />
-                        <Button variant="primary" label="SAVE" onClick={onSave} />
+                        <Button variant="secondary" label="RESET" onClick={onResetGeneral} disabled={readOnly} />
+                        <Button variant="primary" label="SAVE" onClick={onSave} disabled={readOnly} />
                       </div>
                     )}
                   </div>
@@ -388,7 +428,7 @@ export function AgentEditor(props: AgentEditorProps) {
                 <div style={identityStyle}>
                   <Avatar src={imgSrc} status={status} size={58} />
                   <div style="text-align:right;">
-                    <div style="font-size:11px;letter-spacing:.18em;color:#7d78b8;">CREATED:</div>
+                    <div style="font-size:11px;letter-spacing:.18em;color:#7d78b8;">{meta.metaLabel}</div>
                     <div style="font-size:13px;letter-spacing:.1em;color:#cdd5e6;margin-top:6px;">{meta.created}</div>
                   </div>
                 </div>
@@ -403,7 +443,7 @@ export function AgentEditor(props: AgentEditorProps) {
                   <div style="display:flex;align-items:center;gap:16px;">
                     <Avatar src={imgSrc} status={status} size={52} />
                     <div>
-                      <div style="font-size:11px;letter-spacing:.18em;color:#7d78b8;">CREATED:</div>
+                      <div style="font-size:11px;letter-spacing:.18em;color:#7d78b8;">{meta.metaLabel}</div>
                       <div style="font-size:13px;letter-spacing:.1em;color:#cdd5e6;margin-top:6px;">{meta.created}</div>
                     </div>
                   </div>
@@ -436,7 +476,7 @@ export function AgentEditor(props: AgentEditorProps) {
                   ))}
                   <div
                     onClick={onAddFile}
-                    class="gsv-ae-newfile"
+                    class={`gsv-ae-newfile${readOnly ? " is-disabled" : ""}`}
                     style="display:flex;flex-direction:column;align-items:center;gap:9px;cursor:pointer;width:78px;text-align:center;"
                   >
                     <svg width="34" height="30" viewBox="0 0 16 14" shape-rendering="crispEdges" fill="none" stroke="var(--dashed)" stroke-width="1">
@@ -456,17 +496,20 @@ export function AgentEditor(props: AgentEditorProps) {
                   value={curFile.content}
                   onInput={onContent}
                   spellcheck={false}
+                  readOnly={readOnly}
                 />
 
                 {/* actions */}
                 <div style="display:flex;align-items:center;gap:12px;margin-top:16px;">
-                  <span class="gsv-ae-delete" onClick={onDelete}>DELETE</span>
+                  <span class={`gsv-ae-delete${readOnly ? " is-disabled" : ""}`} onClick={readOnly ? undefined : onDelete}>DELETE</span>
                   <span style="flex:1;" />
-                  {flash ? (
+                  {readOnly ? (
+                    <span class="gsv-ae-readonly-note">READ ONLY</span>
+                  ) : flash ? (
                     <span style="font-size:10px;letter-spacing:.14em;color:var(--online);">{flash}</span>
                   ) : null}
-                  <span class="gsv-ae-reset" onClick={onReset}>RESET</span>
-                  <span class="gsv-ae-save" onClick={onSave}>SAVE</span>
+                  <span class={`gsv-ae-reset${readOnly ? " is-disabled" : ""}`} onClick={readOnly ? undefined : onReset}>RESET</span>
+                  <span class={`gsv-ae-save${readOnly ? " is-disabled" : ""}`} onClick={readOnly ? undefined : onSave}>SAVE</span>
                 </div>
               </div>
             ) : null}
