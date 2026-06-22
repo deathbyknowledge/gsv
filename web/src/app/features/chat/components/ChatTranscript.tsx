@@ -97,15 +97,30 @@ function roleClass(role: ChatDockMessageRole): string {
   return role === "toolResult" ? "tool-result" : role;
 }
 
-function roleGlyph(role: ChatDockMessageRole): string {
+function AssistantGlyph() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" shape-rendering="crispEdges">
+      <g fill="currentColor">
+        <rect x="7" y="1" width="2" height="2" />
+        <rect x="6" y="3" width="4" height="6" />
+        <rect x="4" y="6" width="2" height="3" />
+        <rect x="10" y="6" width="2" height="3" />
+        <rect x="7" y="11" width="2" height="3" class="gsv-chat-message-glyph-accent" />
+      </g>
+    </svg>
+  );
+}
+
+function roleGlyph(role: ChatDockMessageRole): ComponentChildren {
   switch (role) {
+    case "assistant":
+      return <AssistantGlyph />;
     case "system":
       return "!";
     case "tool":
       return "$";
     case "toolResult":
       return "=";
-    case "assistant":
     case "user":
       return ">";
   }
@@ -200,6 +215,7 @@ function ProcessMessage({
   const messageRole = normalizedRole(message.role);
   const role = roleClass(messageRole);
   const label = roleLabel(messageRole);
+  const showHead = messageRole !== "assistant" || Boolean(message.meta);
 
   return (
     <article class={`gsv-chat-message gsv-chat-message-${role}`}>
@@ -207,10 +223,12 @@ function ProcessMessage({
         {roleGlyph(messageRole)}
       </div>
       <div class="gsv-chat-message-body">
-        <div class="gsv-chat-message-head">
-          <span>{label}</span>
-          {message.meta ? <small>{message.meta}</small> : null}
-        </div>
+        {showHead ? (
+          <div class="gsv-chat-message-head">
+            <span>{label}</span>
+            {message.meta ? <small>{message.meta}</small> : null}
+          </div>
+        ) : null}
         <div class="gsv-chat-message-text">{message.text}</div>
         <div class="gsv-chat-message-meta">
           {message.time ? <span>{message.time}</span> : null}
