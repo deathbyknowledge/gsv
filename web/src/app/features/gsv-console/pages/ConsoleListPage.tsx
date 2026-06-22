@@ -39,10 +39,13 @@ export type ConsoleListKind = "machines" | "library" | "tasks" | "messengers" | 
 type PackageListKind = "library" | "integrations" | "applications";
 
 type ConsoleListPageProps = {
+  initialCreate?: boolean;
+  initialDetailId?: string | null;
   kind: ConsoleListKind;
 };
 
 type SelectedConsoleDetail = {
+  createNew?: boolean;
   kind: ConsoleListKind;
   id: string;
 };
@@ -121,7 +124,13 @@ const RUNTIME_LABEL: Record<ConsolePackageRuntime, string> = {
   unknown: "UNKNOWN RUNTIME",
 };
 
-export function ConsoleListPage({ kind }: ConsoleListPageProps) {
+const NEW_DETAIL_ID = "__new__";
+
+export function ConsoleListPage({
+  initialCreate = false,
+  initialDetailId = null,
+  kind,
+}: ConsoleListPageProps) {
   const [selectedDetail, setSelectedDetail] = useState<SelectedConsoleDetail | null>(null);
   const targets = useConsoleTargets({ enabled: kind === "machines" });
   const packageKind = isPackageListKind(kind) ? kind : null;
@@ -130,8 +139,12 @@ export function ConsoleListPage({ kind }: ConsoleListPageProps) {
   const adapters = useConsoleAdapters({ enabled: kind === "messengers" });
 
   useEffect(() => {
-    setSelectedDetail(null);
-  }, [kind]);
+    if (initialCreate) {
+      setSelectedDetail({ kind, id: NEW_DETAIL_ID, createNew: true });
+      return;
+    }
+    setSelectedDetail(initialDetailId ? { kind, id: initialDetailId } : null);
+  }, [kind, initialCreate, initialDetailId]);
 
   if (kind === "tasks") {
     return (
@@ -171,8 +184,11 @@ export function ConsoleListPage({ kind }: ConsoleListPageProps) {
           errorLabel="MACHINES"
           render={(data) => (
             selectedDetail?.kind === "machines"
-              ? renderTargetDetail(data, selectedDetail.id, () => setSelectedDetail(null)) ?? (
+              ? (selectedDetail.createNew
+                ? renderNewEntityDetail("machines", () => setSelectedDetail(null))
+                : renderTargetDetail(data, selectedDetail.id, () => setSelectedDetail(null))) ?? (
                 <MachinesConsoleSection
+                  onOpenCreate={() => setSelectedDetail({ kind, id: NEW_DETAIL_ID, createNew: true })}
                   onOpenDetail={(target) => setSelectedDetail({ kind, id: target.deviceId })}
                   targets={data}
                   refreshing={targets.resource.isRefreshing}
@@ -180,6 +196,7 @@ export function ConsoleListPage({ kind }: ConsoleListPageProps) {
               )
               : (
                 <MachinesConsoleSection
+                  onOpenCreate={() => setSelectedDetail({ kind, id: NEW_DETAIL_ID, createNew: true })}
                   onOpenDetail={(target) => setSelectedDetail({ kind, id: target.deviceId })}
                   targets={data}
                   refreshing={targets.resource.isRefreshing}
@@ -232,6 +249,9 @@ export function ConsoleListPage({ kind }: ConsoleListPageProps) {
             packageKind ?? "library",
             selectedDetail,
             () => setSelectedDetail(null),
+            packageKind === "integrations" || packageKind === "applications"
+              ? () => setSelectedDetail({ kind, id: NEW_DETAIL_ID, createNew: true })
+              : undefined,
             (pkg) => setSelectedDetail({ kind, id: pkg.packageId }),
             packages.resource.isRefreshing,
           )
@@ -340,11 +360,14 @@ function renderPackageList(
   packageKind: PackageListKind,
   selectedDetail: SelectedConsoleDetail | null,
   onBack: () => void,
+  onOpenCreate: (() => void) | undefined,
   onOpenDetail: (pkg: ConsolePackage) => void,
   refreshing: boolean,
 ): ComponentChildren {
   if (selectedDetail?.kind === packageKind) {
-    const detail = renderPackageDetail(scopedPackages, packageKind, selectedDetail.id, onBack);
+    const detail = selectedDetail.createNew && packageKind !== "library"
+      ? renderNewEntityDetail(packageKind, onBack)
+      : renderPackageDetail(scopedPackages, packageKind, selectedDetail.id, onBack);
     if (detail) {
       return detail;
     }
@@ -353,9 +376,40 @@ function renderPackageList(
   return (
     <LibraryConsoleSection
       kind={packageKind}
+      onOpenCreate={onOpenCreate}
       onOpenDetail={onOpenDetail}
       packages={scopedPackages}
       refreshing={refreshing}
+    />
+  );
+}
+
+function renderNewEntityDetail(
+  kind: "machines" | "integrations" | "applications",
+  onBack: () => void,
+): ComponentChildren {
+  const noun = kind === "machines" ? "MACHINE" : kind === "integrations" ? "INTEGRATION" : "APPLICATION";
+  return (
+    <ConsoleEntityDetailPage
+      icon={kind === "machines" ? "computer" : kind === "integrations" ? "weblink" : "stars"}
+      title={`NEW ${noun}`}
+      typeLabel={`GSV · ${noun}`}
+      statusLabel="NOT CONFIGURED"
+      tone="idle"
+      blurb="Awaiting source selection and access configuration."
+      parentLabel={kind === "machines" ? "MACHINES" : kind === "integrations" ? "INTEGRATIONS" : "APPLICATIONS"}
+      fields={[
+        { label: "STATE", value: "DRAFT", tone: "idle" },
+        { label: "SOURCE", value: "NOT SELECTED" },
+        { label: "OWNER", value: "" },
+        { label: "PERMISSIONS", value: "" },
+      ]}
+      chips={{
+        title: "REQUIREMENTS",
+        emptyLabel: "NO REQUIREMENTS",
+        items: [],
+      }}
+      onBack={onBack}
     />
   );
 }
@@ -577,10 +631,12 @@ function RuntimeConsoleSection({
 }
 
 function MachinesConsoleSection({
+  onOpenCreate,
   onOpenDetail,
   targets,
   refreshing,
 }: {
+  onOpenCreate: () => void;
   onOpenDetail: (target: ConsoleTarget) => void;
   targets: readonly ConsoleTarget[];
   refreshing: boolean;
@@ -600,7 +656,7 @@ function MachinesConsoleSection({
         statusLabel: target.online ? "ONLINE" : "OFFLINE",
         onOpen: () => onOpenDetail(target),
       }))}
-      action={{ label: "CONNECT NEW MACHINE" }}
+      action={{ label: "CONNECT NEW MACHINE", onClick: onOpenCreate }}
     />
   );
 }
@@ -636,11 +692,13 @@ function MessengersConsoleSection({
 
 function LibraryConsoleSection({
   kind,
+  onOpenCreate,
   onOpenDetail,
   packages,
   refreshing,
 }: {
   kind: PackageListKind;
+  onOpenCreate?: () => void;
   onOpenDetail: (pkg: ConsolePackage) => void;
   packages: readonly ConsolePackage[];
   refreshing: boolean;
@@ -648,9 +706,9 @@ function LibraryConsoleSection({
   const title = packageListTitle(kind);
   const noun = packageListNoun(kind);
   const action = kind === "integrations"
-    ? { label: "NEW INTEGRATION" }
+    ? { label: "NEW INTEGRATION", onClick: onOpenCreate }
     : kind === "applications"
-      ? { label: "NEW APPLICATION" }
+      ? { label: "NEW APPLICATION", onClick: onOpenCreate }
       : undefined;
 
   return (
