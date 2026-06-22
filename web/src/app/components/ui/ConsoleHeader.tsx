@@ -44,15 +44,13 @@ interface ResolvedCrumb {
   style: JSX.CSSProperties;
 }
 
-/** ConsoleHeader — ported from ConsoleHeader.dc.html. Top console bar with a
- *  back chevron, pulsing live dot, a clickable breadcrumb trail and a
- *  right-aligned tail label. */
+/** ConsoleHeader — top console bar with back, live indicator, breadcrumbs, and tail label. */
 export function ConsoleHeader({
   crumbs,
-  c0 = "SETTINGS",
-  c1 = "CREW",
-  c2 = "XANADU",
-  tail = "GSV · XANADU",
+  c0 = "GSV",
+  c1 = "SYSTEM",
+  c2 = "",
+  tail = "GSV",
   onBack,
 }: ConsoleHeaderProps) {
   const noop = () => {};

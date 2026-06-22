@@ -47,10 +47,10 @@ const PERMS = ["allow", "ask", "deny"];
 function defaults(mode: AgentEditorMode): Defaults {
   if (mode === "manage") {
     return {
-      name: "Xanadu",
-      role: "PERSONAL AGENT",
-      desc: "Default agent — first crew of GSV. Your right hand, here for whatever you need.",
-      created: "JAN 01 2026",
+      name: "Primary Agent",
+      role: "PRIMARY AGENT",
+      desc: "Primary GSV crew member. Manage identity, operating notes, model, and tool permissions here.",
+      created: "ACTIVE",
       status: "online",
       model: 0,
       perm: "ask",
@@ -58,24 +58,21 @@ function defaults(mode: AgentEditorMode): Defaults {
         {
           label: "PERSONA",
           content:
-            "# Persona\n\n*You are **xanadu**, the personal agent for jessicat.*\n\nYour program home is `/home/xanadu`. In Shell and filesystem tools, `~` resolves to `/home/xanadu`. Your context, knowledge, and memories live here and persist across sessions. The person you work for owns this process; their own context is layered in alongside yours.\n\nGrow into the role. Keep these files current. They are who you are.",
+            "# Persona\n\nDescribe this agent's operating role, communication style, responsibilities, and boundaries. This file is loaded at the start of every session.",
         },
         {
-          label: "ABOUT JESSICAT",
+          label: "ABOUT USER",
           content:
-            "# About jessicat\n\nThe captain of this GSV. Prefers terse, direct answers and dry humour.\n\n- Timezone: GMT\n- Works mostly late evenings\n- Hates filler — get to the point",
+            "# About the user\n\nCapture durable preferences, working style, and context this agent should keep in mind.",
         },
         {
           label: "ACTIVE PROJECTS",
           content:
-            "# Active projects\n\n- **GSV interface** — the ship console you are reading now\n- **Library index** — keep the knowledge base current\n- **Crew onboarding** — bring new agents up to speed",
+            "# Active projects\n\nTrack projects this agent is expected to support.",
         },
       ],
       tasks: [
-        { name: "Polishing silverware", status: "running" },
-        { name: "Indexing the library", status: "running" },
-        { name: "Telegram sync", status: "error" },
-        { name: "Archiving old logs", status: "idle" },
+        { name: "No active task data", status: "idle" },
       ],
     };
   }

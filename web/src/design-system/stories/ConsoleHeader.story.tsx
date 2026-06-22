@@ -26,9 +26,9 @@ const story: Story = {
             crumbs={[
               { label: "FLEET", onClick: () => {} },
               { label: "NODES", onClick: () => {} },
-              { label: "XANADU" },
+              { label: "PRIMARY NODE" },
             ]}
-            tail="GSV · XANADU"
+            tail="GSV · PRIMARY NODE"
           />
         </div>
       </div>

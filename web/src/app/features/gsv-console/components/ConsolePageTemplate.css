@@ -1,0 +1,57 @@
+.gsv-console-state-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  max-width: min(620px, 100%);
+  line-height: 1.5;
+  text-align: center;
+}
+
+.gsv-console-row .lr {
+  cursor: default !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+}
+
+.gsv-console-row .lr:hover {
+  background: transparent !important;
+}
+
+.gsv-console-row-tag {
+  flex: none;
+}
+
+.gsv-console-page-refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-dim);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+@media (max-width: 760px) {
+  .gsv-console-row {
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .gsv-console-row-icon {
+    padding-left: 12px;
+    padding-top: 18px;
+  }
+
+  .gsv-console-row-status {
+    padding-right: 12px;
+  }
+
+  .gsv-console-row-status span:first-child {
+    display: none;
+  }
+
+  .gsv-console-row-tag {
+    display: none;
+  }
+}

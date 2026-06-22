@@ -18,7 +18,7 @@ const story: Story = {
       <div class="ds-cell">
         <div class="ds-label">Status</div>
         <div class="ds-col">
-          <TextInput label="ERROR" status="error" message="Name already taken" value="Xanadu" />
+          <TextInput label="ERROR" status="error" message="Name already taken" value="Primary Agent" />
           <TextInput label="SUCCESS" status="success" message="Looks good" value="Bob" />
           <TextInput label="INFO" status="info" message="Lowercase recommended" value="agent" />
           <TextInput label="WARNING" status="warning" message="Will be truncated" value="A very long name" />

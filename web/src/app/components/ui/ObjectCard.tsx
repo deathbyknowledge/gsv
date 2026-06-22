@@ -35,12 +35,11 @@ const GLYPH_ICON: Record<ObjectCardGlyph, string> = {
   applications: "stars",
 };
 
-/** ObjectCard — ported from ObjectCard.dc.html. Object dialog card: header
- *  (icon + name + status dot), a type micro-label and a blurb. */
+/** ObjectCard — object dialog card with icon, status, type, and blurb. */
 export function ObjectCard({
-  label = "<HANK-LINUX>",
-  type = "COMPUTE HOST",
-  blurb = "Primary Linux box. Runs heavy jobs and background tasks for the crew.",
+  label = "Object",
+  type = "OBJECT",
+  blurb = "No object details available.",
   glyph = "machines",
   icon,
   status = "online",

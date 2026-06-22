@@ -6,11 +6,10 @@ export interface SystemMessageProps {
   onCopy?: () => void;
 }
 
-/** SystemMessage — ported from SystemMessage.dc.html. Avatar + message bubble
- *  with a meta row showing the timestamp and a copy action. */
+/** SystemMessage — avatar + message bubble with a meta row for timestamp/copy actions. */
 export function SystemMessage({
-  text = "Scaffold's live. What should we call them — and how should they behave?",
-  time = "14:22",
+  text = "",
+  time = "",
   onCopy,
 }: SystemMessageProps) {
   return (
@@ -29,7 +28,7 @@ export function SystemMessage({
       <div class="gsv-sm-body">
         <div class="gsv-sm-text">{text}</div>
         <div class="gsv-sm-meta">
-          <span>{time}</span>
+          {time ? <span>{time}</span> : null}
           <span class="gsv-sm-copy" onClick={onCopy}>
             <svg width="10" height="10" viewBox="0 0 16 16">
               <g fill="none" stroke="currentColor" stroke-width="1.5">

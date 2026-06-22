@@ -6,7 +6,7 @@ import type { NotificationAnchor, NotificationSurface } from "../notifications/t
 import { usePackageApps } from "../packages/usePackageApps";
 import { PresenceController } from "../presence/presenceController";
 import { SessionScreens } from "../session/SessionScreens";
-import { DesktopShellFrame } from "./DesktopShellFrame";
+import { GsvShell } from "../gsv-shell/GsvShell";
 import { useDesktopAppsSync } from "./useDesktopAppsSync";
 import { useDesktopRuntime } from "./useDesktopRuntime";
 
@@ -90,34 +90,25 @@ export function DesktopShell() {
   const openCommandPalette = useCallback((): void => {
     runtimeRef.current?.launcher.openCommandPalette();
   }, [runtimeRef]);
-  const revealDock = useCallback((): void => {
-    runtimeRef.current?.launcher.revealDock();
-  }, [runtimeRef]);
-  const hideDockSoon = useCallback((): void => {
-    runtimeRef.current?.launcher.hideDockSoon();
-  }, [runtimeRef]);
 
   return (
     <>
       <div class="app-shell-root">
-        <DesktopShellFrame
-          shellRef={shellRef}
-          windowsLayerRef={windowsLayerRef}
-          presenceController={presenceController}
-          notificationOpenSurface={notificationOpenSurface}
-          notificationUnreadCount={notificationUnreadCount}
-          onNotificationsToggle={toggleNotifications}
-          desktopVisible={desktopVisible}
-          sessionUsername={sessionUsername}
-          mobileHomeDate={mobileHomeDate}
-          onLockSession={lockSession}
-          onOpenCommandPalette={openCommandPalette}
-          onRevealDock={revealDock}
-          onHideDockSoon={hideDockSoon}
-          standalone={standalone}
-        >
+        <div class={`gsv-native-shell${standalone ? " is-standalone" : ""}`} ref={shellRef}>
           <SessionScreens session={sessionService} snapshot={sessionSnapshot} />
-        </DesktopShellFrame>
+          <GsvShell
+            windowsLayerRef={windowsLayerRef}
+            presenceController={presenceController}
+            notificationOpenSurface={notificationOpenSurface}
+            notificationUnreadCount={notificationUnreadCount}
+            onNotificationsToggle={toggleNotifications}
+            desktopVisible={desktopVisible}
+            sessionUsername={sessionUsername}
+            mobileHomeDate={mobileHomeDate}
+            onLockSession={lockSession}
+            onOpenCommandPalette={openCommandPalette}
+          />
+        </div>
       </div>
       <NotificationsPanel
         anchor={notificationPanel.anchor}

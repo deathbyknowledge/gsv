@@ -15,7 +15,7 @@ const story: Story = {
         <div class="ds-label">Custom copy & labels</div>
         <ConfirmModal
           title="REMOVE CREW MEMBER"
-          message="Remove “Xanadu” from this console?"
+          message="Remove this agent from the current crew?"
           note="The agent stays on GSV — it just leaves this crew."
           cancelLabel="KEEP"
           confirmLabel="REMOVE"
