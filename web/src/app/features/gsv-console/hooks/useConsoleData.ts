@@ -12,11 +12,14 @@ import {
   loadConsolePackages,
   loadConsoleProcesses,
   loadConsoleTargets,
+  saveConsoleAgentBehavior,
   saveConsoleAgentContext,
-  type LoadConsoleOverviewOptions,
   type CreateConsoleAgentInput,
   type CreateConsoleAgentResult,
   type ConsoleAgentContextFile,
+  type LoadConsoleOverviewOptions,
+  type SaveConsoleAgentBehaviorInput,
+  type SaveConsoleAgentBehaviorResult,
   type SaveConsoleAgentContextInput,
   type SaveConsoleAgentContextResult,
 } from "../backend/consoleService";
@@ -225,6 +228,21 @@ export function useSaveConsoleAgentContext() {
     mutationFn: (input) => saveConsoleAgentContext(client, input),
     onSuccess: async (_result, input) => {
       await queryClient.invalidateQueries({ queryKey: [...consoleAgentContextQueryKey, input.username] });
+    },
+  });
+}
+
+export function useSaveConsoleAgentBehavior() {
+  const { client } = useGateway();
+  const queryClient = useQueryClient();
+
+  return useMutation<SaveConsoleAgentBehaviorResult, Error, SaveConsoleAgentBehaviorInput>({
+    mutationFn: (input) => saveConsoleAgentBehavior(client, input),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: consoleConfigQueryKey }),
+        queryClient.invalidateQueries({ queryKey: consoleOverviewQueryKey }),
+      ]);
     },
   });
 }
