@@ -213,6 +213,10 @@ export function GsvConsole({
       navigateSettingsRoute({ view: "crew" });
       return;
     }
+    if (surface === "tasks") {
+      navigateSettingsRoute({ view: "list", kind: "tasks" });
+      return;
+    }
     if (surface === "new-agent") {
       openSettingsNewAgent();
       return;

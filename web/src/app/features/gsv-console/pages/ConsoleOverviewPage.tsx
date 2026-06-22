@@ -64,7 +64,7 @@ type StatLine = {
 };
 
 type OverviewSurface = Exclude<ShellSurfaceId, "desktop">;
-export type ConsoleOverviewTarget = OverviewSurface | "models" | "new-agent" | "overrides";
+export type ConsoleOverviewTarget = OverviewSurface | "models" | "new-agent" | "overrides" | "tasks";
 type OpenSurface = (surface: ConsoleOverviewTarget) => void;
 type OpenAgent = (accountUid: number) => void;
 type OpenListDetail = (kind: ConsoleListKind, detailId: string, detailLabel?: string) => void;
@@ -559,7 +559,7 @@ function ModelsTasksPanel({
           type="button"
           class="gsv-settings-deep-cell"
           data-clickable="true"
-          onClick={() => onOpenSurface("runtime")}
+          onClick={() => onOpenSurface("tasks")}
         >
           <MiniHeading title="TASKS" />
           <div class="gsv-settings-task-summary">
