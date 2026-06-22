@@ -1,5 +1,6 @@
 .gsv-console-config-list {
-  min-height: calc(100vh - 118px);
+  flex: 1;
+  min-height: 100%;
   border: 1px solid var(--border);
   background: var(--panel);
   box-shadow:

@@ -55,7 +55,7 @@ export function ConsoleCrewPage({ onManageAgent }: ConsoleCrewPageProps) {
   const processes = useConsoleProcesses();
 
   return (
-    <ConsolePage>
+    <ConsolePage flush>
       <ConsoleResourceBoundary
         resource={accounts.resource}
         emptyLabel="NO CREW ACCOUNTS"

@@ -38,7 +38,7 @@ export function ConsoleConfigPage({ kind }: ConsoleConfigPageProps) {
   const config = useConsoleConfig();
 
   return (
-    <ConsolePage>
+    <ConsolePage flush>
       <ConsoleResourceBoundary
         resource={{ ...config.resource, isEmpty: false }}
         emptyLabel={kind === "models" ? "NO MODEL CONFIG" : "NO OVERRIDES"}

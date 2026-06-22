@@ -135,7 +135,7 @@ export function ConsoleListPage({ kind }: ConsoleListPageProps) {
 
   if (kind === "tasks") {
     return (
-      <ConsolePage>
+      <ConsolePage flush>
         <ConsoleResourceBoundary
           resource={resourceWithLocalEmptyState(processes.resource)}
           emptyLabel={EMPTY_RESOURCE_LABEL.tasks}
@@ -164,7 +164,7 @@ export function ConsoleListPage({ kind }: ConsoleListPageProps) {
 
   if (kind === "machines") {
     return (
-      <ConsolePage>
+      <ConsolePage flush>
         <ConsoleResourceBoundary
           resource={resourceWithLocalEmptyState(targets.resource)}
           emptyLabel={EMPTY_RESOURCE_LABEL.machines}
@@ -193,7 +193,7 @@ export function ConsoleListPage({ kind }: ConsoleListPageProps) {
 
   if (kind === "messengers") {
     return (
-      <ConsolePage>
+      <ConsolePage flush>
         <ConsoleResourceBoundary
           resource={resourceWithLocalEmptyState(adapters.resource)}
           emptyLabel={EMPTY_RESOURCE_LABEL.messengers}
@@ -221,7 +221,7 @@ export function ConsoleListPage({ kind }: ConsoleListPageProps) {
   }
 
   return (
-    <ConsolePage>
+    <ConsolePage flush>
       <ConsoleResourceBoundary
         resource={resourceWithLocalEmptyState(packages.resource)}
         emptyLabel={EMPTY_RESOURCE_LABEL[packageKind ?? "library"]}

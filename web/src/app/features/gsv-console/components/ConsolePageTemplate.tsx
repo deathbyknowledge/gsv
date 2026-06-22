@@ -33,6 +33,7 @@ export type ConsoleRow = {
 
 type ConsolePageProps = {
   children: ComponentChildren;
+  flush?: boolean;
 };
 
 type ConsoleResourceBoundaryProps<T> = {
@@ -134,9 +135,9 @@ export function rowsFromAdapters(adapters: readonly ConsoleAdapterAccount[]): Co
   }));
 }
 
-export function ConsolePage({ children }: ConsolePageProps) {
+export function ConsolePage({ children, flush = false }: ConsolePageProps) {
   return (
-    <section class="gsv-console-page">
+    <section class={`gsv-console-page${flush ? " is-flush" : ""}`}>
       <div class="gsv-console-page-body">{children}</div>
     </section>
   );

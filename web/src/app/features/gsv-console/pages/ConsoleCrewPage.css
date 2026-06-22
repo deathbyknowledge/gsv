@@ -1,7 +1,7 @@
 .gsv-console-crew {
   position: relative;
-  min-height: calc(100vh - 98px);
-  margin: -20px;
+  flex: 1;
+  min-height: 100%;
   overflow: hidden;
   background: var(--void);
 }
@@ -35,7 +35,7 @@
 .gsv-console-crew-panel {
   position: relative;
   z-index: 2;
-  min-height: calc(100vh - 98px);
+  min-height: 100%;
   border: 1px solid var(--border-raised);
   background: rgba(9, 7, 26, 0.72);
   box-shadow: inset 0 0 0 1px #060414, 0 0 30px rgba(80, 70, 180, 0.1);
@@ -126,10 +126,6 @@
 }
 
 @media (max-width: 680px) {
-  .gsv-console-crew {
-    margin: -12px;
-  }
-
   .gsv-console-crew-grid {
     grid-template-columns: minmax(0, 1fr);
     gap: 16px;
