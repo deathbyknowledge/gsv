@@ -149,9 +149,7 @@
 .gsv-settings-overrides-state[data-clickable="true"],
 .gsv-settings-mini-row[data-clickable="true"],
 .gsv-settings-add-row[data-clickable="true"],
-.gsv-settings-deep-cell[data-clickable="true"],
-.gsv-settings-crew-card[data-clickable="true"],
-.gsv-settings-new-agent[data-clickable="true"] {
+.gsv-settings-deep-cell[data-clickable="true"] {
   cursor: pointer;
   transition: background 120ms ease, border-color 120ms ease;
 }
@@ -161,9 +159,7 @@
 .gsv-settings-overrides-state[data-clickable="true"]:hover,
 .gsv-settings-mini-row[data-clickable="true"]:hover,
 .gsv-settings-add-row[data-clickable="true"]:hover,
-.gsv-settings-deep-cell[data-clickable="true"]:hover,
-.gsv-settings-crew-card[data-clickable="true"]:hover,
-.gsv-settings-new-agent[data-clickable="true"]:hover {
+.gsv-settings-deep-cell[data-clickable="true"]:hover {
   background: var(--hover);
 }
 
@@ -251,67 +247,12 @@
   min-width: 0;
 }
 
-.gsv-settings-crew-card,
-.gsv-settings-new-agent {
-  min-width: 0;
-  min-height: 118px;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 8px;
-  padding: 13px 11px;
+.gsv-settings-crew-grid > .gsv-crew-tile {
   border-right: 1px solid var(--rule-inner);
 }
 
-.gsv-settings-crew-card:last-child,
-.gsv-settings-new-agent:last-child {
+.gsv-settings-crew-grid > .gsv-crew-tile:last-child {
   border-right: 0;
-}
-
-.gsv-settings-crew-portrait {
-  height: 60px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  background: radial-gradient(120% 120% at 50% 35%, #141038, #08061a);
-}
-
-.gsv-settings-crew-card strong,
-.gsv-settings-new-agent strong {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text);
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.04em;
-  text-overflow: ellipsis;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-.gsv-settings-crew-card > span {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  color: #a8a2dc;
-  font-size: 9px;
-  letter-spacing: 0.05em;
-}
-
-.gsv-settings-new-agent {
-  align-items: center;
-  text-align: center;
-}
-
-.gsv-settings-new-agent > span {
-  width: 30px;
-  height: 30px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px dashed var(--dashed);
-  color: var(--accent);
 }
 
 .gsv-settings-deep-cell {
@@ -515,8 +456,7 @@
   }
 
   .gsv-settings-split > div:first-child,
-  .gsv-settings-crew-card,
-  .gsv-settings-new-agent {
+  .gsv-settings-crew-grid > .gsv-crew-tile {
     border-right: 0;
     border-bottom: 1px solid var(--rule-inner);
   }

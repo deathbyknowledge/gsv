@@ -1,0 +1,84 @@
+.gsv-crew-tile {
+  min-width: 0;
+  min-height: 118px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  padding: 13px 11px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  transition: background 120ms ease, box-shadow 120ms ease;
+}
+
+button.gsv-crew-tile {
+  cursor: pointer;
+}
+
+button.gsv-crew-tile:hover,
+button.gsv-crew-tile:focus-visible {
+  background: var(--hover);
+  outline: none;
+}
+
+.gsv-crew-tile.is-active {
+  background: var(--hover);
+  box-shadow: inset 0 0 0 1.5px var(--accent-bright), 0 0 18px rgba(150, 140, 255, 0.18);
+}
+
+.gsv-crew-tile-portrait {
+  height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: radial-gradient(120% 120% at 50% 35%, #141038, #08061a);
+}
+
+.gsv-crew-tile strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-family: var(--gsv-font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.gsv-crew-tile-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  overflow: hidden;
+  color: #a8a2dc;
+  font-family: var(--gsv-font-mono);
+  font-size: 9px;
+  letter-spacing: 0.05em;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.gsv-crew-tile.is-add {
+  align-items: center;
+  text-align: center;
+}
+
+.gsv-crew-tile-add-icon {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--dashed);
+  color: var(--accent);
+}
