@@ -4,6 +4,7 @@ import { useGateway } from "../../../services/gateway/GatewayProvider";
 import {
   DEFAULT_CONSOLE_ADAPTERS,
   createConsoleAgent,
+  loadConsoleAgentContext,
   loadConsoleAccounts,
   loadConsoleAdapterAccounts,
   loadConsoleConfig,
@@ -14,6 +15,7 @@ import {
   type LoadConsoleOverviewOptions,
   type CreateConsoleAgentInput,
   type CreateConsoleAgentResult,
+  type ConsoleAgentContextFile,
 } from "../backend/consoleService";
 import { summarizeConsoleOverview } from "../domain/consoleNormalization";
 import type {
@@ -35,6 +37,7 @@ export const consolePackagesQueryKey = ["packages", "gsv-console"] as const;
 export const consoleAccountsQueryKey = ["accounts", "gsv-console"] as const;
 export const consoleAdaptersQueryKey = ["adapters", "gsv-console"] as const;
 export const consoleConfigQueryKey = ["gsv-console", "config"] as const;
+export const consoleAgentContextQueryKey = ["gsv-console", "agent-context"] as const;
 
 type ConsoleQueryOptions = {
   enabled?: boolean;
@@ -179,6 +182,22 @@ export function useConsoleConfig(options: ConsoleQueryOptions = {}) {
   };
 }
 
+export function useConsoleAgentContext(username: string, options: ConsoleQueryOptions = {}) {
+  const { client, connected } = useGateway();
+  const enabled = connected && username.trim().length > 0 && (options.enabled ?? true);
+  const query = useQuery<ConsoleAgentContextFile[]>({
+    queryKey: [...consoleAgentContextQueryKey, username],
+    enabled,
+    queryFn: () => loadConsoleAgentContext(client, username),
+  });
+
+  return {
+    ...query,
+    files: query.data ?? [],
+    resource: toResourceState(query, enabled, isArrayEmpty),
+  };
+}
+
 export function useCreateConsoleAgent() {
   const { client } = useGateway();
   const queryClient = useQueryClient();
@@ -188,6 +207,7 @@ export function useCreateConsoleAgent() {
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: consoleAccountsQueryKey }),
+        queryClient.invalidateQueries({ queryKey: consoleAgentContextQueryKey }),
         queryClient.invalidateQueries({ queryKey: consoleOverviewQueryKey }),
       ]);
     },

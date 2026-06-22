@@ -24,8 +24,14 @@ export type ConsoleClient = Pick<GSVClient, "call" | "proc" | "pkg" | "account" 
 
 export type ConsoleAgentContextFileDraft = {
   label: string;
+  name?: string;
   content: string;
   orig?: string;
+};
+
+export type ConsoleAgentContextFile = ConsoleAgentContextFileDraft & {
+  name: string;
+  orig: string;
 };
 
 export type CreateConsoleAgentInput = {
@@ -64,6 +70,50 @@ export async function loadConsoleAccounts(client: Pick<GSVClient, "account">): P
 
 export async function loadConsoleConfig(client: ConsoleClient): Promise<ConsoleConfigEntry[]> {
   return normalizeConfigPayload(await client.sys.config.get({}));
+}
+
+export async function loadConsoleAgentContext(
+  client: Pick<GSVClient, "call">,
+  username: string,
+): Promise<ConsoleAgentContextFile[]> {
+  const normalizedUsername = normalizeContextUsername(username);
+  if (!normalizedUsername) {
+    throw new Error("valid username is required");
+  }
+
+  const dir = contextDir(normalizedUsername);
+  const listing = await client.call("fs.read", { path: dir }) as {
+    ok?: boolean;
+    files?: unknown;
+    error?: string;
+  };
+  if (listing.ok === false) {
+    return [];
+  }
+
+  const names = Array.isArray(listing.files)
+    ? listing.files.filter((name): name is string => typeof name === "string" && name.endsWith(".md")).sort()
+    : [];
+  const files: ConsoleAgentContextFile[] = [];
+
+  for (const name of names) {
+    const result = await client.call("fs.read", { path: `${dir}/${name}` }) as {
+      ok?: boolean;
+      content?: unknown;
+    };
+    if (result.ok === false || typeof result.content !== "string") {
+      continue;
+    }
+    const content = stripLineNumbers(result.content);
+    files.push({
+      name,
+      label: displayContextFileLabel(name),
+      content,
+      orig: content,
+    });
+  }
+
+  return files;
 }
 
 export async function createConsoleAgent(
@@ -182,10 +232,10 @@ function usernameFromAgentName(name: string): string | null {
 function contextFilesFromDraft(files: readonly ConsoleAgentContextFileDraft[]):
   Array<{ name: string; text: string }> | undefined {
   const contextFiles = files
-    .filter((file) => normalizeContextFileName(file.label) !== "05-persona.md")
+    .filter((file) => normalizeContextFileName(file.name ?? file.label) !== "05-persona.md")
     .filter(isChangedContextFile)
     .map((file) => ({
-      name: normalizeContextFileName(file.label) ?? "context.md",
+      name: normalizeContextFileName(file.name ?? file.label) ?? "context.md",
       text: file.content,
     }));
 
@@ -193,7 +243,7 @@ function contextFilesFromDraft(files: readonly ConsoleAgentContextFileDraft[]):
 }
 
 function personaSeed(input: CreateConsoleAgentInput): string | undefined {
-  const personaFile = input.files.find((file) => normalizeContextFileName(file.label) === "05-persona.md");
+  const personaFile = input.files.find((file) => normalizeContextFileName(file.name ?? file.label) === "05-persona.md");
   const personaText = personaFile && isChangedContextFile(personaFile) ? personaFile.content.trim() : "";
   const role = input.role.trim();
   const description = input.description.trim();
@@ -231,4 +281,32 @@ function normalizeContextFileName(label: string): string | null {
     return null;
   }
   return `${base}.md`;
+}
+
+function normalizeContextUsername(value: string): string | null {
+  const username = value.trim();
+  return /^[a-z_][a-z0-9_-]{0,31}$/.test(username) ? username : null;
+}
+
+function contextDir(username: string): string {
+  return `/home/${username}/context.d`;
+}
+
+function stripLineNumbers(content: string): string {
+  return content
+    .split("\n")
+    .map((line) => line.replace(/^\s*\d+\t/, ""))
+    .join("\n");
+}
+
+function displayContextFileLabel(name: string): string {
+  if (name === "05-persona.md") {
+    return "PERSONA";
+  }
+  return name
+    .replace(/\.md$/i, "")
+    .replace(/^\d+-/, "")
+    .replace(/[-_]+/g, " ")
+    .trim()
+    .toUpperCase() || name.toUpperCase();
 }
