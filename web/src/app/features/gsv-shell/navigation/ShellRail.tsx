@@ -19,6 +19,7 @@ type ShellRailProps = {
   onSetRailMode: (mode: ShellRailMode) => void;
   onBackToDesktop: () => void;
   onOpenPicker: (id: DesktopObjectId) => void;
+  onOpenControlMenu: () => void;
   onOpenSurface: (surface: GsvControlItem["id"]) => void;
   onActivateTab: (key: string) => void;
   onCloseTab: (key: string) => void;
@@ -71,6 +72,7 @@ export function ShellRail({
   onSetRailMode,
   onBackToDesktop,
   onOpenPicker,
+  onOpenControlMenu,
   onOpenSurface,
   onActivateTab,
   onCloseTab,
@@ -96,7 +98,7 @@ export function ShellRail({
             <span style={{ background: statusColor(object.status), color: statusColor(object.status) }} />
           </button>
         ))}
-        <button type="button" class="gsv-rail-gsv-dot" title="GSV" onClick={onToggleCollapsed}>
+        <button type="button" class="gsv-rail-gsv-dot" title="GSV controls" onClick={onOpenControlMenu}>
           <GsvMark />
         </button>
         {tabs.length > 0 ? (
@@ -129,42 +131,73 @@ export function ShellRail({
         </span>
       </header>
 
+      <div class="gsv-rail-modes" role="tablist" aria-label="Rail mode">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={railMode === "objects" ? "true" : "false"}
+          class={railMode === "objects" ? "is-active" : ""}
+          onClick={() => onSetRailMode("objects")}
+        >
+          <Icon name="stars" size={13} />
+          <span>OBJECTS</span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={railMode === "gsv" ? "true" : "false"}
+          class={railMode === "gsv" ? "is-active" : ""}
+          onClick={() => onSetRailMode("gsv")}
+        >
+          <GsvMark size={15} />
+          <span>GSV</span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={railMode === "tabs" ? "true" : "false"}
+          class={railMode === "tabs" ? "is-active" : ""}
+          disabled={tabs.length === 0}
+          onClick={() => onSetRailMode("tabs")}
+        >
+          <Icon name="bookmark" size={13} />
+          <span>TABS</span>
+          {tabs.length > 0 ? <small>{tabs.length}</small> : null}
+        </button>
+      </div>
+
       <div class="gsv-rail-scroll">
-        <div class="gsv-rail-tree">
-          <span class="gsv-rail-spine" aria-hidden="true" />
-          {desktopObjects.map((object) => (
-            <button
-              key={object.id}
-              type="button"
-              class="gsv-rail-row"
-              title={`${object.label}: ${object.meta}, ${object.statusLabel}`}
-              onClick={() => onOpenPicker(object.id)}
-            >
-              <span class="gsv-rail-node-icon">
-                <Icon name={GLYPH_ICON[object.glyph]} size={19} />
-              </span>
-              <span class="gsv-rail-row-copy">
-                <span>{object.label}</span>
-              </span>
-              <i style={{ background: statusColor(object.status), color: statusColor(object.status) }} />
-            </button>
-          ))}
-          <button
-            type="button"
-            class={`gsv-rail-row gsv-rail-gsv${railMode === "gsv" ? " is-active" : ""}`}
-            onClick={() => onSetRailMode("gsv")}
-          >
-            <span class="gsv-rail-node-icon">
-              <GsvMark />
-            </span>
-            <span class="gsv-rail-row-copy">
-              <span>GSV</span>
-            </span>
-          </button>
-        </div>
+        {railMode === "objects" ? (
+          <div class="gsv-rail-tree">
+            <span class="gsv-rail-spine" aria-hidden="true" />
+            {desktopObjects.map((object) => (
+              <button
+                key={object.id}
+                type="button"
+                class="gsv-rail-row"
+                title={`${object.label}: ${object.meta}, ${object.statusLabel}`}
+                onClick={() => onOpenPicker(object.id)}
+              >
+                <span class="gsv-rail-node-icon">
+                  <Icon name={GLYPH_ICON[object.glyph]} size={19} />
+                </span>
+                <span class="gsv-rail-row-copy">
+                  <span>{object.label}</span>
+                </span>
+                <i style={{ background: statusColor(object.status), color: statusColor(object.status) }} />
+              </button>
+            ))}
+          </div>
+        ) : null}
 
         {railMode === "gsv" ? (
           <nav class="gsv-rail-subnav" aria-label="GSV systems">
+            <button type="button" class="gsv-rail-control-menu" onClick={onOpenControlMenu}>
+              <span class="gsv-rail-subnav-icon">
+                <GsvMark size={16} />
+              </span>
+              <span>CONTROL MENU</span>
+            </button>
             {GSV_CONTROL_ITEMS.map((item) => (
               <button
                 key={item.id}
@@ -172,63 +205,60 @@ export function ShellRail({
                 class={activeTabKey === item.id ? "is-active" : ""}
                 onClick={() => onOpenSurface(item.id)}
               >
+                <span class="gsv-rail-subnav-icon">
+                  <Icon name={item.icon} size={14} />
+                </span>
                 <span>{item.label}</span>
               </button>
             ))}
           </nav>
         ) : null}
 
-        {tabs.length > 0 ? (
+        {tabs.length > 0 && railMode === "tabs" ? (
           <section class="gsv-rail-tabs" aria-label="Open tabs">
-            <button
-              type="button"
-              class={`gsv-rail-tabs-head${railMode === "tabs" ? " is-active" : ""}`}
-              onClick={() => onSetRailMode("tabs")}
-            >
+            <div class="gsv-rail-tabs-head is-active">
               <Icon name="bookmark" size={15} />
               <span>TABS</span>
               <small>{tabs.length}</small>
-            </button>
-            {railMode === "tabs" ? (
-              <div class="gsv-rail-tab-list">
-                {tabs.map((tab) => (
-                  <button
-                    key={tab.key}
-                    type="button"
-                    class={tab.key === activeTabKey ? "is-active" : ""}
-                    onClick={() => onActivateTab(tab.key)}
-                  >
-                    <span class="gsv-rail-tab-icon">
-                      <Icon name="bookmark" size={13} />
-                    </span>
-                    <span>{tab.title}</span>
-                    <i
-                      role="button"
-                      tabIndex={0}
-                      aria-label={`Close ${tab.title}`}
-                      onClick={(event) => {
+            </div>
+            <div class="gsv-rail-tab-list">
+              {tabs.map((tab) => (
+                <button
+                  key={tab.key}
+                  type="button"
+                  class={tab.key === activeTabKey ? "is-active" : ""}
+                  onClick={() => onActivateTab(tab.key)}
+                >
+                  <span class="gsv-rail-tab-icon">
+                    <Icon name="bookmark" size={13} />
+                  </span>
+                  <span>{tab.title}</span>
+                  <i
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Close ${tab.title}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onCloseTab(tab.key);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
                         event.stopPropagation();
                         onCloseTab(tab.key);
-                      }}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter" || event.key === " ") {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          onCloseTab(tab.key);
-                        }
-                      }}
-                    >
-                      x
-                    </i>
-                  </button>
-                ))}
-              </div>
-            ) : null}
+                      }
+                    }}
+                  >
+                    x
+                  </i>
+                </button>
+              ))}
+            </div>
           </section>
         ) : null}
       </div>
 
-      <footer>drag chat left to collapse</footer>
+      <footer>LIVE SHELL</footer>
     </aside>
   );
 }

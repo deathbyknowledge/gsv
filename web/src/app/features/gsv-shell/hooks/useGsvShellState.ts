@@ -5,13 +5,14 @@ import {
   shellSurfaceLabel,
   shellTabForSurface,
   type DesktopObject,
+  type DesktopGlyph,
   type DesktopObjectId,
   type ShellRailMode,
   type ShellSurfaceId,
   type ShellTab,
 } from "../domain/shellModel";
 
-export type PickerId = DesktopObjectId | "tabs";
+export type PickerId = DesktopObjectId | "gsv" | "tabs";
 
 export type PickerCard = {
   key: string;
@@ -19,6 +20,8 @@ export type PickerCard = {
   type: string;
   blurb: string;
   status: "online" | "error" | "idle" | "warn" | "live";
+  glyph?: DesktopGlyph;
+  icon?: string;
   onClick: () => void;
 };
 
@@ -29,6 +32,9 @@ const COLLAPSED_RAIL_WIDTH = 64;
 const MIN_CONSOLE_WIDTH = 360;
 const MIN_DESKTOP_TREE_WIDTH = 700;
 const MIN_DESKTOP_RAIL_CANVAS_WIDTH = 360;
+const STACKED_LAYOUT_WIDTH = 760;
+const MIN_STACKED_CHAT_HEIGHT = 300;
+const MIN_STACKED_WORLD_HEIGHT = 260;
 
 type UseGsvShellStateArgs = {
   rootRef: RefObject<HTMLDivElement>;
@@ -66,14 +72,43 @@ function surfaceForDesktopObject(parentId: DesktopObjectId): ShellSurfaceId {
   return "settings";
 }
 
+function iconForSurface(surface: ShellSurfaceId): string {
+  if (surface === "machines") {
+    return "computer";
+  }
+  if (surface === "files") {
+    return "folder";
+  }
+  if (surface === "library") {
+    return "pencil";
+  }
+  if (surface === "terminal") {
+    return "terminal";
+  }
+  if (surface === "runtime") {
+    return "list";
+  }
+  if (surface === "settings") {
+    return "cog";
+  }
+  if (surface === "crew" || surface === "agent") {
+    return "chat";
+  }
+  if (surface === "object") {
+    return "tag";
+  }
+  return "stars";
+}
+
 export function useGsvShellState({
   rootRef,
   desktopObjects,
 }: UseGsvShellStateArgs) {
   const [rootWidth, setRootWidth] = useState(1280);
+  const [rootHeight, setRootHeight] = useState(760);
   const [tabs, setTabs] = useState<ShellTab[]>([]);
   const [activeTabKey, setActiveTabKey] = useState<string | null>(null);
-  const [railMode, setRailMode] = useState<ShellRailMode>("gsv");
+  const [railMode, setRailMode] = useState<ShellRailMode>("objects");
   const [manualRailCollapsed, setManualRailCollapsed] = useState(false);
   const [selectedObjectId, setSelectedObjectId] = useState<DesktopObjectId | null>(null);
   const [pickerId, setPickerId] = useState<PickerId | null>(null);
@@ -88,7 +123,11 @@ export function useGsvShellState({
       return;
     }
 
-    const update = () => setRootWidth(node.getBoundingClientRect().width);
+    const update = () => {
+      const rect = node.getBoundingClientRect();
+      setRootWidth(rect.width);
+      setRootHeight(rect.height);
+    };
     update();
 
     if (typeof ResizeObserver === "undefined") {
@@ -108,14 +147,17 @@ export function useGsvShellState({
     [desktopObjects],
   );
   const inPageZone = activeTab !== null;
+  const stackedLayout = rootWidth <= STACKED_LAYOUT_WIDTH;
   const maxChatWidth = Math.max(
-    MIN_CHAT_WIDTH,
-    rootWidth - (inPageZone ? COLLAPSED_RAIL_WIDTH + MIN_CONSOLE_WIDTH : COLLAPSED_RAIL_WIDTH),
+    stackedLayout ? MIN_STACKED_CHAT_HEIGHT : MIN_CHAT_WIDTH,
+    stackedLayout
+      ? rootHeight - MIN_STACKED_WORLD_HEIGHT
+      : rootWidth - (inPageZone ? COLLAPSED_RAIL_WIDTH + MIN_CONSOLE_WIDTH : COLLAPSED_RAIL_WIDTH),
   );
-  const resolvedChatWidth = clamp(chatWidth, MIN_CHAT_WIDTH, maxChatWidth);
-  const mainWidth = rootWidth - (chatOpen ? resolvedChatWidth : 0);
-  const desktopCollapsed = !inPageZone && chatOpen && mainWidth < MIN_DESKTOP_TREE_WIDTH;
-  const autoRailCollapsed = chatOpen && (
+  const resolvedChatWidth = clamp(chatWidth, stackedLayout ? MIN_STACKED_CHAT_HEIGHT : MIN_CHAT_WIDTH, maxChatWidth);
+  const mainWidth = rootWidth - (!stackedLayout && chatOpen ? resolvedChatWidth : 0);
+  const desktopCollapsed = !stackedLayout && !inPageZone && chatOpen && mainWidth < MIN_DESKTOP_TREE_WIDTH;
+  const autoRailCollapsed = !stackedLayout && chatOpen && (
     inPageZone
       ? mainWidth - EXPANDED_RAIL_WIDTH < MIN_CONSOLE_WIDTH
       : desktopCollapsed && mainWidth - EXPANDED_RAIL_WIDTH < MIN_DESKTOP_RAIL_CANVAS_WIDTH
@@ -147,7 +189,7 @@ export function useGsvShellState({
     setSelectedObjectId(null);
     setPickerId(null);
     setGsvOpen(false);
-    setRailMode("gsv");
+    setRailMode("objects");
   };
 
   const closeTab = (key: string): void => {
@@ -157,18 +199,26 @@ export function useGsvShellState({
         setActiveTabKey(next.length > 0 ? next[next.length - 1].key : null);
       }
       if (next.length === 0) {
-        setRailMode("gsv");
+        setRailMode("objects");
       }
       return next;
     });
   };
 
   const openPicker = (id: DesktopObjectId): void => {
+    setRailMode("objects");
     if (!inPageZone && !desktopCollapsed) {
       setSelectedObjectId(id);
       return;
     }
     setPickerId(id);
+  };
+
+  const openControlMenu = (): void => {
+    setRailMode("gsv");
+    setSelectedObjectId(null);
+    setGsvOpen(false);
+    setPickerId("gsv");
   };
 
   const activateTab = (key: string): void => {
@@ -184,11 +234,20 @@ export function useGsvShellState({
     }
 
     const reserve = inPageZone ? COLLAPSED_RAIL_WIDTH + MIN_CONSOLE_WIDTH : COLLAPSED_RAIL_WIDTH;
-    const maxWidth = Math.max(MIN_CHAT_WIDTH, rect.width - reserve);
+    const stackedDrag = rect.width <= STACKED_LAYOUT_WIDTH;
+    const minChatExtent = stackedDrag ? MIN_STACKED_CHAT_HEIGHT : MIN_CHAT_WIDTH;
+    const maxChatExtent = Math.max(
+      minChatExtent,
+      stackedDrag ? rect.height - MIN_STACKED_WORLD_HEIGHT : rect.width - reserve,
+    );
     setChatDragging(true);
 
     const onMove = (moveEvent: MouseEvent) => {
-      const nextWidth = clamp(rect.right - moveEvent.clientX, MIN_CHAT_WIDTH, maxWidth);
+      const nextWidth = clamp(
+        stackedDrag ? rect.bottom - moveEvent.clientY : rect.right - moveEvent.clientX,
+        minChatExtent,
+        maxChatExtent,
+      );
       setChatWidth(nextWidth);
     };
     const onUp = () => {
@@ -209,7 +268,7 @@ export function useGsvShellState({
     setChatWidth(maxChatWidth);
   };
 
-  const pickerObject = pickerId && pickerId !== "tabs" ? getDesktopObject(desktopObjects, pickerId) : null;
+  const pickerObject = pickerId && pickerId !== "tabs" && pickerId !== "gsv" ? getDesktopObject(desktopObjects, pickerId) : null;
   const pickerCards: PickerCard[] = pickerId === "tabs"
     ? tabs.map((tab) => ({
         key: tab.key,
@@ -217,6 +276,7 @@ export function useGsvShellState({
         type: "OPEN TAB",
         blurb: tab.key === activeTabKey ? "Currently active in the central panel." : "Open page. Select to bring it forward.",
         status: tab.key === activeTabKey ? "live" as const : "online" as const,
+        icon: iconForSurface(tab.surface),
         onClick: () => {
           setActiveTabKey(tab.key);
           setPickerId(null);
@@ -228,10 +288,28 @@ export function useGsvShellState({
         type: child.type,
         blurb: child.blurb,
         status: objectCardStatus(child.status),
+        glyph: child.glyph,
         onClick: () => {
           openSurface(surfaceForDesktopObject(pickerObject.id));
         },
       })) ?? [];
+  const pickerTitle = pickerId === "gsv"
+    ? "GSV // CONTROL"
+    : pickerId === "tabs"
+      ? "OPEN TABS"
+      : `${pickerObject?.label ?? "OBJECTS"} // SELECT`;
+  const pickerSubtitle = pickerId === "gsv"
+    ? "System surfaces"
+    : pickerId === "tabs"
+      ? `${tabs.length} open ${tabs.length === 1 ? "tab" : "tabs"}`
+      : pickerObject
+        ? `${pickerObject.meta} · ${pickerObject.statusLabel}`
+        : "No branch selected";
+  const pickerEmptyLabel = pickerId === "tabs"
+    ? "NO OPEN TABS"
+    : pickerId === "gsv"
+      ? ""
+      : "NO OBJECTS";
 
   const statusContext = activeTab
     ? shellSurfaceLabel(activeTab.surface)
@@ -250,11 +328,15 @@ export function useGsvShellState({
     desktopCollapsed,
     gsvOpen,
     maxChatWidth,
+    openControlMenu,
     openPicker,
     openSurface,
     pickerCards,
+    pickerEmptyLabel,
     pickerId,
     pickerObject,
+    pickerSubtitle,
+    pickerTitle,
     railCollapsed,
     railMode,
     resolvedChatWidth,
