@@ -1,5 +1,4 @@
 import type { JSX } from "preact";
-import { Icon } from "../../../components/ui/Icon";
 import { IconMenu } from "../../../components/ui/IconMenu";
 import { ObjectCard } from "../../../components/ui/ObjectCard";
 import { StatusDot } from "../../../components/ui/StatusDot";
@@ -9,20 +8,15 @@ import {
   type DesktopObjectId,
   type ShellStatus,
   type ShellSurfaceId,
-  type ShellTab,
 } from "../domain/shellModel";
 
 type GsvDesktopProps = {
   desktopObjects: readonly DesktopObject[];
   selectedObjectId: DesktopObjectId | null;
   gsvOpen: boolean;
-  tabs: readonly ShellTab[];
-  activeTabKey: string | null;
   onSelectObject: (id: DesktopObjectId | null) => void;
   onToggleGsv: () => void;
   onOpenSurface: (surface: ShellSurfaceId) => void;
-  onSelectTab: (key: string) => void;
-  onCloseTab: (key: string) => void;
 };
 
 function objectCardStatus(status: ShellStatus) {
@@ -65,19 +59,6 @@ function surfaceForObject(parentId: DesktopObjectId): ShellSurfaceId {
   return "settings";
 }
 
-function iconForSurface(surface: ShellSurfaceId): string {
-  if (surface === "machines") return "computer";
-  if (surface === "messengers" || surface === "crew" || surface === "agent") return "chat";
-  if (surface === "integrations") return "weblink";
-  if (surface === "applications") return "stars";
-  if (surface === "files") return "folder";
-  if (surface === "library") return "pencil";
-  if (surface === "terminal") return "terminal";
-  if (surface === "runtime") return "list";
-  if (surface === "settings") return "cog";
-  return "bookmark";
-}
-
 function GsvMark() {
   return (
     <svg width="50" height="50" viewBox="0 0 16 16" aria-hidden="true">
@@ -96,20 +77,15 @@ export function GsvDesktop({
   desktopObjects,
   selectedObjectId,
   gsvOpen,
-  tabs,
-  activeTabKey,
   onSelectObject,
   onToggleGsv,
   onOpenSurface,
-  onSelectTab,
-  onCloseTab,
 }: GsvDesktopProps) {
   const selectedObject = selectedObjectId
     ? desktopObjects.find((object) => object.id === selectedObjectId) ?? null
     : null;
   const branchCount = Math.max(desktopObjects.length, 1);
   const totalObjects = desktopObjects.reduce((sum, object) => sum + object.children.length, 0);
-  const tabCount = tabs.length;
   const desktopStateClass = `${selectedObject ? " has-selected-object" : ""}${gsvOpen ? " has-gsv-open" : ""}`;
 
   return (
@@ -131,9 +107,7 @@ export function GsvDesktop({
           <small>
             {selectedObject
               ? `${selectedObject.meta} · ${selectedObject.statusLabel}`
-              : tabCount > 0
-                ? `${tabCount} open ${tabCount === 1 ? "tab" : "tabs"}`
-                : "desktop ready"}
+              : "desktop ready"}
           </small>
         </div>
         <p>
@@ -244,49 +218,6 @@ export function GsvDesktop({
           </aside>
         ) : null}
       </div>
-
-      {tabs.length > 0 ? (
-        <aside class="gsv-space-tabs-list" aria-label="Open tabs" onClick={(event) => event.stopPropagation()}>
-          <header>
-            <span>TABS</span>
-            <small>{tabCount}</small>
-          </header>
-          <div>
-            {tabs.map((tab) => (
-              <div
-                key={tab.key}
-                class={tab.key === activeTabKey ? "is-active" : ""}
-                role="button"
-                tabIndex={0}
-                onClick={() => onSelectTab(tab.key)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    onSelectTab(tab.key);
-                  }
-                }}
-              >
-                <span class="gsv-space-tab-active-bar" aria-hidden="true" />
-                <span class="gsv-space-tab-icon" aria-hidden="true">
-                  <Icon name={iconForSurface(tab.surface)} size={14} />
-                </span>
-                <span class="gsv-space-tab-title">{tab.title}</span>
-                <button
-                  type="button"
-                  class="gsv-space-tab-close"
-                  aria-label={`Close ${tab.title}`}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onCloseTab(tab.key);
-                  }}
-                >
-                  x
-                </button>
-              </div>
-            ))}
-          </div>
-        </aside>
-      ) : null}
 
       <div class="gsv-space-hint">
         {selectedObject ? "CLICK A CHILD TO OPEN · CLICK EMPTY SPACE TO EXIT" : "CLICK A NODE TO EXPLORE · CLICK GSV FOR CONTROLS"}
