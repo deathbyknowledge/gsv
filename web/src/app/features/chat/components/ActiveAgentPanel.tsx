@@ -28,6 +28,7 @@ export function ActiveAgentPanel({
     }
     if (onSelectAgent) {
       onSelectAgent(agentId);
+      onClose();
       return;
     }
     openCrew();
