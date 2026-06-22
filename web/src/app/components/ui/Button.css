@@ -11,6 +11,22 @@
   border: 1px solid transparent;
   cursor: pointer;
   text-decoration: none;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+/* — block: fill container width, stay centered — */
+.gsv-btn-block {
+  display: flex;
+  width: 100%;
+}
+
+/* — label: truncate with ellipsis when it exceeds available width — */
+.gsv-btn-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 /* — primary — */

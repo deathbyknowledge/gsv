@@ -1,5 +1,4 @@
 import type { SessionService, SessionSnapshot } from "../../services/session/sessionService";
-import { BootScreen } from "./BootScreen";
 import { LoginScreen } from "./LoginScreen";
 import { ProvisioningScreen } from "./ProvisioningScreen";
 import { SetupCompleteScreen } from "./SetupCompleteScreen";
@@ -18,12 +17,9 @@ export function SessionScreens({ session, snapshot }: SessionScreensProps) {
   return (
     <section class="session-screen" data-session-screen data-session-view={visibleView} hidden={visibleView === "desktop"} ref={refs.screenRef}>
       <div class={`session-stage${visibleView === "booting" ? " session-stage-booting" : ""}`}>
-        <BootScreen
-          visible={visibleView === "booting"}
-          message={state.boot.message}
-        />
         <LoginScreen
-          visible={visibleView === "login"}
+          visible={visibleView === "login" || visibleView === "booting"}
+          loading={visibleView === "booting"}
           busy={state.busy}
           error={state.login.error}
           username={state.login.username}

@@ -19,6 +19,12 @@ const story: Story = {
           <StatusBar model="DEFAULT MODEL" context="CTX 92%" clock="03:14:00" power="2 RUNS" />
         </div>
       </div>
+      <div class="ds-cell">
+        <div class="ds-label">Custom label (centered)</div>
+        <div class="ds-row" style={{ width: "760px", maxWidth: "100%" }}>
+          <StatusBar label="GENERAL SYSTEMS VEHICLE · SECURE TERMINAL" />
+        </div>
+      </div>
     </div>
   ),
 };

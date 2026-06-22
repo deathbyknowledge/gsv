@@ -30,6 +30,7 @@ import agentImage from "./stories/AgentImage.story";
 import avatar from "./stories/Avatar.story";
 import tile from "./stories/Tile.story";
 import objectCard from "./stories/ObjectCard.story";
+import surface from "./stories/Surface.story";
 import iconButton from "./stories/IconButton.story";
 import sectionHeader from "./stories/SectionHeader.story";
 import addAction from "./stories/AddAction.story";
@@ -77,6 +78,7 @@ const STORIES: Story[] = [
   asciiPlanet,
   tile,
   objectCard,
+  surface,
   agentImage,
   avatar,
   // Chrome

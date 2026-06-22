@@ -1,0 +1,54 @@
+/* ============================================================
+   Design-system tokens, SCOPED to the auth/session surface.
+   Mirrors gsv-tokens.css but on a `.gsv-auth-theme` class instead of :root,
+   so the design system styles the session screens without colliding with the
+   desktop shell's own scoped tokens (.desktop-shell). Apply `gsv-auth-theme`
+   to the session screen's root element.
+   ============================================================ */
+.gsv-auth-theme {
+  /* surfaces */
+  --void: #07061a;
+  --panel: #0a0820;
+  --panel-2: #0a0822;
+  --node-bg: #0b0a1e;
+  --header-bar: #13112e;
+  --frame-lo: #08061c;
+  --frame-hi: #161240;
+
+  /* borders & rules */
+  --border: #322e74;
+  --border-raised: #4a449e;
+  --rule-inner: #25224d;
+  --rule-section: #3a3676;
+  --bracket: #6b66c4;
+  --dashed: #5a52a8;
+
+  /* interaction states */
+  --hover: #171441;
+  --hover-nav: #1b1840;
+  --active: #201c4d;
+  --selected: #221d56;
+
+  /* text & accent */
+  --text-hi: #f4f2ff;
+  --text: #efeefe;
+  --text-title: #e2dfff;
+  --accent: #b3aeff;
+  --accent-bright: #cbc7ff;
+  --label: #b3aee2;
+  --node-label: #c4bfee;
+  --text-dim: #565199;
+
+  /* status */
+  --online: #5ef2a0;
+  --error: #ff6f8c;
+  --idle: #6661a0;
+  --update: #ffd24d;
+  --live: #8f8aff;
+
+  /* action accents */
+  --primary-hi: #6b62c4;
+  --danger: #a8324a;
+  --danger-hi: #c4445f;
+  --warn: #e0a64c;
+}

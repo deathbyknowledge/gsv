@@ -1,0 +1,40 @@
+/* GSV typography utilities — Departure Mono machine scale.
+ * Values transcribed from the Typography story type scale. Each class sets
+ * font-family/size/weight/letter-spacing only (no color/margin) so they
+ * compose freely. px is intentional for now — a later pass converts the whole
+ * system to rem. */
+
+.gsv-title {
+  font-family: var(--gsv-font-mono);
+  font-weight: 700;
+  font-size: 19px;
+  letter-spacing: 0.14em;
+}
+
+.gsv-section {
+  font-family: var(--gsv-font-mono);
+  font-weight: 600;
+  font-size: 13.5px;
+  letter-spacing: 0.2em;
+}
+
+.gsv-sublabel {
+  font-family: var(--gsv-font-mono);
+  font-weight: 500;
+  font-size: 10px;
+  letter-spacing: 0.2em;
+}
+
+.gsv-listitem {
+  font-family: var(--gsv-font-mono);
+  font-weight: 400;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+.gsv-meta {
+  font-family: var(--gsv-font-mono);
+  font-weight: 400;
+  font-size: 11px;
+  letter-spacing: 0.32em;
+}

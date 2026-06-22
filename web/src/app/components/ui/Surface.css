@@ -1,0 +1,72 @@
+/* Surface — reusable card/panel. Provides consistent elevation across the
+   design system. Card backgrounds are mixed visibly lighter than --void so a
+   card never reads as the void backdrop. */
+.gsv-surface {
+  /* card background — set per level below */
+  --surface-bg: color-mix(in srgb, var(--panel) 100%, #ffffff 6%);
+  --surface-border: var(--border);
+  position: relative;
+  display: block;
+  box-sizing: border-box;
+  background: var(--surface-bg);
+  border: 1px solid var(--surface-border);
+  border-radius: 6px;
+  padding: 16px;
+  color: var(--text);
+  font-family: var(--gsv-font-mono);
+  text-align: left;
+  transition: background 0.14s, border-color 0.14s, box-shadow 0.14s, transform 0.14s;
+}
+
+/* button reset when rendered as <button> */
+button.gsv-surface {
+  width: 100%;
+  font: inherit;
+  cursor: default;
+}
+
+/* — level 0: flush panel, no lift — */
+.gsv-surface-l0 {
+  --surface-bg: var(--panel);
+  --surface-border: var(--border);
+  box-shadow: none;
+}
+
+/* — level 1 (default card): clearly lighter than --void — */
+.gsv-surface-l1 {
+  --surface-bg: color-mix(in srgb, var(--panel) 100%, #ffffff 6%);
+  --surface-border: var(--border);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+}
+
+/* — level 2: lighter still + bigger shadow + raised border — */
+.gsv-surface-l2 {
+  --surface-bg: color-mix(in srgb, var(--panel) 100%, #ffffff 11%);
+  --surface-border: var(--border-raised);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.45);
+}
+
+/* — interactive: hover raises bg one notch + emphasis border + pointer — */
+.gsv-surface.is-interactive {
+  cursor: pointer;
+}
+button.gsv-surface.is-interactive {
+  cursor: pointer;
+}
+.gsv-surface.is-interactive:hover {
+  --surface-bg: color-mix(in srgb, var(--panel) 100%, #ffffff 13%);
+  --surface-border: var(--border-raised);
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.5);
+  transform: translateY(-1px);
+}
+
+/* — selected: accent border + faint accent fill + soft glow — */
+.gsv-surface.is-selected {
+  --surface-border: var(--accent);
+  background: color-mix(in srgb, var(--accent) 9%, var(--surface-bg));
+  box-shadow: 0 0 18px rgba(179, 174, 255, 0.32);
+}
+.gsv-surface.is-selected.is-interactive:hover {
+  --surface-border: var(--accent-bright);
+  box-shadow: 0 0 24px rgba(179, 174, 255, 0.45);
+}
