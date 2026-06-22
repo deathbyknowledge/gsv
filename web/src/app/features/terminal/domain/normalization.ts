@@ -92,6 +92,9 @@ export function normalizeTranscriptEntry(
       target: input.target,
       command: input.input,
       cwd: input.cwd,
+      timeoutMs: input.timeoutMs,
+      yieldMs: input.yieldMs,
+      background: input.background,
       startedAt,
       completedAt,
       status: "completed",
@@ -103,12 +106,14 @@ export function normalizeTranscriptEntry(
     };
   }
 
-  const statusText = asString(record.status);
+  const statusText = (asString(record.status) ?? "").toLowerCase();
   const errorText = asString(record.error);
   const exitCode = asNumber(record.exitCode);
   const stdout = asString(record.stdout) ?? asString(record.output) ?? "";
   let stderr = asString(record.stderr) ?? "";
-  const failed = record.ok === false || statusText === "failed" || Boolean(errorText) || (exitCode !== null && exitCode !== 0);
+  const explicitOk = asBoolean(record.ok);
+  const backgrounded = input.background || asBoolean(record.backgrounded) === true;
+  const failed = explicitOk === false || statusText === "failed" || Boolean(errorText) || (exitCode !== null && exitCode !== 0);
 
   if (failed && stderr.trim().length === 0) {
     stderr = errorText ?? (exitCode !== null ? `exit ${exitCode}` : "");
@@ -119,6 +124,9 @@ export function normalizeTranscriptEntry(
     target: input.target,
     command: input.input,
     cwd: input.cwd,
+    timeoutMs: input.timeoutMs,
+    yieldMs: input.yieldMs,
+    background: backgrounded,
     startedAt,
     completedAt,
     status: statusText === "running" ? "running" : failed ? "failed" : "completed",
