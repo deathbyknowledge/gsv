@@ -58,7 +58,9 @@ export function LoginScreen({
 
   return (
     <div class="gsv-auth-theme gsv-login" data-session-login-view hidden={!visible}>
-      <AuthBackground variant="galaxy" />
+      {/* Only mount the animated background while visible — otherwise its rAF
+          loop keeps running behind the desktop/setup once login is CSS-hidden. */}
+      {visible ? <AuthBackground variant="galaxy" /> : null}
 
       <div class="gsv-login-content">
         <div class="gsv-login-panel">
