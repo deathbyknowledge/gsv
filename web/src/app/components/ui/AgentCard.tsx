@@ -17,6 +17,8 @@ export interface AgentCardProps {
   imgSrc?: string;
   status?: AvatarStatus;
   modelIsDefault?: boolean;
+  initialModel?: string;
+  initialPermission?: string;
   tasksTotal?: number;
   active?: boolean;
   showActions?: boolean;
@@ -33,7 +35,7 @@ export interface AgentCardProps {
   onAvatarClick?: () => void;
 }
 
-const PERMS = ["allow", "ask", "deny"];
+const PERMS = ["auto", "ask", "deny"];
 
 const DEFAULT_MODELS = ["Nemotron 3", "Claude Opus 4", "GPT-5", "Llama 4 Maverick"];
 const DEFAULT_TASKS: AgentTask[] = [
@@ -58,6 +60,22 @@ function colFor(st: string): string {
   return st === "error" ? "var(--error)" : st === "idle" ? "#9a95cf" : "var(--online)";
 }
 
+function modelIndexForValue(value: string | undefined, options: readonly string[]): number {
+  const trimmed = value?.trim() ?? "";
+  if (!trimmed) {
+    return 0;
+  }
+  const index = options.findIndex((option) => option.trim() === trimmed);
+  return index >= 0 ? index : 0;
+}
+
+function permissionForValue(value: string | undefined): string {
+  if (value === "allow") {
+    return "auto";
+  }
+  return PERMS.includes(value ?? "") ? value as string : "ask";
+}
+
 /** AgentCard — ported from Agent Card.dc.html. Crew-member card composing
  *  Avatar (status), Select (model), and Segmented (tool permissions), with an
  *  inline tasks dropdown that renders per-row status dots. */
@@ -69,6 +87,8 @@ export function AgentCard(props: AgentCardProps) {
     imgSrc = "/img/agent-0.png",
     status = "online",
     modelIsDefault = true,
+    initialModel,
+    initialPermission,
     tasksTotal,
     active = true,
     showActions = true,
@@ -82,9 +102,11 @@ export function AgentCard(props: AgentCardProps) {
     onSave,
     onAvatarClick,
   } = props;
+  const modelOptions = models.length > 0 ? models : DEFAULT_MODELS;
+  const modelOptionsKey = modelOptions.join("\u0000");
 
-  const [perm, setPerm] = useState("ask");
-  const [model, setModel] = useState(0);
+  const [perm, setPerm] = useState(() => permissionForValue(initialPermission));
+  const [model, setModel] = useState(() => modelIndexForValue(initialModel, modelOptions));
   const [task, setTask] = useState(0);
   const [taskOpen, setTaskOpen] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
@@ -102,6 +124,11 @@ export function AgentCard(props: AgentCardProps) {
       clearTimeout(saveT.current);
     };
   }, []);
+
+  useEffect(() => {
+    setPerm(permissionForValue(initialPermission));
+    setModel(modelIndexForValue(initialModel, modelOptions));
+  }, [initialModel, initialPermission, modelOptionsKey]);
 
   const flashSaved = () => {
     onSave?.();
@@ -262,7 +289,7 @@ export function AgentCard(props: AgentCardProps) {
               </span>
             ) : null}
           </div>
-          <Select options={models} value={model} onChange={onModel} width={560} disabled={readOnly} />
+          <Select options={modelOptions} value={model} onChange={onModel} width={560} disabled={readOnly} />
         </div>
 
         {/* tool permissions */}
