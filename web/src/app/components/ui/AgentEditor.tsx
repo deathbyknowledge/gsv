@@ -6,6 +6,7 @@ import { Select } from "./Select";
 import { Segmented } from "./Segmented";
 import { Button } from "./Button";
 import { Avatar, type AvatarStatus } from "./Avatar";
+import { Tabs } from "./Tabs";
 
 export type AgentEditorMode = "new" | "manage";
 
@@ -314,16 +315,13 @@ export function AgentEditor(props: AgentEditorProps) {
         {/* ============ PANEL ============ */}
         <div style={panelStyle}>
           {/* ===== FOLDER TAB BAR ===== */}
-          <div class="gsv-ae-tabs" style={{ width: `${W}px`, maxWidth: "100%" }}>
-            {tabOrder.map((o, i) => (
-              <span
-                class={`gsv-ae-tab${i === activeIdx ? " is-active" : ""}`}
-                onClick={() => setTab(tabOrder[i] || "general")}
-              >
-                {o.toUpperCase()}
-              </span>
-            ))}
-          </div>
+          <Tabs
+            tabs={tabOrder.map((label) => label.toUpperCase())}
+            value={activeIdx}
+            onChange={(index) => setTab(tabOrder[index] || "general")}
+            width={W}
+            sticky
+          />
 
           {/* ===== CONTENT ===== */}
           <div style="flex:1;min-width:0;position:relative;">
