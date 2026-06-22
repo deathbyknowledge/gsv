@@ -1,11 +1,11 @@
 .gsv-console-config-list {
   flex: 1;
   min-height: 100%;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-raised);
   background: var(--panel);
   box-shadow:
-    inset 0 0 0 1px rgba(169, 164, 255, 0.035),
-    inset 0 0 28px rgba(80, 70, 180, 0.06);
+    inset 0 0 0 1px #060414,
+    0 0 30px rgba(80, 70, 180, 0.1);
 }
 
 .gsv-console-config-list-body {
@@ -14,12 +14,12 @@
 
 .gsv-console-config-row {
   min-width: 0;
-  min-height: 64px;
+  min-height: 62px;
   display: grid;
   grid-template-columns: 24px minmax(0, 1fr) auto minmax(112px, auto);
   align-items: center;
-  gap: 12px;
-  padding: 14px 18px;
+  gap: 14px;
+  padding: 15px 20px;
   border-bottom: 1px solid var(--rule-inner);
 }
 
@@ -39,7 +39,7 @@
   grid-column: 2;
   min-width: 0;
   display: grid;
-  gap: 6px;
+  gap: 5px;
 }
 
 .gsv-console-config-row-copy strong,
@@ -55,14 +55,18 @@
 
 .gsv-console-config-row-copy strong {
   color: var(--text);
-  font-size: 11px;
+  font-size: 12.5px;
   font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: none;
 }
 
 .gsv-console-config-row-copy small {
-  color: var(--text-dim);
-  font-size: 9px;
-  line-height: 1.35;
+  color: #8c86c8;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  line-height: 1.4;
+  text-transform: none;
 }
 
 .gsv-console-config-row-tag {

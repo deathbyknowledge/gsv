@@ -57,7 +57,6 @@ type RowTag = {
 
 type SettingsListRow = {
   id: string;
-  icon?: string;
   label: string;
   sub: string;
   tone: StatusTone;
@@ -545,7 +544,7 @@ function SettingsListRowView({ row }: { row: SettingsListRow }) {
   const content = (
     <>
       <span class="gsv-console-settings-row-mark">
-        {row.icon ? <Icon name={row.icon} size={18} /> : <StatusDot tone={row.tone} size={8} />}
+        <StatusDot tone={row.tone} size={8} />
       </span>
       <span class="gsv-console-settings-row-copy">
         <strong>{row.label}</strong>
@@ -619,7 +618,6 @@ function RuntimeConsoleSection({
       emptyLabel="NO PROCESSES"
       rows={processes.map((process) => ({
         id: process.pid,
-        icon: "list",
         label: process.label,
         sub: processSub(process),
         tone: toneForProcess(process),
@@ -679,7 +677,6 @@ function MessengersConsoleSection({
       emptyLabel="NO MESSENGERS"
       rows={adapters.map((adapter) => ({
         id: adapterDetailId(adapter),
-        icon: iconForAdapterName(adapter.adapter),
         label: formatTokenLabel(adapter.adapter),
         sub: adapterSub(adapter),
         tone: toneForAdapter(adapter),
@@ -718,7 +715,6 @@ function LibraryConsoleSection({
       emptyLabel={`NO ${noun}S`}
       rows={packages.map((pkg) => ({
         id: pkg.packageId,
-        icon: iconForPackageKind(pkg, kind),
         label: pkg.name,
         sub: packageSub(pkg),
         tone: toneForPackage(pkg),
@@ -976,12 +972,6 @@ function packageListNoun(kind: PackageListKind): string {
   if (kind === "applications") return "APPLICATION";
   if (kind === "integrations") return "INTEGRATION";
   return "PACKAGE";
-}
-
-function iconForPackageKind(pkg: ConsolePackage, kind: PackageListKind): string {
-  if (kind === "applications") return "stars";
-  if (kind === "integrations") return "weblink";
-  return pkg.uiEntrypoints.length > 0 ? "stars" : "pencil";
 }
 
 function toneForPackage(pkg: ConsolePackage): StatusTone {

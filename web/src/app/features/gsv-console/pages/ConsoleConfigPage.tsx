@@ -1,4 +1,3 @@
-import { Icon } from "../../../components/ui/Icon";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
 import { StatusDot, type StatusTone } from "../../../components/ui/StatusDot";
 import { Tag, type TagTone } from "../../../components/ui/Tag";
@@ -19,7 +18,6 @@ export type ConsoleConfigKind = "models" | "overrides";
 
 type ConfigRow = {
   id: string;
-  icon: string;
   label: string;
   sub: string;
   statusLabel: string;
@@ -71,7 +69,7 @@ function ConsoleConfigPanel({
         {rows.map((row) => (
           <div class="gsv-console-config-row" key={row.id}>
             <span class="gsv-console-config-row-mark">
-              <Icon name={row.icon} size={18} />
+              <StatusDot tone={row.tone} size={8} />
             </span>
             <span class="gsv-console-config-row-copy">
               <strong>{row.label}</strong>
@@ -97,7 +95,6 @@ function modelRows(config: readonly ConsoleConfigEntry[]): ConfigRow[] {
   const defaultModel = defaultModelLabelForConfig(config);
   const rows = modelConfigEntries(config).map((entry) => ({
     id: entry.key,
-    icon: "stars",
     label: entry.value,
     sub: entry.key,
     statusLabel: entry.value === defaultModel ? "DEFAULT" : "CONFIGURED",
@@ -111,7 +108,6 @@ function modelRows(config: readonly ConsoleConfigEntry[]): ConfigRow[] {
 
   return [{
     id: "gateway-default-model",
-    icon: "stars",
     label: DEFAULT_MODEL_LABEL,
     sub: "No model override is configured; gateway defaults apply.",
     statusLabel: "DEFAULT",
@@ -124,7 +120,6 @@ function overrideRows(config: readonly ConsoleConfigEntry[]): ConfigRow[] {
   if (config.length === 0) {
     return [{
       id: "no-overrides",
-      icon: "cog",
       label: "NOT CONFIGURED",
       sub: "No system config entries are currently returned by the gateway.",
       statusLabel: "EMPTY",
@@ -138,7 +133,6 @@ function overrideRows(config: readonly ConsoleConfigEntry[]): ConfigRow[] {
       const hasValue = entry.value.trim().length > 0;
       return {
         id: entry.key,
-        icon: entry.redacted ? "lock-close" : "cog",
         label: entry.key,
         sub: entry.redacted ? "redacted value" : hasValue ? entry.value : "empty value",
         statusLabel: entry.redacted ? "REDACTED" : hasValue ? "CONFIGURED" : "EMPTY",
