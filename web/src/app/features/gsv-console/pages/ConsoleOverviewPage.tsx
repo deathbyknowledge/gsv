@@ -62,7 +62,7 @@ type StatLine = {
 };
 
 type OverviewSurface = Exclude<ShellSurfaceId, "desktop">;
-export type ConsoleOverviewTarget = OverviewSurface | "models" | "overrides";
+export type ConsoleOverviewTarget = OverviewSurface | "models" | "new-agent" | "overrides";
 type OpenSurface = (surface: ConsoleOverviewTarget) => void;
 type OpenListDetail = (kind: ConsoleListKind, detailId: string) => void;
 type OpenListCreate = (kind: ConsoleListKind) => void;
@@ -437,7 +437,7 @@ function CrewPanel({
         ))}
         <CrewAddTile
           label="NEW AGENT"
-          onClick={onOpenSurface ? () => onOpenSurface("crew") : undefined}
+          onClick={onOpenSurface ? () => onOpenSurface("new-agent") : undefined}
         />
       </div>
     </section>
