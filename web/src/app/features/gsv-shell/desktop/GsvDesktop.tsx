@@ -4,6 +4,7 @@ import { ObjectCard } from "../../../components/ui/ObjectCard";
 import { StatusDot } from "../../../components/ui/StatusDot";
 import { Tile } from "../../../components/ui/Tile";
 import {
+  type DesktopChildObject,
   type DesktopObject,
   type DesktopObjectId,
   type ShellStatus,
@@ -16,6 +17,7 @@ type GsvDesktopProps = {
   gsvOpen: boolean;
   onSelectObject: (id: DesktopObjectId | null) => void;
   onToggleGsv: () => void;
+  onOpenObject: (child: DesktopChildObject) => void;
   onOpenSurface: (surface: ShellSurfaceId) => void;
 };
 
@@ -43,22 +45,6 @@ function branchCountStyle(count: number): JSX.CSSProperties {
   } as JSX.CSSProperties;
 }
 
-function surfaceForObject(parentId: DesktopObjectId): ShellSurfaceId {
-  if (parentId === "machines") {
-    return "machines";
-  }
-  if (parentId === "messengers") {
-    return "messengers";
-  }
-  if (parentId === "integrations") {
-    return "integrations";
-  }
-  if (parentId === "applications") {
-    return "applications";
-  }
-  return "settings";
-}
-
 function GsvMark() {
   return (
     <svg width="50" height="50" viewBox="0 0 16 16" aria-hidden="true">
@@ -79,6 +65,7 @@ export function GsvDesktop({
   gsvOpen,
   onSelectObject,
   onToggleGsv,
+  onOpenObject,
   onOpenSurface,
 }: GsvDesktopProps) {
   const selectedObject = selectedObjectId
@@ -210,7 +197,7 @@ export function GsvDesktop({
                   glyph={child.glyph}
                   status={objectCardStatus(child.status)}
                   width={236}
-                  onClick={() => onOpenSurface(surfaceForObject(selectedObject.id))}
+                  onClick={() => onOpenObject(child)}
                 />
               ))}
             </div>

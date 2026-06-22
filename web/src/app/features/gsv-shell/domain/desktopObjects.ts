@@ -142,6 +142,10 @@ function targetToChild(target: ConsoleTarget): DesktopChildObject {
     status,
     statusLabel: online ? "ONLINE" : "OFFLINE",
     glyph: "machines",
+    route: {
+      kind: "machines",
+      detailId: target.deviceId,
+    },
   };
 }
 
@@ -160,6 +164,10 @@ function adapterToChild(adapter: ConsoleAdapterAccount): DesktopChildObject {
     status: status.status,
     statusLabel: status.label,
     glyph: "messengers",
+    route: {
+      kind: "messengers",
+      detailId: `${adapter.adapter}:${adapter.accountId}`,
+    },
   };
 }
 
@@ -174,6 +182,10 @@ function packageToChild(pkg: ConsolePackage, branchId: PackageBranchId): Desktop
     status: status.status,
     statusLabel: status.label,
     glyph: branchId,
+    route: {
+      kind: branchId,
+      detailId: pkg.packageId,
+    },
   };
 }
 

@@ -11,6 +11,7 @@ type RailMode = "gsv" | "tabs";
 
 type ShellRailProps = {
   activeSurface: ShellSurfaceId;
+  activeTabKey: string | null;
   desktopObjects: readonly DesktopObject[];
   collapsed: boolean;
   openTabs: readonly ShellPageTab[];
@@ -71,6 +72,7 @@ function GsvMark({ size = 22 }: { size?: number }) {
 
 export function ShellRail({
   activeSurface,
+  activeTabKey,
   desktopObjects,
   collapsed,
   openTabs,
@@ -85,7 +87,6 @@ export function ShellRail({
   onOpenTabsPicker,
 }: ShellRailProps) {
   const totalObjects = desktopObjects.reduce((sum, object) => sum + object.children.length, 0);
-  const activeTabKey = openTabs.find((tab) => tab.surface === activeSurface)?.key ?? null;
 
   if (collapsed) {
     return (
