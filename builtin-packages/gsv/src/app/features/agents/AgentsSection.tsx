@@ -3,6 +3,7 @@ import type { GsvBackend } from "../../backend-contract";
 import { ActionButton } from "../../components/ui/ActionButton";
 import { ConsoleCard, ObjectHeader } from "../../components/ui/ConsoleCard";
 import { Icon } from "../../components/ui/Icon";
+import { readAgentsCreateModelFromLocation, readAgentsViewFromLocation } from "../../navigation/route-state";
 import {
   buildCrewAgents,
   buildCrewStackCards,
@@ -45,11 +46,13 @@ type AgentCategory = "general" | "files" | "tasks";
 
 export function AgentsSection({ backend }: { backend: GsvBackend }) {
   const agents = useAgents(backend);
-  const [view, setView] = useState<CrewView>("overview");
+  const [view, setView] = useState<CrewView>(() =>
+    readAgentsCreateModelFromLocation() ? "models" : readAgentsViewFromLocation()
+  );
   const [returnView, setReturnView] = useState<CrewView>("agents");
   const [agentCategory, setAgentCategory] = useState<AgentCategory>("general");
   const [createAgentOpen, setCreateAgentOpen] = useState(false);
-  const [createModelOpen, setCreateModelOpen] = useState(false);
+  const [createModelOpen, setCreateModelOpen] = useState(() => readAgentsCreateModelFromLocation());
   const [modelBusy, setModelBusy] = useState(false);
   const [defaultModelBusyId, setDefaultModelBusyId] = useState("");
   const [modelError, setModelError] = useState("");

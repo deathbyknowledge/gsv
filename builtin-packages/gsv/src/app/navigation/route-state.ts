@@ -10,6 +10,7 @@ export type SourcesRoute = {
 };
 
 export type PackagesRouteView = "inventory" | "updates" | "review" | "discover" | "create" | "remotes";
+export type AgentsRouteView = "overview" | "agents" | "models";
 
 export type PackagesRoute = {
   packageId?: string | null;
@@ -30,6 +31,15 @@ export function readPackagesViewFromLocation(): PackagesRouteView {
     || value === "remotes"
     ? value
     : "inventory";
+}
+
+export function readAgentsViewFromLocation(): AgentsRouteView {
+  const value = new URL(window.location.href).searchParams.get("view");
+  return value === "agents" || value === "models" ? value : "overview";
+}
+
+export function readAgentsCreateModelFromLocation(): boolean {
+  return new URL(window.location.href).searchParams.get("create") === "model";
 }
 
 export function readPackageFromLocation(): string | null {

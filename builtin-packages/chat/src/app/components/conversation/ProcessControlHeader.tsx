@@ -355,7 +355,7 @@ function ModelMenu(props: {
         ) : null}
         <button type="button" class="model-menu-link" onClick={(event) => {
           closeContainingChatMenu(event.currentTarget);
-          openApp({ target: "gsv", payload: { route: "/apps/gsv/?section=settings" } });
+          openApp({ target: "gsv", payload: { route: "/apps/gsv/?section=agents&view=models&create=model" } });
         }}>
           New model
         </button>
