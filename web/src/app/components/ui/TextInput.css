@@ -1,0 +1,193 @@
+/* Ported from TextInput.dc.html — values transcribed verbatim. */
+.gsv-ti {
+  font-family: var(--gsv-font-mono);
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+.gsv-ti-wrap {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  background: #0a0822;
+  border: 1px solid #4a449e;
+  transition: border-color 0.14s, box-shadow 0.14s;
+}
+.gsv-ti-wrap:hover {
+  border-color: #6b62c4;
+}
+.gsv-ti-wrap.is-readonly:hover {
+  border-color: #3a3676;
+}
+.gsv-ti-wrap.is-disabled:hover {
+  border-color: #25224d;
+}
+.gsv-ti-wrap:focus-within {
+  border-color: #b3aeff;
+  box-shadow: 0 0 0 1px rgba(150, 140, 255, 0.22), 0 0 16px rgba(150, 140, 255, 0.14);
+}
+.gsv-ti-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: #f4f2ff;
+  font-family: inherit;
+  letter-spacing: 0.04em;
+  padding: 0;
+}
+.gsv-ti-input::placeholder {
+  color: #565199;
+  letter-spacing: 0.08em;
+}
+.gsv-ti-wrap:focus-within .gsv-ti-input {
+  text-shadow: 0 0 9px rgba(150, 140, 255, 0.4);
+}
+.gsv-ti-wrap.is-readonly {
+  border-style: dashed;
+  border-color: #3a3676;
+}
+.gsv-ti-wrap.is-readonly .gsv-ti-input {
+  color: #cbc7ff;
+}
+.gsv-ti-wrap.is-disabled {
+  border-color: #25224d;
+  opacity: 0.65;
+}
+.gsv-ti-wrap.is-disabled .gsv-ti-input {
+  color: #565199;
+  cursor: not-allowed;
+}
+.gsv-ti-sm .gsv-ti-wrap {
+  padding: 8px 11px;
+}
+.gsv-ti-sm .gsv-ti-input {
+  font-size: 13px;
+}
+.gsv-ti-md .gsv-ti-wrap {
+  padding: 11px 13px;
+}
+.gsv-ti-md .gsv-ti-input {
+  font-size: 16px;
+}
+.gsv-ti-lg .gsv-ti-wrap {
+  padding: 13px 15px;
+}
+.gsv-ti-lg .gsv-ti-input {
+  font-size: 20px;
+  font-weight: 700;
+}
+.gsv-ti-affix {
+  flex: none;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: #7d78b8;
+  white-space: nowrap;
+}
+.gsv-ti-btn {
+  flex: none;
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  color: #7d78b8;
+  cursor: pointer;
+  transition: color 0.12s;
+  user-select: none;
+}
+.gsv-ti-btn:hover {
+  color: #cbc7ff;
+}
+.gsv-ti-x {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  cursor: pointer;
+  color: #7d78b8;
+  transition: color 0.12s;
+}
+.gsv-ti-x:hover {
+  color: #ffb3c2;
+}
+.gsv-ti-labelrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  min-height: 13px;
+}
+.gsv-ti-desc {
+  font-size: 10px;
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+  color: #7d78b8;
+  margin-bottom: 10px;
+  max-width: 52ch;
+}
+.gsv-ti-statusrow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  margin-top: 8px;
+  min-height: 13px;
+}
+.gsv-ti-label {
+  font-size: 9.5px;
+  letter-spacing: 0.22em;
+  color: #b3aee2;
+}
+.gsv-ti-req {
+  color: #7d78b8;
+  letter-spacing: 0.14em;
+}
+.gsv-ti-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.gsv-ti-msg {
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+}
+.gsv-ti-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 1px;
+}
+.gsv-ti-counter {
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  color: #565199;
+}
+.gsv-ti.is-error .gsv-ti-msg {
+  color: #ff6f8c;
+}
+.gsv-ti.is-error .gsv-ti-dot {
+  background: #ff6f8c;
+  box-shadow: 0 0 6px #ff6f8c;
+}
+.gsv-ti.is-success .gsv-ti-msg {
+  color: #5ef2a0;
+}
+.gsv-ti.is-success .gsv-ti-dot {
+  background: #5ef2a0;
+  box-shadow: 0 0 6px #5ef2a0;
+}
+.gsv-ti.is-info .gsv-ti-msg {
+  color: #8f8aff;
+}
+.gsv-ti.is-info .gsv-ti-dot {
+  background: #8f8aff;
+  box-shadow: 0 0 6px #8f8aff;
+}
+.gsv-ti.is-warn .gsv-ti-msg {
+  color: #e0a64c;
+}
+.gsv-ti.is-warn .gsv-ti-dot {
+  background: #e0a64c;
+  box-shadow: 0 0 6px #e0a64c;
+}

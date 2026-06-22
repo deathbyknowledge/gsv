@@ -1,0 +1,54 @@
+/* ============================================================
+   GSV DESIGN TOKENS — single source of truth
+   Edit a value here and every surface that links this file
+   (GSV Live, Agent Card, Agent Editor, Crew Page, Node desktop,
+   and the Default System reference) updates at once.
+   Components reference these inline as var(--token).
+   ============================================================ */
+:root {
+  /* — surfaces — */
+  --void:          #07061a;  /* root / rail background        */
+  --panel:         #0a0820;  /* dashboard / card panel        */
+  --panel-2:       #0a0822;  /* input / inset field surface   */
+  --node-bg:       #0b0a1e;  /* node circle / chat surface    */
+  --header-bar:    #13112e;  /* section-header + menu header  */
+  --frame-lo:      #08061c;  /* render-bay deep               */
+  --frame-hi:      #161240;  /* render-bay glow               */
+
+  /* — borders & rules — */
+  --border:        #322e74;  /* primary hairline              */
+  --border-raised: #4a449e;  /* emphasis frame / menu border  */
+  --rule-inner:    #25224d;  /* sub-divider                   */
+  --rule-section:  #3a3676;  /* section break                 */
+  --bracket:       #6b66c4;  /* corner mark                   */
+  --dashed:        #5a52a8;  /* dashed add tile + primary fill*/
+
+  /* — interaction states — */
+  --hover:         #171441;  /* row hover                     */
+  --hover-nav:     #1b1840;  /* nav-row hover                 */
+  --active:        #201c4d;  /* row active / menu hover       */
+  --selected:      #221d56;  /* selected nav                  */
+
+  /* — text & accent — */
+  --text-hi:       #f4f2ff;  /* titles / GSV                  */
+  --text:          #efeefe;  /* list primary                  */
+  --text-title:    #e2dfff;  /* section title                 */
+  --accent:        #b3aeff;  /* chevron / accent dot          */
+  --accent-bright: #cbc7ff;  /* icons / selected accent       */
+  --label:         #b3aee2;  /* sub-label                     */
+  --node-label:    #c4bfee;  /* node text                     */
+  --text-dim:      #565199;  /* meta / dimmest                */
+
+  /* — status — */
+  --online:        #5ef2a0;  /* live / healthy / running      */
+  --error:         #ff6f8c;  /* crashed / disconnected        */
+  --idle:          #6661a0;  /* offline (no glow)             */
+  --update:        #ffd24d;  /* attention / needs action      */
+  --live:          #8f8aff;  /* processing pulse              */
+
+  /* — action accents — */
+  --primary-hi:    #6b62c4;  /* primary button border / hover */
+  --danger:        #a8324a;  /* destructive fill              */
+  --danger-hi:     #c4445f;  /* destructive border / hover    */
+  --warn:          #e0a64c;  /* caution / modal amber         */
+}

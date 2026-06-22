@@ -1,0 +1,100 @@
+/* Ported from Stepper.dc.html — values transcribed verbatim. */
+.gsv-sp {
+  display: flex;
+  align-items: flex-start;
+  font-family: var(--gsv-font-mono);
+}
+.gsv-sp-step {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+  flex: none;
+  cursor: pointer;
+}
+.gsv-sp-dot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  flex: none;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s;
+}
+.gsv-sp-line {
+  flex: 1;
+  min-width: 22px;
+  height: 2px;
+  align-self: flex-start;
+  transition: background 0.15s;
+}
+.gsv-sp-dot.is-done {
+  background: #443c82;
+  border: 1.5px solid #6b62c4;
+  color: #fff;
+  box-shadow: 0 0 9px rgba(120, 110, 230, 0.35);
+}
+.gsv-sp-dot.is-cur {
+  background: #0a0822;
+  border: 1.5px solid #b3aeff;
+  color: #f4f2ff;
+  box-shadow: 0 0 12px rgba(150, 140, 255, 0.6);
+}
+.gsv-sp-dot.is-next {
+  background: #0a0822;
+  border: 1.5px solid #4a449e;
+  color: #7d78b8;
+}
+.gsv-sp-line.is-done {
+  background: #6b62c4;
+}
+.gsv-sp-line.is-next {
+  background: #322e74;
+}
+.gsv-sp-label {
+  letter-spacing: 0.1em;
+  text-align: center;
+  white-space: nowrap;
+  transition: color 0.15s;
+}
+.gsv-sp-label.is-done {
+  color: #a8a2dc;
+}
+.gsv-sp-label.is-cur {
+  color: #e2dfff;
+}
+.gsv-sp-label.is-next {
+  color: #565199;
+}
+.gsv-sp-sm .gsv-sp-dot {
+  width: 22px;
+  height: 22px;
+  font-size: 10px;
+}
+.gsv-sp-sm .gsv-sp-line {
+  margin-top: 10px;
+}
+.gsv-sp-sm .gsv-sp-label {
+  font-size: 8.5px;
+}
+.gsv-sp-md .gsv-sp-dot {
+  width: 28px;
+  height: 28px;
+  font-size: 12px;
+}
+.gsv-sp-md .gsv-sp-line {
+  margin-top: 13px;
+}
+.gsv-sp-md .gsv-sp-label {
+  font-size: 9.5px;
+}
+.gsv-sp-lg .gsv-sp-dot {
+  width: 34px;
+  height: 34px;
+  font-size: 14px;
+}
+.gsv-sp-lg .gsv-sp-line {
+  margin-top: 16px;
+}
+.gsv-sp-lg .gsv-sp-label {
+  font-size: 11px;
+}

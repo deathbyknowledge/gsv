@@ -1,0 +1,152 @@
+/* Ported from Radio.dc.html — values transcribed verbatim. */
+.gsv-rg {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 14px;
+  font-family: var(--gsv-font-mono);
+  user-select: none;
+}
+.gsv-rd-opt {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+.gsv-rd-ring {
+  flex: none;
+  border-radius: 50%;
+  border: 1.5px solid #7d78c8;
+  background: #0a0822;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.12s;
+}
+.gsv-rd-opt:hover .gsv-rd-ring {
+  border-color: #a9a4ff;
+}
+.gsv-rd-dot {
+  border-radius: 50%;
+  background: #cbc7ff;
+  box-shadow: 0 0 6px #cbc7ff;
+}
+.gsv-rd-label {
+  letter-spacing: 0.04em;
+  color: #a8a2dc;
+  transition: color 0.12s;
+}
+.gsv-rd-opt.is-on .gsv-rd-label {
+  color: #efeefe;
+}
+.gsv-rg.is-disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+.gsv-rg-sm .gsv-rd-ring {
+  width: 14px;
+  height: 14px;
+}
+.gsv-rg-sm .gsv-rd-dot {
+  width: 6px;
+  height: 6px;
+}
+.gsv-rg-sm .gsv-rd-label {
+  font-size: 10px;
+}
+.gsv-rg-md .gsv-rd-ring {
+  width: 16px;
+  height: 16px;
+}
+.gsv-rg-md .gsv-rd-dot {
+  width: 7px;
+  height: 7px;
+}
+.gsv-rg-md .gsv-rd-label {
+  font-size: 11px;
+}
+.gsv-rg-lg .gsv-rd-ring {
+  width: 19px;
+  height: 19px;
+}
+.gsv-rg-lg .gsv-rd-dot {
+  width: 9px;
+  height: 9px;
+}
+.gsv-rg-lg .gsv-rd-label {
+  font-size: 12.5px;
+}
+.gsv-fld {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.gsv-fld-lab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  min-height: 13px;
+}
+.gsv-fld-lab-t {
+  font-size: 9.5px;
+  letter-spacing: 0.22em;
+  color: #b3aee2;
+}
+.gsv-fld-req {
+  font-size: 9.5px;
+  color: #7d78b8;
+  letter-spacing: 0.14em;
+}
+.gsv-fld-desc {
+  font-size: 10px;
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+  color: #7d78b8;
+  margin-bottom: 14px;
+  max-width: 46ch;
+}
+.gsv-fld-stat {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  min-height: 13px;
+}
+.gsv-fld-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 1px;
+}
+.gsv-fld-msg {
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+}
+.gsv-fld.is-error .gsv-fld-msg {
+  color: #ff6f8c;
+}
+.gsv-fld.is-error .gsv-fld-dot {
+  background: #ff6f8c;
+  box-shadow: 0 0 6px #ff6f8c;
+}
+.gsv-fld.is-success .gsv-fld-msg {
+  color: #5ef2a0;
+}
+.gsv-fld.is-success .gsv-fld-dot {
+  background: #5ef2a0;
+  box-shadow: 0 0 6px #5ef2a0;
+}
+.gsv-fld.is-info .gsv-fld-msg {
+  color: #8f8aff;
+}
+.gsv-fld.is-info .gsv-fld-dot {
+  background: #8f8aff;
+  box-shadow: 0 0 6px #8f8aff;
+}
+.gsv-fld.is-warn .gsv-fld-msg {
+  color: #e0a64c;
+}
+.gsv-fld.is-warn .gsv-fld-dot {
+  background: #e0a64c;
+  box-shadow: 0 0 6px #e0a64c;
+}
