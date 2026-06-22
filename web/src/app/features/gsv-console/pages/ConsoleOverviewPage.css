@@ -65,12 +65,10 @@
   clip-path: polygon(calc(100% - 42px) calc(100% - 1px), calc(100% - 1px) calc(100% - 1px), calc(100% - 1px) calc(100% - 42px), 100% calc(100% - 42px), 100% 100%, calc(100% - 42px) 100%);
 }
 
-.gsv-settings-ship-render {
-  width: min(230px, 46%);
-  min-width: 150px;
-  image-rendering: pixelated;
+.gsv-settings-ship-orbit {
+  transform: scale(1.12);
+  transform-origin: center;
   opacity: 0.98;
-  filter: drop-shadow(0 0 20px rgba(150, 140, 255, 0.5));
 }
 
 .gsv-settings-scan,
@@ -475,9 +473,8 @@
     height: 150px;
   }
 
-  .gsv-settings-ship-render {
-    width: min(190px, 58%);
-    min-width: 128px;
+  .gsv-settings-ship-orbit {
+    transform: scale(0.88);
   }
 
   .gsv-settings-deep-cell {
