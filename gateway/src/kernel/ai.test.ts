@@ -796,6 +796,33 @@ describe("handleAiImageGenerate", () => {
     );
   });
 
+  it("falls back to configured media defaults when the process AI snapshot is unavailable", async () => {
+    const ctx = makeImageGenerateContext({
+      config: {
+        "config/ai/image/generation/model": "@cf/example/fallback-image",
+      },
+    });
+    (ctx as { processId?: string }).processId = "proc:missing";
+    (ctx as { procs?: Partial<KernelContext["procs"]> }).procs = {
+      getOwnerUid: vi.fn(() => 1000),
+    };
+    sendFrameToProcessMock.mockRejectedValueOnce(new Error("process unavailable"));
+
+    const result = await handleAiImageGenerate({ prompt: "a fallback terminal" }, ctx);
+
+    expect(result.model).toBe("@cf/example/fallback-image");
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      "proc:missing",
+      expect.objectContaining({
+        call: "proc.ai.config.get",
+      }),
+    );
+    expect(ctx.env.AI.run).toHaveBeenCalledWith(
+      "@cf/example/fallback-image",
+      { prompt: "a fallback terminal" },
+    );
+  });
+
   it("requires a prompt", async () => {
     await expect(handleAiImageGenerate({ prompt: "" }, makeImageGenerateContext())).rejects.toThrow("prompt is required");
   });

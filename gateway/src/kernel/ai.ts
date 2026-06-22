@@ -541,17 +541,19 @@ async function resolveAiProcessOverridesForContext(ctx: KernelContext): Promise<
     return {};
   }
 
-  const frame = await sendFrameToProcess(ctx.processId, {
-    type: "req",
-    id: crypto.randomUUID(),
-    call: "proc.ai.config.get",
-    args: { redacted: false },
-  });
-  if (!frame || frame.type !== "res") {
-    throw new Error(`Failed to resolve process AI config for ${ctx.processId}`);
+  let frame: Awaited<ReturnType<typeof sendFrameToProcess>>;
+  try {
+    frame = await sendFrameToProcess(ctx.processId, {
+      type: "req",
+      id: crypto.randomUUID(),
+      call: "proc.ai.config.get",
+      args: { redacted: false },
+    });
+  } catch {
+    return {};
   }
-  if (!frame.ok) {
-    throw new Error(frame.error.message || `Failed to resolve process AI config for ${ctx.processId}`);
+  if (!frame || frame.type !== "res" || !frame.ok) {
+    return {};
   }
 
   const result = frame.data as ProcAiConfigGetResult;
