@@ -20,6 +20,8 @@ export type ChatAgentCrewData = {
 
 export type ChatAgentData = {
   id?: string;
+  processId?: string;
+  runAs?: string;
   name?: string;
   role?: string;
   description?: string;
@@ -55,6 +57,8 @@ export type ChatAgentCrewView = {
 
 export type ChatAgentViewModel = {
   id: string;
+  processId: string;
+  runAs: string;
   name: string;
   role: string;
   description: string;
@@ -223,7 +227,9 @@ export function buildChatAgentViewModel({
   const crew = normalizeCrew(agent?.crew, fallbackCrew);
 
   return {
-    id: agent?.id ?? "active-process",
+    id: cleanText(agent?.id, ""),
+    processId: cleanText(agent?.processId, ""),
+    runAs: cleanText(agent?.runAs, ""),
     name,
     role,
     description: cleanText(
