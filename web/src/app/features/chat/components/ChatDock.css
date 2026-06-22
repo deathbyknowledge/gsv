@@ -306,19 +306,12 @@
   font-family: var(--gsv-font-mono);
 }
 
-.gsv-shell-root .gsv-chat-min .gsv-icon {
-  flex: none;
-  margin-left: auto;
-  color: #b6b1ff;
-}
-
 .gsv-chat-avatar {
   flex: none;
   display: inline-flex;
 }
 
-.gsv-chat-agent .gsv-chat-avatar,
-.gsv-chat-min .gsv-chat-avatar {
+.gsv-chat-agent .gsv-chat-avatar {
   flex: none;
   display: inline-flex;
   gap: 0;
@@ -326,13 +319,11 @@
   text-align: initial;
 }
 
-.gsv-chat-agent .gsv-chat-avatar span,
-.gsv-chat-min .gsv-chat-avatar span {
+.gsv-chat-agent .gsv-chat-avatar span {
   flex: none;
 }
 
-.gsv-chat-agent .gsv-chat-avatar img,
-.gsv-chat-min .gsv-chat-avatar img {
+.gsv-chat-agent .gsv-chat-avatar img {
   width: auto;
 }
 

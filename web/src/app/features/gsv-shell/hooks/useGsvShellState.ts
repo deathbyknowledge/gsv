@@ -77,7 +77,7 @@ export function useGsvShellState({
   const [selectedObjectId, setSelectedObjectId] = useState<DesktopObjectId | null>(null);
   const [pickerId, setPickerId] = useState<PickerId | null>(null);
   const [gsvOpen, setGsvOpen] = useState(false);
-  const [chatOpen, setChatOpen] = useState(true);
+  const [chatOpen, setChatOpen] = useState(false);
   const [chatWidth, setChatWidth] = useState(DEFAULT_CHAT_WIDTH);
   const [chatDragging, setChatDragging] = useState(false);
 
