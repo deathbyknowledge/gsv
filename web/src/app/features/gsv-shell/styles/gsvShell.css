@@ -705,6 +705,46 @@
   color: var(--accent);
 }
 
+.gsv-rail-subitems {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 6px 0 0;
+}
+
+.gsv-rail-subitem {
+  position: relative;
+  min-height: 38px;
+  border: 0;
+  background: transparent;
+  color: #9d98d8;
+  padding: 10px 20px 10px 74px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  text-align: left;
+}
+
+.gsv-rail-subitem:hover,
+.gsv-rail-subitem:focus-visible,
+.gsv-rail-subitem.is-active {
+  background: var(--hover-nav);
+  color: var(--text-hi);
+  outline: none;
+}
+
+.gsv-rail-subitem.is-active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent-bright);
+  box-shadow: 0 0 8px var(--accent-bright);
+}
+
 .gsv-shell-rail footer {
   position: relative;
   padding: 12px 20px;
