@@ -54,9 +54,8 @@ export type SystemDockItem = {
 };
 
 export type GsvControlItem = {
-  id: "runtime" | "files" | "library" | "terminal" | "settings";
+  id: "files" | "library" | "terminal" | "settings";
   label: string;
-  icon: string;
 };
 
 export const SYSTEM_DOCK_ITEMS: SystemDockItem[] = [
@@ -94,29 +93,20 @@ export const SYSTEM_DOCK_ITEMS: SystemDockItem[] = [
 
 export const GSV_CONTROL_ITEMS: GsvControlItem[] = [
   {
-    id: "runtime",
-    label: "RUNTIME",
-    icon: "list",
-  },
-  {
     id: "files",
     label: "FILES",
-    icon: "folder",
   },
   {
     id: "library",
     label: "LIBRARY",
-    icon: "pencil",
   },
   {
     id: "terminal",
     label: "TERMINAL",
-    icon: "terminal",
   },
   {
     id: "settings",
     label: "SETTINGS",
-    icon: "cog",
   },
 ];
 
