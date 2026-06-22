@@ -44,11 +44,12 @@ export function useFilesTargets(enabled = true) {
     enabled: queryEnabled,
     queryFn: async () => listFilesTargets(client),
   });
+  const targets = withNativeFilesTarget(query.data ?? [], connected);
 
   return {
     ...query,
-    targets: query.data ?? [],
-    resource: toFilesResourceState(query, queryEnabled),
+    targets,
+    resource: toFilesResourceState(query, queryEnabled, targets),
   };
 }
 
@@ -107,15 +108,31 @@ export function useFilesMutations() {
 function toFilesResourceState(
   query: UseQueryResult<FilesTarget[]>,
   enabled: boolean,
+  targets: readonly FilesTarget[],
 ): ConsoleResourceState<FilesTarget[]> {
   const hasData = query.data !== undefined;
   return {
-    data: query.data ?? null,
-    isUnavailable: !enabled && !hasData,
-    isLoading: query.isLoading && !hasData,
+    data: targets.length > 0 ? [...targets] : null,
+    isUnavailable: !enabled && !hasData && targets.length === 0,
+    isLoading: query.isLoading && !hasData && targets.length === 0,
     isRefreshing: query.isFetching && hasData,
-    isError: query.isError && !hasData,
+    isError: query.isError && !hasData && targets.length === 0,
     errorText: query.error instanceof Error ? query.error.message : query.error ? String(query.error) : "",
-    isEmpty: !query.isLoading && !query.isError && hasData && (query.data?.length ?? 0) === 0,
+    isEmpty: !query.isLoading && !query.isError && targets.length === 0,
   };
+}
+
+function withNativeFilesTarget(targets: readonly FilesTarget[], connected: boolean): FilesTarget[] {
+  return [
+    {
+      id: "gsv",
+      label: "GSV",
+      online: connected,
+      platform: "native",
+      description: "Gateway filesystem",
+      ownerUsername: null,
+      lastSeenAt: null,
+    },
+    ...targets.filter((target) => target.id !== "gsv"),
+  ];
 }

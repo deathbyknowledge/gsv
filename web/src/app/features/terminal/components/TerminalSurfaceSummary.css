@@ -1,0 +1,350 @@
+.terminal-surface {
+  display: grid;
+  grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
+  grid-template-areas:
+    "targets command"
+    "targets output";
+  gap: 16px;
+  min-height: calc(100vh - 132px);
+}
+
+.terminal-panel {
+  min-width: 0;
+  border: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.terminal-target-panel {
+  grid-area: targets;
+}
+
+.terminal-command-panel {
+  grid-area: command;
+}
+
+.terminal-output-panel {
+  grid-area: output;
+  min-height: 360px;
+}
+
+.terminal-panel-body {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+
+.terminal-selected-target,
+.terminal-inline-state,
+.terminal-target-row,
+.terminal-run-status {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.terminal-selected-target {
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--rule-inner);
+  background: rgba(10, 8, 34, 0.58);
+}
+
+.terminal-selected-target div,
+.terminal-target-copy,
+.terminal-inline-state div,
+.terminal-transcript-header div {
+  min-width: 0;
+}
+
+.terminal-selected-target strong,
+.terminal-target-copy strong,
+.terminal-inline-state strong,
+.terminal-output-error strong {
+  display: block;
+  overflow: hidden;
+  color: var(--text-hi);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-selected-target span,
+.terminal-target-copy span,
+.terminal-inline-state span,
+.terminal-run-status span,
+.terminal-transcript-header span,
+.terminal-transcript-header small,
+.terminal-stream > span {
+  color: var(--text-dim);
+  font-size: 10px;
+  letter-spacing: 0;
+}
+
+.terminal-inline-state {
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--rule-inner);
+  background: rgba(10, 8, 34, 0.48);
+}
+
+.terminal-inline-state.is-error {
+  border-color: rgba(255, 111, 140, 0.28);
+}
+
+.terminal-inline-action {
+  margin-left: auto;
+  flex: none;
+}
+
+.terminal-target-list {
+  display: grid;
+  max-height: 360px;
+  overflow: auto;
+  border: 1px solid var(--rule-inner);
+  scrollbar-width: thin;
+  scrollbar-color: var(--rule-section) #0c0a22;
+}
+
+.terminal-target-row {
+  gap: 10px;
+  padding: 12px;
+  border-bottom: 1px solid var(--rule-inner);
+}
+
+.terminal-target-row:last-child {
+  border-bottom: 0;
+}
+
+.terminal-target-icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--accent-bright);
+}
+
+.terminal-target-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+  color: var(--text-dim);
+  font-size: 9px;
+  letter-spacing: 0;
+}
+
+.terminal-command-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(130px, 180px);
+  gap: 12px;
+}
+
+.terminal-field {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.terminal-field > span {
+  color: #b3aee2;
+  font-size: 10px;
+  letter-spacing: 0;
+}
+
+.terminal-input,
+.terminal-command-input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #4a449e;
+  background: #0a0822;
+  color: #f4f2ff;
+  font: inherit;
+  letter-spacing: 0;
+  outline: none;
+  transition: border-color 120ms ease, background 120ms ease, box-shadow 120ms ease;
+}
+
+.terminal-input {
+  min-height: 40px;
+  padding: 0 12px;
+}
+
+.terminal-command-input {
+  min-height: 112px;
+  max-height: 280px;
+  resize: vertical;
+  padding: 12px;
+  line-height: 1.5;
+}
+
+.terminal-input:focus,
+.terminal-command-input:focus {
+  border-color: var(--accent-bright);
+  background: #0d0a2c;
+  box-shadow: 0 0 0 2px rgba(150, 140, 255, 0.14);
+}
+
+.terminal-input:disabled,
+.terminal-command-input:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.terminal-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.terminal-run-status {
+  gap: 8px;
+  margin-left: auto;
+  color: var(--text-dim);
+}
+
+.terminal-output {
+  min-height: 320px;
+  background: #050814;
+  color: #d9f4ff;
+}
+
+.terminal-output-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 320px;
+  padding: 22px;
+  color: #8da4b8;
+  font-size: 12px;
+  letter-spacing: 0;
+}
+
+.terminal-output-state.is-compact {
+  min-height: 96px;
+  justify-content: flex-start;
+  border-top: 1px solid rgba(141, 164, 184, 0.16);
+}
+
+.terminal-output-error {
+  display: grid;
+  gap: 10px;
+  min-height: 320px;
+  padding: 18px;
+  align-content: start;
+  color: #ffb6ad;
+}
+
+.terminal-output-error pre,
+.terminal-stream pre {
+  margin: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 12px/1.55 var(--gsv-font-mono);
+  letter-spacing: 0;
+}
+
+.terminal-output-error pre {
+  color: #ffb6ad;
+}
+
+.terminal-transcript {
+  display: grid;
+  min-height: 320px;
+  align-content: start;
+}
+
+.terminal-transcript-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 14px 16px;
+  border-bottom: 1px solid rgba(141, 164, 184, 0.16);
+  background: rgba(127, 198, 255, 0.05);
+}
+
+.terminal-transcript-header strong {
+  display: block;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+  color: #e8fbff;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.terminal-transcript-header small {
+  display: block;
+  margin-top: 5px;
+}
+
+.terminal-transcript-tags {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-left: auto;
+  flex: 0 1 50%;
+}
+
+.terminal-stream {
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px 16px;
+  border-bottom: 1px solid rgba(141, 164, 184, 0.14);
+}
+
+.terminal-stream:last-child {
+  border-bottom: 0;
+}
+
+.terminal-stream > span {
+  color: #7fc6ff;
+}
+
+.terminal-stream pre {
+  color: #d9f4ff;
+}
+
+.terminal-stream.is-error > span,
+.terminal-stream.is-error pre {
+  color: #ffb6ad;
+}
+
+@media (max-width: 940px) {
+  .terminal-surface {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "command"
+      "targets"
+      "output";
+    min-height: auto;
+  }
+
+  .terminal-target-list {
+    max-height: 240px;
+  }
+}
+
+@media (max-width: 620px) {
+  .terminal-command-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .terminal-run-status {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .terminal-transcript-header {
+    display: grid;
+  }
+
+  .terminal-transcript-tags {
+    justify-content: flex-start;
+    margin-left: 0;
+    flex-basis: auto;
+  }
+}
