@@ -1,6 +1,7 @@
 import type { PkgEntrypointSummary, PkgSummary } from "@humansandmachines/gsv/protocol";
 import { defineDesktopApp } from "../desktop/domain/desktopApp";
 import type { DesktopApp, DesktopAppIcon, DesktopAppWindowDefaults } from "../desktop/domain/desktopApp";
+import { isNativeWebPackageName } from "./nativePackages";
 
 const DEFAULT_WINDOW_DEFAULTS: DesktopAppWindowDefaults = {
   width: 1040,
@@ -8,14 +9,6 @@ const DEFAULT_WINDOW_DEFAULTS: DesktopAppWindowDefaults = {
   minWidth: 760,
   minHeight: 520,
 };
-
-const NATIVE_WEB_PACKAGE_NAMES = new Set([
-  "@gsv/chat",
-  "@gsv/files",
-  "@gsv/gsv",
-  "@gsv/shell",
-  "@gsv/wiki",
-]);
 
 type UiEntrypointSummary = PkgEntrypointSummary & {
   kind: "ui";
@@ -87,7 +80,7 @@ function isLaunchableUiEntrypoint(entrypoint: PkgEntrypointSummary): entrypoint 
 }
 
 function isNativeWebPackage(pkg: PkgSummary): boolean {
-  return NATIVE_WEB_PACKAGE_NAMES.has(pkg.name);
+  return isNativeWebPackageName(pkg.name);
 }
 
 export function packageToDesktopApps(pkg: PkgSummary): DesktopApp[] {

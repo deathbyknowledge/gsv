@@ -30,6 +30,7 @@ import type {
   ConsoleTarget,
 } from "../domain/consoleModels";
 import type { ShellSurfaceId } from "../../gsv-shell/domain/shellModel";
+import { isNativeWebPackageName } from "../../packages/nativePackages";
 import { useTerminalRunInBackgroundPreference } from "../../terminal/hooks/useTerminalPreferences";
 import { useConsoleOverview } from "../hooks/useConsoleData";
 import "./ConsoleOverviewPage.css";
@@ -73,6 +74,10 @@ type OpenListCreate = (kind: ConsoleListKind) => void;
 const DASHBOARD_ROW_LIMIT = 5;
 function isApplicationPackage(pkg: ConsolePackage): boolean {
   return pkg.runtime === "web-ui" || pkg.uiEntrypoints.length > 0;
+}
+
+function isNativeConsolePackage(pkg: ConsolePackage): boolean {
+  return isNativeWebPackageName(pkg.name) || isNativeWebPackageName(pkg.packageId);
 }
 
 function isRunningProcess(process: ConsoleProcess): boolean {
@@ -709,8 +714,9 @@ function SettingsOverviewDashboard({
   onOpenListDetail?: OpenListDetail;
   onOpenSurface?: OpenSurface;
 }) {
-  const applications = data.packages.filter(isApplicationPackage);
-  const integrationPackages = data.packages.filter((pkg) => !isApplicationPackage(pkg));
+  const visiblePackages = data.packages.filter((pkg) => !isNativeConsolePackage(pkg));
+  const applications = visiblePackages.filter(isApplicationPackage);
+  const integrationPackages = visiblePackages.filter((pkg) => !isApplicationPackage(pkg));
   const [terminalBackground, setTerminalBackground] = useTerminalRunInBackgroundPreference();
 
   return (
