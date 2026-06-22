@@ -1,6 +1,6 @@
 import { AsciiPlanet } from "../../../components/ui/AsciiPlanet";
-import { AgentImage } from "../../../components/ui/AgentImage";
 import { Checkbox } from "../../../components/ui/Checkbox";
+import { CrewAddTile, CrewTile } from "../../../components/ui/CrewTile";
 import { Icon } from "../../../components/ui/Icon";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
 import { StatusDot, type StatusTone } from "../../../components/ui/StatusDot";
@@ -418,32 +418,19 @@ function CrewPanel({
       />
       <div class="gsv-settings-crew-grid">
         {cards.length === 0 ? <EmptyRow label="NO CREW ACCOUNTS" /> : cards.map((card, index) => (
-          <div
-            class="gsv-settings-crew-card"
-            data-clickable={onOpenSurface ? "true" : undefined}
+          <CrewTile
+            imageIndex={index}
             key={card.id}
+            name={card.name}
             onClick={onOpenSurface ? () => onOpenSurface("crew") : undefined}
-          >
-            <div class="gsv-settings-crew-portrait">
-              <AgentImage agent={index % 3} size={54} />
-            </div>
-            <strong>{card.name}</strong>
-            <span>
-              <StatusDot tone={card.tone} size={8} />
-              {card.statusLabel}
-            </span>
-          </div>
+            statusLabel={card.statusLabel}
+            tone={card.tone}
+          />
         ))}
-        <div
-          class="gsv-settings-new-agent"
-          data-clickable={onOpenSurface ? "true" : undefined}
+        <CrewAddTile
+          label="NEW AGENT"
           onClick={onOpenSurface ? () => onOpenSurface("crew") : undefined}
-        >
-          <span>
-            <Icon name="plus" size={16} />
-          </span>
-          <strong>NEW AGENT</strong>
-        </div>
+        />
       </div>
     </section>
   );

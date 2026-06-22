@@ -46,6 +46,7 @@ import systemMessage from "./stories/SystemMessage.story";
 import tabs from "./stories/Tabs.story";
 import confirmModal from "./stories/ConfirmModal.story";
 import agentCard from "./stories/AgentCard.story";
+import crewTile from "./stories/CrewTile.story";
 import agentEditor from "./stories/AgentEditor.story";
 
 const STORIES: Story[] = [
@@ -91,6 +92,7 @@ const STORIES: Story[] = [
   // Composite
   confirmModal,
   agentCard,
+  crewTile,
   agentEditor,
   // Templates
   settingsDashboard,
