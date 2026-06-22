@@ -17,16 +17,14 @@ const VARIANT_CLASS: Record<ButtonVariant, string> = {
   link: "gsv-btn-link",
 };
 
-/** Button — ported from Button.dc.html. Rendered as a <span> to match the
- *  design source exactly (no native <button> reset to fight). */
+/** Button — ported from Button.dc.html. */
 export function Button({ variant = "primary", label = "BUTTON", disabled = false, onClick }: ButtonProps) {
   const cls = `gsv-btn ${VARIANT_CLASS[variant]}${disabled ? " is-disabled" : ""}`;
   return (
-    <span
+    <button
+      type="button"
       class={cls}
-      role="button"
-      aria-disabled={disabled}
-      tabIndex={disabled ? -1 : 0}
+      disabled={disabled}
       onClick={disabled ? undefined : onClick}
     >
       {label}
@@ -35,6 +33,6 @@ export function Button({ variant = "primary", label = "BUTTON", disabled = false
           <path d="M0 0 L9 6 L0 12 Z" fill="currentColor" />
         </svg>
       ) : null}
-    </span>
+    </button>
   );
 }

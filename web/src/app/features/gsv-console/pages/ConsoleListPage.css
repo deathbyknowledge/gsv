@@ -342,26 +342,6 @@
   margin-top: 24px;
 }
 
-.gsv-console-entity-detail-back {
-  min-height: 38px;
-  border: 1px solid var(--border);
-  background: var(--panel);
-  color: #9d98d8;
-  cursor: pointer;
-  padding: 11px 18px;
-  font: inherit;
-  font-size: 11px;
-  letter-spacing: 0.16em;
-}
-
-.gsv-console-entity-detail-back:hover,
-.gsv-console-entity-detail-back:focus-visible {
-  border-color: var(--accent);
-  background: var(--hover);
-  color: #e6e4ff;
-  outline: none;
-}
-
 @media (max-width: 720px) {
   .gsv-console-settings-list-row .lr {
     gap: 10px;

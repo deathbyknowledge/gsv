@@ -1,6 +1,7 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { AddAction } from "../../../components/ui/AddAction";
+import { Button } from "../../../components/ui/Button";
 import { Icon } from "../../../components/ui/Icon";
 import { ListRow, type ListRowStatus } from "../../../components/ui/ListRow";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
@@ -535,9 +536,7 @@ function ConsoleEntityDetailPage({
         </div>
 
         <div class="gsv-console-entity-detail-actions">
-          <button type="button" class="gsv-console-entity-detail-back" onClick={onBack}>
-            BACK TO {parentLabel}
-          </button>
+          <Button variant="secondary" label={`BACK TO ${parentLabel}`} onClick={onBack} />
         </div>
       </div>
     </section>
