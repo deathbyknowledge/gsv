@@ -226,9 +226,16 @@
 }
 
 .gsv-detail-actions {
-  display: grid;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
   gap: 0.55rem;
   padding: 0.85rem;
+}
+
+.gsv-agents-form > .gsv-detail-actions {
+  justify-content: flex-end;
 }
 
 .gsv-empty-state {

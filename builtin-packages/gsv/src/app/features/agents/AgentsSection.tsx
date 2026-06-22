@@ -9,10 +9,12 @@ import {
   findMatchingStackProfile,
   stackDetail,
   type CrewAgent,
+  type CrewStackCard,
   type CrewTask,
 } from "../../domain/crew";
 import { CrewOverview, CrewModelStackList } from "./CrewCards";
-import { modelProfilesConfigKey, serializeModelProfiles, createModelProfile } from "../settings/model-profiles-domain";
+import { AI_FIELDS, buildUserAiOverrideKey } from "../settings/config-schema";
+import { createModelProfile, modelProfilesConfigKey, profileValuesFromDrafts, serializeModelProfiles } from "../settings/model-profiles-domain";
 import {
   APPROVAL_ACTION_OPTIONS,
   parseApprovalPolicy,
@@ -34,6 +36,7 @@ import type { ProcessEntry } from "../runtime/types";
 const PERSONA_CONTEXT_FILE = "05-persona.md";
 const NEW_CONTEXT_FILE = "__new__";
 const INHERIT_STACK = "__inherit__";
+const CURRENT_DEFAULT_STACK = "__current_default__";
 const CUSTOM_STACK = "__custom__";
 
 type CrewView = "overview" | "agents" | "models";
@@ -47,6 +50,7 @@ export function AgentsSection({ backend }: { backend: GsvBackend }) {
   const [createAgentOpen, setCreateAgentOpen] = useState(false);
   const [createModelOpen, setCreateModelOpen] = useState(false);
   const [modelBusy, setModelBusy] = useState(false);
+  const [defaultModelBusyId, setDefaultModelBusyId] = useState("");
   const [modelError, setModelError] = useState("");
 
   const stateAgents = agents.state?.agents ?? [];
@@ -86,6 +90,28 @@ export function AgentsSection({ backend }: { backend: GsvBackend }) {
       return false;
     } finally {
       setModelBusy(false);
+    }
+  }
+
+  async function makeModelDefault(stack: CrewStackCard): Promise<void> {
+    const state = agents.state;
+    if (!state || stack.default || !stack.profile) return;
+    setDefaultModelBusyId(stack.id);
+    setModelError("");
+    try {
+      const values = profileValuesFromDrafts(stack.profile.values);
+      const entries = AI_FIELDS
+        .filter((field) => field.kind !== "readonly")
+        .map((field) => ({
+          key: state.isRoot ? field.key : buildUserAiOverrideKey(state.viewerUid, field.key),
+          value: values[field.key] ?? "",
+        }));
+      await backend.applyConfigEntries({ entries });
+      await agents.loadState();
+    } catch (error) {
+      setModelError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setDefaultModelBusyId("");
     }
   }
 
@@ -133,6 +159,8 @@ export function AgentsSection({ backend }: { backend: GsvBackend }) {
               setView("models");
               setCreateModelOpen(true);
             }}
+            onMakeDefaultModel={(stack) => void makeModelDefault(stack)}
+            defaultModelBusyId={defaultModelBusyId}
           />
           <CreateAgentForm open={createAgentOpen} busy={agents.busy} onOpenChange={setCreateAgentOpen} onCreate={(args) => agents.createAgent(args)} />
         </>
@@ -163,6 +191,8 @@ export function AgentsSection({ backend }: { backend: GsvBackend }) {
           onOpenChange={setCreateModelOpen}
           onBack={() => setView("overview")}
           onCreate={createModelProfileFromValues}
+          onMakeDefault={(stack) => void makeModelDefault(stack)}
+          defaultModelBusyId={defaultModelBusyId}
         />
       )}
     </section>
@@ -330,18 +360,22 @@ function CrewModelsView({
   models,
   systemAiValues,
   busy,
+  defaultModelBusyId,
   open,
   onOpenChange,
   onBack,
   onCreate,
+  onMakeDefault,
 }: {
   models: AgentModelProfile[];
   systemAiValues: Record<string, string>;
   busy: boolean;
+  defaultModelBusyId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onBack: () => void;
   onCreate: (name: string, values: Record<string, string>) => Promise<boolean>;
+  onMakeDefault: (stack: CrewStackCard) => void;
 }) {
   const stacks = buildCrewStackCards(systemAiValues, models);
 
@@ -353,7 +387,7 @@ function CrewModelsView({
           <header class="gsv-crew-column-head">
             <span class="gsv-kicker">Available model presets</span>
           </header>
-          <CrewModelStackList stacks={stacks} />
+          <CrewModelStackList stacks={stacks} onMakeDefault={onMakeDefault} busyDefaultId={defaultModelBusyId} />
         </section>
         <section class="gsv-crew-model-create">
           <CreateCrewCard title="Add new model" subtitle="Create model preset" label="Create model preset" onCreate={() => onOpenChange(true)} />
@@ -438,8 +472,8 @@ function CreateModelProfileForm({
       <label class="gsv-field"><span>Max tokens</span><input value={maxTokens} onInput={(event) => setMaxTokens(event.currentTarget.value)} /></label>
       <label class="gsv-field"><span>Max context</span><input value={maxContext} onInput={(event) => setMaxContext(event.currentTarget.value)} /></label>
       <div class="gsv-detail-actions">
-        <ActionButton type="submit" icon="check" label="Save model" busyLabel="Saving" busy={busy} disabled={!name.trim() || !model.trim()} />
-        <ActionButton type="button" icon="x" label="Cancel" variant="ghost" onClick={onCancel} />
+        <ActionButton type="submit" icon="check" label="Save model" busyLabel="Saving" busy={busy} size="compact" disabled={!name.trim() || !model.trim()} />
+        <ActionButton type="button" icon="x" label="Cancel" variant="ghost" size="compact" onClick={onCancel} />
       </div>
     </form>
   );
@@ -500,12 +534,13 @@ function CreateAgentForm({
       </label>
       <DraftContextFilesEditor files={contextFiles} onChange={setContextFiles} />
       <div class="gsv-detail-actions">
-        <ActionButton type="submit" icon="check" label="Create agent" busyLabel="Creating" busy={busy} />
+        <ActionButton type="submit" icon="check" label="Create agent" busyLabel="Creating" busy={busy} size="compact" />
         <ActionButton
           type="button"
           icon="x"
           label="Cancel"
           variant="ghost"
+          size="compact"
           onClick={() => {
             resetForm();
             onOpenChange(false);
@@ -627,6 +662,7 @@ function DraftContextFilesEditor({
               icon="file"
               label={normalizedDraftName && files.some((file) => file.name === normalizedDraftName) ? "Update file" : "Add file"}
               variant="ghost"
+              size="compact"
               disabled={!normalizedDraftName}
               onClick={addDraftFile}
             />
@@ -693,8 +729,8 @@ function CreateHumanForm({
         <input value={gecos} onInput={(e) => setGecos(e.currentTarget.value)} placeholder="Alice" />
       </label>
       <div class="gsv-detail-actions">
-        <ActionButton type="submit" icon="check" label="Create user" busyLabel="Creating" busy={busy} />
-        <ActionButton type="button" icon="x" label="Cancel" variant="ghost" onClick={() => setOpen(false)} />
+        <ActionButton type="submit" icon="check" label="Create user" busyLabel="Creating" busy={busy} size="compact" />
+        <ActionButton type="button" icon="x" label="Cancel" variant="ghost" size="compact" onClick={() => setOpen(false)} />
       </div>
     </form>
   );
@@ -954,6 +990,7 @@ function ContextEditor({
           icon="refresh"
           label="Reset"
           variant="ghost"
+          size="compact"
           disabled={!editable || loading}
           onClick={resetDraft}
         />
@@ -962,6 +999,7 @@ function ContextEditor({
           label="Save context"
           busyLabel="Saving"
           busy={busy}
+          size="compact"
           disabled={!editable || !targetName.trim() || loading}
           onClick={async () => {
             const ok = await onSave(targetName.trim(), draft);
@@ -996,17 +1034,17 @@ function PermissionsEditor({
   busy: boolean;
   onSave: (aiValues: Record<string, string> | undefined, approval: string) => Promise<boolean>;
 }) {
-  const [stackSelection, setStackSelection] = useState(() => stackSelectionForAgent(agent, models));
+  const [stackSelection, setStackSelection] = useState(() => stackSelectionForAgent(agent, models, systemAiValues));
   const [policy, setPolicy] = useState<ApprovalPolicy>(() => parseApprovalPolicy(agent.approval));
   const summary = summarizePermissions(serializeApprovalPolicy(policy), agent.configEditable);
   const stackSummary = stackSummaryForSelection(stackSelection, agent, models, systemAiValues);
-  const hasCustomStack = stackSelectionForAgent(agent, models) === CUSTOM_STACK;
+  const hasCustomStack = stackSelectionForAgent(agent, models, systemAiValues) === CUSTOM_STACK;
   const customSelected = stackSelection === CUSTOM_STACK;
 
   useEffect(() => {
-    setStackSelection(stackSelectionForAgent(agent, models));
+    setStackSelection(stackSelectionForAgent(agent, models, systemAiValues));
     setPolicy(parseApprovalPolicy(agent.approval));
-  }, [agent.uid, agent.approval, agent.aiValues, models]);
+  }, [agent.uid, agent.approval, agent.aiValues, models, systemAiValues]);
 
   function setDefault(action: ApprovalPolicy["default"]): void {
     setPolicy((prev) => ({ ...prev, default: action }));
@@ -1056,7 +1094,8 @@ function PermissionsEditor({
           disabled={!agent.configEditable}
           onChange={(e) => setStackSelection(e.currentTarget.value)}
         >
-          <option value={INHERIT_STACK}>Inherit system defaults</option>
+          <option value={INHERIT_STACK}>Inherit default</option>
+          <option value={CURRENT_DEFAULT_STACK}>Current default</option>
           {models.map((profile) => (
             <option key={profile.id} value={profile.id}>{profile.name}</option>
           ))}
@@ -1138,24 +1177,39 @@ function PermissionsEditor({
           label="Save preset & permissions"
           busyLabel="Saving"
           busy={busy}
+          size="compact"
           disabled={!agent.configEditable}
-          onClick={() => void onSave(aiValuesForStackSelection(stackSelection, models), serializeApprovalPolicy(policy))}
+          onClick={() => void onSave(aiValuesForStackSelection(stackSelection, models, systemAiValues), serializeApprovalPolicy(policy))}
         />
       </div>
     </section>
   );
 }
 
-function stackSelectionForAgent(agent: AgentDetail, profiles: AgentModelProfile[]): string {
+function stackSelectionForAgent(
+  agent: AgentDetail,
+  profiles: AgentModelProfile[],
+  systemAiValues: Record<string, string>,
+): string {
   if (Object.keys(agent.aiValues).length === 0) {
     return INHERIT_STACK;
+  }
+  if (profileValuesMatch(agent.aiValues, systemAiValues)) {
+    return CURRENT_DEFAULT_STACK;
   }
   return findMatchingStackProfile(profiles, agent.aiValues)?.id ?? CUSTOM_STACK;
 }
 
-function aiValuesForStackSelection(selection: string, profiles: AgentModelProfile[]): Record<string, string> | undefined {
+function aiValuesForStackSelection(
+  selection: string,
+  profiles: AgentModelProfile[],
+  systemAiValues: Record<string, string>,
+): Record<string, string> | undefined {
   if (selection === INHERIT_STACK) {
     return {};
+  }
+  if (selection === CURRENT_DEFAULT_STACK) {
+    return profileValuesFromDrafts(systemAiValues);
   }
   if (selection === CUSTOM_STACK) {
     return undefined;
@@ -1172,7 +1226,15 @@ function stackSummaryForSelection(
   if (selection === INHERIT_STACK) {
     return {
       kind: "Inherited preset",
-      label: "System defaults",
+      label: "Default",
+      detail: stackDetail(systemAiValues),
+    };
+  }
+
+  if (selection === CURRENT_DEFAULT_STACK) {
+    return {
+      kind: "Fixed preset",
+      label: "Current default",
       detail: stackDetail(systemAiValues),
     };
   }
@@ -1191,4 +1253,10 @@ function stackSummaryForSelection(
     label: "Account overrides",
     detail: stackDetail(agent.effectiveAiValues),
   };
+}
+
+function profileValuesMatch(left: Record<string, string>, right: Record<string, string>): boolean {
+  const normalizedLeft = profileValuesFromDrafts(left);
+  const normalizedRight = profileValuesFromDrafts(right);
+  return AI_FIELDS.every((field) => (normalizedLeft[field.key] ?? "") === (normalizedRight[field.key] ?? ""));
 }

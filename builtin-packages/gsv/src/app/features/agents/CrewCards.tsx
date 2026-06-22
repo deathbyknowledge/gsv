@@ -24,6 +24,8 @@ export function CrewOverview({
   onOpenModels,
   onCreateAgent,
   onCreateModel,
+  onMakeDefaultModel,
+  defaultModelBusyId,
 }: {
   agents: AgentDetail[];
   models: AgentModelProfile[];
@@ -36,6 +38,8 @@ export function CrewOverview({
   onOpenModels: () => void;
   onCreateAgent: () => void;
   onCreateModel: () => void;
+  onMakeDefaultModel: (stack: CrewStackCard) => void;
+  defaultModelBusyId: string;
 }) {
   const crew = buildCrewAgents(agents, processes, models, systemAiValues);
   const stacks = buildCrewStackCards(modelPresetAiValues, models);
@@ -53,7 +57,7 @@ export function CrewOverview({
             <p class="gsv-crew-card-note">{loading ? "Loading model configuration." : "Model configuration is not visible to this account."}</p>
           </ConsoleCard>
         ) : (
-          <CrewModelStackList stacks={stacks} />
+          <CrewModelStackList stacks={stacks} onMakeDefault={onMakeDefaultModel} busyDefaultId={defaultModelBusyId} />
         )}
         <ConsoleCard class="gsv-create-card">
           <div class="gsv-create-card-copy">
@@ -99,9 +103,13 @@ export function CrewOverview({
 export function CrewModelStackList({
   stacks,
   defaultExpandedId = "system-default",
+  onMakeDefault,
+  busyDefaultId = "",
 }: {
   stacks: CrewStackCard[];
   defaultExpandedId?: string;
+  onMakeDefault?: (stack: CrewStackCard) => void;
+  busyDefaultId?: string;
 }) {
   const [expandedId, setExpandedId] = useState(defaultExpandedId);
 
@@ -112,7 +120,9 @@ export function CrewModelStackList({
           key={stack.id}
           stack={stack}
           expanded={stack.id === expandedId}
+          defaultBusy={stack.id === busyDefaultId}
           onToggle={() => setExpandedId(stack.id === expandedId ? "" : stack.id)}
+          onMakeDefault={onMakeDefault}
         />
       ))}
     </>
@@ -122,11 +132,15 @@ export function CrewModelStackList({
 function CrewModelStackCard({
   stack,
   expanded,
+  defaultBusy,
   onToggle,
+  onMakeDefault,
 }: {
   stack: CrewStackCard;
   expanded: boolean;
+  defaultBusy: boolean;
   onToggle: () => void;
+  onMakeDefault?: (stack: CrewStackCard) => void;
 }) {
   return (
     <ConsoleCard class={`gsv-model-card${expanded ? " is-expanded" : ""}`} tone={stack.default ? "accent" : "neutral"}>
@@ -147,7 +161,21 @@ function CrewModelStackCard({
             <MetadataItem label="Max tokens" value={stack.maxTokens} />
             <MetadataItem label="Max context" value={stack.maxContext} />
           </MetadataStack>
-          {stack.default ? <span class="gsv-model-default">Default model</span> : null}
+          <div class="gsv-model-card-actions">
+            {stack.default ? (
+              <span class="gsv-model-default">Default model</span>
+            ) : (
+              <ActionButton
+                icon="check"
+                label="Make default"
+                busyLabel="Saving"
+                busy={defaultBusy}
+                size="compact"
+                disabled={!stack.profile || !onMakeDefault}
+                onClick={() => onMakeDefault?.(stack)}
+              />
+            )}
+          </div>
         </>
       ) : null}
     </ConsoleCard>

@@ -114,6 +114,7 @@ function TaskCard({
             <ActionButton
               icon="external"
               label="Open in Chat"
+              size="compact"
               disabled={!canOpenChat(process)}
               onClick={() => openApp({ target: "chat", payload: { pid, cwd } })}
             />
@@ -124,6 +125,7 @@ function TaskCard({
                 busyLabel="Canceling"
                 busy={killingPid === pid}
                 variant="danger"
+                size="compact"
                 disabled={!pid || Boolean(killingPid)}
                 onClick={() => {
                   if (window.confirm(`Cancel task ${task.title}?\n\nThis stops the runtime work immediately.`)) {
