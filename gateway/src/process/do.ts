@@ -108,6 +108,12 @@ import {
   isProviderContextOverflowErrorMessage,
 } from "../inference/errors";
 import {
+  describeAssistantResponseFailure,
+  hasRawToolCallMarkupOutput,
+  isRetryableAssistantResponseFailure,
+  isRetryableGenerationErrorMessage,
+} from "../inference/output";
+import {
   ProcessStore,
   parseAssistantMessageMeta,
   parseMessageMetadata,
@@ -167,6 +173,7 @@ type RunState = {
   runId: string;
   queued: boolean;
   conversationId: string;
+  pendingRuntimeEvents?: number;
   config?: AiConfigResult;
   tools?: ToolDefinition[];
   devices?: AiToolsDevice[];
@@ -496,26 +503,29 @@ function formatIpcMessage(args: ProcIpcDeliverArgs): string {
   const sentAt = Number.isFinite(args.sentAt)
     ? new Date(args.sentAt).toISOString()
     : new Date().toISOString();
-  const source = `${args.source.username} uid=${args.source.uid}`;
-  const lines = [
-    `Message from process \`${args.sourcePid}\` (${source}).`,
-    `Sent at: ${sentAt}.`,
-    "",
-    args.message,
-  ];
+  const source = `${args.source.username} (${args.sourcePid})`;
+  const lines = args.call
+    ? [
+        `Delegated task from ${source}.`,
+        `Received: ${sentAt}.`,
+        "",
+        args.message,
+      ]
+    : [
+        `Message from ${source}.`,
+        `Sent: ${sentAt}.`,
+        "",
+        args.message,
+      ];
   const renderedMetadata = renderJsonBlock(args.metadata);
   if (renderedMetadata) {
-    lines.push("", "Metadata:", "```json", renderedMetadata, "```");
+    lines.push("", "Additional context:", "```json", renderedMetadata, "```");
   }
   if (args.call) {
     lines.push(
       "",
-      "IPC call:",
-      `Call id: \`${args.call.callId}\``,
-      `Deadline: ${new Date(args.call.deadlineAt).toISOString()}`,
-      `Reply target: process \`${args.call.replyToPid}\``,
-      "",
-      "Complete this run before the deadline. The kernel will deliver the final response to the caller.",
+      `Please complete this task before ${new Date(args.call.deadlineAt).toISOString()}.`,
+      "Your final answer will be returned to the caller automatically.",
     );
   }
   return lines.join("\n");
@@ -527,25 +537,29 @@ function formatIpcReplyMessage(signal: string, payload: unknown): string {
     : {};
   const callId = typeof record.callId === "string" ? record.callId : "unknown";
   const targetPid = typeof record.targetPid === "string" ? record.targetPid : "unknown";
-  const runId = typeof record.runId === "string" ? record.runId : null;
   const error = typeof record.error === "string" && record.error.trim().length > 0
     ? record.error.trim()
     : null;
   const response = "response" in record ? record.response : undefined;
+  const responseText = response && typeof response === "object" && !Array.isArray(response)
+    ? (response as Record<string, unknown>).text
+    : null;
   const renderedResponse = renderJsonBlock(response);
 
   const lines = [
     signal === "ipc.timeout"
-      ? `IPC call \`${callId}\` to process \`${targetPid}\` timed out.`
-      : `IPC call \`${callId}\` completed from process \`${targetPid}\`.`,
+      ? `Delegated task to process \`${targetPid}\` timed out.`
+      : `Delegated task from process \`${targetPid}\` finished.`,
   ];
-  if (runId) {
-    lines.push(`Run id: \`${runId}\`.`);
+  if (callId !== "unknown") {
+    lines.push(`Task id: \`${callId}\`.`);
   }
   if (error) {
     lines.push("", "Error:", error);
   }
-  if (renderedResponse) {
+  if (typeof responseText === "string" && responseText.trim().length > 0) {
+    lines.push("", "Result:", responseText.trim());
+  } else if (renderedResponse) {
     lines.push("", "Response:", "```json", renderedResponse, "```");
   }
   return lines.join("\n");
@@ -2435,19 +2449,44 @@ export class Process extends Host<Env> {
   }
 
   private async handleIpcSignal(signal: string, payload: unknown): Promise<void> {
+    const content = formatIpcReplyMessage(signal, payload);
     const runId = this.currentRun ? undefined : crypto.randomUUID();
-    await this.appendRuntimeMessage("system", formatIpcReplyMessage(signal, payload), {
+    await this.appendRuntimeMessage("system", content, {
       conversationId: DEFAULT_CONVERSATION_ID,
       runId,
     });
-    if (!this.currentRun && runId) {
+
+    const activeRun = this.currentRun;
+    if (activeRun) {
+      if (activeRun.conversationId === DEFAULT_CONVERSATION_ID) {
+        activeRun.pendingRuntimeEvents = (activeRun.pendingRuntimeEvents ?? 0) + 1;
+        this.currentRun = activeRun;
+        return;
+      }
+
+      const wakeRunId = crypto.randomUUID();
+      this.store.enqueue(
+        wakeRunId,
+        "A delegated task event arrived while you were busy. Review the process event above and continue.",
+        undefined,
+        undefined,
+        DEFAULT_CONVERSATION_ID,
+      );
+      await this.emitProcChanged(["queue"], {
+        conversationId: DEFAULT_CONVERSATION_ID,
+        enqueuedRunId: wakeRunId,
+      });
+      return;
+    }
+    const nextRunId = runId ?? crypto.randomUUID();
+    if (!this.currentRun) {
       this.currentRun = {
-        runId,
+        runId: nextRunId,
         queued: false,
         conversationId: DEFAULT_CONVERSATION_ID,
       };
-      await this.emitRunStarted(runId, DEFAULT_CONVERSATION_ID, "ipc.reply");
-      this.scheduleTick(runId);
+      await this.emitRunStarted(nextRunId, DEFAULT_CONVERSATION_ID, "delegated-task");
+      this.scheduleTick(nextRunId);
     }
   }
 
@@ -2571,7 +2610,11 @@ export class Process extends Host<Env> {
     }
 
     // Step 5: Build pi-ai Context
+    const pendingRuntimeEventsInContext = this.currentRun?.runId === runId
+      ? this.currentRun.pendingRuntimeEvents ?? 0
+      : 0;
     let piMessages = await this.buildContextMessages(conversationId);
+    this.consumeRuntimeEventsInContext(runId, pendingRuntimeEventsInContext);
     const tools: Tool[] = (run.tools ?? []).map((t) => ({
       name: t.name,
       description: t.description,
@@ -2602,7 +2645,11 @@ export class Process extends Host<Env> {
       if (await this.handleRunStopped(runId)) {
         return;
       }
+      const pendingRuntimeEventsInCompactedContext = this.currentRun?.runId === runId
+        ? this.currentRun.pendingRuntimeEvents ?? 0
+        : 0;
       piMessages = await this.buildContextMessages(conversationId);
+      this.consumeRuntimeEventsInContext(runId, pendingRuntimeEventsInCompactedContext);
       context = {
         systemPrompt: run.systemPrompt,
         messages: piMessages,
@@ -2718,7 +2765,9 @@ export class Process extends Host<Env> {
         attempt,
         maxAttempts: MAX_RETRYABLE_GENERATION_ATTEMPTS,
         reason: responseFailure,
-        cause: "empty assistant response",
+        cause: hasRawToolCallMarkupOutput(response)
+          ? "malformed assistant response"
+          : "empty assistant response",
       });
       if (retryState === "stopped") {
         return;
@@ -2903,6 +2952,10 @@ export class Process extends Host<Env> {
   private async finishRun(options: RunFinishOptions): Promise<void> {
     const run = this.currentRun;
     const runId = run?.runId;
+    const shouldQueueRuntimeWake =
+      run?.conversationId === DEFAULT_CONVERSATION_ID &&
+      (run.pendingRuntimeEvents ?? 0) > 0 &&
+      this.store.queueSize(DEFAULT_CONVERSATION_ID) === 0;
     this.currentRun = null;
     this.store.clearPendingHil();
     console.log(`[Process] Finished run ${runId}`);
@@ -2910,7 +2963,38 @@ export class Process extends Host<Env> {
     if (run) {
       await this.emitRunFinished(run, options);
     }
+    if (shouldQueueRuntimeWake) {
+      const wakeRunId = crypto.randomUUID();
+      this.store.enqueue(
+        wakeRunId,
+        "A delegated task event arrived while you were busy. Review the process event above and continue.",
+        undefined,
+        undefined,
+        DEFAULT_CONVERSATION_ID,
+      );
+      await this.emitProcChanged(["queue"], {
+        conversationId: DEFAULT_CONVERSATION_ID,
+        enqueuedRunId: wakeRunId,
+      });
+    }
     await this.promoteNextQueuedRun();
+  }
+
+  private consumeRuntimeEventsInContext(runId: string, count: number): void {
+    if (count <= 0) {
+      return;
+    }
+    const run = this.currentRun;
+    if (!run || run.runId !== runId) {
+      return;
+    }
+    const remaining = Math.max(0, (run.pendingRuntimeEvents ?? 0) - count);
+    if (remaining > 0) {
+      run.pendingRuntimeEvents = remaining;
+    } else {
+      delete run.pendingRuntimeEvents;
+    }
+    this.currentRun = run;
   }
 
   private async finishProviderContextOverflowRun(
@@ -4201,68 +4285,6 @@ export class Process extends Host<Env> {
 
 function snapshotAssistantMessageEvent<T extends AssistantMessageEvent>(event: T): T {
   return JSON.parse(JSON.stringify(event)) as T;
-}
-
-function describeAssistantResponseFailure(response: AssistantMessage): string | null {
-  if (response.stopReason === "error" || response.stopReason === "aborted") {
-    return response.errorMessage ?? `LLM generation ended with ${response.stopReason}`;
-  }
-  if (!response.content || response.content.length === 0) {
-    return "LLM returned empty response";
-  }
-  if (!hasAssistantVisibleOutput(response)) {
-    return "LLM returned reasoning but no final response";
-  }
-  return null;
-}
-
-function isRetryableAssistantResponseFailure(
-  response: AssistantMessage,
-  failure: string,
-): boolean {
-  if (response.stopReason === "aborted") {
-    return false;
-  }
-
-  if (response.stopReason === "error") {
-    return typeof response.errorMessage === "string" &&
-      response.errorMessage.trim().length > 0 &&
-      isRetryableGenerationErrorMessage(response.errorMessage);
-  }
-
-  const failureText = `${response.errorMessage ?? ""}\n${failure}`;
-  if (isRetryableGenerationErrorMessage(failureText)) {
-    return true;
-  }
-
-  const content = assistantContentBlocks(response);
-  return !hasAssistantVisibleOutput(response) &&
-    (content.length === 0 || hasAssistantThinking(response));
-}
-
-function hasAssistantVisibleOutput(response: AssistantMessage): boolean {
-  return assistantContentBlocks(response).some((block) => (
-    block.type === "toolCall" ||
-    (block.type === "text" && block.text.trim().length > 0)
-  ));
-}
-
-function hasAssistantThinking(response: AssistantMessage): boolean {
-  return assistantContentBlocks(response).some((block) =>
-    block.type === "thinking" && block.thinking.trim().length > 0
-  );
-}
-
-function assistantContentBlocks(response: AssistantMessage): AssistantMessage["content"] {
-  return Array.isArray(response.content) ? response.content : [];
-}
-
-function isRetryableGenerationErrorMessage(message: string): boolean {
-  const normalized = message.toLowerCase();
-  return normalized.includes("reasoning but no final response") ||
-    normalized.includes("returned an empty response") ||
-    normalized.includes("returned empty response") ||
-    normalized.includes("empty response body");
 }
 
 function orderMessagesForProvider(messages: Message[]): Message[] {

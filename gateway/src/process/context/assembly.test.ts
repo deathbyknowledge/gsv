@@ -16,6 +16,9 @@ const CONFIG: AiConfigResult = {
   maxTokens: 4096,
   contextWindowTokens: 200000,
   contextWindowSource: "model",
+  system: {
+    timezone: "Europe/Amsterdam",
+  },
   systemContextFiles: [
     {
       name: "00-gsv.md",
@@ -23,7 +26,7 @@ const CONFIG: AiConfigResult = {
     },
     {
       name: "10-runtime.md",
-      text: "Task for {{identity.username}} in {{identity.cwd}}\nUser {{user.username}} at {{user.home}}\nProgram {{program.username}} at {{program.home}} cwd {{program.cwd}}\nOwner {{owner.username}} at {{owner.home}}\n\nTargets:\n{{devices}}\n\nMCP:\n{{mcpServers}}",
+      text: "Task for {{identity.username}} in {{identity.cwd}}\nToday is {{current.date}} in {{current.timezone}}\nUser {{user.username}} at {{user.home}}\nProgram {{program.username}} at {{program.home}} cwd {{program.cwd}}\nOwner {{owner.username}} at {{owner.home}}\n\nTargets:\n{{devices}}\n\nMCP:\n{{mcpServers}}",
     },
   ],
   skillIndex: [
@@ -207,8 +210,10 @@ describe("createSystemContextProvider", () => {
       }),
     ]);
     const text = sections.map((section) => section.text).join("\n");
+    const expectedDate = currentDateInTimezone("Europe/Amsterdam");
     expect(text).toContain("Running in GSV for root at /root/projects/demo");
     expect(text).toContain("Task for root in /root/projects/demo");
+    expect(text).toContain(`Today is ${expectedDate} in Europe/Amsterdam`);
     expect(text).toContain("User hank at /home/hank");
     expect(text).toContain("Program root at /root cwd /root/projects/demo");
     expect(text).toContain("Owner hank at /home/hank");
@@ -344,4 +349,17 @@ function makeInput(overrides: Partial<PromptAssemblyInput> = {}): PromptAssembly
     ripgit: null,
     ...overrides,
   };
+}
+
+function currentDateInTimezone(timezone: string): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+  return `${year}-${month}-${day}`;
 }

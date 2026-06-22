@@ -70,10 +70,18 @@ pub(crate) async fn run_proc(
                 result.run_id, result.status, result.queued
             );
         }
-        ProcAction::History { pid, limit, offset } => {
+        ProcAction::History {
+            pid,
+            tail,
+            limit,
+            offset,
+        } => {
             let mut args = json!({});
             if let Some(pid) = pid {
                 args["pid"] = json!(pid);
+            }
+            if tail {
+                args["tail"] = json!(true);
             }
             if let Some(limit) = limit {
                 args["limit"] = json!(limit);

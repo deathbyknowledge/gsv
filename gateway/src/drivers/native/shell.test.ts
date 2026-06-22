@@ -1,12 +1,27 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { env } from "cloudflare:test";
 import { handleShellExec } from "./shell";
 import { handleFsCopy, handleFsRead, handleFsTransferReceive, handleFsTransferSend } from "./fs";
 import { parseBinaryFrame } from "@humansandmachines/gsv/protocol";
+import { sendFrameToProcess } from "../../shared/utils";
 import type { KernelContext } from "../../kernel/context";
 import type { DeviceRecord } from "../../kernel/devices";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { InstalledPackageRecord } from "../../kernel/packages";
+
+vi.mock("../../shared/utils", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../shared/utils")>();
+  return {
+    ...actual,
+    sendFrameToProcess: vi.fn(),
+  };
+});
+
+const sendFrameToProcessMock = vi.mocked(sendFrameToProcess);
+
+beforeEach(() => {
+  sendFrameToProcessMock.mockReset();
+});
 
 const IDENTITY: ProcessIdentity = {
   uid: 1000,
@@ -84,7 +99,9 @@ function makeContext(options?: {
   auth?: KernelContext["auth"];
   caps?: KernelContext["caps"];
   schedules?: KernelContext["schedules"];
+  ipcCalls?: KernelContext["ipcCalls"];
   getAppRunner?: KernelContext["getAppRunner"];
+  scheduleIpcCallTimeout?: KernelContext["scheduleIpcCallTimeout"];
   scheduleScheduleWake?: KernelContext["scheduleScheduleWake"];
   identity?: ProcessIdentity;
 }): KernelContext {
@@ -170,6 +187,7 @@ function makeContext(options?: {
     adapters: null as never,
     runRoutes: null as never,
     schedules: options?.schedules,
+    ipcCalls: options?.ipcCalls,
     connection: null as never,
     identity: {
       role: "user",
@@ -179,6 +197,7 @@ function makeContext(options?: {
     processId: "task:pkg",
     serverVersion: "0.2.8",
     getAppRunner: options?.getAppRunner,
+    scheduleIpcCallTimeout: options?.scheduleIpcCallTimeout,
     scheduleScheduleWake: options?.scheduleScheduleWake,
   } as KernelContext;
 }
@@ -415,6 +434,115 @@ describe("proc native command", () => {
     );
   });
 
+  it("delegates bounded work through a new child process", async () => {
+    const spawnedPids: string[] = [];
+    const parent = {
+      processId: "task:pkg",
+      uid: IDENTITY.uid,
+      ownerUid: IDENTITY.uid,
+      gid: IDENTITY.gid,
+      gids: IDENTITY.gids,
+      username: IDENTITY.username,
+      home: IDENTITY.home,
+      cwd: IDENTITY.cwd,
+      profile: "task",
+      state: "running",
+      mounts: [],
+      contextFiles: [],
+      createdAt: 1,
+    };
+    const spawn = vi.fn((pid: string) => {
+      spawnedPids.push(pid);
+    });
+    const ipcCalls = {
+      create: vi.fn(),
+      remove: vi.fn(),
+      attachRun: vi.fn(),
+    };
+    const scheduleIpcCallTimeout = vi.fn(async () => "timeout-schedule");
+
+    sendFrameToProcessMock.mockImplementation(async (pid, frame) => {
+      const req = frame as any;
+      if (req.call === "proc.setidentity") {
+        return { type: "res", id: req.id, ok: true, data: { ok: true } };
+      }
+      if (req.call === "proc.ipc.deliver") {
+        expect(pid).toBe(spawnedPids[0]);
+        expect(req.args.message).toBe("write a migration plan");
+        expect(req.args.metadata).toBeUndefined();
+        expect(req.args.call).toEqual(expect.objectContaining({
+          callId: expect.any(String),
+          replyToPid: "task:pkg",
+          deadlineAt: expect.any(Number),
+        }));
+        return {
+          type: "res",
+          id: req.id,
+          ok: true,
+          data: {
+            ok: true,
+            status: "started",
+            pid,
+            sourcePid: "task:pkg",
+            conversationId: "default",
+            runId: "child-run",
+          },
+        };
+      }
+      throw new Error(`unexpected process frame: ${req.call}`);
+    });
+
+    const result = await handleShellExec(
+      { input: "proc delegate --label planning --timeout 10m write a migration plan" },
+      makeContext({
+        capabilities: ["proc.spawn", "proc.ipc.call"],
+        procs: {
+          get(pid: string) {
+            if (pid === "task:pkg") return parent;
+            if (pid === spawnedPids[0]) {
+              return {
+                ...parent,
+                processId: pid,
+                parentPid: "task:pkg",
+                interactive: false,
+                label: "planning",
+              };
+            }
+            return null;
+          },
+          getOwnerUid: vi.fn(() => IDENTITY.uid),
+          getMounts: vi.fn(() => []),
+          spawn,
+        } as unknown as KernelContext["procs"],
+        ipcCalls: ipcCalls as unknown as KernelContext["ipcCalls"],
+        scheduleIpcCallTimeout,
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("status=in_progress");
+    expect(result.stdout).toContain("run_id=child-run");
+    expect(result.stdout).toContain("queued=false");
+    expect(result.stdout).toContain('label="planning"');
+    expect(spawn).toHaveBeenCalledWith(
+      spawnedPids[0],
+      expect.objectContaining({ username: "sam" }),
+      expect.objectContaining({
+        parentPid: "task:pkg",
+        interactive: false,
+        label: "planning",
+      }),
+    );
+    expect(ipcCalls.create).toHaveBeenCalledWith(expect.objectContaining({
+      sourcePid: "task:pkg",
+      targetPid: spawnedPids[0],
+      uid: IDENTITY.uid,
+    }));
+    const callId = ipcCalls.create.mock.calls[0]?.[0]?.callId;
+    expect(ipcCalls.attachRun).toHaveBeenCalledWith(callId, "child-run");
+    expect(scheduleIpcCallTimeout).toHaveBeenCalledWith(callId, 600_000);
+  });
+
   it("rejects legacy profile selection in proc spawn", async () => {
     const result = await handleShellExec(
       { input: 'proc spawn --profile cron "Daily brief"' },
@@ -457,6 +585,94 @@ describe("proc native command", () => {
 
     expect(result.status).toBe("failed");
     expect(result.stderr).toContain("Permission denied: cannot access process foreign-pid");
+  });
+
+  it("reads live process history from the native proc command surface", async () => {
+    sendFrameToProcessMock.mockResolvedValueOnce({
+      type: "res",
+      id: "history-1",
+      ok: true,
+      data: {
+        ok: true,
+        pid: "proc:child",
+        conversationId: "default",
+        messages: [
+          {
+            id: 1,
+            role: "user",
+            content: "please investigate",
+            timestamp: 1_800_000_000_000,
+          },
+          {
+            id: 2,
+            role: "toolResult",
+            content: {
+              toolName: "Shell",
+              isError: false,
+              output: "x".repeat(40),
+            },
+            timestamp: 1_800_000_001_000,
+            runId: "run-child",
+          },
+        ],
+        messageCount: 2,
+        truncated: false,
+        hasMoreBefore: false,
+        hasMoreAfter: false,
+        activeRunId: null,
+        activeConversationId: null,
+        pendingHil: null,
+        context: {
+          level: "ok",
+          pressure: 0.2,
+        },
+      },
+    });
+
+    const result = await handleShellExec(
+      { input: "proc history --pid proc:child --tail --limit 2 --max-content-chars 12" },
+      makeContext({
+        capabilities: ["proc.history"],
+        procs: {
+          getOwnerUid: vi.fn(() => IDENTITY.uid),
+          get: vi.fn((pid: string) => {
+            if (pid === "proc:child" || pid === "task:pkg") {
+              return {
+                processId: pid,
+                uid: IDENTITY.uid,
+                ownerUid: IDENTITY.uid,
+                gid: IDENTITY.gid,
+                gids: IDENTITY.gids,
+                username: IDENTITY.username,
+                home: IDENTITY.home,
+                cwd: IDENTITY.cwd,
+                state: "idle",
+                mounts: [],
+                contextFiles: [],
+                createdAt: 1,
+              };
+            }
+            return null;
+          }),
+        } as Partial<KernelContext["procs"]>,
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("History proc:child");
+    expect(result.stdout).toContain("Messages: 2/2");
+    expect(result.stdout).toContain("please inves");
+    expect(result.stdout).toContain("[truncated 6 chars; use --full or --json to inspect all content]");
+    expect(result.stdout).toContain("xxxxxxxxxxxx");
+    expect(result.stdout).toContain("[truncated 28 chars; use --full or --json to inspect all content]");
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith("proc:child", expect.objectContaining({
+      call: "proc.history",
+      args: {
+        pid: "proc:child",
+        limit: 2,
+        tail: true,
+      },
+    }));
   });
 });
 

@@ -23,14 +23,17 @@ Home context is for information that should shape most agent sessions:
 - small files that should always be prompt-visible
 
 New human homes create an empty `~/context.d/` directory. New agent homes seed
-`~/context.d/00-style.md`, `~/context.d/15-memory.md`, and
-`~/context.d/10-user.md` when those files are missing. New personal agents also
-get a one-time `~/context.d/00-boot.md` onboarding file that should be deleted
-after setup is done.
+`~/context.d/00-style.md`, `~/context.d/10-user.md`,
+`~/context.d/15-memory.md`, and `~/context.d/20-open-loops.md` when those files
+are missing. New personal agents also get a one-time
+`~/context.d/00-boot.md` onboarding file that should be deleted after setup is
+done.
 
 Use `~/context.d/` for scoped snippets that should be prompt-visible every time.
 Keep files short and specific. Large knowledge collections and long-term agent
-memory belong in Wiki repos, not always-loaded context.
+memory belong in Wiki repos, not always-loaded context. Active open loops belong
+in `~/context.d/20-open-loops.md`; closed-loop history and supporting evidence
+belong in the `memory` wiki.
 
 ## Durable Knowledge
 

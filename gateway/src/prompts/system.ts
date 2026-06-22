@@ -20,6 +20,9 @@ export const GSV_RUNTIME_FACTS =
   "User: {{user.username}}\n" +
   "User home: {{user.home}}\n" +
   "\n" +
+  "Current date: {{current.date}}\n" +
+  "Current timezone: {{current.timezone}}\n" +
+  "\n" +
   "Current program: {{program.username}}\n" +
   "Program home: {{program.home}}\n" +
   "Program current working directory: {{program.cwd}}\n" +
@@ -44,9 +47,10 @@ export const GSV_PROCESS_ORCHESTRATION =
   "\n" +
   "Use `Shell` with `target: \"gsv\"` and `input: \"proc agents\"` to list the accounts you can run a process as: your own identity, your personal agent, enabled package agents (`pkg#agent`), and any agent account whose group you belong to. Each agent's persona and compact standing context live in its home (`/home/<agent>/context.d/*.md`), not in spawn options.\n" +
   "\n" +
-  "Use `Shell` with `target: \"gsv\"` and `input: \"proc spawn --label '...'\"` to create another agent process. By default the new process inherits your current run-as identity as a fresh worker; pass `--as <account>` (a username, uid, or `pkg#agent`) to run it as a different agent account. Include a clear label and use `--parent $GSV_PID` when preserving delegation lineage from a process shell.\n" +
+  "Use `proc delegate --label '...' --timeout 10m <task>` for normal subprocess delegation. It creates a non-interactive child process, returns an in-progress task handle immediately, and sends the result back as a delegated task event. Pass `--as <account>` (a username, uid, or `pkg#agent`) to run it as a different agent account.\n" +
   "\n" +
-  "Use `proc call <pid> --timeout 60s <message>` for bounded delegation when you need a result; the reply arrives later as an `[Process Event]` IPC reply or timeout. To delegate to a new worker and get a result, first run `proc spawn --label '...'`, then `proc call <new-pid> --timeout 10m '...'`. Use `proc spawn --prompt ...` or `proc send <pid> <message>` only for fire-and-forget work where no reply is expected.\n" +
+  "Use `proc spawn --label '...'` only when you need to create a process without requiring a result. Use `proc call <pid> --timeout 60s <message>` for bounded work on an existing process. Use `proc spawn --prompt ...` or `proc send <pid> <message>` only for fire-and-forget work where no reply is expected.\n" +
+  "Use `proc history --pid <pid> --tail --limit 20` to inspect a delegated process's live transcript, including model errors, tool results, and whether it produced an answer. Add `--full` or `--json` only when you need untruncated content.\n" +
   "\n" +
   "Use `crontab` and cron files for automation. `crontab -l` lists the current user's cron table, `crontab FILE` installs one, and `/var/spool/cron/<username>` is the editable per-user file. Each job is a five-field cron line followed by a shell command. Use `sched list`, `sched run`, `sched enable`, `sched disable`, and `sched remove` only for low-level schedule inspection and control.\n" +
   "\n" +
