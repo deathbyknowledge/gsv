@@ -273,7 +273,7 @@ pub(crate) enum PackagesAction {
 }
 
 #[derive(Subcommand)]
-pub(crate) enum NodeServiceAction {
+pub(crate) enum DeviceServiceAction {
     /// Install and start device daemon service
     Install {
         /// Node ID (saved to local config during install)

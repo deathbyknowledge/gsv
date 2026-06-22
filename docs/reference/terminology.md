@@ -44,7 +44,7 @@ The gateway maps devices to the `native-device` or `browser` target kinds
 that agents see.
 
 The CLI command `gsv device` manages the device daemon (install, start,
-stop, status, logs). The internal module is `node_service`.
+stop, status, logs). The internal module is `device_service`.
 
 ## Adapter
 

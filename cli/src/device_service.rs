@@ -18,7 +18,7 @@ const NODE_LAUNCHD_LABEL: &str = "gsvd";
 const NODE_WINDOWS_TASK_NAME: &str = "gsvd";
 const LOG_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
-struct NodeServiceInstallSpec {
+struct DeviceServiceInstallSpec {
     description: &'static str,
     exe_path: PathBuf,
     args: Vec<String>,
@@ -26,7 +26,7 @@ struct NodeServiceInstallSpec {
     log_path: PathBuf,
 }
 
-impl NodeServiceInstallSpec {
+impl DeviceServiceInstallSpec {
     fn current() -> Result<Self, DynError> {
         let exe_path = std::env::current_exe()?;
         let exe_path = exe_path.canonicalize().unwrap_or(exe_path);
@@ -34,15 +34,15 @@ impl NodeServiceInstallSpec {
             description: "gsvd",
             exe_path,
             args: vec!["device".to_string(), "run".to_string()],
-            path_env: node_service_path(),
+            path_env: device_service_path(),
             log_path: logger::node_log_path()?,
         })
     }
 }
 
-trait NodeServiceManager {
+trait DeviceServiceManager {
     fn is_installed(&self) -> Result<bool, DynError>;
-    fn install(&self, spec: &NodeServiceInstallSpec) -> Result<(), DynError>;
+    fn install(&self, spec: &DeviceServiceInstallSpec) -> Result<(), DynError>;
     fn uninstall(&self) -> Result<(), DynError>;
     fn start(&self) -> Result<(), DynError>;
     fn restart(&self) -> Result<(), DynError>;
@@ -50,40 +50,40 @@ trait NodeServiceManager {
     fn status(&self) -> Result<(), DynError>;
 }
 
-pub fn node_service_management_supported() -> bool {
+pub fn device_service_management_supported() -> bool {
     platform_service_manager().is_some()
 }
 
-pub fn node_service_is_installed() -> Result<bool, DynError> {
+pub fn device_service_is_installed() -> Result<bool, DynError> {
     require_platform_service_manager()?.is_installed()
 }
 
-pub fn install_node_service() -> Result<(), DynError> {
-    let spec = NodeServiceInstallSpec::current()?;
+pub fn install_device_service() -> Result<(), DynError> {
+    let spec = DeviceServiceInstallSpec::current()?;
     require_platform_service_manager()?.install(&spec)
 }
 
-pub fn uninstall_node_service() -> Result<(), DynError> {
+pub fn uninstall_device_service() -> Result<(), DynError> {
     require_platform_service_manager()?.uninstall()
 }
 
-pub fn start_node_service() -> Result<(), DynError> {
+pub fn start_device_service() -> Result<(), DynError> {
     require_platform_service_manager()?.start()
 }
 
-pub fn restart_node_service() -> Result<(), DynError> {
+pub fn restart_device_service() -> Result<(), DynError> {
     require_platform_service_manager()?.restart()
 }
 
-pub fn stop_node_service() -> Result<(), DynError> {
+pub fn stop_device_service() -> Result<(), DynError> {
     require_platform_service_manager()?.stop()
 }
 
-pub fn status_node_service() -> Result<(), DynError> {
+pub fn status_device_service() -> Result<(), DynError> {
     require_platform_service_manager()?.status()
 }
 
-pub fn show_node_service_logs(lines: usize, follow: bool) -> Result<(), DynError> {
+pub fn show_device_service_logs(lines: usize, follow: bool) -> Result<(), DynError> {
     let log_path = logger::node_log_path()?;
     if !log_path.exists() {
         return Err(format!("Log file not found: {}", log_path.display()).into());
@@ -98,11 +98,11 @@ pub fn show_node_service_logs(lines: usize, follow: bool) -> Result<(), DynError
     follow_log_file(&log_path)
 }
 
-fn require_platform_service_manager() -> Result<Box<dyn NodeServiceManager>, DynError> {
+fn require_platform_service_manager() -> Result<Box<dyn DeviceServiceManager>, DynError> {
     platform_service_manager().ok_or_else(|| unsupported_message().into())
 }
 
-fn platform_service_manager() -> Option<Box<dyn NodeServiceManager>> {
+fn platform_service_manager() -> Option<Box<dyn DeviceServiceManager>> {
     #[cfg(target_os = "linux")]
     {
         Some(Box::new(SystemdUserServiceManager))
@@ -277,7 +277,7 @@ fn select_service_path(
         .or_else(|| env_path.and_then(normalize))
 }
 
-fn node_service_path() -> Option<String> {
+fn device_service_path() -> Option<String> {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         select_service_path(probe_path_from_login_shell(), std::env::var_os("PATH"))
@@ -319,7 +319,7 @@ fn systemd_path_environment_line(path: Option<&str>) -> String {
 }
 
 #[cfg(any(test, target_os = "linux"))]
-fn systemd_exec_start(spec: &NodeServiceInstallSpec) -> String {
+fn systemd_exec_start(spec: &DeviceServiceInstallSpec) -> String {
     let mut parts = vec![format!(
         "\"{}\"",
         spec.exe_path.display().to_string().replace('"', "\\\"")
@@ -342,7 +342,7 @@ fn launchd_path_environment_block(path: Option<&str>) -> String {
 }
 
 #[cfg(any(test, target_os = "macos"))]
-fn launchd_program_arguments_block(spec: &NodeServiceInstallSpec) -> String {
+fn launchd_program_arguments_block(spec: &DeviceServiceInstallSpec) -> String {
     let mut lines = vec![format!(
         "    <string>{}</string>",
         xml_escape(&spec.exe_path.display().to_string())
@@ -356,7 +356,7 @@ fn launchd_program_arguments_block(spec: &NodeServiceInstallSpec) -> String {
 #[cfg(any(test, target_os = "macos"))]
 fn launchd_plist_contents(
     label: &str,
-    spec: &NodeServiceInstallSpec,
+    spec: &DeviceServiceInstallSpec,
     path_env_block: &str,
 ) -> String {
     format!(
@@ -416,7 +416,7 @@ fn powershell_single_quote(value: &str) -> String {
 fn windows_task_registration_script(
     task_name: &str,
     user_id: &str,
-    spec: &NodeServiceInstallSpec,
+    spec: &DeviceServiceInstallSpec,
 ) -> String {
     let task_name = powershell_single_quote(task_name);
     let user_id = powershell_single_quote(user_id);
@@ -485,12 +485,12 @@ fn run_windows_powershell_script(script: &str, context: &str) -> Result<(), DynE
 struct SystemdUserServiceManager;
 
 #[cfg(target_os = "linux")]
-impl NodeServiceManager for SystemdUserServiceManager {
+impl DeviceServiceManager for SystemdUserServiceManager {
     fn is_installed(&self) -> Result<bool, DynError> {
         Ok(systemd_user_unit_path()?.exists())
     }
 
-    fn install(&self, spec: &NodeServiceInstallSpec) -> Result<(), DynError> {
+    fn install(&self, spec: &DeviceServiceInstallSpec) -> Result<(), DynError> {
         let unit_path = systemd_user_unit_path()?;
         if let Some(parent) = unit_path.parent() {
             fs::create_dir_all(parent)?;
@@ -647,12 +647,12 @@ fn try_enable_linger() -> Result<(), DynError> {
 struct LaunchdUserServiceManager;
 
 #[cfg(target_os = "macos")]
-impl NodeServiceManager for LaunchdUserServiceManager {
+impl DeviceServiceManager for LaunchdUserServiceManager {
     fn is_installed(&self) -> Result<bool, DynError> {
         Ok(launchd_plist_path()?.exists())
     }
 
-    fn install(&self, spec: &NodeServiceInstallSpec) -> Result<(), DynError> {
+    fn install(&self, spec: &DeviceServiceInstallSpec) -> Result<(), DynError> {
         let plist_path = launchd_plist_path()?;
         if let Some(parent) = plist_path.parent() {
             fs::create_dir_all(parent)?;
@@ -801,7 +801,7 @@ fn launchd_target() -> Result<String, DynError> {
 struct WindowsTaskServiceManager;
 
 #[cfg(target_os = "windows")]
-impl NodeServiceManager for WindowsTaskServiceManager {
+impl DeviceServiceManager for WindowsTaskServiceManager {
     fn is_installed(&self) -> Result<bool, DynError> {
         Ok(Command::new("schtasks")
             .arg("/query")
@@ -811,7 +811,7 @@ impl NodeServiceManager for WindowsTaskServiceManager {
             .success())
     }
 
-    fn install(&self, spec: &NodeServiceInstallSpec) -> Result<(), DynError> {
+    fn install(&self, spec: &DeviceServiceInstallSpec) -> Result<(), DynError> {
         let user_id = current_windows_user_id();
         let script = windows_task_registration_script(NODE_WINDOWS_TASK_NAME, &user_id, spec);
         run_windows_powershell_script(&script, "Failed to register Windows scheduled task")?;
@@ -923,8 +923,8 @@ fn current_windows_user_id() -> String {
 mod tests {
     use super::*;
 
-    fn test_spec() -> NodeServiceInstallSpec {
-        NodeServiceInstallSpec {
+    fn test_spec() -> DeviceServiceInstallSpec {
+        DeviceServiceInstallSpec {
             description: "gsvd",
             exe_path: PathBuf::from("/Applications/GSV/gsv"),
             args: vec!["device".to_string(), "run".to_string()],
