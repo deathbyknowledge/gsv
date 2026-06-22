@@ -149,11 +149,6 @@ function contextPressurePercent(pressure: number | null | undefined): number | n
   return Math.max(0, Math.min(100, Math.round(pressure * 100)));
 }
 
-function runIdFromTaskName(name: string | undefined): string | null {
-  const match = name?.match(/^Run\s+(.+)$/i);
-  return match?.[1]?.trim() || null;
-}
-
 export function ChatDock({
   open,
   width,
@@ -212,7 +207,6 @@ export function ChatDock({
   }, [messages, processHistory.data]);
   const runState = processHistory.data?.runState ?? (effectiveStatusLabel === "loading" ? undefined : effectiveStatusLabel);
   const runStateLabel = pendingHil ? "awaiting approval" : formatRunStateLabel(runState);
-  const activeRunId = pendingHil?.runId ?? processHistory.data?.activeRunId ?? runIdFromTaskName(activeAgent.tasks[0]?.name);
   const canAbortRun = hasActiveProcess
     && !abortProcess.isPending
     && (Boolean(processHistory.data?.activeRunId) || Boolean(pendingHil) || runState === "running" || runState === "awaiting_hil");
@@ -377,20 +371,6 @@ export function ChatDock({
           </div>
         </div>
       </header>
-
-      <div class="gsv-chat-process">
-        <div class="gsv-chat-process-main">
-          <StatusDot tone={effectiveStatus} size={7} />
-          <span>{runStateLabel}</span>
-        </div>
-        <div class="gsv-chat-process-meta">
-          {hasActiveProcess ? <span>pid {shortId(activeProcessId)}</span> : <span>no pid</span>}
-          {activeRunId ? <span>run {shortId(activeRunId)}</span> : null}
-          {processHistory.data?.messageCount !== undefined ? (
-            <span>{processHistory.data.messageCount} messages</span>
-          ) : null}
-        </div>
-      </div>
 
       {pendingHil ? (
         <section
