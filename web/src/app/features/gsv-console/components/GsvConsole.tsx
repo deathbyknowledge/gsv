@@ -14,12 +14,13 @@ type GsvConsoleProps = {
   activeSurface: Exclude<ShellSurfaceId, "desktop">;
   onBackToDesktop: () => void;
   onOpenSurface?: (surface: Exclude<ShellSurfaceId, "desktop">) => void;
+  onSettingsRouteChange?: (route: SettingsRouteRequestRoute) => void;
   settingsRouteRequest?: SettingsRouteRequest | null;
 };
 
 type SettingsRoute =
   | { view: "overview" }
-  | { view: "list"; kind: ConsoleListKind; detailId?: string; createNew?: boolean }
+  | { view: "list"; kind: ConsoleListKind; detailId?: string; detailLabel?: string; createNew?: boolean }
   | { view: "config"; kind: ConsoleConfigKind }
   | { view: "crew" }
   | { view: "agent"; accountUid: number | null; createNew?: boolean };
@@ -95,7 +96,30 @@ function settingsRouteLabel(route: SettingsRoute): string {
     if (route.kind === "integrations") return "NEW INTEGRATION";
     if (route.kind === "applications") return "NEW APPLICATION";
   }
+  if (route.detailLabel) {
+    return route.detailLabel;
+  }
   return route.kind === "tasks" ? "TASKS" : shellSurfaceLabel(route.kind);
+}
+
+function settingsListRouteLabel(kind: ConsoleListKind): string {
+  return kind === "tasks" ? "TASKS" : shellSurfaceLabel(kind);
+}
+
+function settingsListDetailLabel(route: Extract<SettingsRoute, { view: "list" }>): string {
+  if (route.createNew) {
+    if (route.kind === "machines") return "NEW MACHINE";
+    if (route.kind === "integrations") return "NEW INTEGRATION";
+    if (route.kind === "applications") return "NEW APPLICATION";
+    if (route.kind === "messengers") return "NEW MESSENGER";
+    if (route.kind === "library") return "NEW PACKAGE";
+    return "NEW TASK";
+  }
+  return route.detailLabel ?? route.detailId ?? settingsListRouteLabel(route.kind);
+}
+
+function hasSettingsListDetail(route: SettingsRoute): route is Extract<SettingsRoute, { view: "list" }> {
+  return route.view === "list" && (Boolean(route.detailId) || route.createNew === true);
 }
 
 function settingsRouteTail(route: SettingsRoute): string {
@@ -138,10 +162,15 @@ export function GsvConsole({
   activeSurface,
   onBackToDesktop,
   onOpenSurface,
+  onSettingsRouteChange,
   settingsRouteRequest,
 }: GsvConsoleProps) {
   const [selectedAgentUid, setSelectedAgentUid] = useState<number | null>(null);
   const [settingsRoute, setSettingsRoute] = useState<SettingsRoute>({ view: "overview" });
+  const navigateSettingsRoute = (route: SettingsRoute) => {
+    setSettingsRoute(route);
+    onSettingsRouteChange?.(route);
+  };
   const openAgent = (uid: number) => {
     setSelectedAgentUid(uid);
     onOpenSurface?.("agent");
@@ -149,33 +178,39 @@ export function GsvConsole({
   const backToCrew = () => onOpenSurface?.("crew");
   const openSettingsAgent = (uid: number) => {
     setSelectedAgentUid(uid);
-    setSettingsRoute({ view: "agent", accountUid: uid });
+    navigateSettingsRoute({ view: "agent", accountUid: uid });
   };
   const openSettingsNewAgent = () => {
-    setSettingsRoute({ view: "agent", accountUid: null, createNew: true });
+    navigateSettingsRoute({ view: "agent", accountUid: null, createNew: true });
   };
   const openCreatedSettingsAgent = (uid: number) => {
     setSelectedAgentUid(uid);
-    setSettingsRoute({ view: "agent", accountUid: uid });
+    navigateSettingsRoute({ view: "agent", accountUid: uid });
   };
-  const backToSettingsCrew = () => setSettingsRoute({ view: "crew" });
-  const openSettingsListDetail = (kind: ConsoleListKind, detailId: string) => {
-    setSettingsRoute({ view: "list", kind, detailId });
+  const backToSettingsCrew = () => navigateSettingsRoute({ view: "crew" });
+  const openSettingsListDetail = (kind: ConsoleListKind, detailId: string, detailLabel?: string) => {
+    navigateSettingsRoute({ view: "list", kind, detailId, detailLabel });
   };
   const openSettingsListCreate = (kind: ConsoleListKind) => {
-    setSettingsRoute({ view: "list", kind, createNew: true });
+    navigateSettingsRoute({ view: "list", kind, createNew: true });
+  };
+  const handleSettingsListSelectionChange = (
+    kind: ConsoleListKind,
+    selection: { detailId?: string; detailLabel?: string; createNew?: boolean } | null,
+  ) => {
+    navigateSettingsRoute(selection ? { view: "list", kind, ...selection } : { view: "list", kind });
   };
   const openSettingsSurface = (surface: ConsoleOverviewTarget) => {
     if (surface === "settings") {
-      setSettingsRoute({ view: "overview" });
+      navigateSettingsRoute({ view: "overview" });
       return;
     }
     if (surface === "models" || surface === "overrides") {
-      setSettingsRoute({ view: "config", kind: surface });
+      navigateSettingsRoute({ view: "config", kind: surface });
       return;
     }
     if (surface === "crew") {
-      setSettingsRoute({ view: "crew" });
+      navigateSettingsRoute({ view: "crew" });
       return;
     }
     if (surface === "new-agent") {
@@ -183,11 +218,11 @@ export function GsvConsole({
       return;
     }
     if (surface === "agent") {
-      setSettingsRoute({ view: "agent", accountUid: selectedAgentUid });
+      navigateSettingsRoute({ view: "agent", accountUid: selectedAgentUid });
       return;
     }
     if (isSettingsListSurface(surface)) {
-      setSettingsRoute({ view: "list", kind: listKindForSurface(surface) });
+      navigateSettingsRoute({ view: "list", kind: listKindForSurface(surface) });
       return;
     }
     onOpenSurface?.(surface);
@@ -204,18 +239,23 @@ export function GsvConsole({
   }, [activeSurface, settingsRouteRequest]);
 
   const inNestedSettings = activeSurface === "settings" && settingsRoute.view !== "overview";
-  const inSettingsListDetail = activeSurface === "settings"
-    && settingsRoute.view === "list"
-    && (Boolean(settingsRoute.detailId) || settingsRoute.createNew === true);
+  const inSettingsListDetail = activeSurface === "settings" && hasSettingsListDetail(settingsRoute);
   const crumbs: ConsoleCrumb[] = activeSurface === "settings"
     ? [
         { label: "GSV", onClick: onBackToDesktop, notLast: true },
         {
           label: "SETTINGS",
-          onClick: inNestedSettings ? () => setSettingsRoute({ view: "overview" }) : undefined,
+          onClick: inNestedSettings ? () => navigateSettingsRoute({ view: "overview" }) : undefined,
           notLast: inNestedSettings,
         },
-        ...(inNestedSettings ? [{ label: settingsRouteLabel(settingsRoute) }] : []),
+        ...(inSettingsListDetail ? [
+          {
+            label: settingsListRouteLabel(settingsRoute.kind),
+            onClick: () => navigateSettingsRoute({ view: "list", kind: settingsRoute.kind }),
+            notLast: true,
+          },
+          { label: settingsListDetailLabel(settingsRoute) },
+        ] : inNestedSettings ? [{ label: settingsRouteLabel(settingsRoute) }] : []),
       ]
     : [
         { label: "GSV", onClick: onBackToDesktop, notLast: true },
@@ -224,14 +264,14 @@ export function GsvConsole({
   const headerBack = activeSurface === "settings" && settingsRoute.view !== "overview"
     ? () => {
         if (settingsRoute.view === "agent") {
-          setSettingsRoute({ view: "crew" });
+          navigateSettingsRoute({ view: "crew" });
           return;
         }
         if (inSettingsListDetail && settingsRoute.view === "list") {
-          setSettingsRoute({ view: "list", kind: settingsRoute.kind });
+          navigateSettingsRoute({ view: "list", kind: settingsRoute.kind });
           return;
         }
-        setSettingsRoute({ view: "overview" });
+        navigateSettingsRoute({ view: "overview" });
       }
     : onBackToDesktop;
   const tail = activeSurface === "settings" ? settingsRouteTail(settingsRoute) : surfaceTail(activeSurface);
@@ -256,7 +296,9 @@ export function GsvConsole({
             <ConsoleListPage
               initialCreate={settingsRoute.createNew === true}
               initialDetailId={settingsRoute.detailId}
+              initialDetailLabel={settingsRoute.detailLabel}
               kind={settingsRoute.kind}
+              onSelectionChange={(selection) => handleSettingsListSelectionChange(settingsRoute.kind, selection)}
             />
           ) : settingsRoute.view === "config" ? (
             <ConsoleConfigPage kind={settingsRoute.kind} />

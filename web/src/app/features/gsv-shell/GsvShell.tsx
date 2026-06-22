@@ -249,6 +249,7 @@ export function GsvShell({
                 activeSurface={shell.activeSurface}
                 onBackToDesktop={shell.backToDesktop}
                 onOpenSurface={openShellSurface}
+                onSettingsRouteChange={shell.syncActiveSettingsRoute}
                 settingsRouteRequest={settingsRouteRequest}
               />
             ) : shell.desktopCollapsed ? (
