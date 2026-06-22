@@ -86,6 +86,9 @@ function normalizeMessageText(value: unknown): string {
           const text = (part as { text?: unknown }).text;
           return typeof text === "string" ? text : "";
         }
+        if (part && typeof part === "object" && "output" in part) {
+          return normalizeMessageText((part as { output?: unknown }).output);
+        }
         return "";
       })
       .filter(Boolean)
@@ -95,6 +98,17 @@ function normalizeMessageText(value: unknown): string {
   if (value && typeof value === "object" && "text" in value) {
     const text = (value as { text?: unknown }).text;
     return typeof text === "string" ? text : "";
+  }
+
+  if (value && typeof value === "object" && "output" in value) {
+    return normalizeMessageText((value as { output?: unknown }).output);
+  }
+
+  if (value && typeof value === "object" && "toolName" in value) {
+    const toolName = (value as { toolName?: unknown }).toolName;
+    return typeof toolName === "string" && toolName.trim()
+      ? `Tool result: ${toolName}`
+      : "";
   }
 
   return "";
