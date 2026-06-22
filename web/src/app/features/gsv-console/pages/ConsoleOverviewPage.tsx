@@ -1,3 +1,4 @@
+import { AsciiPlanet } from "../../../components/ui/AsciiPlanet";
 import { Checkbox } from "../../../components/ui/Checkbox";
 import { CrewAddTile, CrewTile } from "../../../components/ui/CrewTile";
 import { Icon } from "../../../components/ui/Icon";
@@ -358,7 +359,9 @@ function ShipPanel({
     <section class="gsv-settings-block gsv-settings-ship-block">
       <SectionHeader title="THE SHIP" divider />
       <div class="gsv-settings-ship-visual">
-        <img class="gsv-settings-ship-render" src="/img/ship-render.png" alt="" draggable={false} />
+        <div class="gsv-settings-ship-orbit">
+          <AsciiPlanet variant="moon" formDuration={3.4} label="GSV ship scan" />
+        </div>
         <span class="gsv-settings-scan">SCAN {scanCode(data)}</span>
         <span class="gsv-settings-ship-id">GSV-01</span>
       </div>
