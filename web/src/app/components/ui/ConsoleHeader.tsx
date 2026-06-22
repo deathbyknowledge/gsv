@@ -83,11 +83,17 @@ export function ConsoleHeader({
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: "12px", minWidth: 0 }}>
-        <div onClick={onBack} class="gsv-ch-back">
-          <svg width="9" height="12" viewBox="0 0 9 12">
+        <button
+          type="button"
+          aria-label="Back"
+          class="gsv-ch-back"
+          disabled={!onBack}
+          onClick={onBack}
+        >
+          <svg width="9" height="12" viewBox="0 0 9 12" aria-hidden="true">
             <path d="M9 0 L0 6 L9 12 Z" fill="var(--accent)" />
           </svg>
-        </div>
+        </button>
         <span
           style={{
             width: "8px",

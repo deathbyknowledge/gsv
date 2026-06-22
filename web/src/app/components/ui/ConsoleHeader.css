@@ -9,6 +9,9 @@
 }
 
 .gsv-ch-back {
+  appearance: none;
+  margin: 0;
+  padding: 0;
   flex: none;
   width: 24px;
   height: 24px;
@@ -20,7 +23,13 @@
   background: var(--panel);
   transition: background 0.12s;
 }
-.gsv-ch-back:hover {
+.gsv-ch-back:not(:disabled):hover,
+.gsv-ch-back:not(:disabled):focus-visible {
   border-color: var(--accent) !important;
   background: var(--hover) !important;
+  outline: none;
+}
+.gsv-ch-back:disabled {
+  cursor: default;
+  opacity: 0.45;
 }
