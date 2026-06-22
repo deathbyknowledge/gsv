@@ -66,16 +66,10 @@
   clip-path: polygon(calc(100% - 42px) calc(100% - 1px), calc(100% - 1px) calc(100% - 1px), calc(100% - 1px) calc(100% - 42px), 100% calc(100% - 42px), 100% 100%, calc(100% - 42px) 100%);
 }
 
-.gsv-settings-ship-visual pre {
-  margin: 0;
-  color: #bdb8ff;
-  font-family: var(--gsv-font-mono);
-  font-size: 11px;
-  line-height: 0.86;
-  letter-spacing: 0;
-  text-align: center;
-  text-shadow: 0 0 8px rgba(150, 140, 255, 0.55);
-  white-space: pre;
+.gsv-settings-ship-orbit {
+  transform: scale(1.12);
+  transform-origin: center;
+  opacity: 0.98;
 }
 
 .gsv-settings-scan,
@@ -498,8 +492,8 @@
     height: 150px;
   }
 
-  .gsv-settings-ship-visual pre {
-    font-size: 9px;
+  .gsv-settings-ship-orbit {
+    transform: scale(0.88);
   }
 
   .gsv-settings-deep-cell {

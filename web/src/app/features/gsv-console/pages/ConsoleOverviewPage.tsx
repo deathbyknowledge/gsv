@@ -1,3 +1,4 @@
+import { AsciiPlanet } from "../../../components/ui/AsciiPlanet";
 import { AgentImage } from "../../../components/ui/AgentImage";
 import { Icon } from "../../../components/ui/Icon";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
@@ -56,20 +57,6 @@ type OverviewSurface = Exclude<ShellSurfaceId, "desktop">;
 type OpenSurface = (surface: OverviewSurface) => void;
 
 const DASHBOARD_ROW_LIMIT = 5;
-const SHIP_ART = String.raw`
-        .:++***++:.
-     .=############=.
-   .+################+.
-  .####################.
-  +####################+
-  *####################*
-  +####################+
-  .####################.
-   .+################+.
-     .=############=.
-        .:++***++:.
-`;
-
 function isApplicationPackage(pkg: ConsolePackage): boolean {
   return pkg.runtime === "web-ui" || pkg.uiEntrypoints.length > 0;
 }
@@ -338,7 +325,9 @@ function ShipPanel({
     <section class="gsv-settings-block gsv-settings-ship-block">
       <SectionHeader title="THE SHIP" divider />
       <div class="gsv-settings-ship-visual">
-        <pre aria-hidden="true">{SHIP_ART}</pre>
+        <div class="gsv-settings-ship-orbit">
+          <AsciiPlanet variant="moon" formDuration={3.4} label="GSV ship scan" />
+        </div>
         <span class="gsv-settings-scan">SCAN {scanCode(data)}</span>
         <span class="gsv-settings-ship-id">GSV-01</span>
       </div>
