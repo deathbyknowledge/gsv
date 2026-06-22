@@ -5,11 +5,13 @@ import { SectionHeader } from "../../../components/ui/SectionHeader";
 import { StatusDot, type StatusTone } from "../../../components/ui/StatusDot";
 import { Tag, type TagTone } from "../../../components/ui/Tag";
 import {
+  useConsoleAdapters,
   useConsolePackages,
   useConsoleProcesses,
   useConsoleTargets,
 } from "../hooks/useConsoleData";
 import type {
+  ConsoleAdapterAccount,
   ConsolePackage,
   ConsolePackageEntrypoint,
   ConsolePackageRuntime,
@@ -34,7 +36,8 @@ import {
 } from "./ConsoleDetailBlocks";
 import "./ConsoleListPage.css";
 
-type ConsoleListKind = "machines" | "library" | "tasks";
+type ConsoleListKind = "machines" | "library" | "tasks" | "messengers" | "integrations" | "applications";
+type PackageListKind = "library" | "integrations" | "applications";
 
 type ConsoleListPageProps = {
   kind: ConsoleListKind;
@@ -75,6 +78,9 @@ const EMPTY_RESOURCE_LABEL: Record<ConsoleListKind, string> = {
   machines: "NO MACHINES",
   library: "NO PACKAGES",
   tasks: "NO PROCESSES",
+  messengers: "NO MESSENGERS",
+  integrations: "NO INTEGRATIONS",
+  applications: "NO APPLICATIONS",
 };
 
 const TARGET_KIND_LABEL: Record<ConsoleTargetKind, string> = {
@@ -93,8 +99,10 @@ const RUNTIME_LABEL: Record<ConsolePackageRuntime, string> = {
 
 export function ConsoleListPage({ kind }: ConsoleListPageProps) {
   const targets = useConsoleTargets({ enabled: kind === "machines" });
-  const packages = useConsolePackages({ enabled: kind === "library" });
+  const packageKind = isPackageListKind(kind) ? kind : null;
+  const packages = useConsolePackages({ enabled: packageKind !== null });
   const processes = useConsoleProcesses({ enabled: kind === "tasks" });
+  const adapters = useConsoleAdapters({ enabled: kind === "messengers" });
 
   if (kind === "tasks") {
     return (
@@ -132,21 +140,44 @@ export function ConsoleListPage({ kind }: ConsoleListPageProps) {
     );
   }
 
+  if (kind === "messengers") {
+    return (
+      <ConsolePage>
+        <ConsoleResourceBoundary
+          resource={resourceWithLocalEmptyState(adapters.resource)}
+          emptyLabel={EMPTY_RESOURCE_LABEL.messengers}
+          errorLabel="MESSENGERS"
+          render={(data) => (
+            <MessengersConsoleSection
+              adapters={data}
+              refreshing={adapters.resource.isRefreshing}
+            />
+          )}
+        />
+      </ConsolePage>
+    );
+  }
+
   return (
     <ConsolePage>
       <ConsoleResourceBoundary
         resource={resourceWithLocalEmptyState(packages.resource)}
-        emptyLabel={EMPTY_RESOURCE_LABEL.library}
-        errorLabel="LIBRARY"
+        emptyLabel={EMPTY_RESOURCE_LABEL[packageKind ?? "library"]}
+        errorLabel={packageKind === "applications" ? "APPLICATIONS" : packageKind === "integrations" ? "INTEGRATIONS" : "LIBRARY"}
         render={(data) => (
           <LibraryConsoleSection
-            packages={data}
+            kind={packageKind ?? "library"}
+            packages={filterPackagesForKind(data, packageKind ?? "library")}
             refreshing={packages.resource.isRefreshing}
           />
         )}
       />
     </ConsolePage>
   );
+}
+
+function isPackageListKind(kind: ConsoleListKind): kind is PackageListKind {
+  return kind === "library" || kind === "integrations" || kind === "applications";
 }
 
 function resourceWithLocalEmptyState<T>(resource: ConsoleResourceState<T>): ConsoleResourceState<T> {
@@ -468,13 +499,100 @@ function MachinesConsoleSection({
   );
 }
 
+function MessengersConsoleSection({
+  adapters,
+  refreshing,
+}: {
+  adapters: readonly ConsoleAdapterAccount[];
+  refreshing: boolean;
+}) {
+  const connected = adapters.filter((adapter) => adapter.connected && adapter.authenticated && !adapter.error);
+  const attention = adapters.filter((adapter) => adapter.error || !adapter.authenticated);
+  const idle = adapters.filter((adapter) => !connected.includes(adapter) && !attention.includes(adapter));
+  const authenticated = adapters.filter((adapter) => adapter.authenticated);
+  const errors = adapters.filter((adapter) => adapter.error);
+  const adapterNames = uniqueSorted(adapters.map((adapter) => adapter.adapter));
+  const latestActivity = newestTimestamp(adapters.map((adapter) => adapter.lastActivity));
+
+  return (
+    <OperationalLayout
+      title="MESSENGERS"
+      meta={refreshing ? "REFRESHING" : `${connected.length}/${adapters.length} CONNECTED`}
+      signals={[
+        { label: "CONNECTED", value: connected.length, meta: `${adapters.length} ACCOUNTS`, tone: connected.length > 0 ? "online" : "idle" },
+        { label: "AUTH", value: authenticated.length, meta: "VALID SESSIONS", tone: authenticated.length === adapters.length ? "online" : "warn" },
+        { label: "ERROR", value: errors.length, meta: "CHANNEL FAULTS", tone: errors.length > 0 ? "error" : "online" },
+        { label: "ACTIVE", value: latestActivity ? formatAge(latestActivity) : "NONE", meta: "LAST ACTIVITY", tone: latestActivity ? "live" : "idle" },
+      ]}
+      rail={(
+        <>
+          <RailSection title="CHANNEL STATE" meta={errors.length > 0 ? "ATTENTION" : "NORMAL"}>
+            <RailSignalRow icon="chat" label="CONNECTED ACCOUNTS" meta={`${connected.length} live channels`} tone={connected.length > 0 ? "online" : "idle"} />
+            <RailSignalRow icon="cog" label="AUTH REQUIRED" meta={`${adapters.filter((adapter) => !adapter.authenticated).length} accounts`} tone={adapters.some((adapter) => !adapter.authenticated) ? "warn" : "online"} />
+            <RailSignalRow icon="tag" label="ERROR STATE" meta={`${errors.length} accounts`} tone={errors.length > 0 ? "error" : "online"} />
+          </RailSection>
+          <RailSection title="ADAPTERS" meta={`${adapterNames.length} TYPES`}>
+            {adapterNames.length === 0 ? (
+              <RailSignalRow icon="chat" label="NO ADAPTERS" meta="adapter.status returned no accounts" tone="idle" />
+            ) : adapterNames.map((adapter) => (
+              <RailSignalRow
+                key={adapter}
+                icon={iconForAdapterName(adapter)}
+                label={adapter.toUpperCase()}
+                meta={`${adapters.filter((entry) => entry.adapter === adapter).length} accounts`}
+                tone={adapters.some((entry) => entry.adapter === adapter && entry.connected) ? "online" : "idle"}
+              />
+            ))}
+          </RailSection>
+        </>
+      )}
+    >
+      <AdapterGroup title="CONNECTED CHANNELS" adapters={connected} emptyLabel="NO CONNECTED CHANNELS" />
+      <AdapterGroup title="NEEDS ATTENTION" adapters={attention} emptyLabel="NO CHANNELS NEED ATTENTION" />
+      <AdapterGroup title="IDLE CHANNELS" adapters={idle} emptyLabel="NO IDLE CHANNELS" />
+    </OperationalLayout>
+  );
+}
+
+function AdapterGroup({
+  title,
+  adapters,
+  emptyLabel,
+}: {
+  title: string;
+  adapters: readonly ConsoleAdapterAccount[];
+  emptyLabel: string;
+}) {
+  return (
+    <InventoryGroup title={title} meta={`${adapters.length} CHANNELS`} emptyLabel={emptyLabel} isEmpty={adapters.length === 0}>
+      {adapters.map((adapter) => (
+        <OperationalRow
+          key={`${adapter.adapter}:${adapter.accountId}`}
+          icon={iconForAdapterName(adapter.adapter)}
+          label={adapterLabel(adapter)}
+          sub={adapterSub(adapter)}
+          tone={toneForAdapter(adapter)}
+          statusLabel={statusForAdapter(adapter)}
+          detail={adapterDetail(adapter)}
+          tags={adapterTags(adapter)}
+          details={<AdapterDetails adapter={adapter} />}
+        />
+      ))}
+    </InventoryGroup>
+  );
+}
+
 function LibraryConsoleSection({
+  kind,
   packages,
   refreshing,
 }: {
+  kind: PackageListKind;
   packages: readonly ConsolePackage[];
   refreshing: boolean;
 }) {
+  const title = packageListTitle(kind);
+  const noun = packageListNoun(kind);
   const reviewQueue = packages.filter((pkg) => pkg.reviewPending);
   const enabled = packages.filter((pkg) => pkg.enabled && !pkg.reviewPending);
   const disabled = packages.filter((pkg) => !pkg.enabled && !pkg.reviewPending);
@@ -484,8 +602,8 @@ function LibraryConsoleSection({
 
   return (
     <OperationalLayout
-      title="LIBRARY"
-      meta={refreshing ? "REFRESHING" : `${packages.length} PACKAGES`}
+      title={title}
+      meta={refreshing ? "REFRESHING" : `${packages.length} ${noun}${packages.length === 1 ? "" : "S"}`}
       signals={[
         { label: "REVIEW", value: reviewQueue.length, meta: "PENDING", tone: reviewQueue.length > 0 ? "update" : "online" },
         { label: "ENABLED", value: enabled.length, meta: "INSTALLED", tone: enabled.length > 0 ? "online" : "idle" },
@@ -513,8 +631,8 @@ function LibraryConsoleSection({
       )}
     >
       <PackageGroup title="REVIEW QUEUE" packages={reviewQueue} emptyLabel="NO PACKAGES WAITING FOR REVIEW" />
-      <PackageGroup title="ENABLED PACKAGES" packages={enabled} emptyLabel="NO ENABLED PACKAGES" />
-      <PackageGroup title="DISABLED PACKAGES" packages={disabled} emptyLabel="NO DISABLED PACKAGES" />
+      <PackageGroup title={`ENABLED ${noun}S`} packages={enabled} emptyLabel={`NO ENABLED ${noun}S`} />
+      <PackageGroup title={`DISABLED ${noun}S`} packages={disabled} emptyLabel={`NO DISABLED ${noun}S`} />
     </OperationalLayout>
   );
 }
@@ -568,6 +686,19 @@ function TargetDetails({ target }: { target: ConsoleTarget }) {
         title="CAPABILITIES"
         emptyLabel="NO CAPABILITIES DECLARED"
         chips={targetCapabilityChips(target)}
+      />
+    </ConsoleRowDetails>
+  );
+}
+
+function AdapterDetails({ adapter }: { adapter: ConsoleAdapterAccount }) {
+  return (
+    <ConsoleRowDetails summary="MESSENGER DETAIL">
+      <ConsoleDetailGrid fields={adapterDetailFields(adapter)} />
+      <ConsoleDetailChips
+        title="CHANNEL FLAGS"
+        emptyLabel="NO CHANNEL FLAGS"
+        chips={adapterContextChips(adapter)}
       />
     </ConsoleRowDetails>
   );
@@ -643,6 +774,31 @@ function targetCapabilityChips(target: ConsoleTarget): ConsoleDetailChip[] {
     label: capability,
     tone: target.online ? "accent" : "idle",
   }));
+}
+
+function adapterDetailFields(adapter: ConsoleAdapterAccount): ConsoleDetailField[] {
+  return [
+    { label: "ADAPTER", value: adapter.adapter, tone: "info" },
+    { label: "ACCOUNT ID", value: adapter.accountId, wide: true },
+    { label: "STATE", value: statusForAdapter(adapter), tone: tagToneForAdapter(adapter) },
+    { label: "CONNECTED", value: yesNo(adapter.connected), tone: adapter.connected ? "online" : "idle" },
+    { label: "AUTHENTICATED", value: yesNo(adapter.authenticated), tone: adapter.authenticated ? "online" : "warn" },
+    { label: "MODE", value: adapter.mode },
+    { label: "ERROR", value: adapter.error, tone: adapter.error ? "error" : "idle", wide: true },
+    { label: "LAST ACTIVITY", value: formatTimestampTrace(adapter.lastActivity), wide: true },
+  ];
+}
+
+function adapterContextChips(adapter: ConsoleAdapterAccount): ConsoleDetailChip[] {
+  const chips: ConsoleDetailChip[] = [
+    { label: statusForAdapter(adapter), tone: tagToneForAdapter(adapter) },
+  ];
+  if (adapter.connected) chips.push({ label: "CONNECTED", tone: "online" });
+  if (adapter.authenticated) chips.push({ label: "AUTHENTICATED", tone: "online" });
+  if (!adapter.authenticated) chips.push({ label: "AUTH REQUIRED", tone: "warn" });
+  if (adapter.mode) chips.push({ label: adapter.mode.toUpperCase(), tone: "info" });
+  if (adapter.error) chips.push({ label: "ERROR", tone: "error" });
+  return chips;
 }
 
 function packageDetailFields(pkg: ConsolePackage): ConsoleDetailField[] {
@@ -786,8 +942,90 @@ function targetTags(target: ConsoleTarget): RowTag[] {
   return tags;
 }
 
+function iconForAdapterName(adapter: string): string {
+  if (adapter === "telegram") return "telegram";
+  if (adapter === "discord") return "discord";
+  return "chat";
+}
+
+function adapterLabel(adapter: ConsoleAdapterAccount): string {
+  return `${formatTokenLabel(adapter.adapter)} · ${adapter.accountId}`;
+}
+
+function adapterSub(adapter: ConsoleAdapterAccount): string {
+  return compactText([
+    adapter.mode ? `mode ${adapter.mode}` : "",
+    adapter.lastActivity !== null ? `active ${formatAge(adapter.lastActivity)}` : "",
+    adapter.error,
+  ], `${adapter.adapter}:${adapter.accountId}`);
+}
+
+function adapterDetail(adapter: ConsoleAdapterAccount): string {
+  if (adapter.error) return "ERROR";
+  if (adapter.lastActivity !== null) return `ACTIVE ${formatAge(adapter.lastActivity)}`;
+  if (adapter.connected) return "LIVE SIGNAL";
+  return "NO ACTIVITY";
+}
+
+function toneForAdapter(adapter: ConsoleAdapterAccount): StatusTone {
+  if (adapter.error) return "error";
+  if (adapter.connected && adapter.authenticated) return "online";
+  if (adapter.connected && !adapter.authenticated) return "warn";
+  return "idle";
+}
+
+function statusForAdapter(adapter: ConsoleAdapterAccount): string {
+  if (adapter.error) return "ERROR";
+  if (adapter.connected && adapter.authenticated) return "CONNECTED";
+  if (adapter.connected) return "AUTH REQUIRED";
+  return "DISCONNECTED";
+}
+
+function tagToneForAdapter(adapter: ConsoleAdapterAccount): TagTone {
+  if (adapter.error) return "error";
+  if (adapter.connected && adapter.authenticated) return "online";
+  if (adapter.connected) return "warn";
+  return "idle";
+}
+
+function adapterTags(adapter: ConsoleAdapterAccount): RowTag[] {
+  const tags: RowTag[] = [
+    { label: formatTokenLabel(adapter.adapter).toUpperCase(), tone: "info" },
+    { label: statusForAdapter(adapter), tone: tagToneForAdapter(adapter) },
+  ];
+  if (adapter.mode) tags.push({ label: adapter.mode.toUpperCase(), tone: "idle" });
+  if (adapter.error) tags.push({ label: "ERROR", tone: "error" });
+  return tags;
+}
+
 function isTrustedPackage(pkg: ConsolePackage): boolean {
   return !pkg.reviewRequired || pkg.reviewApprovedAt !== null;
+}
+
+function filterPackagesForKind(packages: readonly ConsolePackage[], kind: PackageListKind): ConsolePackage[] {
+  if (kind === "applications") {
+    return packages.filter(isApplicationPackage);
+  }
+  if (kind === "integrations") {
+    return packages.filter((pkg) => !isApplicationPackage(pkg));
+  }
+  return [...packages];
+}
+
+function isApplicationPackage(pkg: ConsolePackage): boolean {
+  return pkg.runtime === "web-ui" || pkg.uiEntrypoints.length > 0 || pkg.entrypoints.some((entrypoint) => entrypoint.kind === "ui");
+}
+
+function packageListTitle(kind: PackageListKind): string {
+  if (kind === "applications") return "APPLICATIONS";
+  if (kind === "integrations") return "INTEGRATIONS";
+  return "LIBRARY";
+}
+
+function packageListNoun(kind: PackageListKind): string {
+  if (kind === "applications") return "APPLICATION";
+  if (kind === "integrations") return "INTEGRATION";
+  return "PACKAGE";
 }
 
 function toneForPackage(pkg: ConsolePackage): StatusTone {
@@ -877,6 +1115,18 @@ function compactText(parts: readonly (string | null | undefined)[], fallback: st
     .filter(Boolean)
     .join(" / ");
   return value || fallback;
+}
+
+function formatTokenLabel(value: string): string {
+  return value
+    .split(/[-_.:/\s]+/g)
+    .filter(Boolean)
+    .map((part) => part.length <= 3 ? part.toUpperCase() : `${part.slice(0, 1).toUpperCase()}${part.slice(1).toLowerCase()}`)
+    .join(" ") || "Unknown";
+}
+
+function uniqueSorted(values: readonly string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))].sort((left, right) => left.localeCompare(right));
 }
 
 function uidLabel(uid: number | null): string {
