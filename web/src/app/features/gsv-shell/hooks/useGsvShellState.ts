@@ -5,14 +5,13 @@ import {
   shellSurfaceLabel,
   shellTabForSurface,
   type DesktopObject,
-  type DesktopGlyph,
   type DesktopObjectId,
   type ShellRailMode,
   type ShellSurfaceId,
   type ShellTab,
 } from "../domain/shellModel";
 
-export type PickerId = DesktopObjectId | "gsv" | "tabs";
+export type PickerId = DesktopObjectId | "gsv";
 
 export type PickerCard = {
   key: string;
@@ -20,8 +19,7 @@ export type PickerCard = {
   type: string;
   blurb: string;
   status: "online" | "error" | "idle" | "warn" | "live";
-  glyph?: DesktopGlyph;
-  icon?: string;
+  glyph?: DesktopObject["children"][number]["glyph"];
   onClick: () => void;
 };
 
@@ -76,43 +74,6 @@ function surfaceForDesktopObject(parentId: DesktopObjectId): ShellSurfaceId {
     return "applications";
   }
   return "settings";
-}
-
-function iconForSurface(surface: ShellSurfaceId): string {
-  if (surface === "machines") {
-    return "computer";
-  }
-  if (surface === "messengers") {
-    return "chat";
-  }
-  if (surface === "integrations") {
-    return "weblink";
-  }
-  if (surface === "applications") {
-    return "stars";
-  }
-  if (surface === "files") {
-    return "folder";
-  }
-  if (surface === "library") {
-    return "pencil";
-  }
-  if (surface === "terminal") {
-    return "terminal";
-  }
-  if (surface === "runtime") {
-    return "list";
-  }
-  if (surface === "settings") {
-    return "cog";
-  }
-  if (surface === "crew" || surface === "agent") {
-    return "chat";
-  }
-  if (surface === "object") {
-    return "tag";
-  }
-  return "stars";
 }
 
 export function useGsvShellState({
@@ -228,35 +189,6 @@ export function useGsvShellState({
     setPickerId("gsv");
   };
 
-  const activateTab = (key: string): void => {
-    if (!tabs.some((tab) => tab.key === key)) {
-      return;
-    }
-    setActiveTabKey(key);
-    setSelectedObjectId(null);
-    setPickerId(null);
-    setGsvOpen(false);
-  };
-
-  const closeTab = (key: string): void => {
-    const closedIndex = tabs.findIndex((tab) => tab.key === key);
-    if (closedIndex < 0) {
-      return;
-    }
-
-    const next = tabs.filter((tab) => tab.key !== key);
-    setTabs(next);
-    if (activeTabKey === key) {
-      const fallback = next[Math.min(closedIndex, next.length - 1)] ?? null;
-      setActiveTabKey(fallback?.key ?? null);
-      if (!fallback) {
-        setRailMode("objects");
-        setPickerId(null);
-        setGsvOpen(false);
-      }
-    }
-  };
-
   const startChatDrag = (event: JSX.TargetedMouseEvent<HTMLDivElement>): void => {
     event.preventDefault();
     const rect = rootRef.current?.getBoundingClientRect();
@@ -299,21 +231,8 @@ export function useGsvShellState({
     setChatWidth(maxChatWidth);
   };
 
-  const pickerObject = pickerId && pickerId !== "tabs" && pickerId !== "gsv" ? getDesktopObject(desktopObjects, pickerId) : null;
-  const pickerCards: PickerCard[] = pickerId === "tabs"
-    ? tabs.map((tab) => ({
-        key: tab.key,
-        label: tab.title,
-        type: "OPEN TAB",
-        blurb: tab.key === activeTabKey ? "Currently active in the central panel." : "Open page. Select to bring it forward.",
-        status: tab.key === activeTabKey ? "live" as const : "online" as const,
-        icon: iconForSurface(tab.surface),
-        onClick: () => {
-          setActiveTabKey(tab.key);
-          setPickerId(null);
-        },
-      }))
-    : pickerObject?.children.map((child) => ({
+  const pickerObject = pickerId && pickerId !== "gsv" ? getDesktopObject(desktopObjects, pickerId) : null;
+  const pickerCards: PickerCard[] = pickerObject?.children.map((child) => ({
         key: child.id,
         label: child.label,
         type: child.type,
@@ -326,19 +245,13 @@ export function useGsvShellState({
       })) ?? [];
   const pickerTitle = pickerId === "gsv"
     ? "GSV // CONTROL"
-    : pickerId === "tabs"
-      ? "OPEN TABS · SELECT TAB"
-      : `${pickerObject?.label ?? "OBJECTS"} · SELECT AN OBJECT`;
+    : `${pickerObject?.label ?? "OBJECTS"} · SELECT AN OBJECT`;
   const pickerSubtitle = pickerId === "gsv"
     ? "System surfaces"
-    : pickerId === "tabs"
-      ? `${tabs.length} open ${tabs.length === 1 ? "tab" : "tabs"}`
-      : pickerObject
+    : pickerObject
         ? `${pickerObject.meta} · ${pickerObject.statusLabel}`
         : "No branch selected";
-  const pickerEmptyLabel = pickerId === "tabs"
-    ? "NO OPEN TABS"
-    : pickerId === "gsv"
+  const pickerEmptyLabel = pickerId === "gsv"
       ? ""
       : "NO OBJECTS";
 
@@ -352,11 +265,9 @@ export function useGsvShellState({
     activeSurface,
     activeTab,
     activeTabKey,
-    activateTab,
     backToDesktop,
     chatDragging,
     chatOpen,
-    closeTab,
     desktopCollapsed,
     gsvOpen,
     maxChatWidth,
@@ -382,7 +293,6 @@ export function useGsvShellState({
     showRail,
     startChatDrag,
     statusContext,
-    tabs,
     toggleChatMax,
     toggleRailCollapsed: () => setManualRailCollapsed((value) => !value),
   };

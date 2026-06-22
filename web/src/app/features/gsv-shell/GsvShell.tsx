@@ -1,7 +1,6 @@
 import type { RefObject } from "preact";
 import type { ProcHistoryMessage } from "@humansandmachines/gsv/protocol";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { Icon } from "../../components/ui/Icon";
 import { IconMenu } from "../../components/ui/IconMenu";
 import { ObjectCard } from "../../components/ui/ObjectCard";
 import { StatusDot } from "../../components/ui/StatusDot";
@@ -259,8 +258,6 @@ export function GsvShell({
                 desktopObjects={desktopObjects}
                 selectedObjectId={shell.selectedObjectId}
                 gsvOpen={shell.gsvOpen}
-                tabs={shell.tabs}
-                activeTabKey={shell.activeTabKey}
                 onSelectObject={(id) => {
                   shell.setSelectedObjectId(id);
                   shell.setGsvOpen(false);
@@ -270,8 +267,6 @@ export function GsvShell({
                   shell.setSelectedObjectId(null);
                 }}
                 onOpenSurface={shell.openSurface}
-                onSelectTab={shell.activateTab}
-                onCloseTab={shell.closeTab}
               />
             )}
 
@@ -288,7 +283,7 @@ export function GsvShell({
                     <div>
                       <span>{shell.pickerTitle}</span>
                       <small>
-                        <StatusDot tone={shell.pickerObject?.status ?? (shell.pickerId === "tabs" ? "live" : "online")} size={7} />
+                        <StatusDot tone={shell.pickerObject?.status ?? "online"} size={7} />
                         {shell.pickerSubtitle}
                       </small>
                     </div>
@@ -319,7 +314,6 @@ export function GsvShell({
                           blurb={card.blurb}
                           status={card.status}
                           glyph={card.glyph}
-                          icon={card.icon ? <Icon name={card.icon} size={20} color="var(--accent-bright)" /> : undefined}
                           width={238}
                           onClick={card.onClick}
                         />
