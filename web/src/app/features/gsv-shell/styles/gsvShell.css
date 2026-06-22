@@ -474,8 +474,7 @@
   letter-spacing: 0.18em;
 }
 
-.gsv-space-tabs-card,
-.gsv-collapsed-tabs-card {
+.gsv-space-tabs-card {
   position: absolute;
   z-index: 8;
   left: 0;
@@ -502,21 +501,18 @@
   justify-content: center;
 }
 
-.gsv-space-tabs-card > span:not(.gsv-space-tabs-icon),
-.gsv-collapsed-tabs-card > span {
+.gsv-space-tabs-card > span:not(.gsv-space-tabs-icon) {
   font-size: 11px;
   letter-spacing: 0.32em;
 }
 
-.gsv-space-tabs-card strong,
-.gsv-collapsed-tabs-card strong {
+.gsv-space-tabs-card strong {
   color: #7d78b8;
   font-size: 10px;
   letter-spacing: 0.08em;
 }
 
-.gsv-space-tabs-card small,
-.gsv-collapsed-tabs-card small {
+.gsv-space-tabs-card small {
   margin-left: auto;
   color: var(--text-dim);
   font-size: 9px;
@@ -525,9 +521,7 @@
 }
 
 .gsv-space-tabs-card:hover,
-.gsv-space-tabs-card:focus-visible,
-.gsv-collapsed-tabs-card:hover,
-.gsv-collapsed-tabs-card:focus-visible {
+.gsv-space-tabs-card:focus-visible {
   background: var(--hover-nav);
   outline: none;
 }
@@ -1691,8 +1685,7 @@
     margin-top: 32px;
   }
 
-  .gsv-space-tabs-card,
-  .gsv-collapsed-tabs-card {
+  .gsv-space-tabs-card {
     width: min(248px, calc(100% - 24px));
     bottom: 44px;
   }

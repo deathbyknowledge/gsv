@@ -98,19 +98,15 @@ function useClock(): string {
 type CollapsedDesktopProps = {
   desktopObjects: readonly DesktopObject[];
   totalDesktopObjects: number;
-  tabCount: number;
   onOpenPicker: (id: DesktopObjectId) => void;
   onOpenControlMenu: () => void;
-  onActivateTabs: () => void;
 };
 
 function CollapsedDesktop({
   desktopObjects,
   totalDesktopObjects,
-  tabCount,
   onOpenPicker,
   onOpenControlMenu,
-  onActivateTabs,
 }: CollapsedDesktopProps) {
   return (
     <div class="gsv-collapsed-desktop">
@@ -138,18 +134,6 @@ function CollapsedDesktop({
           ))}
         </div>
       </div>
-      {tabCount > 0 ? (
-        <button
-          type="button"
-          class="gsv-collapsed-tabs-card"
-          aria-label={`Open ${tabCount} ${tabCount === 1 ? "tab" : "tabs"}`}
-          onClick={onActivateTabs}
-        >
-          <span>TABS</span>
-          <strong>{tabCount}</strong>
-          <small>select</small>
-        </button>
-      ) : null}
     </div>
   );
 }
@@ -300,10 +284,8 @@ export function GsvShell({
               <CollapsedDesktop
                 desktopObjects={desktopObjects}
                 totalDesktopObjects={shell.totalDesktopObjects}
-                tabCount={shell.tabs.length}
                 onOpenPicker={shell.openPicker}
                 onOpenControlMenu={shell.openControlMenu}
-                onActivateTabs={() => shell.setPickerId("tabs")}
               />
             ) : (
               <GsvDesktop
