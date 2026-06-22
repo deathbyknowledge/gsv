@@ -7,7 +7,7 @@ import { StatusDot } from "../../components/ui/StatusDot";
 import type { StatusTone } from "../../components/ui/StatusDot";
 import { ChatDock } from "../chat/components/ChatDock";
 import type { ChatDockMessage } from "../chat/components/ChatDock";
-import type { ChatAgentData, ChatAgentStatus, ChatAgentTaskStatus } from "../chat/domain";
+import type { ChatAgentData } from "../chat/domain";
 import { useChatProcessHistory, useChatProcessList, useSendChatMessage } from "../chat/hooks";
 import { defaultModelLabelForConfig } from "../gsv-console/domain/consoleAi";
 import { useConsoleConfig, useConsoleOverview } from "../gsv-console/hooks/useConsoleData";
@@ -23,6 +23,7 @@ import { LegacyRuntimeAnchors } from "./legacy/LegacyRuntimeAnchors";
 import { ShellRail } from "./navigation/ShellRail";
 import { ShellStatusBar } from "./navigation/ShellStatusBar";
 import { shellSurfaceLabel } from "./domain/shellModel";
+import { buildShellChatAgent } from "./domain/chatAgentModel";
 import { buildDesktopObjectsFromConsole } from "./domain/desktopObjects";
 import { useGsvShellState } from "./hooks/useGsvShellState";
 import "./styles/gsvShell.css";
@@ -48,24 +49,6 @@ function statusForRunState(runState?: string): StatusTone {
     return "update";
   }
   return "idle";
-}
-
-function agentStatusForRunState(runState?: string): ChatAgentStatus {
-  if (runState === "running") {
-    return "live";
-  }
-  if (runState === "idle") {
-    return "idle";
-  }
-  return "online";
-}
-
-function taskStatusForRunState(runState?: string): ChatAgentTaskStatus {
-  return runState === "idle" ? "idle" : "running";
-}
-
-function processImageSrc(index: number): string {
-  return `/img/agent-${index % 3}.png`;
 }
 
 function formatChatMessageTime(timestamp: number | null): string {
@@ -174,46 +157,15 @@ export function GsvShell({
       ? "loading history"
       : "no history";
   const chatAgent = useMemo<ChatAgentData | null>(() => {
-    if (!activeChatProcess) {
-      return null;
-    }
-
-    const activeProcessIndex = Math.max(
-      0,
-      chatProcessList.findIndex((process) => process.pid === activeChatProcess.pid),
-    );
-    const activeTaskCount = (activeChatProcess.activeRunId ? 1 : 0) + activeChatProcess.queuedCount;
-
-    return {
-      id: activeChatProcess.pid,
-      name: activeChatProcess.title,
-      role: activeChatProcess.username ? `PROCESS · ${activeChatProcess.username}` : "PROCESS",
-      description: [
-        activeChatProcess.cwd,
-        activeChatProcess.activeConversationId ? `conversation ${activeChatProcess.activeConversationId}` : "",
-      ].filter(Boolean).join(" · "),
-      imageSrc: processImageSrc(activeProcessIndex),
-      status: agentStatusForRunState(activeChatProcess.runState),
-      statusLabel: chatStatusLabel,
-      activity: chatStatusLabel,
+    return buildShellChatAgent({
+      activeProcess: activeChatProcess,
+      accounts: consoleOverview.data?.accounts ?? [],
+      chatProcesses: chatProcessList,
+      consoleProcesses: consoleOverview.data?.processes ?? [],
       modelLabel: chatModelLabel,
-      tasksTotal: activeTaskCount,
-      tasks: activeChatProcess.activeRunId
-        ? [{ name: `Run ${activeChatProcess.activeRunId.slice(0, 8)}`, status: taskStatusForRunState(activeChatProcess.runState) }]
-        : activeChatProcess.queuedCount > 0
-          ? [{ name: `${activeChatProcess.queuedCount} queued`, status: "running" }]
-          : [],
-      crew: chatProcessList.map((process, index) => ({
-        id: process.pid,
-        name: process.title,
-        role: process.username ? `PROCESS · ${process.username}` : "PROCESS",
-        imageSrc: processImageSrc(index),
-        status: agentStatusForRunState(process.runState),
-        statusLabel: process.runState.replaceAll("_", " "),
-        active: process.pid === activeChatProcess.pid,
-      })),
-    };
-  }, [activeChatProcess, chatModelLabel, chatProcessList, chatStatusLabel]);
+      statusLabel: chatStatusLabel,
+    });
+  }, [activeChatProcess, chatModelLabel, chatProcessList, chatStatusLabel, consoleOverview.data]);
 
   return (
     <div

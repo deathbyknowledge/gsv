@@ -2,7 +2,7 @@ import { AgentCard } from "../../../components/ui/AgentCard";
 import { AddAction } from "../../../components/ui/AddAction";
 import { Avatar } from "../../../components/ui/Avatar";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
-import type { ChatAgentViewModel } from "../domain/agent";
+import type { ChatAgentCrewView, ChatAgentViewModel } from "../domain/agent";
 
 type ActiveAgentPanelProps = {
   agent: ChatAgentViewModel;
@@ -22,12 +22,12 @@ export function ActiveAgentPanel({
     onOpenCrew();
   };
 
-  const selectAgent = (agentId: string, active: boolean) => {
-    if (active) {
+  const selectAgent = (member: ChatAgentCrewView) => {
+    if (member.active) {
       return;
     }
-    if (onSelectAgent) {
-      onSelectAgent(agentId);
+    if (member.processId && onSelectAgent) {
+      onSelectAgent(member.processId);
       onClose();
       return;
     }
@@ -68,7 +68,7 @@ export function ActiveAgentPanel({
               key={member.id}
               type="button"
               class={`gsv-chat-agent-crew-tile${member.active ? " is-active" : ""}`}
-              onClick={() => selectAgent(member.id, member.active)}
+              onClick={() => selectAgent(member)}
             >
               <Avatar src={member.imageSrc} status={member.status} size={46} />
               <span class="gsv-chat-agent-crew-name">{member.name}</span>
