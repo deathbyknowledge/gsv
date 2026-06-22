@@ -24,6 +24,8 @@ export interface AgentEditorProps {
   files?: AgentEditorFile[];
   tasks?: AgentEditorTask[];
   readOnly?: boolean;
+  onCreate?: (draft: AgentEditorDraft) => Promise<void> | void;
+  onSave?: (draft: AgentEditorDraft) => Promise<void> | void;
   onBack?: () => void;
 }
 
@@ -33,6 +35,16 @@ export interface AgentEditorFile {
   label: string;
   content: string;
   orig?: string;
+}
+
+export interface AgentEditorDraft {
+  name: string;
+  role: string;
+  description: string;
+  model: string;
+  modelIndex: number;
+  permission: string;
+  files: AgentEditorFile[];
 }
 
 export interface AgentEditorTask {
@@ -140,6 +152,8 @@ export function AgentEditor(props: AgentEditorProps) {
   const [desc, setDesc] = useState(meta.desc);
   const [files, setFiles] = useState<AgentEditorFile[]>(meta.files.map((f) => ({ ...f, orig: f.orig ?? f.content })));
   const [flash, setFlash] = useState("");
+  const [formError, setFormError] = useState("");
+  const [pendingAction, setPendingAction] = useState<"create" | "save" | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [w, setW] = useState(0);
   const [formNonce, setFormNonce] = useState(0);
@@ -157,9 +171,16 @@ export function AgentEditor(props: AgentEditorProps) {
   }, []);
 
   const setFlashMsg = (msg: string) => {
+    setFormError("");
     setFlash(msg);
     clearTimeout(flashTimer.current);
     flashTimer.current = window.setTimeout(() => setFlash(""), 1800);
+  };
+
+  const setErrorMsg = (msg: string) => {
+    clearTimeout(flashTimer.current);
+    setFlash("");
+    setFormError(msg);
   };
 
   // ---- responsive ----
@@ -208,6 +229,7 @@ export function AgentEditor(props: AgentEditorProps) {
     setFiles((s) => [...s, { label: "UNTITLED", content: "# Untitled\n\n", orig: "# Untitled\n\n" }]);
     setFileIdx(files.length);
     setFlash("");
+    setFormError("");
   };
   const onReset = () => {
     if (readOnly) return;
@@ -215,12 +237,47 @@ export function AgentEditor(props: AgentEditorProps) {
       s.map((f, i) => (i === fileIdx ? { ...f, content: f.orig != null ? f.orig : f.content } : f)),
     );
     setFlash("");
+    setFormError("");
+  };
+  const draft = (): AgentEditorDraft => ({
+    name,
+    role,
+    description: desc,
+    model: modelOptions[model] ?? "",
+    modelIndex: model,
+    permission: perm,
+    files: files.map((file) => ({ ...file })),
+  });
+  const errorText = (error: unknown): string => {
+    return error instanceof Error ? error.message : error ? String(error) : "Action failed";
+  };
+  const runAction = async (
+    kind: "create" | "save",
+    handler: ((draft: AgentEditorDraft) => Promise<void> | void) | undefined,
+    successMessage: string,
+  ) => {
+    if (readOnly || pendingAction !== null) return;
+    if (!handler) {
+      setFlashMsg(successMessage);
+      return;
+    }
+    setPendingAction(kind);
+    setFormError("");
+    setFlash("");
+    try {
+      await handler(draft());
+      setFlashMsg(successMessage);
+    } catch (error) {
+      setErrorMsg(errorText(error));
+    } finally {
+      setPendingAction(null);
+    }
   };
   const onSave = () => {
-    if (!readOnly) setFlashMsg("✓ SAVED");
+    void runAction("save", props.onSave, "✓ SAVED");
   };
   const onCreate = () => {
-    if (!readOnly) setFlashMsg("✓ AGENT CREATED");
+    void runAction("create", props.onCreate, "✓ AGENT CREATED");
   };
   const onResetGeneral = () => {
     if (readOnly) return;
@@ -230,6 +287,8 @@ export function AgentEditor(props: AgentEditorProps) {
     setModel(meta.model);
     setPerm(meta.perm);
     setFormNonce((n) => n + 1);
+    setFormError("");
+    setFlash("");
   };
 
   const delName = curFile.label;
@@ -247,6 +306,7 @@ export function AgentEditor(props: AgentEditorProps) {
     });
     setDeleteOpen(false);
     setFlash("");
+    setFormError("");
   };
 
   // ---- styles ----
@@ -407,16 +467,28 @@ export function AgentEditor(props: AgentEditorProps) {
                   <div style="display:flex;align-items:center;gap:12px;margin-top:42px;">
                     {readOnly ? (
                       <span class="gsv-ae-readonly-note">READ ONLY</span>
+                    ) : formError ? (
+                      <span style="font-size:10px;letter-spacing:.12em;color:var(--error);">{formError}</span>
                     ) : flash ? (
                       <span style="font-size:10px;letter-spacing:.14em;color:var(--online);">{flash}</span>
                     ) : null}
                     <span style="flex:1;" />
                     {isNew ? (
-                      <Button variant="primary" label="CREATE AGENT" onClick={onCreate} disabled={readOnly} />
+                      <Button
+                        variant="primary"
+                        label={pendingAction === "create" ? "CREATING" : "CREATE AGENT"}
+                        onClick={onCreate}
+                        disabled={readOnly || pendingAction !== null}
+                      />
                     ) : (
                       <div style="display:flex;gap:12px;">
-                        <Button variant="secondary" label="RESET" onClick={onResetGeneral} disabled={readOnly} />
-                        <Button variant="primary" label="SAVE" onClick={onSave} disabled={readOnly} />
+                        <Button variant="secondary" label="RESET" onClick={onResetGeneral} disabled={readOnly || pendingAction !== null} />
+                        <Button
+                          variant="primary"
+                          label={pendingAction === "save" ? "SAVING" : "SAVE"}
+                          onClick={onSave}
+                          disabled={readOnly || pendingAction !== null}
+                        />
                       </div>
                     )}
                   </div>
@@ -460,6 +532,7 @@ export function AgentEditor(props: AgentEditorProps) {
                       onClick={() => {
                         setFileIdx(i);
                         setFlash("");
+                        setFormError("");
                       }}
                       style="display:flex;flex-direction:column;align-items:center;gap:9px;cursor:pointer;width:78px;text-align:center;"
                     >

@@ -124,6 +124,10 @@ export function GsvConsole({
   const openSettingsNewAgent = () => {
     setSettingsRoute({ view: "agent", accountUid: null, createNew: true });
   };
+  const openCreatedSettingsAgent = (uid: number) => {
+    setSelectedAgentUid(uid);
+    setSettingsRoute({ view: "agent", accountUid: uid });
+  };
   const backToSettingsCrew = () => setSettingsRoute({ view: "crew" });
   const openSettingsListDetail = (kind: ConsoleListKind, detailId: string) => {
     setSettingsRoute({ view: "list", kind, detailId });
@@ -223,6 +227,7 @@ export function GsvConsole({
             <ConsoleAgentPage
               accountUid={settingsRoute.accountUid}
               createNew={settingsRoute.createNew === true}
+              onAgentCreated={openCreatedSettingsAgent}
               onBackToCrew={backToSettingsCrew}
             />
           )
