@@ -228,6 +228,51 @@ function activeAgentDescription(
   ].filter(Boolean).join(" · ");
 }
 
+function accountBackedAgent(input: {
+  accounts: readonly ConsoleAccount[];
+  chatProcesses: readonly ChatProcessSummary[];
+  consoleProcesses: readonly ConsoleProcess[];
+  modelLabel: string;
+}): ChatAgentData | null {
+  const accountList = sortedAccounts(input.accounts);
+  const primaryAccount = accountList.find((account) => account.runnable) ?? accountList[0] ?? null;
+  if (!primaryAccount) {
+    return null;
+  }
+
+  const primaryIndex = Math.max(0, accountList.findIndex((account) => account.uid === primaryAccount.uid));
+  const ownedChatProcesses = input.chatProcesses.filter((process) => ownsChatProcess(primaryAccount, process));
+  const ownedConsoleProcesses = input.consoleProcesses.filter((process) => ownsConsoleProcess(primaryAccount, process));
+  const status = accountProcessStatus({
+    account: primaryAccount,
+    chatProcesses: ownedChatProcesses,
+    consoleProcesses: ownedConsoleProcesses,
+  });
+  const crew = accountCrewMembers({
+    accounts: accountList,
+    activeProcess: null,
+    chatProcesses: input.chatProcesses,
+    consoleProcesses: input.consoleProcesses,
+  });
+  const description = primaryAccount.gecos.trim()
+    || "No active GSV process is attached to this chat.";
+
+  return {
+    name: primaryAccount.displayName,
+    role: RELATION_LABEL[primaryAccount.relation],
+    description,
+    imageSrc: processImageSrc(primaryIndex),
+    status: status.status,
+    statusLabel: status.statusLabel,
+    activity: status.statusLabel,
+    modelLabel: input.modelLabel,
+    modelIsDefault: true,
+    tasksTotal: 0,
+    tasks: [],
+    crew,
+  };
+}
+
 export function buildShellChatAgent({
   activeProcess,
   accounts,
@@ -237,7 +282,12 @@ export function buildShellChatAgent({
   statusLabel,
 }: BuildShellChatAgentArgs): ChatAgentData | null {
   if (!activeProcess) {
-    return null;
+    return accountBackedAgent({
+      accounts,
+      chatProcesses,
+      consoleProcesses,
+      modelLabel,
+    });
   }
 
   const accountList = sortedAccounts(accounts);
