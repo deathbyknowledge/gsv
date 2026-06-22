@@ -1,4 +1,5 @@
 import { AgentCard } from "../../../components/ui/AgentCard";
+import { AddAction } from "../../../components/ui/AddAction";
 import { Avatar } from "../../../components/ui/Avatar";
 import { Icon } from "../../../components/ui/Icon";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
@@ -49,6 +50,7 @@ export function ActiveAgentPanel({
           showActions
           models={[agent.modelLabel]}
           tasks={agent.tasks}
+          readOnly
           onManage={openCrew}
           onClose={onClose}
           onAvatarClick={onClose}
@@ -75,6 +77,13 @@ export function ActiveAgentPanel({
               <span class="gsv-chat-agent-crew-status">{member.statusLabel}</span>
             </button>
           ))}
+          <button
+            type="button"
+            class="gsv-chat-agent-crew-tile gsv-chat-agent-crew-tile-add"
+            onClick={openCrew}
+          >
+            <AddAction variant="tile" label="NEW AGENT" />
+          </button>
         </div>
         <button type="button" class="gsv-chat-agent-open-crew" onClick={openCrew}>
           <Icon name="chat" size={14} />
