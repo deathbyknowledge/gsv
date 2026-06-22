@@ -1,0 +1,10 @@
+/* Ported from ConfirmModal.dc.html — values transcribed verbatim.
+   The source <style> block's .mc/.md hover rules target the imported Button's
+   own classes; our ported <Button> carries its own hover/active CSS, so only
+   the header close affordance needs a pseudo-state here. */
+.gsv-cm-close {
+  transition: color 0.12s;
+}
+.gsv-cm-close:hover {
+  color: var(--accent-bright);
+}

@@ -1,0 +1,14 @@
+/* Icon — renders a static dot-matrix SVG (web/public/icons/*.svg) as a
+   CSS mask so it can be tinted with `color`/`currentColor`. No runtime JS
+   icon library; the SVG file is the source, CSS does the tinting. */
+.gsv-icon {
+  display: inline-block;
+  flex: none;
+  background-color: currentColor;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+}

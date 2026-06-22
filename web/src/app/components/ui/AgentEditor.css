@@ -1,0 +1,191 @@
+/* AgentEditor — ported from Agent Editor.dc.html.
+   Pseudo-states (hover/focus) that the source kept as inline style-hover/
+   style-focus are lifted into real CSS here. */
+
+.gsv-ae input::placeholder,
+.gsv-ae textarea::placeholder {
+  color: var(--text-dim);
+}
+
+/* code editor scrollbar (from source <style> .gsv-ed rules) */
+.gsv-ed::-webkit-scrollbar {
+  width: 9px;
+}
+.gsv-ed::-webkit-scrollbar-thumb {
+  background: var(--border);
+}
+.gsv-ed::-webkit-scrollbar-track {
+  background: var(--panel-2);
+}
+
+/* ===== top bar back button ===== */
+.gsv-ae-back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  flex: none;
+  cursor: pointer;
+  color: var(--accent);
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  transition: background 0.12s;
+}
+.gsv-ae-back:hover {
+  background: var(--hover);
+  color: #e6e4ff;
+}
+
+/* ===== breadcrumb ===== */
+.gsv-ae-crumb-dim {
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.gsv-ae-crumb-dim:hover {
+  color: #9d98d8;
+}
+.gsv-ae-crumb-crew {
+  color: #9d98d8;
+  cursor: pointer;
+}
+.gsv-ae-crumb-crew:hover {
+  color: var(--accent-bright);
+}
+
+/* ===== folder tab bar ===== */
+.gsv-ae-tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  padding: 0 30px;
+  border-bottom: 1px solid var(--rule-inner);
+}
+.gsv-ae-tab {
+  cursor: pointer;
+  padding: 16px 22px;
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  color: #9a95cf;
+  border: 1px solid transparent;
+  border-bottom: none;
+  background: transparent;
+  margin-bottom: -1px;
+  transition: color 0.12s, background 0.12s;
+}
+.gsv-ae-tab:hover {
+  color: #cdd5e6;
+}
+.gsv-ae-tab.is-active {
+  color: var(--text-hi);
+  background: var(--panel-2);
+  border-color: var(--rule-inner);
+  text-shadow: 0 0 7px rgba(150, 140, 255, 0.45);
+}
+
+/* ===== new-file folder ===== */
+.gsv-ae-newfile:hover {
+  opacity: 0.8;
+}
+
+/* ===== code editor textarea ===== */
+.gsv-ae-editor {
+  width: 100%;
+  height: 300px;
+  resize: vertical;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  outline: none;
+  padding: 16px 17px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: #dcd9ff;
+}
+.gsv-ae-editor:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(179, 174, 255, 0.35);
+}
+
+/* ===== FILES action buttons ===== */
+.gsv-ae-delete {
+  cursor: pointer;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: #ff8fa3;
+  border: 1px solid #5a2b3a;
+  background: transparent;
+  padding: 10px 20px;
+  transition: background 0.12s;
+}
+.gsv-ae-delete:hover {
+  background: #2a1420;
+  color: #ffb3c2;
+}
+.gsv-ae-reset {
+  cursor: pointer;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: var(--accent);
+  border: 1px solid var(--border-raised);
+  background: transparent;
+  padding: 10px 22px;
+  transition: background 0.12s;
+}
+.gsv-ae-reset:hover {
+  background: var(--hover);
+  color: #e6e4ff;
+}
+.gsv-ae-save {
+  cursor: pointer;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: #fff;
+  background: var(--dashed);
+  border: 1px solid var(--primary-hi);
+  padding: 10px 28px;
+  box-shadow: 0 0 16px rgba(120, 110, 230, 0.35);
+  transition: background 0.12s;
+}
+.gsv-ae-save:hover {
+  background: var(--primary-hi);
+}
+
+/* ===== delete modal ===== */
+.gsv-ae-modal-x {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.gsv-ae-modal-x:hover {
+  color: var(--accent-bright);
+}
+.gsv-ae-modal-cancel {
+  cursor: pointer;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: var(--accent);
+  border: 1px solid var(--border-raised);
+  background: transparent;
+  padding: 10px 24px;
+  transition: background 0.12s;
+}
+.gsv-ae-modal-cancel:hover {
+  background: var(--hover);
+  color: #e6e4ff;
+}
+.gsv-ae-modal-delete {
+  cursor: pointer;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: #fff;
+  background: var(--danger);
+  border: 1px solid var(--danger-hi);
+  padding: 10px 30px;
+  box-shadow: 0 0 16px rgba(200, 60, 90, 0.35);
+  transition: background 0.12s;
+}
+.gsv-ae-modal-delete:hover {
+  background: var(--danger-hi);
+}

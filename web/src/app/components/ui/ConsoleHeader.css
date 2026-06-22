@@ -1,0 +1,26 @@
+@keyframes gsvPulse {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.gsv-ch-back {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  border: 1px solid var(--rule-section);
+  background: var(--panel);
+  transition: background 0.12s;
+}
+.gsv-ch-back:hover {
+  border-color: var(--accent) !important;
+  background: var(--hover) !important;
+}

@@ -1,0 +1,51 @@
+/* Ported from SystemMessage.dc.html — values transcribed verbatim. */
+.gsv-sm {
+  display: flex;
+  gap: 11px;
+  font-family: "Space Grotesk", sans-serif;
+}
+
+.gsv-sm-avatar {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border-radius: 3px;
+  background: #171436;
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gsv-sm-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.gsv-sm-text {
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: #cdd2e0;
+  text-wrap: pretty;
+}
+
+.gsv-sm-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 5px;
+  font-family: var(--gsv-font-mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: var(--text-dim);
+}
+
+.gsv-sm-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+.gsv-sm-copy:hover {
+  color: #9a94ff;
+}
