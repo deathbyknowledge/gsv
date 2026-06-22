@@ -489,50 +489,6 @@
   display: block;
 }
 
-.gsv-chat-process {
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 8px 14px;
-  border-bottom: 1px solid var(--rule-inner);
-  background: #080716;
-}
-
-.gsv-chat-process-main {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  min-width: 0;
-  color: var(--text);
-  font-family: var(--gsv-font-mono);
-  font-size: 9px;
-  letter-spacing: 0.11em;
-  text-transform: uppercase;
-}
-
-.gsv-chat-process-meta {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  color: var(--text-dim);
-  font-family: var(--gsv-font-mono);
-  font-size: 8.5px;
-  letter-spacing: 0.08em;
-}
-
-.gsv-chat-process-meta span {
-  min-width: 0;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .gsv-chat-hil {
   flex: none;
   position: relative;
@@ -1028,16 +984,6 @@
 
   .gsv-chat-agent-panel {
     inset: 100px 10px 10px;
-  }
-
-  .gsv-chat-process {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 5px;
-  }
-
-  .gsv-chat-process-meta {
-    justify-content: flex-start;
   }
 
   .gsv-chat-hil-head,
