@@ -14,9 +14,9 @@
 .gsv-tt-bub {
   position: absolute;
   z-index: 50;
-  background: #000;
-  border: 1px solid #4a449e;
-  color: #e2dfff;
+  background: var(--accent);
+  border: 1px solid var(--accent-bright);
+  color: var(--void);
   font-size: 10px;
   letter-spacing: 0.06em;
   line-height: 1.55;
@@ -35,8 +35,8 @@
   position: absolute;
   width: 7px;
   height: 7px;
-  background: #000;
-  border: 1px solid #4a449e;
+  background: var(--accent);
+  border: 1px solid var(--accent-bright);
   transform: rotate(45deg);
 }
 .gsv-tt-top .gsv-tt-bub {

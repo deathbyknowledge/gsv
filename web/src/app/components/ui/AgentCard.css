@@ -1,0 +1,20 @@
+/* Ported from Agent Card.dc.html — hover states transcribed verbatim from the
+   source's style-hover attributes. */
+.gsv-ac-fade:hover {
+  opacity: 0.85;
+}
+.gsv-ac-switch:hover {
+  color: #f0c574;
+}
+.gsv-ac-close:hover {
+  color: var(--accent-bright);
+}
+.gsv-ac-taskbtn:hover {
+  background: var(--hover) !important;
+}
+.gsv-ac-taskrow:hover {
+  background: var(--active) !important;
+}
+.gsv-ac-manage:hover {
+  color: var(--accent-bright);
+}

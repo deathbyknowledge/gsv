@@ -1,68 +1,43 @@
 import type { Story } from "../story";
+import { DOTICONS } from "../doticons";
 
 /**
- * Object icons. Static SVGs live in `web/public/icons/<name>.svg`, generated once
- * from the dot-matrix source — there is no runtime JS icon module. Each file uses
- * `fill="currentColor"` so it can be tinted; here we apply it as a CSS `mask-image`
- * and color it with a theme token via `background-color`.
+ * Object icons. Two sets, both static SVG assets — no runtime JS icon module:
+ *  · GSV's 16 curated object/chrome icons in /icons/<name>.svg (16-grid, generated
+ *    from gsv-dot-icons.js).
+ *  · The full doticons library (247 icons, 32-grid) vendored from
+ *    eduardconstantin/doticons@v0.9.0 into /icons/doticons/<name>.svg, shown in the
+ *    reference drawer below.
+ * Each is applied as a CSS `mask-image` and tinted with a theme token, so a
+ * black-filled source SVG still takes the color.
  */
 
-// Every unique icon name emitted to /public/icons (see INDEX.md).
 const ICONS = [
-  "bookmark",
-  "chat",
-  "cog",
-  "computer",
-  "discord",
-  "folder",
-  "gmail",
-  "list",
-  "pencil",
-  "plus",
-  "rss",
-  "stars",
-  "tag",
-  "telegram",
-  "terminal",
-  "weblink",
+  "bookmark", "chat", "cog", "computer", "discord", "folder", "gmail", "list",
+  "pencil", "plus", "rss", "stars", "tag", "telegram", "terminal", "weblink",
 ];
 
-// A few painted in other tokens to prove mask tinting picks up theme color.
-const TINTS: Record<string, string> = {
-  plus: "var(--online)",
-  terminal: "var(--text-dim)",
-};
+function maskStyle(url: string, color: string, px: number) {
+  return {
+    width: `${px}px`,
+    height: `${px}px`,
+    backgroundColor: color,
+    maskImage: url,
+    WebkitMaskImage: url,
+    maskRepeat: "no-repeat",
+    WebkitMaskRepeat: "no-repeat",
+    maskSize: "contain",
+    WebkitMaskSize: "contain",
+    maskPosition: "center",
+    WebkitMaskPosition: "center",
+  } as const;
+}
 
-function Icon({ name }: { name: string }) {
-  const color = TINTS[name] ?? "var(--accent-bright)";
-  const url = `url(/icons/${name}.svg)`;
+function IconTile({ src, name, color, px }: { src: string; name: string; color: string; px: number }) {
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        gap: "8px",
-      }}
-    >
-      <div
-        role="img"
-        aria-label={name}
-        style={{
-          width: "40px",
-          height: "40px",
-          backgroundColor: color,
-          maskImage: url,
-          WebkitMaskImage: url,
-          maskRepeat: "no-repeat",
-          WebkitMaskRepeat: "no-repeat",
-          maskSize: "contain",
-          WebkitMaskSize: "contain",
-          maskPosition: "center",
-          WebkitMaskPosition: "center",
-        }}
-      />
-      <div class="ds-label" style={{ fontSize: "9.5px", letterSpacing: "0.18em" }}>
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "8px" }}>
+      <div role="img" aria-label={name} style={maskStyle(`url(${src})`, color, px)} />
+      <div class="ds-label" style={{ fontSize: "8.5px", letterSpacing: "0.1em", textAlign: "center" }}>
         {name}
       </div>
     </div>
@@ -72,23 +47,50 @@ function Icon({ name }: { name: string }) {
 const story: Story = {
   title: "Object icons",
   group: "Foundations",
-  blurb: "public/icons/*.svg · static dot-matrix · CSS mask tint, no runtime JS",
+  blurb: "static dot-matrix SVGs · CSS mask tint · no runtime JS",
   render: () => (
-    <div class="ds-cell">
-      <div class="ds-label" style={{ marginBottom: "16px" }}>
-        Tinted via mask-image + var(--accent-bright) · plus=online, terminal=text-dim
+    <div class="ds-col">
+      <div class="ds-cell">
+        <div class="ds-label" style={{ marginBottom: "16px" }}>
+          GSV object & chrome icons · /icons/*.svg · tinted var(--accent-bright)
+        </div>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(88px, 1fr))",
+            gap: "22px",
+            alignItems: "start",
+          }}
+        >
+          {ICONS.map((name) => (
+            <IconTile key={name} src={`/icons/${name}.svg`} name={name} color="var(--accent-bright)" px={40} />
+          ))}
+        </div>
       </div>
+
+      {/* OTHER ICONS drawer — the full doticons library, vendored locally for reference. */}
       <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(88px, 1fr))",
-          gap: "22px",
-          alignItems: "start",
-        }}
+        class="ds-cell"
+        style={{ marginTop: "10px", paddingTop: "20px", borderTop: "1px solid var(--rule-section)" }}
       >
-        {ICONS.map((name) => (
-          <Icon key={name} name={name} />
-        ))}
+        <div class="ds-label" style={{ marginBottom: "4px" }}>
+          Other icons · doticons library (32-grid · {DOTICONS.length} icons · reference)
+        </div>
+        <div style={{ fontSize: "9px", letterSpacing: "0.04em", color: "var(--text-dim)", marginBottom: "16px" }}>
+          /icons/doticons/*.svg · vendored from eduardconstantin/doticons@v0.9.0 (MIT)
+        </div>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(72px, 1fr))",
+            gap: "16px",
+            alignItems: "start",
+          }}
+        >
+          {DOTICONS.map((name) => (
+            <IconTile key={name} src={`/icons/doticons/${name}.svg`} name={name} color="var(--text-dim)" px={28} />
+          ))}
+        </div>
       </div>
     </div>
   ),

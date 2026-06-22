@@ -6,6 +6,7 @@ import { STORY_GROUP_ORDER, type Story, type StoryGroup } from "./story";
 // entry here when a new component lands. Kept as an explicit list (rather than
 // glob) so review diffs show exactly what entered the catalog.
 import foundationsTokens from "./stories/Tokens.story";
+import typography from "./stories/Typography.story";
 import icons from "./stories/Icons.story";
 import button from "./stories/Button.story";
 import textInput from "./stories/TextInput.story";
@@ -29,10 +30,20 @@ import avatar from "./stories/Avatar.story";
 import iconButton from "./stories/IconButton.story";
 import sectionHeader from "./stories/SectionHeader.story";
 import addAction from "./stories/AddAction.story";
+import iconMenu from "./stories/IconMenu.story";
+import consoleHeader from "./stories/ConsoleHeader.story";
+import statusBar from "./stories/StatusBar.story";
+import messageInput from "./stories/MessageInput.story";
+import systemMessage from "./stories/SystemMessage.story";
+import tabs from "./stories/Tabs.story";
+import confirmModal from "./stories/ConfirmModal.story";
+import agentCard from "./stories/AgentCard.story";
+import agentEditor from "./stories/AgentEditor.story";
 
 const STORIES: Story[] = [
   // Foundations
   foundationsTokens,
+  typography,
   icons,
   // Forms
   button,
@@ -60,6 +71,16 @@ const STORIES: Story[] = [
   iconButton,
   sectionHeader,
   addAction,
+  iconMenu,
+  consoleHeader,
+  statusBar,
+  messageInput,
+  systemMessage,
+  tabs,
+  // Composite
+  confirmModal,
+  agentCard,
+  agentEditor,
 ];
 
 // ───────────────────────────────────────────────────────────────────────────

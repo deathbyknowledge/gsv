@@ -79,18 +79,6 @@ const story: Story = {
       <SwatchGrid label="Text & accent" swatches={TEXT} />
       <SwatchGrid label="Status" swatches={STATUS} />
       <SwatchGrid label="Action accents" swatches={ACTION} />
-      <div class="ds-type-spec ds-type-row" style={{ marginTop: "10px" }}>
-        <div class="ds-label">Typography · Departure Mono (self-hosted, OFL 1.1)</div>
-        <div style={{ fontSize: "28px", letterSpacing: "0.04em", color: "var(--text-hi)" }}>
-          GENERAL SYSTEMS VEHICLE
-        </div>
-        <div style={{ fontSize: "16px", letterSpacing: "0.1em", color: "var(--text)", marginTop: "8px" }}>
-          0123456789 · the quick brown fox · ABCDEFG
-        </div>
-        <div style={{ fontSize: "10px", letterSpacing: "0.22em", color: "var(--text-dim)", marginTop: "8px" }}>
-          MICRO LABEL · 9.5PX · .22EM TRACKING
-        </div>
-      </div>
     </div>
   ),
 };

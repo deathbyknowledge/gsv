@@ -38,7 +38,15 @@ viewBox, so it can be tinted via CSS.
 `computer`, `plus`, `terminal` are the custom-drawn `added` icons.
 `pencil`/`terminal`/`bookmark` double as chrome aliases (library/terminal/tabs).
 
-## All 16 generated files
+## Two sets
 
+**GSV curated set (16)** — `/icons/<name>.svg`, generated from `gsv-dot-icons.js`
+(16-grid). The object/chrome vocabulary the app actually uses:
 bookmark, chat, cog, computer, discord, folder, gmail, list, pencil, plus, rss,
-stars, tag, telegram, terminal, weblink
+stars, tag, telegram, terminal, weblink.
+(`computer`, `plus`, `terminal` are the custom-drawn `added` icons — not in doticons.)
+
+**Full doticons library (247)** — `/icons/doticons/<name>.svg`, vendored from
+[eduardconstantin/doticons@v0.9.0](https://github.com/eduardconstantin/doticons)
+`icons/32` (32-grid, MIT). The complete reference set, shown in the catalog's
+"Other icons" drawer. Name list mirrored in `web/src/design-system/doticons.ts`.

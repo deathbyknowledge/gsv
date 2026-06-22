@@ -1,0 +1,113 @@
+/* Ported from MessageInput.dc.html — values transcribed verbatim. */
+@keyframes gsvPop {
+  0% {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.gsv-mi {
+  border-top: 1px solid var(--border);
+  background: var(--node-bg);
+  padding: 11px 13px 9px;
+  font-family: "Space Grotesk", sans-serif;
+}
+
+.gsv-mi-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #0c0a22;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 8px 11px;
+}
+.gsv-mi-bar:focus-within {
+  border-color: var(--dashed);
+}
+
+.gsv-mi-icon {
+  display: flex;
+  flex: none;
+  cursor: pointer;
+  color: #7d78b8;
+}
+.gsv-mi-icon:hover {
+  color: #b6b1ff;
+}
+
+.gsv-mi-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: #eef0f7;
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 13px;
+}
+
+.gsv-mi-send {
+  display: flex;
+  flex: none;
+  cursor: pointer;
+  color: #b6b1ff;
+}
+.gsv-mi-send:hover {
+  color: #e6e4ff;
+}
+
+.gsv-mi-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+  font-family: var(--gsv-font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+}
+
+.gsv-mi-user {
+  color: var(--online);
+}
+
+.gsv-mi-cost {
+  position: relative;
+  color: #7d78b8;
+  cursor: pointer;
+}
+.gsv-mi-cost:hover {
+  color: #b6b1ff;
+}
+
+.gsv-mi-tip {
+  position: absolute;
+  right: 0;
+  bottom: 20px;
+  width: 158px;
+  background: #100e2a;
+  border: 1px solid var(--border-raised);
+  padding: 9px 11px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+  text-align: left;
+  animation: gsvPop 0.14s ease;
+}
+
+.gsv-mi-tip-title {
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  color: #cdd2e0;
+}
+
+.gsv-mi-tip-link {
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: #9a94ff;
+  margin-top: 6px;
+  text-decoration: underline;
+  cursor: pointer;
+}
