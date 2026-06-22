@@ -213,6 +213,7 @@ export function GsvConsole({
         {activeSurface === "settings" ? (
           settingsRoute.view === "overview" ? (
             <ConsoleOverviewPage
+              onOpenAgent={openSettingsAgent}
               onOpenListCreate={openSettingsListCreate}
               onOpenListDetail={openSettingsListDetail}
               onOpenSurface={openSettingsSurface}
