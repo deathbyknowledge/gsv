@@ -123,6 +123,27 @@
   text-transform: uppercase;
 }
 
+.gsv-settings-mini-heading[data-clickable="true"],
+.gsv-settings-mini-row[data-clickable="true"],
+.gsv-settings-add-row[data-clickable="true"],
+.gsv-settings-terminal-state[data-clickable="true"],
+.gsv-settings-deep-cell[data-clickable="true"],
+.gsv-settings-crew-card[data-clickable="true"],
+.gsv-settings-new-agent[data-clickable="true"] {
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.gsv-settings-mini-heading[data-clickable="true"]:hover,
+.gsv-settings-mini-row[data-clickable="true"]:hover,
+.gsv-settings-add-row[data-clickable="true"]:hover,
+.gsv-settings-terminal-state[data-clickable="true"]:hover,
+.gsv-settings-deep-cell[data-clickable="true"]:hover,
+.gsv-settings-crew-card[data-clickable="true"]:hover,
+.gsv-settings-new-agent[data-clickable="true"]:hover {
+  background: var(--hover);
+}
+
 .gsv-settings-mini-heading small {
   margin-left: auto;
   color: #7d78b8;

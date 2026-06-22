@@ -58,7 +58,7 @@ export function GsvConsole({
       />
       <div class="gsv-console-stage">
         {activeSurface === "settings" ? (
-          <ConsoleOverviewPage />
+          <ConsoleOverviewPage onOpenSurface={onOpenSurface} />
         ) : activeSurface === "runtime" ? (
           <ConsoleListPage kind="tasks" />
         ) : activeSurface === "crew" ? (

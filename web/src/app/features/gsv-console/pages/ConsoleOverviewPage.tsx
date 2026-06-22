@@ -17,6 +17,7 @@ import type {
   ConsoleProcess,
   ConsoleTarget,
 } from "../domain/consoleModels";
+import type { ShellSurfaceId } from "../../gsv-shell/domain/shellModel";
 import { useConsoleOverview } from "../hooks/useConsoleData";
 import "./ConsoleOverviewPage.css";
 
@@ -46,6 +47,9 @@ type StatLine = {
   value: number | string;
   tone: StatusTone;
 };
+
+type OverviewSurface = Exclude<ShellSurfaceId, "desktop">;
+type OpenSurface = (surface: OverviewSurface) => void;
 
 const DASHBOARD_ROW_LIMIT = 5;
 const SHIP_ART = String.raw`
@@ -224,9 +228,9 @@ function Chevron() {
   return <span class="gsv-settings-chevron" aria-hidden="true" />;
 }
 
-function MiniHeading({ title, meta }: { title: string; meta?: string }) {
+function MiniHeading({ title, meta, onClick }: { title: string; meta?: string; onClick?: () => void }) {
   return (
-    <div class="gsv-settings-mini-heading">
+    <div class="gsv-settings-mini-heading" data-clickable={onClick ? "true" : undefined} onClick={onClick}>
       <span>{title}</span>
       {meta ? <small>{meta}</small> : null}
       <Chevron />
@@ -234,9 +238,9 @@ function MiniHeading({ title, meta }: { title: string; meta?: string }) {
   );
 }
 
-function MiniRow({ row, showIcon = true }: { row: OverviewRow; showIcon?: boolean }) {
+function MiniRow({ row, showIcon = true, onClick }: { row: OverviewRow; showIcon?: boolean; onClick?: () => void }) {
   return (
-    <div class="gsv-settings-mini-row">
+    <div class="gsv-settings-mini-row" data-clickable={onClick ? "true" : undefined} onClick={onClick}>
       {showIcon ? (
         <span class="gsv-settings-mini-icon">
           {row.icon ? <Icon name={row.icon} size={18} /> : <StatusDot tone={row.tone} size={8} />}
@@ -263,9 +267,9 @@ function EmptyRow({ label }: { label: string }) {
   );
 }
 
-function AddRow({ label }: { label: string }) {
+function AddRow({ label, onClick }: { label: string; onClick?: () => void }) {
   return (
-    <div class="gsv-settings-add-row">
+    <div class="gsv-settings-add-row" data-clickable={onClick ? "true" : undefined} onClick={onClick}>
       <Icon name="plus" size={15} />
       <span>{label}</span>
       <Chevron />
@@ -285,10 +289,12 @@ function SplitCells({ left, right }: { left: preact.ComponentChildren; right: pr
 function ShipPanel({
   config,
   data,
+  onOpenSurface,
   shellTargetCount,
 }: {
   config: readonly ConsoleConfigEntry[];
   data: ConsoleOverviewData;
+  onOpenSurface?: OpenSurface;
   shellTargetCount: number;
 }) {
   const redacted = config.filter((entry) => entry.redacted).length;
@@ -305,8 +311,12 @@ function ShipPanel({
       <SplitCells
         left={(
           <div class="gsv-settings-mini-cell">
-            <MiniHeading title="TERMINAL" />
-            <div class="gsv-settings-terminal-state">
+            <MiniHeading title="TERMINAL" onClick={onOpenSurface ? () => onOpenSurface("terminal") : undefined} />
+            <div
+              class="gsv-settings-terminal-state"
+              data-clickable={onOpenSurface ? "true" : undefined}
+              onClick={onOpenSurface ? () => onOpenSurface("terminal") : undefined}
+            >
               <span class="gsv-settings-check" aria-hidden="true" />
               <span>{shellTargetCount > 0 ? `${shellTargetCount} SHELL TARGET${shellTargetCount === 1 ? "" : "S"}` : "NO SHELL TARGETS"}</span>
             </div>
@@ -328,9 +338,11 @@ function ShipPanel({
 
 function CrewPanel({
   accounts,
+  onOpenSurface,
   processes,
 }: {
   accounts: readonly ConsoleAccount[];
+  onOpenSurface?: OpenSurface;
   processes: readonly ConsoleProcess[];
 }) {
   const cards = crewCards(accounts, processes);
@@ -341,7 +353,12 @@ function CrewPanel({
       <SectionHeader title="CREW" meta={remaining > 0 ? `+${remaining}` : ""} divider />
       <div class="gsv-settings-crew-grid">
         {cards.length === 0 ? <EmptyRow label="NO CREW ACCOUNTS" /> : cards.map((card, index) => (
-          <div class="gsv-settings-crew-card" key={card.id}>
+          <div
+            class="gsv-settings-crew-card"
+            data-clickable={onOpenSurface ? "true" : undefined}
+            key={card.id}
+            onClick={onOpenSurface ? () => onOpenSurface("crew") : undefined}
+          >
             <div class="gsv-settings-crew-portrait">
               <AgentImage agent={index % 3} size={54} />
             </div>
@@ -352,7 +369,11 @@ function CrewPanel({
             </span>
           </div>
         ))}
-        <div class="gsv-settings-new-agent">
+        <div
+          class="gsv-settings-new-agent"
+          data-clickable={onOpenSurface ? "true" : undefined}
+          onClick={onOpenSurface ? () => onOpenSurface("crew") : undefined}
+        >
           <span>
             <Icon name="plus" size={16} />
           </span>
@@ -366,10 +387,12 @@ function CrewPanel({
 function ModelsTasksPanel({
   config,
   counts,
+  onOpenSurface,
   processes,
 }: {
   config: readonly ConsoleConfigEntry[];
   counts: ConsoleOverviewCounts | null;
+  onOpenSurface?: OpenSurface;
   processes: readonly ConsoleProcess[];
 }) {
   const running = counts?.activeProcesses ?? processes.filter(isRunningProcess).length;
@@ -396,7 +419,11 @@ function ModelsTasksPanel({
         </div>
       )}
       right={(
-        <div class="gsv-settings-deep-cell">
+        <div
+          class="gsv-settings-deep-cell"
+          data-clickable={onOpenSurface ? "true" : undefined}
+          onClick={onOpenSurface ? () => onOpenSurface("runtime") : undefined}
+        >
           <MiniHeading title="TASKS" />
           <div class="gsv-settings-task-summary">
             {stats.map((stat) => (
@@ -416,10 +443,12 @@ function ModelsTasksPanel({
 function FleetPanel({
   adapters,
   integrationPackages,
+  onOpenSurface,
   targets,
 }: {
   adapters: readonly ConsoleAdapterAccount[];
   integrationPackages: readonly ConsolePackage[];
+  onOpenSurface?: OpenSurface;
   targets: readonly ConsoleTarget[];
 }) {
   const targetRows = sortTargets(targets).map(targetRow);
@@ -429,12 +458,16 @@ function FleetPanel({
   return (
     <section class="gsv-settings-block gsv-settings-fleet-block">
       <SectionHeader title="FLEET" divider />
-      <MiniHeading title="MACHINES" meta={`${targets.filter((target) => target.online).length}/${targets.length} ONLINE`} />
+      <MiniHeading
+        title="MACHINES"
+        meta={`${targets.filter((target) => target.online).length}/${targets.length} ONLINE`}
+        onClick={onOpenSurface ? () => onOpenSurface("machines") : undefined}
+      />
       <div class="gsv-settings-section-rows">
         {targetRows.length === 0 ? <EmptyRow label="NO MACHINES" /> : rowLimit(targetRows, 3).map((row) => (
-          <MiniRow key={row.id} row={row} showIcon={false} />
+          <MiniRow key={row.id} row={row} showIcon={false} onClick={onOpenSurface ? () => onOpenSurface("machines") : undefined} />
         ))}
-        <AddRow label="CONNECT NEW MACHINE" />
+        <AddRow label="CONNECT NEW MACHINE" onClick={onOpenSurface ? () => onOpenSurface("machines") : undefined} />
       </div>
       <SplitCells
         left={(
@@ -447,11 +480,15 @@ function FleetPanel({
         )}
         right={(
           <div class="gsv-settings-mini-cell">
-            <MiniHeading title="INTEGRATIONS" meta={`${integrationPackages.filter((pkg) => pkg.enabled).length}/${integrationPackages.length}`} />
+            <MiniHeading
+              title="INTEGRATIONS"
+              meta={`${integrationPackages.filter((pkg) => pkg.enabled).length}/${integrationPackages.length}`}
+              onClick={onOpenSurface ? () => onOpenSurface("library") : undefined}
+            />
             {integrationRows.length === 0 ? <EmptyRow label="NO INTEGRATIONS" /> : rowLimit(integrationRows, 2).map((row) => (
-              <MiniRow key={row.id} row={row} />
+              <MiniRow key={row.id} row={row} onClick={onOpenSurface ? () => onOpenSurface("library") : undefined} />
             ))}
-            <AddRow label="NEW INTEGRATION" />
+            <AddRow label="NEW INTEGRATION" onClick={onOpenSurface ? () => onOpenSurface("library") : undefined} />
           </div>
         )}
       />
@@ -459,18 +496,28 @@ function FleetPanel({
   );
 }
 
-function SatellitesPanel({ applications }: { applications: readonly ConsolePackage[] }) {
+function SatellitesPanel({
+  applications,
+  onOpenSurface,
+}: {
+  applications: readonly ConsolePackage[];
+  onOpenSurface?: OpenSurface;
+}) {
   const rows = sortPackages(applications).map(applicationRow);
 
   return (
     <section class="gsv-settings-block gsv-settings-satellites-block">
       <SectionHeader title="SATELLITES" divider />
-      <MiniHeading title="APPLICATIONS" meta={`${applications.filter((pkg) => pkg.enabled).length}/${applications.length} ONLINE`} />
+      <MiniHeading
+        title="APPLICATIONS"
+        meta={`${applications.filter((pkg) => pkg.enabled).length}/${applications.length} ONLINE`}
+        onClick={onOpenSurface ? () => onOpenSurface("library") : undefined}
+      />
       <div class="gsv-settings-section-rows">
         {rows.length === 0 ? <EmptyRow label="NO APPLICATIONS" /> : rowLimit(rows, 5).map((row) => (
-          <MiniRow key={row.id} row={row} />
+          <MiniRow key={row.id} row={row} onClick={onOpenSurface ? () => onOpenSurface("library") : undefined} />
         ))}
-        <AddRow label="NEW APPLICATION" />
+        <AddRow label="NEW APPLICATION" onClick={onOpenSurface ? () => onOpenSurface("library") : undefined} />
       </div>
     </section>
   );
@@ -479,9 +526,11 @@ function SatellitesPanel({ applications }: { applications: readonly ConsolePacka
 function SettingsOverviewDashboard({
   counts,
   data,
+  onOpenSurface,
 }: {
   counts: ConsoleOverviewCounts | null;
   data: ConsoleOverviewData;
+  onOpenSurface?: OpenSurface;
 }) {
   const applications = data.packages.filter(isApplicationPackage);
   const integrationPackages = data.packages.filter((pkg) => !isApplicationPackage(pkg));
@@ -490,19 +539,19 @@ function SettingsOverviewDashboard({
   return (
     <div class="gsv-settings-overview" aria-label="GSV settings overview">
       <div class="gsv-settings-left">
-        <ShipPanel config={data.config} data={data} shellTargetCount={shellTargetCount} />
-        <CrewPanel accounts={data.accounts} processes={data.processes} />
-        <ModelsTasksPanel config={data.config} counts={counts} processes={data.processes} />
+        <ShipPanel config={data.config} data={data} onOpenSurface={onOpenSurface} shellTargetCount={shellTargetCount} />
+        <CrewPanel accounts={data.accounts} onOpenSurface={onOpenSurface} processes={data.processes} />
+        <ModelsTasksPanel config={data.config} counts={counts} onOpenSurface={onOpenSurface} processes={data.processes} />
       </div>
       <div class="gsv-settings-right">
-        <FleetPanel adapters={data.adapters} integrationPackages={integrationPackages} targets={data.targets} />
-        <SatellitesPanel applications={applications} />
+        <FleetPanel adapters={data.adapters} integrationPackages={integrationPackages} onOpenSurface={onOpenSurface} targets={data.targets} />
+        <SatellitesPanel applications={applications} onOpenSurface={onOpenSurface} />
       </div>
     </div>
   );
 }
 
-export function ConsoleOverviewPage() {
+export function ConsoleOverviewPage({ onOpenSurface }: { onOpenSurface?: OpenSurface }) {
   const overview = useConsoleOverview();
 
   return (
@@ -515,6 +564,7 @@ export function ConsoleOverviewPage() {
           <SettingsOverviewDashboard
             counts={overview.counts}
             data={data}
+            onOpenSurface={onOpenSurface}
           />
         )}
       />
