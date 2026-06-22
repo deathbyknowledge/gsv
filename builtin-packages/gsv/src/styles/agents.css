@@ -4,6 +4,50 @@
   min-width: 0;
 }
 
+.gsv-crew-breadcrumb {
+  padding: 0.2rem 0.1rem 0.35rem;
+}
+
+.gsv-crew-breadcrumb h3 {
+  margin: 0;
+  color: #161b22;
+  font-size: 1.05rem;
+  font-weight: 850;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.gsv-crew-surface-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.gsv-crew-surface-nav button {
+  min-height: 2rem;
+  padding: 0 0.7rem;
+  border: 1px solid #cfd6e1;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #253043;
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.gsv-crew-surface-nav button.is-active {
+  border-color: #3867d6;
+  background: #eef3fb;
+  color: #315fbd;
+}
+
+.gsv-crew-subview {
+  display: grid;
+  gap: 0.85rem;
+  min-width: 0;
+}
+
 .gsv-agents-toolbar {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -44,40 +88,81 @@
   min-width: 0;
 }
 
+.gsv-crew-agent-page-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr));
+  align-items: start;
+  gap: 0.85rem;
+  min-width: 0;
+}
+
+.gsv-crew-model-page {
+  display: grid;
+  grid-template-columns: minmax(16rem, 26rem) minmax(16rem, 26rem);
+  align-items: start;
+  gap: 1.5rem;
+  min-width: 0;
+}
+
+.gsv-crew-model-create {
+  display: grid;
+  align-content: start;
+  gap: 0.75rem;
+  min-width: 0;
+  padding-top: 2rem;
+}
+
 .gsv-model-card {
   gap: 0.65rem;
 }
 
-.gsv-model-summary {
+.gsv-model-card.is-expanded {
+  gap: 0.8rem;
+}
+
+.gsv-model-toggle {
   display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
   min-width: 0;
-  gap: 0.25rem;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
 }
 
-.gsv-model-summary span,
-.gsv-model-summary small,
-.gsv-model-default {
-  color: #687384;
-  font-size: 0.78rem;
-  font-weight: 650;
+.gsv-model-toggle:focus-visible {
+  outline: 2px solid #3867d6;
+  outline-offset: 2px;
 }
 
-.gsv-model-summary strong,
-.gsv-model-summary small {
+.gsv-model-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.55rem;
+  min-width: 0;
+}
+
+.gsv-model-title strong {
   overflow: hidden;
-  line-height: 1.35;
+  color: #253043;
+  font-size: 0.9rem;
+  line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.gsv-model-summary strong {
-  color: #253043;
-  font-size: 0.8rem;
-}
-
-.gsv-model-summary small {
+.gsv-model-title small,
+.gsv-model-default {
+  color: #687384;
   font-size: 0.74rem;
-  font-weight: 500;
+  font-weight: 650;
+  text-transform: uppercase;
 }
 
 .gsv-model-default {
@@ -310,22 +395,144 @@
   min-width: 0;
 }
 
-.gsv-agent-detail-grid {
+.gsv-agent-object-workspace {
   display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(18rem, 0.9fr);
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: start;
-  gap: 0.85rem;
+  gap: 1rem;
   min-width: 0;
 }
 
-.gsv-agent-detail-grid .gsv-agents-panel:first-child,
-.gsv-agent-detail-grid .gsv-agents-panel:nth-child(3) {
-  grid-column: 1;
+.gsv-agent-back {
+  margin-top: 0.25rem;
 }
 
-.gsv-agent-detail-grid .gsv-agents-panel:nth-child(2),
-.gsv-agent-detail-grid .gsv-agents-panel:nth-child(4) {
-  grid-column: 2;
+.gsv-agent-object-shell {
+  display: grid;
+  grid-template-columns: 5rem minmax(0, 1fr);
+  min-width: 0;
+  border: 1px solid #cfd6e1;
+  border-radius: 8px;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.gsv-agent-object-tabs {
+  display: grid;
+  align-content: start;
+  border-right: 1px solid #cfd6e1;
+  background: #f1f3f6;
+}
+
+.gsv-agent-object-tabs button {
+  min-height: 4.6rem;
+  border: 0;
+  border-bottom: 1px solid #ffffff;
+  background: transparent;
+  color: #253043;
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+
+.gsv-agent-object-tabs button.is-active {
+  background: #ffffff;
+  box-shadow: inset -2px 0 0 #ffffff, inset 0 0 0 1px #161b22;
+}
+
+.gsv-agent-object-panel {
+  display: grid;
+  align-content: start;
+  gap: 1.1rem;
+  min-height: 34rem;
+  min-width: 0;
+  padding: 1.5rem 2rem;
+}
+
+.gsv-agent-object-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: start;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.gsv-agent-object-head h3 {
+  margin: 0;
+  color: #161b22;
+  font-size: 1.25rem;
+  line-height: 1.2;
+}
+
+.gsv-agent-object-head p {
+  margin: 0.4rem 0 0;
+  color: #253043;
+  font-size: 0.86rem;
+  text-transform: uppercase;
+}
+
+.gsv-agent-object-head dl {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0;
+  min-width: 7rem;
+  text-align: right;
+}
+
+.gsv-agent-object-head dt,
+.gsv-agent-object-head dd {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.3;
+}
+
+.gsv-agent-object-head dt {
+  color: #687384;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+
+.gsv-agent-object-head dd {
+  color: #253043;
+}
+
+.gsv-agent-general-tab,
+.gsv-agent-files-tab {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.gsv-agent-general-facts {
+  display: grid;
+  gap: 0.75rem;
+  max-width: 36rem;
+  margin: 0;
+}
+
+.gsv-agent-general-facts > div {
+  display: grid;
+  gap: 0.22rem;
+}
+
+.gsv-agent-general-facts dt {
+  color: #687384;
+  font-size: 0.68rem;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+
+.gsv-agent-general-facts dd {
+  margin: 0;
+  color: #161b22;
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.gsv-agent-object-panel .gsv-agents-panel {
+  border: 0;
+  padding: 0;
 }
 
 .gsv-agents-create-context {
@@ -420,6 +627,45 @@
   display: flex;
   flex-wrap: wrap;
   gap: 0.4rem;
+}
+
+.gsv-agent-file-tiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.4rem;
+  min-width: 0;
+}
+
+.gsv-context-file-tile {
+  display: grid;
+  justify-items: center;
+  gap: 0.35rem;
+  width: 5.4rem;
+  border: 0;
+  background: transparent;
+  color: #687384;
+  cursor: pointer;
+  text-align: center;
+}
+
+.gsv-context-file-tile .gsv-icon {
+  width: 2.1rem;
+  height: 2.1rem;
+  fill: currentColor;
+  stroke: currentColor;
+  opacity: 0.7;
+}
+
+.gsv-context-file-tile span {
+  color: #4d5867;
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1.25;
+  text-transform: uppercase;
+}
+
+.gsv-context-file-tile.is-active {
+  color: #161b22;
 }
 
 .gsv-chip {
@@ -591,6 +837,10 @@
   gap: 0.45rem;
 }
 
+.gsv-crew-sortbar {
+  max-width: 28rem;
+}
+
 .gsv-agent-task-item {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -626,51 +876,41 @@
   font-size: 0.74rem;
 }
 
-.gsv-agent-advanced-list {
-  display: grid;
-  gap: 0.45rem;
-  margin: 0;
-}
-
-.gsv-agent-advanced-list > div {
-  display: grid;
-  grid-template-columns: 5.5rem minmax(0, 1fr);
-  gap: 0.6rem;
-}
-
-.gsv-agent-advanced-list dt,
-.gsv-agent-advanced-list dd {
-  margin: 0;
-  font-size: 0.78rem;
-  line-height: 1.35;
-}
-
-.gsv-agent-advanced-list dt {
-  color: #687384;
-  font-weight: 750;
-  text-transform: uppercase;
-}
-
-.gsv-agent-advanced-list dd {
-  overflow: hidden;
-  color: #253043;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 @media (max-width: 860px) {
   .gsv-crew-layout {
     grid-template-columns: 1fr;
   }
 
-  .gsv-agent-detail-grid {
+  .gsv-crew-model-page,
+  .gsv-agent-object-workspace,
+  .gsv-agent-object-shell {
     grid-template-columns: 1fr;
   }
 
-  .gsv-agent-detail-grid .gsv-agents-panel:first-child,
-  .gsv-agent-detail-grid .gsv-agents-panel:nth-child(2),
-  .gsv-agent-detail-grid .gsv-agents-panel:nth-child(3),
-  .gsv-agent-detail-grid .gsv-agents-panel:nth-child(4) {
-    grid-column: 1;
+  .gsv-agent-object-tabs {
+    grid-template-columns: repeat(3, 1fr);
+    border-right: 0;
+    border-bottom: 1px solid #cfd6e1;
   }
+
+  .gsv-agent-object-tabs button {
+    min-height: 3rem;
+    border-bottom: 0;
+    border-right: 1px solid #ffffff;
+  }
+
+  .gsv-agent-object-panel {
+    min-height: 0;
+    padding: 1rem;
+  }
+
+  .gsv-agent-object-head {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .gsv-agent-object-head dl {
+    grid-column: 1 / -1;
+    text-align: left;
+  }
+
 }

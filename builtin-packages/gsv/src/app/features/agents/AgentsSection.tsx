@@ -1,8 +1,18 @@
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useMemo, useState } from "preact/hooks";
 import type { GsvBackend } from "../../backend-contract";
 import { ActionButton } from "../../components/ui/ActionButton";
-import { buildCrewAgents, findMatchingStackProfile, stackDetail } from "../../domain/crew";
-import { CrewOverview } from "./CrewCards";
+import { ConsoleCard, ObjectHeader } from "../../components/ui/ConsoleCard";
+import { Icon } from "../../components/ui/Icon";
+import {
+  buildCrewAgents,
+  buildCrewStackCards,
+  findMatchingStackProfile,
+  stackDetail,
+  type CrewAgent,
+  type CrewTask,
+} from "../../domain/crew";
+import { CrewOverview, CrewModelStackList } from "./CrewCards";
+import { modelProfilesConfigKey, serializeModelProfiles, createModelProfile } from "../settings/model-profiles-domain";
 import {
   APPROVAL_ACTION_OPTIONS,
   parseApprovalPolicy,
@@ -11,6 +21,7 @@ import {
 } from "./agents-domain";
 import { actionLabel, ruleLabel, summarizePermissions } from "./permissions-domain";
 import { useAgents } from "./useAgents";
+import { TaskBoard, sortTaskProcesses, type TaskSort } from "../runtime/TaskBoard";
 import type {
   AccountSummary,
   AgentContextFile,
@@ -26,22 +37,95 @@ const NEW_CONTEXT_FILE = "__new__";
 const INHERIT_STACK = "__inherit__";
 const CUSTOM_STACK = "__custom__";
 
+type CrewView = "overview" | "agents" | "tasks" | "models";
+type AgentTab = "general" | "files" | "tasks";
+
 export function AgentsSection({ backend }: { backend: GsvBackend }) {
   const agents = useAgents(backend);
+  const [view, setView] = useState<CrewView>("overview");
+  const [returnView, setReturnView] = useState<CrewView>("agents");
+  const [agentTab, setAgentTab] = useState<AgentTab>("general");
+  const [createAgentOpen, setCreateAgentOpen] = useState(false);
+  const [modelBusy, setModelBusy] = useState(false);
+  const [modelError, setModelError] = useState("");
+  const [taskError, setTaskError] = useState("");
+  const [killingPid, setKillingPid] = useState("");
+
+  const stateAgents = agents.state?.agents ?? [];
+  const models = agents.state?.modelProfiles ?? [];
+  const systemAiValues = agents.state?.systemAiValues ?? {};
+  const processes = agents.processes;
+
+  function openAgent(agent: AgentDetail, nextReturnView: CrewView): void {
+    setReturnView(nextReturnView);
+    setAgentTab("general");
+    agents.selectAgent(agent);
+  }
+
+  function closeAgent(): void {
+    agents.clearSelection();
+    setView(returnView);
+  }
+
+  async function createModelProfileFromValues(name: string, values: Record<string, string>): Promise<boolean> {
+    const state = agents.state;
+    if (!state) return false;
+    setModelBusy(true);
+    setModelError("");
+    try {
+      const nextProfiles = createModelProfile(state.modelProfiles, name, values);
+      await backend.applyConfigEntries({
+        entries: [{
+          key: modelProfilesConfigKey(state.viewerUid),
+          value: serializeModelProfiles(nextProfiles),
+        }],
+      });
+      await agents.loadState();
+      return true;
+    } catch (error) {
+      setModelError(error instanceof Error ? error.message : String(error));
+      return false;
+    } finally {
+      setModelBusy(false);
+    }
+  }
+
+  async function cancelTask(pid: string): Promise<void> {
+    const normalizedPid = pid.trim();
+    if (!normalizedPid || killingPid) return;
+
+    setKillingPid(normalizedPid);
+    setTaskError("");
+    try {
+      const result = await backend.killRuntimeProcess({ pid: normalizedPid });
+      if (!result.ok) {
+        setTaskError(result.errorText);
+        return;
+      }
+      await agents.loadState();
+    } catch (error) {
+      setTaskError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setKillingPid("");
+    }
+  }
 
   if (agents.selectedAgent) {
     return (
       <section class="gsv-agents">
+        <CrewBreadcrumb view="agents" detail={agents.selectedAgent.displayName} />
         <AgentWorkspace
           agent={agents.selectedAgent}
+          tab={agentTab}
           context={agents.context}
-          models={agents.state?.modelProfiles ?? []}
-          systemAiValues={agents.state?.systemAiValues ?? {}}
-          processes={agents.processes}
+          models={models}
+          systemAiValues={systemAiValues}
+          processes={processes}
           contextLoading={agents.contextLoading}
           busy={agents.busy}
           errorText={agents.errorText}
-          onBack={agents.clearSelection}
+          onBack={closeAgent}
+          onTabChange={setAgentTab}
           onSaveContext={(name, text) => agents.saveContext(agents.selectedAgent!.username, name, text)}
           onSaveBehavior={(aiValues, approval) => agents.setBehavior({ uid: agents.selectedAgent!.uid, aiValues, approval })}
         />
@@ -51,80 +135,151 @@ export function AgentsSection({ backend }: { backend: GsvBackend }) {
 
   return (
     <section class="gsv-agents">
-      <AgentRoster
-        loading={agents.loading}
-        busy={agents.busy}
-        errorText={agents.errorText}
-        agents={agents.state?.agents ?? []}
-        humans={agents.state?.humans ?? []}
-        models={agents.state?.modelProfiles ?? []}
-        systemAiValues={agents.state?.systemAiValues ?? {}}
-        processes={agents.processes}
-        viewerUid={agents.state?.viewerUid ?? 0}
-        isRoot={agents.state?.isRoot ?? false}
-        onRefresh={() => void agents.loadState()}
-        onSelect={agents.selectAgent}
-        onCreateAgent={(args) => agents.createAgent(args)}
-        onCreateHuman={(args) => agents.createHuman(args)}
-      />
+      <CrewBreadcrumb view={view} />
+      <CrewSurfaceNav view={view} onViewChange={setView} />
+      {agents.errorText ? <p class="gsv-inline-error">{agents.errorText}</p> : null}
+      {modelError ? <p class="gsv-inline-error">{modelError}</p> : null}
+      {taskError ? <p class="gsv-inline-error">{taskError}</p> : null}
+
+      {view === "overview" ? (
+        <>
+          <CrewOverview
+            agents={stateAgents}
+            models={models}
+            systemAiValues={systemAiValues}
+            processes={processes}
+            loading={agents.loading}
+            onSelect={(agent) => openAgent(agent, "overview")}
+            onCreateAgent={() => setCreateAgentOpen(true)}
+          />
+          <CreateAgentForm open={createAgentOpen} busy={agents.busy} onOpenChange={setCreateAgentOpen} onCreate={(args) => agents.createAgent(args)} />
+        </>
+      ) : view === "agents" ? (
+        <CrewAgentsView
+          agents={stateAgents}
+          models={models}
+          systemAiValues={systemAiValues}
+          processes={processes}
+          loading={agents.loading}
+          busy={agents.busy}
+          humans={agents.state?.humans ?? []}
+          viewerUid={agents.state?.viewerUid ?? 0}
+          isRoot={agents.state?.isRoot ?? false}
+          createAgentOpen={createAgentOpen}
+          onCreateAgentOpenChange={setCreateAgentOpen}
+          onSelect={(agent) => openAgent(agent, "agents")}
+          onCreateAgent={(args) => agents.createAgent(args)}
+          onCreateHuman={(args) => agents.createHuman(args)}
+        />
+      ) : view === "tasks" ? (
+        <CrewTasksView
+          agents={stateAgents}
+          models={models}
+          systemAiValues={systemAiValues}
+          processes={processes}
+          loading={agents.loading}
+          killingPid={killingPid}
+          onCancelTask={cancelTask}
+        />
+      ) : (
+        <CrewModelsView
+          models={models}
+          systemAiValues={systemAiValues}
+          busy={modelBusy}
+          onCreate={createModelProfileFromValues}
+        />
+      )}
     </section>
   );
 }
 
-function AgentRoster({
-  loading,
-  busy,
-  errorText,
+function CrewBreadcrumb({ view, detail }: { view: CrewView; detail?: string }) {
+  const label = view === "overview" ? "" : view === "agents" ? "Agents" : view === "tasks" ? "Tasks" : "Models";
+  return (
+    <header class="gsv-crew-breadcrumb">
+      <h3>Settings &gt; Crew{label ? ` &gt; ${label}` : ""}{detail ? ` &gt; ${detail}` : ""}</h3>
+    </header>
+  );
+}
+
+function CrewSurfaceNav({
+  view,
+  onViewChange,
+}: {
+  view: CrewView;
+  onViewChange: (view: CrewView) => void;
+}) {
+  return (
+    <nav class="gsv-crew-surface-nav" aria-label="Crew surfaces">
+      {([
+        ["overview", "Crew"],
+        ["agents", "Agents"],
+        ["tasks", "Tasks"],
+        ["models", "Models"],
+      ] as Array<[CrewView, string]>).map(([id, label]) => (
+        <button
+          key={id}
+          type="button"
+          class={view === id ? "is-active" : ""}
+          onClick={() => onViewChange(id)}
+        >
+          {label}
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+function CrewAgentsView({
   agents,
   humans,
   models,
   systemAiValues,
   processes,
+  loading,
+  busy,
   viewerUid,
   isRoot,
-  onRefresh,
+  createAgentOpen,
+  onCreateAgentOpenChange,
   onSelect,
   onCreateAgent,
   onCreateHuman,
 }: {
-  loading: boolean;
-  busy: boolean;
-  errorText: string;
   agents: AgentDetail[];
   humans: AccountSummary[];
   models: AgentModelProfile[];
   systemAiValues: Record<string, string>;
   processes: ProcessEntry[];
+  loading: boolean;
+  busy: boolean;
   viewerUid: number;
   isRoot: boolean;
-  onRefresh: () => void;
+  createAgentOpen: boolean;
+  onCreateAgentOpenChange: (open: boolean) => void;
   onSelect: (agent: AgentDetail) => void;
   onCreateAgent: (args: CreateAgentArgs) => Promise<boolean>;
   onCreateHuman: (args: { username: string; password: string; gecos?: string }) => Promise<boolean>;
 }) {
-  const [createAgentOpen, setCreateAgentOpen] = useState(false);
+  const crew = buildCrewAgents(agents, processes, models, systemAiValues);
 
   return (
-    <section class="gsv-agents-roster" aria-label="Crew">
-      <div class="gsv-agents-toolbar">
-        <p class="gsv-runtime-meta" aria-live="polite">
-          {loading ? "Loading agents." : `${agents.length} agent${agents.length === 1 ? "" : "s"} you can run.`}
-        </p>
-        <ActionButton icon="refresh" label="Refresh" busy={loading} size="icon" onClick={onRefresh} />
-      </div>
-      {errorText ? <p class="gsv-inline-error">{errorText}</p> : null}
+    <section class="gsv-crew-subview" aria-label="Crew agents">
+      {crew.length === 0 ? (
+        <section class="gsv-empty-state">
+          <h3>{loading ? "Loading agents" : "No agents yet"}</h3>
+          <p>{loading ? "Refreshing crew state." : "Create a custom agent or check that your personal agent is provisioned."}</p>
+        </section>
+      ) : (
+        <div class="gsv-crew-agent-page-grid">
+          {crew.map((agent) => (
+            <AgentSummaryCard key={agent.username} agent={agent} expanded onManage={() => onSelect(agent.agent)} />
+          ))}
+          <CreateCrewCard title="Expand crew" subtitle="Create new agent" label="Create new agent" onCreate={() => onCreateAgentOpenChange(true)} />
+        </div>
+      )}
 
-      <CrewOverview
-        agents={agents}
-        models={models}
-        systemAiValues={systemAiValues}
-        processes={processes}
-        loading={loading}
-        onSelect={onSelect}
-        onCreateAgent={() => setCreateAgentOpen(true)}
-      />
-
-      <CreateAgentForm open={createAgentOpen} busy={busy} onOpenChange={setCreateAgentOpen} onCreate={onCreateAgent} />
+      <CreateAgentForm open={createAgentOpen} busy={busy} onOpenChange={onCreateAgentOpenChange} onCreate={onCreateAgent} />
 
       {isRoot ? (
         <section class="gsv-agents-humans" aria-label="Human users">
@@ -148,6 +303,252 @@ function AgentRoster({
         </section>
       ) : null}
     </section>
+  );
+}
+
+function AgentSummaryCard({
+  agent,
+  expanded = false,
+  onManage,
+}: {
+  agent: CrewAgent;
+  expanded?: boolean;
+  onManage: () => void;
+}) {
+  const firstTasks = agent.activeTasks.slice(0, 3);
+  return (
+    <ConsoleCard class="gsv-agent-card" tone={agent.tone}>
+      <ObjectHeader
+        title={agent.displayName}
+        eyebrow={agent.roleLabel}
+        subtitle={expanded ? agent.description : undefined}
+        icon="user"
+        tone={agent.tone}
+        status={agent.activeTasks.length > 0 ? "good" : "neutral"}
+      />
+      {expanded ? (
+        <>
+          <div class="gsv-card-facts">
+            <CardFact label="Model" value={agent.modelLabel} detail={agent.modelDetail} />
+            <CardFact label="Active tasks" value={String(agent.activeTasks.length)} />
+            {firstTasks.length === 0 ? (
+              <p class="gsv-agent-idle">Idle</p>
+            ) : firstTasks.map((task) => (
+              <p key={task.pid} class={`gsv-agent-task-line is-${task.tone}`}>{task.title}</p>
+            ))}
+            <CardFact label="Permissions" value={agent.permissions.headline} detail={agent.permissions.detail} />
+          </div>
+          <div class="gsv-card-actions">
+            <button type="button" class="gsv-text-action" onClick={onManage}>Manage &gt;</button>
+          </div>
+        </>
+      ) : (
+        <div class="gsv-card-actions">
+          <span class="gsv-agent-compact-meta">{agent.modelLabel} / {agent.activeTasks.length} active</span>
+          <button type="button" class="gsv-text-action" onClick={onManage}>Manage &gt;</button>
+        </div>
+      )}
+    </ConsoleCard>
+  );
+}
+
+function CardFact({ label, value, detail }: { label: string; value: string; detail?: string }) {
+  return (
+    <div class="gsv-card-fact">
+      <span>{label}</span>
+      <strong>{value}</strong>
+      {detail ? <small>{detail}</small> : null}
+    </div>
+  );
+}
+
+function CreateCrewCard({
+  title,
+  subtitle,
+  label,
+  onCreate,
+}: {
+  title: string;
+  subtitle: string;
+  label: string;
+  onCreate: () => void;
+}) {
+  return (
+    <ConsoleCard class="gsv-create-card">
+      <div class="gsv-create-card-copy">
+        <strong>{title}</strong>
+        <span>{subtitle}</span>
+      </div>
+      <ActionButton icon="plus" label={label} size="icon" onClick={onCreate} />
+    </ConsoleCard>
+  );
+}
+
+function CrewTasksView({
+  agents,
+  models,
+  systemAiValues,
+  processes,
+  loading,
+  killingPid,
+  onCancelTask,
+}: {
+  agents: AgentDetail[];
+  models: AgentModelProfile[];
+  systemAiValues: Record<string, string>;
+  processes: ProcessEntry[];
+  loading: boolean;
+  killingPid: string;
+  onCancelTask: (pid: string) => void;
+}) {
+  const [sort, setSort] = useState<TaskSort>("agent");
+  const [expandedPid, setExpandedPid] = useState<string>("");
+  const sortedProcesses = useMemo(() => sortTaskProcesses(processes, sort), [processes, sort]);
+  const expandedExists = sortedProcesses.some((process) => String(process.pid ?? "").trim() === expandedPid);
+  const selectedPid = expandedExists ? expandedPid : sortedProcesses[0]?.pid || "";
+
+  return (
+    <section class="gsv-crew-subview" aria-label="Crew tasks">
+      <div class="gsv-crew-sortbar">
+        <label class="gsv-field">
+          <span>Sort by</span>
+          <select value={sort} onChange={(event) => setSort(event.currentTarget.value as TaskSort)}>
+            <option value="agent">Agent</option>
+            <option value="status">Status</option>
+            <option value="created">Date created</option>
+            <option value="updated">Date updated</option>
+          </select>
+        </label>
+      </div>
+
+      <TaskBoard
+        agents={agents}
+        models={models}
+        systemAiValues={systemAiValues}
+        processes={sortedProcesses}
+        loading={loading}
+        selectedPid={selectedPid}
+        killingPid={killingPid}
+        onToggle={(process) => {
+          const pid = String(process.pid ?? "").trim();
+          setExpandedPid(pid === selectedPid ? "" : pid);
+        }}
+        onCancelTask={onCancelTask}
+      />
+    </section>
+  );
+}
+
+function CrewModelsView({
+  models,
+  systemAiValues,
+  busy,
+  onCreate,
+}: {
+  models: AgentModelProfile[];
+  systemAiValues: Record<string, string>;
+  busy: boolean;
+  onCreate: (name: string, values: Record<string, string>) => Promise<boolean>;
+}) {
+  const [open, setOpen] = useState(false);
+  const stacks = buildCrewStackCards(systemAiValues, models);
+
+  return (
+    <section class="gsv-crew-subview" aria-label="Crew models">
+      <div class="gsv-crew-model-page">
+        <section class="gsv-crew-models" aria-label="Available LLM models">
+          <header class="gsv-crew-column-head">
+            <span class="gsv-kicker">Available LLM models</span>
+          </header>
+          <CrewModelStackList stacks={stacks} />
+        </section>
+        <section class="gsv-crew-model-create">
+          <CreateCrewCard title="Add new model" subtitle="Create saved stack" label="Create saved model stack" onCreate={() => setOpen(true)} />
+          <CreateModelProfileForm
+            open={open}
+            busy={busy}
+            systemAiValues={systemAiValues}
+            onCancel={() => setOpen(false)}
+            onCreate={async (name, values) => {
+              const ok = await onCreate(name, values);
+              if (ok) setOpen(false);
+              return ok;
+            }}
+          />
+        </section>
+      </div>
+    </section>
+  );
+}
+
+function CreateModelProfileForm({
+  open,
+  busy,
+  systemAiValues,
+  onCancel,
+  onCreate,
+}: {
+  open: boolean;
+  busy: boolean;
+  systemAiValues: Record<string, string>;
+  onCancel: () => void;
+  onCreate: (name: string, values: Record<string, string>) => Promise<boolean>;
+}) {
+  const [name, setName] = useState("");
+  const [provider, setProvider] = useState(systemAiValues["config/ai/provider"] ?? "workers-ai");
+  const [model, setModel] = useState(systemAiValues["config/ai/model"] ?? "");
+  const [reasoning, setReasoning] = useState(systemAiValues["config/ai/reasoning"] ?? "medium");
+  const [maxTokens, setMaxTokens] = useState(systemAiValues["config/ai/max_tokens"] ?? "");
+  const [maxContext, setMaxContext] = useState(systemAiValues["config/ai/max_context_bytes"] ?? "");
+
+  useEffect(() => {
+    if (!open) return;
+    setProvider(systemAiValues["config/ai/provider"] ?? "workers-ai");
+    setModel(systemAiValues["config/ai/model"] ?? "");
+    setReasoning(systemAiValues["config/ai/reasoning"] ?? "medium");
+    setMaxTokens(systemAiValues["config/ai/max_tokens"] ?? "");
+    setMaxContext(systemAiValues["config/ai/max_context_bytes"] ?? "");
+  }, [open, systemAiValues]);
+
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <form
+      class="gsv-agents-form"
+      onSubmit={async (event) => {
+        event.preventDefault();
+        const ok = await onCreate(name, {
+          ...systemAiValues,
+          "config/ai/provider": provider,
+          "config/ai/model": model,
+          "config/ai/reasoning": reasoning,
+          "config/ai/max_tokens": maxTokens,
+          "config/ai/max_context_bytes": maxContext,
+        });
+        if (ok) setName("");
+      }}
+    >
+      <h4>New model stack</h4>
+      <label class="gsv-field"><span>Name</span><input value={name} onInput={(event) => setName(event.currentTarget.value)} required /></label>
+      <label class="gsv-field"><span>Provider</span><input value={provider} onInput={(event) => setProvider(event.currentTarget.value)} required /></label>
+      <label class="gsv-field"><span>Model</span><input value={model} onInput={(event) => setModel(event.currentTarget.value)} required /></label>
+      <label class="gsv-field">
+        <span>Reasoning</span>
+        <select value={reasoning} onChange={(event) => setReasoning(event.currentTarget.value)}>
+          {["off", "minimal", "low", "medium", "high", "xhigh"].map((level) => (
+            <option key={level} value={level}>{level}</option>
+          ))}
+        </select>
+      </label>
+      <label class="gsv-field"><span>Max tokens</span><input value={maxTokens} onInput={(event) => setMaxTokens(event.currentTarget.value)} /></label>
+      <label class="gsv-field"><span>Max context</span><input value={maxContext} onInput={(event) => setMaxContext(event.currentTarget.value)} /></label>
+      <div class="gsv-detail-actions">
+        <ActionButton type="submit" icon="check" label="Save model" busyLabel="Saving" busy={busy} disabled={!name.trim() || !model.trim()} />
+        <ActionButton type="button" icon="x" label="Cancel" variant="ghost" onClick={onCancel} />
+      </div>
+    </form>
   );
 }
 
@@ -408,6 +809,7 @@ function CreateHumanForm({
 
 function AgentWorkspace({
   agent,
+  tab,
   context,
   models,
   systemAiValues,
@@ -416,10 +818,12 @@ function AgentWorkspace({
   busy,
   errorText,
   onBack,
+  onTabChange,
   onSaveContext,
   onSaveBehavior,
 }: {
   agent: AgentDetail;
+  tab: AgentTab;
   context: { name: string; text: string }[];
   models: AgentModelProfile[];
   systemAiValues: Record<string, string>;
@@ -428,6 +832,7 @@ function AgentWorkspace({
   busy: boolean;
   errorText: string;
   onBack: () => void;
+  onTabChange: (tab: AgentTab) => void;
   onSaveContext: (name: string, text: string) => Promise<boolean>;
   onSaveBehavior: (aiValues: Record<string, string> | undefined, approval: string) => Promise<boolean>;
 }) {
@@ -435,45 +840,96 @@ function AgentWorkspace({
   const tasks = crewAgent?.tasks ?? [];
 
   return (
-    <section class="gsv-agents-workspace" aria-label="Agent detail">
-      <header class="gsv-runtime-detail-head">
-        <ActionButton icon="arrow-left" label="Crew" onClick={onBack} />
-        <div>
-          <span class="gsv-kicker">{relationLabel(agent.relation)}</span>
-          <h3>{agent.displayName}</h3>
-          <p>{agent.username} / uid {agent.uid}</p>
-        </div>
-      </header>
-
+    <section class="gsv-agent-object-workspace" aria-label="Agent detail">
+      <ActionButton class="gsv-agent-back" icon="arrow-left" label="Crew" onClick={onBack} />
       {errorText ? <p class="gsv-inline-error">{errorText}</p> : null}
 
-      <div class="gsv-agent-detail-grid">
-        <PermissionsEditor
-          agent={agent}
-          models={models}
-          systemAiValues={systemAiValues}
-          busy={busy}
-          onSave={onSaveBehavior}
-        />
+      <div class="gsv-agent-object-shell">
+        <nav class="gsv-agent-object-tabs" aria-label={`${agent.displayName} sections`}>
+          {([
+            ["general", "General"],
+            ["files", "Files"],
+            ["tasks", "Tasks"],
+          ] as Array<[AgentTab, string]>).map(([id, label]) => (
+            <button key={id} type="button" class={tab === id ? "is-active" : ""} onClick={() => onTabChange(id)}>
+              {label}
+            </button>
+          ))}
+        </nav>
 
-        <AgentTasksPanel tasks={tasks} />
-
-        <ContextEditor
-          key={agent.username}
-          files={context}
-          loading={contextLoading}
-          busy={busy}
-          editable={agent.contextEditable}
-          onSave={onSaveContext}
-        />
-
-        <AgentAdvancedPanel agent={agent} />
+        <section class="gsv-agent-object-panel" aria-label={`${agent.displayName} ${tab}`}>
+          <AgentObjectHeader agent={agent} />
+          {tab === "general" ? (
+            <AgentGeneralTab
+              agent={agent}
+              models={models}
+              systemAiValues={systemAiValues}
+              busy={busy}
+              onSave={onSaveBehavior}
+            />
+          ) : tab === "files" ? (
+            <ContextEditor
+              key={agent.username}
+              files={context}
+              loading={contextLoading}
+              busy={busy}
+              editable={agent.contextEditable}
+              onSave={onSaveContext}
+            />
+          ) : (
+            <AgentTasksPanel tasks={tasks} />
+          )}
+        </section>
       </div>
     </section>
   );
 }
 
-function AgentTasksPanel({ tasks }: { tasks: NonNullable<ReturnType<typeof buildCrewAgents>[number]>["tasks"] }) {
+function AgentObjectHeader({ agent }: { agent: AgentDetail }) {
+  return (
+    <header class="gsv-agent-object-head">
+      <div>
+        <h3>{agent.displayName}</h3>
+        <p>{relationLabel(agent.relation)}</p>
+      </div>
+      <div class={`gsv-object-avatar is-${agent.relation === "personal-agent" ? "accent" : "good"}`} aria-hidden="true">
+        <Icon name="user" />
+        <span class="gsv-object-status is-good"></span>
+      </div>
+      <dl>
+        <div><dt>Username</dt><dd>{agent.username}</dd></div>
+        <div><dt>UID</dt><dd>{agent.uid}</dd></div>
+      </dl>
+    </header>
+  );
+}
+
+function AgentGeneralTab({
+  agent,
+  models,
+  systemAiValues,
+  busy,
+  onSave,
+}: {
+  agent: AgentDetail;
+  models: AgentModelProfile[];
+  systemAiValues: Record<string, string>;
+  busy: boolean;
+  onSave: (aiValues: Record<string, string> | undefined, approval: string) => Promise<boolean>;
+}) {
+  return (
+    <section class="gsv-agent-general-tab">
+      <dl class="gsv-agent-general-facts">
+        <div><dt>Name</dt><dd>{agent.displayName}</dd></div>
+        <div><dt>Role</dt><dd>{relationLabel(agent.relation)}</dd></div>
+        <div><dt>Description</dt><dd>{agent.gecos || agent.displayName}</dd></div>
+      </dl>
+      <PermissionsEditor agent={agent} models={models} systemAiValues={systemAiValues} busy={busy} onSave={onSave} />
+    </section>
+  );
+}
+
+function AgentTasksPanel({ tasks }: { tasks: CrewTask[] }) {
   return (
     <section class="gsv-agents-panel" aria-label="Current tasks">
       <header class="gsv-section-intro">
@@ -496,36 +952,6 @@ function AgentTasksPanel({ tasks }: { tasks: NonNullable<ReturnType<typeof build
           ))}
         </div>
       )}
-    </section>
-  );
-}
-
-function AgentAdvancedPanel({ agent }: { agent: AgentDetail }) {
-  return (
-    <section class="gsv-agents-panel" aria-label="Advanced agent metadata">
-      <header class="gsv-section-intro">
-        <span class="gsv-kicker">Advanced</span>
-        <h3>Identity</h3>
-        <p>Low-level account fields used for routing and configuration.</p>
-      </header>
-      <dl class="gsv-agent-advanced-list">
-        <div>
-          <dt>Username</dt>
-          <dd>{agent.username}</dd>
-        </div>
-        <div>
-          <dt>UID</dt>
-          <dd>{agent.uid}</dd>
-        </div>
-        <div>
-          <dt>Relation</dt>
-          <dd>{relationLabel(agent.relation)}</dd>
-        </div>
-        <div>
-          <dt>Config</dt>
-          <dd>{agent.configEditable ? "Editable" : "Read-only"}</dd>
-        </div>
-      </dl>
     </section>
   );
 }
@@ -567,32 +993,44 @@ function ContextEditor({
   }
 
   const targetName = selected === NEW_FILE ? draftName : selected;
+  const selectedFile = files.find((file) => file.name === selected);
+
+  function resetDraft(): void {
+    if (selected === NEW_FILE) {
+      setDraftName("");
+      setDraft("");
+      return;
+    }
+    setDraft(selectedFile?.text ?? "");
+  }
 
   return (
-    <section class="gsv-agents-panel" aria-label="Context files">
+    <section class="gsv-agent-files-tab" aria-label="Context files">
       <header class="gsv-section-intro">
         <span class="gsv-kicker">Context</span>
         <h3>Persona &amp; context</h3>
         <p>Markdown files in the agent's <code>context.d</code>, layered into every prompt.</p>
       </header>
 
-      <div class="gsv-agents-context-tabs">
+      <div class="gsv-agent-file-tiles">
         {files.map((file) => (
           <button
             key={file.name}
             type="button"
-            class={`gsv-chip${selected === file.name ? " is-active" : ""}`}
+            class={`gsv-context-file-tile${selected === file.name ? " is-active" : ""}`}
             onClick={() => selectFile(file.name)}
           >
-            {file.name}
+            <Icon name="folder" />
+            <span>{contextFileLabel(file.name)}</span>
           </button>
         ))}
         <button
           type="button"
-          class={`gsv-chip${selected === NEW_FILE ? " is-active" : ""}`}
+          class={`gsv-context-file-tile${selected === NEW_FILE ? " is-active" : ""}`}
           onClick={() => selectFile(NEW_FILE)}
         >
-          + New file
+          <Icon name="folder" />
+          <span>Add new</span>
         </button>
       </div>
 
@@ -620,6 +1058,13 @@ function ContextEditor({
 
       <div class="gsv-detail-actions">
         <ActionButton
+          icon="refresh"
+          label="Reset"
+          variant="ghost"
+          disabled={!editable || loading}
+          onClick={resetDraft}
+        />
+        <ActionButton
           icon="check"
           label="Save context"
           busyLabel="Saving"
@@ -635,6 +1080,14 @@ function ContextEditor({
       </div>
     </section>
   );
+}
+
+function contextFileLabel(name: string): string {
+  return name
+    .replace(/^\d+-/, "")
+    .replace(/\.md$/, "")
+    .replace(/[-_]+/g, " ")
+    .trim() || name;
 }
 
 function PermissionsEditor({

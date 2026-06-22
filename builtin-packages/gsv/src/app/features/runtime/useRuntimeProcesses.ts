@@ -61,13 +61,6 @@ export function useRuntimeProcesses(backend: GsvBackend) {
     return filterProcesses(state?.processes ?? [], query);
   }, [query, state?.processes]);
 
-  const selectedProcess = useMemo(() => {
-    if (!selectedPid || filteredProcesses.length === 0) {
-      return null;
-    }
-    return filteredProcesses.find((process) => process.pid === selectedPid) ?? null;
-  }, [filteredProcesses, selectedPid]);
-
   const setQuery = useCallback((nextQuery: string) => {
     setQueryState(nextQuery);
     writeRuntimeRoute({ q: nextQuery, pid: null });
@@ -112,7 +105,7 @@ export function useRuntimeProcesses(backend: GsvBackend) {
     agents,
     models,
     systemAiValues,
-    selectedProcess,
+    selectedPid,
     filteredProcesses,
     killingPid,
     totalCount: state?.processes.length ?? 0,

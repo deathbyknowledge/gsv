@@ -1,36 +1,19 @@
-import { openApp } from "@humansandmachines/gsv/sdk/host";
+import { useMemo, useState } from "preact/hooks";
 import type { GsvBackend } from "../../backend-contract";
 import { ActionButton } from "../../components/ui/ActionButton";
-import { formatTimestampMs } from "../../utils/format";
-import {
-  canOpenChat,
-  processState,
-  processTitle,
-} from "./runtime-domain";
-import { TaskBoard } from "./TaskBoard";
+import { TaskBoard, sortTaskProcesses, type TaskSort } from "./TaskBoard";
 import { useRuntimeProcesses } from "./useRuntimeProcesses";
-import type { ProcessEntry } from "./types";
 
 export function RuntimeSection({ backend }: { backend: GsvBackend }) {
   const runtime = useRuntimeProcesses(backend);
+  const [sort, setSort] = useState<TaskSort>("agent");
   const hasFilter = runtime.query.trim().length > 0;
-  const selectedProcess = runtime.selectedProcess;
+  const sortedProcesses = useMemo(() => sortTaskProcesses(runtime.filteredProcesses, sort), [runtime.filteredProcesses, sort]);
+  const selectedExists = sortedProcesses.some((process) => String(process.pid ?? "").trim() === runtime.selectedPid);
+  const selectedPid = selectedExists ? runtime.selectedPid ?? "" : sortedProcesses[0]?.pid || "";
   const statusText = runtime.loading
     ? `Refreshing. Showing ${runtime.filteredProcesses.length} of ${runtime.totalCount} tasks.`
     : `Showing ${runtime.filteredProcesses.length} of ${runtime.totalCount} tasks.`;
-
-  if (selectedProcess) {
-    return (
-      <section class="gsv-runtime">
-        <ProcessDetail
-          process={selectedProcess}
-          killingPid={runtime.killingPid}
-          onBack={runtime.clearSelection}
-          onKill={(pid) => void runtime.killProcess(pid)}
-        />
-      </section>
-    );
-  }
 
   return (
     <section class="gsv-runtime">
@@ -53,6 +36,15 @@ export function RuntimeSection({ backend }: { backend: GsvBackend }) {
               placeholder="pid, label, profile, path"
               onInput={(event) => runtime.setQuery(event.currentTarget.value)}
             />
+          </label>
+          <label class="gsv-runtime-search is-compact">
+            <span>Sort by</span>
+            <select value={sort} onChange={(event) => setSort(event.currentTarget.value as TaskSort)}>
+              <option value="agent">Agent</option>
+              <option value="status">Status</option>
+              <option value="created">Date created</option>
+              <option value="updated">Date updated</option>
+            </select>
           </label>
           <ActionButton
             icon="refresh"
@@ -78,108 +70,24 @@ export function RuntimeSection({ backend }: { backend: GsvBackend }) {
               agents={runtime.agents}
               models={runtime.models}
               systemAiValues={runtime.systemAiValues}
-              processes={runtime.filteredProcesses}
+              processes={sortedProcesses}
               loading={runtime.loading}
-              onSelect={runtime.selectProcess}
+              selectedPid={selectedPid}
+              killingPid={runtime.killingPid}
+              onToggle={(process) => {
+                const pid = String(process.pid ?? "").trim();
+                if (!pid) return;
+                if (pid === runtime.selectedPid) {
+                  runtime.clearSelection();
+                  return;
+                }
+                runtime.selectProcess(process);
+              }}
+              onCancelTask={(pid) => void runtime.killProcess(pid)}
             />
           )}
         </div>
       </section>
-    </section>
-  );
-}
-
-function ProcessDetail({
-  process,
-  killingPid,
-  onBack,
-  onKill,
-}: {
-  process: ProcessEntry | null;
-  killingPid: string;
-  onBack: () => void;
-  onKill: (pid: string) => void;
-}) {
-  if (!process) {
-    return (
-      <section class="gsv-runtime-detail">
-        <div class="gsv-empty-state">
-          <h3>No task selected</h3>
-          <p>Select a task to inspect its agent, workspace, and actions.</p>
-        </div>
-      </section>
-    );
-  }
-
-  const pid = String(process.pid ?? "").trim();
-  const title = processTitle(process);
-  const cwd = String(process.cwd ?? "").trim();
-  const killPending = killingPid === pid;
-
-  return (
-    <section class="gsv-runtime-detail" aria-label="Task detail">
-      <header class="gsv-runtime-detail-head">
-        <ActionButton icon="arrow-left" label="Tasks" onClick={onBack} />
-        <div>
-          <span class="gsv-kicker">Task detail</span>
-          <h3>{title}</h3>
-          <p>{pid}</p>
-        </div>
-      </header>
-
-      <dl class="gsv-detail-list">
-        <div>
-          <dt>State</dt>
-          <dd>{processState(process)}</dd>
-        </div>
-        <div>
-          <dt>Agent</dt>
-          <dd>{String(process.profile ?? "unknown")}</dd>
-        </div>
-        <div>
-          <dt>Owner</dt>
-          <dd>uid {String(process.uid ?? "?")}</dd>
-        </div>
-        <div>
-          <dt>Parent task</dt>
-          <dd>{process.parentPid == null ? "none" : String(process.parentPid)}</dd>
-        </div>
-        <div>
-          <dt>Workspace</dt>
-          <dd><code>{cwd || "none"}</code></dd>
-        </div>
-        <div>
-          <dt>Created</dt>
-          <dd>{formatTimestampMs(process.createdAt)}</dd>
-        </div>
-      </dl>
-
-      <div class="gsv-detail-actions">
-        <ActionButton
-          icon="external"
-          label="Open in Chat"
-          size="full"
-          disabled={!canOpenChat(process)}
-          onClick={() => openApp({
-            target: "chat",
-            payload: { pid, cwd },
-          })}
-        />
-        <ActionButton
-          icon="trash"
-          label="Cancel Task"
-          busyLabel="Canceling"
-          busy={killPending}
-          variant="danger"
-          size="full"
-          disabled={!pid || Boolean(killingPid)}
-          onClick={() => {
-            if (window.confirm(`Cancel task ${title}?\n\nThis stops the runtime work immediately.`)) {
-              onKill(pid);
-            }
-          }}
-        />
-      </div>
     </section>
   );
 }

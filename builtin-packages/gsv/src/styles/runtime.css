@@ -11,7 +11,7 @@
 
 .gsv-runtime-toolbar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(12rem, 1fr) minmax(10rem, 14rem) auto;
   align-items: end;
   gap: 0.6rem;
   padding: 0.75rem;
@@ -33,7 +33,8 @@
   text-transform: uppercase;
 }
 
-.gsv-runtime-search input {
+.gsv-runtime-search input,
+.gsv-runtime-search select {
   width: 100%;
   min-width: 0;
   height: 2.35rem;
@@ -270,6 +271,10 @@
   gap: 0.38rem;
 }
 
+.gsv-task-card.is-expanded {
+  gap: 0.7rem;
+}
+
 .gsv-task-card.is-idle {
   color: #687384;
 }
@@ -287,6 +292,21 @@
   align-items: center;
   gap: 0.5rem;
   min-width: 0;
+}
+
+.gsv-task-toggle {
+  width: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.gsv-task-toggle:focus-visible {
+  outline: 2px solid #3867d6;
+  outline-offset: 2px;
 }
 
 .gsv-task-card-main strong {
@@ -316,4 +336,18 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.gsv-task-detail {
+  display: grid;
+  gap: 0.75rem;
+  min-width: 0;
+  padding-top: 0.65rem;
+  border-top: 1px dotted #cfd6e1;
+}
+
+@media (max-width: 720px) {
+  .gsv-runtime-toolbar {
+    grid-template-columns: 1fr;
+  }
 }

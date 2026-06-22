@@ -1,9 +1,13 @@
+import { useState } from "preact/hooks";
 import { buildCrewAgents, buildCrewStackCards, type CrewStackCard } from "../../domain/crew";
 import { ActionButton } from "../../components/ui/ActionButton";
 import {
   ConsoleCard,
+  MetadataItem,
+  MetadataStack,
   ObjectHeader,
 } from "../../components/ui/ConsoleCard";
+import { Icon } from "../../components/ui/Icon";
 import type { ProcessEntry } from "../runtime/types";
 import type { PermissionTone } from "./permissions-domain";
 import type { AgentDetail, AgentModelProfile } from "./types";
@@ -39,9 +43,9 @@ export function CrewOverview({
             <ObjectHeader title="No model data" eyebrow="Configuration" icon="settings" status="neutral" />
             <p class="gsv-crew-card-note">{loading ? "Loading model configuration." : "Model configuration is not visible to this account."}</p>
           </ConsoleCard>
-        ) : stacks.map((model) => (
-          <ModelCard key={model.id} model={model} />
-        ))}
+        ) : (
+          <CrewModelStackList stacks={stacks} />
+        )}
       </section>
 
       <section class="gsv-crew-agents" aria-label="Crew members">
@@ -75,24 +79,59 @@ export function CrewOverview({
   );
 }
 
-function ModelCard({ model }: { model: CrewStackCard }) {
+export function CrewModelStackList({
+  stacks,
+  defaultExpandedId = "system-default",
+}: {
+  stacks: CrewStackCard[];
+  defaultExpandedId?: string;
+}) {
+  const [expandedId, setExpandedId] = useState(defaultExpandedId);
+
   return (
-    <ConsoleCard class="gsv-model-card" tone={model.default ? "accent" : "neutral"}>
-      <ObjectHeader
-        title={model.label}
-        eyebrow={model.default ? "System default" : "Saved stack"}
-        icon="server"
-        tone={model.default ? "accent" : "neutral"}
-        status={model.default ? "good" : "neutral"}
-        compact
-      />
-      <div class="gsv-model-summary">
-        <span>{model.provider}</span>
-        <strong>{model.model}</strong>
-        <small>{model.detail}</small>
-      </div>
-      {model.default ? (
-        <span class="gsv-model-default">System default</span>
+    <>
+      {stacks.map((stack) => (
+        <CrewModelStackCard
+          key={stack.id}
+          stack={stack}
+          expanded={stack.id === expandedId}
+          onToggle={() => setExpandedId(stack.id === expandedId ? "" : stack.id)}
+        />
+      ))}
+    </>
+  );
+}
+
+function CrewModelStackCard({
+  stack,
+  expanded,
+  onToggle,
+}: {
+  stack: CrewStackCard;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <ConsoleCard class={`gsv-model-card${expanded ? " is-expanded" : ""}`} tone={stack.default ? "accent" : "neutral"}>
+      <button type="button" class="gsv-model-toggle" onClick={onToggle}>
+        <span class="gsv-model-title">
+          <strong>{stack.label}</strong>
+          <small>{stack.default ? "Default" : "Saved stack"}</small>
+        </span>
+        <Icon name="chevron-right" />
+      </button>
+
+      {expanded ? (
+        <>
+          <MetadataStack>
+            <MetadataItem label="Provider" value={stack.provider} />
+            <MetadataItem label="Model" value={stack.model} />
+            <MetadataItem label="Reasoning" value={stack.reasoning} />
+            <MetadataItem label="Max tokens" value={stack.maxTokens} />
+            <MetadataItem label="Max context" value={stack.maxContext} />
+          </MetadataStack>
+          {stack.default ? <span class="gsv-model-default">Default model</span> : null}
+        </>
       ) : null}
     </ConsoleCard>
   );
