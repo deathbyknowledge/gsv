@@ -10,7 +10,8 @@ import { ChatDock } from "../chat/components/ChatDock";
 import type { ChatDockMessage } from "../chat/components/ChatDock";
 import type { ChatAgentData, ChatAgentStatus, ChatAgentTaskStatus } from "../chat/domain";
 import { useChatProcessHistory, useChatProcessList, useSendChatMessage } from "../chat/hooks";
-import { useConsoleOverview } from "../gsv-console/hooks/useConsoleData";
+import { defaultModelLabelForConfig } from "../gsv-console/domain/consoleAi";
+import { useConsoleConfig, useConsoleOverview } from "../gsv-console/hooks/useConsoleData";
 import {
   PresenceActivity,
   PresencePanel,
@@ -153,9 +154,14 @@ export function GsvShell({
   const rootRef = useRef<HTMLDivElement>(null);
   const clock = useClock();
   const consoleOverview = useConsoleOverview({ includeConfig: false });
+  const consoleConfig = useConsoleConfig();
   const desktopObjects = useMemo(
     () => buildDesktopObjectsFromConsole(consoleOverview.data),
     [consoleOverview.data],
+  );
+  const chatModelLabel = useMemo(
+    () => defaultModelLabelForConfig(consoleConfig.config),
+    [consoleConfig.config],
   );
   const shell = useGsvShellState({ rootRef, desktopObjects });
 
@@ -225,7 +231,7 @@ export function GsvShell({
       status: agentStatusForRunState(activeChatProcess.runState),
       statusLabel: chatStatusLabel,
       activity: chatStatusLabel,
-      modelLabel: "Gateway default",
+      modelLabel: chatModelLabel,
       tasksTotal: activeTaskCount,
       tasks: activeChatProcess.activeRunId
         ? [{ name: `Run ${activeChatProcess.activeRunId.slice(0, 8)}`, status: taskStatusForRunState(activeChatProcess.runState) }]
@@ -242,7 +248,7 @@ export function GsvShell({
         active: process.pid === activeChatProcess.pid,
       })),
     };
-  }, [activeChatProcess, chatProcessList, chatStatusLabel]);
+  }, [activeChatProcess, chatModelLabel, chatProcessList, chatStatusLabel]);
 
   return (
     <div
