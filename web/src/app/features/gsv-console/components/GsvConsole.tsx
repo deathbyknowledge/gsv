@@ -14,6 +14,7 @@ type GsvConsoleProps = {
   activeSurface: Exclude<ShellSurfaceId, "desktop">;
   onBackToDesktop: () => void;
   onOpenSurface?: (surface: Exclude<ShellSurfaceId, "desktop">) => void;
+  settingsRouteRequest?: SettingsRouteRequest | null;
 };
 
 type SettingsRoute =
@@ -23,6 +24,11 @@ type SettingsRoute =
   | { view: "crew" }
   | { view: "agent"; accountUid: number | null; createNew?: boolean };
 type SettingsListSurface = "machines" | "messengers" | "integrations" | "applications" | "library" | "runtime";
+export type SettingsRouteTarget = "overview" | "crew" | "tasks" | "models" | "overrides";
+export type SettingsRouteRequest = {
+  id: number;
+  target: SettingsRouteTarget;
+};
 
 function surfaceTail(surface: ShellSurfaceId): string {
   if (surface === "files") {
@@ -105,10 +111,24 @@ function settingsRouteTail(route: SettingsRoute): string {
   return surfaceTail(route.kind);
 }
 
+function settingsRouteForRequest(target: SettingsRouteTarget): SettingsRoute {
+  if (target === "overview") {
+    return { view: "overview" };
+  }
+  if (target === "crew") {
+    return { view: "crew" };
+  }
+  if (target === "tasks") {
+    return { view: "list", kind: "tasks" };
+  }
+  return { view: "config", kind: target };
+}
+
 export function GsvConsole({
   activeSurface,
   onBackToDesktop,
   onOpenSurface,
+  settingsRouteRequest,
 }: GsvConsoleProps) {
   const [selectedAgentUid, setSelectedAgentUid] = useState<number | null>(null);
   const [settingsRoute, setSettingsRoute] = useState<SettingsRoute>({ view: "overview" });
@@ -166,8 +186,12 @@ export function GsvConsole({
   useEffect(() => {
     if (activeSurface !== "settings") {
       setSettingsRoute({ view: "overview" });
+      return;
     }
-  }, [activeSurface]);
+    if (settingsRouteRequest) {
+      setSettingsRoute(settingsRouteForRequest(settingsRouteRequest.target));
+    }
+  }, [activeSurface, settingsRouteRequest]);
 
   const inNestedSettings = activeSurface === "settings" && settingsRoute.view !== "overview";
   const inSettingsListDetail = activeSurface === "settings"

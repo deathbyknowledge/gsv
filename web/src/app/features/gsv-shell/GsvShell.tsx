@@ -16,12 +16,16 @@ import {
 } from "../presence/Presence";
 import type { PresenceController } from "../presence/presenceController";
 import type { NotificationSurface } from "../notifications/types";
-import { GsvConsole } from "../gsv-console/components/GsvConsole";
+import {
+  GsvConsole,
+  type SettingsRouteRequest,
+  type SettingsRouteTarget,
+} from "../gsv-console/components/GsvConsole";
 import { GsvDesktop } from "./desktop/GsvDesktop";
 import { LegacyRuntimeAnchors } from "./legacy/LegacyRuntimeAnchors";
 import { ShellRail } from "./navigation/ShellRail";
 import { ShellStatusBar } from "./navigation/ShellStatusBar";
-import { shellSurfaceLabel } from "./domain/shellModel";
+import { shellSurfaceLabel, type ShellSurfaceId } from "./domain/shellModel";
 import { buildShellChatAgent } from "./domain/chatAgentModel";
 import { buildDesktopObjectsFromConsole } from "./domain/desktopObjects";
 import { useGsvShellState } from "./hooks/useGsvShellState";
@@ -109,6 +113,7 @@ export function GsvShell({
   const shell = useGsvShellState({ rootRef, desktopObjects });
 
   const [selectedChatPid, setSelectedChatPid] = useState<string | null>(null);
+  const [settingsRouteRequest, setSettingsRouteRequest] = useState<SettingsRouteRequest | null>(null);
   const chatProcesses = useChatProcessList();
   const chatProcessList = chatProcesses.data ?? [];
   const activeChatProcess = chatProcessList.find((process) => process.pid === selectedChatPid)
@@ -161,6 +166,22 @@ export function GsvShell({
       statusLabel: chatStatusLabel,
     });
   }, [activeChatProcess, chatProcessList, chatStatusLabel, consoleConfig.config, consoleOverview.data]);
+  const requestSettingsRoute = (target: SettingsRouteTarget): void => {
+    setSettingsRouteRequest((current) => ({
+      id: (current?.id ?? 0) + 1,
+      target,
+    }));
+  };
+  const openShellSurface = (surface: ShellSurfaceId): void => {
+    if (surface === "settings") {
+      requestSettingsRoute("overview");
+    }
+    shell.openSurface(surface);
+  };
+  const openSettingsRoute = (target: SettingsRouteTarget): void => {
+    requestSettingsRoute(target);
+    shell.openSurface("settings");
+  };
 
   return (
     <div
@@ -185,7 +206,7 @@ export function GsvShell({
               onBackToDesktop={shell.desktopCollapsed ? shell.revealDesktop : shell.backToDesktop}
               onOpenPicker={shell.openPicker}
               onOpenControlMenu={shell.openControlMenu}
-              onOpenSurface={shell.openSurface}
+              onOpenSurface={openShellSurface}
             />
           ) : null}
 
@@ -194,7 +215,8 @@ export function GsvShell({
               <GsvConsole
                 activeSurface={shell.activeSurface}
                 onBackToDesktop={shell.backToDesktop}
-                onOpenSurface={shell.openSurface}
+                onOpenSurface={openShellSurface}
+                settingsRouteRequest={settingsRouteRequest}
               />
             ) : shell.desktopCollapsed ? (
               <CollapsedDesktop />
@@ -211,7 +233,7 @@ export function GsvShell({
                   shell.setGsvOpen((value) => !value);
                   shell.setSelectedObjectId(null);
                 }}
-                onOpenSurface={shell.openSurface}
+                onOpenSurface={openShellSurface}
               />
             )}
 
@@ -242,10 +264,10 @@ export function GsvShell({
                         title="GSV // CONTROL"
                         width={386}
                         onClose={() => shell.setPickerId(null)}
-                        onFiles={() => shell.openSurface("files")}
-                        onLibrary={() => shell.openSurface("library")}
-                        onTerminal={() => shell.openSurface("terminal")}
-                        onSettings={() => shell.openSurface("settings")}
+                        onFiles={() => openShellSurface("files")}
+                        onLibrary={() => openShellSurface("library")}
+                        onTerminal={() => openShellSurface("terminal")}
+                        onSettings={() => openShellSurface("settings")}
                       />
                     </div>
                   ) : shell.pickerCards.length > 0 ? (
@@ -280,8 +302,8 @@ export function GsvShell({
           onResizeStart={shell.startChatDrag}
           onToggleOpen={() => shell.setChatOpen((value) => !value)}
           onToggleMax={shell.toggleChatMax}
-          onOpenCrew={() => shell.openSurface("crew")}
-          onOpenTasks={() => shell.openSurface("runtime")}
+          onOpenCrew={() => openSettingsRoute("crew")}
+          onOpenTasks={() => openSettingsRoute("tasks")}
           title={activeChatProcess?.title ?? "Chat"}
           status={chatStatus}
           statusLabel={chatStatusLabel}
