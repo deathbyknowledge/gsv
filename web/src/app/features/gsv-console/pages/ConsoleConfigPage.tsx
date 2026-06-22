@@ -72,9 +72,10 @@ function ConsoleConfigPanel({
   const [selectedRowId, setSelectedRowId] = useState<string | null>(null);
   const rows = kind === "models" ? modelRows(config) : overrideRows(config);
   const title = kind === "models" ? "MODELS" : "OVERRIDES";
+  const modelCount = kind === "models" ? modelConfigEntries(config).length : 0;
   const overrideCount = kind === "overrides" ? overrideConfigCount(config) : 0;
   const meta = kind === "models"
-    ? `${rows.length} MODEL ${rows.length === 1 ? "SETTING" : "SETTINGS"}`
+    ? `${modelCount} MODEL ${modelCount === 1 ? "SETTING" : "SETTINGS"}`
     : `${overrideCount} CONFIG ${overrideCount === 1 ? "ENTRY" : "ENTRIES"}`;
   const selectedRow = selectedRowId ? rows.find((row) => row.id === selectedRowId) ?? null : null;
 

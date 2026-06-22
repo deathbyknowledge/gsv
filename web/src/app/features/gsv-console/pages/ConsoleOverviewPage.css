@@ -251,30 +251,6 @@ button.gsv-settings-deep-cell {
   min-width: 0;
 }
 
-.gsv-settings-terminal-state button {
-  width: 24px;
-  height: 24px;
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid transparent;
-  background: transparent;
-  padding: 0;
-  cursor: pointer;
-}
-
-.gsv-settings-terminal-state button:hover,
-.gsv-settings-terminal-state button:focus-visible {
-  border-color: var(--dashed);
-  background: var(--selected);
-  outline: none;
-}
-
-.gsv-settings-terminal-state button .gsv-settings-chevron {
-  margin-left: 0;
-}
-
 .gsv-settings-overrides-state {
   justify-content: space-between;
 }
