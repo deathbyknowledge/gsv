@@ -1,7 +1,10 @@
 import type { RefObject } from "preact";
+import type { ProcHistoryMessage } from "@humansandmachines/gsv/protocol";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { ObjectCard } from "../../components/ui/ObjectCard";
 import type { StatusTone } from "../../components/ui/StatusDot";
+import { ChatDock } from "../chat/components/ChatDock";
+import type { ChatDockMessage } from "../chat/components/ChatDock";
 import { useChatProcessHistory, useChatProcessList, useSendChatMessage } from "../chat/hooks";
 import { useConsoleOverview } from "../gsv-console/hooks/useConsoleData";
 import {
@@ -10,7 +13,6 @@ import {
 } from "../presence/Presence";
 import type { PresenceController } from "../presence/presenceController";
 import type { NotificationSurface } from "../notifications/types";
-import { ChatDock } from "../chat/components/ChatDock";
 import { GsvConsole } from "../gsv-console/components/GsvConsole";
 import { GsvDesktop } from "./desktop/GsvDesktop";
 import { LegacyRuntimeAnchors } from "./legacy/LegacyRuntimeAnchors";
@@ -52,6 +54,10 @@ function formatChatMessageTime(timestamp: number | null): string {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(timestamp));
+}
+
+function chatDockRoleForHistoryRole(role: ProcHistoryMessage["role"]): ChatDockMessage["role"] {
+  return role === "toolResult" ? "tool" : role;
 }
 
 function useClock(): string {
@@ -109,6 +115,7 @@ export function GsvShell({
       id: message.clientId,
       text: message.text,
       time: formatChatMessageTime(message.timestamp),
+      role: chatDockRoleForHistoryRole(message.role),
     }));
   const chatStatus = statusForRunState(activeChatProcess?.runState);
   const chatStatusLabel = activeChatProcess?.runState.replaceAll("_", " ") ?? (
