@@ -63,6 +63,7 @@ export function parseOptionalPositiveInt(value: unknown): number | null {
 
 export function normalizeCommandInput(input: TerminalCommandInput): Required<Pick<TerminalCommandInput, "input">> & {
   target: string;
+  sessionId: string;
   cwd: string;
   timeoutMs: number | null;
   yieldMs: number | null;
@@ -71,6 +72,7 @@ export function normalizeCommandInput(input: TerminalCommandInput): Required<Pic
   return {
     input: input.input.trim(),
     target: normalizeTerminalTarget(input.target),
+    sessionId: String(input.sessionId ?? "").trim(),
     cwd: String(input.cwd ?? "").trim(),
     timeoutMs: parseOptionalPositiveInt(input.timeoutMs),
     yieldMs: parseOptionalPositiveInt(input.yieldMs),
@@ -112,7 +114,7 @@ export function normalizeTranscriptEntry(
   const stdout = asString(record.stdout) ?? asString(record.output) ?? "";
   let stderr = asString(record.stderr) ?? "";
   const explicitOk = asBoolean(record.ok);
-  const backgrounded = input.background || asBoolean(record.backgrounded) === true;
+  const backgrounded = input.background || asBoolean(record.backgrounded) === true || asBoolean(record.background) === true;
   const failed = explicitOk === false || statusText === "failed" || Boolean(errorText) || (exitCode !== null && exitCode !== 0);
 
   if (failed && stderr.trim().length === 0) {
@@ -133,7 +135,7 @@ export function normalizeTranscriptEntry(
     stdout,
     stderr,
     exitCode,
-    sessionId: asString(record.sessionId),
+    sessionId: (asString(record.sessionId) ?? input.sessionId) || null,
     truncated: asBoolean(record.truncated) ?? false,
   };
 }

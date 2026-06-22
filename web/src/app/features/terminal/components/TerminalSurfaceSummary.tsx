@@ -8,7 +8,7 @@ import { Spinner } from "../../../components/ui/Spinner";
 import { StatusDot, type StatusTone } from "../../../components/ui/StatusDot";
 import { Tag, type TagTone } from "../../../components/ui/Tag";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
-import { ConsolePage, ConsolePageState } from "../../gsv-console/components/ConsolePageTemplate";
+import { ConsolePage } from "../../gsv-console/components/ConsolePageTemplate";
 import type { TerminalCommandInput, TerminalTarget, TerminalTranscriptEntry } from "../domain/models";
 import { useTerminalCommandMutation, useTerminalTargets } from "../hooks/useTerminalQueries";
 import "./TerminalSurfaceSummary.css";
@@ -24,6 +24,7 @@ type TargetOption = {
 type CommandSnapshot = {
   input: string;
   target: string;
+  sessionId: string;
   cwd: string;
   timeoutMs: string;
   yieldMs: string;
@@ -36,13 +37,19 @@ type CommandHistoryItem = CommandSnapshot & {
   completedAt: number;
   status: TerminalTranscriptEntry["status"];
   exitCode: number | null;
-  sessionId: string | null;
+  resultSessionId: string | null;
   truncated: boolean;
+  stdoutLines: number;
+  stdoutChars: number;
+  stderrLines: number;
+  stderrChars: number;
   errorText: string;
 };
 
 const NATIVE_TARGET_ID = "gsv";
 const MAX_HISTORY_ITEMS = 16;
+
+type StreamFilter = "all" | "stdout" | "stderr";
 
 function buildTargetOptions(targets: readonly TerminalTarget[], connected: boolean): TargetOption[] {
   return [
@@ -117,13 +124,29 @@ function formatTimestamp(timestamp: number): string {
   });
 }
 
+function countLines(value: string): number {
+  return value.length === 0 ? 0 : value.split(/\r\n|\r|\n/).length;
+}
+
 function pluralize(count: number, label: string): string {
   return `${count} ${label}${count === 1 ? "" : "s"}`;
 }
 
 function streamMeta(value: string): string {
-  const lineCount = value.length === 0 ? 0 : value.split(/\r\n|\r|\n/).length;
+  const lineCount = countLines(value);
   return `${pluralize(lineCount, "line")} · ${pluralize(value.length, "char")}`;
+}
+
+function streamShortMeta(value: string): string {
+  if (value.length === 0) return "EMPTY";
+  return `${countLines(value)}L / ${value.length}C`;
+}
+
+function displayCommand(entry: TerminalTranscriptEntry): string {
+  if (entry.command.length > 0) {
+    return entry.command;
+  }
+  return entry.sessionId ? `session ${entry.sessionId}` : "shell.exec";
 }
 
 function errorText(error: unknown): string {
@@ -134,6 +157,7 @@ function cleanSnapshot(snapshot: CommandSnapshot): CommandSnapshot {
   return {
     input: snapshot.input.trim(),
     target: snapshot.target.trim() || NATIVE_TARGET_ID,
+    sessionId: snapshot.sessionId.trim(),
     cwd: snapshot.cwd.trim(),
     timeoutMs: snapshot.timeoutMs.trim(),
     yieldMs: snapshot.yieldMs.trim(),
@@ -155,23 +179,36 @@ function createHistoryItem(
     completedAt,
     status: entry?.status ?? "failed",
     exitCode: entry?.exitCode ?? null,
-    sessionId: entry?.sessionId ?? null,
+    resultSessionId: entry?.sessionId ?? null,
     truncated: entry?.truncated ?? false,
+    stdoutLines: entry ? countLines(entry.stdout) : 0,
+    stdoutChars: entry?.stdout.length ?? 0,
+    stderrLines: entry ? countLines(entry.stderr) : 0,
+    stderrChars: entry?.stderr.length ?? 0,
     errorText: error ? errorText(error) : "",
   };
 }
 
 function historyMeta(item: CommandHistoryItem): string {
   const parts = [
-    item.target,
+    item.sessionId ? `SESSION ${item.sessionId}` : item.target,
     item.cwd ? `CWD ${item.cwd}` : "",
     item.background ? "BACKGROUND" : "",
     item.exitCode === null ? "" : `EXIT ${item.exitCode}`,
-    item.sessionId ? "SESSION" : "",
+    item.resultSessionId ? `RESULT ${item.resultSessionId}` : "",
     item.truncated ? "TRUNCATED" : "",
+    item.stdoutChars > 0 ? `OUT ${item.stdoutLines}L` : "",
+    item.stderrChars > 0 ? `ERR ${item.stderrLines}L` : "",
     formatDuration(item.startedAt, item.completedAt),
   ].filter(Boolean);
   return parts.join(" · ");
+}
+
+function historyTitle(item: CommandHistoryItem): string {
+  if (item.input.length > 0) {
+    return item.input;
+  }
+  return item.sessionId ? `poll ${item.sessionId}` : "shell.exec";
 }
 
 function TerminalInlineState({
@@ -204,70 +241,78 @@ function TargetInventory({
   error,
   empty,
   offline,
+  selectedId,
+  disabled,
+  onSelect,
   onRetry,
 }: {
-  targets: readonly TerminalTarget[];
+  targets: readonly TargetOption[];
   loading: boolean;
   error: string;
   empty: boolean;
   offline: boolean;
+  selectedId: string;
+  disabled: boolean;
+  onSelect: (targetId: string) => void;
   onRetry: () => void;
 }) {
-  if (offline) {
-    return (
-      <TerminalInlineState
-        kind="offline"
-        title="Gateway offline"
-        detail="Reconnect to refresh targets or run commands."
-      />
-    );
-  }
-  if (loading) {
-    return (
-      <TerminalInlineState
-        kind="loading"
-        title="Loading targets"
-        detail="Reading command targets from the gateway."
-      />
-    );
-  }
-  if (error) {
-    return (
-      <TerminalInlineState
-        kind="error"
-        title="Target load failed"
-        detail={error}
-        action={<Button variant="secondary" label="RETRY" onClick={onRetry} />}
-      />
-    );
-  }
-  if (empty) {
-    return (
-      <TerminalInlineState
-        kind="empty"
-        title="No remote targets"
-        detail="The native GSV shell is still available."
-      />
-    );
-  }
-
   return (
-    <div class="terminal-target-list" aria-label="Command targets">
-      {targets.map((target) => (
-        <div class="terminal-target-row" key={target.id}>
-          <span class="terminal-target-icon">
-            <Icon name="computer" size={16} />
-          </span>
-          <div class="terminal-target-copy">
-            <strong>{target.label}</strong>
-            <span>{[target.id, target.platform, target.description].filter(Boolean).join(" · ")}</span>
-          </div>
-          <span class="terminal-target-state">
-            <StatusDot tone={statusToneForTarget(target)} size={7} />
-            <span>{target.online ? "ONLINE" : "OFFLINE"}</span>
-          </span>
-        </div>
-      ))}
+    <div class="terminal-target-stack">
+      {offline ? (
+        <TerminalInlineState
+          kind="offline"
+          title="Gateway offline"
+          detail="Reconnect to refresh targets or run commands."
+        />
+      ) : null}
+      {!offline && loading ? (
+        <TerminalInlineState
+          kind="loading"
+          title="Loading targets"
+          detail="Reading command targets from the gateway."
+        />
+      ) : null}
+      {!offline && error ? (
+        <TerminalInlineState
+          kind="error"
+          title="Target load failed"
+          detail={error}
+          action={<Button variant="secondary" label="RETRY" onClick={onRetry} />}
+        />
+      ) : null}
+      {!offline && !loading && !error && empty ? (
+        <TerminalInlineState
+          kind="empty"
+          title="No remote targets"
+          detail="The native GSV shell is still available."
+        />
+      ) : null}
+      <div class="terminal-target-list" aria-label="Command targets">
+        {targets.map((target) => {
+          const active = target.id === selectedId;
+          return (
+            <button
+              class={`terminal-target-row${active ? " is-active" : ""}${target.online ? "" : " is-offline"}`}
+              type="button"
+              key={target.id}
+              disabled={disabled}
+              onClick={() => onSelect(target.id)}
+            >
+              <span class="terminal-target-icon">
+                <Icon name={target.native ? "terminal" : "computer"} size={16} />
+              </span>
+              <span class="terminal-target-copy">
+                <strong>{target.label}</strong>
+                <span>{target.detail || target.id}</span>
+              </span>
+              <span class="terminal-target-state">
+                <Tag tone={target.online ? "online" : "idle"} label={target.online ? "ONLINE" : "OFFLINE"} boxed dot />
+                <Tag tone={target.native ? "accent" : "info"} label={target.native ? "NATIVE" : "DEVICE"} boxed />
+              </span>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -276,10 +321,18 @@ function CommandOutput({
   entry,
   pending,
   error,
+  streamFilter,
+  pollDisabled,
+  onStreamFilterChange,
+  onPollSession,
 }: {
   entry: TerminalTranscriptEntry | undefined;
   pending: boolean;
   error: unknown;
+  streamFilter: StreamFilter;
+  pollDisabled: boolean;
+  onStreamFilterChange: (filter: StreamFilter) => void;
+  onPollSession: (entry: TerminalTranscriptEntry) => void;
 }) {
   if (pending) {
     return (
@@ -310,6 +363,8 @@ function CommandOutput({
 
   const hasStdout = entry.stdout.length > 0;
   const hasStderr = entry.stderr.length > 0;
+  const showStdout = hasStdout && (streamFilter === "all" || streamFilter === "stdout");
+  const showStderr = hasStderr && (streamFilter === "all" || streamFilter === "stderr");
   const meta = resultMeta(entry);
   const resultRows = [
     ["TARGET", entry.target],
@@ -330,15 +385,37 @@ function CommandOutput({
       <div class="terminal-transcript-header">
         <div>
           <span>{entry.target}</span>
-          <strong>{entry.command}</strong>
+          <strong>{displayCommand(entry)}</strong>
           {entry.cwd ? <small>{entry.cwd}</small> : null}
         </div>
         <div class="terminal-transcript-tags">
           <Tag tone={resultTone(entry)} label={resultLabel(entry)} boxed />
-          {meta ? <Tag tone="idle" label={meta} boxed /> : null}
+          <Tag tone={entry.background ? "update" : "idle"} label={entry.background ? "BACKGROUND" : "FOREGROUND"} boxed />
+          {entry.exitCode === null ? null : <Tag tone={entry.exitCode === 0 ? "online" : "error"} label={`EXIT ${entry.exitCode}`} boxed />}
+          {entry.sessionId ? <Tag tone="info" label="SESSION" boxed /> : null}
+          {entry.truncated ? <Tag tone="warn" label="TRUNCATED" boxed /> : null}
           <Tag tone="info" label={formatDuration(entry.startedAt, entry.completedAt)} boxed />
         </div>
       </div>
+      {entry.sessionId || entry.background || meta ? (
+        <div class="terminal-session-strip">
+          <div class="terminal-session-copy">
+            <StatusDot tone={entry.status === "running" ? "live" : entry.status === "failed" ? "error" : "online"} size={8} />
+            <div>
+              <strong>{entry.sessionId ? entry.sessionId : entry.background ? "background command" : "command result"}</strong>
+              <span>{meta || "FOREGROUND"}</span>
+            </div>
+          </div>
+          {entry.sessionId ? (
+            <Button
+              variant="secondary"
+              label="POLL SESSION"
+              disabled={pollDisabled}
+              onClick={() => onPollSession(entry)}
+            />
+          ) : null}
+        </div>
+      ) : null}
       <dl class="terminal-result-meta">
         {resultRows.map(([label, value]) => (
           <div key={label}>
@@ -352,7 +429,34 @@ function CommandOutput({
           <span>{entry.status === "running" ? "Command is still running with no returned output" : "Command completed with no output"}</span>
         </div>
       ) : null}
-      {hasStdout ? (
+      {hasStdout || hasStderr ? (
+        <div class="terminal-stream-toolbar">
+          <div class="terminal-stream-summary">
+            <Tag tone={hasStdout ? "info" : "idle"} label={`STDOUT ${streamShortMeta(entry.stdout)}`} boxed />
+            <Tag tone={hasStderr ? "warn" : "idle"} label={`STDERR ${streamShortMeta(entry.stderr)}`} boxed />
+          </div>
+          <div class="terminal-stream-actions" aria-label="Output stream filter">
+            <Button
+              variant={streamFilter === "all" ? "primary" : "secondary"}
+              label="ALL"
+              onClick={() => onStreamFilterChange("all")}
+            />
+            <Button
+              variant={streamFilter === "stdout" ? "primary" : "secondary"}
+              label="STDOUT"
+              disabled={!hasStdout}
+              onClick={() => onStreamFilterChange("stdout")}
+            />
+            <Button
+              variant={streamFilter === "stderr" ? "primary" : "secondary"}
+              label="STDERR"
+              disabled={!hasStderr}
+              onClick={() => onStreamFilterChange("stderr")}
+            />
+          </div>
+        </div>
+      ) : null}
+      {showStdout ? (
         <section class="terminal-stream">
           <div class="terminal-stream-header">
             <span>STDOUT</span>
@@ -361,7 +465,7 @@ function CommandOutput({
           <pre>{entry.stdout}</pre>
         </section>
       ) : null}
-      {hasStderr ? (
+      {showStderr ? (
         <section class="terminal-stream is-error">
           <div class="terminal-stream-header">
             <span>STDERR</span>
@@ -378,12 +482,14 @@ function CommandHistory({
   history,
   pending,
   canRerun,
+  onLoad,
   onRerun,
   onClear,
 }: {
   history: readonly CommandHistoryItem[];
   pending: boolean;
   canRerun: (item: CommandHistoryItem) => boolean;
+  onLoad: (item: CommandHistoryItem) => void;
   onRerun: (item: CommandHistoryItem) => void;
   onClear: () => void;
 }) {
@@ -391,14 +497,12 @@ function CommandHistory({
     <div class="terminal-history">
       <div class="terminal-history-header">
         <span>LOCAL HISTORY</span>
-        <button
-          class="terminal-text-action"
-          type="button"
+        <Button
+          variant="secondary"
+          label="CLEAR HISTORY"
           disabled={pending || history.length === 0}
           onClick={onClear}
-        >
-          CLEAR HISTORY
-        </button>
+        />
       </div>
       {history.length === 0 ? (
         <div class="terminal-history-empty">No commands run in this view</div>
@@ -409,20 +513,26 @@ function CommandHistory({
             return (
               <div class="terminal-history-row" key={item.id}>
                 <div class="terminal-history-copy">
-                  <strong>{item.input}</strong>
+                  <strong>{historyTitle(item)}</strong>
                   <span>{historyMeta(item)}</span>
                   {item.errorText ? <small>{item.errorText}</small> : null}
                 </div>
                 <div class="terminal-history-side">
                   <Tag tone={statusTone(item.status)} label={statusLabel(item.status)} boxed />
-                  <button
-                    class="terminal-text-action"
-                    type="button"
+                  {item.input.length > 0 && !item.sessionId ? (
+                    <Button
+                      variant="secondary"
+                      label="LOAD"
+                      disabled={pending}
+                      onClick={() => onLoad(item)}
+                    />
+                  ) : null}
+                  <Button
+                    variant="secondary"
+                    label={item.sessionId ? "POLL" : "RERUN"}
                     disabled={rerunDisabled}
                     onClick={() => onRerun(item)}
-                  >
-                    RERUN
-                  </button>
+                  />
                 </div>
               </div>
             );
@@ -444,6 +554,7 @@ export function TerminalSurfaceSummary() {
   const [background, setBackground] = useState(false);
   const [commandInput, setCommandInput] = useState("");
   const [history, setHistory] = useState<CommandHistoryItem[]>([]);
+  const [streamFilter, setStreamFilter] = useState<StreamFilter>("all");
 
   const targetOptions = useMemo(
     () => buildTargetOptions(targets.targets, connected),
@@ -458,6 +569,7 @@ export function TerminalSurfaceSummary() {
   const currentCommand = cleanSnapshot({
     input: commandInput,
     target: selectedTarget.id,
+    sessionId: "",
     cwd,
     timeoutMs,
     yieldMs,
@@ -468,7 +580,9 @@ export function TerminalSurfaceSummary() {
   const outputMeta = command.isPending
     ? "RUNNING"
     : command.data
-      ? resultLabel(command.data)
+      ? command.data.sessionId
+        ? `${resultLabel(command.data)} · SESSION`
+        : resultLabel(command.data)
       : command.error
         ? "ERROR"
         : "IDLE";
@@ -478,6 +592,18 @@ export function TerminalSurfaceSummary() {
       setSelectedTargetId(NATIVE_TARGET_ID);
     }
   }, [selectedTargetId, targetOptions]);
+
+  useEffect(() => {
+    if (!command.data) {
+      return;
+    }
+    if (streamFilter === "stdout" && command.data.stdout.length === 0) {
+      setStreamFilter("all");
+    }
+    if (streamFilter === "stderr" && command.data.stderr.length === 0) {
+      setStreamFilter("all");
+    }
+  }, [command.data, streamFilter]);
 
   const runCommand = () => {
     executeCommand(currentCommand);
@@ -493,6 +619,7 @@ export function TerminalSurfaceSummary() {
     const payload: TerminalCommandInput = {
       input: request.input,
       target: request.target,
+      sessionId: request.sessionId,
       cwd: request.cwd,
       timeoutMs: request.timeoutMs,
       yieldMs: request.yieldMs,
@@ -507,7 +634,13 @@ export function TerminalSurfaceSummary() {
   function canExecuteCommand(snapshot: CommandSnapshot): boolean {
     const request = cleanSnapshot(snapshot);
     const target = targetOptions.find((option) => option.id === request.target);
-    return connected && !command.isPending && request.input.length > 0 && Boolean(target?.online);
+    if (!connected || command.isPending) {
+      return false;
+    }
+    if (request.sessionId.length > 0) {
+      return true;
+    }
+    return request.input.length > 0 && Boolean(target?.online);
   }
 
   function rememberCommand(
@@ -522,14 +655,33 @@ export function TerminalSurfaceSummary() {
     ].slice(0, MAX_HISTORY_ITEMS));
   }
 
-  function rerunHistoryItem(item: CommandHistoryItem): void {
+  function loadHistoryItem(item: CommandHistoryItem): void {
     setSelectedTargetId(item.target);
     setCwd(item.cwd);
     setTimeoutMs(item.timeoutMs);
     setYieldMs(item.yieldMs);
     setBackground(item.background);
     setCommandInput(item.input);
+  }
+
+  function rerunHistoryItem(item: CommandHistoryItem): void {
+    loadHistoryItem(item);
     executeCommand(item);
+  }
+
+  function pollSession(entry: TerminalTranscriptEntry): void {
+    if (!entry.sessionId) {
+      return;
+    }
+    executeCommand({
+      input: "",
+      target: entry.target,
+      sessionId: entry.sessionId,
+      cwd: entry.cwd,
+      timeoutMs: entry.timeoutMs === null ? "" : String(entry.timeoutMs),
+      yieldMs: entry.yieldMs === null ? "" : String(entry.yieldMs),
+      background: entry.background,
+    });
   }
 
   const handleCommandKeyDown = (event: JSX.TargetedKeyboardEvent<HTMLTextAreaElement>) => {
@@ -539,21 +691,13 @@ export function TerminalSurfaceSummary() {
     }
   };
 
-  if (!connected && targets.resource.data === null) {
-    return (
-      <ConsolePage>
-        <ConsolePageState kind="offline" detail="CONNECTION REQUIRED" />
-      </ConsolePage>
-    );
-  }
-
   return (
     <ConsolePage>
       <div class="terminal-surface">
         <section class="terminal-panel terminal-target-panel" aria-label="Terminal targets">
           <SectionHeader
             title="COMMAND TARGETS"
-            meta={`${targets.targets.filter((target) => target.online).length}/${targets.targets.length} ONLINE`}
+            meta={`${targetOptions.filter((target) => target.online).length}/${targetOptions.length} ONLINE`}
             divider
           />
           <div class="terminal-panel-body">
@@ -579,13 +723,20 @@ export function TerminalSurfaceSummary() {
                 <strong>{selectedTarget.label}</strong>
                 <span>{selectedTarget.detail || selectedTarget.id}</span>
               </div>
+              <span class="terminal-selected-tags">
+                <Tag tone={selectedTarget.online ? "online" : "idle"} label={selectedTarget.online ? "ONLINE" : "OFFLINE"} boxed dot />
+                <Tag tone={selectedTarget.native ? "accent" : "info"} label={selectedTarget.native ? "NATIVE" : "DEVICE"} boxed />
+              </span>
             </div>
             <TargetInventory
-              targets={targets.targets}
+              targets={targetOptions}
               loading={targets.resource.isLoading}
               error={targetLoadError}
               empty={targetEmpty}
               offline={!connected}
+              selectedId={selectedTarget.id}
+              disabled={command.isPending}
+              onSelect={setSelectedTargetId}
               onRetry={() => {
                 void targets.refetch();
               }}
@@ -594,6 +745,7 @@ export function TerminalSurfaceSummary() {
               history={history}
               pending={command.isPending}
               canRerun={canExecuteCommand}
+              onLoad={loadHistoryItem}
               onRerun={rerunHistoryItem}
               onClear={() => setHistory([])}
             />
@@ -610,6 +762,21 @@ export function TerminalSurfaceSummary() {
                 detail="Command execution is disabled until the gateway reconnects."
               />
             ) : null}
+            <div class="terminal-run-context">
+              <div class="terminal-run-target">
+                <Icon name={selectedTarget.native ? "terminal" : "computer"} size={18} />
+                <div>
+                  <span>TARGET</span>
+                  <strong>{selectedTarget.label}</strong>
+                  <small>{selectedTarget.detail || selectedTarget.id}</small>
+                </div>
+              </div>
+              <div class="terminal-run-tags">
+                <Tag tone={selectedTarget.online ? "online" : "idle"} label={selectedTarget.online ? "ONLINE" : "OFFLINE"} boxed dot />
+                <Tag tone={selectedTarget.native ? "accent" : "info"} label={selectedTarget.native ? "NATIVE" : "DEVICE"} boxed />
+                <Tag tone={background ? "update" : "idle"} label={background ? "BACKGROUND" : "FOREGROUND"} boxed />
+              </div>
+            </div>
             <div class="terminal-command-grid">
               <label class="terminal-field">
                 <span>CWD</span>
@@ -701,7 +868,15 @@ export function TerminalSurfaceSummary() {
         <section class="terminal-panel terminal-output-panel" aria-label="Terminal output">
           <SectionHeader title="OUTPUT" meta={outputMeta} divider />
           <div class="terminal-output">
-            <CommandOutput entry={command.data} pending={command.isPending} error={command.error} />
+            <CommandOutput
+              entry={command.data}
+              pending={command.isPending}
+              error={command.error}
+              streamFilter={streamFilter}
+              pollDisabled={!connected || command.isPending}
+              onStreamFilterChange={setStreamFilter}
+              onPollSession={pollSession}
+            />
           </div>
         </section>
       </div>
