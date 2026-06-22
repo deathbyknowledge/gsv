@@ -28,6 +28,15 @@ function surfaceTail(surface: ShellSurfaceId): string {
   if (surface === "runtime") {
     return "GSV · RUNTIME";
   }
+  if (surface === "messengers") {
+    return "GSV · MESSENGERS";
+  }
+  if (surface === "integrations") {
+    return "GSV · INTEGRATIONS";
+  }
+  if (surface === "applications") {
+    return "GSV · APPLICATIONS";
+  }
   if (surface === "crew" || surface === "agent") {
     return "GSV · CREW";
   }
@@ -67,6 +76,12 @@ export function GsvConsole({
           <ConsoleAgentPage accountUid={selectedAgentUid} onBackToCrew={backToCrew} />
         ) : activeSurface === "machines" ? (
           <ConsoleListPage kind="machines" />
+        ) : activeSurface === "messengers" ? (
+          <ConsoleListPage kind="messengers" />
+        ) : activeSurface === "integrations" ? (
+          <ConsoleListPage kind="integrations" />
+        ) : activeSurface === "applications" ? (
+          <ConsoleListPage kind="applications" />
         ) : activeSurface === "library" ? (
           <ConsoleListPage kind="library" />
         ) : activeSurface === "files" ? (
