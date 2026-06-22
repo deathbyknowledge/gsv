@@ -21,8 +21,8 @@ import {
   type SettingsRouteRequest,
   type SettingsRouteTarget,
 } from "../gsv-console/components/GsvConsole";
+import { LegacyPackageRuntimeAnchors } from "../legacy-package-runtime/LegacyPackageRuntimeAnchors";
 import { GsvDesktop } from "./desktop/GsvDesktop";
-import { LegacyRuntimeAnchors } from "./legacy/LegacyRuntimeAnchors";
 import { ShellRail } from "./navigation/ShellRail";
 import { ShellStatusBar } from "./navigation/ShellStatusBar";
 import { shellSurfaceLabel, type ShellSurfaceId } from "./domain/shellModel";
@@ -332,7 +332,7 @@ export function GsvShell({
 
       <PresenceActivity controller={presenceController} />
       <PresencePanel controller={presenceController} />
-      <LegacyRuntimeAnchors windowsLayerRef={windowsLayerRef} />
+      <LegacyPackageRuntimeAnchors windowsLayerRef={windowsLayerRef} />
     </div>
   );
 }

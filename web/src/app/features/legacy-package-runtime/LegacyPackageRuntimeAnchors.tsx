@@ -1,10 +1,10 @@
 import type { RefObject } from "preact";
 
-type LegacyRuntimeAnchorsProps = {
+type LegacyPackageRuntimeAnchorsProps = {
   windowsLayerRef: RefObject<HTMLElement>;
 };
 
-export function LegacyRuntimeAnchors({ windowsLayerRef }: LegacyRuntimeAnchorsProps) {
+export function LegacyPackageRuntimeAnchors({ windowsLayerRef }: LegacyPackageRuntimeAnchorsProps) {
   return (
     <div class="gsv-legacy-runtime" aria-hidden="true">
       <nav class="gsv-legacy-icons" data-desktop-icons aria-label="Legacy package applications" />

@@ -3,12 +3,10 @@ import { useGateway } from "../../services/gateway/GatewayProvider";
 import { useSession } from "../../services/session/SessionProvider";
 import { NotificationsPanel } from "../notifications/NotificationsPanel";
 import type { NotificationAnchor, NotificationSurface } from "../notifications/types";
-import { usePackageApps } from "../packages/usePackageApps";
+import { useLegacyPackageRuntime } from "../legacy-package-runtime/useLegacyPackageRuntime";
 import { PresenceController } from "../presence/presenceController";
 import { SessionScreens } from "../session/SessionScreens";
 import { GsvShell } from "../gsv-shell/GsvShell";
-import { useDesktopAppsSync } from "./useDesktopAppsSync";
-import { useDesktopRuntime } from "./useDesktopRuntime";
 
 type StandaloneNavigator = Navigator & {
   standalone?: boolean;
@@ -41,28 +39,18 @@ export function DesktopShell() {
   const standalone = useMemo(isStandaloneDisplay, []);
   const mobileHomeDate = useMemo(formatMobileHomeDate, []);
   const presenceController = useMemo(() => new PresenceController(gatewayClient), [gatewayClient]);
-  const packageApps = usePackageApps({
-    gatewayClient,
-    enabled: connected,
-  });
-  const { runtimeRef, runtimeRevision } = useDesktopRuntime({
+  const { runtimeRef } = useLegacyPackageRuntime({
     shellRef,
     windowsLayerRef,
     gatewayClient,
+    connected,
     standalone,
+    sessionPhase: sessionSnapshot.phase,
   });
 
   useEffect(() => {
     void sessionService.start();
   }, [sessionService]);
-  useDesktopAppsSync({
-    runtimeRef,
-    runtimeRevision,
-    apps: packageApps.data,
-    connected,
-    appLoadFailed: packageApps.isError,
-    sessionPhase: sessionSnapshot.phase,
-  });
   useEffect(() => () => presenceController.destroy(), [presenceController]);
   const notificationOpenSurface = notificationPanel.open
     ? notificationPanel.anchor?.surface ?? null
