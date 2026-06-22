@@ -403,13 +403,11 @@ function CrewPanel({
   processes: readonly ConsoleProcess[];
 }) {
   const cards = crewCards(accounts, processes);
-  const remaining = Math.max(0, accounts.length - cards.length);
 
   return (
     <section class="gsv-settings-block gsv-settings-crew-block">
       <ActionSectionHeader
         title="CREW"
-        meta={remaining > 0 ? `+${remaining}` : undefined}
         onClick={onOpenSurface ? () => onOpenSurface("crew") : undefined}
       />
       <div class="gsv-settings-crew-grid">
@@ -527,7 +525,6 @@ function FleetPanel({
       <SectionHeader title="FLEET" divider />
       <MiniHeading
         title="MACHINES"
-        meta={`${targets.filter((target) => target.online).length}/${targets.length} ONLINE`}
         onClick={onOpenSurface ? () => onOpenSurface("machines") : undefined}
       />
       <div class="gsv-settings-section-rows">
@@ -541,7 +538,6 @@ function FleetPanel({
           <div class="gsv-settings-mini-cell">
             <MiniHeading
               title="MESSENGERS"
-              meta={`${adapters.filter((adapter) => adapter.connected).length}/${adapters.length}`}
               onClick={onOpenSurface ? () => onOpenSurface("messengers") : undefined}
             />
             {adapterRows.length === 0 ? <EmptyRow label="NO MESSENGERS" /> : rowLimit(adapterRows, 3).map((row) => (
@@ -553,7 +549,6 @@ function FleetPanel({
           <div class="gsv-settings-mini-cell">
             <MiniHeading
               title="INTEGRATIONS"
-              meta={`${integrationPackages.filter((pkg) => pkg.enabled).length}/${integrationPackages.length}`}
               onClick={onOpenSurface ? () => onOpenSurface("integrations") : undefined}
             />
             {integrationRows.length === 0 ? <EmptyRow label="NO INTEGRATIONS" /> : rowLimit(integrationRows, 2).map((row) => (
@@ -581,7 +576,6 @@ function SatellitesPanel({
       <SectionHeader title="SATELLITES" divider />
       <MiniHeading
         title="APPLICATIONS"
-        meta={`${applications.filter((pkg) => pkg.enabled).length}/${applications.length} ONLINE`}
         onClick={onOpenSurface ? () => onOpenSurface("applications") : undefined}
       />
       <div class="gsv-settings-section-rows">
