@@ -83,6 +83,7 @@ export function useGsvShellState({
   const [manualRailCollapsed, setManualRailCollapsed] = useState(false);
   const [selectedObjectId, setSelectedObjectId] = useState<DesktopObjectId | null>(null);
   const [pickerId, setPickerId] = useState<PickerId | null>(null);
+  const [tabMenuOpen, setTabMenuOpen] = useState(false);
   const [gsvOpen, setGsvOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [chatWidth, setChatWidth] = useState(DEFAULT_CHAT_WIDTH);
@@ -132,12 +133,19 @@ export function useGsvShellState({
   const selectedObject = getDesktopObject(desktopObjects, selectedObjectId);
   const activePageTab = activeTabKey ? openTabs.find((tab) => tab.key === activeTabKey) ?? null : null;
 
+  useEffect(() => {
+    if (!railCollapsed) {
+      setTabMenuOpen(false);
+    }
+  }, [railCollapsed]);
+
   const openSurface = (surface: ShellSurfaceId): void => {
     if (surface === "desktop") {
       setActiveSurface("desktop");
       setActiveTabKey(null);
       setSelectedObjectId(null);
       setPickerId(null);
+      setTabMenuOpen(false);
       setGsvOpen(false);
       return;
     }
@@ -148,6 +156,7 @@ export function useGsvShellState({
     setActiveSurface(surface);
     setSelectedObjectId(null);
     setPickerId(null);
+    setTabMenuOpen(false);
     setGsvOpen(false);
   };
 
@@ -158,6 +167,7 @@ export function useGsvShellState({
     setActiveSurface("settings");
     setSelectedObjectId(null);
     setPickerId(null);
+    setTabMenuOpen(false);
     setGsvOpen(false);
   };
 
@@ -193,6 +203,7 @@ export function useGsvShellState({
     }
     setSelectedObjectId(null);
     setPickerId(null);
+    setTabMenuOpen(false);
     setGsvOpen(false);
   };
 
@@ -203,6 +214,7 @@ export function useGsvShellState({
     setActiveSurface(tab.surface);
     setSelectedObjectId(null);
     setPickerId(null);
+    setTabMenuOpen(false);
     setGsvOpen(false);
   };
 
@@ -211,6 +223,7 @@ export function useGsvShellState({
     setActiveTabKey(null);
     setSelectedObjectId(null);
     setPickerId(null);
+    setTabMenuOpen(false);
     setGsvOpen(false);
   };
 
@@ -220,6 +233,7 @@ export function useGsvShellState({
     setActiveTabKey(null);
     setSelectedObjectId(null);
     setPickerId(null);
+    setTabMenuOpen(false);
     setGsvOpen(false);
   };
 
@@ -232,6 +246,7 @@ export function useGsvShellState({
     setActiveTabKey(tab.key);
     setSelectedObjectId(null);
     setPickerId(null);
+    setTabMenuOpen(false);
     setGsvOpen(false);
   };
 
@@ -247,10 +262,12 @@ export function useGsvShellState({
     if (nextTabs.length === 0) {
       setRailMode("gsv");
       setPickerId((currentPicker) => currentPicker === "tabs" ? null : currentPicker);
+      setTabMenuOpen(false);
     }
   };
 
   const openPicker = (id: DesktopObjectId): void => {
+    setTabMenuOpen(false);
     if (!inPageZone && !desktopCollapsed) {
       setSelectedObjectId(id);
       return;
@@ -260,6 +277,7 @@ export function useGsvShellState({
 
   const openControlMenu = (): void => {
     setSelectedObjectId(null);
+    setTabMenuOpen(false);
     setGsvOpen(false);
     if (railCollapsed && autoRailCollapsed) {
       setPickerId("gsv");
@@ -274,11 +292,13 @@ export function useGsvShellState({
     setSelectedObjectId(null);
     setGsvOpen(false);
     if (railCollapsed) {
-      setPickerId("tabs");
+      setPickerId(null);
+      setTabMenuOpen((open) => !open);
       return;
     }
     setRailMode("tabs");
     setPickerId(null);
+    setTabMenuOpen(false);
   };
 
   const startChatDrag = (event: JSX.TargetedMouseEvent<HTMLDivElement>): void => {
@@ -412,7 +432,12 @@ export function useGsvShellState({
     startChatDrag,
     statusContext,
     syncActiveSettingsRoute,
+    tabMenuOpen,
     toggleChatMax,
-    toggleRailCollapsed: () => setManualRailCollapsed((value) => !value),
+    toggleRailCollapsed: () => {
+      setTabMenuOpen(false);
+      setManualRailCollapsed((value) => !value);
+    },
+    closeTabMenu: () => setTabMenuOpen(false),
   };
 }

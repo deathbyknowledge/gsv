@@ -110,6 +110,17 @@ export function ShellRail({
         <button type="button" class="gsv-rail-gsv-dot" title="GSV controls" onClick={onOpenControlMenu}>
           <GsvMark />
         </button>
+        {openTabs.length > 0 ? (
+          <button
+            type="button"
+            class="gsv-rail-tabs-dot"
+            title="Open tabs"
+            onClick={onOpenTabsPicker}
+          >
+            <Icon name="list" size={16} />
+            <span>{openTabs.length}</span>
+          </button>
+        ) : null}
       </aside>
     );
   }
