@@ -1,6 +1,7 @@
 import type { JSX } from "preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { Button } from "../../../components/ui/Button";
+import { Checkbox } from "../../../components/ui/Checkbox";
 import { Icon } from "../../../components/ui/Icon";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
 import { Select } from "../../../components/ui/Select";
@@ -11,6 +12,7 @@ import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { ConsolePage } from "../../gsv-console/components/ConsolePageTemplate";
 import type { TerminalCommandInput, TerminalTarget, TerminalTranscriptEntry } from "../domain/models";
 import { useTerminalCommandMutation, useTerminalTargets } from "../hooks/useTerminalQueries";
+import { useTerminalRunInBackgroundPreference } from "../hooks/useTerminalPreferences";
 import "./TerminalSurfaceSummary.css";
 
 type TargetOption = {
@@ -547,11 +549,12 @@ export function TerminalSurfaceSummary() {
   const { connected } = useGateway();
   const targets = useTerminalTargets();
   const command = useTerminalCommandMutation();
+  const [preferredBackground, setPreferredBackground] = useTerminalRunInBackgroundPreference();
   const [selectedTargetId, setSelectedTargetId] = useState(NATIVE_TARGET_ID);
   const [cwd, setCwd] = useState("");
   const [timeoutMs, setTimeoutMs] = useState("");
   const [yieldMs, setYieldMs] = useState("");
-  const [background, setBackground] = useState(false);
+  const [background, setBackgroundState] = useState(preferredBackground);
   const [commandInput, setCommandInput] = useState("");
   const [history, setHistory] = useState<CommandHistoryItem[]>([]);
   const [streamFilter, setStreamFilter] = useState<StreamFilter>("all");
@@ -592,6 +595,10 @@ export function TerminalSurfaceSummary() {
       setSelectedTargetId(NATIVE_TARGET_ID);
     }
   }, [selectedTargetId, targetOptions]);
+
+  useEffect(() => {
+    setBackgroundState(preferredBackground);
+  }, [preferredBackground]);
 
   useEffect(() => {
     if (!command.data) {
@@ -660,8 +667,13 @@ export function TerminalSurfaceSummary() {
     setCwd(item.cwd);
     setTimeoutMs(item.timeoutMs);
     setYieldMs(item.yieldMs);
-    setBackground(item.background);
+    setBackgroundState(item.background);
     setCommandInput(item.input);
+  }
+
+  function updateBackground(next: boolean): void {
+    setBackgroundState(next);
+    setPreferredBackground(next);
   }
 
   function rerunHistoryItem(item: CommandHistoryItem): void {
@@ -814,15 +826,15 @@ export function TerminalSurfaceSummary() {
                 />
               </label>
             </div>
-            <label class="terminal-toggle-row">
-              <input
-                type="checkbox"
+            <div class="terminal-toggle-row">
+              <Checkbox
                 checked={background}
                 disabled={command.isPending}
-                onInput={(event) => setBackground(event.currentTarget.checked)}
+                label="RUN IN BACKGROUND"
+                size="medium"
+                onChange={updateBackground}
               />
-              <span>BACKGROUND</span>
-            </label>
+            </div>
             <label class="terminal-field">
               <span>COMMAND</span>
               <textarea

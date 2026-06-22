@@ -1,4 +1,4 @@
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import "./Checkbox.css";
 
 export type CheckboxSize = "small" | "medium" | "large";
@@ -39,6 +39,10 @@ export function Checkbox(props: CheckboxProps) {
   const [checkedState, setCheckedState] = useState<boolean | undefined>(undefined);
   const checked = checkedState === undefined ? !!props.checked : checkedState;
   const on = checked && !indeterminate;
+
+  useEffect(() => {
+    setCheckedState(undefined);
+  }, [props.checked]);
 
   const rawStat = status && status !== "none" ? status : "";
   const statKey = rawStat === "warning" ? "warn" : rawStat;
