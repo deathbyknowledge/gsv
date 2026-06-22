@@ -358,7 +358,7 @@ export async function networkHar(tabId?: number): Promise<unknown> {
       version: "1.2",
       creator: {
         name: "gsv-browser-extension",
-        version: "0.2.8",
+        version: "0.2.9",
       },
       entries,
     },
