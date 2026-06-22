@@ -9,17 +9,20 @@ import {
   type DesktopObjectId,
   type ShellStatus,
   type ShellSurfaceId,
+  type ShellTab,
 } from "../domain/shellModel";
 
 type GsvDesktopProps = {
   desktopObjects: readonly DesktopObject[];
   selectedObjectId: DesktopObjectId | null;
   gsvOpen: boolean;
-  tabCount: number;
+  tabs: readonly ShellTab[];
+  activeTabKey: string | null;
   onSelectObject: (id: DesktopObjectId | null) => void;
   onToggleGsv: () => void;
   onOpenSurface: (surface: ShellSurfaceId) => void;
-  onActivateTabs: () => void;
+  onSelectTab: (key: string) => void;
+  onCloseTab: (key: string) => void;
 };
 
 function objectCardStatus(status: ShellStatus) {
@@ -62,6 +65,19 @@ function surfaceForObject(parentId: DesktopObjectId): ShellSurfaceId {
   return "settings";
 }
 
+function iconForSurface(surface: ShellSurfaceId): string {
+  if (surface === "machines") return "computer";
+  if (surface === "messengers" || surface === "crew" || surface === "agent") return "chat";
+  if (surface === "integrations") return "weblink";
+  if (surface === "applications") return "stars";
+  if (surface === "files") return "folder";
+  if (surface === "library") return "pencil";
+  if (surface === "terminal") return "terminal";
+  if (surface === "runtime") return "list";
+  if (surface === "settings") return "cog";
+  return "bookmark";
+}
+
 function GsvMark() {
   return (
     <svg width="50" height="50" viewBox="0 0 16 16" aria-hidden="true">
@@ -80,17 +96,20 @@ export function GsvDesktop({
   desktopObjects,
   selectedObjectId,
   gsvOpen,
-  tabCount,
+  tabs,
+  activeTabKey,
   onSelectObject,
   onToggleGsv,
   onOpenSurface,
-  onActivateTabs,
+  onSelectTab,
+  onCloseTab,
 }: GsvDesktopProps) {
   const selectedObject = selectedObjectId
     ? desktopObjects.find((object) => object.id === selectedObjectId) ?? null
     : null;
   const branchCount = Math.max(desktopObjects.length, 1);
   const totalObjects = desktopObjects.reduce((sum, object) => sum + object.children.length, 0);
+  const tabCount = tabs.length;
   const desktopStateClass = `${selectedObject ? " has-selected-object" : ""}${gsvOpen ? " has-gsv-open" : ""}`;
 
   return (
@@ -226,20 +245,47 @@ export function GsvDesktop({
         ) : null}
       </div>
 
-      {tabCount > 0 ? (
-        <button
-          type="button"
-          class="gsv-space-tabs-card"
-          aria-label={`Open ${tabCount} ${tabCount === 1 ? "tab" : "tabs"}`}
-          onClick={onActivateTabs}
-        >
-          <span class="gsv-space-tabs-icon" aria-hidden="true">
-            <Icon name="list" size={13} />
-          </span>
-          <span>TABS</span>
-          <strong>{tabCount}</strong>
-          <small>select</small>
-        </button>
+      {tabs.length > 0 ? (
+        <aside class="gsv-space-tabs-list" aria-label="Open tabs" onClick={(event) => event.stopPropagation()}>
+          <header>
+            <span>TABS</span>
+            <small>{tabCount}</small>
+          </header>
+          <div>
+            {tabs.map((tab) => (
+              <div
+                key={tab.key}
+                class={tab.key === activeTabKey ? "is-active" : ""}
+                role="button"
+                tabIndex={0}
+                onClick={() => onSelectTab(tab.key)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    onSelectTab(tab.key);
+                  }
+                }}
+              >
+                <span class="gsv-space-tab-active-bar" aria-hidden="true" />
+                <span class="gsv-space-tab-icon" aria-hidden="true">
+                  <Icon name={iconForSurface(tab.surface)} size={14} />
+                </span>
+                <span class="gsv-space-tab-title">{tab.title}</span>
+                <button
+                  type="button"
+                  class="gsv-space-tab-close"
+                  aria-label={`Close ${tab.title}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onCloseTab(tab.key);
+                  }}
+                >
+                  x
+                </button>
+              </div>
+            ))}
+          </div>
+        </aside>
       ) : null}
 
       <div class="gsv-space-hint">

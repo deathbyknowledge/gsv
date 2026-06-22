@@ -223,6 +223,35 @@ export function useGsvShellState({
     setPickerId("gsv");
   };
 
+  const activateTab = (key: string): void => {
+    if (!tabs.some((tab) => tab.key === key)) {
+      return;
+    }
+    setActiveTabKey(key);
+    setSelectedObjectId(null);
+    setPickerId(null);
+    setGsvOpen(false);
+  };
+
+  const closeTab = (key: string): void => {
+    const closedIndex = tabs.findIndex((tab) => tab.key === key);
+    if (closedIndex < 0) {
+      return;
+    }
+
+    const next = tabs.filter((tab) => tab.key !== key);
+    setTabs(next);
+    if (activeTabKey === key) {
+      const fallback = next[Math.min(closedIndex, next.length - 1)] ?? null;
+      setActiveTabKey(fallback?.key ?? null);
+      if (!fallback) {
+        setRailMode("objects");
+        setPickerId(null);
+        setGsvOpen(false);
+      }
+    }
+  };
+
   const startChatDrag = (event: JSX.TargetedMouseEvent<HTMLDivElement>): void => {
     event.preventDefault();
     const rect = rootRef.current?.getBoundingClientRect();
@@ -318,9 +347,11 @@ export function useGsvShellState({
     activeSurface,
     activeTab,
     activeTabKey,
+    activateTab,
     backToDesktop,
     chatDragging,
     chatOpen,
+    closeTab,
     desktopCollapsed,
     gsvOpen,
     maxChatWidth,
