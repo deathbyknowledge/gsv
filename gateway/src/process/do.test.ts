@@ -345,6 +345,8 @@ describe("Process DO — mechanical", () => {
           "config/ai/provider": "openai",
           "config/ai/model": "gpt-4.1-mini",
           "config/ai/api_key": "sk-process",
+          "config/ai/max_tokens": "",
+          "config/ai/max_context_bytes": "   ",
         },
         profile: {
           id: "fast",
@@ -366,6 +368,8 @@ describe("Process DO — mechanical", () => {
 
       const rawGet = await stub.recvFrame(makeReq("proc.ai.config.get", { redacted: false })) as ResponseOkFrame;
       expect((rawGet.data as any).config.values["config/ai/api_key"]).toBe("sk-process");
+      expect((rawGet.data as any).config.values).not.toHaveProperty("config/ai/max_tokens");
+      expect((rawGet.data as any).config.values).not.toHaveProperty("config/ai/max_context_bytes");
 
       const patchResponse = await stub.recvFrame(makeReq("proc.ai.config.set", {
         key: "config/ai/model",

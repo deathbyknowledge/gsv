@@ -846,7 +846,11 @@ export function App({ backend }: { backend: ChatBackend }) {
     }
   }
 
-  function openArchiveView(): void {
+  function toggleArchiveView(): void {
+    if (stageView === "archive") {
+      setStageView("chat");
+      return;
+    }
     setStageView("archive");
     void loadArchiveSegments(true);
   }
@@ -916,6 +920,7 @@ export function App({ backend }: { backend: ChatBackend }) {
             homeLabel={homeProfileLabel}
             contextState={active ? contextState : null}
             archiveCount={archive.segments.length}
+            archiveOpen={stageView === "archive"}
             conversationControls={(
               <ConversationBar
                 active={active}
@@ -940,7 +945,7 @@ export function App({ backend }: { backend: ChatBackend }) {
             onApplyProfile={(profileId) => void applyProcessAiProfile(profileId)}
             onClearModelOverride={() => void clearProcessAiOverride()}
             onFreeContext={openCompactDialog}
-            onOpenArchive={openArchiveView}
+            onOpenArchive={toggleArchiveView}
             onDraftProfileChange={setDraftProfileId}
             onToggleFullscreen={() => void toggleFullscreen()}
           />

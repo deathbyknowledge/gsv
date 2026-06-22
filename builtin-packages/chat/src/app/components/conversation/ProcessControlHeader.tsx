@@ -55,6 +55,7 @@ export function ProcessControlHeader(props: {
   homeLabel: string;
   contextState: ContextState | null;
   archiveCount: number;
+  archiveOpen: boolean;
   conversationControls?: ComponentChildren;
   processAiState: ProcessAiState | null;
   processAiLoading: boolean;
@@ -79,6 +80,11 @@ export function ProcessControlHeader(props: {
   const reasoningLabel = processAiReasoningLabel(props.processAiState);
   const contextLabel = contextPercentLabel(props.contextState);
   const selectedProfileId = selectedAgentProfileId(props.profiles, props.draftProfileId, props.active, props.activeThread);
+  const archiveActionLabel = props.archiveOpen
+    ? "Close archive"
+    : props.archiveCount > 0
+      ? `Open archive (${props.archiveCount})`
+      : "Open archive";
 
   return (
     <>
@@ -214,7 +220,7 @@ export function ProcessControlHeader(props: {
               props.onOpenArchive();
             }}>
               <ArchiveIcon />
-              <span>{props.archiveCount > 0 ? `Open archive (${props.archiveCount})` : "Open archive"}</span>
+              <span>{archiveActionLabel}</span>
             </button>
           </div>
         </details>

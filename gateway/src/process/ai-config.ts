@@ -104,7 +104,11 @@ export function normalizeProcessAiConfigValues(raw: Record<string, unknown>): Re
     if (!isProcessAiConfigKey(key)) {
       continue;
     }
-    values[key] = String(value ?? "");
+    const normalized = String(value ?? "").trim();
+    if (!normalized) {
+      continue;
+    }
+    values[key] = normalized;
   }
   return values;
 }

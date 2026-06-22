@@ -103,10 +103,16 @@ export function AgentsSection({ backend }: { backend: GsvBackend }) {
       const values = profileValuesFromDrafts(stack.profile.values);
       const entries = AI_FIELDS
         .filter((field) => field.kind !== "readonly")
-        .map((field) => ({
-          key: state.isRoot ? field.key : buildUserAiOverrideKey(state.viewerUid, field.key),
-          value: values[field.key] ?? "",
-        }));
+        .flatMap((field) => {
+          const value = values[field.key] ?? "";
+          if (state.isRoot && !value.trim()) {
+            return [];
+          }
+          return [{
+            key: state.isRoot ? field.key : buildUserAiOverrideKey(state.viewerUid, field.key),
+            value,
+          }];
+        });
       await backend.applyConfigEntries({ entries });
       await agents.loadState();
     } catch (error) {
