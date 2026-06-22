@@ -1,4 +1,3 @@
-import { AsciiPlanet } from "../../../components/ui/AsciiPlanet";
 import { Checkbox } from "../../../components/ui/Checkbox";
 import { CrewAddTile, CrewTile } from "../../../components/ui/CrewTile";
 import { Icon } from "../../../components/ui/Icon";
@@ -14,6 +13,10 @@ import {
   defaultModelLabelForConfig,
   modelConfigCount,
 } from "../domain/consoleAi";
+import {
+  agentImageSrcForIndex,
+  sortedConsoleAccounts,
+} from "../domain/agentPresentation";
 import type {
   ConsoleAccount,
   ConsoleAdapterAccount,
@@ -46,6 +49,7 @@ type CrewCard = {
   id: string;
   name: string;
   meta: string;
+  imageSrc: string;
   tone: StatusTone;
   statusLabel: string;
 };
@@ -161,7 +165,7 @@ function applicationRow(pkg: ConsolePackage): OverviewRow {
 }
 
 function accountStatus(account: ConsoleAccount, processes: readonly ConsoleProcess[]): Pick<CrewCard, "meta" | "statusLabel" | "tone"> {
-  const ownedProcesses = processes.filter((process) => process.username === account.username);
+  const ownedProcesses = processes.filter((process) => process.uid === account.uid || process.username === account.username);
   const running = ownedProcesses.some(isRunningProcess);
   const queued = ownedProcesses.some(isQueuedProcess);
   const unknown = ownedProcesses.some((process) => process.state === "unknown");
@@ -183,11 +187,11 @@ function accountStatus(account: ConsoleAccount, processes: readonly ConsoleProce
 }
 
 function crewCards(accounts: readonly ConsoleAccount[], processes: readonly ConsoleProcess[]): CrewCard[] {
-  return [...accounts]
-    .sort((left, right) => Number(right.runnable) - Number(left.runnable) || left.username.localeCompare(right.username))
+  return sortedConsoleAccounts(accounts)
     .slice(0, 3)
-    .map((account) => ({
+    .map((account, index) => ({
       id: String(account.uid),
+      imageSrc: agentImageSrcForIndex(index),
       name: account.displayName,
       ...accountStatus(account, processes),
     }));
@@ -354,9 +358,7 @@ function ShipPanel({
     <section class="gsv-settings-block gsv-settings-ship-block">
       <SectionHeader title="THE SHIP" divider />
       <div class="gsv-settings-ship-visual">
-        <div class="gsv-settings-ship-orbit">
-          <AsciiPlanet variant="moon" formDuration={3.4} label="GSV ship scan" />
-        </div>
+        <img class="gsv-settings-ship-render" src="/img/ship-render.png" alt="" draggable={false} />
         <span class="gsv-settings-scan">SCAN {scanCode(data)}</span>
         <span class="gsv-settings-ship-id">GSV-01</span>
       </div>
@@ -420,9 +422,9 @@ function CrewPanel({
         onClick={onOpenSurface ? () => onOpenSurface("crew") : undefined}
       />
       <div class="gsv-settings-crew-grid">
-        {cards.length === 0 ? <EmptyRow label="NO CREW ACCOUNTS" /> : cards.map((card, index) => (
+        {cards.length === 0 ? <EmptyRow label="NO CREW ACCOUNTS" /> : cards.map((card) => (
           <CrewTile
-            imageIndex={index}
+            imageSrc={card.imageSrc}
             key={card.id}
             name={card.name}
             onClick={onOpenSurface ? () => onOpenSurface("crew") : undefined}
