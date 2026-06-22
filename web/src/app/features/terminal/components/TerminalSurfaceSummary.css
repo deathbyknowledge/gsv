@@ -307,16 +307,8 @@
   letter-spacing: 0;
 }
 
-.terminal-toggle-row input {
-  width: 16px;
-  height: 16px;
-  flex: none;
-  margin: 0;
-  accent-color: var(--accent-bright);
-}
-
-.terminal-toggle-row input:disabled {
-  cursor: not-allowed;
+.terminal-toggle-row .gsv-cb {
+  max-width: 100%;
 }
 
 .terminal-history {

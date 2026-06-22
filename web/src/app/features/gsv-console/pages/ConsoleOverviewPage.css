@@ -149,7 +149,6 @@
 .gsv-settings-action-header[data-clickable="true"],
 .gsv-settings-mini-row[data-clickable="true"],
 .gsv-settings-add-row[data-clickable="true"],
-.gsv-settings-terminal-state[data-clickable="true"],
 .gsv-settings-deep-cell[data-clickable="true"],
 .gsv-settings-crew-card[data-clickable="true"],
 .gsv-settings-new-agent[data-clickable="true"] {
@@ -161,7 +160,6 @@
 .gsv-settings-action-header[data-clickable="true"]:hover,
 .gsv-settings-mini-row[data-clickable="true"]:hover,
 .gsv-settings-add-row[data-clickable="true"]:hover,
-.gsv-settings-terminal-state[data-clickable="true"]:hover,
 .gsv-settings-deep-cell[data-clickable="true"]:hover,
 .gsv-settings-crew-card[data-clickable="true"]:hover,
 .gsv-settings-new-agent[data-clickable="true"]:hover {
@@ -203,6 +201,38 @@
   text-transform: uppercase;
 }
 
+.gsv-settings-terminal-state {
+  justify-content: space-between;
+}
+
+.gsv-settings-terminal-state .gsv-cb {
+  min-width: 0;
+}
+
+.gsv-settings-terminal-state button {
+  width: 24px;
+  height: 24px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+}
+
+.gsv-settings-terminal-state button:hover,
+.gsv-settings-terminal-state button:focus-visible {
+  border-color: var(--dashed);
+  background: var(--selected);
+  outline: none;
+}
+
+.gsv-settings-terminal-state button .gsv-settings-chevron {
+  margin-left: 0;
+}
+
 .gsv-settings-overrides-state {
   justify-content: space-between;
 }
@@ -212,13 +242,6 @@
   display: flex;
   align-items: center;
   gap: 10px;
-}
-
-.gsv-settings-check {
-  width: 17px;
-  height: 17px;
-  border: 1px solid var(--border-raised);
-  background: rgba(150, 140, 255, 0.03);
 }
 
 .gsv-settings-crew-grid {

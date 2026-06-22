@@ -1,5 +1,6 @@
 import { AsciiPlanet } from "../../../components/ui/AsciiPlanet";
 import { AgentImage } from "../../../components/ui/AgentImage";
+import { Checkbox } from "../../../components/ui/Checkbox";
 import { Icon } from "../../../components/ui/Icon";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
 import { StatusDot, type StatusTone } from "../../../components/ui/StatusDot";
@@ -23,6 +24,7 @@ import type {
   ConsoleTarget,
 } from "../domain/consoleModels";
 import type { ShellSurfaceId } from "../../gsv-shell/domain/shellModel";
+import { useTerminalRunInBackgroundPreference } from "../../terminal/hooks/useTerminalPreferences";
 import { useConsoleOverview } from "../hooks/useConsoleData";
 import "./ConsoleOverviewPage.css";
 
@@ -311,12 +313,14 @@ function ShipPanel({
   config,
   data,
   onOpenSurface,
-  shellTargetCount,
+  terminalBackground,
+  onTerminalBackgroundChange,
 }: {
   config: readonly ConsoleConfigEntry[];
   data: ConsoleOverviewData;
   onOpenSurface?: OpenSurface;
-  shellTargetCount: number;
+  terminalBackground: boolean;
+  onTerminalBackgroundChange: (enabled: boolean) => void;
 }) {
   const redacted = config.filter((entry) => entry.redacted).length;
   const configured = config.filter((entry) => entry.value && !entry.redacted).length;
@@ -337,11 +341,18 @@ function ShipPanel({
             <MiniHeading title="TERMINAL" />
             <div
               class="gsv-settings-terminal-state"
-              data-clickable={onOpenSurface ? "true" : undefined}
-              onClick={onOpenSurface ? () => onOpenSurface("terminal") : undefined}
             >
-              <span class="gsv-settings-check" aria-hidden="true" />
-              <span>{shellTargetCount > 0 ? `${shellTargetCount} SHELL TARGET${shellTargetCount === 1 ? "" : "S"}` : "NO SHELL TARGETS"}</span>
+              <Checkbox
+                checked={terminalBackground}
+                label="RUN IN BACKGROUND"
+                size="medium"
+                onChange={onTerminalBackgroundChange}
+              />
+              {onOpenSurface ? (
+                <button type="button" aria-label="Open terminal" onClick={() => onOpenSurface("terminal")}>
+                  <Chevron />
+                </button>
+              ) : null}
             </div>
           </div>
         )}
@@ -572,12 +583,18 @@ function SettingsOverviewDashboard({
 }) {
   const applications = data.packages.filter(isApplicationPackage);
   const integrationPackages = data.packages.filter((pkg) => !isApplicationPackage(pkg));
-  const shellTargetCount = data.targets.filter((target) => target.online && target.implements.some((item) => item === "shell.exec" || item === "shell.*")).length;
+  const [terminalBackground, setTerminalBackground] = useTerminalRunInBackgroundPreference();
 
   return (
     <div class="gsv-settings-overview" aria-label="GSV settings overview">
       <div class="gsv-settings-left">
-        <ShipPanel config={data.config} data={data} onOpenSurface={onOpenSurface} shellTargetCount={shellTargetCount} />
+        <ShipPanel
+          config={data.config}
+          data={data}
+          onOpenSurface={onOpenSurface}
+          terminalBackground={terminalBackground}
+          onTerminalBackgroundChange={setTerminalBackground}
+        />
         <CrewPanel accounts={data.accounts} onOpenSurface={onOpenSurface} processes={data.processes} />
         <ModelsTasksPanel config={data.config} counts={counts} onOpenSurface={onOpenSurface} processes={data.processes} />
       </div>
