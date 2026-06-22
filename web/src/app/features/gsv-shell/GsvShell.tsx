@@ -298,7 +298,8 @@ export function GsvShell({
                 desktopObjects={desktopObjects}
                 selectedObjectId={shell.selectedObjectId}
                 gsvOpen={shell.gsvOpen}
-                tabCount={shell.tabs.length}
+                tabs={shell.tabs}
+                activeTabKey={shell.activeTabKey}
                 onSelectObject={(id) => {
                   shell.setSelectedObjectId(id);
                   shell.setGsvOpen(false);
@@ -308,7 +309,8 @@ export function GsvShell({
                   shell.setSelectedObjectId(null);
                 }}
                 onOpenSurface={shell.openSurface}
-                onActivateTabs={() => shell.setPickerId("tabs")}
+                onSelectTab={shell.activateTab}
+                onCloseTab={shell.closeTab}
               />
             )}
 
