@@ -7,7 +7,7 @@ import { Select } from "../../../components/ui/Select";
 import { Spinner } from "../../../components/ui/Spinner";
 import { StatusDot, type StatusTone } from "../../../components/ui/StatusDot";
 import { Tag } from "../../../components/ui/Tag";
-import { TextInput } from "../../../components/ui/TextInput";
+import { TextInput, type TextInputStatus } from "../../../components/ui/TextInput";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import {
   ConsolePage,
@@ -26,6 +26,7 @@ import {
   buildPathCrumbs,
   chooseInitialTarget,
   describeTarget,
+  formatBytes,
   formatFileStats,
   formatSearchMatchLine,
   formatTargetOption,
@@ -52,6 +53,7 @@ type ReadPanelProps = {
   savePending: boolean;
   saveFeedback: OperationFeedback | null;
   onOpenPath: (path: string) => void;
+  onRetry: () => void;
   onFileDraftChange: (value: string) => void;
   onSaveFile: () => void;
   onResetFileDraft: () => void;
@@ -65,6 +67,7 @@ type SearchPanelProps = {
   isLoading: boolean;
   queryError: string;
   onOpenPath: (path: string) => void;
+  onRetry: () => void;
 };
 
 type StateKind = "loading" | "error" | "empty" | "offline";
@@ -111,10 +114,12 @@ function FilesStateMessage({
   kind,
   title,
   detail,
+  action,
 }: {
   kind: StateKind;
   title: string;
   detail?: string;
+  action?: JSX.Element;
 }) {
   return (
     <div class={`files-state files-state-${kind}`} role={kind === "error" ? "alert" : "status"}>
@@ -125,6 +130,7 @@ function FilesStateMessage({
         <strong>{title}</strong>
         {detail ? <span>{detail}</span> : null}
       </span>
+      {action ? <span class="files-state-action">{action}</span> : null}
     </div>
   );
 }
@@ -190,6 +196,8 @@ function DirectoryView({
   onOpenPath: (path: string) => void;
 }) {
   const entries = sortDirectoryEntries(directory.entries);
+  const directoryCount = entries.filter((entry) => entry.kind === "directory").length;
+  const fileCount = entries.length - directoryCount;
 
   if (entries.length === 0) {
     return (
@@ -203,6 +211,11 @@ function DirectoryView({
 
   return (
     <div class="files-entry-list">
+      <div class="files-list-summary">
+        <Tag tone="accent" label={`${directoryCount} DIR`} boxed />
+        <Tag tone="idle" label={`${fileCount} FILE`} boxed />
+        <span>{directory.path}</span>
+      </div>
       {entries.map((entry) => (
         <button
           type="button"
@@ -256,6 +269,7 @@ function FileView({
   const stats = formatFileStats(file);
   const canEditText = images.length === 0;
   const saveDisabled = !connected || !targetOnline || !dirty || savePending;
+  const editorMetric = dirty ? "DRAFT MODIFIED" : `${draft.length.toLocaleString()} CHARS`;
   const editorState = !connected
     ? "GATEWAY OFFLINE"
     : !targetOnline
@@ -304,6 +318,7 @@ function FileView({
             <span class="files-editor-status">
               <StatusDot tone={editorTone} size={8} />
               <span>{editorState}</span>
+              <small>{editorMetric}</small>
             </span>
             <span class="files-editor-actions">
               <Button variant="secondary" label="REVERT" disabled={!dirty || savePending} onClick={onResetDraft} />
@@ -315,7 +330,11 @@ function FileView({
               />
             </span>
           </div>
-          {feedback ? <FilesInlineNotice kind={feedback.kind} title={feedback.title} detail={feedback.detail} /> : null}
+          {savePending ? (
+            <FilesInlineNotice kind="loading" title="SAVING CHANGES" detail={file.path} />
+          ) : feedback ? (
+            <FilesInlineNotice kind={feedback.kind} title={feedback.title} detail={feedback.detail} />
+          ) : null}
         </div>
       ) : text.length > 0 ? (
         <pre class="files-code-block">{text}</pre>
@@ -342,6 +361,7 @@ function ReadPanel({
   savePending,
   saveFeedback,
   onOpenPath,
+  onRetry,
   onFileDraftChange,
   onSaveFile,
   onResetFileDraft,
@@ -359,13 +379,34 @@ function ReadPanel({
     return <FilesStateMessage kind="loading" title="OPENING PATH" detail={path} />;
   }
   if (queryError) {
-    return <FilesStateMessage kind="error" title="READ FAILED" detail={queryError} />;
+    return (
+      <FilesStateMessage
+        kind="error"
+        title="READ FAILED"
+        detail={queryError}
+        action={<Button variant="secondary" label="RETRY" onClick={onRetry} />}
+      />
+    );
   }
   if (!payload) {
-    return <FilesStateMessage kind="empty" title="NO PATH LOADED" detail="Enter a path and open it." />;
+    return (
+      <FilesStateMessage
+        kind="empty"
+        title="NO PATH LOADED"
+        detail="Enter a path and open it."
+        action={<Button variant="secondary" label="OPEN ROOT" onClick={() => onOpenPath(DEFAULT_PATH)} />}
+      />
+    );
   }
   if (!payload.ok) {
-    return <FilesStateMessage kind="error" title="READ FAILED" detail={payload.error} />;
+    return (
+      <FilesStateMessage
+        kind="error"
+        title="READ FAILED"
+        detail={payload.error}
+        action={<Button variant="secondary" label="RETRY" onClick={onRetry} />}
+      />
+    );
   }
   if (isDirectoryPayload(payload)) {
     return <DirectoryView directory={payload} onOpenPath={onOpenPath} />;
@@ -397,6 +438,7 @@ function SearchPanel({
   isLoading,
   queryError,
   onOpenPath,
+  onRetry,
 }: SearchPanelProps) {
   if (!connected) {
     return <FilesStateMessage kind="offline" title="GATEWAY OFFLINE" detail="Reconnect to search file targets." />;
@@ -414,13 +456,27 @@ function SearchPanel({
     return <FilesStateMessage kind="loading" title="SEARCHING" detail={query} />;
   }
   if (queryError) {
-    return <FilesStateMessage kind="error" title="SEARCH FAILED" detail={queryError} />;
+    return (
+      <FilesStateMessage
+        kind="error"
+        title="SEARCH FAILED"
+        detail={queryError}
+        action={<Button variant="secondary" label="RETRY" onClick={onRetry} />}
+      />
+    );
   }
   if (!payload) {
     return <FilesStateMessage kind="empty" title="NO SEARCH RESULTS" detail="Run a search to inspect matches." />;
   }
   if (!payload.ok) {
-    return <FilesStateMessage kind="error" title="SEARCH FAILED" detail={payload.error} />;
+    return (
+      <FilesStateMessage
+        kind="error"
+        title="SEARCH FAILED"
+        detail={payload.error}
+        action={<Button variant="secondary" label="RETRY" onClick={onRetry} />}
+      />
+    );
   }
   if (payload.matches.length === 0) {
     return <FilesStateMessage kind="empty" title="NO MATCHES" detail={`No results for "${payload.query}".`} />;
@@ -447,6 +503,65 @@ function SearchPanel({
   );
 }
 
+function DeleteConfirmation({
+  path,
+  pending,
+  value,
+  onValueChange,
+  onCancel,
+  onConfirm,
+}: {
+  path: string;
+  pending: boolean;
+  value: string;
+  onValueChange: (value: string) => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const normalizedValue = value.trim();
+  const confirmed = normalizedValue === path;
+  const status: TextInputStatus = pending ? "info" : value.length === 0 ? "warning" : confirmed ? "success" : "error";
+  const message = pending
+    ? "Deleting path"
+    : confirmed
+      ? "Path confirmed"
+      : "Exact path required";
+
+  return (
+    <div class="files-delete-confirm" role="alert">
+      <span class="files-inline-mark">
+        {pending ? <Spinner size={16} /> : <StatusDot tone="warn" size={8} />}
+      </span>
+      <span class="files-delete-copy">
+        <strong>{pending ? "DELETING" : "CONFIRM DELETE"}</strong>
+        <span>{path}</span>
+      </span>
+      <div class="files-delete-controls">
+        <TextInput
+          key={`delete-${path}`}
+          label="TYPE PATH TO CONFIRM"
+          value={value}
+          placeholder={path}
+          status={status}
+          message={message}
+          clearable
+          disabled={pending}
+          onChange={onValueChange}
+        />
+        <span class="files-delete-actions">
+          <Button variant="secondary" label="CANCEL" disabled={pending} onClick={onCancel} />
+          <Button
+            variant="danger"
+            label={pending ? "DELETING" : "DELETE"}
+            disabled={pending || !confirmed}
+            onClick={onConfirm}
+          />
+        </span>
+      </div>
+    </div>
+  );
+}
+
 export function FilesSurfaceSummary() {
   const { connected } = useGateway();
   const targetsQuery = useFilesTargets();
@@ -469,6 +584,7 @@ export function FilesSurfaceSummary() {
   const [createContent, setCreateContent] = useState("");
   const [createFeedback, setCreateFeedback] = useState<OperationFeedback | null>(null);
   const [deleteConfirmPath, setDeleteConfirmPath] = useState<string | null>(null);
+  const [deleteConfirmInput, setDeleteConfirmInput] = useState("");
   const [deleteFeedback, setDeleteFeedback] = useState<OperationFeedback | null>(null);
 
   const selectedTarget = targets.find((target) => target.id === selectedTargetId) ?? null;
@@ -579,6 +695,7 @@ export function FilesSurfaceSummary() {
     setCreateContent("");
     setCreateFeedback(null);
     setDeleteConfirmPath(null);
+    setDeleteConfirmInput("");
     setDeleteFeedback(null);
     setSaveFeedback(null);
   };
@@ -646,18 +763,24 @@ export function FilesSurfaceSummary() {
     }
 
     setSaveFeedback(null);
+    const savedDraft = editorDraft;
     try {
       const result = await filesMutations.save.mutateAsync({
         target: selectedTarget.id,
         path: activeFile.path,
-        content: editorDraft,
+        content: savedDraft,
       });
       if (!result.ok) {
         setSaveFeedback({ kind: "error", title: "SAVE FAILED", detail: result.error });
         return;
       }
-      setEditorBaseline(editorDraft);
-      setSaveFeedback({ kind: "success", title: "SAVED", detail: result.path });
+      setEditorSourceText(savedDraft);
+      setEditorBaseline(savedDraft);
+      setSaveFeedback({
+        kind: "success",
+        title: "SAVED",
+        detail: [result.path, formatBytes(result.size)].filter(Boolean).join(" · "),
+      });
     } catch (error) {
       setSaveFeedback({
         kind: "error",
@@ -720,6 +843,7 @@ export function FilesSurfaceSummary() {
       return;
     }
     setDeleteFeedback(null);
+    setDeleteConfirmInput("");
     setDeleteConfirmPath((path) => path === displayedPath ? null : displayedPath);
   };
 
@@ -728,12 +852,13 @@ export function FilesSurfaceSummary() {
       return;
     }
     setDeleteConfirmPath(null);
+    setDeleteConfirmInput("");
     setDeleteFeedback(null);
   };
 
   const confirmDelete = async () => {
     const pathToDelete = deleteConfirmPath;
-    if (!selectedTarget || !pathToDelete || !canDeletePath) {
+    if (!selectedTarget || !pathToDelete || !canDeletePath || deleteConfirmInput.trim() !== pathToDelete) {
       return;
     }
 
@@ -745,15 +870,18 @@ export function FilesSurfaceSummary() {
       });
       if (!result.ok) {
         setDeleteConfirmPath(null);
+        setDeleteConfirmInput("");
         setDeleteFeedback({ kind: "error", title: "DELETE FAILED", detail: result.error });
         return;
       }
       const nextPath = parentPath(result.path, detectPathStyle(result.path));
       setDeleteConfirmPath(null);
+      setDeleteConfirmInput("");
       setDeleteFeedback({ kind: "success", title: "DELETED", detail: result.path });
       openPath(nextPath, true);
     } catch (error) {
       setDeleteConfirmPath(null);
+      setDeleteConfirmInput("");
       setDeleteFeedback({
         kind: "error",
         title: "DELETE FAILED",
@@ -835,7 +963,7 @@ export function FilesSurfaceSummary() {
                     />
                     <Button
                       variant="dangerGhost"
-                      label={deleteConfirmPath === displayedPath ? "CANCEL DELETE" : "DELETE"}
+                      label={deleteConfirmPath === displayedPath ? "CONFIRMING" : "DELETE"}
                       disabled={filesMutations.remove.isPending || (!canDeletePath && deleteConfirmPath !== displayedPath)}
                       onClick={deleteConfirmPath === displayedPath ? cancelDelete : requestDeletePath}
                     />
@@ -875,20 +1003,22 @@ export function FilesSurfaceSummary() {
                 <section class="files-create-panel" aria-label="Create file">
                   <SectionHeader title="NEW FILE" meta={createResolvedPath || createBasePath} divider />
                   <div class="files-create-body">
-                    <label class="files-field">
-                      <span>FILE PATH</span>
-                      <input
-                        class="files-input"
+                    <div class="files-field">
+                      <TextInput
+                        key={`create-path-${createOpen}`}
+                        label="FILE PATH"
                         value={createPathInput}
                         placeholder="new-file.txt"
+                        status={createPathInput.trim() ? "success" : "warning"}
+                        message={createResolvedPath || "Path required"}
+                        clearable
                         disabled={!canQueryTarget || filesMutations.create.isPending}
-                        spellcheck={false}
-                        onInput={(event) => {
-                          setCreatePathInput(event.currentTarget.value);
+                        onChange={(value) => {
+                          setCreatePathInput(value);
                           setCreateFeedback(null);
                         }}
                       />
-                    </label>
+                    </div>
                     <label class="files-field files-field-full">
                       <span>INITIAL CONTENT</span>
                       <textarea
@@ -938,16 +1068,16 @@ export function FilesSurfaceSummary() {
               ) : null}
 
               {deleteConfirmPath ? (
-                <FilesInlineNotice
-                  kind={filesMutations.remove.isPending ? "loading" : "warn"}
-                  title={filesMutations.remove.isPending ? "DELETING" : "CONFIRM DELETE"}
-                  detail={deleteConfirmPath}
-                  action={filesMutations.remove.isPending ? undefined : (
-                    <>
-                      <Button variant="secondary" label="CANCEL" onClick={cancelDelete} />
-                      <Button variant="danger" label="DELETE" onClick={confirmDelete} />
-                    </>
-                  )}
+                <DeleteConfirmation
+                  path={deleteConfirmPath}
+                  pending={filesMutations.remove.isPending}
+                  value={deleteConfirmInput}
+                  onValueChange={(value) => {
+                    setDeleteConfirmInput(value);
+                    setDeleteFeedback(null);
+                  }}
+                  onCancel={cancelDelete}
+                  onConfirm={confirmDelete}
                 />
               ) : deleteFeedback ? (
                 <FilesInlineNotice kind={deleteFeedback.kind} title={deleteFeedback.title} detail={deleteFeedback.detail} />
@@ -968,6 +1098,9 @@ export function FilesSurfaceSummary() {
                     savePending={filesMutations.save.isPending}
                     saveFeedback={saveFeedback}
                     onOpenPath={openPath}
+                    onRetry={() => {
+                      void readQuery.refetch();
+                    }}
                     onFileDraftChange={updateFileDraft}
                     onSaveFile={saveFile}
                     onResetFileDraft={resetFileDraft}
@@ -1009,6 +1142,9 @@ export function FilesSurfaceSummary() {
                     isLoading={searchResult.isLoading}
                     queryError={queryErrorText(searchResult.error)}
                     onOpenPath={openPath}
+                    onRetry={() => {
+                      void searchResult.refetch();
+                    }}
                   />
                 </section>
               </div>
