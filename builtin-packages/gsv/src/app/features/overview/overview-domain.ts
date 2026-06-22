@@ -1,4 +1,5 @@
 import type { DeviceSummary, DevicesState } from "../devices/types";
+import { targetKind } from "../devices/devices-domain";
 import type { AdapterAccount, AdapterKind, AdaptersState, McpServer, McpState } from "../integrations/types";
 import type { PackageRecord, PackagesState, PackagesView } from "../packages/types";
 import type { ProcessEntry, RuntimeState } from "../runtime/types";
@@ -131,27 +132,28 @@ function buildRuntimeAttention(runtime: RuntimeState | null): OverviewAttentionI
 function buildDeviceAttention(devices: DevicesState | null, now: number): OverviewAttentionItem[] {
   if (!devices) return [];
   const items: OverviewAttentionItem[] = [];
-  if (devices.devices.length === 0) {
+  const machines = devices.devices.filter((device) => targetKind(device) === "machine");
+  if (machines.length === 0) {
     items.push({
       id: "devices:none",
-      title: "No execution targets are registered",
-      description: "Provision a native node or connect a browser or adapter before routing work.",
-      meta: "Targets",
+      title: "No machines are connected",
+      description: "Connect a machine before running work outside the gateway.",
+      meta: "Fleet",
       tone: "warning",
       sectionId: "devices",
       priority: 58,
     });
   } else {
-    const offline = devices.devices.filter((device) => !device.online);
+    const offline = machines.filter((device) => !device.online);
     if (offline.length > 0) {
       items.push({
         id: "devices:offline",
-        title: plural(offline.length, "target is offline", "targets are offline"),
+        title: plural(offline.length, "machine is offline", "machines are offline"),
         description: summarizeDevices(offline),
-        meta: `${offline.length}/${devices.devices.length} offline`,
-        tone: offline.length === devices.devices.length ? "danger" : "warning",
+        meta: `${offline.length}/${machines.length} offline`,
+        tone: offline.length === machines.length ? "danger" : "warning",
         sectionId: "devices",
-        priority: offline.length === devices.devices.length ? 82 : 60,
+        priority: offline.length === machines.length ? 82 : 60,
       });
     }
   }
@@ -160,9 +162,9 @@ function buildDeviceAttention(devices: DevicesState | null, now: number): Overvi
   if (expiringTokens.length > 0) {
     items.push({
       id: "devices:tokens-expiring",
-      title: plural(expiringTokens.length, "node token expires soon", "node tokens expire soon"),
-      description: "Rotate provisioning credentials before connected nodes lose access.",
-      meta: `${expiringTokens.length} tokens`,
+      title: plural(expiringTokens.length, "setup credential expires soon", "setup credentials expire soon"),
+      description: "Refresh setup credentials before connected machines lose access.",
+      meta: `${expiringTokens.length} credentials`,
       tone: "warning",
       sectionId: "devices",
       priority: 50,
@@ -314,7 +316,7 @@ function buildPosture(snapshot: OverviewSnapshot, attention: OverviewAttentionIt
     },
     {
       id: "devices",
-      label: "Targets",
+      label: "Fleet",
       value: snapshot.devices ? devicePostureValue(snapshot.devices.devices) : "unavailable",
       detail: postureDetail(deviceIssues),
       tone: postureTone(deviceIssues),
@@ -405,8 +407,9 @@ function normalizeTimestampMs(value: number | null): number | null {
 }
 
 function devicePostureValue(devices: DeviceSummary[]): string {
-  const online = devices.filter((device) => device.online).length;
-  return `${online}/${devices.length} online`;
+  const machines = devices.filter((device) => targetKind(device) === "machine");
+  const online = machines.filter((device) => device.online).length;
+  return `${online}/${machines.length} machines`;
 }
 
 function packagePostureValue(packages: PackagesState): string {

@@ -44,16 +44,16 @@ export function DeviceDetailPanel({
 }) {
   if (!device) {
     return (
-      <section class="gsv-device-detail" aria-label="Target detail">
+      <section class="gsv-device-detail" aria-label="Fleet detail">
         <header class="gsv-device-detail-head">
-          <ActionButton icon="arrow-left" label="Targets" onClick={onBackToFleet} />
+          <ActionButton icon="arrow-left" label="Fleet" onClick={onBackToFleet} />
           <div>
-            <span class="gsv-kicker">Target detail</span>
-            <h3>No target selected</h3>
+            <span class="gsv-kicker">Fleet detail</span>
+            <h3>No machine selected</h3>
           </div>
         </header>
         <div class="gsv-empty-state">
-          <p>Choose a target from the list or add a native execution node.</p>
+          <p>Choose a machine from the list or connect a new one.</p>
         </div>
       </section>
     );
@@ -64,36 +64,38 @@ export function DeviceDetailPanel({
   const canManageAccess = Boolean(viewer?.canManageTokens && canManageNodeAccess(device));
 
   return (
-    <section class="gsv-device-detail" aria-label="Target detail">
+    <section class="gsv-device-detail" aria-label="Fleet detail">
       <header class="gsv-device-detail-head">
-        <ActionButton icon="arrow-left" label="Targets" onClick={onBackToFleet} />
+        <ActionButton icon="arrow-left" label="Fleet" onClick={onBackToFleet} />
         <div>
-          <span class="gsv-kicker">{targetKindLabel(kind)} target</span>
+          <span class="gsv-kicker">{targetKindLabel(kind)}</span>
           <h3>{targetDisplayName(device)}</h3>
-          <p>{subtitle ? `${subtitle} / ` : ""}{device.online ? "Online and ready for routing." : "Offline. Review health before routing work here."}</p>
+          <p>{subtitle ? `${subtitle} / ` : ""}{device.online ? "Online and ready." : "Offline. Review health before running work here."}</p>
         </div>
         <div class="gsv-device-actions">
           <ActionButton
             icon="folder"
             label="Files"
+            size="compact"
             disabled={!hasFiles(device)}
-            title={hasFiles(device) ? "Open this target in Files." : "Files capability is unavailable on this target."}
+            title={hasFiles(device) ? "Open this machine in Files." : "Files capability is unavailable here."}
             onClick={() => openApp({ target: "files", payload: { device: device.deviceId, path: "." } })}
           />
           <ActionButton
             icon="terminal"
             label="Shell"
+            size="compact"
             disabled={!hasShell(device)}
-            title={hasShell(device) ? "Open this target in Shell." : "Shell capability is unavailable on this target."}
+            title={hasShell(device) ? "Open this machine in Shell." : "Shell capability is unavailable here."}
             onClick={() => openApp({ target: "shell", payload: { device: device.deviceId, cwd: "." } })}
           />
           {canManageAccess ? (
-            <ActionButton icon="key" label="Add access" onClick={() => onProvision(device.deviceId)} />
+            <ActionButton icon="device" label="Setup command" size="compact" onClick={() => onProvision(device.deviceId)} />
           ) : null}
         </div>
       </header>
 
-      <nav class="gsv-local-tabs" aria-label="Target tabs">
+      <nav class="gsv-local-tabs" aria-label="Fleet object tabs">
         {([
           ["overview", "Overview"],
           ["capabilities", "Capabilities"],
@@ -143,13 +145,13 @@ function DeviceOverview({
     <section class="gsv-device-tab">
       <div class="gsv-device-note">
         <label>
-          <span>Target note</span>
+          <span>Machine note</span>
           <textarea
             value={description}
             maxLength={500}
             readOnly={!canEdit}
             disabled={pending}
-            placeholder="Local workstation, browser session, or adapter account purpose"
+            placeholder="Local workstation, server, or extension purpose"
             onInput={(event) => setDescription(event.currentTarget.value)}
           />
         </label>
@@ -166,7 +168,7 @@ function DeviceOverview({
         </div>
       </div>
 
-      <div class="gsv-device-facts" aria-label="Target overview">
+      <div class="gsv-device-facts" aria-label="Fleet object overview">
         <FactChip icon="activity" label="Status" value={device.online ? "Ready" : "Offline"} tone={device.online ? "good" : "warning"} />
         <FactChip icon="device" label="Kind" value={targetKindLabel(targetKind(device))} />
         <FactChip icon="server" label="Platform" value={device.platform || "Unknown"} />
@@ -216,13 +218,12 @@ function DeviceAccess({
   onRevoke: (tokenId: string) => void;
 }) {
   if (!canManageNodeAccess(device)) {
-    const kind = targetKindLabel(targetKind(device)).toLowerCase();
     return (
       <section class="gsv-device-tab">
         <div class="gsv-info-box">
           <span>Access model</span>
           <strong>{targetDisplayName(device)}</strong>
-          <p>{kind} targets are provided by their owning connection or integration account, so node tokens are not issued here.</p>
+          <p>Service connections are managed by their integration account.</p>
         </div>
       </section>
     );
@@ -231,12 +232,14 @@ function DeviceAccess({
   return (
     <section class="gsv-device-tab">
       <div class="gsv-device-access-head">
-        <span>{tokens.length} node token{tokens.length === 1 ? "" : "s"}</span>
-        {viewer?.canManageTokens ? <ActionButton icon="key" label="Issue token" onClick={() => onProvision(device.deviceId)} /> : null}
+        <span>{tokens.length} setup credential{tokens.length === 1 ? "" : "s"}</span>
+        {viewer?.canManageTokens ? (
+          <ActionButton icon="device" label="Create setup command" size="compact" onClick={() => onProvision(device.deviceId)} />
+        ) : null}
       </div>
       <div class="gsv-token-list">
         {tokens.length === 0 ? (
-          <section class="gsv-empty-state"><h3>No node tokens</h3><p>No node tokens are issued for this target.</p></section>
+          <section class="gsv-empty-state"><h3>No setup credentials</h3><p>No setup credentials are active for this machine.</p></section>
         ) : tokens.map((token) => {
           const revoked = typeof token.revokedAt === "number";
           return (
@@ -253,6 +256,7 @@ function DeviceAccess({
                 <ActionButton
                   icon="trash"
                   label="Revoke"
+                  size="compact"
                   variant="danger"
                   disabled={pendingAction === `revoke:${token.tokenId}`}
                   onClick={() => onRevoke(token.tokenId)}
@@ -317,7 +321,7 @@ function CapabilityIndicator({
   return (
     <span
       class={`gsv-device-capability-indicator is-${available ? "available" : "unavailable"}`}
-      title={`${label} capability is ${available ? "available" : "unavailable"} on this target.`}
+      title={`${label} capability is ${available ? "available" : "unavailable"} here.`}
     >
       <Icon name={icon} />
       <span>{label}</span>

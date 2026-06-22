@@ -1,4 +1,4 @@
-export type ProvisionInstallPlatform = "unix" | "windows";
+export type ProvisionInstallPlatform = "windows" | "mac" | "linux";
 
 export function buildInstallCommand(origin: string, platform: ProvisionInstallPlatform): string {
   return platform === "windows"

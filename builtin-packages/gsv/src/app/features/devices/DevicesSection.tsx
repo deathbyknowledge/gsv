@@ -19,7 +19,7 @@ export function DevicesSection({ backend }: { backend: GsvBackend }) {
           selectedDeviceId={devices.selectedDeviceId}
           query={devices.query}
           scope={devices.scope}
-          kind={devices.kind}
+          includeServiceConnections={devices.includeServiceConnections}
           errorText={devices.errorText}
           onAdd={() => {
             devices.setIssuedToken(null);
@@ -27,7 +27,7 @@ export function DevicesSection({ backend }: { backend: GsvBackend }) {
           }}
           onQuery={devices.setQuery}
           onScope={devices.setScope}
-          onKind={devices.setKind}
+          onIncludeServiceConnections={devices.setIncludeServiceConnections}
           onSelect={(deviceId) => {
             devices.setIssuedToken(null);
             devices.writeRoute({ mode: "detail", deviceId });
@@ -37,11 +37,15 @@ export function DevicesSection({ backend }: { backend: GsvBackend }) {
         <ProvisionPanel
           initialDeviceId={devices.selectedDeviceId ?? ""}
           viewer={viewer}
+          devices={devices.state?.devices ?? []}
           pendingAction={devices.pendingAction}
+          errorText={devices.errorText}
           issuedToken={devices.issuedToken}
           onBack={() => {
             devices.writeRoute({ mode: "detail", deviceId: null });
           }}
+          onRefresh={(deviceId) => void devices.loadState(deviceId || null)}
+          onOpenMachine={(deviceId) => devices.writeRoute({ mode: "detail", deviceId })}
           onSubmit={(form) => void devices.createToken(form)}
         />
       ) : (

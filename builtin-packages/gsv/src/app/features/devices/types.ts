@@ -1,8 +1,7 @@
 export type DevicesTabId = "overview" | "capabilities" | "access" | "health";
 export type DevicesMode = "detail" | "provision";
 export type DeviceScope = "all" | "online" | "offline";
-export type TargetKind = "native-device" | "browser" | "adapter";
-export type TargetKindFilter = "all" | TargetKind;
+export type TargetKind = "machine" | "service-connection";
 
 export type DevicesViewer = {
   uid: number;

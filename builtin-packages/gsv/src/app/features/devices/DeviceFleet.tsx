@@ -2,13 +2,13 @@ import { ActionButton } from "../../components/ui/ActionButton";
 import { formatRelativeTime } from "../../utils/format";
 import {
   formatOwner,
-  summarizeTargets,
+  summarizeFleet,
   targetDisplayName,
   targetKind,
   targetKindLabel,
   targetSubtitle,
 } from "./devices-domain";
-import type { DeviceScope, DeviceSummary, DevicesState, TargetKindFilter } from "./types";
+import type { DeviceScope, DeviceSummary, DevicesState } from "./types";
 
 export function DeviceFleetPane({
   state,
@@ -16,12 +16,12 @@ export function DeviceFleetPane({
   selectedDeviceId,
   query,
   scope,
-  kind,
+  includeServiceConnections,
   errorText,
   onAdd,
   onQuery,
   onScope,
-  onKind,
+  onIncludeServiceConnections,
   onSelect,
 }: {
   state: DevicesState | null;
@@ -29,42 +29,54 @@ export function DeviceFleetPane({
   selectedDeviceId: string | null;
   query: string;
   scope: DeviceScope;
-  kind: TargetKindFilter;
+  includeServiceConnections: boolean;
   errorText: string | null;
   onAdd: () => void;
   onQuery: (value: string) => void;
   onScope: (value: DeviceScope) => void;
-  onKind: (value: TargetKindFilter) => void;
+  onIncludeServiceConnections: (value: boolean) => void;
   onSelect: (deviceId: string) => void;
 }) {
   const viewer = state?.viewer ?? null;
-  const summary = state ? summarizeTargets(state.devices) : null;
+  const summary = state ? summarizeFleet(state.devices) : null;
   return (
-    <section class="gsv-devices-list-pane" aria-label="Target list">
+    <section class="gsv-devices-list-pane" aria-label="Fleet machines">
       <header class="gsv-devices-list-head">
         <div>
-          <span class="gsv-kicker">Targets</span>
-          <h3>Available surfaces</h3>
+          <span class="gsv-kicker">Fleet</span>
+          <h3>Machines</h3>
         </div>
         <ActionButton
-          icon="key"
-          label="Add node"
+          icon="device"
+          label="New machine"
+          size="compact"
           disabled={!viewer?.canManageTokens}
-          title={viewer?.canManageTokens ? "Issue a node token and enroll a native device." : "Token permissions are required to add native devices."}
+          title={viewer?.canManageTokens ? "Connect a machine to this fleet." : "Machine connection permissions are required."}
           onClick={onAdd}
         />
       </header>
 
-      <DeviceFilters query={query} scope={scope} kind={kind} onQuery={onQuery} onScope={onScope} onKind={onKind} />
+      <DeviceFilters
+        query={query}
+        scope={scope}
+        includeServiceConnections={includeServiceConnections}
+        onQuery={onQuery}
+        onScope={onScope}
+        onIncludeServiceConnections={onIncludeServiceConnections}
+      />
 
-      {summary ? <TargetSummaryStrip summary={summary} /> : <p class="gsv-runtime-meta">Loading targets...</p>}
+      {summary ? (
+        <FleetSummaryStrip summary={summary} includeServiceConnections={includeServiceConnections} />
+      ) : (
+        <p class="gsv-runtime-meta">Loading machines...</p>
+      )}
       {errorText ? <p class="gsv-inline-error">{errorText}</p> : null}
 
       <div class="gsv-devices-list" aria-busy={!state ? "true" : "false"}>
         {!state ? (
-          <section class="gsv-empty-state"><h3>Loading targets</h3><p>Fetching target state...</p></section>
+          <section class="gsv-empty-state"><h3>Loading machines</h3><p>Fetching fleet state...</p></section>
         ) : visibleDevices.length === 0 ? (
-          <section class="gsv-empty-state"><h3>No targets</h3><p>No targets matched the current filter.</p></section>
+          <section class="gsv-empty-state"><h3>No machines</h3><p>No machines matched the current filter.</p></section>
         ) : visibleDevices.map((device) => (
           <DeviceRow
             key={device.deviceId}
@@ -81,17 +93,17 @@ export function DeviceFleetPane({
 function DeviceFilters({
   query,
   scope,
-  kind,
+  includeServiceConnections,
   onQuery,
   onScope,
-  onKind,
+  onIncludeServiceConnections,
 }: {
   query: string;
   scope: DeviceScope;
-  kind: TargetKindFilter;
+  includeServiceConnections: boolean;
   onQuery: (value: string) => void;
   onScope: (value: DeviceScope) => void;
-  onKind: (value: TargetKindFilter) => void;
+  onIncludeServiceConnections: (value: boolean) => void;
 }) {
   return (
     <div class="gsv-devices-filters">
@@ -100,38 +112,45 @@ function DeviceFilters({
         <input
           type="search"
           value={query}
-          placeholder="id, platform, owner"
+          placeholder="machine id, platform, owner"
           onInput={(event) => onQuery(event.currentTarget.value)}
         />
       </label>
       <label class="gsv-runtime-search">
-        <span>Kind</span>
-        <select value={kind} onChange={(event) => onKind(event.currentTarget.value as TargetKindFilter)}>
-          <option value="all">All</option>
-          <option value="native-device">Native</option>
-          <option value="browser">Browser</option>
-          <option value="adapter">Adapter</option>
-        </select>
-      </label>
-      <label class="gsv-runtime-search">
-        <span>Scope</span>
+        <span>Status</span>
         <select value={scope} onChange={(event) => onScope(event.currentTarget.value as DeviceScope)}>
           <option value="all">All</option>
           <option value="online">Online</option>
           <option value="offline">Offline</option>
         </select>
       </label>
+      <label class="gsv-service-toggle">
+        <input
+          type="checkbox"
+          checked={includeServiceConnections}
+          onChange={(event) => onIncludeServiceConnections(event.currentTarget.checked)}
+        />
+        <span>Service connections</span>
+      </label>
     </div>
   );
 }
 
-function TargetSummaryStrip({ summary }: { summary: ReturnType<typeof summarizeTargets> }) {
+function FleetSummaryStrip({
+  summary,
+  includeServiceConnections,
+}: {
+  summary: ReturnType<typeof summarizeFleet>;
+  includeServiceConnections: boolean;
+}) {
   return (
-    <div class="gsv-target-summary" aria-label="Target summary">
-      <span><strong>{summary.online}/{summary.total}</strong> online</span>
-      <span><strong>{summary.native}</strong> native</span>
-      <span><strong>{summary.browser}</strong> browser</span>
-      <span><strong>{summary.adapter}</strong> adapter</span>
+    <div class="gsv-target-summary" aria-label="Fleet summary">
+      <span><strong>{summary.onlineMachines}/{summary.machines}</strong> machines online</span>
+      {includeServiceConnections ? (
+        <span><strong>{summary.onlineServiceConnections}/{summary.serviceConnections}</strong> service connections online</span>
+      ) : summary.serviceConnections > 0 ? (
+        <span><strong>{summary.serviceConnections}</strong> service connections hidden</span>
+      ) : null}
     </div>
   );
 }

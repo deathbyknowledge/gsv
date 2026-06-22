@@ -1,24 +1,26 @@
-import type { DeviceDetail, DeviceScope, DeviceSummary, TargetKind, TargetKindFilter } from "./types";
+import type { DeviceDetail, DeviceScope, DeviceSummary, TargetKind } from "./types";
 
-export type TargetFleetSummary = {
+export type FleetSummary = {
   total: number;
   online: number;
-  native: number;
-  browser: number;
-  adapter: number;
+  machines: number;
+  onlineMachines: number;
+  serviceConnections: number;
+  onlineServiceConnections: number;
 };
 
 export function filterDevices(
   devices: DeviceSummary[],
   scope: DeviceScope,
-  kind: TargetKindFilter,
+  includeServiceConnections: boolean,
   query: string,
 ): DeviceSummary[] {
   const normalizedQuery = query.trim().toLowerCase();
   return devices.filter((device) => {
+    const kind = targetKind(device);
     if (scope === "online" && !device.online) return false;
     if (scope === "offline" && device.online) return false;
-    if (kind !== "all" && targetKind(device) !== kind) return false;
+    if (!includeServiceConnections && kind === "service-connection") return false;
     if (!normalizedQuery) return true;
     return [
       device.deviceId,
@@ -26,42 +28,45 @@ export function filterDevices(
       device.description,
       device.platform,
       device.version,
-      targetKindLabel(targetKind(device)),
+      targetKindLabel(kind),
       device.ownerUsername ?? "",
       String(device.ownerUid),
     ].some((part) => part.toLowerCase().includes(normalizedQuery));
   });
 }
 
-export function summarizeTargets(devices: DeviceSummary[]): TargetFleetSummary {
-  return devices.reduce<TargetFleetSummary>((summary, device) => {
+export function summarizeFleet(devices: DeviceSummary[]): FleetSummary {
+  return devices.reduce<FleetSummary>((summary, device) => {
     const kind = targetKind(device);
     summary.total += 1;
     if (device.online) summary.online += 1;
-    if (kind === "native-device") summary.native += 1;
-    if (kind === "browser") summary.browser += 1;
-    if (kind === "adapter") summary.adapter += 1;
+    if (kind === "service-connection") {
+      summary.serviceConnections += 1;
+      if (device.online) summary.onlineServiceConnections += 1;
+    } else {
+      summary.machines += 1;
+      if (device.online) summary.onlineMachines += 1;
+    }
     return summary;
-  }, { total: 0, online: 0, native: 0, browser: 0, adapter: 0 });
+  }, {
+    total: 0,
+    online: 0,
+    machines: 0,
+    onlineMachines: 0,
+    serviceConnections: 0,
+    onlineServiceConnections: 0,
+  });
 }
 
 export function targetKind(device: Pick<DeviceSummary, "deviceId" | "platform">): TargetKind {
   const platform = device.platform.toLowerCase();
-  if (
-    device.deviceId.startsWith("browser:")
-    || platform === "browser"
-    || platform === "browser-extension"
-  ) {
-    return "browser";
-  }
-  if (device.deviceId.startsWith("adapter:") || platform === "adapter") return "adapter";
-  return "native-device";
+  if (device.deviceId.startsWith("adapter:") || platform === "adapter") return "service-connection";
+  return "machine";
 }
 
 export function targetKindLabel(kind: TargetKind): string {
-  if (kind === "browser") return "Browser";
-  if (kind === "adapter") return "Adapter";
-  return "Native";
+  if (kind === "service-connection") return "Service connection";
+  return "Machine";
 }
 
 export function targetDisplayName(device: Pick<DeviceSummary, "deviceId" | "label">): string {
@@ -74,22 +79,22 @@ export function targetSubtitle(device: Pick<DeviceSummary, "deviceId" | "label">
 }
 
 export function canManageNodeAccess(device: DeviceSummary): boolean {
-  return targetKind(device) === "native-device";
+  return targetKind(device) === "machine";
 }
 
 export function canEditTargetMetadata(device: DeviceSummary): boolean {
-  return targetKind(device) !== "adapter";
+  return targetKind(device) !== "service-connection";
 }
 
 export function deviceHealthSummary(device: DeviceDetail): string {
   const lastSeenAge = Date.now() - device.lastSeenAt;
   if (device.online) {
-    return "Connected and available for routing.";
+    return "Connected and available for work.";
   }
   if (lastSeenAge < 10 * 60_000) {
     return "Recently disconnected. Reconnect may still be in progress.";
   }
-  return "Offline. Reconnect or access intervention may be needed before routing work here.";
+  return "Offline. Reconnect or access intervention may be needed before work can run here.";
 }
 
 export function hasShell(device: DeviceDetail): boolean {

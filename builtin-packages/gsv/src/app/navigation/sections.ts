@@ -46,18 +46,18 @@ export const SECTIONS: GsvSection[] = [
     localItems: [
       {
         label: "Review queue",
-        description: "Trust decisions, disconnected surfaces, unhealthy nodes, and runtime issues.",
+        description: "Trust decisions, disconnected surfaces, unhealthy machines, and runtime issues.",
         meta: "Attention inbox",
         tone: "warning",
       },
       {
         label: "Recent operations",
-        description: "Last touched packages, targets, processes, and access changes.",
+        description: "Last touched packages, fleet machines, processes, and access changes.",
         meta: "Activity",
       },
       {
         label: "System posture",
-        description: "A compact read on readiness across runtime, targets, extensions, and administration.",
+        description: "A compact read on readiness across runtime, fleet, extensions, and administration.",
         meta: "Status",
         tone: "good",
       },
@@ -69,8 +69,8 @@ export const SECTIONS: GsvSection[] = [
         sectionId: "packages",
       },
       {
-        label: "Open Targets",
-        description: "Inspect target health, provisioning, and access in GSV.",
+        label: "Open Fleet",
+        description: "Inspect machine health, setup, and access in GSV.",
         sectionId: "devices",
       },
     ],
@@ -141,33 +141,33 @@ export const SECTIONS: GsvSection[] = [
   {
     id: "devices",
     groupId: "operations",
-    label: "Targets",
-    shortLabel: "Targets",
-    title: "Targets",
-    summary: "Manage execution targets, health, capabilities, and native node provisioning.",
+    label: "Fleet",
+    shortLabel: "Fleet",
+    title: "Fleet",
+    summary: "Manage machines, health, capabilities, and setup.",
     statusLabel: "Operations",
     tone: "good",
     localItems: [
       {
-        label: "Target list",
-        description: "Native devices, browser sessions, adapters, status, owner, and routing readiness.",
+        label: "Machines",
+        description: "Connected workstations, servers, extension hosts, status, owner, and readiness.",
         meta: "List/detail",
       },
       {
-        label: "Provisioning",
-        description: "Issue node tokens and guide first connection for a new target.",
+        label: "New machine",
+        description: "Guide first connection for a workstation, server, or extension host.",
         meta: "Flow",
       },
       {
-        label: "Access and health",
-        description: "Review native node tokens, capabilities, and health evidence.",
+        label: "Service connections",
+        description: "Keep adapter-backed connections out of the default view until they are needed.",
         meta: "Inspector",
       },
     ],
     handoffs: [
       {
-        label: "Open Targets",
-        description: "Stay in GSV to manage execution targets.",
+        label: "Open Fleet",
+        description: "Stay in GSV to manage machines and service connections.",
         sectionId: "devices",
       },
       {
