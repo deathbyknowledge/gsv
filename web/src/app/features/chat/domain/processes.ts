@@ -1,5 +1,8 @@
 import type {
   ProcAbortResult,
+  ProcHilArgs,
+  ProcHilDecision,
+  ProcHilResult,
   ProcHistoryMessage,
   ProcHistoryResult,
   ProcListEntry,
@@ -65,15 +68,30 @@ export type ChatSendDraft = {
 };
 
 export type ChatSendPayload = ProcSendArgs;
+export type ChatHilDecision = ProcHilDecision;
+export type ChatHilDecisionArgs = ProcHilArgs;
+export type ChatHilDecisionResult = Extract<ProcHilResult, { ok: true }>;
 
 function cleanOptionalString(value: string | undefined): string | undefined {
   const normalized = value?.trim();
   return normalized ? normalized : undefined;
 }
 
-function normalizeMessageText(value: unknown): string {
+function stringifyMessageContent(value: unknown): string {
+  try {
+    return JSON.stringify(value, null, 2) ?? String(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function normalizeMessageText(value: unknown, role?: ChatHistoryMessageRole): string {
   if (typeof value === "string") {
     return value;
+  }
+
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
   }
 
   if (Array.isArray(value)) {
@@ -87,7 +105,10 @@ function normalizeMessageText(value: unknown): string {
           return typeof text === "string" ? text : "";
         }
         if (part && typeof part === "object" && "output" in part) {
-          return normalizeMessageText((part as { output?: unknown }).output);
+          return normalizeMessageText((part as { output?: unknown }).output, role);
+        }
+        if (part && typeof part === "object" && "content" in part) {
+          return normalizeMessageText((part as { content?: unknown }).content, role);
         }
         return "";
       })
@@ -101,9 +122,47 @@ function normalizeMessageText(value: unknown): string {
   }
 
   if (value && typeof value === "object" && "output" in value) {
-    return normalizeMessageText((value as { output?: unknown }).output);
+    return normalizeMessageText((value as { output?: unknown }).output, role);
   }
 
+  if (value && typeof value === "object" && "content" in value) {
+    return normalizeMessageText((value as { content?: unknown }).content, role);
+  }
+
+  if (value && typeof value === "object" && "result" in value) {
+    return normalizeMessageText((value as { result?: unknown }).result, role);
+  }
+
+  if (value && typeof value === "object" && "error" in value) {
+    const error = (value as { error?: unknown }).error;
+    const text = normalizeMessageText(error, role);
+    return text ? `Error: ${text}` : "";
+  }
+
+  if (value && typeof value === "object" && "toolName" in value) {
+    const toolName = (value as { toolName?: unknown }).toolName;
+    const label = typeof toolName === "string" && toolName.trim()
+      ? `Tool result: ${toolName.trim()}`
+      : "Tool result";
+    const args = "args" in value ? (value as { args?: unknown }).args : undefined;
+    const details = args === undefined ? "" : stringifyMessageContent(args);
+    return details ? `${label}\n${details}` : label;
+  }
+
+  if (role === "system" || role === "toolResult") {
+    const text = stringifyMessageContent(value);
+    return text === undefined ? "" : text;
+  }
+
+  if (value !== null && value !== undefined) {
+    const text = stringifyMessageContent(value);
+    return text === undefined ? "" : text;
+  }
+
+  return "";
+}
+
+function normalizeFallbackToolText(value: unknown): string {
   if (value && typeof value === "object" && "toolName" in value) {
     const toolName = (value as { toolName?: unknown }).toolName;
     return typeof toolName === "string" && toolName.trim()
@@ -177,7 +236,8 @@ export function normalizeHistoryMessage(message: ProcHistoryMessage, index: numb
     runId: message.runId ?? null,
     role: message.role,
     content: message.content,
-    text: normalizeMessageText(message.content),
+    text: normalizeMessageText(message.content, message.role)
+      || normalizeFallbackToolText(message.content),
     timestamp,
     origin: message.origin,
     metadata: message.metadata,

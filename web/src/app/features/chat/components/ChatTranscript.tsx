@@ -1,5 +1,5 @@
 import type { ComponentChildren } from "preact";
-import { useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 
 export type ChatDockMessageRole = "assistant" | "system" | "tool" | "toolResult" | "user";
 
@@ -20,8 +20,13 @@ type ChatTranscriptProps = {
   action?: ComponentChildren;
 };
 
+type CopyState = {
+  id: string;
+  status: "copied" | "failed";
+};
+
 function copyWithFallback(text: string): boolean {
-  if (typeof document === "undefined") {
+  if (typeof document === "undefined" || !document.body) {
     return false;
   }
 
@@ -60,33 +65,85 @@ async function copyText(text: string): Promise<boolean> {
   return copyWithFallback(text);
 }
 
-function roleLabel(role: ChatDockMessageRole | undefined): string {
-  if (role === "tool" || role === "toolResult") {
-    return "TOOL RESULT";
+function normalizedRole(role: ChatDockMessageRole | undefined): ChatDockMessageRole {
+  if (
+    role === "assistant"
+    || role === "system"
+    || role === "tool"
+    || role === "toolResult"
+    || role === "user"
+  ) {
+    return role;
   }
-  return (role ?? "assistant").toUpperCase();
+  return "assistant";
 }
 
-function roleClass(role: ChatDockMessageRole | undefined): string {
-  return role === "toolResult" ? "tool" : role ?? "assistant";
+function roleLabel(role: ChatDockMessageRole): string {
+  switch (role) {
+    case "assistant":
+      return "ASSISTANT";
+    case "system":
+      return "SYSTEM";
+    case "tool":
+      return "TOOL";
+    case "toolResult":
+      return "TOOL RESULT";
+    case "user":
+      return "USER";
+  }
+}
+
+function roleClass(role: ChatDockMessageRole): string {
+  return role === "toolResult" ? "tool-result" : role;
+}
+
+function roleGlyph(role: ChatDockMessageRole): string {
+  switch (role) {
+    case "system":
+      return "!";
+    case "tool":
+      return "$";
+    case "toolResult":
+      return "=";
+    case "assistant":
+    case "user":
+      return ">";
+  }
+}
+
+function copyButtonLabel(copied: boolean, failed: boolean): string {
+  if (copied) {
+    return "COPIED";
+  }
+  if (failed) {
+    return "FAILED";
+  }
+  return "COPY";
 }
 
 function CopyButton({
   copied,
+  failed,
+  role,
   text,
   onCopy,
 }: {
   copied: boolean;
+  failed: boolean;
+  role: ChatDockMessageRole;
   text: string;
   onCopy: () => void;
 }) {
+  const label = copyButtonLabel(copied, failed);
+
   return (
     <button
       type="button"
-      class="gsv-chat-copy"
+      class={`gsv-chat-copy${failed ? " is-failed" : ""}`}
       disabled={!text.trim()}
       onClick={onCopy}
-      aria-label={copied ? "Copied message" : "Copy message"}
+      aria-label={copied ? `Copied ${roleLabel(role).toLowerCase()} message` : `Copy ${roleLabel(role).toLowerCase()} message`}
+      title={copied ? "Copied" : "Copy message"}
     >
       <svg width="10" height="10" viewBox="0 0 16 16" aria-hidden="true">
         <g fill="none" stroke="currentColor" stroke-width="1.5">
@@ -94,17 +151,19 @@ function CopyButton({
           <rect x="6" y="6" width="7" height="7" />
         </g>
       </svg>
-      {copied ? "COPIED" : "COPY"}
+      {label}
     </button>
   );
 }
 
 function UserMessage({
   copied,
+  failed,
   message,
   onCopy,
 }: {
   copied: boolean;
+  failed: boolean;
   message: ChatDockMessage;
   onCopy: () => void;
 }) {
@@ -114,7 +173,13 @@ function UserMessage({
         <div class="gsv-chat-user-message-text">{message.text}</div>
         <div class="gsv-chat-user-message-meta">
           {message.time ? <span>{message.time}</span> : null}
-          <CopyButton copied={copied} text={message.text} onCopy={onCopy} />
+          <CopyButton
+            copied={copied}
+            failed={failed}
+            role="user"
+            text={message.text}
+            onCopy={onCopy}
+          />
         </div>
       </div>
     </div>
@@ -123,20 +188,23 @@ function UserMessage({
 
 function ProcessMessage({
   copied,
+  failed,
   message,
   onCopy,
 }: {
   copied: boolean;
+  failed: boolean;
   message: ChatDockMessage;
   onCopy: () => void;
 }) {
-  const role = roleClass(message.role);
-  const label = roleLabel(message.role);
+  const messageRole = normalizedRole(message.role);
+  const role = roleClass(messageRole);
+  const label = roleLabel(messageRole);
 
   return (
     <article class={`gsv-chat-message gsv-chat-message-${role}`}>
       <div class="gsv-chat-message-glyph" aria-hidden="true">
-        {role === "system" ? "!" : role === "tool" ? "$" : ">"}
+        {roleGlyph(messageRole)}
       </div>
       <div class="gsv-chat-message-body">
         <div class="gsv-chat-message-head">
@@ -146,7 +214,13 @@ function ProcessMessage({
         <div class="gsv-chat-message-text">{message.text}</div>
         <div class="gsv-chat-message-meta">
           {message.time ? <span>{message.time}</span> : null}
-          <CopyButton copied={copied} text={message.text} onCopy={onCopy} />
+          <CopyButton
+            copied={copied}
+            failed={failed}
+            role={messageRole}
+            text={message.text}
+            onCopy={onCopy}
+          />
         </div>
       </div>
     </article>
@@ -181,17 +255,29 @@ export function ChatTranscript({
   messages,
   state = "ready",
 }: ChatTranscriptProps) {
-  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+  const [copyState, setCopyState] = useState<CopyState | null>(null);
+  const copyResetTimer = useRef<ReturnType<typeof globalThis.setTimeout> | null>(null);
 
-  const copyMessage = (message: ChatDockMessage) => {
+  useEffect(() => () => {
+    if (copyResetTimer.current !== null) {
+      globalThis.clearTimeout(copyResetTimer.current);
+    }
+  }, []);
+
+  const resetCopyState = (messageId: string) => {
+    if (copyResetTimer.current !== null) {
+      globalThis.clearTimeout(copyResetTimer.current);
+    }
+    copyResetTimer.current = globalThis.setTimeout(() => {
+      setCopyState((current) => current?.id === messageId ? null : current);
+      copyResetTimer.current = null;
+    }, 1600);
+  };
+
+  const copyMessage = (message: ChatDockMessage, messageId: string) => {
     void copyText(message.text).then((copied) => {
-      if (!copied) {
-        return;
-      }
-      setCopiedMessageId(message.id);
-      globalThis.setTimeout(() => {
-        setCopiedMessageId((current) => current === message.id ? null : current);
-      }, 1600);
+      setCopyState({ id: messageId, status: copied ? "copied" : "failed" });
+      resetCopyState(messageId);
     });
   };
 
@@ -216,23 +302,30 @@ export function ChatTranscript({
           description={emptyDescription}
           tone="empty"
         />
-      ) : messages.map((message) => (
-        message.role === "user" ? (
+      ) : messages.map((message, index) => {
+        const messageRole = normalizedRole(message.role);
+        const messageId = `${messageRole}:${message.id}:${index}`;
+        const copied = copyState?.id === messageId && copyState.status === "copied";
+        const failed = copyState?.id === messageId && copyState.status === "failed";
+
+        return messageRole === "user" ? (
           <UserMessage
-            key={message.id}
-            copied={copiedMessageId === message.id}
+            key={messageId}
+            copied={copied}
+            failed={failed}
             message={message}
-            onCopy={() => copyMessage(message)}
+            onCopy={() => copyMessage(message, messageId)}
           />
         ) : (
           <ProcessMessage
-            key={message.id}
-            copied={copiedMessageId === message.id}
+            key={messageId}
+            copied={copied}
+            failed={failed}
             message={message}
-            onCopy={() => copyMessage(message)}
+            onCopy={() => copyMessage(message, messageId)}
           />
-        )
-      ))}
+        );
+      })}
     </div>
   );
 }
