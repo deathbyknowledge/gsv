@@ -11,10 +11,16 @@ import {
 } from "../components/ConsolePageTemplate";
 import type {
   ConsoleAccount,
+  ConsoleConfigEntry,
   ConsoleProcess,
   ConsoleResourceState,
 } from "../domain/consoleModels";
 import { modelLabelsForConfig } from "../domain/consoleAi";
+import {
+  behaviorForAccount,
+  modelLabelsForAccount,
+  type AgentApprovalAction,
+} from "../domain/consoleAgentBehavior";
 import {
   agentImageSrcForIndex,
   isConsoleAgentAccount,
@@ -39,7 +45,10 @@ type CrewCardModel = {
   tone: StatusTone;
   tasks: AgentTask[];
   active: boolean;
+  model: string;
   modelIsDefault: boolean;
+  modelOptions: string[];
+  permission: AgentApprovalAction;
 };
 
 type ConsoleCrewPageProps = {
@@ -61,7 +70,7 @@ export function ConsoleCrewPage({ onManageAgent, onCreateAgent }: ConsoleCrewPag
         render={(data) => (
           <CrewRoster
             accounts={data}
-            modelLabels={modelLabelsForConfig(config.config)}
+            config={config.config}
             processResource={processes.resource}
             onManageAgent={onManageAgent}
             onCreateAgent={onCreateAgent}
@@ -74,20 +83,21 @@ export function ConsoleCrewPage({ onManageAgent, onCreateAgent }: ConsoleCrewPag
 
 function CrewRoster({
   accounts,
-  modelLabels,
+  config,
   processResource,
   onManageAgent,
   onCreateAgent,
 }: {
   accounts: readonly ConsoleAccount[];
-  modelLabels: string[];
+  config: readonly ConsoleConfigEntry[];
   processResource: ConsoleResourceState<ConsoleProcess[]>;
   onManageAgent?: (uid: number) => void;
   onCreateAgent?: () => void;
 }) {
   const processes = processResource.data ?? [];
   const sortedAccounts = sortedConsoleAccounts(accounts);
-  const cards = sortedAccounts.map((account, index) => buildCrewCard(account, processes, index));
+  const modelLabels = modelLabelsForConfig(config);
+  const cards = sortedAccounts.map((account, index) => buildCrewCard(account, processes, index, config, modelLabels));
   const running = cards.filter((card) => card.processes.some(isRunningProcess)).length;
   const runnable = accounts.filter((account) => account.runnable).length;
   const agents = accounts.filter(isConsoleAgentAccount).length;
@@ -123,8 +133,10 @@ function CrewRoster({
                 description={card.description}
                 imgSrc={card.imageSrc}
                 status={card.status}
+                initialModel={card.model}
+                initialPermission={card.permission}
                 modelIsDefault={card.modelIsDefault}
-                models={modelLabels}
+                models={card.modelOptions}
                 tasks={card.tasks}
                 tasksTotal={card.processes.length}
                 active={card.active}
@@ -168,8 +180,11 @@ function buildCrewCard(
   account: ConsoleAccount,
   processes: readonly ConsoleProcess[],
   index: number,
+  config: readonly ConsoleConfigEntry[],
+  modelLabels: readonly string[],
 ): CrewCardModel {
   const ownedProcesses = processes.filter((process) => ownsProcess(account, process));
+  const behavior = behaviorForAccount(config, account.uid);
   const queued = ownedProcesses.some(isQueuedProcess);
   const running = ownedProcesses.some(isRunningProcess);
   const unknown = ownedProcesses.some((process) => process.state === "unknown");
@@ -188,7 +203,10 @@ function buildCrewCard(
     tone: unknown ? "error" : queued ? "update" : running ? "live" : account.runnable ? "idle" : "idle",
     tasks: tasksForProcesses(ownedProcesses),
     active: account.runnable,
-    modelIsDefault: isConsoleAgentAccount(account),
+    model: behavior.model,
+    modelIsDefault: behavior.model.trim().length === 0,
+    modelOptions: modelLabelsForAccount(modelLabels, behavior.model),
+    permission: behavior.permission,
   };
 }
 
