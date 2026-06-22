@@ -472,9 +472,13 @@ function FleetPanel({
       <SplitCells
         left={(
           <div class="gsv-settings-mini-cell">
-            <MiniHeading title="MESSENGERS" meta={`${adapters.filter((adapter) => adapter.connected).length}/${adapters.length}`} />
+            <MiniHeading
+              title="MESSENGERS"
+              meta={`${adapters.filter((adapter) => adapter.connected).length}/${adapters.length}`}
+              onClick={onOpenSurface ? () => onOpenSurface("messengers") : undefined}
+            />
             {adapterRows.length === 0 ? <EmptyRow label="NO MESSENGERS" /> : rowLimit(adapterRows, 3).map((row) => (
-              <MiniRow key={row.id} row={row} />
+              <MiniRow key={row.id} row={row} onClick={onOpenSurface ? () => onOpenSurface("messengers") : undefined} />
             ))}
           </div>
         )}
@@ -483,12 +487,12 @@ function FleetPanel({
             <MiniHeading
               title="INTEGRATIONS"
               meta={`${integrationPackages.filter((pkg) => pkg.enabled).length}/${integrationPackages.length}`}
-              onClick={onOpenSurface ? () => onOpenSurface("library") : undefined}
+              onClick={onOpenSurface ? () => onOpenSurface("integrations") : undefined}
             />
             {integrationRows.length === 0 ? <EmptyRow label="NO INTEGRATIONS" /> : rowLimit(integrationRows, 2).map((row) => (
-              <MiniRow key={row.id} row={row} onClick={onOpenSurface ? () => onOpenSurface("library") : undefined} />
+              <MiniRow key={row.id} row={row} onClick={onOpenSurface ? () => onOpenSurface("integrations") : undefined} />
             ))}
-            <AddRow label="NEW INTEGRATION" onClick={onOpenSurface ? () => onOpenSurface("library") : undefined} />
+            <AddRow label="NEW INTEGRATION" onClick={onOpenSurface ? () => onOpenSurface("integrations") : undefined} />
           </div>
         )}
       />
@@ -511,13 +515,13 @@ function SatellitesPanel({
       <MiniHeading
         title="APPLICATIONS"
         meta={`${applications.filter((pkg) => pkg.enabled).length}/${applications.length} ONLINE`}
-        onClick={onOpenSurface ? () => onOpenSurface("library") : undefined}
+        onClick={onOpenSurface ? () => onOpenSurface("applications") : undefined}
       />
       <div class="gsv-settings-section-rows">
         {rows.length === 0 ? <EmptyRow label="NO APPLICATIONS" /> : rowLimit(rows, 5).map((row) => (
-          <MiniRow key={row.id} row={row} onClick={onOpenSurface ? () => onOpenSurface("library") : undefined} />
+          <MiniRow key={row.id} row={row} onClick={onOpenSurface ? () => onOpenSurface("applications") : undefined} />
         ))}
-        <AddRow label="NEW APPLICATION" onClick={onOpenSurface ? () => onOpenSurface("library") : undefined} />
+        <AddRow label="NEW APPLICATION" onClick={onOpenSurface ? () => onOpenSurface("applications") : undefined} />
       </div>
     </section>
   );

@@ -66,8 +66,14 @@ function surfaceForDesktopObject(parentId: DesktopObjectId): ShellSurfaceId {
   if (parentId === "machines") {
     return "machines";
   }
+  if (parentId === "messengers") {
+    return "messengers";
+  }
+  if (parentId === "integrations") {
+    return "integrations";
+  }
   if (parentId === "applications") {
-    return "library";
+    return "applications";
   }
   return "settings";
 }
@@ -75,6 +81,15 @@ function surfaceForDesktopObject(parentId: DesktopObjectId): ShellSurfaceId {
 function iconForSurface(surface: ShellSurfaceId): string {
   if (surface === "machines") {
     return "computer";
+  }
+  if (surface === "messengers") {
+    return "chat";
+  }
+  if (surface === "integrations") {
+    return "weblink";
+  }
+  if (surface === "applications") {
+    return "stars";
   }
   if (surface === "files") {
     return "folder";

@@ -4,6 +4,9 @@ export type ShellSurfaceId =
   | "crew"
   | "agent"
   | "machines"
+  | "messengers"
+  | "integrations"
+  | "applications"
   | "object"
   | "runtime"
   | "files"
@@ -142,6 +145,12 @@ export function shellSurfaceLabel(surface: ShellSurfaceId): string {
       return "AGENT";
     case "machines":
       return "MACHINES";
+    case "messengers":
+      return "MESSENGERS";
+    case "integrations":
+      return "INTEGRATIONS";
+    case "applications":
+      return "APPLICATIONS";
     case "object":
       return "OBJECT";
     case "runtime":
