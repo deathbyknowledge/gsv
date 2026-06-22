@@ -145,7 +145,6 @@ export function useGsvShellState({
     const tab = shellTabForSurface(surface);
     setOpenTabs((current) => upsertTab(current, tab));
     setActiveTabKey(tab.key);
-    setRailMode("tabs");
     setActiveSurface(surface);
     setSelectedObjectId(null);
     setPickerId(null);
@@ -156,7 +155,6 @@ export function useGsvShellState({
     const tab = shellTabForSettingsRoute(route);
     setOpenTabs((current) => upsertTab(current, tab));
     setActiveTabKey(tab.key);
-    setRailMode("tabs");
     setActiveSurface("settings");
     setSelectedObjectId(null);
     setPickerId(null);
@@ -193,7 +191,6 @@ export function useGsvShellState({
     if (!shouldKeepObjectTab) {
       setActiveTabKey(settingsTab.key);
     }
-    setRailMode("tabs");
     setSelectedObjectId(null);
     setPickerId(null);
     setGsvOpen(false);
@@ -203,7 +200,6 @@ export function useGsvShellState({
     const tab = shellTabForDesktopChild(child);
     setOpenTabs((current) => upsertTab(current, tab));
     setActiveTabKey(tab.key);
-    setRailMode("tabs");
     setActiveSurface(tab.surface);
     setSelectedObjectId(null);
     setPickerId(null);
@@ -237,7 +233,6 @@ export function useGsvShellState({
     setSelectedObjectId(null);
     setPickerId(null);
     setGsvOpen(false);
-    setRailMode("tabs");
   };
 
   const closeTab = (key: string): void => {
