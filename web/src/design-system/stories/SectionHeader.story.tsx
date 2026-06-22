@@ -25,6 +25,18 @@ const story: Story = {
           <SectionHeader title="CREW" meta="ONLINE" divider />
         </div>
       </div>
+      <div class="ds-cell">
+        <div class="ds-label">Title size · section (default)</div>
+        <div class="ds-row">
+          <SectionHeader title="THE SHIP" titleSize="section" />
+        </div>
+      </div>
+      <div class="ds-cell">
+        <div class="ds-label">Title size · title</div>
+        <div class="ds-row">
+          <SectionHeader title="GENERAL SYSTEMS VEHICLE" titleSize="title" />
+        </div>
+      </div>
     </div>
   ),
 };

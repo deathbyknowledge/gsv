@@ -1,0 +1,133 @@
+/* Login surface — self-contained so it renders the same in the real app
+   (inside .session-screen) and the /auth.html preview. Tokens come from the
+   .gsv-auth-theme scope (session-theme.css). */
+.gsv-login {
+  /* Fill the whole session surface (it's a centering flex container in the real
+     app, so a relative/auto-width child would shrink and let the parent's
+     wallpaper show through on the side). Absolute-fill = galaxy owns the surface. */
+  position: absolute;
+  inset: 0;
+  min-height: 100vh;
+  background: var(--void);
+  color: var(--text);
+  font-family: var(--gsv-font-mono);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+.gsv-login[hidden] {
+  display: none;
+}
+
+/* Form content — pinned to the right so the galaxy (left) stays uncovered. */
+.gsv-login-content {
+  position: relative;
+  z-index: 2;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 48px clamp(24px, 6vw, 96px);
+}
+
+/* Card panel — a surface clearly lighter than --void; full-bleed header/footer. */
+.gsv-login-panel {
+  width: min(440px, 92vw);
+  background: color-mix(in srgb, var(--panel) 100%, #ffffff 5%);
+  border: 1px solid var(--border);
+  box-shadow: 0 0 40px rgba(10, 6, 30, 0.5), 0 0 0 1px rgba(150, 140, 255, 0.04);
+  backdrop-filter: blur(3px);
+  overflow: hidden;
+}
+
+.gsv-login-body {
+  padding: 26px 32px 30px;
+}
+.gsv-login-section {
+  display: block;
+  color: var(--text-title);
+  margin-bottom: 20px;
+}
+.gsv-login-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+/* "Use token instead" — directly under the password field, aligned right. */
+.gsv-login-tokenlink {
+  display: flex;
+  justify-content: flex-end;
+}
+.gsv-login-submit {
+  margin-top: 8px;
+}
+.gsv-login-error {
+  margin: 0;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--error);
+}
+
+/* Progressive-loading skeleton (shown while the session boots). */
+.gsv-login-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.gsv-skel-field {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.gsv-skel {
+  position: relative;
+  overflow: hidden;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+}
+.gsv-skel::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 18%,
+    color-mix(in srgb, var(--accent) 26%, transparent) 50%,
+    transparent 82%
+  );
+  transform: translateX(-100%);
+  animation: gsv-skel-shimmer 1.3s ease-in-out infinite;
+}
+@keyframes gsv-skel-shimmer {
+  to {
+    transform: translateX(100%);
+  }
+}
+.gsv-skel-label {
+  width: 84px;
+  height: 9px;
+  border: none;
+  background: var(--border);
+}
+.gsv-skel-input {
+  width: 100%;
+  height: 44px;
+}
+.gsv-skel-btn {
+  width: 100%;
+  height: 41px;
+  margin-top: 8px;
+  background: color-mix(in srgb, var(--primary-hi) 32%, var(--panel-2));
+  border-color: var(--primary-hi);
+}
+@media (prefers-reduced-motion: reduce) {
+  .gsv-skel::after {
+    animation: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .gsv-login-content {
+    justify-content: center;
+    padding: 32px 20px;
+  }
+}

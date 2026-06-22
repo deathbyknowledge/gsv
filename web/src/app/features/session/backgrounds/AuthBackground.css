@@ -1,0 +1,25 @@
+/* Self-contained positioning for the auth background, so it works wherever
+   AuthBackground is mounted (real session screen + the /auth.html preview). */
+.auth-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+.auth-bg .gsv-glyph-stars,
+.auth-bg .gsv-galaxy {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+/* Galaxy occupies the LEFT zone so the form (right) never covers it. */
+.auth-bg-galaxy {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 58%;
+  max-width: 920px;
+}
