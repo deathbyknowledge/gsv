@@ -28,7 +28,10 @@ export type ChatAgentData = {
   statusLabel?: string;
   activity?: string;
   modelLabel?: string;
+  modelOptions?: readonly string[];
+  modelValue?: string;
   modelIsDefault?: boolean;
+  permission?: string;
   tasksTotal?: number;
   tasks?: readonly ChatAgentTaskData[];
   crew?: readonly ChatAgentCrewData[];
@@ -60,7 +63,10 @@ export type ChatAgentViewModel = {
   statusLabel: string;
   activity: string;
   modelLabel: string;
+  modelOptions: string[];
+  modelValue: string;
   modelIsDefault: boolean;
+  permission: string;
   tasksTotal: number;
   tasks: ChatAgentTaskView[];
   crew: ChatAgentCrewView[];
@@ -233,10 +239,25 @@ export function buildChatAgentViewModel({
     statusLabel: cleanText(agent?.statusLabel, processStatusLabel),
     activity,
     modelLabel: cleanText(agent?.modelLabel, "Gateway default"),
+    modelOptions: normalizeModelOptions(agent?.modelOptions, agent?.modelLabel),
+    modelValue: cleanText(agent?.modelValue, ""),
     modelIsDefault: agent?.modelIsDefault ?? false,
+    permission: cleanText(agent?.permission, "ask"),
     tasksTotal,
     tasks,
     crew: crew.members,
     hasCrewData: crew.hasCrewData,
   };
+}
+
+function normalizeModelOptions(
+  options: readonly string[] | undefined,
+  fallback: string | undefined,
+): string[] {
+  const normalized = (options ?? []).map((option) => option.trim()).filter(Boolean);
+  if (normalized.length > 0) {
+    return normalized;
+  }
+  const fallbackLabel = fallback?.trim();
+  return fallbackLabel ? [fallbackLabel] : ["Gateway default"];
 }

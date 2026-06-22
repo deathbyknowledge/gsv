@@ -9,7 +9,6 @@ import { ChatDock } from "../chat/components/ChatDock";
 import type { ChatDockMessage } from "../chat/components/ChatDock";
 import type { ChatAgentData } from "../chat/domain";
 import { useChatProcessHistory, useChatProcessList, useSendChatMessage } from "../chat/hooks";
-import { defaultModelLabelForConfig } from "../gsv-console/domain/consoleAi";
 import { useConsoleConfig, useConsoleOverview } from "../gsv-console/hooks/useConsoleData";
 import {
   PresenceActivity,
@@ -107,10 +106,6 @@ export function GsvShell({
     () => buildDesktopObjectsFromConsole(consoleOverview.data),
     [consoleOverview.data],
   );
-  const chatModelLabel = useMemo(
-    () => defaultModelLabelForConfig(consoleConfig.config),
-    [consoleConfig.config],
-  );
   const shell = useGsvShellState({ rootRef, desktopObjects });
 
   const [selectedChatPid, setSelectedChatPid] = useState<string | null>(null);
@@ -161,11 +156,11 @@ export function GsvShell({
       activeProcess: activeChatProcess,
       accounts: consoleOverview.data?.accounts ?? [],
       chatProcesses: chatProcessList,
+      config: consoleConfig.config,
       consoleProcesses: consoleOverview.data?.processes ?? [],
-      modelLabel: chatModelLabel,
       statusLabel: chatStatusLabel,
     });
-  }, [activeChatProcess, chatModelLabel, chatProcessList, chatStatusLabel, consoleOverview.data]);
+  }, [activeChatProcess, chatProcessList, chatStatusLabel, consoleConfig.config, consoleOverview.data]);
 
   return (
     <div

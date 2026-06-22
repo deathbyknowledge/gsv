@@ -8,8 +8,17 @@ import type {
 import type { ChatProcessSummary } from "../../chat/domain/processes";
 import type {
   ConsoleAccount,
+  ConsoleConfigEntry,
   ConsoleProcess,
 } from "../../gsv-console/domain/consoleModels";
+import {
+  defaultModelLabelForConfig,
+  modelLabelsForConfig,
+} from "../../gsv-console/domain/consoleAi";
+import {
+  behaviorForAccount,
+  modelLabelsForAccount,
+} from "../../gsv-console/domain/consoleAgentBehavior";
 import {
   agentImageSrcForIndex,
   labelForConsoleAccountRelation,
@@ -20,9 +29,17 @@ type BuildShellChatAgentArgs = {
   activeProcess: ChatProcessSummary | null;
   accounts: readonly ConsoleAccount[];
   chatProcesses: readonly ChatProcessSummary[];
+  config: readonly ConsoleConfigEntry[];
   consoleProcesses: readonly ConsoleProcess[];
-  modelLabel: string;
   statusLabel: string;
+};
+
+type AgentBehaviorView = {
+  modelLabel: string;
+  modelOptions: string[];
+  modelValue: string;
+  modelIsDefault: boolean;
+  permission: string;
 };
 
 function ownsChatProcess(account: ConsoleAccount, process: ChatProcessSummary): boolean {
@@ -204,11 +221,39 @@ function activeAgentDescription(
   ].filter(Boolean).join(" · ");
 }
 
+function behaviorViewForAccount(
+  account: ConsoleAccount,
+  config: readonly ConsoleConfigEntry[],
+  modelLabels: readonly string[],
+): AgentBehaviorView {
+  const behavior = behaviorForAccount(config, account.uid);
+  const modelValue = behavior.model.trim();
+  return {
+    modelLabel: modelValue || defaultModelLabelForConfig(config),
+    modelOptions: modelLabelsForAccount(modelLabels, modelValue),
+    modelValue,
+    modelIsDefault: modelValue.length === 0,
+    permission: behavior.permission,
+  };
+}
+
+function defaultBehaviorView(config: readonly ConsoleConfigEntry[], modelLabels: readonly string[]): AgentBehaviorView {
+  const modelLabel = defaultModelLabelForConfig(config);
+  return {
+    modelLabel,
+    modelOptions: modelLabels.length > 0 ? [...modelLabels] : [modelLabel],
+    modelValue: "",
+    modelIsDefault: true,
+    permission: "ask",
+  };
+}
+
 function accountBackedAgent(input: {
   accounts: readonly ConsoleAccount[];
   chatProcesses: readonly ChatProcessSummary[];
+  config: readonly ConsoleConfigEntry[];
   consoleProcesses: readonly ConsoleProcess[];
-  modelLabel: string;
+  modelLabels: readonly string[];
 }): ChatAgentData | null {
   const accountList = sortedConsoleAccounts(input.accounts);
   const primaryAccount = accountList.find((account) => account.runnable) ?? accountList[0] ?? null;
@@ -232,6 +277,7 @@ function accountBackedAgent(input: {
   });
   const description = primaryAccount.gecos.trim()
     || "No active GSV process is attached to this chat.";
+  const behavior = behaviorViewForAccount(primaryAccount, input.config, input.modelLabels);
 
   return {
     name: primaryAccount.displayName,
@@ -241,8 +287,11 @@ function accountBackedAgent(input: {
     status: status.status,
     statusLabel: status.statusLabel,
     activity: status.statusLabel,
-    modelLabel: input.modelLabel,
-    modelIsDefault: true,
+    modelLabel: behavior.modelLabel,
+    modelOptions: behavior.modelOptions,
+    modelValue: behavior.modelValue,
+    modelIsDefault: behavior.modelIsDefault,
+    permission: behavior.permission,
     tasksTotal: 0,
     tasks: [],
     crew,
@@ -253,16 +302,19 @@ export function buildShellChatAgent({
   activeProcess,
   accounts,
   chatProcesses,
+  config,
   consoleProcesses,
-  modelLabel,
   statusLabel,
 }: BuildShellChatAgentArgs): ChatAgentData | null {
+  const modelLabels = modelLabelsForConfig(config);
+
   if (!activeProcess) {
     return accountBackedAgent({
       accounts,
       chatProcesses,
+      config,
       consoleProcesses,
-      modelLabel,
+      modelLabels,
     });
   }
 
@@ -272,6 +324,9 @@ export function buildShellChatAgent({
     ? Math.max(0, accountList.findIndex((account) => account.uid === activeAccount.uid))
     : Math.max(0, chatProcesses.findIndex((process) => process.pid === activeProcess.pid));
   const tasks = tasksForActiveAgent(activeProcess, activeAccount, chatProcesses);
+  const behavior = activeAccount
+    ? behaviorViewForAccount(activeAccount, config, modelLabels)
+    : defaultBehaviorView(config, modelLabels);
   const crew = accountList.length > 0
     ? accountCrewMembers({
         accounts: accountList,
@@ -290,7 +345,11 @@ export function buildShellChatAgent({
     status: agentStatusForRunState(activeProcess.runState),
     statusLabel,
     activity: statusLabel,
-    modelLabel,
+    modelLabel: behavior.modelLabel,
+    modelOptions: behavior.modelOptions,
+    modelValue: behavior.modelValue,
+    modelIsDefault: behavior.modelIsDefault,
+    permission: behavior.permission,
     tasksTotal: tasks.length,
     tasks,
     crew,
