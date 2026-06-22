@@ -379,12 +379,18 @@ export function AgentEditor(props: AgentEditorProps) {
       <div style={padStyle}>
         {/* ============ TOP BAR ============ */}
         <div style={barStyle}>
-          <span class="gsv-ae-back" onClick={onBack ?? (() => {})}>
+          <button
+            type="button"
+            aria-label="Back to crew"
+            class="gsv-ae-back"
+            disabled={!onBack}
+            onClick={onBack}
+          >
             <svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square">
               <path d="M9.5 3.5 L5 8 L9.5 12.5" />
               <path d="M5 8 H13" />
             </svg>
-          </span>
+          </button>
           <div style={crumbRowStyle}>
             {showFullCrumb ? (
               <>
@@ -394,7 +400,14 @@ export function AgentEditor(props: AgentEditorProps) {
                 <span style="color:var(--rule-section);">›</span>
               </>
             ) : null}
-            <span class="gsv-ae-crumb-crew" onClick={onBack ?? (() => {})}>CREW</span>
+            <button
+              type="button"
+              class="gsv-ae-crumb-crew"
+              disabled={!onBack}
+              onClick={onBack}
+            >
+              CREW
+            </button>
             <span style="color:var(--rule-section);">›</span>
             <span style="color:var(--text-hi);text-shadow:0 0 7px rgba(150,140,255,.45);">{crumbLast}</span>
           </div>

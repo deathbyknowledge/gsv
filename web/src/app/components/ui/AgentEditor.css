@@ -20,6 +20,9 @@
 
 /* ===== top bar back button ===== */
 .gsv-ae-back {
+  appearance: none;
+  margin: 0;
+  padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -32,9 +35,15 @@
   background: var(--panel-2);
   transition: background 0.12s;
 }
-.gsv-ae-back:hover {
+.gsv-ae-back:not(:disabled):hover,
+.gsv-ae-back:not(:disabled):focus-visible {
   background: var(--hover);
   color: #e6e4ff;
+  outline: none;
+}
+.gsv-ae-back:disabled {
+  cursor: default;
+  opacity: 0.45;
 }
 
 /* ===== breadcrumb ===== */
@@ -46,11 +55,24 @@
   color: #9d98d8;
 }
 .gsv-ae-crumb-crew {
+  appearance: none;
+  margin: 0;
+  padding: 0;
   color: #9d98d8;
   cursor: pointer;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  letter-spacing: inherit;
 }
-.gsv-ae-crumb-crew:hover {
+.gsv-ae-crumb-crew:not(:disabled):hover,
+.gsv-ae-crumb-crew:not(:disabled):focus-visible {
   color: var(--accent-bright);
+  outline: none;
+}
+.gsv-ae-crumb-crew:disabled {
+  cursor: default;
+  opacity: 0.45;
 }
 
 /* ===== new-file folder ===== */
