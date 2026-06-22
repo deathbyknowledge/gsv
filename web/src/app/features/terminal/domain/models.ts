@@ -20,6 +20,9 @@ export type TerminalTranscriptEntry = {
   target: string;
   command: string;
   cwd: string;
+  timeoutMs: number | null;
+  yieldMs: number | null;
+  background: boolean;
   startedAt: number;
   completedAt: number;
   status: "completed" | "running" | "failed";
