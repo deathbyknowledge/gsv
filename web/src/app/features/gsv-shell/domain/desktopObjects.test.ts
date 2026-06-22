@@ -63,11 +63,19 @@ const integrationPackage: ConsolePackage = {
   sourceRepo: "gsv/custom-mcp",
 };
 
+const nativePackage: ConsolePackage = {
+  ...appPackage,
+  packageId: "@gsv/chat",
+  name: "@gsv/chat",
+  description: "Native chat shell surface",
+  sourceRepo: "gsv/chat",
+};
+
 const overview: ConsoleOverviewData = {
   loadedAt: 1_700_000_200,
   processes: [],
   targets: [target],
-  packages: [appPackage, integrationPackage],
+  packages: [appPackage, integrationPackage, nativePackage],
   accounts: [],
   adapters: [adapter],
   config: [],
@@ -93,6 +101,8 @@ describe("buildDesktopObjectsFromConsole", () => {
       kind: "applications",
       detailId: "space-simulation",
     });
+    expect(objects.find((object) => object.id === "applications")?.children).toHaveLength(1);
+    expect(objects.find((object) => object.id === "integrations")?.children).toHaveLength(1);
   });
 });
 

@@ -11,6 +11,7 @@ import type {
   DesktopObjectId,
   ShellStatus,
 } from "./shellModel";
+import { isNativeWebPackageName } from "../../packages/nativePackages";
 
 type DesktopObjectSpec = {
   id: DesktopObjectId;
@@ -239,6 +240,9 @@ function classifyPackages(packages: readonly ConsolePackage[]): Record<PackageBr
   };
 
   for (const pkg of packages) {
+    if (isNativeConsolePackage(pkg)) {
+      continue;
+    }
     const branchId = isApplicationPackage(pkg) ? "applications" : "integrations";
     branches[branchId].push(packageToChild(pkg, branchId));
   }
@@ -256,6 +260,10 @@ function isApplicationPackage(pkg: ConsolePackage): boolean {
   return pkg.runtime === "web-ui"
     || safeArray(pkg.uiEntrypoints).length > 0
     || safeArray(pkg.entrypoints).some((entrypoint) => firstNonEmpty(entrypoint.kind)?.toLowerCase() === "ui");
+}
+
+function isNativeConsolePackage(pkg: ConsolePackage): boolean {
+  return isNativeWebPackageName(pkg.name) || isNativeWebPackageName(pkg.packageId);
 }
 
 function adapterStatus(adapter: ConsoleAdapterAccount): { status: ShellStatus; label: string } {

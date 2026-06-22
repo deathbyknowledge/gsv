@@ -4,6 +4,7 @@ import { Icon } from "../../../components/ui/Icon";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
 import { StatusDot, type StatusTone } from "../../../components/ui/StatusDot";
 import { Tag, type TagTone } from "../../../components/ui/Tag";
+import { isNativeWebPackageName } from "../../packages/nativePackages";
 import {
   useConsoleAdapters,
   useConsolePackages,
@@ -976,17 +977,22 @@ function isTrustedPackage(pkg: ConsolePackage): boolean {
 }
 
 function filterPackagesForKind(packages: readonly ConsolePackage[], kind: PackageListKind): ConsolePackage[] {
+  const visiblePackages = packages.filter((pkg) => !isNativeConsolePackage(pkg));
   if (kind === "applications") {
-    return packages.filter(isApplicationPackage);
+    return visiblePackages.filter(isApplicationPackage);
   }
   if (kind === "integrations") {
-    return packages.filter((pkg) => !isApplicationPackage(pkg));
+    return visiblePackages.filter((pkg) => !isApplicationPackage(pkg));
   }
-  return [...packages];
+  return [...visiblePackages];
 }
 
 function isApplicationPackage(pkg: ConsolePackage): boolean {
   return pkg.runtime === "web-ui" || pkg.uiEntrypoints.length > 0 || pkg.entrypoints.some((entrypoint) => entrypoint.kind === "ui");
+}
+
+function isNativeConsolePackage(pkg: ConsolePackage): boolean {
+  return isNativeWebPackageName(pkg.name) || isNativeWebPackageName(pkg.packageId);
 }
 
 function packageListTitle(kind: PackageListKind): string {
