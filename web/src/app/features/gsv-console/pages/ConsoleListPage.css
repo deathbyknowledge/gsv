@@ -1,5 +1,6 @@
 .gsv-console-settings-list {
-  min-height: calc(100vh - 118px);
+  flex: 1;
+  min-height: 100%;
   border: 1px solid var(--border);
   background: var(--panel);
   box-shadow:
@@ -321,7 +322,8 @@ button.gsv-console-settings-row:focus-visible {
 }
 
 .gsv-console-entity-detail {
-  min-height: calc(100vh - 118px);
+  flex: 1;
+  min-height: 100%;
   padding: 38px 40px 88px;
   border: 1px solid var(--border);
   background:

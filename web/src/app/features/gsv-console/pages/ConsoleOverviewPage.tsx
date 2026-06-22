@@ -632,7 +632,7 @@ export function ConsoleOverviewPage({ onOpenSurface }: { onOpenSurface?: OpenSur
   const overview = useConsoleOverview();
 
   return (
-    <ConsolePage>
+    <ConsolePage flush>
       <ConsoleResourceBoundary
         resource={overview.resource}
         emptyLabel="NO CONSOLE DATA"

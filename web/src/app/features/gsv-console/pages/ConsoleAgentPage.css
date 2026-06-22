@@ -1,15 +1,12 @@
 .gsv-console-agent {
-  min-height: calc(100vh - 98px);
-  margin: -20px;
+  flex: 1;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
   background: var(--void);
 }
 
 .gsv-console-agent .gsv-ae {
-  min-height: calc(100vh - 98px) !important;
-}
-
-@media (max-width: 680px) {
-  .gsv-console-agent {
-    margin: -12px;
-  }
+  flex: 1;
+  min-height: 100% !important;
 }

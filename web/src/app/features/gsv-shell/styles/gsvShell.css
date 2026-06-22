@@ -904,11 +904,21 @@
 
 .gsv-console-page {
   min-height: 100%;
+  display: flex;
+  flex-direction: column;
   background: transparent;
 }
 
 .gsv-console-page-body {
+  flex: 1;
+  min-height: 0;
   padding: 20px;
+}
+
+.gsv-console-page.is-flush .gsv-console-page-body {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .gsv-console-state {

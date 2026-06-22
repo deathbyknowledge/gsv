@@ -46,7 +46,7 @@ export function ConsoleAgentPage({
   const processes = useConsoleProcesses();
 
   return (
-    <ConsolePage>
+    <ConsolePage flush>
       <ConsoleResourceBoundary
         resource={accounts.resource}
         emptyLabel="NO AGENT ACCOUNT"
