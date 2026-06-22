@@ -1,4 +1,5 @@
 import type { ComponentChildren } from "preact";
+import { useEffect, useState } from "preact/hooks";
 import { Icon } from "../../../components/ui/Icon";
 import { ListRow } from "../../../components/ui/ListRow";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
@@ -43,6 +44,11 @@ type ConsoleListPageProps = {
   kind: ConsoleListKind;
 };
 
+type SelectedConsoleDetail = {
+  kind: ConsoleListKind;
+  id: string;
+};
+
 type SignalMetric = {
   label: string;
   value: number | string;
@@ -72,6 +78,29 @@ type OperationalRowProps = {
   detail: string;
   tags?: readonly RowTag[];
   details?: ComponentChildren;
+  onOpen?: () => void;
+};
+
+type EntityDetailPageProps = {
+  icon: string;
+  title: string;
+  typeLabel: string;
+  statusLabel: string;
+  tone: StatusTone;
+  blurb: string;
+  parentLabel: string;
+  fields: readonly ConsoleDetailField[];
+  chips?: {
+    title: string;
+    emptyLabel: string;
+    items: readonly ConsoleDetailChip[];
+  };
+  list?: {
+    title: string;
+    emptyLabel: string;
+    items: readonly ConsoleDetailListItem[];
+  };
+  onBack: () => void;
 };
 
 const EMPTY_RESOURCE_LABEL: Record<ConsoleListKind, string> = {
@@ -98,11 +127,16 @@ const RUNTIME_LABEL: Record<ConsolePackageRuntime, string> = {
 };
 
 export function ConsoleListPage({ kind }: ConsoleListPageProps) {
+  const [selectedDetail, setSelectedDetail] = useState<SelectedConsoleDetail | null>(null);
   const targets = useConsoleTargets({ enabled: kind === "machines" });
   const packageKind = isPackageListKind(kind) ? kind : null;
   const packages = useConsolePackages({ enabled: packageKind !== null });
   const processes = useConsoleProcesses({ enabled: kind === "tasks" });
   const adapters = useConsoleAdapters({ enabled: kind === "messengers" });
+
+  useEffect(() => {
+    setSelectedDetail(null);
+  }, [kind]);
 
   if (kind === "tasks") {
     return (
@@ -112,10 +146,21 @@ export function ConsoleListPage({ kind }: ConsoleListPageProps) {
           emptyLabel={EMPTY_RESOURCE_LABEL.tasks}
           errorLabel="RUNTIME"
           render={(data) => (
-            <RuntimeConsoleSection
-              processes={data}
-              refreshing={processes.resource.isRefreshing}
-            />
+            selectedDetail?.kind === "tasks"
+              ? renderProcessDetail(data, selectedDetail.id, () => setSelectedDetail(null)) ?? (
+                <RuntimeConsoleSection
+                  onOpenDetail={(process) => setSelectedDetail({ kind, id: process.pid })}
+                  processes={data}
+                  refreshing={processes.resource.isRefreshing}
+                />
+              )
+              : (
+                <RuntimeConsoleSection
+                  onOpenDetail={(process) => setSelectedDetail({ kind, id: process.pid })}
+                  processes={data}
+                  refreshing={processes.resource.isRefreshing}
+                />
+              )
           )}
         />
       </ConsolePage>
@@ -130,10 +175,21 @@ export function ConsoleListPage({ kind }: ConsoleListPageProps) {
           emptyLabel={EMPTY_RESOURCE_LABEL.machines}
           errorLabel="MACHINES"
           render={(data) => (
-            <MachinesConsoleSection
-              targets={data}
-              refreshing={targets.resource.isRefreshing}
-            />
+            selectedDetail?.kind === "machines"
+              ? renderTargetDetail(data, selectedDetail.id, () => setSelectedDetail(null)) ?? (
+                <MachinesConsoleSection
+                  onOpenDetail={(target) => setSelectedDetail({ kind, id: target.deviceId })}
+                  targets={data}
+                  refreshing={targets.resource.isRefreshing}
+                />
+              )
+              : (
+                <MachinesConsoleSection
+                  onOpenDetail={(target) => setSelectedDetail({ kind, id: target.deviceId })}
+                  targets={data}
+                  refreshing={targets.resource.isRefreshing}
+                />
+              )
           )}
         />
       </ConsolePage>
@@ -148,10 +204,21 @@ export function ConsoleListPage({ kind }: ConsoleListPageProps) {
           emptyLabel={EMPTY_RESOURCE_LABEL.messengers}
           errorLabel="MESSENGERS"
           render={(data) => (
-            <MessengersConsoleSection
-              adapters={data}
-              refreshing={adapters.resource.isRefreshing}
-            />
+            selectedDetail?.kind === "messengers"
+              ? renderAdapterDetail(data, selectedDetail.id, () => setSelectedDetail(null)) ?? (
+                <MessengersConsoleSection
+                  adapters={data}
+                  onOpenDetail={(adapter) => setSelectedDetail({ kind, id: adapterDetailId(adapter) })}
+                  refreshing={adapters.resource.isRefreshing}
+                />
+              )
+              : (
+                <MessengersConsoleSection
+                  adapters={data}
+                  onOpenDetail={(adapter) => setSelectedDetail({ kind, id: adapterDetailId(adapter) })}
+                  refreshing={adapters.resource.isRefreshing}
+                />
+              )
           )}
         />
       </ConsolePage>
@@ -165,11 +232,14 @@ export function ConsoleListPage({ kind }: ConsoleListPageProps) {
         emptyLabel={EMPTY_RESOURCE_LABEL[packageKind ?? "library"]}
         errorLabel={packageKind === "applications" ? "APPLICATIONS" : packageKind === "integrations" ? "INTEGRATIONS" : "LIBRARY"}
         render={(data) => (
-          <LibraryConsoleSection
-            kind={packageKind ?? "library"}
-            packages={filterPackagesForKind(data, packageKind ?? "library")}
-            refreshing={packages.resource.isRefreshing}
-          />
+          renderPackageList(
+            filterPackagesForKind(data, packageKind ?? "library"),
+            packageKind ?? "library",
+            selectedDetail,
+            () => setSelectedDetail(null),
+            (pkg) => setSelectedDetail({ kind, id: pkg.packageId }),
+            packages.resource.isRefreshing,
+          )
         )}
       />
     </ConsolePage>
@@ -180,8 +250,224 @@ function isPackageListKind(kind: ConsoleListKind): kind is PackageListKind {
   return kind === "library" || kind === "integrations" || kind === "applications";
 }
 
+function renderProcessDetail(
+  processes: readonly ConsoleProcess[],
+  id: string,
+  onBack: () => void,
+): ComponentChildren | null {
+  const process = processes.find((entry) => entry.pid === id);
+  if (!process) {
+    return null;
+  }
+
+  return (
+    <ConsoleEntityDetailPage
+      icon="list"
+      title={process.label}
+      typeLabel="GSV · TASK"
+      statusLabel={statusForProcess(process)}
+      tone={toneForProcess(process)}
+      blurb={compactText([process.username, process.profile, process.cwd], "Process runtime state and active conversation context.")}
+      parentLabel="RUNTIME"
+      fields={processDetailFields(process)}
+      chips={{
+        title: "STATE FLAGS",
+        emptyLabel: "NO STATE FLAGS",
+        items: processContextChips(process),
+      }}
+      onBack={onBack}
+    />
+  );
+}
+
+function renderTargetDetail(
+  targets: readonly ConsoleTarget[],
+  id: string,
+  onBack: () => void,
+): ComponentChildren | null {
+  const target = targets.find((entry) => entry.deviceId === id);
+  if (!target) {
+    return null;
+  }
+
+  return (
+    <ConsoleEntityDetailPage
+      icon={iconForTarget(target)}
+      title={target.label}
+      typeLabel="GSV · MACHINE"
+      statusLabel={target.online ? "ONLINE" : "OFFLINE"}
+      tone={target.online ? "online" : "idle"}
+      blurb={target.description || compactText([target.platform, target.version, target.ownerUsername], "Machine target and declared capabilities.")}
+      parentLabel="MACHINES"
+      fields={targetDetailFields(target)}
+      chips={{
+        title: "CAPABILITIES",
+        emptyLabel: "NO CAPABILITIES DECLARED",
+        items: targetCapabilityChips(target),
+      }}
+      onBack={onBack}
+    />
+  );
+}
+
+function renderAdapterDetail(
+  adapters: readonly ConsoleAdapterAccount[],
+  id: string,
+  onBack: () => void,
+): ComponentChildren | null {
+  const adapter = adapters.find((entry) => adapterDetailId(entry) === id);
+  if (!adapter) {
+    return null;
+  }
+
+  return (
+    <ConsoleEntityDetailPage
+      icon={iconForAdapterName(adapter.adapter)}
+      title={adapterLabel(adapter)}
+      typeLabel="GSV · MESSENGER"
+      statusLabel={statusForAdapter(adapter)}
+      tone={toneForAdapter(adapter)}
+      blurb={adapter.error || adapterSub(adapter)}
+      parentLabel="MESSENGERS"
+      fields={adapterDetailFields(adapter)}
+      chips={{
+        title: "CHANNEL FLAGS",
+        emptyLabel: "NO CHANNEL FLAGS",
+        items: adapterContextChips(adapter),
+      }}
+      onBack={onBack}
+    />
+  );
+}
+
+function renderPackageList(
+  scopedPackages: readonly ConsolePackage[],
+  packageKind: PackageListKind,
+  selectedDetail: SelectedConsoleDetail | null,
+  onBack: () => void,
+  onOpenDetail: (pkg: ConsolePackage) => void,
+  refreshing: boolean,
+): ComponentChildren {
+  if (selectedDetail?.kind === packageKind) {
+    const detail = renderPackageDetail(scopedPackages, packageKind, selectedDetail.id, onBack);
+    if (detail) {
+      return detail;
+    }
+  }
+
+  return (
+    <LibraryConsoleSection
+      kind={packageKind}
+      onOpenDetail={onOpenDetail}
+      packages={scopedPackages}
+      refreshing={refreshing}
+    />
+  );
+}
+
+function renderPackageDetail(
+  packages: readonly ConsolePackage[],
+  packageKind: PackageListKind,
+  id: string,
+  onBack: () => void,
+): ComponentChildren | null {
+  const pkg = packages.find((entry) => entry.packageId === id);
+  if (!pkg) {
+    return null;
+  }
+
+  const noun = packageListNoun(packageKind);
+  return (
+    <ConsoleEntityDetailPage
+      icon={pkg.uiEntrypoints.length > 0 ? "stars" : packageKind === "integrations" ? "weblink" : "pencil"}
+      title={pkg.name}
+      typeLabel={`GSV · ${noun}`}
+      statusLabel={statusForPackage(pkg)}
+      tone={toneForPackage(pkg)}
+      blurb={pkg.description || packageSub(pkg)}
+      parentLabel={packageListTitle(packageKind)}
+      fields={packageDetailFields(pkg)}
+      list={{
+        title: "ENTRYPOINTS",
+        emptyLabel: "NO ENTRYPOINTS DECLARED",
+        items: packageEntrypointItems(pkg.entrypoints),
+      }}
+      chips={{
+        title: "BINDINGS",
+        emptyLabel: "NO BINDINGS DECLARED",
+        items: pkg.bindingNames.map((binding) => ({ label: binding, tone: "idle" })),
+      }}
+      onBack={onBack}
+    />
+  );
+}
+
 function resourceWithLocalEmptyState<T>(resource: ConsoleResourceState<T>): ConsoleResourceState<T> {
   return { ...resource, isEmpty: false };
+}
+
+function ConsoleEntityDetailPage({
+  icon,
+  title,
+  typeLabel,
+  statusLabel,
+  tone,
+  blurb,
+  parentLabel,
+  fields,
+  chips,
+  list,
+  onBack,
+}: EntityDetailPageProps) {
+  return (
+    <section class="gsv-console-entity-detail">
+      <div class="gsv-console-entity-detail-shell">
+        <header class="gsv-console-entity-detail-head">
+          <span class="gsv-console-entity-detail-icon">
+            <Icon name={icon} size={30} />
+          </span>
+          <div class="gsv-console-entity-detail-title">
+            <h2>{title}</h2>
+            <div>
+              <span>{typeLabel}</span>
+              <StatusDot tone={tone} size={7} />
+              <span>{statusLabel}</span>
+            </div>
+          </div>
+        </header>
+
+        <p class="gsv-console-entity-detail-blurb">{blurb}</p>
+
+        <div class="gsv-console-entity-detail-panel">
+          <span class="gsv-detail-corner is-top-left" aria-hidden="true" />
+          <span class="gsv-detail-corner is-top-right" aria-hidden="true" />
+          <span class="gsv-detail-corner is-bottom-left" aria-hidden="true" />
+          <span class="gsv-detail-corner is-bottom-right" aria-hidden="true" />
+          <ConsoleDetailGrid fields={fields} />
+          {list ? (
+            <ConsoleDetailList
+              title={list.title}
+              emptyLabel={list.emptyLabel}
+              items={list.items}
+            />
+          ) : null}
+          {chips ? (
+            <ConsoleDetailChips
+              title={chips.title}
+              emptyLabel={chips.emptyLabel}
+              chips={chips.items}
+            />
+          ) : null}
+        </div>
+
+        <div class="gsv-console-entity-detail-actions">
+          <button type="button" class="gsv-console-entity-detail-back" onClick={onBack}>
+            BACK TO {parentLabel}
+          </button>
+        </div>
+      </div>
+    </section>
+  );
 }
 
 function OperationalLayout({
@@ -257,9 +543,10 @@ function OperationalRow({
   detail,
   tags = [],
   details,
+  onOpen,
 }: OperationalRowProps) {
   return (
-    <div class="gsv-console-list-row">
+    <div class="gsv-console-list-row" data-clickable={onOpen ? "true" : undefined}>
       <span class="gsv-console-list-row-icon">
         <Icon name={icon} size={18} />
       </span>
@@ -281,6 +568,14 @@ function OperationalRow({
         </span>
         <small>{detail}</small>
       </div>
+      {onOpen ? (
+        <button
+          type="button"
+          class="gsv-console-list-row-open"
+          aria-label={`Open ${label}`}
+          onClick={onOpen}
+        />
+      ) : null}
     </div>
   );
 }
@@ -331,9 +626,11 @@ function RailSignalRow({
 }
 
 function RuntimeConsoleSection({
+  onOpenDetail,
   processes,
   refreshing,
 }: {
+  onOpenDetail: (process: ConsoleProcess) => void;
   processes: readonly ConsoleProcess[];
   refreshing: boolean;
 }) {
@@ -405,6 +702,7 @@ function RuntimeConsoleSection({
             detail={processDetail(process)}
             tags={processTags(process)}
             details={<ProcessDetails process={process} />}
+            onOpen={() => onOpenDetail(process)}
           />
         ))}
       </InventoryGroup>
@@ -420,6 +718,7 @@ function RuntimeConsoleSection({
             detail={processDetail(process)}
             tags={processTags(process)}
             details={<ProcessDetails process={process} />}
+            onOpen={() => onOpenDetail(process)}
           />
         ))}
       </InventoryGroup>
@@ -428,9 +727,11 @@ function RuntimeConsoleSection({
 }
 
 function MachinesConsoleSection({
+  onOpenDetail,
   targets,
   refreshing,
 }: {
+  onOpenDetail: (target: ConsoleTarget) => void;
   targets: readonly ConsoleTarget[];
   refreshing: boolean;
 }) {
@@ -477,6 +778,7 @@ function MachinesConsoleSection({
             detail={targetDetail(target)}
             tags={targetTags(target)}
             details={<TargetDetails target={target} />}
+            onOpen={() => onOpenDetail(target)}
           />
         ))}
       </InventoryGroup>
@@ -492,6 +794,7 @@ function MachinesConsoleSection({
             detail={targetDetail(target)}
             tags={targetTags(target)}
             details={<TargetDetails target={target} />}
+            onOpen={() => onOpenDetail(target)}
           />
         ))}
       </InventoryGroup>
@@ -501,9 +804,11 @@ function MachinesConsoleSection({
 
 function MessengersConsoleSection({
   adapters,
+  onOpenDetail,
   refreshing,
 }: {
   adapters: readonly ConsoleAdapterAccount[];
+  onOpenDetail: (adapter: ConsoleAdapterAccount) => void;
   refreshing: boolean;
 }) {
   const connected = adapters.filter((adapter) => adapter.connected && adapter.authenticated && !adapter.error);
@@ -547,9 +852,9 @@ function MessengersConsoleSection({
         </>
       )}
     >
-      <AdapterGroup title="CONNECTED CHANNELS" adapters={connected} emptyLabel="NO CONNECTED CHANNELS" />
-      <AdapterGroup title="NEEDS ATTENTION" adapters={attention} emptyLabel="NO CHANNELS NEED ATTENTION" />
-      <AdapterGroup title="IDLE CHANNELS" adapters={idle} emptyLabel="NO IDLE CHANNELS" />
+      <AdapterGroup title="CONNECTED CHANNELS" adapters={connected} emptyLabel="NO CONNECTED CHANNELS" onOpenDetail={onOpenDetail} />
+      <AdapterGroup title="NEEDS ATTENTION" adapters={attention} emptyLabel="NO CHANNELS NEED ATTENTION" onOpenDetail={onOpenDetail} />
+      <AdapterGroup title="IDLE CHANNELS" adapters={idle} emptyLabel="NO IDLE CHANNELS" onOpenDetail={onOpenDetail} />
     </OperationalLayout>
   );
 }
@@ -558,10 +863,12 @@ function AdapterGroup({
   title,
   adapters,
   emptyLabel,
+  onOpenDetail,
 }: {
   title: string;
   adapters: readonly ConsoleAdapterAccount[];
   emptyLabel: string;
+  onOpenDetail: (adapter: ConsoleAdapterAccount) => void;
 }) {
   return (
     <InventoryGroup title={title} meta={`${adapters.length} CHANNELS`} emptyLabel={emptyLabel} isEmpty={adapters.length === 0}>
@@ -576,6 +883,7 @@ function AdapterGroup({
           detail={adapterDetail(adapter)}
           tags={adapterTags(adapter)}
           details={<AdapterDetails adapter={adapter} />}
+          onOpen={() => onOpenDetail(adapter)}
         />
       ))}
     </InventoryGroup>
@@ -584,10 +892,12 @@ function AdapterGroup({
 
 function LibraryConsoleSection({
   kind,
+  onOpenDetail,
   packages,
   refreshing,
 }: {
   kind: PackageListKind;
+  onOpenDetail: (pkg: ConsolePackage) => void;
   packages: readonly ConsolePackage[];
   refreshing: boolean;
 }) {
@@ -630,9 +940,9 @@ function LibraryConsoleSection({
         </>
       )}
     >
-      <PackageGroup title="REVIEW QUEUE" packages={reviewQueue} emptyLabel="NO PACKAGES WAITING FOR REVIEW" />
-      <PackageGroup title={`ENABLED ${noun}S`} packages={enabled} emptyLabel={`NO ENABLED ${noun}S`} />
-      <PackageGroup title={`DISABLED ${noun}S`} packages={disabled} emptyLabel={`NO DISABLED ${noun}S`} />
+      <PackageGroup title="REVIEW QUEUE" packages={reviewQueue} emptyLabel="NO PACKAGES WAITING FOR REVIEW" onOpenDetail={onOpenDetail} />
+      <PackageGroup title={`ENABLED ${noun}S`} packages={enabled} emptyLabel={`NO ENABLED ${noun}S`} onOpenDetail={onOpenDetail} />
+      <PackageGroup title={`DISABLED ${noun}S`} packages={disabled} emptyLabel={`NO DISABLED ${noun}S`} onOpenDetail={onOpenDetail} />
     </OperationalLayout>
   );
 }
@@ -641,10 +951,12 @@ function PackageGroup({
   title,
   packages,
   emptyLabel,
+  onOpenDetail,
 }: {
   title: string;
   packages: readonly ConsolePackage[];
   emptyLabel: string;
+  onOpenDetail: (pkg: ConsolePackage) => void;
 }) {
   return (
     <InventoryGroup title={title} meta={`${packages.length} PACKAGES`} emptyLabel={emptyLabel} isEmpty={packages.length === 0}>
@@ -659,6 +971,7 @@ function PackageGroup({
           detail={packageDetail(pkg)}
           tags={packageTags(pkg)}
           details={<PackageDetails pkg={pkg} />}
+          onOpen={() => onOpenDetail(pkg)}
         />
       ))}
     </InventoryGroup>
@@ -946,6 +1259,10 @@ function iconForAdapterName(adapter: string): string {
   if (adapter === "telegram") return "telegram";
   if (adapter === "discord") return "discord";
   return "chat";
+}
+
+function adapterDetailId(adapter: ConsoleAdapterAccount): string {
+  return `${adapter.adapter}:${adapter.accountId}`;
 }
 
 function adapterLabel(adapter: ConsoleAdapterAccount): string {
