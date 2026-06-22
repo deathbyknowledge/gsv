@@ -517,10 +517,6 @@ function ConsoleEntityDetailPage({
         <p class="gsv-console-entity-detail-blurb">{blurb}</p>
 
         <div class="gsv-console-entity-detail-panel">
-          <span class="gsv-detail-corner is-top-left" aria-hidden="true" />
-          <span class="gsv-detail-corner is-top-right" aria-hidden="true" />
-          <span class="gsv-detail-corner is-bottom-left" aria-hidden="true" />
-          <span class="gsv-detail-corner is-bottom-right" aria-hidden="true" />
           <ConsoleDetailGrid fields={fields} />
           {list ? (
             <ConsoleDetailList

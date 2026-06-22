@@ -253,31 +253,31 @@
 }
 
 .gsv-console-entity-detail-shell {
-  width: min(780px, 100%);
+  width: min(760px, 100%);
   margin: 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 0;
 }
 
 .gsv-console-entity-detail-head {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 18px;
+  gap: 16px;
 }
 
 .gsv-console-entity-detail-icon {
-  width: 66px;
-  height: 66px;
+  width: 52px;
+  height: 52px;
   flex: none;
   border: 1px solid var(--border);
-  background: var(--panel);
+  background: linear-gradient(180deg, #100e2a, var(--node-bg));
   color: var(--accent-bright);
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: inset 0 0 18px rgba(80, 70, 180, 0.18);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
 }
 
 .gsv-console-entity-detail-title {
@@ -291,10 +291,11 @@
   margin: 0;
   overflow-wrap: anywhere;
   color: var(--text-hi);
-  font-size: 25px;
-  line-height: 1.08;
-  letter-spacing: 0.06em;
-  text-shadow: 0 0 8px rgba(150, 140, 255, 0.4);
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 1.12;
+  letter-spacing: 0.08em;
+  text-shadow: 0 0 6px rgba(150, 140, 255, 0.4);
 }
 
 .gsv-console-entity-detail-title div {
@@ -315,65 +316,30 @@
 
 .gsv-console-entity-detail-blurb {
   max-width: 640px;
-  margin: 0;
+  margin: 20px 0 32px;
   color: var(--label);
-  font-family: var(--gsv-font-sans);
+  font-family: var(--gsv-font-prose);
   font-size: 14px;
-  line-height: 1.75;
+  line-height: 1.65;
   overflow-wrap: anywhere;
+  text-wrap: pretty;
 }
 
 .gsv-console-entity-detail-panel {
   position: relative;
   min-width: 0;
   display: grid;
-  gap: 14px;
-  padding: 18px;
-  border: 1px solid var(--border);
-  background:
-    repeating-linear-gradient(45deg, rgba(16, 13, 40, 0.62) 0, rgba(16, 13, 40, 0.62) 12px, rgba(11, 9, 34, 0.72) 12px, rgba(11, 9, 34, 0.72) 24px),
-    var(--panel);
-}
-
-.gsv-detail-corner {
-  position: absolute;
-  width: 10px;
-  height: 10px;
-  pointer-events: none;
-}
-
-.gsv-detail-corner.is-top-left {
-  top: 9px;
-  left: 9px;
-  border-top: 1px solid var(--bracket);
-  border-left: 1px solid var(--bracket);
-}
-
-.gsv-detail-corner.is-top-right {
-  top: 9px;
-  right: 9px;
-  border-top: 1px solid var(--bracket);
-  border-right: 1px solid var(--bracket);
-}
-
-.gsv-detail-corner.is-bottom-left {
-  bottom: 9px;
-  left: 9px;
-  border-bottom: 1px solid var(--bracket);
-  border-left: 1px solid var(--bracket);
-}
-
-.gsv-detail-corner.is-bottom-right {
-  right: 9px;
-  bottom: 9px;
-  border-right: 1px solid var(--bracket);
-  border-bottom: 1px solid var(--bracket);
+  gap: 26px;
+  padding: 0;
+  border: 0;
+  background: transparent;
 }
 
 .gsv-console-entity-detail-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
+  margin-top: 24px;
 }
 
 .gsv-console-entity-detail-back {
@@ -447,15 +413,15 @@
   }
 
   .gsv-console-entity-detail-icon {
-    width: 54px;
-    height: 54px;
+    width: 46px;
+    height: 46px;
   }
 
   .gsv-console-entity-detail-title h2 {
-    font-size: 19px;
+    font-size: 18px;
   }
 
   .gsv-console-entity-detail-panel {
-    padding: 14px;
+    padding: 0;
   }
 }
