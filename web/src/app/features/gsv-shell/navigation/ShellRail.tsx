@@ -147,12 +147,6 @@ export function ShellRail({
 
         {railMode === "gsv" ? (
           <nav class="gsv-rail-subnav" aria-label="GSV systems">
-            <button type="button" class="gsv-rail-control-menu" onClick={onOpenControlMenu}>
-              <span class="gsv-rail-subnav-icon">
-                <GsvMark size={16} />
-              </span>
-              <span>CONTROL MENU</span>
-            </button>
             {GSV_CONTROL_ITEMS.map((item) => (
               <button
                 key={item.id}
@@ -160,9 +154,6 @@ export function ShellRail({
                 class={activeTabKey === item.id ? "is-active" : ""}
                 onClick={() => onOpenSurface(item.id)}
               >
-                <span class="gsv-rail-subnav-icon">
-                  <Icon name={item.icon} size={14} />
-                </span>
                 <span>{item.label}</span>
               </button>
             ))}
@@ -171,7 +162,7 @@ export function ShellRail({
 
       </div>
 
-      <footer>LIVE SHELL</footer>
+      <footer>DRAG CHAT &lt;- TO EXPAND</footer>
     </aside>
   );
 }

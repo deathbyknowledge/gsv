@@ -894,25 +894,11 @@
   color: #9d98d8;
   display: flex;
   align-items: center;
-  gap: 11px;
-  padding: 10px 20px;
+  padding: 10px 20px 10px 74px;
   font-size: 12px;
   letter-spacing: 0.16em;
   text-align: left;
   cursor: pointer;
-}
-
-.gsv-rail-subnav-icon {
-  width: 40px;
-  flex: none;
-  display: inline-flex;
-  justify-content: center;
-  color: var(--accent-bright);
-}
-
-.gsv-rail-control-menu {
-  color: var(--text-hi) !important;
-  background: rgba(150, 140, 255, 0.08) !important;
 }
 
 .gsv-rail-subnav button:hover,
