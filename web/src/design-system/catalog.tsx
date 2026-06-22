@@ -25,6 +25,7 @@ import progress from "./stories/Progress.story";
 import spinner from "./stories/Spinner.story";
 import tooltip from "./stories/Tooltip.story";
 import listRow from "./stories/ListRow.story";
+import asciiPlanet from "./stories/AsciiPlanet.story";
 import agentImage from "./stories/AgentImage.story";
 import avatar from "./stories/Avatar.story";
 import tile from "./stories/Tile.story";
@@ -72,6 +73,7 @@ const STORIES: Story[] = [
   tooltip,
   // Data Display
   listRow,
+  asciiPlanet,
   tile,
   objectCard,
   agentImage,
