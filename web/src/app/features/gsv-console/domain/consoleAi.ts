@@ -40,6 +40,10 @@ export function modelLabelsForConfig(config: readonly ConsoleConfigEntry[]): str
   return labels;
 }
 
+export function modelConfigEntries(config: readonly ConsoleConfigEntry[]): ConsoleConfigEntry[] {
+  return config.filter(isModelConfigEntry);
+}
+
 export function modelConfigCount(config: readonly ConsoleConfigEntry[]): number {
-  return config.filter(isModelConfigEntry).length;
+  return modelConfigEntries(config).length;
 }
