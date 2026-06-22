@@ -487,6 +487,112 @@
   white-space: nowrap;
 }
 
+.gsv-desktop-tabs {
+  position: absolute;
+  z-index: 9;
+  left: 0;
+  bottom: 54px;
+  width: min(248px, calc(100% - 24px));
+  color: #9d98d8;
+  font-family: var(--gsv-font-mono);
+}
+
+.gsv-desktop-tabs header {
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 20px 7px;
+}
+
+.gsv-desktop-tabs header span {
+  color: #a9a4ff;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0.32em;
+}
+
+.gsv-desktop-tabs header small {
+  color: #7d78b8;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+.gsv-desktop-tabs > div {
+  display: flex;
+  flex-direction: column;
+}
+
+.gsv-desktop-tab-row {
+  position: relative;
+  min-height: 36px;
+  display: flex;
+  align-items: stretch;
+}
+
+.gsv-desktop-tab-row.is-active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent-bright);
+  box-shadow: 0 0 8px var(--accent-bright);
+}
+
+.gsv-desktop-tab-row > button {
+  border: 0;
+  background: transparent;
+  color: #9d98d8;
+  font: inherit;
+  cursor: pointer;
+}
+
+.gsv-desktop-tab-row > button:first-child {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 8px 9px 20px;
+  text-align: left;
+}
+
+.gsv-desktop-tab-row > button:last-child {
+  width: 30px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: #7d78b8;
+}
+
+.gsv-desktop-tab-row:hover {
+  background: var(--hover-nav);
+}
+
+.gsv-desktop-tab-row > button:hover,
+.gsv-desktop-tab-row > button:focus-visible {
+  color: var(--text-hi);
+  outline: none;
+}
+
+.gsv-desktop-tab-row.is-active > button:first-child {
+  color: var(--accent-bright);
+}
+
+.gsv-desktop-tab-row span {
+  min-width: 0;
+  overflow: hidden;
+  color: inherit;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .gsv-collapsed-desktop {
   position: absolute;
   inset: 0;
