@@ -21,7 +21,7 @@ type SettingsRoute =
   | { view: "list"; kind: ConsoleListKind; detailId?: string; createNew?: boolean }
   | { view: "config"; kind: ConsoleConfigKind }
   | { view: "crew" }
-  | { view: "agent"; accountUid: number | null };
+  | { view: "agent"; accountUid: number | null; createNew?: boolean };
 type SettingsListSurface = "machines" | "messengers" | "integrations" | "applications" | "library" | "runtime";
 
 function surfaceTail(surface: ShellSurfaceId): string {
@@ -73,6 +73,9 @@ function settingsRouteLabel(route: SettingsRoute): string {
     return "CREW";
   }
   if (route.view === "agent") {
+    if (route.createNew) {
+      return "NEW AGENT";
+    }
     return "AGENT";
   }
   if (route.view === "config") {
@@ -117,6 +120,9 @@ export function GsvConsole({
   const openSettingsAgent = (uid: number) => {
     setSelectedAgentUid(uid);
     setSettingsRoute({ view: "agent", accountUid: uid });
+  };
+  const openSettingsNewAgent = () => {
+    setSettingsRoute({ view: "agent", accountUid: null, createNew: true });
   };
   const backToSettingsCrew = () => setSettingsRoute({ view: "crew" });
   const openSettingsListDetail = (kind: ConsoleListKind, detailId: string) => {
@@ -212,9 +218,13 @@ export function GsvConsole({
           ) : settingsRoute.view === "config" ? (
             <ConsoleConfigPage kind={settingsRoute.kind} />
           ) : settingsRoute.view === "crew" ? (
-            <ConsoleCrewPage onManageAgent={openSettingsAgent} />
+            <ConsoleCrewPage onManageAgent={openSettingsAgent} onCreateAgent={openSettingsNewAgent} />
           ) : (
-            <ConsoleAgentPage accountUid={settingsRoute.accountUid} onBackToCrew={backToSettingsCrew} />
+            <ConsoleAgentPage
+              accountUid={settingsRoute.accountUid}
+              createNew={settingsRoute.createNew === true}
+              onBackToCrew={backToSettingsCrew}
+            />
           )
         ) : activeSurface === "runtime" ? (
           <ConsoleListPage kind="tasks" />

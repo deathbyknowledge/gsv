@@ -12,11 +12,15 @@ import {
 } from "../components/ConsolePageTemplate";
 import type {
   ConsoleAccount,
-  ConsoleAccountRelation,
   ConsoleProcess,
   ConsoleResourceState,
 } from "../domain/consoleModels";
 import { modelLabelsForConfig } from "../domain/consoleAi";
+import {
+  agentImageSrcForAccount,
+  agentImageSrcForIndex,
+  labelForConsoleAccountRelation,
+} from "../domain/agentPresentation";
 import {
   useConsoleAccounts,
   useConsoleConfig,
@@ -26,24 +30,31 @@ import "./ConsoleAgentPage.css";
 
 type ConsoleAgentPageProps = {
   accountUid: number | null;
+  createNew?: boolean;
   onBackToCrew: () => void;
-};
-
-const RELATION_LABEL: Record<ConsoleAccountRelation, string> = {
-  self: "OPERATOR",
-  "personal-agent": "PERSONAL AGENT",
-  agent: "AGENT",
-  human: "HUMAN",
-  unknown: "ACCOUNT",
 };
 
 export function ConsoleAgentPage({
   accountUid,
+  createNew = false,
   onBackToCrew,
 }: ConsoleAgentPageProps) {
   const accounts = useConsoleAccounts();
   const config = useConsoleConfig();
   const processes = useConsoleProcesses();
+  const modelLabels = modelLabelsForConfig(config.config);
+
+  if (createNew) {
+    return (
+      <ConsolePage flush>
+        <NewAgentEditorSurface
+          accountCount={accounts.resource.data?.length ?? 0}
+          modelLabels={modelLabels}
+          onBackToCrew={onBackToCrew}
+        />
+      </ConsolePage>
+    );
+  }
 
   return (
     <ConsolePage flush>
@@ -59,7 +70,8 @@ export function ConsoleAgentPage({
           return (
             <AgentEditorSurface
               account={account}
-              modelLabels={modelLabelsForConfig(config.config)}
+              accounts={data}
+              modelLabels={modelLabels}
               processResource={processes.resource}
               onBackToCrew={onBackToCrew}
             />
@@ -72,11 +84,13 @@ export function ConsoleAgentPage({
 
 function AgentEditorSurface({
   account,
+  accounts,
   modelLabels,
   processResource,
   onBackToCrew,
 }: {
   account: ConsoleAccount;
+  accounts: readonly ConsoleAccount[];
   modelLabels: string[];
   processResource: ConsoleResourceState<ConsoleProcess[]>;
   onBackToCrew: () => void;
@@ -104,10 +118,10 @@ function AgentEditorSurface({
       <AgentEditor
         key={account.uid}
         mode="manage"
-        avatarSrc={`/img/agent-${Math.abs(account.uid) % 3}.png`}
+        avatarSrc={agentImageSrcForAccount(account, accounts)}
         containerWidth={width || undefined}
         initialName={account.displayName}
-        initialRole={RELATION_LABEL[account.relation]}
+        initialRole={labelForConsoleAccountRelation(account.relation)}
         initialDescription={accountDescription(account)}
         createdLabel={String(account.uid)}
         metaLabel="UID:"
@@ -115,6 +129,52 @@ function AgentEditorSurface({
         models={modelLabels}
         tasks={tasksForProcesses(processes)}
         files={filesForAccount(account, processes, processResource)}
+        readOnly
+        onBack={onBackToCrew}
+      />
+    </section>
+  );
+}
+
+function NewAgentEditorSurface({
+  accountCount,
+  modelLabels,
+  onBackToCrew,
+}: {
+  accountCount: number;
+  modelLabels: string[];
+  onBackToCrew: () => void;
+}) {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(0);
+
+  useLayoutEffect(() => {
+    const node = rootRef.current;
+    if (!node) return;
+    const update = () => setWidth(node.clientWidth);
+    update();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", update);
+      return () => window.removeEventListener("resize", update);
+    }
+    const observer = new ResizeObserver(update);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <section class="gsv-console-agent" ref={rootRef}>
+      <AgentEditor
+        key="new-agent-draft"
+        mode="new"
+        avatarSrc={agentImageSrcForIndex(accountCount)}
+        containerWidth={width || undefined}
+        initialRole="AGENT"
+        initialDescription=""
+        createdLabel="DRAFT"
+        metaLabel="STATUS:"
+        status="idle"
+        models={modelLabels}
         readOnly
         onBack={onBackToCrew}
       />
@@ -214,5 +274,5 @@ function accountDescription(account: ConsoleAccount): string {
   if (account.gecos.trim().length > 0) {
     return account.gecos;
   }
-  return `${account.username} / ${RELATION_LABEL[account.relation]}`;
+  return `${account.username} / ${labelForConsoleAccountRelation(account.relation)}`;
 }
