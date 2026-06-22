@@ -26,6 +26,8 @@
   font-size: 13.5px;
   line-height: 1.55;
   color: #cdd2e0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
   text-wrap: pretty;
 }
 
@@ -41,11 +43,26 @@
 }
 
 .gsv-sm-copy {
+  border: 0;
+  background: transparent;
+  color: inherit;
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  padding: 0;
   cursor: pointer;
+  font: inherit;
+  letter-spacing: inherit;
 }
-.gsv-sm-copy:hover {
+.gsv-sm-copy:hover,
+.gsv-sm-copy:focus-visible {
   color: #9a94ff;
+  outline: none;
+}
+.gsv-sm-copy:disabled {
+  opacity: 0.48;
+  cursor: default;
+}
+.gsv-sm-copy.is-failed {
+  color: var(--error);
 }
