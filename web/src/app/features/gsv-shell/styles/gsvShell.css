@@ -1258,15 +1258,7 @@
   box-shadow: 0 0 22px rgba(150, 140, 255, 0.28), 0 12px 32px rgba(0, 0, 0, 0.55);
 }
 
-.gsv-chat-min img {
-  width: 40px;
-  height: 40px;
-  flex: none;
-  object-fit: contain;
-  image-rendering: pixelated;
-}
-
-.gsv-chat-min span {
+.gsv-chat-min-copy {
   flex: 1;
   display: grid;
   gap: 5px;

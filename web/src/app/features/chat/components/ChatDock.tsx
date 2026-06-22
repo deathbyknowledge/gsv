@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
+import { AgentImage } from "../../../components/ui/AgentImage";
 import { Avatar } from "../../../components/ui/Avatar";
 import { Icon } from "../../../components/ui/Icon";
 import { IconButton } from "../../../components/ui/IconButton";
@@ -338,17 +339,14 @@ export function ChatDock({
   if (!open) {
     return (
       <button type="button" class="gsv-chat-min" onClick={onToggleOpen}>
-        <span class="gsv-chat-avatar">
-          <Avatar src={activeAgent.imageSrc} status={activeAgent.status} size={40} />
-        </span>
-        <span>
+        <AgentImage src={activeAgent.imageSrc} size={40} />
+        <span class="gsv-chat-min-copy">
           <strong>{activeAgent.name}</strong>
           <small>
             {activeAgent.activity}
             <i />
           </small>
         </span>
-        <Icon name="chat" size={18} />
       </button>
     );
   }
