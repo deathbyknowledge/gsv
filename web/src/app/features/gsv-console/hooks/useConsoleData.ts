@@ -214,6 +214,7 @@ export function useCreateConsoleAgent() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: consoleAccountsQueryKey }),
         queryClient.invalidateQueries({ queryKey: consoleAgentContextQueryKey }),
+        queryClient.invalidateQueries({ queryKey: consoleConfigQueryKey }),
         queryClient.invalidateQueries({ queryKey: consoleOverviewQueryKey }),
       ]);
     },

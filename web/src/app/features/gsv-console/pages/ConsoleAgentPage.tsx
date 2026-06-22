@@ -258,6 +258,11 @@ function agentDraftToCreateInput(draft: AgentEditorDraft) {
     name: draft.name,
     role: draft.role,
     description: draft.description,
+    model: draft.modelIndex === 0 ? "" : draft.model,
+    approval: serializeApprovalPolicy({
+      default: approvalActionFromValue(draft.permission),
+      rules: [],
+    }),
     files: draft.files.map((file) => ({
       label: file.label,
       content: file.content,
