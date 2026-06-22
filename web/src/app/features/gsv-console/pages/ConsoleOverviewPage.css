@@ -1,6 +1,7 @@
 .gsv-settings-overview {
   flex: 1;
-  min-height: 100%;
+  min-height: calc(100% - 72px);
+  margin-bottom: 72px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   border: 1px solid var(--border-raised);
@@ -29,6 +30,26 @@
 .gsv-settings-right .gsv-settings-block:last-child {
   flex: 1;
   border-bottom: 0;
+}
+
+button.gsv-settings-action-header,
+button.gsv-settings-mini-heading,
+button.gsv-settings-overrides-state,
+button.gsv-settings-mini-row,
+button.gsv-settings-add-row,
+button.gsv-settings-deep-cell {
+  width: 100%;
+  appearance: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+button.gsv-settings-action-header,
+button.gsv-settings-deep-cell {
+  padding: 0;
+  border: 0;
 }
 
 .gsv-settings-ship-visual {
@@ -121,6 +142,15 @@
   background: var(--hover-nav) !important;
 }
 
+.gsv-settings-action-header[data-clickable="true"]:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.gsv-settings-action-header[data-clickable="true"]:focus-visible > div {
+  background: var(--hover-nav) !important;
+}
+
 .gsv-settings-action-header > .gsv-settings-chevron {
   position: absolute;
   right: 16px;
@@ -159,8 +189,23 @@
 .gsv-settings-overrides-state[data-clickable="true"]:hover,
 .gsv-settings-mini-row[data-clickable="true"]:hover,
 .gsv-settings-add-row[data-clickable="true"]:hover,
-.gsv-settings-deep-cell[data-clickable="true"]:hover {
+.gsv-settings-deep-cell[data-clickable="true"]:hover,
+.gsv-settings-mini-heading[data-clickable="true"]:focus-visible,
+.gsv-settings-action-header[data-clickable="true"]:focus-visible,
+.gsv-settings-overrides-state[data-clickable="true"]:focus-visible,
+.gsv-settings-mini-row[data-clickable="true"]:focus-visible,
+.gsv-settings-add-row[data-clickable="true"]:focus-visible,
+.gsv-settings-deep-cell[data-clickable="true"]:focus-visible {
   background: var(--hover);
+}
+
+.gsv-settings-mini-heading[data-clickable="true"]:focus-visible,
+.gsv-settings-overrides-state[data-clickable="true"]:focus-visible,
+.gsv-settings-mini-row[data-clickable="true"]:focus-visible,
+.gsv-settings-add-row[data-clickable="true"]:focus-visible,
+.gsv-settings-deep-cell[data-clickable="true"]:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
 }
 
 .gsv-settings-mini-heading small {

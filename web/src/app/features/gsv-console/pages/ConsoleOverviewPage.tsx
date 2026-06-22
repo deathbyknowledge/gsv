@@ -48,6 +48,7 @@ type OverviewRow = {
 
 type CrewCard = {
   id: string;
+  accountUid: number;
   name: string;
   meta: string;
   imageSrc: string;
@@ -64,6 +65,7 @@ type StatLine = {
 type OverviewSurface = Exclude<ShellSurfaceId, "desktop">;
 export type ConsoleOverviewTarget = OverviewSurface | "models" | "new-agent" | "overrides";
 type OpenSurface = (surface: ConsoleOverviewTarget) => void;
+type OpenAgent = (accountUid: number) => void;
 type OpenListDetail = (kind: ConsoleListKind, detailId: string) => void;
 type OpenListCreate = (kind: ConsoleListKind) => void;
 
@@ -192,6 +194,7 @@ function crewCards(accounts: readonly ConsoleAccount[], processes: readonly Cons
     .slice(0, 3)
     .map((account, index) => ({
       id: String(account.uid),
+      accountUid: account.uid,
       imageSrc: agentImageSrcForIndex(index),
       name: account.displayName,
       ...accountStatus(account, processes),
@@ -252,18 +255,28 @@ function MiniHeading({
   onClick?: () => void;
   showChevron?: boolean;
 }) {
-  return (
-    <div class="gsv-settings-mini-heading" data-clickable={onClick ? "true" : undefined} onClick={onClick}>
+  const content = (
+    <>
       <span>{title}</span>
       {meta ? <small>{meta}</small> : null}
       {showChevron ? <Chevron /> : null}
+    </>
+  );
+
+  return onClick ? (
+    <button type="button" class="gsv-settings-mini-heading" data-clickable="true" onClick={onClick}>
+      {content}
+    </button>
+  ) : (
+    <div class="gsv-settings-mini-heading">
+      {content}
     </div>
   );
 }
 
 function MiniRow({ row, showIcon = true, onClick }: { row: OverviewRow; showIcon?: boolean; onClick?: () => void }) {
-  return (
-    <div class="gsv-settings-mini-row" data-clickable={onClick ? "true" : undefined} onClick={onClick}>
+  const content = (
+    <>
       {showIcon ? (
         <span class="gsv-settings-mini-icon">
           {row.icon ? <Icon name={row.icon} size={18} /> : <StatusDot tone={row.tone} size={8} />}
@@ -277,11 +290,21 @@ function MiniRow({ row, showIcon = true, onClick }: { row: OverviewRow; showIcon
       </span>
       {row.tag ? <Tag label={row.tag.label} tone={row.tag.tone} boxed /> : null}
       {row.statusLabel ? <span class={`gsv-settings-status is-${row.tone}`}>{row.statusLabel}</span> : null}
-      {showIcon ? (
+      {showIcon && row.icon ? (
         <span class="gsv-settings-tail-dot">
           <StatusDot tone={row.tone} size={8} />
         </span>
       ) : null}
+    </>
+  );
+
+  return onClick ? (
+    <button type="button" class="gsv-settings-mini-row" data-clickable="true" onClick={onClick}>
+      {content}
+    </button>
+  ) : (
+    <div class="gsv-settings-mini-row">
+      {content}
     </div>
   );
 }
@@ -296,11 +319,21 @@ function EmptyRow({ label }: { label: string }) {
 }
 
 function AddRow({ label, onClick }: { label: string; onClick?: () => void }) {
-  return (
-    <div class="gsv-settings-add-row" data-clickable={onClick ? "true" : undefined} onClick={onClick}>
+  const content = (
+    <>
       <Icon name="plus" size={15} />
       <span>{label}</span>
       <Chevron />
+    </>
+  );
+
+  return onClick ? (
+    <button type="button" class="gsv-settings-add-row" data-clickable="true" onClick={onClick}>
+      {content}
+    </button>
+  ) : (
+    <div class="gsv-settings-add-row">
+      {content}
     </div>
   );
 }
@@ -331,10 +364,20 @@ function ActionSectionHeader({
   onClick?: () => void;
   title: string;
 }) {
-  return (
-    <div class="gsv-settings-action-header" data-clickable={onClick ? "true" : undefined} onClick={onClick}>
+  const content = (
+    <>
       <SectionHeader title={title} meta={meta} divider />
       {onClick ? <Chevron /> : null}
+    </>
+  );
+
+  return onClick ? (
+    <button type="button" class="gsv-settings-action-header" data-clickable="true" onClick={onClick}>
+      {content}
+    </button>
+  ) : (
+    <div class="gsv-settings-action-header">
+      {content}
     </div>
   );
 }
@@ -389,17 +432,27 @@ function ShipPanel({
         right={(
           <div class="gsv-settings-mini-cell">
             <MiniHeading title="OVERRIDES" />
-            <div
-              class="gsv-settings-overrides-state"
-              data-clickable={onOpenSurface ? "true" : undefined}
-              onClick={onOpenSurface ? () => onOpenSurface("overrides") : undefined}
-            >
-              <span class="gsv-settings-overrides-copy">
-                <span>{configured > 0 ? `${configured} CONFIGURED` : "NOT CONFIGURED"}</span>
-                {redacted > 0 ? <Tag label={`${redacted} REDACTED`} tone="warn" boxed /> : null}
-              </span>
-              {onOpenSurface ? <Chevron /> : null}
-            </div>
+            {onOpenSurface ? (
+              <button
+                type="button"
+                class="gsv-settings-overrides-state"
+                data-clickable="true"
+                onClick={() => onOpenSurface("overrides")}
+              >
+                <span class="gsv-settings-overrides-copy">
+                  <span>{configured > 0 ? `${configured} CONFIGURED` : "NOT CONFIGURED"}</span>
+                  {redacted > 0 ? <Tag label={`${redacted} REDACTED`} tone="warn" boxed /> : null}
+                </span>
+                <Chevron />
+              </button>
+            ) : (
+              <div class="gsv-settings-overrides-state">
+                <span class="gsv-settings-overrides-copy">
+                  <span>{configured > 0 ? `${configured} CONFIGURED` : "NOT CONFIGURED"}</span>
+                  {redacted > 0 ? <Tag label={`${redacted} REDACTED`} tone="warn" boxed /> : null}
+                </span>
+              </div>
+            )}
           </div>
         )}
       />
@@ -409,10 +462,12 @@ function ShipPanel({
 
 function CrewPanel({
   accounts,
+  onOpenAgent,
   onOpenSurface,
   processes,
 }: {
   accounts: readonly ConsoleAccount[];
+  onOpenAgent?: OpenAgent;
   onOpenSurface?: OpenSurface;
   processes: readonly ConsoleProcess[];
 }) {
@@ -430,7 +485,11 @@ function CrewPanel({
             imageSrc={card.imageSrc}
             key={card.id}
             name={card.name}
-            onClick={onOpenSurface ? () => onOpenSurface("crew") : undefined}
+            onClick={onOpenAgent
+              ? () => onOpenAgent(card.accountUid)
+              : onOpenSurface
+                ? () => onOpenSurface("crew")
+                : undefined}
             statusLabel={card.statusLabel}
             tone={card.tone}
           />
@@ -470,11 +529,12 @@ function ModelsTasksPanel({
   return (
     <SplitCells
       className="gsv-settings-model-task-split"
-      left={(
-        <div
+      left={onOpenSurface ? (
+        <button
+          type="button"
           class="gsv-settings-deep-cell"
-          data-clickable={onOpenSurface ? "true" : undefined}
-          onClick={onOpenSurface ? () => onOpenSurface("models") : undefined}
+          data-clickable="true"
+          onClick={() => onOpenSurface("models")}
         >
           <MiniHeading title="MODELS" />
           <div class="gsv-settings-model-summary">
@@ -482,13 +542,22 @@ function ModelsTasksPanel({
             <small>{modelCount > 1 ? `+ ${modelCount - 1} OTHER MODEL SETTINGS` : `${config.length} CONFIG ENTRIES`}</small>
           </div>
           <Chevron />
+        </button>
+      ) : (
+        <div class="gsv-settings-deep-cell">
+          <MiniHeading title="MODELS" />
+          <div class="gsv-settings-model-summary">
+            <span>DEFAULT: <strong>{model}</strong></span>
+            <small>{modelCount > 1 ? `+ ${modelCount - 1} OTHER MODEL SETTINGS` : `${config.length} CONFIG ENTRIES`}</small>
+          </div>
         </div>
       )}
-      right={(
-        <div
+      right={onOpenSurface ? (
+        <button
+          type="button"
           class="gsv-settings-deep-cell"
-          data-clickable={onOpenSurface ? "true" : undefined}
-          onClick={onOpenSurface ? () => onOpenSurface("runtime") : undefined}
+          data-clickable="true"
+          onClick={() => onOpenSurface("runtime")}
         >
           <MiniHeading title="TASKS" />
           <div class="gsv-settings-task-summary">
@@ -500,6 +569,18 @@ function ModelsTasksPanel({
             ))}
           </div>
           <Chevron />
+        </button>
+      ) : (
+        <div class="gsv-settings-deep-cell">
+          <MiniHeading title="TASKS" />
+          <div class="gsv-settings-task-summary">
+            {stats.map((stat) => (
+              <span key={stat.label}>
+                <StatusDot tone={stat.tone} size={8} />
+                {stat.label} · {stat.value}
+              </span>
+            ))}
+          </div>
         </div>
       )}
     />
@@ -614,12 +695,14 @@ function SatellitesPanel({
 function SettingsOverviewDashboard({
   counts,
   data,
+  onOpenAgent,
   onOpenListCreate,
   onOpenListDetail,
   onOpenSurface,
 }: {
   counts: ConsoleOverviewCounts | null;
   data: ConsoleOverviewData;
+  onOpenAgent?: OpenAgent;
   onOpenListCreate?: OpenListCreate;
   onOpenListDetail?: OpenListDetail;
   onOpenSurface?: OpenSurface;
@@ -638,7 +721,12 @@ function SettingsOverviewDashboard({
           terminalBackground={terminalBackground}
           onTerminalBackgroundChange={setTerminalBackground}
         />
-        <CrewPanel accounts={data.accounts} onOpenSurface={onOpenSurface} processes={data.processes} />
+        <CrewPanel
+          accounts={data.accounts}
+          onOpenAgent={onOpenAgent}
+          onOpenSurface={onOpenSurface}
+          processes={data.processes}
+        />
         <ModelsTasksPanel config={data.config} counts={counts} onOpenSurface={onOpenSurface} processes={data.processes} />
       </div>
       <div class="gsv-settings-right">
@@ -662,10 +750,12 @@ function SettingsOverviewDashboard({
 }
 
 export function ConsoleOverviewPage({
+  onOpenAgent,
   onOpenListCreate,
   onOpenListDetail,
   onOpenSurface,
 }: {
+  onOpenAgent?: OpenAgent;
   onOpenListCreate?: OpenListCreate;
   onOpenListDetail?: OpenListDetail;
   onOpenSurface?: OpenSurface;
@@ -682,6 +772,7 @@ export function ConsoleOverviewPage({
           <SettingsOverviewDashboard
             counts={overview.counts}
             data={data}
+            onOpenAgent={onOpenAgent}
             onOpenListCreate={onOpenListCreate}
             onOpenListDetail={onOpenListDetail}
             onOpenSurface={onOpenSurface}
