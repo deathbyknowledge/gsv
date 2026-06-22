@@ -137,8 +137,9 @@ export function GsvDesktop({
             <div class="gsv-space-control-popover" aria-label="GSV controls">
               <IconMenu
                 title="GSV // CONTROL"
-                width={386}
+                width={430}
                 onClose={onToggleGsv}
+                onRuntime={() => onOpenSurface("runtime")}
                 onFiles={() => onOpenSurface("files")}
                 onLibrary={() => onOpenSurface("library")}
                 onTerminal={() => onOpenSurface("terminal")}

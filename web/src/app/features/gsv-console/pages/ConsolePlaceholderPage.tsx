@@ -14,6 +14,7 @@ const ICON_FOR_SURFACE: Record<Exclude<ShellSurfaceId, "desktop">, string> = {
   agent: "chat",
   machines: "computer",
   object: "gmail",
+  runtime: "list",
   files: "folder",
   library: "pencil",
   terminal: "terminal",

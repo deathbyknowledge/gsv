@@ -21,6 +21,9 @@ function surfaceTail(surface: ShellSurfaceId): string {
   if (surface === "terminal") {
     return "GSV · CONSOLE";
   }
+  if (surface === "runtime") {
+    return "GSV · RUNTIME";
+  }
   if (surface === "crew" || surface === "agent") {
     return "GSV · CREW";
   }
@@ -44,6 +47,8 @@ export function GsvConsole({
       <div class="gsv-console-stage">
         {activeSurface === "settings" ? (
           <ConsoleOverviewPage />
+        ) : activeSurface === "runtime" ? (
+          <ConsoleListPage kind="tasks" />
         ) : activeSurface === "crew" ? (
           <ConsoleListPage kind="crew" />
         ) : activeSurface === "machines" ? (
