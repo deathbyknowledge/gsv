@@ -1,7 +1,10 @@
 import type { RefObject } from "preact";
 import type { ProcHistoryMessage } from "@humansandmachines/gsv/protocol";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { Icon } from "../../components/ui/Icon";
+import { IconMenu } from "../../components/ui/IconMenu";
 import { ObjectCard } from "../../components/ui/ObjectCard";
+import { StatusDot } from "../../components/ui/StatusDot";
 import type { StatusTone } from "../../components/ui/StatusDot";
 import { ChatDock } from "../chat/components/ChatDock";
 import type { ChatDockMessage } from "../chat/components/ChatDock";
@@ -19,7 +22,7 @@ import { GsvDesktop } from "./desktop/GsvDesktop";
 import { LegacyRuntimeAnchors } from "./legacy/LegacyRuntimeAnchors";
 import { ShellRail } from "./navigation/ShellRail";
 import { ShellStatusBar } from "./navigation/ShellStatusBar";
-import { shellSurfaceLabel } from "./domain/shellModel";
+import { shellSurfaceLabel, type DesktopObject, type DesktopObjectId } from "./domain/shellModel";
 import { buildDesktopObjectsFromConsole } from "./domain/desktopObjects";
 import { useGsvShellState } from "./hooks/useGsvShellState";
 import "./styles/gsvShell.css";
@@ -90,6 +93,49 @@ function useClock(): string {
   }, []);
 
   return clock;
+}
+
+type CollapsedDesktopProps = {
+  desktopObjects: readonly DesktopObject[];
+  totalDesktopObjects: number;
+  onOpenPicker: (id: DesktopObjectId) => void;
+  onOpenControlMenu: () => void;
+};
+
+function CollapsedDesktop({
+  desktopObjects,
+  totalDesktopObjects,
+  onOpenPicker,
+  onOpenControlMenu,
+}: CollapsedDesktopProps) {
+  return (
+    <div class="gsv-collapsed-desktop">
+      <div class="gsv-collapsed-desktop-panel">
+        <header>
+          <div>
+            <span>DESKTOP // GSV</span>
+            <strong>{totalDesktopObjects} objects</strong>
+            <small>LIVE OBJECT MAP</small>
+          </div>
+          <button type="button" onClick={onOpenControlMenu}>GSV</button>
+        </header>
+        <div class="gsv-collapsed-desktop-branches">
+          {desktopObjects.map((object) => (
+            <button
+              key={object.id}
+              type="button"
+              title={`${object.label}: ${object.meta}, ${object.statusLabel}`}
+              onClick={() => onOpenPicker(object.id)}
+            >
+              <StatusDot tone={object.status} size={7} />
+              <span>{object.label}</span>
+              <small>{object.meta}</small>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export function GsvShell({
@@ -199,10 +245,17 @@ export function GsvShell({
   }, [activeChatProcess, chatProcessList, chatStatusLabel]);
 
   return (
-    <div class="gsv-shell-root" hidden={!desktopVisible}>
-      <div ref={rootRef} class={`gsv-shell-viewport${shell.chatOpen ? " has-chat" : ""}`}>
+    <div
+      class="gsv-shell-root"
+      hidden={!desktopVisible}
+      style={{ "--gsv-chat-width": `${shell.chatOpen ? shell.resolvedChatWidth : 0}px` }}
+    >
+      <div
+        ref={rootRef}
+        class={`gsv-shell-viewport${shell.chatOpen ? " has-chat" : ""}${shell.chatDragging ? " is-chat-dragging" : ""}`}
+      >
         <main
-          class={`gsv-shell-world${shell.activeTab ? " has-page" : ""}${shell.desktopCollapsed ? " is-desktop-collapsed" : ""}`}
+          class={`gsv-shell-world${shell.activeTab ? " has-page" : ""}${shell.desktopCollapsed ? " is-desktop-collapsed" : ""}${shell.railCollapsed ? " is-rail-collapsed" : ""} is-rail-mode-${shell.railMode}`}
           style={{ "--gsv-rail-width": `${shell.showRail ? (shell.railCollapsed ? 64 : 262) : 0}px` }}
         >
           {shell.showRail ? (
@@ -216,6 +269,7 @@ export function GsvShell({
               onSetRailMode={shell.setRailMode}
               onBackToDesktop={shell.backToDesktop}
               onOpenPicker={shell.openPicker}
+              onOpenControlMenu={shell.openControlMenu}
               onOpenSurface={shell.openSurface}
               onActivateTab={shell.activateTab}
               onCloseTab={shell.closeTab}
@@ -226,13 +280,12 @@ export function GsvShell({
             {shell.activeTab ? (
               <GsvConsole activeSurface={shell.activeTab.surface} onBackToDesktop={shell.backToDesktop} />
             ) : shell.desktopCollapsed ? (
-              <div class="gsv-collapsed-desktop">
-                <div>
-                  <span>DESKTOP // GSV</span>
-                  <strong>{shell.totalDesktopObjects} objects</strong>
-                  <small>use the rail to select an object branch</small>
-                </div>
-              </div>
+              <CollapsedDesktop
+                desktopObjects={desktopObjects}
+                totalDesktopObjects={shell.totalDesktopObjects}
+                onOpenPicker={shell.openPicker}
+                onOpenControlMenu={shell.openControlMenu}
+              />
             ) : (
               <GsvDesktop
                 desktopObjects={desktopObjects}
@@ -253,27 +306,58 @@ export function GsvShell({
             )}
 
             {shell.pickerId ? (
-              <div class="gsv-picker-overlay" onClick={() => shell.setPickerId(null)}>
-                <div onClick={(event) => event.stopPropagation()}>
+              <div
+                class={`gsv-picker-overlay${shell.pickerId === "gsv" ? " is-control-picker" : ""}`}
+                role="dialog"
+                aria-modal="true"
+                aria-label={shell.pickerTitle}
+                onClick={() => shell.setPickerId(null)}
+              >
+                <div class="gsv-picker-panel" onClick={(event) => event.stopPropagation()}>
                   <header>
-                    <span>{shell.pickerId === "tabs" ? "OPEN TABS" : `${shell.pickerObject?.label ?? "OBJECTS"} · SELECT AN OBJECT`}</span>
+                    <div>
+                      <span>{shell.pickerTitle}</span>
+                      <small>
+                        <StatusDot tone={shell.pickerObject?.status ?? (shell.pickerId === "tabs" ? "live" : "online")} size={7} />
+                        {shell.pickerSubtitle}
+                      </small>
+                    </div>
                     <button type="button" onClick={() => shell.setPickerId(null)} aria-label="Close picker">
                       x
                     </button>
                   </header>
-                  <div>
-                    {shell.pickerCards.map((card) => (
-                      <ObjectCard
-                        key={card.key}
-                        label={card.label}
-                        type={card.type}
-                        blurb={card.blurb}
-                        status={card.status}
-                        width={238}
-                        onClick={card.onClick}
+                  {shell.pickerId === "gsv" ? (
+                    <div class="gsv-picker-control">
+                      <IconMenu
+                        title="GSV // CONTROL"
+                        width={386}
+                        onClose={() => shell.setPickerId(null)}
+                        onRuntime={() => shell.openSurface("runtime")}
+                        onFiles={() => shell.openSurface("files")}
+                        onLibrary={() => shell.openSurface("library")}
+                        onTerminal={() => shell.openSurface("terminal")}
+                        onSettings={() => shell.openSurface("settings")}
                       />
-                    ))}
-                  </div>
+                    </div>
+                  ) : shell.pickerCards.length > 0 ? (
+                    <div class="gsv-picker-grid">
+                      {shell.pickerCards.map((card) => (
+                        <ObjectCard
+                          key={card.key}
+                          label={card.label}
+                          type={card.type}
+                          blurb={card.blurb}
+                          status={card.status}
+                          glyph={card.glyph}
+                          icon={card.icon ? <Icon name={card.icon} size={20} color="var(--accent-bright)" /> : undefined}
+                          width={238}
+                          onClick={card.onClick}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <div class="gsv-picker-empty">{shell.pickerEmptyLabel}</div>
+                  )}
                 </div>
               </div>
             ) : null}
