@@ -22,7 +22,8 @@ export type StoryGroup =
   | "Feedback"
   | "Data Display"
   | "Chrome"
-  | "Composite";
+  | "Composite"
+  | "Templates";
 
 export const STORY_GROUP_ORDER: StoryGroup[] = [
   "Foundations",
@@ -31,4 +32,5 @@ export const STORY_GROUP_ORDER: StoryGroup[] = [
   "Data Display",
   "Chrome",
   "Composite",
+  "Templates",
 ];

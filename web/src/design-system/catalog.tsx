@@ -27,9 +27,16 @@ import tooltip from "./stories/Tooltip.story";
 import listRow from "./stories/ListRow.story";
 import agentImage from "./stories/AgentImage.story";
 import avatar from "./stories/Avatar.story";
+import tile from "./stories/Tile.story";
+import objectCard from "./stories/ObjectCard.story";
 import iconButton from "./stories/IconButton.story";
 import sectionHeader from "./stories/SectionHeader.story";
 import addAction from "./stories/AddAction.story";
+import settingsDashboard from "./stories/SettingsDashboard.story";
+import crewPage from "./stories/CrewPage.story";
+import agentDetail from "./stories/AgentDetail.story";
+import settingsList from "./stories/SettingsList.story";
+import objectDetail from "./stories/ObjectDetail.story";
 import iconMenu from "./stories/IconMenu.story";
 import consoleHeader from "./stories/ConsoleHeader.story";
 import statusBar from "./stories/StatusBar.story";
@@ -65,6 +72,8 @@ const STORIES: Story[] = [
   tooltip,
   // Data Display
   listRow,
+  tile,
+  objectCard,
   agentImage,
   avatar,
   // Chrome
@@ -81,6 +90,12 @@ const STORIES: Story[] = [
   confirmModal,
   agentCard,
   agentEditor,
+  // Templates
+  settingsDashboard,
+  crewPage,
+  agentDetail,
+  settingsList,
+  objectDetail,
 ];
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -127,21 +142,51 @@ function useScrollSpy(slugs: string[]): string {
   return active;
 }
 
+type Tab = "components" | "templates";
+
+const TABS: { id: Tab; label: string }[] = [
+  { id: "components", label: "Components" },
+  { id: "templates", label: "Templates" },
+];
+
 export function Catalog() {
+  const [tab, setTab] = useState<Tab>("components");
+
+  // Templates live in their own tab; everything else is the Components tab.
+  const tabStories = STORIES.filter((s) =>
+    tab === "templates" ? s.group === "Templates" : s.group !== "Templates",
+  );
+
   const byGroup = new Map<StoryGroup, Story[]>();
-  for (const story of STORIES) {
+  for (const story of tabStories) {
     const list = byGroup.get(story.group) ?? [];
     list.push(story);
     byGroup.set(story.group, list);
   }
   const groups = STORY_GROUP_ORDER.filter((g) => byGroup.has(g));
-  const active = useScrollSpy(STORIES.map((s) => slugify(s.title)));
+  const active = useScrollSpy(tabStories.map((s) => slugify(s.title)));
+
+  const selectTab = (id: Tab) => {
+    setTab(id);
+    window.scrollTo(0, 0);
+  };
 
   return (
     <div class="ds-root">
       <header class="ds-topbar">
         <h1>GSV Design System</h1>
         <span class="ds-sub">migration preview · web/ port</span>
+        <div class="ds-tabs">
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              class={`ds-tab${tab === t.id ? " is-active" : ""}`}
+              onClick={() => selectTab(t.id)}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
       </header>
       <div class="ds-layout">
         <nav class="ds-nav">
