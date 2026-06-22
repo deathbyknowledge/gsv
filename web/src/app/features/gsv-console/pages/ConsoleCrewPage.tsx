@@ -2,7 +2,7 @@ import { AddAction } from "../../../components/ui/AddAction";
 import { AgentCard, type AgentTask } from "../../../components/ui/AgentCard";
 import type { AvatarStatus } from "../../../components/ui/Avatar";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
-import { StatusDot, type StatusTone } from "../../../components/ui/StatusDot";
+import type { StatusTone } from "../../../components/ui/StatusDot";
 import { Tag, type TagTone } from "../../../components/ui/Tag";
 import {
   ConsolePage,
@@ -34,13 +34,6 @@ type CrewCardModel = {
   tasks: AgentTask[];
   active: boolean;
   modelIsDefault: boolean;
-};
-
-type CrewMetric = {
-  label: string;
-  value: number | string;
-  tone: StatusTone;
-  meta: string;
 };
 
 const RELATION_LABEL: Record<ConsoleAccountRelation, string> = {
@@ -97,34 +90,22 @@ function CrewRoster({
   const running = cards.filter((card) => card.processes.some(isRunningProcess)).length;
   const runnable = accounts.filter((account) => account.runnable).length;
   const agents = accounts.filter(isAgentAccount).length;
-  const operators = accounts.filter((account) => account.relation === "self" || account.relation === "human").length;
-  const processMeta = processResource.isRefreshing
-    ? "REFRESHING PROCESS TELEMETRY"
+  const telemetryLabel = processResource.isRefreshing
+    ? "REFRESHING"
     : processResource.isError
-      ? "PROCESS TELEMETRY ERROR"
+      ? "TELEMETRY ERROR"
       : processResource.isUnavailable
-        ? "PROCESS TELEMETRY OFFLINE"
+        ? "TELEMETRY OFFLINE"
         : `${processes.length} PROCESS ${processes.length === 1 ? "TRACE" : "TRACES"}`;
-  const metrics: CrewMetric[] = [
-    { label: "AGENTS", value: agents, meta: "AUTONOMOUS", tone: agents > 0 ? "online" : "idle" },
-    { label: "OPERATORS", value: operators, meta: "HUMAN ACCESS", tone: operators > 0 ? "online" : "idle" },
-    { label: "RUNNABLE", value: runnable, meta: "PROC.SPAWN", tone: runnable > 0 ? "online" : "idle" },
-    { label: "PROCESSES", value: processes.length, meta: processMeta, tone: processToneForResource(processResource) },
-  ];
 
   return (
     <section class="gsv-console-crew">
       <div class="gsv-console-crew-panel">
         <SectionHeader
           title="CREW"
-          meta={`${cards.length} ACCOUNTS / ${running} RUNNING`}
+          meta={`${agents} AGENTS / ${runnable} RUNNABLE / ${running} RUNNING / ${telemetryLabel}`}
           divider
         />
-        <div class="gsv-console-crew-metrics">
-          {metrics.map((metric) => (
-            <CrewMetricCell key={metric.label} metric={metric} />
-          ))}
-        </div>
         <div class="gsv-console-crew-grid">
           {cards.map((card) => (
             <div class="gsv-console-crew-card-shell" key={card.account.uid}>
@@ -155,19 +136,6 @@ function CrewRoster({
         </div>
       </div>
     </section>
-  );
-}
-
-function CrewMetricCell({ metric }: { metric: CrewMetric }) {
-  return (
-    <div class="gsv-console-crew-metric">
-      <span>{metric.label}</span>
-      <strong>{metric.value}</strong>
-      <small>
-        <StatusDot tone={metric.tone} size={7} />
-        {metric.meta}
-      </small>
-    </div>
   );
 }
 
@@ -211,13 +179,6 @@ function accountRank(relation: ConsoleAccountRelation): number {
   if (relation === "self") return 2;
   if (relation === "human") return 3;
   return 4;
-}
-
-function processToneForResource(resource: ConsoleResourceState<ConsoleProcess[]>): StatusTone {
-  if (resource.isError) return "error";
-  if (resource.isUnavailable) return "idle";
-  if (resource.isLoading || resource.isRefreshing) return "live";
-  return resource.data && resource.data.length > 0 ? "online" : "idle";
 }
 
 function tagToneForCard(card: CrewCardModel): TagTone {
