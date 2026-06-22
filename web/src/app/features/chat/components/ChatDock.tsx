@@ -38,6 +38,7 @@ type ChatDockProps = {
   onToggleOpen: () => void;
   onToggleMax: () => void;
   onOpenCrew: () => void;
+  onOpenTasks?: () => void;
   onSendMessage?: (message: string) => void;
   onSelectAgent?: (agentId: string) => void;
 };
@@ -192,6 +193,7 @@ export function ChatDock({
   onToggleOpen,
   onToggleMax,
   onOpenCrew,
+  onOpenTasks,
   onSendMessage,
   onSelectAgent,
 }: ChatDockProps) {
@@ -416,9 +418,6 @@ export function ChatDock({
                 <span aria-hidden="true" />
               </button>
             ) : null}
-            <button type="button" onClick={onOpenCrew} aria-label="Open crew">
-              <Icon name="chat" size={16} />
-            </button>
             <IconButton glyph="max" size="medium" title={atMax ? "Restore chat" : "Expand chat"} onClick={onToggleMax} />
             <IconButton glyph="min" size="medium" title="Minimize chat" onClick={onToggleOpen} />
           </div>
@@ -481,11 +480,11 @@ export function ChatDock({
               class="gsv-chat-popover-action"
               onClick={() => {
                 setOpenPopover(null);
-                onOpenCrew();
+                (onOpenTasks ?? onOpenCrew)();
               }}
             >
-              <Icon name="chat" size={12} />
-              <span>OPEN CREW</span>
+              <Icon name="plus" size={12} />
+              <span>OPEN TASKS</span>
             </button>
           </div>
         ) : null}

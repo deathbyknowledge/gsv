@@ -1,7 +1,6 @@
 import { AgentCard } from "../../../components/ui/AgentCard";
 import { AddAction } from "../../../components/ui/AddAction";
 import { Avatar } from "../../../components/ui/Avatar";
-import { Icon } from "../../../components/ui/Icon";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
 import type { ChatAgentViewModel } from "../domain/agent";
 
@@ -73,7 +72,6 @@ export function ActiveAgentPanel({
             >
               <Avatar src={member.imageSrc} status={member.status} size={46} />
               <span class="gsv-chat-agent-crew-name">{member.name}</span>
-              <span class="gsv-chat-agent-crew-role">{member.role}</span>
               <span class="gsv-chat-agent-crew-status">{member.statusLabel}</span>
             </button>
           ))}
@@ -85,10 +83,6 @@ export function ActiveAgentPanel({
             <AddAction variant="tile" label="NEW AGENT" />
           </button>
         </div>
-        <button type="button" class="gsv-chat-agent-open-crew" onClick={openCrew}>
-          <Icon name="chat" size={14} />
-          <span>OPEN CREW</span>
-        </button>
       </div>
     </div>
   );
