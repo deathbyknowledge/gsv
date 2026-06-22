@@ -247,7 +247,6 @@ export function GsvShell({
                         title="GSV // CONTROL"
                         width={386}
                         onClose={() => shell.setPickerId(null)}
-                        onRuntime={() => shell.openSurface("runtime")}
                         onFiles={() => shell.openSurface("files")}
                         onLibrary={() => shell.openSurface("library")}
                         onTerminal={() => shell.openSurface("terminal")}

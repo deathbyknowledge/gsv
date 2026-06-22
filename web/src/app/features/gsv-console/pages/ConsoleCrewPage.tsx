@@ -11,11 +11,16 @@ import {
 } from "../components/ConsolePageTemplate";
 import type {
   ConsoleAccount,
-  ConsoleAccountRelation,
   ConsoleProcess,
   ConsoleResourceState,
 } from "../domain/consoleModels";
 import { modelLabelsForConfig } from "../domain/consoleAi";
+import {
+  agentImageSrcForIndex,
+  isConsoleAgentAccount,
+  labelForConsoleAccountRelation,
+  sortedConsoleAccounts,
+} from "../domain/agentPresentation";
 import {
   useConsoleAccounts,
   useConsoleConfig,
@@ -37,19 +42,12 @@ type CrewCardModel = {
   modelIsDefault: boolean;
 };
 
-const RELATION_LABEL: Record<ConsoleAccountRelation, string> = {
-  self: "OPERATOR",
-  "personal-agent": "PERSONAL AGENT",
-  agent: "AGENT",
-  human: "HUMAN",
-  unknown: "ACCOUNT",
-};
-
 type ConsoleCrewPageProps = {
   onManageAgent?: (uid: number) => void;
+  onCreateAgent?: () => void;
 };
 
-export function ConsoleCrewPage({ onManageAgent }: ConsoleCrewPageProps) {
+export function ConsoleCrewPage({ onManageAgent, onCreateAgent }: ConsoleCrewPageProps) {
   const accounts = useConsoleAccounts();
   const config = useConsoleConfig();
   const processes = useConsoleProcesses();
@@ -66,6 +64,7 @@ export function ConsoleCrewPage({ onManageAgent }: ConsoleCrewPageProps) {
             modelLabels={modelLabelsForConfig(config.config)}
             processResource={processes.resource}
             onManageAgent={onManageAgent}
+            onCreateAgent={onCreateAgent}
           />
         )}
       />
@@ -78,19 +77,20 @@ function CrewRoster({
   modelLabels,
   processResource,
   onManageAgent,
+  onCreateAgent,
 }: {
   accounts: readonly ConsoleAccount[];
   modelLabels: string[];
   processResource: ConsoleResourceState<ConsoleProcess[]>;
   onManageAgent?: (uid: number) => void;
+  onCreateAgent?: () => void;
 }) {
   const processes = processResource.data ?? [];
-  const cards = accounts
-    .map((account, index) => buildCrewCard(account, processes, index))
-    .sort(compareCrewCards);
+  const sortedAccounts = sortedConsoleAccounts(accounts);
+  const cards = sortedAccounts.map((account, index) => buildCrewCard(account, processes, index));
   const running = cards.filter((card) => card.processes.some(isRunningProcess)).length;
   const runnable = accounts.filter((account) => account.runnable).length;
-  const agents = accounts.filter(isAgentAccount).length;
+  const agents = accounts.filter(isConsoleAgentAccount).length;
   const telemetryLabel = processResource.isRefreshing
     ? "REFRESHING"
     : processResource.isError
@@ -137,9 +137,15 @@ function CrewRoster({
               </div>
             </div>
           ))}
-          <div class="gsv-console-crew-add-tile" aria-disabled="true">
-            <AddAction variant="tile" label="NEW AGENT" />
-          </div>
+          {onCreateAgent ? (
+            <button type="button" class="gsv-console-crew-add-tile" onClick={onCreateAgent}>
+              <AddAction variant="tile" label="NEW AGENT" />
+            </button>
+          ) : (
+            <div class="gsv-console-crew-add-tile" aria-disabled="true">
+              <AddAction variant="tile" label="NEW AGENT" />
+            </div>
+          )}
         </div>
       </div>
     </section>
@@ -167,14 +173,14 @@ function buildCrewCard(
   const queued = ownedProcesses.some(isQueuedProcess);
   const running = ownedProcesses.some(isRunningProcess);
   const unknown = ownedProcesses.some((process) => process.state === "unknown");
-  const role = RELATION_LABEL[account.relation];
+  const role = labelForConsoleAccountRelation(account.relation);
   const status: AvatarStatus = unknown ? "error" : running || queued ? "live" : account.runnable ? "idle" : "idle";
   const statusLabel = unknown ? "ERROR" : queued ? "QUEUED" : running ? "RUNNING" : account.runnable ? "IDLE" : "ACCOUNT";
 
   return {
     account,
     processes: ownedProcesses,
-    imageSrc: `/img/agent-${index % 3}.png`,
+    imageSrc: agentImageSrcForIndex(index),
     role,
     description: accountDescription(account),
     status,
@@ -182,22 +188,8 @@ function buildCrewCard(
     tone: unknown ? "error" : queued ? "update" : running ? "live" : account.runnable ? "idle" : "idle",
     tasks: tasksForProcesses(ownedProcesses),
     active: account.runnable,
-    modelIsDefault: isAgentAccount(account),
+    modelIsDefault: isConsoleAgentAccount(account),
   };
-}
-
-function compareCrewCards(left: CrewCardModel, right: CrewCardModel): number {
-  return accountRank(left.account.relation) - accountRank(right.account.relation)
-    || Number(right.account.runnable) - Number(left.account.runnable)
-    || left.account.username.localeCompare(right.account.username);
-}
-
-function accountRank(relation: ConsoleAccountRelation): number {
-  if (relation === "personal-agent") return 0;
-  if (relation === "agent") return 1;
-  if (relation === "self") return 2;
-  if (relation === "human") return 3;
-  return 4;
 }
 
 function tagToneForCard(card: CrewCardModel): TagTone {
@@ -205,10 +197,6 @@ function tagToneForCard(card: CrewCardModel): TagTone {
   if (card.tone === "update") return "update";
   if (card.tone === "error") return "error";
   return "idle";
-}
-
-function isAgentAccount(account: ConsoleAccount): boolean {
-  return account.relation === "personal-agent" || account.relation === "agent";
 }
 
 function ownsProcess(account: ConsoleAccount, process: ConsoleProcess): boolean {

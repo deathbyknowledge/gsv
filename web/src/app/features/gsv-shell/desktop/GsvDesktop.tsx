@@ -145,7 +145,6 @@ export function GsvDesktop({
                 title="GSV // CONTROL"
                 width={386}
                 onClose={onToggleGsv}
-                onRuntime={() => onOpenSurface("runtime")}
                 onFiles={() => onOpenSurface("files")}
                 onLibrary={() => onOpenSurface("library")}
                 onTerminal={() => onOpenSurface("terminal")}

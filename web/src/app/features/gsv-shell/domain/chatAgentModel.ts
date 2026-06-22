@@ -8,9 +8,13 @@ import type {
 import type { ChatProcessSummary } from "../../chat/domain/processes";
 import type {
   ConsoleAccount,
-  ConsoleAccountRelation,
   ConsoleProcess,
 } from "../../gsv-console/domain/consoleModels";
+import {
+  agentImageSrcForIndex,
+  labelForConsoleAccountRelation,
+  sortedConsoleAccounts,
+} from "../../gsv-console/domain/agentPresentation";
 
 type BuildShellChatAgentArgs = {
   activeProcess: ChatProcessSummary | null;
@@ -20,18 +24,6 @@ type BuildShellChatAgentArgs = {
   modelLabel: string;
   statusLabel: string;
 };
-
-const RELATION_LABEL: Record<ConsoleAccountRelation, string> = {
-  self: "OPERATOR",
-  "personal-agent": "PERSONAL AGENT",
-  agent: "AGENT",
-  human: "HUMAN",
-  unknown: "ACCOUNT",
-};
-
-function processImageSrc(index: number): string {
-  return `/img/agent-${index % 3}.png`;
-}
 
 function ownsChatProcess(account: ConsoleAccount, process: ChatProcessSummary): boolean {
   return process.uid === account.uid || process.username === account.username;
@@ -69,22 +61,6 @@ function agentStatusForRunState(runState?: string): ChatAgentStatus {
 
 function taskStatusForRunState(runState?: string): ChatAgentTaskStatus {
   return runState === "idle" ? "idle" : "running";
-}
-
-function accountRank(account: ConsoleAccount): number {
-  if (account.relation === "personal-agent") return 0;
-  if (account.relation === "agent") return 1;
-  if (account.relation === "self") return 2;
-  if (account.relation === "human") return 3;
-  return 4;
-}
-
-function sortedAccounts(accounts: readonly ConsoleAccount[]): ConsoleAccount[] {
-  return [...accounts].sort((left, right) => (
-    accountRank(left) - accountRank(right)
-    || Number(right.runnable) - Number(left.runnable)
-    || left.username.localeCompare(right.username)
-  ));
 }
 
 function processActivityTime(process: ChatProcessSummary): number {
@@ -163,7 +139,7 @@ function processCrewMember(
     processId: process.pid,
     name: process.title,
     role: process.username ? `PROCESS · ${process.username}` : "PROCESS",
-    imageSrc: processImageSrc(index),
+    imageSrc: agentImageSrcForIndex(index),
     status: agentStatusForRunState(process.runState),
     statusLabel: process.runState.replaceAll("_", " ").toUpperCase(),
     active: process.pid === activeProcess?.pid,
@@ -176,7 +152,7 @@ function accountCrewMembers(input: {
   chatProcesses: readonly ChatProcessSummary[];
   consoleProcesses: readonly ConsoleProcess[];
 }): ChatAgentCrewData[] {
-  const accounts = sortedAccounts(input.accounts);
+  const accounts = sortedConsoleAccounts(input.accounts);
   const members = accounts.map((account, index) => {
     const ownedChatProcesses = input.chatProcesses.filter((process) => ownsChatProcess(account, process));
     const ownedConsoleProcesses = input.consoleProcesses.filter((process) => ownsConsoleProcess(account, process));
@@ -191,8 +167,8 @@ function accountCrewMembers(input: {
       id: `account:${account.uid}`,
       processId: representative?.pid,
       name: account.displayName,
-      role: RELATION_LABEL[account.relation],
-      imageSrc: processImageSrc(index),
+      role: labelForConsoleAccountRelation(account.relation),
+      imageSrc: agentImageSrcForIndex(index),
       status: status.status,
       statusLabel: status.statusLabel,
       active: input.activeProcess ? ownsChatProcess(account, input.activeProcess) : false,
@@ -234,7 +210,7 @@ function accountBackedAgent(input: {
   consoleProcesses: readonly ConsoleProcess[];
   modelLabel: string;
 }): ChatAgentData | null {
-  const accountList = sortedAccounts(input.accounts);
+  const accountList = sortedConsoleAccounts(input.accounts);
   const primaryAccount = accountList.find((account) => account.runnable) ?? accountList[0] ?? null;
   if (!primaryAccount) {
     return null;
@@ -259,9 +235,9 @@ function accountBackedAgent(input: {
 
   return {
     name: primaryAccount.displayName,
-    role: RELATION_LABEL[primaryAccount.relation],
+    role: labelForConsoleAccountRelation(primaryAccount.relation),
     description,
-    imageSrc: processImageSrc(primaryIndex),
+    imageSrc: agentImageSrcForIndex(primaryIndex),
     status: status.status,
     statusLabel: status.statusLabel,
     activity: status.statusLabel,
@@ -290,7 +266,7 @@ export function buildShellChatAgent({
     });
   }
 
-  const accountList = sortedAccounts(accounts);
+  const accountList = sortedConsoleAccounts(accounts);
   const activeAccount = accountForProcess(activeProcess, accountList);
   const activeAccountIndex = activeAccount
     ? Math.max(0, accountList.findIndex((account) => account.uid === activeAccount.uid))
@@ -308,9 +284,9 @@ export function buildShellChatAgent({
   return {
     id: activeProcess.pid,
     name: activeAccount?.displayName ?? activeProcess.title,
-    role: activeAccount ? RELATION_LABEL[activeAccount.relation] : activeProcess.username ? `PROCESS · ${activeProcess.username}` : "PROCESS",
+    role: activeAccount ? labelForConsoleAccountRelation(activeAccount.relation) : activeProcess.username ? `PROCESS · ${activeProcess.username}` : "PROCESS",
     description: activeAgentDescription(activeProcess, activeAccount),
-    imageSrc: processImageSrc(activeAccountIndex),
+    imageSrc: agentImageSrcForIndex(activeAccountIndex),
     status: agentStatusForRunState(activeProcess.runState),
     statusLabel,
     activity: statusLabel,
