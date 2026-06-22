@@ -1,9 +1,9 @@
 {
   "name": "@gsv/shell",
-  "version": "0.2.6",
+  "version": "0.2.9",
   "type": "module",
   "dependencies": {
-    "@humansandmachines/gsv": "0.0.3",
+    "@humansandmachines/gsv": "0.0.4",
     "ghostty-web": "^0.4.0"
   }
 }

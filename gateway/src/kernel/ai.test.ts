@@ -252,10 +252,14 @@ describe("handleAiConfig", () => {
 
   it("resolves the generation streaming switch", async () => {
     await expect(handleAiConfig({}, makeAiConfigContext()))
-      .resolves.toMatchObject({ generationStreaming: "auto" });
+      .resolves.toMatchObject({ generationStreaming: "auto", system: { timezone: "UTC" } });
     await expect(handleAiConfig({}, makeAiConfigContext({
       "config/ai/generation/streaming": "off",
+      "config/server/timezone": "Europe/Amsterdam",
     }))).resolves.toMatchObject({ generationStreaming: "off" });
+    await expect(handleAiConfig({}, makeAiConfigContext({
+      "config/server/timezone": "Europe/Amsterdam",
+    }))).resolves.toMatchObject({ system: { timezone: "Europe/Amsterdam" } });
     await expect(handleAiConfig({}, makeAiConfigContext({
       "config/ai/generation/streaming": "invalid",
     }))).resolves.toMatchObject({ generationStreaming: "auto" });

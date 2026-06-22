@@ -14,7 +14,7 @@ import type {
   ToolResultMessage,
   UserMessage,
 } from "@earendil-works/pi-ai";
-import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
+import { calculateCost, createAssistantMessageEventStream, getModels } from "@earendil-works/pi-ai";
 import { TimeoutError, isTimeoutError, withTimeout } from "./timeout";
 
 export const WORKERS_AI_PROVIDER = "workers-ai";
@@ -22,8 +22,7 @@ export const WORKERS_AI_PROVIDER_ALIAS = "workersai";
 export const DEFAULT_WORKERS_AI_MODEL = "@cf/nvidia/nemotron-3-120b-a12b";
 
 const WORKERS_AI_API = "workers-ai-binding";
-const DEFAULT_INPUT_COST_PER_MILLION = 0.5;
-const DEFAULT_OUTPUT_COST_PER_MILLION = 1.5;
+const PI_WORKERS_AI_PROVIDER = "cloudflare-workers-ai";
 
 type WorkersAiMessage = {
   role: "user" | "assistant" | "system" | "tool";
@@ -363,6 +362,7 @@ class WorkersAiPiEventEmitter {
 
   apply(delta: WorkersAiStreamDelta): void {
     if (delta.usage) {
+      applyWorkersAiUsageCost(this.modelName, delta.usage);
       this.partial.usage = delta.usage;
     }
     if (delta.finishReason) {
@@ -390,11 +390,7 @@ class WorkersAiPiEventEmitter {
     if (message.usage.totalTokens === 0) {
       message.usage.totalTokens = message.usage.input + message.usage.output;
     }
-    if (this.modelName === DEFAULT_WORKERS_AI_MODEL) {
-      message.usage.cost.input = (DEFAULT_INPUT_COST_PER_MILLION / 1_000_000) * message.usage.input;
-      message.usage.cost.output = (DEFAULT_OUTPUT_COST_PER_MILLION / 1_000_000) * message.usage.output;
-      message.usage.cost.total = message.usage.cost.input + message.usage.cost.output;
-    }
+    applyWorkersAiUsageCost(this.modelName, message.usage);
     message.stopReason = this.resolveStopReason(message);
 
     if (!this.hasVisibleOutput(message)) {
@@ -808,7 +804,7 @@ function normalizeWorkersAiUsage(usage: unknown): AssistantMessage["usage"] | nu
   const input = asNumber(record.prompt_tokens) || asNumber(record.input_tokens);
   const output = asNumber(record.completion_tokens) || asNumber(record.output_tokens);
   const totalTokens = asNumber(record.total_tokens) || asNumber(record.totalTokens) || input + output;
-  return {
+  const normalized = {
     input,
     output,
     cacheRead: asNumber(record.cached_tokens),
@@ -822,6 +818,7 @@ function normalizeWorkersAiUsage(usage: unknown): AssistantMessage["usage"] | nu
       total: 0,
     },
   };
+  return normalized;
 }
 
 function normalizeWorkersAiFinishReason(reason: string | null): AssistantMessage["stopReason"] | null {
@@ -1095,11 +1092,7 @@ export function normalizeWorkersAiResponse(
     usage.totalTokens = usage.input + usage.output;
   }
 
-  if (modelName === DEFAULT_WORKERS_AI_MODEL) {
-    usage.cost.input = (DEFAULT_INPUT_COST_PER_MILLION / 1_000_000) * usage.input;
-    usage.cost.output = (DEFAULT_OUTPUT_COST_PER_MILLION / 1_000_000) * usage.output;
-    usage.cost.total = usage.cost.input + usage.cost.output;
-  }
+  applyWorkersAiUsageCost(modelName, usage);
 
   let stopReason: AssistantMessage["stopReason"] = "stop";
   let errorMessage: string | undefined;
@@ -1124,6 +1117,22 @@ export function normalizeWorkersAiResponse(
     errorMessage,
     timestamp: Date.now(),
   };
+}
+
+export function hasWorkersAiModelPricing(modelName: string): boolean {
+  return resolveWorkersAiPricingModel(modelName) !== null;
+}
+
+function applyWorkersAiUsageCost(modelName: string, usage: AssistantMessage["usage"]): void {
+  const model = resolveWorkersAiPricingModel(modelName);
+  if (!model) {
+    return;
+  }
+  calculateCost(model, usage);
+}
+
+function resolveWorkersAiPricingModel(modelName: string) {
+  return getModels(PI_WORKERS_AI_PROVIDER).find((model) => model.id === modelName) ?? null;
 }
 
 function convertMessage(message: Message): WorkersAiMessage[] {

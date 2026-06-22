@@ -228,6 +228,7 @@ export async function handleAiConfig(
     config.get("config/ai/generation/streaming"),
   );
   const media = resolveAiMediaConfig(config, accountConfigUids, apiKey, processOverrides);
+  const timezone = config.get("config/server/timezone") ?? "UTC";
   const skillIndex = await collectPromptSkillIndex(ctx).catch((error) => {
     console.warn(
       `[Prompt] failed to collect skills.d index: ${error instanceof Error ? error.message : String(error)}`,
@@ -245,6 +246,9 @@ export async function handleAiConfig(
     contextWindowTokens,
     contextWindowSource,
     systemContextFiles,
+    system: {
+      timezone,
+    },
     skillIndex,
     accountApprovalPolicy,
     maxContextBytes,

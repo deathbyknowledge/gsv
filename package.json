@@ -1,10 +1,11 @@
 {
   "name": "gsv",
-  "version": "0.2.6",
+  "version": "0.2.9",
   "private": true,
   "workspaces": [
     "assembler",
     "builtin-packages/*",
+    "extension",
     "gateway",
     "web",
     "packages/*"
@@ -14,6 +15,9 @@
     "setup": "bash ./scripts/setup-deps.sh",
     "dev": "bash ./scripts/dev-stack.sh",
     "builtins:check": "tsc --noEmit -p builtin-packages/tsconfig.check.json",
+    "extension:check": "npm run check --workspace extension",
+    "extension:build": "npm run build --workspace extension",
+    "extension:package": "bash ./scripts/build-extension-package.sh",
     "gsv:build": "npm run build --workspace packages/gsv",
     "gsv:check": "npm run typecheck --workspace packages/gsv && npm run gsv:build",
     "version:show": "node ./scripts/version.mjs show",

@@ -36,7 +36,7 @@ import {
   shortId,
 } from "../../view-helpers";
 import { AgentAvatar } from "../navigation/AgentAvatar";
-import { ContextMeter } from "./ContextMeter";
+import { ContextMeter, ConversationCost } from "./ContextMeter";
 
 export function ProcessControlHeader(props: {
   active: ThreadContext | null;
@@ -181,6 +181,7 @@ export function ProcessControlHeader(props: {
       </div>
 
       <div class="chat-stage-actions process-stage-actions">
+        <ConversationCost state={props.contextState} />
         <details class="process-menu context-switcher">
           <summary
             class="context-menu-trigger"

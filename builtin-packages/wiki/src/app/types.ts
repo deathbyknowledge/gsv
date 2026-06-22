@@ -21,7 +21,6 @@ export type WikiWorkspaceState = {
   selectedPath: string;
   dbs: WikiDb[];
   pages: WikiEntry[];
-  inbox: WikiEntry[];
   selectedNote: WikiNote | null;
   searchQuery: string;
   searchMatches: WikiEntry[] | null;
@@ -81,7 +80,7 @@ export type WikiPreviewPayload =
       } | null;
     };
 
-export type WikiMode = "browse" | "edit" | "build" | "ingest" | "inbox";
+export type WikiMode = "browse" | "edit" | "build" | "ingest";
 
 export type BuildStartArgs = {
   sourceTarget: string;
@@ -104,6 +103,5 @@ export interface WikiBackend {
   createDatabase(args: { dbId: string; dbTitle?: string }): Promise<WikiMutationResult>;
   savePage(args: { db: string; path: string; markdown: string }): Promise<WikiMutationResult>;
   ingestSource(args: IngestSourceArgs): Promise<WikiMutationResult>;
-  compileInboxNote(args: { db: string; sourcePath: string; targetPath?: string }): Promise<WikiMutationResult>;
   startBuild(args: BuildStartArgs): Promise<WikiMutationResult>;
 }

@@ -5,7 +5,6 @@ export type WikiIconName =
   | "edit"
   | "file"
   | "folder"
-  | "inbox"
   | "open"
   | "plus"
   | "save"
@@ -29,7 +28,6 @@ function iconPath(name: WikiIconName) {
   if (name === "edit") return <><path d="M5 19h4l10-10-4-4L5 15z"></path><path d="m13.5 6.5 4 4"></path></>;
   if (name === "file") return <><path d="M7 3.5h7l3.5 3.5v13.5H7z"></path><path d="M14 3.5V7h3.5"></path><path d="M9 12h6"></path><path d="M9 15.5h4"></path></>;
   if (name === "folder") return <><path d="M3.5 7.5h6l2 2h9v8a2 2 0 0 1-2 2h-15z"></path><path d="M3.5 7.5v-1A1.5 1.5 0 0 1 5 5h4l2 2"></path></>;
-  if (name === "inbox") return <><path d="M4.5 5.5h15l-1.5 13h-12z"></path><path d="M8 12h2.5l1.5 2 1.5-2H16"></path></>;
   if (name === "open") return <><path d="M8 6h10v10"></path><path d="m18 6-12 12"></path><path d="M6 8v10h10"></path></>;
   if (name === "plus") return <><path d="M12 5v14"></path><path d="M5 12h14"></path></>;
   if (name === "save") return <><path d="M5 4.5h12.5l1.5 1.5v13.5H5z"></path><path d="M8 4.5v5h7v-5"></path><path d="M8 19.5v-6h8v6"></path></>;

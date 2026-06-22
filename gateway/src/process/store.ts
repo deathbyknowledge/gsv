@@ -10,7 +10,16 @@
 
 import type { SyscallName } from "../syscalls";
 import { SYSCALL_TOOL_NAMES } from "../syscalls/constants";
-import type { ProcAiConfigSnapshot, ProcContextFile, ProcContextState } from "../syscalls/proc";
+import type {
+  ProcAiConfigSnapshot,
+  ProcContextFile,
+  ProcContextState,
+  ProcMessageMetadata,
+  ProcMessageProviderMetadata,
+  ProcUsageCost,
+  ProcUsageCostSource,
+  ProcUsageState,
+} from "../syscalls/proc";
 import type {
   Message,
   UserMessage,
@@ -68,13 +77,32 @@ export type MessageRecord = {
   toolCallId: string | null;
   media: string | null;
   origin?: string | null;
+  metadata: string | null;
   createdAt: number;
+};
+
+type MessageRow = {
+  id: number;
+  conversation_id: string;
+  generation: number;
+  run_id: string | null;
+  role: string;
+  content: string;
+  tool_calls: string | null;
+  tool_call_id: string | null;
+  media_json: string | null;
+  origin_json: string | null;
+  metadata_json?: string | null;
+  created_at: number;
 };
 
 export type AssistantMessageMeta = {
   thinking?: ThinkingContent[];
   toolCalls?: ToolCall[];
 };
+
+export type MessageProviderMetadata = ProcMessageProviderMetadata;
+export type MessageMetadata = ProcMessageMetadata;
 
 export type QueuedMessage = {
   id: number;
@@ -287,6 +315,7 @@ export class ProcessStore {
     const count = this.totalMessageCount();
     this.sql.exec("DELETE FROM messages");
     this.deleteAllContextStates();
+    this.deleteAllConversationUsage();
     return count;
   }
 
@@ -745,16 +774,18 @@ export class ProcessStore {
       toolCallId?: string;
       media?: string;
       origin?: string;
+      metadata?: MessageMetadata | string | null;
       runId?: string;
       createdAt?: number;
     },
   ): number {
     const conversationId = normalizeConversationId(opts?.conversationId);
     const generation = opts?.generation ?? this.getConversationGeneration(conversationId);
+    const metadataJson = stringifyMessageMetadata(opts?.metadata);
     this.sql.exec(
       `INSERT INTO messages (
-        conversation_id, generation, run_id, role, content, tool_calls, tool_call_id, media_json, origin_json, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        conversation_id, generation, run_id, role, content, tool_calls, tool_call_id, media_json, origin_json, metadata_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       conversationId,
       generation,
       opts?.runId ?? null,
@@ -764,11 +795,21 @@ export class ProcessStore {
       opts?.toolCallId ?? null,
       opts?.media ?? null,
       opts?.origin ?? null,
+      metadataJson,
       opts?.createdAt ?? Date.now(),
     );
 
     const rows = [...this.sql.exec<{ id: number }>("SELECT last_insert_rowid() as id")];
-    return rows[0]?.id ?? -1;
+    const messageId = rows[0]?.id ?? -1;
+
+    if (role === "assistant") {
+      const metadata = parseMessageMetadata(metadataJson);
+      if (metadata?.usage) {
+        this.addConversationUsage(conversationId, metadata.usage);
+      }
+    }
+
+    return messageId;
   }
 
   getMessages(opts?: {
@@ -803,19 +844,7 @@ export class ProcessStore {
         : { clause: "", args: [] as const };
     const order = tail || beforeMessageId !== undefined ? "DESC" : "ASC";
 
-    const rows = [...this.sql.exec<{
-      id: number;
-      conversation_id: string;
-      generation: number;
-      run_id: string | null;
-      role: string;
-      content: string;
-      tool_calls: string | null;
-      tool_call_id: string | null;
-      media_json: string | null;
-      origin_json: string | null;
-      created_at: number;
-      }>(
+    const rows = [...this.sql.exec<MessageRow>(
         `SELECT * FROM messages WHERE ${where.join(" AND ")} ORDER BY id ${order} ${pagination.clause}`,
       ...args,
       ...pagination.args,
@@ -824,19 +853,7 @@ export class ProcessStore {
       rows.reverse();
     }
 
-    return rows.map((row) => ({
-      id: row.id,
-      conversationId: row.conversation_id,
-      generation: row.generation,
-      runId: row.run_id,
-      role: row.role as MessageRole,
-      content: row.content,
-      toolCalls: row.tool_calls,
-      toolCallId: row.tool_call_id,
-      media: row.media_json,
-      origin: row.origin_json,
-      createdAt: row.created_at,
-    }));
+    return rows.map(messageRecordFromRow);
   }
 
   hasMessageBefore(conversationId: string, messageId: number): boolean {
@@ -863,38 +880,14 @@ export class ProcessStore {
   ): MessageRecord[] {
     const normalizedConversationId = normalizeConversationId(conversationId);
     const normalizedGeneration = generation ?? this.getConversationGeneration(normalizedConversationId);
-    return [...this.sql.exec<{
-      id: number;
-      conversation_id: string;
-      generation: number;
-      run_id: string | null;
-      role: string;
-      content: string;
-      tool_calls: string | null;
-      tool_call_id: string | null;
-      media_json: string | null;
-      origin_json: string | null;
-      created_at: number;
-    }>(
+    return [...this.sql.exec<MessageRow>(
       `SELECT * FROM messages
         WHERE conversation_id = ?
           AND generation = ?
         ORDER BY id ASC`,
       normalizedConversationId,
       normalizedGeneration,
-    )].map((row) => ({
-      id: row.id,
-      conversationId: row.conversation_id,
-      generation: row.generation,
-      runId: row.run_id,
-      role: row.role as MessageRole,
-      content: row.content,
-      toolCalls: row.tool_calls,
-      toolCallId: row.tool_call_id,
-      media: row.media_json,
-      origin: row.origin_json,
-      createdAt: row.created_at,
-    }));
+    )].map(messageRecordFromRow);
   }
 
   getMessagesForGenerationAfter(opts: {
@@ -916,19 +909,7 @@ export class ProcessStore {
       args.push(opts.throughCreatedAt);
     }
 
-    return [...this.sql.exec<{
-      id: number;
-      conversation_id: string;
-      generation: number;
-      run_id: string | null;
-      role: string;
-      content: string;
-      tool_calls: string | null;
-      tool_call_id: string | null;
-      media_json: string | null;
-      origin_json: string | null;
-      created_at: number;
-    }>(
+    return [...this.sql.exec<MessageRow>(
       `SELECT * FROM messages
         WHERE conversation_id = ?
           AND generation = ?
@@ -936,19 +917,7 @@ export class ProcessStore {
           ${createdAtFilter}
         ORDER BY id ASC`,
       ...args,
-    )].map((row) => ({
-      id: row.id,
-      conversationId: row.conversation_id,
-      generation: row.generation,
-      runId: row.run_id,
-      role: row.role as MessageRole,
-      content: row.content,
-      toolCalls: row.tool_calls,
-      toolCallId: row.tool_call_id,
-      media: row.media_json,
-      origin: row.origin_json,
-      createdAt: row.created_at,
-    }));
+    )].map(messageRecordFromRow);
   }
 
   messageCount(conversationId: string = DEFAULT_CONVERSATION_ID): number {
@@ -977,34 +946,10 @@ export class ProcessStore {
 
   allMessagesForArchive(conversationId: string = DEFAULT_CONVERSATION_ID): MessageRecord[] {
     const normalizedConversationId = normalizeConversationId(conversationId);
-    return [...this.sql.exec<{
-      id: number;
-      conversation_id: string;
-      generation: number;
-      run_id: string | null;
-      role: string;
-      content: string;
-      tool_calls: string | null;
-      tool_call_id: string | null;
-      media_json: string | null;
-      origin_json: string | null;
-      created_at: number;
-      }>(
+    return [...this.sql.exec<MessageRow>(
         "SELECT * FROM messages WHERE conversation_id = ? ORDER BY id ASC",
       normalizedConversationId,
-    )].map((row) => ({
-      id: row.id,
-      conversationId: row.conversation_id,
-      generation: row.generation,
-      runId: row.run_id,
-      role: row.role as MessageRole,
-      content: row.content,
-      toolCalls: row.tool_calls,
-      toolCallId: row.tool_call_id,
-      media: row.media_json,
-      origin: row.origin_json,
-      createdAt: row.created_at,
-    }));
+    )].map(messageRecordFromRow);
   }
 
   clearMessages(conversationId: string = DEFAULT_CONVERSATION_ID): number {
@@ -1012,6 +957,7 @@ export class ProcessStore {
     const count = this.messageCount(normalizedConversationId);
     this.sql.exec("DELETE FROM messages WHERE conversation_id = ?", normalizedConversationId);
     this.deleteContextState(normalizedConversationId);
+    this.deleteConversationUsage(normalizedConversationId);
     return count;
   }
 
@@ -1085,6 +1031,43 @@ export class ProcessStore {
 
   deleteAllContextStates(): void {
     this.sql.exec("DELETE FROM process_kv WHERE key LIKE 'contextState:%'");
+  }
+
+  getConversationUsage(conversationId: string = DEFAULT_CONVERSATION_ID): ProcUsageState | null {
+    const raw = this.getValue(conversationUsageKey(normalizeConversationId(conversationId)));
+    if (!raw) {
+      return null;
+    }
+    try {
+      return normalizeUsageState(JSON.parse(raw)) ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  addConversationUsage(
+    conversationId: string = DEFAULT_CONVERSATION_ID,
+    usage: ProcUsageState,
+  ): ProcUsageState {
+    const normalizedConversationId = normalizeConversationId(conversationId);
+    const normalizedUsage = normalizeUsageState(usage);
+    if (!normalizedUsage) {
+      return this.getConversationUsage(normalizedConversationId) ?? emptyUsageState();
+    }
+    const merged = mergeUsageStates(
+      this.getConversationUsage(normalizedConversationId),
+      normalizedUsage,
+    );
+    this.setValue(conversationUsageKey(normalizedConversationId), JSON.stringify(merged));
+    return merged;
+  }
+
+  deleteConversationUsage(conversationId: string = DEFAULT_CONVERSATION_ID): void {
+    this.deleteValue(conversationUsageKey(normalizeConversationId(conversationId)));
+  }
+
+  deleteAllConversationUsage(): void {
+    this.sql.exec("DELETE FROM process_kv WHERE key LIKE 'conversationUsage:%'");
   }
 
   getProcessContextFiles(): ProcContextFile[] {
@@ -1164,6 +1147,7 @@ export class ProcessStore {
         case "assistant": {
           const content: (TextContent | ThinkingContent | ToolCall)[] = [];
           const meta = parseAssistantMessageMeta(r.toolCalls);
+          const metadata = parseMessageMetadata(r.metadata);
           if (meta.thinking) {
             content.push(...meta.thinking);
           }
@@ -1176,11 +1160,13 @@ export class ProcessStore {
           messages.push({
             role: "assistant",
             content,
-            api: "",
-            provider: "",
-            model: "",
-            usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
-            stopReason: "stop",
+            api: metadata?.provider?.api ?? "",
+            provider: metadata?.provider?.provider ?? "",
+            model: metadata?.provider?.model ?? "",
+            ...(metadata?.provider?.responseModel ? { responseModel: metadata.provider.responseModel } : {}),
+            ...(metadata?.provider?.responseId ? { responseId: metadata.provider.responseId } : {}),
+            usage: usageStateToPiUsage(metadata?.usage),
+            stopReason: normalizeAssistantStopReason(metadata?.provider?.stopReason),
             timestamp: r.createdAt,
           } as AssistantMessage);
           break;
@@ -1367,6 +1353,229 @@ export class ProcessStore {
   }
 }
 
+function messageRecordFromRow(row: MessageRow): MessageRecord {
+  return {
+    id: row.id,
+    conversationId: row.conversation_id,
+    generation: row.generation,
+    runId: row.run_id,
+    role: row.role as MessageRole,
+    content: row.content,
+    toolCalls: row.tool_calls,
+    toolCallId: row.tool_call_id,
+    media: row.media_json,
+    origin: row.origin_json,
+    metadata: row.metadata_json ?? null,
+    createdAt: row.created_at,
+  };
+}
+
+export function parseMessageMetadata(raw: string | null | undefined): MessageMetadata | null {
+  if (!raw) {
+    return null;
+  }
+  try {
+    return normalizeMessageMetadata(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+
+export function stringifyMessageMetadata(
+  metadata: MessageMetadata | string | null | undefined,
+): string | null {
+  if (metadata === undefined || metadata === null) {
+    return null;
+  }
+  if (typeof metadata === "string") {
+    const normalized = parseMessageMetadata(metadata);
+    return normalized ? JSON.stringify(normalized) : null;
+  }
+  const normalized = normalizeMessageMetadata(metadata);
+  return normalized ? JSON.stringify(normalized) : null;
+}
+
+export function normalizeMessageMetadata(value: unknown): MessageMetadata | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+  const provider = normalizeProviderMetadata(record.provider);
+  const usage = normalizeUsageState(record.usage);
+  if (!provider && !usage) {
+    return null;
+  }
+  return {
+    ...(provider ? { provider } : {}),
+    ...(usage ? { usage } : {}),
+  };
+}
+
+function normalizeProviderMetadata(value: unknown): MessageProviderMetadata | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+  const provider: MessageProviderMetadata = {};
+  const api = normalizeOptionalNonEmptyString(record.api);
+  const providerName = normalizeOptionalNonEmptyString(record.provider);
+  const model = normalizeOptionalNonEmptyString(record.model);
+  const responseModel = normalizeOptionalNonEmptyString(record.responseModel);
+  const responseId = normalizeOptionalNonEmptyString(record.responseId);
+  const stopReason = normalizeOptionalNonEmptyString(record.stopReason);
+  if (api) provider.api = api;
+  if (providerName) provider.provider = providerName;
+  if (model) provider.model = model;
+  if (responseModel) provider.responseModel = responseModel;
+  if (responseId) provider.responseId = responseId;
+  if (stopReason) provider.stopReason = stopReason;
+  return Object.keys(provider).length > 0 ? provider : null;
+}
+
+export function normalizeUsageState(value: unknown): ProcUsageState | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+  const inputTokens = normalizeNonNegativeNumber(record.inputTokens ?? record.input) ?? 0;
+  const outputTokens = normalizeNonNegativeNumber(record.outputTokens ?? record.output) ?? 0;
+  const cacheReadTokens = normalizeNonNegativeNumber(record.cacheReadTokens ?? record.cacheRead) ?? 0;
+  const cacheWriteTokens = normalizeNonNegativeNumber(record.cacheWriteTokens ?? record.cacheWrite) ?? 0;
+  const totalTokens = normalizeNonNegativeNumber(record.totalTokens)
+    ?? inputTokens + outputTokens;
+  const generations = normalizePositiveInteger(record.generations);
+  const updatedAt = normalizeNonNegativeNumber(record.updatedAt);
+
+  return {
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheWriteTokens,
+    totalTokens,
+    cost: normalizeUsageCost(record.cost),
+    ...(generations !== null ? { generations } : {}),
+    ...(record.costIncomplete === true ? { costIncomplete: true } : {}),
+    ...(updatedAt !== null ? { updatedAt } : {}),
+  };
+}
+
+function normalizeUsageCost(value: unknown): ProcUsageCost | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+  const input = normalizeNonNegativeNumber(record.input) ?? 0;
+  const output = normalizeNonNegativeNumber(record.output) ?? 0;
+  const cacheRead = normalizeNonNegativeNumber(record.cacheRead) ?? 0;
+  const cacheWrite = normalizeNonNegativeNumber(record.cacheWrite) ?? 0;
+  const total = normalizeNonNegativeNumber(record.total) ?? input + output + cacheRead + cacheWrite;
+  return {
+    input,
+    output,
+    cacheRead,
+    cacheWrite,
+    total,
+    currency: "USD",
+    source: normalizeUsageCostSource(record.source) ?? "provider",
+  };
+}
+
+function mergeUsageStates(
+  current: ProcUsageState | null,
+  next: ProcUsageState,
+): ProcUsageState {
+  const cost = mergeUsageCosts(current?.cost ?? null, next.cost);
+  const currentGenerations = current?.generations ?? 0;
+  const nextGenerations = next.generations ?? 1;
+  const costIncomplete = current?.costIncomplete === true
+    || next.costIncomplete === true
+    || next.cost === null
+    || (current !== null && current.cost === null);
+
+  return {
+    inputTokens: (current?.inputTokens ?? 0) + next.inputTokens,
+    outputTokens: (current?.outputTokens ?? 0) + next.outputTokens,
+    cacheReadTokens: (current?.cacheReadTokens ?? 0) + next.cacheReadTokens,
+    cacheWriteTokens: (current?.cacheWriteTokens ?? 0) + next.cacheWriteTokens,
+    totalTokens: (current?.totalTokens ?? 0) + next.totalTokens,
+    cost,
+    generations: currentGenerations + nextGenerations,
+    ...(costIncomplete ? { costIncomplete: true } : {}),
+    updatedAt: Date.now(),
+  };
+}
+
+function mergeUsageCosts(
+  current: ProcUsageCost | null,
+  next: ProcUsageCost | null,
+): ProcUsageCost | null {
+  if (!current && !next) {
+    return null;
+  }
+  if (!current) {
+    return cloneUsageCost(next!);
+  }
+  if (!next) {
+    return cloneUsageCost(current);
+  }
+  return {
+    input: current.input + next.input,
+    output: current.output + next.output,
+    cacheRead: current.cacheRead + next.cacheRead,
+    cacheWrite: current.cacheWrite + next.cacheWrite,
+    total: current.total + next.total,
+    currency: "USD",
+    source: current.source === next.source ? current.source : "mixed",
+  };
+}
+
+function cloneUsageCost(cost: ProcUsageCost): ProcUsageCost {
+  return {
+    input: cost.input,
+    output: cost.output,
+    cacheRead: cost.cacheRead,
+    cacheWrite: cost.cacheWrite,
+    total: cost.total,
+    currency: "USD",
+    source: cost.source,
+  };
+}
+
+function emptyUsageState(): ProcUsageState {
+  return {
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    totalTokens: 0,
+    cost: null,
+    generations: 0,
+  };
+}
+
+function usageStateToPiUsage(usage: ProcUsageState | null | undefined): AssistantMessage["usage"] {
+  return {
+    input: usage?.inputTokens ?? 0,
+    output: usage?.outputTokens ?? 0,
+    cacheRead: usage?.cacheReadTokens ?? 0,
+    cacheWrite: usage?.cacheWriteTokens ?? 0,
+    totalTokens: usage?.totalTokens ?? 0,
+    cost: {
+      input: usage?.cost?.input ?? 0,
+      output: usage?.cost?.output ?? 0,
+      cacheRead: usage?.cost?.cacheRead ?? 0,
+      cacheWrite: usage?.cost?.cacheWrite ?? 0,
+      total: usage?.cost?.total ?? 0,
+    },
+  };
+}
+
+function normalizeAssistantStopReason(value: unknown): AssistantMessage["stopReason"] {
+  return value === "length" || value === "toolUse" || value === "error" || value === "aborted"
+    ? value
+    : "stop";
+}
+
 export function parseAssistantMessageMeta(raw: string | null): AssistantMessageMeta {
   if (!raw) {
     return {};
@@ -1412,6 +1621,44 @@ function parseConversationArchiveKind(value: string): ConversationArchiveKind {
 
 function contextStateKey(conversationId: string): string {
   return `contextState:${conversationId}`;
+}
+
+function conversationUsageKey(conversationId: string): string {
+  return `conversationUsage:${conversationId}`;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function normalizeOptionalNonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : undefined;
+}
+
+function normalizeNonNegativeNumber(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+  return value >= 0 ? value : null;
+}
+
+function normalizePositiveInteger(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+  const normalized = Math.trunc(value);
+  return normalized > 0 ? normalized : null;
+}
+
+function normalizeUsageCostSource(value: unknown): ProcUsageCostSource | null {
+  if (value === "provider" || value === "model-pricing" || value === "mixed") {
+    return value;
+  }
+  return null;
 }
 
 function buildFallbackUserContent(

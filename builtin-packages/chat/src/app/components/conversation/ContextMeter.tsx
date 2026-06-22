@@ -16,11 +16,39 @@ export function ContextMeter({ state }: { state: ContextState | null }) {
   );
 }
 
+export function ConversationCost({ state }: { state: ContextState | null }) {
+  const usage = state?.conversationUsage;
+  const cost = usage?.cost;
+  if (!usage) {
+    return null;
+  }
+  const label = cost
+    ? `${usage.costIncomplete ? "~" : ""}${formatCurrencyCost(cost.total)}`
+    : "n/a";
+  const title = [
+    cost ? `conversation cost ${label}` : "conversation cost unavailable",
+    `${formatCompactTokens(usage.totalTokens)} tokens`,
+    cost ? cost.source === "model-pricing" ? "model pricing" : cost.source : "pricing unavailable",
+  ].join(" · ");
+  return (
+    <div class="conversation-cost" title={title} aria-label={title}>
+      $
+    </div>
+  );
+}
+
 function contextMeterTitle(state: ContextState, label: string): string {
   if (state.inputTokens && state.availableInputTokens) {
     return `${formatCompactTokens(state.inputTokens)}/${formatCompactTokens(state.availableInputTokens)} (${label})`;
   }
   return "context unknown";
+}
+
+function formatCurrencyCost(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return "$0.00";
+  if (value >= 1) return `$${value.toFixed(2)}`;
+  if (value >= 0.01) return `$${value.toFixed(4)}`;
+  return `$${value.toFixed(6)}`;
 }
 
 function formatCompactTokens(value: number | null): string {

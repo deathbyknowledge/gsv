@@ -1166,7 +1166,7 @@ Runtime behavior:
 | Syscall | Handler | Behavior |
 |---|---|---|
 | `ai.tools` | `handleAiTools` | Process-internal. Lists online accessible devices and filters built-in tool definitions by caller capabilities. Routable filesystem and shell tools are wrapped with required `target`; CodeMode is exposed as a process-local programmable tool. MCP tools are used through CodeMode or shell, not expanded into this direct tool list. |
-| `ai.config` | `handleAiConfig` | Process-internal. Resolves account/user override then system AI config for chat model settings and media model stack settings, plus system-only operational keys such as generation streaming. Context and tool approval are sourced from the run-as account, with owner context layered in when distinct. Defaults provider to `workers-ai`, model to `@cf/nvidia/nemotron-3-120b-a12b`, max tokens to 8192, context window to provider/model metadata or configured fallback, streaming to `auto`, and context budget to 32768 bytes. |
+| `ai.config` | `handleAiConfig` | Process-internal. Resolves account/user override then system AI config for chat model settings and media model stack settings, plus system-only operational keys such as generation streaming and timezone. Context and tool approval are sourced from the run-as account, with owner context layered in when distinct. Defaults provider to `workers-ai`, model to `@cf/nvidia/nemotron-3-120b-a12b`, max tokens to 8192, context window to provider/model metadata or configured fallback, streaming to `auto`, and context budget to 32768 bytes. |
 | `ai.transcription.create` | `handleAiTranscriptionCreate` | User-callable. Accepts base64 audio data plus MIME type, transcribes or translates it through the configured transcription provider/model, and returns normalized text plus optional language, duration, and segments. |
 | `ai.speech.create` | `handleAiSpeechCreate` | User-callable. Accepts text, normalizes Markdown to speech-friendly text by default, synthesizes speech through the configured speech provider/model, and returns a browser-playable audio data URL plus MIME type and size. |
 
@@ -1181,7 +1181,7 @@ type AiSyscalls = {
 
   "ai.config": {
     args: Empty;
-    result: { owner?: ProcessIdentity | null; provider: string; model: string; apiKey: string; reasoning?: string; maxTokens: number; contextWindowTokens: number | null; contextWindowSource: "model" | "config" | "unknown"; systemContextFiles?: Array<{ name: string; text: string }>; skillIndex?: Array<{ id: string; name: string; description: string; source: { kind: "home" | "package"; label: string; writable: boolean } }>; accountApprovalPolicy?: string | null; maxContextBytes: number; generationTimeoutMs: number; generationStreaming?: "auto" | "off"; media?: { transcriptionProvider: string; transcriptionModel: string; transcriptionApiKey: string; transcriptionMaxBytes: number; imageReadingProvider: string; imageReadingModel: string; imageReadingApiKey: string; imageReadingInputFormat: "auto" | "chat" | "image"; imageReadingMaxBytes: number; imageReadingMaxTokens: number; imageReadingTimeoutMs: number; imageReadingPrompt: string; imageGenerationProvider: string; imageGenerationModel: string; imageGenerationApiKey: string; speechProvider: string; speechModel: string; speechApiKey: string; speechSpeaker: string; speechEncoding: string; speechMaxChars: number; speechTimeoutMs: number } };
+    result: { owner?: ProcessIdentity | null; provider: string; model: string; apiKey: string; reasoning?: string; maxTokens: number; contextWindowTokens: number | null; contextWindowSource: "model" | "config" | "unknown"; systemContextFiles?: Array<{ name: string; text: string }>; system?: { timezone: string }; skillIndex?: Array<{ id: string; name: string; description: string; source: { kind: "home" | "package"; label: string; writable: boolean } }>; accountApprovalPolicy?: string | null; maxContextBytes: number; generationTimeoutMs: number; generationStreaming?: "auto" | "off"; media?: { transcriptionProvider: string; transcriptionModel: string; transcriptionApiKey: string; transcriptionMaxBytes: number; imageReadingProvider: string; imageReadingModel: string; imageReadingApiKey: string; imageReadingInputFormat: "auto" | "chat" | "image"; imageReadingMaxBytes: number; imageReadingMaxTokens: number; imageReadingTimeoutMs: number; imageReadingPrompt: string; imageGenerationProvider: string; imageGenerationModel: string; imageGenerationApiKey: string; speechProvider: string; speechModel: string; speechApiKey: string; speechSpeaker: string; speechEncoding: string; speechMaxChars: number; speechTimeoutMs: number } };
   };
 
   "ai.transcription.create": {
@@ -1198,7 +1198,7 @@ type AiSyscalls = {
 
 ## Adapters: `adapter.*`
 
-`adapter.*` is the control plane for external chat or channel connectors.
+`adapter.*` is the control plane for external chat or adapter connectors.
 
 Runtime behavior:
 

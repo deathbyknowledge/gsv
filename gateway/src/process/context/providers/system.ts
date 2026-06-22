@@ -55,10 +55,18 @@ function renderContextTemplate(
     };
     devices: Array<{ id: string; label?: string; implements: string[]; description?: string; platform?: string }>;
     mcpServers: string[];
+    config: {
+      system?: {
+        timezone?: string;
+      };
+    };
   },
 ): string {
   const user = input.ownerIdentity ?? input.identity;
+  const timezone = normalizeTimezone(input.config.system?.timezone);
   const values = new Map<string, string>([
+    ["current.date", formatCurrentDate(timezone)],
+    ["current.timezone", timezone],
     ["identity.uid", String(input.identity.uid)],
     ["identity.gid", String(input.identity.gid)],
     ["identity.username", input.identity.username],
@@ -79,7 +87,8 @@ function renderContextTemplate(
     ["user.username", user.username],
     ["user.home", user.home],
     ["user.cwd", user.cwd],
-    ["devices", formatDevices(input.devices)],
+    ["targets", formatTargets(input.devices)],
+    ["devices", formatTargets(input.devices)],
     ["mcpServers", formatMcpServers(input.mcpServers)],
   ]);
 
@@ -88,18 +97,41 @@ function renderContextTemplate(
   });
 }
 
-function formatDevices(
+function normalizeTimezone(timezone: string | undefined): string {
+  const candidate = typeof timezone === "string" && timezone.trim() ? timezone.trim() : "UTC";
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: candidate }).format(new Date());
+    return candidate;
+  } catch {
+    return "UTC";
+  }
+}
+
+function formatCurrentDate(timezone: string): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const year = parts.find((part) => part.type === "year")?.value ?? "1970";
+  const month = parts.find((part) => part.type === "month")?.value ?? "01";
+  const day = parts.find((part) => part.type === "day")?.value ?? "01";
+  return `${year}-${month}-${day}`;
+}
+
+function formatTargets(
   devices: Array<{ id: string; label?: string; implements: string[]; description?: string; platform?: string }>,
 ): string {
   if (devices.length === 0) {
     return "- gsv";
   }
-  const sortedDevices = [...devices].sort((left, right) => left.id.localeCompare(right.id));
-  const renderedDevices = sortedDevices.slice(0, MAX_RENDERED_TARGETS);
-  const remaining = sortedDevices.length - renderedDevices.length;
+  const sortedTargets = [...devices].sort((left, right) => left.id.localeCompare(right.id));
+  const renderedTargets = sortedTargets.slice(0, MAX_RENDERED_TARGETS);
+  const remaining = sortedTargets.length - renderedTargets.length;
   const lines = [
     "- gsv",
-    ...renderedDevices.map(formatDeviceLine),
+    ...renderedTargets.map(formatTargetLine),
   ];
   if (remaining > 0) {
     lines.push(`- ... ${remaining} more ${remaining === 1 ? "target" : "targets"}. Run \`targets list\` in Shell to discover more.`);
@@ -107,7 +139,7 @@ function formatDevices(
   return lines.join("\n");
 }
 
-function formatDeviceLine(device: {
+function formatTargetLine(device: {
   id: string;
   label?: string;
   description?: string;

@@ -8,8 +8,8 @@ knowledge-specific behavior lives in the Wiki package app and CLI.
 
 | Layer | Location | Purpose |
 |---|---|---|
-| Home context | `~/context.d/` | Always-relevant account context loaded into agent prompts. |
-| Durable knowledge | Wiki repos with `wiki.json` | User-controlled markdown databases, pages, inbox notes, and source references. |
+| Home context | `~/context.d/` | Compact account context loaded into agent prompts. |
+| Durable knowledge and memory | Wiki repos with `wiki.json` | Searchable markdown databases, agent memory pages, and source references. |
 | Repository substrate | `repo.*` | Versioned reads, writes, diffs, imports, and history over ripgit repositories. |
 | Filesystem substrate | `fs.*` | Linux-like file access across native GSV storage and routed devices. |
 
@@ -23,12 +23,17 @@ Home context is for information that should shape most agent sessions:
 - small files that should always be prompt-visible
 
 New human homes create an empty `~/context.d/` directory. New agent homes seed
-`~/context.d/00-style.md` and `~/context.d/10-user.md` when those files are
-missing. New personal agents also get a one-time `~/context.d/00-boot.md`
-onboarding file that should be deleted after setup is done.
+`~/context.d/00-style.md`, `~/context.d/10-user.md`,
+`~/context.d/15-memory.md`, and `~/context.d/20-open-loops.md` when those files
+are missing. New personal agents also get a one-time
+`~/context.d/00-boot.md` onboarding file that should be deleted after setup is
+done.
 
-Use `~/context.d/` for scoped snippets. Keep files short and specific. Large
-knowledge collections belong in Wiki repos, not always-loaded context.
+Use `~/context.d/` for scoped snippets that should be prompt-visible every time.
+Keep files short and specific. Large knowledge collections and long-term agent
+memory belong in Wiki repos, not always-loaded context. Active open loops belong
+in `~/context.d/20-open-loops.md`; closed-loop history and supporting evidence
+belong in the `memory` wiki.
 
 ## Durable Knowledge
 
@@ -39,7 +44,6 @@ Durable knowledge is stored in normal ripgit repositories that contain a root
 wiki.json
 index.md
 pages/
-inbox/
 ```
 
 Example manifest:
@@ -48,14 +52,18 @@ Example manifest:
 {
   "kind": "gsv.wiki",
   "version": 1,
-  "id": "personal",
-  "title": "Personal Wiki"
+  "id": "memory",
+  "title": "Agent Memory"
 }
 ```
 
 Each wiki is just markdown in a repository. `index.md` is the landing page.
-`pages/` contains canonical notes. `inbox/` contains staged notes that should be
-reviewed before becoming canonical.
+`pages/` contains durable notes. Additional directories can exist when a
+collection needs a domain-specific shape, but the default Wiki app and CLI
+operate on `index.md` and `pages/`.
+
+For agent memory, the conventional wiki id is `memory`; after creation it is
+available through the filesystem at `/src/repos/<agent>/memory`.
 
 ## Wiki Semantics
 
@@ -66,7 +74,6 @@ wiki repos:
 - read and write markdown pages
 - search and query notes
 - ingest live source references
-- compile inbox notes into canonical pages
 - merge or annotate existing notes
 
 These are product and CLI behaviors, not kernel syscalls. The implementation

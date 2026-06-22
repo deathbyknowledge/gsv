@@ -1,9 +1,8 @@
 import {
-  compileInboxNote as legacyCompileInboxNote,
   createDatabase as legacyCreateDatabase,
   getPreview as legacyGetPreview,
   handleAppSignal,
-  ingestSourcesToInbox as legacyIngestSourcesToInbox,
+  ingestSourcesToPage as legacyIngestSourcesToPage,
   loadState as legacyLoadState,
   startBuildFromDirectory as legacyStartBuildFromDirectory,
   writePage as legacyWritePage,
@@ -66,20 +65,12 @@ export async function ingestSource(
   const title = String(args.sourceTitle || "").trim();
   const summary = String(args.summary || "").trim();
   const sourceSpec = `${target}:${sourcePath}${title ? `::${title}` : ""}`;
-  return legacyIngestSourcesToInbox(kernel, {
+  return legacyIngestSourcesToPage(kernel, {
     db: args.db,
     title: title || undefined,
     summary: summary || undefined,
     sources: sourceSpec,
   }, storage) as Promise<WikiMutationResult>;
-}
-
-export async function compileInboxNote(
-  kernel: any,
-  args: { db: string; sourcePath: string; targetPath?: string },
-  storage?: PackageStorageBinding,
-): Promise<WikiMutationResult> {
-  return legacyCompileInboxNote(kernel, args, storage) as Promise<WikiMutationResult>;
 }
 
 export async function startBuild(

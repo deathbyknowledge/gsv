@@ -47,7 +47,13 @@ export function summarizeTargets(devices: DeviceSummary[]): TargetFleetSummary {
 
 export function targetKind(device: Pick<DeviceSummary, "deviceId" | "platform">): TargetKind {
   const platform = device.platform.toLowerCase();
-  if (device.deviceId.startsWith("browser:") || platform === "browser") return "browser";
+  if (
+    device.deviceId.startsWith("browser:")
+    || platform === "browser"
+    || platform === "browser-extension"
+  ) {
+    return "browser";
+  }
   if (device.deviceId.startsWith("adapter:") || platform === "adapter") return "adapter";
   return "native-device";
 }

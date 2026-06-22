@@ -27,8 +27,8 @@ export function IngestPane(props: Props) {
     <section class="wiki-pane">
       <div class="wiki-pane-head">
         <div>
-          <h2>Add to inbox</h2>
-          <p>Add source material for review before it becomes a page.</p>
+          <h2>Capture source</h2>
+          <p>Create a wiki page that cites one or more live source files.</p>
         </div>
       </div>
       <form class="wiki-workflow" onSubmit={(event) => void props.onIngestSource(event)}>
@@ -59,17 +59,17 @@ export function IngestPane(props: Props) {
           </label>
           <label>
             <span>Source title</span>
-            <input value={props.ingestSourceTitle} onInput={(event) => props.onIngestSourceTitleChange((event.currentTarget as HTMLInputElement).value)} placeholder="Optional title for the inbox item" />
+            <input value={props.ingestSourceTitle} onInput={(event) => props.onIngestSourceTitleChange((event.currentTarget as HTMLInputElement).value)} placeholder="Optional page title" />
           </label>
           <label>
             <span>Summary</span>
-            <input value={props.ingestSummary} onInput={(event) => props.onIngestSummaryChange((event.currentTarget as HTMLInputElement).value)} placeholder="Optional review context" />
+            <input value={props.ingestSummary} onInput={(event) => props.onIngestSummaryChange((event.currentTarget as HTMLInputElement).value)} placeholder="Optional page summary" />
           </label>
         </div>
         <div class="wiki-inline-actions">
-          <button type="submit" disabled={props.mutating} title="Add source to inbox" aria-label="Add source to inbox">
-            <WikiIcon name="inbox" />
-            <span>Add to inbox</span>
+          <button type="submit" disabled={props.mutating} title="Create source page" aria-label="Create source page">
+            <WikiIcon name="plus" />
+            <span>Create page</span>
           </button>
         </div>
       </form>

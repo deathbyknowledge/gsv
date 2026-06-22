@@ -3,7 +3,6 @@ import { WikiRail } from "./components/navigation/wiki-rail";
 import { BrowsePane } from "./components/panes/browse-pane";
 import { BuildPane } from "./components/panes/build-pane";
 import { EditPane } from "./components/panes/edit-pane";
-import { InboxPane } from "./components/panes/inbox-pane";
 import { IngestPane } from "./components/panes/ingest-pane";
 import { PreviewCard } from "./preview-card";
 import { useWikiPreview } from "./hooks/use-wiki-preview";
@@ -49,15 +48,12 @@ export function App({ backend, routeBase }: { backend: WikiBackend; routeBase: s
           state={wiki.state}
           selectedDb={wiki.selectedDb}
           visiblePages={wiki.visiblePages}
-          selectedInboxPath={wiki.selectedInboxPath}
           mutating={wiki.mutating}
           newDatabaseOpen={wiki.newDatabaseOpen}
           newDatabaseTitle={wiki.newDatabaseTitle}
           newDatabaseId={wiki.newDatabaseId}
           onOpenDb={wiki.openDb}
           onOpenPage={wiki.openPageAndBrowse}
-          onOpenInboxNote={wiki.openInboxNote}
-          onCompileSelectedInbox={wiki.compileSelectedInbox}
           onNewPage={() => wiki.setMode("edit")}
           onToggleCreateDatabase={() => wiki.setNewDatabaseOpen((open) => !open)}
           onCreateDatabase={wiki.createDatabaseFlow}
@@ -145,19 +141,6 @@ export function App({ backend, routeBase }: { backend: WikiBackend; routeBase: s
                 />
               ) : null}
 
-              {wiki.mode === "inbox" ? (
-                <InboxPane
-                  state={wiki.state}
-                  routeBase={routeBase}
-                  selectedDb={wiki.selectedDb}
-                  selectedInboxPath={wiki.selectedInboxPath}
-                  mutating={wiki.mutating}
-                  onCompileSelectedInbox={wiki.compileSelectedInbox}
-                  onOpenPageAndBrowse={wiki.openPageAndBrowse}
-                  onPreviewOpen={handleArticlePreviewOpen}
-                  onPreviewHide={hidePreview}
-                />
-              ) : null}
             </>
           ) : null}
         </main>

@@ -388,14 +388,14 @@ describe("Process DO — mechanical", () => {
 
       await runInDurableObject(stub, async (instance: Process) => {
         const process = instance as any;
-        process.store.appendMessage("system", "IPC call completed with result GREEN.");
+        process.store.appendMessage("system", "Delegated task finished with result GREEN.");
         process.store.appendMessage("user", "What was the result?");
 
         const messages = await process.buildContextMessages("default");
         expect(messages).toHaveLength(2);
         expect(messages[0]).toMatchObject({ role: "user" });
         expect((messages[0] as any).content).toContain("[Process Event]:");
-        expect((messages[0] as any).content).toContain("IPC call completed with result GREEN.");
+        expect((messages[0] as any).content).toContain("Delegated task finished with result GREEN.");
         expect(messages[1]).toMatchObject({
           role: "user",
           content: "What was the result?",
@@ -423,7 +423,7 @@ describe("Process DO — mechanical", () => {
         });
         process.store.appendMessage(
           "system",
-          "IPC call `abc` completed from process `worker`.",
+          "Delegated task from process `worker` finished.",
         );
         process.store.appendToolResult(
           "call_shell",
@@ -440,7 +440,7 @@ describe("Process DO — mechanical", () => {
         ]);
         expect((messages[1] as any).toolCallId).toBe("call_shell");
         expect((messages[2] as any).content).toContain("[Process Event]:");
-        expect((messages[2] as any).content).toContain("IPC call `abc` completed");
+        expect((messages[2] as any).content).toContain("Delegated task from process `worker` finished");
       });
     });
 
@@ -825,6 +825,16 @@ describe("Process DO — mechanical", () => {
                 api: "test",
                 provider: "test",
                 model: "test",
+                usage: {
+                  ...testUsage(100, 0),
+                  cost: {
+                    input: 0.00005,
+                    output: 0,
+                    cacheRead: 0,
+                    cacheWrite: 0,
+                    total: 0.00005,
+                  },
+                },
                 stopReason: "stop",
                 timestamp: Date.now(),
               };
@@ -837,6 +847,16 @@ describe("Process DO — mechanical", () => {
               api: "test",
               provider: "test",
               model: "test",
+              usage: {
+                ...testUsage(50, 10),
+                cost: {
+                  input: 0.000025,
+                  output: 0.000015,
+                  cacheRead: 0,
+                  cacheWrite: 0,
+                  total: 0.00004,
+                },
+              },
               stopReason: "stop",
               timestamp: Date.now(),
             };
@@ -871,6 +891,8 @@ describe("Process DO — mechanical", () => {
         return {
           calls,
           emitted,
+          contextState: process.store.getContextState("default"),
+          conversationUsage: process.store.getConversationUsage("default"),
           messages: process.store.getMessages(),
         };
       });
@@ -880,6 +902,18 @@ describe("Process DO — mechanical", () => {
         ["user", "answer visibly"],
         ["assistant", "visible answer"],
       ]);
+      expect(result.conversationUsage).toMatchObject({
+        inputTokens: 150,
+        outputTokens: 10,
+        totalTokens: 160,
+        cost: { total: 0.00009, source: "model-pricing" },
+        generations: 2,
+      });
+      expect(result.contextState?.conversationUsage).toMatchObject({
+        inputTokens: 150,
+        outputTokens: 10,
+        cost: { total: 0.00009, source: "model-pricing" },
+      });
       const output = result.emitted.find((entry) => entry.signal === "proc.run.output")?.payload as any;
       expect(output?.text).toBe("visible answer");
       const finished = result.emitted.find((entry) => entry.signal === "proc.run.finished")?.payload as any;
@@ -1034,6 +1068,110 @@ describe("Process DO — mechanical", () => {
         status: "ok",
         reason: "turn.complete",
         text: "recovered",
+      });
+    });
+
+    it("retries raw tool-call markup returned as final text", async () => {
+      const pid = "mech-chat-tool-markup-text";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const emitted: Array<{ signal: string; payload: unknown }> = [];
+        let calls = 0;
+        process.sendSignal = async (signal: string, payload: unknown) => {
+          emitted.push({ signal, payload });
+        };
+        process.generation = {
+          async generate() {
+            calls += 1;
+            if (calls === 1) {
+              return {
+                role: "assistant",
+                content: [{
+                  type: "text",
+                  text: "<tool_call>Shell<arg_key>input</arg_key><arg_value>pwd</arg_value><arg_key>target</arg_key><arg_value>gsv</arg_value></tool_call>",
+                }],
+                api: "test",
+                provider: "test",
+                model: "test",
+                stopReason: "stop",
+                timestamp: Date.now(),
+              };
+            }
+            return {
+              role: "assistant",
+              content: [{
+                type: "toolCall",
+                id: "call-retry-shell",
+                name: "Shell",
+                arguments: { input: "pwd", target: "gsv" },
+              }],
+              api: "test",
+              provider: "test",
+              model: "test",
+              stopReason: "toolUse",
+              timestamp: Date.now(),
+            };
+          },
+          async generateText() {
+            return "unused";
+          },
+        };
+
+        process.store.appendMessage("user", "run pwd");
+        process.currentRun = {
+          runId: "run-chat-tool-markup-text",
+          queued: false,
+          conversationId: "default",
+          config: {
+            profile: "task",
+            provider: "openai",
+            model: "gpt-test",
+            apiKey: "test-key",
+            reasoning: "high",
+            maxTokens: 8192,
+            contextWindowTokens: 128000,
+            contextWindowSource: "config",
+            maxContextBytes: 32768,
+          },
+          tools: [],
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: {
+            default: "auto",
+            rules: [{ match: "shell.exec", action: "ask" }],
+          },
+        };
+        await process.continueAgentLoop("run-chat-tool-markup-text");
+        return {
+          calls,
+          emitted,
+          messages: process.store.getMessages(),
+          pendingHil: process.store.getPendingHilForRun("run-chat-tool-markup-text"),
+        };
+      });
+
+      expect(result.calls).toBe(2);
+      expect(result.messages.map((message: any) => [message.role, message.content])).toEqual([
+        ["user", "run pwd"],
+        ["assistant", ""],
+      ]);
+      const retry = result.emitted.find((entry) => entry.signal === "proc.run.retrying")?.payload as any;
+      expect(retry).toMatchObject({
+        pid,
+        runId: "run-chat-tool-markup-text",
+        conversationId: "default",
+        attempt: 1,
+        nextAttempt: 2,
+        maxAttempts: 3,
+        reason: "LLM returned malformed tool call markup as final text",
+      });
+      expect(result.pendingHil).toMatchObject({
+        runId: "run-chat-tool-markup-text",
+        toolCallId: "call-retry-shell",
+        toolName: "Shell",
+        syscall: "shell.exec",
       });
     });
 
@@ -1250,7 +1388,16 @@ describe("Process DO — mechanical", () => {
               api: "test",
               provider: "google",
               model: "gemini-test",
-              usage: testUsage(1_196_265, 0),
+              usage: {
+                ...testUsage(1_196_265, 0),
+                cost: {
+                  input: 0.12,
+                  output: 0,
+                  cacheRead: 0,
+                  cacheWrite: 0,
+                  total: 0.12,
+                },
+              },
               stopReason: "error",
               errorMessage: "The input token count (1196265) exceeds the maximum number of tokens allowed (1048575)",
               timestamp: Date.now(),
@@ -1286,6 +1433,7 @@ describe("Process DO — mechanical", () => {
         return {
           emitted,
           contextState: process.store.getContextState("default"),
+          conversationUsage: process.store.getConversationUsage("default"),
           messages: process.store.getMessages(),
         };
       });
@@ -1298,6 +1446,16 @@ describe("Process DO — mechanical", () => {
         inputTokens: 1196265,
         source: "provider",
         level: "full",
+      });
+      expect(result.conversationUsage).toMatchObject({
+        inputTokens: 1196265,
+        totalTokens: 1196265,
+        cost: { total: 0.12, source: "provider" },
+        generations: 1,
+      });
+      expect(result.contextState?.conversationUsage).toMatchObject({
+        inputTokens: 1196265,
+        cost: { total: 0.12, source: "provider" },
       });
       expect(result.emitted).toEqual(expect.arrayContaining([
         {
@@ -1924,7 +2082,7 @@ describe("Process DO — mechanical", () => {
         expect(messages).toHaveLength(0);
         expect(store.queueSize("mail")).toBe(1);
         const queued = store.drainQueue("mail");
-        expect(queued[0].message).toContain(`Message from process \`${sourcePid}\``);
+        expect(queued[0].message).toContain(`Message from sam (${sourcePid}).`);
         expect(queued[0].message).toContain("Please summarize the current build status.");
         expect(queued[0].message).toContain('"kind": "delegation"');
         expect(process.currentRun).toMatchObject({
@@ -2030,8 +2188,11 @@ describe("Process DO — mechanical", () => {
         const store = (instance as any).store;
         const queued = store.drainQueue("mail");
         expect(queued).toHaveLength(1);
-        expect(queued[0].message).toContain(`Call id: \`${data.callId}\``);
-        expect(queued[0].message).toContain("Complete this run before the deadline.");
+        expect(queued[0].message).toContain(`Delegated task from sam (${sourcePid}).`);
+        expect(queued[0].message).toContain("Please complete this task before");
+        expect(queued[0].message).toContain("Your final answer will be returned to the caller automatically.");
+        expect(queued[0].message).not.toContain("Call id:");
+        expect(queued[0].message).not.toContain("Reply target:");
         store.enqueue(data.runId, queued[0].message, undefined, undefined, "mail");
       });
 
@@ -2053,7 +2214,8 @@ describe("Process DO — mechanical", () => {
         const messages = store.getMessages();
         expect(messages).toHaveLength(1);
         expect(messages[0].role).toBe("system");
-        expect(messages[0].content).toContain(`IPC call \`${data.callId}\` completed`);
+        expect(messages[0].content).toContain(`Delegated task from process \`${targetPid}\` finished.`);
+        expect(messages[0].content).toContain(`Task id: \`${data.callId}\`.`);
         expect(messages[0].content).toContain("status is green");
         expect(process.currentRun).toMatchObject({
           conversationId: "default",
@@ -2112,12 +2274,183 @@ describe("Process DO — mechanical", () => {
         const messages = (instance as any).store.getMessages();
         const reply = messages.find((message: any) =>
           message.role === "system"
-          && message.content.includes(`IPC call \`${data.callId}\` completed`)
+          && message.content.includes(`Task id: \`${data.callId}\``)
         );
         expect(reply).toBeTruthy();
         expect(reply.content).toContain("worker completed");
         (instance as any).currentRun = null;
       });
+    });
+
+    it("defers the fallback wake run until a busy source run finishes", async () => {
+      const sourcePid = "mech-ipc-busy-source";
+      const targetPid = "mech-ipc-busy-target";
+      const source = await initProcess(sourcePid, ROOT_IDENTITY);
+
+      await runInDurableObject(source, (instance: Process) => {
+        const process = instance as any;
+        process.scheduleTick = vi.fn();
+        process.currentRun = {
+          runId: "active-source-run",
+          queued: false,
+          conversationId: "default",
+        };
+      });
+
+      await source.recvFrame({
+        type: "sig",
+        signal: "ipc.reply",
+        payload: {
+          callId: "busy-call",
+          sourcePid,
+          targetPid,
+          runId: "target-run",
+          deadlineAt: Date.now() + 30_000,
+          status: "completed",
+          response: { text: "busy result", usage: null },
+        },
+      });
+
+      await runInDurableObject(source, (instance: Process) => {
+        const process = instance as any;
+        const messages = process.store.getMessages();
+        expect(messages).toHaveLength(1);
+        expect(messages[0].role).toBe("system");
+        expect(messages[0].content).toContain(`Delegated task from process \`${targetPid}\` finished.`);
+        expect(messages[0].content).toContain("busy result");
+        expect(process.currentRun).toMatchObject({
+          runId: "active-source-run",
+          pendingRuntimeEvents: 1,
+        });
+        expect(process.store.queueSize("default")).toBe(0);
+        expect(process.scheduleTick).not.toHaveBeenCalled();
+      });
+
+      await runInDurableObject(source, async (instance: Process) => {
+        const process = instance as any;
+        await process.finishRun({
+          reason: "turn.complete",
+          status: "ok",
+          text: "parent finished before reading the event",
+        });
+      });
+
+      await runInDurableObject(source, (instance: Process) => {
+        const process = instance as any;
+        const userMessages = process.store.getMessages()
+          .filter((message: any) => message.role === "user");
+        expect(userMessages.at(-1)?.content).toContain("A delegated task event arrived while you were busy.");
+        expect(process.store.queueSize("default")).toBe(0);
+        expect(process.currentRun?.runId).not.toBe("active-source-run");
+        expect(process.currentRun).toMatchObject({ conversationId: "default" });
+        process.currentRun = null;
+      });
+    });
+
+    it("uses a busy bounded IPC reply on the next tool-result turn", async () => {
+      const sourcePid = "mech-ipc-next-turn-source";
+      const targetPid = "mech-ipc-next-turn-target";
+      const source = await initProcess(sourcePid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(source, async (instance: Process) => {
+        const process = instance as any;
+        const generatedInputs: string[] = [];
+        process.sendSignal = async () => {};
+        process.generation = {
+          async generate(request: any) {
+            generatedInputs.push(JSON.stringify(request.context.messages));
+            return {
+              role: "assistant",
+              content: [{ type: "text", text: "used delegated result" }],
+              api: "test",
+              provider: "test",
+              model: "test",
+              stopReason: "stop",
+              timestamp: Date.now(),
+            };
+          },
+          async generateText() {
+            return "";
+          },
+        };
+        process.store.appendMessage("user", "Wait for delegated work.", {
+          runId: "active-source-turn",
+        });
+        process.store.appendMessage("assistant", "Waiting on a command.", {
+          runId: "active-source-turn",
+          toolCalls: JSON.stringify({
+            toolCalls: [
+              {
+                type: "toolCall",
+                id: "call_shell",
+                name: "Shell",
+                arguments: { input: "sleep 10", target: "gsv" },
+              },
+            ],
+          }),
+        });
+        process.store.register("call_shell", "active-source-turn", "shell.exec", {
+          input: "sleep 10",
+          target: "gsv",
+        });
+        process.store.resolve("call_shell", { ok: true, stdout: "done" });
+        process.currentRun = {
+          runId: "active-source-turn",
+          queued: false,
+          conversationId: "default",
+          config: {
+            profile: "task",
+            provider: "workers-ai",
+            model: "@cf/test/model",
+            apiKey: "",
+            reasoning: "off",
+            maxTokens: 8192,
+          },
+          tools: [],
+          devices: [],
+          mcpServers: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+
+        await process.recvFrame({
+          type: "sig",
+          signal: "ipc.reply",
+          payload: {
+            callId: "next-turn-call",
+            sourcePid,
+            targetPid,
+            runId: "target-run",
+            deadlineAt: Date.now() + 30_000,
+            status: "completed",
+            response: { text: "next-turn result", usage: null },
+          },
+        });
+
+        expect(process.currentRun).toMatchObject({
+          runId: "active-source-turn",
+          pendingRuntimeEvents: 1,
+        });
+        expect(process.store.queueSize("default")).toBe(0);
+
+        await process.continueAgentLoop("active-source-turn");
+
+        return {
+          generatedInputs,
+          queueSize: process.store.queueSize("default"),
+          currentRun: process.currentRun,
+          messages: process.store.getMessages(),
+        };
+      });
+
+      expect(result.generatedInputs).toHaveLength(1);
+      expect(result.generatedInputs[0]).toContain("next-turn result");
+      expect(result.queueSize).toBe(0);
+      expect(result.currentRun).toBeNull();
+      const assistant = result.messages
+        .filter((message: any) => message.role === "assistant")
+        .pop();
+      expect(assistant?.content).toContain("used delegated result");
     });
 
     it("drives a bounded IPC reply through the target and source agent loops", async () => {
@@ -2129,14 +2462,14 @@ describe("Process DO — mechanical", () => {
 
       await stubGeneration(target, (request) => {
         const input = JSON.stringify(request.context.messages);
-        expect(input).toContain(`Message from process \`${sourcePid}\``);
+        expect(input).toContain(`Delegated task from root (${sourcePid}).`);
         expect(input).toContain(`Reply with exactly this token and nothing else: ${token}`);
         return token;
       });
       await stubGeneration(source, (request) => {
         const input = JSON.stringify(request.context.messages);
-        expect(input).toContain("IPC call");
-        expect(input).toContain("completed");
+        expect(input).toContain("Delegated task");
+        expect(input).toContain("finished");
         expect(input).toContain(token);
         return token;
       });
@@ -2175,7 +2508,7 @@ describe("Process DO — mechanical", () => {
           const messages = (instance as any).store.getMessages();
           return messages.find((message: any) =>
             message.role === "system"
-            && message.content.includes(`IPC call \`${data.callId}\` completed`)
+            && message.content.includes(`Task id: \`${data.callId}\``)
           ) ?? null;
         });
         if (replyMessage) break;
@@ -2233,7 +2566,8 @@ describe("Process DO — mechanical", () => {
         const messages = process.store.getMessages();
         expect(messages).toHaveLength(1);
         expect(messages[0].role).toBe("system");
-        expect(messages[0].content).toContain(`IPC call \`${data.callId}\` to process \`${targetPid}\` timed out.`);
+        expect(messages[0].content).toContain(`Delegated task to process \`${targetPid}\` timed out.`);
+        expect(messages[0].content).toContain(`Task id: \`${data.callId}\`.`);
         process.currentRun = null;
       });
     });
@@ -3588,6 +3922,55 @@ describe("Process DO — mechanical", () => {
         role: "user",
         content: "from the browser",
         origin,
+      });
+    });
+
+    it("returns assistant usage metadata", async () => {
+      const pid = "mech-history-usage-metadata";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        store.appendMessage("assistant", "priced reply", {
+          metadata: {
+            provider: {
+              api: "workers-ai-binding",
+              provider: "workers-ai",
+              model: "@cf/nvidia/nemotron-3-120b-a12b",
+            },
+            usage: {
+              inputTokens: 100,
+              outputTokens: 25,
+              cacheReadTokens: 0,
+              cacheWriteTokens: 0,
+              totalTokens: 125,
+              cost: {
+                input: 0.00005,
+                output: 0.0000375,
+                cacheRead: 0,
+                cacheWrite: 0,
+                total: 0.0000875,
+                currency: "USD",
+                source: "model-pricing",
+              },
+            },
+          },
+        });
+      });
+
+      const res = (await stub.recvFrame(
+        makeReq("proc.history", {}),
+      )) as ResponseOkFrame;
+
+      expect(res.ok).toBe(true);
+      const data = res.data as any;
+      expect(data.messages[0].metadata).toMatchObject({
+        provider: { provider: "workers-ai" },
+        usage: {
+          inputTokens: 100,
+          outputTokens: 25,
+          cost: { total: 0.0000875, source: "model-pricing" },
+        },
       });
     });
 

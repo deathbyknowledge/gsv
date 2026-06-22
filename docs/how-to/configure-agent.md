@@ -82,8 +82,28 @@ gsv proc spawn --as research-agent --prompt "Audit the week of notes."
 ```
 
 System and agent context can use runtime template variables such as
-`identity.username`, `identity.home`, `identity.cwd`, `devices`, and
-`mcpServers`.
+`current.date`, `current.timezone`, `identity.username`, `identity.home`,
+`identity.cwd`, `devices`, and `mcpServers`.
+
+Keep `context.d` concise. For long-term searchable memory, create or use the
+agent's repo-backed `memory` wiki:
+
+```bash
+wiki db init memory --title "research-agent Memory"
+```
+
+After initialization, pages are normal markdown files in the agent-owned repo:
+
+```text
+/src/repos/research-agent/memory/index.md
+/src/repos/research-agent/memory/pages/
+/src/repos/research-agent/memory/pages/journal/YYYY/MM/YYYY-MM-DD.md
+```
+
+Agents should search and edit those files for durable facts, decisions,
+preferences, journal entries, closed-loop history, and supporting evidence. Keep
+active commitments, unresolved questions, blockers, and follow-ups in
+`~/context.d/20-open-loops.md` when they must be loaded into every prompt.
 
 ## Add Owner Context
 
@@ -95,9 +115,9 @@ files exist:
 ~/context.d/*.md
 ```
 
-Use home context for durable preferences and recurring operating notes. Put
-project-specific instructions, status, and handoff notes in explicit project
-files, package source, or process assignment context. Keep always-loaded context
+Use home context for compact recurring operating notes. Put durable preferences,
+project-specific instructions, status, and handoff notes in a wiki, explicit
+project files, package source, or process assignment context. Keep always-loaded context
 short and focused; the runtime loads context files lexically until
 `config/ai/max_context_bytes` is reached.
 

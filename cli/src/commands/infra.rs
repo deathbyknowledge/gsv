@@ -7,7 +7,7 @@ use gsv::device_service;
 
 use crate::auth_flow::{can_prompt_interactively, prompt_secret, prompt_yes_no};
 use crate::cli::{DeviceServiceAction, InfraAction};
-use crate::device::run_node_service;
+use crate::device::run_device_service;
 
 struct DeployCommandOptions {
     version: String,
@@ -360,7 +360,7 @@ async fn run_destroy_command(
         return Ok(());
     }
 
-    if !device_service::node_service_management_supported() {
+    if !device_service::device_service_management_supported() {
         println!(
             "Device daemon management is unsupported on this OS. Local device teardown was skipped."
         );
@@ -368,7 +368,7 @@ async fn run_destroy_command(
     }
 
     let refreshed_cfg = CliConfig::load();
-    run_node_service(
+    run_device_service(
         DeviceServiceAction::Uninstall,
         &refreshed_cfg,
         None,

@@ -236,6 +236,58 @@ describe("ProcessStore", () => {
       });
     });
 
+    it("appendMessage stores assistant usage metadata and accumulates conversation usage", async () => {
+      const stub = await getProcessByPid("msg-crud-usage-metadata");
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        const id = store.appendMessage("assistant", "priced response", {
+          metadata: {
+            provider: {
+              api: "workers-ai-binding",
+              provider: "workers-ai",
+              model: "@cf/nvidia/nemotron-3-120b-a12b",
+              stopReason: "stop",
+            },
+            usage: {
+              inputTokens: 1000,
+              outputTokens: 250,
+              cacheReadTokens: 0,
+              cacheWriteTokens: 0,
+              totalTokens: 1250,
+              cost: {
+                input: 0.0005,
+                output: 0.000375,
+                cacheRead: 0,
+                cacheWrite: 0,
+                total: 0.000875,
+                currency: "USD",
+                source: "model-pricing",
+              },
+            },
+          },
+        });
+
+        const message = store.getMessages()[0];
+        expect(id).toBe(message.id);
+        expect(JSON.parse(message.metadata)).toMatchObject({
+          provider: { provider: "workers-ai" },
+          usage: { inputTokens: 1000, outputTokens: 250 },
+        });
+        expect(store.getConversationUsage()).toMatchObject({
+          inputTokens: 1000,
+          outputTokens: 250,
+          totalTokens: 1250,
+          cost: { total: 0.000875, source: "model-pricing" },
+          generations: 1,
+        });
+
+        const piMessage = store.toMessages()[0] as any;
+        expect(piMessage.provider).toBe("workers-ai");
+        expect(piMessage.model).toBe("@cf/nvidia/nemotron-3-120b-a12b");
+        expect(piMessage.usage.cost.total).toBe(0.000875);
+      });
+    });
+
     it("appendMessage stores assistant message with tool calls", async () => {
       const stub = await getProcessByPid("msg-crud-2");
       await runInDurableObject(stub, (instance: Process) => {
@@ -338,6 +390,49 @@ describe("ProcessStore", () => {
         const cleared = store.clearMessages();
         expect(cleared).toBe(2);
         expect(store.messageCount()).toBe(0);
+      });
+    });
+
+    it("keeps conversation usage through compaction and clears it on reset", async () => {
+      const stub = await getProcessByPid("conversation-usage-compaction");
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        store.openConversation({ conversationId: "thread" });
+        const firstId = store.appendMessage("user", "old one", { conversationId: "thread" });
+        const secondId = store.appendMessage("assistant", "old two", {
+          conversationId: "thread",
+          metadata: {
+            usage: {
+              inputTokens: 100,
+              outputTokens: 20,
+              cacheReadTokens: 0,
+              cacheWriteTokens: 0,
+              totalTokens: 120,
+              cost: {
+                input: 0.00005,
+                output: 0.00003,
+                cacheRead: 0,
+                cacheWrite: 0,
+                total: 0.00008,
+                currency: "USD",
+                source: "model-pricing",
+              },
+            },
+          },
+        });
+        store.appendMessage("user", "keep me", { conversationId: "thread" });
+
+        store.compactConversationPrefix({
+          conversationId: "thread",
+          generation: 1,
+          fromMessageId: firstId,
+          toMessageId: secondId,
+          summary: "Summary.",
+        });
+        expect(store.getConversationUsage("thread")?.cost?.total).toBe(0.00008);
+
+        store.resetConversation("thread");
+        expect(store.getConversationUsage("thread")).toBeNull();
       });
     });
 

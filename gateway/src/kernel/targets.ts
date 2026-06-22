@@ -243,5 +243,7 @@ function adapterTargetToDescriptor(ctx: KernelContext, target: AdapterTarget): T
 }
 
 function isBrowserDevice(record: DeviceRecord): boolean {
-  return record.device_id.startsWith("browser:") || record.platform === "browser";
+  return record.device_id.startsWith("browser:")
+    || record.platform === "browser"
+    || record.platform === "browser-extension";
 }

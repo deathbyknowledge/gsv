@@ -129,7 +129,7 @@ fn persist_gateway_overrides(
     Ok(changed)
 }
 
-pub(crate) fn run_node_service(
+pub(crate) fn run_device_service(
     action: DeviceServiceAction,
     cfg: &CliConfig,
     gateway_url_override: Option<&str>,
@@ -146,10 +146,10 @@ pub(crate) fn run_node_service(
             let (node_id, workspace, node_defaults_changed) =
                 persist_node_defaults(cfg, id, workspace)?;
 
-            device_service::install_node_service()?;
+            device_service::install_device_service()?;
 
             if gateway_overrides_changed || node_defaults_changed {
-                device_service::restart_node_service()?;
+                device_service::restart_device_service()?;
             }
 
             println!("Device daemon installed and started.");
@@ -167,7 +167,7 @@ pub(crate) fn run_node_service(
             println!("  gsv device logs --follow");
         }
         DeviceServiceAction::Uninstall => {
-            device_service::uninstall_node_service()?;
+            device_service::uninstall_device_service()?;
 
             println!("Device daemon uninstalled.");
         }
@@ -179,26 +179,26 @@ pub(crate) fn run_node_service(
             )?;
 
             if gateway_overrides_changed {
-                device_service::restart_node_service()?;
+                device_service::restart_device_service()?;
                 println!("Saved gateway connection overrides to local config.");
                 println!("Device daemon restarted.");
                 return Ok(());
             }
 
-            device_service::start_node_service()?;
+            device_service::start_device_service()?;
 
             println!("Device daemon started.");
         }
         DeviceServiceAction::Stop => {
-            device_service::stop_node_service()?;
+            device_service::stop_device_service()?;
 
             println!("Device daemon stopped.");
         }
         DeviceServiceAction::Status => {
-            device_service::status_node_service()?;
+            device_service::status_device_service()?;
         }
         DeviceServiceAction::Logs { lines, follow } => {
-            device_service::show_node_service_logs(lines, follow)?;
+            device_service::show_device_service_logs(lines, follow)?;
         }
     }
 

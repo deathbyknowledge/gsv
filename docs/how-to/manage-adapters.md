@@ -1,7 +1,7 @@
 # How to Manage Adapters
 
 Adapters connect GSV processes to external messaging systems such as WhatsApp,
-Discord, and Telegram. The deployed channel Workers host protocol-specific code; the
+Discord, and Telegram. The deployed adapter Workers host protocol-specific code; the
 Kernel sees them through `adapter.*` syscalls and linked external actors.
 
 ## Deploy Adapter Workers
@@ -158,7 +158,7 @@ for the syscall/target class. Non-DM messages from unlinked actors are dropped.
 
 ## Troubleshooting
 
-- If `adapter.connect` fails, verify the channel Worker was deployed and the
+- If `adapter.connect` fails, verify the adapter Worker was deployed and the
   Gateway has the correct service binding.
 - If WhatsApp does not show a QR code, reconnect with `{"force":true}`.
 - If Discord does not respond, check the bot token, gateway status, invite

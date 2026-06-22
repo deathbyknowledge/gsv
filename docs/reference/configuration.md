@@ -145,8 +145,8 @@ config/ai/context.d/10-runtime.md
 ```
 
 System and account context support runtime template variables such as
-`identity.uid`, `identity.username`, `identity.home`, `identity.cwd`, `devices`,
-and `mcpServers`.
+`current.date`, `current.timezone`, `identity.uid`, `identity.username`,
+`identity.home`, `identity.cwd`, `devices`, and `mcpServers`.
 
 ## Tool Approval Policy
 
