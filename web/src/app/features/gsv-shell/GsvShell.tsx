@@ -79,7 +79,7 @@ function formatChatMessageTime(timestamp: number | null): string {
 }
 
 function chatDockRoleForHistoryRole(role: ProcHistoryMessage["role"]): ChatDockMessage["role"] {
-  return role === "toolResult" ? "tool" : role;
+  return role === "toolResult" ? "toolResult" : role;
 }
 
 function useClock(): string {
