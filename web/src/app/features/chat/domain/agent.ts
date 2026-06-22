@@ -9,6 +9,7 @@ export type ChatAgentTaskData = {
 
 export type ChatAgentCrewData = {
   id?: string;
+  processId?: string;
   name: string;
   role?: string;
   imageSrc?: string;
@@ -40,6 +41,7 @@ export type ChatAgentTaskView = {
 
 export type ChatAgentCrewView = {
   id: string;
+  processId?: string;
   name: string;
   role: string;
   imageSrc: string;
@@ -152,8 +154,10 @@ function normalizeCrew(
         return null;
       }
       const status = member.status ?? fallback.status;
+      const processId = member.processId?.trim();
       return {
         id: cleanText(member.id, `crew-${index}`),
+        ...(processId ? { processId } : {}),
         name,
         role: cleanText(member.role, fallback.role),
         imageSrc: cleanText(member.imageSrc, fallback.imageSrc),
