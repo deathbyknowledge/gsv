@@ -1,6 +1,5 @@
 export type AdministrationMode = "access" | "settings";
-export type SettingsPanelId = "ai" | "runtime" | "advanced";
-export type ConfigSectionId = "ai" | "shell" | "server";
+export type SettingsPanelId = "runtime" | "advanced";
 export type TokenKind = "node" | "service" | "user";
 export type SettingKind = "text" | "textarea" | "password" | "number" | "checkbox" | "select" | "readonly" | "json";
 
@@ -122,11 +121,4 @@ export type SettingField = {
   placeholder?: string;
   rows?: number;
   options?: Array<{ value: string; label: string }>;
-};
-
-export type ConfigSection = {
-  id: ConfigSectionId;
-  panel: SettingsPanelId;
-  label: string;
-  description: string;
 };

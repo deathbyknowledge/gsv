@@ -308,15 +308,10 @@ export const SECTIONS: GsvSection[] = [
     label: "Settings",
     shortLabel: "Settings",
     title: "Settings",
-    summary: "Curated runtime configuration with Advanced as an escape hatch.",
+    summary: "Runtime configuration with Advanced as a technical escape hatch.",
     statusLabel: "Administration",
     tone: "neutral",
     localItems: [
-      {
-        label: "AI defaults",
-        description: "Model/provider defaults, personal overrides, and prompt budgets.",
-        meta: "Config",
-      },
       {
         label: "Runtime behavior",
         description: "Shell defaults and server settings.",

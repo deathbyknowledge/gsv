@@ -1,8 +1,6 @@
-import { AI_FIELDS, buildUserAiOverrideKey } from "./config-schema";
+import { AI_FIELDS } from "./config-schema";
 import type {
-  AdministrationViewer,
   ModelProfile,
-  SaveConfigEntry,
 } from "./types";
 
 const MODEL_PROFILES_VERSION = 1;
@@ -81,7 +79,7 @@ export function createModelProfile(
   ];
 }
 
-export function updateModelProfile(
+function updateModelProfile(
   profiles: ModelProfile[],
   profileId: string,
   values: Record<string, string>,
@@ -96,37 +94,8 @@ export function updateModelProfile(
     : profile);
 }
 
-export function removeModelProfile(profiles: ModelProfile[], profileId: string): ModelProfile[] {
-  return profiles.filter((profile) => profile.id !== profileId);
-}
-
-export function buildApplyModelProfileEntries(
-  profile: ModelProfile,
-  viewer: AdministrationViewer,
-  overrideAiForUser: boolean,
-): SaveConfigEntry[] {
-  return AI_FIELDS
-    .filter((field) => field.kind !== "readonly")
-    .map((field) => ({
-      key: overrideAiForUser ? buildUserAiOverrideKey(viewer.uid, field.key) : field.key,
-      value: profile.values[field.key] ?? "",
-    }));
-}
-
 export function modelProfileMatches(profile: ModelProfile, values: Record<string, string>): boolean {
   return AI_FIELDS.every((field) => (profile.values[field.key] ?? "") === (values[field.key] ?? ""));
-}
-
-export function modelProfileSummary(profile: ModelProfile): string {
-  const chatProvider = summarizeProfileValue(profile.values["config/ai/provider"], "chat provider");
-  const chatModel = summarizeProfileValue(profile.values["config/ai/model"], "chat model");
-  const imageProvider = summarizeProfileValue(profile.values["config/ai/image/read/provider"], "image provider");
-  const imageModel = summarizeProfileValue(profile.values["config/ai/image/read/model"], "image reader");
-  const transcriptionProvider = summarizeProfileValue(profile.values["config/ai/transcription/provider"], "audio provider");
-  const transcriptionModel = summarizeProfileValue(profile.values["config/ai/transcription/model"], "transcription");
-  const speechProvider = summarizeProfileValue(profile.values["config/ai/speech/provider"], "speech provider");
-  const speechModel = summarizeProfileValue(profile.values["config/ai/speech/model"], "speech");
-  return `chat ${chatProvider}/${chatModel} - image ${imageProvider}/${imageModel} - audio ${transcriptionProvider}/${transcriptionModel} - speech ${speechProvider}/${speechModel}`;
 }
 
 export function profileValuesFromDrafts(values: Record<string, string>): Record<string, string> {
@@ -197,12 +166,4 @@ function slugify(value: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 48);
-}
-
-function summarizeProfileValue(value: string | undefined, fallback: string): string {
-  const normalized = (value ?? "").trim();
-  if (!normalized) {
-    return fallback;
-  }
-  return normalized.length > 34 ? `${normalized.slice(0, 31)}...` : normalized;
 }

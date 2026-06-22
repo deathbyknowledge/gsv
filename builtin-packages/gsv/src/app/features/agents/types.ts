@@ -22,9 +22,9 @@ export type AgentDetail = {
   contextEditable: boolean;
   /** Per-agent model override (config key users/<uid>/ai/model); empty = inherit default. */
   model: string;
-  /** Sparse per-agent AI stack overrides keyed by config/ai/* field names. */
+  /** Sparse per-agent model preset overrides keyed by config/ai/* field names. */
   aiValues: Record<string, string>;
-  /** Effective AI stack values after applying visible account overrides over system defaults. */
+  /** Effective model preset values after applying visible account overrides over system defaults. */
   effectiveAiValues: Record<string, string>;
   /** Per-agent tool approval policy as a JSON string; empty = inherit default. */
   approval: string;
@@ -36,7 +36,10 @@ export type AgentsState = {
   agents: AgentDetail[];
   humans: AccountSummary[];
   modelProfiles: AgentModelProfile[];
+  /** System-level AI defaults used when an agent account has no explicit override. */
   systemAiValues: Record<string, string>;
+  /** Viewer-effective AI defaults used to create and display that viewer's model presets. */
+  viewerAiValues: Record<string, string>;
   viewerUid: number;
   isRoot: boolean;
   errorText: string;

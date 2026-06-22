@@ -241,7 +241,7 @@ function agentStackSummary(
   }
 
   return {
-    label: "Custom stack",
+    label: "Custom preset",
     detail: stackDetail(profileValuesFromDrafts(agent.effectiveAiValues)),
   };
 }

@@ -16,27 +16,36 @@ export function CrewOverview({
   agents,
   models,
   systemAiValues,
+  modelPresetAiValues,
   processes,
   loading,
   onSelect,
+  onOpenAgents,
+  onOpenModels,
   onCreateAgent,
+  onCreateModel,
 }: {
   agents: AgentDetail[];
   models: AgentModelProfile[];
   systemAiValues: Record<string, string>;
+  modelPresetAiValues: Record<string, string>;
   processes: ProcessEntry[];
   loading: boolean;
   onSelect: (agent: AgentDetail) => void;
+  onOpenAgents: () => void;
+  onOpenModels: () => void;
   onCreateAgent: () => void;
+  onCreateModel: () => void;
 }) {
   const crew = buildCrewAgents(agents, processes, models, systemAiValues);
-  const stacks = buildCrewStackCards(systemAiValues, models);
+  const stacks = buildCrewStackCards(modelPresetAiValues, models);
 
   return (
     <div class="gsv-crew-layout">
-      <section class="gsv-crew-models" aria-label="Available AI stacks">
+      <section class="gsv-crew-models" aria-label="Available model presets">
         <header class="gsv-crew-column-head">
-          <span class="gsv-kicker">Available AI stacks</span>
+          <span class="gsv-kicker">Available model presets</span>
+          <button type="button" class="gsv-text-action" onClick={onOpenModels}>Manage &gt;</button>
         </header>
         {stacks.length === 0 ? (
           <ConsoleCard>
@@ -46,11 +55,19 @@ export function CrewOverview({
         ) : (
           <CrewModelStackList stacks={stacks} />
         )}
+        <ConsoleCard class="gsv-create-card">
+          <div class="gsv-create-card-copy">
+            <strong>Add new model</strong>
+            <span>Create model preset</span>
+          </div>
+          <ActionButton icon="plus" label="Create model preset" size="icon" onClick={onCreateModel} />
+        </ConsoleCard>
       </section>
 
       <section class="gsv-crew-agents" aria-label="Crew members">
         <header class="gsv-crew-column-head">
           <span class="gsv-kicker">Crew members</span>
+          <button type="button" class="gsv-text-action" onClick={onOpenAgents}>View all &gt;</button>
         </header>
         <div class="gsv-crew-agent-grid">
           {crew.length === 0 ? (
@@ -116,7 +133,7 @@ function CrewModelStackCard({
       <button type="button" class="gsv-model-toggle" onClick={onToggle}>
         <span class="gsv-model-title">
           <strong>{stack.label}</strong>
-          <small>{stack.default ? "Default" : "Saved stack"}</small>
+          <small>{stack.default ? "Default" : "Model preset"}</small>
         </span>
         <Icon name="chevron-right" />
       </button>
@@ -163,7 +180,7 @@ function AgentObjectCard({
       {expanded ? (
         <>
           <div class="gsv-card-facts">
-            <CardFact label="AI stack" value={agent.modelLabel} detail={agent.modelDetail} />
+            <CardFact label="Model preset" value={agent.modelLabel} detail={agent.modelDetail} />
             <CardFact label="Active tasks" value={String(agent.activeTasks.length)} />
             {firstTasks.length === 0 ? (
               <p class="gsv-agent-idle">Idle</p>

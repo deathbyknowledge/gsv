@@ -109,6 +109,7 @@ export async function loadAgentsState(
       : [];
     const values = configValues(entries);
     const systemAiValues = profileValuesFromDrafts(values);
+    const viewerAiValues = effectiveAgentAiValues(systemAiValues, agentAiOverrides(values, viewerUid));
 
     const agents: AgentDetail[] = accounts
       .filter((account) => account.relation === "personal-agent" || account.relation === "agent")
@@ -139,12 +140,13 @@ export async function loadAgentsState(
       humans,
       modelProfiles: readModelProfiles(values, viewerUid),
       systemAiValues,
+      viewerAiValues,
       viewerUid,
       isRoot,
       errorText: "",
     };
   } catch (error) {
-    return { agents: [], humans: [], modelProfiles: [], systemAiValues: {}, viewerUid, isRoot, errorText: errorText(error) };
+    return { agents: [], humans: [], modelProfiles: [], systemAiValues: {}, viewerAiValues: {}, viewerUid, isRoot, errorText: errorText(error) };
   }
 }
 

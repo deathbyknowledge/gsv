@@ -4,44 +4,6 @@
   min-width: 0;
 }
 
-.gsv-crew-breadcrumb {
-  padding: 0.2rem 0.1rem 0.35rem;
-}
-
-.gsv-crew-breadcrumb h3 {
-  margin: 0;
-  color: #161b22;
-  font-size: 1.05rem;
-  font-weight: 850;
-  letter-spacing: 0;
-  text-transform: uppercase;
-}
-
-.gsv-crew-surface-nav {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.45rem;
-}
-
-.gsv-crew-surface-nav button {
-  min-height: 2rem;
-  padding: 0 0.7rem;
-  border: 1px solid #cfd6e1;
-  border-radius: 6px;
-  background: #ffffff;
-  color: #253043;
-  cursor: pointer;
-  font-size: 0.78rem;
-  font-weight: 800;
-  text-transform: uppercase;
-}
-
-.gsv-crew-surface-nav button.is-active {
-  border-color: #3867d6;
-  background: #eef3fb;
-  color: #315fbd;
-}
-
 .gsv-crew-subview {
   display: grid;
   gap: 0.85rem;
@@ -77,6 +39,10 @@
 }
 
 .gsv-crew-column-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
   padding: 0 0.1rem;
 }
 
@@ -417,14 +383,14 @@
   overflow: hidden;
 }
 
-.gsv-agent-object-tabs {
+.gsv-agent-object-nav {
   display: grid;
   align-content: start;
   border-right: 1px solid #cfd6e1;
   background: #f1f3f6;
 }
 
-.gsv-agent-object-tabs button {
+.gsv-agent-object-nav button {
   min-height: 4.6rem;
   border: 0;
   border-bottom: 1px solid #ffffff;
@@ -436,7 +402,7 @@
   text-transform: uppercase;
 }
 
-.gsv-agent-object-tabs button.is-active {
+.gsv-agent-object-nav button.is-active {
   background: #ffffff;
   box-shadow: inset -2px 0 0 #ffffff, inset 0 0 0 1px #161b22;
 }
@@ -579,7 +545,7 @@
   cursor: not-allowed;
 }
 
-.gsv-ai-stack-summary {
+.gsv-model-preset-summary {
   display: grid;
   gap: 0.2rem;
   min-width: 0;
@@ -589,27 +555,27 @@
   background: #fbfcfe;
 }
 
-.gsv-ai-stack-summary span {
+.gsv-model-preset-summary span {
   color: #687384;
   font-size: 0.72rem;
   font-weight: 750;
   text-transform: uppercase;
 }
 
-.gsv-ai-stack-summary strong,
-.gsv-ai-stack-summary p {
+.gsv-model-preset-summary strong,
+.gsv-model-preset-summary p {
   overflow: hidden;
   min-width: 0;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.gsv-ai-stack-summary strong {
+.gsv-model-preset-summary strong {
   color: #253043;
   font-size: 0.86rem;
 }
 
-.gsv-ai-stack-summary p {
+.gsv-model-preset-summary p {
   margin: 0;
   color: #687384;
   font-size: 0.78rem;
@@ -887,13 +853,13 @@
     grid-template-columns: 1fr;
   }
 
-  .gsv-agent-object-tabs {
+  .gsv-agent-object-nav {
     grid-template-columns: repeat(3, 1fr);
     border-right: 0;
     border-bottom: 1px solid #cfd6e1;
   }
 
-  .gsv-agent-object-tabs button {
+  .gsv-agent-object-nav button {
     min-height: 3rem;
     border-bottom: 0;
     border-right: 1px solid #ffffff;

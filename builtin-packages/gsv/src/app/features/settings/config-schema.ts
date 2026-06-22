@@ -1,25 +1,4 @@
-import type { ConfigSection, SettingField } from "./types";
-
-export const CONFIG_SECTIONS: ConfigSection[] = [
-  {
-    id: "ai",
-    panel: "ai",
-    label: "AI defaults",
-    description: "Chat, media, speech, and prompt budget defaults.",
-  },
-  {
-    id: "shell",
-    panel: "runtime",
-    label: "Shell",
-    description: "Native command execution limits and network behavior.",
-  },
-  {
-    id: "server",
-    panel: "runtime",
-    label: "Server",
-    description: "Instance identity and runtime metadata.",
-  },
-];
+import type { SettingField } from "./types";
 
 export const AI_FIELDS: SettingField[] = [
   {
