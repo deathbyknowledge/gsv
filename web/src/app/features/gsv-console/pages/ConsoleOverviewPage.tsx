@@ -7,6 +7,10 @@ import {
   ConsolePage,
   ConsoleResourceBoundary,
 } from "../components/ConsolePageTemplate";
+import {
+  defaultModelLabelForConfig,
+  modelConfigCount,
+} from "../domain/consoleAi";
 import type {
   ConsoleAccount,
   ConsoleAdapterAccount,
@@ -208,11 +212,6 @@ function sortPackages(packages: readonly ConsolePackage[]): ConsolePackage[] {
     if (left.enabled !== right.enabled) return left.enabled ? -1 : 1;
     return left.name.localeCompare(right.name);
   });
-}
-
-function findDefaultModel(config: readonly ConsoleConfigEntry[]): string {
-  const entry = config.find((item) => !item.redacted && item.value && /(^|[/.])model($|[/.])|default.*model|model.*default/i.test(item.key));
-  return entry?.value ? entry.value : "GATEWAY DEFAULT";
 }
 
 function scanCode(data: ConsoleOverviewData): string {
@@ -439,8 +438,8 @@ function ModelsTasksPanel({
   const running = counts?.activeProcesses ?? processes.filter(isRunningProcess).length;
   const queued = counts?.queuedProcesses ?? processes.filter(isQueuedProcess).length;
   const idle = Math.max(0, processes.length - running - queued);
-  const model = findDefaultModel(config);
-  const modelCount = config.filter((entry) => /model/i.test(entry.key)).length;
+  const model = defaultModelLabelForConfig(config);
+  const modelCount = modelConfigCount(config);
   const stats: StatLine[] = [
     { label: "RUNNING", value: running, tone: running > 0 ? "live" : "idle" },
     { label: "QUEUED", value: queued, tone: queued > 0 ? "update" : "idle" },

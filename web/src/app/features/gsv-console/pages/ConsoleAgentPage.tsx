@@ -16,8 +16,10 @@ import type {
   ConsoleProcess,
   ConsoleResourceState,
 } from "../domain/consoleModels";
+import { modelLabelsForConfig } from "../domain/consoleAi";
 import {
   useConsoleAccounts,
+  useConsoleConfig,
   useConsoleProcesses,
 } from "../hooks/useConsoleData";
 import "./ConsoleAgentPage.css";
@@ -35,13 +37,12 @@ const RELATION_LABEL: Record<ConsoleAccountRelation, string> = {
   unknown: "ACCOUNT",
 };
 
-const DEFAULT_MODELS = ["GATEWAY DEFAULT"];
-
 export function ConsoleAgentPage({
   accountUid,
   onBackToCrew,
 }: ConsoleAgentPageProps) {
   const accounts = useConsoleAccounts();
+  const config = useConsoleConfig();
   const processes = useConsoleProcesses();
 
   return (
@@ -58,6 +59,7 @@ export function ConsoleAgentPage({
           return (
             <AgentEditorSurface
               account={account}
+              modelLabels={modelLabelsForConfig(config.config)}
               processResource={processes.resource}
               onBackToCrew={onBackToCrew}
             />
@@ -70,10 +72,12 @@ export function ConsoleAgentPage({
 
 function AgentEditorSurface({
   account,
+  modelLabels,
   processResource,
   onBackToCrew,
 }: {
   account: ConsoleAccount;
+  modelLabels: string[];
   processResource: ConsoleResourceState<ConsoleProcess[]>;
   onBackToCrew: () => void;
 }) {
@@ -108,7 +112,7 @@ function AgentEditorSurface({
         createdLabel={String(account.uid)}
         metaLabel="UID:"
         status={avatarStatusForProcesses(account, processes)}
-        models={DEFAULT_MODELS}
+        models={modelLabels}
         tasks={tasksForProcesses(processes)}
         files={filesForAccount(account, processes, processResource)}
         readOnly

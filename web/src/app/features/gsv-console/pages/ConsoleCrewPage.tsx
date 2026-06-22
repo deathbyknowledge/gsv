@@ -14,8 +14,10 @@ import type {
   ConsoleProcess,
   ConsoleResourceState,
 } from "../domain/consoleModels";
+import { modelLabelsForConfig } from "../domain/consoleAi";
 import {
   useConsoleAccounts,
+  useConsoleConfig,
   useConsoleProcesses,
 } from "../hooks/useConsoleData";
 import "./ConsoleCrewPage.css";
@@ -49,14 +51,13 @@ const RELATION_LABEL: Record<ConsoleAccountRelation, string> = {
   unknown: "ACCOUNT",
 };
 
-const DEFAULT_MODELS = ["GATEWAY DEFAULT"];
-
 type ConsoleCrewPageProps = {
   onManageAgent?: (uid: number) => void;
 };
 
 export function ConsoleCrewPage({ onManageAgent }: ConsoleCrewPageProps) {
   const accounts = useConsoleAccounts();
+  const config = useConsoleConfig();
   const processes = useConsoleProcesses();
 
   return (
@@ -68,6 +69,7 @@ export function ConsoleCrewPage({ onManageAgent }: ConsoleCrewPageProps) {
         render={(data) => (
           <CrewRoster
             accounts={data}
+            modelLabels={modelLabelsForConfig(config.config)}
             processResource={processes.resource}
             onManageAgent={onManageAgent}
           />
@@ -79,10 +81,12 @@ export function ConsoleCrewPage({ onManageAgent }: ConsoleCrewPageProps) {
 
 function CrewRoster({
   accounts,
+  modelLabels,
   processResource,
   onManageAgent,
 }: {
   accounts: readonly ConsoleAccount[];
+  modelLabels: string[];
   processResource: ConsoleResourceState<ConsoleProcess[]>;
   onManageAgent?: (uid: number) => void;
 }) {
@@ -131,7 +135,7 @@ function CrewRoster({
                 imgSrc={card.imageSrc}
                 status={card.status}
                 modelIsDefault={card.modelIsDefault}
-                models={DEFAULT_MODELS}
+                models={modelLabels}
                 tasks={card.tasks}
                 tasksTotal={card.processes.length}
                 active={card.active}
