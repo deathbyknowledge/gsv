@@ -147,6 +147,7 @@
 
 .gsv-settings-mini-heading[data-clickable="true"],
 .gsv-settings-action-header[data-clickable="true"],
+.gsv-settings-overrides-state[data-clickable="true"],
 .gsv-settings-mini-row[data-clickable="true"],
 .gsv-settings-add-row[data-clickable="true"],
 .gsv-settings-deep-cell[data-clickable="true"],
@@ -158,6 +159,7 @@
 
 .gsv-settings-mini-heading[data-clickable="true"]:hover,
 .gsv-settings-action-header[data-clickable="true"]:hover,
+.gsv-settings-overrides-state[data-clickable="true"]:hover,
 .gsv-settings-mini-row[data-clickable="true"]:hover,
 .gsv-settings-add-row[data-clickable="true"]:hover,
 .gsv-settings-deep-cell[data-clickable="true"]:hover,

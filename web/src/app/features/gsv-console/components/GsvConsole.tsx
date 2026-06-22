@@ -4,9 +4,10 @@ import { FilesSurfaceSummary } from "../../files/components/FilesSurfaceSummary"
 import { TerminalSurfaceSummary } from "../../terminal/components/TerminalSurfaceSummary";
 import { shellSurfaceLabel, type ShellSurfaceId } from "../../gsv-shell/domain/shellModel";
 import { ConsoleAgentPage } from "../pages/ConsoleAgentPage";
+import { ConsoleConfigPage, type ConsoleConfigKind } from "../pages/ConsoleConfigPage";
 import { ConsoleCrewPage } from "../pages/ConsoleCrewPage";
 import { ConsoleListPage, type ConsoleListKind } from "../pages/ConsoleListPage";
-import { ConsoleOverviewPage } from "../pages/ConsoleOverviewPage";
+import { ConsoleOverviewPage, type ConsoleOverviewTarget } from "../pages/ConsoleOverviewPage";
 import { ConsolePlaceholderPage } from "../pages/ConsolePlaceholderPage";
 
 type GsvConsoleProps = {
@@ -18,6 +19,7 @@ type GsvConsoleProps = {
 type SettingsRoute =
   | { view: "overview" }
   | { view: "list"; kind: ConsoleListKind }
+  | { view: "config"; kind: ConsoleConfigKind }
   | { view: "crew" }
   | { view: "agent"; accountUid: number | null };
 type SettingsListSurface = "machines" | "messengers" | "integrations" | "applications" | "library" | "runtime";
@@ -73,6 +75,9 @@ function settingsRouteLabel(route: SettingsRoute): string {
   if (route.view === "agent") {
     return "AGENT";
   }
+  if (route.view === "config") {
+    return route.kind === "models" ? "MODELS" : "OVERRIDES";
+  }
   return route.kind === "tasks" ? "TASKS" : shellSurfaceLabel(route.kind);
 }
 
@@ -82,6 +87,9 @@ function settingsRouteTail(route: SettingsRoute): string {
   }
   if (route.view === "crew" || route.view === "agent") {
     return "GSV · CREW";
+  }
+  if (route.view === "config") {
+    return route.kind === "models" ? "GSV · MODELS" : "GSV · CONFIG";
   }
   if (route.kind === "tasks") {
     return "GSV · RUNTIME";
@@ -106,9 +114,13 @@ export function GsvConsole({
     setSettingsRoute({ view: "agent", accountUid: uid });
   };
   const backToSettingsCrew = () => setSettingsRoute({ view: "crew" });
-  const openSettingsSurface = (surface: Exclude<ShellSurfaceId, "desktop">) => {
+  const openSettingsSurface = (surface: ConsoleOverviewTarget) => {
     if (surface === "settings") {
       setSettingsRoute({ view: "overview" });
+      return;
+    }
+    if (surface === "models" || surface === "overrides") {
+      setSettingsRoute({ view: "config", kind: surface });
       return;
     }
     if (surface === "crew") {
@@ -165,6 +177,8 @@ export function GsvConsole({
             <ConsoleOverviewPage onOpenSurface={openSettingsSurface} />
           ) : settingsRoute.view === "list" ? (
             <ConsoleListPage kind={settingsRoute.kind} />
+          ) : settingsRoute.view === "config" ? (
+            <ConsoleConfigPage kind={settingsRoute.kind} />
           ) : settingsRoute.view === "crew" ? (
             <ConsoleCrewPage onManageAgent={openSettingsAgent} />
           ) : (

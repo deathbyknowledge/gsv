@@ -56,7 +56,8 @@ type StatLine = {
 };
 
 type OverviewSurface = Exclude<ShellSurfaceId, "desktop">;
-type OpenSurface = (surface: OverviewSurface) => void;
+export type ConsoleOverviewTarget = OverviewSurface | "models" | "overrides";
+type OpenSurface = (surface: ConsoleOverviewTarget) => void;
 
 const DASHBOARD_ROW_LIMIT = 5;
 function isApplicationPackage(pkg: ConsolePackage): boolean {
@@ -380,11 +381,16 @@ function ShipPanel({
         right={(
           <div class="gsv-settings-mini-cell">
             <MiniHeading title="OVERRIDES" />
-            <div class="gsv-settings-overrides-state">
+            <div
+              class="gsv-settings-overrides-state"
+              data-clickable={onOpenSurface ? "true" : undefined}
+              onClick={onOpenSurface ? () => onOpenSurface("overrides") : undefined}
+            >
               <span class="gsv-settings-overrides-copy">
                 <span>{configured > 0 ? `${configured} CONFIGURED` : "NOT CONFIGURED"}</span>
                 {redacted > 0 ? <Tag label={`${redacted} REDACTED`} tone="warn" boxed /> : null}
               </span>
+              {onOpenSurface ? <Chevron /> : null}
             </div>
           </div>
         )}
@@ -473,7 +479,7 @@ function ModelsTasksPanel({
         <div
           class="gsv-settings-deep-cell"
           data-clickable={onOpenSurface ? "true" : undefined}
-          onClick={onOpenSurface ? () => onOpenSurface("library") : undefined}
+          onClick={onOpenSurface ? () => onOpenSurface("models") : undefined}
         >
           <MiniHeading title="MODELS" />
           <div class="gsv-settings-model-summary">

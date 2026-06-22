@@ -1,0 +1,99 @@
+.gsv-console-config-list {
+  min-height: calc(100vh - 118px);
+  border: 1px solid var(--border);
+  background: var(--panel);
+  box-shadow:
+    inset 0 0 0 1px rgba(169, 164, 255, 0.035),
+    inset 0 0 28px rgba(80, 70, 180, 0.06);
+}
+
+.gsv-console-config-list-body {
+  display: grid;
+}
+
+.gsv-console-config-row {
+  min-width: 0;
+  min-height: 64px;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto minmax(112px, auto);
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--rule-inner);
+}
+
+.gsv-console-config-row:last-child {
+  border-bottom: 0;
+}
+
+.gsv-console-config-row-mark {
+  grid-column: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-bright);
+}
+
+.gsv-console-config-row-copy {
+  grid-column: 2;
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.gsv-console-config-row-copy strong,
+.gsv-console-config-row-copy small,
+.gsv-console-config-row-status {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.gsv-console-config-row-copy strong {
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.gsv-console-config-row-copy small {
+  color: var(--text-dim);
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+.gsv-console-config-row-tag {
+  grid-column: 3;
+  min-width: 0;
+  justify-self: end;
+}
+
+.gsv-console-config-row-status {
+  grid-column: 4;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  color: var(--text-dim);
+  font-size: 9px;
+}
+
+@media (max-width: 620px) {
+  .gsv-console-config-row {
+    grid-template-columns: 24px minmax(0, 1fr) auto;
+  }
+
+  .gsv-console-config-row-tag {
+    display: none;
+  }
+
+  .gsv-console-config-row-status {
+    grid-column: 3;
+  }
+
+  .gsv-console-config-row-status span {
+    display: none;
+  }
+}
