@@ -1,8 +1,10 @@
 import { useState } from "preact/hooks";
+import { Button } from "../../../components/ui/Button";
 import { Icon } from "../../../components/ui/Icon";
+import { ListRow, type ListRowStatus } from "../../../components/ui/ListRow";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
 import { StatusDot, type StatusTone } from "../../../components/ui/StatusDot";
-import { Tag, type TagTone } from "../../../components/ui/Tag";
+import type { TagTone } from "../../../components/ui/Tag";
 import {
   ConsolePage,
   ConsoleResourceBoundary,
@@ -94,30 +96,18 @@ function ConsoleConfigPanel({
       <SectionHeader title={title} meta={meta} divider />
       <div class="gsv-console-config-list-body">
         {rows.map((row) => (
-          <button
-            type="button"
-            class="gsv-console-config-row"
-            key={row.id}
-            onClick={() => setSelectedRowId(row.id)}
-          >
-            <span class="gsv-console-config-row-mark">
-              <StatusDot tone={row.tone} size={8} />
-            </span>
-            <span class="gsv-console-config-row-copy">
-              <strong>{row.label}</strong>
-              <small>{row.sub}</small>
-            </span>
-            {row.tag ? (
-              <span class="gsv-console-config-row-tag">
-                <Tag label={row.tag.label} tone={row.tag.tone} boxed />
-              </span>
-            ) : null}
-            <span class="gsv-console-config-row-status">
-              <StatusDot tone={row.tone} size={7} />
-              <span>{row.statusLabel}</span>
-            </span>
-            <span class="gsv-console-config-row-open" aria-hidden="true" />
-          </button>
+          <div class="gsv-console-config-list-row" key={row.id}>
+            <ListRow
+              label={row.label}
+              sub={row.sub}
+              status={listRowStatusForTone(row.tone)}
+              statusLabel={row.statusLabel}
+              tag={row.tag?.label}
+              tagTone={row.tag?.tone}
+              chevron
+              onClick={() => setSelectedRowId(row.id)}
+            />
+          </div>
         ))}
       </div>
     </section>
@@ -161,13 +151,18 @@ function ConfigDetailPanel({
           <ConsoleDetailChips title="STATE" emptyLabel="NO STATE" chips={row.chips} />
         </div>
         <div class="gsv-console-config-detail-actions">
-          <button type="button" class="gsv-console-config-detail-back" onClick={onBack}>
-            BACK TO {kind === "models" ? "MODELS" : "OVERRIDES"}
-          </button>
+          <Button variant="secondary" label={`BACK TO ${kind === "models" ? "MODELS" : "OVERRIDES"}`} onClick={onBack} />
         </div>
       </div>
     </section>
   );
+}
+
+function listRowStatusForTone(tone: StatusTone): ListRowStatus {
+  if (tone === "online" || tone === "error" || tone === "idle" || tone === "live" || tone === "update" || tone === "warn") {
+    return tone;
+  }
+  return "online";
 }
 
 function modelRows(config: readonly ConsoleConfigEntry[]): ConfigRow[] {

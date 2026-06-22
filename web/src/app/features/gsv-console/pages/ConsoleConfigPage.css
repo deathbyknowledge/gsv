@@ -12,104 +12,22 @@
   display: grid;
 }
 
-.gsv-console-config-row {
-  width: 100%;
-  min-width: 0;
-  min-height: 62px;
-  display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) auto minmax(112px, auto) 24px;
-  align-items: center;
-  gap: 14px;
-  padding: 15px 20px;
-  border: 0;
+.gsv-console-config-list-row {
   border-bottom: 1px solid var(--rule-inner);
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
 }
 
-button.gsv-console-config-row {
-  cursor: pointer;
-}
-
-button.gsv-console-config-row:hover,
-button.gsv-console-config-row:focus-visible {
-  background: rgba(150, 140, 255, 0.045);
-  outline: none;
-}
-
-.gsv-console-config-row:last-child {
+.gsv-console-config-list-row:last-child {
   border-bottom: 0;
 }
 
-.gsv-console-config-row-mark {
-  grid-column: 1;
+.gsv-console-config-list-row .lr {
+  min-height: 62px;
+}
+
+.gsv-console-config-list-row .lr-status {
   display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--accent-bright);
-}
-
-.gsv-console-config-row-copy {
-  grid-column: 2;
-  min-width: 0;
-  display: grid;
-  gap: 5px;
-}
-
-.gsv-console-config-row-copy strong,
-.gsv-console-config-row-copy small,
-.gsv-console-config-row-status {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.gsv-console-config-row-copy strong {
-  color: var(--text);
-  font-size: 12.5px;
-  font-weight: 500;
-  letter-spacing: 0.04em;
-  text-transform: none;
-}
-
-.gsv-console-config-row-copy small {
-  color: #8c86c8;
-  font-size: 10px;
-  letter-spacing: 0.04em;
-  line-height: 1.4;
-  text-transform: none;
-}
-
-.gsv-console-config-row-tag {
-  grid-column: 3;
-  min-width: 0;
-  justify-self: end;
-}
-
-.gsv-console-config-row-status {
-  grid-column: 4;
-  display: inline-flex;
-  align-items: center;
+  min-width: 96px;
   justify-content: flex-end;
-  gap: 8px;
-  color: var(--text-dim);
-  font-size: 9px;
-}
-
-.gsv-console-config-row-open {
-  grid-column: 5;
-  width: 0;
-  height: 0;
-  justify-self: end;
-  border-top: 6px solid transparent;
-  border-bottom: 6px solid transparent;
-  border-left: 8px solid var(--accent);
-  filter: drop-shadow(0 0 4px rgba(150, 140, 255, 0.55));
 }
 
 .gsv-console-config-detail {
@@ -211,45 +129,13 @@ button.gsv-console-config-row:focus-visible {
   gap: 12px;
 }
 
-.gsv-console-config-detail-back {
-  min-height: 38px;
-  border: 1px solid var(--border);
-  background: var(--panel);
-  color: #9d98d8;
-  cursor: pointer;
-  padding: 11px 18px;
-  font: inherit;
-  font-size: 11px;
-  letter-spacing: 0.16em;
-}
-
-.gsv-console-config-detail-back:hover,
-.gsv-console-config-detail-back:focus-visible {
-  border-color: var(--accent);
-  background: var(--hover);
-  color: #e6e4ff;
-  outline: none;
-}
-
 @media (max-width: 620px) {
-  .gsv-console-config-row {
-    grid-template-columns: 24px minmax(0, 1fr) auto 18px;
-  }
-
-  .gsv-console-config-row-tag {
+  .gsv-console-config-list-row .lr-tag {
     display: none;
   }
 
-  .gsv-console-config-row-status {
-    grid-column: 3;
-  }
-
-  .gsv-console-config-row-status span {
-    display: none;
-  }
-
-  .gsv-console-config-row-open {
-    grid-column: 4;
+  .gsv-console-config-list-row .lr-status {
+    min-width: 0;
   }
 
   .gsv-console-config-detail {
