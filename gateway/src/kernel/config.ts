@@ -44,7 +44,7 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   "config/ai/model": "@cf/nvidia/nemotron-3-120b-a12b",
   // API key for the LLM provider. Empty is valid for local providers such as Workers AI.
   "config/ai/api_key": "",
-  // Reasoning effort/mode hint passed to the model (off, low, medium, high).
+  // Reasoning effort/mode hint passed to the model (off, minimal, low, medium, high, xhigh).
   // Only applies to models that support extended thinking.
   "config/ai/reasoning": "medium",
   // Max tokens for LLM responses (model-dependent upper bound).
@@ -65,8 +65,25 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   "config/ai/generation/timeout_ms": "180000",
   // Generation streaming transport: auto streams when supported, off forces final-output only.
   "config/ai/generation/streaming": "auto",
-  // Default speech synthesis model and output settings.
+  // Default media model stack used by process attachments and AI syscalls.
+  "config/ai/image/read/provider": "workers-ai",
+  "config/ai/image/read/model": "@cf/google/gemma-4-26b-a4b-it",
+  "config/ai/image/read/api_key": "",
+  "config/ai/image/read/input_format": "auto",
+  "config/ai/image/read/max_bytes": "10485760",
+  "config/ai/image/read/max_tokens": "512",
+  "config/ai/image/read/timeout_ms": "30000",
+  "config/ai/image/read/prompt": "Describe this image for an AI assistant that cannot see it. Include visible text, UI details, objects, people, layout, and any information needed to answer follow-up questions.",
+  "config/ai/image/generation/provider": "workers-ai",
+  "config/ai/image/generation/model": "@cf/black-forest-labs/flux-1-schnell",
+  "config/ai/image/generation/api_key": "",
+  "config/ai/transcription/provider": "workers-ai",
+  "config/ai/transcription/model": "@cf/openai/whisper-large-v3-turbo",
+  "config/ai/transcription/api_key": "",
+  "config/ai/transcription/max_bytes": "26214400",
+  "config/ai/speech/provider": "workers-ai",
   "config/ai/speech/model": "@cf/deepgram/aura-2-en",
+  "config/ai/speech/api_key": "",
   "config/ai/speech/speaker": "luna",
   "config/ai/speech/encoding": "mp3",
   "config/ai/speech/max_chars": "4000",

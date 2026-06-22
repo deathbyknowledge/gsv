@@ -1,15 +1,10 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { ActionButton } from "../../components/ui/ActionButton";
 import {
-  AI_FIELDS,
-  buildUserAiOverrideKey,
-} from "./config-schema";
-import {
   buildDrafts,
   isWideField,
   serializeConfigValue,
   settingFieldsForRuntime,
-  summarizeValue,
   unmodeledEntries,
 } from "./settings-domain";
 import type {
@@ -31,7 +26,7 @@ export function SettingsView({
   onSave: (actionId: string, entries: SaveConfigEntry[]) => Promise<void>;
   onClientError: (message: string | null) => void;
 }) {
-  const [panel, setPanel] = useState<SettingsPanelId>("ai");
+  const [panel, setPanel] = useState<SettingsPanelId>("runtime");
   const initialDrafts = useMemo(() => buildDrafts(state.configValues), [state.configValues]);
   const [drafts, setDrafts] = useState<Record<string, string>>(initialDrafts);
 
@@ -68,9 +63,8 @@ export function SettingsView({
     <section class="gsv-admin-settings">
       <aside class="gsv-admin-nav" aria-label="Settings sections">
         {([
-          ["ai", "AI", "Provider, model, keys, and personal overrides"],
           ["runtime", "Runtime", "Shell defaults and server settings"],
-          ["advanced", "Advanced", "Raw config for recovery and unmodeled keys"],
+          ["advanced", "Advanced", "Raw config for technical recovery and unmodeled keys"],
         ] as Array<[SettingsPanelId, string, string]>).map(([id, label, description]) => (
           <button key={id} type="button" class={panel === id ? "is-active" : ""} onClick={() => setPanel(id)}>
             <strong>{label}</strong>
@@ -79,32 +73,15 @@ export function SettingsView({
         ))}
       </aside>
 
-      {panel === "ai" ? (
-        <SettingsForm
-          title="AI defaults"
-          description="Root edits system defaults. Non-root users save personal AI overrides."
-          fields={AI_FIELDS}
-          values={state.configValues}
-          viewer={state.viewer}
-          drafts={drafts}
-          initialDrafts={initialDrafts}
-          pendingAction={pendingAction}
-          overrideAiForUser={!state.viewer.canEditSystemConfig}
-          onChange={updateDraft}
-          onReset={resetKeys}
-          onSave={saveEntries}
-        />
-      ) : panel === "runtime" ? (
+      {panel === "runtime" ? (
         <SettingsForm
           title="Runtime behavior"
           description="Shell defaults and runtime metadata. Root access is required to change these settings."
           fields={settingFieldsForRuntime()}
-          values={state.configValues}
           viewer={state.viewer}
           drafts={drafts}
           initialDrafts={initialDrafts}
           pendingAction={pendingAction}
-          overrideAiForUser={false}
           onChange={updateDraft}
           onReset={resetKeys}
           onSave={saveEntries}
@@ -126,12 +103,10 @@ function SettingsForm({
   title,
   description,
   fields,
-  values,
   viewer,
   drafts,
   initialDrafts,
   pendingAction,
-  overrideAiForUser,
   onChange,
   onReset,
   onSave,
@@ -139,29 +114,22 @@ function SettingsForm({
   title: string;
   description: string;
   fields: SettingField[];
-  values: Record<string, string>;
   viewer: AdministrationState["viewer"];
   drafts: Record<string, string>;
   initialDrafts: Record<string, string>;
   pendingAction: string | null;
-  overrideAiForUser: boolean;
   onChange: (key: string, value: string) => void;
   onReset: (keys: string[]) => void;
   onSave: (actionId: string, entries: SaveConfigEntry[]) => Promise<void>;
 }) {
   const rows = fields.map((field) => {
-    const editableKey = overrideAiForUser ? buildUserAiOverrideKey(viewer.uid, field.key) : field.key;
-    const systemValue = initialDrafts[field.key] ?? "";
-    const fallback = overrideAiForUser ? systemValue : initialDrafts[editableKey] ?? systemValue;
-    const value = drafts[editableKey] ?? initialDrafts[editableKey] ?? fallback;
-    const baseline = initialDrafts[editableKey] ?? fallback;
-    const disabled = (!viewer.canEditSystemConfig && !overrideAiForUser) || field.kind === "readonly";
-    const hasOverride = overrideAiForUser && values[editableKey] !== undefined;
-    const note = overrideAiForUser
-      ? (hasOverride ? "Personal override active." : `Using system default: ${summarizeValue(systemValue)}`)
-      : !viewer.canEditSystemConfig && field.kind !== "readonly"
-        ? "Only root can edit this system setting."
-        : null;
+    const editableKey = field.key;
+    const value = drafts[editableKey] ?? initialDrafts[editableKey] ?? "";
+    const baseline = initialDrafts[editableKey] ?? "";
+    const disabled = !viewer.canEditSystemConfig || field.kind === "readonly";
+    const note = !viewer.canEditSystemConfig && field.kind !== "readonly"
+      ? "Only root can edit this system setting."
+      : null;
     return { field, editableKey, value, baseline, disabled, note, dirty: value !== baseline };
   });
   const editableRows = rows.filter((row) => !row.disabled && row.field.kind !== "readonly");
@@ -264,8 +232,10 @@ type SettingRow = {
   field: SettingField;
   editableKey: string;
   value: string;
+  baseline: string;
   disabled: boolean;
   note: string | null;
+  dirty: boolean;
 };
 
 function SettingBlock({ row, onChange }: { row: SettingRow; onChange: (key: string, value: string) => void }) {

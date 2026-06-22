@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { GsvBackend } from "../../backend-contract";
 import { errorToText } from "../../utils/format";
+import type { AgentDetail, AgentModelProfile } from "../agents/types";
 import { filterProcesses } from "./runtime-domain";
 import type { ProcessEntry, RuntimeState } from "./types";
 
 export function useRuntimeProcesses(backend: GsvBackend) {
   const [state, setState] = useState<RuntimeState | null>(null);
+  const [agents, setAgents] = useState<AgentDetail[]>([]);
+  const [models, setModels] = useState<AgentModelProfile[]>([]);
+  const [systemAiValues, setSystemAiValues] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [errorText, setErrorText] = useState("");
   const [query, setQueryState] = useState(readRuntimeQuery);
@@ -17,11 +21,17 @@ export function useRuntimeProcesses(backend: GsvBackend) {
     const requestId = ++requestIdRef.current;
     setLoading(true);
     try {
-      const nextState = await backend.loadRuntimeState();
+      const [nextState, nextAgents] = await Promise.all([
+        backend.loadRuntimeState(),
+        backend.loadAgentsState(),
+      ]);
       if (requestId !== requestIdRef.current) {
         return;
       }
       setState(nextState);
+      setAgents(nextAgents.agents);
+      setModels(nextAgents.modelProfiles);
+      setSystemAiValues(nextAgents.systemAiValues);
       setErrorText(nextState.errorText);
     } catch (error) {
       if (requestId === requestIdRef.current) {
@@ -50,13 +60,6 @@ export function useRuntimeProcesses(backend: GsvBackend) {
   const filteredProcesses = useMemo(() => {
     return filterProcesses(state?.processes ?? [], query);
   }, [query, state?.processes]);
-
-  const selectedProcess = useMemo(() => {
-    if (!selectedPid || filteredProcesses.length === 0) {
-      return null;
-    }
-    return filteredProcesses.find((process) => process.pid === selectedPid) ?? null;
-  }, [filteredProcesses, selectedPid]);
 
   const setQuery = useCallback((nextQuery: string) => {
     setQueryState(nextQuery);
@@ -99,7 +102,10 @@ export function useRuntimeProcesses(backend: GsvBackend) {
     loading,
     errorText,
     query,
-    selectedProcess,
+    agents,
+    models,
+    systemAiValues,
+    selectedPid,
     filteredProcesses,
     killingPid,
     totalCount: state?.processes.length ?? 0,

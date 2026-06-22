@@ -285,6 +285,55 @@ export type ProcContextState = {
   updatedAt: number;
 };
 
+export type ProcAiConfigProfileRef = {
+  id?: string;
+  name?: string;
+  appliedAt: number;
+};
+
+export type ProcAiConfigSnapshot = {
+  version: 1;
+  values: Record<string, string>;
+  profile?: ProcAiConfigProfileRef;
+  updatedAt: number;
+};
+
+export type ProcAiConfigGetArgs = {
+  redacted?: boolean;
+};
+
+export type ProcAiConfigGetResult =
+  | {
+      ok: true;
+      pid: string;
+      config: ProcAiConfigSnapshot | null;
+    }
+  | { ok: false; error: string };
+
+export type ProcAiConfigSetArgs =
+  | {
+      clear: true;
+    }
+  | {
+      values: Record<string, string>;
+      profile?: {
+        id?: string;
+        name?: string;
+      };
+    }
+  | {
+      key: string;
+      value: string;
+    };
+
+export type ProcAiConfigSetResult =
+  | {
+      ok: true;
+      pid: string;
+      config: ProcAiConfigSnapshot | null;
+    }
+  | { ok: false; error: string };
+
 export type ProcHistoryResult =
   | {
       ok: true;

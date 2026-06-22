@@ -11,6 +11,7 @@
 import type { SyscallName } from "../syscalls";
 import { SYSCALL_TOOL_NAMES } from "../syscalls/constants";
 import type {
+  ProcAiConfigSnapshot,
   ProcContextFile,
   ProcContextState,
   ProcMessageMetadata,
@@ -43,6 +44,10 @@ import {
   type ProcessConversationRecord,
   type ProcessConversationSegmentRecord,
 } from "./conversations";
+import {
+  PROCESS_AI_CONFIG_STORE_KEY,
+  normalizeProcessAiConfigSnapshot,
+} from "./ai-config";
 
 const DEFAULT_MESSAGE_READ_LIMIT = 200;
 
@@ -978,6 +983,26 @@ export class ProcessStore {
 
   deleteValue(key: string): void {
     this.sql.exec("DELETE FROM process_kv WHERE key = ?", key);
+  }
+
+  getAiConfigSnapshot(): ProcAiConfigSnapshot | null {
+    const raw = this.getValue(PROCESS_AI_CONFIG_STORE_KEY);
+    if (!raw) {
+      return null;
+    }
+    try {
+      return normalizeProcessAiConfigSnapshot(JSON.parse(raw));
+    } catch {
+      return null;
+    }
+  }
+
+  setAiConfigSnapshot(snapshot: ProcAiConfigSnapshot): void {
+    this.setValue(PROCESS_AI_CONFIG_STORE_KEY, JSON.stringify(snapshot));
+  }
+
+  clearAiConfigSnapshot(): void {
+    this.deleteValue(PROCESS_AI_CONFIG_STORE_KEY);
   }
 
   getContextState(conversationId: string = DEFAULT_CONVERSATION_ID): ProcContextState | null {

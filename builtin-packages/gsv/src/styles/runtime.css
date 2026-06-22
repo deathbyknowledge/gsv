@@ -11,7 +11,7 @@
 
 .gsv-runtime-toolbar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(12rem, 1fr) minmax(10rem, 14rem) auto;
   align-items: end;
   gap: 0.6rem;
   padding: 0.75rem;
@@ -33,7 +33,8 @@
   text-transform: uppercase;
 }
 
-.gsv-runtime-search input {
+.gsv-runtime-search input,
+.gsv-runtime-search select {
   width: 100%;
   min-width: 0;
   height: 2.35rem;
@@ -144,10 +145,7 @@
 .gsv-runtime-list {
   display: grid;
   min-width: 0;
-  border: 1px solid #dce2ea;
-  border-radius: 8px;
-  overflow: hidden;
-  background: #ffffff;
+  overflow: visible;
 }
 
 .gsv-runtime-row {
@@ -228,9 +226,16 @@
 }
 
 .gsv-detail-actions {
-  display: grid;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
   gap: 0.55rem;
   padding: 0.85rem;
+}
+
+.gsv-agents-form > .gsv-detail-actions {
+  justify-content: flex-end;
 }
 
 .gsv-empty-state {
@@ -243,4 +248,113 @@
 .gsv-empty-state h3,
 .gsv-empty-state p {
   margin: 0;
+}
+
+.gsv-task-board {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  align-items: start;
+  gap: 1.2rem;
+  min-width: 0;
+  padding-top: 0.35rem;
+}
+
+.gsv-task-group {
+  display: grid;
+  align-content: start;
+  gap: 0.65rem;
+  min-width: 0;
+}
+
+.gsv-task-list {
+  display: grid;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.gsv-task-card {
+  min-height: 3.1rem;
+  padding: 0.65rem 0.75rem;
+  gap: 0.38rem;
+}
+
+.gsv-task-card.is-expanded {
+  gap: 0.7rem;
+}
+
+.gsv-task-card.is-idle {
+  color: #687384;
+}
+
+.gsv-task-idle {
+  margin: 0;
+  color: #687384;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.gsv-task-card-main {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.gsv-task-toggle {
+  width: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.gsv-task-toggle:focus-visible {
+  outline: 2px solid #3867d6;
+  outline-offset: 2px;
+}
+
+.gsv-task-card-main strong {
+  overflow: hidden;
+  color: #161b22;
+  font-size: 0.82rem;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gsv-task-card-main .gsv-icon {
+  color: #7b8492;
+}
+
+.gsv-task-card-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.65rem;
+  min-width: 0;
+  padding-left: 1.05rem;
+  color: #687384;
+  font-size: 0.72rem;
+}
+
+.gsv-task-card-meta span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gsv-task-detail {
+  display: grid;
+  gap: 0.75rem;
+  min-width: 0;
+  padding-top: 0.65rem;
+  border-top: 1px dotted #cfd6e1;
+}
+
+@media (max-width: 720px) {
+  .gsv-runtime-toolbar {
+    grid-template-columns: 1fr;
+  }
 }

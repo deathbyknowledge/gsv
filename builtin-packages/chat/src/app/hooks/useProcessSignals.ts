@@ -30,6 +30,7 @@ export function useProcessSignals({
   loadArchiveSegments,
   loadConversations,
   loadHistory,
+  onAiConfigChanged,
   onContextMessageId,
   prepareForLiveTranscriptActivity,
   setContextState,
@@ -48,6 +49,7 @@ export function useProcessSignals({
   loadArchiveSegments(preserveSelection?: boolean): Promise<void>;
   loadConversations(pid: string): Promise<void>;
   loadHistory(target?: ThreadContext | null): Promise<void>;
+  onAiConfigChanged?(): void;
   onContextMessageId(target: ThreadContext, messageId: number): void;
   prepareForLiveTranscriptActivity(): void;
   setContextState: Setter<ContextState | null>;
@@ -101,6 +103,9 @@ export function useProcessSignals({
               });
             }
           }
+        }
+        if (changes.includes("ai.config")) {
+          onAiConfigChanged?.();
         }
         const event = asString(record?.event);
         if (event === "conversation.compacted" || event === "conversation.forked" || event === "conversation.auto_compacted") {
@@ -222,6 +227,7 @@ export function useProcessSignals({
     loadArchiveSegments,
     loadConversations,
     loadHistory,
+    onAiConfigChanged,
     onContextMessageId,
     prepareForLiveTranscriptActivity,
     setContextState,

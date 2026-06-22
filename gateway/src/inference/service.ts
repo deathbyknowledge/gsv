@@ -2,15 +2,15 @@ import type {
   AssistantMessage,
   AssistantMessageEventStream,
   Context,
-  KnownProvider,
   TextContent,
   ThinkingContent,
   ThinkingLevel,
 } from "@earendil-works/pi-ai";
-import { completeSimple, getModels, getProviders, streamSimple } from "@earendil-works/pi-ai";
+import { completeSimple, streamSimple } from "@earendil-works/pi-ai";
 import type { AiConfigResult } from "../syscalls/ai";
 import { completeWithWorkersAi, isWorkersAiProvider, streamWithWorkersAi } from "./workers-ai";
 import { withTimeout } from "./timeout";
+import { resolveModelThinkingLevel, resolvePiAiModel } from "./model-registry";
 import {
   errorMessageFromUnknown,
   formatProviderErrorMessage,
@@ -60,7 +60,7 @@ export function createGenerationService(): GenerationService {
       });
     }
 
-    const model = resolveModel(options.modelProvider, options.modelName);
+    const model = resolvePiAiModel(options.modelProvider, options.modelName);
     const controller = new AbortController();
     const timeout = setTimeout(() => {
       controller.abort(new Error(generationTimeoutMessage(generationTimeoutMs)));
@@ -93,7 +93,7 @@ export function createGenerationService(): GenerationService {
       });
     }
 
-    const model = resolveModel(options.modelProvider, options.modelName);
+    const model = resolvePiAiModel(options.modelProvider, options.modelName);
     const controller = new AbortController();
     const timeout = setTimeout(() => {
       controller.abort(new Error(generationTimeoutMessage(generationTimeoutMs)));
@@ -193,9 +193,8 @@ export function resolveGenerationOptions(
 ): ResolvedGenerationOptions {
   const { config, purpose } = request;
   const baseReasoning: ThinkingLevel | undefined =
-    config.reasoning && config.reasoning !== "off"
-      ? (config.reasoning as ThinkingLevel)
-      : undefined;
+    generationReasoningFromLevel(resolveModelThinkingLevel(config.provider, config.model, config.reasoning))
+      ?? undefined;
 
   switch (purpose) {
     case "thread.title":
@@ -241,21 +240,10 @@ export function resolveGenerationTimeoutMs(config: AiConfigResult): number {
     : DEFAULT_GENERATION_TIMEOUT_MS;
 }
 
-function resolveModel(provider: string, modelName: string) {
-  if (!isKnownProvider(provider)) {
-    throw new Error(`Unknown model provider: ${provider}`);
-  }
-  const model = getModels(provider).find((candidate) => candidate.id === modelName);
-  if (!model) {
-    throw new Error(`Model not found: ${provider}/${modelName}`);
-  }
-  return model;
+function generationReasoningFromLevel(level: ReturnType<typeof resolveModelThinkingLevel>): ThinkingLevel | null {
+  return level && level !== "off" ? level : null;
 }
 
 function generationTimeoutMessage(timeoutMs: number): string {
   return `Model generation timed out after ${timeoutMs}ms`;
-}
-
-function isKnownProvider(provider: string): provider is KnownProvider {
-  return getProviders().includes(provider as KnownProvider);
 }

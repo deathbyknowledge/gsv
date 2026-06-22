@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { GsvBackend } from "../../backend-contract";
 import { errorToText } from "../../utils/format";
+import type { ProcessEntry } from "../runtime/types";
 import type {
   AgentContextFile,
   AgentDetail,
@@ -12,6 +13,7 @@ import type {
 
 export function useAgents(backend: GsvBackend) {
   const [state, setState] = useState<AgentsState | null>(null);
+  const [processes, setProcesses] = useState<ProcessEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [errorText, setErrorText] = useState("");
   const [selectedUsername, setSelectedUsername] = useState<string | null>(null);
@@ -26,9 +28,13 @@ export function useAgents(backend: GsvBackend) {
     const requestId = ++requestIdRef.current;
     setLoading(true);
     try {
-      const next = await backend.loadAgentsState();
+      const [next, runtime] = await Promise.all([
+        backend.loadAgentsState(),
+        backend.loadRuntimeState(),
+      ]);
       if (requestId !== requestIdRef.current) return;
       setState(next);
+      setProcesses(runtime.processes);
       setErrorText(next.errorText);
     } catch (error) {
       if (requestId === requestIdRef.current) setErrorText(errorToText(error));
@@ -162,6 +168,7 @@ export function useAgents(backend: GsvBackend) {
 
   return {
     state,
+    processes,
     loading,
     errorText,
     busy,
