@@ -35,7 +35,7 @@ import {
 } from "./ConsoleDetailBlocks";
 import "./ConsoleListPage.css";
 
-type ConsoleListKind = "machines" | "library" | "tasks" | "messengers" | "integrations" | "applications";
+export type ConsoleListKind = "machines" | "library" | "tasks" | "messengers" | "integrations" | "applications";
 type PackageListKind = "library" | "integrations" | "applications";
 
 type ConsoleListPageProps = {

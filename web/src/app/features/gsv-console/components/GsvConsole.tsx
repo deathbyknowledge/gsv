@@ -1,11 +1,11 @@
-import { useState } from "preact/hooks";
-import { ConsoleHeader } from "../../../components/ui/ConsoleHeader";
+import { useEffect, useState } from "preact/hooks";
+import { ConsoleHeader, type ConsoleCrumb } from "../../../components/ui/ConsoleHeader";
 import { FilesSurfaceSummary } from "../../files/components/FilesSurfaceSummary";
 import { TerminalSurfaceSummary } from "../../terminal/components/TerminalSurfaceSummary";
 import { shellSurfaceLabel, type ShellSurfaceId } from "../../gsv-shell/domain/shellModel";
 import { ConsoleAgentPage } from "../pages/ConsoleAgentPage";
 import { ConsoleCrewPage } from "../pages/ConsoleCrewPage";
-import { ConsoleListPage } from "../pages/ConsoleListPage";
+import { ConsoleListPage, type ConsoleListKind } from "../pages/ConsoleListPage";
 import { ConsoleOverviewPage } from "../pages/ConsoleOverviewPage";
 import { ConsolePlaceholderPage } from "../pages/ConsolePlaceholderPage";
 
@@ -14,6 +14,13 @@ type GsvConsoleProps = {
   onBackToDesktop: () => void;
   onOpenSurface?: (surface: Exclude<ShellSurfaceId, "desktop">) => void;
 };
+
+type SettingsRoute =
+  | { view: "overview" }
+  | { view: "list"; kind: ConsoleListKind }
+  | { view: "crew" }
+  | { view: "agent"; accountUid: number | null };
+type SettingsListSurface = "machines" | "messengers" | "integrations" | "applications" | "library" | "runtime";
 
 function surfaceTail(surface: ShellSurfaceId): string {
   if (surface === "files") {
@@ -43,31 +50,126 @@ function surfaceTail(surface: ShellSurfaceId): string {
   return "GSV · CONTROL";
 }
 
+function isSettingsListSurface(surface: Exclude<ShellSurfaceId, "desktop">): surface is SettingsListSurface {
+  return surface === "machines"
+    || surface === "messengers"
+    || surface === "integrations"
+    || surface === "applications"
+    || surface === "library"
+    || surface === "runtime";
+}
+
+function listKindForSurface(surface: SettingsListSurface): ConsoleListKind {
+  return surface === "runtime" ? "tasks" : surface;
+}
+
+function settingsRouteLabel(route: SettingsRoute): string {
+  if (route.view === "overview") {
+    return "SETTINGS";
+  }
+  if (route.view === "crew") {
+    return "CREW";
+  }
+  if (route.view === "agent") {
+    return "AGENT";
+  }
+  return route.kind === "tasks" ? "TASKS" : shellSurfaceLabel(route.kind);
+}
+
+function settingsRouteTail(route: SettingsRoute): string {
+  if (route.view === "overview") {
+    return "GSV · CONTROL";
+  }
+  if (route.view === "crew" || route.view === "agent") {
+    return "GSV · CREW";
+  }
+  if (route.kind === "tasks") {
+    return "GSV · RUNTIME";
+  }
+  return surfaceTail(route.kind);
+}
+
 export function GsvConsole({
   activeSurface,
   onBackToDesktop,
   onOpenSurface,
 }: GsvConsoleProps) {
   const [selectedAgentUid, setSelectedAgentUid] = useState<number | null>(null);
+  const [settingsRoute, setSettingsRoute] = useState<SettingsRoute>({ view: "overview" });
   const openAgent = (uid: number) => {
     setSelectedAgentUid(uid);
     onOpenSurface?.("agent");
   };
   const backToCrew = () => onOpenSurface?.("crew");
+  const openSettingsAgent = (uid: number) => {
+    setSelectedAgentUid(uid);
+    setSettingsRoute({ view: "agent", accountUid: uid });
+  };
+  const backToSettingsCrew = () => setSettingsRoute({ view: "crew" });
+  const openSettingsSurface = (surface: Exclude<ShellSurfaceId, "desktop">) => {
+    if (surface === "settings") {
+      setSettingsRoute({ view: "overview" });
+      return;
+    }
+    if (surface === "crew") {
+      setSettingsRoute({ view: "crew" });
+      return;
+    }
+    if (surface === "agent") {
+      setSettingsRoute({ view: "agent", accountUid: selectedAgentUid });
+      return;
+    }
+    if (isSettingsListSurface(surface)) {
+      setSettingsRoute({ view: "list", kind: listKindForSurface(surface) });
+      return;
+    }
+    onOpenSurface?.(surface);
+  };
+
+  useEffect(() => {
+    if (activeSurface !== "settings") {
+      setSettingsRoute({ view: "overview" });
+    }
+  }, [activeSurface]);
+
+  const inNestedSettings = activeSurface === "settings" && settingsRoute.view !== "overview";
+  const crumbs: ConsoleCrumb[] = activeSurface === "settings"
+    ? [
+        { label: "GSV", onClick: onBackToDesktop, notLast: true },
+        {
+          label: "SETTINGS",
+          onClick: inNestedSettings ? () => setSettingsRoute({ view: "overview" }) : undefined,
+          notLast: inNestedSettings,
+        },
+        ...(inNestedSettings ? [{ label: settingsRouteLabel(settingsRoute) }] : []),
+      ]
+    : [
+        { label: "GSV", onClick: onBackToDesktop, notLast: true },
+        { label: shellSurfaceLabel(activeSurface) },
+      ];
+  const headerBack = activeSurface === "settings" && settingsRoute.view !== "overview"
+    ? () => setSettingsRoute(settingsRoute.view === "agent" ? { view: "crew" } : { view: "overview" })
+    : onBackToDesktop;
+  const tail = activeSurface === "settings" ? settingsRouteTail(settingsRoute) : surfaceTail(activeSurface);
 
   return (
     <section class="gsv-console-frame" aria-label={`${shellSurfaceLabel(activeSurface)} surface`}>
       <ConsoleHeader
-        crumbs={[
-          { label: "GSV", onClick: onBackToDesktop, notLast: true },
-          { label: shellSurfaceLabel(activeSurface) },
-        ]}
-        tail={surfaceTail(activeSurface)}
-        onBack={onBackToDesktop}
+        crumbs={crumbs}
+        tail={tail}
+        onBack={headerBack}
       />
       <div class="gsv-console-stage">
         {activeSurface === "settings" ? (
-          <ConsoleOverviewPage onOpenSurface={onOpenSurface} />
+          settingsRoute.view === "overview" ? (
+            <ConsoleOverviewPage onOpenSurface={openSettingsSurface} />
+          ) : settingsRoute.view === "list" ? (
+            <ConsoleListPage kind={settingsRoute.kind} />
+          ) : settingsRoute.view === "crew" ? (
+            <ConsoleCrewPage onManageAgent={openSettingsAgent} />
+          ) : (
+            <ConsoleAgentPage accountUid={settingsRoute.accountUid} onBackToCrew={backToSettingsCrew} />
+          )
         ) : activeSurface === "runtime" ? (
           <ConsoleListPage kind="tasks" />
         ) : activeSurface === "crew" ? (
