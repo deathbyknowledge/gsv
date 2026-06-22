@@ -9,6 +9,7 @@ import {
   ConsolePage,
   ConsoleResourceBoundary,
 } from "../components/ConsolePageTemplate";
+import type { ConsoleListKind } from "./ConsoleListPage";
 import {
   defaultModelLabelForConfig,
   modelConfigCount,
@@ -58,6 +59,8 @@ type StatLine = {
 type OverviewSurface = Exclude<ShellSurfaceId, "desktop">;
 export type ConsoleOverviewTarget = OverviewSurface | "models" | "overrides";
 type OpenSurface = (surface: ConsoleOverviewTarget) => void;
+type OpenListDetail = (kind: ConsoleListKind, detailId: string) => void;
+type OpenListCreate = (kind: ConsoleListKind) => void;
 
 const DASHBOARD_ROW_LIMIT = 5;
 function isApplicationPackage(pkg: ConsolePackage): boolean {
@@ -501,40 +504,51 @@ function ModelsTasksPanel({
 function FleetPanel({
   adapters,
   integrationPackages,
+  onOpenListCreate,
+  onOpenListDetail,
   onOpenSurface,
   targets,
 }: {
   adapters: readonly ConsoleAdapterAccount[];
   integrationPackages: readonly ConsolePackage[];
+  onOpenListCreate?: OpenListCreate;
+  onOpenListDetail?: OpenListDetail;
   onOpenSurface?: OpenSurface;
   targets: readonly ConsoleTarget[];
 }) {
   const targetRows = sortTargets(targets).map(targetRow);
   const adapterRows = sortAdapters(adapters).map(adapterRow);
   const integrationRows = sortPackages(integrationPackages).map(integrationRow);
+  const openList = (surface: ConsoleOverviewTarget) => onOpenSurface ? () => onOpenSurface(surface) : undefined;
+  const openDetail = (kind: ConsoleListKind, id: string, surface: ConsoleOverviewTarget) => (
+    onOpenListDetail ? () => onOpenListDetail(kind, id) : openList(surface)
+  );
+  const openCreate = (kind: ConsoleListKind, surface: ConsoleOverviewTarget) => (
+    onOpenListCreate ? () => onOpenListCreate(kind) : openList(surface)
+  );
 
   return (
     <section class="gsv-settings-block gsv-settings-fleet-block">
       <SectionHeader title="FLEET" divider />
       <MiniHeading
         title="MACHINES"
-        onClick={onOpenSurface ? () => onOpenSurface("machines") : undefined}
+        onClick={openList("machines")}
       />
       <div class="gsv-settings-section-rows">
         {targetRows.length === 0 ? <EmptyRow label="NO MACHINES" /> : rowLimit(targetRows, 3).map((row) => (
-          <MiniRow key={row.id} row={row} showIcon={false} onClick={onOpenSurface ? () => onOpenSurface("machines") : undefined} />
+          <MiniRow key={row.id} row={row} showIcon={false} onClick={openDetail("machines", row.id, "machines")} />
         ))}
-        <AddRow label="CONNECT NEW MACHINE" onClick={onOpenSurface ? () => onOpenSurface("machines") : undefined} />
+        <AddRow label="CONNECT NEW MACHINE" onClick={openCreate("machines", "machines")} />
       </div>
       <SplitCells
         left={(
           <div class="gsv-settings-mini-cell">
             <MiniHeading
               title="MESSENGERS"
-              onClick={onOpenSurface ? () => onOpenSurface("messengers") : undefined}
+              onClick={openList("messengers")}
             />
             {adapterRows.length === 0 ? <EmptyRow label="NO MESSENGERS" /> : rowLimit(adapterRows, 3).map((row) => (
-              <MiniRow key={row.id} row={row} onClick={onOpenSurface ? () => onOpenSurface("messengers") : undefined} />
+              <MiniRow key={row.id} row={row} onClick={openDetail("messengers", row.id, "messengers")} />
             ))}
           </div>
         )}
@@ -542,12 +556,12 @@ function FleetPanel({
           <div class="gsv-settings-mini-cell">
             <MiniHeading
               title="INTEGRATIONS"
-              onClick={onOpenSurface ? () => onOpenSurface("integrations") : undefined}
+              onClick={openList("integrations")}
             />
             {integrationRows.length === 0 ? <EmptyRow label="NO INTEGRATIONS" /> : rowLimit(integrationRows, 2).map((row) => (
-              <MiniRow key={row.id} row={row} onClick={onOpenSurface ? () => onOpenSurface("integrations") : undefined} />
+              <MiniRow key={row.id} row={row} onClick={openDetail("integrations", row.id, "integrations")} />
             ))}
-            <AddRow label="NEW INTEGRATION" onClick={onOpenSurface ? () => onOpenSurface("integrations") : undefined} />
+            <AddRow label="NEW INTEGRATION" onClick={openCreate("integrations", "integrations")} />
           </div>
         )}
       />
@@ -557,25 +571,36 @@ function FleetPanel({
 
 function SatellitesPanel({
   applications,
+  onOpenListCreate,
+  onOpenListDetail,
   onOpenSurface,
 }: {
   applications: readonly ConsolePackage[];
+  onOpenListCreate?: OpenListCreate;
+  onOpenListDetail?: OpenListDetail;
   onOpenSurface?: OpenSurface;
 }) {
   const rows = sortPackages(applications).map(applicationRow);
+  const openList = onOpenSurface ? () => onOpenSurface("applications") : undefined;
+  const openDetail = (id: string) => (
+    onOpenListDetail ? () => onOpenListDetail("applications", id) : openList
+  );
+  const openCreate = onOpenListCreate
+    ? () => onOpenListCreate("applications")
+    : openList;
 
   return (
     <section class="gsv-settings-block gsv-settings-satellites-block">
       <SectionHeader title="SATELLITES" divider />
       <MiniHeading
         title="APPLICATIONS"
-        onClick={onOpenSurface ? () => onOpenSurface("applications") : undefined}
+        onClick={openList}
       />
       <div class="gsv-settings-section-rows">
         {rows.length === 0 ? <EmptyRow label="NO APPLICATIONS" /> : rowLimit(rows, 5).map((row) => (
-          <MiniRow key={row.id} row={row} onClick={onOpenSurface ? () => onOpenSurface("applications") : undefined} />
+          <MiniRow key={row.id} row={row} onClick={openDetail(row.id)} />
         ))}
-        <AddRow label="NEW APPLICATION" onClick={onOpenSurface ? () => onOpenSurface("applications") : undefined} />
+        <AddRow label="NEW APPLICATION" onClick={openCreate} />
       </div>
     </section>
   );
@@ -584,10 +609,14 @@ function SatellitesPanel({
 function SettingsOverviewDashboard({
   counts,
   data,
+  onOpenListCreate,
+  onOpenListDetail,
   onOpenSurface,
 }: {
   counts: ConsoleOverviewCounts | null;
   data: ConsoleOverviewData;
+  onOpenListCreate?: OpenListCreate;
+  onOpenListDetail?: OpenListDetail;
   onOpenSurface?: OpenSurface;
 }) {
   const applications = data.packages.filter(isApplicationPackage);
@@ -608,14 +637,34 @@ function SettingsOverviewDashboard({
         <ModelsTasksPanel config={data.config} counts={counts} onOpenSurface={onOpenSurface} processes={data.processes} />
       </div>
       <div class="gsv-settings-right">
-        <FleetPanel adapters={data.adapters} integrationPackages={integrationPackages} onOpenSurface={onOpenSurface} targets={data.targets} />
-        <SatellitesPanel applications={applications} onOpenSurface={onOpenSurface} />
+        <FleetPanel
+          adapters={data.adapters}
+          integrationPackages={integrationPackages}
+          onOpenListCreate={onOpenListCreate}
+          onOpenListDetail={onOpenListDetail}
+          onOpenSurface={onOpenSurface}
+          targets={data.targets}
+        />
+        <SatellitesPanel
+          applications={applications}
+          onOpenListCreate={onOpenListCreate}
+          onOpenListDetail={onOpenListDetail}
+          onOpenSurface={onOpenSurface}
+        />
       </div>
     </div>
   );
 }
 
-export function ConsoleOverviewPage({ onOpenSurface }: { onOpenSurface?: OpenSurface }) {
+export function ConsoleOverviewPage({
+  onOpenListCreate,
+  onOpenListDetail,
+  onOpenSurface,
+}: {
+  onOpenListCreate?: OpenListCreate;
+  onOpenListDetail?: OpenListDetail;
+  onOpenSurface?: OpenSurface;
+}) {
   const overview = useConsoleOverview();
 
   return (
@@ -628,6 +677,8 @@ export function ConsoleOverviewPage({ onOpenSurface }: { onOpenSurface?: OpenSur
           <SettingsOverviewDashboard
             counts={overview.counts}
             data={data}
+            onOpenListCreate={onOpenListCreate}
+            onOpenListDetail={onOpenListDetail}
             onOpenSurface={onOpenSurface}
           />
         )}
