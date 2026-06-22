@@ -178,7 +178,7 @@ export function useGsvShellState({
 
     setTabs((current) => current.some((item) => item.key === tab.key) ? current : [...current, tab]);
     setActiveTabKey(tab.key);
-    setRailMode("tabs");
+    setRailMode("gsv");
     setSelectedObjectId(null);
     setPickerId(null);
     setGsvOpen(false);
@@ -190,19 +190,6 @@ export function useGsvShellState({
     setPickerId(null);
     setGsvOpen(false);
     setRailMode("objects");
-  };
-
-  const closeTab = (key: string): void => {
-    setTabs((current) => {
-      const next = current.filter((tab) => tab.key !== key);
-      if (activeTabKey === key) {
-        setActiveTabKey(next.length > 0 ? next[next.length - 1].key : null);
-      }
-      if (next.length === 0) {
-        setRailMode("objects");
-      }
-      return next;
-    });
   };
 
   const openPicker = (id: DesktopObjectId): void => {
@@ -219,11 +206,6 @@ export function useGsvShellState({
     setSelectedObjectId(null);
     setGsvOpen(false);
     setPickerId("gsv");
-  };
-
-  const activateTab = (key: string): void => {
-    setActiveTabKey(key);
-    setPickerId(null);
   };
 
   const startChatDrag = (event: JSX.TargetedMouseEvent<HTMLDivElement>): void => {
@@ -324,7 +306,6 @@ export function useGsvShellState({
     backToDesktop,
     chatDragging,
     chatOpen,
-    closeTab,
     desktopCollapsed,
     gsvOpen,
     maxChatWidth,
@@ -353,6 +334,5 @@ export function useGsvShellState({
     toggleChatMax,
     toggleRailCollapsed: () => setManualRailCollapsed((value) => !value),
     totalDesktopObjects,
-    activateTab,
   };
 }

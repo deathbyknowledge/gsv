@@ -6,14 +6,12 @@ import {
   type DesktopObjectId,
   type GsvControlItem,
   type ShellRailMode,
-  type ShellTab,
 } from "../domain/shellModel";
 
 type ShellRailProps = {
   desktopObjects: readonly DesktopObject[];
   collapsed: boolean;
   railMode: ShellRailMode;
-  tabs: readonly ShellTab[];
   activeTabKey: string | null;
   onToggleCollapsed: () => void;
   onSetRailMode: (mode: ShellRailMode) => void;
@@ -21,8 +19,6 @@ type ShellRailProps = {
   onOpenPicker: (id: DesktopObjectId) => void;
   onOpenControlMenu: () => void;
   onOpenSurface: (surface: GsvControlItem["id"]) => void;
-  onActivateTab: (key: string) => void;
-  onCloseTab: (key: string) => void;
 };
 
 const GLYPH_ICON: Record<string, string> = {
@@ -66,7 +62,6 @@ export function ShellRail({
   desktopObjects,
   collapsed,
   railMode,
-  tabs,
   activeTabKey,
   onToggleCollapsed,
   onSetRailMode,
@@ -74,8 +69,6 @@ export function ShellRail({
   onOpenPicker,
   onOpenControlMenu,
   onOpenSurface,
-  onActivateTab,
-  onCloseTab,
 }: ShellRailProps) {
   const totalObjects = desktopObjects.reduce((sum, object) => sum + object.children.length, 0);
 
@@ -101,20 +94,6 @@ export function ShellRail({
         <button type="button" class="gsv-rail-gsv-dot" title="GSV controls" onClick={onOpenControlMenu}>
           <GsvMark />
         </button>
-        {tabs.length > 0 ? (
-          <button
-            type="button"
-            class="gsv-rail-tabs-dot"
-            title="Open tabs"
-            onClick={() => {
-              onSetRailMode("tabs");
-              onToggleCollapsed();
-            }}
-          >
-            <Icon name="bookmark" size={18} />
-            <strong>{tabs.length}</strong>
-          </button>
-        ) : null}
       </aside>
     );
   }
@@ -151,18 +130,6 @@ export function ShellRail({
         >
           <GsvMark size={15} />
           <span>GSV</span>
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={railMode === "tabs" ? "true" : "false"}
-          class={railMode === "tabs" ? "is-active" : ""}
-          disabled={tabs.length === 0}
-          onClick={() => onSetRailMode("tabs")}
-        >
-          <Icon name="bookmark" size={13} />
-          <span>TABS</span>
-          {tabs.length > 0 ? <small>{tabs.length}</small> : null}
         </button>
       </div>
 
@@ -214,48 +181,6 @@ export function ShellRail({
           </nav>
         ) : null}
 
-        {tabs.length > 0 && railMode === "tabs" ? (
-          <section class="gsv-rail-tabs" aria-label="Open tabs">
-            <div class="gsv-rail-tabs-head is-active">
-              <Icon name="bookmark" size={15} />
-              <span>TABS</span>
-              <small>{tabs.length}</small>
-            </div>
-            <div class="gsv-rail-tab-list">
-              {tabs.map((tab) => (
-                <button
-                  key={tab.key}
-                  type="button"
-                  class={tab.key === activeTabKey ? "is-active" : ""}
-                  onClick={() => onActivateTab(tab.key)}
-                >
-                  <span class="gsv-rail-tab-icon">
-                    <Icon name="bookmark" size={13} />
-                  </span>
-                  <span>{tab.title}</span>
-                  <i
-                    role="button"
-                    tabIndex={0}
-                    aria-label={`Close ${tab.title}`}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onCloseTab(tab.key);
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        onCloseTab(tab.key);
-                      }
-                    }}
-                  >
-                    x
-                  </i>
-                </button>
-              ))}
-            </div>
-          </section>
-        ) : null}
       </div>
 
       <footer>LIVE SHELL</footer>

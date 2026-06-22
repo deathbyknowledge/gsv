@@ -13,7 +13,7 @@ export type ShellSurfaceId =
 export type DesktopObjectId = "machines" | "messengers" | "integrations" | "applications";
 export type ShellStatus = "online" | "error" | "idle" | "warn" | "live" | "update";
 export type DesktopGlyph = "machines" | "messengers" | "integrations" | "applications";
-export type ShellRailMode = "objects" | "gsv" | "tabs";
+export type ShellRailMode = "objects" | "gsv";
 
 export type ShellTab = {
   key: string;

@@ -263,7 +263,6 @@ export function GsvShell({
               desktopObjects={desktopObjects}
               collapsed={shell.railCollapsed}
               railMode={shell.railMode}
-              tabs={shell.tabs}
               activeTabKey={shell.activeTabKey}
               onToggleCollapsed={shell.toggleRailCollapsed}
               onSetRailMode={shell.setRailMode}
@@ -271,8 +270,6 @@ export function GsvShell({
               onOpenPicker={shell.openPicker}
               onOpenControlMenu={shell.openControlMenu}
               onOpenSurface={shell.openSurface}
-              onActivateTab={shell.activateTab}
-              onCloseTab={shell.closeTab}
             />
           ) : null}
 

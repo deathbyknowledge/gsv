@@ -960,102 +960,6 @@
   box-shadow: inset 2px 0 0 var(--accent-bright);
 }
 
-.gsv-rail-tabs {
-  margin-top: 8px;
-}
-
-.gsv-rail-tabs-head {
-  width: 100%;
-  border: 0;
-  background: transparent;
-  color: var(--accent);
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 14px 20px 8px;
-  cursor: default;
-}
-
-.gsv-rail-tabs-head:hover,
-.gsv-rail-tabs-head:focus-visible,
-.gsv-rail-tabs-head.is-active {
-  background: var(--hover-nav);
-}
-
-.gsv-rail-tabs-head span {
-  font-size: 11px;
-  letter-spacing: 0.32em;
-}
-
-.gsv-rail-tabs-head small {
-  margin-left: auto;
-  color: #7d78b8;
-  font-size: 10px;
-  letter-spacing: 0.08em;
-}
-
-.gsv-rail-tab-list {
-  display: flex;
-  flex-direction: column;
-  padding-top: 4px;
-}
-
-.gsv-rail-tab-list button {
-  position: relative;
-  min-height: 38px;
-  border: 0;
-  background: transparent;
-  color: var(--text);
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 9px 14px 9px 30px;
-  cursor: pointer;
-}
-
-.gsv-rail-tab-list button.is-active {
-  background: var(--selected);
-  box-shadow: inset 2px 0 0 var(--accent-bright);
-}
-
-.gsv-rail-tab-list button:hover {
-  background: var(--hover-nav);
-}
-
-.gsv-rail-tab-icon {
-  width: 15px;
-  flex: none;
-  display: inline-flex;
-  color: var(--accent);
-}
-
-.gsv-rail-tab-list button > span:not(.gsv-rail-tab-icon) {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 11px;
-  letter-spacing: 0.1em;
-  text-align: left;
-}
-
-.gsv-rail-tab-list button i {
-  width: 18px;
-  height: 18px;
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #7d78b8;
-  font-style: normal;
-}
-
-.gsv-rail-tab-list button i:hover {
-  color: #fff;
-  background: var(--selected);
-}
-
 .gsv-shell-rail footer {
   position: relative;
   padding: 12px 20px;
@@ -1080,8 +984,7 @@
 }
 
 .gsv-rail-dot-button:hover,
-.gsv-rail-gsv-dot:hover,
-.gsv-rail-tabs-dot:hover {
+.gsv-rail-gsv-dot:hover {
   border-color: var(--accent);
   background: var(--hover);
 }
@@ -1102,28 +1005,6 @@
   margin-top: 4px;
   border: 1.4px solid var(--accent-bright);
   box-shadow: 0 0 14px rgba(150, 140, 255, 0.4);
-}
-
-.gsv-rail-tabs-dot {
-  position: relative;
-  width: 44px;
-  flex: none;
-  margin-top: auto;
-  margin-bottom: 16px;
-  border: 0;
-  background: transparent;
-  color: var(--accent);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 3px;
-}
-
-.gsv-rail-tabs-dot strong {
-  color: var(--accent-bright);
-  font-size: 12px;
-  letter-spacing: 0.02em;
 }
 
 .gsv-picker-overlay {
