@@ -3,7 +3,7 @@
   min-height: calc(100vh - 98px);
   margin: -20px;
   display: grid;
-  grid-template-columns: minmax(520px, 1fr) minmax(520px, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   border: 1px solid var(--border-raised);
   background: var(--panel);
   box-shadow: inset 0 0 0 1px #060414, 0 0 30px rgba(80, 70, 180, 0.1);
@@ -381,12 +381,12 @@
 .gsv-settings-mini-row,
 .gsv-settings-add-row,
 .gsv-settings-empty-row {
-  min-height: 48px;
+  min-height: 43px;
   display: flex;
   align-items: center;
   gap: 11px;
   min-width: 0;
-  padding: 13px 16px;
+  padding: 12px 16px;
   border-bottom: 1px solid var(--rule-inner);
 }
 
@@ -405,9 +405,11 @@
 }
 
 .gsv-settings-mini-copy {
+  flex: 1 1 auto;
   min-width: 0;
-  display: grid;
-  gap: 4px;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
 }
 
 .gsv-settings-mini-copy strong {
@@ -422,6 +424,7 @@
 }
 
 .gsv-settings-mini-copy small {
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   color: #7d78b8;
@@ -438,6 +441,16 @@
   font-size: 9px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
+}
+
+.gsv-settings-tail-dot {
+  flex: none;
+  display: inline-flex;
+  margin-left: auto;
+}
+
+.gsv-settings-status + .gsv-settings-tail-dot {
+  margin-left: 0;
 }
 
 .gsv-settings-status.is-online,
@@ -480,7 +493,7 @@
   flex: 1;
 }
 
-@media (max-width: 1180px) {
+@media (max-width: 760px) {
   .gsv-settings-overview {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -494,7 +507,7 @@
   }
 }
 
-@media (max-width: 680px) {
+@media (max-width: 540px) {
   .gsv-settings-overview {
     margin: -12px;
   }
