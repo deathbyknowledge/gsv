@@ -1,5 +1,6 @@
 import type { ComponentChildren } from "preact";
 import { ListRow, type ListRowStatus } from "../../../components/ui/ListRow";
+import { SectionHeader } from "../../../components/ui/SectionHeader";
 import { Tag, type TagTone } from "../../../components/ui/Tag";
 
 export type ConsoleDetailField = {
@@ -73,10 +74,7 @@ export function ConsoleDetailChips({
 
   return (
     <section class="gsv-console-detail-section">
-      <div class="gsv-console-detail-section-heading">
-        <span>{title}</span>
-        <small>{visibleChips.length > 0 ? `${visibleChips.length} ITEMS` : emptyLabel}</small>
-      </div>
+      <SectionHeader title={title} meta={visibleChips.length > 0 ? `${visibleChips.length} ITEMS` : emptyLabel} divider />
       <div class="gsv-console-detail-chip-list">
         {visibleChips.length > 0 ? visibleChips.map((chip, index) => (
           <Tag key={`${index}-${chip.label}`} label={chip.label} tone={chip.tone ?? "idle"} boxed />
@@ -99,10 +97,7 @@ export function ConsoleDetailList({
 }) {
   return (
     <section class="gsv-console-detail-section">
-      <div class="gsv-console-detail-section-heading">
-        <span>{title}</span>
-        <small>{items.length > 0 ? `${items.length} ITEMS` : emptyLabel}</small>
-      </div>
+      <SectionHeader title={title} meta={items.length > 0 ? `${items.length} ITEMS` : emptyLabel} divider />
       <div class="gsv-console-detail-list">
         {items.length > 0 ? items.map((item) => (
           <div class="gsv-console-detail-list-item" key={item.id}>

@@ -155,7 +155,6 @@
   white-space: nowrap;
 }
 
-.gsv-console-detail-section-heading,
 .gsv-console-detail-empty {
   color: var(--text-dim);
   font-size: 9px;
@@ -166,25 +165,6 @@
 .gsv-console-detail-section {
   min-width: 0;
   border: 1px solid var(--rule-inner);
-}
-
-.gsv-console-detail-section-heading {
-  min-height: 30px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--rule-inner);
-  background: rgba(9, 7, 26, 0.52);
-}
-
-.gsv-console-detail-section-heading span,
-.gsv-console-detail-section-heading small {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .gsv-console-detail-chip-list {
