@@ -183,14 +183,12 @@ export function GsvShell({
         >
           {shell.showRail ? (
             <ShellRail
-              activeSurface={shell.activeSurface}
               desktopObjects={desktopObjects}
               collapsed={shell.railCollapsed}
               onToggleCollapsed={shell.toggleRailCollapsed}
               onBackToDesktop={shell.desktopCollapsed ? shell.revealDesktop : shell.backToDesktop}
               onOpenPicker={shell.openPicker}
               onOpenControlMenu={shell.openControlMenu}
-              onOpenSurface={shell.openSurface}
             />
           ) : null}
 
