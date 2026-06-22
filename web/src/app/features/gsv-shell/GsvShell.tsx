@@ -30,7 +30,6 @@ import { ShellRail } from "./navigation/ShellRail";
 import { ShellStatusBar } from "./navigation/ShellStatusBar";
 import {
   shellSurfaceLabel,
-  type ShellPageTab,
   type ShellSettingsRoute,
   type ShellSurfaceId,
 } from "./domain/shellModel";
@@ -95,60 +94,6 @@ function CollapsedDesktop() {
       <div class="gsv-space-grid" />
       <div class="gsv-space-stars" />
     </div>
-  );
-}
-
-function CollapsedTabsMenu({
-  activeTabKey,
-  openTabs,
-  onActivateTab,
-  onClose,
-  onCloseTab,
-}: {
-  activeTabKey: string | null;
-  openTabs: readonly ShellPageTab[];
-  onActivateTab: (key: string) => void;
-  onClose: () => void;
-  onCloseTab: (key: string) => void;
-}) {
-  if (openTabs.length === 0) {
-    return null;
-  }
-
-  return (
-    <>
-      <button
-        type="button"
-        class="gsv-collapsed-tabs-scrim"
-        aria-label="Close open tabs menu"
-        onClick={onClose}
-      />
-      <aside class="gsv-collapsed-tabs-menu" aria-label="Open tabs">
-        <header>
-          <Icon name="list" size={13} />
-          <span>OPEN TABS</span>
-        </header>
-        <div>
-          {openTabs.map((tab) => {
-            const active = tab.key === activeTabKey;
-            return (
-              <div
-                class={`gsv-collapsed-tabs-row${active ? " is-active" : ""}`}
-                key={tab.key}
-              >
-                <button type="button" onClick={() => onActivateTab(tab.key)}>
-                  <Icon name={tab.icon} size={17} />
-                  <span>{tab.title}</span>
-                </button>
-                <button type="button" aria-label={`Close ${tab.title}`} onClick={() => onCloseTab(tab.key)}>
-                  <Icon name="doticons/x" size={12} />
-                </button>
-              </div>
-            );
-          })}
-        </div>
-      </aside>
-    </>
   );
 }
 
@@ -295,16 +240,6 @@ export function GsvShell({
               onOpenControlMenu={shell.openControlMenu}
               onOpenSurface={openShellSurface}
               onOpenTabsPicker={shell.openTabsPicker}
-            />
-          ) : null}
-
-          {shell.showRail && shell.railCollapsed && shell.tabMenuOpen ? (
-            <CollapsedTabsMenu
-              activeTabKey={shell.activeTabKey}
-              openTabs={shell.openTabs}
-              onActivateTab={shell.activateTab}
-              onClose={shell.closeTabMenu}
-              onCloseTab={shell.closeTab}
             />
           ) : null}
 
