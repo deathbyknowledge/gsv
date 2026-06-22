@@ -3,11 +3,14 @@ import { useEffect, useState } from "preact/hooks";
 import {
   getDesktopObject,
   shellSurfaceLabel,
+  shellTabForDesktopChild,
+  shellTabForSettingsRoute,
   shellTabForSurface,
+  type DesktopChildObject,
   type DesktopObject,
   type DesktopObjectId,
-  type ShellPageSurfaceId,
   type ShellPageTab,
+  type ShellSettingsRoute,
   type ShellSurfaceId,
 } from "../domain/shellModel";
 
@@ -55,24 +58,12 @@ function objectCardStatus(status: string): "online" | "error" | "idle" | "warn" 
   return "online";
 }
 
-function surfaceForDesktopObject(parentId: DesktopObjectId): ShellSurfaceId {
-  if (parentId === "machines") {
-    return "machines";
+function upsertTab(tabs: readonly ShellPageTab[], tab: ShellPageTab): ShellPageTab[] {
+  const index = tabs.findIndex((candidate) => candidate.key === tab.key);
+  if (index === -1) {
+    return [...tabs, tab];
   }
-  if (parentId === "messengers") {
-    return "messengers";
-  }
-  if (parentId === "integrations") {
-    return "integrations";
-  }
-  if (parentId === "applications") {
-    return "applications";
-  }
-  return "settings";
-}
-
-function isPageSurface(surface: ShellSurfaceId): surface is ShellPageSurfaceId {
-  return surface !== "desktop";
+  return tabs.map((candidate, candidateIndex) => candidateIndex === index ? tab : candidate);
 }
 
 export function useGsvShellState({
@@ -83,6 +74,7 @@ export function useGsvShellState({
   const [rootHeight, setRootHeight] = useState(760);
   const [activeSurface, setActiveSurface] = useState<ShellSurfaceId>("desktop");
   const [openTabs, setOpenTabs] = useState<ShellPageTab[]>([]);
+  const [activeTabKey, setActiveTabKey] = useState<string | null>(null);
   const [railMode, setRailMode] = useState<RailMode>("gsv");
   const [manualRailCollapsed, setManualRailCollapsed] = useState(false);
   const [selectedObjectId, setSelectedObjectId] = useState<DesktopObjectId | null>(null);
@@ -134,10 +126,12 @@ export function useGsvShellState({
   const railCollapsed = manualRailCollapsed || autoRailCollapsed;
   const showRail = inPageZone || desktopCollapsed;
   const selectedObject = getDesktopObject(desktopObjects, selectedObjectId);
+  const activePageTab = activeTabKey ? openTabs.find((tab) => tab.key === activeTabKey) ?? null : null;
 
   const openSurface = (surface: ShellSurfaceId): void => {
     if (surface === "desktop") {
       setActiveSurface("desktop");
+      setActiveTabKey(null);
       setSelectedObjectId(null);
       setPickerId(null);
       setGsvOpen(false);
@@ -145,11 +139,8 @@ export function useGsvShellState({
     }
 
     const tab = shellTabForSurface(surface);
-    setOpenTabs((current) => (
-      current.some((candidate) => candidate.key === tab.key)
-        ? current
-        : [...current, tab]
-    ));
+    setOpenTabs((current) => upsertTab(current, tab));
+    setActiveTabKey(tab.key);
     setRailMode("tabs");
     setActiveSurface(surface);
     setSelectedObjectId(null);
@@ -157,8 +148,31 @@ export function useGsvShellState({
     setGsvOpen(false);
   };
 
+  const openSettingsRoute = (route: ShellSettingsRoute): void => {
+    const tab = shellTabForSettingsRoute(route);
+    setOpenTabs((current) => upsertTab(current, tab));
+    setActiveTabKey(tab.key);
+    setRailMode("tabs");
+    setActiveSurface("settings");
+    setSelectedObjectId(null);
+    setPickerId(null);
+    setGsvOpen(false);
+  };
+
+  const openObject = (child: DesktopChildObject): void => {
+    const tab = shellTabForDesktopChild(child);
+    setOpenTabs((current) => upsertTab(current, tab));
+    setActiveTabKey(tab.key);
+    setRailMode("tabs");
+    setActiveSurface(tab.surface);
+    setSelectedObjectId(null);
+    setPickerId(null);
+    setGsvOpen(false);
+  };
+
   const backToDesktop = (): void => {
     setActiveSurface("desktop");
+    setActiveTabKey(null);
     setSelectedObjectId(null);
     setPickerId(null);
     setGsvOpen(false);
@@ -167,6 +181,7 @@ export function useGsvShellState({
   const revealDesktop = (): void => {
     setChatWidth(MIN_CHAT_WIDTH);
     setActiveSurface("desktop");
+    setActiveTabKey(null);
     setSelectedObjectId(null);
     setPickerId(null);
     setGsvOpen(false);
@@ -178,6 +193,7 @@ export function useGsvShellState({
       return;
     }
     setActiveSurface(tab.surface);
+    setActiveTabKey(tab.key);
     setSelectedObjectId(null);
     setPickerId(null);
     setGsvOpen(false);
@@ -185,14 +201,13 @@ export function useGsvShellState({
   };
 
   const closeTab = (key: string): void => {
-    const activeKey = isPageSurface(activeSurface)
-      ? shellTabForSurface(activeSurface).key
-      : null;
     const nextTabs = openTabs.filter((tab) => tab.key !== key);
 
     setOpenTabs(nextTabs);
-    if (activeKey === key) {
-      setActiveSurface(nextTabs[nextTabs.length - 1]?.surface ?? "desktop");
+    if (activeTabKey === key) {
+      const nextActiveTab = nextTabs[nextTabs.length - 1] ?? null;
+      setActiveTabKey(nextActiveTab?.key ?? null);
+      setActiveSurface(nextActiveTab?.surface ?? "desktop");
     }
     if (nextTabs.length === 0) {
       setRailMode("gsv");
@@ -276,7 +291,7 @@ export function useGsvShellState({
   const pickerObject = pickerId && pickerId !== "gsv" && pickerId !== "tabs" ? getDesktopObject(desktopObjects, pickerId) : null;
   const pickerCards: PickerCard[] = pickerId === "tabs"
     ? openTabs.map((tab) => {
-        const active = activeSurface === tab.surface;
+        const active = activeTabKey === tab.key;
         return {
           key: tab.key,
           label: tab.title,
@@ -297,7 +312,7 @@ export function useGsvShellState({
         status: objectCardStatus(child.status),
         glyph: child.glyph,
         onClick: () => {
-          openSurface(surfaceForDesktopObject(pickerObject.id));
+          openObject(child);
         },
       })) ?? [];
   const pickerTitle = pickerId === "gsv"
@@ -319,13 +334,15 @@ export function useGsvShellState({
       : "NO OBJECTS";
 
   const statusContext = activeSurface !== "desktop"
-    ? shellSurfaceLabel(activeSurface)
+    ? activePageTab?.title ?? shellSurfaceLabel(activeSurface)
     : selectedObject
       ? selectedObject.label
       : "DESKTOP";
 
   return {
     activeSurface,
+    activePageTab,
+    activeTabKey,
     activateTab,
     backToDesktop,
     chatDragging,
@@ -335,7 +352,9 @@ export function useGsvShellState({
     gsvOpen,
     maxChatWidth,
     openControlMenu,
+    openObject,
     openPicker,
+    openSettingsRoute,
     openSurface,
     openTabs,
     openTabsPicker,

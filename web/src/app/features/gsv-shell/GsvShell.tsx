@@ -19,6 +19,7 @@ import type { PresenceController } from "../presence/presenceController";
 import type { NotificationSurface } from "../notifications/types";
 import {
   GsvConsole,
+  type SettingsRouteRequestRoute,
   type SettingsRouteRequest,
   type SettingsRouteTarget,
 } from "../gsv-console/components/GsvConsole";
@@ -26,7 +27,7 @@ import { LegacyPackageRuntimeAnchors } from "../legacy-package-runtime/LegacyPac
 import { GsvDesktop } from "./desktop/GsvDesktop";
 import { ShellRail } from "./navigation/ShellRail";
 import { ShellStatusBar } from "./navigation/ShellStatusBar";
-import { shellSurfaceLabel, type ShellSurfaceId } from "./domain/shellModel";
+import { shellSurfaceLabel, type ShellSettingsRoute, type ShellSurfaceId } from "./domain/shellModel";
 import { buildShellChatAgent } from "./domain/chatAgentModel";
 import { buildDesktopObjectsFromConsole } from "./domain/desktopObjects";
 import { useGsvShellState } from "./hooks/useGsvShellState";
@@ -89,6 +90,23 @@ function CollapsedDesktop() {
       <div class="gsv-space-stars" />
     </div>
   );
+}
+
+function shellSettingsRouteForTarget(target: SettingsRouteTarget): ShellSettingsRoute {
+  if (target === "overview") {
+    return { view: "overview" };
+  }
+  if (target === "crew") {
+    return { view: "crew" };
+  }
+  if (target === "tasks") {
+    return { view: "list", kind: "tasks" };
+  }
+  return { view: "config", kind: target };
+}
+
+function toSettingsRouteRequestRoute(route: ShellSettingsRoute): SettingsRouteRequestRoute {
+  return route;
 }
 
 export function GsvShell({
@@ -167,22 +185,25 @@ export function GsvShell({
       statusLabel: chatStatusLabel,
     });
   }, [activeChatProcess, chatProcessList, chatStatusLabel, consoleConfig.config, consoleOverview.data]);
-  const requestSettingsRoute = (target: SettingsRouteTarget): void => {
+  const requestSettingsRoute = (route: ShellSettingsRoute): void => {
     setSettingsRouteRequest((current) => ({
       id: (current?.id ?? 0) + 1,
-      target,
+      route: toSettingsRouteRequestRoute(route),
     }));
   };
   const openShellSurface = (surface: ShellSurfaceId): void => {
-    if (surface === "settings") {
-      requestSettingsRoute("overview");
-    }
     shell.openSurface(surface);
   };
   const openSettingsRoute = (target: SettingsRouteTarget): void => {
-    requestSettingsRoute(target);
-    shell.openSurface("settings");
+    shell.openSettingsRoute(shellSettingsRouteForTarget(target));
   };
+
+  useEffect(() => {
+    if (shell.activeSurface !== "settings") {
+      return;
+    }
+    requestSettingsRoute(shell.activePageTab?.settingsRoute ?? { view: "overview" });
+  }, [shell.activeSurface, shell.activePageTab?.key, shell.activePageTab?.settingsRoute]);
 
   return (
     <div
@@ -201,6 +222,7 @@ export function GsvShell({
           {shell.showRail ? (
             <ShellRail
               activeSurface={shell.activeSurface}
+              activeTabKey={shell.activeTabKey}
               desktopObjects={desktopObjects}
               collapsed={shell.railCollapsed}
               openTabs={shell.openTabs}
@@ -240,6 +262,7 @@ export function GsvShell({
                   shell.setSelectedObjectId(null);
                 }}
                 onOpenSurface={openShellSurface}
+                onOpenObject={shell.openObject}
               />
             )}
 

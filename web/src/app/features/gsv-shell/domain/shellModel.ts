@@ -17,7 +17,15 @@ export type DesktopObjectId = "machines" | "messengers" | "integrations" | "appl
 export type ShellStatus = "online" | "error" | "idle" | "warn" | "live" | "update";
 export type DesktopGlyph = "machines" | "messengers" | "integrations" | "applications";
 export type ShellPageSurfaceId = Exclude<ShellSurfaceId, "desktop">;
-export type ShellPageTabKind = "settings" | "system" | "inventory";
+export type ShellPageTabKind = "settings" | "system" | "inventory" | "object";
+export type ShellSettingsListKind = DesktopObjectId | "library" | "tasks";
+
+export type ShellSettingsRoute =
+  | { view: "overview" }
+  | { view: "list"; kind: ShellSettingsListKind; detailId?: string; createNew?: boolean }
+  | { view: "config"; kind: "models" | "overrides" }
+  | { view: "crew" }
+  | { view: "agent"; accountUid: number | null; createNew?: boolean };
 
 export type ShellPageTab = {
   key: string;
@@ -26,6 +34,12 @@ export type ShellPageTab = {
   kind: ShellPageTabKind;
   icon: string;
   type: string;
+  settingsRoute?: ShellSettingsRoute;
+};
+
+export type DesktopChildRoute = {
+  kind: DesktopObjectId;
+  detailId: string;
 };
 
 export type DesktopChildObject = {
@@ -36,6 +50,7 @@ export type DesktopChildObject = {
   status: ShellStatus;
   statusLabel: string;
   glyph: DesktopGlyph;
+  route: DesktopChildRoute;
 };
 
 export type DesktopObject = {
@@ -139,6 +154,7 @@ export function shellTabForSurface(surface: ShellPageSurfaceId): ShellPageTab {
       kind: "settings",
       icon: "cog",
       type: "GSV · SETTINGS",
+      settingsRoute: { view: "overview" },
     };
   }
   if (surface === "files") {
@@ -186,5 +202,35 @@ export function shellTabForSurface(surface: ShellPageSurfaceId): ShellPageTab {
             ? "stars"
             : "list",
     type: "GSV · CONTROL",
+  };
+}
+
+function iconForDesktopGlyph(glyph: DesktopGlyph): string {
+  if (glyph === "machines") return "computer";
+  if (glyph === "messengers") return "chat";
+  if (glyph === "integrations") return "weblink";
+  return "stars";
+}
+
+export function shellTabForSettingsRoute(route: ShellSettingsRoute): ShellPageTab {
+  return {
+    ...shellTabForSurface("settings"),
+    settingsRoute: route,
+  };
+}
+
+export function shellTabForDesktopChild(child: DesktopChildObject): ShellPageTab {
+  return {
+    key: `obj:${child.route.kind}:${child.route.detailId}`,
+    surface: "settings",
+    title: child.label,
+    kind: "object",
+    icon: iconForDesktopGlyph(child.glyph),
+    type: child.type,
+    settingsRoute: {
+      view: "list",
+      kind: child.route.kind,
+      detailId: child.route.detailId,
+    },
   };
 }

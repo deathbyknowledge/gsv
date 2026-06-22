@@ -25,10 +25,13 @@ type SettingsRoute =
   | { view: "agent"; accountUid: number | null; createNew?: boolean };
 type SettingsListSurface = "machines" | "messengers" | "integrations" | "applications" | "library" | "runtime";
 export type SettingsRouteTarget = "overview" | "crew" | "tasks" | "models" | "overrides";
+export type SettingsRouteRequestRoute = SettingsRoute;
 export type SettingsRouteRequest = {
   id: number;
-  target: SettingsRouteTarget;
-};
+} & (
+  | { target: SettingsRouteTarget }
+  | { route: SettingsRouteRequestRoute }
+);
 
 function surfaceTail(surface: ShellSurfaceId): string {
   if (surface === "files") {
@@ -111,7 +114,7 @@ function settingsRouteTail(route: SettingsRoute): string {
   return surfaceTail(route.kind);
 }
 
-function settingsRouteForRequest(target: SettingsRouteTarget): SettingsRoute {
+function settingsRouteForTarget(target: SettingsRouteTarget): SettingsRoute {
   if (target === "overview") {
     return { view: "overview" };
   }
@@ -122,6 +125,13 @@ function settingsRouteForRequest(target: SettingsRouteTarget): SettingsRoute {
     return { view: "list", kind: "tasks" };
   }
   return { view: "config", kind: target };
+}
+
+function settingsRouteForRequest(request: SettingsRouteRequest): SettingsRoute {
+  if ("route" in request) {
+    return request.route;
+  }
+  return settingsRouteForTarget(request.target);
 }
 
 export function GsvConsole({
@@ -189,7 +199,7 @@ export function GsvConsole({
       return;
     }
     if (settingsRouteRequest) {
-      setSettingsRoute(settingsRouteForRequest(settingsRouteRequest.target));
+      setSettingsRoute(settingsRouteForRequest(settingsRouteRequest));
     }
   }, [activeSurface, settingsRouteRequest]);
 
