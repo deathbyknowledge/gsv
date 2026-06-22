@@ -320,6 +320,10 @@
   min-width: 0;
 }
 
+.gsv-settings-fleet-block > .gsv-settings-split {
+  border-top: 1px solid var(--border);
+}
+
 .gsv-settings-mini-row,
 .gsv-settings-add-row,
 .gsv-settings-empty-row {
@@ -433,6 +437,10 @@
 
 .gsv-settings-satellites-block {
   flex: 1;
+}
+
+.gsv-settings-satellites-block .gsv-settings-section-rows {
+  min-height: 0;
 }
 
 @media (max-width: 760px) {

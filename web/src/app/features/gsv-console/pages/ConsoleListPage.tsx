@@ -556,7 +556,7 @@ function SettingsListRowView({ row }: { row: SettingsListRow }) {
           <Tag label={row.tag.label} tone={row.tag.tone} boxed />
         </span>
       ) : null}
-      <span class="gsv-console-settings-row-status">
+      <span class={`gsv-console-settings-row-status is-${row.tone}`}>
         <StatusDot tone={row.tone} size={7} />
         <span>{row.statusLabel}</span>
       </span>
