@@ -15,12 +15,12 @@
 .gsv-console-settings-row {
   width: 100%;
   min-width: 0;
-  min-height: 64px;
+  min-height: 62px;
   display: grid;
   grid-template-columns: 24px minmax(0, 1fr) auto minmax(96px, auto) 24px;
   align-items: center;
-  gap: 12px;
-  padding: 14px 18px;
+  gap: 14px;
+  padding: 15px 20px;
   border: 0;
   border-bottom: 1px solid var(--rule-inner);
   background: transparent;
@@ -65,7 +65,7 @@ button.gsv-console-settings-row:focus-visible {
   grid-column: 2;
   min-width: 0;
   display: grid;
-  gap: 6px;
+  gap: 5px;
 }
 
 .gsv-console-settings-row-tag {
@@ -88,14 +88,18 @@ button.gsv-console-settings-row:focus-visible {
 
 .gsv-console-settings-row-copy strong {
   color: var(--text);
-  font-size: 11px;
+  font-size: 12.5px;
   font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: none;
 }
 
 .gsv-console-settings-row-copy small {
-  color: var(--text-dim);
-  font-size: 9px;
-  line-height: 1.35;
+  color: #8c86c8;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  line-height: 1.4;
+  text-transform: none;
 }
 
 .gsv-console-settings-row-status {
