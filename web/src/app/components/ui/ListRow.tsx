@@ -1,4 +1,5 @@
 import type { JSX } from "preact";
+import { Tag, type TagTone } from "./Tag";
 import "./ListRow.css";
 
 export type ListRowStatus = "online" | "error" | "idle" | "live" | "none" | "update" | "warn";
@@ -9,6 +10,7 @@ export interface ListRowProps {
   statusLabel?: string;
   sub?: string;
   tag?: string;
+  tagTone?: TagTone;
   chevron?: boolean;
   active?: boolean;
   onClick?: () => void;
@@ -39,6 +41,7 @@ export function ListRow({
   statusLabel = "",
   sub = "",
   tag = "",
+  tagTone = "update",
   chevron = false,
   active = false,
   onClick,
@@ -83,21 +86,7 @@ export function ListRow({
           <div class="lr-sub" style={{ fontSize: "10px", letterSpacing: ".04em", color: "#8c86c8", marginTop: "6px" }}>{sub}</div>
         ) : null}
       </div>
-      {tag ? (
-        <span
-          class="lr-tag"
-          style={{
-            flex: "none",
-            fontSize: "8.5px",
-            letterSpacing: ".14em",
-            color: "var(--update)",
-            border: "1px solid #5a4a1f",
-            padding: "3px 7px",
-          }}
-        >
-          {tag}
-        </span>
-      ) : null}
+      {tag ? <span class="lr-tag" style={{ flex: "none" }}><Tag label={tag} tone={tagTone} boxed /></span> : null}
       {statusLabel ? (
         <span class="lr-status" style={{ flex: "none", fontSize: "9px", letterSpacing: ".12em", color: STATUS_TEXT[dotKey] }}>
           {statusLabel}
