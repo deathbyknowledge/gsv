@@ -110,52 +110,40 @@ export function ShellRail({
         </span>
       </header>
 
-      <div class="gsv-rail-modes" role="tablist" aria-label="Rail mode">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={railMode === "objects" ? "true" : "false"}
-          class={railMode === "objects" ? "is-active" : ""}
-          onClick={() => onSetRailMode("objects")}
-        >
-          <Icon name="stars" size={13} />
-          <span>OBJECTS</span>
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={railMode === "gsv" ? "true" : "false"}
-          class={railMode === "gsv" ? "is-active" : ""}
-          onClick={() => onSetRailMode("gsv")}
-        >
-          <GsvMark size={15} />
-          <span>GSV</span>
-        </button>
-      </div>
-
       <div class="gsv-rail-scroll">
-        {railMode === "objects" ? (
-          <div class="gsv-rail-tree">
-            <span class="gsv-rail-spine" aria-hidden="true" />
-            {desktopObjects.map((object) => (
-              <button
-                key={object.id}
-                type="button"
-                class="gsv-rail-row"
-                title={`${object.label}: ${object.meta}, ${object.statusLabel}`}
-                onClick={() => onOpenPicker(object.id)}
-              >
-                <span class="gsv-rail-node-icon">
-                  <Icon name={GLYPH_ICON[object.glyph]} size={19} />
-                </span>
-                <span class="gsv-rail-row-copy">
-                  <span>{object.label}</span>
-                </span>
-                <i style={{ background: statusColor(object.status), color: statusColor(object.status) }} />
-              </button>
-            ))}
-          </div>
-        ) : null}
+        <div class="gsv-rail-tree">
+          <span class="gsv-rail-spine" aria-hidden="true" />
+          {desktopObjects.map((object) => (
+            <button
+              key={object.id}
+              type="button"
+              class="gsv-rail-row"
+              title={`${object.label}: ${object.meta}, ${object.statusLabel}`}
+              onClick={() => onOpenPicker(object.id)}
+            >
+              <span class="gsv-rail-node-icon">
+                <Icon name={GLYPH_ICON[object.glyph]} size={19} />
+              </span>
+              <span class="gsv-rail-row-copy">
+                <span>{object.label}</span>
+              </span>
+              <i style={{ background: statusColor(object.status), color: statusColor(object.status) }} />
+            </button>
+          ))}
+          <button
+            type="button"
+            class="gsv-rail-row gsv-rail-gsv"
+            aria-expanded={railMode === "gsv" ? "true" : "false"}
+            onClick={() => onSetRailMode(railMode === "gsv" ? "objects" : "gsv")}
+          >
+            <span class="gsv-rail-node-icon">
+              <GsvMark />
+            </span>
+            <span class="gsv-rail-row-copy">
+              <span>GSV</span>
+            </span>
+          </button>
+        </div>
 
         {railMode === "gsv" ? (
           <nav class="gsv-rail-subnav" aria-label="GSV systems">

@@ -278,8 +278,8 @@ export function useGsvShellState({
   const pickerTitle = pickerId === "gsv"
     ? "GSV // CONTROL"
     : pickerId === "tabs"
-      ? "OPEN TABS"
-      : `${pickerObject?.label ?? "OBJECTS"} // SELECT`;
+      ? "OPEN TABS · SELECT TAB"
+      : `${pickerObject?.label ?? "OBJECTS"} · SELECT AN OBJECT`;
   const pickerSubtitle = pickerId === "gsv"
     ? "System surfaces"
     : pickerId === "tabs"

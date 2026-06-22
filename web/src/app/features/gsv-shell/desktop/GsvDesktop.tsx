@@ -1,4 +1,5 @@
 import type { JSX } from "preact";
+import { Icon } from "../../../components/ui/Icon";
 import { IconMenu } from "../../../components/ui/IconMenu";
 import { ObjectCard } from "../../../components/ui/ObjectCard";
 import { StatusDot } from "../../../components/ui/StatusDot";
@@ -220,7 +221,15 @@ export function GsvDesktop({
       </div>
 
       {tabCount > 0 ? (
-        <button type="button" class="gsv-space-tabs-card" onClick={onActivateTabs}>
+        <button
+          type="button"
+          class="gsv-space-tabs-card"
+          aria-label={`Open ${tabCount} ${tabCount === 1 ? "tab" : "tabs"}`}
+          onClick={onActivateTabs}
+        >
+          <span class="gsv-space-tabs-icon" aria-hidden="true">
+            <Icon name="list" size={13} />
+          </span>
           <span>TABS</span>
           <strong>{tabCount}</strong>
           <small>select</small>
