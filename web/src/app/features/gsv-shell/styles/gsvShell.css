@@ -474,7 +474,8 @@
   letter-spacing: 0.18em;
 }
 
-.gsv-space-tabs-card {
+.gsv-space-tabs-card,
+.gsv-collapsed-tabs-card {
   position: absolute;
   z-index: 8;
   left: 0;
@@ -492,18 +493,30 @@
   text-align: left;
 }
 
-.gsv-space-tabs-card span {
+.gsv-space-tabs-icon {
+  width: 18px;
+  flex: none;
+  color: var(--accent-bright);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gsv-space-tabs-card > span:not(.gsv-space-tabs-icon),
+.gsv-collapsed-tabs-card > span {
   font-size: 11px;
   letter-spacing: 0.32em;
 }
 
-.gsv-space-tabs-card strong {
+.gsv-space-tabs-card strong,
+.gsv-collapsed-tabs-card strong {
   color: #7d78b8;
   font-size: 10px;
   letter-spacing: 0.08em;
 }
 
-.gsv-space-tabs-card small {
+.gsv-space-tabs-card small,
+.gsv-collapsed-tabs-card small {
   margin-left: auto;
   color: var(--text-dim);
   font-size: 9px;
@@ -511,8 +524,12 @@
   text-transform: uppercase;
 }
 
-.gsv-space-tabs-card:hover {
+.gsv-space-tabs-card:hover,
+.gsv-space-tabs-card:focus-visible,
+.gsv-collapsed-tabs-card:hover,
+.gsv-collapsed-tabs-card:focus-visible {
   background: var(--hover-nav);
+  outline: none;
 }
 
 .gsv-space-hint {
@@ -696,6 +713,7 @@
   text-align: left;
   display: grid;
   gap: 5px;
+  cursor: pointer;
 }
 
 .gsv-rail-home span {
@@ -709,6 +727,12 @@
   font-size: 10px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
+}
+
+.gsv-rail-home:hover,
+.gsv-rail-home:focus-visible {
+  opacity: 0.82;
+  outline: none;
 }
 
 .gsv-rail-menu {
@@ -727,66 +751,6 @@
 .gsv-rail-menu:focus-visible {
   border-color: var(--accent);
   color: var(--text-hi);
-}
-
-.gsv-rail-modes {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 1px;
-  padding: 1px;
-  margin: 0 14px 8px;
-  background: var(--rule-inner);
-  border: 1px solid var(--border);
-}
-
-.gsv-rail-modes button {
-  min-width: 0;
-  min-height: 34px;
-  border: 0;
-  background: var(--panel);
-  color: #8f8ac8;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 0 6px;
-  cursor: pointer;
-}
-
-.gsv-rail-modes button span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 8.5px;
-  letter-spacing: 0.11em;
-}
-
-.gsv-rail-modes button small {
-  color: var(--accent-bright);
-  font-size: 9px;
-  letter-spacing: 0;
-}
-
-.gsv-rail-modes button:hover,
-.gsv-rail-modes button:focus-visible,
-.gsv-rail-modes button.is-active {
-  background: var(--selected);
-  color: var(--text-hi);
-  outline: none;
-}
-
-.gsv-rail-modes button.is-active {
-  box-shadow: inset 0 0 0 1px var(--border-raised);
-}
-
-.gsv-rail-modes button:disabled {
-  opacity: 0.42;
-  cursor: default;
-}
-
-.gsv-rail-modes button:disabled:hover {
-  background: var(--panel);
-  color: #8f8ac8;
 }
 
 .gsv-rail-rule {
@@ -841,6 +805,10 @@
 .gsv-rail-row:focus-visible,
 .gsv-rail-row.is-active {
   background: var(--hover-nav);
+}
+
+.gsv-rail-row:focus-visible {
+  outline: none;
 }
 
 .gsv-rail-node-icon {
@@ -901,6 +869,10 @@
 .gsv-rail-gsv .gsv-rail-node-icon > svg {
   border: 1.4px solid var(--accent-bright);
   box-shadow: 0 0 16px rgba(150, 140, 255, 0.45);
+}
+
+.gsv-rail-gsv[aria-expanded="true"] {
+  background: rgba(150, 140, 255, 0.08);
 }
 
 .gsv-rail-gsv .gsv-rail-row-copy > span {
@@ -1014,8 +986,10 @@
   background:
     linear-gradient(rgba(150, 140, 255, 0.04) 1px, transparent 1px),
     linear-gradient(90deg, rgba(150, 140, 255, 0.04) 1px, transparent 1px),
-    rgba(10, 8, 34, 0.94);
+    var(--panel-2);
   background-size: 44px 44px, 44px 44px, auto;
+  display: flex;
+  flex-direction: column;
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--rule-section) #0c0a22;
@@ -1056,6 +1030,7 @@
   color: #8c86c8;
   font-size: 11px;
   letter-spacing: 0.26em;
+  text-transform: uppercase;
 }
 
 .gsv-picker-overlay header small {
@@ -1528,13 +1503,19 @@
   gap: 8px;
   min-width: 0;
   padding-left: 12px;
-  background: var(--node-bg);
+  background:
+    linear-gradient(90deg, rgba(18, 16, 42, 0), var(--node-bg) 18px),
+    var(--node-bg);
 }
 
 .gsv-status-actions > span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--text-dim);
+  font-size: 9.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
 }
 
 .gsv-status-actions button,
@@ -1553,6 +1534,7 @@
   font-size: 9px;
   letter-spacing: 0.12em;
   white-space: nowrap;
+  cursor: pointer;
 }
 
 .gsv-status-actions button svg {
@@ -1709,7 +1691,8 @@
     margin-top: 32px;
   }
 
-  .gsv-space-tabs-card {
+  .gsv-space-tabs-card,
+  .gsv-collapsed-tabs-card {
     width: min(248px, calc(100% - 24px));
     bottom: 44px;
   }
