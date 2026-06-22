@@ -148,6 +148,10 @@ export function GsvConsole({
       setSettingsRoute({ view: "crew" });
       return;
     }
+    if (surface === "new-agent") {
+      openSettingsNewAgent();
+      return;
+    }
     if (surface === "agent") {
       setSettingsRoute({ view: "agent", accountUid: selectedAgentUid });
       return;
