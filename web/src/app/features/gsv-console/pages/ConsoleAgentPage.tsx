@@ -6,6 +6,7 @@ import {
   type AgentEditorTask,
 } from "../../../components/ui/AgentEditor";
 import type { AvatarStatus } from "../../../components/ui/Avatar";
+import type { ConsoleAgentContextFile } from "../backend/consoleService";
 import {
   ConsolePage,
   ConsolePageState,
@@ -23,6 +24,7 @@ import {
   labelForConsoleAccountRelation,
 } from "../domain/agentPresentation";
 import {
+  useConsoleAgentContext,
   useConsoleAccounts,
   useConsoleConfig,
   useConsoleProcesses,
@@ -103,6 +105,15 @@ function AgentEditorSurface({
   const rootRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
   const processes = (processResource.data ?? []).filter((process) => ownsProcess(account, process));
+  const context = useConsoleAgentContext(account.username);
+  const files = editorFilesForAccount({
+    account,
+    contextFiles: context.files,
+    contextLoading: context.resource.isLoading,
+    contextError: context.resource.isError ? context.resource.errorText : "",
+    processes,
+    processResource,
+  });
 
   useLayoutEffect(() => {
     const node = rootRef.current;
@@ -121,7 +132,7 @@ function AgentEditorSurface({
   return (
     <section class="gsv-console-agent" ref={rootRef}>
       <AgentEditor
-        key={account.uid}
+        key={`${account.uid}:${context.dataUpdatedAt}:${processes.length}`}
         mode="manage"
         avatarSrc={agentImageSrcForAccount(account, accounts)}
         containerWidth={width || undefined}
@@ -133,7 +144,7 @@ function AgentEditorSurface({
         status={avatarStatusForProcesses(account, processes)}
         models={modelLabels}
         tasks={tasksForProcesses(processes)}
-        files={filesForAccount(account, processes, processResource)}
+        files={files}
         readOnly
         onBack={onBackToCrew}
       />
@@ -275,6 +286,41 @@ function filesForAccount(
       content: processFileContent(processes, processResource),
     },
   ];
+}
+
+function editorFilesForAccount({
+  account,
+  contextError,
+  contextFiles,
+  contextLoading,
+  processes,
+  processResource,
+}: {
+  account: ConsoleAccount;
+  contextError: string;
+  contextFiles: readonly ConsoleAgentContextFile[];
+  contextLoading: boolean;
+  processes: readonly ConsoleProcess[];
+  processResource: ConsoleResourceState<ConsoleProcess[]>;
+}): AgentEditorFile[] {
+  if (contextLoading) {
+    return [{
+      label: "CONTEXT",
+      content: "# Context\n\nLoading agent context files.",
+      orig: "# Context\n\nLoading agent context files.",
+    }];
+  }
+  if (contextFiles.length > 0) {
+    return contextFiles.map((file) => ({ ...file }));
+  }
+  if (contextError.trim().length > 0) {
+    return [{
+      label: "CONTEXT",
+      content: `# Context\n\n${contextError}`,
+      orig: `# Context\n\n${contextError}`,
+    }];
+  }
+  return filesForAccount(account, processes, processResource);
 }
 
 function processFileContent(

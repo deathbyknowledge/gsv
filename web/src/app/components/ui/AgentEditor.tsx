@@ -33,6 +33,7 @@ type TaskStatus = "running" | "error" | "idle" | "online";
 
 export interface AgentEditorFile {
   label: string;
+  name?: string;
   content: string;
   orig?: string;
 }
