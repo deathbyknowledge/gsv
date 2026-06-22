@@ -1,24 +1,17 @@
 import { Icon } from "../../../components/ui/Icon";
 import { IconButton } from "../../../components/ui/IconButton";
 import {
-  GSV_CONTROL_ITEMS,
   type DesktopObject,
   type DesktopObjectId,
-  type GsvControlItem,
-  type ShellRailMode,
 } from "../domain/shellModel";
 
 type ShellRailProps = {
   desktopObjects: readonly DesktopObject[];
   collapsed: boolean;
-  railMode: ShellRailMode;
-  activeTabKey: string | null;
   onToggleCollapsed: () => void;
-  onSetRailMode: (mode: ShellRailMode) => void;
   onBackToDesktop: () => void;
   onOpenPicker: (id: DesktopObjectId) => void;
   onOpenControlMenu: () => void;
-  onOpenSurface: (surface: GsvControlItem["id"]) => void;
 };
 
 const GLYPH_ICON: Record<string, string> = {
@@ -61,14 +54,10 @@ function GsvMark({ size = 22 }: { size?: number }) {
 export function ShellRail({
   desktopObjects,
   collapsed,
-  railMode,
-  activeTabKey,
   onToggleCollapsed,
-  onSetRailMode,
   onBackToDesktop,
   onOpenPicker,
   onOpenControlMenu,
-  onOpenSurface,
 }: ShellRailProps) {
   const totalObjects = desktopObjects.reduce((sum, object) => sum + object.children.length, 0);
 
@@ -133,8 +122,7 @@ export function ShellRail({
           <button
             type="button"
             class="gsv-rail-row gsv-rail-gsv"
-            aria-expanded={railMode === "gsv" ? "true" : "false"}
-            onClick={() => onSetRailMode(railMode === "gsv" ? "objects" : "gsv")}
+            onClick={onOpenControlMenu}
           >
             <span class="gsv-rail-node-icon">
               <GsvMark />
@@ -144,22 +132,6 @@ export function ShellRail({
             </span>
           </button>
         </div>
-
-        {railMode === "gsv" ? (
-          <nav class="gsv-rail-subnav" aria-label="GSV systems">
-            {GSV_CONTROL_ITEMS.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                class={activeTabKey === item.id ? "is-active" : ""}
-                onClick={() => onOpenSurface(item.id)}
-              >
-                <span>{item.label}</span>
-              </button>
-            ))}
-          </nav>
-        ) : null}
-
       </div>
 
       <footer>DRAG CHAT &lt;- TO EXPAND</footer>

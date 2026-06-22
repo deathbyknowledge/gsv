@@ -3,12 +3,9 @@ import { useEffect, useState } from "preact/hooks";
 import {
   getDesktopObject,
   shellSurfaceLabel,
-  shellTabForSurface,
   type DesktopObject,
   type DesktopObjectId,
-  type ShellRailMode,
   type ShellSurfaceId,
-  type ShellTab,
 } from "../domain/shellModel";
 
 export type PickerId = DesktopObjectId | "gsv";
@@ -43,13 +40,6 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-function tabForSurface(surface: ShellSurfaceId): ShellTab | null {
-  if (surface === "desktop") {
-    return null;
-  }
-  return shellTabForSurface(surface);
-}
-
 function objectCardStatus(status: string): "online" | "error" | "idle" | "warn" | "live" {
   if (status === "update") {
     return "warn";
@@ -82,9 +72,7 @@ export function useGsvShellState({
 }: UseGsvShellStateArgs) {
   const [rootWidth, setRootWidth] = useState(1280);
   const [rootHeight, setRootHeight] = useState(760);
-  const [tabs, setTabs] = useState<ShellTab[]>([]);
-  const [activeTabKey, setActiveTabKey] = useState<string | null>(null);
-  const [railMode, setRailMode] = useState<ShellRailMode>("objects");
+  const [activeSurface, setActiveSurface] = useState<ShellSurfaceId>("desktop");
   const [manualRailCollapsed, setManualRailCollapsed] = useState(false);
   const [selectedObjectId, setSelectedObjectId] = useState<DesktopObjectId | null>(null);
   const [pickerId, setPickerId] = useState<PickerId | null>(null);
@@ -116,9 +104,7 @@ export function useGsvShellState({
     return () => observer.disconnect();
   }, [rootRef]);
 
-  const activeTab = tabs.find((tab) => tab.key === activeTabKey) ?? null;
-  const activeSurface: ShellSurfaceId = activeTab?.surface ?? "desktop";
-  const inPageZone = activeTab !== null;
+  const inPageZone = activeSurface !== "desktop";
   const stackedLayout = rootWidth <= STACKED_LAYOUT_WIDTH;
   const maxChatWidth = Math.max(
     stackedLayout ? MIN_STACKED_CHAT_HEIGHT : MIN_CHAT_WIDTH,
@@ -139,42 +125,36 @@ export function useGsvShellState({
   const selectedObject = getDesktopObject(desktopObjects, selectedObjectId);
 
   const openSurface = (surface: ShellSurfaceId): void => {
-    const tab = tabForSurface(surface);
-    if (!tab) {
-      setActiveTabKey(null);
+    if (surface === "desktop") {
+      setActiveSurface("desktop");
       setSelectedObjectId(null);
       setPickerId(null);
       setGsvOpen(false);
       return;
     }
 
-    setTabs((current) => current.some((item) => item.key === tab.key) ? current : [...current, tab]);
-    setActiveTabKey(tab.key);
-    setRailMode("gsv");
+    setActiveSurface(surface);
     setSelectedObjectId(null);
     setPickerId(null);
     setGsvOpen(false);
   };
 
   const backToDesktop = (): void => {
-    setActiveTabKey(null);
+    setActiveSurface("desktop");
     setSelectedObjectId(null);
     setPickerId(null);
     setGsvOpen(false);
-    setRailMode("objects");
   };
 
   const revealDesktop = (): void => {
     setChatWidth(MIN_CHAT_WIDTH);
-    setActiveTabKey(null);
+    setActiveSurface("desktop");
     setSelectedObjectId(null);
     setPickerId(null);
     setGsvOpen(false);
-    setRailMode("objects");
   };
 
   const openPicker = (id: DesktopObjectId): void => {
-    setRailMode("objects");
     if (!inPageZone && !desktopCollapsed) {
       setSelectedObjectId(id);
       return;
@@ -183,7 +163,6 @@ export function useGsvShellState({
   };
 
   const openControlMenu = (): void => {
-    setRailMode("gsv");
     setSelectedObjectId(null);
     setGsvOpen(false);
     setPickerId("gsv");
@@ -255,16 +234,14 @@ export function useGsvShellState({
       ? ""
       : "NO OBJECTS";
 
-  const statusContext = activeTab
-    ? shellSurfaceLabel(activeTab.surface)
+  const statusContext = activeSurface !== "desktop"
+    ? shellSurfaceLabel(activeSurface)
     : selectedObject
       ? selectedObject.label
       : "DESKTOP";
 
   return {
     activeSurface,
-    activeTab,
-    activeTabKey,
     backToDesktop,
     chatDragging,
     chatOpen,
@@ -281,14 +258,12 @@ export function useGsvShellState({
     pickerSubtitle,
     pickerTitle,
     railCollapsed,
-    railMode,
     revealDesktop,
     resolvedChatWidth,
     selectedObjectId,
     setChatOpen,
     setGsvOpen,
     setPickerId,
-    setRailMode,
     setSelectedObjectId,
     showRail,
     startChatDrag,

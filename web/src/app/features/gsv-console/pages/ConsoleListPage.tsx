@@ -1,7 +1,6 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { Icon } from "../../../components/ui/Icon";
-import { ListRow } from "../../../components/ui/ListRow";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
 import { StatusDot, type StatusTone } from "../../../components/ui/StatusDot";
 import { Tag, type TagTone } from "../../../components/ui/Tag";
@@ -30,7 +29,6 @@ import {
   ConsoleDetailChips,
   ConsoleDetailGrid,
   ConsoleDetailList,
-  ConsoleRowDetails,
   type ConsoleDetailChip,
   type ConsoleDetailField,
   type ConsoleDetailListItem,
@@ -49,36 +47,33 @@ type SelectedConsoleDetail = {
   id: string;
 };
 
-type SignalMetric = {
-  label: string;
-  value: number | string;
-  meta: string;
-  tone: StatusTone;
-};
-
 type RowTag = {
   label: string;
   tone: TagTone;
 };
 
-type OperationalLayoutProps = {
-  title: string;
-  meta: string;
-  signals: readonly SignalMetric[];
-  children: ComponentChildren;
-  rail: ComponentChildren;
-};
-
-type OperationalRowProps = {
-  icon: string;
+type SettingsListRow = {
+  id: string;
+  icon?: string;
   label: string;
   sub: string;
   tone: StatusTone;
   statusLabel: string;
-  detail: string;
-  tags?: readonly RowTag[];
-  details?: ComponentChildren;
+  tag?: RowTag;
   onOpen?: () => void;
+};
+
+type SettingsListAction = {
+  label: string;
+  onClick?: () => void;
+};
+
+type SettingsListPanelProps = {
+  title: string;
+  meta: string;
+  rows: readonly SettingsListRow[];
+  emptyLabel: string;
+  action?: SettingsListAction;
 };
 
 type EntityDetailPageProps = {
@@ -470,157 +465,86 @@ function ConsoleEntityDetailPage({
   );
 }
 
-function OperationalLayout({
+function SettingsListPanel({
   title,
   meta,
-  signals,
-  children,
-  rail,
-}: OperationalLayoutProps) {
-  return (
-    <section class="gsv-console-list-layout">
-      <main class="gsv-console-list-main">
-        <SectionHeader title={title} meta={meta} divider />
-        <SignalStrip signals={signals} />
-        {children}
-      </main>
-      <aside class="gsv-console-list-rail">{rail}</aside>
-    </section>
-  );
-}
-
-function SignalStrip({ signals }: { signals: readonly SignalMetric[] }) {
-  return (
-    <div class="gsv-console-list-signals">
-      {signals.map((signal) => (
-        <div class="gsv-console-list-signal" key={signal.label}>
-          <span>{signal.label}</span>
-          <strong>{signal.value}</strong>
-          <small>
-            <StatusDot tone={signal.tone} size={7} />
-            {signal.meta}
-          </small>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function InventoryGroup({
-  title,
-  meta,
+  rows,
   emptyLabel,
-  isEmpty,
-  children,
-}: {
-  title: string;
-  meta: string;
-  emptyLabel: string;
-  isEmpty: boolean;
-  children: ComponentChildren;
-}) {
+  action,
+}: SettingsListPanelProps) {
   return (
-    <section class="gsv-console-list-group">
-      <div class="gsv-console-list-group-heading">
-        <span>{title}</span>
-        <small>{meta}</small>
-      </div>
-      {isEmpty ? <EmptyInventoryRow label={emptyLabel} /> : children}
-    </section>
-  );
-}
-
-function EmptyInventoryRow({ label }: { label: string }) {
-  return <div class="gsv-console-list-empty">{label}</div>;
-}
-
-function OperationalRow({
-  icon,
-  label,
-  sub,
-  tone,
-  statusLabel,
-  detail,
-  tags = [],
-  details,
-  onOpen,
-}: OperationalRowProps) {
-  return (
-    <div class="gsv-console-list-row" data-clickable={onOpen ? "true" : undefined}>
-      <span class="gsv-console-list-row-icon">
-        <Icon name={icon} size={18} />
-      </span>
-      <div class="gsv-console-list-row-main">
-        <ListRow label={label} sub={sub} status="none" />
-        {tags.length > 0 ? (
-          <div class="gsv-console-list-row-tags">
-            {tags.map((tag) => (
-              <Tag key={`${label}-${tag.label}`} label={tag.label} tone={tag.tone} boxed />
-            ))}
-          </div>
-        ) : null}
-        {details ? <div class="gsv-console-list-row-detail-slot">{details}</div> : null}
-      </div>
-      <div class="gsv-console-list-row-status">
-        <span>
-          <StatusDot tone={tone} size={8} />
-          {statusLabel}
-        </span>
-        <small>{detail}</small>
-      </div>
-      {onOpen ? (
-        <button
-          type="button"
-          class="gsv-console-list-row-open"
-          aria-label={`Open ${label}`}
-          onClick={onOpen}
-        />
-      ) : null}
-    </div>
-  );
-}
-
-function RailSection({
-  title,
-  meta,
-  children,
-}: {
-  title: string;
-  meta: string;
-  children: ComponentChildren;
-}) {
-  return (
-    <section class="gsv-console-list-rail-section">
+    <section class="gsv-console-settings-list">
       <SectionHeader title={title} meta={meta} divider />
-      <div class="gsv-console-list-rail-body">{children}</div>
+      <div class="gsv-console-settings-list-body">
+        {rows.length === 0 ? (
+          <div class="gsv-console-settings-empty">{emptyLabel}</div>
+        ) : rows.map((row) => (
+          <SettingsListRowView key={row.id} row={row} />
+        ))}
+        {action ? <SettingsListActionRow action={action} /> : null}
+      </div>
     </section>
   );
 }
 
-function RailSignalRow({
-  icon,
-  label,
-  meta,
-  tone,
-  tag,
-}: {
-  icon: string;
-  label: string;
-  meta: string;
-  tone: StatusTone;
-  tag?: RowTag;
-}) {
+function SettingsListRowView({ row }: { row: SettingsListRow }) {
+  const content = (
+    <>
+      <span class="gsv-console-settings-row-mark">
+        {row.icon ? <Icon name={row.icon} size={18} /> : <StatusDot tone={row.tone} size={8} />}
+      </span>
+      <span class="gsv-console-settings-row-copy">
+        <strong>{row.label}</strong>
+        <small>{row.sub}</small>
+      </span>
+      {row.tag ? (
+        <span class="gsv-console-settings-row-tag">
+          <Tag label={row.tag.label} tone={row.tag.tone} boxed />
+        </span>
+      ) : null}
+      <span class="gsv-console-settings-row-status">
+        <StatusDot tone={row.tone} size={7} />
+        <span>{row.statusLabel}</span>
+      </span>
+      <span class="gsv-console-settings-row-open" aria-hidden="true" />
+    </>
+  );
+
+  if (row.onOpen) {
+    return (
+      <button type="button" class="gsv-console-settings-row" onClick={row.onOpen}>
+        {content}
+      </button>
+    );
+  }
+
+  return <div class="gsv-console-settings-row">{content}</div>;
+}
+
+function SettingsListActionRow({ action }: { action: SettingsListAction }) {
+  const content = (
+    <>
+      <span class="gsv-console-settings-row-mark is-action">
+        <Icon name="plus" size={18} />
+      </span>
+      <span class="gsv-console-settings-row-copy">
+        <strong>{action.label}</strong>
+      </span>
+      <span class="gsv-console-settings-row-open" aria-hidden="true" />
+    </>
+  );
+
+  if (action.onClick) {
+    return (
+      <button type="button" class="gsv-console-settings-row is-action" onClick={action.onClick}>
+        {content}
+      </button>
+    );
+  }
+
   return (
-    <div class="gsv-console-list-rail-row">
-      <span class="gsv-console-list-rail-icon">
-        <Icon name={icon} size={16} />
-      </span>
-      <span class="gsv-console-list-rail-copy">
-        <strong>{label}</strong>
-        <small>{meta}</small>
-      </span>
-      {tag ? <Tag label={tag.label} tone={tag.tone} boxed /> : null}
-      <StatusDot tone={tone} size={7} />
+    <div class="gsv-console-settings-row is-action is-disabled" aria-disabled="true">
+      {content}
     </div>
   );
 }
@@ -634,95 +558,21 @@ function RuntimeConsoleSection({
   processes: readonly ConsoleProcess[];
   refreshing: boolean;
 }) {
-  const running = processes.filter(isRunningProcess);
-  const queued = processes.filter(isQueuedProcess);
-  const unknown = processes.filter((process) => process.state === "unknown");
-  const active = processes.filter((process) => isRunningProcess(process) || isQueuedProcess(process) || process.state === "unknown");
-  const idle = processes.filter((process) => !active.includes(process));
-  const interactive = processes.filter((process) => process.interactive).length;
-  const contexts = processes.filter((process) => process.activeConversationId).length;
-
   return (
-    <OperationalLayout
+    <SettingsListPanel
       title="RUNTIME"
       meta={refreshing ? "REFRESHING" : `${processes.length} PROCESSES`}
-      signals={[
-        { label: "RUNNING", value: running.length, meta: "ACTIVE RUNS", tone: running.length > 0 ? "live" : "idle" },
-        { label: "QUEUED", value: queued.length, meta: "WAITING", tone: queued.length > 0 ? "update" : "idle" },
-        { label: "IDLE", value: idle.length, meta: "READY", tone: idle.length > 0 ? "idle" : "idle" },
-        { label: "INTERACTIVE", value: interactive, meta: "PROCESS IO", tone: interactive > 0 ? "online" : "idle" },
-      ]}
-      rail={(
-        <>
-          <RailSection title="TOP ACTIONS" meta={running.length > 0 ? "RUN CONTROL" : "PROCESS CONTROL"}>
-            <RailSignalRow
-              icon="chat"
-              label="PROC.SEND"
-              meta={processes.length > 0 ? `${processes.length} process targets` : "no process target"}
-              tone={processes.length > 0 ? "online" : "idle"}
-              tag={{ label: "MESSAGE", tone: "info" }}
-            />
-            <RailSignalRow
-              icon="terminal"
-              label="PROC.ABORT"
-              meta={running.length > 0 ? `${running.length} active runs` : "no active runs"}
-              tone={running.length > 0 ? "warn" : "idle"}
-              tag={{ label: "RUN", tone: running.length > 0 ? "warn" : "idle" }}
-            />
-            <RailSignalRow
-              icon="list"
-              label="PROC.HISTORY"
-              meta={contexts > 0 ? `${contexts} active contexts` : "no active contexts"}
-              tone={contexts > 0 ? "online" : "idle"}
-            />
-            <RailSignalRow
-              icon="cog"
-              label="PROC.RESET"
-              meta={`${idle.length} idle / ${queued.length} queued`}
-              tone={queued.length > 0 ? "update" : "idle"}
-            />
-          </RailSection>
-          <RailSection title="STATE MIX" meta={unknown.length > 0 ? "ATTENTION" : "NORMALIZED"}>
-            <RailSignalRow icon="stars" label="ACTIVE RUN IDS" meta={`${running.filter((process) => process.activeRunId).length} present`} tone={running.length > 0 ? "live" : "idle"} />
-            <RailSignalRow icon="list" label="QUEUE DEPTH" meta={`${sum(processes.map((process) => process.queuedCount))} pending messages`} tone={queued.length > 0 ? "update" : "idle"} />
-            <RailSignalRow icon="tag" label="UNKNOWN STATE" meta={`${unknown.length} processes`} tone={unknown.length > 0 ? "warn" : "idle"} />
-          </RailSection>
-        </>
-      )}
-    >
-      <InventoryGroup title="ACTIVE AND QUEUED" meta={`${active.length} PROCESSES`} emptyLabel="NO ACTIVE RUNS" isEmpty={active.length === 0}>
-        {active.map((process) => (
-          <OperationalRow
-            key={process.pid}
-            icon="list"
-            label={process.label}
-            sub={processSub(process)}
-            tone={toneForProcess(process)}
-            statusLabel={statusForProcess(process)}
-            detail={processDetail(process)}
-            tags={processTags(process)}
-            details={<ProcessDetails process={process} />}
-            onOpen={() => onOpenDetail(process)}
-          />
-        ))}
-      </InventoryGroup>
-      <InventoryGroup title="IDLE PROCESSES" meta={`${idle.length} READY`} emptyLabel="NO IDLE PROCESSES" isEmpty={idle.length === 0}>
-        {idle.map((process) => (
-          <OperationalRow
-            key={process.pid}
-            icon="list"
-            label={process.label}
-            sub={processSub(process)}
-            tone={toneForProcess(process)}
-            statusLabel={statusForProcess(process)}
-            detail={processDetail(process)}
-            tags={processTags(process)}
-            details={<ProcessDetails process={process} />}
-            onOpen={() => onOpenDetail(process)}
-          />
-        ))}
-      </InventoryGroup>
-    </OperationalLayout>
+      emptyLabel="NO PROCESSES"
+      rows={processes.map((process) => ({
+        id: process.pid,
+        icon: "list",
+        label: process.label,
+        sub: processSub(process),
+        tone: toneForProcess(process),
+        statusLabel: statusForProcess(process),
+        onOpen: () => onOpenDetail(process),
+      }))}
+    />
   );
 }
 
@@ -735,70 +585,23 @@ function MachinesConsoleSection({
   targets: readonly ConsoleTarget[];
   refreshing: boolean;
 }) {
-  const online = targets.filter((target) => target.online);
-  const offline = targets.filter((target) => !target.online);
-  const filesReady = online.filter(supportsFilesSurface);
-  const shellReady = online.filter(supportsShellSurface);
-  const capabilityCount = targets.reduce((total, target) => total + target.implements.length, 0);
+  const onlineCount = targets.filter((target) => target.online).length;
 
   return (
-    <OperationalLayout
+    <SettingsListPanel
       title="MACHINES"
-      meta={refreshing ? "REFRESHING" : `${online.length}/${targets.length} ONLINE`}
-      signals={[
-        { label: "ONLINE", value: online.length, meta: `${targets.length} TOTAL`, tone: online.length > 0 ? "online" : "idle" },
-        { label: "OFFLINE", value: offline.length, meta: "UNREACHABLE", tone: offline.length > 0 ? "warn" : "idle" },
-        { label: "FILES", value: filesReady.length, meta: "READY TARGETS", tone: filesReady.length > 0 ? "online" : "idle" },
-        { label: "SHELL", value: shellReady.length, meta: "READY TARGETS", tone: shellReady.length > 0 ? "online" : "idle" },
-      ]}
-      rail={(
-        <>
-          <RailSection title="COMPANIONS" meta="FILES / SHELL">
-            <RailSignalRow icon="folder" label="FILES TARGETS" meta={`${filesReady.length} online with file capability`} tone={filesReady.length > 0 ? "online" : "idle"} />
-            <RailSignalRow icon="terminal" label="SHELL TARGETS" meta={`${shellReady.length} online with shell capability`} tone={shellReady.length > 0 ? "online" : "idle"} />
-            <RailSignalRow icon="computer" label="OFFLINE TARGETS" meta={`${offline.length} unavailable to companions`} tone={offline.length > 0 ? "warn" : "idle"} />
-          </RailSection>
-          <RailSection title="CAPABILITY MAP" meta={`${capabilityCount} CLAIMS`}>
-            <RailSignalRow icon="computer" label="NATIVE" meta={`${targets.filter((target) => target.kind === "native-device").length} devices`} tone="online" />
-            <RailSignalRow icon="bookmark" label="BROWSER" meta={`${targets.filter((target) => target.kind === "browser").length} devices`} tone="online" />
-            <RailSignalRow icon="chat" label="ADAPTER" meta={`${targets.filter((target) => target.kind === "adapter").length} surfaces`} tone="idle" />
-          </RailSection>
-        </>
-      )}
-    >
-      <InventoryGroup title="ONLINE FLEET" meta={`${online.length} TARGETS`} emptyLabel="NO ONLINE MACHINES" isEmpty={online.length === 0}>
-        {online.map((target) => (
-          <OperationalRow
-            key={target.deviceId}
-            icon={iconForTarget(target)}
-            label={target.label}
-            sub={targetSub(target)}
-            tone="online"
-            statusLabel="ONLINE"
-            detail={targetDetail(target)}
-            tags={targetTags(target)}
-            details={<TargetDetails target={target} />}
-            onOpen={() => onOpenDetail(target)}
-          />
-        ))}
-      </InventoryGroup>
-      <InventoryGroup title="OFFLINE FLEET" meta={`${offline.length} TARGETS`} emptyLabel="NO OFFLINE MACHINES" isEmpty={offline.length === 0}>
-        {offline.map((target) => (
-          <OperationalRow
-            key={target.deviceId}
-            icon={iconForTarget(target)}
-            label={target.label}
-            sub={targetSub(target)}
-            tone="idle"
-            statusLabel="OFFLINE"
-            detail={targetDetail(target)}
-            tags={targetTags(target)}
-            details={<TargetDetails target={target} />}
-            onOpen={() => onOpenDetail(target)}
-          />
-        ))}
-      </InventoryGroup>
-    </OperationalLayout>
+      meta={refreshing ? "REFRESHING" : `${onlineCount}/${targets.length} ONLINE`}
+      emptyLabel="NO MACHINES"
+      rows={targets.map((target) => ({
+        id: target.deviceId,
+        label: target.label,
+        sub: targetSub(target),
+        tone: target.online ? "online" : "idle",
+        statusLabel: target.online ? "ONLINE" : "OFFLINE",
+        onOpen: () => onOpenDetail(target),
+      }))}
+      action={{ label: "CONNECT NEW MACHINE" }}
+    />
   );
 }
 
@@ -812,81 +615,22 @@ function MessengersConsoleSection({
   refreshing: boolean;
 }) {
   const connected = adapters.filter((adapter) => adapter.connected && adapter.authenticated && !adapter.error);
-  const attention = adapters.filter((adapter) => adapter.error || !adapter.authenticated);
-  const idle = adapters.filter((adapter) => !connected.includes(adapter) && !attention.includes(adapter));
-  const authenticated = adapters.filter((adapter) => adapter.authenticated);
-  const errors = adapters.filter((adapter) => adapter.error);
-  const adapterNames = uniqueSorted(adapters.map((adapter) => adapter.adapter));
-  const latestActivity = newestTimestamp(adapters.map((adapter) => adapter.lastActivity));
 
   return (
-    <OperationalLayout
+    <SettingsListPanel
       title="MESSENGERS"
       meta={refreshing ? "REFRESHING" : `${connected.length}/${adapters.length} CONNECTED`}
-      signals={[
-        { label: "CONNECTED", value: connected.length, meta: `${adapters.length} ACCOUNTS`, tone: connected.length > 0 ? "online" : "idle" },
-        { label: "AUTH", value: authenticated.length, meta: "VALID SESSIONS", tone: authenticated.length === adapters.length ? "online" : "warn" },
-        { label: "ERROR", value: errors.length, meta: "CHANNEL FAULTS", tone: errors.length > 0 ? "error" : "online" },
-        { label: "ACTIVE", value: latestActivity ? formatAge(latestActivity) : "NONE", meta: "LAST ACTIVITY", tone: latestActivity ? "live" : "idle" },
-      ]}
-      rail={(
-        <>
-          <RailSection title="CHANNEL STATE" meta={errors.length > 0 ? "ATTENTION" : "NORMAL"}>
-            <RailSignalRow icon="chat" label="CONNECTED ACCOUNTS" meta={`${connected.length} live channels`} tone={connected.length > 0 ? "online" : "idle"} />
-            <RailSignalRow icon="cog" label="AUTH REQUIRED" meta={`${adapters.filter((adapter) => !adapter.authenticated).length} accounts`} tone={adapters.some((adapter) => !adapter.authenticated) ? "warn" : "online"} />
-            <RailSignalRow icon="tag" label="ERROR STATE" meta={`${errors.length} accounts`} tone={errors.length > 0 ? "error" : "online"} />
-          </RailSection>
-          <RailSection title="ADAPTERS" meta={`${adapterNames.length} TYPES`}>
-            {adapterNames.length === 0 ? (
-              <RailSignalRow icon="chat" label="NO ADAPTERS" meta="adapter.status returned no accounts" tone="idle" />
-            ) : adapterNames.map((adapter) => (
-              <RailSignalRow
-                key={adapter}
-                icon={iconForAdapterName(adapter)}
-                label={adapter.toUpperCase()}
-                meta={`${adapters.filter((entry) => entry.adapter === adapter).length} accounts`}
-                tone={adapters.some((entry) => entry.adapter === adapter && entry.connected) ? "online" : "idle"}
-              />
-            ))}
-          </RailSection>
-        </>
-      )}
-    >
-      <AdapterGroup title="CONNECTED CHANNELS" adapters={connected} emptyLabel="NO CONNECTED CHANNELS" onOpenDetail={onOpenDetail} />
-      <AdapterGroup title="NEEDS ATTENTION" adapters={attention} emptyLabel="NO CHANNELS NEED ATTENTION" onOpenDetail={onOpenDetail} />
-      <AdapterGroup title="IDLE CHANNELS" adapters={idle} emptyLabel="NO IDLE CHANNELS" onOpenDetail={onOpenDetail} />
-    </OperationalLayout>
-  );
-}
-
-function AdapterGroup({
-  title,
-  adapters,
-  emptyLabel,
-  onOpenDetail,
-}: {
-  title: string;
-  adapters: readonly ConsoleAdapterAccount[];
-  emptyLabel: string;
-  onOpenDetail: (adapter: ConsoleAdapterAccount) => void;
-}) {
-  return (
-    <InventoryGroup title={title} meta={`${adapters.length} CHANNELS`} emptyLabel={emptyLabel} isEmpty={adapters.length === 0}>
-      {adapters.map((adapter) => (
-        <OperationalRow
-          key={`${adapter.adapter}:${adapter.accountId}`}
-          icon={iconForAdapterName(adapter.adapter)}
-          label={adapterLabel(adapter)}
-          sub={adapterSub(adapter)}
-          tone={toneForAdapter(adapter)}
-          statusLabel={statusForAdapter(adapter)}
-          detail={adapterDetail(adapter)}
-          tags={adapterTags(adapter)}
-          details={<AdapterDetails adapter={adapter} />}
-          onOpen={() => onOpenDetail(adapter)}
-        />
-      ))}
-    </InventoryGroup>
+      emptyLabel="NO MESSENGERS"
+      rows={adapters.map((adapter) => ({
+        id: adapterDetailId(adapter),
+        icon: iconForAdapterName(adapter.adapter),
+        label: formatTokenLabel(adapter.adapter),
+        sub: adapterSub(adapter),
+        tone: toneForAdapter(adapter),
+        statusLabel: statusForAdapter(adapter),
+        onOpen: () => onOpenDetail(adapter),
+      }))}
+    />
   );
 }
 
@@ -903,135 +647,29 @@ function LibraryConsoleSection({
 }) {
   const title = packageListTitle(kind);
   const noun = packageListNoun(kind);
-  const reviewQueue = packages.filter((pkg) => pkg.reviewPending);
-  const enabled = packages.filter((pkg) => pkg.enabled && !pkg.reviewPending);
-  const disabled = packages.filter((pkg) => !pkg.enabled && !pkg.reviewPending);
-  const trusted = packages.filter(isTrustedPackage);
-  const updated = packages.filter((pkg) => pkg.updatedAt !== null);
-  const latestUpdate = newestTimestamp(packages.map((pkg) => pkg.updatedAt));
+  const action = kind === "integrations"
+    ? { label: "NEW INTEGRATION" }
+    : kind === "applications"
+      ? { label: "NEW APPLICATION" }
+      : undefined;
 
   return (
-    <OperationalLayout
+    <SettingsListPanel
       title={title}
       meta={refreshing ? "REFRESHING" : `${packages.length} ${noun}${packages.length === 1 ? "" : "S"}`}
-      signals={[
-        { label: "REVIEW", value: reviewQueue.length, meta: "PENDING", tone: reviewQueue.length > 0 ? "update" : "online" },
-        { label: "ENABLED", value: enabled.length, meta: "INSTALLED", tone: enabled.length > 0 ? "online" : "idle" },
-        { label: "TRUSTED", value: trusted.length, meta: "APPROVED/POLICY", tone: trusted.length === packages.length ? "online" : "warn" },
-        { label: "UPDATED", value: updated.length, meta: "WITH TRACE", tone: updated.length > 0 ? "online" : "idle" },
-      ]}
-      rail={(
-        <>
-          <RailSection title="REVIEW STATE" meta={reviewQueue.length > 0 ? "ACTION REQUIRED" : "CLEAR"}>
-            <RailSignalRow icon="pencil" label="PENDING REVIEW" meta={`${reviewQueue.length} packages`} tone={reviewQueue.length > 0 ? "update" : "online"} />
-            <RailSignalRow icon="stars" label="APPROVED" meta={`${packages.filter((pkg) => pkg.reviewApprovedAt !== null).length} packages`} tone="online" />
-            <RailSignalRow icon="tag" label="REVIEW REQUIRED" meta={`${packages.filter((pkg) => pkg.reviewRequired).length} packages`} tone={reviewQueue.length > 0 ? "update" : "idle"} />
-          </RailSection>
-          <RailSection title="TRUST AND SOURCE" meta={`${trusted.length}/${packages.length} TRUSTED`}>
-            <RailSignalRow icon="weblink" label="PUBLIC SOURCE" meta={`${packages.filter((pkg) => pkg.sourcePublic).length} packages`} tone="online" />
-            <RailSignalRow icon="folder" label="PRIVATE SOURCE" meta={`${packages.filter((pkg) => !pkg.sourcePublic).length} packages`} tone={packages.some((pkg) => !pkg.sourcePublic) ? "warn" : "idle"} />
-            <RailSignalRow icon="cog" label="GLOBAL SCOPE" meta={`${packages.filter((pkg) => pkg.scopeKind === "global").length} packages`} tone="online" />
-          </RailSection>
-          <RailSection title="INSTALL TRACE" meta={latestUpdate ? `LATEST ${formatAge(latestUpdate)}` : "NO UPDATE TRACE"}>
-            <RailSignalRow icon="computer" label="INSTALLED" meta={`${packages.filter((pkg) => pkg.installedAt !== null).length} packages`} tone="online" />
-            <RailSignalRow icon="list" label="UPDATE TRACE" meta={`${updated.length} packages`} tone={updated.length > 0 ? "online" : "idle"} />
-            <RailSignalRow icon="bookmark" label="UI ENTRYPOINTS" meta={`${sum(packages.map((pkg) => pkg.uiEntrypoints.length))} declared`} tone="online" />
-          </RailSection>
-        </>
-      )}
-    >
-      <PackageGroup title="REVIEW QUEUE" packages={reviewQueue} emptyLabel="NO PACKAGES WAITING FOR REVIEW" onOpenDetail={onOpenDetail} />
-      <PackageGroup title={`ENABLED ${noun}S`} packages={enabled} emptyLabel={`NO ENABLED ${noun}S`} onOpenDetail={onOpenDetail} />
-      <PackageGroup title={`DISABLED ${noun}S`} packages={disabled} emptyLabel={`NO DISABLED ${noun}S`} onOpenDetail={onOpenDetail} />
-    </OperationalLayout>
-  );
-}
-
-function PackageGroup({
-  title,
-  packages,
-  emptyLabel,
-  onOpenDetail,
-}: {
-  title: string;
-  packages: readonly ConsolePackage[];
-  emptyLabel: string;
-  onOpenDetail: (pkg: ConsolePackage) => void;
-}) {
-  return (
-    <InventoryGroup title={title} meta={`${packages.length} PACKAGES`} emptyLabel={emptyLabel} isEmpty={packages.length === 0}>
-      {packages.map((pkg) => (
-        <OperationalRow
-          key={pkg.packageId}
-          icon={pkg.uiEntrypoints.length > 0 ? "stars" : "pencil"}
-          label={pkg.name}
-          sub={packageSub(pkg)}
-          tone={toneForPackage(pkg)}
-          statusLabel={statusForPackage(pkg)}
-          detail={packageDetail(pkg)}
-          tags={packageTags(pkg)}
-          details={<PackageDetails pkg={pkg} />}
-          onOpen={() => onOpenDetail(pkg)}
-        />
-      ))}
-    </InventoryGroup>
-  );
-}
-
-function ProcessDetails({ process }: { process: ConsoleProcess }) {
-  return (
-    <ConsoleRowDetails summary="PROCESS DETAIL">
-      <ConsoleDetailGrid fields={processDetailFields(process)} />
-      <ConsoleDetailChips
-        title="STATE FLAGS"
-        emptyLabel="NO STATE FLAGS"
-        chips={processContextChips(process)}
-      />
-    </ConsoleRowDetails>
-  );
-}
-
-function TargetDetails({ target }: { target: ConsoleTarget }) {
-  return (
-    <ConsoleRowDetails summary="MACHINE DETAIL">
-      <ConsoleDetailGrid fields={targetDetailFields(target)} />
-      <ConsoleDetailChips
-        title="CAPABILITIES"
-        emptyLabel="NO CAPABILITIES DECLARED"
-        chips={targetCapabilityChips(target)}
-      />
-    </ConsoleRowDetails>
-  );
-}
-
-function AdapterDetails({ adapter }: { adapter: ConsoleAdapterAccount }) {
-  return (
-    <ConsoleRowDetails summary="MESSENGER DETAIL">
-      <ConsoleDetailGrid fields={adapterDetailFields(adapter)} />
-      <ConsoleDetailChips
-        title="CHANNEL FLAGS"
-        emptyLabel="NO CHANNEL FLAGS"
-        chips={adapterContextChips(adapter)}
-      />
-    </ConsoleRowDetails>
-  );
-}
-
-function PackageDetails({ pkg }: { pkg: ConsolePackage }) {
-  return (
-    <ConsoleRowDetails summary="PACKAGE DETAIL">
-      <ConsoleDetailGrid fields={packageDetailFields(pkg)} />
-      <ConsoleDetailList
-        title="ENTRYPOINTS"
-        emptyLabel="NO ENTRYPOINTS DECLARED"
-        items={packageEntrypointItems(pkg.entrypoints)}
-      />
-      <ConsoleDetailChips
-        title="BINDINGS"
-        emptyLabel="NO BINDINGS DECLARED"
-        chips={pkg.bindingNames.map((binding) => ({ label: binding, tone: "idle" }))}
-      />
-    </ConsoleRowDetails>
+      emptyLabel={`NO ${noun}S`}
+      rows={packages.map((pkg) => ({
+        id: pkg.packageId,
+        icon: iconForPackageKind(pkg, kind),
+        label: pkg.name,
+        sub: packageSub(pkg),
+        tone: toneForPackage(pkg),
+        statusLabel: statusForPackage(pkg),
+        tag: pkg.reviewPending ? { label: "UPDATE", tone: "update" } : undefined,
+        onOpen: () => onOpenDetail(pkg),
+      }))}
+      action={action}
+    />
   );
 }
 
@@ -1146,10 +784,6 @@ function packageEntrypointItems(entrypoints: readonly ConsolePackageEntrypoint[]
   }));
 }
 
-function isRunningProcess(process: ConsoleProcess): boolean {
-  return process.state === "running";
-}
-
 function isQueuedProcess(process: ConsoleProcess): boolean {
   return process.state === "queued" || process.queuedCount > 0;
 }
@@ -1174,27 +808,6 @@ function processSub(process: ConsoleProcess): string {
     process.profile,
     process.cwd,
   ], process.pid);
-}
-
-function processDetail(process: ConsoleProcess): string {
-  if (process.lastActiveAt !== null) {
-    return `ACTIVE ${formatAge(process.lastActiveAt)}`;
-  }
-  if (process.createdAt !== null) {
-    return `CREATED ${formatAge(process.createdAt)}`;
-  }
-  return process.rawState ? `STATE ${process.rawState}` : "NO TIMESTAMP";
-}
-
-function processTags(process: ConsoleProcess): RowTag[] {
-  const tags: RowTag[] = [];
-  if (process.interactive) tags.push({ label: "INTERACTIVE", tone: "info" });
-  if (process.activeRunId) tags.push({ label: "RUN ID", tone: "update" });
-  if (process.activeConversationId) tags.push({ label: "CONTEXT", tone: "accent" });
-  if (process.queuedCount > 0) tags.push({ label: `QUEUE ${process.queuedCount}`, tone: "update" });
-  if (process.parentPid) tags.push({ label: "CHILD", tone: "idle" });
-  tags.push({ label: processStateLabel(process.state), tone: tagToneForProcess(process) });
-  return tags;
 }
 
 function processStateLabel(state: ConsoleProcessState): string {
@@ -1234,27 +847,6 @@ function targetSub(target: ConsoleTarget): string {
   ], target.deviceId);
 }
 
-function targetDetail(target: ConsoleTarget): string {
-  if (target.lastSeenAt !== null) {
-    return `SEEN ${formatAge(target.lastSeenAt)}`;
-  }
-  return target.online ? "LIVE SIGNAL" : "NO LAST SEEN";
-}
-
-function targetTags(target: ConsoleTarget): RowTag[] {
-  const tags: RowTag[] = [
-    { label: TARGET_KIND_LABEL[target.kind], tone: target.online ? "info" : "idle" },
-  ];
-  if (supportsFilesSurface(target)) tags.push({ label: "FILES", tone: target.online ? "online" : "idle" });
-  if (supportsShellSurface(target)) tags.push({ label: "SHELL", tone: target.online ? "online" : "idle" });
-  if (target.implements.length > 0) {
-    tags.push({ label: `${target.implements.length} CAP`, tone: "accent" });
-  } else {
-    tags.push({ label: "CAP UNKNOWN", tone: "warn" });
-  }
-  return tags;
-}
-
 function iconForAdapterName(adapter: string): string {
   if (adapter === "telegram") return "telegram";
   if (adapter === "discord") return "discord";
@@ -1277,13 +869,6 @@ function adapterSub(adapter: ConsoleAdapterAccount): string {
   ], `${adapter.adapter}:${adapter.accountId}`);
 }
 
-function adapterDetail(adapter: ConsoleAdapterAccount): string {
-  if (adapter.error) return "ERROR";
-  if (adapter.lastActivity !== null) return `ACTIVE ${formatAge(adapter.lastActivity)}`;
-  if (adapter.connected) return "LIVE SIGNAL";
-  return "NO ACTIVITY";
-}
-
 function toneForAdapter(adapter: ConsoleAdapterAccount): StatusTone {
   if (adapter.error) return "error";
   if (adapter.connected && adapter.authenticated) return "online";
@@ -1303,16 +888,6 @@ function tagToneForAdapter(adapter: ConsoleAdapterAccount): TagTone {
   if (adapter.connected && adapter.authenticated) return "online";
   if (adapter.connected) return "warn";
   return "idle";
-}
-
-function adapterTags(adapter: ConsoleAdapterAccount): RowTag[] {
-  const tags: RowTag[] = [
-    { label: formatTokenLabel(adapter.adapter).toUpperCase(), tone: "info" },
-    { label: statusForAdapter(adapter), tone: tagToneForAdapter(adapter) },
-  ];
-  if (adapter.mode) tags.push({ label: adapter.mode.toUpperCase(), tone: "idle" });
-  if (adapter.error) tags.push({ label: "ERROR", tone: "error" });
-  return tags;
 }
 
 function isTrustedPackage(pkg: ConsolePackage): boolean {
@@ -1345,6 +920,12 @@ function packageListNoun(kind: PackageListKind): string {
   return "PACKAGE";
 }
 
+function iconForPackageKind(pkg: ConsolePackage, kind: PackageListKind): string {
+  if (kind === "applications") return "stars";
+  if (kind === "integrations") return "weblink";
+  return pkg.uiEntrypoints.length > 0 ? "stars" : "pencil";
+}
+
 function toneForPackage(pkg: ConsolePackage): StatusTone {
   if (pkg.reviewPending) return "update";
   if (pkg.enabled) return "online";
@@ -1364,35 +945,6 @@ function packageSub(pkg: ConsolePackage): string {
     pkg.sourceRepo,
     pkg.sourceRef,
   ], pkg.packageId);
-}
-
-function packageDetail(pkg: ConsolePackage): string {
-  if (pkg.updatedAt !== null) {
-    return `UPDATED ${formatAge(pkg.updatedAt)}`;
-  }
-  if (pkg.installedAt !== null) {
-    return `INSTALLED ${formatAge(pkg.installedAt)}`;
-  }
-  return "INSTALL TRACE MISSING";
-}
-
-function packageTags(pkg: ConsolePackage): RowTag[] {
-  const tags: RowTag[] = [];
-  if (pkg.reviewPending) {
-    tags.push({ label: "REVIEW", tone: "update" });
-  } else if (pkg.reviewApprovedAt !== null) {
-    tags.push({ label: "APPROVED", tone: "online" });
-  } else if (!pkg.reviewRequired) {
-    tags.push({ label: "TRUSTED", tone: "online" });
-  } else {
-    tags.push({ label: "UNREVIEWED", tone: "warn" });
-  }
-  tags.push({ label: pkg.enabled ? "INSTALLED" : "DISABLED", tone: pkg.enabled ? "online" : "idle" });
-  tags.push({ label: pkg.scopeKind === "global" ? "GLOBAL" : pkg.scopeKind === "user" ? "USER" : "SCOPE UNKNOWN", tone: pkg.scopeKind === "unknown" ? "warn" : "info" });
-  tags.push({ label: sourceVisibilityLabel(pkg), tone: pkg.sourcePublic ? "info" : "warn" });
-  if (pkg.uiEntrypoints.length > 0) tags.push({ label: `UI ${pkg.uiEntrypoints.length}`, tone: "accent" });
-  if (pkg.bindingNames.length > 0) tags.push({ label: `BIND ${pkg.bindingNames.length}`, tone: "idle" });
-  return tags;
 }
 
 function packageStateTone(pkg: ConsolePackage): TagTone {
@@ -1442,22 +994,8 @@ function formatTokenLabel(value: string): string {
     .join(" ") || "Unknown";
 }
 
-function uniqueSorted(values: readonly string[]): string[] {
-  return [...new Set(values.map((value) => value.trim()).filter(Boolean))].sort((left, right) => left.localeCompare(right));
-}
-
 function uidLabel(uid: number | null): string {
   return uid === null ? "" : `uid ${uid}`;
-}
-
-function newestTimestamp(values: readonly (number | null)[]): number | null {
-  const normalized = values
-    .filter((value): value is number => value !== null)
-    .map(normalizeTimestamp);
-  if (normalized.length === 0) {
-    return null;
-  }
-  return Math.max(...normalized);
 }
 
 function normalizeTimestamp(value: number): number {
@@ -1483,10 +1021,6 @@ function formatAge(value: number): string {
   const days = Math.floor(hours / 24);
   if (days < 30) return `${days}D AGO`;
   return new Date(timestamp).toLocaleDateString();
-}
-
-function sum(values: readonly number[]): number {
-  return values.reduce((total, value) => total + value, 0);
 }
 
 function yesNo(value: boolean): string {
