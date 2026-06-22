@@ -39,6 +39,8 @@ export type CreateConsoleAgentInput = {
   name: string;
   role: string;
   description: string;
+  model?: string;
+  approval?: string;
   files: readonly ConsoleAgentContextFileDraft[];
 };
 
@@ -137,7 +139,7 @@ export async function loadConsoleAgentContext(
 }
 
 export async function createConsoleAgent(
-  client: Pick<GSVClient, "account">,
+  client: Pick<GSVClient, "account" | "sys">,
   input: CreateConsoleAgentInput,
 ): Promise<CreateConsoleAgentResult> {
   const displayName = input.name.trim();
@@ -155,6 +157,9 @@ export async function createConsoleAgent(
   });
   const account = result.account;
   const uid = Number(account.uid);
+  if (Number.isFinite(uid)) {
+    await saveAgentBehaviorConfig(client, uid, input);
+  }
 
   return {
     uid: Number.isFinite(uid) ? uid : null,
@@ -202,14 +207,7 @@ export async function saveConsoleAgentBehavior(
   if (!Number.isFinite(uid)) {
     throw new Error("uid is required");
   }
-  await client.sys.config.set({
-    key: `users/${uid}/ai/model`,
-    value: input.model.trim(),
-  });
-  await client.sys.config.set({
-    key: `users/${uid}/ai/tools/approval`,
-    value: input.approval.trim(),
-  });
+  await saveAgentBehaviorConfig(client, uid, input, { includeEmpty: true });
 
   return { ok: true };
 }
@@ -282,6 +280,37 @@ async function loadOptionalPayload(load: () => Promise<unknown>): Promise<unknow
   } catch {
     return {};
   }
+}
+
+type AgentBehaviorConfigDraft = {
+  model?: string;
+  approval?: string;
+};
+
+async function saveAgentBehaviorConfig(
+  client: Pick<GSVClient, "sys">,
+  uid: number,
+  input: AgentBehaviorConfigDraft,
+  options: { includeEmpty?: boolean } = {},
+): Promise<void> {
+  const model = input.model?.trim() ?? "";
+  const approval = input.approval?.trim() ?? "";
+  const writes: Promise<unknown>[] = [];
+
+  if (options.includeEmpty || model) {
+    writes.push(client.sys.config.set({
+      key: `users/${uid}/ai/model`,
+      value: model,
+    }));
+  }
+  if (options.includeEmpty || approval) {
+    writes.push(client.sys.config.set({
+      key: `users/${uid}/ai/tools/approval`,
+      value: approval,
+    }));
+  }
+
+  await Promise.all(writes);
 }
 
 function usernameFromAgentName(name: string): string | null {
