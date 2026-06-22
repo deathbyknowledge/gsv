@@ -303,6 +303,7 @@ export function GsvShell({
           onToggleOpen={() => shell.setChatOpen((value) => !value)}
           onToggleMax={shell.toggleChatMax}
           onOpenCrew={() => openSettingsRoute("crew")}
+          onOpenModels={() => openSettingsRoute("models")}
           onOpenTasks={() => openSettingsRoute("tasks")}
           title={activeChatProcess?.title ?? "Chat"}
           status={chatStatus}
