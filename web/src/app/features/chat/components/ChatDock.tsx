@@ -225,7 +225,8 @@ export function ChatDock({
 }: ChatDockProps) {
   const [agentPanelOpen, setAgentPanelOpen] = useState(false);
   const [openPopover, setOpenPopover] = useState<ChatPopoverId | null>(null);
-  const activeProcessId = agent?.id?.trim() ?? "";
+  const activeProcessId = agent?.processId?.trim() ?? "";
+  const startRunAs = agent?.runAs?.trim() ?? "";
   const hasActiveProcess = activeProcessId.length > 0;
   const processHistory = useChatProcessHistory({
     enabled: open && hasActiveProcess,
@@ -305,7 +306,10 @@ export function ChatDock({
   const contextModel = context ? [context.provider, context.model].filter(Boolean).join(" · ") : activeAgent.modelLabel;
 
   const startProcess = () => {
-    spawnProcess.mutate({ interactive: true });
+    spawnProcess.mutate({
+      interactive: true,
+      ...(startRunAs ? { runAs: startRunAs } : {}),
+    });
   };
 
   const abortActiveRun = () => {

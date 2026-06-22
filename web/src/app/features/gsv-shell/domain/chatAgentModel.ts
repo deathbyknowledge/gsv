@@ -280,6 +280,8 @@ function accountBackedAgent(input: {
   const behavior = behaviorViewForAccount(primaryAccount, input.config, input.modelLabels);
 
   return {
+    id: `account:${primaryAccount.uid}`,
+    runAs: primaryAccount.relation === "personal-agent" ? undefined : primaryAccount.username,
     name: primaryAccount.displayName,
     role: labelForConsoleAccountRelation(primaryAccount.relation),
     description,
@@ -338,6 +340,8 @@ export function buildShellChatAgent({
 
   return {
     id: activeProcess.pid,
+    processId: activeProcess.pid,
+    runAs: activeAccount && activeAccount.relation !== "personal-agent" ? activeAccount.username : undefined,
     name: activeAccount?.displayName ?? activeProcess.title,
     role: activeAccount ? labelForConsoleAccountRelation(activeAccount.relation) : activeProcess.username ? `PROCESS · ${activeProcess.username}` : "PROCESS",
     description: activeAgentDescription(activeProcess, activeAccount),
