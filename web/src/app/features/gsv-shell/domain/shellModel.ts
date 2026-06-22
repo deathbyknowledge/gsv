@@ -22,7 +22,7 @@ export type ShellSettingsListKind = DesktopObjectId | "library" | "tasks";
 
 export type ShellSettingsRoute =
   | { view: "overview" }
-  | { view: "list"; kind: ShellSettingsListKind; detailId?: string; createNew?: boolean }
+  | { view: "list"; kind: ShellSettingsListKind; detailId?: string; detailLabel?: string; createNew?: boolean }
   | { view: "config"; kind: "models" | "overrides" }
   | { view: "crew" }
   | { view: "agent"; accountUid: number | null; createNew?: boolean };
@@ -231,6 +231,7 @@ export function shellTabForDesktopChild(child: DesktopChildObject): ShellPageTab
       view: "list",
       kind: child.route.kind,
       detailId: child.route.detailId,
+      detailLabel: child.label,
     },
   };
 }

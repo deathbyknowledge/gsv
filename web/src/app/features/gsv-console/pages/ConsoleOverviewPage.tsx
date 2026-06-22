@@ -66,7 +66,7 @@ type OverviewSurface = Exclude<ShellSurfaceId, "desktop">;
 export type ConsoleOverviewTarget = OverviewSurface | "models" | "new-agent" | "overrides";
 type OpenSurface = (surface: ConsoleOverviewTarget) => void;
 type OpenAgent = (accountUid: number) => void;
-type OpenListDetail = (kind: ConsoleListKind, detailId: string) => void;
+type OpenListDetail = (kind: ConsoleListKind, detailId: string, detailLabel?: string) => void;
 type OpenListCreate = (kind: ConsoleListKind) => void;
 
 const DASHBOARD_ROW_LIMIT = 5;
@@ -606,8 +606,8 @@ function FleetPanel({
   const adapterRows = sortAdapters(adapters).map(adapterRow);
   const integrationRows = sortPackages(integrationPackages).map(integrationRow);
   const openList = (surface: ConsoleOverviewTarget) => onOpenSurface ? () => onOpenSurface(surface) : undefined;
-  const openDetail = (kind: ConsoleListKind, id: string, surface: ConsoleOverviewTarget) => (
-    onOpenListDetail ? () => onOpenListDetail(kind, id) : openList(surface)
+  const openDetail = (kind: ConsoleListKind, row: OverviewRow, surface: ConsoleOverviewTarget) => (
+    onOpenListDetail ? () => onOpenListDetail(kind, row.id, row.label) : openList(surface)
   );
   const openCreate = (kind: ConsoleListKind, surface: ConsoleOverviewTarget) => (
     onOpenListCreate ? () => onOpenListCreate(kind) : openList(surface)
@@ -622,7 +622,7 @@ function FleetPanel({
       />
       <div class="gsv-settings-section-rows">
         {targetRows.length === 0 ? <EmptyRow label="NO MACHINES" /> : rowLimit(targetRows, 3).map((row) => (
-          <MiniRow key={row.id} row={row} showIcon={false} onClick={openDetail("machines", row.id, "machines")} />
+          <MiniRow key={row.id} row={row} showIcon={false} onClick={openDetail("machines", row, "machines")} />
         ))}
         <AddRow label="CONNECT NEW MACHINE" onClick={openCreate("machines", "machines")} />
       </div>
@@ -634,7 +634,7 @@ function FleetPanel({
               onClick={openList("messengers")}
             />
             {adapterRows.length === 0 ? <EmptyRow label="NO MESSENGERS" /> : rowLimit(adapterRows, 3).map((row) => (
-              <MiniRow key={row.id} row={row} onClick={openDetail("messengers", row.id, "messengers")} />
+              <MiniRow key={row.id} row={row} onClick={openDetail("messengers", row, "messengers")} />
             ))}
           </div>
         )}
@@ -645,7 +645,7 @@ function FleetPanel({
               onClick={openList("integrations")}
             />
             {integrationRows.length === 0 ? <EmptyRow label="NO INTEGRATIONS" /> : rowLimit(integrationRows, 2).map((row) => (
-              <MiniRow key={row.id} row={row} onClick={openDetail("integrations", row.id, "integrations")} />
+              <MiniRow key={row.id} row={row} onClick={openDetail("integrations", row, "integrations")} />
             ))}
             <AddRow label="NEW INTEGRATION" onClick={openCreate("integrations", "integrations")} />
           </div>
@@ -668,8 +668,8 @@ function SatellitesPanel({
 }) {
   const rows = sortPackages(applications).map(applicationRow);
   const openList = onOpenSurface ? () => onOpenSurface("applications") : undefined;
-  const openDetail = (id: string) => (
-    onOpenListDetail ? () => onOpenListDetail("applications", id) : openList
+  const openDetail = (row: OverviewRow) => (
+    onOpenListDetail ? () => onOpenListDetail("applications", row.id, row.label) : openList
   );
   const openCreate = onOpenListCreate
     ? () => onOpenListCreate("applications")
@@ -684,7 +684,7 @@ function SatellitesPanel({
       />
       <div class="gsv-settings-section-rows">
         {rows.length === 0 ? <EmptyRow label="NO APPLICATIONS" /> : rowLimit(rows, 5).map((row) => (
-          <MiniRow key={row.id} row={row} onClick={openDetail(row.id)} />
+          <MiniRow key={row.id} row={row} onClick={openDetail(row)} />
         ))}
         <AddRow label="NEW APPLICATION" onClick={openCreate} />
       </div>

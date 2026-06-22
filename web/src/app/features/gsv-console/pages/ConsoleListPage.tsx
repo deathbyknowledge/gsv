@@ -41,13 +41,22 @@ type PackageListKind = "library" | "integrations" | "applications";
 type ConsoleListPageProps = {
   initialCreate?: boolean;
   initialDetailId?: string | null;
+  initialDetailLabel?: string | null;
   kind: ConsoleListKind;
+  onSelectionChange?: (selection: ConsoleListSelection | null) => void;
 };
 
 type SelectedConsoleDetail = {
   createNew?: boolean;
+  label?: string;
   kind: ConsoleListKind;
   id: string;
+};
+
+export type ConsoleListSelection = {
+  createNew?: boolean;
+  detailId?: string;
+  detailLabel?: string;
 };
 
 type RowTag = {
@@ -128,7 +137,9 @@ const NEW_DETAIL_ID = "__new__";
 export function ConsoleListPage({
   initialCreate = false,
   initialDetailId = null,
+  initialDetailLabel = null,
   kind,
+  onSelectionChange,
 }: ConsoleListPageProps) {
   const [selectedDetail, setSelectedDetail] = useState<SelectedConsoleDetail | null>(null);
   const targets = useConsoleTargets({ enabled: kind === "machines" });
@@ -142,8 +153,24 @@ export function ConsoleListPage({
       setSelectedDetail({ kind, id: NEW_DETAIL_ID, createNew: true });
       return;
     }
-    setSelectedDetail(initialDetailId ? { kind, id: initialDetailId } : null);
-  }, [kind, initialCreate, initialDetailId]);
+    setSelectedDetail(initialDetailId ? { kind, id: initialDetailId, label: initialDetailLabel ?? undefined } : null);
+  }, [kind, initialCreate, initialDetailId, initialDetailLabel]);
+
+  const selectDetail = (detail: SelectedConsoleDetail | null) => {
+    setSelectedDetail(detail);
+    if (!onSelectionChange) {
+      return;
+    }
+    if (!detail) {
+      onSelectionChange(null);
+      return;
+    }
+    if (detail.createNew) {
+      onSelectionChange({ createNew: true });
+      return;
+    }
+    onSelectionChange({ detailId: detail.id, detailLabel: detail.label });
+  };
 
   if (kind === "tasks") {
     return (
@@ -154,16 +181,16 @@ export function ConsoleListPage({
           errorLabel="RUNTIME"
           render={(data) => (
             selectedDetail?.kind === "tasks"
-              ? renderProcessDetail(data, selectedDetail.id, () => setSelectedDetail(null)) ?? (
+              ? renderProcessDetail(data, selectedDetail.id, () => selectDetail(null)) ?? (
                 <RuntimeConsoleSection
-                  onOpenDetail={(process) => setSelectedDetail({ kind, id: process.pid })}
+                  onOpenDetail={(process) => selectDetail({ kind, id: process.pid, label: process.label })}
                   processes={data}
                   refreshing={processes.resource.isRefreshing}
                 />
               )
               : (
                 <RuntimeConsoleSection
-                  onOpenDetail={(process) => setSelectedDetail({ kind, id: process.pid })}
+                  onOpenDetail={(process) => selectDetail({ kind, id: process.pid, label: process.label })}
                   processes={data}
                   refreshing={processes.resource.isRefreshing}
                 />
@@ -184,19 +211,19 @@ export function ConsoleListPage({
           render={(data) => (
             selectedDetail?.kind === "machines"
               ? (selectedDetail.createNew
-                ? renderNewEntityDetail("machines", () => setSelectedDetail(null))
-                : renderTargetDetail(data, selectedDetail.id, () => setSelectedDetail(null))) ?? (
+                ? renderNewEntityDetail("machines", () => selectDetail(null))
+                : renderTargetDetail(data, selectedDetail.id, () => selectDetail(null))) ?? (
                 <MachinesConsoleSection
-                  onOpenCreate={() => setSelectedDetail({ kind, id: NEW_DETAIL_ID, createNew: true })}
-                  onOpenDetail={(target) => setSelectedDetail({ kind, id: target.deviceId })}
+                  onOpenCreate={() => selectDetail({ kind, id: NEW_DETAIL_ID, createNew: true })}
+                  onOpenDetail={(target) => selectDetail({ kind, id: target.deviceId, label: target.label })}
                   targets={data}
                   refreshing={targets.resource.isRefreshing}
                 />
               )
               : (
                 <MachinesConsoleSection
-                  onOpenCreate={() => setSelectedDetail({ kind, id: NEW_DETAIL_ID, createNew: true })}
-                  onOpenDetail={(target) => setSelectedDetail({ kind, id: target.deviceId })}
+                  onOpenCreate={() => selectDetail({ kind, id: NEW_DETAIL_ID, createNew: true })}
+                  onOpenDetail={(target) => selectDetail({ kind, id: target.deviceId, label: target.label })}
                   targets={data}
                   refreshing={targets.resource.isRefreshing}
                 />
@@ -216,17 +243,17 @@ export function ConsoleListPage({
           errorLabel="MESSENGERS"
           render={(data) => (
             selectedDetail?.kind === "messengers"
-              ? renderAdapterDetail(data, selectedDetail.id, () => setSelectedDetail(null)) ?? (
+              ? renderAdapterDetail(data, selectedDetail.id, () => selectDetail(null)) ?? (
                 <MessengersConsoleSection
                   adapters={data}
-                  onOpenDetail={(adapter) => setSelectedDetail({ kind, id: adapterDetailId(adapter) })}
+                  onOpenDetail={(adapter) => selectDetail({ kind, id: adapterDetailId(adapter), label: adapterLabel(adapter) })}
                   refreshing={adapters.resource.isRefreshing}
                 />
               )
               : (
                 <MessengersConsoleSection
                   adapters={data}
-                  onOpenDetail={(adapter) => setSelectedDetail({ kind, id: adapterDetailId(adapter) })}
+                  onOpenDetail={(adapter) => selectDetail({ kind, id: adapterDetailId(adapter), label: adapterLabel(adapter) })}
                   refreshing={adapters.resource.isRefreshing}
                 />
               )
@@ -247,11 +274,11 @@ export function ConsoleListPage({
             filterPackagesForKind(data, packageKind ?? "library"),
             packageKind ?? "library",
             selectedDetail,
-            () => setSelectedDetail(null),
+            () => selectDetail(null),
             packageKind === "integrations" || packageKind === "applications"
-              ? () => setSelectedDetail({ kind, id: NEW_DETAIL_ID, createNew: true })
+              ? () => selectDetail({ kind, id: NEW_DETAIL_ID, createNew: true })
               : undefined,
-            (pkg) => setSelectedDetail({ kind, id: pkg.packageId }),
+            (pkg) => selectDetail({ kind, id: pkg.packageId, label: pkg.name }),
             packages.resource.isRefreshing,
           )
         )}

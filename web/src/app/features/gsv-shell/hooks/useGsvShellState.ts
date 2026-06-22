@@ -66,6 +66,10 @@ function upsertTab(tabs: readonly ShellPageTab[], tab: ShellPageTab): ShellPageT
   return tabs.map((candidate, candidateIndex) => candidateIndex === index ? tab : candidate);
 }
 
+function isListDetailRoute(route: ShellSettingsRoute): route is Extract<ShellSettingsRoute, { view: "list" }> & { detailId: string } {
+  return route.view === "list" && typeof route.detailId === "string" && route.detailId.length > 0;
+}
+
 export function useGsvShellState({
   rootRef,
   desktopObjects,
@@ -154,6 +158,42 @@ export function useGsvShellState({
     setActiveTabKey(tab.key);
     setRailMode("tabs");
     setActiveSurface("settings");
+    setSelectedObjectId(null);
+    setPickerId(null);
+    setGsvOpen(false);
+  };
+
+  const syncActiveSettingsRoute = (route: ShellSettingsRoute): void => {
+    if (activeSurface !== "settings") {
+      return;
+    }
+
+    const activeKey = activeTabKey;
+    const shouldKeepObjectTab = activePageTab?.kind === "object" && isListDetailRoute(route);
+    const settingsTab = shellTabForSettingsRoute(route);
+
+    setOpenTabs((current) => {
+      const activeTab = activeKey ? current.find((tab) => tab.key === activeKey) ?? null : null;
+      if (activeTab?.kind === "object" && shouldKeepObjectTab) {
+        return current.map((tab) => tab.key === activeTab.key
+          ? {
+              ...tab,
+              title: route.detailLabel ?? tab.title,
+              settingsRoute: route,
+            }
+          : tab);
+      }
+
+      const tabs = activeTab?.kind === "object"
+        ? current.filter((tab) => tab.key !== activeTab.key)
+        : current;
+      return upsertTab(tabs, settingsTab);
+    });
+
+    if (!shouldKeepObjectTab) {
+      setActiveTabKey(settingsTab.key);
+    }
+    setRailMode("tabs");
     setSelectedObjectId(null);
     setPickerId(null);
     setGsvOpen(false);
@@ -376,6 +416,7 @@ export function useGsvShellState({
     showRail,
     startChatDrag,
     statusContext,
+    syncActiveSettingsRoute,
     toggleChatMax,
     toggleRailCollapsed: () => setManualRailCollapsed((value) => !value),
   };
