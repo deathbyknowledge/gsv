@@ -1,5 +1,7 @@
 /* Ported from Button.dc.html — values transcribed verbatim. */
 .gsv-btn {
+  appearance: none;
+  margin: 0;
   font-family: var(--gsv-font-mono);
   display: inline-flex;
   align-items: center;
@@ -8,6 +10,7 @@
   user-select: none;
   border: 1px solid transparent;
   cursor: pointer;
+  text-decoration: none;
 }
 
 /* — primary — */
@@ -21,11 +24,13 @@
   box-shadow: 0 0 18px rgba(120, 110, 230, 0.4);
   transition: background 0.12s, box-shadow 0.12s, border-color 0.12s;
 }
-.gsv-btn-primary:hover {
+.gsv-btn-primary:not(.is-disabled):hover,
+.gsv-btn-primary:not(.is-disabled):focus-visible {
   background: #6b62c4;
   box-shadow: 0 0 28px rgba(120, 110, 230, 0.7);
+  outline: none;
 }
-.gsv-btn-primary:active {
+.gsv-btn-primary:not(.is-disabled):active {
   background: #4a43a0;
   border-color: #5a52a8;
   box-shadow: 0 0 8px rgba(120, 110, 230, 0.2);
@@ -47,12 +52,14 @@
   color: #b3aeff;
   transition: background 0.12s, color 0.12s, border-color 0.12s;
 }
-.gsv-btn-secondary:hover {
+.gsv-btn-secondary:not(.is-disabled):hover,
+.gsv-btn-secondary:not(.is-disabled):focus-visible {
   background: #171441;
   color: #e6e4ff;
   border-color: #6b62c4;
+  outline: none;
 }
-.gsv-btn-secondary:active {
+.gsv-btn-secondary:not(.is-disabled):active {
   background: #201c4d;
   color: #cbc7ff;
   border-color: #7a72d4;
@@ -74,11 +81,13 @@
   box-shadow: 0 0 16px rgba(200, 60, 90, 0.35);
   transition: background 0.12s, box-shadow 0.12s, border-color 0.12s;
 }
-.gsv-btn-danger:hover {
+.gsv-btn-danger:not(.is-disabled):hover,
+.gsv-btn-danger:not(.is-disabled):focus-visible {
   background: #c4445f;
   box-shadow: 0 0 26px rgba(200, 60, 90, 0.6);
+  outline: none;
 }
-.gsv-btn-danger:active {
+.gsv-btn-danger:not(.is-disabled):active {
   background: #8c2840;
   border-color: #a8324a;
   box-shadow: 0 0 8px rgba(200, 60, 90, 0.2);
@@ -100,12 +109,14 @@
   color: #ff8fa3;
   transition: background 0.12s, color 0.12s, border-color 0.12s;
 }
-.gsv-btn-dghost:hover {
+.gsv-btn-dghost:not(.is-disabled):hover,
+.gsv-btn-dghost:not(.is-disabled):focus-visible {
   background: #2a1420;
   color: #ffb3c2;
   border-color: #7a3050;
+  outline: none;
 }
-.gsv-btn-dghost:active {
+.gsv-btn-dghost:not(.is-disabled):active {
   background: #3a1a2a;
   color: #ffd0dc;
   border-color: #9a4060;
@@ -127,11 +138,13 @@
   color: #b3aeff;
   transition: color 0.12s, border-color 0.12s, opacity 0.12s;
 }
-.gsv-btn-link:hover {
+.gsv-btn-link:not(.is-disabled):hover,
+.gsv-btn-link:not(.is-disabled):focus-visible {
   color: #cbc7ff;
   border-color: #cbc7ff;
+  outline: none;
 }
-.gsv-btn-link:active {
+.gsv-btn-link:not(.is-disabled):active {
   opacity: 0.65;
 }
 .gsv-btn-link.is-disabled {

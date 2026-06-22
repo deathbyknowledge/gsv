@@ -15,7 +15,7 @@ into this web client. Follow this exactly so every ported atom is consistent.
 ## Canonical examples — read these first
 
 - `web/src/app/components/ui/Button.tsx` + `Button.css` + `stories/Button.story.tsx`
-  (variant enum, class CSS, disabled, `<span role="button">`).
+  (variant enum, class CSS, disabled, native `<button type="button">`).
 - `web/src/app/components/ui/TextInput.tsx` + `TextInput.css` + `stories/TextInput.story.tsx`
   (internal `useState`, controlled-by-prop-until-edited, status/size classes).
 - `web/src/app/components/ui/StatusDot.tsx`, `Tag.tsx` (inline-style only, no `.css`).
