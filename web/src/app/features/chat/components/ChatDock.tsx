@@ -73,6 +73,23 @@ function contentToolName(content: unknown): string {
   return typeof toolName === "string" ? toolName.trim() : "";
 }
 
+function contentToolCallId(content: unknown): string {
+  if (!content || typeof content !== "object" || !("toolCallId" in content)) {
+    return "";
+  }
+  const toolCallId = (content as { toolCallId?: unknown }).toolCallId;
+  return typeof toolCallId === "string" ? toolCallId.trim() : "";
+}
+
+function contentToolIsError(content: unknown): boolean {
+  return Boolean(
+    content
+      && typeof content === "object"
+      && "isError" in content
+      && (content as { isError?: unknown }).isError === true,
+  );
+}
+
 function messageMeta(message: ChatHistoryMessage): string | undefined {
   const details = [
     message.role === "toolResult" ? contentToolName(message.content) : "",
@@ -88,6 +105,12 @@ function historyMessageToDockMessage(message: ChatHistoryMessage): ChatDockMessa
     time: formatChatMessageTime(message.timestamp),
     role: historyRoleToDockRole(message.role),
     meta: messageMeta(message),
+    ...(message.runId ? { runId: message.runId } : {}),
+    ...(message.role === "toolResult" ? {
+      isError: contentToolIsError(message.content),
+      toolCallId: contentToolCallId(message.content),
+      toolName: contentToolName(message.content),
+    } : {}),
   };
 }
 

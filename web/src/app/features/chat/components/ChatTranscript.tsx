@@ -5,10 +5,14 @@ export type ChatDockMessageRole = "assistant" | "system" | "tool" | "toolResult"
 
 export type ChatDockMessage = {
   id: string;
+  isError?: boolean;
   text: string;
   time: string;
+  toolCallId?: string;
+  toolName?: string;
   role?: ChatDockMessageRole;
   meta?: string;
+  runId?: string;
 };
 
 type ChatTranscriptProps = {
@@ -171,6 +175,10 @@ function CopyButton({
   );
 }
 
+function shortId(value: string | undefined): string {
+  return value ? value.slice(0, 8) : "";
+}
+
 function UserMessage({
   copied,
   failed,
@@ -201,6 +209,55 @@ function UserMessage({
   );
 }
 
+function ToolResultMessage({
+  copied,
+  failed,
+  message,
+  onCopy,
+}: {
+  copied: boolean;
+  failed: boolean;
+  message: ChatDockMessage;
+  onCopy: () => void;
+}) {
+  const title = message.toolName?.trim() || "Tool result";
+  const status = message.isError ? "ERROR" : "DONE";
+  const identifier = message.toolCallId || message.runId || message.id;
+
+  return (
+    <article class={`gsv-chat-tool-card${message.isError ? " is-error" : ""}`}>
+      <span class="gsv-chat-tool-corner is-top-left" aria-hidden="true" />
+      <span class="gsv-chat-tool-corner is-top-right" aria-hidden="true" />
+      <span class="gsv-chat-tool-corner is-bottom-left" aria-hidden="true" />
+      <span class="gsv-chat-tool-corner is-bottom-right" aria-hidden="true" />
+
+      <header class="gsv-chat-tool-card-head">
+        <span class="gsv-chat-tool-card-dot" aria-hidden="true" />
+        <strong>{title}</strong>
+        <small>{status}</small>
+      </header>
+
+      <div class="gsv-chat-tool-card-id">
+        <span>{message.runId ? `RUN ${shortId(message.runId)}` : "TOOL RESULT"}</span>
+        {identifier ? <small>{shortId(identifier)}</small> : null}
+      </div>
+
+      <div class="gsv-chat-tool-card-output">{message.text}</div>
+
+      <footer class="gsv-chat-tool-card-meta">
+        {message.time ? <span>{message.time}</span> : null}
+        <CopyButton
+          copied={copied}
+          failed={failed}
+          role="toolResult"
+          text={message.text}
+          onCopy={onCopy}
+        />
+      </footer>
+    </article>
+  );
+}
+
 function ProcessMessage({
   copied,
   failed,
@@ -216,6 +273,17 @@ function ProcessMessage({
   const role = roleClass(messageRole);
   const label = roleLabel(messageRole);
   const showHead = messageRole !== "assistant" || Boolean(message.meta);
+
+  if (messageRole === "toolResult") {
+    return (
+      <ToolResultMessage
+        copied={copied}
+        failed={failed}
+        message={message}
+        onCopy={onCopy}
+      />
+    );
+  }
 
   return (
     <article class={`gsv-chat-message gsv-chat-message-${role}`}>
