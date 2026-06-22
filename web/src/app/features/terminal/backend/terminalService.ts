@@ -18,21 +18,23 @@ export async function executeTerminalCommand(
   command: TerminalCommandInput,
 ): Promise<TerminalTranscriptEntry> {
   const input = normalizeCommandInput(command);
-  if (!input.input) {
+  if (!input.input && !input.sessionId) {
     throw new Error("Command is required.");
   }
 
   const requestArgs: Record<string, unknown> = { input: input.input };
-  if (input.target !== "gsv") {
+  if (input.sessionId) {
+    requestArgs.sessionId = input.sessionId;
+  } else if (input.target !== "gsv") {
     requestArgs.target = input.target;
   }
-  if (input.cwd) {
+  if (!input.sessionId && input.cwd) {
     requestArgs.cwd = input.cwd;
   }
-  if (input.timeoutMs !== null) {
+  if (!input.sessionId && input.timeoutMs !== null) {
     requestArgs.timeout = input.timeoutMs;
   }
-  if (input.background) {
+  if (!input.sessionId && input.background) {
     requestArgs.background = true;
     if (input.yieldMs !== null) {
       requestArgs.yieldMs = input.yieldMs;

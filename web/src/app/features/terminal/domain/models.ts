@@ -9,6 +9,7 @@ export type TerminalTarget = {
 export type TerminalCommandInput = {
   input: string;
   target?: string | null;
+  sessionId?: string | null;
   cwd?: string | null;
   timeoutMs?: number | string | null;
   yieldMs?: number | string | null;
