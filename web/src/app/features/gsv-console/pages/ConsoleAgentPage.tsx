@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState } from "preact/hooks";
 import {
   AgentEditor,
+  type AgentEditorDraft,
   type AgentEditorFile,
   type AgentEditorTask,
 } from "../../../components/ui/AgentEditor";
@@ -25,18 +26,21 @@ import {
   useConsoleAccounts,
   useConsoleConfig,
   useConsoleProcesses,
+  useCreateConsoleAgent,
 } from "../hooks/useConsoleData";
 import "./ConsoleAgentPage.css";
 
 type ConsoleAgentPageProps = {
   accountUid: number | null;
   createNew?: boolean;
+  onAgentCreated?: (uid: number) => void;
   onBackToCrew: () => void;
 };
 
 export function ConsoleAgentPage({
   accountUid,
   createNew = false,
+  onAgentCreated,
   onBackToCrew,
 }: ConsoleAgentPageProps) {
   const accounts = useConsoleAccounts();
@@ -50,6 +54,7 @@ export function ConsoleAgentPage({
         <NewAgentEditorSurface
           accountCount={accounts.resource.data?.length ?? 0}
           modelLabels={modelLabels}
+          onAgentCreated={onAgentCreated}
           onBackToCrew={onBackToCrew}
         />
       </ConsolePage>
@@ -139,14 +144,17 @@ function AgentEditorSurface({
 function NewAgentEditorSurface({
   accountCount,
   modelLabels,
+  onAgentCreated,
   onBackToCrew,
 }: {
   accountCount: number;
   modelLabels: string[];
+  onAgentCreated?: (uid: number) => void;
   onBackToCrew: () => void;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
+  const createAgent = useCreateConsoleAgent();
 
   useLayoutEffect(() => {
     const node = rootRef.current;
@@ -175,11 +183,33 @@ function NewAgentEditorSurface({
         metaLabel="STATUS:"
         status="idle"
         models={modelLabels}
-        readOnly
+        onCreate={async (draft) => {
+          const created = await createAgent.mutateAsync(agentDraftToCreateInput(draft));
+          window.setTimeout(() => {
+            if (created.uid !== null) {
+              onAgentCreated?.(created.uid);
+              return;
+            }
+            onBackToCrew();
+          }, 0);
+        }}
         onBack={onBackToCrew}
       />
     </section>
   );
+}
+
+function agentDraftToCreateInput(draft: AgentEditorDraft) {
+  return {
+    name: draft.name,
+    role: draft.role,
+    description: draft.description,
+    files: draft.files.map((file) => ({
+      label: file.label,
+      content: file.content,
+      orig: file.orig,
+    })),
+  };
 }
 
 function selectAccount(accounts: readonly ConsoleAccount[], accountUid: number | null): ConsoleAccount | null {

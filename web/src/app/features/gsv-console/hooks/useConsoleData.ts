@@ -1,8 +1,9 @@
-import { useQuery, useQueryClient, type UseQueryResult } from "@tanstack/preact-query";
+import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/preact-query";
 import { useEffect, useMemo } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import {
   DEFAULT_CONSOLE_ADAPTERS,
+  createConsoleAgent,
   loadConsoleAccounts,
   loadConsoleAdapterAccounts,
   loadConsoleConfig,
@@ -11,6 +12,8 @@ import {
   loadConsoleProcesses,
   loadConsoleTargets,
   type LoadConsoleOverviewOptions,
+  type CreateConsoleAgentInput,
+  type CreateConsoleAgentResult,
 } from "../backend/consoleService";
 import { summarizeConsoleOverview } from "../domain/consoleNormalization";
 import type {
@@ -174,6 +177,21 @@ export function useConsoleConfig(options: ConsoleQueryOptions = {}) {
     config: query.data ?? [],
     resource: toResourceState(query, enabled, isArrayEmpty),
   };
+}
+
+export function useCreateConsoleAgent() {
+  const { client } = useGateway();
+  const queryClient = useQueryClient();
+
+  return useMutation<CreateConsoleAgentResult, Error, CreateConsoleAgentInput>({
+    mutationFn: (input) => createConsoleAgent(client, input),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: consoleAccountsQueryKey }),
+        queryClient.invalidateQueries({ queryKey: consoleOverviewQueryKey }),
+      ]);
+    },
+  });
 }
 
 function toResourceState<T>(

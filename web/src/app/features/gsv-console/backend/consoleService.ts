@@ -22,6 +22,25 @@ export const DEFAULT_CONSOLE_ADAPTERS = ["whatsapp", "discord", "telegram"] as c
 
 export type ConsoleClient = Pick<GSVClient, "call" | "proc" | "pkg" | "account" | "sys">;
 
+export type ConsoleAgentContextFileDraft = {
+  label: string;
+  content: string;
+  orig?: string;
+};
+
+export type CreateConsoleAgentInput = {
+  name: string;
+  role: string;
+  description: string;
+  files: readonly ConsoleAgentContextFileDraft[];
+};
+
+export type CreateConsoleAgentResult = {
+  uid: number | null;
+  username: string;
+  displayName: string;
+};
+
 export type LoadConsoleOverviewOptions = {
   adapters?: readonly string[];
   includeConfig?: boolean;
@@ -45,6 +64,33 @@ export async function loadConsoleAccounts(client: Pick<GSVClient, "account">): P
 
 export async function loadConsoleConfig(client: ConsoleClient): Promise<ConsoleConfigEntry[]> {
   return normalizeConfigPayload(await client.sys.config.get({}));
+}
+
+export async function createConsoleAgent(
+  client: Pick<GSVClient, "account">,
+  input: CreateConsoleAgentInput,
+): Promise<CreateConsoleAgentResult> {
+  const displayName = input.name.trim();
+  const username = usernameFromAgentName(displayName);
+  if (!username) {
+    throw new Error("agent name is required");
+  }
+
+  const result = await client.account.create({
+    kind: "agent",
+    username,
+    gecos: displayName || undefined,
+    persona: personaSeed(input),
+    contextFiles: contextFilesFromDraft(input.files),
+  });
+  const account = result.account;
+  const uid = Number(account.uid);
+
+  return {
+    uid: Number.isFinite(uid) ? uid : null,
+    username: account.username || username,
+    displayName,
+  };
 }
 
 export async function loadConsoleAdapterAccounts(
@@ -115,4 +161,74 @@ async function loadOptionalPayload(load: () => Promise<unknown>): Promise<unknow
   } catch {
     return {};
   }
+}
+
+function usernameFromAgentName(name: string): string | null {
+  const username = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 32);
+  if (!username) {
+    return null;
+  }
+  if (/^[a-z_]/.test(username)) {
+    return username;
+  }
+  return `a-${username}`.slice(0, 32);
+}
+
+function contextFilesFromDraft(files: readonly ConsoleAgentContextFileDraft[]):
+  Array<{ name: string; text: string }> | undefined {
+  const contextFiles = files
+    .filter((file) => normalizeContextFileName(file.label) !== "05-persona.md")
+    .filter(isChangedContextFile)
+    .map((file) => ({
+      name: normalizeContextFileName(file.label) ?? "context.md",
+      text: file.content,
+    }));
+
+  return contextFiles.length > 0 ? contextFiles : undefined;
+}
+
+function personaSeed(input: CreateConsoleAgentInput): string | undefined {
+  const personaFile = input.files.find((file) => normalizeContextFileName(file.label) === "05-persona.md");
+  const personaText = personaFile && isChangedContextFile(personaFile) ? personaFile.content.trim() : "";
+  const role = input.role.trim();
+  const description = input.description.trim();
+  const parts = [
+    role && role.toUpperCase() !== "AGENT" ? `Role: ${role}` : "",
+    personaText || description,
+  ].filter(Boolean);
+
+  return parts.length > 0 ? parts.join("\n\n") : undefined;
+}
+
+function isChangedContextFile(file: ConsoleAgentContextFileDraft): boolean {
+  const content = file.content.trim();
+  if (!content) {
+    return false;
+  }
+  return content !== (file.orig ?? "").trim();
+}
+
+function normalizeContextFileName(label: string): string | null {
+  const raw = label.trim();
+  if (!raw || raw.includes("/") || raw.includes("\\") || raw.includes("\0")) {
+    return null;
+  }
+  if (raw.toUpperCase() === "PERSONA") {
+    return "05-persona.md";
+  }
+  const base = raw
+    .replace(/\.md$/i, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  if (!base || base === "." || base === "..") {
+    return null;
+  }
+  return `${base}.md`;
 }
