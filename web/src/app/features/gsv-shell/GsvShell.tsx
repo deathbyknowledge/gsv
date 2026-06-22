@@ -25,11 +25,11 @@ import {
 } from "../gsv-console/components/GsvConsole";
 import { LegacyPackageRuntimeAnchors } from "../legacy-package-runtime/LegacyPackageRuntimeAnchors";
 import { GsvDesktop } from "./desktop/GsvDesktop";
+import { DesktopTabsDock } from "./navigation/DesktopTabsDock";
 import { ShellRail } from "./navigation/ShellRail";
 import { ShellStatusBar } from "./navigation/ShellStatusBar";
 import {
   shellSurfaceLabel,
-  type ShellPageTab,
   type ShellSettingsRoute,
   type ShellSurfaceId,
 } from "./domain/shellModel";
@@ -94,47 +94,6 @@ function CollapsedDesktop() {
       <div class="gsv-space-grid" />
       <div class="gsv-space-stars" />
     </div>
-  );
-}
-
-function DesktopTabsDock({
-  activeTabKey,
-  openTabs,
-  onActivateTab,
-  onCloseTab,
-}: {
-  activeTabKey: string | null;
-  openTabs: readonly ShellPageTab[];
-  onActivateTab: (key: string) => void;
-  onCloseTab: (key: string) => void;
-}) {
-  if (openTabs.length === 0) {
-    return null;
-  }
-
-  return (
-    <aside class="gsv-desktop-tabs" aria-label="Open tabs">
-      <header>
-        <span>TABS</span>
-        <small>{openTabs.length}</small>
-      </header>
-      <div>
-        {openTabs.map((tab) => (
-          <div
-            class={`gsv-desktop-tab-row${tab.key === activeTabKey ? " is-active" : ""}`}
-            key={tab.key}
-          >
-            <button type="button" onClick={() => onActivateTab(tab.key)}>
-              <Icon name={tab.icon} size={17} />
-              <span>{tab.title}</span>
-            </button>
-            <button type="button" aria-label={`Close ${tab.title}`} onClick={() => onCloseTab(tab.key)}>
-              <Icon name="doticons/x" size={12} />
-            </button>
-          </div>
-        ))}
-      </div>
-    </aside>
   );
 }
 
