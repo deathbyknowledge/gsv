@@ -1,6 +1,7 @@
 import type { RefObject } from "preact";
 import type { ProcHistoryMessage } from "@humansandmachines/gsv/protocol";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { Icon } from "../../components/ui/Icon";
 import { IconMenu } from "../../components/ui/IconMenu";
 import { ObjectCard } from "../../components/ui/ObjectCard";
 import { StatusDot } from "../../components/ui/StatusDot";
@@ -202,11 +203,16 @@ export function GsvShell({
               activeSurface={shell.activeSurface}
               desktopObjects={desktopObjects}
               collapsed={shell.railCollapsed}
+              openTabs={shell.openTabs}
+              railMode={shell.railMode}
               onToggleCollapsed={shell.toggleRailCollapsed}
               onBackToDesktop={shell.desktopCollapsed ? shell.revealDesktop : shell.backToDesktop}
+              onActivateTab={shell.activateTab}
+              onCloseTab={shell.closeTab}
               onOpenPicker={shell.openPicker}
               onOpenControlMenu={shell.openControlMenu}
               onOpenSurface={openShellSurface}
+              onOpenTabsPicker={shell.openTabsPicker}
             />
           ) : null}
 
@@ -280,6 +286,7 @@ export function GsvShell({
                           blurb={card.blurb}
                           status={card.status}
                           glyph={card.glyph}
+                          icon={card.icon ? <Icon name={card.icon} size={20} color="var(--accent-bright)" /> : undefined}
                           width={238}
                           onClick={card.onClick}
                         />
