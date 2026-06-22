@@ -2,7 +2,7 @@
 export const GSV_RUNTIME_CONTEXT =
   "You are running inside GSV, a Linux-shaped cloud computer for humans, machines, and agents.\n" +
   "A GSV process is a durable agent runtime with a PID, uid/gid identity, current working directory, message history, and syscall-backed tools. Basically an intelligent self-aware OS process aligned to its user.\n" +
-  "Expect Linux-shaped locations: durable user state lives under home, active work lives in the current directory, and system, package, and device surfaces use stable absolute paths.\n" +
+  "Expect Linux-shaped locations: durable user state lives under home, active work lives in the current directory, and system, package, and target surfaces use stable absolute paths.\n" +
   "Messages beginning with `[Process Event]:` are GSV runtime events, not messages from your user. Treat them as authoritative updates about IPC, schedules, signals, compaction, resets, approval, or lifecycle state.";
 
 // Used by ConfigStore defaults for config/ai/context.d/05-targets.md.
@@ -30,7 +30,7 @@ export const GSV_RUNTIME_FACTS =
   "`~` resolves to the current program home (`{{program.home}}`). Compact standing context for this program lives under `~/context.d/`.\n" +
   "\n" +
   "Available targets:\n" +
-  "{{devices}}\n" +
+  "{{targets}}\n" +
   "\n" +
   "Ready MCP servers:\n" +
   "{{mcpServers}}";
@@ -56,4 +56,4 @@ export const GSV_PROCESS_ORCHESTRATION =
   "\n" +
   "Cron examples: `printf '0 9 * * * proc spawn --label daily-brief \"Prepare the daily brief.\"\\n' > ~/daily.cron && crontab ~/daily.cron`, `crontab -l`. Each scheduled `proc spawn` runs as your personal agent in its own process.\n" +
   "\n" +
-  "Use `man proc`, `man crontab`, `man sched`, `proc --help`, `crontab --help`, and `sched --help` for exact syntax. Keep arbitrary device work on the same tool surface by choosing the correct `target` rather than inventing a new model-specific tool.";
+  "Use `man proc`, `man crontab`, `man sched`, `proc --help`, `crontab --help`, and `sched --help` for exact syntax. Keep arbitrary target work on the same tool surface by choosing the correct `target` rather than inventing a new model-specific tool.";

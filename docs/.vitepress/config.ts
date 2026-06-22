@@ -23,7 +23,7 @@ export default defineConfig({
           text: "Tutorials",
           items: [
             { text: "Getting Started", link: "/tutorials/getting-started" },
-            { text: "Connecting Adapters", link: "/tutorials/setting-up-a-channel" },
+            { text: "Connecting Adapters", link: "/tutorials/setting-up-an-adapter" },
           ],
         },
       ],
@@ -38,7 +38,7 @@ export default defineConfig({
             { text: "Run a Device", link: "/how-to/run-a-node" },
             { text: "Manage Processes", link: "/how-to/manage-sessions" },
             { text: "Configure Automation", link: "/how-to/set-up-cron" },
-            { text: "Manage Adapters", link: "/how-to/manage-channels" },
+            { text: "Manage Adapters", link: "/how-to/manage-adapters" },
           ],
         },
       ],
@@ -77,6 +77,8 @@ export default defineConfig({
 
     socialLinks: [
       { icon: "github", link: "https://github.com/deathbyknowledge/gsv" },
+      { icon: "discord", link: "https://discord.gg/HUMmwES6v3" },
+      { icon: "x", link: "https://x.com/humachinesinc" },
     ],
 
     search: {

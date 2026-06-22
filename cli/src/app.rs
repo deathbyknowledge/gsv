@@ -10,7 +10,7 @@ use crate::cli::{
 };
 use crate::commands;
 use crate::device::{
-    resolve_node_id, resolve_node_workspace, run_node, run_node_service, run_shell,
+    resolve_node_id, resolve_node_workspace, run_node, run_device_service, run_shell,
 };
 use crate::local_config::run_local_config;
 use crate::version::run_version;
@@ -182,35 +182,35 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 )
                 .await
             }
-            DeviceAction::Install { id, workspace } => run_node_service(
+            DeviceAction::Install { id, workspace } => run_device_service(
                 DeviceServiceAction::Install { id, workspace },
                 &cfg,
                 cli_url_override.as_deref(),
                 cli_user_override.as_deref(),
                 cli_token_override.as_deref(),
             ),
-            DeviceAction::Start => run_node_service(
+            DeviceAction::Start => run_device_service(
                 DeviceServiceAction::Start,
                 &cfg,
                 cli_url_override.as_deref(),
                 cli_user_override.as_deref(),
                 cli_token_override.as_deref(),
             ),
-            DeviceAction::Stop => run_node_service(
+            DeviceAction::Stop => run_device_service(
                 DeviceServiceAction::Stop,
                 &cfg,
                 cli_url_override.as_deref(),
                 cli_user_override.as_deref(),
                 cli_token_override.as_deref(),
             ),
-            DeviceAction::Status => run_node_service(
+            DeviceAction::Status => run_device_service(
                 DeviceServiceAction::Status,
                 &cfg,
                 cli_url_override.as_deref(),
                 cli_user_override.as_deref(),
                 cli_token_override.as_deref(),
             ),
-            DeviceAction::Logs { lines, follow } => run_node_service(
+            DeviceAction::Logs { lines, follow } => run_device_service(
                 DeviceServiceAction::Logs { lines, follow },
                 &cfg,
                 cli_url_override.as_deref(),

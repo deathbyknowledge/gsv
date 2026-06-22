@@ -263,7 +263,7 @@ before recording starts; each grant can start one recording.
 
 ## CLI Device Targets
 
-CLI devices run on user machines through `gsv device run` or the managed device service. They implement the same `fs.*` and `shell.exec` interface over WebSocket.
+CLI devices run on user machines through `gsv device run` or the managed device daemon service. They implement the same `fs.*` and `shell.exec` interface over WebSocket.
 
 Device filesystem semantics:
 

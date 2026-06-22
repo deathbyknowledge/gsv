@@ -122,6 +122,6 @@ different tool set for each machine.
 
 ## Next Steps
 
-- [Connect WhatsApp or Discord adapters](setting-up-a-channel.md).
+- [Connect WhatsApp or Discord adapters](setting-up-an-adapter.md).
 - [Write a package app](../how-to/write-a-package-app.md).
 - [Review the architecture](../explanation/architecture.md).

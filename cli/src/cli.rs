@@ -108,7 +108,7 @@ pub(crate) enum DeviceAction {
 
     /// Install and start device daemon service
     Install {
-        /// Device ID (saved to local config during install)
+        /// Node ID (saved to local config during install)
         #[arg(long)]
         id: Option<String>,
 

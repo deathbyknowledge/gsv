@@ -34,7 +34,7 @@ impl DeviceServiceInstallSpec {
             description: "gsvd",
             exe_path,
             args: vec!["device".to_string(), "run".to_string()],
-            path_env: node_service_path(),
+            path_env: device_service_path(),
             log_path: logger::node_log_path()?,
         })
     }
@@ -50,40 +50,40 @@ trait DeviceServiceManager {
     fn status(&self) -> Result<(), DynError>;
 }
 
-pub fn node_service_management_supported() -> bool {
+pub fn device_service_management_supported() -> bool {
     platform_service_manager().is_some()
 }
 
-pub fn node_service_is_installed() -> Result<bool, DynError> {
+pub fn device_service_is_installed() -> Result<bool, DynError> {
     require_platform_service_manager()?.is_installed()
 }
 
-pub fn install_node_service() -> Result<(), DynError> {
+pub fn install_device_service() -> Result<(), DynError> {
     let spec = DeviceServiceInstallSpec::current()?;
     require_platform_service_manager()?.install(&spec)
 }
 
-pub fn uninstall_node_service() -> Result<(), DynError> {
+pub fn uninstall_device_service() -> Result<(), DynError> {
     require_platform_service_manager()?.uninstall()
 }
 
-pub fn start_node_service() -> Result<(), DynError> {
+pub fn start_device_service() -> Result<(), DynError> {
     require_platform_service_manager()?.start()
 }
 
-pub fn restart_node_service() -> Result<(), DynError> {
+pub fn restart_device_service() -> Result<(), DynError> {
     require_platform_service_manager()?.restart()
 }
 
-pub fn stop_node_service() -> Result<(), DynError> {
+pub fn stop_device_service() -> Result<(), DynError> {
     require_platform_service_manager()?.stop()
 }
 
-pub fn status_node_service() -> Result<(), DynError> {
+pub fn status_device_service() -> Result<(), DynError> {
     require_platform_service_manager()?.status()
 }
 
-pub fn show_node_service_logs(lines: usize, follow: bool) -> Result<(), DynError> {
+pub fn show_device_service_logs(lines: usize, follow: bool) -> Result<(), DynError> {
     let log_path = logger::node_log_path()?;
     if !log_path.exists() {
         return Err(format!("Log file not found: {}", log_path.display()).into());
@@ -277,7 +277,7 @@ fn select_service_path(
         .or_else(|| env_path.and_then(normalize))
 }
 
-fn node_service_path() -> Option<String> {
+fn device_service_path() -> Option<String> {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         select_service_path(probe_path_from_login_shell(), std::env::var_os("PATH"))
