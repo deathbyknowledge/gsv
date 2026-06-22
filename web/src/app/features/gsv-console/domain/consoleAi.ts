@@ -4,9 +4,14 @@ export const DEFAULT_MODEL_LABEL = "GATEWAY DEFAULT";
 
 const MODEL_CONFIG_KEY_RE = /(^|[/.])model($|[/.])|default.*model|model.*default/i;
 const PRIMARY_MODEL_KEY_RE = /(^|[/.])ai[/.]model$|default.*model|model.*default/i;
+const AGENT_BEHAVIOR_CONFIG_KEY_RE = /^users\/[^/]+\/ai\//i;
+
+function isModelConfigKey(key: string): boolean {
+  return MODEL_CONFIG_KEY_RE.test(key);
+}
 
 function isModelConfigEntry(entry: ConsoleConfigEntry): boolean {
-  return !entry.redacted && entry.value.trim().length > 0 && MODEL_CONFIG_KEY_RE.test(entry.key);
+  return !entry.redacted && entry.value.trim().length > 0 && isModelConfigKey(entry.key);
 }
 
 function normalizeModelLabel(value: string): string {
@@ -46,4 +51,12 @@ export function modelConfigEntries(config: readonly ConsoleConfigEntry[]): Conso
 
 export function modelConfigCount(config: readonly ConsoleConfigEntry[]): number {
   return modelConfigEntries(config).length;
+}
+
+export function overrideConfigEntries(config: readonly ConsoleConfigEntry[]): ConsoleConfigEntry[] {
+  return config.filter((entry) => !isModelConfigKey(entry.key) && !AGENT_BEHAVIOR_CONFIG_KEY_RE.test(entry.key));
+}
+
+export function overrideConfigCount(config: readonly ConsoleConfigEntry[]): number {
+  return overrideConfigEntries(config).length;
 }

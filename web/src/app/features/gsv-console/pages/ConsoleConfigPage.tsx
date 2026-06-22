@@ -11,6 +11,8 @@ import {
   DEFAULT_MODEL_LABEL,
   defaultModelLabelForConfig,
   modelConfigEntries,
+  overrideConfigEntries,
+  overrideConfigCount,
 } from "../domain/consoleAi";
 import type { ConsoleConfigEntry } from "../domain/consoleModels";
 import { useConsoleConfig } from "../hooks/useConsoleData";
@@ -70,9 +72,10 @@ function ConsoleConfigPanel({
   const [selectedRowId, setSelectedRowId] = useState<string | null>(null);
   const rows = kind === "models" ? modelRows(config) : overrideRows(config);
   const title = kind === "models" ? "MODELS" : "OVERRIDES";
+  const overrideCount = kind === "overrides" ? overrideConfigCount(config) : 0;
   const meta = kind === "models"
     ? `${rows.length} MODEL ${rows.length === 1 ? "SETTING" : "SETTINGS"}`
-    : `${rows.length} CONFIG ${rows.length === 1 ? "ENTRY" : "ENTRIES"}`;
+    : `${overrideCount} CONFIG ${overrideCount === 1 ? "ENTRY" : "ENTRIES"}`;
   const selectedRow = selectedRowId ? rows.find((row) => row.id === selectedRowId) ?? null : null;
 
   if (selectedRow) {
@@ -216,7 +219,9 @@ function modelRows(config: readonly ConsoleConfigEntry[]): ConfigRow[] {
 }
 
 function overrideRows(config: readonly ConsoleConfigEntry[]): ConfigRow[] {
-  if (config.length === 0) {
+  const overrides = overrideConfigEntries(config);
+
+  if (overrides.length === 0) {
     return [{
       id: "no-overrides",
       label: "NOT CONFIGURED",
@@ -234,7 +239,7 @@ function overrideRows(config: readonly ConsoleConfigEntry[]): ConfigRow[] {
     }];
   }
 
-  return [...config]
+  return [...overrides]
     .sort((left, right) => left.key.localeCompare(right.key))
     .map((entry): ConfigRow => {
       const hasValue = entry.value.trim().length > 0;

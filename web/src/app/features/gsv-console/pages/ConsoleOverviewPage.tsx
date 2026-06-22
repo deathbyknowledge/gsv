@@ -13,6 +13,7 @@ import type { ConsoleListKind } from "./ConsoleListPage";
 import {
   defaultModelLabelForConfig,
   modelConfigCount,
+  overrideConfigEntries,
 } from "../domain/consoleAi";
 import {
   agentImageSrcForIndex,
@@ -395,8 +396,9 @@ function ShipPanel({
   terminalBackground: boolean;
   onTerminalBackgroundChange: (enabled: boolean) => void;
 }) {
-  const redacted = config.filter((entry) => entry.redacted).length;
-  const configured = config.filter((entry) => entry.value && !entry.redacted).length;
+  const overrides = overrideConfigEntries(config);
+  const redacted = overrides.filter((entry) => entry.redacted).length;
+  const configured = overrides.filter((entry) => entry.value && !entry.redacted).length;
 
   return (
     <section class="gsv-settings-block gsv-settings-ship-block">
@@ -520,6 +522,11 @@ function ModelsTasksPanel({
   const idle = Math.max(0, processes.length - running - queued - errored);
   const model = defaultModelLabelForConfig(config);
   const modelCount = modelConfigCount(config);
+  const modelSummary = modelCount > 1
+    ? `+ ${modelCount - 1} OTHER MODEL ${modelCount === 2 ? "SETTING" : "SETTINGS"}`
+    : modelCount === 1
+      ? "1 MODEL SETTING"
+      : "NO MODEL OVERRIDE";
   const stats: StatLine[] = [
     { label: "RUNNING", value: running, tone: running > 0 ? "live" : "idle" },
     { label: "ERROR", value: errored, tone: errored > 0 ? "error" : "idle" },
@@ -539,7 +546,7 @@ function ModelsTasksPanel({
           <MiniHeading title="MODELS" />
           <div class="gsv-settings-model-summary">
             <span>DEFAULT: <strong>{model}</strong></span>
-            <small>{modelCount > 1 ? `+ ${modelCount - 1} OTHER MODEL SETTINGS` : `${config.length} CONFIG ENTRIES`}</small>
+            <small>{modelSummary}</small>
           </div>
           <Chevron />
         </button>
@@ -548,7 +555,7 @@ function ModelsTasksPanel({
           <MiniHeading title="MODELS" />
           <div class="gsv-settings-model-summary">
             <span>DEFAULT: <strong>{model}</strong></span>
-            <small>{modelCount > 1 ? `+ ${modelCount - 1} OTHER MODEL SETTINGS` : `${config.length} CONFIG ENTRIES`}</small>
+            <small>{modelSummary}</small>
           </div>
         </div>
       )}
