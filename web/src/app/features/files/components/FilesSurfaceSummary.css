@@ -266,6 +266,87 @@
   color: var(--error);
 }
 
+.files-inline-notice {
+  min-width: 0;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 11px 13px;
+  color: var(--text-dim);
+}
+
+.files-inline-error {
+  border-color: #5a2b3a;
+  background: #170b17;
+}
+
+.files-inline-success {
+  border-color: #1c4a32;
+  background: #081812;
+}
+
+.files-inline-warn {
+  border-color: #5a4a1f;
+  background: #181407;
+}
+
+.files-inline-mark {
+  flex: none;
+  display: inline-flex;
+}
+
+.files-inline-copy {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: grid;
+  gap: 5px;
+}
+
+.files-inline-copy strong {
+  color: var(--text-title);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.files-inline-error .files-inline-copy strong {
+  color: var(--error);
+}
+
+.files-inline-success .files-inline-copy strong {
+  color: var(--online);
+}
+
+.files-inline-warn .files-inline-copy strong {
+  color: var(--warn);
+}
+
+.files-inline-copy span {
+  min-width: 0;
+  color: #8c86c8;
+  font-family: var(--gsv-font-prose);
+  font-size: 12px;
+  letter-spacing: 0;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.files-inline-actions {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.files-inline-actions .gsv-btn {
+  min-height: 33px;
+}
+
 .files-file-view {
   display: grid;
   gap: 12px;
@@ -309,6 +390,128 @@
   padding: 14px;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.files-editor {
+  display: grid;
+  gap: 11px;
+}
+
+.files-editor-field,
+.files-field {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.files-editor-field > span,
+.files-field > span {
+  color: #b3aee2;
+  font-size: 9.5px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.files-editor-input,
+.files-create-textarea,
+.files-input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  border: 1px solid #4a449e;
+  background: #070612;
+  color: var(--text);
+  font-family: var(--gsv-font-mono);
+  font-size: 12px;
+  letter-spacing: 0;
+  line-height: 1.55;
+  outline: none;
+  transition: border-color 0.14s, box-shadow 0.14s;
+}
+
+.files-editor-input,
+.files-create-textarea {
+  max-height: min(58vh, 620px);
+  min-height: 260px;
+  overflow: auto;
+  padding: 14px;
+  resize: vertical;
+  white-space: pre-wrap;
+}
+
+.files-create-textarea {
+  min-height: 150px;
+}
+
+.files-input {
+  min-height: 39px;
+  padding: 0 12px;
+}
+
+.files-editor-input:focus,
+.files-create-textarea:focus,
+.files-input:focus {
+  border-color: #b3aeff;
+  box-shadow: 0 0 0 1px rgba(150, 140, 255, 0.22), 0 0 16px rgba(150, 140, 255, 0.14);
+}
+
+.files-editor-input:disabled,
+.files-create-textarea:disabled,
+.files-input:disabled {
+  border-color: #25224d;
+  color: #565199;
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.files-editor-footer,
+.files-create-footer {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.files-editor-status {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #8c86c8;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.files-editor-status span:last-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.files-editor-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.files-editor-actions .gsv-btn {
+  min-height: 35px;
+}
+
+.files-create-panel {
+  min-width: 0;
+  border: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.files-create-body {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
 }
 
 .files-image-strip {
@@ -405,7 +608,19 @@
   }
 
   .files-action-row .gsv-btn,
-  .files-search-actions .gsv-btn {
+  .files-search-actions .gsv-btn,
+  .files-editor-actions .gsv-btn,
+  .files-inline-actions .gsv-btn {
     flex: 1 1 120px;
+  }
+
+  .files-inline-notice {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .files-inline-actions,
+  .files-editor-actions {
+    width: 100%;
   }
 }

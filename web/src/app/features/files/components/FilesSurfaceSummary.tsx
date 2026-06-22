@@ -1,3 +1,4 @@
+import type { JSX } from "preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { Button } from "../../../components/ui/Button";
 import { Icon } from "../../../components/ui/Icon";
@@ -34,7 +35,7 @@ import {
   sortDirectoryEntries,
   textFromContent,
 } from "../domain/view";
-import { useFilesPath, useFilesSearch, useFilesTargets } from "../hooks/useFilesQueries";
+import { useFilesMutations, useFilesPath, useFilesSearch, useFilesTargets } from "../hooks/useFilesQueries";
 import "./FilesSurfaceSummary.css";
 
 const DEFAULT_PATH = ".";
@@ -46,7 +47,14 @@ type ReadPanelProps = {
   payload: FilesReadPayload | FilesErrorPayload | undefined;
   isLoading: boolean;
   queryError: string;
+  fileDraft: string;
+  fileDirty: boolean;
+  savePending: boolean;
+  saveFeedback: OperationFeedback | null;
   onOpenPath: (path: string) => void;
+  onFileDraftChange: (value: string) => void;
+  onSaveFile: () => void;
+  onResetFileDraft: () => void;
 };
 
 type SearchPanelProps = {
@@ -60,12 +68,27 @@ type SearchPanelProps = {
 };
 
 type StateKind = "loading" | "error" | "empty" | "offline";
+type InlineStateKind = "loading" | "error" | "success" | "info" | "warn";
+
+type OperationFeedback = {
+  kind: Exclude<InlineStateKind, "loading">;
+  title: string;
+  detail: string;
+};
 
 const STATE_TONE: Record<StateKind, StatusTone> = {
   loading: "live",
   error: "error",
   empty: "idle",
   offline: "idle",
+};
+
+const INLINE_STATE_TONE: Record<InlineStateKind, StatusTone> = {
+  loading: "live",
+  error: "error",
+  success: "online",
+  info: "idle",
+  warn: "warn",
 };
 
 function queryErrorText(error: unknown): string {
@@ -78,6 +101,10 @@ function isDirectoryPayload(payload: FilesReadPayload | FilesErrorPayload | unde
 
 function isFilePayload(payload: FilesReadPayload | FilesErrorPayload | undefined): payload is FilesFilePayload {
   return Boolean(payload?.ok && "content" in payload);
+}
+
+function mutationErrorText(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : error ? String(error) : fallback;
 }
 
 function FilesStateMessage({
@@ -98,6 +125,31 @@ function FilesStateMessage({
         <strong>{title}</strong>
         {detail ? <span>{detail}</span> : null}
       </span>
+    </div>
+  );
+}
+
+function FilesInlineNotice({
+  kind,
+  title,
+  detail,
+  action,
+}: {
+  kind: InlineStateKind;
+  title: string;
+  detail: string;
+  action?: JSX.Element;
+}) {
+  return (
+    <div class={`files-inline-notice files-inline-${kind}`} role={kind === "error" ? "alert" : "status"}>
+      <span class="files-inline-mark">
+        {kind === "loading" ? <Spinner size={16} /> : <StatusDot tone={INLINE_STATE_TONE[kind]} size={8} />}
+      </span>
+      <span class="files-inline-copy">
+        <strong>{title}</strong>
+        <span>{detail}</span>
+      </span>
+      {action ? <span class="files-inline-actions">{action}</span> : null}
     </div>
   );
 }
@@ -176,10 +228,50 @@ function DirectoryView({
   );
 }
 
-function FileView({ file }: { file: FilesFilePayload }) {
+function FileView({
+  file,
+  connected,
+  targetOnline,
+  draft,
+  dirty,
+  savePending,
+  feedback,
+  onDraftChange,
+  onSave,
+  onResetDraft,
+}: {
+  file: FilesFilePayload;
+  connected: boolean;
+  targetOnline: boolean;
+  draft: string;
+  dirty: boolean;
+  savePending: boolean;
+  feedback: OperationFeedback | null;
+  onDraftChange: (value: string) => void;
+  onSave: () => void;
+  onResetDraft: () => void;
+}) {
   const text = textFromContent(file.content);
   const images = imagePreviewsFromContent(file.content);
   const stats = formatFileStats(file);
+  const canEditText = images.length === 0;
+  const saveDisabled = !connected || !targetOnline || !dirty || savePending;
+  const editorState = !connected
+    ? "GATEWAY OFFLINE"
+    : !targetOnline
+      ? "TARGET OFFLINE"
+      : savePending
+        ? "SAVING"
+        : dirty
+          ? "UNSAVED CHANGES"
+          : "SAVED";
+  const editorTone: StatusTone = savePending
+    ? "live"
+    : !connected || !targetOnline
+      ? "idle"
+      : dirty
+        ? "warn"
+        : "online";
 
   return (
     <div class="files-file-view">
@@ -195,7 +287,37 @@ function FileView({ file }: { file: FilesFilePayload }) {
           ))}
         </div>
       ) : null}
-      {text.length > 0 ? (
+      {canEditText ? (
+        <div class="files-editor">
+          <label class="files-editor-field">
+            <span>TEXT CONTENT</span>
+            <textarea
+              class="files-editor-input"
+              value={draft}
+              rows={18}
+              disabled={!connected || !targetOnline || savePending}
+              spellcheck={false}
+              onInput={(event) => onDraftChange(event.currentTarget.value)}
+            />
+          </label>
+          <div class="files-editor-footer">
+            <span class="files-editor-status">
+              <StatusDot tone={editorTone} size={8} />
+              <span>{editorState}</span>
+            </span>
+            <span class="files-editor-actions">
+              <Button variant="secondary" label="REVERT" disabled={!dirty || savePending} onClick={onResetDraft} />
+              <Button
+                variant="primary"
+                label={savePending ? "SAVING" : "SAVE"}
+                disabled={saveDisabled}
+                onClick={onSave}
+              />
+            </span>
+          </div>
+          {feedback ? <FilesInlineNotice kind={feedback.kind} title={feedback.title} detail={feedback.detail} /> : null}
+        </div>
+      ) : text.length > 0 ? (
         <pre class="files-code-block">{text}</pre>
       ) : images.length === 0 ? (
         <FilesStateMessage
@@ -215,7 +337,14 @@ function ReadPanel({
   payload,
   isLoading,
   queryError,
+  fileDraft,
+  fileDirty,
+  savePending,
+  saveFeedback,
   onOpenPath,
+  onFileDraftChange,
+  onSaveFile,
+  onResetFileDraft,
 }: ReadPanelProps) {
   if (!connected) {
     return <FilesStateMessage kind="offline" title="GATEWAY OFFLINE" detail="Reconnect to browse file targets." />;
@@ -242,7 +371,20 @@ function ReadPanel({
     return <DirectoryView directory={payload} onOpenPath={onOpenPath} />;
   }
   if (isFilePayload(payload)) {
-    return <FileView file={payload} />;
+    return (
+      <FileView
+        file={payload}
+        connected={connected}
+        targetOnline={Boolean(target?.online)}
+        draft={fileDraft}
+        dirty={fileDirty}
+        savePending={savePending}
+        feedback={saveFeedback}
+        onDraftChange={onFileDraftChange}
+        onSave={onSaveFile}
+        onResetDraft={onResetFileDraft}
+      />
+    );
   }
   return <FilesStateMessage kind="empty" title="UNRECOGNIZED RESPONSE" detail="The target returned a payload this UI cannot render." />;
 }
@@ -308,6 +450,7 @@ function SearchPanel({
 export function FilesSurfaceSummary() {
   const { connected } = useGateway();
   const targetsQuery = useFilesTargets();
+  const filesMutations = useFilesMutations();
   const targets = targetsQuery.targets;
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
   const [currentPath, setCurrentPath] = useState(DEFAULT_PATH);
@@ -316,6 +459,17 @@ export function FilesSurfaceSummary() {
   const [searchInput, setSearchInput] = useState("");
   const [searchInputKey, setSearchInputKey] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
+  const [editorFileKey, setEditorFileKey] = useState<string | null>(null);
+  const [editorSourceText, setEditorSourceText] = useState("");
+  const [editorDraft, setEditorDraft] = useState("");
+  const [editorBaseline, setEditorBaseline] = useState("");
+  const [saveFeedback, setSaveFeedback] = useState<OperationFeedback | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createPathInput, setCreatePathInput] = useState("");
+  const [createContent, setCreateContent] = useState("");
+  const [createFeedback, setCreateFeedback] = useState<OperationFeedback | null>(null);
+  const [deleteConfirmPath, setDeleteConfirmPath] = useState<string | null>(null);
+  const [deleteFeedback, setDeleteFeedback] = useState<OperationFeedback | null>(null);
 
   const selectedTarget = targets.find((target) => target.id === selectedTargetId) ?? null;
   const selectedTargetIndex = Math.max(0, targets.findIndex((target) => target.id === selectedTargetId));
@@ -334,6 +488,20 @@ export function FilesSurfaceSummary() {
     path: searchBasePath,
     query: searchQuery,
   }, canQueryTarget && searchQuery.length > 0);
+  const activeFile = isFilePayload(readPayload) ? readPayload : null;
+  const activeFileText = activeFile ? textFromContent(activeFile.content) : "";
+  const activeFileEditable = Boolean(activeFile && imagePreviewsFromContent(activeFile.content).length === 0);
+  const activeFileKey = activeFile && activeFileEditable ? `${activeFile.target}:${activeFile.path}` : null;
+  const editorDirty = Boolean(activeFileKey && editorDraft !== editorBaseline);
+  const createBasePath = isFilePayload(readPayload) ? readPayload.directoryPath : displayedPath;
+  const createResolvedPath = createPathInput.trim().length > 0
+    ? resolveEnteredPath(createPathInput, createBasePath)
+    : "";
+  const canCreateFile = canQueryTarget && createPathInput.trim().length > 0 && !filesMutations.create.isPending;
+  const canDeletePath = canQueryTarget
+    && Boolean(readPayload?.ok)
+    && displayedPath !== pathRoot(displayedPath)
+    && !filesMutations.remove.isPending;
 
   const targetOptions = useMemo(() => targets.map(formatTargetOption), [targets]);
   const onlineCount = targets.filter((target) => target.online).length;
@@ -370,20 +538,62 @@ export function FilesSurfaceSummary() {
     setSearchQuery("");
   }, [selectedTargetId, targets]);
 
+  useEffect(() => {
+    if (!activeFileKey) {
+      if (editorFileKey !== null) {
+        setEditorFileKey(null);
+        setEditorSourceText("");
+        setEditorDraft("");
+        setEditorBaseline("");
+        setSaveFeedback(null);
+      }
+      return;
+    }
+
+    if (editorFileKey !== activeFileKey) {
+      setEditorFileKey(activeFileKey);
+      setEditorSourceText(activeFileText);
+      setEditorDraft(activeFileText);
+      setEditorBaseline(activeFileText);
+      setSaveFeedback(null);
+      return;
+    }
+
+    if (activeFileText !== editorSourceText && editorDraft === editorBaseline) {
+      setEditorSourceText(activeFileText);
+      setEditorDraft(activeFileText);
+      setEditorBaseline(activeFileText);
+      setSaveFeedback(null);
+    }
+  }, [activeFileKey, activeFileText, editorBaseline, editorDraft, editorFileKey, editorSourceText]);
+
   const resetSearch = () => {
     setSearchInput("");
     setSearchInputKey((key) => key + 1);
     setSearchQuery("");
   };
 
-  const setExternalPath = (nextPath: string) => {
+  const clearTransientState = () => {
+    setCreateOpen(false);
+    setCreatePathInput("");
+    setCreateContent("");
+    setCreateFeedback(null);
+    setDeleteConfirmPath(null);
+    setDeleteFeedback(null);
+    setSaveFeedback(null);
+  };
+
+  const setExternalPath = (nextPath: string, preserveFeedback = false) => {
+    if (!preserveFeedback) {
+      clearTransientState();
+    }
     setCurrentPath(nextPath);
     setPathInput(nextPath);
     setPathInputKey((key) => key + 1);
   };
 
-  const openPath = (nextPath: string) => {
-    setExternalPath(nextPath.trim() || pathRoot(displayedPath));
+  const openPath = (nextPath: string, preserveFeedback = false) => {
+    setExternalPath(nextPath.trim() || pathRoot(displayedPath), preserveFeedback);
     resetSearch();
   };
 
@@ -411,6 +621,145 @@ export function FilesSurfaceSummary() {
     setSelectedTargetId(nextTarget.id);
     setExternalPath(DEFAULT_PATH);
     resetSearch();
+  };
+
+  const updateFileDraft = (value: string) => {
+    setEditorDraft(value);
+    setSaveFeedback(null);
+  };
+
+  const resetFileDraft = () => {
+    if (!activeFileKey) {
+      return;
+    }
+    setEditorDraft(editorBaseline);
+    setSaveFeedback({
+      kind: "info",
+      title: "REVERTED",
+      detail: activeFile?.path ?? displayedPath,
+    });
+  };
+
+  const saveFile = async () => {
+    if (!activeFile || !selectedTarget || !activeFileEditable || !editorDirty || filesMutations.save.isPending) {
+      return;
+    }
+
+    setSaveFeedback(null);
+    try {
+      const result = await filesMutations.save.mutateAsync({
+        target: selectedTarget.id,
+        path: activeFile.path,
+        content: editorDraft,
+      });
+      if (!result.ok) {
+        setSaveFeedback({ kind: "error", title: "SAVE FAILED", detail: result.error });
+        return;
+      }
+      setEditorBaseline(editorDraft);
+      setSaveFeedback({ kind: "success", title: "SAVED", detail: result.path });
+    } catch (error) {
+      setSaveFeedback({
+        kind: "error",
+        title: "SAVE FAILED",
+        detail: mutationErrorText(error, `Failed to write ${activeFile.path}`),
+      });
+    }
+  };
+
+  const toggleCreate = () => {
+    if (filesMutations.create.isPending) {
+      return;
+    }
+    setCreateOpen((open) => !open);
+    setCreateFeedback(null);
+  };
+
+  const cancelCreate = () => {
+    if (filesMutations.create.isPending) {
+      return;
+    }
+    setCreateOpen(false);
+    setCreatePathInput("");
+    setCreateContent("");
+    setCreateFeedback(null);
+  };
+
+  const createFile = async () => {
+    if (!selectedTarget || !canCreateFile || !createResolvedPath) {
+      return;
+    }
+
+    setCreateFeedback(null);
+    try {
+      const result = await filesMutations.create.mutateAsync({
+        target: selectedTarget.id,
+        path: createResolvedPath,
+        content: createContent,
+      });
+      if (!result.ok) {
+        setCreateFeedback({ kind: "error", title: "CREATE FAILED", detail: result.error });
+        return;
+      }
+      setCreateOpen(false);
+      setCreatePathInput("");
+      setCreateContent("");
+      setCreateFeedback({ kind: "success", title: "CREATED", detail: result.path });
+      openPath(result.path, true);
+    } catch (error) {
+      setCreateFeedback({
+        kind: "error",
+        title: "CREATE FAILED",
+        detail: mutationErrorText(error, `Failed to create ${createResolvedPath}`),
+      });
+    }
+  };
+
+  const requestDeletePath = () => {
+    if (!canDeletePath) {
+      return;
+    }
+    setDeleteFeedback(null);
+    setDeleteConfirmPath((path) => path === displayedPath ? null : displayedPath);
+  };
+
+  const cancelDelete = () => {
+    if (filesMutations.remove.isPending) {
+      return;
+    }
+    setDeleteConfirmPath(null);
+    setDeleteFeedback(null);
+  };
+
+  const confirmDelete = async () => {
+    const pathToDelete = deleteConfirmPath;
+    if (!selectedTarget || !pathToDelete || !canDeletePath) {
+      return;
+    }
+
+    setDeleteFeedback(null);
+    try {
+      const result = await filesMutations.remove.mutateAsync({
+        target: selectedTarget.id,
+        path: pathToDelete,
+      });
+      if (!result.ok) {
+        setDeleteConfirmPath(null);
+        setDeleteFeedback({ kind: "error", title: "DELETE FAILED", detail: result.error });
+        return;
+      }
+      const nextPath = parentPath(result.path, detectPathStyle(result.path));
+      setDeleteConfirmPath(null);
+      setDeleteFeedback({ kind: "success", title: "DELETED", detail: result.path });
+      openPath(nextPath, true);
+    } catch (error) {
+      setDeleteConfirmPath(null);
+      setDeleteFeedback({
+        kind: "error",
+        title: "DELETE FAILED",
+        detail: mutationErrorText(error, `Failed to delete ${pathToDelete}`),
+      });
+    }
   };
 
   const goParent = () => {
@@ -478,6 +827,18 @@ export function FilesSurfaceSummary() {
                         void readQuery.refetch();
                       }}
                     />
+                    <Button
+                      variant="secondary"
+                      label={createOpen ? "CANCEL NEW" : "NEW FILE"}
+                      disabled={!canQueryTarget || filesMutations.create.isPending}
+                      onClick={createOpen ? cancelCreate : toggleCreate}
+                    />
+                    <Button
+                      variant="dangerGhost"
+                      label={deleteConfirmPath === displayedPath ? "CANCEL DELETE" : "DELETE"}
+                      disabled={filesMutations.remove.isPending || (!canDeletePath && deleteConfirmPath !== displayedPath)}
+                      onClick={deleteConfirmPath === displayedPath ? cancelDelete : requestDeletePath}
+                    />
                   </div>
                 </form>
               </div>
@@ -510,6 +871,88 @@ export function FilesSurfaceSummary() {
                 ))}
               </nav>
 
+              {createOpen ? (
+                <section class="files-create-panel" aria-label="Create file">
+                  <SectionHeader title="NEW FILE" meta={createResolvedPath || createBasePath} divider />
+                  <div class="files-create-body">
+                    <label class="files-field">
+                      <span>FILE PATH</span>
+                      <input
+                        class="files-input"
+                        value={createPathInput}
+                        placeholder="new-file.txt"
+                        disabled={!canQueryTarget || filesMutations.create.isPending}
+                        spellcheck={false}
+                        onInput={(event) => {
+                          setCreatePathInput(event.currentTarget.value);
+                          setCreateFeedback(null);
+                        }}
+                      />
+                    </label>
+                    <label class="files-field files-field-full">
+                      <span>INITIAL CONTENT</span>
+                      <textarea
+                        class="files-create-textarea"
+                        value={createContent}
+                        rows={7}
+                        disabled={!canQueryTarget || filesMutations.create.isPending}
+                        spellcheck={false}
+                        onInput={(event) => {
+                          setCreateContent(event.currentTarget.value);
+                          setCreateFeedback(null);
+                        }}
+                      />
+                    </label>
+                    <div class="files-create-footer">
+                      <span class="files-editor-status">
+                        <StatusDot
+                          tone={filesMutations.create.isPending ? "live" : createPathInput.trim() ? "online" : "idle"}
+                          size={8}
+                        />
+                        <span>{filesMutations.create.isPending ? "CREATING" : createResolvedPath || "PATH REQUIRED"}</span>
+                      </span>
+                      <span class="files-editor-actions">
+                        <Button
+                          variant="secondary"
+                          label="CANCEL"
+                          disabled={filesMutations.create.isPending}
+                          onClick={cancelCreate}
+                        />
+                        <Button
+                          variant="primary"
+                          label={filesMutations.create.isPending ? "CREATING" : "CREATE"}
+                          disabled={!canCreateFile}
+                          onClick={createFile}
+                        />
+                      </span>
+                    </div>
+                    {filesMutations.create.isPending ? (
+                      <FilesInlineNotice kind="loading" title="CREATING" detail={createResolvedPath} />
+                    ) : createFeedback && createFeedback.kind === "error" ? (
+                      <FilesInlineNotice kind={createFeedback.kind} title={createFeedback.title} detail={createFeedback.detail} />
+                    ) : null}
+                  </div>
+                </section>
+              ) : createFeedback ? (
+                <FilesInlineNotice kind={createFeedback.kind} title={createFeedback.title} detail={createFeedback.detail} />
+              ) : null}
+
+              {deleteConfirmPath ? (
+                <FilesInlineNotice
+                  kind={filesMutations.remove.isPending ? "loading" : "warn"}
+                  title={filesMutations.remove.isPending ? "DELETING" : "CONFIRM DELETE"}
+                  detail={deleteConfirmPath}
+                  action={filesMutations.remove.isPending ? undefined : (
+                    <>
+                      <Button variant="secondary" label="CANCEL" onClick={cancelDelete} />
+                      <Button variant="danger" label="DELETE" onClick={confirmDelete} />
+                    </>
+                  )}
+                />
+              ) : deleteFeedback ? (
+                <FilesInlineNotice kind={deleteFeedback.kind} title={deleteFeedback.title} detail={deleteFeedback.detail} />
+              ) : null}
+
               <div class="files-browser-grid">
                 <section class="files-browser-panel">
                   <SectionHeader title={readTitle} meta={readMeta} divider />
@@ -520,7 +963,14 @@ export function FilesSurfaceSummary() {
                     payload={readPayload}
                     isLoading={readQuery.isLoading}
                     queryError={queryErrorText(readQuery.error)}
+                    fileDraft={editorDraft}
+                    fileDirty={editorDirty}
+                    savePending={filesMutations.save.isPending}
+                    saveFeedback={saveFeedback}
                     onOpenPath={openPath}
+                    onFileDraftChange={updateFileDraft}
+                    onSaveFile={saveFile}
+                    onResetFileDraft={resetFileDraft}
                   />
                 </section>
 
