@@ -1,4 +1,4 @@
-import { useMemo, useState } from "preact/hooks";
+import { useEffect, useMemo, useState } from "preact/hooks";
 import { Avatar } from "../../../components/ui/Avatar";
 import { Icon } from "../../../components/ui/Icon";
 import { IconButton } from "../../../components/ui/IconButton";
@@ -7,11 +7,11 @@ import { StatusDot } from "../../../components/ui/StatusDot";
 import type { StatusTone } from "../../../components/ui/StatusDot";
 import type { JSX } from "preact";
 import { buildChatAgentViewModel, type ChatAgentData } from "../domain/agent";
-import type { ChatHistoryMessage, ChatRunState } from "../domain/processes";
+import type { ChatHilDecision, ChatHistoryMessage, ChatRunState } from "../domain/processes";
 import {
   useAbortChatProcess,
   useChatProcessHistory,
-  useChatProcessList,
+  useDecideChatHil,
   useSpawnChatProcess,
 } from "../hooks";
 import { ActiveAgentPanel } from "./ActiveAgentPanel";
@@ -101,6 +101,46 @@ function errorMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
+function formatHilTime(timestamp: number | null | undefined): string {
+  if (typeof timestamp !== "number" || !Number.isFinite(timestamp)) {
+    return "";
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(timestamp));
+}
+
+function summarizeHilValue(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function summarizeHilArgs(args: Record<string, unknown> | null | undefined): string {
+  if (!args || Object.keys(args).length === 0) {
+    return "No tool arguments were provided.";
+  }
+
+  const entries = Object.entries(args)
+    .slice(0, 3)
+    .map(([key, value]) => {
+      const valueText = summarizeHilValue(value);
+      const normalized = valueText.length > 80 ? `${valueText.slice(0, 77)}...` : valueText;
+      return `${key}: ${normalized}`;
+    });
+  const remaining = Object.keys(args).length - entries.length;
+
+  return remaining > 0
+    ? `${entries.join(" · ")} · +${remaining} more`
+    : entries.join(" · ");
+}
+
 function contextPressurePercent(pressure: number | null | undefined): number | null {
   if (typeof pressure !== "number" || !Number.isFinite(pressure)) {
     return null;
@@ -136,20 +176,30 @@ export function ChatDock({
   const [agentPanelOpen, setAgentPanelOpen] = useState(false);
   const activeProcessId = agent?.id?.trim() ?? "";
   const hasActiveProcess = activeProcessId.length > 0;
-  const processList = useChatProcessList({ enabled: open });
   const processHistory = useChatProcessHistory({
     enabled: open && hasActiveProcess,
     args: hasActiveProcess ? { pid: activeProcessId } : {},
   });
   const spawnProcess = useSpawnChatProcess();
   const abortProcess = useAbortChatProcess();
+  const hilDecision = useDecideChatHil();
+  const pendingHil = processHistory.data?.pendingHil ?? null;
+  const effectiveStatus = pendingHil ? "update" : status;
+  const effectiveStatusLabel = pendingHil ? "awaiting approval" : statusLabel;
+
+  useEffect(() => {
+    if (!open) {
+      setAgentPanelOpen(false);
+    }
+  }, [open]);
+
   const activeAgent = useMemo(() => buildChatAgentViewModel({
     agent,
     title,
-    status,
-    statusLabel,
+    status: effectiveStatus,
+    statusLabel: effectiveStatusLabel,
     contextLabel,
-  }), [agent, title, status, statusLabel, contextLabel]);
+  }), [agent, title, effectiveStatus, effectiveStatusLabel, contextLabel]);
   const transcriptMessages = useMemo(() => {
     if (!processHistory.data) {
       return messages;
@@ -159,36 +209,37 @@ export function ChatDock({
       .slice(-TRANSCRIPT_MESSAGE_LIMIT)
       .map(historyMessageToDockMessage);
   }, [messages, processHistory.data]);
-  const pendingHil = processHistory.data?.pendingHil ?? null;
-  const runState = processHistory.data?.runState ?? (statusLabel === "loading" ? undefined : statusLabel);
-  const runStateLabel = formatRunStateLabel(runState);
-  const activeRunId = processHistory.data?.activeRunId ?? runIdFromTaskName(activeAgent.tasks[0]?.name);
+  const runState = processHistory.data?.runState ?? (effectiveStatusLabel === "loading" ? undefined : effectiveStatusLabel);
+  const runStateLabel = pendingHil ? "awaiting approval" : formatRunStateLabel(runState);
+  const activeRunId = pendingHil?.runId ?? processHistory.data?.activeRunId ?? runIdFromTaskName(activeAgent.tasks[0]?.name);
   const canAbortRun = hasActiveProcess
     && !abortProcess.isPending
     && (Boolean(processHistory.data?.activeRunId) || Boolean(pendingHil) || runState === "running" || runState === "awaiting_hil");
   const context = processHistory.data?.context ?? null;
   const contextPercent = contextPressurePercent(context?.pressure);
   const hasVisibleMessages = transcriptMessages.length > 0;
-  const hasTranscriptError = (processHistory.isError && !hasVisibleMessages)
-    || (!hasActiveProcess && processList.isError);
+  const processLookupLoading = !hasActiveProcess && effectiveStatusLabel === "loading";
+  const hasTranscriptError = processHistory.isError && !hasVisibleMessages;
   const transcriptState = hasTranscriptError
     ? "error"
-    : ((processHistory.isLoading || (!hasActiveProcess && processList.isLoading)) && !hasVisibleMessages)
+    : ((processHistory.isLoading || processLookupLoading) && !hasVisibleMessages)
       ? "loading"
       : "ready";
-  const transcriptError = processHistory.isError
-    ? errorMessage(processHistory.error, "Process history could not be loaded.")
-    : errorMessage(processList.error, "Process list could not be loaded.");
+  const transcriptError = errorMessage(processHistory.error, "Process history could not be loaded.");
   const controlError = spawnProcess.isError
     ? errorMessage(spawnProcess.error, "Process could not be started.")
     : abortProcess.isError
       ? errorMessage(abortProcess.error, "Run could not be aborted.")
-      : "";
+      : hilDecision.isError
+        ? errorMessage(hilDecision.error, "Tool approval could not be applied.")
+        : "";
   const emptyTitle = hasActiveProcess ? "No visible process messages" : "No process attached";
   const emptyDescription = hasActiveProcess
     ? "This process has not written user, assistant, system, or tool result messages yet."
     : "Start an interactive process to begin a native chat session.";
-  const inputDisabled = sending || (!hasActiveProcess && !processList.isLoading);
+  const inputDisabled = sending || (!hasActiveProcess && !processLookupLoading);
+  const hilArgsSummary = pendingHil ? summarizeHilArgs(pendingHil.args) : "";
+  const hilCreatedAt = formatHilTime(pendingHil?.createdAt);
 
   const startProcess = () => {
     spawnProcess.mutate({ interactive: true });
@@ -199,6 +250,17 @@ export function ChatDock({
       return;
     }
     abortProcess.mutate({ pid: activeProcessId });
+  };
+
+  const decidePendingHil = (decision: ChatHilDecision) => {
+    if (!hasActiveProcess || !pendingHil || hilDecision.isPending) {
+      return;
+    }
+    hilDecision.mutate({
+      pid: activeProcessId,
+      requestId: pendingHil.requestId,
+      decision,
+    });
   };
 
   const openAgentPanel = () => {
@@ -256,7 +318,7 @@ export function ChatDock({
           <span>
             <strong>{activeAgent.name}</strong>
             <small>
-              <StatusDot tone={status} size={7} />
+              <StatusDot tone={effectiveStatus} size={7} />
               {activeAgent.activity}
             </small>
           </span>
@@ -269,7 +331,7 @@ export function ChatDock({
             <button
               type="button"
               class="gsv-chat-command gsv-chat-command-start"
-              disabled={spawnProcess.isPending || processList.isLoading}
+              disabled={spawnProcess.isPending}
               onClick={startProcess}
               title="Start process"
               aria-label="Start process"
@@ -298,8 +360,8 @@ export function ChatDock({
 
       <div class="gsv-chat-process">
         <div class="gsv-chat-process-main">
-          <StatusDot tone={pendingHil ? "update" : status} size={7} />
-          <span>{pendingHil ? "awaiting approval" : runStateLabel}</span>
+          <StatusDot tone={effectiveStatus} size={7} />
+          <span>{runStateLabel}</span>
         </div>
         <div class="gsv-chat-process-meta">
           {hasActiveProcess ? <span>pid {shortId(activeProcessId)}</span> : <span>no pid</span>}
@@ -311,16 +373,41 @@ export function ChatDock({
       </div>
 
       {pendingHil ? (
-        <section class="gsv-chat-hil" aria-label="Human approval pending">
-          <div>
-            <span>HIL PENDING</span>
+        <section
+          class={`gsv-chat-hil${hilDecision.isPending ? " is-busy" : ""}`}
+          aria-label="Human approval pending"
+          aria-busy={hilDecision.isPending}
+        >
+          <div class="gsv-chat-hil-head">
+            <span>APPROVAL REQUIRED</span>
             <strong>{pendingHil.toolName || pendingHil.syscall}</strong>
           </div>
-          <small>
+          <p>{hilArgsSummary}</p>
+          <small class="gsv-chat-hil-meta">
             {pendingHil.syscall}
             {" · request "}
             {shortId(pendingHil.requestId)}
+            {pendingHil.runId ? ` · run ${shortId(pendingHil.runId)}` : ""}
+            {hilCreatedAt ? ` · ${hilCreatedAt}` : ""}
           </small>
+          <div class="gsv-chat-hil-actions">
+            <button
+              type="button"
+              class="gsv-chat-hil-deny"
+              disabled={hilDecision.isPending}
+              onClick={() => decidePendingHil("deny")}
+            >
+              Deny
+            </button>
+            <button
+              type="button"
+              class="gsv-chat-hil-approve"
+              disabled={hilDecision.isPending}
+              onClick={() => decidePendingHil("approve")}
+            >
+              {hilDecision.isPending ? "Applying" : "Approve"}
+            </button>
+          </div>
         </section>
       ) : null}
 
@@ -335,7 +422,7 @@ export function ChatDock({
           <button
             type="button"
             class="gsv-chat-empty-start"
-            disabled={spawnProcess.isPending || processList.isLoading}
+            disabled={spawnProcess.isPending}
             onClick={startProcess}
           >
             <Icon name="plus" size={13} />

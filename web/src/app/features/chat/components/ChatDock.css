@@ -275,12 +275,16 @@
   gap: 6px;
 }
 
-.gsv-chat-hil div {
+.gsv-chat-hil-head {
   min-width: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+}
+
+.gsv-chat-hil.is-busy {
+  opacity: 0.82;
 }
 
 .gsv-chat-hil span,
@@ -300,12 +304,61 @@
   font-size: 12px;
 }
 
+.gsv-chat-hil p {
+  margin: 0;
+  color: #ffe9b8;
+  font-size: 11px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
 .gsv-chat-hil small {
   min-width: 0;
   color: rgba(255, 227, 163, 0.76);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.gsv-chat-hil-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.gsv-chat-hil-actions button {
+  min-height: 28px;
+  border: 1px solid rgba(255, 227, 163, 0.38);
+  background: rgba(18, 14, 40, 0.72);
+  color: #ffe3a3;
+  padding: 0 10px;
+  cursor: pointer;
+  font-family: var(--gsv-font-mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+}
+
+.gsv-chat-hil-actions button:hover,
+.gsv-chat-hil-actions button:focus-visible {
+  border-color: #ffe3a3;
+  color: #fff2c7;
+  outline: none;
+}
+
+.gsv-chat-hil-actions button:disabled {
+  opacity: 0.56;
+  cursor: wait;
+}
+
+.gsv-chat-hil-approve {
+  background: rgba(35, 49, 24, 0.72) !important;
+  color: #d7ffbd !important;
+  border-color: rgba(165, 239, 125, 0.44) !important;
+}
+
+.gsv-chat-hil-deny {
+  color: #ffb199 !important;
+  border-color: rgba(255, 177, 153, 0.44) !important;
 }
 
 .gsv-chat-control-error {
@@ -382,7 +435,8 @@
   text-wrap: pretty;
 }
 
-.gsv-chat-message-tool .gsv-chat-message-text {
+.gsv-chat-message-tool .gsv-chat-message-text,
+.gsv-chat-message-tool-result .gsv-chat-message-text {
   border-left: 2px solid rgba(125, 240, 178, 0.55);
   background: rgba(8, 21, 17, 0.58);
   color: #bdeed0;
@@ -401,9 +455,15 @@
   color: #e4d4a8;
 }
 
-.gsv-chat-message-tool .gsv-chat-message-glyph {
+.gsv-chat-message-tool .gsv-chat-message-glyph,
+.gsv-chat-message-tool-result .gsv-chat-message-glyph {
   color: #7df0b2;
   border-color: rgba(125, 240, 178, 0.44);
+}
+
+.gsv-chat-message-tool-result .gsv-chat-message-glyph {
+  color: #9a94ff;
+  border-color: rgba(154, 148, 255, 0.46);
 }
 
 .gsv-chat-message-meta {
@@ -433,6 +493,10 @@
 .gsv-chat-copy:focus-visible {
   color: #9a94ff;
   outline: none;
+}
+
+.gsv-chat-copy.is-failed {
+  color: #ffb199;
 }
 
 .gsv-chat-copy:disabled {

@@ -2,6 +2,8 @@ import type { GSVClient } from "@humansandmachines/gsv/client";
 import type {
   ProcAbortArgs,
   ProcAbortResult,
+  ProcHilArgs,
+  ProcHilResult,
   ProcHistoryArgs,
   ProcHistoryResult,
   ProcListArgs,
@@ -15,6 +17,7 @@ import {
   normalizeHistory,
   normalizeProcessSummaries,
   normalizeSendPayload,
+  type ChatHilDecisionResult,
   type ChatHistory,
   type ChatProcessSummary,
   type ChatSendDraft,
@@ -63,6 +66,15 @@ export async function abortChatProcess(
   args: ProcAbortArgs = {},
 ): Promise<Extract<ProcAbortResult, { ok: true }>> {
   return throwIfFailed(await client.proc.abort(args));
+}
+
+export async function decideChatHil(
+  client: ChatGsvClient,
+  args: ProcHilArgs,
+): Promise<ChatHilDecisionResult> {
+  return throwIfFailed<Extract<ProcHilResult, { ok: true }>>(
+    await client.proc.hil(args),
+  );
 }
 
 export async function getChatHistory(

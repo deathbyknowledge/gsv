@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
 import type {
   ProcAbortArgs,
+  ProcHilArgs,
   ProcHistoryArgs,
   ProcListArgs,
   ProcMediaReadArgs,
@@ -9,6 +10,7 @@ import type {
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import {
   abortChatProcess,
+  decideChatHil,
   getChatHistory,
   listChatProcesses,
   readChatProcessMedia,
@@ -122,6 +124,19 @@ export function useAbortChatProcess() {
 
   return useMutation({
     mutationFn: (args: ProcAbortArgs = {}) => abortChatProcess(client, args),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["processes"] });
+      void queryClient.invalidateQueries({ queryKey: chatProcessHistoryQueryKeyRoot });
+    },
+  });
+}
+
+export function useDecideChatHil() {
+  const { client } = useGateway();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (args: ProcHilArgs) => decideChatHil(client, args),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["processes"] });
       void queryClient.invalidateQueries({ queryKey: chatProcessHistoryQueryKeyRoot });
