@@ -1,6 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { KernelContext } from "./context";
 import type { DeviceRecord } from "./devices";
+import { sendFrameToProcess } from "../shared/utils";
 import {
   handleAiConfig,
   handleAiImageGenerate,
@@ -21,6 +22,16 @@ import {
   DEFAULT_IMAGE_READING_PROMPT,
 } from "../inference/image-reading";
 import { DEFAULT_IMAGE_GENERATION_MODEL } from "../inference/capabilities";
+
+vi.mock("../shared/utils", () => ({
+  sendFrameToProcess: vi.fn(),
+}));
+
+const sendFrameToProcessMock = vi.mocked(sendFrameToProcess);
+
+beforeEach(() => {
+  sendFrameToProcessMock.mockReset();
+});
 
 function makeDevice(partial: Partial<DeviceRecord> & { device_id: string }): DeviceRecord {
   const now = 1_800_000_000_000;
@@ -91,6 +102,32 @@ function makeContext(connectionState: string): KernelContext {
       }]),
     },
   } as unknown as KernelContext;
+}
+
+function attachProcessAiSnapshot(
+  ctx: KernelContext,
+  values: Record<string, string>,
+  pid = "proc:test",
+): KernelContext {
+  (ctx as { processId?: string }).processId = pid;
+  (ctx as { procs?: { getOwnerUid: ReturnType<typeof vi.fn> } }).procs = {
+    getOwnerUid: vi.fn(() => ctx.identity?.process.uid ?? 1000),
+  };
+  sendFrameToProcessMock.mockResolvedValueOnce({
+    type: "res",
+    id: "proc-ai-config",
+    ok: true,
+    data: {
+      ok: true,
+      pid,
+      config: {
+        version: 1,
+        values,
+        updatedAt: 1,
+      },
+    },
+  });
+  return ctx;
 }
 
 describe("handleAiTools", () => {
@@ -542,6 +579,33 @@ describe("handleAiTranscriptionCreate", () => {
     );
   });
 
+  it("honors process-local transcription media overrides", async () => {
+    const ctx = attachProcessAiSnapshot(makeTranscriptionContext(), {
+      "config/ai/transcription/model": "@cf/openai/whisper-large-v3-turbo",
+      "config/ai/transcription/max_bytes": "8",
+    });
+
+    const result = await handleAiTranscriptionCreate({
+      audio: {
+        data: "AQID",
+        mimeType: "audio/ogg",
+      },
+    }, ctx);
+
+    expect(result.model).toBe("@cf/openai/whisper-large-v3-turbo");
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      "proc:test",
+      expect.objectContaining({
+        call: "proc.ai.config.get",
+        args: { redacted: false },
+      }),
+    );
+    expect(ctx.env.AI.run).toHaveBeenCalledWith(
+      "@cf/openai/whisper-large-v3-turbo",
+      expect.any(Object),
+    );
+  });
+
   it("uses configured transcription model and byte limits", async () => {
     const ctx = makeTranscriptionContext({
       config: {
@@ -625,6 +689,28 @@ describe("handleAiImageRead", () => {
     );
   });
 
+  it("honors process-local image reading media overrides", async () => {
+    const ctx = attachProcessAiSnapshot(makeImageReadContext(), {
+      "config/ai/image/read/model": "@cf/llava-hf/llava-1.5-7b-hf",
+      "config/ai/image/read/max_tokens": "77",
+    });
+
+    const result = await handleAiImageRead({
+      image: {
+        data: "AQID",
+        mimeType: "image/png",
+      },
+    }, ctx);
+
+    expect(result.model).toBe("@cf/llava-hf/llava-1.5-7b-hf");
+    expect(ctx.env.AI.run).toHaveBeenCalledWith(
+      "@cf/llava-hf/llava-1.5-7b-hf",
+      expect.objectContaining({
+        max_tokens: 77,
+      }),
+    );
+  });
+
   it("uses image read byte limits and rejects non-image payloads", async () => {
     const ctx = makeImageReadContext({
       config: {
@@ -696,6 +782,20 @@ describe("handleAiImageGenerate", () => {
     );
   });
 
+  it("honors process-local image generation media overrides", async () => {
+    const ctx = attachProcessAiSnapshot(makeImageGenerateContext(), {
+      "config/ai/image/generation/model": "@cf/black-forest-labs/flux-1-schnell",
+    });
+
+    const result = await handleAiImageGenerate({ prompt: "a blue terminal" }, ctx);
+
+    expect(result.model).toBe("@cf/black-forest-labs/flux-1-schnell");
+    expect(ctx.env.AI.run).toHaveBeenCalledWith(
+      "@cf/black-forest-labs/flux-1-schnell",
+      { prompt: "a blue terminal" },
+    );
+  });
+
   it("requires a prompt", async () => {
     await expect(handleAiImageGenerate({ prompt: "" }, makeImageGenerateContext())).rejects.toThrow("prompt is required");
   });
@@ -756,6 +856,26 @@ describe("handleAiSpeechCreate", () => {
         text: "Hello GSV",
         speaker: DEFAULT_AUDIO_SPEECH_SPEAKER,
         encoding: "mp3",
+      }),
+    );
+  });
+
+  it("honors process-local speech media overrides", async () => {
+    const ctx = attachProcessAiSnapshot(makeSpeechContext(), {
+      "config/ai/speech/model": "@cf/deepgram/aura-1",
+      "config/ai/speech/speaker": "orpheus",
+      "config/ai/speech/encoding": "wav",
+    });
+
+    const result = await handleAiSpeechCreate({ text: "Hello GSV" }, ctx);
+
+    expect(result.model).toBe("@cf/deepgram/aura-1");
+    expect(result.voice).toBe("orpheus");
+    expect(ctx.env.AI.run).toHaveBeenCalledWith(
+      "@cf/deepgram/aura-1",
+      expect.objectContaining({
+        speaker: "orpheus",
+        encoding: "wav",
       }),
     );
   });

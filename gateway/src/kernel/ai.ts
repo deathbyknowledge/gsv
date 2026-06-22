@@ -27,6 +27,7 @@ import type {
   AiTranscriptionCreateResult,
   ContextFile,
 } from "../syscalls/ai";
+import type { ProcAiConfigGetResult } from "../syscalls/proc";
 import type { ToolDefinition, SyscallName } from "../syscalls";
 import { intoSyscallTool, isRoutableSyscall } from "../syscalls";
 import {
@@ -86,6 +87,7 @@ import {
 import { collectPromptSkillIndex } from "./skills";
 import { listVisibleTargets, targetToAiDevice } from "./targets";
 import { normalizeProcessAiConfigValues } from "../process/ai-config";
+import { sendFrameToProcess } from "../shared/utils";
 
 const SYSCALL_TOOLS: Record<string, ToolDefinition> = {
   "fs.read": FS_READ_DEFINITION,
@@ -262,7 +264,7 @@ export async function handleAiTranscriptionCreate(
   args: AiTranscriptionCreateArgs,
   ctx: KernelContext,
 ): Promise<AiTranscriptionCreateResult> {
-  const media = resolveAiMediaConfigForContext(ctx);
+  const media = await resolveAiMediaConfigForContext(ctx);
   const audio = args.audio;
   if (!audio || typeof audio !== "object") {
     throw new Error("audio is required");
@@ -312,7 +314,7 @@ export async function handleAiImageRead(
   ctx: KernelContext,
 ): Promise<AiImageReadResult> {
   const input = args && typeof args === "object" ? args : ({} as AiImageReadArgs);
-  const media = resolveAiMediaConfigForContext(ctx);
+  const media = await resolveAiMediaConfigForContext(ctx);
   const image = input.image;
   if (!image || typeof image !== "object") {
     throw new Error("image is required");
@@ -361,7 +363,7 @@ export async function handleAiImageGenerate(
   ctx: KernelContext,
 ): Promise<AiImageGenerateResult> {
   const input = args && typeof args === "object" ? args : ({} as AiImageGenerateArgs);
-  const media = resolveAiMediaConfigForContext(ctx);
+  const media = await resolveAiMediaConfigForContext(ctx);
   const prompt = normalizeOptionalString(input.prompt);
   if (!prompt) {
     throw new Error("prompt is required");
@@ -401,7 +403,7 @@ export async function handleAiSpeechCreate(
   ctx: KernelContext,
 ): Promise<AiSpeechCreateResult> {
   const input = args && typeof args === "object" ? args : ({} as AiSpeechCreateArgs);
-  const media = resolveAiMediaConfigForContext(ctx);
+  const media = await resolveAiMediaConfigForContext(ctx);
   const rawText = normalizeOptionalString(input.text);
   if (!rawText) {
     throw new Error("text is required");
@@ -521,15 +523,42 @@ function resolveAiProcessConfigValue(
     : null;
 }
 
-function resolveAiMediaConfigForContext(ctx: KernelContext): NonNullable<AiConfigResult["media"]> {
+async function resolveAiMediaConfigForContext(ctx: KernelContext): Promise<NonNullable<AiConfigResult["media"]>> {
   const uid = ctx.identity?.process.uid ?? 0;
   const owner = resolveOwnerIdentity(ctx);
   const accountConfigUids = resolveAiConfigAccountUids(uid, owner);
+  const processOverrides = await resolveAiProcessOverridesForContext(ctx);
   const apiKey =
+    resolveAiProcessConfigValue(processOverrides, "api_key") ??
     resolveAiConfigValue(ctx.config, accountConfigUids, "api_key") ??
     ctx.config.get("config/ai/api_key") ??
     "";
-  return resolveAiMediaConfig(ctx.config, accountConfigUids, apiKey, {});
+  return resolveAiMediaConfig(ctx.config, accountConfigUids, apiKey, processOverrides);
+}
+
+async function resolveAiProcessOverridesForContext(ctx: KernelContext): Promise<Record<string, string>> {
+  if (!ctx.processId) {
+    return {};
+  }
+
+  const frame = await sendFrameToProcess(ctx.processId, {
+    type: "req",
+    id: crypto.randomUUID(),
+    call: "proc.ai.config.get",
+    args: { redacted: false },
+  });
+  if (!frame || frame.type !== "res") {
+    throw new Error(`Failed to resolve process AI config for ${ctx.processId}`);
+  }
+  if (!frame.ok) {
+    throw new Error(frame.error.message || `Failed to resolve process AI config for ${ctx.processId}`);
+  }
+
+  const result = frame.data as ProcAiConfigGetResult;
+  if (!result.ok || !result.config) {
+    return {};
+  }
+  return normalizeProcessAiConfigValues(result.config.values);
 }
 
 function resolveAiMediaConfig(
