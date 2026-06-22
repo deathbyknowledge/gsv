@@ -228,12 +228,22 @@ function Chevron() {
   return <span class="gsv-settings-chevron" aria-hidden="true" />;
 }
 
-function MiniHeading({ title, meta, onClick }: { title: string; meta?: string; onClick?: () => void }) {
+function MiniHeading({
+  title,
+  meta,
+  onClick,
+  showChevron = Boolean(onClick),
+}: {
+  title: string;
+  meta?: string;
+  onClick?: () => void;
+  showChevron?: boolean;
+}) {
   return (
     <div class="gsv-settings-mini-heading" data-clickable={onClick ? "true" : undefined} onClick={onClick}>
       <span>{title}</span>
       {meta ? <small>{meta}</small> : null}
-      <Chevron />
+      {showChevron ? <Chevron /> : null}
     </div>
   );
 }
@@ -277,11 +287,36 @@ function AddRow({ label, onClick }: { label: string; onClick?: () => void }) {
   );
 }
 
-function SplitCells({ left, right }: { left: preact.ComponentChildren; right: preact.ComponentChildren }) {
+function SplitCells({
+  className = "",
+  left,
+  right,
+}: {
+  className?: string;
+  left: preact.ComponentChildren;
+  right: preact.ComponentChildren;
+}) {
   return (
-    <div class="gsv-settings-split">
+    <div class={`gsv-settings-split${className ? ` ${className}` : ""}`}>
       <div>{left}</div>
       <div>{right}</div>
+    </div>
+  );
+}
+
+function ActionSectionHeader({
+  meta,
+  onClick,
+  title,
+}: {
+  meta?: string;
+  onClick?: () => void;
+  title: string;
+}) {
+  return (
+    <div class="gsv-settings-action-header" data-clickable={onClick ? "true" : undefined} onClick={onClick}>
+      <SectionHeader title={title} meta={meta} divider />
+      {onClick ? <Chevron /> : null}
     </div>
   );
 }
@@ -311,7 +346,7 @@ function ShipPanel({
       <SplitCells
         left={(
           <div class="gsv-settings-mini-cell">
-            <MiniHeading title="TERMINAL" onClick={onOpenSurface ? () => onOpenSurface("terminal") : undefined} />
+            <MiniHeading title="TERMINAL" />
             <div
               class="gsv-settings-terminal-state"
               data-clickable={onOpenSurface ? "true" : undefined}
@@ -326,8 +361,10 @@ function ShipPanel({
           <div class="gsv-settings-mini-cell">
             <MiniHeading title="OVERRIDES" />
             <div class="gsv-settings-overrides-state">
-              <span>{configured > 0 ? `${configured} CONFIGURED` : "NOT CONFIGURED"}</span>
-              {redacted > 0 ? <Tag label={`${redacted} REDACTED`} tone="warn" boxed /> : null}
+              <span class="gsv-settings-overrides-copy">
+                <span>{configured > 0 ? `${configured} CONFIGURED` : "NOT CONFIGURED"}</span>
+                {redacted > 0 ? <Tag label={`${redacted} REDACTED`} tone="warn" boxed /> : null}
+              </span>
             </div>
           </div>
         )}
@@ -350,7 +387,11 @@ function CrewPanel({
 
   return (
     <section class="gsv-settings-block gsv-settings-crew-block">
-      <SectionHeader title="CREW" meta={remaining > 0 ? `+${remaining}` : ""} divider />
+      <ActionSectionHeader
+        title="CREW"
+        meta={remaining > 0 ? `+${remaining}` : undefined}
+        onClick={onOpenSurface ? () => onOpenSurface("crew") : undefined}
+      />
       <div class="gsv-settings-crew-grid">
         {cards.length === 0 ? <EmptyRow label="NO CREW ACCOUNTS" /> : cards.map((card, index) => (
           <div
@@ -408,8 +449,13 @@ function ModelsTasksPanel({
 
   return (
     <SplitCells
+      className="gsv-settings-model-task-split"
       left={(
-        <div class="gsv-settings-deep-cell">
+        <div
+          class="gsv-settings-deep-cell"
+          data-clickable={onOpenSurface ? "true" : undefined}
+          onClick={onOpenSurface ? () => onOpenSurface("library") : undefined}
+        >
           <MiniHeading title="MODELS" />
           <div class="gsv-settings-model-summary">
             <span>DEFAULT: <strong>{model}</strong></span>

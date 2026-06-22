@@ -1,4 +1,5 @@
 .gsv-settings-overview {
+  height: 100%;
   min-height: calc(100vh - 98px);
   margin: -20px;
   display: grid;
@@ -11,6 +12,7 @@
 .gsv-settings-left,
 .gsv-settings-right {
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }
@@ -109,6 +111,32 @@
   border-right: 1px solid var(--rule-section);
 }
 
+.gsv-settings-action-header {
+  position: relative;
+}
+
+.gsv-settings-action-header[data-clickable="true"] {
+  cursor: pointer;
+}
+
+.gsv-settings-action-header[data-clickable="true"] > div {
+  padding-right: 52px !important;
+  transition: background 120ms ease;
+}
+
+.gsv-settings-action-header[data-clickable="true"]:hover > div {
+  background: var(--hover-nav) !important;
+}
+
+.gsv-settings-action-header > .gsv-settings-chevron {
+  position: absolute;
+  right: 16px;
+  top: 50%;
+  margin-left: 0;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
 .gsv-settings-mini-heading {
   min-height: 32px;
   display: flex;
@@ -124,6 +152,7 @@
 }
 
 .gsv-settings-mini-heading[data-clickable="true"],
+.gsv-settings-action-header[data-clickable="true"],
 .gsv-settings-mini-row[data-clickable="true"],
 .gsv-settings-add-row[data-clickable="true"],
 .gsv-settings-terminal-state[data-clickable="true"],
@@ -135,6 +164,7 @@
 }
 
 .gsv-settings-mini-heading[data-clickable="true"]:hover,
+.gsv-settings-action-header[data-clickable="true"]:hover,
 .gsv-settings-mini-row[data-clickable="true"]:hover,
 .gsv-settings-add-row[data-clickable="true"]:hover,
 .gsv-settings-terminal-state[data-clickable="true"]:hover,
@@ -149,6 +179,10 @@
   color: #7d78b8;
   font-size: 9px;
   letter-spacing: 0.12em;
+}
+
+.gsv-settings-mini-heading small + .gsv-settings-chevron {
+  margin-left: 0;
 }
 
 .gsv-settings-chevron {
@@ -179,6 +213,13 @@
   justify-content: space-between;
 }
 
+.gsv-settings-overrides-copy {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .gsv-settings-check {
   width: 17px;
   height: 17px;
@@ -190,7 +231,6 @@
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   min-width: 0;
-  border-bottom: 1px solid var(--border);
 }
 
 .gsv-settings-crew-card,
@@ -258,9 +298,19 @@
 
 .gsv-settings-deep-cell {
   position: relative;
-  min-height: 212px;
+  min-height: 100%;
+  flex: 1;
   display: flex;
   flex-direction: column;
+}
+
+.gsv-settings-model-task-split {
+  flex: 1;
+  min-height: 260px;
+}
+
+.gsv-settings-model-task-split > div {
+  display: flex;
 }
 
 .gsv-settings-model-summary,
