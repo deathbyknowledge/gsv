@@ -1,4 +1,5 @@
 import type { ComponentChildren } from "preact";
+import { ListRow, type ListRowStatus } from "../../../components/ui/ListRow";
 import { Tag, type TagTone } from "../../../components/ui/Tag";
 
 export type ConsoleDetailField = {
@@ -44,20 +45,18 @@ export function ConsoleDetailGrid({ fields }: { fields: readonly ConsoleDetailFi
   }
 
   return (
-    <dl class="gsv-console-detail-grid">
+    <div class="gsv-console-detail-field-list">
       {visibleFields.map((field) => (
-        <div class="gsv-console-detail-field" data-wide={field.wide ? "true" : undefined} key={field.label}>
-          <dt>{field.label}</dt>
-          <dd>
-            {field.tone ? (
-              <Tag label={String(field.value)} tone={field.tone} boxed />
-            ) : (
-              <code>{field.value}</code>
-            )}
-          </dd>
+        <div class="gsv-console-detail-field-row" data-wide={field.wide ? "true" : undefined} key={field.label}>
+          <ListRow
+            label={field.label}
+            status={field.tone ? detailStatusForTone(field.tone) : "none"}
+            statusLabel={field.tone ? String(field.value) : ""}
+            sub={field.tone ? "" : String(field.value)}
+          />
         </div>
       ))}
-    </dl>
+    </div>
   );
 }
 
@@ -129,4 +128,11 @@ export function ConsoleDetailList({
 
 function hasDetailValue(value: number | string | null | undefined): boolean {
   return value !== null && value !== undefined && String(value).trim().length > 0;
+}
+
+function detailStatusForTone(tone: TagTone): ListRowStatus {
+  if (tone === "online" || tone === "error" || tone === "idle" || tone === "update" || tone === "warn") {
+    return tone;
+  }
+  return "live";
 }
