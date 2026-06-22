@@ -14,6 +14,7 @@ import type {
   ConsoleAccount,
   ConsoleAccountRelation,
   ConsolePackage,
+  ConsolePackageEntrypoint,
   ConsolePackageRuntime,
   ConsoleProcess,
   ConsoleProcessState,
@@ -25,6 +26,15 @@ import {
   ConsolePage,
   ConsoleResourceBoundary,
 } from "../components/ConsolePageTemplate";
+import {
+  ConsoleDetailChips,
+  ConsoleDetailGrid,
+  ConsoleDetailList,
+  ConsoleRowDetails,
+  type ConsoleDetailChip,
+  type ConsoleDetailField,
+  type ConsoleDetailListItem,
+} from "./ConsoleDetailBlocks";
 import "./ConsoleListPage.css";
 
 type ConsoleListKind = "crew" | "machines" | "library" | "tasks";
@@ -61,6 +71,7 @@ type OperationalRowProps = {
   statusLabel: string;
   detail: string;
   tags?: readonly RowTag[];
+  details?: ComponentChildren;
 };
 
 const EMPTY_RESOURCE_LABEL: Record<ConsoleListKind, string> = {
@@ -245,6 +256,7 @@ function OperationalRow({
   statusLabel,
   detail,
   tags = [],
+  details,
 }: OperationalRowProps) {
   return (
     <div class="gsv-console-list-row">
@@ -260,6 +272,7 @@ function OperationalRow({
             ))}
           </div>
         ) : null}
+        {details ? <div class="gsv-console-list-row-detail-slot">{details}</div> : null}
       </div>
       <div class="gsv-console-list-row-status">
         <span>
@@ -391,6 +404,7 @@ function RuntimeConsoleSection({
             statusLabel={statusForProcess(process)}
             detail={processDetail(process)}
             tags={processTags(process)}
+            details={<ProcessDetails process={process} />}
           />
         ))}
       </InventoryGroup>
@@ -405,6 +419,7 @@ function RuntimeConsoleSection({
             statusLabel={statusForProcess(process)}
             detail={processDetail(process)}
             tags={processTags(process)}
+            details={<ProcessDetails process={process} />}
           />
         ))}
       </InventoryGroup>
@@ -461,6 +476,7 @@ function MachinesConsoleSection({
             statusLabel="ONLINE"
             detail={targetDetail(target)}
             tags={targetTags(target)}
+            details={<TargetDetails target={target} />}
           />
         ))}
       </InventoryGroup>
@@ -475,6 +491,7 @@ function MachinesConsoleSection({
             statusLabel="OFFLINE"
             detail={targetDetail(target)}
             tags={targetTags(target)}
+            details={<TargetDetails target={target} />}
           />
         ))}
       </InventoryGroup>
@@ -549,6 +566,7 @@ function AccountGroup({
           statusLabel={account.runnable ? "RUNNABLE" : "ACCOUNT"}
           detail={`UID ${account.uid}`}
           tags={accountTags(account)}
+          details={<AccountDetails account={account} />}
         />
       ))}
     </InventoryGroup>
@@ -627,10 +645,172 @@ function PackageGroup({
           statusLabel={statusForPackage(pkg)}
           detail={packageDetail(pkg)}
           tags={packageTags(pkg)}
+          details={<PackageDetails pkg={pkg} />}
         />
       ))}
     </InventoryGroup>
   );
+}
+
+function ProcessDetails({ process }: { process: ConsoleProcess }) {
+  return (
+    <ConsoleRowDetails summary="PROCESS DETAIL">
+      <ConsoleDetailGrid fields={processDetailFields(process)} />
+      <ConsoleDetailChips
+        title="STATE FLAGS"
+        emptyLabel="NO STATE FLAGS"
+        chips={processContextChips(process)}
+      />
+    </ConsoleRowDetails>
+  );
+}
+
+function TargetDetails({ target }: { target: ConsoleTarget }) {
+  return (
+    <ConsoleRowDetails summary="MACHINE DETAIL">
+      <ConsoleDetailGrid fields={targetDetailFields(target)} />
+      <ConsoleDetailChips
+        title="CAPABILITIES"
+        emptyLabel="NO CAPABILITIES DECLARED"
+        chips={targetCapabilityChips(target)}
+      />
+    </ConsoleRowDetails>
+  );
+}
+
+function AccountDetails({ account }: { account: ConsoleAccount }) {
+  return (
+    <ConsoleRowDetails summary="ACCOUNT DETAIL">
+      <ConsoleDetailGrid fields={accountDetailFields(account)} />
+      <ConsoleDetailChips
+        title="ACCESS FLAGS"
+        emptyLabel="NO ACCESS FLAGS"
+        chips={accountAccessChips(account)}
+      />
+    </ConsoleRowDetails>
+  );
+}
+
+function PackageDetails({ pkg }: { pkg: ConsolePackage }) {
+  return (
+    <ConsoleRowDetails summary="PACKAGE DETAIL">
+      <ConsoleDetailGrid fields={packageDetailFields(pkg)} />
+      <ConsoleDetailList
+        title="ENTRYPOINTS"
+        emptyLabel="NO ENTRYPOINTS DECLARED"
+        items={packageEntrypointItems(pkg.entrypoints)}
+      />
+      <ConsoleDetailChips
+        title="BINDINGS"
+        emptyLabel="NO BINDINGS DECLARED"
+        chips={pkg.bindingNames.map((binding) => ({ label: binding, tone: "idle" }))}
+      />
+    </ConsoleRowDetails>
+  );
+}
+
+function processDetailFields(process: ConsoleProcess): ConsoleDetailField[] {
+  return [
+    { label: "PID", value: process.pid, wide: true },
+    { label: "STATE", value: processStateLabel(process.state), tone: tagToneForProcess(process) },
+    { label: "RAW STATE", value: process.rawState },
+    { label: "USER", value: process.username || uidLabel(process.uid) },
+    { label: "UID", value: process.uid },
+    { label: "PROFILE", value: process.profile },
+    { label: "CWD", value: process.cwd, wide: true },
+    { label: "PARENT PID", value: process.parentPid },
+    { label: "ACTIVE RUN", value: process.activeRunId, wide: true },
+    { label: "CONVERSATION", value: process.activeConversationId, wide: true },
+    { label: "QUEUE DEPTH", value: process.queuedCount },
+    { label: "INTERACTIVE", value: yesNo(process.interactive), tone: process.interactive ? "info" : "idle" },
+    { label: "CREATED", value: formatTimestampTrace(process.createdAt), wide: true },
+    { label: "LAST ACTIVE", value: formatTimestampTrace(process.lastActiveAt), wide: true },
+  ];
+}
+
+function processContextChips(process: ConsoleProcess): ConsoleDetailChip[] {
+  const chips: ConsoleDetailChip[] = [
+    { label: processStateLabel(process.state), tone: tagToneForProcess(process) },
+  ];
+  if (process.interactive) chips.push({ label: "INTERACTIVE IO", tone: "info" });
+  if (process.activeRunId) chips.push({ label: "ACTIVE RUN", tone: "update" });
+  if (process.activeConversationId) chips.push({ label: "CONVERSATION", tone: "accent" });
+  if (process.queuedCount > 0) chips.push({ label: `QUEUE ${process.queuedCount}`, tone: "update" });
+  if (process.parentPid) chips.push({ label: "CHILD PROCESS", tone: "idle" });
+  return chips;
+}
+
+function targetDetailFields(target: ConsoleTarget): ConsoleDetailField[] {
+  return [
+    { label: "DEVICE ID", value: target.deviceId, wide: true },
+    { label: "STATE", value: target.online ? "ONLINE" : "OFFLINE", tone: target.online ? "online" : "idle" },
+    { label: "KIND", value: TARGET_KIND_LABEL[target.kind], tone: target.kind === "unknown" ? "warn" : "info" },
+    { label: "OWNER", value: target.ownerUsername },
+    { label: "OWNER UID", value: target.ownerUid },
+    { label: "PLATFORM", value: target.platform },
+    { label: "VERSION", value: target.version },
+    { label: "FILES SURFACE", value: yesNo(supportsFilesSurface(target)), tone: supportsFilesSurface(target) ? "online" : "idle" },
+    { label: "SHELL SURFACE", value: yesNo(supportsShellSurface(target)), tone: supportsShellSurface(target) ? "online" : "idle" },
+    { label: "DESCRIPTION", value: target.description, wide: true },
+    { label: "LAST SEEN", value: formatTimestampTrace(target.lastSeenAt), wide: true },
+  ];
+}
+
+function targetCapabilityChips(target: ConsoleTarget): ConsoleDetailChip[] {
+  return target.implements.map((capability) => ({
+    label: capability,
+    tone: target.online ? "accent" : "idle",
+  }));
+}
+
+function accountDetailFields(account: ConsoleAccount): ConsoleDetailField[] {
+  return [
+    { label: "UID", value: account.uid },
+    { label: "USERNAME", value: account.username },
+    { label: "DISPLAY NAME", value: account.displayName },
+    { label: "RELATION", value: RELATION_LABEL[account.relation], tone: account.relation === "unknown" ? "warn" : "info" },
+    { label: "RUNNABLE", value: yesNo(account.runnable), tone: account.runnable ? "online" : "idle" },
+    { label: "GECOS", value: account.gecos, wide: true },
+  ];
+}
+
+function accountAccessChips(account: ConsoleAccount): ConsoleDetailChip[] {
+  return [
+    { label: RELATION_LABEL[account.relation], tone: account.relation === "unknown" ? "warn" : "info" },
+    { label: account.runnable ? "PROC.SPAWN" : "ACCOUNT ONLY", tone: account.runnable ? "online" : "idle" },
+  ];
+}
+
+function packageDetailFields(pkg: ConsolePackage): ConsoleDetailField[] {
+  return [
+    { label: "PACKAGE ID", value: pkg.packageId, wide: true },
+    { label: "VERSION", value: pkg.version },
+    { label: "RUNTIME", value: RUNTIME_LABEL[pkg.runtime], tone: pkg.runtime === "unknown" ? "warn" : "info" },
+    { label: "STATE", value: statusForPackage(pkg), tone: packageStateTone(pkg) },
+    { label: "SCOPE", value: packageScopeLabel(pkg), tone: pkg.scopeKind === "unknown" ? "warn" : "info" },
+    { label: "SCOPE UID", value: pkg.scopeUid },
+    { label: "REVIEW", value: packageReviewLabel(pkg), tone: packageReviewTone(pkg) },
+    { label: "APPROVED", value: formatTimestampTrace(pkg.reviewApprovedAt), wide: true },
+    { label: "SOURCE REPO", value: pkg.sourceRepo, wide: true },
+    { label: "SOURCE REF", value: pkg.sourceRef },
+    { label: "SOURCE SUBDIR", value: pkg.sourceSubdir, wide: true },
+    { label: "SOURCE VISIBILITY", value: sourceVisibilityLabel(pkg), tone: pkg.sourcePublic ? "info" : "warn" },
+    { label: "INSTALLED", value: formatTimestampTrace(pkg.installedAt), wide: true },
+    { label: "UPDATED", value: formatTimestampTrace(pkg.updatedAt), wide: true },
+  ];
+}
+
+function packageEntrypointItems(entrypoints: readonly ConsolePackageEntrypoint[]): ConsoleDetailListItem[] {
+  return entrypoints.map((entrypoint, index) => ({
+    id: `${index}:${entrypoint.kind}:${entrypoint.name}:${entrypoint.route}:${entrypoint.command}`,
+    label: `${entrypoint.kind.toUpperCase()} / ${entrypoint.name}`,
+    meta: compactText([
+      entrypoint.route ? `route ${entrypoint.route}` : "",
+      entrypoint.command ? `command ${entrypoint.command}` : "",
+      entrypoint.description,
+    ], "NO ROUTE OR COMMAND"),
+    chips: entrypoint.syscalls.map((syscall) => ({ label: syscall, tone: "idle" })),
+  }));
 }
 
 function isRunningProcess(process: ConsoleProcess): boolean {
@@ -804,10 +984,41 @@ function packageTags(pkg: ConsolePackage): RowTag[] {
   }
   tags.push({ label: pkg.enabled ? "INSTALLED" : "DISABLED", tone: pkg.enabled ? "online" : "idle" });
   tags.push({ label: pkg.scopeKind === "global" ? "GLOBAL" : pkg.scopeKind === "user" ? "USER" : "SCOPE UNKNOWN", tone: pkg.scopeKind === "unknown" ? "warn" : "info" });
-  tags.push({ label: pkg.sourcePublic ? "PUBLIC" : "PRIVATE", tone: pkg.sourcePublic ? "info" : "warn" });
+  tags.push({ label: sourceVisibilityLabel(pkg), tone: pkg.sourcePublic ? "info" : "warn" });
   if (pkg.uiEntrypoints.length > 0) tags.push({ label: `UI ${pkg.uiEntrypoints.length}`, tone: "accent" });
   if (pkg.bindingNames.length > 0) tags.push({ label: `BIND ${pkg.bindingNames.length}`, tone: "idle" });
   return tags;
+}
+
+function packageStateTone(pkg: ConsolePackage): TagTone {
+  if (pkg.reviewPending) return "update";
+  if (pkg.enabled) return "online";
+  return "idle";
+}
+
+function packageReviewLabel(pkg: ConsolePackage): string {
+  if (pkg.reviewPending) return "PENDING REVIEW";
+  if (pkg.reviewApprovedAt !== null) return "APPROVED";
+  if (!pkg.reviewRequired) return "NOT REQUIRED";
+  return "REQUIRED";
+}
+
+function packageReviewTone(pkg: ConsolePackage): TagTone {
+  if (pkg.reviewPending) return "update";
+  if (isTrustedPackage(pkg)) return "online";
+  return "warn";
+}
+
+function packageScopeLabel(pkg: ConsolePackage): string {
+  if (pkg.scopeKind === "global") return "GLOBAL";
+  if (pkg.scopeKind === "user") {
+    return pkg.scopeUid === null ? "USER" : `USER ${pkg.scopeUid}`;
+  }
+  return "UNKNOWN";
+}
+
+function sourceVisibilityLabel(pkg: ConsolePackage): string {
+  return pkg.sourcePublic ? "PUBLIC" : "NON-PUBLIC";
 }
 
 function compactText(parts: readonly (string | null | undefined)[], fallback: string): string {
@@ -836,6 +1047,14 @@ function normalizeTimestamp(value: number): number {
   return value < 10_000_000_000 ? value * 1000 : value;
 }
 
+function formatTimestampTrace(value: number | null): string {
+  if (value === null) {
+    return "";
+  }
+  const timestamp = normalizeTimestamp(value);
+  return `${formatAge(timestamp)} / ${new Date(timestamp).toLocaleString()}`;
+}
+
 function formatAge(value: number): string {
   const timestamp = normalizeTimestamp(value);
   const diffMs = Math.max(0, Date.now() - timestamp);
@@ -851,4 +1070,8 @@ function formatAge(value: number): string {
 
 function sum(values: readonly number[]): number {
   return values.reduce((total, value) => total + value, 0);
+}
+
+function yesNo(value: boolean): string {
+  return value ? "YES" : "NO";
 }

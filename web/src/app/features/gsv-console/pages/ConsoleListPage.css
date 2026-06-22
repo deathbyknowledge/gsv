@@ -139,14 +139,213 @@
   padding-top: 8px;
 }
 
+.gsv-console-list-row-detail-slot {
+  min-width: 0;
+  padding-top: 10px;
+}
+
+.gsv-console-list-row-details {
+  min-width: 0;
+  border: 1px solid var(--rule-inner);
+  background: rgba(9, 7, 26, 0.32);
+}
+
+.gsv-console-list-row-details summary {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 31px;
+  padding: 8px 10px;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 9px;
+  letter-spacing: 0;
+  list-style: none;
+  text-transform: uppercase;
+}
+
+.gsv-console-list-row-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.gsv-console-list-row-details summary::before {
+  content: "";
+  flex: none;
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 5px solid var(--accent-bright);
+  transition: transform 120ms ease;
+}
+
+.gsv-console-list-row-details[open] summary {
+  border-bottom: 1px solid var(--rule-inner);
+}
+
+.gsv-console-list-row-details[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.gsv-console-detail-body {
+  min-width: 0;
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+}
+
+.gsv-console-detail-grid {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  margin: 0;
+  border: 1px solid var(--rule-inner);
+  background: var(--rule-inner);
+}
+
+.gsv-console-detail-field {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  padding: 9px 10px;
+  background: rgba(9, 7, 26, 0.52);
+}
+
+.gsv-console-detail-field[data-wide="true"] {
+  grid-column: 1 / -1;
+}
+
+.gsv-console-detail-field dt,
+.gsv-console-detail-section-heading,
+.gsv-console-detail-empty {
+  color: var(--text-dim);
+  font-size: 9px;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.gsv-console-detail-field dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.gsv-console-detail-field code {
+  color: inherit;
+  font-family: var(--gsv-font-mono);
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.gsv-console-detail-section {
+  min-width: 0;
+  border: 1px solid var(--rule-inner);
+}
+
+.gsv-console-detail-section-heading {
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--rule-inner);
+  background: rgba(9, 7, 26, 0.52);
+}
+
+.gsv-console-detail-section-heading span,
+.gsv-console-detail-section-heading small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gsv-console-detail-chip-list {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px;
+}
+
+.gsv-console-detail-chip-list--inline {
+  flex: none;
+  justify-content: flex-end;
+  padding: 0;
+}
+
+.gsv-console-detail-chip-list > span,
+.gsv-console-detail-chip-list > span > span {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.gsv-console-detail-chip-list > span > span > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gsv-console-detail-list {
+  min-width: 0;
+  display: grid;
+}
+
+.gsv-console-detail-list-item {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(120px, auto);
+  align-items: center;
+  gap: 12px;
+  padding: 10px;
+  border-bottom: 1px solid var(--rule-inner);
+}
+
+.gsv-console-detail-list-item:last-child {
+  border-bottom: 0;
+}
+
+.gsv-console-detail-list-copy {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.gsv-console-detail-list-copy strong {
+  min-width: 0;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+}
+
+.gsv-console-detail-list-copy small {
+  min-width: 0;
+  color: var(--text-dim);
+  font-size: 10px;
+  letter-spacing: 0;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.gsv-console-detail-empty {
+  padding: 10px;
+}
+
 .gsv-console-list-row-status {
   flex: none;
   width: 138px;
   display: grid;
-  align-content: center;
+  align-content: start;
   justify-items: end;
   gap: 7px;
-  padding: 12px 16px 12px 0;
+  padding: 16px 16px 12px 0;
   text-align: right;
 }
 
@@ -271,6 +470,15 @@
   .gsv-console-list-row-status small {
     display: none;
   }
+
+  .gsv-console-detail-grid,
+  .gsv-console-detail-list-item {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .gsv-console-detail-chip-list--inline {
+    justify-content: flex-start;
+  }
 }
 
 @media (max-width: 520px) {
@@ -301,5 +509,9 @@
 
   .gsv-console-list-row-tags {
     display: none;
+  }
+
+  .gsv-console-detail-body {
+    padding: 10px;
   }
 }
