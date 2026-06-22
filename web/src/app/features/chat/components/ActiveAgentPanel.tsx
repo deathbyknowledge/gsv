@@ -42,11 +42,13 @@ export function ActiveAgentPanel({
           description={agent.description}
           imgSrc={agent.imageSrc}
           status={agent.status}
+          initialModel={agent.modelValue}
+          initialPermission={agent.permission}
           modelIsDefault={agent.modelIsDefault}
           tasksTotal={agent.tasksTotal}
           active
           showActions
-          models={[agent.modelLabel]}
+          models={agent.modelOptions}
           tasks={agent.tasks}
           readOnly
           onManage={openCrew}
