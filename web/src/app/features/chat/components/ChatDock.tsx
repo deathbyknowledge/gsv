@@ -3,6 +3,7 @@ import { Avatar } from "../../../components/ui/Avatar";
 import { Icon } from "../../../components/ui/Icon";
 import { IconButton } from "../../../components/ui/IconButton";
 import { MessageInput } from "../../../components/ui/MessageInput";
+import { Progress } from "../../../components/ui/Progress";
 import { StatusDot } from "../../../components/ui/StatusDot";
 import type { StatusTone } from "../../../components/ui/StatusDot";
 import type { JSX } from "preact";
@@ -217,6 +218,9 @@ export function ChatDock({
     && (Boolean(processHistory.data?.activeRunId) || Boolean(pendingHil) || runState === "running" || runState === "awaiting_hil");
   const context = processHistory.data?.context ?? null;
   const contextPercent = contextPressurePercent(context?.pressure);
+  const contextTitle = contextPercent === null
+    ? contextLabel
+    : `${contextPercent}% context pressure`;
   const hasVisibleMessages = transcriptMessages.length > 0;
   const processLookupLoading = !hasActiveProcess && effectiveStatusLabel === "loading";
   const hasTranscriptError = processHistory.isError && !hasVisibleMessages;
@@ -315,46 +319,62 @@ export function ChatDock({
           <span class="gsv-chat-avatar">
             <Avatar src={activeAgent.imageSrc} status={activeAgent.status} size={42} />
           </span>
-          <span>
-            <strong>{activeAgent.name}</strong>
-            <small>
+          <span class="gsv-chat-agent-copy">
+            <span class="gsv-chat-agent-name-row">
+              <strong>{activeAgent.name}</strong>
+              <svg class="gsv-chat-agent-chevron" width="8" height="10" viewBox="0 0 8 10" aria-hidden="true">
+                <path d="M1 1 L6 5 L1 9" fill="none" stroke="currentColor" stroke-width="1.4" />
+              </svg>
+            </span>
+            <span class="gsv-chat-agent-model">
+              <span>{activeAgent.modelLabel}</span>
+              <span>{runStateLabel}</span>
+            </span>
+            <small class="gsv-chat-agent-activity">
               <StatusDot tone={effectiveStatus} size={7} />
               {activeAgent.activity}
+              <i aria-hidden="true" />
             </small>
           </span>
-          <svg class="gsv-chat-agent-chevron" width="8" height="10" viewBox="0 0 8 10" aria-hidden="true">
-            <path d="M1 1 L6 5 L1 9" fill="none" stroke="currentColor" stroke-width="1.4" />
-          </svg>
         </button>
         <div class="gsv-chat-actions">
-          {!hasActiveProcess ? (
-            <button
-              type="button"
-              class="gsv-chat-command gsv-chat-command-start"
-              disabled={spawnProcess.isPending}
-              onClick={startProcess}
-              title="Start process"
-              aria-label="Start process"
-            >
-              <Icon name="plus" size={15} />
+          <div class="gsv-chat-action-row">
+            {!hasActiveProcess ? (
+              <button
+                type="button"
+                class="gsv-chat-command gsv-chat-command-start"
+                disabled={spawnProcess.isPending}
+                onClick={startProcess}
+                title="Start process"
+                aria-label="Start process"
+              >
+                <Icon name="plus" size={15} />
+              </button>
+            ) : null}
+            {canAbortRun ? (
+              <button
+                type="button"
+                class="gsv-chat-command gsv-chat-command-abort"
+                onClick={abortActiveRun}
+                title="Abort current run"
+                aria-label="Abort current run"
+              >
+                <span aria-hidden="true" />
+              </button>
+            ) : null}
+            <button type="button" onClick={onOpenCrew} aria-label="Open crew">
+              <Icon name="chat" size={16} />
             </button>
-          ) : null}
-          {canAbortRun ? (
-            <button
-              type="button"
-              class="gsv-chat-command gsv-chat-command-abort"
-              onClick={abortActiveRun}
-              title="Abort current run"
-              aria-label="Abort current run"
-            >
-              <span aria-hidden="true" />
-            </button>
-          ) : null}
-          <button type="button" onClick={onOpenCrew} aria-label="Open crew">
-            <Icon name="chat" size={16} />
-          </button>
-          <IconButton glyph="max" size="medium" title={atMax ? "Restore chat" : "Expand chat"} onClick={onToggleMax} />
-          <IconButton glyph="min" size="medium" title="Minimize chat" onClick={onToggleOpen} />
+            <IconButton glyph="max" size="medium" title={atMax ? "Restore chat" : "Expand chat"} onClick={onToggleMax} />
+            <IconButton glyph="min" size="medium" title="Minimize chat" onClick={onToggleOpen} />
+          </div>
+          <div class="gsv-chat-context-control" title={contextTitle}>
+            <Icon name="stars" size={14} />
+            {contextPercent !== null ? (
+              <Progress value={contextPercent} label="" showValue={false} size="medium" width={46} />
+            ) : null}
+            <span>{contextPercent !== null ? `${contextPercent}%` : contextLabel}</span>
+          </div>
         </div>
       </header>
 
@@ -435,18 +455,6 @@ export function ChatDock({
         messages={transcriptMessages}
         state={transcriptState}
       />
-
-      <div class="gsv-chat-context">
-        <span>{contextLabel}</span>
-        {contextPercent !== null ? (
-          <span class="gsv-chat-context-meter" title={`${contextPercent}% context pressure`}>
-            <i>
-              <b style={{ width: `${contextPercent}%` }} />
-            </i>
-            <em>{contextPercent}%</em>
-          </span>
-        ) : null}
-      </div>
 
       <MessageInput
         disabled={inputDisabled}
