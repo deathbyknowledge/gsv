@@ -17,6 +17,7 @@ import type {
   ConsoleProcess,
   ConsoleTarget,
 } from "../domain/consoleModels";
+export type { AgentApprovalAction } from "../domain/consoleAgentBehavior";
 
 export const DEFAULT_CONSOLE_ADAPTERS = ["whatsapp", "discord", "telegram"] as const;
 
@@ -54,6 +55,16 @@ export type SaveConsoleAgentContextInput = {
 
 export type SaveConsoleAgentContextResult = {
   written: number;
+};
+
+export type SaveConsoleAgentBehaviorInput = {
+  uid: number;
+  model: string;
+  approval: string;
+};
+
+export type SaveConsoleAgentBehaviorResult = {
+  ok: true;
 };
 
 export type LoadConsoleOverviewOptions = {
@@ -181,6 +192,26 @@ export async function saveConsoleAgentContext(
   }
 
   return { written };
+}
+
+export async function saveConsoleAgentBehavior(
+  client: Pick<GSVClient, "sys">,
+  input: SaveConsoleAgentBehaviorInput,
+): Promise<SaveConsoleAgentBehaviorResult> {
+  const uid = Number(input.uid);
+  if (!Number.isFinite(uid)) {
+    throw new Error("uid is required");
+  }
+  await client.sys.config.set({
+    key: `users/${uid}/ai/model`,
+    value: input.model.trim(),
+  });
+  await client.sys.config.set({
+    key: `users/${uid}/ai/tools/approval`,
+    value: input.approval.trim(),
+  });
+
+  return { ok: true };
 }
 
 export async function loadConsoleAdapterAccounts(

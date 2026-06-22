@@ -14,10 +14,18 @@ import {
 } from "../components/ConsolePageTemplate";
 import type {
   ConsoleAccount,
+  ConsoleConfigEntry,
   ConsoleProcess,
   ConsoleResourceState,
 } from "../domain/consoleModels";
 import { modelLabelsForConfig } from "../domain/consoleAi";
+import {
+  approvalActionFromValue,
+  behaviorForAccount,
+  modelLabelsForAccount,
+  parseApprovalPolicy,
+  serializeApprovalPolicy,
+} from "../domain/consoleAgentBehavior";
 import {
   agentImageSrcForAccount,
   agentImageSrcForIndex,
@@ -29,6 +37,7 @@ import {
   useConsoleConfig,
   useConsoleProcesses,
   useCreateConsoleAgent,
+  useSaveConsoleAgentBehavior,
   useSaveConsoleAgentContext,
 } from "../hooks/useConsoleData";
 import "./ConsoleAgentPage.css";
@@ -79,6 +88,7 @@ export function ConsoleAgentPage({
             <AgentEditorSurface
               account={account}
               accounts={data}
+              config={config.config}
               modelLabels={modelLabels}
               processResource={processes.resource}
               onBackToCrew={onBackToCrew}
@@ -93,12 +103,14 @@ export function ConsoleAgentPage({
 function AgentEditorSurface({
   account,
   accounts,
+  config,
   modelLabels,
   processResource,
   onBackToCrew,
 }: {
   account: ConsoleAccount;
   accounts: readonly ConsoleAccount[];
+  config: readonly ConsoleConfigEntry[];
   modelLabels: string[];
   processResource: ConsoleResourceState<ConsoleProcess[]>;
   onBackToCrew: () => void;
@@ -107,10 +119,14 @@ function AgentEditorSurface({
   const [width, setWidth] = useState(0);
   const processes = (processResource.data ?? []).filter((process) => ownsProcess(account, process));
   const context = useConsoleAgentContext(account.username);
+  const saveBehavior = useSaveConsoleAgentBehavior();
   const saveContext = useSaveConsoleAgentContext();
   const contextEditable = context.files.length > 0
     && !context.resource.isLoading
     && !context.resource.isError;
+  const behavior = behaviorForAccount(config, account.uid);
+  const behaviorEditable = account.runnable;
+  const resolvedModelLabels = modelLabelsForAccount(modelLabels, behavior.model);
   const files = editorFilesForAccount({
     account,
     contextFiles: context.files,
@@ -137,27 +153,42 @@ function AgentEditorSurface({
   return (
     <section class="gsv-console-agent" ref={rootRef}>
       <AgentEditor
-        key={`${account.uid}:${context.dataUpdatedAt}:${processes.length}`}
+        key={`${account.uid}:${context.dataUpdatedAt}:${processes.length}:${behavior.model}:${behavior.permission}`}
         mode="manage"
         avatarSrc={agentImageSrcForAccount(account, accounts)}
         containerWidth={width || undefined}
         initialName={account.displayName}
         initialRole={labelForConsoleAccountRelation(account.relation)}
         initialDescription={accountDescription(account)}
+        initialModel={behavior.model}
+        initialPermission={behavior.permission}
         createdLabel={String(account.uid)}
         metaLabel="UID:"
         status={avatarStatusForProcesses(account, processes)}
-        models={modelLabels}
+        models={resolvedModelLabels}
         tasks={tasksForProcesses(processes)}
         files={files}
-        generalReadOnly
+        identityReadOnly
+        behaviorReadOnly={!behaviorEditable}
         filesReadOnly={!contextEditable}
-        onSave={contextEditable ? async (draft) => {
-          await saveContext.mutateAsync({
-            username: account.username,
-            files: draft.files,
-          });
-        } : undefined}
+        onSave={async (draft) => {
+          if (behaviorEditable) {
+            await saveBehavior.mutateAsync({
+              uid: account.uid,
+              model: draft.modelIndex === 0 ? "" : draft.model,
+              approval: serializeApprovalPolicy({
+                ...parseApprovalPolicy(behavior.approval),
+                default: approvalActionFromValue(draft.permission),
+              }),
+            });
+          }
+          if (contextEditable) {
+            await saveContext.mutateAsync({
+              username: account.username,
+              files: draft.files,
+            });
+          }
+        }}
         onBack={onBackToCrew}
       />
     </section>

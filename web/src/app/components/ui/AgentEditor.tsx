@@ -21,10 +21,14 @@ export interface AgentEditorProps {
   metaLabel?: string;
   status?: AvatarStatus;
   models?: string[];
+  initialModel?: string;
+  initialPermission?: string;
   files?: AgentEditorFile[];
   tasks?: AgentEditorTask[];
   readOnly?: boolean;
   generalReadOnly?: boolean;
+  identityReadOnly?: boolean;
+  behaviorReadOnly?: boolean;
   filesReadOnly?: boolean;
   onCreate?: (draft: AgentEditorDraft) => Promise<void> | void;
   onSave?: (draft: AgentEditorDraft) => Promise<void> | void;
@@ -69,7 +73,24 @@ interface Defaults {
 }
 
 const MODELS = ["INHERIT DEFAULT", "NEMOTRON 3", "CLAUDE OPUS 4", "GPT-5", "LLAMA 4 MAVERICK"];
-const PERMS = ["allow", "ask", "deny"];
+const PERMS = ["auto", "ask", "deny"];
+
+function modelIndexForValue(value: string | undefined, options: readonly string[] | undefined): number {
+  const trimmed = value?.trim() ?? "";
+  if (!trimmed) {
+    return 0;
+  }
+  const modelOptions = options && options.length > 0 ? options : MODELS;
+  const index = modelOptions.findIndex((option) => option.trim() === trimmed);
+  return index >= 0 ? index : 0;
+}
+
+function permissionForValue(value: string | undefined): string {
+  if (value === "allow") {
+    return "auto";
+  }
+  return PERMS.includes(value ?? "") ? value as string : "ask";
+}
 
 function defaults(mode: AgentEditorMode, props: AgentEditorProps): Defaults {
   const files = props.files && props.files.length > 0 ? props.files : null;
@@ -83,8 +104,8 @@ function defaults(mode: AgentEditorMode, props: AgentEditorProps): Defaults {
       created: props.createdLabel ?? "ACTIVE",
       metaLabel: props.metaLabel ?? "CREATED:",
       status: props.status ?? "online",
-      model: 0,
-      perm: "ask",
+      model: modelIndexForValue(props.initialModel, props.models),
+      perm: permissionForValue(props.initialPermission),
       files: files ?? [
         {
           label: "PERSONA",
@@ -114,8 +135,8 @@ function defaults(mode: AgentEditorMode, props: AgentEditorProps): Defaults {
     created: props.createdLabel ?? "-",
     metaLabel: props.metaLabel ?? "CREATED:",
     status: props.status ?? "idle",
-    model: 0,
-    perm: "ask",
+    model: modelIndexForValue(props.initialModel, props.models),
+    perm: permissionForValue(props.initialPermission),
     files: files ?? [
       {
         label: "PERSONA",
@@ -142,6 +163,8 @@ export function AgentEditor(props: AgentEditorProps) {
   const isNew = mode !== "manage";
   const readOnly = props.readOnly === true;
   const generalReadOnly = props.generalReadOnly ?? readOnly;
+  const identityReadOnly = props.identityReadOnly ?? generalReadOnly;
+  const behaviorReadOnly = props.behaviorReadOnly ?? generalReadOnly;
   const filesReadOnly = props.filesReadOnly ?? readOnly;
   const modelOptions = props.models && props.models.length > 0 ? props.models : MODELS;
 
@@ -285,7 +308,7 @@ export function AgentEditor(props: AgentEditorProps) {
     void runAction("create", props.onCreate, "✓ AGENT CREATED");
   };
   const onResetGeneral = () => {
-    if (generalReadOnly) return;
+    if (identityReadOnly && behaviorReadOnly) return;
     setName(meta.name);
     setRole(meta.role);
     setDesc(meta.desc);
@@ -338,7 +361,7 @@ export function AgentEditor(props: AgentEditorProps) {
   return (
     <div
       class="gsv-ae"
-      data-readonly={generalReadOnly && filesReadOnly ? "true" : undefined}
+      data-readonly={identityReadOnly && behaviorReadOnly && filesReadOnly ? "true" : undefined}
       style="position:relative;min-height:100vh;background:var(--void);font-family:var(--gsv-font-mono);color:#cdd2e0;padding:0;overflow:visible;"
     >
       {/* glyph universe texture */}
@@ -400,11 +423,11 @@ export function AgentEditor(props: AgentEditorProps) {
                     <TextInput
                       key={`ti-name-${formNonce}`}
                       value={name}
-                      onChange={generalReadOnly ? undefined : setName}
+                      onChange={identityReadOnly ? undefined : setName}
                       placeholder="Name your agent"
                       size="large"
                       label="NAME"
-                      readonly={generalReadOnly}
+                      readonly={identityReadOnly}
                     />
                   </div>
 
@@ -413,11 +436,11 @@ export function AgentEditor(props: AgentEditorProps) {
                     <TextInput
                       key={`ti-role-${formNonce}`}
                       value={role}
-                      onChange={generalReadOnly ? undefined : setRole}
+                      onChange={identityReadOnly ? undefined : setRole}
                       placeholder="e.g. PERSONAL AGENT"
                       size="medium"
                       label="ROLE"
-                      readonly={generalReadOnly}
+                      readonly={identityReadOnly}
                     />
                   </div>
 
@@ -426,12 +449,12 @@ export function AgentEditor(props: AgentEditorProps) {
                     <TextArea
                       key={`ta-desc-${formNonce}`}
                       value={desc}
-                      onChange={generalReadOnly ? undefined : setDesc}
+                      onChange={identityReadOnly ? undefined : setDesc}
                       placeholder="What is this agent for? A line or two."
                       rows={3}
                       size="medium"
                       label="DESCRIPTION"
-                      readonly={generalReadOnly}
+                      readonly={identityReadOnly}
                     />
                   </div>
 
@@ -449,9 +472,9 @@ export function AgentEditor(props: AgentEditorProps) {
                       key={`sel-model-${formNonce}`}
                       options={modelOptions}
                       value={model}
-                      onChange={generalReadOnly ? undefined : setModel}
+                      onChange={behaviorReadOnly ? undefined : setModel}
                       width={420}
-                      disabled={generalReadOnly}
+                      disabled={behaviorReadOnly}
                     />
                   </div>
 
@@ -462,15 +485,15 @@ export function AgentEditor(props: AgentEditorProps) {
                     l1="ASK"
                     l2="DENY"
                     value={permVal}
-                    onChange={generalReadOnly ? undefined : (i) => setPerm(PERMS[i] || "ask")}
+                    onChange={behaviorReadOnly ? undefined : (i) => setPerm(PERMS[i] || "ask")}
                     width={segWidth}
                     label="TOOL PERMISSIONS"
-                    disabled={generalReadOnly}
+                    disabled={behaviorReadOnly}
                   />
 
                   {/* GENERAL actions */}
                   <div style="display:flex;align-items:center;gap:12px;margin-top:42px;">
-                    {generalReadOnly ? (
+                    {identityReadOnly && behaviorReadOnly ? (
                       <span class="gsv-ae-readonly-note">READ ONLY</span>
                     ) : formError ? (
                       <span style="font-size:10px;letter-spacing:.12em;color:var(--error);">{formError}</span>
@@ -483,16 +506,16 @@ export function AgentEditor(props: AgentEditorProps) {
                         variant="primary"
                         label={pendingAction === "create" ? "CREATING" : "CREATE AGENT"}
                         onClick={onCreate}
-                        disabled={generalReadOnly || pendingAction !== null}
+                        disabled={(identityReadOnly && behaviorReadOnly) || pendingAction !== null}
                       />
                     ) : (
                       <div style="display:flex;gap:12px;">
-                        <Button variant="secondary" label="RESET" onClick={onResetGeneral} disabled={generalReadOnly || pendingAction !== null} />
+                        <Button variant="secondary" label="RESET" onClick={onResetGeneral} disabled={(identityReadOnly && behaviorReadOnly) || pendingAction !== null} />
                         <Button
                           variant="primary"
                           label={pendingAction === "save" ? "SAVING" : "SAVE"}
                           onClick={onSave}
-                          disabled={generalReadOnly || pendingAction !== null}
+                          disabled={(identityReadOnly && behaviorReadOnly) || pendingAction !== null}
                         />
                       </div>
                     )}
