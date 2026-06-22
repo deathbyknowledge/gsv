@@ -23,7 +23,7 @@ import { GsvDesktop } from "./desktop/GsvDesktop";
 import { LegacyRuntimeAnchors } from "./legacy/LegacyRuntimeAnchors";
 import { ShellRail } from "./navigation/ShellRail";
 import { ShellStatusBar } from "./navigation/ShellStatusBar";
-import { shellSurfaceLabel, type DesktopObject, type DesktopObjectId } from "./domain/shellModel";
+import { shellSurfaceLabel } from "./domain/shellModel";
 import { buildDesktopObjectsFromConsole } from "./domain/desktopObjects";
 import { useGsvShellState } from "./hooks/useGsvShellState";
 import "./styles/gsvShell.css";
@@ -96,45 +96,11 @@ function useClock(): string {
   return clock;
 }
 
-type CollapsedDesktopProps = {
-  desktopObjects: readonly DesktopObject[];
-  totalDesktopObjects: number;
-  onOpenPicker: (id: DesktopObjectId) => void;
-  onOpenControlMenu: () => void;
-};
-
-function CollapsedDesktop({
-  desktopObjects,
-  totalDesktopObjects,
-  onOpenPicker,
-  onOpenControlMenu,
-}: CollapsedDesktopProps) {
+function CollapsedDesktop() {
   return (
-    <div class="gsv-collapsed-desktop">
-      <div class="gsv-collapsed-desktop-panel">
-        <header>
-          <div>
-            <span>DESKTOP // GSV</span>
-            <strong>{totalDesktopObjects} objects</strong>
-            <small>LIVE OBJECT MAP</small>
-          </div>
-          <button type="button" onClick={onOpenControlMenu}>GSV</button>
-        </header>
-        <div class="gsv-collapsed-desktop-branches">
-          {desktopObjects.map((object) => (
-            <button
-              key={object.id}
-              type="button"
-              title={`${object.label}: ${object.meta}, ${object.statusLabel}`}
-              onClick={() => onOpenPicker(object.id)}
-            >
-              <StatusDot tone={object.status} size={7} />
-              <span>{object.label}</span>
-              <small>{object.meta}</small>
-            </button>
-          ))}
-        </div>
-      </div>
+    <div class="gsv-collapsed-desktop" aria-hidden="true">
+      <div class="gsv-space-grid" />
+      <div class="gsv-space-stars" />
     </div>
   );
 }
@@ -272,7 +238,7 @@ export function GsvShell({
               activeTabKey={shell.activeTabKey}
               onToggleCollapsed={shell.toggleRailCollapsed}
               onSetRailMode={shell.setRailMode}
-              onBackToDesktop={shell.backToDesktop}
+              onBackToDesktop={shell.desktopCollapsed ? shell.revealDesktop : shell.backToDesktop}
               onOpenPicker={shell.openPicker}
               onOpenControlMenu={shell.openControlMenu}
               onOpenSurface={shell.openSurface}
@@ -287,12 +253,7 @@ export function GsvShell({
                 onOpenSurface={shell.openSurface}
               />
             ) : shell.desktopCollapsed ? (
-              <CollapsedDesktop
-                desktopObjects={desktopObjects}
-                totalDesktopObjects={shell.totalDesktopObjects}
-                onOpenPicker={shell.openPicker}
-                onOpenControlMenu={shell.openControlMenu}
-              />
+              <CollapsedDesktop />
             ) : (
               <GsvDesktop
                 desktopObjects={desktopObjects}

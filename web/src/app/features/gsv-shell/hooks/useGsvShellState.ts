@@ -1,5 +1,5 @@
 import type { JSX, RefObject } from "preact";
-import { useEffect, useMemo, useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import {
   getDesktopObject,
   shellSurfaceLabel,
@@ -157,10 +157,6 @@ export function useGsvShellState({
 
   const activeTab = tabs.find((tab) => tab.key === activeTabKey) ?? null;
   const activeSurface: ShellSurfaceId = activeTab?.surface ?? "desktop";
-  const totalDesktopObjects = useMemo(
-    () => desktopObjects.reduce((sum, object) => sum + object.children.length, 0),
-    [desktopObjects],
-  );
   const inPageZone = activeTab !== null;
   const stackedLayout = rootWidth <= STACKED_LAYOUT_WIDTH;
   const maxChatWidth = Math.max(
@@ -200,6 +196,15 @@ export function useGsvShellState({
   };
 
   const backToDesktop = (): void => {
+    setActiveTabKey(null);
+    setSelectedObjectId(null);
+    setPickerId(null);
+    setGsvOpen(false);
+    setRailMode("objects");
+  };
+
+  const revealDesktop = (): void => {
+    setChatWidth(MIN_CHAT_WIDTH);
     setActiveTabKey(null);
     setSelectedObjectId(null);
     setPickerId(null);
@@ -366,6 +371,7 @@ export function useGsvShellState({
     pickerTitle,
     railCollapsed,
     railMode,
+    revealDesktop,
     resolvedChatWidth,
     selectedObjectId,
     setChatOpen,
@@ -379,6 +385,5 @@ export function useGsvShellState({
     tabs,
     toggleChatMax,
     toggleRailCollapsed: () => setManualRailCollapsed((value) => !value),
-    totalDesktopObjects,
   };
 }
