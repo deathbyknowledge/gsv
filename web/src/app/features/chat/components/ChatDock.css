@@ -35,29 +35,42 @@
   background: var(--node-bg);
 }
 
+.gsv-chat-popover-scrim {
+  position: absolute;
+  z-index: 50;
+  inset: 112px 0 0;
+  border: 0;
+  background: transparent;
+  cursor: default;
+}
+
 .gsv-shell-root .gsv-chat-agent {
   flex: 1;
   min-width: 0;
-  gap: 11px;
-}
-
-.gsv-shell-root .gsv-chat-agent-copy,
-.gsv-shell-root .gsv-chat-agent-copy span {
-  min-width: 0;
-  text-align: left;
-}
-
-.gsv-shell-root .gsv-chat-agent-copy span {
-  display: inline-flex;
-  gap: 0;
-}
-
-.gsv-shell-root .gsv-chat-agent-copy {
-  flex: 1;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 0;
+}
+
+.gsv-shell-root .gsv-chat-agent-main {
+  min-width: 0;
+  max-width: 100%;
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 11px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.gsv-shell-root .gsv-chat-agent-main:hover,
+.gsv-shell-root .gsv-chat-agent-main:focus-visible {
+  opacity: 0.86;
+  outline: none;
 }
 
 .gsv-shell-root .gsv-chat-agent-name-row {
@@ -86,6 +99,11 @@
   line-height: 1.2;
   color: #b6b1ff;
   text-transform: uppercase;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
 }
 
 .gsv-shell-root .gsv-chat-agent-model > span {
@@ -101,6 +119,14 @@
   color: var(--online);
 }
 
+.gsv-shell-root .gsv-chat-agent-model:hover,
+.gsv-shell-root .gsv-chat-agent-model:focus-visible,
+.gsv-shell-root .gsv-chat-agent-activity:hover,
+.gsv-shell-root .gsv-chat-agent-activity:focus-visible {
+  color: #e6e4ff;
+  outline: none;
+}
+
 .gsv-shell-root .gsv-chat-agent-activity {
   display: inline-flex;
   align-items: center;
@@ -114,6 +140,18 @@
   letter-spacing: 0.01em;
   line-height: 1.2;
   text-transform: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.gsv-shell-root .gsv-chat-agent-activity span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .gsv-shell-root .gsv-chat-agent-activity i {
@@ -160,6 +198,8 @@
 }
 
 .gsv-shell-root .gsv-chat-context-control {
+  width: auto !important;
+  height: auto !important;
   max-width: 148px;
   min-height: 27px;
   display: inline-flex;
@@ -169,10 +209,19 @@
   border: 1px solid var(--border);
   background: #0c0a22;
   color: #b6b1ff;
+  cursor: pointer;
   font-family: var(--gsv-font-mono);
   font-size: 9px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.gsv-shell-root .gsv-chat-context-control:hover,
+.gsv-shell-root .gsv-chat-context-control:focus-visible {
+  border-color: var(--dashed);
+  background: #100e2a;
+  color: #e6e4ff;
+  outline: none;
 }
 
 .gsv-shell-root .gsv-chat-context-control .gsv-icon,
@@ -290,6 +339,173 @@
 .gsv-chat-agent-chevron {
   flex: none;
   color: #7d78b8;
+}
+
+.gsv-chat-popover {
+  position: absolute;
+  z-index: 72;
+  background: #0c0a22;
+  border: 1px solid var(--border-raised);
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.65);
+  color: #cdd2e0;
+  font-family: var(--gsv-font-mono);
+  animation: gsvChatPanelIn 0.14s ease;
+}
+
+.gsv-chat-popover header {
+  min-height: 39px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--header-bar);
+}
+
+.gsv-chat-popover header span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-title);
+  font-size: 10.5px;
+  letter-spacing: 0.16em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.gsv-chat-popover header small {
+  flex: none;
+  color: #7d78b8;
+  font-size: 8.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.gsv-chat-model-popover,
+.gsv-chat-task-popover {
+  left: 64px;
+  width: min(256px, calc(100% - 84px));
+}
+
+.gsv-chat-model-popover {
+  top: 62px;
+}
+
+.gsv-chat-task-popover {
+  top: 92px;
+}
+
+.gsv-chat-context-popover {
+  top: 99px;
+  right: 12px;
+  width: min(232px, calc(100% - 24px));
+}
+
+.gsv-chat-popover-section {
+  display: grid;
+  gap: 5px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--rule-inner);
+}
+
+.gsv-chat-popover-section:last-child {
+  border-bottom: 0;
+}
+
+.gsv-chat-popover-section span,
+.gsv-chat-context-grid span {
+  color: var(--text-dim);
+  font-size: 8.5px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+.gsv-chat-popover-section strong,
+.gsv-chat-context-grid strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--node-label);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.gsv-chat-task-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 228px;
+  overflow-y: auto;
+}
+
+.gsv-chat-task-row {
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--rule-inner);
+}
+
+.gsv-chat-task-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gsv-chat-task-row small {
+  flex: none;
+  color: #9a95cf;
+  font-size: 8px;
+  letter-spacing: 0.12em;
+}
+
+.gsv-chat-popover-action {
+  width: 100%;
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  border-top: 1px solid var(--rule-inner);
+  background: transparent;
+  color: #9a94ff;
+  padding: 10px 14px;
+  cursor: pointer;
+  font-family: var(--gsv-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-decoration: underline;
+}
+
+.gsv-chat-popover-action:hover,
+.gsv-chat-popover-action:focus-visible {
+  color: var(--accent-bright);
+  outline: none;
+}
+
+.gsv-chat-context-popover-meter {
+  padding: 12px 14px 4px;
+}
+
+.gsv-chat-context-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 12px;
+  padding: 10px 14px 13px;
+}
+
+.gsv-chat-context-grid strong {
+  justify-self: end;
+  color: #cbc7ff;
 }
 
 .gsv-chat-agent-panel {
