@@ -16,6 +16,17 @@ export type ShellSurfaceId =
 export type DesktopObjectId = "machines" | "messengers" | "integrations" | "applications";
 export type ShellStatus = "online" | "error" | "idle" | "warn" | "live" | "update";
 export type DesktopGlyph = "machines" | "messengers" | "integrations" | "applications";
+export type ShellPageSurfaceId = Exclude<ShellSurfaceId, "desktop">;
+export type ShellPageTabKind = "settings" | "system" | "inventory";
+
+export type ShellPageTab = {
+  key: string;
+  surface: ShellPageSurfaceId;
+  title: string;
+  kind: ShellPageTabKind;
+  icon: string;
+  type: string;
+};
 
 export type DesktopChildObject = {
   id: string;
@@ -116,4 +127,64 @@ export function shellSurfaceLabel(surface: ShellSurfaceId): string {
     default:
       return "DESKTOP";
   }
+}
+
+export function shellTabForSurface(surface: ShellPageSurfaceId): ShellPageTab {
+  const title = shellSurfaceLabel(surface);
+  if (surface === "settings") {
+    return {
+      key: "settings",
+      surface,
+      title,
+      kind: "settings",
+      icon: "cog",
+      type: "GSV · SETTINGS",
+    };
+  }
+  if (surface === "files") {
+    return {
+      key: "sys:files",
+      surface,
+      title,
+      kind: "system",
+      icon: "folder",
+      type: "GSV · STORAGE",
+    };
+  }
+  if (surface === "library") {
+    return {
+      key: "sys:library",
+      surface,
+      title,
+      kind: "system",
+      icon: "pencil",
+      type: "GSV · PACKAGES",
+    };
+  }
+  if (surface === "terminal") {
+    return {
+      key: "sys:terminal",
+      surface,
+      title,
+      kind: "system",
+      icon: "terminal",
+      type: "GSV · CONSOLE",
+    };
+  }
+  return {
+    key: `surface:${surface}`,
+    surface,
+    title,
+    kind: "inventory",
+    icon: surface === "machines"
+      ? "computer"
+      : surface === "messengers" || surface === "crew" || surface === "agent"
+        ? "chat"
+        : surface === "integrations"
+          ? "weblink"
+          : surface === "applications"
+            ? "stars"
+            : "list",
+    type: "GSV · CONTROL",
+  };
 }
