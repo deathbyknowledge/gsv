@@ -6,6 +6,7 @@ export interface IconMenuProps {
   /** Popover width in px (280–480). */
   width?: number;
   onClose?: () => void;
+  onRuntime?: () => void;
   onFiles?: () => void;
   onLibrary?: () => void;
   onTerminal?: () => void;
@@ -13,12 +14,12 @@ export interface IconMenuProps {
 }
 
 /** IconMenu — ported from IconMenu.dc.html. GSV control popover: a header bar
- *  with a pulsing live dot + title + close affordance, over a 4-cell grid of
- *  FILES / LIBRARY / TERMINAL / SETTINGS controls. */
+ *  with a pulsing live dot + title + close affordance, over a grid of GSV controls. */
 export function IconMenu({
   title = "GSV // CONTROL",
   width = 386,
   onClose,
+  onRuntime,
   onFiles,
   onLibrary,
   onTerminal,
@@ -75,12 +76,16 @@ export function IconMenu({
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(4,1fr)",
+          gridTemplateColumns: "repeat(5,minmax(0,1fr))",
           gap: "1px",
           background: "var(--rule-inner)",
           padding: "1px",
         }}
       >
+        <div onClick={onRuntime} class="gsv-im-cell" style={{ color: "var(--accent-bright)" }}>
+          <Icon name="list" size={22} />
+          <span style={{ fontSize: "9px", letterSpacing: ".16em", color: "#7d78b8" }}>RUNTIME</span>
+        </div>
         <div onClick={onFiles} class="gsv-im-cell" style={{ color: "var(--accent-bright)" }}>
           <Icon name="folder" size={22} />
           <span style={{ fontSize: "9px", letterSpacing: ".16em", color: "#7d78b8" }}>FILES</span>

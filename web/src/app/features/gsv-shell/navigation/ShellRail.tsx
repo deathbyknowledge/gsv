@@ -4,6 +4,7 @@ import {
   GSV_CONTROL_ITEMS,
   type DesktopObject,
   type DesktopObjectId,
+  type GsvControlItem,
   type ShellRailMode,
   type ShellTab,
 } from "../domain/shellModel";
@@ -18,7 +19,7 @@ type ShellRailProps = {
   onSetRailMode: (mode: ShellRailMode) => void;
   onBackToDesktop: () => void;
   onOpenPicker: (id: DesktopObjectId) => void;
-  onOpenSurface: (surface: "files" | "library" | "terminal" | "settings") => void;
+  onOpenSurface: (surface: GsvControlItem["id"]) => void;
   onActivateTab: (key: string) => void;
   onCloseTab: (key: string) => void;
 };

@@ -5,6 +5,7 @@ export type ShellSurfaceId =
   | "agent"
   | "machines"
   | "object"
+  | "runtime"
   | "files"
   | "library"
   | "terminal";
@@ -50,7 +51,7 @@ export type SystemDockItem = {
 };
 
 export type GsvControlItem = {
-  id: "files" | "library" | "terminal" | "settings";
+  id: "runtime" | "files" | "library" | "terminal" | "settings";
   label: string;
   icon: string;
 };
@@ -89,6 +90,11 @@ export const SYSTEM_DOCK_ITEMS: SystemDockItem[] = [
 ];
 
 export const GSV_CONTROL_ITEMS: GsvControlItem[] = [
+  {
+    id: "runtime",
+    label: "RUNTIME",
+    icon: "list",
+  },
   {
     id: "files",
     label: "FILES",
@@ -138,6 +144,8 @@ export function shellSurfaceLabel(surface: ShellSurfaceId): string {
       return "MACHINES";
     case "object":
       return "OBJECT";
+    case "runtime":
+      return "RUNTIME";
     case "files":
       return "FILES";
     case "library":
