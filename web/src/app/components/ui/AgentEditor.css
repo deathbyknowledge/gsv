@@ -53,36 +53,6 @@
   color: var(--accent-bright);
 }
 
-/* ===== folder tab bar ===== */
-.gsv-ae-tabs {
-  display: flex;
-  align-items: flex-end;
-  gap: 4px;
-  padding: 0 30px;
-  border-bottom: 1px solid var(--rule-inner);
-}
-.gsv-ae-tab {
-  cursor: pointer;
-  padding: 16px 22px;
-  font-size: 11px;
-  letter-spacing: 0.18em;
-  color: #9a95cf;
-  border: 1px solid transparent;
-  border-bottom: none;
-  background: transparent;
-  margin-bottom: -1px;
-  transition: color 0.12s, background 0.12s;
-}
-.gsv-ae-tab:hover {
-  color: #cdd5e6;
-}
-.gsv-ae-tab.is-active {
-  color: var(--text-hi);
-  background: var(--panel-2);
-  border-color: var(--rule-inner);
-  text-shadow: 0 0 7px rgba(150, 140, 255, 0.45);
-}
-
 /* ===== new-file folder ===== */
 .gsv-ae-newfile:hover {
   opacity: 0.8;
