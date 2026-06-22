@@ -9,6 +9,14 @@ const DEFAULT_WINDOW_DEFAULTS: DesktopAppWindowDefaults = {
   minHeight: 520,
 };
 
+const NATIVE_WEB_PACKAGE_NAMES = new Set([
+  "@gsv/chat",
+  "@gsv/files",
+  "@gsv/gsv",
+  "@gsv/shell",
+  "@gsv/wiki",
+]);
+
 type UiEntrypointSummary = PkgEntrypointSummary & {
   kind: "ui";
   route: string;
@@ -78,8 +86,12 @@ function isLaunchableUiEntrypoint(entrypoint: PkgEntrypointSummary): entrypoint 
   return entrypoint.kind === "ui" && typeof entrypoint.route === "string" && entrypoint.route.trim().length > 0;
 }
 
+function isNativeWebPackage(pkg: PkgSummary): boolean {
+  return NATIVE_WEB_PACKAGE_NAMES.has(pkg.name);
+}
+
 export function packageToDesktopApps(pkg: PkgSummary): DesktopApp[] {
-  if (!pkg.enabled || pkg.runtime !== "web-ui") {
+  if (!pkg.enabled || pkg.runtime !== "web-ui" || isNativeWebPackage(pkg)) {
     return [];
   }
 
