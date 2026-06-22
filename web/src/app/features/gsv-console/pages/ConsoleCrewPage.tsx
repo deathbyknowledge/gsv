@@ -1,3 +1,4 @@
+import type { JSX } from "preact";
 import { AddAction } from "../../../components/ui/AddAction";
 import { AgentCard, type AgentTask } from "../../../components/ui/AgentCard";
 import type { AvatarStatus } from "../../../components/ui/Avatar";
@@ -108,7 +109,14 @@ function CrewRoster({
         />
         <div class="gsv-console-crew-grid">
           {cards.map((card) => (
-            <div class="gsv-console-crew-card-shell" key={card.account.uid}>
+            <div
+              class="gsv-console-crew-card-shell"
+              data-clickable={onManageAgent ? "true" : undefined}
+              key={card.account.uid}
+              onClick={onManageAgent ? () => onManageAgent(card.account.uid) : undefined}
+              onKeyDown={onManageAgent ? (event) => handleCardKeyDown(event, card.account.uid, onManageAgent) : undefined}
+              tabIndex={onManageAgent ? 0 : undefined}
+            >
               <AgentCard
                 agentName={card.account.displayName}
                 agentRole={card.role}
@@ -122,7 +130,6 @@ function CrewRoster({
                 active={card.active}
                 showActions={false}
                 readOnly
-                onManage={onManageAgent ? () => onManageAgent(card.account.uid) : undefined}
               />
               <div class="gsv-console-crew-card-footer">
                 <Tag label={card.statusLabel} tone={tagToneForCard(card)} boxed dot />
@@ -137,6 +144,18 @@ function CrewRoster({
       </div>
     </section>
   );
+}
+
+function handleCardKeyDown(
+  event: JSX.TargetedKeyboardEvent<HTMLDivElement>,
+  uid: number,
+  onManageAgent: (uid: number) => void,
+): void {
+  if (event.key !== "Enter" && event.key !== " ") {
+    return;
+  }
+  event.preventDefault();
+  onManageAgent(uid);
 }
 
 function buildCrewCard(

@@ -64,6 +64,22 @@
   flex-direction: column;
 }
 
+.gsv-console-crew-card-shell[data-clickable="true"] {
+  cursor: pointer;
+  transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+}
+
+.gsv-console-crew-card-shell[data-clickable="true"]:hover,
+.gsv-console-crew-card-shell[data-clickable="true"]:focus-visible {
+  border-color: var(--primary-hi);
+  box-shadow: 0 0 28px rgba(150, 140, 255, 0.2);
+  outline: none;
+}
+
+.gsv-console-crew-card-shell[data-clickable="true"]:active {
+  transform: translateY(1px);
+}
+
 .gsv-console-crew-card-shell > div:first-child {
   flex: 1 1 auto;
 }
