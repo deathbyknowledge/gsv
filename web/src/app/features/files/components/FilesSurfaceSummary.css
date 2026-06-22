@@ -3,6 +3,7 @@
   grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
   gap: 16px;
   min-height: calc(100vh - 150px);
+  align-items: start;
 }
 
 .files-target-panel,
@@ -10,6 +11,7 @@
   min-width: 0;
   border: 1px solid var(--border);
   background: var(--panel);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
 }
 
 .files-target-panel {
@@ -215,6 +217,29 @@
   overflow: auto;
 }
 
+.files-list-summary {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  min-width: 0;
+  border-bottom: 1px solid var(--rule-inner);
+  background: color-mix(in srgb, var(--panel) 86%, #070612);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+}
+
+.files-list-summary > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  color: #8c86c8;
+  font-size: 10px;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .files-entry-row {
   display: flex;
   align-items: center;
@@ -260,10 +285,21 @@
   font-size: 13px;
   letter-spacing: 0;
   line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .files-state-error .files-state-copy strong {
   color: var(--error);
+}
+
+.files-state-action {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+}
+
+.files-state-action .gsv-btn {
+  min-height: 33px;
 }
 
 .files-inline-notice {
@@ -485,9 +521,16 @@
   text-transform: uppercase;
 }
 
-.files-editor-status span:last-child {
+.files-editor-status span,
+.files-editor-status small {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.files-editor-status small {
+  color: #6f69ad;
+  font-size: 9px;
+  letter-spacing: 0.08em;
 }
 
 .files-editor-actions {
@@ -512,6 +555,59 @@
   display: grid;
   gap: 12px;
   padding: 14px;
+}
+
+.files-delete-confirm {
+  min-width: 0;
+  border: 1px solid #5a4a1f;
+  background: #181407;
+  display: grid;
+  grid-template-columns: auto minmax(0, 0.72fr) minmax(280px, 1fr);
+  gap: 12px;
+  align-items: start;
+  padding: 12px 13px;
+}
+
+.files-delete-copy {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.files-delete-copy strong {
+  color: var(--warn);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.files-delete-copy span {
+  min-width: 0;
+  color: #c9bb8e;
+  font-family: var(--gsv-font-prose);
+  font-size: 12px;
+  letter-spacing: 0;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.files-delete-controls {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.files-delete-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.files-delete-actions .gsv-btn {
+  min-height: 33px;
 }
 
 .files-image-strip {
@@ -589,6 +685,23 @@
   .files-target-panel {
     max-height: none;
   }
+
+  .files-target-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  }
+
+  .files-target-row {
+    border-right: 1px solid var(--rule-inner);
+  }
+
+  .files-delete-confirm {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .files-delete-controls {
+    grid-column: 2;
+  }
 }
 
 @media (max-width: 640px) {
@@ -607,10 +720,44 @@
     flex-direction: column;
   }
 
+  .files-target-list {
+    grid-auto-columns: minmax(220px, 86%);
+    grid-auto-flow: column;
+    grid-template-columns: none;
+    overflow-x: auto;
+  }
+
+  .files-target-row {
+    border-bottom: 0;
+  }
+
+  .files-entry-row,
+  .files-search-row {
+    min-height: 0;
+    padding: 12px;
+  }
+
+  .files-entry-row {
+    align-items: flex-start;
+  }
+
+  .files-state {
+    min-height: 190px;
+    align-items: flex-start;
+    flex-direction: column;
+    justify-content: center;
+  }
+
+  .files-state-action {
+    width: 100%;
+  }
+
   .files-action-row .gsv-btn,
   .files-search-actions .gsv-btn,
   .files-editor-actions .gsv-btn,
-  .files-inline-actions .gsv-btn {
+  .files-inline-actions .gsv-btn,
+  .files-state-action .gsv-btn,
+  .files-delete-actions .gsv-btn {
     flex: 1 1 120px;
   }
 
@@ -620,7 +767,27 @@
   }
 
   .files-inline-actions,
-  .files-editor-actions {
+  .files-editor-actions,
+  .files-delete-actions {
     width: 100%;
+  }
+
+  .files-delete-confirm {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .files-delete-controls {
+    grid-column: 1 / -1;
+  }
+
+  .files-editor-footer,
+  .files-create-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .files-editor-status {
+    align-items: flex-start;
+    flex-wrap: wrap;
   }
 }
