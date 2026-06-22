@@ -423,11 +423,6 @@ function ShipPanel({
                 size="medium"
                 onChange={onTerminalBackgroundChange}
               />
-              {onOpenSurface ? (
-                <button type="button" aria-label="Open terminal" onClick={() => onOpenSurface("terminal")}>
-                  <Chevron />
-                </button>
-              ) : null}
             </div>
           </div>
         )}
