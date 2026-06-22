@@ -115,7 +115,6 @@ function targetRow(target: ConsoleTarget): OverviewRow {
   return {
     id: target.deviceId,
     label: clampLabel(target.label, target.deviceId),
-    meta: joinMeta([target.platform, target.ownerUsername]),
     tone: target.online ? "online" : "idle",
     statusLabel: target.online ? "ONLINE" : "IDLE",
   };
@@ -127,30 +126,33 @@ function adapterRow(adapter: ConsoleAdapterAccount): OverviewRow {
   return {
     id: `${adapter.adapter}:${adapter.accountId}`,
     icon: adapter.adapter === "telegram" ? "telegram" : adapter.adapter === "discord" ? "discord" : "chat",
-    label: adapter.adapter,
-    meta: joinMeta([adapter.accountId, adapter.mode, adapter.error]),
+    label: formatTokenLabel(adapter.adapter),
+    meta: hasError ? adapter.error : undefined,
     tone: connected ? "online" : hasError ? "error" : "idle",
-    statusLabel: connected ? "ONLINE" : hasError ? "ERROR" : "IDLE",
+    statusLabel: hasError ? "ERROR" : undefined,
   };
 }
 
 function integrationRow(pkg: ConsolePackage): OverviewRow {
+  const status = packageStatus(pkg);
   return {
     id: pkg.packageId,
-    icon: "cog",
     label: pkg.name,
-    meta: joinMeta([pkg.runtime, pkg.sourceRepo]),
-    ...packageStatus(pkg),
+    tone: status.tone,
+    statusLabel: pkg.reviewPending ? status.statusLabel : undefined,
+    tag: status.tag,
   };
 }
 
 function applicationRow(pkg: ConsolePackage): OverviewRow {
+  const status = packageStatus(pkg);
   return {
     id: pkg.packageId,
     icon: "rss",
     label: pkg.name,
-    meta: joinMeta([pkg.scopeKind, pkg.version]),
-    ...packageStatus(pkg),
+    meta: packageSourceLabel(pkg),
+    tone: status.tone,
+    tag: status.tag,
   };
 }
 
@@ -203,6 +205,20 @@ function sortPackages(packages: readonly ConsolePackage[]): ConsolePackage[] {
   });
 }
 
+function formatTokenLabel(value: string): string {
+  return value
+    .split(/[-_.:/\s]+/g)
+    .filter(Boolean)
+    .map((part) => part.length <= 3 ? part.toUpperCase() : `${part.slice(0, 1).toUpperCase()}${part.slice(1).toLowerCase()}`)
+    .join(" ") || "Unknown";
+}
+
+function packageSourceLabel(pkg: ConsolePackage): string {
+  const sourceParts = pkg.sourceRepo.split(/[/:]/g).filter(Boolean);
+  const source = sourceParts[sourceParts.length - 1] ?? "";
+  return joinMeta([source, pkg.version ? `v${pkg.version}` : "", pkg.scopeKind === "unknown" ? "" : pkg.scopeKind.toUpperCase()]);
+}
+
 function scanCode(data: ConsoleOverviewData): string {
   const seed = data.loadedAt + data.processes.length * 17 + data.targets.length * 31 + data.packages.length * 47;
   return `0x${(seed % 255).toString(16).padStart(2, "0").toUpperCase()}`;
@@ -252,6 +268,11 @@ function MiniRow({ row, showIcon = true, onClick }: { row: OverviewRow; showIcon
       </span>
       {row.tag ? <Tag label={row.tag.label} tone={row.tag.tone} boxed /> : null}
       {row.statusLabel ? <span class={`gsv-settings-status is-${row.tone}`}>{row.statusLabel}</span> : null}
+      {showIcon ? (
+        <span class="gsv-settings-tail-dot">
+          <StatusDot tone={row.tone} size={8} />
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -437,12 +458,13 @@ function ModelsTasksPanel({
 }) {
   const running = counts?.activeProcesses ?? processes.filter(isRunningProcess).length;
   const queued = counts?.queuedProcesses ?? processes.filter(isQueuedProcess).length;
-  const idle = Math.max(0, processes.length - running - queued);
+  const errored = processes.filter((process) => process.state === "unknown").length;
+  const idle = Math.max(0, processes.length - running - queued - errored);
   const model = defaultModelLabelForConfig(config);
   const modelCount = modelConfigCount(config);
   const stats: StatLine[] = [
     { label: "RUNNING", value: running, tone: running > 0 ? "live" : "idle" },
-    { label: "QUEUED", value: queued, tone: queued > 0 ? "update" : "idle" },
+    { label: "ERROR", value: errored, tone: errored > 0 ? "error" : "idle" },
     { label: "IDLE", value: idle, tone: "idle" },
   ];
 
