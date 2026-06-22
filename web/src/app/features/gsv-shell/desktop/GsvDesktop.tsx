@@ -25,8 +25,13 @@ function objectCardStatus(status: ShellStatus) {
   return status === "update" ? "warn" : status;
 }
 
+function treeWidth(count: number): number {
+  return Math.max(96, count * 96 + Math.max(0, count - 1) * 64);
+}
+
 function branchStyle(index: number, count: number): JSX.CSSProperties {
-  const left = count <= 1 ? 50 : 8 + (index / (count - 1)) * 84;
+  const width = treeWidth(count);
+  const left = count <= 1 ? 50 : ((48 + index * 160) / width) * 100;
 
   return {
     "--gsv-branch-left": `${left}%`,
@@ -36,6 +41,7 @@ function branchStyle(index: number, count: number): JSX.CSSProperties {
 function branchCountStyle(count: number): JSX.CSSProperties {
   return {
     "--gsv-branch-count": count,
+    "--gsv-tree-width": `${treeWidth(count)}px`,
   } as JSX.CSSProperties;
 }
 
@@ -137,7 +143,7 @@ export function GsvDesktop({
             <div class="gsv-space-control-popover" aria-label="GSV controls">
               <IconMenu
                 title="GSV // CONTROL"
-                width={430}
+                width={386}
                 onClose={onToggleGsv}
                 onRuntime={() => onOpenSurface("runtime")}
                 onFiles={() => onOpenSurface("files")}
@@ -179,11 +185,6 @@ export function GsvDesktop({
                 status={object.status}
                 selected={selectedObjectId === object.id}
               />
-              <span class="gsv-space-node-meta">
-                <StatusDot tone={object.status} size={7} />
-                <span>{object.statusLabel}</span>
-              </span>
-              <span class="gsv-space-node-count">{object.meta}</span>
             </button>
           ))}
         </div>
@@ -220,7 +221,7 @@ export function GsvDesktop({
 
       {tabCount > 0 ? (
         <button type="button" class="gsv-space-tabs-card" onClick={onActivateTabs}>
-          <span>OPEN TABS</span>
+          <span>TABS</span>
           <strong>{tabCount}</strong>
           <small>select</small>
         </button>

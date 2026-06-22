@@ -27,6 +27,8 @@ const DEFAULT_CHAT_WIDTH = 460;
 const EXPANDED_RAIL_WIDTH = 262;
 const COLLAPSED_RAIL_WIDTH = 64;
 const MIN_CONSOLE_WIDTH = 360;
+const MIN_DESKTOP_TREE_WIDTH = 700;
+const MIN_DESKTOP_RAIL_CANVAS_WIDTH = 360;
 
 type UseGsvShellStateArgs = {
   rootRef: RefObject<HTMLDivElement>;
@@ -112,11 +114,11 @@ export function useGsvShellState({
   );
   const resolvedChatWidth = clamp(chatWidth, MIN_CHAT_WIDTH, maxChatWidth);
   const mainWidth = rootWidth - (chatOpen ? resolvedChatWidth : 0);
-  const desktopCollapsed = !inPageZone && chatOpen && mainWidth < 600;
+  const desktopCollapsed = !inPageZone && chatOpen && mainWidth < MIN_DESKTOP_TREE_WIDTH;
   const autoRailCollapsed = chatOpen && (
     inPageZone
       ? mainWidth - EXPANDED_RAIL_WIDTH < MIN_CONSOLE_WIDTH
-      : mainWidth < EXPANDED_RAIL_WIDTH + 40
+      : desktopCollapsed && mainWidth - EXPANDED_RAIL_WIDTH < MIN_DESKTOP_RAIL_CANVAS_WIDTH
   );
   const railCollapsed = manualRailCollapsed || autoRailCollapsed;
   const showRail = inPageZone || desktopCollapsed;
