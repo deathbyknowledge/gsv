@@ -1,0 +1,64 @@
+/* Ported from Progress.dc.html — values transcribed verbatim. */
+.gsv-pr {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 9px;
+  font-family: var(--gsv-font-mono);
+}
+.gsv-pr-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.gsv-pr-label {
+  font-size: 9.5px;
+  letter-spacing: 0.22em;
+  color: #b3aee2;
+}
+.gsv-pr-num {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: #cbc7ff;
+}
+.gsv-pr-track {
+  position: relative;
+  height: 6px;
+  background: #1a1740;
+  border: 1px solid #322e74;
+  overflow: hidden;
+}
+.gsv-pr-sm .gsv-pr-track {
+  height: 4px;
+}
+.gsv-pr-md .gsv-pr-track {
+  height: 6px;
+}
+.gsv-pr-lg .gsv-pr-track {
+  height: 9px;
+}
+.gsv-pr-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: linear-gradient(90deg, #8f8aff, #ffd24d);
+  box-shadow: 0 0 8px rgba(150, 140, 255, 0.4);
+  transition: width 0.35s;
+}
+@keyframes gsvProgIndet {
+  0% {
+    left: -45%;
+  }
+  100% {
+    left: 100%;
+  }
+}
+.gsv-pr-indet {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 45%;
+  background: linear-gradient(90deg, transparent, #b3aeff, transparent);
+  animation: gsvProgIndet 1.2s linear infinite;
+}

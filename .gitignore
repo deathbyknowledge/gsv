@@ -11,3 +11,6 @@ docs/.vitepress/cache/
 
 # Alchemy state
 .alchemy/
+
+# OS junk
+.DS_Store

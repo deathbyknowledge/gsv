@@ -1,0 +1,4 @@
+/* Ported from ListRow.dc.html — hover rule transcribed verbatim. */
+.lr:hover {
+  background: var(--hover) !important;
+}

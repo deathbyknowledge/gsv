@@ -1,0 +1,151 @@
+/* Ported from Toggle.dc.html — values transcribed verbatim. */
+.gsv-tg {
+  display: inline-flex;
+  align-items: center;
+  gap: 11px;
+  cursor: pointer;
+  font-family: var(--gsv-font-mono);
+  user-select: none;
+}
+.gsv-tg-track {
+  flex: none;
+  position: relative;
+  border-radius: 999px;
+  border: 1px solid #4a449e;
+  background: #0a0822;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+.gsv-tg:hover .gsv-tg-track {
+  border-color: #6b62c4;
+}
+.gsv-tg.is-on .gsv-tg-track {
+  background: #5a52a8;
+  border-color: #6b62c4;
+  box-shadow: 0 0 12px rgba(120, 110, 230, 0.45);
+}
+.gsv-tg-knob {
+  position: absolute;
+  top: 50%;
+  border-radius: 50%;
+  background: #9089d4;
+  transform: translateY(-50%);
+  transition: left 0.16s, background 0.15s;
+}
+.gsv-tg.is-on .gsv-tg-knob {
+  background: #fff;
+  box-shadow: 0 0 6px rgba(255, 255, 255, 0.7);
+}
+.gsv-tg-label {
+  letter-spacing: 0.04em;
+  color: #a8a2dc;
+  transition: color 0.12s;
+}
+.gsv-tg.is-on .gsv-tg-label {
+  color: #efeefe;
+}
+.gsv-tg.is-disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+.gsv-tg-sm .gsv-tg-track {
+  width: 30px;
+  height: 16px;
+}
+.gsv-tg-sm .gsv-tg-knob {
+  width: 12px;
+  height: 12px;
+  left: 1px;
+}
+.gsv-tg-sm.is-on .gsv-tg-knob {
+  left: 16px;
+}
+.gsv-tg-sm .gsv-tg-label {
+  font-size: 10px;
+}
+.gsv-tg-md .gsv-tg-track {
+  width: 38px;
+  height: 20px;
+}
+.gsv-tg-md .gsv-tg-knob {
+  width: 15px;
+  height: 15px;
+  left: 2px;
+}
+.gsv-tg-md.is-on .gsv-tg-knob {
+  left: 20px;
+}
+.gsv-tg-md .gsv-tg-label {
+  font-size: 11px;
+}
+.gsv-tg-lg .gsv-tg-track {
+  width: 46px;
+  height: 24px;
+}
+.gsv-tg-lg .gsv-tg-knob {
+  width: 18px;
+  height: 18px;
+  left: 2px;
+}
+.gsv-tg-lg.is-on .gsv-tg-knob {
+  left: 25px;
+}
+.gsv-tg-lg .gsv-tg-label {
+  font-size: 12.5px;
+}
+.gsv-tg-fld {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 9px;
+}
+.gsv-tg-desc {
+  font-size: 10px;
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+  color: #7d78b8;
+  max-width: 46ch;
+}
+.gsv-tg-stat {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 13px;
+}
+.gsv-tg-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 1px;
+}
+.gsv-tg-msg {
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+}
+.gsv-tg-fld.is-error .gsv-tg-msg {
+  color: #ff6f8c;
+}
+.gsv-tg-fld.is-error .gsv-tg-dot {
+  background: #ff6f8c;
+  box-shadow: 0 0 6px #ff6f8c;
+}
+.gsv-tg-fld.is-success .gsv-tg-msg {
+  color: #5ef2a0;
+}
+.gsv-tg-fld.is-success .gsv-tg-dot {
+  background: #5ef2a0;
+  box-shadow: 0 0 6px #5ef2a0;
+}
+.gsv-tg-fld.is-info .gsv-tg-msg {
+  color: #8f8aff;
+}
+.gsv-tg-fld.is-info .gsv-tg-dot {
+  background: #8f8aff;
+  box-shadow: 0 0 6px #8f8aff;
+}
+.gsv-tg-fld.is-warn .gsv-tg-msg {
+  color: #e0a64c;
+}
+.gsv-tg-fld.is-warn .gsv-tg-dot {
+  background: #e0a64c;
+  box-shadow: 0 0 6px #e0a64c;
+}

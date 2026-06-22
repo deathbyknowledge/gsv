@@ -1,0 +1,104 @@
+import type { JSX } from "preact";
+import "./ListRow.css";
+
+export type ListRowStatus = "online" | "error" | "idle" | "none";
+
+export interface ListRowProps {
+  label?: string;
+  status?: ListRowStatus;
+  statusLabel?: string;
+  sub?: string;
+  tag?: string;
+  chevron?: boolean;
+  active?: boolean;
+  onClick?: () => void;
+}
+
+const STATUS_TEXT: Record<Exclude<ListRowStatus, "none">, string> = {
+  online: "var(--online)",
+  error: "var(--error)",
+  idle: "#9a95cf",
+};
+
+const DOT_COLOR: Record<Exclude<ListRowStatus, "none">, string> = {
+  online: "var(--online)",
+  error: "var(--error)",
+  idle: "var(--idle)",
+};
+
+/** ListRow — ported from ListRow.dc.html. Full-width clickable row with status
+ *  dot, primary label + optional sub-label, optional tag/status text, chevron,
+ *  active skin and a hover state (real CSS). */
+export function ListRow({
+  label = "<HANK-LINUX>",
+  status = "online",
+  statusLabel = "",
+  sub = "",
+  tag = "",
+  chevron = false,
+  active = false,
+  onClick,
+}: ListRowProps) {
+  const st = status || "online";
+  const hasDot = st !== "none";
+  const dotKey = (st === "none" ? "online" : st) as Exclude<ListRowStatus, "none">;
+  const dc = DOT_COLOR[dotKey];
+
+  const rootStyle: JSX.CSSProperties = {
+    display: "flex",
+    alignItems: "center",
+    gap: "14px",
+    padding: "15px 20px",
+    cursor: "pointer",
+    transition: "background .12s",
+    fontFamily: "var(--gsv-font-mono)",
+    ...(active ? { background: "var(--active)" } : {}),
+  };
+
+  const dotStyle: JSX.CSSProperties = {
+    width: "8px",
+    height: "8px",
+    borderRadius: "50%",
+    flex: "none",
+    background: dc,
+    ...(st === "idle" ? {} : { boxShadow: `0 0 7px ${dc}` }),
+  };
+
+  return (
+    <div onClick={onClick} class="lr" style={rootStyle}>
+      {hasDot ? <span style={dotStyle} /> : null}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: "12.5px", letterSpacing: ".04em", color: "var(--text)" }}>{label}</div>
+        {sub ? (
+          <div style={{ fontSize: "10px", letterSpacing: ".04em", color: "#8c86c8", marginTop: "6px" }}>{sub}</div>
+        ) : null}
+      </div>
+      {tag ? (
+        <span
+          style={{
+            flex: "none",
+            fontSize: "8.5px",
+            letterSpacing: ".14em",
+            color: "var(--update)",
+            border: "1px solid #5a4a1f",
+            padding: "3px 7px",
+          }}
+        >
+          {tag}
+        </span>
+      ) : null}
+      {statusLabel ? (
+        <span style={{ flex: "none", fontSize: "9px", letterSpacing: ".12em", color: STATUS_TEXT[dotKey] }}>
+          {statusLabel}
+        </span>
+      ) : null}
+      {chevron ? (
+        <span style={{ display: "inline-flex", flex: "none", alignItems: "center" }}>
+          <svg width="9" height="12" viewBox="0 0 9 12" style={{ filter: "drop-shadow(0 0 3px rgba(150,140,255,.5))" }}>
+            <path d="M0 0 L9 6 L0 12 Z" fill="var(--accent)" />
+          </svg>
+        </span>
+      ) : null}
+    </div>
+  );
+}

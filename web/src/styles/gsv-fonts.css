@@ -1,0 +1,18 @@
+/* ============================================================
+   GSV self-hosted fonts (SIL Open Font License 1.1)
+   Departure Mono — primary console/HUD face.
+   Served from web/public/fonts/ (publicDir → "/fonts/...").
+   ============================================================ */
+@font-face {
+  font-family: "Departure Mono";
+  src: url("/fonts/DepartureMono-Regular.woff2") format("woff2");
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  /* Canonical design-system font stacks. Departure Mono is the primary
+     face; JetBrains/IBM Plex Mono are graceful monospace fallbacks. */
+  --gsv-font-mono: "Departure Mono", "JetBrains Mono", "IBM Plex Mono", monospace;
+}

@@ -1,0 +1,24 @@
+/* Ported from IconButton.dc.html — values transcribed verbatim. */
+.gsv-ibtn {
+  background: #0a0820;
+  border: 1px solid #322e74;
+  color: #9089d4;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.gsv-ibtn:hover {
+  background: #171441;
+  border-color: #b3aeff;
+  color: #cbc7ff;
+}
+.gsv-ibtn:active {
+  background: #201c4d;
+  border-color: #7a72d4;
+  color: #fff;
+}
+.gsv-ibtn-disabled {
+  background: #0a0820;
+  border: 1px solid #25224d;
+  color: #565199;
+  pointer-events: none;
+  cursor: not-allowed;
+}
