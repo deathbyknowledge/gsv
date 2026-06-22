@@ -1,0 +1,6 @@
+/* ObjectCard — hover state ported from ObjectCard.dc.html <helmet><style>. */
+.gsv-objcard:hover {
+  border-color: #9a94ff !important;
+  box-shadow: 0 0 18px rgba(150, 140, 255, 0.3), 0 12px 30px rgba(0, 0, 0, 0.55) !important;
+  background: linear-gradient(180deg, var(--hover), var(--panel)) !important;
+}

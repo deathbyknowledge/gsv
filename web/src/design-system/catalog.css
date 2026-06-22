@@ -43,6 +43,37 @@
   color: var(--text-hi);
   text-transform: uppercase;
 }
+
+.ds-tabs {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 0;
+  border: 1px solid var(--border);
+}
+.ds-tab {
+  font-family: var(--gsv-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  padding: 8px 18px;
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--border);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.ds-tab:last-child {
+  border-right: none;
+}
+.ds-tab:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.ds-tab.is-active {
+  background: var(--selected);
+  color: var(--accent-bright);
+}
 .ds-topbar .ds-sub {
   font-size: 10px;
   letter-spacing: 0.18em;
@@ -157,6 +188,17 @@
 }
 .ds-story-body {
   padding: 24px 18px;
+}
+
+/* Page-template viewport — frames a full screen inside the catalog so the long
+   page can be reviewed without blowing up overall page height. */
+.ds-template-frame {
+  height: 720px;
+  overflow: auto;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  background: var(--void);
 }
 
 /* Layout helpers for stories */
