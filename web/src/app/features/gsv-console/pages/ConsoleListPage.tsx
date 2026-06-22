@@ -5,14 +5,11 @@ import { SectionHeader } from "../../../components/ui/SectionHeader";
 import { StatusDot, type StatusTone } from "../../../components/ui/StatusDot";
 import { Tag, type TagTone } from "../../../components/ui/Tag";
 import {
-  useConsoleAccounts,
   useConsolePackages,
   useConsoleProcesses,
   useConsoleTargets,
 } from "../hooks/useConsoleData";
 import type {
-  ConsoleAccount,
-  ConsoleAccountRelation,
   ConsolePackage,
   ConsolePackageEntrypoint,
   ConsolePackageRuntime,
@@ -37,7 +34,7 @@ import {
 } from "./ConsoleDetailBlocks";
 import "./ConsoleListPage.css";
 
-type ConsoleListKind = "crew" | "machines" | "library" | "tasks";
+type ConsoleListKind = "machines" | "library" | "tasks";
 
 type ConsoleListPageProps = {
   kind: ConsoleListKind;
@@ -75,18 +72,9 @@ type OperationalRowProps = {
 };
 
 const EMPTY_RESOURCE_LABEL: Record<ConsoleListKind, string> = {
-  crew: "NO ACCOUNTS",
   machines: "NO MACHINES",
   library: "NO PACKAGES",
   tasks: "NO PROCESSES",
-};
-
-const RELATION_LABEL: Record<ConsoleAccountRelation, string> = {
-  self: "SELF",
-  "personal-agent": "PERSONAL AGENT",
-  agent: "AGENT",
-  human: "HUMAN",
-  unknown: "UNKNOWN",
 };
 
 const TARGET_KIND_LABEL: Record<ConsoleTargetKind, string> = {
@@ -104,7 +92,6 @@ const RUNTIME_LABEL: Record<ConsolePackageRuntime, string> = {
 };
 
 export function ConsoleListPage({ kind }: ConsoleListPageProps) {
-  const accounts = useConsoleAccounts({ enabled: kind === "crew" });
   const targets = useConsoleTargets({ enabled: kind === "machines" });
   const packages = useConsolePackages({ enabled: kind === "library" });
   const processes = useConsoleProcesses({ enabled: kind === "tasks" });
@@ -145,34 +132,16 @@ export function ConsoleListPage({ kind }: ConsoleListPageProps) {
     );
   }
 
-  if (kind === "library") {
-    return (
-      <ConsolePage>
-        <ConsoleResourceBoundary
-          resource={resourceWithLocalEmptyState(packages.resource)}
-          emptyLabel={EMPTY_RESOURCE_LABEL.library}
-          errorLabel="LIBRARY"
-          render={(data) => (
-            <LibraryConsoleSection
-              packages={data}
-              refreshing={packages.resource.isRefreshing}
-            />
-          )}
-        />
-      </ConsolePage>
-    );
-  }
-
   return (
     <ConsolePage>
       <ConsoleResourceBoundary
-        resource={resourceWithLocalEmptyState(accounts.resource)}
-        emptyLabel={EMPTY_RESOURCE_LABEL.crew}
-        errorLabel="CREW"
+        resource={resourceWithLocalEmptyState(packages.resource)}
+        emptyLabel={EMPTY_RESOURCE_LABEL.library}
+        errorLabel="LIBRARY"
         render={(data) => (
-          <CrewConsoleSection
-            accounts={data}
-            refreshing={accounts.resource.isRefreshing}
+          <LibraryConsoleSection
+            packages={data}
+            refreshing={packages.resource.isRefreshing}
           />
         )}
       />
@@ -499,80 +468,6 @@ function MachinesConsoleSection({
   );
 }
 
-function CrewConsoleSection({
-  accounts,
-  refreshing,
-}: {
-  accounts: readonly ConsoleAccount[];
-  refreshing: boolean;
-}) {
-  const runnable = accounts.filter((account) => account.runnable);
-  const operators = accounts.filter((account) => account.relation === "self" || account.relation === "human");
-  const agents = accounts.filter((account) => account.relation === "personal-agent" || account.relation === "agent");
-  const other = accounts.filter((account) => !operators.includes(account) && !agents.includes(account));
-
-  return (
-    <OperationalLayout
-      title="CREW"
-      meta={refreshing ? "REFRESHING" : `${accounts.length} ACCOUNTS`}
-      signals={[
-        { label: "ACCOUNTS", value: accounts.length, meta: "KNOWN IDENTITIES", tone: accounts.length > 0 ? "online" : "idle" },
-        { label: "RUNNABLE", value: runnable.length, meta: "PROC SPAWN", tone: runnable.length > 0 ? "online" : "idle" },
-        { label: "AGENTS", value: agents.length, meta: "AUTONOMOUS", tone: agents.length > 0 ? "online" : "idle" },
-        { label: "OPERATORS", value: operators.length, meta: "HUMAN ACCESS", tone: operators.length > 0 ? "online" : "idle" },
-      ]}
-      rail={(
-        <>
-          <RailSection title="ACCESS STATE" meta={`${runnable.length}/${accounts.length} RUNNABLE`}>
-            <RailSignalRow icon="stars" label="PROC.SPAWN" meta={`${runnable.length} runnable identities`} tone={runnable.length > 0 ? "online" : "idle"} />
-            <RailSignalRow icon="tag" label="ACCOUNT ONLY" meta={`${accounts.length - runnable.length} non-runnable identities`} tone={accounts.length - runnable.length > 0 ? "idle" : "online"} />
-            <RailSignalRow icon="chat" label="PERSONAL AGENTS" meta={`${accounts.filter((account) => account.relation === "personal-agent").length} assigned`} tone="online" />
-          </RailSection>
-          <RailSection title="RELATIONS" meta="GROUPED">
-            <RailSignalRow icon="tag" label="SELF" meta={`${accounts.filter((account) => account.relation === "self").length} accounts`} tone="online" />
-            <RailSignalRow icon="chat" label="AGENT" meta={`${agents.length} accounts`} tone={agents.length > 0 ? "online" : "idle"} />
-            <RailSignalRow icon="computer" label="HUMAN" meta={`${accounts.filter((account) => account.relation === "human").length} accounts`} tone={operators.length > 0 ? "online" : "idle"} />
-          </RailSection>
-        </>
-      )}
-    >
-      <AccountGroup title="OPERATORS" accounts={operators} emptyLabel="NO OPERATOR ACCOUNTS" />
-      <AccountGroup title="AGENTS" accounts={agents} emptyLabel="NO AGENT ACCOUNTS" />
-      <AccountGroup title="OTHER ACCESS" accounts={other} emptyLabel="NO OTHER ACCOUNTS" />
-    </OperationalLayout>
-  );
-}
-
-function AccountGroup({
-  title,
-  accounts,
-  emptyLabel,
-}: {
-  title: string;
-  accounts: readonly ConsoleAccount[];
-  emptyLabel: string;
-}) {
-  const runnable = accounts.filter((account) => account.runnable).length;
-
-  return (
-    <InventoryGroup title={title} meta={`${runnable}/${accounts.length} RUNNABLE`} emptyLabel={emptyLabel} isEmpty={accounts.length === 0}>
-      {accounts.map((account) => (
-        <OperationalRow
-          key={String(account.uid)}
-          icon={account.runnable ? "chat" : "tag"}
-          label={account.displayName}
-          sub={accountSub(account)}
-          tone={account.runnable ? "online" : "idle"}
-          statusLabel={account.runnable ? "RUNNABLE" : "ACCOUNT"}
-          detail={`UID ${account.uid}`}
-          tags={accountTags(account)}
-          details={<AccountDetails account={account} />}
-        />
-      ))}
-    </InventoryGroup>
-  );
-}
-
 function LibraryConsoleSection({
   packages,
   refreshing,
@@ -678,19 +573,6 @@ function TargetDetails({ target }: { target: ConsoleTarget }) {
   );
 }
 
-function AccountDetails({ account }: { account: ConsoleAccount }) {
-  return (
-    <ConsoleRowDetails summary="ACCOUNT DETAIL">
-      <ConsoleDetailGrid fields={accountDetailFields(account)} />
-      <ConsoleDetailChips
-        title="ACCESS FLAGS"
-        emptyLabel="NO ACCESS FLAGS"
-        chips={accountAccessChips(account)}
-      />
-    </ConsoleRowDetails>
-  );
-}
-
 function PackageDetails({ pkg }: { pkg: ConsolePackage }) {
   return (
     <ConsoleRowDetails summary="PACKAGE DETAIL">
@@ -761,24 +643,6 @@ function targetCapabilityChips(target: ConsoleTarget): ConsoleDetailChip[] {
     label: capability,
     tone: target.online ? "accent" : "idle",
   }));
-}
-
-function accountDetailFields(account: ConsoleAccount): ConsoleDetailField[] {
-  return [
-    { label: "UID", value: account.uid },
-    { label: "USERNAME", value: account.username },
-    { label: "DISPLAY NAME", value: account.displayName },
-    { label: "RELATION", value: RELATION_LABEL[account.relation], tone: account.relation === "unknown" ? "warn" : "info" },
-    { label: "RUNNABLE", value: yesNo(account.runnable), tone: account.runnable ? "online" : "idle" },
-    { label: "GECOS", value: account.gecos, wide: true },
-  ];
-}
-
-function accountAccessChips(account: ConsoleAccount): ConsoleDetailChip[] {
-  return [
-    { label: RELATION_LABEL[account.relation], tone: account.relation === "unknown" ? "warn" : "info" },
-    { label: account.runnable ? "PROC.SPAWN" : "ACCOUNT ONLY", tone: account.runnable ? "online" : "idle" },
-  ];
 }
 
 function packageDetailFields(pkg: ConsolePackage): ConsoleDetailField[] {
@@ -920,20 +784,6 @@ function targetTags(target: ConsoleTarget): RowTag[] {
     tags.push({ label: "CAP UNKNOWN", tone: "warn" });
   }
   return tags;
-}
-
-function accountSub(account: ConsoleAccount): string {
-  return compactText([
-    account.username,
-    account.gecos,
-  ], `uid ${account.uid}`);
-}
-
-function accountTags(account: ConsoleAccount): RowTag[] {
-  return [
-    { label: RELATION_LABEL[account.relation], tone: account.relation === "unknown" ? "warn" : "info" },
-    { label: account.runnable ? "PROC.SPAWN" : "ACCESS", tone: account.runnable ? "online" : "idle" },
-  ];
 }
 
 function isTrustedPackage(pkg: ConsolePackage): boolean {

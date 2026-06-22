@@ -21,6 +21,7 @@ export interface AgentCardProps {
   active?: boolean;
   showActions?: boolean;
   saved?: boolean;
+  readOnly?: boolean;
   /** Model dropdown options. */
   models?: string[];
   /** Tasks list (each with a per-row status dot). */
@@ -72,6 +73,7 @@ export function AgentCard(props: AgentCardProps) {
     active = true,
     showActions = true,
     saved = false,
+    readOnly = false,
     models = DEFAULT_MODELS,
     tasks = DEFAULT_TASKS,
     onManage,
@@ -129,10 +131,12 @@ export function AgentCard(props: AgentCardProps) {
 
   const permVal = PERMS.indexOf(perm) < 0 ? 1 : PERMS.indexOf(perm);
   const onPerm = (i: number) => {
+    if (readOnly) return;
     setPerm(PERMS[i] || "ask");
     flashSaved();
   };
   const onModel = (i: number) => {
+    if (readOnly) return;
     setModel(i);
     flashSaved();
   };
@@ -258,7 +262,7 @@ export function AgentCard(props: AgentCardProps) {
               </span>
             ) : null}
           </div>
-          <Select options={models} value={model} onChange={onModel} width={560} />
+          <Select options={models} value={model} onChange={onModel} width={560} disabled={readOnly} />
         </div>
 
         {/* tool permissions */}
@@ -266,7 +270,7 @@ export function AgentCard(props: AgentCardProps) {
           <div style={{ marginBottom: "9px", fontFamily: MONO, fontSize: "10px", letterSpacing: ".18em", color: "var(--label)" }}>
             TOOL PERMISSIONS
           </div>
-          <Segmented l0="ALLOW" l1="ASK" l2="DENY" value={permVal} onChange={onPerm} width={220} />
+          <Segmented l0="ALLOW" l1="ASK" l2="DENY" value={permVal} onChange={onPerm} width={220} disabled={readOnly} />
         </div>
 
         {/* tasks */}
@@ -318,7 +322,9 @@ export function AgentCard(props: AgentCardProps) {
                     onClick={() => {
                       setTask(i);
                       setTaskOpen(false);
-                      flashSaved();
+                      if (!readOnly) {
+                        flashSaved();
+                      }
                     }}
                     class="gsv-ac-taskrow"
                     style={{
