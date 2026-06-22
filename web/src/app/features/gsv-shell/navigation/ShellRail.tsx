@@ -93,8 +93,7 @@ export function ShellRail({
             onClick={() => onOpenPicker(object.id)}
           >
             <Icon name={GLYPH_ICON[object.glyph]} size={19} />
-            <span style={{ background: statusColor(object.status) }} />
-            <small>{object.children.length}</small>
+            <span style={{ background: statusColor(object.status), color: statusColor(object.status) }} />
           </button>
         ))}
         <button type="button" class="gsv-rail-gsv-dot" title="GSV" onClick={onToggleCollapsed}>
@@ -105,7 +104,10 @@ export function ShellRail({
             type="button"
             class="gsv-rail-tabs-dot"
             title="Open tabs"
-            onClick={() => onSetRailMode("tabs")}
+            onClick={() => {
+              onSetRailMode("tabs");
+              onToggleCollapsed();
+            }}
           >
             <Icon name="bookmark" size={18} />
             <strong>{tabs.length}</strong>
@@ -143,22 +145,20 @@ export function ShellRail({
               </span>
               <span class="gsv-rail-row-copy">
                 <span>{object.label}</span>
-                <small>{object.meta}</small>
               </span>
-              <i style={{ background: statusColor(object.status) }} />
+              <i style={{ background: statusColor(object.status), color: statusColor(object.status) }} />
             </button>
           ))}
           <button
             type="button"
             class={`gsv-rail-row gsv-rail-gsv${railMode === "gsv" ? " is-active" : ""}`}
-            onClick={() => onSetRailMode(railMode === "gsv" ? "tabs" : "gsv")}
+            onClick={() => onSetRailMode("gsv")}
           >
             <span class="gsv-rail-node-icon">
               <GsvMark />
             </span>
             <span class="gsv-rail-row-copy">
               <span>GSV</span>
-              <small>systems</small>
             </span>
           </button>
         </div>
@@ -172,7 +172,6 @@ export function ShellRail({
                 class={activeTabKey === item.id ? "is-active" : ""}
                 onClick={() => onOpenSurface(item.id)}
               >
-                <Icon name={item.icon} size={15} />
                 <span>{item.label}</span>
               </button>
             ))}
