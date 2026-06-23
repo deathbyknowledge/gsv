@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tan
 import { useEffect, useMemo } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import {
+  createMachineNodeToken,
   createConsoleAgent,
   loadConsoleAgentContext,
   loadConsoleAccounts,
@@ -13,9 +14,11 @@ import {
   loadConsoleTargets,
   saveConsoleAgentBehavior,
   saveConsoleAgentContext,
+  type CreateMachineNodeTokenInput,
   type CreateConsoleAgentInput,
   type CreateConsoleAgentResult,
   type ConsoleAgentContextFile,
+  type IssuedMachineNodeToken,
   type LoadConsoleOverviewOptions,
   type SaveConsoleAgentBehaviorInput,
   type SaveConsoleAgentBehaviorResult,
@@ -241,6 +244,21 @@ export function useSaveConsoleAgentBehavior() {
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: consoleConfigQueryKey }),
+        queryClient.invalidateQueries({ queryKey: consoleOverviewQueryKey }),
+      ]);
+    },
+  });
+}
+
+export function useCreateMachineNodeToken() {
+  const { client } = useGateway();
+  const queryClient = useQueryClient();
+
+  return useMutation<IssuedMachineNodeToken, Error, CreateMachineNodeTokenInput>({
+    mutationFn: (input) => createMachineNodeToken(client, input),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: consoleTargetsQueryKey }),
         queryClient.invalidateQueries({ queryKey: consoleOverviewQueryKey }),
       ]);
     },

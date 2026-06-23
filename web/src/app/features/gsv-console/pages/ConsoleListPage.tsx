@@ -19,6 +19,7 @@ import type {
   ConsoleResourceState,
   ConsoleTarget,
 } from "../domain/consoleModels";
+import { MachineProvisionFlow } from "../machines/MachineProvisionFlow";
 import {
   ConsolePage,
   ConsoleResourceBoundary,
@@ -185,7 +186,11 @@ export function ConsoleListPage({
           render={(data) => (
             selectedDetail?.kind === "machines"
               ? (selectedDetail.createNew
-                ? renderNewEntityDetail("machines", () => selectDetail(null))
+                ? renderNewEntityDetail(
+                  "machines",
+                  () => selectDetail(null),
+                  (target) => selectDetail({ kind, id: target.deviceId, label: target.label }),
+                )
                 : renderTargetDetail(data, selectedDetail.id, () => selectDetail(null))) ?? (
                 <MachinesConsoleSection
                   onOpenCreate={() => selectDetail({ kind, id: NEW_DETAIL_ID, createNew: true })}
@@ -375,17 +380,22 @@ function renderPackageList(
 function renderNewEntityDetail(
   kind: "machines" | "integrations" | "applications",
   onBack: () => void,
+  onOpenMachine?: (target: ConsoleTarget) => void,
 ): ComponentChildren {
-  const noun = kind === "machines" ? "MACHINE" : kind === "integrations" ? "INTEGRATION" : "APPLICATION";
+  if (kind === "machines") {
+    return <MachineProvisionFlow onBack={onBack} onOpenMachine={onOpenMachine} />;
+  }
+
+  const noun = kind === "integrations" ? "INTEGRATION" : "APPLICATION";
   return (
     <ConsoleEntityDetailPage
-      icon={kind === "machines" ? "computer" : kind === "integrations" ? "weblink" : "stars"}
+      icon={kind === "integrations" ? "weblink" : "stars"}
       title={`NEW ${noun}`}
       typeLabel={`GSV · ${noun}`}
       statusLabel="NOT CONFIGURED"
       tone="idle"
       blurb="Awaiting source selection and access configuration."
-      parentLabel={kind === "machines" ? "MACHINES" : kind === "integrations" ? "INTEGRATIONS" : "APPLICATIONS"}
+      parentLabel={kind === "integrations" ? "INTEGRATIONS" : "APPLICATIONS"}
       pendingLabel="FORM PLACEHOLDER"
       primaryLabel={`CREATE ${noun}`}
       onBack={onBack}
