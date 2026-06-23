@@ -65,7 +65,7 @@ class DesktopWindowContentSlot extends Component<DesktopWindowContentSlotProps> 
 }
 
 function windowClassName(window: DesktopWindowView): string {
-  const classes = ["mock-window", "managed-window"];
+  const classes = ["desktop-window", "managed-window"];
   if (window.active) {
     classes.push("is-active");
   }
