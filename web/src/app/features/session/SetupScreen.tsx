@@ -63,13 +63,13 @@ export function SetupScreen({
   const guideButtonText = draft.mode === "guided" ? "Hide guide" : "Ask the guide";
   const formRef = useRef<HTMLFormElement>(null);
 
-  // Stepper index: welcome / details(account) → 0, details(other) → 1, review → 2.
+  // Three stepper steps: Login credentials (account) · Preferences (system) ·
+  // Review and deploy. Welcome is the path chooser — before step 1 — so it has
+  // no stepper and no step count.
   const detailStep = currentDetailStep(draft);
+  const onWelcome = draft.stage === "welcome";
   const current =
-    draft.stage === "review" ? 2 : draft.stage === "details" && detailStep !== "account" ? 1 : 0;
-  // Screen number across the 4 visual screens (welcome · account · system · review).
-  const screen =
-    draft.stage === "review" ? 4 : draft.stage === "details" ? (detailStep === "account" ? 2 : 3) : 1;
+    draft.stage === "review" ? 2 : detailStep !== "account" ? 1 : 0;
 
   return (
     <AuthLayout background="galaxy" visible={snapshot.phase === "setup"} surfaceClass="gsv-auth-surface-setup">
@@ -81,16 +81,18 @@ export function SetupScreen({
           data-setup-stage={draft.stage}
           onSubmit={onSubmit}
         >
-          <div class="gsv-setup-stepper">
-            <Stepper
-              current={current}
-              l0="Login credentials"
-              l1="Preferences"
-              l2="Review and start"
-              size="small"
-              width={460}
-            />
-          </div>
+          {!onWelcome ? (
+            <div class="gsv-setup-stepper">
+              <Stepper
+                current={current}
+                l0="Login credentials"
+                l1="Preferences"
+                l2="Review and deploy"
+                size="small"
+                width={460}
+              />
+            </div>
+          ) : null}
 
           <div class="gsv-setup-body">
             <WelcomeStage draft={draft} onLane={onLane} />
@@ -99,31 +101,33 @@ export function SetupScreen({
             <SessionError className="gsv-setup-alert" message={setupError} />
           </div>
 
-          <div class="gsv-setup-nav">
-            {showBack ? (
-              <Button variant="secondary" label="Back" disabled={busy} onClick={onBack} />
-            ) : null}
-            <span class="gsv-setup-nav-spacer">
-              <span class="gsv-setup-stepcount">
-                {screen} / 4
+          {!onWelcome ? (
+            <div class="gsv-setup-nav">
+              {showBack ? (
+                <Button variant="secondary" label="Back" disabled={busy} onClick={onBack} />
+              ) : null}
+              <span class="gsv-setup-nav-spacer">
+                <span class="gsv-setup-stepcount">
+                  {current + 1} / 3
+                </span>
               </span>
-            </span>
-            {showNext ? (
-              <Button variant="primary" label="Next" disabled={busy} onClick={onNext} />
-            ) : null}
-            {showSubmit ? (
-              <Button
-                variant="primary"
-                label="Start setup"
-                disabled={busy}
-                dataAttrs={{ "data-setup-submit": true }}
-                onClick={() => formRef.current?.requestSubmit()}
-              />
-            ) : null}
-            {showGuideToggle ? (
-              <Button variant="secondary" label={guideButtonText} onClick={onGuideToggle} />
-            ) : null}
-          </div>
+              {showNext ? (
+                <Button variant="primary" label="Next" disabled={busy} onClick={onNext} />
+              ) : null}
+              {showSubmit ? (
+                <Button
+                  variant="primary"
+                  label="Deploy"
+                  disabled={busy}
+                  dataAttrs={{ "data-setup-submit": true }}
+                  onClick={() => formRef.current?.requestSubmit()}
+                />
+              ) : null}
+              {showGuideToggle ? (
+                <Button variant="secondary" label={guideButtonText} onClick={onGuideToggle} />
+              ) : null}
+            </div>
+          ) : null}
 
           <GuidePanel
             snapshot={onboardingSnapshot}

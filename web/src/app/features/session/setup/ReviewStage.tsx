@@ -20,8 +20,8 @@ export function ReviewStage({ draft }: { draft: OnboardingDraft }) {
   return (
     <section class="gsv-setup-stage gsv-setup-stage-review" data-setup-stage="review" hidden={draft.stage !== "review"}>
       <div class="gsv-setup-head">
-        <span class="gsv-setup-head-kicker">Create account · Step 4 / 4</span>
-        <h2 class="gsv-setup-head-title">Review and start</h2>
+        <span class="gsv-setup-head-kicker">Create account · Step 3 / 3</span>
+        <h2 class="gsv-setup-head-title">Review and deploy</h2>
         <p class="gsv-setup-head-sub">This is the setup plan that will be applied before the desktop opens.</p>
       </div>
       <div class="review-summary-grid">
