@@ -1,4 +1,4 @@
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useId, useRef, useState } from "preact/hooks";
 import "./Checkbox.css";
 
 export type CheckboxSize = "small" | "medium" | "large";
@@ -36,6 +36,9 @@ export function Checkbox(props: CheckboxProps) {
     onChange,
   } = props;
 
+  const fieldId = useId();
+  const inputRef = useRef<HTMLInputElement>(null);
+
   const [checkedState, setCheckedState] = useState<boolean | undefined>(undefined);
   const checked = checkedState === undefined ? !!props.checked : checkedState;
   const on = checked && !indeterminate;
@@ -43,6 +46,12 @@ export function Checkbox(props: CheckboxProps) {
   useEffect(() => {
     setCheckedState(undefined);
   }, [props.checked]);
+
+  useEffect(() => {
+    if (inputRef.current) {
+      inputRef.current.indeterminate = indeterminate;
+    }
+  }, [indeterminate]);
 
   const rawStat = status && status !== "none" ? status : "";
   const statKey = rawStat === "warning" ? "warn" : rawStat;
@@ -62,7 +71,10 @@ export function Checkbox(props: CheckboxProps) {
       {description ? <div class="gsv-cb-desc">{description}</div> : null}
       <label class={rootClass}>
         <input
+          ref={inputRef}
           aria-checked={indeterminate ? "mixed" : checked}
+          aria-describedby={hasStat ? `${fieldId}-msg` : undefined}
+          aria-invalid={status === "error" ? true : undefined}
           checked={checked}
           class="gsv-cb-input"
           disabled={disabled}
@@ -78,7 +90,7 @@ export function Checkbox(props: CheckboxProps) {
       {hasStat ? (
         <div class="gsv-cb-stat">
           <span class="gsv-cb-dot" />
-          <span class="gsv-cb-msg">{message}</span>
+          <span class="gsv-cb-msg" id={`${fieldId}-msg`}>{message}</span>
         </div>
       ) : null}
     </div>

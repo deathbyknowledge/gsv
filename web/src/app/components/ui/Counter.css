@@ -27,6 +27,10 @@
   color: #cbc7ff;
   outline: none;
 }
+.gsv-st-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
 .gsv-st-btn:not(:disabled):active {
   background: #201c4d;
   color: #fff;

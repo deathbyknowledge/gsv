@@ -1,4 +1,4 @@
-import { useState } from "preact/hooks";
+import { useId, useState } from "preact/hooks";
 import "./TextArea.css";
 
 export type TextAreaSize = "small" | "medium" | "large";
@@ -45,6 +45,7 @@ export function TextArea(props: TextAreaProps) {
     onChange,
   } = props;
 
+  const fieldId = useId();
   const [val, setVal] = useState<string | undefined>(undefined);
 
   const value = val !== undefined ? val : props.value ?? "";
@@ -61,6 +62,11 @@ export function TextArea(props: TextAreaProps) {
   const hasDesc = description.length > 0;
   const hasStatusRow = hasStatusMsg || showCounter;
 
+  const describedBy =
+    [hasDesc ? `${fieldId}-desc` : "", hasStatusMsg ? `${fieldId}-msg` : ""]
+      .filter(Boolean)
+      .join(" ") || undefined;
+
   const rootClass = `gsv-ta ${SIZE_CLASS[size]}${rawStatus ? ` is-${statusKey}` : ""}`;
   const boxClass = `gsv-ta-box ${disabled ? "is-disabled" : readonly ? "is-readonly" : ""}`.trim();
 
@@ -73,21 +79,25 @@ export function TextArea(props: TextAreaProps) {
     <div class={rootClass}>
       {hasLabelRow ? (
         <div class="gsv-ta-labelrow">
-          <span class="gsv-ta-label">
+          <span class="gsv-ta-label" id={`${fieldId}-label`}>
             {label}
             {req ? <span class="gsv-ta-req"> {req === "required" ? "· REQUIRED" : "· OPTIONAL"}</span> : null}
           </span>
         </div>
       ) : null}
-      {hasDesc ? <div class="gsv-ta-desc">{description}</div> : null}
+      {hasDesc ? <div class="gsv-ta-desc" id={`${fieldId}-desc`}>{description}</div> : null}
       <textarea
         class={boxClass}
+        id={fieldId}
         value={value}
         placeholder={placeholder}
         rows={rows}
         disabled={disabled}
         readOnly={readonly}
         spellcheck={false}
+        aria-labelledby={hasLabelRow && label.length > 0 ? `${fieldId}-label` : undefined}
+        aria-describedby={describedBy}
+        aria-invalid={status === "error" ? true : undefined}
         onInput={(e) => emit((e.target as HTMLTextAreaElement).value)}
       />
       {hasStatusRow ? (
@@ -95,7 +105,7 @@ export function TextArea(props: TextAreaProps) {
           {hasStatusMsg ? (
             <span class="gsv-ta-right">
               <span class="gsv-ta-dot" />
-              <span class="gsv-ta-msg">{message}</span>
+              <span class="gsv-ta-msg" id={`${fieldId}-msg`}>{message}</span>
             </span>
           ) : null}
           {showCounter ? <span class="gsv-ta-counter">{counterText}</span> : null}

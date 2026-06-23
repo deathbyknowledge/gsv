@@ -10,7 +10,7 @@ export interface AddActionProps {
 }
 
 const PlusGlyph = () => (
-  <svg width="16" height="16" viewBox="0 0 16 16" shape-rendering="crispEdges">
+  <svg width="16" height="16" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true">
     <g fill="currentColor">
       <rect x="7" y="3" width="2" height="10" />
       <rect x="3" y="7" width="10" height="2" />
@@ -62,7 +62,7 @@ export function AddAction({ variant = "row", label, onClick }: AddActionProps) {
       </span>
       <span style={{ fontSize: "11px", letterSpacing: ".04em", color: "var(--text-title)" }}>{text}</span>
       <span style={{ marginLeft: "auto" }}>
-        <svg width="9" height="12" viewBox="0 0 9 12" style={{ display: "block", filter: "drop-shadow(0 0 3px rgba(150,140,255,.5))" }}>
+        <svg width="9" height="12" viewBox="0 0 9 12" aria-hidden="true" style={{ display: "block", filter: "drop-shadow(0 0 3px rgba(150,140,255,.5))" }}>
           <path d="M0 0 L9 6 L0 12 Z" fill="var(--accent)" />
         </svg>
       </span>

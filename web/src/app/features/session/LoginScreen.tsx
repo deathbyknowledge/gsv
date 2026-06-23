@@ -1,4 +1,4 @@
-import { useRef, useState } from "preact/hooks";
+import { useState } from "preact/hooks";
 import { SectionHeader } from "../../components/ui/SectionHeader";
 import { TextInput } from "../../components/ui/TextInput";
 import { Button } from "../../components/ui/Button";
@@ -52,7 +52,6 @@ export function LoginScreen({
   onSubmit,
 }: LoginScreenProps) {
   const [showToken, setShowToken] = useState(false);
-  const formRef = useRef<HTMLFormElement>(null);
 
   return (
     <AuthLayout background="galaxy" visible={visible}>
@@ -65,7 +64,7 @@ export function LoginScreen({
             {loading ? (
               <LoginSkeleton />
             ) : (
-              <form ref={formRef} class="gsv-login-fields" onSubmit={onSubmit}>
+              <form class="gsv-login-fields" onSubmit={onSubmit}>
               <TextInput
                 label="USERNAME"
                 placeholder="e.g. captain"
@@ -116,7 +115,7 @@ export function LoginScreen({
                   label="SIGN IN"
                   block
                   disabled={busy}
-                  onClick={() => formRef.current?.requestSubmit()}
+                  type="submit"
                 />
               </div>
               </form>

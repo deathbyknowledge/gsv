@@ -17,5 +17,8 @@
 .gsv-cm-close:hover,
 .gsv-cm-close:focus-visible {
   color: var(--accent-bright);
-  outline: none;
+}
+.gsv-cm-close:focus-visible {
+  outline: 2px solid var(--accent-bright);
+  outline-offset: 2px;
 }

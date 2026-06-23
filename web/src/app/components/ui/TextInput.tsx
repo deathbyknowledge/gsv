@@ -1,5 +1,5 @@
 import type { JSX } from "preact";
-import { useState } from "preact/hooks";
+import { useId, useState } from "preact/hooks";
 import "./TextInput.css";
 
 export type TextInputSize = "small" | "medium" | "large";
@@ -56,6 +56,7 @@ export function TextInput(props: TextInputProps) {
     inputProps,
   } = props;
 
+  const fieldId = useId();
   const [val, setVal] = useState<string | undefined>(undefined);
   const [revealed, setRevealed] = useState(false);
 
@@ -75,6 +76,11 @@ export function TextInput(props: TextInputProps) {
   const hasLabelRow = label.length > 0 || !!req;
   const hasStatusRow = hasStatusMsg || showCounter;
 
+  const describedBy =
+    [description ? `${fieldId}-desc` : "", hasStatusMsg ? `${fieldId}-msg` : ""]
+      .filter(Boolean)
+      .join(" ") || undefined;
+
   const rootClass = `gsv-ti ${SIZE_CLASS[size]}${rawStatus ? ` is-${statusKey}` : ""}`;
   const wrapClass = `gsv-ti-wrap ${disabled ? "is-disabled" : readonly ? "is-readonly" : ""}`.trim();
 
@@ -87,28 +93,32 @@ export function TextInput(props: TextInputProps) {
     <div class={rootClass}>
       {hasLabelRow ? (
         <div class="gsv-ti-labelrow">
-          <span class="gsv-ti-label">
+          <span class="gsv-ti-label" id={`${fieldId}-label`}>
             {label}
             {req ? <span class="gsv-ti-req"> {req === "required" ? "· REQUIRED" : "· OPTIONAL"}</span> : null}
           </span>
         </div>
       ) : null}
-      {description ? <div class="gsv-ti-desc">{description}</div> : null}
+      {description ? <div class="gsv-ti-desc" id={`${fieldId}-desc`}>{description}</div> : null}
       <div class={wrapClass}>
         {prefix ? <span class="gsv-ti-affix">{prefix}</span> : null}
         <input
           {...inputProps}
           class="gsv-ti-input"
+          id={fieldId}
           type={isPassword && !revealed ? "password" : "text"}
           value={value}
           placeholder={placeholder}
           disabled={disabled}
           readOnly={readonly}
+          aria-labelledby={hasLabelRow && label.length > 0 ? `${fieldId}-label` : undefined}
+          aria-describedby={describedBy}
+          aria-invalid={status === "error" ? true : undefined}
           onInput={(e) => emit((e.target as HTMLInputElement).value)}
         />
         {showClear ? (
           <button type="button" class="gsv-ti-x" aria-label="Clear input" onClick={() => emit("")}>
-            <svg width="11" height="11" viewBox="0 0 16 16" stroke="currentColor" stroke-width="1.6" stroke-linecap="square">
+            <svg aria-hidden="true" width="11" height="11" viewBox="0 0 16 16" stroke="currentColor" stroke-width="1.6" stroke-linecap="square">
               <line x1="3" y1="3" x2="13" y2="13" />
               <line x1="13" y1="3" x2="3" y2="13" />
             </svg>
@@ -119,6 +129,8 @@ export function TextInput(props: TextInputProps) {
             type="button"
             class="gsv-ti-btn"
             disabled={disabled}
+            aria-pressed={revealed}
+            aria-label={revealed ? "Hide password" : "Show password"}
             onClick={() => setRevealed((r) => !r)}
           >
             {revealed ? "HIDE" : "SHOW"}
@@ -131,7 +143,7 @@ export function TextInput(props: TextInputProps) {
           {hasStatusMsg ? (
             <span class="gsv-ti-right">
               <span class="gsv-ti-dot" />
-              <span class="gsv-ti-msg">{message}</span>
+              <span class="gsv-ti-msg" id={`${fieldId}-msg`}>{message}</span>
             </span>
           ) : (
             <span />

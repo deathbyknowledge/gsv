@@ -113,7 +113,7 @@ export function ListRow({
       {hasDot && statusDotPlacement === "trailing" ? <span class={dotClass} style={dotStyle} /> : null}
       {chevron ? (
         <span class="lr-chevron" style={{ display: "inline-flex", flex: "none", alignItems: "center" }}>
-          <svg width="9" height="12" viewBox="0 0 9 12" style={{ filter: "drop-shadow(0 0 3px rgba(150,140,255,.5))" }}>
+          <svg width="9" height="12" viewBox="0 0 9 12" aria-hidden="true" style={{ filter: "drop-shadow(0 0 3px rgba(150,140,255,.5))" }}>
             <path d="M0 0 L9 6 L0 12 Z" fill="var(--accent)" />
           </svg>
         </span>

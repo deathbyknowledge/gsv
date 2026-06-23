@@ -1,4 +1,4 @@
-import { useRef, useState } from "preact/hooks";
+import { useId, useRef, useState } from "preact/hooks";
 import "./Radio.css";
 
 export type RadioSize = "small" | "medium" | "large";
@@ -47,6 +47,7 @@ export function Radio(props: RadioProps) {
 
   const [idxState, setIdxState] = useState<number | undefined>(undefined);
   const nameRef = useRef(`gsv-radio-${Math.random().toString(36).slice(2)}`);
+  const groupId = useId();
 
   const opts = [o0, o1, o2, o3].filter((x) => x != null && x !== "");
   const labels = opts.length ? opts : ["ALLOW", "ASK", "DENY"];
@@ -67,16 +68,27 @@ export function Radio(props: RadioProps) {
     onChange?.(i);
   };
 
+  const labelId = hasFldLabel ? `${groupId}-label` : undefined;
+  const descId = description ? `${groupId}-desc` : undefined;
+  const msgId = hasStat ? `${groupId}-msg` : undefined;
+  const describedBy = [descId, msgId].filter(Boolean).join(" ") || undefined;
+
   return (
     <div class={fldClass}>
       {hasFldLabel ? (
         <div class="gsv-fld-lab">
-          <span class="gsv-fld-lab-t">{label}</span>
+          <span class="gsv-fld-lab-t" id={labelId}>{label}</span>
           {req ? <span class="gsv-fld-req">{fldReq}</span> : null}
         </div>
       ) : null}
-      {description ? <div class="gsv-fld-desc">{description}</div> : null}
-      <div class={rootClass}>
+      {description ? <div class="gsv-fld-desc" id={descId}>{description}</div> : null}
+      <div
+        class={rootClass}
+        role="radiogroup"
+        aria-labelledby={labelId}
+        aria-describedby={describedBy}
+        aria-invalid={status === "error" ? true : undefined}
+      >
         {labels.map((optLabel, i) => (
           <label class={`gsv-rd-opt${i === idx ? " is-on" : ""}`} key={i}>
             <input
@@ -95,7 +107,7 @@ export function Radio(props: RadioProps) {
       {hasStat ? (
         <div class="gsv-fld-stat">
           <span class="gsv-fld-dot" />
-          <span class="gsv-fld-msg">{message}</span>
+          <span class="gsv-fld-msg" id={msgId}>{message}</span>
         </div>
       ) : null}
     </div>

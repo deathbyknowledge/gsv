@@ -31,6 +31,8 @@
 .gsv-cb-input:focus-visible + .gsv-cb-box {
   border-color: #b3aeff;
   box-shadow: 0 0 0 1px rgba(150, 140, 255, 0.35);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 .gsv-cb-fill {
   background: #cbc7ff;

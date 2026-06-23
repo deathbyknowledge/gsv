@@ -51,6 +51,10 @@
   box-shadow: 0 0 8px rgba(150, 140, 255, 0.6);
   transform: translate(-50%, -50%);
 }
+.gsv-sl-thumb:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 .gsv-sl.is-disabled {
   opacity: 0.45;
   pointer-events: none;
