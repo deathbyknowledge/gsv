@@ -123,10 +123,11 @@
 
 .gsv-space-glyphs span {
   position: absolute;
-  color: #b6b1ff;
-  font-size: 10px;
+  color: #d8d2ff;
+  font-size: 12px;
   line-height: 1;
-  opacity: 0.18;
+  opacity: 0.34;
+  text-shadow: 0 0 8px rgba(169, 164, 255, 0.5);
 }
 
 .gsv-space-glyphs span:nth-child(1) {
@@ -138,118 +139,118 @@
   left: 24%;
   top: 58%;
   color: #cdd5e6;
-  opacity: 0.2;
+  opacity: 0.32;
 }
 
 .gsv-space-glyphs span:nth-child(3) {
   left: 36%;
   top: 34%;
-  font-size: 8px;
-  opacity: 0.24;
+  font-size: 10px;
+  opacity: 0.38;
 }
 
 .gsv-space-glyphs span:nth-child(4) {
   left: 45%;
   top: 72%;
-  opacity: 0.16;
+  opacity: 0.28;
 }
 
 .gsv-space-glyphs span:nth-child(5) {
   left: 53%;
   top: 22%;
   color: #cdd5e6;
-  font-size: 7px;
-  opacity: 0.22;
+  font-size: 10px;
+  opacity: 0.34;
 }
 
 .gsv-space-glyphs span:nth-child(6) {
   left: 67%;
   top: 40%;
-  opacity: 0.2;
+  opacity: 0.34;
 }
 
 .gsv-space-glyphs span:nth-child(7) {
   left: 78%;
   top: 18%;
   color: var(--idle);
-  opacity: 0.18;
+  opacity: 0.32;
 }
 
 .gsv-space-glyphs span:nth-child(8) {
   left: 88%;
   top: 62%;
   color: #cdd5e6;
-  font-size: 7px;
-  opacity: 0.2;
+  font-size: 10px;
+  opacity: 0.32;
 }
 
 .gsv-space-glyphs span:nth-child(9) {
   left: 18%;
   top: 80%;
-  opacity: 0.15;
+  opacity: 0.28;
 }
 
 .gsv-space-glyphs span:nth-child(10) {
   left: 31%;
   top: 14%;
   color: #cdd5e6;
-  opacity: 0.16;
+  opacity: 0.3;
 }
 
 .gsv-space-glyphs span:nth-child(11) {
   left: 41%;
   top: 50%;
-  font-size: 7px;
-  opacity: 0.2;
+  font-size: 10px;
+  opacity: 0.32;
 }
 
 .gsv-space-glyphs span:nth-child(12) {
   left: 57%;
   top: 84%;
-  opacity: 0.16;
+  opacity: 0.28;
 }
 
 .gsv-space-glyphs span:nth-child(13) {
   left: 70%;
   top: 70%;
   color: #cdd5e6;
-  opacity: 0.18;
+  opacity: 0.32;
 }
 
 .gsv-space-glyphs span:nth-child(14) {
   left: 83%;
   top: 36%;
-  font-size: 8px;
-  opacity: 0.22;
+  font-size: 10px;
+  opacity: 0.36;
 }
 
 .gsv-space-glyphs span:nth-child(15) {
   left: 91%;
   top: 82%;
   color: #cdd5e6;
-  font-size: 7px;
-  opacity: 0.17;
+  font-size: 10px;
+  opacity: 0.3;
 }
 
 .gsv-space-glyphs span:nth-child(16) {
   left: 11%;
   top: 42%;
   color: var(--idle);
-  opacity: 0.16;
+  opacity: 0.3;
 }
 
 .gsv-space-glyphs span:nth-child(17) {
   left: 62%;
   top: 12%;
   color: #cdd5e6;
-  font-size: 7px;
-  opacity: 0.18;
+  font-size: 10px;
+  opacity: 0.3;
 }
 
 .gsv-space-glyphs span:nth-child(18) {
   left: 74%;
   top: 88%;
-  opacity: 0.16;
+  opacity: 0.28;
 }
 
 .gsv-space-hud {

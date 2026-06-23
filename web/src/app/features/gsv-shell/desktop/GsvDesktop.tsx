@@ -66,7 +66,7 @@ function GsvMark() {
 }
 
 function SpaceGlyphs() {
-  const glyphs = ["+", ".", "*", ":", ".", "+", "o", ".", "*", "-", ".", "+", ":", "*", ".", "o", ".", "+"];
+  const glyphs = ["+", "*", ":", "o", "+", "*", "o", ":", "*", "-", "+", "*", ":", "o", "+", "*", ":", "o"];
 
   return (
     <div class="gsv-space-glyphs" aria-hidden="true">
