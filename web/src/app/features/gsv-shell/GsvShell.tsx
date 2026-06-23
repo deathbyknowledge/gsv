@@ -25,7 +25,6 @@ import {
 } from "../gsv-console/components/GsvConsole";
 import { LegacyPackageRuntimeAnchors } from "../legacy-package-runtime/LegacyPackageRuntimeAnchors";
 import { GsvDesktop } from "./desktop/GsvDesktop";
-import { DesktopTabsDock } from "./navigation/DesktopTabsDock";
 import { ShellRail } from "./navigation/ShellRail";
 import { ShellStatusBar } from "./navigation/ShellStatusBar";
 import {
@@ -277,15 +276,6 @@ export function GsvShell({
                 onOpenObject={shell.openObject}
               />
             )}
-
-            {shell.activeSurface === "desktop" && !shell.desktopCollapsed && !shell.showRail ? (
-              <DesktopTabsDock
-                activeTabKey={shell.activeTabKey}
-                openTabs={shell.openTabs}
-                onActivateTab={shell.activateTab}
-                onCloseTab={shell.closeTab}
-              />
-            ) : null}
 
             {shell.pickerId ? (
               <div
