@@ -1117,58 +1117,6 @@
   text-transform: uppercase;
 }
 
-.gsv-placeholder-surface {
-  min-height: 100%;
-  background: transparent;
-}
-
-.gsv-placeholder-body {
-  max-width: 720px;
-  margin: 0 auto;
-  padding: 54px 32px;
-  display: flex;
-  align-items: flex-start;
-  gap: 22px;
-}
-
-.gsv-placeholder-icon {
-  width: 74px;
-  height: 74px;
-  flex: none;
-  border: 1px solid var(--border);
-  background: var(--node-bg);
-  color: var(--accent-bright);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.gsv-placeholder-body h2 {
-  margin: 0 0 12px;
-  color: var(--text-hi);
-  font-size: 22px;
-  letter-spacing: 0.12em;
-}
-
-.gsv-placeholder-body p {
-  margin: 0 0 20px;
-  max-width: 420px;
-  color: #9089d4;
-  font-family: var(--gsv-font-prose);
-  font-size: 14px;
-  line-height: 1.6;
-}
-
-.gsv-placeholder-body span:last-child {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--text-dim);
-  font-size: 10px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-}
-
 .gsv-shell-statusbar {
   position: absolute;
   z-index: 90;
