@@ -1,5 +1,6 @@
 import { AgentCard } from "../../../components/ui/AgentCard";
-import { CrewAddTile, CrewTile } from "../../../components/ui/CrewTile";
+import { Avatar } from "../../../components/ui/Avatar";
+import { CrewAddTile } from "../../../components/ui/CrewTile";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
 import type { ChatAgentCrewView, ChatAgentViewModel } from "../domain/agent";
 
@@ -9,6 +10,32 @@ type ActiveAgentPanelProps = {
   onOpenCrew: () => void;
   onSelectAgent?: (agentId: string) => void;
 };
+
+function ChatAgentCrewTile({
+  member,
+  onClick,
+}: {
+  member: ChatAgentCrewView;
+  onClick?: () => void;
+}) {
+  const content = (
+    <>
+      <Avatar src={member.imageSrc} status={member.status} size={50} />
+      <strong>{member.name}</strong>
+      <span>{member.statusLabel}</span>
+    </>
+  );
+
+  return onClick ? (
+    <button type="button" class="gsv-chat-agent-crew-tile" onClick={onClick}>
+      {content}
+    </button>
+  ) : (
+    <div class="gsv-chat-agent-crew-tile is-active" aria-current="true">
+      {content}
+    </div>
+  );
+}
 
 export function ActiveAgentPanel({
   agent,
@@ -65,17 +92,13 @@ export function ActiveAgentPanel({
         />
         <div class="gsv-chat-agent-crew-list">
           {agent.crew.map((member) => (
-            <CrewTile
-              active={member.active}
-              imageSrc={member.imageSrc}
+            <ChatAgentCrewTile
               key={member.id}
-              name={member.name}
+              member={member}
               onClick={member.active ? undefined : () => selectAgent(member)}
-              statusLabel={member.statusLabel}
-              tone={member.status}
             />
           ))}
-          <CrewAddTile label="NEW AGENT" onClick={openCrew} />
+          <CrewAddTile className="gsv-chat-agent-crew-add" label="NEW AGENT" onClick={openCrew} />
         </div>
       </div>
     </div>
