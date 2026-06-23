@@ -602,7 +602,10 @@ function FleetPanel({
 
   return (
     <section class="gsv-settings-block gsv-settings-fleet-block">
-      <SectionHeader title="FLEET" divider />
+      <ActionSectionHeader
+        title="FLEET"
+        onClick={openList("machines")}
+      />
       <MiniHeading
         title="MACHINES"
         onClick={openList("machines")}
@@ -664,7 +667,10 @@ function SatellitesPanel({
 
   return (
     <section class="gsv-settings-block gsv-settings-satellites-block">
-      <SectionHeader title="SATELLITES" divider />
+      <ActionSectionHeader
+        title="SATELLITES"
+        onClick={openList}
+      />
       <MiniHeading
         title="APPLICATIONS"
         onClick={openList}
