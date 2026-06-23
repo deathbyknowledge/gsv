@@ -35,10 +35,19 @@ const inactiveStyle: JSX.CSSProperties = {
   cursor: "pointer",
 };
 
-const styleFor = (last: boolean): JSX.CSSProperties => (last ? activeStyle : inactiveStyle);
+const inactiveStaticStyle: JSX.CSSProperties = {
+  fontSize: "11px",
+  letterSpacing: ".16em",
+  color: "#9d98d8",
+};
+
+const styleFor = (last: boolean, clickable: boolean): JSX.CSSProperties => (
+  last ? activeStyle : clickable ? inactiveStyle : inactiveStaticStyle
+);
 
 interface ResolvedCrumb {
   label: string;
+  clickable: boolean;
   notLast: boolean;
   onClick: () => void;
   style: JSX.CSSProperties;
@@ -60,13 +69,14 @@ export function ConsoleHeader({
     const n = crumbs.length;
     resolved = crumbs.map((c, i) => {
       const last = c.notLast !== undefined ? !c.notLast : i === n - 1;
-      return { label: c.label, notLast: !last, onClick: c.onClick ?? noop, style: c.style ?? styleFor(last) };
+      const clickable = typeof c.onClick === "function";
+      return { label: c.label, clickable, notLast: !last, onClick: c.onClick ?? noop, style: c.style ?? styleFor(last, clickable) };
     });
   } else {
     const raw = [c0, c1, c2].filter(Boolean) as string[];
     resolved = raw.map((label, i) => {
       const last = i === raw.length - 1;
-      return { label, notLast: !last, onClick: noop, style: styleFor(last) };
+      return { label, clickable: false, notLast: !last, onClick: noop, style: styleFor(last, false) };
     });
   }
 
@@ -108,9 +118,15 @@ export function ConsoleHeader({
         <div style={{ display: "flex", alignItems: "center", gap: "9px", minWidth: 0, flexWrap: "wrap" }}>
           {resolved.map((c, i) => (
             <Fragment key={i}>
-              <span onClick={c.onClick} style={c.style}>
-                {c.label}
-              </span>
+              {c.clickable ? (
+                <button type="button" class="gsv-ch-crumb" onClick={c.onClick} style={c.style}>
+                  {c.label}
+                </button>
+              ) : (
+                <span style={c.style}>
+                  {c.label}
+                </span>
+              )}
               {c.notLast ? <span style={{ color: "var(--text-dim)", fontSize: "12px" }}>/</span> : null}
             </Fragment>
           ))}
