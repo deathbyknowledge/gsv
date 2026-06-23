@@ -6,7 +6,30 @@
   background: var(--void);
 }
 
-.gsv-console-agent .gsv-ae {
+.gsv-console-agent-frame {
+  flex: 1;
+  min-height: 100%;
+  padding: 26px;
+}
+
+.gsv-console-agent-panel {
+  min-height: 560px;
+  border: 1px solid var(--border);
+  background: var(--void);
+  box-shadow: 0 0 0 1px #060414, 0 0 26px rgba(150, 140, 255, 0.12);
+}
+
+.gsv-console-agent-panel .gsv-ae {
   flex: 1;
   min-height: 100% !important;
+}
+
+@media (max-width: 680px) {
+  .gsv-console-agent-frame {
+    padding: 16px;
+  }
+
+  .gsv-console-agent-panel {
+    min-height: 480px;
+  }
 }

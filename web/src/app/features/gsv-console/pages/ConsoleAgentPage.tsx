@@ -151,46 +151,50 @@ function AgentEditorSurface({
   }, []);
 
   return (
-    <section class="gsv-console-agent" ref={rootRef}>
-      <AgentEditor
-        key={`${account.uid}:${context.dataUpdatedAt}:${processes.length}:${behavior.model}:${behavior.permission}`}
-        mode="manage"
-        avatarSrc={agentImageSrcForAccount(account, accounts)}
-        containerWidth={width || undefined}
-        initialName={account.displayName}
-        initialRole={labelForConsoleAccountRelation(account.relation)}
-        initialDescription={accountDescription(account)}
-        initialModel={behavior.model}
-        initialPermission={behavior.permission}
-        createdLabel={String(account.uid)}
-        metaLabel="UID:"
-        status={avatarStatusForProcesses(account, processes)}
-        models={resolvedModelLabels}
-        tasks={tasksForProcesses(processes)}
-        files={files}
-        identityReadOnly
-        behaviorReadOnly={!behaviorEditable}
-        filesReadOnly={!contextEditable}
-        onSave={async (draft) => {
-          if (behaviorEditable) {
-            await saveBehavior.mutateAsync({
-              uid: account.uid,
-              model: draft.modelIndex === 0 ? "" : draft.model,
-              approval: serializeApprovalPolicy({
-                ...parseApprovalPolicy(behavior.approval),
-                default: approvalActionFromValue(draft.permission),
-              }),
-            });
-          }
-          if (contextEditable) {
-            await saveContext.mutateAsync({
-              username: account.username,
-              files: draft.files,
-            });
-          }
-        }}
-        onBack={onBackToCrew}
-      />
+    <section class="gsv-console-agent">
+      <div class="gsv-console-agent-frame">
+        <div class="gsv-console-agent-panel" ref={rootRef}>
+          <AgentEditor
+            key={`${account.uid}:${context.dataUpdatedAt}:${processes.length}:${behavior.model}:${behavior.permission}`}
+            mode="manage"
+            avatarSrc={agentImageSrcForAccount(account, accounts)}
+            containerWidth={width || undefined}
+            initialName={account.displayName}
+            initialRole={labelForConsoleAccountRelation(account.relation)}
+            initialDescription={accountDescription(account)}
+            initialModel={behavior.model}
+            initialPermission={behavior.permission}
+            createdLabel={String(account.uid)}
+            metaLabel="UID:"
+            status={avatarStatusForProcesses(account, processes)}
+            models={resolvedModelLabels}
+            tasks={tasksForProcesses(processes)}
+            files={files}
+            identityReadOnly
+            behaviorReadOnly={!behaviorEditable}
+            filesReadOnly={!contextEditable}
+            onSave={async (draft) => {
+              if (behaviorEditable) {
+                await saveBehavior.mutateAsync({
+                  uid: account.uid,
+                  model: draft.modelIndex === 0 ? "" : draft.model,
+                  approval: serializeApprovalPolicy({
+                    ...parseApprovalPolicy(behavior.approval),
+                    default: approvalActionFromValue(draft.permission),
+                  }),
+                });
+              }
+              if (contextEditable) {
+                await saveContext.mutateAsync({
+                  username: account.username,
+                  files: draft.files,
+                });
+              }
+            }}
+            onBack={onBackToCrew}
+          />
+        </div>
+      </div>
     </section>
   );
 }
@@ -225,30 +229,34 @@ function NewAgentEditorSurface({
   }, []);
 
   return (
-    <section class="gsv-console-agent" ref={rootRef}>
-      <AgentEditor
-        key="new-agent-draft"
-        mode="new"
-        avatarSrc={agentImageSrcForIndex(accountCount)}
-        containerWidth={width || undefined}
-        initialRole="AGENT"
-        initialDescription=""
-        createdLabel="DRAFT"
-        metaLabel="STATUS:"
-        status="idle"
-        models={modelLabels}
-        onCreate={async (draft) => {
-          const created = await createAgent.mutateAsync(agentDraftToCreateInput(draft));
-          window.setTimeout(() => {
-            if (created.uid !== null) {
-              onAgentCreated?.(created.uid);
-              return;
-            }
-            onBackToCrew();
-          }, 0);
-        }}
-        onBack={onBackToCrew}
-      />
+    <section class="gsv-console-agent">
+      <div class="gsv-console-agent-frame">
+        <div class="gsv-console-agent-panel" ref={rootRef}>
+          <AgentEditor
+            key="new-agent-draft"
+            mode="new"
+            avatarSrc={agentImageSrcForIndex(accountCount)}
+            containerWidth={width || undefined}
+            initialRole="AGENT"
+            initialDescription=""
+            createdLabel="DRAFT"
+            metaLabel="STATUS:"
+            status="idle"
+            models={modelLabels}
+            onCreate={async (draft) => {
+              const created = await createAgent.mutateAsync(agentDraftToCreateInput(draft));
+              window.setTimeout(() => {
+                if (created.uid !== null) {
+                  onAgentCreated?.(created.uid);
+                  return;
+                }
+                onBackToCrew();
+              }, 0);
+            }}
+            onBack={onBackToCrew}
+          />
+        </div>
+      </div>
     </section>
   );
 }
