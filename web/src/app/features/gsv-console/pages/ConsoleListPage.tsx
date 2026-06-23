@@ -23,7 +23,11 @@ import {
   ConsolePage,
   ConsoleResourceBoundary,
 } from "../components/ConsolePageTemplate";
-import { ConsoleDetailPlaceholder } from "../components/ConsoleDetailPlaceholder";
+import {
+  ConsoleDetailPlaceholder,
+  type ConsoleDetailRow,
+  type ConsoleDetailSection,
+} from "../components/ConsoleDetailPlaceholder";
 import "./ConsoleListPage.css";
 
 export type ConsoleListKind = "machines" | "library" | "tasks" | "messengers" | "integrations" | "applications";
@@ -89,6 +93,7 @@ type EntityDetailPageProps = {
   parentLabel: string;
   placeholderLabel: string;
   primaryLabel: string;
+  sections?: readonly ConsoleDetailSection[];
   onBack: () => void;
 };
 
@@ -281,6 +286,7 @@ function renderProcessDetail(
       parentLabel="RUNTIME"
       placeholderLabel="DETAIL VIEW PLACEHOLDER"
       primaryLabel="SAVE CHANGES"
+      sections={processDetailSections(process)}
       onBack={onBack}
     />
   );
@@ -307,6 +313,7 @@ function renderTargetDetail(
       parentLabel="MACHINES"
       placeholderLabel="DETAIL VIEW PLACEHOLDER"
       primaryLabel="SAVE CHANGES"
+      sections={targetDetailSections(target)}
       onBack={onBack}
     />
   );
@@ -333,6 +340,7 @@ function renderAdapterDetail(
       parentLabel="MESSENGERS"
       placeholderLabel="DETAIL VIEW PLACEHOLDER"
       primaryLabel="SAVE CHANGES"
+      sections={adapterDetailSections(adapter)}
       onBack={onBack}
     />
   );
@@ -411,6 +419,7 @@ function renderPackageDetail(
       parentLabel={packageListTitle(packageKind)}
       placeholderLabel="DETAIL VIEW PLACEHOLDER"
       primaryLabel="SAVE CHANGES"
+      sections={packageDetailSections(pkg)}
       onBack={onBack}
     />
   );
@@ -422,6 +431,146 @@ function resourceWithLocalEmptyState<T>(resource: ConsoleResourceState<T>): Cons
 
 function ConsoleEntityDetailPage(props: EntityDetailPageProps) {
   return <ConsoleDetailPlaceholder {...props} />;
+}
+
+function detailRow(
+  id: string,
+  label: string,
+  value: string | number | boolean | null | undefined,
+  options: Pick<ConsoleDetailRow, "icon" | "status" | "statusLabel"> = {},
+): ConsoleDetailRow | null {
+  const sub = typeof value === "boolean"
+    ? (value ? "YES" : "NO")
+    : typeof value === "number"
+      ? String(value)
+      : value?.trim() ?? "";
+
+  return sub ? { id, label, sub, ...options } : null;
+}
+
+function liveRows(rows: readonly (ConsoleDetailRow | null)[]): ConsoleDetailRow[] {
+  return rows.filter((row): row is ConsoleDetailRow => row !== null);
+}
+
+function processDetailSections(process: ConsoleProcess): ConsoleDetailSection[] {
+  return [
+    {
+      title: "PROCESS",
+      meta: statusForProcess(process),
+      rows: liveRows([
+        detailRow("pid", "PROCESS ID", process.pid),
+        detailRow("state", "STATE", process.rawState || statusForProcess(process), {
+          status: listRowStatusForTone(toneForProcess(process)),
+          statusLabel: statusForProcess(process),
+        }),
+        detailRow("owner", "OWNER", process.username || uidLabel(process.uid)),
+        detailRow("profile", "PROFILE", process.profile),
+        detailRow("workspace", "WORKSPACE", process.cwd),
+        detailRow("interactive", "INTERACTIVE", process.interactive),
+      ]),
+    },
+    {
+      title: "RUN",
+      meta: process.activeRunId ? "ACTIVE" : process.queuedCount > 0 ? "QUEUED" : "IDLE",
+      rows: liveRows([
+        detailRow("active-run", "ACTIVE RUN", process.activeRunId),
+        detailRow("conversation", "CONVERSATION", process.activeConversationId),
+        detailRow("queued", "QUEUED MESSAGES", process.queuedCount),
+        detailRow("created", "CREATED", process.createdAt === null ? "" : formatAge(process.createdAt)),
+        detailRow("last-active", "LAST ACTIVE", process.lastActiveAt === null ? "" : formatAge(process.lastActiveAt)),
+      ]),
+    },
+  ];
+}
+
+function targetDetailSections(target: ConsoleTarget): ConsoleDetailSection[] {
+  return [
+    {
+      title: "MACHINE",
+      meta: target.online ? "ONLINE" : "OFFLINE",
+      rows: liveRows([
+        detailRow("device", "DEVICE ID", target.deviceId),
+        detailRow("status", "STATUS", target.online ? "ONLINE" : "OFFLINE", {
+          status: target.online ? "online" : "idle",
+          statusLabel: target.online ? "ONLINE" : "OFFLINE",
+        }),
+        detailRow("kind", "KIND", formatTokenLabel(target.kind)),
+        detailRow("platform", "PLATFORM", target.platform),
+        detailRow("version", "VERSION", target.version),
+        detailRow("owner", "OWNER", target.ownerUsername || uidLabel(target.ownerUid)),
+        detailRow("last-seen", "LAST SEEN", target.lastSeenAt === null ? "" : formatAge(target.lastSeenAt)),
+      ]),
+    },
+    {
+      title: "CAPABILITIES",
+      meta: `${target.implements.length}`,
+      rows: liveRows([
+        detailRow("implements", "IMPLEMENTS", target.implements.join(" / ")),
+        detailRow("description", "DESCRIPTION", target.description),
+      ]),
+    },
+  ];
+}
+
+function adapterDetailSections(adapter: ConsoleAdapterAccount): ConsoleDetailSection[] {
+  return [
+    {
+      title: "MESSENGER",
+      meta: statusForAdapter(adapter),
+      rows: liveRows([
+        detailRow("adapter", "ADAPTER", formatTokenLabel(adapter.adapter)),
+        detailRow("account", "ACCOUNT", adapter.accountId),
+        detailRow("mode", "MODE", adapter.mode),
+        detailRow("status", "STATUS", statusForAdapter(adapter), {
+          status: listRowStatusForTone(toneForAdapter(adapter)),
+          statusLabel: statusForAdapter(adapter),
+        }),
+        detailRow("authenticated", "AUTHENTICATED", adapter.authenticated),
+        detailRow("last-activity", "LAST ACTIVITY", adapter.lastActivity === null ? "" : formatAge(adapter.lastActivity)),
+        detailRow("error", "ERROR", adapter.error),
+      ]),
+    },
+  ];
+}
+
+function packageDetailSections(pkg: ConsolePackage): ConsoleDetailSection[] {
+  return [
+    {
+      title: "PACKAGE",
+      meta: statusForPackage(pkg),
+      rows: liveRows([
+        detailRow("package-id", "PACKAGE ID", pkg.packageId),
+        detailRow("status", "STATUS", statusForPackage(pkg), {
+          status: listRowStatusForTone(toneForPackage(pkg)),
+          statusLabel: statusForPackage(pkg),
+        }),
+        detailRow("runtime", "RUNTIME", runtimeLabel(pkg.runtime)),
+        detailRow("version", "VERSION", pkg.version),
+        detailRow("scope", "SCOPE", pkg.scopeKind === "user" && pkg.scopeUid !== null ? `USER ${pkg.scopeUid}` : pkg.scopeKind.toUpperCase()),
+        detailRow("review", "REVIEW REQUIRED", pkg.reviewRequired),
+      ]),
+    },
+    {
+      title: "SOURCE",
+      meta: pkg.sourcePublic ? "PUBLIC" : "PRIVATE",
+      rows: liveRows([
+        detailRow("repo", "REPOSITORY", pkg.sourceRepo),
+        detailRow("ref", "REF", pkg.sourceRef),
+        detailRow("subdir", "SUBDIRECTORY", pkg.sourceSubdir),
+        detailRow("installed", "INSTALLED", pkg.installedAt === null ? "" : formatAge(pkg.installedAt)),
+        detailRow("updated", "UPDATED", pkg.updatedAt === null ? "" : formatAge(pkg.updatedAt)),
+      ]),
+    },
+    {
+      title: "ENTRYPOINTS",
+      meta: `${pkg.entrypoints.length}`,
+      rows: liveRows([
+        detailRow("ui-entrypoints", "UI", pkg.uiEntrypoints.map((entrypoint) => entrypoint.name).join(" / ")),
+        detailRow("entrypoints", "ALL", pkg.entrypoints.map((entrypoint) => entrypoint.name).join(" / ")),
+        detailRow("bindings", "BINDINGS", pkg.bindingNames.join(" / ")),
+      ]),
+    },
+  ];
 }
 
 function SettingsListPanel({

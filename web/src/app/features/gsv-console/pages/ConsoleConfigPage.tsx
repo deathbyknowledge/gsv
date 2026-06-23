@@ -3,7 +3,11 @@ import { ListRow, type ListRowStatus } from "../../../components/ui/ListRow";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
 import type { StatusTone } from "../../../components/ui/StatusDot";
 import type { TagTone } from "../../../components/ui/Tag";
-import { ConsoleDetailPlaceholder } from "../components/ConsoleDetailPlaceholder";
+import {
+  ConsoleDetailPlaceholder,
+  type ConsoleDetailRow,
+  type ConsoleDetailSection,
+} from "../components/ConsoleDetailPlaceholder";
 import {
   ConsolePage,
   ConsoleResourceBoundary,
@@ -130,9 +134,41 @@ function ConfigDetailPanel({
       parentLabel={kind === "models" ? "MODELS" : "OVERRIDES"}
       placeholderLabel="DETAIL VIEW PLACEHOLDER"
       primaryLabel="SAVE CHANGES"
+      sections={configDetailSections(kind, row)}
       onBack={onBack}
     />
   );
+}
+
+function configDetailSections(kind: ConsoleConfigKind, row: ConfigRow): ConsoleDetailSection[] {
+  return [
+    {
+      title: kind === "models" ? "MODEL" : "CONFIG",
+      meta: row.statusLabel,
+      rows: configDetailRows([
+        configDetailRow("label", kind === "models" ? "MODEL" : "KEY", row.label),
+        configDetailRow("source", kind === "models" ? "CONFIG KEY" : "VALUE", row.sub),
+        configDetailRow("status", "STATUS", row.statusLabel, {
+          status: listRowStatusForTone(row.tone),
+          statusLabel: row.statusLabel,
+        }),
+      ]),
+    },
+  ];
+}
+
+function configDetailRow(
+  id: string,
+  label: string,
+  sub: string,
+  options: Pick<ConsoleDetailRow, "status" | "statusLabel"> = {},
+): ConsoleDetailRow | null {
+  const value = sub.trim();
+  return value ? { id, label, sub: value, ...options } : null;
+}
+
+function configDetailRows(rows: readonly (ConsoleDetailRow | null)[]): ConsoleDetailRow[] {
+  return rows.filter((row): row is ConsoleDetailRow => row !== null);
 }
 
 function listRowStatusForTone(tone: StatusTone): ListRowStatus {
