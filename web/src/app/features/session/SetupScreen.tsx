@@ -134,6 +134,7 @@ export function SetupScreen({
             onGuideMessage={onGuideMessage}
             onGuideSend={onGuideSend}
             onGuideKeyDown={onGuideKeyDown}
+            onClose={onGuideToggle}
           />
         </form>
       </div>

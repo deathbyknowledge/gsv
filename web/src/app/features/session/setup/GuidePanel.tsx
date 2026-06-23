@@ -14,6 +14,7 @@ export function GuidePanel({
   onGuideMessage,
   onGuideSend,
   onGuideKeyDown,
+  onClose,
 }: {
   snapshot: OnboardingSnapshot;
   sessionSnapshot: SessionSnapshot;
@@ -23,6 +24,7 @@ export function GuidePanel({
   onGuideMessage: (message: string) => void;
   onGuideSend: () => void;
   onGuideKeyDown: (event: KeyboardEvent) => void;
+  onClose: () => void;
 }) {
   const showPanel = snapshot.draft.stage !== "welcome" && snapshot.draft.mode === "guided";
   const disabled = !showPanel || snapshot.busy || sessionSnapshot.phase === "authenticating";
@@ -30,17 +32,19 @@ export function GuidePanel({
   return (
     <aside class="gsv-guide-panel" data-setup-guide-panel hidden={!showPanel}>
       <div class="gsv-guide-head">
-        <p class="gsv-guide-kicker">Setup guide</p>
-        <h3 class="gsv-guide-title">Ask for help shaping the plan</h3>
-        <p class="gsv-guide-copy">Passwords and API keys stay manual. The guide only patches non-secret fields.</p>
+        <div class="gsv-guide-head-text">
+          <p class="gsv-guide-kicker">Setup guide</p>
+          <h3 class="gsv-guide-title">Ask for help shaping the plan</h3>
+          <p class="gsv-guide-copy">Questions? The assistant can help you pick the right option. For your safety, secret fields remain in the form.</p>
+        </div>
+        <button type="button" class="gsv-guide-close" aria-label="Close setup assistant" onClick={onClose}>
+          <svg width="14" height="14" viewBox="0 0 16 16" stroke="currentColor" stroke-width="1.6" stroke-linecap="square">
+            <line x1="3" y1="3" x2="13" y2="13" />
+            <line x1="13" y1="3" x2="3" y2="13" />
+          </svg>
+        </button>
       </div>
       <div class="gsv-guide-log" data-setup-guide-log ref={guideLogRef}>
-        {snapshot.messages.length === 0 && !snapshot.busy ? (
-          <div class="gsv-guide-empty">
-            <strong>Ask for setup help</strong>
-            <p>System files, AI model, timezone, and device setup can be adjusted here. Secrets stay in the form.</p>
-          </div>
-        ) : null}
         {snapshot.messages.map((entry, index) => (
           <article class={`gsv-guide-msg gsv-guide-msg-${entry.role}`} data-role={entry.role} key={`${entry.role}-${index}`}>
             <span class="gsv-guide-msg-who">{entry.role === "user" ? "You" : "Guide"}</span>
