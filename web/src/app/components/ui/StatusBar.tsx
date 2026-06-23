@@ -8,10 +8,10 @@ export interface StatusBarProps {
 /** StatusBar — ported from StatusBar.dc.html. Bottom system status strip:
  *  online indicator + model + context on the left, clock + power on the right. */
 export function StatusBar({
-  model = "NEMOTRON 3",
+  model = "GATEWAY DEFAULT",
   context = "CTX 50%",
   clock = "14:21:08",
-  power = "1.8kW",
+  power = "SYNC",
 }: StatusBarProps) {
   return (
     <div

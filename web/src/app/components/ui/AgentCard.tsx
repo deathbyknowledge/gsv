@@ -37,7 +37,7 @@ export interface AgentCardProps {
 
 const PERMS = ["auto", "ask", "deny"];
 
-const DEFAULT_MODELS = ["Nemotron 3", "Claude Opus 4", "GPT-5", "Llama 4 Maverick"];
+const DEFAULT_MODELS = ["Gateway Default", "Fast Model", "Deep Model"];
 const DEFAULT_TASKS: AgentTask[] = [
   { name: "No active tasks", status: "idle" },
 ];

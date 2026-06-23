@@ -73,7 +73,7 @@ interface Defaults {
   tasks: AgentEditorTask[];
 }
 
-const MODELS = ["INHERIT DEFAULT", "NEMOTRON 3", "CLAUDE OPUS 4", "GPT-5", "LLAMA 4 MAVERICK"];
+const MODELS = ["INHERIT DEFAULT", "GATEWAY DEFAULT", "FAST MODEL", "DEEP MODEL"];
 const PERMS = ["auto", "ask", "deny"];
 
 function modelIndexForValue(value: string | undefined, options: readonly string[] | undefined): number {

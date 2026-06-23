@@ -30,7 +30,7 @@ const story: Story = {
           <Select label="OPTIONAL" requirement="optional" />
           <Select label="ERROR" status="error" message="Selection required" />
           <Select label="SUCCESS" status="success" message="Good choice" />
-          <Select label="INFO" status="info" message="Defaults to NEMOTRON 3" />
+          <Select label="INFO" status="info" message="Defaults to gateway default" />
           <Select label="WARNING" status="warning" message="May be slow" />
           <Select label="DISABLED" disabled />
         </div>

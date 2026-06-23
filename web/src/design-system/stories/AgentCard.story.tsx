@@ -38,7 +38,7 @@ const story: Story = {
             imgSrc="/img/agent-2.png"
             saved
             modelIsDefault={false}
-            models={["GPT-5", "Claude Opus 4", "Nemotron 3"]}
+            models={["Gateway Default", "Deep Model", "Fast Model"]}
             description="Watches the infra. Pages you when something breaks."
             tasksTotal={2}
             tasks={[
