@@ -7,6 +7,7 @@ import { Segmented } from "./Segmented";
 import { Button } from "./Button";
 import { Avatar, type AvatarStatus } from "./Avatar";
 import { Tabs } from "./Tabs";
+import { ConfirmModal } from "./ConfirmModal";
 
 export type AgentEditorMode = "new" | "manage";
 
@@ -320,7 +321,6 @@ export function AgentEditor(props: AgentEditorProps) {
   };
 
   const delName = curFile.label;
-  const stopProp = (e: Event) => e.stopPropagation();
   const onDelete = () => {
     if (!filesReadOnly) setDeleteOpen(true);
   };
@@ -613,7 +613,7 @@ export function AgentEditor(props: AgentEditorProps) {
 
                 {/* actions */}
                 <div style="display:flex;align-items:center;gap:12px;margin-top:16px;">
-                  <span class={`gsv-ae-delete${filesReadOnly ? " is-disabled" : ""}`} onClick={filesReadOnly ? undefined : onDelete}>DELETE</span>
+                  <Button variant="dangerGhost" label="DELETE" onClick={onDelete} disabled={filesReadOnly} />
                   <span style="flex:1;" />
                   {filesReadOnly ? (
                     <span class="gsv-ae-readonly-note">READ ONLY</span>
@@ -624,8 +624,8 @@ export function AgentEditor(props: AgentEditorProps) {
                   ) : flash ? (
                     <span style="font-size:10px;letter-spacing:.14em;color:var(--online);">{flash}</span>
                   ) : null}
-                  <span class={`gsv-ae-reset${filesReadOnly || pendingAction !== null ? " is-disabled" : ""}`} onClick={filesReadOnly || pendingAction !== null ? undefined : onReset}>RESET</span>
-                  <span class={`gsv-ae-save${filesReadOnly || pendingAction !== null ? " is-disabled" : ""}`} onClick={filesReadOnly || pendingAction !== null ? undefined : onSave}>SAVE</span>
+                  <Button variant="secondary" label="RESET" onClick={onReset} disabled={filesReadOnly || pendingAction !== null} />
+                  <Button variant="primary" label="SAVE" onClick={onSave} disabled={filesReadOnly || pendingAction !== null} />
                 </div>
               </div>
             ) : null}
@@ -650,36 +650,15 @@ export function AgentEditor(props: AgentEditorProps) {
 
             {/* DELETE CONFIRM MODAL */}
             {deleteOpen ? (
-              <div onClick={onCancelDelete} style="position:fixed;inset:0;z-index:90;background:rgba(4,3,16,.66);display:flex;align-items:center;justify-content:center;">
-                <div onClick={stopProp} style="position:relative;width:440px;max-width:90vw;background:#0e0b24;border:1px solid var(--primary-hi);box-shadow:0 0 0 1px #060414,0 18px 50px rgba(0,0,0,.6);">
-                  <span style="position:absolute;top:5px;left:5px;width:9px;height:9px;border-top:1px solid var(--bracket);border-left:1px solid var(--bracket);" />
-                  <span style="position:absolute;top:5px;right:5px;width:9px;height:9px;border-top:1px solid var(--bracket);border-right:1px solid var(--bracket);" />
-                  <span style="position:absolute;bottom:5px;left:5px;width:9px;height:9px;border-bottom:1px solid var(--bracket);border-left:1px solid var(--bracket);" />
-                  <span style="position:absolute;bottom:5px;right:5px;width:9px;height:9px;border-bottom:1px solid var(--bracket);border-right:1px solid var(--bracket);" />
-                  <div style="display:flex;align-items:center;gap:9px;padding:11px 14px;background:var(--header-bar);border-bottom:1px solid var(--border-raised);">
-                    <span style="width:7px;height:7px;flex:none;border-radius:1px;background:var(--warn);box-shadow:0 0 8px var(--warn);" />
-                    <span style="font-size:11px;letter-spacing:.2em;color:#e8d7b0;">CONFIRM DELETE</span>
-                    <span class="gsv-ae-modal-x" onClick={onCancelDelete}>✕</span>
-                  </div>
-                  <div style="display:flex;gap:16px;padding:24px 22px 20px;">
-                    <svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="1.4" style="flex:none;filter:drop-shadow(0 0 6px rgba(224,166,76,.4));">
-                      <path d="M12 3 L22 20 L2 20 Z" />
-                      <rect x="11.1" y="9" width="1.8" height="5.4" fill="var(--warn)" stroke="none" />
-                      <rect x="11.1" y="16" width="1.8" height="1.8" fill="var(--warn)" stroke="none" />
-                    </svg>
-                    <div style="padding-top:2px;">
-                      <div style="font-size:13.5px;line-height:1.65;color:var(--text);">
-                        Are you sure you want to delete <span style="color:#ffb3c2;">“{delName}”</span>?
-                      </div>
-                      <div style="font-size:11px;color:#9a95cf;margin-top:9px;letter-spacing:.04em;">
-                        This file is removed from the agent — it can’t be recovered.
-                      </div>
-                    </div>
-                  </div>
-                  <div style="display:flex;justify-content:flex-end;gap:12px;padding:0 22px 22px;">
-                    <span class="gsv-ae-modal-cancel" onClick={onCancelDelete}>CANCEL</span>
-                    <span class="gsv-ae-modal-delete" onClick={onConfirmDelete}>DELETE</span>
-                  </div>
+              <div class="gsv-ae-modal-scrim" onClick={onCancelDelete}>
+                <div class="gsv-ae-modal-wrap" onClick={(event) => event.stopPropagation()}>
+                  <ConfirmModal
+                    title="CONFIRM DELETE"
+                    message={`Are you sure you want to delete "${delName}"?`}
+                    note="This file is removed from the agent -- it can't be recovered."
+                    onCancel={onCancelDelete}
+                    onConfirm={onConfirmDelete}
+                  />
                 </div>
               </div>
             ) : null}

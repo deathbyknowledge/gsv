@@ -54,9 +54,9 @@ export function ConfirmModal({
       >
         <span style={{ width: "7px", height: "7px", flex: "none", borderRadius: "1px", background: "var(--warn)", boxShadow: "0 0 8px var(--warn)" }} />
         <span style={{ fontSize: "11px", letterSpacing: ".2em", color: "#e8d7b0" }}>{title}</span>
-        <span class="gsv-cm-close" onClick={onCancel} style={{ marginLeft: "auto", fontSize: "12px", color: "var(--text-dim)", cursor: "pointer" }}>
+        <button type="button" class="gsv-cm-close" aria-label="Close modal" onClick={onCancel}>
           {"✕"}
-        </span>
+        </button>
       </div>
 
       <div style={{ display: "flex", gap: "16px", padding: "24px 22px 20px" }}>
