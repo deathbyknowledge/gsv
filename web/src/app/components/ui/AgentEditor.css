@@ -76,8 +76,33 @@
 }
 
 /* ===== new-file folder ===== */
+.gsv-ae-file-tab {
+  appearance: none;
+  width: 78px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: center;
+}
+
+.gsv-ae-file-tab:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 4px;
+}
+
 .gsv-ae-newfile:hover {
   opacity: 0.8;
+}
+.gsv-ae-newfile:disabled:hover {
+  opacity: 0.45;
 }
 .gsv-ae-newfile.is-disabled {
   cursor: not-allowed !important;

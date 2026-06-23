@@ -569,13 +569,14 @@ export function AgentEditor(props: AgentEditorProps) {
                 {/* file folder tabs */}
                 <div style="display:flex;align-items:flex-start;gap:30px;flex-wrap:wrap;padding-bottom:24px;border-bottom:1px solid var(--rule-inner);margin-bottom:22px;">
                   {files.map((f, i) => (
-                    <div
+                    <button
+                      type="button"
+                      class="gsv-ae-file-tab"
                       onClick={() => {
                         setFileIdx(i);
                         setFlash("");
                         setFormError("");
                       }}
-                      style="display:flex;flex-direction:column;align-items:center;gap:9px;cursor:pointer;width:78px;text-align:center;"
                     >
                       <svg width="34" height="30" viewBox="0 0 16 14" shape-rendering="crispEdges" fill={i === fileIdx ? "var(--accent-bright)" : "#4a4585"}>
                         <rect x="1" y="2" width="6" height="2" />
@@ -584,19 +585,20 @@ export function AgentEditor(props: AgentEditorProps) {
                       <span style={`font-size:10px;letter-spacing:.1em;color:${i === fileIdx ? "var(--text)" : "#9a95cf"};line-height:1.35;`}>
                         {f.label}
                       </span>
-                    </div>
+                    </button>
                   ))}
-                  <div
-                    onClick={onAddFile}
-                    class={`gsv-ae-newfile${filesReadOnly ? " is-disabled" : ""}`}
-                    style="display:flex;flex-direction:column;align-items:center;gap:9px;cursor:pointer;width:78px;text-align:center;"
+                  <button
+                    type="button"
+                    disabled={filesReadOnly}
+                    onClick={filesReadOnly ? undefined : onAddFile}
+                    class={`gsv-ae-file-tab gsv-ae-newfile${filesReadOnly ? " is-disabled" : ""}`}
                   >
                     <svg width="34" height="30" viewBox="0 0 16 14" shape-rendering="crispEdges" fill="none" stroke="var(--dashed)" stroke-width="1">
                       <path d="M1.5 3.5 H6.5 V4.5" />
                       <rect x="1.5" y="4.5" width="13" height="8" />
                     </svg>
                     <span style="font-size:10px;letter-spacing:.1em;color:var(--accent);border-bottom:1px solid var(--accent);padding-bottom:1px;">NEW FILE</span>
-                  </div>
+                  </button>
                 </div>
 
                 {/* current file label */}
