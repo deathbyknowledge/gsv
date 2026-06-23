@@ -4,16 +4,24 @@
   font-family: var(--gsv-font-mono);
 }
 .gsv-sel-trig {
+  appearance: none;
+  width: 100%;
   display: flex;
   align-items: center;
   gap: 8px;
+  margin: 0;
   border: 1px solid #4a449e;
   background: #0a0822;
+  color: inherit;
   cursor: pointer;
+  font: inherit;
+  text-align: left;
   transition: border-color 0.12s;
 }
-.gsv-sel-trig:hover {
+.gsv-sel-trig:not(:disabled):hover,
+.gsv-sel-trig:not(:disabled):focus-visible {
   border-color: #6b62c4;
+  outline: none;
 }
 .gsv-sel.is-open .gsv-sel-trig {
   border-color: #b3aeff;
@@ -50,15 +58,25 @@
   font-size: 13px;
 }
 .gsv-sel-row {
+  appearance: none;
+  width: 100%;
   display: flex;
   align-items: center;
   gap: 9px;
+  margin: 0;
   padding: 10px 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
   cursor: pointer;
+  font: inherit;
+  text-align: left;
   transition: background 0.12s;
 }
-.gsv-sel-row:hover {
+.gsv-sel-row:hover,
+.gsv-sel-row:focus-visible {
   background: #201c4d;
+  outline: none;
 }
 .gsv-fld {
   display: flex;

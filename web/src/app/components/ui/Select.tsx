@@ -97,14 +97,14 @@ export function Select(props: SelectProps) {
       ) : null}
       {description.length > 0 ? <div class="gsv-fld-desc">{description}</div> : null}
       <div ref={rootRef} class={rootClass} style={{ width: "100%" }}>
-        <div class="gsv-sel-trig" onClick={toggle}>
+        <button type="button" class="gsv-sel-trig" disabled={disabled} onClick={toggle}>
           <span class="gsv-sel-val">{opts[idx]}</span>
           <span style={{ marginLeft: "auto", display: "flex" }}>
             <svg width="9" height="6" viewBox="0 0 9 6">
               <path d="M0 0 L9 0 L4.5 6 Z" fill="#b3aeff" />
             </svg>
           </span>
-        </div>
+        </button>
         {isOpen ? (
           <div
             style={{
@@ -120,10 +120,12 @@ export function Select(props: SelectProps) {
             }}
           >
             {opts.map((optLabel, i) => (
-              <div
-                onClick={() => pick(i)}
+              <button
+                type="button"
                 class="gsv-sel-row"
+                key={i}
                 style={i === idx ? { background: "#171441" } : undefined}
+                onClick={() => pick(i)}
               >
                 <span style={{ fontSize: "11px", letterSpacing: ".03em", color: i === idx ? "#fff" : "#c4bfee" }}>
                   {optLabel}
@@ -140,7 +142,7 @@ export function Select(props: SelectProps) {
                     }}
                   />
                 ) : null}
-              </div>
+              </button>
             ))}
           </div>
         ) : null}

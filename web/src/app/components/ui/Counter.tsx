@@ -81,20 +81,20 @@ export function Counter(props: CounterProps) {
       ) : null}
       {description ? <div class="gsv-fld-desc">{description}</div> : null}
       <div class={rootClass}>
-        <span class="gsv-st-btn" onClick={dec}>
+        <button type="button" class="gsv-st-btn" disabled={disabled} onClick={dec}>
           <svg width="11" height="11" viewBox="0 0 16 16" shape-rendering="crispEdges">
             <rect x="3" y="7" width="10" height="2" fill="currentColor" />
           </svg>
-        </span>
+        </button>
         <span class="gsv-st-val">{display}</span>
-        <span class="gsv-st-btn" onClick={inc}>
+        <button type="button" class="gsv-st-btn" disabled={disabled} onClick={inc}>
           <svg width="11" height="11" viewBox="0 0 16 16" shape-rendering="crispEdges">
             <g fill="currentColor">
               <rect x="7" y="3" width="2" height="10" />
               <rect x="3" y="7" width="10" height="2" />
             </g>
           </svg>
-        </span>
+        </button>
       </div>
       {hasStat ? (
         <div class="gsv-fld-stat">

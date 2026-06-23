@@ -1,3 +1,4 @@
+import { Fragment } from "preact";
 import { useState } from "preact/hooks";
 import "./Stepper.css";
 
@@ -57,13 +58,13 @@ export function Stepper(props: StepperProps) {
   return (
     <div class={rootClass} style={{ width: `${width}px`, maxWidth: "100%" }}>
       {steps.map((s) => (
-        <>
+        <Fragment key={s.num}>
           {s.hasLine ? <span class={s.lineCls} /> : null}
-          <div class="gsv-sp-step" onClick={s.pick}>
+          <button type="button" class="gsv-sp-step" onClick={s.pick}>
             <span class={s.dotCls}>{s.num}</span>
             {s.hasLabel ? <span class={s.labelCls}>{s.label}</span> : null}
-          </div>
-        </>
+          </button>
+        </Fragment>
       ))}
     </div>
   );

@@ -5,12 +5,26 @@
   font-family: var(--gsv-font-mono);
 }
 .gsv-sp-step {
+  appearance: none;
   display: inline-flex;
   flex-direction: column;
   align-items: center;
   gap: 9px;
   flex: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
   cursor: pointer;
+  font: inherit;
+  text-align: center;
+}
+.gsv-sp-step:focus-visible {
+  outline: none;
+}
+.gsv-sp-step:focus-visible .gsv-sp-dot {
+  box-shadow: 0 0 0 1px rgba(150, 140, 255, 0.35), 0 0 12px rgba(150, 140, 255, 0.45);
 }
 .gsv-sp-dot {
   display: flex;
