@@ -19,7 +19,7 @@ const slot = (children: ComponentChildren) => (
 const story: Story = {
   title: "Surface",
   group: "Data Display",
-  blurb: "card / panel · elevation levels · interactive · selected",
+  blurb: "square card / panel · emphasis levels · interactive · selected",
   render: () => (
     /* render on a --void backdrop so card-vs-background contrast is visible */
     <div
@@ -31,28 +31,28 @@ const story: Story = {
         <div class="ds-row">
           {slot(
             <Surface level={0}>
-              {sample("LEVEL 0", "Flush panel. Sits flat on the surface, no shadow.")}
+              {sample("LEVEL 0", "Base panel. Sits flat in the console surface.")}
             </Surface>,
           )}
           {slot(
             <Surface level={1}>
-              {sample("LEVEL 1", "Default card. Clearly lighter than the void backdrop.")}
+              {sample("LEVEL 1", "Default square card with panel background and border.")}
             </Surface>,
           )}
           {slot(
             <Surface level={2}>
-              {sample("LEVEL 2", "Raised card. Lighter still with a stronger shadow.")}
+              {sample("LEVEL 2", "Emphasized panel with a stronger border, still flat.")}
             </Surface>,
           )}
         </div>
       </div>
 
       <div class="ds-cell">
-        <div class="ds-label">Interactive (hover to lift)</div>
+        <div class="ds-label">Interactive (hover emphasis)</div>
         <div class="ds-row">
           {slot(
             <Surface level={1} interactive>
-              {sample("HOVER ME", "Interactive card. Raises and brightens on hover.")}
+              {sample("HOVER ME", "Interactive card with hover background and accent edge.")}
             </Surface>,
           )}
           {slot(

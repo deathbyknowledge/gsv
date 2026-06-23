@@ -4,9 +4,9 @@ import "./Surface.css";
 export interface SurfaceProps {
   /** Removes card chrome while keeping the shared reset/interactive behavior. */
   flush?: boolean;
-  /** Elevation: higher = lighter background + stronger shadow/border. */
+  /** Panel emphasis: higher = stronger border/contrast without rounded lift. */
   level?: 0 | 1 | 2;
-  /** Adds a hover lift (raised bg + border). Use for clickable cards. */
+  /** Adds hover emphasis. Use for clickable cards. */
   interactive?: boolean;
   /** Accent border + faint accent fill + glow — for selectable cards. */
   selected?: boolean;
@@ -18,7 +18,7 @@ export interface SurfaceProps {
   children?: ComponentChildren;
 }
 
-/** Surface — reusable card/panel with consistent elevation, border and
+/** Surface — reusable square card/panel with consistent border and
  *  background across the GSV design system. */
 export function Surface({
   flush = false,
