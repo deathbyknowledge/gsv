@@ -11,6 +11,11 @@ export function WelcomeStage({
 }) {
   return (
     <section class="gsv-setup-stage gsv-setup-stage-welcome" data-setup-stage="welcome" hidden={draft.stage !== "welcome"}>
+      <div class="gsv-setup-head">
+        <span class="gsv-setup-head-kicker">Create account · Step 1 / 3</span>
+        <h1 class="gsv-setup-head-title" data-setup-heading>Choose a setup path</h1>
+        <p class="gsv-setup-head-sub">Pick how much you want to configure before first start.</p>
+      </div>
       <div class="gsv-setup-mode-grid">
         <Surface
           as="button"

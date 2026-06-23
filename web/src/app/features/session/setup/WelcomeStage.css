@@ -14,6 +14,35 @@
   display: none;
 }
 
+/* Per-step head — kicker + title + sub (matches RegisterMock). */
+.gsv-setup-head {
+  margin-bottom: 22px;
+}
+.gsv-setup-head-kicker {
+  display: block;
+  font-family: var(--gsv-font-mono);
+  font-size: 9px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 9px;
+}
+.gsv-setup-head-title {
+  margin: 0;
+  font-family: var(--gsv-font-prose);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0.005em;
+  color: var(--text-hi);
+}
+.gsv-setup-head-sub {
+  margin: 8px 0 0;
+  font-family: var(--gsv-font-prose);
+  font-size: 13px;
+  line-height: 1.5;
+  color: #9d98d4;
+}
+
 .gsv-setup-mode-grid {
   display: flex;
   flex-direction: column;

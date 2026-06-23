@@ -1,9 +1,11 @@
 /* Create-account (register) wizard shell — sits in the AuthLayout galaxy
-   surface. A wide card panel: sidebar (stepper) + workspace (stages + guide). */
+   surface. Single-column flow (matches the auth-preview RegisterMock):
+   horizontal stepper on top, stacked step content, then footer nav. */
 .gsv-setup-panel {
-  width: min(920px, 94vw);
+  width: min(640px, 92vw);
   max-height: calc(100% - 56px);
   overflow: auto;
+  padding: 32px 36px;
   background: color-mix(in srgb, var(--panel) 100%, #ffffff 5%);
   border: 1px solid var(--border);
   box-shadow: 0 0 40px rgba(10, 6, 30, 0.5), 0 0 0 1px rgba(150, 140, 255, 0.04);
@@ -11,26 +13,21 @@
 }
 
 .gsv-setup-form {
-  display: grid;
-  grid-template-columns: 300px minmax(0, 1fr);
-  align-items: stretch;
-}
-/* Sidebar column (the only direct <aside> of the form). */
-.gsv-setup-form > aside {
-  padding: 28px 24px;
-  border-right: 1px solid var(--border);
-  background: color-mix(in srgb, var(--void) 35%, transparent);
+  display: flex;
+  flex-direction: column;
 }
 
-.gsv-setup-workspace {
+/* Stepper on top, centered, with a divider. */
+.gsv-setup-stepper {
   display: flex;
-  align-items: stretch;
-  min-width: 0;
+  justify-content: center;
+  padding-bottom: 26px;
+  margin-bottom: 26px;
+  border-bottom: 1px solid var(--border);
 }
-.gsv-setup-main {
-  flex: 1;
-  min-width: 0;
-  padding: 28px 30px;
+
+/* Stacked step content. Only one stage is visible at a time. */
+.gsv-setup-body {
   display: flex;
   flex-direction: column;
   gap: 22px;
@@ -46,31 +43,23 @@
   display: none;
 }
 
-/* Footer actions. */
-.gsv-setup-actions {
+/* Footer nav: back (left) · step count (center) · primary + guide (right). */
+.gsv-setup-nav {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
-  margin-top: 8px;
+  margin-top: 28px;
   padding-top: 22px;
   border-top: 1px solid var(--border);
 }
-.gsv-setup-primary {
+.gsv-setup-nav-spacer {
+  flex: 1;
   display: flex;
-  align-items: center;
-  gap: 12px;
+  justify-content: center;
 }
-
-@media (max-width: 880px) {
-  .gsv-setup-form {
-    grid-template-columns: 1fr;
-  }
-  .gsv-setup-form > aside {
-    border-right: none;
-    border-bottom: 1px solid var(--border);
-  }
-  .gsv-setup-workspace {
-    flex-direction: column;
-  }
+.gsv-setup-stepcount {
+  font-family: var(--gsv-font-mono);
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  color: var(--text-dim);
 }
