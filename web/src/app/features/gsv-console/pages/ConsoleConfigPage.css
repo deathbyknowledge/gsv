@@ -30,105 +30,6 @@
   justify-content: flex-end;
 }
 
-.gsv-console-config-detail {
-  flex: 1;
-  min-height: 100%;
-  padding: 38px 40px 88px;
-  border: 1px solid var(--border);
-  background:
-    linear-gradient(rgba(150, 140, 255, 0.035) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(150, 140, 255, 0.035) 1px, transparent 1px),
-    var(--void);
-  background-size: 42px 42px;
-}
-
-.gsv-console-config-detail-shell {
-  width: min(780px, 100%);
-  margin: 0 auto;
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
-}
-
-.gsv-console-config-detail-head {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 18px;
-}
-
-.gsv-console-config-detail-icon {
-  width: 66px;
-  height: 66px;
-  flex: none;
-  border: 1px solid var(--border);
-  background: var(--panel);
-  color: var(--accent-bright);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: inset 0 0 18px rgba(80, 70, 180, 0.18);
-}
-
-.gsv-console-config-detail-title {
-  min-width: 0;
-  display: grid;
-  gap: 9px;
-}
-
-.gsv-console-config-detail-title h2 {
-  min-width: 0;
-  margin: 0;
-  overflow-wrap: anywhere;
-  color: var(--text-hi);
-  font-size: 25px;
-  line-height: 1.08;
-  letter-spacing: 0.06em;
-  text-shadow: 0 0 8px rgba(150, 140, 255, 0.4);
-}
-
-.gsv-console-config-detail-title div {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  color: #a8a2dc;
-  font-size: 10px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-}
-
-.gsv-console-config-detail-title div span:first-child {
-  color: #8c86c8;
-  letter-spacing: 0.22em;
-}
-
-.gsv-console-config-detail-blurb {
-  max-width: 640px;
-  margin: 0;
-  color: var(--label);
-  font-family: var(--gsv-font-sans);
-  font-size: 14px;
-  line-height: 1.75;
-  overflow-wrap: anywhere;
-}
-
-.gsv-console-config-detail-panel {
-  position: relative;
-  min-width: 0;
-  display: grid;
-  gap: 14px;
-  padding: 18px;
-  border: 1px solid var(--border);
-  background: var(--panel);
-}
-
-.gsv-console-config-detail-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-}
-
 @media (max-width: 620px) {
   .gsv-console-config-list-row .lr-tag {
     display: none;
@@ -136,9 +37,5 @@
 
   .gsv-console-config-list-row .lr-status {
     min-width: 0;
-  }
-
-  .gsv-console-config-detail {
-    padding: 26px 16px 88px;
   }
 }

@@ -1,10 +1,9 @@
 import { useState } from "preact/hooks";
-import { Button } from "../../../components/ui/Button";
-import { Icon } from "../../../components/ui/Icon";
 import { ListRow, type ListRowStatus } from "../../../components/ui/ListRow";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
-import { StatusDot, type StatusTone } from "../../../components/ui/StatusDot";
+import type { StatusTone } from "../../../components/ui/StatusDot";
 import type { TagTone } from "../../../components/ui/Tag";
+import { ConsoleDetailPlaceholder } from "../components/ConsoleDetailPlaceholder";
 import {
   ConsolePage,
   ConsoleResourceBoundary,
@@ -18,12 +17,6 @@ import {
 } from "../domain/consoleAi";
 import type { ConsoleConfigEntry } from "../domain/consoleModels";
 import { useConsoleConfig } from "../hooks/useConsoleData";
-import {
-  ConsoleDetailChips,
-  ConsoleDetailGrid,
-  type ConsoleDetailChip,
-  type ConsoleDetailField,
-} from "./ConsoleDetailBlocks";
 import "./ConsoleConfigPage.css";
 
 export type ConsoleConfigKind = "models" | "overrides";
@@ -35,8 +28,6 @@ type ConfigRow = {
   statusLabel: string;
   tone: StatusTone;
   detailBlurb: string;
-  fields: readonly ConsoleDetailField[];
-  chips: readonly ConsoleDetailChip[];
   tag?: {
     label: string;
     tone: TagTone;
@@ -126,35 +117,18 @@ function ConfigDetailPanel({
   const noun = kind === "models" ? "MODEL" : "CONFIG";
 
   return (
-    <section class="gsv-console-config-detail">
-      <div class="gsv-console-config-detail-shell">
-        <header class="gsv-console-config-detail-head">
-          <span class="gsv-console-config-detail-icon">
-            <Icon name={kind === "models" ? "stars" : "cog"} size={30} />
-          </span>
-          <div class="gsv-console-config-detail-title">
-            <h2>{row.label}</h2>
-            <div>
-              <span>GSV · {noun}</span>
-              <StatusDot tone={row.tone} size={7} />
-              <span>{row.statusLabel}</span>
-            </div>
-          </div>
-        </header>
-        <p class="gsv-console-config-detail-blurb">{row.detailBlurb}</p>
-        <div class="gsv-console-config-detail-panel">
-          <span class="gsv-detail-corner is-top-left" aria-hidden="true" />
-          <span class="gsv-detail-corner is-top-right" aria-hidden="true" />
-          <span class="gsv-detail-corner is-bottom-left" aria-hidden="true" />
-          <span class="gsv-detail-corner is-bottom-right" aria-hidden="true" />
-          <ConsoleDetailGrid fields={row.fields} />
-          <ConsoleDetailChips title="STATE" emptyLabel="NO STATE" chips={row.chips} />
-        </div>
-        <div class="gsv-console-config-detail-actions">
-          <Button variant="secondary" label={`BACK TO ${kind === "models" ? "MODELS" : "OVERRIDES"}`} onClick={onBack} />
-        </div>
-      </div>
-    </section>
+    <ConsoleDetailPlaceholder
+      icon="cog"
+      title={row.label}
+      typeLabel={`GSV · ${noun}`}
+      statusLabel={row.statusLabel}
+      tone={row.tone}
+      blurb={row.detailBlurb}
+      parentLabel={kind === "models" ? "MODELS" : "OVERRIDES"}
+      placeholderLabel="DETAIL VIEW PLACEHOLDER"
+      primaryLabel="SAVE CHANGES"
+      onBack={onBack}
+    />
   );
 }
 
@@ -176,16 +150,6 @@ function modelRows(config: readonly ConsoleConfigEntry[]): ConfigRow[] {
     detailBlurb: entry.value === defaultModel
       ? "Gateway model setting currently selected as the default model for agent behavior."
       : "Gateway model setting returned by the live system configuration.",
-    fields: [
-      { label: "CONFIG KEY", value: entry.key, wide: true },
-      { label: "MODEL", value: entry.value, wide: true },
-      { label: "DEFAULT", value: entry.value === defaultModel ? "YES" : "NO", tone: entry.value === defaultModel ? "online" : "idle" },
-      { label: "SOURCE", value: "GATEWAY CONFIG" },
-    ],
-    chips: [
-      { label: entry.value === defaultModel ? "DEFAULT" : "CONFIGURED", tone: entry.value === defaultModel ? "online" : "accent" },
-      { label: "LIVE CONFIG", tone: "info" },
-    ],
     ...(entry.value === defaultModel ? { tag: { label: "DEFAULT", tone: "online" as const } } : {}),
   }));
 
@@ -200,16 +164,6 @@ function modelRows(config: readonly ConsoleConfigEntry[]): ConfigRow[] {
     statusLabel: "DEFAULT",
     tone: "idle",
     detailBlurb: "No model override is currently returned by the gateway. The displayed model is inferred from the application default.",
-    fields: [
-      { label: "MODEL", value: DEFAULT_MODEL_LABEL, wide: true },
-      { label: "CONFIG KEY", value: "NOT CONFIGURED", wide: true },
-      { label: "DEFAULT", value: "YES", tone: "idle" },
-      { label: "SOURCE", value: "INFERRED" },
-    ],
-    chips: [
-      { label: "INFERRED", tone: "idle" },
-      { label: "NO OVERRIDE", tone: "idle" },
-    ],
     tag: { label: "INFERRED", tone: "idle" },
   }];
 }
@@ -225,13 +179,6 @@ function overrideRows(config: readonly ConsoleConfigEntry[]): ConfigRow[] {
       statusLabel: "EMPTY",
       tone: "idle",
       detailBlurb: "No override entries are currently returned by the gateway.",
-      fields: [
-        { label: "STATE", value: "EMPTY", tone: "idle" },
-        { label: "CONFIG ENTRIES", value: "0" },
-      ],
-      chips: [
-        { label: "NO OVERRIDES", tone: "idle" },
-      ],
     }];
   }
 
@@ -250,16 +197,6 @@ function overrideRows(config: readonly ConsoleConfigEntry[]): ConfigRow[] {
           : hasValue
             ? "This override is present in the live gateway configuration."
             : "This override is present but currently has an empty value.",
-        fields: [
-          { label: "CONFIG KEY", value: entry.key, wide: true },
-          { label: "VALUE", value: entry.redacted ? "REDACTED" : entry.value, tone: entry.redacted ? "warn" : hasValue ? "online" : "idle", wide: true },
-          { label: "REDACTED", value: entry.redacted ? "YES" : "NO", tone: entry.redacted ? "warn" : "idle" },
-          { label: "STATE", value: entry.redacted ? "REDACTED" : hasValue ? "CONFIGURED" : "EMPTY", tone: entry.redacted ? "warn" : hasValue ? "online" : "idle" },
-        ],
-        chips: [
-          { label: entry.redacted ? "REDACTED" : hasValue ? "CONFIGURED" : "EMPTY", tone: entry.redacted ? "warn" : hasValue ? "online" : "idle" },
-          { label: "LIVE CONFIG", tone: "info" },
-        ],
         ...(entry.redacted ? { tag: { label: "REDACTED", tone: "warn" as const } } : {}),
       };
     });
