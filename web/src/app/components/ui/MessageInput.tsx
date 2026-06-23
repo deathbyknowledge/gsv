@@ -100,8 +100,10 @@ export function MessageInput({
         <div class="gsv-mi-meta">
           <span class="gsv-mi-user">{user}</span>
           {cost ? (
-            <span class="gsv-mi-cost" onClick={toggleCost}>
-              {cost}
+            <span class="gsv-mi-cost-wrap">
+              <button type="button" class="gsv-mi-cost" onClick={toggleCost}>
+                {cost}
+              </button>
               {costTip ? (
                 <div class="gsv-mi-tip" onClick={stop}>
                   <div class="gsv-mi-tip-title">CURRENT SESSION COST</div>

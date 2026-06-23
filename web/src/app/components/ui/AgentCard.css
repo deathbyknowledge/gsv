@@ -1,12 +1,65 @@
 /* Ported from Agent Card.dc.html — hover states transcribed verbatim from the
    source's style-hover attributes. */
+button.gsv-ac-fade,
+.gsv-ac-switch-button,
+.gsv-ac-close {
+  appearance: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  text-align: inherit;
+}
+
+.gsv-ac-avatar-hit {
+  appearance: none;
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.gsv-ac-avatar-hit:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 3px;
+}
+
 .gsv-ac-fade:hover {
   opacity: 0.85;
 }
-.gsv-ac-switch:hover {
+button.gsv-ac-fade:focus-visible,
+.gsv-ac-switch-button:focus-visible,
+.gsv-ac-close:focus-visible {
+  outline: none;
+  opacity: 0.85;
+}
+
+.gsv-ac-switch-button {
+  color: inherit;
+  cursor: pointer;
+}
+
+.gsv-ac-switch-button:disabled,
+.gsv-ac-close:disabled {
+  cursor: default !important;
+  opacity: 0.45;
+}
+
+.gsv-ac-switch-button:disabled span {
+  cursor: default !important;
+}
+
+.gsv-ac-switch:hover,
+.gsv-ac-switch-button:not(:disabled):hover .gsv-ac-switch,
+.gsv-ac-switch-button:not(:disabled):focus-visible .gsv-ac-switch {
   color: #f0c574;
 }
-.gsv-ac-close:hover {
+.gsv-ac-close:not(:disabled):hover,
+.gsv-ac-close:not(:disabled):focus-visible {
   color: var(--accent-bright);
 }
 .gsv-ac-taskbtn:hover {
