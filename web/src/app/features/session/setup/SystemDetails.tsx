@@ -2,9 +2,9 @@ import type { OnboardingDetailStep, OnboardingDraft } from "@humansandmachines/g
 import { Checkbox } from "../../../components/ui/Checkbox";
 import { Select } from "../../../components/ui/Select";
 import { TextInput } from "../../../components/ui/TextInput";
+import { Toggle } from "../../../components/ui/Toggle";
 import { OnboardingHelp } from "../SessionChrome";
 import { advancedSectionsVisible } from "../sessionDomain";
-import { checkedInputValue, textInputValue } from "../sessionViewUtils";
 import "./SystemDetails.css";
 
 export function SystemDetails({
@@ -109,232 +109,177 @@ export function SystemDetails({
         </div>
       </div>
 
-      <div class="onboarding-custom-options" data-setup-ai-section hidden={!showAdvanced}>
-        <div class="onboarding-section-head">
+      <div class="gsv-setup-preference-group" data-setup-ai-section hidden={!showAdvanced}>
+        <div class="gsv-setup-section-head">
           <h3>AI defaults</h3>
           <p>Keep the default AI path, or choose the AI service and model from the start.</p>
         </div>
         <OnboardingHelp label="Explain AI defaults" tooltipId="setup-help-ai" title="What does this change?">
           These settings choose the default AI service GSV uses after setup. You can change them later from settings.
         </OnboardingHelp>
-        <div class="session-field-grid">
-          <label class="session-toggle">
-            <span>Customize AI settings</span>
-            <input
-              data-setup-ai-enabled
-              type="checkbox"
+        <div class="system-details-fields">
+          <div data-setup-ai-enabled>
+            <Toggle
+              label="Customize AI settings"
+              on={draft.ai.enabled}
               disabled={!showAdvanced}
-              checked={draft.ai.enabled}
-              onChange={(event) => updateDraft((current) => ({
+              onChange={(checked) => updateDraft((current) => ({
                 ...current,
-                ai: {
-                  ...current.ai,
-                  enabled: checkedInputValue(event),
-                },
+                ai: { ...current.ai, enabled: checked },
               }))}
             />
-          </label>
-          <label data-setup-ai-provider-row hidden={!showAiRows}>
-            AI service
-            <input
-              data-setup-ai-provider
-              type="text"
+          </div>
+          <div data-setup-ai-provider-row hidden={!showAiRows}>
+            <TextInput
+              label="AI service"
               placeholder="openai"
-              autoComplete="off"
               disabled={!showAiRows}
               value={draft.ai.provider}
-              onInput={(event) => updateDraft((current) => ({
+              inputProps={{ "data-setup-ai-provider": true, autoComplete: "off" }}
+              onChange={(value) => updateDraft((current) => ({
                 ...current,
-                ai: {
-                  ...current.ai,
-                  provider: textInputValue(event),
-                },
+                ai: { ...current.ai, provider: value },
               }))}
             />
-          </label>
-          <label data-setup-ai-model-row hidden={!showAiRows}>
-            AI model
-            <input
-              data-setup-ai-model
-              type="text"
+          </div>
+          <div data-setup-ai-model-row hidden={!showAiRows}>
+            <TextInput
+              label="AI model"
               placeholder="gpt-5.4"
-              autoComplete="off"
               disabled={!showAiRows}
               value={draft.ai.model}
-              onInput={(event) => updateDraft((current) => ({
+              inputProps={{ "data-setup-ai-model": true, autoComplete: "off" }}
+              onChange={(value) => updateDraft((current) => ({
                 ...current,
-                ai: {
-                  ...current.ai,
-                  model: textInputValue(event),
-                },
+                ai: { ...current.ai, model: value },
               }))}
             />
-          </label>
-          <label data-setup-ai-key-row hidden={!showAiRows}>
-            API key
-            <input
-              data-setup-ai-key
+          </div>
+          <div data-setup-ai-key-row hidden={!showAiRows}>
+            <TextInput
+              label="API key"
               type="password"
-              autoComplete="off"
+              placeholder="sk-…"
               disabled={!showAiRows}
               value={draft.ai.apiKey}
-              onInput={(event) => updateDraft((current) => ({
+              inputProps={{ "data-setup-ai-key": true, autoComplete: "off" }}
+              onChange={(value) => updateDraft((current) => ({
                 ...current,
-                ai: {
-                  ...current.ai,
-                  apiKey: textInputValue(event),
-                },
+                ai: { ...current.ai, apiKey: value },
               }))}
             />
-          </label>
+          </div>
         </div>
       </div>
 
-      <div class="onboarding-custom-options" data-setup-source-section hidden={!showAdvanced}>
-        <div class="onboarding-section-head">
+      <div class="gsv-setup-preference-group" data-setup-source-section hidden={!showAdvanced}>
+        <div class="gsv-setup-section-head">
           <h3>System files</h3>
           <p>Use the official system files, or choose a repository and version you control.</p>
         </div>
         <OnboardingHelp label="Explain system files" tooltipId="setup-help-source" title="For advanced setup">
           System files are the built-in apps and settings GSV starts with. Advanced users can point this at a Git repository or remote URL; Version can be a branch, tag, or commit.
         </OnboardingHelp>
-        <div class="session-field-grid">
-          <label class="session-toggle">
-            <span>Use custom system files</span>
-            <input
-              data-setup-source-enabled
-              type="checkbox"
+        <div class="system-details-fields">
+          <div data-setup-source-enabled>
+            <Toggle
+              label="Use custom system files"
+              on={draft.source.enabled}
               disabled={!showAdvanced}
-              checked={draft.source.enabled}
-              onChange={(event) => updateDraft((current) => ({
+              onChange={(checked) => updateDraft((current) => ({
                 ...current,
-                source: {
-                  ...current.source,
-                  enabled: checkedInputValue(event),
-                },
+                source: { ...current.source, enabled: checked },
               }))}
             />
-          </label>
-          <label data-setup-source-row hidden={!showSourceRows}>
-            System files location
-            <input
-              data-setup-bootstrap-source
-              type="text"
-              autoComplete="off"
+          </div>
+          <div data-setup-source-row hidden={!showSourceRows}>
+            <TextInput
+              label="System files location"
               placeholder="deathbyknowledge/gsv"
               disabled={!showSourceRows}
               value={draft.source.value}
-              onInput={(event) => updateDraft((current) => ({
+              inputProps={{ "data-setup-bootstrap-source": true, autoComplete: "off" }}
+              onChange={(value) => updateDraft((current) => ({
                 ...current,
-                source: {
-                  ...current.source,
-                  value: textInputValue(event),
-                },
+                source: { ...current.source, value },
               }))}
             />
-          </label>
-          <label data-setup-source-ref-row hidden={!showSourceRows}>
-            Version
-            <input
-              data-setup-bootstrap-ref
-              type="text"
-              autoComplete="off"
+          </div>
+          <div data-setup-source-ref-row hidden={!showSourceRows}>
+            <TextInput
+              label="Version"
               placeholder="main"
               disabled={!showSourceRows}
               value={draft.source.ref}
-              onInput={(event) => updateDraft((current) => ({
+              inputProps={{ "data-setup-bootstrap-ref": true, autoComplete: "off" }}
+              onChange={(value) => updateDraft((current) => ({
                 ...current,
-                source: {
-                  ...current.source,
-                  ref: textInputValue(event),
-                },
+                source: { ...current.source, ref: value },
               }))}
             />
-          </label>
+          </div>
         </div>
       </div>
 
-      <div class="onboarding-custom-options" data-setup-node-section hidden={!showAdvanced}>
-        <div class="onboarding-section-head">
+      <div class="gsv-setup-preference-group" data-setup-node-section hidden={!showAdvanced}>
+        <div class="gsv-setup-section-head">
           <h3>Device setup</h3>
           <p>Create a setup key now if you want another machine to connect immediately.</p>
         </div>
         <OnboardingHelp label="Explain device setup" tooltipId="setup-help-node" title="Setup key">
           A setup key lets another machine connect to this workspace. Only create one now if you are ready to connect a device.
         </OnboardingHelp>
-        <div class="session-field-grid">
-          <label class="session-toggle">
-            <span>Create a device setup key now</span>
-            <input
-              data-setup-node-enabled
-              type="checkbox"
+        <div class="system-details-fields">
+          <div data-setup-node-enabled>
+            <Toggle
+              label="Create a device setup key now"
+              on={draft.device.enabled}
               disabled={!showAdvanced}
-              checked={draft.device.enabled}
-              onChange={(event) => updateDraft((current) => ({
+              onChange={(checked) => updateDraft((current) => ({
                 ...current,
-                device: {
-                  ...current.device,
-                  enabled: checkedInputValue(event),
-                },
+                device: { ...current.device, enabled: checked },
               }))}
             />
-          </label>
-          <label data-setup-node-device-row hidden={!showNodeRows}>
-            Device ID
-            <input
-              data-setup-node-device-id
-              type="text"
-              autoComplete="off"
+          </div>
+          <div data-setup-node-device-row hidden={!showNodeRows}>
+            <TextInput
+              label="Device ID"
               placeholder="node-rearden"
               disabled={!showNodeRows}
               value={draft.device.deviceId}
-              onInput={(event) => updateDraft((current) => ({
+              inputProps={{ "data-setup-node-device-id": true, autoComplete: "off" }}
+              onChange={(value) => updateDraft((current) => ({
                 ...current,
-                device: {
-                  ...current.device,
-                  deviceId: textInputValue(event),
-                },
+                device: { ...current.device, deviceId: value },
               }))}
             />
-          </label>
-          <label data-setup-node-label-row hidden={!showNodeRows}>
-            Label
-            <input
-              data-setup-node-label
-              type="text"
-              autoComplete="off"
+          </div>
+          <div data-setup-node-label-row hidden={!showNodeRows}>
+            <TextInput
+              label="Label"
               placeholder="rearden"
               disabled={!showNodeRows}
               value={draft.device.label}
-              onInput={(event) => updateDraft((current) => ({
+              inputProps={{ "data-setup-node-label": true, autoComplete: "off" }}
+              onChange={(value) => updateDraft((current) => ({
                 ...current,
-                device: {
-                  ...current.device,
-                  label: textInputValue(event),
-                },
+                device: { ...current.device, label: value },
               }))}
             />
-          </label>
-          <label data-setup-node-expiry-row hidden={!showNodeRows}>
-            Expires in days
-            <input
-              data-setup-node-expiry
-              type="number"
-              min="1"
-              inputMode="numeric"
-              autoComplete="off"
+          </div>
+          <div data-setup-node-expiry-row hidden={!showNodeRows}>
+            <TextInput
+              label="Expires in days"
               placeholder="30"
               disabled={!showNodeRows}
               value={draft.device.expiryDays}
-              onInput={(event) => updateDraft((current) => ({
+              inputProps={{ "data-setup-node-expiry": true, autoComplete: "off", inputMode: "numeric" }}
+              onChange={(value) => updateDraft((current) => ({
                 ...current,
-                device: {
-                  ...current.device,
-                  expiryDays: textInputValue(event),
-                },
+                device: { ...current.device, expiryDays: value },
               }))}
             />
-          </label>
+          </div>
         </div>
       </div>
     </section>
