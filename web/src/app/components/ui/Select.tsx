@@ -32,9 +32,9 @@ const SIZE_CLASS: Record<SelectSize, string> = {
  *  (falls back to o0/o1/o2), outside-click close, field label/desc/status. */
 export function Select(props: SelectProps) {
   const {
-    o0 = "NEMOTRON 3",
-    o1 = "CLAUDE OPUS 4",
-    o2 = "GPT-5",
+    o0 = "GATEWAY DEFAULT",
+    o1 = "FAST MODEL",
+    o2 = "DEEP MODEL",
     options,
     size = "medium",
     disabled = false,
