@@ -366,6 +366,7 @@ const SYSCALL_NAMES = [
   "adapter.state.update",
   "adapter.send",
   "adapter.status",
+  "adapter.list",
   "notification.create",
   "notification.list",
   "notification.mark_read",

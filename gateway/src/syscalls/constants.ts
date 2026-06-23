@@ -101,6 +101,7 @@ export const ADAPTER_CONNECT = "adapter.connect";
 export const ADAPTER_DISCONNECT = "adapter.disconnect";
 export const ADAPTER_SEND = "adapter.send";
 export const ADAPTER_STATUS = "adapter.status";
+export const ADAPTER_LIST = "adapter.list";
 
 // Notifications
 export const NOTIFICATION_CREATE = "notification.create";

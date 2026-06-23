@@ -14,6 +14,9 @@ import type {
   AdapterDisconnectResult as AdapterDisconnectSyscallResult,
   AdapterInboundArgs,
   AdapterInboundSyscallResult,
+  AdapterListArgs,
+  AdapterListEntry,
+  AdapterListResult,
   AdapterStateUpdateArgs,
   AdapterStateUpdateResult,
   AdapterSendArgs,
@@ -31,6 +34,7 @@ import { ensureDefaultConversationExecutor } from "./agents";
 import { canOwnerRunAsAccount } from "./account-access";
 import { isLocked } from "../auth/shadow";
 import { DEFAULT_CONVERSATION_ID } from "../process/conversations";
+import type { AdapterStatusRecord } from "./adapter-status";
 
 type AdapterServiceBinding = Fetcher & Partial<AdapterWorkerInterface>;
 type ProcSendData = {
@@ -268,6 +272,47 @@ export async function handleAdapterStatus(
   return { adapter, accounts };
 }
 
+export function handleAdapterList(
+  _args: AdapterListArgs,
+  ctx: KernelContext,
+): AdapterListResult {
+  const entries = new Map<string, AdapterListEntry>();
+
+  for (const key of Object.keys(ctx.env)) {
+    const adapter = adapterNameFromBindingKey(key);
+    if (!adapter) continue;
+
+    const value = Reflect.get(ctx.env, key);
+    const service = value && typeof value === "object"
+      ? value as AdapterServiceBinding
+      : null;
+    entries.set(adapter, adapterListEntry(adapter, service));
+  }
+
+  const statusStore = ctx.adapters.status as typeof ctx.adapters.status & {
+    listAll?: () => AdapterStatusRecord[];
+  };
+  const statuses = typeof statusStore.listAll === "function" ? statusStore.listAll() : [];
+
+  for (const status of statuses) {
+    const adapter = normalizeAdapterName(status.adapter);
+    if (!adapter) continue;
+
+    const entry = entries.get(adapter) ?? adapterListEntry(adapter, null);
+    entry.accounts.push(adapterAccountStatusFromRecord(status));
+    entries.set(adapter, entry);
+  }
+
+  return {
+    adapters: Array.from(entries.values())
+      .map((entry) => ({
+        ...entry,
+        accounts: entry.accounts.sort((left, right) => left.accountId.localeCompare(right.accountId)),
+      }))
+      .sort((left, right) => left.adapter.localeCompare(right.adapter)),
+  };
+}
+
 export async function handleAdapterInbound(
   args: AdapterInboundArgs,
   ctx: KernelContext,
@@ -490,6 +535,43 @@ export function handleAdapterStateUpdate(
 
 export function resolveAdapterServiceForKernel(env: Env, adapter: string): AdapterServiceBinding | null {
   return resolveAdapterService(env, adapter);
+}
+
+function adapterNameFromBindingKey(key: string): string | null {
+  if (!key.startsWith("CHANNEL_")) {
+    return null;
+  }
+  return normalizeAdapterName(key.slice("CHANNEL_".length)) || null;
+}
+
+function normalizeAdapterName(adapter: string): string {
+  return adapter.trim().toLowerCase();
+}
+
+function adapterListEntry(adapter: string, service: AdapterServiceBinding | null): AdapterListEntry {
+  return {
+    adapter,
+    available: service !== null,
+    supportsConnect: typeof service?.adapterConnect === "function",
+    supportsDisconnect: typeof service?.adapterDisconnect === "function",
+    supportsSend: typeof service?.adapterSend === "function",
+    supportsStatus: typeof service?.adapterStatus === "function",
+    supportsShellExec: typeof service?.adapterShellExec === "function",
+    supportsActivity: typeof service?.adapterSetActivity === "function",
+    accounts: [],
+  };
+}
+
+function adapterAccountStatusFromRecord(status: AdapterStatusRecord): AdapterAccountStatus {
+  return {
+    accountId: status.accountId,
+    connected: status.connected,
+    authenticated: status.authenticated,
+    mode: status.mode,
+    lastActivity: status.lastActivity,
+    error: status.error,
+    extra: status.extra,
+  };
 }
 
 export async function setAdapterActivityForKernel(

@@ -2,7 +2,6 @@ import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tan
 import { useEffect, useMemo } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import {
-  DEFAULT_CONSOLE_ADAPTERS,
   createConsoleAgent,
   loadConsoleAgentContext,
   loadConsoleAccounts,
@@ -62,7 +61,7 @@ export function useConsoleOverview(options: ConsoleOverviewHookOptions = {}) {
   const { client, connected } = useGateway();
   const queryClient = useQueryClient();
   const enabled = connected && (options.enabled ?? true);
-  const adapters = options.adapters ?? DEFAULT_CONSOLE_ADAPTERS;
+  const adapters = options.adapters;
   const includeConfig = options.includeConfig ?? true;
 
   useEffect(() => {
@@ -74,7 +73,7 @@ export function useConsoleOverview(options: ConsoleOverviewHookOptions = {}) {
   }, [client, queryClient]);
 
   const query = useQuery<ConsoleOverviewData>({
-    queryKey: [...consoleOverviewQueryKey, { adapters: [...adapters], includeConfig }],
+    queryKey: [...consoleOverviewQueryKey, { adapters: adapters ? [...adapters] : "discover", includeConfig }],
     enabled,
     queryFn: () => loadConsoleOverview(client, { adapters, includeConfig }),
   });
@@ -157,10 +156,10 @@ export function useConsoleAccounts(options: ConsoleQueryOptions = {}) {
 
 export function useConsoleAdapters(options: ConsoleQueryOptions & { adapters?: readonly string[] } = {}) {
   const { client, connected } = useGateway();
-  const adapters = options.adapters ?? DEFAULT_CONSOLE_ADAPTERS;
+  const adapters = options.adapters;
   const enabled = connected && (options.enabled ?? true);
   const query = useQuery<ConsoleAdapterAccount[]>({
-    queryKey: [...consoleAdaptersQueryKey, { adapters: [...adapters] }],
+    queryKey: [...consoleAdaptersQueryKey, { adapters: adapters ? [...adapters] : "discover" }],
     enabled,
     queryFn: () => loadConsoleAdapterAccounts(client, adapters),
   });

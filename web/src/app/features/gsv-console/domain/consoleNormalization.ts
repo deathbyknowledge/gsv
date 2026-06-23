@@ -67,6 +67,15 @@ export function normalizeAdapterStatusPayload(payload: unknown, adapterFallback:
     .sort((left, right) => left.accountId.localeCompare(right.accountId));
 }
 
+export function normalizeAdapterPayload(payload: unknown, adapterFallback = ""): ConsoleAdapterAccount[] {
+  const record = asRecord(payload);
+  const adapters = asArray(record?.adapters);
+  if (adapters.length > 0) {
+    return adapters.flatMap((adapter) => normalizeAdapterStatusPayload(adapter, ""));
+  }
+  return normalizeAdapterStatusPayload(payload, adapterFallback);
+}
+
 export function normalizeConfigPayload(payload: unknown): ConsoleConfigEntry[] {
   const record = asRecord(payload);
   return asArray(record?.entries)
@@ -90,7 +99,7 @@ export function buildConsoleOverviewData(input: {
     targets: normalizeTargetsPayload(input.targets),
     packages: normalizePackagesPayload(input.packages),
     accounts: normalizeAccountsPayload(input.accounts),
-    adapters: input.adapters.flatMap((payload) => normalizeAdapterStatusPayload(payload, "")),
+    adapters: input.adapters.flatMap((payload) => normalizeAdapterPayload(payload)),
     config: normalizeConfigPayload(input.config),
   };
 }

@@ -233,6 +233,8 @@ import type {
   AdapterDisconnectResult,
   AdapterInboundArgs,
   AdapterInboundSyscallResult,
+  AdapterListArgs,
+  AdapterListResult,
   AdapterSendArgs,
   AdapterSendResult,
   AdapterStateUpdateArgs,
@@ -384,6 +386,7 @@ export type SyscallDomains = {
   "adapter.state.update": { args: AdapterStateUpdateArgs; result: AdapterStateUpdateResult };
   "adapter.send": { args: AdapterSendArgs; result: AdapterSendResult };
   "adapter.status": { args: AdapterStatusArgs; result: AdapterStatusResult };
+  "adapter.list": { args: AdapterListArgs; result: AdapterListResult };
 
   "notification.create": { args: NotificationCreateArgs; result: NotificationCreateResult };
   "notification.list": { args: NotificationListArgs; result: NotificationListResult };

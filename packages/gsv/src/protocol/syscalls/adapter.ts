@@ -78,6 +78,24 @@ export type AdapterStatusResult = {
   accounts: AdapterAccountStatus[];
 };
 
+export type AdapterListArgs = Record<string, never>;
+
+export type AdapterListEntry = {
+  adapter: string;
+  available: boolean;
+  supportsConnect: boolean;
+  supportsDisconnect: boolean;
+  supportsSend: boolean;
+  supportsStatus: boolean;
+  supportsShellExec: boolean;
+  supportsActivity: boolean;
+  accounts: AdapterAccountStatus[];
+};
+
+export type AdapterListResult = {
+  adapters: AdapterListEntry[];
+};
+
 export type AdapterInboundArgs = {
   adapter: string;
   accountId: string;
