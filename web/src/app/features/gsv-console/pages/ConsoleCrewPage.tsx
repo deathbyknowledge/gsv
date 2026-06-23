@@ -1,7 +1,7 @@
 import type { JSX } from "preact";
-import { AddAction } from "../../../components/ui/AddAction";
 import { AgentCard, type AgentTask } from "../../../components/ui/AgentCard";
 import type { AvatarStatus } from "../../../components/ui/Avatar";
+import { CrewAddTile } from "../../../components/ui/CrewTile";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
 import type { StatusTone } from "../../../components/ui/StatusDot";
 import { Tag, type TagTone } from "../../../components/ui/Tag";
@@ -149,15 +149,7 @@ function CrewRoster({
               </div>
             </div>
           ))}
-          {onCreateAgent ? (
-            <button type="button" class="gsv-console-crew-add-tile" onClick={onCreateAgent}>
-              <AddAction variant="tile" label="NEW AGENT" />
-            </button>
-          ) : (
-            <div class="gsv-console-crew-add-tile" aria-disabled="true">
-              <AddAction variant="tile" label="NEW AGENT" />
-            </div>
-          )}
+          <CrewAddTile className="gsv-console-crew-add-tile" label="NEW AGENT" onClick={onCreateAgent} />
         </div>
       </div>
     </section>
