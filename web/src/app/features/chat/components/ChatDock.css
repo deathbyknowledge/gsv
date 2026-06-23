@@ -564,7 +564,7 @@
   background: var(--header-bar);
 }
 
-.gsv-chat-popover header span {
+.gsv-chat-popover header > span {
   min-width: 0;
   overflow: hidden;
   color: var(--text-title);
@@ -615,6 +615,7 @@
 }
 
 .gsv-chat-popover-section span,
+.gsv-chat-popover-label,
 .gsv-chat-context-grid span {
   color: var(--text-dim);
   font-size: 8.5px;
@@ -623,7 +624,8 @@
 }
 
 .gsv-chat-popover-section strong,
-.gsv-chat-context-grid strong {
+.gsv-chat-context-grid strong,
+.gsv-chat-model-label {
   min-width: 0;
   overflow: hidden;
   color: var(--node-label);
@@ -633,6 +635,61 @@
   text-overflow: ellipsis;
   text-transform: uppercase;
   white-space: nowrap;
+}
+
+.gsv-chat-popover-label {
+  padding: 10px 14px 6px;
+  border-bottom: 1px solid var(--rule-inner);
+  background: rgba(121, 111, 255, 0.035);
+}
+
+.gsv-chat-model-options {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--rule-inner);
+}
+
+.gsv-chat-model-row {
+  min-height: 34px;
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--rule-inner);
+}
+
+.gsv-chat-model-row:last-child {
+  border-bottom: 0;
+}
+
+.gsv-chat-model-row.is-current {
+  background: rgba(132, 122, 255, 0.08);
+}
+
+.gsv-chat-model-current {
+  width: 10px;
+  height: 10px;
+  position: relative;
+}
+
+.gsv-chat-model-row.is-current .gsv-chat-model-current::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 1px;
+  width: 5px;
+  height: 8px;
+  border: solid #bdb8ff;
+  border-width: 0 1px 1px 0;
+  transform: rotate(42deg);
+}
+
+.gsv-chat-model-row small {
+  flex: none;
+  color: #7d78b8;
+  font-size: 7.5px;
+  letter-spacing: 0.12em;
 }
 
 .gsv-chat-task-list {
@@ -695,6 +752,17 @@
 
 .gsv-chat-context-popover-meter {
   padding: 12px 14px 4px;
+}
+
+.gsv-chat-context-heading {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.gsv-chat-context-heading .gsv-icon {
+  flex: none;
+  color: #9f98ff;
 }
 
 .gsv-chat-context-grid {
