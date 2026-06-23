@@ -1,52 +1,62 @@
-# GSV object icons
+# GSV icons
 
-Static, committed dot-matrix SVGs generated once from `gsv-dot-icons.js` (MODE `16`).
-No runtime JS icon library. Each file uses `fill="currentColor"` on a `0 0 512 512`
-viewBox, so it can be tinted via CSS.
+Static, committed dot-matrix SVGs. No runtime JS icon library. The app uses
+`web/src/app/components/ui/Icon.tsx`, which applies SVGs as CSS masks and tints
+them with `background-color`.
+
+The primary app icon family is the curated GSV mask set in `/icons/<name>.svg`.
+Existing app calls such as `<Icon name="computer" />` intentionally keep using
+those curated masks.
+
+The broader reference family is `doticons`, vendored from
+[eduardconstantin/doticons@v0.9.0](https://github.com/eduardconstantin/doticons)
+(MIT):
+
+- 16-dot masters: `/icons/doticons/16/<name>.svg`
+- 32-dot masters: `/icons/doticons/<name>.svg`
+
+When the doticons family is used, `Icon` chooses the 16-dot master for rendered
+sizes at `20px` and under, and the 32-dot master above that. `dotMatrix={16 |
+32}` can force a master when a view needs exact control. A few 32-grid names are
+not present in upstream's 16-grid folder, so those fall back to 32.
 
 ## Usage
 
-- Fixed color: `<img src="/icons/folder.svg">`
-- Token tinting: `mask-image: url(/icons/folder.svg); -webkit-mask-image: url(/icons/folder.svg); background-color: var(--accent-bright)` (set `mask-size`/`mask-repeat` as needed).
-- The `currentColor` fill also lets you inline the SVG and tint it with `color`.
+- App usage: `<Icon name="folder" size={18} />`
+- Doticons usage: `<Icon name="folder" family="doticons" size={18} />`
+- Namespaced doticons usage: `<Icon name="doticons/file" size={18} />`
+- Force doticons 16-grid: `<Icon name="folder" family="doticons" size={18} dotMatrix={16} />`
 
 ## object key → icon name → filename
 
 | object key   | icon name | filename       |
 | ------------ | --------- | -------------- |
-| machines     | computer  | computer.svg   |
-| machine      | computer  | computer.svg   |
-| messengers   | chat      | chat.svg       |
-| discord      | discord   | discord.svg    |
-| telegram     | telegram  | telegram.svg   |
-| integrations | weblink   | weblink.svg    |
-| mail         | gmail     | gmail.svg      |
-| linear       | list      | list.svg       |
-| applications | stars     | stars.svg      |
-| game         | stars     | stars.svg      |
-| scanner      | stars     | stars.svg      |
-| coach        | stars     | stars.svg      |
-| files        | folder    | folder.svg     |
-| settings     | cog       | cog.svg        |
-| cat          | tag       | tag.svg        |
-| satellite    | rss       | rss.svg        |
-| add          | plus      | plus.svg       |
-| library      | pencil    | pencil.svg     |
-| terminal     | terminal  | terminal.svg   |
-| tabs         | bookmark  | bookmark.svg   |
+| machines     | computer  | icons/computer.svg |
+| machine      | computer  | icons/computer.svg |
+| messengers   | chat      | icons/chat.svg     |
+| discord      | discord   | icons/discord.svg  |
+| telegram     | telegram  | icons/telegram.svg |
+| integrations | weblink   | icons/weblink.svg  |
+| mail         | gmail     | icons/gmail.svg    |
+| linear       | list      | icons/list.svg     |
+| applications | stars     | icons/stars.svg    |
+| game         | stars     | icons/stars.svg    |
+| scanner      | stars     | icons/stars.svg    |
+| coach        | stars     | icons/stars.svg    |
+| files        | folder    | icons/folder.svg   |
+| settings     | cog       | icons/cog.svg      |
+| cat          | tag       | icons/tag.svg      |
+| satellite    | rss       | icons/rss.svg      |
+| add          | plus      | icons/plus.svg     |
+| library      | pencil    | icons/pencil.svg   |
+| terminal     | terminal  | icons/terminal.svg |
+| tabs         | bookmark  | icons/bookmark.svg |
 
-`computer`, `plus`, `terminal` are the custom-drawn `added` icons.
-`pencil`/`terminal`/`bookmark` double as chrome aliases (library/terminal/tabs).
+Doticons aliases such as `computer -> box`, `plus -> circlePlus`, and `terminal
+-> powershell` apply only when the caller explicitly selects the doticons family.
 
-## Two sets
+## Doticons Set
 
-**GSV curated set (16)** — `/icons/<name>.svg`, generated from `gsv-dot-icons.js`
-(16-grid). The object/chrome vocabulary the app actually uses:
-bookmark, chat, cog, computer, discord, folder, gmail, list, pencil, plus, rss,
-stars, tag, telegram, terminal, weblink.
-(`computer`, `plus`, `terminal` are the custom-drawn `added` icons — not in doticons.)
-
-**Full doticons library (247)** — `/icons/doticons/<name>.svg`, vendored from
-[eduardconstantin/doticons@v0.9.0](https://github.com/eduardconstantin/doticons)
-`icons/32` (32-grid, MIT). The complete reference set, shown in the catalog's
-"Other icons" drawer. Name list mirrored in `web/src/design-system/doticons.ts`.
+The full doticons set remains available for views that need icons outside the
+curated GSV object set. Prefer explicit doticons usage at the call site so app
+icons do not drift unexpectedly.

@@ -138,7 +138,11 @@ export function Tile({
       >
         <span style={dotStyle} />
         <span style={{ display: "flex", color: iconColor }}>
-          <Icon name={GLYPH_ICON[glyph] ?? GLYPH_ICON.machines} size={30} />
+          <Icon
+            name={GLYPH_ICON[glyph] ?? GLYPH_ICON.machines}
+            size={32}
+            dotMatrix={16}
+          />
         </span>
       </div>
       <span style={{ fontSize: "11px", letterSpacing: ".16em", color: labelColor }}>{labelText}</span>

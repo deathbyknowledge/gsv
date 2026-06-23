@@ -1,5 +1,6 @@
 // Auto-generated: every doticon vendored from eduardconstantin/doticons@v0.9.0
-// (icons/32, MIT) into web/public/icons/doticons/<name>.svg. 247 icons.
+// (icons/32, MIT) into web/public/icons/doticons/<name>.svg. Matching 16-grid
+// masters live in web/public/icons/doticons/16 where upstream provides them.
 export const DOTICONS: string[] = [
   "adobe",
   "affinity",
