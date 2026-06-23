@@ -37,6 +37,12 @@ const story: Story = {
           <Tabs tabs={["GENERAL", "FILES", "TASKS"]} />
         </div>
       </div>
+      <div class="ds-cell">
+        <div class="ds-label">Closeable</div>
+        <div style={{ width: 540 }}>
+          <Tabs tabs={["GSV", "PERSONA", "NOTES"]} value={1} onClose={() => {}} />
+        </div>
+      </div>
     </div>
   ),
 };
