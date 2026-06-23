@@ -7,20 +7,27 @@
   font-family: var(--gsv-font-mono);
 }
 .gsv-st-btn {
+  appearance: none;
   display: flex;
   align-items: center;
   justify-content: center;
+  margin: 0;
+  padding: 0;
+  border: 0;
   cursor: pointer;
   color: #9089d4;
   background: transparent;
+  font: inherit;
   transition: background 0.12s, color 0.12s;
   user-select: none;
 }
-.gsv-st-btn:hover {
+.gsv-st-btn:not(:disabled):hover,
+.gsv-st-btn:not(:disabled):focus-visible {
   background: #171441;
   color: #cbc7ff;
+  outline: none;
 }
-.gsv-st-btn:active {
+.gsv-st-btn:not(:disabled):active {
   background: #201c4d;
   color: #fff;
 }
