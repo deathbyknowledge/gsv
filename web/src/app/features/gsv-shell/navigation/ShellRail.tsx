@@ -3,18 +3,15 @@ import { IconButton } from "../../../components/ui/IconButton";
 import {
   type DesktopObject,
   type DesktopObjectId,
-  type ShellSurfaceId,
 } from "../domain/shellModel";
 
 type ShellRailProps = {
-  activeSurface: ShellSurfaceId;
   desktopObjects: readonly DesktopObject[];
   collapsed: boolean;
   onToggleCollapsed: () => void;
   onBackToDesktop: () => void;
   onOpenPicker: (id: DesktopObjectId) => void;
   onOpenControlMenu: () => void;
-  onOpenSurface: (surface: ShellSurfaceId) => void;
 };
 
 const GLYPH_ICON: Record<string, string> = {
@@ -23,13 +20,6 @@ const GLYPH_ICON: Record<string, string> = {
   integrations: "weblink",
   applications: "stars",
 };
-
-const GSV_RAIL_ITEMS: { label: string; surface: ShellSurfaceId }[] = [
-  { label: "FILES", surface: "files" },
-  { label: "LIBRARY", surface: "library" },
-  { label: "TERMINAL", surface: "terminal" },
-  { label: "SETTINGS", surface: "settings" },
-];
 
 function statusColor(status: string): string {
   if (status === "error") {
@@ -62,14 +52,12 @@ function GsvMark({ size = 22 }: { size?: number }) {
 }
 
 export function ShellRail({
-  activeSurface,
   desktopObjects,
   collapsed,
   onToggleCollapsed,
   onBackToDesktop,
   onOpenPicker,
   onOpenControlMenu,
-  onOpenSurface,
 }: ShellRailProps) {
   const totalObjects = desktopObjects.reduce((sum, object) => sum + object.children.length, 0);
 
@@ -143,18 +131,6 @@ export function ShellRail({
               <span>GSV</span>
             </span>
           </button>
-          <div class="gsv-rail-subitems" aria-label="GSV system surfaces">
-            {GSV_RAIL_ITEMS.map((item) => (
-              <button
-                key={item.surface}
-                type="button"
-                class={`gsv-rail-subitem${activeSurface === item.surface ? " is-active" : ""}`}
-                onClick={() => onOpenSurface(item.surface)}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
         </div>
       </div>
 
