@@ -18,37 +18,6 @@
   display: none;
 }
 
-.gsv-setup-stage-review .gsv-setup-lane-kicker {
-  display: block;
-  font-family: var(--gsv-font-mono);
-  font-size: 9px;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-  color: var(--text-dim);
-}
-
-.gsv-setup-stage-review .gsv-setup-step-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.gsv-setup-stage-review .gsv-setup-step-copy h2 {
-  margin: 0;
-  font-family: var(--gsv-font-mono);
-  font-size: 15px;
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--text-title);
-}
-.gsv-setup-stage-review .gsv-setup-copy-text {
-  margin: 0;
-  font-family: var(--gsv-font-prose);
-  font-size: 12px;
-  line-height: 1.55;
-  color: var(--text-dim);
-}
-
 .review-summary-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));

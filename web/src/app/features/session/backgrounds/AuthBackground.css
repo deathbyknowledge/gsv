@@ -14,12 +14,14 @@
   height: 100%;
   display: block;
 }
-/* Galaxy occupies the LEFT zone so the form (right) never covers it. */
+/* Galaxy occupies the LEFT zone so the form (right) never covers it. The zone
+   is capped short of the right-aligned panel; --gsv-galaxy-reserve is the space
+   reserved for that panel (default fits login's narrow panel; the wider Setup
+   wizard overrides it) so the forming "GSV" stays fully uncovered at any width. */
 .auth-bg-galaxy {
   position: absolute;
   left: 0;
   top: 0;
   bottom: 0;
-  width: 58%;
-  max-width: 920px;
+  width: min(920px, calc(100% - var(--gsv-galaxy-reserve, 540px)));
 }

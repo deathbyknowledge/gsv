@@ -52,6 +52,7 @@ export function SystemDetails({
             <TextInput
               label="Define admin password"
               type="password"
+              placeholder="••••••••"
               disabled={draft.admin.mode !== "custom"}
               value={draft.admin.password}
               inputProps={{ "data-setup-root-password": true, autoComplete: "new-password" }}
@@ -68,6 +69,7 @@ export function SystemDetails({
             <TextInput
               label="Confirm admin password"
               type="password"
+              placeholder="••••••••"
               disabled={draft.admin.mode !== "custom"}
               value={draft.admin.passwordConfirm}
               inputProps={{ "data-setup-root-password-confirm": true, autoComplete: "new-password" }}

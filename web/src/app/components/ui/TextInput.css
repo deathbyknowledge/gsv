@@ -156,6 +156,7 @@
 .gsv-ti-label {
   font-size: 9.5px;
   letter-spacing: 0.22em;
+  text-transform: uppercase;
   color: #b3aee2;
 }
 .gsv-ti-req {

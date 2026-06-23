@@ -1,6 +1,12 @@
 /* Create-account (register) wizard shell — sits in the AuthLayout galaxy
    surface. Single-column flow (matches the auth-preview RegisterMock):
    horizontal stepper on top, stacked step content, then footer nav. */
+
+/* The setup panel is wider than login's, so reserve more room for it and keep
+   the galaxy fully to its left. */
+.gsv-auth-surface-setup {
+  --gsv-galaxy-reserve: 760px;
+}
 .gsv-setup-panel {
   width: min(640px, 92vw);
   max-height: calc(100% - 56px);
@@ -31,6 +37,36 @@
   display: flex;
   flex-direction: column;
   gap: 22px;
+}
+
+/* Per-step head — kicker + prose title + sub. Shared by every stage so
+   they read identically (matches the RegisterMock). */
+.gsv-setup-head {
+  margin-bottom: 22px;
+}
+.gsv-setup-head-kicker {
+  display: block;
+  font-family: var(--gsv-font-mono);
+  font-size: 9px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 9px;
+}
+.gsv-setup-head-title {
+  margin: 0;
+  font-family: var(--gsv-font-prose);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0.005em;
+  color: var(--text-hi);
+}
+.gsv-setup-head-sub {
+  margin: 8px 0 0;
+  font-family: var(--gsv-font-prose);
+  font-size: 13px;
+  line-height: 1.5;
+  color: #9d98d4;
 }
 
 .gsv-setup-alert {

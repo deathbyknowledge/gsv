@@ -24,10 +24,10 @@ export function DetailsStage({
 
   return (
     <section class="gsv-setup-stage gsv-setup-stage-details" data-setup-stage="details" hidden={draft.stage !== "details"}>
-      <span class="gsv-setup-lane-kicker" data-setup-lane-kicker>{isSystem ? "Preferences" : "Login credentials"}</span>
-      <div class="gsv-setup-step-copy" data-setup-detail-copy>
-        <h2 data-setup-lane-title>{title}</h2>
-        <p class="gsv-setup-copy-text" data-setup-lane-description>{description}</p>
+      <div class="gsv-setup-head" data-setup-detail-copy>
+        <span class="gsv-setup-head-kicker" data-setup-lane-kicker>Create account · Step {isSystem ? 3 : 2} / 4</span>
+        <h2 class="gsv-setup-head-title" data-setup-lane-title>{title}</h2>
+        <p class="gsv-setup-head-sub" data-setup-lane-description>{description}</p>
       </div>
       <AccountDetails draft={draft} activeStep={activeStep} updateDraft={updateDraft} />
       <SystemDetails draft={draft} activeStep={activeStep} timezoneOptions={timezoneOptions} updateDraft={updateDraft} />
