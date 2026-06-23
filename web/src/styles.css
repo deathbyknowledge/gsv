@@ -2430,20 +2430,6 @@ button:disabled {
   color: color-mix(in srgb, var(--accent) 70%, var(--text-main));
 }
 
-.mock-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.mock-grid article {
-  padding: 12px;
-  border-radius: 10px;
-  border: var(--surface-border-width) solid var(--line-soft);
-  background: var(--surface-overlay);
-  box-shadow: var(--elevation-soft);
-}
-
 .app-grid article:last-child p {
   margin-bottom: 8px;
 }
@@ -2464,79 +2450,6 @@ button:disabled {
   font-family: var(--font-mono);
   font-size: 0.68rem;
   padding: 3px 8px;
-}
-
-.config-app {
-  display: grid;
-  grid-template-rows: 108px auto minmax(0, 1fr);
-  gap: 12px;
-  align-content: start;
-}
-
-.config-page-header {
-  min-height: 108px;
-  max-height: 108px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: start;
-  gap: 12px;
-}
-
-.config-page-copy {
-  min-width: 0;
-}
-
-.config-page-copy .eyebrow {
-  margin: 0;
-}
-
-.config-page-copy h1 {
-  margin: 4px 0 6px;
-}
-
-.config-page-copy p {
-  margin: 0;
-  max-width: 64ch;
-}
-
-.config-tabs {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.config-tab-btn {
-  border: var(--surface-border-width) solid var(--line-soft);
-  border-radius: 999px;
-  background: var(--surface-overlay);
-  box-shadow: var(--elevation-soft);
-  color: var(--text-main);
-  font-family: var(--font-ui);
-  font-size: 0.74rem;
-  font-weight: 600;
-  line-height: 1;
-  padding: 7px 11px;
-  cursor: pointer;
-}
-
-.config-tab-btn:hover {
-  border-color: var(--control-border-focus);
-}
-
-.config-tab-btn:focus-visible {
-  outline: none;
-  border-color: var(--control-border-focus);
-  box-shadow: var(--control-focus-ring);
-}
-
-.config-tab-btn.is-active {
-  border-color: color-mix(in srgb, var(--accent) 58%, var(--line-soft));
-  background: color-mix(in srgb, var(--accent) 14%, var(--surface-overlay));
-}
-
-.control-tab-content {
-  min-height: 0;
 }
 
 .shell-app {
@@ -5692,10 +5605,6 @@ button:disabled {
     display: none;
   }
 
-  .mock-grid {
-    grid-template-columns: 1fr;
-  }
-
   .chat-composer {
     padding: 10px;
   }
@@ -5721,16 +5630,6 @@ button:disabled {
 
   .config-layout {
     grid-template-columns: 1fr;
-  }
-
-  .config-app {
-    grid-template-rows: auto auto minmax(0, 1fr);
-  }
-
-  .config-page-header {
-    min-height: auto;
-    max-height: none;
-    grid-template-columns: 1fr auto;
   }
 
   .config-nav {
