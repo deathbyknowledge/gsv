@@ -180,6 +180,17 @@ function shortId(value: string | undefined): string {
   return value ? value.slice(0, 8) : "";
 }
 
+function summarizeSystemText(text: string): string {
+  const trimmed = text.replace(/\s+/g, " ").trim();
+  if (!trimmed) {
+    return "";
+  }
+  if (trimmed.length <= 92) {
+    return trimmed;
+  }
+  return `${trimmed.slice(0, 89).trim()}...`;
+}
+
 function UserMessage({
   copied,
   failed,
@@ -207,6 +218,45 @@ function UserMessage({
         </div>
       </div>
     </div>
+  );
+}
+
+function SystemSurfaceMessage({
+  copied,
+  failed,
+  message,
+  onCopy,
+}: {
+  copied: boolean;
+  failed: boolean;
+  message: ChatDockMessage;
+  onCopy: () => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const summary = message.meta || summarizeSystemText(message.text);
+
+  return (
+    <article class="gsv-chat-system-surface">
+      <div class="gsv-chat-system-line">
+        <span>SYSTEM</span>
+        {summary ? <small>{summary}</small> : null}
+      </div>
+      <div class="gsv-chat-system-actions">
+        <button type="button" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}>
+          <i aria-hidden="true" data-expanded={expanded ? "true" : undefined}>{">"}</i>
+          DETAILS
+        </button>
+        {message.time ? <span>{message.time}</span> : null}
+        <CopyButton
+          copied={copied}
+          failed={failed}
+          role="system"
+          text={message.text}
+          onCopy={onCopy}
+        />
+      </div>
+      {expanded ? <div class="gsv-chat-system-detail">{message.text}</div> : null}
+    </article>
   );
 }
 
@@ -278,6 +328,17 @@ function ProcessMessage({
   if (messageRole === "toolResult") {
     return (
       <ToolResultMessage
+        copied={copied}
+        failed={failed}
+        message={message}
+        onCopy={onCopy}
+      />
+    );
+  }
+
+  if (messageRole === "system") {
+    return (
+      <SystemSurfaceMessage
         copied={copied}
         failed={failed}
         message={message}
