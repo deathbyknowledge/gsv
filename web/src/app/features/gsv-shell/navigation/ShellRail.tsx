@@ -89,7 +89,7 @@ export function ShellRail({
             onClick={() => onOpenPicker(object.id)}
           >
             <Icon name={GLYPH_ICON[object.glyph]} size={19} />
-            <span style={{ background: statusColor(object.status), color: statusColor(object.status) }} />
+            <span class="gsv-rail-status-dot" style={{ background: statusColor(object.status), color: statusColor(object.status) }} />
           </button>
         ))}
         <button type="button" class="gsv-rail-gsv-dot" title="GSV controls" onClick={onOpenControlMenu}>
