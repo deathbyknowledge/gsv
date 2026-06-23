@@ -4,6 +4,7 @@ import {
   handleAdapterConnect,
   handleAdapterDisconnect,
   handleAdapterInbound,
+  handleAdapterList,
 } from "./adapter-handlers";
 import { sendFrameToProcess } from "../shared/utils";
 
@@ -13,6 +14,7 @@ vi.mock("../shared/utils", () => ({
 
 type FakeAdapterStatusStore = {
   upsert: ReturnType<typeof vi.fn>;
+  listAll?: ReturnType<typeof vi.fn>;
 };
 type MakeContextOptions = {
   routePid?: string | null;
@@ -179,6 +181,100 @@ const sendFrameToProcessMock = vi.mocked(sendFrameToProcess);
 describe("adapter lifecycle handlers", () => {
   beforeEach(() => {
     sendFrameToProcessMock.mockReset();
+  });
+
+  it("adapter.list discovers deployed adapter bindings and cached accounts", () => {
+    const whatsappService = {
+      adapterConnect: vi.fn(),
+      adapterDisconnect: vi.fn(),
+      adapterSend: vi.fn(),
+      adapterStatus: vi.fn(),
+      adapterShellExec: vi.fn(),
+      adapterSetActivity: vi.fn(),
+    };
+    const status = {
+      upsert: vi.fn(),
+      listAll: vi.fn(() => [
+        {
+          adapter: "whatsapp",
+          accountId: "primary",
+          connected: true,
+          authenticated: true,
+          mode: "websocket",
+          lastActivity: 123,
+          error: null,
+          extra: null,
+          updatedAt: 456,
+        },
+        {
+          adapter: "telegram",
+          accountId: "alerts",
+          connected: false,
+          authenticated: false,
+          mode: null,
+          lastActivity: null,
+          error: "binding removed",
+          extra: { reason: "missing-worker" },
+          updatedAt: 789,
+        },
+      ]),
+    };
+    const ctx = makeContext(
+      {
+        CHANNEL_WHATSAPP: whatsappService,
+        CHANNEL_DISCORD: { adapterStatus: vi.fn() },
+      },
+      status,
+    );
+
+    const result = handleAdapterList({}, ctx);
+
+    expect(result.adapters).toEqual([
+      expect.objectContaining({
+        adapter: "discord",
+        available: true,
+        supportsConnect: false,
+        supportsStatus: true,
+        accounts: [],
+      }),
+      expect.objectContaining({
+        adapter: "telegram",
+        available: false,
+        supportsConnect: false,
+        accounts: [
+          {
+            accountId: "alerts",
+            connected: false,
+            authenticated: false,
+            mode: null,
+            lastActivity: null,
+            error: "binding removed",
+            extra: { reason: "missing-worker" },
+          },
+        ],
+      }),
+      expect.objectContaining({
+        adapter: "whatsapp",
+        available: true,
+        supportsConnect: true,
+        supportsDisconnect: true,
+        supportsSend: true,
+        supportsStatus: true,
+        supportsShellExec: true,
+        supportsActivity: true,
+        accounts: [
+          {
+            accountId: "primary",
+            connected: true,
+            authenticated: true,
+            mode: "websocket",
+            lastActivity: 123,
+            error: null,
+            extra: null,
+          },
+        ],
+      }),
+    ]);
   });
 
   it("adapter.connect returns connect challenge payload and refreshes status", async () => {

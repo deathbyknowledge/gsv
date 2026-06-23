@@ -102,6 +102,7 @@ import {
   handleAdapterConnect,
   handleAdapterDisconnect,
   handleAdapterInbound,
+  handleAdapterList,
   handleAdapterSend,
   handleAdapterShellExec,
   handleAdapterStateUpdate,
@@ -596,6 +597,9 @@ async function dispatchNative(
         break;
       case "adapter.status":
         data = await handleAdapterStatus(frame.args, ctx);
+        break;
+      case "adapter.list":
+        data = handleAdapterList(frame.args, ctx);
         break;
 
       case "notification.create":

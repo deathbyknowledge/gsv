@@ -186,6 +186,7 @@ describe("CapabilityStore", () => {
       "account.list",
       "adapter.connect",
       "adapter.disconnect",
+      "adapter.list",
       "adapter.status",
       "ai.image.generate",
       "ai.image.read",

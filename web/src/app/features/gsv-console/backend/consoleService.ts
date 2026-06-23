@@ -2,7 +2,7 @@ import type { GSVClient } from "@humansandmachines/gsv/client";
 import {
   buildConsoleOverviewData,
   normalizeAccountsPayload,
-  normalizeAdapterStatusPayload,
+  normalizeAdapterPayload,
   normalizeConfigPayload,
   normalizePackagesPayload,
   normalizeProcessesPayload,
@@ -214,23 +214,16 @@ export async function saveConsoleAgentBehavior(
 
 export async function loadConsoleAdapterAccounts(
   client: Pick<GSVClient, "call">,
-  adapters: readonly string[] = DEFAULT_CONSOLE_ADAPTERS,
+  adapters?: readonly string[],
 ): Promise<ConsoleAdapterAccount[]> {
-  const settled = await Promise.allSettled(
-    adapters.map(async (adapter) => normalizeAdapterStatusPayload(
-      await client.call("adapter.status", { adapter }),
-      adapter,
-    )),
-  );
-
-  return settled.flatMap((result) => result.status === "fulfilled" ? result.value : []);
+  const payloads = await loadAdapterPayloads(client, adapters);
+  return payloads.flatMap((payload) => normalizeAdapterPayload(payload));
 }
 
 export async function loadConsoleOverview(
   client: ConsoleClient,
   options: LoadConsoleOverviewOptions = {},
 ): Promise<ConsoleOverviewData> {
-  const adapters = options.adapters ?? DEFAULT_CONSOLE_ADAPTERS;
   const includeConfig = options.includeConfig ?? true;
 
   const [
@@ -245,7 +238,7 @@ export async function loadConsoleOverview(
     client.call("sys.device.list", { includeOffline: true }),
     client.pkg.list({}),
     client.account.list({}),
-    loadAdapterPayloads(client, adapters),
+    loadAdapterPayloads(client, options.adapters),
     includeConfig ? loadOptionalPayload(() => client.sys.config.get({})) : Promise.resolve({ entries: [] }),
   ]);
 
@@ -260,7 +253,19 @@ export async function loadConsoleOverview(
   });
 }
 
-async function loadAdapterPayloads(client: Pick<GSVClient, "call">, adapters: readonly string[]): Promise<unknown[]> {
+async function loadAdapterPayloads(client: Pick<GSVClient, "call">, adapters?: readonly string[]): Promise<unknown[]> {
+  if (!adapters) {
+    try {
+      return [await client.call("adapter.list", {})];
+    } catch {
+      return loadAdapterStatusPayloads(client, DEFAULT_CONSOLE_ADAPTERS);
+    }
+  }
+
+  return loadAdapterStatusPayloads(client, adapters);
+}
+
+async function loadAdapterStatusPayloads(client: Pick<GSVClient, "call">, adapters: readonly string[]): Promise<unknown[]> {
   const settled = await Promise.allSettled(
     adapters.map(async (adapter) => {
       try {

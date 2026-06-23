@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   createConsoleAgent,
+  loadConsoleAdapterAccounts,
   saveConsoleAgentBehavior,
 } from "./consoleService";
 
@@ -30,6 +31,84 @@ function createMockClient(uid: number | string = 42) {
 }
 
 describe("console agent service", () => {
+  it("loads adapter accounts from adapter discovery", async () => {
+    const call = vi.fn(async (syscall: string) => {
+      expect(syscall).toBe("adapter.list");
+      return {
+        adapters: [
+          {
+            adapter: "whatsapp",
+            available: true,
+            accounts: [
+              {
+                accountId: "primary",
+                connected: true,
+                authenticated: true,
+                mode: "websocket",
+                lastActivity: 100,
+              },
+            ],
+          },
+          {
+            adapter: "discord",
+            available: true,
+            accounts: [],
+          },
+        ],
+      };
+    });
+
+    await expect(loadConsoleAdapterAccounts({ call } as any)).resolves.toEqual([
+      {
+        adapter: "whatsapp",
+        accountId: "primary",
+        connected: true,
+        authenticated: true,
+        mode: "websocket",
+        lastActivity: 100,
+        error: "",
+      },
+    ]);
+    expect(call).toHaveBeenCalledWith("adapter.list", {});
+  });
+
+  it("falls back to known adapter status calls when discovery is unavailable", async () => {
+    const call = vi.fn(async (syscall: string, args: { adapter?: string }) => {
+      if (syscall === "adapter.list") {
+        throw new Error("unsupported syscall");
+      }
+      return {
+        adapter: args.adapter,
+        accounts: args.adapter === "discord"
+          ? [
+              {
+                accountId: "bot",
+                connected: false,
+                authenticated: true,
+                mode: "gateway",
+                error: "offline",
+              },
+            ]
+          : [],
+      };
+    });
+
+    await expect(loadConsoleAdapterAccounts({ call } as any)).resolves.toEqual([
+      {
+        adapter: "discord",
+        accountId: "bot",
+        connected: false,
+        authenticated: true,
+        mode: "gateway",
+        lastActivity: null,
+        error: "offline",
+      },
+    ]);
+    expect(call).toHaveBeenCalledWith("adapter.status", { adapter: "whatsapp" });
+    expect(call).toHaveBeenCalledWith("adapter.status", { adapter: "discord" });
+    expect(call).toHaveBeenCalledWith("adapter.status", { adapter: "telegram" });
+  });
+
   it("persists selected behavior config when creating an agent", async () => {
     const { client, createAccount, setConfig } = createMockClient(42);
     const approval = JSON.stringify({ default: "deny", rules: [] });

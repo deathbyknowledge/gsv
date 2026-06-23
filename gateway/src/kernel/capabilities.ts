@@ -50,6 +50,7 @@ const DEFAULT_CAPABILITIES: [number, string[]][] = [
     "ai.speech.create",
     "adapter.connect",
     "adapter.disconnect",
+    "adapter.list",
     "adapter.status",
     "sys.config.get",
     "sys.config.set",
