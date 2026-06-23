@@ -1,7 +1,7 @@
 .gsv-settings-overview {
-  flex: 1;
-  min-height: calc(100% - 72px);
-  margin-bottom: 72px;
+  flex: 1 0 auto;
+  min-height: 100%;
+  margin-bottom: 88px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   border: 1px solid var(--border-raised);
@@ -61,7 +61,6 @@ button.gsv-settings-deep-cell {
   overflow: hidden;
   border-bottom: 1px solid var(--border);
   background:
-    radial-gradient(circle at 50% 35%, rgba(150, 140, 255, 0.16), transparent 12%),
     radial-gradient(120% 120% at 50% 38%, #171441, #08061a 75%);
   box-shadow: inset 0 0 40px rgba(80, 70, 180, 0.18);
 }
@@ -75,15 +74,19 @@ button.gsv-settings-deep-cell {
 }
 
 .gsv-settings-ship-visual::before {
-  border-top: 1px solid var(--bracket);
-  border-left: 1px solid var(--bracket);
-  clip-path: polygon(0 0, 42px 0, 42px 1px, 1px 1px, 1px 42px, 0 42px);
+  background:
+    linear-gradient(var(--bracket), var(--bracket)) left top / 9px 1px no-repeat,
+    linear-gradient(var(--bracket), var(--bracket)) left top / 1px 9px no-repeat,
+    linear-gradient(var(--bracket), var(--bracket)) right top / 9px 1px no-repeat,
+    linear-gradient(var(--bracket), var(--bracket)) right top / 1px 9px no-repeat,
+    linear-gradient(var(--bracket), var(--bracket)) left bottom / 9px 1px no-repeat,
+    linear-gradient(var(--bracket), var(--bracket)) left bottom / 1px 9px no-repeat,
+    linear-gradient(var(--bracket), var(--bracket)) right bottom / 9px 1px no-repeat,
+    linear-gradient(var(--bracket), var(--bracket)) right bottom / 1px 9px no-repeat;
 }
 
 .gsv-settings-ship-visual::after {
-  border-right: 1px solid var(--bracket);
-  border-bottom: 1px solid var(--bracket);
-  clip-path: polygon(calc(100% - 42px) calc(100% - 1px), calc(100% - 1px) calc(100% - 1px), calc(100% - 1px) calc(100% - 42px), 100% calc(100% - 42px), 100% 100%, calc(100% - 42px) 100%);
+  display: none;
 }
 
 .gsv-settings-ship-orbit {
@@ -298,9 +301,9 @@ button.gsv-settings-deep-cell {
   flex: 1;
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
+  justify-content: center;
   gap: 8px;
-  padding: 16px;
+  padding: 14px 42px 14px 16px;
 }
 
 .gsv-settings-model-summary span {
@@ -332,7 +335,9 @@ button.gsv-settings-deep-cell {
 .gsv-settings-deep-cell > .gsv-settings-chevron {
   position: absolute;
   right: 16px;
-  bottom: 16px;
+  top: 50%;
+  bottom: auto;
+  transform: translateY(-50%);
 }
 
 .gsv-settings-section-rows {
