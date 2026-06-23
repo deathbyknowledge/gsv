@@ -8,6 +8,8 @@ export interface ButtonProps {
   disabled?: boolean;
   block?: boolean;
   onClick?: () => void;
+  /** Extra data-* attributes spread onto the root (e.g. focus markers). */
+  dataAttrs?: Record<`data-${string}`, string | number | boolean>;
 }
 
 const VARIANT_CLASS: Record<ButtonVariant, string> = {
@@ -19,10 +21,11 @@ const VARIANT_CLASS: Record<ButtonVariant, string> = {
 };
 
 /** Button — ported from Button.dc.html. */
-export function Button({ variant = "primary", label = "BUTTON", disabled = false, block = false, onClick }: ButtonProps) {
+export function Button({ variant = "primary", label = "BUTTON", disabled = false, block = false, onClick, dataAttrs }: ButtonProps) {
   const cls = `gsv-btn ${VARIANT_CLASS[variant]}${block ? " gsv-btn-block" : ""}${disabled ? " is-disabled" : ""}`;
   return (
     <button
+      {...dataAttrs}
       type="button"
       class={cls}
       disabled={disabled}

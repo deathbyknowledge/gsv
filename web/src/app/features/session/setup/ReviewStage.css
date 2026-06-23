@@ -1,0 +1,67 @@
+/* ============================================================
+   ReviewStage — "Review and start" setup summary, restyled to
+   the GSV design system. Summary cards use the Surface atom;
+   this sheet only handles the heading copy, the summary grid
+   layout, the card text composition, and the review notes aside.
+   Classes prefixed review-.
+   ============================================================ */
+
+.review-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+/* Card text composition (border/background come from Surface) */
+.review-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.review-card-label {
+  font-family: var(--gsv-font-mono);
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.review-card-value {
+  font-family: var(--gsv-font-prose);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--text-title);
+}
+.review-card-desc {
+  margin: 0;
+  font-family: var(--gsv-font-prose);
+  font-size: 12px;
+  line-height: 1.5;
+  color: #9d98d4;
+}
+
+/* Review notes aside */
+.onboarding-review-notes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+.onboarding-review-notes strong {
+  display: block;
+  font-family: var(--gsv-font-mono);
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 6px;
+}
+.onboarding-review-notes p {
+  margin: 0;
+  font-family: var(--gsv-font-prose);
+  font-size: 12px;
+  line-height: 1.5;
+  color: #9d98d4;
+}
