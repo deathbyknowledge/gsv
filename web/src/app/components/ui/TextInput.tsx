@@ -101,17 +101,22 @@ export function TextInput(props: TextInputProps) {
           onInput={(e) => emit((e.target as HTMLInputElement).value)}
         />
         {showClear ? (
-          <span class="gsv-ti-x" onClick={() => emit("")}>
+          <button type="button" class="gsv-ti-x" aria-label="Clear input" onClick={() => emit("")}>
             <svg width="11" height="11" viewBox="0 0 16 16" stroke="currentColor" stroke-width="1.6" stroke-linecap="square">
               <line x1="3" y1="3" x2="13" y2="13" />
               <line x1="13" y1="3" x2="3" y2="13" />
             </svg>
-          </span>
+          </button>
         ) : null}
         {isPassword ? (
-          <span class="gsv-ti-btn" onClick={() => setRevealed((r) => !r)}>
+          <button
+            type="button"
+            class="gsv-ti-btn"
+            disabled={disabled}
+            onClick={() => setRevealed((r) => !r)}
+          >
             {revealed ? "HIDE" : "SHOW"}
-          </span>
+          </button>
         ) : null}
         {suffix ? <span class="gsv-ti-affix">{suffix}</span> : null}
       </div>
