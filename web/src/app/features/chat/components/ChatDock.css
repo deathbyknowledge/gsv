@@ -91,7 +91,8 @@
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  max-width: 100%;
+  max-width: calc(100% - 53px);
+  margin-left: 53px;
   margin-top: 7px;
   font-family: var(--gsv-font-mono);
   font-size: 9.5px;
@@ -131,8 +132,9 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  margin-left: 53px;
   margin-top: 6px;
-  max-width: 100%;
+  max-width: calc(100% - 53px);
   color: var(--accent-bright);
   font-family: var(--gsv-font-prose);
   font-size: 11.5px;
@@ -149,6 +151,7 @@
 
 .gsv-shell-root .gsv-chat-agent-activity span {
   min-width: 0;
+  max-width: calc(100% - 28px);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
