@@ -93,6 +93,18 @@ function CollapsedDesktop() {
     <div class="gsv-collapsed-desktop" aria-hidden="true">
       <div class="gsv-space-grid" />
       <div class="gsv-space-stars" />
+      <div class="gsv-collapsed-glyphs">
+        <span>✦</span>
+        <span>◦</span>
+        <span>*</span>
+        <span>·</span>
+        <span>⋆</span>
+        <span>*</span>
+        <span>✦</span>
+        <span>·</span>
+        <span>✧</span>
+        <span>◦</span>
+      </div>
     </div>
   );
 }

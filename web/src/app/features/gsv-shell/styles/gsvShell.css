@@ -599,6 +599,95 @@
   overflow: hidden;
 }
 
+.gsv-collapsed-glyphs {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  font-family: var(--gsv-font-mono);
+}
+
+.gsv-collapsed-glyphs span {
+  position: absolute;
+  color: #b6b1ff;
+}
+
+.gsv-collapsed-glyphs span:nth-child(1) {
+  left: 36%;
+  top: 18%;
+  font-size: 13px;
+  opacity: 0.16;
+}
+
+.gsv-collapsed-glyphs span:nth-child(2) {
+  left: 54%;
+  top: 62%;
+  color: #cdd5e6;
+  font-size: 9px;
+  opacity: 0.28;
+}
+
+.gsv-collapsed-glyphs span:nth-child(3) {
+  left: 70%;
+  top: 24%;
+  color: #cdd5e6;
+  font-size: 18px;
+  opacity: 0.26;
+}
+
+.gsv-collapsed-glyphs span:nth-child(4) {
+  left: 88%;
+  top: 74%;
+  font-size: 12px;
+  opacity: 0.22;
+}
+
+.gsv-collapsed-glyphs span:nth-child(5) {
+  left: 48%;
+  top: 40%;
+  color: var(--idle);
+  font-size: 11px;
+  opacity: 0.18;
+}
+
+.gsv-collapsed-glyphs span:nth-child(6) {
+  left: 78%;
+  top: 48%;
+  color: #cdd5e6;
+  font-size: 14px;
+  opacity: 0.2;
+}
+
+.gsv-collapsed-glyphs span:nth-child(7) {
+  left: 62%;
+  top: 84%;
+  font-size: 10px;
+  opacity: 0.15;
+}
+
+.gsv-collapsed-glyphs span:nth-child(8) {
+  left: 42%;
+  top: 78%;
+  color: var(--idle);
+  font-size: 14px;
+  opacity: 0.17;
+}
+
+.gsv-collapsed-glyphs span:nth-child(9) {
+  left: 92%;
+  top: 34%;
+  font-size: 11px;
+  opacity: 0.19;
+}
+
+.gsv-collapsed-glyphs span:nth-child(10) {
+  left: 32%;
+  top: 52%;
+  color: #cdd5e6;
+  font-size: 9px;
+  opacity: 0.22;
+}
+
 .gsv-shell-rail {
   position: relative;
   z-index: 12;
@@ -620,6 +709,10 @@
   align-items: center;
   gap: 6px;
   padding-top: 14px;
+}
+
+.gsv-shell-rail.is-collapsed .gsv-rail-menu {
+  flex: none;
 }
 
 .gsv-rail-head {
@@ -865,19 +958,25 @@
   width: 40px;
   height: 40px;
   flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border-radius: 50%;
   border: 1px solid var(--border);
   background: var(--node-bg);
   color: var(--node-label);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
 }
 
 .gsv-rail-dot-button:hover,
-.gsv-rail-gsv-dot:hover {
-  border-color: var(--accent);
+.gsv-rail-dot-button:focus-visible,
+.gsv-rail-gsv-dot:hover,
+.gsv-rail-gsv-dot:focus-visible {
+  border-color: #a9a4ff;
   background: var(--hover);
+  color: var(--text-hi);
+  outline: none;
 }
 
 .gsv-rail-dot-button span {
