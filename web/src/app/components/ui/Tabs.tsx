@@ -4,6 +4,7 @@ export interface TabsProps {
   tabs?: string[];
   value?: number;
   onChange?: (i: number) => void;
+  onClose?: (i: number) => void;
   width?: number;
   sticky?: boolean;
 }
@@ -12,7 +13,7 @@ export interface TabsProps {
  *  continuous glowing rail. The active tab is transparent (revealing the host
  *  surface); unselected tabs draw their own outline. Geometry is derived from
  *  the bar's measured width via a ResizeObserver. */
-export function Tabs({ tabs, value, onChange, width, sticky = false }: TabsProps) {
+export function Tabs({ tabs, value, onChange, onClose, width, sticky = false }: TabsProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [hover, setHover] = useState(-1);
   const [w, setW] = useState(0);
@@ -38,6 +39,7 @@ export function Tabs({ tabs, value, onChange, width, sticky = false }: TabsProps
   const controlled = value != null;
   const val = Math.max(0, Math.min(controlled ? (value as number) | 0 : sel | 0, tabList.length - 1));
   const emit = onChange || (() => {});
+  const closeable = typeof onClose === "function";
 
   // width drives the single continuous rail path; prefer an explicit prop, else self-measured, else a safe default
   const W = (width != null ? +width : 0) || w || 600;
@@ -62,12 +64,17 @@ export function Tabs({ tabs, value, onChange, width, sticky = false }: TabsProps
     const active = i === val, hov = i === hover, H = active ? 32 : 28;
     // active tab is TRANSPARENT — it reveals whatever texture/background the host page sits on
     const fill = active ? "background:transparent;" : "background-color:" + (hov ? "var(--active)" : "var(--header-bar)") + ";";
-    return "position:absolute;left:0;top:0;width:" + TAB_W + "px;height:" + H + "px;clip-path:" + tabClip(TAB_W, H) + ";" + fill + "display:flex;align-items:center;justify-content:flex-start;padding-left:18px;transition:background-color .12s;";
+    return "position:absolute;left:0;top:0;width:" + TAB_W + "px;height:" + H + "px;clip-path:" + tabClip(TAB_W, H) + ";" + fill + "display:flex;align-items:center;justify-content:flex-start;gap:7px;box-sizing:border-box;padding-left:18px;padding-right:" + (closeable ? "10px" : "14px") + ";transition:background-color .12s;";
   };
   const textStyle = (i: number): string => {
     const active = i === val, hov = i === hover;
     const color = active ? "var(--accent-bright)" : hov ? "#cbc7ff" : "var(--accent)";
-    return "font-family:var(--gsv-font-mono);font-size:" + (narrow ? "11px" : "12px") + ";letter-spacing:.2em;font-weight:" + (active ? "700" : "500") + ";color:" + color + ";" + (active ? "text-shadow:0 0 7px rgba(179,174,255,.5);" : "text-shadow:0 0 6px rgba(150,140,255,.25);");
+    return "min-width:0;flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--gsv-font-mono);font-size:" + (narrow ? "11px" : "12px") + ";letter-spacing:.2em;font-weight:" + (active ? "700" : "500") + ";color:" + color + ";" + (active ? "text-shadow:0 0 7px rgba(179,174,255,.5);" : "text-shadow:0 0 6px rgba(150,140,255,.25);");
+  };
+  const closeStyle = (i: number): string => {
+    const visible = i === val || i === hover;
+    const color = visible ? "var(--accent-bright)" : "#7d78b8";
+    return "appearance:none;margin:0;padding:0;flex:none;width:18px;height:18px;border:0;background:transparent;color:" + color + ";cursor:pointer;display:inline-flex;align-items:center;justify-content:center;opacity:" + (visible ? "1" : "0") + ";transition:opacity .12s,color .12s;";
   };
   const mkTabSvg = (i: number) => {
     const active = i === val, hov = i === hover;
@@ -132,6 +139,25 @@ export function Tabs({ tabs, value, onChange, width, sticky = false }: TabsProps
         >
           <div style={innerStyle(i)}>
             <span style={textStyle(i)}>{label}</span>
+            {closeable ? (
+              <button
+                type="button"
+                aria-label={`Close ${label}`}
+                title={`Close ${label}`}
+                style={closeStyle(i)}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onClose?.(i);
+                }}
+                onFocus={() => setHover(i)}
+                onBlur={() => setHover(-1)}
+              >
+                <svg width="10" height="10" viewBox="0 0 16 16" stroke="currentColor" stroke-width="1.6" stroke-linecap="square">
+                  <line x1="3" y1="3" x2="13" y2="13" />
+                  <line x1="13" y1="3" x2="3" y2="13" />
+                </svg>
+              </button>
+            ) : null}
           </div>
           {mkTabSvg(i)}
         </div>

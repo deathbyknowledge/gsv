@@ -1259,10 +1259,13 @@
 .gsv-console-stage {
   flex: 1;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
   overflow: auto;
 }
 
 .gsv-console-page {
+  flex: 1 0 auto;
   min-height: 100%;
   display: flex;
   flex-direction: column;
