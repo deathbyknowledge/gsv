@@ -111,21 +111,23 @@ export function SetupScreen({
                   {current + 1} / 3
                 </span>
               </span>
-              {showNext ? (
-                <Button variant="primary" label="Next" disabled={busy} onClick={onNext} />
-              ) : null}
-              {showSubmit ? (
-                <Button
-                  variant="primary"
-                  label="Deploy"
-                  disabled={busy}
-                  dataAttrs={{ "data-setup-submit": true }}
-                  onClick={() => formRef.current?.requestSubmit()}
-                />
-              ) : null}
-              {showGuideToggle ? (
-                <Button variant="secondary" label={guideButtonText} onClick={onGuideToggle} />
-              ) : null}
+              <div class="gsv-setup-nav-primary">
+                {showNext ? (
+                  <Button variant="primary" label="Next" disabled={busy} onClick={onNext} />
+                ) : null}
+                {showSubmit ? (
+                  <Button
+                    variant="primary"
+                    label="Deploy"
+                    disabled={busy}
+                    dataAttrs={{ "data-setup-submit": true }}
+                    onClick={() => formRef.current?.requestSubmit()}
+                  />
+                ) : null}
+                {showGuideToggle ? (
+                  <Button variant="link" label={guideButtonText} onClick={onGuideToggle} />
+                ) : null}
+              </div>
             </div>
           ) : null}
 
