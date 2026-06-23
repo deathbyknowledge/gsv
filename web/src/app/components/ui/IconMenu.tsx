@@ -64,12 +64,9 @@ export function IconMenu({
           />
           <span style={{ fontSize: "11px", letterSpacing: ".24em", color: "var(--accent-bright)" }}>{title}</span>
         </div>
-        <span
-          onClick={onClose}
-          style={{ fontSize: "11px", color: "var(--text-dim)", cursor: "pointer", letterSpacing: ".12em" }}
-        >
+        <button type="button" class="gsv-im-close" disabled={!onClose} onClick={onClose}>
           [ X ]
-        </span>
+        </button>
       </div>
       <div
         style={{
@@ -80,22 +77,22 @@ export function IconMenu({
           padding: "1px",
         }}
       >
-        <div onClick={onFiles} class="gsv-im-cell" style={{ color: "var(--accent-bright)" }}>
+        <button type="button" disabled={!onFiles} onClick={onFiles} class="gsv-im-cell" style={{ color: "var(--accent-bright)" }}>
           <Icon name="folder" size={22} />
           <span style={{ fontSize: "9px", letterSpacing: ".16em", color: "#7d78b8" }}>FILES</span>
-        </div>
-        <div onClick={onLibrary} class="gsv-im-cell" style={{ color: "var(--accent-bright)" }}>
+        </button>
+        <button type="button" disabled={!onLibrary} onClick={onLibrary} class="gsv-im-cell" style={{ color: "var(--accent-bright)" }}>
           <Icon name="pencil" size={22} />
           <span style={{ fontSize: "9px", letterSpacing: ".16em", color: "#7d78b8" }}>LIBRARY</span>
-        </div>
-        <div onClick={onTerminal} class="gsv-im-cell" style={{ color: "var(--accent-bright)" }}>
+        </button>
+        <button type="button" disabled={!onTerminal} onClick={onTerminal} class="gsv-im-cell" style={{ color: "var(--accent-bright)" }}>
           <Icon name="terminal" size={22} />
           <span style={{ fontSize: "9px", letterSpacing: ".16em", color: "#7d78b8" }}>TERMINAL</span>
-        </div>
-        <div onClick={onSettings} class="gsv-im-cell" style={{ color: "#b6b1ff" }}>
+        </button>
+        <button type="button" disabled={!onSettings} onClick={onSettings} class="gsv-im-cell" style={{ color: "#b6b1ff" }}>
           <Icon name="cog" size={22} />
           <span style={{ fontSize: "9px", letterSpacing: ".16em", color: "#b6b1ff" }}>SETTINGS</span>
-        </div>
+        </button>
       </div>
     </div>
   );
