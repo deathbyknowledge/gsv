@@ -3,7 +3,7 @@ import { Icon } from "../../../components/ui/Icon";
 import { ListRow, type ListRowStatus } from "../../../components/ui/ListRow";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
 import { StatusDot, type StatusTone } from "../../../components/ui/StatusDot";
-import "./ConsoleDetailPlaceholder.css";
+import "./ConsoleDetailPage.css";
 
 export type ConsoleDetailRow = {
   id: string;
@@ -20,13 +20,13 @@ export type ConsoleDetailSection = {
   rows: readonly ConsoleDetailRow[];
 };
 
-type ConsoleDetailPlaceholderProps = {
+type ConsoleDetailPageProps = {
   blurb: string;
   icon: string;
   onBack: () => void;
   onPrimary?: () => void;
   parentLabel: string;
-  placeholderLabel: string;
+  pendingLabel?: string;
   primaryLabel?: string;
   sections?: readonly ConsoleDetailSection[];
   statusLabel: string;
@@ -35,30 +35,30 @@ type ConsoleDetailPlaceholderProps = {
   typeLabel: string;
 };
 
-export function ConsoleDetailPlaceholder({
+export function ConsoleDetailPage({
   blurb,
   icon,
   onBack,
   onPrimary,
   parentLabel,
-  placeholderLabel,
+  pendingLabel = "PENDING SURFACE",
   primaryLabel,
   sections = [],
   statusLabel,
   title,
   tone,
   typeLabel,
-}: ConsoleDetailPlaceholderProps) {
+}: ConsoleDetailPageProps) {
   const hasSections = sections.some((section) => section.rows.length > 0);
 
   return (
-    <section class="gsv-console-detail-placeholder-page">
-      <div class="gsv-console-detail-placeholder-shell">
-        <header class="gsv-console-detail-placeholder-head">
-          <span class="gsv-console-detail-placeholder-icon">
+    <section class="gsv-console-detail-page">
+      <div class="gsv-console-detail-shell">
+        <header class="gsv-console-detail-head">
+          <span class="gsv-console-detail-icon">
             <Icon name={icon} size={30} />
           </span>
-          <div class="gsv-console-detail-placeholder-title">
+          <div class="gsv-console-detail-title">
             <h2>{title}</h2>
             <div>
               <span>{typeLabel}</span>
@@ -68,7 +68,7 @@ export function ConsoleDetailPlaceholder({
           </div>
         </header>
 
-        <p class="gsv-console-detail-placeholder-blurb">{blurb}</p>
+        <p class="gsv-console-detail-blurb">{blurb}</p>
 
         {hasSections ? (
           <div class="gsv-console-detail-sections">
@@ -94,16 +94,16 @@ export function ConsoleDetailPlaceholder({
             ))}
           </div>
         ) : (
-          <div class="gsv-console-detail-placeholder-panel">
+          <div class="gsv-console-detail-pending-panel">
             <span class="gsv-detail-corner is-top-left" aria-hidden="true" />
             <span class="gsv-detail-corner is-top-right" aria-hidden="true" />
             <span class="gsv-detail-corner is-bottom-left" aria-hidden="true" />
             <span class="gsv-detail-corner is-bottom-right" aria-hidden="true" />
-            <span>[ {title} · {placeholderLabel} ]</span>
+            <span>[ {title} · {pendingLabel} ]</span>
           </div>
         )}
 
-        <div class="gsv-console-detail-placeholder-actions">
+        <div class="gsv-console-detail-actions">
           {primaryLabel && onPrimary ? <Button variant="primary" label={primaryLabel} onClick={onPrimary} /> : null}
           <Button variant="secondary" label={`BACK TO ${parentLabel}`} onClick={onBack} />
         </div>

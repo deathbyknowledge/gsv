@@ -4,10 +4,10 @@ import { SectionHeader } from "../../../components/ui/SectionHeader";
 import type { StatusTone } from "../../../components/ui/StatusDot";
 import type { TagTone } from "../../../components/ui/Tag";
 import {
-  ConsoleDetailPlaceholder,
+  ConsoleDetailPage,
   type ConsoleDetailRow,
   type ConsoleDetailSection,
-} from "../components/ConsoleDetailPlaceholder";
+} from "../components/ConsoleDetailPage";
 import {
   ConsolePage,
   ConsoleResourceBoundary,
@@ -124,7 +124,7 @@ function ConfigDetailPanel({
   const noun = kind === "models" ? "MODEL" : "CONFIG";
 
   return (
-    <ConsoleDetailPlaceholder
+    <ConsoleDetailPage
       icon={row.icon}
       title={row.label}
       typeLabel={`GSV · ${noun}`}
@@ -132,7 +132,6 @@ function ConfigDetailPanel({
       tone={row.tone}
       blurb={row.detailBlurb}
       parentLabel={kind === "models" ? "MODELS" : "OVERRIDES"}
-      placeholderLabel="DETAIL VIEW PLACEHOLDER"
       primaryLabel="SAVE CHANGES"
       sections={configDetailSections(kind, row)}
       onBack={onBack}

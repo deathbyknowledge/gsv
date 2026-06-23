@@ -1,11 +1,11 @@
-.gsv-console-detail-placeholder-page {
+.gsv-console-detail-page {
   flex: 1;
   min-height: 100%;
   padding: 38px 40px 88px;
   background: transparent;
 }
 
-.gsv-console-detail-placeholder-shell {
+.gsv-console-detail-shell {
   width: min(780px, 100%);
   margin: 0 auto;
   display: flex;
@@ -13,14 +13,14 @@
   gap: 28px;
 }
 
-.gsv-console-detail-placeholder-head {
+.gsv-console-detail-head {
   min-width: 0;
   display: flex;
   align-items: center;
   gap: 18px;
 }
 
-.gsv-console-detail-placeholder-icon {
+.gsv-console-detail-icon {
   width: 66px;
   height: 66px;
   flex: none;
@@ -33,13 +33,13 @@
   box-shadow: inset 0 0 18px rgba(80, 70, 180, 0.18);
 }
 
-.gsv-console-detail-placeholder-title {
+.gsv-console-detail-title {
   min-width: 0;
   display: grid;
   gap: 9px;
 }
 
-.gsv-console-detail-placeholder-title h2 {
+.gsv-console-detail-title h2 {
   min-width: 0;
   margin: 0;
   overflow-wrap: anywhere;
@@ -51,7 +51,7 @@
   text-shadow: 0 0 8px rgba(150, 140, 255, 0.4);
 }
 
-.gsv-console-detail-placeholder-title div {
+.gsv-console-detail-title div {
   min-width: 0;
   display: flex;
   align-items: center;
@@ -62,12 +62,12 @@
   text-transform: uppercase;
 }
 
-.gsv-console-detail-placeholder-title div span:first-child {
+.gsv-console-detail-title div span:first-child {
   color: #8c86c8;
   letter-spacing: 0.22em;
 }
 
-.gsv-console-detail-placeholder-blurb {
+.gsv-console-detail-blurb {
   max-width: 640px;
   margin: 0;
   color: var(--label);
@@ -78,7 +78,7 @@
   text-wrap: pretty;
 }
 
-.gsv-console-detail-placeholder-panel {
+.gsv-console-detail-pending-panel {
   position: relative;
   width: 100%;
   min-width: 0;
@@ -97,7 +97,7 @@
   text-transform: uppercase;
 }
 
-.gsv-console-detail-placeholder-panel > span:last-child {
+.gsv-console-detail-pending-panel > span:last-child {
   max-width: calc(100% - 40px);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -135,37 +135,37 @@
   justify-content: flex-end;
 }
 
-.gsv-console-detail-placeholder-actions {
+.gsv-console-detail-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
 }
 
 @media (max-width: 720px) {
-  .gsv-console-detail-placeholder-page {
+  .gsv-console-detail-page {
     padding: 28px 24px 72px;
   }
 }
 
 @media (max-width: 520px) {
-  .gsv-console-detail-placeholder-page {
+  .gsv-console-detail-page {
     padding: 18px 14px 64px;
   }
 
-  .gsv-console-detail-placeholder-head {
+  .gsv-console-detail-head {
     align-items: flex-start;
   }
 
-  .gsv-console-detail-placeholder-icon {
+  .gsv-console-detail-icon {
     width: 46px;
     height: 46px;
   }
 
-  .gsv-console-detail-placeholder-title h2 {
+  .gsv-console-detail-title h2 {
     font-size: 18px;
   }
 
-  .gsv-console-detail-placeholder-panel {
+  .gsv-console-detail-pending-panel {
     height: 260px;
   }
 }
