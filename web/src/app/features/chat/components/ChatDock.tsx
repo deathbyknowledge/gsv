@@ -1,11 +1,7 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { AgentImage } from "../../../components/ui/AgentImage";
-import { Avatar } from "../../../components/ui/Avatar";
 import { Icon } from "../../../components/ui/Icon";
-import { IconButton } from "../../../components/ui/IconButton";
 import { MessageInput } from "../../../components/ui/MessageInput";
-import { Progress } from "../../../components/ui/Progress";
-import { StatusDot } from "../../../components/ui/StatusDot";
 import type { StatusTone } from "../../../components/ui/StatusDot";
 import type { JSX } from "preact";
 import { buildChatAgentViewModel, type ChatAgentData } from "../domain/agent";
@@ -18,7 +14,8 @@ import {
 } from "../hooks";
 import { ActiveAgentPanel } from "./ActiveAgentPanel";
 import { ChatApprovalBanner } from "./ChatApprovalBanner";
-import { ChatDockPopovers, type ChatPopoverId } from "./ChatDockPopovers";
+import { ChatDockHeader } from "./ChatDockHeader";
+import type { ChatPopoverId } from "./ChatDockPopovers";
 import { ChatTranscript, type ChatDockMessage } from "./ChatTranscript";
 import { shortId } from "./chatUiFormat";
 import "./ChatDock.css";
@@ -304,118 +301,39 @@ export function ChatDock({
         />
       ) : null}
       {openPopover ? <button type="button" class="gsv-chat-popover-scrim" aria-label="Close chat menu" onClick={() => setOpenPopover(null)} /> : null}
-      <header class="gsv-chat-head">
-        <div class="gsv-chat-agent">
-          <button
-            type="button"
-            class="gsv-chat-agent-main"
-            onClick={openAgentPanel}
-            aria-haspopup="dialog"
-            aria-expanded={agentPanelOpen}
-          >
-            <span class="gsv-chat-avatar">
-              <Avatar src={activeAgent.imageSrc} status={activeAgent.status} size={42} />
-            </span>
-            <span class="gsv-chat-agent-name-row">
-              <strong>{activeAgent.name}</strong>
-              <svg class="gsv-chat-agent-chevron" width="8" height="10" viewBox="0 0 8 10" aria-hidden="true">
-                <path d="M1 1 L6 5 L1 9" fill="none" stroke="currentColor" stroke-width="1.4" />
-              </svg>
-            </span>
-          </button>
-          <button
-            type="button"
-            class="gsv-chat-agent-model"
-            onClick={() => togglePopover("model")}
-            aria-haspopup="menu"
-            aria-expanded={openPopover === "model"}
-          >
-            <span>{activeAgent.modelLabel}</span>
-            <span>{runStateLabel}</span>
-            <svg class="gsv-chat-agent-chevron" width="8" height="10" viewBox="0 0 8 10" aria-hidden="true">
-              <path d="M1 1 L6 5 L1 9" fill="none" stroke="currentColor" stroke-width="1.4" />
-            </svg>
-          </button>
-          <button
-            type="button"
-            class="gsv-chat-agent-activity"
-            onClick={() => togglePopover("tasks")}
-            aria-haspopup="menu"
-            aria-expanded={openPopover === "tasks"}
-          >
-            <StatusDot tone={effectiveStatus} size={7} />
-            <span>{activeAgent.activity}</span>
-            <i aria-hidden="true" />
-            <svg class="gsv-chat-agent-chevron" width="8" height="10" viewBox="0 0 8 10" aria-hidden="true">
-              <path d="M1 1 L6 5 L1 9" fill="none" stroke="currentColor" stroke-width="1.4" />
-            </svg>
-          </button>
-        </div>
-        <div class="gsv-chat-actions">
-          <div class="gsv-chat-action-row">
-            {!hasActiveProcess ? (
-              <button
-                type="button"
-                class="gsv-chat-command gsv-chat-command-start"
-                disabled={spawnProcess.isPending}
-                onClick={startProcess}
-                title="Start process"
-                aria-label="Start process"
-              >
-                <Icon name="plus" size={15} />
-              </button>
-            ) : null}
-            {canAbortRun ? (
-              <button
-                type="button"
-                class="gsv-chat-command gsv-chat-command-abort"
-                onClick={abortActiveRun}
-                title="Abort current run"
-                aria-label="Abort current run"
-              >
-                <span aria-hidden="true" />
-              </button>
-            ) : null}
-            <IconButton glyph="max" size="medium" title={atMax ? "Restore chat" : "Expand chat"} onClick={onToggleMax} />
-            <IconButton glyph="min" size="medium" title="Minimize chat" onClick={onToggleOpen} />
-          </div>
-          <button
-            type="button"
-            class="gsv-chat-context-control"
-            title={contextTitle}
-            onClick={() => togglePopover("context")}
-            aria-haspopup="menu"
-            aria-expanded={openPopover === "context"}
-          >
-            <Icon name="stars" size={14} />
-            {contextPercent !== null ? (
-              <Progress value={contextPercent} label="" showValue={false} size="medium" width={46} />
-            ) : null}
-            <span>{contextPercent !== null ? `${contextPercent}%` : contextLabel}</span>
-          </button>
-        </div>
-
-        <ChatDockPopovers
-          activeAgent={activeAgent}
-          context={context}
-          contextLevel={contextLevel}
-          contextModel={contextModel}
-          contextPercent={contextPercent}
-          hasActiveProcess={hasActiveProcess}
-          messageCount={processHistory.data?.messageCount}
-          openPopover={openPopover}
-          runStateLabel={runStateLabel}
-          taskCount={taskCount}
-          onOpenModels={() => {
-            setOpenPopover(null);
-            (onOpenModels ?? onOpenCrew)();
-          }}
-          onOpenTasks={() => {
-            setOpenPopover(null);
-            (onOpenTasks ?? onOpenCrew)();
-          }}
-        />
-      </header>
+      <ChatDockHeader
+        activeAgent={activeAgent}
+        agentPanelOpen={agentPanelOpen}
+        atMax={atMax}
+        canAbortRun={canAbortRun}
+        context={context}
+        contextLabel={contextLabel}
+        contextLevel={contextLevel}
+        contextModel={contextModel}
+        contextPercent={contextPercent}
+        contextTitle={contextTitle}
+        effectiveStatus={effectiveStatus}
+        hasActiveProcess={hasActiveProcess}
+        messageCount={processHistory.data?.messageCount}
+        openPopover={openPopover}
+        runStateLabel={runStateLabel}
+        spawnPending={spawnProcess.isPending}
+        taskCount={taskCount}
+        onAbortRun={abortActiveRun}
+        onOpenAgentPanel={openAgentPanel}
+        onOpenModels={() => {
+          setOpenPopover(null);
+          (onOpenModels ?? onOpenCrew)();
+        }}
+        onOpenTasks={() => {
+          setOpenPopover(null);
+          (onOpenTasks ?? onOpenCrew)();
+        }}
+        onStartProcess={startProcess}
+        onToggleMax={onToggleMax}
+        onToggleOpen={onToggleOpen}
+        onTogglePopover={togglePopover}
+      />
 
       {pendingHil ? (
         <ChatApprovalBanner
