@@ -10,6 +10,8 @@ import { ChatDock } from "../chat/components/ChatDock";
 import type { ChatDockMessage } from "../chat/components/ChatDock";
 import type { ChatAgentData } from "../chat/domain";
 import { useChatProcessHistory, useChatProcessList, useSendChatMessage } from "../chat/hooks";
+import { defaultModelLabelForConfig } from "../gsv-console/domain/consoleAi";
+import type { ConsoleOverviewCounts } from "../gsv-console/domain/consoleModels";
 import { useConsoleConfig, useConsoleOverview } from "../gsv-console/hooks/useConsoleData";
 import {
   PresenceActivity,
@@ -87,6 +89,24 @@ function useClock(): string {
   return clock;
 }
 
+function systemLoadLabel(counts: ConsoleOverviewCounts | null): string {
+  if (!counts) {
+    return "SYNC";
+  }
+
+  const active = counts.activeProcesses + counts.queuedProcesses;
+  if (active > 0) {
+    return active === 1 ? "1 RUN" : `${active} RUNS`;
+  }
+  if (counts.targets > 0) {
+    return `${counts.onlineTargets}/${counts.targets} ${counts.targets === 1 ? "TARGET" : "TARGETS"}`;
+  }
+  if (counts.connectedAdapterAccounts > 0) {
+    return counts.connectedAdapterAccounts === 1 ? "1 CHANNEL" : `${counts.connectedAdapterAccounts} CHANNELS`;
+  }
+  return "IDLE";
+}
+
 function CollapsedDesktop() {
   return (
     <div class="gsv-collapsed-desktop" aria-hidden="true">
@@ -141,6 +161,14 @@ export function GsvShell({
   const clock = useClock();
   const consoleOverview = useConsoleOverview({ includeConfig: false });
   const consoleConfig = useConsoleConfig();
+  const statusModelLabel = useMemo(
+    () => defaultModelLabelForConfig(consoleConfig.config),
+    [consoleConfig.config],
+  );
+  const statusSystemLabel = useMemo(
+    () => systemLoadLabel(consoleOverview.counts),
+    [consoleOverview.counts],
+  );
   const desktopObjects = useMemo(
     () => buildDesktopObjectsFromConsole(consoleOverview.data),
     [consoleOverview.data],
@@ -362,6 +390,8 @@ export function GsvShell({
       <ShellStatusBar
         context={shell.statusContext}
         clock={clock}
+        modelLabel={statusModelLabel}
+        systemLoadLabel={statusSystemLabel}
         sessionUsername={sessionUsername}
         mobileHomeDate={mobileHomeDate}
         presenceController={presenceController}

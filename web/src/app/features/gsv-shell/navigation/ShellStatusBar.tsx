@@ -7,6 +7,8 @@ import type { NotificationSurface } from "../../notifications/types";
 type ShellStatusBarProps = {
   context: string;
   clock: string;
+  modelLabel: string;
+  systemLoadLabel: string;
   sessionUsername: string;
   mobileHomeDate: string;
   presenceController: PresenceController;
@@ -38,6 +40,8 @@ function PowerIcon() {
 export function ShellStatusBar({
   context,
   clock,
+  modelLabel,
+  systemLoadLabel,
   sessionUsername,
   mobileHomeDate,
   presenceController,
@@ -49,7 +53,7 @@ export function ShellStatusBar({
 }: ShellStatusBarProps) {
   return (
     <footer class="gsv-shell-statusbar">
-      <StatusBar model="NEMOTRON 3" context={context} clock={clock} power="1.8kW" />
+      <StatusBar model={modelLabel} context={context} clock={clock} power={systemLoadLabel} />
       <div class="gsv-status-actions">
         <span>{mobileHomeDate}</span>
         <button type="button" title="Open apps" onClick={onOpenCommandPalette}>
