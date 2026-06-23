@@ -17,7 +17,10 @@ import {
   useSpawnChatProcess,
 } from "../hooks";
 import { ActiveAgentPanel } from "./ActiveAgentPanel";
+import { ChatApprovalBanner } from "./ChatApprovalBanner";
+import { ChatDockPopovers, type ChatPopoverId } from "./ChatDockPopovers";
 import { ChatTranscript, type ChatDockMessage } from "./ChatTranscript";
+import { shortId } from "./chatUiFormat";
 import "./ChatDock.css";
 
 export type { ChatDockMessage } from "./ChatTranscript";
@@ -45,8 +48,6 @@ type ChatDockProps = {
   onSelectAgent?: (agentId: string) => void;
 };
 
-type ChatPopoverId = "model" | "tasks" | "context";
-
 const TRANSCRIPT_MESSAGE_LIMIT = 24;
 
 function formatChatMessageTime(timestamp: number | null): string {
@@ -57,10 +58,6 @@ function formatChatMessageTime(timestamp: number | null): string {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(timestamp));
-}
-
-function shortId(value: string | null | undefined): string {
-  return value ? value.slice(0, 8) : "";
 }
 
 function historyRoleToDockRole(role: ChatHistoryMessage["role"]): ChatDockMessage["role"] {
@@ -130,75 +127,11 @@ function errorMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
-function formatHilTime(timestamp: number | null | undefined): string {
-  if (typeof timestamp !== "number" || !Number.isFinite(timestamp)) {
-    return "";
-  }
-  return new Intl.DateTimeFormat(undefined, {
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(timestamp));
-}
-
-function summarizeHilValue(value: unknown): string {
-  if (typeof value === "string") {
-    return value;
-  }
-  try {
-    return JSON.stringify(value) ?? String(value);
-  } catch {
-    return String(value);
-  }
-}
-
-function summarizeHilArgs(args: Record<string, unknown> | null | undefined): string {
-  if (!args || Object.keys(args).length === 0) {
-    return "No tool arguments were provided.";
-  }
-
-  const entries = Object.entries(args)
-    .slice(0, 3)
-    .map(([key, value]) => {
-      const valueText = summarizeHilValue(value);
-      const normalized = valueText.length > 80 ? `${valueText.slice(0, 77)}...` : valueText;
-      return `${key}: ${normalized}`;
-    });
-  const remaining = Object.keys(args).length - entries.length;
-
-  return remaining > 0
-    ? `${entries.join(" · ")} · +${remaining} more`
-    : entries.join(" · ");
-}
-
 function contextPressurePercent(pressure: number | null | undefined): number | null {
   if (typeof pressure !== "number" || !Number.isFinite(pressure)) {
     return null;
   }
   return Math.max(0, Math.min(100, Math.round(pressure * 100)));
-}
-
-function taskStatusTone(status: string): StatusTone {
-  if (status === "error") {
-    return "error";
-  }
-  if (status === "idle") {
-    return "idle";
-  }
-  return "live";
-}
-
-function taskStatusLabel(status: string): string {
-  if (status === "error") {
-    return "ERROR";
-  }
-  if (status === "idle") {
-    return "IDLE";
-  }
-  return "RUNNING";
-}
-
-function formatCount(value: number | null | undefined): string {
-  return typeof value === "number" && Number.isFinite(value) ? value.toLocaleString() : "UNKNOWN";
 }
 
 export function ChatDock({
@@ -299,8 +232,6 @@ export function ChatDock({
     ? "This process has not written user, assistant, system, or tool result messages yet."
     : "Start an interactive process to begin a native chat session.";
   const inputDisabled = sending || (!hasActiveProcess && !processLookupLoading);
-  const hilArgsSummary = pendingHil ? summarizeHilArgs(pendingHil.args) : "";
-  const hilCreatedAt = formatHilTime(pendingHil?.createdAt);
   const taskCount = activeAgent.tasksTotal > 0 ? activeAgent.tasksTotal : activeAgent.tasks.length;
   const contextLevel = context?.level ? context.level.toUpperCase() : contextPercent === null ? "UNKNOWN" : "ESTIMATED";
   const contextModel = context ? [context.provider, context.model].filter(Boolean).join(" · ") : activeAgent.modelLabel;
@@ -464,136 +395,34 @@ export function ChatDock({
           </button>
         </div>
 
-        {openPopover === "model" ? (
-          <div class="gsv-chat-popover gsv-chat-model-popover" role="menu" aria-label="Model state">
-            <header>
-              <span>{activeAgent.modelLabel}</span>
-              <small>{activeAgent.modelIsDefault ? "DEFAULT" : "ACTIVE"}</small>
-            </header>
-            <div class="gsv-chat-popover-section">
-              <span>RUN STATE</span>
-              <strong>{runStateLabel.toUpperCase()}</strong>
-            </div>
-            <div class="gsv-chat-popover-section">
-              <span>MODEL SOURCE</span>
-              <strong>{contextModel || "GATEWAY DEFAULT"}</strong>
-            </div>
-            {context?.runId ? (
-              <div class="gsv-chat-popover-section">
-                <span>RUN</span>
-                <strong>{shortId(context.runId)}</strong>
-              </div>
-            ) : null}
-            <button
-              type="button"
-              class="gsv-chat-popover-action"
-              onClick={() => {
-                setOpenPopover(null);
-                (onOpenModels ?? onOpenCrew)();
-              }}
-            >
-              <Icon name="stars" size={12} />
-              <span>MANAGE MODELS</span>
-            </button>
-          </div>
-        ) : null}
-
-        {openPopover === "tasks" ? (
-          <div class="gsv-chat-popover gsv-chat-task-popover" role="menu" aria-label="Current tasks">
-            <header>
-              <span>CURRENT TASKS</span>
-              <small>{taskCount}</small>
-            </header>
-            <div class="gsv-chat-task-list">
-              {activeAgent.tasks.map((task) => (
-                <div class="gsv-chat-task-row" key={`${task.status}-${task.name}`}>
-                  <StatusDot tone={taskStatusTone(task.status)} size={8} />
-                  <span class="gsv-chat-task-name">{task.name}</span>
-                  <small>{taskStatusLabel(task.status)}</small>
-                </div>
-              ))}
-            </div>
-            <button
-              type="button"
-              class="gsv-chat-popover-action"
-              onClick={() => {
-                setOpenPopover(null);
-                (onOpenTasks ?? onOpenCrew)();
-              }}
-            >
-              <Icon name="plus" size={12} />
-              <span>OPEN TASKS</span>
-            </button>
-          </div>
-        ) : null}
-
-        {openPopover === "context" ? (
-          <div class="gsv-chat-popover gsv-chat-context-popover" role="menu" aria-label="Context state">
-            <header>
-              <span>CONTEXT</span>
-              <small>{contextPercent !== null ? `${contextPercent}% · ${contextLevel}` : contextLevel}</small>
-            </header>
-            <div class="gsv-chat-context-popover-meter">
-              <Progress
-                value={contextPercent ?? 0}
-                indeterminate={contextPercent === null && hasActiveProcess}
-                label=""
-                showValue={false}
-                size="medium"
-                width={186}
-              />
-            </div>
-            <div class="gsv-chat-context-grid">
-              <span>INPUT</span>
-              <strong>{formatCount(context?.inputTokens)}</strong>
-              <span>AVAILABLE</span>
-              <strong>{formatCount(context?.availableInputTokens)}</strong>
-              <span>WINDOW</span>
-              <strong>{formatCount(context?.contextWindowTokens)}</strong>
-              <span>MESSAGES</span>
-              <strong>{formatCount(context?.messageCount ?? processHistory.data?.messageCount)}</strong>
-            </div>
-          </div>
-        ) : null}
+        <ChatDockPopovers
+          activeAgent={activeAgent}
+          context={context}
+          contextLevel={contextLevel}
+          contextModel={contextModel}
+          contextPercent={contextPercent}
+          hasActiveProcess={hasActiveProcess}
+          messageCount={processHistory.data?.messageCount}
+          openPopover={openPopover}
+          runStateLabel={runStateLabel}
+          taskCount={taskCount}
+          onOpenModels={() => {
+            setOpenPopover(null);
+            (onOpenModels ?? onOpenCrew)();
+          }}
+          onOpenTasks={() => {
+            setOpenPopover(null);
+            (onOpenTasks ?? onOpenCrew)();
+          }}
+        />
       </header>
 
       {pendingHil ? (
-        <section
-          class={`gsv-chat-hil${hilDecision.isPending ? " is-busy" : ""}`}
-          aria-label="Human approval pending"
-          aria-busy={hilDecision.isPending}
-        >
-          <div class="gsv-chat-hil-head">
-            <span>APPROVAL REQUIRED</span>
-            <strong>{pendingHil.toolName || pendingHil.syscall}</strong>
-          </div>
-          <p>{hilArgsSummary}</p>
-          <small class="gsv-chat-hil-meta">
-            {pendingHil.syscall}
-            {" · request "}
-            {shortId(pendingHil.requestId)}
-            {pendingHil.runId ? ` · run ${shortId(pendingHil.runId)}` : ""}
-            {hilCreatedAt ? ` · ${hilCreatedAt}` : ""}
-          </small>
-          <div class="gsv-chat-hil-actions">
-            <button
-              type="button"
-              class="gsv-chat-hil-deny"
-              disabled={hilDecision.isPending}
-              onClick={() => decidePendingHil("deny")}
-            >
-              Deny
-            </button>
-            <button
-              type="button"
-              class="gsv-chat-hil-approve"
-              disabled={hilDecision.isPending}
-              onClick={() => decidePendingHil("approve")}
-            >
-              {hilDecision.isPending ? "Applying" : "Approve"}
-            </button>
-          </div>
-        </section>
+        <ChatApprovalBanner
+          busy={hilDecision.isPending}
+          pendingHil={pendingHil}
+          onDecision={decidePendingHil}
+        />
       ) : null}
 
       {controlError ? (
