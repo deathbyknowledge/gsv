@@ -11,7 +11,11 @@ import type { ChatDockMessage } from "../chat/components/ChatDock";
 import type { ChatAgentData } from "../chat/domain";
 import { useChatProcessHistory, useChatProcessList, useSendChatMessage } from "../chat/hooks";
 import { defaultModelLabelForConfig } from "../gsv-console/domain/consoleAi";
-import type { ConsoleOverviewCounts } from "../gsv-console/domain/consoleModels";
+import type {
+  ConsoleOverviewCounts,
+  ConsoleOverviewData,
+  ConsoleResourceState,
+} from "../gsv-console/domain/consoleModels";
 import { useConsoleConfig, useConsoleOverview } from "../gsv-console/hooks/useConsoleData";
 import {
   PresenceActivity,
@@ -26,7 +30,7 @@ import {
   type SettingsRouteTarget,
 } from "../gsv-console/components/GsvConsole";
 import { LegacyPackageRuntimeAnchors } from "../legacy-package-runtime/LegacyPackageRuntimeAnchors";
-import { GsvDesktop } from "./desktop/GsvDesktop";
+import { GsvDesktop, type DesktopInventoryState } from "./desktop/GsvDesktop";
 import { ShellRail } from "./navigation/ShellRail";
 import { ShellStatusBar } from "./navigation/ShellStatusBar";
 import {
@@ -89,7 +93,70 @@ function useClock(): string {
   return clock;
 }
 
-function systemLoadLabel(counts: ConsoleOverviewCounts | null): string {
+type GatewayStatusTone = "online" | "loading" | "offline" | "error";
+
+function gatewayStatusForResource(resource: ConsoleResourceState<ConsoleOverviewData>): {
+  label: string;
+  tone: GatewayStatusTone;
+} {
+  if (resource.isError) {
+    return { label: "GSV ERROR", tone: "error" };
+  }
+  if (resource.isUnavailable) {
+    return { label: "GSV OFFLINE", tone: "offline" };
+  }
+  if (resource.isLoading) {
+    return { label: "GSV SYNCING", tone: "loading" };
+  }
+  if (resource.isRefreshing) {
+    return { label: "GSV REFRESHING", tone: "loading" };
+  }
+  return { label: "GSV ONLINE", tone: "online" };
+}
+
+function desktopInventoryState(resource: ConsoleResourceState<ConsoleOverviewData>): DesktopInventoryState {
+  if (resource.data) {
+    return "ready";
+  }
+  if (resource.isError) {
+    return "error";
+  }
+  if (resource.isUnavailable) {
+    return "offline";
+  }
+  return "loading";
+}
+
+function desktopInventoryMessage(
+  resource: ConsoleResourceState<ConsoleOverviewData>,
+  objects: readonly { children: readonly unknown[] }[],
+): string {
+  if (resource.data) {
+    const totalObjects = objects.reduce((sum, object) => sum + object.children.length, 0);
+    return totalObjects === 0 ? "inventory empty" : "desktop ready";
+  }
+  if (resource.isError) {
+    return resource.errorText || "inventory unavailable";
+  }
+  if (resource.isUnavailable) {
+    return "gateway offline";
+  }
+  return "loading live inventory";
+}
+
+function systemLoadLabel(
+  counts: ConsoleOverviewCounts | null,
+  resource: ConsoleResourceState<ConsoleOverviewData>,
+): string {
+  if (resource.isError) {
+    return "ERROR";
+  }
+  if (resource.isUnavailable) {
+    return "OFFLINE";
+  }
+  if (resource.isLoading) {
+    return "SYNCING";
+  }
   if (!counts) {
     return "SYNC";
   }
@@ -166,13 +233,16 @@ export function GsvShell({
     [consoleConfig.config],
   );
   const statusSystemLabel = useMemo(
-    () => systemLoadLabel(consoleOverview.counts),
-    [consoleOverview.counts],
+    () => systemLoadLabel(consoleOverview.counts, consoleOverview.resource),
+    [consoleOverview.counts, consoleOverview.resource],
   );
   const desktopObjects = useMemo(
     () => buildDesktopObjectsFromConsole(consoleOverview.data),
     [consoleOverview.data],
   );
+  const gatewayStatus = gatewayStatusForResource(consoleOverview.resource);
+  const inventoryState = desktopInventoryState(consoleOverview.resource);
+  const inventoryMessage = desktopInventoryMessage(consoleOverview.resource, desktopObjects);
   const shell = useGsvShellState({ rootRef, desktopObjects });
 
   const [selectedChatPid, setSelectedChatPid] = useState<string | null>(null);
@@ -265,12 +335,14 @@ export function GsvShell({
         >
           {shell.showRail ? (
             <ShellRail
+              activeSurface={shell.activeSurface}
               desktopObjects={desktopObjects}
               collapsed={shell.railCollapsed}
               onToggleCollapsed={shell.toggleRailCollapsed}
               onBackToDesktop={shell.desktopCollapsed ? shell.revealDesktop : shell.backToDesktop}
               onOpenPicker={shell.openPicker}
               onOpenControlMenu={shell.openControlMenu}
+              onOpenSurface={openShellSurface}
             />
           ) : null}
 
@@ -288,6 +360,8 @@ export function GsvShell({
             ) : (
               <GsvDesktop
                 desktopObjects={desktopObjects}
+                inventoryMessage={inventoryMessage}
+                inventoryState={inventoryState}
                 selectedObjectId={shell.selectedObjectId}
                 gsvOpen={shell.gsvOpen}
                 onSelectObject={(id) => {
@@ -297,6 +371,9 @@ export function GsvShell({
                 onToggleGsv={() => {
                   shell.setGsvOpen((value) => !value);
                   shell.setSelectedObjectId(null);
+                }}
+                onCreateObject={(id) => {
+                  shell.openSettingsRoute({ view: "list", kind: id, createNew: true });
                 }}
                 onOpenSurface={openShellSurface}
                 onOpenObject={shell.openObject}
@@ -388,6 +465,8 @@ export function GsvShell({
       <ShellStatusBar
         context={shell.statusContext}
         clock={clock}
+        gatewayStatusLabel={gatewayStatus.label}
+        gatewayStatusTone={gatewayStatus.tone}
         modelLabel={statusModelLabel}
         systemLoadLabel={statusSystemLabel}
         sessionUsername={sessionUsername}

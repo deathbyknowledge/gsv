@@ -281,6 +281,10 @@ export function GsvConsole({
 
   return (
     <section class="gsv-console-frame" aria-label={`${shellSurfaceLabel(activeSurface)} surface`}>
+      <span class="gsv-console-corner is-top-left" aria-hidden="true" />
+      <span class="gsv-console-corner is-top-right" aria-hidden="true" />
+      <span class="gsv-console-corner is-bottom-left" aria-hidden="true" />
+      <span class="gsv-console-corner is-bottom-right" aria-hidden="true" />
       <ConsoleHeader
         crumbs={crumbs}
         tail={tail}

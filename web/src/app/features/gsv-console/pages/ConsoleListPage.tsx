@@ -702,7 +702,7 @@ function MessengersConsoleSection({
       rows={adapters.map((adapter) => ({
         id: adapterDetailId(adapter),
         icon: iconForAdapterName(adapter.adapter),
-        label: formatTokenLabel(adapter.adapter),
+        label: adapterLabel(adapter),
         sub: adapterSub(adapter),
         tone: toneForAdapter(adapter),
         statusLabel: statusForAdapter(adapter),

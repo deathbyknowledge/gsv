@@ -7,6 +7,8 @@ import type { NotificationSurface } from "../../notifications/types";
 type ShellStatusBarProps = {
   context: string;
   clock: string;
+  gatewayStatusLabel: string;
+  gatewayStatusTone: "online" | "loading" | "offline" | "error";
   modelLabel: string;
   systemLoadLabel: string;
   sessionUsername: string;
@@ -40,6 +42,8 @@ function PowerIcon() {
 export function ShellStatusBar({
   context,
   clock,
+  gatewayStatusLabel,
+  gatewayStatusTone,
   modelLabel,
   systemLoadLabel,
   sessionUsername,
@@ -53,7 +57,14 @@ export function ShellStatusBar({
 }: ShellStatusBarProps) {
   return (
     <footer class="gsv-shell-statusbar">
-      <StatusBar model={modelLabel} context={context} clock={clock} power={systemLoadLabel} />
+      <StatusBar
+        clock={clock}
+        context={context}
+        model={modelLabel}
+        power={systemLoadLabel}
+        statusLabel={gatewayStatusLabel}
+        statusTone={gatewayStatusTone}
+      />
       <div class="gsv-status-actions">
         <span>{mobileHomeDate}</span>
         <button type="button" title="Open apps" onClick={onOpenCommandPalette}>

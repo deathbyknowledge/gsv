@@ -122,11 +122,12 @@ function targetRow(target: ConsoleTarget): OverviewRow {
 function adapterRow(adapter: ConsoleAdapterAccount): OverviewRow {
   const hasError = adapter.error.trim().length > 0;
   const connected = adapter.connected && !hasError;
+  const accountLabel = adapter.accountId.trim();
   return {
     id: `${adapter.adapter}:${adapter.accountId}`,
     icon: adapter.adapter === "telegram" ? "telegram" : adapter.adapter === "discord" ? "discord" : "chat",
     label: formatTokenLabel(adapter.adapter),
-    meta: hasError ? adapter.error : undefined,
+    meta: joinMeta([accountLabel, hasError ? adapter.error : undefined]),
     tone: connected ? "online" : hasError ? "error" : "idle",
     statusLabel: hasError ? "ERROR" : undefined,
   };
@@ -219,13 +220,23 @@ function packageSourceLabel(pkg: ConsolePackage): string {
   return joinMeta([source, pkg.version ? `v${pkg.version}` : "", pkg.scopeKind === "unknown" ? "" : pkg.scopeKind.toUpperCase()]);
 }
 
-function scanCode(data: ConsoleOverviewData): string {
-  const seed = data.loadedAt + data.processes.length * 17 + data.targets.length * 31 + data.packages.length * 47;
-  return `0x${(seed % 255).toString(16).padStart(2, "0").toUpperCase()}`;
-}
-
 function rowLimit<T>(rows: readonly T[], limit = DASHBOARD_ROW_LIMIT): readonly T[] {
   return rows.slice(0, limit);
+}
+
+function shipInventoryLabel(data: ConsoleOverviewData): string {
+  if (data.targets.length > 0) {
+    const online = data.targets.filter((target) => target.online).length;
+    return `${online}/${data.targets.length} TARGETS`;
+  }
+  if (data.processes.length > 0) {
+    return `${data.processes.length} ${data.processes.length === 1 ? "PROCESS" : "PROCESSES"}`;
+  }
+  if (data.accounts.length > 0) {
+    const runnable = data.accounts.filter((account) => account.runnable).length;
+    return `${runnable}/${data.accounts.length} CREW`;
+  }
+  return "NO INVENTORY";
 }
 
 function Chevron() {
@@ -394,8 +405,8 @@ function ShipPanel({
         <div class="gsv-settings-ship-orbit">
           <AsciiPlanet variant="moon" formDuration={3.4} label="GSV ship scan" />
         </div>
-        <span class="gsv-settings-scan">SCAN {scanCode(data)}</span>
-        <span class="gsv-settings-ship-id">GSV-01</span>
+        <span class="gsv-settings-scan">{shipInventoryLabel(data)}</span>
+        <span class="gsv-settings-ship-id">GSV</span>
       </div>
       <SplitCells
         left={(

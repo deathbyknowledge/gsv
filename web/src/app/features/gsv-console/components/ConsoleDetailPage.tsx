@@ -104,7 +104,14 @@ export function ConsoleDetailPage({
         )}
 
         <div class="gsv-console-detail-actions">
-          {primaryLabel && onPrimary ? <Button variant="primary" label={primaryLabel} onClick={onPrimary} /> : null}
+          {primaryLabel ? (
+            <Button
+              variant="primary"
+              label={primaryLabel}
+              disabled={!onPrimary}
+              onClick={onPrimary}
+            />
+          ) : null}
           <Button variant="secondary" label={`BACK TO ${parentLabel}`} onClick={onBack} />
         </div>
       </div>

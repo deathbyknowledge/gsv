@@ -16,8 +16,13 @@
   border-bottom: 1px solid var(--rule-inner);
 }
 
-.gsv-console-config-list-row:last-child {
+.gsv-console-config-list-row:last-child,
+.gsv-console-config-list-add:last-child {
   border-bottom: 0;
+}
+
+.gsv-console-config-list-add {
+  border-bottom: 1px solid var(--rule-inner);
 }
 
 .gsv-console-config-list-row .lr {
