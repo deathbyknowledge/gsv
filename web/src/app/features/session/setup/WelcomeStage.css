@@ -3,16 +3,25 @@
    Quick start vs Custom. Card border / background / hover /
    selected come from the Surface component; these classes set
    layout + text. Matches the auth-preview RegisterMock cards.
+   Self-contained: gsv-setup- prefixed so legacy styles.css
+   onboarding-* rules do not bleed in.
    ============================================================ */
 
-.onboarding-mode-grid {
+.gsv-setup-stage {
+  min-width: 0;
+}
+.gsv-setup-stage[hidden] {
+  display: none;
+}
+
+.gsv-setup-mode-grid {
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
 
 /* Layout + text alignment only — visuals come from Surface. */
-.onboarding-mode-card {
+.gsv-setup-mode-card {
   display: block;
   width: 100%;
   text-align: left;
@@ -21,7 +30,7 @@
   color: inherit;
 }
 
-.onboarding-mode-kicker {
+.gsv-setup-mode-kicker {
   display: block;
   font-family: var(--gsv-font-mono);
   font-size: 8.5px;
@@ -30,11 +39,11 @@
   color: var(--text-dim);
   margin-bottom: 8px;
 }
-.onboarding-mode-card.is-selected .onboarding-mode-kicker {
+.gsv-setup-mode-card.is-selected .gsv-setup-mode-kicker {
   color: var(--accent);
 }
 
-.onboarding-mode-card strong {
+.gsv-setup-mode-card strong {
   display: block;
   font-family: var(--gsv-font-mono);
   font-size: 13px;
@@ -45,7 +54,7 @@
   margin-bottom: 6px;
 }
 
-.onboarding-mode-card p {
+.gsv-setup-mode-card p {
   display: block;
   margin: 0;
   font-family: var(--gsv-font-prose);

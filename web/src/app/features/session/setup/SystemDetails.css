@@ -1,11 +1,62 @@
 /* ============================================================
    SystemDetails — create-account "Preferences" step, core
    groups restyled to the GSV design system. Stacked design-
-   system fields (Checkbox, TextInput, Select) inside the
-   existing onboarding-preference-group / onboarding-section
-   chrome. Advanced (onboarding-custom-options) sections are
-   unchanged and keep their legacy styling.
+   system fields (Checkbox, TextInput, Select). Core groups use
+   gsv-setup- prefixed classes so legacy styles.css onboarding-*
+   rules do not bleed in. The advanced onboarding-custom-options
+   sections (AI / files / device) are intentionally still legacy-
+   styled (Phase 2) and are left untouched.
    ============================================================ */
+
+/* Keep the literal onboarding-section class (useSessionFocus queries
+   `.onboarding-section:not([hidden]) input`), but neutralize the
+   legacy styles.css grid/box layout. */
+.onboarding-section {
+  position: static;
+  display: block;
+  width: auto;
+  gap: 0;
+}
+
+.gsv-setup-preferences {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.gsv-setup-preference-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+.gsv-setup-preferences > :first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.gsv-setup-section-head {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.gsv-setup-section-head h3 {
+  margin: 0;
+  font-family: var(--gsv-font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-title);
+}
+.gsv-setup-section-head p {
+  margin: 0;
+  font-family: var(--gsv-font-prose);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
 
 .system-details-fields {
   display: flex;

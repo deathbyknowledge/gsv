@@ -28,9 +28,9 @@ export function SystemDetails({
   const timezoneIndex = Math.max(0, options.indexOf(draft.system.timezone));
 
   return (
-    <section class="onboarding-section onboarding-preferences" data-setup-detail-step="system" hidden={draft.stage !== "details" || activeStep !== "system"}>
-      <div class="onboarding-preference-group">
-        <div class="onboarding-section-head">
+    <section class="onboarding-section gsv-setup-preferences" data-setup-detail-step="system" hidden={draft.stage !== "details" || activeStep !== "system"}>
+      <div class="gsv-setup-preference-group">
+        <div class="gsv-setup-section-head">
           <h3>Admin security</h3>
           <p>Choose whether sensitive admin actions need a second password.</p>
         </div>
@@ -86,8 +86,8 @@ export function SystemDetails({
         </OnboardingHelp>
       </div>
 
-      <div class="onboarding-preference-group">
-        <div class="onboarding-section-head">
+      <div class="gsv-setup-preference-group">
+        <div class="gsv-setup-section-head">
           <h3>Timezone</h3>
           <p>Used for schedules, calendars, and timestamp displays.</p>
         </div>
