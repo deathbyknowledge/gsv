@@ -80,21 +80,21 @@ export function Segmented(props: SegmentedProps) {
       ) : null}
       {description.length > 0 ? <div class="gsv-fld-desc">{description}</div> : null}
       <div class={rootClass} style={{ width: "100%" }}>
-        <span class={segCls(0)} onClick={pick(0)}>
+        <button type="button" class={segCls(0)} disabled={disabled} onClick={pick(0)}>
           {l0}
-        </span>
-        <span class={segCls(1)} onClick={pick(1)}>
+        </button>
+        <button type="button" class={segCls(1)} disabled={disabled} onClick={pick(1)}>
           {l1}
-        </span>
+        </button>
         {has2 ? (
-          <span class={segCls(2)} onClick={pick(2)}>
+          <button type="button" class={segCls(2)} disabled={disabled} onClick={pick(2)}>
             {l2}
-          </span>
+          </button>
         ) : null}
         {has3 ? (
-          <span class={segCls(3)} onClick={pick(3)}>
+          <button type="button" class={segCls(3)} disabled={disabled} onClick={pick(3)}>
             {l3}
-          </span>
+          </button>
         ) : null}
       </div>
       {hasStatus ? (
