@@ -8,7 +8,6 @@ import { ConsoleConfigPage, type ConsoleConfigKind } from "../pages/ConsoleConfi
 import { ConsoleCrewPage } from "../pages/ConsoleCrewPage";
 import { ConsoleListPage, type ConsoleListKind } from "../pages/ConsoleListPage";
 import { ConsoleOverviewPage, type ConsoleOverviewTarget } from "../pages/ConsoleOverviewPage";
-import { ConsolePlaceholderPage } from "../pages/ConsolePlaceholderPage";
 
 type GsvConsoleProps = {
   activeSurface: Exclude<ShellSurfaceId, "desktop">;
@@ -337,7 +336,7 @@ export function GsvConsole({
         ) : activeSurface === "terminal" ? (
           <TerminalSurfaceSummary />
         ) : (
-          <ConsolePlaceholderPage surface={activeSurface} />
+          null
         )}
       </div>
     </section>

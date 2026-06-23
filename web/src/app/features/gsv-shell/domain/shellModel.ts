@@ -7,7 +7,6 @@ export type ShellSurfaceId =
   | "messengers"
   | "integrations"
   | "applications"
-  | "object"
   | "runtime"
   | "files"
   | "library"
@@ -66,7 +65,7 @@ export type DesktopObject = {
 };
 
 export type SystemDockItem = {
-  id: Exclude<ShellSurfaceId, "desktop" | "agent" | "machines" | "object">;
+  id: Exclude<ShellSurfaceId, "desktop" | "agent" | "machines">;
   label: string;
   icon: string;
   description: string;
@@ -128,8 +127,6 @@ export function shellSurfaceLabel(surface: ShellSurfaceId): string {
       return "INTEGRATIONS";
     case "applications":
       return "APPLICATIONS";
-    case "object":
-      return "OBJECT";
     case "runtime":
       return "RUNTIME";
     case "files":
