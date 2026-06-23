@@ -93,6 +93,13 @@
   display: flex;
   justify-content: center;
 }
+/* Primary action with the "Ask the guide" link stacked beneath it. */
+.gsv-setup-nav-primary {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
 .gsv-setup-stepcount {
   font-family: var(--gsv-font-mono);
   font-size: 9px;
