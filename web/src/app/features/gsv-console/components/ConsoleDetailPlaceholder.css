@@ -104,6 +104,37 @@
   white-space: nowrap;
 }
 
+.gsv-console-detail-sections {
+  display: grid;
+  gap: 24px;
+}
+
+.gsv-console-detail-section {
+  min-width: 0;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  box-shadow: inset 0 0 0 1px #060414;
+}
+
+.gsv-console-detail-section > div {
+  display: grid;
+}
+
+.gsv-console-detail-section .lr {
+  min-height: 48px;
+  border-bottom: 1px solid var(--rule-inner) !important;
+}
+
+.gsv-console-detail-section .lr:last-child {
+  border-bottom: 0 !important;
+}
+
+.gsv-console-detail-section .lr-status {
+  min-width: 86px;
+  display: inline-flex;
+  justify-content: flex-end;
+}
+
 .gsv-console-detail-placeholder-actions {
   display: flex;
   flex-wrap: wrap;
