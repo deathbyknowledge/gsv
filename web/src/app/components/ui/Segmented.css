@@ -5,27 +5,36 @@
   font-family: var(--gsv-font-mono);
 }
 .gsv-sg-seg {
+  appearance: none;
+  margin: 0;
   flex: 1;
   text-align: center;
   letter-spacing: 0.12em;
   color: #9a95cf;
   background: transparent;
+  border-top: 0;
+  border-bottom: 0;
+  border-left: 0;
   border-right: 1px solid #322e74;
   cursor: pointer;
+  font: inherit;
   transition: background 0.12s, color 0.12s;
 }
 .gsv-sg-seg:last-child {
   border-right: none;
 }
-.gsv-sg-seg:hover {
+.gsv-sg-seg:not(:disabled):hover,
+.gsv-sg-seg:not(:disabled):focus-visible {
   background: #171441;
   color: #cbc7ff;
+  outline: none;
 }
 .gsv-sg-seg.is-sel {
   background: #5a52a8;
   color: #fff;
 }
-.gsv-sg-seg.is-sel:hover {
+.gsv-sg-seg.is-sel:not(:disabled):hover,
+.gsv-sg-seg.is-sel:not(:disabled):focus-visible {
   background: #6b62c4;
 }
 .gsv-sg.is-disabled {
