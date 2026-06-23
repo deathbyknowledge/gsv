@@ -2,6 +2,7 @@ import type { OnboardingDraft } from "@humansandmachines/gsv/protocol";
 import { currentDetailStep } from "../sessionDomain";
 import { AccountDetails } from "./AccountDetails";
 import { SystemDetails } from "./SystemDetails";
+import "./DetailsStage.css";
 
 export function DetailsStage({
   draft,
@@ -22,13 +23,11 @@ export function DetailsStage({
     : "Create the first desktop account and secure it with a password.";
 
   return (
-    <section class="onboarding-stage onboarding-stage-details" data-setup-stage="details" hidden={draft.stage !== "details"}>
-      <div class="onboarding-lane-banner">
-        <span data-setup-lane-kicker>{isSystem ? "Preferences" : "Login credentials"}</span>
-      </div>
-      <div class="setup-step-copy" data-setup-detail-copy>
+    <section class="gsv-setup-stage gsv-setup-stage-details" data-setup-stage="details" hidden={draft.stage !== "details"}>
+      <span class="gsv-setup-lane-kicker" data-setup-lane-kicker>{isSystem ? "Preferences" : "Login credentials"}</span>
+      <div class="gsv-setup-step-copy" data-setup-detail-copy>
         <h2 data-setup-lane-title>{title}</h2>
-        <p class="session-copy" data-setup-lane-description>{description}</p>
+        <p class="gsv-setup-copy-text" data-setup-lane-description>{description}</p>
       </div>
       <AccountDetails draft={draft} activeStep={activeStep} updateDraft={updateDraft} />
       <SystemDetails draft={draft} activeStep={activeStep} timezoneOptions={timezoneOptions} updateDraft={updateDraft} />

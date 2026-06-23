@@ -1,0 +1,49 @@
+/* ============================================================
+   DetailsStage — create-account "Details" stage shell. Lane
+   kicker (small mono label), heading + prose copy, then the
+   Account / System detail sections. Self-contained: gsv-setup-
+   prefixed so legacy styles.css onboarding / session rules do
+   not bleed in.
+   ============================================================ */
+
+.gsv-setup-stage-details {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+}
+.gsv-setup-stage-details[hidden] {
+  display: none;
+}
+
+.gsv-setup-lane-kicker {
+  display: block;
+  font-family: var(--gsv-font-mono);
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.gsv-setup-step-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.gsv-setup-step-copy h2 {
+  margin: 0;
+  font-family: var(--gsv-font-mono);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-title);
+}
+
+.gsv-setup-copy-text {
+  margin: 0;
+  font-family: var(--gsv-font-prose);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-dim);
+}

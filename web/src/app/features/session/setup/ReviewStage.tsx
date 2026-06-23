@@ -18,13 +18,11 @@ export function ReviewStage({ draft }: { draft: OnboardingDraft }) {
     : `${username} · default personal agent`;
 
   return (
-    <section class="onboarding-stage onboarding-stage-review" data-setup-stage="review" hidden={draft.stage !== "review"}>
-      <div class="onboarding-lane-banner">
-        <span>Review and start</span>
-      </div>
-      <div class="setup-step-copy">
+    <section class="gsv-setup-stage gsv-setup-stage-review" data-setup-stage="review" hidden={draft.stage !== "review"}>
+      <span class="gsv-setup-lane-kicker">Review and start</span>
+      <div class="gsv-setup-step-copy">
         <h2>Setup plan</h2>
-        <p class="session-copy">This is the setup plan that will be applied before the desktop opens.</p>
+        <p class="gsv-setup-copy-text">This is the setup plan that will be applied before the desktop opens.</p>
       </div>
       <div class="review-summary-grid">
         <Surface level={1} class="review-card">
@@ -65,7 +63,7 @@ export function ReviewStage({ draft }: { draft: OnboardingDraft }) {
           <p class="review-card-desc">Optional setup key for connecting another machine.</p>
         </Surface>
       </div>
-      <aside class="onboarding-review-notes">
+      <aside class="gsv-setup-review-notes">
         <div>
           <strong>You can change this later</strong>
           <p>AI defaults and system settings can be adjusted from the desktop after setup.</p>

@@ -12,7 +12,7 @@
 
 .gsv-setup-form {
   display: grid;
-  grid-template-columns: 236px minmax(0, 1fr);
+  grid-template-columns: 300px minmax(0, 1fr);
   align-items: stretch;
 }
 /* Sidebar column (the only direct <aside> of the form). */

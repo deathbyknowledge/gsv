@@ -10,17 +10,17 @@ export function WelcomeStage({
   onLane: (lane: OnboardingLane) => void;
 }) {
   return (
-    <section class="onboarding-stage onboarding-stage-welcome" data-setup-stage="welcome" hidden={draft.stage !== "welcome"}>
-      <div class="onboarding-mode-grid">
+    <section class="gsv-setup-stage gsv-setup-stage-welcome" data-setup-stage="welcome" hidden={draft.stage !== "welcome"}>
+      <div class="gsv-setup-mode-grid">
         <Surface
           as="button"
           interactive
           selected={draft.lane === "quick"}
-          class="onboarding-mode-card"
+          class="gsv-setup-mode-card"
           dataAttrs={{ "data-setup-lane": "quick" }}
           onClick={() => onLane("quick")}
         >
-          <span class="onboarding-mode-kicker">Recommended</span>
+          <span class="gsv-setup-mode-kicker">Recommended</span>
           <strong>Quick start</strong>
           <p>Create the first account, keep the default AI path, and use the official system files.</p>
         </Surface>
@@ -28,11 +28,11 @@ export function WelcomeStage({
           as="button"
           interactive
           selected={draft.lane === "customize" || draft.lane === "advanced"}
-          class="onboarding-mode-card"
+          class="gsv-setup-mode-card"
           dataAttrs={{ "data-setup-lane": "customize" }}
           onClick={() => onLane("customize")}
         >
-          <span class="onboarding-mode-kicker">More control</span>
+          <span class="gsv-setup-mode-kicker">More control</span>
           <strong>Custom</strong>
           <p>Choose AI defaults, system files, and optional device setup before first start.</p>
         </Surface>

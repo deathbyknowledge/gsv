@@ -4,6 +4,16 @@
    safety note, using the periwinkle token vocabulary.
    ============================================================ */
 
+/* Keep the literal onboarding-section class (useSessionFocus queries
+   `.onboarding-section:not([hidden]) input`), but neutralize the
+   legacy styles.css grid/box layout so it does not break the stage. */
+.onboarding-section {
+  position: static;
+  display: block;
+  width: auto;
+  gap: 0;
+}
+
 .account-details-fields {
   display: flex;
   flex-direction: column;

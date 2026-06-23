@@ -1,14 +1,15 @@
 import type { OnboardingDraft } from "@humansandmachines/gsv/protocol";
-import { Stepper } from "../../../components/ui/Stepper";
 import { SETUP_LANE_META, currentDetailStep } from "../sessionDomain";
 import "./SetupSidebar.css";
+
+const STEPS = ["Login credentials", "Preferences", "Review and start"];
 
 export function SetupSidebar({ draft }: { draft: OnboardingDraft }) {
   const meta = SETUP_LANE_META[draft.lane];
   const detailStep = currentDetailStep(draft);
   const copy = draft.stage === "welcome" ? "Choose a setup path." : meta.estimate;
 
-  // Mirror SetupStageRail's active/complete derivation into a single Stepper index:
+  // Mirror SetupStageRail's active/complete derivation:
   //   welcome / details(account)        → step 0 (Login credentials)
   //   details(detailStep !== "account") → step 1 (Preferences)
   //   review                            → step 2 (Review and start)
@@ -26,14 +27,18 @@ export function SetupSidebar({ draft }: { draft: OnboardingDraft }) {
           {copy}
         </p>
       </div>
-      <Stepper
-        current={current}
-        l0="Login credentials"
-        l1="Preferences"
-        l2="Review and start"
-        size="small"
-        width={320}
-      />
+      {/* Vertical step rail — fits the sidebar column at any width. */}
+      <ol class="gsv-setup-steps">
+        {STEPS.map((label, i) => {
+          const state = i < current ? "done" : i === current ? "cur" : "next";
+          return (
+            <li class={`gsv-setup-step is-${state}`} key={label}>
+              <span class="gsv-setup-step-dot">{i + 1}</span>
+              <span class="gsv-setup-step-label">{label}</span>
+            </li>
+          );
+        })}
+      </ol>
     </aside>
   );
 }
