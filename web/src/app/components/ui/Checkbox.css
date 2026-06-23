@@ -1,11 +1,19 @@
 /* Ported from Checkbox.dc.html — values transcribed verbatim. */
 .gsv-cb {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 10px;
   cursor: pointer;
   font-family: var(--gsv-font-mono);
   user-select: none;
+}
+.gsv-cb-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
 }
 .gsv-cb-box {
   flex: none;
@@ -19,6 +27,10 @@
 .gsv-cb:hover .gsv-cb-box {
   border-color: #a9a4ff;
   background: #100e2a;
+}
+.gsv-cb-input:focus-visible + .gsv-cb-box {
+  border-color: #b3aeff;
+  box-shadow: 0 0 0 1px rgba(150, 140, 255, 0.35);
 }
 .gsv-cb-fill {
   background: #cbc7ff;

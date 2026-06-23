@@ -44,22 +44,29 @@ export function Toggle(props: ToggleProps) {
   const rootClass = `gsv-tg ${SIZE_CLASS[size]}${on ? " is-on" : ""}${disabled ? " is-disabled" : ""}`;
   const fldClass = `gsv-tg-fld${hasStat ? ` is-${statKey}` : ""}`;
 
-  const handleClick = () => {
+  const handleChange = (next: boolean) => {
     if (disabled) return;
-    const nv = !on;
-    setOnState(nv);
-    onChange?.(nv);
+    setOnState(next);
+    onChange?.(next);
   };
 
   return (
     <div class={fldClass}>
       {description ? <div class="gsv-tg-desc">{description}</div> : null}
-      <div class={rootClass} onClick={handleClick}>
+      <label class={rootClass}>
+        <input
+          checked={on}
+          class="gsv-tg-input"
+          disabled={disabled}
+          role="switch"
+          type="checkbox"
+          onChange={(event) => handleChange((event.currentTarget as HTMLInputElement).checked)}
+        />
         <span class="gsv-tg-track">
           <span class="gsv-tg-knob" />
         </span>
         {label.length > 0 ? <span class="gsv-tg-label">{label}</span> : null}
-      </div>
+      </label>
       {hasStat ? (
         <div class="gsv-tg-stat">
           <span class="gsv-tg-dot" />
