@@ -15,7 +15,6 @@ import {
 } from "../domain/shellModel";
 
 export type PickerId = DesktopObjectId | "gsv";
-export type RailMode = "gsv" | "tabs";
 
 export type PickerCard = {
   key: string;
@@ -79,7 +78,6 @@ export function useGsvShellState({
   const [activeSurface, setActiveSurface] = useState<ShellSurfaceId>("desktop");
   const [openTabs, setOpenTabs] = useState<ShellPageTab[]>([]);
   const [activeTabKey, setActiveTabKey] = useState<string | null>(null);
-  const [railMode, setRailMode] = useState<RailMode>("gsv");
   const [manualRailCollapsed, setManualRailCollapsed] = useState(false);
   const [selectedObjectId, setSelectedObjectId] = useState<DesktopObjectId | null>(null);
   const [pickerId, setPickerId] = useState<PickerId | null>(null);
@@ -244,9 +242,6 @@ export function useGsvShellState({
       setActiveTabKey(nextActiveTab?.key ?? null);
       setActiveSurface(nextActiveTab?.surface ?? "desktop");
     }
-    if (nextTabs.length === 0) {
-      setRailMode("gsv");
-    }
   };
 
   const openPicker = (id: DesktopObjectId): void => {
@@ -265,17 +260,6 @@ export function useGsvShellState({
       return;
     }
     setManualRailCollapsed(false);
-    setRailMode("gsv");
-    setPickerId(null);
-  };
-
-  const openTabsPicker = (): void => {
-    setSelectedObjectId(null);
-    setGsvOpen(false);
-    if (railCollapsed) {
-      return;
-    }
-    setRailMode("tabs");
     setPickerId(null);
   };
 
@@ -369,14 +353,12 @@ export function useGsvShellState({
     openSettingsRoute,
     openSurface,
     openTabs,
-    openTabsPicker,
     pickerCards,
     pickerEmptyLabel,
     pickerId,
     pickerObject,
     pickerSubtitle,
     pickerTitle,
-    railMode,
     railCollapsed,
     revealDesktop,
     resolvedChatWidth,

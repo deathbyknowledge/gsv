@@ -3,27 +3,18 @@ import { IconButton } from "../../../components/ui/IconButton";
 import {
   type DesktopObject,
   type DesktopObjectId,
-  type ShellPageTab,
   type ShellSurfaceId,
 } from "../domain/shellModel";
 
-type RailMode = "gsv" | "tabs";
-
 type ShellRailProps = {
   activeSurface: ShellSurfaceId;
-  activeTabKey: string | null;
   desktopObjects: readonly DesktopObject[];
   collapsed: boolean;
-  openTabs: readonly ShellPageTab[];
-  railMode: RailMode;
   onToggleCollapsed: () => void;
   onBackToDesktop: () => void;
-  onActivateTab: (key: string) => void;
-  onCloseTab: (key: string) => void;
   onOpenPicker: (id: DesktopObjectId) => void;
   onOpenControlMenu: () => void;
   onOpenSurface: (surface: ShellSurfaceId) => void;
-  onOpenTabsPicker: () => void;
 };
 
 const GLYPH_ICON: Record<string, string> = {
@@ -72,19 +63,13 @@ function GsvMark({ size = 22 }: { size?: number }) {
 
 export function ShellRail({
   activeSurface,
-  activeTabKey,
   desktopObjects,
   collapsed,
-  openTabs,
-  railMode,
   onToggleCollapsed,
   onBackToDesktop,
-  onActivateTab,
-  onCloseTab,
   onOpenPicker,
   onOpenControlMenu,
   onOpenSurface,
-  onOpenTabsPicker,
 }: ShellRailProps) {
   const totalObjects = desktopObjects.reduce((sum, object) => sum + object.children.length, 0);
 
@@ -148,7 +133,7 @@ export function ShellRail({
           ))}
           <button
             type="button"
-            class={`gsv-rail-row gsv-rail-gsv${railMode === "gsv" ? " is-active" : ""}`}
+            class="gsv-rail-row gsv-rail-gsv is-active"
             onClick={onOpenControlMenu}
           >
             <span class="gsv-rail-node-icon">
@@ -158,51 +143,18 @@ export function ShellRail({
               <span>GSV</span>
             </span>
           </button>
-          {railMode === "gsv" ? (
-            <div class="gsv-rail-subitems" aria-label="GSV system surfaces">
-              {GSV_RAIL_ITEMS.map((item) => (
-                <button
-                  key={item.surface}
-                  type="button"
-                  class={`gsv-rail-subitem${activeSurface === item.surface ? " is-active" : ""}`}
-                  onClick={() => onOpenSurface(item.surface)}
-                >
-                  {item.label}
-                </button>
-              ))}
-            </div>
-          ) : null}
-          {openTabs.length > 0 ? (
-            <>
+          <div class="gsv-rail-subitems" aria-label="GSV system surfaces">
+            {GSV_RAIL_ITEMS.map((item) => (
               <button
+                key={item.surface}
                 type="button"
-                class={`gsv-rail-tabs-head${railMode === "tabs" ? " is-active" : ""}`}
-                onClick={onOpenTabsPicker}
+                class={`gsv-rail-subitem${activeSurface === item.surface ? " is-active" : ""}`}
+                onClick={() => onOpenSurface(item.surface)}
               >
-                <Icon name="list" size={14} />
-                <span>TABS</span>
-                <small>{openTabs.length}</small>
+                {item.label}
               </button>
-              {railMode === "tabs" ? (
-                <div class="gsv-rail-tabs" aria-label="Open tabs">
-                  {openTabs.map((tab) => (
-                    <div
-                      key={tab.key}
-                      class={`gsv-rail-tab-row${tab.key === activeTabKey ? " is-active" : ""}`}
-                    >
-                      <button type="button" onClick={() => onActivateTab(tab.key)}>
-                        <Icon name={tab.icon} size={17} />
-                        <span>{tab.title}</span>
-                      </button>
-                      <button type="button" aria-label={`Close ${tab.title}`} onClick={() => onCloseTab(tab.key)}>
-                        <Icon name="doticons/x" size={12} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-            </>
-          ) : null}
+            ))}
+          </div>
         </div>
       </div>
 
