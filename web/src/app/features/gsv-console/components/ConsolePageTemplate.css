@@ -32,6 +32,41 @@
   text-transform: uppercase;
 }
 
+.gsv-detail-corner {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  pointer-events: none;
+}
+
+.gsv-detail-corner.is-top-left {
+  top: 9px;
+  left: 9px;
+  border-top: 1px solid var(--bracket);
+  border-left: 1px solid var(--bracket);
+}
+
+.gsv-detail-corner.is-top-right {
+  top: 9px;
+  right: 9px;
+  border-top: 1px solid var(--bracket);
+  border-right: 1px solid var(--bracket);
+}
+
+.gsv-detail-corner.is-bottom-left {
+  bottom: 9px;
+  left: 9px;
+  border-bottom: 1px solid var(--bracket);
+  border-left: 1px solid var(--bracket);
+}
+
+.gsv-detail-corner.is-bottom-right {
+  right: 9px;
+  bottom: 9px;
+  border-right: 1px solid var(--bracket);
+  border-bottom: 1px solid var(--bracket);
+}
+
 @media (max-width: 760px) {
   .gsv-console-row {
     align-items: stretch;
