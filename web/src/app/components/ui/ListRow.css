@@ -1,4 +1,16 @@
 /* Ported from ListRow.dc.html — hover rule transcribed verbatim. */
+.lr-icon {
+  width: 20px;
+  flex: none;
+  display: inline-flex;
+  justify-content: center;
+  color: var(--accent-bright);
+}
+
+.lr-dot.is-trailing {
+  margin-left: -4px;
+}
+
 .lr[data-clickable="true"]:hover,
 .lr[data-clickable="true"]:focus-visible {
   background: var(--hover) !important;

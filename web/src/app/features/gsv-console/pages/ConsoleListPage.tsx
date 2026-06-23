@@ -57,6 +57,7 @@ type RowTag = {
 
 type SettingsListRow = {
   id: string;
+  icon: string;
   label: string;
   sub: string;
   tone: StatusTone;
@@ -449,9 +450,11 @@ function SettingsListRowView({ row }: { row: SettingsListRow }) {
   return (
     <div class="gsv-console-settings-list-row">
       <ListRow
+        icon={row.icon}
         label={row.label}
         sub={row.sub}
         status={listRowStatusForTone(row.tone)}
+        statusDotPlacement="trailing"
         statusLabel={row.statusLabel}
         tag={row.tag?.label}
         chevron={Boolean(row.onOpen)}
@@ -492,6 +495,7 @@ function RuntimeConsoleSection({
       emptyLabel="NO PROCESSES"
       rows={processes.map((process) => ({
         id: process.pid,
+        icon: "list",
         label: process.label,
         sub: processSub(process),
         tone: toneForProcess(process),
@@ -522,6 +526,7 @@ function MachinesConsoleSection({
       emptyLabel="NO MACHINES"
       rows={targets.map((target) => ({
         id: target.deviceId,
+        icon: iconForTarget(target),
         label: target.label,
         sub: targetSub(target),
         tone: target.online ? "online" : "idle",
@@ -551,6 +556,7 @@ function MessengersConsoleSection({
       emptyLabel="NO MESSENGERS"
       rows={adapters.map((adapter) => ({
         id: adapterDetailId(adapter),
+        icon: iconForAdapterName(adapter.adapter),
         label: formatTokenLabel(adapter.adapter),
         sub: adapterSub(adapter),
         tone: toneForAdapter(adapter),
@@ -589,6 +595,7 @@ function LibraryConsoleSection({
       emptyLabel={`NO ${noun}S`}
       rows={packages.map((pkg) => ({
         id: pkg.packageId,
+        icon: iconForPackage(pkg, kind),
         label: pkg.name,
         sub: packageSub(pkg),
         tone: toneForPackage(pkg),
@@ -646,6 +653,14 @@ function iconForAdapterName(adapter: string): string {
   if (adapter === "telegram") return "telegram";
   if (adapter === "discord") return "discord";
   return "chat";
+}
+
+function iconForPackage(pkg: ConsolePackage, kind: PackageListKind): string {
+  if (isApplicationPackage(pkg)) return "rss";
+  if (kind === "integrations") return "weblink";
+  if (pkg.runtime === "web-ui") return "stars";
+  if (pkg.runtime === "node") return "terminal";
+  return "pencil";
 }
 
 function adapterDetailId(adapter: ConsoleAdapterAccount): string {

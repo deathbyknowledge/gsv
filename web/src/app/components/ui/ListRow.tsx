@@ -1,8 +1,10 @@
 import type { JSX } from "preact";
+import { Icon } from "./Icon";
 import { Tag, type TagTone } from "./Tag";
 import "./ListRow.css";
 
 export type ListRowStatus = "online" | "error" | "idle" | "live" | "none" | "update" | "warn";
+export type ListRowStatusDotPlacement = "leading" | "trailing";
 
 export interface ListRowProps {
   label?: string;
@@ -12,6 +14,9 @@ export interface ListRowProps {
   tag?: string;
   tagTone?: TagTone;
   chevron?: boolean;
+  icon?: string;
+  iconTitle?: string;
+  statusDotPlacement?: ListRowStatusDotPlacement;
   active?: boolean;
   onClick?: () => void;
 }
@@ -43,6 +48,9 @@ export function ListRow({
   tag = "",
   tagTone = "update",
   chevron = false,
+  icon,
+  iconTitle,
+  statusDotPlacement = "leading",
   active = false,
   onClick,
 }: ListRowProps) {
@@ -50,6 +58,7 @@ export function ListRow({
   const hasDot = st !== "none";
   const dotKey = (st === "none" ? "online" : st) as Exclude<ListRowStatus, "none">;
   const dc = DOT_COLOR[dotKey];
+  const dotClass = `lr-dot${statusDotPlacement === "trailing" ? " is-trailing" : ""}`;
 
   const rootStyle: JSX.CSSProperties = {
     width: "100%",
@@ -79,7 +88,12 @@ export function ListRow({
 
   const content = (
     <>
-      {hasDot ? <span class="lr-dot" style={dotStyle} /> : null}
+      {icon ? (
+        <span class="lr-icon">
+          <Icon name={icon} size={18} title={iconTitle ?? label} />
+        </span>
+      ) : null}
+      {hasDot && statusDotPlacement === "leading" ? <span class={dotClass} style={dotStyle} /> : null}
       <div class="lr-main" style={{ flex: 1, minWidth: 0 }}>
         <div class="lr-label" style={{ fontSize: "12.5px", letterSpacing: ".04em", color: "var(--text)" }}>{label}</div>
         {sub ? (
@@ -92,6 +106,7 @@ export function ListRow({
           {statusLabel}
         </span>
       ) : null}
+      {hasDot && statusDotPlacement === "trailing" ? <span class={dotClass} style={dotStyle} /> : null}
       {chevron ? (
         <span class="lr-chevron" style={{ display: "inline-flex", flex: "none", alignItems: "center" }}>
           <svg width="9" height="12" viewBox="0 0 9 12" style={{ filter: "drop-shadow(0 0 3px rgba(150,140,255,.5))" }}>
