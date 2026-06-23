@@ -1,0 +1,140 @@
+.gsv-console-detail-placeholder-page {
+  flex: 1;
+  min-height: 100%;
+  padding: 38px 40px 88px;
+  background: transparent;
+}
+
+.gsv-console-detail-placeholder-shell {
+  width: min(780px, 100%);
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.gsv-console-detail-placeholder-head {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.gsv-console-detail-placeholder-icon {
+  width: 66px;
+  height: 66px;
+  flex: none;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--accent-bright);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: inset 0 0 18px rgba(80, 70, 180, 0.18);
+}
+
+.gsv-console-detail-placeholder-title {
+  min-width: 0;
+  display: grid;
+  gap: 9px;
+}
+
+.gsv-console-detail-placeholder-title h2 {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-hi);
+  font-size: 25px;
+  font-weight: 700;
+  line-height: 1.08;
+  letter-spacing: 0.06em;
+  text-shadow: 0 0 8px rgba(150, 140, 255, 0.4);
+}
+
+.gsv-console-detail-placeholder-title div {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: #a8a2dc;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.gsv-console-detail-placeholder-title div span:first-child {
+  color: #8c86c8;
+  letter-spacing: 0.22em;
+}
+
+.gsv-console-detail-placeholder-blurb {
+  max-width: 640px;
+  margin: 0;
+  color: var(--label);
+  font-family: var(--gsv-font-sans);
+  font-size: 14px;
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+
+.gsv-console-detail-placeholder-panel {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  height: 320px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  background-color: var(--panel);
+  background-image:
+    repeating-linear-gradient(45deg, #100d28 0, #100d28 12px, #0b0922 12px, #0b0922 24px);
+  color: var(--idle);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.gsv-console-detail-placeholder-panel > span:last-child {
+  max-width: calc(100% - 40px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gsv-console-detail-placeholder-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+@media (max-width: 720px) {
+  .gsv-console-detail-placeholder-page {
+    padding: 28px 24px 72px;
+  }
+}
+
+@media (max-width: 520px) {
+  .gsv-console-detail-placeholder-page {
+    padding: 18px 14px 64px;
+  }
+
+  .gsv-console-detail-placeholder-head {
+    align-items: flex-start;
+  }
+
+  .gsv-console-detail-placeholder-icon {
+    width: 46px;
+    height: 46px;
+  }
+
+  .gsv-console-detail-placeholder-title h2 {
+    font-size: 18px;
+  }
+
+  .gsv-console-detail-placeholder-panel {
+    height: 260px;
+  }
+}

@@ -1,11 +1,9 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { AddAction } from "../../../components/ui/AddAction";
-import { Button } from "../../../components/ui/Button";
-import { Icon } from "../../../components/ui/Icon";
 import { ListRow, type ListRowStatus } from "../../../components/ui/ListRow";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
-import { StatusDot, type StatusTone } from "../../../components/ui/StatusDot";
+import type { StatusTone } from "../../../components/ui/StatusDot";
 import type { TagTone } from "../../../components/ui/Tag";
 import { isNativeWebPackageName } from "../../packages/nativePackages";
 import {
@@ -25,6 +23,7 @@ import {
   ConsolePage,
   ConsoleResourceBoundary,
 } from "../components/ConsolePageTemplate";
+import { ConsoleDetailPlaceholder } from "../components/ConsoleDetailPlaceholder";
 import "./ConsoleListPage.css";
 
 export type ConsoleListKind = "machines" | "library" | "tasks" | "messengers" | "integrations" | "applications";
@@ -420,52 +419,8 @@ function resourceWithLocalEmptyState<T>(resource: ConsoleResourceState<T>): Cons
   return { ...resource, isEmpty: false };
 }
 
-function ConsoleEntityDetailPage({
-  icon,
-  title,
-  typeLabel,
-  statusLabel,
-  tone,
-  blurb,
-  parentLabel,
-  placeholderLabel,
-  primaryLabel,
-  onBack,
-}: EntityDetailPageProps) {
-  return (
-    <section class="gsv-console-entity-detail">
-      <div class="gsv-console-entity-detail-shell">
-        <header class="gsv-console-entity-detail-head">
-          <span class="gsv-console-entity-detail-icon">
-            <Icon name={icon} size={30} />
-          </span>
-          <div class="gsv-console-entity-detail-title">
-            <h2>{title}</h2>
-            <div>
-              <span>{typeLabel}</span>
-              <StatusDot tone={tone} size={7} />
-              <span>{statusLabel}</span>
-            </div>
-          </div>
-        </header>
-
-        <p class="gsv-console-entity-detail-blurb">{blurb}</p>
-
-        <div class="gsv-console-entity-detail-placeholder">
-          <span class="gsv-detail-corner is-top-left" aria-hidden="true" />
-          <span class="gsv-detail-corner is-top-right" aria-hidden="true" />
-          <span class="gsv-detail-corner is-bottom-left" aria-hidden="true" />
-          <span class="gsv-detail-corner is-bottom-right" aria-hidden="true" />
-          <span>[ {title} · {placeholderLabel} ]</span>
-        </div>
-
-        <div class="gsv-console-entity-detail-actions">
-          <Button variant="primary" label={primaryLabel} onClick={onBack} />
-          <Button variant="secondary" label={`BACK TO ${parentLabel}`} onClick={onBack} />
-        </div>
-      </div>
-    </section>
-  );
+function ConsoleEntityDetailPage(props: EntityDetailPageProps) {
+  return <ConsoleDetailPlaceholder {...props} />;
 }
 
 function SettingsListPanel({
