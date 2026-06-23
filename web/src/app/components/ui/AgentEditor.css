@@ -107,57 +107,6 @@
   color: #aaa5d8;
 }
 
-/* ===== FILES action buttons ===== */
-.gsv-ae-delete {
-  cursor: pointer;
-  font-size: 11px;
-  letter-spacing: 0.14em;
-  color: #ff8fa3;
-  border: 1px solid #5a2b3a;
-  background: transparent;
-  padding: 10px 20px;
-  transition: background 0.12s;
-}
-.gsv-ae-delete:hover {
-  background: #2a1420;
-  color: #ffb3c2;
-}
-.gsv-ae-reset {
-  cursor: pointer;
-  font-size: 11px;
-  letter-spacing: 0.14em;
-  color: var(--accent);
-  border: 1px solid var(--border-raised);
-  background: transparent;
-  padding: 10px 22px;
-  transition: background 0.12s;
-}
-.gsv-ae-reset:hover {
-  background: var(--hover);
-  color: #e6e4ff;
-}
-.gsv-ae-save {
-  cursor: pointer;
-  font-size: 11px;
-  letter-spacing: 0.14em;
-  color: #fff;
-  background: var(--dashed);
-  border: 1px solid var(--primary-hi);
-  padding: 10px 28px;
-  box-shadow: 0 0 16px rgba(120, 110, 230, 0.35);
-  transition: background 0.12s;
-}
-.gsv-ae-save:hover {
-  background: var(--primary-hi);
-}
-.gsv-ae-delete.is-disabled,
-.gsv-ae-reset.is-disabled,
-.gsv-ae-save.is-disabled {
-  cursor: not-allowed;
-  opacity: 0.45;
-  pointer-events: none;
-}
-
 .gsv-ae-readonly-note {
   color: var(--text-dim);
   font-size: 10px;
@@ -165,40 +114,17 @@
 }
 
 /* ===== delete modal ===== */
-.gsv-ae-modal-x {
-  margin-left: auto;
-  font-size: 12px;
-  color: var(--text-dim);
-  cursor: pointer;
+.gsv-ae-modal-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(4, 3, 16, 0.66);
 }
-.gsv-ae-modal-x:hover {
-  color: var(--accent-bright);
-}
-.gsv-ae-modal-cancel {
-  cursor: pointer;
-  font-size: 11px;
-  letter-spacing: 0.14em;
-  color: var(--accent);
-  border: 1px solid var(--border-raised);
-  background: transparent;
-  padding: 10px 24px;
-  transition: background 0.12s;
-}
-.gsv-ae-modal-cancel:hover {
-  background: var(--hover);
-  color: #e6e4ff;
-}
-.gsv-ae-modal-delete {
-  cursor: pointer;
-  font-size: 11px;
-  letter-spacing: 0.14em;
-  color: #fff;
-  background: var(--danger);
-  border: 1px solid var(--danger-hi);
-  padding: 10px 30px;
-  box-shadow: 0 0 16px rgba(200, 60, 90, 0.35);
-  transition: background 0.12s;
-}
-.gsv-ae-modal-delete:hover {
-  background: var(--danger-hi);
+
+.gsv-ae-modal-wrap {
+  width: 440px;
+  max-width: 90vw;
 }

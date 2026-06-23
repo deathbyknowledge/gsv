@@ -3,8 +3,19 @@
    own classes; our ported <Button> carries its own hover/active CSS, so only
    the header close affordance needs a pseudo-state here. */
 .gsv-cm-close {
+  appearance: none;
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
   transition: color 0.12s;
 }
-.gsv-cm-close:hover {
+.gsv-cm-close:hover,
+.gsv-cm-close:focus-visible {
   color: var(--accent-bright);
+  outline: none;
 }
