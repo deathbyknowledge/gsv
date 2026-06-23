@@ -119,16 +119,6 @@
   text-align: inherit;
 }
 
-.gsv-console-crew-add-tile > div {
-  pointer-events: none;
-}
-
-.gsv-console-crew-add-tile > div > div {
-  min-height: 170px;
-  border-color: var(--dashed) !important;
-  background: transparent !important;
-}
-
 button.gsv-console-crew-add-tile {
   cursor: pointer;
   transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
