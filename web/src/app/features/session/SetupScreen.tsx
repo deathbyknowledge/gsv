@@ -67,9 +67,12 @@ export function SetupScreen({
   const detailStep = currentDetailStep(draft);
   const current =
     draft.stage === "review" ? 2 : draft.stage === "details" && detailStep !== "account" ? 1 : 0;
+  // Screen number across the 4 visual screens (welcome · account · system · review).
+  const screen =
+    draft.stage === "review" ? 4 : draft.stage === "details" ? (detailStep === "account" ? 2 : 3) : 1;
 
   return (
-    <AuthLayout background="galaxy" visible={snapshot.phase === "setup"}>
+    <AuthLayout background="galaxy" visible={snapshot.phase === "setup"} surfaceClass="gsv-auth-surface-setup">
       <div class="gsv-setup-panel" data-session-setup-view>
         <form
           ref={formRef}
@@ -102,7 +105,7 @@ export function SetupScreen({
             ) : null}
             <span class="gsv-setup-nav-spacer">
               <span class="gsv-setup-stepcount">
-                {current + 1} / 3
+                {screen} / 4
               </span>
             </span>
             {showNext ? (

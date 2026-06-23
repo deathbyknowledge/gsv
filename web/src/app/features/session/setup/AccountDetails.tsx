@@ -17,7 +17,8 @@ export function AccountDetails({
         <TextInput
           label="Username"
           type="text"
-          placeholder="hank"
+          requirement="required"
+          placeholder="e.g. hank"
           value={draft.account.username}
           inputProps={{ autoComplete: "username" }}
           onChange={(value) => updateDraft((current) => ({
@@ -28,8 +29,9 @@ export function AccountDetails({
         <TextInput
           label="Personal agent username"
           type="text"
-          placeholder="friday"
-          description="Optional. Leave blank to use the next available default name."
+          requirement="optional"
+          placeholder="e.g. friday"
+          description="Leave blank to use the next available default name."
           value={draft.account.agentName}
           inputProps={{ autoComplete: "off" }}
           onChange={(value) => updateDraft((current) => ({
@@ -40,6 +42,8 @@ export function AccountDetails({
         <TextInput
           label="Password"
           type="password"
+          requirement="required"
+          placeholder="••••••••"
           value={draft.account.password}
           inputProps={{ autoComplete: "new-password" }}
           onChange={(value) => updateDraft((current) => ({
@@ -50,6 +54,8 @@ export function AccountDetails({
         <TextInput
           label="Confirm password"
           type="password"
+          requirement="required"
+          placeholder="••••••••"
           value={draft.account.passwordConfirm}
           inputProps={{ autoComplete: "new-password" }}
           onChange={(value) => updateDraft((current) => ({
