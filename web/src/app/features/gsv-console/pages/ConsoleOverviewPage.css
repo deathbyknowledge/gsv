@@ -32,26 +32,6 @@
   border-bottom: 0;
 }
 
-button.gsv-settings-action-header,
-button.gsv-settings-mini-heading,
-button.gsv-settings-overrides-state,
-button.gsv-settings-mini-row,
-button.gsv-settings-add-row,
-button.gsv-settings-deep-cell {
-  width: 100%;
-  appearance: none;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-}
-
-button.gsv-settings-action-header,
-button.gsv-settings-deep-cell {
-  padding: 0;
-  border: 0;
-}
-
 .gsv-settings-ship-visual {
   position: relative;
   height: 182px;
@@ -128,98 +108,8 @@ button.gsv-settings-deep-cell {
   border-right: 1px solid var(--rule-section);
 }
 
-.gsv-settings-action-header {
-  position: relative;
-}
-
-.gsv-settings-action-header[data-clickable="true"] {
-  cursor: pointer;
-}
-
-.gsv-settings-action-header[data-clickable="true"] > div {
-  padding-right: 52px !important;
-  transition: background 120ms ease;
-}
-
-.gsv-settings-action-header[data-clickable="true"]:hover > div {
-  background: var(--hover-nav) !important;
-}
-
-.gsv-settings-action-header[data-clickable="true"]:focus-visible {
-  outline: 1px solid var(--accent);
-  outline-offset: -2px;
-}
-
-.gsv-settings-action-header[data-clickable="true"]:focus-visible > div {
-  background: var(--hover-nav) !important;
-}
-
-.gsv-settings-action-header > .gsv-settings-chevron {
-  position: absolute;
-  right: 16px;
-  top: 50%;
-  margin-left: 0;
-  transform: translateY(-50%);
-  pointer-events: none;
-}
-
-.gsv-settings-mini-heading {
+.gsv-settings-mini-heading.gsv-section-header {
   min-height: 32px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 9px 16px;
-  border-bottom: 1px solid var(--rule-inner);
-  color: var(--label);
-  font-size: 10px;
-  font-weight: 500;
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-}
-
-.gsv-settings-mini-heading[data-clickable="true"],
-.gsv-settings-action-header[data-clickable="true"],
-.gsv-settings-overrides-state[data-clickable="true"],
-.gsv-settings-mini-row[data-clickable="true"],
-.gsv-settings-add-row[data-clickable="true"],
-.gsv-settings-deep-cell[data-clickable="true"] {
-  cursor: pointer;
-  transition: background 120ms ease, border-color 120ms ease;
-}
-
-.gsv-settings-mini-heading[data-clickable="true"]:hover,
-.gsv-settings-action-header[data-clickable="true"]:hover,
-.gsv-settings-overrides-state[data-clickable="true"]:hover,
-.gsv-settings-mini-row[data-clickable="true"]:hover,
-.gsv-settings-add-row[data-clickable="true"]:hover,
-.gsv-settings-deep-cell[data-clickable="true"]:hover,
-.gsv-settings-mini-heading[data-clickable="true"]:focus-visible,
-.gsv-settings-action-header[data-clickable="true"]:focus-visible,
-.gsv-settings-overrides-state[data-clickable="true"]:focus-visible,
-.gsv-settings-mini-row[data-clickable="true"]:focus-visible,
-.gsv-settings-add-row[data-clickable="true"]:focus-visible,
-.gsv-settings-deep-cell[data-clickable="true"]:focus-visible {
-  background: var(--hover);
-}
-
-.gsv-settings-mini-heading[data-clickable="true"]:focus-visible,
-.gsv-settings-overrides-state[data-clickable="true"]:focus-visible,
-.gsv-settings-mini-row[data-clickable="true"]:focus-visible,
-.gsv-settings-add-row[data-clickable="true"]:focus-visible,
-.gsv-settings-deep-cell[data-clickable="true"]:focus-visible {
-  outline: 1px solid var(--accent);
-  outline-offset: -1px;
-}
-
-.gsv-settings-mini-heading small {
-  margin-left: auto;
-  color: #7d78b8;
-  font-size: 9px;
-  letter-spacing: 0.12em;
-}
-
-.gsv-settings-mini-heading small + .gsv-settings-chevron {
-  margin-left: 0;
 }
 
 .gsv-settings-chevron {
@@ -233,8 +123,7 @@ button.gsv-settings-deep-cell {
   filter: drop-shadow(0 0 4px rgba(150, 140, 255, 0.6));
 }
 
-.gsv-settings-terminal-state,
-.gsv-settings-overrides-state {
+.gsv-settings-terminal-state {
   min-height: 55px;
   display: flex;
   align-items: center;
@@ -252,17 +141,6 @@ button.gsv-settings-deep-cell {
 
 .gsv-settings-terminal-state .gsv-cb {
   min-width: 0;
-}
-
-.gsv-settings-overrides-state {
-  justify-content: space-between;
-}
-
-.gsv-settings-overrides-copy {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 10px;
 }
 
 .gsv-settings-crew-grid {
@@ -370,106 +248,34 @@ button.gsv-settings-deep-cell {
 }
 
 .gsv-settings-mini-row,
-.gsv-settings-add-row,
+.gsv-settings-add-action,
 .gsv-settings-empty-row {
   min-height: 44px;
-  display: flex;
-  align-items: center;
-  gap: 11px;
   min-width: 0;
-  padding: 13px 16px;
-  border-bottom: 1px solid var(--rule-inner);
+}
+
+.gsv-settings-mini-row,
+.gsv-settings-add-action,
+.gsv-settings-empty-row {
+  border-bottom: 1px solid var(--rule-inner) !important;
+}
+
+.gsv-settings-add-action .aa {
+  border: 0 !important;
+  background: transparent !important;
 }
 
 .gsv-settings-mini-row:last-child,
-.gsv-settings-add-row:last-child,
+.gsv-settings-add-action:last-child,
 .gsv-settings-empty-row:last-child {
-  border-bottom: 0;
-}
-
-.gsv-settings-mini-icon {
-  width: 20px;
-  display: inline-flex;
-  justify-content: center;
-  flex: none;
-  color: var(--accent-bright);
-}
-
-.gsv-settings-mini-copy {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-}
-
-.gsv-settings-mini-copy strong {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text);
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.04em;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.gsv-settings-mini-copy small {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  color: #7d78b8;
-  font-size: 9px;
-  letter-spacing: 0.06em;
-  text-overflow: ellipsis;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-.gsv-settings-status {
-  margin-left: auto;
-  color: #9a95cf;
-  font-size: 9px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-
-.gsv-settings-tail-dot {
-  flex: none;
-  display: inline-flex;
-  margin-left: auto;
-}
-
-.gsv-settings-status + .gsv-settings-tail-dot {
-  margin-left: 0;
-}
-
-.gsv-settings-status.is-online,
-.gsv-settings-status.is-live {
-  color: var(--online);
-}
-
-.gsv-settings-status.is-error {
-  color: var(--error);
-}
-
-.gsv-settings-status.is-update,
-.gsv-settings-status.is-warn {
-  color: var(--update);
-}
-
-.gsv-settings-add-row {
-  color: var(--text-title);
-  font-size: 11px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.gsv-settings-add-row .gsv-icon {
-  color: var(--accent);
+  border-bottom: 0 !important;
 }
 
 .gsv-settings-empty-row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 13px 16px;
   color: #7d78b8;
   font-size: 10px;
   letter-spacing: 0.08em;

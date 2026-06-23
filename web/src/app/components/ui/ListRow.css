@@ -16,3 +16,8 @@
   background: var(--hover) !important;
   outline: none;
 }
+
+.lr[data-clickable="true"]:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}

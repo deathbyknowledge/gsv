@@ -21,8 +21,14 @@
 /* button reset when rendered as <button> */
 button.gsv-surface {
   width: 100%;
+  appearance: none;
   font: inherit;
   cursor: default;
+}
+
+button.gsv-surface:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
 }
 
 /* — level 0: flush panel, no lift — */
@@ -46,6 +52,17 @@ button.gsv-surface {
   box-shadow: 0 6px 22px rgba(0, 0, 0, 0.45);
 }
 
+/* — flush: structural surface without card chrome — */
+.gsv-surface.is-flush {
+  --surface-bg: transparent;
+  --surface-border: transparent;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 0;
+}
+
 /* — interactive: hover raises bg one notch + emphasis border + pointer — */
 .gsv-surface.is-interactive {
   cursor: pointer;
@@ -58,6 +75,15 @@ button.gsv-surface.is-interactive {
   --surface-border: var(--border-raised);
   box-shadow: 0 8px 26px rgba(0, 0, 0, 0.5);
   transform: translateY(-1px);
+}
+
+.gsv-surface.is-flush.is-interactive:hover,
+.gsv-surface.is-flush.is-interactive:focus-visible {
+  --surface-bg: transparent;
+  --surface-border: transparent;
+  background: var(--hover);
+  box-shadow: none;
+  transform: none;
 }
 
 /* — selected: accent border + faint accent fill + soft glow — */

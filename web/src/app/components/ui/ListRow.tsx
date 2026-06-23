@@ -7,6 +7,7 @@ export type ListRowStatus = "online" | "error" | "idle" | "live" | "none" | "upd
 export type ListRowStatusDotPlacement = "leading" | "trailing";
 
 export interface ListRowProps {
+  className?: string;
   label?: string;
   status?: ListRowStatus;
   statusLabel?: string;
@@ -17,6 +18,7 @@ export interface ListRowProps {
   icon?: string;
   iconTitle?: string;
   statusDotPlacement?: ListRowStatusDotPlacement;
+  style?: JSX.CSSProperties;
   active?: boolean;
   onClick?: () => void;
 }
@@ -41,6 +43,7 @@ const DOT_COLOR: Record<Exclude<ListRowStatus, "none">, string> = {
 
 /** ListRow — full-width clickable row with status, optional tag/status text, and chevron. */
 export function ListRow({
+  className = "",
   label = "Item",
   status = "online",
   statusLabel = "",
@@ -51,6 +54,7 @@ export function ListRow({
   icon,
   iconTitle,
   statusDotPlacement = "leading",
+  style,
   active = false,
   onClick,
 }: ListRowProps) {
@@ -117,12 +121,15 @@ export function ListRow({
     </>
   );
 
+  const rootClass = `lr${className ? ` ${className}` : ""}`;
+  const mergedStyle = style ? { ...rootStyle, ...style } : rootStyle;
+
   return onClick ? (
-    <button type="button" onClick={onClick} class="lr" data-clickable="true" style={rootStyle}>
+    <button type="button" onClick={onClick} class={rootClass} data-clickable="true" style={mergedStyle}>
       {content}
     </button>
   ) : (
-    <div class="lr" style={rootStyle}>
+    <div class={rootClass} style={mergedStyle}>
       {content}
     </div>
   );

@@ -2,6 +2,8 @@ import type { ComponentChildren } from "preact";
 import "./Surface.css";
 
 export interface SurfaceProps {
+  /** Removes card chrome while keeping the shared reset/interactive behavior. */
+  flush?: boolean;
   /** Elevation: higher = lighter background + stronger shadow/border. */
   level?: 0 | 1 | 2;
   /** Adds a hover lift (raised bg + border). Use for clickable cards. */
@@ -19,6 +21,7 @@ export interface SurfaceProps {
 /** Surface — reusable card/panel with consistent elevation, border and
  *  background across the GSV design system. */
 export function Surface({
+  flush = false,
   level = 1,
   interactive = false,
   selected = false,
@@ -30,6 +33,7 @@ export function Surface({
   const cls = [
     "gsv-surface",
     `gsv-surface-l${level}`,
+    flush ? "is-flush" : "",
     interactive ? "is-interactive" : "",
     selected ? "is-selected" : "",
     extraClass ?? "",
