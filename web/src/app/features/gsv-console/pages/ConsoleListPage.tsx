@@ -17,26 +17,14 @@ import {
 import type {
   ConsoleAdapterAccount,
   ConsolePackage,
-  ConsolePackageEntrypoint,
-  ConsolePackageRuntime,
   ConsoleProcess,
-  ConsoleProcessState,
   ConsoleResourceState,
   ConsoleTarget,
-  ConsoleTargetKind,
 } from "../domain/consoleModels";
 import {
   ConsolePage,
   ConsoleResourceBoundary,
 } from "../components/ConsolePageTemplate";
-import {
-  ConsoleDetailChips,
-  ConsoleDetailGrid,
-  ConsoleDetailList,
-  type ConsoleDetailChip,
-  type ConsoleDetailField,
-  type ConsoleDetailListItem,
-} from "./ConsoleDetailBlocks";
 import "./ConsoleListPage.css";
 
 export type ConsoleListKind = "machines" | "library" | "tasks" | "messengers" | "integrations" | "applications";
@@ -99,17 +87,8 @@ type EntityDetailPageProps = {
   tone: StatusTone;
   blurb: string;
   parentLabel: string;
-  fields: readonly ConsoleDetailField[];
-  chips?: {
-    title: string;
-    emptyLabel: string;
-    items: readonly ConsoleDetailChip[];
-  };
-  list?: {
-    title: string;
-    emptyLabel: string;
-    items: readonly ConsoleDetailListItem[];
-  };
+  placeholderLabel: string;
+  primaryLabel: string;
   onBack: () => void;
 };
 
@@ -120,20 +99,6 @@ const EMPTY_RESOURCE_LABEL: Record<ConsoleListKind, string> = {
   messengers: "NO MESSENGERS",
   integrations: "NO INTEGRATIONS",
   applications: "NO APPLICATIONS",
-};
-
-const TARGET_KIND_LABEL: Record<ConsoleTargetKind, string> = {
-  "native-device": "NATIVE",
-  browser: "BROWSER",
-  adapter: "ADAPTER",
-  unknown: "UNKNOWN",
-};
-
-const RUNTIME_LABEL: Record<ConsolePackageRuntime, string> = {
-  "dynamic-worker": "DYNAMIC WORKER",
-  node: "NODE",
-  "web-ui": "WEB UI",
-  unknown: "UNKNOWN RUNTIME",
 };
 
 const NEW_DETAIL_ID = "__new__";
@@ -314,12 +279,8 @@ function renderProcessDetail(
       tone={toneForProcess(process)}
       blurb={compactText([process.username, process.profile, process.cwd], "Process runtime state and active conversation context.")}
       parentLabel="RUNTIME"
-      fields={processDetailFields(process)}
-      chips={{
-        title: "STATE FLAGS",
-        emptyLabel: "NO STATE FLAGS",
-        items: processContextChips(process),
-      }}
+      placeholderLabel="DETAIL VIEW PLACEHOLDER"
+      primaryLabel="SAVE CHANGES"
       onBack={onBack}
     />
   );
@@ -344,12 +305,8 @@ function renderTargetDetail(
       tone={target.online ? "online" : "idle"}
       blurb={target.description || compactText([target.platform, target.version, target.ownerUsername], "Machine target and declared capabilities.")}
       parentLabel="MACHINES"
-      fields={targetDetailFields(target)}
-      chips={{
-        title: "CAPABILITIES",
-        emptyLabel: "NO CAPABILITIES DECLARED",
-        items: targetCapabilityChips(target),
-      }}
+      placeholderLabel="DETAIL VIEW PLACEHOLDER"
+      primaryLabel="SAVE CHANGES"
       onBack={onBack}
     />
   );
@@ -374,12 +331,8 @@ function renderAdapterDetail(
       tone={toneForAdapter(adapter)}
       blurb={adapter.error || adapterSub(adapter)}
       parentLabel="MESSENGERS"
-      fields={adapterDetailFields(adapter)}
-      chips={{
-        title: "CHANNEL FLAGS",
-        emptyLabel: "NO CHANNEL FLAGS",
-        items: adapterContextChips(adapter),
-      }}
+      placeholderLabel="DETAIL VIEW PLACEHOLDER"
+      primaryLabel="SAVE CHANGES"
       onBack={onBack}
     />
   );
@@ -428,17 +381,8 @@ function renderNewEntityDetail(
       tone="idle"
       blurb="Awaiting source selection and access configuration."
       parentLabel={kind === "machines" ? "MACHINES" : kind === "integrations" ? "INTEGRATIONS" : "APPLICATIONS"}
-      fields={[
-        { label: "STATE", value: "DRAFT", tone: "idle" },
-        { label: "SOURCE", value: "NOT SELECTED" },
-        { label: "OWNER", value: "" },
-        { label: "PERMISSIONS", value: "" },
-      ]}
-      chips={{
-        title: "REQUIREMENTS",
-        emptyLabel: "NO REQUIREMENTS",
-        items: [],
-      }}
+      placeholderLabel="FORM PLACEHOLDER"
+      primaryLabel={`CREATE ${noun}`}
       onBack={onBack}
     />
   );
@@ -465,17 +409,8 @@ function renderPackageDetail(
       tone={toneForPackage(pkg)}
       blurb={pkg.description || packageSub(pkg)}
       parentLabel={packageListTitle(packageKind)}
-      fields={packageDetailFields(pkg)}
-      list={{
-        title: "ENTRYPOINTS",
-        emptyLabel: "NO ENTRYPOINTS DECLARED",
-        items: packageEntrypointItems(pkg.entrypoints),
-      }}
-      chips={{
-        title: "BINDINGS",
-        emptyLabel: "NO BINDINGS DECLARED",
-        items: pkg.bindingNames.map((binding) => ({ label: binding, tone: "idle" })),
-      }}
+      placeholderLabel="DETAIL VIEW PLACEHOLDER"
+      primaryLabel="SAVE CHANGES"
       onBack={onBack}
     />
   );
@@ -493,9 +428,8 @@ function ConsoleEntityDetailPage({
   tone,
   blurb,
   parentLabel,
-  fields,
-  chips,
-  list,
+  placeholderLabel,
+  primaryLabel,
   onBack,
 }: EntityDetailPageProps) {
   return (
@@ -517,25 +451,16 @@ function ConsoleEntityDetailPage({
 
         <p class="gsv-console-entity-detail-blurb">{blurb}</p>
 
-        <div class="gsv-console-entity-detail-panel">
-          <ConsoleDetailGrid fields={fields} />
-          {list ? (
-            <ConsoleDetailList
-              title={list.title}
-              emptyLabel={list.emptyLabel}
-              items={list.items}
-            />
-          ) : null}
-          {chips ? (
-            <ConsoleDetailChips
-              title={chips.title}
-              emptyLabel={chips.emptyLabel}
-              chips={chips.items}
-            />
-          ) : null}
+        <div class="gsv-console-entity-detail-placeholder">
+          <span class="gsv-detail-corner is-top-left" aria-hidden="true" />
+          <span class="gsv-detail-corner is-top-right" aria-hidden="true" />
+          <span class="gsv-detail-corner is-bottom-left" aria-hidden="true" />
+          <span class="gsv-detail-corner is-bottom-right" aria-hidden="true" />
+          <span>[ {title} · {placeholderLabel} ]</span>
         </div>
 
         <div class="gsv-console-entity-detail-actions">
+          <Button variant="primary" label={primaryLabel} onClick={onBack} />
           <Button variant="secondary" label={`BACK TO ${parentLabel}`} onClick={onBack} />
         </div>
       </div>
@@ -721,117 +646,6 @@ function LibraryConsoleSection({
   );
 }
 
-function processDetailFields(process: ConsoleProcess): ConsoleDetailField[] {
-  return [
-    { label: "PID", value: process.pid, wide: true },
-    { label: "STATE", value: processStateLabel(process.state), tone: tagToneForProcess(process) },
-    { label: "RAW STATE", value: process.rawState },
-    { label: "USER", value: process.username || uidLabel(process.uid) },
-    { label: "UID", value: process.uid },
-    { label: "PROFILE", value: process.profile },
-    { label: "CWD", value: process.cwd, wide: true },
-    { label: "PARENT PID", value: process.parentPid },
-    { label: "ACTIVE RUN", value: process.activeRunId, wide: true },
-    { label: "CONVERSATION", value: process.activeConversationId, wide: true },
-    { label: "QUEUE DEPTH", value: process.queuedCount },
-    { label: "INTERACTIVE", value: yesNo(process.interactive), tone: process.interactive ? "info" : "idle" },
-    { label: "CREATED", value: formatTimestampTrace(process.createdAt), wide: true },
-    { label: "LAST ACTIVE", value: formatTimestampTrace(process.lastActiveAt), wide: true },
-  ];
-}
-
-function processContextChips(process: ConsoleProcess): ConsoleDetailChip[] {
-  const chips: ConsoleDetailChip[] = [
-    { label: processStateLabel(process.state), tone: tagToneForProcess(process) },
-  ];
-  if (process.interactive) chips.push({ label: "INTERACTIVE IO", tone: "info" });
-  if (process.activeRunId) chips.push({ label: "ACTIVE RUN", tone: "update" });
-  if (process.activeConversationId) chips.push({ label: "CONVERSATION", tone: "accent" });
-  if (process.queuedCount > 0) chips.push({ label: `QUEUE ${process.queuedCount}`, tone: "update" });
-  if (process.parentPid) chips.push({ label: "CHILD PROCESS", tone: "idle" });
-  return chips;
-}
-
-function targetDetailFields(target: ConsoleTarget): ConsoleDetailField[] {
-  return [
-    { label: "DEVICE ID", value: target.deviceId, wide: true },
-    { label: "STATE", value: target.online ? "ONLINE" : "OFFLINE", tone: target.online ? "online" : "idle" },
-    { label: "KIND", value: TARGET_KIND_LABEL[target.kind], tone: target.kind === "unknown" ? "warn" : "info" },
-    { label: "OWNER", value: target.ownerUsername },
-    { label: "OWNER UID", value: target.ownerUid },
-    { label: "PLATFORM", value: target.platform },
-    { label: "VERSION", value: target.version },
-    { label: "FILES SURFACE", value: yesNo(supportsFilesSurface(target)), tone: supportsFilesSurface(target) ? "online" : "idle" },
-    { label: "SHELL SURFACE", value: yesNo(supportsShellSurface(target)), tone: supportsShellSurface(target) ? "online" : "idle" },
-    { label: "DESCRIPTION", value: target.description, wide: true },
-    { label: "LAST SEEN", value: formatTimestampTrace(target.lastSeenAt), wide: true },
-  ];
-}
-
-function targetCapabilityChips(target: ConsoleTarget): ConsoleDetailChip[] {
-  return target.implements.map((capability) => ({
-    label: capability,
-    tone: target.online ? "accent" : "idle",
-  }));
-}
-
-function adapterDetailFields(adapter: ConsoleAdapterAccount): ConsoleDetailField[] {
-  return [
-    { label: "ADAPTER", value: adapter.adapter, tone: "info" },
-    { label: "ACCOUNT ID", value: adapter.accountId, wide: true },
-    { label: "STATE", value: statusForAdapter(adapter), tone: tagToneForAdapter(adapter) },
-    { label: "CONNECTED", value: yesNo(adapter.connected), tone: adapter.connected ? "online" : "idle" },
-    { label: "AUTHENTICATED", value: yesNo(adapter.authenticated), tone: adapter.authenticated ? "online" : "warn" },
-    { label: "MODE", value: adapter.mode },
-    { label: "ERROR", value: adapter.error, tone: adapter.error ? "error" : "idle", wide: true },
-    { label: "LAST ACTIVITY", value: formatTimestampTrace(adapter.lastActivity), wide: true },
-  ];
-}
-
-function adapterContextChips(adapter: ConsoleAdapterAccount): ConsoleDetailChip[] {
-  const chips: ConsoleDetailChip[] = [
-    { label: statusForAdapter(adapter), tone: tagToneForAdapter(adapter) },
-  ];
-  if (adapter.connected) chips.push({ label: "CONNECTED", tone: "online" });
-  if (adapter.authenticated) chips.push({ label: "AUTHENTICATED", tone: "online" });
-  if (!adapter.authenticated) chips.push({ label: "AUTH REQUIRED", tone: "warn" });
-  if (adapter.mode) chips.push({ label: adapter.mode.toUpperCase(), tone: "info" });
-  if (adapter.error) chips.push({ label: "ERROR", tone: "error" });
-  return chips;
-}
-
-function packageDetailFields(pkg: ConsolePackage): ConsoleDetailField[] {
-  return [
-    { label: "PACKAGE ID", value: pkg.packageId, wide: true },
-    { label: "VERSION", value: pkg.version },
-    { label: "RUNTIME", value: RUNTIME_LABEL[pkg.runtime], tone: pkg.runtime === "unknown" ? "warn" : "info" },
-    { label: "STATE", value: statusForPackage(pkg), tone: packageStateTone(pkg) },
-    { label: "SCOPE", value: packageScopeLabel(pkg), tone: pkg.scopeKind === "unknown" ? "warn" : "info" },
-    { label: "SCOPE UID", value: pkg.scopeUid },
-    { label: "REVIEW", value: packageReviewLabel(pkg), tone: packageReviewTone(pkg) },
-    { label: "APPROVED", value: formatTimestampTrace(pkg.reviewApprovedAt), wide: true },
-    { label: "SOURCE REPO", value: pkg.sourceRepo, wide: true },
-    { label: "SOURCE REF", value: pkg.sourceRef },
-    { label: "SOURCE SUBDIR", value: pkg.sourceSubdir, wide: true },
-    { label: "SOURCE VISIBILITY", value: sourceVisibilityLabel(pkg), tone: pkg.sourcePublic ? "info" : "warn" },
-    { label: "INSTALLED", value: formatTimestampTrace(pkg.installedAt), wide: true },
-    { label: "UPDATED", value: formatTimestampTrace(pkg.updatedAt), wide: true },
-  ];
-}
-
-function packageEntrypointItems(entrypoints: readonly ConsolePackageEntrypoint[]): ConsoleDetailListItem[] {
-  return entrypoints.map((entrypoint, index) => ({
-    id: `${index}:${entrypoint.kind}:${entrypoint.name}:${entrypoint.route}:${entrypoint.command}`,
-    label: `${entrypoint.kind.toUpperCase()} / ${entrypoint.name}`,
-    meta: compactText([
-      entrypoint.route ? `route ${entrypoint.route}` : "",
-      entrypoint.command ? `command ${entrypoint.command}` : "",
-      entrypoint.description,
-    ], "NO ROUTE OR COMMAND"),
-    chips: entrypoint.syscalls.map((syscall) => ({ label: syscall, tone: "idle" })),
-  }));
-}
-
 function isQueuedProcess(process: ConsoleProcess): boolean {
   return process.state === "queued" || process.queuedCount > 0;
 }
@@ -856,28 +670,6 @@ function processSub(process: ConsoleProcess): string {
     process.profile,
     process.cwd,
   ], process.pid);
-}
-
-function processStateLabel(state: ConsoleProcessState): string {
-  if (state === "running") return "ACTIVE";
-  if (state === "queued") return "QUEUED";
-  if (state === "unknown") return "UNKNOWN";
-  return "IDLE";
-}
-
-function tagToneForProcess(process: ConsoleProcess): TagTone {
-  if (process.state === "running") return "online";
-  if (isQueuedProcess(process)) return "update";
-  if (process.state === "unknown") return "warn";
-  return "idle";
-}
-
-function supportsFilesSurface(target: ConsoleTarget): boolean {
-  return target.implements.some((capability) => /(?:^|[./:-])(fs|file|files|storage|read|write|ripgit)(?:$|[./:-])/i.test(capability));
-}
-
-function supportsShellSurface(target: ConsoleTarget): boolean {
-  return target.implements.some((capability) => /(?:^|[./:-])(shell|terminal|exec|command|proc|process)(?:$|[./:-])/i.test(capability));
 }
 
 function iconForTarget(target: ConsoleTarget): string {
@@ -931,17 +723,6 @@ function statusForAdapter(adapter: ConsoleAdapterAccount): string {
   return "DISCONNECTED";
 }
 
-function tagToneForAdapter(adapter: ConsoleAdapterAccount): TagTone {
-  if (adapter.error) return "error";
-  if (adapter.connected && adapter.authenticated) return "online";
-  if (adapter.connected) return "warn";
-  return "idle";
-}
-
-function isTrustedPackage(pkg: ConsolePackage): boolean {
-  return !pkg.reviewRequired || pkg.reviewApprovedAt !== null;
-}
-
 function filterPackagesForKind(packages: readonly ConsolePackage[], kind: PackageListKind): ConsolePackage[] {
   const visiblePackages = packages.filter((pkg) => !isNativeConsolePackage(pkg));
   if (kind === "applications") {
@@ -988,41 +769,17 @@ function statusForPackage(pkg: ConsolePackage): string {
 function packageSub(pkg: ConsolePackage): string {
   return compactText([
     pkg.version ? `v${pkg.version}` : "",
-    RUNTIME_LABEL[pkg.runtime],
+    runtimeLabel(pkg.runtime),
     pkg.sourceRepo,
     pkg.sourceRef,
   ], pkg.packageId);
 }
 
-function packageStateTone(pkg: ConsolePackage): TagTone {
-  if (pkg.reviewPending) return "update";
-  if (pkg.enabled) return "online";
-  return "idle";
-}
-
-function packageReviewLabel(pkg: ConsolePackage): string {
-  if (pkg.reviewPending) return "PENDING REVIEW";
-  if (pkg.reviewApprovedAt !== null) return "APPROVED";
-  if (!pkg.reviewRequired) return "NOT REQUIRED";
-  return "REQUIRED";
-}
-
-function packageReviewTone(pkg: ConsolePackage): TagTone {
-  if (pkg.reviewPending) return "update";
-  if (isTrustedPackage(pkg)) return "online";
-  return "warn";
-}
-
-function packageScopeLabel(pkg: ConsolePackage): string {
-  if (pkg.scopeKind === "global") return "GLOBAL";
-  if (pkg.scopeKind === "user") {
-    return pkg.scopeUid === null ? "USER" : `USER ${pkg.scopeUid}`;
-  }
-  return "UNKNOWN";
-}
-
-function sourceVisibilityLabel(pkg: ConsolePackage): string {
-  return pkg.sourcePublic ? "PUBLIC" : "NON-PUBLIC";
+function runtimeLabel(runtime: ConsolePackage["runtime"]): string {
+  if (runtime === "dynamic-worker") return "DYNAMIC WORKER";
+  if (runtime === "web-ui") return "WEB UI";
+  if (runtime === "node") return "NODE";
+  return "UNKNOWN RUNTIME";
 }
 
 function compactText(parts: readonly (string | null | undefined)[], fallback: string): string {
@@ -1049,14 +806,6 @@ function normalizeTimestamp(value: number): number {
   return value < 10_000_000_000 ? value * 1000 : value;
 }
 
-function formatTimestampTrace(value: number | null): string {
-  if (value === null) {
-    return "";
-  }
-  const timestamp = normalizeTimestamp(value);
-  return `${formatAge(timestamp)} / ${new Date(timestamp).toLocaleString()}`;
-}
-
 function formatAge(value: number): string {
   const timestamp = normalizeTimestamp(value);
   const diffMs = Math.max(0, Date.now() - timestamp);
@@ -1068,8 +817,4 @@ function formatAge(value: number): string {
   const days = Math.floor(hours / 24);
   if (days < 30) return `${days}D AGO`;
   return new Date(timestamp).toLocaleDateString();
-}
-
-function yesNo(value: boolean): string {
-  return value ? "YES" : "NO";
 }
