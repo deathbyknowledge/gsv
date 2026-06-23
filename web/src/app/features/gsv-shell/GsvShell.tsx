@@ -348,13 +348,24 @@ export function GsvShell({
 
           <section class="gsv-shell-canvas" aria-label={shellSurfaceLabel(shell.activeSurface)}>
             {shell.activeSurface !== "desktop" ? (
-              <GsvConsole
-                activeSurface={shell.activeSurface}
-                onBackToDesktop={shell.backToDesktop}
-                onOpenSurface={openShellSurface}
-                onSettingsRouteChange={shell.syncActiveSettingsRoute}
-                settingsRouteRequest={settingsRouteRequest}
-              />
+              <>
+                {shell.showRail ? (
+                  <button
+                    type="button"
+                    class="gsv-console-rail-handle"
+                    title={shell.railCollapsed ? "Expand menu" : "Collapse menu"}
+                    aria-label={shell.railCollapsed ? "Expand menu" : "Collapse menu"}
+                    onClick={shell.toggleRailCollapsed}
+                  />
+                ) : null}
+                <GsvConsole
+                  activeSurface={shell.activeSurface}
+                  onBackToDesktop={shell.backToDesktop}
+                  onOpenSurface={openShellSurface}
+                  onSettingsRouteChange={shell.syncActiveSettingsRoute}
+                  settingsRouteRequest={settingsRouteRequest}
+                />
+              </>
             ) : shell.desktopCollapsed ? (
               <CollapsedDesktop />
             ) : (
