@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "preact/hooks";
 import { Icon } from "./Icon";
 import "./IconMenu.css";
 
@@ -23,8 +24,31 @@ export function IconMenu({
   onTerminal,
   onSettings,
 }: IconMenuProps) {
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  // On mount: move focus to the first enabled action button (or the close button).
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    const firstEnabledCell = root.querySelector<HTMLButtonElement>(".gsv-im-cell:not(:disabled)");
+    const closeButton = root.querySelector<HTMLButtonElement>(".gsv-im-close");
+    (firstEnabledCell ?? closeButton)?.focus();
+  }, []);
+
+  // Escape closes the menu.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose?.();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
   return (
     <div
+      ref={rootRef}
+      role="dialog"
+      aria-label={title}
       class="gsv-im"
       style={{
         width: `${width}px`,
@@ -53,6 +77,7 @@ export function IconMenu({
       >
         <div style={{ display: "flex", alignItems: "center", gap: "9px" }}>
           <span
+            aria-hidden="true"
             style={{
               width: "7px",
               height: "7px",
@@ -64,7 +89,7 @@ export function IconMenu({
           />
           <span style={{ fontSize: "11px", letterSpacing: ".24em", color: "var(--accent-bright)" }}>{title}</span>
         </div>
-        <button type="button" class="gsv-im-close" disabled={!onClose} onClick={onClose}>
+        <button type="button" aria-label="Close menu" class="gsv-im-close" disabled={!onClose} onClick={onClose}>
           [ X ]
         </button>
       </div>

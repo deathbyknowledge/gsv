@@ -1,4 +1,4 @@
-import { useState } from "preact/hooks";
+import { useId, useState } from "preact/hooks";
 import "./Counter.css";
 
 export type CounterSize = "small" | "medium" | "large";
@@ -45,6 +45,8 @@ export function Counter(props: CounterProps) {
     onChange,
   } = props;
 
+  const fieldId = useId();
+
   const [stateVal, setStateVal] = useState<number | undefined>(undefined);
 
   const cur = stateVal === undefined ? props.value ?? 1 : stateVal;
@@ -69,26 +71,71 @@ export function Counter(props: CounterProps) {
   const dec = disabled ? undefined : () => set(val - step);
   const inc = disabled ? undefined : () => set(val + step);
 
+  const labelId = `${fieldId}-label`;
+  const descId = `${fieldId}-desc`;
+  const msgId = `${fieldId}-msg`;
+  const describedBy =
+    [description ? descId : "", hasStat ? msgId : ""].filter(Boolean).join(" ") || undefined;
+  const isError = hasStat && statKey === "error";
+
   return (
-    <div class={fldClass}>
+    <div
+      class={fldClass}
+      role="group"
+      aria-labelledby={hasFldLabel ? labelId : undefined}
+      aria-describedby={describedBy}
+      aria-invalid={isError ? true : undefined}
+    >
       {hasFldLabel ? (
         <div class="gsv-fld-lab">
-          <span class="gsv-fld-lab-t">{label}</span>
+          <span class="gsv-fld-lab-t" id={labelId}>
+            {label}
+          </span>
           {req ? (
             <span class="gsv-fld-req">{req === "required" ? "· REQUIRED" : "· OPTIONAL"}</span>
           ) : null}
         </div>
       ) : null}
-      {description ? <div class="gsv-fld-desc">{description}</div> : null}
+      {description ? (
+        <div class="gsv-fld-desc" id={descId}>
+          {description}
+        </div>
+      ) : null}
       <div class={rootClass}>
-        <button type="button" class="gsv-st-btn" disabled={disabled} onClick={dec}>
-          <svg width="11" height="11" viewBox="0 0 16 16" shape-rendering="crispEdges">
+        <button
+          type="button"
+          class="gsv-st-btn"
+          disabled={disabled}
+          onClick={dec}
+          aria-label={`Decrease ${label || "value"}`}
+        >
+          <svg
+            width="11"
+            height="11"
+            viewBox="0 0 16 16"
+            shape-rendering="crispEdges"
+            aria-hidden="true"
+          >
             <rect x="3" y="7" width="10" height="2" fill="currentColor" />
           </svg>
         </button>
-        <span class="gsv-st-val">{display}</span>
-        <button type="button" class="gsv-st-btn" disabled={disabled} onClick={inc}>
-          <svg width="11" height="11" viewBox="0 0 16 16" shape-rendering="crispEdges">
+        <span class="gsv-st-val" aria-live="polite" aria-atomic="true" role="status">
+          {display}
+        </span>
+        <button
+          type="button"
+          class="gsv-st-btn"
+          disabled={disabled}
+          onClick={inc}
+          aria-label={`Increase ${label || "value"}`}
+        >
+          <svg
+            width="11"
+            height="11"
+            viewBox="0 0 16 16"
+            shape-rendering="crispEdges"
+            aria-hidden="true"
+          >
             <g fill="currentColor">
               <rect x="7" y="3" width="2" height="10" />
               <rect x="3" y="7" width="10" height="2" />
@@ -97,7 +144,7 @@ export function Counter(props: CounterProps) {
         </button>
       </div>
       {hasStat ? (
-        <div class="gsv-fld-stat">
+        <div class="gsv-fld-stat" id={msgId}>
           <span class="gsv-fld-dot" />
           <span class="gsv-fld-msg">{message}</span>
         </div>

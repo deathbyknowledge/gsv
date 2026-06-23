@@ -56,11 +56,17 @@ export function Stepper(props: StepperProps) {
   }
 
   return (
-    <div class={rootClass} style={{ width: `${width}px`, maxWidth: "100%" }}>
-      {steps.map((s) => (
+    <div role="group" aria-label="Progress" class={rootClass} style={{ width: `${width}px`, maxWidth: "100%" }}>
+      {steps.map((s, i) => (
         <Fragment key={s.num}>
           {s.hasLine ? <span class={s.lineCls} /> : null}
-          <button type="button" class="gsv-sp-step" onClick={s.pick}>
+          <button
+            type="button"
+            class="gsv-sp-step"
+            aria-current={i === cur ? "step" : undefined}
+            aria-label={`Step ${s.num}${s.label ? `: ${s.label}` : ""}`}
+            onClick={s.pick}
+          >
             <span class={s.dotCls}>{s.num}</span>
             {s.hasLabel ? <span class={s.labelCls}>{s.label}</span> : null}
           </button>

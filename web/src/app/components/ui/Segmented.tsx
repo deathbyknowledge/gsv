@@ -1,4 +1,4 @@
-import { useState } from "preact/hooks";
+import { useId, useRef, useState } from "preact/hooks";
 import "./Segmented.css";
 
 export type SegmentedSize = "small" | "medium" | "large";
@@ -49,6 +49,8 @@ export function Segmented(props: SegmentedProps) {
 
   const [selState, setSelState] = useState<number | undefined>(undefined);
   const sel = selState === undefined ? props.value ?? 1 : selState;
+  const groupId = useId();
+  const segRefs = useRef<(HTMLButtonElement | null)[]>([]);
 
   const req = requirement && requirement !== "none" ? requirement : "";
   const rawStatus = status && status !== "none" ? status : "";
@@ -63,44 +65,94 @@ export function Segmented(props: SegmentedProps) {
   const rootClass = `gsv-sg ${sizeClass}${disabled ? " is-disabled" : ""}`.trim();
   const fldClass = `gsv-fld${hasStatus ? ` is-${statusKey}` : ""}`;
 
+  // Indices of the segments actually rendered (respecting has2/has3).
+  const segIndices = [0, 1, ...(has2 ? [2] : []), ...(has3 ? [3] : [])];
+
   const pick = (i: number) => () => {
     setSelState(i);
     onChange?.(i);
   };
 
+  const moveTo = (i: number) => {
+    setSelState(i);
+    onChange?.(i);
+    segRefs.current[i]?.focus();
+  };
+
+  const onKeyDown = (e: KeyboardEvent) => {
+    if (disabled) return;
+    const pos = segIndices.indexOf(sel);
+    const cur = pos < 0 ? 0 : pos;
+    let next: number | null = null;
+    switch (e.key) {
+      case "ArrowRight":
+      case "ArrowDown":
+        next = segIndices[(cur + 1) % segIndices.length];
+        break;
+      case "ArrowLeft":
+      case "ArrowUp":
+        next = segIndices[(cur - 1 + segIndices.length) % segIndices.length];
+        break;
+      case "Home":
+        next = segIndices[0];
+        break;
+      case "End":
+        next = segIndices[segIndices.length - 1];
+        break;
+      default:
+        return;
+    }
+    e.preventDefault();
+    if (next !== null) moveTo(next);
+  };
+
   const segCls = (i: number) => `gsv-sg-seg${sel === i ? " is-sel" : ""}`;
+
+  const labelId = hasFldLabel ? `${groupId}-label` : undefined;
+  const descId = description.length > 0 ? `${groupId}-desc` : undefined;
+  const msgId = hasStatus ? `${groupId}-msg` : undefined;
+  const describedBy = [descId, msgId].filter(Boolean).join(" ") || undefined;
+
+  const segProps = (i: number) => ({
+    type: "button" as const,
+    class: segCls(i),
+    disabled,
+    role: "radio" as const,
+    "aria-checked": sel === i,
+    tabIndex: sel === i ? 0 : -1,
+    ref: (el: HTMLButtonElement | null) => {
+      segRefs.current[i] = el;
+    },
+    onClick: pick(i),
+    onKeyDown,
+  });
 
   return (
     <div class={fldClass} style={{ width: `${width}px`, maxWidth: "100%" }}>
       {hasFldLabel ? (
         <div class="gsv-fld-lab">
-          <span class="gsv-fld-lab-t">{label}</span>
+          <span class="gsv-fld-lab-t" id={labelId}>{label}</span>
           {req ? <span class="gsv-fld-req">{req === "required" ? "· REQUIRED" : "· OPTIONAL"}</span> : null}
         </div>
       ) : null}
-      {description.length > 0 ? <div class="gsv-fld-desc">{description}</div> : null}
-      <div class={rootClass} style={{ width: "100%" }}>
-        <button type="button" class={segCls(0)} disabled={disabled} onClick={pick(0)}>
-          {l0}
-        </button>
-        <button type="button" class={segCls(1)} disabled={disabled} onClick={pick(1)}>
-          {l1}
-        </button>
-        {has2 ? (
-          <button type="button" class={segCls(2)} disabled={disabled} onClick={pick(2)}>
-            {l2}
-          </button>
-        ) : null}
-        {has3 ? (
-          <button type="button" class={segCls(3)} disabled={disabled} onClick={pick(3)}>
-            {l3}
-          </button>
-        ) : null}
+      {description.length > 0 ? <div class="gsv-fld-desc" id={descId}>{description}</div> : null}
+      <div
+        class={rootClass}
+        style={{ width: "100%" }}
+        role="radiogroup"
+        aria-labelledby={labelId}
+        aria-describedby={describedBy}
+        aria-invalid={status === "error" ? true : undefined}
+      >
+        <button {...segProps(0)}>{l0}</button>
+        <button {...segProps(1)}>{l1}</button>
+        {has2 ? <button {...segProps(2)}>{l2}</button> : null}
+        {has3 ? <button {...segProps(3)}>{l3}</button> : null}
       </div>
       {hasStatus ? (
         <div class="gsv-fld-stat">
           <span class="gsv-fld-dot" />
-          <span class="gsv-fld-msg">{message}</span>
+          <span class="gsv-fld-msg" id={msgId}>{message}</span>
         </div>
       ) : null}
     </div>

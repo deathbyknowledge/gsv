@@ -37,6 +37,10 @@
 .gsv-sg-seg.is-sel:not(:disabled):focus-visible {
   background: #6b62c4;
 }
+.gsv-sg-seg:not(:disabled):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
 .gsv-sg.is-disabled {
   opacity: 0.45;
   pointer-events: none;

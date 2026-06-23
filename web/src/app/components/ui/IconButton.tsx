@@ -77,13 +77,16 @@ export function IconButton({ glyph = "back", size = "medium", disabled = false, 
   const px = typeof size === "number" ? size : SIZE_MAP[size] ?? Number(size) ?? 30;
   const cls = disabled ? "gsv-ibtn-disabled" : "gsv-ibtn";
   return (
-    <div
+    <button
+      type="button"
       class={cls}
       title={title}
+      aria-label={title || undefined}
+      disabled={disabled}
       onClick={disabled ? undefined : onClick}
       style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", width: `${px}px`, height: `${px}px` }}
     >
       {GLYPHS[glyph]}
-    </div>
+    </button>
   );
 }

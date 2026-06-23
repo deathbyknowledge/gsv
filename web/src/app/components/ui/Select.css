@@ -23,6 +23,10 @@
   border-color: #6b62c4;
   outline: none;
 }
+.gsv-sel-trig:focus-visible {
+  outline: 2px solid #b3aeff;
+  outline-offset: 2px;
+}
 .gsv-sel.is-open .gsv-sel-trig {
   border-color: #b3aeff;
 }
@@ -74,9 +78,16 @@
   transition: background 0.12s;
 }
 .gsv-sel-row:hover,
-.gsv-sel-row:focus-visible {
+.gsv-sel-row:focus-visible,
+.gsv-sel-row.is-highlighted {
   background: #201c4d;
   outline: none;
+}
+/* Keyboard highlight stays visible even on the selected row, whose inline
+   background would otherwise override the .is-highlighted background. Scoped to
+   :not(:hover) so mouse hover keeps its original background-only appearance. */
+.gsv-sel-row.is-highlighted:not(:hover) {
+  box-shadow: inset 0 0 0 1px #6b62c4;
 }
 .gsv-fld {
   display: flex;

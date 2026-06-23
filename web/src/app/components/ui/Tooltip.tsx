@@ -1,3 +1,4 @@
+import { useId } from "preact/hooks";
 import "./Tooltip.css";
 
 export type TooltipPosition = "top" | "bottom" | "left" | "right";
@@ -22,10 +23,13 @@ export function Tooltip({
   text = "A short hint about this control.",
   position = "top",
 }: TooltipProps) {
+  const bubbleId = useId();
   return (
     <span class={`gsv-tt ${POS_CLASS[position]}`}>
-      <span class="gsv-tt-trigger">{trigger}</span>
-      <span class="gsv-tt-bub">
+      <button type="button" class="gsv-tt-trigger" aria-describedby={bubbleId}>
+        {trigger}
+      </button>
+      <span class="gsv-tt-bub" id={bubbleId} role="tooltip">
         {text}
         <span class="gsv-tt-arrow" />
       </span>
