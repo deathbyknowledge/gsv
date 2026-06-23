@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "preact/hooks";
+import "./Tabs.css";
 
 export interface TabsProps {
   tabs?: string[];
@@ -15,6 +16,7 @@ export interface TabsProps {
  *  the bar's measured width via a ResizeObserver. */
 export function Tabs({ tabs, value, onChange, onClose, width, sticky = false }: TabsProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const tabRefs = useRef<(HTMLDivElement | null)[]>([]);
   const [hover, setHover] = useState(-1);
   const [w, setW] = useState(0);
   const [sel, setSel] = useState(0);
@@ -40,6 +42,41 @@ export function Tabs({ tabs, value, onChange, onClose, width, sticky = false }: 
   const val = Math.max(0, Math.min(controlled ? (value as number) | 0 : sel | 0, tabList.length - 1));
   const emit = onChange || (() => {});
   const closeable = typeof onClose === "function";
+
+  const select = (i: number, focus: boolean) => {
+    if (!controlled) setSel(i);
+    emit(i);
+    if (focus) tabRefs.current[i]?.focus();
+  };
+  const onTabKeyDown = (e: KeyboardEvent, i: number) => {
+    const last = tabList.length - 1;
+    let next = -1;
+    switch (e.key) {
+      case "ArrowRight":
+      case "ArrowDown":
+        next = i >= last ? 0 : i + 1;
+        break;
+      case "ArrowLeft":
+      case "ArrowUp":
+        next = i <= 0 ? last : i - 1;
+        break;
+      case "Home":
+        next = 0;
+        break;
+      case "End":
+        next = last;
+        break;
+      case "Enter":
+      case " ":
+        e.preventDefault();
+        select(i, true);
+        return;
+      default:
+        return;
+    }
+    e.preventDefault();
+    select(next, true);
+  };
 
   // width drives the single continuous rail path; prefer an explicit prop, else self-measured, else a safe default
   const W = (width != null ? +width : 0) || w || 600;
@@ -125,14 +162,23 @@ export function Tabs({ tabs, value, onChange, onClose, width, sticky = false }: 
     "z-index:6;display:flex;align-items:flex-end;overflow:visible;padding:" + (narrow ? "12px 12px 0" : "16px 30px 0") + ";background:transparent;";
 
   return (
-    <div ref={rootRef} style={barStyle}>
+    <div ref={rootRef} role="tablist" style={barStyle}>
       {railSvg}
       {tabList.map((label, i) => (
         <div
+          ref={(el) => {
+            tabRefs.current[i] = el;
+          }}
+          id={"gsv-tab-" + i}
+          class="gsv-tab"
+          role="tab"
+          aria-selected={i === val}
+          tabIndex={i === val ? 0 : -1}
           onClick={() => {
             if (!controlled) setSel(i);
             emit(i);
           }}
+          onKeyDown={(e) => onTabKeyDown(e, i)}
           onMouseEnter={() => setHover(i)}
           onMouseLeave={() => setHover(-1)}
           style={outerStyle(i)}

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useId, useRef, useState } from "preact/hooks";
 import "./Select.css";
 
 export type SelectSize = "small" | "medium" | "large";
@@ -47,9 +47,13 @@ export function Select(props: SelectProps) {
     onChange,
   } = props;
 
+  const fieldId = useId();
   const [open, setOpen] = useState(false);
   const [idxState, setIdxState] = useState<number | undefined>(undefined);
+  const [highlight, setHighlight] = useState(0);
   const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const onDoc = (e: MouseEvent) => {
@@ -76,6 +80,39 @@ export function Select(props: SelectProps) {
   const rootClass = `gsv-sel ${sizeClass}${isOpen ? " is-open" : ""}${disabled ? " is-disabled" : ""}`.trim();
   const fldClass = `gsv-fld${hasStatus ? ` is-${statusKey}` : ""}`;
 
+  const labelId = `${fieldId}-label`;
+  const descId = `${fieldId}-desc`;
+  const msgId = `${fieldId}-msg`;
+  const triggerId = `${fieldId}-trigger`;
+  const listId = `${fieldId}-list`;
+  const optId = (i: number) => `${fieldId}-opt-${i}`;
+
+  const triggerLabelledBy = (hasFldLabel && label.length > 0 ? `${labelId} ` : "") + triggerId;
+  const describedByParts: string[] = [];
+  if (description.length > 0) describedByParts.push(descId);
+  if (hasStatus) describedByParts.push(msgId);
+  const triggerDescribedBy = describedByParts.length ? describedByParts.join(" ") : undefined;
+
+  // When opening, focus the listbox and highlight the current value.
+  useEffect(() => {
+    if (isOpen) {
+      setHighlight(idx);
+      listRef.current?.focus();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
+
+  const openList = () => {
+    if (disabled) return;
+    setHighlight(idx);
+    setOpen(true);
+  };
+
+  const closeList = (returnFocus: boolean) => {
+    setOpen(false);
+    if (returnFocus) triggerRef.current?.focus();
+  };
+
   const toggle = () => {
     if (disabled) return;
     setOpen((o) => !o);
@@ -85,28 +122,94 @@ export function Select(props: SelectProps) {
     setIdxState(i);
     setOpen(false);
     onChange?.(i);
+    triggerRef.current?.focus();
+  };
+
+  const onTriggerKeyDown = (e: KeyboardEvent) => {
+    if (disabled) return;
+    if (e.key === "ArrowDown" || e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      openList();
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      openList();
+    }
+  };
+
+  const onListKeyDown = (e: KeyboardEvent) => {
+    const last = opts.length - 1;
+    switch (e.key) {
+      case "ArrowDown":
+        e.preventDefault();
+        setHighlight((h) => (h >= last ? 0 : h + 1));
+        break;
+      case "ArrowUp":
+        e.preventDefault();
+        setHighlight((h) => (h <= 0 ? last : h - 1));
+        break;
+      case "Home":
+        e.preventDefault();
+        setHighlight(0);
+        break;
+      case "End":
+        e.preventDefault();
+        setHighlight(last);
+        break;
+      case "Enter":
+      case " ":
+        e.preventDefault();
+        pick(highlight);
+        break;
+      case "Escape":
+        e.preventDefault();
+        closeList(true);
+        break;
+      case "Tab":
+        closeList(false);
+        break;
+    }
   };
 
   return (
     <div class={fldClass} style={{ width: `${width}px`, maxWidth: "100%" }}>
       {hasFldLabel ? (
         <div class="gsv-fld-lab">
-          <span class="gsv-fld-lab-t">{label}</span>
+          <span class="gsv-fld-lab-t" id={label.length > 0 ? labelId : undefined}>{label}</span>
           {req ? <span class="gsv-fld-req">{req === "required" ? "· REQUIRED" : "· OPTIONAL"}</span> : null}
         </div>
       ) : null}
-      {description.length > 0 ? <div class="gsv-fld-desc">{description}</div> : null}
+      {description.length > 0 ? <div class="gsv-fld-desc" id={descId}>{description}</div> : null}
       <div ref={rootRef} class={rootClass} style={{ width: "100%" }}>
-        <button type="button" class="gsv-sel-trig" disabled={disabled} onClick={toggle}>
+        <button
+          type="button"
+          class="gsv-sel-trig"
+          id={triggerId}
+          ref={triggerRef}
+          disabled={disabled}
+          aria-haspopup="listbox"
+          aria-expanded={isOpen}
+          aria-controls={listId}
+          aria-labelledby={triggerLabelledBy}
+          aria-describedby={triggerDescribedBy}
+          onClick={toggle}
+          onKeyDown={onTriggerKeyDown}
+        >
           <span class="gsv-sel-val">{opts[idx]}</span>
           <span style={{ marginLeft: "auto", display: "flex" }}>
-            <svg width="9" height="6" viewBox="0 0 9 6">
+            <svg width="9" height="6" viewBox="0 0 9 6" aria-hidden="true">
               <path d="M0 0 L9 0 L4.5 6 Z" fill="#b3aeff" />
             </svg>
           </span>
         </button>
         {isOpen ? (
           <div
+            id={listId}
+            ref={listRef}
+            role="listbox"
+            tabIndex={-1}
+            aria-labelledby={hasFldLabel && label.length > 0 ? labelId : undefined}
+            aria-activedescendant={optId(highlight)}
+            onKeyDown={onListKeyDown}
             style={{
               position: "absolute",
               left: 0,
@@ -117,21 +220,28 @@ export function Select(props: SelectProps) {
               background: "#13112e",
               border: "1px solid #4a449e",
               boxShadow: "0 12px 30px rgba(0,0,0,.55)",
+              outline: "none",
             }}
           >
             {opts.map((optLabel, i) => (
               <button
                 type="button"
-                class="gsv-sel-row"
+                class={`gsv-sel-row${i === highlight ? " is-highlighted" : ""}`}
                 key={i}
+                id={optId(i)}
+                role="option"
+                aria-selected={i === idx}
+                tabIndex={-1}
                 style={i === idx ? { background: "#171441" } : undefined}
                 onClick={() => pick(i)}
+                onMouseEnter={() => setHighlight(i)}
               >
                 <span style={{ fontSize: "11px", letterSpacing: ".03em", color: i === idx ? "#fff" : "#c4bfee" }}>
                   {optLabel}
                 </span>
                 {i === idx ? (
                   <span
+                    aria-hidden="true"
                     style={{
                       marginLeft: "auto",
                       width: "6px",
@@ -149,8 +259,8 @@ export function Select(props: SelectProps) {
       </div>
       {hasStatus ? (
         <div class="gsv-fld-stat">
-          <span class="gsv-fld-dot" />
-          <span class="gsv-fld-msg">{message}</span>
+          <span class="gsv-fld-dot" aria-hidden="true" />
+          <span class="gsv-fld-msg" id={msgId}>{message}</span>
         </div>
       ) : null}
     </div>

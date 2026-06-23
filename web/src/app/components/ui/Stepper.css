@@ -21,7 +21,9 @@
   text-align: center;
 }
 .gsv-sp-step:focus-visible {
-  outline: none;
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
 }
 .gsv-sp-step:focus-visible .gsv-sp-dot {
   box-shadow: 0 0 0 1px rgba(150, 140, 255, 0.35), 0 0 12px rgba(150, 140, 255, 0.45);

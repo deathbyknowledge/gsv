@@ -1,4 +1,4 @@
-import { useState } from "preact/hooks";
+import { useId, useState } from "preact/hooks";
 import "./Toggle.css";
 
 export type ToggleSize = "small" | "medium" | "large";
@@ -34,6 +34,8 @@ export function Toggle(props: ToggleProps) {
     onChange,
   } = props;
 
+  const fieldId = useId();
+
   const [onState, setOnState] = useState<boolean | undefined>(undefined);
   const on = onState === undefined ? props.on === true : onState;
 
@@ -55,6 +57,8 @@ export function Toggle(props: ToggleProps) {
       {description ? <div class="gsv-tg-desc">{description}</div> : null}
       <label class={rootClass}>
         <input
+          aria-describedby={hasStat ? `${fieldId}-msg` : undefined}
+          aria-invalid={status === "error" ? true : undefined}
           checked={on}
           class="gsv-tg-input"
           disabled={disabled}
@@ -70,7 +74,7 @@ export function Toggle(props: ToggleProps) {
       {hasStat ? (
         <div class="gsv-tg-stat">
           <span class="gsv-tg-dot" />
-          <span class="gsv-tg-msg">{message}</span>
+          <span class="gsv-tg-msg" id={`${fieldId}-msg`}>{message}</span>
         </div>
       ) : null}
     </div>

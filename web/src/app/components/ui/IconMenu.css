@@ -57,6 +57,11 @@
   outline: none;
 }
 
+.gsv-im-close:not(:disabled):focus-visible {
+  outline: 1px solid var(--accent-bright);
+  outline-offset: 2px;
+}
+
 .gsv-im-close:disabled {
   cursor: default;
   opacity: 0.45;
@@ -80,6 +85,10 @@
 .gsv-im-cell:not(:disabled):focus-visible {
   background: var(--hover) !important;
   outline: none;
+}
+.gsv-im-cell:not(:disabled):focus-visible {
+  outline: 1px solid var(--accent-bright);
+  outline-offset: -1px;
 }
 .gsv-im-cell:disabled {
   cursor: default;

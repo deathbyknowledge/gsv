@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect } from "preact/hooks";
+import { useRef, useState, useEffect, useId } from "preact/hooks";
 import "./Slider.css";
 
 export type SliderRequirement = "none" | "required" | "optional";
@@ -38,6 +38,7 @@ export function Slider(props: SliderProps) {
     onChange,
   } = props;
 
+  const fieldId = useId();
   const [val, setVal] = useState<number | undefined>(undefined);
   const trackRef = useRef<HTMLDivElement | null>(null);
   const draggingRef = useRef(false);
@@ -55,6 +56,19 @@ export function Slider(props: SliderProps) {
     "gsv-sl" + (disabled ? " is-disabled" : "") + (hasStat ? " is-" + statKey : "");
   const hasTop = label.length > 0 || showValue || !!req;
 
+  const hasLabel = label.length > 0;
+  const hasDesc = !!description;
+  const describedBy =
+    [hasDesc ? `${fieldId}-desc` : "", hasStat ? `${fieldId}-msg` : ""]
+      .filter(Boolean)
+      .join(" ") || undefined;
+
+  const commit = (v: number) => {
+    v = Math.max(min, Math.min(max, v));
+    setVal(v);
+    onChange?.(v);
+  };
+
   const setFromX = (clientX: number) => {
     const el = trackRef.current;
     if (!el) return;
@@ -63,10 +77,40 @@ export function Slider(props: SliderProps) {
     p = Math.max(0, Math.min(1, p));
     let v = min + p * (max - min);
     v = Math.round(v / step) * step;
-    v = Math.max(min, Math.min(max, v));
-    setVal(v);
-    onChange?.(v);
+    commit(v);
   };
+
+  const onKeyDown = disabled
+    ? undefined
+    : (e: KeyboardEvent) => {
+        let next: number | undefined;
+        switch (e.key) {
+          case "ArrowRight":
+          case "ArrowUp":
+            next = value + step;
+            break;
+          case "ArrowLeft":
+          case "ArrowDown":
+            next = value - step;
+            break;
+          case "Home":
+            next = min;
+            break;
+          case "End":
+            next = max;
+            break;
+          case "PageUp":
+            next = value + 10 * step;
+            break;
+          case "PageDown":
+            next = value - 10 * step;
+            break;
+          default:
+            return;
+        }
+        e.preventDefault();
+        commit(next);
+      };
 
   useEffect(() => {
     const move = (e: PointerEvent) => {
@@ -95,7 +139,7 @@ export function Slider(props: SliderProps) {
     <div class={rootClass} style={{ width: `${width}px`, maxWidth: "100%" }}>
       {hasTop ? (
         <div class="gsv-sl-top">
-          <span class="gsv-sl-label">
+          <span class="gsv-sl-label" id={hasLabel ? `${fieldId}-label` : undefined}>
             {label}
             {req ? (
               <span class="gsv-sl-req">{req === "required" ? "· REQUIRED" : "· OPTIONAL"}</span>
@@ -104,17 +148,36 @@ export function Slider(props: SliderProps) {
           {showValue ? <span class="gsv-sl-num">{value}</span> : null}
         </div>
       ) : null}
-      {description ? <div class="gsv-sl-desc">{description}</div> : null}
+      {description ? (
+        <div class="gsv-sl-desc" id={`${fieldId}-desc`}>
+          {description}
+        </div>
+      ) : null}
       <div class="gsv-sl-hit" onPointerDown={onDown}>
         <div class="gsv-sl-track" ref={trackRef}>
           <div class="gsv-sl-fill" style={{ width: pctStr }} />
-          <div class="gsv-sl-thumb" style={{ left: pctStr }} />
+          <div
+            class="gsv-sl-thumb"
+            style={{ left: pctStr }}
+            tabIndex={disabled ? undefined : 0}
+            role="slider"
+            aria-valuemin={min}
+            aria-valuemax={max}
+            aria-valuenow={value}
+            aria-orientation="horizontal"
+            aria-labelledby={hasLabel ? `${fieldId}-label` : undefined}
+            aria-describedby={describedBy}
+            aria-disabled={disabled ? true : undefined}
+            onKeyDown={onKeyDown}
+          />
         </div>
       </div>
       {hasStat ? (
         <div class="gsv-sl-stat">
           <span class="gsv-sl-dot" />
-          <span class="gsv-sl-msg">{message}</span>
+          <span class="gsv-sl-msg" id={`${fieldId}-msg`}>
+            {message}
+          </span>
         </div>
       ) : null}
     </div>
