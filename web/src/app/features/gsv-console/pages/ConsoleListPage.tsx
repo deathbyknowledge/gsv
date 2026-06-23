@@ -24,10 +24,10 @@ import {
   ConsoleResourceBoundary,
 } from "../components/ConsolePageTemplate";
 import {
-  ConsoleDetailPlaceholder,
+  ConsoleDetailPage,
   type ConsoleDetailRow,
   type ConsoleDetailSection,
-} from "../components/ConsoleDetailPlaceholder";
+} from "../components/ConsoleDetailPage";
 import "./ConsoleListPage.css";
 
 export type ConsoleListKind = "machines" | "library" | "tasks" | "messengers" | "integrations" | "applications";
@@ -91,7 +91,7 @@ type EntityDetailPageProps = {
   tone: StatusTone;
   blurb: string;
   parentLabel: string;
-  placeholderLabel: string;
+  pendingLabel?: string;
   primaryLabel: string;
   sections?: readonly ConsoleDetailSection[];
   onBack: () => void;
@@ -284,7 +284,6 @@ function renderProcessDetail(
       tone={toneForProcess(process)}
       blurb={compactText([process.username, process.profile, process.cwd], "Process runtime state and active conversation context.")}
       parentLabel="RUNTIME"
-      placeholderLabel="DETAIL VIEW PLACEHOLDER"
       primaryLabel="SAVE CHANGES"
       sections={processDetailSections(process)}
       onBack={onBack}
@@ -311,7 +310,6 @@ function renderTargetDetail(
       tone={target.online ? "online" : "idle"}
       blurb={target.description || compactText([target.platform, target.version, target.ownerUsername], "Machine target and declared capabilities.")}
       parentLabel="MACHINES"
-      placeholderLabel="DETAIL VIEW PLACEHOLDER"
       primaryLabel="SAVE CHANGES"
       sections={targetDetailSections(target)}
       onBack={onBack}
@@ -338,7 +336,6 @@ function renderAdapterDetail(
       tone={toneForAdapter(adapter)}
       blurb={adapter.error || adapterSub(adapter)}
       parentLabel="MESSENGERS"
-      placeholderLabel="DETAIL VIEW PLACEHOLDER"
       primaryLabel="SAVE CHANGES"
       sections={adapterDetailSections(adapter)}
       onBack={onBack}
@@ -389,7 +386,7 @@ function renderNewEntityDetail(
       tone="idle"
       blurb="Awaiting source selection and access configuration."
       parentLabel={kind === "machines" ? "MACHINES" : kind === "integrations" ? "INTEGRATIONS" : "APPLICATIONS"}
-      placeholderLabel="FORM PLACEHOLDER"
+      pendingLabel="FORM PLACEHOLDER"
       primaryLabel={`CREATE ${noun}`}
       onBack={onBack}
     />
@@ -417,7 +414,6 @@ function renderPackageDetail(
       tone={toneForPackage(pkg)}
       blurb={pkg.description || packageSub(pkg)}
       parentLabel={packageListTitle(packageKind)}
-      placeholderLabel="DETAIL VIEW PLACEHOLDER"
       primaryLabel="SAVE CHANGES"
       sections={packageDetailSections(pkg)}
       onBack={onBack}
@@ -430,7 +426,7 @@ function resourceWithLocalEmptyState<T>(resource: ConsoleResourceState<T>): Cons
 }
 
 function ConsoleEntityDetailPage(props: EntityDetailPageProps) {
-  return <ConsoleDetailPlaceholder {...props} />;
+  return <ConsoleDetailPage {...props} />;
 }
 
 function detailRow(
