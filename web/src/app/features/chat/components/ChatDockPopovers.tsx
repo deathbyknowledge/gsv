@@ -43,6 +43,62 @@ function taskStatusLabel(status: string): string {
   return "RUNNING";
 }
 
+type ModelOptionView = {
+  key: string;
+  label: string;
+  current: boolean;
+  badge: string;
+};
+
+function normalizeModelKey(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function modelOptionRows(activeAgent: ChatAgentViewModel): ModelOptionView[] {
+  const currentLabel = activeAgent.modelValue.trim() || activeAgent.modelLabel;
+  const currentKey = normalizeModelKey(currentLabel);
+  const seen = new Set<string>();
+  const rows = activeAgent.modelOptions
+    .map((option, index) => {
+      const label = option.trim();
+      if (!label) {
+        return null;
+      }
+
+      const key = normalizeModelKey(label);
+      if (seen.has(key)) {
+        return null;
+      }
+      seen.add(key);
+
+      const current = key === currentKey || (activeAgent.modelIsDefault && index === 0);
+      return {
+        key,
+        label,
+        current,
+        badge: current ? (activeAgent.modelIsDefault ? "DEFAULT" : "ACTIVE") : "",
+      };
+    })
+    .filter((option): option is ModelOptionView => option !== null);
+
+  if (rows.some((option) => option.current)) {
+    return rows;
+  }
+
+  const label = currentLabel.trim();
+  return label
+    ? [
+        {
+          key: normalizeModelKey(label),
+          label,
+          current: true,
+          badge: activeAgent.modelIsDefault ? "DEFAULT" : "ACTIVE",
+        },
+        ...rows,
+      ]
+    : rows;
+}
+
 export function ChatDockPopovers({
   activeAgent,
   context,
@@ -57,6 +113,8 @@ export function ChatDockPopovers({
   runStateLabel,
   taskCount,
 }: ChatDockPopoversProps) {
+  const modelOptions = modelOptionRows(activeAgent);
+
   return (
     <>
       {openPopover === "model" ? (
@@ -72,6 +130,21 @@ export function ChatDockPopovers({
           <div class="gsv-chat-popover-section">
             <span>MODEL SOURCE</span>
             <strong>{contextModel || "GATEWAY DEFAULT"}</strong>
+          </div>
+          <div class="gsv-chat-popover-label">SWITCH MODEL</div>
+          <div class="gsv-chat-model-options" role="list">
+            {modelOptions.map((option) => (
+              <div
+                class={`gsv-chat-model-row${option.current ? " is-current" : ""}`}
+                role="listitem"
+                aria-current={option.current ? "true" : undefined}
+                key={option.key}
+              >
+                <span class="gsv-chat-model-current" aria-hidden="true" />
+                <span class="gsv-chat-model-label">{option.label}</span>
+                {option.badge ? <small>{option.badge}</small> : null}
+              </div>
+            ))}
           </div>
           {context?.runId ? (
             <div class="gsv-chat-popover-section">
@@ -111,7 +184,10 @@ export function ChatDockPopovers({
       {openPopover === "context" ? (
         <div class="gsv-chat-popover gsv-chat-context-popover" role="menu" aria-label="Context state">
           <header>
-            <span>CONTEXT</span>
+            <span class="gsv-chat-context-heading">
+              <Icon name="stars" size={12} />
+              <span>CONTEXT</span>
+            </span>
             <small>{contextPercent !== null ? `${contextPercent}% · ${contextLevel}` : contextLevel}</small>
           </header>
           <div class="gsv-chat-context-popover-meter">
