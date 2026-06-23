@@ -84,39 +84,44 @@
   flex: 1 1 auto;
 }
 
-.gsv-console-crew-card-footer {
-  min-height: 40px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-  padding: 9px 12px;
-  border-top: 1px solid var(--rule-inner);
-  background: rgba(9, 7, 26, 0.46);
-}
-
-.gsv-console-crew-card-footer > span:last-child {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text-dim);
-  font-size: 9px;
-  letter-spacing: 0.08em;
-  text-overflow: ellipsis;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
 .gsv-console-crew-add-tile {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 18px;
   padding: 0;
   border-style: dashed;
   border-color: var(--border-raised);
-  background: rgba(13, 10, 36, 0.7);
+  background: var(--panel);
   color: inherit;
   font: inherit;
-  text-align: inherit;
+  text-align: center;
+}
+
+.gsv-console-crew-add-tile .gsv-crew-tile-add-icon {
+  width: 54px;
+  height: 54px;
+  border-color: var(--dashed);
+}
+
+.gsv-console-crew-add-tile .gsv-crew-tile-add-icon .gsv-icon {
+  width: 26px !important;
+  height: 26px !important;
+}
+
+.gsv-console-crew-add-tile strong {
+  color: var(--text-title);
+  font-size: 11px;
+  letter-spacing: 0.2em;
+}
+
+.gsv-console-crew-add-tile .gsv-crew-tile-description {
+  max-width: 200px;
+  color: #7d78b8;
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  line-height: 1.5;
 }
 
 button.gsv-console-crew-add-tile {
@@ -127,6 +132,7 @@ button.gsv-console-crew-add-tile {
 button.gsv-console-crew-add-tile:hover,
 button.gsv-console-crew-add-tile:focus-visible {
   border-color: var(--primary-hi);
+  background: #0e0b2a;
   box-shadow: 0 0 28px rgba(150, 140, 255, 0.2);
   outline: none;
 }

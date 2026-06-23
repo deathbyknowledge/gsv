@@ -82,3 +82,14 @@ button.gsv-crew-tile:focus-visible {
   border: 1px dashed var(--dashed);
   color: var(--accent);
 }
+
+.gsv-crew-tile-description {
+  max-width: 200px;
+  color: #7d78b8;
+  font-family: var(--gsv-font-mono);
+  font-size: 9.5px;
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  line-height: 1.5;
+  text-align: center;
+}

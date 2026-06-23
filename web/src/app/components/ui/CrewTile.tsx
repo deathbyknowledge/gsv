@@ -16,6 +16,7 @@ export interface CrewTileProps {
 
 export interface CrewAddTileProps {
   className?: string;
+  description?: string;
   label?: string;
   onClick?: () => void;
 }
@@ -61,6 +62,7 @@ export function CrewTile({
 
 export function CrewAddTile({
   className,
+  description = "",
   label = "NEW AGENT",
   onClick,
 }: CrewAddTileProps) {
@@ -71,6 +73,7 @@ export function CrewAddTile({
         <Icon name="plus" size={16} />
       </span>
       <strong>{label}</strong>
+      {description ? <small class="gsv-crew-tile-description">{description}</small> : null}
     </>
   );
 
