@@ -1,0 +1,224 @@
+.application-import {
+  min-height: 100%;
+  display: grid;
+  place-items: start center;
+  padding: clamp(18px, 3vw, 34px);
+  color: var(--text);
+  font-family: var(--gsv-font-mono);
+}
+
+.application-import-shell {
+  width: min(790px, 100%);
+  display: grid;
+  gap: 18px;
+}
+
+.application-import-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 15px;
+}
+
+.application-import-head > div {
+  min-width: 0;
+}
+
+.application-import-kicker {
+  display: block;
+  margin-bottom: 7px;
+  color: var(--accent);
+  font-size: 9px;
+  letter-spacing: 0.18em;
+}
+
+.application-import-head h2 {
+  margin: 0;
+  color: var(--text-hi);
+  font-size: clamp(21px, 3vw, 32px);
+  line-height: 1;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.application-import-head p {
+  margin: 10px 0 0;
+  max-width: 62ch;
+  color: var(--label);
+  font-family: var(--gsv-font-prose);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.application-import-stepper {
+  display: flex;
+  justify-content: center;
+  padding: 2px 0 4px;
+}
+
+.application-import-stepper .gsv-sp,
+.application-import-stepper .gsv-sp-step {
+  pointer-events: none;
+}
+
+.application-import-card {
+  padding: 0;
+  overflow: hidden;
+}
+
+.application-import-card-body {
+  display: grid;
+  gap: 18px;
+  padding: 22px;
+}
+
+.application-import-copy {
+  margin: 0;
+  color: var(--label);
+  font-family: var(--gsv-font-prose);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.application-import-source-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(130px, 0.55fr);
+  gap: 16px;
+}
+
+.application-import-source-grid > :first-child {
+  grid-column: 1 / -1;
+}
+
+.application-import-review-toggle,
+.application-import-reviewer,
+.application-import-package-panel,
+.application-import-agent-review,
+.application-import-inline-error,
+.application-import-inline-info,
+.application-import-review-empty,
+.application-import-footnote {
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel-2) 100%, #ffffff 4%);
+}
+
+.application-import-review-toggle {
+  padding: 14px;
+}
+
+.application-import-reviewer {
+  padding: 16px;
+}
+
+.application-import-package-panel {
+  display: grid;
+}
+
+.application-import-package-panel .lr {
+  padding: 16px;
+}
+
+.application-import-package-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 16px 16px;
+}
+
+.application-import-agent-review {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+
+.application-import-agent-review-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.application-import-agent-review-head > div {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.application-import-agent-review-head strong {
+  color: var(--text-title);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+}
+
+.application-import-agent-review-head span,
+.application-import-review-process,
+.application-import-review-empty,
+.application-import-inline-info,
+.application-import-footnote {
+  color: var(--label);
+  font-family: var(--gsv-font-prose);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.application-import-review-process {
+  min-width: 0;
+  border-top: 1px solid var(--rule-inner);
+  padding-top: 12px;
+  word-break: break-word;
+}
+
+.application-import-review-empty,
+.application-import-inline-info {
+  padding: 14px;
+}
+
+.application-import-inline-error {
+  padding: 14px;
+  border-color: color-mix(in srgb, var(--error) 55%, var(--border));
+  color: var(--error);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+.application-import-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 16px 20px 20px;
+  border-top: 1px solid var(--rule-inner);
+}
+
+.application-import-footnote {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 12px 14px;
+}
+
+@media (max-width: 760px) {
+  .application-import {
+    padding: 14px;
+  }
+
+  .application-import-head {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .application-import-head > span:last-child {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+
+  .application-import-source-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .application-import-card-actions {
+    flex-direction: column-reverse;
+  }
+
+  .application-import-card-actions .gsv-btn {
+    width: 100%;
+  }
+}

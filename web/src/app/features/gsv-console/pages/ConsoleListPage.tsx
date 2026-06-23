@@ -20,6 +20,7 @@ import type {
   ConsoleTarget,
 } from "../domain/consoleModels";
 import { MachineProvisionFlow } from "../machines/MachineProvisionFlow";
+import { ApplicationImportFlow } from "../packages/ApplicationImportFlow";
 import {
   ConsolePage,
   ConsoleResourceBoundary,
@@ -252,6 +253,7 @@ export function ConsoleListPage({
           renderPackageList(
             filterPackagesForKind(data, packageKind ?? "library"),
             packageKind ?? "library",
+            data,
             selectedDetail,
             () => selectDetail(null),
             packageKind === "integrations" || packageKind === "applications"
@@ -351,6 +353,7 @@ function renderAdapterDetail(
 function renderPackageList(
   scopedPackages: readonly ConsolePackage[],
   packageKind: PackageListKind,
+  allPackages: readonly ConsolePackage[],
   selectedDetail: SelectedConsoleDetail | null,
   onBack: () => void,
   onOpenCreate: (() => void) | undefined,
@@ -358,6 +361,15 @@ function renderPackageList(
   refreshing: boolean,
 ): ComponentChildren {
   if (selectedDetail?.kind === packageKind) {
+    if (selectedDetail.createNew && packageKind === "applications") {
+      return (
+        <ApplicationImportFlow
+          packages={allPackages}
+          onBack={onBack}
+          onOpenPackage={onOpenDetail}
+        />
+      );
+    }
     const detail = selectedDetail.createNew && packageKind !== "library"
       ? renderNewEntityDetail(packageKind, onBack)
       : renderPackageDetail(scopedPackages, packageKind, selectedDetail.id, onBack);
