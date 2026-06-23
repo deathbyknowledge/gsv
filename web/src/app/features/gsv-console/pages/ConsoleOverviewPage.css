@@ -239,10 +239,10 @@ button.gsv-settings-deep-cell {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 14px 16px;
+  padding: 15px 16px;
   color: #a8a2dc;
   font-size: 11px;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 
@@ -269,14 +269,33 @@ button.gsv-settings-deep-cell {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   min-width: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.gsv-settings-crew-block {
+  border-bottom: 0;
 }
 
 .gsv-settings-crew-grid > .gsv-crew-tile {
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 9px;
+  min-height: 118px;
+  padding: 13px 11px;
   border-right: 1px solid var(--rule-inner);
 }
 
 .gsv-settings-crew-grid > .gsv-crew-tile:last-child {
   border-right: 0;
+}
+
+.gsv-settings-crew-grid > .gsv-crew-tile .gsv-crew-tile-portrait {
+  width: 100%;
+}
+
+.gsv-settings-crew-grid > .gsv-crew-tile.is-add {
+  align-items: center;
+  justify-content: center;
 }
 
 .gsv-settings-deep-cell {
@@ -289,7 +308,7 @@ button.gsv-settings-deep-cell {
 
 .gsv-settings-model-task-split {
   flex: 1;
-  min-height: 260px;
+  min-height: 300px;
 }
 
 .gsv-settings-model-task-split > div {
@@ -353,12 +372,12 @@ button.gsv-settings-deep-cell {
 .gsv-settings-mini-row,
 .gsv-settings-add-row,
 .gsv-settings-empty-row {
-  min-height: 43px;
+  min-height: 44px;
   display: flex;
   align-items: center;
   gap: 11px;
   min-width: 0;
-  padding: 12px 16px;
+  padding: 13px 16px;
   border-bottom: 1px solid var(--rule-inner);
 }
 
@@ -442,7 +461,7 @@ button.gsv-settings-deep-cell {
 .gsv-settings-add-row {
   color: var(--text-title);
   font-size: 11px;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
