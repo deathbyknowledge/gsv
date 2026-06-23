@@ -6,6 +6,7 @@ export interface ButtonProps {
   variant?: ButtonVariant;
   label?: string;
   disabled?: boolean;
+  block?: boolean;
   onClick?: () => void;
 }
 
@@ -18,8 +19,8 @@ const VARIANT_CLASS: Record<ButtonVariant, string> = {
 };
 
 /** Button — ported from Button.dc.html. */
-export function Button({ variant = "primary", label = "BUTTON", disabled = false, onClick }: ButtonProps) {
-  const cls = `gsv-btn ${VARIANT_CLASS[variant]}${disabled ? " is-disabled" : ""}`;
+export function Button({ variant = "primary", label = "BUTTON", disabled = false, block = false, onClick }: ButtonProps) {
+  const cls = `gsv-btn ${VARIANT_CLASS[variant]}${block ? " gsv-btn-block" : ""}${disabled ? " is-disabled" : ""}`;
   return (
     <button
       type="button"
@@ -27,7 +28,7 @@ export function Button({ variant = "primary", label = "BUTTON", disabled = false
       disabled={disabled}
       onClick={disabled ? undefined : onClick}
     >
-      {label}
+      <span class="gsv-btn-label">{label}</span>
       {variant === "link" ? (
         <svg width="8" height="11" viewBox="0 0 9 12">
           <path d="M0 0 L9 6 L0 12 Z" fill="currentColor" />

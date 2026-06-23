@@ -27,6 +27,14 @@ const story: Story = {
           <Button variant="link" label="LEARN MORE" disabled />
         </div>
       </div>
+      <div class="ds-cell">
+        <div class="ds-label">Block</div>
+        <div class="ds-col" style={{ width: "220px" }}>
+          <Button variant="primary" label="SAVE" block />
+          <Button variant="primary" label="SAVE A VERY LONG LABEL THAT OVERFLOWS" block />
+          <Button variant="link" label="LEARN MUCH MORE ABOUT THIS LONG TOPIC" block />
+        </div>
+      </div>
     </div>
   ),
 };

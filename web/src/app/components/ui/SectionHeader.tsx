@@ -1,13 +1,16 @@
+import "../../../styles/gsv-type.css";
+
 export interface SectionHeaderProps {
   title?: string;
   meta?: string;
   divider?: boolean;
+  titleSize?: "section" | "title";
 }
 
 /** SectionHeader — ported from SectionHeader.dc.html. Header bar with a square
  *  accent dot, Departure Mono title, optional meta (right-aligned) and a
  *  divider variant (bottom rule instead of full border). */
-export function SectionHeader({ title = "THE SHIP", meta = "", divider = false }: SectionHeaderProps) {
+export function SectionHeader({ title = "THE SHIP", meta = "", divider = false, titleSize = "section" }: SectionHeaderProps) {
   const hasMeta = !!meta;
   return (
     <div
@@ -32,10 +35,8 @@ export function SectionHeader({ title = "THE SHIP", meta = "", divider = false }
         }}
       />
       <span
+        class={titleSize === "title" ? "gsv-title" : "gsv-section"}
         style={{
-          fontWeight: 600,
-          fontSize: "13.5px",
-          letterSpacing: ".2em",
           color: "var(--text-title)",
           textShadow: "0 0 5px rgba(150,140,255,.3)",
         }}
