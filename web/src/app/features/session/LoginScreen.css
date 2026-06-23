@@ -1,33 +1,4 @@
-/* Login surface — self-contained so it renders the same in the real app
-   (inside .session-screen) and the /auth.html preview. Tokens come from the
-   .gsv-auth-theme scope (session-theme.css). */
-.gsv-login {
-  /* Fill the whole session surface (it's a centering flex container in the real
-     app, so a relative/auto-width child would shrink and let the parent's
-     wallpaper show through on the side). Absolute-fill = galaxy owns the surface. */
-  position: absolute;
-  inset: 0;
-  min-height: 100vh;
-  background: var(--void);
-  color: var(--text);
-  font-family: var(--gsv-font-mono);
-  overflow: hidden;
-  -webkit-font-smoothing: antialiased;
-}
-.gsv-login[hidden] {
-  display: none;
-}
-
-/* Form content — pinned to the right so the galaxy (left) stays uncovered. */
-.gsv-login-content {
-  position: relative;
-  z-index: 2;
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  padding: 48px clamp(24px, 6vw, 96px);
-}
+/* Login panel — the surface/content layout now lives in AuthLayout.css. */
 
 /* Card panel — a surface clearly lighter than --void; full-bleed header/footer. */
 .gsv-login-panel {
@@ -122,12 +93,5 @@
 @media (prefers-reduced-motion: reduce) {
   .gsv-skel::after {
     animation: none;
-  }
-}
-
-@media (max-width: 760px) {
-  .gsv-login-content {
-    justify-content: center;
-    padding: 32px 20px;
   }
 }

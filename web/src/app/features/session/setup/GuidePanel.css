@@ -1,0 +1,173 @@
+/* ============================================================
+   GuidePanel — the "Ask the guide" setup assistant. Deliberately
+   INVERTED: a light surface with dark text so the chat is legible
+   against the dark wizard. Self-contained gsv-guide- classes so no
+   legacy styles.css onboarding / session rules bleed in.
+   ============================================================ */
+
+.gsv-guide-panel {
+  margin-top: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px 22px;
+  background: #eceaf7;
+  border: 1px solid #c8c4e4;
+  box-shadow: 0 0 24px rgba(8, 5, 26, 0.45);
+}
+.gsv-guide-panel[hidden] {
+  display: none;
+}
+
+/* Head */
+.gsv-guide-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+.gsv-guide-head-text {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.gsv-guide-close {
+  appearance: none;
+  flex: none;
+  margin: -4px -4px 0 0;
+  padding: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  color: #6a6498;
+  cursor: pointer;
+  transition: color 0.12s;
+}
+.gsv-guide-close:hover,
+.gsv-guide-close:focus-visible {
+  color: #16132e;
+  outline: none;
+}
+.gsv-guide-kicker {
+  margin: 0;
+  font-family: var(--gsv-font-mono);
+  font-size: 9px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: #6a6498;
+}
+.gsv-guide-title {
+  margin: 0;
+  font-family: var(--gsv-font-prose);
+  font-size: 17px;
+  font-weight: 600;
+  color: #16132e;
+}
+.gsv-guide-copy {
+  margin: 0;
+  font-family: var(--gsv-font-prose);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #4b4670;
+}
+
+/* Message log */
+.gsv-guide-log {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.gsv-guide-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 11px 14px;
+  border: 1px solid #d8d5ee;
+  background: #ffffff;
+  max-width: 88%;
+}
+.gsv-guide-msg-user {
+  align-self: flex-end;
+  background: #d9d4f6;
+  border-color: #bdb6ea;
+}
+.gsv-guide-msg-who {
+  font-family: var(--gsv-font-mono);
+  font-size: 8.5px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: #6a6498;
+}
+.gsv-guide-msg p {
+  margin: 0;
+  font-family: var(--gsv-font-prose);
+  font-size: 13px;
+  line-height: 1.5;
+  color: #1c1838;
+  white-space: pre-wrap;
+}
+.gsv-guide-msg.is-pending {
+  opacity: 0.7;
+}
+.gsv-guide-msg.is-pending p::after {
+  content: "…";
+}
+
+/* Composer */
+.gsv-guide-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-end;
+}
+.gsv-guide-input {
+  width: 100%;
+  resize: vertical;
+  padding: 11px 13px;
+  font-family: var(--gsv-font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+  color: #16132e;
+  background: #ffffff;
+  border: 1px solid #c8c4e4;
+  outline: none;
+  transition: border-color 0.14s, box-shadow 0.14s;
+}
+.gsv-guide-input::placeholder {
+  color: #8b86b2;
+}
+.gsv-guide-input:focus {
+  border-color: #6f66d6;
+  box-shadow: 0 0 0 1px rgba(111, 102, 214, 0.35);
+}
+.gsv-guide-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.gsv-guide-send {
+  appearance: none;
+  padding: 9px 22px;
+  font-family: var(--gsv-font-mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #f4f2ff;
+  background: #4f47a8;
+  border: 1px solid #4f47a8;
+  cursor: pointer;
+  transition: background 0.14s, border-color 0.14s;
+}
+.gsv-guide-send:not(:disabled):hover {
+  background: #3f3893;
+  border-color: #3f3893;
+}
+.gsv-guide-send:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

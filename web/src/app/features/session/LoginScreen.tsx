@@ -3,9 +3,7 @@ import { SectionHeader } from "../../components/ui/SectionHeader";
 import { TextInput } from "../../components/ui/TextInput";
 import { Button } from "../../components/ui/Button";
 import { StatusBar } from "../../components/ui/StatusBar";
-import { AuthBackground } from "./backgrounds/AuthBackground";
-import "../../../styles/gsv-fonts.css";
-import "./session-theme.css";
+import { AuthLayout } from "./AuthLayout";
 import "./LoginScreen.css";
 
 type LoginScreenProps = {
@@ -57,13 +55,8 @@ export function LoginScreen({
   const formRef = useRef<HTMLFormElement>(null);
 
   return (
-    <div class="gsv-auth-theme gsv-login" data-session-login-view hidden={!visible}>
-      {/* Only mount the animated background while visible — otherwise its rAF
-          loop keeps running behind the desktop/setup once login is CSS-hidden. */}
-      {visible ? <AuthBackground variant="galaxy" /> : null}
-
-      <div class="gsv-login-content">
-        <div class="gsv-login-panel">
+    <AuthLayout background="galaxy" visible={visible}>
+      <div class="gsv-login-panel" data-session-login-view>
           <SectionHeader title="WELCOME BACK" titleSize="title" divider />
 
           <div class="gsv-login-body">
@@ -78,6 +71,7 @@ export function LoginScreen({
                 placeholder="e.g. captain"
                 value={username}
                 onChange={onUsername}
+                inputProps={{ autoComplete: "username", "data-session-username": true }}
               />
               <TextInput
                 label="PASSWORD"
@@ -86,6 +80,7 @@ export function LoginScreen({
                 value={password}
                 clearable={false}
                 onChange={onPassword}
+                inputProps={{ autoComplete: "current-password", "data-session-password": true }}
               />
 
               {/* "Use token instead" — directly under the password input. */}
@@ -105,6 +100,7 @@ export function LoginScreen({
                   description="Paste a console token to sign in without a password."
                   value={token}
                   onChange={onToken}
+                  inputProps={{ autoComplete: "off" }}
                 />
               ) : null}
 
@@ -129,7 +125,6 @@ export function LoginScreen({
 
           <StatusBar label="GENERAL SYSTEMS VEHICLE · SECURE TERMINAL" />
         </div>
-      </div>
-    </div>
+    </AuthLayout>
   );
 }

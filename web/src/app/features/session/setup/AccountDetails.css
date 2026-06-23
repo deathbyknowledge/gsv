@@ -1,0 +1,44 @@
+/* ============================================================
+   AccountDetails — create-account "Account" step, restyled to
+   the GSV design system. Stacked TextInput fields + a password
+   safety note, using the periwinkle token vocabulary.
+   ============================================================ */
+
+/* Keep the literal onboarding-section class (useSessionFocus queries
+   `.onboarding-section:not([hidden]) input`), but neutralize the
+   legacy styles.css grid/box layout so it does not break the stage. */
+.onboarding-section {
+  position: static;
+  display: block;
+  width: auto;
+  gap: 0;
+}
+
+.account-details-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.account-details-note {
+  margin-top: 22px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+}
+.account-details-note strong {
+  display: block;
+  font-family: var(--gsv-font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 6px;
+}
+.account-details-note p {
+  margin: 0;
+  font-family: var(--gsv-font-prose);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}

@@ -1,3 +1,4 @@
+import type { JSX } from "preact";
 import { useState } from "preact/hooks";
 import "./TextInput.css";
 
@@ -22,6 +23,9 @@ export interface TextInputProps {
   type?: "text" | "password";
   maxLength?: number;
   onChange?: (value: string) => void;
+  /** Extra attributes spread onto the inner <input> (autoComplete, name,
+   *  data-* focus markers, etc.) — does not override the managed attrs. */
+  inputProps?: JSX.IntrinsicElements["input"] & Record<`data-${string}`, string | number | boolean>;
 }
 
 const SIZE_CLASS: Record<TextInputSize, string> = {
@@ -49,6 +53,7 @@ export function TextInput(props: TextInputProps) {
     type = "text",
     maxLength = 0,
     onChange,
+    inputProps,
   } = props;
 
   const [val, setVal] = useState<string | undefined>(undefined);
@@ -92,6 +97,7 @@ export function TextInput(props: TextInputProps) {
       <div class={wrapClass}>
         {prefix ? <span class="gsv-ti-affix">{prefix}</span> : null}
         <input
+          {...inputProps}
           class="gsv-ti-input"
           type={isPassword && !revealed ? "password" : "text"}
           value={value}

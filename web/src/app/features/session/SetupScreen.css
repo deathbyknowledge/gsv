@@ -1,0 +1,108 @@
+/* Create-account (register) wizard shell — sits in the AuthLayout galaxy
+   surface. Single-column flow (matches the auth-preview RegisterMock):
+   horizontal stepper on top, stacked step content, then footer nav. */
+
+/* The setup panel is wider than login's, so reserve more room for it and keep
+   the galaxy fully to its left. */
+.gsv-auth-surface-setup {
+  --gsv-galaxy-reserve: 760px;
+}
+.gsv-setup-panel {
+  width: min(640px, 92vw);
+  max-height: calc(100% - 56px);
+  overflow: auto;
+  padding: 32px 36px;
+  background: color-mix(in srgb, var(--panel) 100%, #ffffff 5%);
+  border: 1px solid var(--border);
+  box-shadow: 0 0 40px rgba(10, 6, 30, 0.5), 0 0 0 1px rgba(150, 140, 255, 0.04);
+  backdrop-filter: blur(3px);
+}
+
+.gsv-setup-form {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Stepper on top, centered, with a divider. */
+.gsv-setup-stepper {
+  display: flex;
+  justify-content: center;
+  padding-bottom: 26px;
+  margin-bottom: 26px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Stacked step content. Only one stage is visible at a time. */
+.gsv-setup-body {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+/* Per-step head — kicker + prose title + sub. Shared by every stage so
+   they read identically (matches the RegisterMock). */
+.gsv-setup-head {
+  margin-bottom: 22px;
+}
+.gsv-setup-head-kicker {
+  display: block;
+  font-family: var(--gsv-font-mono);
+  font-size: 9px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 9px;
+}
+.gsv-setup-head-title {
+  margin: 0;
+  font-family: var(--gsv-font-prose);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0.005em;
+  color: var(--text-hi);
+}
+.gsv-setup-head-sub {
+  margin: 8px 0 0;
+  font-family: var(--gsv-font-prose);
+  font-size: 13px;
+  line-height: 1.5;
+  color: #9d98d4;
+}
+
+.gsv-setup-alert {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--error);
+}
+.gsv-setup-alert[hidden] {
+  display: none;
+}
+
+/* Footer nav: back (left) · step count (center) · primary + guide (right). */
+.gsv-setup-nav {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 28px;
+  padding-top: 22px;
+  border-top: 1px solid var(--border);
+}
+.gsv-setup-nav-spacer {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+}
+/* Primary action with the "Ask the guide" link stacked beneath it. */
+.gsv-setup-nav-primary {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+.gsv-setup-stepcount {
+  font-family: var(--gsv-font-mono);
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  color: var(--text-dim);
+}
