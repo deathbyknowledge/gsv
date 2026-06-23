@@ -65,6 +65,16 @@ function GsvMark() {
   );
 }
 
+function SpaceGlyphs() {
+  const glyphs = ["+", ".", "*", ":", ".", "+", "o", ".", "*", "-", ".", "+", ":", "*", ".", "o", ".", "+"];
+
+  return (
+    <div class="gsv-space-glyphs" aria-hidden="true">
+      {glyphs.map((glyph, index) => <span key={`${glyph}-${index}`}>{glyph}</span>)}
+    </div>
+  );
+}
+
 function canCreateObject(id: DesktopObjectId): boolean {
   return id === "machines" || id === "integrations" || id === "applications";
 }
@@ -111,6 +121,13 @@ export function GsvDesktop({
   const totalObjects = desktopObjects.reduce((sum, object) => sum + object.children.length, 0);
   const desktopStateClass = `${selectedObject ? " has-selected-object" : ""}${gsvOpen ? " has-gsv-open" : ""}`;
   const inventoryReady = inventoryState === "ready";
+  const hudStatus = selectedObject
+    ? selectedObject.statusLabel
+    : gsvOpen
+      ? "GSV / CONTROL"
+      : inventoryReady
+        ? "SYSTEM MAP"
+        : inventoryState.toUpperCase();
 
   return (
     <section
@@ -123,6 +140,7 @@ export function GsvDesktop({
       <div class="gsv-space-grid" aria-hidden="true" />
       <div class="gsv-space-stars" aria-hidden="true" />
       <div class="gsv-space-nebula" aria-hidden="true" />
+      <SpaceGlyphs />
 
       <header class="gsv-space-hud">
         <div>
@@ -134,15 +152,7 @@ export function GsvDesktop({
               : inventoryMessage}
           </small>
         </div>
-        <p>
-          {selectedObject
-            ? "click a child to open · click empty space to exit"
-            : gsvOpen
-              ? "select a control · click empty space to close"
-              : inventoryReady
-                ? "click a node to explore · click GSV for controls"
-                : "waiting for live inventory · click GSV for controls"}
-        </p>
+        <p>{hudStatus}</p>
       </header>
 
       <div
