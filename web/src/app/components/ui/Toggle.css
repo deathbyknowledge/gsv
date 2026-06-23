@@ -1,11 +1,19 @@
 /* Ported from Toggle.dc.html — values transcribed verbatim. */
 .gsv-tg {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 11px;
   cursor: pointer;
   font-family: var(--gsv-font-mono);
   user-select: none;
+}
+.gsv-tg-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
 }
 .gsv-tg-track {
   flex: none;
@@ -17,6 +25,10 @@
 }
 .gsv-tg:hover .gsv-tg-track {
   border-color: #6b62c4;
+}
+.gsv-tg-input:focus-visible + .gsv-tg-track {
+  border-color: #b3aeff;
+  box-shadow: 0 0 0 1px rgba(150, 140, 255, 0.35);
 }
 .gsv-tg.is-on .gsv-tg-track {
   background: #5a52a8;

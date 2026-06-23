@@ -51,23 +51,30 @@ export function Checkbox(props: CheckboxProps) {
   const rootClass = `gsv-cb ${SIZE_CLASS[size]}${on ? " is-on" : ""}${disabled ? " is-disabled" : ""}`;
   const fldClass = `gsv-cb-fld${hasStat ? ` is-${statKey}` : ""}`;
 
-  const handleClick = () => {
+  const handleChange = (next: boolean) => {
     if (disabled) return;
-    const nv = !checked;
-    setCheckedState(nv);
-    onChange?.(nv);
+    setCheckedState(next);
+    onChange?.(next);
   };
 
   return (
     <div class={fldClass}>
       {description ? <div class="gsv-cb-desc">{description}</div> : null}
-      <div class={rootClass} onClick={handleClick}>
+      <label class={rootClass}>
+        <input
+          aria-checked={indeterminate ? "mixed" : checked}
+          checked={checked}
+          class="gsv-cb-input"
+          disabled={disabled}
+          type="checkbox"
+          onChange={(event) => handleChange((event.currentTarget as HTMLInputElement).checked)}
+        />
         <span class="gsv-cb-box">
           {on ? <span class="gsv-cb-fill gsv-cb-on" /> : null}
           {indeterminate ? <span class="gsv-cb-fill gsv-cb-dash" /> : null}
         </span>
         {label.length > 0 ? <span class="gsv-cb-label">{label}</span> : null}
-      </div>
+      </label>
       {hasStat ? (
         <div class="gsv-cb-stat">
           <span class="gsv-cb-dot" />

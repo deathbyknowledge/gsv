@@ -7,10 +7,18 @@
   user-select: none;
 }
 .gsv-rd-opt {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 10px;
   cursor: pointer;
+}
+.gsv-rd-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
 }
 .gsv-rd-ring {
   flex: none;
@@ -24,6 +32,10 @@
 }
 .gsv-rd-opt:hover .gsv-rd-ring {
   border-color: #a9a4ff;
+}
+.gsv-rd-input:focus-visible + .gsv-rd-ring {
+  border-color: #b3aeff;
+  box-shadow: 0 0 0 1px rgba(150, 140, 255, 0.35);
 }
 .gsv-rd-dot {
   border-radius: 50%;

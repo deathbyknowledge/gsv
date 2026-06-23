@@ -1,4 +1,4 @@
-import { useState } from "preact/hooks";
+import { useRef, useState } from "preact/hooks";
 import "./Radio.css";
 
 export type RadioSize = "small" | "medium" | "large";
@@ -46,6 +46,7 @@ export function Radio(props: RadioProps) {
   } = props;
 
   const [idxState, setIdxState] = useState<number | undefined>(undefined);
+  const nameRef = useRef(`gsv-radio-${Math.random().toString(36).slice(2)}`);
 
   const opts = [o0, o1, o2, o3].filter((x) => x != null && x !== "");
   const labels = opts.length ? opts : ["ALLOW", "ASK", "DENY"];
@@ -77,10 +78,18 @@ export function Radio(props: RadioProps) {
       {description ? <div class="gsv-fld-desc">{description}</div> : null}
       <div class={rootClass}>
         {labels.map((optLabel, i) => (
-          <div class={`gsv-rd-opt${i === idx ? " is-on" : ""}`} onClick={() => pick(i)}>
+          <label class={`gsv-rd-opt${i === idx ? " is-on" : ""}`} key={i}>
+            <input
+              checked={i === idx}
+              class="gsv-rd-input"
+              disabled={disabled}
+              name={nameRef.current}
+              type="radio"
+              onChange={() => pick(i)}
+            />
             <span class="gsv-rd-ring">{i === idx ? <span class="gsv-rd-dot" /> : null}</span>
             <span class="gsv-rd-label">{optLabel}</span>
-          </div>
+          </label>
         ))}
       </div>
       {hasStat ? (
