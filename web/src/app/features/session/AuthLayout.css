@@ -1,0 +1,36 @@
+/* Shared auth surface — fills its container (the session screen is a centering
+   flex container, so a relative/auto-width child would shrink and let the
+   parent wallpaper show through). Tokens come from .gsv-auth-theme. */
+.gsv-auth-surface {
+  /* inset:0 sizes the surface to its container (the session screen full-bleed,
+     or a framed catalog story); no fixed 100vh so it never overflows a frame. */
+  position: absolute;
+  inset: 0;
+  background: var(--void);
+  color: var(--text);
+  font-family: var(--gsv-font-mono);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+.gsv-auth-surface[hidden] {
+  display: none;
+}
+
+/* Content slot — pinned right so the galaxy (left) stays uncovered. */
+.gsv-auth-content {
+  position: relative;
+  z-index: 2;
+  min-height: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 48px clamp(24px, 6vw, 96px);
+}
+
+@media (max-width: 760px) {
+  .gsv-auth-content {
+    justify-content: center;
+    padding: 32px 20px;
+  }
+}

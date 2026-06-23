@@ -49,6 +49,7 @@ import confirmModal from "./stories/ConfirmModal.story";
 import agentCard from "./stories/AgentCard.story";
 import crewTile from "./stories/CrewTile.story";
 import agentEditor from "./stories/AgentEditor.story";
+import authLayout from "./stories/AuthLayout.story";
 
 const STORIES: Story[] = [
   // Foundations
@@ -91,6 +92,7 @@ const STORIES: Story[] = [
   messageInput,
   systemMessage,
   tabs,
+  authLayout,
   // Composite
   confirmModal,
   agentCard,
