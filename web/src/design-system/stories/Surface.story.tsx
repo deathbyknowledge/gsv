@@ -64,6 +64,17 @@ const story: Story = {
       </div>
 
       <div class="ds-cell">
+        <div class="ds-label">Flush interactive</div>
+        <div class="ds-row">
+          {slot(
+            <Surface as="button" flush interactive onClick={() => {}}>
+              {sample("FLUSH CELL", "A clickable structural surface without card chrome.")}
+            </Surface>,
+          )}
+        </div>
+      </div>
+
+      <div class="ds-cell">
         <div class="ds-label">Selected (e.g. register-mode cards)</div>
         <div class="ds-row">
           {slot(

@@ -26,6 +26,12 @@ const story: Story = {
         </div>
       </div>
       <div class="ds-cell">
+        <div class="ds-label">Compact clickable</div>
+        <div class="ds-row">
+          <SectionHeader title="MACHINES" density="compact" divider chevron onClick={() => {}} />
+        </div>
+      </div>
+      <div class="ds-cell">
         <div class="ds-label">Title size · section (default)</div>
         <div class="ds-row">
           <SectionHeader title="THE SHIP" titleSize="section" />

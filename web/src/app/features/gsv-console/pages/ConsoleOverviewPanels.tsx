@@ -1,11 +1,13 @@
-import type { ComponentChildren } from "preact";
+import type { ComponentChildren, JSX } from "preact";
+import { AddAction } from "../../../components/ui/AddAction";
 import { AsciiPlanet } from "../../../components/ui/AsciiPlanet";
 import { Checkbox } from "../../../components/ui/Checkbox";
 import { CrewAddTile, CrewTile } from "../../../components/ui/CrewTile";
-import { Icon } from "../../../components/ui/Icon";
+import { ListRow, type ListRowStatus } from "../../../components/ui/ListRow";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
 import { StatusDot, type StatusTone } from "../../../components/ui/StatusDot";
-import { Tag, type TagTone } from "../../../components/ui/Tag";
+import { Surface } from "../../../components/ui/Surface";
+import type { TagTone } from "../../../components/ui/Tag";
 import type { ConsoleListKind } from "./ConsoleListPage";
 import {
   defaultModelLabelForConfig,
@@ -67,6 +69,18 @@ export type OpenListDetail = (kind: ConsoleListKind, detailId: string, detailLab
 export type OpenListCreate = (kind: ConsoleListKind) => void;
 
 const DASHBOARD_ROW_LIMIT = 5;
+const OVERVIEW_ROW_STYLE: JSX.CSSProperties = {
+  minHeight: "44px",
+  padding: "13px 16px",
+};
+const OVERVIEW_STATE_ROW_STYLE: JSX.CSSProperties = {
+  minHeight: "55px",
+  padding: "15px 16px",
+};
+
+function listRowStatus(tone: StatusTone): ListRowStatus {
+  return tone;
+}
 
 function isApplicationPackage(pkg: ConsolePackage): boolean {
   return pkg.runtime === "web-ui" || pkg.uiEntrypoints.length > 0;
@@ -254,57 +268,38 @@ function MiniHeading({
   onClick?: () => void;
   showChevron?: boolean;
 }) {
-  const content = (
-    <>
-      <span>{title}</span>
-      {meta ? <small>{meta}</small> : null}
-      {showChevron ? <Chevron /> : null}
-    </>
-  );
-
-  return onClick ? (
-    <button type="button" class="gsv-settings-mini-heading" data-clickable="true" onClick={onClick}>
-      {content}
-    </button>
-  ) : (
-    <div class="gsv-settings-mini-heading">
-      {content}
-    </div>
+  return (
+    <SectionHeader
+      chevron={showChevron}
+      className="gsv-settings-mini-heading"
+      density="compact"
+      divider
+      meta={meta}
+      onClick={onClick}
+      title={title}
+    />
   );
 }
 
 function MiniRow({ row, showIcon = true, onClick }: { row: OverviewRow; showIcon?: boolean; onClick?: () => void }) {
-  const content = (
-    <>
-      {showIcon ? (
-        <span class="gsv-settings-mini-icon">
-          {row.icon ? <Icon name={row.icon} size={18} /> : <StatusDot tone={row.tone} size={8} />}
-        </span>
-      ) : (
-        <StatusDot tone={row.tone} size={8} />
-      )}
-      <span class="gsv-settings-mini-copy">
-        <strong>{row.label}</strong>
-        {row.meta ? <small>{row.meta}</small> : null}
-      </span>
-      {row.tag ? <Tag label={row.tag.label} tone={row.tag.tone} boxed /> : null}
-      {row.statusLabel ? <span class={`gsv-settings-status is-${row.tone}`}>{row.statusLabel}</span> : null}
-      {showIcon && row.icon ? (
-        <span class="gsv-settings-tail-dot">
-          <StatusDot tone={row.tone} size={8} />
-        </span>
-      ) : null}
-    </>
-  );
+  const hasIcon = showIcon && Boolean(row.icon);
 
-  return onClick ? (
-    <button type="button" class="gsv-settings-mini-row" data-clickable="true" onClick={onClick}>
-      {content}
-    </button>
-  ) : (
-    <div class="gsv-settings-mini-row">
-      {content}
-    </div>
+  return (
+    <ListRow
+      chevron={Boolean(onClick)}
+      className="gsv-settings-mini-row"
+      icon={hasIcon ? row.icon : undefined}
+      iconTitle={row.label}
+      label={row.label}
+      onClick={onClick}
+      status={listRowStatus(row.tone)}
+      statusDotPlacement={hasIcon ? "trailing" : "leading"}
+      statusLabel={row.statusLabel}
+      style={OVERVIEW_ROW_STYLE}
+      sub={row.meta}
+      tag={row.tag?.label}
+      tagTone={row.tag?.tone}
+    />
   );
 }
 
@@ -318,21 +313,9 @@ function EmptyRow({ label }: { label: string }) {
 }
 
 function AddRow({ label, onClick }: { label: string; onClick?: () => void }) {
-  const content = (
-    <>
-      <Icon name="plus" size={15} />
-      <span>{label}</span>
-      <Chevron />
-    </>
-  );
-
-  return onClick ? (
-    <button type="button" class="gsv-settings-add-row" data-clickable="true" onClick={onClick}>
-      {content}
-    </button>
-  ) : (
-    <div class="gsv-settings-add-row">
-      {content}
+  return (
+    <div class="gsv-settings-add-action">
+      <AddAction label={label} onClick={onClick} variant="row" />
     </div>
   );
 }
@@ -363,21 +346,15 @@ function ActionSectionHeader({
   onClick?: () => void;
   title: string;
 }) {
-  const content = (
-    <>
-      <SectionHeader title={title} meta={meta} divider />
-      {onClick ? <Chevron /> : null}
-    </>
-  );
-
-  return onClick ? (
-    <button type="button" class="gsv-settings-action-header" data-clickable="true" onClick={onClick}>
-      {content}
-    </button>
-  ) : (
-    <div class="gsv-settings-action-header">
-      {content}
-    </div>
+  return (
+    <SectionHeader
+      chevron={Boolean(onClick)}
+      className="gsv-settings-action-header"
+      divider
+      meta={meta}
+      onClick={onClick}
+      title={title}
+    />
   );
 }
 
@@ -425,27 +402,16 @@ function ShipPanel({
         right={(
           <div class="gsv-settings-mini-cell">
             <MiniHeading title="OVERRIDES" />
-            {onOpenSurface ? (
-              <button
-                type="button"
-                class="gsv-settings-overrides-state"
-                data-clickable="true"
-                onClick={() => onOpenSurface("overrides")}
-              >
-                <span class="gsv-settings-overrides-copy">
-                  <span>{configured > 0 ? `${configured} CONFIGURED` : "NOT CONFIGURED"}</span>
-                  {redacted > 0 ? <Tag label={`${redacted} REDACTED`} tone="warn" boxed /> : null}
-                </span>
-                <Chevron />
-              </button>
-            ) : (
-              <div class="gsv-settings-overrides-state">
-                <span class="gsv-settings-overrides-copy">
-                  <span>{configured > 0 ? `${configured} CONFIGURED` : "NOT CONFIGURED"}</span>
-                  {redacted > 0 ? <Tag label={`${redacted} REDACTED`} tone="warn" boxed /> : null}
-                </span>
-              </div>
-            )}
+            <ListRow
+              chevron={Boolean(onOpenSurface)}
+              className="gsv-settings-overrides-state"
+              label={configured > 0 ? `${configured} CONFIGURED` : "NOT CONFIGURED"}
+              onClick={onOpenSurface ? () => onOpenSurface("overrides") : undefined}
+              status="none"
+              style={OVERVIEW_STATE_ROW_STYLE}
+              tag={redacted > 0 ? `${redacted} REDACTED` : undefined}
+              tagTone="warn"
+            />
           </div>
         )}
       />
@@ -528,10 +494,11 @@ function ModelsTasksPanel({
     <SplitCells
       className="gsv-settings-model-task-split"
       left={onOpenSurface ? (
-        <button
-          type="button"
+        <Surface
+          as="button"
           class="gsv-settings-deep-cell"
-          data-clickable="true"
+          flush
+          interactive
           onClick={() => onOpenSurface("models")}
         >
           <MiniHeading title="MODELS" />
@@ -540,21 +507,22 @@ function ModelsTasksPanel({
             <small>{modelSummary}</small>
           </div>
           <Chevron />
-        </button>
+        </Surface>
       ) : (
-        <div class="gsv-settings-deep-cell">
+        <Surface class="gsv-settings-deep-cell" flush>
           <MiniHeading title="MODELS" />
           <div class="gsv-settings-model-summary">
             <span>DEFAULT: <strong>{model}</strong></span>
             <small>{modelSummary}</small>
           </div>
-        </div>
+        </Surface>
       )}
       right={onOpenSurface ? (
-        <button
-          type="button"
+        <Surface
+          as="button"
           class="gsv-settings-deep-cell"
-          data-clickable="true"
+          flush
+          interactive
           onClick={() => onOpenSurface("tasks")}
         >
           <MiniHeading title="TASKS" />
@@ -567,9 +535,9 @@ function ModelsTasksPanel({
             ))}
           </div>
           <Chevron />
-        </button>
+        </Surface>
       ) : (
-        <div class="gsv-settings-deep-cell">
+        <Surface class="gsv-settings-deep-cell" flush>
           <MiniHeading title="TASKS" />
           <div class="gsv-settings-task-summary">
             {stats.map((stat) => (
@@ -579,7 +547,7 @@ function ModelsTasksPanel({
               </span>
             ))}
           </div>
-        </div>
+        </Surface>
       )}
     />
   );
