@@ -1,0 +1,55 @@
+/* ============================================================
+   WelcomeStage — create-account "Welcome" stage mode cards.
+   Quick start vs Custom. Card border / background / hover /
+   selected come from the Surface component; these classes set
+   layout + text. Matches the auth-preview RegisterMock cards.
+   ============================================================ */
+
+.onboarding-mode-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Layout + text alignment only — visuals come from Surface. */
+.onboarding-mode-card {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 16px 18px;
+  font: inherit;
+  color: inherit;
+}
+
+.onboarding-mode-kicker {
+  display: block;
+  font-family: var(--gsv-font-mono);
+  font-size: 8.5px;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+.onboarding-mode-card.is-selected .onboarding-mode-kicker {
+  color: var(--accent);
+}
+
+.onboarding-mode-card strong {
+  display: block;
+  font-family: var(--gsv-font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-title);
+  margin-bottom: 6px;
+}
+
+.onboarding-mode-card p {
+  display: block;
+  margin: 0;
+  font-family: var(--gsv-font-prose);
+  font-size: 12px;
+  line-height: 1.5;
+  color: #9d98d4;
+}

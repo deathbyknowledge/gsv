@@ -1,0 +1,76 @@
+/* Create-account (register) wizard shell — sits in the AuthLayout galaxy
+   surface. A wide card panel: sidebar (stepper) + workspace (stages + guide). */
+.gsv-setup-panel {
+  width: min(920px, 94vw);
+  max-height: calc(100% - 56px);
+  overflow: auto;
+  background: color-mix(in srgb, var(--panel) 100%, #ffffff 5%);
+  border: 1px solid var(--border);
+  box-shadow: 0 0 40px rgba(10, 6, 30, 0.5), 0 0 0 1px rgba(150, 140, 255, 0.04);
+  backdrop-filter: blur(3px);
+}
+
+.gsv-setup-form {
+  display: grid;
+  grid-template-columns: 236px minmax(0, 1fr);
+  align-items: stretch;
+}
+/* Sidebar column (the only direct <aside> of the form). */
+.gsv-setup-form > aside {
+  padding: 28px 24px;
+  border-right: 1px solid var(--border);
+  background: color-mix(in srgb, var(--void) 35%, transparent);
+}
+
+.gsv-setup-workspace {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+}
+.gsv-setup-main {
+  flex: 1;
+  min-width: 0;
+  padding: 28px 30px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.gsv-setup-alert {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--error);
+}
+.gsv-setup-alert[hidden] {
+  display: none;
+}
+
+/* Footer actions. */
+.gsv-setup-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+  padding-top: 22px;
+  border-top: 1px solid var(--border);
+}
+.gsv-setup-primary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+@media (max-width: 880px) {
+  .gsv-setup-form {
+    grid-template-columns: 1fr;
+  }
+  .gsv-setup-form > aside {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .gsv-setup-workspace {
+    flex-direction: column;
+  }
+}

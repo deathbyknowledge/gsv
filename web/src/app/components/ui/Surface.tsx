@@ -15,6 +15,8 @@ export interface SurfaceProps {
   onClick?: () => void;
   /** Extra classes appended to the surface. */
   class?: string;
+  /** Extra data-* attributes spread onto the root (e.g. focus markers). */
+  dataAttrs?: Record<`data-${string}`, string | number | boolean>;
   children?: ComponentChildren;
 }
 
@@ -28,6 +30,7 @@ export function Surface({
   as = "div",
   onClick,
   class: extraClass,
+  dataAttrs,
   children,
 }: SurfaceProps) {
   const cls = [
@@ -43,13 +46,13 @@ export function Surface({
 
   if (as === "button") {
     return (
-      <button type="button" class={cls} onClick={onClick}>
+      <button {...dataAttrs} type="button" class={cls} onClick={onClick}>
         {children}
       </button>
     );
   }
   return (
-    <div class={cls} onClick={onClick}>
+    <div {...dataAttrs} class={cls} onClick={onClick}>
       {children}
     </div>
   );

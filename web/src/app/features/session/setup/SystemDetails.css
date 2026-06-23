@@ -1,0 +1,14 @@
+/* ============================================================
+   SystemDetails — create-account "Preferences" step, core
+   groups restyled to the GSV design system. Stacked design-
+   system fields (Checkbox, TextInput, Select) inside the
+   existing onboarding-preference-group / onboarding-section
+   chrome. Advanced (onboarding-custom-options) sections are
+   unchanged and keep their legacy styling.
+   ============================================================ */
+
+.system-details-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}

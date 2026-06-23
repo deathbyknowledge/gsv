@@ -1,0 +1,29 @@
+/* SetupSidebar — restyled to the GSV design system. Uses design tokens; no literal colors. */
+.gsv-setup-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.gsv-setup-head {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.gsv-setup-kicker {
+  margin: 0;
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+
+.gsv-setup-title {
+  margin: 0;
+  color: var(--text-title);
+  text-shadow: 0 0 5px rgba(150, 140, 255, 0.3);
+}
+
+.gsv-setup-copy {
+  margin: 0;
+  color: var(--label);
+}
