@@ -185,33 +185,68 @@ export function AgentCard(props: AgentCardProps) {
     >
       {/* header */}
       <div style={headerStyle}>
-        <div onClick={onAvatarClick} class="gsv-ac-fade" style={{ position: "relative", flex: "none", cursor: "pointer" }}>
-          <Avatar src={imgSrc} status={status} size={44} />
-        </div>
+        {onAvatarClick ? (
+          <div class="gsv-ac-fade" style={{ position: "relative", flex: "none", cursor: "pointer" }}>
+            <Avatar src={imgSrc} status={status} size={44} />
+            <button
+              type="button"
+              aria-label={`Open ${agentName}`}
+              class="gsv-ac-avatar-hit"
+              onClick={onAvatarClick}
+            />
+          </div>
+        ) : (
+          <div class="gsv-ac-fade" style={{ position: "relative", flex: "none" }}>
+            <Avatar src={imgSrc} status={status} size={44} />
+          </div>
+        )}
         <div style={{ minWidth: 0, flex: 1, display: "flex", alignItems: "baseline", gap: "9px", flexWrap: "wrap" }}>
-          <span
-            onClick={onAvatarClick}
-            class="gsv-ac-fade"
-            style={{
-              fontFamily: MONO,
-              fontWeight: 700,
-              fontSize: "17px",
-              letterSpacing: ".06em",
-              color: "var(--text-hi)",
-              textShadow: "0 0 7px rgba(150,140,255,.4)",
-              lineHeight: 1,
-              cursor: "pointer",
-            }}
-          >
-            {agentName}
-          </span>
+          {onAvatarClick ? (
+            <button
+              type="button"
+              onClick={onAvatarClick}
+              class="gsv-ac-fade"
+              style={{
+                fontFamily: MONO,
+                fontWeight: 700,
+                fontSize: "17px",
+                letterSpacing: ".06em",
+                color: "var(--text-hi)",
+                textShadow: "0 0 7px rgba(150,140,255,.4)",
+                lineHeight: 1,
+                cursor: "pointer",
+              }}
+            >
+              {agentName}
+            </button>
+          ) : (
+            <span
+              class="gsv-ac-fade"
+              style={{
+                fontFamily: MONO,
+                fontWeight: 700,
+                fontSize: "17px",
+                letterSpacing: ".06em",
+                color: "var(--text-hi)",
+                textShadow: "0 0 7px rgba(150,140,255,.4)",
+                lineHeight: 1,
+              }}
+            >
+              {agentName}
+            </span>
+          )}
           <span style={{ fontFamily: MONO, fontSize: "9.5px", letterSpacing: ".16em", color: "#8f8ac0" }}>{agentRole}</span>
         </div>
         {showSwitch ? (
-          <div style={{ flex: "none", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "7px" }}>
+          <button
+            type="button"
+            class="gsv-ac-switch-button"
+            disabled={!onSwitch}
+            onClick={onSwitch}
+            style={{ flex: "none", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "7px" }}
+          >
             <span
               style={{ display: "flex", color: "var(--warn)", cursor: "pointer", filter: "drop-shadow(0 0 5px rgba(224,166,76,.45))" }}
-              onClick={onSwitch}
             >
               <svg width="17" height="17" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="square">
                 <path d="M2 5 H12" />
@@ -221,7 +256,6 @@ export function AgentCard(props: AgentCardProps) {
               </svg>
             </span>
             <span
-              onClick={onSwitch}
               class="gsv-ac-switch"
               style={{
                 display: "inline-flex",
@@ -240,12 +274,14 @@ export function AgentCard(props: AgentCardProps) {
                 <path d="M0 0 L9 6 L0 12 Z" fill="currentColor" />
               </svg>
             </span>
-          </div>
+          </button>
         ) : null}
         {showClose ? (
-          <span
-            onClick={onClose}
+          <button
+            type="button"
             class="gsv-ac-close"
+            disabled={!onClose}
+            onClick={onClose}
             style={{
               flex: "none",
               cursor: "pointer",
@@ -257,7 +293,7 @@ export function AgentCard(props: AgentCardProps) {
             }}
           >
             {"✕"}
-          </span>
+          </button>
         ) : null}
       </div>
 
