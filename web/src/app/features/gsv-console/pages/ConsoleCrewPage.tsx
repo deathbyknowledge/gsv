@@ -3,8 +3,6 @@ import { AgentCard, type AgentTask } from "../../../components/ui/AgentCard";
 import type { AvatarStatus } from "../../../components/ui/Avatar";
 import { CrewAddTile } from "../../../components/ui/CrewTile";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
-import type { StatusTone } from "../../../components/ui/StatusDot";
-import { Tag, type TagTone } from "../../../components/ui/Tag";
 import {
   ConsolePage,
   ConsoleResourceBoundary,
@@ -41,8 +39,6 @@ type CrewCardModel = {
   role: string;
   description: string;
   status: AvatarStatus;
-  statusLabel: string;
-  tone: StatusTone;
   tasks: AgentTask[];
   active: boolean;
   model: string;
@@ -143,13 +139,14 @@ function CrewRoster({
                 showActions={false}
                 readOnly
               />
-              <div class="gsv-console-crew-card-footer">
-                <Tag label={card.statusLabel} tone={tagToneForCard(card)} boxed dot />
-                <span>{accountFooter(card.account)}</span>
-              </div>
             </div>
           ))}
-          <CrewAddTile className="gsv-console-crew-add-tile" label="NEW AGENT" onClick={onCreateAgent} />
+          <CrewAddTile
+            className="gsv-console-crew-add-tile"
+            description="Spin up a new crew member with its own persona & files"
+            label="NEW AGENT"
+            onClick={onCreateAgent}
+          />
         </div>
       </div>
     </section>
@@ -182,7 +179,6 @@ function buildCrewCard(
   const unknown = ownedProcesses.some((process) => process.state === "unknown");
   const role = labelForConsoleAccountRelation(account.relation);
   const status: AvatarStatus = unknown ? "error" : running || queued ? "live" : account.runnable ? "idle" : "idle";
-  const statusLabel = unknown ? "ERROR" : queued ? "QUEUED" : running ? "RUNNING" : account.runnable ? "IDLE" : "ACCOUNT";
 
   return {
     account,
@@ -191,8 +187,6 @@ function buildCrewCard(
     role,
     description: accountDescription(account),
     status,
-    statusLabel,
-    tone: unknown ? "error" : queued ? "update" : running ? "live" : account.runnable ? "idle" : "idle",
     tasks: tasksForProcesses(ownedProcesses),
     active: account.runnable,
     model: behavior.model,
@@ -200,13 +194,6 @@ function buildCrewCard(
     modelOptions: modelLabelsForAccount(modelLabels, behavior.model),
     permission: behavior.permission,
   };
-}
-
-function tagToneForCard(card: CrewCardModel): TagTone {
-  if (card.tone === "live") return "online";
-  if (card.tone === "update") return "update";
-  if (card.tone === "error") return "error";
-  return "idle";
 }
 
 function ownsProcess(account: ConsoleAccount, process: ConsoleProcess): boolean {
@@ -235,9 +222,5 @@ function accountDescription(account: ConsoleAccount): string {
   if (account.gecos.trim().length > 0) {
     return account.gecos;
   }
-  return `${account.username} / uid ${account.uid}`;
-}
-
-function accountFooter(account: ConsoleAccount): string {
   return `${account.username} / uid ${account.uid}`;
 }
