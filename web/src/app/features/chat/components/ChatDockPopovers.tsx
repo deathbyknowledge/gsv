@@ -166,7 +166,13 @@ export function ChatDockPopovers({
             <small>{taskCount}</small>
           </header>
           <div class="gsv-chat-task-list">
-            {activeAgent.tasks.map((task) => (
+            {activeAgent.tasks.length === 0 ? (
+              <div class="gsv-chat-task-row is-empty">
+                <StatusDot tone="idle" size={8} />
+                <span class="gsv-chat-task-name">No process activity</span>
+                <small>IDLE</small>
+              </div>
+            ) : activeAgent.tasks.map((task) => (
               <div class="gsv-chat-task-row" key={`${task.status}-${task.name}`}>
                 <StatusDot tone={taskStatusTone(task.status)} size={8} />
                 <span class="gsv-chat-task-name">{task.name}</span>

@@ -1,4 +1,5 @@
 import type { JSX } from "preact";
+import { AddAction } from "../../../components/ui/AddAction";
 import { IconMenu } from "../../../components/ui/IconMenu";
 import { ObjectCard } from "../../../components/ui/ObjectCard";
 import { StatusDot } from "../../../components/ui/StatusDot";
@@ -11,12 +12,17 @@ import {
   type ShellSurfaceId,
 } from "../domain/shellModel";
 
+export type DesktopInventoryState = "ready" | "loading" | "offline" | "error";
+
 type GsvDesktopProps = {
   desktopObjects: readonly DesktopObject[];
+  inventoryMessage: string;
+  inventoryState: DesktopInventoryState;
   selectedObjectId: DesktopObjectId | null;
   gsvOpen: boolean;
   onSelectObject: (id: DesktopObjectId | null) => void;
   onToggleGsv: () => void;
+  onCreateObject: (id: DesktopObjectId) => void;
   onOpenObject: (child: DesktopChildObject) => void;
   onOpenSurface: (surface: ShellSurfaceId) => void;
 };
@@ -59,12 +65,42 @@ function GsvMark() {
   );
 }
 
+function canCreateObject(id: DesktopObjectId): boolean {
+  return id === "machines" || id === "integrations" || id === "applications";
+}
+
+function addObjectLabel(id: DesktopObjectId): string {
+  if (id === "machines") {
+    return "CONNECT NEW MACHINE";
+  }
+  if (id === "integrations") {
+    return "NEW INTEGRATION";
+  }
+  return "NEW APPLICATION";
+}
+
+function inventoryTitle(state: DesktopInventoryState, totalObjects: number): string {
+  if (state === "loading") {
+    return "GSV · LOADING";
+  }
+  if (state === "offline") {
+    return "GSV · OFFLINE";
+  }
+  if (state === "error") {
+    return "GSV · ERROR";
+  }
+  return `GSV · ${totalObjects} OBJECTS`;
+}
+
 export function GsvDesktop({
   desktopObjects,
+  inventoryMessage,
+  inventoryState,
   selectedObjectId,
   gsvOpen,
   onSelectObject,
   onToggleGsv,
+  onCreateObject,
   onOpenObject,
   onOpenSurface,
 }: GsvDesktopProps) {
@@ -74,6 +110,7 @@ export function GsvDesktop({
   const branchCount = Math.max(desktopObjects.length, 1);
   const totalObjects = desktopObjects.reduce((sum, object) => sum + object.children.length, 0);
   const desktopStateClass = `${selectedObject ? " has-selected-object" : ""}${gsvOpen ? " has-gsv-open" : ""}`;
+  const inventoryReady = inventoryState === "ready";
 
   return (
     <section
@@ -90,11 +127,11 @@ export function GsvDesktop({
       <header class="gsv-space-hud">
         <div>
           <span>DESKTOP // GSV</span>
-          <strong>{selectedObject ? `GSV / ${selectedObject.label}` : `GSV · ${totalObjects} OBJECTS`}</strong>
+          <strong>{selectedObject ? `GSV / ${selectedObject.label}` : inventoryTitle(inventoryState, totalObjects)}</strong>
           <small>
             {selectedObject
               ? `${selectedObject.meta} · ${selectedObject.statusLabel}`
-              : "desktop ready"}
+              : inventoryMessage}
           </small>
         </div>
         <p>
@@ -102,7 +139,9 @@ export function GsvDesktop({
             ? "click a child to open · click empty space to exit"
             : gsvOpen
               ? "select a control · click empty space to close"
-              : "click a node to explore · click GSV for controls"}
+              : inventoryReady
+                ? "click a node to explore · click GSV for controls"
+                : "waiting for live inventory · click GSV for controls"}
         </p>
       </header>
 
@@ -141,39 +180,48 @@ export function GsvDesktop({
           </>
         ) : null}
 
-        <div
-          class={`gsv-space-connectors${gsvOpen ? " is-control-open" : ""}`}
-          style={branchCountStyle(branchCount)}
-          aria-hidden="true"
-        >
-          <span />
-          <i />
-          {desktopObjects.map((object, index) => (
-            <b key={object.id} style={branchStyle(index, branchCount)} />
-          ))}
-        </div>
-
-        <div class="gsv-space-tiles" style={branchCountStyle(branchCount)}>
-          {desktopObjects.map((object) => (
-            <button
-              key={object.id}
-              type="button"
-              class={`gsv-space-tile-button${selectedObjectId === object.id ? " is-selected" : ""}`}
-              aria-pressed={selectedObjectId === object.id ? "true" : "false"}
-              title={`${object.label}: ${object.meta}, ${object.statusLabel}`}
-              onClick={() => {
-                onSelectObject(selectedObjectId === object.id ? null : object.id);
-              }}
+        {inventoryReady ? (
+          <>
+            <div
+              class={`gsv-space-connectors${gsvOpen ? " is-control-open" : ""}`}
+              style={branchCountStyle(branchCount)}
+              aria-hidden="true"
             >
-              <Tile
-                label={object.label}
-                glyph={object.glyph}
-                status={object.status}
-                selected={selectedObjectId === object.id}
-              />
-            </button>
-          ))}
-        </div>
+              <span />
+              <i />
+              {desktopObjects.map((object, index) => (
+                <b key={object.id} style={branchStyle(index, branchCount)} />
+              ))}
+            </div>
+
+            <div class="gsv-space-tiles" style={branchCountStyle(branchCount)}>
+              {desktopObjects.map((object) => (
+                <button
+                  key={object.id}
+                  type="button"
+                  class={`gsv-space-tile-button${selectedObjectId === object.id ? " is-selected" : ""}`}
+                  aria-pressed={selectedObjectId === object.id ? "true" : "false"}
+                  title={`${object.label}: ${object.meta}, ${object.statusLabel}`}
+                  onClick={() => {
+                    onSelectObject(selectedObjectId === object.id ? null : object.id);
+                  }}
+                >
+                  <Tile
+                    label={object.label}
+                    glyph={object.glyph}
+                    status={object.status}
+                    selected={selectedObjectId === object.id}
+                  />
+                </button>
+              ))}
+            </div>
+          </>
+        ) : (
+          <div class={`gsv-space-inventory-state is-${inventoryState}`}>
+            <StatusDot tone={inventoryState === "error" ? "error" : inventoryState === "offline" ? "idle" : "warn"} size={8} />
+            <span>{inventoryMessage}</span>
+          </div>
+        )}
 
         {selectedObject ? (
           <aside class="gsv-object-strip" aria-label={`${selectedObject.label} objects`}>
@@ -200,6 +248,15 @@ export function GsvDesktop({
                   onClick={() => onOpenObject(child)}
                 />
               ))}
+              {canCreateObject(selectedObject.id) ? (
+                <div class="gsv-object-strip-add">
+                  <AddAction
+                    variant="tile"
+                    label={addObjectLabel(selectedObject.id)}
+                    onClick={() => onCreateObject(selectedObject.id)}
+                  />
+                </div>
+              ) : null}
             </div>
           </aside>
         ) : null}

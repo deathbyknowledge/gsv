@@ -3,6 +3,21 @@ export interface StatusBarProps {
   context?: string;
   clock?: string;
   power?: string;
+  statusLabel?: string;
+  statusTone?: "online" | "loading" | "offline" | "error";
+}
+
+function statusColor(tone: NonNullable<StatusBarProps["statusTone"]>): string {
+  if (tone === "error") {
+    return "var(--error)";
+  }
+  if (tone === "offline") {
+    return "var(--idle)";
+  }
+  if (tone === "loading") {
+    return "var(--update)";
+  }
+  return "var(--bracket)";
 }
 
 /** StatusBar — ported from StatusBar.dc.html. Bottom system status strip:
@@ -12,6 +27,8 @@ export function StatusBar({
   context = "CTX 50%",
   clock = "14:21:08",
   power = "SYNC",
+  statusLabel = "GSV ONLINE",
+  statusTone = "online",
 }: StatusBarProps) {
   return (
     <div
@@ -30,7 +47,7 @@ export function StatusBar({
       }}
     >
       <div style={{ display: "flex", gap: "22px", alignItems: "center" }}>
-        <span style={{ color: "var(--bracket)" }}>{"● GSV ONLINE"}</span>
+        <span style={{ color: statusColor(statusTone) }}>● {statusLabel}</span>
         <span>{model}</span>
         <span style={{ color: "#9a94ff" }}>{context}</span>
       </div>

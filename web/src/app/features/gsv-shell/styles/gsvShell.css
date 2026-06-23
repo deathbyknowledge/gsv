@@ -365,6 +365,27 @@
   max-width: calc(100% - 72px);
 }
 
+.gsv-space-inventory-state {
+  margin-top: 34px;
+  min-width: min(320px, calc(100% - 72px));
+  min-height: 74px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 11px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  box-shadow: inset 0 0 18px rgba(80, 70, 180, 0.18);
+  color: #a8a2dc;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.gsv-space-inventory-state.is-error {
+  border-color: color-mix(in srgb, var(--error) 50%, var(--border));
+}
+
 .gsv-space-tile-button {
   width: 96px;
   min-height: 132px;
@@ -461,6 +482,18 @@
   grid-template-columns: repeat(auto-fit, minmax(220px, 236px));
   justify-content: center;
   gap: 18px;
+}
+
+.gsv-object-strip-add {
+  width: 236px;
+  min-height: 118px;
+  display: flex;
+}
+
+.gsv-object-strip-add > div,
+.gsv-object-strip-add .aa {
+  width: 100%;
+  min-height: 118px;
 }
 
 .gsv-object-strip-empty {
@@ -798,6 +831,46 @@
   color: var(--accent);
 }
 
+.gsv-shell-rail:not(.is-collapsed) .gsv-rail-subitems {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 6px 0 0;
+}
+
+.gsv-shell-rail:not(.is-collapsed) .gsv-rail-subitem {
+  position: relative;
+  min-height: 38px;
+  border: 0;
+  background: transparent;
+  color: #9d98d8;
+  padding: 10px 20px 10px 74px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  text-align: left;
+}
+
+.gsv-shell-rail:not(.is-collapsed) .gsv-rail-subitem:hover,
+.gsv-shell-rail:not(.is-collapsed) .gsv-rail-subitem:focus-visible,
+.gsv-shell-rail:not(.is-collapsed) .gsv-rail-subitem.is-active {
+  background: var(--hover-nav);
+  color: var(--text-hi);
+  outline: none;
+}
+
+.gsv-shell-rail:not(.is-collapsed) .gsv-rail-subitem.is-active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent-bright);
+  box-shadow: 0 0 8px var(--accent-bright);
+}
+
 .gsv-shell-rail footer {
   position: relative;
   padding: 12px 20px;
@@ -953,6 +1026,42 @@
 .gsv-console-frame > section {
   position: relative;
   z-index: 2;
+}
+
+.gsv-console-corner {
+  position: absolute;
+  z-index: 3;
+  width: 11px;
+  height: 11px;
+  pointer-events: none;
+}
+
+.gsv-console-corner.is-top-left {
+  top: 8px;
+  left: 8px;
+  border-top: 1px solid var(--bracket);
+  border-left: 1px solid var(--bracket);
+}
+
+.gsv-console-corner.is-top-right {
+  top: 8px;
+  right: 8px;
+  border-top: 1px solid var(--bracket);
+  border-right: 1px solid var(--bracket);
+}
+
+.gsv-console-corner.is-bottom-left {
+  bottom: 8px;
+  left: 8px;
+  border-bottom: 1px solid var(--bracket);
+  border-left: 1px solid var(--bracket);
+}
+
+.gsv-console-corner.is-bottom-right {
+  right: 8px;
+  bottom: 8px;
+  border-right: 1px solid var(--bracket);
+  border-bottom: 1px solid var(--bracket);
 }
 
 .gsv-console-stage {

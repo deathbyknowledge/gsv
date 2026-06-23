@@ -124,19 +124,14 @@ function processToneToTaskStatus(status: ChatProcessStatusTone): ChatAgentTaskSt
 
 function normalizeTasks(
   tasks: readonly ChatAgentTaskData[] | undefined,
-  fallbackName: string,
   fallbackStatus: ChatAgentTaskStatus,
 ): ChatAgentTaskView[] {
-  const normalized = (tasks ?? [])
+  return (tasks ?? [])
     .map((task) => ({
       name: task.name.trim(),
       status: task.status ?? fallbackStatus,
     }))
     .filter((task) => task.name.length > 0);
-
-  return normalized.length > 0
-    ? normalized
-    : [{ name: fallbackName, status: fallbackStatus }];
 }
 
 function buildDefaultDescription(input: {
@@ -209,7 +204,6 @@ export function buildChatAgentViewModel({
   );
   const tasks = normalizeTasks(
     agent?.tasks,
-    hasProcess ? `Process ${processStatusLabel}` : "No task data",
     taskStatus,
   );
   const tasksTotal = agent?.tasksTotal === undefined
@@ -244,7 +238,7 @@ export function buildChatAgentViewModel({
     status: agentStatus,
     statusLabel: cleanText(agent?.statusLabel, processStatusLabel),
     activity,
-    modelLabel: cleanText(agent?.modelLabel, "Gateway default"),
+    modelLabel: cleanText(agent?.modelLabel, "GATEWAY DEFAULT"),
     modelOptions: normalizeModelOptions(agent?.modelOptions, agent?.modelLabel),
     modelValue: cleanText(agent?.modelValue, ""),
     modelIsDefault: agent?.modelIsDefault ?? false,
@@ -265,5 +259,5 @@ function normalizeModelOptions(
     return normalized;
   }
   const fallbackLabel = fallback?.trim();
-  return fallbackLabel ? [fallbackLabel] : ["Gateway default"];
+  return fallbackLabel ? [fallbackLabel] : ["GATEWAY DEFAULT"];
 }

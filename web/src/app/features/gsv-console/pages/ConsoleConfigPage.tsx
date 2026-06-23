@@ -1,4 +1,5 @@
 import { useState } from "preact/hooks";
+import { AddAction } from "../../../components/ui/AddAction";
 import { ListRow, type ListRowStatus } from "../../../components/ui/ListRow";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
 import type { StatusTone } from "../../../components/ui/StatusDot";
@@ -13,7 +14,6 @@ import {
   ConsoleResourceBoundary,
 } from "../components/ConsolePageTemplate";
 import {
-  DEFAULT_MODEL_LABEL,
   defaultModelLabelForConfig,
   modelConfigEntries,
   overrideConfigEntries,
@@ -68,6 +68,7 @@ function ConsoleConfigPanel({
   kind: ConsoleConfigKind;
 }) {
   const [selectedRowId, setSelectedRowId] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
   const rows = kind === "models" ? modelRows(config) : overrideRows(config);
   const title = kind === "models" ? "MODELS" : "OVERRIDES";
   const modelCount = kind === "models" ? modelConfigEntries(config).length : 0;
@@ -76,6 +77,15 @@ function ConsoleConfigPanel({
     ? `${modelCount} MODEL ${modelCount === 1 ? "SETTING" : "SETTINGS"}`
     : `${overrideCount} CONFIG ${overrideCount === 1 ? "ENTRY" : "ENTRIES"}`;
   const selectedRow = selectedRowId ? rows.find((row) => row.id === selectedRowId) ?? null : null;
+
+  if (creating) {
+    return (
+      <ConfigCreatePanel
+        kind={kind}
+        onBack={() => setCreating(false)}
+      />
+    );
+  }
 
   if (selectedRow) {
     return (
@@ -103,12 +113,53 @@ function ConsoleConfigPanel({
               tag={row.tag?.label}
               tagTone={row.tag?.tone}
               chevron
-              onClick={() => setSelectedRowId(row.id)}
+              onClick={() => {
+                setCreating(false);
+                setSelectedRowId(row.id);
+              }}
             />
           </div>
         ))}
+        {kind === "models" ? (
+          <div class="gsv-console-config-list-add">
+            <AddAction
+              label="NEW MODEL"
+              onClick={() => {
+                setSelectedRowId(null);
+                setCreating(true);
+              }}
+            />
+          </div>
+        ) : null}
       </div>
     </section>
+  );
+}
+
+function ConfigCreatePanel({
+  kind,
+  onBack,
+}: {
+  kind: ConsoleConfigKind;
+  onBack: () => void;
+}) {
+  const isModel = kind === "models";
+
+  return (
+    <ConsoleDetailPage
+      icon={isModel ? "stars" : "cog"}
+      title={isModel ? "NEW MODEL" : "NEW CONFIG"}
+      typeLabel={`GSV · ${isModel ? "MODEL" : "CONFIG"}`}
+      statusLabel="DRAFT"
+      tone="idle"
+      blurb={isModel
+        ? "Model creation is reserved for the live gateway model configuration form."
+        : "Configuration creation is reserved for the live gateway override form."}
+      parentLabel={isModel ? "MODELS" : "OVERRIDES"}
+      pendingLabel="FORM PLACEHOLDER"
+      primaryLabel={isModel ? "CREATE MODEL" : "CREATE CONFIG"}
+      onBack={onBack}
+    />
   );
 }
 
@@ -197,14 +248,13 @@ function modelRows(config: readonly ConsoleConfigEntry[]): ConfigRow[] {
   }
 
   return [{
-    id: "gateway-default-model",
+    id: "no-live-model-config",
     icon: "stars",
-    label: DEFAULT_MODEL_LABEL,
-    sub: "No model override is configured; gateway defaults apply.",
-    statusLabel: "DEFAULT",
+    label: "NO LIVE MODEL CONFIG",
+    sub: "Gateway did not return model configuration entries.",
+    statusLabel: "EMPTY",
     tone: "idle",
-    detailBlurb: "No model override is currently returned by the gateway. The displayed model is inferred from the application default.",
-    tag: { label: "INFERRED", tone: "idle" },
+    detailBlurb: "No model configuration entries are currently returned by the gateway.",
   }];
 }
 
