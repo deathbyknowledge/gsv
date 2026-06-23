@@ -20,6 +20,213 @@
   }
 }
 
+.gsv-chat {
+  position: relative;
+  z-index: 35;
+  flex: none;
+  min-width: 380px;
+  max-width: calc(100vw - 64px);
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--border);
+  background: #070612;
+  box-shadow: -22px 0 60px rgba(0, 0, 0, 0.5);
+  transition: width 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.gsv-chat.is-dragging {
+  transition: none;
+}
+
+.gsv-chat-resize {
+  position: absolute;
+  z-index: 60;
+  left: -3px;
+  top: 0;
+  bottom: 0;
+  width: 7px;
+  cursor: ew-resize;
+  background: transparent;
+}
+
+.gsv-chat-resize:hover,
+.gsv-chat.is-dragging .gsv-chat-resize {
+  background: rgba(150, 140, 255, 0.4);
+}
+
+.gsv-chat-head {
+  min-height: 74px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 14px 13px;
+  border-bottom: 1px solid var(--border);
+  background: var(--node-bg);
+}
+
+.gsv-chat-agent {
+  min-width: 0;
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 11px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.gsv-chat-agent img {
+  width: 38px;
+  height: 38px;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+.gsv-chat-agent span {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  text-align: left;
+}
+
+.gsv-chat-agent strong {
+  color: var(--text-hi);
+  font-family: var(--gsv-font-prose);
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.01em;
+}
+
+.gsv-chat-agent small {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #b6b1ff;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.gsv-chat-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gsv-chat-actions button {
+  width: 31px;
+  height: 31px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--label);
+}
+
+.gsv-chat-actions button:hover,
+.gsv-chat-actions button:focus-visible {
+  border-color: var(--accent);
+  color: var(--text-hi);
+}
+
+.gsv-chat-transcript {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow: auto;
+  padding: 18px 14px;
+}
+
+.gsv-chat-empty {
+  max-width: 260px;
+  display: grid;
+  gap: 8px;
+  margin: auto;
+  color: var(--text-dim);
+  text-align: center;
+}
+
+.gsv-chat-empty strong {
+  color: var(--text);
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.gsv-chat-empty span {
+  font-family: var(--gsv-font-prose);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.gsv-chat .gsv-mi {
+  border-top: 1px solid var(--border);
+}
+
+.gsv-chat-min {
+  position: absolute;
+  z-index: 40;
+  right: 24px;
+  bottom: 20px;
+  min-width: 238px;
+  min-height: 62px;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 10px 16px 10px 11px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--node-bg);
+  color: var(--text-hi);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+}
+
+.gsv-chat-min:hover,
+.gsv-chat-min:focus-visible {
+  border-color: var(--dashed);
+  box-shadow: 0 0 22px rgba(150, 140, 255, 0.28), 0 12px 32px rgba(0, 0, 0, 0.55);
+}
+
+.gsv-chat-min-copy {
+  flex: 1;
+  display: grid;
+  gap: 5px;
+  text-align: left;
+}
+
+.gsv-chat-min strong {
+  color: #f3f5fb;
+  font-family: var(--gsv-font-prose);
+  font-size: 16px;
+  line-height: 1;
+}
+
+.gsv-chat-min small {
+  color: var(--accent-bright);
+  font-size: 11px;
+  font-style: italic;
+  letter-spacing: 0.02em;
+}
+
+.gsv-chat-min small i {
+  display: inline-block;
+  width: 6px;
+  height: 11px;
+  margin-left: 5px;
+  background: var(--accent-bright);
+  vertical-align: -1px;
+  opacity: 0.72;
+}
+
 .gsv-shell-root .gsv-chat {
   background: #070612;
   box-shadow: -18px 0 52px rgba(0, 0, 0, 0.52);
@@ -1268,5 +1475,28 @@
 
   .gsv-chat-hil-actions button {
     width: 100%;
+  }
+}
+
+@media (max-width: 760px) {
+  .gsv-chat {
+    width: 100% !important;
+    max-width: none;
+    min-width: 0;
+    height: min(var(--gsv-chat-width), calc(100% - 240px));
+    min-height: min(300px, 48%);
+    max-height: calc(100% - 220px);
+    border-top: 1px solid var(--border);
+    border-left: 0;
+  }
+
+  .gsv-chat-resize {
+    top: -3px;
+    right: 0;
+    bottom: auto;
+    left: 0;
+    width: auto;
+    height: 7px;
+    cursor: ns-resize;
   }
 }
