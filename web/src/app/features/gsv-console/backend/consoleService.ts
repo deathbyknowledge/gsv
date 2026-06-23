@@ -69,6 +69,25 @@ export type SaveConsoleAgentBehaviorResult = {
   ok: true;
 };
 
+export type CreateMachineNodeTokenInput = {
+  deviceId: string;
+  label?: string;
+  expiresAt?: number | null;
+};
+
+export type IssuedMachineNodeToken = {
+  tokenId: string;
+  token: string;
+  tokenPrefix: string;
+  uid: number;
+  kind: "node";
+  label: string | null;
+  allowedRole: "driver" | null;
+  allowedDeviceId: string | null;
+  createdAt: number;
+  expiresAt: number | null;
+};
+
 export type LoadConsoleOverviewOptions = {
   adapters?: readonly string[];
   includeConfig?: boolean;
@@ -210,6 +229,38 @@ export async function saveConsoleAgentBehavior(
   await saveAgentBehaviorConfig(client, uid, input, { includeEmpty: true });
 
   return { ok: true };
+}
+
+export async function createMachineNodeToken(
+  client: Pick<GSVClient, "sys">,
+  input: CreateMachineNodeTokenInput,
+): Promise<IssuedMachineNodeToken> {
+  const deviceId = input.deviceId.trim();
+  if (!deviceId) {
+    throw new Error("device id is required");
+  }
+
+  const label = input.label?.trim();
+  const result = await client.sys.token.create({
+    kind: "node",
+    allowedRole: "driver",
+    allowedDeviceId: deviceId,
+    ...(label ? { label } : {}),
+    ...(typeof input.expiresAt === "number" ? { expiresAt: input.expiresAt } : {}),
+  });
+
+  return {
+    tokenId: result.token.tokenId,
+    token: result.token.token,
+    tokenPrefix: result.token.tokenPrefix,
+    uid: result.token.uid,
+    kind: "node",
+    label: result.token.label,
+    allowedRole: result.token.allowedRole === "driver" ? "driver" : null,
+    allowedDeviceId: result.token.allowedDeviceId,
+    createdAt: result.token.createdAt,
+    expiresAt: result.token.expiresAt,
+  };
 }
 
 export async function loadConsoleAdapterAccounts(

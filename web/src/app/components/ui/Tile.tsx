@@ -11,6 +11,9 @@ export interface TileProps {
   status?: TileStatus;
   selected?: boolean;
   anchor?: boolean;
+  iconSrc?: string;
+  iconTitle?: string;
+  iconSize?: number;
   onClick?: () => void;
 }
 
@@ -41,6 +44,9 @@ export function Tile({
   status = "online",
   selected = false,
   anchor = false,
+  iconSrc,
+  iconTitle,
+  iconSize = 32,
   onClick,
 }: TileProps) {
   const dc = STATUS_VAR[status] ?? STATUS_VAR.online;
@@ -107,6 +113,14 @@ export function Tile({
   }
 
   const iconColor = selected ? "var(--text-hi)" : "var(--node-label)";
+  const iconMaskStyle: JSX.CSSProperties | null = iconSrc
+    ? {
+        width: `${iconSize}px`,
+        height: `${iconSize}px`,
+        WebkitMaskImage: `url(${iconSrc})`,
+        maskImage: `url(${iconSrc})`,
+      }
+    : null;
   const tileSkin: JSX.CSSProperties = selected
     ? {
         background: "rgba(150,140,255,.15)",
@@ -138,11 +152,21 @@ export function Tile({
       >
         <span style={dotStyle} />
         <span style={{ display: "flex", color: iconColor }}>
-          <Icon
-            name={GLYPH_ICON[glyph] ?? GLYPH_ICON.machines}
-            size={32}
-            dotMatrix={16}
-          />
+          {iconMaskStyle ? (
+            <span
+              class="gsv-icon"
+              role="img"
+              aria-label={iconTitle ?? labelText}
+              style={iconMaskStyle}
+            />
+          ) : (
+            <Icon
+              name={GLYPH_ICON[glyph] ?? GLYPH_ICON.machines}
+              size={iconSize}
+              dotMatrix={16}
+              title={iconTitle ?? labelText}
+            />
+          )}
         </span>
       </div>
       <span style={{ fontSize: "11px", letterSpacing: ".16em", color: labelColor }}>{labelText}</span>

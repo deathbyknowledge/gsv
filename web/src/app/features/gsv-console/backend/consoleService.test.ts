@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  createMachineNodeToken,
   createConsoleAgent,
   loadConsoleAdapterAccounts,
   saveConsoleAgentBehavior,
@@ -31,6 +32,51 @@ function createMockClient(uid: number | string = 42) {
 }
 
 describe("console agent service", () => {
+  it("creates driver-scoped node tokens for machine provisioning", async () => {
+    const create = vi.fn(async () => ({
+      token: {
+        tokenId: "tok-1",
+        token: "secret-node-token",
+        tokenPrefix: "gsv_node",
+        uid: 42,
+        kind: "node",
+        label: "Studio Mac",
+        allowedRole: "driver",
+        allowedDeviceId: "studio-mac",
+        createdAt: 1_700_000_000,
+        expiresAt: 1_700_086_400,
+      },
+    }));
+
+    await expect(createMachineNodeToken({
+      sys: {
+        token: { create },
+      },
+    } as any, {
+      deviceId: "studio-mac",
+      label: "Studio Mac",
+      expiresAt: 1_700_086_400,
+    })).resolves.toEqual({
+      tokenId: "tok-1",
+      token: "secret-node-token",
+      tokenPrefix: "gsv_node",
+      uid: 42,
+      kind: "node",
+      label: "Studio Mac",
+      allowedRole: "driver",
+      allowedDeviceId: "studio-mac",
+      createdAt: 1_700_000_000,
+      expiresAt: 1_700_086_400,
+    });
+    expect(create).toHaveBeenCalledWith({
+      kind: "node",
+      allowedRole: "driver",
+      allowedDeviceId: "studio-mac",
+      label: "Studio Mac",
+      expiresAt: 1_700_086_400,
+    });
+  });
+
   it("loads adapter accounts from adapter discovery", async () => {
     const call = vi.fn(async (syscall: string) => {
       expect(syscall).toBe("adapter.list");

@@ -1,0 +1,313 @@
+.machine-provision {
+  min-height: 100%;
+  display: grid;
+  place-items: start center;
+  padding: clamp(18px, 3vw, 34px);
+  color: var(--text);
+  font-family: var(--gsv-font-mono);
+}
+
+.machine-provision-shell {
+  width: min(760px, 100%);
+  display: grid;
+  gap: 18px;
+}
+
+.machine-provision-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 15px;
+}
+
+.machine-provision-head > div {
+  min-width: 0;
+}
+
+.machine-provision-kicker {
+  display: block;
+  margin-bottom: 7px;
+  color: var(--accent);
+  font-size: 9px;
+  letter-spacing: 0.18em;
+}
+
+.machine-provision-head h2 {
+  margin: 0;
+  color: var(--text-hi);
+  font-size: clamp(21px, 3vw, 32px);
+  line-height: 1;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.machine-provision-head p {
+  margin: 10px 0 0;
+  max-width: 62ch;
+  color: var(--label);
+  font-family: var(--gsv-font-prose);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.machine-provision-stepper {
+  display: flex;
+  justify-content: center;
+  padding: 2px 0 4px;
+}
+
+.machine-provision-stepper .gsv-sp,
+.machine-provision-stepper .gsv-sp-step {
+  pointer-events: none;
+}
+
+.machine-provision-card {
+  padding: 0;
+  overflow: hidden;
+}
+
+.machine-card-body {
+  display: grid;
+  gap: 18px;
+  padding: 22px;
+}
+
+.machine-card-copy {
+  margin: 0;
+  color: var(--label);
+  font-family: var(--gsv-font-prose);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.machine-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 16px 20px 20px;
+  border-top: 1px solid var(--rule-inner);
+}
+
+.machine-platform-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+  align-items: start;
+  justify-items: center;
+}
+
+.machine-platform-tile-button {
+  width: 100%;
+  min-height: 176px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 11px;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-family: var(--gsv-font-mono);
+  padding: 0;
+  text-align: center;
+  cursor: pointer;
+}
+
+.machine-platform-tile-button:hover .gsv-tile,
+.machine-platform-tile-button:focus-visible .gsv-tile {
+  border-color: var(--accent);
+  transform: translateY(-2px);
+}
+
+.machine-platform-tile-button:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 7px;
+}
+
+.machine-platform-meta {
+  min-height: 34px;
+  color: var(--label);
+  font-family: var(--gsv-font-prose);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.machine-detail-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+}
+
+.machine-detail-grid > :last-child {
+  grid-column: 1 / -1;
+  max-width: 260px;
+}
+
+.machine-detail-summary {
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel-2) 100%, #ffffff 4%);
+}
+
+.machine-command {
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+}
+
+.machine-command header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--rule-inner);
+  background: color-mix(in srgb, var(--header-bar) 82%, transparent);
+}
+
+.machine-command header > div {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.machine-command header span {
+  color: var(--text-title);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+}
+
+.machine-command header small {
+  color: var(--text-dim);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+}
+
+.machine-command pre {
+  margin: 0;
+  min-height: 92px;
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: 14px;
+  color: var(--text);
+  font-family: var(--gsv-font-mono);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.machine-copy-button {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  appearance: none;
+  border: 1px solid var(--border-raised);
+  background: var(--active);
+  color: var(--accent-bright);
+  font: inherit;
+  font-family: var(--gsv-font-mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  padding: 7px 10px;
+  cursor: pointer;
+}
+
+.machine-copy-button:hover,
+.machine-copy-button:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  color: var(--text-hi);
+}
+
+.machine-issue-token,
+.machine-waiting,
+.machine-inline-error,
+.machine-inline-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel-2) 100%, #ffffff 4%);
+  padding: 14px;
+}
+
+.machine-issue-token > div {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.machine-issue-token strong {
+  color: var(--text-title);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+}
+
+.machine-issue-token span {
+  color: var(--label);
+  font-family: var(--gsv-font-prose);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.machine-inline-error {
+  border-color: color-mix(in srgb, var(--error) 55%, var(--border));
+  color: var(--error);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+.machine-inline-info,
+.machine-waiting {
+  color: var(--label);
+  font-family: var(--gsv-font-prose);
+  font-size: 12px;
+}
+
+.machine-success-mark {
+  width: 56px;
+  height: 56px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--online);
+  background: color-mix(in srgb, var(--online) 9%, var(--panel));
+  color: var(--online);
+  box-shadow: 0 0 20px rgba(94, 242, 160, 0.2);
+}
+
+.machine-card-body h3 {
+  margin: 0;
+  color: var(--text-hi);
+  font-size: 20px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+@media (max-width: 760px) {
+  .machine-provision {
+    padding: 14px;
+  }
+
+  .machine-provision-head {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .machine-provision-head > span:last-child {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+
+  .machine-platform-grid,
+  .machine-detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .machine-card-actions {
+    flex-direction: column-reverse;
+  }
+
+  .machine-card-actions .gsv-btn {
+    width: 100%;
+  }
+}
