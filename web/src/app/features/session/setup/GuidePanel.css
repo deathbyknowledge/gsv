@@ -22,8 +22,33 @@
 /* Head */
 .gsv-guide-head {
   display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+.gsv-guide-head-text {
+  display: flex;
   flex-direction: column;
   gap: 7px;
+}
+.gsv-guide-close {
+  appearance: none;
+  flex: none;
+  margin: -4px -4px 0 0;
+  padding: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  color: #6a6498;
+  cursor: pointer;
+  transition: color 0.12s;
+}
+.gsv-guide-close:hover,
+.gsv-guide-close:focus-visible {
+  color: #16132e;
+  outline: none;
 }
 .gsv-guide-kicker {
   margin: 0;
@@ -55,27 +80,6 @@
   gap: 10px;
   max-height: 320px;
   overflow-y: auto;
-}
-
-.gsv-guide-empty {
-  padding: 16px 18px;
-  background: #f7f6fc;
-  border: 1px solid #d8d5ee;
-}
-.gsv-guide-empty strong {
-  display: block;
-  font-family: var(--gsv-font-prose);
-  font-size: 13px;
-  font-weight: 600;
-  color: #16132e;
-  margin-bottom: 6px;
-}
-.gsv-guide-empty p {
-  margin: 0;
-  font-family: var(--gsv-font-prose);
-  font-size: 12.5px;
-  line-height: 1.5;
-  color: #4b4670;
 }
 
 .gsv-guide-msg {
