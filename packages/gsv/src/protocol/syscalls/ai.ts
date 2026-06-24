@@ -58,6 +58,7 @@ export type AiConfigResult = {
   };
   skillIndex?: AiSkillIndexEntry[];
   accountApprovalPolicy?: string | null;
+  capabilities: string[];
   maxContextBytes: number;
   generationTimeoutMs: number;
   generationStreaming?: "auto" | "off";

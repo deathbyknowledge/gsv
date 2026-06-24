@@ -181,6 +181,7 @@ import {
   redactProcessAiConfigSnapshot,
 } from "./ai-config";
 import { runProcessSqlMigrations } from "./schema/migrations";
+import { hasCapability } from "../kernel/capabilities";
 
 type RunState = {
   runId: string;
@@ -4040,6 +4041,7 @@ export class Process extends Host<Env> {
     args: Record<string, unknown>,
   ): Promise<unknown> {
     if (call === NET_FETCH) {
+      await this.requireCodeModeCapability(null, NET_FETCH);
       return this.performCodeModeFetch(args);
     }
     return this.executeCodeModeCommandSyscall(call, args);
@@ -4054,6 +4056,7 @@ export class Process extends Host<Env> {
     if (await this.handleRunStopped(runId)) {
       throw new Error("Run stopped before CodeMode fetch completed");
     }
+    await this.requireCodeModeCapability(runId, NET_FETCH);
 
     const toolCallId = `codemode-${crypto.randomUUID()}`;
     const toolName = "Fetch";
@@ -4130,6 +4133,29 @@ export class Process extends Host<Env> {
 
   private async performCodeModeFetch(args: Record<string, unknown>): Promise<unknown> {
     return performCodeModeFetch(args);
+  }
+
+  private async requireCodeModeCapability(runId: string | null, capability: string): Promise<void> {
+    const capabilities = await this.resolveCodeModeCapabilities(runId);
+    if (!hasCapability(capabilities, capability)) {
+      throw new Error(`Permission denied: ${capability}`);
+    }
+  }
+
+  private async resolveCodeModeCapabilities(runId: string | null): Promise<string[]> {
+    const run = runId !== null && this.currentRun?.runId === runId
+      ? this.currentRun
+      : null;
+    if (run?.config?.capabilities) {
+      return run.config.capabilities;
+    }
+
+    const config = await this.resolveAiConfig();
+    if (run) {
+      run.config = config;
+      this.currentRun = run;
+    }
+    return config.capabilities;
   }
 
   private async executeCodeModeSyscall(

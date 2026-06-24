@@ -288,7 +288,7 @@ describe("handleAiTools", () => {
 describe("handleAiConfig", () => {
   function makeAiConfigContext(
     config: Record<string, string> = {},
-    options: { uid?: number; processId?: string; ownerUid?: number } = {},
+    options: { uid?: number; processId?: string; ownerUid?: number; capabilities?: string[] } = {},
   ): KernelContext {
     const uid = options.uid ?? 1000;
     const ownerUid = options.ownerUid ?? uid;
@@ -303,7 +303,7 @@ describe("handleAiConfig", () => {
           home: uid === 2000 ? "/home/friday" : "/home/sam",
           cwd: uid === 2000 ? "/home/friday" : "/home/sam",
         },
-        capabilities: ["*"],
+        capabilities: options.capabilities ?? ["*"],
       },
       config: {
         get: vi.fn((key: string) => config[key] ?? null),
@@ -346,6 +346,14 @@ describe("handleAiConfig", () => {
     await expect(handleAiConfig({}, makeAiConfigContext({
       "config/ai/generation/streaming": "invalid",
     }))).resolves.toMatchObject({ generationStreaming: "auto" });
+  });
+
+  it("returns the resolved process capabilities", async () => {
+    const result = await handleAiConfig({}, makeAiConfigContext({}, {
+      capabilities: ["codemode.run", "net.fetch"],
+    }));
+
+    expect(result.capabilities).toEqual(["codemode.run", "net.fetch"]);
   });
 
   it("falls back to the owning human's AI config for agent processes", async () => {
