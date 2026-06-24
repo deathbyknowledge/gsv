@@ -8,6 +8,7 @@ import {
   type ShellSurfaceId,
 } from "../../gsv-shell/domain/shellModel";
 import type { ConsoleListKind, ConsoleListSelection, PackageListKind } from "../domain/consoleListTypes";
+import { IntegrationsPage } from "../integrations/IntegrationsPage";
 import { MachinesPage } from "../machines/MachinesPage";
 import { MessengersPage } from "../messengers/MessengersPage";
 import { PackageListPage } from "../packages/PackageListPage";
@@ -31,7 +32,7 @@ type SettingsListSurface = "machines" | "messengers" | "integrations" | "applica
 export type SettingsRouteTarget = "overview" | "crew" | "tasks" | "models" | "overrides";
 
 function isPackageSettingsKind(kind: ConsoleListKind): kind is PackageListKind {
-  return kind === "library" || kind === "integrations" || kind === "applications";
+  return kind === "library" || kind === "applications";
 }
 
 function surfaceTail(surface: ShellSurfaceId): string {
@@ -197,6 +198,9 @@ export function GsvConsole({
     if (kind === "messengers") {
       return <MessengersPage {...options} />;
     }
+    if (kind === "integrations") {
+      return <IntegrationsPage {...options} />;
+    }
     if (isPackageSettingsKind(kind)) {
       return <PackageListPage {...options} kind={kind} onOpenApp={onOpenApp} />;
     }
@@ -322,7 +326,7 @@ export function GsvConsole({
         ) : activeSurface === "messengers" ? (
           <MessengersPage />
         ) : activeSurface === "integrations" ? (
-          <PackageListPage kind="integrations" onOpenApp={onOpenApp} />
+          <IntegrationsPage />
         ) : activeSurface === "applications" ? (
           <PackageListPage kind="applications" onOpenApp={onOpenApp} />
         ) : activeSurface === "library" ? (

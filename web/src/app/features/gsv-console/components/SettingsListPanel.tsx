@@ -33,6 +33,7 @@ type SettingsListPanelProps = {
   rows: readonly SettingsListRow[];
   emptyLabel: string;
   action?: SettingsListAction;
+  fitContent?: boolean;
 };
 
 function SettingsListRowView({ row }: { row: SettingsListRow }) {
@@ -67,9 +68,10 @@ export function SettingsListPanel({
   rows,
   emptyLabel,
   action,
+  fitContent = false,
 }: SettingsListPanelProps) {
   return (
-    <section class="gsv-console-settings-list">
+    <section class={`gsv-console-settings-list${fitContent ? " is-fit-content" : ""}`}>
       <SectionHeader title={title} meta={meta} divider />
       <div class="gsv-console-settings-list-body">
         {rows.length === 0 ? (

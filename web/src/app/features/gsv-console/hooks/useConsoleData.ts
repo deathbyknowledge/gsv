@@ -2,18 +2,28 @@ import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tan
 import { useEffect, useMemo } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import {
+  addConsoleMcpServer,
+  connectConsoleAdapter,
   createMachineNodeToken,
   createConsoleAgent,
+  disconnectConsoleAdapter,
+  loadConsoleAdapters,
   loadConsoleAgentContext,
   loadConsoleAccounts,
   loadConsoleAdapterAccounts,
   loadConsoleConfig,
+  loadConsoleMcpServers,
   loadConsoleOverview,
   loadConsolePackages,
   loadConsoleProcesses,
   loadConsoleTargets,
+  refreshConsoleMcpServer,
+  removeConsoleMcpServer,
   saveConsoleAgentBehavior,
   saveConsoleAgentContext,
+  type AddConsoleMcpServerInput,
+  type ConnectConsoleAdapterInput,
+  type ConnectConsoleAdapterResult,
   type CreateMachineNodeTokenInput,
   type CreateConsoleAgentInput,
   type CreateConsoleAgentResult,
@@ -28,8 +38,10 @@ import {
 import { summarizeConsoleOverview } from "../domain/consoleNormalization";
 import type {
   ConsoleAccount,
+  ConsoleAdapter,
   ConsoleAdapterAccount,
   ConsoleConfigEntry,
+  ConsoleMcpServer,
   ConsoleOverviewCounts,
   ConsoleOverviewData,
   ConsolePackage,
@@ -44,6 +56,8 @@ export const consoleTargetsQueryKey = ["devices", "gsv-console"] as const;
 export const consolePackagesQueryKey = ["packages", "gsv-console"] as const;
 export const consoleAccountsQueryKey = ["accounts", "gsv-console"] as const;
 export const consoleAdaptersQueryKey = ["adapters", "gsv-console"] as const;
+export const consoleAdapterInventoryQueryKey = ["adapter-inventory", "gsv-console"] as const;
+export const consoleMcpServersQueryKey = ["mcp-servers", "gsv-console"] as const;
 export const consoleConfigQueryKey = ["gsv-console", "config"] as const;
 export const consoleAgentContextQueryKey = ["gsv-console", "agent-context"] as const;
 
@@ -58,6 +72,7 @@ const CONSOLE_OVERVIEW_SIGNALS = new Set([
   "device.status",
   "pkg.changed",
   "adapter.status",
+  "mcp.changed",
 ]);
 
 export function useConsoleOverview(options: ConsoleOverviewHookOptions = {}) {
@@ -174,6 +189,39 @@ export function useConsoleAdapters(options: ConsoleQueryOptions & { adapters?: r
   };
 }
 
+export function useConsoleAdapterInventory(options: ConsoleQueryOptions & { adapters?: readonly string[] } = {}) {
+  const { client, connected } = useGateway();
+  const adapters = options.adapters;
+  const enabled = connected && (options.enabled ?? true);
+  const query = useQuery<ConsoleAdapter[]>({
+    queryKey: [...consoleAdapterInventoryQueryKey, { adapters: adapters ? [...adapters] : "discover" }],
+    enabled,
+    queryFn: () => loadConsoleAdapters(client, adapters),
+  });
+
+  return {
+    ...query,
+    adapters: query.data ?? [],
+    resource: toResourceState(query, enabled, isArrayEmpty),
+  };
+}
+
+export function useConsoleMcpServers(options: ConsoleQueryOptions = {}) {
+  const { client, connected } = useGateway();
+  const enabled = connected && (options.enabled ?? true);
+  const query = useQuery<ConsoleMcpServer[]>({
+    queryKey: consoleMcpServersQueryKey,
+    enabled,
+    queryFn: () => loadConsoleMcpServers(client),
+  });
+
+  return {
+    ...query,
+    servers: query.data ?? [],
+    resource: toResourceState(query, enabled, isArrayEmpty),
+  };
+}
+
 export function useConsoleConfig(options: ConsoleQueryOptions = {}) {
   const { client, connected } = useGateway();
   const enabled = connected && (options.enabled ?? true);
@@ -217,6 +265,83 @@ export function useCreateConsoleAgent() {
         queryClient.invalidateQueries({ queryKey: consoleAccountsQueryKey }),
         queryClient.invalidateQueries({ queryKey: consoleAgentContextQueryKey }),
         queryClient.invalidateQueries({ queryKey: consoleConfigQueryKey }),
+        queryClient.invalidateQueries({ queryKey: consoleOverviewQueryKey }),
+      ]);
+    },
+  });
+}
+
+export function useConnectConsoleAdapter() {
+  const { client } = useGateway();
+  const queryClient = useQueryClient();
+
+  return useMutation<ConnectConsoleAdapterResult, Error, ConnectConsoleAdapterInput>({
+    mutationFn: (input) => connectConsoleAdapter(client, input),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: consoleAdaptersQueryKey }),
+        queryClient.invalidateQueries({ queryKey: consoleAdapterInventoryQueryKey }),
+        queryClient.invalidateQueries({ queryKey: consoleOverviewQueryKey }),
+      ]);
+    },
+  });
+}
+
+export function useDisconnectConsoleAdapter() {
+  const { client } = useGateway();
+  const queryClient = useQueryClient();
+
+  return useMutation<{ ok: boolean; message: string; error: string }, Error, { adapter: string; accountId: string }>({
+    mutationFn: (input) => disconnectConsoleAdapter(client, input),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: consoleAdaptersQueryKey }),
+        queryClient.invalidateQueries({ queryKey: consoleAdapterInventoryQueryKey }),
+        queryClient.invalidateQueries({ queryKey: consoleOverviewQueryKey }),
+      ]);
+    },
+  });
+}
+
+export function useAddConsoleMcpServer() {
+  const { client } = useGateway();
+  const queryClient = useQueryClient();
+
+  return useMutation<ConsoleMcpServer, Error, AddConsoleMcpServerInput>({
+    mutationFn: (input) => addConsoleMcpServer(client, input),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: consoleMcpServersQueryKey }),
+        queryClient.invalidateQueries({ queryKey: consoleOverviewQueryKey }),
+      ]);
+    },
+  });
+}
+
+export function useRefreshConsoleMcpServer() {
+  const { client } = useGateway();
+  const queryClient = useQueryClient();
+
+  return useMutation<ConsoleMcpServer | null, Error, string>({
+    mutationFn: (serverId) => refreshConsoleMcpServer(client, serverId),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: consoleMcpServersQueryKey }),
+        queryClient.invalidateQueries({ queryKey: consoleOverviewQueryKey }),
+      ]);
+    },
+  });
+}
+
+export function useRemoveConsoleMcpServer() {
+  const { client } = useGateway();
+  const queryClient = useQueryClient();
+
+  return useMutation<{ removed: boolean }, Error, string>({
+    mutationFn: (serverId) => removeConsoleMcpServer(client, serverId),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: consoleMcpServersQueryKey }),
         queryClient.invalidateQueries({ queryKey: consoleOverviewQueryKey }),
       ]);
     },
@@ -291,7 +416,9 @@ function isOverviewEmpty(value: ConsoleOverviewData): boolean {
     && value.targets.length === 0
     && value.packages.length === 0
     && value.accounts.length === 0
+    && value.adapterInventory.length === 0
     && value.adapters.length === 0
+    && value.mcpServers.length === 0
     && value.config.length === 0;
 }
 

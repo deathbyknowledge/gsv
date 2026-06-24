@@ -12,7 +12,6 @@ import type { ConsolePackage } from "../domain/consoleModels";
 
 export function iconForPackage(pkg: ConsolePackage, kind: PackageListKind): string {
   if (isApplicationPackage(pkg)) return "rss";
-  if (kind === "integrations") return "weblink";
   if (pkg.runtime === "web-ui") return "stars";
   if (pkg.runtime === "node") return "terminal";
   return "pencil";
@@ -22,9 +21,6 @@ export function filterPackagesForKind(packages: readonly ConsolePackage[], kind:
   const visiblePackages = packages.filter((pkg) => !isNativeConsolePackage(pkg));
   if (kind === "applications") {
     return visiblePackages.filter(isApplicationPackage);
-  }
-  if (kind === "integrations") {
-    return visiblePackages.filter((pkg) => !isApplicationPackage(pkg));
   }
   return [...visiblePackages];
 }
@@ -39,13 +35,11 @@ function isNativeConsolePackage(pkg: ConsolePackage): boolean {
 
 export function packageListTitle(kind: PackageListKind): string {
   if (kind === "applications") return "APPLICATIONS";
-  if (kind === "integrations") return "INTEGRATIONS";
   return "LIBRARY";
 }
 
 export function packageListNoun(kind: PackageListKind): string {
   if (kind === "applications") return "APPLICATION";
-  if (kind === "integrations") return "INTEGRATION";
   return "PACKAGE";
 }
 

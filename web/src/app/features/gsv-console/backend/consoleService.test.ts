@@ -3,6 +3,7 @@ import {
   createMachineNodeToken,
   createConsoleAgent,
   loadConsoleAdapterAccounts,
+  loadConsoleAdapters,
   saveConsoleAgentBehavior,
 } from "./consoleService";
 
@@ -113,9 +114,38 @@ describe("console agent service", () => {
         mode: "websocket",
         lastActivity: 100,
         error: "",
+        extra: {},
       },
     ]);
     expect(call).toHaveBeenCalledWith("adapter.list", {});
+  });
+
+  it("loads deployed adapter inventory including empty account lists", async () => {
+    const call = vi.fn(async () => ({
+      adapters: [
+        {
+          adapter: "telegram",
+          available: true,
+          supportsConnect: true,
+          supportsSend: true,
+          accounts: [],
+        },
+      ],
+    }));
+
+    await expect(loadConsoleAdapters({ call } as any)).resolves.toEqual([
+      {
+        adapter: "telegram",
+        available: true,
+        supportsConnect: true,
+        supportsDisconnect: false,
+        supportsSend: true,
+        supportsStatus: false,
+        supportsShellExec: false,
+        supportsActivity: false,
+        accounts: [],
+      },
+    ]);
   });
 
   it("falls back to known adapter status calls when discovery is unavailable", async () => {
@@ -148,6 +178,7 @@ describe("console agent service", () => {
         mode: "gateway",
         lastActivity: null,
         error: "offline",
+        extra: {},
       },
     ]);
     expect(call).toHaveBeenCalledWith("adapter.status", { adapter: "whatsapp" });

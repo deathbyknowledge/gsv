@@ -1,0 +1,165 @@
+.gsv-messenger-onboarding {
+  min-height: 100%;
+  display: grid;
+  place-items: start center;
+  padding: clamp(18px, 3vw, 34px);
+}
+
+.gsv-messenger-onboarding-shell {
+  width: min(760px, 100%);
+  display: grid;
+  gap: 18px;
+}
+
+.gsv-messenger-onboarding-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 15px;
+}
+
+.gsv-messenger-onboarding-head > div {
+  min-width: 0;
+}
+
+.gsv-messenger-onboarding-kicker {
+  display: block;
+  margin-bottom: 7px;
+  color: var(--accent);
+  font-size: 9px;
+  letter-spacing: 0.18em;
+}
+
+.gsv-messenger-onboarding-head h2 {
+  margin: 0;
+  color: var(--text-hi);
+  font-size: clamp(21px, 3vw, 32px);
+  line-height: 1;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.gsv-messenger-onboarding-head p {
+  margin: 10px 0 0;
+  max-width: 62ch;
+  color: var(--label);
+  font-family: var(--gsv-font-prose);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.gsv-messenger-onboarding-stepper {
+  display: flex;
+  justify-content: center;
+  padding: 2px 0 4px;
+}
+
+.gsv-messenger-onboarding-stepper .gsv-sp,
+.gsv-messenger-onboarding-stepper .gsv-sp-step {
+  pointer-events: none;
+}
+
+.gsv-messenger-flow-panel {
+  display: grid;
+  gap: 22px;
+  padding: 0;
+  overflow: hidden;
+}
+
+.gsv-messenger-flow-panel > .gsv-messenger-form-grid,
+.gsv-messenger-flow-panel > .gsv-messenger-form-note,
+.gsv-messenger-flow-panel > .gsv-messenger-form-error,
+.gsv-messenger-flow-panel > .gsv-messenger-challenge,
+.gsv-messenger-flow-panel > p {
+  margin-inline: 22px;
+}
+
+.gsv-messenger-form-grid {
+  display: grid;
+  gap: 18px;
+}
+
+.gsv-messenger-form-grid .lr {
+  border: 1px solid var(--rule-inner) !important;
+  background: rgba(11, 8, 30, 0.48) !important;
+}
+
+.gsv-messenger-form-note,
+.gsv-messenger-form-error {
+  margin: 0;
+  font-family: var(--gsv-font-prose);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.gsv-messenger-form-note {
+  color: var(--online);
+}
+
+.gsv-messenger-form-error {
+  color: var(--error);
+}
+
+.gsv-messenger-challenge {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+}
+
+.gsv-messenger-challenge p,
+.gsv-messenger-challenge small {
+  margin: 0;
+  color: #9d96d8;
+  font-family: var(--gsv-font-prose);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.gsv-messenger-challenge img {
+  width: min(280px, 100%);
+  image-rendering: pixelated;
+  background: #fff;
+}
+
+.gsv-messenger-challenge pre {
+  max-width: 100%;
+  overflow: auto;
+  margin: 0;
+  padding: 14px;
+  border: 1px solid var(--rule-inner);
+  color: var(--text);
+  background: #08061d;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.gsv-messenger-flow-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px 20px;
+  border-top: 1px solid var(--rule-inner);
+}
+
+@media (max-width: 520px) {
+  .gsv-messenger-onboarding {
+    padding: 18px 14px;
+  }
+
+  .gsv-messenger-onboarding-head {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .gsv-messenger-onboarding-head > span:last-child {
+    grid-column: 2;
+  }
+
+  .gsv-messenger-flow-panel > .gsv-messenger-form-grid,
+  .gsv-messenger-flow-panel > .gsv-messenger-form-note,
+  .gsv-messenger-flow-panel > .gsv-messenger-form-error,
+  .gsv-messenger-flow-panel > .gsv-messenger-challenge,
+  .gsv-messenger-flow-panel > p {
+    margin-inline: 16px;
+  }
+}

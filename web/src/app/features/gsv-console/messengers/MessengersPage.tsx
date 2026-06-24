@@ -1,19 +1,27 @@
+import { useState } from "preact/hooks";
 import { SettingsListPanel } from "../components/SettingsListPanel";
 import {
   ConsolePage,
   ConsoleResourceBoundary,
 } from "../components/ConsolePageTemplate";
-import type { ConsoleListSelection } from "../domain/consoleListTypes";
-import type { ConsoleAdapterAccount, ConsoleResourceState } from "../domain/consoleModels";
-import { useConsoleAdapters } from "../hooks/useConsoleData";
+import {
+  NEW_DETAIL_ID,
+  type ConsoleListSelection,
+} from "../domain/consoleListTypes";
+import type { ConsoleAdapter, ConsoleAdapterAccount, ConsoleResourceState } from "../domain/consoleModels";
+import { useConsoleAdapterInventory } from "../hooks/useConsoleData";
 import { useConsoleListSelection } from "../hooks/useConsoleListSelection";
 import { MessengerDetailPage } from "./MessengerDetailPage";
+import { MessengerOnboardingFlow } from "./MessengerOnboardingFlow";
 import {
   adapterDetailId,
   adapterLabel,
+  adapterName,
   adapterSub,
   iconForAdapterName,
+  parseAdapterDetailId,
   statusForAdapter,
+  statusForAdapterFamily,
   toneForAdapter,
 } from "./messengerPresentation";
 
@@ -28,42 +36,78 @@ function resourceWithLocalEmptyState<T>(resource: ConsoleResourceState<T>): Cons
   return { ...resource, isEmpty: false };
 }
 
-function MessengersConsoleSection({
+function accountRows(adapter: ConsoleAdapter, onOpenDetail: (account: ConsoleAdapterAccount) => void) {
+  return adapter.accounts.map((account) => ({
+    id: adapterDetailId(account),
+    icon: iconForAdapterName(account.adapter),
+    label: adapterLabel(account),
+    sub: adapterSub(account),
+    tone: toneForAdapter(account),
+    statusLabel: statusForAdapter(account),
+    onOpen: () => onOpenDetail(account),
+  }));
+}
+
+function MessengersConsoleSections({
   adapters,
+  onOpenCreate,
   onOpenDetail,
   refreshing,
 }: {
-  adapters: readonly ConsoleAdapterAccount[];
+  adapters: readonly ConsoleAdapter[];
+  onOpenCreate: (adapter: ConsoleAdapter) => void;
   onOpenDetail: (adapter: ConsoleAdapterAccount) => void;
   refreshing: boolean;
 }) {
-  const connected = adapters.filter((adapter) => adapter.connected && adapter.authenticated && !adapter.error);
-
   return (
-    <SettingsListPanel
-      title="MESSENGERS"
-      meta={refreshing ? "REFRESHING" : `${connected.length}/${adapters.length} CONNECTED`}
-      emptyLabel="NO MESSENGERS"
-      rows={adapters.map((adapter) => ({
-        id: adapterDetailId(adapter),
-        icon: iconForAdapterName(adapter.adapter),
-        label: adapterLabel(adapter),
-        sub: adapterSub(adapter),
-        tone: toneForAdapter(adapter),
-        statusLabel: statusForAdapter(adapter),
-        onOpen: () => onOpenDetail(adapter),
-      }))}
-    />
+    <>
+      {adapters.length === 0 ? (
+        <SettingsListPanel
+          title="MESSENGERS"
+          meta={refreshing ? "REFRESHING" : "0 ADAPTERS"}
+          emptyLabel="NO ADAPTER WORKERS"
+          rows={[]}
+        />
+      ) : adapters.map((adapter) => {
+        const connected = adapter.accounts.filter((account) => account.connected && account.authenticated && !account.error).length;
+        const meta = !adapter.available
+          ? statusForAdapterFamily(adapter)
+          : adapter.accounts.length === 0
+            ? "READY"
+            : `${connected}/${adapter.accounts.length} CONNECTED`;
+        return (
+          <SettingsListPanel
+            key={adapter.adapter}
+            fitContent
+            title={adapterName(adapter.adapter).toUpperCase()}
+            meta={refreshing ? "REFRESHING" : meta}
+            emptyLabel={`NO ${adapterName(adapter.adapter).toUpperCase()} ACCOUNTS`}
+            rows={accountRows(adapter, onOpenDetail)}
+            action={adapter.available && adapter.supportsConnect
+              ? { label: `CONNECT ${adapterName(adapter.adapter).toUpperCase()}`, onClick: () => onOpenCreate(adapter) }
+              : adapter.available
+                ? { label: "CONNECT UNSUPPORTED" }
+                : { label: "ADAPTER UNAVAILABLE" }}
+          />
+        );
+      })}
+    </>
   );
 }
 
 function renderMessengerDetail(
-  adapters: readonly ConsoleAdapterAccount[],
+  adapters: readonly ConsoleAdapter[],
   id: string,
   onBack: () => void,
+  onReconnect: (account: ConsoleAdapterAccount) => void,
 ) {
-  const adapter = adapters.find((entry) => adapterDetailId(entry) === id);
-  return adapter ? <MessengerDetailPage adapter={adapter} onBack={onBack} /> : null;
+  const parsed = parseAdapterDetailId(id);
+  const account = parsed
+    ? adapters
+      .find((entry) => entry.adapter === parsed.adapter)
+      ?.accounts.find((entry) => entry.accountId === parsed.accountId) ?? null
+    : null;
+  return account ? <MessengerDetailPage adapter={account} onBack={onBack} onReconnect={onReconnect} /> : null;
 }
 
 export function MessengersPage({
@@ -72,7 +116,9 @@ export function MessengersPage({
   initialDetailLabel = null,
   onSelectionChange,
 }: MessengersPageProps) {
-  const adapters = useConsoleAdapters({ enabled: true });
+  const adapters = useConsoleAdapterInventory({ enabled: true });
+  const [preferredAdapter, setPreferredAdapter] = useState<string | null>(null);
+  const [preferredAccount, setPreferredAccount] = useState<string | null>(null);
   const { selectedDetail, selectDetail } = useConsoleListSelection({
     initialCreate,
     initialDetailId,
@@ -88,18 +134,40 @@ export function MessengersPage({
         emptyLabel="NO MESSENGERS"
         errorLabel="MESSENGERS"
         render={(data) => (
-          selectedDetail?.kind === "messengers"
-            ? renderMessengerDetail(data, selectedDetail.id, () => selectDetail(null)) ?? (
-              <MessengersConsoleSection
+          selectedDetail?.kind === "messengers" && selectedDetail.createNew ? (
+            <MessengerOnboardingFlow
+              adapters={data}
+              initialAccountId={preferredAccount}
+              initialAdapter={preferredAdapter}
+              onBack={() => selectDetail(null)}
+              onConnected={(id) => selectDetail({ kind: "messengers", id })}
+            />
+          ) : selectedDetail?.kind === "messengers" && selectedDetail.id !== NEW_DETAIL_ID
+            ? renderMessengerDetail(data, selectedDetail.id, () => selectDetail(null), (account) => {
+              setPreferredAdapter(account.adapter);
+              setPreferredAccount(account.accountId);
+              selectDetail({ kind: "messengers", id: NEW_DETAIL_ID, createNew: true, label: `Reconnect ${adapterName(account.adapter)} · ${account.accountId}` });
+            }) ?? (
+              <MessengersConsoleSections
                 adapters={data}
-                onOpenDetail={(adapter) => selectDetail({ kind: "messengers", id: adapterDetailId(adapter), label: adapterLabel(adapter) })}
+                onOpenCreate={(adapter) => {
+                  setPreferredAdapter(adapter.adapter);
+                  setPreferredAccount(null);
+                  selectDetail({ kind: "messengers", id: NEW_DETAIL_ID, createNew: true, label: `New ${adapterName(adapter.adapter)}` });
+                }}
+                onOpenDetail={(adapter) => selectDetail({ kind: "messengers", id: adapterDetailId(adapter), label: `${adapterName(adapter.adapter)} · ${adapterLabel(adapter)}` })}
                 refreshing={adapters.resource.isRefreshing}
               />
             )
             : (
-              <MessengersConsoleSection
+              <MessengersConsoleSections
                 adapters={data}
-                onOpenDetail={(adapter) => selectDetail({ kind: "messengers", id: adapterDetailId(adapter), label: adapterLabel(adapter) })}
+                onOpenCreate={(adapter) => {
+                  setPreferredAdapter(adapter.adapter);
+                  setPreferredAccount(null);
+                  selectDetail({ kind: "messengers", id: NEW_DETAIL_ID, createNew: true, label: `New ${adapterName(adapter.adapter)}` });
+                }}
+                onOpenDetail={(adapter) => selectDetail({ kind: "messengers", id: adapterDetailId(adapter), label: `${adapterName(adapter.adapter)} · ${adapterLabel(adapter)}` })}
                 refreshing={adapters.resource.isRefreshing}
               />
             )

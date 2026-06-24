@@ -87,6 +87,56 @@ export type ConsoleAdapterAccount = {
   mode: string;
   lastActivity: number | null;
   error: string;
+  extra: Record<string, unknown>;
+};
+
+export type ConsoleAdapter = {
+  adapter: string;
+  available: boolean;
+  supportsConnect: boolean;
+  supportsDisconnect: boolean;
+  supportsSend: boolean;
+  supportsStatus: boolean;
+  supportsShellExec: boolean;
+  supportsActivity: boolean;
+  accounts: ConsoleAdapterAccount[];
+};
+
+export type ConsoleMcpTransport = "auto" | "streamable-http" | "sse" | "unknown";
+
+export type ConsoleMcpConnectionState =
+  | "not-connected"
+  | "authenticating"
+  | "connecting"
+  | "connected"
+  | "discovering"
+  | "ready"
+  | "failed"
+  | "unknown";
+
+export type ConsoleMcpTool = {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown> | null;
+  outputSchema: Record<string, unknown> | null;
+};
+
+export type ConsoleMcpServer = {
+  serverId: string;
+  uid: number | null;
+  name: string;
+  url: string;
+  transport: ConsoleMcpTransport;
+  state: ConsoleMcpConnectionState;
+  authUrl: string;
+  error: string;
+  instructions: string;
+  capabilities: Record<string, unknown> | null;
+  tools: ConsoleMcpTool[];
+  resourceCount: number;
+  promptCount: number;
+  createdAt: number | null;
+  updatedAt: number | null;
 };
 
 export type ConsoleConfigEntry = {
@@ -101,7 +151,9 @@ export type ConsoleOverviewData = {
   targets: ConsoleTarget[];
   packages: ConsolePackage[];
   accounts: ConsoleAccount[];
+  adapterInventory: ConsoleAdapter[];
   adapters: ConsoleAdapterAccount[];
+  mcpServers: ConsoleMcpServer[];
   config: ConsoleConfigEntry[];
 };
 
@@ -116,8 +168,12 @@ export type ConsoleOverviewCounts = {
   reviewPendingPackages: number;
   accounts: number;
   runnableAccounts: number;
+  adapters: number;
+  availableAdapters: number;
   adapterAccounts: number;
   connectedAdapterAccounts: number;
+  mcpServers: number;
+  readyMcpServers: number;
   configEntries: number;
 };
 

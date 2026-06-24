@@ -8,6 +8,11 @@
     0 0 30px rgba(80, 70, 180, 0.1);
 }
 
+.gsv-console-settings-list.is-fit-content {
+  flex: 0 0 auto;
+  min-height: 0;
+}
+
 .gsv-console-settings-list-body {
   display: grid;
 }

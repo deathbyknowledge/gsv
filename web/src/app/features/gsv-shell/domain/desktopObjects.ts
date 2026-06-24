@@ -1,5 +1,6 @@
 import type {
   ConsoleAdapterAccount,
+  ConsoleMcpServer,
   ConsoleOverviewData,
   ConsolePackage,
   ConsoleTarget,
@@ -63,8 +64,8 @@ const SPECS: Record<DesktopObjectId, DesktopObjectSpec> = {
     id: "integrations",
     label: "INTEGRATIONS",
     glyph: "integrations",
-    singular: "service package",
-    plural: "service packages",
+    singular: "MCP server",
+    plural: "MCP servers",
     x: 26,
     y: 70,
   },
@@ -87,7 +88,7 @@ const KNOWN_TOKEN_LABELS: Record<string, string> = {
 };
 
 export function buildDesktopObjectsFromConsole(data: ConsoleOverviewData | null | undefined): DesktopObject[] {
-  const packageBranches = classifyPackages(safeArray(data?.packages));
+  const applicationChildren = classifyApplications(safeArray(data?.packages));
   const branches: Record<DesktopObjectId, DesktopObjectBranch> = {
     machines: {
       id: "machines",
@@ -102,11 +103,13 @@ export function buildDesktopObjectsFromConsole(data: ConsoleOverviewData | null 
     },
     integrations: {
       id: "integrations",
-      children: packageBranches.integrations,
+      children: safeArray(data?.mcpServers)
+        .map(mcpServerToChild)
+        .sort(compareChildren),
     },
     applications: {
       id: "applications",
-      children: packageBranches.applications,
+      children: applicationChildren,
     },
   };
 
@@ -192,6 +195,29 @@ function packageToChild(pkg: ConsolePackage, branchId: PackageBranchId): Desktop
   };
 }
 
+function mcpServerToChild(server: ConsoleMcpServer): DesktopChildObject {
+  const status = mcpServerStatus(server);
+
+  return {
+    id: stableId("integration", [server.serverId], server.name),
+    label: firstNonEmpty(server.name, server.serverId) ?? "Unnamed MCP server",
+    type: "INTEGRATION · MCP",
+    blurb: firstNonEmpty(
+      server.error,
+      server.url,
+      `${server.tools.length} tool${server.tools.length === 1 ? "" : "s"} available.`,
+      server.serverId,
+    ) ?? "MCP server.",
+    status: status.status,
+    statusLabel: status.label,
+    glyph: "integrations",
+    route: {
+      kind: "integrations",
+      detailId: server.serverId,
+    },
+  };
+}
+
 function statusForChildren(children: readonly DesktopChildObject[]): ShellStatus {
   const summary = summarizeStatuses(children);
   if (summary.error > 0) {
@@ -235,23 +261,20 @@ function statusLabelForChildren(children: readonly DesktopChildObject[]): string
   return `${summary.total} IDLE`;
 }
 
-function classifyPackages(packages: readonly ConsolePackage[]): Record<PackageBranchId, DesktopChildObject[]> {
-  const branches: Record<PackageBranchId, DesktopChildObject[]> = {
-    integrations: [],
-    applications: [],
-  };
+function classifyApplications(packages: readonly ConsolePackage[]): DesktopChildObject[] {
+  const children: DesktopChildObject[] = [];
 
   for (const pkg of packages) {
     if (isNativeConsolePackage(pkg)) {
       continue;
     }
-    const branchId = isApplicationPackage(pkg) ? "applications" : "integrations";
-    branches[branchId].push(packageToChild(pkg, branchId));
+    if (isApplicationPackage(pkg)) {
+      children.push(packageToChild(pkg, "applications"));
+    }
   }
 
-  branches.integrations.sort(compareChildren);
-  branches.applications.sort(compareChildren);
-  return branches;
+  children.sort(compareChildren);
+  return children;
 }
 
 function isMachineTarget(target: ConsoleTarget): boolean {
@@ -292,6 +315,22 @@ function packageStatus(pkg: ConsolePackage): { status: ShellStatus; label: strin
     return { status: "warn", label: "UNKNOWN" };
   }
   return { status: "online", label: "ENABLED" };
+}
+
+function mcpServerStatus(server: ConsoleMcpServer): { status: ShellStatus; label: string } {
+  if (server.state === "failed" || firstNonEmpty(server.error)) {
+    return { status: "error", label: "ERROR" };
+  }
+  if (server.state === "authenticating") {
+    return { status: "warn", label: "SIGN-IN" };
+  }
+  if (server.state === "connecting" || server.state === "connected" || server.state === "discovering") {
+    return { status: "warn", label: "CHECK" };
+  }
+  if (server.state === "ready") {
+    return { status: "online", label: "READY" };
+  }
+  return { status: "idle", label: "IDLE" };
 }
 
 function appRouteForPackage(pkg: ConsolePackage): ShellAppRoute | undefined {

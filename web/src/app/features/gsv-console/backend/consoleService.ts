@@ -2,16 +2,21 @@ import type { GSVClient } from "@humansandmachines/gsv/client";
 import {
   buildConsoleOverviewData,
   normalizeAccountsPayload,
+  normalizeAdapterInventoryPayload,
   normalizeAdapterPayload,
   normalizeConfigPayload,
+  normalizeMcpServersPayload,
   normalizePackagesPayload,
   normalizeProcessesPayload,
   normalizeTargetsPayload,
 } from "../domain/consoleNormalization";
 import type {
   ConsoleAccount,
+  ConsoleAdapter,
   ConsoleAdapterAccount,
   ConsoleConfigEntry,
+  ConsoleMcpServer,
+  ConsoleMcpTransport,
   ConsoleOverviewData,
   ConsolePackage,
   ConsoleProcess,
@@ -73,6 +78,35 @@ export type CreateMachineNodeTokenInput = {
   deviceId: string;
   label?: string;
   expiresAt?: number | null;
+};
+
+export type ConnectConsoleAdapterInput = {
+  adapter: string;
+  accountId: string;
+  config?: Record<string, unknown>;
+};
+
+export type ConnectConsoleAdapterResult = {
+  ok: boolean;
+  adapter: string;
+  accountId: string;
+  connected: boolean;
+  authenticated: boolean;
+  message: string;
+  error: string;
+  challenge: {
+    type: string;
+    message: string;
+    data: string;
+    expiresAt: number | null;
+  } | null;
+};
+
+export type AddConsoleMcpServerInput = {
+  name: string;
+  url: string;
+  transport: ConsoleMcpTransport;
+  headers?: Record<string, string>;
 };
 
 export type IssuedMachineNodeToken = {
@@ -271,6 +305,127 @@ export async function loadConsoleAdapterAccounts(
   return payloads.flatMap((payload) => normalizeAdapterPayload(payload));
 }
 
+export async function loadConsoleAdapters(
+  client: Pick<GSVClient, "call">,
+  adapters?: readonly string[],
+): Promise<ConsoleAdapter[]> {
+  const payloads = await loadAdapterPayloads(client, adapters);
+  return payloads.flatMap((payload) => normalizeAdapterInventoryPayload(payload));
+}
+
+export async function connectConsoleAdapter(
+  client: Pick<GSVClient, "call">,
+  input: ConnectConsoleAdapterInput,
+): Promise<ConnectConsoleAdapterResult> {
+  const adapter = input.adapter.trim();
+  const accountId = input.accountId.trim();
+  if (!adapter) {
+    throw new Error("adapter is required");
+  }
+  if (!accountId) {
+    throw new Error("account id is required");
+  }
+
+  const result = await client.call("adapter.connect", {
+    adapter,
+    accountId,
+    ...(input.config && Object.keys(input.config).length > 0 ? { config: input.config } : {}),
+  }) as Record<string, unknown>;
+  const ok = result.ok === true;
+  const challenge = normalizeAdapterChallenge(result.challenge);
+  return {
+    ok,
+    adapter: stringOr(adapter, result.adapter),
+    accountId: stringOr(accountId, result.accountId),
+    connected: result.connected === true,
+    authenticated: result.authenticated === true,
+    message: stringOr(ok ? "Connected" : "Connection failed", result.message),
+    error: stringOr("", result.error),
+    challenge,
+  };
+}
+
+export async function disconnectConsoleAdapter(
+  client: Pick<GSVClient, "call">,
+  input: { adapter: string; accountId: string },
+): Promise<{ ok: boolean; message: string; error: string }> {
+  const adapter = input.adapter.trim();
+  const accountId = input.accountId.trim();
+  if (!adapter) {
+    throw new Error("adapter is required");
+  }
+  if (!accountId) {
+    throw new Error("account id is required");
+  }
+
+  const result = await client.call("adapter.disconnect", { adapter, accountId }) as Record<string, unknown>;
+  return {
+    ok: result.ok === true,
+    message: stringOr(result.ok === true ? "Disconnected" : "Disconnect failed", result.message),
+    error: stringOr("", result.error),
+  };
+}
+
+export async function loadConsoleMcpServers(client: Pick<GSVClient, "call">): Promise<ConsoleMcpServer[]> {
+  return normalizeMcpServersPayload(await client.call("sys.mcp.list", {}));
+}
+
+export async function addConsoleMcpServer(
+  client: Pick<GSVClient, "call">,
+  input: AddConsoleMcpServerInput,
+): Promise<ConsoleMcpServer> {
+  const name = input.name.trim();
+  const url = input.url.trim();
+  if (!name) {
+    throw new Error("name is required");
+  }
+  if (!url) {
+    throw new Error("url is required");
+  }
+
+  const transport = input.transport === "streamable-http" || input.transport === "sse" ? input.transport : "auto";
+  const callbackHost = typeof window === "undefined" ? undefined : window.location.origin;
+  const result = await client.call("sys.mcp.add", {
+    name,
+    url,
+    ...(callbackHost ? { callbackHost } : {}),
+    transport: {
+      type: transport,
+      ...(input.headers && Object.keys(input.headers).length > 0 ? { headers: input.headers } : {}),
+    },
+  }) as Record<string, unknown>;
+  const servers = normalizeMcpServersPayload({ servers: [result.server] });
+  const server = servers[0];
+  if (!server) {
+    throw new Error("MCP server response was invalid");
+  }
+  return server;
+}
+
+export async function refreshConsoleMcpServer(
+  client: Pick<GSVClient, "call">,
+  serverId: string,
+): Promise<ConsoleMcpServer | null> {
+  const id = serverId.trim();
+  if (!id) {
+    throw new Error("server id is required");
+  }
+  const result = await client.call("sys.mcp.refresh", { serverId: id }) as Record<string, unknown>;
+  return normalizeMcpServersPayload({ servers: result.server ? [result.server] : [] })[0] ?? null;
+}
+
+export async function removeConsoleMcpServer(
+  client: Pick<GSVClient, "call">,
+  serverId: string,
+): Promise<{ removed: boolean }> {
+  const id = serverId.trim();
+  if (!id) {
+    throw new Error("server id is required");
+  }
+  const result = await client.call("sys.mcp.remove", { serverId: id }) as Record<string, unknown>;
+  return { removed: result.removed === true };
+}
+
 export async function loadConsoleOverview(
   client: ConsoleClient,
   options: LoadConsoleOverviewOptions = {},
@@ -283,6 +438,7 @@ export async function loadConsoleOverview(
     packagesResult,
     accounts,
     adapterResults,
+    mcpServers,
     config,
   ] = await Promise.all([
     client.proc.list({}),
@@ -290,6 +446,7 @@ export async function loadConsoleOverview(
     client.pkg.list({}),
     client.account.list({}),
     loadAdapterPayloads(client, options.adapters),
+    loadOptionalPayload(() => client.call("sys.mcp.list", {})),
     includeConfig ? loadOptionalPayload(() => client.sys.config.get({})) : Promise.resolve({ entries: [] }),
   ]);
 
@@ -300,6 +457,7 @@ export async function loadConsoleOverview(
     packages: packagesResult,
     accounts,
     adapters: adapterResults,
+    mcpServers,
     config,
   });
 }
@@ -328,6 +486,27 @@ async function loadAdapterStatusPayloads(client: Pick<GSVClient, "call">, adapte
   );
 
   return settled.map((result) => result.status === "fulfilled" ? result.value : { accounts: [] });
+}
+
+function normalizeAdapterChallenge(value: unknown): ConnectConsoleAdapterResult["challenge"] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  const type = stringOr("", record.type);
+  if (!type) {
+    return null;
+  }
+  return {
+    type,
+    message: stringOr("", record.message),
+    data: stringOr("", record.data),
+    expiresAt: typeof record.expiresAt === "number" && Number.isFinite(record.expiresAt) ? record.expiresAt : null,
+  };
+}
+
+function stringOr(fallback: string, value: unknown): string {
+  return typeof value === "string" && value.trim().length > 0 ? value : fallback;
 }
 
 async function loadOptionalPayload(load: () => Promise<unknown>): Promise<unknown> {
