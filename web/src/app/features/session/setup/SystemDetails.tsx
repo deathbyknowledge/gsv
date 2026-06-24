@@ -100,6 +100,7 @@ export function SystemDetails({
         <div class="system-details-fields">
           <Select
             label="Timezone"
+            block
             options={options}
             value={timezoneIndex}
             onChange={(index) => updateDraft((current) => ({

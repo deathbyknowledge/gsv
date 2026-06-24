@@ -33,9 +33,6 @@
 }
 .gsv-login-error {
   margin: 0;
-  font-size: 10px;
-  letter-spacing: 0.1em;
-  color: var(--error);
 }
 
 /* Progressive-loading skeleton (shown while the session boots). */

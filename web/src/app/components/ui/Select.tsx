@@ -15,6 +15,8 @@ export interface SelectProps {
   size?: SelectSize;
   disabled?: boolean;
   width?: number;
+  /** Stretch to fill the container width (ignores `width`). */
+  block?: boolean;
   label?: string;
   info?: string;
   description?: string;
@@ -41,6 +43,7 @@ export function Select(props: SelectProps) {
     size = "medium",
     disabled = false,
     width = 300,
+    block = false,
     label = "",
     info = "",
     description = "",
@@ -174,7 +177,7 @@ export function Select(props: SelectProps) {
   };
 
   return (
-    <div class={fldClass} style={{ width: `${width}px`, maxWidth: "100%" }}>
+    <div class={fldClass} style={block ? { width: "100%" } : { width: `${width}px`, maxWidth: "100%" }}>
       {hasFldLabel ? (
         <div class="gsv-fld-lab">
           <span class="gsv-fld-lab-t" id={label.length > 0 ? labelId : undefined}>{label}</span>

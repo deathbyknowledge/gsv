@@ -1,4 +1,5 @@
 import { useState } from "preact/hooks";
+import { Alert } from "../../components/ui/Alert";
 import { SectionHeader } from "../../components/ui/SectionHeader";
 import { TextInput } from "../../components/ui/TextInput";
 import { Button } from "../../components/ui/Button";
@@ -104,9 +105,9 @@ export function LoginScreen({
               ) : null}
 
               {error ? (
-                <p class="gsv-login-error" role="alert">
-                  {error}
-                </p>
+                <div class="gsv-login-error" role="alert">
+                  <Alert variant="error" text={error} />
+                </div>
               ) : null}
 
               <div class="gsv-login-submit">
