@@ -10,7 +10,7 @@
  * Runtime reads are explicit SQLite overrides over code defaults.
  */
 
-import type { KernelContext } from "./context";
+import { resolveCallerOwnerUid, type KernelContext } from "./context";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type {
   AiToolsResult,
@@ -35,6 +35,7 @@ import {
   buildCodeModeMcpTypeDeclarations,
   type CodeModeMcpToolSource,
 } from "../codemode/mcp";
+import { hasCapability } from "./capabilities";
 
 import { FS_READ_DEFINITION } from "../syscalls/read";
 import { FS_WRITE_DEFINITION } from "../syscalls/write";
@@ -109,7 +110,9 @@ export async function handleAiTools(
 ): Promise<AiToolsResult> {
   const identity = ctx.identity!;
   const capabilities = identity.capabilities;
-  const uid = identity.process.uid;
+  const canUseMcpTools = hasCapability(capabilities, "sys.mcp.list")
+    && hasCapability(capabilities, "sys.mcp.call");
+  const mcpUid = resolveCallerOwnerUid(ctx);
 
   const onlineDevices: AiToolsDevice[] = [];
   const deviceIds: string[] = [];
@@ -132,7 +135,7 @@ export async function handleAiTools(
     if (isRoutableSyscall(syscall as SyscallName)) {
       tools.push(intoSyscallTool(baseDef, deviceIds));
     } else if (syscall === "codemode.exec") {
-      tools.push(withCodeModeMcpTypeHints(baseDef, ctx, uid));
+      tools.push(canUseMcpTools ? withCodeModeMcpTypeHints(baseDef, ctx, mcpUid) : baseDef);
     } else {
       tools.push(baseDef);
     }
@@ -141,7 +144,7 @@ export async function handleAiTools(
   return {
     tools,
     devices: onlineDevices,
-    mcpServers: listReadyMcpServerNames(ctx, uid),
+    mcpServers: canUseMcpTools ? listReadyMcpServerNames(ctx, mcpUid) : [],
   };
 }
 

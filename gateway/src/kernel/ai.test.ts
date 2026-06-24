@@ -51,31 +51,48 @@ function makeDevice(partial: Partial<DeviceRecord> & { device_id: string }): Dev
   };
 }
 
-function makeContext(connectionState: string): KernelContext {
+function makeContext(
+  connectionState: string,
+  options: {
+    uid?: number;
+    ownerUid?: number;
+    processId?: string;
+    capabilities?: string[];
+  } = {},
+): KernelContext {
+  const uid = options.uid ?? 1000;
+  const ownerUid = options.ownerUid ?? uid;
+  const mcpRecord = {
+    serverId: "server-1",
+    uid: ownerUid,
+    name: "Search",
+    createdAt: 1,
+    updatedAt: 2,
+  };
   return {
     identity: {
       role: "user",
       process: {
-        uid: 1000,
-        gid: 1000,
-        gids: [1000],
-        username: "sam",
-        home: "/home/sam",
-        cwd: "/home/sam",
+        uid,
+        gid: uid,
+        gids: [uid],
+        username: uid === 2000 ? "friday" : "sam",
+        home: uid === 2000 ? "/home/friday" : "/home/sam",
+        cwd: uid === 2000 ? "/home/friday" : "/home/sam",
       },
-      capabilities: ["*"],
+      capabilities: options.capabilities ?? ["*"],
+    },
+    processId: options.processId,
+    procs: {
+      getOwnerUid: vi.fn((processId: string) =>
+        processId === options.processId ? ownerUid : null
+      ),
     },
     devices: {
       listForUser: vi.fn(() => []),
     },
     mcpServers: {
-      list: vi.fn(() => [{
-        serverId: "server-1",
-        uid: 1000,
-        name: "Search",
-        createdAt: 1,
-        updatedAt: 2,
-      }]),
+      list: vi.fn((lookupUid?: number) => lookupUid === mcpRecord.uid ? [mcpRecord] : []),
     },
     mcp: {
       mcpConnections: {
@@ -160,6 +177,35 @@ describe("handleAiTools", () => {
     expect(codeModeTool?.description).toContain("declare function lookup");
     expect(codeModeTool?.description).toContain("type LookupOutput");
     expect(ctx.mcp.listTools).toHaveBeenCalledWith({ serverId: "server-1" });
+  });
+
+  it("advertises owner-owned MCP tools for service-account agent processes", async () => {
+    const ctx = makeContext("ready", {
+      uid: 2000,
+      ownerUid: 1000,
+      processId: "proc-agent",
+    });
+
+    const result = await handleAiTools(ctx);
+
+    expect(result.mcpServers).toEqual(["Search"]);
+    expect(ctx.mcpServers.list).toHaveBeenCalledWith(1000);
+    const codeModeTool = result.tools.find((tool) => tool.name === "CodeMode");
+    expect(codeModeTool?.description).toContain("declare function lookup");
+  });
+
+  it("does not advertise MCP tools without sys.mcp.call capability", async () => {
+    const ctx = makeContext("ready", {
+      capabilities: ["codemode.*"],
+    });
+
+    const result = await handleAiTools(ctx);
+
+    expect(result.mcpServers).toEqual([]);
+    expect(ctx.mcpServers.list).not.toHaveBeenCalled();
+    const codeModeTool = result.tools.find((tool) => tool.name === "CodeMode");
+    expect(codeModeTool).toBeTruthy();
+    expect(codeModeTool?.description).not.toContain("declare function lookup");
   });
 
   it("keeps the same boundary for non-ready MCP connections", async () => {
