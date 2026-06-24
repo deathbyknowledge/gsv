@@ -11,6 +11,7 @@ import icons from "./stories/Icons.story";
 import scrollbar from "./stories/Scrollbar.story";
 import button from "./stories/Button.story";
 import textInput from "./stories/TextInput.story";
+import search from "./stories/Search.story";
 import textArea from "./stories/TextArea.story";
 import select from "./stories/Select.story";
 import segmented from "./stories/Segmented.story";
@@ -66,6 +67,7 @@ const STORIES: Story[] = [
   // Forms
   button,
   textInput,
+  search,
   textArea,
   select,
   segmented,

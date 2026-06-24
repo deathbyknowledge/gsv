@@ -1,4 +1,4 @@
-import type { JSX } from "preact";
+import type { ComponentChildren, JSX } from "preact";
 import { useId, useState } from "preact/hooks";
 import { InfoTip } from "./InfoTip";
 import "./TextInput.css";
@@ -19,7 +19,9 @@ export interface TextInputProps {
   requirement?: TextInputRequirement;
   disabled?: boolean;
   readonly?: boolean;
-  prefix?: string;
+  /** Leading affix — a short string, or any node (e.g. an Icon) for callers
+   *  like Search that need a glyph. Rendered before the input. */
+  prefix?: ComponentChildren;
   suffix?: string;
   clearable?: boolean;
   type?: "text" | "password";
