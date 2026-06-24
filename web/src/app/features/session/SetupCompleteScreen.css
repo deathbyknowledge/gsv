@@ -9,11 +9,12 @@
    SetupScreen.css being loaded). Right-pinned inside the AuthLayout content. */
 .gsv-complete {
   box-sizing: border-box;
+  --complete-pad-x: 36px;
   width: min(560px, 92vw);
   max-height: calc(100% - 56px);
   overflow-x: hidden;
   overflow-y: auto;
-  padding: 32px 36px 0;
+  padding: 32px var(--complete-pad-x) 0;
   background: color-mix(in srgb, var(--panel) 100%, #ffffff 5%);
   border: 1px solid var(--border);
   box-shadow: 0 0 40px rgba(10, 6, 30, 0.5), 0 0 0 1px rgba(150, 140, 255, 0.04);
@@ -183,7 +184,7 @@
 /* Footer status bar — full-bleed strip flush to the panel edges, mirroring the
    design-system StatusBar look: green online indicator, then system readout. */
 .gsv-complete-statusbar {
-  margin: 6px -36px 0;
+  margin: 6px calc(var(--complete-pad-x) * -1) 0;
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
@@ -243,4 +244,33 @@
 .gsv-complete-status-link:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+/* Narrow screens: the three-segment readout can't fit on one line without
+   collapsing the system-files link, so let it wrap — system files gets its own
+   full-width row and the link wraps fully instead of truncating to nothing. */
+@media (max-width: 480px) {
+  .gsv-complete-statusbar {
+    flex-wrap: wrap;
+    gap: 6px 16px;
+    white-space: normal;
+  }
+  .gsv-complete-status-seg-grow {
+    flex: 1 1 100%;
+  }
+  .gsv-complete-status-seg-grow .gsv-complete-status-val {
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}
+
+/* Small phones: tighten the panel padding; the footer's full-bleed margin
+   follows --complete-pad-x so it stays flush to the edges. */
+@media (max-width: 380px) {
+  .gsv-complete {
+    --complete-pad-x: 20px;
+    padding-top: 24px;
+  }
 }

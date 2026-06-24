@@ -104,3 +104,18 @@
   line-height: 1.5;
   color: #9d98d4;
 }
+
+/* Narrow screens: stack label over value so long summaries (URLs, agent names)
+   wrap left-aligned instead of clipping against the right edge. */
+@media (max-width: 420px) {
+  .review-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 5px;
+  }
+  .review-row-v {
+    text-align: left;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}

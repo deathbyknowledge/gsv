@@ -18,6 +18,11 @@
   box-shadow: 0 0 40px rgba(10, 6, 30, 0.5), 0 0 0 1px rgba(150, 140, 255, 0.04);
   backdrop-filter: blur(3px);
 }
+@media (max-width: 380px) {
+  .gsv-setup-panel {
+    padding: 24px 18px;
+  }
+}
 
 .gsv-setup-form {
   display: flex;

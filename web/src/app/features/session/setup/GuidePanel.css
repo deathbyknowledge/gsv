@@ -28,6 +28,22 @@
   display: none;
 }
 
+/* Small screens: a floating corner box would cover the form and footer nav, so
+   dock it as a full-width bottom sheet instead. */
+@media (max-width: 480px) {
+  .gsv-guide-panel {
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    max-width: none;
+    max-height: 64vh;
+    border-left: 0;
+    border-right: 0;
+    border-bottom: 0;
+  }
+}
+
 /* Head */
 .gsv-guide-head {
   display: flex;

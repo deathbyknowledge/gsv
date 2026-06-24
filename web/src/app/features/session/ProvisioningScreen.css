@@ -21,6 +21,11 @@
   flex-direction: column;
   gap: 22px;
 }
+@media (max-width: 380px) {
+  .gsv-provision {
+    padding: 24px 18px;
+  }
+}
 
 /* Header — spinner + kicker/title/sub type (matches gsv-complete-head). */
 .gsv-provision-head {

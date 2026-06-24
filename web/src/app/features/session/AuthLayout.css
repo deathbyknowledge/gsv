@@ -25,12 +25,41 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  padding: 48px clamp(24px, 6vw, 96px);
+  padding: var(--gsv-auth-pad-y) var(--gsv-auth-pad-x);
 }
 
+/* Tablet / large phone: the wide Setup surface reserves a lot of room for the
+   galaxy (760px). As the viewport narrows, shrink that reserve step by step so
+   the panel keeps breathing room and the galaxy stays visible instead of
+   collapsing to a sliver before the center switch at 760px. */
+@media (max-width: 1100px) {
+  .gsv-auth-surface-setup {
+    --gsv-galaxy-reserve: 480px;
+  }
+}
+@media (max-width: 900px) {
+  .gsv-auth-content {
+    --gsv-auth-pad-x: clamp(20px, 5vw, 48px);
+  }
+  .gsv-auth-surface-setup {
+    --gsv-galaxy-reserve: 320px;
+  }
+}
+
+/* Below 760px the panel centers and the galaxy becomes a full-bleed backdrop
+   behind it (see AuthBackground.css). */
 @media (max-width: 760px) {
   .gsv-auth-content {
     justify-content: center;
-    padding: 32px 20px;
+    --gsv-auth-pad-y: 40px;
+    --gsv-auth-pad-x: 20px;
+  }
+}
+
+/* Small phones: tighten the gutter so the panel keeps as much width as possible. */
+@media (max-width: 380px) {
+  .gsv-auth-content {
+    --gsv-auth-pad-y: 28px;
+    --gsv-auth-pad-x: 14px;
   }
 }

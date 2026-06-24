@@ -41,7 +41,7 @@
   letter-spacing: 0.06em;
   line-height: 1.55;
   padding: 7px 10px;
-  max-width: 220px;
+  max-width: min(220px, calc(100vw - 40px));
   width: max-content;
   box-shadow: 0 8px 22px rgba(0, 0, 0, 0.55);
   opacity: 0;
