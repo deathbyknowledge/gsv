@@ -1,0 +1,124 @@
+/* Breadcrumbs — browsable path trail. Mono type, design tokens, border-box.
+   Labels ellipsize (overflow + text-overflow + min-width:0) so the trail never
+   hard-clips, mirroring the ConsoleHeader tail-truncation fix. */
+.gsv-bc {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  box-sizing: border-box;
+  font-family: var(--gsv-font-mono);
+}
+.gsv-bc * {
+  box-sizing: border-box;
+}
+
+/* Keep the back button from shrinking while the trail flexes. */
+.gsv-bc-back {
+  flex: none;
+  display: inline-flex;
+}
+
+.gsv-bc-list {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.gsv-bc-item {
+  display: flex;
+  align-items: center;
+  /* Allow each crumb to shrink so its label can ellipsize. */
+  min-width: 0;
+}
+
+/* Crumbs (button + static) share one base so hover/focus stay consistent. */
+.gsv-bc-crumb {
+  display: block;
+  max-width: 22ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  letter-spacing: 0.12em;
+  color: #9a95cf;
+  text-decoration: none;
+  cursor: default;
+}
+
+/* The clickable variants are <button>; reset native chrome + add affordance. */
+button.gsv-bc-crumb {
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  transition: color 0.12s;
+}
+button.gsv-bc-crumb:hover {
+  color: #cbc7ff;
+}
+button.gsv-bc-crumb:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  color: #cbc7ff;
+}
+
+/* Current page: brighter, static. */
+.gsv-bc-current {
+  color: var(--text-hi);
+  cursor: default;
+}
+
+/* Collapsed middle: never truncate the ellipsis itself. */
+.gsv-bc-ellipsis {
+  max-width: none;
+  letter-spacing: 0.16em;
+}
+
+/* Separator: dim, fixed. */
+.gsv-bc-sep {
+  flex: none;
+  color: var(--text-dim);
+  user-select: none;
+}
+
+/* Size scale — font-size + gap track the trail, like Segmented. */
+.gsv-bc-sm {
+  gap: 7px;
+}
+.gsv-bc-sm .gsv-bc-list {
+  gap: 7px;
+}
+.gsv-bc-sm .gsv-bc-crumb,
+.gsv-bc-sm .gsv-bc-sep {
+  font-size: 10px;
+}
+
+.gsv-bc-md {
+  gap: 10px;
+}
+.gsv-bc-md .gsv-bc-list {
+  gap: 9px;
+}
+.gsv-bc-md .gsv-bc-crumb,
+.gsv-bc-md .gsv-bc-sep {
+  font-size: 11px;
+}
+
+.gsv-bc-lg {
+  gap: 12px;
+}
+.gsv-bc-lg .gsv-bc-list {
+  gap: 11px;
+}
+.gsv-bc-lg .gsv-bc-crumb,
+.gsv-bc-lg .gsv-bc-sep {
+  font-size: 13px;
+}
