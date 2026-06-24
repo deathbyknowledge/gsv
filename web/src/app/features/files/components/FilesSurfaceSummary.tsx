@@ -296,12 +296,6 @@ function DirectoryBrowser({
         <div
           class="files-row-wrap"
           key={`${entry.kind}:${entry.path}`}
-          // ListRow has no dbl-click hook, so a FILE's double-click to open the
-          // preview is handled here on the wrapper (single-click stays select-only).
-          onDblClick={entry.kind === "file" ? () => {
-            selectEntry(index);
-            onOpenFile(entry.path);
-          } : undefined}
         >
           <ListRow
             className={`files-object-row${index === cursor ? " is-selected" : ""}`}
@@ -313,13 +307,12 @@ function DirectoryBrowser({
             tagTone={entry.kind === "directory" ? "accent" : "idle"}
             chevron
             style={COMPACT_ROW_STYLE}
-            // Directory: single-click navigates in. File: single-click only
-            // selects (highlight + toolbar DELETE); double-click (above) opens preview.
+            // Single-click selects the row AND opens it — directory navigates in,
+            // file opens in the preview tab. The selected file (highlight) keys the
+            // toolbar DELETE.
             onClick={() => {
               selectEntry(index);
-              if (entry.kind === "directory") {
-                onOpenDirectory(entry.path);
-              }
+              openEntry(index);
             }}
           />
           {entry.kind === "file" ? (

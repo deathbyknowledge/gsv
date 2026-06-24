@@ -608,15 +608,6 @@
   .files-editor-actions {
     justify-content: flex-start;
   }
-
-  /* Let the search take the row; CREATE NEW wraps beneath, left-aligned. */
-  .files-toolbar-search {
-    flex-basis: 100%;
-  }
-
-  .files-toolbar-row .files-toolbar-actions {
-    margin-left: 0;
-  }
 }
 
 @media (max-width: 680px) {
