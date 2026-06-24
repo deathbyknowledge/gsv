@@ -11,10 +11,11 @@ import {
 
 type MessengerDetailPageProps = {
   adapter: ConsoleAdapterAccount;
+  onReconnect?: (adapter: ConsoleAdapterAccount) => void;
   onBack: () => void;
 };
 
-export function MessengerDetailPage({ adapter, onBack }: MessengerDetailPageProps) {
+export function MessengerDetailPage({ adapter, onBack, onReconnect }: MessengerDetailPageProps) {
   return (
     <ConsoleDetailPage
       icon={iconForAdapterName(adapter.adapter)}
@@ -24,6 +25,8 @@ export function MessengerDetailPage({ adapter, onBack }: MessengerDetailPageProp
       tone={toneForAdapter(adapter)}
       blurb={adapter.error || adapterSub(adapter)}
       parentLabel="MESSENGERS"
+      primaryLabel="RECONNECT"
+      onPrimary={onReconnect ? () => onReconnect(adapter) : undefined}
       sections={adapterDetailSections(adapter)}
       onBack={onBack}
     />

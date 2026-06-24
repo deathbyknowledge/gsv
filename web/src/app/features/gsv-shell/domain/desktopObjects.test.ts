@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type {
+  ConsoleAdapter,
   ConsoleAdapterAccount,
+  ConsoleMcpServer,
   ConsoleOverviewData,
   ConsolePackage,
   ConsoleTarget,
@@ -30,6 +32,19 @@ const adapter: ConsoleAdapterAccount = {
   mode: "bot",
   lastActivity: 1_700_000_100,
   error: "",
+  extra: {},
+};
+
+const adapterInventory: ConsoleAdapter = {
+  adapter: "discord",
+  available: true,
+  supportsConnect: true,
+  supportsDisconnect: true,
+  supportsSend: true,
+  supportsStatus: true,
+  supportsShellExec: true,
+  supportsActivity: true,
+  accounts: [adapter],
 };
 
 const appPackage: ConsolePackage = {
@@ -79,6 +94,24 @@ const integrationPackage: ConsolePackage = {
   uiEntrypoints: [],
 };
 
+const mcpServer: ConsoleMcpServer = {
+  serverId: "custom-mcp",
+  uid: 1,
+  name: "Custom MCP",
+  url: "https://mcp.example.com/mcp",
+  transport: "streamable-http",
+  state: "ready",
+  authUrl: "",
+  error: "",
+  instructions: "",
+  capabilities: null,
+  tools: [],
+  resourceCount: 0,
+  promptCount: 0,
+  createdAt: 1_700_000_000,
+  updatedAt: 1_700_000_100,
+};
+
 const nativePackage: ConsolePackage = {
   ...appPackage,
   packageId: "@gsv/chat",
@@ -93,7 +126,9 @@ const overview: ConsoleOverviewData = {
   targets: [target],
   packages: [appPackage, integrationPackage, nativePackage],
   accounts: [],
+  adapterInventory: [adapterInventory],
   adapters: [adapter],
+  mcpServers: [mcpServer],
   config: [],
 };
 

@@ -7,19 +7,18 @@ type PackageCreatePlaceholderPageProps = {
 };
 
 export function PackageCreatePlaceholderPage({
-  kind,
   onBack,
 }: PackageCreatePlaceholderPageProps) {
-  const noun = kind === "integrations" ? "INTEGRATION" : "APPLICATION";
+  const noun = "APPLICATION";
   return (
     <ConsoleDetailPage
-      icon={kind === "integrations" ? "weblink" : "stars"}
+      icon="stars"
       title={`NEW ${noun}`}
       typeLabel={`GSV · ${noun}`}
       statusLabel="NOT CONFIGURED"
       tone="idle"
       blurb="Awaiting source selection and access configuration."
-      parentLabel={kind === "integrations" ? "INTEGRATIONS" : "APPLICATIONS"}
+      parentLabel="APPLICATIONS"
       pendingLabel="FORM PLACEHOLDER"
       primaryLabel={`CREATE ${noun}`}
       onBack={onBack}

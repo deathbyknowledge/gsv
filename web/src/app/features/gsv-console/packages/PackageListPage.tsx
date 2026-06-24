@@ -12,7 +12,6 @@ import type { ConsolePackage, ConsoleResourceState } from "../domain/consoleMode
 import { useConsolePackages } from "../hooks/useConsoleData";
 import { useConsoleListSelection } from "../hooks/useConsoleListSelection";
 import { ApplicationImportFlow } from "./ApplicationImportFlow";
-import { PackageCreatePlaceholderPage } from "./PackageCreatePlaceholderPage";
 import { PackageDetailPage } from "./PackageDetailPage";
 import {
   filterPackagesForKind,
@@ -39,7 +38,6 @@ function resourceWithLocalEmptyState<T>(resource: ConsoleResourceState<T>): Cons
 
 function packageErrorLabel(kind: PackageListKind): string {
   if (kind === "applications") return "APPLICATIONS";
-  if (kind === "integrations") return "INTEGRATIONS";
   return "LIBRARY";
 }
 
@@ -58,9 +56,7 @@ function PackageConsoleSection({
 }) {
   const title = packageListTitle(kind);
   const noun = packageListNoun(kind);
-  const action = kind === "integrations"
-    ? { label: "NEW INTEGRATION", onClick: onOpenCreate }
-    : kind === "applications"
+  const action = kind === "applications"
       ? { label: "NEW APPLICATION", onClick: onOpenCreate }
       : undefined;
 
@@ -132,10 +128,6 @@ export function PackageListPage({
               );
             }
 
-            if (selectedDetail.createNew && kind === "integrations") {
-              return <PackageCreatePlaceholderPage kind="integrations" onBack={() => selectDetail(null)} />;
-            }
-
             const detail = renderPackageDetail(scopedPackages, kind, selectedDetail.id, () => selectDetail(null), onOpenApp);
             if (detail) {
               return detail;
@@ -145,7 +137,7 @@ export function PackageListPage({
           return (
             <PackageConsoleSection
               kind={kind}
-              onOpenCreate={kind === "integrations" || kind === "applications"
+              onOpenCreate={kind === "applications"
                 ? () => selectDetail({ kind, id: NEW_DETAIL_ID, createNew: true })
                 : undefined}
               onOpenDetail={(pkg) => selectDetail({ kind, id: pkg.packageId, label: pkg.name })}

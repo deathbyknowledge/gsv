@@ -29,7 +29,7 @@ export function PackageDetailPage({
 
   return (
     <ConsoleDetailPage
-      icon={pkg.uiEntrypoints.length > 0 ? "stars" : kind === "integrations" ? "weblink" : "pencil"}
+      icon={pkg.uiEntrypoints.length > 0 ? "stars" : "pencil"}
       title={pkg.name}
       typeLabel={`GSV · ${noun}`}
       statusLabel={statusForPackage(pkg)}

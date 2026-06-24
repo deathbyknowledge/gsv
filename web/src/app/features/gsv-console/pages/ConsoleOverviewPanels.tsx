@@ -22,6 +22,7 @@ import type {
   ConsoleAccount,
   ConsoleAdapterAccount,
   ConsoleConfigEntry,
+  ConsoleMcpServer,
   ConsoleOverviewCounts,
   ConsoleOverviewData,
   ConsolePackage,
@@ -139,7 +140,7 @@ function adapterRow(adapter: ConsoleAdapterAccount): OverviewRow {
   const accountLabel = adapter.accountId.trim();
   return {
     id: `${adapter.adapter}:${adapter.accountId}`,
-    icon: adapter.adapter === "telegram" ? "telegram" : adapter.adapter === "discord" ? "discord" : "chat",
+    icon: adapter.adapter === "telegram" ? "telegram" : adapter.adapter === "discord" ? "discord" : adapter.adapter === "whatsapp" ? "messenger" : "chat",
     label: formatTokenLabel(adapter.adapter),
     meta: joinMeta([accountLabel, hasError ? adapter.error : undefined]),
     tone: connected ? "online" : hasError ? "error" : "idle",
@@ -147,14 +148,22 @@ function adapterRow(adapter: ConsoleAdapterAccount): OverviewRow {
   };
 }
 
-function integrationRow(pkg: ConsolePackage): OverviewRow {
-  const status = packageStatus(pkg);
+function integrationRow(server: ConsoleMcpServer): OverviewRow {
+  const failed = server.state === "failed" || server.error.trim().length > 0;
+  const active = server.state === "authenticating" || server.state === "connecting" || server.state === "connected" || server.state === "discovering";
+  const ready = server.state === "ready";
   return {
-    id: pkg.packageId,
-    label: pkg.name,
-    tone: status.tone,
-    statusLabel: pkg.reviewPending ? status.statusLabel : undefined,
-    tag: status.tag,
+    id: server.serverId,
+    icon: "weblink",
+    label: server.name,
+    meta: joinMeta([
+      server.tools.length ? `${server.tools.length} tools` : undefined,
+      server.resourceCount ? `${server.resourceCount} resources` : undefined,
+      server.error,
+    ]),
+    tone: failed ? "error" : ready ? "online" : active ? "warn" : "idle",
+    statusLabel: failed ? "ERROR" : active ? "CHECK" : ready ? undefined : "IDLE",
+    tag: server.state === "authenticating" ? { label: "SIGN-IN", tone: "warn" } : undefined,
   };
 }
 
@@ -216,6 +225,19 @@ function sortPackages(packages: readonly ConsolePackage[]): ConsolePackage[] {
   return [...packages].sort((left, right) => {
     if (left.reviewPending !== right.reviewPending) return left.reviewPending ? -1 : 1;
     if (left.enabled !== right.enabled) return left.enabled ? -1 : 1;
+    return left.name.localeCompare(right.name);
+  });
+}
+
+function sortMcpServers(servers: readonly ConsoleMcpServer[]): ConsoleMcpServer[] {
+  return [...servers].sort((left, right) => {
+    const leftError = left.state === "failed" || left.error.trim().length > 0;
+    const rightError = right.state === "failed" || right.error.trim().length > 0;
+    if (leftError !== rightError) return leftError ? -1 : 1;
+    if (left.state === "authenticating" && right.state !== "authenticating") return -1;
+    if (left.state !== "authenticating" && right.state === "authenticating") return 1;
+    if (left.state === "ready" && right.state !== "ready") return -1;
+    if (left.state !== "ready" && right.state === "ready") return 1;
     return left.name.localeCompare(right.name);
   });
 }
@@ -555,14 +577,14 @@ function ModelsTasksPanel({
 
 function FleetPanel({
   adapters,
-  integrationPackages,
+  integrations,
   onOpenListCreate,
   onOpenListDetail,
   onOpenSurface,
   targets,
 }: {
   adapters: readonly ConsoleAdapterAccount[];
-  integrationPackages: readonly ConsolePackage[];
+  integrations: readonly ConsoleMcpServer[];
   onOpenListCreate?: OpenListCreate;
   onOpenListDetail?: OpenListDetail;
   onOpenSurface?: OpenSurface;
@@ -570,7 +592,7 @@ function FleetPanel({
 }) {
   const targetRows = sortTargets(targets).map(targetRow);
   const adapterRows = sortAdapters(adapters).map(adapterRow);
-  const integrationRows = sortPackages(integrationPackages).map(integrationRow);
+  const integrationRows = sortMcpServers(integrations).map(integrationRow);
   const openList = (surface: ConsoleOverviewTarget) => onOpenSurface ? () => onOpenSurface(surface) : undefined;
   const openDetail = (kind: ConsoleListKind, row: OverviewRow, surface: ConsoleOverviewTarget) => (
     onOpenListDetail ? () => onOpenListDetail(kind, row.id, row.label) : openList(surface)
@@ -681,7 +703,6 @@ export function SettingsOverviewDashboard({
 }) {
   const visiblePackages = data.packages.filter((pkg) => !isNativeConsolePackage(pkg));
   const applications = visiblePackages.filter(isApplicationPackage);
-  const integrationPackages = visiblePackages.filter((pkg) => !isApplicationPackage(pkg));
   const [terminalBackground, setTerminalBackground] = useTerminalRunInBackgroundPreference();
 
   return (
@@ -705,7 +726,7 @@ export function SettingsOverviewDashboard({
       <div class="gsv-settings-right">
         <FleetPanel
           adapters={data.adapters}
-          integrationPackages={integrationPackages}
+          integrations={data.mcpServers}
           onOpenListCreate={onOpenListCreate}
           onOpenListDetail={onOpenListDetail}
           onOpenSurface={onOpenSurface}

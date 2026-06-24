@@ -1,8 +1,13 @@
 import type {
   ConsoleAccount,
   ConsoleAccountRelation,
+  ConsoleAdapter,
   ConsoleAdapterAccount,
   ConsoleConfigEntry,
+  ConsoleMcpConnectionState,
+  ConsoleMcpServer,
+  ConsoleMcpTool,
+  ConsoleMcpTransport,
   ConsoleOverviewCounts,
   ConsoleOverviewData,
   ConsolePackage,
@@ -76,6 +81,30 @@ export function normalizeAdapterPayload(payload: unknown, adapterFallback = ""):
   return normalizeAdapterStatusPayload(payload, adapterFallback);
 }
 
+export function normalizeAdapterInventoryPayload(payload: unknown, adapterFallback = ""): ConsoleAdapter[] {
+  const record = asRecord(payload);
+  const adapters = asArray(record?.adapters);
+  const rows = adapters.length > 0
+    ? adapters.map((adapter) => normalizeAdapterEntry(adapter, ""))
+    : [normalizeAdapterEntry(payload, adapterFallback)];
+
+  return rows
+    .filter((entry): entry is ConsoleAdapter => entry !== null)
+    .sort((left, right) => adapterRank(left.adapter) - adapterRank(right.adapter) || left.adapter.localeCompare(right.adapter));
+}
+
+export function normalizeMcpServersPayload(payload: unknown): ConsoleMcpServer[] {
+  const record = asRecord(payload);
+  return asArray(record?.servers)
+    .map(normalizeMcpServer)
+    .filter((entry): entry is ConsoleMcpServer => entry !== null)
+    .sort((left, right) => {
+      const leftRank = mcpStateRank(left.state);
+      const rightRank = mcpStateRank(right.state);
+      return leftRank - rightRank || left.name.localeCompare(right.name);
+    });
+}
+
 export function normalizeConfigPayload(payload: unknown): ConsoleConfigEntry[] {
   const record = asRecord(payload);
   return asArray(record?.entries)
@@ -90,16 +119,20 @@ export function buildConsoleOverviewData(input: {
   packages: unknown;
   accounts: unknown;
   adapters: unknown[];
+  mcpServers: unknown;
   config: unknown;
   loadedAt?: number;
 }): ConsoleOverviewData {
+  const adapterInventory = input.adapters.flatMap((payload) => normalizeAdapterInventoryPayload(payload));
   return {
     loadedAt: input.loadedAt ?? Date.now(),
     processes: normalizeProcessesPayload(input.processes),
     targets: normalizeTargetsPayload(input.targets),
     packages: normalizePackagesPayload(input.packages),
     accounts: normalizeAccountsPayload(input.accounts),
-    adapters: input.adapters.flatMap((payload) => normalizeAdapterPayload(payload)),
+    adapterInventory,
+    adapters: adapterInventory.flatMap((adapter) => adapter.accounts),
+    mcpServers: normalizeMcpServersPayload(input.mcpServers),
     config: normalizeConfigPayload(input.config),
   };
 }
@@ -116,8 +149,12 @@ export function summarizeConsoleOverview(data: ConsoleOverviewData): ConsoleOver
     reviewPendingPackages: data.packages.filter((entry) => entry.reviewPending).length,
     accounts: data.accounts.length,
     runnableAccounts: data.accounts.filter((entry) => entry.runnable).length,
+    adapters: data.adapterInventory.length,
+    availableAdapters: data.adapterInventory.filter((entry) => entry.available).length,
     adapterAccounts: data.adapters.length,
     connectedAdapterAccounts: data.adapters.filter((entry) => entry.connected).length,
+    mcpServers: data.mcpServers.length,
+    readyMcpServers: data.mcpServers.filter((entry) => entry.state === "ready").length,
     configEntries: data.config.length,
   };
 }
@@ -264,6 +301,75 @@ function normalizeAdapterAccount(value: unknown, adapter: string): ConsoleAdapte
     mode: stringOrEmpty(record.mode),
     lastActivity: numberOrNull(record.lastActivity),
     error: stringOrEmpty(record.error),
+    extra: asRecord(record.extra) ?? {},
+  };
+}
+
+function normalizeAdapterEntry(value: unknown, adapterFallback: string): ConsoleAdapter | null {
+  const record = asRecord(value);
+  const adapter = nonEmptyString(record?.adapter) ?? adapterFallback;
+  if (!record || !adapter) {
+    return null;
+  }
+
+  const accounts = asArray(record.accounts)
+    .map((account) => normalizeAdapterAccount(account, adapter))
+    .filter((entry): entry is ConsoleAdapterAccount => entry !== null)
+    .sort((left, right) => left.accountId.localeCompare(right.accountId));
+
+  return {
+    adapter,
+    available: record.available === true,
+    supportsConnect: record.supportsConnect === true,
+    supportsDisconnect: record.supportsDisconnect === true,
+    supportsSend: record.supportsSend === true,
+    supportsStatus: record.supportsStatus === true,
+    supportsShellExec: record.supportsShellExec === true,
+    supportsActivity: record.supportsActivity === true,
+    accounts,
+  };
+}
+
+function normalizeMcpServer(value: unknown): ConsoleMcpServer | null {
+  const record = asRecord(value);
+  const serverId = nonEmptyString(record?.serverId);
+  if (!record || !serverId) {
+    return null;
+  }
+
+  return {
+    serverId,
+    uid: numberOrNull(record.uid),
+    name: nonEmptyString(record.name) ?? serverId,
+    url: stringOrEmpty(record.url),
+    transport: normalizeMcpTransport(record.transport),
+    state: normalizeMcpState(record.state),
+    authUrl: stringOrEmpty(record.authUrl),
+    error: stringOrEmpty(record.error),
+    instructions: stringOrEmpty(record.instructions),
+    capabilities: asRecord(record.capabilities),
+    tools: asArray(record.tools)
+      .map(normalizeMcpTool)
+      .filter((entry): entry is ConsoleMcpTool => entry !== null)
+      .sort((left, right) => left.name.localeCompare(right.name)),
+    resourceCount: numberOrNull(record.resourceCount) ?? 0,
+    promptCount: numberOrNull(record.promptCount) ?? 0,
+    createdAt: numberOrNull(record.createdAt),
+    updatedAt: numberOrNull(record.updatedAt),
+  };
+}
+
+function normalizeMcpTool(value: unknown): ConsoleMcpTool | null {
+  const record = asRecord(value);
+  const name = nonEmptyString(record?.name);
+  if (!record || !name) {
+    return null;
+  }
+  return {
+    name,
+    description: stringOrEmpty(record.description),
+    inputSchema: asRecord(record.inputSchema),
+    outputSchema: asRecord(record.outputSchema),
   };
 }
 
@@ -305,6 +411,41 @@ function normalizePackageRuntime(value: unknown): ConsolePackageRuntime {
 
 function normalizeAccountRelation(value: unknown): ConsoleAccountRelation {
   return value === "self" || value === "personal-agent" || value === "agent" || value === "human" ? value : "unknown";
+}
+
+function normalizeMcpTransport(value: unknown): ConsoleMcpTransport {
+  return value === "auto" || value === "streamable-http" || value === "sse" ? value : "unknown";
+}
+
+function normalizeMcpState(value: unknown): ConsoleMcpConnectionState {
+  if (
+    value === "not-connected"
+    || value === "authenticating"
+    || value === "connecting"
+    || value === "connected"
+    || value === "discovering"
+    || value === "ready"
+    || value === "failed"
+  ) {
+    return value;
+  }
+  return "unknown";
+}
+
+function adapterRank(adapter: string): number {
+  if (adapter === "telegram") return 0;
+  if (adapter === "discord") return 1;
+  if (adapter === "whatsapp") return 2;
+  return 10;
+}
+
+function mcpStateRank(state: ConsoleMcpConnectionState): number {
+  if (state === "failed") return 0;
+  if (state === "authenticating") return 1;
+  if (state === "connecting" || state === "discovering" || state === "connected") return 2;
+  if (state === "ready") return 3;
+  if (state === "not-connected") return 4;
+  return 5;
 }
 
 function accountRank(relation: ConsoleAccountRelation): number {
