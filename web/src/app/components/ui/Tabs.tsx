@@ -8,13 +8,17 @@ export interface TabsProps {
   onClose?: (i: number) => void;
   width?: number;
   sticky?: boolean;
+  /** Index of a transient "preview" tab (VS Code peek-tab semantics). The matching
+   *  tab renders with an italic label and a subtle leading peek cue. Independent of
+   *  which tab is active; default undefined → no preview treatment. */
+  previewIndex?: number;
 }
 
 /** Tabs — ported from Tabs.dc.html. A row of chamfered tabs joined by a single
  *  continuous glowing rail. The active tab is transparent (revealing the host
  *  surface); unselected tabs draw their own outline. Geometry is derived from
  *  the bar's measured width via a ResizeObserver. */
-export function Tabs({ tabs, value, onChange, onClose, width, sticky = false }: TabsProps) {
+export function Tabs({ tabs, value, onChange, onClose, width, sticky = false, previewIndex }: TabsProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const tabRefs = useRef<(HTMLDivElement | null)[]>([]);
   const [hover, setHover] = useState(-1);
@@ -42,6 +46,8 @@ export function Tabs({ tabs, value, onChange, onClose, width, sticky = false }: 
   const val = Math.max(0, Math.min(controlled ? (value as number) | 0 : sel | 0, tabList.length - 1));
   const emit = onChange || (() => {});
   const closeable = typeof onClose === "function";
+  // a tab is "preview" (transient/peek) when its index matches previewIndex — purely visual, orthogonal to active
+  const isPreview = (i: number) => previewIndex != null && i === (previewIndex | 0);
 
   const select = (i: number, focus: boolean) => {
     if (!controlled) setSel(i);
@@ -104,10 +110,13 @@ export function Tabs({ tabs, value, onChange, onClose, width, sticky = false }: 
     return "position:absolute;left:0;top:0;width:" + TAB_W + "px;height:" + H + "px;clip-path:" + tabClip(TAB_W, H) + ";" + fill + "display:flex;align-items:center;justify-content:flex-start;gap:7px;box-sizing:border-box;padding-left:18px;padding-right:" + (closeable ? "10px" : "14px") + ";transition:background-color .12s;";
   };
   const textStyle = (i: number): string => {
-    const active = i === val, hov = i === hover;
+    const active = i === val, hov = i === hover, preview = isPreview(i);
     const color = active ? "var(--accent-bright)" : hov ? "#cbc7ff" : "var(--accent)";
-    return "min-width:0;flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--gsv-font-mono);font-size:" + (narrow ? "11px" : "12px") + ";letter-spacing:.2em;font-weight:" + (active ? "700" : "500") + ";color:" + color + ";" + (active ? "text-shadow:0 0 7px rgba(179,174,255,.5);" : "text-shadow:0 0 6px rgba(150,140,255,.25);");
+    return "min-width:0;flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--gsv-font-mono);font-size:" + (narrow ? "11px" : "12px") + ";letter-spacing:.2em;font-weight:" + (active ? "700" : "500") + ";color:" + color + ";" + (preview ? "font-style:italic;" : "") + (active ? "text-shadow:0 0 7px rgba(179,174,255,.5);" : "text-shadow:0 0 6px rgba(150,140,255,.25);");
   };
+  // subtle leading peek cue for the preview tab — a dim "~" in the dimmest text token, set off from the label
+  const peekStyle = (): string =>
+    "flex:none;font-family:var(--gsv-font-mono);font-size:" + (narrow ? "11px" : "12px") + ";line-height:1;color:var(--text-dim);opacity:.8;margin-right:1px;";
   const closeStyle = (i: number): string => {
     const visible = i === val || i === hover;
     const color = visible ? "var(--accent-bright)" : "#7d78b8";
@@ -170,7 +179,7 @@ export function Tabs({ tabs, value, onChange, onClose, width, sticky = false }: 
             tabRefs.current[i] = el;
           }}
           id={"gsv-tab-" + i}
-          class="gsv-tab"
+          class={"gsv-tab" + (isPreview(i) ? " gsv-tab-preview" : "")}
           role="tab"
           aria-selected={i === val}
           tabIndex={i === val ? 0 : -1}
@@ -184,6 +193,11 @@ export function Tabs({ tabs, value, onChange, onClose, width, sticky = false }: 
           style={outerStyle(i)}
         >
           <div style={innerStyle(i)}>
+            {isPreview(i) ? (
+              <span aria-hidden="true" style={peekStyle()}>
+                ~
+              </span>
+            ) : null}
             <span style={textStyle(i)}>{label}</span>
             {closeable ? (
               <button
