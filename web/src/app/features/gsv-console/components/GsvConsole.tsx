@@ -4,11 +4,13 @@ import { FilesPage } from "../../files/FilesPage";
 import { TerminalPage } from "../../terminal/TerminalPage";
 import {
   shellSurfaceLabel,
+  type ShellLibraryRoute,
   type ShellSettingsRoute,
   type ShellSurfaceId,
 } from "../../gsv-shell/domain/shellModel";
 import type { ConsoleListKind, ConsoleListSelection, PackageListKind } from "../domain/consoleListTypes";
 import { IntegrationsPage } from "../integrations/IntegrationsPage";
+import { LibraryPage } from "../library/LibraryPage";
 import { MachinesPage } from "../machines/MachinesPage";
 import { MessengersPage } from "../messengers/MessengersPage";
 import { PackageListPage } from "../packages/PackageListPage";
@@ -21,6 +23,8 @@ import { RuntimePage } from "../runtime/RuntimePage";
 type GsvConsoleProps = {
   activeSurface: Exclude<ShellSurfaceId, "desktop" | "app">;
   onBackToDesktop: () => void;
+  libraryRoute?: ShellLibraryRoute;
+  onLibraryRouteChange?: (route: ShellLibraryRoute) => void;
   onOpenApp?: (appId: string, title?: string) => void;
   onOpenSurface?: (surface: Exclude<ShellSurfaceId, "desktop" | "app">) => void;
   onSettingsRouteChange?: (route: SettingsRoute) => void;
@@ -32,7 +36,7 @@ type SettingsListSurface = "machines" | "messengers" | "integrations" | "applica
 export type SettingsRouteTarget = "overview" | "crew" | "tasks" | "models" | "overrides";
 
 function isPackageSettingsKind(kind: ConsoleListKind): kind is PackageListKind {
-  return kind === "library" || kind === "applications";
+  return kind === "applications";
 }
 
 function surfaceTail(surface: ShellSurfaceId): string {
@@ -40,7 +44,7 @@ function surfaceTail(surface: ShellSurfaceId): string {
     return "GSV · STORAGE";
   }
   if (surface === "library") {
-    return "GSV · PACKAGES";
+    return "GSV · LIBRARY";
   }
   if (surface === "terminal") {
     return "GSV · CONSOLE";
@@ -113,7 +117,7 @@ function settingsListDetailLabel(route: Extract<SettingsRoute, { view: "list" }>
     if (route.kind === "integrations") return "NEW INTEGRATION";
     if (route.kind === "applications") return "NEW APPLICATION";
     if (route.kind === "messengers") return "NEW MESSENGER";
-    if (route.kind === "library") return "NEW PACKAGE";
+    if (route.kind === "library") return "NEW PAGE";
     return "NEW TASK";
   }
   return route.detailLabel ?? route.detailId ?? settingsListRouteLabel(route.kind);
@@ -141,7 +145,9 @@ function settingsRouteTail(route: SettingsRoute): string {
 
 export function GsvConsole({
   activeSurface,
+  libraryRoute = { view: "index" },
   onBackToDesktop,
+  onLibraryRouteChange,
   onOpenApp,
   onOpenSurface,
   onSettingsRouteChange,
@@ -200,6 +206,14 @@ export function GsvConsole({
     }
     if (kind === "integrations") {
       return <IntegrationsPage {...options} />;
+    }
+    if (kind === "library") {
+      return (
+        <LibraryPage
+          route={libraryRoute}
+          onRouteChange={onLibraryRouteChange}
+        />
+      );
     }
     if (isPackageSettingsKind(kind)) {
       return <PackageListPage {...options} kind={kind} onOpenApp={onOpenApp} />;
@@ -330,7 +344,10 @@ export function GsvConsole({
         ) : activeSurface === "applications" ? (
           <PackageListPage kind="applications" onOpenApp={onOpenApp} />
         ) : activeSurface === "library" ? (
-          <PackageListPage kind="library" onOpenApp={onOpenApp} />
+          <LibraryPage
+            route={libraryRoute}
+            onRouteChange={onLibraryRouteChange}
+          />
         ) : activeSurface === "files" ? (
           <FilesPage />
         ) : activeSurface === "terminal" ? (

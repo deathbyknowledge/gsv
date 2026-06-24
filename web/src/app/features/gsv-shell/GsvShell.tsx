@@ -33,6 +33,7 @@ import { ShellRail } from "./navigation/ShellRail";
 import { ShellStatusBar } from "./navigation/ShellStatusBar";
 import {
   shellSurfaceLabel,
+  type ShellLibraryRoute,
   type ShellSettingsRoute,
   type ShellSurfaceId,
 } from "./domain/shellModel";
@@ -305,6 +306,9 @@ export function GsvShell({
   const activeSettingsRoute: ShellSettingsRoute = shell.activeSurface === "settings"
     ? shell.activePageTab?.settingsRoute ?? { view: "overview" }
     : { view: "overview" };
+  const activeLibraryRoute: ShellLibraryRoute = shell.activeSurface === "library"
+    ? shell.activePageTab?.libraryRoute ?? { view: "index" }
+    : { view: "index" };
 
   return (
     <div
@@ -366,7 +370,9 @@ export function GsvShell({
                         onBackToDesktop={shell.backToDesktop}
                         onOpenApp={openAppById}
                         onOpenSurface={openShellSurface}
+                        onLibraryRouteChange={shell.syncActiveLibraryRoute}
                         onSettingsRouteChange={shell.syncActiveSettingsRoute}
+                        libraryRoute={activeLibraryRoute}
                         settingsRoute={activeSettingsRoute}
                       />
                     ) : null}

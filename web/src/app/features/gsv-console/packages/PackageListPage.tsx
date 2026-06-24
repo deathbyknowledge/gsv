@@ -37,8 +37,7 @@ function resourceWithLocalEmptyState<T>(resource: ConsoleResourceState<T>): Cons
 }
 
 function packageErrorLabel(kind: PackageListKind): string {
-  if (kind === "applications") return "APPLICATIONS";
-  return "LIBRARY";
+  return "APPLICATIONS";
 }
 
 function PackageConsoleSection({
