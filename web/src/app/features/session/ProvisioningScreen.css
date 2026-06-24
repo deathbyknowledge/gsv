@@ -1,0 +1,124 @@
+/* ============================================================
+   ProvisioningScreen — transitional "deploying" screen shown
+   between Deploy and the Complete screen. Sits in the AuthLayout
+   galaxy surface; self-contained panel matching the rest of the
+   register flow. Classes prefixed gsv-provision-.
+   ============================================================ */
+
+/* Panel shell — mirrors the setup/complete panels, self-contained. */
+.gsv-provision {
+  box-sizing: border-box;
+  width: min(560px, 92vw);
+  max-height: calc(100% - 56px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 32px 36px;
+  background: color-mix(in srgb, var(--panel) 100%, #ffffff 5%);
+  border: 1px solid var(--border);
+  box-shadow: 0 0 40px rgba(10, 6, 30, 0.5), 0 0 0 1px rgba(150, 140, 255, 0.04);
+  backdrop-filter: blur(3px);
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+/* Header — spinner + kicker/title/sub type (matches gsv-complete-head). */
+.gsv-provision-head {
+  display: flex;
+  flex-direction: column;
+}
+.gsv-provision-spinner {
+  display: inline-flex;
+  margin-bottom: 18px;
+  color: var(--accent-bright);
+}
+.gsv-provision-kicker {
+  font-family: var(--gsv-font-mono);
+  font-size: 9px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 9px;
+}
+.gsv-provision-title {
+  margin: 0;
+  font-family: var(--gsv-font-prose);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0.005em;
+  color: var(--text-hi);
+}
+.gsv-provision-sub {
+  margin: 8px 0 0;
+  font-family: var(--gsv-font-prose);
+  font-size: 13px;
+  line-height: 1.5;
+  color: #9d98d4;
+}
+
+/* "Keep this tab open" note. */
+.gsv-provision-note {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+}
+.gsv-provision-note strong {
+  font-family: var(--gsv-font-mono);
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--accent-bright);
+}
+.gsv-provision-note p {
+  margin: 0;
+  font-family: var(--gsv-font-prose);
+  font-size: 12px;
+  line-height: 1.5;
+  color: #9d98d4;
+}
+
+/* Step list — informational stages, dim markers (no live per-step state). */
+.gsv-provision-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.gsv-provision-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.gsv-provision-step-marker {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: var(--panel-2);
+  border: 1px solid var(--primary-hi);
+}
+.gsv-provision-step-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.gsv-provision-step-text strong {
+  font-family: var(--gsv-font-prose);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-hi);
+}
+.gsv-provision-step-text p {
+  margin: 0;
+  font-family: var(--gsv-font-prose);
+  font-size: 12px;
+  line-height: 1.5;
+  color: #9d98d4;
+}

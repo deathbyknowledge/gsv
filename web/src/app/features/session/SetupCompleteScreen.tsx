@@ -1,8 +1,11 @@
 import type { RefObject } from "preact";
 import type { SessionSnapshot } from "../../services/session/sessionService";
-import { InfoTip } from "../../components/ui/InfoTip";
-import { CompleteStageRail, SessionError } from "./SessionChrome";
+import { Button } from "../../components/ui/Button";
+import { StatusDot } from "../../components/ui/StatusDot";
+import { AuthLayout } from "./AuthLayout";
+import { SessionError } from "./SessionChrome";
 import { setupResultViewModel, type AdminMode } from "./sessionDomain";
+import "./SetupCompleteScreen.css";
 
 type SetupCompleteScreenProps = {
   visible: boolean;
@@ -32,95 +35,119 @@ export function SetupCompleteScreen({
   onCopyToken,
 }: SetupCompleteScreenProps) {
   const result = setupResultViewModel(snapshot, adminMode);
+  const sourceIsUrl = /^https?:\/\//i.test(result.sourceLabel);
 
   return (
-    <div class="session-panel session-panel-wide onboarding-panel onboarding-status-panel onboarding-complete-panel" data-session-setup-complete hidden={!visible}>
-      <div class="session-setup-form onboarding-layout">
-        <aside class="onboarding-sidebar">
-          <div class="session-panel-head">
-            <p class="session-kicker">First-time setup</p>
-            <h1>Complete</h1>
-            <p class="session-copy">Your workspace is ready.</p>
-          </div>
-          <CompleteStageRail />
-        </aside>
-        <div class="onboarding-workspace">
-          <main class="onboarding-main onboarding-status-main">
-            <section class="onboarding-stage onboarding-status-stage">
-              <div class="onboarding-lane-banner">
-                <span>Complete</span>
-              </div>
-              <div class="setup-step-copy onboarding-complete-copy">
-                <h2>Your workspace is ready</h2>
-                <p class="session-copy">Your account and system files are ready. Open the desktop now; command line tools and device setup are available below.</p>
-              </div>
-              <div class="session-result-grid">
-                <div class="session-result-card">
-                  <span>Account</span>
-                  <strong data-setup-result-username>{result.username}</strong>
-                </div>
-                <div class="session-result-card">
-                  <span>Admin security</span>
-                  <strong data-setup-result-root>{result.rootLabel}</strong>
-                </div>
-                <div class="session-result-card">
-                  <span>System files</span>
-                  <strong data-setup-result-source>{result.sourceLabel}</strong>
-                </div>
-                <div class="session-result-card">
-                  <span>Version</span>
-                  <strong data-setup-result-ref>{result.refLabel}</strong>
-                </div>
-              </div>
-              <div class="session-token-panel">
-                <div class="session-token-head">
-                  <div>
-                    <p class="session-kicker">Command line tools</p>
-                    <h2 data-setup-result-cli-label>
-                      {result.cliLabel}
-                      <InfoTip
-                        position="right"
-                        label="Explain command line tools"
-                        text="These commands install GSV tools on this machine so you can manage or connect to the workspace from a terminal."
-                      />
-                    </h2>
-                  </div>
-                  <button type="button" class="runtime-btn session-btn-secondary" data-setup-copy-cli onClick={onCopyCli}>Copy command</button>
-                </div>
-                <textarea class="session-token-value" data-setup-result-cli-command ref={cliCommandRef} readOnly value={result.cliCommand} />
-                <p class="session-token-meta" data-setup-result-cli-meta>{result.cliMeta}</p>
-              </div>
-              <div class="session-token-panel" data-setup-node-result hidden={!result.node.visible}>
-                <div class="session-token-head">
-                  <div>
-                    <p class="session-kicker">Device setup</p>
-                    <h2 data-setup-result-node-label>{result.node.label}</h2>
-                  </div>
-                  <button type="button" class="runtime-btn session-btn-secondary" data-setup-copy-token onClick={onCopyToken}>Copy setup steps</button>
-                </div>
-                <textarea class="session-token-value" data-setup-result-node-token ref={nodeCommandRef} readOnly value={result.node.command} />
-                <p class="session-token-meta" data-setup-result-node-meta>{result.node.meta}</p>
-              </div>
-            </section>
-            <SessionError className="session-error onboarding-alert" message={completeError} />
-            <div class="session-actions onboarding-actions">
-              <div />
-              <div class="onboarding-primary-actions">
-                <button
-                  type="button"
-                  class="runtime-btn"
-                  data-session-setup-continue
-                  ref={continueButtonRef}
-                  disabled={busy}
-                  onClick={onContinue}
-                >
-                  Open desktop
-                </button>
-              </div>
-            </div>
-          </main>
+    <AuthLayout background="galaxy" visible={visible} surfaceClass="gsv-auth-surface-setup">
+      <div class="gsv-complete" data-session-setup-complete>
+        <div class="gsv-complete-head">
+          <span class="gsv-complete-badge" aria-hidden="true">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3.5 8.5 L6.5 11.5 L12.5 4.5" />
+            </svg>
+          </span>
+          <span class="gsv-complete-kicker">First-time setup · Complete</span>
+          <h2 class="gsv-complete-title">Your workspace is ready</h2>
         </div>
+
+        <div class="gsv-complete-account">
+          <span class="gsv-complete-k">Account</span>
+          <span class="gsv-complete-v" data-setup-result-username>{result.username}</span>
+        </div>
+
+        <div class="gsv-complete-actions">
+          <button
+            type="button"
+            class={`gsv-btn gsv-btn-primary${busy ? " is-disabled" : ""}`}
+            data-session-setup-continue
+            ref={continueButtonRef}
+            disabled={busy}
+            onClick={busy ? undefined : onContinue}
+          >
+            <span class="gsv-btn-label">Open desktop</span>
+          </button>
+        </div>
+
+        <section class="gsv-complete-more">
+          <div class="gsv-complete-more-head">
+            <h3 class="gsv-complete-more-title">Get more out of GSV</h3>
+            <span class="gsv-complete-more-tag">Optional</span>
+          </div>
+
+          <div class="gsv-complete-more-item">
+            <div class="gsv-complete-more-item-head">
+              <span class="gsv-complete-more-item-title" data-setup-result-cli-label>
+                Install it on your machine to run commands via terminal
+              </span>
+              <Button
+                variant="secondary"
+                label="Copy command"
+                onClick={onCopyCli}
+                dataAttrs={{ "data-setup-copy-cli": true }}
+              />
+            </div>
+            <textarea
+              class="gsv-complete-code gsv-scroll"
+              data-setup-result-cli-command
+              ref={cliCommandRef}
+              readOnly
+              value={result.cliCommand}
+            />
+            <p class="gsv-complete-meta" data-setup-result-cli-meta>{result.cliMeta}</p>
+          </div>
+
+          <div class="gsv-complete-more-item" data-setup-node-result hidden={!result.node.visible}>
+            <div class="gsv-complete-more-item-head">
+              <span class="gsv-complete-more-item-title" data-setup-result-node-label>
+                Connect other devices
+              </span>
+              <Button
+                variant="secondary"
+                label="Copy setup steps"
+                onClick={onCopyToken}
+                dataAttrs={{ "data-setup-copy-token": true }}
+              />
+            </div>
+            <textarea
+              class="gsv-complete-code gsv-scroll"
+              data-setup-result-node-token
+              ref={nodeCommandRef}
+              readOnly
+              value={result.node.command}
+            />
+            <p class="gsv-complete-meta" data-setup-result-node-meta>{result.node.meta}</p>
+          </div>
+        </section>
+
+        <SessionError className="gsv-complete-alert" message={completeError} />
+
+        <footer class="gsv-complete-statusbar">
+          <span class="gsv-complete-status-online">
+            <StatusDot tone="online" size={7} />
+            GSV Online
+          </span>
+          <span class="gsv-complete-status-seg gsv-complete-status-seg-grow">
+            <b>System files</b>
+            {sourceIsUrl ? (
+              <a
+                class="gsv-complete-status-val gsv-complete-status-link"
+                href={result.sourceLabel}
+                target="_blank"
+                rel="noopener noreferrer"
+                data-setup-result-source
+              >
+                {result.sourceLabel.replace(/^https?:\/\//i, "").replace(/^github\.com\//i, "")}
+              </a>
+            ) : (
+              <span class="gsv-complete-status-val" data-setup-result-source>{result.sourceLabel}</span>
+            )}
+          </span>
+          <span class="gsv-complete-status-seg">
+            <b>Version</b>
+            <span class="gsv-complete-status-val" data-setup-result-ref>{result.refLabel}</span>
+          </span>
+        </footer>
       </div>
-    </div>
+    </AuthLayout>
   );
 }
