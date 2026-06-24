@@ -27,6 +27,38 @@ describe("CodeMode fetch bridge", () => {
     expect(result.headers).toContainEqual(["location", "https://example.test/final"]);
   });
 
+  it("rejects responses above the content-length limit", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response("ok", {
+        headers: { "content-length": "5" },
+      })
+    );
+
+    await expect(performCodeModeFetch({
+      url: "https://example.test/large",
+      method: "GET",
+      headers: [],
+    }, fetchMock, 4)).rejects.toThrow("fetch response body exceeds CodeMode limit of 4 bytes");
+  });
+
+  it("rejects streamed responses that exceed the body limit", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(new ReadableStream({
+        start(controller) {
+          controller.enqueue(new Uint8Array([1, 2, 3]));
+          controller.enqueue(new Uint8Array([4, 5]));
+          controller.close();
+        },
+      }))
+    );
+
+    await expect(performCodeModeFetch({
+      url: "https://example.test/stream",
+      method: "GET",
+      headers: [],
+    }, fetchMock, 4)).rejects.toThrow("fetch response body exceeds CodeMode limit of 4 bytes");
+  });
+
   it("serializes fetch redirect mode from sandbox requests", () => {
     const source = buildCodeModeSource(`
       await fetch("https://example.test/redirect", { redirect: "manual" });

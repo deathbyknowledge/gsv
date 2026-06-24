@@ -4102,20 +4102,13 @@ export class Process extends Host<Env> {
       throw new Error("Run stopped before CodeMode fetch completed");
     }
 
+    let output: unknown;
     try {
-      const output = await this.performCodeModeFetch(args);
-      await this.sendSignal("proc.run.tool.finished", {
-        name: toolName,
-        syscall: NET_FETCH,
-        callId: toolCallId,
-        ok: true,
-        output,
-        pid: this.pid,
-        runId,
-        conversationId,
-      });
-      return output;
+      output = await this.performCodeModeFetch(args);
     } catch (error) {
+      if (await this.handleRunStopped(runId)) {
+        throw error;
+      }
       const message = error instanceof Error ? error.message : String(error);
       await this.sendSignal("proc.run.tool.finished", {
         name: toolName,
@@ -4129,6 +4122,21 @@ export class Process extends Host<Env> {
       });
       throw error;
     }
+
+    if (await this.handleRunStopped(runId)) {
+      throw new Error("Run stopped before CodeMode fetch completed");
+    }
+    await this.sendSignal("proc.run.tool.finished", {
+      name: toolName,
+      syscall: NET_FETCH,
+      callId: toolCallId,
+      ok: true,
+      output,
+      pid: this.pid,
+      runId,
+      conversationId,
+    });
+    return output;
   }
 
   private async performCodeModeFetch(args: Record<string, unknown>): Promise<unknown> {

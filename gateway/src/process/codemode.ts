@@ -20,6 +20,7 @@ export { buildCodeModeMcpToolBindings } from "../codemode/mcp";
 export type { CodeModeMcpToolBinding } from "../codemode/mcp";
 
 export const CODE_MODE_EXECUTION_TIMEOUT_MS = 60_000;
+export const CODE_MODE_FETCH_MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
 
 export type CodeModeHostCall = SyscallName | typeof NET_FETCH;
 
@@ -324,17 +325,75 @@ export async function executeCodeMode(
 export async function performCodeModeFetch(
   args: Record<string, unknown>,
   fetcher: CodeModeFetchHandler = (request) => fetch(request),
+  maxResponseBytes = CODE_MODE_FETCH_MAX_RESPONSE_BYTES,
 ): Promise<CodeModeFetchResult> {
   const request = buildCodeModeFetchRequest(args);
   const response = await fetcher(request);
+  const body = await readLimitedResponseBody(response, maxResponseBytes);
   return {
     url: response.url,
     status: response.status,
     statusText: response.statusText,
     headers: Array.from(response.headers.entries()),
-    bodyBase64: arrayBufferToBase64(await response.arrayBuffer()),
+    bodyBase64: arrayBufferToBase64(body),
     redirected: response.redirected,
   };
+}
+
+async function readLimitedResponseBody(
+  response: Response,
+  maxBytes: number,
+): Promise<Uint8Array> {
+  const contentLength = parseContentLength(response.headers.get("content-length"));
+  if (contentLength !== null && contentLength > maxBytes) {
+    throw new Error(`fetch response body exceeds CodeMode limit of ${maxBytes} bytes`);
+  }
+  if (!response.body) {
+    return new Uint8Array();
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      if (!value) {
+        continue;
+      }
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        await reader.cancel(`CodeMode fetch response exceeded ${maxBytes} bytes`);
+        throw new Error(`fetch response body exceeds CodeMode limit of ${maxBytes} bytes`);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const body = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body;
+}
+
+function parseContentLength(value: string | null): number | null {
+  if (value === null) {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) {
+    return null;
+  }
+  const length = Number(trimmed);
+  return Number.isSafeInteger(length) ? length : null;
 }
 
 function toRecord(value: unknown, name: string): Record<string, unknown> {
@@ -395,8 +454,10 @@ function parseFetchHeaders(value: unknown): Headers {
   return headers;
 }
 
-function arrayBufferToBase64(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer);
+function arrayBufferToBase64(buffer: ArrayBuffer | ArrayBufferView): string {
+  const bytes = buffer instanceof ArrayBuffer
+    ? new Uint8Array(buffer)
+    : new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
   let binary = "";
   const chunkSize = 0x8000;
   for (let i = 0; i < bytes.length; i += chunkSize) {

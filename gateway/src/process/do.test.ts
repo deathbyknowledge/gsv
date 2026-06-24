@@ -4406,6 +4406,49 @@ describe("Process DO — mechanical", () => {
       });
     });
 
+    it("does not emit CodeMode fetch results after the run stops", async () => {
+      const pid = "mech-codemode-fetch-stopped-after-fetch";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const signals: Array<{ type: string; payload: Record<string, unknown> }> = [];
+        let stopChecks = 0;
+
+        process.currentRun = {
+          runId: "run-codemode-fetch-stopped-after-fetch",
+          queued: false,
+          conversationId: "default",
+          config: { capabilities: ["codemode.*", "net.fetch"] },
+          approvalPolicy: {
+            default: "auto",
+            rules: [],
+          },
+        };
+        process.sendSignal = async (type: string, payload: Record<string, unknown>) => {
+          signals.push({ type, payload });
+        };
+        process.handleRunStopped = async () => {
+          stopChecks += 1;
+          return stopChecks >= 3;
+        };
+        process.performCodeModeFetch = async () => ({ status: 200 });
+
+        await expect(process.executeCodeModeFetch(
+          "run-codemode-fetch-stopped-after-fetch",
+          {
+            url: "https://example.com/",
+            method: "GET",
+            headers: [],
+          },
+          process.currentRun.approvalPolicy,
+          "default",
+        )).rejects.toThrow("Run stopped before CodeMode fetch completed");
+
+        expect(signals.map((signal) => signal.type)).toEqual(["proc.run.tool.started"]);
+      });
+    });
+
     it("rejects codemode.run fetches without net.fetch capability", async () => {
       const pid = "mech-codemode-run-fetch-capability";
       const identity: ProcessIdentity = {
