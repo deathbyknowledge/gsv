@@ -89,6 +89,23 @@ const story: Story = {
           />
         </div>
       </div>
+
+      <div class="ds-cell">
+        <div class="ds-label">Narrow container · current crumb stays readable</div>
+        {/* ~320px, like the Files panel: earlier crumbs ellipsize first while the
+            current crumb (context.md) renders in full. */}
+        <div class="ds-col" style={{ width: "320px" }}>
+          <Breadcrumbs
+            onBack={noop}
+            items={[
+              { label: "ROOT", onClick: noop },
+              { label: "home", onClick: noop },
+              { label: "jessicat", onClick: noop },
+              { label: "context.md" },
+            ]}
+          />
+        </div>
+      </div>
     </div>
   ),
 };

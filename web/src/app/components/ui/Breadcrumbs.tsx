@@ -101,7 +101,7 @@ export function Breadcrumbs({ items, onBack, size = "medium", maxVisible }: Brea
           const last = i === nodes.length - 1;
           return (
             <Fragment key={i}>
-              <li class="gsv-bc-item">
+              <li class={node.current ? "gsv-bc-item gsv-bc-item-current" : "gsv-bc-item"}>
                 {node.kind === "ellipsis" ? (
                   clickable ? (
                     <button type="button" class="gsv-bc-crumb gsv-bc-ellipsis" title={node.title} onClick={node.onClick}>
