@@ -30,9 +30,14 @@ export function Stepper(props: StepperProps) {
 
   const [stateCur, setStateCur] = useState<number | undefined>(undefined);
 
+  // When a parent wires onChange the Stepper is controlled — it always mirrors
+  // the parent's `current`. Without onChange it self-navigates via local state
+  // (e.g. the catalog demo).
+  const controlled = onChange != null;
+
   const names = [l0, l1, l2, l3, l4].filter((x) => x != null && x !== "") as string[];
   const stepCount = names.length ? names.length : Math.max(2, Math.min(6, count));
-  const cur = stateCur === undefined ? current : stateCur;
+  const cur = controlled || stateCur === undefined ? current : stateCur;
 
   const sizeClass = SIZE_CLASS[size];
   const rootClass = ("gsv-sp " + sizeClass).trim();
@@ -40,6 +45,9 @@ export function Stepper(props: StepperProps) {
   const steps = [];
   for (let i = 0; i < stepCount; i++) {
     const st = i < cur ? "done" : i === cur ? "cur" : "next";
+    // Only completed steps (before the current one) are navigable — clicking
+    // them goes back. The current step and any later steps are not clickable.
+    const navigable = i < cur;
     steps.push({
       num: i + 1,
       hasLine: i > 0,
@@ -48,10 +56,13 @@ export function Stepper(props: StepperProps) {
       hasLabel: !!(names.length && names[i]),
       label: names.length ? names[i] || "" : "",
       labelCls: "gsv-sp-label is-" + st,
-      pick: () => {
-        setStateCur(i);
-        onChange?.(i);
-      },
+      navigable,
+      pick: navigable
+        ? () => {
+            if (!controlled) setStateCur(i);
+            onChange?.(i);
+          }
+        : undefined,
     });
   }
 
@@ -63,6 +74,7 @@ export function Stepper(props: StepperProps) {
           <button
             type="button"
             class="gsv-sp-step"
+            disabled={!s.navigable}
             aria-current={i === cur ? "step" : undefined}
             aria-label={`Step ${s.num}${s.label ? `: ${s.label}` : ""}`}
             onClick={s.pick}

@@ -1,5 +1,5 @@
 import type { RefObject } from "preact";
-import { useRef } from "preact/hooks";
+import { useEffect, useRef } from "preact/hooks";
 import type {
   OnboardingDraft,
   OnboardingLane,
@@ -28,6 +28,7 @@ type SetupScreenProps = {
   onLane: (lane: OnboardingLane) => void;
   onBack: () => void;
   onNext: () => void;
+  onStep: (index: number) => void;
   onSubmit: (event: Event) => void;
   onGuideToggle: () => void;
   onGuideMessage: (message: string) => void;
@@ -47,6 +48,7 @@ export function SetupScreen({
   onLane,
   onBack,
   onNext,
+  onStep,
   onSubmit,
   onGuideToggle,
   onGuideMessage,
@@ -72,9 +74,17 @@ export function SetupScreen({
   const current =
     draft.stage === "review" ? 2 : detailStep !== "account" ? 1 : 0;
 
+  // Each step is a fresh page: when the step changes, scroll the panel back to
+  // the top so a step doesn't open mid-scroll from the previous one.
+  const panelRef = useRef<HTMLDivElement>(null);
+  const stepKey = `${draft.stage}:${detailStep}`;
+  useEffect(() => {
+    panelRef.current?.scrollTo({ top: 0 });
+  }, [stepKey]);
+
   return (
     <AuthLayout background="galaxy" visible={snapshot.phase === "setup"} surfaceClass="gsv-auth-surface-setup">
-      <div class="gsv-setup-panel" data-session-setup-view>
+      <div class="gsv-setup-panel" data-session-setup-view ref={panelRef}>
         <form
           ref={formRef}
           class="gsv-setup-form"
@@ -91,6 +101,7 @@ export function SetupScreen({
                 l2="Review and deploy"
                 size="small"
                 width={460}
+                onChange={onStep}
               />
             </div>
           ) : null}

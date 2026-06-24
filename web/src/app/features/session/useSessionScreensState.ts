@@ -160,6 +160,22 @@ export function useSessionScreensState({
     }
   };
 
+  // Jump straight to an earlier step by clicking its stepper dot. The Stepper
+  // only enables completed steps, so this is always a backwards move — no
+  // forward validation needed. Steps: 0 = account · 1 = system · 2 = review.
+  const goToStep = (index: number): void => {
+    setSetupValidationError(null);
+    if (index >= 2) {
+      onboarding.setStage("review");
+      return;
+    }
+    onboarding.setStage("details");
+    const steps = detailStepsForLane(draft.lane);
+    onboarding.setDetailStep(
+      index <= 0 ? "account" : steps[1] ?? steps[steps.length - 1] ?? "account",
+    );
+  };
+
   const next = (): void => {
     const jumpToReview = guideShortcutReady(draft, onboardingSnapshot.reviewReady);
     const validation = validateSetupDetails(draft, jumpToReview);
@@ -286,6 +302,7 @@ export function useSessionScreensState({
       onLane: selectLane,
       onBack: back,
       onNext: next,
+      onStep: goToStep,
       onSubmit: submitSetup,
       onGuideToggle: toggleGuide,
       onGuideMessage: setGuideMessage,
