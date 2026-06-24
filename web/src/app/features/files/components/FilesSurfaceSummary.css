@@ -82,9 +82,11 @@
   padding: 14px;
 }
 
+/* Two stacked rows: row 1 = search (left) + CREATE NEW (right); row 2 (only
+   rendered when a file is selected) = DELETE, right-aligned under CREATE NEW. */
 .files-browser-toolbar {
-  grid-template-columns: minmax(260px, 1fr) auto;
-  align-items: end;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
 }
 
 .files-editor-toolbar {
@@ -92,13 +94,31 @@
   align-items: center;
 }
 
-.files-search-form {
+/* A single toolbar row: pushes its action cluster to the right of the search. */
+.files-toolbar-row {
   min-width: 0;
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+/* Row 2 has no left content, so its actions sit at the right edge — aligned
+   under the CREATE NEW button above. */
+.files-toolbar-row-secondary {
+  justify-content: flex-end;
+}
+
+/* Bounded, left-aligned search — never stretches across the toolbar. */
+.files-toolbar-search {
+  min-width: 0;
+  flex: 0 1 260px;
   display: block;
 }
 
 .files-toolbar-actions {
   min-width: 0;
+  margin-left: auto;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -579,16 +599,23 @@
    the whole app can drop to mobile, so collapse the two-up toolbars to a single
    stacked column before anything is forced to shrink-and-clip its labels. */
 @media (max-width: 980px) {
-  .files-browser-toolbar,
   .files-editor-toolbar {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  /* Search + CREATE NEW / DELETE actions sit stacked; keep the action cluster
-     left-aligned and wrapping rather than crowded against the right edge. */
-  .files-toolbar-actions,
+  /* Editor actions sit stacked; keep the cluster left-aligned and wrapping
+     rather than crowded against the right edge. */
   .files-editor-actions {
     justify-content: flex-start;
+  }
+
+  /* Let the search take the row; CREATE NEW wraps beneath, left-aligned. */
+  .files-toolbar-search {
+    flex-basis: 100%;
+  }
+
+  .files-toolbar-row .files-toolbar-actions {
+    margin-left: 0;
   }
 }
 
