@@ -2,13 +2,17 @@ import { AgentCard } from "../../../components/ui/AgentCard";
 import { Avatar } from "../../../components/ui/Avatar";
 import { CrewAddTile } from "../../../components/ui/CrewTile";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
-import type { ChatAgentCrewView, ChatAgentViewModel } from "../domain/agent";
+import type {
+  ChatAgentCrewView,
+  ChatAgentSelection,
+  ChatAgentViewModel,
+} from "../domain/agent";
 
 type ActiveAgentPanelProps = {
   agent: ChatAgentViewModel;
   onClose: () => void;
   onOpenCrew: () => void;
-  onSelectAgent?: (agentId: string) => void;
+  onSelectAgent?: (selection: ChatAgentSelection) => void;
 };
 
 function ChatAgentCrewTile({
@@ -53,7 +57,15 @@ export function ActiveAgentPanel({
       return;
     }
     if (member.processId && onSelectAgent) {
-      onSelectAgent(member.processId);
+      onSelectAgent({ agentId: member.id, processId: member.processId });
+      onClose();
+      return;
+    }
+    if (member.startable && onSelectAgent) {
+      onSelectAgent({
+        agentId: member.id,
+        ...(member.runAs ? { runAs: member.runAs } : {}),
+      });
       onClose();
       return;
     }

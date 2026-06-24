@@ -1,5 +1,18 @@
 import type {
   ProcAbortResult,
+  ProcAiConfigGetResult,
+  ProcAiConfigSetArgs,
+  ProcAiConfigSetResult,
+  ProcConversation,
+  ProcConversationCompactArgs,
+  ProcConversationCompactResult,
+  ProcConversationForkArgs,
+  ProcConversationForkResult,
+  ProcConversationListArgs,
+  ProcConversationSegment,
+  ProcConversationSegmentReadArgs,
+  ProcConversationSegmentReadResult,
+  ProcConversationSegmentsArgs,
   ProcHilArgs,
   ProcHilDecision,
   ProcHilResult,
@@ -71,6 +84,19 @@ export type ChatSendPayload = ProcSendArgs;
 export type ChatHilDecision = ProcHilDecision;
 export type ChatHilDecisionArgs = ProcHilArgs;
 export type ChatHilDecisionResult = Extract<ProcHilResult, { ok: true }>;
+export type ChatConversation = ProcConversation;
+export type ChatConversationSegment = ProcConversationSegment;
+export type ChatConversationListArgs = ProcConversationListArgs;
+export type ChatConversationCompactArgs = ProcConversationCompactArgs;
+export type ChatConversationCompactResult = Extract<ProcConversationCompactResult, { ok: true }>;
+export type ChatConversationForkArgs = ProcConversationForkArgs;
+export type ChatConversationForkResult = Extract<ProcConversationForkResult, { ok: true }>;
+export type ChatConversationSegmentReadArgs = ProcConversationSegmentReadArgs;
+export type ChatConversationSegmentReadResult = Extract<ProcConversationSegmentReadResult, { ok: true }>;
+export type ChatConversationSegmentsArgs = ProcConversationSegmentsArgs;
+export type ChatProcessAiConfig = Extract<ProcAiConfigGetResult, { ok: true }>["config"];
+export type ChatProcessAiConfigSetArgs = ProcAiConfigSetArgs;
+export type ChatProcessAiConfigSetResult = Extract<ProcAiConfigSetResult, { ok: true }>;
 
 function cleanOptionalString(value: string | undefined): string | undefined {
   const normalized = value?.trim();

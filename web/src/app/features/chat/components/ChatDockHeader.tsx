@@ -4,8 +4,8 @@ import { IconButton } from "../../../components/ui/IconButton";
 import { Progress } from "../../../components/ui/Progress";
 import { StatusDot } from "../../../components/ui/StatusDot";
 import type { StatusTone } from "../../../components/ui/StatusDot";
-import type { ChatAgentViewModel } from "../domain/agent";
-import type { ChatHistory } from "../domain/processes";
+import type { ChatAgentViewModel, ChatModelProfileData } from "../domain/agent";
+import type { ChatHistory, ChatProcessAiConfig } from "../domain/processes";
 import { ChatDockPopovers, type ChatPopoverId } from "./ChatDockPopovers";
 
 type ChatDockHeaderProps = {
@@ -23,13 +23,19 @@ type ChatDockHeaderProps = {
   hasActiveProcess: boolean;
   messageCount: number | null | undefined;
   openPopover: ChatPopoverId | null;
+  processAiConfig: ChatProcessAiConfig;
+  processAiConfigBusy: boolean;
+  processAiConfigLoading: boolean;
   runStateLabel: string;
   spawnPending: boolean;
   taskCount: number;
   onAbortRun: () => void;
+  onApplyModelProfile: (profile: ChatModelProfileData) => void;
+  onClearProcessAiConfig: () => void;
   onOpenAgentPanel: () => void;
   onOpenModels: () => void;
   onOpenTasks: () => void;
+  onSetReasoning: (reasoning: string) => void;
   onStartProcess: () => void;
   onToggleMax: () => void;
   onToggleOpen: () => void;
@@ -51,13 +57,19 @@ export function ChatDockHeader({
   hasActiveProcess,
   messageCount,
   openPopover,
+  processAiConfig,
+  processAiConfigBusy,
+  processAiConfigLoading,
   runStateLabel,
   spawnPending,
   taskCount,
   onAbortRun,
+  onApplyModelProfile,
+  onClearProcessAiConfig,
   onOpenAgentPanel,
   onOpenModels,
   onOpenTasks,
+  onSetReasoning,
   onStartProcess,
   onToggleMax,
   onToggleOpen,
@@ -164,10 +176,16 @@ export function ChatDockHeader({
         hasActiveProcess={hasActiveProcess}
         messageCount={messageCount}
         openPopover={openPopover}
+        processAiConfig={processAiConfig}
+        processAiConfigBusy={processAiConfigBusy}
+        processAiConfigLoading={processAiConfigLoading}
         runStateLabel={runStateLabel}
         taskCount={taskCount}
+        onApplyModelProfile={onApplyModelProfile}
+        onClearProcessAiConfig={onClearProcessAiConfig}
         onOpenModels={onOpenModels}
         onOpenTasks={onOpenTasks}
+        onSetReasoning={onSetReasoning}
       />
     </header>
   );

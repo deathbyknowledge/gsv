@@ -70,6 +70,35 @@ describe("shell chat agent model", () => {
     expect(agent?.runAs).toBeUndefined();
   });
 
+  it("uses the selected account as the draft chat agent", () => {
+    const agent = buildShellChatAgent({
+      activeProcess: null,
+      accounts: [
+        account({ uid: 7, username: "scout", relation: "agent", displayName: "Scout" }),
+        account({ uid: 9, username: "builder", relation: "agent", displayName: "Builder" }),
+      ],
+      chatProcesses: [],
+      config: [],
+      consoleProcesses: [],
+      selectedAgentId: "account:9",
+      statusLabel: "no process",
+    });
+
+    const view = buildChatAgentViewModel({
+      agent,
+      title: "Chat",
+      status: "idle",
+      statusLabel: "no process",
+      contextLabel: "no history",
+    });
+
+    expect(agent?.id).toBe("account:9");
+    expect(agent?.name).toBe("Builder");
+    expect(agent?.runAs).toBe("builder");
+    expect(view.crew.find((member) => member.id === "account:9")?.active).toBe(true);
+    expect(view.crew.find((member) => member.id === "account:9")?.startable).toBe(true);
+  });
+
   it("uses the process id only for process-backed active chat", () => {
     const activeProcess = process({ pid: "proc:scout", uid: 7, username: "scout" });
     const agent = buildShellChatAgent({
@@ -92,5 +121,56 @@ describe("shell chat agent model", () => {
     expect(agent?.processId).toBe("proc:scout");
     expect(view.processId).toBe("proc:scout");
     expect(view.runAs).toBe("scout");
+  });
+
+  it("exposes viewer model profiles instead of raw model config fields", () => {
+    const agent = buildShellChatAgent({
+      activeProcess: null,
+      accounts: [
+        account({ uid: 1000, username: "sam", relation: "self", displayName: "Sam" }),
+        account({ uid: 1001, username: "scout", relation: "agent", displayName: "Scout" }),
+      ],
+      chatProcesses: [],
+      config: [
+        {
+          key: "config/ai/image/read/model",
+          value: "vision-model",
+          redacted: false,
+        },
+        {
+          key: "users/1000/ai/model_profiles",
+          value: JSON.stringify({
+            profiles: [
+              {
+                id: "fast-stack",
+                name: "Fast Stack",
+                values: {
+                  "config/ai/provider": "openai",
+                  "config/ai/model": "gpt-4.1-mini",
+                  "config/ai/api_key": "secret",
+                },
+                createdAt: 10,
+                updatedAt: 20,
+              },
+            ],
+          }),
+          redacted: false,
+        },
+      ],
+      consoleProcesses: [],
+      sessionUsername: "sam",
+      statusLabel: "no process",
+    });
+
+    expect(agent?.modelProfiles).toEqual([
+      expect.objectContaining({
+        id: "fast-stack",
+        name: "Fast Stack",
+        values: expect.objectContaining({
+          "config/ai/provider": "openai",
+          "config/ai/model": "gpt-4.1-mini",
+        }),
+      }),
+    ]);
   });
 });
