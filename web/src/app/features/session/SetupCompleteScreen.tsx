@@ -1,6 +1,7 @@
 import type { RefObject } from "preact";
 import type { SessionSnapshot } from "../../services/session/sessionService";
-import { CompleteStageRail, OnboardingHelp, SessionError } from "./SessionChrome";
+import { InfoTip } from "../../components/ui/InfoTip";
+import { CompleteStageRail, SessionError } from "./SessionChrome";
 import { setupResultViewModel, type AdminMode } from "./sessionDomain";
 
 type SetupCompleteScreenProps = {
@@ -75,11 +76,15 @@ export function SetupCompleteScreen({
                 <div class="session-token-head">
                   <div>
                     <p class="session-kicker">Command line tools</p>
-                    <h2 data-setup-result-cli-label>{result.cliLabel}</h2>
+                    <h2 data-setup-result-cli-label>
+                      {result.cliLabel}
+                      <InfoTip
+                        position="right"
+                        label="Explain command line tools"
+                        text="These commands install GSV tools on this machine so you can manage or connect to the workspace from a terminal."
+                      />
+                    </h2>
                   </div>
-                  <OnboardingHelp label="Explain command line tools" tooltipId="setup-help-cli" title="For terminal use">
-                    These commands install GSV tools on this machine so you can manage or connect to the workspace from a terminal.
-                  </OnboardingHelp>
                   <button type="button" class="runtime-btn session-btn-secondary" data-setup-copy-cli onClick={onCopyCli}>Copy command</button>
                 </div>
                 <textarea class="session-token-value" data-setup-result-cli-command ref={cliCommandRef} readOnly value={result.cliCommand} />

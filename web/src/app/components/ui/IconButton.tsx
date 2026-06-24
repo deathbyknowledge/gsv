@@ -11,7 +11,13 @@ export interface IconButtonProps {
   /** Borderless rendering (no background/border) — for inline affordances such
    *  as the label info hint. */
   ghost?: boolean;
+  /** Native browser tooltip text. Also used as the accessible name unless
+   *  ariaLabel is given. Omit when a custom tooltip already labels the control
+   *  (e.g. InfoTip) to avoid a duplicate native tooltip. */
   title?: string;
+  /** Accessible name without rendering a native title tooltip. Takes precedence
+   *  over title for aria-label. */
+  ariaLabel?: string;
   /** id of an element that describes this control (e.g. a tooltip bubble). */
   ariaDescribedBy?: string;
   onClick?: () => void;
@@ -112,7 +118,7 @@ const GLYPHS: Record<IconButtonGlyph, ComponentChildren> = {
 
 /** IconButton — ported from IconButton.dc.html. Square icon button with inline
  *  SVG glyphs, named or numeric size, disabled + title + onClick. */
-export function IconButton({ glyph = "back", size = "medium", disabled = false, ghost = false, title = "", ariaDescribedBy, onClick }: IconButtonProps) {
+export function IconButton({ glyph = "back", size = "medium", disabled = false, ghost = false, title = "", ariaLabel, ariaDescribedBy, onClick }: IconButtonProps) {
   const px = typeof size === "number" ? size : SIZE_MAP[size] ?? Number(size) ?? 30;
   const base = ghost ? "gsv-ibtn-ghost" : "gsv-ibtn";
   const cls = disabled ? (ghost ? "gsv-ibtn-ghost is-disabled" : "gsv-ibtn-disabled") : base;
@@ -120,8 +126,8 @@ export function IconButton({ glyph = "back", size = "medium", disabled = false, 
     <button
       type="button"
       class={cls}
-      title={title}
-      aria-label={title || undefined}
+      title={title || undefined}
+      aria-label={ariaLabel || title || undefined}
       aria-describedby={ariaDescribedBy}
       disabled={disabled}
       onClick={disabled ? undefined : onClick}

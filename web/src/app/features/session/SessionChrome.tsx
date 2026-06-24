@@ -1,4 +1,3 @@
-import type { JSX } from "preact";
 import type { OnboardingDetailStep, OnboardingStage } from "@humansandmachines/gsv/protocol";
 
 type SetupStageRailProps = {
@@ -92,27 +91,5 @@ export function DeployStageRail() {
         <strong>Review and start</strong>
       </li>
     </ol>
-  );
-}
-
-export function OnboardingHelp({
-  label,
-  tooltipId,
-  title,
-  children,
-}: {
-  label: string;
-  tooltipId: string;
-  title: string;
-  children: JSX.Element | string;
-}) {
-  return (
-    <div class="onboarding-help" tabIndex={0} aria-label={label} aria-describedby={tooltipId}>
-      <span class="onboarding-help-trigger" aria-hidden="true">?</span>
-      <div id={tooltipId} class="onboarding-help-popover" role="tooltip">
-        <strong>{title}</strong>
-        <p>{children}</p>
-      </div>
-    </div>
   );
 }
