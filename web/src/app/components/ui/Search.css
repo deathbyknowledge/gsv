@@ -1,0 +1,22 @@
+/* Search — wrapper around TextInput. `.gsv-ti` is width:100%, so the wrapper
+ * owns the field's outer width: bounded by default, full-width when blocked. */
+.gsv-search {
+  display: inline-flex;
+  width: 280px;
+  max-width: 100%;
+}
+.gsv-search.is-block {
+  display: flex;
+  width: 100%;
+}
+.gsv-search > .gsv-ti {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Leading magnifier — lift it onto the affix baseline; color is inherited from
+ * `.gsv-ti-affix` (currentColor), matching the field's muted affix tone. */
+.gsv-search-glyph {
+  display: block;
+  flex: none;
+}
