@@ -18,27 +18,6 @@
   display: flex;
   flex-direction: column;
   gap: 18px;
-}
-
-.account-details-note {
-  margin-top: 22px;
-  padding: 14px 16px;
-  border: 1px solid var(--border);
-  background: var(--panel-2);
-}
-.account-details-note strong {
-  display: block;
-  font-family: var(--gsv-font-mono);
-  font-size: 9.5px;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-  color: var(--accent);
-  margin-bottom: 6px;
-}
-.account-details-note p {
-  margin: 0;
-  font-family: var(--gsv-font-prose);
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--text-dim);
+  /* separate the form from the password-safety alert that follows */
+  margin-bottom: 20px;
 }

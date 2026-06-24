@@ -1,4 +1,5 @@
 import { useId, useRef, useState } from "preact/hooks";
+import { InfoTip } from "./InfoTip";
 import "./Radio.css";
 
 export type RadioSize = "small" | "medium" | "large";
@@ -14,6 +15,7 @@ export interface RadioProps {
   size?: RadioSize;
   disabled?: boolean;
   label?: string;
+  info?: string;
   description?: string;
   requirement?: RadioRequirement;
   status?: RadioStatus;
@@ -38,6 +40,7 @@ export function Radio(props: RadioProps) {
     size = "medium",
     disabled = false,
     label = "",
+    info = "",
     description = "",
     requirement = "none",
     status = "none",
@@ -79,6 +82,7 @@ export function Radio(props: RadioProps) {
         <div class="gsv-fld-lab">
           <span class="gsv-fld-lab-t" id={labelId}>{label}</span>
           {req ? <span class="gsv-fld-req">{fldReq}</span> : null}
+          {info ? <InfoTip text={info} /> : null}
         </div>
       ) : null}
       {description ? <div class="gsv-fld-desc" id={descId}>{description}</div> : null}

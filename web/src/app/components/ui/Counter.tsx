@@ -1,4 +1,5 @@
 import { useId, useState } from "preact/hooks";
+import { InfoTip } from "./InfoTip";
 import "./Counter.css";
 
 export type CounterSize = "small" | "medium" | "large";
@@ -12,6 +13,7 @@ export interface CounterProps {
   step?: number;
   unit?: string;
   label?: string;
+  info?: string;
   description?: string;
   requirement?: CounterRequirement;
   status?: CounterStatus;
@@ -36,6 +38,7 @@ export function Counter(props: CounterProps) {
     step = 1,
     unit = "",
     label = "",
+    info = "",
     description = "",
     requirement = "none",
     status = "none",
@@ -94,6 +97,7 @@ export function Counter(props: CounterProps) {
           {req ? (
             <span class="gsv-fld-req">{req === "required" ? "· REQUIRED" : "· OPTIONAL"}</span>
           ) : null}
+          {info ? <InfoTip text={info} /> : null}
         </div>
       ) : null}
       {description ? (

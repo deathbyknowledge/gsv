@@ -1,5 +1,6 @@
 import type { OnboardingDetailStep, OnboardingDraft } from "@humansandmachines/gsv/protocol";
 import { TextInput } from "../../../components/ui/TextInput";
+import { Alert } from "../../../components/ui/Alert";
 import "./AccountDetails.css";
 
 export function AccountDetails({
@@ -64,10 +65,11 @@ export function AccountDetails({
           }))}
         />
       </div>
-      <div class="account-details-note">
-        <strong>Keep this password safe.</strong>
-        <p>GSV does not store a recoverable copy. Losing it can lock you out of this workspace.</p>
-      </div>
+      <Alert
+        variant="attention"
+        title="Keep this password safe."
+        text="GSV does not store a recoverable copy. Losing it can lock you out of this workspace."
+      />
     </section>
   );
 }

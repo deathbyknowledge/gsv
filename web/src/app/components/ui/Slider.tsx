@@ -1,4 +1,5 @@
 import { useRef, useState, useEffect, useId } from "preact/hooks";
+import { InfoTip } from "./InfoTip";
 import "./Slider.css";
 
 export type SliderRequirement = "none" | "required" | "optional";
@@ -10,6 +11,7 @@ export interface SliderProps {
   max?: number;
   step?: number;
   label?: string;
+  info?: string;
   description?: string;
   requirement?: SliderRequirement;
   status?: SliderStatus;
@@ -28,6 +30,7 @@ export function Slider(props: SliderProps) {
     max = 100,
     step = 1,
     label = "TEMPERATURE",
+    info = "",
     description = "",
     requirement = "none",
     status = "none",
@@ -139,11 +142,14 @@ export function Slider(props: SliderProps) {
     <div class={rootClass} style={{ width: `${width}px`, maxWidth: "100%" }}>
       {hasTop ? (
         <div class="gsv-sl-top">
-          <span class="gsv-sl-label" id={hasLabel ? `${fieldId}-label` : undefined}>
-            {label}
-            {req ? (
-              <span class="gsv-sl-req">{req === "required" ? "· REQUIRED" : "· OPTIONAL"}</span>
-            ) : null}
+          <span class="gsv-sl-labelgroup">
+            <span class="gsv-sl-label" id={hasLabel ? `${fieldId}-label` : undefined}>
+              {label}
+              {req ? (
+                <span class="gsv-sl-req">{req === "required" ? "· REQUIRED" : "· OPTIONAL"}</span>
+              ) : null}
+            </span>
+            {info ? <InfoTip text={info} /> : null}
           </span>
           {showValue ? <span class="gsv-sl-num">{value}</span> : null}
         </div>

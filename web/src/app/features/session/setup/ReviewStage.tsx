@@ -1,16 +1,15 @@
 import type { OnboardingDraft } from "@humansandmachines/gsv/protocol";
 import {
-  SETUP_LANE_META,
   browserTimeZone,
   buildAiSummary,
   buildDeviceSummary,
   buildSourceSummary,
 } from "../sessionDomain";
-import { Surface } from "../../../components/ui/Surface";
+import { Tooltip } from "../../../components/ui/Tooltip";
+import { InfoTip } from "../../../components/ui/InfoTip";
 import "./ReviewStage.css";
 
 export function ReviewStage({ draft }: { draft: OnboardingDraft }) {
-  const meta = SETUP_LANE_META[draft.lane];
   const username = draft.account.username.trim();
   const agentName = draft.account.agentName.trim();
   const accountSummary = agentName
@@ -24,44 +23,48 @@ export function ReviewStage({ draft }: { draft: OnboardingDraft }) {
         <h2 class="gsv-setup-head-title">Review and deploy</h2>
         <p class="gsv-setup-head-sub">This is the setup plan that will be applied before the desktop opens.</p>
       </div>
-      <div class="review-summary-grid">
-        <Surface level={1} class="review-card">
-          <span class="review-card-label">Path</span>
-          <strong class="review-card-value" data-setup-summary-lane>{meta.label}</strong>
-          <p class="review-card-desc" data-setup-summary-lane-copy>{meta.reviewCopy}</p>
-        </Surface>
-        <Surface level={1} class="review-card">
-          <span class="review-card-label">Account</span>
-          <strong class="review-card-value" data-setup-summary-account>{accountSummary}</strong>
-          <p class="review-card-desc">First desktop user and personal agent account.</p>
-        </Surface>
-        <Surface level={1} class="review-card">
-          <span class="review-card-label">Admin security</span>
-          <strong class="review-card-value" data-setup-summary-admin>
-            {draft.admin.mode === "custom" ? "Extra admin security layer configured" : "Account password protects admin tasks"}
-          </strong>
-          <p class="review-card-desc">How sensitive admin actions are protected.</p>
-        </Surface>
-        <Surface level={1} class="review-card">
-          <span class="review-card-label">Timezone</span>
-          <strong class="review-card-value" data-setup-summary-timezone>{draft.system.timezone.trim() || browserTimeZone()}</strong>
-          <p class="review-card-desc">Calendar basis for schedules and timestamps.</p>
-        </Surface>
-        <Surface level={1} class="review-card">
-          <span class="review-card-label">AI</span>
-          <strong class="review-card-value" data-setup-summary-ai>{buildAiSummary(draft)}</strong>
-          <p class="review-card-desc">Initial AI service and model behavior.</p>
-        </Surface>
-        <Surface level={1} class="review-card">
-          <span class="review-card-label">System files</span>
-          <strong class="review-card-value" data-setup-summary-source>{buildSourceSummary(draft)}</strong>
-          <p class="review-card-desc">The system files loaded during setup.</p>
-        </Surface>
-        <Surface level={1} class="review-card">
-          <span class="review-card-label">Device setup</span>
-          <strong class="review-card-value" data-setup-summary-device>{buildDeviceSummary(draft)}</strong>
-          <p class="review-card-desc">Optional setup key for connecting another machine.</p>
-        </Surface>
+      <div class="review-table">
+        <div class="review-row">
+          <span class="review-row-k">Account</span>
+          <Tooltip text="First desktop user and personal agent account." position="left">
+            <span class="review-row-v" data-setup-summary-account>{accountSummary}</span>
+          </Tooltip>
+        </div>
+        <div class="review-row">
+          <span class="review-row-klabel">
+            <span class="review-row-k">Admin security</span>
+            <InfoTip text="adding and removing users, other system wide configurations" position="right" />
+          </span>
+          <Tooltip text="How sensitive admin actions are protected." position="left">
+            <span class="review-row-v" data-setup-summary-admin>
+              {draft.admin.mode === "custom" ? "Extra admin security layer configured" : "Account password protects admin tasks"}
+            </span>
+          </Tooltip>
+        </div>
+        <div class="review-row">
+          <span class="review-row-k">Timezone</span>
+          <Tooltip text="Calendar basis for schedules and timestamps." position="left">
+            <span class="review-row-v" data-setup-summary-timezone>{draft.system.timezone.trim() || browserTimeZone()}</span>
+          </Tooltip>
+        </div>
+        <div class="review-row">
+          <span class="review-row-k">AI</span>
+          <Tooltip text="Initial AI service and model behavior." position="left">
+            <span class="review-row-v" data-setup-summary-ai>{buildAiSummary(draft)}</span>
+          </Tooltip>
+        </div>
+        <div class="review-row">
+          <span class="review-row-k">System files</span>
+          <Tooltip text="The system files loaded during setup." position="left">
+            <span class="review-row-v" data-setup-summary-source>{buildSourceSummary(draft)}</span>
+          </Tooltip>
+        </div>
+        <div class="review-row">
+          <span class="review-row-k">Device setup</span>
+          <Tooltip text="Optional setup key for connecting another machine." position="left">
+            <span class="review-row-v" data-setup-summary-device>{buildDeviceSummary(draft)}</span>
+          </Tooltip>
+        </div>
       </div>
       <aside class="gsv-setup-review-notes">
         <div>

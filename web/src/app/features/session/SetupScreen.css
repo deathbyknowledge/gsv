@@ -10,7 +10,8 @@
 .gsv-setup-panel {
   width: min(640px, 92vw);
   max-height: calc(100% - 56px);
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: 32px 36px;
   background: color-mix(in srgb, var(--panel) 100%, #ffffff 5%);
   border: 1px solid var(--border);
@@ -105,4 +106,39 @@
   font-size: 9px;
   letter-spacing: 0.22em;
   color: var(--text-dim);
+}
+
+/* Floating launcher for the guide chat window — pinned to the same corner the
+   window opens at; only shown while the guide is closed. */
+.gsv-guide-launch {
+  position: fixed;
+  right: 28px;
+  bottom: 28px;
+  z-index: 49;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 11px 17px;
+  font-family: var(--gsv-font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent-bright);
+  background: color-mix(in srgb, var(--panel) 100%, #ffffff 6%);
+  border: 1px solid var(--primary-hi);
+  box-shadow: 0 14px 40px rgba(5, 3, 18, 0.55);
+  cursor: pointer;
+  transition: background 0.14s, border-color 0.14s, color 0.14s;
+}
+.gsv-guide-launch:hover {
+  background: var(--active);
+  border-color: var(--accent);
+  color: #ffffff;
+}
+.gsv-guide-launch:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.gsv-guide-launch-icon {
+  flex: none;
 }

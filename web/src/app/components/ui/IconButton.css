@@ -3,13 +3,36 @@
    original <div> (font inheritance + zero padding; box-sizing keeps the
    inline width/height matching the old border-box div). */
 .gsv-ibtn,
-.gsv-ibtn-disabled {
+.gsv-ibtn-disabled,
+.gsv-ibtn-ghost {
   margin: 0;
   padding: 0;
   font: inherit;
   box-sizing: border-box;
   -webkit-appearance: none;
   appearance: none;
+}
+
+/* Ghost — borderless inline affordance (e.g. the label info hint). No box; the
+   glyph alone carries the shape. */
+.gsv-ibtn-ghost {
+  background: transparent;
+  border: 0;
+  color: var(--label);
+  transition: color 0.12s;
+}
+.gsv-ibtn-ghost:hover {
+  color: var(--accent-bright);
+}
+.gsv-ibtn-ghost:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 50%;
+}
+.gsv-ibtn-ghost.is-disabled {
+  color: #565199;
+  pointer-events: none;
+  cursor: not-allowed;
 }
 .gsv-ibtn {
   background: #0a0820;

@@ -56,11 +56,12 @@ export function SetupScreen({
 }: SetupScreenProps) {
   const { draft } = onboardingSnapshot;
   const busy = snapshot.phase === "authenticating";
-  const showGuideToggle = draft.stage !== "welcome";
   const showNext = draft.stage === "details";
   const showSubmit = draft.stage === "review";
   const showBack = draft.stage !== "welcome";
-  const guideButtonText = draft.mode === "guided" ? "Hide guide" : "Ask the guide";
+  // The guide opens as a floating corner window; its launcher sits at that same
+  // corner and only shows while the guide is available but not already open.
+  const showGuideLaunch = draft.stage !== "welcome" && draft.mode !== "guided";
   const formRef = useRef<HTMLFormElement>(null);
 
   // Three stepper steps: Login credentials (account) · Preferences (system) ·
@@ -124,26 +125,32 @@ export function SetupScreen({
                     onClick={() => formRef.current?.requestSubmit()}
                   />
                 ) : null}
-                {showGuideToggle ? (
-                  <Button variant="link" label={guideButtonText} onClick={onGuideToggle} />
-                ) : null}
               </div>
             </div>
           ) : null}
-
-          <GuidePanel
-            snapshot={onboardingSnapshot}
-            sessionSnapshot={snapshot}
-            guideMessage={guideMessage}
-            guideInputRef={guideInputRef}
-            guideLogRef={guideLogRef}
-            onGuideMessage={onGuideMessage}
-            onGuideSend={onGuideSend}
-            onGuideKeyDown={onGuideKeyDown}
-            onClose={onGuideToggle}
-          />
         </form>
       </div>
+
+      <GuidePanel
+        snapshot={onboardingSnapshot}
+        sessionSnapshot={snapshot}
+        guideMessage={guideMessage}
+        guideInputRef={guideInputRef}
+        guideLogRef={guideLogRef}
+        onGuideMessage={onGuideMessage}
+        onGuideSend={onGuideSend}
+        onGuideKeyDown={onGuideKeyDown}
+        onClose={onGuideToggle}
+      />
+
+      {showGuideLaunch ? (
+        <button type="button" class="gsv-guide-launch" onClick={onGuideToggle}>
+          <svg class="gsv-guide-launch-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round">
+            <path d="M2 3.5 H14 V11 H6.5 L3.5 13.5 V11 H2 Z" />
+          </svg>
+          Ask the guide
+        </button>
+      ) : null}
     </AuthLayout>
   );
 }

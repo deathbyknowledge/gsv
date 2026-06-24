@@ -1,8 +1,7 @@
 /* ============================================================
-   ReviewStage — "Review and start" setup summary, restyled to
-   the GSV design system. Summary cards use the Surface atom;
-   this sheet only handles the heading copy, the summary grid
-   layout, the card text composition, and the review notes aside.
+   ReviewStage — "Review and deploy" setup summary. A bordered
+   label/value table (mirrors the auth-preview review table); each
+   value is a tooltip trigger that reveals its description on hover.
    Classes prefixed review-.
    ============================================================ */
 
@@ -18,38 +17,66 @@
   display: none;
 }
 
-.review-summary-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 12px;
-}
-
-/* Card text composition (border/background come from Surface) */
-.review-card {
+/* Summary table — label (left) + selection (right) rows, dividers between. */
+.review-table {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
 }
-.review-card-label {
+.review-row {
+  /* relative + raised z-index on hover so the (left-opening) tooltip bubble
+     clears the neighbouring rows instead of being painted over by them. */
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.review-row:last-child {
+  border-bottom: none;
+}
+.review-row:has(.gsv-tt:hover),
+.review-row:has(.gsv-tt:focus-within) {
+  z-index: 5;
+}
+
+/* Label cell — groups the label with an optional info hint on the left. */
+.review-row-klabel {
+  display: inline-flex;
+  align-items: center;
+}
+/* Label — Meta / HUD type, label colour. */
+.review-row-k {
   font-family: var(--gsv-font-mono);
-  font-size: 9px;
-  letter-spacing: 0.22em;
+  font-weight: 400;
+  font-size: 11px;
+  letter-spacing: 0.32em;
   text-transform: uppercase;
-  color: var(--text-dim);
+  color: var(--label);
+  white-space: nowrap;
 }
-.review-card-value {
-  font-family: var(--gsv-font-prose);
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 1.4;
-  color: var(--text-title);
+
+/* Selection value — List item type, text colour; the tooltip trigger carries
+   a dashed underline as the hover affordance. */
+.review-row .gsv-tt {
+  min-width: 0;
 }
-.review-card-desc {
-  margin: 0;
-  font-family: var(--gsv-font-prose);
-  font-size: 12px;
-  line-height: 1.5;
-  color: #9d98d4;
+.review-row-v {
+  font-family: var(--gsv-font-mono);
+  font-weight: 400;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--text);
+  text-align: right;
+  text-decoration: underline dashed #6b62c4;
+  text-underline-offset: 4px;
+}
+.review-row .gsv-tt:hover .review-row-v,
+.review-row .gsv-tt:focus-within .review-row-v {
+  text-decoration-color: var(--accent);
 }
 
 /* Review notes aside */

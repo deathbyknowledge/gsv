@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from "preact/hooks";
+import { InfoTip } from "./InfoTip";
 import "./Checkbox.css";
 
 export type CheckboxSize = "small" | "medium" | "large";
@@ -10,6 +11,7 @@ export interface CheckboxProps {
   disabled?: boolean;
   size?: CheckboxSize;
   label?: string;
+  info?: string;
   description?: string;
   status?: CheckboxStatus;
   message?: string;
@@ -30,6 +32,7 @@ export function Checkbox(props: CheckboxProps) {
     disabled = false,
     size = "medium",
     label = "RUN IN BACKGROUND",
+    info = "",
     description = "",
     status = "none",
     message = "",
@@ -69,24 +72,27 @@ export function Checkbox(props: CheckboxProps) {
   return (
     <div class={fldClass}>
       {description ? <div class="gsv-cb-desc">{description}</div> : null}
-      <label class={rootClass}>
-        <input
-          ref={inputRef}
-          aria-checked={indeterminate ? "mixed" : checked}
-          aria-describedby={hasStat ? `${fieldId}-msg` : undefined}
-          aria-invalid={status === "error" ? true : undefined}
-          checked={checked}
-          class="gsv-cb-input"
-          disabled={disabled}
-          type="checkbox"
-          onChange={(event) => handleChange((event.currentTarget as HTMLInputElement).checked)}
-        />
-        <span class="gsv-cb-box">
-          {on ? <span class="gsv-cb-fill gsv-cb-on" /> : null}
-          {indeterminate ? <span class="gsv-cb-fill gsv-cb-dash" /> : null}
-        </span>
-        {label.length > 0 ? <span class="gsv-cb-label">{label}</span> : null}
-      </label>
+      <span class="gsv-cb-labelrow">
+        <label class={rootClass}>
+          <input
+            ref={inputRef}
+            aria-checked={indeterminate ? "mixed" : checked}
+            aria-describedby={hasStat ? `${fieldId}-msg` : undefined}
+            aria-invalid={status === "error" ? true : undefined}
+            checked={checked}
+            class="gsv-cb-input"
+            disabled={disabled}
+            type="checkbox"
+            onChange={(event) => handleChange((event.currentTarget as HTMLInputElement).checked)}
+          />
+          <span class="gsv-cb-box">
+            {on ? <span class="gsv-cb-fill gsv-cb-on" /> : null}
+            {indeterminate ? <span class="gsv-cb-fill gsv-cb-dash" /> : null}
+          </span>
+          {label.length > 0 ? <span class="gsv-cb-label">{label}</span> : null}
+        </label>
+        {info ? <InfoTip text={info} /> : null}
+      </span>
       {hasStat ? (
         <div class="gsv-cb-stat">
           <span class="gsv-cb-dot" />

@@ -8,6 +8,10 @@
   font-family: var(--gsv-font-mono);
   user-select: none;
 }
+.gsv-tg-labelrow {
+  display: inline-flex;
+  align-items: center;
+}
 .gsv-tg-input {
   position: absolute;
   width: 1px;

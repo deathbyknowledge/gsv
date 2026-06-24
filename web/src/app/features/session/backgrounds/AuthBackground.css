@@ -25,3 +25,17 @@
   bottom: 0;
   width: min(920px, calc(100% - var(--gsv-galaxy-reserve, 540px)));
 }
+
+/* Narrow widths: the panel centers (see AuthLayout.css), so the galaxy can no
+   longer sit in a left zone. Move it behind the centered panel and scale it up
+   so the disc + formed "GSV" mark spill past the card and leak out visibly on
+   both sides (the surface clips the overflow). scale() augments the rendered
+   canvas without resizing it, so there's no extra draw cost. */
+@media (max-width: 760px) {
+  .auth-bg-galaxy {
+    left: 50%;
+    width: min(920px, 150vw);
+    transform-origin: center;
+    transform: translateX(-50%) scale(1.8);
+  }
+}

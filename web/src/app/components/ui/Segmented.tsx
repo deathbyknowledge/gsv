@@ -1,4 +1,5 @@
 import { useId, useRef, useState } from "preact/hooks";
+import { InfoTip } from "./InfoTip";
 import "./Segmented.css";
 
 export type SegmentedSize = "small" | "medium" | "large";
@@ -15,6 +16,7 @@ export interface SegmentedProps {
   disabled?: boolean;
   width?: number;
   label?: string;
+  info?: string;
   description?: string;
   requirement?: SegmentedRequirement;
   status?: SegmentedStatus;
@@ -40,6 +42,7 @@ export function Segmented(props: SegmentedProps) {
     disabled = false,
     width = 300,
     label = "",
+    info = "",
     description = "",
     requirement = "none",
     status = "none",
@@ -133,6 +136,7 @@ export function Segmented(props: SegmentedProps) {
         <div class="gsv-fld-lab">
           <span class="gsv-fld-lab-t" id={labelId}>{label}</span>
           {req ? <span class="gsv-fld-req">{req === "required" ? "· REQUIRED" : "· OPTIONAL"}</span> : null}
+          {info ? <InfoTip text={info} /> : null}
         </div>
       ) : null}
       {description.length > 0 ? <div class="gsv-fld-desc" id={descId}>{description}</div> : null}
