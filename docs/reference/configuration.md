@@ -135,3 +135,9 @@ Package-related config is also stored in the same key/value store:
 ## Practical Notes
 
 All values are strings. Callers parse booleans and numbers at the point of use. Prefer user-scoped AI overrides for per-user model settings, and reserve system keys for defaults that should apply across the GSV instance.
+
+## See also
+
+- [CLI Commands](./cli-commands.md)
+- [Context Files](./context-files.md)
+- [How to Configure an Agent](../how-to/configure-agent.md)

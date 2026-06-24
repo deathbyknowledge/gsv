@@ -203,3 +203,8 @@ Current behavior:
 - the API is async from package code
 - bindings accept `string`, `number`, `boolean`, and `null`
 - booleans are stored as numeric SQLite values
+
+## See also
+
+- [How to Write a Package App](../how-to/write-a-package-app.md)
+- [Architecture Overview](../architecture/)

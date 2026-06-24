@@ -217,3 +217,9 @@ same `target` and `sessionId` routing rules as the direct `Shell`, `Read`,
 - Device registry: `gateway/src/kernel/devices.ts`
 - CLI driver bridge: `cli/src/main.rs`
 - CLI local tools: `cli/src/tools/`
+
+## See also
+
+- [How to Run a Device](../how-to/run-a-device.md)
+- [Routing Reference](./routing.md)
+- [Architecture Overview](../architecture/)

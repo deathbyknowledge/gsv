@@ -172,3 +172,9 @@ Security depends on operational discipline:
   adapter, and network behavior.
 - Link adapter actors intentionally and use HIL policies for destructive or
   remote work.
+
+## See also
+
+- [The Adapter Model](./adapter-model.md)
+- [How to Run a Device](../how-to/run-a-device.md)
+- [Configuration Reference](../reference/configuration.md)

@@ -154,3 +154,9 @@ export default class ReportsBackend extends PackageBackendEntrypoint {
   }
 }
 ```
+
+## See also
+
+- [How to Manage Processes](./manage-processes.md)
+- [Configure an Agent](./configure-agent.md)
+- [Process IPC and Scheduler](../architecture/process-ipc-and-scheduler.md)

@@ -275,3 +275,9 @@ Binary-frame helpers still exist in the CLI protocol module, using this format:
 ```
 
 That code is marked legacy/future-use in `cli/src/protocol.rs`. The current gateway syscall surface in this repo does not expose a public transfer syscall, so ordinary runtime traffic is JSON text frames only.
+
+## See also
+
+- [Syscalls Reference](./syscalls.md)
+- [Routing Reference](./routing.md)
+- [CLI Commands](./cli-commands.md)

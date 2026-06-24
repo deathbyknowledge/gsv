@@ -227,3 +227,9 @@ This model keeps:
 5. Add `proc.message`.
 
 This gives a clean `init -> task` story first, without forcing all process coordination through fake chat-message semantics.
+
+## See also
+
+- [The Agent Loop](./agent-loop.md)
+- [Process IPC and Scheduler](./process-ipc-and-scheduler.md)
+- [How to Manage Processes](../how-to/manage-processes.md)

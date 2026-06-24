@@ -98,3 +98,9 @@ Use the GSV target for GSV filesystem paths. Use a device target only when inten
 ## What Belongs Where
 
 Use `~/context.d/` for concise standing context. Use `/workspaces/{id}/.gsv/context.d/` for active workspace continuity. Use `skills.d/` for reusable procedures. Use `~/knowledge/` for durable, searchable reference material. Use process context for the current assignment only.
+
+## See also
+
+- [Configuration](./configuration.md)
+- [Context and Knowledge](../architecture/context-and-knowledge.md)
+- [How to Configure an Agent](../how-to/configure-agent.md)

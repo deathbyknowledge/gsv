@@ -121,3 +121,9 @@ AppRunner also stores runtime props in Durable Object KV and daemon schedules in
 - Use R2 for opaque bytes, archives, media, and default filesystem files.
 - Use ripgit for user-editable/versioned documents, knowledge, workspace files, and package source.
 - Prefer filesystem paths in agent prompts; the mount layer hides the backing store.
+
+## See also
+
+- [Configuration](./configuration.md)
+- [Context Files](./context-files.md)
+- [Architecture Overview](../architecture/)

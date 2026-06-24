@@ -582,3 +582,9 @@ conversation policies once the same-owner model is proven.
 - advanced cron syntax without a reliable parser
 - package-owned timers before process targets work
 - replacing `signal.watch` in the same change
+
+## See also
+
+- [The Agent Loop](./agent-loop.md)
+- [Process Handoffs](./process-handoffs.md)
+- [How to Configure Automation](../how-to/set-up-cron.md)

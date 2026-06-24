@@ -3,8 +3,48 @@ import { defineConfig } from "vitepress";
 export default defineConfig({
   title: "GSV",
   description:
-    "A durable cloud computer for humans, machines, and agents — persistent processes, device nodes, and automated workflows.",
+    "An open-source personal AI computer that spans all your devices and stays awake when they're asleep. One mind across your machines — not rented, not stuck on one box.",
   cleanUrls: true,
+
+  redirects: {
+    // explanation → architecture
+    "/explanation/architecture": "/architecture/",
+    "/explanation/agent-loop": "/architecture/agent-loop",
+    "/explanation/channel-model": "/architecture/adapter-model",
+    "/explanation/context-compaction": "/architecture/context-compaction",
+    "/explanation/process-ipc-and-scheduler": "/architecture/process-ipc-and-scheduler",
+    "/explanation/security-model": "/architecture/security-model",
+
+    // tutorials → get-started
+    "/tutorials/getting-started": "/get-started/",
+    "/tutorials/setting-up-a-channel": "/get-started/connect-adapters",
+
+    // top-level orphans
+    "/process-spawn-handoff-model": "/architecture/process-handoffs",
+    "/context-memory-knowledge-architecture": "/architecture/context-and-knowledge",
+
+    // how-to renames
+    "/how-to/manage-channels": "/how-to/manage-adapters",
+    "/how-to/manage-sessions": "/how-to/manage-processes",
+    "/how-to/run-a-node": "/how-to/run-a-device",
+
+    // why orphans
+    "/why/examples": "/why/use-cases",
+    "/why/why": "/why/",
+
+    // get-started renames
+    "/get-started/cf-setup": "/get-started/cloudflare-setup",
+    "/get-started/getting-started": "/get-started/",
+    "/get-started/setting-up-a-channel": "/get-started/connect-adapters",
+
+    // architecture renames
+    "/architecture/channel-model": "/architecture/adapter-model",
+
+    // reference renames
+    "/reference/native-tools": "/reference/hardware-tools",
+    "/reference/session-routing": "/reference/routing",
+    "/reference/workspace-files": "/reference/context-files",
+  },
 
   sitemap: {
     hostname: "https://gsv.dev",
@@ -20,7 +60,7 @@ export default defineConfig({
       {
         property: "og:description",
         content:
-          "A durable cloud computer for humans, machines, and agents — persistent processes, device nodes, and automated workflows.",
+          "An open-source personal AI computer that spans all your devices and stays awake when they're asleep. One mind across your machines — not rented, not stuck on one box.",
       },
     ],
     ["meta", { property: "og:title", content: "GSV" }],

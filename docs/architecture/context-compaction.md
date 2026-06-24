@@ -123,3 +123,9 @@ GSV doesn't use a real tokenizer for estimation. Running `tiktoken` or equivalen
 This is deliberately conservative. Real token counts vary by model and content (code tokenizes differently from prose, non-English text differs from English). The 1.2x safety margin means compaction triggers a bit earlier than strictly necessary, which is preferable to triggering too late and hitting a hard context overflow.
 
 The most accurate signal comes from the LLM provider itself. After each call, the usage response includes actual input token counts. GSV caches this value and uses it as the primary compaction trigger on the next call. This means the first call after a reset uses the heuristic estimate, but subsequent calls use real data. In practice, the system quickly converges to accurate triggering.
+
+## See also
+
+- [Context and Knowledge](./context-and-knowledge.md)
+- [The Agent Loop](./agent-loop.md)
+- [Context Files Reference](../reference/context-files.md)

@@ -235,3 +235,10 @@ The loop treats failures as process events rather than hidden transport details.
 This keeps the model's history aligned with what actually happened. If a syscall
 failed, the next model call sees that failure as a tool result and can choose a
 different approach.
+
+## See also
+
+- [Process IPC and Scheduler](./process-ipc-and-scheduler.md)
+- [Context Compaction & Memory](./context-compaction.md)
+- [Process Handoffs](./process-handoffs.md)
+- [How to Manage Processes](../how-to/manage-processes.md)

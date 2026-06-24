@@ -119,3 +119,9 @@ This keeps the prompt small and makes retrieval visible:
 Do not add a kernel syscall for a knowledge workflow unless it is truly generic
 infrastructure. Most knowledge behavior belongs in an app, package backend, CLI,
 or agent workflow layered on top of `repo.*` and `fs.*`.
+
+## See also
+
+- [Context Compaction & Memory](./context-compaction.md)
+- [The Agent Loop](./agent-loop.md)
+- [Context Files Reference](../reference/context-files.md)
