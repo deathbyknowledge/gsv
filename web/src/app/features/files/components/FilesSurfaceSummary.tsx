@@ -8,6 +8,7 @@ import { Icon } from "../../../components/ui/Icon";
 import { IconButton } from "../../../components/ui/IconButton";
 import { ListRow } from "../../../components/ui/ListRow";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
+import { Search } from "../../../components/ui/Search";
 import { Select } from "../../../components/ui/Select";
 import { Spinner } from "../../../components/ui/Spinner";
 import { StatusDot, type StatusTone } from "../../../components/ui/StatusDot";
@@ -212,6 +213,7 @@ function DirectoryBrowser({
   onOpenFileInNewTab,
   onOpenParent,
   onOpenCreate,
+  onSelectionChange,
 }: {
   directory: FilesDirectoryPayload;
   onOpenDirectory: (path: string) => void;
@@ -219,13 +221,33 @@ function DirectoryBrowser({
   onOpenFileInNewTab: (path: string) => void;
   onOpenParent: () => void;
   onOpenCreate: () => void;
+  // Reports the currently selected FILE path (or null) up to the toolbar so it
+  // can offer DELETE for that file. Directory selections report null.
+  onSelectionChange: (path: string | null) => void;
 }) {
   const entries = sortDirectoryEntries(directory.entries);
   const directoryCount = entries.filter((entry) => entry.kind === "directory").length;
   const fileCount = entries.length - directoryCount;
-  // Keyboard cursor over the listing; clamped against the live entry count below.
-  const [selectedRowIndex, setSelectedRowIndex] = useState(0);
+  // Keyboard/selection cursor over the listing; clamped against the live entry
+  // count below. -1 means "nothing selected" (e.g. after a fresh navigation).
+  const [selectedRowIndex, setSelectedRowIndex] = useState(-1);
   const cursor = entries.length === 0 ? -1 : Math.min(selectedRowIndex, entries.length - 1);
+
+  // Re-derive the directory path so a navigation into a new folder resets the
+  // selection (stale highlight + toolbar DELETE) back to "nothing selected".
+  useEffect(() => {
+    setSelectedRowIndex(-1);
+  }, [directory.path]);
+
+  // Lift the selected FILE path (directories never expose a DELETE target).
+  useEffect(() => {
+    const entry = cursor >= 0 ? entries[cursor] : undefined;
+    onSelectionChange(entry && entry.kind === "file" ? entry.path : null);
+  }, [cursor, directory.path, directory.entries]);
+
+  const selectEntry = (index: number) => {
+    setSelectedRowIndex(index);
+  };
 
   const openEntry = (index: number) => {
     const entry = entries[index];
@@ -239,14 +261,15 @@ function DirectoryBrowser({
     }
   };
 
-  // ArrowUp/Down move the cursor, Enter opens, Backspace/ArrowLeft go up a dir.
+  // ArrowUp/Down move the selection, Enter opens (file → preview, dir → in),
+  // Backspace/ArrowLeft go up a dir.
   const onKeyDown = (event: JSX.TargetedKeyboardEvent<HTMLDivElement>) => {
     if (event.key === "ArrowDown") {
       event.preventDefault();
       setSelectedRowIndex((index) => Math.min(index + 1, entries.length - 1));
     } else if (event.key === "ArrowUp") {
       event.preventDefault();
-      setSelectedRowIndex((index) => Math.max(index - 1, 0));
+      setSelectedRowIndex((index) => Math.max((index < 0 ? 0 : index) - 1, 0));
     } else if (event.key === "Enter") {
       event.preventDefault();
       openEntry(cursor);
@@ -270,7 +293,16 @@ function DirectoryBrowser({
           detail={`${directory.path} has no entries returned by the target.`}
         />
       ) : entries.map((entry, index) => (
-        <div class="files-row-wrap" key={`${entry.kind}:${entry.path}`}>
+        <div
+          class="files-row-wrap"
+          key={`${entry.kind}:${entry.path}`}
+          // ListRow has no dbl-click hook, so a FILE's double-click to open the
+          // preview is handled here on the wrapper (single-click stays select-only).
+          onDblClick={entry.kind === "file" ? () => {
+            selectEntry(index);
+            onOpenFile(entry.path);
+          } : undefined}
+        >
           <ListRow
             className={`files-object-row${index === cursor ? " is-selected" : ""}`}
             icon={entry.kind === "directory" ? FOLDER_ICON : FILE_ICON}
@@ -281,9 +313,13 @@ function DirectoryBrowser({
             tagTone={entry.kind === "directory" ? "accent" : "idle"}
             chevron
             style={COMPACT_ROW_STYLE}
+            // Directory: single-click navigates in. File: single-click only
+            // selects (highlight + toolbar DELETE); double-click (above) opens preview.
             onClick={() => {
-              setSelectedRowIndex(index);
-              entry.kind === "directory" ? onOpenDirectory(entry.path) : onOpenFile(entry.path);
+              selectEntry(index);
+              if (entry.kind === "directory") {
+                onOpenDirectory(entry.path);
+              }
             }}
           />
           {entry.kind === "file" ? (
@@ -497,10 +533,22 @@ function BrowserTabView({
   const canQuery = connected && Boolean(target?.online);
   const atRoot = displayedPath === pathRoot(displayedPath);
   const basePath = isDirectoryPayload(payload) ? payload.path : isFilePayload(payload) ? payload.directoryPath : tab.path;
+  // The listing lifts its selected FILE path here so the toolbar's second row
+  // can offer DELETE for that file. Cleared on navigate/search/payload change.
+  const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
   const readMeta = [
     target ? describeTarget(target) : "",
     isFetching && payload ? "REFRESHING" : "",
   ].filter(Boolean).join(" | ");
+
+  // While the search view replaces the listing, there is no row selection, so
+  // drop any stale selected file (and its toolbar DELETE) until we're back.
+  const searchActive = Boolean(tab.searchQuery);
+  useEffect(() => {
+    if (searchActive && selectedFilePath !== null) {
+      setSelectedFilePath(null);
+    }
+  }, [searchActive, selectedFilePath]);
 
   // Crumbs navigate; the current page (last crumb) stays static via no onClick.
   const crumbs = buildPathCrumbs(displayedPath).map((crumb, index, list) => ({
@@ -516,36 +564,51 @@ function BrowserTabView({
           items={crumbs}
           onBack={atRoot ? undefined : () => onNavigate(pathParent(displayedPath))}
           size="medium"
-          maxVisible={8}
+          maxVisible={3}
         />
         <span class="files-breadcrumbs-actions">
           <IconButton glyph="refresh" size="small" title="Refresh directory" disabled={!canQuery} onClick={onRefresh} />
         </span>
       </div>
       <div class="files-browser-toolbar">
-        <form
-          class="files-search-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (canQuery) {
-              onSearchSubmit(tab.commandInput);
-            }
-          }}
-        >
-          <TextInput
-            key={`search-${tab.id}-${tab.commandInputKey}`}
-            label="SEARCH"
-            value={tab.commandInput}
-            placeholder="Search this target — press ENTER"
-            clearable
-            disabled={!canQuery}
-            onChange={onSearchInputChange}
-          />
-        </form>
-        <span class="files-toolbar-actions">
-          <Button variant="primary" label="CREATE NEW" disabled={!canQuery} onClick={() => onCreateStateChange({ ...emptyCreateState(), open: true })} />
-          <Button variant="dangerGhost" label="DELETE" disabled={!canQuery || atRoot || !payload?.ok} onClick={() => onRequestDelete(displayedPath)} />
-        </span>
+        {/* Row 1: bounded search (left) + CREATE NEW (right). */}
+        <div class="files-toolbar-row">
+          <span class="files-toolbar-search">
+            <Search
+              key={`search-${tab.id}-${tab.commandInputKey}`}
+              size="small"
+              value={tab.commandInput}
+              placeholder="Search this target — press ENTER"
+              disabled={!canQuery}
+              // Typing keeps the field in sync (and clears the active query when
+              // emptied, via the parent's onSearchInputChange handler).
+              onChange={onSearchInputChange}
+              // ENTER drives the existing whole-target search; an empty submit
+              // clears it back to the directory listing.
+              onSearch={(value) => {
+                if (canQuery) {
+                  onSearchSubmit(value);
+                }
+              }}
+            />
+          </span>
+          <span class="files-toolbar-actions">
+            <Button variant="primary" label="CREATE NEW" disabled={!canQuery} onClick={() => onCreateStateChange({ ...emptyCreateState(), open: true })} />
+          </span>
+        </div>
+        {/* Row 2: DELETE for the selected file — present only when one is selected. */}
+        {selectedFilePath ? (
+          <div class="files-toolbar-row files-toolbar-row-secondary">
+            <span class="files-toolbar-actions">
+              <Button
+                variant="dangerGhost"
+                label="DELETE"
+                disabled={!canQuery}
+                onClick={() => onRequestDelete(selectedFilePath)}
+              />
+            </span>
+          </div>
+        ) : null}
       </div>
 
       <CreateFilePanel
@@ -600,6 +663,7 @@ function BrowserTabView({
           onOpenFileInNewTab={onOpenFileInNewTab}
           onOpenParent={() => onNavigate(pathParent(displayedPath))}
           onOpenCreate={() => onCreateStateChange({ ...emptyCreateState(), open: true })}
+          onSelectionChange={setSelectedFilePath}
         />
       ) : isFilePayload(payload) ? (
         <FilesStateMessage
