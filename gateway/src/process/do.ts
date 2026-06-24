@@ -156,7 +156,7 @@ import {
 import { assembleSystemPrompt } from "./context";
 import { sendFrameToKernel } from "../shared/utils";
 import {
-  CODEMODE_FETCH,
+  NET_FETCH,
   CODEMODE_EXEC,
   TOOL_TO_SYSCALL,
   SYSCALL_TOOL_NAMES,
@@ -4029,7 +4029,7 @@ export class Process extends Host<Env> {
     approvalPolicy: ToolApprovalPolicy,
     conversationId: string,
   ): Promise<unknown> {
-    if (call === CODEMODE_FETCH) {
+    if (call === NET_FETCH) {
       return this.executeCodeModeFetch(runId, args, approvalPolicy, conversationId);
     }
     return this.executeCodeModeSyscall(runId, call, args, approvalPolicy, conversationId);
@@ -4039,7 +4039,7 @@ export class Process extends Host<Env> {
     call: CodeModeHostCall,
     args: Record<string, unknown>,
   ): Promise<unknown> {
-    if (call === CODEMODE_FETCH) {
+    if (call === NET_FETCH) {
       return this.performCodeModeFetch(args);
     }
     return this.executeCodeModeCommandSyscall(call, args);
@@ -4059,36 +4059,36 @@ export class Process extends Host<Env> {
     const toolName = "Fetch";
     const approval = resolveToolApproval(
       approvalPolicy,
-      CODEMODE_FETCH,
+      NET_FETCH,
       args,
       this.identity,
     );
 
     if (approval.action === "deny") {
-      throw new Error(`Tool execution denied by policy: ${CODEMODE_FETCH}`);
+      throw new Error(`Tool execution denied by policy: ${NET_FETCH}`);
     }
 
     if (approval.action === "ask") {
       if (!this.interactive) {
         throw new Error(
-          `Tool execution requires interactive approval, which is unavailable for this process: ${CODEMODE_FETCH}`,
+          `Tool execution requires interactive approval, which is unavailable for this process: ${NET_FETCH}`,
         );
       }
       const approved = await this.waitForCodeModeApproval(
         runId,
         toolCallId,
         toolName,
-        CODEMODE_FETCH,
+        NET_FETCH,
         args,
       );
       if (!approved) {
-        throw new Error(`Tool execution was not approved: ${CODEMODE_FETCH}`);
+        throw new Error(`Tool execution was not approved: ${NET_FETCH}`);
       }
     }
 
     await this.sendSignal("proc.run.tool.started", {
       name: toolName,
-      syscall: CODEMODE_FETCH,
+      syscall: NET_FETCH,
       args,
       callId: toolCallId,
       pid: this.pid,
@@ -4103,7 +4103,7 @@ export class Process extends Host<Env> {
       const output = await this.performCodeModeFetch(args);
       await this.sendSignal("proc.run.tool.finished", {
         name: toolName,
-        syscall: CODEMODE_FETCH,
+        syscall: NET_FETCH,
         callId: toolCallId,
         ok: true,
         output,
@@ -4116,7 +4116,7 @@ export class Process extends Host<Env> {
       const message = error instanceof Error ? error.message : String(error);
       await this.sendSignal("proc.run.tool.finished", {
         name: toolName,
-        syscall: CODEMODE_FETCH,
+        syscall: NET_FETCH,
         callId: toolCallId,
         ok: false,
         error: message,

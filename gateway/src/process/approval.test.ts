@@ -108,7 +108,7 @@ describe("tool approval policy", () => {
   it("requires approval for CodeMode fetches", () => {
     const get = resolveToolApproval(
       DEFAULT_TOOL_APPROVAL_POLICY,
-      "codemode.fetch",
+      "net.fetch",
       { url: "https://example.com", method: "GET" },
       IDENTITY,
       "task",
@@ -118,7 +118,7 @@ describe("tool approval policy", () => {
 
     const post = resolveToolApproval(
       DEFAULT_TOOL_APPROVAL_POLICY,
-      "codemode.fetch",
+      "net.fetch",
       { url: "https://example.com", method: "POST" },
       IDENTITY,
       "task",

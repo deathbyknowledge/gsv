@@ -69,7 +69,7 @@ describe("CodeMode executor", () => {
       `,
       async (call, args) => {
         calls.push({ call, args });
-        if (call === "codemode.fetch") {
+        if (call === "net.fetch") {
           return {
             url: String(args.url),
             status: 200,
@@ -85,7 +85,7 @@ describe("CodeMode executor", () => {
 
     expect(calls).toEqual([
       {
-        call: "codemode.fetch",
+        call: "net.fetch",
         args: {
           url: "https://example.test/index.html",
           method: "GET",

@@ -12,7 +12,9 @@ export const SHELL_EXEC = "shell.exec";
 // CodeMode (process-local programmable tool use)
 export const CODEMODE_EXEC = "codemode.exec";
 export const CODEMODE_RUN = "codemode.run";
-export const CODEMODE_FETCH = "codemode.fetch";
+
+// Host-routed network operations
+export const NET_FETCH = "net.fetch";
 
 // Process management (OS-level agent processes)
 export const PROC_SPAWN = "proc.spawn";

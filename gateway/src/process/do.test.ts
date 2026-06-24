@@ -4317,7 +4317,7 @@ describe("Process DO — mechanical", () => {
           conversationId: "default",
           approvalPolicy: {
             default: "auto",
-            rules: [{ match: "codemode.fetch", action: "ask" }],
+            rules: [{ match: "net.fetch", action: "ask" }],
           },
         };
         process.waitForCodeModeApproval = async (
@@ -4345,11 +4345,11 @@ describe("Process DO — mechanical", () => {
           },
           process.currentRun.approvalPolicy,
           "default",
-        )).rejects.toThrow("Tool execution was not approved: codemode.fetch");
+        )).rejects.toThrow("Tool execution was not approved: net.fetch");
 
         expect(approvals).toEqual([
           {
-            call: "codemode.fetch",
+            call: "net.fetch",
             args: {
               url: "https://example.com/upload",
               method: "POST",

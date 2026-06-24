@@ -6,7 +6,7 @@ import type { CodeModeMcpToolBinding } from "../codemode/mcp";
 import type { SyscallName } from "../syscalls";
 import type { CodeModeExecResult } from "../syscalls/codemode";
 import {
-  CODEMODE_FETCH,
+  NET_FETCH,
   FS_DELETE,
   FS_EDIT,
   FS_READ,
@@ -21,7 +21,7 @@ export type { CodeModeMcpToolBinding } from "../codemode/mcp";
 
 export const CODE_MODE_EXECUTION_TIMEOUT_MS = 60_000;
 
-export type CodeModeHostCall = SyscallName | typeof CODEMODE_FETCH;
+export type CodeModeHostCall = SyscallName | typeof NET_FETCH;
 
 export type CodeModeToolRequest = (
   call: CodeModeHostCall,
@@ -138,7 +138,7 @@ export function buildCodeModeSource(
   };
   const fetch = async (input, init) => {
     const request = await __normalizeFetchRequest(input, init);
-    const response = await codemode.fetch(request);
+    const response = await net.fetch(request);
     const proxiedResponse = new Response(
       response.bodyBase64 ? __arrayBufferFromBase64(response.bodyBase64) : null,
       {
@@ -270,7 +270,12 @@ export async function executeCodeMode(
         edit: async (args: unknown) => requestTool(FS_EDIT as SyscallName, toRecord(args, "fs.edit")),
         delete: async (args: unknown) => requestTool(FS_DELETE as SyscallName, toRecord(args, "fs.delete")),
         search: async (args: unknown) => requestTool(FS_SEARCH as SyscallName, toRecord(args, "fs.search")),
-        fetch: async (args: unknown) => requestTool(CODEMODE_FETCH, toRecord(args, "fetch")),
+      },
+    },
+    {
+      name: "net",
+      fns: {
+        fetch: async (args: unknown) => requestTool(NET_FETCH, toRecord(args, "fetch")),
       },
     },
   ];
