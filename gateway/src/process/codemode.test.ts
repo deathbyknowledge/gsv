@@ -52,6 +52,29 @@ describe("CodeMode executor", () => {
     });
   });
 
+  it("allows sandboxed code to use fetch", async () => {
+    const result = await executeCodeMode(
+      env,
+      `
+        const response = await fetch("https://assets.example.test/index.html");
+        return {
+          status: response.status,
+          body: await response.text(),
+        };
+      `,
+      async () => null,
+      {
+        globalOutbound: env.ASSETS,
+      },
+    );
+
+    expect(result.status).toBe("completed");
+    if (result.status === "completed") {
+      expect(result.result).toMatchObject({ status: 200 });
+      expect(String((result.result as { body?: unknown }).body)).toContain("gateway test assets");
+    }
+  });
+
   it("applies command defaults and exposes argv and args", async () => {
     const calls: Array<{ call: string; args: Record<string, unknown> }> = [];
     const result = await executeCodeMode(

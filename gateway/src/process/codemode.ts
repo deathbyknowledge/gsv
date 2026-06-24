@@ -31,6 +31,7 @@ export type CodeModeExecutionOptions = {
   argv?: string[];
   args?: unknown;
   mcpToolBindings?: CodeModeMcpToolBinding[];
+  globalOutbound?: Fetcher | null;
 };
 
 export function buildCodeModeSource(
@@ -193,7 +194,7 @@ export async function executeCodeMode(
   const executor = new DynamicWorkerExecutor({
     loader: env.LOADER,
     timeout: CODE_MODE_EXECUTION_TIMEOUT_MS,
-    globalOutbound: null,
+    globalOutbound: options?.globalOutbound ?? null,
   });
 
   const providers: ResolvedProvider[] = [

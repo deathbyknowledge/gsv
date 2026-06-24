@@ -73,6 +73,11 @@
 		{
 			"binding": "ASSEMBLER",
 			"service": "gsv-assembler"
+		},
+		{
+			"binding": "CODEMODE_OUTBOUND",
+			"service": "gsv",
+			"entrypoint": "CodeModeOutbound"
 		}
 	],
 	"worker_loaders": [

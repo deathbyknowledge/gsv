@@ -3950,6 +3950,7 @@ export class Process extends Host<Env> {
           argv: normalizeStringArray(args.argv),
           args: args.args ?? null,
           mcpToolBindings: await this.getCodeModeMcpToolBindings(),
+          globalOutbound: this.env.CODEMODE_OUTBOUND,
         },
       );
     } catch (error) {
@@ -3999,6 +4000,7 @@ export class Process extends Host<Env> {
         ),
         {
           mcpToolBindings: await this.getCodeModeMcpToolBindings(),
+          globalOutbound: this.env.CODEMODE_OUTBOUND,
         },
       );
       this.store.resolve(toolCallId, result);

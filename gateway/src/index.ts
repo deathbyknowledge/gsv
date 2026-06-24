@@ -21,6 +21,12 @@ export { Process } from "./process/do";
 export { KernelBinding } from "./kernel/packages";
 export { AppRunner, GsvApiBinding } from "./app-runner";
 
+export class CodeModeOutbound extends WorkerEntrypoint<Env> {
+  async fetch(request: Request): Promise<Response> {
+    return fetch(request);
+  }
+}
+
 export default {
   async fetch(request, env, ctx): Promise<Response> {
     const url = new URL(request.url);
