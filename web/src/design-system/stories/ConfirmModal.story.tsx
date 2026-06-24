@@ -29,6 +29,18 @@ const story: Story = {
         <div class="ds-label">Wide width (560)</div>
         <ConfirmModal width={560} title="PURGE LOGS" message="Delete all archived logs for this agent?" />
       </div>
+      <div class="ds-cell">
+        <div class="ds-label">Type-to-confirm guard (delete file)</div>
+        <ConfirmModal
+          title="DELETE FILE"
+          message="Delete “/personas/captain.md” permanently?"
+          note="Type the file path below to enable delete. This can’t be undone."
+          confirmLabel="DELETE"
+          confirmPhrase="/personas/captain.md"
+          confirmInputLabel="TYPE PATH TO CONFIRM"
+          confirmInputPlaceholder="/personas/captain.md"
+        />
+      </div>
     </div>
   ),
 };
