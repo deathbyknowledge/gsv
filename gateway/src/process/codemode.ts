@@ -37,6 +37,9 @@ export type CodeModeFetchResult = {
   redirected: boolean;
 };
 
+type FetchRedirectMode = "follow" | "error" | "manual";
+type CodeModeFetchHandler = (request: Request) => Promise<Response>;
+
 export type CodeModeExecutionOptions = {
   defaultTarget?: string;
   defaultCwd?: string;
@@ -125,16 +128,24 @@ export function buildCodeModeSource(
     }
     return bytes.buffer;
   };
+  const __fetchRedirectMode = (input, init) => {
+    if (__isObject(init) && typeof init.redirect === "string") return init.redirect;
+    if (__isObject(input) && typeof input.redirect === "string") return input.redirect;
+    return undefined;
+  };
   const __normalizeFetchRequest = async (input, init) => {
     const request = new Request(input, init);
+    const redirect = __fetchRedirectMode(input, init);
     const method = request.method.toUpperCase();
     const bodyAllowed = method !== "GET" && method !== "HEAD";
-    return {
+    const normalized = {
       url: request.url,
       method,
       headers: Array.from(request.headers.entries()),
-      ...(bodyAllowed ? { bodyBase64: __base64FromArrayBuffer(await request.arrayBuffer()) } : {}),
     };
+    if (redirect) normalized.redirect = redirect;
+    if (bodyAllowed) normalized.bodyBase64 = __base64FromArrayBuffer(await request.arrayBuffer());
+    return normalized;
   };
   const fetch = async (input, init) => {
     const request = await __normalizeFetchRequest(input, init);
@@ -310,9 +321,12 @@ export async function executeCodeMode(
   return { status: "completed", result: response.result, logs };
 }
 
-export async function performCodeModeFetch(args: Record<string, unknown>): Promise<CodeModeFetchResult> {
+export async function performCodeModeFetch(
+  args: Record<string, unknown>,
+  fetcher: CodeModeFetchHandler = (request) => fetch(request),
+): Promise<CodeModeFetchResult> {
   const request = buildCodeModeFetchRequest(args);
-  const response = await fetch(request);
+  const response = await fetcher(request);
   return {
     url: response.url,
     status: response.status,
@@ -347,13 +361,21 @@ function buildCodeModeFetchRequest(args: Record<string, unknown>): Request {
     : "GET";
   const headers = parseFetchHeaders(args.headers);
   const bodyBase64 = typeof args.bodyBase64 === "string" ? args.bodyBase64 : "";
+  const redirect = parseFetchRedirect(args.redirect);
   return new Request(url, {
     method,
     headers,
+    ...(redirect ? { redirect } : {}),
     ...(bodyBase64 && method !== "GET" && method !== "HEAD"
       ? { body: arrayBufferFromBase64(bodyBase64) }
       : {}),
   });
+}
+
+function parseFetchRedirect(value: unknown): FetchRedirectMode | undefined {
+  return value === "follow" || value === "error" || value === "manual"
+    ? value
+    : undefined;
 }
 
 function parseFetchHeaders(value: unknown): Headers {
