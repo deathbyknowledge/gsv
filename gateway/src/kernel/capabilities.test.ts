@@ -194,6 +194,7 @@ describe("CapabilityStore", () => {
       "app.*",
       "codemode.*",
       "fs.*",
+      "net.fetch",
       "notification.*",
       "pkg.checkout",
       "pkg.create",

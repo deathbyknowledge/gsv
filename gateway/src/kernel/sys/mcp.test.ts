@@ -36,7 +36,12 @@ type SdkMcpServerRow = {
   server_options: string | null;
 };
 
-function makeContext(uid: number, mcpServers: FakeMcpServers): KernelContext {
+function makeContext(
+  uid: number,
+  mcpServers: FakeMcpServers,
+  options: { ownerUid?: number; processId?: string } = {},
+): KernelContext {
+  const ownerUid = options.ownerUid ?? uid;
   return {
     identity: {
       role: "user",
@@ -49,6 +54,12 @@ function makeContext(uid: number, mcpServers: FakeMcpServers): KernelContext {
         cwd: uid === 0 ? "/root" : `/home/user${uid}`,
       },
       capabilities: ["*"],
+    },
+    processId: options.processId,
+    procs: {
+      getOwnerUid: vi.fn((processId: string) =>
+        processId === options.processId ? ownerUid : null
+      ),
     },
     mcpServers,
     mcp: {
@@ -245,6 +256,45 @@ describe("sys.mcp handlers", () => {
     expect(await handleSysMcpRemove({ serverId: "server-2" }, ctx)).toEqual({ removed: false });
     expect(await handleSysMcpRemove({ serverId: "server-1" }, ctx)).toEqual({ removed: true });
     expect(ctx.removeMcpServerConnection).toHaveBeenCalledWith("server-1");
+  });
+
+  it("defaults process-originated MCP access to the owning human", async () => {
+    const ctx = makeContext(2000, mcpServers, {
+      ownerUid: 1000,
+      processId: "proc-agent",
+    });
+    mcpServers.upsert({
+      serverId: "server-1",
+      uid: 1000,
+      name: "Owner Search",
+    });
+    mcpServers.addSdkServer({
+      serverId: "server-1",
+      uid: 1000,
+      name: "Owner Search",
+      url: "https://owner.example.com/mcp",
+    });
+    mcpServers.upsert({
+      serverId: "server-2",
+      uid: 2000,
+      name: "Agent Local",
+    });
+    mcpServers.addSdkServer({
+      serverId: "server-2",
+      uid: 2000,
+      name: "Agent Local",
+      url: "https://agent.example.com/mcp",
+    });
+
+    expect(handleSysMcpList({}, ctx).servers.map((server) => server.serverId)).toEqual(["server-1"]);
+
+    await handleSysMcpCall({
+      serverId: "server-1",
+      name: "lookup",
+      arguments: { query: "test" },
+    }, ctx);
+
+    expect(ctx.callMcpTool).toHaveBeenCalledWith("server-1", "lookup", { query: "test" });
   });
 
   it("calls only caller-owned MCP tools", async () => {

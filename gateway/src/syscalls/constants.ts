@@ -13,6 +13,9 @@ export const SHELL_EXEC = "shell.exec";
 export const CODEMODE_EXEC = "codemode.exec";
 export const CODEMODE_RUN = "codemode.run";
 
+// Host-routed network operations
+export const NET_FETCH = "net.fetch";
+
 // Process management (OS-level agent processes)
 export const PROC_SPAWN = "proc.spawn";
 export const PROC_KILL = "proc.kill";

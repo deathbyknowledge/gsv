@@ -7,6 +7,7 @@ import {
   type WordNode,
 } from "just-bash";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
+import { NET_FETCH } from "../syscalls/constants";
 
 export type ToolApprovalAction = "auto" | "ask" | "deny";
 
@@ -46,6 +47,7 @@ export const DEFAULT_TOOL_APPROVAL_POLICY: ToolApprovalPolicy = {
   default: "auto",
   rules: [
     { match: "shell.exec", when: { anyTag: ["destructive", "privileged", "network", "mutating", "unclassified"] }, action: "ask" },
+    { match: NET_FETCH, when: { anyTag: ["network", "mutating"] }, action: "ask" },
     { match: "fs.delete", action: "ask" },
     { match: "sys.mcp.call", action: "ask" },
   ],
@@ -257,6 +259,13 @@ export function buildToolApprovalFacts(
 
   if (command) {
     addShellCommandTags(command, tags);
+  }
+  if (syscall === NET_FETCH) {
+    tags.add("network");
+    const method = typeof record?.method === "string" ? record.method.trim().toUpperCase() : "GET";
+    if (method && method !== "GET" && method !== "HEAD") {
+      tags.add("mutating");
+    }
   }
 
   return {

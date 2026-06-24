@@ -31,6 +31,7 @@ const WORKER_TOOL_APPROVAL_POLICY = JSON.stringify({
   default: "auto",
   rules: [
     { match: "shell.exec", when: { anyTag: ["destructive", "privileged", "network", "mutating", "unclassified"] }, action: "ask" },
+    { match: "net.fetch", when: { anyTag: ["network", "mutating"] }, action: "ask" },
     { match: "fs.delete", action: "ask" },
     { match: "sys.mcp.call", action: "ask" },
   ],

@@ -4302,6 +4302,190 @@ describe("Process DO — mechanical", () => {
       });
     });
 
+    it("gates CodeMode fetches through tool approval", async () => {
+      const pid = "mech-codemode-fetch-approval";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const approvals: Array<{ call: string; args: Record<string, unknown> }> = [];
+        let performedFetch = false;
+
+        process.currentRun = {
+          runId: "run-codemode-fetch-approval",
+          queued: false,
+          conversationId: "default",
+          approvalPolicy: {
+            default: "auto",
+            rules: [{ match: "net.fetch", action: "ask" }],
+          },
+        };
+        process.waitForCodeModeApproval = async (
+          _runId: string,
+          _toolCallId: string,
+          _toolName: string,
+          call: string,
+          args: Record<string, unknown>,
+        ) => {
+          approvals.push({ call, args });
+          return false;
+        };
+        process.performCodeModeFetch = async () => {
+          performedFetch = true;
+          return { status: 200 };
+        };
+
+        await expect(process.executeCodeModeFetch(
+          "run-codemode-fetch-approval",
+          {
+            url: "https://example.com/upload",
+            method: "POST",
+            headers: [],
+            bodyBase64: btoa("secret"),
+          },
+          process.currentRun.approvalPolicy,
+          "default",
+        )).rejects.toThrow("Tool execution was not approved: net.fetch");
+
+        expect(approvals).toEqual([
+          {
+            call: "net.fetch",
+            args: {
+              url: "https://example.com/upload",
+              method: "POST",
+              headers: [],
+              bodyBase64: btoa("secret"),
+            },
+          },
+        ]);
+        expect(performedFetch).toBe(false);
+      });
+    });
+
+    it("rejects CodeMode fetches without net.fetch capability", async () => {
+      const pid = "mech-codemode-fetch-capability";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        let requestedApproval = false;
+        let performedFetch = false;
+
+        process.currentRun = {
+          runId: "run-codemode-fetch-capability",
+          queued: false,
+          conversationId: "default",
+          config: { capabilities: ["codemode.*"] },
+          approvalPolicy: {
+            default: "auto",
+            rules: [],
+          },
+        };
+        process.waitForCodeModeApproval = async () => {
+          requestedApproval = true;
+          return true;
+        };
+        process.performCodeModeFetch = async () => {
+          performedFetch = true;
+          return { status: 200 };
+        };
+
+        await expect(process.executeCodeModeFetch(
+          "run-codemode-fetch-capability",
+          {
+            url: "https://example.com/",
+            method: "GET",
+            headers: [],
+          },
+          process.currentRun.approvalPolicy,
+          "default",
+        )).rejects.toThrow("Permission denied: net.fetch");
+
+        expect(requestedApproval).toBe(false);
+        expect(performedFetch).toBe(false);
+      });
+    });
+
+    it("does not emit CodeMode fetch results after the run stops", async () => {
+      const pid = "mech-codemode-fetch-stopped-after-fetch";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const signals: Array<{ type: string; payload: Record<string, unknown> }> = [];
+        let stopChecks = 0;
+
+        process.currentRun = {
+          runId: "run-codemode-fetch-stopped-after-fetch",
+          queued: false,
+          conversationId: "default",
+          config: { capabilities: ["codemode.*", "net.fetch"] },
+          approvalPolicy: {
+            default: "auto",
+            rules: [],
+          },
+        };
+        process.sendSignal = async (type: string, payload: Record<string, unknown>) => {
+          signals.push({ type, payload });
+        };
+        process.handleRunStopped = async () => {
+          stopChecks += 1;
+          return stopChecks >= 3;
+        };
+        process.performCodeModeFetch = async () => ({ status: 200 });
+
+        await expect(process.executeCodeModeFetch(
+          "run-codemode-fetch-stopped-after-fetch",
+          {
+            url: "https://example.com/",
+            method: "GET",
+            headers: [],
+          },
+          process.currentRun.approvalPolicy,
+          "default",
+        )).rejects.toThrow("Run stopped before CodeMode fetch completed");
+
+        expect(signals.map((signal) => signal.type)).toEqual(["proc.run.tool.started"]);
+      });
+    });
+
+    it("rejects codemode.run fetches without net.fetch capability", async () => {
+      const pid = "mech-codemode-run-fetch-capability";
+      const identity: ProcessIdentity = {
+        uid: 3000,
+        gid: 3000,
+        gids: [3000],
+        username: "limited",
+        home: "/home/limited",
+        cwd: "/home/limited",
+      };
+      const stub = await initProcess(pid, identity);
+      const kernel = await getKernelPtr();
+      await runInDurableObject(kernel, (instance: Kernel) => {
+        const k = instance as any;
+        k.caps.grant(3000, "codemode.run");
+      });
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        let performedFetch = false;
+        process.performCodeModeFetch = async () => {
+          performedFetch = true;
+          return { status: 200 };
+        };
+
+        const result = await process.handleCodeModeRun({
+          code: "const response = await fetch('https://example.com/'); return response.status;",
+        });
+
+        expect(result).toMatchObject({
+          status: "failed",
+          error: expect.stringContaining("Permission denied: net.fetch"),
+        });
+        expect(performedFetch).toBe(false);
+      });
+    });
+
     it("dispatches CodeMode through the process-local executor path", async () => {
       const pid = "mech-codemode-basic";
       const stub = await initProcess(pid, ROOT_IDENTITY);

@@ -175,6 +175,11 @@ describe("ConfigStore", () => {
       when: { anyTag: ["destructive", "privileged", "network", "mutating", "unclassified"] },
       action: "ask",
     });
+    expect(policy.rules).toContainEqual({
+      match: "net.fetch",
+      when: { anyTag: ["network", "mutating"] },
+      action: "ask",
+    });
     expect(policy.rules).toContainEqual({ match: "fs.delete", action: "ask" });
   });
 });
