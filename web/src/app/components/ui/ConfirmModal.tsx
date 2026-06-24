@@ -1,5 +1,6 @@
-import { useEffect, useId, useRef } from "preact/hooks";
+import { useEffect, useId, useRef, useState } from "preact/hooks";
 import { Button } from "./Button";
+import { TextInput } from "./TextInput";
 import "./ConfirmModal.css";
 
 export interface ConfirmModalProps {
@@ -10,6 +11,13 @@ export interface ConfirmModalProps {
   confirmLabel?: string;
   /** Modal width in px (320–560). */
   width?: number;
+  /** When set, the confirm button stays disabled until the user types text that
+   *  exactly matches this phrase (e.g. a file path before a destructive delete). */
+  confirmPhrase?: string;
+  /** Label for the confirm-phrase input. */
+  confirmInputLabel?: string;
+  /** Placeholder for the confirm-phrase input (often the phrase/path to type). */
+  confirmInputPlaceholder?: string;
   onCancel?: () => void;
   onConfirm?: () => void;
 }
@@ -23,6 +31,9 @@ export function ConfirmModal({
   cancelLabel = "CANCEL",
   confirmLabel = "DELETE",
   width = 440,
+  confirmPhrase,
+  confirmInputLabel = "TYPE TO CONFIRM",
+  confirmInputPlaceholder,
   onCancel,
   onConfirm,
 }: ConfirmModalProps) {
@@ -30,6 +41,11 @@ export function ConfirmModal({
   const descId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
   const footerRef = useRef<HTMLDivElement>(null);
+
+  // Confirm-phrase guard: when confirmPhrase is set, the danger button stays
+  // disabled until the typed value matches it exactly. Undefined → no guard.
+  const [typedValue, setTypedValue] = useState("");
+  const phraseMatched = confirmPhrase === undefined || typedValue === confirmPhrase;
 
   // On mount, move focus to the Cancel (secondary) button.
   useEffect(() => {
@@ -132,9 +148,22 @@ export function ConfirmModal({
         </div>
       </div>
 
+      {confirmPhrase !== undefined ? (
+        <div style={{ padding: "0 22px 18px" }}>
+          <TextInput
+            value={typedValue}
+            label={confirmInputLabel}
+            placeholder={confirmInputPlaceholder ?? confirmPhrase}
+            clearable
+            status={phraseMatched && typedValue.length > 0 ? "success" : "none"}
+            onChange={setTypedValue}
+          />
+        </div>
+      ) : null}
+
       <div ref={footerRef} style={{ display: "flex", justifyContent: "flex-end", gap: "12px", padding: "0 22px 22px" }}>
         <Button variant="secondary" label={cancelLabel} onClick={onCancel} />
-        <Button variant="danger" label={confirmLabel} onClick={onConfirm} />
+        <Button variant="danger" label={confirmLabel} disabled={!phraseMatched} onClick={onConfirm} />
       </div>
     </div>
   );
