@@ -156,6 +156,7 @@ import {
 import { assembleSystemPrompt } from "./context";
 import { sendFrameToKernel } from "../shared/utils";
 import {
+  CODEMODE_FETCH,
   CODEMODE_EXEC,
   TOOL_TO_SYSCALL,
   SYSCALL_TOOL_NAMES,
@@ -164,6 +165,8 @@ import { RipgitClient } from "../fs/ripgit/client";
 import {
   buildCodeModeMcpToolBindings,
   executeCodeMode,
+  performCodeModeFetch,
+  type CodeModeHostCall,
 } from "./codemode";
 import {
   DEFAULT_CONVERSATION_ID,
@@ -3943,14 +3946,13 @@ export class Process extends Host<Env> {
       return await executeCodeMode(
         this.env,
         args.code,
-        (call, toolArgs) => this.executeCodeModeCommandSyscall(call, toolArgs),
+        (call, toolArgs) => this.executeCodeModeCommandHostCall(call, toolArgs),
         {
           defaultTarget: normalizeOptionalString(args.target),
           defaultCwd: normalizeOptionalString(args.cwd),
           argv: normalizeStringArray(args.argv),
           args: args.args ?? null,
           mcpToolBindings: await this.getCodeModeMcpToolBindings(),
-          globalOutbound: this.env.CODEMODE_OUTBOUND,
         },
       );
     } catch (error) {
@@ -3991,7 +3993,7 @@ export class Process extends Host<Env> {
       const result = await executeCodeMode(
         this.env,
         args.code,
-        (call, toolArgs) => this.executeCodeModeSyscall(
+        (call, toolArgs) => this.executeCodeModeHostCall(
           runId,
           call,
           toolArgs,
@@ -4000,7 +4002,6 @@ export class Process extends Host<Env> {
         ),
         {
           mcpToolBindings: await this.getCodeModeMcpToolBindings(),
-          globalOutbound: this.env.CODEMODE_OUTBOUND,
         },
       );
       this.store.resolve(toolCallId, result);
@@ -4019,6 +4020,116 @@ export class Process extends Host<Env> {
     } catch {
       return [];
     }
+  }
+
+  private async executeCodeModeHostCall(
+    runId: string,
+    call: CodeModeHostCall,
+    args: Record<string, unknown>,
+    approvalPolicy: ToolApprovalPolicy,
+    conversationId: string,
+  ): Promise<unknown> {
+    if (call === CODEMODE_FETCH) {
+      return this.executeCodeModeFetch(runId, args, approvalPolicy, conversationId);
+    }
+    return this.executeCodeModeSyscall(runId, call, args, approvalPolicy, conversationId);
+  }
+
+  private async executeCodeModeCommandHostCall(
+    call: CodeModeHostCall,
+    args: Record<string, unknown>,
+  ): Promise<unknown> {
+    if (call === CODEMODE_FETCH) {
+      return this.performCodeModeFetch(args);
+    }
+    return this.executeCodeModeCommandSyscall(call, args);
+  }
+
+  private async executeCodeModeFetch(
+    runId: string,
+    args: Record<string, unknown>,
+    approvalPolicy: ToolApprovalPolicy,
+    conversationId: string,
+  ): Promise<unknown> {
+    if (await this.handleRunStopped(runId)) {
+      throw new Error("Run stopped before CodeMode fetch completed");
+    }
+
+    const toolCallId = `codemode-${crypto.randomUUID()}`;
+    const toolName = "Fetch";
+    const approval = resolveToolApproval(
+      approvalPolicy,
+      CODEMODE_FETCH,
+      args,
+      this.identity,
+    );
+
+    if (approval.action === "deny") {
+      throw new Error(`Tool execution denied by policy: ${CODEMODE_FETCH}`);
+    }
+
+    if (approval.action === "ask") {
+      if (!this.interactive) {
+        throw new Error(
+          `Tool execution requires interactive approval, which is unavailable for this process: ${CODEMODE_FETCH}`,
+        );
+      }
+      const approved = await this.waitForCodeModeApproval(
+        runId,
+        toolCallId,
+        toolName,
+        CODEMODE_FETCH,
+        args,
+      );
+      if (!approved) {
+        throw new Error(`Tool execution was not approved: ${CODEMODE_FETCH}`);
+      }
+    }
+
+    await this.sendSignal("proc.run.tool.started", {
+      name: toolName,
+      syscall: CODEMODE_FETCH,
+      args,
+      callId: toolCallId,
+      pid: this.pid,
+      runId,
+      conversationId,
+    });
+    if (await this.handleRunStopped(runId)) {
+      throw new Error("Run stopped before CodeMode fetch completed");
+    }
+
+    try {
+      const output = await this.performCodeModeFetch(args);
+      await this.sendSignal("proc.run.tool.finished", {
+        name: toolName,
+        syscall: CODEMODE_FETCH,
+        callId: toolCallId,
+        ok: true,
+        output,
+        pid: this.pid,
+        runId,
+        conversationId,
+      });
+      return output;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await this.sendSignal("proc.run.tool.finished", {
+        name: toolName,
+        syscall: CODEMODE_FETCH,
+        callId: toolCallId,
+        ok: false,
+        error: message,
+        pid: this.pid,
+        runId,
+        conversationId,
+      });
+      throw error;
+    }
+  }
+
+  private async performCodeModeFetch(args: Record<string, unknown>): Promise<unknown> {
+    return performCodeModeFetch(args);
   }
 
   private async executeCodeModeSyscall(
@@ -4151,7 +4262,7 @@ export class Process extends Host<Env> {
     runId: string,
     toolCallId: string,
     toolName: string,
-    call: SyscallName,
+    call: string,
     args: Record<string, unknown>,
   ): Promise<boolean> {
     const requestId = crypto.randomUUID();

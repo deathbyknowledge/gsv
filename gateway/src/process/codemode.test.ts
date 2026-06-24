@@ -52,25 +52,54 @@ describe("CodeMode executor", () => {
     });
   });
 
-  it("allows sandboxed code to use fetch", async () => {
+  it("routes sandboxed fetch through the host callback", async () => {
+    const calls: Array<{ call: string; args: Record<string, unknown> }> = [];
     const result = await executeCodeMode(
       env,
       `
-        const response = await fetch("https://assets.example.test/index.html");
+        const response = await fetch("https://example.test/index.html", {
+          headers: { "x-test": "yes" },
+        });
         return {
           status: response.status,
+          url: response.url,
+          header: response.headers.get("content-type"),
           body: await response.text(),
         };
       `,
-      async () => null,
-      {
-        globalOutbound: env.ASSETS,
+      async (call, args) => {
+        calls.push({ call, args });
+        if (call === "codemode.fetch") {
+          return {
+            url: String(args.url),
+            status: 200,
+            statusText: "OK",
+            headers: [["content-type", "text/plain"]],
+            bodyBase64: btoa("gateway test assets"),
+            redirected: false,
+          };
+        }
+        throw new Error(`unexpected call: ${call}`);
       },
     );
 
+    expect(calls).toEqual([
+      {
+        call: "codemode.fetch",
+        args: {
+          url: "https://example.test/index.html",
+          method: "GET",
+          headers: [["x-test", "yes"]],
+        },
+      },
+    ]);
     expect(result.status).toBe("completed");
     if (result.status === "completed") {
-      expect(result.result).toMatchObject({ status: 200 });
+      expect(result.result).toMatchObject({
+        status: 200,
+        url: "https://example.test/index.html",
+        header: "text/plain",
+      });
       expect(String((result.result as { body?: unknown }).body)).toContain("gateway test assets");
     }
   });

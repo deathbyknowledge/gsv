@@ -51,13 +51,6 @@
 			"binding": "LOADER"
 		}
 	],
-	"services": [
-		{
-			"binding": "CODEMODE_OUTBOUND",
-			"service": "gateway-test",
-			"entrypoint": "CodeModeOutbound"
-		}
-	],
 	"assets": {
 		"directory": "./test-assets/",
 		"binding": "ASSETS",

@@ -4302,6 +4302,66 @@ describe("Process DO — mechanical", () => {
       });
     });
 
+    it("gates CodeMode fetches through tool approval", async () => {
+      const pid = "mech-codemode-fetch-approval";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const approvals: Array<{ call: string; args: Record<string, unknown> }> = [];
+        let performedFetch = false;
+
+        process.currentRun = {
+          runId: "run-codemode-fetch-approval",
+          queued: false,
+          conversationId: "default",
+          approvalPolicy: {
+            default: "auto",
+            rules: [{ match: "codemode.fetch", action: "ask" }],
+          },
+        };
+        process.waitForCodeModeApproval = async (
+          _runId: string,
+          _toolCallId: string,
+          _toolName: string,
+          call: string,
+          args: Record<string, unknown>,
+        ) => {
+          approvals.push({ call, args });
+          return false;
+        };
+        process.performCodeModeFetch = async () => {
+          performedFetch = true;
+          return { status: 200 };
+        };
+
+        await expect(process.executeCodeModeFetch(
+          "run-codemode-fetch-approval",
+          {
+            url: "https://example.com/upload",
+            method: "POST",
+            headers: [],
+            bodyBase64: btoa("secret"),
+          },
+          process.currentRun.approvalPolicy,
+          "default",
+        )).rejects.toThrow("Tool execution was not approved: codemode.fetch");
+
+        expect(approvals).toEqual([
+          {
+            call: "codemode.fetch",
+            args: {
+              url: "https://example.com/upload",
+              method: "POST",
+              headers: [],
+              bodyBase64: btoa("secret"),
+            },
+          },
+        ]);
+        expect(performedFetch).toBe(false);
+      });
+    });
+
     it("dispatches CodeMode through the process-local executor path", async () => {
       const pid = "mech-codemode-basic";
       const stub = await initProcess(pid, ROOT_IDENTITY);

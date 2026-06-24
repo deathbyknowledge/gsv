@@ -6,6 +6,7 @@ import type { CodeModeMcpToolBinding } from "../codemode/mcp";
 import type { SyscallName } from "../syscalls";
 import type { CodeModeExecResult } from "../syscalls/codemode";
 import {
+  CODEMODE_FETCH,
   FS_DELETE,
   FS_EDIT,
   FS_READ,
@@ -20,10 +21,21 @@ export type { CodeModeMcpToolBinding } from "../codemode/mcp";
 
 export const CODE_MODE_EXECUTION_TIMEOUT_MS = 60_000;
 
+export type CodeModeHostCall = SyscallName | typeof CODEMODE_FETCH;
+
 export type CodeModeToolRequest = (
-  call: SyscallName,
+  call: CodeModeHostCall,
   args: Record<string, unknown>,
 ) => Promise<unknown>;
+
+export type CodeModeFetchResult = {
+  url: string;
+  status: number;
+  statusText: string;
+  headers: Array<[string, string]>;
+  bodyBase64: string;
+  redirected: boolean;
+};
 
 export type CodeModeExecutionOptions = {
   defaultTarget?: string;
@@ -31,7 +43,6 @@ export type CodeModeExecutionOptions = {
   argv?: string[];
   args?: unknown;
   mcpToolBindings?: CodeModeMcpToolBinding[];
-  globalOutbound?: Fetcher | null;
 };
 
 export function buildCodeModeSource(
@@ -97,6 +108,58 @@ export function buildCodeModeSource(
     }
     return { ...value };
   };
+  const __base64FromArrayBuffer = (buffer) => {
+    const bytes = new Uint8Array(buffer);
+    let binary = "";
+    const chunkSize = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+    }
+    return btoa(binary);
+  };
+  const __arrayBufferFromBase64 = (base64) => {
+    const binary = atob(base64 || "");
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes.buffer;
+  };
+  const __normalizeFetchRequest = async (input, init) => {
+    const request = new Request(input, init);
+    const method = request.method.toUpperCase();
+    const bodyAllowed = method !== "GET" && method !== "HEAD";
+    return {
+      url: request.url,
+      method,
+      headers: Array.from(request.headers.entries()),
+      ...(bodyAllowed ? { bodyBase64: __base64FromArrayBuffer(await request.arrayBuffer()) } : {}),
+    };
+  };
+  const fetch = async (input, init) => {
+    const request = await __normalizeFetchRequest(input, init);
+    const response = await codemode.fetch(request);
+    const proxiedResponse = new Response(
+      response.bodyBase64 ? __arrayBufferFromBase64(response.bodyBase64) : null,
+      {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      },
+    );
+    try {
+      Object.defineProperty(proxiedResponse, "url", { value: response.url });
+      Object.defineProperty(proxiedResponse, "redirected", { value: response.redirected });
+    } catch {}
+    return proxiedResponse;
+  };
+  try {
+    Object.defineProperty(globalThis, "fetch", {
+      value: fetch,
+      configurable: true,
+      writable: true,
+    });
+  } catch {}
   const __unwrapMcpResult = (result) => {
     if (!__isObject(result)) return result;
     if ("toolResult" in result) return result.toolResult;
@@ -194,7 +257,7 @@ export async function executeCodeMode(
   const executor = new DynamicWorkerExecutor({
     loader: env.LOADER,
     timeout: CODE_MODE_EXECUTION_TIMEOUT_MS,
-    globalOutbound: options?.globalOutbound ?? null,
+    globalOutbound: null,
   });
 
   const providers: ResolvedProvider[] = [
@@ -207,6 +270,7 @@ export async function executeCodeMode(
         edit: async (args: unknown) => requestTool(FS_EDIT as SyscallName, toRecord(args, "fs.edit")),
         delete: async (args: unknown) => requestTool(FS_DELETE as SyscallName, toRecord(args, "fs.delete")),
         search: async (args: unknown) => requestTool(FS_SEARCH as SyscallName, toRecord(args, "fs.search")),
+        fetch: async (args: unknown) => requestTool(CODEMODE_FETCH, toRecord(args, "fetch")),
       },
     },
   ];
@@ -241,6 +305,19 @@ export async function executeCodeMode(
   return { status: "completed", result: response.result, logs };
 }
 
+export async function performCodeModeFetch(args: Record<string, unknown>): Promise<CodeModeFetchResult> {
+  const request = buildCodeModeFetchRequest(args);
+  const response = await fetch(request);
+  return {
+    url: response.url,
+    status: response.status,
+    statusText: response.statusText,
+    headers: Array.from(response.headers.entries()),
+    bodyBase64: arrayBufferToBase64(await response.arrayBuffer()),
+    redirected: response.redirected,
+  };
+}
+
 function toRecord(value: unknown, name: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${name} requires an object argument`);
@@ -253,4 +330,59 @@ function toOptionalRecord(value: unknown, name: string): Record<string, unknown>
     return {};
   }
   return toRecord(value, name);
+}
+
+function buildCodeModeFetchRequest(args: Record<string, unknown>): Request {
+  const url = typeof args.url === "string" ? args.url : "";
+  if (!url) {
+    throw new Error("fetch requires a url string");
+  }
+  const method = typeof args.method === "string" && args.method.trim()
+    ? args.method.trim().toUpperCase()
+    : "GET";
+  const headers = parseFetchHeaders(args.headers);
+  const bodyBase64 = typeof args.bodyBase64 === "string" ? args.bodyBase64 : "";
+  return new Request(url, {
+    method,
+    headers,
+    ...(bodyBase64 && method !== "GET" && method !== "HEAD"
+      ? { body: arrayBufferFromBase64(bodyBase64) }
+      : {}),
+  });
+}
+
+function parseFetchHeaders(value: unknown): Headers {
+  const headers = new Headers();
+  if (!Array.isArray(value)) {
+    return headers;
+  }
+  for (const entry of value) {
+    if (!Array.isArray(entry) || entry.length !== 2) {
+      continue;
+    }
+    const [name, headerValue] = entry;
+    if (typeof name === "string" && typeof headerValue === "string") {
+      headers.append(name, headerValue);
+    }
+  }
+  return headers;
+}
+
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
+function arrayBufferFromBase64(base64: string): ArrayBuffer {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes.buffer;
 }

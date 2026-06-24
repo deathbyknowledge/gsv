@@ -105,6 +105,29 @@ describe("tool approval policy", () => {
     expect(redirect.facts.tags).toContain("mutating");
   });
 
+  it("requires approval for CodeMode fetches", () => {
+    const get = resolveToolApproval(
+      DEFAULT_TOOL_APPROVAL_POLICY,
+      "codemode.fetch",
+      { url: "https://example.com", method: "GET" },
+      IDENTITY,
+      "task",
+    );
+    expect(get.action).toBe("ask");
+    expect(get.facts.tags).toContain("network");
+
+    const post = resolveToolApproval(
+      DEFAULT_TOOL_APPROVAL_POLICY,
+      "codemode.fetch",
+      { url: "https://example.com", method: "POST" },
+      IDENTITY,
+      "task",
+    );
+    expect(post.action).toBe("ask");
+    expect(post.facts.tags).toContain("network");
+    expect(post.facts.tags).toContain("mutating");
+  });
+
   it("prefers exact syscall rules over domain wildcards", () => {
     const policy = parseToolApprovalPolicy(JSON.stringify({
       default: "auto",
