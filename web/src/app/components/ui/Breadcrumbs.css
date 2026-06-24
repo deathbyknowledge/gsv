@@ -31,7 +31,17 @@
 .gsv-bc-item {
   display: flex;
   align-items: center;
-  /* Allow each crumb to shrink so its label can ellipsize. */
+  /* Earlier crumbs absorb the squeeze: shrink (but never grow) so their label
+     can ellipsize first. */
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+/* Current page wins the width contest: it does not shrink, so it stays fully
+   readable as long as it physically fits. Earlier crumbs + separators give up
+   their width first. */
+.gsv-bc-item-current {
+  flex: 0 0 auto;
   min-width: 0;
 }
 
@@ -70,8 +80,11 @@ button.gsv-bc-crumb:focus-visible {
   color: #cbc7ff;
 }
 
-/* Current page: brighter, static. */
+/* Current page: brighter, static. Priority crumb — drop the max-width clamp and
+   keep nowrap so it renders in full while earlier crumbs ellipsize. */
 .gsv-bc-current {
+  max-width: none;
+  white-space: nowrap;
   color: var(--text-hi);
   cursor: default;
 }

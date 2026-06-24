@@ -14,6 +14,8 @@
   --header-bar:    #13112e;  /* section-header + menu header  */
   --frame-lo:      #08061c;  /* render-bay deep               */
   --frame-hi:      #161240;  /* render-bay glow               */
+  --field-deep:    #070612;  /* deep input / code / image bay */
+  --shadow-deep:   #060414;  /* inset shadow + panel-mix tint */
 
   /* — borders & rules — */
   --border:        #322e74;  /* primary hairline              */
@@ -37,6 +39,7 @@
   --accent-bright: #cbc7ff;  /* icons / selected accent       */
   --label:         #b3aee2;  /* sub-label                     */
   --node-label:    #c4bfee;  /* node text                     */
+  --text-muted:    #8c86c8;  /* muted body / secondary copy   */
   --text-dim:      #565199;  /* meta / dimmest                */
 
   /* — status — */
@@ -45,6 +48,9 @@
   --idle:          #6661a0;  /* offline (no glow)             */
   --update:        #ffd24d;  /* attention / needs action      */
   --live:          #8f8aff;  /* processing pulse              */
+  --bg-error:      #170b17;  /* dark notice bg — error        */
+  --bg-online:     #081812;  /* dark notice bg — success/live */
+  --bg-warn:       #181407;  /* dark notice bg — caution      */
 
   /* — action accents — */
   --primary-hi:    #6b62c4;  /* primary button border / hover */
