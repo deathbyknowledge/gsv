@@ -2,30 +2,28 @@ import type { JSX, RefObject } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import {
   getDesktopObject,
+  shellRouteForTab,
+  shellTabForAppRoute,
   shellSurfaceLabel,
   shellTabForDesktopChild,
+  shellTabForRoute,
   shellTabForSettingsRoute,
-  shellTabForSurface,
   type DesktopChildObject,
   type DesktopObject,
   type DesktopObjectId,
+  type ShellAppRoute,
   type ShellPageTab,
+  type ShellRoute,
   type ShellSettingsRoute,
   type ShellSurfaceId,
 } from "../domain/shellModel";
+import {
+  pushShellRoute,
+  replaceShellRoute,
+  shellRouteFromLocation,
+} from "../routing/shellRoutes";
 
-export type PickerId = DesktopObjectId | "gsv";
-
-export type PickerCard = {
-  key: string;
-  label: string;
-  type: string;
-  blurb: string;
-  status: "online" | "error" | "idle" | "warn" | "live";
-  glyph?: DesktopObject["children"][number]["glyph"];
-  icon?: string;
-  onClick: () => void;
-};
+export type PickerId = "gsv" | "tabs";
 
 const MIN_CHAT_WIDTH = 380;
 const DEFAULT_CHAT_WIDTH = 460;
@@ -37,6 +35,7 @@ const MIN_DESKTOP_RAIL_CANVAS_WIDTH = 40;
 const STACKED_LAYOUT_WIDTH = 760;
 const MIN_STACKED_CHAT_HEIGHT = 300;
 const MIN_STACKED_WORLD_HEIGHT = 260;
+const SHELL_TABS_STORAGE_KEY = "gsv.shell.tabs.v1";
 
 type UseGsvShellStateArgs = {
   rootRef: RefObject<HTMLDivElement>;
@@ -47,16 +46,6 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-function objectCardStatus(status: string): "online" | "error" | "idle" | "warn" | "live" {
-  if (status === "update") {
-    return "warn";
-  }
-  if (status === "online" || status === "error" || status === "idle" || status === "warn" || status === "live") {
-    return status;
-  }
-  return "online";
-}
-
 function upsertTab(tabs: readonly ShellPageTab[], tab: ShellPageTab): ShellPageTab[] {
   const index = tabs.findIndex((candidate) => candidate.key === tab.key);
   if (index === -1) {
@@ -65,22 +54,79 @@ function upsertTab(tabs: readonly ShellPageTab[], tab: ShellPageTab): ShellPageT
   return tabs.map((candidate, candidateIndex) => candidateIndex === index ? tab : candidate);
 }
 
+function isShellPageTab(value: unknown): value is ShellPageTab {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const tab = value as Record<string, unknown>;
+  return typeof tab.key === "string"
+    && typeof tab.surface === "string"
+    && typeof tab.title === "string"
+    && typeof tab.kind === "string"
+    && typeof tab.icon === "string"
+    && typeof tab.type === "string";
+}
+
+function readPersistedTabs(): ShellPageTab[] {
+  try {
+    const raw = window.localStorage.getItem(SHELL_TABS_STORAGE_KEY);
+    if (!raw) {
+      return [];
+    }
+    const parsed = JSON.parse(raw) as { version?: unknown; tabs?: unknown };
+    if (parsed.version !== 1 || !Array.isArray(parsed.tabs)) {
+      return [];
+    }
+    return parsed.tabs.filter(isShellPageTab);
+  } catch {
+    return [];
+  }
+}
+
+function writePersistedTabs(tabs: readonly ShellPageTab[]): void {
+  try {
+    window.localStorage.setItem(SHELL_TABS_STORAGE_KEY, JSON.stringify({
+      version: 1,
+      tabs,
+    }));
+  } catch {
+    // Ignore storage failures; tabs still work for the current session.
+  }
+}
+
 function isListDetailRoute(route: ShellSettingsRoute): route is Extract<ShellSettingsRoute, { view: "list" }> & { detailId: string } {
   return route.view === "list" && typeof route.detailId === "string" && route.detailId.length > 0;
+}
+
+function readInitialRoute(): ShellRoute {
+  return typeof window === "undefined"
+    ? { surface: "desktop" }
+    : shellRouteFromLocation(window.location);
+}
+
+function surfaceForRoute(route: ShellRoute): ShellSurfaceId {
+  return route.surface;
 }
 
 export function useGsvShellState({
   rootRef,
   desktopObjects,
 }: UseGsvShellStateArgs) {
+  const [initialRoute] = useState<ShellRoute>(() => readInitialRoute());
+  const initialTab = shellTabForRoute(initialRoute);
   const [rootWidth, setRootWidth] = useState(1280);
   const [rootHeight, setRootHeight] = useState(760);
-  const [activeSurface, setActiveSurface] = useState<ShellSurfaceId>("desktop");
-  const [openTabs, setOpenTabs] = useState<ShellPageTab[]>([]);
-  const [activeTabKey, setActiveTabKey] = useState<string | null>(null);
+  const [activeSurface, setActiveSurface] = useState<ShellSurfaceId>(() => surfaceForRoute(initialRoute));
+  const [openTabs, setOpenTabs] = useState<ShellPageTab[]>(() => {
+    const persistedTabs = readPersistedTabs();
+    return initialTab ? upsertTab(persistedTabs, initialTab) : persistedTabs;
+  });
+  const [activeTabKey, setActiveTabKey] = useState<string | null>(() => initialTab?.key ?? null);
   const [manualRailCollapsed, setManualRailCollapsed] = useState(false);
   const [selectedObjectId, setSelectedObjectId] = useState<DesktopObjectId | null>(null);
   const [pickerId, setPickerId] = useState<PickerId | null>(null);
+  const [tabsExpanded, setTabsExpanded] = useState(true);
   const [gsvOpen, setGsvOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [chatWidth, setChatWidth] = useState(DEFAULT_CHAT_WIDTH);
@@ -109,6 +155,10 @@ export function useGsvShellState({
     return () => observer.disconnect();
   }, [rootRef]);
 
+  useEffect(() => {
+    writePersistedTabs(openTabs);
+  }, [openTabs]);
+
   const inPageZone = activeSurface !== "desktop";
   const stackedLayout = rootWidth <= STACKED_LAYOUT_WIDTH;
   const maxChatWidth = Math.max(
@@ -130,8 +180,14 @@ export function useGsvShellState({
   const selectedObject = getDesktopObject(desktopObjects, selectedObjectId);
   const activePageTab = activeTabKey ? openTabs.find((tab) => tab.key === activeTabKey) ?? null : null;
 
-  const openSurface = (surface: ShellSurfaceId): void => {
-    if (surface === "desktop") {
+  const activateRoute = (route: ShellRoute, history: "none" | "push" | "replace" = "push"): void => {
+    if (history === "push") {
+      pushShellRoute(route);
+    } else if (history === "replace") {
+      replaceShellRoute(route);
+    }
+
+    if (route.surface === "desktop") {
       setActiveSurface("desktop");
       setActiveTabKey(null);
       setSelectedObjectId(null);
@@ -140,29 +196,68 @@ export function useGsvShellState({
       return;
     }
 
-    const tab = shellTabForSurface(surface);
+    const tab = shellTabForRoute(route);
+    if (!tab) {
+      return;
+    }
+
     setOpenTabs((current) => upsertTab(current, tab));
     setActiveTabKey(tab.key);
-    setActiveSurface(surface);
+    setActiveSurface(route.surface);
     setSelectedObjectId(null);
     setPickerId(null);
     setGsvOpen(false);
   };
 
+  useEffect(() => {
+    const onPopState = () => {
+      activateRoute(shellRouteFromLocation(window.location), "none");
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
+  const openSurface = (surface: ShellSurfaceId): void => {
+    if (surface === "desktop") {
+      activateRoute({ surface: "desktop" });
+      return;
+    }
+
+    if (surface === "settings") {
+      activateRoute({ surface: "settings", settingsRoute: { view: "overview" } });
+      return;
+    }
+
+    if (surface === "app") {
+      return;
+    }
+
+    activateRoute({ surface });
+  };
+
   const openSettingsRoute = (route: ShellSettingsRoute): void => {
-    const tab = shellTabForSettingsRoute(route);
+    activateRoute({ surface: "settings", settingsRoute: route });
+  };
+
+  const openAppRoute = (route: ShellAppRoute, title?: string): string => {
+    const tab = shellTabForAppRoute(route, title);
+    const shellRoute: ShellRoute = { surface: "app", appRoute: tab.appRoute ?? route };
+    pushShellRoute(shellRoute);
     setOpenTabs((current) => upsertTab(current, tab));
     setActiveTabKey(tab.key);
-    setActiveSurface("settings");
+    setActiveSurface("app");
     setSelectedObjectId(null);
     setPickerId(null);
     setGsvOpen(false);
+    return tab.key;
   };
 
   const syncActiveSettingsRoute = (route: ShellSettingsRoute): void => {
     if (activeSurface !== "settings") {
       return;
     }
+
+    pushShellRoute({ surface: "settings", settingsRoute: route });
 
     const activeKey = activeTabKey;
     const shouldKeepObjectTab = activePageTab?.kind === "object" && isListDetailRoute(route);
@@ -195,7 +290,13 @@ export function useGsvShellState({
   };
 
   const openObject = (child: DesktopChildObject): void => {
+    if (child.appRoute) {
+      openAppRoute(child.appRoute, child.label);
+      return;
+    }
+
     const tab = shellTabForDesktopChild(child);
+    pushShellRoute(shellRouteForTab(tab));
     setOpenTabs((current) => upsertTab(current, tab));
     setActiveTabKey(tab.key);
     setActiveSurface(tab.surface);
@@ -205,20 +306,12 @@ export function useGsvShellState({
   };
 
   const backToDesktop = (): void => {
-    setActiveSurface("desktop");
-    setActiveTabKey(null);
-    setSelectedObjectId(null);
-    setPickerId(null);
-    setGsvOpen(false);
+    activateRoute({ surface: "desktop" });
   };
 
   const revealDesktop = (): void => {
     setChatWidth(MIN_CHAT_WIDTH);
-    setActiveSurface("desktop");
-    setActiveTabKey(null);
-    setSelectedObjectId(null);
-    setPickerId(null);
-    setGsvOpen(false);
+    activateRoute({ surface: "desktop" });
   };
 
   const activateTab = (key: string): void => {
@@ -226,6 +319,7 @@ export function useGsvShellState({
     if (!tab) {
       return;
     }
+    pushShellRoute(shellRouteForTab(tab));
     setActiveSurface(tab.surface);
     setActiveTabKey(tab.key);
     setSelectedObjectId(null);
@@ -241,15 +335,12 @@ export function useGsvShellState({
       const nextActiveTab = nextTabs[nextTabs.length - 1] ?? null;
       setActiveTabKey(nextActiveTab?.key ?? null);
       setActiveSurface(nextActiveTab?.surface ?? "desktop");
+      if (nextActiveTab) {
+        pushShellRoute(shellRouteForTab(nextActiveTab));
+      } else {
+        pushShellRoute({ surface: "desktop" });
+      }
     }
-  };
-
-  const openPicker = (id: DesktopObjectId): void => {
-    if (!inPageZone && !desktopCollapsed) {
-      setSelectedObjectId(id);
-      return;
-    }
-    setPickerId(id);
   };
 
   const openControlMenu = (): void => {
@@ -305,29 +396,18 @@ export function useGsvShellState({
     setChatWidth(maxChatWidth);
   };
 
-  const pickerObject = pickerId && pickerId !== "gsv" ? getDesktopObject(desktopObjects, pickerId) : null;
-  const pickerCards: PickerCard[] = pickerObject?.children.map((child) => ({
-    key: child.id,
-    label: child.label,
-    type: child.type,
-    blurb: child.blurb,
-    status: objectCardStatus(child.status),
-    glyph: child.glyph,
-    onClick: () => {
-      openObject(child);
-    },
-  })) ?? [];
+  const openTabsPicker = (): void => {
+    setPickerId("tabs");
+    setSelectedObjectId(null);
+    setGsvOpen(false);
+  };
+
   const pickerTitle = pickerId === "gsv"
     ? "GSV // CONTROL"
-    : `${pickerObject?.label ?? "OBJECTS"} · SELECT AN OBJECT`;
+    : "OPEN TABS";
   const pickerSubtitle = pickerId === "gsv"
     ? "System surfaces"
-    : pickerObject
-      ? `${pickerObject.meta} · ${pickerObject.statusLabel}`
-      : "No branch selected";
-  const pickerEmptyLabel = pickerId === "gsv"
-    ? ""
-    : "NO OBJECTS";
+    : `${openTabs.length} open ${openTabs.length === 1 ? "page" : "pages"}`;
 
   const statusContext = activeSurface !== "desktop"
     ? activePageTab?.title ?? shellSurfaceLabel(activeSurface)
@@ -349,14 +429,12 @@ export function useGsvShellState({
     maxChatWidth,
     openControlMenu,
     openObject,
-    openPicker,
+    openAppRoute,
+    openTabsPicker,
     openSettingsRoute,
     openSurface,
     openTabs,
-    pickerCards,
-    pickerEmptyLabel,
     pickerId,
-    pickerObject,
     pickerSubtitle,
     pickerTitle,
     railCollapsed,
@@ -371,7 +449,11 @@ export function useGsvShellState({
     startChatDrag,
     statusContext,
     syncActiveSettingsRoute,
+    tabsExpanded,
     toggleChatMax,
+    toggleTabsExpanded: () => {
+      setTabsExpanded((value) => !value);
+    },
     toggleRailCollapsed: () => {
       setManualRailCollapsed((value) => !value);
     },

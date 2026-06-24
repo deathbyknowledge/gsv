@@ -8,12 +8,12 @@ import { SectionHeader } from "../../../components/ui/SectionHeader";
 import { StatusDot, type StatusTone } from "../../../components/ui/StatusDot";
 import { Surface } from "../../../components/ui/Surface";
 import type { TagTone } from "../../../components/ui/Tag";
-import type { ConsoleListKind } from "./ConsoleListPage";
 import {
   defaultModelLabelForConfig,
   modelConfigCount,
   overrideConfigEntries,
 } from "../domain/consoleAi";
+import type { ConsoleListKind } from "../domain/consoleListTypes";
 import {
   agentImageSrcForIndex,
   sortedConsoleAccounts,
@@ -61,7 +61,7 @@ type StatLine = {
   tone: StatusTone;
 };
 
-type OverviewSurface = Exclude<ShellSurfaceId, "desktop">;
+type OverviewSurface = Exclude<ShellSurfaceId, "desktop" | "app">;
 export type ConsoleOverviewTarget = OverviewSurface | "models" | "new-agent" | "overrides" | "tasks";
 export type OpenSurface = (surface: ConsoleOverviewTarget) => void;
 export type OpenAgent = (accountUid: number) => void;

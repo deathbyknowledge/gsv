@@ -1,37 +1,38 @@
-import { useEffect, useState } from "preact/hooks";
+import { useState } from "preact/hooks";
 import { ConsoleHeader, type ConsoleCrumb } from "../../../components/ui/ConsoleHeader";
-import { FilesSurfaceSummary } from "../../files/components/FilesSurfaceSummary";
-import { TerminalSurfaceSummary } from "../../terminal/components/TerminalSurfaceSummary";
-import { shellSurfaceLabel, type ShellSurfaceId } from "../../gsv-shell/domain/shellModel";
+import { FilesPage } from "../../files/FilesPage";
+import { TerminalPage } from "../../terminal/TerminalPage";
+import {
+  shellSurfaceLabel,
+  type ShellSettingsRoute,
+  type ShellSurfaceId,
+} from "../../gsv-shell/domain/shellModel";
+import type { ConsoleListKind, ConsoleListSelection, PackageListKind } from "../domain/consoleListTypes";
+import { MachinesPage } from "../machines/MachinesPage";
+import { MessengersPage } from "../messengers/MessengersPage";
+import { PackageListPage } from "../packages/PackageListPage";
 import { ConsoleAgentPage } from "../pages/ConsoleAgentPage";
-import { ConsoleConfigPage, type ConsoleConfigKind } from "../pages/ConsoleConfigPage";
+import { ConsoleConfigPage } from "../pages/ConsoleConfigPage";
 import { ConsoleCrewPage } from "../pages/ConsoleCrewPage";
-import { ConsoleListPage, type ConsoleListKind } from "../pages/ConsoleListPage";
 import { ConsoleOverviewPage, type ConsoleOverviewTarget } from "../pages/ConsoleOverviewPage";
+import { RuntimePage } from "../runtime/RuntimePage";
 
 type GsvConsoleProps = {
-  activeSurface: Exclude<ShellSurfaceId, "desktop">;
+  activeSurface: Exclude<ShellSurfaceId, "desktop" | "app">;
   onBackToDesktop: () => void;
-  onOpenSurface?: (surface: Exclude<ShellSurfaceId, "desktop">) => void;
-  onSettingsRouteChange?: (route: SettingsRouteRequestRoute) => void;
-  settingsRouteRequest?: SettingsRouteRequest | null;
+  onOpenApp?: (appId: string, title?: string) => void;
+  onOpenSurface?: (surface: Exclude<ShellSurfaceId, "desktop" | "app">) => void;
+  onSettingsRouteChange?: (route: SettingsRoute) => void;
+  settingsRoute?: SettingsRoute;
 };
 
-type SettingsRoute =
-  | { view: "overview" }
-  | { view: "list"; kind: ConsoleListKind; detailId?: string; detailLabel?: string; createNew?: boolean }
-  | { view: "config"; kind: ConsoleConfigKind }
-  | { view: "crew" }
-  | { view: "agent"; accountUid: number | null; createNew?: boolean };
+type SettingsRoute = ShellSettingsRoute;
 type SettingsListSurface = "machines" | "messengers" | "integrations" | "applications" | "library" | "runtime";
 export type SettingsRouteTarget = "overview" | "crew" | "tasks" | "models" | "overrides";
-export type SettingsRouteRequestRoute = SettingsRoute;
-export type SettingsRouteRequest = {
-  id: number;
-} & (
-  | { target: SettingsRouteTarget }
-  | { route: SettingsRouteRequestRoute }
-);
+
+function isPackageSettingsKind(kind: ConsoleListKind): kind is PackageListKind {
+  return kind === "library" || kind === "integrations" || kind === "applications";
+}
 
 function surfaceTail(surface: ShellSurfaceId): string {
   if (surface === "files") {
@@ -61,7 +62,7 @@ function surfaceTail(surface: ShellSurfaceId): string {
   return "GSV · CONTROL";
 }
 
-function isSettingsListSurface(surface: Exclude<ShellSurfaceId, "desktop">): surface is SettingsListSurface {
+function isSettingsListSurface(surface: Exclude<ShellSurfaceId, "desktop" | "app">): surface is SettingsListSurface {
   return surface === "machines"
     || surface === "messengers"
     || surface === "integrations"
@@ -137,37 +138,16 @@ function settingsRouteTail(route: SettingsRoute): string {
   return surfaceTail(route.kind);
 }
 
-function settingsRouteForTarget(target: SettingsRouteTarget): SettingsRoute {
-  if (target === "overview") {
-    return { view: "overview" };
-  }
-  if (target === "crew") {
-    return { view: "crew" };
-  }
-  if (target === "tasks") {
-    return { view: "list", kind: "tasks" };
-  }
-  return { view: "config", kind: target };
-}
-
-function settingsRouteForRequest(request: SettingsRouteRequest): SettingsRoute {
-  if ("route" in request) {
-    return request.route;
-  }
-  return settingsRouteForTarget(request.target);
-}
-
 export function GsvConsole({
   activeSurface,
   onBackToDesktop,
+  onOpenApp,
   onOpenSurface,
   onSettingsRouteChange,
-  settingsRouteRequest,
+  settingsRoute = { view: "overview" },
 }: GsvConsoleProps) {
   const [selectedAgentUid, setSelectedAgentUid] = useState<number | null>(null);
-  const [settingsRoute, setSettingsRoute] = useState<SettingsRoute>({ view: "overview" });
   const navigateSettingsRoute = (route: SettingsRoute) => {
-    setSettingsRoute(route);
     onSettingsRouteChange?.(route);
   };
   const openAgent = (uid: number) => {
@@ -195,9 +175,32 @@ export function GsvConsole({
   };
   const handleSettingsListSelectionChange = (
     kind: ConsoleListKind,
-    selection: { detailId?: string; detailLabel?: string; createNew?: boolean } | null,
+    selection: ConsoleListSelection | null,
   ) => {
     navigateSettingsRoute(selection ? { view: "list", kind, ...selection } : { view: "list", kind });
+  };
+  const renderListPage = (
+    kind: ConsoleListKind,
+    options: {
+      initialCreate?: boolean;
+      initialDetailId?: string | null;
+      initialDetailLabel?: string | null;
+      onSelectionChange?: (selection: ConsoleListSelection | null) => void;
+    } = {},
+  ) => {
+    if (kind === "tasks") {
+      return <RuntimePage {...options} />;
+    }
+    if (kind === "machines") {
+      return <MachinesPage {...options} />;
+    }
+    if (kind === "messengers") {
+      return <MessengersPage {...options} />;
+    }
+    if (isPackageSettingsKind(kind)) {
+      return <PackageListPage {...options} kind={kind} onOpenApp={onOpenApp} />;
+    }
+    return null;
   };
   const openSettingsSurface = (surface: ConsoleOverviewTarget) => {
     if (surface === "settings") {
@@ -230,16 +233,6 @@ export function GsvConsole({
     }
     onOpenSurface?.(surface);
   };
-
-  useEffect(() => {
-    if (activeSurface !== "settings") {
-      setSettingsRoute({ view: "overview" });
-      return;
-    }
-    if (settingsRouteRequest) {
-      setSettingsRoute(settingsRouteForRequest(settingsRouteRequest));
-    }
-  }, [activeSurface, settingsRouteRequest]);
 
   const inNestedSettings = activeSurface === "settings" && settingsRoute.view !== "overview";
   const inSettingsListDetail = activeSurface === "settings" && hasSettingsListDetail(settingsRoute);
@@ -300,13 +293,12 @@ export function GsvConsole({
               onOpenSurface={openSettingsSurface}
             />
           ) : settingsRoute.view === "list" ? (
-            <ConsoleListPage
-              initialCreate={settingsRoute.createNew === true}
-              initialDetailId={settingsRoute.detailId}
-              initialDetailLabel={settingsRoute.detailLabel}
-              kind={settingsRoute.kind}
-              onSelectionChange={(selection) => handleSettingsListSelectionChange(settingsRoute.kind, selection)}
-            />
+            renderListPage(settingsRoute.kind, {
+              initialCreate: settingsRoute.createNew === true,
+              initialDetailId: settingsRoute.detailId,
+              initialDetailLabel: settingsRoute.detailLabel,
+              onSelectionChange: (selection) => handleSettingsListSelectionChange(settingsRoute.kind, selection),
+            })
           ) : settingsRoute.view === "config" ? (
             <ConsoleConfigPage kind={settingsRoute.kind} />
           ) : settingsRoute.view === "crew" ? (
@@ -320,25 +312,25 @@ export function GsvConsole({
             />
           )
         ) : activeSurface === "runtime" ? (
-          <ConsoleListPage kind="tasks" />
+          <RuntimePage />
         ) : activeSurface === "crew" ? (
           <ConsoleCrewPage onManageAgent={openAgent} />
         ) : activeSurface === "agent" ? (
           <ConsoleAgentPage accountUid={selectedAgentUid} onBackToCrew={backToCrew} />
         ) : activeSurface === "machines" ? (
-          <ConsoleListPage kind="machines" />
+          <MachinesPage />
         ) : activeSurface === "messengers" ? (
-          <ConsoleListPage kind="messengers" />
+          <MessengersPage />
         ) : activeSurface === "integrations" ? (
-          <ConsoleListPage kind="integrations" />
+          <PackageListPage kind="integrations" onOpenApp={onOpenApp} />
         ) : activeSurface === "applications" ? (
-          <ConsoleListPage kind="applications" />
+          <PackageListPage kind="applications" onOpenApp={onOpenApp} />
         ) : activeSurface === "library" ? (
-          <ConsoleListPage kind="library" />
+          <PackageListPage kind="library" onOpenApp={onOpenApp} />
         ) : activeSurface === "files" ? (
-          <FilesSurfaceSummary />
+          <FilesPage />
         ) : activeSurface === "terminal" ? (
-          <TerminalSurfaceSummary />
+          <TerminalPage />
         ) : (
           null
         )}

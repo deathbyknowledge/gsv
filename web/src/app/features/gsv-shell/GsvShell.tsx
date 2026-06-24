@@ -1,4 +1,3 @@
-import type { RefObject } from "preact";
 import type { ProcHistoryMessage } from "@humansandmachines/gsv/protocol";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { Icon } from "../../components/ui/Icon";
@@ -6,6 +5,7 @@ import { IconMenu } from "../../components/ui/IconMenu";
 import { ObjectCard } from "../../components/ui/ObjectCard";
 import { StatusDot } from "../../components/ui/StatusDot";
 import type { StatusTone } from "../../components/ui/StatusDot";
+import { AppFramePage } from "../apps/components/AppFramePage";
 import { ChatDock } from "../chat/components/ChatDock";
 import type { ChatDockMessage } from "../chat/components/ChatDock";
 import type { ChatAgentData } from "../chat/domain";
@@ -25,12 +25,10 @@ import type { PresenceController } from "../presence/presenceController";
 import type { NotificationSurface } from "../notifications/types";
 import {
   GsvConsole,
-  type SettingsRouteRequestRoute,
-  type SettingsRouteRequest,
   type SettingsRouteTarget,
 } from "../gsv-console/components/GsvConsole";
-import { LegacyPackageRuntimeAnchors } from "../legacy-package-runtime/LegacyPackageRuntimeAnchors";
 import { GsvDesktop, type DesktopInventoryState } from "./desktop/GsvDesktop";
+import { DesktopTabStack } from "./navigation/DesktopTabStack";
 import { ShellRail } from "./navigation/ShellRail";
 import { ShellStatusBar } from "./navigation/ShellStatusBar";
 import {
@@ -44,7 +42,6 @@ import { useGsvShellState } from "./hooks/useGsvShellState";
 import "./styles/gsvShell.css";
 
 type GsvShellProps = {
-  windowsLayerRef: RefObject<HTMLElement>;
   presenceController: PresenceController;
   notificationOpenSurface: NotificationSurface | null;
   notificationUnreadCount: number;
@@ -53,7 +50,6 @@ type GsvShellProps = {
   sessionUsername: string;
   mobileHomeDate: string;
   onLockSession: () => void;
-  onOpenCommandPalette: () => void;
 };
 
 function statusForRunState(runState?: string): StatusTone {
@@ -208,12 +204,7 @@ function shellSettingsRouteForTarget(target: SettingsRouteTarget): ShellSettings
   return { view: "config", kind: target };
 }
 
-function toSettingsRouteRequestRoute(route: ShellSettingsRoute): SettingsRouteRequestRoute {
-  return route;
-}
-
 export function GsvShell({
-  windowsLayerRef,
   presenceController,
   notificationOpenSurface,
   notificationUnreadCount,
@@ -222,7 +213,6 @@ export function GsvShell({
   sessionUsername,
   mobileHomeDate,
   onLockSession,
-  onOpenCommandPalette,
 }: GsvShellProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const clock = useClock();
@@ -246,7 +236,6 @@ export function GsvShell({
   const shell = useGsvShellState({ rootRef, desktopObjects });
 
   const [selectedChatPid, setSelectedChatPid] = useState<string | null>(null);
-  const [settingsRouteRequest, setSettingsRouteRequest] = useState<SettingsRouteRequest | null>(null);
   const chatProcesses = useChatProcessList();
   const chatProcessList = chatProcesses.data ?? [];
   const activeChatProcess = chatProcessList.find((process) => process.pid === selectedChatPid)
@@ -299,25 +288,23 @@ export function GsvShell({
       statusLabel: chatStatusLabel,
     });
   }, [activeChatProcess, chatProcessList, chatStatusLabel, consoleConfig.config, consoleOverview.data]);
-  const requestSettingsRoute = (route: ShellSettingsRoute): void => {
-    setSettingsRouteRequest((current) => ({
-      id: (current?.id ?? 0) + 1,
-      route: toSettingsRouteRequestRoute(route),
-    }));
-  };
   const openShellSurface = (surface: ShellSurfaceId): void => {
     shell.openSurface(surface);
   };
   const openSettingsRoute = (target: SettingsRouteTarget): void => {
     shell.openSettingsRoute(shellSettingsRouteForTarget(target));
   };
-
-  useEffect(() => {
-    if (shell.activeSurface !== "settings") {
-      return;
-    }
-    requestSettingsRoute(shell.activePageTab?.settingsRoute ?? { view: "overview" });
-  }, [shell.activeSurface, shell.activePageTab?.key, shell.activePageTab?.settingsRoute]);
+  const openAppById = (appId: string, title?: string): void => {
+    shell.openAppRoute({
+      appId,
+      suffix: "/",
+      search: "",
+      hash: "",
+    }, title);
+  };
+  const activeSettingsRoute: ShellSettingsRoute = shell.activeSurface === "settings"
+    ? shell.activePageTab?.settingsRoute ?? { view: "overview" }
+    : { view: "overview" };
 
   return (
     <div
@@ -336,11 +323,17 @@ export function GsvShell({
           {shell.showRail ? (
             <ShellRail
               activeSurface={shell.activeSurface}
+              activeTabKey={shell.activeTabKey}
               desktopObjects={desktopObjects}
+              openTabs={shell.openTabs}
               collapsed={shell.railCollapsed}
+              tabsExpanded={shell.tabsExpanded}
               onToggleCollapsed={shell.toggleRailCollapsed}
               onBackToDesktop={shell.desktopCollapsed ? shell.revealDesktop : shell.backToDesktop}
-              onOpenPicker={shell.openPicker}
+              onCloseTab={shell.closeTab}
+              onOpenTab={shell.activateTab}
+              onOpenTabsPicker={shell.openTabsPicker}
+              onToggleTabsExpanded={shell.toggleTabsExpanded}
               onOpenControlMenu={shell.openControlMenu}
               onOpenSurface={openShellSurface}
             />
@@ -358,37 +351,59 @@ export function GsvShell({
                     onClick={shell.toggleRailCollapsed}
                   />
                 ) : null}
-                <GsvConsole
-                  activeSurface={shell.activeSurface}
-                  onBackToDesktop={shell.backToDesktop}
-                  onOpenSurface={openShellSurface}
-                  onSettingsRouteChange={shell.syncActiveSettingsRoute}
-                  settingsRouteRequest={settingsRouteRequest}
-                />
+                <div class="gsv-shell-page-stack">
+                  <div class="gsv-shell-page-content">
+                    {shell.activeSurface === "app" && shell.activePageTab?.appRoute ? (
+                      <AppFramePage
+                        key={shell.activePageTab.key}
+                        appRoute={shell.activePageTab.appRoute}
+                        onBackToDesktop={shell.backToDesktop}
+                        onOpenAppRoute={shell.openAppRoute}
+                      />
+                    ) : shell.activeSurface !== "app" ? (
+                      <GsvConsole
+                        activeSurface={shell.activeSurface}
+                        onBackToDesktop={shell.backToDesktop}
+                        onOpenApp={openAppById}
+                        onOpenSurface={openShellSurface}
+                        onSettingsRouteChange={shell.syncActiveSettingsRoute}
+                        settingsRoute={activeSettingsRoute}
+                      />
+                    ) : null}
+                  </div>
+                </div>
               </>
             ) : shell.desktopCollapsed ? (
               <CollapsedDesktop />
             ) : (
-              <GsvDesktop
-                desktopObjects={desktopObjects}
-                inventoryMessage={inventoryMessage}
-                inventoryState={inventoryState}
-                selectedObjectId={shell.selectedObjectId}
-                gsvOpen={shell.gsvOpen}
-                onSelectObject={(id) => {
-                  shell.setSelectedObjectId(id);
-                  shell.setGsvOpen(false);
-                }}
-                onToggleGsv={() => {
-                  shell.setGsvOpen((value) => !value);
-                  shell.setSelectedObjectId(null);
-                }}
-                onCreateObject={(id) => {
-                  shell.openSettingsRoute({ view: "list", kind: id, createNew: true });
-                }}
-                onOpenSurface={openShellSurface}
-                onOpenObject={shell.openObject}
-              />
+              <>
+                <GsvDesktop
+                  desktopObjects={desktopObjects}
+                  inventoryMessage={inventoryMessage}
+                  inventoryState={inventoryState}
+                  selectedObjectId={shell.selectedObjectId}
+                  gsvOpen={shell.gsvOpen}
+                  onSelectObject={(id) => {
+                    shell.setSelectedObjectId(id);
+                    shell.setGsvOpen(false);
+                  }}
+                  onToggleGsv={() => {
+                    shell.setGsvOpen((value) => !value);
+                    shell.setSelectedObjectId(null);
+                  }}
+                  onCreateObject={(id) => {
+                    shell.openSettingsRoute({ view: "list", kind: id, createNew: true });
+                  }}
+                  onOpenSurface={openShellSurface}
+                  onOpenObject={shell.openObject}
+                />
+                <DesktopTabStack
+                  activeTabKey={shell.activeTabKey}
+                  tabs={shell.openTabs}
+                  onCloseTab={shell.closeTab}
+                  onOpenTab={shell.activateTab}
+                />
+              </>
             )}
 
             {shell.pickerId ? (
@@ -404,7 +419,7 @@ export function GsvShell({
                     <div>
                       <span>{shell.pickerTitle}</span>
                       <small>
-                        <StatusDot tone={shell.pickerObject?.status ?? "online"} size={7} />
+                        <StatusDot tone="online" size={7} />
                         {shell.pickerSubtitle}
                       </small>
                     </div>
@@ -424,25 +439,28 @@ export function GsvShell({
                         onSettings={() => openShellSurface("settings")}
                       />
                     </div>
-                  ) : shell.pickerCards.length > 0 ? (
-                    <div class="gsv-picker-grid">
-                      {shell.pickerCards.map((card) => (
-                        <ObjectCard
-                          key={card.key}
-                          label={card.label}
-                          type={card.type}
-                          blurb={card.blurb}
-                          status={card.status}
-                          glyph={card.glyph}
-                          icon={card.icon ? <Icon name={card.icon} size={20} color="var(--accent-bright)" /> : undefined}
-                          width={238}
-                          onClick={card.onClick}
-                        />
-                      ))}
-                    </div>
-                  ) : (
-                    <div class="gsv-picker-empty">{shell.pickerEmptyLabel}</div>
-                  )}
+                  ) : shell.pickerId === "tabs" ? (
+                    shell.openTabs.length > 0 ? (
+                      <div class="gsv-picker-grid">
+                        {shell.openTabs.map((tab) => (
+                          <ObjectCard
+                            key={tab.key}
+                            label={tab.title}
+                            type={tab.type}
+                            blurb={tab.key === shell.activeTabKey
+                              ? "Currently open in the central panel."
+                              : "Open page — click to bring it to the central panel."}
+                            status={tab.key === shell.activeTabKey ? "live" : "online"}
+                            icon={<Icon name={tab.icon} size={20} color="var(--accent-bright)" />}
+                            width={238}
+                            onClick={() => shell.activateTab(tab.key)}
+                          />
+                        ))}
+                      </div>
+                    ) : (
+                      <div class="gsv-picker-empty">NO OPEN TABS</div>
+                    )
+                  ) : null}
                 </div>
               </div>
             ) : null}
@@ -486,13 +504,12 @@ export function GsvShell({
         notificationOpenSurface={notificationOpenSurface}
         notificationUnreadCount={notificationUnreadCount}
         onNotificationsToggle={onNotificationsToggle}
-        onOpenCommandPalette={onOpenCommandPalette}
+        onOpenApps={() => openShellSurface("applications")}
         onLockSession={onLockSession}
       />
 
       <PresenceActivity controller={presenceController} />
       <PresencePanel controller={presenceController} />
-      <LegacyPackageRuntimeAnchors windowsLayerRef={windowsLayerRef} />
     </div>
   );
 }

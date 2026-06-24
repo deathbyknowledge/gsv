@@ -9,6 +9,7 @@ import type {
   DesktopGlyph,
   DesktopObject,
   DesktopObjectId,
+  ShellAppRoute,
   ShellStatus,
 } from "./shellModel";
 import { isNativeWebPackageName } from "../../packages/nativePackages";
@@ -183,6 +184,7 @@ function packageToChild(pkg: ConsolePackage, branchId: PackageBranchId): Desktop
     status: status.status,
     statusLabel: status.label,
     glyph: branchId,
+    appRoute: branchId === "applications" ? appRouteForPackage(pkg) : undefined,
     route: {
       kind: branchId,
       detailId: pkg.packageId,
@@ -290,6 +292,20 @@ function packageStatus(pkg: ConsolePackage): { status: ShellStatus; label: strin
     return { status: "warn", label: "UNKNOWN" };
   }
   return { status: "online", label: "ENABLED" };
+}
+
+function appRouteForPackage(pkg: ConsolePackage): ShellAppRoute | undefined {
+  const uiEntrypoints = safeArray(pkg.uiEntrypoints).filter((entrypoint) => entrypoint.route.trim().length > 0);
+  if (pkg.runtime !== "web-ui" || pkg.enabled !== true || uiEntrypoints.length === 0) {
+    return undefined;
+  }
+
+  return {
+    appId: uiEntrypoints.length === 1 ? pkg.name : `${pkg.name}-${uiEntrypoints[0].name}`,
+    suffix: "/",
+    search: "",
+    hash: "",
+  };
 }
 
 function targetTypeLabel(target: ConsoleTarget, platform: string): string {

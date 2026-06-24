@@ -51,8 +51,22 @@ const appPackage: ConsolePackage = {
   installedAt: 1_700_000_000,
   updatedAt: 1_700_000_000,
   bindingNames: [],
-  entrypoints: [],
-  uiEntrypoints: [],
+  entrypoints: [{
+    name: "main",
+    kind: "ui",
+    description: "Main app",
+    route: "/apps/space-simulation/",
+    command: "",
+    syscalls: [],
+  }],
+  uiEntrypoints: [{
+    name: "main",
+    kind: "ui",
+    description: "Main app",
+    route: "/apps/space-simulation/",
+    command: "",
+    syscalls: [],
+  }],
 };
 
 const integrationPackage: ConsolePackage = {
@@ -61,6 +75,8 @@ const integrationPackage: ConsolePackage = {
   name: "Custom MCP",
   runtime: "dynamic-worker",
   sourceRepo: "gsv/custom-mcp",
+  entrypoints: [],
+  uiEntrypoints: [],
 };
 
 const nativePackage: ConsolePackage = {
@@ -100,6 +116,12 @@ describe("buildDesktopObjectsFromConsole", () => {
     expect(objects.find((object) => object.id === "applications")?.children[0]?.route).toEqual({
       kind: "applications",
       detailId: "space-simulation",
+    });
+    expect(objects.find((object) => object.id === "applications")?.children[0]?.appRoute).toEqual({
+      appId: "Space Simulation",
+      suffix: "/",
+      search: "",
+      hash: "",
     });
     expect(objects.find((object) => object.id === "applications")?.children).toHaveLength(1);
     expect(objects.find((object) => object.id === "integrations")?.children).toHaveLength(1);
