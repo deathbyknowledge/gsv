@@ -5,6 +5,21 @@ import { SessionError } from "../SessionChrome";
 import { textInputValue } from "../sessionViewUtils";
 import "./GuidePanel.css";
 
+/**
+ * GuidePanel — the "Ask the guide" setup assistant.
+ *
+ * Design-system note: this panel is an intentional INVERTED micro-surface
+ * (light background, dark text) so the chat reads against the dark wizard. The
+ * controls here are deliberately raw rather than design-system components:
+ *   - the chat <textarea> needs a forwarded ref (guideInputRef), Enter-to-send
+ *     (onKeyDown), and a fully parent-controlled value that clears on send —
+ *     none of which the DS <TextArea> exposes today, and its internal
+ *     value-shadowing state would also break the clear-on-send behaviour;
+ *   - the send/close buttons would render with dark-theme tokens on this light
+ *     surface, so DS <Button>/<IconButton> can't drop in without overrides.
+ * The correct fix is a light/inverted DS theme variant (a separate, larger
+ * effort); until then these raw controls are a documented exception.
+ */
 export function GuidePanel({
   snapshot,
   sessionSnapshot,
