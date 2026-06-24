@@ -68,6 +68,24 @@
     var(--void);
 }
 
+.gsv-shell-page-stack {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.gsv-shell-page-content {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .gsv-space {
   position: relative;
   height: 100%;
@@ -660,6 +678,183 @@
   white-space: nowrap;
 }
 
+.gsv-desktop-tab-stack {
+  position: absolute;
+  z-index: 10;
+  left: 18px;
+  bottom: 18px;
+  width: min(292px, calc(100% - 36px));
+  max-height: min(252px, calc(100% - 104px));
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  background:
+    linear-gradient(rgba(150, 140, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(150, 140, 255, 0.035) 1px, transparent 1px),
+    rgba(10, 8, 29, 0.92);
+  background-size: 28px 28px, 28px 28px, auto;
+  box-shadow: 0 0 24px rgba(8, 6, 28, 0.48), inset 0 0 18px rgba(80, 70, 180, 0.12);
+  backdrop-filter: blur(8px);
+  overflow: hidden;
+}
+
+.gsv-desktop-tab-stack header {
+  min-height: 30px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--rule-inner);
+  padding: 8px 9px 7px 11px;
+}
+
+.gsv-desktop-tab-stack header span {
+  color: #a9a4ff;
+  font-size: 10px;
+  letter-spacing: 0.28em;
+}
+
+.gsv-desktop-tab-stack header small {
+  color: #7d78b8;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+.gsv-desktop-tab-list {
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--rule-section) #0c0a22;
+}
+
+.gsv-desktop-tab-row {
+  position: relative;
+  min-height: 50px;
+  display: flex;
+  align-items: stretch;
+}
+
+.gsv-desktop-tab-row + .gsv-desktop-tab-row {
+  border-top: 1px solid rgba(72, 65, 143, 0.45);
+}
+
+.gsv-desktop-tab-row.is-active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent-bright);
+  box-shadow: 0 0 8px var(--accent-bright);
+}
+
+.gsv-desktop-tab-row > button:first-child {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  padding: 8px 8px 8px 10px;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.gsv-desktop-tab-row.is-active > button:first-child {
+  background: var(--selected);
+}
+
+.gsv-desktop-tab-row > button:first-child:hover,
+.gsv-desktop-tab-row > button:first-child:focus-visible {
+  background: var(--hover-nav);
+  outline: none;
+}
+
+.gsv-desktop-tab-icon {
+  width: 32px;
+  height: 32px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  background: var(--node-bg);
+}
+
+.gsv-desktop-tab-copy {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.gsv-desktop-tab-copy > span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-hi);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gsv-desktop-tab-copy > small {
+  min-width: 0;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #7d78b8;
+  font-size: 8.5px;
+  letter-spacing: 0.11em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.gsv-desktop-tab-close {
+  position: relative;
+  width: 32px;
+  flex: none;
+  border: 0;
+  border-left: 1px solid transparent;
+  background: transparent;
+  color: #7d78b8;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0;
+}
+
+.gsv-desktop-tab-close::before,
+.gsv-desktop-tab-close::after {
+  content: "";
+  position: absolute;
+  left: 10px;
+  top: 24px;
+  width: 11px;
+  height: 1px;
+  background: currentColor;
+}
+
+.gsv-desktop-tab-close::before {
+  transform: rotate(45deg);
+}
+
+.gsv-desktop-tab-close::after {
+  transform: rotate(-45deg);
+}
+
+.gsv-desktop-tab-close:hover,
+.gsv-desktop-tab-close:focus-visible {
+  border-left-color: var(--dashed);
+  background: var(--selected);
+  color: var(--text-hi);
+  outline: none;
+}
+
 .gsv-collapsed-desktop {
   position: absolute;
   inset: 0;
@@ -1011,6 +1206,166 @@
   box-shadow: 0 0 8px var(--accent-bright);
 }
 
+.gsv-rail-tabs {
+  position: relative;
+  padding: 6px 0 0;
+}
+
+.gsv-rail-tabs-head {
+  position: relative;
+  width: 100%;
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  border: 0;
+  background: transparent;
+  color: #a9a4ff;
+  padding: 14px 20px 8px;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.gsv-rail-tabs-head:hover,
+.gsv-rail-tabs-head:focus-visible {
+  background: var(--hover-nav);
+  outline: none;
+}
+
+.gsv-rail-tabs-icon {
+  width: 40px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gsv-rail-tabs-head > span:not(.gsv-rail-tabs-icon) {
+  color: #a9a4ff;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0.32em;
+}
+
+.gsv-rail-tabs-head > small {
+  margin-left: auto;
+  color: #7d78b8;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+.gsv-rail-tabs-list {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 4px 0 0;
+}
+
+.gsv-rail-tab-row {
+  position: relative;
+  min-height: 36px;
+  display: flex;
+  align-items: stretch;
+}
+
+.gsv-rail-tab-row.is-active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent-bright);
+  box-shadow: 0 0 8px var(--accent-bright);
+}
+
+.gsv-rail-tab-row > button:first-child {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  background: transparent;
+  color: #cdd2e0;
+  padding: 9px 4px 9px 30px;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.gsv-rail-tab-row.is-active > button:first-child {
+  background: var(--selected);
+  color: var(--text-hi);
+}
+
+.gsv-rail-tab-row > button:first-child:hover,
+.gsv-rail-tab-row > button:first-child:focus-visible {
+  background: var(--hover-nav);
+  outline: none;
+}
+
+.gsv-rail-tab-icon {
+  flex: none;
+  display: inline-flex;
+  color: #9d98d8;
+}
+
+.gsv-rail-tab-row.is-active .gsv-rail-tab-icon {
+  color: var(--accent-bright);
+}
+
+.gsv-rail-tab-row > button:first-child > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  color: inherit;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gsv-rail-tab-close {
+  position: relative;
+  width: 28px;
+  flex: none;
+  border: 0;
+  border-left: 1px solid transparent;
+  background: transparent;
+  color: #7d78b8;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0;
+}
+
+.gsv-rail-tab-close::before,
+.gsv-rail-tab-close::after {
+  content: "";
+  position: absolute;
+  left: 9px;
+  top: 17px;
+  width: 10px;
+  height: 1px;
+  background: currentColor;
+}
+
+.gsv-rail-tab-close::before {
+  transform: rotate(45deg);
+}
+
+.gsv-rail-tab-close::after {
+  transform: rotate(-45deg);
+}
+
+.gsv-rail-tab-close:hover,
+.gsv-rail-tab-close:focus-visible {
+  border-left-color: var(--dashed);
+  background: var(--selected);
+  color: var(--text-hi);
+  outline: none;
+}
+
 .gsv-shell-rail footer {
   position: relative;
   padding: 12px 20px;
@@ -1038,6 +1393,7 @@
 
 .gsv-rail-dot-button:hover,
 .gsv-rail-dot-button:focus-visible,
+.gsv-rail-dot-button.is-active,
 .gsv-rail-gsv-dot:hover,
 .gsv-rail-gsv-dot:focus-visible {
   border-color: #a9a4ff;
@@ -1062,6 +1418,36 @@
   margin-top: 4px;
   border: 1.4px solid var(--accent-bright);
   box-shadow: 0 0 14px rgba(150, 140, 255, 0.4);
+}
+
+.gsv-rail-tabs-dot {
+  position: relative;
+  width: 44px;
+  flex: none;
+  margin-top: auto;
+  margin-bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  border: 0;
+  background: transparent;
+  color: #a9a4ff;
+  cursor: pointer;
+}
+
+.gsv-rail-tabs-dot:hover,
+.gsv-rail-tabs-dot:focus-visible {
+  color: var(--text-hi);
+  outline: none;
+}
+
+.gsv-rail-tabs-dot > span {
+  color: var(--accent-bright);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
 }
 
 .gsv-console-rail-handle {
@@ -1297,90 +1683,6 @@
   text-transform: uppercase;
 }
 
-.gsv-console-stats {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-  margin-bottom: 16px;
-}
-
-.gsv-console-stat,
-.gsv-console-section {
-  border: 1px solid var(--border);
-  background: var(--panel);
-}
-
-.gsv-console-stat {
-  min-width: 0;
-  padding: 14px;
-  display: grid;
-  gap: 7px;
-}
-
-.gsv-console-stat span,
-.gsv-console-stat small {
-  color: var(--text-dim);
-  font-size: 9px;
-  font-weight: 400;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-}
-
-.gsv-console-stat strong {
-  color: var(--text-hi);
-  font-size: 26px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-}
-
-.gsv-console-sections {
-  display: grid;
-  gap: 16px;
-}
-
-.gsv-console-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  border-bottom: 1px solid var(--rule-inner);
-}
-
-.gsv-console-row:last-child {
-  border-bottom: 0;
-}
-
-.gsv-console-row-icon {
-  flex: none;
-  display: inline-flex;
-  color: var(--accent-bright);
-  padding-left: 16px;
-}
-
-.gsv-console-row-main {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.gsv-console-row-status {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 9px;
-  padding-right: 16px;
-  color: var(--text-dim);
-  font-size: 9px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-
-.gsv-console-empty-row {
-  padding: 18px;
-  color: var(--text-dim);
-  font-size: 10px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-}
-
 .gsv-shell-statusbar {
   position: absolute;
   z-index: 90;
@@ -1471,27 +1773,6 @@
   line-height: 17px;
 }
 
-.gsv-legacy-runtime {
-  position: absolute;
-  inset: 0 0 30px;
-  z-index: 70;
-  pointer-events: none;
-}
-
-.gsv-legacy-icons,
-.gsv-legacy-taskbar,
-.gsv-legacy-mobile {
-  display: none;
-}
-
-.gsv-legacy-windows {
-  z-index: 70;
-}
-
-.gsv-legacy-runtime [data-command-palette-root] {
-  pointer-events: auto;
-}
-
 @keyframes gsvCtrlIn {
   from {
     opacity: 0;
@@ -1547,10 +1828,6 @@
 
   .gsv-space-connectors {
     display: none;
-  }
-
-  .gsv-console-stats {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .gsv-status-actions {

@@ -3,7 +3,6 @@ import { useGateway } from "../../services/gateway/GatewayProvider";
 import { useSession } from "../../services/session/SessionProvider";
 import { NotificationsPanel } from "../notifications/NotificationsPanel";
 import type { NotificationAnchor, NotificationSurface } from "../notifications/types";
-import { useLegacyPackageRuntime } from "../legacy-package-runtime/useLegacyPackageRuntime";
 import { PresenceController } from "../presence/presenceController";
 import { SessionScreens } from "../session/SessionScreens";
 import { GsvShell } from "../gsv-shell/GsvShell";
@@ -28,8 +27,7 @@ function formatMobileHomeDate(): string {
 
 export function DesktopShell() {
   const shellRef = useRef<HTMLDivElement>(null);
-  const windowsLayerRef = useRef<HTMLElement>(null);
-  const { client: gatewayClient, connected } = useGateway();
+  const { client: gatewayClient } = useGateway();
   const { service: sessionService, snapshot: sessionSnapshot } = useSession();
   const [notificationPanel, setNotificationPanel] = useState<{
     open: boolean;
@@ -39,14 +37,6 @@ export function DesktopShell() {
   const standalone = useMemo(isStandaloneDisplay, []);
   const mobileHomeDate = useMemo(formatMobileHomeDate, []);
   const presenceController = useMemo(() => new PresenceController(gatewayClient), [gatewayClient]);
-  const { runtimeRef } = useLegacyPackageRuntime({
-    shellRef,
-    windowsLayerRef,
-    gatewayClient,
-    connected,
-    standalone,
-    sessionPhase: sessionSnapshot.phase,
-  });
 
   useEffect(() => {
     void sessionService.start();
@@ -75,17 +65,12 @@ export function DesktopShell() {
   const lockSession = useCallback((): void => {
     sessionService.lock();
   }, [sessionService]);
-  const openCommandPalette = useCallback((): void => {
-    runtimeRef.current?.launcher.openCommandPalette();
-  }, [runtimeRef]);
-
   return (
     <>
       <div class="app-shell-root">
         <div class={`gsv-native-shell${standalone ? " is-standalone" : ""}`} ref={shellRef}>
           <SessionScreens session={sessionService} snapshot={sessionSnapshot} />
           <GsvShell
-            windowsLayerRef={windowsLayerRef}
             presenceController={presenceController}
             notificationOpenSurface={notificationOpenSurface}
             notificationUnreadCount={notificationUnreadCount}
@@ -94,7 +79,6 @@ export function DesktopShell() {
             sessionUsername={sessionUsername}
             mobileHomeDate={mobileHomeDate}
             onLockSession={lockSession}
-            onOpenCommandPalette={openCommandPalette}
           />
         </div>
       </div>

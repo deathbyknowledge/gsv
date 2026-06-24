@@ -17,7 +17,7 @@ type ShellStatusBarProps = {
   notificationOpenSurface: NotificationSurface | null;
   notificationUnreadCount: number;
   onNotificationsToggle: (surface: NotificationSurface, node: HTMLButtonElement) => void;
-  onOpenCommandPalette: () => void;
+  onOpenApps: () => void;
   onLockSession: () => void;
 };
 
@@ -52,7 +52,7 @@ export function ShellStatusBar({
   notificationOpenSurface,
   notificationUnreadCount,
   onNotificationsToggle,
-  onOpenCommandPalette,
+  onOpenApps,
   onLockSession,
 }: ShellStatusBarProps) {
   return (
@@ -67,7 +67,7 @@ export function ShellStatusBar({
       />
       <div class="gsv-status-actions">
         <span>{mobileHomeDate}</span>
-        <button type="button" title="Open apps" onClick={onOpenCommandPalette}>
+        <button type="button" title="Open apps" onClick={onOpenApps}>
           <Icon name="bookmark" size={14} />
           <span>APPS</span>
         </button>

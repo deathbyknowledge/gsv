@@ -1,5 +1,6 @@
 export type ShellSurfaceId =
   | "desktop"
+  | "app"
   | "settings"
   | "crew"
   | "agent"
@@ -16,7 +17,7 @@ export type DesktopObjectId = "machines" | "messengers" | "integrations" | "appl
 export type ShellStatus = "online" | "error" | "idle" | "warn" | "live" | "update";
 export type DesktopGlyph = "machines" | "messengers" | "integrations" | "applications";
 export type ShellPageSurfaceId = Exclude<ShellSurfaceId, "desktop">;
-export type ShellPageTabKind = "settings" | "system" | "inventory" | "object";
+export type ShellPageTabKind = "settings" | "system" | "inventory" | "object" | "app";
 export type ShellSettingsListKind = DesktopObjectId | "library" | "tasks";
 
 export type ShellSettingsRoute =
@@ -33,8 +34,21 @@ export type ShellPageTab = {
   kind: ShellPageTabKind;
   icon: string;
   type: string;
+  appRoute?: ShellAppRoute;
   settingsRoute?: ShellSettingsRoute;
 };
+
+export type ShellAppRoute = {
+  appId: string;
+  suffix: string;
+  search: string;
+  hash: string;
+};
+
+export type ShellRoute =
+  | { surface: "desktop" }
+  | { surface: "app"; appRoute: ShellAppRoute }
+  | { surface: Exclude<ShellPageSurfaceId, "app">; settingsRoute?: ShellSettingsRoute };
 
 export type DesktopChildRoute = {
   kind: DesktopObjectId;
@@ -49,6 +63,7 @@ export type DesktopChildObject = {
   status: ShellStatus;
   statusLabel: string;
   glyph: DesktopGlyph;
+  appRoute?: ShellAppRoute;
   route: DesktopChildRoute;
 };
 
@@ -65,7 +80,7 @@ export type DesktopObject = {
 };
 
 export type SystemDockItem = {
-  id: Exclude<ShellSurfaceId, "desktop" | "agent" | "machines">;
+  id: Exclude<ShellSurfaceId, "desktop" | "app" | "agent" | "machines">;
   label: string;
   icon: string;
   description: string;
@@ -115,6 +130,8 @@ export function shellSurfaceLabel(surface: ShellSurfaceId): string {
   switch (surface) {
     case "settings":
       return "SETTINGS";
+    case "app":
+      return "APP";
     case "crew":
       return "CREW";
     case "agent":
@@ -184,6 +201,22 @@ export function shellTabForSurface(surface: ShellPageSurfaceId): ShellPageTab {
       type: "GSV · CONSOLE",
     };
   }
+  if (surface === "app") {
+    return {
+      key: "app:unknown",
+      surface,
+      title: "APP",
+      kind: "app",
+      icon: "stars",
+      type: "GSV · APP",
+      appRoute: {
+        appId: "unknown",
+        suffix: "/",
+        search: "",
+        hash: "",
+      },
+    };
+  }
   return {
     key: `surface:${surface}`,
     surface,
@@ -213,6 +246,70 @@ export function shellTabForSettingsRoute(route: ShellSettingsRoute): ShellPageTa
   return {
     ...shellTabForSurface("settings"),
     settingsRoute: route,
+  };
+}
+
+export function shellTabForAppRoute(route: ShellAppRoute, title?: string): ShellPageTab {
+  const normalizedRoute = normalizeShellAppRoute(route);
+  return {
+    key: shellAppRouteKey(normalizedRoute),
+    surface: "app",
+    title: title ?? normalizedRoute.appId,
+    kind: "app",
+    icon: "stars",
+    type: "GSV · APP",
+    appRoute: normalizedRoute,
+  };
+}
+
+export function shellTabForRoute(route: ShellRoute, title?: string): ShellPageTab | null {
+  if (route.surface === "desktop") {
+    return null;
+  }
+  if (route.surface === "app") {
+    return shellTabForAppRoute(route.appRoute, title);
+  }
+  if (route.surface === "settings" && route.settingsRoute) {
+    return shellTabForSettingsRoute(route.settingsRoute);
+  }
+  return shellTabForSurface(route.surface);
+}
+
+export function shellRouteForTab(tab: ShellPageTab): ShellRoute {
+  if (tab.surface === "app") {
+    return {
+      surface: "app",
+      appRoute: normalizeShellAppRoute(tab.appRoute ?? {
+        appId: "unknown",
+        suffix: "/",
+        search: "",
+        hash: "",
+      }),
+    };
+  }
+  if (tab.surface === "settings") {
+    return {
+      surface: "settings",
+      settingsRoute: tab.settingsRoute ?? { view: "overview" },
+    };
+  }
+  return { surface: tab.surface };
+}
+
+export function shellAppRouteKey(route: ShellAppRoute): string {
+  const normalizedRoute = normalizeShellAppRoute(route);
+  return `app:${normalizedRoute.appId}:${normalizedRoute.suffix}:${normalizedRoute.search}:${normalizedRoute.hash}`;
+}
+
+export function normalizeShellAppRoute(route: ShellAppRoute): ShellAppRoute {
+  const suffix = route.suffix.trim();
+  const search = route.search.trim();
+  const hash = route.hash.trim();
+  return {
+    appId: route.appId.trim(),
+    suffix: suffix.length === 0 ? "/" : suffix.startsWith("/") ? suffix : `/${suffix}`,
+    search: search.length > 0 && !search.startsWith("?") ? `?${search}` : search,
+    hash: hash.length > 0 && !hash.startsWith("#") ? `#${hash}` : hash,
   };
 }
 

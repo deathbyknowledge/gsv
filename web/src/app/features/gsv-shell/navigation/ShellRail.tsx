@@ -2,17 +2,23 @@ import { Icon } from "../../../components/ui/Icon";
 import { IconButton } from "../../../components/ui/IconButton";
 import {
   type DesktopObject,
-  type DesktopObjectId,
+  type ShellPageTab,
   type ShellSurfaceId,
 } from "../domain/shellModel";
 
 type ShellRailProps = {
   activeSurface: ShellSurfaceId;
+  activeTabKey: string | null;
   desktopObjects: readonly DesktopObject[];
+  openTabs: readonly ShellPageTab[];
   collapsed: boolean;
+  tabsExpanded: boolean;
   onToggleCollapsed: () => void;
   onBackToDesktop: () => void;
-  onOpenPicker: (id: DesktopObjectId) => void;
+  onCloseTab: (key: string) => void;
+  onOpenTab: (key: string) => void;
+  onOpenTabsPicker: () => void;
+  onToggleTabsExpanded: () => void;
   onOpenControlMenu: () => void;
   onOpenSurface: (surface: ShellSurfaceId) => void;
 };
@@ -61,17 +67,41 @@ function GsvMark({ size = 22 }: { size?: number }) {
   );
 }
 
+function TabsMark({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" aria-hidden="true" shape-rendering="crispEdges">
+      <g fill="currentColor">
+        <rect x="2" y="4" width="5" height="2" />
+        <rect x="8" y="4" width="6" height="2" />
+        <rect x="2" y="6" width="12" height="7" />
+      </g>
+    </svg>
+  );
+}
+
+function tabIcon(tab: ShellPageTab): string {
+  return tab.icon || (tab.kind === "app" ? "stars" : "list");
+}
+
 export function ShellRail({
   activeSurface,
+  activeTabKey,
   desktopObjects,
+  openTabs,
   collapsed,
+  tabsExpanded,
   onToggleCollapsed,
   onBackToDesktop,
-  onOpenPicker,
+  onCloseTab,
+  onOpenTab,
+  onOpenTabsPicker,
+  onToggleTabsExpanded,
   onOpenControlMenu,
   onOpenSurface,
 }: ShellRailProps) {
   const totalObjects = desktopObjects.reduce((sum, object) => sum + object.children.length, 0);
+  const tabCount = openTabs.length;
+  const hasTabs = tabCount > 0;
 
   if (collapsed) {
     return (
@@ -84,9 +114,9 @@ export function ShellRail({
           <button
             key={object.id}
             type="button"
-            class="gsv-rail-dot-button"
+            class={`gsv-rail-dot-button${activeSurface === object.id ? " is-active" : ""}`}
             title={object.label}
-            onClick={() => onOpenPicker(object.id)}
+            onClick={() => onOpenSurface(object.id)}
           >
             <Icon name={GLYPH_ICON[object.glyph]} size={19} />
             <span class="gsv-rail-status-dot" style={{ background: statusColor(object.status), color: statusColor(object.status) }} />
@@ -95,6 +125,12 @@ export function ShellRail({
         <button type="button" class="gsv-rail-gsv-dot" title="GSV controls" onClick={onOpenControlMenu}>
           <GsvMark />
         </button>
+        {hasTabs ? (
+          <button type="button" class="gsv-rail-tabs-dot" title="Open tabs" onClick={onOpenTabsPicker}>
+            <TabsMark />
+            <span>{tabCount}</span>
+          </button>
+        ) : null}
       </aside>
     );
   }
@@ -118,9 +154,9 @@ export function ShellRail({
             <button
               key={object.id}
               type="button"
-              class="gsv-rail-row"
+              class={`gsv-rail-row${activeSurface === object.id ? " is-active" : ""}`}
               title={`${object.label}: ${object.meta}, ${object.statusLabel}`}
-              onClick={() => onOpenPicker(object.id)}
+              onClick={() => onOpenSurface(object.id)}
             >
               <span class="gsv-rail-node-icon">
                 <Icon name={GLYPH_ICON[object.glyph]} size={19} />
@@ -155,6 +191,45 @@ export function ShellRail({
               </button>
             ))}
           </div>
+          {hasTabs ? (
+            <div class="gsv-rail-tabs">
+              <button
+                type="button"
+                class="gsv-rail-tabs-head"
+                onClick={onToggleTabsExpanded}
+              >
+                <span class="gsv-rail-tabs-icon"><TabsMark size={13} /></span>
+                <span>TABS</span>
+                <small>{tabCount}</small>
+              </button>
+              {tabsExpanded ? (
+                <div class="gsv-rail-tabs-list">
+                  {openTabs.map((tab) => {
+                    const active = tab.key === activeTabKey;
+                    return (
+                      <div class={`gsv-rail-tab-row${active ? " is-active" : ""}`} key={tab.key}>
+                        <button type="button" onClick={() => onOpenTab(tab.key)}>
+                          <span class="gsv-rail-tab-icon">
+                            <Icon name={tabIcon(tab)} size={17} />
+                          </span>
+                          <span>{tab.title}</span>
+                        </button>
+                        <button
+                          type="button"
+                          class="gsv-rail-tab-close"
+                          title={`Close ${tab.title}`}
+                          aria-label={`Close ${tab.title}`}
+                          onClick={() => onCloseTab(tab.key)}
+                        >
+                          x
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       </div>
 
