@@ -69,22 +69,10 @@
   display: none;
 }
 
-.gsv-settings-ship-scan-frame {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: stretch;
-  justify-content: stretch;
-}
-
-.gsv-settings-ship-scan {
-  width: 100%;
-  height: 100%;
-  min-height: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
+.gsv-settings-ship-orbit {
+  transform: scale(1.12);
+  transform-origin: center;
+  opacity: 0.98;
 }
 
 .gsv-settings-scan,
@@ -288,8 +276,8 @@
     height: 150px;
   }
 
-  .gsv-settings-ship-scan {
-    --gsv-ascii-galaxy-font-size: 6px;
+  .gsv-settings-ship-orbit {
+    transform: scale(0.88);
   }
 
   .gsv-settings-deep-cell {

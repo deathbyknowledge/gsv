@@ -64,8 +64,10 @@ const MAX_RADIUS = 56;
 const ASPECT_Y = 1.85;
 const ROT_RATE = 0.085;
 const T_FORM = 5.0;
-const T_DANCE = 5.6;
-const T_MORPH = 11.4;
+const T_SETTLE = 0.85;
+const T_SETTLE_END = T_FORM + T_SETTLE;
+const T_DANCE = T_SETTLE_END + 0.6;
+const T_MORPH = 11.4 + T_SETTLE;
 const TARGET_SCALE = 0.6;
 const FOREGROUND_GLOW = "0 0 5px rgba(140,120,235,.55),0 0 14px rgba(110,95,209,.28)";
 
@@ -365,19 +367,25 @@ class AsciiGalaxyScanRenderer {
       let brightness: number;
 
       if (t < T_FORM) {
-        const formT = t / T_FORM;
-        const radiusNorm = Math.min(1, particle.r / MAX_RADIUS);
-        const start = radiusNorm * 0.55;
-        const local = (formT - start) / (1 - start * 0.6);
+        const state = this.formationState(particle, galaxy, t);
+        if (!state) {
+          continue;
+        }
+        x = state.x;
+        y = state.y;
+        brightness = state.brightness;
+      } else if (t < T_SETTLE_END) {
+        const settle = easeOut((t - T_FORM) / T_SETTLE);
+        const startGalaxy = this.galaxyScreen(particle, this.rotAt(T_FORM));
+        const start = this.formationState(particle, startGalaxy, T_FORM);
 
-        if (local <= 0) {
+        if (!start) {
           continue;
         }
 
-        const eased = smoother(Math.min(1, local));
-        x = particle.sx + (galaxy.x - particle.sx) * eased;
-        y = particle.sy + (galaxy.y - particle.sy) * eased;
-        brightness = particle.gb * smoother(Math.min(1, local * 1.05)) * (0.82 + 0.18 * Math.sin(particle.jitter * Math.PI * 2 + elapsed * 3.2));
+        x = start.x + (galaxy.x - start.x) * settle;
+        y = start.y + (galaxy.y - start.y) * settle;
+        brightness = start.brightness + (particle.gb - start.brightness) * settle;
       } else if (t < T_DANCE) {
         x = galaxy.x;
         y = galaxy.y;
@@ -433,6 +441,25 @@ class AsciiGalaxyScanRenderer {
       output.push(line);
     }
     return output;
+  }
+
+  private formationState(particle: GalaxyParticle, galaxy: Point, elapsed: number): { x: number; y: number; brightness: number } | null {
+    const formT = elapsed / T_FORM;
+    const radiusNorm = Math.min(1, particle.r / MAX_RADIUS);
+    const start = radiusNorm * 0.55;
+    const local = (formT - start) / (1 - start * 0.6);
+
+    if (local <= 0) {
+      return null;
+    }
+
+    const eased = smoother(Math.min(1, local));
+    const shimmer = 0.82 + 0.18 * Math.sin(particle.jitter * Math.PI * 2 + elapsed * 3.2);
+    return {
+      x: particle.sx + (galaxy.x - particle.sx) * eased,
+      y: particle.sy + (galaxy.y - particle.sy) * eased,
+      brightness: particle.gb * smoother(Math.min(1, local * 1.05)) * shimmer,
+    };
   }
 
   private applyGlitch(frameRows: string[], elapsed: number, preEl: HTMLPreElement): void {

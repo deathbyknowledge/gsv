@@ -1,4 +1,4 @@
-import { GalaxyGsv } from "./GalaxyGsv";
+import { AsciiGalaxyScan } from "../../../components/ui/AsciiGalaxyScan";
 import { GlyphStars } from "./GlyphStars";
 import "./AuthBackground.css";
 
@@ -15,7 +15,11 @@ export function AuthBackground({ variant }: { variant: AuthBgVariant }) {
       <GlyphStars />
       {variant === "galaxy" ? (
         <div class="auth-bg-galaxy">
-          <GalaxyGsv />
+          <AsciiGalaxyScan
+            className="auth-bg-galaxy-scan"
+            label="GSV login galaxy scan"
+            showTexture
+          />
         </div>
       ) : null}
     </div>

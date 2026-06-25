@@ -1,6 +1,6 @@
 import type { ComponentChildren, JSX } from "preact";
 import { AddAction } from "../../../components/ui/AddAction";
-import { AsciiGalaxyScan } from "../../../components/ui/AsciiGalaxyScan";
+import { AsciiPlanet } from "../../../components/ui/AsciiPlanet";
 import { CrewAddTile, CrewTile } from "../../../components/ui/CrewTile";
 import { ListRow, type ListRowStatus } from "../../../components/ui/ListRow";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
@@ -488,8 +488,8 @@ function ShipPanel({
     <section class="gsv-settings-block gsv-settings-ship-block">
       <SectionHeader title="THE SHIP" divider />
       <div class="gsv-settings-ship-visual">
-        <div class="gsv-settings-ship-scan-frame">
-          <AsciiGalaxyScan className="gsv-settings-ship-scan" label="GSV ship scan" showTexture />
+        <div class="gsv-settings-ship-orbit">
+          <AsciiPlanet variant="moon" formDuration={3.4} label="GSV ship scan" />
         </div>
         <span class="gsv-settings-scan">{shipInventoryLabel(data)}</span>
         <span class="gsv-settings-ship-id">GSV</span>
