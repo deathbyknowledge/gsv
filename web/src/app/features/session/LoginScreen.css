@@ -13,6 +13,11 @@
 .gsv-login-body {
   padding: 26px 32px 30px;
 }
+@media (max-width: 380px) {
+  .gsv-login-body {
+    padding: 22px 18px 24px;
+  }
+}
 .gsv-login-section {
   display: block;
   color: var(--text-title);
@@ -33,9 +38,6 @@
 }
 .gsv-login-error {
   margin: 0;
-  font-size: 10px;
-  letter-spacing: 0.1em;
-  color: var(--error);
 }
 
 /* Progressive-loading skeleton (shown while the session boots). */

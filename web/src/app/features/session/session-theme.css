@@ -51,4 +51,9 @@
   --danger: #a8324a;
   --danger-hi: #c4445f;
   --warn: #e0a64c;
+
+  /* auth layout — shared gutter so every auth panel reflows in step.
+     Overridden per breakpoint in AuthLayout.css. */
+  --gsv-auth-pad-y: 48px;
+  --gsv-auth-pad-x: clamp(24px, 6vw, 96px);
 }

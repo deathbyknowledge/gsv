@@ -1202,11 +1202,6 @@ button:disabled {
   background: rgba(255, 255, 255, 0.08);
 }
 
-.onboarding-status-panel .onboarding-step-list {
-  opacity: 1;
-  pointer-events: auto;
-}
-
 .onboarding-layout {
   width: 100%;
   height: 100%;
@@ -1221,60 +1216,6 @@ button:disabled {
   padding: 58px 42px 42px;
   border-right: 1px solid rgba(24, 49, 79, 0.14);
   background: rgba(255, 255, 255, 0.08);
-}
-
-.onboarding-step-list {
-  display: grid;
-  align-content: center;
-  gap: 46px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  transition: opacity 140ms ease;
-}
-
-.onboarding-layout[data-setup-stage="welcome"] .onboarding-step-list {
-  opacity: 0;
-  pointer-events: none;
-}
-
-.onboarding-stage-pill {
-  display: grid;
-  grid-template-columns: 46px minmax(0, 1fr);
-  align-items: center;
-  gap: 16px;
-  color: rgba(24, 49, 79, 0.72);
-}
-
-.onboarding-stage-pill span {
-  display: inline-grid;
-  place-items: center;
-  width: 46px;
-  height: 46px;
-  border: 1px solid rgba(24, 49, 79, 0.34);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.26);
-  color: #172f4c;
-  font-size: 0.92rem;
-}
-
-.onboarding-stage-pill strong {
-  font-size: 0.92rem;
-  font-weight: 600;
-}
-
-.onboarding-stage-pill.is-active span,
-.onboarding-stage-pill.is-complete span {
-  background: rgba(24, 49, 79, 0.24);
-  border-color: rgba(24, 49, 79, 0.42);
-}
-
-.onboarding-stage-pill.is-active strong {
-  color: #102742;
-}
-
-.onboarding-stage-pill.is-muted {
-  color: rgba(24, 49, 79, 0.52);
 }
 
 .onboarding-workspace {
@@ -1447,88 +1388,6 @@ button:disabled {
 .onboarding-preference-group .session-field-grid,
 .onboarding-custom-options .session-field-grid {
   gap: 10px;
-}
-
-.onboarding-preference-group .onboarding-help {
-  right: -58px;
-  top: 0;
-}
-
-.onboarding-custom-options .onboarding-help {
-  right: -58px;
-  top: 18px;
-}
-
-.onboarding-help {
-  position: absolute;
-  right: -58px;
-  top: 76px;
-  z-index: 3;
-  width: 34px;
-  height: 34px;
-}
-
-.onboarding-help:focus-visible {
-  outline: none;
-}
-
-.onboarding-help-trigger {
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 999px;
-  background: #172234;
-  color: #fff;
-  font-weight: 800;
-  cursor: help;
-}
-
-.onboarding-help:focus-visible .onboarding-help-trigger {
-  box-shadow: 0 0 0 3px rgba(74, 123, 181, 0.24);
-}
-
-.onboarding-help-popover {
-  position: absolute;
-  right: 44px;
-  top: -12px;
-  width: 300px;
-  padding: 13px 15px;
-  border: 1px solid rgba(24, 49, 79, 0.28);
-  border-radius: 5px;
-  background: rgba(255, 255, 255, 0.92);
-  box-shadow: 0 18px 36px rgba(12, 32, 58, 0.14);
-  color: #24364d;
-  opacity: 0;
-  visibility: hidden;
-  transform: translateY(4px);
-  pointer-events: none;
-  transition:
-    opacity 120ms ease,
-    transform 120ms ease,
-    visibility 120ms ease;
-}
-
-.onboarding-help:hover .onboarding-help-popover,
-.onboarding-help:focus-visible .onboarding-help-popover,
-.onboarding-help:focus-within .onboarding-help-popover {
-  opacity: 1;
-  visibility: visible;
-  transform: translateY(0);
-  pointer-events: auto;
-}
-
-.onboarding-help strong {
-  display: block;
-  margin-bottom: 5px;
-  text-align: center;
-  font-size: 0.78rem;
-}
-
-.onboarding-help p {
-  margin: 0;
-  font-size: 0.82rem;
-  line-height: 1.45;
 }
 
 .onboarding-custom-options[hidden] {
@@ -1973,19 +1832,6 @@ button:disabled {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-}
-
-.session-token-head .onboarding-help {
-  position: relative;
-  right: auto;
-  top: auto;
-  flex: 0 0 auto;
-  margin-left: auto;
-}
-
-.session-token-head .onboarding-help-popover {
-  right: 44px;
-  top: -12px;
 }
 
 .session-token-value {
@@ -5054,28 +4900,6 @@ button:disabled {
     border-bottom: 1px solid rgba(24, 49, 79, 0.14);
   }
 
-  .onboarding-step-list {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 10px;
-    align-content: start;
-  }
-
-  .onboarding-stage-pill {
-    grid-template-columns: minmax(0, 1fr);
-    justify-items: center;
-    gap: 8px;
-    text-align: center;
-  }
-
-  .onboarding-stage-pill span {
-    width: 36px;
-    height: 36px;
-  }
-
-  .onboarding-stage-pill strong {
-    font-size: 0.76rem;
-  }
-
   .onboarding-workspace {
     flex-direction: column;
     overflow: visible;
@@ -5111,27 +4935,6 @@ button:disabled {
 
   .onboarding-summary-card p {
     grid-column: auto;
-  }
-
-  .onboarding-help {
-    position: relative;
-    right: auto;
-    top: auto;
-    margin-top: 10px;
-  }
-
-  .onboarding-help-popover {
-    left: 0;
-    right: auto;
-    top: 42px;
-    width: min(300px, calc(100vw - 56px));
-    margin-top: 0;
-  }
-
-  .session-token-head .onboarding-help-popover {
-    left: auto;
-    right: 0;
-    top: 42px;
   }
 
   .onboarding-guide-panel {

@@ -1,14 +1,25 @@
 import type { ComponentChildren } from "preact";
 import "./IconButton.css";
 
-export type IconButtonGlyph = "back" | "arrowBack" | "menu" | "max" | "min" | "close" | "plus";
+export type IconButtonGlyph = "back" | "arrowBack" | "menu" | "max" | "min" | "close" | "plus" | "help" | "attention";
 export type IconButtonSize = "small" | "medium" | "large" | number;
 
 export interface IconButtonProps {
   glyph?: IconButtonGlyph;
   size?: IconButtonSize;
   disabled?: boolean;
+  /** Borderless rendering (no background/border) — for inline affordances such
+   *  as the label info hint. */
+  ghost?: boolean;
+  /** Native browser tooltip text. Also used as the accessible name unless
+   *  ariaLabel is given. Omit when a custom tooltip already labels the control
+   *  (e.g. InfoTip) to avoid a duplicate native tooltip. */
   title?: string;
+  /** Accessible name without rendering a native title tooltip. Takes precedence
+   *  over title for aria-label. */
+  ariaLabel?: string;
+  /** id of an element that describes this control (e.g. a tooltip bubble). */
+  ariaDescribedBy?: string;
   onClick?: () => void;
 }
 
@@ -69,19 +80,55 @@ const GLYPHS: Record<IconButtonGlyph, ComponentChildren> = {
       </g>
     </svg>
   ),
+  help: (
+    <svg width="72%" height="72%" viewBox="0 0 16 16" fill="none">
+      <circle cx="8" cy="8" r="6.4" stroke="currentColor" stroke-width="1.2" />
+      <text
+        x="8"
+        y="11.55"
+        text-anchor="middle"
+        font-size="9.5"
+        font-weight="700"
+        font-family="ui-sans-serif, system-ui, sans-serif"
+        fill="currentColor"
+        stroke="none"
+      >
+        ?
+      </text>
+    </svg>
+  ),
+  attention: (
+    <svg width="72%" height="72%" viewBox="0 0 16 16" fill="none">
+      <circle cx="8" cy="8" r="6.4" stroke="currentColor" stroke-width="1.2" />
+      <text
+        x="8"
+        y="11.55"
+        text-anchor="middle"
+        font-size="9.5"
+        font-weight="700"
+        font-family="ui-sans-serif, system-ui, sans-serif"
+        fill="currentColor"
+        stroke="none"
+      >
+        !
+      </text>
+    </svg>
+  ),
 };
 
 /** IconButton — ported from IconButton.dc.html. Square icon button with inline
  *  SVG glyphs, named or numeric size, disabled + title + onClick. */
-export function IconButton({ glyph = "back", size = "medium", disabled = false, title = "", onClick }: IconButtonProps) {
+export function IconButton({ glyph = "back", size = "medium", disabled = false, ghost = false, title = "", ariaLabel, ariaDescribedBy, onClick }: IconButtonProps) {
   const px = typeof size === "number" ? size : SIZE_MAP[size] ?? Number(size) ?? 30;
-  const cls = disabled ? "gsv-ibtn-disabled" : "gsv-ibtn";
+  const base = ghost ? "gsv-ibtn-ghost" : "gsv-ibtn";
+  const cls = disabled ? (ghost ? "gsv-ibtn-ghost is-disabled" : "gsv-ibtn-disabled") : base;
   return (
     <button
       type="button"
       class={cls}
-      title={title}
-      aria-label={title || undefined}
+      title={title || undefined}
+      aria-label={ariaLabel || title || undefined}
+      aria-describedby={ariaDescribedBy}
       disabled={disabled}
       onClick={disabled ? undefined : onClick}
       style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", width: `${px}px`, height: `${px}px` }}

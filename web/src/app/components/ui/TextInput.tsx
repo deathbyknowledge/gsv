@@ -1,5 +1,6 @@
 import type { JSX } from "preact";
 import { useId, useState } from "preact/hooks";
+import { InfoTip } from "./InfoTip";
 import "./TextInput.css";
 
 export type TextInputSize = "small" | "medium" | "large";
@@ -10,6 +11,7 @@ export interface TextInputProps {
   value?: string;
   placeholder?: string;
   label?: string;
+  info?: string;
   description?: string;
   size?: TextInputSize;
   status?: TextInputStatus;
@@ -40,6 +42,7 @@ export function TextInput(props: TextInputProps) {
   const {
     placeholder = "e.g. PERSONAL AGENT",
     label = "ROLE",
+    info = "",
     description = "",
     size = "medium",
     status = "none",
@@ -97,6 +100,7 @@ export function TextInput(props: TextInputProps) {
             {label}
             {req ? <span class="gsv-ti-req"> {req === "required" ? "· REQUIRED" : "· OPTIONAL"}</span> : null}
           </span>
+          {info ? <InfoTip text={info} /> : null}
         </div>
       ) : null}
       {description ? <div class="gsv-ti-desc" id={`${fieldId}-desc`}>{description}</div> : null}

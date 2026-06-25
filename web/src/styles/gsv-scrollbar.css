@@ -1,0 +1,40 @@
+/* ============================================================
+   Branded scrollbars — a thin periwinkle accent thumb on a faint
+   track, matching the GSV palette. Applied automatically inside
+   design-system surfaces (.gsv-auth-theme) and available anywhere
+   else via the .gsv-scroll utility class.
+   ============================================================ */
+
+.gsv-scroll,
+.gsv-auth-theme {
+  /* Firefox (scrollbar-color inherits to scrollable descendants) */
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--accent) 60%, transparent) transparent;
+}
+
+/* WebKit / Blink (Chrome, Edge, Safari) */
+.gsv-scroll::-webkit-scrollbar,
+.gsv-auth-theme ::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.gsv-scroll::-webkit-scrollbar-track,
+.gsv-auth-theme ::-webkit-scrollbar-track {
+  background: transparent;
+}
+.gsv-scroll::-webkit-scrollbar-thumb,
+.gsv-auth-theme ::-webkit-scrollbar-thumb {
+  background-color: color-mix(in srgb, var(--accent) 42%, transparent);
+  /* transparent border + padding-box clip insets the thumb so it reads ~4px */
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+.gsv-scroll::-webkit-scrollbar-thumb:hover,
+.gsv-auth-theme ::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in srgb, var(--accent) 72%, transparent);
+  background-clip: padding-box;
+}
+.gsv-scroll::-webkit-scrollbar-corner,
+.gsv-auth-theme ::-webkit-scrollbar-corner {
+  background: transparent;
+}

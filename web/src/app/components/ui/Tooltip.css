@@ -21,6 +21,16 @@
   outline: 2px solid var(--accent-bright);
   outline-offset: 2px;
 }
+/* Bare trigger (Tooltip children) — drop the hinted-text chrome so the caller's
+   own content/styling shows through; keep the help cursor + reveal behavior. */
+.gsv-tt-trigger-bare {
+  font-size: inherit;
+  letter-spacing: inherit;
+  color: inherit;
+  text-align: inherit;
+  border-bottom: 0;
+  max-width: 100%;
+}
 .gsv-tt-bub {
   position: absolute;
   z-index: 50;
@@ -31,7 +41,7 @@
   letter-spacing: 0.06em;
   line-height: 1.55;
   padding: 7px 10px;
-  max-width: 220px;
+  max-width: min(220px, calc(100vw - 40px));
   width: max-content;
   box-shadow: 0 8px 22px rgba(0, 0, 0, 0.55);
   opacity: 0;

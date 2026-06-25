@@ -1,6 +1,7 @@
 import "../styles/gsv-fonts.css";
 import "../styles/gsv-tokens.css";
 import "../styles.css";
+import "../styles/gsv-scrollbar.css";
 import "./features/desktop/commandPalette.css";
 import "./features/presence/presence.css";
 import "../design-system/catalog.css";

@@ -99,6 +99,10 @@
 .gsv-cb-lg .gsv-cb-label {
   font-size: 12.5px;
 }
+.gsv-cb-labelrow {
+  display: inline-flex;
+  align-items: center;
+}
 .gsv-cb-fld {
   display: inline-flex;
   flex-direction: column;

@@ -1,5 +1,6 @@
 import type { JSX } from "preact";
 import { useId, useState } from "preact/hooks";
+import { InfoTip } from "./InfoTip";
 import "./TextArea.css";
 
 export type TextAreaSize = "small" | "medium" | "large";
@@ -10,6 +11,7 @@ export interface TextAreaProps {
   value?: string;
   placeholder?: string;
   label?: string;
+  info?: string;
   description?: string;
   size?: TextAreaSize;
   rows?: number;
@@ -37,6 +39,7 @@ export function TextArea(props: TextAreaProps) {
   const {
     placeholder = "What is this agent for? A line or two.",
     label = "DESCRIPTION",
+    info = "",
     description = "",
     size = "medium",
     rows = 3,
@@ -91,6 +94,7 @@ export function TextArea(props: TextAreaProps) {
             {label}
             {req ? <span class="gsv-ta-req"> {req === "required" ? "· REQUIRED" : "· OPTIONAL"}</span> : null}
           </span>
+          {info ? <InfoTip text={info} /> : null}
         </div>
       ) : null}
       {hasDesc ? <div class="gsv-ta-desc" id={`${fieldId}-desc`}>{description}</div> : null}

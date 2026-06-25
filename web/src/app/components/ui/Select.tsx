@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from "preact/hooks";
+import { InfoTip } from "./InfoTip";
 import "./Select.css";
 
 export type SelectSize = "small" | "medium" | "large";
@@ -14,7 +15,10 @@ export interface SelectProps {
   size?: SelectSize;
   disabled?: boolean;
   width?: number;
+  /** Stretch to fill the container width (ignores `width`). */
+  block?: boolean;
   label?: string;
+  info?: string;
   description?: string;
   requirement?: SelectRequirement;
   status?: SelectStatus;
@@ -39,7 +43,9 @@ export function Select(props: SelectProps) {
     size = "medium",
     disabled = false,
     width = 300,
+    block = false,
     label = "",
+    info = "",
     description = "",
     requirement = "none",
     status = "none",
@@ -171,11 +177,12 @@ export function Select(props: SelectProps) {
   };
 
   return (
-    <div class={fldClass} style={{ width: `${width}px`, maxWidth: "100%" }}>
+    <div class={fldClass} style={block ? { width: "100%" } : { width: `${width}px`, maxWidth: "100%" }}>
       {hasFldLabel ? (
         <div class="gsv-fld-lab">
           <span class="gsv-fld-lab-t" id={label.length > 0 ? labelId : undefined}>{label}</span>
           {req ? <span class="gsv-fld-req">{req === "required" ? "· REQUIRED" : "· OPTIONAL"}</span> : null}
+          {info ? <InfoTip text={info} /> : null}
         </div>
       ) : null}
       {description.length > 0 ? <div class="gsv-fld-desc" id={descId}>{description}</div> : null}

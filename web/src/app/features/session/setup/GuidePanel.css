@@ -5,18 +5,43 @@
    legacy styles.css onboarding / session rules bleed in.
    ============================================================ */
 
+/* A small chat window floating over the form, pinned to the bottom-right
+   corner. The form behind stays usable (no backdrop). */
 .gsv-guide-panel {
-  margin-top: 22px;
+  position: fixed;
+  right: 28px;
+  bottom: 28px;
+  z-index: 50;
+  width: 360px;
+  max-width: calc(100vw - 32px);
+  max-height: min(72vh, 560px);
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 16px;
   padding: 20px 22px;
   background: #eceaf7;
   border: 1px solid #c8c4e4;
-  box-shadow: 0 0 24px rgba(8, 5, 26, 0.45);
+  box-shadow: 0 18px 50px rgba(5, 3, 18, 0.6);
 }
 .gsv-guide-panel[hidden] {
   display: none;
+}
+
+/* Small screens: a floating corner box would cover the form and footer nav, so
+   dock it as a full-width bottom sheet instead. */
+@media (max-width: 480px) {
+  .gsv-guide-panel {
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    max-width: none;
+    max-height: 64vh;
+    border-left: 0;
+    border-right: 0;
+    border-bottom: 0;
+  }
 }
 
 /* Head */

@@ -41,6 +41,7 @@ export function SessionScreens({ session, snapshot }: SessionScreensProps) {
           onLane={state.setup.onLane}
           onBack={state.setup.onBack}
           onNext={state.setup.onNext}
+          onStep={state.setup.onStep}
           onSubmit={state.setup.onSubmit}
           onGuideToggle={state.setup.onGuideToggle}
           onGuideMessage={state.setup.onGuideMessage}

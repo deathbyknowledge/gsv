@@ -8,6 +8,7 @@ import { STORY_GROUP_ORDER, type Story, type StoryGroup } from "./story";
 import foundationsTokens from "./stories/Tokens.story";
 import typography from "./stories/Typography.story";
 import icons from "./stories/Icons.story";
+import scrollbar from "./stories/Scrollbar.story";
 import button from "./stories/Button.story";
 import textInput from "./stories/TextInput.story";
 import textArea from "./stories/TextArea.story";
@@ -24,6 +25,8 @@ import tag from "./stories/Tag.story";
 import progress from "./stories/Progress.story";
 import spinner from "./stories/Spinner.story";
 import tooltip from "./stories/Tooltip.story";
+import infoTip from "./stories/InfoTip.story";
+import alert from "./stories/Alert.story";
 import listRow from "./stories/ListRow.story";
 import asciiPlanet from "./stories/AsciiPlanet.story";
 import agentImage from "./stories/AgentImage.story";
@@ -56,6 +59,7 @@ const STORIES: Story[] = [
   foundationsTokens,
   typography,
   icons,
+  scrollbar,
   // Forms
   button,
   textInput,
@@ -74,6 +78,8 @@ const STORIES: Story[] = [
   progress,
   spinner,
   tooltip,
+  infoTip,
+  alert,
   // Data Display
   listRow,
   asciiPlanet,

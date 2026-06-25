@@ -11,6 +11,11 @@
   align-items: center;
   gap: 12px;
 }
+.gsv-sl-labelgroup {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
 .gsv-sl-label {
   font-size: 9.5px;
   letter-spacing: 0.22em;

@@ -36,8 +36,12 @@ const STYLE = `
 
 export function GlyphStars() {
   const stars = useMemo(() => {
+    // Scale density with viewport so small screens aren't over-packed (and
+    // render fewer animated nodes on low-power devices).
+    const vw = typeof window !== "undefined" ? window.innerWidth : 1440;
+    const count = Math.max(60, Math.min(COUNT, Math.round(vw / 9)));
     const out = [];
-    for (let i = 0; i < COUNT; i++) {
+    for (let i = 0; i < count; i++) {
       const left = frac(i * 12.9898) * 100;
       const top = frac(i * 78.233) * 100;
       const g = GLYPHS[Math.floor(frac(i * 3.17) * GLYPHS.length)];

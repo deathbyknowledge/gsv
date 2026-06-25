@@ -3,7 +3,7 @@ import { Checkbox } from "../../../components/ui/Checkbox";
 import { Select } from "../../../components/ui/Select";
 import { TextInput } from "../../../components/ui/TextInput";
 import { Toggle } from "../../../components/ui/Toggle";
-import { OnboardingHelp } from "../SessionChrome";
+import { InfoTip } from "../../../components/ui/InfoTip";
 import { advancedSectionsVisible } from "../sessionDomain";
 import "./SystemDetails.css";
 
@@ -31,7 +31,14 @@ export function SystemDetails({
     <section class="onboarding-section gsv-setup-preferences" data-setup-detail-step="system" hidden={draft.stage !== "details" || activeStep !== "system"}>
       <div class="gsv-setup-preference-group">
         <div class="gsv-setup-section-head">
-          <h3>Admin security</h3>
+          <h3>
+            Admin security
+            <InfoTip
+              position="right"
+              label="Explain admin security"
+              text="A separate admin password adds a second check for sensitive system actions."
+            />
+          </h3>
           <p>Choose whether sensitive admin actions need a second password.</p>
         </div>
         <div class="system-details-fields">
@@ -83,9 +90,6 @@ export function SystemDetails({
             />
           </div>
         </div>
-        <OnboardingHelp label="Explain admin security" tooltipId="setup-help-admin" title="Why?">
-          A separate admin password adds a second check for sensitive system actions.
-        </OnboardingHelp>
       </div>
 
       <div class="gsv-setup-preference-group">
@@ -96,6 +100,7 @@ export function SystemDetails({
         <div class="system-details-fields">
           <Select
             label="Timezone"
+            block
             options={options}
             value={timezoneIndex}
             onChange={(index) => updateDraft((current) => ({
@@ -111,12 +116,16 @@ export function SystemDetails({
 
       <div class="gsv-setup-preference-group" data-setup-ai-section hidden={!showAdvanced}>
         <div class="gsv-setup-section-head">
-          <h3>AI defaults</h3>
+          <h3>
+            AI defaults
+            <InfoTip
+              position="right"
+              label="Explain AI defaults"
+              text="These settings choose the default AI service GSV uses after setup. You can change them later from settings."
+            />
+          </h3>
           <p>Keep the default AI path, or choose the AI service and model from the start.</p>
         </div>
-        <OnboardingHelp label="Explain AI defaults" tooltipId="setup-help-ai" title="What does this change?">
-          These settings choose the default AI service GSV uses after setup. You can change them later from settings.
-        </OnboardingHelp>
         <div class="system-details-fields">
           <div data-setup-ai-enabled>
             <Toggle
@@ -174,12 +183,16 @@ export function SystemDetails({
 
       <div class="gsv-setup-preference-group" data-setup-source-section hidden={!showAdvanced}>
         <div class="gsv-setup-section-head">
-          <h3>System files</h3>
+          <h3>
+            System files
+            <InfoTip
+              position="right"
+              label="Explain system files"
+              text="System files are the built-in apps and settings GSV starts with. Advanced users can point this at a Git repository or remote URL; Version can be a branch, tag, or commit."
+            />
+          </h3>
           <p>Use the official system files, or choose a repository and version you control.</p>
         </div>
-        <OnboardingHelp label="Explain system files" tooltipId="setup-help-source" title="For advanced setup">
-          System files are the built-in apps and settings GSV starts with. Advanced users can point this at a Git repository or remote URL; Version can be a branch, tag, or commit.
-        </OnboardingHelp>
         <div class="system-details-fields">
           <div data-setup-source-enabled>
             <Toggle
@@ -223,12 +236,16 @@ export function SystemDetails({
 
       <div class="gsv-setup-preference-group" data-setup-node-section hidden={!showAdvanced}>
         <div class="gsv-setup-section-head">
-          <h3>Device setup</h3>
+          <h3>
+            Device setup
+            <InfoTip
+              position="right"
+              label="Explain device setup"
+              text="A setup key lets another machine connect to this workspace. Only create one now if you are ready to connect a device."
+            />
+          </h3>
           <p>Create a setup key now if you want another machine to connect immediately.</p>
         </div>
-        <OnboardingHelp label="Explain device setup" tooltipId="setup-help-node" title="Setup key">
-          A setup key lets another machine connect to this workspace. Only create one now if you are ready to connect a device.
-        </OnboardingHelp>
         <div class="system-details-fields">
           <div data-setup-node-enabled>
             <Toggle

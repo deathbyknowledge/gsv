@@ -1,0 +1,76 @@
+/* Alert — bubble container + optional icon, title and text. Colour follows the
+   status reference palette via a per-variant --alert-color; the bubble fill and
+   border are tinted from it. */
+.gsv-alert {
+  --alert-bg: color-mix(in srgb, var(--alert-color) 9%, var(--panel));
+  --alert-border: color-mix(in srgb, var(--alert-color) 38%, transparent);
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  padding: 13px 15px;
+  border: 1px solid var(--alert-border);
+  background: var(--alert-bg);
+  font-family: var(--gsv-font-prose);
+}
+
+.gsv-alert-icon {
+  flex: none;
+  display: inline-flex;
+  color: var(--alert-color);
+  margin-top: -1px;
+}
+/* The alert icon is decorative — neutralise IconButton's interactive hover so
+   it reads as an icon, keeping the variant colour. */
+.gsv-alert-icon .gsv-ibtn-ghost,
+.gsv-alert-icon .gsv-ibtn-ghost:hover {
+  color: var(--alert-color);
+  cursor: default;
+}
+
+.gsv-alert-body {
+  min-width: 0;
+}
+.gsv-alert-title {
+  font-family: var(--gsv-font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--alert-color);
+}
+.gsv-alert-title + .gsv-alert-text {
+  margin-top: 5px;
+}
+.gsv-alert-text {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  /* A very light variation of the status colour — tied to the variant but kept
+     legible by mixing mostly toward the light text token. */
+  color: color-mix(in srgb, var(--alert-color) 25%, var(--text));
+}
+
+/* Variant colours — status reference palette (gsv-tokens.css). */
+.gsv-alert-info {
+  --alert-color: var(--live);
+} /* #8f8aff */
+.gsv-alert-attention {
+  --alert-color: var(--update);
+} /* #ffd24d */
+.gsv-alert-warning {
+  --alert-color: var(--warn);
+} /* #e0a64c */
+.gsv-alert-neutral {
+  --alert-color: var(--idle);
+} /* #6661a0 */
+.gsv-alert-success {
+  --alert-color: var(--online);
+} /* #5ef2a0 */
+.gsv-alert-error {
+  --alert-color: var(--error);
+} /* #ff6f8c */
+
+/* Neutral text/title read better slightly brighter than the dim idle colour. */
+.gsv-alert-neutral .gsv-alert-title {
+  color: var(--label);
+}

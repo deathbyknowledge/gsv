@@ -182,6 +182,10 @@
 .gsv-mi-send.is-stop:focus-visible {
   color: #ffc1cc;
 }
+.gsv-mi-send:disabled {
+  cursor: default;
+  color: #565178;
+}
 
 .gsv-mi-meta {
   display: flex;
