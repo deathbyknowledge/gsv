@@ -1,0 +1,44 @@
+/* ============================================================
+   GSV self-hosted fonts (SIL Open Font License 1.1)
+   Two faces, per the design system:
+     · Departure Mono — the machine: labels, HUD, readouts.
+     · Space Grotesk  — human prose: chat bubbles, section intros.
+   Served from web/public/fonts/ (publicDir → "/fonts/...").
+   ============================================================ */
+@font-face {
+  font-family: "Departure Mono";
+  src: url("/fonts/DepartureMono-Regular.woff2") format("woff2");
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("/fonts/SpaceGrotesk-400.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("/fonts/SpaceGrotesk-500.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("/fonts/SpaceGrotesk-700.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  /* Canonical design-system font stacks. Departure Mono is the machine face;
+     JetBrains/IBM Plex Mono are graceful monospace fallbacks. Space Grotesk is
+     the human-prose face (chat bubbles, section intros). */
+  --gsv-font-mono: "Departure Mono", "JetBrains Mono", "IBM Plex Mono", monospace;
+  --gsv-font-prose: "Space Grotesk", "Avenir Next", "Segoe UI", sans-serif;
+}

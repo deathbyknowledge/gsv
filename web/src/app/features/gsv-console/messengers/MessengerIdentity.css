@@ -1,0 +1,117 @@
+.gsv-messenger-link-code-panel {
+  width: min(560px, 100%);
+  min-width: 0;
+  align-self: center;
+  margin: 0 auto 18px;
+  padding: 0;
+  overflow: hidden;
+}
+
+.gsv-messenger-link-code-body {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 14px;
+  padding: 18px;
+}
+
+.gsv-messenger-link-code-notice {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 12px 18px 16px;
+  border-top: 1px solid var(--rule-inner);
+  color: var(--text);
+  font-family: var(--gsv-font-prose);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.gsv-messenger-link-code-notice > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gsv-messenger-identity-section {
+  margin-top: 0;
+}
+
+.gsv-messenger-identity-list {
+  min-width: 0;
+  display: grid;
+}
+
+.gsv-messenger-identity-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  border-bottom: 1px solid var(--rule-inner);
+}
+
+.gsv-messenger-identity-row:last-child {
+  border-bottom: 0;
+}
+
+.gsv-messenger-identity-row .lr {
+  min-height: 56px;
+  padding: 14px 16px;
+}
+
+.gsv-messenger-identity-row > .gsv-btn {
+  align-self: center;
+  margin: 0 16px;
+}
+
+.gsv-messenger-identity-empty {
+  min-height: 54px;
+  padding: 18px;
+  color: var(--text-dim);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.gsv-messenger-identity-error {
+  margin: -12px 0 0;
+  color: var(--error);
+  font-family: var(--gsv-font-prose);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+@media (max-width: 620px) {
+  .gsv-messenger-link-code-body {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+  }
+
+  .gsv-messenger-link-code-notice {
+    align-items: flex-start;
+  }
+
+  .gsv-messenger-link-code-notice > span:last-child {
+    white-space: normal;
+  }
+
+  .gsv-messenger-identity-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .gsv-messenger-identity-row > .gsv-btn {
+    justify-self: stretch;
+    margin: 0 16px 16px;
+  }
+
+  .gsv-messenger-identity-row .lr-tag,
+  .gsv-messenger-identity-row .lr-status {
+    display: none;
+  }
+}

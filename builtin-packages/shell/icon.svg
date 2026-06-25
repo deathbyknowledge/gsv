@@ -1,7 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-label="Shell">
-  <path d="M21 24h54c4.4 0 8 3.6 8 8v38c0 4.4-3.6 8-8 8H21c-4.4 0-8-3.6-8-8V32c0-4.4 3.6-8 8-8z" fill="none" stroke="#7c8da1" stroke-width="4" stroke-linejoin="round"/>
-  <path d="M21 34h54" fill="none" stroke="#7c8da1" stroke-width="4" stroke-linecap="round"/>
-  <path d="M31 47l12 9-12 9" fill="none" stroke="#1c3146" stroke-width="7.4" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M51 66h21" fill="none" stroke="#1c3146" stroke-width="7.4" stroke-linecap="round"/>
-  <rect x="61" y="45" width="10" height="10" rx="2.5" fill="#3c7adf"/>
-</svg>

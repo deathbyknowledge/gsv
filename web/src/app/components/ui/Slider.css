@@ -1,0 +1,123 @@
+/* Ported from Slider.dc.html — values transcribed verbatim. */
+.gsv-sl {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 11px;
+  font-family: var(--gsv-font-mono);
+}
+.gsv-sl-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.gsv-sl-labelgroup {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+.gsv-sl-label {
+  font-size: 9.5px;
+  letter-spacing: 0.22em;
+  color: #b3aee2;
+}
+.gsv-sl-num {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: #cbc7ff;
+}
+.gsv-sl-hit {
+  padding: 9px 0;
+  cursor: pointer;
+  touch-action: none;
+}
+.gsv-sl-track {
+  position: relative;
+  height: 4px;
+  background: #1a1740;
+  border: 1px solid #322e74;
+}
+.gsv-sl-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: linear-gradient(90deg, #8f8aff, #b3aeff);
+  box-shadow: 0 0 8px rgba(150, 140, 255, 0.5);
+}
+.gsv-sl-thumb {
+  position: absolute;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #cbc7ff;
+  border: 2px solid #0a0822;
+  box-shadow: 0 0 8px rgba(150, 140, 255, 0.6);
+  transform: translate(-50%, -50%);
+}
+.gsv-sl-thumb:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.gsv-sl.is-disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+.gsv-sl-req {
+  font-size: 9.5px;
+  color: #7d78b8;
+  letter-spacing: 0.14em;
+  margin-left: 7px;
+}
+.gsv-sl-desc {
+  font-size: 10px;
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+  color: #7d78b8;
+  max-width: 46ch;
+}
+.gsv-sl-stat {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 13px;
+}
+.gsv-sl-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 1px;
+}
+.gsv-sl-msg {
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+}
+.gsv-sl.is-error .gsv-sl-msg {
+  color: #ff6f8c;
+}
+.gsv-sl.is-error .gsv-sl-dot {
+  background: #ff6f8c;
+  box-shadow: 0 0 6px #ff6f8c;
+}
+.gsv-sl.is-success .gsv-sl-msg {
+  color: #5ef2a0;
+}
+.gsv-sl.is-success .gsv-sl-dot {
+  background: #5ef2a0;
+  box-shadow: 0 0 6px #5ef2a0;
+}
+.gsv-sl.is-info .gsv-sl-msg {
+  color: #8f8aff;
+}
+.gsv-sl.is-info .gsv-sl-dot {
+  background: #8f8aff;
+  box-shadow: 0 0 6px #8f8aff;
+}
+.gsv-sl.is-warn .gsv-sl-msg {
+  color: #e0a64c;
+}
+.gsv-sl.is-warn .gsv-sl-dot {
+  background: #e0a64c;
+  box-shadow: 0 0 6px #e0a64c;
+}

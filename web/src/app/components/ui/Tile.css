@@ -1,0 +1,13 @@
+/* Tile — hover states ported from Tile.dc.html <helmet><style>.
+   .tl is the object tile; .ga is the anchor (GSV) circle. */
+.gsv-tile:hover {
+  border-color: #a9a4ff !important;
+  transform: translateY(-2px);
+}
+
+.gsv-tile-anchor:hover {
+  transform: scale(1.07);
+  border-color: var(--accent-bright) !important;
+  background: rgba(150, 140, 255, 0.12) !important;
+  box-shadow: 0 0 40px rgba(150, 140, 255, 0.6) !important;
+}

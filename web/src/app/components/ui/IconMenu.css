@@ -1,0 +1,96 @@
+@keyframes gsvPulse {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.gsv-im-bracket {
+  position: absolute;
+  width: 7px;
+  height: 7px;
+}
+.gsv-im-tl {
+  top: 4px;
+  left: 4px;
+  border-top: 1px solid var(--bracket);
+  border-left: 1px solid var(--bracket);
+}
+.gsv-im-tr {
+  top: 4px;
+  right: 4px;
+  border-top: 1px solid var(--bracket);
+  border-right: 1px solid var(--bracket);
+}
+.gsv-im-bl {
+  bottom: 4px;
+  left: 4px;
+  border-bottom: 1px solid var(--bracket);
+  border-left: 1px solid var(--bracket);
+}
+.gsv-im-br {
+  bottom: 4px;
+  right: 4px;
+  border-bottom: 1px solid var(--bracket);
+  border-right: 1px solid var(--bracket);
+}
+
+.gsv-im-close {
+  appearance: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+}
+
+.gsv-im-close:not(:disabled):hover,
+.gsv-im-close:not(:disabled):focus-visible {
+  color: var(--accent-bright);
+  outline: none;
+}
+
+.gsv-im-close:not(:disabled):focus-visible {
+  outline: 1px solid var(--accent-bright);
+  outline-offset: 2px;
+}
+
+.gsv-im-close:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.gsv-im-cell {
+  appearance: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+  margin: 0;
+  padding: 18px 6px;
+  border: 0;
+  background: var(--panel);
+  cursor: pointer;
+  font: inherit;
+  text-align: center;
+}
+.gsv-im-cell:not(:disabled):hover,
+.gsv-im-cell:not(:disabled):focus-visible {
+  background: var(--hover) !important;
+  outline: none;
+}
+.gsv-im-cell:not(:disabled):focus-visible {
+  outline: 1px solid var(--accent-bright);
+  outline-offset: -1px;
+}
+.gsv-im-cell:disabled {
+  cursor: default;
+  opacity: 0.45;
+}

@@ -1,0 +1,11 @@
+/* InfoTip — borderless help icon placed after a label. Reuses the tooltip
+   bubble styling from Tooltip.css; this sheet only aligns the inline trigger
+   and gives it consistent spacing after the label. */
+.gsv-infotip {
+  vertical-align: middle;
+  margin-inline-start: 6px;
+}
+.gsv-infotip .gsv-ibtn-ghost {
+  /* nudge the circle to sit centred on the label cap-height */
+  margin-top: -1px;
+}

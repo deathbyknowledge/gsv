@@ -1,0 +1,68 @@
+/* Ported from SystemMessage.dc.html — values transcribed verbatim. */
+.gsv-sm {
+  display: flex;
+  gap: 11px;
+  font-family: "Space Grotesk", sans-serif;
+}
+
+.gsv-sm-avatar {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border-radius: 3px;
+  background: #171436;
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gsv-sm-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.gsv-sm-text {
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: #cdd2e0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  text-wrap: pretty;
+}
+
+.gsv-sm-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 5px;
+  font-family: var(--gsv-font-mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: var(--text-dim);
+}
+
+.gsv-sm-copy {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  letter-spacing: inherit;
+}
+.gsv-sm-copy:hover,
+.gsv-sm-copy:focus-visible {
+  color: #9a94ff;
+  outline: none;
+}
+.gsv-sm-copy:disabled {
+  opacity: 0.48;
+  cursor: default;
+}
+.gsv-sm-copy.is-failed {
+  color: var(--error);
+}

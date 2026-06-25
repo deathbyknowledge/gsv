@@ -1,0 +1,202 @@
+.notifications-panel {
+  width: min(390px, calc(100vw - 20px));
+  max-height: min(560px, calc(100vh - 28px));
+  font-family: var(--gsv-font-mono);
+  color: var(--text);
+}
+
+.notifications-surface {
+  padding: 0;
+  overflow: hidden;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.58), inset 0 0 0 1px #060414;
+}
+
+.notifications-panel-bar {
+  position: relative;
+  min-width: 0;
+}
+
+.notifications-panel-bar .gsv-section-header {
+  padding-right: 54px !important;
+}
+
+.notifications-panel-actions {
+  position: absolute;
+  top: 7px;
+  right: 10px;
+  display: flex;
+  align-items: center;
+}
+
+.notifications-delivery-row {
+  min-width: 0;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--rule-inner);
+  background: color-mix(in srgb, var(--panel) 86%, #ffffff 2%);
+  color: #8c86c8;
+  font-size: 9.5px;
+  letter-spacing: 0.12em;
+}
+
+.notifications-delivery-row > span {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notifications-delivery-row .gsv-btn {
+  flex: none;
+  padding: 7px 11px;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+}
+
+.notifications-list {
+  max-height: min(430px, calc(100vh - 160px));
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  list-style: none;
+  scrollbar-width: thin;
+  scrollbar-color: var(--rule-section) #0c0a22;
+}
+
+.notification-item {
+  position: relative;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  border-bottom: 1px solid var(--rule-inner);
+  background: transparent;
+}
+
+.notification-item:last-child {
+  border-bottom: 0;
+}
+
+.notification-item.is-unread {
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+
+.notification-item.is-unread::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--accent-bright);
+  box-shadow: 0 0 10px rgba(179, 174, 255, 0.55);
+}
+
+.notification-main {
+  min-height: 58px;
+  padding: 12px 12px 12px 16px !important;
+}
+
+.notification-item > .gsv-ibtn,
+.notification-item > .gsv-ibtn-disabled {
+  align-self: center;
+  margin-right: 10px;
+}
+
+.notifications-empty {
+  min-height: 92px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: #7d78b8;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+}
+
+.notification-toasts {
+  position: fixed;
+  right: max(18px, env(safe-area-inset-right));
+  bottom: max(48px, calc(env(safe-area-inset-bottom) + 48px));
+  z-index: 280;
+  width: min(360px, calc(100vw - 28px));
+  display: grid;
+  gap: 10px;
+  pointer-events: none;
+}
+
+.notification-toast {
+  padding: 12px 14px;
+  pointer-events: auto;
+  border-color: var(--border-raised);
+  background: #0e0b24;
+  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.58), inset 0 0 0 1px #060414;
+}
+
+.notification-toast.is-success {
+  border-color: #1c4a32;
+}
+
+.notification-toast.is-warning {
+  border-color: #5a4a1f;
+}
+
+.notification-toast.is-error {
+  border-color: #5a2b3a;
+}
+
+.notification-toast-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.notification-toast-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-hi);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+}
+
+.notification-toast-body {
+  margin-top: 5px;
+  color: #a8a2dc;
+  font-family: var(--gsv-font-prose);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .notifications-panel {
+    width: auto;
+    max-height: none;
+  }
+
+  .notifications-surface {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .notifications-list {
+    flex: 1;
+    max-height: none;
+  }
+
+  .notification-toasts {
+    right: max(10px, env(safe-area-inset-right));
+    bottom: max(14px, env(safe-area-inset-bottom));
+    width: auto;
+    left: max(10px, env(safe-area-inset-left));
+  }
+}

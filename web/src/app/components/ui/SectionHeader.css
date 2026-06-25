@@ -1,0 +1,33 @@
+.gsv-section-header {
+  box-sizing: border-box;
+}
+
+button.gsv-section-header {
+  appearance: none;
+  cursor: pointer;
+}
+
+button.gsv-section-header:hover,
+button.gsv-section-header:focus-visible {
+  background: var(--hover-nav) !important;
+}
+
+button.gsv-section-header:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.gsv-section-header-chevron {
+  width: 0;
+  height: 0;
+  flex: none;
+  margin-left: auto;
+  border-top: 6px solid transparent;
+  border-bottom: 6px solid transparent;
+  border-left: 9px solid var(--accent);
+  filter: drop-shadow(0 0 4px rgba(150, 140, 255, 0.6));
+}
+
+.gsv-section-header-meta + .gsv-section-header-chevron {
+  margin-left: 0;
+}

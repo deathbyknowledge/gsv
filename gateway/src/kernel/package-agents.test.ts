@@ -106,7 +106,7 @@ function createCtx() {
 
 function record(profiles: InstalledPackageRecord["manifest"]["profiles"]): InstalledPackageRecord {
   return {
-    packageId: "builtin:wiki@1",
+    packageId: "import:root/wiki:.",
     scope: { kind: "global" },
     enabled: true,
     manifest: {

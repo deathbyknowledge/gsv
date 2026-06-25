@@ -1,14 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { useGateway } from "../../services/gateway/GatewayProvider";
 import { useSession } from "../../services/session/SessionProvider";
 import { NotificationsPanel } from "../notifications/NotificationsPanel";
 import type { NotificationAnchor, NotificationSurface } from "../notifications/types";
-import { usePackageApps } from "../packages/usePackageApps";
-import { PresenceController } from "../presence/presenceController";
 import { SessionScreens } from "../session/SessionScreens";
-import { DesktopShellFrame } from "./DesktopShellFrame";
-import { useDesktopAppsSync } from "./useDesktopAppsSync";
-import { useDesktopRuntime } from "./useDesktopRuntime";
+import { GsvShell } from "../gsv-shell/GsvShell";
 
 type StandaloneNavigator = Navigator & {
   standalone?: boolean;
@@ -30,8 +25,6 @@ function formatMobileHomeDate(): string {
 
 export function DesktopShell() {
   const shellRef = useRef<HTMLDivElement>(null);
-  const windowsLayerRef = useRef<HTMLElement>(null);
-  const { client: gatewayClient, connected } = useGateway();
   const { service: sessionService, snapshot: sessionSnapshot } = useSession();
   const [notificationPanel, setNotificationPanel] = useState<{
     open: boolean;
@@ -40,30 +33,10 @@ export function DesktopShell() {
   const [notificationUnreadCount, setNotificationUnreadCount] = useState(0);
   const standalone = useMemo(isStandaloneDisplay, []);
   const mobileHomeDate = useMemo(formatMobileHomeDate, []);
-  const presenceController = useMemo(() => new PresenceController(gatewayClient), [gatewayClient]);
-  const packageApps = usePackageApps({
-    gatewayClient,
-    enabled: connected,
-  });
-  const { runtimeRef, runtimeRevision } = useDesktopRuntime({
-    shellRef,
-    windowsLayerRef,
-    gatewayClient,
-    standalone,
-  });
 
   useEffect(() => {
     void sessionService.start();
   }, [sessionService]);
-  useDesktopAppsSync({
-    runtimeRef,
-    runtimeRevision,
-    apps: packageApps.data,
-    connected,
-    appLoadFailed: packageApps.isError,
-    sessionPhase: sessionSnapshot.phase,
-  });
-  useEffect(() => () => presenceController.destroy(), [presenceController]);
   const notificationOpenSurface = notificationPanel.open
     ? notificationPanel.anchor?.surface ?? null
     : null;
@@ -87,37 +60,21 @@ export function DesktopShell() {
   const lockSession = useCallback((): void => {
     sessionService.lock();
   }, [sessionService]);
-  const openCommandPalette = useCallback((): void => {
-    runtimeRef.current?.launcher.openCommandPalette();
-  }, [runtimeRef]);
-  const revealDock = useCallback((): void => {
-    runtimeRef.current?.launcher.revealDock();
-  }, [runtimeRef]);
-  const hideDockSoon = useCallback((): void => {
-    runtimeRef.current?.launcher.hideDockSoon();
-  }, [runtimeRef]);
-
   return (
     <>
       <div class="app-shell-root">
-        <DesktopShellFrame
-          shellRef={shellRef}
-          windowsLayerRef={windowsLayerRef}
-          presenceController={presenceController}
-          notificationOpenSurface={notificationOpenSurface}
-          notificationUnreadCount={notificationUnreadCount}
-          onNotificationsToggle={toggleNotifications}
-          desktopVisible={desktopVisible}
-          sessionUsername={sessionUsername}
-          mobileHomeDate={mobileHomeDate}
-          onLockSession={lockSession}
-          onOpenCommandPalette={openCommandPalette}
-          onRevealDock={revealDock}
-          onHideDockSoon={hideDockSoon}
-          standalone={standalone}
-        >
+        <div class={`gsv-native-shell${standalone ? " is-standalone" : ""}`} ref={shellRef}>
           <SessionScreens session={sessionService} snapshot={sessionSnapshot} />
-        </DesktopShellFrame>
+          <GsvShell
+            notificationOpenSurface={notificationOpenSurface}
+            notificationUnreadCount={notificationUnreadCount}
+            onNotificationsToggle={toggleNotifications}
+            desktopVisible={desktopVisible}
+            sessionUsername={sessionUsername}
+            mobileHomeDate={mobileHomeDate}
+            onLockSession={lockSession}
+          />
+        </div>
       </div>
       <NotificationsPanel
         anchor={notificationPanel.anchor}

@@ -1,0 +1,134 @@
+/* Ported from Segmented.dc.html — values transcribed verbatim. */
+.gsv-sg {
+  display: inline-flex;
+  border: 1px solid #322e74;
+  font-family: var(--gsv-font-mono);
+}
+.gsv-sg-seg {
+  appearance: none;
+  margin: 0;
+  flex: 1;
+  text-align: center;
+  letter-spacing: 0.12em;
+  color: #9a95cf;
+  background: transparent;
+  border-top: 0;
+  border-bottom: 0;
+  border-left: 0;
+  border-right: 1px solid #322e74;
+  cursor: pointer;
+  font: inherit;
+  transition: background 0.12s, color 0.12s;
+}
+.gsv-sg-seg:last-child {
+  border-right: none;
+}
+.gsv-sg-seg:not(:disabled):hover,
+.gsv-sg-seg:not(:disabled):focus-visible {
+  background: #171441;
+  color: #cbc7ff;
+  outline: none;
+}
+.gsv-sg-seg.is-sel {
+  background: #5a52a8;
+  color: #fff;
+}
+.gsv-sg-seg.is-sel:not(:disabled):hover,
+.gsv-sg-seg.is-sel:not(:disabled):focus-visible {
+  background: #6b62c4;
+}
+.gsv-sg-seg:not(:disabled):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.gsv-sg.is-disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+.gsv-sg-sm .gsv-sg-seg {
+  padding: 6px 0;
+  font-size: 9px;
+}
+.gsv-sg-md .gsv-sg-seg {
+  padding: 9px 0;
+  font-size: 10px;
+}
+.gsv-sg-lg .gsv-sg-seg {
+  padding: 12px 0;
+  font-size: 11px;
+}
+.gsv-fld {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.gsv-fld-lab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  min-height: 13px;
+}
+.gsv-fld-lab-t {
+  font-size: 9.5px;
+  letter-spacing: 0.22em;
+  color: #b3aee2;
+}
+.gsv-fld-req {
+  font-size: 9.5px;
+  color: #7d78b8;
+  letter-spacing: 0.14em;
+}
+.gsv-fld-desc {
+  font-size: 10px;
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+  color: #7d78b8;
+  margin-bottom: 10px;
+  max-width: 46ch;
+}
+.gsv-fld-stat {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  min-height: 13px;
+}
+.gsv-fld-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 1px;
+}
+.gsv-fld-msg {
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+}
+.gsv-fld.is-error .gsv-fld-msg {
+  color: #ff6f8c;
+}
+.gsv-fld.is-error .gsv-fld-dot {
+  background: #ff6f8c;
+  box-shadow: 0 0 6px #ff6f8c;
+}
+.gsv-fld.is-success .gsv-fld-msg {
+  color: #5ef2a0;
+}
+.gsv-fld.is-success .gsv-fld-dot {
+  background: #5ef2a0;
+  box-shadow: 0 0 6px #5ef2a0;
+}
+.gsv-fld.is-info .gsv-fld-msg {
+  color: #8f8aff;
+}
+.gsv-fld.is-info .gsv-fld-dot {
+  background: #8f8aff;
+  box-shadow: 0 0 6px #8f8aff;
+}
+.gsv-fld.is-warn .gsv-fld-msg {
+  color: #e0a64c;
+}
+.gsv-fld.is-warn .gsv-fld-dot {
+  background: #e0a64c;
+  box-shadow: 0 0 6px #e0a64c;
+}

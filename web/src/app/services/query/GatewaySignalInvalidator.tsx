@@ -28,6 +28,26 @@ export function GatewaySignalInvalidator() {
         return;
       }
 
+      if (
+        signal === "process.exit" ||
+        signal === "proc.run.started" ||
+        signal === "proc.run.retrying" ||
+        signal === "proc.run.tool.started" ||
+        signal === "proc.run.hil.requested"
+      ) {
+        void queryClient.invalidateQueries({ queryKey: ["processes"] });
+        return;
+      }
+
+      if (
+        signal === "proc.run.tool.finished" ||
+        signal === "proc.run.finished"
+      ) {
+        void queryClient.invalidateQueries({ queryKey: ["processes"] });
+        void queryClient.invalidateQueries({ queryKey: ["process"] });
+        return;
+      }
+
       if (signal === "device.status") {
         void queryClient.invalidateQueries({ queryKey: ["devices"] });
         return;

@@ -1,0 +1,115 @@
+.gsv-ascii-galaxy {
+  --gsv-ascii-galaxy-font-size: 8px;
+
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  min-height: 220px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--line-soft, #8071dd) 64%, transparent);
+  border-radius: 3px;
+  background: #07060f;
+  box-shadow: 0 1px 0 rgba(150, 134, 240, 0.05) inset;
+  color: #8071dd;
+  isolation: isolate;
+}
+
+.gsv-ascii-galaxy-pre {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  font-family: var(--gsv-font-mono), ui-monospace, monospace;
+  font-size: var(--gsv-ascii-galaxy-font-size);
+  font-variant-ligatures: none;
+  line-height: var(--gsv-ascii-galaxy-font-size);
+  letter-spacing: 0;
+  pointer-events: none;
+  white-space: pre;
+  -webkit-font-smoothing: none;
+  text-rendering: geometricPrecision;
+}
+
+.gsv-ascii-galaxy-nebula {
+  color: #272350;
+}
+
+.gsv-ascii-galaxy-stars {
+  color: #5d5798;
+  text-shadow: 0 0 4px rgba(128, 113, 221, 0.4);
+}
+
+.gsv-ascii-galaxy-foreground {
+  color: #8071dd;
+  text-shadow:
+    0 0 5px rgba(140, 120, 235, 0.55),
+    0 0 14px rgba(110, 95, 209, 0.28);
+}
+
+.gsv-ascii-galaxy-texture {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.gsv-ascii-galaxy-scanlines {
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0) 0,
+    rgba(0, 0, 0, 0) 2px,
+    rgba(0, 0, 0, 0.22) 3px
+  );
+  mix-blend-mode: multiply;
+}
+
+.gsv-ascii-galaxy-vignette {
+  background: radial-gradient(
+    ellipse 86% 84% at 50% 50%,
+    rgba(0, 0, 0, 0) 66%,
+    rgba(0, 0, 0, 0.38) 100%
+  );
+}
+
+.gsv-ascii-galaxy-replay {
+  position: absolute;
+  right: 22px;
+  bottom: 20px;
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 8px 15px;
+  border: 1px solid rgba(140, 120, 235, 0.45);
+  border-radius: 2px;
+  opacity: 0;
+  color: #cbc7ff;
+  background: rgba(20, 16, 40, 0.55);
+  backdrop-filter: blur(3px);
+  font-family: var(--gsv-font-mono), ui-monospace, monospace;
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  line-height: 1;
+  text-shadow: 0 0 8px rgba(140, 120, 235, 0.5);
+  text-transform: uppercase;
+  transition:
+    opacity 0.5s ease,
+    border-color 0.16s ease,
+    background 0.16s ease,
+    color 0.16s ease;
+}
+
+.gsv-ascii-galaxy-replay:hover,
+.gsv-ascii-galaxy-replay:focus-visible {
+  border-color: rgba(180, 168, 255, 0.85);
+  color: #f4f2ff;
+  background: rgba(40, 34, 72, 0.7);
+}
+
+.gsv-ascii-galaxy-replay-icon {
+  font-size: 13px;
+  line-height: 1;
+}

@@ -9,12 +9,6 @@ import {
   storeCliInstallScripts,
   storeDefaultCliChannel,
 } from "../../downloads/cli";
-import {
-  buildBuiltinPackageSeeds,
-  type PackageEntrypoint,
-  type PackageRuntime,
-} from "../packages";
-import { provisionEnabledPackagesForCaller } from "../package-agents";
 import { seedRepoSkillsToHome } from "./skills-seed";
 import { setRepoVisibility } from "../repo-visibility";
 
@@ -27,7 +21,6 @@ const GSV_BOOTSTRAP_REF_ENV = "GSV_BOOTSTRAP_REF";
 const GSV_MANUAL_BOOTSTRAP_UPSTREAM_ENV = "GSV_MANUAL_BOOTSTRAP_UPSTREAM";
 const GSV_MANUAL_BOOTSTRAP_REF_ENV = "GSV_MANUAL_BOOTSTRAP_REF";
 const BOOTSTRAP_OUTBOUND_SLOTS = 5;
-const BOOTSTRAP_PACKAGE_SLOTS = 2;
 const ROOT_GSV_REPO: RipgitRepoRef = {
   owner: "root",
   repo: "gsv",
@@ -192,23 +185,6 @@ export async function handleSysBootstrap(
       ))
     );
 
-    const installPackagesPromise = limitBootstrap(BOOTSTRAP_PACKAGE_SLOTS, async () => {
-      const builtinSeeds = await timeBootstrapStep(
-        timings,
-        "resolve-builtin-seeds",
-        () => buildBuiltinPackageSeeds(ctx.env),
-      );
-      return await timeBootstrapStep(
-        timings,
-        "seed-builtin-packages",
-        async () => {
-          const installed = await ctx.packages.seedBuiltinPackages(builtinSeeds);
-          await provisionEnabledPackagesForCaller(ctx, installed);
-          return installed;
-        },
-      );
-    });
-
     const mirrorCliPromise = (async () => {
       const mirroredChannels = await allSettledOrThrow(CLI_RELEASE_CHANNELS.map(async (channel) => {
         await limitBootstrap(
@@ -238,9 +214,8 @@ export async function handleSysBootstrap(
       return mirroredChannels;
     })();
 
-    const [, installed, mirroredChannels, importedManual] = await allSettledOrThrow([
+    const [, mirroredChannels, importedManual] = await allSettledOrThrow([
       seedSkillsPromise,
-      installPackagesPromise,
       mirrorCliPromise,
       manualImportPromise,
     ]);
@@ -267,21 +242,7 @@ export async function handleSysBootstrap(
         mirroredChannels,
         assets: [...CLI_BINARY_ASSETS],
       },
-      packages: installed.map((record) => ({
-        packageId: record.packageId,
-        name: record.manifest.name,
-        description: record.manifest.description,
-        version: record.manifest.version,
-        runtime: toSysBootstrapRuntime(record.manifest.runtime),
-        enabled: record.enabled,
-        source: {
-          repo: record.manifest.source.repo,
-          ref: record.manifest.source.ref,
-          subdir: record.manifest.source.subdir,
-          resolvedCommit: record.manifest.source.resolvedCommit ?? null,
-        },
-        entrypoints: record.manifest.entrypoints.flatMap(toSysBootstrapEntrypoint),
-      })),
+      packages: [],
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -290,28 +251,6 @@ export async function handleSysBootstrap(
     );
     throw error;
   }
-}
-
-function toSysBootstrapRuntime(runtime: PackageRuntime): SysBootstrapResult["packages"][number]["runtime"] {
-  return runtime === "node" ? "node" : runtime;
-}
-
-function toSysBootstrapEntrypoint(
-  entrypoint: PackageEntrypoint,
-): SysBootstrapResult["packages"][number]["entrypoints"] {
-  if (entrypoint.kind !== "command" && entrypoint.kind !== "ui") {
-    return [];
-  }
-  return [{
-    name: entrypoint.name,
-    kind: entrypoint.kind,
-    description: entrypoint.description,
-    command: entrypoint.command,
-    route: entrypoint.route,
-    icon: entrypoint.icon?.kind === "builtin" ? entrypoint.icon.id : undefined,
-    syscalls: entrypoint.syscalls,
-    windowDefaults: entrypoint.windowDefaults,
-  }];
 }
 
 function githubRepoUrl(repo: string): string {

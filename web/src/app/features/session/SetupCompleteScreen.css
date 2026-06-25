@@ -1,0 +1,276 @@
+/* ============================================================
+   SetupCompleteScreen — success screen for first-time setup.
+   Sits in the AuthLayout galaxy surface; self-contained panel
+   shell so it reads as the final step of the register flow.
+   Classes prefixed gsv-complete-.
+   ============================================================ */
+
+/* Panel shell — mirrors .gsv-setup-panel but self-contained (does not rely on
+   SetupScreen.css being loaded). Right-pinned inside the AuthLayout content. */
+.gsv-complete {
+  box-sizing: border-box;
+  --complete-pad-x: 36px;
+  width: min(560px, 92vw);
+  max-height: calc(100% - 56px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 32px var(--complete-pad-x) 0;
+  background: color-mix(in srgb, var(--panel) 100%, #ffffff 5%);
+  border: 1px solid var(--border);
+  box-shadow: 0 0 40px rgba(10, 6, 30, 0.5), 0 0 0 1px rgba(150, 140, 255, 0.04);
+  backdrop-filter: blur(3px);
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+/* Header — success badge + kicker/title type. */
+.gsv-complete-head {
+  display: flex;
+  flex-direction: column;
+}
+.gsv-complete-badge {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  margin-bottom: 16px;
+  border-radius: 50%;
+  color: var(--online);
+  background: color-mix(in srgb, var(--online) 16%, transparent);
+  border: 1px solid var(--online);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--online) 45%, transparent);
+}
+.gsv-complete-kicker {
+  font-family: var(--gsv-font-mono);
+  font-size: 9px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 9px;
+}
+.gsv-complete-title {
+  margin: 0;
+  font-family: var(--gsv-font-prose);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0.005em;
+  color: var(--text-hi);
+}
+
+/* Account — label over value, Meta / List-item type. */
+.gsv-complete-account {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.gsv-complete-k {
+  font-family: var(--gsv-font-mono);
+  font-weight: 400;
+  font-size: 11px;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: var(--label);
+}
+.gsv-complete-v {
+  font-family: var(--gsv-font-mono);
+  font-weight: 400;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+/* Primary action sits directly under the account. */
+.gsv-complete-actions {
+  display: flex;
+}
+.gsv-complete-actions .gsv-btn {
+  min-width: 160px;
+}
+
+/* "Get more out of GSV" — optional extras, divided off above. */
+.gsv-complete-more {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-top: 22px;
+  border-top: 1px solid var(--border);
+}
+.gsv-complete-more-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.gsv-complete-more-title {
+  margin: 0;
+  font-family: var(--gsv-font-prose);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-hi);
+}
+.gsv-complete-more-tag {
+  font-family: var(--gsv-font-mono);
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--accent-bright);
+  padding: 3px 8px;
+  border: 1px solid var(--primary-hi);
+  border-radius: 3px;
+}
+
+/* Each optional step — friendly title + copy action, command box, meta. */
+.gsv-complete-more-item {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+}
+.gsv-complete-more-item[hidden] {
+  display: none;
+}
+.gsv-complete-more-item-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.gsv-complete-more-item-title {
+  font-family: var(--gsv-font-prose);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.45;
+  color: var(--text-hi);
+  min-width: 0;
+}
+.gsv-complete-code {
+  width: 100%;
+  min-height: 70px;
+  box-sizing: border-box;
+  resize: vertical;
+  padding: 11px 13px;
+  border: 1px solid var(--border);
+  background: var(--void);
+  color: var(--text);
+  font-family: var(--gsv-font-mono);
+  font-size: 11px;
+  line-height: 1.55;
+}
+.gsv-complete-code:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.gsv-complete-meta {
+  margin: 0;
+  font-family: var(--gsv-font-prose);
+  font-size: 12px;
+  line-height: 1.5;
+  color: #9d98d4;
+}
+
+.gsv-complete-alert {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--error);
+}
+.gsv-complete-alert[hidden] {
+  display: none;
+}
+
+/* Footer status bar — full-bleed strip flush to the panel edges, mirroring the
+   design-system StatusBar look: green online indicator, then system readout. */
+.gsv-complete-statusbar {
+  margin: 6px calc(var(--complete-pad-x) * -1) 0;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 16px;
+  min-height: 30px;
+  padding: 8px 18px;
+  background: var(--node-bg);
+  border-top: 1px solid var(--border);
+  font-family: var(--gsv-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.gsv-complete-status-online {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+  text-transform: uppercase;
+  color: var(--online);
+}
+.gsv-complete-status-seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+}
+/* The system-files segment is the one that shrinks; its value truncates so the
+   version segment stays visible on the same line. */
+.gsv-complete-status-seg-grow {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.gsv-complete-status-seg b {
+  font-weight: 400;
+  flex: none;
+  text-transform: uppercase;
+  color: var(--label);
+}
+.gsv-complete-status-val {
+  color: var(--text);
+}
+.gsv-complete-status-seg-grow .gsv-complete-status-val {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.gsv-complete-status-link {
+  color: var(--accent-bright);
+  text-decoration: none;
+}
+.gsv-complete-status-link:hover {
+  text-decoration: underline;
+}
+.gsv-complete-status-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Narrow screens: the three-segment readout can't fit on one line without
+   collapsing the system-files link, so let it wrap — system files gets its own
+   full-width row and the link wraps fully instead of truncating to nothing. */
+@media (max-width: 480px) {
+  .gsv-complete-statusbar {
+    flex-wrap: wrap;
+    gap: 6px 16px;
+    white-space: normal;
+  }
+  .gsv-complete-status-seg-grow {
+    flex: 1 1 100%;
+  }
+  .gsv-complete-status-seg-grow .gsv-complete-status-val {
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}
+
+/* Small phones: tighten the panel padding; the footer's full-bleed margin
+   follows --complete-pad-x so it stays flush to the edges. */
+@media (max-width: 380px) {
+  .gsv-complete {
+    --complete-pad-x: 20px;
+    padding-top: 24px;
+  }
+}

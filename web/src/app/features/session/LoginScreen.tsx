@@ -1,8 +1,16 @@
-import { SessionError } from "./SessionChrome";
-import { textInputValue } from "./sessionViewUtils";
+import { useState } from "preact/hooks";
+import { Alert } from "../../components/ui/Alert";
+import { SectionHeader } from "../../components/ui/SectionHeader";
+import { TextInput } from "../../components/ui/TextInput";
+import { Button } from "../../components/ui/Button";
+import { StatusBar } from "../../components/ui/StatusBar";
+import { AuthLayout } from "./AuthLayout";
+import "./LoginScreen.css";
 
 type LoginScreenProps = {
   visible: boolean;
+  /** While booting/initializing, render the box as a progressive skeleton. */
+  loading?: boolean;
   busy: boolean;
   error: string | null;
   username: string;
@@ -14,8 +22,26 @@ type LoginScreenProps = {
   onSubmit: (event: Event) => void;
 };
 
+/** On-brand skeleton (periwinkle shimmer) shown while the session is booting. */
+function LoginSkeleton() {
+  return (
+    <div class="gsv-login-skeleton" role="status" aria-label="Loading" aria-busy="true">
+      <div class="gsv-skel-field">
+        <span class="gsv-skel gsv-skel-label" />
+        <span class="gsv-skel gsv-skel-input" />
+      </div>
+      <div class="gsv-skel-field">
+        <span class="gsv-skel gsv-skel-label" />
+        <span class="gsv-skel gsv-skel-input" />
+      </div>
+      <span class="gsv-skel gsv-skel-btn" />
+    </div>
+  );
+}
+
 export function LoginScreen({
   visible,
+  loading = false,
   busy,
   error,
   username,
@@ -26,30 +52,79 @@ export function LoginScreen({
   onToken,
   onSubmit,
 }: LoginScreenProps) {
+  const [showToken, setShowToken] = useState(false);
+
   return (
-    <div class="session-panel" data-session-login-view hidden={!visible}>
-      <div class="session-panel-head">
-        <h1>Welcome back</h1>
-      </div>
-      <form class="session-form" data-session-login-form onSubmit={onSubmit}>
-        <label>
-          Username
-          <input data-session-username type="text" autoComplete="username" value={username} onInput={(event) => onUsername(textInputValue(event))} />
-        </label>
-        <label>
-          Password
-          <input data-session-password type="password" autoComplete="current-password" value={password} onInput={(event) => onPassword(textInputValue(event))} />
-        </label>
-        <details class="session-advanced">
-          <summary>Use token instead</summary>
-          <label>
-            Token
-            <input data-session-token type="password" autoComplete="off" value={token} onInput={(event) => onToken(textInputValue(event))} />
-          </label>
-        </details>
-        <SessionError message={error} />
-        <button type="submit" class="runtime-btn" data-session-submit disabled={busy}>Sign in</button>
-      </form>
-    </div>
+    <AuthLayout background="galaxy" visible={visible}>
+      <div class="gsv-login-panel" data-session-login-view>
+          <SectionHeader title="WELCOME BACK" titleSize="title" divider />
+
+          <div class="gsv-login-body">
+            <span class="gsv-section gsv-login-section">SIGN IN</span>
+
+            {loading ? (
+              <LoginSkeleton />
+            ) : (
+              <form class="gsv-login-fields" onSubmit={onSubmit}>
+              <TextInput
+                label="USERNAME"
+                placeholder="e.g. captain"
+                value={username}
+                onChange={onUsername}
+                inputProps={{ autoComplete: "username", "data-session-username": true }}
+              />
+              <TextInput
+                label="PASSWORD"
+                type="password"
+                placeholder="••••••••••••"
+                value={password}
+                clearable={false}
+                onChange={onPassword}
+                inputProps={{ autoComplete: "current-password", "data-session-password": true }}
+              />
+
+              {/* "Use token instead" — directly under the password input. */}
+              <div class="gsv-login-tokenlink">
+                <Button
+                  variant="link"
+                  label={showToken ? "USE PASSWORD INSTEAD" : "USE TOKEN INSTEAD"}
+                  onClick={() => setShowToken((v) => !v)}
+                />
+              </div>
+
+              {showToken ? (
+                <TextInput
+                  label="ACCESS TOKEN"
+                  type="password"
+                  placeholder="gsv_tok_…"
+                  description="Paste a console token to sign in without a password."
+                  value={token}
+                  onChange={onToken}
+                  inputProps={{ autoComplete: "off" }}
+                />
+              ) : null}
+
+              {error ? (
+                <div class="gsv-login-error" role="alert">
+                  <Alert variant="error" text={error} />
+                </div>
+              ) : null}
+
+              <div class="gsv-login-submit">
+                <Button
+                  variant="primary"
+                  label="SIGN IN"
+                  block
+                  disabled={busy}
+                  type="submit"
+                />
+              </div>
+              </form>
+            )}
+          </div>
+
+          <StatusBar label="GENERAL SYSTEMS VEHICLE · SECURE TERMINAL" />
+        </div>
+    </AuthLayout>
   );
 }

@@ -22,6 +22,7 @@ import { isValidCapability } from "./capabilities";
 import type { KernelContext } from "./context";
 import { ensureAccountHomeLayout } from "./account-home";
 import { ensurePublicAssetStorageLayout } from "../public-assets";
+import { USER_CONNECTION_SIGNALS } from "./user-signals";
 
 export type ConnectOutcome =
   | { ok: true; identity: ConnectionIdentity; result: ConnectResult }
@@ -277,7 +278,7 @@ async function resolveIdentity(
 function buildSignalList(role: string): string[] {
   switch (role) {
     case "user":
-      return ["proc.changed", "proc.run.started", "proc.run.stream", "proc.run.retrying", "proc.run.output", "proc.run.tool.started", "proc.run.tool.finished", "proc.run.hil.requested", "proc.run.finished", "process.exit", "device.status", "adapter.status", "pkg.changed"];
+      return [...USER_CONNECTION_SIGNALS];
     case "driver":
       return ["device.status"];
     case "service":

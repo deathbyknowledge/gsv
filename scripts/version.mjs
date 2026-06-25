@@ -38,7 +38,7 @@ function listPackageJsonFiles() {
     "web/package.json",
     "ripgit/package.json",
   ];
-  for (const group of ["shared", "adapters", "builtin-packages"]) {
+  for (const group of ["shared", "adapters"]) {
     const groupDir = join(ROOT, group);
     if (!existsSync(groupDir)) {
       continue;
@@ -61,7 +61,7 @@ function listPackageJsonFiles() {
 
 function listStandaloneNpmDirs() {
   const dirs = ["gateway", "web", "ripgit"];
-  for (const group of ["adapters", "builtin-packages"]) {
+  for (const group of ["adapters"]) {
     const groupDir = join(ROOT, group);
     for (const entry of readdirSync(groupDir, { withFileTypes: true })) {
       if (entry.isDirectory()) {

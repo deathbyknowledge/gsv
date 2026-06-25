@@ -1,0 +1,130 @@
+/* Ported from Tooltip.dc.html — values transcribed verbatim. */
+.gsv-tt {
+  position: relative;
+  display: inline-flex;
+  font-family: var(--gsv-font-mono);
+}
+.gsv-tt-trigger {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: default;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: #b3aeff;
+  border-bottom: 1px dashed #6b62c4;
+  cursor: help;
+}
+.gsv-tt-trigger:focus-visible {
+  outline: 2px solid var(--accent-bright);
+  outline-offset: 2px;
+}
+/* Bare trigger (Tooltip children) — drop the hinted-text chrome so the caller's
+   own content/styling shows through; keep the help cursor + reveal behavior. */
+.gsv-tt-trigger-bare {
+  font-size: inherit;
+  letter-spacing: inherit;
+  color: inherit;
+  text-align: inherit;
+  border-bottom: 0;
+  max-width: 100%;
+}
+.gsv-tt-bub {
+  position: absolute;
+  z-index: 50;
+  background: var(--accent);
+  border: 1px solid var(--accent-bright);
+  color: var(--void);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  line-height: 1.55;
+  padding: 7px 10px;
+  max-width: min(220px, calc(100vw - 40px));
+  width: max-content;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.55);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+.gsv-tt:hover .gsv-tt-bub,
+.gsv-tt:focus-within .gsv-tt-bub {
+  opacity: 1;
+}
+.gsv-tt-arrow {
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  background: var(--accent);
+  border: 1px solid var(--accent-bright);
+  transform: rotate(45deg);
+}
+.gsv-tt-top .gsv-tt-bub {
+  bottom: 100%;
+  left: 50%;
+  margin-bottom: 9px;
+  transform: translateX(-50%) translateY(4px);
+}
+.gsv-tt-top:hover .gsv-tt-bub,
+.gsv-tt-top:focus-within .gsv-tt-bub {
+  transform: translateX(-50%) translateY(0);
+}
+.gsv-tt-top .gsv-tt-arrow {
+  bottom: -4px;
+  left: 50%;
+  margin-left: -3.5px;
+  border-top: none;
+  border-left: none;
+}
+.gsv-tt-bottom .gsv-tt-bub {
+  top: 100%;
+  left: 50%;
+  margin-top: 9px;
+  transform: translateX(-50%) translateY(-4px);
+}
+.gsv-tt-bottom:hover .gsv-tt-bub,
+.gsv-tt-bottom:focus-within .gsv-tt-bub {
+  transform: translateX(-50%) translateY(0);
+}
+.gsv-tt-bottom .gsv-tt-arrow {
+  top: -4px;
+  left: 50%;
+  margin-left: -3.5px;
+  border-bottom: none;
+  border-right: none;
+}
+.gsv-tt-left .gsv-tt-bub {
+  right: 100%;
+  top: 50%;
+  margin-right: 9px;
+  transform: translateY(-50%) translateX(4px);
+}
+.gsv-tt-left:hover .gsv-tt-bub,
+.gsv-tt-left:focus-within .gsv-tt-bub {
+  transform: translateY(-50%) translateX(0);
+}
+.gsv-tt-left .gsv-tt-arrow {
+  right: -4px;
+  top: 50%;
+  margin-top: -3.5px;
+  border-bottom: none;
+  border-left: none;
+}
+.gsv-tt-right .gsv-tt-bub {
+  left: 100%;
+  top: 50%;
+  margin-left: 9px;
+  transform: translateY(-50%) translateX(-4px);
+}
+.gsv-tt-right:hover .gsv-tt-bub,
+.gsv-tt-right:focus-within .gsv-tt-bub {
+  transform: translateY(-50%) translateX(0);
+}
+.gsv-tt-right .gsv-tt-arrow {
+  left: -4px;
+  top: 50%;
+  margin-top: -3.5px;
+  border-top: none;
+  border-right: none;
+}

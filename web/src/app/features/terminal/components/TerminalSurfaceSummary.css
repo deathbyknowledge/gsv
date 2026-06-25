@@ -1,0 +1,253 @@
+.gsv-console-page.terminal-console-page {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.gsv-console-page.terminal-console-page .gsv-console-page-body {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.terminal-page-frame {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.terminal-shell {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+  background: #070612;
+  color: var(--text);
+}
+
+.terminal-shell-screen {
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 14px 16px 18px;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.018) 50%, transparent 50%) 0 0 / 100% 6px,
+    #05050d;
+  color: #d9d6ff;
+  font-family: var(--gsv-font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  scrollbar-width: thin;
+  scrollbar-color: var(--rule-section) #05050d;
+}
+
+.terminal-line {
+  min-width: 0;
+  margin: 0 0 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.terminal-line.is-command {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  color: #f4f2ff;
+}
+
+.terminal-line-prompt {
+  flex: none;
+  max-width: min(48vw, 520px);
+  overflow: hidden;
+  color: #8f8aff;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-line-command {
+  min-width: 0;
+}
+
+.terminal-line pre {
+  margin: 0;
+  color: inherit;
+  font: inherit;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.terminal-line.is-output pre {
+  color: #f0eefc;
+}
+
+.terminal-line.is-error pre {
+  color: #ff8fa3;
+}
+
+.terminal-line.is-system pre,
+.terminal-running {
+  color: #aaa5dc;
+}
+
+.terminal-running {
+  display: flex;
+  align-items: center;
+  min-height: 18px;
+}
+
+.terminal-composer {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: 10px;
+  min-width: 0;
+  padding: 11px 14px 13px;
+  border-top: 1px solid var(--rule-inner);
+  background: color-mix(in srgb, var(--panel) 74%, #000 26%);
+}
+
+.terminal-composer-prompt {
+  position: relative;
+  display: inline-flex;
+  align-items: baseline;
+  flex: none;
+  max-width: min(44vw, 520px);
+  color: #8f8aff;
+  font-family: var(--gsv-font-mono);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: nowrap;
+}
+
+.terminal-host-button {
+  appearance: none;
+  max-width: min(28vw, 360px);
+  overflow: hidden;
+  padding: 0 1px;
+  border: 0;
+  border-bottom: 1px solid currentColor;
+  background: transparent;
+  color: #b3aeff;
+  cursor: pointer;
+  font: inherit;
+  line-height: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-host-button:hover,
+.terminal-host-button:focus-visible {
+  color: #f4f2ff;
+  outline: none;
+}
+
+.terminal-host-button:focus-visible {
+  box-shadow: 0 1px 0 #f4f2ff;
+}
+
+.terminal-host-popover {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 0;
+  z-index: 20;
+  width: min(380px, calc(100vw - 32px));
+  white-space: normal;
+}
+
+.terminal-host-menu {
+  padding: 0;
+  overflow: hidden;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.58);
+}
+
+.terminal-host-menu-head {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--rule-inner);
+  background: var(--header-bar);
+  color: var(--accent-bright);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+}
+
+.terminal-host-menu-list {
+  display: grid;
+  max-height: min(320px, 52vh);
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--rule-section) #0c0a22;
+}
+
+.terminal-host-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 13px 16px;
+  border-top: 1px solid var(--rule-inner);
+  color: var(--text-dim);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+.terminal-host-state.is-error {
+  color: #ff8fa3;
+}
+
+.terminal-composer .gsv-ta {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.terminal-composer .gsv-ta-box {
+  min-height: 24px;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: #f4f2ff;
+  font-size: 12px;
+  line-height: 1.45;
+  resize: none;
+}
+
+.terminal-composer .gsv-ta-box:hover,
+.terminal-composer .gsv-ta-box:focus {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.terminal-composer .gsv-ta-box::placeholder {
+  color: #565199;
+}
+
+.terminal-composer .gsv-ta-box.is-disabled,
+.terminal-composer .gsv-ta-box.is-readonly {
+  color: #565199;
+  opacity: 0.72;
+}
+
+@media (max-width: 760px) {
+  .terminal-composer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .terminal-composer-prompt,
+  .terminal-line-prompt {
+    max-width: 100%;
+  }
+
+  .terminal-host-button {
+    max-width: min(76vw, 360px);
+  }
+
+  .terminal-composer .gsv-ta {
+    width: 100%;
+  }
+}

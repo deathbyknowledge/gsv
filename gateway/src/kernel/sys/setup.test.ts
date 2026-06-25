@@ -230,7 +230,7 @@ describe("handleSysSetup", () => {
         username: "mira",
         uid: 1001,
         gid: 1001,
-        gecos: "mira",
+        gecos: "Mira",
         home: "/home/mira",
       }),
     );
@@ -239,7 +239,7 @@ describe("handleSysSetup", () => {
 
   it("grants the first user access to enabled package profile agents", async () => {
     const packageRecord = {
-      packageId: "builtin:wiki@1",
+      packageId: "import:root/wiki:.",
       scope: { kind: "global" },
       enabled: true,
       manifest: {

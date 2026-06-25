@@ -1,0 +1,166 @@
+/* Ported from Select.dc.html — values transcribed verbatim. */
+.gsv-sel {
+  position: relative;
+  font-family: var(--gsv-font-mono);
+}
+.gsv-sel-trig {
+  appearance: none;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  border: 1px solid #4a449e;
+  background: #0a0822;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: border-color 0.12s;
+}
+.gsv-sel-trig:not(:disabled):hover,
+.gsv-sel-trig:not(:disabled):focus-visible {
+  border-color: #6b62c4;
+  outline: none;
+}
+.gsv-sel-trig:focus-visible {
+  outline: 2px solid #b3aeff;
+  outline-offset: 2px;
+}
+.gsv-sel.is-open .gsv-sel-trig {
+  border-color: #b3aeff;
+}
+.gsv-sel.is-disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+.gsv-sel-val {
+  letter-spacing: 0.03em;
+  color: #f4f2ff;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gsv-sel-sm .gsv-sel-trig {
+  padding: 7px 10px;
+}
+.gsv-sel-sm .gsv-sel-val {
+  font-size: 10.5px;
+}
+.gsv-sel-md .gsv-sel-trig {
+  padding: 10px 12px;
+}
+.gsv-sel-md .gsv-sel-val {
+  font-size: 11.5px;
+}
+.gsv-sel-lg .gsv-sel-trig {
+  padding: 13px 14px;
+}
+.gsv-sel-lg .gsv-sel-val {
+  font-size: 13px;
+}
+.gsv-sel-row {
+  appearance: none;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: background 0.12s;
+}
+.gsv-sel-row:hover,
+.gsv-sel-row:focus-visible,
+.gsv-sel-row.is-highlighted {
+  background: #201c4d;
+  outline: none;
+}
+/* Keyboard highlight stays visible even on the selected row, whose inline
+   background would otherwise override the .is-highlighted background. Scoped to
+   :not(:hover) so mouse hover keeps its original background-only appearance. */
+.gsv-sel-row.is-highlighted:not(:hover) {
+  box-shadow: inset 0 0 0 1px #6b62c4;
+}
+.gsv-fld {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.gsv-fld-lab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  min-height: 13px;
+}
+.gsv-fld-lab-t {
+  font-size: 9.5px;
+  letter-spacing: 0.22em;
+  color: #b3aee2;
+}
+.gsv-fld-req {
+  font-size: 9.5px;
+  color: #7d78b8;
+  letter-spacing: 0.14em;
+}
+.gsv-fld-desc {
+  font-size: 10px;
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+  color: #7d78b8;
+  margin-bottom: 10px;
+  max-width: 46ch;
+}
+.gsv-fld-stat {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  min-height: 13px;
+}
+.gsv-fld-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 1px;
+}
+.gsv-fld-msg {
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+}
+.gsv-fld.is-error .gsv-fld-msg {
+  color: #ff6f8c;
+}
+.gsv-fld.is-error .gsv-fld-dot {
+  background: #ff6f8c;
+  box-shadow: 0 0 6px #ff6f8c;
+}
+.gsv-fld.is-success .gsv-fld-msg {
+  color: #5ef2a0;
+}
+.gsv-fld.is-success .gsv-fld-dot {
+  background: #5ef2a0;
+  box-shadow: 0 0 6px #5ef2a0;
+}
+.gsv-fld.is-info .gsv-fld-msg {
+  color: #8f8aff;
+}
+.gsv-fld.is-info .gsv-fld-dot {
+  background: #8f8aff;
+  box-shadow: 0 0 6px #8f8aff;
+}
+.gsv-fld.is-warn .gsv-fld-msg {
+  color: #e0a64c;
+}
+.gsv-fld.is-warn .gsv-fld-dot {
+  background: #e0a64c;
+  box-shadow: 0 0 6px #e0a64c;
+}

@@ -1,0 +1,120 @@
+import type { StatusTone } from "../../../components/ui/StatusDot";
+import {
+  detailRow,
+  listRowStatusForTone,
+  liveRows,
+} from "../components/consoleDetailRows";
+import type { ConsoleDetailSection } from "../components/ConsoleDetailPage";
+import { compactText, formatAge, formatTokenLabel } from "../domain/consoleFormat";
+import type { ConsoleAdapter, ConsoleAdapterAccount } from "../domain/consoleModels";
+
+export function iconForAdapterName(adapter: string): string {
+  if (adapter === "telegram") return "telegram";
+  if (adapter === "discord") return "discord";
+  if (adapter === "whatsapp") return "doticons/messenger";
+  return "chat";
+}
+
+export function adapterName(adapter: string): string {
+  return formatTokenLabel(adapter);
+}
+
+export function adapterFamilySub(adapter: ConsoleAdapter): string {
+  const connected = adapter.accounts.filter((account) => account.connected && account.authenticated && !account.error).length;
+  const capabilities = [
+    adapter.supportsConnect ? "connect" : "",
+    adapter.supportsSend ? "send" : "",
+    adapter.supportsShellExec ? "shell" : "",
+    adapter.supportsActivity ? "activity" : "",
+  ].filter(Boolean).join(", ");
+  return compactText([
+    adapter.available ? `${connected}/${adapter.accounts.length} accounts connected` : "adapter worker unavailable",
+    capabilities ? `supports ${capabilities}` : "",
+  ], `${adapterName(adapter.adapter)} adapter`);
+}
+
+export function toneForAdapterFamily(adapter: ConsoleAdapter): StatusTone {
+  if (!adapter.available) return adapter.accounts.length > 0 ? "warn" : "idle";
+  if (adapter.accounts.some((account) => account.error)) return "error";
+  if (adapter.accounts.some((account) => account.connected && account.authenticated)) return "online";
+  if (adapter.accounts.some((account) => account.connected || account.authenticated)) return "warn";
+  return "idle";
+}
+
+export function statusForAdapterFamily(adapter: ConsoleAdapter): string {
+  if (!adapter.available) return "UNAVAILABLE";
+  const connected = adapter.accounts.filter((account) => account.connected && account.authenticated && !account.error).length;
+  if (adapter.accounts.length === 0) return "READY";
+  return `${connected}/${adapter.accounts.length}`;
+}
+
+export function adapterDetailId(adapter: ConsoleAdapterAccount): string {
+  return `${adapter.adapter}:${adapter.accountId}`;
+}
+
+export function parseAdapterDetailId(id: string): { adapter: string; accountId: string } | null {
+  const separator = id.indexOf(":");
+  if (separator <= 0) {
+    return null;
+  }
+  const adapter = id.slice(0, separator).trim();
+  const accountId = id.slice(separator + 1).trim();
+  return adapter && accountId ? { adapter, accountId } : null;
+}
+
+export function adapterLabel(adapter: ConsoleAdapterAccount): string {
+  return adapter.accountId;
+}
+
+export function adapterSub(adapter: ConsoleAdapterAccount): string {
+  return compactText([
+    formatTokenLabel(adapter.adapter),
+    adapter.mode ? `mode ${adapter.mode}` : "",
+    adapter.lastActivity !== null ? `active ${formatAge(adapter.lastActivity)}` : "",
+    adapter.error,
+  ], `${adapter.adapter}:${adapter.accountId}`);
+}
+
+export function toneForAdapter(adapter: ConsoleAdapterAccount): StatusTone {
+  if (adapter.error) return "error";
+  if (adapter.connected && adapter.authenticated) return "online";
+  if (adapter.connected && !adapter.authenticated) return "warn";
+  return "idle";
+}
+
+export function statusForAdapter(adapter: ConsoleAdapterAccount): string {
+  if (adapter.error) return "ERROR";
+  if (adapter.connected && adapter.authenticated) return "CONNECTED";
+  if (adapter.connected) return "AUTH REQUIRED";
+  return "DISCONNECTED";
+}
+
+export function adapterDetailSections(adapter: ConsoleAdapterAccount): ConsoleDetailSection[] {
+  const extraRows = Object.entries(adapter.extra)
+    .filter(([, value]) => value !== null && value !== undefined && value !== "")
+    .map(([key, value]) => detailRow(`extra-${key}`, formatTokenLabel(key), String(value)));
+
+  return [
+    {
+      title: "MESSENGER",
+      meta: statusForAdapter(adapter),
+      rows: liveRows([
+        detailRow("adapter", "ADAPTER", formatTokenLabel(adapter.adapter)),
+        detailRow("account", "ACCOUNT", adapter.accountId),
+        detailRow("mode", "MODE", adapter.mode),
+        detailRow("status", "STATUS", statusForAdapter(adapter), {
+          status: listRowStatusForTone(toneForAdapter(adapter)),
+          statusLabel: statusForAdapter(adapter),
+        }),
+        detailRow("authenticated", "AUTHENTICATED", adapter.authenticated),
+        detailRow("last-activity", "LAST ACTIVITY", adapter.lastActivity === null ? "" : formatAge(adapter.lastActivity)),
+        detailRow("error", "ERROR", adapter.error),
+      ]),
+    },
+    {
+      title: "IDENTITY",
+      meta: `${extraRows.filter(Boolean).length}`,
+      rows: liveRows(extraRows),
+    },
+  ];
+}

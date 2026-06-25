@@ -1,0 +1,48 @@
+/* Self-contained positioning for the auth background, so it works wherever
+   AuthBackground is mounted (real session screen + the /auth.html preview). */
+.auth-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+.auth-bg .gsv-glyph-stars,
+.auth-bg .auth-bg-galaxy-scan {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.auth-bg .auth-bg-galaxy-scan {
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+/* Galaxy occupies the LEFT zone so the form (right) never covers it. The zone
+   is capped short of the right-aligned panel; --gsv-galaxy-reserve is the space
+   reserved for that panel (default fits login's narrow panel; the wider Setup
+   wizard overrides it) so the forming "GSV" stays fully uncovered at any width. */
+.auth-bg-galaxy {
+  position: absolute;
+  left: clamp(0px, 3vw, 44px);
+  top: 0;
+  bottom: 0;
+  width: min(1040px, calc(100% - var(--gsv-galaxy-reserve, 540px) + clamp(64px, 8vw, 128px)));
+}
+
+/* Narrow widths: the panel centers (see AuthLayout.css), so the galaxy can no
+   longer sit in a left zone. Move it behind the centered panel and scale it up
+   so the disc + formed "GSV" mark spill past the card and leak out visibly on
+   both sides. */
+@media (max-width: 760px) {
+  .auth-bg-galaxy {
+    left: 50%;
+    width: min(920px, 150vw);
+    transform-origin: center;
+    transform: translateX(-50%) scale(1.8);
+  }
+}

@@ -1,0 +1,286 @@
+.gsv-settings-overview {
+  flex: 1 0 auto;
+  min-height: 100%;
+  margin-bottom: 88px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  border: 1px solid var(--border-raised);
+  background: var(--panel);
+  box-shadow: inset 0 0 0 1px #060414, 0 0 30px rgba(80, 70, 180, 0.1);
+}
+
+.gsv-settings-left,
+.gsv-settings-right {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.gsv-settings-left {
+  border-right: 1px solid var(--rule-section);
+}
+
+.gsv-settings-block {
+  min-width: 0;
+  border-bottom: 1px solid var(--rule-section);
+}
+
+.gsv-settings-left .gsv-settings-block:last-child,
+.gsv-settings-right .gsv-settings-block:last-child {
+  flex: 1;
+  border-bottom: 0;
+}
+
+.gsv-settings-ship-visual {
+  position: relative;
+  height: 182px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-bottom: 1px solid var(--border);
+  background:
+    radial-gradient(120% 120% at 50% 38%, #171441, #08061a 75%);
+  box-shadow: inset 0 0 40px rgba(80, 70, 180, 0.18);
+}
+
+.gsv-settings-ship-visual::before,
+.gsv-settings-ship-visual::after {
+  content: "";
+  position: absolute;
+  inset: 8px;
+  pointer-events: none;
+}
+
+.gsv-settings-ship-visual::before {
+  background:
+    linear-gradient(var(--bracket), var(--bracket)) left top / 9px 1px no-repeat,
+    linear-gradient(var(--bracket), var(--bracket)) left top / 1px 9px no-repeat,
+    linear-gradient(var(--bracket), var(--bracket)) right top / 9px 1px no-repeat,
+    linear-gradient(var(--bracket), var(--bracket)) right top / 1px 9px no-repeat,
+    linear-gradient(var(--bracket), var(--bracket)) left bottom / 9px 1px no-repeat,
+    linear-gradient(var(--bracket), var(--bracket)) left bottom / 1px 9px no-repeat,
+    linear-gradient(var(--bracket), var(--bracket)) right bottom / 9px 1px no-repeat,
+    linear-gradient(var(--bracket), var(--bracket)) right bottom / 1px 9px no-repeat;
+}
+
+.gsv-settings-ship-visual::after {
+  display: none;
+}
+
+.gsv-settings-ship-orbit {
+  transform: scale(1.12);
+  transform-origin: center;
+  opacity: 0.98;
+}
+
+.gsv-settings-scan,
+.gsv-settings-ship-id {
+  position: absolute;
+  color: #8f89ca;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+}
+
+.gsv-settings-scan {
+  left: 12px;
+  bottom: 10px;
+}
+
+.gsv-settings-ship-id {
+  top: 10px;
+  right: 12px;
+}
+
+.gsv-settings-split {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  min-width: 0;
+}
+
+.gsv-settings-split > div {
+  min-width: 0;
+}
+
+.gsv-settings-split > div:first-child {
+  border-right: 1px solid var(--rule-section);
+}
+
+.gsv-settings-mini-heading.gsv-section-header {
+  min-height: 32px;
+}
+
+.gsv-settings-terminal-state {
+  min-height: 55px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 15px 16px;
+  color: #a8a2dc;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.gsv-settings-terminal-state {
+  justify-content: space-between;
+}
+
+.gsv-settings-terminal-state .gsv-cb {
+  min-width: 0;
+}
+
+.gsv-settings-crew-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  min-width: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.gsv-settings-crew-block {
+  border-bottom: 0;
+}
+
+.gsv-settings-crew-grid > .gsv-crew-tile {
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 9px;
+  min-height: 118px;
+  padding: 13px 11px;
+  border-right: 1px solid var(--rule-inner);
+}
+
+.gsv-settings-crew-grid > .gsv-crew-tile:last-child {
+  border-right: 0;
+}
+
+.gsv-settings-crew-grid > .gsv-crew-tile .gsv-crew-tile-portrait {
+  width: 100%;
+}
+
+.gsv-settings-crew-grid > .gsv-crew-tile.is-add {
+  align-items: center;
+  justify-content: center;
+}
+
+.gsv-settings-deep-cell {
+  position: relative;
+  min-height: 100%;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.gsv-settings-model-task-split {
+  flex: 1;
+  min-height: 300px;
+}
+
+.gsv-settings-model-task-split > div {
+  display: flex;
+}
+
+.gsv-settings-overview-list {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.gsv-settings-section-rows {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.gsv-settings-fleet-block > .gsv-settings-split {
+  border-top: 1px solid var(--border);
+}
+
+.gsv-settings-mini-row,
+.gsv-settings-add-action,
+.gsv-settings-empty-row {
+  min-height: 44px;
+  min-width: 0;
+}
+
+.gsv-settings-mini-row,
+.gsv-settings-add-action,
+.gsv-settings-empty-row {
+  border-bottom: 1px solid var(--rule-inner) !important;
+}
+
+.gsv-settings-add-action .aa {
+  border: 0 !important;
+  background: transparent !important;
+}
+
+.gsv-settings-mini-row:last-child,
+.gsv-settings-add-action:last-child,
+.gsv-settings-empty-row:last-child {
+  border-bottom: 0 !important;
+}
+
+.gsv-settings-empty-row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 13px 16px;
+  color: #7d78b8;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.gsv-settings-fleet-block {
+  flex: none;
+}
+
+.gsv-settings-satellites-block {
+  flex: 1;
+}
+
+.gsv-settings-satellites-block .gsv-settings-section-rows {
+  min-height: 0;
+}
+
+@media (max-width: 760px) {
+  .gsv-settings-overview {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .gsv-settings-left {
+    border-right: 0;
+  }
+
+  .gsv-settings-left .gsv-settings-block:last-child {
+    border-bottom: 1px solid var(--rule-section);
+  }
+}
+
+@media (max-width: 540px) {
+  .gsv-settings-split,
+  .gsv-settings-crew-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .gsv-settings-split > div:first-child,
+  .gsv-settings-crew-grid > .gsv-crew-tile {
+    border-right: 0;
+    border-bottom: 1px solid var(--rule-inner);
+  }
+
+  .gsv-settings-ship-visual {
+    height: 150px;
+  }
+
+  .gsv-settings-ship-orbit {
+    transform: scale(0.88);
+  }
+
+  .gsv-settings-deep-cell {
+    min-height: 150px;
+  }
+}

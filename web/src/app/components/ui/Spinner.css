@@ -1,0 +1,14 @@
+/* Ported from Spinner.dc.html — values transcribed verbatim. */
+@keyframes gsvSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.gsv-spinner {
+  display: inline-block;
+  flex: none;
+  border: 2px solid var(--idle);
+  border-top-color: var(--accent-bright);
+  border-radius: 50%;
+  animation: gsvSpin 0.9s linear infinite;
+}

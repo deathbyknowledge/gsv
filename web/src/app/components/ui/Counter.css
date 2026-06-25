@@ -1,0 +1,149 @@
+/* Ported from Counter.dc.html — values transcribed verbatim. */
+.gsv-st {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid #4a449e;
+  background: #0a0822;
+  font-family: var(--gsv-font-mono);
+}
+.gsv-st-btn {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  cursor: pointer;
+  color: #9089d4;
+  background: transparent;
+  font: inherit;
+  transition: background 0.12s, color 0.12s;
+  user-select: none;
+}
+.gsv-st-btn:not(:disabled):hover,
+.gsv-st-btn:not(:disabled):focus-visible {
+  background: #171441;
+  color: #cbc7ff;
+  outline: none;
+}
+.gsv-st-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.gsv-st-btn:not(:disabled):active {
+  background: #201c4d;
+  color: #fff;
+}
+.gsv-st-val {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #f4f2ff;
+  border-left: 1px solid #322e74;
+  border-right: 1px solid #322e74;
+  letter-spacing: 0.05em;
+}
+.gsv-st.is-disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+.gsv-st-sm .gsv-st-btn {
+  width: 26px;
+}
+.gsv-st-sm .gsv-st-val {
+  padding: 6px 12px;
+  font-size: 12px;
+  min-width: 42px;
+}
+.gsv-st-md .gsv-st-btn {
+  width: 32px;
+}
+.gsv-st-md .gsv-st-val {
+  padding: 9px 16px;
+  font-size: 14px;
+  min-width: 50px;
+}
+.gsv-st-lg .gsv-st-btn {
+  width: 38px;
+}
+.gsv-st-lg .gsv-st-val {
+  padding: 11px 20px;
+  font-size: 16px;
+  min-width: 58px;
+}
+.gsv-fld {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.gsv-fld-lab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  min-height: 13px;
+}
+.gsv-fld-lab-t {
+  font-size: 9.5px;
+  letter-spacing: 0.22em;
+  color: #b3aee2;
+}
+.gsv-fld-req {
+  font-size: 9.5px;
+  color: #7d78b8;
+  letter-spacing: 0.14em;
+}
+.gsv-fld-desc {
+  font-size: 10px;
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+  color: #7d78b8;
+  margin-bottom: 10px;
+  max-width: 46ch;
+}
+.gsv-fld-stat {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  min-height: 13px;
+}
+.gsv-fld-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 1px;
+}
+.gsv-fld-msg {
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+}
+.gsv-fld.is-error .gsv-fld-msg {
+  color: #ff6f8c;
+}
+.gsv-fld.is-error .gsv-fld-dot {
+  background: #ff6f8c;
+  box-shadow: 0 0 6px #ff6f8c;
+}
+.gsv-fld.is-success .gsv-fld-msg {
+  color: #5ef2a0;
+}
+.gsv-fld.is-success .gsv-fld-dot {
+  background: #5ef2a0;
+  box-shadow: 0 0 6px #5ef2a0;
+}
+.gsv-fld.is-info .gsv-fld-msg {
+  color: #8f8aff;
+}
+.gsv-fld.is-info .gsv-fld-dot {
+  background: #8f8aff;
+  box-shadow: 0 0 6px #8f8aff;
+}
+.gsv-fld.is-warn .gsv-fld-msg {
+  color: #e0a64c;
+}
+.gsv-fld.is-warn .gsv-fld-dot {
+  background: #e0a64c;
+  box-shadow: 0 0 6px #e0a64c;
+}

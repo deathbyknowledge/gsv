@@ -1,6 +1,7 @@
 import type { PkgEntrypointSummary, PkgSummary } from "@humansandmachines/gsv/protocol";
 import { defineDesktopApp } from "../desktop/domain/desktopApp";
 import type { DesktopApp, DesktopAppIcon, DesktopAppWindowDefaults } from "../desktop/domain/desktopApp";
+import { isNativeWebPackageName } from "./nativePackages";
 
 const DEFAULT_WINDOW_DEFAULTS: DesktopAppWindowDefaults = {
   width: 1040,
@@ -78,8 +79,12 @@ function isLaunchableUiEntrypoint(entrypoint: PkgEntrypointSummary): entrypoint 
   return entrypoint.kind === "ui" && typeof entrypoint.route === "string" && entrypoint.route.trim().length > 0;
 }
 
+function isNativeWebPackage(pkg: PkgSummary): boolean {
+  return isNativeWebPackageName(pkg.name);
+}
+
 export function packageToDesktopApps(pkg: PkgSummary): DesktopApp[] {
-  if (!pkg.enabled || pkg.runtime !== "web-ui") {
+  if (!pkg.enabled || pkg.runtime !== "web-ui" || isNativeWebPackage(pkg)) {
     return [];
   }
 

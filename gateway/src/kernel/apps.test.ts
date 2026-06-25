@@ -23,7 +23,7 @@ function makePackageRecord(): InstalledPackageRecord {
       source: {
         repo: "root/gsv",
         ref: "main",
-        subdir: "builtin-packages/chat",
+        subdir: "packages/chat",
       },
       entrypoints: [{
         name: "Chat",

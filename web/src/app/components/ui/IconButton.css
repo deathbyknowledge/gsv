@@ -1,0 +1,63 @@
+/* Ported from IconButton.dc.html — values transcribed verbatim. */
+/* Reset native <button> chrome so the button renders identically to the
+   original <div> (font inheritance + zero padding; box-sizing keeps the
+   inline width/height matching the old border-box div). */
+.gsv-ibtn,
+.gsv-ibtn-disabled,
+.gsv-ibtn-ghost {
+  margin: 0;
+  padding: 0;
+  font: inherit;
+  box-sizing: border-box;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+/* Ghost — borderless inline affordance (e.g. the label info hint). No box; the
+   glyph alone carries the shape. */
+.gsv-ibtn-ghost {
+  background: transparent;
+  border: 0;
+  color: var(--label);
+  transition: color 0.12s;
+}
+.gsv-ibtn-ghost:hover {
+  color: var(--accent-bright);
+}
+.gsv-ibtn-ghost:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 50%;
+}
+.gsv-ibtn-ghost.is-disabled {
+  color: #565199;
+  pointer-events: none;
+  cursor: not-allowed;
+}
+.gsv-ibtn {
+  background: #0a0820;
+  border: 1px solid #322e74;
+  color: #9089d4;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.gsv-ibtn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.gsv-ibtn:hover {
+  background: #171441;
+  border-color: #b3aeff;
+  color: #cbc7ff;
+}
+.gsv-ibtn:active {
+  background: #201c4d;
+  border-color: #7a72d4;
+  color: #fff;
+}
+.gsv-ibtn-disabled {
+  background: #0a0820;
+  border: 1px solid #25224d;
+  color: #565199;
+  pointer-events: none;
+  cursor: not-allowed;
+}

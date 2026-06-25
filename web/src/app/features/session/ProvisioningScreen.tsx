@@ -1,11 +1,20 @@
 import type { PendingAction } from "./sessionDomain";
 import { provisioningCopy } from "./sessionDomain";
-import { DeployStageRail } from "./SessionChrome";
+import { Progress } from "../../components/ui/Progress";
+import { Spinner } from "../../components/ui/Spinner";
+import { AuthLayout } from "./AuthLayout";
+import "./ProvisioningScreen.css";
 
 type ProvisioningScreenProps = {
   visible: boolean;
   pendingAction: PendingAction;
 };
+
+const STEPS = [
+  { title: "Creating account", copy: "Securing your account and admin settings." },
+  { title: "Preparing system files", copy: "Loading the built-in apps and starter settings." },
+  { title: "Opening desktop", copy: "Getting the first session ready." },
+];
 
 export function ProvisioningScreen({
   visible,
@@ -14,60 +23,36 @@ export function ProvisioningScreen({
   const copy = provisioningCopy(pendingAction);
 
   return (
-    <div class="session-panel session-panel-wide onboarding-panel onboarding-status-panel onboarding-deploying-panel" data-session-provisioning-view hidden={!visible}>
-      <div class="session-setup-form onboarding-layout">
-        <aside class="onboarding-sidebar">
-          <div class="session-panel-head">
-            <p class="session-kicker">First-time setup</p>
-            <h1>Setting things up</h1>
-            <p class="session-copy">The desktop is almost ready.</p>
-          </div>
-          <DeployStageRail />
-        </aside>
-        <div class="onboarding-workspace">
-          <main class="onboarding-main onboarding-status-main">
-            <section class="onboarding-stage onboarding-status-stage">
-              <div class="onboarding-lane-banner">
-                <span>Setting things up</span>
-              </div>
-              <div class="setup-step-copy">
-                <h2 data-session-provisioning-title>{copy.title}</h2>
-                <p class="session-copy" data-session-provisioning-copy>{copy.copy}</p>
-              </div>
-              <div class="onboarding-deploy-status">
-                <div class="onboarding-deploy-spinner" aria-hidden="true" />
-                <div>
-                  <strong>Keep this tab open</strong>
-                  <p>This can take a few seconds while GSV prepares your workspace.</p>
-                </div>
-              </div>
-              <ol class="onboarding-deploy-steps" aria-label="Setup progress">
-                <li>
-                  <span />
-                  <div>
-                    <strong>Creating account</strong>
-                    <p>Securing your account and admin settings.</p>
-                  </div>
-                </li>
-                <li>
-                  <span />
-                  <div>
-                    <strong>Preparing system files</strong>
-                    <p>Loading the built-in apps and starter settings.</p>
-                  </div>
-                </li>
-                <li>
-                  <span />
-                  <div>
-                    <strong>Opening desktop</strong>
-                    <p>Getting the first session ready.</p>
-                  </div>
-                </li>
-              </ol>
-            </section>
-          </main>
+    <AuthLayout background="galaxy" visible={visible} surfaceClass="gsv-auth-surface-setup">
+      <div class="gsv-provision" data-session-provisioning-view>
+        <div class="gsv-provision-head">
+          <span class="gsv-provision-spinner" aria-hidden="true">
+            <Spinner size={26} />
+          </span>
+          <span class="gsv-provision-kicker">First-time setup · Setting up</span>
+          <h2 class="gsv-provision-title" data-session-provisioning-title>{copy.title}</h2>
+          <p class="gsv-provision-sub" data-session-provisioning-copy>{copy.copy}</p>
         </div>
+
+        <Progress indeterminate label="" showValue={false} width={600} />
+
+        <div class="gsv-provision-note">
+          <strong>Keep this tab open</strong>
+          <p>This can take a few seconds while GSV prepares your workspace.</p>
+        </div>
+
+        <ol class="gsv-provision-steps" aria-label="Setup progress">
+          {STEPS.map((step) => (
+            <li class="gsv-provision-step" key={step.title}>
+              <span class="gsv-provision-step-marker" aria-hidden="true" />
+              <div class="gsv-provision-step-text">
+                <strong>{step.title}</strong>
+                <p>{step.copy}</p>
+              </div>
+            </li>
+          ))}
+        </ol>
       </div>
-    </div>
+    </AuthLayout>
   );
 }

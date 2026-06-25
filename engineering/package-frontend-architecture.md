@@ -1,6 +1,6 @@
 # Package Frontend Architecture
 
-Builtin packages are examples for future user-authored packages. Hold their frontend structure to a high standard.
+User-authored packages should be understandable examples of how to extend GSV. Hold their frontend structure to a high standard.
 
 Do not let a package grow into a few huge files such as:
 - `app.tsx` owning backend loading, subscriptions, media lifecycle, dialogs, and all JSX
@@ -88,14 +88,14 @@ When refactoring an existing app, preserve behavior first:
 Useful inspection commands:
 
 ```bash
-find builtin-packages/<app>/src -maxdepth 4 -type f -print0 | xargs -0 wc -l | sort -nr
-rg -n "^(export\\s+)?(function|const|type|interface)\\s+" builtin-packages/<app>/src
+find packages/<app>/src -maxdepth 4 -type f -print0 | xargs -0 wc -l | sort -nr
+rg -n "^(export\\s+)?(function|const|type|interface)\\s+" packages/<app>/src
 ```
 
 For frontend-only package refactors, a useful import-graph check is:
 
 ```bash
-npx esbuild builtin-packages/<app>/src/app/main.tsx --bundle --platform=browser --format=esm --jsx=automatic --jsx-import-source=preact --external:@humansandmachines/gsv --external:@humansandmachines/gsv/* --outfile=/tmp/gsv-<app>-main.js
+npx esbuild packages/<app>/src/app/main.tsx --bundle --platform=browser --format=esm --jsx=automatic --jsx-import-source=preact --external:@humansandmachines/gsv --external:@humansandmachines/gsv/* --outfile=/tmp/gsv-<app>-main.js
 ```
 
-If the app uses a different browser entry, read `src/package.ts` and use that path. Do not rely on a repo-wide builtin TypeScript check if it is already failing for unrelated package/module-resolution reasons.
+If the app uses a different browser entry, read `src/package.ts` and use that path. Do not rely on a repo-wide TypeScript check if it is already failing for unrelated package/module-resolution reasons.

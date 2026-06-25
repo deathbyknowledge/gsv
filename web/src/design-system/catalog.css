@@ -1,0 +1,275 @@
+/* ============================================================
+   Design-system catalog harness (review-only chrome).
+   The catalog itself adopts the Control Panel vocabulary:
+   deep-void backdrop, periwinkle hairlines, Departure Mono.
+   ============================================================ */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+:root {
+  --ds-topbar-h: 53px;
+}
+
+.ds-root {
+  width: 100%;
+  height: 100%;
+  min-height: 100vh;
+  overflow: auto;
+  background:
+    radial-gradient(1200px 800px at 70% -10%, rgba(60, 52, 140, 0.18), transparent 60%),
+    var(--void);
+  color: var(--text);
+  font-family: var(--gsv-font-mono);
+  -webkit-font-smoothing: antialiased;
+  padding: 0 0 120px;
+}
+
+.ds-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  padding: 18px 32px;
+  background: color-mix(in srgb, var(--void) 86%, transparent);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--border);
+}
+.ds-topbar h1 {
+  margin: 0;
+  font-size: 15px;
+  letter-spacing: 0.34em;
+  color: var(--text-hi);
+  text-transform: uppercase;
+}
+
+.ds-tabs {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 0;
+  border: 1px solid var(--border);
+}
+.ds-tab {
+  font-family: var(--gsv-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  padding: 8px 18px;
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--border);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.ds-tab:last-child {
+  border-right: none;
+}
+.ds-tab:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.ds-tab.is-active {
+  background: var(--selected);
+  color: var(--accent-bright);
+}
+.ds-topbar .ds-sub {
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+
+.ds-layout {
+  display: flex;
+  align-items: flex-start;
+}
+
+/* Left nav menu — sticky index of every component */
+.ds-nav {
+  position: sticky;
+  top: var(--ds-topbar-h);
+  align-self: flex-start;
+  flex: none;
+  width: 220px;
+  max-height: calc(100vh - var(--ds-topbar-h));
+  overflow-y: auto;
+  padding: 22px 14px 64px 32px;
+  border-right: 1px solid var(--border);
+}
+.ds-nav-group {
+  margin-bottom: 18px;
+}
+.ds-nav-grouphead {
+  font-size: 9px;
+  letter-spacing: 0.26em;
+  color: var(--accent);
+  text-transform: uppercase;
+  margin: 0 0 8px;
+}
+.ds-nav-link {
+  display: block;
+  padding: 4px 8px;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  text-decoration: none;
+  border-left: 1px solid transparent;
+  transition: color 0.12s, border-color 0.12s, background 0.12s;
+}
+.ds-nav-link:hover {
+  color: var(--text);
+  border-left-color: var(--border-raised);
+  background: var(--hover);
+}
+.ds-nav-link.is-active {
+  color: var(--accent-bright);
+  border-left-color: var(--accent);
+}
+
+.ds-main {
+  flex: 1;
+  min-width: 0;
+  max-width: 1000px;
+  margin: 0;
+  padding: 0 36px;
+}
+
+@media (max-width: 880px) {
+  .ds-nav {
+    display: none;
+  }
+}
+
+.ds-group-head {
+  margin: 56px 0 8px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--rule-section);
+  font-size: 11px;
+  letter-spacing: 0.3em;
+  color: var(--accent);
+  text-transform: uppercase;
+}
+
+.ds-story {
+  margin: 28px 0;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  border-radius: 2px;
+  scroll-margin-top: calc(var(--ds-topbar-h) + 16px);
+}
+.ds-story-head {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  padding: 13px 18px;
+  background: var(--header-bar);
+  border-bottom: 1px solid var(--rule-inner);
+}
+.ds-story-head .ds-dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+}
+.ds-story-head h2 {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.22em;
+  color: var(--text-title);
+  text-transform: uppercase;
+}
+.ds-story-head .ds-blurb {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+.ds-story-body {
+  padding: 24px 18px;
+}
+
+/* Page-template viewport — frames a full screen inside the catalog so the long
+   page can be reviewed without blowing up overall page height. */
+.ds-template-frame {
+  height: 720px;
+  overflow: auto;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  background: var(--void);
+}
+
+/* Layout helpers for stories */
+.ds-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 18px;
+}
+.ds-col {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.ds-grid {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+}
+.ds-label {
+  font-size: 8.5px;
+  letter-spacing: 0.2em;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  margin-bottom: 9px;
+}
+.ds-cell {
+  min-width: 0;
+}
+
+/* Token swatches */
+.ds-swatches {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(176px, 1fr));
+}
+.ds-swatch {
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--panel-2);
+}
+.ds-swatch-chip {
+  height: 52px;
+}
+.ds-swatch-meta {
+  padding: 8px 10px;
+  border-top: 1px solid var(--rule-inner);
+}
+.ds-swatch-name {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--text);
+}
+.ds-swatch-val {
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  margin-top: 3px;
+}
+
+.ds-type-spec {
+  color: var(--text);
+}
+.ds-type-spec .ds-type-row {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--rule-inner);
+}
+.ds-type-spec .ds-type-row:last-child {
+  border-bottom: none;
+}

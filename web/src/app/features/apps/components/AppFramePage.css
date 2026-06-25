@@ -1,0 +1,147 @@
+.gsv-app-frame-page {
+  min-width: 0;
+  min-height: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background:
+    linear-gradient(rgba(150, 140, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(150, 140, 255, 0.035) 1px, transparent 1px),
+    radial-gradient(1100px 720px at 50% -4%, rgba(150, 140, 255, 0.07), transparent 58%),
+    var(--void);
+  background-size: 46px 46px, 46px 46px, auto, auto;
+}
+
+.gsv-app-frame-toolbar {
+  min-height: 48px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--rule-inner);
+  background: color-mix(in srgb, var(--panel) 84%, transparent);
+}
+
+.gsv-app-frame-identity {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.gsv-app-frame-icon,
+.gsv-app-frame-empty-icon {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  background: linear-gradient(180deg, #100e2a, var(--node-bg));
+  color: var(--accent-bright);
+  box-shadow: inset 0 0 16px rgba(80, 70, 180, 0.18);
+}
+
+.gsv-app-frame-identity div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.gsv-app-frame-identity strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-hi);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.gsv-app-frame-identity span,
+.gsv-app-frame-route {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.gsv-app-frame-route {
+  flex: 0 1 auto;
+  max-width: 46%;
+  text-align: right;
+}
+
+.gsv-app-frame-host-shell {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  display: flex;
+}
+
+.gsv-app-frame-host {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  background: #050414;
+}
+
+.gsv-app-frame-empty {
+  width: min(620px, calc(100% - 48px));
+  margin: auto;
+  display: grid;
+  justify-items: start;
+  gap: 18px;
+  padding: 28px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  box-shadow: inset 0 0 0 1px #060414;
+}
+
+.gsv-app-frame-empty h2 {
+  margin: 0;
+  color: var(--text-hi);
+  font-size: 18px;
+  line-height: 1.1;
+  letter-spacing: 0.08em;
+}
+
+.gsv-app-frame-empty p {
+  margin: 8px 0 0;
+  color: var(--label);
+  font-family: var(--gsv-font-prose);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.gsv-app-frame-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+@media (max-width: 720px) {
+  .gsv-app-frame-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .gsv-app-frame-route {
+    max-width: 100%;
+    text-align: left;
+  }
+}
+

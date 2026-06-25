@@ -1,0 +1,226 @@
+@keyframes gsvPop {
+  0% {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.gsv-mi {
+  border-top: 1px solid var(--border);
+  background: var(--node-bg);
+  padding: 11px 13px 9px;
+  font-family: "Space Grotesk", sans-serif;
+}
+
+.gsv-mi-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.gsv-mi-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-height: 24px;
+  border: 1px solid var(--border);
+  background: #0c0a22;
+  color: #cdd2e0;
+  padding: 3px 5px 3px 7px;
+  font-family: var(--gsv-font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.05em;
+}
+
+.gsv-mi-chip > span {
+  display: grid;
+  min-width: 0;
+}
+
+.gsv-mi-chip strong,
+.gsv-mi-chip small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gsv-mi-chip strong {
+  font: inherit;
+  color: #eef0f7;
+}
+
+.gsv-mi-chip small {
+  margin-top: 1px;
+  color: #7d78b8;
+}
+
+.gsv-mi-chip button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #7d78b8;
+  cursor: pointer;
+}
+
+.gsv-mi-chip button:hover,
+.gsv-mi-chip button:focus-visible {
+  color: #b6b1ff;
+  outline: none;
+}
+
+.gsv-mi-chip button:disabled {
+  opacity: 0.48;
+  cursor: default;
+}
+
+.gsv-mi-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #0c0a22;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 8px 11px;
+}
+.gsv-mi-bar:focus-within {
+  border-color: var(--dashed);
+}
+
+.gsv-mi-icon {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  color: #7d78b8;
+}
+.gsv-mi-icon:hover,
+.gsv-mi-icon:focus-within {
+  color: #b6b1ff;
+  outline: none;
+}
+
+.gsv-mi-icon:disabled {
+  cursor: default;
+  color: #565178;
+}
+
+.gsv-mi-voice.is-active {
+  color: #ff8aa0;
+}
+
+.gsv-mi-file input {
+  display: none;
+}
+
+.gsv-mi-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 18px;
+  max-height: 164px;
+  resize: none;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: #eef0f7;
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 13px;
+  line-height: 1.35;
+  padding: 0;
+}
+
+.gsv-mi-input::placeholder {
+  color: #7d78b8;
+}
+
+.gsv-mi-input:disabled {
+  color: #565178;
+  cursor: default;
+}
+
+.gsv-mi-send {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  color: #b6b1ff;
+}
+.gsv-mi-send:hover,
+.gsv-mi-send:focus-visible {
+  color: #e6e4ff;
+  outline: none;
+}
+.gsv-mi-send:disabled {
+  cursor: default;
+  color: #565178;
+}
+.gsv-mi-send.is-stop {
+  color: #ff8aa0;
+}
+.gsv-mi-send.is-stop:hover,
+.gsv-mi-send.is-stop:focus-visible {
+  color: #ffc1cc;
+}
+.gsv-mi-send:disabled {
+  cursor: default;
+  color: #565178;
+}
+
+.gsv-mi-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+  font-family: var(--gsv-font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+}
+
+.gsv-mi-user {
+  color: var(--online);
+}
+
+.gsv-mi-cost-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.gsv-mi-cost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 12px;
+  color: #7d78b8;
+  font: inherit;
+  letter-spacing: inherit;
+}
+
+.gsv-mi-cost-wrap .gsv-tt-trigger-bare {
+  line-height: 1;
+}
+
+.gsv-mi-cost-wrap .gsv-tt-trigger-bare:hover .gsv-mi-cost,
+.gsv-mi-cost-wrap .gsv-tt-trigger-bare:focus-visible .gsv-mi-cost {
+  color: #b6b1ff;
+}

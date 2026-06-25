@@ -10,6 +10,7 @@ import {
   handlePkgRemoteList,
   handlePkgRemoteRemove,
   handlePkgRemove,
+  handlePkgSync,
 } from "./pkg";
 import type { KernelContext } from "./context";
 
@@ -147,18 +148,30 @@ describe("pkg syscalls", () => {
     expect(config.get("repos/alice/weather/visibility")).toBeNull();
   });
 
+  it("syncs with an empty builtin package seed set", async () => {
+    const seedBuiltinPackages = vi.fn(async () => []);
+    const ctx = {
+      packages: {
+        seedBuiltinPackages,
+      },
+    } as unknown as KernelContext;
+
+    await expect(handlePkgSync(undefined, ctx)).resolves.toEqual({ packages: [] });
+    expect(seedBuiltinPackages).toHaveBeenCalledWith([]);
+  });
+
   it("surfaces profile capabilities in package summaries", () => {
     const record = {
       ...makeInstalledPackageRecord({
-        packageId: "builtin:wiki@1",
+        packageId: "import:root/gsv:packages/wiki",
         name: "wiki",
-        sourceSubdir: "builtin-packages/wiki",
+        sourceSubdir: "packages/wiki",
       }),
       manifest: {
         ...makeInstalledPackageRecord({
-          packageId: "builtin:wiki@1",
+          packageId: "import:root/gsv:packages/wiki",
           name: "wiki",
-          sourceSubdir: "builtin-packages/wiki",
+          sourceSubdir: "packages/wiki",
         }).manifest,
         profiles: [{
           name: "builder",
@@ -187,16 +200,16 @@ describe("pkg syscalls", () => {
   it("does not enable packages when package-agent provisioning fails", async () => {
     const record = {
       ...makeInstalledPackageRecord({
-        packageId: "builtin:wiki@1",
+        packageId: "import:root/gsv:packages/wiki",
         name: "wiki",
-        sourceSubdir: "builtin-packages/wiki",
+        sourceSubdir: "packages/wiki",
       }),
       enabled: false,
       manifest: {
         ...makeInstalledPackageRecord({
-          packageId: "builtin:wiki@1",
+          packageId: "import:root/gsv:packages/wiki",
           name: "wiki",
-          sourceSubdir: "builtin-packages/wiki",
+          sourceSubdir: "packages/wiki",
         }).manifest,
         profiles: [{
           name: "builder",
@@ -244,7 +257,7 @@ describe("pkg syscalls", () => {
       ...makeInstalledPackageRecord({
         packageId: "user:1000:wiki@1",
         name: "wiki",
-        sourceSubdir: "builtin-packages/wiki",
+        sourceSubdir: "packages/wiki",
       }),
       scope: { kind: "user", uid: 1000 } as const,
       enabled,
@@ -357,26 +370,34 @@ describe("pkg syscalls", () => {
     }
   });
 
-  it("prevents removing the consolidated GSV console package", async () => {
+  it("allows removing a former builtin GSV console package", async () => {
+    let enabled = true;
     const record = makeInstalledPackageRecord({
       packageId: "builtin:gsv@0.1.0",
       name: "gsv",
-      sourceSubdir: "builtin-packages/gsv",
+      sourceSubdir: "packages/gsv",
     });
-    const setEnabled = vi.fn();
+    const setEnabled = vi.fn(() => {
+      enabled = false;
+      return true;
+    });
     const ctx = {
       config: makeConfig(),
       packages: {
-        resolve: vi.fn(() => record),
+        resolve: vi.fn(() => ({ ...record, enabled })),
         setEnabled,
       },
       identity: makeRootIdentity(),
     } as unknown as KernelContext;
 
-    await expect(handlePkgRemove({ packageId: record.packageId }, ctx)).rejects.toThrow(
-      "Cannot remove the system console package",
-    );
-    expect(setEnabled).not.toHaveBeenCalled();
+    await expect(handlePkgRemove({ packageId: record.packageId }, ctx)).resolves.toMatchObject({
+      changed: true,
+      package: {
+        packageId: "builtin:gsv@0.1.0",
+        enabled: false,
+      },
+    });
+    expect(setEnabled).toHaveBeenCalledWith(record.packageId, false, record.scope);
   });
 
   it("scaffolds a user-owned package repo and installs the resolved package", async () => {

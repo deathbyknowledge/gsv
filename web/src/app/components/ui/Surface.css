@@ -1,0 +1,98 @@
+/* Surface — reusable square card/panel shell for console surfaces. */
+.gsv-surface {
+  --surface-bg: var(--panel);
+  --surface-border: var(--border);
+  position: relative;
+  display: block;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  background: var(--surface-bg);
+  border: 1px solid var(--surface-border);
+  border-radius: 2px;
+  padding: 16px;
+  color: var(--text);
+  font-family: var(--gsv-font-mono);
+  text-align: left;
+  box-shadow: none;
+  transition: background 0.14s, border-color 0.14s, box-shadow 0.14s;
+}
+
+/* button reset when rendered as <button> */
+button.gsv-surface {
+  width: 100%;
+  appearance: none;
+  font: inherit;
+  cursor: default;
+}
+
+button.gsv-surface:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+/* — level 0: base panel — */
+.gsv-surface-l0 {
+  --surface-bg: var(--panel);
+  --surface-border: var(--border);
+  box-shadow: none;
+}
+
+/* — level 1: default console card — */
+.gsv-surface-l1 {
+  --surface-bg: var(--panel);
+  --surface-border: var(--border);
+  box-shadow: none;
+}
+
+/* — level 2: emphasized panel, still flat and square — */
+.gsv-surface-l2 {
+  --surface-bg: color-mix(in srgb, var(--panel) 100%, #ffffff 2%);
+  --surface-border: var(--border-raised);
+  box-shadow: inset 0 0 0 1px rgba(6, 4, 20, 0.72);
+}
+
+/* — flush: structural surface without card chrome — */
+.gsv-surface.is-flush {
+  --surface-bg: transparent;
+  --surface-border: transparent;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 0;
+}
+
+/* — interactive: hover emphasis without card lift — */
+.gsv-surface.is-interactive {
+  cursor: pointer;
+}
+button.gsv-surface.is-interactive {
+  cursor: pointer;
+}
+.gsv-surface.is-interactive:hover {
+  --surface-bg: var(--hover);
+  --surface-border: var(--border-raised);
+  box-shadow: inset 3px 0 0 var(--accent-bright);
+}
+
+.gsv-surface.is-flush.is-interactive:hover,
+.gsv-surface.is-flush.is-interactive:focus-visible {
+  --surface-bg: transparent;
+  --surface-border: transparent;
+  background: var(--hover);
+  box-shadow: none;
+  transform: none;
+}
+
+/* — selected: accent border + faint accent fill + soft glow — */
+.gsv-surface.is-selected {
+  --surface-border: var(--accent);
+  background: color-mix(in srgb, var(--accent) 9%, var(--surface-bg));
+  box-shadow: inset 3px 0 0 var(--accent-bright);
+}
+.gsv-surface.is-selected.is-interactive:hover {
+  --surface-border: var(--accent-bright);
+  box-shadow: inset 3px 0 0 var(--accent-bright);
+}

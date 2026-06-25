@@ -42,7 +42,6 @@ import type {
   PackageManifest,
 } from "./packages";
 import {
-  buildBuiltinPackageSeeds,
   defaultPackageInstallScopeForActor,
   packageScopeEquals,
   resolvePackageFromRipgitSource,
@@ -393,11 +392,9 @@ export async function handlePkgSync(
   _args: PkgSyncArgs | undefined,
   ctx: KernelContext,
 ): Promise<PkgSyncResult> {
-  const builtinSeeds = await buildBuiltinPackageSeeds(ctx.env);
-  const installed = await ctx.packages.seedBuiltinPackages(builtinSeeds);
-  await provisionEnabledPackagesForCaller(ctx, installed);
+  await ctx.packages.seedBuiltinPackages([]);
   return {
-    packages: installed.map((record) => toPkgSummary(record, ctx)),
+    packages: [],
   };
 }
 
@@ -451,9 +448,6 @@ export async function handlePkgRemove(
 ): Promise<PkgRemoveResult> {
   const record = requirePackage(args.packageId, ctx);
   assertMutablePackageAccess(record, ctx);
-  if (isRequiredSystemConsolePackage(record)) {
-    throw new Error("Cannot remove the system console package");
-  }
   if (record.enabled) {
     const updated = ctx.packages.setEnabled(record.packageId, false, record.scope);
     if (!updated) {
@@ -511,16 +505,6 @@ export function resolveInstalledPackage(packageId: string, ctx: KernelContext): 
 
 function requirePackage(packageId: string, ctx: KernelContext): InstalledPackageRecord {
   return resolveInstalledPackage(packageId, ctx);
-}
-
-function isRequiredSystemConsolePackage(record: InstalledPackageRecord): boolean {
-  if (record.manifest.name === "packages") {
-    return true;
-  }
-  return record.manifest.name === "gsv"
-    && record.packageId.startsWith("builtin:gsv@")
-    && record.manifest.source.repo === "root/gsv"
-    && normalizeRepoPath(record.manifest.source.subdir) === "builtin-packages/gsv";
 }
 
 async function provisionEnabledPackageAgentsForCaller(

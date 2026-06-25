@@ -1,5 +1,0 @@
-Current working directory: {{identity.cwd}}
-Home: {{identity.home}}
-
-Available targets:
-{{devices}}

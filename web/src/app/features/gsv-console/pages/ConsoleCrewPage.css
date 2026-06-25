@@ -1,0 +1,150 @@
+.gsv-console-crew {
+  position: relative;
+  flex: 1;
+  min-height: 100%;
+  overflow: hidden;
+  background: var(--void);
+}
+
+.gsv-console-crew::before,
+.gsv-console-crew::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.gsv-console-crew::before {
+  z-index: 0;
+  background-image:
+    linear-gradient(rgba(150, 140, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(150, 140, 255, 0.04) 1px, transparent 1px);
+  background-size: 46px 46px;
+}
+
+.gsv-console-crew::after {
+  z-index: 1;
+  background:
+    radial-gradient(circle at 16% 13%, rgba(182, 177, 255, 0.12), transparent 1px),
+    radial-gradient(circle at 62% 8%, rgba(205, 213, 230, 0.12), transparent 1px),
+    radial-gradient(circle at 85% 30%, rgba(182, 177, 255, 0.1), transparent 1px),
+    radial-gradient(circle at 40% 52%, rgba(205, 213, 230, 0.11), transparent 1px),
+    radial-gradient(circle at 22% 78%, rgba(182, 177, 255, 0.09), transparent 1px);
+}
+
+.gsv-console-crew-panel {
+  position: relative;
+  z-index: 2;
+  min-height: 100%;
+  border: 1px solid var(--border-raised);
+  background: rgba(9, 7, 26, 0.72);
+  box-shadow: inset 0 0 0 1px #060414, 0 0 30px rgba(80, 70, 180, 0.1);
+}
+
+.gsv-console-crew-grid {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(312px, 1fr));
+  align-items: stretch;
+  gap: 22px;
+  padding: 26px;
+}
+
+.gsv-console-crew-card-shell,
+.gsv-console-crew-add-tile {
+  min-width: 0;
+  min-height: 430px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  box-shadow: 0 0 22px rgba(60, 52, 150, 0.12);
+}
+
+.gsv-console-crew-card-shell {
+  display: flex;
+  flex-direction: column;
+}
+
+.gsv-console-crew-card-shell[data-clickable="true"] {
+  cursor: pointer;
+  transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+}
+
+.gsv-console-crew-card-shell[data-clickable="true"]:hover,
+.gsv-console-crew-card-shell[data-clickable="true"]:focus-visible {
+  border-color: var(--primary-hi);
+  box-shadow: 0 0 28px rgba(150, 140, 255, 0.2);
+  outline: none;
+}
+
+.gsv-console-crew-card-shell[data-clickable="true"]:active {
+  transform: translateY(1px);
+}
+
+.gsv-console-crew-card-shell > div:first-child {
+  flex: 1 1 auto;
+}
+
+.gsv-console-crew-add-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 0;
+  border-style: dashed;
+  border-color: var(--border-raised);
+  background: var(--panel);
+  color: inherit;
+  font: inherit;
+  text-align: center;
+}
+
+.gsv-console-crew-add-tile .gsv-crew-tile-add-icon {
+  width: 54px;
+  height: 54px;
+  border-color: var(--dashed);
+}
+
+.gsv-console-crew-add-tile .gsv-crew-tile-add-icon .gsv-icon {
+  width: 26px !important;
+  height: 26px !important;
+}
+
+.gsv-console-crew-add-tile strong {
+  color: var(--text-title);
+  font-size: 11px;
+  letter-spacing: 0.2em;
+}
+
+.gsv-console-crew-add-tile .gsv-crew-tile-description {
+  max-width: 200px;
+  color: #7d78b8;
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  line-height: 1.5;
+}
+
+button.gsv-console-crew-add-tile {
+  cursor: pointer;
+  transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+}
+
+button.gsv-console-crew-add-tile:hover,
+button.gsv-console-crew-add-tile:focus-visible {
+  border-color: var(--primary-hi);
+  background: #0e0b2a;
+  box-shadow: 0 0 28px rgba(150, 140, 255, 0.2);
+  outline: none;
+}
+
+button.gsv-console-crew-add-tile:active {
+  transform: translateY(1px);
+}
+
+@media (max-width: 680px) {
+  .gsv-console-crew-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+    padding: 16px;
+  }
+}

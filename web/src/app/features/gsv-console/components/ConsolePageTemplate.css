@@ -1,0 +1,54 @@
+.gsv-console-state-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  max-width: min(620px, 100%);
+  line-height: 1.5;
+  text-align: center;
+}
+
+.gsv-console-page-refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-dim);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.gsv-detail-corner {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  pointer-events: none;
+}
+
+.gsv-detail-corner.is-top-left {
+  top: 9px;
+  left: 9px;
+  border-top: 1px solid var(--bracket);
+  border-left: 1px solid var(--bracket);
+}
+
+.gsv-detail-corner.is-top-right {
+  top: 9px;
+  right: 9px;
+  border-top: 1px solid var(--bracket);
+  border-right: 1px solid var(--bracket);
+}
+
+.gsv-detail-corner.is-bottom-left {
+  bottom: 9px;
+  left: 9px;
+  border-bottom: 1px solid var(--bracket);
+  border-left: 1px solid var(--bracket);
+}
+
+.gsv-detail-corner.is-bottom-right {
+  right: 9px;
+  bottom: 9px;
+  border-right: 1px solid var(--bracket);
+  border-bottom: 1px solid var(--bracket);
+}
