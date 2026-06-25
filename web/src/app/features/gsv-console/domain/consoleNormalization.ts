@@ -4,6 +4,7 @@ import type {
   ConsoleAdapter,
   ConsoleAdapterAccount,
   ConsoleConfigEntry,
+  ConsoleIdentityLink,
   ConsoleMcpConnectionState,
   ConsoleMcpServer,
   ConsoleMcpTool,
@@ -113,6 +114,14 @@ export function normalizeConfigPayload(payload: unknown): ConsoleConfigEntry[] {
     .sort((left, right) => left.key.localeCompare(right.key));
 }
 
+export function normalizeIdentityLinksPayload(payload: unknown): ConsoleIdentityLink[] {
+  const record = asRecord(payload);
+  return asArray(record?.links)
+    .map(normalizeIdentityLink)
+    .filter((entry): entry is ConsoleIdentityLink => entry !== null)
+    .sort((left, right) => (right.createdAt ?? 0) - (left.createdAt ?? 0));
+}
+
 export function buildConsoleOverviewData(input: {
   processes: unknown;
   targets: unknown;
@@ -156,6 +165,25 @@ export function summarizeConsoleOverview(data: ConsoleOverviewData): ConsoleOver
     mcpServers: data.mcpServers.length,
     readyMcpServers: data.mcpServers.filter((entry) => entry.state === "ready").length,
     configEntries: data.config.length,
+  };
+}
+
+function normalizeIdentityLink(value: unknown): ConsoleIdentityLink | null {
+  const record = asRecord(value);
+  const adapter = nonEmptyString(record?.adapter);
+  const accountId = nonEmptyString(record?.accountId);
+  const actorId = nonEmptyString(record?.actorId);
+  if (!record || !adapter || !accountId || !actorId) {
+    return null;
+  }
+
+  return {
+    adapter,
+    accountId,
+    actorId,
+    uid: numberOrNull(record.uid) ?? 0,
+    createdAt: numberOrNull(record.createdAt),
+    linkedByUid: numberOrNull(record.linkedByUid),
   };
 }
 

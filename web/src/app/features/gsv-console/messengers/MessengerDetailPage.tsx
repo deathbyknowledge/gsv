@@ -1,5 +1,10 @@
 import { ConsoleDetailPage } from "../components/ConsoleDetailPage";
-import type { ConsoleAdapterAccount } from "../domain/consoleModels";
+import type {
+  ConsoleAccount,
+  ConsoleAdapterAccount,
+  ConsoleIdentityLink,
+} from "../domain/consoleModels";
+import { MessengerIdentityLinks } from "./MessengerIdentityLinks";
 import {
   adapterDetailSections,
   adapterLabel,
@@ -10,12 +15,24 @@ import {
 } from "./messengerPresentation";
 
 type MessengerDetailPageProps = {
+  accounts: readonly ConsoleAccount[];
   adapter: ConsoleAdapterAccount;
+  identityLinks: readonly ConsoleIdentityLink[];
+  identityLinksError?: string;
+  identityLinksRefreshing: boolean;
   onReconnect?: (adapter: ConsoleAdapterAccount) => void;
   onBack: () => void;
 };
 
-export function MessengerDetailPage({ adapter, onBack, onReconnect }: MessengerDetailPageProps) {
+export function MessengerDetailPage({
+  accounts,
+  adapter,
+  identityLinks,
+  identityLinksError,
+  identityLinksRefreshing,
+  onBack,
+  onReconnect,
+}: MessengerDetailPageProps) {
   return (
     <ConsoleDetailPage
       icon={iconForAdapterName(adapter.adapter)}
@@ -29,6 +46,14 @@ export function MessengerDetailPage({ adapter, onBack, onReconnect }: MessengerD
       onPrimary={onReconnect ? () => onReconnect(adapter) : undefined}
       sections={adapterDetailSections(adapter)}
       onBack={onBack}
-    />
+    >
+      <MessengerIdentityLinks
+        accounts={accounts}
+        errorText={identityLinksError}
+        links={identityLinks}
+        messenger={adapter}
+        refreshing={identityLinksRefreshing}
+      />
+    </ConsoleDetailPage>
   );
 }

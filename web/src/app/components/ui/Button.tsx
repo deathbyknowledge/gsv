@@ -1,6 +1,6 @@
 import "./Button.css";
 
-export type ButtonVariant = "primary" | "secondary" | "danger" | "dangerGhost" | "link";
+export type ButtonVariant = "primary" | "secondary" | "success" | "danger" | "dangerGhost" | "link";
 
 export interface ButtonProps {
   variant?: ButtonVariant;
@@ -16,6 +16,7 @@ export interface ButtonProps {
 const VARIANT_CLASS: Record<ButtonVariant, string> = {
   primary: "gsv-btn-primary",
   secondary: "gsv-btn-secondary",
+  success: "gsv-btn-success",
   danger: "gsv-btn-danger",
   dangerGhost: "gsv-btn-dghost",
   link: "gsv-btn-link",

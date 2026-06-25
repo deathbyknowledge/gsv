@@ -102,6 +102,15 @@ export type ConsoleAdapter = {
   accounts: ConsoleAdapterAccount[];
 };
 
+export type ConsoleIdentityLink = {
+  adapter: string;
+  accountId: string;
+  actorId: string;
+  uid: number;
+  createdAt: number | null;
+  linkedByUid: number | null;
+};
+
 export type ConsoleMcpTransport = "auto" | "streamable-http" | "sse" | "unknown";
 
 export type ConsoleMcpConnectionState =

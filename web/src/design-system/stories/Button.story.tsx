@@ -12,6 +12,7 @@ const story: Story = {
         <div class="ds-row">
           <Button variant="primary" label="SAVE" />
           <Button variant="secondary" label="CANCEL" />
+          <Button variant="success" label="ADD" />
           <Button variant="danger" label="DELETE" />
           <Button variant="dangerGhost" label="REMOVE" />
           <Button variant="link" label="LEARN MORE" />
@@ -22,6 +23,7 @@ const story: Story = {
         <div class="ds-row">
           <Button variant="primary" label="SAVE" disabled />
           <Button variant="secondary" label="CANCEL" disabled />
+          <Button variant="success" label="ADD" disabled />
           <Button variant="danger" label="DELETE" disabled />
           <Button variant="dangerGhost" label="REMOVE" disabled />
           <Button variant="link" label="LEARN MORE" disabled />

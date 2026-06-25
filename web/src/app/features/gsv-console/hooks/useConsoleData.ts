@@ -4,6 +4,7 @@ import { useGateway } from "../../../services/gateway/GatewayProvider";
 import {
   addConsoleMcpServer,
   connectConsoleAdapter,
+  consumeIdentityLinkCode,
   createMachineNodeToken,
   createConsoleAgent,
   disconnectConsoleAdapter,
@@ -12,12 +13,14 @@ import {
   loadConsoleAccounts,
   loadConsoleAdapterAccounts,
   loadConsoleConfig,
+  loadConsoleIdentityLinks,
   loadConsoleMcpServers,
   loadConsoleOverview,
   loadConsolePackages,
   loadConsoleProcesses,
   loadConsoleTargets,
   refreshConsoleMcpServer,
+  removeIdentityLink,
   removeConsoleMcpServer,
   runConsoleProcessAction,
   saveConsoleConfig,
@@ -27,12 +30,16 @@ import {
   type AddConsoleMcpServerInput,
   type ConnectConsoleAdapterInput,
   type ConnectConsoleAdapterResult,
+  type ConsumeIdentityLinkCodeInput,
   type CreateMachineNodeTokenInput,
   type CreateConsoleAgentInput,
   type CreateConsoleAgentResult,
   type ConsoleAgentContextFile,
+  type IdentityLinkMutationResult,
   type IssuedMachineNodeToken,
   type LoadConsoleOverviewOptions,
+  type RemoveIdentityLinkInput,
+  type RemoveIdentityLinkResult,
   type RunConsoleProcessActionInput,
   type RunConsoleProcessActionResult,
   type SaveConsoleAgentBehaviorInput,
@@ -50,6 +57,7 @@ import type {
   ConsoleAdapter,
   ConsoleAdapterAccount,
   ConsoleConfigEntry,
+  ConsoleIdentityLink,
   ConsoleMcpServer,
   ConsoleOverviewCounts,
   ConsoleOverviewData,
@@ -68,6 +76,7 @@ export const consoleAdaptersQueryKey = ["adapters", "gsv-console"] as const;
 export const consoleAdapterInventoryQueryKey = ["adapter-inventory", "gsv-console"] as const;
 export const consoleMcpServersQueryKey = ["mcp-servers", "gsv-console"] as const;
 export const consoleConfigQueryKey = ["gsv-console", "config"] as const;
+export const consoleIdentityLinksQueryKey = ["gsv-console", "identity-links"] as const;
 export const consoleAgentContextQueryKey = ["gsv-console", "agent-context"] as const;
 
 type ConsoleQueryOptions = {
@@ -247,6 +256,22 @@ export function useConsoleConfig(options: ConsoleQueryOptions = {}) {
   };
 }
 
+export function useConsoleIdentityLinks(options: ConsoleQueryOptions = {}) {
+  const { client, connected } = useGateway();
+  const enabled = connected && (options.enabled ?? true);
+  const query = useQuery<ConsoleIdentityLink[]>({
+    queryKey: consoleIdentityLinksQueryKey,
+    enabled,
+    queryFn: () => loadConsoleIdentityLinks(client),
+  });
+
+  return {
+    ...query,
+    links: query.data ?? [],
+    resource: toResourceState(query, enabled, isArrayEmpty),
+  };
+}
+
 export function useConsoleAgentContext(username: string, options: ConsoleQueryOptions = {}) {
   const { client, connected } = useGateway();
   const enabled = connected && username.trim().length > 0 && (options.enabled ?? true);
@@ -277,6 +302,36 @@ export function useCreateConsoleAgent() {
         queryClient.invalidateQueries({ queryKey: consoleOverviewQueryKey }),
       ]);
     },
+  });
+}
+
+async function invalidateConsoleIdentityState(queryClient: ReturnType<typeof useQueryClient>): Promise<void> {
+  await Promise.all([
+    queryClient.invalidateQueries({ queryKey: consoleIdentityLinksQueryKey }),
+    queryClient.invalidateQueries({ queryKey: consoleAdaptersQueryKey }),
+    queryClient.invalidateQueries({ queryKey: consoleAdapterInventoryQueryKey }),
+    queryClient.invalidateQueries({ queryKey: consoleTargetsQueryKey }),
+    queryClient.invalidateQueries({ queryKey: consoleOverviewQueryKey }),
+  ]);
+}
+
+export function useConsumeIdentityLinkCode() {
+  const { client } = useGateway();
+  const queryClient = useQueryClient();
+
+  return useMutation<IdentityLinkMutationResult, Error, ConsumeIdentityLinkCodeInput>({
+    mutationFn: (input) => consumeIdentityLinkCode(client, input),
+    onSuccess: async () => invalidateConsoleIdentityState(queryClient),
+  });
+}
+
+export function useRemoveIdentityLink() {
+  const { client } = useGateway();
+  const queryClient = useQueryClient();
+
+  return useMutation<RemoveIdentityLinkResult, Error, RemoveIdentityLinkInput>({
+    mutationFn: (input) => removeIdentityLink(client, input),
+    onSuccess: async () => invalidateConsoleIdentityState(queryClient),
   });
 }
 

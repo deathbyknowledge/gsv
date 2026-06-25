@@ -1,9 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  consumeIdentityLinkCode,
   createMachineNodeToken,
   createConsoleAgent,
+  loadConsoleIdentityLinks,
   loadConsoleAdapterAccounts,
   loadConsoleAdapters,
+  removeIdentityLink,
   runConsoleProcessAction,
   saveConsoleConfig,
   saveConsoleConfigEntries,
@@ -149,6 +152,90 @@ describe("console agent service", () => {
         accounts: [],
       },
     ]);
+  });
+
+  it("loads identity links from the kernel", async () => {
+    const call = vi.fn(async () => ({
+      links: [
+        {
+          adapter: "discord",
+          accountId: "main",
+          actorId: "u-2",
+          uid: 2,
+          createdAt: 20,
+          linkedByUid: 0,
+        },
+        {
+          adapter: "whatsapp",
+          accountId: "primary",
+          actorId: "u-1",
+          uid: 1,
+          createdAt: 30,
+          linkedByUid: 1,
+        },
+      ],
+    }));
+
+    await expect(loadConsoleIdentityLinks({ call } as any)).resolves.toEqual([
+      {
+        adapter: "whatsapp",
+        accountId: "primary",
+        actorId: "u-1",
+        uid: 1,
+        createdAt: 30,
+        linkedByUid: 1,
+      },
+      {
+        adapter: "discord",
+        accountId: "main",
+        actorId: "u-2",
+        uid: 2,
+        createdAt: 20,
+        linkedByUid: 0,
+      },
+    ]);
+    expect(call).toHaveBeenCalledWith("sys.link.list", {});
+  });
+
+  it("redeems identity link codes", async () => {
+    const call = vi.fn(async () => ({
+      linked: true,
+      link: {
+        adapter: "discord",
+        accountId: "main",
+        actorId: "external-user",
+        uid: 42,
+        createdAt: 100,
+      },
+    }));
+
+    await expect(consumeIdentityLinkCode({ call } as any, { code: " abc123 " })).resolves.toEqual({
+      linked: true,
+      link: {
+        adapter: "discord",
+        accountId: "main",
+        actorId: "external-user",
+        uid: 42,
+        createdAt: 100,
+        linkedByUid: null,
+      },
+    });
+    expect(call).toHaveBeenCalledWith("sys.link.consume", { code: "abc123" });
+  });
+
+  it("removes identity links", async () => {
+    const call = vi.fn(async () => ({ removed: true }));
+
+    await expect(removeIdentityLink({ call } as any, {
+      adapter: " Discord ",
+      accountId: " main ",
+      actorId: " actor-1 ",
+    })).resolves.toEqual({ removed: true });
+    expect(call).toHaveBeenCalledWith("sys.unlink", {
+      adapter: "discord",
+      accountId: "main",
+      actorId: "actor-1",
+    });
   });
 
   it("falls back to known adapter status calls when discovery is unavailable", async () => {

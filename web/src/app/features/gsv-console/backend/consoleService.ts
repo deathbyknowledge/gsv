@@ -5,6 +5,7 @@ import {
   normalizeAdapterInventoryPayload,
   normalizeAdapterPayload,
   normalizeConfigPayload,
+  normalizeIdentityLinksPayload,
   normalizeMcpServersPayload,
   normalizePackagesPayload,
   normalizeProcessesPayload,
@@ -15,6 +16,7 @@ import type {
   ConsoleAdapter,
   ConsoleAdapterAccount,
   ConsoleConfigEntry,
+  ConsoleIdentityLink,
   ConsoleMcpServer,
   ConsoleMcpTransport,
   ConsoleOverviewData,
@@ -113,6 +115,25 @@ export type CreateMachineNodeTokenInput = {
   expiresAt?: number | null;
 };
 
+export type ConsumeIdentityLinkCodeInput = {
+  code: string;
+};
+
+export type RemoveIdentityLinkInput = {
+  adapter: string;
+  accountId: string;
+  actorId: string;
+};
+
+export type IdentityLinkMutationResult = {
+  linked: boolean;
+  link: ConsoleIdentityLink | null;
+};
+
+export type RemoveIdentityLinkResult = {
+  removed: boolean;
+};
+
 export type ConnectConsoleAdapterInput = {
   adapter: string;
   accountId: string;
@@ -178,6 +199,35 @@ export async function loadConsoleAccounts(client: Pick<GSVClient, "account">): P
 
 export async function loadConsoleConfig(client: ConsoleClient): Promise<ConsoleConfigEntry[]> {
   return normalizeConfigPayload(await client.sys.config.get({}));
+}
+
+export async function loadConsoleIdentityLinks(client: Pick<GSVClient, "call">): Promise<ConsoleIdentityLink[]> {
+  return normalizeIdentityLinksPayload(await client.call("sys.link.list", {}));
+}
+
+export async function consumeIdentityLinkCode(
+  client: Pick<GSVClient, "call">,
+  input: ConsumeIdentityLinkCodeInput,
+): Promise<IdentityLinkMutationResult> {
+  const code = input.code.trim();
+  if (!code) {
+    throw new Error("link code is required");
+  }
+
+  const result = await client.call("sys.link.consume", { code }) as Record<string, unknown>;
+  return normalizeIdentityLinkMutationResult(result);
+}
+
+export async function removeIdentityLink(
+  client: Pick<GSVClient, "call">,
+  input: RemoveIdentityLinkInput,
+): Promise<RemoveIdentityLinkResult> {
+  const adapter = normalizeIdentityLinkField(input.adapter, "adapter").toLowerCase();
+  const accountId = normalizeIdentityLinkField(input.accountId, "account id");
+  const actorId = normalizeIdentityLinkField(input.actorId, "actor id");
+
+  const result = await client.call("sys.unlink", { adapter, accountId, actorId }) as Record<string, unknown>;
+  return { removed: result.removed === true };
 }
 
 export async function saveConsoleConfig(
@@ -546,6 +596,22 @@ export async function loadConsoleOverview(
     mcpServers,
     config,
   });
+}
+
+function normalizeIdentityLinkMutationResult(result: Record<string, unknown>): IdentityLinkMutationResult {
+  const links = normalizeIdentityLinksPayload({ links: result.link ? [result.link] : [] });
+  return {
+    linked: result.linked === true,
+    link: links[0] ?? null,
+  };
+}
+
+function normalizeIdentityLinkField(value: string, field: string): string {
+  const normalized = value.trim();
+  if (!normalized) {
+    throw new Error(`${field} is required`);
+  }
+  return normalized;
 }
 
 async function loadAdapterPayloads(client: Pick<GSVClient, "call">, adapters?: readonly string[]): Promise<unknown[]> {

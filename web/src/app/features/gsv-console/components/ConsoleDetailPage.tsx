@@ -75,9 +75,7 @@ export function ConsoleDetailPage({
 
         <p class="gsv-console-detail-blurb">{blurb}</p>
 
-        {children ? (
-          <div class="gsv-console-detail-custom">{children}</div>
-        ) : hasSections ? (
+        {hasSections ? (
           <div class="gsv-console-detail-sections">
             {sections.map((section) => (
               section.rows.length > 0 ? (
@@ -100,7 +98,11 @@ export function ConsoleDetailPage({
               ) : null
             ))}
           </div>
-        ) : (
+        ) : null}
+
+        {children ? (
+          <div class="gsv-console-detail-custom">{children}</div>
+        ) : !hasSections ? (
           <div class="gsv-console-detail-pending-panel">
             <span class="gsv-detail-corner is-top-left" aria-hidden="true" />
             <span class="gsv-detail-corner is-top-right" aria-hidden="true" />
@@ -108,7 +110,7 @@ export function ConsoleDetailPage({
             <span class="gsv-detail-corner is-bottom-right" aria-hidden="true" />
             <span>[ {title} · {pendingLabel} ]</span>
           </div>
-        )}
+        ) : null}
 
         <div class="gsv-console-detail-actions">
           {actions}
