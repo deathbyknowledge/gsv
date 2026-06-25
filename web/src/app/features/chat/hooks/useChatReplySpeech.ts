@@ -141,7 +141,17 @@ export function useChatReplySpeech({
     setSpeechStatus("Speak replies on");
   }, [conversationId, processId, rows, speechOutput]);
 
+  const cancelSpeech = useCallback(() => {
+    speechOutput.cancel();
+  }, [speechOutput]);
+
+  const isSpeaking = useCallback(() => {
+    return speechOutput.isPlaying();
+  }, [speechOutput]);
+
   return {
+    cancelSpeech,
+    isSpeaking,
     setSpeakReplies,
     speakReplies,
     speechStatus,

@@ -1175,6 +1175,36 @@
   color: #ffb199;
 }
 
+.gsv-chat-voice-chip {
+  max-width: 138px;
+  min-height: 24px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  background: rgba(132, 122, 255, 0.1);
+  color: #bdb8ff;
+  padding: 0 8px;
+  font-family: var(--gsv-font-mono);
+  font-size: 8px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.gsv-chat-voice-chip > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gsv-chat-voice-chip[data-state="error"] {
+  border-color: rgba(255, 110, 142, 0.44);
+  color: #ff9caf;
+  background: rgba(255, 110, 142, 0.1);
+}
+
 .gsv-chat-command-abort span {
   width: 9px;
   height: 9px;

@@ -30,6 +30,7 @@ export interface MessageInputProps {
   onVoiceClick?: () => void;
   running?: boolean;
   voiceActive?: boolean;
+  voiceAvailableWhenBusy?: boolean;
   voiceDisabled?: boolean;
   voiceTitle?: string;
 }
@@ -102,6 +103,7 @@ export function MessageInput({
   onVoiceClick,
   running = false,
   voiceActive = false,
+  voiceAvailableWhenBusy = false,
   voiceDisabled = false,
   voiceTitle = "Record voice",
 }: MessageInputProps) {
@@ -231,7 +233,7 @@ export function MessageInput({
           <button
             type="button"
             class={`gsv-mi-icon gsv-mi-voice${voiceActive ? " is-active" : ""}`}
-            disabled={disabled || busy || voiceDisabled}
+            disabled={disabled || (!voiceAvailableWhenBusy && busy) || voiceDisabled}
             aria-label={voiceTitle}
             title={voiceTitle}
             onClick={onVoiceClick}

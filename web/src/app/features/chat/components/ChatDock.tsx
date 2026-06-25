@@ -5,7 +5,7 @@ import { ConfirmModal } from "../../../components/ui/ConfirmModal";
 import { Counter } from "../../../components/ui/Counter";
 import { Icon } from "../../../components/ui/Icon";
 import { MessageInput, type MessageInputAttachment } from "../../../components/ui/MessageInput";
-import type { StatusTone } from "../../../components/ui/StatusDot";
+import { StatusDot, type StatusTone } from "../../../components/ui/StatusDot";
 import type { JSX } from "preact";
 import {
   buildChatAgentViewModel,
@@ -28,10 +28,9 @@ import {
   useSendChatMessage,
   useSetChatProcessAiConfig,
   useSpawnChatProcess,
+  useChatAmbientTranscription,
   useChatReplySpeech,
   useChatRuntime,
-  useChatVoiceRecorder,
-  type ChatVoiceAttachment,
 } from "../hooks";
 import { ActiveAgentPanel } from "./ActiveAgentPanel";
 import { ChatApprovalBanner } from "./ChatApprovalBanner";
@@ -311,23 +310,72 @@ export function ChatDock({
     ? "This process has not written user, assistant, system, or tool result messages yet."
     : "Start an interactive process to begin a native chat session.";
   const inputDisabled = !hasActiveProcess && !canStartProcess && !processLookupLoading;
-  const addVoiceAttachment = useCallback((attachment: ChatVoiceAttachment) => {
+  const sendChatDraft = useCallback(async (
+    message: string,
+    media: ProcMediaInput[] = [],
+  ): Promise<boolean> => {
+    if ((!hasActiveProcess && !canStartProcess) || sendMessage.isPending || spawnProcess.isPending) {
+      return false;
+    }
+    const trimmedMessage = message.trim();
+    if (!trimmedMessage && media.length === 0) {
+      return false;
+    }
+    const outgoingMessage = trimmedMessage
+      || (media.some((attachment) => attachment.type === "audio") ? "Voice message." : "Attached media.");
+    let targetPid = activeProcessId;
+    let targetConversationId = selectedConversationId;
+    if (!targetPid) {
+      const spawned = await spawnProcess.mutateAsync({
+        interactive: true,
+        label: outgoingMessage || activeAgent.name,
+        ...(startRunAs ? { runAs: startRunAs } : {}),
+      });
+      targetPid = spawned.pid;
+      targetConversationId = "default";
+      onProcessStarted?.(spawned.pid);
+      onSelectConversation?.("default");
+    }
+
+    chatRuntime.appendOptimisticUserMessage(outgoingMessage, media);
     setAttachmentError("");
-    setDraftAttachments((current) => current.concat(attachment));
-  }, []);
-  const voiceRecorder = useChatVoiceRecorder({
-    disabled: inputDisabled || sendMessage.isPending || abortProcess.isPending,
-    onAttachment: addVoiceAttachment,
+    await sendMessage.mutateAsync({
+      message: outgoingMessage,
+      pid: targetPid,
+      ...(targetConversationId ? { conversationId: targetConversationId } : {}),
+      ...(media.length > 0 ? { media } : {}),
+    });
+    return true;
+  }, [
+    activeAgent.name,
+    activeProcessId,
+    canStartProcess,
+    chatRuntime,
+    hasActiveProcess,
+    onProcessStarted,
+    onSelectConversation,
+    selectedConversationId,
+    sendMessage,
+    spawnProcess,
+    startRunAs,
+  ]);
+  const ambientTranscription = useChatAmbientTranscription({
+    activeRunCount: canAbortRun ? 1 : 0,
+    agentName: activeAgent.name,
+    disabled: inputDisabled || abortProcess.isPending,
+    isSpeechOutputPlaying: replySpeech.isSpeaking,
+    onCancelSpeechOutput: replySpeech.cancelSpeech,
+    onTranscript: async (text) => {
+      await sendChatDraft(text);
+    },
   });
-  const voiceStatus = voiceRecorder.voice.status;
-  const voiceTitle = voiceStatus === "recording"
-    ? "Stop recording"
-    : voiceStatus === "requesting"
-      ? "Requesting microphone"
-      : voiceStatus === "processing"
-        ? "Preparing voice message"
-        : "Record voice";
-  const voiceError = voiceRecorder.voice.error ?? "";
+  const voiceTitle = ambientTranscription.title;
+  const voiceError = ambientTranscription.error;
+  const voiceStatusLabel = ambientTranscription.active || ambientTranscription.state === "error"
+    ? ambientTranscription.state === "error"
+      ? ambientTranscription.error || "VOICE ERROR"
+      : ambientTranscription.note || ambientTranscription.title
+    : "";
   const controlError = spawnProcess.isError
     ? errorMessage(spawnProcess.error, "Process could not be started.")
     : abortProcess.isError
@@ -424,9 +472,6 @@ export function ChatDock({
   };
 
   const handleSendMessage = async (message: string) => {
-    if ((!hasActiveProcess && !canStartProcess) || sendMessage.isPending || spawnProcess.isPending) {
-      return;
-    }
     const media = draftAttachments.map((attachment): ProcMediaInput => ({
       type: attachment.type,
       mimeType: attachment.mimeType,
@@ -437,39 +482,17 @@ export function ChatDock({
       ...(attachment.duration ? { duration: attachment.duration } : {}),
       ...(attachment.transcription ? { transcription: attachment.transcription } : {}),
     }));
-    const trimmedMessage = message.trim();
-    if (!trimmedMessage && media.length === 0) {
+    let sent = false;
+    try {
+      sent = await sendChatDraft(message, media);
+    } catch {
       return;
     }
-    const outgoingMessage = trimmedMessage
-      || (media.some((attachment) => attachment.type === "audio") ? "Voice message." : "Attached media.");
-    let targetPid = activeProcessId;
-    let targetConversationId = selectedConversationId;
-    if (!targetPid) {
-      try {
-        const spawned = await spawnProcess.mutateAsync({
-          interactive: true,
-          label: outgoingMessage || activeAgent.name,
-          ...(startRunAs ? { runAs: startRunAs } : {}),
-        });
-        targetPid = spawned.pid;
-        targetConversationId = "default";
-        onProcessStarted?.(spawned.pid);
-      } catch {
-        return;
-      }
+    if (!sent) {
+      return;
     }
-
-    chatRuntime.appendOptimisticUserMessage(outgoingMessage, media);
     revokeDraftAttachments(draftAttachments);
     setDraftAttachments([]);
-    setAttachmentError("");
-    sendMessage.mutate({
-      message: outgoingMessage,
-      pid: targetPid,
-      ...(targetConversationId ? { conversationId: targetConversationId } : {}),
-      ...(media.length > 0 ? { media } : {}),
-    });
   };
 
   const branchFromMessage = (messageId: number) => {
@@ -779,16 +802,23 @@ export function ChatDock({
         canSend={hasActiveProcess || canStartProcess}
         disabled={inputDisabled}
         focusKey={newTaskFocusKey}
+        actions={voiceStatusLabel ? (
+          <span class="gsv-chat-voice-chip" data-state={ambientTranscription.state}>
+            <StatusDot tone={ambientTranscription.state === "error" ? "error" : "live"} size={7} />
+            <span>{voiceStatusLabel}</span>
+          </span>
+        ) : null}
         onFiles={handleFiles}
         onRemoveAttachment={removeAttachment}
         onSend={handleSendMessage}
         onStop={abortActiveRun}
-        onVoiceClick={voiceRecorder.toggleRecording}
+        onVoiceClick={ambientTranscription.toggle}
         placeholder={`Message ${activeAgent.name}...`}
         running={canAbortRun}
         user={userLabel}
-        voiceActive={voiceStatus === "recording"}
-        voiceDisabled={voiceStatus === "requesting" || voiceStatus === "processing"}
+        voiceActive={ambientTranscription.active}
+        voiceAvailableWhenBusy={ambientTranscription.active}
+        voiceDisabled={ambientTranscription.unavailable}
         voiceTitle={voiceTitle}
       />
     </aside>
