@@ -703,6 +703,7 @@ function FleetPanel({
             {adapterRows.length === 0 ? <EmptyRow label="NO MESSENGERS" /> : rowLimit(adapterRows, 3).map((row) => (
               <MiniRow key={row.id} row={row} onClick={openDetail("messengers", row, "messengers")} />
             ))}
+            <AddRow label="CONNECT MESSENGER" onClick={openCreate("messengers", "messengers")} />
           </div>
         )}
         right={(

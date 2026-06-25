@@ -76,12 +76,15 @@ function SpaceGlyphs() {
 }
 
 function canCreateObject(id: DesktopObjectId): boolean {
-  return id === "machines" || id === "integrations" || id === "applications";
+  return id === "machines" || id === "messengers" || id === "integrations" || id === "applications";
 }
 
 function addObjectLabel(id: DesktopObjectId): string {
   if (id === "machines") {
     return "CONNECT NEW MACHINE";
+  }
+  if (id === "messengers") {
+    return "CONNECT MESSENGER";
   }
   if (id === "integrations") {
     return "NEW INTEGRATION";
