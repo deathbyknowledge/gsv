@@ -21,6 +21,7 @@ export interface MessageInputProps {
   user?: string;
   cost?: string;
   disabled?: boolean;
+  focusKey?: number;
   onChange?: (value: string) => void;
   onFiles?: (files: FileList | null) => void;
   onRemoveAttachment?: (id: string) => void;
@@ -92,6 +93,7 @@ export function MessageInput({
   user,
   cost,
   disabled = false,
+  focusKey,
   onChange,
   onFiles,
   onRemoveAttachment,
@@ -123,6 +125,13 @@ export function MessageInput({
     textarea.style.height = `${nextHeight}px`;
     textarea.style.overflowY = textarea.scrollHeight > maxHeight ? "auto" : "hidden";
   }, [draft]);
+
+  useEffect(() => {
+    if (focusKey === undefined || disabled) {
+      return;
+    }
+    textareaRef.current?.focus();
+  }, [disabled, focusKey]);
 
   const setDraft = (nextValue: string) => {
     if (value === undefined) {

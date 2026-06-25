@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { ProcMediaInput } from "@humansandmachines/gsv/protocol";
 import { AgentImage } from "../../../components/ui/AgentImage";
+import { ConfirmModal } from "../../../components/ui/ConfirmModal";
+import { Counter } from "../../../components/ui/Counter";
 import { Icon } from "../../../components/ui/Icon";
 import { MessageInput, type MessageInputAttachment } from "../../../components/ui/MessageInput";
 import type { StatusTone } from "../../../components/ui/StatusDot";
@@ -26,6 +28,7 @@ import {
   useSendChatMessage,
   useSetChatProcessAiConfig,
   useSpawnChatProcess,
+  useChatReplySpeech,
   useChatRuntime,
   useChatVoiceRecorder,
   type ChatVoiceAttachment,
@@ -188,6 +191,9 @@ export function ChatDock({
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [selectedArchiveSegmentId, setSelectedArchiveSegmentId] = useState("");
   const [openPopover, setOpenPopover] = useState<ChatPopoverId | null>(null);
+  const [contextConfirmOpen, setContextConfirmOpen] = useState(false);
+  const [compactKeepLastDraft, setCompactKeepLastDraft] = useState(1);
+  const [newTaskFocusKey, setNewTaskFocusKey] = useState(0);
   const [visibleMessageLimit, setVisibleMessageLimit] = useState(TRANSCRIPT_MESSAGE_LIMIT);
   const draftAttachmentsRef = useRef<DraftAttachment[]>([]);
   const activeProcessId = agent?.processId?.trim() ?? "";
@@ -282,6 +288,11 @@ export function ChatDock({
     && (Boolean(runtime.activeRunId) || Boolean(pendingHil) || runState === "running" || runState === "awaiting_hil");
   const context = runtime.context;
   const selectedConversationId = activeConversationId ?? runtime.conversationId ?? "default";
+  const replySpeech = useChatReplySpeech({
+    conversationId: selectedConversationId,
+    processId: activeProcessId,
+    rows: runtime.rows,
+  });
   const contextPercent = contextPressurePercent(context?.pressure);
   const contextTitle = contextPercent === null
     ? contextLabel
@@ -336,18 +347,32 @@ export function ChatDock({
   const contextLevel = context?.level ? context.level.toUpperCase() : contextPercent === null ? "UNKNOWN" : "ESTIMATED";
   const contextModel = context ? [context.provider, context.model].filter(Boolean).join(" · ") : activeAgent.modelLabel;
   const compactKeepLast = Math.max(1, Math.min(48, Math.floor(Math.max(runtime.messageCount, transcriptMessages.length) / 2)));
+  const compactMessageTotal = Math.max(runtime.messageCount, transcriptMessages.length);
+  const compactKeepMax = Math.max(1, Math.min(96, compactMessageTotal - 1));
   const canFreeContext = hasActiveProcess
     && !canAbortRun
     && !compactConversation.isPending
-    && Math.max(runtime.messageCount, transcriptMessages.length) > compactKeepLast;
+    && compactMessageTotal > compactKeepLast;
+  const canStartNewTask = canStartProcess && !spawnProcess.isPending;
+
+  useEffect(() => {
+    if (!contextConfirmOpen) {
+      setCompactKeepLastDraft(compactKeepLast);
+    }
+  }, [compactKeepLast, contextConfirmOpen]);
 
   const startProcess = () => {
+    if (!canStartNewTask) {
+      return;
+    }
     spawnProcess.mutate({
       interactive: true,
       ...(startRunAs ? { runAs: startRunAs } : {}),
     }, {
       onSuccess: (result) => {
         onProcessStarted?.(result.pid);
+        onSelectConversation?.("default");
+        setNewTaskFocusKey((key) => key + 1);
       },
     });
   };
@@ -465,14 +490,45 @@ export function ChatDock({
     });
   };
 
-  const freeContext = () => {
+  const prepareNewTask = () => {
+    if (!canStartNewTask) {
+      return;
+    }
+    setOpenPopover(null);
+    setArchiveOpen(false);
+    setSelectedArchiveSegmentId("");
+    setVisibleMessageLimit(TRANSCRIPT_MESSAGE_LIMIT);
+    spawnProcess.mutate({
+      interactive: true,
+      label: activeAgent.name,
+      ...(startRunAs ? { runAs: startRunAs } : {}),
+    }, {
+      onSuccess: (result) => {
+        onProcessStarted?.(result.pid);
+        onSelectConversation?.("default");
+        setNewTaskFocusKey((key) => key + 1);
+      },
+    });
+  };
+
+  const requestFreeContext = () => {
     if (!canFreeContext) {
       return;
     }
+    setCompactKeepLastDraft(compactKeepLast);
+    setContextConfirmOpen(true);
+  };
+
+  const freeContext = (keepLast: number) => {
+    if (!canFreeContext) {
+      return;
+    }
+    const normalizedKeepLast = Math.max(1, Math.min(compactKeepMax, Math.floor(keepLast)));
+    setContextConfirmOpen(false);
     compactConversation.mutate({
       pid: activeProcessId,
       conversationId: selectedConversationId,
-      keepLast: compactKeepLast,
+      keepLast: normalizedKeepLast,
       generateSummary: true,
     }, {
       onSuccess: (result) => {
@@ -559,6 +615,32 @@ export function ChatDock({
           onSelectAgent={onSelectAgent}
         />
       ) : null}
+      {contextConfirmOpen ? (
+        <div class="gsv-chat-modal-layer" onClick={() => setContextConfirmOpen(false)}>
+          <div class="gsv-chat-modal-wrap" onClick={(event) => event.stopPropagation()}>
+            <ConfirmModal
+              title="FREE CONTEXT"
+              message={`Archive older messages, generate a summary, and keep the latest ${compactKeepLastDraft} messages active.`}
+              note="Older messages remain available in the archive after compaction."
+              confirmLabel="FREE CONTEXT"
+              width={470}
+              onCancel={() => setContextConfirmOpen(false)}
+              onConfirm={() => freeContext(compactKeepLastDraft)}
+            >
+              <Counter
+                label="KEEP MESSAGES"
+                description={`Choose how many recent messages stay live. Current conversation has ${compactMessageTotal}.`}
+                min={1}
+                max={compactKeepMax}
+                step={1}
+                size="small"
+                value={compactKeepLastDraft}
+                onChange={setCompactKeepLastDraft}
+              />
+            </ConfirmModal>
+          </div>
+        </div>
+      ) : null}
       {openPopover ? <button type="button" class="gsv-chat-popover-scrim" aria-label="Close chat menu" onClick={() => setOpenPopover(null)} /> : null}
       <ChatDockHeader
         activeAgent={activeAgent}
@@ -579,7 +661,10 @@ export function ChatDock({
         processAiConfigBusy={setProcessAiConfig.isPending}
         processAiConfigLoading={processAiConfig.isLoading}
         runStateLabel={runStateLabel}
+        canStartNewTask={canStartNewTask}
         spawnPending={spawnProcess.isPending}
+        speakReplies={replySpeech.speakReplies}
+        speechStatus={replySpeech.speechStatus}
         taskCount={taskCount}
         onAbortRun={abortActiveRun}
         onOpenAgentPanel={openAgentPanel}
@@ -591,10 +676,12 @@ export function ChatDock({
           setOpenPopover(null);
           (onOpenTasks ?? onOpenCrew)();
         }}
+        onStartNewTask={prepareNewTask}
         onStartProcess={startProcess}
         onApplyModelProfile={applyProcessAiProfile}
         onClearProcessAiConfig={clearProcessAiConfig}
         onSetReasoning={(reasoning) => setProcessAiKey("config/ai/reasoning", reasoning)}
+        onToggleSpeakReplies={() => replySpeech.setSpeakReplies(!replySpeech.speakReplies)}
         onToggleMax={onToggleMax}
         onToggleOpen={onToggleOpen}
         onTogglePopover={togglePopover}
@@ -623,7 +710,7 @@ export function ChatDock({
             type="button"
             disabled={!canFreeContext}
             title={canAbortRun ? "Context can be compacted after the active run finishes" : "Archive older messages and keep the latest context live"}
-            onClick={freeContext}
+            onClick={requestFreeContext}
           >
             <Icon name="stars" size={12} />
             <span>{compactConversation.isPending ? "FREEING" : "FREE CONTEXT"}</span>
@@ -691,6 +778,7 @@ export function ChatDock({
         busy={sendMessage.isPending || abortProcess.isPending || spawnProcess.isPending}
         canSend={hasActiveProcess || canStartProcess}
         disabled={inputDisabled}
+        focusKey={newTaskFocusKey}
         onFiles={handleFiles}
         onRemoveAttachment={removeAttachment}
         onSend={handleSendMessage}

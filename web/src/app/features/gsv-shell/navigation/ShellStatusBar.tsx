@@ -1,7 +1,5 @@
 import { Icon } from "../../../components/ui/Icon";
 import { StatusBar } from "../../../components/ui/StatusBar";
-import { PresenceTopbarToggle } from "../../presence/Presence";
-import type { PresenceController } from "../../presence/presenceController";
 import type { NotificationSurface } from "../../notifications/types";
 
 type ShellStatusBarProps = {
@@ -13,10 +11,10 @@ type ShellStatusBarProps = {
   systemLoadLabel: string;
   sessionUsername: string;
   mobileHomeDate: string;
-  presenceController: PresenceController;
   notificationOpenSurface: NotificationSurface | null;
   notificationUnreadCount: number;
   onNotificationsToggle: (surface: NotificationSurface, node: HTMLButtonElement) => void;
+  onToggleChat: () => void;
   onOpenApps: () => void;
   onLockSession: () => void;
 };
@@ -48,10 +46,10 @@ export function ShellStatusBar({
   systemLoadLabel,
   sessionUsername,
   mobileHomeDate,
-  presenceController,
   notificationOpenSurface,
   notificationUnreadCount,
   onNotificationsToggle,
+  onToggleChat,
   onOpenApps,
   onLockSession,
 }: ShellStatusBarProps) {
@@ -71,7 +69,10 @@ export function ShellStatusBar({
           <Icon name="bookmark" size={14} />
           <span>APPS</span>
         </button>
-        <PresenceTopbarToggle controller={presenceController} />
+        <button type="button" title="Toggle chat" onClick={onToggleChat}>
+          <Icon name="chat" family="doticons" size={14} />
+          <span>CHAT</span>
+        </button>
         <button
           type="button"
           aria-label="Notifications"

@@ -19,6 +19,7 @@ type ChatDockPopoversProps = {
   onApplyModelProfile: (profile: ChatModelProfileData) => void;
   onOpenModels: () => void;
   onOpenTasks: () => void;
+  onStartNewTask: () => void;
   onClearProcessAiConfig: () => void;
   onSetReasoning: (reasoning: string) => void;
   openPopover: ChatPopoverId | null;
@@ -26,6 +27,7 @@ type ChatDockPopoversProps = {
   processAiConfigBusy: boolean;
   processAiConfigLoading: boolean;
   runStateLabel: string;
+  canStartNewTask: boolean;
   taskCount: number;
 };
 
@@ -80,17 +82,22 @@ export function ChatDockPopovers({
   onClearProcessAiConfig,
   onOpenModels,
   onOpenTasks,
+  onStartNewTask,
   onSetReasoning,
   openPopover,
   processAiConfig,
   processAiConfigBusy,
   processAiConfigLoading,
   runStateLabel,
+  canStartNewTask,
   taskCount,
 }: ChatDockPopoversProps) {
   const processModel = processAiConfig?.values["config/ai/model"]?.trim() ?? "";
   const processReasoning = processAiConfig?.values["config/ai/reasoning"]?.trim() ?? "";
   const hasProcessOverrides = Boolean(processAiConfig && Object.keys(processAiConfig.values).length > 0);
+  const chatOverrideLabel = processAiConfigLoading
+    ? "LOADING"
+    : processAiConfig?.profile?.name || processAiConfig?.profile?.id || (hasProcessOverrides ? "CUSTOM OVERRIDE" : "");
 
   return (
     <>
@@ -108,10 +115,12 @@ export function ChatDockPopovers({
             <span>MODEL SOURCE</span>
             <strong>{processModel ? `PROCESS · ${processModel}` : contextModel || "GATEWAY DEFAULT"}</strong>
           </div>
-          <div class="gsv-chat-popover-section">
-            <span>PROCESS PROFILE</span>
-            <strong>{processAiConfigLoading ? "LOADING" : processAiConfig?.profile?.name || processAiConfig?.profile?.id || "NO LOCAL PROFILE"}</strong>
-          </div>
+          {chatOverrideLabel ? (
+            <div class="gsv-chat-popover-section">
+              <span>CHAT OVERRIDE</span>
+              <strong>{chatOverrideLabel}</strong>
+            </div>
+          ) : null}
           <div class="gsv-chat-popover-label">MODEL PROFILE</div>
           <div class="gsv-chat-model-options" role="list">
             {activeAgent.modelProfiles.length > 0 ? activeAgent.modelProfiles.map((profile) => {
@@ -131,7 +140,7 @@ export function ChatDockPopovers({
                   <strong>{profile.name}</strong>
                   <em>{modelProfileSummary(profile)}</em>
                 </span>
-                {active ? <small>PROCESS</small> : null}
+                {active ? <small>CHAT</small> : null}
               </button>
               );
             }) : (
@@ -165,7 +174,7 @@ export function ChatDockPopovers({
             onClick={onClearProcessAiConfig}
           >
             <Icon name="close" size={12} />
-            <span>CLEAR PROCESS OVERRIDES</span>
+            <span>CLEAR CHAT OVERRIDES</span>
           </button>
           <button type="button" class="gsv-chat-popover-action" onClick={onOpenModels}>
             <Icon name="stars" size={12} />
@@ -195,8 +204,17 @@ export function ChatDockPopovers({
               </div>
             ))}
           </div>
-          <button type="button" class="gsv-chat-popover-action" onClick={onOpenTasks}>
+          <button
+            type="button"
+            class="gsv-chat-popover-action"
+            disabled={!canStartNewTask}
+            onClick={onStartNewTask}
+          >
             <Icon name="plus" size={12} />
+            <span>NEW TASK</span>
+          </button>
+          <button type="button" class="gsv-chat-popover-action" onClick={onOpenTasks}>
+            <Icon name="list" size={12} />
             <span>OPEN TASKS</span>
           </button>
         </div>

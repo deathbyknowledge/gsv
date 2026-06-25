@@ -27,7 +27,10 @@ type ChatDockHeaderProps = {
   processAiConfigBusy: boolean;
   processAiConfigLoading: boolean;
   runStateLabel: string;
+  canStartNewTask: boolean;
   spawnPending: boolean;
+  speakReplies: boolean;
+  speechStatus: string;
   taskCount: number;
   onAbortRun: () => void;
   onApplyModelProfile: (profile: ChatModelProfileData) => void;
@@ -35,8 +38,10 @@ type ChatDockHeaderProps = {
   onOpenAgentPanel: () => void;
   onOpenModels: () => void;
   onOpenTasks: () => void;
+  onStartNewTask: () => void;
   onSetReasoning: (reasoning: string) => void;
   onStartProcess: () => void;
+  onToggleSpeakReplies: () => void;
   onToggleMax: () => void;
   onToggleOpen: () => void;
   onTogglePopover: (popover: ChatPopoverId) => void;
@@ -61,7 +66,10 @@ export function ChatDockHeader({
   processAiConfigBusy,
   processAiConfigLoading,
   runStateLabel,
+  canStartNewTask,
   spawnPending,
+  speakReplies,
+  speechStatus,
   taskCount,
   onAbortRun,
   onApplyModelProfile,
@@ -69,8 +77,10 @@ export function ChatDockHeader({
   onOpenAgentPanel,
   onOpenModels,
   onOpenTasks,
+  onStartNewTask,
   onSetReasoning,
   onStartProcess,
+  onToggleSpeakReplies,
   onToggleMax,
   onToggleOpen,
   onTogglePopover,
@@ -137,6 +147,16 @@ export function ChatDockHeader({
               <Icon name="plus" size={15} />
             </button>
           ) : null}
+          <button
+            type="button"
+            class={`gsv-chat-command gsv-chat-command-speech${speakReplies ? " is-active" : ""}`}
+            title={speechStatus}
+            aria-label={speakReplies ? "Disable spoken replies" : "Enable spoken replies"}
+            aria-pressed={speakReplies ? "true" : "false"}
+            onClick={onToggleSpeakReplies}
+          >
+            <Icon name="volume" family="doticons" size={14} />
+          </button>
           {canAbortRun ? (
             <button
               type="button"
@@ -180,11 +200,13 @@ export function ChatDockHeader({
         processAiConfigBusy={processAiConfigBusy}
         processAiConfigLoading={processAiConfigLoading}
         runStateLabel={runStateLabel}
+        canStartNewTask={canStartNewTask}
         taskCount={taskCount}
         onApplyModelProfile={onApplyModelProfile}
         onClearProcessAiConfig={onClearProcessAiConfig}
         onOpenModels={onOpenModels}
         onOpenTasks={onOpenTasks}
+        onStartNewTask={onStartNewTask}
         onSetReasoning={onSetReasoning}
       />
     </header>

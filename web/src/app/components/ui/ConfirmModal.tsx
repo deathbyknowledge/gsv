@@ -1,3 +1,4 @@
+import type { ComponentChildren } from "preact";
 import { useEffect, useId, useRef } from "preact/hooks";
 import { Button } from "./Button";
 import "./ConfirmModal.css";
@@ -10,6 +11,7 @@ export interface ConfirmModalProps {
   confirmLabel?: string;
   /** Modal width in px (320–560). */
   width?: number;
+  children?: ComponentChildren;
   onCancel?: () => void;
   onConfirm?: () => void;
 }
@@ -23,6 +25,7 @@ export function ConfirmModal({
   cancelLabel = "CANCEL",
   confirmLabel = "DELETE",
   width = 440,
+  children,
   onCancel,
   onConfirm,
 }: ConfirmModalProps) {
@@ -129,6 +132,7 @@ export function ConfirmModal({
         <div style={{ paddingTop: "2px", fontFamily: "'Space Grotesk',sans-serif" }}>
           <div id={descId} style={{ fontSize: "13.5px", lineHeight: "1.65", color: "var(--text)" }}>{message}</div>
           <div style={{ fontSize: "11px", color: "#9a95cf", marginTop: "9px", letterSpacing: ".04em" }}>{note}</div>
+          {children ? <div class="gsv-cm-extra">{children}</div> : null}
         </div>
       </div>
 

@@ -172,5 +172,6 @@ describe("shell chat agent model", () => {
         }),
       }),
     ]);
+    expect(agent?.crew?.map((member) => member.id)).toEqual(["account:1001"]);
   });
 });

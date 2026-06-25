@@ -22,6 +22,7 @@ import {
 } from "../../gsv-console/domain/consoleAgentBehavior";
 import {
   agentImageSrcForIndex,
+  isConsoleAgentAccount,
   labelForConsoleAccountRelation,
   sortedConsoleAccounts,
 } from "../../gsv-console/domain/agentPresentation";
@@ -181,7 +182,7 @@ function accountCrewMembers(input: {
   consoleProcesses: readonly ConsoleProcess[];
   selectedAgentId?: string | null;
 }): ChatAgentCrewData[] {
-  const accounts = sortedConsoleAccounts(input.accounts);
+  const accounts = sortedConsoleAccounts(input.accounts).filter(isConsoleAgentAccount);
   const members = accounts.map((account, index) => {
     const id = accountAgentId(account);
     const ownedChatProcesses = input.chatProcesses.filter((process) => ownsChatProcess(account, process));
@@ -223,7 +224,7 @@ function accountForProcess(
   process: ChatProcessSummary,
   accounts: readonly ConsoleAccount[],
 ): ConsoleAccount | null {
-  return accounts.find((account) => ownsChatProcess(account, process)) ?? null;
+  return accounts.find((account) => isConsoleAgentAccount(account) && ownsChatProcess(account, process)) ?? null;
 }
 
 function activeAgentDescription(
@@ -285,7 +286,7 @@ function accountBackedAgent(input: {
   modelProfiles: ReturnType<typeof modelProfilesForConfig>;
   selectedAgentId?: string | null;
 }): ChatAgentData | null {
-  const accountList = sortedConsoleAccounts(input.accounts);
+  const accountList = sortedConsoleAccounts(input.accounts).filter(isConsoleAgentAccount);
   const selectedAccount = input.selectedAgentId
     ? accountList.find((account) => accountAgentId(account) === input.selectedAgentId) ?? null
     : null;

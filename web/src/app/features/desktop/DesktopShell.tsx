@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { useGateway } from "../../services/gateway/GatewayProvider";
 import { useSession } from "../../services/session/SessionProvider";
 import { NotificationsPanel } from "../notifications/NotificationsPanel";
 import type { NotificationAnchor, NotificationSurface } from "../notifications/types";
-import { PresenceController } from "../presence/presenceController";
 import { SessionScreens } from "../session/SessionScreens";
 import { GsvShell } from "../gsv-shell/GsvShell";
 
@@ -27,7 +25,6 @@ function formatMobileHomeDate(): string {
 
 export function DesktopShell() {
   const shellRef = useRef<HTMLDivElement>(null);
-  const { client: gatewayClient } = useGateway();
   const { service: sessionService, snapshot: sessionSnapshot } = useSession();
   const [notificationPanel, setNotificationPanel] = useState<{
     open: boolean;
@@ -36,12 +33,10 @@ export function DesktopShell() {
   const [notificationUnreadCount, setNotificationUnreadCount] = useState(0);
   const standalone = useMemo(isStandaloneDisplay, []);
   const mobileHomeDate = useMemo(formatMobileHomeDate, []);
-  const presenceController = useMemo(() => new PresenceController(gatewayClient), [gatewayClient]);
 
   useEffect(() => {
     void sessionService.start();
   }, [sessionService]);
-  useEffect(() => () => presenceController.destroy(), [presenceController]);
   const notificationOpenSurface = notificationPanel.open
     ? notificationPanel.anchor?.surface ?? null
     : null;
@@ -71,7 +66,6 @@ export function DesktopShell() {
         <div class={`gsv-native-shell${standalone ? " is-standalone" : ""}`} ref={shellRef}>
           <SessionScreens session={sessionService} snapshot={sessionSnapshot} />
           <GsvShell
-            presenceController={presenceController}
             notificationOpenSurface={notificationOpenSurface}
             notificationUnreadCount={notificationUnreadCount}
             onNotificationsToggle={toggleNotifications}

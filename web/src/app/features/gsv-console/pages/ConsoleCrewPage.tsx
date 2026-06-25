@@ -91,12 +91,12 @@ function CrewRoster({
   onCreateAgent?: () => void;
 }) {
   const processes = processResource.data ?? [];
-  const sortedAccounts = sortedConsoleAccounts(accounts);
+  const sortedAccounts = sortedConsoleAccounts(accounts).filter(isConsoleAgentAccount);
   const modelLabels = modelLabelsForConfig(config);
   const cards = sortedAccounts.map((account, index) => buildCrewCard(account, processes, index, config, modelLabels));
   const running = cards.filter((card) => card.processes.some(isRunningProcess)).length;
-  const runnable = accounts.filter((account) => account.runnable).length;
-  const agents = accounts.filter(isConsoleAgentAccount).length;
+  const runnable = cards.filter((card) => card.account.runnable).length;
+  const agents = cards.length;
   const telemetryLabel = processResource.isRefreshing
     ? "REFRESHING"
     : processResource.isError

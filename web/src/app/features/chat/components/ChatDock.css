@@ -56,6 +56,20 @@
   background: rgba(150, 140, 255, 0.4);
 }
 
+.gsv-chat-modal-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(4, 3, 16, 0.72);
+}
+
+.gsv-chat-modal-wrap {
+  max-width: 100%;
+}
+
 .gsv-chat-head {
   min-height: 74px;
   display: flex;
@@ -1149,6 +1163,12 @@
 
 .gsv-chat .gsv-chat-actions .gsv-chat-command-start {
   color: #7df0b2;
+}
+
+.gsv-chat .gsv-chat-actions .gsv-chat-command-speech.is-active {
+  border-color: var(--accent);
+  color: #bdb8ff;
+  background: rgba(132, 122, 255, 0.16);
 }
 
 .gsv-chat .gsv-chat-actions .gsv-chat-command-abort {

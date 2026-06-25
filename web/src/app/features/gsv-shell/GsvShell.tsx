@@ -15,11 +15,6 @@ import type {
   ConsoleResourceState,
 } from "../gsv-console/domain/consoleModels";
 import { useConsoleConfig, useConsoleOverview } from "../gsv-console/hooks/useConsoleData";
-import {
-  PresenceActivity,
-  PresencePanel,
-} from "../presence/Presence";
-import type { PresenceController } from "../presence/presenceController";
 import type { NotificationSurface } from "../notifications/types";
 import {
   GsvConsole,
@@ -41,7 +36,6 @@ import { useGsvShellState } from "./hooks/useGsvShellState";
 import "./styles/gsvShell.css";
 
 type GsvShellProps = {
-  presenceController: PresenceController;
   notificationOpenSurface: NotificationSurface | null;
   notificationUnreadCount: number;
   onNotificationsToggle: (surface: NotificationSurface, node: HTMLButtonElement) => void;
@@ -223,7 +217,6 @@ function normalizeTargetChatProcess(value: unknown): TargetChatProcess | null {
 }
 
 export function GsvShell({
-  presenceController,
   notificationOpenSurface,
   notificationUnreadCount,
   onNotificationsToggle,
@@ -555,16 +548,13 @@ export function GsvShell({
         systemLoadLabel={statusSystemLabel}
         sessionUsername={sessionUsername}
         mobileHomeDate={mobileHomeDate}
-        presenceController={presenceController}
         notificationOpenSurface={notificationOpenSurface}
         notificationUnreadCount={notificationUnreadCount}
         onNotificationsToggle={onNotificationsToggle}
+        onToggleChat={() => shell.setChatOpen((value) => !value)}
         onOpenApps={() => openShellSurface("applications")}
         onLockSession={onLockSession}
       />
-
-      <PresenceActivity controller={presenceController} />
-      <PresencePanel controller={presenceController} />
     </div>
   );
 }
