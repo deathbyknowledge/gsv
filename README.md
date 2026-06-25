@@ -76,10 +76,9 @@ Linux-like by design, so agents can reason with familiar patterns (mental model,
 ## Development
 
 ```bash
-./scripts/setup-deps.sh        # install JS deps across workspace, adapters, ripgit
-npm run dev                    # local multi-worker dev stack
-cd cli && cargo build --release
-./scripts/deploy-local.sh      # build + deploy local bundles (defaults to -c gateway)
+./scripts/setup-deps.sh       # install JS deps across workspace, adapters, ripgit
+cd web && npm run build    # build web app
+cd .. && npm run dev           # local multi-worker dev stack
 ```
 
 Requires [Rust](https://rustup.rs) and [Node.js + npm](https://nodejs.org).
