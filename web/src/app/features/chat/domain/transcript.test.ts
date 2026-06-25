@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ChatHistory } from "./processes";
 import {
+  addOptimisticUserMessage,
   applyChatSignal,
   emptyChatRuntimeState,
   transcriptRowsFromHistory,
@@ -68,10 +69,93 @@ describe("chat transcript rows", () => {
     expect(rows[0]).toMatchObject({ role: "assistant", text: "I'll inspect it." });
     expect(rows[1]).toMatchObject({
       role: "toolResult",
+      messageId: 2,
       toolCallId: "call-1",
       toolName: "Read",
       text: "file contents",
     });
+  });
+
+  it("keeps historical tool activity before later conversation messages", () => {
+    const rows = transcriptRowsFromHistory(history([
+      {
+        id: 1,
+        clientId: "1",
+        role: "user",
+        runId: "run-tools",
+        content: "try your tools",
+        text: "try your tools",
+        timestamp: 1,
+        origin: undefined,
+        metadata: undefined,
+      },
+      {
+        id: 2,
+        clientId: "2",
+        role: "assistant",
+        runId: "run-tools",
+        content: {
+          text: "\n",
+          thinking: [{ type: "thinking", thinking: "I'll run a command." }],
+          toolCalls: [
+            {
+              id: "call-1",
+              name: "Shell",
+              arguments: { input: "pwd" },
+            },
+          ],
+        },
+        text: "\n",
+        timestamp: 2,
+        origin: undefined,
+        metadata: undefined,
+      },
+      {
+        id: 3,
+        clientId: "3",
+        role: "toolResult",
+        runId: "run-tools",
+        content: {
+          toolName: "Shell",
+          toolCallId: "call-1",
+          output: "done",
+          ok: true,
+        },
+        text: "done",
+        timestamp: 3,
+        origin: undefined,
+        metadata: undefined,
+      },
+      {
+        id: 4,
+        clientId: "4",
+        role: "assistant",
+        runId: "run-tools",
+        content: {
+          text: "Finished.",
+          thinking: [],
+          toolCalls: [],
+        },
+        text: "Finished.",
+        timestamp: 4,
+        origin: undefined,
+        metadata: undefined,
+      },
+      {
+        id: 5,
+        clientId: "5",
+        role: "user",
+        runId: "run-later",
+        content: "later",
+        text: "later",
+        timestamp: 5,
+        origin: undefined,
+        metadata: undefined,
+      },
+    ]));
+
+    expect(rows.map((row) => row.messageId)).toEqual([1, 2, 3, 4, 5]);
+    expect(rows[2]).toMatchObject({ role: "toolResult", toolCallId: "call-1" });
   });
 
   it("applies live stream, tool, and HIL signals for the active process", () => {
@@ -118,5 +202,30 @@ describe("chat transcript rows", () => {
       expect.objectContaining({ role: "assistant", text: "Hello", streaming: true }),
       expect.objectContaining({ role: "tool", toolCallId: "call-1", status: "running" }),
     ]));
+  });
+
+  it("replaces one optimistic user row when the persisted message signal arrives", () => {
+    let state = addOptimisticUserMessage(
+      emptyChatRuntimeState("pid-1", "default"),
+      "hello",
+      "default",
+    );
+    state = addOptimisticUserMessage(state, "hello", "default");
+
+    state = applyChatSignal(state, "proc.changed", {
+      pid: "pid-1",
+      conversationId: "default",
+      changes: ["messages"],
+      role: "user",
+      content: "hello",
+      messageId: 42,
+      timestamp: Date.now(),
+    }, { pid: "pid-1", conversationId: "default" }).state;
+
+    expect(state.rows.filter((row) => row.role === "user" && row.text === "hello")).toHaveLength(2);
+    expect(state.rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "message:42", role: "user", text: "hello" }),
+    ]));
+    expect(state.rows.filter((row) => row.id.startsWith("optimistic:user:"))).toHaveLength(1);
   });
 });

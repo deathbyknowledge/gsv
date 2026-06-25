@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import type { ProcMediaInput } from "@humansandmachines/gsv/protocol";
+import type { ProcContextState, ProcMediaInput, ProcUsageState } from "@humansandmachines/gsv/protocol";
 import { AgentImage } from "../../../components/ui/AgentImage";
 import { ConfirmModal } from "../../../components/ui/ConfirmModal";
 import { Counter } from "../../../components/ui/Counter";
@@ -39,7 +39,7 @@ import { ChatConversationBar } from "./ChatConversationBar";
 import { ChatDockHeader } from "./ChatDockHeader";
 import type { ChatPopoverId } from "./ChatDockPopovers";
 import { ChatTranscript, type ChatDockMessage } from "./ChatTranscript";
-import { shortId } from "./chatUiFormat";
+import { formatCount, formatCurrencyCost, shortId } from "./chatUiFormat";
 import "./ChatDock.css";
 
 export type { ChatDockMessage } from "./ChatTranscript";
@@ -67,8 +67,6 @@ type ChatDockProps = {
   onSelectAgent?: (selection: ChatAgentSelection) => void;
 };
 
-const TRANSCRIPT_MESSAGE_LIMIT = 24;
-
 function formatRunStateLabel(runState: ChatRunState | string | undefined): string {
   return runState ? runState.replaceAll("_", " ") : "idle";
 }
@@ -88,6 +86,46 @@ function contextPressurePercent(pressure: number | null | undefined): number | n
     return null;
   }
   return Math.max(0, Math.min(100, Math.round(pressure * 100)));
+}
+
+function formatCostSource(source: string | undefined): string {
+  if (source === "model-pricing") {
+    return "model pricing";
+  }
+  if (source === "provider") {
+    return "provider pricing";
+  }
+  if (source === "mixed") {
+    return "mixed pricing";
+  }
+  return "pricing unavailable";
+}
+
+function formatConversationCostTooltip(context: ProcContextState | null | undefined): string {
+  const usage: ProcUsageState | null = context?.conversationUsage ?? null;
+  if (!usage) {
+    return "";
+  }
+  const cost = usage.cost;
+  const tokens = `${formatCount(usage.totalTokens)} tokens`;
+  if (!cost) {
+    return `Conversation cost unavailable · ${tokens} · pricing unavailable`;
+  }
+  const total = `${usage.costIncomplete ? "~" : ""}${formatCurrencyCost(cost.total)}`;
+  const details = [
+    `Conversation cost ${total}`,
+    tokens,
+    `input ${formatCount(usage.inputTokens)}`,
+    `output ${formatCount(usage.outputTokens)}`,
+  ];
+  if (usage.cacheReadTokens > 0) {
+    details.push(`cache read ${formatCount(usage.cacheReadTokens)}`);
+  }
+  if (usage.cacheWriteTokens > 0) {
+    details.push(`cache write ${formatCount(usage.cacheWriteTokens)}`);
+  }
+  details.push(formatCostSource(cost.source));
+  return details.join(" · ");
 }
 
 type DraftAttachment = ProcMediaInput & MessageInputAttachment & {
@@ -194,7 +232,6 @@ export function ChatDock({
   const [compactKeepLastDraft, setCompactKeepLastDraft] = useState(1);
   const [newTaskFocusKey, setNewTaskFocusKey] = useState(0);
   const [composerDraft, setComposerDraft] = useState("");
-  const [visibleMessageLimit, setVisibleMessageLimit] = useState(TRANSCRIPT_MESSAGE_LIMIT);
   const draftAttachmentsRef = useRef<DraftAttachment[]>([]);
   const activeProcessId = agent?.processId?.trim() ?? "";
   const startRunAs = agent?.runAs?.trim() ?? "";
@@ -202,7 +239,7 @@ export function ChatDock({
   const canStartProcess = Boolean(agent);
   const chatRuntime = useChatRuntime({
     conversationId: activeConversationId,
-    enabled: open && hasActiveProcess,
+    enabled: hasActiveProcess,
     processId: activeProcessId,
   });
   const spawnProcess = useSpawnChatProcess();
@@ -252,12 +289,10 @@ export function ChatDock({
     setAttachmentError("");
     setArchiveOpen(false);
     setSelectedArchiveSegmentId("");
-    setVisibleMessageLimit(TRANSCRIPT_MESSAGE_LIMIT);
   }, [activeProcessId]);
 
   useEffect(() => {
     setSelectedArchiveSegmentId("");
-    setVisibleMessageLimit(TRANSCRIPT_MESSAGE_LIMIT);
   }, [activeProcessId, activeConversationId]);
 
   useEffect(() => {
@@ -277,10 +312,7 @@ export function ChatDock({
     statusLabel: effectiveStatusLabel,
     contextLabel,
   }), [effectiveAgent, title, effectiveStatus, effectiveStatusLabel, contextLabel]);
-  const transcriptMessages = useMemo(() => {
-    return runtime.rows.slice(-visibleMessageLimit);
-  }, [runtime.rows, visibleMessageLimit]);
-  const hasOlderLoadedMessages = runtime.rows.length > visibleMessageLimit;
+  const transcriptMessages = runtime.rows;
   const runState = runtime.runState ?? (effectiveStatusLabel === "loading" ? undefined : effectiveStatusLabel);
   const runStateLabel = liveActivity?.runStateLabel ?? formatRunStateLabel(runState);
   const canAbortRun = hasActiveProcess
@@ -298,6 +330,7 @@ export function ChatDock({
   const contextTitle = contextPercent === null
     ? contextLabel
     : `${contextPercent}% context pressure`;
+  const conversationCost = formatConversationCostTooltip(context);
   const hasVisibleMessages = transcriptMessages.length > 0;
   const processLookupLoading = !hasActiveProcess && effectiveStatusLabel === "loading";
   const hasTranscriptError = processHistory.isError && !hasVisibleMessages;
@@ -537,7 +570,6 @@ export function ChatDock({
     setOpenPopover(null);
     setArchiveOpen(false);
     setSelectedArchiveSegmentId("");
-    setVisibleMessageLimit(TRANSCRIPT_MESSAGE_LIMIT);
     spawnProcess.mutate({
       interactive: true,
       label: activeAgent.name,
@@ -798,16 +830,11 @@ export function ChatDock({
         emptyTitle={emptyTitle}
         emptyDescription={emptyDescription}
         errorMessage={transcriptError}
+        conversationId={selectedConversationId}
+        hasOlderMessages={chatRuntime.hasOlderHistory}
         messages={transcriptMessages}
-        beforeMessages={hasOlderLoadedMessages ? (
-          <button
-            type="button"
-            class="gsv-chat-load-older"
-            onClick={() => setVisibleMessageLimit((current) => current + TRANSCRIPT_MESSAGE_LIMIT)}
-          >
-            LOAD OLDER
-          </button>
-        ) : null}
+        loadingOlderMessages={chatRuntime.loadingOlderHistory}
+        onLoadOlder={chatRuntime.loadOlderHistory}
         onBranch={branchFromMessage}
         processId={activeProcessId}
         state={transcriptState}
@@ -817,6 +844,7 @@ export function ChatDock({
         attachments={draftAttachments}
         busy={sendMessage.isPending || abortProcess.isPending || spawnProcess.isPending}
         canSend={hasActiveProcess || canStartProcess}
+        cost={conversationCost}
         disabled={inputDisabled}
         focusKey={newTaskFocusKey}
         value={composerDraft}

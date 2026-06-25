@@ -1,10 +1,17 @@
 import type { ComponentChildren } from "preact";
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
+import DOMPurify from "dompurify";
+import { parse as parseMarkdown } from "marked";
 import { SystemMessage } from "../../../components/ui/SystemMessage";
 import type {
   ChatTranscriptRow,
   ChatTranscriptRowRole,
 } from "../domain/transcript";
+import {
+  useVirtualTranscript,
+  type VirtualTranscriptItem,
+  type VirtualTranscriptSource,
+} from "../hooks/useVirtualTranscript";
 import { ChatMediaAttachment } from "./ChatMediaAttachment";
 
 export type ChatDockMessageRole = ChatTranscriptRowRole;
@@ -17,7 +24,10 @@ type ChatTranscriptProps = {
   emptyDescription?: string;
   errorMessage?: string;
   action?: ComponentChildren;
-  beforeMessages?: ComponentChildren;
+  conversationId?: string | null;
+  hasOlderMessages?: boolean;
+  loadingOlderMessages?: boolean;
+  onLoadOlder?: () => Promise<void> | void;
   processId?: string;
   onBranch?: (messageId: number) => void;
 };
@@ -34,6 +44,21 @@ type TranscriptActivityEntry =
 type TranscriptRenderItem =
   | { kind: "message"; id: string; index: number; message: ChatDockMessage }
   | { kind: "activityGroup"; entries: TranscriptActivityEntry[]; id: string; index: number };
+
+type TranscriptVirtualEntry = VirtualTranscriptSource & (
+  | { kind: "olderLoader" }
+  | { item: TranscriptRenderItem; kind: "item" }
+);
+
+type TranscriptViewport = {
+  height: number;
+  scrollTop: number;
+};
+
+const EMPTY_VIEWPORT: TranscriptViewport = {
+  height: 0,
+  scrollTop: 0,
+};
 
 function copyWithFallback(text: string): boolean {
   if (typeof document === "undefined" || !document.body) {
@@ -241,18 +266,68 @@ function assistantBlocks(text: string): AssistantBlock[] {
   return blocks.length > 0 ? blocks : [{ kind: "text", text }];
 }
 
+function renderMarkdownHtml(value: string): string {
+  try {
+    const html = parseMarkdown(value, { async: false, breaks: true, gfm: true });
+    return DOMPurify.sanitize(html);
+  } catch {
+    return DOMPurify.sanitize(value);
+  }
+}
+
+function MarkdownText({ text }: { text: string }) {
+  return (
+    <div
+      class="gsv-chat-rich-text"
+      dangerouslySetInnerHTML={{ __html: renderMarkdownHtml(text) }}
+    />
+  );
+}
+
+function CodeBlock({ code, language }: { code: string; language: string }) {
+  const [copied, setCopied] = useState(false);
+  const timerRef = useRef<ReturnType<typeof globalThis.setTimeout> | null>(null);
+
+  useEffect(() => () => {
+    if (timerRef.current !== null) {
+      globalThis.clearTimeout(timerRef.current);
+    }
+  }, []);
+
+  const copyCode = () => {
+    void copyText(code).then((ok) => {
+      if (!ok) {
+        return;
+      }
+      setCopied(true);
+      if (timerRef.current !== null) {
+        globalThis.clearTimeout(timerRef.current);
+      }
+      timerRef.current = globalThis.setTimeout(() => {
+        setCopied(false);
+        timerRef.current = null;
+      }, 1400);
+    });
+  };
+
+  return (
+    <figure class="gsv-chat-code-block">
+      <figcaption>
+        <span>{language}</span>
+        <button type="button" onClick={copyCode}>{copied ? "COPIED" : "COPY"}</button>
+      </figcaption>
+      <pre><code>{code}</code></pre>
+    </figure>
+  );
+}
+
 function AssistantText({ text }: { text: string }) {
   return (
     <div class="gsv-chat-assistant-rich">
       {assistantBlocks(text).map((block, index) => block.kind === "code" ? (
-        <figure class="gsv-chat-code-block" key={`code:${index}`}>
-          <figcaption>{block.language}</figcaption>
-          <pre><code>{block.code}</code></pre>
-        </figure>
+        <CodeBlock code={block.code} language={block.language} key={`code:${index}`} />
       ) : (
-        <div class="gsv-chat-rich-text" key={`text:${index}`}>
-          {block.text}
-        </div>
+        <MarkdownText text={block.text} key={`text:${index}`} />
       ))}
     </div>
   );
@@ -270,6 +345,18 @@ function formatToolDetailValue(value: unknown): string {
   } catch {
     return String(value);
   }
+}
+
+function isEmptyObjectText(value: string): boolean {
+  return value.trim() === "{}" || value.trim() === "[]";
+}
+
+function optionalString(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function truncateBlock(value: string, maxLength: number): string {
+  return value.length <= maxLength ? value : `${value.slice(0, maxLength).trimEnd()}\n...`;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -378,6 +465,154 @@ function toolDisplayName(message: ChatDockMessage): string {
     return message.toolSyscall?.trim() || "tool";
   }
   return name;
+}
+
+type ToolDetailSection = {
+  body: ComponentChildren;
+  label: string;
+};
+
+function textDetail(label: string, value: unknown, maxLength = 12000): ToolDetailSection | null {
+  const text = typeof value === "string" ? value : formatToolDetailValue(value);
+  if (!text.trim() || isEmptyObjectText(text)) {
+    return null;
+  }
+  return {
+    label,
+    body: <pre>{truncateBlock(text, maxLength)}</pre>,
+  };
+}
+
+function fileToolKind(syscall: string | null): "read" | "write" | "edit" | "delete" | null {
+  if (syscall === "fs.read") return "read";
+  if (syscall === "fs.write") return "write";
+  if (syscall === "fs.edit") return "edit";
+  if (syscall === "fs.delete") return "delete";
+  return null;
+}
+
+function readToolDetails(output: unknown): ToolDetailSection | null {
+  const record = asRecord(output);
+  const content = optionalString(record?.content);
+  if (content !== null) {
+    return content.trim()
+      ? textDetail("CONTENT", content)
+      : { label: "CONTENT", body: <p class="gsv-chat-tool-muted">Empty file.</p> };
+  }
+  const directories = Array.isArray(record?.directories) ? record.directories : [];
+  const files = Array.isArray(record?.files) ? record.files : [];
+  if (directories.length || files.length) {
+    const listing = [
+      ...directories.map((item) => `${String(item)}/`),
+      ...files.map((item) => String(item)),
+    ].join("\n");
+    return textDetail("LISTING", listing);
+  }
+  return textDetail("OUTPUT", output);
+}
+
+function shellToolDetails(output: unknown): ToolDetailSection[] {
+  const record = asRecord(output);
+  const stdout = optionalString(record?.stdout);
+  const stderr = optionalString(record?.stderr);
+  const sections = [
+    stdout !== null ? textDetail("STDOUT", stdout) : null,
+    stderr !== null ? textDetail("STDERR", stderr) : null,
+  ].filter((section): section is ToolDetailSection => section !== null);
+  return sections.length > 0
+    ? sections
+    : [textDetail("OUTPUT", output)].filter((section): section is ToolDetailSection => section !== null);
+}
+
+function codeModeToolDetails(output: unknown): ToolDetailSection[] {
+  const record = asRecord(output);
+  const logs = Array.isArray(record?.logs)
+    ? record.logs.map((item) => typeof item === "string" ? item : formatToolDetailValue(item)).filter(Boolean).join("\n")
+    : "";
+  const sections = [
+    textDetail("LOGS", logs),
+    textDetail("ERROR", record?.error),
+    textDetail("RESULT", record?.result ?? output),
+  ].filter((section): section is ToolDetailSection => section !== null);
+  return sections.length > 0 ? sections : [];
+}
+
+function searchToolDetails(output: unknown): ToolDetailSection | null {
+  const record = asRecord(output);
+  const matches = Array.isArray(record?.matches) ? record.matches : [];
+  if (matches.length > 0) {
+    return textDetail("MATCHES", matches);
+  }
+  return textDetail("OUTPUT", output);
+}
+
+function editToolDiff(args: Record<string, unknown> | null): ToolDetailSection | null {
+  const oldText = optionalString(args?.oldString);
+  const newText = optionalString(args?.newString);
+  if (oldText === null && newText === null) {
+    return null;
+  }
+  return {
+    label: "DIFF",
+    body: <ToolDiffPreview oldText={oldText ?? ""} newText={newText ?? ""} />,
+  };
+}
+
+function toolDetailSections(tool: ChatDockMessage): ToolDetailSection[] {
+  const syscall = toolSyscall(tool);
+  const kind = fileToolKind(syscall);
+  const args = asRecord(tool.toolArgs);
+  const sections: ToolDetailSection[] = [];
+
+  if (kind === "write") {
+    const content = optionalString(args?.content);
+    if (content !== null) {
+      const detail = content.trim()
+        ? textDetail("CONTENT", content)
+        : { label: "CONTENT", body: <p class="gsv-chat-tool-muted">Empty file.</p> };
+      if (detail) {
+        sections.push(detail);
+      }
+    }
+  } else if (kind === "edit") {
+    const diff = editToolDiff(args);
+    if (diff) sections.push(diff);
+  } else if (kind === "read" && tool.role === "toolResult") {
+    const detail = readToolDetails(tool.toolOutput);
+    if (detail) sections.push(detail);
+  } else if (syscall === "shell.exec" && tool.role === "toolResult") {
+    sections.push(...shellToolDetails(tool.toolOutput));
+  } else if ((syscall === "codemode.exec" || syscall === "codemode.run") && tool.role === "toolResult") {
+    sections.push(...codeModeToolDetails(tool.toolOutput));
+  } else if (syscall === "fs.search" && tool.role === "toolResult") {
+    const detail = searchToolDetails(tool.toolOutput);
+    if (detail) sections.push(detail);
+  }
+
+  if (tool.role === "tool" && sections.length === 0) {
+    const input = textDetail("INPUT", tool.toolArgs);
+    if (input) sections.push(input);
+  }
+  if (tool.role === "toolResult" && sections.length === 0) {
+    const output = textDetail("OUTPUT", tool.toolOutput ?? tool.text);
+    if (output) sections.push(output);
+  }
+  return sections;
+}
+
+function ToolDiffPreview({ oldText, newText }: { oldText: string; newText: string }) {
+  const oldLines = oldText.length > 0 ? oldText.split("\n") : [""];
+  const newLines = newText.length > 0 ? newText.split("\n") : [""];
+  return (
+    <pre class="gsv-chat-tool-diff">
+      {oldLines.map((line, index) => (
+        <span class="is-removed" key={`old:${index}`}>- {line}</span>
+      ))}
+      {newLines.map((line, index) => (
+        <span class="is-added" key={`new:${index}`}>+ {line}</span>
+      ))}
+    </pre>
+  );
 }
 
 function toolActivityTitle(message: ChatDockMessage): string {
@@ -586,6 +821,73 @@ function buildTranscriptRenderItems(messages: readonly ChatDockMessage[]): Trans
   }
 
   return items;
+}
+
+function estimateMessageHeight(message: ChatDockMessage): number {
+  const role = normalizedRole(message.role);
+  const textLength = message.text.length + (message.thinking?.join("\n\n").length ?? 0);
+  const mediaHeight = (message.media?.length ?? 0) * 92;
+  if (role === "user") {
+    return Math.max(72, 44 + Math.ceil(textLength / 48) * 22 + mediaHeight);
+  }
+  if (role === "assistant") {
+    return Math.max(86, 52 + Math.ceil(textLength / 72) * 23 + mediaHeight);
+  }
+  if (role === "system") {
+    return Math.max(64, 44 + Math.ceil(textLength / 80) * 18);
+  }
+  return Math.max(120, 92 + Math.ceil(textLength / 72) * 18);
+}
+
+function estimateRenderItemHeight(item: TranscriptRenderItem): number {
+  if (item.kind === "activityGroup") {
+    const status = activityGroupStatus(item.entries);
+    const expanded = status === "running";
+    return expanded ? Math.max(112, 76 + item.entries.length * 42) : 58;
+  }
+  return estimateMessageHeight(item.message);
+}
+
+function estimateKeyForRenderItem(item: TranscriptRenderItem): string {
+  if (item.kind === "activityGroup") {
+    const signature = item.entries
+      .map((entry) => `${entry.kind}:${entry.message.id}:${entry.message.status ?? ""}:${entry.message.text.length}:${reasoningText(entry.message).length}`)
+      .join("|");
+    return `${item.id}:${signature}`;
+  }
+  return `${item.id}:${item.message.status ?? ""}:${item.message.text.length}:${reasoningText(item.message).length}:${item.message.media?.length ?? 0}`;
+}
+
+function buildVirtualEntries({
+  hasOlderMessages,
+  loadingOlderMessages,
+  renderItems,
+}: {
+  hasOlderMessages: boolean;
+  loadingOlderMessages: boolean;
+  renderItems: TranscriptRenderItem[];
+}): TranscriptVirtualEntry[] {
+  const entries: TranscriptVirtualEntry[] = [];
+  if (hasOlderMessages || loadingOlderMessages) {
+    entries.push({
+      alwaysRender: true,
+      estimateHeight: 30,
+      estimateKey: `older:${loadingOlderMessages}`,
+      key: "older-loader",
+      kind: "olderLoader",
+    });
+  }
+  for (const item of renderItems) {
+    entries.push({
+      alwaysRender: item.kind === "activityGroup" && activityGroupStatus(item.entries) === "running",
+      estimateHeight: estimateRenderItemHeight(item),
+      estimateKey: estimateKeyForRenderItem(item),
+      item,
+      key: item.id,
+      kind: "item",
+    });
+  }
+  return entries;
 }
 
 function summarizeSystemText(text: string): string {
@@ -860,9 +1162,8 @@ function ReasoningEntry({ message }: { message: ChatDockMessage }) {
 function ToolEntry({ tool }: { tool: ChatDockMessage }) {
   const [expanded, setExpanded] = useState(false);
   const tone = toolEntryTone(tool);
-  const argsText = formatToolDetailValue(tool.toolArgs);
-  const outputText = formatToolDetailValue(tool.toolOutput);
-  const hasDetails = Boolean(argsText.trim() || outputText.trim());
+  const details = toolDetailSections(tool);
+  const hasDetails = details.length > 0;
   return (
     <div class={`gsv-chat-tool-entry is-${tone}`}>
       <span class="gsv-chat-tool-entry-status" aria-hidden="true" />
@@ -878,18 +1179,12 @@ function ToolEntry({ tool }: { tool: ChatDockMessage }) {
       />
       {hasDetails && expanded ? (
         <div class="gsv-chat-tool-entry-detail-body">
-          {argsText.trim() ? (
-            <>
-              <small>INPUT</small>
-              <pre>{argsText}</pre>
-            </>
-          ) : null}
-          {outputText.trim() ? (
-            <>
-              <small>OUTPUT</small>
-              <pre>{outputText}</pre>
-            </>
-          ) : null}
+          {details.map((section, index) => (
+            <div class="gsv-chat-tool-detail-section" key={`${section.label}:${index}`}>
+              <small>{section.label}</small>
+              {section.body}
+            </div>
+          ))}
         </div>
       ) : null}
     </div>
@@ -1101,6 +1396,72 @@ function ProcessMessage({
   );
 }
 
+function VirtualTranscriptRow({
+  children,
+  item,
+  setItemNode,
+}: {
+  children: ComponentChildren;
+  item: VirtualTranscriptItem<TranscriptVirtualEntry>;
+  setItemNode(key: string, estimateKey: string, node: HTMLElement | null): void;
+}) {
+  const setNode = useCallback((node: HTMLElement | null) => {
+    setItemNode(item.entry.key, item.entry.estimateKey ?? String(Math.round(item.entry.estimateHeight)), node);
+  }, [item.entry, setItemNode]);
+  return (
+    <div
+      class="gsv-chat-transcript-virtual-item"
+      ref={setNode}
+      style={{ transform: `translateY(${item.top}px)` }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function TranscriptRenderItemView({
+  copyState,
+  item,
+  onBranch,
+  onCopy,
+  processId,
+}: {
+  copyState: CopyState | null;
+  item: TranscriptRenderItem;
+  onBranch?: (messageId: number) => void;
+  onCopy: (message: ChatDockMessage, messageId: string) => void;
+  processId: string;
+}) {
+  if (item.kind === "activityGroup") {
+    return <RunActivityCard entries={item.entries} />;
+  }
+
+  const message = item.message;
+  const messageRole = normalizedRole(message.role);
+  const messageId = `${messageRole}:${message.id}:${item.index}`;
+  const copied = copyState?.id === messageId && copyState.status === "copied";
+  const failed = copyState?.id === messageId && copyState.status === "failed";
+
+  return messageRole === "user" ? (
+    <UserMessage
+      copied={copied}
+      failed={failed}
+      message={message}
+      processId={processId}
+      onCopy={() => onCopy(message, messageId)}
+      onBranch={onBranch}
+    />
+  ) : (
+    <ProcessMessage
+      copied={copied}
+      failed={failed}
+      message={message}
+      processId={processId}
+      onCopy={() => onCopy(message, messageId)}
+    />
+  );
+}
+
 function TranscriptState({
   action,
   description,
@@ -1123,12 +1484,15 @@ function TranscriptState({
 
 export function ChatTranscript({
   action,
-  beforeMessages,
   emptyDescription = "Process history will appear here when a conversation is available.",
   emptyTitle = "No active conversation",
   errorMessage = "Process history could not be loaded.",
+  conversationId = null,
+  hasOlderMessages = false,
+  loadingOlderMessages = false,
   messages,
   onBranch,
+  onLoadOlder,
   processId = "",
   state = "ready",
 }: ChatTranscriptProps) {
@@ -1136,14 +1500,62 @@ export function ChatTranscript({
   const copyResetTimer = useRef<ReturnType<typeof globalThis.setTimeout> | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const stickToBottomRef = useRef(true);
+  const scrollAnchorRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
+  const lastTranscriptIdentityRef = useRef("");
   const [showJumpLatest, setShowJumpLatest] = useState(false);
-  const renderItems = buildTranscriptRenderItems(messages);
+  const [viewport, setViewport] = useState<TranscriptViewport>(EMPTY_VIEWPORT);
+  const renderItems = useMemo(() => buildTranscriptRenderItems(messages), [messages]);
+  const virtualEntries = useMemo(() => buildVirtualEntries({
+    hasOlderMessages,
+    loadingOlderMessages,
+    renderItems,
+  }), [hasOlderMessages, loadingOlderMessages, renderItems]);
+  const virtual = useVirtualTranscript({
+    entries: virtualEntries,
+    scrollTop: viewport.scrollTop,
+    viewportHeight: viewport.height,
+  });
 
   useEffect(() => () => {
     if (copyResetTimer.current !== null) {
       globalThis.clearTimeout(copyResetTimer.current);
     }
   }, []);
+
+  const updateViewportForNode = useCallback((node: HTMLDivElement) => {
+    setViewport((current) => {
+      const next = {
+        height: node.clientHeight,
+        scrollTop: node.scrollTop,
+      };
+      return current.height === next.height && current.scrollTop === next.scrollTop
+        ? current
+        : next;
+    });
+  }, []);
+
+  const setTranscriptRef = useCallback((node: HTMLDivElement | null) => {
+    transcriptRef.current = node;
+    if (node) {
+      updateViewportForNode(node);
+    }
+  }, [updateViewportForNode]);
+
+  useLayoutEffect(() => {
+    const node = transcriptRef.current;
+    if (!node) {
+      return undefined;
+    }
+    const update = () => updateViewportForNode(node);
+    update();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", update);
+      return () => window.removeEventListener("resize", update);
+    }
+    const observer = new ResizeObserver(update);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [updateViewportForNode]);
 
   const resetCopyState = (messageId: string) => {
     if (copyResetTimer.current !== null) {
@@ -1163,7 +1575,7 @@ export function ChatTranscript({
     });
   };
 
-  const scrollToLatest = () => {
+  const scrollToLatest = useCallback(() => {
     const node = transcriptRef.current;
     if (!node) {
       return;
@@ -1171,27 +1583,92 @@ export function ChatTranscript({
     node.scrollTop = node.scrollHeight;
     stickToBottomRef.current = true;
     setShowJumpLatest(false);
-  };
+    updateViewportForNode(node);
+  }, [updateViewportForNode]);
 
   const handleScroll = () => {
     const node = transcriptRef.current;
     if (!node) {
       return;
     }
+    setViewport((current) => current.scrollTop === node.scrollTop
+      ? current
+      : { ...current, scrollTop: node.scrollTop });
     const distanceFromBottom = node.scrollHeight - node.scrollTop - node.clientHeight;
     const nearBottom = distanceFromBottom < 96;
     stickToBottomRef.current = nearBottom;
     setShowJumpLatest(!nearBottom);
+    if (hasOlderMessages && !loadingOlderMessages && node.scrollTop <= 96 && onLoadOlder) {
+      loadOlderWithAnchor();
+    }
   };
 
-  useEffect(() => {
-    if (stickToBottomRef.current) {
-      scrollToLatest();
+  const loadOlderWithAnchor = () => {
+    const node = transcriptRef.current;
+    if (!node || !hasOlderMessages || loadingOlderMessages || !onLoadOlder) {
+      return;
     }
-  }, [messages]);
+    stickToBottomRef.current = false;
+    scrollAnchorRef.current = {
+      scrollHeight: node.scrollHeight,
+      scrollTop: node.scrollTop,
+    };
+    void Promise.resolve(onLoadOlder()).catch(() => {});
+  };
+
+  const transcriptIdentity = `${processId}:${conversationId ?? ""}`;
+  const tailMessage = messages[messages.length - 1];
+  const tailKey = `${transcriptIdentity}:${messages.length}:${tailMessage?.id ?? "empty"}`;
+
+  useLayoutEffect(() => {
+    const anchor = scrollAnchorRef.current;
+    const node = transcriptRef.current;
+    if (!node) {
+      return undefined;
+    }
+
+    const previousIdentity = lastTranscriptIdentityRef.current;
+    const identityChanged = previousIdentity !== transcriptIdentity;
+    lastTranscriptIdentityRef.current = transcriptIdentity;
+
+    if (identityChanged || messages.length === 0) {
+      stickToBottomRef.current = true;
+    }
+
+    if (anchor) {
+      const frame = requestAnimationFrame(() => {
+        const anchoredNode = transcriptRef.current;
+        scrollAnchorRef.current = null;
+        if (!anchoredNode) {
+          return;
+        }
+        anchoredNode.scrollTop = anchoredNode.scrollHeight - anchor.scrollHeight + anchor.scrollTop;
+        updateViewportForNode(anchoredNode);
+      });
+      return () => cancelAnimationFrame(frame);
+    }
+
+    if (!stickToBottomRef.current || messages.length === 0) {
+      return undefined;
+    }
+
+    node.scrollTop = node.scrollHeight;
+    setShowJumpLatest(false);
+    updateViewportForNode(node);
+    const frame = requestAnimationFrame(() => {
+      const latestNode = transcriptRef.current;
+      if (!latestNode || !stickToBottomRef.current) {
+        return;
+      }
+      latestNode.scrollTop = latestNode.scrollHeight;
+      setShowJumpLatest(false);
+      updateViewportForNode(latestNode);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [messages.length, tailKey, transcriptIdentity, updateViewportForNode, virtual.totalHeight]);
 
   return (
-    <div class="gsv-chat-transcript" aria-live="polite" ref={transcriptRef} onScroll={handleScroll}>
+    <div class="gsv-chat-transcript" aria-live="polite" ref={setTranscriptRef} onScroll={handleScroll}>
       {state === "loading" ? (
         <TranscriptState
           title="Loading process history"
@@ -1212,41 +1689,34 @@ export function ChatTranscript({
           tone="empty"
         />
       ) : (
-        <>
-          {beforeMessages}
-          {renderItems.map((item) => {
-            if (item.kind === "activityGroup") {
-              return <RunActivityCard key={item.id} entries={item.entries} />;
-            }
-
-            const message = item.message;
-            const messageRole = normalizedRole(message.role);
-            const messageId = `${messageRole}:${message.id}:${item.index}`;
-            const copied = copyState?.id === messageId && copyState.status === "copied";
-            const failed = copyState?.id === messageId && copyState.status === "failed";
-
-            return messageRole === "user" ? (
-              <UserMessage
-                key={messageId}
-                copied={copied}
-                failed={failed}
-                message={message}
-                processId={processId}
-                onCopy={() => copyMessage(message, messageId)}
-                onBranch={onBranch}
-              />
-            ) : (
-              <ProcessMessage
-                key={messageId}
-                copied={copied}
-                failed={failed}
-                message={message}
-                processId={processId}
-                onCopy={() => copyMessage(message, messageId)}
-              />
-            );
-          })}
-        </>
+        <div class="gsv-chat-transcript-virtual" style={{ height: `${virtual.totalHeight}px` }}>
+          {virtual.items.map((item) => (
+            <VirtualTranscriptRow
+              item={item}
+              key={item.entry.key}
+              setItemNode={virtual.setItemNode}
+            >
+              {item.entry.kind === "olderLoader" ? (
+                <button
+                  type="button"
+                  class="gsv-chat-load-older"
+                  disabled={loadingOlderMessages}
+                  onClick={loadOlderWithAnchor}
+                >
+                  {loadingOlderMessages ? "LOADING" : "LOAD OLDER"}
+                </button>
+              ) : (
+                <TranscriptRenderItemView
+                  copyState={copyState}
+                  item={item.entry.item}
+                  onBranch={onBranch}
+                  onCopy={copyMessage}
+                  processId={processId}
+                />
+              )}
+            </VirtualTranscriptRow>
+          ))}
+        </div>
       )}
       {showJumpLatest ? (
         <button type="button" class="gsv-chat-jump-latest" onClick={scrollToLatest}>

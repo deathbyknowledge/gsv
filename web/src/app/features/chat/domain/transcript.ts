@@ -79,6 +79,7 @@ type ToolResultHistory = {
 };
 
 const DEFAULT_CONVERSATION_ID = "default";
+const OPTIMISTIC_USER_MATCH_WINDOW_MS = 5 * 60 * 1000;
 
 export function emptyChatRuntimeState(processId = "", conversationId: string | null = null): ChatRuntimeState {
   void processId;
@@ -329,6 +330,8 @@ export function transcriptRowsFromHistory(history: ChatHistory): ChatTranscriptR
           id: `tool:${toolCall.callId}`,
           role: "tool",
           text: formatToolInput(toolCall.args),
+          messageId: message.id,
+          origin: message.origin,
           timestamp: message.timestamp,
           time: formatTranscriptTime(message.timestamp),
           runId: message.runId ?? undefined,
@@ -350,6 +353,8 @@ export function transcriptRowsFromHistory(history: ChatHistory): ChatTranscriptR
           id: `tool:${parsed.callId}`,
           role: "toolResult" as const,
           text: formatToolOutput(parsed.output, parsed.error, message.text),
+          messageId: message.id,
+          origin: message.origin,
           timestamp: message.timestamp,
           time: formatTranscriptTime(message.timestamp),
           runId: message.runId ?? undefined,
@@ -396,7 +401,21 @@ export function transcriptRowsFromHistory(history: ChatHistory): ChatTranscriptR
     });
   });
 
-  return rows;
+  return rows.sort(compareTranscriptRows);
+}
+
+function compareTranscriptRows(left: ChatTranscriptRow, right: ChatTranscriptRow): number {
+  return transcriptRowSortValue(left) - transcriptRowSortValue(right);
+}
+
+function transcriptRowSortValue(row: ChatTranscriptRow): number {
+  if (typeof row.messageId === "number") {
+    return row.messageId * 1000;
+  }
+  if (typeof row.timestamp === "number" && Number.isFinite(row.timestamp)) {
+    return row.timestamp;
+  }
+  return Number.MAX_SAFE_INTEGER;
 }
 
 export function formatTranscriptTime(timestamp: number | null | undefined): string {
@@ -487,9 +506,47 @@ function appendUniqueMessageRow(rows: ChatTranscriptRow[], row: ChatTranscriptRo
     return rows;
   }
   const withoutMatchingOptimistic = row.role === "user"
-    ? rows.filter((candidate) => !(candidate.id.startsWith("optimistic:user:") && candidate.text === row.text))
+    ? dropOneMatchingOptimisticUserRow(rows, row)
     : rows;
   return dropEmptyTransientRows(withoutMatchingOptimistic, row.runId).concat(row);
+}
+
+function dropOneMatchingOptimisticUserRow(
+  rows: ChatTranscriptRow[],
+  row: ChatTranscriptRow,
+): ChatTranscriptRow[] {
+  let dropped = false;
+  return rows.filter((candidate) => {
+    if (dropped || !isMatchingOptimisticUserRow(candidate, row)) {
+      return true;
+    }
+    dropped = true;
+    return false;
+  });
+}
+
+function isMatchingOptimisticUserRow(candidate: ChatTranscriptRow, row: ChatTranscriptRow): boolean {
+  return candidate.id.startsWith("optimistic:user:")
+    && candidate.role === "user"
+    && candidate.text === row.text
+    && mediaCount(candidate) === mediaCount(row)
+    && timestampCloseEnough(candidate.timestamp, row.timestamp);
+}
+
+function mediaCount(row: ChatTranscriptRow): number {
+  return Array.isArray(row.media) ? row.media.length : 0;
+}
+
+function timestampCloseEnough(left: number | null | undefined, right: number | null | undefined): boolean {
+  if (
+    typeof left !== "number"
+    || !Number.isFinite(left)
+    || typeof right !== "number"
+    || !Number.isFinite(right)
+  ) {
+    return true;
+  }
+  return Math.abs(left - right) <= OPTIMISTIC_USER_MATCH_WINDOW_MS;
 }
 
 function applyAssistantOutput(

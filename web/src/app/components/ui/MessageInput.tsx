@@ -2,6 +2,7 @@ import type { ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { JSX } from "preact";
 import { Icon } from "./Icon";
+import { Tooltip } from "./Tooltip";
 import "./MessageInput.css";
 
 export type MessageInputAttachment = {
@@ -111,7 +112,6 @@ export function MessageInput({
 }: MessageInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [internalValue, setInternalValue] = useState(defaultValue);
-  const [costTip, setCostTip] = useState(false);
   const draft = value ?? internalValue;
   const draftText = draft.trim();
   const hasAttachment = attachments.length > 0;
@@ -144,13 +144,6 @@ export function MessageInput({
     onChange?.(nextValue);
   };
 
-  const toggleCost = (e: Event) => {
-    e.stopPropagation();
-    setCostTip((c) => !c);
-  };
-  const stop = (e: Event) => {
-    e.stopPropagation();
-  };
   const handleInput = (event: JSX.TargetedEvent<HTMLTextAreaElement>) => {
     setDraft(event.currentTarget.value);
   };
@@ -261,20 +254,14 @@ export function MessageInput({
       </form>
       {user || cost ? (
         <div class="gsv-mi-meta">
-          <span class="gsv-mi-user">{user}</span>
           {cost ? (
             <span class="gsv-mi-cost-wrap">
-              <button type="button" class="gsv-mi-cost" onClick={toggleCost}>
-                {cost}
-              </button>
-              {costTip ? (
-                <div class="gsv-mi-tip" onClick={stop}>
-                  <div class="gsv-mi-tip-title">CURRENT SESSION COST</div>
-                  <div class="gsv-mi-tip-link">learn more</div>
-                </div>
-              ) : null}
+              <Tooltip text={cost} position="top">
+                <span class="gsv-mi-cost">$</span>
+              </Tooltip>
             </span>
           ) : null}
+          <span class="gsv-mi-user">{user}</span>
         </div>
       ) : null}
     </div>
