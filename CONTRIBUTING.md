@@ -22,4 +22,4 @@ For anything beyond a small fix, open an issue first so we can align before you 
 
 ## Security
 
-Don't open public issues for vulnerabilities — email [security@gsv.space](mailto:security@gsv.space) instead.
+Don't open public issues for vulnerabilities — email [security@gsv.space](mailto:security@humansandmachin.es) instead.
