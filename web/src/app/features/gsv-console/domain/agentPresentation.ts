@@ -1,7 +1,7 @@
 import type { ConsoleAccount, ConsoleAccountRelation } from "./consoleModels";
 
 const ACCOUNT_RELATION_LABEL: Record<ConsoleAccountRelation, string> = {
-  self: "OPERATOR",
+  self: "HUMAN (YOU)",
   "personal-agent": "PERSONAL AGENT",
   agent: "AGENT",
   human: "HUMAN",

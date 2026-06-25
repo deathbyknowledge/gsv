@@ -21,7 +21,6 @@ import {
 } from "../domain/consoleAgentBehavior";
 import {
   agentImageSrcForIndex,
-  isConsoleAgentAccount,
   labelForConsoleAccountRelation,
   sortedConsoleAccounts,
 } from "../domain/agentPresentation";
@@ -91,12 +90,12 @@ function CrewRoster({
   onCreateAgent?: () => void;
 }) {
   const processes = processResource.data ?? [];
-  const sortedAccounts = sortedConsoleAccounts(accounts).filter(isConsoleAgentAccount);
+  const sortedAccounts = sortedConsoleAccounts(accounts);
   const modelLabels = modelLabelsForConfig(config);
   const cards = sortedAccounts.map((account, index) => buildCrewCard(account, processes, index, config, modelLabels));
   const running = cards.filter((card) => card.processes.some(isRunningProcess)).length;
   const runnable = cards.filter((card) => card.account.runnable).length;
-  const agents = cards.length;
+  const accountCount = cards.length;
   const telemetryLabel = processResource.isRefreshing
     ? "REFRESHING"
     : processResource.isError
@@ -110,7 +109,7 @@ function CrewRoster({
       <div class="gsv-console-crew-panel">
         <SectionHeader
           title="CREW"
-          meta={`${agents} AGENTS / ${runnable} RUNNABLE / ${running} RUNNING / ${telemetryLabel}`}
+          meta={`${accountCount} ACCOUNTS / ${runnable} RUNNABLE / ${running} RUNNING / ${telemetryLabel}`}
           divider
         />
         <div class="gsv-console-crew-grid">
