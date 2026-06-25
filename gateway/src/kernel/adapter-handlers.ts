@@ -353,7 +353,7 @@ export async function handleAdapterInbound(
       ok: true,
       challenge: {
         code: challenge.code,
-        prompt: `Link your account by running: gsv auth link ${challenge.code}`,
+        prompt: `UNKNOWN USER. Who are you? 🧐.\n\nIdentify yourself in your GSV by using this access code: ${challenge.code}`,
         expiresAt: challenge.expiresAt,
       },
     };
