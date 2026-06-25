@@ -55,7 +55,7 @@ export function Select(props: SelectProps) {
 
   const fieldId = useId();
   const [open, setOpen] = useState(false);
-  const [idxState, setIdxState] = useState<number | undefined>(undefined);
+  const [internalIdx, setInternalIdx] = useState(props.value ?? 0);
   const [highlight, setHighlight] = useState(0);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -72,7 +72,8 @@ export function Select(props: SelectProps) {
   const arr = Array.isArray(options) ? options.filter((x) => x != null) : null;
   const opts = arr && arr.length ? arr : [o0, o1, o2];
 
-  const rawIdx = idxState === undefined ? props.value ?? 0 : idxState;
+  const controlled = props.value !== undefined;
+  const rawIdx = controlled ? props.value ?? 0 : internalIdx;
   const idx = Math.max(0, Math.min(Number(rawIdx) || 0, opts.length - 1));
   const isOpen = open && !disabled;
 
@@ -125,7 +126,9 @@ export function Select(props: SelectProps) {
   };
 
   const pick = (i: number) => {
-    setIdxState(i);
+    if (!controlled) {
+      setInternalIdx(i);
+    }
     setOpen(false);
     onChange?.(i);
     triggerRef.current?.focus();
