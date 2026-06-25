@@ -5,33 +5,10 @@ import type { ChatTranscriptRow } from "../domain/transcript";
 
 type UseChatReplySpeechArgs = {
   conversationId?: string | null;
+  hydrated?: boolean;
   processId: string;
   rows: readonly ChatTranscriptRow[];
 };
-
-const CHAT_SPEAK_REPLIES_STORAGE_KEY = "gsv.chat.speakReplies";
-
-function loadSpeakRepliesPreference(): boolean {
-  if (typeof window === "undefined") {
-    return false;
-  }
-  try {
-    return window.localStorage.getItem(CHAT_SPEAK_REPLIES_STORAGE_KEY) === "true";
-  } catch {
-    return false;
-  }
-}
-
-function saveSpeakRepliesPreference(enabled: boolean): void {
-  if (typeof window === "undefined") {
-    return;
-  }
-  try {
-    window.localStorage.setItem(CHAT_SPEAK_REPLIES_STORAGE_KEY, enabled ? "true" : "false");
-  } catch {
-    // Local storage can be unavailable in private or restricted browser contexts.
-  }
-}
 
 function latestSpeakableAssistantRow(
   rows: readonly ChatTranscriptRow[],
@@ -68,15 +45,17 @@ function speechKey(
 
 export function useChatReplySpeech({
   conversationId,
+  hydrated = true,
   processId,
   rows,
 }: UseChatReplySpeechArgs) {
   const { client } = useGateway();
-  const [speakReplies, setSpeakRepliesState] = useState(loadSpeakRepliesPreference);
+  const [speakReplies, setSpeakRepliesState] = useState(false);
   const [speechStatus, setSpeechStatus] = useState(() => speakReplies ? "Speak replies on" : "Speech off");
   const speakRepliesRef = useRef(speakReplies);
   const destroyedRef = useRef(false);
   const lastSpokenKeyRef = useRef("");
+  const needsHistoryHydrationRef = useRef(true);
 
   useEffect(() => {
     speakRepliesRef.current = speakReplies;
@@ -99,6 +78,7 @@ export function useChatReplySpeech({
 
   useEffect(() => {
     lastSpokenKeyRef.current = "";
+    needsHistoryHydrationRef.current = true;
     speechOutput.cancel(speakRepliesRef.current ? "Speak replies on" : "Speech off");
   }, [conversationId, processId, speechOutput]);
 
@@ -113,9 +93,20 @@ export function useChatReplySpeech({
   useEffect(() => {
     const row = latestSpeakableAssistantRow(rows);
     if (!row || !processId) {
+      if (hydrated) {
+        needsHistoryHydrationRef.current = false;
+      }
       return;
     }
     const key = speechKey(row, processId, conversationId);
+    if (needsHistoryHydrationRef.current) {
+      if (!hydrated) {
+        return;
+      }
+      lastSpokenKeyRef.current = key;
+      needsHistoryHydrationRef.current = false;
+      return;
+    }
     if (!speakReplies) {
       lastSpokenKeyRef.current = key;
       return;
@@ -125,11 +116,10 @@ export function useChatReplySpeech({
     }
     lastSpokenKeyRef.current = key;
     void speechOutput.speakReply(row.text);
-  }, [conversationId, processId, rows, speakReplies, speechOutput]);
+  }, [conversationId, hydrated, processId, rows, speakReplies, speechOutput]);
 
   const setSpeakReplies = useCallback((enabled: boolean) => {
     setSpeakRepliesState(enabled);
-    saveSpeakRepliesPreference(enabled);
     if (!enabled) {
       speechOutput.cancel("Speech off");
       return;

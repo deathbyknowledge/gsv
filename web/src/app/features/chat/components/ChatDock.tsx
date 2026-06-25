@@ -290,6 +290,7 @@ export function ChatDock({
   const selectedConversationId = activeConversationId ?? runtime.conversationId ?? "default";
   const replySpeech = useChatReplySpeech({
     conversationId: selectedConversationId,
+    hydrated: !processHistory.isLoading,
     processId: activeProcessId,
     rows: runtime.rows,
   });
