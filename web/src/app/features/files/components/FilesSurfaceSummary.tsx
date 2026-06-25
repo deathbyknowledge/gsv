@@ -4,7 +4,6 @@ import { AddAction } from "../../../components/ui/AddAction";
 import { Breadcrumbs } from "../../../components/ui/Breadcrumbs";
 import { Button } from "../../../components/ui/Button";
 import { ConfirmModal } from "../../../components/ui/ConfirmModal";
-import { Icon } from "../../../components/ui/Icon";
 import { IconButton } from "../../../components/ui/IconButton";
 import { ListRow } from "../../../components/ui/ListRow";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
@@ -284,7 +283,6 @@ function DirectoryBrowser({
       <div class="files-list-summary">
         <Tag tone="accent" label={`${directoryCount} DIR`} boxed />
         <Tag tone="idle" label={`${fileCount} FILE`} boxed />
-        <span>{directory.path}</span>
       </div>
       {entries.length === 0 ? (
         <FilesStateMessage
@@ -687,7 +685,7 @@ function FileTabView({
   onReset,
   onSave,
   onRefresh,
-  onOpenParent,
+  onNavigate,
   onRequestDelete,
 }: {
   connected: boolean;
@@ -704,7 +702,7 @@ function FileTabView({
   onReset: () => void;
   onSave: () => void;
   onRefresh: () => void;
-  onOpenParent: () => void;
+  onNavigate: (path: string) => void;
   onRequestDelete: () => void;
 }) {
   const file = isFilePayload(payload) ? payload : null;
@@ -722,6 +720,14 @@ function FileTabView({
         ? "SAVED"
         : "READ ONLY";
 
+  // Single path UI for the file view: the same Breadcrumbs trail as the browser,
+  // ending on the file name (static). Ancestors + the back arrow navigate to the
+  // owning folder, so no separate path string or SHOW FOLDER button is needed.
+  const crumbs = buildPathCrumbs(tab.path).map((crumb, index, list) => ({
+    label: crumb.label,
+    onClick: index === list.length - 1 ? undefined : () => onNavigate(crumb.path),
+  }));
+
   return (
     <section class="files-tab-panel" aria-label="File editor">
       <SectionHeader
@@ -733,12 +739,13 @@ function FileTabView({
         divider
       />
       <div class="files-editor-toolbar">
-        <span class="files-editor-path">
-          <Icon name={FILE_ICON} size={16} />
-          <span>{tab.path}</span>
-        </span>
+        <Breadcrumbs
+          items={crumbs}
+          onBack={() => onNavigate(pathParent(tab.path))}
+          size="medium"
+          maxVisible={3}
+        />
         <span class="files-toolbar-actions">
-          <Button variant="secondary" label="SHOW FOLDER" disabled={!target} onClick={onOpenParent} />
           <Button variant="dangerGhost" label={deletePending ? "DELETING" : "DELETE"} disabled={!target?.online || deletePending} onClick={onRequestDelete} />
         </span>
       </div>
@@ -772,7 +779,6 @@ function FileTabView({
         <div class="files-file-view">
           <div class="files-file-meta">
             <Tag tone="idle" label="FILE" boxed />
-            <span>{file.path}</span>
             {formatFileStats(file) ? <small>{formatFileStats(file)}</small> : null}
           </div>
           {images.length > 0 ? (
@@ -1286,8 +1292,8 @@ export function FilesSurfaceSummary() {
                   onRefresh={() => {
                     void readQuery.refetch();
                   }}
-                  onOpenParent={() => {
-                    const browserTab = createBrowserTab(activeTab.targetId, pathParent(activeTab.path));
+                  onNavigate={(path) => {
+                    const browserTab = createBrowserTab(activeTab.targetId, path);
                     setTabs((currentTabs) => currentTabs.some((tab) => tab.id === browserTab.id) ? currentTabs.map((tab) => (
                       tab.id === browserTab.id && tab.kind === "browser"
                         ? { ...tab, path: browserTab.path, commandInput: "", commandInputKey: tab.commandInputKey + 1, searchQuery: "" }
@@ -1311,9 +1317,6 @@ export function FilesSurfaceSummary() {
                   message={`Delete ${deleteRequest.path}?`}
                   note="This file is permanently removed from the target — it cannot be recovered."
                   confirmLabel="DELETE"
-                  confirmPhrase={deleteRequest.path}
-                  confirmInputLabel="TYPE PATH TO CONFIRM"
-                  confirmInputPlaceholder={deleteRequest.path}
                   onCancel={() => setDeleteRequest(null)}
                   onConfirm={confirmDelete}
                 />

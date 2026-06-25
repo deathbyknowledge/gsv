@@ -217,16 +217,6 @@
   padding: 10px 14px;
 }
 
-.files-list-summary > span:last-child {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text-muted);
-  font-size: 10px;
-  letter-spacing: 0;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .files-object-row {
   border-bottom: 1px solid var(--rule-inner) !important;
 }
@@ -509,11 +499,6 @@
   padding-bottom: 2px;
 }
 
-.files-file-meta > span {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
 .files-file-meta small {
   color: var(--text-muted);
   font-size: 10px;
@@ -545,28 +530,6 @@
   padding: 14px;
   white-space: pre-wrap;
   word-break: break-word;
-}
-
-.files-editor-path {
-  min-width: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 9px;
-  color: var(--accent);
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.files-editor-path svg {
-  flex: none;
-}
-
-.files-editor-path span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .files-image-strip {
