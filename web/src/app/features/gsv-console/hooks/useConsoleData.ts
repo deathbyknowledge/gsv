@@ -19,6 +19,7 @@ import {
   loadConsoleTargets,
   refreshConsoleMcpServer,
   removeConsoleMcpServer,
+  saveConsoleConfig,
   saveConsoleAgentBehavior,
   saveConsoleAgentContext,
   type AddConsoleMcpServerInput,
@@ -32,6 +33,8 @@ import {
   type LoadConsoleOverviewOptions,
   type SaveConsoleAgentBehaviorInput,
   type SaveConsoleAgentBehaviorResult,
+  type SaveConsoleConfigInput,
+  type SaveConsoleConfigResult,
   type SaveConsoleAgentContextInput,
   type SaveConsoleAgentContextResult,
 } from "../backend/consoleService";
@@ -366,6 +369,21 @@ export function useSaveConsoleAgentBehavior() {
 
   return useMutation<SaveConsoleAgentBehaviorResult, Error, SaveConsoleAgentBehaviorInput>({
     mutationFn: (input) => saveConsoleAgentBehavior(client, input),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: consoleConfigQueryKey }),
+        queryClient.invalidateQueries({ queryKey: consoleOverviewQueryKey }),
+      ]);
+    },
+  });
+}
+
+export function useSaveConsoleConfig() {
+  const { client } = useGateway();
+  const queryClient = useQueryClient();
+
+  return useMutation<SaveConsoleConfigResult, Error, SaveConsoleConfigInput>({
+    mutationFn: (input) => saveConsoleConfig(client, input),
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: consoleConfigQueryKey }),

@@ -74,6 +74,17 @@ export type SaveConsoleAgentBehaviorResult = {
   ok: true;
 };
 
+export type SaveConsoleConfigInput = {
+  key: string;
+  value: string;
+};
+
+export type SaveConsoleConfigResult = {
+  ok: true;
+  key: string;
+  value: string;
+};
+
 export type CreateMachineNodeTokenInput = {
   deviceId: string;
   label?: string;
@@ -145,6 +156,20 @@ export async function loadConsoleAccounts(client: Pick<GSVClient, "account">): P
 
 export async function loadConsoleConfig(client: ConsoleClient): Promise<ConsoleConfigEntry[]> {
   return normalizeConfigPayload(await client.sys.config.get({}));
+}
+
+export async function saveConsoleConfig(
+  client: Pick<GSVClient, "sys">,
+  input: SaveConsoleConfigInput,
+): Promise<SaveConsoleConfigResult> {
+  const key = input.key.trim();
+  if (!key) {
+    throw new Error("config key is required");
+  }
+
+  const value = String(input.value ?? "");
+  await client.sys.config.set({ key, value });
+  return { ok: true, key, value };
 }
 
 export async function loadConsoleAgentContext(

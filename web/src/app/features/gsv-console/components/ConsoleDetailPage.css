@@ -109,6 +109,10 @@
   gap: 24px;
 }
 
+.gsv-console-detail-custom {
+  min-width: 0;
+}
+
 .gsv-console-detail-section {
   min-width: 0;
   border: 1px solid var(--border);

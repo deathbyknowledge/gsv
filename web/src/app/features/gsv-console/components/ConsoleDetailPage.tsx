@@ -1,3 +1,4 @@
+import type { ComponentChildren } from "preact";
 import { Button } from "../../../components/ui/Button";
 import { Icon } from "../../../components/ui/Icon";
 import { ListRow, type ListRowStatus } from "../../../components/ui/ListRow";
@@ -22,6 +23,7 @@ export type ConsoleDetailSection = {
 
 type ConsoleDetailPageProps = {
   blurb: string;
+  children?: ComponentChildren;
   icon: string;
   onBack: () => void;
   onPrimary?: () => void;
@@ -37,6 +39,7 @@ type ConsoleDetailPageProps = {
 
 export function ConsoleDetailPage({
   blurb,
+  children,
   icon,
   onBack,
   onPrimary,
@@ -70,7 +73,9 @@ export function ConsoleDetailPage({
 
         <p class="gsv-console-detail-blurb">{blurb}</p>
 
-        {hasSections ? (
+        {children ? (
+          <div class="gsv-console-detail-custom">{children}</div>
+        ) : hasSections ? (
           <div class="gsv-console-detail-sections">
             {sections.map((section) => (
               section.rows.length > 0 ? (

@@ -4,6 +4,7 @@ import {
   createConsoleAgent,
   loadConsoleAdapterAccounts,
   loadConsoleAdapters,
+  saveConsoleConfig,
   saveConsoleAgentBehavior,
 } from "./consoleService";
 
@@ -259,5 +260,34 @@ describe("console agent service", () => {
       key: "users/42/ai/tools/approval",
       value: "",
     });
+  });
+
+  it("saves generic config entries without trimming values", async () => {
+    const { client, setConfig } = createMockClient(42);
+
+    await expect(saveConsoleConfig(client, {
+      key: " config/ai/model ",
+      value: "  provider/model\n",
+    })).resolves.toEqual({
+      ok: true,
+      key: "config/ai/model",
+      value: "  provider/model\n",
+    });
+
+    expect(setConfig).toHaveBeenCalledWith({
+      key: "config/ai/model",
+      value: "  provider/model\n",
+    });
+  });
+
+  it("requires a config key when saving generic config", async () => {
+    const { client, setConfig } = createMockClient(42);
+
+    await expect(saveConsoleConfig(client, {
+      key: " ",
+      value: "value",
+    })).rejects.toThrow("config key is required");
+
+    expect(setConfig).not.toHaveBeenCalled();
   });
 });
