@@ -8,9 +8,9 @@ The primary app icon family is the curated GSV mask set in `/icons/<name>.svg`.
 Existing app calls such as `<Icon name="computer" />` intentionally keep using
 those curated masks.
 
-The broader reference family is `doticons`, vendored from
+The broader reference family is `doticons`, originally vendored from
 [eduardconstantin/doticons@v0.9.0](https://github.com/eduardconstantin/doticons)
-(MIT):
+(MIT) and pruned to icons referenced by the web UI:
 
 - 16-dot masters: `/icons/doticons/16/<name>.svg`
 - 32-dot masters: `/icons/doticons/<name>.svg`
@@ -45,7 +45,6 @@ not present in upstream's 16-grid folder, so those fall back to 32.
 | coach        | stars     | icons/stars.svg    |
 | files        | folder    | icons/folder.svg   |
 | settings     | cog       | icons/cog.svg      |
-| cat          | tag       | icons/tag.svg      |
 | satellite    | rss       | icons/rss.svg      |
 | add          | plus      | icons/plus.svg     |
 | library      | pencil    | icons/pencil.svg   |
@@ -57,6 +56,6 @@ Doticons aliases such as `computer -> box`, `plus -> circlePlus`, and `terminal
 
 ## Doticons Set
 
-The full doticons set remains available for views that need icons outside the
-curated GSV object set. Prefer explicit doticons usage at the call site so app
-icons do not drift unexpectedly.
+Only the active doticons subset remains available in source. Prefer explicit
+doticons usage at the call site, and add the matching SVG asset when a new icon
+is introduced.

@@ -9,7 +9,7 @@ import { DOTICONS } from "../doticons";
 
 const ICONS = [
   "bookmark", "chat", "cog", "computer", "discord", "folder", "gmail", "list",
-  "pencil", "plus", "rss", "stars", "tag", "telegram", "terminal", "weblink",
+  "pencil", "plus", "rss", "stars", "telegram", "terminal", "weblink",
 ];
 
 const COMPARISON_ICONS = ["folder", "file", "chat", "stars", "terminal", "computer"];
@@ -100,16 +100,16 @@ const story: Story = {
         </div>
       </div>
 
-      {/* OTHER ICONS drawer — the full doticons library, vendored locally for reference. */}
+      {/* OTHER ICONS drawer — active doticons subset kept in the web bundle. */}
       <div
         class="ds-cell"
         style={{ marginTop: "10px", paddingTop: "20px", borderTop: "1px solid var(--rule-section)" }}
       >
         <div class="ds-label" style={{ marginBottom: "4px" }}>
-          Other icons · doticons library ({DOTICONS.length} icons · reference)
+          Other icons · active doticons subset ({DOTICONS.length} icons)
         </div>
         <div style={{ fontSize: "9px", letterSpacing: "0.04em", color: "var(--text-dim)", marginBottom: "16px" }}>
-          /icons/doticons/16/*.svg and /icons/doticons/*.svg · vendored from eduardconstantin/doticons@v0.9.0 (MIT)
+          /icons/doticons/16/*.svg and /icons/doticons/*.svg · pruned to icons referenced by the web UI
         </div>
         <div
           style={{
@@ -120,7 +120,7 @@ const story: Story = {
           }}
         >
           {DOTICONS.map((name) => (
-            <IconTile key={name} name={name} color="var(--text-dim)" px={28} family="doticons" />
+            <IconTile key={name} name={name} color="var(--text-dim)" px={18} family="doticons" />
           ))}
         </div>
       </div>

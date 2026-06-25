@@ -11,7 +11,7 @@ import type { ConsoleAdapter, ConsoleAdapterAccount } from "../domain/consoleMod
 export function iconForAdapterName(adapter: string): string {
   if (adapter === "telegram") return "telegram";
   if (adapter === "discord") return "discord";
-  if (adapter === "whatsapp") return "messenger";
+  if (adapter === "whatsapp") return "doticons/messenger";
   return "chat";
 }
 

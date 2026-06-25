@@ -173,7 +173,7 @@ export function ChatDockPopovers({
             disabled={processAiConfigBusy || !hasProcessOverrides}
             onClick={onClearProcessAiConfig}
           >
-            <Icon name="close" size={12} />
+            <Icon name="close" family="doticons" size={12} />
             <span>CLEAR CHAT OVERRIDES</span>
           </button>
           <button type="button" class="gsv-chat-popover-action" onClick={onOpenModels}>
