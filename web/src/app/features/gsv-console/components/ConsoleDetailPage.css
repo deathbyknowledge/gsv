@@ -145,6 +145,39 @@
   gap: 12px;
 }
 
+.gsv-runtime-task-actions {
+  min-width: 0;
+  display: contents;
+}
+
+.gsv-runtime-task-action-error {
+  min-width: min(100%, 240px);
+  max-width: 100%;
+  align-self: center;
+  color: var(--error);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gsv-console-confirm-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(4, 3, 16, 0.66);
+}
+
+.gsv-console-confirm-wrap {
+  width: 440px;
+  max-width: 100%;
+}
+
 @media (max-width: 720px) {
   .gsv-console-detail-page {
     padding: 28px 24px 72px;

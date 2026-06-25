@@ -47,6 +47,7 @@ function SettingsListRowView({ row }: { row: SettingsListRow }) {
         statusDotPlacement="trailing"
         statusLabel={row.statusLabel}
         tag={row.tag?.label}
+        tagTone={row.tag?.tone}
         chevron={Boolean(row.onOpen)}
         onClick={row.onOpen}
       />

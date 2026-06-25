@@ -85,6 +85,28 @@ export type SaveConsoleConfigResult = {
   value: string;
 };
 
+export type SaveConsoleConfigEntriesInput = {
+  entries: readonly SaveConsoleConfigInput[];
+};
+
+export type SaveConsoleConfigEntriesResult = {
+  ok: true;
+  written: number;
+};
+
+export type ConsoleProcessAction = "abort" | "reset" | "kill";
+
+export type RunConsoleProcessActionInput = {
+  pid: string;
+  action: ConsoleProcessAction;
+};
+
+export type RunConsoleProcessActionResult = {
+  ok: true;
+  action: ConsoleProcessAction;
+  pid: string;
+};
+
 export type CreateMachineNodeTokenInput = {
   deviceId: string;
   label?: string;
@@ -170,6 +192,45 @@ export async function saveConsoleConfig(
   const value = String(input.value ?? "");
   await client.sys.config.set({ key, value });
   return { ok: true, key, value };
+}
+
+export async function saveConsoleConfigEntries(
+  client: Pick<GSVClient, "sys">,
+  input: SaveConsoleConfigEntriesInput,
+): Promise<SaveConsoleConfigEntriesResult> {
+  let written = 0;
+  for (const entry of input.entries) {
+    await saveConsoleConfig(client, entry);
+    written += 1;
+  }
+  return { ok: true, written };
+}
+
+export async function runConsoleProcessAction(
+  client: Pick<GSVClient, "proc">,
+  input: RunConsoleProcessActionInput,
+): Promise<RunConsoleProcessActionResult> {
+  const pid = input.pid.trim();
+  if (!pid) {
+    throw new Error("process id is required");
+  }
+
+  const result = input.action === "abort"
+    ? await client.proc.abort({ pid })
+    : input.action === "reset"
+      ? await client.proc.reset({ pid })
+      : input.action === "kill"
+        ? await client.proc.kill({ pid, archive: true })
+        : null;
+
+  if (!result) {
+    throw new Error(`unsupported process action: ${input.action}`);
+  }
+  if (result.ok === false) {
+    throw new Error(result.error || `failed to ${input.action} process`);
+  }
+
+  return { ok: true, action: input.action, pid };
 }
 
 export async function loadConsoleAgentContext(

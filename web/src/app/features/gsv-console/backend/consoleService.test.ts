@@ -4,7 +4,9 @@ import {
   createConsoleAgent,
   loadConsoleAdapterAccounts,
   loadConsoleAdapters,
+  runConsoleProcessAction,
   saveConsoleConfig,
+  saveConsoleConfigEntries,
   saveConsoleAgentBehavior,
 } from "./consoleService";
 
@@ -289,5 +291,54 @@ describe("console agent service", () => {
     })).rejects.toThrow("config key is required");
 
     expect(setConfig).not.toHaveBeenCalled();
+  });
+
+  it("saves grouped config entries in order", async () => {
+    const { client, setConfig } = createMockClient(42);
+
+    await expect(saveConsoleConfigEntries(client, {
+      entries: [
+        { key: "config/ai/provider", value: "workers-ai" },
+        { key: "config/ai/model", value: "@cf/test/model" },
+      ],
+    })).resolves.toEqual({ ok: true, written: 2 });
+
+    expect(setConfig).toHaveBeenNthCalledWith(1, {
+      key: "config/ai/provider",
+      value: "workers-ai",
+    });
+    expect(setConfig).toHaveBeenNthCalledWith(2, {
+      key: "config/ai/model",
+      value: "@cf/test/model",
+    });
+  });
+
+  it("runs process actions through proc syscalls", async () => {
+    const abort = vi.fn(async () => ({ ok: true, pid: "proc-1", aborted: true }));
+    const reset = vi.fn(async () => ({ ok: true, pid: "proc-1", archivedMessages: 2, archives: [] }));
+    const kill = vi.fn(async () => ({ ok: true, pid: "proc-1", archivedMessages: 2, archives: [] }));
+    const client = {
+      proc: { abort, reset, kill },
+    };
+
+    await expect(runConsoleProcessAction(client as any, { pid: " proc-1 ", action: "abort" })).resolves.toEqual({
+      ok: true,
+      action: "abort",
+      pid: "proc-1",
+    });
+    await expect(runConsoleProcessAction(client as any, { pid: "proc-1", action: "reset" })).resolves.toEqual({
+      ok: true,
+      action: "reset",
+      pid: "proc-1",
+    });
+    await expect(runConsoleProcessAction(client as any, { pid: "proc-1", action: "kill" })).resolves.toEqual({
+      ok: true,
+      action: "kill",
+      pid: "proc-1",
+    });
+
+    expect(abort).toHaveBeenCalledWith({ pid: "proc-1" });
+    expect(reset).toHaveBeenCalledWith({ pid: "proc-1" });
+    expect(kill).toHaveBeenCalledWith({ pid: "proc-1", archive: true });
   });
 });

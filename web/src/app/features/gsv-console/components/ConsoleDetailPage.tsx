@@ -22,6 +22,7 @@ export type ConsoleDetailSection = {
 };
 
 type ConsoleDetailPageProps = {
+  actions?: ComponentChildren;
   blurb: string;
   children?: ComponentChildren;
   icon: string;
@@ -38,6 +39,7 @@ type ConsoleDetailPageProps = {
 };
 
 export function ConsoleDetailPage({
+  actions,
   blurb,
   children,
   icon,
@@ -109,6 +111,7 @@ export function ConsoleDetailPage({
         )}
 
         <div class="gsv-console-detail-actions">
+          {actions}
           {primaryLabel ? (
             <Button
               variant="primary"

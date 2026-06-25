@@ -19,7 +19,9 @@ import {
   loadConsoleTargets,
   refreshConsoleMcpServer,
   removeConsoleMcpServer,
+  runConsoleProcessAction,
   saveConsoleConfig,
+  saveConsoleConfigEntries,
   saveConsoleAgentBehavior,
   saveConsoleAgentContext,
   type AddConsoleMcpServerInput,
@@ -31,8 +33,12 @@ import {
   type ConsoleAgentContextFile,
   type IssuedMachineNodeToken,
   type LoadConsoleOverviewOptions,
+  type RunConsoleProcessActionInput,
+  type RunConsoleProcessActionResult,
   type SaveConsoleAgentBehaviorInput,
   type SaveConsoleAgentBehaviorResult,
+  type SaveConsoleConfigEntriesInput,
+  type SaveConsoleConfigEntriesResult,
   type SaveConsoleConfigInput,
   type SaveConsoleConfigResult,
   type SaveConsoleAgentContextInput,
@@ -387,6 +393,36 @@ export function useSaveConsoleConfig() {
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: consoleConfigQueryKey }),
+        queryClient.invalidateQueries({ queryKey: consoleOverviewQueryKey }),
+      ]);
+    },
+  });
+}
+
+export function useSaveConsoleConfigEntries() {
+  const { client } = useGateway();
+  const queryClient = useQueryClient();
+
+  return useMutation<SaveConsoleConfigEntriesResult, Error, SaveConsoleConfigEntriesInput>({
+    mutationFn: (input) => saveConsoleConfigEntries(client, input),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: consoleConfigQueryKey }),
+        queryClient.invalidateQueries({ queryKey: consoleOverviewQueryKey }),
+      ]);
+    },
+  });
+}
+
+export function useRunConsoleProcessAction() {
+  const { client } = useGateway();
+  const queryClient = useQueryClient();
+
+  return useMutation<RunConsoleProcessActionResult, Error, RunConsoleProcessActionInput>({
+    mutationFn: (input) => runConsoleProcessAction(client, input),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: consoleProcessesQueryKey }),
         queryClient.invalidateQueries({ queryKey: consoleOverviewQueryKey }),
       ]);
     },

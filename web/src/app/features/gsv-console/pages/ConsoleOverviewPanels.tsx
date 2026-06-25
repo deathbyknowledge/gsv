@@ -1,7 +1,6 @@
 import type { ComponentChildren, JSX } from "preact";
 import { AddAction } from "../../../components/ui/AddAction";
 import { AsciiPlanet } from "../../../components/ui/AsciiPlanet";
-import { Checkbox } from "../../../components/ui/Checkbox";
 import { CrewAddTile, CrewTile } from "../../../components/ui/CrewTile";
 import { ListRow, type ListRowStatus } from "../../../components/ui/ListRow";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
@@ -9,10 +8,14 @@ import { StatusDot, type StatusTone } from "../../../components/ui/StatusDot";
 import { Surface } from "../../../components/ui/Surface";
 import type { TagTone } from "../../../components/ui/Tag";
 import {
-  defaultModelLabelForConfig,
-  modelConfigCount,
-  overrideConfigEntries,
-} from "../domain/consoleAi";
+  RUNTIME_SETTING_GROUPS,
+  TOOL_MODEL_GROUPS,
+  configValueForKey,
+  effectiveAiValuesForViewer,
+  modelDisplayName,
+  modelProfilesForConfig,
+  viewerAccountForSettings,
+} from "../domain/consoleSettings";
 import type { ConsoleListKind } from "../domain/consoleListTypes";
 import {
   agentImageSrcForIndex,
@@ -31,7 +34,11 @@ import type {
 } from "../domain/consoleModels";
 import type { ShellSurfaceId } from "../../gsv-shell/domain/shellModel";
 import { isNativeWebPackageName } from "../../packages/nativePackages";
-import { useTerminalRunInBackgroundPreference } from "../../terminal/hooks/useTerminalPreferences";
+import {
+  processSub,
+  statusForProcess,
+  toneForProcess,
+} from "../runtime/runtimePresentation";
 
 type OverviewRow = {
   id: string;
@@ -56,12 +63,6 @@ type CrewCard = {
   statusLabel: string;
 };
 
-type StatLine = {
-  label: string;
-  value: number | string;
-  tone: StatusTone;
-};
-
 type OverviewSurface = Exclude<ShellSurfaceId, "desktop" | "app">;
 export type ConsoleOverviewTarget = OverviewSurface | "models" | "new-agent" | "overrides" | "tasks";
 export type OpenSurface = (surface: ConsoleOverviewTarget) => void;
@@ -70,6 +71,7 @@ export type OpenListDetail = (kind: ConsoleListKind, detailId: string, detailLab
 export type OpenListCreate = (kind: ConsoleListKind) => void;
 
 const DASHBOARD_ROW_LIMIT = 5;
+const DEEP_CELL_ROW_LIMIT = 6;
 const OVERVIEW_ROW_STYLE: JSX.CSSProperties = {
   minHeight: "44px",
   padding: "13px 16px",
@@ -260,6 +262,21 @@ function rowLimit<T>(rows: readonly T[], limit = DASHBOARD_ROW_LIMIT): readonly 
   return rows.slice(0, limit);
 }
 
+function processPriority(process: ConsoleProcess): number {
+  if (process.state === "running") return 0;
+  if (isQueuedProcess(process)) return 1;
+  if (process.state === "unknown") return 2;
+  return 3;
+}
+
+function sortProcessesForOverview(processes: readonly ConsoleProcess[]): ConsoleProcess[] {
+  return [...processes].sort((left, right) =>
+    processPriority(left) - processPriority(right)
+    || (right.lastActiveAt ?? right.createdAt ?? 0) - (left.lastActiveAt ?? left.createdAt ?? 0)
+    || left.label.localeCompare(right.label)
+  );
+}
+
 function shipInventoryLabel(data: ConsoleOverviewData): string {
   if (data.targets.length > 0) {
     const online = data.targets.filter((target) => target.online).length;
@@ -273,10 +290,6 @@ function shipInventoryLabel(data: ConsoleOverviewData): string {
     return `${runnable}/${data.accounts.length} CREW`;
   }
   return "NO INVENTORY";
-}
-
-function Chevron() {
-  return <span class="gsv-settings-chevron" aria-hidden="true" />;
 }
 
 function MiniHeading({
@@ -342,6 +355,80 @@ function AddRow({ label, onClick }: { label: string; onClick?: () => void }) {
   );
 }
 
+function toolModelIcon(groupId: string): string {
+  switch (groupId) {
+    case "image-generation":
+      return "doticons/pencil";
+    case "image-read":
+      return "doticons/camera";
+    case "speech":
+      return "doticons/volume";
+    case "transcription":
+      return "doticons/microphone";
+    default:
+      return "cog";
+  }
+}
+
+function modelValueForGroup(values: Record<string, string>, groupId: string): string {
+  const group = TOOL_MODEL_GROUPS.find((candidate) => candidate.id === groupId);
+  const modelField = group?.fields.find((field) => field.key.endsWith("/model"));
+  return modelField ? values[modelField.key] ?? "" : "";
+}
+
+function overviewModelRows(
+  values: Record<string, string>,
+  profileCount: number,
+): OverviewRow[] {
+  const agentModel = values["config/ai/model"] ?? "";
+  const defaultModelLabel = modelDisplayName(agentModel) || "Not configured";
+  const rows: OverviewRow[] = [
+    {
+      id: "default-agent-model",
+      icon: "stars",
+      label: "Default Agent Model",
+      meta: defaultModelLabel,
+      tone: agentModel ? "online" : "idle",
+      statusLabel: agentModel ? "DEFAULT" : "EMPTY",
+    },
+    {
+      id: "model-presets",
+      icon: "stars",
+      label: "Model Presets",
+      meta: profileCount === 0
+        ? "No saved presets"
+        : `${profileCount} saved preset${profileCount === 1 ? "" : "s"}`,
+      tone: profileCount > 0 ? "online" : "idle",
+      statusLabel: profileCount > 0 ? "SAVED" : "EMPTY",
+    },
+  ];
+
+  for (const group of TOOL_MODEL_GROUPS) {
+    const model = modelValueForGroup(values, group.id);
+    rows.push({
+      id: group.id,
+      icon: toolModelIcon(group.id),
+      label: group.title,
+      meta: model ? modelDisplayName(model) : group.description,
+      tone: model ? "online" : "idle",
+      statusLabel: model ? "CONFIGURED" : "EMPTY",
+    });
+  }
+
+  return rows;
+}
+
+function processOverviewRow(process: ConsoleProcess): OverviewRow {
+  return {
+    id: process.pid,
+    icon: "list",
+    label: process.label,
+    meta: processSub(process),
+    tone: toneForProcess(process),
+    statusLabel: statusForProcess(process),
+  };
+}
+
 function SplitCells({
   className = "",
   left,
@@ -384,18 +471,18 @@ function ShipPanel({
   config,
   data,
   onOpenSurface,
-  terminalBackground,
-  onTerminalBackgroundChange,
 }: {
   config: readonly ConsoleConfigEntry[];
   data: ConsoleOverviewData;
   onOpenSurface?: OpenSurface;
-  terminalBackground: boolean;
-  onTerminalBackgroundChange: (enabled: boolean) => void;
 }) {
-  const overrides = overrideConfigEntries(config);
-  const redacted = overrides.filter((entry) => entry.redacted).length;
-  const configured = overrides.filter((entry) => entry.value && !entry.redacted).length;
+  const runtimeFields = RUNTIME_SETTING_GROUPS.flatMap((group) => group.fields);
+  const configured = runtimeFields.filter((field) =>
+    field.kind !== "readonly" && configValueForKey(config, field.key).trim().length > 0
+  ).length;
+  const networkEnabled = configValueForKey(config, "config/shell/network_enabled") === "true";
+  const instanceName = configValueForKey(config, "config/server/name") || "gsv";
+  const timezone = configValueForKey(config, "config/server/timezone") || "UTC";
 
   return (
     <section class="gsv-settings-block gsv-settings-ship-block">
@@ -410,29 +497,30 @@ function ShipPanel({
       <SplitCells
         left={(
           <div class="gsv-settings-mini-cell">
-            <MiniHeading title="TERMINAL" />
-            <div class="gsv-settings-terminal-state">
-              <Checkbox
-                checked={terminalBackground}
-                label="RUN IN BACKGROUND"
-                size="medium"
-                onChange={onTerminalBackgroundChange}
-              />
-            </div>
+            <MiniHeading title="INSTANCE" />
+            <ListRow
+              chevron={Boolean(onOpenSurface)}
+              label={instanceName}
+              onClick={onOpenSurface ? () => onOpenSurface("overrides") : undefined}
+              status="none"
+              style={OVERVIEW_STATE_ROW_STYLE}
+              tag={timezone}
+              tagTone="info"
+            />
           </div>
         )}
         right={(
           <div class="gsv-settings-mini-cell">
-            <MiniHeading title="OVERRIDES" />
+            <MiniHeading title="RUNTIME" />
             <ListRow
               chevron={Boolean(onOpenSurface)}
               className="gsv-settings-overrides-state"
-              label={configured > 0 ? `${configured} CONFIGURED` : "NOT CONFIGURED"}
+              label={`${configured} SETTINGS`}
               onClick={onOpenSurface ? () => onOpenSurface("overrides") : undefined}
               status="none"
               style={OVERVIEW_STATE_ROW_STYLE}
-              tag={redacted > 0 ? `${redacted} REDACTED` : undefined}
-              tagTone="warn"
+              tag={networkEnabled ? "NETWORK ON" : "NETWORK OFF"}
+              tagTone={networkEnabled ? "online" : "idle"}
             />
           </div>
         )}
@@ -485,88 +573,76 @@ function CrewPanel({
 }
 
 function ModelsTasksPanel({
+  accounts,
   config,
   counts,
+  onOpenListDetail,
   onOpenSurface,
   processes,
 }: {
+  accounts: readonly ConsoleAccount[];
   config: readonly ConsoleConfigEntry[];
   counts: ConsoleOverviewCounts | null;
+  onOpenListDetail?: OpenListDetail;
   onOpenSurface?: OpenSurface;
   processes: readonly ConsoleProcess[];
 }) {
   const running = counts?.activeProcesses ?? processes.filter(isRunningProcess).length;
   const queued = counts?.queuedProcesses ?? processes.filter(isQueuedProcess).length;
   const errored = processes.filter((process) => process.state === "unknown").length;
-  const idle = Math.max(0, processes.length - running - queued - errored);
-  const model = defaultModelLabelForConfig(config);
-  const modelCount = modelConfigCount(config);
-  const modelSummary = modelCount > 1
-    ? `+ ${modelCount - 1} OTHER MODEL ${modelCount === 2 ? "SETTING" : "SETTINGS"}`
-    : modelCount === 1
-      ? "1 MODEL SETTING"
-      : "NO MODEL OVERRIDE";
-  const stats: StatLine[] = [
-    { label: "RUNNING", value: running, tone: running > 0 ? "live" : "idle" },
-    { label: "ERROR", value: errored, tone: errored > 0 ? "error" : "idle" },
-    { label: "IDLE", value: idle, tone: "idle" },
-  ];
+  const viewer = viewerAccountForSettings(accounts);
+  const modelValues = effectiveAiValuesForViewer(config, viewer?.uid);
+  const profiles = modelProfilesForConfig(config, viewer?.uid);
+  const modelRows = overviewModelRows(modelValues, profiles.length);
+  const configuredModels = modelRows.filter((row) => row.tone === "online").length;
+  const visibleProcesses = rowLimit(sortProcessesForOverview(processes), DEEP_CELL_ROW_LIMIT);
+  const openModels = onOpenSurface ? () => onOpenSurface("models") : undefined;
+  const openTasks = onOpenSurface ? () => onOpenSurface("tasks") : undefined;
+  const openTaskDetail = (process: ConsoleProcess) => (
+    onOpenListDetail
+      ? () => onOpenListDetail("tasks", process.pid, process.label)
+      : openTasks
+  );
+  const taskMeta = processes.length === 0
+    ? "NO TASKS"
+    : joinMeta([
+        running > 0 ? `${running} RUNNING` : undefined,
+        queued > 0 ? `${queued} QUEUED` : undefined,
+        errored > 0 ? `${errored} UNKNOWN` : undefined,
+        running === 0 && queued === 0 && errored === 0 ? `${processes.length} IDLE` : undefined,
+      ]);
 
   return (
     <SplitCells
       className="gsv-settings-model-task-split"
-      left={onOpenSurface ? (
-        <Surface
-          as="button"
-          class="gsv-settings-deep-cell"
-          flush
-          interactive
-          onClick={() => onOpenSurface("models")}
-        >
-          <MiniHeading title="MODELS" />
-          <div class="gsv-settings-model-summary">
-            <span>DEFAULT: <strong>{model}</strong></span>
-            <small>{modelSummary}</small>
-          </div>
-          <Chevron />
-        </Surface>
-      ) : (
+      left={(
         <Surface class="gsv-settings-deep-cell" flush>
-          <MiniHeading title="MODELS" />
-          <div class="gsv-settings-model-summary">
-            <span>DEFAULT: <strong>{model}</strong></span>
-            <small>{modelSummary}</small>
+          <MiniHeading
+            title="MODELS"
+            meta={`${configuredModels}/${modelRows.length} CONFIGURED`}
+            onClick={openModels}
+          />
+          <div class="gsv-settings-overview-list">
+            {rowLimit(modelRows, DEEP_CELL_ROW_LIMIT).map((row) => (
+              <MiniRow key={row.id} row={row} onClick={openModels} />
+            ))}
           </div>
         </Surface>
       )}
-      right={onOpenSurface ? (
-        <Surface
-          as="button"
-          class="gsv-settings-deep-cell"
-          flush
-          interactive
-          onClick={() => onOpenSurface("tasks")}
-        >
-          <MiniHeading title="TASKS" />
-          <div class="gsv-settings-task-summary">
-            {stats.map((stat) => (
-              <span key={stat.label}>
-                <StatusDot tone={stat.tone} size={8} />
-                {stat.label} · {stat.value}
-              </span>
-            ))}
-          </div>
-          <Chevron />
-        </Surface>
-      ) : (
+      right={(
         <Surface class="gsv-settings-deep-cell" flush>
-          <MiniHeading title="TASKS" />
-          <div class="gsv-settings-task-summary">
-            {stats.map((stat) => (
-              <span key={stat.label}>
-                <StatusDot tone={stat.tone} size={8} />
-                {stat.label} · {stat.value}
-              </span>
+          <MiniHeading
+            title="TASKS"
+            meta={taskMeta}
+            onClick={openTasks}
+          />
+          <div class="gsv-settings-overview-list">
+            {visibleProcesses.length === 0 ? <EmptyRow label="NO TASKS" /> : visibleProcesses.map((process) => (
+              <MiniRow
+                key={process.pid}
+                row={processOverviewRow(process)}
+                onClick={openTaskDetail(process)}
+              />
             ))}
           </div>
         </Surface>
@@ -703,7 +779,6 @@ export function SettingsOverviewDashboard({
 }) {
   const visiblePackages = data.packages.filter((pkg) => !isNativeConsolePackage(pkg));
   const applications = visiblePackages.filter(isApplicationPackage);
-  const [terminalBackground, setTerminalBackground] = useTerminalRunInBackgroundPreference();
 
   return (
     <div class="gsv-settings-overview" aria-label="GSV settings overview">
@@ -712,8 +787,6 @@ export function SettingsOverviewDashboard({
           config={data.config}
           data={data}
           onOpenSurface={onOpenSurface}
-          terminalBackground={terminalBackground}
-          onTerminalBackgroundChange={setTerminalBackground}
         />
         <CrewPanel
           accounts={data.accounts}
@@ -721,7 +794,14 @@ export function SettingsOverviewDashboard({
           onOpenSurface={onOpenSurface}
           processes={data.processes}
         />
-        <ModelsTasksPanel config={data.config} counts={counts} onOpenSurface={onOpenSurface} processes={data.processes} />
+        <ModelsTasksPanel
+          accounts={data.accounts}
+          config={data.config}
+          counts={counts}
+          onOpenListDetail={onOpenListDetail}
+          onOpenSurface={onOpenSurface}
+          processes={data.processes}
+        />
       </div>
       <div class="gsv-settings-right">
         <FleetPanel

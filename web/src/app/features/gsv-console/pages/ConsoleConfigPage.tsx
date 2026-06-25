@@ -1,9 +1,9 @@
-import { useEffect, useState } from "preact/hooks";
-import { AddAction } from "../../../components/ui/AddAction";
-import { ListRow, type ListRowStatus } from "../../../components/ui/ListRow";
-import { SectionHeader } from "../../../components/ui/SectionHeader";
-import type { StatusTone } from "../../../components/ui/StatusDot";
-import type { TagTone } from "../../../components/ui/Tag";
+import { useEffect, useMemo, useState } from "preact/hooks";
+import { Button } from "../../../components/ui/Button";
+import { Checkbox } from "../../../components/ui/Checkbox";
+import { Select } from "../../../components/ui/Select";
+import { Surface } from "../../../components/ui/Surface";
+import { Tag } from "../../../components/ui/Tag";
 import { TextArea } from "../../../components/ui/TextArea";
 import { TextInput } from "../../../components/ui/TextInput";
 import { ConsoleDetailPage } from "../components/ConsoleDetailPage";
@@ -12,430 +12,814 @@ import {
   ConsoleResourceBoundary,
 } from "../components/ConsolePageTemplate";
 import {
-  defaultModelLabelForConfig,
-  modelConfigEntries,
-  overrideConfigEntries,
-  overrideConfigCount,
-} from "../domain/consoleAi";
-import type { ConsoleConfigEntry } from "../domain/consoleModels";
-import { useConsoleConfig, useSaveConsoleConfig } from "../hooks/useConsoleData";
+  SettingsListPanel,
+  type SettingsListRow,
+} from "../components/SettingsListPanel";
+import type { SaveConsoleConfigInput } from "../backend/consoleService";
+import type {
+  ConsoleAccount,
+  ConsoleConfigEntry,
+} from "../domain/consoleModels";
+import {
+  AGENT_MODEL_FIELDS,
+  MODEL_PROFILE_FIELDS,
+  RUNTIME_SETTING_GROUPS,
+  TOOL_MODEL_GROUPS,
+  buildUserAiOverrideKey,
+  configEntryForKey,
+  configValueForKey,
+  createModelProfile,
+  deleteModelProfile,
+  effectiveAiValuesForViewer,
+  isSensitiveSettingKey,
+  modelDisplayName,
+  modelProfileSummary,
+  modelProfilesConfigKey,
+  modelProfilesForConfig,
+  profileValuesFromDrafts,
+  serializeModelProfiles,
+  updateModelProfile,
+  viewerAccountForSettings,
+  type ConsoleModelProfile,
+  type ConsoleSettingField,
+  type ConsoleSettingGroup,
+} from "../domain/consoleSettings";
+import {
+  useConsoleAccounts,
+  useConsoleConfig,
+  useSaveConsoleConfigEntries,
+} from "../hooks/useConsoleData";
 import "./ConsoleConfigPage.css";
 
 export type ConsoleConfigKind = "models" | "overrides";
-
-type ConfigRow = {
-  id: string;
-  icon: string;
-  label: string;
-  sub: string;
-  statusLabel: string;
-  tone: StatusTone;
-  detailBlurb: string;
-  configKey: string | null;
-  value: string;
-  redacted: boolean;
-  tag?: {
-    label: string;
-    tone: TagTone;
-  };
-};
 
 type ConsoleConfigPageProps = {
   kind: ConsoleConfigKind;
 };
 
+type SettingsViewer = {
+  account: ConsoleAccount | null;
+  uid: number | null;
+  isRoot: boolean;
+};
+
+type ModelSelection =
+  | { kind: "default" }
+  | { kind: "new-profile" }
+  | { kind: "profile"; id: string }
+  | { kind: "tool"; id: string };
+
+type RuntimeSelection = {
+  id: string;
+};
+
+type SettingsFieldGroupProps = {
+  config: readonly ConsoleConfigEntry[];
+  description: string;
+  editable: boolean;
+  fields: readonly ConsoleSettingField[];
+  initialValues?: Record<string, string>;
+  meta?: string;
+  onSave: (entries: readonly SaveConsoleConfigInput[]) => Promise<void>;
+  title: string;
+  writeKeyForField: (field: ConsoleSettingField) => string;
+};
+
 export function ConsoleConfigPage({ kind }: ConsoleConfigPageProps) {
   const config = useConsoleConfig();
+  const accounts = useConsoleAccounts();
 
   return (
     <ConsolePage flush>
       <ConsoleResourceBoundary
         resource={{ ...config.resource, isEmpty: false }}
-        emptyLabel={kind === "models" ? "NO MODEL CONFIG" : "NO OVERRIDES"}
-        errorLabel={kind === "models" ? "MODELS" : "OVERRIDES"}
+        emptyLabel={kind === "models" ? "NO MODEL SETTINGS" : "NO RUNTIME SETTINGS"}
+        errorLabel={kind === "models" ? "MODELS" : "RUNTIME"}
         render={(data) => (
-          <ConsoleConfigPanel config={data} kind={kind} />
+          <ConsoleSettingsPanel
+            accounts={accounts.accounts}
+            config={data}
+            kind={kind}
+          />
         )}
       />
     </ConsolePage>
   );
 }
 
-function ConsoleConfigPanel({
+function ConsoleSettingsPanel({
+  accounts,
   config,
   kind,
 }: {
+  accounts: readonly ConsoleAccount[];
   config: readonly ConsoleConfigEntry[];
   kind: ConsoleConfigKind;
 }) {
-  const [selectedRowId, setSelectedRowId] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
-  const rows = kind === "models" ? modelRows(config) : overrideRows(config);
-  const title = kind === "models" ? "MODELS" : "OVERRIDES";
-  const modelCount = kind === "models" ? modelConfigEntries(config).length : 0;
-  const overrideCount = kind === "overrides" ? overrideConfigCount(config) : 0;
-  const meta = kind === "models"
-    ? `${modelCount} MODEL ${modelCount === 1 ? "SETTING" : "SETTINGS"}`
-    : `${overrideCount} CONFIG ${overrideCount === 1 ? "ENTRY" : "ENTRIES"}`;
-  const selectedRow = selectedRowId ? rows.find((row) => row.id === selectedRowId) ?? null : null;
+  const viewerAccount = viewerAccountForSettings(accounts);
+  const viewer: SettingsViewer = {
+    account: viewerAccount,
+    uid: viewerAccount?.uid ?? null,
+    isRoot: viewerAccount?.uid === 0,
+  };
 
-  if (creating) {
-    return (
-      <ConfigCreatePanel
-        kind={kind}
-        onBack={() => setCreating(false)}
-      />
-    );
+  if (kind === "models") {
+    return <ModelSettingsPage config={config} viewer={viewer} />;
   }
+  return <RuntimeSettingsPage config={config} viewer={viewer} />;
+}
 
-  if (selectedRow) {
+function ModelSettingsPage({
+  config,
+  viewer,
+}: {
+  config: readonly ConsoleConfigEntry[];
+  viewer: SettingsViewer;
+}) {
+  const saveConfig = useSaveConsoleConfigEntries();
+  const [selection, setSelection] = useState<ModelSelection | null>(null);
+  const effectiveValues = effectiveAiValuesForViewer(config, viewer.uid);
+  const profiles = modelProfilesForConfig(config, viewer.uid);
+  const canEditAi = viewer.uid !== null;
+  const scopeLabel = viewer.isRoot ? "GLOBAL" : viewer.account ? "PERSONAL" : "READ ONLY";
+
+  const saveEntries = async (entries: readonly SaveConsoleConfigInput[]) => {
+    if (entries.length === 0) {
+      return;
+    }
+    await saveConfig.mutateAsync({ entries });
+  };
+
+  if (selection) {
     return (
-      <ConfigDetailPanel
-        kind={kind}
-        row={selectedRow}
-        onBack={() => setSelectedRowId(null)}
+      <ModelSettingsDetail
+        config={config}
+        editable={canEditAi}
+        effectiveValues={effectiveValues}
+        profiles={profiles}
+        scopeLabel={scopeLabel}
+        selection={selection}
+        viewer={viewer}
+        onBack={() => setSelection(null)}
+        onSaveEntries={saveEntries}
       />
     );
   }
 
   return (
-    <section class="gsv-console-config-list">
-      <SectionHeader title={title} meta={meta} divider />
-      <div class="gsv-console-config-list-body">
-        {rows.map((row) => (
-          <div class="gsv-console-config-list-row" key={row.id}>
-            <ListRow
-              icon={row.icon}
-              label={row.label}
-              sub={row.sub}
-              status={listRowStatusForTone(row.tone)}
-              statusDotPlacement="trailing"
-              statusLabel={row.statusLabel}
-              tag={row.tag?.label}
-              tagTone={row.tag?.tone}
-              chevron={row.configKey !== null}
-              onClick={row.configKey === null ? undefined : () => {
-                setCreating(false);
-                setSelectedRowId(row.id);
-              }}
-            />
-          </div>
-        ))}
-        <div class="gsv-console-config-list-add">
-          <AddAction
-            label={kind === "models" ? "NEW MODEL SETTING" : "NEW CONFIG"}
-            onClick={() => {
-              setSelectedRowId(null);
-              setCreating(true);
-            }}
-          />
-        </div>
-      </div>
+    <section class="gsv-console-settings-index">
+      <SettingsListPanel
+        title="DEFAULT AGENT MODEL"
+        meta={scopeLabel}
+        emptyLabel="NO DEFAULT MODEL"
+        fitContent
+        rows={[defaultModelRow(effectiveValues, () => setSelection({ kind: "default" }))]}
+      />
+      <SettingsListPanel
+        title="MODEL PRESETS"
+        meta={`${profiles.length} PRESET${profiles.length === 1 ? "" : "S"}`}
+        emptyLabel="NO MODEL PRESETS"
+        fitContent
+        action={{ label: "NEW MODEL PRESET", onClick: canEditAi ? () => setSelection({ kind: "new-profile" }) : undefined }}
+        rows={profiles.map((profile) => profileRow(profile, () => setSelection({ kind: "profile", id: profile.id })))}
+      />
+      <SettingsListPanel
+        title="TOOL MODELS"
+        meta={`${TOOL_MODEL_GROUPS.length} STACKS`}
+        emptyLabel="NO TOOL MODELS"
+        fitContent
+        rows={TOOL_MODEL_GROUPS.map((group) => toolModelRow(group, effectiveValues, () => setSelection({ kind: "tool", id: group.id })))}
+      />
     </section>
   );
 }
 
-function ConfigCreatePanel({
-  kind,
+function ModelSettingsDetail({
+  config,
+  editable,
+  effectiveValues,
+  profiles,
+  scopeLabel,
+  selection,
+  viewer,
   onBack,
+  onSaveEntries,
 }: {
-  kind: ConsoleConfigKind;
+  config: readonly ConsoleConfigEntry[];
+  editable: boolean;
+  effectiveValues: Record<string, string>;
+  profiles: readonly ConsoleModelProfile[];
+  scopeLabel: string;
+  selection: ModelSelection;
+  viewer: SettingsViewer;
   onBack: () => void;
+  onSaveEntries: (entries: readonly SaveConsoleConfigInput[]) => Promise<void>;
 }) {
-  const isModel = kind === "models";
-  const saveConfig = useSaveConsoleConfig();
-  const [configKey, setConfigKey] = useState("");
-  const [value, setValue] = useState("");
-  const [errorText, setErrorText] = useState("");
-  const normalizedKey = configKey.trim();
-  const saving = saveConfig.isPending;
-  const sensitive = isSensitiveConfigKey(normalizedKey);
-  const canSave = normalizedKey.length > 0 && !saving;
+  if (selection.kind === "default") {
+    return (
+      <ConsoleDetailPage
+        icon="stars"
+        title="DEFAULT AGENT MODEL"
+        typeLabel="GSV · MODELS"
+        statusLabel={scopeLabel}
+        tone={editable ? "online" : "idle"}
+        blurb="Fallback model stack used when an agent inherits model behavior."
+        parentLabel="MODELS"
+        onBack={onBack}
+      >
+        <SettingsFieldGroup
+          config={config}
+          description={viewer.isRoot
+            ? "Global fallback used by agents without personal model overrides."
+            : "Your personal fallback used when your agents inherit model behavior."}
+          editable={editable}
+          fields={AGENT_MODEL_FIELDS}
+          initialValues={effectiveValues}
+          meta={scopeLabel}
+          title="Default Agent Model"
+          writeKeyForField={(field) => viewer.isRoot || viewer.uid === null
+            ? field.key
+            : buildUserAiOverrideKey(viewer.uid, field.key)}
+          onSave={onSaveEntries}
+        />
+      </ConsoleDetailPage>
+    );
+  }
 
-  const handleSave = async () => {
-    if (!canSave) {
-      return;
-    }
+  if (selection.kind === "tool") {
+    const group = TOOL_MODEL_GROUPS.find((candidate) => candidate.id === selection.id) ?? TOOL_MODEL_GROUPS[0];
+    return (
+      <ConsoleDetailPage
+        icon={toolModelIcon(group.id)}
+        title={group.title.toUpperCase()}
+        typeLabel="GSV · TOOL MODEL"
+        statusLabel={scopeLabel}
+        tone={editable ? "online" : "idle"}
+        blurb={group.description}
+        parentLabel="MODELS"
+        onBack={onBack}
+      >
+        <SettingsFieldGroup
+          config={config}
+          description={group.description}
+          editable={editable}
+          fields={group.fields}
+          initialValues={effectiveValues}
+          meta={viewer.isRoot ? "GLOBAL STACK" : "PERSONAL OVERRIDE"}
+          title={group.title}
+          writeKeyForField={(field) => viewer.isRoot || viewer.uid === null
+            ? field.key
+            : buildUserAiOverrideKey(viewer.uid, field.key)}
+          onSave={onSaveEntries}
+        />
+      </ConsoleDetailPage>
+    );
+  }
 
-    setErrorText("");
-    try {
-      await saveConfig.mutateAsync({ key: normalizedKey, value });
-      onBack();
-    } catch (error) {
-      setErrorText(errorMessage(error));
-    }
-  };
+  const profile = selection.kind === "profile"
+    ? profiles.find((candidate) => candidate.id === selection.id) ?? null
+    : null;
+  const title = profile?.name.toUpperCase() ?? "NEW MODEL PRESET";
 
   return (
     <ConsoleDetailPage
-      icon={isModel ? "stars" : "cog"}
-      title={isModel ? "NEW MODEL SETTING" : "NEW CONFIG"}
-      typeLabel={`GSV · ${isModel ? "MODEL SETTING" : "CONFIG"}`}
-      statusLabel="DRAFT"
-      tone="idle"
-      blurb={isModel
-        ? "Create a gateway model configuration entry."
-        : "Create a gateway configuration entry."}
-      parentLabel={isModel ? "MODELS" : "OVERRIDES"}
-      primaryLabel={saving ? "SAVING" : isModel ? "CREATE SETTING" : "CREATE CONFIG"}
-      onPrimary={canSave ? () => {
-        void handleSave();
-      } : undefined}
+      icon="stars"
+      title={title}
+      typeLabel="GSV · MODEL PRESET"
+      statusLabel={profile ? "SAVED" : "DRAFT"}
+      tone={profile ? "online" : "idle"}
+      blurb="Reusable named model stack for agents. Credentials are managed on the default or tool model settings."
+      parentLabel="MODELS"
       onBack={onBack}
     >
-      <div class="gsv-console-config-form">
-        <TextInput
-          label="CONFIG KEY"
-          placeholder={isModel ? "config/ai/model" : "config/shell/timeout_ms"}
-          requirement="required"
-          value={configKey}
-          disabled={saving}
-          clearable
-          status={errorText ? "error" : "none"}
-          message={errorText}
-          onChange={(next) => {
-            setErrorText("");
-            setConfigKey(next);
-          }}
-        />
-        {sensitive ? (
-          <TextInput
-            key={`new-secret-${normalizedKey}`}
-            label="VALUE"
-            placeholder="replacement value"
-            type="password"
-            value={value}
-            disabled={saving}
-            onChange={(next) => {
-              setErrorText("");
-              setValue(next);
-            }}
-          />
-        ) : (
-          <TextArea
-            label="VALUE"
-            placeholder={isModel ? "provider/model-name" : "value"}
-            rows={configValueRows(value)}
-            value={value}
-            disabled={saving}
-            onChange={(next) => {
-              setErrorText("");
-              setValue(next);
-            }}
-          />
-        )}
-      </div>
+      <ModelProfileForm
+        defaultValues={effectiveValues}
+        editable={editable}
+        profile={profile}
+        profiles={profiles}
+        onCancel={onBack}
+        onDelete={profile ? async () => {
+          await saveModelProfiles(viewer, profiles, deleteModelProfile(profiles, profile.id), onSaveEntries);
+          onBack();
+        } : undefined}
+        onMakeDefault={profile ? async () => {
+          await makeProfileDefault(viewer, profile, onSaveEntries);
+        } : undefined}
+        onSave={async (name, values) => {
+          const nextProfiles = profile
+            ? updateModelProfile(profiles, profile.id, name, values)
+            : createModelProfile(profiles, name, values);
+          await saveModelProfiles(viewer, profiles, nextProfiles, onSaveEntries);
+          if (!profile) {
+            onBack();
+          }
+        }}
+      />
     </ConsoleDetailPage>
   );
 }
 
-function ConfigDetailPanel({
-  kind,
-  row,
-  onBack,
+function RuntimeSettingsPage({
+  config,
+  viewer,
 }: {
-  kind: ConsoleConfigKind;
-  row: ConfigRow;
-  onBack: () => void;
+  config: readonly ConsoleConfigEntry[];
+  viewer: SettingsViewer;
 }) {
-  const noun = kind === "models" ? "MODEL" : "CONFIG";
-  const saveConfig = useSaveConsoleConfig();
-  const initialValue = row.redacted ? "" : row.value;
-  const [draftValue, setDraftValue] = useState(initialValue);
-  const [errorText, setErrorText] = useState("");
-  const [savedText, setSavedText] = useState("");
-  const [redactedVersion, setRedactedVersion] = useState(0);
-  const saving = saveConfig.isPending;
-  const hasReplacement = draftValue.length > 0;
-  const dirty = row.redacted ? hasReplacement : draftValue !== row.value;
-  const canSave = row.configKey !== null && dirty && !saving;
-  const status = errorText ? "error" : savedText ? "success" : row.redacted && !hasReplacement ? "warning" : "none";
-  const message = errorText || savedText || (row.redacted && !hasReplacement ? "ENTER A REPLACEMENT VALUE" : "");
+  const saveConfig = useSaveConsoleConfigEntries();
+  const [selection, setSelection] = useState<RuntimeSelection | null>(null);
+  const canEditRuntime = viewer.isRoot;
+
+  const saveEntries = async (entries: readonly SaveConsoleConfigInput[]) => {
+    if (entries.length === 0) {
+      return;
+    }
+    await saveConfig.mutateAsync({ entries });
+  };
+
+  if (selection) {
+    const group = RUNTIME_SETTING_GROUPS.find((candidate) => candidate.id === selection.id) ?? RUNTIME_SETTING_GROUPS[0];
+    return (
+      <ConsoleDetailPage
+        icon={group.id === "shell" ? "terminal" : "cog"}
+        title={group.title.toUpperCase()}
+        typeLabel="GSV · RUNTIME"
+        statusLabel={canEditRuntime ? "GLOBAL SETTINGS" : "ROOT REQUIRED"}
+        tone={canEditRuntime ? "online" : "idle"}
+        blurb={group.description}
+        parentLabel="RUNTIME"
+        onBack={() => setSelection(null)}
+      >
+        <SettingsFieldGroup
+          config={config}
+          description={group.description}
+          editable={canEditRuntime}
+          fields={group.fields}
+          meta={canEditRuntime ? "EDITABLE" : "READ ONLY"}
+          title={group.title}
+          writeKeyForField={(field) => field.key}
+          onSave={saveEntries}
+        />
+      </ConsoleDetailPage>
+    );
+  }
+
+  return (
+    <section class="gsv-console-settings-index">
+      {RUNTIME_SETTING_GROUPS.map((group) => (
+        <SettingsListPanel
+          key={group.id}
+          title={group.title.toUpperCase()}
+          meta={canEditRuntime ? "EDITABLE" : "ROOT REQUIRED"}
+          emptyLabel={`NO ${group.title.toUpperCase()} SETTINGS`}
+          fitContent
+          rows={[runtimeGroupRow(group, config, () => setSelection({ id: group.id }))]}
+        />
+      ))}
+    </section>
+  );
+}
+
+function defaultModelRow(values: Record<string, string>, onOpen: () => void): SettingsListRow {
+  const model = values["config/ai/model"] ?? "";
+  const label = modelDisplayName(model) || "Not configured";
+  return {
+    id: "default-agent-model",
+    icon: "stars",
+    label,
+    sub: model || "Default agent model stack",
+    statusLabel: model ? "DEFAULT" : "EMPTY",
+    tone: model ? "online" : "idle",
+    onOpen,
+  };
+}
+
+function profileRow(profile: ConsoleModelProfile, onOpen: () => void): SettingsListRow {
+  const model = profile.values["config/ai/model"] ?? "";
+  return {
+    id: profile.id,
+    icon: "stars",
+    label: profile.name,
+    sub: modelDisplayName(model) || model || "Model behavior preset",
+    statusLabel: model ? "PRESET" : "INCOMPLETE",
+    tone: model ? "online" : "warn",
+    tag: { label: modelDisplayName(model) || "MODEL", tone: "info" },
+    onOpen,
+  };
+}
+
+function toolModelRow(
+  group: ConsoleSettingGroup,
+  values: Record<string, string>,
+  onOpen: () => void,
+): SettingsListRow {
+  const modelField = group.fields.find((field) => field.key.endsWith("/model"));
+  const model = modelField ? values[modelField.key] ?? "" : "";
+  return {
+    id: group.id,
+    icon: toolModelIcon(group.id),
+    label: group.title,
+    sub: model ? modelDisplayName(model) : group.description,
+    statusLabel: model ? "CONFIGURED" : "EMPTY",
+    tone: model ? "online" : "idle",
+    onOpen,
+  };
+}
+
+function toolModelIcon(groupId: string): string {
+  switch (groupId) {
+    case "image-generation":
+      return "doticons/pencil";
+    case "image-read":
+      return "doticons/camera";
+    case "speech":
+      return "doticons/volume";
+    case "transcription":
+      return "doticons/microphone";
+    default:
+      return "cog";
+  }
+}
+
+function runtimeGroupRow(
+  group: ConsoleSettingGroup,
+  config: readonly ConsoleConfigEntry[],
+  onOpen: () => void,
+): SettingsListRow {
+  const values = group.fields.map((field) => configValueForKey(config, field.key)).filter((value) => value.trim().length > 0);
+  const primary = group.id === "shell"
+    ? shellRuntimeSummary(config)
+    : serverRuntimeSummary(config);
+  return {
+    id: group.id,
+    icon: group.id === "shell" ? "terminal" : "cog",
+    label: group.title,
+    sub: primary,
+    statusLabel: `${values.length} SET`,
+    tone: values.length > 0 ? "online" : "idle",
+    onOpen,
+  };
+}
+
+function shellRuntimeSummary(config: readonly ConsoleConfigEntry[]): string {
+  const timeout = configValueForKey(config, "config/shell/timeout_ms") || "timeout";
+  const network = configValueForKey(config, "config/shell/network_enabled") === "true" ? "network on" : "network off";
+  const output = configValueForKey(config, "config/shell/max_output_bytes") || "output cap";
+  return `${timeout} ms · ${network} · ${output} bytes`;
+}
+
+function serverRuntimeSummary(config: readonly ConsoleConfigEntry[]): string {
+  const name = configValueForKey(config, "config/server/name") || "gsv";
+  const timezone = configValueForKey(config, "config/server/timezone") || "UTC";
+  const version = configValueForKey(config, "config/server/version") || "version";
+  return `${name} · ${timezone} · ${version}`;
+}
+
+async function saveModelProfiles(
+  viewer: SettingsViewer,
+  currentProfiles: readonly ConsoleModelProfile[],
+  nextProfiles: readonly ConsoleModelProfile[],
+  onSaveEntries: (entries: readonly SaveConsoleConfigInput[]) => Promise<void>,
+): Promise<void> {
+  void currentProfiles;
+  if (viewer.uid === null) {
+    throw new Error("A signed-in account is required to save model presets.");
+  }
+  await onSaveEntries([{
+    key: modelProfilesConfigKey(viewer.uid),
+    value: serializeModelProfiles(nextProfiles),
+  }]);
+}
+
+async function makeProfileDefault(
+  viewer: SettingsViewer,
+  profile: ConsoleModelProfile,
+  onSaveEntries: (entries: readonly SaveConsoleConfigInput[]) => Promise<void>,
+): Promise<void> {
+  if (viewer.uid === null) {
+    throw new Error("A signed-in account is required to update the default model.");
+  }
+  await onSaveEntries(MODEL_PROFILE_FIELDS.map((field) => ({
+    key: viewer.isRoot ? field.key : buildUserAiOverrideKey(viewer.uid!, field.key),
+    value: profile.values[field.key] ?? "",
+  })));
+}
+
+function ModelProfileForm({
+  defaultValues,
+  editable,
+  profile,
+  profiles,
+  onCancel,
+  onDelete,
+  onMakeDefault,
+  onSave,
+}: {
+  defaultValues: Record<string, string>;
+  editable: boolean;
+  profile: ConsoleModelProfile | null;
+  profiles: readonly ConsoleModelProfile[];
+  onCancel: () => void;
+  onDelete?: () => Promise<void>;
+  onMakeDefault?: () => Promise<void>;
+  onSave: (name: string, values: Record<string, string>) => Promise<void>;
+}) {
+  const initialValues = useMemo(
+    () => profile ? profile.values : profileValuesFromDrafts(defaultValues),
+    [defaultValues, profile],
+  );
+  const [name, setName] = useState(profile?.name ?? "");
+  const [drafts, setDrafts] = useState(initialValues);
+  const [pending, setPending] = useState(false);
+  const [statusText, setStatusText] = useState("");
 
   useEffect(() => {
-    setDraftValue(row.redacted ? "" : row.value);
-    setErrorText("");
-    setSavedText("");
-    setRedactedVersion((version) => version + 1);
-    saveConfig.reset();
-  }, [row.id, row.redacted, row.value]);
+    setName(profile?.name ?? "");
+    setDrafts(initialValues);
+    setStatusText("");
+  }, [initialValues, profile]);
 
-  const handleSave = async () => {
-    if (!canSave || row.configKey === null) {
-      return;
-    }
+  const duplicateName = profiles.some((candidate) =>
+    candidate.id !== profile?.id &&
+    candidate.name.toLowerCase() === name.trim().toLowerCase()
+  );
+  const canSave = editable && name.trim().length > 0 && !duplicateName && drafts["config/ai/model"]?.trim();
 
-    setErrorText("");
-    setSavedText("");
+  const run = async (action: () => Promise<void>, successText: string) => {
+    setPending(true);
+    setStatusText("");
     try {
-      await saveConfig.mutateAsync({ key: row.configKey, value: draftValue });
-      setSavedText("SAVED");
-      if (row.redacted) {
-        setDraftValue("");
-        setRedactedVersion((version) => version + 1);
-      }
+      await action();
+      setStatusText(successText);
     } catch (error) {
-      setErrorText(errorMessage(error));
+      setStatusText(errorMessage(error));
+    } finally {
+      setPending(false);
     }
   };
 
   return (
-    <ConsoleDetailPage
-      icon={row.icon}
-      title={row.label}
-      typeLabel={`GSV · ${noun}`}
-      statusLabel={row.statusLabel}
-      tone={row.tone}
-      blurb={row.detailBlurb}
-      parentLabel={kind === "models" ? "MODELS" : "OVERRIDES"}
-      primaryLabel={saving ? "SAVING" : "SAVE CHANGES"}
-      onPrimary={canSave ? () => {
-        void handleSave();
-      } : undefined}
-      onBack={onBack}
-    >
-      <div class="gsv-console-config-form">
-        <TextInput
-          key={`key-${row.id}`}
-          label="CONFIG KEY"
-          value={row.configKey ?? ""}
-          readonly
-        />
-        {row.redacted ? (
-          <TextInput
-            key={`secret-${row.id}-${redactedVersion}`}
-            label="VALUE"
-            placeholder="replacement value"
-            type="password"
-            value={draftValue}
-            status={status}
-            message={message}
-            disabled={saving}
-            onChange={(next) => {
-              setErrorText("");
-              setSavedText("");
-              setDraftValue(next);
-            }}
-          />
-        ) : (
-          <TextArea
-            label="VALUE"
-            placeholder="value"
-            rows={configValueRows(draftValue)}
-            value={draftValue}
-            status={status}
-            message={message}
-            disabled={saving}
-            onChange={(next) => {
-              setErrorText("");
-              setSavedText("");
-              setDraftValue(next);
-            }}
-          />
-        )}
+    <Surface level={1} class="gsv-console-model-form">
+      <div class="gsv-console-settings-form-head">
+        <div>
+          <h3>{profile ? "Edit Preset" : "New Preset"}</h3>
+          <p>Presets store provider, model, reasoning, and context limits. Credentials stay in model settings.</p>
+        </div>
       </div>
-    </ConsoleDetailPage>
+      <div class="gsv-console-settings-fields">
+        <TextInput
+          label="PRESET NAME"
+          placeholder="Deep Research"
+          value={name}
+          disabled={!editable || pending}
+          status={duplicateName ? "error" : "none"}
+          message={duplicateName ? "NAME ALREADY EXISTS" : ""}
+          onChange={setName}
+        />
+        {MODEL_PROFILE_FIELDS.map((field) => (
+          <SettingFieldInput
+            field={field}
+            key={field.key}
+            disabled={!editable || pending}
+            value={drafts[field.key] ?? ""}
+            onChange={(value) => setDrafts((current) => ({ ...current, [field.key]: value }))}
+          />
+        ))}
+      </div>
+      {statusText ? <div class="gsv-console-settings-status">{statusText}</div> : null}
+      <div class="gsv-console-settings-actions">
+        <Button
+          variant="primary"
+          label={pending ? "SAVING" : "SAVE PRESET"}
+          disabled={!canSave || pending}
+          onClick={() => void run(() => onSave(name, drafts), "Saved")}
+        />
+        {profile && onMakeDefault ? (
+          <Button
+            variant="secondary"
+            label="MAKE DEFAULT"
+            disabled={!editable || pending}
+            onClick={() => void run(onMakeDefault, "Default updated")}
+          />
+        ) : null}
+        <Button variant="secondary" label="CANCEL" disabled={pending} onClick={onCancel} />
+        {profile && onDelete ? (
+          <Button
+            variant="dangerGhost"
+            label="DELETE"
+            disabled={!editable || pending}
+            onClick={() => void run(onDelete, "Deleted")}
+          />
+        ) : null}
+      </div>
+    </Surface>
   );
 }
 
-function listRowStatusForTone(tone: StatusTone): ListRowStatus {
-  if (tone === "online" || tone === "error" || tone === "idle" || tone === "live" || tone === "update" || tone === "warn") {
-    return tone;
-  }
-  return "online";
+function SettingsFieldGroup({
+  config,
+  description,
+  editable,
+  fields,
+  initialValues,
+  meta,
+  onSave,
+  title,
+  writeKeyForField,
+}: SettingsFieldGroupProps) {
+  const initialDrafts = useMemo(
+    () => Object.fromEntries(fields.map((field) => [
+      field.key,
+      initialValues?.[field.key] ?? configValueForKey(config, field.key),
+    ])),
+    [config, fields, initialValues],
+  );
+  const [drafts, setDrafts] = useState<Record<string, string>>(initialDrafts);
+  const [version, setVersion] = useState(0);
+  const [pending, setPending] = useState(false);
+  const [statusText, setStatusText] = useState("");
+
+  useEffect(() => {
+    setDrafts(initialDrafts);
+    setStatusText("");
+    setVersion((current) => current + 1);
+  }, [initialDrafts]);
+
+  const changedEntries = fields.flatMap((field) => {
+    if (field.kind === "readonly") {
+      return [];
+    }
+    const value = drafts[field.key] ?? "";
+    const baseline = initialDrafts[field.key] ?? "";
+    if (isSensitiveSettingKey(field.key) && value.length === 0) {
+      return [];
+    }
+    if (value === baseline) {
+      return [];
+    }
+    return [{
+      key: writeKeyForField(field),
+      value: serializeSettingValue(field, value),
+    }];
+  });
+  const dirty = changedEntries.length > 0;
+
+  const save = async () => {
+    if (!dirty || pending) {
+      return;
+    }
+    setPending(true);
+    setStatusText("");
+    try {
+      await onSave(changedEntries);
+      setStatusText("Saved");
+    } catch (error) {
+      setStatusText(errorMessage(error));
+    } finally {
+      setPending(false);
+    }
+  };
+
+  return (
+    <Surface level={1} class="gsv-console-settings-group">
+      <div class="gsv-console-settings-form-head">
+        <div>
+          <h3>{title}</h3>
+          <p>{description}</p>
+        </div>
+        {meta ? <Tag label={meta} tone={editable ? "accent" : "idle"} boxed /> : null}
+      </div>
+      <div class="gsv-console-settings-fields">
+        {fields.map((field) => (
+          <SettingFieldInput
+            disabled={!editable || pending || field.kind === "readonly"}
+            field={field}
+            key={`${field.key}:${version}`}
+            redacted={isFieldRedacted(config, field, writeKeyForField(field))}
+            value={drafts[field.key] ?? ""}
+            onChange={(value) => {
+              setStatusText("");
+              setDrafts((current) => ({ ...current, [field.key]: value }));
+            }}
+          />
+        ))}
+      </div>
+      {statusText ? <div class="gsv-console-settings-status">{statusText}</div> : null}
+      <div class="gsv-console-settings-actions">
+        <Button variant="primary" label={pending ? "SAVING" : "SAVE CHANGES"} disabled={!editable || !dirty || pending} onClick={() => void save()} />
+        <Button
+          variant="secondary"
+          label="RESET"
+          disabled={!dirty || pending}
+          onClick={() => {
+            setDrafts(initialDrafts);
+            setStatusText("");
+            setVersion((current) => current + 1);
+          }}
+        />
+      </div>
+    </Surface>
+  );
 }
 
-const SENSITIVE_CONFIG_KEY_RE = /(?:^|\/|_)(?:api[_-]?key|password|secret|token|credential)(?:$|\/|_)/i;
+function SettingFieldInput({
+  disabled,
+  field,
+  redacted = false,
+  value,
+  onChange,
+}: {
+  disabled: boolean;
+  field: ConsoleSettingField;
+  redacted?: boolean;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const placeholder = redacted ? "configured - enter replacement" : field.placeholder;
+  const description = redacted ? `${field.description} Current value is hidden.` : field.description;
 
-function isSensitiveConfigKey(key: string): boolean {
-  return SENSITIVE_CONFIG_KEY_RE.test(key);
+  if (field.kind === "textarea") {
+    return (
+      <TextArea
+        label={field.label}
+        description={description}
+        placeholder={placeholder}
+        rows={field.rows ?? 4}
+        value={value}
+        disabled={disabled}
+        onChange={onChange}
+      />
+    );
+  }
+
+  if (field.kind === "select") {
+    const options = field.options ?? [];
+    const optionLabels = options.map((option) => option.label);
+    const selectedIndex = Math.max(0, options.findIndex((option) => option.value === value));
+    return (
+      <Select
+        label={field.label}
+        description={description}
+        options={optionLabels}
+        value={selectedIndex}
+        disabled={disabled}
+        width={420}
+        onChange={(index) => onChange(options[index]?.value ?? "")}
+      />
+    );
+  }
+
+  if (field.kind === "checkbox") {
+    return (
+      <Checkbox
+        label={field.label}
+        description={description}
+        checked={value === "true"}
+        disabled={disabled}
+        onChange={(checked) => onChange(checked ? "true" : "false")}
+      />
+    );
+  }
+
+  return (
+    <TextInput
+      label={field.label}
+      description={description}
+      placeholder={placeholder}
+      value={value}
+      readonly={field.kind === "readonly"}
+      disabled={disabled}
+      clearable={field.kind !== "readonly" && field.kind !== "password"}
+      type={field.kind === "password" ? "password" : "text"}
+      inputProps={field.kind === "number" ? { inputMode: "numeric" } : undefined}
+      onChange={onChange}
+    />
+  );
 }
 
-function configValueRows(value: string): number {
-  if (value.includes("\n")) {
-    return 8;
+function isFieldRedacted(
+  config: readonly ConsoleConfigEntry[],
+  field: ConsoleSettingField,
+  writeKey: string,
+): boolean {
+  if (!isSensitiveSettingKey(field.key) && !isSensitiveSettingKey(writeKey)) {
+    return false;
   }
-  return value.length > 120 ? 6 : 4;
+  const writeEntry = configEntryForKey(config, writeKey);
+  const readEntry = configEntryForKey(config, field.key);
+  return writeEntry?.redacted === true || readEntry?.redacted === true || field.kind === "password";
+}
+
+function serializeSettingValue(field: ConsoleSettingField, value: string): string {
+  if (field.kind === "number") {
+    return value.trim();
+  }
+  if (field.kind === "checkbox") {
+    return value === "true" ? "true" : "false";
+  }
+  return value;
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : error ? String(error) : "Unable to save config.";
-}
-
-function modelRows(config: readonly ConsoleConfigEntry[]): ConfigRow[] {
-  const defaultModel = defaultModelLabelForConfig(config);
-  const rows = modelConfigEntries(config).map((entry): ConfigRow => ({
-    id: entry.key,
-    icon: "stars",
-    label: entry.value,
-    sub: entry.key,
-    statusLabel: entry.value === defaultModel ? "DEFAULT" : "CONFIGURED",
-    tone: "online" as const,
-    detailBlurb: entry.value === defaultModel
-      ? "Gateway model setting currently selected as the default model for agent behavior."
-      : "Gateway model setting returned by the live system configuration.",
-    configKey: entry.key,
-    value: entry.value,
-    redacted: entry.redacted,
-    ...(entry.value === defaultModel ? { tag: { label: "DEFAULT", tone: "online" as const } } : {}),
-  }));
-
-  if (rows.length > 0) {
-    return rows;
-  }
-
-  return [{
-    id: "no-live-model-config",
-    icon: "stars",
-    label: "NO LIVE MODEL CONFIG",
-    sub: "Gateway did not return model configuration entries.",
-    statusLabel: "EMPTY",
-    tone: "idle",
-    detailBlurb: "No model configuration entries are currently returned by the gateway.",
-    configKey: null,
-    value: "",
-    redacted: false,
-  }];
-}
-
-function overrideRows(config: readonly ConsoleConfigEntry[]): ConfigRow[] {
-  const overrides = overrideConfigEntries(config);
-
-  if (overrides.length === 0) {
-    return [{
-      id: "no-overrides",
-      icon: "cog",
-      label: "NOT CONFIGURED",
-      sub: "No system config entries are currently returned by the gateway.",
-      statusLabel: "EMPTY",
-      tone: "idle",
-      detailBlurb: "No override entries are currently returned by the gateway.",
-      configKey: null,
-      value: "",
-      redacted: false,
-    }];
-  }
-
-  return [...overrides]
-    .sort((left, right) => left.key.localeCompare(right.key))
-    .map((entry): ConfigRow => {
-      const hasValue = entry.value.trim().length > 0;
-      return {
-        id: entry.key,
-        icon: "cog",
-        label: entry.key,
-        sub: entry.redacted ? "redacted value" : hasValue ? entry.value : "empty value",
-        statusLabel: entry.redacted ? "REDACTED" : hasValue ? "CONFIGURED" : "EMPTY",
-        tone: entry.redacted ? "update" : hasValue ? "online" : "idle",
-        detailBlurb: entry.redacted
-          ? "This override is present but its value is redacted by the gateway."
-          : hasValue
-            ? "This override is present in the live gateway configuration."
-            : "This override is present but currently has an empty value.",
-        configKey: entry.key,
-        value: entry.value,
-        redacted: entry.redacted,
-        ...(entry.redacted ? { tag: { label: "REDACTED", tone: "warn" as const } } : {}),
-      };
-    });
+  return error instanceof Error ? error.message : error ? String(error) : "Unable to save settings.";
 }

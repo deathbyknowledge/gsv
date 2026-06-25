@@ -27,11 +27,7 @@ export function statusForProcess(process: ConsoleProcess): string {
 }
 
 export function processSub(process: ConsoleProcess): string {
-  return compactText([
-    process.username || uidLabel(process.uid),
-    process.profile,
-    process.cwd,
-  ], process.pid);
+  return process.username || uidLabel(process.uid) || process.pid;
 }
 
 export function processBlurb(process: ConsoleProcess): string {

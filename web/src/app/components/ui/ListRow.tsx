@@ -66,6 +66,9 @@ export function ListRow({
 
   const rootStyle: JSX.CSSProperties = {
     width: "100%",
+    maxWidth: "100%",
+    minWidth: 0,
+    boxSizing: "border-box",
     appearance: "none",
     border: 0,
     background: active ? "var(--active)" : "transparent",
@@ -73,6 +76,7 @@ export function ListRow({
     display: "flex",
     alignItems: "center",
     gap: "14px",
+    overflow: "hidden",
     padding: "15px 20px",
     cursor: onClick ? "pointer" : "default",
     transition: "background .12s",
@@ -98,10 +102,37 @@ export function ListRow({
         </span>
       ) : null}
       {hasDot && statusDotPlacement === "leading" ? <span class={dotClass} style={dotStyle} /> : null}
-      <div class="lr-main" style={{ flex: 1, minWidth: 0 }}>
-        <div class="lr-label" style={{ fontSize: "12.5px", letterSpacing: ".04em", color: "var(--text)" }}>{label}</div>
+      <div class="lr-main" style={{ flex: "1 1 0", minWidth: 0, maxWidth: "100%", overflow: "hidden" }}>
+        <div
+          class="lr-label"
+          style={{
+            maxWidth: "100%",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            fontSize: "12.5px",
+            letterSpacing: ".04em",
+            color: "var(--text)",
+          }}
+        >
+          {label}
+        </div>
         {sub ? (
-          <div class="lr-sub" style={{ fontSize: "10px", letterSpacing: ".04em", color: "#8c86c8", marginTop: "6px" }}>{sub}</div>
+          <div
+            class="lr-sub"
+            style={{
+              maxWidth: "100%",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              fontSize: "10px",
+              letterSpacing: ".04em",
+              color: "#8c86c8",
+              marginTop: "6px",
+            }}
+          >
+            {sub}
+          </div>
         ) : null}
       </div>
       {tag ? <span class="lr-tag" style={{ flex: "none" }}><Tag label={tag} tone={tagTone} boxed /></span> : null}

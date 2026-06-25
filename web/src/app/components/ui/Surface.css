@@ -4,6 +4,9 @@
   --surface-border: var(--border);
   position: relative;
   display: block;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   box-sizing: border-box;
   background: var(--surface-bg);
   border: 1px solid var(--surface-border);

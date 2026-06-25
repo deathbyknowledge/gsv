@@ -1,10 +1,35 @@
 /* Ported from ListRow.dc.html — hover rule transcribed verbatim. */
+.lr {
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
 .lr-icon {
   width: 20px;
   flex: none;
   display: inline-flex;
   justify-content: center;
   color: var(--accent-bright);
+}
+
+.lr-main,
+.lr-label,
+.lr-sub {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.lr-main {
+  overflow: hidden;
+}
+
+.lr-label,
+.lr-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .lr-dot.is-trailing {
