@@ -29,6 +29,7 @@ import infoTip from "./stories/InfoTip.story";
 import alert from "./stories/Alert.story";
 import listRow from "./stories/ListRow.story";
 import asciiPlanet from "./stories/AsciiPlanet.story";
+import asciiGalaxyScan from "./stories/AsciiGalaxyScan.story";
 import agentImage from "./stories/AgentImage.story";
 import avatar from "./stories/Avatar.story";
 import tile from "./stories/Tile.story";
@@ -83,6 +84,7 @@ const STORIES: Story[] = [
   // Data Display
   listRow,
   asciiPlanet,
+  asciiGalaxyScan,
   tile,
   objectCard,
   surface,
