@@ -1,10 +1,11 @@
-import { PackageBackendEntrypoint, type PackageSignalContext } from "@gsv/package/backend";
+import { PackageBackendEntrypoint, type PackageSignalContext } from "@humansandmachines/gsv/sdk/backend";
 import {
   abortRun,
   compactConversation,
   decideHil,
   forkConversation,
   getHistory,
+  getProcessAiConfig,
   getViewer,
   listConversations,
   listConversationSegments,
@@ -13,6 +14,8 @@ import {
   readProcessMedia,
   readConversationSegment,
   sendMessage,
+  setProcessAiField,
+  setProcessAiProfile,
   spawnProcess,
   unwatchProcessSignals,
   watchProcessSignals,
@@ -45,6 +48,18 @@ export default class ChatBackend extends PackageBackendEntrypoint {
 
   async readProcessMedia(args: unknown): Promise<unknown> {
     return readProcessMedia(this.kernel, args);
+  }
+
+  async getProcessAiConfig(args: unknown): Promise<unknown> {
+    return getProcessAiConfig(this.kernel, args);
+  }
+
+  async setProcessAiProfile(args: unknown): Promise<unknown> {
+    return setProcessAiProfile(this.kernel, args);
+  }
+
+  async setProcessAiField(args: unknown): Promise<unknown> {
+    return setProcessAiField(this.kernel, args);
   }
 
   async listConversations(args: unknown): Promise<unknown> {

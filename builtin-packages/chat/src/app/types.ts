@@ -6,6 +6,9 @@ export type ChatBackend = {
   sendMessage(args: unknown): Promise<unknown>;
   getHistory(args: unknown): Promise<unknown>;
   readProcessMedia(args: unknown): Promise<unknown>;
+  getProcessAiConfig(args: unknown): Promise<unknown>;
+  setProcessAiProfile(args: unknown): Promise<unknown>;
+  setProcessAiField(args: unknown): Promise<unknown>;
   listConversations(args: unknown): Promise<unknown>;
   compactConversation(args: unknown): Promise<unknown>;
   listConversationSegments(args: unknown): Promise<unknown>;
@@ -76,6 +79,28 @@ export type ConversationRecord = {
   updatedAt: number;
 };
 
+export type UsageCost = {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  total: number;
+  currency: "USD";
+  source: "provider" | "model-pricing" | "mixed";
+};
+
+export type UsageState = {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  totalTokens: number;
+  cost: UsageCost | null;
+  generations?: number;
+  costIncomplete?: boolean;
+  updatedAt?: number;
+};
+
 export type ContextState = {
   conversationId: string;
   runId?: string;
@@ -89,11 +114,46 @@ export type ContextState = {
   inputTokens: number;
   outputTokens: number | null;
   totalTokens: number | null;
+  usage: UsageState | null;
+  conversationUsage: UsageState | null;
   availableInputTokens: number | null;
   pressure: number | null;
   level: "ok" | "warn" | "critical" | "full" | "unknown";
   source: "provider" | "estimate";
   updatedAt: number;
+};
+
+export type ProcessAiProfileRef = {
+  id?: string;
+  name?: string;
+  appliedAt?: number;
+};
+
+export type ProcessAiSnapshot = {
+  version?: number;
+  profile?: ProcessAiProfileRef | null;
+  values: Record<string, string>;
+  updatedAt?: number;
+};
+
+export type ProcessAiEffectiveState = {
+  profile: ProcessAiProfileRef | null;
+  values: Record<string, string>;
+};
+
+export type ProcessAiModelProfile = {
+  id: string;
+  name: string;
+  values: Record<string, string>;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type ProcessAiState = {
+  profile: string;
+  effective: ProcessAiEffectiveState;
+  local: ProcessAiSnapshot | null;
+  profiles: ProcessAiModelProfile[];
 };
 
 export type Attachment = {

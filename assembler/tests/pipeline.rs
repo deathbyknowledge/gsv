@@ -249,7 +249,7 @@ fn rejects_missing_icon_file() {
 }
 
 #[test]
-fn prepare_sources_injects_sdk_fallbacks_and_materializes_workspace_packages() {
+fn prepare_sources_materializes_workspace_packages() {
     let mut request = base_request();
     request.files.extend(files([
         (
@@ -257,10 +257,7 @@ fn prepare_sources_injects_sdk_fallbacks_and_materializes_workspace_packages() {
             r#"{
   "name": "local-ui",
   "version": "1.0.0",
-  "type": "module",
-  "dependencies": {
-    "@gsv/package": "^0.1.0"
-  }
+  "type": "module"
 }"#,
         ),
         (
@@ -273,25 +270,22 @@ fn prepare_sources_injects_sdk_fallbacks_and_materializes_workspace_packages() {
     let prepared = prepare_sources(validated.value.as_ref().expect("validated"));
     let prepared = prepared.value.expect("prepared");
 
-    assert!(prepared
+    assert!(!prepared
         .files
-        .contains("node_modules/@gsv/package/src/manifest.ts"));
-    assert!(prepared
-        .files
-        .contains("node_modules/@gsv/app-link/src/index.ts"));
+        .contains("node_modules/@humansandmachines/gsv/src/sdk.ts"));
     assert!(prepared
         .files
         .contains("node_modules/local-ui/src/index.ts"));
 }
 
 #[test]
-fn prepare_sources_uses_repo_sdk_packages_when_declared() {
+fn prepare_sources_materializes_repo_sdk_package() {
     let mut request = base_request();
     request.files.extend(files([
         (
             "vendor/gsv-package/package.json",
             r#"{
-  "name": "@gsv/package",
+  "name": "@humansandmachines/gsv",
   "version": "9.9.9",
   "type": "module"
 }"#,
@@ -300,35 +294,16 @@ fn prepare_sources_uses_repo_sdk_packages_when_declared() {
             "vendor/gsv-package/src/index.ts",
             "export const source = 'repo';",
         ),
-        (
-            "vendor/app-link/package.json",
-            r#"{
-  "name": "@gsv/app-link",
-  "version": "9.9.9",
-  "type": "module"
-}"#,
-        ),
-        (
-            "vendor/app-link/src/index.ts",
-            "export const source = 'repo';",
-        ),
     ]));
 
     let validated = validate_request(&request);
     let prepared = prepare_sources(validated.value.as_ref().expect("validated"));
     let prepared = prepared.value.expect("prepared");
 
-    assert!(!prepared
-        .files
-        .contains("__gsv_sdk/@gsv/package/package.json"));
-    assert_eq!(
-        prepared.files.get("node_modules/@gsv/package/src/index.ts"),
-        Some("export const source = 'repo';")
-    );
     assert_eq!(
         prepared
             .files
-            .get("node_modules/@gsv/app-link/src/index.ts"),
+            .get("node_modules/@humansandmachines/gsv/src/index.ts"),
         Some("export const source = 'repo';")
     );
 }
@@ -387,13 +362,13 @@ fn install_plan_prefers_lockfile_versions() {
 }
 
 #[test]
-fn install_plan_skips_local_file_workspace_and_dev_dependencies() {
+fn install_plan_skips_explicit_local_specs_and_dev_dependencies() {
     let mut request = base_request();
     request.analysis.package_json.dependencies.extend(
         [
             ("local-ui".to_string(), "workspace:*".to_string()),
             ("linked-ui".to_string(), "file:../linked-ui".to_string()),
-            ("@gsv/package".to_string(), "^0.1.0".to_string()),
+            ("@humansandmachines/gsv".to_string(), "0.0.1".to_string()),
             ("react".to_string(), "^18.0.0".to_string()),
         ]
         .into_iter()
@@ -413,6 +388,15 @@ fn install_plan_skips_local_file_workspace_and_dev_dependencies() {
 }"#,
         ),
         ("packages/local-ui/src/index.ts", "export {};"),
+        (
+            "packages/gsv/package.json",
+            r#"{
+  "name": "@humansandmachines/gsv",
+  "version": "0.0.1",
+  "type": "module"
+}"#,
+        ),
+        ("packages/gsv/src/sdk.ts", "export {};"),
     ]));
 
     let planned = prepare_request(&request).value.expect("planned");
@@ -423,7 +407,7 @@ fn install_plan_skips_local_file_workspace_and_dev_dependencies() {
         .map(|item| item.name.as_str())
         .collect();
 
-    assert_eq!(names, vec!["react"]);
+    assert_eq!(names, vec!["@humansandmachines/gsv", "react"]);
 }
 
 #[test]
@@ -493,7 +477,7 @@ fn install_plan_merges_lockfile_version_with_compatible_workspace_range() {
         (
             "packages/protocol/package.json",
             r#"{
-  "name": "@gsv/protocol",
+  "name": "@demo/protocol",
   "version": "1.0.0",
   "dependencies": {
     "marked": "^16.4.2"
@@ -507,7 +491,7 @@ fn install_plan_merges_lockfile_version_with_compatible_workspace_range() {
     let marked = find_plan_item(&planned.install_plan.registry_dependencies, "marked");
 
     assert_eq!(marked.install_spec, "16.4.2");
-    assert_eq!(marked.requested_by, vec!["@demo/app", "@gsv/protocol"]);
+    assert_eq!(marked.requested_by, vec!["@demo/app", "@demo/protocol"]);
 }
 
 #[test]

@@ -1,4 +1,4 @@
-import { definePackage } from "@gsv/package/manifest";
+import { definePackage } from "@humansandmachines/gsv/sdk/manifest";
 
 export default definePackage({
   meta: {
@@ -71,6 +71,7 @@ export default definePackage({
       "./src/styles/base.css",
       "./src/styles/shell.css",
       "./src/styles/sections.css",
+      "./src/styles/object-cards.css",
       "./src/styles/runtime.css",
       "./src/styles/agents.css",
       "./src/styles/devices.css",

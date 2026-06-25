@@ -1,10 +1,10 @@
 import { withTimeout } from "./timeout";
 
-type AudioSpeechBinding = {
+export type AudioSpeechBinding = {
   run(model: string, input: Record<string, unknown>): Promise<unknown>;
 };
 
-type AudioSpeechRequest = {
+export type AudioSpeechRequest = {
   text: string;
   model?: string;
   voice?: string;
@@ -16,11 +16,11 @@ type AudioSpeechRequest = {
   timeoutMs?: number;
 };
 
-type AudioSpeechResult = {
+export type AudioSpeechResult = {
   data: string;
   mimeType: string;
   size: number;
-  provider: "workers-ai";
+  provider: string;
   model: string;
   voice?: string;
   encoding?: string;

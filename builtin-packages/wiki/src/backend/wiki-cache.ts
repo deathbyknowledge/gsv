@@ -1,5 +1,5 @@
-import type { RepoSummary } from "@gsv/protocol/syscalls/repositories";
-import type { PackageStorageBinding } from "@gsv/package/context";
+import type { RepoSummary } from "@humansandmachines/gsv/protocol";
+import type { PackageStorageBinding } from "@humansandmachines/gsv/sdk/context";
 
 const WIKI_CACHE_MIGRATIONS_TABLE = "wiki_schema_migrations";
 const WIKI_REPO_CACHE_TABLE = "wiki_repo_cache";
@@ -59,16 +59,21 @@ export class WikiRepoDiscoveryCache {
       `SELECT repo, repo_updated_at, is_wiki, wiki_id, title
        FROM ${WIKI_REPO_CACHE_TABLE}`,
     );
-    return new Map(rows.map((row) => {
+    const entries: Array<[string, WikiRepoCacheEntry]> = [];
+    for (const row of rows) {
       const repo = String(row.repo ?? "");
-      return [repo, {
+      if (!repo) {
+        continue;
+      }
+      entries.push([repo, {
         repo,
         repoUpdatedAt: typeof row.repo_updated_at === "number" ? row.repo_updated_at : null,
         isWiki: row.is_wiki === 1 || row.is_wiki === true,
         wikiId: typeof row.wiki_id === "string" && row.wiki_id.trim() ? row.wiki_id.trim() : undefined,
         title: typeof row.title === "string" && row.title.trim() ? row.title.trim() : undefined,
-      }];
-    }).filter(([repo]) => repo));
+      }]);
+    }
+    return new Map(entries);
   }
 
   async write(repo: RepoSummary, manifest: WikiCacheManifest | null): Promise<void> {

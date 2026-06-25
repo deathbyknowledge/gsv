@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { PROCESS_MIGRATIONS, PROCESS_SCHEMA_COMPONENT } from "./migrations";
 import { PROCESS_V001_INITIAL_SCHEMA } from "./v001_initial";
 import { PROCESS_V002_MESSAGE_RUN_ID } from "./v002_message_run_id";
+import { PROCESS_V003_MESSAGE_METADATA } from "./v003_message_metadata";
 
 function normalizedStatements(): string[] {
   return PROCESS_MIGRATIONS.flatMap((migration) => migration.statements)
@@ -33,7 +34,7 @@ function createTableStatement(name: string): string {
 describe("process schema migrations", () => {
   it("starts the process component at a v1 baseline with ordered migrations", () => {
     expect(PROCESS_SCHEMA_COMPONENT).toBe("process");
-    expect(PROCESS_MIGRATIONS).toHaveLength(2);
+    expect(PROCESS_MIGRATIONS).toHaveLength(3);
     expect(PROCESS_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_process_schema",
@@ -41,6 +42,10 @@ describe("process schema migrations", () => {
     expect(PROCESS_MIGRATIONS[1]).toMatchObject({
       id: 2,
       name: "add_message_run_id",
+    });
+    expect(PROCESS_MIGRATIONS[2]).toMatchObject({
+      id: 3,
+      name: "add_message_metadata",
     });
   });
 
@@ -98,5 +103,11 @@ describe("process schema migrations", () => {
       .map((statement) => statement.trim().replace(/\s+/g, " "));
     expect(statements).toContain("ALTER TABLE messages ADD COLUMN run_id TEXT");
     expect(statements).toContain("CREATE INDEX IF NOT EXISTS messages_run_id_idx ON messages (run_id)");
+  });
+
+  it("adds typed metadata to persisted messages in v3", () => {
+    const statements = PROCESS_V003_MESSAGE_METADATA.statements
+      .map((statement) => statement.trim().replace(/\s+/g, " "));
+    expect(statements).toContain("ALTER TABLE messages ADD COLUMN metadata_json TEXT");
   });
 });

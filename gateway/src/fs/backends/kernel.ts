@@ -3,11 +3,12 @@ import type {
   MkdirOptions,
   RmOptions,
 } from "just-bash";
-import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
+import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { canReadConfigKey } from "../../kernel/config-access";
 import type { KernelRefs, ProcessViewCall } from "../refs";
 import type { ArgsOf, ResultOf } from "../../syscalls";
 import type {
+  ProcAiConfigSnapshot,
   ProcConversation,
   ProcConversationGenerationManifest,
   ProcConversationSegment,
@@ -20,6 +21,17 @@ import {
   type PackageEntrypoint,
   type PackageInstallScope,
 } from "../../kernel/packages";
+import type { ProcessRecord } from "../../kernel/processes";
+import {
+  PROCESS_AI_CONFIG_KEYS,
+  normalizeProcessAiConfigValues,
+  processAiConfigDirEntries,
+  processAiConfigSuffix,
+  processAiPathToConfigKey,
+  redactProcessAiConfigSnapshot,
+  redactProcessAiConfigValue,
+  redactProcessAiConfigValues,
+} from "../../process/ai-config";
 import { packageSourcePathNameForRecord } from "./process-sources";
 import type { MountBackend, ExtendedMountStat } from "../mount";
 import { normalizePath } from "../utils";
@@ -85,7 +97,8 @@ export class KernelMountBackend implements MountBackend {
       throw new Error(`EPERM: cannot write to virtual device '${p}'`);
     }
     if (p.startsWith("/proc/")) {
-      throw new Error(`EPERM: /proc is read-only`);
+      await this.writeProc(p, typeof content === "string" ? content : new TextDecoder().decode(content));
+      return;
     }
     if (p.startsWith("/sys/")) {
       this.writeSys(p, typeof content === "string" ? content : new TextDecoder().decode(content));
@@ -237,6 +250,10 @@ export class KernelMountBackend implements MountBackend {
       return this.readProcConversation(pid, attrParts.slice(1));
     }
 
+    if (attrParts[0] === "ai") {
+      return this.readProcAi(proc.processId, proc, attrParts.slice(1));
+    }
+
     switch (attr) {
       case "status":
         return [
@@ -316,6 +333,190 @@ export class KernelMountBackend implements MountBackend {
     }
 
     return undefined;
+  }
+
+  private async readProcAi(
+    pid: string,
+    proc: ProcessRecord,
+    parts: string[],
+  ): Promise<string | undefined> {
+    if (parts.length === 0) return undefined;
+
+    const attr = parts.join("/");
+    const local = await this.getProcessAiConfig(pid, false);
+
+    if (attr === "profile") {
+      return `${local?.profile?.name ?? local?.profile?.id ?? ""}\n`;
+    }
+
+    if (attr === "profiles") {
+      return jsonText(this.listProcAiProfiles(proc.ownerUid).map((profile) => ({
+        ...profile,
+        values: redactProcessAiConfigValues(profile.values),
+      })));
+    }
+
+    if (attr === "local.json") {
+      return jsonText(redactProcessAiConfigSnapshot(local));
+    }
+
+    if (attr === "effective.json") {
+      const effective = this.buildProcAiEffectiveValues(proc, local?.values ?? {});
+      return jsonText({
+        profile: local?.profile ?? null,
+        values: redactProcessAiConfigValues(effective),
+      });
+    }
+
+    const key = processAiPathToConfigKey(parts);
+    if (!key) {
+      return undefined;
+    }
+
+    const effective = this.buildProcAiEffectiveValues(proc, local?.values ?? {});
+    if (!Object.prototype.hasOwnProperty.call(effective, key)) {
+      return undefined;
+    }
+    return `${redactProcessAiConfigValue(key, effective[key])}\n`;
+  }
+
+  private async writeProc(path: string, content: string): Promise<void> {
+    if (!this.kernel) {
+      throw new Error("EPERM: /proc is not available");
+    }
+
+    const parts = path.slice("/proc/".length).split("/");
+    if (parts.length < 3 || parts[1] !== "ai") {
+      throw new Error(`EPERM: /proc is read-only`);
+    }
+
+    const proc = this.resolveVisibleProcess(parts[0]);
+    if (!proc || !this.canWriteProcess(proc)) {
+      throw new Error(`ENOENT: no such file or directory, open '${path}'`);
+    }
+
+    const aiParts = parts.slice(2);
+    if (aiParts.length === 1 && aiParts[0] === "profile") {
+      await this.writeProcAiProfile(proc, content);
+      return;
+    }
+
+    const key = processAiPathToConfigKey(aiParts);
+    if (key) {
+      const result = await this.processRequest(
+        proc.processId,
+        "proc.ai.config.set",
+        { key, value: content.trim() },
+      );
+      if (!result?.ok) {
+        throw new Error(`EIO: failed to update process AI config`);
+      }
+      return;
+    }
+
+    throw new Error(`ENOENT: no such file or directory, open '${path}'`);
+  }
+
+  private async writeProcAiProfile(proc: ProcessRecord, content: string): Promise<void> {
+    const selector = content.trim();
+    if (!selector) {
+      const result = await this.processRequest(
+        proc.processId,
+        "proc.ai.config.set",
+        { clear: true },
+      );
+      if (!result?.ok) {
+        throw new Error(`EIO: failed to clear process AI config`);
+      }
+      return;
+    }
+
+    const profile = this.findProcAiProfile(proc.ownerUid, selector);
+    if (!profile) {
+      throw new Error(`ENOENT: AI model profile not found: ${selector}`);
+    }
+
+    const result = await this.processRequest(
+      proc.processId,
+      "proc.ai.config.set",
+      {
+        values: profile.values,
+        profile: {
+          id: profile.id,
+          name: profile.name,
+        },
+      },
+    );
+    if (!result?.ok) {
+      throw new Error(`EIO: failed to apply process AI profile`);
+    }
+  }
+
+  private async getProcessAiConfig(
+    pid: string,
+    redacted: boolean,
+  ): Promise<ProcAiConfigSnapshot | null> {
+    const result = await this.processRequest(
+      pid,
+      "proc.ai.config.get",
+      { redacted },
+    );
+    return result?.ok ? result.config : null;
+  }
+
+  private buildProcAiEffectiveValues(
+    proc: ProcessRecord,
+    localValues: Record<string, string>,
+  ): Record<string, string> {
+    const values: Record<string, string> = {};
+    const accountUids = proc.ownerUid === proc.uid ? [proc.uid] : [proc.uid, proc.ownerUid];
+
+    for (const key of PROCESS_AI_CONFIG_KEYS) {
+      const suffix = processAiConfigSuffix(key);
+      let value: string | null = null;
+      for (const uid of accountUids) {
+        value = this.kernel?.config?.get(`users/${uid}/ai/${suffix}`) ?? null;
+        if (value !== null) break;
+      }
+      value ??= this.kernel?.config?.get(key) ?? null;
+      if (value !== null) {
+        values[key] = value;
+      }
+    }
+
+    for (const [key, value] of Object.entries(localValues)) {
+      if (PROCESS_AI_CONFIG_KEYS.includes(key as typeof PROCESS_AI_CONFIG_KEYS[number])) {
+        values[key] = value;
+      }
+    }
+
+    return values;
+  }
+
+  private listProcAiProfiles(ownerUid: number): ProcAiModelProfile[] {
+    const raw = this.kernel?.config?.get(`users/${ownerUid}/ai/model_profiles`);
+    if (!raw) {
+      return [];
+    }
+
+    try {
+      const payload = JSON.parse(raw) as { profiles?: unknown[] };
+      const profiles = Array.isArray(payload.profiles) ? payload.profiles : [];
+      return profiles
+        .map(normalizeProcAiModelProfile)
+        .filter((profile): profile is ProcAiModelProfile => profile !== null)
+        .sort((left, right) => right.updatedAt - left.updatedAt || left.name.localeCompare(right.name));
+    } catch {
+      return [];
+    }
+  }
+
+  private findProcAiProfile(ownerUid: number, selector: string): ProcAiModelProfile | null {
+    const normalized = selector.trim().toLowerCase();
+    return this.listProcAiProfiles(ownerUid).find((profile) =>
+      profile.id.toLowerCase() === normalized ||
+      profile.name.toLowerCase() === normalized
+    ) ?? null;
   }
 
   private readDev(path: string): string | undefined {
@@ -509,6 +710,10 @@ export class KernelMountBackend implements MountBackend {
     if (this.identity.uid === 0) return true;
     if (this.selfPid && proc.processId === this.selfPid) return true;
     return (proc.ownerUid ?? proc.uid) === this.viewerOwnerUid();
+  }
+
+  private canWriteProcess(proc: { processId?: string; uid: number; ownerUid?: number | null }): boolean {
+    return this.canViewProcess(proc);
   }
 
   private viewerOwnerUid(): number {
@@ -845,6 +1050,12 @@ export class KernelMountBackend implements MountBackend {
 
     if (path.startsWith("/proc/")) {
       const parts = path.slice("/proc/".length).split("/");
+      if (parts.length >= 2 && parts[1] === "ai") {
+        const proc = this.resolveVisibleProcess(parts[0]);
+        if (!proc) return false;
+        if (parts.length === 2) return true;
+        return processAiConfigDirEntries(parts.slice(2)).length > 0;
+      }
       if (parts.length === 2 && parts[1] === "context.d") {
         return this.resolveVisibleProcess(parts[0]) !== null;
       }
@@ -996,7 +1207,13 @@ export class KernelMountBackend implements MountBackend {
       const parts = path.slice("/proc/".length).split("/");
       if (parts.length === 1) {
         const proc = this.resolveVisibleProcess(parts[0]);
-        if (proc) return ["context.d", "conversations", "identity", "status"];
+        if (proc) return ["ai", "context.d", "conversations", "identity", "status"];
+      }
+      if (parts.length >= 2 && parts[1] === "ai") {
+        const proc = this.resolveVisibleProcess(parts[0]);
+        if (!proc) return undefined;
+        const entries = processAiConfigDirEntries(parts.slice(2));
+        return entries.length > 0 ? entries : undefined;
       }
       if (parts.length === 2 && parts[1] === "context.d") {
         const proc = this.resolveVisibleProcess(parts[0]);
@@ -1151,6 +1368,43 @@ function uniquePrefixes(entries: { key: string }[], strip: string): string[] {
     if (first) seen.add(first);
   }
   return [...seen].sort();
+}
+
+type ProcAiModelProfile = {
+  id: string;
+  name: string;
+  values: Record<string, string>;
+  createdAt: number;
+  updatedAt: number;
+};
+
+function normalizeProcAiModelProfile(raw: unknown): ProcAiModelProfile | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return null;
+  }
+  const record = raw as Record<string, unknown>;
+  const id = normalizeProfileText(record.id).toLowerCase().replace(/[^a-z0-9_-]/g, "");
+  const name = normalizeProfileText(record.name);
+  if (!id || !name) {
+    return null;
+  }
+  return {
+    id,
+    name,
+    values: record.values && typeof record.values === "object" && !Array.isArray(record.values)
+      ? normalizeProcessAiConfigValues(record.values as Record<string, unknown>)
+      : {},
+    createdAt: normalizeProfileTimestamp(record.createdAt),
+    updatedAt: normalizeProfileTimestamp(record.updatedAt),
+  };
+}
+
+function normalizeProfileText(value: unknown): string {
+  return String(value ?? "").trim().replace(/\s+/g, " ");
+}
+
+function normalizeProfileTimestamp(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
 }
 
 type PackageInfoFileKind = "list" | "manifest" | "refs";

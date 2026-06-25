@@ -34,6 +34,9 @@ export function ThreadsIcon() {
 export function GaugeIcon() {
   return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 14a8 8 0 0 1 16 0" /><path d="M12 14l4-4" /><path d="M7 17h10" /></svg>;
 }
+export function MaximizeIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5" /><path d="M3 3l7 7" /><path d="M16 3h5v5" /><path d="M21 3l-7 7" /><path d="M8 21H3v-5" /><path d="M3 21l7-7" /><path d="M16 21h5v-5" /><path d="M21 21l-7-7" /></svg>;
+}
 export function FolderIcon() {
   return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6.5h6l2 2h10v9.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>;
 }

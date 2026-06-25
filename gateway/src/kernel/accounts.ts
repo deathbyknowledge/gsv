@@ -12,7 +12,7 @@
  *     so the human can act as the agent and vice versa.
  */
 
-import type { AccountKind, ProcessIdentity } from "@gsv/protocol/syscalls/system";
+import type { AccountKind, ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { hashPassword, makeShadowEntry } from "../auth/shadow";
 import { ensureAccountHomeLayout } from "./account-home";
 import { RipgitClient, type RipgitApplyOp } from "../fs/ripgit/client";

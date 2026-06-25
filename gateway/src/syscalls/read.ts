@@ -25,23 +25,8 @@ export const FS_READ_DEFINITION: ToolDefinition = {
   },
 };
 
-export type FsReadArgs = {
-  path: string;
-  offset?: number;
-  limit?: number;
-}
-
-export type FsReadResult =
-  | {
-      ok: true;
-      content: string | FsImageContent[];
-      path: string;
-      lines?: number;
-      size: number;
-    }
-  | { ok: true; path: string; files: string[]; directories: string[] }
-  | { ok: false; error: string };
-
-export type FsImageContent =
-  | { type: "text"; text: string }
-  | { type: "image"; data: string; mimeType: string };
+export type {
+  FsImageContent,
+  FsReadArgs,
+  FsReadResult,
+} from "@humansandmachines/gsv/protocol";

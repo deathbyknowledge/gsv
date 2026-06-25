@@ -34,7 +34,7 @@ impl DeviceServiceInstallSpec {
             description: "gsvd",
             exe_path,
             args: vec!["device".to_string(), "run".to_string()],
-            path_env: node_service_path(),
+            path_env: device_service_path(),
             log_path: logger::node_log_path()?,
         })
     }
@@ -50,40 +50,40 @@ trait DeviceServiceManager {
     fn status(&self) -> Result<(), DynError>;
 }
 
-pub fn node_service_management_supported() -> bool {
+pub fn device_service_management_supported() -> bool {
     platform_service_manager().is_some()
 }
 
-pub fn node_service_is_installed() -> Result<bool, DynError> {
+pub fn device_service_is_installed() -> Result<bool, DynError> {
     require_platform_service_manager()?.is_installed()
 }
 
-pub fn install_node_service() -> Result<(), DynError> {
+pub fn install_device_service() -> Result<(), DynError> {
     let spec = DeviceServiceInstallSpec::current()?;
     require_platform_service_manager()?.install(&spec)
 }
 
-pub fn uninstall_node_service() -> Result<(), DynError> {
+pub fn uninstall_device_service() -> Result<(), DynError> {
     require_platform_service_manager()?.uninstall()
 }
 
-pub fn start_node_service() -> Result<(), DynError> {
+pub fn start_device_service() -> Result<(), DynError> {
     require_platform_service_manager()?.start()
 }
 
-pub fn restart_node_service() -> Result<(), DynError> {
+pub fn restart_device_service() -> Result<(), DynError> {
     require_platform_service_manager()?.restart()
 }
 
-pub fn stop_node_service() -> Result<(), DynError> {
+pub fn stop_device_service() -> Result<(), DynError> {
     require_platform_service_manager()?.stop()
 }
 
-pub fn status_node_service() -> Result<(), DynError> {
+pub fn status_device_service() -> Result<(), DynError> {
     require_platform_service_manager()?.status()
 }
 
-pub fn show_node_service_logs(lines: usize, follow: bool) -> Result<(), DynError> {
+pub fn show_device_service_logs(lines: usize, follow: bool) -> Result<(), DynError> {
     let log_path = logger::node_log_path()?;
     if !log_path.exists() {
         return Err(format!("Log file not found: {}", log_path.display()).into());
@@ -277,7 +277,7 @@ fn select_service_path(
         .or_else(|| env_path.and_then(normalize))
 }
 
-fn node_service_path() -> Option<String> {
+fn device_service_path() -> Option<String> {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         select_service_path(probe_path_from_login_shell(), std::env::var_os("PATH"))
@@ -426,16 +426,19 @@ fn windows_task_registration_script(
 
     format!(
         "$ErrorActionPreference = 'Stop'\n\
+$ProgressPreference = 'SilentlyContinue'\n\
 Import-Module ScheduledTasks -ErrorAction Stop\n\
 $TaskName = {task_name}\n\
 $UserId = {user_id}\n\
 $Action = New-ScheduledTaskAction -Execute {exe_path} -Argument {args}\n\
 $Principal = New-ScheduledTaskPrincipal -UserId $UserId -LogonType Interactive -RunLevel Limited\n\
-$Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew\n\
-$Settings.AllowStartOnDemand = $true\n\
-$Settings.ExecutionTimeLimit = 'PT0S'\n\
-$Settings.Enabled = $true\n\
-$Settings.Hidden = $false\n\
+$Settings = $null\n\
+try {{\n\
+  $Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::Zero)\n\
+}} catch {{\n\
+  $Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew\n\
+}}\n\
+try {{ $Settings.ExecutionTimeLimit = 'PT0S' }} catch {{}}\n\
 function Register-GsvTask($Trigger) {{\n\
   $Task = New-ScheduledTask -Action $Action -Trigger $Trigger -Principal $Principal -Settings $Settings -Description {description}\n\
   Register-ScheduledTask -TaskName $TaskName -InputObject $Task -Force | Out-Null\n\
@@ -1006,6 +1009,7 @@ mod tests {
         let script = windows_task_registration_script("gsvd", r"ACME\hank", &spec);
 
         assert!(script.contains("$UserId = 'ACME\\hank'"));
+        assert!(script.contains("$ProgressPreference = 'SilentlyContinue'"));
         assert!(
             script.contains("Register-GsvTask (New-ScheduledTaskTrigger -AtLogOn -User $UserId)")
         );
@@ -1016,7 +1020,18 @@ mod tests {
         assert!(script.contains(
             "$Action = New-ScheduledTaskAction -Execute 'C:\\Program Files\\GSV\\gsv.exe' -Argument 'device run'"
         ));
+        assert!(!script.contains("AllowStartOnDemand"));
+        assert!(script.contains("-ExecutionTimeLimit ([TimeSpan]::Zero)"));
         assert!(script.contains("$Settings.ExecutionTimeLimit = 'PT0S'"));
+        let fallback_settings = script
+            .find("New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew\n")
+            .expect("fallback settings constructor");
+        let explicit_infinite_limit = script
+            .find("$Settings.ExecutionTimeLimit = 'PT0S'")
+            .expect("explicit infinite execution time assignment");
+        assert!(explicit_infinite_limit > fallback_settings);
+        assert!(!script.contains("$Settings.Enabled"));
+        assert!(!script.contains("$Settings.Hidden"));
         assert!(script.contains(
             "Register-ScheduledTask -TaskName $TaskName -InputObject $Task -Force | Out-Null"
         ));

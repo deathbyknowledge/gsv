@@ -47,7 +47,7 @@ import {
   BINARY_FRAME_END,
   BINARY_FRAME_ERROR,
   buildBinaryFrame,
-} from "@gsv/protocol/binary-frame";
+} from "@humansandmachines/gsv/protocol";
 
 const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
 const TRANSFER_SEND_CHUNK_SIZE = 512 * 1024;
@@ -745,14 +745,19 @@ async function resolveDeviceDestinationDirectory(
   destination: Required<FsCopyEndpoint>,
   transport: FsCopyDeviceTransport,
 ): Promise<Required<FsCopyEndpoint>> {
-  const stat = await requestDeviceResult<FsTransferStatResult>(
-    transport,
-    destination.target,
-    "fs.transfer.stat",
-    {
-      path: destination.path,
-    },
-  );
+  let stat: FsTransferStatResult;
+  try {
+    stat = await requestDeviceResult<FsTransferStatResult>(
+      transport,
+      destination.target,
+      "fs.transfer.stat",
+      {
+        path: destination.path,
+      },
+    );
+  } catch {
+    return destination;
+  }
   if (stat.ok && stat.isDirectory) {
     return {
       ...destination,

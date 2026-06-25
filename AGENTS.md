@@ -13,7 +13,7 @@ This document is the working orientation for the current repository. It should h
 ## Repository layout
 
 ```text
-gsv-app-runtime/
+gsv/
 ├── gateway/
 │   ├── src/
 │   │   ├── kernel/          # syscall dispatch, auth, config, adapters, packages
@@ -28,7 +28,7 @@ gsv-app-runtime/
 │   ├── wrangler.jsonc
 │   └── package.json
 ├── builtin-packages/        # builtin apps synced from root/gsv
-├── shared/                  # shared SDKs, contracts, and app-link types
+├── packages/gsv/            # public GSV SDK, client, host bridge, and protocol types
 ├── web/
 │   ├── src/                # desktop shell, host bridge, setup/login UI
 │   ├── public/
@@ -104,10 +104,12 @@ It owns:
 - app/window orchestration
 
 Key files:
-- `web/src/session-ui.ts`
-- `web/src/session-service.ts`
-- `web/src/host-bridge.ts`
-- `web/src/gateway-client.ts`
+- `web/src/app/App.tsx`
+- `web/src/app/features/desktop/DesktopShell.tsx`
+- `web/src/app/features/session/SessionScreens.tsx`
+- `web/src/app/services/session/sessionService.ts`
+- `web/src/app/services/gateway/GatewayProvider.tsx`
+- `web/src/app/features/desktop/runtime/host/hostBridge.ts`
 
 ### Builtin apps
 

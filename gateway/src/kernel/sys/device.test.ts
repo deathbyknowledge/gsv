@@ -14,7 +14,6 @@ type FakeDeviceRecord = {
   implements: string[];
   platform: string;
   version: string;
-  lifecycle: "persistent" | "ephemeral";
   online: boolean;
   first_seen_at: number;
   last_seen_at: number;
@@ -81,7 +80,6 @@ describe("sys.device handlers", () => {
       implements: ["fs.*", "shell.*"],
       platform: "linux",
       version: "1.0.0",
-      lifecycle: "persistent",
       online: true,
       first_seen_at: 1_700_000_000_000,
       last_seen_at: 1_700_000_010_000,
@@ -96,7 +94,6 @@ describe("sys.device handlers", () => {
       implements: ["shell.*"],
       platform: "darwin",
       version: "1.1.0",
-      lifecycle: "persistent",
       online: false,
       first_seen_at: 1_700_000_000_500,
       last_seen_at: 1_700_000_020_000,
@@ -111,7 +108,6 @@ describe("sys.device handlers", () => {
     expect(result.devices.map((device) => device.deviceId)).toEqual(["node-alpha"]);
     expect(result.devices[0].label).toBe("Alpha");
     expect(result.devices[0].description).toBe("Linux home server");
-    expect(result.devices[0].lifecycle).toBe("persistent");
   });
 
   it("accepts empty args payloads for list", () => {

@@ -1,4 +1,4 @@
-import { onAppEvent } from "@gsv/package/browser";
+import { onAppEvent } from "@humansandmachines/gsv/sdk/browser";
 import { useEffect } from "preact/hooks";
 import type { ChatBackend } from "../types";
 import { formatError } from "../view-helpers";

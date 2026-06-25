@@ -15,7 +15,6 @@ const EMPTY_STATE: WikiWorkspaceState = {
   selectedPath: "",
   dbs: [],
   pages: [],
-  inbox: [],
   selectedNote: null,
   searchQuery: "",
   searchMatches: null,
@@ -58,7 +57,6 @@ export function useWikiWorkspace(backend: WikiBackend) {
   const visiblePages = state.pages;
   const selectedDb = state.selectedDb || state.dbs[0]?.id || "";
   const activeDb = state.dbs.find((db) => db.id === selectedDb);
-  const selectedInboxPath = mode === "inbox" ? (route.path || state.inbox[0]?.path || "") : "";
 
   const refresh = useCallback(async (nextRoute = route): Promise<void> => {
     setLoading(true);
@@ -205,12 +203,6 @@ export function useWikiWorkspace(backend: WikiBackend) {
     void refresh(nextRoute);
   }, [refresh, route, selectedDb]);
 
-  const openInboxNote = useCallback((path: string): void => {
-    const nextRoute = { ...route, db: selectedDb, path };
-    setRoute(nextRoute);
-    void refresh(nextRoute);
-  }, [refresh, route, selectedDb]);
-
   const openPageAndBrowse = useCallback((path: string): void => {
     setMode("browse");
     openPage(path);
@@ -225,11 +217,6 @@ export function useWikiWorkspace(backend: WikiBackend) {
 
   function changeMode(next: WikiMode): void {
     setMode(next);
-    if (next === "inbox" && state.inbox[0]?.path) {
-      const nextRoute = { ...route, path: state.inbox[0].path };
-      setRoute(nextRoute);
-      void refresh(nextRoute);
-    }
   }
 
   function applySearch(event: Event): void {
@@ -343,7 +330,7 @@ export function useWikiWorkspace(backend: WikiBackend) {
     }
     const sourcePath = ingestSourcePath.trim();
     if (!sourcePath) {
-      setError("Choose a source path before adding it to the inbox.");
+      setError("Choose a source path before creating a page.");
       return;
     }
     await runMutation(() => backend.ingestSource({
@@ -353,14 +340,6 @@ export function useWikiWorkspace(backend: WikiBackend) {
       sourceTitle: ingestSourceTitle.trim() || undefined,
       summary: ingestSummary.trim() || undefined,
     }));
-  }
-
-  async function compileSelectedInbox(): Promise<void> {
-    if (!selectedDb || !selectedInboxPath) {
-      setError("Choose an inbox item first.");
-      return;
-    }
-    await runMutation(() => backend.compileInboxNote({ db: selectedDb, sourcePath: selectedInboxPath }));
   }
 
   return {
@@ -398,11 +377,9 @@ export function useWikiWorkspace(backend: WikiBackend) {
     visiblePages,
     selectedDb,
     activeDb,
-    selectedInboxPath,
     changeMode,
     openDb,
     openPage,
-    openInboxNote,
     openPageAndBrowse,
     openSearchMatch,
     applySearch,
@@ -412,7 +389,6 @@ export function useWikiWorkspace(backend: WikiBackend) {
     createPage,
     startBuildFlow,
     ingestSourceFlow,
-    compileSelectedInbox,
     setMode,
     setSearchDraft,
     setSearchOpen,

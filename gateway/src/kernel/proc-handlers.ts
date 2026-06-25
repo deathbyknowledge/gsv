@@ -25,7 +25,7 @@ import type {
 } from "../syscalls/proc";
 import type { InteractionOrigin } from "../syscalls/interaction-origin";
 import { sendFrameToProcess } from "../shared/utils";
-import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
+import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { ProcessMount } from "./processes";
 import {
   normalizePath,

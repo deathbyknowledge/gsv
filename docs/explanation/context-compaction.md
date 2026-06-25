@@ -2,13 +2,13 @@
 
 Every LLM has a finite context window. Claude has 200K tokens. GPT-4 has 128K. But conversations are, in principle, infinite. A personal AI agent that you talk to every day generates megabytes of conversation history over weeks and months. The context window is a hard physical constraint, and any long-lived agent system must grapple with it.
 
-GSV's answer to this problem is a layered memory system that combines in-session compaction, daily memory extraction, long-term memory files, and session archival. Understanding how these layers interact — and what is lost at each stage — is key to understanding the agent's behavior over time.
+GSV's answer to this problem is a layered continuity system that combines in-session compaction, compact prompt context, repo-backed wiki memory, and session archival. Understanding how these layers interact — and what is lost at each stage — is key to understanding the agent's behavior over time.
 
 ## The Fundamental Problem
 
 Consider what's in the context window when the LLM is called:
 
-- **System prompt**: Personality, operating instructions, memory files, tool definitions, and runtime context. This alone can be 3,000-10,000 tokens depending on configuration.
+- **System prompt**: Personality, operating instructions, compact context files, tool definitions, and runtime context. This alone can be 3,000-10,000 tokens depending on configuration.
 - **Conversation history**: Every user message, every assistant response, every tool call and its result. Tool results can be massive — a `Bash` command that outputs 200 lines of log data might be 2,000+ tokens.
 - **Tool definitions**: JSON schemas for every available tool. With multiple nodes connected, this can be 50+ tools.
 
@@ -46,7 +46,7 @@ The old messages are divided into chunks of roughly 25% of the context window ea
 
 Compaction uses a three-tier fallback chain, and this is where the design gets interesting:
 
-**Tier 1 — Full summarization**: Each chunk is sent to the LLM with a summarization prompt. The LLM is asked to produce two things: a `<summary>` (concise narrative preserving decisions, action items, technical context, and current state) and `<memories>` (durable facts worth remembering long-term). Chunks are processed sequentially with rolling context — the summary from chunk N is included in the prompt for chunk N+1, building a progressive summary. If existing daily memories are available, they're included so the LLM avoids duplicating already-recorded facts.
+**Tier 1 — Full summarization**: Each chunk is sent to the LLM with a summarization prompt. The LLM is asked to produce a concise narrative preserving decisions, action items, technical context, and current state. Chunks are processed sequentially with rolling context — the summary from chunk N is included in the prompt for chunk N+1, building a progressive summary.
 
 **Tier 2 — Partial summarization**: If full summarization fails (perhaps a chunk is too large to fit in the summarization LLM's own context), the system falls back to partial mode. Oversized chunks (more than 50% of the context window) are skipped with a placeholder note. The remaining chunks are summarized normally.
 
@@ -58,25 +58,52 @@ The old messages are replaced in SQLite with a single synthetic "user" message c
 
 The recent messages are kept verbatim after the summary. From the LLM's perspective on the next call, it sees: a summary of earlier conversation, then the recent exchanges in full detail.
 
-## Memory Extraction
+## Memory Capture
 
-Compaction doesn't just summarize — it extracts. The `<memories>` section of each summarization response captures durable facts: "The user prefers TypeScript over JavaScript," "The project uses pnpm, not npm," "The deploy pipeline runs on GitHub Actions." These aren't conversation artifacts — they're persistent knowledge.
+Compaction protects the active conversation from overflowing the model context. It is not the primary long-term memory store. Durable facts such as "The user prefers TypeScript over JavaScript," "The project uses pnpm, not npm," or "The deploy pipeline runs on GitHub Actions" should be written to the agent's repo-backed `memory` wiki when they are useful beyond the current session.
 
-Extracted memories are appended to daily memory files in R2 at `agents/{agentId}/memory/{YYYY-MM-DD}.md`. Each extraction is timestamped with a header: `### Extracted from context compaction (14:30)`. Multiple compactions in a day append to the same file.
+Each agent has a conventional wiki id:
 
-This creates a chronological record of what the agent learned each day. The daily memory files for today and yesterday are loaded into every system prompt, giving the agent a two-day sliding window of recently-extracted knowledge.
+```text
+memory
+```
 
-## Long-Term Memory: MEMORY.md
+After initialization, it is available as normal markdown under:
 
-Beyond daily memory files, the agent can keep a `MEMORY.md` file in its home repository or another explicit path - a more curated, manually-managed document of long-term knowledge. Unlike daily memory files, which are automatically appended by compaction, MEMORY.md is typically updated by the agent itself during conversations or commissioning.
+```text
+/src/repos/<agent>/memory/index.md
+/src/repos/<agent>/memory/pages/
+/src/repos/<agent>/memory/pages/journal/YYYY/MM/YYYY-MM-DD.md
+```
 
-MEMORY.md is only loaded into the system prompt for "main" sessions. This is a security consideration: if someone sends a WhatsApp message that routes to a per-peer session, they shouldn't see the agent's personal memory about its owner. The daily memory files, by contrast, are loaded for all sessions — they contain extracted facts that are generally safe to share.
+Create it with:
+
+```bash
+wiki db init memory --title "<agent> Memory"
+```
+
+Unlike `~/context.d`, wiki pages are not loaded into every prompt. The agent searches and reads them deliberately when relevant. This keeps prompts small while making hundreds of memory files discoverable.
+
+## Long-Term Memory: Wiki Pages
+
+Use the `memory` wiki for curated long-term knowledge. The baseline structure is:
+
+```text
+index.md
+pages/journal/YYYY/MM/YYYY-MM-DD.md
+pages/people/
+pages/projects/
+pages/preferences/
+pages/decisions/
+```
+
+Chronological journal entries are a good default capture path. Stable facts should be promoted into topical pages so search finds the canonical source instead of many duplicate daily notes. Active open loops belong in `~/context.d/20-open-loops.md` so they are loaded into every prompt; the wiki can keep closed-loop history and supporting evidence.
 
 ## Session Reset and Archival
 
 When a session is reset (manually via `/reset` or automatically via reset policy), the entire conversation history is archived to R2 as a gzipped JSONL file at `agents/{agentId}/sessions/{sessionId}.jsonl.gz`. The Session DO generates a new session ID, clears its SQLite messages, and resets token counters.
 
-Before archiving, if compaction is enabled and the session has extractable content, the system runs a memory extraction pass. This ensures that anything worth remembering from the session is captured in the daily memory file before the conversation history is archived away. The archived transcript is still accessible (it's in R2), but it won't be loaded into future prompts.
+The archived transcript is still accessible in cold storage, but it will not be loaded into future prompts. Durable facts that should survive reset should be written to the agent's `memory` wiki before the session is forgotten.
 
 Reset policies automate this process:
 
@@ -93,16 +120,14 @@ Active conversation (SQLite in Session DO)
   → Compaction (when context window fills)
     → Summary replaces old messages in SQLite
     → Old messages archived to R2 (.jsonl.gz)
-    → Memories extracted to daily file (memory/YYYY-MM-DD.md)
   → Session reset (manual or policy-based)
     → Full transcript archived to R2
-    → Final memory extraction
     → Session cleared
-  → Daily memory loaded into next session's system prompt
-  → Long-term memories curated in MEMORY.md
+  → Prompt-critical standing context stays in ~/context.d/
+  → Long-term memories are searched and curated in the agent's memory wiki
 ```
 
-At each stage, information is compressed and distilled. A detailed tool call result ("Here are 200 lines of test output...") becomes a summary sentence ("Tests passed after fixing the import path"). That summary eventually becomes a memory bullet point ("The project's test suite uses vitest"). The fidelity decreases, but the durability increases.
+At each stage, information is compressed and distilled. A detailed tool call result ("Here are 200 lines of test output...") becomes a summary sentence ("Tests passed after fixing the import path"). If that fact matters later, the agent should record it in wiki memory, where it can be searched without loading every note into the prompt. The fidelity decreases, but the durability and retrievability increase.
 
 ## What Is Lost
 

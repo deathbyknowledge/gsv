@@ -1,4 +1,4 @@
-import { PackageBackendEntrypoint } from "@gsv/package/backend";
+import { PackageBackendEntrypoint } from "@humansandmachines/gsv/sdk/backend";
 import { createFile, deletePath, listDevices, loadDirectory, loadFile, saveFile, searchFiles } from "./backend/api";
 
 export default class FilesBackend extends PackageBackendEntrypoint {

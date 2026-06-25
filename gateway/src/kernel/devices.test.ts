@@ -40,11 +40,10 @@ function createMockSql() {
         implements_,
         platform,
         version,
-        lifecycle,
         first_seen_at,
         last_seen_at,
         connected_at,
-      ] = bindings as [string, number, string, string, string, string, string, string, number, number, number];
+      ] = bindings as [string, number, string, string, string, string, string, number, number, number];
       table.push({
         device_id,
         owner_uid,
@@ -53,7 +52,6 @@ function createMockSql() {
         implements: implements_,
         platform,
         version,
-        lifecycle,
         online: 1,
         first_seen_at,
         last_seen_at,
@@ -65,8 +63,8 @@ function createMockSql() {
 
     if (q.startsWith("UPDATE devices SET\n          owner_uid")) {
       const table = getTable("devices");
-      const [owner_uid, label, description, implements_, platform, version, lifecycle, last_seen_at, connected_at, device_id] =
-        bindings as [number, string, string, string, string, string, string, number, number, string];
+      const [owner_uid, label, description, implements_, platform, version, last_seen_at, connected_at, device_id] =
+        bindings as [number, string, string, string, string, string, number, number, string];
       const row = table.find((r) => r.device_id === device_id);
       if (row) {
         row.owner_uid = owner_uid;
@@ -75,7 +73,6 @@ function createMockSql() {
         row.implements = implements_;
         row.platform = platform;
         row.version = version;
-        row.lifecycle = lifecycle;
         row.online = 1;
         row.last_seen_at = last_seen_at;
         row.connected_at = connected_at;
@@ -245,7 +242,6 @@ describe("DeviceRegistry", () => {
     expect(device!.owner_uid).toBe(1000);
     expect(device!.label).toBe("macbook");
     expect(device!.description).toBe("");
-    expect(device!.lifecycle).toBe("persistent");
     expect(device!.implements).toEqual(["fs.*", "proc.*"]);
     expect(device!.online).toBe(true);
   });
@@ -271,7 +267,6 @@ describe("DeviceRegistry", () => {
     expect(updated!.implements).toEqual(["fs.*", "proc.*"]);
     expect(updated!.description).toBe("Linux home server");
     expect(updated!.label).toBe("server");
-    expect(updated!.lifecycle).toBe("persistent");
   });
 
   it("resets owner-authored metadata when a device id changes owner", () => {
@@ -297,26 +292,24 @@ describe("DeviceRegistry", () => {
     expect(registry.setDescription("missing", "nope")).toBe(false);
   });
 
-  it("registers ephemeral browser-provided targets", () => {
+  it("stores registration metadata", () => {
     const result = registry.register(
-      "browser:abc",
+      "browser-extension",
       1000,
       1000,
       ["fs.read", "shell.exec"],
-      "browser-shell",
+      "browser",
       "0.1.0",
       {
-        label: "Browser Shell",
-        description: "Active web shell",
-        lifecycle: "ephemeral",
+        label: "Browser Target",
+        description: "Active browser",
       },
     );
     expect(result.ok).toBe(true);
 
-    const device = registry.get("browser:abc");
-    expect(device?.label).toBe("Browser Shell");
-    expect(device?.description).toBe("Active web shell");
-    expect(device?.lifecycle).toBe("ephemeral");
+    const device = registry.get("browser-extension");
+    expect(device?.label).toBe("Browser Target");
+    expect(device?.description).toBe("Active browser");
   });
 
   it("marks a device disconnected", () => {
@@ -329,13 +322,13 @@ describe("DeviceRegistry", () => {
   });
 
   it("removes device records and access entries", () => {
-    registry.register("browser:abc", 1000, 1000, ["fs.read"], "browser-shell", "0.1.0");
-    registry.grantAccess("browser:abc", 100);
+    registry.register("macbook", 1000, 1000, ["fs.read"], "darwin", "0.1.0");
+    registry.grantAccess("macbook", 100);
 
-    expect(registry.remove("browser:abc")).toBe(true);
-    expect(registry.get("browser:abc")).toBeNull();
-    expect(registry.listAccess("browser:abc")).toEqual([]);
-    expect(registry.remove("browser:abc")).toBe(false);
+    expect(registry.remove("macbook")).toBe(true);
+    expect(registry.get("macbook")).toBeNull();
+    expect(registry.listAccess("macbook")).toEqual([]);
+    expect(registry.remove("macbook")).toBe(false);
   });
 
   it("listOnline returns only online devices", () => {

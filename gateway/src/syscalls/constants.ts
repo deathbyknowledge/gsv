@@ -13,6 +13,9 @@ export const SHELL_EXEC = "shell.exec";
 export const CODEMODE_EXEC = "codemode.exec";
 export const CODEMODE_RUN = "codemode.run";
 
+// Host-routed network operations
+export const NET_FETCH = "net.fetch";
+
 // Process management (OS-level agent processes)
 export const PROC_SPAWN = "proc.spawn";
 export const PROC_KILL = "proc.kill";
@@ -63,7 +66,6 @@ export const SYS_CONFIG_SET = "sys.config.set";
 export const SYS_DEVICE_LIST = "sys.device.list";
 export const SYS_DEVICE_GET = "sys.device.get";
 export const SYS_DEVICE_UPDATE = "sys.device.update";
-export const SYS_TARGET_REGISTER = "sys.target.register";
 export const SYS_OAUTH_START = "sys.oauth.start";
 export const SYS_OAUTH_LIST = "sys.oauth.list";
 export const SYS_OAUTH_FORGET = "sys.oauth.forget";
@@ -91,6 +93,8 @@ export const SCHED_RUN = "sched.run";
 export const AI_TOOLS = "ai.tools";
 export const AI_CONFIG = "ai.config";
 export const AI_TRANSCRIPTION_CREATE = "ai.transcription.create";
+export const AI_IMAGE_READ = "ai.image.read";
+export const AI_IMAGE_GENERATE = "ai.image.generate";
 export const AI_SPEECH_CREATE = "ai.speech.create";
 
 // Adapter transport (external connectors)

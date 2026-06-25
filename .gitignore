@@ -1,6 +1,8 @@
 node_modules/
 .dev.vars
 target/
+!extension/src/target/
+!extension/src/target/**
 .wrangler/
 
 # Build artifacts

@@ -21,11 +21,7 @@ export const FS_WRITE_DEFINITION: ToolDefinition = {
   },
 };
 
-export type FsWriteArgs = {
-  path: string;
-  content: string;
-};
-
-export type FsWriteResult =
-  | { ok: true; path: string; size: number }
-  | { ok: false; error: string };
+export type {
+  FsWriteArgs,
+  FsWriteResult,
+} from "@humansandmachines/gsv/protocol";

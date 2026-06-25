@@ -7,7 +7,7 @@ import type {
   OnboardingAssistPatch,
   SysSetupAssistArgs,
   SysSetupAssistResult,
-} from "@gsv/protocol/syscalls/system";
+} from "@humansandmachines/gsv/protocol";
 import { SETUP_ASSIST_SYSTEM_PROMPT } from "../../prompts/setup-assist";
 
 const ALLOWED_PATCH_PATHS = new Set<OnboardingAssistPatch["path"]>([

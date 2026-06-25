@@ -2,13 +2,13 @@
 
 ![gsv](https://github.com/user-attachments/assets/fd40032c-d551-44e4-ba77-7808d29cc0a1)
 
-> ***A mind for your machines, by [Humans & Machines, Inc.](https://humanandmachin.es)***
+> ***A mind for your machines, by [Humans & Machines, Inc.](https://humansandmachin.es)***
 
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![Release](https://img.shields.io/github/v/release/deathbyknowledge/gsv)](https://github.com/deathbyknowledge/gsv/releases)
 [![Discord](https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/hy9ExJJFvn)
 [![X](https://img.shields.io/badge/X-@humachinesinc-000?logo=x&logoColor=white)](https://x.com/humachinesinc)
-[![Website](https://img.shields.io/badge/site-gsv.space-111)](https://gsv.space)
+[![Docs](https://img.shields.io/badge/site-gsv.space-111)](https://gsv.space)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/deathbyknowledge/gsv)
 
 **🛸 Public beta — coming before July. Issues and PRs very welcome.**

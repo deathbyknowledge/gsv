@@ -13,9 +13,9 @@ import type {
   SysMcpServerSummary,
   SysMcpToolSummary,
   SysMcpTransportType,
-} from "@gsv/protocol/syscalls/system";
+} from "@humansandmachines/gsv/protocol";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
-import type { KernelContext } from "../context";
+import { resolveCallerOwnerUid, type KernelContext } from "../context";
 import type { McpServerRecord } from "../mcp-store";
 
 export type McpAddConnectionInput = {
@@ -55,8 +55,7 @@ export async function handleSysMcpAdd(
   args: SysMcpAddArgs,
   ctx: KernelContext,
 ): Promise<SysMcpAddResult> {
-  const identity = ctx.identity!;
-  const effectiveUid = parseEffectiveUid(args.uid, identity.process.uid, "add MCP servers");
+  const effectiveUid = parseEffectiveUid(args.uid, ctx, "add MCP servers");
   const name = parseName(args.name);
   const url = parseServerUrl(args.url);
   const callbackHost = parseOptionalCallbackHost(args.callbackHost);
@@ -91,8 +90,7 @@ export function handleSysMcpList(
   args: SysMcpListArgs,
   ctx: KernelContext,
 ): SysMcpListResult {
-  const identity = ctx.identity!;
-  const effectiveUid = parseEffectiveUid(args.uid, identity.process.uid, "list MCP servers");
+  const effectiveUid = parseEffectiveUid(args.uid, ctx, "list MCP servers");
   return {
     servers: ctx.mcpServers.list(effectiveUid).map((record) => summarizeServer(record, ctx)),
   };
@@ -102,9 +100,8 @@ export async function handleSysMcpRemove(
   args: SysMcpRemoveArgs,
   ctx: KernelContext,
 ): Promise<SysMcpRemoveResult> {
-  const identity = ctx.identity!;
   const serverId = parseId(args.serverId, "serverId");
-  const effectiveUid = parseEffectiveUid(args.uid, identity.process.uid, "remove MCP servers");
+  const effectiveUid = parseEffectiveUid(args.uid, ctx, "remove MCP servers");
   const record = ctx.mcpServers.get(serverId);
   if (!record || record.uid !== effectiveUid) {
     return { removed: false };
@@ -120,9 +117,8 @@ export async function handleSysMcpRefresh(
   args: SysMcpRefreshArgs,
   ctx: KernelContext,
 ): Promise<SysMcpRefreshResult> {
-  const identity = ctx.identity!;
   const serverId = parseId(args.serverId, "serverId");
-  const effectiveUid = parseEffectiveUid(args.uid, identity.process.uid, "refresh MCP servers");
+  const effectiveUid = parseEffectiveUid(args.uid, ctx, "refresh MCP servers");
   const record = ctx.mcpServers.get(serverId);
   if (!record || record.uid !== effectiveUid) {
     return { server: null };
@@ -138,10 +134,9 @@ export async function handleSysMcpCall(
   args: SysMcpCallArgs,
   ctx: KernelContext,
 ): Promise<SysMcpCallResult> {
-  const identity = ctx.identity!;
   const serverId = parseId(args.serverId, "serverId");
   const toolName = parseId(args.name, "name");
-  const effectiveUid = parseEffectiveUid(args.uid, identity.process.uid, "call MCP tools");
+  const effectiveUid = parseEffectiveUid(args.uid, ctx, "call MCP tools");
   const record = ctx.mcpServers.get(serverId);
   if (!record || record.uid !== effectiveUid) {
     throw new Error("MCP server not found");
@@ -241,17 +236,19 @@ function summarizeTool(tool: Tool): SysMcpToolSummary {
   };
 }
 
-function parseEffectiveUid(input: unknown, callerUid: number, action: string): number {
+function parseEffectiveUid(input: unknown, ctx: KernelContext, action: string): number {
+  const callerUid = ctx.identity!.process.uid;
+  const ownerUid = resolveCallerOwnerUid(ctx);
   if (input !== undefined && input !== null) {
     if (!Number.isInteger(input) || (input as number) < 0) {
       throw new Error("uid must be a non-negative integer");
     }
-    if (callerUid !== 0 && input !== callerUid) {
+    if (callerUid !== 0 && input !== callerUid && input !== ownerUid) {
       throw new Error(`Permission denied: cannot ${action} for another user`);
     }
     return input as number;
   }
-  return callerUid;
+  return ownerUid;
 }
 
 function parseName(input: unknown): string {

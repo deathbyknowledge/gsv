@@ -14,6 +14,8 @@ import type {
   Profile,
   ThreadContext,
   ToolRow,
+  UsageCost,
+  UsageState,
 } from "./types";
 
 type RunStreamEffect = "message" | "thinking" | "tool";
@@ -804,11 +806,48 @@ function normalizeContextState(value: unknown): ContextState | null {
     inputTokens: normalizePositiveNumber(record.inputTokens) || 0,
     outputTokens: normalizePositiveNumber(record.outputTokens),
     totalTokens: normalizePositiveNumber(record.totalTokens),
+    usage: normalizeUsageState(record.usage),
+    conversationUsage: normalizeUsageState(record.conversationUsage),
     availableInputTokens: normalizePositiveNumber(record.availableInputTokens),
     pressure: typeof record.pressure === "number" && Number.isFinite(record.pressure) && record.pressure >= 0 ? record.pressure : null,
     level,
     source: record.source === "provider" ? "provider" : "estimate",
     updatedAt: normalizeTimestampMs(record.updatedAt) || Date.now(),
+  };
+}
+
+function normalizeUsageState(value: unknown): UsageState | null {
+  const record = asRecord(value);
+  if (!record) return null;
+  const generations = normalizeNonNegativeInteger(record.generations);
+  const updatedAt = normalizeTimestampMs(record.updatedAt);
+  return {
+    inputTokens: normalizeNonNegativeInteger(record.inputTokens) ?? 0,
+    outputTokens: normalizeNonNegativeInteger(record.outputTokens) ?? 0,
+    cacheReadTokens: normalizeNonNegativeInteger(record.cacheReadTokens) ?? 0,
+    cacheWriteTokens: normalizeNonNegativeInteger(record.cacheWriteTokens) ?? 0,
+    totalTokens: normalizeNonNegativeInteger(record.totalTokens) ?? 0,
+    cost: normalizeUsageCost(record.cost),
+    ...(generations !== null ? { generations } : {}),
+    ...(record.costIncomplete === true ? { costIncomplete: true } : {}),
+    ...(updatedAt !== null ? { updatedAt } : {}),
+  };
+}
+
+function normalizeUsageCost(value: unknown): UsageCost | null {
+  const record = asRecord(value);
+  if (!record) return null;
+  const source = record.source === "model-pricing" || record.source === "mixed"
+    ? record.source
+    : "provider";
+  return {
+    input: normalizeNonNegativeFinite(record.input) ?? 0,
+    output: normalizeNonNegativeFinite(record.output) ?? 0,
+    cacheRead: normalizeNonNegativeFinite(record.cacheRead) ?? 0,
+    cacheWrite: normalizeNonNegativeFinite(record.cacheWrite) ?? 0,
+    total: normalizeNonNegativeFinite(record.total) ?? 0,
+    currency: "USD",
+    source,
   };
 }
 
@@ -1227,6 +1266,14 @@ function normalizeTimestampMs(value: unknown): number | null {
 
 function normalizePositiveNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.trunc(value) : null;
+}
+
+function normalizeNonNegativeInteger(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.trunc(value) : null;
+}
+
+function normalizeNonNegativeFinite(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

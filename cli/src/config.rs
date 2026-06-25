@@ -48,17 +48,17 @@ pub struct CliConfig {
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct ChannelsConfig {
-    /// WhatsApp channel settings
+    /// WhatsApp adapter settings
     #[serde(default)]
     pub whatsapp: WhatsAppChannelConfig,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct WhatsAppChannelConfig {
-    /// WhatsApp channel worker URL (e.g., https://gsv-channel-whatsapp.example.workers.dev)
+    /// WhatsApp adapter worker URL (e.g., https://gsv-channel-whatsapp.example.workers.dev)
     pub url: Option<String>,
 
-    /// Auth token for WhatsApp channel
+    /// Auth token for WhatsApp adapter
     pub token: Option<String>,
 }
 

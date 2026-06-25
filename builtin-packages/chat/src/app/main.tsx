@@ -1,5 +1,5 @@
 import { render } from "preact";
-import { getBackend, setAppError } from "@gsv/package/browser";
+import { getBackend, setAppError } from "@humansandmachines/gsv/sdk/browser";
 import { App } from "./app";
 import type { ChatBackend } from "./types";
 

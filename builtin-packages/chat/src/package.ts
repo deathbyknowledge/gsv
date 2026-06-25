@@ -1,4 +1,4 @@
-import { definePackage } from "@gsv/package/manifest";
+import { definePackage } from "@humansandmachines/gsv/sdk/manifest";
 
 export default definePackage({
   meta: {
@@ -25,6 +25,8 @@ export default definePackage({
         "proc.conversation.segment.read",
         "proc.conversation.segments",
         "account.list",
+        "fs.read",
+        "fs.write",
         "proc.list",
         "signal.watch",
         "signal.unwatch",
@@ -39,6 +41,7 @@ export default definePackage({
       "./src/styles/navigation.css",
       "./src/styles/archive.css",
       "./src/styles/stage.css",
+      "./src/styles/process-controls.css",
       "./src/styles/transcript.css",
       "./src/styles/media.css",
       "./src/styles/composer.css",

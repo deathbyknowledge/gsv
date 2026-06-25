@@ -8,7 +8,7 @@ signal handlers, package-scoped storage, and optional CLI commands.
 Put the package definition in `src/package.ts`:
 
 ```ts
-import { definePackage } from "@gsv/package/manifest";
+import { definePackage } from "@humansandmachines/gsv/sdk";
 
 export default definePackage({
   meta: {
@@ -58,7 +58,7 @@ Backends extend `PackageBackendEntrypoint`. Public methods are exposed over the
 package RPC surface.
 
 ```ts
-import { PackageBackendEntrypoint } from "@gsv/package/backend";
+import { PackageBackendEntrypoint } from "@humansandmachines/gsv/sdk";
 
 export default class NotesBackend extends PackageBackendEntrypoint {
   async listNotes() {
@@ -92,7 +92,7 @@ The browser entry renders into the platform shell. If you use JSX, declare
 ```tsx
 import { render } from "preact";
 import { useEffect, useState } from "preact/hooks";
-import { connectBackend, getAppBoot } from "@gsv/package/browser";
+import { connectBackend, getAppBoot } from "@humansandmachines/gsv/sdk";
 
 type NotesBackend = {
   listNotes(): Promise<{ files: string[]; directories: string[] }>;
@@ -132,7 +132,7 @@ socket disconnects.
 CLI commands are package modules that default-export `defineCommand(...)`:
 
 ```ts
-import { defineCommand } from "@gsv/package/cli";
+import { defineCommand } from "@humansandmachines/gsv/sdk";
 
 export default defineCommand(async (ctx) => {
   const target = ctx.argv[0] ?? "/home/notes";

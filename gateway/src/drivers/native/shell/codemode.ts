@@ -3,7 +3,7 @@ import type { ExecResult } from "just-bash";
 import { GsvFs } from "../../../fs/gsv-fs";
 import { resolveUserPath } from "../../../fs";
 import type { KernelContext } from "../../../kernel/context";
-import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
+import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { sendFrameToProcess } from "../../../shared/utils";
 import { ensureDefaultConversationExecutor } from "../../../kernel/agents";
 import { CODEMODE_RUN } from "../../../syscalls/constants";
@@ -225,7 +225,7 @@ function codeModeUsage(): string {
     "codemode -e <code> [options] [-- argv...]",
     "",
     "Options:",
-    "  --target <device>   default target for shell/fs calls",
+    "  --target <target>   default target for shell/fs calls",
     "  --cwd <path>        default cwd for shell calls and relative fs paths",
     "  --json              print the full CodeMode result envelope",
     "  --arg key=value     expose scalar args[key] to the script",

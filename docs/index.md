@@ -4,7 +4,7 @@ layout: home
 hero:
   name: GSV
   text: General Systems Vehicle
-  tagline: A personal cloud computer for agents, devices, packages, and apps
+  tagline: Personal AI computer / distributed OS across all your devices. Open-source, runs on your own Cloudflare account. Not one box.
   actions:
     - theme: brand
       text: Get Started

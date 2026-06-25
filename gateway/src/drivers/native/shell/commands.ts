@@ -2,7 +2,7 @@ import { defineCommand } from "just-bash";
 import type { ExecResult } from "just-bash";
 import { GsvFs } from "../../../fs/gsv-fs";
 import type { KernelContext } from "../../../kernel/context";
-import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
+import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { FsCopyDeviceTransport } from "../fs";
 import { buildNotifyCommands } from "../notify-shell";
 import { buildCodeModeCommand } from "./codemode";
@@ -10,6 +10,7 @@ import { buildCoreCommands } from "./core";
 import { buildCpCommand } from "./cp";
 import { buildCrontabCommand } from "./crontab";
 import { buildLsCommand } from "./ls";
+import { buildMediaCommands } from "./media";
 import { buildMcpCommand } from "./mcp";
 import { buildPackageCommands, buildPkgCommand } from "./pkg";
 import { buildProcCommand } from "./proc";
@@ -40,6 +41,7 @@ export function buildCustomCommands(
   const proc = buildProcCommand(ctx);
   const sched = buildSchedCommand(ctx);
   const targets = buildTargetsCommands(ctx);
+  const mediaCommands = buildMediaCommands(fs, ctx);
   const notifyCommands = buildNotifyCommands(ctx);
   const packageCommands = buildPackageCommands(identity, ctx);
   const flynn = defineCommand("flynn", async (): Promise<ExecResult> => ({
@@ -59,6 +61,7 @@ export function buildCustomCommands(
     proc,
     sched,
     ...targets,
+    ...mediaCommands,
     pkg,
     skills,
     flynn,

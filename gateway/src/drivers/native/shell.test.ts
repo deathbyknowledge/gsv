@@ -1,12 +1,27 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { env } from "cloudflare:test";
 import { handleShellExec } from "./shell";
 import { handleFsCopy, handleFsRead, handleFsTransferReceive, handleFsTransferSend } from "./fs";
-import { parseBinaryFrame } from "@gsv/protocol/binary-frame";
+import { parseBinaryFrame } from "@humansandmachines/gsv/protocol";
+import { sendFrameToProcess } from "../../shared/utils";
 import type { KernelContext } from "../../kernel/context";
 import type { DeviceRecord } from "../../kernel/devices";
-import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
+import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { InstalledPackageRecord } from "../../kernel/packages";
+
+vi.mock("../../shared/utils", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../shared/utils")>();
+  return {
+    ...actual,
+    sendFrameToProcess: vi.fn(),
+  };
+});
+
+const sendFrameToProcessMock = vi.mocked(sendFrameToProcess);
+
+beforeEach(() => {
+  sendFrameToProcessMock.mockReset();
+});
 
 const IDENTITY: ProcessIdentity = {
   uid: 1000,
@@ -66,7 +81,6 @@ function makeDevice(partial: Partial<DeviceRecord> & { device_id: string }): Dev
     implements: partial.implements ?? ["shell.exec"],
     platform: partial.platform ?? "linux",
     version: partial.version ?? "1.0.0",
-    lifecycle: partial.lifecycle ?? "persistent",
     online: partial.online ?? true,
     first_seen_at: partial.first_seen_at ?? now,
     last_seen_at: partial.last_seen_at ?? now,
@@ -85,9 +99,12 @@ function makeContext(options?: {
   auth?: KernelContext["auth"];
   caps?: KernelContext["caps"];
   schedules?: KernelContext["schedules"];
+  ipcCalls?: KernelContext["ipcCalls"];
   getAppRunner?: KernelContext["getAppRunner"];
+  scheduleIpcCallTimeout?: KernelContext["scheduleIpcCallTimeout"];
   scheduleScheduleWake?: KernelContext["scheduleScheduleWake"];
   identity?: ProcessIdentity;
+  aiRun?: (model: string, input: Record<string, unknown>) => Promise<unknown>;
 }): KernelContext {
   const records = [...(options?.packages ?? [options?.pkg ?? makePackage()])];
   const identity = options?.identity ?? IDENTITY;
@@ -103,13 +120,14 @@ function makeContext(options?: {
       STORAGE: env.STORAGE,
       RIPGIT: {} as Fetcher,
       LOADER: { get() { throw new Error("LOADER should not be used in pkg shell tests"); } },
+      ...(options?.aiRun ? { AI: { run: vi.fn(options.aiRun) } } : {}),
     } as unknown as Env,
     auth: options?.auth ?? null as never,
     caps: options?.caps ?? null as never,
     config: {
       get(key: string) {
         if (key === "config/server/name") return "gsv";
-        if (key === "config/server/version") return "0.2.6";
+        if (key === "config/server/version") return "0.2.9";
         return configValues.get(key) ?? null;
       },
       list(prefix: string) {
@@ -130,6 +148,9 @@ function makeContext(options?: {
           profile: "task",
           uid: identity.uid,
         };
+      },
+      getOwnerUid() {
+        return identity.uid;
       },
       ...(options?.procs ?? {}),
     } as never,
@@ -171,6 +192,7 @@ function makeContext(options?: {
     adapters: null as never,
     runRoutes: null as never,
     schedules: options?.schedules,
+    ipcCalls: options?.ipcCalls,
     connection: null as never,
     identity: {
       role: "user",
@@ -178,8 +200,9 @@ function makeContext(options?: {
       capabilities: options?.capabilities ?? ["pkg.list", "repo.refs", "repo.log"],
     },
     processId: "task:pkg",
-    serverVersion: "0.2.6",
+    serverVersion: "0.2.9",
     getAppRunner: options?.getAppRunner,
+    scheduleIpcCallTimeout: options?.scheduleIpcCallTimeout,
     scheduleScheduleWake: options?.scheduleScheduleWake,
   } as KernelContext;
 }
@@ -268,6 +291,61 @@ describe("native shell execution", () => {
   });
 });
 
+describe("media native commands", () => {
+  it("runs standalone media commands through the configured AI media paths", async () => {
+    const result = await handleShellExec(
+      {
+        input: [
+          "printf 'image-bytes' > media.png",
+          "printf 'audio-bytes' > sample.mp3",
+          "img2txt media.png",
+          "stt sample.mp3",
+          "printf 'green square' | txt2img -o out.png",
+          "printf 'hello voice' | tts -o speech.mp3",
+          "ls out.png speech.mp3",
+        ].join("; "),
+      },
+      makeContext({
+        capabilities: [
+          "ai.image.read",
+          "ai.image.generate",
+          "ai.transcription.create",
+          "ai.speech.create",
+        ],
+        aiRun: vi.fn(async (_model, input) => {
+          if (Array.isArray(input.messages)) {
+            return { response: "terminal screenshot" };
+          }
+          if (typeof input.audio === "string") {
+            return { text: "hello audio" };
+          }
+          if (typeof input.text === "string") {
+            return new ReadableStream({
+              start(controller) {
+                controller.enqueue(new Uint8Array([4, 5, 6]));
+                controller.close();
+              },
+            });
+          }
+          if (typeof input.prompt === "string") {
+            return { image: "AQID" };
+          }
+          return null;
+        }),
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("terminal screenshot");
+    expect(result.stdout).toContain("hello audio");
+    expect(result.stdout).toContain("/home/sam/out.png");
+    expect(result.stdout).toContain("/home/sam/speech.mp3");
+    expect(result.stdout).toContain("out.png");
+    expect(result.stdout).toContain("speech.mp3");
+  });
+});
+
 describe("targets native command", () => {
   it("lists targets with pagination and keeps devices as an alias", async () => {
     const records = [
@@ -279,10 +357,9 @@ describe("targets native command", () => {
         implements: ["shell.exec", "fs.read"],
       }),
       makeDevice({
-        device_id: "browser:abc",
+        device_id: "rearden:brave",
         label: "Browser",
-        platform: "browser",
-        lifecycle: "ephemeral",
+        platform: "browser-extension",
         implements: ["shell.exec", "fs.*"],
       }),
     ];
@@ -296,17 +373,23 @@ describe("targets native command", () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(result.stdout).toContain("TARGET\tKIND\tSTATE\tLIFE\tPLATFORM\tCAPS\tLABEL");
-    expect(result.stdout).toContain("gsv\tgsv\tonline\tpersistent\tcloudflare-worker");
-    expect(result.stdout).toContain("browser:abc\tbrowser\tonline\tephemeral\tbrowser");
+    expect(result.stdout).toContain("TARGET\tKIND\tSTATE\tPLATFORM\tCAPS\tLABEL");
+    expect(result.stdout).toContain("gsv\tgsv\tonline\tcloudflare-worker");
     expect(result.stdout).toContain("Showing 1-2 of 3");
+
+    const browserList = await handleShellExec(
+      { input: "targets list --kind browser" },
+      makeContext({ capabilities: ["sys.device.list"], devices }),
+    );
+    expect(browserList.ok).toBe(true);
+    expect(browserList.stdout).toContain("rearden:brave\tbrowser\tonline\tbrowser-extension");
 
     const alias = await handleShellExec(
       { input: "devices search macbook" },
       makeContext({ capabilities: ["sys.device.list"], devices }),
     );
     expect(alias.ok).toBe(true);
-    expect(alias.stdout).toContain("macbook\tnative-device\tonline\tpersistent\tdarwin");
+    expect(alias.stdout).toContain("macbook\tnative-device\tonline\tdarwin");
   });
 
   it("shows target details", async () => {
@@ -411,6 +494,115 @@ describe("proc native command", () => {
     );
   });
 
+  it("delegates bounded work through a new child process", async () => {
+    const spawnedPids: string[] = [];
+    const parent = {
+      processId: "task:pkg",
+      uid: IDENTITY.uid,
+      ownerUid: IDENTITY.uid,
+      gid: IDENTITY.gid,
+      gids: IDENTITY.gids,
+      username: IDENTITY.username,
+      home: IDENTITY.home,
+      cwd: IDENTITY.cwd,
+      profile: "task",
+      state: "running",
+      mounts: [],
+      contextFiles: [],
+      createdAt: 1,
+    };
+    const spawn = vi.fn((pid: string) => {
+      spawnedPids.push(pid);
+    });
+    const ipcCalls = {
+      create: vi.fn(),
+      remove: vi.fn(),
+      attachRun: vi.fn(),
+    };
+    const scheduleIpcCallTimeout = vi.fn(async () => "timeout-schedule");
+
+    sendFrameToProcessMock.mockImplementation(async (pid, frame) => {
+      const req = frame as any;
+      if (req.call === "proc.setidentity") {
+        return { type: "res", id: req.id, ok: true, data: { ok: true } };
+      }
+      if (req.call === "proc.ipc.deliver") {
+        expect(pid).toBe(spawnedPids[0]);
+        expect(req.args.message).toBe("write a migration plan");
+        expect(req.args.metadata).toBeUndefined();
+        expect(req.args.call).toEqual(expect.objectContaining({
+          callId: expect.any(String),
+          replyToPid: "task:pkg",
+          deadlineAt: expect.any(Number),
+        }));
+        return {
+          type: "res",
+          id: req.id,
+          ok: true,
+          data: {
+            ok: true,
+            status: "started",
+            pid,
+            sourcePid: "task:pkg",
+            conversationId: "default",
+            runId: "child-run",
+          },
+        };
+      }
+      throw new Error(`unexpected process frame: ${req.call}`);
+    });
+
+    const result = await handleShellExec(
+      { input: "proc delegate --label planning --timeout 10m write a migration plan" },
+      makeContext({
+        capabilities: ["proc.spawn", "proc.ipc.call"],
+        procs: {
+          get(pid: string) {
+            if (pid === "task:pkg") return parent;
+            if (pid === spawnedPids[0]) {
+              return {
+                ...parent,
+                processId: pid,
+                parentPid: "task:pkg",
+                interactive: false,
+                label: "planning",
+              };
+            }
+            return null;
+          },
+          getOwnerUid: vi.fn(() => IDENTITY.uid),
+          getMounts: vi.fn(() => []),
+          spawn,
+        } as unknown as KernelContext["procs"],
+        ipcCalls: ipcCalls as unknown as KernelContext["ipcCalls"],
+        scheduleIpcCallTimeout,
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("status=in_progress");
+    expect(result.stdout).toContain("run_id=child-run");
+    expect(result.stdout).toContain("queued=false");
+    expect(result.stdout).toContain('label="planning"');
+    expect(spawn).toHaveBeenCalledWith(
+      spawnedPids[0],
+      expect.objectContaining({ username: "sam" }),
+      expect.objectContaining({
+        parentPid: "task:pkg",
+        interactive: false,
+        label: "planning",
+      }),
+    );
+    expect(ipcCalls.create).toHaveBeenCalledWith(expect.objectContaining({
+      sourcePid: "task:pkg",
+      targetPid: spawnedPids[0],
+      uid: IDENTITY.uid,
+    }));
+    const callId = ipcCalls.create.mock.calls[0]?.[0]?.callId;
+    expect(ipcCalls.attachRun).toHaveBeenCalledWith(callId, "child-run");
+    expect(scheduleIpcCallTimeout).toHaveBeenCalledWith(callId, 600_000);
+  });
+
   it("rejects legacy profile selection in proc spawn", async () => {
     const result = await handleShellExec(
       { input: 'proc spawn --profile cron "Daily brief"' },
@@ -453,6 +645,94 @@ describe("proc native command", () => {
 
     expect(result.status).toBe("failed");
     expect(result.stderr).toContain("Permission denied: cannot access process foreign-pid");
+  });
+
+  it("reads live process history from the native proc command surface", async () => {
+    sendFrameToProcessMock.mockResolvedValueOnce({
+      type: "res",
+      id: "history-1",
+      ok: true,
+      data: {
+        ok: true,
+        pid: "proc:child",
+        conversationId: "default",
+        messages: [
+          {
+            id: 1,
+            role: "user",
+            content: "please investigate",
+            timestamp: 1_800_000_000_000,
+          },
+          {
+            id: 2,
+            role: "toolResult",
+            content: {
+              toolName: "Shell",
+              isError: false,
+              output: "x".repeat(40),
+            },
+            timestamp: 1_800_000_001_000,
+            runId: "run-child",
+          },
+        ],
+        messageCount: 2,
+        truncated: false,
+        hasMoreBefore: false,
+        hasMoreAfter: false,
+        activeRunId: null,
+        activeConversationId: null,
+        pendingHil: null,
+        context: {
+          level: "ok",
+          pressure: 0.2,
+        },
+      },
+    });
+
+    const result = await handleShellExec(
+      { input: "proc history --pid proc:child --tail --limit 2 --max-content-chars 12" },
+      makeContext({
+        capabilities: ["proc.history"],
+        procs: {
+          getOwnerUid: vi.fn(() => IDENTITY.uid),
+          get: vi.fn((pid: string) => {
+            if (pid === "proc:child" || pid === "task:pkg") {
+              return {
+                processId: pid,
+                uid: IDENTITY.uid,
+                ownerUid: IDENTITY.uid,
+                gid: IDENTITY.gid,
+                gids: IDENTITY.gids,
+                username: IDENTITY.username,
+                home: IDENTITY.home,
+                cwd: IDENTITY.cwd,
+                state: "idle",
+                mounts: [],
+                contextFiles: [],
+                createdAt: 1,
+              };
+            }
+            return null;
+          }),
+        } as Partial<KernelContext["procs"]>,
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("History proc:child");
+    expect(result.stdout).toContain("Messages: 2/2");
+    expect(result.stdout).toContain("please inves");
+    expect(result.stdout).toContain("[truncated 6 chars; use --full or --json to inspect all content]");
+    expect(result.stdout).toContain("xxxxxxxxxxxx");
+    expect(result.stdout).toContain("[truncated 28 chars; use --full or --json to inspect all content]");
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith("proc:child", expect.objectContaining({
+      call: "proc.history",
+      args: {
+        pid: "proc:child",
+        limit: 2,
+        tail: true,
+      },
+    }));
   });
 });
 
@@ -580,7 +860,7 @@ describe("fs copy", () => {
       async requestDevice(deviceId, call, args) {
         expect(deviceId).toBe("rearden");
         if (call === "fs.transfer.stat") {
-          return { ok: false, error: "not found" };
+          throw new Error("No such file or directory: /tmp/device-destination.txt");
         }
         throw new Error(`unexpected call ${call}`);
       },

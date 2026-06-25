@@ -2,7 +2,7 @@ import { defineCommand } from "just-bash";
 import type { ExecResult } from "just-bash";
 import { GsvFs } from "../../../fs/gsv-fs";
 import type { KernelContext } from "../../../kernel/context";
-import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
+import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { formatMode, loadNameCache, resolveOwner, type NameCache } from "./metadata";
 
 export function buildStatCommand(fs: GsvFs, identity: ProcessIdentity, kernelCtx: KernelContext) {

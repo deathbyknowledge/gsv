@@ -17,10 +17,7 @@ export const FS_DELETE_DEFINITION: ToolDefinition = {
   },
 };
 
-export type FsDeleteArgs = {
-  path: string;
-};
-
-export type FsDeleteResult =
-  | { ok: true; path: string }
-  | { ok: false; error: string };
+export type {
+  FsDeleteArgs,
+  FsDeleteResult,
+} from "@humansandmachines/gsv/protocol";

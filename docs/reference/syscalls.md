@@ -6,7 +6,7 @@ Source of truth:
 
 - `gateway/src/syscalls/index.ts`
 - `gateway/src/kernel/dispatch.ts`
-- `shared/protocol/src/syscalls/*.ts`
+- `packages/gsv/src/protocol/syscalls/*.ts`
 
 ## Calling Convention
 
@@ -566,6 +566,8 @@ Runtime behavior:
 | `proc.hil` | Process DO | Resolves a pending human-in-the-loop request. `approve` dispatches the original syscall; `deny` appends a synthetic error tool result. `remember: true` with `approve` stores a process-local allow override for the syscall and target class. |
 | `proc.kill` | Process DO | Optionally archives every non-empty conversation under one archive directory, clears active run, tool state, HIL, queue, media, and all conversation messages, then increments conversation generations. On successful syscall completion the Kernel removes the process registry entry. |
 | `proc.history` | Process DO | Returns paged stored messages for `conversationId` or `default`, plus message ids, message count, cursor flags, truncation status, timestamps, origin metadata, pending HIL, and the latest context-pressure state when available. Offset paging reads from the beginning. `tail: true` reads the latest page, `beforeMessageId` reads older messages, and `afterMessageId` reads newer messages. Tool results and assistant metadata are expanded into structured content. |
+| `proc.ai.config.get` | Process DO direct path | Reads the process-local AI config snapshot from Process DO storage. `/proc/<pid>/ai/*` uses this path and redacts API keys in filesystem output. |
+| `proc.ai.config.set` | Process DO direct path | Replaces, patches, or clears the process-local AI config snapshot. Writing `/proc/<pid>/ai/profile` copies one saved owner profile into the process; writing an individual `/proc/<pid>/ai/...` file changes one field. |
 | `proc.conversation.open` | Process DO | Creates or reopens a process-local conversation. If `conversationId` is omitted, the Process DO generates one. Optional `title` is trimmed and stored. |
 | `proc.conversation.list` | Process DO | Lists open conversations by default. `includeClosed: true` includes closed conversations. Each record includes generation, status, title, message count, and timestamps. |
 | `proc.conversation.get` | Process DO | Returns one conversation record for `conversationId` or `default`; unknown conversations return `conversation: null`. |
@@ -597,6 +599,13 @@ type ProcHilRequest = {
   syscall: string;
   args: Record<string, unknown>;
   createdAt: number;
+};
+
+type ProcAiConfigSnapshot = {
+  version: 1;
+  values: Record<string, string>;
+  profile?: { id?: string; name?: string; appliedAt: number };
+  updatedAt: number;
 };
 
 type ProcConversation = {
@@ -721,6 +730,16 @@ type ProcessSyscalls = {
     result: { ok: true; pid: string; conversationId?: string; messages: Array<{ id?: number; role: "user" | "assistant" | "system" | "toolResult"; content: unknown; timestamp?: number; origin?: InteractionOrigin }>; messageCount: number; truncated?: boolean; hasMoreBefore?: boolean; hasMoreAfter?: boolean; pendingHil?: ProcHilRequest | null; context?: ProcContextState | null } | OperationError;
   };
 
+  "proc.ai.config.get": {
+    args: { redacted?: boolean };
+    result: { ok: true; pid: string; config: ProcAiConfigSnapshot | null } | OperationError;
+  };
+
+  "proc.ai.config.set": {
+    args: { clear: true } | { values: Record<string, string>; profile?: { id?: string; name?: string } } | { key: string; value: string };
+    result: { ok: true; pid: string; config: ProcAiConfigSnapshot | null } | OperationError;
+  };
+
   "proc.conversation.open": {
     args: { pid?: string; conversationId?: string; title?: string };
     result: { ok: true; pid: string; conversation: ProcConversation; created: boolean } | OperationError;
@@ -788,7 +807,7 @@ type ProcessSyscalls = {
 };
 ```
 
-`proc.ipc.deliver` and `proc.setidentity` are kernel-only. User and device callers receive a forbidden response.
+`proc.ipc.deliver`, `proc.setidentity`, and `proc.ai.config.*` are internal-only. User and device callers receive a forbidden response.
 
 ## Packages: `pkg.*`
 
@@ -1147,9 +1166,9 @@ Runtime behavior:
 | Syscall | Handler | Behavior |
 |---|---|---|
 | `ai.tools` | `handleAiTools` | Process-internal. Lists online accessible devices and filters built-in tool definitions by caller capabilities. Routable filesystem and shell tools are wrapped with required `target`; CodeMode is exposed as a process-local programmable tool. MCP tools are used through CodeMode or shell, not expanded into this direct tool list. |
-| `ai.config` | `handleAiConfig` | Process-internal. Resolves account/user override then system AI config for model settings, plus system-only operational keys such as generation streaming. Context and tool approval are sourced from the run-as account, with owner context layered in when distinct. Defaults provider to `workers-ai`, model to `@cf/nvidia/nemotron-3-120b-a12b`, max tokens to 8192, context window to provider/model metadata or configured fallback, streaming to `auto`, and context budget to 32768 bytes. |
-| `ai.transcription.create` | `handleAiTranscriptionCreate` | User-callable. Accepts base64 audio data plus MIME type, transcribes or translates it through the configured transcription model, and returns normalized text plus optional language, duration, and segments. |
-| `ai.speech.create` | `handleAiSpeechCreate` | User-callable. Accepts text, normalizes Markdown to speech-friendly text by default, synthesizes speech through the configured Workers AI text-to-speech model, and returns a browser-playable audio data URL plus MIME type and size. |
+| `ai.config` | `handleAiConfig` | Process-internal. Resolves account/user override then system AI config for chat model settings and media model stack settings, plus system-only operational keys such as generation streaming and timezone. Context and tool approval are sourced from the run-as account, with owner context layered in when distinct. Defaults provider to `workers-ai`, model to `@cf/nvidia/nemotron-3-120b-a12b`, max tokens to 8192, context window to provider/model metadata or configured fallback, streaming to `auto`, and context budget to 32768 bytes. |
+| `ai.transcription.create` | `handleAiTranscriptionCreate` | User-callable. Accepts base64 audio data plus MIME type, transcribes or translates it through the configured transcription provider/model, and returns normalized text plus optional language, duration, and segments. |
+| `ai.speech.create` | `handleAiSpeechCreate` | User-callable. Accepts text, normalizes Markdown to speech-friendly text by default, synthesizes speech through the configured speech provider/model, and returns a browser-playable audio data URL plus MIME type and size. |
 
 External callers cannot invoke `ai.tools` or `ai.config`; those syscalls are exposed to process-originated calls. User surfaces such as the web shell can invoke `ai.transcription.create` and `ai.speech.create`.
 
@@ -1162,7 +1181,7 @@ type AiSyscalls = {
 
   "ai.config": {
     args: Empty;
-    result: { owner?: ProcessIdentity | null; provider: string; model: string; apiKey: string; reasoning?: string; maxTokens: number; contextWindowTokens: number | null; contextWindowSource: "model" | "config" | "unknown"; systemContextFiles?: Array<{ name: string; text: string }>; skillIndex?: Array<{ id: string; name: string; description: string; source: { kind: "home" | "package"; label: string; writable: boolean } }>; accountApprovalPolicy?: string | null; maxContextBytes: number; generationTimeoutMs: number; generationStreaming?: "auto" | "off" };
+    result: { owner?: ProcessIdentity | null; provider: string; model: string; apiKey: string; reasoning?: string; maxTokens: number; contextWindowTokens: number | null; contextWindowSource: "model" | "config" | "unknown"; systemContextFiles?: Array<{ name: string; text: string }>; system?: { timezone: string }; skillIndex?: Array<{ id: string; name: string; description: string; source: { kind: "home" | "package"; label: string; writable: boolean } }>; accountApprovalPolicy?: string | null; maxContextBytes: number; generationTimeoutMs: number; generationStreaming?: "auto" | "off"; media?: { transcriptionProvider: string; transcriptionModel: string; transcriptionApiKey: string; transcriptionMaxBytes: number; imageReadingProvider: string; imageReadingModel: string; imageReadingApiKey: string; imageReadingInputFormat: "auto" | "chat" | "image"; imageReadingMaxBytes: number; imageReadingMaxTokens: number; imageReadingTimeoutMs: number; imageReadingPrompt: string; imageGenerationProvider: string; imageGenerationModel: string; imageGenerationApiKey: string; speechProvider: string; speechModel: string; speechApiKey: string; speechSpeaker: string; speechEncoding: string; speechMaxChars: number; speechTimeoutMs: number } };
   };
 
   "ai.transcription.create": {
@@ -1179,7 +1198,7 @@ type AiSyscalls = {
 
 ## Adapters: `adapter.*`
 
-`adapter.*` is the control plane for external chat or channel connectors.
+`adapter.*` is the control plane for external chat or adapter connectors.
 
 Runtime behavior:
 

@@ -150,8 +150,8 @@ describe("public asset serving", () => {
   });
 
   it("maps public URL paths to the public filesystem root", () => {
-    expect(matchPublicAssetPath("/public/gsv/assets/voice.onnx")).toEqual({
-      fsPath: "/public/gsv/assets/voice.onnx",
+    expect(matchPublicAssetPath("/public/gsv/assets/app-logo.bin")).toEqual({
+      fsPath: "/public/gsv/assets/app-logo.bin",
     });
     expect(matchPublicAssetPath("/public/wallpapers/hello%20world.jpg")).toEqual({
       fsPath: "/public/wallpapers/hello world.jpg",
@@ -167,14 +167,14 @@ describe("public asset serving", () => {
 
   it("serves files with public asset headers", async () => {
     const fs = new FakePublicAssetFs();
-    fs.put("/public/gsv/assets/tts/voice.onnx", "model", {
+    fs.put("/public/gsv/assets/app-logo.bin", "asset", {
       contentType: "application/octet-stream",
       cacheControl: "private, max-age=0",
     });
-    const match = matchPublicAssetPath("/public/gsv/assets/tts/voice.onnx");
+    const match = matchPublicAssetPath("/public/gsv/assets/app-logo.bin");
 
     const response = await servePublicAssetRequest(
-      new Request("https://gsv.test/public/gsv/assets/tts/voice.onnx"),
+      new Request("https://gsv.test/public/gsv/assets/app-logo.bin"),
       fs,
       match!,
     );
@@ -184,7 +184,7 @@ describe("public asset serving", () => {
     expect(response.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
     expect(response.headers.get("access-control-allow-origin")).toBe("*");
     expect(response.headers.get("x-content-type-options")).toBe("nosniff");
-    expect(new TextDecoder().decode(await response.arrayBuffer())).toBe("model");
+    expect(new TextDecoder().decode(await response.arrayBuffer())).toBe("asset");
   });
 
   it("relays stored HTTP metadata for normal public files", async () => {

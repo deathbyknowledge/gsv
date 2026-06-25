@@ -1,5 +1,5 @@
 import { render } from "preact";
-import { getAppBoot, getBackend } from "@gsv/package/browser";
+import { getAppBoot, getBackend } from "@humansandmachines/gsv/sdk/browser";
 import { App } from "./src/app/app";
 import type { WikiBackend } from "./src/app/types";
 

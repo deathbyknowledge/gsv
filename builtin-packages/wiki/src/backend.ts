@@ -1,6 +1,5 @@
-import { PackageBackendEntrypoint, type PackageSignalContext } from "@gsv/package/backend";
+import { PackageBackendEntrypoint, type PackageSignalContext } from "@humansandmachines/gsv/sdk/backend";
 import {
-  compileInboxNote,
   createDatabase,
   handleAppSignal,
   ingestSource,
@@ -29,10 +28,6 @@ export default class WikiBackend extends PackageBackendEntrypoint {
 
   async ingestSource(args: unknown): Promise<unknown> {
     return ingestSource(this.kernel, args as never, this.storage);
-  }
-
-  async compileInboxNote(args: unknown): Promise<unknown> {
-    return compileInboxNote(this.kernel, args as never, this.storage);
   }
 
   async startBuild(args: unknown): Promise<unknown> {

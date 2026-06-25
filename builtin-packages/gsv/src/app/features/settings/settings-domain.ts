@@ -3,6 +3,7 @@ import {
   SERVER_FIELDS,
   SHELL_FIELDS,
 } from "./config-schema";
+import { isModelProfilesConfigKey } from "./model-profiles-domain";
 import type { ConfigEntry, SettingField } from "./types";
 
 export function formatDate(value: number | null | undefined): string {
@@ -43,8 +44,16 @@ export function modeledConfigKeys(): Set<string> {
 }
 
 export function unmodeledEntries(entries: ConfigEntry[]): ConfigEntry[] {
+  return entries.filter((entry) => !isModeledConfigKey(entry.key));
+}
+
+export function isModeledConfigKey(key: string): boolean {
   const modeled = modeledConfigKeys();
-  return entries.filter((entry) => !modeled.has(entry.key));
+  if (modeled.has(key) || isModelProfilesConfigKey(key)) {
+    return true;
+  }
+  const userAiMatch = /^users\/\d+\/ai\/(.+)$/.exec(key);
+  return userAiMatch ? modeled.has(`config/ai/${userAiMatch[1]}`) : false;
 }
 
 export function summarizeValue(value: string): string {

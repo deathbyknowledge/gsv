@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine};
 use semver::{Version, VersionReq};
@@ -7,10 +7,6 @@ use serde::Deserialize;
 use crate::diagnostics::{has_errors, PackageAssemblyDiagnostic};
 use crate::model::{
     PackageAssemblyRequest, PackageAssemblyTarget, PackageDefinition, PackageJsonDefinition,
-};
-use crate::sdk_fallback::{
-    GSV_APP_LINK_FALLBACK_FILES, GSV_APP_LINK_NAME, GSV_PACKAGE_SDK_FALLBACK_FILES,
-    GSV_PACKAGE_SDK_NAME,
 };
 use crate::virtual_fs::{dirname, extension, join_posix, resolve_from_root, VirtualFileTree};
 
@@ -397,8 +393,6 @@ pub fn prepare_sources(validated: &ValidatedRequest) -> StageOutcome<PreparedSou
         }
     }
 
-    inject_builtin_sdk_files(&mut files);
-
     let root_package = build_root_package(
         &validated.request.analysis.package_root,
         &validated.request.analysis.package_json,
@@ -433,18 +427,13 @@ pub fn prepare_sources(validated: &ValidatedRequest) -> StageOutcome<PreparedSou
 pub fn plan_installs(prepared: &PreparedSources) -> StageOutcome<InstallPlan> {
     let mut diagnostics = Vec::new();
     let mut planned = BTreeMap::<String, RegistryDependencyPlanItem>::new();
-    let mut local_package_names = BTreeSet::new();
-    local_package_names.insert(prepared.root_package.manifest.name.clone());
-    for package_name in prepared.workspace_packages.keys() {
-        local_package_names.insert(package_name.clone());
-    }
 
     let mut packages = vec![prepared.root_package.clone()];
     packages.extend(prepared.workspace_packages.values().cloned());
 
     for package in &packages {
         for (dependency_name, dependency_spec) in &package.manifest.dependencies {
-            if is_local_dependency_spec(dependency_name, dependency_spec, &local_package_names) {
+            if is_local_dependency_spec(dependency_spec) {
                 continue;
             }
 
@@ -577,30 +566,6 @@ fn collect_workspace_packages(
     packages
 }
 
-fn inject_builtin_sdk_files(files: &mut VirtualFileTree) {
-    if !repo_declares_package(files, GSV_APP_LINK_NAME) {
-        for (path, content) in GSV_APP_LINK_FALLBACK_FILES {
-            files.insert_if_missing(path, content);
-        }
-    }
-
-    if !repo_declares_package(files, GSV_PACKAGE_SDK_NAME) {
-        for (path, content) in GSV_PACKAGE_SDK_FALLBACK_FILES {
-            files.insert_if_missing(path, content);
-        }
-    }
-}
-
-fn repo_declares_package(files: &VirtualFileTree, package_name: &str) -> bool {
-    files
-        .iter()
-        .filter(|(path, _)| path.ends_with("/package.json") || path.as_str() == "package.json")
-        .filter_map(|(_, content)| {
-            serde_json::from_str::<WorkspacePackageManifestFile>(content).ok()
-        })
-        .any(|manifest| manifest.name == package_name)
-}
-
 fn collect_locked_dependency_versions(
     files: &VirtualFileTree,
     package_root: &str,
@@ -698,15 +663,8 @@ fn request_contains_file(request: &PackageAssemblyRequest, path: &str) -> bool {
     request.files.contains_key(path) || request.binary_files.contains_key(path)
 }
 
-fn is_local_dependency_spec(
-    package_name: &str,
-    spec: &str,
-    local_package_names: &BTreeSet<String>,
-) -> bool {
-    local_package_names.contains(package_name)
-        || spec.starts_with("file:")
-        || spec.starts_with("link:")
-        || spec.starts_with("workspace:")
+fn is_local_dependency_spec(spec: &str) -> bool {
+    spec.starts_with("file:") || spec.starts_with("link:") || spec.starts_with("workspace:")
 }
 
 fn merge_compatible_install_specs(existing: &str, incoming: &str) -> Option<String> {
@@ -739,17 +697,72 @@ fn manifest_path(root: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_local_dependency_spec, top_level_node_modules_package_name};
-    use std::collections::BTreeSet;
+    use super::{
+        is_local_dependency_spec, plan_installs, top_level_node_modules_package_name,
+        PreparedSources, WorkspacePackage, WorkspacePackageManifest,
+    };
+    use crate::virtual_fs::VirtualFileTree;
+    use std::collections::BTreeMap;
 
     #[test]
     fn recognizes_local_dependency_specs() {
-        let names = BTreeSet::from(["local-ui".to_string()]);
-        assert!(is_local_dependency_spec("local-ui", "^1.0.0", &names));
-        assert!(is_local_dependency_spec("react", "file:../react", &names));
-        assert!(is_local_dependency_spec("react", "link:../react", &names));
-        assert!(is_local_dependency_spec("react", "workspace:*", &names));
-        assert!(!is_local_dependency_spec("react", "^18.3.1", &names));
+        assert!(is_local_dependency_spec("file:../react"));
+        assert!(is_local_dependency_spec("link:../react"));
+        assert!(is_local_dependency_spec("workspace:*"));
+        assert!(!is_local_dependency_spec("^18.3.1"));
+        assert!(!is_local_dependency_spec("0.0.2"));
+    }
+
+    #[test]
+    fn plans_registry_install_for_versioned_workspace_dependency() {
+        let root_package = WorkspacePackage {
+            root: "builtin-packages/gsv".to_string(),
+            manifest_path: "builtin-packages/gsv/package.json".to_string(),
+            manifest: WorkspacePackageManifest {
+                name: "@gsv/gsv".to_string(),
+                version: Some("0.2.6".to_string()),
+                package_type: Some("module".to_string()),
+                dependencies: BTreeMap::from([(
+                    "@humansandmachines/gsv".to_string(),
+                    "0.0.2".to_string(),
+                )]),
+                dev_dependencies: BTreeMap::new(),
+            },
+            locked_dependencies: BTreeMap::new(),
+        };
+
+        let sdk_package = WorkspacePackage {
+            root: "packages/gsv".to_string(),
+            manifest_path: "packages/gsv/package.json".to_string(),
+            manifest: WorkspacePackageManifest {
+                name: "@humansandmachines/gsv".to_string(),
+                version: Some("0.0.2".to_string()),
+                package_type: Some("module".to_string()),
+                dependencies: BTreeMap::new(),
+                dev_dependencies: BTreeMap::new(),
+            },
+            locked_dependencies: BTreeMap::new(),
+        };
+
+        let prepared = PreparedSources {
+            files: VirtualFileTree::default(),
+            root_package,
+            workspace_packages: BTreeMap::from([(
+                "@humansandmachines/gsv".to_string(),
+                sdk_package,
+            )]),
+            browser_entry: None,
+            backend_entry: None,
+            command_entries: BTreeMap::new(),
+            asset_paths: Vec::new(),
+        };
+
+        let outcome = plan_installs(&prepared);
+        assert!(outcome.diagnostics.is_empty());
+        let plan = outcome.value.expect("install plan");
+        assert_eq!(plan.registry_dependencies.len(), 1);
+        assert_eq!(plan.registry_dependencies[0].name, "@humansandmachines/gsv");
+        assert_eq!(plan.registry_dependencies[0].install_spec, "0.0.2");
     }
 
     #[test]

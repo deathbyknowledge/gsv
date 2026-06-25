@@ -1,0 +1,79 @@
+{
+  "name": "@humansandmachines/gsv",
+  "version": "0.0.4",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "npm run clean && npm run build:types && npm run build:js",
+    "build:js": "node ./scripts/build-js.mjs",
+    "build:types": "tsc -p tsconfig.build.json",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run build",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./protocol": {
+      "types": "./dist/protocol.d.ts",
+      "default": "./dist/protocol.js"
+    },
+    "./protocol/*": {
+      "types": "./dist/protocol/*.d.ts",
+      "default": "./dist/protocol/*.js"
+    },
+    "./client": {
+      "types": "./dist/client.d.ts",
+      "default": "./dist/client.js"
+    },
+    "./sdk": {
+      "types": "./dist/sdk.d.ts",
+      "default": "./dist/sdk.js"
+    },
+    "./sdk/backend": {
+      "types": "./dist/sdk/backend.d.ts",
+      "default": "./dist/sdk/backend.js"
+    },
+    "./sdk/browser": {
+      "types": "./dist/sdk/browser.d.ts",
+      "default": "./dist/sdk/browser.js"
+    },
+    "./sdk/cli": {
+      "types": "./dist/sdk/cli.d.ts",
+      "default": "./dist/sdk/cli.js"
+    },
+    "./sdk/context": {
+      "types": "./dist/sdk/context.d.ts",
+      "default": "./dist/sdk/context.js"
+    },
+    "./sdk/host": {
+      "types": "./dist/sdk/host.d.ts",
+      "default": "./dist/sdk/host.js"
+    },
+    "./sdk/manifest": {
+      "types": "./dist/sdk/manifest.d.ts",
+      "default": "./dist/sdk/manifest.js"
+    },
+    "./host": {
+      "types": "./dist/host.d.ts",
+      "default": "./dist/host.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "marked": "^16.4.2"
+  },
+  "devDependencies": {
+    "esbuild": "^0.27.7",
+    "typescript": "^5.9.3"
+  }
+}

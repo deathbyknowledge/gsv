@@ -13,5 +13,12 @@
     "resolveJsonModule": true,
     "types": []
   },
-  "include": ["chat/src", "gsv/src", "wiki/src"]
+  "include": [
+    "chat/src",
+    "files/src",
+    "gsv/src",
+    "shell/src",
+    "wiki/main.tsx",
+    "wiki/src"
+  ]
 }

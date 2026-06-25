@@ -10,9 +10,10 @@
  * identity (uid/gid/home/caps).
  */
 
-import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
+import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { PasswdEntry } from "../auth/passwd";
 import { accountIdentity, createAccount, removeContextFile, writeContextFile } from "./accounts";
+import { ensureAccountHomeLayout } from "./account-home";
 import type { KernelContext } from "./context";
 import { resolveCallerOwnerUid } from "./context";
 import {
@@ -132,6 +133,9 @@ export async function ensurePackageAgent(
     await reconcilePackageAgentProfile(ctx, entry, profile);
   }
 
+  await ensureAccountHomeLayout(ctx.env, accountIdentity(auth, entry), {
+    seedPromptContext: true,
+  });
   ensurePackageAgentAccessGroup(ctx, entry.uid, accessGroupName);
   joinAccessGroup(ctx, accessGroupName, enablingHumanUid);
   return accountIdentity(auth, entry);

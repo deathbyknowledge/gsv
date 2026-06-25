@@ -28,7 +28,14 @@ import {
   handleFsTransferReceive,
 } from "../drivers/native/fs";
 import { handleShellExec } from "../drivers/native/shell";
-import { handleAiTools, handleAiConfig, handleAiSpeechCreate, handleAiTranscriptionCreate } from "./ai";
+import {
+  handleAiConfig,
+  handleAiImageGenerate,
+  handleAiImageRead,
+  handleAiSpeechCreate,
+  handleAiTools,
+  handleAiTranscriptionCreate,
+} from "./ai";
 import {
   handleProcList,
   handleProcIpcCall,
@@ -356,6 +363,8 @@ async function dispatchNative(
       case "proc.hil":
       case "proc.kill":
       case "proc.history":
+      case "proc.ai.config.get":
+      case "proc.ai.config.set":
       case "proc.media.read":
       case "proc.conversation.open":
       case "proc.conversation.list":
@@ -462,6 +471,12 @@ async function dispatchNative(
       case "ai.transcription.create":
         data = await handleAiTranscriptionCreate(frame.args, ctx);
         break;
+      case "ai.image.read":
+        data = await handleAiImageRead(frame.args, ctx);
+        break;
+      case "ai.image.generate":
+        data = await handleAiImageGenerate(frame.args, ctx);
+        break;
       case "ai.speech.create":
         data = await handleAiSpeechCreate(frame.args, ctx);
         break;
@@ -492,8 +507,6 @@ async function dispatchNative(
       case "sys.device.update":
         data = handleSysDeviceUpdate(frame.args, ctx);
         break;
-      case "sys.target.register":
-        return errFrame(frame.id, 400, "sys.target.register is connection-only");
       case "sys.oauth.start":
         data = await handleSysOAuthStart(frame.args, ctx);
         break;
@@ -776,12 +789,8 @@ function findDeviceConnection(
   for (const [, conn] of connections) {
     const state = conn.state as {
       identity?: { role: string; device?: string };
-      providedTargets?: Array<{ targetId: string }>;
     } | undefined;
     if (state?.identity?.role === "driver" && state.identity.device === deviceId) {
-      return conn;
-    }
-    if (state?.providedTargets?.some((target) => target.targetId === deviceId)) {
       return conn;
     }
   }

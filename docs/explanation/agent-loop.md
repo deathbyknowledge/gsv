@@ -68,8 +68,9 @@ Context roots are rendered with prompt-markup tags such as
 `<system path="/sys/config/ai/context.d/">`, `<user path="/home/alice/context.d/">`,
 and `<program path="/home/agent/context.d/">`. Each context file is rendered
 inside a filename tag. System and account context can template values such as
-`identity.username`, `identity.cwd`, `devices`, and `mcpServers`. Home context
-is loaded lexically and bounded by `config/ai/max_context_bytes`.
+`current.date`, `current.timezone`, `identity.username`, `identity.cwd`,
+`devices`, and `mcpServers`. Home context is loaded lexically and bounded by
+`config/ai/max_context_bytes`.
 
 Skill sources are layered from `~/skills.d` and visible package
 `/src/packages/<package>/skills.d`.

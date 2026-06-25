@@ -1,4 +1,4 @@
-import type { KernelClientLike, PackageViewerBinding } from "@gsv/package/backend";
+import type { KernelClientLike, PackageViewerBinding } from "@humansandmachines/gsv/sdk/backend";
 import type {
   AccessToken,
   AdministrationState,

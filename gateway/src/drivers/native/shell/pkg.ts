@@ -39,7 +39,7 @@ import {
   type InstalledPackageRecord,
   type PackageEntrypoint,
 } from "../../../kernel/packages";
-import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
+import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { requireCommandCapability } from "./common";
 
 type PackageCommandResult = {

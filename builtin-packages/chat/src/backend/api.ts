@@ -1,4 +1,4 @@
-import type { PackageViewerBinding } from "@gsv/package/backend";
+import type { PackageViewerBinding } from "@humansandmachines/gsv/sdk/backend";
 
 type KernelClient = {
   request(call: string, args: Record<string, unknown>): Promise<any>;
@@ -12,6 +12,8 @@ type AppBinding = {
   sessionId?: string;
   clientId?: string;
 };
+
+type ReadTextResult = { ok: true; content: string } | { ok: false; error: string };
 
 const CHAT_TRANSCRIPT_SIGNALS = [
   "proc.run.tool.started",
@@ -33,6 +35,12 @@ const CHAT_PROCESS_UNWATCH_SIGNALS = Array.from(new Set([
   ...CHAT_TRANSCRIPT_SIGNALS,
   ...CHAT_CATALOG_SIGNALS,
 ]));
+
+const PROCESS_AI_DIRECT_WRITE_FIELDS = new Set([
+  "provider",
+  "model",
+  "reasoning",
+]);
 function normalizeArgs(value: unknown) {
   return value && typeof value === "object" ? value as Record<string, unknown> : {};
 }
@@ -45,8 +53,57 @@ function normalizeClientId(value: unknown) {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : "";
 }
 
+function normalizeProcessAiPath(pid: unknown, suffix: unknown) {
+  const normalizedPid = normalizePid(pid);
+  const normalizedSuffix = typeof suffix === "string" ? suffix.trim().replace(/^\/+|\/+$/g, "") : "";
+  if (!normalizedPid) {
+    throw new Error("pid is required");
+  }
+  if (normalizedPid.includes("/")) {
+    throw new Error("invalid process id");
+  }
+  if (!normalizedSuffix || normalizedSuffix.split("/").some((part) => !part || part === "." || part === "..")) {
+    throw new Error("invalid AI config path");
+  }
+  return `/proc/${normalizedPid}/ai/${normalizedSuffix}`;
+}
+
 function normalizeLimit(value: unknown, fallback = 50) {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
+}
+
+function stripLineNumbers(value: string): string {
+  return value
+    .split("\n")
+    .map((line) => line.replace(/^ {0,6}\d+\t/, ""))
+    .join("\n");
+}
+
+async function readTextFile(kernel: KernelClient, path: string): Promise<ReadTextResult> {
+  const result = await kernel.request("fs.read", { path }) as {
+    ok?: boolean;
+    content?: unknown;
+    error?: string;
+  };
+  if (result?.ok !== true) {
+    return { ok: false, error: result?.error || `read failed: ${path}` };
+  }
+  if (typeof result.content !== "string") {
+    return { ok: false, error: `not a text file: ${path}` };
+  }
+  return { ok: true, content: stripLineNumbers(result.content) };
+}
+
+function isReadTextFailure(result: ReadTextResult): result is { ok: false; error: string } {
+  return result.ok === false;
+}
+
+function parseJsonText(text: string, fallback: unknown): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return fallback;
+  }
 }
 
 function buildSignalWatchKey(sessionId: string, clientId: string, pid: string, signal: string) {
@@ -121,6 +178,56 @@ export async function readProcessMedia(kernel: KernelClient, input: unknown) {
     key,
     ...(mimeType ? { mimeType } : {}),
   });
+}
+
+export async function getProcessAiConfig(kernel: KernelClient, input: unknown) {
+  const args = normalizeArgs(input);
+  const pid = normalizePid(args.pid);
+  const [profile, effective, local, profiles] = await Promise.all([
+    readTextFile(kernel, normalizeProcessAiPath(pid, "profile")),
+    readTextFile(kernel, normalizeProcessAiPath(pid, "effective.json")),
+    readTextFile(kernel, normalizeProcessAiPath(pid, "local.json")),
+    readTextFile(kernel, normalizeProcessAiPath(pid, "profiles")),
+  ]);
+  if (isReadTextFailure(profile)) return { ok: false, error: profile.error };
+  if (isReadTextFailure(effective)) return { ok: false, error: effective.error };
+  if (isReadTextFailure(local)) return { ok: false, error: local.error };
+  if (isReadTextFailure(profiles)) return { ok: false, error: profiles.error };
+  return {
+    ok: true,
+    profile: profile.content.trim(),
+    effective: parseJsonText(effective.content, null),
+    local: parseJsonText(local.content, null),
+    profiles: parseJsonText(profiles.content, []),
+  };
+}
+
+export async function setProcessAiProfile(kernel: KernelClient, input: unknown) {
+  const args = normalizeArgs(input);
+  const result = await kernel.request("fs.write", {
+    path: normalizeProcessAiPath(args.pid, "profile"),
+    content: typeof args.profile === "string" ? args.profile.trim() : "",
+  }) as { ok?: boolean; error?: string };
+  if (result?.ok !== true) {
+    return { ok: false, error: result?.error || "profile update failed" };
+  }
+  return { ok: true };
+}
+
+export async function setProcessAiField(kernel: KernelClient, input: unknown) {
+  const args = normalizeArgs(input);
+  const field = typeof args.field === "string" ? args.field.trim() : "";
+  if (!PROCESS_AI_DIRECT_WRITE_FIELDS.has(field)) {
+    return { ok: false, error: "unsupported AI config field" };
+  }
+  const result = await kernel.request("fs.write", {
+    path: normalizeProcessAiPath(args.pid, field),
+    content: typeof args.value === "string" ? args.value.trim() : "",
+  }) as { ok?: boolean; error?: string };
+  if (result?.ok !== true) {
+    return { ok: false, error: result?.error || "AI config update failed" };
+  }
+  return { ok: true };
 }
 
 export async function listConversations(kernel: KernelClient, input: unknown) {

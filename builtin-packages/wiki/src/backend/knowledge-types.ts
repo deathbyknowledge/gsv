@@ -1,4 +1,4 @@
-import type { RepoReadResult } from "@gsv/protocol/syscalls/repositories";
+import type { RepoReadResult } from "@humansandmachines/gsv/protocol";
 
 export type WikiKernelClient = {
   request<T = unknown>(name: string, args: unknown): Promise<T>;
@@ -37,16 +37,6 @@ export type KnowledgeWriteArgs = {
   create?: boolean;
 };
 
-export type KnowledgePromoteArgs = {
-  source:
-    | { kind: "text"; text: string }
-    | { kind: "candidate"; path: string }
-    | { kind: "process"; pid: string; runId?: string; messageIds?: number[] };
-  targetPath?: string;
-  mode?: "inbox" | "direct";
-};
-
-export type KnowledgeCompileArgs = { db: string; sourcePath: string; targetPath?: string; title?: string; keepSource?: boolean };
 export type KnowledgeDbDeleteArgs = { id: string };
 export type KnowledgeDbInitArgs = { id: string; title?: string; description?: string };
 export type KnowledgeIngestArgs = {
@@ -55,7 +45,6 @@ export type KnowledgeIngestArgs = {
   title?: string;
   summary?: string;
   path?: string;
-  mode?: "inbox" | "page";
 };
 export type KnowledgeListArgs = { prefix?: string; recursive?: boolean; limit?: number };
 export type KnowledgeMergeArgs = { sourcePath: string; targetPath: string; mode?: "prefer-target" | "prefer-source" | "union"; keepSource?: boolean };

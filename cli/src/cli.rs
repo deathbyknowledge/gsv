@@ -108,7 +108,7 @@ pub(crate) enum DeviceAction {
 
     /// Install and start device daemon service
     Install {
-        /// Device ID (saved to local config during install)
+        /// Node ID (saved to local config during install)
         #[arg(long)]
         id: Option<String>,
 
@@ -565,6 +565,10 @@ pub(crate) enum ProcAction {
         /// Optional process ID (defaults to your init process)
         #[arg(long)]
         pid: Option<String>,
+
+        /// Read the newest messages instead of the oldest page
+        #[arg(long)]
+        tail: bool,
 
         /// Maximum number of messages
         #[arg(long)]

@@ -1,6 +1,6 @@
 # Target Tools Reference
 
-GSV exposes one targetable tool interface to AI processes. The same tool names are used for the native cloud target, connected devices, active browser clients, and adapter command targets; the `target` argument chooses where the syscall runs.
+GSV exposes one targetable tool interface to AI processes. The same tool names are used for the native cloud target, connected devices, extension-provided browser targets, and adapter command targets; the `target` argument chooses where the syscall runs.
 
 This is the important rule for agents: choose `target: "gsv"` for Gateway-native work, and choose a device target only when the file, command, network, or hardware dependency lives on that device.
 
@@ -10,7 +10,7 @@ This is the important rule for agents: choose `target: "gsv"` for Gateway-native
 |---|---|
 | `gsv` | Native Gateway target running in the Cloudflare Worker sandbox. |
 | `<deviceId>` | A connected native device, such as `macbook` or `server`. |
-| `browser:<id>` | An active web shell desktop target. |
+| browser target id | An active browser target registered by the browser extension, such as `browser:chrome` or `rearden:brave`. |
 | `adapter:<adapter>:<account>` | An adapter command target, such as WhatsApp or Discord. |
 
 The prompt includes a compact sample of accessible online targets. Use `targets list` in the native shell for paginated discovery, or `targets show <target-id>` for details. The lower-level syscall surface is still `sys.device.list`/`sys.device.get`, and device-like entries also appear in the native filesystem under `/sys/devices`.
@@ -63,7 +63,7 @@ running results.
 
 ## Target Descriptors
 
-Native devices register with the Gateway as driver connections. Browser clients and adapter accounts are normalized into the same target descriptor model. A descriptor records identity, online state, and implemented syscall patterns.
+Native devices register with the Gateway as driver connections. Browser extension targets and adapter accounts are normalized into the same target descriptor model. A descriptor records identity, online state, and implemented syscall patterns.
 
 ```json
 {
@@ -96,7 +96,8 @@ Important native paths:
 - `/home` and the user's home directory contain durable user context.
 - `/etc` contains operator docs and system manuals.
 - `/sys` exposes live kernel configuration, devices, users, and capabilities.
-- `/proc` exposes process inspection surfaces.
+- `/proc` exposes process inspection surfaces, including
+  `/proc/<pid>/ai` for process-local AI stack selection.
 - `/dev` exposes device-like virtual endpoints.
 
 Native shell commands run in the Worker sandbox. They are useful for GSV control-plane work, virtual filesystem inspection, package commands, and HTTP/network operations allowed by the runtime. They do not run on the user's laptop.
@@ -192,9 +193,78 @@ native shell as `mcp status`, `mcp tools`, `mcp describe`, `mcp search`,
 server ids or unique server names, and tool selectors may use either the
 original MCP tool name or the generated CodeMode function name.
 
+## Browser Extension Targets
+
+Browser targets are active browser profiles connected by the GSV browser
+extension. They use the same targetable `Shell` and `fs.*` tools as native
+devices, with the target id selecting which browser profile receives the call.
+
+Browser target ids are configured by the extension. They may start with
+`browser:` or use a host/browser shape such as `rearden:brave`. Because many
+browser target ids contain `:`, bracket them in target-qualified file paths:
+
+```bash
+cp [rearden:brave]:/home/browser/screenshots/tab-123.png gsv:/home/alice/tab-123.png
+cp gsv:/home/alice/input.json [rearden:brave]:/tmp/input.json
+```
+
+Run target-qualified `cp` from the native GSV shell or target-aware filesystem
+tools. The browser target's just-bash `cp` is local to the browser filesystem.
+
+Use the native `gsv` target to discover and inspect browser targets:
+
+```bash
+targets list --kind browser
+targets show rearden:brave
+```
+
+Then use `Shell` with `target` set to the browser target and inspect the target's
+own help before acting:
+
+```bash
+cat /README.txt
+help
+tabs --help
+page --help
+network --help
+media --help
+```
+
+Current extension targets expose browser commands for tabs, windows, page
+snapshots/text/screenshots/clicks/typing/keyboard/scroll/wait/JavaScript,
+clipboard, cookies, `chrome.storage.local`, downloads, history, bookmarks, and
+network capture. Newer extension targets can also record tab audio/video and open
+URLs, browser-local files, or stdin in viewer tabs through
+`tabs open [--mime type] <url|path|->`. The exact command set
+depends on extension version and browser permissions, so `/README.txt`, `help`,
+and `<command> --help` are authoritative.
+
+For reusable operating guidance, run `skills show browser-target`.
+
+Useful runtime paths include:
+
+- `/README.txt`
+- `/proc/browser.json`
+- `/proc/tabs.json`
+- `/proc/tabs/<tabId>/meta.json`
+- `/proc/tabs/<tabId>/text.txt`
+- `/proc/network/status.json`
+- `/proc/network/events.jsonl`
+- `/proc/network/requests.json`
+
+Writable browser-local paths usually include `/tmp`, `/tmp/render`,
+`/home/browser`, `/home/browser/screenshots`, `/home/browser/network`, and
+`/home/browser/recordings`. Network captures started with
+`network start --persist` write session artifacts under
+`/home/browser/network/sessions/...`; tab media recordings write under
+`/home/browser/recordings` unless another path is requested. Use
+`media record start --video` or `--mode video` for video capture. Chrome may
+require the user to focus the tab and click Grant Recording in the extension UI
+before recording starts; each grant can start one recording.
+
 ## CLI Device Targets
 
-CLI devices run on user machines through `gsv device run` or the managed device service. They implement the same `fs.*` and `shell.exec` interface over WebSocket.
+CLI devices run on user machines through `gsv device run` or the managed device daemon service. They implement the same `fs.*` and `shell.exec` interface over WebSocket.
 
 Device filesystem semantics:
 

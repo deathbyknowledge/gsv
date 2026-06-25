@@ -3,8 +3,8 @@ import type {
   MkdirOptions,
   RmOptions,
 } from "just-bash";
-import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
-import type { RepoSummary } from "@gsv/protocol/syscalls/repositories";
+import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
+import type { RepoSummary } from "@humansandmachines/gsv/protocol";
 import type { InstalledPackageRecord } from "../../kernel/packages";
 import type { ProcessMount } from "../../kernel/processes";
 import type { ExtendedMountStat, FsSearchBackendResult, MountBackend } from "../mount";
@@ -52,6 +52,7 @@ type SourceRepo = {
   repo: string;
   mountPath: string;
   ref: string;
+  writable: boolean;
 };
 
 type SourceBranchState = {
@@ -187,7 +188,7 @@ class ProcessSourceMountBackend implements MountBackend {
     this.processId = options.processId ?? null;
     this.config = options.config ?? null;
     this.packages = visibleSourcePackages(options.packages, options.identity, options.mounts);
-    this.repos = visibleSourceRepos(options.repos);
+    this.repos = visibleSourceRepos(options.repos, options.packages, options.mounts);
   }
 
   handles(path: string): boolean {
@@ -264,18 +265,37 @@ class ProcessSourceMountBackend implements MountBackend {
   }
 
   async writeFile(path: string, content: FileContent): Promise<void> {
-    const resolved = this.resolveWritablePackagePath(path, "write");
-    await this.stageOverlayPut(resolved.pkg, resolved.relativePath, asBytes(content));
+    const packageResolved = this.resolvePackagePathOrNull(path);
+    if (packageResolved) {
+      const resolved = this.assertWritablePackagePath(packageResolved, "write");
+      await this.stageOverlayPut(resolved.pkg, resolved.relativePath, asBytes(content));
+      return;
+    }
+
+    const repoResolved = this.resolveWritableRepoPath(path, "write");
+    await this.applyRepoPut(repoResolved.repo, repoResolved.relativePath, asBytes(content), "write");
   }
 
   async appendFile(path: string, content: FileContent): Promise<void> {
-    const resolved = this.resolveWritablePackagePath(path, "append");
+    const packageResolved = this.resolvePackagePathOrNull(path);
+    if (packageResolved) {
+      const resolved = this.assertWritablePackagePath(packageResolved, "append");
+      let current: Uint8Array<ArrayBufferLike> = new Uint8Array();
+      if (await this.exists(path)) {
+        current = await this.readFileBuffer(path);
+      }
+      const next = concatBytes(current, asBytes(content));
+      await this.stageOverlayPut(resolved.pkg, resolved.relativePath, next);
+      return;
+    }
+
+    const repoResolved = this.resolveWritableRepoPath(path, "append");
     let current: Uint8Array<ArrayBufferLike> = new Uint8Array();
     if (await this.exists(path)) {
       current = await this.readFileBuffer(path);
     }
     const next = concatBytes(current, asBytes(content));
-    await this.stageOverlayPut(resolved.pkg, resolved.relativePath, next);
+    await this.applyRepoPut(repoResolved.repo, repoResolved.relativePath, next, "append");
   }
 
   async exists(path: string): Promise<boolean> {
@@ -344,7 +364,7 @@ class ProcessSourceMountBackend implements MountBackend {
     normalizedPath: string;
   }): Promise<ExtendedMountStat> {
     if (!resolved.relativePath) {
-      return makeDirectoryStat(this.identity.uid, this.identity.gid, false);
+      return makeDirectoryStat(this.identity.uid, this.identity.gid, resolved.repo.writable);
     }
 
     const result = await this.ripgit.readPath(
@@ -355,17 +375,26 @@ class ProcessSourceMountBackend implements MountBackend {
       throw new Error(`ENOENT: no such file or directory, stat '${resolved.normalizedPath}'`);
     }
     if (result.kind === "tree") {
-      return makeDirectoryStat(this.identity.uid, this.identity.gid, false);
+      return makeDirectoryStat(this.identity.uid, this.identity.gid, resolved.repo.writable);
     }
-    return makeFileStat(this.identity.uid, this.identity.gid, result.size, false);
+    return makeFileStat(this.identity.uid, this.identity.gid, result.size, resolved.repo.writable);
   }
 
   async mkdir(path: string, _options?: MkdirOptions): Promise<void> {
-    const resolved = this.resolvePackagePath(path);
-    if (!resolved.relativePath) {
+    const packageResolved = this.resolvePackagePathOrNull(path);
+    if (packageResolved) {
+      if (!packageResolved.relativePath) {
+        return;
+      }
+      this.assertWritablePackagePath(packageResolved, "mkdir");
       return;
     }
-    this.assertWritablePackagePath(resolved, "mkdir");
+
+    const repoResolved = this.resolveRepoPath(path);
+    if (!repoResolved.relativePath) {
+      return;
+    }
+    this.assertWritableRepoPath(repoResolved, "mkdir");
     // ripgit tracks files, not empty directories. Directory creation is accepted
     // so normal shell workflows can create parents before writing files.
   }
@@ -449,12 +478,23 @@ class ProcessSourceMountBackend implements MountBackend {
   }
 
   async rm(path: string, options?: RmOptions): Promise<void> {
-    const resolved = this.resolveWritablePackagePath(path, "rm");
-    const removable = await this.assertRemovablePackagePath(resolved, options);
+    const packageResolved = this.resolvePackagePathOrNull(path);
+    if (packageResolved) {
+      const resolved = this.assertWritablePackagePath(packageResolved, "rm");
+      const removable = await this.assertRemovablePackagePath(resolved, options);
+      if (!removable) {
+        return;
+      }
+      await this.stageOverlayDelete(resolved.pkg, resolved.relativePath, options?.recursive === true);
+      return;
+    }
+
+    const repoResolved = this.resolveWritableRepoPath(path, "rm");
+    const removable = await this.assertRemovableRepoPath(repoResolved, options);
     if (!removable) {
       return;
     }
-    await this.stageOverlayDelete(resolved.pkg, resolved.relativePath, options?.recursive === true);
+    await this.applyRepoDelete(repoResolved.repo, repoResolved.relativePath, options?.recursive === true);
   }
 
   async chmod(path: string): Promise<void> {
@@ -561,18 +601,6 @@ class ProcessSourceMountBackend implements MountBackend {
     };
   }
 
-  private resolvePackagePath(path: string): {
-    pkg: SourcePackage;
-    relativePath: string;
-    normalizedPath: string;
-  } {
-    const resolved = this.resolvePackagePathOrNull(path);
-    if (!resolved) {
-      throw new Error(`ENOENT: no such package source '${normalizePath(path)}'`);
-    }
-    return resolved;
-  }
-
   private resolvePackagePathOrNull(path: string): {
     pkg: SourcePackage;
     relativePath: string;
@@ -598,6 +626,18 @@ class ProcessSourceMountBackend implements MountBackend {
         : normalizeRepoPath(normalizedPath.slice(pkg.mountPath.length + 1)),
       normalizedPath,
     };
+  }
+
+  private resolveRepoPath(path: string): {
+    repo: SourceRepo;
+    relativePath: string;
+    normalizedPath: string;
+  } {
+    const resolved = this.resolveRepoPathOrNull(path);
+    if (!resolved) {
+      throw new Error(`ENOENT: no such source repo '${normalizePath(path)}'`);
+    }
+    return resolved;
   }
 
   private resolveRepoPathOrNull(path: string): {
@@ -700,16 +740,32 @@ class ProcessSourceMountBackend implements MountBackend {
     return [];
   }
 
-  private resolveWritablePackagePath(path: string, operation: string): {
-    pkg: SourcePackage;
+  private resolveWritableRepoPath(path: string, operation: string): {
+    repo: SourceRepo;
     relativePath: string;
     normalizedPath: string;
   } {
-    const resolved = this.resolvePackagePath(path);
+    return this.assertWritableRepoPath(this.resolveRepoPath(path), operation);
+  }
+
+  private assertWritableRepoPath(
+    resolved: {
+      repo: SourceRepo;
+      relativePath: string;
+      normalizedPath: string;
+    },
+    operation: string,
+  ): {
+    repo: SourceRepo;
+    relativePath: string;
+    normalizedPath: string;
+  } {
     if (!resolved.relativePath) {
       throw new Error(`EISDIR: illegal operation on a directory, ${operation} '${resolved.normalizedPath}'`);
     }
-    this.assertWritablePackagePath(resolved, operation);
+    if (!resolved.repo.writable) {
+      throw new Error(`EPERM: source repo is read-only '${resolved.normalizedPath}'`);
+    }
     return resolved;
   }
 
@@ -719,7 +775,25 @@ class ProcessSourceMountBackend implements MountBackend {
       relativePath: string;
       normalizedPath: string;
     },
-    _operation: string,
+    operation: string,
+  ): {
+    pkg: SourcePackage;
+    relativePath: string;
+    normalizedPath: string;
+  } {
+    if (!resolved.relativePath) {
+      throw new Error(`EISDIR: illegal operation on a directory, ${operation} '${resolved.normalizedPath}'`);
+    }
+    this.assertPackagePathWriteContext(resolved);
+    return resolved;
+  }
+
+  private assertPackagePathWriteContext(
+    resolved: {
+      pkg: SourcePackage;
+      relativePath: string;
+      normalizedPath: string;
+    },
   ): void {
     if (!resolved.pkg.writable) {
       throw new Error(`EPERM: package source is read-only '${resolved.normalizedPath}'`);
@@ -757,6 +831,31 @@ class ProcessSourceMountBackend implements MountBackend {
     return true;
   }
 
+  private async assertRemovableRepoPath(
+    resolved: {
+      repo: SourceRepo;
+      relativePath: string;
+      normalizedPath: string;
+    },
+    options?: RmOptions,
+  ): Promise<boolean> {
+    try {
+      const stat = await this.stat(resolved.normalizedPath);
+      if (stat.isDirectory && !options?.recursive) {
+        const entries = await this.readdir(resolved.normalizedPath);
+        if (entries.length > 0) {
+          throw new Error(`ENOTEMPTY: directory not empty, rmdir '${resolved.normalizedPath}'`);
+        }
+      }
+    } catch (error) {
+      if (options?.force && error instanceof Error && error.message.includes("ENOENT")) {
+        return false;
+      }
+      throw error;
+    }
+    return true;
+  }
+
   private repoRefForPackage(pkg: SourcePackage): RipgitRepoRef {
     const repo = parseRepoSlug(pkg.repo);
     const state = this.readBranchState(pkg);
@@ -772,6 +871,57 @@ class ProcessSourceMountBackend implements MountBackend {
       repo: repo.name,
       branch: repo.ref,
     };
+  }
+
+  private async applyRepoPut(
+    repo: SourceRepo,
+    relativePath: string,
+    content: Uint8Array,
+    operation: "write" | "append",
+  ): Promise<void> {
+    await this.ripgit.apply(
+      this.repoRefForSourceRepo(repo),
+      this.identity.username,
+      `${this.identity.username}@gsv.local`,
+      `gsv: ${operation} ${relativePath}`,
+      [
+        {
+          type: "put",
+          path: relativePath,
+          contentBytes: Array.from(content),
+        },
+      ],
+    );
+    this.refreshRepoMetadata(repo);
+  }
+
+  private async applyRepoDelete(repo: SourceRepo, relativePath: string, recursive: boolean): Promise<void> {
+    await this.ripgit.apply(
+      this.repoRefForSourceRepo(repo),
+      this.identity.username,
+      `${this.identity.username}@gsv.local`,
+      `gsv: rm ${relativePath}`,
+      [
+        {
+          type: "delete",
+          path: relativePath,
+          recursive,
+        },
+      ],
+    );
+    this.refreshRepoMetadata(repo);
+  }
+
+  private refreshRepoMetadata(repo: SourceRepo): void {
+    if (!this.config) {
+      return;
+    }
+    const now = String(Date.now());
+    const createdKey = sourceRepoConfigKey(repo, "created_at");
+    if (this.config.get(createdKey) === null) {
+      this.config.set(createdKey, now);
+    }
+    this.config.set(sourceRepoConfigKey(repo, "updated_at"), now);
   }
 
   private async readOverlay(pkg: SourcePackage): Promise<SourceOverlayManifest> {
@@ -1124,11 +1274,19 @@ function visibleSourcePackages(
   return packages.sort((left, right) => left.name.localeCompare(right.name));
 }
 
-function visibleSourceRepos(summaries?: RepoSummary[] | null): SourceRepo[] {
+function visibleSourceRepos(
+  summaries?: RepoSummary[] | null,
+  records?: InstalledPackageRecord[],
+  mounts?: ProcessMount[] | null,
+): SourceRepo[] {
+  const hiddenPackageRepos = mounts ? packageSourceRepos(records ?? []) : null;
   const repos = new Map<string, SourceRepo>();
   for (const summary of summaries ?? []) {
     const parsed = sourceRepoForSummary(summary);
     if (!parsed) {
+      continue;
+    }
+    if (hiddenPackageRepos?.has(parsed.repo)) {
       continue;
     }
     repos.set(parsed.repo, parsed);
@@ -1137,6 +1295,19 @@ function visibleSourceRepos(summaries?: RepoSummary[] | null): SourceRepo[] {
     const owner = left.owner.localeCompare(right.owner);
     return owner !== 0 ? owner : left.name.localeCompare(right.name);
   });
+}
+
+function packageSourceRepos(records: InstalledPackageRecord[]): Set<string> {
+  const repos = new Set<string>();
+  for (const record of records) {
+    try {
+      const parsed = parseRepoSlug(record.manifest.source.repo);
+      repos.add(`${parsed.owner}/${parsed.repo}`);
+    } catch {
+      continue;
+    }
+  }
+  return repos;
 }
 
 function sourceRepoForSummary(summary: RepoSummary): SourceRepo | null {
@@ -1148,10 +1319,15 @@ function sourceRepoForSummary(summary: RepoSummary): SourceRepo | null {
       repo: `${parsed.owner}/${parsed.repo}`,
       mountPath: `/src/repos/${parsed.owner}/${parsed.repo}`,
       ref: DEFAULT_REPO_REF,
+      writable: summary.writable,
     };
   } catch {
     return null;
   }
+}
+
+function sourceRepoConfigKey(repo: SourceRepo, field: string): string {
+  return `repos/${repo.owner}/${repo.name}/${field}`;
 }
 
 function throwMissingSourcePath(path: string): never {

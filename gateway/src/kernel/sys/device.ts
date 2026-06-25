@@ -6,7 +6,7 @@ import type {
   SysDeviceGetResult,
   SysDeviceUpdateArgs,
   SysDeviceUpdateResult,
-} from "@gsv/protocol/syscalls/system";
+} from "@humansandmachines/gsv/protocol";
 import {
   getVisibleTarget,
   listVisibleTargets,

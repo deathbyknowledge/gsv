@@ -15,7 +15,7 @@ import type {
   ConnectResult,
   ConnectionIdentity,
   ProcessIdentity,
-} from "@gsv/protocol/syscalls/system";
+} from "@humansandmachines/gsv/protocol";
 import type { AuthTokenRole } from "./auth-store";
 import type { CapabilityStore } from "./capabilities";
 import { isValidCapability } from "./capabilities";

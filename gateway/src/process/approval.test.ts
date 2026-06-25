@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
+import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import {
   DEFAULT_TOOL_APPROVAL_POLICY,
   buildToolApprovalFacts,
@@ -103,6 +103,29 @@ describe("tool approval policy", () => {
     );
     expect(redirect.action).toBe("ask");
     expect(redirect.facts.tags).toContain("mutating");
+  });
+
+  it("requires approval for CodeMode fetches", () => {
+    const get = resolveToolApproval(
+      DEFAULT_TOOL_APPROVAL_POLICY,
+      "net.fetch",
+      { url: "https://example.com", method: "GET" },
+      IDENTITY,
+      "task",
+    );
+    expect(get.action).toBe("ask");
+    expect(get.facts.tags).toContain("network");
+
+    const post = resolveToolApproval(
+      DEFAULT_TOOL_APPROVAL_POLICY,
+      "net.fetch",
+      { url: "https://example.com", method: "POST" },
+      IDENTITY,
+      "task",
+    );
+    expect(post.action).toBe("ask");
+    expect(post.facts.tags).toContain("network");
+    expect(post.facts.tags).toContain("mutating");
   });
 
   it("prefers exact syscall rules over domain wildcards", () => {

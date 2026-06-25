@@ -4,8 +4,8 @@ import type {
   RepoReadResult,
   RepoSummary,
   RepoTreeEntry,
-} from "@gsv/protocol/syscalls/repositories";
-import type { PackageStorageBinding } from "@gsv/package/context";
+} from "@humansandmachines/gsv/protocol";
+import type { PackageStorageBinding } from "@humansandmachines/gsv/sdk/context";
 import { runWikiCommand } from "../../../../builtin-packages/wiki/src/cli/wiki-runner";
 import { WikiKnowledgeStore } from "../../../../builtin-packages/wiki/src/backend/knowledge-store";
 
@@ -526,7 +526,7 @@ describe("WikiKnowledgeStore", () => {
     expect(search.matches[0]?.path).toBe("personal/pages/alice.md");
   });
 
-  it("ingests live source refs into inbox notes and compiles them into db pages", async () => {
+  it("ingests live source refs directly into db pages", async () => {
     const store = createStore();
 
     const ingest = await store.ingest({
@@ -550,12 +550,11 @@ describe("WikiKnowledgeStore", () => {
     if (!ingest.ok) {
       throw new Error("expected ingest to succeed");
     }
-    expect(ingest.path.startsWith("personal/inbox/")).toBe(true);
-    expect(ingest.requiresReview).toBe(true);
+    expect(ingest.path).toBe("personal/pages/alice-onboarding-notes.md");
 
-    const staged = await store.read({ path: ingest.path });
-    expect(staged.exists).toBe(true);
-    expect(staged.sources).toEqual([
+    const page = await store.read({ path: ingest.path });
+    expect(page.exists).toBe(true);
+    expect(page.sources).toEqual([
       {
         target: "gsv",
         path: "/home/alice/projects/onboarding/notes/alice.md",
@@ -566,27 +565,8 @@ describe("WikiKnowledgeStore", () => {
         path: "/Users/hank/Downloads/alice-review.txt",
       },
     ]);
-    expect(staged.markdown).toContain("## Sources");
-    expect(staged.markdown).toContain("[gsv] /home/alice/projects/onboarding/notes/alice.md | Onboarding notes");
-
-    const compiled = await store.compile({
-      db: "personal",
-      sourcePath: ingest.path,
-      targetPath: "personal/pages/alice.md",
-    });
-
-    expect(compiled).toEqual({
-      ok: true,
-      db: "personal",
-      path: "personal/pages/alice.md",
-      sourcePath: ingest.path,
-      removedSource: true,
-    });
-
-    const page = await store.read({ path: "personal/pages/alice.md" });
-    expect(page.exists).toBe(true);
-    expect(page.sources).toEqual(staged.sources);
     expect(page.markdown).toContain("## Sources");
+    expect(page.markdown).toContain("[gsv] /home/alice/projects/onboarding/notes/alice.md | Onboarding notes");
 
     const dbs = await store.listDbs({});
     expect(dbs.dbs).toEqual([
@@ -598,10 +578,56 @@ describe("WikiKnowledgeStore", () => {
 
     const index = await store.read({ path: "personal/index.md" });
     expect(index.exists).toBe(true);
-    expect(index.markdown).toContain("pages/alice.md");
+    expect(index.markdown).toContain("pages/alice-onboarding-notes.md");
 
     const log = await store.read({ path: "personal/log.md" });
     expect(log.exists).toBe(false);
+  });
+
+  it("derives untitled ingest pages from source paths", async () => {
+    const store = createStore();
+
+    const first = await store.ingest({
+      db: "personal",
+      sources: [{ target: "gsv", path: "/home/alice/notes/source-a.md" }],
+    });
+    const second = await store.ingest({
+      db: "personal",
+      sources: [{ target: "gsv", path: "/home/alice/notes/source-b.md" }],
+    });
+
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    if (!first.ok || !second.ok) {
+      throw new Error("expected ingest to succeed");
+    }
+    expect(first.path).toBe("personal/pages/home-alice-notes-source-a.md");
+    expect(second.path).toBe("personal/pages/home-alice-notes-source-b.md");
+
+    const firstPage = await store.read({ path: first.path });
+    const secondPage = await store.read({ path: second.path });
+    expect(firstPage.exists).toBe(true);
+    expect(secondPage.exists).toBe(true);
+  });
+
+  it("indexes db-relative ingest paths", async () => {
+    const store = createStore();
+
+    const ingest = await store.ingest({
+      db: "personal",
+      path: "pages/source-note.md",
+      sources: [{ target: "gsv", path: "/home/alice/source.md" }],
+    });
+
+    expect(ingest.ok).toBe(true);
+    if (!ingest.ok) {
+      throw new Error("expected ingest to succeed");
+    }
+    expect(ingest.path).toBe("personal/pages/source-note.md");
+
+    const index = await store.read({ path: "personal/index.md" });
+    expect(index.exists).toBe(true);
+    expect(index.markdown).toContain("pages/source-note.md");
   });
 
   it("merges duplicate notes into the target and removes the source by default", async () => {
@@ -651,7 +677,7 @@ describe("WikiKnowledgeStore", () => {
     expect(source.exists).toBe(false);
   });
 
-  it("promotes text into inbox candidates and builds compact query briefs", async () => {
+  it("builds compact query briefs from matching notes", async () => {
     const store = createStore(undefined, {
       "hank/projects": wikiRepo("projects", "Projects", {
         "alpha.md": [
@@ -666,23 +692,6 @@ describe("WikiKnowledgeStore", () => {
         ].join("\n"),
       }),
     });
-
-    const promoted = await store.promote({
-      source: { kind: "text", text: "Alice prefers async updates and concise replies." },
-      targetPath: "personal/pages/alice.md",
-      mode: "inbox",
-    });
-
-    expect(promoted.ok).toBe(true);
-    if (!promoted.ok) {
-      throw new Error("expected inbox promotion");
-    }
-    expect(promoted.path.startsWith("personal/inbox/")).toBe(true);
-    expect(promoted.requiresReview).toBe(true);
-
-    const candidate = await store.read({ path: promoted.path });
-    expect(candidate.exists).toBe(true);
-    expect(candidate.markdown).toContain("Suggested target: personal/pages/alice.md");
 
     const search = await store.search({
       query: "alpha adapters",
@@ -730,7 +739,6 @@ describe("Wiki CLI", () => {
           "Pair messages with the channel adapter.",
           "",
         ].join("\n"),
-        "inbox/.dir": "",
       }),
     });
     client.setWritable("hank/gsv-manual", false);
@@ -753,7 +761,6 @@ describe("Wiki CLI", () => {
     ].join("\n"));
     expect(output).not.toContain("wiki.json");
     expect(output).not.toContain(".dir");
-    expect(output).not.toContain("inbox/");
   });
 
   it("reports a missing wiki for info", async () => {
@@ -874,7 +881,7 @@ describe("Wiki CLI", () => {
     expect(read.markdown).toContain("Pair messages");
   });
 
-  it("uses stdin for write and promote text", async () => {
+  it("uses stdin for write text", async () => {
     const client = new InMemoryKnowledgeClient();
 
     const written = await runWikiCommand(commandContext(
@@ -886,15 +893,5 @@ describe("Wiki CLI", () => {
 
     const readWritten = await runWikiCommand(commandContext(client, ["read", "gsv/pages/stdin.md"]));
     expect(readWritten).toContain("Connect WhatsApp from piped text.");
-
-    const promoted = await runWikiCommand(commandContext(
-      client,
-      ["promote", "--to", "personal/pages/alice.md", "--mode", "direct"],
-      "Alice prefers concise replies.\n",
-    ));
-    expect(promoted).toBe("promoted personal/pages/alice.md\n");
-
-    const readPromoted = await runWikiCommand(commandContext(client, ["read", "personal/pages/alice.md"]));
-    expect(readPromoted).toContain("Alice prefers concise replies.");
   });
 });

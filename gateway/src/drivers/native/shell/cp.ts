@@ -22,7 +22,7 @@ export function buildCpCommand(
           "",
           "Examples:",
           "  cp rearden:/home/hank/report.pdf /tmp/report.pdf",
-          "  cp /tmp/report.pdf [browser:abc123]:/tmp/report.pdf",
+          "  cp /tmp/report.pdf [rearden:brave]:/tmp/report.pdf",
           "",
         ].join("\n"),
         stderr: "",

@@ -75,11 +75,10 @@ function createMockSql() {
         implements_,
         platform,
         version,
-        lifecycle,
         first_seen_at,
         last_seen_at,
         connected_at,
-      ] = bindings as [string, number, string, string, string, string, string, string, number, number, number];
+      ] = bindings as [string, number, string, string, string, string, string, number, number, number];
       table.push({
         device_id,
         owner_uid,
@@ -88,7 +87,6 @@ function createMockSql() {
         implements: implements_,
         platform,
         version,
-        lifecycle,
         online: 1,
         first_seen_at,
         last_seen_at,

@@ -51,7 +51,7 @@ textarea {
   height: 100dvh;
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(284px, 336px) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   background: var(--panel);
   overflow: hidden;
   overscroll-behavior: none;

@@ -1,5 +1,5 @@
 import type { Context, Usage } from "@earendil-works/pi-ai";
-import type { ProcContextPressureLevel, ProcContextState } from "../syscalls/proc";
+import type { ProcContextPressureLevel, ProcContextState, ProcUsageState } from "../syscalls/proc";
 
 const TOKEN_ESTIMATE_CHARS_PER_TOKEN = 4;
 const TOKEN_ESTIMATE_SAFETY_FACTOR = 1.15;
@@ -49,6 +49,8 @@ export function buildProcContextState(input: {
   maxOutputTokens: number;
   estimatedInputTokens: number;
   usage?: Usage;
+  usageState?: ProcUsageState | null;
+  conversationUsage?: ProcUsageState | null;
   updatedAt?: number;
 }): ProcContextState {
   const contextWindowTokens = normalizePositiveInt(input.contextWindowTokens);
@@ -80,6 +82,8 @@ export function buildProcContextState(input: {
     inputTokens,
     ...(providerOutputTokens !== null ? { outputTokens: providerOutputTokens } : {}),
     ...(providerTotalTokens !== null ? { totalTokens: providerTotalTokens } : {}),
+    ...(input.usageState ? { usage: input.usageState } : {}),
+    ...(input.conversationUsage ? { conversationUsage: input.conversationUsage } : {}),
     availableInputTokens,
     pressure,
     level: levelForPressure(pressure),

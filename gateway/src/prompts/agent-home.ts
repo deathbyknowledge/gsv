@@ -8,8 +8,7 @@ export const DEFAULT_BOOT_CONTEXT_TEMPLATE =
   "\n" +
   "- Get to know the user enough to be useful: their name, how they like to work, current priorities, important tools, devices, and accounts.\n" +
   "- Help the user and your own agent account finish setting up GSV: connect useful devices or adapters, configure models and approvals, create useful agents or packages, and verify Chat, Files, Shell, and the GSV console.\n" +
-  "- As you learn durable preferences or facts, update the relevant context files in your home, especially `~/context.d/10-user.md`, or add focused files under `~/context.d/`. Keep them short.\n" +
-  "- Do not store secrets, credentials, tokens, or raw private data in context files.\n" +
+  "- Keep home context short and durable. Do not store secrets, credentials, tokens, or raw private data there.\n" +
   "- When the user says onboarding or setup is done, delete `~/context.d/00-boot.md` so this one-time assignment does not appear in future conversations.\n";
 
 // Used by ensureAccountHomeLayout to seed context.d/00-style.md for agent accounts.
@@ -25,6 +24,69 @@ export const DEFAULT_STYLE_CONTEXT =
   "Bad: Great question! The choice between Redis and Memcached is a nuanced decision that requires careful consideration of multiple factors. Let me break down the key differences: Redis offers a rich set of data structures including strings, hashes, lists, sets, and sorted sets, which provide flexibility for various use cases. It supports persistence through RDB snapshots and AOF logs, enabling data durability...\n" +
   "\n" +
   "Good: Redis. We need pub/sub for the notifications feature.\n";
+
+// Used by ensureAccountHomeLayout to replace the previous generated
+// context.d/15-memory.md for agent accounts when it is still unmodified.
+export const LEGACY_MEMORY_CONTEXT_TEMPLATE =
+  "# Memory\n" +
+  "\n" +
+  "Use `~/context.d/` only for compact standing instructions that should appear in every prompt. Use your repo-backed wiki for searchable long-term memory, journal notes, project facts, decisions, preferences, and open loops.\n" +
+  "\n" +
+  "Default wiki:\n" +
+  "- Wiki id: `memory`\n" +
+  "- Repo path: `/src/repos/{{program.username}}/memory`\n" +
+  "- Pages directory: `/src/repos/{{program.username}}/memory/pages/`\n" +
+  "- Journal path pattern: `/src/repos/{{program.username}}/memory/pages/journal/YYYY/MM/YYYY-MM-DD.md`\n" +
+  "\n" +
+  "If the wiki does not exist yet, create it on the native `gsv` target:\n" +
+  "\n" +
+  "```bash\n" +
+  "wiki db init memory --title \"{{program.username}} Memory\"\n" +
+  "```\n" +
+  "\n" +
+  "Once created, prefer normal filesystem tools for page work: search under `/src/repos/{{program.username}}/memory`, read pages before editing, and write/edit markdown files directly. Use `wiki info memory` for the page tree and `wiki search <query> --prefix memory` when the filesystem path is not obvious.\n" +
+  "\n" +
+  "Keep `index.md` as an orientation page. Prefer dated journal entries for chronological observations, then promote stable facts into topical pages such as `pages/people/`, `pages/projects/`, `pages/preferences/`, `pages/decisions/`, and `pages/open-loops.md`.\n" +
+  "\n" +
+  "Do not store secrets, credentials, tokens, or raw private data in memory. Summarize only what is useful and appropriate to remember.\n";
+
+// Used by ensureAccountHomeLayout to seed context.d/15-memory.md for agent accounts.
+export const DEFAULT_MEMORY_CONTEXT_TEMPLATE =
+  "# Memory\n" +
+  "\n" +
+  "Use `~/context.d/` only for compact standing instructions that should appear in every prompt. Use your repo-backed wiki for searchable long-term memory, journal notes, project facts, decisions, preferences, and durable background.\n" +
+  "\n" +
+  "Default wiki:\n" +
+  "- Wiki id: `memory`\n" +
+  "- Repo path: `/src/repos/{{program.username}}/memory`\n" +
+  "- Pages directory: `/src/repos/{{program.username}}/memory/pages/`\n" +
+  "- Journal path pattern: `/src/repos/{{program.username}}/memory/pages/journal/YYYY/MM/YYYY-MM-DD.md`\n" +
+  "\n" +
+  "If the wiki does not exist yet, create it on the native `gsv` target:\n" +
+  "\n" +
+  "```bash\n" +
+  "wiki db init memory --title \"{{program.username}} Memory\"\n" +
+  "```\n" +
+  "\n" +
+  "Once created, prefer normal filesystem tools for page work: search under `/src/repos/{{program.username}}/memory`, read pages before editing, and write/edit markdown files directly. Use `wiki info memory` for the page tree and `wiki search <query> --prefix memory` when the filesystem path is not obvious.\n" +
+  "\n" +
+  "Keep `index.md` as an orientation page. Prefer dated journal entries for chronological observations, then promote stable facts into topical pages such as `pages/people/`, `pages/projects/`, `pages/preferences/`, and `pages/decisions/`.\n" +
+  "\n" +
+  "Active open loops belong in `~/context.d/20-open-loops.md` so they are loaded every time. Use the wiki for closed-loop history, evidence, and background that does not need to be prompt-visible.\n" +
+  "\n" +
+  "Do not store secrets, credentials, tokens, or raw private data in memory. Summarize only what is useful and appropriate to remember.\n";
+
+// Used by ensureAccountHomeLayout to seed context.d/20-open-loops.md for agent accounts.
+export const DEFAULT_OPEN_LOOPS_CONTEXT =
+  "# Open Loops\n" +
+  "\n" +
+  "Track active commitments, unresolved questions, blockers, and follow-ups that should be visible in every prompt.\n" +
+  "\n" +
+  "Keep this short. Remove closed items promptly, and move durable history or evidence to the `memory` wiki when it is useful later.\n" +
+  "\n" +
+  "## Active\n" +
+  "\n" +
+  "- None yet.\n";
 
 // Used by ensureAccountHomeLayout only to delete exact legacy generated context.d/00-constitution.md files.
 export const LEGACY_DEFAULT_CONSTITUTION_CONTEXT =

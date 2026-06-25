@@ -6,12 +6,16 @@ describe("internal syscall exposure", () => {
     expect(isInternalOnlySyscall("ai.config")).toBe(true);
     expect(isInternalOnlySyscall("ai.tools")).toBe(true);
     expect(isInternalOnlySyscall("codemode.exec")).toBe(true);
+    expect(isInternalOnlySyscall("proc.ai.config.get")).toBe(true);
+    expect(isInternalOnlySyscall("proc.ai.config.set")).toBe(true);
     expect(isInternalOnlySyscall("proc.ipc.deliver")).toBe(true);
   });
 
   it("keeps user-facing syscalls public", () => {
     expect(isInternalOnlySyscall("proc.send")).toBe(false);
     expect(isInternalOnlySyscall("ai.transcription.create")).toBe(false);
+    expect(isInternalOnlySyscall("ai.image.read")).toBe(false);
+    expect(isInternalOnlySyscall("ai.image.generate")).toBe(false);
     expect(isInternalOnlySyscall("ai.speech.create")).toBe(false);
     expect(isInternalOnlySyscall("proc.ipc.send")).toBe(false);
     expect(isInternalOnlySyscall("sys.config.get")).toBe(false);

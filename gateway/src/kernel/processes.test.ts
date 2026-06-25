@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ProcessRegistry } from "./processes";
-import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
+import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 
 type Row = Record<string, unknown>;
 

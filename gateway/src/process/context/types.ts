@@ -1,7 +1,7 @@
 import type { AiConfigResult, AiToolsDevice } from "../../syscalls/ai";
 import type { ProcContextFile } from "../../syscalls/proc";
 import type { RipgitClient } from "../../fs/ripgit/client";
-import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
+import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 
 export type PromptStorage = Pick<R2Bucket, "get" | "list">;
 export type PromptRipgitClient = Pick<RipgitClient, "readPath">;

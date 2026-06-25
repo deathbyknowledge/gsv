@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { env } from "cloudflare:test";
 import { GsvFs, parseMode, isValidMode, resolveUserPath } from "./index";
 import type { KernelRefs } from "./index";
-import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
+import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 
 const ROOT: ProcessIdentity = {
   uid: 0,
@@ -379,6 +379,37 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
   const systemCrontabs = new Map<string, string>([
     ["daily", "0 5 * * * proc compact init:1000 --conversation default --keep-last 80\n"],
   ]);
+  const configEntries = new Map<string, string>([
+    ["config/ai/provider", "workers-ai"],
+    ["config/ai/model", "@cf/system/model"],
+    ["config/ai/api_key", "sk-system"],
+    ["config/ai/image/read/provider", "workers-ai"],
+    ["config/ai/image/read/model", "@cf/system/vision"],
+    ["config/ai/speech/provider", "workers-ai"],
+    ["users/1000/ai/model_profiles", JSON.stringify({
+      version: 1,
+      profiles: [
+        {
+          id: "fast-stack",
+          name: "Fast Stack",
+          values: {
+            "config/ai/provider": "openai",
+            "config/ai/model": "gpt-4.1-mini",
+            "config/ai/api_key": "sk-profile",
+            "config/ai/image/read/provider": "openai",
+            "config/ai/image/read/model": "gpt-4o",
+            "config/ai/image/read/api_key": "sk-image",
+            "config/ai/speech/provider": "openai",
+            "config/ai/speech/model": "gpt-4o-mini-tts",
+            "config/ai/speech/api_key": "sk-speech",
+          },
+          createdAt: 1000,
+          updatedAt: 2000,
+        },
+      ],
+    })],
+  ]);
+  let processAiConfig: any = null;
   const passwdEntries = [ROOT, SAM, ALICE, SAM_AGENT].map((user) => ({
     username: user.username,
     uid: user.uid,
@@ -425,7 +456,21 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
     } as never,
     devices: null as never,
     caps: null as never,
-    config: null as never,
+    config: {
+      get(key: string) {
+        return configEntries.get(key) ?? null;
+      },
+      set(key: string, value: string) {
+        configEntries.set(key, value);
+      },
+      list(prefix: string) {
+        const normalized = prefix.trim();
+        const withSlash = normalized.endsWith("/") ? normalized : `${normalized}/`;
+        return [...configEntries.entries()]
+          .filter(([key]) => key.startsWith(withSlash))
+          .map(([key, value]) => ({ key, value }));
+      },
+    } as never,
     packages: {
       list(args?: { scopes?: any[]; enabled?: boolean; name?: string; runtime?: string }) {
         const visibleScopes = args?.scopes?.map(packageScopeKey);
@@ -492,8 +537,40 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
         }];
       },
     },
-    async processRequest(_pid, call, args) {
+    async processRequest(pid, call, args) {
       const conversationId = String(args?.conversationId ?? "default");
+      if (call === "proc.ai.config.get") {
+        return { ok: true, pid, config: processAiConfig };
+      }
+      if (call === "proc.ai.config.set") {
+        const now = 2500;
+        if ("clear" in args && args.clear === true) {
+          processAiConfig = null;
+          return { ok: true, pid, config: null };
+        }
+        if ("values" in args && args.values && typeof args.values === "object") {
+          processAiConfig = {
+            version: 1,
+            values: { ...args.values },
+            ...(args.profile ? { profile: { ...args.profile, appliedAt: now } } : {}),
+            updatedAt: now,
+          };
+          return { ok: true, pid, config: processAiConfig };
+        }
+        if ("key" in args && typeof args.key === "string") {
+          const values = { ...(processAiConfig?.values ?? {}) };
+          const value = String(args.value ?? "").trim();
+          if (value) {
+            values[args.key] = value;
+          } else {
+            delete values[args.key];
+          }
+          processAiConfig = Object.keys(values).length > 0
+            ? { version: 1, values, updatedAt: now }
+            : null;
+          return { ok: true, pid, config: processAiConfig };
+        }
+      }
       if (call === "proc.conversation.list") {
         return { ok: true, pid: "task-alpha", conversations };
       }
@@ -1210,6 +1287,7 @@ describe("GsvFs Linux-like runtime views", () => {
     const fs = makeRuntimeViewFs(SAM, "task-alpha");
 
     await expect(fs.readdir("/proc/task-alpha")).resolves.toEqual([
+      "ai",
       "context.d",
       "conversations",
       "identity",
@@ -1282,6 +1360,7 @@ describe("GsvFs Linux-like runtime views", () => {
       "version",
     ]);
     await expect(fs.readdir("/proc/self")).resolves.toEqual([
+      "ai",
       "context.d",
       "conversations",
       "identity",
@@ -1305,6 +1384,7 @@ describe("GsvFs Linux-like runtime views", () => {
       "version",
     ]);
     await expect(fs.readdir("/proc/self")).resolves.toEqual([
+      "ai",
       "context.d",
       "conversations",
       "identity",
@@ -1324,6 +1404,80 @@ describe("GsvFs Linux-like runtime views", () => {
     const fs = makeRuntimeViewFs(SAM);
 
     await expect(fs.readdir("/proc/task-foreign")).rejects.toThrow("ENOENT");
+  });
+
+  it("applies process-local AI profiles through /proc with redacted reads", async () => {
+    const fs = makeRuntimeViewFs(SAM, "task-alpha");
+
+    await expect(fs.readdir("/proc/task-alpha/ai")).resolves.toEqual([
+      "api_key",
+      "context_window_tokens",
+      "effective.json",
+      "generation",
+      "image",
+      "local.json",
+      "max_context_bytes",
+      "max_tokens",
+      "model",
+      "profile",
+      "profiles",
+      "provider",
+      "reasoning",
+      "speech",
+      "transcription",
+    ]);
+    await expect(fs.readdir("/proc/task-alpha/ai/image/read")).resolves.toEqual([
+      "api_key",
+      "input_format",
+      "max_bytes",
+      "max_tokens",
+      "model",
+      "prompt",
+      "provider",
+      "timeout_ms",
+    ]);
+
+    const profiles = JSON.parse(await fs.readFile("/proc/task-alpha/ai/profiles"));
+    expect(profiles).toHaveLength(1);
+    expect(profiles[0]).toMatchObject({
+      id: "fast-stack",
+      name: "Fast Stack",
+      values: {
+        "config/ai/api_key": "redacted",
+        "config/ai/model": "gpt-4.1-mini",
+      },
+    });
+
+    await fs.writeFile("/proc/task-alpha/ai/profile", "fast-stack");
+
+    await expect(fs.readFile("/proc/task-alpha/ai/profile")).resolves.toBe("Fast Stack\n");
+    await expect(fs.readFile("/proc/task-alpha/ai/provider")).resolves.toBe("openai\n");
+    await expect(fs.readFile("/proc/task-alpha/ai/model")).resolves.toBe("gpt-4.1-mini\n");
+    await expect(fs.readFile("/proc/task-alpha/ai/api_key")).resolves.toBe("redacted\n");
+    await expect(fs.readFile("/proc/task-alpha/ai/image/read/api_key")).resolves.toBe("redacted\n");
+
+    const local = JSON.parse(await fs.readFile("/proc/task-alpha/ai/local.json"));
+    expect(local).toMatchObject({
+      profile: { id: "fast-stack", name: "Fast Stack" },
+      values: {
+        "config/ai/api_key": "redacted",
+        "config/ai/image/read/api_key": "redacted",
+      },
+    });
+
+    const effective = JSON.parse(await fs.readFile("/proc/task-alpha/ai/effective.json"));
+    expect(effective.values).toMatchObject({
+      "config/ai/provider": "openai",
+      "config/ai/model": "gpt-4.1-mini",
+      "config/ai/api_key": "redacted",
+    });
+
+    await fs.writeFile("/proc/task-alpha/ai/model", "gpt-4.2");
+    await expect(fs.readFile("/proc/task-alpha/ai/model")).resolves.toBe("gpt-4.2\n");
+    await expect(fs.readFile("/proc/task-alpha/ai/profile")).resolves.toBe("\n");
+
+    await fs.writeFile("/proc/task-alpha/ai/model", "");
+    await expect(fs.readFile("/proc/task-alpha/ai/model")).resolves.toBe("@cf/system/model\n");
   });
 
   it("exposes installed package status and metadata under /var/lib/gsv/packages", async () => {
