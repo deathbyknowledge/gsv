@@ -1,81 +1,181 @@
-// Flickering glyph star field — the GSV desktop's glyph-texture vibe, more
-// populated. A sparse set of absolutely-positioned spans with a CSS keyframe
-// flicker, positioned/timed by deterministic index math (no Math.random, which
-// is unavailable in some render contexts). Subtle periwinkle/grey on transparent.
-import { useMemo } from "preact/hooks";
+import { useEffect, useRef } from "preact/hooks";
 
-const GLYPHS = ["·", "◦", "✦", "∗", "+", "·", ".", "◦"];
-const COUNT = 160;
+type Star = {
+  idx: number;
+  phase: number;
+  rate: number;
+  bright: boolean;
+  base: number;
+};
 
-// cheap deterministic hash → [0,1)
-function frac(n: number) {
-  const x = Math.sin(n) * 43758.5453;
-  return x - Math.floor(x);
+type StarGrid = {
+  cols: number;
+  rows: number;
+  stars: Star[];
+  buffer: string[];
+};
+
+const FONT_SIZE = 8;
+const CHAR_WIDTH = 5;
+const STAR_DENSITY = 0.022;
+
+function makeRandom(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state * 1664525 + 1013904223) >>> 0;
+    return state / 4294967296;
+  };
+}
+
+function gridSize(element: HTMLElement): { cols: number; rows: number } {
+  const width = element.clientWidth || window.innerWidth || 1440;
+  const height = element.clientHeight || window.innerHeight || 900;
+  return {
+    cols: Math.max(80, Math.ceil(width / CHAR_WIDTH) + 4),
+    rows: Math.max(48, Math.ceil(height / FONT_SIZE) + 4),
+  };
+}
+
+function buildGrid(cols: number, rows: number): StarGrid {
+  const stars: Star[] = [];
+  const random = makeRandom(137);
+  const total = cols * rows;
+
+  for (let i = 0; i < total; i += 1) {
+    if (random() > 1 - STAR_DENSITY) {
+      stars.push({
+        idx: i,
+        phase: random() * Math.PI * 2,
+        rate: 0.7 + random() * 2.4,
+        bright: random() > 0.82,
+        base: 0.2 + random() * 0.45,
+      });
+    }
+  }
+
+  return {
+    cols,
+    rows,
+    stars,
+    buffer: new Array(total),
+  };
+}
+
+function renderGrid(grid: StarGrid, elapsed: number): string {
+  grid.buffer.fill(" ");
+
+  for (const star of grid.stars) {
+    const twinkle = 0.5 + 0.5 * Math.sin(elapsed * star.rate + star.phase);
+    const level = star.base + twinkle * 0.62;
+    let char = " ";
+
+    if (star.bright) {
+      char = level > 0.95 ? "*" : level > 0.72 ? "+" : level > 0.48 ? "·" : level > 0.27 ? "." : " ";
+    } else {
+      char = level > 0.8 ? "+" : level > 0.52 ? "·" : level > 0.32 ? "." : " ";
+    }
+
+    grid.buffer[star.idx] = char;
+  }
+
+  let output = "";
+  for (let y = 0; y < grid.rows; y += 1) {
+    let line = "";
+    const base = y * grid.cols;
+    for (let x = 0; x < grid.cols; x += 1) {
+      line += grid.buffer[base + x];
+    }
+    output += `${y ? "\n" : ""}${line}`;
+  }
+  return output;
 }
 
 const STYLE = `
-.gsv-glyph-stars { overflow: hidden; }
-.gsv-glyph-stars b {
+.gsv-glyph-stars {
+  overflow: hidden;
+}
+.gsv-glyph-stars pre {
   position: absolute;
+  left: 50%;
+  top: 50%;
+  margin: 0;
+  color: #5d5798;
   font-family: var(--gsv-font-mono, ui-monospace, monospace);
-  color: var(--accent, #b3aeff);
-  line-height: 1;
+  font-size: ${FONT_SIZE}px;
+  font-variant-ligatures: none;
+  line-height: ${FONT_SIZE}px;
+  letter-spacing: 0;
   pointer-events: none;
-  will-change: opacity;
-  animation: gsv-tw var(--d) ease-in-out infinite alternate;
-  animation-delay: var(--delay);
-}
-@keyframes gsv-tw {
-  0%   { opacity: var(--lo); }
-  100% { opacity: var(--hi); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .gsv-glyph-stars b { animation: none; opacity: var(--hi); }
+  text-rendering: geometricPrecision;
+  text-shadow: 0 0 4px rgba(128, 113, 221, 0.4);
+  transform: translate(-50%, -50%);
+  white-space: pre;
+  -webkit-font-smoothing: none;
 }
 `;
 
 export function GlyphStars() {
-  const stars = useMemo(() => {
-    // Scale density with viewport so small screens aren't over-packed (and
-    // render fewer animated nodes on low-power devices).
-    const vw = typeof window !== "undefined" ? window.innerWidth : 1440;
-    const count = Math.max(60, Math.min(COUNT, Math.round(vw / 9)));
-    const out = [];
-    for (let i = 0; i < count; i++) {
-      const left = frac(i * 12.9898) * 100;
-      const top = frac(i * 78.233) * 100;
-      const g = GLYPHS[Math.floor(frac(i * 3.17) * GLYPHS.length)];
-      const bright = frac(i * 5.71) > 0.8; // ~20% prominent
-      const size = bright ? 12 + frac(i * 9.1) * 9 : 5 + frac(i * 2.3) * 4;
-      const hi = bright ? 0.34 + frac(i * 1.7) * 0.22 : 0.1 + frac(i * 4.3) * 0.16;
-      const lo = hi * (0.18 + frac(i * 6.6) * 0.22);
-      const dur = (2.6 + frac(i * 8.8) * 4.4).toFixed(2);
-      const delay = (frac(i * 1.31) * -6).toFixed(2);
-      out.push({ i, left, top, g, size, hi, lo, dur, delay });
+  const rootRef = useRef<HTMLDivElement>(null);
+  const preRef = useRef<HTMLPreElement>(null);
+
+  useEffect(() => {
+    const root = rootRef.current;
+    const pre = preRef.current;
+    if (!root || !pre) {
+      return;
     }
-    return out;
+
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    const initialSize = gridSize(root);
+    let grid = buildGrid(initialSize.cols, initialSize.rows);
+    let raf = 0;
+    let lastFrame = 0;
+    let start = performance.now();
+    const frameMs = reduced ? Infinity : 1000 / 24;
+
+    const draw = (elapsed: number) => {
+      pre.textContent = renderGrid(grid, elapsed);
+    };
+
+    const resize = () => {
+      const size = gridSize(root);
+      if (size.cols === grid.cols && size.rows === grid.rows) {
+        return;
+      }
+      grid = buildGrid(size.cols, size.rows);
+      start = performance.now();
+      draw(0);
+    };
+
+    const loop = (now: number) => {
+      if (now - lastFrame >= frameMs) {
+        lastFrame = now;
+        draw((now - start) / 1000);
+      }
+      raf = window.requestAnimationFrame(loop);
+    };
+
+    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(resize) : null;
+    observer?.observe(root);
+    resize();
+    draw(0);
+
+    if (!reduced) {
+      raf = window.requestAnimationFrame(loop);
+    }
+
+    return () => {
+      observer?.disconnect();
+      if (raf) {
+        window.cancelAnimationFrame(raf);
+      }
+    };
   }, []);
 
   return (
-    <div class="gsv-glyph-stars" aria-hidden="true">
+    <div ref={rootRef} class="gsv-glyph-stars" aria-hidden="true">
       <style>{STYLE}</style>
-      {stars.map((s) => (
-        <b
-          key={s.i}
-          style={{
-            left: `${s.left.toFixed(2)}%`,
-            top: `${s.top.toFixed(2)}%`,
-            fontSize: `${s.size.toFixed(1)}px`,
-            // CSS custom props consumed by the keyframe
-            ["--d" as any]: `${s.dur}s`,
-            ["--delay" as any]: `${s.delay}s`,
-            ["--hi" as any]: s.hi.toFixed(3),
-            ["--lo" as any]: s.lo.toFixed(3),
-          }}
-        >
-          {s.g}
-        </b>
-      ))}
+      <pre ref={preRef} />
     </div>
   );
 }

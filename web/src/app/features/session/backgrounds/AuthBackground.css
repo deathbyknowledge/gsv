@@ -28,10 +28,10 @@
    wizard overrides it) so the forming "GSV" stays fully uncovered at any width. */
 .auth-bg-galaxy {
   position: absolute;
-  left: 0;
+  left: clamp(0px, 3vw, 44px);
   top: 0;
   bottom: 0;
-  width: min(920px, calc(100% - var(--gsv-galaxy-reserve, 540px)));
+  width: min(1040px, calc(100% - var(--gsv-galaxy-reserve, 540px) + clamp(64px, 8vw, 128px)));
 }
 
 /* Narrow widths: the panel centers (see AuthLayout.css), so the galaxy can no
