@@ -19,7 +19,7 @@ Most personal AI agents run on one host you pick and keep alive — a laptop, a 
 
 - Run things across all your machines from one agent — kick off a job on your home server while your laptop's shut.
 - Keep agents working while your devices sleep — they live on the edge, not your hardware.
-- Reach it from anywhere — web UI, CLI, or Discord / Telegram.
+- Reach it from anywhere — web UI, CLI, or Whatsapp / Discord / Telegram.
 - Spawn durable agents with their own memory, permissions, and the ability to start sub-agents.
 - Host your own packages and share apps between GSV instances through a built-in git remote.
 
@@ -45,7 +45,7 @@ curl -sSL https://install.gsv.space | bash
 gsv infra deploy --api-token <CLOUDFLARE-API-TOKEN>
 ```
 
-Open the URL it prints to finish onboarding in the Web UI. Then chat from the UI, a connected adapter (Discord/Telegram), or the CLI:
+Open the URL it prints to finish onboarding in the Web UI. Then chat from the UI, a connected adapter (Discord/Telegram/Whatsapp), or the CLI:
 
 ```bash
 gsv chat "Hello, what can you help me with?"
@@ -71,7 +71,7 @@ Linux-like by design, so agents can reason with familiar patterns (mental model,
 - **Kernel** — the Gateway runs on Cloudflare, exposing authenticated syscalls (`proc.*`, `pkg.*`, `sys.*`).
 - **Processes** — agents are durable processes with PIDs (`gsv proc list|spawn|send|kill`).
 - **Devices** — connected machines act as execution nodes, scoped to a workspace.
-- **Adapters** — Discord/Telegram workers act like device drivers for external chat.
+- **Adapters** — Discord/Telegram/Whatsapp workers act like device drivers for external chat.
 
 ## Development
 
