@@ -1175,6 +1175,37 @@
   color: #ffb199;
 }
 
+.gsv-chat-live-toggle {
+  min-width: 38px;
+  min-height: 24px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  background: rgba(132, 122, 255, 0.08);
+  color: #8f89d6;
+  padding: 0 8px;
+  cursor: pointer;
+  font-family: var(--gsv-font-mono);
+  font-size: 8px;
+  letter-spacing: 0.1em;
+}
+
+.gsv-chat-live-toggle:hover,
+.gsv-chat-live-toggle:focus-visible,
+.gsv-chat-live-toggle.is-active {
+  border-color: var(--dashed);
+  color: #bdb8ff;
+  background: rgba(132, 122, 255, 0.16);
+  outline: none;
+}
+
+.gsv-chat-live-toggle:disabled {
+  opacity: 0.44;
+  cursor: not-allowed;
+}
+
 .gsv-chat-voice-chip {
   max-width: 138px;
   min-height: 24px;

@@ -193,6 +193,7 @@ export function ChatDock({
   const [contextConfirmOpen, setContextConfirmOpen] = useState(false);
   const [compactKeepLastDraft, setCompactKeepLastDraft] = useState(1);
   const [newTaskFocusKey, setNewTaskFocusKey] = useState(0);
+  const [composerDraft, setComposerDraft] = useState("");
   const [visibleMessageLimit, setVisibleMessageLimit] = useState(TRANSCRIPT_MESSAGE_LIMIT);
   const draftAttachmentsRef = useRef<DraftAttachment[]>([]);
   const activeProcessId = agent?.processId?.trim() ?? "";
@@ -359,23 +360,43 @@ export function ChatDock({
     spawnProcess,
     startRunAs,
   ]);
+  const appendDictationDraft = useCallback((text: string) => {
+    const dictation = text.trim();
+    if (!dictation) {
+      return;
+    }
+    setComposerDraft((current) => current.trim()
+      ? `${current.trimEnd()} ${dictation}`
+      : dictation);
+    setNewTaskFocusKey((key) => key + 1);
+  }, []);
   const ambientTranscription = useChatAmbientTranscription({
     activeRunCount: canAbortRun ? 1 : 0,
     agentName: activeAgent.name,
     disabled: inputDisabled || abortProcess.isPending,
     isSpeechOutputPlaying: replySpeech.isSpeaking,
+    onDictation: appendDictationDraft,
     onCancelSpeechOutput: replySpeech.cancelSpeech,
     onTranscript: async (text) => {
       await sendChatDraft(text);
     },
   });
-  const voiceTitle = ambientTranscription.title;
+  const voiceTitle = ambientTranscription.liveActive
+    ? ambientTranscription.liveTitle
+    : ambientTranscription.dictationTitle;
   const voiceError = ambientTranscription.error;
   const voiceStatusLabel = ambientTranscription.active || ambientTranscription.state === "error"
     ? ambientTranscription.state === "error"
       ? ambientTranscription.error || "VOICE ERROR"
-      : ambientTranscription.note || ambientTranscription.title
+      : `${ambientTranscription.liveActive ? "LIVE" : "DICTATE"} · ${ambientTranscription.note || ambientTranscription.title}`
     : "";
+  const handleVoiceClick = useCallback(() => {
+    if (ambientTranscription.liveActive) {
+      ambientTranscription.toggleLive();
+      return;
+    }
+    ambientTranscription.toggleDictation();
+  }, [ambientTranscription]);
   const controlError = spawnProcess.isError
     ? errorMessage(spawnProcess.error, "Process could not be started.")
     : abortProcess.isError
@@ -802,23 +823,41 @@ export function ChatDock({
         canSend={hasActiveProcess || canStartProcess}
         disabled={inputDisabled}
         focusKey={newTaskFocusKey}
-        actions={voiceStatusLabel ? (
-          <span class="gsv-chat-voice-chip" data-state={ambientTranscription.state}>
-            <StatusDot tone={ambientTranscription.state === "error" ? "error" : "live"} size={7} />
-            <span>{voiceStatusLabel}</span>
-          </span>
-        ) : null}
+        value={composerDraft}
+        actions={(
+          <>
+            <button
+              type="button"
+              class={`gsv-chat-live-toggle${ambientTranscription.liveActive ? " is-active" : ""}`}
+              disabled={ambientTranscription.liveUnavailable}
+              title={ambientTranscription.liveTitle}
+              aria-pressed={ambientTranscription.liveActive ? "true" : "false"}
+              onClick={ambientTranscription.toggleLive}
+            >
+              LIVE
+            </button>
+            {voiceStatusLabel ? (
+              <span class="gsv-chat-voice-chip" data-state={ambientTranscription.state}>
+                <StatusDot tone={ambientTranscription.state === "error" ? "error" : "live"} size={7} />
+                <span>{voiceStatusLabel}</span>
+              </span>
+            ) : null}
+          </>
+        )}
+        onChange={setComposerDraft}
         onFiles={handleFiles}
         onRemoveAttachment={removeAttachment}
         onSend={handleSendMessage}
         onStop={abortActiveRun}
-        onVoiceClick={ambientTranscription.toggle}
+        onVoiceClick={handleVoiceClick}
         placeholder={`Message ${activeAgent.name}...`}
         running={canAbortRun}
         user={userLabel}
-        voiceActive={ambientTranscription.active}
+        voiceActive={ambientTranscription.dictationActive || ambientTranscription.liveActive}
         voiceAvailableWhenBusy={ambientTranscription.active}
-        voiceDisabled={ambientTranscription.unavailable}
+        voiceDisabled={ambientTranscription.liveActive
+          ? false
+          : ambientTranscription.dictationUnavailable}
         voiceTitle={voiceTitle}
       />
     </aside>
