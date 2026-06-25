@@ -327,7 +327,7 @@ describe("handleAccountCreate", () => {
     expect(personalAgents.get(result.account.uid)).toBe(result.personalAgent?.uid);
   });
 
-  it("uses the personal agent username as the display name", async () => {
+  it("uses a humanized personal agent username as the display name", async () => {
     const { ctxFor, passwd } = createCtx();
     const ctx = ctxFor(userIdentity(0, "root", ["*"]));
 
@@ -336,8 +336,9 @@ describe("handleAccountCreate", () => {
       ctx,
     );
 
-    expect(passwd.find((u) => u.uid === result.personalAgent?.uid)?.gecos)
-      .toBe(result.personalAgent?.username);
+    const personalAgent = passwd.find((u) => u.uid === result.personalAgent?.uid);
+    expect(personalAgent?.username).toBe("friday");
+    expect(personalAgent?.gecos).toBe("Friday");
   });
 
   it("reconciles legacy personal agent display names without re-seeding boot context", async () => {
@@ -358,8 +359,8 @@ describe("handleAccountCreate", () => {
     const result = await ensurePersonalAgent(ctx, ctx.identity!.process);
 
     expect(result.created).toBe(false);
-    expect(auth.updateUser).toHaveBeenCalledWith("friday", { gecos: "friday" });
-    expect(passwd.find((u) => u.username === "friday")?.gecos).toBe("friday");
+    expect(auth.updateUser).toHaveBeenCalledWith("friday", { gecos: "Friday" });
+    expect(passwd.find((u) => u.username === "friday")?.gecos).toBe("Friday");
     expect(ripgitApplyBodies.flatMap((body) => body.ops)).not.toContainEqual(
       expect.objectContaining({ type: "put", path: "context.d/00-boot.md" }),
     );

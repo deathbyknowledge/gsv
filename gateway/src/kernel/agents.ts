@@ -99,6 +99,19 @@ function legacyPersonalAgentDisplayName(ownerUsername: string): string {
   return `${ownerUsername}'s agent`;
 }
 
+function personalAgentDisplayName(username: string): string {
+  const words = username
+    .split(/[-_]+/g)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (words.length === 0) {
+    return username;
+  }
+  return words
+    .map((word) => `${word.slice(0, 1).toUpperCase()}${word.slice(1)}`)
+    .join(" ");
+}
+
 function reconcilePersonalAgentDisplayName(
   auth: AuthStore,
   entry: { username: string; uid: number; gecos: string },
@@ -108,7 +121,7 @@ function reconcilePersonalAgentDisplayName(
   if (displayName !== legacyPersonalAgentDisplayName(human.username)) {
     return auth.getPasswdByUid(entry.uid);
   }
-  auth.updateUser(entry.username, { gecos: entry.username });
+  auth.updateUser(entry.username, { gecos: personalAgentDisplayName(entry.username) });
   return auth.getPasswdByUid(entry.uid);
 }
 
@@ -185,7 +198,7 @@ export async function ensurePersonalAgent(
   return createAccount(ctx, {
     kind: "agent",
     username: agentName,
-    gecos: agentName,
+    gecos: personalAgentDisplayName(agentName),
     ownerUid: human.uid,
     shared: true,
     crossMemberOwner: true,
