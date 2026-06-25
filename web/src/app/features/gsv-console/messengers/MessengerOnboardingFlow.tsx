@@ -10,7 +10,7 @@ import { TextInput } from "../../../components/ui/TextInput";
 import { ConsoleDetailHeader } from "../components/ConsoleDetailHeader";
 import type { ConnectConsoleAdapterResult } from "../backend/consoleService";
 import { useConnectConsoleAdapter } from "../hooks/useConsoleData";
-import { BOTFATHER_URL, MESSENGER_CAPABILITIES, adapterDocUrl } from "./messengerDocs";
+import { BOTFATHER_URL, DISCORD_DEVELOPER_URL, MESSENGER_CAPABILITIES, adapterDocUrl } from "./messengerDocs";
 import { adapterDetailId, adapterName, deriveTelegramAccountId, iconForAdapterName } from "./messengerPresentation";
 import "./MessengerOnboardingFlow.css";
 
@@ -116,7 +116,7 @@ export function MessengerOnboardingFlow({
       <div class="gsv-connect-shell">
         <ConsoleDetailHeader
           icon={iconForAdapterName(adapterId)}
-          title="Connect messenger bot"
+          title={`Connect ${name} bot`}
           typeLabel={`${name.toUpperCase()} · NEW MESSENGER`}
           statusLabel={connected ? "CONNECTED" : "NOT CONNECTED"}
           tone={connected ? "online" : "idle"}
@@ -162,7 +162,9 @@ export function MessengerOnboardingFlow({
                     : "Create a new bot application in the Discord developer portal to act as your GSV's messenger."}
                 </p>
                 <div class="gsv-connect-step-links">
-                  {isTelegram ? <Link href={BOTFATHER_URL}>Open BotFather</Link> : null}
+                  <Link href={isTelegram ? BOTFATHER_URL : DISCORD_DEVELOPER_URL}>
+                    {isTelegram ? "Open BotFather" : "Open Discord Developer Portal"}
+                  </Link>
                   <Link href={docUrl} arrow>Need help? Documentation</Link>
                 </div>
               </>

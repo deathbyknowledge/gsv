@@ -13,6 +13,8 @@ export function adapterDocUrl(adapter: string): string {
 
 // Telegram BotFather (where users create a bot + get a token).
 export const BOTFATHER_URL = "https://t.me/botfather";
+// Discord developer portal (where users create a bot application + token).
+export const DISCORD_DEVELOPER_URL = "https://discord.com/developers/applications";
 
 // "Things you can do with your messenger-bot" — shown on the success step.
 export interface MessengerCapability {

@@ -157,6 +157,42 @@
   color: var(--text-dim);
 }
 
+/* "N more messengers" → opens the dedicated per-platform page. */
+.gsv-messenger-card-more {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  margin-top: 4px;
+  padding: 9px 4px 5px;
+  background: transparent;
+  border: none;
+  border-top: 1px solid var(--rule-inner);
+  font-family: var(--gsv-font-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--link);
+  cursor: pointer;
+  transition: color 120ms ease;
+}
+
+.gsv-messenger-card-more:hover,
+.gsv-messenger-card-more:focus-visible {
+  color: var(--link-hover);
+  outline: none;
+}
+
+.gsv-messenger-card-more-chevron {
+  font-size: 15px;
+  line-height: 1;
+}
+
+/* Dedicated per-platform bot list (inside ConsoleDetailPage children slot). */
+.gsv-messenger-platform-rows {
+  border: 1px solid var(--border);
+  border-top: none;
+}
+
 .gsv-messenger-card-foot {
   margin-top: auto;
   padding: 16px 22px 20px;

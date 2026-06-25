@@ -6,6 +6,7 @@ import { SectionHeader } from "../../../components/ui/SectionHeader";
 import { Tag, type TagTone } from "../../../components/ui/Tag";
 import { Tooltip } from "../../../components/ui/Tooltip";
 import { listRowStatusForTone } from "../components/consoleDetailRows";
+import { ConsoleDetailPage } from "../components/ConsoleDetailPage";
 import {
   ConsolePage,
   ConsoleResourceBoundary,
@@ -107,19 +108,25 @@ function PlatformStatusBadge({ adapter }: { adapter: ConsoleAdapter }) {
   ) : badge;
 }
 
+const MAX_CARD_BOTS = 2;
+
 function MessengerCard({
   adapter,
   identityLinks,
   onConnect,
   onOpenDetail,
+  onOpenPlatform,
 }: {
   adapter: ConsoleAdapter;
   identityLinks: readonly ConsoleIdentityLink[];
   onConnect: (adapter: ConsoleAdapter) => void;
   onOpenDetail: (account: ConsoleAdapterAccount) => void;
+  onOpenPlatform: (adapter: ConsoleAdapter) => void;
 }) {
   const platform = adapterName(adapter.adapter).toUpperCase();
   const bots = adapter.accounts;
+  const visible = bots.slice(0, MAX_CARD_BOTS);
+  const extra = bots.length - visible.length;
 
   return (
     <article class="gsv-messenger-card">
@@ -141,7 +148,7 @@ function MessengerCard({
             <div class="gsv-messenger-card-bots-label">
               {bots.length} {bots.length === 1 ? "BOT" : "BOTS"}
             </div>
-            {bots.map((account) => (
+            {visible.map((account) => (
               <ListRow
                 key={adapterDetailId(account)}
                 icon={iconForAdapterName(account.adapter)}
@@ -154,6 +161,12 @@ function MessengerCard({
                 onClick={() => onOpenDetail(account)}
               />
             ))}
+            {extra > 0 ? (
+              <button type="button" class="gsv-messenger-card-more" onClick={() => onOpenPlatform(adapter)}>
+                <span>{extra} more messenger{extra === 1 ? "" : "s"}</span>
+                <span class="gsv-messenger-card-more-chevron" aria-hidden="true">›</span>
+              </button>
+            ) : null}
           </div>
         ) : (
           <div class="gsv-messenger-card-hint">No bot connected yet.</div>
@@ -179,6 +192,7 @@ function MessengersRoster({
   identityLinksRefreshing,
   onConnect,
   onOpenDetail,
+  onOpenPlatform,
   refreshing,
 }: {
   adapters: readonly ConsoleAdapter[];
@@ -187,6 +201,7 @@ function MessengersRoster({
   identityLinksRefreshing: boolean;
   onConnect: (adapter: ConsoleAdapter) => void;
   onOpenDetail: (account: ConsoleAdapterAccount) => void;
+  onOpenPlatform: (adapter: ConsoleAdapter) => void;
   refreshing: boolean;
 }) {
   const platforms = supportedAdapters(adapters);
@@ -214,11 +229,67 @@ function MessengersRoster({
               identityLinks={identityLinks}
               onConnect={onConnect}
               onOpenDetail={onOpenDetail}
+              onOpenPlatform={onOpenPlatform}
             />
           ))}
         </div>
       </div>
     </section>
+  );
+}
+
+/** Dedicated per-platform page listing every bot for one messenger — opened
+ *  from a card's "N more messengers" affordance. Reuses the standard
+ *  ConsoleDetailPage chrome (header + back + primary action). */
+function MessengerPlatformPage({
+  adapter,
+  identityLinks,
+  onBack,
+  onConnect,
+  onOpenDetail,
+}: {
+  adapter: ConsoleAdapter;
+  identityLinks: readonly ConsoleIdentityLink[];
+  onBack: () => void;
+  onConnect: (adapter: ConsoleAdapter) => void;
+  onOpenDetail: (account: ConsoleAdapterAccount) => void;
+}) {
+  const info = familyStatus(adapter);
+  const platform = adapterName(adapter.adapter).toUpperCase();
+  const total = adapter.accounts.length;
+
+  return (
+    <ConsoleDetailPage
+      icon={iconForAdapterName(adapter.adapter)}
+      title={adapterName(adapter.adapter)}
+      typeLabel="GSV · MESSENGER"
+      statusLabel={info.label}
+      tone={info.tone}
+      blurb={`${info.connectedCount} of ${total} ${total === 1 ? "bot" : "bots"} connected.`}
+      parentLabel="MESSENGERS"
+      primaryLabel={`CONNECT ANOTHER ${platform}`}
+      onPrimary={() => onConnect(adapter)}
+      onBack={onBack}
+    >
+      <section class="gsv-messenger-platform">
+        <SectionHeader title="BOTS" meta={String(total)} divider />
+        <div class="gsv-messenger-platform-rows">
+          {adapter.accounts.map((account) => (
+            <ListRow
+              key={adapterDetailId(account)}
+              icon={iconForAdapterName(account.adapter)}
+              label={adapterLabel(account)}
+              sub={accountSub(account, identityLinks)}
+              status={listRowStatusForTone(toneForAdapter(account)) as ListRowStatus}
+              statusDotPlacement="trailing"
+              statusLabel={statusForAdapter(account)}
+              chevron
+              onClick={() => onOpenDetail(account)}
+            />
+          ))}
+        </div>
+      </section>
+    </ConsoleDetailPage>
   );
 }
 
@@ -277,6 +348,9 @@ export function MessengersPage({
   const openDetail = (account: ConsoleAdapterAccount) =>
     selectDetail({ kind: "messengers", id: adapterDetailId(account), label: `${adapterName(account.adapter)} · ${adapterLabel(account)}` });
 
+  const openPlatform = (adapter: ConsoleAdapter) =>
+    selectDetail({ kind: "messengers", id: adapter.adapter, label: `${adapterName(adapter.adapter)} · all bots` });
+
   const reconnect = (account: ConsoleAdapterAccount) => {
     setPreferredAdapter(account.adapter);
     selectDetail({ kind: "messengers", id: NEW_DETAIL_ID, createNew: true, label: `Reconnect ${adapterName(account.adapter)}` });
@@ -306,12 +380,25 @@ export function MessengersPage({
             const platform = SUPPORTED_MESSENGER_ADAPTERS.find((id) => id === selectedDetail.id);
             if (platform) {
               const target = supportedAdapters(data).find((entry) => entry.adapter === platform);
-              if (target && target.accounts.length === 0) {
+              if (target) {
+                // No bots yet → straight to the connect flow; otherwise the
+                // dedicated full-list page for the platform.
+                if (target.accounts.length === 0) {
+                  return (
+                    <MessengerOnboardingFlow
+                      adapterId={platform}
+                      onBack={() => selectDetail(null)}
+                      onConnected={(id) => selectDetail({ kind: "messengers", id })}
+                    />
+                  );
+                }
                 return (
-                  <MessengerOnboardingFlow
-                    adapterId={platform}
+                  <MessengerPlatformPage
+                    adapter={target}
+                    identityLinks={identityLinks.links}
                     onBack={() => selectDetail(null)}
-                    onConnected={(id) => selectDetail({ kind: "messengers", id })}
+                    onConnect={openCreate}
+                    onOpenDetail={openDetail}
                   />
                 );
               }
@@ -340,6 +427,7 @@ export function MessengersPage({
               identityLinksRefreshing={identityLinksRefreshing}
               onConnect={openCreate}
               onOpenDetail={openDetail}
+              onOpenPlatform={openPlatform}
               refreshing={adapters.resource.isRefreshing}
             />
           );
