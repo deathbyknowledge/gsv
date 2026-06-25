@@ -40,7 +40,6 @@ import type { ArgsOf, ResultOf, SyscallName } from "../syscalls";
 export type PackageRuntime = "dynamic-worker" | "node" | "web-ui";
 
 type PackageAssemblerBinding = Fetcher & Pick<PackageAssemblerInterface, "assemblePackage">;
-const BUILTIN_PACKAGE_ASSEMBLY_CONCURRENCY = 2;
 const PACKAGE_PUBLIC_FILE_WRITE_CONCURRENCY = 2;
 
 export type PackageModuleKind =
@@ -227,12 +226,6 @@ export interface PackageManifest {
   capabilities?: PackageCapabilityDeclaration;
 }
 
-type BuiltinRipgitPackageSpec = {
-  source: PackageSource;
-  grants?: PackageGrantSet;
-  enabled: boolean;
-};
-
 /**
  * Concrete binding grant decided by kernel at install or launch time.
  */
@@ -272,80 +265,12 @@ export interface PackageInstallRecordInput extends Omit<InstalledPackageRecord, 
 
 export type PackageSeed = Omit<PackageInstallRecordInput, "installedAt" | "updatedAt">;
 
-
-
-// TODO: remove all this crap with a prper runtime sdk and streamline this
-
-
 export const DEFAULT_PACKAGE_COMPATIBILITY_DATE = "2026-01-28";
-export const BUILTIN_SOURCE_OWNER = "root";
-export const BUILTIN_SOURCE_REPO = "gsv";
-export const BUILTIN_SOURCE_REF = "main";
-
-const BUILTIN_RIPGIT_PACKAGE_SPECS: readonly BuiltinRipgitPackageSpec[] = [
-  createBuiltinRipgitPackageSpec("chat"),
-  createBuiltinRipgitPackageSpec("gsv"),
-  createBuiltinRipgitPackageSpec("shell", {
-    bindings: [
-      {
-        binding: "KERNEL",
-        providerKind: "kernel-entrypoint",
-        providerRef: "kernel://app/request",
-      },
-    ],
-    egress: {
-      mode: "none",
-    },
-  }),
-  createBuiltinRipgitPackageSpec("files", {
-    bindings: [
-      {
-        binding: "KERNEL",
-        providerKind: "kernel-entrypoint",
-        providerRef: "kernel://app/request",
-      },
-    ],
-    egress: {
-      mode: "none",
-    },
-  }),
-  createBuiltinRipgitPackageSpec("wiki", {
-    bindings: [
-      {
-        binding: "KERNEL",
-        providerKind: "kernel-entrypoint",
-        providerRef: "kernel://app/request",
-      },
-    ],
-    egress: {
-      mode: "none",
-    },
-  }),
-] as const;
 
 const TEXT_DECODER = new TextDecoder();
 
 export function packageRouteBase(packageName: string): string {
   return `/apps/${packageName}`;
-}
-
-function createBuiltinRipgitPackageSpec(
-  name: string,
-  grants: PackageGrantSet = {
-    egress: {
-      mode: "none",
-    },
-  },
-): BuiltinRipgitPackageSpec {
-  return {
-    source: {
-      repo: `${BUILTIN_SOURCE_OWNER}/${BUILTIN_SOURCE_REPO}`,
-      ref: BUILTIN_SOURCE_REF,
-      subdir: `builtin-packages/${name}`,
-    },
-    grants,
-    enabled: true,
-  };
 }
 
 type PackageScopeOwner = { uid: number } | null | undefined;
@@ -871,32 +796,6 @@ function parseJson<T>(value: string): T {
   return JSON.parse(value) as T;
 }
 
-export async function buildBuiltinPackageSeeds(
-  env: Env,
-): Promise<PackageSeed[]> {
-  const ripgitBinding = env.RIPGIT;
-  if (!ripgitBinding) {
-    throw new Error("RIPGIT binding is required for builtin package resolution");
-  }
-  if (!env.ASSEMBLER) {
-    throw new Error("ASSEMBLER binding is required for builtin package resolution");
-  }
-
-  const ripgit = new RipgitClient(ripgitBinding);
-  const ripgitSeeds = await mapWithConcurrency(
-    BUILTIN_RIPGIT_PACKAGE_SPECS,
-    BUILTIN_PACKAGE_ASSEMBLY_CONCURRENCY,
-    (spec) => resolveBuiltinRipgitPackage(env, ripgit, spec),
-  ).catch((error) => {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(
-      `Failed to resolve builtin packages from ripgit. Push the gsv monorepo to root/gsv first. ${message}`,
-    );
-  });
-
-  return ripgitSeeds;
-}
-
 export async function resolvePackageFromRipgitSource(
   env: Env,
   source: PackageSource,
@@ -1019,25 +918,6 @@ async function resolvePackageFromRipgitNativeBuild(
       },
     },
     artifact,
-  };
-}
-
-async function resolveBuiltinRipgitPackage(
-  env: Env,
-  client: RipgitClient,
-  spec: BuiltinRipgitPackageSpec,
-): Promise<PackageSeed> {
-  const { manifest, artifact } = await resolvePackageFromRipgitNativeBuild(env, client, spec.source);
-
-  return {
-    packageId: `builtin:${manifest.name}@${manifest.version}`,
-    scope: { kind: "global" },
-    manifest,
-    artifact,
-    grants: spec.grants,
-    enabled: spec.enabled,
-    reviewRequired: false,
-    reviewedAt: Date.now(),
   };
 }
 

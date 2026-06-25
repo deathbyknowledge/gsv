@@ -2,11 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { KernelContext } from "../context";
 import { handleSysBootstrap } from "./bootstrap";
 
-const { importFromUpstreamMock, readPathMock, applyMock, buildBuiltinPackageSeedsMock } = vi.hoisted(() => ({
+const { importFromUpstreamMock, readPathMock, applyMock } = vi.hoisted(() => ({
   importFromUpstreamMock: vi.fn(),
   readPathMock: vi.fn(),
   applyMock: vi.fn(),
-  buildBuiltinPackageSeedsMock: vi.fn(),
 }));
 
 const {
@@ -29,10 +28,6 @@ vi.mock("../../fs/ripgit/client", () => ({
   },
 }));
 
-vi.mock("../packages", () => ({
-  buildBuiltinPackageSeeds: buildBuiltinPackageSeedsMock,
-}));
-
 vi.mock("../../downloads/cli", () => ({
   CLI_BINARY_ASSETS: ["gsv-darwin-arm64", "gsv-linux-x64"],
   CLI_RELEASE_CHANNELS: ["stable", "dev"],
@@ -41,41 +36,6 @@ vi.mock("../../downloads/cli", () => ({
   storeCliInstallScripts: storeCliInstallScriptsMock,
   storeDefaultCliChannel: storeDefaultCliChannelMock,
 }));
-
-function makeInstalledPackage() {
-  return {
-    packageId: "pkg-chat",
-    enabled: true,
-    manifest: {
-      name: "chat",
-      description: "Chat",
-      version: "1.0.0",
-      runtime: "web-ui" as const,
-      source: {
-        repo: "root/gsv",
-        ref: "main",
-        subdir: "builtin-packages/chat",
-        resolvedCommit: "abc123",
-      },
-      entrypoints: [
-        {
-          name: "chat",
-          kind: "ui" as const,
-          description: "Chat app",
-          route: "/apps/chat",
-          icon: { kind: "builtin", id: "chat" },
-          syscalls: ["proc.*"],
-          windowDefaults: {
-            width: 960,
-            height: 720,
-            minWidth: 640,
-            minHeight: 480,
-          },
-        },
-      ],
-    },
-  };
-}
 
 function makeContext(): KernelContext {
   const configValues = new Map<string, string>();
@@ -96,9 +56,6 @@ function makeContext(): KernelContext {
       },
       capabilities: ["*"],
     },
-    packages: {
-      seedBuiltinPackages: vi.fn(() => [makeInstalledPackage()]),
-    } as unknown as KernelContext["packages"],
     config: {
       get: vi.fn((key: string) => configValues.get(key) ?? null),
       set: vi.fn((key: string, value: string) => {
@@ -163,14 +120,13 @@ describe("handleSysBootstrap", () => {
       return { kind: "missing" };
     });
     applyMock.mockResolvedValue({ head: "home123" });
-    buildBuiltinPackageSeedsMock.mockResolvedValue([{ name: "chat-seed" }]);
     inferDefaultCliChannelMock.mockReturnValue("dev");
     mirrorCliChannelMock.mockResolvedValue(undefined);
     storeDefaultCliChannelMock.mockResolvedValue(undefined);
     storeCliInstallScriptsMock.mockResolvedValue(undefined);
   });
 
-  it("bootstraps root/gsv from the default upstream and reseeds builtins", async () => {
+  it("bootstraps root/gsv from the default upstream without seeding builtin packages", async () => {
     const ctx = makeContext();
 
     const result = await handleSysBootstrap(undefined, ctx);
@@ -191,7 +147,6 @@ describe("handleSysBootstrap", () => {
       "https://github.com/deathbyknowledge/gsv-manual",
       "main",
     );
-    expect(buildBuiltinPackageSeedsMock).toHaveBeenCalledWith(ctx.env);
     expect(applyMock).toHaveBeenCalledWith(
       { owner: "root", repo: "home" },
       "root",
@@ -212,7 +167,6 @@ describe("handleSysBootstrap", () => {
     );
     expect(ctx.config.set).toHaveBeenCalledWith("repos/root/gsv-manual/description", "GSV Manual");
     expect(ctx.config.set).toHaveBeenCalledWith("repos/root/gsv-manual/visibility", "public");
-    expect(ctx.packages.seedBuiltinPackages).toHaveBeenCalledWith([{ name: "chat-seed" }]);
     expect(inferDefaultCliChannelMock).toHaveBeenCalledWith("main");
     expect(mirrorCliChannelMock).toHaveBeenCalledTimes(2);
     expect(storeDefaultCliChannelMock).toHaveBeenCalledWith(ctx.env.STORAGE, "dev");
@@ -235,39 +189,7 @@ describe("handleSysBootstrap", () => {
         mirroredChannels: ["stable", "dev"],
         assets: ["gsv-darwin-arm64", "gsv-linux-x64"],
       },
-      packages: [
-        {
-          packageId: "pkg-chat",
-          name: "chat",
-          description: "Chat",
-          version: "1.0.0",
-          runtime: "web-ui",
-          enabled: true,
-          source: {
-            repo: "root/gsv",
-            ref: "main",
-            subdir: "builtin-packages/chat",
-            resolvedCommit: "abc123",
-          },
-          entrypoints: [
-            {
-              name: "chat",
-              kind: "ui",
-              description: "Chat app",
-              route: "/apps/chat",
-              command: undefined,
-              icon: "chat",
-              syscalls: ["proc.*"],
-              windowDefaults: {
-                width: 960,
-                height: 720,
-                minWidth: 640,
-                minHeight: 480,
-              },
-            },
-          ],
-        },
-      ],
+      packages: [],
     });
   });
 

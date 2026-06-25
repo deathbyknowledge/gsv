@@ -374,7 +374,7 @@ describe("repo syscalls", () => {
   it("allows reads from visible package source repos", async () => {
     const fetcher = makeFetcher((url) => {
       expect(url.pathname).toBe("/hyperspace/repos/root/gsv/read");
-      expect(url.searchParams.get("path")).toBe("builtin-packages/wiki/src/package.ts");
+      expect(url.searchParams.get("path")).toBe("packages/wiki/src/package.ts");
       return new Response("export default {}\n", {
         headers: { "Content-Type": "text/plain" },
       });
@@ -391,7 +391,7 @@ describe("repo syscalls", () => {
 
     await expect(handleRepoRead({
       repo: "root/gsv",
-      path: "builtin-packages/wiki/src/package.ts",
+      path: "packages/wiki/src/package.ts",
     }, ctx)).resolves.toMatchObject({
       repo: "root/gsv",
       kind: "file",

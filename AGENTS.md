@@ -27,7 +27,6 @@ gsv/
 │   │   └── protocol/        # WS and RPC frame types
 │   ├── wrangler.jsonc
 │   └── package.json
-├── builtin-packages/        # builtin apps synced from root/gsv
 ├── packages/gsv/            # public GSV SDK, client, host bridge, and protocol types
 ├── web/
 │   ├── src/                # desktop shell, host bridge, setup/login UI
@@ -100,7 +99,7 @@ The web shell is the desktop UI.
 It owns:
 - login and setup flows
 - the desktop frame
-- the iframe host bridge for builtin apps
+- the app frame host bridge for package/app surfaces
 - app/window orchestration
 
 Key files:
@@ -111,20 +110,11 @@ Key files:
 - `web/src/app/services/gateway/GatewayProvider.tsx`
 - `web/src/app/features/desktop/runtime/host/hostBridge.ts`
 
-### Builtin apps
+### Packages
 
-Builtin apps live under `builtin-packages/*`.
+Core GSV UI surfaces now live in the web shell, not in local builtin packages.
 
-Examples:
-- `chat`
-- `gsv`
-- `files`
-- `shell`
-- `wiki`
-
-Runtime operations for processes, devices, message adapters, access, settings, packages, and source repositories belong in the consolidated `gsv` builtin app, not separate standalone builtin apps.
-
-They are synced from `root/gsv` into the running system. A builtin app change is not applied by redeploying the gateway worker alone.
+The package system still exists for installable and user-authored packages. Package source resolution, permissions, app frames, package agents, and package-backed commands are kernel/runtime concerns, but package code is no longer bootstrapped from a local `builtin-packages` workspace.
 
 ### Adapter workers
 
@@ -180,18 +170,6 @@ cd web
 npm run dev
 ```
 
-### `builtin-packages/*`
-
-You changed a builtin app.
-
-Use:
-```bash
-git push <remote> HEAD:main
-cargo run -- -u root packages sync
-```
-
-If the package is a new builtin, the running gateway code must already know about that builtin package.
-
 ### `adapters/*`
 
 You changed an adapter worker.
@@ -212,16 +190,10 @@ npm run deploy
 
 If a change spans multiple layers, update each one explicitly.
 
-Examples:
-- `gateway/src/*` + `builtin-packages/*`
-  - redeploy gateway
-  - sync builtins
+Example:
 - `gateway/src/*` + `web/src/*`
   - redeploy gateway
   - rebuild/redeploy web shell
-- `builtin-packages/*` + `adapters/*`
-  - sync builtins
-  - redeploy that adapter
 
 ## Development commands
 
@@ -294,7 +266,6 @@ cargo fmt
 
 Useful commands:
 ```bash
-cargo run -- -u root packages sync
 cargo run -- node install --id <device-id> --workspace ~/projects
 cargo run -- deploy up --wizard --all
 ```
@@ -308,8 +279,6 @@ Examples:
   - `cd gateway && npx tsc --noEmit && npm run test:run`
 - web shell changes:
   - `cd web && npm run check && npm run build`
-- builtin app changes:
-  - sync the package and exercise it through the desktop shell
 - WhatsApp changes:
   - `cd adapters/whatsapp && npx tsc --noEmit`
 - Discord/Test adapter changes:
@@ -412,10 +381,10 @@ When you change something:
 
 ## App product and UX decision-making
 
-Builtin apps are operational desktop tools, not generic dashboards.
+GSV web shell surfaces are operational desktop tools, not generic dashboards.
 Start from the app's product job and the user decisions it must support.
 
-Before coding a builtin app, be able to answer:
+Before coding an app surface, be able to answer:
 - what job the app owns
 - what state should be visible at a glance
 - what the top actions are
@@ -433,7 +402,7 @@ The consolidated `GSV` system console contract lives in `docs/gsv-system-console
 
 ## Package frontend architecture and refactoring
 
-Builtin packages are examples for future user-authored packages. Keep frontend structure understandable as apps grow.
+User-authored packages should keep frontend structure understandable as apps grow.
 
 Once a package has more than one real surface, prefer feature-oriented structure:
 - `app.tsx` for composition and cross-feature wiring

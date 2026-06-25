@@ -1404,7 +1404,7 @@ describe("createProcessSourceBackend", () => {
       identity: IDENTITY,
       storage: makeBucket(),
       packages: [makePackage({
-        packageId: "import:root/gsv:builtin-packages/wiki",
+        packageId: "import:root/gsv:packages/wiki",
         scope: { kind: "global" },
         manifest: {
           ...makePackage().manifest,
@@ -1412,7 +1412,7 @@ describe("createProcessSourceBackend", () => {
           source: {
             repo: "root/gsv",
             ref: "main",
-            subdir: "builtin-packages/wiki",
+            subdir: "packages/wiki",
             resolvedCommit: "rootbase",
           },
         },

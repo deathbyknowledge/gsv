@@ -1,10 +1,10 @@
-# Builtin App Design
+# GSV App Surface Design
 
-Builtin apps are operational tools inside the GSV desktop environment. They should make important system state and actions obvious, avoid generic dashboard behavior, and avoid raw data dumps unless the app is explicitly an advanced/debug surface.
+GSV app surfaces are operational tools inside the desktop environment. They should make important system state and actions obvious, avoid generic dashboard behavior, and avoid raw data dumps unless the surface is explicitly an advanced/debug surface.
 
 ## Start With The App Job
 
-When designing or rewriting a builtin app, do not start from the current code shape or from whatever UI happens to exist today. Start from the product job of the app.
+When designing or rewriting a GSV app surface, do not start from the current code shape or from whatever UI happens to exist today. Start from the product job of the app.
 
 Write down:
 - what job the app owns
@@ -76,7 +76,7 @@ Examples:
 - `Control` can expose token and access flows, but should not become a device fleet manager
 - `Processes` can open a conversation in `Chat`, but should not become the chat app
 
-A builtin app should have a clear center of gravity.
+A GSV app surface should have a clear center of gravity.
 
 ## Use Desktop Patterns
 
@@ -195,7 +195,7 @@ This does not need to be long, but it should exist before implementation starts.
 
 ## Minimum Checklist
 
-Before coding a builtin app, be able to answer:
+Before coding a GSV app surface, be able to answer:
 - What job does this app own?
 - What should be visible at a glance?
 - What are the top three user actions?

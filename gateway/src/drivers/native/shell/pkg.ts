@@ -100,17 +100,6 @@ export function buildPackageCommands(identity: ProcessIdentity, ctx: KernelConte
   });
 
   for (const record of packageRecords) {
-    if (!isBuiltinWikiPackage(record)) continue;
-    const wikiEntrypoint = record.manifest.entrypoints.find((entrypoint) =>
-      entrypoint.kind === "command" && entrypoint.command?.trim() === "wiki"
-    );
-    if (wikiEntrypoint) {
-      commands.push(buildPackageCommand("wiki", record, wikiEntrypoint, identity, ctx));
-    }
-    break;
-  }
-
-  for (const record of packageRecords) {
     for (const entrypoint of record.manifest.entrypoints) {
       if (entrypoint.kind !== "command") continue;
       const commandName = entrypoint.command?.trim();
@@ -147,10 +136,6 @@ function buildPackageCommand(
       };
     }
   });
-}
-
-function isBuiltinWikiPackage(record: InstalledPackageRecord): boolean {
-  return record.packageId.startsWith("builtin:wiki@") && record.manifest.name === "wiki";
 }
 
 export function buildPkgCommand(ctx: KernelContext) {

@@ -716,8 +716,8 @@ mod tests {
     #[test]
     fn plans_registry_install_for_versioned_workspace_dependency() {
         let root_package = WorkspacePackage {
-            root: "builtin-packages/gsv".to_string(),
-            manifest_path: "builtin-packages/gsv/package.json".to_string(),
+            root: "packages/gsv-console".to_string(),
+            manifest_path: "packages/gsv-console/package.json".to_string(),
             manifest: WorkspacePackageManifest {
                 name: "@gsv/gsv".to_string(),
                 version: Some("0.2.6".to_string()),

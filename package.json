@@ -4,7 +4,6 @@
   "private": true,
   "workspaces": [
     "assembler",
-    "builtin-packages/*",
     "extension",
     "gateway",
     "web",
@@ -14,7 +13,6 @@
     "postinstall": "npm run gsv:build",
     "setup": "bash ./scripts/setup-deps.sh",
     "dev": "bash ./scripts/dev-stack.sh",
-    "builtins:check": "tsc --noEmit -p builtin-packages/tsconfig.check.json",
     "extension:check": "npm run check --workspace extension",
     "extension:build": "npm run build --workspace extension",
     "extension:package": "bash ./scripts/build-extension-package.sh",

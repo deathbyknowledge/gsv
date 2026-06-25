@@ -311,7 +311,7 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
       updatedAt: 2000,
     },
     {
-      packageId: "builtin:chat@1.0.0",
+      packageId: "import:root/gsv:packages/chat",
       scope: { kind: "global" },
       manifest: {
         name: "chat",
@@ -321,7 +321,7 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
         source: {
           repo: "root/gsv",
           ref: "main",
-          subdir: "builtin-packages/chat",
+          subdir: "packages/chat",
           resolvedCommit: "def456",
         },
         entrypoints: [{
@@ -1483,7 +1483,7 @@ describe("GsvFs Linux-like runtime views", () => {
   it("exposes installed package status and metadata under /var/lib/gsv/packages", async () => {
     const fs = makeRuntimeViewFs(SAM);
     const weatherBase = encodeURIComponent("import:sam/tools:packages/weather");
-    const chatBase = encodeURIComponent("builtin:chat@1.0.0");
+    const chatBase = encodeURIComponent("import:root/gsv:packages/chat");
     const hiddenBase = encodeURIComponent("import:alice/private:app");
 
     await expect(fs.readdir("/var/lib")).resolves.toEqual(["gsv"]);
@@ -1502,7 +1502,7 @@ describe("GsvFs Linux-like runtime views", () => {
     expect(status).toContain("Name: weather");
     expect(status).toContain("Enabled: yes");
     expect(status).toContain("Scope: user:1000");
-    expect(status).toContain("Package: builtin:chat@1.0.0");
+    expect(status).toContain("Package: import:root/gsv:packages/chat");
     expect(status).not.toContain("import:alice/private:app");
 
     const manifest = JSON.parse(await fs.readFile(`/var/lib/gsv/packages/info/${weatherBase}.manifest`));
