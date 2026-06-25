@@ -47,6 +47,13 @@ function appRouteFromRuntimeRoute(app: DesktopApp, route: string): ShellAppRoute
   });
 }
 
+function createAppWindowId(): string {
+  const randomId = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  return `native-app-${randomId}`;
+}
+
 function AppFrameEmpty({
   actionLabel,
   message,
@@ -81,7 +88,7 @@ export function AppFramePage({
   const packageApps = usePackageApps({ gatewayClient, enabled: connected });
   const hostRef = useRef<HTMLDivElement>(null);
   const onOpenAppRouteRef = useRef(onOpenAppRoute);
-  const windowIdRef = useRef(`native-app-${crypto.randomUUID()}`);
+  const windowId = useMemo(createAppWindowId, []);
   const [title, setTitle] = useState<string | null>(null);
   const [badge, setBadge] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
@@ -112,7 +119,7 @@ export function AppFramePage({
     void instance.mount(host, {
       app,
       route: runtimeRoute,
-      windowId: windowIdRef.current,
+      windowId,
       requestFocus: () => host.focus(),
       setTitle,
       setBadge,
@@ -127,7 +134,7 @@ export function AppFramePage({
       void instance.terminate?.();
       host.replaceChildren();
     };
-  }, [app, gatewayClient, runtimeRoute]);
+  }, [app, gatewayClient, runtimeRoute, windowId]);
 
   return (
     <section class="gsv-app-frame-page" aria-label={`${displayTitle} app`}>
