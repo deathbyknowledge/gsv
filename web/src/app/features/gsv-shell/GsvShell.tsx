@@ -8,7 +8,6 @@ import { AppFramePage } from "../apps/components/AppFramePage";
 import { ChatDock } from "../chat/components/ChatDock";
 import type { ChatAgentData, ChatAgentSelection } from "../chat/domain";
 import { useChatProcessList } from "../chat/hooks";
-import { defaultModelLabelForConfig } from "../gsv-console/domain/consoleAi";
 import type {
   ConsoleOverviewCounts,
   ConsoleOverviewData,
@@ -73,27 +72,6 @@ function useClock(): string {
   }, []);
 
   return clock;
-}
-
-type GatewayStatusTone = "online" | "loading" | "offline" | "error";
-
-function gatewayStatusForResource(resource: ConsoleResourceState<ConsoleOverviewData>): {
-  label: string;
-  tone: GatewayStatusTone;
-} {
-  if (resource.isError) {
-    return { label: "GSV ERROR", tone: "error" };
-  }
-  if (resource.isUnavailable) {
-    return { label: "GSV OFFLINE", tone: "offline" };
-  }
-  if (resource.isLoading) {
-    return { label: "GSV SYNCING", tone: "loading" };
-  }
-  if (resource.isRefreshing) {
-    return { label: "GSV REFRESHING", tone: "loading" };
-  }
-  return { label: "GSV ONLINE", tone: "online" };
 }
 
 function desktopInventoryState(resource: ConsoleResourceState<ConsoleOverviewData>): DesktopInventoryState {
@@ -229,10 +207,6 @@ export function GsvShell({
   const clock = useClock();
   const consoleOverview = useConsoleOverview({ includeConfig: false });
   const consoleConfig = useConsoleConfig();
-  const statusModelLabel = useMemo(
-    () => defaultModelLabelForConfig(consoleConfig.config),
-    [consoleConfig.config],
-  );
   const statusSystemLabel = useMemo(
     () => systemLoadLabel(consoleOverview.counts, consoleOverview.resource),
     [consoleOverview.counts, consoleOverview.resource],
@@ -241,7 +215,6 @@ export function GsvShell({
     () => buildDesktopObjectsFromConsole(consoleOverview.data),
     [consoleOverview.data],
   );
-  const gatewayStatus = gatewayStatusForResource(consoleOverview.resource);
   const inventoryState = desktopInventoryState(consoleOverview.resource);
   const inventoryMessage = desktopInventoryMessage(consoleOverview.resource, desktopObjects);
   const shell = useGsvShellState({ rootRef, desktopObjects });
@@ -542,17 +515,12 @@ export function GsvShell({
       <ShellStatusBar
         context={shell.statusContext}
         clock={clock}
-        gatewayStatusLabel={gatewayStatus.label}
-        gatewayStatusTone={gatewayStatus.tone}
-        modelLabel={statusModelLabel}
         systemLoadLabel={statusSystemLabel}
         sessionUsername={sessionUsername}
         mobileHomeDate={mobileHomeDate}
         notificationOpenSurface={notificationOpenSurface}
         notificationUnreadCount={notificationUnreadCount}
         onNotificationsToggle={onNotificationsToggle}
-        onToggleChat={() => shell.setChatOpen((value) => !value)}
-        onOpenApps={() => openShellSurface("applications")}
         onLockSession={onLockSession}
       />
     </div>

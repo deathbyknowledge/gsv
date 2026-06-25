@@ -1748,7 +1748,7 @@
 .gsv-shell-statusbar > div:first-child {
   width: 100%;
   border-top: 0 !important;
-  padding-right: max(330px, calc(var(--gsv-chat-width, 0px) + 24px)) !important;
+  padding-right: max(236px, calc(var(--gsv-chat-width, 0px) + 24px)) !important;
 }
 
 .gsv-status-actions {
@@ -1756,7 +1756,7 @@
   top: 3px;
   right: 18px;
   height: 24px;
-  max-width: min(372px, calc(100% - 420px));
+  max-width: min(256px, calc(100% - 220px));
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -1769,6 +1769,8 @@
 }
 
 .gsv-status-actions > span {
+  flex: none;
+  max-width: 168px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1781,6 +1783,7 @@
 .gsv-status-actions button,
 .gsv-status-actions .presence-toggle {
   position: relative;
+  flex: none;
   min-width: 28px;
   height: 24px;
   border: 1px solid var(--border);
@@ -1883,11 +1886,11 @@
 
   .gsv-status-actions {
     right: 12px;
-    max-width: min(312px, calc(100% - 320px));
+    max-width: min(236px, calc(100% - 180px));
   }
 
   .gsv-shell-statusbar > div:first-child {
-    padding-right: max(286px, calc(var(--gsv-chat-width, 0px) + 20px)) !important;
+    padding-right: max(216px, calc(var(--gsv-chat-width, 0px) + 20px)) !important;
   }
 
   .gsv-status-actions > span:first-child {

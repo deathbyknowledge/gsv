@@ -1,13 +1,21 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
 import type { JSX } from "preact";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import type { NotificationRecord } from "@humansandmachines/gsv/protocol";
+import type { NotificationLevel, NotificationRecord } from "@humansandmachines/gsv/protocol";
 import {
   canUseServiceWorker as canUseServiceWorkerNotifications,
   registerGsvServiceWorker,
 } from "../../../service-worker";
+import { Button } from "../../components/ui/Button";
+import { IconButton } from "../../components/ui/IconButton";
+import { ListRow } from "../../components/ui/ListRow";
+import { SectionHeader } from "../../components/ui/SectionHeader";
+import { StatusDot, type StatusTone } from "../../components/ui/StatusDot";
+import { Surface } from "../../components/ui/Surface";
+import { Tag, type TagTone } from "../../components/ui/Tag";
 import { useGateway } from "../../services/gateway/GatewayProvider";
 import type { NotificationAnchor } from "./types";
+import "./NotificationsPanel.css";
 
 type NotificationsPanelProps = {
   anchor: NotificationAnchor | null;
@@ -54,12 +62,50 @@ function systemPermission(): NotificationPermission | "unsupported" {
 
 function deliveryStateLabel(permission: NotificationPermission | "unsupported"): string {
   if (permission === "granted") {
-    return "System alerts enabled";
+    return "SYSTEM ALERTS ENABLED";
   }
   if (permission === "denied") {
-    return "System alerts blocked";
+    return "SYSTEM ALERTS BLOCKED";
   }
-  return "In-shell alerts";
+  return "IN-SHELL ALERTS";
+}
+
+function deliveryTone(permission: NotificationPermission | "unsupported"): StatusTone {
+  if (permission === "granted") {
+    return "online";
+  }
+  if (permission === "denied") {
+    return "warn";
+  }
+  return "idle";
+}
+
+function levelTone(level: NotificationLevel): StatusTone {
+  if (level === "success") return "online";
+  if (level === "warning") return "warn";
+  if (level === "error") return "error";
+  return "update";
+}
+
+function levelTagTone(level: NotificationLevel): TagTone {
+  if (level === "success") return "online";
+  if (level === "warning") return "warn";
+  if (level === "error") return "error";
+  return "info";
+}
+
+function sourceLabel(notification: NotificationRecord): string {
+  if (notification.source.kind === "app") {
+    return notification.source.packageName || notification.source.entrypointName || "APP";
+  }
+  if (notification.source.kind === "process") {
+    return notification.source.processId.slice(0, 8) || "PROCESS";
+  }
+  return "USER";
+}
+
+function notificationMeta(notification: NotificationRecord): string {
+  return notification.body?.trim() || "No additional detail";
 }
 
 function upsertNotification(
@@ -398,71 +444,86 @@ export function NotificationsPanel({
           aria-label="Notifications"
           style={panelStyle}
         >
-          <header class="notifications-panel-head">
-            <div>
-              <strong>Notifications</strong>
-              <span>{deliveryStateLabel(permission)}</span>
+          <Surface class="notifications-surface" level={2}>
+            <div class="notifications-panel-bar">
+              <SectionHeader
+                title="NOTIFICATIONS"
+                meta={unreadCount > 0 ? `${unreadCount} UNREAD` : `${notifications.length} TOTAL`}
+                divider
+              />
+              <div class="notifications-panel-actions">
+                <IconButton glyph="close" size="small" title="Close notifications" onClick={onClose} />
+              </div>
             </div>
-            {showEnableSystem ? (
-              <button
-                type="button"
-                class="notifications-system-enable"
-                onClick={() => void requestSystemPermission()}
-              >
-                Enable system
-              </button>
-            ) : null}
-          </header>
 
-          {notifications.length === 0 ? (
-            <p class="windows-empty muted">No notifications</p>
-          ) : (
-            <ul class="notifications-list">
-              {notifications.map((notification) => {
-                const unreadClass = notification.readAt ? "" : " is-unread";
-                return (
-                  <li
-                    key={notification.notificationId}
-                    class={`notification-item${unreadClass}`}
-                    data-notification-id={notification.notificationId}
-                  >
-                    <button
-                      type="button"
-                      class="notification-main"
-                      onClick={() => markReadMutation.mutate(notification.notificationId)}
+            <div class="notifications-delivery-row">
+              <StatusDot tone={deliveryTone(permission)} size={7} />
+              <span>{deliveryStateLabel(permission)}</span>
+              {showEnableSystem ? (
+                <Button
+                  variant="secondary"
+                  label="ENABLE SYSTEM"
+                  onClick={() => void requestSystemPermission()}
+                />
+              ) : null}
+            </div>
+
+            {notifications.length === 0 ? (
+              <div class="notifications-empty">
+                <StatusDot tone="idle" size={7} />
+                <span>NO NOTIFICATIONS</span>
+              </div>
+            ) : (
+              <ul class="notifications-list">
+                {notifications.map((notification) => {
+                  const unread = !notification.readAt;
+                  return (
+                    <li
+                      key={notification.notificationId}
+                      class={`notification-item${unread ? " is-unread" : ""}`}
+                      data-notification-id={notification.notificationId}
                     >
-                      <div class="notification-item-head">
-                        <strong>{notification.title}</strong>
-                        <span>{formatTime(notification.createdAt)}</span>
-                      </div>
-                      {notification.body ? <p>{notification.body}</p> : null}
-                    </button>
-                    <button
-                      type="button"
-                      class="notification-dismiss"
-                      aria-label="Dismiss notification"
-                      onClick={() => dismissMutation.mutate(notification.notificationId)}
-                    >
-                      x
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
+                      <ListRow
+                        className="notification-main"
+                        label={notification.title}
+                        sub={notificationMeta(notification)}
+                        status={levelTone(notification.level)}
+                        statusDotPlacement="leading"
+                        statusLabel={formatTime(notification.createdAt)}
+                        tag={sourceLabel(notification).toUpperCase()}
+                        tagTone={unread ? "accent" : "info"}
+                        onClick={() => markReadMutation.mutate(notification.notificationId)}
+                      />
+                      <IconButton
+                        glyph="close"
+                        size="small"
+                        title="Dismiss notification"
+                        onClick={() => dismissMutation.mutate(notification.notificationId)}
+                      />
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </Surface>
         </section>
       ) : null}
 
       <div class="notification-toasts" aria-live="polite" aria-atomic="false">
         {toasts.map(({ notification }) => (
-          <div
+          <Surface
             key={notification.notificationId}
             class={`notification-toast is-${notification.level}`}
-            data-toast-id={notification.notificationId}
+            level={2}
+            dataAttrs={{ "data-toast-id": notification.notificationId }}
           >
+            <div class="notification-toast-head">
+              <StatusDot tone={levelTone(notification.level)} size={7} />
+              <Tag label={notification.level.toUpperCase()} tone={levelTagTone(notification.level)} boxed />
+            </div>
             <div class="notification-toast-title">{notification.title}</div>
             {notification.body ? <div class="notification-toast-body">{notification.body}</div> : null}
-          </div>
+          </Surface>
         ))}
       </div>
     </>

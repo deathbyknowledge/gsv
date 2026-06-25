@@ -1,21 +1,15 @@
-import { Icon } from "../../../components/ui/Icon";
 import { StatusBar } from "../../../components/ui/StatusBar";
 import type { NotificationSurface } from "../../notifications/types";
 
 type ShellStatusBarProps = {
   context: string;
   clock: string;
-  gatewayStatusLabel: string;
-  gatewayStatusTone: "online" | "loading" | "offline" | "error";
-  modelLabel: string;
   systemLoadLabel: string;
   sessionUsername: string;
   mobileHomeDate: string;
   notificationOpenSurface: NotificationSurface | null;
   notificationUnreadCount: number;
   onNotificationsToggle: (surface: NotificationSurface, node: HTMLButtonElement) => void;
-  onToggleChat: () => void;
-  onOpenApps: () => void;
   onLockSession: () => void;
 };
 
@@ -40,17 +34,12 @@ function PowerIcon() {
 export function ShellStatusBar({
   context,
   clock,
-  gatewayStatusLabel,
-  gatewayStatusTone,
-  modelLabel,
   systemLoadLabel,
   sessionUsername,
   mobileHomeDate,
   notificationOpenSurface,
   notificationUnreadCount,
   onNotificationsToggle,
-  onToggleChat,
-  onOpenApps,
   onLockSession,
 }: ShellStatusBarProps) {
   return (
@@ -58,21 +47,12 @@ export function ShellStatusBar({
       <StatusBar
         clock={clock}
         context={context}
-        model={modelLabel}
         power={systemLoadLabel}
-        statusLabel={gatewayStatusLabel}
-        statusTone={gatewayStatusTone}
+        showModel={false}
+        showStatus={false}
       />
       <div class="gsv-status-actions">
         <span>{mobileHomeDate}</span>
-        <button type="button" title="Open apps" onClick={onOpenApps}>
-          <Icon name="bookmark" size={14} />
-          <span>APPS</span>
-        </button>
-        <button type="button" title="Toggle chat" onClick={onToggleChat}>
-          <Icon name="chat" family="doticons" size={14} />
-          <span>CHAT</span>
-        </button>
         <button
           type="button"
           aria-label="Notifications"

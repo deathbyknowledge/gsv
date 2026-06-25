@@ -11,6 +11,8 @@ export interface StatusBarProps {
   /** Horizontal alignment of the bar content. Defaults to "between" for the
    *  system readout and "center" when a `label` is provided. */
   align?: "between" | "center";
+  showModel?: boolean;
+  showStatus?: boolean;
 }
 
 function statusColor(tone: NonNullable<StatusBarProps["statusTone"]>): string {
@@ -38,6 +40,8 @@ export function StatusBar({
   statusTone = "online",
   label,
   align,
+  showModel = true,
+  showStatus = true,
 }: StatusBarProps) {
   const justify =
     (align ?? (label != null ? "center" : "between")) === "center"
@@ -65,8 +69,8 @@ export function StatusBar({
       ) : (
         <>
           <div style={{ display: "flex", gap: "22px", alignItems: "center" }}>
-            <span style={{ color: statusColor(statusTone) }}>● {statusLabel}</span>
-            <span>{model}</span>
+            {showStatus ? <span style={{ color: statusColor(statusTone) }}>● {statusLabel}</span> : null}
+            {showModel ? <span>{model}</span> : null}
             <span style={{ color: "#9a94ff" }}>{context}</span>
           </div>
           <div style={{ display: "flex", gap: "22px", alignItems: "center" }}>
