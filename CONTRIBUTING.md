@@ -2,7 +2,7 @@
 
 ## Setup
 
-**Prerequisites:** [Rust](https://rustup.rs) · [Node.js](https://nodejs.org) v18+ · Cloudflare account (Workers Paid)
+**Prerequisites:** [Rust](https://rustup.rs) · [Node.js](https://nodejs.org) v20+ · Cloudflare account (Workers Paid)
 
 ```bash
 git clone https://github.com/deathbyknowledge/gsv.git
