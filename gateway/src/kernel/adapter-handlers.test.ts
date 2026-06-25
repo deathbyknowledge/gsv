@@ -5,6 +5,7 @@ import {
   handleAdapterDisconnect,
   handleAdapterInbound,
   handleAdapterList,
+  handleAdapterStatus,
 } from "./adapter-handlers";
 import { sendFrameToProcess } from "../shared/utils";
 
@@ -14,9 +15,12 @@ vi.mock("../shared/utils", () => ({
 
 type FakeAdapterStatusStore = {
   upsert: ReturnType<typeof vi.fn>;
+  list?: ReturnType<typeof vi.fn>;
   listAll?: ReturnType<typeof vi.fn>;
 };
 type MakeContextOptions = {
+  identity?: KernelContext["identity"];
+  identityLinks?: Record<string, unknown>;
   routePid?: string | null;
 };
 
@@ -152,6 +156,8 @@ function makeContext(
       status,
       identityLinks: {
         resolveUid: vi.fn(() => 1000),
+        list: vi.fn(() => []),
+        ...options.identityLinks,
       },
       linkChallenges: {
         issue: vi.fn(() => ({
@@ -168,7 +174,7 @@ function makeContext(
     runRoutes: {
       setAdapterRoute: vi.fn(),
     },
-    identity: {
+    identity: options.identity ?? {
       role: "service",
       service: "test",
       capabilities: [],
@@ -273,6 +279,195 @@ describe("adapter lifecycle handlers", () => {
             extra: null,
           },
         ],
+      }),
+    ]);
+  });
+
+  it("adapter.list filters cached accounts to non-root identity links", () => {
+    const rows = [
+      {
+        adapter: "whatsapp",
+        accountId: "primary",
+        connected: true,
+        authenticated: true,
+        mode: "websocket",
+        lastActivity: 123,
+        error: null,
+        extra: null,
+        updatedAt: 456,
+      },
+      {
+        adapter: "telegram",
+        accountId: "alerts",
+        connected: false,
+        authenticated: false,
+        mode: null,
+        lastActivity: null,
+        error: "binding removed",
+        extra: { reason: "missing-worker" },
+        updatedAt: 789,
+      },
+    ];
+    const status = {
+      upsert: vi.fn(),
+      list: vi.fn((adapter: string, accountId?: string) =>
+        rows.filter((row) => row.adapter === adapter && (!accountId || row.accountId === accountId))
+      ),
+      listAll: vi.fn(() => rows),
+    };
+    const ctx = makeContext(
+      {
+        CHANNEL_WHATSAPP: { adapterStatus: vi.fn() },
+        CHANNEL_DISCORD: { adapterStatus: vi.fn() },
+      },
+      status,
+      {
+        identity: {
+          role: "user",
+          process: {
+            uid: 1000,
+            gid: 1000,
+            gids: [100],
+            username: "sam",
+            home: "/home/sam",
+            cwd: "/home/sam",
+          },
+          capabilities: ["adapter.list"],
+        },
+        identityLinks: {
+          list: vi.fn(() => [
+            {
+              adapter: "whatsapp",
+              accountId: "primary",
+              actorId: "sam-phone",
+              uid: 1000,
+              createdAt: 1,
+              linkedByUid: 1000,
+              metadata: null,
+            },
+          ]),
+        },
+      },
+    );
+
+    const result = handleAdapterList({}, ctx);
+
+    expect(status.listAll).not.toHaveBeenCalled();
+    expect(result.adapters).toEqual([
+      expect.objectContaining({
+        adapter: "discord",
+        accounts: [],
+      }),
+      expect.objectContaining({
+        adapter: "whatsapp",
+        accounts: [
+          expect.objectContaining({
+            accountId: "primary",
+            connected: true,
+            authenticated: true,
+          }),
+        ],
+      }),
+    ]);
+  });
+
+  it("adapter.status filters non-root status refreshes to visible accounts", async () => {
+    const rows = [
+      {
+        adapter: "whatsapp",
+        accountId: "primary",
+        connected: true,
+        authenticated: true,
+        mode: "websocket",
+        lastActivity: 123,
+        error: null,
+        extra: null,
+        updatedAt: 456,
+      },
+      {
+        adapter: "whatsapp",
+        accountId: "hidden",
+        connected: true,
+        authenticated: true,
+        mode: "websocket",
+        lastActivity: 789,
+        error: "hidden error",
+        extra: { secret: true },
+        updatedAt: 790,
+      },
+    ];
+    const adapterStatus = vi.fn(async () => [
+      {
+        accountId: "primary",
+        connected: true,
+        authenticated: true,
+        mode: "websocket",
+      },
+      {
+        accountId: "hidden",
+        connected: true,
+        authenticated: true,
+        mode: "websocket",
+        error: "hidden error",
+        extra: { secret: true },
+      },
+    ]);
+    const status = {
+      upsert: vi.fn(),
+      list: vi.fn((adapter: string, accountId?: string) =>
+        rows.filter((row) => row.adapter === adapter && (!accountId || row.accountId === accountId))
+      ),
+      listAll: vi.fn(() => rows),
+    };
+    const ctx = makeContext(
+      {
+        CHANNEL_WHATSAPP: { adapterStatus },
+      },
+      status,
+      {
+        identity: {
+          role: "user",
+          process: {
+            uid: 1000,
+            gid: 1000,
+            gids: [100],
+            username: "sam",
+            home: "/home/sam",
+            cwd: "/home/sam",
+          },
+          capabilities: ["adapter.status"],
+        },
+        identityLinks: {
+          list: vi.fn(() => [
+            {
+              adapter: "whatsapp",
+              accountId: "primary",
+              actorId: "sam-phone",
+              uid: 1000,
+              createdAt: 1,
+              linkedByUid: 1000,
+              metadata: null,
+            },
+          ]),
+        },
+      },
+    );
+
+    const result = await handleAdapterStatus({ adapter: "whatsapp" }, ctx);
+
+    expect(adapterStatus).toHaveBeenCalledWith("primary");
+    expect(adapterStatus).not.toHaveBeenCalledWith(undefined);
+    expect(status.upsert).toHaveBeenCalledTimes(1);
+    expect(status.upsert).toHaveBeenCalledWith(
+      "whatsapp",
+      "primary",
+      expect.objectContaining({ accountId: "primary" }),
+    );
+    expect(result.accounts).toEqual([
+      expect.objectContaining({
+        accountId: "primary",
+        connected: true,
+        authenticated: true,
       }),
     ]);
   });

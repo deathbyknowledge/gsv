@@ -54,6 +54,9 @@ type HilDecision = {
   decision: "approve" | "deny";
   remember: boolean;
 };
+type AdapterStatusReader = KernelContext["adapters"]["status"] & {
+  listAll?: () => AdapterStatusRecord[];
+};
 
 function traceIdFromConfig(config: Record<string, unknown> | undefined): string {
   const value = config?.__traceId;
@@ -242,23 +245,30 @@ export async function handleAdapterStatus(
   args: AdapterStatusArgs,
   ctx: KernelContext,
 ): Promise<AdapterStatusResult> {
-  const adapter = args.adapter.trim();
+  const adapter = normalizeAdapterName(args.adapter);
   if (!adapter) throw new Error("adapter is required");
+  const accountId = args.accountId?.trim() || undefined;
 
   const service = resolveAdapterService(ctx.env, adapter);
   if (service && typeof service.adapterStatus === "function") {
-    try {
-      const statuses = await service.adapterStatus(args.accountId);
-      for (const status of statuses) {
-        ctx.adapters.status.upsert(adapter, status.accountId, status);
+    const refreshAccountIds = adapterStatusRefreshAccountIds(ctx, adapter, accountId);
+    for (const refreshAccountId of refreshAccountIds) {
+      try {
+        const statuses = await service.adapterStatus(refreshAccountId);
+        const allowedAccountIds = refreshAccountId ? new Set([refreshAccountId]) : null;
+        for (const status of statuses) {
+          if (allowedAccountIds && !allowedAccountIds.has(status.accountId.trim())) {
+            continue;
+          }
+          ctx.adapters.status.upsert(adapter, status.accountId, status);
+        }
+      } catch {
+        // status syscall should still return last known state when live check fails
       }
-    } catch {
-      // status syscall should still return last known state when live check fails
     }
   }
 
-  const accounts = ctx.adapters.status
-    .list(adapter, args.accountId)
+  const accounts = visibleAdapterStatusRecords(ctx, adapter, accountId)
     .map((row): AdapterAccountStatus => ({
       accountId: row.accountId,
       connected: row.connected,
@@ -289,10 +299,8 @@ export function handleAdapterList(
     entries.set(adapter, adapterListEntry(adapter, service));
   }
 
-  const statusStore = ctx.adapters.status as typeof ctx.adapters.status & {
-    listAll?: () => AdapterStatusRecord[];
-  };
-  const statuses = typeof statusStore.listAll === "function" ? statusStore.listAll() : [];
+  const statusStore = ctx.adapters.status as AdapterStatusReader;
+  const statuses = visibleAdapterStatusRecords(ctx, undefined, undefined, statusStore);
 
   for (const status of statuses) {
     const adapter = normalizeAdapterName(status.adapter);
@@ -311,6 +319,95 @@ export function handleAdapterList(
       }))
       .sort((left, right) => left.adapter.localeCompare(right.adapter)),
   };
+}
+
+function adapterStatusRefreshAccountIds(
+  ctx: KernelContext,
+  adapter: string,
+  accountId: string | undefined,
+): Array<string | undefined> {
+  if (canSeeAllAdapterStatuses(ctx)) {
+    return [accountId];
+  }
+
+  const linkedAccounts = visibleAdapterAccounts(ctx, adapter, accountId);
+  return linkedAccounts.map((account) => account.accountId);
+}
+
+function visibleAdapterStatusRecords(
+  ctx: KernelContext,
+  adapterFilter?: string,
+  accountIdFilter?: string,
+  statusStore: AdapterStatusReader = ctx.adapters.status,
+): AdapterStatusRecord[] {
+  const adapter = adapterFilter ? normalizeAdapterName(adapterFilter) : undefined;
+  const accountId = accountIdFilter?.trim();
+
+  if (canSeeAllAdapterStatuses(ctx)) {
+    if (adapter) {
+      return statusStore.list(adapter, accountId);
+    }
+    return typeof statusStore.listAll === "function" ? statusStore.listAll() : [];
+  }
+
+  const accounts = visibleAdapterAccounts(ctx, adapter, accountId);
+  const records: AdapterStatusRecord[] = [];
+  for (const account of accounts) {
+    records.push(
+      ...statusStore
+        .list(account.adapter, account.accountId)
+        .map((status) => ({ ...status, adapter: account.adapter })),
+    );
+  }
+  return records;
+}
+
+function visibleAdapterAccounts(
+  ctx: KernelContext,
+  adapter: string | undefined,
+  accountId: string | undefined,
+): Array<{ adapter: string; accountId: string }> {
+  const identity = ctx.identity;
+  if (!identity || identity.role !== "user") {
+    return [];
+  }
+
+  const links = ctx.adapters.identityLinks.list(identity.process.uid);
+  const seen = new Set<string>();
+  const accounts: Array<{ adapter: string; accountId: string }> = [];
+  for (const link of links) {
+    const linkAdapter = normalizeAdapterName(link.adapter);
+    const linkAccountId = link.accountId.trim();
+    if (!linkAdapter || !linkAccountId) {
+      continue;
+    }
+    if (adapter && linkAdapter !== adapter) {
+      continue;
+    }
+    if (accountId && linkAccountId !== accountId) {
+      continue;
+    }
+    const key = `${linkAdapter}\0${linkAccountId}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    accounts.push({ adapter: linkAdapter, accountId: linkAccountId });
+  }
+  return accounts.sort((left, right) =>
+    left.adapter.localeCompare(right.adapter) || left.accountId.localeCompare(right.accountId)
+  );
+}
+
+function canSeeAllAdapterStatuses(ctx: KernelContext): boolean {
+  const identity = ctx.identity;
+  if (!identity) {
+    return false;
+  }
+  if (identity.role === "service") {
+    return true;
+  }
+  return identity.role === "user" && identity.process.uid === 0;
 }
 
 export async function handleAdapterInbound(

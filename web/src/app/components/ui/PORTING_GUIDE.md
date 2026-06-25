@@ -33,8 +33,8 @@ into this web client. Follow this exactly so every ported atom is consistent.
 4. **Font:** wherever the source sets `font-family:'Departure Mono','JetBrains Mono',monospace`,
    use `var(--gsv-font-mono)` instead (defined in `gsv-fonts.css` — same stack).
 5. **State:** the `.dc.html` uses `class Component extends DCLogic { state=…; renderVals() }`.
-   Port `this.state`/`setState` to `useState`. Mirror the "internal state overrides prop
-   until the user interacts" pattern from `TextInput.tsx`.
+   Port `this.state`/`setState` to `useState`. When a component accepts `value`,
+   treat it as controlled whenever it is provided, as in `TextInput.tsx`.
 6. **Pseudo-states** (`:hover`/`:active`/`:focus-within`) go in real CSS in the `.css`
    file (the source keeps them in its `<helmet><style>`). Don't use inline hover.
 7. **Booleans:** props are real booleans here (the catalog passes real booleans), so you

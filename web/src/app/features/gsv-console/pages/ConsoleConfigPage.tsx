@@ -138,8 +138,14 @@ function ModelSettingsPage({
 }) {
   const saveConfig = useSaveConsoleConfigEntries();
   const [selection, setSelection] = useState<ModelSelection | null>(null);
-  const effectiveValues = effectiveAiValuesForViewer(config, viewer.uid);
-  const profiles = modelProfilesForConfig(config, viewer.uid);
+  const effectiveValues = useMemo(
+    () => effectiveAiValuesForViewer(config, viewer.uid),
+    [config, viewer.uid],
+  );
+  const profiles = useMemo(
+    () => modelProfilesForConfig(config, viewer.uid),
+    [config, viewer.uid],
+  );
   const canEditAi = viewer.uid !== null;
   const scopeLabel = viewer.isRoot ? "GLOBAL" : viewer.account ? "PERSONAL" : "READ ONLY";
 
@@ -627,22 +633,22 @@ function SettingsFieldGroup({
   title,
   writeKeyForField,
 }: SettingsFieldGroupProps) {
-  const initialDrafts = useMemo(
-    () => Object.fromEntries(fields.map((field) => [
-      field.key,
-      initialValues?.[field.key] ?? configValueForKey(config, field.key),
-    ])),
-    [config, fields, initialValues],
+  const initialDraftEntries = fields.map((field): [string, string] => [
+    field.key,
+    initialValues?.[field.key] ?? configValueForKey(config, field.key),
+  ]);
+  const initialDraftsSignature = JSON.stringify(initialDraftEntries);
+  const initialDrafts = useMemo<Record<string, string>>(
+    () => Object.fromEntries(initialDraftEntries),
+    [initialDraftsSignature],
   );
   const [drafts, setDrafts] = useState<Record<string, string>>(initialDrafts);
-  const [version, setVersion] = useState(0);
   const [pending, setPending] = useState(false);
   const [statusText, setStatusText] = useState("");
 
   useEffect(() => {
     setDrafts(initialDrafts);
     setStatusText("");
-    setVersion((current) => current + 1);
   }, [initialDrafts]);
 
   const changedEntries = fields.flatMap((field) => {
@@ -694,7 +700,7 @@ function SettingsFieldGroup({
           <SettingFieldInput
             disabled={!editable || pending || field.kind === "readonly"}
             field={field}
-            key={`${field.key}:${version}`}
+            key={field.key}
             redacted={isFieldRedacted(config, field, writeKeyForField(field))}
             value={drafts[field.key] ?? ""}
             onChange={(value) => {
@@ -714,7 +720,6 @@ function SettingsFieldGroup({
           onClick={() => {
             setDrafts(initialDrafts);
             setStatusText("");
-            setVersion((current) => current + 1);
           }}
         />
       </div>

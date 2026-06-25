@@ -60,10 +60,11 @@ export function TextInput(props: TextInputProps) {
   } = props;
 
   const fieldId = useId();
-  const [val, setVal] = useState<string | undefined>(undefined);
+  const [internalValue, setInternalValue] = useState(props.value ?? "");
   const [revealed, setRevealed] = useState(false);
 
-  const value = val !== undefined ? val : props.value ?? "";
+  const controlled = props.value !== undefined;
+  const value = controlled ? props.value ?? "" : internalValue;
   const hasValue = String(value).length > 0;
 
   const rawStatus = status && status !== "none" ? status : "";
@@ -88,7 +89,9 @@ export function TextInput(props: TextInputProps) {
   const wrapClass = `gsv-ti-wrap ${disabled ? "is-disabled" : readonly ? "is-readonly" : ""}`.trim();
 
   const emit = (next: string) => {
-    setVal(next);
+    if (!controlled) {
+      setInternalValue(next);
+    }
     onChange?.(next);
   };
 
