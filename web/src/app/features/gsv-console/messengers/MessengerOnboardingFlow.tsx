@@ -1,16 +1,17 @@
 import type { JSX } from "preact";
 import { useState } from "preact/hooks";
+import { Alert } from "../../../components/ui/Alert";
 import { Button } from "../../../components/ui/Button";
-import { IconButton } from "../../../components/ui/IconButton";
+import { Link } from "../../../components/ui/Link";
+import { ListRow } from "../../../components/ui/ListRow";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
 import { Stepper } from "../../../components/ui/Stepper";
-import { Surface } from "../../../components/ui/Surface";
-import { Tag } from "../../../components/ui/Tag";
 import { TextInput } from "../../../components/ui/TextInput";
+import { ConsoleDetailHeader } from "../components/ConsoleDetailHeader";
 import type { ConnectConsoleAdapterResult } from "../backend/consoleService";
 import { useConnectConsoleAdapter } from "../hooks/useConsoleData";
 import { BOTFATHER_URL, MESSENGER_CAPABILITIES, adapterDocUrl } from "./messengerDocs";
-import { adapterDetailId, adapterName, deriveTelegramAccountId } from "./messengerPresentation";
+import { adapterDetailId, adapterName, deriveTelegramAccountId, iconForAdapterName } from "./messengerPresentation";
 import "./MessengerOnboardingFlow.css";
 
 type MessengerOnboardingFlowProps = {
@@ -19,16 +20,14 @@ type MessengerOnboardingFlowProps = {
   onConnected: (detailId: string) => void;
 };
 
+/** Step indices for the progressive-disclosure wizard. */
+const STEP_CREATE = 0;
+const STEP_TOKEN = 1;
+const STEP_CONNECT = 2;
+const STEP_ONLINE = 3;
+
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : error ? String(error) : "";
-}
-
-function HelpLink({ href, label }: { href: string; label: string }): JSX.Element {
-  return (
-    <a class="gsv-messenger-help-link" href={href} target="_blank" rel="noreferrer">
-      {label}
-    </a>
-  );
 }
 
 export function MessengerOnboardingFlow({
@@ -37,6 +36,7 @@ export function MessengerOnboardingFlow({
   onConnected,
 }: MessengerOnboardingFlowProps): JSX.Element {
   const connect = useConnectConsoleAdapter();
+  const [step, setStep] = useState(STEP_CREATE);
   const [token, setToken] = useState("");
   const [result, setResult] = useState<ConnectConsoleAdapterResult | null>(null);
   const [formError, setFormError] = useState("");
@@ -44,15 +44,29 @@ export function MessengerOnboardingFlow({
   const isTelegram = adapterId === "telegram";
   const name = adapterName(adapterId);
   const docUrl = adapterDocUrl(adapterId);
-  const connected = Boolean(result?.ok);
+  const connected = step === STEP_ONLINE;
   const canSubmit = token.trim().length > 0 && !connect.isPending;
+  // Steps 1-2 are performed on the messaging platform; 3-4 happen inside GSV.
+  const onPlatform = step <= STEP_TOKEN;
+
+  const goNext = () => setStep((current) => Math.min(current + 1, STEP_CONNECT));
+  const goBack = () => {
+    if (step === STEP_CREATE) {
+      onBack();
+      return;
+    }
+    setStep((current) => current - 1);
+  };
+  const goToStep = (target: number) => {
+    if (connected || target >= step) return;
+    setStep(target);
+  };
 
   const submit = async () => {
     if (!canSubmit) {
       return;
     }
     setFormError("");
-    setResult(null);
     try {
       const accountId = isTelegram ? deriveTelegramAccountId(token) : "main";
       const next = await connect.mutateAsync({
@@ -62,6 +76,7 @@ export function MessengerOnboardingFlow({
       });
       if (next.ok) {
         setResult(next);
+        setStep(STEP_ONLINE);
         return;
       }
       setFormError(next.error || next.message);
@@ -87,138 +102,156 @@ export function MessengerOnboardingFlow({
     }));
   };
 
-  return (
-    <section class="gsv-messenger-onboarding">
-      <div class="gsv-messenger-onboarding-shell">
-        <header class="gsv-messenger-onboarding-head">
-          <IconButton glyph="arrowBack" size="medium" title="Back to messengers" onClick={onBack} />
-          <div>
-            <span class="gsv-messenger-onboarding-kicker">FLEET / NEW MESSENGER</span>
-            <h2>Connect {name}</h2>
-            <p>Link a {name} bot to your GSV so you can message it from anywhere.</p>
-          </div>
-          <Tag tone={connected ? "online" : "idle"} label={connected ? "CONNECTED" : "NOT CONNECTED"} boxed dot />
-        </header>
+  const stepTitle =
+    step === STEP_CREATE
+      ? "Create your GSV messenger bot"
+      : step === STEP_TOKEN
+        ? "Generate an access token"
+        : step === STEP_CONNECT
+          ? "Insert your access token"
+          : "Messenger-bot online!";
 
-        <div class="gsv-messenger-onboarding-stepper" aria-label="Messenger connection progress">
+  return (
+    <section class="gsv-connect">
+      <div class="gsv-connect-shell">
+        <ConsoleDetailHeader
+          icon={iconForAdapterName(adapterId)}
+          title="Connect messenger bot"
+          typeLabel={`${name.toUpperCase()} · NEW MESSENGER`}
+          statusLabel={connected ? "CONNECTED" : "NOT CONNECTED"}
+          tone={connected ? "online" : "idle"}
+        />
+
+        <p class="gsv-console-detail-blurb">
+          Link a {name} bot to your GSV so you can check files, approve tasks, and stay in control from anywhere.
+        </p>
+
+        <div class="gsv-connect-stepper" aria-label="Connection progress">
           <Stepper
             count={4}
-            current={connected ? 3 : 2}
+            current={step}
             l0="CREATE BOT"
             l1="GET TOKEN"
             l2="CONNECT"
             l3="ONLINE"
-            width={440}
-            size="small"
+            size="medium"
+            width={520}
+            onChange={goToStep}
           />
         </div>
 
-        {connected ? (
-          <Surface class="gsv-messenger-flow-panel" level={2}>
-            <SectionHeader title="MESSENGER-BOT ONLINE" meta={name.toUpperCase()} divider />
-            <p class="gsv-messenger-success-lede">
-              Your {name} messenger-bot is connected. Start messaging your GSV.
-            </p>
-            <div class="gsv-messenger-caps">
-              <span class="gsv-messenger-caps-title">Things you can do with your messenger-bot</span>
-              <ul class="gsv-messenger-caps-list">
-                {MESSENGER_CAPABILITIES.map((cap) => (
-                  <li key={cap.title}>
-                    <span class="gsv-messenger-cap-title">{cap.title}</span>
-                    <span class="gsv-messenger-cap-detail">{cap.detail}</span>
-                  </li>
-                ))}
-              </ul>
-              <HelpLink href={docUrl} label="Read the docs" />
-            </div>
-            {result?.message ? <p class="gsv-messenger-form-note">{result.message}</p> : null}
-            {result?.challenge ? (
-              <p class="gsv-messenger-form-note">
-                This adapter returned an extra authentication step — open the bot detail to finish it.
-              </p>
-            ) : null}
-            <div class="gsv-messenger-flow-actions">
-              <Button variant="secondary" label="VIEW BOT" onClick={goToDetail} />
-              <Button variant="primary" label="DONE" onClick={onBack} />
-            </div>
-          </Surface>
-        ) : (
-          <Surface class="gsv-messenger-flow-panel" level={2}>
-            <SectionHeader title="CONNECT BOT" meta={name.toUpperCase()} divider />
-
-            <ol class="gsv-messenger-steps">
-              <li class="gsv-messenger-step">
-                <span class="gsv-messenger-step-num">1</span>
-                <div class="gsv-messenger-step-body">
-                  <span class="gsv-messenger-step-title">Create your GSV messenger-bot</span>
-                  <p class="gsv-messenger-step-text">
-                    {isTelegram
-                      ? "Open BotFather and create a new bot for your GSV."
-                      : "Create a new bot application in the Discord developer portal."}
-                  </p>
-                  <div class="gsv-messenger-step-links">
-                    {isTelegram ? <HelpLink href={BOTFATHER_URL} label="Open BotFather" /> : null}
-                    <HelpLink href={docUrl} label="Don't know how? Find help here" />
-                  </div>
-                </div>
-              </li>
-
-              <li class="gsv-messenger-step">
-                <span class="gsv-messenger-step-num">2</span>
-                <div class="gsv-messenger-step-body">
-                  <span class="gsv-messenger-step-title">Generate an access token to connect your bot to GSV</span>
-                  <p class="gsv-messenger-step-text">
-                    {isTelegram
-                      ? "BotFather hands you an access token once the bot is created. Copy it."
-                      : "In the bot settings, create a token and copy it."}
-                  </p>
-                  <div class="gsv-messenger-step-links">
-                    <HelpLink href={docUrl} label="Don't know how? Find help here" />
-                  </div>
-                </div>
-              </li>
-
-              <li class="gsv-messenger-step">
-                <span class="gsv-messenger-step-num">3</span>
-                <div class="gsv-messenger-step-body">
-                  <span class="gsv-messenger-step-title">Insert your access token</span>
-                  <p class="gsv-messenger-step-text">Paste the token below and connect.</p>
-                  <div class="gsv-messenger-token-field">
-                    <TextInput
-                      label="ACCESS TOKEN"
-                      requirement="required"
-                      value={token}
-                      placeholder="123456789:AA…"
-                      type="password"
-                      clearable
-                      status={formError ? "error" : "none"}
-                      message={formError}
-                      onChange={(value) => {
-                        if (formError) setFormError("");
-                        setToken(value);
-                      }}
-                      inputProps={{ name: "botToken", autoComplete: "off" }}
-                    />
-                  </div>
-                </div>
-              </li>
-            </ol>
-
-            {connect.error && !formError ? (
-              <p class="gsv-messenger-form-error">{errorText(connect.error)}</p>
-            ) : null}
-
-            <div class="gsv-messenger-flow-actions">
-              <Button variant="secondary" label="BACK" disabled={connect.isPending} onClick={onBack} />
-              <Button
-                variant="primary"
-                label={connect.isPending ? "CONNECTING" : "CONNECT"}
-                disabled={!canSubmit}
-                onClick={submit}
+        <div class="gsv-connect-step">
+          <SectionHeader
+            title={stepTitle}
+            meta={onPlatform ? `IN ${name.toUpperCase()}` : "IN GSV"}
+            divider
+          />
+          <div class="gsv-connect-step-body">
+            {onPlatform ? (
+              <Alert
+                variant="attention"
+                text={`Do this step in ${name} — finish it there, then come back to GSV to continue.`}
               />
-            </div>
-          </Surface>
-        )}
+            ) : null}
+
+            {step === STEP_CREATE ? (
+              <>
+                <p class="gsv-connect-step-desc">
+                  {isTelegram
+                    ? "Open BotFather in Telegram and create a new bot to act as your GSV's messenger."
+                    : "Create a new bot application in the Discord developer portal to act as your GSV's messenger."}
+                </p>
+                <div class="gsv-connect-step-links">
+                  {isTelegram ? <Link href={BOTFATHER_URL}>Open BotFather</Link> : null}
+                  <Link href={docUrl} arrow>Need help? Documentation</Link>
+                </div>
+              </>
+            ) : step === STEP_TOKEN ? (
+              <>
+                <p class="gsv-connect-step-desc">
+                  {isTelegram
+                    ? "BotFather hands you an access token once the bot is created. Copy it — you'll paste it in the next step."
+                    : "In your bot's settings, create a bot token and copy it — you'll paste it in the next step."}
+                </p>
+                <div class="gsv-connect-step-links">
+                  <Link href={docUrl} arrow>Need help? Documentation</Link>
+                </div>
+              </>
+            ) : step === STEP_CONNECT ? (
+              <>
+                <p class="gsv-connect-step-desc">
+                  Paste the token below to connect your {name} bot to GSV.
+                </p>
+                <div class="gsv-connect-token-field">
+                  <TextInput
+                    label="ACCESS TOKEN"
+                    size="large"
+                    requirement="required"
+                    value={token}
+                    placeholder="123456789:AA…"
+                    type="password"
+                    clearable
+                    status={formError ? "error" : "none"}
+                    message={formError}
+                    onChange={(value) => {
+                      if (formError) setFormError("");
+                      setToken(value);
+                    }}
+                    inputProps={{ name: "botToken", autoComplete: "off" }}
+                  />
+                </div>
+              </>
+            ) : (
+              <>
+                <p class="gsv-connect-step-desc">
+                  Your {name} bot is connected. Start messaging your GSV — open a chat and ask it to message your bot,
+                  or message the bot directly.
+                </p>
+                <div class="gsv-connect-caps">
+                  <SectionHeader title="THINGS YOU CAN DO" titleSize="section" divider />
+                  <div class="gsv-connect-caps-rows">
+                    {MESSENGER_CAPABILITIES.map((cap) => (
+                      <ListRow key={cap.title} label={cap.title} sub={cap.detail} status="none" />
+                    ))}
+                  </div>
+                </div>
+                <div class="gsv-connect-step-links">
+                  <Link href={docUrl} arrow>Read the docs</Link>
+                </div>
+                {result?.challenge ? (
+                  <Alert
+                    variant="warning"
+                    text="This adapter returned an extra authentication step — open the bot detail to finish it."
+                  />
+                ) : null}
+              </>
+            )}
+          </div>
+
+          <div class="gsv-connect-actions">
+            {step === STEP_ONLINE ? (
+              <>
+                <Button variant="secondary" label="VIEW BOT" onClick={goToDetail} />
+                <Button variant="primary" label="DONE" onClick={onBack} />
+              </>
+            ) : step === STEP_CONNECT ? (
+              <>
+                <Button variant="secondary" label="BACK" disabled={connect.isPending} onClick={goBack} />
+                <Button
+                  variant="primary"
+                  label={connect.isPending ? "CONNECTING" : "CONNECT"}
+                  disabled={!canSubmit}
+                  onClick={submit}
+                />
+              </>
+            ) : (
+              <>
+                <Button variant="secondary" label={step === STEP_CREATE ? "CANCEL" : "BACK"} onClick={goBack} />
+                <Button variant="primary" label="NEXT" onClick={goNext} />
+              </>
+            )}
+          </div>
+        </div>
       </div>
     </section>
   );

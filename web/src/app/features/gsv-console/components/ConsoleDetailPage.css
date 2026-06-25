@@ -54,8 +54,10 @@
 .gsv-console-detail-title div {
   min-width: 0;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
+  row-gap: 6px;
   color: #a8a2dc;
   font-size: 10px;
   letter-spacing: 0.16em;
@@ -70,7 +72,7 @@
 .gsv-console-detail-blurb {
   max-width: 640px;
   margin: 0;
-  color: #9089d4;
+  color: var(--prose-dim);
   font-family: var(--gsv-font-prose);
   font-size: 14px;
   line-height: 1.65;

@@ -16,6 +16,7 @@
   --frame-hi:      #161240;  /* render-bay glow               */
   --field-deep:    #070612;  /* deep input / code / image bay */
   --shadow-deep:   #060414;  /* inset shadow + panel-mix tint */
+  --frame-inset:   #060414;  /* panel inset-frame shadow ring */
 
   /* — borders & rules — */
   --border:        #322e74;  /* primary hairline              */
@@ -37,9 +38,13 @@
   --text-title:    #e2dfff;  /* section title                 */
   --accent:        #b3aeff;  /* chevron / accent dot          */
   --accent-bright: #cbc7ff;  /* icons / selected accent       */
+  --link:          #8fb6ff;  /* hyperlink (bluer, stands out) */
+  --link-hover:    #b8d2ff;  /* hyperlink hover               */
   --label:         #b3aee2;  /* sub-label                     */
   --node-label:    #c4bfee;  /* node text                     */
   --text-muted:    #8c86c8;  /* muted body / secondary copy   */
+  --prose-dim:     #9089d4;  /* dim prose / blurb body        */
+  --meta:          #7d78b8;  /* eyebrow / meta / counts       */
   --text-dim:      #565199;  /* meta / dimmest                */
 
   /* — status — */

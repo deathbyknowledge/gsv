@@ -3,6 +3,7 @@
 .gsv-messengers {
   position: relative;
   flex: 1;
+  min-width: 0;
   min-height: 100%;
   overflow: hidden;
   background: var(--void);
@@ -40,13 +41,18 @@
   min-height: 100%;
   border: 1px solid var(--border-raised);
   background: rgba(9, 7, 26, 0.72);
-  box-shadow: inset 0 0 0 1px #060414, 0 0 30px rgba(80, 70, 180, 0.1);
+  box-shadow: inset 0 0 0 1px var(--frame-inset), 0 0 30px rgba(80, 70, 180, 0.1);
+  /* respond to the panel's own width (console column), not the viewport */
+  container-type: inline-size;
+  container-name: messengers;
 }
 
 .gsv-messengers-grid {
   min-width: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(312px, 1fr));
+  /* min(312px,100%) lets the track shrink below 312 in a narrow console
+     column (e.g. ChatDock open) instead of forcing horizontal scroll. */
+  grid-template-columns: repeat(auto-fill, minmax(min(312px, 100%), 1fr));
   align-items: stretch;
   gap: 22px;
   padding: 26px;
@@ -100,6 +106,8 @@
 }
 
 .gsv-messenger-card-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-family: var(--gsv-font-mono);
   font-size: 15px;
   font-weight: 700;
@@ -118,10 +126,11 @@
 
 .gsv-messenger-card-blurb {
   margin: 0;
+  font-family: var(--gsv-font-prose);
   font-size: 11px;
   line-height: 1.65;
   letter-spacing: 0.03em;
-  color: #9a95d8;
+  color: var(--prose-dim);
 }
 
 .gsv-messenger-card-bots {
@@ -134,7 +143,7 @@
   font-family: var(--gsv-font-mono);
   font-size: 9.5px;
   letter-spacing: 0.22em;
-  color: #7d78b8;
+  color: var(--meta);
   padding-bottom: 2px;
 }
 
@@ -154,10 +163,15 @@
   border-top: 1px solid var(--border);
 }
 
-@media (max-width: 680px) {
+@container messengers (max-width: 680px) {
   .gsv-messengers-grid {
     grid-template-columns: minmax(0, 1fr);
     gap: 16px;
     padding: 16px;
+  }
+
+  /* single-column cards size to content instead of a tall fixed floor */
+  .gsv-messenger-card {
+    min-height: auto;
   }
 }

@@ -69,7 +69,7 @@ export function SectionHeader({
         {title}
       </span>
       {hasMeta ? (
-        <span class="gsv-section-header-meta" style={{ marginLeft: "auto", fontSize: "10px", letterSpacing: ".16em", color: "#7d78b8" }}>{meta}</span>
+        <span class="gsv-section-header-meta" style={{ marginLeft: "auto", fontSize: "10px", letterSpacing: ".16em", color: "var(--meta)" }}>{meta}</span>
       ) : null}
       {chevron ? <span class="gsv-section-header-chevron" aria-hidden="true" /> : null}
     </>

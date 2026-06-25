@@ -1,9 +1,9 @@
 import type { ComponentChildren } from "preact";
 import { Button } from "../../../components/ui/Button";
-import { Icon } from "../../../components/ui/Icon";
 import { ListRow, type ListRowStatus } from "../../../components/ui/ListRow";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
-import { StatusDot, type StatusTone } from "../../../components/ui/StatusDot";
+import type { StatusTone } from "../../../components/ui/StatusDot";
+import { ConsoleDetailHeader } from "./ConsoleDetailHeader";
 import "./ConsoleDetailPage.css";
 
 export type ConsoleDetailRow = {
@@ -59,19 +59,13 @@ export function ConsoleDetailPage({
   return (
     <section class="gsv-console-detail-page">
       <div class="gsv-console-detail-shell">
-        <header class="gsv-console-detail-head">
-          <span class="gsv-console-detail-icon">
-            <Icon name={icon} size={30} />
-          </span>
-          <div class="gsv-console-detail-title">
-            <h2>{title}</h2>
-            <div>
-              <span>{typeLabel}</span>
-              <StatusDot tone={tone} size={7} />
-              <span>{statusLabel}</span>
-            </div>
-          </div>
-        </header>
+        <ConsoleDetailHeader
+          icon={icon}
+          title={title}
+          typeLabel={typeLabel}
+          statusLabel={statusLabel}
+          tone={tone}
+        />
 
         <p class="gsv-console-detail-blurb">{blurb}</p>
 
