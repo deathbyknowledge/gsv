@@ -5,7 +5,7 @@ type PendingHil = NonNullable<ChatHistory["pendingHil"]>;
 
 type ChatApprovalBannerProps = {
   busy: boolean;
-  onDecision: (decision: ChatHilDecision) => void;
+  onDecision: (decision: ChatHilDecision, remember?: boolean) => void;
   pendingHil: PendingHil;
 };
 
@@ -87,6 +87,14 @@ export function ChatApprovalBanner({ busy, onDecision, pendingHil }: ChatApprova
           onClick={() => onDecision("approve")}
         >
           {busy ? "Applying" : "Approve"}
+        </button>
+        <button
+          type="button"
+          class="gsv-chat-hil-approve"
+          disabled={busy}
+          onClick={() => onDecision("approve", true)}
+        >
+          Always allow
         </button>
       </div>
     </section>

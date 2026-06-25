@@ -1,5 +1,4 @@
-import type { ProcHistoryMessage } from "@humansandmachines/gsv/protocol";
-import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { Icon } from "../../components/ui/Icon";
 import { IconMenu } from "../../components/ui/IconMenu";
 import { ObjectCard } from "../../components/ui/ObjectCard";
@@ -7,9 +6,8 @@ import { StatusDot } from "../../components/ui/StatusDot";
 import type { StatusTone } from "../../components/ui/StatusDot";
 import { AppFramePage } from "../apps/components/AppFramePage";
 import { ChatDock } from "../chat/components/ChatDock";
-import type { ChatDockMessage } from "../chat/components/ChatDock";
-import type { ChatAgentData } from "../chat/domain";
-import { useChatProcessHistory, useChatProcessList, useSendChatMessage } from "../chat/hooks";
+import type { ChatAgentData, ChatAgentSelection } from "../chat/domain";
+import { useChatProcessList } from "../chat/hooks";
 import { defaultModelLabelForConfig } from "../gsv-console/domain/consoleAi";
 import type {
   ConsoleOverviewCounts,
@@ -33,6 +31,7 @@ import { ShellRail } from "./navigation/ShellRail";
 import { ShellStatusBar } from "./navigation/ShellStatusBar";
 import {
   shellSurfaceLabel,
+  type ShellLibraryRoute,
   type ShellSettingsRoute,
   type ShellSurfaceId,
 } from "./domain/shellModel";
@@ -52,6 +51,13 @@ type GsvShellProps = {
   onLockSession: () => void;
 };
 
+const TARGET_CHAT_PROCESS_EVENT = "gsv:target-chat-process";
+
+type TargetChatProcess = {
+  conversationId: string | null;
+  pid: string;
+};
+
 function statusForRunState(runState?: string): StatusTone {
   if (runState === "running") {
     return "live";
@@ -60,20 +66,6 @@ function statusForRunState(runState?: string): StatusTone {
     return "update";
   }
   return "idle";
-}
-
-function formatChatMessageTime(timestamp: number | null): string {
-  if (timestamp === null) {
-    return "";
-  }
-  return new Intl.DateTimeFormat(undefined, {
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(timestamp));
-}
-
-function chatDockRoleForHistoryRole(role: ProcHistoryMessage["role"]): ChatDockMessage["role"] {
-  return role === "toolResult" ? "toolResult" : role;
 }
 
 function useClock(): string {
@@ -204,6 +196,32 @@ function shellSettingsRouteForTarget(target: SettingsRouteTarget): ShellSettings
   return { view: "config", kind: target };
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function asTrimmedString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeTargetChatProcess(value: unknown): TargetChatProcess | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+  const pid = asTrimmedString(record.pid) || asTrimmedString(record.processId);
+  if (!pid) {
+    return null;
+  }
+  const conversationId = asTrimmedString(record.conversationId);
+  return {
+    pid,
+    conversationId: conversationId || null,
+  };
+}
+
 export function GsvShell({
   presenceController,
   notificationOpenSurface,
@@ -236,47 +254,59 @@ export function GsvShell({
   const shell = useGsvShellState({ rootRef, desktopObjects });
 
   const [selectedChatPid, setSelectedChatPid] = useState<string | null>(null);
+  const [selectedChatAgentId, setSelectedChatAgentId] = useState<string | null>(null);
+  const [selectedChatConversationId, setSelectedChatConversationId] = useState<string | null>(null);
   const chatProcesses = useChatProcessList();
   const chatProcessList = chatProcesses.data ?? [];
-  const activeChatProcess = chatProcessList.find((process) => process.pid === selectedChatPid)
-    ?? chatProcessList[0]
-    ?? null;
+  const activeChatProcess = selectedChatAgentId
+    ? null
+    : chatProcessList.find((process) => process.pid === selectedChatPid)
+      ?? chatProcessList[0]
+      ?? null;
 
   useEffect(() => {
-    if (selectedChatPid && !chatProcessList.some((process) => process.pid === selectedChatPid)) {
+    if (selectedChatPid && !chatProcesses.isLoading && !chatProcessList.some((process) => process.pid === selectedChatPid)) {
       setSelectedChatPid(null);
+      setSelectedChatConversationId(null);
     }
-  }, [chatProcessList, selectedChatPid]);
+  }, [chatProcessList, chatProcesses.isLoading, selectedChatPid]);
 
-  const chatHistory = useChatProcessHistory({
-    enabled: activeChatProcess !== null,
-    args: activeChatProcess ? { pid: activeChatProcess.pid } : {},
-  });
-  const sendChatMessage = useSendChatMessage();
-  const handleSendChatMessage = useCallback((message: string) => {
-    sendChatMessage.mutate({
-      message,
-      ...(activeChatProcess ? { pid: activeChatProcess.pid } : {}),
-      ...(chatHistory.data?.conversationId ? { conversationId: chatHistory.data.conversationId } : {}),
-    });
-  }, [activeChatProcess, chatHistory.data?.conversationId, sendChatMessage]);
-  const chatMessages = (chatHistory.data?.messages ?? [])
-    .filter((message) => message.text.trim().length > 0)
-    .slice(-24)
-    .map((message) => ({
-      id: message.clientId,
-      text: message.text,
-      time: formatChatMessageTime(message.timestamp),
-      role: chatDockRoleForHistoryRole(message.role),
-    }));
+  useEffect(() => {
+    if (!selectedChatAgentId || !consoleOverview.data) {
+      return;
+    }
+    const hasSelectedAgent = consoleOverview.data.accounts.some((account) => `account:${account.uid}` === selectedChatAgentId);
+    if (!hasSelectedAgent) {
+      setSelectedChatAgentId(null);
+    }
+  }, [consoleOverview.data, selectedChatAgentId]);
+
+  useEffect(() => {
+    const handleTargetEvent = (event: Event) => {
+      const target = normalizeTargetChatProcess((event as CustomEvent).detail);
+      if (!target) {
+        return;
+      }
+      setSelectedChatPid(target.pid);
+      setSelectedChatAgentId(null);
+      setSelectedChatConversationId(target.conversationId);
+      shell.setChatOpen(true);
+    };
+
+    window.addEventListener(TARGET_CHAT_PROCESS_EVENT, handleTargetEvent);
+    return () => {
+      window.removeEventListener(TARGET_CHAT_PROCESS_EVENT, handleTargetEvent);
+    };
+  }, [shell]);
+
   const chatStatus = statusForRunState(activeChatProcess?.runState);
   const chatStatusLabel = activeChatProcess?.runState.replaceAll("_", " ") ?? (
     chatProcesses.isLoading ? "loading" : "no process"
   );
-  const chatContextLabel = chatHistory.data
-    ? `${chatHistory.data.messageCount} messages`
-    : chatHistory.isLoading
-      ? "loading history"
+  const chatContextLabel = activeChatProcess?.activeConversationId
+    ? `conversation ${activeChatProcess.activeConversationId.slice(0, 8)}`
+    : activeChatProcess
+      ? "default conversation"
       : "no history";
   const chatAgent = useMemo<ChatAgentData | null>(() => {
     return buildShellChatAgent({
@@ -285,9 +315,29 @@ export function GsvShell({
       chatProcesses: chatProcessList,
       config: consoleConfig.config,
       consoleProcesses: consoleOverview.data?.processes ?? [],
+      selectedAgentId: selectedChatAgentId,
+      sessionUsername,
       statusLabel: chatStatusLabel,
     });
-  }, [activeChatProcess, chatProcessList, chatStatusLabel, consoleConfig.config, consoleOverview.data]);
+  }, [activeChatProcess, chatProcessList, chatStatusLabel, consoleConfig.config, consoleOverview.data, selectedChatAgentId, sessionUsername]);
+  const selectChatAgent = (selection: ChatAgentSelection): void => {
+    if (selection.processId) {
+      setSelectedChatPid(selection.processId);
+      setSelectedChatAgentId(null);
+      setSelectedChatConversationId(null);
+      return;
+    }
+    if (selection.agentId) {
+      setSelectedChatPid(null);
+      setSelectedChatAgentId(selection.agentId);
+      setSelectedChatConversationId(null);
+    }
+  };
+  const selectStartedChatProcess = (pid: string): void => {
+    setSelectedChatPid(pid);
+    setSelectedChatAgentId(null);
+    setSelectedChatConversationId(null);
+  };
   const openShellSurface = (surface: ShellSurfaceId): void => {
     shell.openSurface(surface);
   };
@@ -305,6 +355,9 @@ export function GsvShell({
   const activeSettingsRoute: ShellSettingsRoute = shell.activeSurface === "settings"
     ? shell.activePageTab?.settingsRoute ?? { view: "overview" }
     : { view: "overview" };
+  const activeLibraryRoute: ShellLibraryRoute = shell.activeSurface === "library"
+    ? shell.activePageTab?.libraryRoute ?? { view: "index" }
+    : { view: "index" };
 
   return (
     <div
@@ -366,7 +419,9 @@ export function GsvShell({
                         onBackToDesktop={shell.backToDesktop}
                         onOpenApp={openAppById}
                         onOpenSurface={openShellSurface}
+                        onLibraryRouteChange={shell.syncActiveLibraryRoute}
                         onSettingsRouteChange={shell.syncActiveSettingsRoute}
+                        libraryRoute={activeLibraryRoute}
                         settingsRoute={activeSettingsRoute}
                       />
                     ) : null}
@@ -470,6 +525,7 @@ export function GsvShell({
         <ChatDock
           open={shell.chatOpen}
           width={shell.resolvedChatWidth}
+          activeConversationId={selectedChatConversationId ?? activeChatProcess?.activeConversationId ?? null}
           dragging={shell.chatDragging}
           atMax={shell.resolvedChatWidth >= shell.maxChatWidth - 1}
           onResizeStart={shell.startChatDrag}
@@ -478,16 +534,15 @@ export function GsvShell({
           onOpenCrew={() => openSettingsRoute("crew")}
           onOpenModels={() => openSettingsRoute("models")}
           onOpenTasks={() => openSettingsRoute("tasks")}
+          onProcessStarted={selectStartedChatProcess}
+          onSelectConversation={setSelectedChatConversationId}
           title={activeChatProcess?.title ?? "Chat"}
           status={chatStatus}
           statusLabel={chatStatusLabel}
           contextLabel={chatContextLabel}
           agent={chatAgent}
           userLabel={sessionUsername}
-          sending={sendChatMessage.isPending}
-          onSendMessage={handleSendChatMessage}
-          onSelectAgent={setSelectedChatPid}
-          messages={chatMessages}
+          onSelectAgent={selectChatAgent}
         />
       </div>
 

@@ -14,6 +14,7 @@ import type {
 import {
   defaultModelLabelForConfig,
   modelLabelsForConfig,
+  modelProfilesForConfig,
 } from "../../gsv-console/domain/consoleAi";
 import {
   behaviorForAccount,
@@ -31,6 +32,8 @@ type BuildShellChatAgentArgs = {
   chatProcesses: readonly ChatProcessSummary[];
   config: readonly ConsoleConfigEntry[];
   consoleProcesses: readonly ConsoleProcess[];
+  selectedAgentId?: string | null;
+  sessionUsername?: string;
   statusLabel: string;
 };
 
@@ -146,6 +149,14 @@ function tasksForActiveAgent(
   return tasks.length > 0 ? tasks : [chatProcessTask(activeProcess)];
 }
 
+function accountAgentId(account: ConsoleAccount): string {
+  return `account:${account.uid}`;
+}
+
+function accountRunAs(account: ConsoleAccount): string | undefined {
+  return account.relation === "personal-agent" ? undefined : account.username;
+}
+
 function processCrewMember(
   process: ChatProcessSummary,
   index: number,
@@ -168,9 +179,11 @@ function accountCrewMembers(input: {
   activeProcess: ChatProcessSummary | null;
   chatProcesses: readonly ChatProcessSummary[];
   consoleProcesses: readonly ConsoleProcess[];
+  selectedAgentId?: string | null;
 }): ChatAgentCrewData[] {
   const accounts = sortedConsoleAccounts(input.accounts);
   const members = accounts.map((account, index) => {
+    const id = accountAgentId(account);
     const ownedChatProcesses = input.chatProcesses.filter((process) => ownsChatProcess(account, process));
     const ownedConsoleProcesses = input.consoleProcesses.filter((process) => ownsConsoleProcess(account, process));
     const representative = representativeProcess(ownedChatProcesses, input.activeProcess);
@@ -181,14 +194,18 @@ function accountCrewMembers(input: {
     });
 
     return {
-      id: `account:${account.uid}`,
+      id,
       processId: representative?.pid,
+      runAs: accountRunAs(account),
       name: account.displayName,
       role: labelForConsoleAccountRelation(account.relation),
       imageSrc: agentImageSrcForIndex(index),
       status: status.status,
       statusLabel: status.statusLabel,
-      active: input.activeProcess ? ownsChatProcess(account, input.activeProcess) : false,
+      startable: account.runnable,
+      active: input.activeProcess
+        ? ownsChatProcess(account, input.activeProcess)
+        : input.selectedAgentId === id,
     };
   });
 
@@ -248,15 +265,34 @@ function defaultBehaviorView(config: readonly ConsoleConfigEntry[], modelLabels:
   };
 }
 
+function viewerAccount(
+  accounts: readonly ConsoleAccount[],
+  sessionUsername?: string,
+): ConsoleAccount | null {
+  return accounts.find((account) => account.relation === "self")
+    ?? accounts.find((account) => sessionUsername && account.username === sessionUsername)
+    ?? accounts.find((account) => account.relation === "human")
+    ?? accounts[0]
+    ?? null;
+}
+
 function accountBackedAgent(input: {
   accounts: readonly ConsoleAccount[];
   chatProcesses: readonly ChatProcessSummary[];
   config: readonly ConsoleConfigEntry[];
   consoleProcesses: readonly ConsoleProcess[];
   modelLabels: readonly string[];
+  modelProfiles: ReturnType<typeof modelProfilesForConfig>;
+  selectedAgentId?: string | null;
 }): ChatAgentData | null {
   const accountList = sortedConsoleAccounts(input.accounts);
-  const primaryAccount = accountList.find((account) => account.runnable) ?? accountList[0] ?? null;
+  const selectedAccount = input.selectedAgentId
+    ? accountList.find((account) => accountAgentId(account) === input.selectedAgentId) ?? null
+    : null;
+  const primaryAccount = selectedAccount
+    ?? accountList.find((account) => account.runnable)
+    ?? accountList[0]
+    ?? null;
   if (!primaryAccount) {
     return null;
   }
@@ -274,14 +310,15 @@ function accountBackedAgent(input: {
     activeProcess: null,
     chatProcesses: input.chatProcesses,
     consoleProcesses: input.consoleProcesses,
+    selectedAgentId: accountAgentId(primaryAccount),
   });
   const description = primaryAccount.gecos.trim()
     || "No active GSV process is attached to this chat.";
   const behavior = behaviorViewForAccount(primaryAccount, input.config, input.modelLabels);
 
   return {
-    id: `account:${primaryAccount.uid}`,
-    runAs: primaryAccount.relation === "personal-agent" ? undefined : primaryAccount.username,
+    id: accountAgentId(primaryAccount),
+    runAs: accountRunAs(primaryAccount),
     name: primaryAccount.displayName,
     role: labelForConsoleAccountRelation(primaryAccount.relation),
     description,
@@ -291,6 +328,7 @@ function accountBackedAgent(input: {
     activity: status.statusLabel,
     modelLabel: behavior.modelLabel,
     modelOptions: behavior.modelOptions,
+    modelProfiles: input.modelProfiles,
     modelValue: behavior.modelValue,
     modelIsDefault: behavior.modelIsDefault,
     permission: behavior.permission,
@@ -306,9 +344,13 @@ export function buildShellChatAgent({
   chatProcesses,
   config,
   consoleProcesses,
+  selectedAgentId,
+  sessionUsername,
   statusLabel,
 }: BuildShellChatAgentArgs): ChatAgentData | null {
   const modelLabels = modelLabelsForConfig(config);
+  const viewer = viewerAccount(accounts, sessionUsername);
+  const modelProfiles = modelProfilesForConfig(config, viewer?.uid);
 
   if (!activeProcess) {
     return accountBackedAgent({
@@ -317,6 +359,8 @@ export function buildShellChatAgent({
       config,
       consoleProcesses,
       modelLabels,
+      modelProfiles,
+      selectedAgentId,
     });
   }
 
@@ -335,13 +379,14 @@ export function buildShellChatAgent({
         activeProcess,
         chatProcesses,
         consoleProcesses,
+        selectedAgentId,
       })
     : chatProcesses.map((process, index) => processCrewMember(process, index, activeProcess));
 
   return {
     id: activeProcess.pid,
     processId: activeProcess.pid,
-    runAs: activeAccount && activeAccount.relation !== "personal-agent" ? activeAccount.username : undefined,
+    runAs: activeAccount ? accountRunAs(activeAccount) : undefined,
     name: activeAccount?.displayName ?? activeProcess.title,
     role: activeAccount ? labelForConsoleAccountRelation(activeAccount.relation) : activeProcess.username ? `PROCESS · ${activeProcess.username}` : "PROCESS",
     description: activeAgentDescription(activeProcess, activeAccount),
@@ -351,6 +396,7 @@ export function buildShellChatAgent({
     activity: statusLabel,
     modelLabel: behavior.modelLabel,
     modelOptions: behavior.modelOptions,
+    modelProfiles,
     modelValue: behavior.modelValue,
     modelIsDefault: behavior.modelIsDefault,
     permission: behavior.permission,

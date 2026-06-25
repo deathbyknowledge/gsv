@@ -41,6 +41,7 @@ import { RunRouteStore, type AdapterRunRoute, type RunRoute } from "./run-routes
 import { OAuthStore } from "./oauth-store";
 import { McpServerStore } from "./mcp-store";
 import { SignalWatchStore, type SignalWatchRecord } from "./signal-watches";
+import { isUserProcessSignal } from "./user-signals";
 import { NotificationStore } from "./notifications";
 import { IpcCallStore, type IpcCallRecord } from "./ipc-calls";
 import {
@@ -680,9 +681,9 @@ export class Kernel extends Host<Env> {
     await this.dispatchSignalWatches(ownerUid, processId, frame);
     await this.completeIpcCallsFromSignal(ownerUid, processId, frame, runId);
 
-    if (!frame.signal.startsWith("proc.run.")) return;
+    if (!isUserProcessSignal(frame.signal)) return;
 
-    // Client-facing run signals route by the owning human (owner_uid), not the
+    // Client-facing process signals route by the owning human (owner_uid), not the
     // run-as identity (which may be the personal agent account).
     if (!runId) {
       this.broadcastToUid(ownerUid, frame.signal, frame.payload);

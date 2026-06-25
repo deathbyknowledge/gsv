@@ -67,22 +67,6 @@ function GsvMark({ size = 22 }: { size?: number }) {
   );
 }
 
-function TabsMark({ size = 16 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 16 16" aria-hidden="true" shape-rendering="crispEdges">
-      <g fill="currentColor">
-        <rect x="2" y="4" width="5" height="2" />
-        <rect x="8" y="4" width="6" height="2" />
-        <rect x="2" y="6" width="12" height="7" />
-      </g>
-    </svg>
-  );
-}
-
-function tabIcon(tab: ShellPageTab): string {
-  return tab.icon || (tab.kind === "app" ? "stars" : "list");
-}
-
 export function ShellRail({
   activeSurface,
   activeTabKey,
@@ -127,7 +111,7 @@ export function ShellRail({
         </button>
         {hasTabs ? (
           <button type="button" class="gsv-rail-tabs-dot" title="Open tabs" onClick={onOpenTabsPicker}>
-            <TabsMark />
+            <Icon name="bookmark" size={17} />
             <span>{tabCount}</span>
           </button>
         ) : null}
@@ -149,36 +133,42 @@ export function ShellRail({
 
       <div class="gsv-rail-scroll">
         <div class="gsv-rail-tree">
-          <span class="gsv-rail-spine" aria-hidden="true" />
-          {desktopObjects.map((object) => (
+          <div class="gsv-rail-primary-tree">
+            <span class="gsv-rail-spine" aria-hidden="true" />
+            {desktopObjects.map((object) => (
+              <button
+                key={object.id}
+                type="button"
+                class={`gsv-rail-row${activeSurface === object.id ? " is-active" : ""}`}
+                title={`${object.label}: ${object.meta}, ${object.statusLabel}`}
+                onClick={() => onOpenSurface(object.id)}
+              >
+                <span class="gsv-rail-node-icon">
+                  <span class="gsv-rail-node-disc">
+                    <Icon name={GLYPH_ICON[object.glyph]} size={19} />
+                  </span>
+                </span>
+                <span class="gsv-rail-row-copy">
+                  <span>{object.label}</span>
+                </span>
+                <i style={{ background: statusColor(object.status), color: statusColor(object.status) }} />
+              </button>
+            ))}
             <button
-              key={object.id}
               type="button"
-              class={`gsv-rail-row${activeSurface === object.id ? " is-active" : ""}`}
-              title={`${object.label}: ${object.meta}, ${object.statusLabel}`}
-              onClick={() => onOpenSurface(object.id)}
+              class="gsv-rail-row gsv-rail-gsv is-active"
+              onClick={onOpenControlMenu}
             >
               <span class="gsv-rail-node-icon">
-                <Icon name={GLYPH_ICON[object.glyph]} size={19} />
+                <span class="gsv-rail-node-disc is-gsv">
+                  <GsvMark />
+                </span>
               </span>
               <span class="gsv-rail-row-copy">
-                <span>{object.label}</span>
+                <span>GSV</span>
               </span>
-              <i style={{ background: statusColor(object.status), color: statusColor(object.status) }} />
             </button>
-          ))}
-          <button
-            type="button"
-            class="gsv-rail-row gsv-rail-gsv is-active"
-            onClick={onOpenControlMenu}
-          >
-            <span class="gsv-rail-node-icon">
-              <GsvMark />
-            </span>
-            <span class="gsv-rail-row-copy">
-              <span>GSV</span>
-            </span>
-          </button>
+          </div>
           <div class="gsv-rail-subitems" aria-label="GSV system surfaces">
             {GSV_RAIL_ITEMS.map((item) => (
               <button
@@ -191,49 +181,49 @@ export function ShellRail({
               </button>
             ))}
           </div>
-          {hasTabs ? (
-            <div class="gsv-rail-tabs">
-              <button
-                type="button"
-                class="gsv-rail-tabs-head"
-                onClick={onToggleTabsExpanded}
-              >
-                <span class="gsv-rail-tabs-icon"><TabsMark size={13} /></span>
-                <span>TABS</span>
-                <small>{tabCount}</small>
-              </button>
-              {tabsExpanded ? (
-                <div class="gsv-rail-tabs-list">
-                  {openTabs.map((tab) => {
-                    const active = tab.key === activeTabKey;
-                    return (
-                      <div class={`gsv-rail-tab-row${active ? " is-active" : ""}`} key={tab.key}>
-                        <button type="button" onClick={() => onOpenTab(tab.key)}>
-                          <span class="gsv-rail-tab-icon">
-                            <Icon name={tabIcon(tab)} size={17} />
-                          </span>
-                          <span>{tab.title}</span>
-                        </button>
-                        <button
-                          type="button"
-                          class="gsv-rail-tab-close"
-                          title={`Close ${tab.title}`}
-                          aria-label={`Close ${tab.title}`}
-                          onClick={() => onCloseTab(tab.key)}
-                        >
-                          x
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
         </div>
       </div>
 
       <footer>DRAG CHAT &lt;- TO EXPAND</footer>
+      {hasTabs ? (
+        <div class="gsv-rail-tabs">
+          <button
+            type="button"
+            class="gsv-rail-tabs-head"
+            onClick={onToggleTabsExpanded}
+          >
+            <span class="gsv-rail-tabs-icon"><Icon name="bookmark" size={15} /></span>
+            <span>TABS</span>
+            <small>{tabCount}</small>
+          </button>
+          {tabsExpanded ? (
+            <div class="gsv-rail-tabs-list">
+              {openTabs.map((tab) => {
+                const active = tab.key === activeTabKey;
+                return (
+                  <div class={`gsv-rail-tab-row${active ? " is-active" : ""}`} key={tab.key}>
+                    <button type="button" onClick={() => onOpenTab(tab.key)}>
+                      <span class="gsv-rail-tab-icon">
+                        <Icon name="bookmark" size={17} />
+                      </span>
+                      <span>{tab.title}</span>
+                    </button>
+                    <button
+                      type="button"
+                      class="gsv-rail-tab-close"
+                      title={`Close ${tab.title}`}
+                      aria-label={`Close ${tab.title}`}
+                      onClick={() => onCloseTab(tab.key)}
+                    >
+                      x
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </aside>
   );
 }

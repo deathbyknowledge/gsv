@@ -1,5 +1,6 @@
 import type {
   ShellAppRoute,
+  ShellLibraryRoute,
   ShellRoute,
   ShellSettingsListKind,
   ShellSettingsRoute,
@@ -122,6 +123,47 @@ function appRouteFromParts(parts: readonly string[], search: string, hash: strin
   });
 }
 
+function decodedParts(parts: readonly string[]): string[] | null {
+  const decoded = parts.map(decodeSegment);
+  return decoded.some((part) => part === null) ? null : decoded as string[];
+}
+
+function libraryRouteFromParts(parts: readonly string[], search: string): ShellLibraryRoute {
+  const decoded = decodedParts(parts.slice(1));
+  if (!decoded) {
+    return { view: "index" };
+  }
+
+  const query = new URLSearchParams(search);
+  const q = query.get("q")?.trim() || undefined;
+  const [db, actionOrPath, ...rest] = decoded;
+
+  if (!db) {
+    return { view: "index", ...(q ? { q } : {}) };
+  }
+  if (db === "build") {
+    return { view: "build" };
+  }
+  if (!actionOrPath) {
+    return { view: "index", db, ...(q ? { q } : {}) };
+  }
+  if (actionOrPath === "new") {
+    return { view: "editor", db };
+  }
+  if (actionOrPath === "edit") {
+    const path = rest.join("/");
+    return path ? { view: "editor", db, path } : { view: "editor", db };
+  }
+  if (actionOrPath === "capture") {
+    return { view: "capture", db };
+  }
+  if (actionOrPath === "build") {
+    return { view: "build", db };
+  }
+
+  return { view: "reader", db, path: [actionOrPath, ...rest].join("/") };
+}
+
 export function shellRouteFromLocation(location: Pick<Location, "hash" | "pathname" | "search">): ShellRoute {
   if (isWorkerOwnedPath(location.pathname)) {
     return { surface: "desktop" };
@@ -134,6 +176,10 @@ export function shellRouteFromLocation(location: Pick<Location, "hash" | "pathna
 
   if (parts[0] === "settings") {
     return { surface: "settings", settingsRoute: settingsRouteFromParts(parts) };
+  }
+
+  if (parts[0] === "library") {
+    return { surface: "library", libraryRoute: libraryRouteFromParts(parts, location.search) };
   }
 
   if (parts[0] === "open") {
@@ -178,6 +224,29 @@ function formatAppRoute(route: ShellAppRoute): string {
   return `${path}${appRoute.search}${appRoute.hash}`;
 }
 
+function formatLibraryRoute(route: ShellLibraryRoute | undefined): string {
+  if (!route || route.view === "index") {
+    const base = route?.db ? `/library/${encodeSegment(route.db)}` : "/library";
+    const q = route?.q?.trim();
+    return q ? `${base}?q=${encodeURIComponent(q)}` : base;
+  }
+  if (route.view === "build") {
+    return route.db ? `/library/${encodeSegment(route.db)}/build` : "/library/build";
+  }
+  if (route.view === "capture") {
+    return `/library/${encodeSegment(route.db)}/capture`;
+  }
+  if (route.view === "editor") {
+    if (!route.path) {
+      return `/library/${encodeSegment(route.db)}/new`;
+    }
+    const path = route.path.split("/").filter(Boolean).map(encodeSegment).join("/");
+    return `/library/${encodeSegment(route.db)}/edit/${path}`;
+  }
+  const path = route.path.split("/").filter(Boolean).map(encodeSegment).join("/");
+  return `/library/${encodeSegment(route.db)}/${path}`;
+}
+
 export function shellRouteToPath(route: ShellRoute): string {
   if (route.surface === "desktop") {
     return "/";
@@ -187,6 +256,9 @@ export function shellRouteToPath(route: ShellRoute): string {
   }
   if (route.surface === "app") {
     return formatAppRoute(route.appRoute);
+  }
+  if (route.surface === "library") {
+    return formatLibraryRoute(route.libraryRoute);
   }
   if (route.surface === "runtime") {
     return "/tasks";
@@ -209,4 +281,3 @@ export function pushShellRoute(route: ShellRoute): void {
   }
   window.history.pushState(null, "", path);
 }
-

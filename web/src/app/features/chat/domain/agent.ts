@@ -7,14 +7,22 @@ export type ChatAgentTaskData = {
   status?: ChatAgentTaskStatus;
 };
 
+export type ChatModelProfileData = {
+  id: string;
+  name: string;
+  values: Record<string, string>;
+};
+
 export type ChatAgentCrewData = {
   id?: string;
   processId?: string;
+  runAs?: string;
   name: string;
   role?: string;
   imageSrc?: string;
   status?: ChatAgentStatus;
   statusLabel?: string;
+  startable?: boolean;
   active?: boolean;
 };
 
@@ -31,6 +39,7 @@ export type ChatAgentData = {
   activity?: string;
   modelLabel?: string;
   modelOptions?: readonly string[];
+  modelProfiles?: readonly ChatModelProfileData[];
   modelValue?: string;
   modelIsDefault?: boolean;
   permission?: string;
@@ -47,12 +56,20 @@ export type ChatAgentTaskView = {
 export type ChatAgentCrewView = {
   id: string;
   processId?: string;
+  runAs?: string;
   name: string;
   role: string;
   imageSrc: string;
   status: ChatAgentStatus;
   statusLabel: string;
+  startable: boolean;
   active: boolean;
+};
+
+export type ChatAgentSelection = {
+  agentId?: string;
+  processId?: string;
+  runAs?: string;
 };
 
 export type ChatAgentViewModel = {
@@ -68,6 +85,7 @@ export type ChatAgentViewModel = {
   activity: string;
   modelLabel: string;
   modelOptions: string[];
+  modelProfiles: ChatModelProfileData[];
   modelValue: string;
   modelIsDefault: boolean;
   permission: string;
@@ -134,6 +152,25 @@ function normalizeTasks(
     .filter((task) => task.name.length > 0);
 }
 
+function normalizeModelProfiles(
+  profiles: readonly ChatModelProfileData[] | undefined,
+): ChatModelProfileData[] {
+  return (profiles ?? [])
+    .map((profile) => {
+      const id = profile.id.trim();
+      const name = profile.name.trim();
+      if (!id || !name) {
+        return null;
+      }
+      return {
+        id,
+        name,
+        values: { ...profile.values },
+      };
+    })
+    .filter((profile): profile is ChatModelProfileData => profile !== null);
+}
+
 function buildDefaultDescription(input: {
   hasProcess: boolean;
   statusLabel: string;
@@ -160,14 +197,17 @@ function normalizeCrew(
       }
       const status = member.status ?? fallback.status;
       const processId = member.processId?.trim();
+      const runAs = member.runAs?.trim();
       return {
         id: cleanText(member.id, `crew-${index}`),
         ...(processId ? { processId } : {}),
+        ...(runAs ? { runAs } : {}),
         name,
         role: cleanText(member.role, fallback.role),
         imageSrc: cleanText(member.imageSrc, fallback.imageSrc),
         status,
         statusLabel: cleanText(member.statusLabel, status),
+        startable: member.startable === true,
         active: member.active === true,
       };
     })
@@ -178,7 +218,7 @@ function normalizeCrew(
   }
 
   return {
-    members: [{ ...fallback, active: true }],
+    members: [{ ...fallback, active: true, startable: false }],
     hasCrewData: false,
   };
 }
@@ -217,6 +257,7 @@ export function buildChatAgentViewModel({
     imageSrc,
     status: agentStatus,
     statusLabel: cleanText(agent?.statusLabel, processStatusLabel),
+    startable: false,
   };
   const crew = normalizeCrew(agent?.crew, fallbackCrew);
 
@@ -240,6 +281,7 @@ export function buildChatAgentViewModel({
     activity,
     modelLabel: cleanText(agent?.modelLabel, "GATEWAY DEFAULT"),
     modelOptions: normalizeModelOptions(agent?.modelOptions, agent?.modelLabel),
+    modelProfiles: normalizeModelProfiles(agent?.modelProfiles),
     modelValue: cleanText(agent?.modelValue, ""),
     modelIsDefault: agent?.modelIsDefault ?? false,
     permission: cleanText(agent?.permission, "ask"),

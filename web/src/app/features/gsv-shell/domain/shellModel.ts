@@ -35,6 +35,7 @@ export type ShellPageTab = {
   icon: string;
   type: string;
   appRoute?: ShellAppRoute;
+  libraryRoute?: ShellLibraryRoute;
   settingsRoute?: ShellSettingsRoute;
 };
 
@@ -45,10 +46,18 @@ export type ShellAppRoute = {
   hash: string;
 };
 
+export type ShellLibraryRoute =
+  | { view: "index"; db?: string; q?: string }
+  | { view: "reader"; db: string; path: string }
+  | { view: "editor"; db: string; path?: string }
+  | { view: "capture"; db: string }
+  | { view: "build"; db?: string };
+
 export type ShellRoute =
   | { surface: "desktop" }
   | { surface: "app"; appRoute: ShellAppRoute }
-  | { surface: Exclude<ShellPageSurfaceId, "app">; settingsRoute?: ShellSettingsRoute };
+  | { surface: "library"; libraryRoute?: ShellLibraryRoute }
+  | { surface: Exclude<ShellPageSurfaceId, "app" | "library">; settingsRoute?: ShellSettingsRoute };
 
 export type DesktopChildRoute = {
   kind: DesktopObjectId;
@@ -97,7 +106,7 @@ export const SYSTEM_DOCK_ITEMS: SystemDockItem[] = [
     id: "library",
     label: "LIBRARY",
     icon: "pencil",
-    description: "Packages, models, and reusable skills available to agents.",
+    description: "Repo-backed markdown knowledge, source notes, and durable memory.",
   },
   {
     id: "terminal",
@@ -188,7 +197,8 @@ export function shellTabForSurface(surface: ShellPageSurfaceId): ShellPageTab {
       title,
       kind: "system",
       icon: "pencil",
-      type: "GSV · PACKAGES",
+      type: "GSV · LIBRARY",
+      libraryRoute: { view: "index" },
     };
   }
   if (surface === "terminal") {
@@ -249,6 +259,13 @@ export function shellTabForSettingsRoute(route: ShellSettingsRoute): ShellPageTa
   };
 }
 
+export function shellTabForLibraryRoute(route: ShellLibraryRoute): ShellPageTab {
+  return {
+    ...shellTabForSurface("library"),
+    libraryRoute: route,
+  };
+}
+
 export function shellTabForAppRoute(route: ShellAppRoute, title?: string): ShellPageTab {
   const normalizedRoute = normalizeShellAppRoute(route);
   return {
@@ -272,6 +289,9 @@ export function shellTabForRoute(route: ShellRoute, title?: string): ShellPageTa
   if (route.surface === "settings" && route.settingsRoute) {
     return shellTabForSettingsRoute(route.settingsRoute);
   }
+  if (route.surface === "library" && route.libraryRoute) {
+    return shellTabForLibraryRoute(route.libraryRoute);
+  }
   return shellTabForSurface(route.surface);
 }
 
@@ -291,6 +311,12 @@ export function shellRouteForTab(tab: ShellPageTab): ShellRoute {
     return {
       surface: "settings",
       settingsRoute: tab.settingsRoute ?? { view: "overview" },
+    };
+  }
+  if (tab.surface === "library") {
+    return {
+      surface: "library",
+      libraryRoute: tab.libraryRoute ?? { view: "index" },
     };
   }
   return { surface: tab.surface };

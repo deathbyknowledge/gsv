@@ -14,6 +14,8 @@
   "dependencies": {
     "@humansandmachines/gsv": "file:../packages/gsv",
     "@tanstack/preact-query": "^5.101.0",
+    "dompurify": "^3.4.11",
+    "marked": "^16.4.2",
     "preact": "^10.29.2"
   },
   "devDependencies": {

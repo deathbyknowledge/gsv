@@ -19,10 +19,7 @@ export function iconForPackage(pkg: ConsolePackage, kind: PackageListKind): stri
 
 export function filterPackagesForKind(packages: readonly ConsolePackage[], kind: PackageListKind): ConsolePackage[] {
   const visiblePackages = packages.filter((pkg) => !isNativeConsolePackage(pkg));
-  if (kind === "applications") {
-    return visiblePackages.filter(isApplicationPackage);
-  }
-  return [...visiblePackages];
+  return visiblePackages.filter(isApplicationPackage);
 }
 
 export function isApplicationPackage(pkg: ConsolePackage): boolean {
@@ -34,13 +31,11 @@ function isNativeConsolePackage(pkg: ConsolePackage): boolean {
 }
 
 export function packageListTitle(kind: PackageListKind): string {
-  if (kind === "applications") return "APPLICATIONS";
-  return "LIBRARY";
+  return "APPLICATIONS";
 }
 
 export function packageListNoun(kind: PackageListKind): string {
-  if (kind === "applications") return "APPLICATION";
-  return "PACKAGE";
+  return "APPLICATION";
 }
 
 export function toneForPackage(pkg: ConsolePackage): StatusTone {

@@ -6,12 +6,14 @@ import {
   shellTabForAppRoute,
   shellSurfaceLabel,
   shellTabForDesktopChild,
+  shellTabForLibraryRoute,
   shellTabForRoute,
   shellTabForSettingsRoute,
   type DesktopChildObject,
   type DesktopObject,
   type DesktopObjectId,
   type ShellAppRoute,
+  type ShellLibraryRoute,
   type ShellPageTab,
   type ShellRoute,
   type ShellSettingsRoute,
@@ -289,6 +291,20 @@ export function useGsvShellState({
     setGsvOpen(false);
   };
 
+  const syncActiveLibraryRoute = (route: ShellLibraryRoute): void => {
+    if (activeSurface !== "library") {
+      return;
+    }
+
+    pushShellRoute({ surface: "library", libraryRoute: route });
+    const libraryTab = shellTabForLibraryRoute(route);
+    setOpenTabs((current) => upsertTab(current, libraryTab));
+    setActiveTabKey(libraryTab.key);
+    setSelectedObjectId(null);
+    setPickerId(null);
+    setGsvOpen(false);
+  };
+
   const openObject = (child: DesktopChildObject): void => {
     if (child.appRoute) {
       openAppRoute(child.appRoute, child.label);
@@ -449,6 +465,7 @@ export function useGsvShellState({
     startChatDrag,
     statusContext,
     syncActiveSettingsRoute,
+    syncActiveLibraryRoute,
     tabsExpanded,
     toggleChatMax,
     toggleTabsExpanded: () => {

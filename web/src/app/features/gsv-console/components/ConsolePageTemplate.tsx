@@ -8,6 +8,7 @@ export type ConsolePageStateKind = "loading" | "error" | "empty" | "offline";
 type ConsolePageProps = {
   children: ComponentChildren;
   flush?: boolean;
+  className?: string;
 };
 
 type ConsoleResourceBoundaryProps<T> = {
@@ -32,9 +33,10 @@ const STATE_TONE: Record<ConsolePageStateKind, StatusTone> = {
   offline: "idle",
 };
 
-export function ConsolePage({ children, flush = false }: ConsolePageProps) {
+export function ConsolePage({ children, flush = false, className = "" }: ConsolePageProps) {
+  const classes = ["gsv-console-page", flush ? "is-flush" : "", className].filter(Boolean).join(" ");
   return (
-    <section class={`gsv-console-page${flush ? " is-flush" : ""}`}>
+    <section class={classes}>
       <div class="gsv-console-page-body">{children}</div>
     </section>
   );

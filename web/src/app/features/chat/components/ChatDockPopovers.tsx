@@ -2,8 +2,8 @@ import { Icon } from "../../../components/ui/Icon";
 import { Progress } from "../../../components/ui/Progress";
 import { StatusDot } from "../../../components/ui/StatusDot";
 import type { StatusTone } from "../../../components/ui/StatusDot";
-import type { ChatAgentViewModel } from "../domain/agent";
-import type { ChatHistory } from "../domain/processes";
+import type { ChatAgentViewModel, ChatModelProfileData } from "../domain/agent";
+import type { ChatHistory, ChatProcessAiConfig } from "../domain/processes";
 import { formatCount, shortId } from "./chatUiFormat";
 
 export type ChatPopoverId = "model" | "tasks" | "context";
@@ -16,9 +16,15 @@ type ChatDockPopoversProps = {
   contextPercent: number | null;
   hasActiveProcess: boolean;
   messageCount: number | null | undefined;
+  onApplyModelProfile: (profile: ChatModelProfileData) => void;
   onOpenModels: () => void;
   onOpenTasks: () => void;
+  onClearProcessAiConfig: () => void;
+  onSetReasoning: (reasoning: string) => void;
   openPopover: ChatPopoverId | null;
+  processAiConfig: ChatProcessAiConfig;
+  processAiConfigBusy: boolean;
+  processAiConfigLoading: boolean;
   runStateLabel: string;
   taskCount: number;
 };
@@ -43,60 +49,23 @@ function taskStatusLabel(status: string): string {
   return "RUNNING";
 }
 
-type ModelOptionView = {
-  key: string;
-  label: string;
-  current: boolean;
-  badge: string;
-};
+const REASONING_OPTIONS = ["off", "low", "medium", "high"] as const;
 
-function normalizeModelKey(value: string): string {
-  return value.trim().toLowerCase();
+function modelProfileSummary(profile: ChatModelProfileData): string {
+  return [
+    profile.values["config/ai/provider"],
+    profile.values["config/ai/model"],
+  ].map((value) => value?.trim()).filter(Boolean).join(" · ") || "Saved AI config";
 }
 
-function modelOptionRows(activeAgent: ChatAgentViewModel): ModelOptionView[] {
-  const currentLabel = activeAgent.modelValue.trim() || activeAgent.modelLabel;
-  const currentKey = normalizeModelKey(currentLabel);
-  const seen = new Set<string>();
-  const rows = activeAgent.modelOptions
-    .map((option, index) => {
-      const label = option.trim();
-      if (!label) {
-        return null;
-      }
-
-      const key = normalizeModelKey(label);
-      if (seen.has(key)) {
-        return null;
-      }
-      seen.add(key);
-
-      const current = key === currentKey || (activeAgent.modelIsDefault && index === 0);
-      return {
-        key,
-        label,
-        current,
-        badge: current ? (activeAgent.modelIsDefault ? "DEFAULT" : "ACTIVE") : "",
-      };
-    })
-    .filter((option): option is ModelOptionView => option !== null);
-
-  if (rows.some((option) => option.current)) {
-    return rows;
+function modelProfileIsActive(
+  config: ChatProcessAiConfig,
+  profile: ChatModelProfileData,
+): boolean {
+  if (!config) {
+    return false;
   }
-
-  const label = currentLabel.trim();
-  return label
-    ? [
-        {
-          key: normalizeModelKey(label),
-          label,
-          current: true,
-          badge: activeAgent.modelIsDefault ? "DEFAULT" : "ACTIVE",
-        },
-        ...rows,
-      ]
-    : rows;
+  return config.profile?.id === profile.id || config.profile?.name === profile.name;
 }
 
 export function ChatDockPopovers({
@@ -107,13 +76,21 @@ export function ChatDockPopovers({
   contextPercent,
   hasActiveProcess,
   messageCount,
+  onApplyModelProfile,
+  onClearProcessAiConfig,
   onOpenModels,
   onOpenTasks,
+  onSetReasoning,
   openPopover,
+  processAiConfig,
+  processAiConfigBusy,
+  processAiConfigLoading,
   runStateLabel,
   taskCount,
 }: ChatDockPopoversProps) {
-  const modelOptions = modelOptionRows(activeAgent);
+  const processModel = processAiConfig?.values["config/ai/model"]?.trim() ?? "";
+  const processReasoning = processAiConfig?.values["config/ai/reasoning"]?.trim() ?? "";
+  const hasProcessOverrides = Boolean(processAiConfig && Object.keys(processAiConfig.values).length > 0);
 
   return (
     <>
@@ -129,21 +106,50 @@ export function ChatDockPopovers({
           </div>
           <div class="gsv-chat-popover-section">
             <span>MODEL SOURCE</span>
-            <strong>{contextModel || "GATEWAY DEFAULT"}</strong>
+            <strong>{processModel ? `PROCESS · ${processModel}` : contextModel || "GATEWAY DEFAULT"}</strong>
           </div>
-          <div class="gsv-chat-popover-label">SWITCH MODEL</div>
+          <div class="gsv-chat-popover-section">
+            <span>PROCESS PROFILE</span>
+            <strong>{processAiConfigLoading ? "LOADING" : processAiConfig?.profile?.name || processAiConfig?.profile?.id || "NO LOCAL PROFILE"}</strong>
+          </div>
+          <div class="gsv-chat-popover-label">MODEL PROFILE</div>
           <div class="gsv-chat-model-options" role="list">
-            {modelOptions.map((option) => (
-              <div
-                class={`gsv-chat-model-row${option.current ? " is-current" : ""}`}
+            {activeAgent.modelProfiles.length > 0 ? activeAgent.modelProfiles.map((profile) => {
+              const active = modelProfileIsActive(processAiConfig, profile);
+              return (
+              <button
+                type="button"
+                class={`gsv-chat-model-row${active ? " is-current" : ""}`}
                 role="listitem"
-                aria-current={option.current ? "true" : undefined}
-                key={option.key}
+                aria-current={active ? "true" : undefined}
+                disabled={processAiConfigBusy || !hasActiveProcess || active}
+                key={profile.id}
+                onClick={() => onApplyModelProfile(profile)}
               >
                 <span class="gsv-chat-model-current" aria-hidden="true" />
-                <span class="gsv-chat-model-label">{option.label}</span>
-                {option.badge ? <small>{option.badge}</small> : null}
-              </div>
+                <span class="gsv-chat-model-label">
+                  <strong>{profile.name}</strong>
+                  <em>{modelProfileSummary(profile)}</em>
+                </span>
+                {active ? <small>PROCESS</small> : null}
+              </button>
+              );
+            }) : (
+              <div class="gsv-chat-model-empty">NO SAVED MODEL PROFILES</div>
+            )}
+          </div>
+          <div class="gsv-chat-popover-label">REASONING</div>
+          <div class="gsv-chat-reasoning-options">
+            {REASONING_OPTIONS.map((option) => (
+              <button
+                key={option}
+                type="button"
+                class={processReasoning === option ? "is-current" : ""}
+                disabled={processAiConfigBusy || !hasActiveProcess}
+                onClick={() => onSetReasoning(option)}
+              >
+                {option.toUpperCase()}
+              </button>
             ))}
           </div>
           {context?.runId ? (
@@ -152,6 +158,15 @@ export function ChatDockPopovers({
               <strong>{shortId(context.runId)}</strong>
             </div>
           ) : null}
+          <button
+            type="button"
+            class="gsv-chat-popover-action"
+            disabled={processAiConfigBusy || !hasProcessOverrides}
+            onClick={onClearProcessAiConfig}
+          >
+            <Icon name="close" size={12} />
+            <span>CLEAR PROCESS OVERRIDES</span>
+          </button>
           <button type="button" class="gsv-chat-popover-action" onClick={onOpenModels}>
             <Icon name="stars" size={12} />
             <span>MANAGE MODELS</span>

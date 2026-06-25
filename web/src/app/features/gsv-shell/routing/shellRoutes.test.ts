@@ -51,4 +51,46 @@ describe("shellRoutes", () => {
     expect(shellRouteToPath(route)).toBe("/open/Space%20Simulation/planets/mars?mode=edit#orbit");
     expect(shellRouteFromLocation(location("/open/Space%20Simulation/planets/mars", "?mode=edit", "#orbit"))).toEqual(route);
   });
+
+  it("round-trips library collection and page routes", () => {
+    expect(shellRouteFromLocation(location("/library"))).toEqual({
+      surface: "library",
+      libraryRoute: { view: "index" },
+    });
+    expect(shellRouteFromLocation(location("/library/memory"))).toEqual({
+      surface: "library",
+      libraryRoute: { view: "index", db: "memory" },
+    });
+
+    const route: ShellRoute = {
+      surface: "library",
+      libraryRoute: {
+        view: "reader",
+        db: "memory",
+        path: "pages/auth-notes.md",
+      },
+    };
+
+    expect(shellRouteToPath(route)).toBe("/library/memory/pages/auth-notes.md");
+    expect(shellRouteFromLocation(location("/library/memory/pages/auth-notes.md"))).toEqual(route);
+  });
+
+  it("round-trips library authoring routes", () => {
+    expect(shellRouteFromLocation(location("/library/memory/new"))).toEqual({
+      surface: "library",
+      libraryRoute: { view: "editor", db: "memory" },
+    });
+    expect(shellRouteToPath({
+      surface: "library",
+      libraryRoute: { view: "editor", db: "memory", path: "pages/auth-notes.md" },
+    })).toBe("/library/memory/edit/pages/auth-notes.md");
+    expect(shellRouteFromLocation(location("/library/memory/capture"))).toEqual({
+      surface: "library",
+      libraryRoute: { view: "capture", db: "memory" },
+    });
+    expect(shellRouteFromLocation(location("/library/build"))).toEqual({
+      surface: "library",
+      libraryRoute: { view: "build" },
+    });
+  });
 });

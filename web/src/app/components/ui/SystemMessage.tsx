@@ -1,6 +1,8 @@
+import type { ComponentChildren } from "preact";
 import "./SystemMessage.css";
 
 export interface SystemMessageProps {
+  children?: ComponentChildren;
   text?: string;
   time?: string;
   copyAriaLabel?: string;
@@ -8,16 +10,19 @@ export interface SystemMessageProps {
   copyLabel?: string;
   copyTitle?: string;
   copyFailed?: boolean;
+  meta?: ComponentChildren;
   onCopy?: () => void;
 }
 
 /** SystemMessage — avatar + message bubble with a meta row for timestamp/copy actions. */
 export function SystemMessage({
+  children,
   copyAriaLabel,
   copyDisabled = false,
   copyFailed = false,
   copyLabel = "COPY",
   copyTitle = "Copy message",
+  meta,
   text = "",
   time = "",
   onCopy,
@@ -36,9 +41,10 @@ export function SystemMessage({
         </svg>
       </div>
       <div class="gsv-sm-body">
-        <div class="gsv-sm-text">{text}</div>
+        <div class="gsv-sm-text">{children ?? text}</div>
         <div class="gsv-sm-meta">
           {time ? <span>{time}</span> : null}
+          {meta}
           <button
             type="button"
             class={`gsv-sm-copy${copyFailed ? " is-failed" : ""}`}

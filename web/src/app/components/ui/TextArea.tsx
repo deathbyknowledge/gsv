@@ -1,3 +1,4 @@
+import type { JSX } from "preact";
 import { useId, useState } from "preact/hooks";
 import { InfoTip } from "./InfoTip";
 import "./TextArea.css";
@@ -21,6 +22,9 @@ export interface TextAreaProps {
   readonly?: boolean;
   maxLength?: number;
   onChange?: (value: string) => void;
+  /** Extra attributes spread onto the inner <textarea> (onKeyDown, ref,
+   *  aria-* markers, etc.) — does not override the managed attrs. */
+  textareaProps?: JSX.IntrinsicElements["textarea"] & Record<`data-${string}`, string | number | boolean>;
 }
 
 const SIZE_CLASS: Record<TextAreaSize, string> = {
@@ -46,12 +50,14 @@ export function TextArea(props: TextAreaProps) {
     readonly = false,
     maxLength = 0,
     onChange,
+    textareaProps,
   } = props;
 
   const fieldId = useId();
-  const [val, setVal] = useState<string | undefined>(undefined);
+  const [internalValue, setInternalValue] = useState(props.value ?? "");
+  const controlled = props.value !== undefined;
 
-  const value = val !== undefined ? val : props.value ?? "";
+  const value = controlled ? props.value ?? "" : internalValue;
 
   const rawStatus = status && status !== "none" ? status : "";
   const statusKey = rawStatus === "warning" ? "warn" : rawStatus;
@@ -74,7 +80,9 @@ export function TextArea(props: TextAreaProps) {
   const boxClass = `gsv-ta-box ${disabled ? "is-disabled" : readonly ? "is-readonly" : ""}`.trim();
 
   const emit = (next: string) => {
-    setVal(next);
+    if (!controlled) {
+      setInternalValue(next);
+    }
     onChange?.(next);
   };
 
@@ -91,6 +99,7 @@ export function TextArea(props: TextAreaProps) {
       ) : null}
       {hasDesc ? <div class="gsv-ta-desc" id={`${fieldId}-desc`}>{description}</div> : null}
       <textarea
+        {...textareaProps}
         class={boxClass}
         id={fieldId}
         value={value}
