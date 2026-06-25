@@ -28,6 +28,7 @@ export interface MessageInputProps {
   onSend?: (message: string) => void;
   onStop?: () => void;
   onVoiceClick?: () => void;
+  voiceAction?: ComponentChildren;
   running?: boolean;
   voiceActive?: boolean;
   voiceAvailableWhenBusy?: boolean;
@@ -101,6 +102,7 @@ export function MessageInput({
   onSend,
   onStop,
   onVoiceClick,
+  voiceAction,
   running = false,
   voiceActive = false,
   voiceAvailableWhenBusy = false,
@@ -229,6 +231,7 @@ export function MessageInput({
           onInput={handleInput}
           onKeyDown={handleKeyDown}
         />
+        {voiceAction}
         {onVoiceClick ? (
           <button
             type="button"

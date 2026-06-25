@@ -5,7 +5,7 @@ import { ConfirmModal } from "../../../components/ui/ConfirmModal";
 import { Counter } from "../../../components/ui/Counter";
 import { Icon } from "../../../components/ui/Icon";
 import { MessageInput, type MessageInputAttachment } from "../../../components/ui/MessageInput";
-import { StatusDot, type StatusTone } from "../../../components/ui/StatusDot";
+import type { StatusTone } from "../../../components/ui/StatusDot";
 import type { JSX } from "preact";
 import {
   buildChatAgentViewModel,
@@ -385,11 +385,6 @@ export function ChatDock({
     ? ambientTranscription.liveTitle
     : ambientTranscription.dictationTitle;
   const voiceError = ambientTranscription.error;
-  const voiceStatusLabel = ambientTranscription.active || ambientTranscription.state === "error"
-    ? ambientTranscription.state === "error"
-      ? ambientTranscription.error || "VOICE ERROR"
-      : `${ambientTranscription.liveActive ? "LIVE" : "DICTATE"} · ${ambientTranscription.note || ambientTranscription.title}`
-    : "";
   const handleVoiceClick = useCallback(() => {
     if (ambientTranscription.liveActive) {
       ambientTranscription.toggleLive();
@@ -824,26 +819,6 @@ export function ChatDock({
         disabled={inputDisabled}
         focusKey={newTaskFocusKey}
         value={composerDraft}
-        actions={(
-          <>
-            <button
-              type="button"
-              class={`gsv-chat-live-toggle${ambientTranscription.liveActive ? " is-active" : ""}`}
-              disabled={ambientTranscription.liveUnavailable}
-              title={ambientTranscription.liveTitle}
-              aria-pressed={ambientTranscription.liveActive ? "true" : "false"}
-              onClick={ambientTranscription.toggleLive}
-            >
-              LIVE
-            </button>
-            {voiceStatusLabel ? (
-              <span class="gsv-chat-voice-chip" data-state={ambientTranscription.state}>
-                <StatusDot tone={ambientTranscription.state === "error" ? "error" : "live"} size={7} />
-                <span>{voiceStatusLabel}</span>
-              </span>
-            ) : null}
-          </>
-        )}
         onChange={setComposerDraft}
         onFiles={handleFiles}
         onRemoveAttachment={removeAttachment}
@@ -854,6 +829,19 @@ export function ChatDock({
         running={canAbortRun}
         user={userLabel}
         voiceActive={ambientTranscription.dictationActive || ambientTranscription.liveActive}
+        voiceAction={(
+          <button
+            type="button"
+            class={`gsv-chat-live-icon${ambientTranscription.liveActive ? " is-active" : ""}`}
+            disabled={ambientTranscription.liveUnavailable}
+            title={ambientTranscription.liveTitle}
+            aria-label={ambientTranscription.liveActive ? "Stop live voice chat" : "Start live voice chat"}
+            aria-pressed={ambientTranscription.liveActive ? "true" : "false"}
+            onClick={ambientTranscription.toggleLive}
+          >
+            <Icon name="wifi" family="doticons" size={13} />
+          </button>
+        )}
         voiceAvailableWhenBusy={ambientTranscription.active}
         voiceDisabled={ambientTranscription.liveActive
           ? false
