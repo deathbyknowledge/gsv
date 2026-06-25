@@ -1,5 +1,4 @@
 import type {
-  ConsoleAdapterAccount,
   ConsoleMcpServer,
   ConsoleOverviewData,
   ConsolePackage,
@@ -14,6 +13,10 @@ import type {
   ShellStatus,
 } from "./shellModel";
 import { isNativeWebPackageName } from "../../packages/nativePackages";
+import {
+  messengerFamilies,
+  type MessengerFamily,
+} from "../../gsv-console/messengers/messengerPresentation";
 
 type DesktopObjectSpec = {
   id: DesktopObjectId;
@@ -55,8 +58,8 @@ const SPECS: Record<DesktopObjectId, DesktopObjectSpec> = {
     id: "messengers",
     label: "MESSENGERS",
     glyph: "messengers",
-    singular: "adapter account",
-    plural: "adapter accounts",
+    singular: "messenger",
+    plural: "messengers",
     x: 67,
     y: 25,
   },
@@ -99,7 +102,7 @@ export function buildDesktopObjectsFromConsole(data: ConsoleOverviewData | null 
     },
     messengers: {
       id: "messengers",
-      children: safeArray(data?.adapters).map(adapterToChild).sort(compareChildren),
+      children: messengerFamilies(safeArray(data?.adapters)).map(familyToChild),
     },
     integrations: {
       id: "integrations",
@@ -154,26 +157,35 @@ function targetToChild(target: ConsoleTarget): DesktopChildObject {
   };
 }
 
-function adapterToChild(adapter: ConsoleAdapterAccount): DesktopChildObject {
-  const adapterLabel = formatTokenLabel(adapter.adapter) || "Adapter";
-  const accountLabel = firstNonEmpty(adapter.accountId) ?? "default";
-  const modeLabel = formatTokenLabel(adapter.mode).toUpperCase();
-  const error = firstNonEmpty(adapter.error);
-  const status = adapterStatus(adapter);
-
+function familyToChild(family: MessengerFamily): DesktopChildObject {
   return {
-    id: stableId("adapter", [adapter.adapter, adapter.accountId], "default"),
-    label: `${adapterLabel} · ${accountLabel}`,
-    type: modeLabel ? `MESSENGER · ${modeLabel}` : "MESSENGER",
-    blurb: error ?? `${adapterLabel} adapter account.`,
-    status: status.status,
-    statusLabel: status.label,
+    id: stableId("messenger", [family.adapter], family.adapter),
+    label: formatTokenLabel(family.adapter),
+    type: "MESSENGER",
+    blurb: familyBlurb(family),
+    status: family.status.tone as ShellStatus,
+    statusLabel: family.status.label,
     glyph: "messengers",
     route: {
       kind: "messengers",
-      detailId: `${adapter.adapter}:${adapter.accountId}`,
+      detailId: family.adapter,
     },
   };
+}
+
+function familyBlurb(family: MessengerFamily): string {
+  switch (family.status.status) {
+    case "not-enabled":
+      return "Not enabled. Connect a bot to start messaging.";
+    case "connected":
+      return `${family.status.connectedCount} connected.`;
+    case "disconnected":
+      return "Disconnected.";
+    case "attention":
+      return family.status.tooltip ?? "Needs attention.";
+    default:
+      return "Messenger.";
+  }
 }
 
 function packageToChild(pkg: ConsolePackage, branchId: PackageBranchId): DesktopChildObject {
@@ -289,19 +301,6 @@ function isApplicationPackage(pkg: ConsolePackage): boolean {
 
 function isNativeConsolePackage(pkg: ConsolePackage): boolean {
   return isNativeWebPackageName(pkg.name) || isNativeWebPackageName(pkg.packageId);
-}
-
-function adapterStatus(adapter: ConsoleAdapterAccount): { status: ShellStatus; label: string } {
-  if (firstNonEmpty(adapter.error)) {
-    return { status: "error", label: "ERROR" };
-  }
-  if (adapter.connected === true && adapter.authenticated === true) {
-    return { status: "online", label: "CONNECTED" };
-  }
-  if (adapter.connected === true && adapter.authenticated !== true) {
-    return { status: "warn", label: "AUTH REQUIRED" };
-  }
-  return { status: "idle", label: "DISCONNECTED" };
 }
 
 function packageStatus(pkg: ConsolePackage): { status: ShellStatus; label: string } {

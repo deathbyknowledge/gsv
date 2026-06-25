@@ -118,3 +118,105 @@ export function adapterDetailSections(adapter: ConsoleAdapterAccount): ConsoleDe
     },
   ];
 }
+
+export type AdapterFamilyStatus = "not-enabled" | "connected" | "disconnected" | "attention";
+
+export interface AdapterFamilyStatusInfo {
+  status: AdapterFamilyStatus;
+  tone: StatusTone;
+  label: string;
+  connectedCount: number;
+  disconnectedCount: number;
+  total: number;
+  tooltip: string | null;
+}
+
+export function familyStatus(adapter: ConsoleAdapter): AdapterFamilyStatusInfo {
+  return familyStatusFromAccounts(adapter.accounts);
+}
+
+export function familyStatusFromAccounts(
+  accounts: readonly ConsoleAdapterAccount[],
+): AdapterFamilyStatusInfo {
+  const total = accounts.length;
+  const connectedCount = accounts.filter(
+    (account) => account.connected && account.authenticated && !account.error,
+  ).length;
+  const disconnectedCount = total - connectedCount;
+
+  if (total === 0) {
+    return {
+      status: "not-enabled",
+      tone: "idle",
+      label: "NOT ENABLED",
+      connectedCount,
+      disconnectedCount,
+      total,
+      tooltip: null,
+    };
+  }
+
+  if (connectedCount === total) {
+    return {
+      status: "connected",
+      tone: "online",
+      label: "CONNECTED",
+      connectedCount,
+      disconnectedCount,
+      total,
+      tooltip: null,
+    };
+  }
+
+  if (connectedCount === 0) {
+    return {
+      status: "disconnected",
+      tone: "error",
+      label: "DISCONNECTED",
+      connectedCount,
+      disconnectedCount,
+      total,
+      tooltip: null,
+    };
+  }
+
+  return {
+    status: "attention",
+    tone: "warn",
+    label: "ATTENTION",
+    connectedCount,
+    disconnectedCount,
+    total,
+    tooltip: `${connectedCount} connected / ${disconnectedCount} disconnected`,
+  };
+}
+
+/** Messenger platforms GSV supports, in display order. These are ALWAYS shown
+ *  (as "NOT ENABLED" when no bot is connected) — there is no empty state. */
+export const SUPPORTED_MESSENGER_ADAPTERS = ["telegram", "discord"] as const;
+
+export interface MessengerFamily {
+  adapter: string;
+  accounts: ConsoleAdapterAccount[];
+  status: AdapterFamilyStatusInfo;
+}
+
+/** Group a flat list of adapter accounts into the canonical supported platforms,
+ *  each with its aggregated family status. Always returns one entry per platform. */
+export function messengerFamilies(
+  accounts: readonly ConsoleAdapterAccount[],
+): MessengerFamily[] {
+  return SUPPORTED_MESSENGER_ADAPTERS.map((adapter) => {
+    const own = accounts.filter((account) => account.adapter === adapter);
+    return { adapter, accounts: own, status: familyStatusFromAccounts(own) };
+  });
+}
+
+export function deriveTelegramAccountId(botToken: string): string {
+  const separator = botToken.indexOf(":");
+  if (separator <= 0) {
+    return "bot";
+  }
+  const botId = botToken.slice(0, separator).trim();
+  return /^\d+$/.test(botId) ? botId : "bot";
+}

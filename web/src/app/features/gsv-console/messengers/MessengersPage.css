@@ -1,0 +1,163 @@
+/* Messengers roster — modelled on the Crew page: glyph-textured panel capping a
+   responsive grid of platform cards (one per supported messenger). */
+.gsv-messengers {
+  position: relative;
+  flex: 1;
+  min-height: 100%;
+  overflow: hidden;
+  background: var(--void);
+}
+
+.gsv-messengers::before,
+.gsv-messengers::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.gsv-messengers::before {
+  z-index: 0;
+  background-image:
+    linear-gradient(rgba(150, 140, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(150, 140, 255, 0.04) 1px, transparent 1px);
+  background-size: 46px 46px;
+}
+
+.gsv-messengers::after {
+  z-index: 1;
+  background:
+    radial-gradient(circle at 16% 13%, rgba(182, 177, 255, 0.12), transparent 1px),
+    radial-gradient(circle at 62% 8%, rgba(205, 213, 230, 0.12), transparent 1px),
+    radial-gradient(circle at 85% 30%, rgba(182, 177, 255, 0.1), transparent 1px),
+    radial-gradient(circle at 40% 52%, rgba(205, 213, 230, 0.11), transparent 1px),
+    radial-gradient(circle at 22% 78%, rgba(182, 177, 255, 0.09), transparent 1px);
+}
+
+.gsv-messengers-panel {
+  position: relative;
+  z-index: 2;
+  min-height: 100%;
+  border: 1px solid var(--border-raised);
+  background: rgba(9, 7, 26, 0.72);
+  box-shadow: inset 0 0 0 1px #060414, 0 0 30px rgba(80, 70, 180, 0.1);
+}
+
+.gsv-messengers-grid {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(312px, 1fr));
+  align-items: stretch;
+  gap: 22px;
+  padding: 26px;
+}
+
+.gsv-messengers-link-code {
+  min-width: 0;
+  display: flex;
+  justify-content: center;
+  padding: 24px 26px 0;
+}
+
+/* ── Card ─────────────────────────────────────────────────────────── */
+.gsv-messenger-card {
+  min-width: 0;
+  min-height: 430px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  box-shadow: 0 0 22px rgba(60, 52, 150, 0.12);
+}
+
+.gsv-messenger-card-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 20px 22px;
+  border-bottom: 1px solid var(--border);
+  background: var(--header-bar);
+}
+
+.gsv-messenger-card-glyph {
+  flex: none;
+  width: 46px;
+  height: 46px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-raised);
+  background: var(--panel-2);
+  color: var(--accent-bright);
+}
+
+.gsv-messenger-card-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  align-items: flex-start;
+}
+
+.gsv-messenger-card-name {
+  font-family: var(--gsv-font-mono);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--text-hi);
+  text-shadow: 0 0 7px rgba(150, 140, 255, 0.35);
+}
+
+.gsv-messenger-card-body {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px 22px;
+}
+
+.gsv-messenger-card-blurb {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.65;
+  letter-spacing: 0.03em;
+  color: #9a95d8;
+}
+
+.gsv-messenger-card-bots {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.gsv-messenger-card-bots-label {
+  font-family: var(--gsv-font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.22em;
+  color: #7d78b8;
+  padding-bottom: 2px;
+}
+
+.gsv-messenger-card-bots .lr {
+  border: 1px solid var(--rule-inner);
+}
+
+.gsv-messenger-card-hint {
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.gsv-messenger-card-foot {
+  margin-top: auto;
+  padding: 16px 22px 20px;
+  border-top: 1px solid var(--border);
+}
+
+@media (max-width: 680px) {
+  .gsv-messengers-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+    padding: 16px;
+  }
+}

@@ -66,22 +66,149 @@
   overflow: hidden;
 }
 
-.gsv-messenger-flow-panel > .gsv-messenger-form-grid,
+.gsv-messenger-flow-panel > .gsv-messenger-steps,
+.gsv-messenger-flow-panel > .gsv-messenger-caps,
+.gsv-messenger-flow-panel > .gsv-messenger-success-lede,
 .gsv-messenger-flow-panel > .gsv-messenger-form-note,
 .gsv-messenger-flow-panel > .gsv-messenger-form-error,
-.gsv-messenger-flow-panel > .gsv-messenger-challenge,
 .gsv-messenger-flow-panel > p {
   margin-inline: 22px;
 }
 
-.gsv-messenger-form-grid {
+/* Numbered prep steps + token field */
+.gsv-messenger-steps {
   display: grid;
-  gap: 18px;
+  gap: 20px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
-.gsv-messenger-form-grid .lr {
-  border: 1px solid var(--rule-inner) !important;
-  background: rgba(11, 8, 30, 0.48) !important;
+.gsv-messenger-step {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.gsv-messenger-step-num {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border: 1px solid var(--rule-inner);
+  background: rgba(11, 8, 30, 0.48);
+  color: var(--accent);
+  font-family: var(--gsv-font-mono);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.gsv-messenger-step-body {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.gsv-messenger-step-title {
+  color: var(--text-hi);
+  font-family: var(--gsv-font-mono);
+  font-size: 12.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.gsv-messenger-step-text {
+  margin: 0;
+  max-width: 60ch;
+  color: var(--label);
+  font-family: var(--gsv-font-prose);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.gsv-messenger-step-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+}
+
+.gsv-messenger-token-field {
+  margin-top: 4px;
+}
+
+/* Help links */
+.gsv-messenger-help-link {
+  display: inline-flex;
+  align-items: center;
+  color: var(--accent);
+  font-family: var(--gsv-font-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-decoration: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  padding-bottom: 1px;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+
+.gsv-messenger-help-link:hover,
+.gsv-messenger-help-link:focus-visible {
+  color: var(--text-hi);
+  border-bottom-color: var(--text-hi);
+  outline: none;
+}
+
+/* Success — capabilities */
+.gsv-messenger-success-lede {
+  margin: 0;
+  color: var(--label);
+  font-family: var(--gsv-font-prose);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.gsv-messenger-caps {
+  display: grid;
+  gap: 14px;
+}
+
+.gsv-messenger-caps-title {
+  color: var(--text-hi);
+  font-family: var(--gsv-font-mono);
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.gsv-messenger-caps-list {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.gsv-messenger-caps-list li {
+  display: grid;
+  gap: 3px;
+  padding: 12px 14px;
+  border: 1px solid var(--rule-inner);
+  background: rgba(11, 8, 30, 0.48);
+}
+
+.gsv-messenger-cap-title {
+  color: var(--text-hi);
+  font-family: var(--gsv-font-mono);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+}
+
+.gsv-messenger-cap-detail {
+  color: var(--label);
+  font-family: var(--gsv-font-prose);
+  font-size: 12.5px;
+  line-height: 1.45;
 }
 
 .gsv-messenger-form-note,
@@ -98,39 +225,6 @@
 
 .gsv-messenger-form-error {
   color: var(--error);
-}
-
-.gsv-messenger-challenge {
-  display: grid;
-  gap: 16px;
-  padding: 18px;
-}
-
-.gsv-messenger-challenge p,
-.gsv-messenger-challenge small {
-  margin: 0;
-  color: #9d96d8;
-  font-family: var(--gsv-font-prose);
-  font-size: 13px;
-  line-height: 1.55;
-}
-
-.gsv-messenger-challenge img {
-  width: min(280px, 100%);
-  image-rendering: pixelated;
-  background: #fff;
-}
-
-.gsv-messenger-challenge pre {
-  max-width: 100%;
-  overflow: auto;
-  margin: 0;
-  padding: 14px;
-  border: 1px solid var(--rule-inner);
-  color: var(--text);
-  background: #08061d;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
 }
 
 .gsv-messenger-flow-actions {
@@ -155,10 +249,11 @@
     grid-column: 2;
   }
 
-  .gsv-messenger-flow-panel > .gsv-messenger-form-grid,
+  .gsv-messenger-flow-panel > .gsv-messenger-steps,
+  .gsv-messenger-flow-panel > .gsv-messenger-caps,
+  .gsv-messenger-flow-panel > .gsv-messenger-success-lede,
   .gsv-messenger-flow-panel > .gsv-messenger-form-note,
   .gsv-messenger-flow-panel > .gsv-messenger-form-error,
-  .gsv-messenger-flow-panel > .gsv-messenger-challenge,
   .gsv-messenger-flow-panel > p {
     margin-inline: 16px;
   }
