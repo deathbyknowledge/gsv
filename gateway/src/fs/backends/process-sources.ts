@@ -1276,17 +1276,13 @@ function visibleSourcePackages(
 
 function visibleSourceRepos(
   summaries?: RepoSummary[] | null,
-  records?: InstalledPackageRecord[],
-  mounts?: ProcessMount[] | null,
+  _records?: InstalledPackageRecord[],
+  _mounts?: ProcessMount[] | null,
 ): SourceRepo[] {
-  const hiddenPackageRepos = mounts ? packageSourceRepos(records ?? []) : null;
   const repos = new Map<string, SourceRepo>();
   for (const summary of summaries ?? []) {
     const parsed = sourceRepoForSummary(summary);
     if (!parsed) {
-      continue;
-    }
-    if (hiddenPackageRepos?.has(parsed.repo)) {
       continue;
     }
     repos.set(parsed.repo, parsed);
@@ -1295,19 +1291,6 @@ function visibleSourceRepos(
     const owner = left.owner.localeCompare(right.owner);
     return owner !== 0 ? owner : left.name.localeCompare(right.name);
   });
-}
-
-function packageSourceRepos(records: InstalledPackageRecord[]): Set<string> {
-  const repos = new Set<string>();
-  for (const record of records) {
-    try {
-      const parsed = parseRepoSlug(record.manifest.source.repo);
-      repos.add(`${parsed.owner}/${parsed.repo}`);
-    } catch {
-      continue;
-    }
-  }
-  return repos;
 }
 
 function sourceRepoForSummary(summary: RepoSummary): SourceRepo | null {

@@ -363,6 +363,67 @@ describe("createProcessSourceBackend", () => {
     await expect(backend!.readFile("/src/repos/bob/private/README.md")).rejects.toThrow("no such source repo");
   });
 
+  it("keeps package source repos visible under /src/repos for automatic package mounts", async () => {
+    const pkg = makePackage({
+      packageId: "builtin:chat",
+      scope: { kind: "global" },
+      manifest: {
+        ...makePackage().manifest,
+        name: "Chat",
+        source: {
+          repo: "root/gsv",
+          ref: "main",
+          subdir: "packages/chat",
+          resolvedCommit: "gsvbase123",
+        },
+      },
+    });
+    const backend = createProcessSourceBackend({
+      identity: IDENTITY,
+      storage: makeBucket(),
+      packages: [pkg],
+      repos: [
+        makeRepo("root/gsv", { kind: "package", public: false, writable: false }),
+        makeRepo("root/gsv-manual", { kind: "user", public: true, writable: false }),
+      ],
+      mounts: [{
+        kind: "ripgit-source",
+        mountPath: "/src/packages/chat",
+        packageId: pkg.packageId,
+        scope: pkg.scope,
+        repo: "root/gsv",
+        ref: "main",
+        subdir: "packages/chat",
+        resolvedCommit: "gsvbase123",
+      }],
+      processId: "task:source",
+      config: makeConfig(),
+      ripgit: {
+        readPath: async (repo: { owner: string; repo: string; branch?: string }, path: string) => {
+          if (repo.owner === "root" && repo.repo === "gsv" && path === "README.md") {
+            return {
+              kind: "file",
+              bytes: new TextEncoder().encode("gsv source\n"),
+              size: 11,
+            };
+          }
+          if (repo.owner === "root" && repo.repo === "gsv" && path === "packages/chat/package.json") {
+            return {
+              kind: "file",
+              bytes: new TextEncoder().encode("{\"name\":\"chat\"}\n"),
+              size: 16,
+            };
+          }
+          return { kind: "missing" };
+        },
+      } as any,
+    });
+
+    await expect(backend!.readdir("/src/repos/root")).resolves.toEqual(["gsv", "gsv-manual"]);
+    await expect(backend!.readFile("/src/repos/root/gsv/README.md")).resolves.toBe("gsv source\n");
+    await expect(backend!.readFile("/src/packages/chat/package.json")).resolves.toContain("chat");
+  });
+
   it("preserves exact package source repo mounts when generic repo owners overlap", async () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
@@ -463,14 +524,12 @@ describe("createProcessSourceBackend", () => {
 
     expect(backend).not.toBeNull();
     await expect(backend!.readdir("/src/packages")).resolves.toEqual([]);
-    await expect(backend!.readdir("/src/repos/sam")).resolves.toEqual(["docs"]);
+    await expect(backend!.readdir("/src/repos/sam")).resolves.toEqual(["docs", "pkg-test"]);
     await expect(backend!.readFile("/src/packages/sample-console/src/index.ts"))
       .rejects.toThrow("no such package source");
-    await expect(backend!.readFile("/src/repos/sam/pkg-test/README.md"))
-      .rejects.toThrow("no such source repo");
   });
 
-  it("hides unmounted package repos from generic repo mounts", async () => {
+  it("keeps canonical repos visible alongside package mounts", async () => {
     const app = makePackage({
       packageId: "import:sam/mono:packages/app",
       manifest: {
@@ -524,6 +583,13 @@ describe("createProcessSourceBackend", () => {
               size: 25,
             };
           }
+          if (path === "packages/other/index.ts") {
+            return {
+              kind: "file",
+              bytes: new TextEncoder().encode("export const other = true;\n"),
+              size: 27,
+            };
+          }
           return { kind: "missing" };
         },
       } as any,
@@ -533,11 +599,17 @@ describe("createProcessSourceBackend", () => {
     await expect(backend!.readFile("/src/packages/other-tool/index.ts"))
       .rejects.toThrow("no such package source");
     await expect(backend!.readFile("/src/repos/sam/mono/packages/other/index.ts"))
-      .rejects.toThrow("no such source repo");
-    expect(readCalls).toEqual([{
-      repo: { owner: "sam", repo: "mono", branch: "base123" },
-      path: "packages/app/index.ts",
-    }]);
+      .resolves.toContain("other = true");
+    expect(readCalls).toEqual([
+      {
+        repo: { owner: "sam", repo: "mono", branch: "base123" },
+        path: "packages/app/index.ts",
+      },
+      {
+        repo: { owner: "sam", repo: "mono", branch: "main" },
+        path: "packages/other/index.ts",
+      },
+    ]);
   });
 
   it("stages package source edits and commits them explicitly", async () => {
