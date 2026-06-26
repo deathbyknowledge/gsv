@@ -23,6 +23,7 @@ import {
 } from "../domain/agentPresentation";
 import type {
   ConsoleAccount,
+  ConsoleAdapter,
   ConsoleAdapterAccount,
   ConsoleConfigEntry,
   ConsoleMcpServer,
@@ -650,6 +651,7 @@ function ModelsTasksPanel({
 
 function FleetPanel({
   adapters,
+  adapterInventory,
   integrations,
   onOpenListCreate,
   onOpenListDetail,
@@ -657,6 +659,7 @@ function FleetPanel({
   targets,
 }: {
   adapters: readonly ConsoleAdapterAccount[];
+  adapterInventory: readonly ConsoleAdapter[];
   integrations: readonly ConsoleMcpServer[];
   onOpenListCreate?: OpenListCreate;
   onOpenListDetail?: OpenListDetail;
@@ -664,7 +667,7 @@ function FleetPanel({
   targets: readonly ConsoleTarget[];
 }) {
   const targetRows = sortTargets(targets).map(targetRow);
-  const adapterRows = messengerFamilies(adapters).map(familyRow);
+  const adapterRows = messengerFamilies(adapters, adapterInventory).map(familyRow);
   const integrationRows = sortMcpServers(integrations).map(integrationRow);
   const openList = (surface: ConsoleOverviewTarget) => onOpenSurface ? () => onOpenSurface(surface) : undefined;
   const openDetail = (kind: ConsoleListKind, row: OverviewRow, surface: ConsoleOverviewTarget) => (
@@ -804,6 +807,7 @@ export function SettingsOverviewDashboard({
       <div class="gsv-settings-right">
         <FleetPanel
           adapters={data.adapters}
+          adapterInventory={data.adapterInventory}
           integrations={data.mcpServers}
           onOpenListCreate={onOpenListCreate}
           onOpenListDetail={onOpenListDetail}

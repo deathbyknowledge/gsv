@@ -102,7 +102,7 @@ export function buildDesktopObjectsFromConsole(data: ConsoleOverviewData | null 
     },
     messengers: {
       id: "messengers",
-      children: messengerFamilies(safeArray(data?.adapters)).map(familyToChild),
+      children: messengerFamilies(safeArray(data?.adapters), safeArray(data?.adapterInventory)).map(familyToChild),
     },
     integrations: {
       id: "integrations",

@@ -11,7 +11,7 @@ import { ConsoleDetailHeader } from "../components/ConsoleDetailHeader";
 import type { ConnectConsoleAdapterResult, IdentityLinkMutationResult } from "../backend/consoleService";
 import { useConnectConsoleAdapter, useConsumeIdentityLinkCode } from "../hooks/useConsoleData";
 import { BOTFATHER_URL, DISCORD_DEVELOPER_URL, MESSENGER_CAPABILITIES, adapterDocUrl } from "./messengerDocs";
-import { adapterDetailId, adapterName, deriveTelegramAccountId, iconForAdapterName } from "./messengerPresentation";
+import { adapterDetailId, adapterName, deriveAccountId, iconForAdapterName } from "./messengerPresentation";
 import "./MessengerOnboardingFlow.css";
 
 type MessengerOnboardingFlowProps = {
@@ -54,7 +54,7 @@ export function MessengerOnboardingFlow({
   const isTelegram = adapterId === "telegram";
   const name = adapterName(adapterId);
   const docUrl = adapterDocUrl(adapterId);
-  const botConnected = Boolean(result?.ok);
+  const botConnected = Boolean(result?.ok && result?.connected && result?.authenticated);
   const linked = linkResultText.length > 0;
   const canSubmit = token.trim().length > 0 && !connect.isPending;
   const canLinkUser = botConnected && linkCode.trim().length > 0 && !consumeLinkCode.isPending;
@@ -80,18 +80,29 @@ export function MessengerOnboardingFlow({
     }
     setFormError("");
     try {
-      const accountId = isTelegram ? deriveTelegramAccountId(token) : "main";
+      const accountId = deriveAccountId(adapterId, token.trim());
       const next = await connect.mutateAsync({
         adapter: adapterId,
         accountId,
         config: { botToken: token.trim() },
       });
-      if (next.ok) {
+      if (next.ok && next.connected && next.authenticated) {
         setResult(next);
         setLinkCode("");
         setLinkError("");
         setLinkResultText("");
         setStep(STEP_LINK);
+        return;
+      }
+      if (next.ok) {
+        // The adapter accepted the token but the bot isn't online/authenticated
+        // yet — e.g. the Discord gateway opened before READY, or the token is
+        // invalid/revoked. Don't advance and claim a false success.
+        setResult(next);
+        setFormError(
+          next.challenge?.message ||
+            "The bot connected but isn't authenticated yet. Check the token is valid, then try again.",
+        );
         return;
       }
       setFormError(next.error || next.message);
