@@ -105,6 +105,7 @@ function makeContext(options?: {
   scheduleScheduleWake?: KernelContext["scheduleScheduleWake"];
   identity?: ProcessIdentity;
   aiRun?: (model: string, input: Record<string, unknown>) => Promise<unknown>;
+  ripgit?: Fetcher;
 }): KernelContext {
   const records = [...(options?.packages ?? [options?.pkg ?? makePackage()])];
   const identity = options?.identity ?? IDENTITY;
@@ -118,7 +119,7 @@ function makeContext(options?: {
   return {
     env: {
       STORAGE: env.STORAGE,
-      RIPGIT: {} as Fetcher,
+      RIPGIT: options?.ripgit ?? {} as Fetcher,
       LOADER: { get() { throw new Error("LOADER should not be used in pkg shell tests"); } },
       ...(options?.aiRun ? { AI: { run: vi.fn(options.aiRun) } } : {}),
     } as unknown as Env,
@@ -1581,6 +1582,52 @@ describe("pkg shell command", () => {
     expect(result.stdout).toContain("Repo: root/pkg-test");
     expect(result.stdout).toContain("No staged changes.");
     expect(result.stderr).toBe("");
+  });
+
+  it("uses the package source ref for repo log from /src/repos", async () => {
+    const calls: string[] = [];
+    const packageRecord = makePackage({
+      manifest: {
+        ...makePackage().manifest,
+        source: {
+          repo: "root/pkg-test",
+          ref: "feature/review",
+          subdir: ".",
+          resolvedCommit: "commit123",
+        },
+      },
+    });
+    const ripgit = {
+      async fetch(input: RequestInfo | URL) {
+        const url = new URL(String(input));
+        calls.push(url.toString());
+        expect(url.pathname).toBe("/hyperspace/repos/root/pkg-test/log");
+        expect(url.searchParams.get("ref")).toBe("feature/review");
+        return Response.json([{
+          hash: "commit123",
+          tree_hash: "tree123",
+          author: "Sam",
+          author_email: "sam@gsv.local",
+          author_time: 1,
+          committer: "Sam",
+          committer_email: "sam@gsv.local",
+          commit_time: 1,
+          message: "package update",
+          parents: [],
+        }]);
+      },
+    } as Fetcher;
+
+    const result = await handleShellExec(
+      { input: "rgit log --here", cwd: "/src/repos/root/pkg-test/src" },
+      makeContext({ capabilities: ["repo.log"], pkg: packageRecord, ripgit }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("commit123");
+    expect(result.stdout).toContain("package update");
+    expect(result.stderr).toBe("");
+    expect(calls).toHaveLength(1);
   });
 
   it("shows review status in pkg list output", async () => {

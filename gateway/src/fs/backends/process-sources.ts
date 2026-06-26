@@ -46,6 +46,7 @@ type SourceRepo = {
   repo: string;
   rootPath: string;
   ref: string;
+  baseRef: string;
   writable: boolean;
 };
 
@@ -844,11 +845,15 @@ export async function commitRepoSourceChanges(
     target,
     sourceBaseRefForPackage(target, state),
   );
-  const branch = args.branch?.trim()
-    ? normalizeSourceBranch(args.branch)
+  const explicitBranch = args.branch?.trim();
+  const branch = explicitBranch
+    ? normalizeSourceBranch(explicitBranch)
     : state?.branch ?? repo.ref;
+  const requestedBranch = explicitBranch || (!state && repo.baseRef === repo.ref)
+    ? branch
+    : undefined;
   const repoRef = parseRepoSlug(repo.repo);
-  const targetRef = await resolveSourceCommitTarget(options.ripgit, repoRef, branch, state, overlay, branch);
+  const targetRef = await resolveSourceCommitTarget(options.ripgit, repoRef, branch, state, overlay, requestedBranch);
   const ops = await overlayApplyOps(options.storage, options.ripgit, target, overlay, targetRef.opsBaseRef);
   if (ops.length === 0) {
     const nextState = sourceBranchStateForTarget(state, branch, targetRef, null);
@@ -928,12 +933,14 @@ function visibleSourceRepos(
 function sourceRepoForSummary(summary: RepoSummary): SourceRepo | null {
   try {
     const parsed = parseRepoSlug(summary.repo || `${summary.owner}/${summary.name}`);
+    const ref = sourceRefForSummary(summary);
     return {
       owner: parsed.owner,
       name: parsed.repo,
       repo: `${parsed.owner}/${parsed.repo}`,
       rootPath: `/src/repos/${parsed.owner}/${parsed.repo}`,
-      ref: sourceRefForSummary(summary),
+      ref,
+      baseRef: sourceBaseRefForSummary(summary, ref),
       writable: summary.writable,
     };
   } catch {
@@ -945,6 +952,12 @@ function sourceRefForSummary(summary: RepoSummary): string {
   return typeof summary.ref === "string" && summary.ref.trim().length > 0
     ? summary.ref.trim()
     : DEFAULT_REPO_REF;
+}
+
+function sourceBaseRefForSummary(summary: RepoSummary, fallback: string): string {
+  return typeof summary.baseRef === "string" && summary.baseRef.trim().length > 0
+    ? summary.baseRef.trim()
+    : fallback;
 }
 
 function throwMissingSourcePath(path: string): never {
@@ -975,7 +988,7 @@ function sourcePackageForRepo(repo: SourceRepo): SourcePackage {
         repo: repo.repo,
         ref: repo.ref,
         subdir: ".",
-        resolvedCommit: null,
+        resolvedCommit: repo.baseRef,
       },
     },
   } as InstalledPackageRecord;
@@ -984,7 +997,7 @@ function sourcePackageForRepo(repo: SourceRepo): SourcePackage {
     repo: repo.repo,
     sourceRef: repo.ref,
     sourceSubdir: ".",
-    resolvedCommit: null,
+    resolvedCommit: repo.baseRef,
   };
 }
 
@@ -1048,7 +1061,7 @@ function sourceStatusForRepo(
   return {
     repo: repo.repo,
     sourceRef: repo.ref,
-    baseRef: explicitState?.baseRef ?? repo.ref,
+    baseRef: explicitState?.baseRef ?? repo.baseRef,
     branch: explicitState?.branch ?? null,
     head: explicitState?.head ?? null,
     changes: sortedOverlayChanges(overlay).map((change) => ({

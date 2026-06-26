@@ -6,6 +6,7 @@ export type RepoSummary = {
   writable: boolean;
   public: boolean;
   ref?: string;
+  baseRef?: string;
   description?: string;
   updatedAt?: number;
 };

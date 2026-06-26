@@ -58,12 +58,14 @@ export function handleRepoList(
       return;
     }
     const ref = existing.ref ?? summary.ref;
+    const baseRef = existing.baseRef ?? summary.baseRef;
     repos.set(summary.repo, {
       ...existing,
       writable: existing.writable || summary.writable,
       public: existing.public || summary.public,
       kind: existing.kind === "user" ? summary.kind : existing.kind,
       ...(ref ? { ref } : {}),
+      ...(baseRef ? { baseRef } : {}),
       updatedAt: Math.max(existing.updatedAt ?? 0, summary.updatedAt ?? 0) || undefined,
     });
   };
@@ -75,7 +77,7 @@ export function handleRepoList(
     const repo = parseRepoSlug(record.manifest.source.repo);
     add({
       ...toSummary(repo, "package", ctx),
-      ...sourceRefField(record.manifest.source.resolvedCommit, record.manifest.source.ref),
+      ...packageSourceRefFields(record.manifest.source.ref, record.manifest.source.resolvedCommit),
       description: record.manifest.name,
       updatedAt: record.updatedAt,
     });
@@ -450,14 +452,21 @@ function toSummary(
   };
 }
 
-function sourceRefField(...refs: Array<string | null | undefined>): Pick<RepoSummary, "ref"> {
-  for (const ref of refs) {
-    const normalized = typeof ref === "string" ? ref.trim() : "";
-    if (normalized) {
-      return { ref: normalized };
-    }
-  }
-  return {};
+function packageSourceRefFields(
+  sourceRef: string | null | undefined,
+  resolvedCommit: string | null | undefined,
+): Pick<RepoSummary, "ref" | "baseRef"> {
+  const ref = normalizeSummaryRef(sourceRef);
+  const baseRef = normalizeSummaryRef(resolvedCommit);
+  return {
+    ...(ref ? { ref } : {}),
+    ...(baseRef ? { baseRef } : {}),
+  };
+}
+
+function normalizeSummaryRef(ref: string | null | undefined): string | null {
+  const normalized = typeof ref === "string" ? ref.trim() : "";
+  return normalized || null;
 }
 
 function repoPackageScopeIdentity(ctx: KernelContext, fallback: ProcessIdentity): ProcessIdentity {

@@ -403,7 +403,7 @@ describe("createProcessSourceBackend", () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage: makeBucket(),
-      repos: [makeRepo("root/gsv", { kind: "package", writable: false, ref: "commit123" })],
+      repos: [makeRepo("root/gsv", { kind: "package", writable: false, ref: "feature/review", baseRef: "commit123" })],
       processId: "task:source",
       config: makeConfig(),
       ripgit: {
@@ -426,6 +426,66 @@ describe("createProcessSourceBackend", () => {
       repo: { owner: "root", repo: "gsv", branch: "commit123" },
       path: "packages/chat/package.json",
     }]);
+  });
+
+  it("commits package source repos to the package source ref by default", async () => {
+    const config = makeConfig();
+    const storage = makeBucket();
+    const applyCalls: any[] = [];
+    const readCalls: Array<{ repo: { owner: string; repo: string; branch?: string }; path: string }> = [];
+    const ripgit = {
+      readPath: async (repo: { owner: string; repo: string; branch?: string }, path: string) => {
+        readCalls.push({ repo, path });
+        return { kind: "missing" };
+      },
+      refs: async () => ({ heads: {}, tags: {} }),
+      apply: async (...args: any[]) => {
+        applyCalls.push(args);
+        return { head: "featurehead123" };
+      },
+    } as any;
+    const repos = [makeRepo("sam/pkg-test", {
+      kind: "package",
+      writable: true,
+      ref: "feature/review",
+      baseRef: "commit123",
+    })];
+    const backend = createProcessSourceBackend({
+      identity: IDENTITY,
+      storage,
+      repos,
+      processId: "task:source",
+      config,
+      ripgit,
+    });
+
+    await backend!.writeFile("/src/repos/sam/pkg-test/packages/sample-console/src/index.ts", "export const review = true;\n");
+    const result = await commitRepoSourceChanges({
+      identity: IDENTITY,
+      storage,
+      repos,
+      processId: "task:source",
+      config,
+      ripgit,
+    }, "sam/pkg-test", { message: "repo: update package" });
+
+    expect(result).toMatchObject({
+      sourceRef: "feature/review",
+      baseRef: "commit123",
+      branch: "feature/review",
+      head: "featurehead123",
+    });
+    expect(readCalls).toEqual([{
+      repo: { owner: "sam", repo: "pkg-test", branch: "commit123" },
+      path: "packages/sample-console/src/index.ts",
+    }]);
+    expect(applyCalls).toHaveLength(1);
+    expect(applyCalls[0][0]).toEqual({
+      owner: "sam",
+      repo: "pkg-test",
+      branch: "feature/review",
+    });
+    expect(applyCalls[0][5]).toEqual({ baseRef: "commit123" });
   });
 
   it("reads package subdirectories through the canonical repo path", async () => {

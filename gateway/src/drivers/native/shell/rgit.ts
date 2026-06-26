@@ -90,13 +90,13 @@ async function runRgitCommand(
     case "read": {
       requireCommandCapability(ctx, "repo.read");
       const parsed = parseReadArgs(rest, cwd);
-      const result = await handleRepoRead(parsed, ctx);
+      const result = await handleRepoRead(withDefaultRepoRef(parsed, ctx), ctx);
       return { stdout: formatRepoRead(result), stderr: "", exitCode: 0 };
     }
     case "search": {
       requireCommandCapability(ctx, "repo.search");
       const parsed = parseSearchArgs(rest, cwd);
-      const result = await handleRepoSearch(parsed, ctx);
+      const result = await handleRepoSearch(withDefaultRepoRef(parsed, ctx), ctx);
       return { stdout: formatRepoSearch(result), stderr: "", exitCode: 0 };
     }
     case "refs": {
@@ -108,7 +108,7 @@ async function runRgitCommand(
     case "log": {
       requireCommandCapability(ctx, "repo.log");
       const parsed = parseLogArgs(rest, cwd);
-      const result = await handleRepoLog(parsed, ctx);
+      const result = await handleRepoLog(withDefaultRepoRef(parsed, ctx), ctx);
       return { stdout: formatRepoLog(result), stderr: "", exitCode: 0 };
     }
     case "status": {
@@ -209,6 +209,19 @@ function processSourceOptions(ctx: KernelContext) {
     processId: ctx.processId ?? null,
     config: ctx.config,
   };
+}
+
+function withDefaultRepoRef<T extends { repo: string; ref?: string }>(parsed: T, ctx: KernelContext): T {
+  if (parsed.ref) {
+    return parsed;
+  }
+  const ref = defaultRepoRef(ctx, parsed.repo);
+  return ref ? { ...parsed, ref } : parsed;
+}
+
+function defaultRepoRef(ctx: KernelContext, repo: string): string | null {
+  const found = handleRepoList(undefined, ctx).repos.find((summary) => summary.repo === repo);
+  return found?.ref ?? null;
 }
 
 function parseRepoTarget(args: string[], cwd: string, startIndex = 0): RepoTarget {

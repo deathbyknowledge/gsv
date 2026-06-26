@@ -833,7 +833,7 @@ type RepoDiffFile = {
 type RepoSyscalls = {
   "repo.list": {
     args: { owner?: string };
-    result: { repos: Array<{ repo: string; owner: string; name: string; kind: "home" | "workspace" | "package" | "user"; writable: boolean; public: boolean; ref?: string; description?: string; updatedAt?: number }> };
+    result: { repos: Array<{ repo: string; owner: string; name: string; kind: "home" | "workspace" | "package" | "user"; writable: boolean; public: boolean; ref?: string; baseRef?: string; description?: string; updatedAt?: number }> };
   };
 
   "repo.create": {

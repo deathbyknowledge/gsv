@@ -433,7 +433,8 @@ describe("repo syscalls", () => {
       kind: "package",
       writable: false,
       public: false,
-      ref: "commit123",
+      ref: "feature/wiki",
+      baseRef: "commit123",
       description: "Wiki",
       updatedAt: 200,
     });
