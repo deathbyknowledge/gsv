@@ -3,6 +3,7 @@ import type { ConsoleConfigEntry } from "./consoleModels";
 import {
   defaultModelLabelForConfig,
   modelConfigCount,
+  modelLabelsForConfig,
   modelProfilesForConfig,
   overrideConfigEntries,
 } from "./consoleAi";
@@ -47,5 +48,30 @@ describe("console AI config classification", () => {
       "config/ai/provider": "openai",
       "config/ai/model": "gpt-5",
     });
+  });
+
+  it("lists only chat model overrides and profile models as LLM options", () => {
+    const labels = modelLabelsForConfig([
+      { key: "config/ai/model", value: "system-llm", redacted: false },
+      { key: "config/ai/image/read/model", value: "vision-model", redacted: false },
+      { key: "config/ai/speech/model", value: "voice-model", redacted: false },
+      { key: "users/1/ai/model", value: "agent-llm", redacted: false },
+      {
+        key: "users/1/ai/model_profiles",
+        value: JSON.stringify({
+          profiles: [{
+            id: "profile-fast",
+            name: "Profile Fast",
+            values: {
+              "config/ai/model": "profile-llm",
+              "config/ai/image/read/model": "profile-vision",
+            },
+          }],
+        }),
+        redacted: false,
+      },
+    ]);
+
+    expect(labels).toEqual(["system-llm", "agent-llm", "profile-llm"]);
   });
 });

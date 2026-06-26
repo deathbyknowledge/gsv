@@ -78,7 +78,8 @@ export type SaveConsoleAgentBehaviorResult = {
 
 export type SaveConsoleConfigInput = {
   key: string;
-  value: string;
+  value?: string;
+  copyFromKey?: string;
 };
 
 export type SaveConsoleConfigResult = {
@@ -240,6 +241,10 @@ export async function saveConsoleConfig(
   }
 
   const value = String(input.value ?? "");
+  if (input.copyFromKey) {
+    await client.sys.config.set({ key, copyFromKey: input.copyFromKey });
+    return { ok: true, key, value };
+  }
   await client.sys.config.set({ key, value });
   return { ok: true, key, value };
 }

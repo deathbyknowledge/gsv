@@ -46,6 +46,14 @@ export const PROCESS_AI_CONFIG_SECRET_KEYS = new Set<string>(
   PROCESS_AI_CONFIG_KEYS.filter((key) => key === "config/ai/api_key" || key.endsWith("/api_key")),
 );
 
+export type ProcessAiModelProfile = {
+  id: string;
+  name: string;
+  values: Record<string, string>;
+  createdAt: number;
+  updatedAt: number;
+};
+
 const PROCESS_AI_ROOT_FILES = [
   "effective.json",
   "local.json",
@@ -201,4 +209,96 @@ function normalizeProfileRef(raw: unknown, fallbackAppliedAt: number): ProcAiCon
 function normalizeOptionalText(value: unknown): string | undefined {
   const normalized = String(value ?? "").trim();
   return normalized.length > 0 ? normalized : undefined;
+}
+
+export function parseProcessAiModelProfiles(
+  raw: string | null | undefined,
+  ownerUid: number,
+  getConfigValue?: (key: string) => string | null,
+): ProcessAiModelProfile[] {
+  if (!raw) {
+    return [];
+  }
+
+  try {
+    const payload = JSON.parse(raw) as { profiles?: unknown[] };
+    const profiles = Array.isArray(payload.profiles) ? payload.profiles : [];
+    return profiles
+      .map(normalizeProcessAiModelProfile)
+      .filter((profile): profile is ProcessAiModelProfile => profile !== null)
+      .map((profile) => getConfigValue
+        ? hydrateProcessAiModelProfileSecrets(ownerUid, profile, getConfigValue)
+        : profile)
+      .sort((left, right) => right.updatedAt - left.updatedAt || left.name.localeCompare(right.name));
+  } catch {
+    return [];
+  }
+}
+
+export function findProcessAiModelProfile(
+  raw: string | null | undefined,
+  ownerUid: number,
+  selector: string,
+  getConfigValue?: (key: string) => string | null,
+): ProcessAiModelProfile | null {
+  const normalized = selector.trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+  return parseProcessAiModelProfiles(raw, ownerUid, getConfigValue).find((profile) =>
+    profile.id.toLowerCase() === normalized ||
+    profile.name.toLowerCase() === normalized
+  ) ?? null;
+}
+
+export function processAiModelProfileSecretConfigKey(
+  ownerUid: number,
+  profileId: string,
+  configKey: string,
+): string {
+  return `users/${ownerUid}/ai/model_profiles/${profileId}/${processAiConfigSuffix(configKey)}`;
+}
+
+function normalizeProcessAiModelProfile(raw: unknown): ProcessAiModelProfile | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return null;
+  }
+  const record = raw as Record<string, unknown>;
+  const id = normalizeProfileText(record.id).toLowerCase().replace(/[^a-z0-9_-]/g, "");
+  const name = normalizeProfileText(record.name);
+  if (!id || !name) {
+    return null;
+  }
+  return {
+    id,
+    name,
+    values: record.values && typeof record.values === "object" && !Array.isArray(record.values)
+      ? normalizeProcessAiConfigValues(record.values as Record<string, unknown>)
+      : {},
+    createdAt: normalizeProfileTimestamp(record.createdAt),
+    updatedAt: normalizeProfileTimestamp(record.updatedAt),
+  };
+}
+
+function hydrateProcessAiModelProfileSecrets(
+  ownerUid: number,
+  profile: ProcessAiModelProfile,
+  getConfigValue: (key: string) => string | null,
+): ProcessAiModelProfile {
+  const values = { ...profile.values };
+  for (const key of PROCESS_AI_CONFIG_SECRET_KEYS) {
+    const value = getConfigValue(processAiModelProfileSecretConfigKey(ownerUid, profile.id, key));
+    if (value) {
+      values[key] = value;
+    }
+  }
+  return { ...profile, values };
+}
+
+function normalizeProfileText(value: unknown): string {
+  return String(value ?? "").trim().replace(/\s+/g, " ");
+}
+
+function normalizeProfileTimestamp(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
 }

@@ -22,10 +22,12 @@ type ChatDockHeaderProps = {
   effectiveStatus: StatusTone;
   hasActiveProcess: boolean;
   messageCount: number | null | undefined;
+  modelLabel: string;
   openPopover: ChatPopoverId | null;
   processAiConfig: ChatProcessAiConfig;
   processAiConfigBusy: boolean;
   processAiConfigLoading: boolean;
+  reasoningLabel: string;
   runStateLabel: string;
   canStartNewTask: boolean;
   spawnPending: boolean;
@@ -61,10 +63,12 @@ export function ChatDockHeader({
   effectiveStatus,
   hasActiveProcess,
   messageCount,
+  modelLabel,
   openPopover,
   processAiConfig,
   processAiConfigBusy,
   processAiConfigLoading,
+  reasoningLabel,
   runStateLabel,
   canStartNewTask,
   spawnPending,
@@ -112,8 +116,8 @@ export function ChatDockHeader({
           aria-haspopup="menu"
           aria-expanded={openPopover === "model"}
         >
-          <span>{activeAgent.modelLabel}</span>
-          <span>{runStateLabel}</span>
+          <span>{modelLabel}</span>
+          <span>{reasoningLabel}</span>
           <svg class="gsv-chat-agent-chevron" width="8" height="10" viewBox="0 0 8 10" aria-hidden="true">
             <path d="M1 1 L6 5 L1 9" fill="none" stroke="currentColor" stroke-width="1.4" />
           </svg>
@@ -195,6 +199,7 @@ export function ChatDockHeader({
         contextPercent={contextPercent}
         hasActiveProcess={hasActiveProcess}
         messageCount={messageCount}
+        modelLabel={modelLabel}
         openPopover={openPopover}
         processAiConfig={processAiConfig}
         processAiConfigBusy={processAiConfigBusy}

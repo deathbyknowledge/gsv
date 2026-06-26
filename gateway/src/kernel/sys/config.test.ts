@@ -148,6 +148,30 @@ describe("sys.config.get", () => {
     });
   });
 
+  it("copies readable config values without exposing model profile secrets to the caller", () => {
+    const ctx = makeContext(1000, {
+      ...baseEntries,
+      "users/1000/ai/model_profiles/fast/api_key": "sk-profile",
+    });
+
+    expect(handleSysConfigSet({
+      key: "users/1000/ai/api_key",
+      copyFromKey: "users/1000/ai/model_profiles/fast/api_key",
+    }, ctx)).toEqual({ ok: true });
+    expect(handleSysConfigGet({ key: "users/1000/ai/api_key" }, ctx)).toEqual({
+      entries: [{ key: "users/1000/ai/api_key", value: "sk-profile" }],
+    });
+  });
+
+  it("rejects copies from config keys the caller cannot read", () => {
+    const ctx = makeContext(1000, baseEntries);
+
+    expect(() => handleSysConfigSet({
+      key: "users/1000/ai/api_key",
+      copyFromKey: "config/ai/api_key",
+    }, ctx)).toThrow("Permission denied: cannot read config/ai/api_key");
+  });
+
   it("rejects delegated writes outside user-overridable config", () => {
     const ctx = makeContext(1000, baseEntries);
 

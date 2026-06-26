@@ -24,14 +24,14 @@ import {
 import type { ProcessRecord } from "../../kernel/processes";
 import {
   PROCESS_AI_CONFIG_KEYS,
-  PROCESS_AI_CONFIG_SECRET_KEYS,
-  normalizeProcessAiConfigValues,
+  parseProcessAiModelProfiles,
   processAiConfigDirEntries,
   processAiConfigSuffix,
   processAiPathToConfigKey,
   redactProcessAiConfigSnapshot,
   redactProcessAiConfigValue,
   redactProcessAiConfigValues,
+  type ProcessAiModelProfile,
 } from "../../process/ai-config";
 import { packageSourcePathNameForRecord } from "./process-sources";
 import type { MountBackend, ExtendedMountStat } from "../mount";
@@ -494,40 +494,15 @@ export class KernelMountBackend implements MountBackend {
     return values;
   }
 
-  private listProcAiProfiles(ownerUid: number): ProcAiModelProfile[] {
-    const raw = this.kernel?.config?.get(`users/${ownerUid}/ai/model_profiles`);
-    if (!raw) {
-      return [];
-    }
-
-    try {
-      const payload = JSON.parse(raw) as { profiles?: unknown[] };
-      const profiles = Array.isArray(payload.profiles) ? payload.profiles : [];
-      return profiles
-        .map(normalizeProcAiModelProfile)
-        .filter((profile): profile is ProcAiModelProfile => profile !== null)
-        .map((profile) => this.hydrateProcAiProfileSecrets(ownerUid, profile))
-        .sort((left, right) => right.updatedAt - left.updatedAt || left.name.localeCompare(right.name));
-    } catch {
-      return [];
-    }
+  private listProcAiProfiles(ownerUid: number): ProcessAiModelProfile[] {
+    return parseProcessAiModelProfiles(
+      this.kernel?.config?.get(`users/${ownerUid}/ai/model_profiles`),
+      ownerUid,
+      this.kernel ? (key) => this.kernel!.config.get(key) : undefined,
+    );
   }
 
-  private hydrateProcAiProfileSecrets(ownerUid: number, profile: ProcAiModelProfile): ProcAiModelProfile {
-    if (!this.kernel) {
-      return profile;
-    }
-    const values = { ...profile.values };
-    for (const key of PROCESS_AI_CONFIG_SECRET_KEYS) {
-      const value = this.kernel.config.get(procAiModelProfileSecretConfigKey(ownerUid, profile.id, key));
-      if (value) {
-        values[key] = value;
-      }
-    }
-    return { ...profile, values };
-  }
-
-  private findProcAiProfile(ownerUid: number, selector: string): ProcAiModelProfile | null {
+  private findProcAiProfile(ownerUid: number, selector: string): ProcessAiModelProfile | null {
     const normalized = selector.trim().toLowerCase();
     return this.listProcAiProfiles(ownerUid).find((profile) =>
       profile.id.toLowerCase() === normalized ||
@@ -1384,47 +1359,6 @@ function uniquePrefixes(entries: { key: string }[], strip: string): string[] {
     if (first) seen.add(first);
   }
   return [...seen].sort();
-}
-
-type ProcAiModelProfile = {
-  id: string;
-  name: string;
-  values: Record<string, string>;
-  createdAt: number;
-  updatedAt: number;
-};
-
-function normalizeProcAiModelProfile(raw: unknown): ProcAiModelProfile | null {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    return null;
-  }
-  const record = raw as Record<string, unknown>;
-  const id = normalizeProfileText(record.id).toLowerCase().replace(/[^a-z0-9_-]/g, "");
-  const name = normalizeProfileText(record.name);
-  if (!id || !name) {
-    return null;
-  }
-  return {
-    id,
-    name,
-    values: record.values && typeof record.values === "object" && !Array.isArray(record.values)
-      ? normalizeProcessAiConfigValues(record.values as Record<string, unknown>)
-      : {},
-    createdAt: normalizeProfileTimestamp(record.createdAt),
-    updatedAt: normalizeProfileTimestamp(record.updatedAt),
-  };
-}
-
-function normalizeProfileText(value: unknown): string {
-  return String(value ?? "").trim().replace(/\s+/g, " ");
-}
-
-function normalizeProfileTimestamp(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
-}
-
-function procAiModelProfileSecretConfigKey(ownerUid: number, profileId: string, configKey: string): string {
-  return `users/${ownerUid}/ai/model_profiles/${profileId}/${processAiConfigSuffix(configKey)}`;
 }
 
 type PackageInfoFileKind = "list" | "manifest" | "refs";

@@ -79,6 +79,7 @@ describe("context pressure", () => {
       conversationId: "default",
       provider: "workers-ai",
       model: "@cf/test",
+      reasoning: "high",
       contextWindowTokens: 1000,
       maxOutputTokens: 100,
       estimatedInputTokens: 100,
@@ -87,6 +88,7 @@ describe("context pressure", () => {
     });
 
     expect(state.inputTokens).toBe(1000);
+    expect(state.reasoning).toBe("high");
     expect(state.outputTokens).toBe(80);
     expect(state.totalTokens).toBe(1000);
     expect(state.level).toBe("full");

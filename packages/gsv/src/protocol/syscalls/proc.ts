@@ -43,6 +43,8 @@ export type ProcSpawnArgs = {
   runAs?: string;
   /** Whether the process can request human-in-the-loop approval. Background spawns set false. */
   interactive?: boolean;
+  /** Force allocation of a new top-level process instead of reusing the default conversation executor. */
+  fresh?: boolean;
   label?: string;
   prompt?: string;
   assignment?: ProcSpawnAssignment;
@@ -270,6 +272,7 @@ export type ProcContextState = {
   lastMessageId?: number | null;
   provider: string;
   model: string;
+  reasoning?: string;
   contextWindowTokens: number | null;
   maxOutputTokens: number;
   estimatedInputTokens: number;
@@ -313,6 +316,14 @@ export type ProcAiConfigGetResult =
 export type ProcAiConfigSetArgs =
   | {
       clear: true;
+    }
+  | {
+      profileId: string;
+      profileName?: string;
+    }
+  | {
+      profileName: string;
+      profileId?: string;
     }
   | {
       values: Record<string, string>;

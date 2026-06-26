@@ -87,6 +87,8 @@ type SettingsFieldGroupProps = {
   writeKeyForField: (field: ConsoleSettingField) => string;
 };
 
+type ClearedProfileSecretKeys = ReadonlyMap<string, ReadonlySet<string>>;
+
 export function ConsoleConfigPage({ kind }: ConsoleConfigPageProps) {
   const config = useConsoleConfig();
   const accounts = useConsoleAccounts();
@@ -313,13 +315,13 @@ function ModelSettingsDetail({
           onBack();
         } : undefined}
         onMakeDefault={profile ? async (values) => {
-          await makeProfileDefault(viewer, { ...profile, values }, onSaveEntries);
+          await makeProfileDefault(config, viewer, { ...profile, values }, onSaveEntries);
         } : undefined}
-        onSave={async (name, values) => {
+        onSave={async (name, values, clearedSecretKeys) => {
           const nextProfiles = profile
             ? updateModelProfile(profiles, profile.id, name, values)
             : createModelProfile(profiles, name, values);
-          await saveModelProfiles(viewer, profiles, nextProfiles, onSaveEntries);
+          await saveModelProfiles(viewer, profiles, nextProfiles, onSaveEntries, clearedSecretKeys);
           if (!profile) {
             onBack();
           }
@@ -490,6 +492,7 @@ async function saveModelProfiles(
   currentProfiles: readonly ConsoleModelProfile[],
   nextProfiles: readonly ConsoleModelProfile[],
   onSaveEntries: (entries: readonly SaveConsoleConfigInput[]) => Promise<void>,
+  clearedSecretKeys: ClearedProfileSecretKeys = new Map(),
 ): Promise<void> {
   if (viewer.uid === null) {
     throw new Error("A signed-in account is required to save model presets.");
@@ -500,9 +503,15 @@ async function saveModelProfiles(
     value: serializeModelProfiles(nextProfiles),
   }];
   for (const profile of nextProfiles) {
+    const clearedForProfile = clearedSecretKeys.get(profile.id);
     for (const field of MODEL_PROFILE_SECRET_FIELDS) {
       const value = profile.values[field.key] ?? "";
-      if (value.length > 0) {
+      if (clearedForProfile?.has(field.key)) {
+        entries.push({
+          key: modelProfileSecretConfigKey(viewer.uid, profile.id, field.key),
+          value: "",
+        });
+      } else if (value.length > 0) {
         entries.push({
           key: modelProfileSecretConfigKey(viewer.uid, profile.id, field.key),
           value,
@@ -525,6 +534,7 @@ async function saveModelProfiles(
 }
 
 async function makeProfileDefault(
+  config: readonly ConsoleConfigEntry[],
   viewer: SettingsViewer,
   profile: ConsoleModelProfile,
   onSaveEntries: (entries: readonly SaveConsoleConfigInput[]) => Promise<void>,
@@ -532,13 +542,18 @@ async function makeProfileDefault(
   if (viewer.uid === null) {
     throw new Error("A signed-in account is required to update the default model.");
   }
-  await onSaveEntries(MODEL_PROFILE_FIELDS.flatMap((field) => {
+  await onSaveEntries(MODEL_PROFILE_FIELDS.flatMap((field): SaveConsoleConfigInput[] => {
+    const key = viewer.isRoot ? field.key : buildUserAiOverrideKey(viewer.uid!, field.key);
     const value = profile.values[field.key] ?? "";
     if (isSensitiveSettingKey(field.key) && value.length === 0) {
+      const copyFromKey = modelProfileSecretConfigKey(viewer.uid!, profile.id, field.key);
+      if (configEntryForKey(config, copyFromKey)?.redacted === true) {
+        return [{ key, copyFromKey }];
+      }
       return [];
     }
     return [{
-      key: viewer.isRoot ? field.key : buildUserAiOverrideKey(viewer.uid!, field.key),
+      key,
       value,
     }];
   }));
@@ -565,7 +580,11 @@ function ModelProfileForm({
   onCancel: () => void;
   onDelete?: () => Promise<void>;
   onMakeDefault?: (values: Record<string, string>) => Promise<void>;
-  onSave: (name: string, values: Record<string, string>) => Promise<void>;
+  onSave: (
+    name: string,
+    values: Record<string, string>,
+    clearedSecretKeys: ClearedProfileSecretKeys,
+  ) => Promise<void>;
 }) {
   const initialValues = useMemo(
     () => profile ? profile.values : profileValuesFromDrafts(defaultValues),
@@ -573,12 +592,14 @@ function ModelProfileForm({
   );
   const [name, setName] = useState(profile?.name ?? "");
   const [drafts, setDrafts] = useState(initialValues);
+  const [clearedSecretKeys, setClearedSecretKeys] = useState<Set<string>>(() => new Set());
   const [pending, setPending] = useState(false);
   const [statusText, setStatusText] = useState("");
 
   useEffect(() => {
     setName(profile?.name ?? "");
     setDrafts(initialValues);
+    setClearedSecretKeys(new Set());
     setStatusText("");
   }, [initialValues, profile]);
 
@@ -587,6 +608,9 @@ function ModelProfileForm({
     candidate.name.toLowerCase() === name.trim().toLowerCase()
   );
   const canSave = editable && name.trim().length > 0 && !duplicateName && drafts["config/ai/model"]?.trim();
+  const clearedProfileSecretKeys = profile
+    ? new Map([[profile.id, clearedSecretKeys]])
+    : new Map<string, ReadonlySet<string>>();
 
   const run = async (action: () => Promise<void>, successText: string) => {
     setPending(true);
@@ -624,9 +648,25 @@ function ModelProfileForm({
             field={field}
             key={field.key}
             disabled={!editable || pending}
+            cleared={clearedSecretKeys.has(field.key)}
             redacted={isModelProfileFieldRedacted(config, viewer, profile, field)}
             value={drafts[field.key] ?? ""}
-            onChange={(value) => setDrafts((current) => ({ ...current, [field.key]: value }))}
+            onChange={(value) => {
+              setClearedSecretKeys((current) => {
+                if (!current.has(field.key)) {
+                  return current;
+                }
+                const next = new Set(current);
+                next.delete(field.key);
+                return next;
+              });
+              setDrafts((current) => ({ ...current, [field.key]: value }));
+            }}
+            onClearRedacted={() => {
+              setClearedSecretKeys((current) => new Set(current).add(field.key));
+              setDrafts((current) => ({ ...current, [field.key]: "" }));
+              setStatusText("");
+            }}
           />
         ))}
       </div>
@@ -636,7 +676,7 @@ function ModelProfileForm({
           variant="primary"
           label={pending ? "SAVING" : "SAVE PRESET"}
           disabled={!canSave || pending}
-          onClick={() => void run(() => onSave(name, drafts), "Saved")}
+          onClick={() => void run(() => onSave(name, drafts, clearedProfileSecretKeys), "Saved")}
         />
         {profile && onMakeDefault ? (
           <Button
@@ -681,11 +721,13 @@ function SettingsFieldGroup({
     [initialDraftsSignature],
   );
   const [drafts, setDrafts] = useState<Record<string, string>>(initialDrafts);
+  const [clearedSensitiveKeys, setClearedSensitiveKeys] = useState<Set<string>>(() => new Set());
   const [pending, setPending] = useState(false);
   const [statusText, setStatusText] = useState("");
 
   useEffect(() => {
     setDrafts(initialDrafts);
+    setClearedSensitiveKeys(new Set());
     setStatusText("");
   }, [initialDrafts]);
 
@@ -696,7 +738,13 @@ function SettingsFieldGroup({
     const value = drafts[field.key] ?? "";
     const baseline = initialDrafts[field.key] ?? "";
     if (isSensitiveSettingKey(field.key) && value.length === 0) {
-      return [];
+      if (!clearedSensitiveKeys.has(field.key)) {
+        return [];
+      }
+      return [{
+        key: writeKeyForField(field),
+        value: "",
+      }];
     }
     if (value === baseline) {
       return [];
@@ -716,6 +764,7 @@ function SettingsFieldGroup({
     setStatusText("");
     try {
       await onSave(changedEntries);
+      setClearedSensitiveKeys(new Set());
       setStatusText("Saved");
     } catch (error) {
       setStatusText(errorMessage(error));
@@ -739,11 +788,25 @@ function SettingsFieldGroup({
             disabled={!editable || pending || field.kind === "readonly"}
             field={field}
             key={field.key}
+            cleared={clearedSensitiveKeys.has(field.key)}
             redacted={isFieldRedacted(config, field, writeKeyForField(field))}
             value={drafts[field.key] ?? ""}
             onChange={(value) => {
               setStatusText("");
+              setClearedSensitiveKeys((current) => {
+                if (!current.has(field.key)) {
+                  return current;
+                }
+                const next = new Set(current);
+                next.delete(field.key);
+                return next;
+              });
               setDrafts((current) => ({ ...current, [field.key]: value }));
+            }}
+            onClearRedacted={() => {
+              setClearedSensitiveKeys((current) => new Set(current).add(field.key));
+              setDrafts((current) => ({ ...current, [field.key]: "" }));
+              setStatusText("");
             }}
           />
         ))}
@@ -757,6 +820,7 @@ function SettingsFieldGroup({
           disabled={!dirty || pending}
           onClick={() => {
             setDrafts(initialDrafts);
+            setClearedSensitiveKeys(new Set());
             setStatusText("");
           }}
         />
@@ -766,20 +830,31 @@ function SettingsFieldGroup({
 }
 
 function SettingFieldInput({
+  cleared = false,
   disabled,
   field,
   redacted = false,
   value,
   onChange,
+  onClearRedacted,
 }: {
+  cleared?: boolean;
   disabled: boolean;
   field: ConsoleSettingField;
   redacted?: boolean;
   value: string;
   onChange: (value: string) => void;
+  onClearRedacted?: () => void;
 }) {
-  const placeholder = redacted ? "configured - enter replacement" : field.placeholder;
+  const [replacingRedacted, setReplacingRedacted] = useState(false);
+  const placeholder = redacted ? "Enter replacement" : field.placeholder;
   const description = redacted ? `${field.description} Current value is hidden.` : field.description;
+
+  useEffect(() => {
+    if (!redacted) {
+      setReplacingRedacted(false);
+    }
+  }, [redacted]);
 
   if (field.kind === "textarea") {
     return (
@@ -824,6 +899,45 @@ function SettingFieldInput({
     );
   }
 
+  if (field.kind === "password" && redacted && !replacingRedacted) {
+    return (
+      <div class="gsv-console-secret-field">
+        <div class="gsv-console-secret-label">{field.label}</div>
+        <div class="gsv-console-secret-desc">{description}</div>
+        <div class={`gsv-console-secret-state${cleared ? " is-cleared" : ""}`}>
+          <span>{cleared ? "WILL BE CLEARED" : "CONFIGURED"}</span>
+          <small>{cleared ? "Save changes to remove this token." : "Stored value is hidden."}</small>
+        </div>
+        <div class="gsv-console-secret-actions">
+          <Button
+            variant="secondary"
+            label="REPLACE"
+            disabled={disabled}
+            onClick={() => {
+              onChange("");
+              setReplacingRedacted(true);
+            }}
+          />
+          {cleared ? (
+            <Button
+              variant="secondary"
+              label="UNDO CLEAR"
+              disabled={disabled}
+              onClick={() => onChange("")}
+            />
+          ) : (
+            <Button
+              variant="dangerGhost"
+              label="CLEAR"
+              disabled={disabled || !onClearRedacted}
+              onClick={onClearRedacted}
+            />
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <TextInput
       label={field.label}
@@ -850,7 +964,7 @@ function isFieldRedacted(
   }
   const writeEntry = configEntryForKey(config, writeKey);
   const readEntry = configEntryForKey(config, field.key);
-  return writeEntry?.redacted === true || readEntry?.redacted === true || field.kind === "password";
+  return writeEntry?.redacted === true || readEntry?.redacted === true;
 }
 
 function isModelProfileFieldRedacted(

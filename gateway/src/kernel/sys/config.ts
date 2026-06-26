@@ -131,7 +131,8 @@ export function handleSysConfigSet(
   if (!args.key || typeof args.key !== "string") {
     throw new Error("sys.config.set requires a key");
   }
-  if (args.value === undefined || args.value === null) {
+  const copyFromKey = typeof args.copyFromKey === "string" ? args.copyFromKey.trim() : "";
+  if ((args.value === undefined || args.value === null) && !copyFromKey) {
     throw new Error("sys.config.set requires a value");
   }
 
@@ -149,7 +150,16 @@ export function handleSysConfigSet(
     );
   }
 
-  const value = String(args.value);
+  if (copyFromKey && !canRead(ctx, copyFromKey)) {
+    throw new Error(`Permission denied: cannot read ${copyFromKey}`);
+  }
+
+  const value = copyFromKey
+    ? ctx.config.get(copyFromKey)
+    : String(args.value);
+  if (value === null) {
+    throw new Error(`Config source not found: ${copyFromKey}`);
+  }
   if (shouldDeleteBlankUserOverride(args.key, value)) {
     ctx.config.delete(args.key);
     return { ok: true };

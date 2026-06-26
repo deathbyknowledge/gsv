@@ -22,6 +22,7 @@ import { modelLabelsForConfig } from "../domain/consoleAi";
 import {
   approvalActionFromValue,
   behaviorForAccount,
+  inheritedModelLabelForAccount,
   modelLabelsForAccount,
   parseApprovalPolicy,
   serializeApprovalPolicy,
@@ -59,13 +60,16 @@ export function ConsoleAgentPage({
   const config = useConsoleConfig();
   const processes = useConsoleProcesses();
   const modelLabels = modelLabelsForConfig(config.config);
+  const ownerUid = viewerAccountForAgents(accounts.resource.data ?? [])?.uid ?? null;
+  const inheritedNewAgentModel = inheritedModelLabelForAccount(config.config, -1, ownerUid);
+  const newAgentModelLabels = modelLabelsForAccount(modelLabels, "", inheritedNewAgentModel);
 
   if (createNew) {
     return (
       <ConsolePage flush>
         <NewAgentEditorSurface
           accountCount={accounts.resource.data?.length ?? 0}
-          modelLabels={modelLabels}
+          modelLabels={newAgentModelLabels}
           onAgentCreated={onAgentCreated}
           onBackToCrew={onBackToCrew}
         />
@@ -90,6 +94,7 @@ export function ConsoleAgentPage({
               accounts={data}
               config={config.config}
               modelLabels={modelLabels}
+              ownerUid={viewerAccountForAgents(data)?.uid ?? null}
               processResource={processes.resource}
               onBackToCrew={onBackToCrew}
             />
@@ -105,6 +110,7 @@ function AgentEditorSurface({
   accounts,
   config,
   modelLabels,
+  ownerUid,
   processResource,
   onBackToCrew,
 }: {
@@ -112,6 +118,7 @@ function AgentEditorSurface({
   accounts: readonly ConsoleAccount[];
   config: readonly ConsoleConfigEntry[];
   modelLabels: string[];
+  ownerUid: number | null;
   processResource: ConsoleResourceState<ConsoleProcess[]>;
   onBackToCrew: () => void;
 }) {
@@ -126,7 +133,8 @@ function AgentEditorSurface({
     && !context.resource.isError;
   const behavior = behaviorForAccount(config, account.uid);
   const behaviorEditable = account.runnable;
-  const resolvedModelLabels = modelLabelsForAccount(modelLabels, behavior.model);
+  const inheritedModelLabel = inheritedModelLabelForAccount(config, account.uid, ownerUid);
+  const resolvedModelLabels = modelLabelsForAccount(modelLabels, behavior.model, inheritedModelLabel);
   const files = editorFilesForAccount({
     account,
     contextFiles: context.files,
@@ -155,7 +163,7 @@ function AgentEditorSurface({
       <div class="gsv-console-agent-frame">
         <div class="gsv-console-agent-panel" ref={rootRef}>
           <AgentEditor
-            key={`${account.uid}:${context.dataUpdatedAt}:${processes.length}:${behavior.model}:${behavior.permission}`}
+            key={`${account.uid}:${context.dataUpdatedAt}:${processes.length}:${behavior.model}:${behavior.permission}:${resolvedModelLabels.join("\u0000")}`}
             mode="manage"
             avatarSrc={agentImageSrcForAccount(account, accounts)}
             containerWidth={width || undefined}
@@ -288,6 +296,13 @@ function selectAccount(accounts: readonly ConsoleAccount[], accountUid: number |
     ?? accounts.find((account) => account.relation === "agent")
     ?? accounts.find((account) => account.relation === "self")
     ?? accounts[0]
+    ?? null;
+}
+
+function viewerAccountForAgents(accounts: readonly ConsoleAccount[]): ConsoleAccount | null {
+  return accounts.find((account) => account.relation === "self")
+    ?? accounts.find((account) => account.uid === 0)
+    ?? accounts.find((account) => account.relation === "human")
     ?? null;
 }
 

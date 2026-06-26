@@ -623,6 +623,7 @@ describe("Process DO — mechanical", () => {
         conversationId: "default",
         provider: "workers-ai",
         model: "@cf/nvidia/nemotron-3-120b-a12b",
+        reasoning: "off",
         contextWindowTokens: 256000,
         inputTokens: 1290,
         outputTokens: 56,

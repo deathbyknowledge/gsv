@@ -5,8 +5,8 @@ import { ObjectCard } from "../../components/ui/ObjectCard";
 import { StatusDot } from "../../components/ui/StatusDot";
 import type { StatusTone } from "../../components/ui/StatusDot";
 import { AppFramePage } from "../apps/components/AppFramePage";
-import { ChatDock } from "../chat/components/ChatDock";
-import type { ChatAgentData, ChatAgentSelection } from "../chat/domain";
+import { ChatDock, type StartedChatProcess } from "../chat/components/ChatDock";
+import type { ChatAgentData, ChatAgentSelection, ChatProcessSummary } from "../chat/domain";
 import { useChatProcessList } from "../chat/hooks";
 import type {
   ConsoleOverviewCounts,
@@ -222,20 +222,39 @@ export function GsvShell({
   const [selectedChatPid, setSelectedChatPid] = useState<string | null>(null);
   const [selectedChatAgentId, setSelectedChatAgentId] = useState<string | null>(null);
   const [selectedChatConversationId, setSelectedChatConversationId] = useState<string | null>(null);
+  const [pendingChatProcess, setPendingChatProcess] = useState<ChatProcessSummary | null>(null);
   const chatProcesses = useChatProcessList();
   const chatProcessList = chatProcesses.data ?? [];
+  const selectedListedChatProcess = selectedChatPid
+    ? chatProcessList.find((process) => process.pid === selectedChatPid) ?? null
+    : null;
+  const selectedPendingChatProcess = pendingChatProcess?.pid === selectedChatPid
+    ? pendingChatProcess
+    : null;
   const activeChatProcess = selectedChatAgentId
     ? null
-    : chatProcessList.find((process) => process.pid === selectedChatPid)
-      ?? chatProcessList[0]
-      ?? null;
+    : selectedChatPid
+      ? selectedListedChatProcess ?? selectedPendingChatProcess
+      : chatProcessList[0] ?? null;
 
   useEffect(() => {
-    if (selectedChatPid && !chatProcesses.isLoading && !chatProcessList.some((process) => process.pid === selectedChatPid)) {
+    if (pendingChatProcess && chatProcessList.some((process) => process.pid === pendingChatProcess.pid)) {
+      setPendingChatProcess(null);
+    }
+  }, [chatProcessList, pendingChatProcess]);
+
+  useEffect(() => {
+    if (
+      selectedChatPid &&
+      !selectedPendingChatProcess &&
+      !chatProcesses.isLoading &&
+      !chatProcesses.isFetching &&
+      !chatProcessList.some((process) => process.pid === selectedChatPid)
+    ) {
       setSelectedChatPid(null);
       setSelectedChatConversationId(null);
     }
-  }, [chatProcessList, chatProcesses.isLoading, selectedChatPid]);
+  }, [chatProcessList, chatProcesses.isFetching, chatProcesses.isLoading, selectedChatPid, selectedPendingChatProcess]);
 
   useEffect(() => {
     if (!selectedChatAgentId || !consoleOverview.data) {
@@ -254,6 +273,7 @@ export function GsvShell({
         return;
       }
       setSelectedChatPid(target.pid);
+      setPendingChatProcess(null);
       setSelectedChatAgentId(null);
       setSelectedChatConversationId(target.conversationId);
       shell.setChatOpen(true);
@@ -289,18 +309,42 @@ export function GsvShell({
   const selectChatAgent = (selection: ChatAgentSelection): void => {
     if (selection.processId) {
       setSelectedChatPid(selection.processId);
+      setPendingChatProcess(null);
       setSelectedChatAgentId(null);
       setSelectedChatConversationId(null);
       return;
     }
     if (selection.agentId) {
       setSelectedChatPid(null);
+      setPendingChatProcess(null);
       setSelectedChatAgentId(selection.agentId);
       setSelectedChatConversationId(null);
     }
   };
-  const selectStartedChatProcess = (pid: string): void => {
-    setSelectedChatPid(pid);
+  const selectStartedChatProcess = (process: StartedChatProcess): void => {
+    const now = Date.now();
+    const selectedAgentUid = selectedChatAgentId?.startsWith("account:")
+      ? Number(selectedChatAgentId.slice("account:".length))
+      : NaN;
+    setPendingChatProcess({
+      pid: process.pid,
+      uid: Number.isFinite(selectedAgentUid) ? selectedAgentUid : (activeChatProcess?.uid ?? 0),
+      username: chatAgent?.runAs || activeChatProcess?.username || sessionUsername,
+      interactive: true,
+      parentPid: null,
+      state: "idle",
+      runState: "idle",
+      activeRunId: null,
+      activeConversationId: null,
+      queuedCount: 0,
+      lastActiveAt: now,
+      label: process.label ?? null,
+      title: process.label?.trim() || chatAgent?.name || "New task",
+      createdAt: now,
+      cwd: process.cwd || activeChatProcess?.cwd || "",
+      isDefaultConversation: false,
+    });
+    setSelectedChatPid(process.pid);
     setSelectedChatAgentId(null);
     setSelectedChatConversationId(null);
   };

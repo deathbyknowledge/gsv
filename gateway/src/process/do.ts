@@ -3270,6 +3270,7 @@ export class Process extends Host<Env> {
       lastMessageId,
       provider: config.provider,
       model: config.model,
+      reasoning: config.reasoning,
       contextWindowTokens: config.contextWindowTokens,
       maxOutputTokens: config.maxTokens,
       estimatedInputTokens: estimateContextInputTokens(context),
