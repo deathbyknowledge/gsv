@@ -20,6 +20,24 @@ import { ConfirmModal } from "../../../components/ui/ConfirmModal";
 
 type DirtyProbe = () => boolean;
 
+/**
+ * True if any probe reports dirty. A throwing probe is treated as clean — a bug
+ * in one screen's probe must never trap the user on that screen — and evaluation
+ * short-circuits on the first dirty probe. Pure and exported for tests.
+ */
+export function isAnyProbeDirty(probes: Iterable<DirtyProbe>): boolean {
+  for (const probe of probes) {
+    try {
+      if (probe()) {
+        return true;
+      }
+    } catch {
+      // A throwing probe must never trap the user on a screen.
+    }
+  }
+  return false;
+}
+
 type UnsavedGuardContextValue = {
   register: (id: string, probe: DirtyProbe) => void;
   unregister: (id: string) => void;
@@ -61,18 +79,7 @@ export function useUnsavedGuardController(): UnsavedGuardController {
     if (pendingRef.current) {
       return;
     }
-    let dirty = false;
-    for (const probe of registryRef.current.values()) {
-      try {
-        if (probe()) {
-          dirty = true;
-          break;
-        }
-      } catch {
-        // A throwing probe must never trap the user on a screen.
-      }
-    }
-    if (dirty) {
+    if (isAnyProbeDirty(registryRef.current.values())) {
       setPending(() => proceed);
     } else {
       proceed();

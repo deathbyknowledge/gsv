@@ -1,5 +1,6 @@
 import { useState } from "preact/hooks";
 import { ConsoleHeader, type ConsoleCrumb } from "../../../components/ui/ConsoleHeader";
+import { useUnsavedGuardLeave } from "../../gsv-shell/unsaved/unsavedGuard";
 import { FilesPage } from "../../files/FilesPage";
 import { TerminalPage } from "../../terminal/TerminalPage";
 import {
@@ -159,6 +160,14 @@ export function GsvConsole({
   const navigateSettingsRoute = (route: SettingsRoute) => {
     onSettingsRouteChange?.(route);
   };
+  // In-surface settings navigation (breadcrumbs, the console header back button)
+  // changes the settings route without unmounting the whole surface, so the
+  // shell-level guard never sees it. Route the user-initiated *leave* controls
+  // through the guard so a dirty editor/field group prompts first. Programmatic
+  // open* navigations stay raw — they fire from clean list/overview states and
+  // from the create-success flow, which must not prompt.
+  const requestLeave = useUnsavedGuardLeave();
+  const guardedSettingsNavigate = (route: SettingsRoute) => requestLeave(() => navigateSettingsRoute(route));
   const openAgent = (uid: number) => {
     setSelectedAgentUid(uid);
     onOpenSurface?.("agent");
@@ -261,13 +270,13 @@ export function GsvConsole({
         { label: "GSV", onClick: onBackToDesktop, notLast: true },
         {
           label: "SETTINGS",
-          onClick: inNestedSettings ? () => navigateSettingsRoute({ view: "overview" }) : undefined,
+          onClick: inNestedSettings ? () => guardedSettingsNavigate({ view: "overview" }) : undefined,
           notLast: inNestedSettings,
         },
         ...(inSettingsListDetail ? [
           {
             label: settingsListRouteLabel(settingsRoute.kind),
-            onClick: () => navigateSettingsRoute({ view: "list", kind: settingsRoute.kind }),
+            onClick: () => guardedSettingsNavigate({ view: "list", kind: settingsRoute.kind }),
             notLast: true,
           },
           { label: settingsListDetailLabel(settingsRoute) },
@@ -280,14 +289,14 @@ export function GsvConsole({
   const headerBack = activeSurface === "settings" && settingsRoute.view !== "overview"
     ? () => {
         if (settingsRoute.view === "agent") {
-          navigateSettingsRoute({ view: "crew" });
+          guardedSettingsNavigate({ view: "crew" });
           return;
         }
         if (inSettingsListDetail && settingsRoute.view === "list") {
-          navigateSettingsRoute({ view: "list", kind: settingsRoute.kind });
+          guardedSettingsNavigate({ view: "list", kind: settingsRoute.kind });
           return;
         }
-        navigateSettingsRoute({ view: "overview" });
+        guardedSettingsNavigate({ view: "overview" });
       }
     : onBackToDesktop;
   const tail = activeSurface === "settings" ? settingsRouteTail(settingsRoute) : surfaceTail(activeSurface);

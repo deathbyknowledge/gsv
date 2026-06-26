@@ -68,6 +68,7 @@ export function LibraryPage({ route = { view: "index" }, onRouteChange }: Librar
       (library.buildPath.trim().length > 0 ||
         library.buildDbTitle.trim().length > 0);
     const collectionDirty =
+      library.activeRoute.view === "index" &&
       library.createCollectionOpen &&
       (library.newCollectionTitle.trim().length > 0 ||
         library.newCollectionId.trim().length > 0);
