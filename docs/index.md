@@ -2,34 +2,37 @@
 layout: home
 
 hero:
-  name: GSV
-  text: General Systems Vehicle
+  name: GSV in beta
+  text: by Humans & Machines, Inc.
   tagline: Personal AI computer / distributed OS across all your devices. Open-source, runs on your own Cloudflare account. Not one box.
   actions:
     - theme: brand
-      text: Get Started
-      link: /tutorials/getting-started
+      text: Why GSV?
+      link: /why/
     - theme: alt
-      text: Architecture
-      link: /explanation/architecture
+      text: Get Started
+      link: /get-started/
+    - theme: alt
+      text: FAQ
+      link: /get-started/faq
 
 features:
-  - title: Tutorials
-    details: Learn GSV step by step -- deploy the Kernel, use the Web Desktop, connect a device, and attach adapters.
-    link: /tutorials/getting-started
+  - title: Why GSV?
+    details: "Learn why GSV treats agents as long-lived processes inside a Linux-shaped cloud computer instead of short-lived chat threads."
+    link: /why/
+  - title: Get Started
+    details: "Deploy GSV, finish first-run setup, connect your first device, and reach a working system quickly."
+    link: /get-started/
+  - title: Examples
+    details: "Real-world setups showing how GSV handles multi-machine work, personal ops, adapters, and package-backed tools."
+    link: /examples/
   - title: How-to Guides
-    details: Accomplish specific tasks -- deploy, configure agents, manage processes, connect adapters, and run devices.
-    link: /how-to/deploy
+    details: "Solve concrete tasks such as deployment, device setup, process management, automation, adapters, and package development."
+    link: /how-to/
   - title: Reference
-    details: Complete technical reference — CLI commands, protocol, config, tools, storage.
-    link: /reference/cli-commands
-  - title: Explanation
-    details: Understand the system -- architecture, the agent loop, context, adapters, and security.
-    link: /explanation/architecture
-  - title: Write a Package App
-    details: Build a package with a declarative manifest, backend entrypoint, browser app, and CLI commands.
-    link: /how-to/write-a-package-app
-  - title: Package SDK
-    details: Reference for package manifests, backend bindings, browser helpers, CLI context, and package state.
-    link: /reference/package-sdk
+    details: "Look up the stable technical surface: CLI commands, WebSocket protocol, syscalls, configuration, routing, and storage."
+    link: /reference/
+  - title: Architecture
+    details: "Understand how the Kernel, processes, devices, packages, adapters, filesystems, and repositories fit together."
+    link: /architecture/
 ---

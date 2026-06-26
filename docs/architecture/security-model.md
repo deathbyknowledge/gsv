@@ -17,7 +17,7 @@ can change Worker code, Durable Object state, Worker secrets, R2 buckets, or
 bound services can effectively control the GSV instance.
 
 The Kernel Durable Object is the trusted control plane. It owns users, groups,
-tokens, capabilities, config, devices, process registry, package
+tokens, capabilities, config, devices, process registry, workspaces, package
 records, adapter links, routing tables, and public package state in Kernel
 SQLite.
 
@@ -78,13 +78,13 @@ Default groups are intentionally OS-like:
 - `root` (`gid 0`) receives `*`.
 - `users` (`gid 100`) receives broad user capabilities, including filesystem,
   shell, process, package, repository, adapter status/connect, OAuth, token,
-  and config syscalls.
+  workspace, and config syscalls.
 - `drivers` (`gid 101`) receives `fs.*` and `shell.*` for device execution.
 - `services` (`gid 102`) receives `adapter.*`.
 
 Capabilities are necessary but not always sufficient. Handlers also enforce
 object ownership. Non-root users can access only their own processes and
-owned filesystem paths. Non-root config reads include their own `users/{uid}/...` keys and
+workspaces. Non-root config reads include their own `users/{uid}/...` keys and
 non-sensitive `config/...` keys; sensitive key names such as `api_key`,
 `secret`, `token`, and `password` are hidden. Non-root config writes are limited
 to user-overridable `users/{uid}/ai/...` keys.
@@ -92,8 +92,8 @@ to user-overridable `users/{uid}/ai/...` keys.
 ## Files and Shell
 
 Native GSV file access uses a virtual filesystem. `/sys`, `/proc`, `/dev`, and
-`/etc` expose Kernel state; ordinary paths and process archives are stored in R2
-with Unix-like uid/gid/mode metadata. Root can
+`/etc` expose Kernel state; `/workspaces/{workspaceId}` is workspace-backed;
+ordinary paths are stored in R2 with Unix-like uid/gid/mode metadata. Root can
 read/write broadly. Non-root reads and writes are checked against owner, group,
 and other mode bits where the backend supports them.
 
@@ -103,10 +103,10 @@ against the device workspace, but absolute paths are used as-is on the device.
 Run device daemons as an unprivileged account and point their workspace at the
 smallest useful directory.
 
-Tool approval is a policy layer, not an isolation layer. Account policies can
-auto, deny, or ask for matching syscalls. The default interactive policy asks for
-risky destructive or privileged `shell.exec`, `fs.delete`, and `sys.mcp.call`.
-Non-interactive background processes cannot pause for human approval.
+Tool approval is a policy layer, not an isolation layer. Profiles can auto,
+deny, or ask for matching syscalls. The default interactive policy asks for
+`shell.exec`, `fs.delete`, and `sys.mcp.call`; non-interactive profiles cannot
+pause for human approval.
 
 ## Devices
 
@@ -172,3 +172,9 @@ Security depends on operational discipline:
   adapter, and network behavior.
 - Link adapter actors intentionally and use HIL policies for destructive or
   remote work.
+
+## See also
+
+- [The Adapter Model](./adapter-model.md)
+- [Connect Devices](../how-to/connect-devices)
+- [Configuration Reference](../reference/configuration.md)

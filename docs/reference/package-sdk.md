@@ -33,7 +33,7 @@ type PackageDefinition = {
 };
 ```
 
-Import the manifest helper from `@humansandmachines/gsv/sdk`.
+Import the manifest helper from `@gsv/package/manifest`.
 
 `meta.capabilities.kernel` is the package's syscall grant list. Declare only the
 calls the backend or CLI entrypoints actually need. Use `repo.*` when a package
@@ -50,7 +50,7 @@ capabilities: {
 
 ## Backend
 
-Import the backend base class from `@humansandmachines/gsv/sdk`.
+Import the backend base class from `@gsv/package/backend`.
 
 ```ts
 export default class ExampleBackend extends PackageBackendEntrypoint {
@@ -88,7 +88,7 @@ Every other public method is exposed as backend RPC.
 
 ## Browser helpers
 
-Import browser helpers from `@humansandmachines/gsv/sdk`.
+Import browser helpers from `@gsv/package/browser`.
 
 ### `getAppBoot()`
 
@@ -101,17 +101,12 @@ type PackageAppBoot = {
   routeBase: string;
   rpcBase: string;
   sessionId: string;
+  sessionSecret: string;
   clientId: string;
   expiresAt: number;
   hasBackend: boolean;
 };
 ```
-
-`routeBase` is the mounted app-session route for the current app instance.
-`rpcBase` is the platform app-socket endpoint under that session mount.
-Package apps should treat it as opaque and use `connectBackend()` instead of
-speaking the wire protocol directly. App session credentials are carried in
-HttpOnly cookies and are not exposed to package JavaScript.
 
 ### `hasAppBoot()`
 
@@ -123,7 +118,7 @@ Connects to the package backend RPC surface and returns a stable proxy.
 
 Behavior:
 
-- opens the backend app-socket session on first use
+- opens the backend websocket session on first use
 - caches the backend proxy for reuse
 - reconnects automatically on transport disconnect and retries the failed call
   once
@@ -133,15 +128,9 @@ Behavior:
 
 Alias for `connectBackend<T>()`.
 
-### `onAppEvent(listener)`
-
-Subscribes to app events emitted by the backend with `this.app.emit(...)` or
-`this.app.emitTo(...)`. Events are delivered over the same app socket used by
-backend RPC.
-
 ## CLI
 
-Import CLI helpers from `@humansandmachines/gsv/sdk`.
+Import CLI helpers from `@gsv/package/cli`.
 
 ```ts
 type PackageCommandContext = {
@@ -214,3 +203,8 @@ Current behavior:
 - the API is async from package code
 - bindings accept `string`, `number`, `boolean`, and `null`
 - booleans are stored as numeric SQLite values
+
+## See also
+
+- [Applications](../how-to/applications)
+- [Architecture Overview](../architecture/)

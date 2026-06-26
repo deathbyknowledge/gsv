@@ -11,7 +11,7 @@ The current protocol is syscall-based:
 The source of truth is:
 
 - `gateway/src/protocol/frames.ts`
-- `packages/gsv/src/protocol/syscalls/system.ts`
+- `shared/protocol/src/syscalls/system.ts`
 - `gateway/src/kernel/connect.ts`
 - `gateway/src/kernel/dispatch.ts`
 
@@ -79,7 +79,7 @@ Error:
 ```json
 {
   "type": "sig",
-  "signal": "proc.run.finished",
+  "signal": "chat.complete",
   "payload": {},
   "seq": 1
 }
@@ -191,12 +191,13 @@ The gateway rejects setup-mode connections with error code `425` and details:
         "gids": [1000],
         "username": "alice",
         "home": "/home/alice",
-        "cwd": "/home/alice"
+        "cwd": "/home/alice",
+        "workspaceId": null
       },
       "capabilities": ["fs.*", "proc.*"]
     },
     "syscalls": ["fs.read", "proc.send"],
-    "signals": ["proc.run.stream", "proc.run.output", "proc.run.finished"]
+    "signals": ["chat.text", "chat.complete"]
   }
 }
 ```
@@ -220,9 +221,9 @@ The websocket protocol is uniform: every operation is a `req` frame with a sysca
 | `fs.*` | Native on `gsv`, or routed to a driver when `args.target` names a device |
 | `shell.exec` | Native on `gsv`, routed to a driver when `args.target` names a device, or routed by `args.sessionId` for an existing shell session |
 | `proc.*` | Kernel and Process DO control plane |
-| `pkg.*`, `repo.*`, `sys.*`, `sched.*`, `notification.*`, `signal.*`, `ai.transcription.create`, `ai.speech.create` | Kernel-handled |
+| `pkg.*`, `repo.*`, `sys.*`, `sched.*`, `notification.*`, `signal.*` | Kernel-handled |
 | `adapter.*` | Service-binding / adapter control path |
-| `ai.tools`, `ai.config` | Kernel-internal process bootstrap path |
+| `ai.*` | Kernel-internal process bootstrap path |
 
 For routed `fs.*` and initial `shell.exec` requests, the gateway strips `args.target` before forwarding the request frame to the driver. Shell continuations use `args.sessionId`; the gateway looks up the session owner and forwards the same `shell.exec` frame to that device.
 
@@ -238,15 +239,13 @@ Current role defaults from `buildSignalList()`:
 
 ### User connections
 
-- `proc.changed`
-- `proc.run.started`
-- `proc.run.stream`
-- `proc.run.retrying`
-- `proc.run.output`
-- `proc.run.tool.started`
-- `proc.run.tool.finished`
-- `proc.run.hil.requested`
-- `proc.run.finished`
+- `process.message`
+- `process.context`
+- `chat.text`
+- `chat.tool_call`
+- `chat.tool_result`
+- `chat.hil`
+- `chat.complete`
 - `process.exit`
 - `device.status`
 - `adapter.status`
@@ -260,40 +259,10 @@ Current role defaults from `buildSignalList()`:
 
 - `adapter.status`
 
-`proc.run.*` signals are emitted by Process DOs and relayed through run-route tracking. In the current kernel:
+`chat.*` signals are emitted by Process DOs and relayed through run-route tracking. In the current kernel:
 
-- user connections receive routed `proc.run.*` signals for their own runs
-- adapter surfaces use `proc.run.hil.requested` and `proc.run.finished`
-- durable watches can subscribe to `proc.changed` for message, context, queue, and conversation lifecycle changes
-
-`proc.run.stream` carries the provider stream event exactly in the pi-ai
-assistant event shape:
-
-```json
-{
-  "pid": "proc-123",
-  "runId": "run-123",
-  "conversationId": "default",
-  "seq": 3,
-  "event": {
-    "type": "text_delta",
-    "contentIndex": 0,
-    "delta": "hello",
-    "partial": {}
-  },
-  "timestamp": 1760000000000
-}
-```
-
-The nested `event.type` values are `start`, `text_start`, `text_delta`,
-`text_end`, `thinking_start`, `thinking_delta`, `thinking_end`,
-`toolcall_start`, `toolcall_delta`, `toolcall_end`, `done`, and `error`.
-Consumers should use `contentIndex` for block identity; different block streams
-are not guaranteed to be contiguous.
-
-`proc.run.retrying` is emitted after a retryable generation failure and before
-the next model attempt. Its payload includes `runId`, `conversationId`,
-`attempt`, `nextAttempt`, `maxAttempts`, `reason`, and `timestamp`.
+- user connections receive routed `chat.*` signals for their own runs
+- adapter surfaces only use `chat.hil` and `chat.complete`
 
 ---
 
@@ -306,3 +275,9 @@ Binary-frame helpers still exist in the CLI protocol module, using this format:
 ```
 
 That code is marked legacy/future-use in `cli/src/protocol.rs`. The current gateway syscall surface in this repo does not expose a public transfer syscall, so ordinary runtime traffic is JSON text frames only.
+
+## See also
+
+- [Syscalls Reference](./syscalls.md)
+- [Routing Reference](./routing.md)
+- [CLI Commands](./cli-commands.md)
