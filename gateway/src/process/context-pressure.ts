@@ -45,6 +45,7 @@ export function buildProcContextState(input: {
   lastMessageId?: number | null;
   provider: string;
   model: string;
+  reasoning?: string;
   contextWindowTokens?: number | null;
   maxOutputTokens: number;
   estimatedInputTokens: number;
@@ -76,6 +77,7 @@ export function buildProcContextState(input: {
     ...(input.lastMessageId !== undefined ? { lastMessageId: input.lastMessageId } : {}),
     provider: input.provider,
     model: input.model,
+    ...(input.reasoning?.trim() ? { reasoning: input.reasoning.trim() } : {}),
     contextWindowTokens,
     maxOutputTokens,
     estimatedInputTokens,

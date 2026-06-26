@@ -313,8 +313,10 @@ export type SysConfigGetResult = {
 
 export type SysConfigSetArgs = {
   key: string;
-  value: string;
-};
+} & (
+  | { value: string; copyFromKey?: never }
+  | { copyFromKey: string; value?: never }
+);
 
 export type SysConfigSetResult = {
   ok: true;

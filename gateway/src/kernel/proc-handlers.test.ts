@@ -284,6 +284,140 @@ describe("proc handlers", () => {
     );
   });
 
+  it("forwards process AI profile selectors without materializing profile secrets", async () => {
+    sendFrameToProcessMock.mockResolvedValue({
+      type: "res",
+      id: "ai-profile-1",
+      ok: true,
+      data: {
+        ok: true,
+        pid: "proc-1",
+        config: {
+          version: 1,
+          profile: { id: "fast-stack", name: "Fast Stack", appliedAt: 1 },
+          values: {
+            "config/ai/provider": "openai",
+            "config/ai/model": "gpt-4.1-mini",
+            "config/ai/api_key": "redacted",
+            "config/ai/image/read/api_key": "redacted",
+          },
+          updatedAt: 1,
+        },
+      },
+    } satisfies ResponseFrame);
+    const configEntries = new Map<string, string>([
+      ["users/1000/ai/model_profiles", JSON.stringify({
+        version: 1,
+        profiles: [{
+          id: "fast-stack",
+          name: "Fast Stack",
+          values: {
+            "config/ai/provider": "openai",
+            "config/ai/model": "gpt-4.1-mini",
+            "config/ai/image/read/provider": "openai",
+            "config/ai/image/read/model": "gpt-4o",
+          },
+          createdAt: 10,
+          updatedAt: 20,
+        }],
+      })],
+      ["users/1000/ai/model_profiles/fast-stack/api_key", "sk-chat"],
+      ["users/1000/ai/model_profiles/fast-stack/image/read/api_key", "sk-image"],
+    ]);
+    const ctx = {
+      identity: {
+        role: "user",
+        process: IDENTITY,
+        capabilities: ["proc.ai.config.set"],
+      },
+      procs: {
+        get: vi.fn(() => ({ uid: 2000, ownerUid: IDENTITY.uid })),
+      },
+      config: {
+        get: vi.fn((key: string) => configEntries.get(key) ?? null),
+      },
+    } as unknown as KernelContext;
+
+    await forwardToProcess({
+      type: "req",
+      id: "ai-profile-1",
+      call: "proc.ai.config.set",
+      args: {
+        pid: "proc-1",
+        profileId: "fast-stack",
+      },
+    } as RequestFrame, ctx);
+
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      "proc-1",
+      expect.objectContaining({
+        call: "proc.ai.config.set",
+        args: {
+          values: {
+            "config/ai/provider": "openai",
+            "config/ai/model": "gpt-4.1-mini",
+            "config/ai/image/read/provider": "openai",
+            "config/ai/image/read/model": "gpt-4o",
+          },
+          profile: {
+            id: "fast-stack",
+            name: "Fast Stack",
+          },
+        },
+      }),
+    );
+  });
+
+  it("forces forwarded process AI config reads to stay redacted", async () => {
+    sendFrameToProcessMock.mockResolvedValue({
+      type: "res",
+      id: "ai-config-get-1",
+      ok: true,
+      data: {
+        ok: true,
+        pid: "proc-1",
+        config: {
+          version: 1,
+          values: {
+            "config/ai/api_key": "redacted",
+          },
+          updatedAt: 1,
+        },
+      },
+    } satisfies ResponseFrame);
+    const ctx = {
+      identity: {
+        role: "user",
+        process: IDENTITY,
+        capabilities: ["proc.ai.config.get"],
+      },
+      procs: {
+        get: vi.fn(() => ({ uid: 2000, ownerUid: IDENTITY.uid })),
+      },
+    } as unknown as KernelContext;
+
+    await forwardToProcess({
+      type: "req",
+      id: "ai-config-get-1",
+      call: "proc.ai.config.get",
+      args: {
+        pid: "proc-1",
+        redacted: false,
+      },
+    } as RequestFrame, ctx);
+
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      "proc-1",
+      expect.objectContaining({
+        call: "proc.ai.config.get",
+        args: {
+          pid: "proc-1",
+          redacted: true,
+        },
+      }),
+    );
+  });
+
   it("clears a default conversation archive pointer after proc.reset", async () => {
     sendFrameToProcessMock.mockResolvedValue({
       type: "res",
@@ -662,6 +796,68 @@ describe("proc handlers", () => {
     expect(sendFrameToProcessMock).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
       call: "proc.send",
       args: expect.objectContaining({ message: "Review this package." }),
+    }));
+  });
+
+  it("spawns a fresh top-level process when requested without custom mounts", async () => {
+    const personalAgent = {
+      username: "sam-agent",
+      uid: 2000,
+      gid: 2000,
+      gecos: "sam agent",
+      home: "/home/sam-agent",
+      shell: "/bin/init",
+    };
+    const ctx = {
+      env: {
+        STORAGE: makeStorageBucket(),
+      },
+      identity: {
+        process: IDENTITY,
+        capabilities: ["*"],
+      },
+      auth: {
+        getPersonalAgentUid: vi.fn((uid: number) => uid === IDENTITY.uid ? personalAgent.uid : null),
+        getPasswdByUid: vi.fn((uid: number) => uid === personalAgent.uid ? personalAgent : null),
+        isPersonalAgentUid: vi.fn((uid: number) => uid === personalAgent.uid),
+        resolveGids: vi.fn((_username: string, gid: number) => [gid]),
+      },
+      procs: {
+        get: vi.fn(() => null),
+        spawn: vi.fn(),
+      },
+      conversations: spawnConversationsMock(),
+      packages: {
+        resolve: vi.fn(() => null),
+        list: vi.fn(() => []),
+      },
+    } as unknown as KernelContext;
+
+    const result = await handleProcSpawn({
+      fresh: true,
+      interactive: true,
+      label: "New task",
+    }, ctx);
+
+    expect(result).toMatchObject({
+      ok: true,
+      label: "New task",
+      cwd: "/home/sam-agent",
+    });
+    expect(ctx.procs.spawn).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        uid: personalAgent.uid,
+        username: personalAgent.username,
+      }),
+      expect.objectContaining({
+        ownerUid: IDENTITY.uid,
+        label: "New task",
+        interactive: true,
+      }),
+    );
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      call: "proc.setidentity",
     }));
   });
 

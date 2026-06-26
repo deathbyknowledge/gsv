@@ -383,6 +383,30 @@ describe("Process DO — mechanical", () => {
       const afterClear = await stub.recvFrame(makeReq("proc.ai.config.get", {})) as ResponseOkFrame;
       expect((afterClear.data as any).config).toBeNull();
     });
+
+    it("keeps profile-only snapshots for server-side secret resolution", async () => {
+      const pid = "mech-ai-config-profile-only";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const setResponse = await stub.recvFrame(makeReq("proc.ai.config.set", {
+        values: {},
+        profile: {
+          id: "fast",
+          name: "Fast",
+        },
+      })) as ResponseOkFrame;
+
+      expect((setResponse.data as any).config).toMatchObject({
+        profile: { id: "fast", name: "Fast" },
+        values: {},
+      });
+
+      const getResponse = await stub.recvFrame(makeReq("proc.ai.config.get", { redacted: false })) as ResponseOkFrame;
+      expect((getResponse.data as any).config).toMatchObject({
+        profile: { id: "fast", name: "Fast" },
+        values: {},
+      });
+    });
   });
 
   describe("model context", () => {
@@ -623,6 +647,7 @@ describe("Process DO — mechanical", () => {
         conversationId: "default",
         provider: "workers-ai",
         model: "@cf/nvidia/nemotron-3-120b-a12b",
+        reasoning: "off",
         contextWindowTokens: 256000,
         inputTokens: 1290,
         outputTokens: 56,

@@ -13,6 +13,7 @@ import type {
   ProcListArgs,
   ProcListResult,
   ProcListEntry,
+  ProcAiConfigSetArgs,
   ProcIpcCallArgs,
   ProcIpcCallResult,
   ProcIpcSendArgs,
@@ -42,6 +43,10 @@ import { accountIdentity } from "./accounts";
 import { canOwnerDelegateRunAs } from "./account-access";
 import { resolvePackageAgentRunAs } from "./package-agents";
 import { DEFAULT_CONVERSATION_ID } from "../process/conversations";
+import {
+  findProcessAiModelProfile,
+  omitProcessAiConfigSecrets,
+} from "../process/ai-config";
 
 const DEFAULT_IPC_CALL_TIMEOUT_MS = 60_000;
 const MIN_IPC_CALL_TIMEOUT_MS = 1_000;
@@ -100,6 +105,7 @@ export async function handleProcSpawn(
   // surface. Background spawns (interactive === false, e.g. cron) and child
   // spawns from a process get their own fresh executor + conversation.
   const useDefaultExecutor =
+    args.fresh !== true &&
     !explicitRunAs &&
     !hasCustomSpawnOptions &&
     args.interactive !== false &&
@@ -521,7 +527,11 @@ export async function forwardToProcess(
 
   const processFrame = frame.call === "proc.send"
     ? withProcSendOrigin(frame, ctx)
-    : frame;
+    : frame.call === "proc.ai.config.get"
+      ? withRedactedProcAiConfigGet(frame as RequestFrame<"proc.ai.config.get">)
+    : frame.call === "proc.ai.config.set"
+      ? withProcAiConfigProfile(frame as RequestFrame<"proc.ai.config.set">, ctx, proc.ownerUid)
+      : frame;
   const response = await sendFrameToProcess(pid, processFrame);
 
   if (response && response.type === "res") {
@@ -561,6 +571,65 @@ export async function forwardToProcess(
   return { ok: true, status: "delivered" };
 }
 
+function withRedactedProcAiConfigGet(
+  frame: RequestFrame<"proc.ai.config.get">,
+): RequestFrame<"proc.ai.config.get"> {
+  const args = frame.args && typeof frame.args === "object"
+    ? frame.args as Record<string, unknown>
+    : {};
+  return {
+    ...frame,
+    args: {
+      ...args,
+      redacted: true,
+    },
+  };
+}
+
+function withProcAiConfigProfile(
+  frame: RequestFrame<"proc.ai.config.set">,
+  ctx: KernelContext,
+  ownerUid: number,
+): RequestFrame<"proc.ai.config.set"> {
+  const args = (frame.args ?? {}) as ProcAiConfigSetArgs & { pid?: string };
+  if (
+    !args ||
+    typeof args !== "object" ||
+    "clear" in args ||
+    "values" in args ||
+    "key" in args
+  ) {
+    return frame;
+  }
+
+  const profileId = "profileId" in args ? normalizeText(args.profileId) : "";
+  const profileName = "profileName" in args ? normalizeText(args.profileName) : "";
+  const selector = profileId || profileName;
+  if (!selector) {
+    return frame;
+  }
+
+  const profile = findProcessAiModelProfile(
+    ctx.config.get(`users/${ownerUid}/ai/model_profiles`),
+    ownerUid,
+    selector,
+  );
+  if (!profile) {
+    throw new Error(`AI model profile not found: ${selector}`);
+  }
+
+  return {
+    ...frame,
+    args: {
+      values: omitProcessAiConfigSecrets(profile.values),
+      profile: {
+        id: profile.id,
+        name: profile.name,
+      },
+    },
+  };
+}
+
 function clearLatestArchiveForConversation(
   ctx: KernelContext,
   conversation: { conversationId: string } | null | undefined,
@@ -580,6 +649,10 @@ function resolveCallerOwnerIdentity(ctx: KernelContext, fallback: ProcessIdentit
     throw new Error(`Cannot resolve caller owner uid ${ownerUid}`);
   }
   return accountIdentity(ctx.auth, entry);
+}
+
+function normalizeText(value: unknown): string {
+  return String(value ?? "").trim();
 }
 
 type NormalizedIpcSendArgs =

@@ -1100,7 +1100,7 @@ export class Process extends Host<Env> {
 
     if ("values" in args && args.values && typeof args.values === "object" && !Array.isArray(args.values)) {
       const snapshot = createProcessAiConfigSnapshot(args.values, args.profile);
-      if (Object.keys(snapshot.values).length === 0) {
+      if (Object.keys(snapshot.values).length === 0 && !snapshot.profile) {
         this.store.clearAiConfigSnapshot();
         await this.emitProcChanged(["ai.config"], { aiConfig: null });
         return { ok: true, pid: this.pid, config: null };
@@ -3270,6 +3270,7 @@ export class Process extends Host<Env> {
       lastMessageId,
       provider: config.provider,
       model: config.model,
+      reasoning: config.reasoning,
       contextWindowTokens: config.contextWindowTokens,
       maxOutputTokens: config.maxTokens,
       estimatedInputTokens: estimateContextInputTokens(context),
@@ -3312,16 +3313,13 @@ export class Process extends Host<Env> {
   }
 
   private async resolveAiConfig(): Promise<AiConfigResult> {
-    const overrides = this.aiConfigProcessOverrides();
-    return await this.kernelRpc("ai.config", overrides ? { processOverrides: overrides } : {});
-  }
-
-  private aiConfigProcessOverrides(): Record<string, string> | undefined {
     const snapshot = this.store.getAiConfigSnapshot();
-    if (!snapshot || Object.keys(snapshot.values).length === 0) {
-      return undefined;
-    }
-    return snapshot.values;
+    return await this.kernelRpc("ai.config", snapshot
+      ? {
+          processOverrides: snapshot.values,
+          processProfile: snapshot.profile ?? null,
+        }
+      : {});
   }
 
   /**

@@ -10,18 +10,17 @@ export type ConsoleModelProfile = {
   updatedAt: number;
 };
 
-const MODEL_CONFIG_KEY_RE = /(^|[/.])model($|[/.])|default.*model|model.*default/i;
-const PRIMARY_MODEL_KEY_RE = /(^|[/.])ai[/.]model$|default.*model|model.*default/i;
+const PRIMARY_MODEL_KEY_RE = /^(?:config\/ai|users\/\d+\/ai)\/model$/;
 const AGENT_BEHAVIOR_CONFIG_KEY_RE = /^users\/[^/]+\/ai\//i;
 const MODEL_PROFILES_KEY_RE = /^users\/(\d+)\/ai\/model_profiles$/;
 const SENSITIVE_PROFILE_VALUE_KEY_RE = /(?:^|\/|_)(?:api[_-]?key|password|secret|token|credential)(?:$|\/|_)/i;
 
 function isModelConfigKey(key: string): boolean {
-  return MODEL_CONFIG_KEY_RE.test(key);
+  return PRIMARY_MODEL_KEY_RE.test(key) || MODEL_PROFILES_KEY_RE.test(key);
 }
 
 function isModelConfigEntry(entry: ConsoleConfigEntry): boolean {
-  return !entry.redacted && entry.value.trim().length > 0 && isModelConfigKey(entry.key);
+  return !entry.redacted && entry.value.trim().length > 0 && PRIMARY_MODEL_KEY_RE.test(entry.key);
 }
 
 function normalizeModelLabel(value: string): string {
@@ -29,9 +28,12 @@ function normalizeModelLabel(value: string): string {
 }
 
 export function defaultModelLabelForConfig(config: readonly ConsoleConfigEntry[]): string {
-  const primary = config.find((entry) => isModelConfigEntry(entry) && PRIMARY_MODEL_KEY_RE.test(entry.key));
-  const fallback = primary ?? config.find(isModelConfigEntry);
-  return fallback ? normalizeModelLabel(fallback.value) : DEFAULT_MODEL_LABEL;
+  const system = config.find((entry) => isModelConfigEntry(entry) && entry.key === "config/ai/model");
+  const fallback = system ?? config.find(isModelConfigEntry);
+  if (fallback) {
+    return normalizeModelLabel(fallback.value);
+  }
+  return profileModelLabelsForConfig(config)[0] ?? DEFAULT_MODEL_LABEL;
 }
 
 export function modelLabelsForConfig(config: readonly ConsoleConfigEntry[]): string[] {
@@ -39,20 +41,47 @@ export function modelLabelsForConfig(config: readonly ConsoleConfigEntry[]): str
   const seen = new Set([defaultLabel.toLowerCase()]);
   const labels = [defaultLabel];
 
+  const addLabel = (value: string) => {
+    const label = normalizeModelLabel(value);
+    const key = label.toLowerCase();
+    if (!label || seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    labels.push(label);
+  };
+
   for (const entry of config) {
     if (!isModelConfigEntry(entry)) {
       continue;
     }
-    const label = normalizeModelLabel(entry.value);
-    const key = label.toLowerCase();
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    labels.push(label);
+    addLabel(entry.value);
+  }
+
+  for (const label of profileModelLabelsForConfig(config)) {
+    addLabel(label);
   }
 
   return labels;
+}
+
+function profileModelLabelsForConfig(config: readonly ConsoleConfigEntry[]): string[] {
+  return config.flatMap((entry) => {
+    if (entry.redacted || !MODEL_PROFILES_KEY_RE.test(entry.key) || !entry.value.trim()) {
+      return [];
+    }
+    try {
+      const payload = JSON.parse(entry.value) as { profiles?: unknown[] };
+      const profiles = Array.isArray(payload.profiles) ? payload.profiles : [];
+      return profiles
+        .map(normalizeModelProfile)
+        .filter((profile): profile is ConsoleModelProfile => profile !== null)
+        .map((profile) => profile.values["config/ai/model"]?.trim() ?? "")
+        .filter(Boolean);
+    } catch {
+      return [];
+    }
+  });
 }
 
 export function modelProfilesForConfig(

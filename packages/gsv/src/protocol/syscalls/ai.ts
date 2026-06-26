@@ -1,4 +1,5 @@
 import type { ProcessIdentity } from "./system";
+import type { ProcAiConfigProfileRef } from "./proc";
 
 export type ToolDefinition = {
   name: string;
@@ -35,6 +36,7 @@ export type AiSkillIndexEntry = {
 
 export type AiConfigArgs = {
   processOverrides?: Record<string, string>;
+  processProfile?: ProcAiConfigProfileRef | null;
 };
 
 export type ContextFile = {

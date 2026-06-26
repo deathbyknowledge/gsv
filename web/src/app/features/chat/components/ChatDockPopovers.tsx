@@ -16,6 +16,7 @@ type ChatDockPopoversProps = {
   contextPercent: number | null;
   hasActiveProcess: boolean;
   messageCount: number | null | undefined;
+  modelLabel: string;
   onApplyModelProfile: (profile: ChatModelProfileData) => void;
   onOpenModels: () => void;
   onOpenTasks: () => void;
@@ -78,6 +79,7 @@ export function ChatDockPopovers({
   contextPercent,
   hasActiveProcess,
   messageCount,
+  modelLabel,
   onApplyModelProfile,
   onClearProcessAiConfig,
   onOpenModels,
@@ -104,7 +106,7 @@ export function ChatDockPopovers({
       {openPopover === "model" ? (
         <div class="gsv-chat-popover gsv-chat-model-popover" role="menu" aria-label="Model state">
           <header>
-            <span>{activeAgent.modelLabel}</span>
+            <span>{modelLabel}</span>
             <small>{activeAgent.modelIsDefault ? "DEFAULT" : "ACTIVE"}</small>
           </header>
           <div class="gsv-chat-popover-section">

@@ -9,6 +9,7 @@ import type { StatusTone } from "../../../components/ui/StatusDot";
 import type { JSX } from "preact";
 import {
   buildChatAgentViewModel,
+  formatChatReasoningLabel,
   type ChatAgentData,
   type ChatAgentSelection,
   type ChatModelProfileData,
@@ -44,6 +45,12 @@ import "./ChatDock.css";
 
 export type { ChatDockMessage } from "./ChatTranscript";
 
+export type StartedChatProcess = {
+  cwd?: string;
+  label?: string;
+  pid: string;
+};
+
 type ChatDockProps = {
   open: boolean;
   width: number;
@@ -62,7 +69,7 @@ type ChatDockProps = {
   onOpenCrew: () => void;
   onOpenModels?: () => void;
   onOpenTasks?: () => void;
-  onProcessStarted?: (pid: string) => void;
+  onProcessStarted?: (process: StartedChatProcess) => void;
   onSelectConversation?: (conversationId: string) => void;
   onSelectAgent?: (selection: ChatAgentSelection) => void;
 };
@@ -368,7 +375,7 @@ export function ChatDock({
       });
       targetPid = spawned.pid;
       targetConversationId = "default";
-      onProcessStarted?.(spawned.pid);
+      onProcessStarted?.(spawned);
       onSelectConversation?.("default");
     }
 
@@ -444,6 +451,11 @@ export function ChatDock({
   const taskCount = activeAgent.tasksTotal > 0 ? activeAgent.tasksTotal : activeAgent.tasks.length;
   const contextLevel = context?.level ? context.level.toUpperCase() : contextPercent === null ? "UNKNOWN" : "ESTIMATED";
   const contextModel = context ? [context.provider, context.model].filter(Boolean).join(" · ") : activeAgent.modelLabel;
+  const processModel = processAiConfig.data?.values["config/ai/model"]?.trim() ?? "";
+  const currentModelLabel = processModel || activeAgent.modelLabel;
+  const processReasoning = processAiConfig.data?.values["config/ai/reasoning"]?.trim() ?? "";
+  const contextReasoning = context?.reasoning?.trim() ?? "";
+  const currentReasoningLabel = formatChatReasoningLabel(processReasoning || contextReasoning || activeAgent.reasoningLabel);
   const compactKeepLast = Math.max(1, Math.min(48, Math.floor(Math.max(runtime.messageCount, transcriptMessages.length) / 2)));
   const compactMessageTotal = Math.max(runtime.messageCount, transcriptMessages.length);
   const compactKeepMax = Math.max(1, Math.min(96, compactMessageTotal - 1));
@@ -468,7 +480,7 @@ export function ChatDock({
       ...(startRunAs ? { runAs: startRunAs } : {}),
     }, {
       onSuccess: (result) => {
-        onProcessStarted?.(result.pid);
+        onProcessStarted?.(result);
         onSelectConversation?.("default");
         setNewTaskFocusKey((key) => key + 1);
       },
@@ -571,12 +583,13 @@ export function ChatDock({
     setArchiveOpen(false);
     setSelectedArchiveSegmentId("");
     spawnProcess.mutate({
+      fresh: true,
       interactive: true,
       label: activeAgent.name,
       ...(startRunAs ? { runAs: startRunAs } : {}),
     }, {
       onSuccess: (result) => {
-        onProcessStarted?.(result.pid);
+        onProcessStarted?.(result);
         onSelectConversation?.("default");
         setNewTaskFocusKey((key) => key + 1);
       },
@@ -627,11 +640,8 @@ export function ChatDock({
     }
     setProcessAiConfig.mutate({
       pid: activeProcessId,
-      values: profile.values,
-      profile: {
-        id: profile.id,
-        name: profile.name,
-      },
+      profileId: profile.id,
+      profileName: profile.name,
     });
   };
 
@@ -728,10 +738,12 @@ export function ChatDock({
         effectiveStatus={effectiveStatus}
         hasActiveProcess={hasActiveProcess}
         messageCount={runtime.messageCount}
+        modelLabel={currentModelLabel}
         openPopover={openPopover}
         processAiConfig={processAiConfig.data ?? null}
         processAiConfigBusy={setProcessAiConfig.isPending}
         processAiConfigLoading={processAiConfig.isLoading}
+        reasoningLabel={currentReasoningLabel}
         runStateLabel={runStateLabel}
         canStartNewTask={canStartNewTask}
         spawnPending={spawnProcess.isPending}

@@ -123,6 +123,61 @@ describe("shell chat agent model", () => {
     expect(view.runAs).toBe("scout");
   });
 
+  it("uses the owner model override as an inherited default for agent chats", () => {
+    const agent = buildShellChatAgent({
+      activeProcess: null,
+      accounts: [
+        account({ uid: 1000, username: "sam", relation: "self", displayName: "Sam" }),
+        account({ uid: 1001, username: "scout", relation: "agent", displayName: "Scout" }),
+      ],
+      chatProcesses: [],
+      config: [
+        { key: "config/ai/model", value: "system-model", redacted: false },
+        { key: "config/ai/reasoning", value: "medium", redacted: false },
+        { key: "users/1000/ai/model", value: "owner-model", redacted: false },
+        { key: "users/1000/ai/reasoning", value: "high", redacted: false },
+      ],
+      consoleProcesses: [],
+      sessionUsername: "sam",
+      statusLabel: "no process",
+    });
+
+    expect(agent?.modelLabel).toBe("owner-model");
+    expect(agent?.modelValue).toBe("");
+    expect(agent?.modelIsDefault).toBe(true);
+    expect(agent?.modelOptions?.[0]).toBe("owner-model");
+    expect(agent?.reasoningLabel).toBe("HIGH");
+  });
+
+  it("prefers an agent model override over the owner model override", () => {
+    const activeProcess = process({ pid: "proc:scout", uid: 1001, username: "scout" });
+    const agent = buildShellChatAgent({
+      activeProcess,
+      accounts: [
+        account({ uid: 1000, username: "sam", relation: "self", displayName: "Sam" }),
+        account({ uid: 1001, username: "scout", relation: "agent", displayName: "Scout" }),
+      ],
+      chatProcesses: [activeProcess],
+      config: [
+        { key: "config/ai/model", value: "system-model", redacted: false },
+        { key: "config/ai/reasoning", value: "medium", redacted: false },
+        { key: "users/1000/ai/model", value: "owner-model", redacted: false },
+        { key: "users/1000/ai/reasoning", value: "high", redacted: false },
+        { key: "users/1001/ai/model", value: "agent-model", redacted: false },
+        { key: "users/1001/ai/reasoning", value: "low", redacted: false },
+      ],
+      consoleProcesses: [],
+      sessionUsername: "sam",
+      statusLabel: "idle",
+    });
+
+    expect(agent?.modelLabel).toBe("agent-model");
+    expect(agent?.modelValue).toBe("agent-model");
+    expect(agent?.modelIsDefault).toBe(false);
+    expect(agent?.modelOptions).toEqual(["owner-model", "system-model", "agent-model"]);
+    expect(agent?.reasoningLabel).toBe("LOW");
+  });
+
   it("exposes viewer model profiles instead of raw model config fields", () => {
     const agent = buildShellChatAgent({
       activeProcess: null,
@@ -172,6 +227,8 @@ describe("shell chat agent model", () => {
         }),
       }),
     ]);
+    expect(agent?.modelOptions).toContain("gpt-4.1-mini");
+    expect(agent?.modelOptions).not.toContain("vision-model");
     expect(agent?.crew?.map((member) => member.id)).toEqual(["account:1001"]);
   });
 });

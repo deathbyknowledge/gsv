@@ -125,6 +125,7 @@ function attachProcessAiSnapshot(
   ctx: KernelContext,
   values: Record<string, string>,
   pid = "proc:test",
+  profile?: { id?: string; name?: string; appliedAt: number },
 ): KernelContext {
   (ctx as { processId?: string }).processId = pid;
   (ctx as { procs?: { getOwnerUid: ReturnType<typeof vi.fn> } }).procs = {
@@ -140,6 +141,7 @@ function attachProcessAiSnapshot(
       config: {
         version: 1,
         values,
+        ...(profile ? { profile } : {}),
         updatedAt: 1,
       },
     },
@@ -466,6 +468,30 @@ describe("handleAiConfig", () => {
       speechApiKey: "process-chat-key",
       speechSpeaker: "alloy",
     });
+  });
+
+  it("hydrates process profile secrets inside internal AI config resolution", async () => {
+    const result = await handleAiConfig({
+      processOverrides: {
+        "config/ai/provider": "openai",
+        "config/ai/model": "gpt-4.1-mini",
+        "config/ai/image/read/provider": "openai",
+        "config/ai/image/read/model": "gpt-4o-mini",
+      },
+      processProfile: {
+        id: "fast-stack",
+        name: "Fast Stack",
+        appliedAt: 1,
+      },
+    }, makeAiConfigContext({
+      "users/1000/ai/api_key": "owner-key",
+      "users/1000/ai/model_profiles/fast-stack/api_key": "sk-profile-chat",
+      "users/1000/ai/model_profiles/fast-stack/image/read/api_key": "sk-profile-image",
+      "config/ai/api_key": "system-key",
+    }));
+
+    expect(result.apiKey).toBe("sk-profile-chat");
+    expect(result.media?.imageReadingApiKey).toBe("sk-profile-image");
   });
 
   it("resolves the media model stack with owner fallback", async () => {
@@ -848,6 +874,42 @@ describe("handleAiImageGenerate", () => {
       "@cf/black-forest-labs/flux-1-schnell",
       { prompt: "a blue terminal" },
     );
+  });
+
+  it("hydrates process profile secrets for media syscalls", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ data: [{ b64_json: "AQID" }] }), {
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    const ctx = attachProcessAiSnapshot(makeImageGenerateContext({
+      config: {
+        "users/1000/ai/model_profiles/fast-stack/image/generation/api_key": "sk-profile-image",
+      },
+    }), {
+      "config/ai/image/generation/provider": "openai",
+      "config/ai/image/generation/model": "gpt-image-1",
+    }, "proc:test", {
+      id: "fast-stack",
+      name: "Fast Stack",
+      appliedAt: 1,
+    });
+
+    try {
+      const result = await handleAiImageGenerate({ prompt: "a profile terminal" }, ctx);
+
+      expect(result.provider).toBe("openai");
+      expect(fetchSpy).toHaveBeenCalledWith(
+        expect.stringContaining("/images/generations"),
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: "Bearer sk-profile-image",
+          }),
+        }),
+      );
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 
   it("falls back to configured media defaults when the process AI snapshot is unavailable", async () => {

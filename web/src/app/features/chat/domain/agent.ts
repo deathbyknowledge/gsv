@@ -42,6 +42,7 @@ export type ChatAgentData = {
   modelProfiles?: readonly ChatModelProfileData[];
   modelValue?: string;
   modelIsDefault?: boolean;
+  reasoningLabel?: string;
   permission?: string;
   tasksTotal?: number;
   tasks?: readonly ChatAgentTaskData[];
@@ -88,6 +89,7 @@ export type ChatAgentViewModel = {
   modelProfiles: ChatModelProfileData[];
   modelValue: string;
   modelIsDefault: boolean;
+  reasoningLabel: string;
   permission: string;
   tasksTotal: number;
   tasks: ChatAgentTaskView[];
@@ -108,6 +110,11 @@ const DEFAULT_AGENT_IMAGE = "/img/agent-0.png";
 function cleanText(value: string | undefined, fallback: string): string {
   const text = value?.trim();
   return text && text.length > 0 ? text : fallback;
+}
+
+export function formatChatReasoningLabel(value: string | undefined, fallback = "MEDIUM"): string {
+  const text = value?.trim();
+  return text && text.length > 0 ? text.toUpperCase() : fallback;
 }
 
 function normalizeCount(value: number | undefined): number {
@@ -284,6 +291,7 @@ export function buildChatAgentViewModel({
     modelProfiles: normalizeModelProfiles(agent?.modelProfiles),
     modelValue: cleanText(agent?.modelValue, ""),
     modelIsDefault: agent?.modelIsDefault ?? false,
+    reasoningLabel: formatChatReasoningLabel(agent?.reasoningLabel),
     permission: cleanText(agent?.permission, "ask"),
     tasksTotal,
     tasks,

@@ -5,6 +5,7 @@ import type {
   ChatAgentTaskData,
   ChatAgentTaskStatus,
 } from "../../chat/domain";
+import { formatChatReasoningLabel } from "../../chat/domain";
 import type { ChatProcessSummary } from "../../chat/domain/processes";
 import type {
   ConsoleAccount,
@@ -18,6 +19,8 @@ import {
 } from "../../gsv-console/domain/consoleAi";
 import {
   behaviorForAccount,
+  inheritedModelLabelForAccount,
+  inheritedReasoningForAccount,
   modelLabelsForAccount,
 } from "../../gsv-console/domain/consoleAgentBehavior";
 import {
@@ -43,6 +46,7 @@ type AgentBehaviorView = {
   modelOptions: string[];
   modelValue: string;
   modelIsDefault: boolean;
+  reasoningLabel: string;
   permission: string;
 };
 
@@ -243,14 +247,18 @@ function behaviorViewForAccount(
   account: ConsoleAccount,
   config: readonly ConsoleConfigEntry[],
   modelLabels: readonly string[],
+  ownerUid?: number | null,
 ): AgentBehaviorView {
   const behavior = behaviorForAccount(config, account.uid);
   const modelValue = behavior.model.trim();
+  const inheritedModelLabel = inheritedModelLabelForAccount(config, account.uid, ownerUid);
+  const reasoning = behavior.reasoning.trim() || inheritedReasoningForAccount(config, account.uid, ownerUid);
   return {
-    modelLabel: modelValue || defaultModelLabelForConfig(config),
-    modelOptions: modelLabelsForAccount(modelLabels, modelValue),
+    modelLabel: modelValue || inheritedModelLabel,
+    modelOptions: modelLabelsForAccount(modelLabels, modelValue, inheritedModelLabel),
     modelValue,
     modelIsDefault: modelValue.length === 0,
+    reasoningLabel: formatChatReasoningLabel(reasoning),
     permission: behavior.permission,
   };
 }
@@ -262,6 +270,7 @@ function defaultBehaviorView(config: readonly ConsoleConfigEntry[], modelLabels:
     modelOptions: modelLabels.length > 0 ? [...modelLabels] : [modelLabel],
     modelValue: "",
     modelIsDefault: true,
+    reasoningLabel: formatChatReasoningLabel(inheritedReasoningForAccount(config, -1, null)),
     permission: "ask",
   };
 }
@@ -284,6 +293,7 @@ function accountBackedAgent(input: {
   consoleProcesses: readonly ConsoleProcess[];
   modelLabels: readonly string[];
   modelProfiles: ReturnType<typeof modelProfilesForConfig>;
+  ownerUid?: number | null;
   selectedAgentId?: string | null;
 }): ChatAgentData | null {
   const accountList = sortedConsoleAccounts(input.accounts).filter(isConsoleAgentAccount);
@@ -315,7 +325,7 @@ function accountBackedAgent(input: {
   });
   const description = primaryAccount.gecos.trim()
     || "No active GSV process is attached to this chat.";
-  const behavior = behaviorViewForAccount(primaryAccount, input.config, input.modelLabels);
+  const behavior = behaviorViewForAccount(primaryAccount, input.config, input.modelLabels, input.ownerUid);
 
   return {
     id: accountAgentId(primaryAccount),
@@ -332,6 +342,7 @@ function accountBackedAgent(input: {
     modelProfiles: input.modelProfiles,
     modelValue: behavior.modelValue,
     modelIsDefault: behavior.modelIsDefault,
+    reasoningLabel: behavior.reasoningLabel,
     permission: behavior.permission,
     tasksTotal: 0,
     tasks: [],
@@ -361,6 +372,7 @@ export function buildShellChatAgent({
       consoleProcesses,
       modelLabels,
       modelProfiles,
+      ownerUid: viewer?.uid,
       selectedAgentId,
     });
   }
@@ -372,7 +384,7 @@ export function buildShellChatAgent({
     : Math.max(0, chatProcesses.findIndex((process) => process.pid === activeProcess.pid));
   const tasks = tasksForActiveAgent(activeProcess, activeAccount, chatProcesses);
   const behavior = activeAccount
-    ? behaviorViewForAccount(activeAccount, config, modelLabels)
+    ? behaviorViewForAccount(activeAccount, config, modelLabels, viewer?.uid)
     : defaultBehaviorView(config, modelLabels);
   const crew = accountList.length > 0
     ? accountCrewMembers({
@@ -400,6 +412,7 @@ export function buildShellChatAgent({
     modelProfiles,
     modelValue: behavior.modelValue,
     modelIsDefault: behavior.modelIsDefault,
+    reasoningLabel: behavior.reasoningLabel,
     permission: behavior.permission,
     tasksTotal: tasks.length,
     tasks,

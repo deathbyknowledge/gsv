@@ -16,6 +16,7 @@ import type {
 import { modelLabelsForConfig } from "../domain/consoleAi";
 import {
   behaviorForAccount,
+  inheritedModelLabelForAccount,
   modelLabelsForAccount,
   type AgentApprovalAction,
 } from "../domain/consoleAgentBehavior";
@@ -92,7 +93,15 @@ function CrewRoster({
   const processes = processResource.data ?? [];
   const sortedAccounts = sortedConsoleAccounts(accounts);
   const modelLabels = modelLabelsForConfig(config);
-  const cards = sortedAccounts.map((account, index) => buildCrewCard(account, processes, index, config, modelLabels));
+  const ownerUid = viewerAccountForCrew(sortedAccounts)?.uid ?? null;
+  const cards = sortedAccounts.map((account, index) => buildCrewCard(
+    account,
+    processes,
+    index,
+    config,
+    modelLabels,
+    ownerUid,
+  ));
   const running = cards.filter((card) => card.processes.some(isRunningProcess)).length;
   const runnable = cards.filter((card) => card.account.runnable).length;
   const accountCount = cards.length;
@@ -170,9 +179,11 @@ function buildCrewCard(
   index: number,
   config: readonly ConsoleConfigEntry[],
   modelLabels: readonly string[],
+  ownerUid: number | null,
 ): CrewCardModel {
   const ownedProcesses = processes.filter((process) => ownsProcess(account, process));
   const behavior = behaviorForAccount(config, account.uid);
+  const inheritedModelLabel = inheritedModelLabelForAccount(config, account.uid, ownerUid);
   const queued = ownedProcesses.some(isQueuedProcess);
   const running = ownedProcesses.some(isRunningProcess);
   const unknown = ownedProcesses.some((process) => process.state === "unknown");
@@ -190,9 +201,16 @@ function buildCrewCard(
     active: account.runnable,
     model: behavior.model,
     modelIsDefault: behavior.model.trim().length === 0,
-    modelOptions: modelLabelsForAccount(modelLabels, behavior.model),
+    modelOptions: modelLabelsForAccount(modelLabels, behavior.model, inheritedModelLabel),
     permission: behavior.permission,
   };
+}
+
+function viewerAccountForCrew(accounts: readonly ConsoleAccount[]): ConsoleAccount | null {
+  return accounts.find((account) => account.relation === "self")
+    ?? accounts.find((account) => account.uid === 0)
+    ?? accounts.find((account) => account.relation === "human")
+    ?? null;
 }
 
 function ownsProcess(account: ConsoleAccount, process: ConsoleProcess): boolean {
