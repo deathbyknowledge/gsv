@@ -614,6 +614,7 @@ function ModelProfileForm({
     : new Map<string, ReadonlySet<string>>();
 
   const dirty = name !== (profile?.name ?? "") ||
+    clearedSecretKeys.size > 0 ||
     JSON.stringify(drafts) !== JSON.stringify(initialValues);
   useUnsavedGuard(() => dirty);
 
