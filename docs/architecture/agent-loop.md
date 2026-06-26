@@ -2,26 +2,26 @@
 
 The agent loop is the runtime inside a GSV process. It turns incoming messages,
 signals, and queued work into model calls, syscall requests, tool results, and
-`proc.run.*` / `proc.changed` signals. The loop is not tied to one client. CLI chat, browser apps,
+`chat.*` signals. The loop is not tied to one client. CLI chat, browser apps,
 adapter messages, scheduled work, and signal watches all converge on the same
 Process DO model.
 
 ## Process, Not Session
 
 Each agent process is a Durable Object with a SQLite-backed `ProcessStore`.
-Kernel SQLite stores process registry data such as PID, owner uid, run-as
-uid/gid, cwd, parent, and state. Process SQLite stores the mutable run state:
+Kernel SQLite stores process registry data such as PID, uid/gid, profile, cwd,
+workspace id, parent, and state. Process SQLite stores the mutable run state:
 
 - `messages`: active conversation history.
 - `pending_tool_calls`: syscalls waiting for Kernel or device responses.
 - `message_queue`: FIFO messages received while a run is active.
 - `pending_hil`: human-in-the-loop tool approval state.
-- `process_kv`: process metadata such as identity, current run, and
+- `process_kv`: process metadata such as identity, profile, current run, and
   process-local context files.
 
 The Kernel delivers frames to the Process DO through `recvFrame`. `proc.send`
 starts or queues a run, `proc.history` reads stored messages, `proc.reset`
-archives and clears history, and `proc.kill` can archive and clear process
+archives and clears history, and `proc.kill` checkpoints and clears process
 state.
 
 ## Message Lifecycle
@@ -46,7 +46,7 @@ cleanly.
 
 On the first tick for a run, the process asks the Kernel for runtime inputs:
 
-- `ai.config` resolves provider, model, reasoning, output limit, system/account context
+- `ai.config` resolves provider, model, reasoning, output limit, system/profile context
   files, approval policy, and context byte budget.
 - `ai.tools` returns the syscall tool schemas visible to this process and the
   accessible online devices, including owner-authored device descriptions.
@@ -55,29 +55,27 @@ The process then assembles a system prompt from explicit context providers in
 this order:
 
 1. **System context** from `config/ai/context.d/*.md`.
-2. **Agent home context** from the run-as account's `~/context.d/*.md`, backed
-   by ripgit home storage with R2 fallback.
-3. **Owner context** from the owning human's `~/context.d/*.md`.
-4. **Available skills** from layered `skills.d` directories. This is a compact
-   top-level index only. Full `SKILL.md` bodies and nested child workflows are
-   read explicitly with `skills list <skill>`, `skills tree <skill>`,
-   `skills search <query>`, and `skills show <skill>`.
-5. **Process context** supplied with the assignment or runtime.
+2. **Profile context** from `config/ai/profile/{profile}/context.d/*.md`, or
+   from a package profile when the profile is package-provided.
+3. **Home context** from `~/context.d/*.md`, backed by the user's ripgit home
+   repository with R2 fallback.
+4. **Workspace context** from `/workspaces/{workspaceId}/.gsv/context.d/*.md`,
+   or `.gsv/summary.md` when no context files exist.
+5. **Available skills** from layered `skills.d` directories. This is a compact
+   command-oriented index only; full `SKILL.md` bodies are read explicitly with
+   `skills show <skill>`.
+6. **Process context** supplied with the assignment or runtime.
 
-Context roots are rendered with prompt-markup tags such as
-`<system path="/sys/config/ai/context.d/">`, `<user path="/home/alice/context.d/">`,
-and `<program path="/home/agent/context.d/">`. Each context file is rendered
-inside a filename tag. System and account context can template values such as
-`current.date`, `current.timezone`, `identity.username`, `identity.cwd`,
-`devices`, and `mcpServers`. Home context is loaded lexically and bounded by
-`config/ai/max_context_bytes`.
+Each section is rendered as `[section.name]` and separated with `---`. System
+and profile context can template values such as `identity.username`, `identity.cwd`,
+`workspace`, `devices`, `mcpServers`, and `known_paths`. Home and workspace context are loaded
+lexically and bounded by `config/ai/max_context_bytes`.
 
-Skill sources are layered from `~/skills.d` and visible package
-`/src/packages/<package>/skills.d`.
-The prompt renders top-level skills inside `<available_skills>` as `<skill>`
-entries with `<name>` and `<description>`. It tells processes to use
-`skills list <skill>`, `skills tree <skill>`, and `skills show <skill>` rather
-than embedding long source paths or every detailed workflow in the index.
+Skill sources follow the same layered shape: profile `skills.d`, `~/skills.d`,
+workspace `.gsv/skills.d`, and visible package `/src/packages/<package>/skills.d`.
+The prompt tells processes to use `skills list`, `skills search`, `skills show`,
+`skills files`, and `skills read` rather than embedding long source paths in the
+index.
 
 System-provided skills live in the root GSV source tree under `skills/` and are
 seeded into user home `skills.d` during bootstrap when missing.
@@ -102,15 +100,10 @@ set to the PID.
 
 The model response can contain text, thinking blocks, and tool calls:
 
-- Provider stream events are mirrored during generation as `proc.run.stream`.
-  The payload wraps pi-ai assistant stream events (`text_delta`,
-  `thinking_delta`, `toolcall_delta`, and their start/end/done/error events)
-  with `pid`, `runId`, `conversationId`, `seq`, and `timestamp`.
-- Final assistant text and thinking blocks are still emitted as
-  `proc.run.output` for compatibility and transcript reconciliation.
+- Text is emitted immediately as `chat.text`.
 - Assistant text, thinking blocks, and tool calls are stored in the `messages`
   table.
-- If there are no tool calls, the process emits `proc.run.finished` and finishes the
+- If there are no tool calls, the process emits `chat.complete` and finishes the
   run.
 - If there are tool calls, the process evaluates approval rules and dispatches
   each allowed call as a syscall frame.
@@ -139,42 +132,42 @@ When a response frame arrives, the process resolves or fails the matching
 process schedules/continues the loop:
 
 1. Completed syscall results are appended as `toolResult` messages.
-2. `proc.run.tool.finished` is emitted for clients.
+2. `chat.tool_result` is emitted for clients.
 3. Any queued user messages are injected at the tool-result boundary.
 4. The model is called again with the updated message history.
 
 This repeats until the model produces a final response without tool calls.
 
 Tool result content is stored as text. Non-string syscall output is JSON encoded
-for the model history, while the live `proc.run.tool.finished` signal also carries the
+for the model history, while the live `chat.tool_result` signal also carries the
 raw output or error for clients.
 
 ## Human-in-the-Loop Approval
 
-Tool approval is account-configured with JSON at
-`users/{uid}/ai/tools/approval`. If no policy is configured, GSV
+Tool approval is profile-configured with JSON at
+`config/ai/profile/{profile}/tools/approval`. If no policy is configured, GSV
 defaults to:
 
 - Auto-allow most tools.
-- Ask before risky `shell.exec` commands tagged as destructive or privileged.
+- Ask before `shell.exec`.
 - Ask before `fs.delete`.
 - Ask before `sys.mcp.call`.
 
 Rules can match exact syscalls or wildcard domains and can inspect facts such as
-target type, tags, paths, commands, and argument prefixes. The approval
+profile, target type, tags, paths, commands, and argument prefixes. The approval
 engine tags risky operations, including destructive commands, hidden paths,
 paths outside cwd/home, remote device targets, privileged commands, and network
 commands.
 
 Approval outcomes are:
 
-- `auto`: emit `proc.run.tool.started` and dispatch the syscall.
+- `auto`: emit `chat.tool_call` and dispatch the syscall.
 - `deny`: append a synthetic tool error.
-- `ask`: store `pending_hil` and emit `proc.run.hil.requested`.
+- `ask`: store `pending_hil` and emit `chat.hil`.
 
 The run pauses while a HIL request is pending. A user or adapter reply resumes it
-through `proc.hil` with `approve` or `deny`. Non-interactive background
-processes cannot ask; an `ask` decision becomes a tool error.
+through `proc.hil` with `approve` or `deny`. Non-interactive profiles such as
+`cron` cannot ask; an `ask` decision becomes a tool error.
 
 ## Queueing and Abort
 
@@ -187,7 +180,7 @@ messages in the same run. If the active run completes without that boundary, the
 next queued message is promoted into a new run.
 
 `proc.abort` stops the current run. Pending tool calls are converted to
-interruption errors when possible, pending HIL state is cleared, `proc.run.finished`
+interruption errors when possible, pending HIL state is cleared, `chat.complete`
 is emitted with `aborted: true`, and the next queued message is promoted unless
 continuation must wait for a tool-result phase to finish safely.
 
@@ -214,20 +207,24 @@ loop without pretending to be user chat.
 Process conversation state is active runtime state, not the durable artifact of
 work. When a process is reset or killed, GSV can:
 
+- Generate/update `/workspaces/{workspaceId}/.gsv/summary.md`.
+- Write a process transcript to
+  `/workspaces/{workspaceId}/.gsv/processes/{pid}/chat.jsonl`.
+- Commit those files to the workspace ripgit repository.
 - Archive the old message history to
   `var/sessions/{username}/{pid}/{archiveId}.jsonl.gz` in R2.
 - Delete process media from R2.
 
-Processes can be reset, killed, or replaced without inventing a second durable
-object. Continuity comes from explicit archives, ordinary files, and repositories
-that the user or process chooses to write.
+Workspaces therefore outlive processes. A process can be reset, killed, or
+replaced while the durable workspace and its summary continue carrying task
+state forward.
 
 ## Failure Behavior
 
 The loop treats failures as process events rather than hidden transport details.
 
 - Generation failures are appended as system messages and emitted as
-  `proc.run.finished` with an error.
+  `chat.complete` with an error.
 - Unknown tool names become synthetic tool-result errors.
 - Denied or unapproved tools become tool-result errors visible to the model.
 - Kernel/device routing errors are stored as failed pending tool calls and fed
@@ -238,3 +235,10 @@ The loop treats failures as process events rather than hidden transport details.
 This keeps the model's history aligned with what actually happened. If a syscall
 failed, the next model call sees that failure as a tool result and can choose a
 different approach.
+
+## See also
+
+- [Process IPC and Scheduler](./process-ipc-and-scheduler.md)
+- [Context Compaction & Memory](./context-compaction.md)
+- [Process Handoffs](./process-handoffs.md)
+- [Guides](../how-to/)

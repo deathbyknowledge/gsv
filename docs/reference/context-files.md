@@ -7,62 +7,32 @@ GSV assembles process prompts from explicit context providers, not from hidden a
 Prompt context is collected in provider order:
 
 1. **System context** from `config/ai/context.d/*.md`.
-2. **Agent home context** from the run-as account's `~/context.d/*.md`.
-3. **Owner context** from the owning human's `~/context.d/*.md` when distinct.
-4. **Process context** supplied by the current assignment or runtime.
+2. **Profile context** from `config/ai/profile/{profile}/context.d/*.md`.
+3. **Home context** from `~/context.d/*.md`.
+4. **Workspace context** from `/workspaces/{workspaceId}/.gsv/context.d/*.md`, when the process has a workspace.
+5. **Process context** supplied by the current assignment or runtime.
 
 GSV also assembles a compact skill index from layered `skills.d` directories.
-The prompt lists top-level skill descriptions only. Nested skills are disclosed
-on demand with `skills list <skill>`, `skills tree <skill>`,
-`skills search <query>`, and `skills show <skill>`.
+The prompt lists skill ids and descriptions only. Use `skills list`,
+`skills search <query>`, and `skills show <skill>` to inspect full skill bodies.
 
-System context is operator-managed runtime guidance shared by every process.
-Agent context files add account-specific behavior and preferences. Owner
-context is available for human-authored notes; human homes start with an empty
-`~/context.d/` directory.
-Context files may use template keys such as `identity.home`, `identity.cwd`,
-`current.date`, `current.timezone`, `targets` (or `devices`), and `mcpServers`.
+System context is operator-managed runtime guidance shared by every profile. Profile files are operator-managed instructions for roles such as `task`, `review`, `cron`, `mcp`, and `app`. They may use template keys such as `identity.home`, `workspace`, `devices`, `mcpServers`, and `known_paths`.
 
-Prompt context roots are rendered with prompt-markup tags such as
-`<system path="/sys/config/ai/context.d/">`, `<user path="/home/alice/context.d/">`,
-and `<program path="/home/agent/context.d/">`. Each context file is rendered
-inside a filename tag.
-
-Home context files are loaded lexically, include only non-empty `.md` files, and are bounded by `config/ai/max_context_bytes`.
+Home and workspace context files are loaded lexically, include only non-empty `.md` files, and are bounded by `config/ai/max_context_bytes`.
 
 ## Home Context: `~/context.d/`
 
-Use `~/context.d/*.md` for small, curated notes that should be available to most processes running as that account. This is for standing context, not raw logs or a private database.
+Use `~/context.d/*.md` for small, curated user-global notes that should be available to most processes. This is for standing context, not raw logs or a private database.
 
 Good examples:
 
 ```text
-~/context.d/00-style.md
+~/context.d/00-constitution.md
 ~/context.d/10-user.md
-~/context.d/20-open-loops.md
 ~/context.d/20-current-priorities.md
 ```
 
-New human homes create the directory only. New agent homes seed short style,
-memory, user identity, and open-loop files. New personal agents also seed a
-one-time `00-boot.md` onboarding file, which the agent should delete after
-setup is done. Keep these files short and stable.
-
-Agent long-term memory belongs in a repo-backed wiki, conventionally the
-agent-owned `memory` wiki. After creation it is available as normal markdown
-under:
-
-```text
-/src/repos/<agent>/memory/index.md
-/src/repos/<agent>/memory/pages/
-/src/repos/<agent>/memory/pages/journal/YYYY/MM/YYYY-MM-DD.md
-```
-
-Create the wiki with `wiki db init memory --title "<agent> Memory"`, then use
-filesystem search/read/write/edit for page work. Put durable reference material
-there, where it can be searched and retrieved deliberately. Keep active
-commitments and unresolved follow-ups in `~/context.d/20-open-loops.md` so they
-are prompt-visible without a separate wiki lookup.
+Keep these files short and stable. Put durable reference material under `~/knowledge/` instead, where it can be searched and retrieved deliberately.
 
 ## Skills: `skills.d/`
 
@@ -73,7 +43,9 @@ pitfalls to avoid.
 Skill sources are layered:
 
 ```text
+config/ai/profile/{profile}/skills.d/
 ~/skills.d/
+/workspaces/{workspaceId}/.gsv/skills.d/
 /src/packages/{package}/skills.d/
 ```
 
@@ -86,7 +58,6 @@ Supported forms:
 ```text
 skills.d/package-development.md
 skills.d/package-development/SKILL.md
-skills.d/package-development/skills.d/create-package/SKILL.md
 skills.d/package-development/references/details.md
 ```
 
@@ -95,10 +66,20 @@ That command prints the full `SKILL.md`, source path, and whether the source is
 writable. Package skills follow package source rules: writable package edits are
 staged until `pkg source commit`.
 
-Nested skills live under a parent skill's own `skills.d/`. The parent
-`SKILL.md` is prompt-visible; its nested children are not included in prompt
-assembly and must be loaded explicitly. Frontmatter supports `name`,
-`description`, and optional `aliases`; hierarchy comes from the filesystem.
+## Workspace Context: `.gsv/context.d/`
+
+Workspace context is task-local continuity. It is loaded only when the process has a `workspaceId`.
+
+Recommended layout:
+
+```text
+/workspaces/{workspaceId}/.gsv/context.d/
+├── 10-summary.md
+├── 20-open-loops.md
+└── 30-decisions.md
+```
+
+Use workspace context for active project state, decisions, next actions, and compacted conversation continuity. Do not use it for user-global preferences or durable knowledge. If `.gsv/context.d/` has no loadable files, GSV falls back to `/workspaces/{workspaceId}/.gsv/summary.md` when present.
 
 ## Editing Guidance
 
@@ -109,10 +90,17 @@ Examples:
 ```sh
 mkdir -p ~/context.d
 printf '%s\n' '# Current Priorities' > ~/context.d/20-current-priorities.md
+mkdir -p /workspaces/my-project/.gsv/context.d
 ```
 
 Use the GSV target for GSV filesystem paths. Use a device target only when intentionally editing files on that external hardware.
 
 ## What Belongs Where
 
-Use `~/context.d/` for concise standing context. Use `skills.d/` for reusable procedures. Use Wiki for durable, searchable reference material and agent memory. Use process context for the current assignment only.
+Use `~/context.d/` for concise standing context. Use `/workspaces/{id}/.gsv/context.d/` for active workspace continuity. Use `skills.d/` for reusable procedures. Use `~/knowledge/` for durable, searchable reference material. Use process context for the current assignment only.
+
+## See also
+
+- [Configuration](./configuration.md)
+- [Context and Knowledge](../architecture/context-and-knowledge.md)
+- [Guides](../how-to/)

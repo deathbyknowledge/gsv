@@ -29,7 +29,7 @@ gsv chat [MESSAGE] [--pid PID]
 gsv shell
 ```
 
-`chat` sends a message to a process with `proc.send` and waits for `proc.run.*`
+`chat` sends a message to a process with `proc.send` and waits for `chat.*`
 signals for up to 120 seconds. Omit `MESSAGE` for an interactive prompt; type
 `quit` or `exit` to leave. `--pid` targets a specific process; when omitted, the
 Kernel targets your init process. Set `GSV_CLIENT_DEBUG=1` to trace chat signal
@@ -40,18 +40,15 @@ Commands run inside the gateway OS context, not directly on your local machine.
 Use `:quit`, `:exit`, or `:q` to leave.
 
 Inside the gateway shell, `proc` is the process IPC userland command and
-`crontab` manages cron files; `sched` inspects and controls the compiled Kernel
-schedules:
+`sched` manages Kernel schedules:
 
 ```bash
 proc self
 proc list
 proc send <pid> [--conversation id] [--metadata-json json] <message>
 proc call <pid> [--conversation id] [--metadata-json json] [--timeout 60s] <message>
-crontab -l [-u user]
-crontab FILE [-u user]
-crontab -r [-u user]
 sched list [--all]
+sched add --name NAME (--cron EXPR [--timezone TZ] | --every DURATION | --after DURATION | --at TIME) <prompt/message>
 sched remove <id>
 sched run <id> [--force]
 ```
@@ -61,14 +58,11 @@ the source process receives either `ipc.reply` or `ipc.timeout` in its default
 conversation. `proc self` prints the current GSV process id; the shell also
 exports it as `GSV_PID`.
 
-Cron jobs live in `/var/spool/cron/<username>` or `/etc/cron.d/<name>` and run
-the command after the five time fields.
-
 ## Process Commands
 
 ```bash
 gsv proc list [--uid UID]
-gsv proc spawn [--as ACCOUNT] [--label LABEL] [--prompt TEXT] [--parent PID]
+gsv proc spawn [--label LABEL] [--prompt TEXT] [--parent PID]
 gsv proc send MESSAGE [--pid PID]
 gsv proc history [--pid PID] [--limit N] [--offset N]
 gsv proc reset [--pid PID]
@@ -80,10 +74,6 @@ Processes are the agent-facing execution model. `spawn` creates a child process;
 `history`, `reset`, and `kill` operate on the selected process or your init
 process when `--pid` is omitted. `--uid` filters process lists and requires root
 when viewing another user.
-
-`spawn` defaults to the caller's personal agent. Use `--as ACCOUNT` to run as a
-specific runnable account from `account.list`, such as a personal agent, custom
-agent, or package agent.
 
 ## Device Commands
 
@@ -195,8 +185,7 @@ Adapters are long-lived external account bridges. `--account-id` defaults to
 passed to the adapter implementation, for example:
 
 ```bash
-gsv adapter connect --adapter whatsapp --config-json '{"force":true}'
-gsv adapter connect --adapter telegram --config-json '{"botToken":"<telegram-bot-token>"}'
+gsv adapter connect --adapter whatsapp --config-json '{"pairing":true}'
 ```
 
 ## Package Commands
@@ -211,36 +200,26 @@ the `pkg.sync` syscall and prints the resolved package commits.
 ## Infrastructure Commands
 
 ```bash
-gsv infra deploy [--instance NAME] [--version REF] [-c COMPONENT ... | --all] [--force-fetch]
-gsv infra upgrade [--instance NAME] [--version REF] [-c COMPONENT ... | --all] [--force-fetch]
-gsv infra destroy [--instance NAME] [-c COMPONENT ... | --all] [--delete-bucket] [--purge-bucket]
+gsv infra deploy [--version REF] [-c COMPONENT ... | --all] [--force-fetch]
+gsv infra upgrade [--version REF] [-c COMPONENT ... | --all] [--force-fetch]
+gsv infra destroy [-c COMPONENT ... | --all] [--delete-bucket] [--purge-bucket]
 ```
 
-Valid components are `ripgit`, `assembler`, `gateway`, `channel-whatsapp`,
-`channel-discord`, and `channel-telegram`. When no deploy/upgrade component is
-supplied, all components are selected. Deploying `gateway` requires `ripgit` and
-`assembler` to be selected or already deployed.
+Valid components are `ripgit`, `assembler`, `gateway`, `channel-whatsapp`, and
+`channel-discord`. When no deploy/upgrade component is supplied, all components
+are selected. Deploying `gateway` requires `ripgit` and `assembler` to be
+selected or already deployed.
 
 `deploy` fetches release bundles and applies Cloudflare Workers. `upgrade` does
 the same but auto-refreshes mutable refs such as `latest`, `stable`, and `dev`.
 Both accept `--bundle-dir PATH` for local bundles, `--api-token` or
-`CF_API_TOKEN`, `--account-id` or `CF_ACCOUNT_ID`, `--discord-bot-token` or
-`DISCORD_BOT_TOKEN`, and `--telegram-bot-token` or `TELEGRAM_BOT_TOKEN`.
+`CF_API_TOKEN`, `--account-id` or `CF_ACCOUNT_ID`, and `--discord-bot-token` or
+`DISCORD_BOT_TOKEN`.
 
-`--instance NAME` or `GSV_INSTANCE` scopes Worker script names and the R2 bucket
-so multiple GSVs can coexist in one Cloudflare account. The default instance is
-`gsv`, which preserves the historical names: `gsv`, `ripgit`, `gsv-assembler`,
-`gsv-channel-*`, and `gsv-storage`. A named instance such as `gsv-personal`
-deploys `gsv-personal`, `gsv-personal-ripgit`,
-`gsv-personal-channel-whatsapp`, and `gsv-personal-storage`. Non-default
-instance names cannot be `ripgit` or end with generated component suffixes such
-as `-ripgit`, `-assembler`, or `-channel-whatsapp`.
-
-`destroy` tears down Workers for the selected instance. If no component or
-`--all` is supplied, it targets all components. `--delete-bucket` removes that
-instance's R2 bucket; `--purge-bucket` must be combined with it. Unless
-`--keep-node` is passed, `destroy` also attempts to uninstall the local device
-service.
+`destroy` tears down Workers. If no component or `--all` is supplied, it targets
+all components. `--delete-bucket` removes the shared R2 bucket; `--purge-bucket`
+must be combined with it. Unless `--keep-node` is passed, `destroy` also attempts
+to uninstall the local device service.
 
 ## Version
 
@@ -261,3 +240,10 @@ Prints build metadata for the installed CLI.
 | `gsv local-config` | `gsv config --local` |
 | `gsv deploy` | `gsv infra` |
 | `gsv tools`, `gsv skills`, `gsv init` | Removed from the current CLI. |
+
+## See also
+
+- [Get Started](../get-started/)
+- [Connect Devices](../how-to/connect-devices)
+- [Guides](../how-to/)
+- [Routing Reference](./routing.md)

@@ -10,7 +10,7 @@ humans to reason about.
 ## Design Intent
 
 GSV processes should be durable agent instances, not single chat sessions. A
-process may have an owner, cwd, mounted context, package source, tools,
+process may have an owner, a workspace, mounted context, package source, tools,
 and process-local state. Multiple users, apps, adapters, schedules, or other
 processes may need to interact with that same process over time.
 
@@ -55,9 +55,9 @@ Use these meanings:
 
 - `SignalFrame`: existing transport frame with `type: "sig"` and a `signal`
   topic string.
-- Notification: an outward observation such as `proc.run.stream`,
-  `proc.run.output`, `proc.run.finished`, `device.status`, `exec.status`, or
-  `identity.changed`, often carried over a `SignalFrame`.
+- Notification: an outward observation such as `chat.delta`, `chat.complete`,
+  `device.status`, `exec.status`, or `identity.changed`, often carried over a
+  `SignalFrame`.
 - Process event: normal input/work delivered to a process conversation or inbox.
 - Process signal: process control operation such as abort, kill, reset, pause,
   resume, or reload.
@@ -118,7 +118,7 @@ type ProcessEvent = {
   kind:
     | "user.message"
     | "adapter.message"
-    | "process.input"
+    | "process.message"
     | "process.call"
     | "schedule.tick"
     | "package.event"
@@ -136,7 +136,7 @@ thing is a user message.
 
 When a runtime event is rendered into model context, it should be visibly marked
 as such. The current convention is a conversation message that starts with
-`[Process Event]:`. Agent context teaches agents that these entries are GSV
+`[Process Event]:`. Profile context teaches agents that these entries are GSV
 runtime events such as IPC replies, IPC timeouts, watched signals, compaction
 summaries, resets, or other process lifecycle changes.
 
@@ -174,7 +174,7 @@ are explicit.
 Compaction and reset should be first-class conversation lifecycle operations,
 not hidden automation.
 
-The Linux-like model is log rotation plus explicit archives:
+The Linux-like model is log rotation plus checkpointing:
 
 - A conversation has an active working log.
 - Compaction rotates an old prefix of that log into an archive segment, writes a
@@ -182,7 +182,8 @@ The Linux-like model is log rotation plus explicit archives:
 - Reset rotates the active log into an archive segment and starts a new
   generation for the same conversation or a new conversation, depending on the
   requested mode.
-- Archives are stored as ordinary inspectable records under `/var` in R2.
+- Checkpointing writes durable continuity artifacts for workspace-backed
+  processes.
 
 This keeps all history movement inspectable. No transcript should disappear into
 an unmodeled background flow.
@@ -208,7 +209,7 @@ type ConversationSegment = {
   pid: string;
   conversationId: string;
   generation: number;
-  kind: "compaction" | "reset";
+  kind: "compaction" | "reset" | "checkpoint";
   fromMessageId: number;
   toMessageId: number;
   archiveUri: string;
@@ -238,7 +239,7 @@ A compact operation should:
 6. Record a `ConversationSegment`.
 7. Allow archived segment reads without restoring the archived messages.
 8. Emit a lifecycle notification over the existing `SignalFrame` transport,
-   for example `proc.changed` with `event: "conversation.compacted"`.
+   for example `process.lifecycle` with `event: "conversation.compacted"`.
 
 The summary record should say what happened and where the exact archive lives.
 Agents should be able to inspect the archive through normal history or
@@ -263,16 +264,16 @@ Example policy:
 
 ```ts
 type ConversationContextPolicy = {
-  overflow: "auto-compact" | "fail";
+  overflow: "manual" | "auto-compact" | "fail";
   compactAtPressure: number;
   keepLast: number;
 };
 ```
 
 `proc.conversation.policy.get` and `proc.conversation.policy.set` expose this
-policy. The default is `auto-compact`, and it runs as part of the normal process
-run preflight before a model call. `fail` makes pressure overflow explicit
-instead of summarizing automatically.
+policy. The default is manual; automatic compaction only happens when the
+conversation policy explicitly opts into `auto-compact`, and it runs as part of
+the normal process run preflight before a model call.
 
 Automatic compaction is acceptable when it is policy-driven, recorded, and
 visible. It should not be a secret background subsystem.
@@ -306,6 +307,23 @@ file under one archive directory:
   default.gen-1.jsonl.gz
   build.gen-3.jsonl.gz
 ```
+
+### Checkpoint
+
+Checkpointing should be distinct from compaction and reset.
+
+Compaction manages the active model working set. Reset creates a conversation
+boundary. Checkpointing writes durable continuity artifacts, especially for
+workspace-backed processes.
+
+Workspace-backed checkpoints may update files such as:
+
+- `.gsv/summary.md`
+- `.gsv/processes/<pid>/conversations/<conversationId>/chat.jsonl`
+- `.gsv/processes/<pid>/conversations/<conversationId>/segments.jsonl`
+
+Those paths should be generated from explicit lifecycle operations, not from a
+separate automation system.
 
 ### History access
 
@@ -392,34 +410,33 @@ Schedule records should include:
 
 Example target shape:
 
-These are scheduler target kinds, not syscall names. For example,
-`kind: "process.spawn"` dispatches through the `proc.spawn` syscall, and
-`runAs` selects the account for that spawned process.
-
 ```ts
 type ScheduleTarget =
   | {
-      kind: "command.exec";
-      command: string;
-      cwd?: string;
-      timeoutMs?: number;
-    }
-  | {
       kind: "process.spawn";
-      runAs?: string;
-      label?: string;
+      profile: string;
       prompt: string;
-      parentPid?: string;
-      cwd?: string;
-      mounts?: unknown[];
-      assignment?: unknown;
+      workspace?: unknown;
     }
   | {
       kind: "process.event";
       pid: string;
       conversationId?: string;
-      message: string;
-      data?: Record<string, unknown>;
+      event: ProcessEventInput;
+    }
+  | {
+      kind: "process.lifecycle";
+      pid: string;
+      conversationId?: string;
+      action: "compact" | "reset" | "checkpoint";
+      options?: unknown;
+    }
+  | {
+      kind: "package.event";
+      packageId: string;
+      entrypoint: string;
+      event: string;
+      payload?: unknown;
     };
 ```
 
@@ -427,20 +444,12 @@ The first implementation should support:
 
 - `at`
 - `every`
-- `command.exec`
-- `process.spawn` as a low-level scheduler target
+- `process.spawn`
 - `process.event`
+- `process.lifecycle` for compact, reset, and checkpoint
 
-Normal crontab files should not compile directly to `process.spawn`. They
-compile to `command.exec`, and the command can choose to run `proc spawn`,
-`proc compact`, package commands, shell scripts, or any other native shell
-surface. Keeping `process.spawn` in `ScheduleTarget` is still useful for the
-low-level `sched` API and for callers that want to bypass shell parsing.
-
-Process lifecycle work should be exposed as commands, for example
-`proc compact` or `proc reset`, instead of scheduler-specific lifecycle target
-kinds. Package events, advanced retry behavior, and cross-user run-as rules can
-follow after the basic lifecycle is working.
+Cron expressions, package events, advanced retry behavior, and cross-user run-as
+rules can follow after the basic lifecycle is working.
 
 ## Linux-Like Views
 
@@ -453,8 +462,7 @@ Potential views:
 - `/proc/<pid>/conversations/<conversationId>`
 - `/proc/<pid>/conversations/<conversationId>/history`
 - `/proc/<pid>/conversations/<conversationId>/segments`
-- `/var/spool/cron/<username>`
-- `/etc/cron.d/<name>`
+- `/var/spool/cron`
 - `/var/log/gsv/scheduler`
 
 These should be views over Kernel and Process state, not separate stores.
@@ -471,8 +479,7 @@ Completed initial cleanup:
 - removed archivist/curator default profile config
 - removed archivist/curator profile list entries
 
-Keep the existing `SignalFrame` protocol. `signal.watch` remains the durable
-watch primitive, with app-session/client owner scoping added for UI watches.
+Keep the existing `SignalFrame` protocol and `signal.watch` behavior unchanged.
 
 ### 2. Add process event and conversation types
 
@@ -506,14 +513,14 @@ the prefix boundary, and records a `compaction` segment that can be listed with
 messages out of a compacted segment without restoring them. `proc.conversation.fork`
 can branch a live conversation through a message id, or restore a compacted
 segment into a new conversation, including the live suffix that existed at the
-compaction boundary by default. Compaction and fork emit `proc.changed` so
+compaction boundary by default. Compaction and fork emit `process.lifecycle` so
 UI clients can refresh without polling. Process-wide
 `proc.reset` and `proc.kill` archive every non-empty conversation into a
 directory with one generation file per conversation before clearing all
 conversation messages and runtime state.
 
-Still pending: richer segmented history read APIs. Preserve raw transcript
-archives, visible summary markers, and forkable segments.
+Still pending: checkpoint and richer segmented history read APIs. Preserve raw
+transcript archives, visible summary markers, and forkable segments.
 
 ### 6. Add same-owner IPC
 
@@ -546,8 +553,6 @@ Implemented:
 
 - Kernel-owned schedule store and `sched.*` syscall handlers.
 - `at`, `after`, `every`, and timezone-aware five-field cron expressions.
-- `command.exec` targets that run native shell commands as the schedule owner.
-- writable crontab files that compile cron lines into `command.exec` schedules.
 - `process.spawn` targets for scheduled background work.
 - `process.event` targets that enter process context as visible process events.
 - Cloudflare Agent schedules as one-shot wake-ups only; GSV stores the schedule
@@ -555,7 +560,7 @@ Implemented:
 
 Still pending:
 
-- lifecycle commands such as `proc compact` and `proc reset`
+- `process.lifecycle` schedule targets.
 - package-owned Kernel schedules and package event targets.
 
 ### 8. Add filesystem views
@@ -577,3 +582,9 @@ conversation policies once the same-owner model is proven.
 - advanced cron syntax without a reliable parser
 - package-owned timers before process targets work
 - replacing `signal.watch` in the same change
+
+## See also
+
+- [The Agent Loop](./agent-loop.md)
+- [Process Handoffs](./process-handoffs.md)
+- [Guides](../how-to/)

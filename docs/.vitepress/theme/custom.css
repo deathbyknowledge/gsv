@@ -1,0 +1,243 @@
+/* ============================================
+   GSV Docs Theme — Void/Purple
+   ============================================ */
+
+@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap");
+
+/* ============================================
+   Root Variables — Light
+   ============================================ */
+:root {
+  --vp-c-brand-1: #6b62c4;
+  --vp-c-brand-2: #b3aeff;
+  --vp-c-brand-3: #4a449e;
+  --vp-c-brand-soft: rgba(179, 174, 255, 0.12);
+
+  --vp-c-bg:     #faf9ff;
+  --vp-c-bg-soft: #f0eeff;
+  --vp-c-bg-alt:  #e8e5ff;
+
+  --vp-c-divider: #c8c4ee;
+
+  --vp-font-family-base: "Space Grotesk", "Avenir Next", "Segoe UI", sans-serif;
+  --vp-font-family-mono: "JetBrains Mono", "IBM Plex Mono", monospace;
+
+  --vp-home-hero-name-color: transparent;
+  --vp-home-hero-name-background: linear-gradient(120deg, #6b62c4 20%, #b3aeff 100%);
+
+  --vp-home-hero-image-background-image: linear-gradient(135deg, #322e74 0%, #6b62c4 100%);
+  --vp-home-hero-image-filter: blur(44px);
+}
+
+/* ============================================
+   Root Variables — Dark
+   ============================================ */
+.dark {
+  --vp-c-brand-1: #b3aeff;
+  --vp-c-brand-2: #cbc7ff;
+  --vp-c-brand-3: #8f8aff;
+  --vp-c-brand-soft: rgba(179, 174, 255, 0.10);
+
+  --vp-c-bg:      #07061a;
+  --vp-c-bg-soft: #0a0820;
+  --vp-c-bg-alt:  #13112e;
+
+  --vp-c-text-1: #f4f2ff;
+  --vp-c-text-2: #e2dfff;
+  --vp-c-text-3: #b3aee2;
+
+  --vp-c-divider: #322e74;
+  --vp-c-gutter:  #07061a;
+
+  --vp-home-hero-name-background: linear-gradient(120deg, #cbc7ff 20%, #b3aeff 100%);
+  --vp-home-hero-image-background-image: linear-gradient(135deg, #161240 0%, #322e74 100%);
+}
+
+/* ============================================
+   Nav
+   ============================================ */
+.VPNav {
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.dark .VPNavBar {
+  background: rgba(7, 6, 26, 0.85) !important;
+  border-bottom: 1px solid #322e74;
+}
+
+.VPNavBarMenuLink {
+  font-weight: 500;
+}
+
+/* ============================================
+   Sidebar
+   ============================================ */
+.dark .VPSidebar {
+  background: #07061a !important;
+  border-right: 1px solid #322e74;
+}
+
+.VPSidebarItem .text {
+  font-weight: 500;
+}
+
+/* ============================================
+   Hero
+   ============================================ */
+.VPHero {
+  padding-top: 8rem !important;
+  padding-bottom: 6rem !important;
+}
+
+.VPHero .name {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.VPHero .text {
+  font-size: 1.25rem;
+  font-weight: 500;
+  color: var(--vp-c-text-2);
+  max-width: 576px;
+}
+
+.VPHero .tagline {
+  font-size: 1.05rem;
+  color: var(--vp-c-text-2);
+  max-width: 560px;
+  line-height: 1.6;
+}
+
+.VPHero .VPButton.brand {
+  border-radius: 6px;
+  font-weight: 600;
+  padding: 0 24px;
+}
+
+.VPHero .VPButton.alt {
+  border-radius: 6px;
+  font-weight: 500;
+  padding: 0 24px;
+}
+
+.dark .VPHero .VPButton.alt {
+  border-color: #4a449e;
+  background: transparent;
+}
+
+.dark .VPHero .VPButton.alt:hover {
+  border-color: #b3aeff;
+}
+
+/* FAQ button — borderless, reads as a plain text link */
+.VPHero .actions .action:nth-child(3) .VPButton {
+  border-color: transparent !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  padding-left: 4px;
+  padding-right: 4px;
+  font-weight: 500;
+  color: var(--vp-c-text-2);
+}
+
+.VPHero .actions .action:nth-child(3) .VPButton:hover {
+  color: var(--vp-c-brand-1);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* ============================================
+   Feature Cards
+   ============================================ */
+.VPFeature {
+  border-radius: 8px;
+  border: 1px solid var(--vp-c-divider);
+  transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
+}
+
+.VPFeature:hover {
+  border-color: var(--vp-c-brand-1);
+  transform: translateY(-2px);
+}
+
+.dark .VPFeature {
+  background: #0a0820;
+  border-color: #322e74;
+}
+
+.dark .VPFeature:hover {
+  border-color: #b3aeff;
+  box-shadow: 0 4px 24px rgba(107, 98, 196, 0.18);
+}
+
+/* ============================================
+   Content Typography
+   ============================================ */
+.vp-doc h1 {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.vp-doc h2 {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  border-bottom: 1px solid var(--vp-c-divider);
+  padding-bottom: 0.3em;
+  margin-top: 2.5em;
+}
+
+.vp-doc a {
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.vp-doc a:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* ============================================
+   Code Blocks
+   ============================================ */
+.dark .vp-doc div[class*="language-"] {
+  border: 1px solid #322e74;
+  border-radius: 8px;
+  background: #0a0820;
+}
+
+.vp-doc div[class*="language-"] {
+  border-radius: 8px;
+  border: 1px solid var(--vp-c-divider);
+}
+
+.vp-doc code {
+  border-radius: 4px;
+  padding: 0.15em 0.4em;
+  font-size: 0.875em;
+}
+
+.dark .vp-doc :not(pre) > code {
+  background: #13112e;
+  color: #cbc7ff;
+}
+
+/* ============================================
+   Scrollbar
+   ============================================ */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #322e74;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #4a449e;
+}

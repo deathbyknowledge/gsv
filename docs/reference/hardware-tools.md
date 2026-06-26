@@ -1,6 +1,6 @@
-# Target Tools Reference
+# Hardware Tools Reference
 
-GSV exposes one targetable tool interface to AI processes. The same tool names are used for the native cloud target, connected devices, extension-provided browser targets, and adapter command targets; the `target` argument chooses where the syscall runs.
+GSV exposes a single hardware tool interface to AI processes. The same tool names are used for the native cloud target and for connected CLI devices; the `target` argument chooses where the syscall runs.
 
 This is the important rule for agents: choose `target: "gsv"` for Gateway-native work, and choose a device target only when the file, command, network, or hardware dependency lives on that device.
 
@@ -9,11 +9,9 @@ This is the important rule for agents: choose `target: "gsv"` for Gateway-native
 | Target | Description |
 |---|---|
 | `gsv` | Native Gateway target running in the Cloudflare Worker sandbox. |
-| `<deviceId>` | A connected native device, such as `macbook` or `server`. |
-| browser target id | An active browser target registered by the browser extension, such as `browser:chrome` or `rearden:brave`. |
-| `adapter:<adapter>:<account>` | An adapter command target, such as WhatsApp or Discord. |
+| `<deviceId>` | A connected CLI device, such as `macbook` or `server`. |
 
-The prompt includes a compact sample of accessible online targets. Use `targets list` in the native shell for paginated discovery, or `targets show <target-id>` for details. The lower-level syscall surface is still `sys.device.list`/`sys.device.get`, and device-like entries also appear in the native filesystem under `/sys/devices`.
+The Gateway includes accessible online devices in `ai.tools` context and in `sys.device.list`. Device notes are included there too, so processes can choose targets using the user's own description of what each machine is for. Devices also appear in the native filesystem under `/sys/devices`.
 
 ## Agent-Visible Tools
 
@@ -61,9 +59,9 @@ When `sessionId` is absent, `input` is a command to start. When
 the wait budget and output caps, so callers should handle both completed and
 running results.
 
-## Target Descriptors
+## Hardware Descriptors
 
-Native devices register with the Gateway as driver connections. Browser extension targets and adapter accounts are normalized into the same target descriptor model. A descriptor records identity, online state, and implemented syscall patterns.
+CLI devices register with the Gateway as driver connections. A device descriptor records identity, online state, and implemented syscall patterns.
 
 ```json
 {
@@ -80,8 +78,6 @@ The `implements` field is the hardware contract. The Gateway uses it to decide w
 
 Inspect descriptors with:
 
-- `targets list`
-- `targets show <target-id>`
 - `sys.device.list`
 - `sys.device.get`
 - `sys.device.update` to change the owner-managed `description`
@@ -94,17 +90,17 @@ The `gsv` target runs inside the Gateway. Filesystem syscalls use `GsvFs`; shell
 Important native paths:
 
 - `/home` and the user's home directory contain durable user context.
+- `/workspaces` contains task workspaces and user artifacts.
 - `/etc` contains operator docs and system manuals.
 - `/sys` exposes live kernel configuration, devices, users, and capabilities.
-- `/proc` exposes process inspection surfaces, including
-  `/proc/<pid>/ai` for process-local AI stack selection.
+- `/proc` exposes process inspection surfaces.
 - `/dev` exposes device-like virtual endpoints.
 
 Native shell commands run in the Worker sandbox. They are useful for GSV control-plane work, virtual filesystem inspection, package commands, and HTTP/network operations allowed by the runtime. They do not run on the user's laptop.
 
-Use `skills list`, `skills list <skill>`, `skills search <query>`, and
-`skills show <skill>` in the native shell to inspect reusable process workflows
-populated from layered `skills.d` directories.
+Use `skills list`, `skills search <query>`, and `skills show <skill>` in the
+native shell to inspect reusable process workflows populated from layered
+`skills.d` directories.
 
 The native shell also includes a `codemode` command for reusable GSV tool
 scripts and an `mcp` command for connected MCP servers:
@@ -119,27 +115,6 @@ mcp describe Linear list_issues
 mcp codemode
 mcp call Linear list_issues --args-json '{"assignee":"me","limit":5}' --json
 ```
-
-Process and automation control also stay on the native shell surface:
-
-```bash
-proc agents
-proc spawn --as friday --label "docs audit"
-proc call <pid> --timeout 60s "Summarize the current result."
-crontab -l
-printf '0 4 * * * proc compact init:1000 --conversation default --keep-last 80 --generate-summary\n' > /var/spool/cron/sam
-printf '0 9 * * * proc spawn --as friday --non-interactive --label daily-brief "Prepare the daily brief."\n' > ~/daily.cron && crontab ~/daily.cron
-```
-
-Use `proc agents` to discover accounts you can run processes as: your own
-account, your personal agent, and enabled package agents. Agent prompt context
-lives in that account's `~/context.d/*.md` files. Replace `friday` with the
-agent account username listed for your install.
-`proc call` is the bounded request/reply path; `proc spawn --prompt` and `proc
-send` are fire-and-forget unless the worker explicitly sends a later message.
-Cron jobs run shell commands from `/var/spool/cron/<user>` or `/etc/cron.d/*`.
-Use `proc compact`, `proc spawn --non-interactive`, or `proc send` directly in
-those files.
 
 Scripts use the same CodeMode shape exposed to agents. A script is treated as
 the body of an async function: top-level `await` works, and the final value must
@@ -193,78 +168,9 @@ native shell as `mcp status`, `mcp tools`, `mcp describe`, `mcp search`,
 server ids or unique server names, and tool selectors may use either the
 original MCP tool name or the generated CodeMode function name.
 
-## Browser Extension Targets
-
-Browser targets are active browser profiles connected by the GSV browser
-extension. They use the same targetable `Shell` and `fs.*` tools as native
-devices, with the target id selecting which browser profile receives the call.
-
-Browser target ids are configured by the extension. They may start with
-`browser:` or use a host/browser shape such as `rearden:brave`. Because many
-browser target ids contain `:`, bracket them in target-qualified file paths:
-
-```bash
-cp [rearden:brave]:/home/browser/screenshots/tab-123.png gsv:/home/alice/tab-123.png
-cp gsv:/home/alice/input.json [rearden:brave]:/tmp/input.json
-```
-
-Run target-qualified `cp` from the native GSV shell or target-aware filesystem
-tools. The browser target's just-bash `cp` is local to the browser filesystem.
-
-Use the native `gsv` target to discover and inspect browser targets:
-
-```bash
-targets list --kind browser
-targets show rearden:brave
-```
-
-Then use `Shell` with `target` set to the browser target and inspect the target's
-own help before acting:
-
-```bash
-cat /README.txt
-help
-tabs --help
-page --help
-network --help
-media --help
-```
-
-Current extension targets expose browser commands for tabs, windows, page
-snapshots/text/screenshots/clicks/typing/keyboard/scroll/wait/JavaScript,
-clipboard, cookies, `chrome.storage.local`, downloads, history, bookmarks, and
-network capture. Newer extension targets can also record tab audio/video and open
-URLs, browser-local files, or stdin in viewer tabs through
-`tabs open [--mime type] <url|path|->`. The exact command set
-depends on extension version and browser permissions, so `/README.txt`, `help`,
-and `<command> --help` are authoritative.
-
-For reusable operating guidance, run `skills show browser-target`.
-
-Useful runtime paths include:
-
-- `/README.txt`
-- `/proc/browser.json`
-- `/proc/tabs.json`
-- `/proc/tabs/<tabId>/meta.json`
-- `/proc/tabs/<tabId>/text.txt`
-- `/proc/network/status.json`
-- `/proc/network/events.jsonl`
-- `/proc/network/requests.json`
-
-Writable browser-local paths usually include `/tmp`, `/tmp/render`,
-`/home/browser`, `/home/browser/screenshots`, `/home/browser/network`, and
-`/home/browser/recordings`. Network captures started with
-`network start --persist` write session artifacts under
-`/home/browser/network/sessions/...`; tab media recordings write under
-`/home/browser/recordings` unless another path is requested. Use
-`media record start --video` or `--mode video` for video capture. Chrome may
-require the user to focus the tab and click Grant Recording in the extension UI
-before recording starts; each grant can start one recording.
-
 ## CLI Device Targets
 
-CLI devices run on user machines through `gsv device run` or the managed device daemon service. They implement the same `fs.*` and `shell.exec` interface over WebSocket.
+CLI devices run on user machines through `gsv device run` or the managed device service. They implement the same `fs.*` and `shell.exec` interface over WebSocket.
 
 Device filesystem semantics:
 
@@ -311,3 +217,9 @@ same `target` and `sessionId` routing rules as the direct `Shell`, `Read`,
 - Device registry: `gateway/src/kernel/devices.ts`
 - CLI driver bridge: `cli/src/main.rs`
 - CLI local tools: `cli/src/tools/`
+
+## See also
+
+- [Connect Devices](../how-to/connect-devices)
+- [Routing Reference](./routing.md)
+- [Architecture Overview](../architecture/)

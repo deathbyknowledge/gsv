@@ -1,6 +1,6 @@
 # Routing Reference
 
-GSV routing is kernel-level message and syscall routing. It is not only chat/session routing. The Kernel Durable Object is the central router for WebSocket clients, agent processes, package apps, adapter workers, and connected devices.
+GSV routing is kernel-level message and syscall routing. It is not only chat routing. The Kernel Durable Object is the central router for WebSocket clients, agent processes, package apps, adapter workers, and connected devices.
 
 ## Routing Surfaces
 
@@ -66,7 +66,7 @@ as direct model tool calls.
 
 Agent conversations are durable processes, identified by PIDs. The long-lived home process for a user is `init:{uid}`. Other processes are spawned with `proc.spawn` and usually receive UUID PIDs.
 
-The Kernel stores process metadata in the `processes` table: uid, gids, profile, parent PID, cwd, source mounts, activity state, active run/conversation ids, queued count, label, and context files. `proc.list` is answered directly from this registry.
+The Kernel stores process metadata in the `processes` table: uid, gids, profile, parent PID, cwd, workspace id, source mounts, state, label, and context files. `proc.list` is answered directly from this registry.
 
 These syscalls are forwarded to the target Process DO after ownership checks:
 
@@ -82,15 +82,13 @@ codemode.run
 
 When no PID is supplied, process syscalls default to the caller's `init:{uid}` process. Non-root callers cannot access another user's process.
 
-## Process Signal Routing
+## Chat Signal Routing
 
-Process DOs emit run signals such as `proc.run.stream`, `proc.run.output`, `proc.run.tool.finished`, `proc.run.hil.requested`, and `proc.run.finished`. The Kernel routes those signals using `run_routes`.
+Process DOs emit chat signals such as `chat.delta`, `chat.tool_result`, `chat.hil`, and `chat.complete`. The Kernel routes those signals using `run_routes`.
 
 For CLI/browser-originated runs, `run_routes` maps `runId` to the originating WebSocket connection. For adapter-originated runs, it maps `runId` to the adapter, account id, surface kind, surface id, and optional thread id. Routes expire after 30 minutes.
 
 If a run route is missing, the Kernel falls back to broadcasting the signal to connected clients for the owning uid.
-
-Process DOs also emit `proc.changed` for durable state changes such as messages, context estimates, queue size, and conversation archive/fork events. The Kernel uses `proc.run.*` and `proc.changed` payloads to keep `proc.list` activity state current.
 
 ## Adapter Routing
 
@@ -102,19 +100,13 @@ Inbound behavior:
 - Unlinked DM actor: return a link challenge such as `gsv auth link CODE`.
 - Unlinked non-DM actor: drop the message as `unlinked_actor`.
 
-The default delivery target is the user's default personal conversation. A `surface_routes` entry can override this for a specific adapter account and surface:
+The default delivery target is the user's `init:{uid}` process. A `surface_routes` entry can override this for a specific adapter account and surface:
 
 ```text
 adapter + accountId + surface.kind + surface.id -> pid
 ```
 
-Linked DMs can manage their route with gateway-level commands before the message
-is delivered to a process: `/list`, `/where`, `/use personal`,
-`/use <process-id>`, `/use <agent-name>`, and `/help`. These commands are
-handled by the Kernel, not by individual adapter workers. Non-DM surfaces do not
-accept route commands.
-
-Human-in-the-loop replies are routed specially. If the target process has a pending HIL request, a DM reply of approval or denial resumes `proc.hil` instead of starting a new chat turn. `approve always` resumes with `remember: true`, storing a process-local allow override for that syscall and target class.
+Human-in-the-loop replies are routed specially. If the target process has a pending HIL request, a DM reply of approval or denial resumes `proc.hil` instead of starting a new chat turn.
 
 ## Package App Routing
 
@@ -155,8 +147,14 @@ Device routing does not rename syscalls. Agents and clients always see the same 
 |---|---|
 | `routing_table` | In-flight device-routed syscalls. |
 | `shell_sessions` | Device ownership and lifecycle for resumable shell sessions. |
-| `run_routes` | Routes process run signals back to connections or adapter surfaces. |
+| `run_routes` | Routes process chat signals back to connections or adapter surfaces. |
 | `processes` | Kernel process registry and process ownership. |
 | `devices`, `device_access` | Device catalog and group ACLs. |
 | `identity_links` | External adapter actor to local uid mapping. |
 | `surface_routes` | Adapter surface to process mapping. |
+
+## See also
+
+- [Guides](../how-to/)
+- [Connect a Messenger](../how-to/messengers)
+- [The Adapter Model](../architecture/adapter-model.md)
