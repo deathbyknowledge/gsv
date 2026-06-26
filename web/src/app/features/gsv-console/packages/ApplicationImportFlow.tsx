@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from "preact/hooks";
-import { useUnsavedGuard } from "../../gsv-shell/unsaved/unsavedGuard";
+import { useUnsavedGuard, useUnsavedGuardLeave } from "../../gsv-shell/unsaved/unsavedGuard";
 import { Button } from "../../../components/ui/Button";
 import { Checkbox } from "../../../components/ui/Checkbox";
 import { Icon } from "../../../components/ui/Icon";
@@ -154,6 +154,11 @@ export function ApplicationImportFlow({
     return () => window.clearInterval(timer);
   }, [reviewPid, reviewHistory.refetch]);
 
+  // The wizard's own back controls unmount it like shell nav does, so route
+  // them through the guard to prompt before discarding the import draft.
+  const requestLeave = useUnsavedGuardLeave();
+  const guardedBack = () => requestLeave(onBack);
+
   const openImportedPackage = (pkg: ConsolePackage | null) => {
     if (pkg && onOpenPackage) {
       onOpenPackage(pkg);
@@ -233,7 +238,7 @@ export function ApplicationImportFlow({
         {importError ? <div class="application-import-inline-error" role="alert">{importError}</div> : null}
       </div>
       <footer class="application-import-card-actions">
-        <Button variant="secondary" label="BACK TO APPLICATIONS" disabled={flow.importMutation.isPending} onClick={onBack} />
+        <Button variant="secondary" label="BACK TO APPLICATIONS" disabled={flow.importMutation.isPending} onClick={guardedBack} />
         <Button
           variant="primary"
           label={flow.importMutation.isPending ? "IMPORTING" : "IMPORT APPLICATION"}
@@ -351,7 +356,7 @@ export function ApplicationImportFlow({
     <section class="application-import">
       <div class="application-import-shell">
         <header class="application-import-head">
-          <IconButton glyph="arrowBack" size="medium" title="Back to applications" onClick={onBack} />
+          <IconButton glyph="arrowBack" size="medium" title="Back to applications" onClick={guardedBack} />
           <div>
             <span class="application-import-kicker">SATELLITES / NEW APPLICATION</span>
             <h2>Add application</h2>

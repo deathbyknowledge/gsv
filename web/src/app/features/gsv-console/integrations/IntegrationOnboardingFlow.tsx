@@ -1,5 +1,5 @@
 import { useState } from "preact/hooks";
-import { useUnsavedGuard } from "../../gsv-shell/unsaved/unsavedGuard";
+import { useUnsavedGuard, useUnsavedGuardLeave } from "../../gsv-shell/unsaved/unsavedGuard";
 import { Button } from "../../../components/ui/Button";
 import { IconButton } from "../../../components/ui/IconButton";
 import { Select } from "../../../components/ui/Select";
@@ -129,6 +129,10 @@ export function IntegrationOnboardingFlow({ onBack, onCreated }: IntegrationOnbo
       url.trim().length > 0 ||
       headers.some((row) => row.key.trim().length > 0 || row.value.trim().length > 0))
   );
+  // The flow's own back controls unmount it like shell nav does, so route them
+  // through the guard to prompt before discarding the in-progress connection.
+  const requestLeave = useUnsavedGuardLeave();
+  const guardedBack = () => requestLeave(onBack);
 
   const submit = async () => {
     if (!canSubmit) {
@@ -168,7 +172,7 @@ export function IntegrationOnboardingFlow({ onBack, onCreated }: IntegrationOnbo
     <section class="gsv-integration-onboarding">
       <div class="gsv-integration-onboarding-shell">
         <header class="gsv-integration-onboarding-head">
-          <IconButton glyph="arrowBack" size="medium" title="Back to integrations" onClick={onBack} />
+          <IconButton glyph="arrowBack" size="medium" title="Back to integrations" onClick={guardedBack} />
           <div>
             <span class="gsv-integration-onboarding-kicker">FLEET / NEW INTEGRATION</span>
             <h2>Connect MCP server</h2>
@@ -253,7 +257,7 @@ export function IntegrationOnboardingFlow({ onBack, onCreated }: IntegrationOnbo
           ) : null}
 
           <div class="gsv-integration-flow-actions">
-            <Button variant="secondary" label="BACK" disabled={addServer.isPending} onClick={onBack} />
+            <Button variant="secondary" label="BACK" disabled={addServer.isPending} onClick={guardedBack} />
             {created ? (
               <Button variant="primary" label="VIEW INTEGRATION" onClick={() => onCreated(created)} />
             ) : (
