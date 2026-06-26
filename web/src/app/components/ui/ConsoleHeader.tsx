@@ -1,5 +1,6 @@
 import { Fragment } from "preact";
 import type { JSX } from "preact";
+import { IconButton } from "./IconButton";
 import "./ConsoleHeader.css";
 
 export interface ConsoleCrumb {
@@ -19,6 +20,8 @@ export interface ConsoleHeaderProps {
   c2?: string;
   tail?: string;
   onBack?: () => void;
+  /** When provided, renders a top-right (X) button that closes the screen. */
+  onClose?: () => void;
 }
 
 const activeStyle: JSX.CSSProperties = {
@@ -61,6 +64,7 @@ export function ConsoleHeader({
   c2 = "",
   tail = "GSV",
   onBack,
+  onClose,
 }: ConsoleHeaderProps) {
   const noop = () => {};
 
@@ -132,7 +136,12 @@ export function ConsoleHeader({
           ))}
         </div>
       </div>
-      <span style={{ fontSize: "11px", letterSpacing: ".18em", color: "var(--text-dim)", flex: "none" }}>{tail}</span>
+      <div style={{ display: "flex", alignItems: "center", gap: "12px", flex: "none" }}>
+        <span style={{ fontSize: "11px", letterSpacing: ".18em", color: "var(--text-dim)" }}>{tail}</span>
+        {onClose ? (
+          <IconButton glyph="close" size="small" title="Close" ariaLabel="Close screen" onClick={onClose} />
+        ) : null}
+      </div>
     </div>
   );
 }

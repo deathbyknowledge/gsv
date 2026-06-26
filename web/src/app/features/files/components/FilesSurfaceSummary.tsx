@@ -21,6 +21,7 @@ import {
   ConsoleResourceBoundary,
 } from "../../gsv-console/components/ConsolePageTemplate";
 import { pushShellRoute } from "../../gsv-shell/routing/shellRoutes";
+import { useUnsavedGuard } from "../../gsv-shell/unsaved/unsavedGuard";
 import type {
   FilesDirectoryPayload,
   FilesErrorPayload,
@@ -915,6 +916,11 @@ export function FilesSurfaceSummary() {
     const draft = drafts[tab.id];
     return Boolean(draft && draft.draft !== draft.baseline);
   };
+
+  useUnsavedGuard(() =>
+    tabs.some((tab) => draftDirty(tab)) ||
+    (createState.open && (createState.pathInput.trim() !== "" || createState.content !== "")),
+  );
 
   const tabLabels = tabs.map((tab) => tabLabel(tab, targetForTab(tab, targets), draftDirty(tab)));
   const activeIndex = Math.max(0, tabs.findIndex((tab) => tab.id === activeTabId));

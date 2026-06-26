@@ -1,4 +1,5 @@
 import { useEffect, useMemo } from "preact/hooks";
+import { useUnsavedGuard } from "../../gsv-shell/unsaved/unsavedGuard";
 import { Button } from "../../../components/ui/Button";
 import { Checkbox } from "../../../components/ui/Checkbox";
 import { Icon } from "../../../components/ui/Icon";
@@ -127,6 +128,14 @@ export function ApplicationImportFlow({
   const importError = errorText(flow.importMutation.error);
   const reviewError = errorText(flow.reviewMutation.error);
   const enableError = errorText(flow.enableMutation.error);
+
+  useUnsavedGuard(() =>
+    !flow.enableMutation.isSuccess &&
+    (flow.step !== "import" ||
+      flow.draft.source.trim().length > 0 ||
+      flow.draft.ref.trim() !== "main" ||
+      flow.draft.subdir.trim() !== ".")
+  );
 
   useEffect(() => {
     if (flow.draft.reviewerUsername || reviewerAccounts.length === 0) {

@@ -26,6 +26,7 @@ import {
   renderPreviewBodyHtml,
 } from "./libraryMarkdown";
 import { useLibraryWorkspace } from "./useLibraryWorkspace";
+import { useUnsavedGuard } from "../../gsv-shell/unsaved/unsavedGuard";
 import type {
   LibraryCollection,
   LibraryEntry,
@@ -51,6 +52,24 @@ type PreviewState = {
 
 export function LibraryPage({ route = { view: "index" }, onRouteChange }: LibraryPageProps) {
   const library = useLibraryWorkspace(route, onRouteChange);
+
+  useUnsavedGuard(() => {
+    const editorDirty =
+      library.activeRoute.view === "editor" &&
+      library.editorMarkdown !== (library.state.selectedNote?.markdown ?? "");
+    const captureDirty =
+      library.ingestPath.trim().length > 0 ||
+      library.ingestTitle.trim().length > 0 ||
+      library.ingestSummary.trim().length > 0;
+    const buildDirty =
+      library.buildPath.trim().length > 0 ||
+      library.buildDbTitle.trim().length > 0;
+    const collectionDirty =
+      library.createCollectionOpen &&
+      (library.newCollectionTitle.trim().length > 0 ||
+        library.newCollectionId.trim().length > 0);
+    return editorDirty || captureDirty || buildDirty || collectionDirty;
+  });
 
   if (!library.connected) {
     return (

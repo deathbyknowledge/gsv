@@ -7,6 +7,7 @@ import { Tag } from "../../../components/ui/Tag";
 import { TextArea } from "../../../components/ui/TextArea";
 import { TextInput } from "../../../components/ui/TextInput";
 import { ConsoleDetailPage } from "../components/ConsoleDetailPage";
+import { useUnsavedGuard } from "../../gsv-shell/unsaved/unsavedGuard";
 import {
   ConsolePage,
   ConsoleResourceBoundary,
@@ -612,6 +613,10 @@ function ModelProfileForm({
     ? new Map([[profile.id, clearedSecretKeys]])
     : new Map<string, ReadonlySet<string>>();
 
+  const dirty = name !== (profile?.name ?? "") ||
+    JSON.stringify(drafts) !== JSON.stringify(initialValues);
+  useUnsavedGuard(() => dirty);
+
   const run = async (action: () => Promise<void>, successText: string) => {
     setPending(true);
     setStatusText("");
@@ -755,6 +760,7 @@ function SettingsFieldGroup({
     }];
   });
   const dirty = changedEntries.length > 0;
+  useUnsavedGuard(() => dirty);
 
   const save = async () => {
     if (!dirty || pending) {

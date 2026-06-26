@@ -10,11 +10,13 @@ import type { AppInstance } from "../../desktop/runtime/appRuntime";
 import { usePackageApps } from "../../packages/usePackageApps";
 import type { ShellAppRoute } from "../../gsv-shell/domain/shellModel";
 import { normalizeShellAppRoute } from "../../gsv-shell/domain/shellModel";
+import { useUnsavedGuard } from "../../gsv-shell/unsaved/unsavedGuard";
 import "./AppFramePage.css";
 
 type AppFramePageProps = {
   appRoute: ShellAppRoute;
   onBackToDesktop: () => void;
+  onClose?: () => void;
   onOpenAppRoute: (route: ShellAppRoute, title?: string) => string;
 };
 
@@ -82,6 +84,7 @@ function AppFrameEmpty({
 export function AppFramePage({
   appRoute,
   onBackToDesktop,
+  onClose,
   onOpenAppRoute,
 }: AppFramePageProps) {
   const { client: gatewayClient, connected } = useGateway();
@@ -92,6 +95,7 @@ export function AppFramePage({
   const [title, setTitle] = useState<string | null>(null);
   const [badge, setBadge] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
+  useUnsavedGuard(() => dirty);
   const app = useMemo(
     () => packageApps.data?.find((candidate) => candidate.id === appRoute.appId) ?? null,
     [appRoute.appId, packageApps.data],
@@ -146,6 +150,7 @@ export function AppFramePage({
         ]}
         tail="GSV · APP"
         onBack={onBackToDesktop}
+        onClose={onClose}
       />
       <div class="gsv-app-frame-toolbar">
         <div class="gsv-app-frame-identity">

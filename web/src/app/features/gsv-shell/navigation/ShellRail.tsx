@@ -2,23 +2,15 @@ import { Icon } from "../../../components/ui/Icon";
 import { IconButton } from "../../../components/ui/IconButton";
 import {
   type DesktopObject,
-  type ShellPageTab,
   type ShellSurfaceId,
 } from "../domain/shellModel";
 
 type ShellRailProps = {
   activeSurface: ShellSurfaceId;
-  activeTabKey: string | null;
   desktopObjects: readonly DesktopObject[];
-  openTabs: readonly ShellPageTab[];
   collapsed: boolean;
-  tabsExpanded: boolean;
   onToggleCollapsed: () => void;
   onBackToDesktop: () => void;
-  onCloseTab: (key: string) => void;
-  onOpenTab: (key: string) => void;
-  onOpenTabsPicker: () => void;
-  onToggleTabsExpanded: () => void;
   onOpenControlMenu: () => void;
   onOpenSurface: (surface: ShellSurfaceId) => void;
 };
@@ -69,23 +61,14 @@ function GsvMark({ size = 22 }: { size?: number }) {
 
 export function ShellRail({
   activeSurface,
-  activeTabKey,
   desktopObjects,
-  openTabs,
   collapsed,
-  tabsExpanded,
   onToggleCollapsed,
   onBackToDesktop,
-  onCloseTab,
-  onOpenTab,
-  onOpenTabsPicker,
-  onToggleTabsExpanded,
   onOpenControlMenu,
   onOpenSurface,
 }: ShellRailProps) {
   const totalObjects = desktopObjects.reduce((sum, object) => sum + object.children.length, 0);
-  const tabCount = openTabs.length;
-  const hasTabs = tabCount > 0;
 
   if (collapsed) {
     return (
@@ -109,12 +92,6 @@ export function ShellRail({
         <button type="button" class="gsv-rail-gsv-dot" title="GSV controls" onClick={onOpenControlMenu}>
           <GsvMark />
         </button>
-        {hasTabs ? (
-          <button type="button" class="gsv-rail-tabs-dot" title="Open tabs" onClick={onOpenTabsPicker}>
-            <Icon name="bookmark" size={17} />
-            <span>{tabCount}</span>
-          </button>
-        ) : null}
       </aside>
     );
   }
@@ -185,45 +162,6 @@ export function ShellRail({
       </div>
 
       <footer>DRAG CHAT &lt;- TO EXPAND</footer>
-      {hasTabs ? (
-        <div class="gsv-rail-tabs">
-          <button
-            type="button"
-            class="gsv-rail-tabs-head"
-            onClick={onToggleTabsExpanded}
-          >
-            <span class="gsv-rail-tabs-icon"><Icon name="bookmark" size={15} /></span>
-            <span>TABS</span>
-            <small>{tabCount}</small>
-          </button>
-          {tabsExpanded ? (
-            <div class="gsv-rail-tabs-list">
-              {openTabs.map((tab) => {
-                const active = tab.key === activeTabKey;
-                return (
-                  <div class={`gsv-rail-tab-row${active ? " is-active" : ""}`} key={tab.key}>
-                    <button type="button" onClick={() => onOpenTab(tab.key)}>
-                      <span class="gsv-rail-tab-icon">
-                        <Icon name="bookmark" size={17} />
-                      </span>
-                      <span>{tab.title}</span>
-                    </button>
-                    <button
-                      type="button"
-                      class="gsv-rail-tab-close"
-                      title={`Close ${tab.title}`}
-                      aria-label={`Close ${tab.title}`}
-                      onClick={() => onCloseTab(tab.key)}
-                    >
-                      x
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          ) : null}
-        </div>
-      ) : null}
     </aside>
   );
 }

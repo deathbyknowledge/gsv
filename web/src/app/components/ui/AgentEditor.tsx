@@ -8,6 +8,7 @@ import { Button } from "./Button";
 import { Avatar, type AvatarStatus } from "./Avatar";
 import { Tabs } from "./Tabs";
 import { ConfirmModal } from "./ConfirmModal";
+import { useUnsavedGuard } from "../../features/gsv-shell/unsaved/unsavedGuard";
 
 export type AgentEditorMode = "new" | "manage";
 
@@ -232,6 +233,22 @@ export function AgentEditor(props: AgentEditorProps) {
   const setFileContent = (v: string) => {
     setFiles((s) => s.map((f, i) => (i === fileIdx ? { ...f, content: v } : f)));
   };
+
+  // ---- unsaved-changes guard ----
+  // Baseline is the initial values captured once in metaRef (see line ~172).
+  // Scalars compare against meta.*; files compare body vs per-file `orig`
+  // baseline, plus a count check to catch added/removed files.
+  const dirty =
+    name !== meta.name ||
+    role !== meta.role ||
+    desc !== meta.desc ||
+    model !== meta.model ||
+    perm !== meta.perm ||
+    files.length !== meta.files.length ||
+    files.some(
+      (f, i) => f.label !== meta.files[i]?.label || f.content !== (f.orig ?? f.content),
+    );
+  useUnsavedGuard(() => dirty);
 
   // ---- tasks ----
   const dotColorFor = (st: TaskStatus) =>

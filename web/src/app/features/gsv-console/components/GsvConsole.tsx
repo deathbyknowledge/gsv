@@ -23,6 +23,7 @@ import { RuntimePage } from "../runtime/RuntimePage";
 type GsvConsoleProps = {
   activeSurface: Exclude<ShellSurfaceId, "desktop" | "app">;
   onBackToDesktop: () => void;
+  onClose?: () => void;
   libraryRoute?: ShellLibraryRoute;
   onLibraryRouteChange?: (route: ShellLibraryRoute) => void;
   onOpenApp?: (appId: string, title?: string) => void;
@@ -147,6 +148,7 @@ export function GsvConsole({
   activeSurface,
   libraryRoute = { view: "index" },
   onBackToDesktop,
+  onClose,
   onLibraryRouteChange,
   onOpenApp,
   onOpenSurface,
@@ -300,6 +302,7 @@ export function GsvConsole({
         crumbs={crumbs}
         tail={tail}
         onBack={headerBack}
+        onClose={onClose}
       />
       <div class="gsv-console-stage">
         {activeSurface === "settings" ? (

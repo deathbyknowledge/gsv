@@ -1,4 +1,5 @@
 import { useState } from "preact/hooks";
+import { useUnsavedGuard } from "../../gsv-shell/unsaved/unsavedGuard";
 import { Button } from "../../../components/ui/Button";
 import { IconButton } from "../../../components/ui/IconButton";
 import { Select } from "../../../components/ui/Select";
@@ -120,6 +121,14 @@ export function IntegrationOnboardingFlow({ onBack, onCreated }: IntegrationOnbo
   const canSubmit = name.trim().length > 0 && urlReady && headersResult.ok && !addServer.isPending;
   const currentStep = created ? 2 : urlReady && name.trim() ? 1 : 0;
   const statusLabel = created ? statusForMcpServer(created) : "NOT CONFIGURED";
+
+  useUnsavedGuard(() =>
+    !(created && created.state !== "authenticating") &&
+    (currentStep > 0 ||
+      name.trim().length > 0 ||
+      url.trim().length > 0 ||
+      headers.some((row) => row.key.trim().length > 0 || row.value.trim().length > 0))
+  );
 
   const submit = async () => {
     if (!canSubmit) {

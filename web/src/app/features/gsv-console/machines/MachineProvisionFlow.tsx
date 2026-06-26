@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
+import { useUnsavedGuard } from "../../gsv-shell/unsaved/unsavedGuard";
 import { Button } from "../../../components/ui/Button";
 import { Icon } from "../../../components/ui/Icon";
 import { IconButton } from "../../../components/ui/IconButton";
@@ -154,6 +155,14 @@ export function MachineProvisionFlow({
       })
     : "";
   const createError = errorText(createToken.error);
+
+  useUnsavedGuard(() =>
+    step !== "success" &&
+    (step !== "platform" ||
+      nameTouched ||
+      deviceIdTouched ||
+      expiresDays.trim() !== "30")
+  );
 
   useEffect(() => {
     if (!issuedToken || step !== "connect") {

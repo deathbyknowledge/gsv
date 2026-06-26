@@ -10,6 +10,7 @@ import { TextInput } from "../../../components/ui/TextInput";
 import { ConsoleDetailHeader } from "../components/ConsoleDetailHeader";
 import type { ConnectConsoleAdapterResult, IdentityLinkMutationResult } from "../backend/consoleService";
 import { useConnectConsoleAdapter, useConsumeIdentityLinkCode } from "../hooks/useConsoleData";
+import { useUnsavedGuard } from "../../gsv-shell/unsaved/unsavedGuard";
 import { BOTFATHER_URL, DISCORD_DEVELOPER_URL, MESSENGER_CAPABILITIES, adapterDocUrl } from "./messengerDocs";
 import { adapterDetailId, adapterName, deriveAccountId, iconForAdapterName } from "./messengerPresentation";
 import "./MessengerOnboardingFlow.css";
@@ -50,6 +51,10 @@ export function MessengerOnboardingFlow({
   const [formError, setFormError] = useState("");
   const [linkError, setLinkError] = useState("");
   const [linkResultText, setLinkResultText] = useState("");
+
+  useUnsavedGuard(
+    () => !linked && (step > STEP_CREATE || token.trim() !== "" || linkCode.trim() !== ""),
+  );
 
   const isTelegram = adapterId === "telegram";
   const name = adapterName(adapterId);
