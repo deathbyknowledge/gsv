@@ -80,8 +80,9 @@ export const AGENT_MODEL_FIELDS: readonly ConsoleSettingField[] = [
   },
 ];
 
-export const MODEL_PROFILE_FIELDS: readonly ConsoleSettingField[] = AGENT_MODEL_FIELDS
-  .filter((field) => field.key !== "config/ai/api_key");
+export const MODEL_PROFILE_FIELDS: readonly ConsoleSettingField[] = AGENT_MODEL_FIELDS;
+export const MODEL_PROFILE_SECRET_FIELDS: readonly ConsoleSettingField[] = MODEL_PROFILE_FIELDS
+  .filter((field) => isSensitiveSettingKey(field.key));
 
 export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
   {
@@ -337,6 +338,17 @@ export function isModelProfilesConfigKey(key: string): boolean {
   return /^users\/\d+\/ai\/model_profiles$/.test(key);
 }
 
+export function modelProfileSecretConfigKey(uid: number, profileId: string, fieldKey: string): string {
+  if (!fieldKey.startsWith("config/ai/")) {
+    throw new Error(`Cannot build model profile secret key for non-AI key: ${fieldKey}`);
+  }
+  const normalizedProfileId = normalizeProfileId(profileId);
+  if (!normalizedProfileId) {
+    throw new Error("Profile id is required");
+  }
+  return `users/${uid}/ai/${MODEL_PROFILE_KEY}/${normalizedProfileId}/${fieldKey.slice("config/ai/".length)}`;
+}
+
 export function configEntryForKey(
   config: readonly ConsoleConfigEntry[],
   key: string,
@@ -400,6 +412,7 @@ export function modelProfilesForConfig(
     return profiles
       .map(normalizeModelProfile)
       .filter((profile): profile is ConsoleModelProfile => profile !== null)
+      .map((profile) => hydrateModelProfileSecrets(config, uid, profile))
       .sort((left, right) => right.updatedAt - left.updatedAt || left.name.localeCompare(right.name));
   } catch {
     return [];
@@ -412,11 +425,29 @@ export function serializeModelProfiles(profiles: readonly ConsoleModelProfile[])
     profiles: profiles.map((profile) => ({
       id: profile.id,
       name: normalizeProfileName(profile.name),
-      values: normalizeProfileValues(profile.values),
+      values: normalizeProfileStorageValues(profile.values),
       createdAt: profile.createdAt,
       updatedAt: profile.updatedAt,
     })),
   });
+}
+
+export function redactModelProfilesConfigValue(raw: string): string {
+  if (!raw.trim()) {
+    return raw;
+  }
+  try {
+    const payload = JSON.parse(raw) as Record<string, unknown>;
+    if (!payload || typeof payload !== "object" || !Array.isArray(payload.profiles)) {
+      return raw;
+    }
+    return JSON.stringify({
+      ...payload,
+      profiles: payload.profiles.map(redactModelProfileSecrets),
+    });
+  } catch {
+    return raw;
+  }
 }
 
 export function createModelProfile(
@@ -567,6 +598,46 @@ function normalizeProfileValues(values: Record<string, unknown>): Record<string,
     normalized[field.key] = String(values[field.key] ?? "");
   }
   return normalized;
+}
+
+function normalizeProfileStorageValues(values: Record<string, unknown>): Record<string, string> {
+  const normalized = normalizeProfileValues(values);
+  for (const field of MODEL_PROFILE_SECRET_FIELDS) {
+    delete normalized[field.key];
+  }
+  return normalized;
+}
+
+function hydrateModelProfileSecrets(
+  config: readonly ConsoleConfigEntry[],
+  uid: number,
+  profile: ConsoleModelProfile,
+): ConsoleModelProfile {
+  const values = { ...profile.values };
+  for (const field of MODEL_PROFILE_SECRET_FIELDS) {
+    const secret = configValueForKey(config, modelProfileSecretConfigKey(uid, profile.id, field.key));
+    if (secret) {
+      values[field.key] = secret;
+    }
+  }
+  return { ...profile, values };
+}
+
+function redactModelProfileSecrets(profile: unknown): unknown {
+  if (!profile || typeof profile !== "object" || Array.isArray(profile)) {
+    return profile;
+  }
+  const record = profile as Record<string, unknown>;
+  if (!record.values || typeof record.values !== "object" || Array.isArray(record.values)) {
+    return record;
+  }
+  const values = { ...(record.values as Record<string, unknown>) };
+  for (const key of Object.keys(values)) {
+    if (isSensitiveSettingKey(key)) {
+      values[key] = "";
+    }
+  }
+  return { ...record, values };
 }
 
 function normalizeProfileName(value: unknown): string {

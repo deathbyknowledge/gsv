@@ -19,6 +19,10 @@ import type {
   ConsoleTarget,
   ConsoleTargetKind,
 } from "./consoleModels";
+import {
+  isModelProfilesConfigKey,
+  redactModelProfilesConfigValue,
+} from "./consoleSettings";
 
 const SENSITIVE_CONFIG_KEY_RE = /(?:^|\/|_)(?:api[_-]?key|password|secret|token|credential)(?:$|\/|_)/i;
 
@@ -409,9 +413,10 @@ function normalizeConfigEntry(value: unknown): ConsoleConfigEntry | null {
   }
 
   const redacted = SENSITIVE_CONFIG_KEY_RE.test(key);
+  const entryValue = stringOrEmpty(record.value);
   return {
     key,
-    value: redacted ? "" : stringOrEmpty(record.value),
+    value: redacted ? "" : isModelProfilesConfigKey(key) ? redactModelProfilesConfigValue(entryValue) : entryValue,
     redacted,
   };
 }

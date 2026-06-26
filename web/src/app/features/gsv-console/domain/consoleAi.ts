@@ -14,6 +14,7 @@ const MODEL_CONFIG_KEY_RE = /(^|[/.])model($|[/.])|default.*model|model.*default
 const PRIMARY_MODEL_KEY_RE = /(^|[/.])ai[/.]model$|default.*model|model.*default/i;
 const AGENT_BEHAVIOR_CONFIG_KEY_RE = /^users\/[^/]+\/ai\//i;
 const MODEL_PROFILES_KEY_RE = /^users\/(\d+)\/ai\/model_profiles$/;
+const SENSITIVE_PROFILE_VALUE_KEY_RE = /(?:^|\/|_)(?:api[_-]?key|password|secret|token|credential)(?:$|\/|_)/i;
 
 function isModelConfigKey(key: string): boolean {
   return MODEL_CONFIG_KEY_RE.test(key);
@@ -131,7 +132,7 @@ function normalizeProfileValues(value: unknown): Record<string, string> {
   }
   const values: Record<string, string> = {};
   for (const [key, rawValue] of Object.entries(value as Record<string, unknown>)) {
-    if (key.startsWith("config/ai/")) {
+    if (key.startsWith("config/ai/") && !SENSITIVE_PROFILE_VALUE_KEY_RE.test(key)) {
       values[key] = String(rawValue ?? "");
     }
   }

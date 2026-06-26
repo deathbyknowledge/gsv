@@ -395,19 +395,19 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
           values: {
             "config/ai/provider": "openai",
             "config/ai/model": "gpt-4.1-mini",
-            "config/ai/api_key": "sk-profile",
             "config/ai/image/read/provider": "openai",
             "config/ai/image/read/model": "gpt-4o",
-            "config/ai/image/read/api_key": "sk-image",
             "config/ai/speech/provider": "openai",
             "config/ai/speech/model": "gpt-4o-mini-tts",
-            "config/ai/speech/api_key": "sk-speech",
           },
           createdAt: 1000,
           updatedAt: 2000,
         },
       ],
     })],
+    ["users/1000/ai/model_profiles/fast-stack/api_key", "sk-profile"],
+    ["users/1000/ai/model_profiles/fast-stack/image/read/api_key", "sk-image"],
+    ["users/1000/ai/model_profiles/fast-stack/speech/api_key", "sk-speech"],
   ]);
   let processAiConfig: any = null;
   const passwdEntries = [ROOT, SAM, ALICE, SAM_AGENT].map((user) => ({
