@@ -12,7 +12,8 @@ Applications are packages anyone can write, share, and run on GSV. Before a pack
 
 ## Try it: Starfield
 
-Import `https://github.com/deathbyknowledge/starfield`, then fly around with **WASD** to explore.
+Import `https://github.com/deathbyknowledge/starfield` and try out our GSV made Starfield app :).
+
 ## See also
 
 - [Package SDK](/reference/package-sdk) — build your own package
