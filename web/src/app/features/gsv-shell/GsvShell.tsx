@@ -401,12 +401,14 @@ export function GsvShell({
           {shell.showRail ? (
             <ShellRail
               activeSurface={shell.activeSurface}
+              activeTabKey={shell.activeTabKey}
               desktopObjects={desktopObjects}
               collapsed={shell.railCollapsed}
               onToggleCollapsed={shell.toggleRailCollapsed}
               onBackToDesktop={shell.desktopCollapsed ? guardedRevealDesktop : guardedBackToDesktop}
               onOpenControlMenu={shell.openControlMenu}
               onOpenSurface={openShellSurface}
+              onOpenObject={guardedOpenObject}
             />
           ) : null}
 
