@@ -5,6 +5,7 @@ export type RepoSummary = {
   kind: "home" | "package" | "user";
   writable: boolean;
   public: boolean;
+  ref?: string;
   description?: string;
   updatedAt?: number;
 };

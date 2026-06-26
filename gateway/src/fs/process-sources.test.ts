@@ -398,6 +398,36 @@ describe("createProcessSourceBackend", () => {
     await expect(backend!.readFile("/src/repos/root/gsv/packages/chat/package.json")).resolves.toContain("chat");
   });
 
+  it("reads package source repos at the package source ref", async () => {
+    const readCalls: Array<{ repo: { owner: string; repo: string; branch?: string }; path: string }> = [];
+    const backend = createProcessSourceBackend({
+      identity: IDENTITY,
+      storage: makeBucket(),
+      repos: [makeRepo("root/gsv", { kind: "package", writable: false, ref: "commit123" })],
+      processId: "task:source",
+      config: makeConfig(),
+      ripgit: {
+        readPath: async (repo: { owner: string; repo: string; branch?: string }, path: string) => {
+          readCalls.push({ repo, path });
+          if (repo.branch === "commit123" && path === "packages/chat/package.json") {
+            return {
+              kind: "file",
+              bytes: new TextEncoder().encode("{\"name\":\"chat\"}\n"),
+              size: 16,
+            };
+          }
+          return { kind: "missing" };
+        },
+      } as any,
+    });
+
+    await expect(backend!.readFile("/src/repos/root/gsv/packages/chat/package.json")).resolves.toContain("chat");
+    expect(readCalls).toEqual([{
+      repo: { owner: "root", repo: "gsv", branch: "commit123" },
+      path: "packages/chat/package.json",
+    }]);
+  });
+
   it("reads package subdirectories through the canonical repo path", async () => {
     const readCalls: Array<{ repo: { owner: string; repo: string; branch?: string }; path: string }> = [];
     const backend = createProcessSourceBackend({

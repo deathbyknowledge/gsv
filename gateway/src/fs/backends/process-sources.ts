@@ -933,12 +933,18 @@ function sourceRepoForSummary(summary: RepoSummary): SourceRepo | null {
       name: parsed.repo,
       repo: `${parsed.owner}/${parsed.repo}`,
       rootPath: `/src/repos/${parsed.owner}/${parsed.repo}`,
-      ref: DEFAULT_REPO_REF,
+      ref: sourceRefForSummary(summary),
       writable: summary.writable,
     };
   } catch {
     return null;
   }
+}
+
+function sourceRefForSummary(summary: RepoSummary): string {
+  return typeof summary.ref === "string" && summary.ref.trim().length > 0
+    ? summary.ref.trim()
+    : DEFAULT_REPO_REF;
 }
 
 function throwMissingSourcePath(path: string): never {

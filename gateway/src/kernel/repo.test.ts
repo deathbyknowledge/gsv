@@ -52,7 +52,17 @@ function makeConfig(seed: Record<string, string> = {}) {
 function makeContext(
   fetcher: Fetcher,
   configSeed: Record<string, string> = {},
-  packages: Array<{ manifest: { source: { repo: string } } }> = [],
+  packages: Array<{
+    manifest: {
+      name?: string;
+      source: {
+        repo: string;
+        ref?: string;
+        resolvedCommit?: string | null;
+      };
+    };
+    updatedAt?: number;
+  }> = [],
 ): KernelContext {
   const config = makeConfig(configSeed);
   return {
@@ -396,6 +406,36 @@ describe("repo syscalls", () => {
       repo: "root/gsv",
       kind: "file",
       content: "export default {}\n",
+    });
+  });
+
+  it("lists visible package source repos at their installed source ref", () => {
+    const ctx = makeContext(makeFetcher(() => {
+      throw new Error("ripgit should not be called");
+    }), {}, [
+      {
+        manifest: {
+          name: "Wiki",
+          source: {
+            repo: "root/gsv",
+            ref: "feature/wiki",
+            resolvedCommit: "commit123",
+          },
+        },
+        updatedAt: 200,
+      },
+    ]);
+
+    expect(handleRepoList({}, ctx).repos).toContainEqual({
+      repo: "root/gsv",
+      owner: "root",
+      name: "gsv",
+      kind: "package",
+      writable: false,
+      public: false,
+      ref: "commit123",
+      description: "Wiki",
+      updatedAt: 200,
     });
   });
 
