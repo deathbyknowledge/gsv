@@ -1,5 +1,5 @@
 import type { JSX, RefObject } from "preact";
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import {
   getDesktopObject,
   shellRouteForTab,
@@ -132,6 +132,8 @@ export function useGsvShellState({
   const [chatOpen, setChatOpen] = useState(false);
   const [chatWidth, setChatWidth] = useState(DEFAULT_CHAT_WIDTH);
   const [chatDragging, setChatDragging] = useState(false);
+  // Set while dragging the rail divider, so the trailing click doesn't also toggle.
+  const railDraggedRef = useRef(false);
 
   useEffect(() => {
     const node = rootRef.current;
@@ -385,6 +387,44 @@ export function useGsvShellState({
     window.addEventListener("mouseup", onUp);
   };
 
+  // Drag the rail divider: collapse to the icon rail when dragged left past the
+  // midpoint between the collapsed and expanded widths, expand when dragged back.
+  const startRailDrag = (event: JSX.TargetedMouseEvent<HTMLElement>): void => {
+    event.preventDefault();
+    const rect = rootRef.current?.getBoundingClientRect();
+    if (!rect) {
+      return;
+    }
+    const threshold = (COLLAPSED_RAIL_WIDTH + EXPANDED_RAIL_WIDTH) / 2;
+    const startX = event.clientX;
+    railDraggedRef.current = false;
+
+    const onMove = (moveEvent: MouseEvent) => {
+      if (!railDraggedRef.current && Math.abs(moveEvent.clientX - startX) > 4) {
+        railDraggedRef.current = true;
+      }
+      if (railDraggedRef.current) {
+        setManualRailCollapsed(moveEvent.clientX - rect.left < threshold);
+      }
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
+  const toggleRailCollapsed = (): void => {
+    // Ignore the click that follows a drag — the drag already set the state.
+    if (railDraggedRef.current) {
+      railDraggedRef.current = false;
+      return;
+    }
+    setManualRailCollapsed((value) => !value);
+  };
+
   const toggleChatMax = (): void => {
     if (resolvedChatWidth >= maxChatWidth - 1) {
       setChatWidth(DEFAULT_CHAT_WIDTH);
@@ -433,11 +473,10 @@ export function useGsvShellState({
     showRail,
     startChatDrag,
     statusContext,
+    startRailDrag,
     syncActiveSettingsRoute,
     syncActiveLibraryRoute,
     toggleChatMax,
-    toggleRailCollapsed: () => {
-      setManualRailCollapsed((value) => !value);
-    },
+    toggleRailCollapsed,
   };
 }

@@ -425,8 +425,9 @@ export function GsvShell({
                   <button
                     type="button"
                     class="gsv-console-rail-handle"
-                    title={shell.railCollapsed ? "Expand menu" : "Collapse menu"}
+                    title={shell.railCollapsed ? "Expand menu (drag or click)" : "Collapse menu (drag or click)"}
                     aria-label={shell.railCollapsed ? "Expand menu" : "Collapse menu"}
+                    onMouseDown={shell.startRailDrag}
                     onClick={shell.toggleRailCollapsed}
                   />
                 ) : null}

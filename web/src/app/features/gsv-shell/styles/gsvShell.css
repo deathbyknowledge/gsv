@@ -1158,6 +1158,7 @@
   min-width: 0;
   flex: 1 1 auto;
   display: block;
+  text-align: left;
 }
 
 .gsv-rail-row-copy > span {
@@ -1219,32 +1220,27 @@
   min-height: 38px;
   border: 0;
   background: transparent;
-  color: #9d98d8;
+  color: #7d78b8;
   padding: 10px 20px 10px 74px;
   cursor: pointer;
   font: inherit;
   font-size: 12px;
   letter-spacing: 0.16em;
   text-align: left;
+  text-transform: uppercase;
 }
 
+/* Subitems highlight the TEXT only (no row background) — a softer affordance
+   than the near-white full-row hover used by the top-level rail items. */
 .gsv-shell-rail:not(.is-collapsed) .gsv-rail-subitem:hover,
-.gsv-shell-rail:not(.is-collapsed) .gsv-rail-subitem:focus-visible,
-.gsv-shell-rail:not(.is-collapsed) .gsv-rail-subitem.is-active {
-  background: var(--hover-nav);
-  color: var(--text-hi);
+.gsv-shell-rail:not(.is-collapsed) .gsv-rail-subitem:focus-visible {
+  color: #b6b2e0;
   outline: none;
 }
 
-.gsv-shell-rail:not(.is-collapsed) .gsv-rail-subitem.is-active::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  background: var(--accent-bright);
-  box-shadow: 0 0 8px var(--accent-bright);
+/* Selected subitem: text color only (no background, no accent bar). */
+.gsv-shell-rail:not(.is-collapsed) .gsv-rail-subitem.is-active {
+  color: var(--accent-bright);
 }
 
 /* The "create" entry at the bottom of a section drawer reads as an action,
@@ -1526,7 +1522,7 @@
   padding: 0;
   background: transparent;
   color: var(--accent);
-  cursor: pointer;
+  cursor: ew-resize;
 }
 
 .gsv-console-rail-handle::before {

@@ -32,12 +32,12 @@ const GLYPH_ICON: Record<string, string> = {
   applications: "stars",
 };
 
-/** Label for each section's "create" entry at the bottom of its drawer. */
+/** Label for a section's "create" entry. Messengers are intentionally absent —
+ *  connecting a messenger is done from its dedicated platform page. Applications
+ *  are absent — they route to the applications list page instead of a drawer. */
 const CREATE_LABEL: Record<string, string> = {
-  machines: "+ PROVISION MACHINE",
-  messengers: "+ CONNECT MESSENGER",
-  integrations: "+ ADD INTEGRATION",
-  applications: "+ IMPORT APPLICATION",
+  machines: "CONNECT MACHINE",
+  integrations: "CONNECT INTEGRATION",
 };
 
 /** Drawer id for the GSV system-surfaces section (the one non-object section). */
@@ -191,11 +191,14 @@ export function ShellRail({
                 if (isSectionActive(object)) {
                   return; // already in this section — leave the current object alone
                 }
-                if (object.children.length > 0) {
-                  onOpenObject(object.children[0]); // auto-open the first object
-                } else {
-                  onOpenSurface(object.id); // empty section → its connect/landing
+                // Applications open as native app frames — jarring to launch from
+                // a section click — so route to the applications list page instead
+                // of auto-opening one. Empty sections also go to their landing.
+                if (object.id === "applications" || object.children.length === 0) {
+                  onOpenSurface(object.id);
+                  return;
                 }
+                onOpenObject(object.children[0]); // auto-open the first object
               };
               return (
                 <Fragment key={object.id}>
@@ -216,7 +219,7 @@ export function ShellRail({
                     </span>
                     <i style={{ background: statusColor(object.status), color: statusColor(object.status) }} />
                   </button>
-                  {expanded ? (
+                  {expanded && object.id !== "applications" ? (
                     <div class="gsv-rail-subitems" aria-label={`${object.label} objects`}>
                       {object.children.map((child) => (
                         <button
@@ -229,13 +232,15 @@ export function ShellRail({
                           {child.label}
                         </button>
                       ))}
-                      <button
-                        type="button"
-                        class="gsv-rail-subitem gsv-rail-subitem-create"
-                        onClick={() => onCreateObject(object.id)}
-                      >
-                        {CREATE_LABEL[object.id] ?? "+ NEW"}
-                      </button>
+                      {CREATE_LABEL[object.id] ? (
+                        <button
+                          type="button"
+                          class="gsv-rail-subitem gsv-rail-subitem-create"
+                          onClick={() => onCreateObject(object.id)}
+                        >
+                          {CREATE_LABEL[object.id]}
+                        </button>
+                      ) : null}
                     </div>
                   ) : null}
                 </Fragment>
