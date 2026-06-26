@@ -690,7 +690,6 @@ function normalizeScheduleTarget(target: ScheduleTarget): ScheduleTarget {
       ...(target.label ? { label: normalizeRequiredText(target.label, "process.spawn label") } : {}),
       ...(target.parentPid ? { parentPid: normalizeRequiredText(target.parentPid, "process.spawn parentPid") } : {}),
       ...(target.cwd ? { cwd: normalizeRequiredText(target.cwd, "process.spawn cwd") } : {}),
-      ...(target.mounts ? { mounts: target.mounts } : {}),
       ...(target.assignment ? { assignment: target.assignment } : {}),
     };
   }

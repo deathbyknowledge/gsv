@@ -34,13 +34,6 @@ function createMockSql() {
       return rows([] as T[]);
     }
 
-    if (q.startsWith("UPDATE processes SET mounts = '[]'")) {
-      for (const row of table.values()) {
-        if (!row.mounts) row.mounts = "[]";
-      }
-      return rows([] as T[]);
-    }
-
     if (q.startsWith("UPDATE processes SET context_files_json = '[]'")) {
       for (const row of table.values()) {
         if (!row.context_files_json) row.context_files_json = "[]";
@@ -74,7 +67,6 @@ function createMockSql() {
         username,
         home,
         cwd,
-        mounts,
         context_files_json,
         label,
         created_at,
@@ -85,7 +77,6 @@ function createMockSql() {
         number,
         number,
         number,
-        string,
         string,
         string,
         string,
@@ -106,7 +97,6 @@ function createMockSql() {
         username,
         home,
         cwd,
-        mounts,
         context_files_json,
         state: "idle",
         active_run_id: null,
@@ -131,10 +121,10 @@ function createMockSql() {
       return rows((row ? [{ owner_uid: row.owner_uid ?? null, uid: row.uid }] : []) as T[]);
     }
 
-    if (q.startsWith("SELECT mounts FROM processes WHERE process_id = ?")) {
+    if (q.startsWith("SELECT context_files_json FROM processes WHERE process_id = ?")) {
       const [processId] = bindings as [string];
       const row = table.get(processId);
-      return rows((row ? [{ mounts: row.mounts ?? "[]" }] : []) as T[]);
+      return rows((row ? [{ context_files_json: row.context_files_json ?? "[]" }] : []) as T[]);
     }
 
     if (q.startsWith("SELECT * FROM processes WHERE process_id = ?")) {
@@ -329,36 +319,18 @@ describe("ProcessRegistry", () => {
     });
   });
 
-  it("stores and returns process mounts on spawn", () => {
+  it("stores and returns process context files on spawn", () => {
     const sql = createMockSql();
     const registry = new ProcessRegistry(sql as unknown as SqlStorage);
 
     registry.spawn("task:4", makeIdentity("/home/sam"), {
-      cwd: "/src/repos/root/pkg-test",
-      mounts: [
-        {
-          kind: "ripgit-source",
-          mountPath: "/src/repos/root/pkg-test",
-          packageId: "import:root/pkg-test:.",
-          repo: "root/pkg-test",
-          ref: "main",
-          resolvedCommit: "abc123",
-          subdir: ".",
-        },
-      ],
+      cwd: "/src/repos/sam/pkg-test",
+      contextFiles: [{ name: "brief.md", text: "Investigate the package." }],
     });
 
-    expect(registry.get("task:4")?.cwd).toBe("/src/repos/root/pkg-test");
-    expect(registry.getMounts("task:4")).toEqual([
-      {
-        kind: "ripgit-source",
-        mountPath: "/src/repos/root/pkg-test",
-        packageId: "import:root/pkg-test:.",
-        repo: "root/pkg-test",
-        ref: "main",
-        resolvedCommit: "abc123",
-        subdir: ".",
-      },
+    expect(registry.get("task:4")?.cwd).toBe("/src/repos/sam/pkg-test");
+    expect(registry.getContextFiles("task:4")).toEqual([
+      { name: "brief.md", text: "Investigate the package." },
     ]);
   });
 });

@@ -5,10 +5,7 @@
 This branch has the package review architecture replacement in progress:
 
 - Review processes no longer depend on bespoke AI package tools as the intended model.
-- Process-scoped read-only source mounts are being added.
-- Review processes mount:
-  - /src/package
-  - /src/repo
+- Review processes start in the package source directory under `/src/repos/{owner}/{repo}/{subdir}`.
 - A native `pkg` shell command is being added as the package control surface.
 
 ## Done recently
@@ -29,26 +26,22 @@ This branch has the package review architecture replacement in progress:
 
 ## In progress now
 
-### Replace bespoke package review tools with mounts + pkg CLI
+### Replace bespoke package review tools with pkg CLI
 
 Goal:
 - Remove the agent-facing dependency on `PackageRefs`, `PackageRead`, and `PackageLog`.
-- Make review feel like inspecting a mounted Linux filesystem tree.
+- Make review feel like inspecting package source through normal fs/shell tools.
 
 Implemented in this slice:
-- Process mount specs on `proc.spawn`
-- Process mount persistence in `ProcessRegistry`
 - `KernelContext.processId`
-- `/src/*` read-only ripgit-backed source mount backend
-- `GsvFs` support for process source mounts
-- FS and shell drivers wired to process mounts
-- Review process now spawns with `/src/package` and `/src/repo`
+- `/src/repos/*` ripgit-backed source backend
+- FS and shell drivers wired to source and repo paths
+- Review process now spawns with cwd at package source
 - Review prompt rewritten to use shell/fs/`pkg`
 - AI tool exposure for bespoke package repo tools removed from `ai.tools`
 
 Still to verify/fix:
-- Typecheck for the new mount + shell changes
-- Runtime behavior of `/src/package` and `/src/repo`
+- Runtime behavior of package review cwd
 - `pkg` command behavior and output polish
 - Remove any remaining dead code/wiring around old package repo review tools if no longer needed anywhere
 
@@ -56,7 +49,7 @@ Still to verify/fix:
 
 ### 1. Validate and finish the new package review model
 
-- Verify review process opens with cwd at `/src/package`
+- Verify review process opens with cwd at package source
 - Verify the reviewer can use:
   - `pwd`
   - `ls`
@@ -65,16 +58,16 @@ Still to verify/fix:
   - `cat`
   - `pkg manifest`
   - `pkg capabilities`
-  - `pkg refs`
-  - `pkg log`
+  - `pkg source`
+  - `rgit status --here`
+  - `rgit diff --here`
 - Verify approval flow still works from Packages after review
 
 ### 2. Add tests for the new package review architecture
 
 Backend coverage to add:
-- process mount persistence and retrieval
-- review spawn mounts `/src/package` and `/src/repo`
-- source mount backend read/tree behavior
+- review spawn cwd selection
+- source backend read/tree behavior
 - `pkg` CLI subcommands:
   - `list`
   - `manifest`
@@ -117,7 +110,7 @@ Backend coverage to add:
 - `pkg` is the correct user/agent-facing package abstraction.
 - `ripgit` should remain implementation detail or expert-facing.
 - Package review should happen through:
-  - mounted source trees
+  - visible package source trees
   - normal fs/shell exploration
   - `pkg` command
 - Process profiles remain fixed system roles.

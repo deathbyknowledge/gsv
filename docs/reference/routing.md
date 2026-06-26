@@ -66,7 +66,7 @@ as direct model tool calls.
 
 Agent conversations are durable processes, identified by PIDs. The long-lived home process for a user is `init:{uid}`. Other processes are spawned with `proc.spawn` and usually receive UUID PIDs.
 
-The Kernel stores process metadata in the `processes` table: uid, gids, profile, parent PID, cwd, workspace id, source mounts, state, label, and context files. `proc.list` is answered directly from this registry.
+The Kernel stores process metadata in the `processes` table: owner uid, run-as identity, parent PID, cwd, interactive flag, runtime state, active conversation/run ids, label, and context files. `proc.list` is answered directly from this registry.
 
 These syscalls are forwarded to the target Process DO after ownership checks:
 

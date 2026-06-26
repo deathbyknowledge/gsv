@@ -20,10 +20,6 @@ export type ProcMediaInput = {
   transcription?: string;
 };
 
-export type ProcSpawnMountSpec =
-  | { kind: "package-source"; packageId: string; mountPath?: string }
-  | { kind: "package-repo"; packageId: string; mountPath?: string };
-
 export type ProcContextFile = {
   name: string;
   text: string;
@@ -50,7 +46,6 @@ export type ProcSpawnArgs = {
   assignment?: ProcSpawnAssignment;
   parentPid?: string;
   cwd?: string;
-  mounts?: ProcSpawnMountSpec[];
   // NOTE: consider allowing explicit identity override (root only or subset of current identity)
 };
 

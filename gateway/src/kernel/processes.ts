@@ -12,7 +12,6 @@
 
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { ProcContextFile } from "../syscalls/proc";
-import type { PackageInstallScope } from "./packages";
 
 export type ProcessState = "idle" | "queued" | "running" | "waiting_tool" | "waiting_hil";
 
@@ -22,17 +21,6 @@ export type ProcessRuntimePatch = {
   activeConversationId?: string | null;
   queuedCount?: number;
   lastActiveAt?: number | null;
-};
-
-export type ProcessMount = {
-  kind: "ripgit-source";
-  mountPath: string;
-  packageId: string | null;
-  scope?: PackageInstallScope;
-  repo: string;
-  ref: string;
-  resolvedCommit: string | null;
-  subdir: string;
 };
 
 export type ProcessRecord = {
@@ -53,7 +41,6 @@ export type ProcessRecord = {
   lastActiveAt: number | null;
   label: string | null;
   createdAt: number;
-  mounts: ProcessMount[];
   contextFiles: ProcContextFile[];
 };
 
@@ -69,14 +56,13 @@ export class ProcessRegistry {
       interactive?: boolean;
       label?: string;
       cwd?: string;
-      mounts?: ProcessMount[];
       contextFiles?: ProcContextFile[];
     },
   ): void {
     this.sql.exec(
       `INSERT OR REPLACE INTO processes
-        (process_id, parent_pid, uid, owner_uid, interactive, gid, gids, username, home, cwd, mounts, context_files_json, state, active_run_id, active_conversation_id, queued_count, last_active_at, label, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle', NULL, NULL, 0, NULL, ?, ?)`,
+        (process_id, parent_pid, uid, owner_uid, interactive, gid, gids, username, home, cwd, context_files_json, state, active_run_id, active_conversation_id, queued_count, last_active_at, label, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle', NULL, NULL, 0, NULL, ?, ?)`,
       processId,
       opts.parentPid ?? null,
       identity.uid,
@@ -87,7 +73,6 @@ export class ProcessRegistry {
       identity.username,
       identity.home,
       opts.cwd ?? identity.cwd,
-      JSON.stringify(opts.mounts ?? []),
       JSON.stringify(opts.contextFiles ?? []),
       opts.label ?? null,
       Date.now(),
@@ -138,14 +123,6 @@ export class ProcessRegistry {
 
     if (rows.length === 0) return null;
     return toRecord(rows[0]);
-  }
-
-  getMounts(processId: string): ProcessMount[] {
-    const rows = [...this.sql.exec<{ mounts: string | null }>(
-      "SELECT mounts FROM processes WHERE process_id = ?",
-      processId,
-    )];
-    return parseMounts(rows[0]?.mounts ?? null);
   }
 
   getContextFiles(processId: string): ProcContextFile[] {
@@ -263,7 +240,6 @@ type RowShape = {
   username: string;
   home: string;
   cwd: string | null;
-  mounts: string | null;
   context_files_json: string | null;
   state: string;
   active_run_id: string | null;
@@ -293,7 +269,6 @@ function toRecord(row: RowShape): ProcessRecord {
     lastActiveAt: row.last_active_at,
     label: row.label,
     createdAt: row.created_at,
-    mounts: parseMounts(row.mounts),
     contextFiles: parseContextFiles(row.context_files_json),
   };
 }
@@ -308,18 +283,6 @@ function normalizeProcessState(value: string): ProcessState {
       return value;
     default:
       return "idle";
-  }
-}
-
-function parseMounts(value: string | null): ProcessMount[] {
-  if (!value) {
-    return [];
-  }
-  try {
-    const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
   }
 }
 

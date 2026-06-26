@@ -14,14 +14,15 @@ pkg list
 pkg show <package>
 pkg manifest <package>
 pkg capabilities <package>
-pkg refs <package>
-pkg log <package> --limit 20
-pkg source status <package>
+pkg source <package>
+rgit refs --here
+rgit log --here --limit 20
+rgit status --here
 ```
 
 A review should usually start from clean source. If staged edits exist, explain what they are before trusting the tree.
 
-Inspect `/src/packages/<package>` directly. Identify browser, backend, CLI, public route, daemon, signal, and package profile entrypoints.
+Inspect the path reported by `pkg source <package>` directly. Identify browser, backend, CLI, public route, daemon, signal, and package profile entrypoints.
 
 ## What To Check
 

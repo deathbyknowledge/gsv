@@ -8,7 +8,6 @@ import {
   RipgitClient,
 } from "../../../fs";
 import type { KernelContext } from "../../../kernel/context";
-import { resolveCallerOwnerUid } from "../../../kernel/context";
 import {
   handleRepoCompare,
   handleRepoCreate,
@@ -20,7 +19,6 @@ import {
   handleRepoRefs,
   handleRepoSearch,
 } from "../../../kernel/repo";
-import { visiblePackageScopesForActor } from "../../../kernel/packages";
 import type {
   RepoCompareResult,
   RepoDiffResult,
@@ -203,14 +201,11 @@ async function runRgitCommand(
 
 function processSourceOptions(ctx: KernelContext) {
   const identity = ctx.identity!.process;
-  const ownerUid = resolveCallerOwnerUid(ctx);
   return {
     identity,
     storage: ctx.env.STORAGE,
     ripgit: ctx.env.RIPGIT ? new RipgitClient(ctx.env.RIPGIT) : null,
-    packages: ctx.packages.list({ scopes: visiblePackageScopesForActor({ uid: ownerUid }) }),
     repos: handleRepoList(undefined, ctx).repos,
-    mounts: ctx.processId ? ctx.procs.getMounts(ctx.processId) : null,
     processId: ctx.processId ?? null,
     config: ctx.config,
   };

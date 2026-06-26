@@ -6,7 +6,6 @@ import type {
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { RepoSummary } from "@humansandmachines/gsv/protocol";
 import type { InstalledPackageRecord } from "../../kernel/packages";
-import type { ProcessMount } from "../../kernel/processes";
 import type { ExtendedMountStat, FsSearchBackendResult, MountBackend } from "../mount";
 import {
   RipgitClient,
@@ -28,9 +27,7 @@ export type ProcessSourceBackendOptions = {
   identity: ProcessIdentity;
   storage?: R2Bucket | null;
   ripgit: RipgitClient | null;
-  packages: InstalledPackageRecord[];
   repos?: RepoSummary[] | null;
-  mounts?: ProcessMount[] | null;
   processId?: string | null;
   config?: SourceConfig | null;
 };
@@ -47,7 +44,7 @@ type SourceRepo = {
   owner: string;
   name: string;
   repo: string;
-  mountPath: string;
+  rootPath: string;
   ref: string;
   writable: boolean;
 };
@@ -115,10 +112,10 @@ export function createProcessSourceBackend(
     return null;
   }
 
-  return new ProcessSourceMountBackend(options);
+  return new ProcessSourceBackend(options);
 }
 
-export function isProcessSourceMountPath(path: string): boolean {
+export function isProcessSourcePath(path: string): boolean {
   const normalized = normalizePath(path);
   return normalized === "/src" || normalized.startsWith("/src/");
 }
@@ -160,7 +157,7 @@ export function packageSourcePathNameMap<T extends Pick<InstalledPackageRecord, 
   return result;
 }
 
-class ProcessSourceMountBackend implements MountBackend {
+class ProcessSourceBackend implements MountBackend {
   private readonly identity: ProcessIdentity;
   private readonly storage: R2Bucket | null;
   private readonly ripgit: RipgitClient;
@@ -174,11 +171,11 @@ class ProcessSourceMountBackend implements MountBackend {
     this.ripgit = options.ripgit!;
     this.processId = options.processId ?? null;
     this.config = options.config ?? null;
-    this.repos = visibleSourceRepos(options.repos, options.packages, options.mounts);
+    this.repos = visibleSourceRepos(options.repos);
   }
 
   handles(path: string): boolean {
-    return isProcessSourceMountPath(path);
+    return isProcessSourcePath(path);
   }
 
   async readFile(path: string): Promise<string> {
@@ -374,11 +371,11 @@ class ProcessSourceMountBackend implements MountBackend {
   }
 
   async chmod(path: string): Promise<void> {
-    throw new Error(`EPERM: source mount modes are managed by ripgit '${normalizePath(path)}'`);
+    throw new Error(`EPERM: source path modes are managed by ripgit '${normalizePath(path)}'`);
   }
 
   async chown(path: string): Promise<void> {
-    throw new Error(`EPERM: source mount ownership is managed by ripgit '${normalizePath(path)}'`);
+    throw new Error(`EPERM: source path ownership is managed by ripgit '${normalizePath(path)}'`);
   }
 
   async utimes(path: string): Promise<void> {
@@ -431,11 +428,11 @@ class ProcessSourceMountBackend implements MountBackend {
             !isDeletedByOverlay(overlay, match.path)
           )
           .map((match) => ({
-            path: `${repo.mountPath}/${match.path}`.replace(/\/+$/g, ""),
+            path: `${repo.rootPath}/${match.path}`.replace(/\/+$/g, ""),
             line: match.line,
             content: match.content,
           })),
-        ...await this.searchOverlay(repo.mountPath, overlay, relativePath, query),
+        ...await this.searchOverlay(repo.rootPath, overlay, relativePath, query),
       ],
     };
   }
@@ -459,16 +456,16 @@ class ProcessSourceMountBackend implements MountBackend {
   } | null {
     const normalizedPath = normalizePath(path);
     const repo = this.repos.find((candidate) =>
-      normalizedPath === candidate.mountPath || normalizedPath.startsWith(`${candidate.mountPath}/`)
+      normalizedPath === candidate.rootPath || normalizedPath.startsWith(`${candidate.rootPath}/`)
     );
     if (!repo) {
       return null;
     }
     return {
       repo,
-      relativePath: normalizedPath === repo.mountPath
+      relativePath: normalizedPath === repo.rootPath
         ? ""
-        : normalizeRepoPath(normalizedPath.slice(repo.mountPath.length + 1)),
+        : normalizeRepoPath(normalizedPath.slice(repo.rootPath.length + 1)),
       normalizedPath,
     };
   }
@@ -478,7 +475,7 @@ class ProcessSourceMountBackend implements MountBackend {
     if (normalizedPath !== "/src" && !normalizedPath.startsWith("/src/")) {
       return null;
     }
-    if (this.repos.some((repo) => repo.mountPath === normalizedPath)) {
+    if (this.repos.some((repo) => repo.rootPath === normalizedPath)) {
       return null;
     }
     const entries = new Set<string>();
@@ -912,8 +909,6 @@ export async function discardRepoSourceChanges(
 
 function visibleSourceRepos(
   summaries?: RepoSummary[] | null,
-  _records?: InstalledPackageRecord[],
-  _mounts?: ProcessMount[] | null,
 ): SourceRepo[] {
   const repos = new Map<string, SourceRepo>();
   for (const summary of summaries ?? []) {
@@ -936,7 +931,7 @@ function sourceRepoForSummary(summary: RepoSummary): SourceRepo | null {
       owner: parsed.owner,
       name: parsed.repo,
       repo: `${parsed.owner}/${parsed.repo}`,
-      mountPath: `/src/repos/${parsed.owner}/${parsed.repo}`,
+      rootPath: `/src/repos/${parsed.owner}/${parsed.repo}`,
       ref: DEFAULT_REPO_REF,
       writable: summary.writable,
     };
@@ -955,7 +950,7 @@ function sourceRepoForOptions(
   repoSlug: string,
 ): SourceRepo {
   const normalizedRepo = normalizeRepoSlug(repoSlug);
-  const repos = visibleSourceRepos(options.repos, options.packages, options.mounts);
+  const repos = visibleSourceRepos(options.repos);
   const found = repos.find((repo) => repo.repo === normalizedRepo);
   if (!found) {
     throw new Error(`Repo is not visible: ${normalizedRepo}`);

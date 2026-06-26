@@ -13,10 +13,10 @@ Use native shell on `target: "gsv"`:
 pkg list
 pkg show <package>
 pkg manifest <package>
-pkg source status <package>
+pkg source <package>
 ```
 
-Do not invent source paths. Visible package source lives under `/src/packages/<package-path>`. When cwd is inside a package source tree, most `pkg source` commands can infer the package.
+Do not invent source paths. Use `pkg source <package>` to find the package source path under `/src/repos/{owner}/{repo}/{subdir}`. When cwd is inside a repo, use `rgit --here` forms for repo operations.
 
 ## Create a User-Owned Package
 
@@ -27,7 +27,7 @@ pkg create --repo <username>/<repo> --template web-ui --enable
 pkg create --repo <username>/<repo> --template command --enable
 ```
 
-Then edit the mounted source under `/src/packages/<package>`.
+Then edit the package source path reported by `pkg source <package>`.
 
 ## Manifest Shape
 
@@ -50,8 +50,8 @@ Capabilities are part of the package trust contract. Do not broaden them to make
 4. Inspect staged source changes:
 
 ```bash
-pkg source status <package>
-pkg source diff <package>
+rgit status --here
+rgit diff --here
 ```
 
 Source writes are staged per process for ripgit-backed package source. They are not installed or shared until committed.
@@ -61,7 +61,7 @@ Source writes are staged per process for ripgit-backed package source. They are 
 Commit staged source edits:
 
 ```bash
-pkg source commit <package> --message "short imperative message" --branch <branch>
+rgit commit --here --message "short imperative message" --branch <branch>
 ```
 
 Move an installed package to a committed ref:

@@ -559,174 +559,7 @@ describe("proc handlers", () => {
     expect(ctx.scheduleIpcCallTimeout).not.toHaveBeenCalled();
   });
 
-  it("uses disambiguated package source mount paths", async () => {
-    const pkgA = makePackage("pkg-a", "Demo Tool", "sam/demo-a");
-    const pkgB = makePackage("pkg-b", "demo-tool", "sam/demo-b");
-    const ctx = {
-      env: {},
-      identity: {
-        process: IDENTITY,
-        capabilities: ["*"],
-      },
-      procs: {
-        get: vi.fn(() => SPAWN_PARENT),
-        spawn: vi.fn(),
-      },
-      conversations: spawnConversationsMock(),
-      packages: {
-        resolve: vi.fn((packageId: string) => {
-          if (packageId === "pkg-a") return pkgA;
-          if (packageId === "pkg-b") return pkgB;
-          return null;
-        }),
-        list: vi.fn(() => [pkgA, pkgB]),
-      },
-    } as unknown as KernelContext;
-
-    const result = await handleProcSpawn({
-      parentPid: `init:${IDENTITY.uid}`,
-      mounts: [
-        { kind: "package-source", packageId: "pkg-a" },
-        { kind: "package-source", packageId: "pkg-b" },
-      ],
-    }, ctx);
-
-    expect(result).toMatchObject({
-      ok: true,
-      cwd: "/src/repos/sam/demo-a",
-    });
-    expect(ctx.procs.spawn).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({ cwd: "/src/repos/sam/demo-a" }),
-      expect.objectContaining({
-        mounts: [
-          expect.objectContaining({
-            packageId: "pkg-a",
-            mountPath: "/src/repos/sam/demo-a",
-          }),
-          expect.objectContaining({
-            packageId: "pkg-b",
-            mountPath: "/src/repos/sam/demo-b",
-          }),
-        ],
-      }),
-    );
-    expect(sendFrameToProcessMock).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
-      call: "proc.setidentity",
-    }));
-  });
-
-  it("materializes visible package source mounts by default without changing cwd", async () => {
-    const pkgA = makePackage("pkg-a", "Demo Tool", "sam/demo-a");
-    const pkgB = makePackage("pkg-b", "Other Tool", "sam/other-b");
-    const ctx = {
-      env: {},
-      identity: {
-        process: IDENTITY,
-        capabilities: ["*"],
-      },
-      procs: {
-        get: vi.fn(() => SPAWN_PARENT),
-        spawn: vi.fn(),
-      },
-      conversations: spawnConversationsMock(),
-      packages: {
-        resolve: vi.fn((packageId: string) => {
-          if (packageId === "pkg-a") return pkgA;
-          if (packageId === "pkg-b") return pkgB;
-          return null;
-        }),
-        list: vi.fn(() => [pkgA, pkgB]),
-      },
-    } as unknown as KernelContext;
-
-    const result = await handleProcSpawn({ parentPid: `init:${IDENTITY.uid}` }, ctx);
-
-    expect(result).toMatchObject({
-      ok: true,
-      cwd: "/home/sam",
-    });
-    expect(ctx.procs.spawn).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({ cwd: "/home/sam" }),
-      expect.objectContaining({
-        mounts: [
-          expect.objectContaining({
-            packageId: "pkg-a",
-            scope: pkgA.scope,
-            mountPath: "/src/repos/sam/demo-a",
-          }),
-          expect.objectContaining({
-            packageId: "pkg-b",
-            scope: pkgB.scope,
-            mountPath: "/src/repos/sam/other-b",
-          }),
-        ],
-      }),
-    );
-  });
-
-  it("uses the owning human's package scopes for default spawned worker mounts", async () => {
-    const pkg = makePackage("pkg-a", "Demo Tool", "sam/demo-a");
-    const parent = {
-      ...SPAWN_PARENT,
-      uid: 2000,
-      ownerUid: IDENTITY.uid,
-      gid: 2000,
-      gids: [2000],
-      username: "sam-agent",
-      home: "/home/sam-agent",
-      cwd: "/home/sam-agent",
-    };
-    const list = vi.fn((args?: { scopes?: unknown }) => {
-      expect(args?.scopes).toEqual([
-        { kind: "user", uid: IDENTITY.uid },
-        { kind: "global" },
-      ]);
-      return [pkg];
-    });
-    const ctx = {
-      env: {},
-      processId: "proc:agent",
-      identity: {
-        process: { ...IDENTITY, uid: 2000, username: "sam-agent", home: "/home/sam-agent", cwd: "/home/sam-agent" },
-        capabilities: ["*"],
-      },
-      procs: {
-        get: vi.fn(() => parent),
-        spawn: vi.fn(),
-      },
-      conversations: spawnConversationsMock(),
-      packages: {
-        resolve: vi.fn((packageId: string) => packageId === "pkg-a" ? pkg : null),
-        list,
-      },
-    } as unknown as KernelContext;
-
-    const result = await handleProcSpawn({}, ctx);
-
-    expect(result).toMatchObject({
-      ok: true,
-      cwd: "/home/sam-agent",
-    });
-    expect(list).toHaveBeenCalled();
-    expect(ctx.procs.spawn).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({ uid: 2000 }),
-      expect.objectContaining({
-        ownerUid: IDENTITY.uid,
-        mounts: [
-          expect.objectContaining({
-            packageId: "pkg-a",
-            mountPath: "/src/repos/sam/demo-a",
-          }),
-        ],
-      }),
-    );
-  });
-
-  it("spawns a fresh top-level process when mounts are requested", async () => {
-    const pkg = makePackage("pkg-a", "Demo Tool", "sam/demo-a");
+  it("spawns a fresh top-level process when explicit cwd is requested", async () => {
     const personalAgent = {
       username: "sam-agent",
       uid: 2000,
@@ -754,40 +587,28 @@ describe("proc handlers", () => {
         spawn: vi.fn(),
       },
       conversations: spawnConversationsMock(),
-      packages: {
-        resolve: vi.fn((packageId: string) => packageId === "pkg-a" ? pkg : null),
-        list: vi.fn(() => [pkg]),
-      },
     } as unknown as KernelContext;
 
     const result = await handleProcSpawn({
       label: "Review Demo Tool",
       prompt: "Review this package.",
-      mounts: [
-        { kind: "package-source", packageId: "pkg-a" },
-      ],
+      cwd: "/src/repos/sam/demo-a/packages/demo-tool",
     }, ctx);
 
     expect(result).toMatchObject({
       ok: true,
-      cwd: "/src/repos/sam/demo-a",
+      cwd: "/src/repos/sam/demo-a/packages/demo-tool",
     });
     expect(ctx.procs.spawn).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({
         uid: personalAgent.uid,
         username: personalAgent.username,
-        cwd: "/src/repos/sam/demo-a",
+        cwd: "/src/repos/sam/demo-a/packages/demo-tool",
       }),
       expect.objectContaining({
         ownerUid: IDENTITY.uid,
         label: "Review Demo Tool",
-        mounts: [
-          expect.objectContaining({
-            packageId: "pkg-a",
-            mountPath: "/src/repos/sam/demo-a",
-          }),
-        ],
       }),
     );
     expect(sendFrameToProcessMock).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
@@ -799,7 +620,7 @@ describe("proc handlers", () => {
     }));
   });
 
-  it("spawns a fresh top-level process when requested without custom mounts", async () => {
+  it("spawns a fresh top-level process when requested without explicit cwd", async () => {
     const personalAgent = {
       username: "sam-agent",
       uid: 2000,
@@ -961,147 +782,6 @@ describe("proc handlers", () => {
     expect(sendFrameToProcessMock).not.toHaveBeenCalled();
   });
 
-  it("uses distinct default mount paths for package source and repo mounts", async () => {
-    const pkg = makePackage("pkg-a", "Demo Tool", "sam/demo-a", "packages/demo-tool");
-    const ctx = {
-      env: {},
-      identity: {
-        process: IDENTITY,
-        capabilities: ["*"],
-      },
-      procs: {
-        get: vi.fn(() => SPAWN_PARENT),
-        spawn: vi.fn(),
-      },
-      conversations: spawnConversationsMock(),
-      packages: {
-        resolve: vi.fn((packageId: string) => packageId === "pkg-a" ? pkg : null),
-        list: vi.fn(() => [pkg]),
-      },
-    } as unknown as KernelContext;
-
-    const result = await handleProcSpawn({
-      parentPid: `init:${IDENTITY.uid}`,
-      mounts: [
-        { kind: "package-source", packageId: "pkg-a" },
-        { kind: "package-repo", packageId: "pkg-a" },
-      ],
-    }, ctx);
-
-    expect(result).toMatchObject({
-      ok: true,
-      cwd: "/src/repos/sam/demo-a/packages/demo-tool",
-    });
-    expect(ctx.procs.spawn).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({ cwd: "/src/repos/sam/demo-a/packages/demo-tool" }),
-      expect.objectContaining({
-        mounts: [
-          expect.objectContaining({
-            mountPath: "/src/repos/sam/demo-a/packages/demo-tool",
-            subdir: "packages/demo-tool",
-          }),
-          expect.objectContaining({
-            mountPath: "/src/repos/sam/demo-a",
-            subdir: ".",
-          }),
-        ],
-      }),
-    );
-  });
-
-  it("uses the first requested mount for default spawn cwd", async () => {
-    const pkg = makePackage("pkg-a", "Demo Tool", "sam/demo-a", "packages/demo-tool");
-    const ctx = {
-      env: {},
-      identity: {
-        process: IDENTITY,
-        capabilities: ["*"],
-      },
-      procs: {
-        get: vi.fn(() => SPAWN_PARENT),
-        spawn: vi.fn(),
-      },
-      conversations: spawnConversationsMock(),
-      packages: {
-        resolve: vi.fn((packageId: string) => packageId === "pkg-a" ? pkg : null),
-        list: vi.fn(() => [pkg]),
-      },
-    } as unknown as KernelContext;
-
-    const result = await handleProcSpawn({
-      parentPid: `init:${IDENTITY.uid}`,
-      mounts: [
-        { kind: "package-repo", packageId: "pkg-a" },
-        { kind: "package-source", packageId: "pkg-a" },
-      ],
-    }, ctx);
-
-    expect(result).toMatchObject({
-      ok: true,
-      cwd: "/src/repos/sam/demo-a",
-    });
-    expect(ctx.procs.spawn).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({ cwd: "/src/repos/sam/demo-a" }),
-      expect.objectContaining({
-        mounts: [
-          expect.objectContaining({
-            mountPath: "/src/repos/sam/demo-a",
-            subdir: ".",
-          }),
-          expect.objectContaining({
-            mountPath: "/src/repos/sam/demo-a/packages/demo-tool",
-            subdir: "packages/demo-tool",
-          }),
-        ],
-      }),
-    );
-  });
-
-  it("preserves caller-supplied package source mount paths", async () => {
-    const pkg = makePackage("pkg-a", "Demo Tool", "sam/demo-a", "packages/demo-tool");
-    const ctx = {
-      env: {},
-      identity: {
-        process: IDENTITY,
-        capabilities: ["*"],
-      },
-      procs: {
-        get: vi.fn(() => SPAWN_PARENT),
-        spawn: vi.fn(),
-      },
-      conversations: spawnConversationsMock(),
-      packages: {
-        resolve: vi.fn((packageId: string) => packageId === "pkg-a" ? pkg : null),
-        list: vi.fn(() => [pkg]),
-      },
-    } as unknown as KernelContext;
-
-    const result = await handleProcSpawn({
-      parentPid: `init:${IDENTITY.uid}`,
-      mounts: [
-        { kind: "package-source", packageId: "pkg-a", mountPath: "/src/custom/demo" },
-      ],
-    }, ctx);
-
-    expect(result).toMatchObject({
-      ok: true,
-      cwd: "/src/custom/demo",
-    });
-    expect(ctx.procs.spawn).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({ cwd: "/src/custom/demo" }),
-      expect.objectContaining({
-        mounts: [
-          expect.objectContaining({
-            mountPath: "/src/custom/demo",
-            subdir: "packages/demo-tool",
-          }),
-        ],
-      }),
-    );
-  });
 });
 
 function makeIpcCallContext(options: {

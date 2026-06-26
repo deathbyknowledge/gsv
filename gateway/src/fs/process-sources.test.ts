@@ -6,7 +6,6 @@ import {
 } from "./index";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { RepoSummary } from "@humansandmachines/gsv/protocol";
-import type { InstalledPackageRecord } from "../kernel/packages";
 
 const IDENTITY: ProcessIdentity = {
   uid: 1000,
@@ -16,33 +15,6 @@ const IDENTITY: ProcessIdentity = {
   home: "/home/sam",
   cwd: "/home/sam",
 };
-
-function makePackage(partial?: Partial<InstalledPackageRecord>): InstalledPackageRecord {
-  return {
-    packageId: "import:sam/pkg-test:packages/sample-console",
-    scope: { kind: "user", uid: 1000 },
-    manifest: {
-      name: "sample-console",
-      description: "Sample console",
-      version: "0.1.0",
-      runtime: "web-ui",
-      source: {
-        repo: "sam/pkg-test",
-        ref: "main",
-        subdir: "packages/sample-console",
-        resolvedCommit: "base123",
-      },
-      entrypoints: [{ name: "Console", kind: "ui", module: "main.js", route: "/apps/sample-console" }],
-    },
-    artifact: { hash: "hash1", mainModule: "main.js", modulePaths: ["main.js"] },
-    enabled: true,
-    reviewRequired: false,
-    reviewedAt: 1,
-    installedAt: 1,
-    updatedAt: 2,
-    ...partial,
-  } as InstalledPackageRecord;
-}
 
 function makeRepo(repo: string, partial?: Partial<RepoSummary>): RepoSummary {
   const [owner = "", name = ""] = repo.split("/");
@@ -115,7 +87,6 @@ describe("createProcessSourceBackend", () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage: makeBucket(),
-      packages: [],
       repos: [
         makeRepo("sam/docs"),
         makeRepo("sam/tools"),
@@ -151,7 +122,6 @@ describe("createProcessSourceBackend", () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage: makeBucket(),
-      packages: [makePackage()],
       repos: [makeRepo("sam/docs")],
       processId: "task:source",
       config: makeConfig(),
@@ -221,7 +191,6 @@ describe("createProcessSourceBackend", () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage,
-      packages: [makePackage()],
       repos: [makeRepo("sam/docs")],
       processId: "task:source",
       config,
@@ -265,7 +234,6 @@ describe("createProcessSourceBackend", () => {
     await expect(getRepoSourceStatus({
       identity: IDENTITY,
       storage: makeBucket(),
-      packages: [makePackage()],
       repos: [makeRepo("sam/docs")],
       processId: "other-process",
       config,
@@ -277,7 +245,6 @@ describe("createProcessSourceBackend", () => {
     const status = await getRepoSourceStatus({
       identity: IDENTITY,
       storage,
-      packages: [makePackage()],
       repos: [makeRepo("sam/docs")],
       processId: "task:source",
       config,
@@ -292,7 +259,6 @@ describe("createProcessSourceBackend", () => {
     const result = await commitRepoSourceChanges({
       identity: IDENTITY,
       storage,
-      packages: [makePackage()],
       repos: [makeRepo("sam/docs")],
       processId: "task:source",
       config,
@@ -345,7 +311,6 @@ describe("createProcessSourceBackend", () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage: makeBucket(),
-      packages: [],
       repos: [makeRepo("root/gsv-manual", { public: true, writable: false })],
       processId: "task:source",
       config: makeConfig(),
@@ -371,7 +336,6 @@ describe("createProcessSourceBackend", () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage: makeBucket(),
-      packages: [],
       repos: [
         makeRepo("root/gsv-manual", { kind: "user", public: true, writable: false }),
         makeRepo("bob/public", { public: true, writable: false }),
@@ -398,39 +362,14 @@ describe("createProcessSourceBackend", () => {
     await expect(backend!.readFile("/src/repos/bob/private/README.md")).rejects.toThrow("no such source repo");
   });
 
-  it("keeps package source repos visible under /src/repos for automatic package mounts", async () => {
-    const pkg = makePackage({
-      packageId: "builtin:chat",
-      scope: { kind: "global" },
-      manifest: {
-        ...makePackage().manifest,
-        name: "Chat",
-        source: {
-          repo: "root/gsv",
-          ref: "main",
-          subdir: "packages/chat",
-          resolvedCommit: "gsvbase123",
-        },
-      },
-    });
+  it("keeps package source repos visible under /src/repos from repo visibility", async () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage: makeBucket(),
-      packages: [pkg],
       repos: [
         makeRepo("root/gsv", { kind: "package", public: false, writable: false }),
         makeRepo("root/gsv-manual", { kind: "user", public: true, writable: false }),
       ],
-      mounts: [{
-        kind: "ripgit-source",
-        mountPath: "/src/repos/root/gsv/packages/chat",
-        packageId: pkg.packageId,
-        scope: pkg.scope,
-        repo: "root/gsv",
-        ref: "main",
-        subdir: "packages/chat",
-        resolvedCommit: "gsvbase123",
-      }],
       processId: "task:source",
       config: makeConfig(),
       ripgit: {
@@ -460,47 +399,11 @@ describe("createProcessSourceBackend", () => {
   });
 
   it("reads package subdirectories through the canonical repo path", async () => {
-    const app = makePackage({
-      packageId: "import:sam/mono:packages/app",
-      manifest: {
-        ...makePackage().manifest,
-        name: "Demo App",
-        source: {
-          repo: "sam/mono",
-          ref: "main",
-          subdir: "packages/app",
-          resolvedCommit: "base123",
-        },
-      },
-    });
-    const other = makePackage({
-      packageId: "import:sam/mono:packages/other",
-      manifest: {
-        ...makePackage().manifest,
-        name: "Other Tool",
-        source: {
-          repo: "sam/mono",
-          ref: "main",
-          subdir: "packages/other",
-          resolvedCommit: "otherbase123",
-        },
-      },
-    });
     const readCalls: Array<{ repo: { owner: string; repo: string; branch?: string }; path: string }> = [];
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage: makeBucket(),
-      packages: [app, other],
       repos: [makeRepo("sam/mono")],
-      mounts: [{
-        kind: "ripgit-source",
-        mountPath: "/src/repos/sam/mono",
-        packageId: app.packageId,
-        repo: "sam/mono",
-        ref: "main",
-        resolvedCommit: "base123",
-        subdir: "packages/app",
-      }],
       processId: "task:source",
       config: makeConfig(),
       ripgit: {
@@ -557,7 +460,6 @@ describe("createProcessSourceBackend", () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage,
-      packages: [makePackage()],
       repos: [makeRepo("sam/pkg-test")],
       processId: "task:source",
       config,
@@ -568,7 +470,6 @@ describe("createProcessSourceBackend", () => {
     await commitRepoSourceChanges({
       identity: IDENTITY,
       storage,
-      packages: [makePackage()],
       repos: [makeRepo("sam/pkg-test")],
       processId: "task:source",
       config,
@@ -579,7 +480,6 @@ describe("createProcessSourceBackend", () => {
     await commitRepoSourceChanges({
       identity: IDENTITY,
       storage,
-      packages: [makePackage()],
       repos: [makeRepo("sam/pkg-test")],
       processId: "task:source",
       config,
@@ -598,7 +498,6 @@ describe("createProcessSourceBackend", () => {
     await commitRepoSourceChanges({
       identity: IDENTITY,
       storage,
-      packages: [makePackage()],
       repos: [makeRepo("sam/pkg-test")],
       processId: "task:source",
       config,
@@ -644,7 +543,6 @@ describe("createProcessSourceBackend", () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage,
-      packages: [makePackage()],
       repos: [makeRepo("sam/pkg-test")],
       processId: "task:source",
       config,
@@ -655,7 +553,6 @@ describe("createProcessSourceBackend", () => {
     await commitRepoSourceChanges({
       identity: IDENTITY,
       storage,
-      packages: [makePackage()],
       repos: [makeRepo("sam/pkg-test")],
       processId: "task:source",
       config,
@@ -708,7 +605,6 @@ describe("createProcessSourceBackend", () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage,
-      packages: [makePackage()],
       repos: [makeRepo("sam/pkg-test")],
       processId: "task:source",
       config,
@@ -719,7 +615,6 @@ describe("createProcessSourceBackend", () => {
     await commitRepoSourceChanges({
       identity: IDENTITY,
       storage,
-      packages: [makePackage()],
       repos: [makeRepo("sam/pkg-test")],
       processId: "task:source",
       config,
@@ -730,7 +625,6 @@ describe("createProcessSourceBackend", () => {
     const result = await commitRepoSourceChanges({
       identity: IDENTITY,
       storage,
-      packages: [makePackage()],
       repos: [makeRepo("sam/pkg-test")],
       processId: "task:source",
       config,
@@ -750,7 +644,6 @@ describe("createProcessSourceBackend", () => {
     await expect(getRepoSourceStatus({
       identity: IDENTITY,
       storage,
-      packages: [makePackage()],
       repos: [makeRepo("sam/pkg-test")],
       processId: "task:source",
       config,
@@ -766,7 +659,6 @@ describe("createProcessSourceBackend", () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage: makeBucket(),
-      packages: [makePackage()],
       repos: [makeRepo("sam/pkg-test")],
       processId: "task:source",
       config: makeConfig(),
@@ -801,7 +693,6 @@ describe("createProcessSourceBackend", () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage: makeBucket(),
-      packages: [makePackage()],
       repos: [makeRepo("sam/pkg-test")],
       processId: "task:source",
       config: makeConfig(),
@@ -845,7 +736,6 @@ describe("createProcessSourceBackend", () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage,
-      packages: [makePackage()],
       repos: [makeRepo("sam/pkg-test")],
       processId: "task:source",
       config: makeConfig(),
@@ -868,7 +758,6 @@ describe("createProcessSourceBackend", () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage,
-      packages: [makePackage()],
       repos: [makeRepo("sam/pkg-test")],
       processId: "task:source",
       config: makeConfig(),
@@ -894,20 +783,6 @@ describe("createProcessSourceBackend", () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage: makeBucket(),
-      packages: [makePackage({
-        packageId: "import:root/gsv:packages/wiki",
-        scope: { kind: "global" },
-        manifest: {
-          ...makePackage().manifest,
-          name: "wiki",
-          source: {
-            repo: "root/gsv",
-            ref: "main",
-            subdir: "packages/wiki",
-            resolvedCommit: "rootbase",
-          },
-        },
-      })],
       repos: [makeRepo("root/gsv", { kind: "package", writable: false })],
       processId: "task:source",
       config: makeConfig(),

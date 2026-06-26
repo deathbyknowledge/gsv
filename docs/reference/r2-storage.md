@@ -44,7 +44,7 @@ Kernel SQLite is the authoritative control-plane store. Important tables include
 | `group_capabilities` | Capability grants by group id. |
 | `devices`, `device_access` | Registered devices and group access. |
 | `routing_table` | In-flight device-routed syscalls. |
-| `processes` | Process registry, identity, cwd, workspace, mounts, state. |
+| `processes` | Process registry, identity, cwd, workspace, state. |
 | `workspaces` | Workspace metadata. Actual workspace files live in ripgit. |
 | `packages` | Installed package manifests, scopes, grants, and artifact hashes. |
 | `identity_links`, `surface_routes`, `link_challenges` | Adapter actor links and inbound surface routing. |
@@ -79,7 +79,7 @@ R2 remains the byte store. The current runtime uses these key families:
 | `public/gsv/downloads/cli/{channel}/{asset}.sha256` | `sys.bootstrap` CLI mirroring | CLI checksums served through `/public/*`. |
 | `public/gsv/downloads/cli/default-channel.txt` | `sys.bootstrap` | Default CLI release channel. |
 | `public/gsv/downloads/cli/install.{sh,ps1}` | `sys.bootstrap` | Static CLI install scripts served through `/public/*`. |
-| `process-source-overlays/{pid}/{sourceKey}/manifest.json` | `/src/repos`, `rgit` | Manifest of staged source edits for one process/repo or legacy package source view. |
+| `process-source-overlays/{pid}/{sourceKey}/manifest.json` | `/src/repos`, `rgit` | Manifest of staged source edits for one process/repo. |
 | `process-source-overlays/{pid}/{sourceKey}/files/{path}` | `/src/repos`, `rgit` | Staged file content for source puts. |
 
 Process media is deleted by prefix when the process is reset or killed. Package artifacts are content-addressed by hash and referenced from the Kernel `packages` table.
@@ -108,7 +108,7 @@ Workspace repos contain platform metadata under `.gsv/`:
 .gsv/processes/{pid}/chat.jsonl
 ```
 
-Generic visible repos are mounted under `/src/repos/{owner}/{repo}`. Repos writable by the process identity accept `fs.write`, `fs.edit`, and `fs.delete`, but those writes stage into a process-local R2 overlay. Use `rgit status`, `rgit diff`, `rgit commit`, and `rgit discard` to inspect, commit, or discard staged repo edits. Read-only visible repos still support read and search. `pkg source <package>` reports the package's source repo path; package lifecycle stays under `pkg`, while repository history and source edits stay under `rgit`. Wiki-specific behavior uses the higher-level Wiki app and CLI on top of the same repo storage.
+Generic visible repos are available under `/src/repos/{owner}/{repo}`. Repos writable by the process identity accept `fs.write`, `fs.edit`, and `fs.delete`, but those writes stage into a process-local R2 overlay. Use `rgit status`, `rgit diff`, `rgit commit`, and `rgit discard` to inspect, commit, or discard staged repo edits. Read-only visible repos still support read and search. `pkg source <package>` reports the package's source repo path; package lifecycle stays under `pkg`, while repository history and source edits stay under `rgit`. Wiki-specific behavior uses the higher-level Wiki app and CLI on top of the same repo storage.
 
 ## Package Runtime Storage
 
