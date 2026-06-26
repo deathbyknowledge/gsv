@@ -21,7 +21,7 @@ import {
   ConsoleResourceBoundary,
 } from "../../gsv-console/components/ConsolePageTemplate";
 import { pushShellRoute } from "../../gsv-shell/routing/shellRoutes";
-import { useUnsavedGuard } from "../../gsv-shell/unsaved/unsavedGuard";
+import { useUnsavedGuard, useUnsavedGuardLeave } from "../../gsv-shell/unsaved/unsavedGuard";
 import type {
   FilesDirectoryPayload,
   FilesErrorPayload,
@@ -921,6 +921,9 @@ export function FilesSurfaceSummary() {
     tabs.some((tab) => draftDirty(tab)) ||
     (createState.open && (createState.pathInput.trim() !== "" || createState.content !== "")),
   );
+  // "+ ADD MACHINE" leaves the Files surface for the provisioning route, so
+  // route it through the guard to prompt before discarding a dirty draft.
+  const requestLeave = useUnsavedGuardLeave();
 
   const tabLabels = tabs.map((tab) => tabLabel(tab, targetForTab(tab, targets), draftDirty(tab)));
   const activeIndex = Math.max(0, tabs.findIndex((tab) => tab.id === activeTabId));
@@ -1163,7 +1166,7 @@ export function FilesSurfaceSummary() {
                 value={Math.max(0, data.findIndex((target) => target.id === activeTargetId))}
                 onChange={(index) => {
                   if (index === data.length) {
-                    openAddMachineRoute();
+                    requestLeave(() => openAddMachineRoute());
                     return;
                   }
                   const target = data[index];

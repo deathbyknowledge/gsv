@@ -10,7 +10,7 @@ import type { AppInstance } from "../../desktop/runtime/appRuntime";
 import { usePackageApps } from "../../packages/usePackageApps";
 import type { ShellAppRoute } from "../../gsv-shell/domain/shellModel";
 import { normalizeShellAppRoute } from "../../gsv-shell/domain/shellModel";
-import { useUnsavedGuard } from "../../gsv-shell/unsaved/unsavedGuard";
+import { useUnsavedGuard, useUnsavedGuardLeave } from "../../gsv-shell/unsaved/unsavedGuard";
 import "./AppFramePage.css";
 
 type AppFramePageProps = {
@@ -96,6 +96,13 @@ export function AppFramePage({
   const [badge, setBadge] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   useUnsavedGuard(() => dirty);
+  // Read inside the mount effect's stable closure: a dirty app frame that opens
+  // a new app route is replaced (tabless shell), so route that through the guard.
+  const requestLeave = useUnsavedGuardLeave();
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
+  const requestLeaveRef = useRef(requestLeave);
+  requestLeaveRef.current = requestLeave;
   const app = useMemo(
     () => packageApps.data?.find((candidate) => candidate.id === appRoute.appId) ?? null,
     [appRoute.appId, packageApps.data],
@@ -128,10 +135,20 @@ export function AppFramePage({
       setTitle,
       setBadge,
       setDirty,
-      requestNewWindow: (route) => onOpenAppRouteRef.current(
-        appRouteFromRuntimeRoute(app, route ?? runtimeRoute),
-        app.name,
-      ),
+      requestNewWindow: (route) => {
+        const open = () => onOpenAppRouteRef.current(
+          appRouteFromRuntimeRoute(app, route ?? runtimeRoute),
+          app.name,
+        );
+        // Clean frame: open synchronously and return the new window id as
+        // before. Dirty frame: confirm first; the window isn't created until
+        // the user accepts, so there is no id to return yet.
+        if (!dirtyRef.current) {
+          return open();
+        }
+        requestLeaveRef.current(open);
+        return "";
+      },
     });
 
     return () => {
