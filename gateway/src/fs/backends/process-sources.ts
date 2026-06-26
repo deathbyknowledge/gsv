@@ -37,13 +37,10 @@ export type ProcessSourceBackendOptions = {
 
 type SourcePackage = {
   record: InstalledPackageRecord;
-  name: string;
-  mountPath: string;
   repo: string;
   sourceRef: string;
   sourceSubdir: string;
   resolvedCommit: string | null;
-  writable: boolean;
 };
 
 type SourceRepo = {
@@ -88,7 +85,7 @@ type SourceOverlayManifest = {
   changes: Record<string, SourceOverlayChange>;
 };
 
-export type ProcessSourceChangeSummary = {
+export type SourceChangeSummary = {
   path: string;
   type: "put" | "delete";
   size?: number;
@@ -96,19 +93,16 @@ export type ProcessSourceChangeSummary = {
   updatedAt: number;
 };
 
-export type ProcessSourceStatus = {
-  packageId: string;
-  packageName: string;
+export type RepoSourceStatus = {
   repo: string;
   sourceRef: string;
-  sourceSubdir: string;
   baseRef: string;
   branch: string | null;
   head: string | null;
-  changes: ProcessSourceChangeSummary[];
+  changes: SourceChangeSummary[];
 };
 
-export type ProcessSourceCommitResult = ProcessSourceStatus & {
+export type RepoSourceCommitResult = RepoSourceStatus & {
   committed: boolean;
   commitHead: string | null;
   ops: number;
@@ -131,6 +125,13 @@ export function isProcessSourceMountPath(path: string): boolean {
 
 export function packageSourcePathName(record: Pick<InstalledPackageRecord, "manifest">): string {
   return sanitizePackageSourcePathSegment(record.manifest.name);
+}
+
+export function packageSourceRepoPath(record: Pick<InstalledPackageRecord, "manifest">): string {
+  const repo = normalizeRepoPath(record.manifest.source.repo);
+  const subdir = normalizeRepoPath(record.manifest.source.subdir);
+  const root = `/src/repos/${repo}`;
+  return subdir ? `${root}/${subdir}` : root;
 }
 
 export function packageSourcePathNameMap<T extends Pick<InstalledPackageRecord, "packageId" | "scope" | "manifest">>(
@@ -159,24 +160,10 @@ export function packageSourcePathNameMap<T extends Pick<InstalledPackageRecord, 
   return result;
 }
 
-export function packageSourcePathNameForRecord<
-  T extends Pick<InstalledPackageRecord, "packageId" | "scope" | "manifest">,
->(target: T, records: T[]): string {
-  const names = packageSourcePathNameMap(records);
-  const targetKey = packageSourceRecordKey(target);
-  for (const [record, name] of names) {
-    if (packageSourceRecordKey(record) === targetKey) {
-      return name;
-    }
-  }
-  return packageSourcePathName(target);
-}
-
 class ProcessSourceMountBackend implements MountBackend {
   private readonly identity: ProcessIdentity;
   private readonly storage: R2Bucket | null;
   private readonly ripgit: RipgitClient;
-  private readonly packages: SourcePackage[];
   private readonly repos: SourceRepo[];
   private readonly processId: string | null;
   private readonly config: SourceConfig | null;
@@ -187,7 +174,6 @@ class ProcessSourceMountBackend implements MountBackend {
     this.ripgit = options.ripgit!;
     this.processId = options.processId ?? null;
     this.config = options.config ?? null;
-    this.packages = visibleSourcePackages(options.packages, options.identity, options.mounts);
     this.repos = visibleSourceRepos(options.repos, options.packages, options.mounts);
   }
 
@@ -201,45 +187,11 @@ class ProcessSourceMountBackend implements MountBackend {
   }
 
   async readFileBuffer(path: string): Promise<Uint8Array> {
-    const resolved = this.resolvePackagePathOrNull(path);
-    if (resolved) {
-      return this.readPackageFileBuffer(resolved);
-    }
     const repoResolved = this.resolveRepoPathOrNull(path);
     if (repoResolved) {
       return this.readRepoFileBuffer(repoResolved);
     }
     throwMissingSourcePath(path);
-  }
-
-  private async readPackageFileBuffer(resolved: {
-    pkg: SourcePackage;
-    relativePath: string;
-    normalizedPath: string;
-  }): Promise<Uint8Array> {
-    if (!resolved.relativePath) {
-      throw new Error(`EISDIR: illegal operation on a directory, read '${resolved.normalizedPath}'`);
-    }
-    const overlay = await this.readOverlay(resolved.pkg);
-    const put = await this.readOverlayPut(overlay, resolved.relativePath);
-    if (put) {
-      return put;
-    }
-    if (isDeletedByOverlay(overlay, resolved.relativePath)) {
-      throw new Error(`ENOENT: no such file or directory, open '${resolved.normalizedPath}'`);
-    }
-
-    const result = await this.ripgit.readPath(
-      this.repoRefForPackage(resolved.pkg),
-      joinRepoPath(resolved.pkg.sourceSubdir, resolved.relativePath),
-    );
-    if (result.kind === "missing") {
-      throw new Error(`ENOENT: no such file or directory, open '${resolved.normalizedPath}'`);
-    }
-    if (result.kind === "tree") {
-      throw new Error(`EISDIR: illegal operation on a directory, read '${resolved.normalizedPath}'`);
-    }
-    return result.bytes;
   }
 
   private async readRepoFileBuffer(resolved: {
@@ -249,6 +201,16 @@ class ProcessSourceMountBackend implements MountBackend {
   }): Promise<Uint8Array> {
     if (!resolved.relativePath) {
       throw new Error(`EISDIR: illegal operation on a directory, read '${resolved.normalizedPath}'`);
+    }
+
+    const overlayTarget = sourcePackageForRepo(resolved.repo);
+    const overlay = await this.readOverlay(overlayTarget);
+    const put = await this.readOverlayPut(overlay, resolved.relativePath);
+    if (put) {
+      return put;
+    }
+    if (isDeletedByOverlay(overlay, resolved.relativePath)) {
+      throw new Error(`ENOENT: no such file or directory, open '${resolved.normalizedPath}'`);
     }
 
     const result = await this.ripgit.readPath(
@@ -265,37 +227,18 @@ class ProcessSourceMountBackend implements MountBackend {
   }
 
   async writeFile(path: string, content: FileContent): Promise<void> {
-    const packageResolved = this.resolvePackagePathOrNull(path);
-    if (packageResolved) {
-      const resolved = this.assertWritablePackagePath(packageResolved, "write");
-      await this.stageOverlayPut(resolved.pkg, resolved.relativePath, asBytes(content));
-      return;
-    }
-
     const repoResolved = this.resolveWritableRepoPath(path, "write");
-    await this.applyRepoPut(repoResolved.repo, repoResolved.relativePath, asBytes(content), "write");
+    await this.stageOverlayPut(sourcePackageForRepo(repoResolved.repo), repoResolved.relativePath, asBytes(content));
   }
 
   async appendFile(path: string, content: FileContent): Promise<void> {
-    const packageResolved = this.resolvePackagePathOrNull(path);
-    if (packageResolved) {
-      const resolved = this.assertWritablePackagePath(packageResolved, "append");
-      let current: Uint8Array<ArrayBufferLike> = new Uint8Array();
-      if (await this.exists(path)) {
-        current = await this.readFileBuffer(path);
-      }
-      const next = concatBytes(current, asBytes(content));
-      await this.stageOverlayPut(resolved.pkg, resolved.relativePath, next);
-      return;
-    }
-
     const repoResolved = this.resolveWritableRepoPath(path, "append");
     let current: Uint8Array<ArrayBufferLike> = new Uint8Array();
     if (await this.exists(path)) {
       current = await this.readFileBuffer(path);
     }
     const next = concatBytes(current, asBytes(content));
-    await this.applyRepoPut(repoResolved.repo, repoResolved.relativePath, next, "append");
+    await this.stageOverlayPut(sourcePackageForRepo(repoResolved.repo), repoResolved.relativePath, next);
   }
 
   async exists(path: string): Promise<boolean> {
@@ -313,49 +256,11 @@ class ProcessSourceMountBackend implements MountBackend {
       return makeDirectoryStat(this.identity.uid, this.identity.gid, true);
     }
 
-    const resolved = this.resolvePackagePathOrNull(normalizedPath);
-    if (resolved) {
-      return this.statPackagePath(resolved);
-    }
-
     const repoResolved = this.resolveRepoPathOrNull(normalizedPath);
     if (repoResolved) {
       return this.statRepoPath(repoResolved);
     }
     throwMissingSourcePath(normalizedPath);
-  }
-
-  private async statPackagePath(resolved: {
-    pkg: SourcePackage;
-    relativePath: string;
-    normalizedPath: string;
-  }): Promise<ExtendedMountStat> {
-    const overlay = await this.readOverlay(resolved.pkg);
-    if (!resolved.relativePath) {
-      return makeDirectoryStat(this.identity.uid, this.identity.gid, resolved.pkg.writable);
-    }
-    const putChange = overlay.changes[resolved.relativePath];
-    if (putChange?.type === "put") {
-      return makeFileStat(this.identity.uid, this.identity.gid, putChange.size, resolved.pkg.writable);
-    }
-    if (hasOverlayDescendant(overlay, resolved.relativePath)) {
-      return makeDirectoryStat(this.identity.uid, this.identity.gid, resolved.pkg.writable);
-    }
-    if (isDeletedByOverlay(overlay, resolved.relativePath)) {
-      throw new Error(`ENOENT: no such file or directory, stat '${resolved.normalizedPath}'`);
-    }
-
-    const result = await this.ripgit.readPath(
-      this.repoRefForPackage(resolved.pkg),
-      joinRepoPath(resolved.pkg.sourceSubdir, resolved.relativePath),
-    );
-    if (result.kind === "missing") {
-      throw new Error(`ENOENT: no such file or directory, stat '${resolved.normalizedPath}'`);
-    }
-    if (result.kind === "tree") {
-      return makeDirectoryStat(this.identity.uid, this.identity.gid, resolved.pkg.writable);
-    }
-    return makeFileStat(this.identity.uid, this.identity.gid, result.size, resolved.pkg.writable);
   }
 
   private async statRepoPath(resolved: {
@@ -365,6 +270,19 @@ class ProcessSourceMountBackend implements MountBackend {
   }): Promise<ExtendedMountStat> {
     if (!resolved.relativePath) {
       return makeDirectoryStat(this.identity.uid, this.identity.gid, resolved.repo.writable);
+    }
+
+    const overlayTarget = sourcePackageForRepo(resolved.repo);
+    const overlay = await this.readOverlay(overlayTarget);
+    const putChange = overlay.changes[resolved.relativePath];
+    if (putChange?.type === "put") {
+      return makeFileStat(this.identity.uid, this.identity.gid, putChange.size, resolved.repo.writable);
+    }
+    if (hasOverlayDescendant(overlay, resolved.relativePath)) {
+      return makeDirectoryStat(this.identity.uid, this.identity.gid, resolved.repo.writable);
+    }
+    if (isDeletedByOverlay(overlay, resolved.relativePath)) {
+      throw new Error(`ENOENT: no such file or directory, stat '${resolved.normalizedPath}'`);
     }
 
     const result = await this.ripgit.readPath(
@@ -381,15 +299,6 @@ class ProcessSourceMountBackend implements MountBackend {
   }
 
   async mkdir(path: string, _options?: MkdirOptions): Promise<void> {
-    const packageResolved = this.resolvePackagePathOrNull(path);
-    if (packageResolved) {
-      if (!packageResolved.relativePath) {
-        return;
-      }
-      this.assertWritablePackagePath(packageResolved, "mkdir");
-      return;
-    }
-
     const repoResolved = this.resolveRepoPath(path);
     if (!repoResolved.relativePath) {
       return;
@@ -406,11 +315,6 @@ class ProcessSourceMountBackend implements MountBackend {
       return virtualEntries;
     }
 
-    const resolved = this.resolvePackagePathOrNull(normalizedPath);
-    if (resolved) {
-      return this.readdirPackagePath(resolved);
-    }
-
     const repoResolved = this.resolveRepoPathOrNull(normalizedPath);
     if (repoResolved) {
       return this.readdirRepoPath(repoResolved);
@@ -418,12 +322,13 @@ class ProcessSourceMountBackend implements MountBackend {
     throwMissingSourcePath(normalizedPath);
   }
 
-  private async readdirPackagePath(resolved: {
-    pkg: SourcePackage;
+  private async readdirRepoPath(resolved: {
+    repo: SourceRepo;
     relativePath: string;
     normalizedPath: string;
   }): Promise<string[]> {
-    const overlay = await this.readOverlay(resolved.pkg);
+    const overlayTarget = sourcePackageForRepo(resolved.repo);
+    const overlay = await this.readOverlay(overlayTarget);
     const putChange = overlay.changes[resolved.relativePath];
     if (putChange?.type === "put") {
       throw new Error(`ENOTDIR: not a directory, scandir '${resolved.normalizedPath}'`);
@@ -437,16 +342,19 @@ class ProcessSourceMountBackend implements MountBackend {
     const entries = new Set<string>();
     if (!deletedByOverlay) {
       const result = await this.ripgit.readPath(
-        this.repoRefForPackage(resolved.pkg),
-        joinRepoPath(resolved.pkg.sourceSubdir, resolved.relativePath),
+        this.repoRefForSourceRepo(resolved.repo),
+        resolved.relativePath,
       );
-      if (result.kind === "missing" && !hasStagedChildren) {
-        throw new Error(`ENOENT: no such file or directory, scandir '${resolved.normalizedPath}'`);
-      }
-      if (result.kind !== "missing" && result.kind !== "tree") {
+      if (result.kind === "missing") {
+        if (!resolved.relativePath) {
+          return [];
+        }
+        if (!hasStagedChildren) {
+          throw new Error(`ENOENT: no such file or directory, scandir '${resolved.normalizedPath}'`);
+        }
+      } else if (result.kind !== "tree") {
         throw new Error(`ENOTDIR: not a directory, scandir '${resolved.normalizedPath}'`);
-      }
-      if (result.kind === "tree") {
+      } else {
         for (const entry of result.entries) {
           entries.add(entry.name);
         }
@@ -456,45 +364,13 @@ class ProcessSourceMountBackend implements MountBackend {
     return [...entries].sort();
   }
 
-  private async readdirRepoPath(resolved: {
-    repo: SourceRepo;
-    relativePath: string;
-    normalizedPath: string;
-  }): Promise<string[]> {
-    const result = await this.ripgit.readPath(
-      this.repoRefForSourceRepo(resolved.repo),
-      resolved.relativePath,
-    );
-    if (result.kind === "missing") {
-      if (!resolved.relativePath) {
-        return [];
-      }
-      throw new Error(`ENOENT: no such file or directory, scandir '${resolved.normalizedPath}'`);
-    }
-    if (result.kind !== "tree") {
-      throw new Error(`ENOTDIR: not a directory, scandir '${resolved.normalizedPath}'`);
-    }
-    return result.entries.map((entry) => entry.name).sort();
-  }
-
   async rm(path: string, options?: RmOptions): Promise<void> {
-    const packageResolved = this.resolvePackagePathOrNull(path);
-    if (packageResolved) {
-      const resolved = this.assertWritablePackagePath(packageResolved, "rm");
-      const removable = await this.assertRemovablePackagePath(resolved, options);
-      if (!removable) {
-        return;
-      }
-      await this.stageOverlayDelete(resolved.pkg, resolved.relativePath, options?.recursive === true);
-      return;
-    }
-
     const repoResolved = this.resolveWritableRepoPath(path, "rm");
     const removable = await this.assertRemovableRepoPath(repoResolved, options);
     if (!removable) {
       return;
     }
-    await this.applyRepoDelete(repoResolved.repo, repoResolved.relativePath, options?.recursive === true);
+    await this.stageOverlayDelete(sourcePackageForRepo(repoResolved.repo), repoResolved.relativePath, options?.recursive === true);
   }
 
   async chmod(path: string): Promise<void> {
@@ -515,16 +391,10 @@ class ProcessSourceMountBackend implements MountBackend {
 
   async search(path: string, query: string): Promise<FsSearchBackendResult> {
     const normalizedPath = normalizePath(path);
-    const virtualPackages = this.virtualDirectoryPackages(normalizedPath);
     const virtualRepos = this.virtualDirectoryRepos(normalizedPath);
-    if (virtualPackages || virtualRepos) {
+    if (virtualRepos) {
       const matches = [];
       let truncated = false;
-      for (const pkg of virtualPackages ?? []) {
-        const result = await this.searchPackage(pkg, "", query);
-        matches.push(...result.matches);
-        truncated = truncated || result.truncated === true;
-      }
       for (const repo of virtualRepos ?? []) {
         const result = await this.searchRepo(repo, "", query);
         matches.push(...result.matches);
@@ -533,10 +403,6 @@ class ProcessSourceMountBackend implements MountBackend {
       return { matches, truncated };
     }
 
-    const resolved = this.resolvePackagePathOrNull(normalizedPath);
-    if (resolved) {
-      return this.searchPackage(resolved.pkg, resolved.relativePath, query);
-    }
     const repoResolved = this.resolveRepoPathOrNull(normalizedPath);
     if (repoResolved) {
       return this.searchRepo(repoResolved.repo, repoResolved.relativePath, query);
@@ -544,48 +410,13 @@ class ProcessSourceMountBackend implements MountBackend {
     throwMissingSourcePath(normalizedPath);
   }
 
-  private async searchPackage(
-    pkg: SourcePackage,
-    relativePath: string,
-    query: string,
-  ): Promise<FsSearchBackendResult> {
-    const overlay = await this.readOverlay(pkg);
-    const sourcePrefix = joinRepoPath(pkg.sourceSubdir, relativePath);
-    const result = await this.ripgit.search(
-      this.repoRefForPackage(pkg),
-      query,
-      sourcePrefix || undefined,
-    );
-    const packageRoot = pkg.mountPath;
-    const sourceSubdir = normalizeRepoPath(pkg.sourceSubdir);
-    return {
-      truncated: result.truncated,
-      matches: [
-        ...result.matches
-          .map((match) => ({
-            relativePath: stripPackageSubdir(match.path, sourceSubdir),
-            line: match.line,
-            content: match.content,
-          }))
-          .filter((match) =>
-            !overlayHasPut(overlay, match.relativePath) &&
-            !isDeletedByOverlay(overlay, match.relativePath)
-          )
-          .map((match) => ({
-            path: `${packageRoot}/${match.relativePath}`.replace(/\/+$/g, ""),
-            line: match.line,
-            content: match.content,
-          })),
-        ...await this.searchOverlay(packageRoot, overlay, relativePath, query),
-      ],
-    };
-  }
-
   private async searchRepo(
     repo: SourceRepo,
     relativePath: string,
     query: string,
   ): Promise<FsSearchBackendResult> {
+    const overlayTarget = sourcePackageForRepo(repo);
+    const overlay = await this.readOverlay(overlayTarget);
     const result = await this.ripgit.search(
       this.repoRefForSourceRepo(repo),
       query,
@@ -593,38 +424,19 @@ class ProcessSourceMountBackend implements MountBackend {
     );
     return {
       truncated: result.truncated,
-      matches: result.matches.map((match) => ({
-        path: `${repo.mountPath}/${match.path}`.replace(/\/+$/g, ""),
-        line: match.line,
-        content: match.content,
-      })),
-    };
-  }
-
-  private resolvePackagePathOrNull(path: string): {
-    pkg: SourcePackage;
-    relativePath: string;
-    normalizedPath: string;
-  } | null {
-    const normalizedPath = normalizePath(path);
-    let pkg: SourcePackage | null = null;
-    for (const candidate of this.packages) {
-      if (normalizedPath !== candidate.mountPath && !normalizedPath.startsWith(`${candidate.mountPath}/`)) {
-        continue;
-      }
-      if (!pkg || candidate.mountPath.length > pkg.mountPath.length) {
-        pkg = candidate;
-      }
-    }
-    if (!pkg) {
-      return null;
-    }
-    return {
-      pkg,
-      relativePath: normalizedPath === pkg.mountPath
-        ? ""
-        : normalizeRepoPath(normalizedPath.slice(pkg.mountPath.length + 1)),
-      normalizedPath,
+      matches: [
+        ...result.matches
+          .filter((match) =>
+            !overlayHasPut(overlay, match.path) &&
+            !isDeletedByOverlay(overlay, match.path)
+          )
+          .map((match) => ({
+            path: `${repo.mountPath}/${match.path}`.replace(/\/+$/g, ""),
+            line: match.line,
+            content: match.content,
+          })),
+        ...await this.searchOverlay(repo.mountPath, overlay, relativePath, query),
+      ],
     };
   }
 
@@ -666,13 +478,11 @@ class ProcessSourceMountBackend implements MountBackend {
     if (normalizedPath !== "/src" && !normalizedPath.startsWith("/src/")) {
       return null;
     }
-    if (this.packages.some((pkg) => pkg.mountPath === normalizedPath) ||
-      this.repos.some((repo) => repo.mountPath === normalizedPath)) {
+    if (this.repos.some((repo) => repo.mountPath === normalizedPath)) {
       return null;
     }
     const entries = new Set<string>();
     if (normalizedPath === "/src") {
-      entries.add("packages");
       if (this.repos.length > 0) {
         entries.add("repos");
       }
@@ -691,34 +501,14 @@ class ProcessSourceMountBackend implements MountBackend {
         }
       }
     }
-    for (const pkg of this.packages) {
-      if (!pkg.mountPath.startsWith(`${normalizedPath}/`)) {
-        continue;
-      }
-      const remainder = pkg.mountPath.slice(normalizedPath.length + 1);
-      const [entry] = remainder.split("/");
-      if (entry) {
-        entries.add(entry);
-      }
-    }
     if (
       normalizedPath === "/src" ||
-      normalizedPath === "/src/packages" ||
       normalizedPath === "/src/repos" ||
       entries.size > 0
     ) {
       return [...entries].sort();
     }
     return null;
-  }
-
-  private virtualDirectoryPackages(path: string): SourcePackage[] | null {
-    const normalizedPath = normalizePath(path);
-    const entries = this.virtualDirectoryEntries(normalizedPath);
-    if (!entries) {
-      return null;
-    }
-    return this.packages.filter((pkg) => normalizedPath === "/src" || pkg.mountPath.startsWith(`${normalizedPath}/`));
   }
 
   private virtualDirectoryRepos(path: string): SourceRepo[] | null {
@@ -766,69 +556,25 @@ class ProcessSourceMountBackend implements MountBackend {
     if (!resolved.repo.writable) {
       throw new Error(`EPERM: source repo is read-only '${resolved.normalizedPath}'`);
     }
+    this.assertRepoPathWriteContext(resolved);
     return resolved;
   }
 
-  private assertWritablePackagePath(
+  private assertRepoPathWriteContext(
     resolved: {
-      pkg: SourcePackage;
-      relativePath: string;
-      normalizedPath: string;
-    },
-    operation: string,
-  ): {
-    pkg: SourcePackage;
-    relativePath: string;
-    normalizedPath: string;
-  } {
-    if (!resolved.relativePath) {
-      throw new Error(`EISDIR: illegal operation on a directory, ${operation} '${resolved.normalizedPath}'`);
-    }
-    this.assertPackagePathWriteContext(resolved);
-    return resolved;
-  }
-
-  private assertPackagePathWriteContext(
-    resolved: {
-      pkg: SourcePackage;
-      relativePath: string;
+      repo: SourceRepo;
       normalizedPath: string;
     },
   ): void {
-    if (!resolved.pkg.writable) {
-      throw new Error(`EPERM: package source is read-only '${resolved.normalizedPath}'`);
+    if (!resolved.repo.writable) {
+      throw new Error(`EPERM: source repo is read-only '${resolved.normalizedPath}'`);
     }
     if (!this.processId) {
-      throw new Error(`EPERM: source writes require a process context '${resolved.normalizedPath}'`);
+      throw new Error(`EPERM: repo writes require a process context '${resolved.normalizedPath}'`);
     }
     if (!this.storage) {
-      throw new Error(`ENOSYS: source overlay storage is unavailable '${resolved.normalizedPath}'`);
+      throw new Error(`ENOSYS: repo overlay storage is unavailable '${resolved.normalizedPath}'`);
     }
-  }
-
-  private async assertRemovablePackagePath(
-    resolved: {
-      pkg: SourcePackage;
-      relativePath: string;
-      normalizedPath: string;
-    },
-    options?: RmOptions,
-  ): Promise<boolean> {
-    try {
-      const stat = await this.stat(resolved.normalizedPath);
-      if (stat.isDirectory && !options?.recursive) {
-        const entries = await this.readdir(resolved.normalizedPath);
-        if (entries.length > 0) {
-          throw new Error(`ENOTEMPTY: directory not empty, rmdir '${resolved.normalizedPath}'`);
-        }
-      }
-    } catch (error) {
-      if (options?.force && error instanceof Error && error.message.includes("ENOENT")) {
-        return false;
-      }
-      throw error;
-    }
-    return true;
   }
 
   private async assertRemovableRepoPath(
@@ -856,72 +602,12 @@ class ProcessSourceMountBackend implements MountBackend {
     return true;
   }
 
-  private repoRefForPackage(pkg: SourcePackage): RipgitRepoRef {
-    const repo = parseRepoSlug(pkg.repo);
-    const state = this.readBranchState(pkg);
-    return {
-      ...repo,
-      branch: state?.branch ?? pkg.resolvedCommit ?? pkg.sourceRef,
-    };
-  }
-
   private repoRefForSourceRepo(repo: SourceRepo): RipgitRepoRef {
     return {
       owner: repo.owner,
       repo: repo.name,
       branch: repo.ref,
     };
-  }
-
-  private async applyRepoPut(
-    repo: SourceRepo,
-    relativePath: string,
-    content: Uint8Array,
-    operation: "write" | "append",
-  ): Promise<void> {
-    await this.ripgit.apply(
-      this.repoRefForSourceRepo(repo),
-      this.identity.username,
-      `${this.identity.username}@gsv.local`,
-      `gsv: ${operation} ${relativePath}`,
-      [
-        {
-          type: "put",
-          path: relativePath,
-          contentBytes: Array.from(content),
-        },
-      ],
-    );
-    this.refreshRepoMetadata(repo);
-  }
-
-  private async applyRepoDelete(repo: SourceRepo, relativePath: string, recursive: boolean): Promise<void> {
-    await this.ripgit.apply(
-      this.repoRefForSourceRepo(repo),
-      this.identity.username,
-      `${this.identity.username}@gsv.local`,
-      `gsv: rm ${relativePath}`,
-      [
-        {
-          type: "delete",
-          path: relativePath,
-          recursive,
-        },
-      ],
-    );
-    this.refreshRepoMetadata(repo);
-  }
-
-  private refreshRepoMetadata(repo: SourceRepo): void {
-    if (!this.config) {
-      return;
-    }
-    const now = String(Date.now());
-    const createdKey = sourceRepoConfigKey(repo, "created_at");
-    if (this.config.get(createdKey) === null) {
-      this.config.set(createdKey, now);
-    }
-    this.config.set(sourceRepoConfigKey(repo, "updated_at"), now);
   }
 
   private async readOverlay(pkg: SourcePackage): Promise<SourceOverlayManifest> {
@@ -1055,52 +741,51 @@ class ProcessSourceMountBackend implements MountBackend {
     }
   }
 
-  private writeBranchState(pkg: SourcePackage, state: SourceBranchState): void {
-    this.config!.set(sourceBranchStateKey(this.processId!, pkg.record), JSON.stringify(state));
-  }
 }
 
-export async function getProcessSourceStatus(
+export async function getRepoSourceStatus(
   options: ProcessSourceBackendOptions,
-  record: InstalledPackageRecord,
-): Promise<ProcessSourceStatus> {
-  const pkg = sourcePackageForOptions(options, record);
-  const state = readSourceBranchState(options.config ?? null, options.processId ?? null, pkg.record);
+  repoSlug: string,
+): Promise<RepoSourceStatus> {
+  const repo = sourceRepoForOptions(options, repoSlug);
+  const target = sourcePackageForRepo(repo);
+  const state = readSourceBranchState(options.config ?? null, options.processId ?? null, target.record);
   const overlay = await readOverlayManifest(
     options.storage ?? null,
     options.processId ?? null,
-    pkg,
-    sourceBaseRefForPackage(pkg, state),
+    target,
+    sourceBaseRefForPackage(target, state),
   );
-  return sourceStatusForPackage(options, pkg, overlay, state);
+  return sourceStatusForRepo(repo, overlay, state);
 }
 
-export async function diffProcessSourceChanges(
+export async function diffRepoSourceChanges(
   options: ProcessSourceBackendOptions,
-  record: InstalledPackageRecord,
+  repoSlug: string,
 ): Promise<string> {
   if (!options.ripgit) {
     throw new Error("RIPGIT binding is required");
   }
-  const pkg = sourcePackageForOptions(options, record);
-  const state = readSourceBranchState(options.config ?? null, options.processId ?? null, pkg.record);
+  const repo = sourceRepoForOptions(options, repoSlug);
+  const target = sourcePackageForRepo(repo);
+  const state = readSourceBranchState(options.config ?? null, options.processId ?? null, target.record);
   const overlay = await readOverlayManifest(
     options.storage ?? null,
     options.processId ?? null,
-    pkg,
-    sourceBaseRefForPackage(pkg, state),
+    target,
+    sourceBaseRefForPackage(target, state),
   );
   const changes = sortedOverlayChanges(overlay);
   if (changes.length === 0) {
-    return `No staged source changes for ${pkg.name}\n`;
+    return `No staged repo changes for ${repo.repo}\n`;
   }
 
-  const repoRef = repoRefForOverlay(pkg, overlay.baseRef);
+  const repoRef = repoRefForOverlay(target, overlay.baseRef);
   const lines: string[] = [];
   for (const change of changes) {
     if (change.type === "delete") {
       lines.push(`D ${change.path}`);
-      const base = await options.ripgit.readPath(repoRef, joinRepoPath(pkg.sourceSubdir, change.path));
+      const base = await options.ripgit.readPath(repoRef, change.path);
       if (base.kind === "file") {
         lines.push(...formatSimpleDiff(change.path, base.bytes, null));
       }
@@ -1111,7 +796,7 @@ export async function diffProcessSourceChanges(
     if (!bytes) {
       continue;
     }
-    const base = await options.ripgit.readPath(repoRef, joinRepoPath(pkg.sourceSubdir, change.path));
+    const base = await options.ripgit.readPath(repoRef, change.path);
     if (base.kind === "file") {
       if (bytesEqual(base.bytes, bytes)) {
         continue;
@@ -1124,154 +809,105 @@ export async function diffProcessSourceChanges(
     }
   }
 
-  return lines.length > 0 ? `${lines.join("\n")}\n` : `No staged source changes for ${pkg.name}\n`;
+  return lines.length > 0 ? `${lines.join("\n")}\n` : `No staged repo changes for ${repo.repo}\n`;
 }
 
-export async function commitProcessSourceChanges(
+export async function commitRepoSourceChanges(
   options: ProcessSourceBackendOptions,
-  record: InstalledPackageRecord,
+  repoSlug: string,
   args: { message: string; branch?: string },
-): Promise<ProcessSourceCommitResult> {
+): Promise<RepoSourceCommitResult> {
   if (!options.ripgit) {
     throw new Error("RIPGIT binding is required");
   }
   if (!options.storage) {
-    throw new Error("Source overlay storage is required");
+    throw new Error("Repo overlay storage is required");
   }
   if (!options.config) {
-    throw new Error("Source branch state storage is required");
+    throw new Error("Repo branch state storage is required");
   }
   if (!options.processId) {
-    throw new Error("Source changes require a process context");
+    throw new Error("Repo changes require a process context");
   }
   const message = args.message.trim();
   if (!message) {
     throw new Error("message is required");
   }
 
-  const pkg = sourcePackageForOptions(options, record);
-  if (!pkg.writable) {
-    throw new Error(`Package source is read-only: ${pkg.name}`);
+  const repo = sourceRepoForOptions(options, repoSlug);
+  if (!repo.writable) {
+    throw new Error(`Repo is read-only: ${repo.repo}`);
   }
-  const state = readSourceBranchState(options.config, options.processId, pkg.record);
+  const target = sourcePackageForRepo(repo);
+  const state = readSourceBranchState(options.config, options.processId, target.record);
   const overlay = await readOverlayManifest(
     options.storage,
     options.processId,
-    pkg,
-    sourceBaseRefForPackage(pkg, state),
+    target,
+    sourceBaseRefForPackage(target, state),
   );
   const branch = args.branch?.trim()
     ? normalizeSourceBranch(args.branch)
-    : state?.branch ?? processBranchName(options.processId, pkg.name);
-  const repo = parseRepoSlug(pkg.repo);
-  const target = await resolveSourceCommitTarget(options.ripgit, repo, branch, state, overlay, args.branch);
-  const ops = await overlayApplyOps(options.storage, options.ripgit, pkg, overlay, target.opsBaseRef);
-  const explicitBranch = typeof args.branch === "string" && args.branch.trim().length > 0;
+    : state?.branch ?? repo.ref;
+  const repoRef = parseRepoSlug(repo.repo);
+  const targetRef = await resolveSourceCommitTarget(options.ripgit, repoRef, branch, state, overlay, branch);
+  const ops = await overlayApplyOps(options.storage, options.ripgit, target, overlay, targetRef.opsBaseRef);
   if (ops.length === 0) {
-    const nextState = explicitBranch
-      ? sourceBranchStateForTarget(state, branch, target, null)
-      : state;
-    if (nextState && explicitBranch) {
-      writeSourceBranchState(options.config, options.processId, pkg.record, nextState);
-    }
-    await discardOverlay(options.storage, options.processId, pkg, overlay);
+    const nextState = sourceBranchStateForTarget(state, branch, targetRef, null);
+    writeSourceBranchState(options.config, options.processId, target.record, nextState);
+    await discardOverlay(options.storage, options.processId, target, overlay);
     return {
-      ...sourceStatusForPackage(options, pkg, emptyOverlayManifest(pkg, sourceBaseRefForPackage(pkg, nextState)), nextState),
+      ...sourceStatusForRepo(repo, emptyOverlayManifest(target, sourceBaseRefForPackage(target, nextState)), nextState),
       committed: false,
-      commitHead: nextState?.head ?? null,
+      commitHead: nextState.head,
       ops: 0,
     };
   }
 
   const result = await options.ripgit.apply(
-    { ...repo, branch },
+    { ...repoRef, branch },
     options.identity.username,
     `${options.identity.username}@gsv.local`,
     message,
     ops,
     {
-      baseRef: target.applyBaseRef,
-      ...(target.expectedHead ? { expectedHead: target.expectedHead } : {}),
+      baseRef: targetRef.applyBaseRef,
+      ...(targetRef.expectedHead ? { expectedHead: targetRef.expectedHead } : {}),
     },
   );
-  const nextState = sourceBranchStateForTarget(state, branch, target, result.head ?? null);
-  writeSourceBranchState(options.config, options.processId, pkg.record, nextState);
-  await discardOverlay(options.storage, options.processId, pkg, overlay);
+  const nextState = sourceBranchStateForTarget(state, branch, targetRef, result.head ?? null);
+  writeSourceBranchState(options.config, options.processId, target.record, nextState);
+  await discardOverlay(options.storage, options.processId, target, overlay);
 
   return {
-    ...sourceStatusForPackage(options, pkg, emptyOverlayManifest(pkg, sourceBaseRefForPackage(pkg, nextState)), nextState),
+    ...sourceStatusForRepo(repo, emptyOverlayManifest(target, sourceBaseRefForPackage(target, nextState)), nextState),
     committed: true,
     commitHead: nextState.head,
     ops: ops.length,
   };
 }
 
-export async function discardProcessSourceChanges(
+export async function discardRepoSourceChanges(
   options: ProcessSourceBackendOptions,
-  record: InstalledPackageRecord,
-): Promise<ProcessSourceStatus> {
+  repoSlug: string,
+): Promise<RepoSourceStatus> {
   if (!options.storage) {
-    throw new Error("Source overlay storage is required");
+    throw new Error("Repo overlay storage is required");
   }
   if (!options.processId) {
-    throw new Error("Source changes require a process context");
+    throw new Error("Repo changes require a process context");
   }
-  const pkg = sourcePackageForOptions(options, record);
-  const state = readSourceBranchState(options.config ?? null, options.processId, pkg.record);
+  const repo = sourceRepoForOptions(options, repoSlug);
+  const target = sourcePackageForRepo(repo);
+  const state = readSourceBranchState(options.config ?? null, options.processId, target.record);
   const overlay = await readOverlayManifest(
     options.storage,
     options.processId,
-    pkg,
-    sourceBaseRefForPackage(pkg, state),
+    target,
+    sourceBaseRefForPackage(target, state),
   );
-  await discardOverlay(options.storage, options.processId, pkg, overlay);
-  return sourceStatusForPackage(options, pkg, emptyOverlayManifest(pkg, sourceBaseRefForPackage(pkg, state)), state);
-}
-
-function visibleSourcePackages(
-  records: InstalledPackageRecord[],
-  identity: ProcessIdentity,
-  mounts?: ProcessMount[] | null,
-): SourcePackage[] {
-  const pathNames = packageSourcePathNameMap(records);
-  const normalizedMounts = normalizeSourceMounts(mounts);
-  if (normalizedMounts.length > 0) {
-    const packages: SourcePackage[] = [];
-    for (const mount of normalizedMounts) {
-      const record = sourceRecordForMount(records, mount);
-      if (!record) {
-        continue;
-      }
-      const defaultName = pathNames.get(record) ?? packageSourcePathNameForRecord(record, records);
-      const mountPath = normalizePath(mount.mountPath);
-      packages.push(sourcePackageForRecord(
-        record,
-        identity,
-        sourceNameForMountPath(mountPath, defaultName),
-        {
-          mountPath,
-          repo: mount.repo,
-          sourceRef: mount.ref,
-          sourceSubdir: normalizeRepoPath(mount.subdir) || ".",
-          resolvedCommit: mount.resolvedCommit,
-        },
-      ));
-    }
-    return packages.sort((left, right) => left.mountPath.localeCompare(right.mountPath));
-  }
-  if (mounts) {
-    return [];
-  }
-
-  const packages: SourcePackage[] = [];
-  for (const record of records) {
-    const name = pathNames.get(record);
-    if (!name) {
-      continue;
-    }
-    packages.push(sourcePackageForRecord(record, identity, name));
-  }
-  return packages.sort((left, right) => left.name.localeCompare(right.name));
+  await discardOverlay(options.storage, options.processId, target, overlay);
+  return sourceStatusForRepo(repo, emptyOverlayManifest(target, sourceBaseRefForPackage(target, state)), state);
 }
 
 function visibleSourceRepos(
@@ -1309,103 +945,45 @@ function sourceRepoForSummary(summary: RepoSummary): SourceRepo | null {
   }
 }
 
-function sourceRepoConfigKey(repo: SourceRepo, field: string): string {
-  return `repos/${repo.owner}/${repo.name}/${field}`;
-}
-
 function throwMissingSourcePath(path: string): never {
   const normalizedPath = normalizePath(path);
-  if (normalizedPath === "/src/repos" || normalizedPath.startsWith("/src/repos/")) {
-    throw new Error(`ENOENT: no such source repo '${normalizedPath}'`);
-  }
-  throw new Error(`ENOENT: no such package source '${normalizedPath}'`);
+  throw new Error(`ENOENT: no such source repo '${normalizedPath}'. Create repos with rgit create owner/repo and edit them under /src/repos/{owner}/{repo}.`);
 }
 
-function canWritePackageSource(
-  record: InstalledPackageRecord,
-  identity: ProcessIdentity,
-  sourceRepo = record.manifest.source.repo,
-): boolean {
-  const repo = parseRepoSlug(sourceRepo);
-  return identity.uid === 0 || repo.owner === identity.username;
-}
-
-function sourcePackageForOptions(
+function sourceRepoForOptions(
   options: ProcessSourceBackendOptions,
-  record: InstalledPackageRecord,
-): SourcePackage {
-  const packages = visibleSourcePackages(options.packages, options.identity, options.mounts);
-  const targetKey = packageSourceRecordKey(record);
-  const found = packages.find((pkg) => packageSourceRecordKey(pkg.record) === targetKey);
-  if (found) {
-    return found;
+  repoSlug: string,
+): SourceRepo {
+  const normalizedRepo = normalizeRepoSlug(repoSlug);
+  const repos = visibleSourceRepos(options.repos, options.packages, options.mounts);
+  const found = repos.find((repo) => repo.repo === normalizedRepo);
+  if (!found) {
+    throw new Error(`Repo is not visible: ${normalizedRepo}`);
   }
-  if (options.mounts) {
-    throw new Error(`Package source is not mounted: ${record.manifest.name}`);
-  }
-  return sourcePackageForRecord(record, options.identity, packageSourcePathNameForRecord(record, options.packages));
+  return found;
 }
 
-function sourcePackageForRecord(
-  record: InstalledPackageRecord,
-  identity: ProcessIdentity,
-  name = packageSourcePathName(record),
-  source?: {
-    mountPath?: string;
-    repo?: string;
-    sourceRef?: string;
-    sourceSubdir?: string;
-    resolvedCommit?: string | null;
-  },
-): SourcePackage {
-  const manifestSource = record.manifest.source;
+function sourcePackageForRepo(repo: SourceRepo): SourcePackage {
+  const record = {
+    packageId: `repo:${repo.repo}`,
+    scope: { kind: "global" },
+    manifest: {
+      name: repo.repo,
+      source: {
+        repo: repo.repo,
+        ref: repo.ref,
+        subdir: ".",
+        resolvedCommit: null,
+      },
+    },
+  } as InstalledPackageRecord;
   return {
     record,
-    name,
-    mountPath: source?.mountPath ?? defaultPackageSourceMountPath(name),
-    repo: source?.repo ?? manifestSource.repo,
-    sourceRef: source?.sourceRef ?? manifestSource.ref,
-    sourceSubdir: normalizeRepoPath(source?.sourceSubdir ?? manifestSource.subdir) || ".",
-    resolvedCommit: source?.resolvedCommit ?? manifestSource.resolvedCommit ?? null,
-    writable: canWritePackageSource(record, identity, source?.repo),
+    repo: repo.repo,
+    sourceRef: repo.ref,
+    sourceSubdir: ".",
+    resolvedCommit: null,
   };
-}
-
-function normalizeSourceMounts(mounts: ProcessMount[] | null | undefined): ProcessMount[] {
-  return (mounts ?? [])
-    .filter((mount) => mount.kind === "ripgit-source")
-    .map((mount) => ({
-      ...mount,
-      mountPath: normalizePath(mount.mountPath),
-      subdir: normalizeRepoPath(mount.subdir) || ".",
-    }))
-    .filter((mount) => mount.mountPath === "/src" || mount.mountPath.startsWith("/src/"));
-}
-
-function sourceRecordForMount(
-  records: InstalledPackageRecord[],
-  mount: ProcessMount,
-): InstalledPackageRecord | null {
-  if (!mount.packageId) {
-    return null;
-  }
-  if (mount.scope) {
-    const mountKey = packageSourceRecordKey({ packageId: mount.packageId, scope: mount.scope });
-    return records.find((record) => packageSourceRecordKey(record) === mountKey) ?? null;
-  }
-  return records.find((record) => record.packageId === mount.packageId) ?? null;
-}
-
-function defaultPackageSourceMountPath(name: string): string {
-  return `/src/packages/${name}`;
-}
-
-function sourceNameForMountPath(mountPath: string, fallback: string): string {
-  const parts = normalizePath(mountPath).split("/").filter(Boolean);
-  if (parts[0] === "src" && parts[1] === "packages" && parts[2]) {
-    return parts[2];
-  }
-  return sanitizePackageSourcePathSegment(parts.join("-")) || fallback;
 }
 
 function compareSourcePathEntries<T extends Pick<InstalledPackageRecord, "packageId" | "scope" | "manifest">>(
@@ -1460,22 +1038,17 @@ function packageSourceRecordKey(record: Pick<InstalledPackageRecord, "packageId"
   }
 }
 
-function sourceStatusForPackage(
-  options: ProcessSourceBackendOptions,
-  pkg: SourcePackage,
+function sourceStatusForRepo(
+  repo: SourceRepo,
   overlay: SourceOverlayManifest,
   explicitState?: SourceBranchState | null,
-): ProcessSourceStatus {
-  const state = explicitState ?? readSourceBranchState(options.config ?? null, options.processId ?? null, pkg.record);
+): RepoSourceStatus {
   return {
-    packageId: pkg.record.packageId,
-    packageName: pkg.record.manifest.name,
-    repo: pkg.repo,
-    sourceRef: pkg.sourceRef,
-    sourceSubdir: pkg.sourceSubdir,
-    baseRef: state?.baseRef ?? pkg.resolvedCommit ?? pkg.sourceRef,
-    branch: state?.branch ?? null,
-    head: state?.head ?? null,
+    repo: repo.repo,
+    sourceRef: repo.ref,
+    baseRef: explicitState?.baseRef ?? repo.ref,
+    branch: explicitState?.branch ?? null,
+    head: explicitState?.head ?? null,
     changes: sortedOverlayChanges(overlay).map((change) => ({
       path: change.path,
       type: change.type,
@@ -1491,6 +1064,11 @@ function parseRepoSlug(raw: string): RipgitRepoRef {
     throw new Error(`Invalid package source repo: ${raw}`);
   }
   return { owner, repo };
+}
+
+function normalizeRepoSlug(raw: string): string {
+  const parsed = parseRepoSlug(raw);
+  return `${parsed.owner}/${parsed.repo}`;
 }
 
 function repoRefForOverlay(pkg: SourcePackage, baseRef: string): RipgitRepoRef {
@@ -1940,20 +1518,6 @@ function joinRepoPath(base: string, relativePath: string): string {
     return normalizedBase;
   }
   return `${normalizedBase}/${normalizedRelative}`;
-}
-
-function stripPackageSubdir(path: string, subdir: string): string {
-  const normalizedPath = normalizeRepoPath(path);
-  const normalizedSubdir = normalizeRepoPath(subdir);
-  if (!normalizedSubdir || normalizedSubdir === ".") {
-    return normalizedPath;
-  }
-  if (normalizedPath === normalizedSubdir) {
-    return "";
-  }
-  return normalizedPath.startsWith(`${normalizedSubdir}/`)
-    ? normalizedPath.slice(normalizedSubdir.length + 1)
-    : normalizedPath;
 }
 
 function makeDirectoryStat(uid: number, gid: number, writable: boolean): ExtendedMountStat {

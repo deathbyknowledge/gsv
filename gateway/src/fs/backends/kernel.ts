@@ -36,7 +36,7 @@ import {
   redactProcessAiConfigValues,
   type ProcessAiModelProfile,
 } from "../../process/ai-config";
-import { packageSourcePathNameForRecord } from "./process-sources";
+import { packageSourceRepoPath } from "./process-sources";
 import type { MountBackend, ExtendedMountStat } from "../mount";
 import { normalizePath } from "../utils";
 
@@ -1475,10 +1475,9 @@ function packagePaths(record: InstalledPackageRecord, records: InstalledPackageR
   publicFiles: string[];
 } {
   const infoBase = `/var/lib/gsv/packages/info/${packageInfoFileBase(record)}`;
-  const sourceName = packageSourcePathNameForRecord(record, records);
   return {
     info: [`${infoBase}.list`, `${infoBase}.manifest`, `${infoBase}.refs`],
-    source: `/src/packages/${sourceName}`,
+    source: packageSourceRepoPath(record),
     commands: packageCommandPaths(record, records),
     publicFiles: packagePublicFilePaths(record),
   };

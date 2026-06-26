@@ -593,20 +593,20 @@ describe("proc handlers", () => {
 
     expect(result).toMatchObject({
       ok: true,
-      cwd: "/src/packages/demo-tool--sam-demo-a",
+      cwd: "/src/repos/sam/demo-a",
     });
     expect(ctx.procs.spawn).toHaveBeenCalledWith(
       expect.any(String),
-      expect.objectContaining({ cwd: "/src/packages/demo-tool--sam-demo-a" }),
+      expect.objectContaining({ cwd: "/src/repos/sam/demo-a" }),
       expect.objectContaining({
         mounts: [
           expect.objectContaining({
             packageId: "pkg-a",
-            mountPath: "/src/packages/demo-tool--sam-demo-a",
+            mountPath: "/src/repos/sam/demo-a",
           }),
           expect.objectContaining({
             packageId: "pkg-b",
-            mountPath: "/src/packages/demo-tool--sam-demo-b",
+            mountPath: "/src/repos/sam/demo-b",
           }),
         ],
       }),
@@ -654,12 +654,12 @@ describe("proc handlers", () => {
           expect.objectContaining({
             packageId: "pkg-a",
             scope: pkgA.scope,
-            mountPath: "/src/packages/demo-tool",
+            mountPath: "/src/repos/sam/demo-a",
           }),
           expect.objectContaining({
             packageId: "pkg-b",
             scope: pkgB.scope,
-            mountPath: "/src/packages/other-tool",
+            mountPath: "/src/repos/sam/other-b",
           }),
         ],
       }),
@@ -718,7 +718,7 @@ describe("proc handlers", () => {
         mounts: [
           expect.objectContaining({
             packageId: "pkg-a",
-            mountPath: "/src/packages/demo-tool",
+            mountPath: "/src/repos/sam/demo-a",
           }),
         ],
       }),
@@ -770,14 +770,14 @@ describe("proc handlers", () => {
 
     expect(result).toMatchObject({
       ok: true,
-      cwd: "/src/packages/demo-tool",
+      cwd: "/src/repos/sam/demo-a",
     });
     expect(ctx.procs.spawn).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({
         uid: personalAgent.uid,
         username: personalAgent.username,
-        cwd: "/src/packages/demo-tool",
+        cwd: "/src/repos/sam/demo-a",
       }),
       expect.objectContaining({
         ownerUid: IDENTITY.uid,
@@ -785,7 +785,7 @@ describe("proc handlers", () => {
         mounts: [
           expect.objectContaining({
             packageId: "pkg-a",
-            mountPath: "/src/packages/demo-tool",
+            mountPath: "/src/repos/sam/demo-a",
           }),
         ],
       }),
@@ -990,19 +990,19 @@ describe("proc handlers", () => {
 
     expect(result).toMatchObject({
       ok: true,
-      cwd: "/src/packages/demo-tool",
+      cwd: "/src/repos/sam/demo-a/packages/demo-tool",
     });
     expect(ctx.procs.spawn).toHaveBeenCalledWith(
       expect.any(String),
-      expect.objectContaining({ cwd: "/src/packages/demo-tool" }),
+      expect.objectContaining({ cwd: "/src/repos/sam/demo-a/packages/demo-tool" }),
       expect.objectContaining({
         mounts: [
           expect.objectContaining({
-            mountPath: "/src/packages/demo-tool",
+            mountPath: "/src/repos/sam/demo-a/packages/demo-tool",
             subdir: "packages/demo-tool",
           }),
           expect.objectContaining({
-            mountPath: "/src/repos/sam-demo-a",
+            mountPath: "/src/repos/sam/demo-a",
             subdir: ".",
           }),
         ],
@@ -1010,7 +1010,7 @@ describe("proc handlers", () => {
     );
   });
 
-  it("prefers package source mounts for default spawn cwd", async () => {
+  it("uses the first requested mount for default spawn cwd", async () => {
     const pkg = makePackage("pkg-a", "Demo Tool", "sam/demo-a", "packages/demo-tool");
     const ctx = {
       env: {},
@@ -1039,19 +1039,19 @@ describe("proc handlers", () => {
 
     expect(result).toMatchObject({
       ok: true,
-      cwd: "/src/packages/demo-tool",
+      cwd: "/src/repos/sam/demo-a",
     });
     expect(ctx.procs.spawn).toHaveBeenCalledWith(
       expect.any(String),
-      expect.objectContaining({ cwd: "/src/packages/demo-tool" }),
+      expect.objectContaining({ cwd: "/src/repos/sam/demo-a" }),
       expect.objectContaining({
         mounts: [
           expect.objectContaining({
-            mountPath: "/src/repos/sam-demo-a",
+            mountPath: "/src/repos/sam/demo-a",
             subdir: ".",
           }),
           expect.objectContaining({
-            mountPath: "/src/packages/demo-tool",
+            mountPath: "/src/repos/sam/demo-a/packages/demo-tool",
             subdir: "packages/demo-tool",
           }),
         ],

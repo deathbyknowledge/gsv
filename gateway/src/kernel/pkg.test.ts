@@ -148,16 +148,8 @@ describe("pkg syscalls", () => {
     expect(config.get("repos/alice/weather/visibility")).toBeNull();
   });
 
-  it("syncs with an empty builtin package seed set", async () => {
-    const seedBuiltinPackages = vi.fn(async () => []);
-    const ctx = {
-      packages: {
-        seedBuiltinPackages,
-      },
-    } as unknown as KernelContext;
-
-    await expect(handlePkgSync(undefined, ctx)).resolves.toEqual({ packages: [] });
-    expect(seedBuiltinPackages).toHaveBeenCalledWith([]);
+  it("requires a package id for package sync", async () => {
+    await expect(handlePkgSync(undefined, {} as KernelContext)).rejects.toThrow("packageId is required");
   });
 
   it("surfaces profile capabilities in package summaries", () => {

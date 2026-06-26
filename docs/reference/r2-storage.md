@@ -23,7 +23,7 @@ The native `fs.*` and `shell.exec` handlers use `GsvFs`, a Linux-like virtual fi
 | `~/context.d/*` | ripgit home repo, with R2 fallback | Account prompt context. Human homes start empty; agent homes seed style and user files. Personal agents also get a one-time boot file. |
 | `~/skills.d/*` | ripgit home repo, with R2 fallback | User-global reusable process skills. |
 | Other home files | R2 | Stored as ordinary objects with uid/gid/mode metadata. |
-| `/src/packages/{packageName}` | ripgit package source plus R2 overlay | Visible installed package source. Writable owned sources stage process-local edits in R2 until explicit commit. |
+| `/src/repos/{owner}/{repo}` | ripgit repo plus R2 overlay | Visible source repositories. Writable repos stage process-local edits in R2 until explicit `rgit commit`. |
 | `/usr/local/bin/*` | package mount | Read-only package command shims. |
 | Everything else | R2 | Default object-backed filesystem. |
 
@@ -76,8 +76,8 @@ R2 remains the byte store. The current runtime uses these key families:
 | `public/gsv/downloads/cli/{channel}/{asset}.sha256` | `sys.bootstrap` CLI mirroring | CLI checksums served through `/public/*`. |
 | `public/gsv/downloads/cli/default-channel.txt` | `sys.bootstrap` | Default CLI release channel. |
 | `public/gsv/downloads/cli/install.{sh,ps1}` | `sys.bootstrap` | Static CLI install scripts served through `/public/*`. |
-| `process-source-overlays/{pid}/{packageId}/manifest.json` | Package source mount, `pkg source` | Manifest of staged package source edits for one process/package. |
-| `process-source-overlays/{pid}/{packageId}/files/{path}` | Package source mount, `pkg source` | Staged file content for package source puts. |
+| `process-source-overlays/{pid}/{sourceKey}/manifest.json` | `/src/repos`, `rgit` | Manifest of staged source edits for one process/repo or legacy package source view. |
+| `process-source-overlays/{pid}/{sourceKey}/files/{path}` | `/src/repos`, `rgit` | Staged file content for source puts. |
 
 Process media is deleted by prefix when the process is reset or killed. Package artifacts are content-addressed by hash and referenced from the Kernel `packages` table.
 
@@ -89,7 +89,7 @@ ripgit stores versioned content. It is used anywhere history, diffs, search, or 
 |---|---|---|---|
 | `{username}/home` | `accountHomeRepoRef(username)` | `~/context.d`, `~/skills.d` | Home context and account-local skills. |
 | Wiki repos, for example `root/gsv-manual` or `{owner}/{wiki}` | repo manifest `wiki.json` | Wiki app, `/src/repos/{owner}/{wiki}`, `repo.*` | Durable markdown knowledge databases. |
-| Package source repos, for example `root/gsv` or `{owner}/{repo}` | package manifest `source.repo` | `/src/packages/{packageName}`, `/src/repos/{owner}/{repo}`, `repo.*` | Installed package source, review context, and generic repo operations. |
+| Package source repos, for example `root/gsv` or `{owner}/{repo}` | package manifest `source.repo` | `/src/repos/{owner}/{repo}`, `repo.*`, `rgit` | Installed package source, review context, and generic repo operations. |
 
 The `root/gsv` repository may contain a top-level `skills/` directory. Bootstrap
 copies those files into user home repos under `skills.d/` when they are missing.
@@ -98,7 +98,7 @@ upstream ref under `refs/remotes/upstream/<ref>` and uses that tracking ref for
 later pulls. The local branch is moved only when it can be updated without
 dropping local commits.
 
-Generic visible repos are mounted under `/src/repos/{owner}/{repo}`. Repos writable by the process identity accept direct `fs.write`, `fs.edit`, and `fs.delete` operations that commit to ripgit immediately; read-only visible repos still support read and search. Package source mounts under `/src/packages/{packageName}` keep their process-local R2 overlay behavior; `pkg source status`, `pkg source diff`, `pkg source commit`, and `pkg source discard` make package source commit/discard explicit. Other package sources are read-only from the package-source path. Wiki-specific behavior uses the higher-level Wiki app and CLI on top of the same repo storage.
+Generic visible repos are mounted under `/src/repos/{owner}/{repo}`. Repos writable by the process identity accept `fs.write`, `fs.edit`, and `fs.delete`, but those writes stage into a process-local R2 overlay. Use `rgit status`, `rgit diff`, `rgit commit`, and `rgit discard` to inspect, commit, or discard staged repo edits. Read-only visible repos still support read and search. `pkg source <package>` reports the package's source repo path; package lifecycle stays under `pkg`, while repository history and source edits stay under `rgit`. Wiki-specific behavior uses the higher-level Wiki app and CLI on top of the same repo storage.
 
 ## Package Runtime Storage
 

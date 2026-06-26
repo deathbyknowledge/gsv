@@ -161,27 +161,28 @@ await this.daemon?.upsertRpcSchedule({
 Use `kind: "at"`, `kind: "after"`, or `kind: "every"`. The scheduled method
 receives the stored payload, and `this.daemon.trigger` describes the invocation.
 
-## Ship Built-in Package Changes
+## Ship Package Source Changes
 
-After changing a built-in package source tree:
+After changing a package source tree in `/src/repos`:
 
 ```bash
-git push <remote> HEAD:main
-gsv packages sync
+rgit diff owner/repo
+rgit commit owner/repo --message "update package"
+pkg update <package> --ref main
 ```
 
 To bring upstream GSV changes into a deployed `root/gsv`, use the GSV console's
 source/package **Pull upstream** action or call `repo.import` for `root/gsv`.
 The pull records `refs/remotes/upstream/<ref>` and fast-forwards the local branch
 only when it is safe; if local commits diverged, merge upstream first and then
-sync packages.
+update the affected packages explicitly.
 
 If you changed the package runtime, SDK, assembler, or Gateway code, redeploy the
 infrastructure first:
 
 ```bash
 gsv infra deploy -c assembler -c gateway
-gsv packages sync
+pkg update <package> --ref main
 ```
 
 For a named deployment, pass the same `--instance NAME` to the infrastructure

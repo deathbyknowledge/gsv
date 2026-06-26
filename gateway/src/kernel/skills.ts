@@ -1,15 +1,14 @@
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import {
   accountHomeRepoRef,
-  packageSourcePathNameForRecord,
   packageSourcePathNameMap,
+  packageSourceRepoPath,
   packageSourcePathName,
   RipgitClient,
   type RipgitRepoRef,
 } from "../fs";
 import type { KernelContext } from "./context";
 import {
-  resolvePackageProfileReference,
   visiblePackageScopesForActor,
   type InstalledPackageRecord,
 } from "./packages";
@@ -260,7 +259,7 @@ async function collectRipgitRuntimeSkillFiles(
   const packagePathNames = packageSourcePathNameMap(packageRecords);
   for (const record of packageRecords) {
     const sourcePathName = packagePathNames.get(record) ?? packageSourcePathName(record);
-    const root = packageTopLevelSkillRoot(record, sourcePathName);
+    const root = packageTopLevelSkillRoot(record);
     if (!root) {
       continue;
     }
@@ -301,7 +300,7 @@ function filesystemSkillRoots(
   for (const record of packageRecords) {
     const sourcePathName = packagePathNames.get(record) ?? packageSourcePathName(record);
     roots.push({
-      rootPath: `/src/packages/${sourcePathName}/skills.d`,
+      rootPath: `${packageSourceRepoPath(record)}/skills.d`,
       source: {
         kind: "package",
         label: `pkg:${record.manifest.name}`,
@@ -726,7 +725,7 @@ function sourceRank(source: SkillSource): number {
   return 3;
 }
 
-function packageTopLevelSkillRoot(record: InstalledPackageRecord, sourcePathName?: string): {
+function packageTopLevelSkillRoot(record: InstalledPackageRecord): {
   repo: RipgitRepoRef;
   path: string;
   virtualPath: string;
@@ -737,12 +736,12 @@ function packageTopLevelSkillRoot(record: InstalledPackageRecord, sourcePathName
   }
   return {
     repo,
-    path: joinPath(record.manifest.source.subdir, "skills.d"),
-    virtualPath: `/src/packages/${sourcePathName ?? packageSourcePathName(record)}/skills.d`,
+    path: packageSourceRipgitPath(record, "skills.d"),
+    virtualPath: `${packageSourceRepoPath(record)}/skills.d`,
   };
 }
 
-function packageProfileSkillRoot(record: InstalledPackageRecord, profileName: string, sourcePathName?: string): {
+function packageProfileSkillRoot(record: InstalledPackageRecord, profileName: string): {
   repo: RipgitRepoRef;
   path: string;
   virtualPath: string;
@@ -751,12 +750,19 @@ function packageProfileSkillRoot(record: InstalledPackageRecord, profileName: st
   if (!repo) {
     return null;
   }
-  const profileRoot = joinPath(record.manifest.source.subdir, "profiles");
   return {
     repo,
-    path: joinPath(joinPath(profileRoot, profileName), "skills.d"),
-    virtualPath: `/src/packages/${sourcePathName ?? packageSourcePathName(record)}/profiles/${profileName}/skills.d`,
+    path: packageSourceRipgitPath(record, joinPath(joinPath("profiles", profileName), "skills.d")),
+    virtualPath: `${packageSourceRepoPath(record)}/profiles/${profileName}/skills.d`,
   };
+}
+
+function packageSourceRipgitPath(record: InstalledPackageRecord, child: string): string {
+  const subdir = trimSlashes(record.manifest.source.subdir);
+  if (!subdir || subdir === ".") {
+    return trimSlashes(child);
+  }
+  return joinPath(subdir, child);
 }
 
 function repoRefFromPackage(record: InstalledPackageRecord): RipgitRepoRef | null {

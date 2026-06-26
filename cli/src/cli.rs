@@ -268,8 +268,15 @@ pub(crate) enum InfraAction {
 
 #[derive(Subcommand, Clone)]
 pub(crate) enum PackagesAction {
-    /// Re-seed builtin packages from the mirrored root/gsv repo
-    Sync,
+    /// Re-resolve one installed package from its source repo/ref
+    Sync {
+        /// Package id, manifest name, or unique package alias
+        package: String,
+
+        /// Source ref to install. Defaults to the package's recorded source ref.
+        #[arg(long)]
+        r#ref: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]

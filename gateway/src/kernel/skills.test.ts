@@ -40,8 +40,8 @@ describe("collectFilesystemSkillDocuments", () => {
       },
     } as unknown as KernelContext;
     const fs = makeSkillFs({
-      "/src/packages/foreign-tools/skills.d": ["guide.md"],
-      "/src/packages/foreign-tools/skills.d/guide.md": [
+      "/src/repos/alice/tools/skills.d": ["guide.md"],
+      "/src/repos/alice/tools/skills.d/guide.md": [
         "---",
         "name: foreign-guide",
         "description: Foreign package guide.",
@@ -50,8 +50,8 @@ describe("collectFilesystemSkillDocuments", () => {
         "# Foreign",
         "",
       ].join("\n"),
-      "/src/packages/owned-tools/skills.d": ["guide.md"],
-      "/src/packages/owned-tools/skills.d/guide.md": [
+      "/src/repos/sam/tools/skills.d": ["guide.md"],
+      "/src/repos/sam/tools/skills.d/guide.md": [
         "---",
         "name: owned-guide",
         "description: Owned package guide.",
@@ -86,24 +86,14 @@ describe("collectFilesystemSkillDocuments", () => {
       },
     } as unknown as KernelContext;
     const fs = makeSkillFs({
-      "/src/packages/tools--sam-tools/skills.d": ["workflow.md"],
-      "/src/packages/tools--sam-tools/skills.d/workflow.md": [
+      "/src/repos/sam/tools/skills.d": ["workflow.md"],
+      "/src/repos/sam/tools/skills.d/workflow.md": [
         "---",
         "name: workflow",
-        "description: Global package workflow.",
+        "description: Package workflow.",
         "---",
         "",
-        "# Global",
-        "",
-      ].join("\n"),
-      "/src/packages/tools--sam-tools-2/skills.d": ["workflow.md"],
-      "/src/packages/tools--sam-tools-2/skills.d/workflow.md": [
-        "---",
-        "name: workflow",
-        "description: User package workflow.",
-        "---",
-        "",
-        "# User",
+        "# Workflow",
         "",
       ].join("\n"),
     });
@@ -117,13 +107,13 @@ describe("collectFilesystemSkillDocuments", () => {
     expect(resolveSkillDocument(docs, "tools--sam-tools:workflow")).toMatchObject({
       ok: true,
       doc: {
-        path: "/src/packages/tools--sam-tools/skills.d/workflow.md",
+        path: "/src/repos/sam/tools/skills.d/workflow.md",
       },
     });
     expect(resolveSkillDocument(docs, "tools--sam-tools-2:workflow")).toMatchObject({
       ok: true,
       doc: {
-        path: "/src/packages/tools--sam-tools-2/skills.d/workflow.md",
+        path: "/src/repos/sam/tools/skills.d/workflow.md",
       },
     });
   });
@@ -142,8 +132,8 @@ describe("collectFilesystemSkillDocuments", () => {
       "/home/friday/skills.d": ["shared.md", "specialized.md"],
       "/home/friday/skills.d/shared.md": skillMarkdown("shared", "Agent-specific override skill."),
       "/home/friday/skills.d/specialized.md": skillMarkdown("specialized", "Agent-only skill."),
-      "/src/packages/owner-tools/skills.d": ["workflow.md"],
-      "/src/packages/owner-tools/skills.d/workflow.md": skillMarkdown("owner-workflow", "Owner package workflow."),
+      "/src/repos/sam/tools/skills.d": ["workflow.md"],
+      "/src/repos/sam/tools/skills.d/workflow.md": skillMarkdown("owner-workflow", "Owner package workflow."),
     });
 
     const docs = await collectFilesystemSkillDocuments(fs, ctx, AGENT_IDENTITY);

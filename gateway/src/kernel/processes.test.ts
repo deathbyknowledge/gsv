@@ -334,11 +334,11 @@ describe("ProcessRegistry", () => {
     const registry = new ProcessRegistry(sql as unknown as SqlStorage);
 
     registry.spawn("task:4", makeIdentity("/home/sam"), {
-      cwd: "/src/packages/pkg-test",
+      cwd: "/src/repos/root/pkg-test",
       mounts: [
         {
           kind: "ripgit-source",
-          mountPath: "/src/packages/pkg-test",
+          mountPath: "/src/repos/root/pkg-test",
           packageId: "import:root/pkg-test:.",
           repo: "root/pkg-test",
           ref: "main",
@@ -348,11 +348,11 @@ describe("ProcessRegistry", () => {
       ],
     });
 
-    expect(registry.get("task:4")?.cwd).toBe("/src/packages/pkg-test");
+    expect(registry.get("task:4")?.cwd).toBe("/src/repos/root/pkg-test");
     expect(registry.getMounts("task:4")).toEqual([
       {
         kind: "ripgit-source",
-        mountPath: "/src/packages/pkg-test",
+        mountPath: "/src/repos/root/pkg-test",
         packageId: "import:root/pkg-test:.",
         repo: "root/pkg-test",
         ref: "main",

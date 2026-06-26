@@ -55,7 +55,7 @@ process; browser apps and adapters can target the same process model.
 
 GSV exposes a virtual filesystem through `GsvFs`. Agents and apps interact with
 paths such as `/home/alice`, `/sys`, `/proc`, `/var`, `/dev`, `/etc`,
-`/src/packages`, and `/usr/local/bin` instead of storage APIs.
+`/src/repos`, and `/usr/local/bin` instead of storage APIs.
 
 Different path families are backed by different stores:
 

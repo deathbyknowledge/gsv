@@ -201,12 +201,12 @@ gsv adapter connect --adapter telegram --config-json '{"botToken":"<telegram-bot
 
 ## Package Commands
 
-```bash
-gsv packages sync
-```
+Package source and update workflows are handled in the GSV shell with `rgit`
+and `pkg update <package>`. The CLI also exposes an explicit package sync:
 
-`sync` re-seeds builtin packages from the mirrored `root/gsv` repository through
-the `pkg.sync` syscall and prints the resolved package commits.
+```bash
+gsv packages sync <package> [--ref REF]
+```
 
 ## Infrastructure Commands
 

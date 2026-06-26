@@ -819,7 +819,7 @@ Runtime behavior:
 |---|---|---|
 | `pkg.list` | `handlePkgList` | Lists visible packages with optional `enabled`, exact trimmed `name`, and `runtime` filters. Visible scope is actor user scope first, then global. |
 | `pkg.add` | `handlePkgAdd` | Imports a package from `remoteUrl` or GitHub `repo`, resolves and assembles it, stores the artifact, and upserts the package record. Defaults `ref` to `main` and `subdir` to `.`. Imports outside `root/gsv` stay disabled and review-required by default. |
-| `pkg.sync` | `handlePkgSync` | Rebuilds builtin package seeds from `root/gsv`, removes stale builtin rows, and preserves existing enabled state. Requires `RIPGIT` and `ASSEMBLER`. Broadcasts `pkg.changed` after success. |
+| `pkg.sync` | `handlePkgSync` | Re-resolves one installed package at its recorded source ref, or an explicit `ref`, and replaces the installed manifest/artifact through the same path as `pkg.checkout`. Requires a package specifier. |
 | `pkg.checkout` | `handlePkgCheckout` | Re-resolves an existing package at a new ref and replaces manifest and artifact while preserving grants, enabled state, review flags, and install time. Requires mutable package access. |
 | `pkg.install` | `handlePkgInstall` | Enables an installed package. Errors if review is required and not approved. Idempotent when already enabled. |
 | `pkg.review.approve` | `handlePkgReviewApprove` | Sets review approval metadata for review-required packages. If review is not required, returns unchanged. |
@@ -845,7 +845,7 @@ type PackageSyscalls = {
   };
 
   "pkg.sync": {
-    args: Empty;
+    args: { packageId: string; ref?: string };
     result: { packages: PkgSummary[] };
   };
 
@@ -898,7 +898,7 @@ type PackageSyscalls = {
 
 ## Repositories: `repo.*`
 
-`repo.*` is the kernel-level interface to ripgit repositories. It exposes versioned content, history, diffs, imports, and atomic commits without modeling a Git index or separate `add` step.
+`repo.*` is the kernel-level interface to ripgit repositories. It exposes versioned content, history, diffs, imports, and atomic commits without modeling a Git index or separate `add` step. In the native GSV shell, `/src/repos/{owner}/{repo}` edits are staged per process and committed through `rgit commit`; direct `repo.apply` callers still submit one explicit atomic commit.
 
 Runtime behavior:
 
@@ -915,7 +915,7 @@ Runtime behavior:
 | `repo.apply` | `handleRepoApply` | Atomically commits `put`, `delete`, and `move` operations to one ref. `expectedHead` enables optimistic concurrency. `allowEmpty` permits an empty commit. |
 | `repo.import` | `handleRepoImport` | Imports or refreshes a repo from an upstream Git URL/ref into a local ripgit repo. ripgit stores the fetched upstream in `refs/remotes/upstream/<ref>` first, then moves the local branch only when it can fast-forward or when the branch is still at the previous upstream head. Diverged local branches keep their local head and return `diverged: true`. |
 
-Write access is intentionally narrower than read access. Non-root users can write repos owned by their username. Public repos and visible package source repos are readable but not writable unless ownership also matches.
+Write access is intentionally narrower than read access. Non-root users can write repos owned by their username. Public repos and visible package source repos are readable but not writable unless ownership also matches. Native shell writes under `/src/repos` stage in a process-local overlay until `rgit commit` or `rgit discard`.
 
 ```ts
 type RepoDiffFile = {

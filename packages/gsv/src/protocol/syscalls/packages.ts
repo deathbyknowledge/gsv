@@ -128,7 +128,10 @@ export type PkgCreateResult = {
   package: PkgSummary;
 };
 
-export type PkgSyncArgs = Record<string, never>;
+export type PkgSyncArgs = {
+  packageId: string;
+  ref?: string;
+};
 
 export type PkgSyncResult = {
   packages: PkgSummary[];

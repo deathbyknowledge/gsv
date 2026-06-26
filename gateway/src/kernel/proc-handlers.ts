@@ -30,7 +30,6 @@ import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { ProcessMount } from "./processes";
 import {
   normalizePath,
-  packageSourcePathNameForRecord,
   resolveUserPath,
 } from "../fs";
 import { resolveInstalledPackage } from "./pkg";
@@ -839,26 +838,22 @@ function materializeSpawnMounts(
 function defaultMountPathForPackage(
   spec: ProcSpawnMountSpec,
   record: InstalledPackageRecord,
-  sourcePackages: InstalledPackageRecord[],
+  _sourcePackages: InstalledPackageRecord[],
 ): string {
+  const repoPath = `/src/repos/${record.manifest.source.repo}`;
   if (spec.kind === "package-repo") {
-    return `/src/repos/${packageSourceRepoPathName(record)}`;
+    return repoPath;
   }
-  return `/src/packages/${packageSourcePathNameForRecord(record, sourcePackages)}`;
+  const subdir = normalizeRepoPath(record.manifest.source.subdir);
+  return subdir && subdir !== "." ? `${repoPath}/${subdir}` : repoPath;
 }
 
-function packageSourceRepoPathName(record: InstalledPackageRecord): string {
-  return sanitizeMountPathSegment(record.manifest.source.repo) || sanitizeMountPathSegment(record.packageId) || "repo";
-}
-
-function sanitizeMountPathSegment(value: string): string {
-  return value.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+function normalizeRepoPath(path: string): string {
+  return path.trim().replace(/^\/+|\/+$/g, "").replace(/\/+/g, "/");
 }
 
 function defaultMountCwd(mounts: ProcessMount[]): string | null {
-  return mounts.find((mount) => mount.mountPath.startsWith("/src/packages/"))?.mountPath
-    ?? mounts[0]?.mountPath
-    ?? null;
+  return mounts[0]?.mountPath ?? null;
 }
 
 function resolveSpawnCwd(

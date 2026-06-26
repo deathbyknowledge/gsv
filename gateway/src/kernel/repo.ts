@@ -13,6 +13,7 @@ import type {
   RepoListResult,
   RepoLogArgs,
   RepoLogResult,
+  ProcessIdentity,
   RepoReadArgs,
   RepoReadResult,
   RepoRefsArgs,
@@ -67,7 +68,8 @@ export function handleRepoList(
 
   add(toSummary(accountHomeRepoRef(identity.process.username), "home", ctx));
 
-  for (const record of ctx.packages.list({ scopes: visiblePackageScopesForActor(identity.process) })) {
+  const packageScopeIdentity = repoPackageScopeIdentity(ctx, identity.process);
+  for (const record of ctx.packages.list({ scopes: visiblePackageScopesForActor(packageScopeIdentity) })) {
     const repo = parseRepoSlug(record.manifest.source.repo);
     add({
       ...toSummary(repo, "package", ctx),
@@ -395,7 +397,8 @@ function canReadRepo(rawRepo: string, ctx: KernelContext): boolean {
   if (isRepoPublic(repoSlug(repo), ctx.config)) {
     return true;
   }
-  const scopes = visiblePackageScopesForActor(ctx.identity?.process);
+  const identity = requireIdentity(ctx);
+  const scopes = visiblePackageScopesForActor(repoPackageScopeIdentity(ctx, identity.process));
   return ctx.packages.list({ scopes }).some((record) => record.manifest.source.repo === repoSlug(repo));
 }
 
@@ -441,6 +444,25 @@ function toSummary(
     kind,
     writable: canWriteRepo(slug, ctx),
     public: isRepoPublic(slug, ctx.config),
+  };
+}
+
+function repoPackageScopeIdentity(ctx: KernelContext, fallback: ProcessIdentity): ProcessIdentity {
+  const ownerUid = resolveCallerOwnerUid(ctx);
+  if (ownerUid === fallback.uid) {
+    return fallback;
+  }
+  const owner = ctx.auth?.getPasswdByUid(ownerUid);
+  if (!owner) {
+    return { ...fallback, uid: ownerUid };
+  }
+  return {
+    uid: owner.uid,
+    gid: owner.gid,
+    gids: ctx.auth?.resolveGids(owner.username, owner.gid) ?? [owner.gid],
+    username: owner.username,
+    home: owner.home,
+    cwd: owner.home,
   };
 }
 

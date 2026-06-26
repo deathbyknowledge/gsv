@@ -74,7 +74,7 @@ Skill sources are layered:
 
 ```text
 ~/skills.d/
-/src/packages/{package}/skills.d/
+package source repos, resolved with `pkg source <package>`
 ```
 
 The root GSV source repo can ship system skills under `skills/`. During
@@ -92,8 +92,8 @@ skills.d/package-development/references/details.md
 
 Processes should use `skills show <skill>` before relying on a workflow.
 That command prints the full `SKILL.md`, source path, and whether the source is
-writable. Package skills follow package source rules: writable package edits are
-staged until `pkg source commit`.
+writable. Package skills follow repo source rules: writable package edits are
+staged until `rgit commit`.
 
 Nested skills live under a parent skill's own `skills.d/`. The parent
 `SKILL.md` is prompt-visible; its nested children are not included in prompt

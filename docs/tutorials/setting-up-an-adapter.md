@@ -108,7 +108,7 @@ gsv auth link CODE
 
 ## Troubleshooting
 
-- If **GSV** is missing, run `gsv packages sync` from the CLI.
+- If **GSV** is missing, update the relevant installed package from the GSV shell with `pkg update <package>`.
 - If WhatsApp does not show a QR code, reconnect with the force option enabled.
 - If Discord stays offline, check the bot token, invite permissions, Gateway
   status, and Message Content Intent.

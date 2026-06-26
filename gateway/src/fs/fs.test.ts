@@ -1527,7 +1527,7 @@ describe("GsvFs Linux-like runtime views", () => {
         hash: "sha256:weather",
       },
       paths: {
-        source: "/src/packages/weather",
+        source: "/src/repos/sam/tools/packages/weather",
         commands: ["/usr/local/bin/weather"],
         publicFiles: ["/public/gsv/packages/sha256-weather/browser/src/main.js"],
       },
@@ -1540,7 +1540,7 @@ describe("GsvFs Linux-like runtime views", () => {
       `/var/lib/gsv/packages/info/${weatherBase}.list`,
       `/var/lib/gsv/packages/info/${weatherBase}.manifest`,
       `/var/lib/gsv/packages/info/${weatherBase}.refs`,
-      "/src/packages/weather",
+      "/src/repos/sam/tools/packages/weather",
       "/usr/local/bin/weather",
       "/public/gsv/packages/sha256-weather/browser/src/main.js",
     ]);

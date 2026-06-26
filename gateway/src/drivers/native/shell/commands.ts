@@ -14,6 +14,7 @@ import { buildMediaCommands } from "./media";
 import { buildMcpCommand } from "./mcp";
 import { buildPackageCommands, buildPkgCommand } from "./pkg";
 import { buildProcCommand } from "./proc";
+import { buildRgitCommands } from "./rgit";
 import { buildSchedCommand } from "./sched";
 import { buildSkillsCommand } from "./skills";
 import { buildStatCommand } from "./stat";
@@ -39,6 +40,7 @@ export function buildCustomCommands(
   const pkg = buildPkgCommand(ctx);
   const skills = buildSkillsCommand(fs, ctx, identity);
   const proc = buildProcCommand(ctx);
+  const rgitCommands = buildRgitCommands(ctx);
   const sched = buildSchedCommand(ctx);
   const targets = buildTargetsCommands(ctx);
   const mediaCommands = buildMediaCommands(fs, ctx);
@@ -59,6 +61,7 @@ export function buildCustomCommands(
     codemode,
     mcp,
     proc,
+    ...rgitCommands,
     sched,
     ...targets,
     ...mediaCommands,

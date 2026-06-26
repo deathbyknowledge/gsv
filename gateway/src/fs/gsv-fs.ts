@@ -3,7 +3,7 @@
  *
  * Explicit mount routing:
  *   /proc/*, /dev/*, /sys/*, /var/{spool,log}/*, /etc/{passwd,shadow,group,cron.d} → KernelMountBackend
- *   /src/{packages,repos}/*                             → Process source/ripgit repo backend
+ *   /src/repos/*                                       → Process source/ripgit repo backend
  *   /usr/local/bin/*                                      → Package backend
  *   everything else                                           → R2 backend
  *

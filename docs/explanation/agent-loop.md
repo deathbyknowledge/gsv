@@ -72,8 +72,9 @@ inside a filename tag. System and account context can template values such as
 `devices`, and `mcpServers`. Home context is loaded lexically and bounded by
 `config/ai/max_context_bytes`.
 
-Skill sources are layered from `~/skills.d` and visible package
-`/src/packages/<package>/skills.d`.
+Skill sources are layered from `~/skills.d` and visible package source repos.
+Use `pkg source <package>` to locate package-provided skill files under
+`/src/repos/<owner>/<repo>`.
 The prompt renders top-level skills inside `<available_skills>` as `<skill>`
 entries with `<name>` and `<description>`. It tells processes to use
 `skills list <skill>`, `skills tree <skill>`, and `skills show <skill>` rather

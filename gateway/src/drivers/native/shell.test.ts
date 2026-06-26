@@ -237,6 +237,12 @@ describe("native shell execution", () => {
       manifest: {
         ...makePackage().manifest,
         name: "human-tools",
+        source: {
+          repo: "root/human-tools",
+          ref: "main",
+          subdir: ".",
+          resolvedCommit: "abc123",
+        },
         entrypoints: [{ name: "Human Tool", kind: "command", command: "human-tool" }],
       },
     });
@@ -247,6 +253,12 @@ describe("native shell execution", () => {
       manifest: {
         ...makePackage().manifest,
         name: "agent-tools",
+        source: {
+          repo: "root/agent-tools",
+          ref: "main",
+          subdir: ".",
+          resolvedCommit: "abc123",
+        },
         entrypoints: [{ name: "Agent Tool", kind: "command", command: "agent-tool" }],
       },
     });
@@ -266,8 +278,8 @@ describe("native shell execution", () => {
         getMounts: vi.fn(() => [{
           kind: "ripgit-source",
           packageId: humanPackage.packageId,
-          mountPath: "/src/packages/human-tools",
-          repo: "root/pkg-test",
+          mountPath: "/src/repos/root/human-tools",
+          repo: "root/human-tools",
           ref: "main",
           subdir: ".",
           resolvedCommit: "abc123",
@@ -275,7 +287,7 @@ describe("native shell execution", () => {
       } as unknown as KernelContext["procs"],
     });
 
-    const sourceList = await handleFsRead({ path: "/src/packages" }, ctx);
+    const sourceList = await handleFsRead({ path: "/src/repos/root" }, ctx);
     expect(sourceList.ok).toBe(true);
     if (sourceList.ok) {
       expect(sourceList.directories).toContain("human-tools");
@@ -1553,77 +1565,38 @@ describe("pkg shell command", () => {
     expect(result.stdout).toContain("error\tProcess not found: missing");
   });
 
-  it("defaults to the current package source for manifest inspection", async () => {
+  it("requires an explicit package for manifest inspection", async () => {
     const result = await handleShellExec(
-      { input: "pkg manifest", cwd: "/src/packages/sample-console" },
+      { input: "pkg manifest", cwd: "/src/repos/root/pkg-test" },
       makeContext(),
     );
 
     expect(result.ok).toBe(true);
-    expect(result.stdout).toContain('"name": "sample-console"');
-    expect(result.stderr).toBe("");
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("packageId is required");
   });
 
-  it("preserves scoped package identity when defaulting from the source cwd", async () => {
-    const packageId = "import:root/pkg-test:.";
-    const globalPackage = makePackage({
-      packageId,
-      scope: { kind: "global" },
-      manifest: {
-        ...makePackage().manifest,
-        source: {
-          repo: "root/pkg-test",
-          ref: "stable",
-          subdir: ".",
-          resolvedCommit: "global123",
-        },
-      },
-    });
-    const userPackage = makePackage({
-      packageId,
-      scope: { kind: "user", uid: 1000 },
-      manifest: {
-        ...makePackage().manifest,
-        source: {
-          repo: "root/pkg-test",
-          ref: "dev",
-          subdir: ".",
-          resolvedCommit: "user123",
-        },
-      },
-    });
-
+  it("shows package source as a repo path", async () => {
     const result = await handleShellExec(
-      { input: "pkg manifest", cwd: "/src/packages/sample-console--root-pkg-test" },
-      makeContext({ packages: [userPackage, globalPackage] }),
+      { input: "pkg source sample-console" },
+      makeContext(),
     );
 
     expect(result.ok).toBe(true);
-    expect(result.stdout).toContain('"ref": "stable"');
-    expect(result.stdout).not.toContain('"ref": "dev"');
+    expect(result.stdout).toContain("repo: root/pkg-test");
+    expect(result.stdout).toContain("path: /src/repos/root/pkg-test");
     expect(result.stderr).toBe("");
   });
 
-  it("defaults to the current package from custom source mounts", async () => {
+  it("uses explicit --here for repo status from /src/repos", async () => {
     const result = await handleShellExec(
-      { input: "pkg manifest", cwd: "/src/package/src" },
-      makeContext({
-        procs: {
-          getMounts: vi.fn(() => [{
-            kind: "ripgit-source",
-            mountPath: "/src/package",
-            packageId: "import:root/pkg-test:.",
-            repo: "root/pkg-test",
-            ref: "main",
-            resolvedCommit: "abc123",
-            subdir: ".",
-          }]),
-        } as Partial<KernelContext["procs"]>,
-      }),
+      { input: "rgit status --here", cwd: "/src/repos/root/pkg-test/src" },
+      makeContext({ capabilities: ["repo.list"] }),
     );
 
     expect(result.ok).toBe(true);
-    expect(result.stdout).toContain('"name": "sample-console"');
+    expect(result.stdout).toContain("Repo: root/pkg-test");
+    expect(result.stdout).toContain("No staged changes.");
     expect(result.stderr).toBe("");
   });
 
@@ -1640,7 +1613,7 @@ describe("pkg shell command", () => {
 
   it("enables an approved package through pkg enable", async () => {
     const result = await handleShellExec(
-      { input: "pkg enable", cwd: "/src/packages/sample-console" },
+      { input: "pkg enable sample-console" },
       makeContext({
         capabilities: ["pkg.install"],
         pkg: makePackage({
@@ -1834,7 +1807,7 @@ describe("pkg shell command", () => {
     });
 
     const result = await handleShellExec(
-      { input: "pkg manifest", cwd: "/src/packages/human-tools" },
+      { input: "pkg manifest human-tools" },
       makeContext({
         capabilities: ["pkg.list"],
         packages: [humanPackage, agentPackage],
