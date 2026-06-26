@@ -15,6 +15,9 @@ type ShellRailProps = {
   /** view of the active settings route — distinguishes the GSV Settings surface
    *  from crew/tasks/config/object views that also live on "settings". */
   settingsView: string;
+  /** section whose create flow is active, so its drawer stays open and its
+   *  create entry stays selected (the create route has no object child). */
+  createSection: string | null;
   desktopObjects: readonly DesktopObject[];
   collapsed: boolean;
   onToggleCollapsed: () => void;
@@ -94,6 +97,7 @@ export function ShellRail({
   activeSurface,
   activeTabKey,
   settingsView,
+  createSection,
   desktopObjects,
   collapsed,
   onToggleCollapsed,
@@ -112,6 +116,7 @@ export function ShellRail({
     const section = desktopObjects.find(
       (object) =>
         object.id === activeSurface ||
+        object.id === createSection ||
         object.children.some((child) => childKey(child) === activeTabKey),
     );
     if (section) {
@@ -126,7 +131,7 @@ export function ShellRail({
       return GSV_DRAWER;
     }
     return null;
-  }, [desktopObjects, activeSurface, activeTabKey, settingsView]);
+  }, [desktopObjects, activeSurface, activeTabKey, settingsView, createSection]);
 
   // Accordion: exactly one drawer open, derived purely from the active route.
   // GSV is the only drawer that opens without navigating (it is not a surface),
@@ -140,6 +145,7 @@ export function ShellRail({
 
   const isSectionActive = (object: DesktopObject): boolean =>
     activeSurface === object.id ||
+    object.id === createSection ||
     object.children.some((child) => childKey(child) === activeTabKey);
   const gsvActive = activeSectionId === GSV_DRAWER;
 
@@ -235,7 +241,7 @@ export function ShellRail({
                       {CREATE_LABEL[object.id] ? (
                         <button
                           type="button"
-                          class="gsv-rail-subitem gsv-rail-subitem-create"
+                          class={`gsv-rail-subitem gsv-rail-subitem-create${object.id === createSection ? " is-active" : ""}`}
                           onClick={() => onCreateObject(object.id)}
                         >
                           {CREATE_LABEL[object.id]}

@@ -383,6 +383,12 @@ export function GsvShell({
   const activeSettingsRoute: ShellSettingsRoute = shell.activeSurface === "settings"
     ? shell.activePageTab?.settingsRoute ?? { view: "overview" }
     : { view: "overview" };
+  // Section whose create flow is active — keeps that section's rail drawer open
+  // and its create entry selected (a create route carries no object detailId).
+  const activeCreateSection: string | null =
+    activeSettingsRoute.view === "list" && activeSettingsRoute.createNew === true
+      ? activeSettingsRoute.kind
+      : null;
   const activeLibraryRoute: ShellLibraryRoute = shell.activeSurface === "library"
     ? shell.activePageTab?.libraryRoute ?? { view: "index" }
     : { view: "index" };
@@ -407,6 +413,7 @@ export function GsvShell({
               activeSurface={shell.activeSurface}
               activeTabKey={shell.activeTabKey}
               settingsView={activeSettingsRoute.view}
+              createSection={activeCreateSection}
               desktopObjects={desktopObjects}
               collapsed={shell.railCollapsed}
               onToggleCollapsed={shell.toggleRailCollapsed}

@@ -410,6 +410,13 @@ export function useGsvShellState({
     const onUp = () => {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
+      // Clear the drag flag after the trailing click would have fired (the click
+      // dispatches before the next frame). This way an aborted drag whose click
+      // is never delivered can't leave the flag stuck and swallow the next
+      // activation (e.g. a keyboard Enter, which has no preceding mousedown).
+      requestAnimationFrame(() => {
+        railDraggedRef.current = false;
+      });
     };
 
     window.addEventListener("mousemove", onMove);
