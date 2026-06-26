@@ -1,6 +1,7 @@
 import type { OnboardingDetailStep, OnboardingDraft } from "@humansandmachines/gsv/protocol";
 import { TextInput } from "../../../components/ui/TextInput";
 import { Alert } from "../../../components/ui/Alert";
+import { USERNAME_FORMAT_DESCRIPTION } from "../sessionDomain";
 import "./AccountDetails.css";
 
 export function AccountDetails({
@@ -20,6 +21,7 @@ export function AccountDetails({
           type="text"
           requirement="required"
           placeholder="e.g. hank"
+          description={USERNAME_FORMAT_DESCRIPTION}
           value={draft.account.username}
           inputProps={{ autoComplete: "username" }}
           onChange={(value) => updateDraft((current) => ({
@@ -32,7 +34,7 @@ export function AccountDetails({
           type="text"
           requirement="optional"
           placeholder="e.g. friday"
-          description="Leave blank to use the next available default name."
+          description={`Leave blank to use the next available default name. ${USERNAME_FORMAT_DESCRIPTION}`}
           value={draft.account.agentName}
           inputProps={{ autoComplete: "off" }}
           onChange={(value) => updateDraft((current) => ({
