@@ -31,6 +31,7 @@ export const libraryWorkspaceQueryKey = ["gsv-console", "library-workspace"] as 
 export function useLibraryWorkspace(
   route: ShellLibraryRoute = { view: "index" },
   onRouteChange?: (route: ShellLibraryRoute) => void,
+  requestLeave?: (proceed: () => void) => void,
 ) {
   const { client, connected } = useGateway();
   const queryClient = useQueryClient();
@@ -43,6 +44,16 @@ export function useLibraryWorkspace(
       setInternalRoute(nextRoute);
     }
   }, [onRouteChange]);
+  // User-initiated navigation away from the current view: routed through the
+  // unsaved guard so leaving a dirty editor prompts "Discard changes?". Save-
+  // driven navigation uses `navigate` directly (the editor is clean by then).
+  const guardedNavigate = useCallback((nextRoute: ShellLibraryRoute) => {
+    if (requestLeave) {
+      requestLeave(() => navigate(nextRoute));
+    } else {
+      navigate(nextRoute);
+    }
+  }, [requestLeave, navigate]);
 
   useEffect(() => {
     if (!onRouteChange) {
@@ -212,11 +223,11 @@ export function useLibraryWorkspace(
     state,
     applySearch: () => {
       const q = searchDraft.trim();
-      navigate({ view: "index", db: selectedDb || undefined, ...(q ? { q } : {}) });
+      guardedNavigate({ view: "index", db: selectedDb || undefined, ...(q ? { q } : {}) });
     },
     clearSearch: () => {
       setSearchDraft("");
-      navigate({ view: "index", db: selectedDb || undefined });
+      guardedNavigate({ view: "index", db: selectedDb || undefined });
     },
     createCollection: () => createCollection.mutate({
       dbId: newCollectionId.trim() || slugifyLibraryId(newCollectionTitle),
@@ -228,11 +239,20 @@ export function useLibraryWorkspace(
         setLocalError("page title is required");
         return;
       }
-      const path = suggestLibraryPagePath(selectedDb, title, state.selectedPath);
-      setEditorPath(path);
-      setEditorMarkdown(`# ${title}\n\n`);
-      setNewPageTitle("");
-      navigate({ view: "editor", db: selectedDb, path: localLibraryPath(path, selectedDb) });
+      // Guard before replacing the editor: starting a new page abandons any
+      // unsaved edits in the current editor. Mutate state only once confirmed.
+      const proceed = () => {
+        const path = suggestLibraryPagePath(selectedDb, title, state.selectedPath);
+        setEditorPath(path);
+        setEditorMarkdown(`# ${title}\n\n`);
+        setNewPageTitle("");
+        navigate({ view: "editor", db: selectedDb, path: localLibraryPath(path, selectedDb) });
+      };
+      if (requestLeave) {
+        requestLeave(proceed);
+      } else {
+        proceed();
+      }
     },
     ingestSource: () => ingestSource.mutate({
       db: selectedDb,
@@ -241,17 +261,20 @@ export function useLibraryWorkspace(
       sourceTitle: ingestTitle || undefined,
       summary: ingestSummary || undefined,
     }),
-    navigate,
-    openCollection: (db: string) => navigate({ view: "index", db }),
+    // Exposed navigation is guarded so every in-Library route change from the UI
+    // (BACK buttons, view switches, tree clicks) prompts before discarding a
+    // dirty editor. The save flow uses the raw `navigate` internally.
+    navigate: guardedNavigate,
+    openCollection: (db: string) => guardedNavigate({ view: "index", db }),
     openEditor: (path?: string) => {
       if (selectedDb) {
-        navigate({ view: "editor", db: selectedDb, ...(path ? { path: localLibraryPath(path, selectedDb) } : {}) });
+        guardedNavigate({ view: "editor", db: selectedDb, ...(path ? { path: localLibraryPath(path, selectedDb) } : {}) });
       }
     },
     openPage: (path: string) => {
       const db = path.split("/")[0] || selectedDb;
       if (db) {
-        navigate({ view: "reader", db, path: localLibraryPath(path, db) });
+        guardedNavigate({ view: "reader", db, path: localLibraryPath(path, db) });
       }
     },
     resetEditor: () => {

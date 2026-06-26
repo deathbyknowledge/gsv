@@ -1,5 +1,5 @@
 import type { JSX, RefObject } from "preact";
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import {
   getDesktopObject,
   shellRouteForTab,
@@ -25,7 +25,7 @@ import {
   shellRouteFromLocation,
 } from "../routing/shellRoutes";
 
-export type PickerId = "gsv" | "tabs";
+export type PickerId = "gsv";
 
 const MIN_CHAT_WIDTH = 380;
 const DEFAULT_CHAT_WIDTH = 460;
@@ -128,11 +128,12 @@ export function useGsvShellState({
   const [manualRailCollapsed, setManualRailCollapsed] = useState(false);
   const [selectedObjectId, setSelectedObjectId] = useState<DesktopObjectId | null>(null);
   const [pickerId, setPickerId] = useState<PickerId | null>(null);
-  const [tabsExpanded, setTabsExpanded] = useState(true);
   const [gsvOpen, setGsvOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [chatWidth, setChatWidth] = useState(DEFAULT_CHAT_WIDTH);
   const [chatDragging, setChatDragging] = useState(false);
+  // Set while dragging the rail divider, so the trailing click doesn't also toggle.
+  const railDraggedRef = useRef(false);
 
   useEffect(() => {
     const node = rootRef.current;
@@ -330,33 +331,15 @@ export function useGsvShellState({
     activateRoute({ surface: "desktop" });
   };
 
-  const activateTab = (key: string): void => {
-    const tab = openTabs.find((candidate) => candidate.key === key);
-    if (!tab) {
-      return;
+  /** Close the active screen: drop it from the (now-invisible) tab stack and
+   *  return to the desktop. With the tab UI removed, a predictable "back to
+   *  home" beats jumping to some other previously-opened screen. */
+  const closeActiveScreen = (): void => {
+    if (activeTabKey) {
+      const key = activeTabKey;
+      setOpenTabs((current) => current.filter((tab) => tab.key !== key));
     }
-    pushShellRoute(shellRouteForTab(tab));
-    setActiveSurface(tab.surface);
-    setActiveTabKey(tab.key);
-    setSelectedObjectId(null);
-    setPickerId(null);
-    setGsvOpen(false);
-  };
-
-  const closeTab = (key: string): void => {
-    const nextTabs = openTabs.filter((tab) => tab.key !== key);
-
-    setOpenTabs(nextTabs);
-    if (activeTabKey === key) {
-      const nextActiveTab = nextTabs[nextTabs.length - 1] ?? null;
-      setActiveTabKey(nextActiveTab?.key ?? null);
-      setActiveSurface(nextActiveTab?.surface ?? "desktop");
-      if (nextActiveTab) {
-        pushShellRoute(shellRouteForTab(nextActiveTab));
-      } else {
-        pushShellRoute({ surface: "desktop" });
-      }
-    }
+    activateRoute({ surface: "desktop" });
   };
 
   const openControlMenu = (): void => {
@@ -404,6 +387,51 @@ export function useGsvShellState({
     window.addEventListener("mouseup", onUp);
   };
 
+  // Drag the rail divider: collapse to the icon rail when dragged left past the
+  // midpoint between the collapsed and expanded widths, expand when dragged back.
+  const startRailDrag = (event: JSX.TargetedMouseEvent<HTMLElement>): void => {
+    event.preventDefault();
+    const rect = rootRef.current?.getBoundingClientRect();
+    if (!rect) {
+      return;
+    }
+    const threshold = (COLLAPSED_RAIL_WIDTH + EXPANDED_RAIL_WIDTH) / 2;
+    const startX = event.clientX;
+    railDraggedRef.current = false;
+
+    const onMove = (moveEvent: MouseEvent) => {
+      if (!railDraggedRef.current && Math.abs(moveEvent.clientX - startX) > 4) {
+        railDraggedRef.current = true;
+      }
+      if (railDraggedRef.current) {
+        setManualRailCollapsed(moveEvent.clientX - rect.left < threshold);
+      }
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      // Clear the drag flag after the trailing click would have fired (the click
+      // dispatches before the next frame). This way an aborted drag whose click
+      // is never delivered can't leave the flag stuck and swallow the next
+      // activation (e.g. a keyboard Enter, which has no preceding mousedown).
+      requestAnimationFrame(() => {
+        railDraggedRef.current = false;
+      });
+    };
+
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
+  const toggleRailCollapsed = (): void => {
+    // Ignore the click that follows a drag — the drag already set the state.
+    if (railDraggedRef.current) {
+      railDraggedRef.current = false;
+      return;
+    }
+    setManualRailCollapsed((value) => !value);
+  };
+
   const toggleChatMax = (): void => {
     if (resolvedChatWidth >= maxChatWidth - 1) {
       setChatWidth(DEFAULT_CHAT_WIDTH);
@@ -412,18 +440,8 @@ export function useGsvShellState({
     setChatWidth(maxChatWidth);
   };
 
-  const openTabsPicker = (): void => {
-    setPickerId("tabs");
-    setSelectedObjectId(null);
-    setGsvOpen(false);
-  };
-
-  const pickerTitle = pickerId === "gsv"
-    ? "GSV // CONTROL"
-    : "OPEN TABS";
-  const pickerSubtitle = pickerId === "gsv"
-    ? "System surfaces"
-    : `${openTabs.length} open ${openTabs.length === 1 ? "page" : "pages"}`;
+  const pickerTitle = "GSV // CONTROL";
+  const pickerSubtitle = "System surfaces";
 
   const statusContext = activeSurface !== "desktop"
     ? activePageTab?.title ?? shellSurfaceLabel(activeSurface)
@@ -435,18 +453,16 @@ export function useGsvShellState({
     activeSurface,
     activePageTab,
     activeTabKey,
-    activateTab,
     backToDesktop,
     chatDragging,
     chatOpen,
-    closeTab,
+    closeActiveScreen,
     desktopCollapsed,
     gsvOpen,
     maxChatWidth,
     openControlMenu,
     openObject,
     openAppRoute,
-    openTabsPicker,
     openSettingsRoute,
     openSurface,
     openTabs,
@@ -464,15 +480,10 @@ export function useGsvShellState({
     showRail,
     startChatDrag,
     statusContext,
+    startRailDrag,
     syncActiveSettingsRoute,
     syncActiveLibraryRoute,
-    tabsExpanded,
     toggleChatMax,
-    toggleTabsExpanded: () => {
-      setTabsExpanded((value) => !value);
-    },
-    toggleRailCollapsed: () => {
-      setManualRailCollapsed((value) => !value);
-    },
+    toggleRailCollapsed,
   };
 }

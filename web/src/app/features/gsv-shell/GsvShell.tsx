@@ -1,7 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { Icon } from "../../components/ui/Icon";
 import { IconMenu } from "../../components/ui/IconMenu";
-import { ObjectCard } from "../../components/ui/ObjectCard";
 import { StatusDot } from "../../components/ui/StatusDot";
 import type { StatusTone } from "../../components/ui/StatusDot";
 import { AppFramePage } from "../apps/components/AppFramePage";
@@ -20,11 +18,12 @@ import {
   type SettingsRouteTarget,
 } from "../gsv-console/components/GsvConsole";
 import { GsvDesktop, type DesktopInventoryState } from "./desktop/GsvDesktop";
-import { DesktopTabStack } from "./navigation/DesktopTabStack";
 import { ShellRail } from "./navigation/ShellRail";
 import { ShellStatusBar } from "./navigation/ShellStatusBar";
+import { UnsavedGuardProvider, useUnsavedGuardController } from "./unsaved/unsavedGuard";
 import {
   shellSurfaceLabel,
+  type DesktopObjectId,
   type ShellLibraryRoute,
   type ShellSettingsRoute,
   type ShellSurfaceId,
@@ -218,6 +217,7 @@ export function GsvShell({
   const inventoryState = desktopInventoryState(consoleOverview.resource);
   const inventoryMessage = desktopInventoryMessage(consoleOverview.resource, desktopObjects);
   const shell = useGsvShellState({ rootRef, desktopObjects });
+  const guard = useUnsavedGuardController();
 
   const [selectedChatPid, setSelectedChatPid] = useState<string | null>(null);
   const [selectedChatAgentId, setSelectedChatAgentId] = useState<string | null>(null);
@@ -348,28 +348,60 @@ export function GsvShell({
     setSelectedChatAgentId(null);
     setSelectedChatConversationId(null);
   };
+  // Navigation that unmounts the active screen is routed through the unsaved
+  // guard: a dirty screen prompts "discard changes?" first, a clean one passes
+  // straight through.
   const openShellSurface = (surface: ShellSurfaceId): void => {
-    shell.openSurface(surface);
+    guard.requestLeave(() => shell.openSurface(surface));
+  };
+  const guardedBackToDesktop = (): void => {
+    guard.requestLeave(shell.backToDesktop);
+  };
+  const guardedRevealDesktop = (): void => {
+    guard.requestLeave(shell.revealDesktop);
+  };
+  const closeActiveScreen = (): void => {
+    guard.requestLeave(shell.closeActiveScreen);
+  };
+  const guardedOpenObject = (child: Parameters<typeof shell.openObject>[0]): void => {
+    guard.requestLeave(() => shell.openObject(child));
+  };
+  const createSectionObject = (section: DesktopObjectId): void => {
+    guard.requestLeave(() => shell.openSettingsRoute({ view: "list", kind: section, createNew: true }));
   };
   const openSettingsRoute = (target: SettingsRouteTarget): void => {
-    shell.openSettingsRoute(shellSettingsRouteForTarget(target));
+    guard.requestLeave(() => shell.openSettingsRoute(shellSettingsRouteForTarget(target)));
   };
   const openAppById = (appId: string, title?: string): void => {
-    shell.openAppRoute({
+    guard.requestLeave(() => shell.openAppRoute({
       appId,
       suffix: "/",
       search: "",
       hash: "",
-    }, title);
+    }, title));
   };
   const activeSettingsRoute: ShellSettingsRoute = shell.activeSurface === "settings"
     ? shell.activePageTab?.settingsRoute ?? { view: "overview" }
     : { view: "overview" };
+  // Section whose create flow is active — keeps that section's rail drawer open
+  // and its create entry selected (a create route carries no object detailId).
+  const activeCreateSection: string | null =
+    activeSettingsRoute.view === "list" && activeSettingsRoute.createNew === true
+      ? activeSettingsRoute.kind
+      : null;
+  // Section + object a settings list/detail route points at, so the rail keeps
+  // the owning drawer/subitem lit when reached via settings nav (direct URL,
+  // BACK TO X, completing create) rather than openObject.
+  const activeSettingsKind: string | null =
+    activeSettingsRoute.view === "list" ? activeSettingsRoute.kind : null;
+  const activeSettingsDetailId: string | null =
+    activeSettingsRoute.view === "list" ? activeSettingsRoute.detailId ?? null : null;
   const activeLibraryRoute: ShellLibraryRoute = shell.activeSurface === "library"
     ? shell.activePageTab?.libraryRoute ?? { view: "index" }
     : { view: "index" };
 
   return (
+    <UnsavedGuardProvider value={guard.contextValue}>
     <div
       class="gsv-shell-root"
       hidden={!desktopVisible}
@@ -387,18 +419,18 @@ export function GsvShell({
             <ShellRail
               activeSurface={shell.activeSurface}
               activeTabKey={shell.activeTabKey}
+              settingsView={activeSettingsRoute.view}
+              createSection={activeCreateSection}
+              settingsKind={activeSettingsKind}
+              settingsDetailId={activeSettingsDetailId}
               desktopObjects={desktopObjects}
-              openTabs={shell.openTabs}
               collapsed={shell.railCollapsed}
-              tabsExpanded={shell.tabsExpanded}
               onToggleCollapsed={shell.toggleRailCollapsed}
-              onBackToDesktop={shell.desktopCollapsed ? shell.revealDesktop : shell.backToDesktop}
-              onCloseTab={shell.closeTab}
-              onOpenTab={shell.activateTab}
-              onOpenTabsPicker={shell.openTabsPicker}
-              onToggleTabsExpanded={shell.toggleTabsExpanded}
+              onBackToDesktop={shell.desktopCollapsed ? guardedRevealDesktop : guardedBackToDesktop}
               onOpenControlMenu={shell.openControlMenu}
               onOpenSurface={openShellSurface}
+              onOpenObject={guardedOpenObject}
+              onCreateObject={createSectionObject}
             />
           ) : null}
 
@@ -409,8 +441,9 @@ export function GsvShell({
                   <button
                     type="button"
                     class="gsv-console-rail-handle"
-                    title={shell.railCollapsed ? "Expand menu" : "Collapse menu"}
+                    title={shell.railCollapsed ? "Expand menu (drag or click)" : "Collapse menu (drag or click)"}
                     aria-label={shell.railCollapsed ? "Expand menu" : "Collapse menu"}
+                    onMouseDown={shell.startRailDrag}
                     onClick={shell.toggleRailCollapsed}
                   />
                 ) : null}
@@ -420,13 +453,15 @@ export function GsvShell({
                       <AppFramePage
                         key={shell.activePageTab.key}
                         appRoute={shell.activePageTab.appRoute}
-                        onBackToDesktop={shell.backToDesktop}
+                        onBackToDesktop={guardedBackToDesktop}
+                        onClose={closeActiveScreen}
                         onOpenAppRoute={shell.openAppRoute}
                       />
                     ) : shell.activeSurface !== "app" ? (
                       <GsvConsole
                         activeSurface={shell.activeSurface}
-                        onBackToDesktop={shell.backToDesktop}
+                        onBackToDesktop={guardedBackToDesktop}
+                        onClose={closeActiveScreen}
                         onOpenApp={openAppById}
                         onOpenSurface={openShellSurface}
                         onLibraryRouteChange={shell.syncActiveLibraryRoute}
@@ -460,13 +495,7 @@ export function GsvShell({
                     shell.openSettingsRoute({ view: "list", kind: id, createNew: true });
                   }}
                   onOpenSurface={openShellSurface}
-                  onOpenObject={shell.openObject}
-                />
-                <DesktopTabStack
-                  activeTabKey={shell.activeTabKey}
-                  tabs={shell.openTabs}
-                  onCloseTab={shell.closeTab}
-                  onOpenTab={shell.activateTab}
+                  onOpenObject={guardedOpenObject}
                 />
               </>
             )}
@@ -504,27 +533,6 @@ export function GsvShell({
                         onSettings={() => openShellSurface("settings")}
                       />
                     </div>
-                  ) : shell.pickerId === "tabs" ? (
-                    shell.openTabs.length > 0 ? (
-                      <div class="gsv-picker-grid">
-                        {shell.openTabs.map((tab) => (
-                          <ObjectCard
-                            key={tab.key}
-                            label={tab.title}
-                            type={tab.type}
-                            blurb={tab.key === shell.activeTabKey
-                              ? "Currently open in the central panel."
-                              : "Open page — click to bring it to the central panel."}
-                            status={tab.key === shell.activeTabKey ? "live" : "online"}
-                            icon={<Icon name={tab.icon} size={20} color="var(--accent-bright)" />}
-                            width={238}
-                            onClick={() => shell.activateTab(tab.key)}
-                          />
-                        ))}
-                      </div>
-                    ) : (
-                      <div class="gsv-picker-empty">NO OPEN TABS</div>
-                    )
                   ) : null}
                 </div>
               </div>
@@ -568,5 +576,7 @@ export function GsvShell({
         onLockSession={onLockSession}
       />
     </div>
+    {guard.guardModal}
+    </UnsavedGuardProvider>
   );
 }

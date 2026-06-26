@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
+import { useUnsavedGuard, useUnsavedGuardLeave } from "../../gsv-shell/unsaved/unsavedGuard";
 import { Button } from "../../../components/ui/Button";
 import { Icon } from "../../../components/ui/Icon";
 import { IconButton } from "../../../components/ui/IconButton";
@@ -155,6 +156,18 @@ export function MachineProvisionFlow({
     : "";
   const createError = errorText(createToken.error);
 
+  useUnsavedGuard(() =>
+    step !== "success" &&
+    (step !== "platform" ||
+      nameTouched ||
+      deviceIdTouched ||
+      expiresDays.trim() !== "30")
+  );
+  // The flow's own back controls unmount the wizard like shell nav does, so
+  // route them through the guard to prompt before discarding the draft.
+  const requestLeave = useUnsavedGuardLeave();
+  const guardedBack = () => requestLeave(onBack);
+
   useEffect(() => {
     if (!issuedToken || step !== "connect") {
       return;
@@ -272,7 +285,7 @@ export function MachineProvisionFlow({
             </div>
           </div>
           <footer class="machine-card-actions">
-            <Button variant="secondary" label="BACK TO MACHINES" onClick={onBack} />
+            <Button variant="secondary" label="BACK TO MACHINES" onClick={guardedBack} />
             <Button variant="primary" label="CONTINUE" onClick={() => setStep("details")} />
           </footer>
         </>
@@ -457,7 +470,7 @@ export function MachineProvisionFlow({
           </div>
         </div>
         <footer class="machine-card-actions">
-          <Button variant="secondary" label="BACK TO MACHINES" onClick={onBack} />
+          <Button variant="secondary" label="BACK TO MACHINES" onClick={guardedBack} />
           <Button
             variant="primary"
             label="OPEN MACHINE"
@@ -477,7 +490,7 @@ export function MachineProvisionFlow({
     <section class="machine-provision">
       <div class="machine-provision-shell">
         <header class="machine-provision-head">
-          <IconButton glyph="arrowBack" size="medium" title="Back to machines" onClick={onBack} />
+          <IconButton glyph="arrowBack" size="medium" title="Back to machines" onClick={guardedBack} />
           <div>
             <span class="machine-provision-kicker">FLEET / NEW MACHINE</span>
             <h2>Connect new machine</h2>

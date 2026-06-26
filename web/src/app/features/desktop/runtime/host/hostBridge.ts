@@ -47,7 +47,7 @@ type HostChromeController = {
   setTitle: (title: string | null) => void;
   setBadge: (badge: string | null) => void;
   setDirty: (dirty: boolean) => void;
-  requestNewWindow: (route?: string) => string;
+  requestNewWindow: (route?: string) => string | null;
 };
 
 type HostStatusClient = {

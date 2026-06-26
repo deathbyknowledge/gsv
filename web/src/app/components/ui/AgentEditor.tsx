@@ -8,6 +8,7 @@ import { Button } from "./Button";
 import { Avatar, type AvatarStatus } from "./Avatar";
 import { Tabs } from "./Tabs";
 import { ConfirmModal } from "./ConfirmModal";
+import { useUnsavedGuard, useUnsavedGuardLeave } from "../../features/gsv-shell/unsaved/unsavedGuard";
 
 export type AgentEditorMode = "new" | "manage";
 
@@ -233,6 +234,27 @@ export function AgentEditor(props: AgentEditorProps) {
     setFiles((s) => s.map((f, i) => (i === fileIdx ? { ...f, content: v } : f)));
   };
 
+  // ---- unsaved-changes guard ----
+  // Baseline is the initial values captured once in metaRef (see line ~172).
+  // Scalars compare against meta.*; files compare body vs per-file `orig`
+  // baseline, plus a count check to catch added/removed files.
+  const dirty =
+    name !== meta.name ||
+    role !== meta.role ||
+    desc !== meta.desc ||
+    model !== meta.model ||
+    perm !== meta.perm ||
+    files.length !== meta.files.length ||
+    files.some(
+      (f, i) => f.label !== meta.files[i]?.label || f.content !== (f.orig ?? f.content),
+    );
+  useUnsavedGuard(() => dirty);
+  // The editor's own back controls (back arrow, CREW crumb) unmount the editor
+  // just like shell nav does, so route them through the same guard to prompt
+  // before discarding unsaved edits.
+  const requestLeave = useUnsavedGuardLeave();
+  const guardedBack = onBack ? () => requestLeave(onBack) : undefined;
+
   // ---- tasks ----
   const dotColorFor = (st: TaskStatus) =>
     st === "error" ? "var(--error)" : st === "idle" ? "var(--idle)" : "var(--online)";
@@ -384,7 +406,7 @@ export function AgentEditor(props: AgentEditorProps) {
             aria-label="Back to crew"
             class="gsv-ae-back"
             disabled={!onBack}
-            onClick={onBack}
+            onClick={guardedBack}
           >
             <svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square">
               <path d="M9.5 3.5 L5 8 L9.5 12.5" />
@@ -404,7 +426,7 @@ export function AgentEditor(props: AgentEditorProps) {
               type="button"
               class="gsv-ae-crumb-crew"
               disabled={!onBack}
-              onClick={onBack}
+              onClick={guardedBack}
             >
               CREW
             </button>

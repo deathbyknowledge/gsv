@@ -6,6 +6,7 @@ import { Tag, type TagTone } from "../../../components/ui/Tag";
 import { TextInput } from "../../../components/ui/TextInput";
 import type { ConsoleIdentityLink } from "../domain/consoleModels";
 import { useConsumeIdentityLinkCode } from "../hooks/useConsoleData";
+import { useUnsavedGuard } from "../../gsv-shell/unsaved/unsavedGuard";
 import { adapterName } from "./messengerPresentation";
 import "./MessengerIdentity.css";
 
@@ -42,6 +43,9 @@ export function MessengerLinkCodePanel({
   const [code, setCode] = useState("");
   const [resetKey, setResetKey] = useState(0);
   const [notice, setNotice] = useState<Notice | null>(null);
+
+  useUnsavedGuard(() => code.trim() !== "");
+
   const canSubmit = code.trim().length > 0 && !consumeCode.isPending;
 
   const submit = async () => {

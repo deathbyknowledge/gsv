@@ -10,6 +10,7 @@ import { TextInput } from "../../../components/ui/TextInput";
 import { ConsoleDetailHeader } from "../components/ConsoleDetailHeader";
 import type { ConnectConsoleAdapterResult, IdentityLinkMutationResult } from "../backend/consoleService";
 import { useConnectConsoleAdapter, useConsumeIdentityLinkCode } from "../hooks/useConsoleData";
+import { useUnsavedGuard, useUnsavedGuardLeave } from "../../gsv-shell/unsaved/unsavedGuard";
 import { BOTFATHER_URL, DISCORD_DEVELOPER_URL, MESSENGER_CAPABILITIES, adapterDocUrl } from "./messengerDocs";
 import { adapterDetailId, adapterName, deriveAccountId, iconForAdapterName } from "./messengerPresentation";
 import "./MessengerOnboardingFlow.css";
@@ -51,6 +52,10 @@ export function MessengerOnboardingFlow({
   const [linkError, setLinkError] = useState("");
   const [linkResultText, setLinkResultText] = useState("");
 
+  useUnsavedGuard(
+    () => !linked && (step > STEP_CREATE || token.trim() !== "" || linkCode.trim() !== ""),
+  );
+
   const isTelegram = adapterId === "telegram";
   const name = adapterName(adapterId);
   const docUrl = adapterDocUrl(adapterId);
@@ -61,10 +66,13 @@ export function MessengerOnboardingFlow({
   // Steps 1-2 are performed on the messaging platform; 3-4 happen inside GSV.
   const onPlatform = step <= STEP_TOKEN;
 
+  const requestLeave = useUnsavedGuardLeave();
   const goNext = () => setStep((current) => Math.min(current + 1, STEP_CONNECT));
   const goBack = () => {
     if (step === STEP_CREATE) {
-      onBack();
+      // Leaving the flow entirely — guard so a typed token/link code prompts
+      // before discarding. (Stepping back between steps keeps that state.)
+      requestLeave(onBack);
       return;
     }
     setStep((current) => current - 1);

@@ -26,6 +26,7 @@ import {
   renderPreviewBodyHtml,
 } from "./libraryMarkdown";
 import { useLibraryWorkspace } from "./useLibraryWorkspace";
+import { useUnsavedGuard, useUnsavedGuardLeave } from "../../gsv-shell/unsaved/unsavedGuard";
 import type {
   LibraryCollection,
   LibraryEntry,
@@ -50,7 +51,36 @@ type PreviewState = {
 };
 
 export function LibraryPage({ route = { view: "index" }, onRouteChange }: LibraryPageProps) {
-  const library = useLibraryWorkspace(route, onRouteChange);
+  const requestLeave = useUnsavedGuardLeave();
+  const library = useLibraryWorkspace(route, onRouteChange, requestLeave);
+
+  useUnsavedGuard(() => {
+    const editorNote = library.state.selectedNote;
+    const editorDirty =
+      library.activeRoute.view === "editor" &&
+      (library.editorMarkdown !== (editorNote?.markdown ?? "") ||
+        // Renaming an existing note only changes editorPath; savePage persists
+        // it, so a path-only edit must register as dirty. New pages have no
+        // saved baseline and are already dirty via their markdown body.
+        (editorNote != null && library.editorPath !== editorNote.path));
+    const captureDirty =
+      library.activeRoute.view === "capture" &&
+      (library.ingestPath.trim().length > 0 ||
+        library.ingestTitle.trim().length > 0 ||
+        library.ingestSummary.trim().length > 0 ||
+        library.ingestTarget !== "gsv");
+    const buildDirty =
+      library.activeRoute.view === "build" &&
+      (library.buildPath.trim().length > 0 ||
+        library.buildDbTitle.trim().length > 0 ||
+        library.buildTarget !== "gsv");
+    const collectionDirty =
+      library.activeRoute.view === "index" &&
+      library.createCollectionOpen &&
+      (library.newCollectionTitle.trim().length > 0 ||
+        library.newCollectionId.trim().length > 0);
+    return editorDirty || captureDirty || buildDirty || collectionDirty;
+  });
 
   if (!library.connected) {
     return (
