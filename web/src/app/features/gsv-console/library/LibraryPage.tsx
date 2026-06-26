@@ -55,9 +55,14 @@ export function LibraryPage({ route = { view: "index" }, onRouteChange }: Librar
   const library = useLibraryWorkspace(route, onRouteChange, requestLeave);
 
   useUnsavedGuard(() => {
+    const editorNote = library.state.selectedNote;
     const editorDirty =
       library.activeRoute.view === "editor" &&
-      library.editorMarkdown !== (library.state.selectedNote?.markdown ?? "");
+      (library.editorMarkdown !== (editorNote?.markdown ?? "") ||
+        // Renaming an existing note only changes editorPath; savePage persists
+        // it, so a path-only edit must register as dirty. New pages have no
+        // saved baseline and are already dirty via their markdown body.
+        (editorNote != null && library.editorPath !== editorNote.path));
     const captureDirty =
       library.activeRoute.view === "capture" &&
       (library.ingestPath.trim().length > 0 ||
