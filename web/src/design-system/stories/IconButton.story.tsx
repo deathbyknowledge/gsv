@@ -1,12 +1,12 @@
 import { IconButton, type IconButtonGlyph } from "../../app/components/ui/IconButton";
 import type { Story } from "../story";
 
-const GLYPHS: IconButtonGlyph[] = ["back", "arrowBack", "menu", "max", "min", "close", "plus", "help", "attention"];
+const GLYPHS: IconButtonGlyph[] = ["back", "arrowBack", "menu", "max", "min", "close", "plus", "help", "attention", "refresh", "newTab"];
 
 const story: Story = {
   title: "IconButton",
   group: "Chrome",
-  blurb: "back · arrowBack · menu · max · min · close · plus · help · attention",
+  blurb: "back · arrowBack · menu · max · min · close · plus · help · attention · refresh · newTab",
   render: () => (
     <div class="ds-col">
       <div class="ds-cell">

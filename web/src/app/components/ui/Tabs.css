@@ -2,3 +2,10 @@
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
+
+/* preview (transient / VS Code peek) tab — italic label is set inline on the
+ * text span; this class anchors any future preview-only chrome and documents
+ * the variant. Purely additive: tabs without previewIndex never receive it. */
+.gsv-tab-preview {
+  font-style: italic;
+}

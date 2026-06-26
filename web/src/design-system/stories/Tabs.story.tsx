@@ -43,6 +43,18 @@ const story: Story = {
           <Tabs tabs={["GSV", "PERSONA", "NOTES"]} value={1} onClose={() => {}} />
         </div>
       </div>
+      <div class="ds-cell">
+        <div class="ds-label">Preview tab (transient · italic peek slot)</div>
+        <div style={{ width: 540 }}>
+          <Tabs tabs={["README.md", "config.ts", "notes.txt"]} value={0} previewIndex={2} onClose={() => {}} />
+        </div>
+      </div>
+      <div class="ds-cell">
+        <div class="ds-label">Preview tab is also active</div>
+        <div style={{ width: 540 }}>
+          <Tabs tabs={["README.md", "config.ts", "notes.txt"]} value={2} previewIndex={2} onClose={() => {}} />
+        </div>
+      </div>
     </div>
   ),
 };

@@ -11,6 +11,7 @@ import icons from "./stories/Icons.story";
 import scrollbar from "./stories/Scrollbar.story";
 import button from "./stories/Button.story";
 import textInput from "./stories/TextInput.story";
+import search from "./stories/Search.story";
 import textArea from "./stories/TextArea.story";
 import select from "./stories/Select.story";
 import segmented from "./stories/Segmented.story";
@@ -43,8 +44,10 @@ import crewPage from "./stories/CrewPage.story";
 import agentDetail from "./stories/AgentDetail.story";
 import settingsList from "./stories/SettingsList.story";
 import objectDetail from "./stories/ObjectDetail.story";
+import filesRedesign from "./stories/FilesRedesign.story";
 import iconMenu from "./stories/IconMenu.story";
 import consoleHeader from "./stories/ConsoleHeader.story";
+import breadcrumbs from "./stories/Breadcrumbs.story";
 import statusBar from "./stories/StatusBar.story";
 import messageInput from "./stories/MessageInput.story";
 import systemMessage from "./stories/SystemMessage.story";
@@ -64,6 +67,7 @@ const STORIES: Story[] = [
   // Forms
   button,
   textInput,
+  search,
   textArea,
   select,
   segmented,
@@ -96,6 +100,7 @@ const STORIES: Story[] = [
   addAction,
   iconMenu,
   consoleHeader,
+  breadcrumbs,
   statusBar,
   messageInput,
   systemMessage,
@@ -112,6 +117,7 @@ const STORIES: Story[] = [
   agentDetail,
   settingsList,
   objectDetail,
+  filesRedesign,
 ];
 
 // ───────────────────────────────────────────────────────────────────────────

@@ -1,22 +1,26 @@
 import type { JSX } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { AddAction } from "../../../components/ui/AddAction";
+import { Breadcrumbs } from "../../../components/ui/Breadcrumbs";
 import { Button } from "../../../components/ui/Button";
 import { ConfirmModal } from "../../../components/ui/ConfirmModal";
-import { Icon } from "../../../components/ui/Icon";
+import { IconButton } from "../../../components/ui/IconButton";
 import { ListRow } from "../../../components/ui/ListRow";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
+import { Search } from "../../../components/ui/Search";
+import { Select } from "../../../components/ui/Select";
 import { Spinner } from "../../../components/ui/Spinner";
 import { StatusDot, type StatusTone } from "../../../components/ui/StatusDot";
 import { Surface } from "../../../components/ui/Surface";
 import { Tabs } from "../../../components/ui/Tabs";
 import { Tag } from "../../../components/ui/Tag";
-import { TextInput, type TextInputStatus } from "../../../components/ui/TextInput";
+import { TextInput } from "../../../components/ui/TextInput";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import {
   ConsolePage,
   ConsoleResourceBoundary,
 } from "../../gsv-console/components/ConsolePageTemplate";
+import { pushShellRoute } from "../../gsv-shell/routing/shellRoutes";
 import type {
   FilesDirectoryPayload,
   FilesErrorPayload,
@@ -25,13 +29,14 @@ import type {
   FilesSearchPayload,
   FilesTarget,
 } from "../domain/models";
-import { detectPathStyle, parentPath } from "../domain/paths";
 import {
+  buildPathCrumbs,
   chooseInitialTarget,
   describeTarget,
   formatBytes,
   formatFileStats,
   formatSearchMatchLine,
+  formatTargetOption,
   imagePreviewsFromContent,
   pathRoot,
   resolveEnteredPath,
@@ -49,8 +54,21 @@ import {
   type FilesWorkspaceTab,
 } from "../domain/workspace";
 import { useFilesMutations, useFilesPath, useFilesSearch, useFilesTargets } from "../hooks/useFilesQueries";
-import { FilesTargetRail } from "./FilesTargetRail";
 import "./FilesSurfaceSummary.css";
+
+/** Sentinel appended to the machine Select so the user can jump to provisioning. */
+const ADD_MACHINE_OPTION = "+ ADD MACHINE";
+
+/** Navigate to the machine-provisioning route. The shell has no nav context that
+ *  reaches this deeply-nested console page, so we push the route + dispatch a
+ *  popstate, which the shell already listens for to re-render from the URL. */
+function openAddMachineRoute() {
+  pushShellRoute({
+    surface: "settings",
+    settingsRoute: { view: "list", kind: "machines", createNew: true },
+  });
+  window.dispatchEvent(new PopStateEvent("popstate"));
+}
 
 const DEFAULT_PATH = ".";
 const FILE_ICON = "doticons/file";
@@ -137,31 +155,6 @@ function emptyCreateState(feedback: OperationFeedback | null = null): CreateStat
   };
 }
 
-function looksPathLikeCommand(value: string): boolean {
-  const input = value.trim();
-  if (!input) {
-    return false;
-  }
-  if (
-    input === "."
-    || input === ".."
-    || input.startsWith("/")
-    || input.startsWith("./")
-    || input.startsWith("../")
-    || input.startsWith("~")
-  ) {
-    return true;
-  }
-  if (input.includes("/")) {
-    return true;
-  }
-  return /^[^\s]+\.[A-Za-z0-9]{1,10}$/.test(input);
-}
-
-function commandActionLabel(value: string): string {
-  return looksPathLikeCommand(value) ? "OPEN" : "SEARCH";
-}
-
 function FilesStateMessage({
   kind,
   title,
@@ -216,23 +209,80 @@ function DirectoryBrowser({
   directory,
   onOpenDirectory,
   onOpenFile,
+  onOpenFileInNewTab,
+  onOpenParent,
   onOpenCreate,
+  onSelectionChange,
 }: {
   directory: FilesDirectoryPayload;
   onOpenDirectory: (path: string) => void;
   onOpenFile: (path: string) => void;
+  onOpenFileInNewTab: (path: string) => void;
+  onOpenParent: () => void;
   onOpenCreate: () => void;
+  // Reports the currently selected FILE path (or null) up to the toolbar so it
+  // can offer DELETE for that file. Directory selections report null.
+  onSelectionChange: (path: string | null) => void;
 }) {
   const entries = sortDirectoryEntries(directory.entries);
   const directoryCount = entries.filter((entry) => entry.kind === "directory").length;
   const fileCount = entries.length - directoryCount;
+  // Keyboard/selection cursor over the listing; clamped against the live entry
+  // count below. -1 means "nothing selected" (e.g. after a fresh navigation).
+  const [selectedRowIndex, setSelectedRowIndex] = useState(-1);
+  const cursor = entries.length === 0 ? -1 : Math.min(selectedRowIndex, entries.length - 1);
+
+  // Re-derive the directory path so a navigation into a new folder resets the
+  // selection (stale highlight + toolbar DELETE) back to "nothing selected".
+  useEffect(() => {
+    setSelectedRowIndex(-1);
+  }, [directory.path]);
+
+  // Lift the selected FILE path (directories never expose a DELETE target).
+  useEffect(() => {
+    const entry = cursor >= 0 ? entries[cursor] : undefined;
+    onSelectionChange(entry && entry.kind === "file" ? entry.path : null);
+  }, [cursor, directory.path, directory.entries]);
+
+  const selectEntry = (index: number) => {
+    setSelectedRowIndex(index);
+  };
+
+  const openEntry = (index: number) => {
+    const entry = entries[index];
+    if (!entry) {
+      return;
+    }
+    if (entry.kind === "directory") {
+      onOpenDirectory(entry.path);
+    } else {
+      onOpenFile(entry.path);
+    }
+  };
+
+  // ArrowUp/Down move the selection, Enter opens (file → preview, dir → in),
+  // Backspace/ArrowLeft go up a dir.
+  const onKeyDown = (event: JSX.TargetedKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setSelectedRowIndex((index) => Math.min(index + 1, entries.length - 1));
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setSelectedRowIndex((index) => Math.max((index < 0 ? 0 : index) - 1, 0));
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      openEntry(cursor);
+    } else if (event.key === "Backspace" || event.key === "ArrowLeft") {
+      event.preventDefault();
+      onOpenParent();
+    }
+  };
 
   return (
-    <div class="files-browser-list">
+    <div class="files-browser-list" tabIndex={0} onKeyDown={onKeyDown} aria-label="Directory entries">
       <div class="files-list-summary">
         <Tag tone="accent" label={`${directoryCount} DIR`} boxed />
         <Tag tone="idle" label={`${fileCount} FILE`} boxed />
-        <span>{directory.path}</span>
       </div>
       {entries.length === 0 ? (
         <FilesStateMessage
@@ -240,20 +290,35 @@ function DirectoryBrowser({
           title="EMPTY DIRECTORY"
           detail={`${directory.path} has no entries returned by the target.`}
         />
-      ) : entries.map((entry) => (
-        <ListRow
+      ) : entries.map((entry, index) => (
+        <div
+          class="files-row-wrap"
           key={`${entry.kind}:${entry.path}`}
-          className="files-object-row"
-          icon={entry.kind === "directory" ? FOLDER_ICON : FILE_ICON}
-          label={entry.name}
-          sub={entry.path}
-          status="none"
-          tag={entry.kind === "directory" ? "DIR" : "FILE"}
-          tagTone={entry.kind === "directory" ? "accent" : "idle"}
-          chevron
-          style={COMPACT_ROW_STYLE}
-          onClick={() => entry.kind === "directory" ? onOpenDirectory(entry.path) : onOpenFile(entry.path)}
-        />
+        >
+          <ListRow
+            className={`files-object-row${index === cursor ? " is-selected" : ""}`}
+            icon={entry.kind === "directory" ? FOLDER_ICON : FILE_ICON}
+            label={entry.name}
+            sub={entry.path}
+            status="none"
+            tag={entry.kind === "directory" ? "DIR" : "FILE"}
+            tagTone={entry.kind === "directory" ? "accent" : "idle"}
+            chevron
+            style={COMPACT_ROW_STYLE}
+            // Single-click selects the row AND opens it — directory navigates in,
+            // file opens in the preview tab. The selected file (highlight) keys the
+            // toolbar DELETE.
+            onClick={() => {
+              selectEntry(index);
+              openEntry(index);
+            }}
+          />
+          {entry.kind === "file" ? (
+            <span class="files-row-action">
+              <IconButton glyph="newTab" size="small" title="Open in new tab" onClick={() => onOpenFileInNewTab(entry.path)} />
+            </span>
+          ) : null}
+        </div>
       ))}
       <div class="files-add-row">
         <AddAction label="NEW FILE" onClick={onOpenCreate} variant="row" />
@@ -406,51 +471,6 @@ function CreateFilePanel({
   );
 }
 
-function DeleteConfirmation({
-  request,
-  pending,
-  value,
-  onValueChange,
-  onCancel,
-  onConfirm,
-}: {
-  request: DeleteRequest;
-  pending: boolean;
-  value: string;
-  onValueChange: (value: string) => void;
-  onCancel: () => void;
-  onConfirm: () => void;
-}) {
-  const confirmed = value.trim() === request.path;
-  const status: TextInputStatus = pending ? "info" : value.length === 0 ? "warning" : confirmed ? "success" : "error";
-
-  return (
-    <div class="files-delete-confirm" role="alert">
-      <StatusDot tone="warn" size={8} />
-      <span class="files-delete-copy">
-        <strong>{pending ? "DELETING" : "CONFIRM DELETE"}</strong>
-        <span>{request.path}</span>
-      </span>
-      <div class="files-delete-controls">
-        <TextInput
-          label="TYPE PATH TO CONFIRM"
-          value={value}
-          placeholder={request.path}
-          status={status}
-          message={confirmed ? "Path confirmed" : "Exact path required"}
-          clearable
-          disabled={pending}
-          onChange={onValueChange}
-        />
-        <span class="files-delete-actions">
-          <Button variant="secondary" label="CANCEL" disabled={pending} onClick={onCancel} />
-          <Button variant="danger" label={pending ? "DELETING" : "DELETE"} disabled={pending || !confirmed} onClick={onConfirm} />
-        </span>
-      </div>
-    </div>
-  );
-}
-
 function BrowserTabView({
   connected,
   target,
@@ -468,11 +488,11 @@ function BrowserTabView({
   onCreateCancel,
   onCreateSubmit,
   onNavigate,
-  onCommandInputChange,
-  onCommandSubmit,
+  onSearchInputChange,
+  onSearchSubmit,
   onOpenFile,
+  onOpenFileInNewTab,
   onRefresh,
-  onSearchClear,
   onSearchRetry,
   onRequestDelete,
 }: {
@@ -492,11 +512,11 @@ function BrowserTabView({
   onCreateCancel: () => void;
   onCreateSubmit: () => void;
   onNavigate: (path: string) => void;
-  onCommandInputChange: (value: string) => void;
-  onCommandSubmit: (value: string, basePath: string) => void;
+  onSearchInputChange: (value: string) => void;
+  onSearchSubmit: (value: string) => void;
   onOpenFile: (path: string) => void;
+  onOpenFileInNewTab: (path: string) => void;
   onRefresh: () => void;
-  onSearchClear: () => void;
   onSearchRetry: () => void;
   onRequestDelete: (path: string) => void;
 }) {
@@ -504,47 +524,82 @@ function BrowserTabView({
   const canQuery = connected && Boolean(target?.online);
   const atRoot = displayedPath === pathRoot(displayedPath);
   const basePath = isDirectoryPayload(payload) ? payload.path : isFilePayload(payload) ? payload.directoryPath : tab.path;
+  // The listing lifts its selected FILE path here so the toolbar's second row
+  // can offer DELETE for that file. Cleared on navigate/search/payload change.
+  const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
   const readMeta = [
     target ? describeTarget(target) : "",
     isFetching && payload ? "REFRESHING" : "",
   ].filter(Boolean).join(" | ");
 
+  // While the search view replaces the listing, there is no row selection, so
+  // drop any stale selected file (and its toolbar DELETE) until we're back.
+  const searchActive = Boolean(tab.searchQuery);
+  useEffect(() => {
+    if (searchActive && selectedFilePath !== null) {
+      setSelectedFilePath(null);
+    }
+  }, [searchActive, selectedFilePath]);
+
+  // Crumbs navigate; the current page (last crumb) stays static via no onClick.
+  const crumbs = buildPathCrumbs(displayedPath).map((crumb, index, list) => ({
+    label: crumb.label,
+    onClick: index === list.length - 1 ? undefined : () => onNavigate(crumb.path),
+  }));
+
   return (
     <section class="files-tab-panel" aria-label="Files browser">
       <SectionHeader title="BROWSER" meta={readMeta} divider />
+      <div class="files-breadcrumbs-container">
+        <Breadcrumbs
+          items={crumbs}
+          onBack={atRoot ? undefined : () => onNavigate(pathParent(displayedPath))}
+          size="medium"
+          maxVisible={3}
+        />
+        <span class="files-breadcrumbs-actions">
+          <IconButton glyph="refresh" size="small" title="Refresh directory" disabled={!canQuery} onClick={onRefresh} />
+        </span>
+      </div>
       <div class="files-browser-toolbar">
-        <form
-          class="files-path-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (canQuery) {
-              onCommandSubmit(tab.commandInput, basePath);
-            }
-          }}
-        >
-          <TextInput
-            key={`command-${tab.id}-${tab.commandInputKey}`}
-            label="OPEN OR SEARCH"
-            value={tab.commandInput}
-            placeholder="/path, ./file.txt, or search text"
-            prefix={target?.id ?? ""}
-            clearable
-            disabled={!canQuery}
-            onChange={onCommandInputChange}
-          />
-          <span class="files-toolbar-actions">
-            <Button variant="secondary" label="UP" disabled={!canQuery || atRoot} onClick={() => onNavigate(parentPath(displayedPath, detectPathStyle(displayedPath)))} />
-            <Button
-              variant="primary"
-              label={commandActionLabel(tab.commandInput)}
-              disabled={!canQuery || tab.commandInput.trim().length === 0}
-              onClick={() => onCommandSubmit(tab.commandInput, basePath)}
+        {/* Row 1: bounded search (left) + CREATE NEW (right). */}
+        <div class="files-toolbar-row">
+          <span class="files-toolbar-search">
+            <Search
+              key={`search-${tab.id}-${tab.commandInputKey}`}
+              size="small"
+              value={tab.commandInput}
+              placeholder="Search this target — press ENTER"
+              disabled={!canQuery}
+              // Typing keeps the field in sync (and clears the active query when
+              // emptied, via the parent's onSearchInputChange handler).
+              onChange={onSearchInputChange}
+              // ENTER drives the existing whole-target search; an empty submit
+              // clears it back to the directory listing.
+              onSearch={(value) => {
+                if (canQuery) {
+                  onSearchSubmit(value);
+                }
+              }}
             />
-            <Button variant="secondary" label="CLEAR" disabled={!tab.commandInput && !tab.searchQuery} onClick={onSearchClear} />
-            <Button variant="secondary" label="NEW FILE" disabled={!canQuery} onClick={() => onCreateStateChange({ ...emptyCreateState(), open: true })} />
-            <Button variant="dangerGhost" label="DELETE" disabled={!canQuery || atRoot || !payload?.ok} onClick={() => onRequestDelete(displayedPath)} />
           </span>
-        </form>
+          <span class="files-toolbar-actions">
+            <Button variant="primary" label="CREATE NEW" disabled={!canQuery} onClick={() => onCreateStateChange({ ...emptyCreateState(), open: true })} />
+          </span>
+        </div>
+        {/* Row 2: DELETE for the selected file — present only when one is selected. */}
+        {selectedFilePath ? (
+          <div class="files-toolbar-row files-toolbar-row-secondary">
+            <span class="files-toolbar-actions">
+              <Button
+                variant="dangerGhost"
+                label="DELETE"
+                disabled={!canQuery}
+                onClick={() => onRequestDelete(selectedFilePath)}
+              />
+            </span>
+          </div>
+        ) : null}
       </div>
 
       <CreateFilePanel
@@ -596,7 +651,10 @@ function BrowserTabView({
           directory={payload}
           onOpenDirectory={onNavigate}
           onOpenFile={onOpenFile}
+          onOpenFileInNewTab={onOpenFileInNewTab}
+          onOpenParent={() => onNavigate(pathParent(displayedPath))}
           onOpenCreate={() => onCreateStateChange({ ...emptyCreateState(), open: true })}
+          onSelectionChange={setSelectedFilePath}
         />
       ) : isFilePayload(payload) ? (
         <FilesStateMessage
@@ -627,7 +685,7 @@ function FileTabView({
   onReset,
   onSave,
   onRefresh,
-  onOpenParent,
+  onNavigate,
   onRequestDelete,
 }: {
   connected: boolean;
@@ -644,7 +702,7 @@ function FileTabView({
   onReset: () => void;
   onSave: () => void;
   onRefresh: () => void;
-  onOpenParent: () => void;
+  onNavigate: (path: string) => void;
   onRequestDelete: () => void;
 }) {
   const file = isFilePayload(payload) ? payload : null;
@@ -662,6 +720,14 @@ function FileTabView({
         ? "SAVED"
         : "READ ONLY";
 
+  // Single path UI for the file view: the same Breadcrumbs trail as the browser,
+  // ending on the file name (static). Ancestors + the back arrow navigate to the
+  // owning folder, so no separate path string or SHOW FOLDER button is needed.
+  const crumbs = buildPathCrumbs(tab.path).map((crumb, index, list) => ({
+    label: crumb.label,
+    onClick: index === list.length - 1 ? undefined : () => onNavigate(crumb.path),
+  }));
+
   return (
     <section class="files-tab-panel" aria-label="File editor">
       <SectionHeader
@@ -673,12 +739,13 @@ function FileTabView({
         divider
       />
       <div class="files-editor-toolbar">
-        <span class="files-editor-path">
-          <Icon name={FILE_ICON} size={16} />
-          <span>{tab.path}</span>
-        </span>
+        <Breadcrumbs
+          items={crumbs}
+          onBack={() => onNavigate(pathParent(tab.path))}
+          size="medium"
+          maxVisible={3}
+        />
         <span class="files-toolbar-actions">
-          <Button variant="secondary" label="SHOW FOLDER" disabled={!target} onClick={onOpenParent} />
           <Button variant="dangerGhost" label={deletePending ? "DELETING" : "DELETE"} disabled={!target?.online || deletePending} onClick={onRequestDelete} />
         </span>
       </div>
@@ -712,7 +779,6 @@ function FileTabView({
         <div class="files-file-view">
           <div class="files-file-meta">
             <Tag tone="idle" label="FILE" boxed />
-            <span>{file.path}</span>
             {formatFileStats(file) ? <small>{formatFileStats(file)}</small> : null}
           </div>
           {images.length > 0 ? (
@@ -767,9 +833,11 @@ export function FilesSurfaceSummary() {
   const [drafts, setDrafts] = useState<Record<string, FileDraftState>>({});
   const [createState, setCreateState] = useState<CreateState>(emptyCreateState());
   const [deleteRequest, setDeleteRequest] = useState<DeleteRequest | null>(null);
-  const [deleteInput, setDeleteInput] = useState("");
   const [deleteFeedback, setDeleteFeedback] = useState<OperationFeedback | null>(null);
   const [pendingCloseTabId, setPendingCloseTabId] = useState<string | null>(null);
+  // Single reusable preview/peek tab (VS Code semantics): single-click opens here;
+  // editing or the explicit "open in new tab" action promotes it to permanent.
+  const [previewTabId, setPreviewTabId] = useState<string | null>(null);
 
   useEffect(() => {
     setTabs((currentTabs) => {
@@ -851,6 +919,7 @@ export function FilesSurfaceSummary() {
   const tabLabels = tabs.map((tab) => tabLabel(tab, targetForTab(tab, targets), draftDirty(tab)));
   const activeIndex = Math.max(0, tabs.findIndex((tab) => tab.id === activeTabId));
   const activeTargetId = activeTab?.targetId ?? null;
+  const previewIndex = tabs.findIndex((tab) => tab.id === previewTabId);
 
   const focusOrOpenBrowserTab = (targetId: string) => {
     const id = createBrowserTab(targetId).id;
@@ -864,10 +933,36 @@ export function FilesSurfaceSummary() {
     setActiveTabId(nextTab.id);
   };
 
-  const openFileTab = (targetId: string, path: string) => {
+  // Promote the active preview tab to a permanent tab (first edit, or explicit action).
+  const promotePreviewTab = (tabId: string) => {
+    setPreviewTabId((current) => (current === tabId ? null : current));
+  };
+
+  // preview=true reuses a single peek tab (replacing any prior preview); preview=false
+  // opens/focuses a permanent tab and never disturbs the existing preview slot.
+  const openFileTab = (targetId: string, path: string, preview = false) => {
     const nextTab = createFileTab(targetId, path);
+    const alreadyPermanent = tabs.some((tab) => tab.id === nextTab.id && tab.id !== previewTabId);
+
+    if (preview && !alreadyPermanent) {
+      // Swap the file into the single preview slot, dropping the prior preview.
+      setTabs((currentTabs) => {
+        const withoutPreview = previewTabId
+          ? currentTabs.filter((tab) => tab.id !== previewTabId)
+          : currentTabs;
+        return withoutPreview.some((tab) => tab.id === nextTab.id)
+          ? withoutPreview
+          : [...withoutPreview, nextTab];
+      });
+      setPreviewTabId(nextTab.id);
+      setActiveTabId(nextTab.id);
+      return;
+    }
+
+    // Permanent open (explicit action) or focusing a tab that already exists.
     const existing = tabs.find((tab) => tab.id === nextTab.id);
     if (existing) {
+      promotePreviewTab(existing.id);
       setActiveTabId(existing.id);
       return;
     }
@@ -899,6 +994,7 @@ export function FilesSurfaceSummary() {
       return;
     }
     setTabs(nextTabs);
+    setPreviewTabId((current) => (current === tabId ? null : current));
     setDrafts((currentDrafts) => {
       const nextDrafts = { ...currentDrafts };
       delete nextDrafts[tabId];
@@ -985,8 +1081,9 @@ export function FilesSurfaceSummary() {
     }
   };
 
+  // Runs the delete once the user confirms via the ConfirmModal's DELETE button.
   const confirmDelete = async () => {
-    if (!deleteRequest || deleteInput.trim() !== deleteRequest.path || filesMutations.remove.isPending) {
+    if (!deleteRequest || filesMutations.remove.isPending) {
       return;
     }
     try {
@@ -996,19 +1093,18 @@ export function FilesSurfaceSummary() {
       });
       if (!result.ok) {
         setDeleteRequest(null);
-        setDeleteInput("");
         setDeleteFeedback({ kind: "error", title: "DELETE FAILED", detail: result.error });
         return;
       }
       const sourceTab = tabs.find((tab) => tab.id === deleteRequest.sourceTabId);
       const nextParent = pathParent(result.path);
       setDeleteRequest(null);
-      setDeleteInput("");
       setDeleteFeedback({ kind: "success", title: "DELETED", detail: result.path });
       if (sourceTab?.kind === "browser") {
         navigateBrowserTab(sourceTab, nextParent);
       } else if (sourceTab?.kind === "file") {
         const browserTab = createBrowserTab(sourceTab.targetId, nextParent);
+        setPreviewTabId((current) => (current === sourceTab.id ? null : current));
         setTabs((currentTabs) => {
           const withoutFile = currentTabs.filter((tab) => tab.id !== sourceTab.id);
           const existingBrowser = withoutFile.some((tab) => tab.id === browserTab.id);
@@ -1036,7 +1132,6 @@ export function FilesSurfaceSummary() {
       }
     } catch (error) {
       setDeleteRequest(null);
-      setDeleteInput("");
       setDeleteFeedback({
         kind: "error",
         title: "DELETE FAILED",
@@ -1054,16 +1149,31 @@ export function FilesSurfaceSummary() {
         loadingLabel="LOADING FILE TARGETS"
         render={(data) => (
           <div class="files-surface">
-            <FilesTargetRail
-              activeTargetId={activeTargetId}
-              targets={data}
-              onOpenTarget={focusOrOpenBrowserTab}
-            />
+            <div class="files-header-bar">
+              <Select
+                label="MACHINE"
+                width={280}
+                options={[...data.map((target) => formatTargetOption(target)), ADD_MACHINE_OPTION]}
+                value={Math.max(0, data.findIndex((target) => target.id === activeTargetId))}
+                onChange={(index) => {
+                  if (index === data.length) {
+                    openAddMachineRoute();
+                    return;
+                  }
+                  const target = data[index];
+                  if (target) {
+                    focusOrOpenBrowserTab(target.id);
+                  }
+                }}
+                size="medium"
+              />
+            </div>
             <section class="files-workspace" aria-label="Files workspace">
               <div class="files-tabbar">
                 <Tabs
                   tabs={tabLabels.length > 0 ? tabLabels : ["FILES"]}
                   value={activeIndex}
+                  previewIndex={previewIndex >= 0 ? previewIndex : undefined}
                   onChange={(index) => {
                     const tab = tabs[index];
                     if (tab) {
@@ -1085,22 +1195,7 @@ export function FilesSurfaceSummary() {
                   } : undefined}
                 />
               </div>
-              {deleteRequest ? (
-                <DeleteConfirmation
-                  request={deleteRequest}
-                  pending={filesMutations.remove.isPending}
-                  value={deleteInput}
-                  onValueChange={(value) => {
-                    setDeleteInput(value);
-                    setDeleteFeedback(null);
-                  }}
-                  onCancel={() => {
-                    setDeleteRequest(null);
-                    setDeleteInput("");
-                  }}
-                  onConfirm={confirmDelete}
-                />
-              ) : deleteFeedback ? (
+              {deleteFeedback ? (
                 <FilesInlineNotice kind={deleteFeedback.kind} title={deleteFeedback.title} detail={deleteFeedback.detail} />
               ) : null}
               {!activeTab ? (
@@ -1125,35 +1220,29 @@ export function FilesSurfaceSummary() {
                   onCreateCancel={() => setCreateState(emptyCreateState())}
                   onCreateSubmit={createFile}
                   onNavigate={(path) => navigateBrowserTab(activeTab, path)}
-                  onCommandInputChange={(commandInput) => updateBrowserTab(activeTab.id, (tab) => ({ ...tab, commandInput }))}
-                  onCommandSubmit={(value, basePath) => {
-                    const command = value.trim();
-                    if (!command) {
-                      return;
-                    }
-                    if (looksPathLikeCommand(command)) {
-                      navigateBrowserTab(activeTab, resolveEnteredPath(command, basePath));
-                      return;
-                    }
-                    updateBrowserTab(activeTab.id, (tab) => ({ ...tab, searchQuery: command }));
+                  onSearchInputChange={(commandInput) => updateBrowserTab(activeTab.id, (tab) => ({
+                    ...tab,
+                    commandInput,
+                    // Emptying the field (e.g. the clear button) drops back to the listing.
+                    searchQuery: commandInput.trim() ? tab.searchQuery : "",
+                  }))}
+                  onSearchSubmit={(value) => {
+                    const query = value.trim();
+                    // Submitting a query drives the existing whole-target search; an
+                    // empty submit clears it, returning to the directory listing.
+                    updateBrowserTab(activeTab.id, (tab) => ({ ...tab, searchQuery: query }));
                   }}
-                  onOpenFile={(path) => openFileTab(activeTab.targetId, path)}
+                  onOpenFile={(path) => openFileTab(activeTab.targetId, path, true)}
+                  onOpenFileInNewTab={(path) => openFileTab(activeTab.targetId, path, false)}
                   onRefresh={() => {
                     void readQuery.refetch();
                   }}
-                  onSearchClear={() => updateBrowserTab(activeTab.id, (tab) => ({
-                    ...tab,
-                    commandInput: "",
-                    commandInputKey: tab.commandInputKey + 1,
-                    searchQuery: "",
-                  }))}
                   onSearchRetry={() => {
                     void searchResult.refetch();
                   }}
                   onRequestDelete={(path) => {
                     if (activeTarget) {
                       setDeleteRequest({ targetId: activeTarget.id, sourceTabId: activeTab.id, path });
-                      setDeleteInput("");
                       setDeleteFeedback(null);
                     }
                   }}
@@ -1170,16 +1259,20 @@ export function FilesSurfaceSummary() {
                   draftState={drafts[activeTab.id] ?? null}
                   savePending={filesMutations.save.isPending}
                   deletePending={filesMutations.remove.isPending}
-                  onDraftChange={(draft) => setDrafts((currentDrafts) => {
-                    const current = currentDrafts[activeTab.id];
-                    if (!current) {
-                      return currentDrafts;
-                    }
-                    return {
-                      ...currentDrafts,
-                      [activeTab.id]: { ...current, draft, feedback: null },
-                    };
-                  })}
+                  onDraftChange={(draft) => {
+                    // First edit promotes a preview tab to permanent.
+                    promotePreviewTab(activeTab.id);
+                    setDrafts((currentDrafts) => {
+                      const current = currentDrafts[activeTab.id];
+                      if (!current) {
+                        return currentDrafts;
+                      }
+                      return {
+                        ...currentDrafts,
+                        [activeTab.id]: { ...current, draft, feedback: null },
+                      };
+                    });
+                  }}
                   onReset={() => setDrafts((currentDrafts) => {
                     const current = currentDrafts[activeTab.id];
                     if (!current) {
@@ -1198,8 +1291,8 @@ export function FilesSurfaceSummary() {
                   onRefresh={() => {
                     void readQuery.refetch();
                   }}
-                  onOpenParent={() => {
-                    const browserTab = createBrowserTab(activeTab.targetId, pathParent(activeTab.path));
+                  onNavigate={(path) => {
+                    const browserTab = createBrowserTab(activeTab.targetId, path);
                     setTabs((currentTabs) => currentTabs.some((tab) => tab.id === browserTab.id) ? currentTabs.map((tab) => (
                       tab.id === browserTab.id && tab.kind === "browser"
                         ? { ...tab, path: browserTab.path, commandInput: "", commandInputKey: tab.commandInputKey + 1, searchQuery: "" }
@@ -1210,13 +1303,24 @@ export function FilesSurfaceSummary() {
                   onRequestDelete={() => {
                     if (activeTarget) {
                       setDeleteRequest({ targetId: activeTarget.id, sourceTabId: activeTab.id, path: activeTab.path });
-                      setDeleteInput("");
                       setDeleteFeedback(null);
                     }
                   }}
                 />
               )}
             </section>
+            {deleteRequest ? (
+              <div class="files-modal-layer">
+                <ConfirmModal
+                  title="DELETE"
+                  message={`Delete ${deleteRequest.path}?`}
+                  note="This file is permanently removed from the target — it cannot be recovered."
+                  confirmLabel="DELETE"
+                  onCancel={() => setDeleteRequest(null)}
+                  onConfirm={confirmDelete}
+                />
+              </div>
+            ) : null}
             {pendingCloseTabId ? (
               <div class="files-modal-layer">
                 <ConfirmModal
