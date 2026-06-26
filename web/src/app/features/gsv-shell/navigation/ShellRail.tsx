@@ -35,12 +35,13 @@ const GLYPH_ICON: Record<string, string> = {
   applications: "stars",
 };
 
-/** Label for a section's "create" entry. Messengers are intentionally absent —
- *  connecting a messenger is done from its dedicated platform page. Applications
- *  are absent — they route to the applications list page instead of a drawer. */
+/** Sections that show a "create" entry in their drawer. The label is the same
+ *  for every section. Messengers are intentionally absent — connecting a
+ *  messenger is done from its dedicated platform page. Applications are absent —
+ *  they route to the applications list page instead of a drawer. */
 const CREATE_LABEL: Record<string, string> = {
-  machines: "CONNECT MACHINE",
-  integrations: "CONNECT INTEGRATION",
+  machines: "+ CONNECT NEW",
+  integrations: "+ CONNECT NEW",
 };
 
 /** Drawer id for the GSV system-surfaces section (the one non-object section). */
