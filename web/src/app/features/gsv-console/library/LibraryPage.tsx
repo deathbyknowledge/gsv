@@ -67,11 +67,13 @@ export function LibraryPage({ route = { view: "index" }, onRouteChange }: Librar
       library.activeRoute.view === "capture" &&
       (library.ingestPath.trim().length > 0 ||
         library.ingestTitle.trim().length > 0 ||
-        library.ingestSummary.trim().length > 0);
+        library.ingestSummary.trim().length > 0 ||
+        library.ingestTarget !== "gsv");
     const buildDirty =
       library.activeRoute.view === "build" &&
       (library.buildPath.trim().length > 0 ||
-        library.buildDbTitle.trim().length > 0);
+        library.buildDbTitle.trim().length > 0 ||
+        library.buildTarget !== "gsv");
     const collectionDirty =
       library.activeRoute.view === "index" &&
       library.createCollectionOpen &&

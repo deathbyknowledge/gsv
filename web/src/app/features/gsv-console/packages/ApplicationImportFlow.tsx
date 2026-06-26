@@ -134,7 +134,8 @@ export function ApplicationImportFlow({
     (flow.step !== "import" ||
       flow.draft.source.trim().length > 0 ||
       flow.draft.ref.trim() !== "main" ||
-      flow.draft.subdir.trim() !== ".")
+      flow.draft.subdir.trim() !== "." ||
+      flow.draft.includeReview !== true)
   );
 
   useEffect(() => {

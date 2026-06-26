@@ -389,6 +389,13 @@ export function GsvShell({
     activeSettingsRoute.view === "list" && activeSettingsRoute.createNew === true
       ? activeSettingsRoute.kind
       : null;
+  // Section + object a settings list/detail route points at, so the rail keeps
+  // the owning drawer/subitem lit when reached via settings nav (direct URL,
+  // BACK TO X, completing create) rather than openObject.
+  const activeSettingsKind: string | null =
+    activeSettingsRoute.view === "list" ? activeSettingsRoute.kind : null;
+  const activeSettingsDetailId: string | null =
+    activeSettingsRoute.view === "list" ? activeSettingsRoute.detailId ?? null : null;
   const activeLibraryRoute: ShellLibraryRoute = shell.activeSurface === "library"
     ? shell.activePageTab?.libraryRoute ?? { view: "index" }
     : { view: "index" };
@@ -414,6 +421,8 @@ export function GsvShell({
               activeTabKey={shell.activeTabKey}
               settingsView={activeSettingsRoute.view}
               createSection={activeCreateSection}
+              settingsKind={activeSettingsKind}
+              settingsDetailId={activeSettingsDetailId}
               desktopObjects={desktopObjects}
               collapsed={shell.railCollapsed}
               onToggleCollapsed={shell.toggleRailCollapsed}

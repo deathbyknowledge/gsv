@@ -127,6 +127,7 @@ export function IntegrationOnboardingFlow({ onBack, onCreated }: IntegrationOnbo
     (currentStep > 0 ||
       name.trim().length > 0 ||
       url.trim().length > 0 ||
+      transportIndex !== 0 ||
       headers.some((row) => row.key.trim().length > 0 || row.value.trim().length > 0))
   );
   // The flow's own back controls unmount it like shell nav does, so route them

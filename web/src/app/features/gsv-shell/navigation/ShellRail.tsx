@@ -18,6 +18,12 @@ type ShellRailProps = {
   /** section whose create flow is active, so its drawer stays open and its
    *  create entry stays selected (the create route has no object child). */
   createSection: string | null;
+  /** Owning section + object for a settings list/detail route (e.g. a direct
+   *  URL to settings?kind=machines&detailId=…, or a detail page's BACK TO X).
+   *  These surface as activeSurface="settings"/activeTabKey="settings", so the
+   *  rail needs the route kind/detail to keep the right drawer + subitem lit. */
+  settingsKind: string | null;
+  settingsDetailId: string | null;
   desktopObjects: readonly DesktopObject[];
   collapsed: boolean;
   onToggleCollapsed: () => void;
@@ -99,6 +105,8 @@ export function ShellRail({
   activeTabKey,
   settingsView,
   createSection,
+  settingsKind,
+  settingsDetailId,
   desktopObjects,
   collapsed,
   onToggleCollapsed,
@@ -110,29 +118,41 @@ export function ShellRail({
 }: ShellRailProps) {
   const totalObjects = desktopObjects.reduce((sum, object) => sum + object.children.length, 0);
 
+  // A settings list/detail route surfaces as activeSurface="settings" with a
+  // generic activeTabKey, so re-derive the object key it points at (matching
+  // childKey's `obj:<kind>:<detailId>` shape) to keep the owning drawer + the
+  // specific subitem lit when reached via settings nav.
+  const settingsObjectKey = settingsKind && settingsDetailId
+    ? `obj:${settingsKind}:${settingsDetailId}`
+    : null;
+  const ownsActiveObject = (object: DesktopObject): boolean =>
+    object.id === activeSurface ||
+    object.id === createSection ||
+    object.id === settingsKind ||
+    object.children.some((child) => {
+      const key = childKey(child);
+      return key === activeTabKey || key === settingsObjectKey;
+    });
+
   // The section whose drawer should be open follows the active route: the data
   // section that owns the active surface or active object, else the GSV drawer
   // when a GSV system surface is active.
   const activeSectionId = useMemo<string | null>(() => {
-    const section = desktopObjects.find(
-      (object) =>
-        object.id === activeSurface ||
-        object.id === createSection ||
-        object.children.some((child) => childKey(child) === activeTabKey),
-    );
+    const section = desktopObjects.find(ownsActiveObject);
     if (section) {
       return section.id;
     }
     if (GSV_PLAIN_SURFACES.includes(activeSurface)) {
       return GSV_DRAWER;
     }
-    // "settings" is overloaded — only the GSV Settings overview (not crew/tasks/
-    // config/object-detail, which also live on "settings") counts as GSV.
-    if (activeSurface === "settings" && settingsView === "overview") {
+    // Any "settings" route not owned by a data section above (overview, crew,
+    // agent, config, and tasks/library lists whose kind is not a data object)
+    // belongs to the GSV drawer, which then lights its SETTINGS subitem.
+    if (activeSurface === "settings") {
       return GSV_DRAWER;
     }
     return null;
-  }, [desktopObjects, activeSurface, activeTabKey, settingsView, createSection]);
+  }, [desktopObjects, activeSurface, activeTabKey, settingsView, createSection, settingsKind, settingsObjectKey]);
 
   // Accordion: exactly one drawer open, derived purely from the active route.
   // GSV is the only drawer that opens without navigating (it is not a surface),
@@ -144,10 +164,7 @@ export function ShellRail({
   }, [activeSectionId]);
   const effectiveOpen = gsvManualOpen ? GSV_DRAWER : activeSectionId;
 
-  const isSectionActive = (object: DesktopObject): boolean =>
-    activeSurface === object.id ||
-    object.id === createSection ||
-    object.children.some((child) => childKey(child) === activeTabKey);
+  const isSectionActive = ownsActiveObject;
   const gsvActive = activeSectionId === GSV_DRAWER;
 
   // Shared by both the expanded rows and the collapsed icon dots so collapsed
@@ -235,7 +252,7 @@ export function ShellRail({
                         <button
                           key={child.id}
                           type="button"
-                          class={`gsv-rail-subitem${childKey(child) === activeTabKey ? " is-active" : ""}`}
+                          class={`gsv-rail-subitem${childKey(child) === activeTabKey || childKey(child) === settingsObjectKey ? " is-active" : ""}`}
                           title={`${child.label} · ${child.statusLabel}`}
                           onClick={() => onOpenObject(child)}
                         >
