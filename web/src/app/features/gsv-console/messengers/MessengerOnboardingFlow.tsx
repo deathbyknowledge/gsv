@@ -1,348 +1,349 @@
-import { useMemo, useState } from "preact/hooks";
+import type { JSX } from "preact";
+import { useState } from "preact/hooks";
+import { Alert } from "../../../components/ui/Alert";
 import { Button } from "../../../components/ui/Button";
-import { Checkbox } from "../../../components/ui/Checkbox";
-import { IconButton } from "../../../components/ui/IconButton";
+import { Link } from "../../../components/ui/Link";
 import { ListRow } from "../../../components/ui/ListRow";
-import { Select } from "../../../components/ui/Select";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
 import { Stepper } from "../../../components/ui/Stepper";
-import { Surface } from "../../../components/ui/Surface";
-import { Tag } from "../../../components/ui/Tag";
 import { TextInput } from "../../../components/ui/TextInput";
-import type { ConnectConsoleAdapterResult } from "../backend/consoleService";
-import { listRowStatusForTone } from "../components/consoleDetailRows";
-import type { ConsoleAdapter } from "../domain/consoleModels";
-import { useConnectConsoleAdapter } from "../hooks/useConsoleData";
-import {
-  adapterDetailId,
-  adapterName,
-  iconForAdapterName,
-  statusForAdapterFamily,
-  toneForAdapterFamily,
-} from "./messengerPresentation";
+import { ConsoleDetailHeader } from "../components/ConsoleDetailHeader";
+import type { ConnectConsoleAdapterResult, IdentityLinkMutationResult } from "../backend/consoleService";
+import { useConnectConsoleAdapter, useConsumeIdentityLinkCode } from "../hooks/useConsoleData";
+import { BOTFATHER_URL, DISCORD_DEVELOPER_URL, MESSENGER_CAPABILITIES, adapterDocUrl } from "./messengerDocs";
+import { adapterDetailId, adapterName, deriveAccountId, iconForAdapterName } from "./messengerPresentation";
 import "./MessengerOnboardingFlow.css";
 
 type MessengerOnboardingFlowProps = {
-  adapters: readonly ConsoleAdapter[];
-  initialAccountId?: string | null;
-  initialAdapter?: string | null;
+  adapterId: string;
   onBack: () => void;
   onConnected: (detailId: string) => void;
 };
 
-type Challenge = NonNullable<ConnectConsoleAdapterResult["challenge"]>;
-
-function defaultAccountId(adapter: string): string {
-  if (adapter === "discord") return "main";
-  if (adapter === "telegram") return "bot";
-  return "primary";
-}
+/** Step indices for the progressive-disclosure wizard. */
+const STEP_CREATE = 0;
+const STEP_TOKEN = 1;
+const STEP_CONNECT = 2;
+const STEP_LINK = 3;
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : error ? String(error) : "";
 }
 
-function validUrl(value: string): boolean {
-  if (!value.trim()) return true;
-  try {
-    const url = new URL(value);
-    return url.protocol === "http:" || url.protocol === "https:";
-  } catch {
-    return false;
-  }
-}
-
-function buildAdapterConfig(args: {
-  adapter: string;
-  botToken: string;
-  forcePairing: boolean;
-  webhookBaseUrl: string;
-  webhookSecret: string;
-}): Record<string, unknown> | undefined {
-  const config: Record<string, unknown> = {};
-  if (args.adapter === "whatsapp") {
-    config.force = args.forcePairing;
-  }
-  if ((args.adapter === "discord" || args.adapter === "telegram") && args.botToken.trim()) {
-    config.botToken = args.botToken.trim();
-  }
-  if (args.adapter === "telegram" && args.webhookBaseUrl.trim()) {
-    config.webhookBaseUrl = args.webhookBaseUrl.trim();
-  }
-  if (args.adapter === "telegram" && args.webhookSecret.trim()) {
-    config.webhookSecret = args.webhookSecret.trim();
-  }
-  return Object.keys(config).length > 0 ? config : undefined;
-}
-
-function ChallengePanel({ challenge }: { challenge: Challenge }) {
-  const isImage = /^data:image\//i.test(challenge.data);
-  return (
-    <Surface class="gsv-messenger-challenge" level={1}>
-      <SectionHeader title={challenge.type === "qr" ? "PAIR DEVICE" : "NEXT STEP"} meta={challenge.type.toUpperCase()} divider />
-      <p>{challenge.message || "Complete the adapter authentication step, then check account status."}</p>
-      {challenge.data ? (
-        isImage ? (
-          <img src={challenge.data} alt="Adapter authentication challenge" />
-        ) : (
-          <pre>{challenge.data}</pre>
-        )
-      ) : null}
-      {challenge.expiresAt ? <small>EXPIRES {new Date(challenge.expiresAt).toLocaleString()}</small> : null}
-    </Surface>
-  );
+function linkedText(result: IdentityLinkMutationResult): string {
+  return result.link
+    ? `${adapterName(result.link.adapter)} / ${result.link.actorId}`
+    : "Messenger identity";
 }
 
 export function MessengerOnboardingFlow({
-  adapters,
-  initialAccountId = null,
-  initialAdapter = null,
+  adapterId,
   onBack,
   onConnected,
-}: MessengerOnboardingFlowProps) {
-  const availableAdapters = adapters.filter((adapter) => adapter.available && adapter.supportsConnect);
-  const selectableAdapters = availableAdapters.length > 0 ? availableAdapters : adapters;
-  const initialIndex = Math.max(0, selectableAdapters.findIndex((adapter) => adapter.adapter === initialAdapter));
+}: MessengerOnboardingFlowProps): JSX.Element {
   const connect = useConnectConsoleAdapter();
-  const [adapterIndex, setAdapterIndex] = useState(initialIndex);
-  const selectedAdapter = selectableAdapters[adapterIndex] ?? selectableAdapters[0] ?? null;
-  const selectedAdapterId = selectedAdapter?.adapter ?? "";
-  const initialAccount = initialAccountId?.trim() || defaultAccountId(selectedAdapterId);
-  const [accountId, setAccountId] = useState(initialAccount);
-  const [accountTouched, setAccountTouched] = useState(Boolean(initialAccountId?.trim()));
-  const [botToken, setBotToken] = useState("");
-  const [forcePairing, setForcePairing] = useState(false);
-  const [webhookBaseUrl, setWebhookBaseUrl] = useState("");
-  const [webhookSecret, setWebhookSecret] = useState("");
+  const consumeLinkCode = useConsumeIdentityLinkCode();
+  const [step, setStep] = useState(STEP_CREATE);
+  const [token, setToken] = useState("");
+  const [linkCode, setLinkCode] = useState("");
   const [result, setResult] = useState<ConnectConsoleAdapterResult | null>(null);
   const [formError, setFormError] = useState("");
-  const webhookValid = validUrl(webhookBaseUrl);
-  const canSubmit = Boolean(selectedAdapterId && accountId.trim()) && webhookValid && !connect.isPending;
-  const currentStep = result?.challenge ? 2 : accountId.trim() ? 1 : 0;
-  const options = selectableAdapters.map((adapter) => adapterName(adapter.adapter));
+  const [linkError, setLinkError] = useState("");
+  const [linkResultText, setLinkResultText] = useState("");
 
-  const selectedRow = useMemo(() => selectedAdapter ? {
-    icon: iconForAdapterName(selectedAdapter.adapter),
-    label: adapterName(selectedAdapter.adapter),
-    status: listRowStatusForTone(toneForAdapterFamily(selectedAdapter)),
-    statusLabel: statusForAdapterFamily(selectedAdapter),
-    sub: selectedAdapter.available
-      ? `${selectedAdapter.accounts.length} configured account${selectedAdapter.accounts.length === 1 ? "" : "s"}`
-      : "Adapter worker not deployed",
-  } : null, [selectedAdapter]);
+  const isTelegram = adapterId === "telegram";
+  const name = adapterName(adapterId);
+  const docUrl = adapterDocUrl(adapterId);
+  const botConnected = Boolean(result?.ok && result?.connected && result?.authenticated);
+  const linked = linkResultText.length > 0;
+  const canSubmit = token.trim().length > 0 && !connect.isPending;
+  const canLinkUser = botConnected && linkCode.trim().length > 0 && !consumeLinkCode.isPending;
+  // Steps 1-2 are performed on the messaging platform; 3-4 happen inside GSV.
+  const onPlatform = step <= STEP_TOKEN;
 
-  const selectAdapter = (index: number) => {
-    const next = selectableAdapters[index] ?? null;
-    setAdapterIndex(index);
-    setResult(null);
-    setFormError("");
-    if (next && !accountTouched) {
-      setAccountId(next.adapter === initialAdapter && initialAccountId?.trim() ? initialAccountId.trim() : defaultAccountId(next.adapter));
+  const goNext = () => setStep((current) => Math.min(current + 1, STEP_CONNECT));
+  const goBack = () => {
+    if (step === STEP_CREATE) {
+      onBack();
+      return;
     }
+    setStep((current) => current - 1);
+  };
+  const goToStep = (target: number) => {
+    if (linked || target >= step) return;
+    setStep(target);
   };
 
   const submit = async () => {
-    if (!selectedAdapter || !canSubmit) {
+    if (!canSubmit) {
       return;
     }
     setFormError("");
-    setResult(null);
     try {
+      const accountId = deriveAccountId(adapterId, token.trim());
       const next = await connect.mutateAsync({
-        adapter: selectedAdapter.adapter,
+        adapter: adapterId,
         accountId,
-        config: buildAdapterConfig({
-          adapter: selectedAdapter.adapter,
-          botToken,
-          forcePairing,
-          webhookBaseUrl,
-          webhookSecret,
-        }),
+        config: { botToken: token.trim() },
       });
-      setResult(next);
-      if (!next.ok) {
-        setFormError(next.error || next.message);
+      if (next.ok && next.connected && next.authenticated) {
+        setResult(next);
+        setLinkCode("");
+        setLinkError("");
+        setLinkResultText("");
+        setStep(STEP_LINK);
         return;
       }
-      if (!next.challenge) {
-        onConnected(adapterDetailId({
-          adapter: next.adapter,
-          accountId: next.accountId,
-          connected: next.connected,
-          authenticated: next.authenticated,
-          mode: "",
-          lastActivity: null,
-          error: "",
-          extra: {},
-        }));
+      if (next.ok) {
+        // The adapter accepted the token but the bot isn't online/authenticated
+        // yet — e.g. the Discord gateway opened before READY, or the token is
+        // invalid/revoked. Don't advance and claim a false success.
+        setResult(next);
+        setFormError(
+          next.challenge?.message ||
+            "The bot connected but isn't authenticated yet. Check the token is valid, then try again.",
+        );
+        return;
       }
+      setFormError(next.error || next.message);
     } catch (error) {
       setFormError(errorText(error));
     }
   };
 
-  if (selectableAdapters.length === 0) {
-    return (
-      <section class="gsv-messenger-onboarding">
-        <div class="gsv-messenger-onboarding-shell">
-          <header class="gsv-messenger-onboarding-head">
-            <IconButton glyph="arrowBack" size="medium" title="Back to messengers" onClick={onBack} />
-            <div>
-              <span class="gsv-messenger-onboarding-kicker">FLEET / NEW MESSENGER</span>
-              <h2>Connect messenger</h2>
-              <p>Add an external messaging account to route conversations into GSV.</p>
-            </div>
-            <Tag tone="idle" label="NO ADAPTERS" boxed dot />
-          </header>
-          <Surface class="gsv-messenger-flow-panel" level={2}>
-            <SectionHeader title="ADAPTERS" meta="UNAVAILABLE" divider />
-            <p>No adapter workers were discovered on this GSV instance.</p>
-            <div class="gsv-messenger-flow-actions">
-              <Button variant="secondary" label="BACK TO MESSENGERS" onClick={onBack} />
-            </div>
-          </Surface>
-        </div>
-      </section>
-    );
-  }
+  const submitLinkCode = async () => {
+    if (!canLinkUser) {
+      return;
+    }
+    setLinkError("");
+    setLinkResultText("");
+    try {
+      const next = await consumeLinkCode.mutateAsync({ code: linkCode });
+      setLinkCode("");
+      setLinkResultText(linkedText(next));
+    } catch (error) {
+      setLinkError(errorText(error));
+    }
+  };
+
+  const goToDetail = () => {
+    if (!result) {
+      onBack();
+      return;
+    }
+    onConnected(adapterDetailId({
+      adapter: result.adapter,
+      accountId: result.accountId,
+      connected: result.connected,
+      authenticated: result.authenticated,
+      mode: "",
+      lastActivity: null,
+      error: "",
+      extra: {},
+    }));
+  };
+
+  const stepTitle =
+    step === STEP_CREATE
+      ? "Create your GSV messenger bot"
+      : step === STEP_TOKEN
+        ? "Generate an access token"
+        : step === STEP_CONNECT
+          ? "Insert your access token"
+          : "Link your GSV user";
 
   return (
-    <section class="gsv-messenger-onboarding">
-      <div class="gsv-messenger-onboarding-shell">
-        <header class="gsv-messenger-onboarding-head">
-          <IconButton glyph="arrowBack" size="medium" title="Back to messengers" onClick={onBack} />
-          <div>
-            <span class="gsv-messenger-onboarding-kicker">FLEET / NEW MESSENGER</span>
-            <h2>Connect messenger</h2>
-            <p>Add an external messaging account to route conversations into GSV.</p>
-          </div>
-          <Tag tone={result?.ok ? "online" : "idle"} label={result?.ok ? "CONNECTED" : "NOT CONFIGURED"} boxed dot />
-        </header>
+    <section class="gsv-connect">
+      <div class="gsv-connect-shell">
+        <ConsoleDetailHeader
+          icon={iconForAdapterName(adapterId)}
+          title={`Connect ${name} bot`}
+          typeLabel={`${name.toUpperCase()} · NEW MESSENGER`}
+          statusLabel={linked ? "LINKED" : botConnected ? "CONNECTED" : "NOT CONNECTED"}
+          tone={botConnected ? "online" : "idle"}
+        />
 
-        <div class="gsv-messenger-onboarding-stepper" aria-label="Messenger connection progress">
-          <Stepper count={3} current={currentStep} l0="ADAPTER" l1="ACCOUNT" l2="AUTH" width={420} size="small" />
+        <p class="gsv-console-detail-blurb">
+          Link a {name} bot to your GSV so you can check files, approve tasks, and stay in control from anywhere.
+        </p>
+
+        <div class="gsv-connect-stepper" aria-label="Connection progress">
+          <Stepper
+            count={4}
+            current={step}
+            l0="CREATE BOT"
+            l1="GET TOKEN"
+            l2="CONNECT"
+            l3="LINK USER"
+            size="medium"
+            width={520}
+            onChange={goToStep}
+          />
         </div>
 
-        <Surface class="gsv-messenger-flow-panel" level={2}>
-          <SectionHeader title="ACCOUNT" meta={selectedAdapter ? adapterName(selectedAdapter.adapter).toUpperCase() : "ADAPTER"} divider />
-          <div class="gsv-messenger-form-grid">
-            <Select
-              label="ADAPTER"
-              description="Only deployed adapter workers can create new accounts."
-              requirement="required"
-              options={options}
-              value={adapterIndex}
-              onChange={selectAdapter}
-            />
-            {selectedRow ? (
-              <ListRow
-                icon={selectedRow.icon}
-                label={selectedRow.label}
-                status={selectedRow.status}
-                statusDotPlacement="trailing"
-                statusLabel={selectedRow.statusLabel}
-                sub={selectedRow.sub}
-              />
-            ) : null}
-            <TextInput
-              label="ACCOUNT ID"
-              description="Local account handle for this adapter."
-              requirement="required"
-              value={accountId}
-              placeholder={defaultAccountId(selectedAdapterId)}
-              clearable
-              onChange={(value) => {
-                setAccountTouched(true);
-                setAccountId(value);
-              }}
-              inputProps={{ required: true, name: "accountId" }}
-            />
-
-            {selectedAdapterId === "whatsapp" ? (
-              <Checkbox
-                checked={forcePairing}
-                label="FORCE FRESH QR SESSION"
-                description="Start a fresh pairing session even if cached state exists."
-                onChange={setForcePairing}
-              />
-            ) : selectedAdapterId === "discord" || selectedAdapterId === "telegram" ? (
-              <TextInput
-                label="BOT TOKEN"
-                description="Optional when the adapter worker has a deployment token configured."
-                requirement="optional"
-                value={botToken}
-                placeholder="Use deployment default"
-                type="password"
-                clearable
-                onChange={setBotToken}
-                inputProps={{ name: "botToken", autoComplete: "off" }}
+        <div class="gsv-connect-step">
+          <SectionHeader
+            title={stepTitle}
+            meta={step === STEP_LINK ? "FINALIZE" : onPlatform ? `IN ${name.toUpperCase()}` : "IN GSV"}
+            divider
+          />
+          <div class="gsv-connect-step-body">
+            {onPlatform ? (
+              <Alert
+                variant="attention"
+                text={`Do this step in ${name} — finish it there, then come back to GSV to continue.`}
               />
             ) : null}
 
-            {selectedAdapterId === "telegram" ? (
+            {step === STEP_CREATE ? (
               <>
-                <TextInput
-                  label="WEBHOOK BASE URL"
-                  description="Needed only when the adapter worker has no deployment default."
-                  requirement="optional"
-                  status={webhookValid ? "none" : "error"}
-                  message={webhookValid ? "" : "Enter an http(s) URL or leave blank."}
-                  value={webhookBaseUrl}
-                  placeholder="https://telegram-adapter.example.com"
-                  clearable
-                  onChange={setWebhookBaseUrl}
-                  inputProps={{ name: "webhookBaseUrl", inputMode: "url" }}
-                />
-                <TextInput
-                  label="WEBHOOK SECRET"
-                  description="Leave blank to use the worker default."
-                  requirement="optional"
-                  value={webhookSecret}
-                  placeholder="Use deployment default"
-                  type="password"
-                  clearable
-                  onChange={setWebhookSecret}
-                  inputProps={{ name: "webhookSecret", autoComplete: "off" }}
-                />
+                <p class="gsv-connect-step-desc">
+                  {isTelegram
+                    ? "Open BotFather in Telegram and create a new bot to act as your GSV's messenger."
+                    : "Create a new bot application in the Discord developer portal to act as your GSV's messenger."}
+                </p>
+                <div class="gsv-connect-step-links">
+                  <Link href={isTelegram ? BOTFATHER_URL : DISCORD_DEVELOPER_URL}>
+                    {isTelegram ? "Open BotFather" : "Open Discord Developer Portal"}
+                  </Link>
+                  <Link href={docUrl} arrow>Need help? Documentation</Link>
+                </div>
               </>
-            ) : null}
-          </div>
-
-          {formError || connect.error ? (
-            <p class="gsv-messenger-form-error">{formError || errorText(connect.error)}</p>
-          ) : result?.message ? (
-            <p class="gsv-messenger-form-note">{result.message}</p>
-          ) : null}
-
-          {result?.challenge ? <ChallengePanel challenge={result.challenge} /> : null}
-
-          <div class="gsv-messenger-flow-actions">
-            <Button variant="secondary" label="BACK" disabled={connect.isPending} onClick={onBack} />
-            {result?.ok ? (
-              <Button
-                variant="primary"
-                label="VIEW ACCOUNT"
-                onClick={() => onConnected(adapterDetailId({
-                  adapter: result.adapter,
-                  accountId: result.accountId,
-                  connected: result.connected,
-                  authenticated: result.authenticated,
-                  mode: "",
-                  lastActivity: null,
-                  error: "",
-                  extra: {},
-                }))}
-              />
+            ) : step === STEP_TOKEN ? (
+              <>
+                <p class="gsv-connect-step-desc">
+                  {isTelegram
+                    ? "BotFather hands you an access token once the bot is created. Copy it — you'll paste it in the next step."
+                    : "In your bot's settings, create a bot token and copy it — you'll paste it in the next step."}
+                </p>
+                <div class="gsv-connect-step-links">
+                  <Link href={docUrl} arrow>Need help? Documentation</Link>
+                </div>
+              </>
+            ) : step === STEP_CONNECT ? (
+              <>
+                <p class="gsv-connect-step-desc">
+                  Paste the token below to connect your {name} bot to GSV.
+                </p>
+                <div class="gsv-connect-token-field">
+                  <TextInput
+                    label="ACCESS TOKEN"
+                    size="large"
+                    requirement="required"
+                    value={token}
+                    placeholder="123456789:AA…"
+                    type="password"
+                    clearable
+                    status={formError ? "error" : "none"}
+                    message={formError}
+                    onChange={(value) => {
+                      if (formError) setFormError("");
+                      setToken(value);
+                    }}
+                    inputProps={{ name: "botToken", autoComplete: "off" }}
+                  />
+                </div>
+              </>
             ) : (
-              <Button
-                variant="primary"
-                label={connect.isPending ? "CONNECTING" : selectedAdapterId === "whatsapp" ? "PAIR" : "CONNECT"}
-                disabled={!canSubmit}
-                onClick={submit}
-              />
+              <>
+                <p class="gsv-connect-step-desc">
+                  Your {name} bot account has been created. Message the bot from the user account you want to link,
+                  then paste the authorization code it sends back.
+                </p>
+                <Alert
+                  variant={linked ? "success" : "attention"}
+                  title={linked ? "USER LINKED" : `MESSAGE YOUR ${name.toUpperCase()} BOT`}
+                  text={linked
+                    ? `${linkResultText} can now authenticate with this GSV.`
+                    : "Send the bot a message, wait for its link code response, and enter that code here to finish setup."}
+                />
+                {!linked ? (
+                  <div class="gsv-connect-token-field">
+                    <TextInput
+                      label="AUTHORIZATION CODE"
+                      size="large"
+                      requirement="required"
+                      value={linkCode}
+                      placeholder="ABC123"
+                      clearable
+                      status={linkError ? "error" : "none"}
+                      message={linkError}
+                      onChange={(value) => {
+                        if (linkError) setLinkError("");
+                        setLinkCode(value);
+                      }}
+                      inputProps={{
+                        autoComplete: "one-time-code",
+                        name: "messengerIdentityLinkCode",
+                        onKeyDown: (event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            void submitLinkCode();
+                          }
+                        },
+                      }}
+                    />
+                  </div>
+                ) : null}
+                {linked ? (
+                  <>
+                    <div class="gsv-connect-caps">
+                      <SectionHeader title="THINGS YOU CAN DO" titleSize="section" divider />
+                      <div class="gsv-connect-caps-rows">
+                        {MESSENGER_CAPABILITIES.map((cap) => (
+                          <ListRow key={cap.title} label={cap.title} sub={cap.detail} status="none" />
+                        ))}
+                      </div>
+                    </div>
+                    <div class="gsv-connect-step-links">
+                      <Link href={docUrl} arrow>Read the docs</Link>
+                    </div>
+                    {result?.challenge ? (
+                      <Alert
+                        variant="warning"
+                        text="This adapter returned an extra authentication step — open the bot detail to finish it."
+                      />
+                    ) : null}
+                  </>
+                ) : null}
+              </>
             )}
           </div>
-        </Surface>
+
+          <div class="gsv-connect-actions">
+            {step === STEP_LINK && linked ? (
+              <>
+                <Button variant="secondary" label="VIEW BOT" onClick={goToDetail} />
+                <Button variant="primary" label="DONE" onClick={onBack} />
+              </>
+            ) : step === STEP_LINK ? (
+              <>
+                <Button variant="secondary" label="BACK" disabled={consumeLinkCode.isPending} onClick={goBack} />
+                <Button
+                  variant="primary"
+                  label={consumeLinkCode.isPending ? "LINKING" : "LINK USER"}
+                  disabled={!canLinkUser}
+                  onClick={submitLinkCode}
+                />
+              </>
+            ) : step === STEP_CONNECT ? (
+              <>
+                <Button variant="secondary" label="BACK" disabled={connect.isPending} onClick={goBack} />
+                <Button
+                  variant="primary"
+                  label={connect.isPending ? "CONNECTING" : "CONNECT"}
+                  disabled={!canSubmit}
+                  onClick={submit}
+                />
+              </>
+            ) : (
+              <>
+                <Button variant="secondary" label={step === STEP_CREATE ? "CANCEL" : "BACK"} onClick={goBack} />
+                <Button variant="primary" label="NEXT" onClick={goNext} />
+              </>
+            )}
+          </div>
+        </div>
       </div>
     </section>
   );

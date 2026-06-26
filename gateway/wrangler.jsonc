@@ -57,9 +57,9 @@
 	// Channel service bindings (Gateway → Channel RPC)
 	"services": [
 		{
-			"binding": "CHANNEL_WHATSAPP",
-			"service": "gsv-channel-whatsapp",
-			"entrypoint": "WhatsAppChannelEntrypoint"
+			"binding": "CHANNEL_TELEGRAM",
+			"service": "gsv-channel-telegram",
+			"entrypoint": "TelegramChannel"
 		},
 		{
 			"binding": "CHANNEL_DISCORD",
