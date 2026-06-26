@@ -42,6 +42,9 @@ export type SetupResultViewModel = {
 
 export const DEFAULT_SOURCE_LABEL = "Official system files";
 export const DEFAULT_SOURCE_REF = "Default version";
+export const USERNAME_FORMAT_DESCRIPTION = "Use 1-32 characters: lowercase letters, numbers, underscores, or hyphens. Start with a lowercase letter or underscore.";
+
+const USERNAME_FORMAT_REQUIREMENT = "be 1-32 characters, start with a lowercase letter or underscore, and use only lowercase letters, numbers, underscores, or hyphens";
 
 export const SETUP_LANE_META: Record<OnboardingLane, SetupLaneMeta> = {
   quick: {
@@ -72,6 +75,10 @@ export const SETUP_LANE_META: Record<OnboardingLane, SetupLaneMeta> = {
 
 export function isValidUsername(value: string): boolean {
   return /^[a-z_][a-z0-9_-]{0,31}$/.test(value);
+}
+
+function usernameFormatError(label: string): string {
+  return `${label} must ${USERNAME_FORMAT_REQUIREMENT}.`;
 }
 
 export function isPositiveNumber(value: string): boolean {
@@ -220,10 +227,10 @@ export function validateSetupDetails(
         return { message: "Username is required.", step };
       }
       if (!isValidUsername(username)) {
-        return { message: "Username must match ^[a-z_][a-z0-9_-]{0,31}$.", step };
+        return { message: usernameFormatError("Username"), step };
       }
       if (agentName && !isValidUsername(agentName)) {
-        return { message: "Personal agent username must match ^[a-z_][a-z0-9_-]{0,31}$.", step };
+        return { message: usernameFormatError("Personal agent username"), step };
       }
       if (agentName && agentName === username) {
         return { message: "Personal agent username must be different from the desktop username.", step };
