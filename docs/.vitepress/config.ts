@@ -1,9 +1,9 @@
 import { defineConfig } from "vitepress";
 
 export default defineConfig({
-  title: "GSV",
+  title: "GSV docs",
   description:
-    "An open-source personal AI computer that spans all your devices and stays awake when they're asleep. One mind across your machines — not rented, not stuck on one box.",
+    "GSV docs — an open-source personal AI computer, a distributed OS with AI in the kernel, that spans all your devices and stays always-on in your own Cloudflare account.",
   cleanUrls: true,
 
   redirects: {
@@ -18,6 +18,7 @@ export default defineConfig({
     // tutorials → get-started
     "/tutorials/getting-started": "/get-started/",
     "/tutorials/setting-up-a-channel": "/how-to/messengers",
+    "/tutorials/setting-up-an-adapter": "/how-to/messengers",
 
     // top-level orphans
     "/process-spawn-handoff-model": "/architecture/process-handoffs",
@@ -69,10 +70,10 @@ export default defineConfig({
       {
         property: "og:description",
         content:
-          "An open-source personal AI computer that spans all your devices and stays awake when they're asleep. One mind across your machines — not rented, not stuck on one box.",
+          "GSV docs — an open-source personal AI computer, a distributed OS with AI in the kernel, that spans all your devices and stays always-on in your own Cloudflare account.",
       },
     ],
-    ["meta", { property: "og:title", content: "GSV" }],
+    ["meta", { property: "og:title", content: "GSV docs" }],
   ],
 
   themeConfig: {

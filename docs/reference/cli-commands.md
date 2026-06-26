@@ -205,8 +205,8 @@ gsv infra upgrade [--version REF] [-c COMPONENT ... | --all] [--force-fetch]
 gsv infra destroy [-c COMPONENT ... | --all] [--delete-bucket] [--purge-bucket]
 ```
 
-Valid components are `ripgit`, `assembler`, `gateway`, `channel-whatsapp`, and
-`channel-discord`. When no deploy/upgrade component is supplied, all components
+Valid components are `ripgit`, `assembler`, `gateway`, `channel-whatsapp`,
+`channel-discord`, and `channel-telegram`. When no deploy/upgrade component is supplied, all components
 are selected. Deploying `gateway` requires `ripgit` and `assembler` to be
 selected or already deployed.
 
