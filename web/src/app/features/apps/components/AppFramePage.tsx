@@ -142,12 +142,14 @@ export function AppFramePage({
         );
         // Clean frame: open synchronously and return the new window id as
         // before. Dirty frame: confirm first; the window isn't created until
-        // the user accepts, so there is no id to return yet.
+        // the user accepts, so report no window (null) per the host contract —
+        // an empty string would read as a successful id past the bridge's
+        // `?? null` fallback.
         if (!dirtyRef.current) {
           return open();
         }
         requestLeaveRef.current(open);
-        return "";
+        return null;
       },
     });
 

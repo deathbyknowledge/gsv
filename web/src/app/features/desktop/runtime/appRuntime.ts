@@ -8,7 +8,9 @@ export type AppRuntimeContext = {
   setTitle: (title: string | null) => void;
   setBadge: (badge: string | null) => void;
   setDirty: (dirty: boolean) => void;
-  requestNewWindow: (route?: string) => string;
+  // Returns the new window id, or null when no window is created (e.g. the
+  // host deferred the route change behind an unsaved-changes confirmation).
+  requestNewWindow: (route?: string) => string | null;
 };
 
 export type AppInstance = {
