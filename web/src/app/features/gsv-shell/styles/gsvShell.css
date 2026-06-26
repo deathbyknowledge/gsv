@@ -1244,10 +1244,9 @@
 }
 
 /* The "create" entry at the bottom of a section drawer reads as an action,
-   not an object — dimmer, accented on hover. */
+   not an object — accented, but the same size as the other subitems. */
 .gsv-shell-rail:not(.is-collapsed) .gsv-rail-subitem-create {
   color: var(--accent);
-  font-size: 11px;
   opacity: 0.85;
 }
 
