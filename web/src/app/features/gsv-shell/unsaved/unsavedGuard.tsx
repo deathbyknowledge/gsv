@@ -23,6 +23,10 @@ type DirtyProbe = () => boolean;
 type UnsavedGuardContextValue = {
   register: (id: string, probe: DirtyProbe) => void;
   unregister: (id: string) => void;
+  /** Run `proceed` immediately if nothing is dirty, else confirm first. Exposed
+   *  so a screen can guard its own in-surface navigation (e.g. the Library
+   *  editor switching pages without going through the shell's nav handlers). */
+  requestLeave: (proceed: () => void) => void;
 };
 
 const UnsavedGuardContext = createContext<UnsavedGuardContextValue | null>(null);
@@ -76,8 +80,8 @@ export function useUnsavedGuardController(): UnsavedGuardController {
   }, []);
 
   const contextValue = useMemo<UnsavedGuardContextValue>(
-    () => ({ register, unregister }),
-    [register, unregister],
+    () => ({ register, unregister, requestLeave }),
+    [register, unregister, requestLeave],
   );
 
   const guardModal = pending ? (
@@ -145,4 +149,14 @@ export function useUnsavedGuard(isDirty: DirtyProbe): void {
     ctx.register(id, probe);
     return () => ctx.unregister(id);
   }, [ctx, id]);
+}
+
+/**
+ * Access the guard's `requestLeave` so a screen can gate its own in-surface
+ * navigation (which doesn't pass through the shell's nav handlers). Falls back
+ * to running `proceed` immediately when there is no guard provider.
+ */
+export function useUnsavedGuardLeave(): (proceed: () => void) => void {
+  const ctx = useContext(UnsavedGuardContext);
+  return ctx?.requestLeave ?? ((proceed) => proceed());
 }

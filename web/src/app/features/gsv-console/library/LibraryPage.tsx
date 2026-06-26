@@ -26,7 +26,7 @@ import {
   renderPreviewBodyHtml,
 } from "./libraryMarkdown";
 import { useLibraryWorkspace } from "./useLibraryWorkspace";
-import { useUnsavedGuard } from "../../gsv-shell/unsaved/unsavedGuard";
+import { useUnsavedGuard, useUnsavedGuardLeave } from "../../gsv-shell/unsaved/unsavedGuard";
 import type {
   LibraryCollection,
   LibraryEntry,
@@ -51,7 +51,8 @@ type PreviewState = {
 };
 
 export function LibraryPage({ route = { view: "index" }, onRouteChange }: LibraryPageProps) {
-  const library = useLibraryWorkspace(route, onRouteChange);
+  const requestLeave = useUnsavedGuardLeave();
+  const library = useLibraryWorkspace(route, onRouteChange, requestLeave);
 
   useUnsavedGuard(() => {
     const editorDirty =

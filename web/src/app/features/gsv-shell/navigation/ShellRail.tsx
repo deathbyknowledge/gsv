@@ -150,6 +150,22 @@ export function ShellRail({
     object.children.some((child) => childKey(child) === activeTabKey);
   const gsvActive = activeSectionId === GSV_DRAWER;
 
+  // Shared by both the expanded rows and the collapsed icon dots so collapsed
+  // navigation follows the same per-object flow.
+  const openSection = (object: DesktopObject): void => {
+    if (isSectionActive(object)) {
+      return; // already in this section — leave the current object alone
+    }
+    // Applications open as native app frames — jarring to launch from a section
+    // click — so route to the applications list page instead of auto-opening
+    // one. Empty sections also go to their landing.
+    if (object.id === "applications" || object.children.length === 0) {
+      onOpenSurface(object.id);
+      return;
+    }
+    onOpenObject(object.children[0]); // auto-open the first object
+  };
+
   if (collapsed) {
     return (
       <aside class="gsv-shell-rail is-collapsed" aria-label="GSV navigation">
@@ -161,9 +177,9 @@ export function ShellRail({
           <button
             key={object.id}
             type="button"
-            class={`gsv-rail-dot-button${activeSurface === object.id ? " is-active" : ""}`}
+            class={`gsv-rail-dot-button${isSectionActive(object) ? " is-active" : ""}`}
             title={object.label}
-            onClick={() => onOpenSurface(object.id)}
+            onClick={() => openSection(object)}
           >
             <Icon name={GLYPH_ICON[object.glyph]} size={19} />
             <span class="gsv-rail-status-dot" style={{ background: statusColor(object.status), color: statusColor(object.status) }} />
@@ -194,19 +210,6 @@ export function ShellRail({
             <span class="gsv-rail-spine" aria-hidden="true" />
             {desktopObjects.map((object) => {
               const expanded = effectiveOpen === object.id;
-              const openSection = () => {
-                if (isSectionActive(object)) {
-                  return; // already in this section — leave the current object alone
-                }
-                // Applications open as native app frames — jarring to launch from
-                // a section click — so route to the applications list page instead
-                // of auto-opening one. Empty sections also go to their landing.
-                if (object.id === "applications" || object.children.length === 0) {
-                  onOpenSurface(object.id);
-                  return;
-                }
-                onOpenObject(object.children[0]); // auto-open the first object
-              };
               return (
                 <Fragment key={object.id}>
                   <button
@@ -214,7 +217,7 @@ export function ShellRail({
                     class={`gsv-rail-row${isSectionActive(object) ? " is-active" : ""}${expanded ? " is-expanded" : ""}`}
                     title={`${object.label}: ${object.meta}, ${object.statusLabel}`}
                     aria-expanded={expanded}
-                    onClick={openSection}
+                    onClick={() => openSection(object)}
                   >
                     <span class="gsv-rail-node-icon">
                       <span class="gsv-rail-node-disc">
