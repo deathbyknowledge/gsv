@@ -581,6 +581,75 @@ describe("createProcessSourceBackend", () => {
     expect(applyCalls[0][5]).toEqual({ baseRef: "featurehead456", expectedHead: "featurehead456" });
   });
 
+  it("reads from the active process branch head after committing source changes", async () => {
+    const config = makeConfig();
+    const storage = makeBucket();
+    const applyCalls: any[] = [];
+    const readCalls: Array<{ repo: { owner: string; repo: string; branch?: string }; path: string }> = [];
+    const filePath = "packages/sample-console/src/index.ts";
+    const ripgit = {
+      readPath: async (repo: { owner: string; repo: string; branch?: string }, path: string) => {
+        readCalls.push({ repo, path });
+        if (path !== filePath) {
+          return { kind: "missing" };
+        }
+        const text = repo.branch === "processhead123" ? "branch\n" : "main\n";
+        return {
+          kind: "file",
+          bytes: new TextEncoder().encode(text),
+          size: text.length,
+        };
+      },
+      refs: async () => ({ heads: {}, tags: {} }),
+      apply: async (...args: any[]) => {
+        applyCalls.push(args);
+        return { head: applyCalls.length === 1 ? "processhead123" : "processhead456" };
+      },
+    } as any;
+    const backend = createProcessSourceBackend({
+      identity: IDENTITY,
+      storage,
+      repos: [makeRepo("sam/pkg-test")],
+      processId: "task:source",
+      config,
+      ripgit,
+    });
+
+    await backend!.writeFile(`/src/repos/sam/pkg-test/${filePath}`, "branch\n");
+    await commitRepoSourceChanges({
+      identity: IDENTITY,
+      storage,
+      repos: [makeRepo("sam/pkg-test")],
+      processId: "task:source",
+      config,
+      ripgit,
+    }, "sam/pkg-test", { message: "repo: commit branch base", branch: "feature/package-work" });
+    expect(readCalls).toEqual([{
+      repo: { owner: "sam", repo: "pkg-test", branch: "main" },
+      path: filePath,
+    }]);
+
+    readCalls.length = 0;
+    await backend!.appendFile(`/src/repos/sam/pkg-test/${filePath}`, "next\n");
+    await commitRepoSourceChanges({
+      identity: IDENTITY,
+      storage,
+      repos: [makeRepo("sam/pkg-test")],
+      processId: "task:source",
+      config,
+      ripgit,
+    }, "sam/pkg-test", { message: "repo: append on branch" });
+
+    expect(readCalls.length).toBeGreaterThan(0);
+    expect(readCalls.every((call) => call.repo.branch === "processhead123")).toBe(true);
+    expect(applyCalls[1][4]).toEqual([{
+      type: "put",
+      path: filePath,
+      contentBytes: Array.from(new TextEncoder().encode("branch\nnext\n")),
+    }]);
+    expect(applyCalls[1][5]).toEqual({ baseRef: "processhead123", expectedHead: "processhead123" });
+  });
+
   it("remembers an explicit target branch even when staged source edits are no-ops", async () => {
     const config = makeConfig();
     const storage = makeBucket();

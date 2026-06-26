@@ -600,10 +600,11 @@ class ProcessSourceBackend implements MountBackend {
   }
 
   private repoRefForSourceRepo(repo: SourceRepo): RipgitRepoRef {
+    const target = sourcePackageForRepo(repo);
     return {
       owner: repo.owner,
       repo: repo.name,
-      branch: repo.ref,
+      branch: this.overlayBaseRef(target),
     };
   }
 

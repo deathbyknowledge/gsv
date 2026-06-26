@@ -839,7 +839,7 @@ function buildWebUiPackageScaffold(input: {
       "",
       input.description,
       "",
-      "This package was scaffolded by GSV. Edit the package files under `/src/repos`, inspect changes with `rgit diff`, commit with `rgit commit --message \"...\"`, then run `pkg update <package> --ref <branch>` when you want to install committed source changes.",
+      "This package was scaffolded by GSV. Edit the package files under `/src/repos`, inspect changes with `rgit diff --here`, commit with `rgit commit --here --message \"...\"`, then run `pkg update <package> --ref <branch>` when you want to install committed source changes.",
       "",
     ].join("\n"),
   };
