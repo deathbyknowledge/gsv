@@ -10,7 +10,7 @@ GSV uses several storage planes. The Kernel chooses the plane based on whether t
 | Process SQLite | Process Durable Object SQL | Active messages, pending tool calls, message queue, HIL state, process-local metadata. |
 | AppRunner SQLite/KV | AppRunner Durable Object storage | Package runtime SQL, daemon schedules, loaded package runtime props. |
 | R2 `STORAGE` bucket | Cloudflare R2 | Ordinary virtual filesystem files, process media, process archives, package artifacts, CLI download mirrors. |
-| ripgit | `RIPGIT` binding | Versioned home knowledge, workspaces, package source repositories, mounted source trees. |
+| ripgit | `RIPGIT` binding | Versioned home knowledge, workspaces, package source repositories, and source trees. |
 
 ## Virtual Filesystem Mapping
 
@@ -44,7 +44,7 @@ Kernel SQLite is the authoritative control-plane store. Important tables include
 | `group_capabilities` | Capability grants by group id. |
 | `devices`, `device_access` | Registered devices and group access. |
 | `routing_table` | In-flight device-routed syscalls. |
-| `processes` | Process registry, identity, cwd, workspace, mounts, state. |
+| `processes` | Process registry, identity, cwd, workspace, state. |
 | `workspaces` | Workspace metadata. Actual workspace files live in ripgit. |
 | `packages` | Installed package manifests, scopes, grants, and artifact hashes. |
 | `identity_links`, `surface_routes`, `link_challenges` | Adapter actor links and inbound surface routing. |
@@ -78,8 +78,8 @@ R2 remains the byte store. The current runtime uses these key families:
 | `downloads/cli/{channel}/{asset}` | `sys.bootstrap` CLI mirroring | Downloadable CLI binaries. |
 | `downloads/cli/{channel}/{asset}.sha256` | `sys.bootstrap` CLI mirroring | CLI checksums. |
 | `downloads/cli/default-channel.txt` | `sys.bootstrap` | Default CLI release channel. |
-| `process-source-overlays/{pid}/{packageId}/manifest.json` | Package source mount, `pkg source` | Manifest of staged package source edits for one process/package. |
-| `process-source-overlays/{pid}/{packageId}/files/{path}` | Package source mount, `pkg source` | Staged file content for package source puts. |
+| `process-source-overlays/{pid}/{packageId}/manifest.json` | Package source overlay, `pkg source` | Manifest of staged package source edits for one process/package. |
+| `process-source-overlays/{pid}/{packageId}/files/{path}` | Package source overlay, `pkg source` | Staged file content for package source puts. |
 
 Process media is deleted by prefix when the process is reset or killed. Package artifacts are content-addressed by hash and referenced from the Kernel `packages` table.
 
@@ -106,7 +106,7 @@ Workspace repos contain platform metadata under `.gsv/`:
 .gsv/processes/{pid}/chat.jsonl
 ```
 
-Package source mounts are always visible for installed packages the process identity can see. Sources owned by the current user are writable through a process-local R2 overlay; `pkg source status`, `pkg source diff`, `pkg source commit`, and `pkg source discard` make commit/discard explicit. Other package sources are read-only. Workspace and home knowledge repos are writable through the filesystem; generic repository operations use `repo.*`, and Wiki-specific behavior uses the higher-level knowledge interface.
+Package sources are visible for installed packages the process identity can see. Sources owned by the current user are writable through a process-local R2 overlay; `pkg source status`, `pkg source diff`, `pkg source commit`, and `pkg source discard` make commit/discard explicit. Other package sources are read-only. Workspace and home knowledge repos are writable through the filesystem; generic repository operations use `repo.*`, and Wiki-specific behavior uses the higher-level knowledge interface.
 
 ## Package Runtime Storage
 

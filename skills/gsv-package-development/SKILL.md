@@ -27,7 +27,7 @@ pkg create --repo <username>/<repo> --template web-ui --enable
 pkg create --repo <username>/<repo> --template command --enable
 ```
 
-Then edit the mounted source under `/src/packages/<package>`.
+Then edit the package source under `/src/packages/<package>`.
 
 ## Manifest Shape
 

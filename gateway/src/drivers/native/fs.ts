@@ -99,7 +99,6 @@ function makeFs(ctx: KernelContext): GsvFs {
       scopes: visiblePackageScopesForActor(packageScopeOwner),
     }),
     repos: handleRepoList(undefined, ctx).repos,
-    mounts: ctx.processId ? ctx.procs.getMounts(ctx.processId) : null,
     processId: ctx.processId ?? null,
     config: ctx.config,
   });

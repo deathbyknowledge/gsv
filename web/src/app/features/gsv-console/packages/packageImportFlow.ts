@@ -122,7 +122,7 @@ export function buildPackageReviewPrompt(pkg: ConsolePackage, packages: readonly
   const entrypoints = pkg.entrypoints.length > 0
     ? pkg.entrypoints.map((entrypoint) => `${entrypoint.name}:${entrypoint.kind}`).join(", ")
     : "none";
-  const sourcePath = `/src/packages/${packageSourcePathNameForPackage(pkg, packages)}`;
+  const sourcePath = packageSourcePathForPackage(pkg, packages);
 
   return [
     `Review the imported package "${pkg.name}".`,
@@ -153,18 +153,22 @@ export function buildPackageReviewPrompt(pkg: ConsolePackage, packages: readonly
 }
 
 export function buildPackageReviewAssignmentContext(pkg: ConsolePackage, packages: readonly ConsolePackage[]): string {
-  const sourcePath = `/src/packages/${packageSourcePathNameForPackage(pkg, packages)}`;
+  const sourcePath = packageSourcePathForPackage(pkg, packages);
   return [
     "# Package Review",
     "",
     `You are reviewing the imported package "${pkg.name}".`,
-    `The package source is mounted at ${sourcePath}, and the process starts there.`,
+    `The package source is available at ${sourcePath}, and the process starts there.`,
     "",
     "Treat this as a focused code review for whether the package should be enabled.",
     "Prioritize manifest, entrypoints, declared capabilities, host bridge usage, filesystem writes, shell execution, process spawning, network access, eval, and destructive actions.",
     "Keep evidence concrete. If a command fails, note it briefly and continue with other review evidence.",
     "Do not approve the package unless the reviewed source and requested capabilities match the user's intent.",
   ].join("\n");
+}
+
+export function packageSourcePathForPackage(pkg: ConsolePackage, packages: readonly ConsolePackage[]): string {
+  return `/src/packages/${packageSourcePathNameForPackage(pkg, packages)}`;
 }
 
 function packageSourcePathNameForPackage(pkg: ConsolePackage, packages: readonly ConsolePackage[]): string {

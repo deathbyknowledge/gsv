@@ -329,7 +329,6 @@ function parseProcSpawnCommand(args: string[]): ProcSpawnArgs {
   let cwd: string | undefined;
   let interactive: boolean | undefined;
   let assignment: ProcSpawnArgs["assignment"];
-  let mounts: ProcSpawnArgs["mounts"];
   const positional: string[] = [];
 
   for (let index = 0; index < args.length; index += 1) {
@@ -374,11 +373,6 @@ function parseProcSpawnCommand(args: string[]): ProcSpawnArgs {
       assignment = JSON.parse(requireShellOptionValue(args[index], current)) as ProcSpawnArgs["assignment"];
       continue;
     }
-    if (current === "--mounts-json") {
-      index += 1;
-      mounts = JSON.parse(requireShellOptionValue(args[index], current)) as ProcSpawnArgs["mounts"];
-      continue;
-    }
     positional.push(current);
   }
 
@@ -392,7 +386,6 @@ function parseProcSpawnCommand(args: string[]): ProcSpawnArgs {
     ...(cwd ? { cwd } : {}),
     ...(interactive !== undefined ? { interactive } : {}),
     ...(assignment ? { assignment } : {}),
-    ...(mounts ? { mounts } : {}),
   };
 }
 

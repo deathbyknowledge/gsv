@@ -6,7 +6,6 @@ import type {
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { RepoSummary } from "@humansandmachines/gsv/protocol";
 import type { InstalledPackageRecord } from "../../kernel/packages";
-import type { ProcessMount } from "../../kernel/processes";
 import type { ExtendedMountStat, FsSearchBackendResult, MountBackend } from "../mount";
 import {
   RipgitClient,
@@ -30,7 +29,6 @@ export type ProcessSourceBackendOptions = {
   ripgit: RipgitClient | null;
   packages: InstalledPackageRecord[];
   repos?: RepoSummary[] | null;
-  mounts?: ProcessMount[] | null;
   processId?: string | null;
   config?: SourceConfig | null;
 };
@@ -38,7 +36,7 @@ export type ProcessSourceBackendOptions = {
 type SourcePackage = {
   record: InstalledPackageRecord;
   name: string;
-  mountPath: string;
+  rootPath: string;
   repo: string;
   sourceRef: string;
   sourceSubdir: string;
@@ -50,7 +48,7 @@ type SourceRepo = {
   owner: string;
   name: string;
   repo: string;
-  mountPath: string;
+  rootPath: string;
   ref: string;
   writable: boolean;
 };
@@ -121,10 +119,10 @@ export function createProcessSourceBackend(
     return null;
   }
 
-  return new ProcessSourceMountBackend(options);
+  return new ProcessSourceBackend(options);
 }
 
-export function isProcessSourceMountPath(path: string): boolean {
+export function isProcessSourcePath(path: string): boolean {
   const normalized = normalizePath(path);
   return normalized === "/src" || normalized.startsWith("/src/");
 }
@@ -172,7 +170,7 @@ export function packageSourcePathNameForRecord<
   return packageSourcePathName(target);
 }
 
-class ProcessSourceMountBackend implements MountBackend {
+class ProcessSourceBackend implements MountBackend {
   private readonly identity: ProcessIdentity;
   private readonly storage: R2Bucket | null;
   private readonly ripgit: RipgitClient;
@@ -187,12 +185,12 @@ class ProcessSourceMountBackend implements MountBackend {
     this.ripgit = options.ripgit!;
     this.processId = options.processId ?? null;
     this.config = options.config ?? null;
-    this.packages = visibleSourcePackages(options.packages, options.identity, options.mounts);
-    this.repos = visibleSourceRepos(options.repos, options.packages, options.mounts);
+    this.packages = visibleSourcePackages(options.packages, options.identity);
+    this.repos = visibleSourceRepos(options.repos);
   }
 
   handles(path: string): boolean {
-    return isProcessSourceMountPath(path);
+    return isProcessSourcePath(path);
   }
 
   async readFile(path: string): Promise<string> {
@@ -498,11 +496,11 @@ class ProcessSourceMountBackend implements MountBackend {
   }
 
   async chmod(path: string): Promise<void> {
-    throw new Error(`EPERM: source mount modes are managed by ripgit '${normalizePath(path)}'`);
+    throw new Error(`EPERM: source path modes are managed by ripgit '${normalizePath(path)}'`);
   }
 
   async chown(path: string): Promise<void> {
-    throw new Error(`EPERM: source mount ownership is managed by ripgit '${normalizePath(path)}'`);
+    throw new Error(`EPERM: source path ownership is managed by ripgit '${normalizePath(path)}'`);
   }
 
   async utimes(path: string): Promise<void> {
@@ -556,7 +554,7 @@ class ProcessSourceMountBackend implements MountBackend {
       query,
       sourcePrefix || undefined,
     );
-    const packageRoot = pkg.mountPath;
+    const packageRoot = pkg.rootPath;
     const sourceSubdir = normalizeRepoPath(pkg.sourceSubdir);
     return {
       truncated: result.truncated,
@@ -594,7 +592,7 @@ class ProcessSourceMountBackend implements MountBackend {
     return {
       truncated: result.truncated,
       matches: result.matches.map((match) => ({
-        path: `${repo.mountPath}/${match.path}`.replace(/\/+$/g, ""),
+        path: `${repo.rootPath}/${match.path}`.replace(/\/+$/g, ""),
         line: match.line,
         content: match.content,
       })),
@@ -609,10 +607,10 @@ class ProcessSourceMountBackend implements MountBackend {
     const normalizedPath = normalizePath(path);
     let pkg: SourcePackage | null = null;
     for (const candidate of this.packages) {
-      if (normalizedPath !== candidate.mountPath && !normalizedPath.startsWith(`${candidate.mountPath}/`)) {
+      if (normalizedPath !== candidate.rootPath && !normalizedPath.startsWith(`${candidate.rootPath}/`)) {
         continue;
       }
-      if (!pkg || candidate.mountPath.length > pkg.mountPath.length) {
+      if (!pkg || candidate.rootPath.length > pkg.rootPath.length) {
         pkg = candidate;
       }
     }
@@ -621,9 +619,9 @@ class ProcessSourceMountBackend implements MountBackend {
     }
     return {
       pkg,
-      relativePath: normalizedPath === pkg.mountPath
+      relativePath: normalizedPath === pkg.rootPath
         ? ""
-        : normalizeRepoPath(normalizedPath.slice(pkg.mountPath.length + 1)),
+        : normalizeRepoPath(normalizedPath.slice(pkg.rootPath.length + 1)),
       normalizedPath,
     };
   }
@@ -647,16 +645,16 @@ class ProcessSourceMountBackend implements MountBackend {
   } | null {
     const normalizedPath = normalizePath(path);
     const repo = this.repos.find((candidate) =>
-      normalizedPath === candidate.mountPath || normalizedPath.startsWith(`${candidate.mountPath}/`)
+      normalizedPath === candidate.rootPath || normalizedPath.startsWith(`${candidate.rootPath}/`)
     );
     if (!repo) {
       return null;
     }
     return {
       repo,
-      relativePath: normalizedPath === repo.mountPath
+      relativePath: normalizedPath === repo.rootPath
         ? ""
-        : normalizeRepoPath(normalizedPath.slice(repo.mountPath.length + 1)),
+        : normalizeRepoPath(normalizedPath.slice(repo.rootPath.length + 1)),
       normalizedPath,
     };
   }
@@ -666,8 +664,8 @@ class ProcessSourceMountBackend implements MountBackend {
     if (normalizedPath !== "/src" && !normalizedPath.startsWith("/src/")) {
       return null;
     }
-    if (this.packages.some((pkg) => pkg.mountPath === normalizedPath) ||
-      this.repos.some((repo) => repo.mountPath === normalizedPath)) {
+    if (this.packages.some((pkg) => pkg.rootPath === normalizedPath) ||
+      this.repos.some((repo) => repo.rootPath === normalizedPath)) {
       return null;
     }
     const entries = new Set<string>();
@@ -692,10 +690,10 @@ class ProcessSourceMountBackend implements MountBackend {
       }
     }
     for (const pkg of this.packages) {
-      if (!pkg.mountPath.startsWith(`${normalizedPath}/`)) {
+      if (!pkg.rootPath.startsWith(`${normalizedPath}/`)) {
         continue;
       }
-      const remainder = pkg.mountPath.slice(normalizedPath.length + 1);
+      const remainder = pkg.rootPath.slice(normalizedPath.length + 1);
       const [entry] = remainder.split("/");
       if (entry) {
         entries.add(entry);
@@ -718,7 +716,7 @@ class ProcessSourceMountBackend implements MountBackend {
     if (!entries) {
       return null;
     }
-    return this.packages.filter((pkg) => normalizedPath === "/src" || pkg.mountPath.startsWith(`${normalizedPath}/`));
+    return this.packages.filter((pkg) => normalizedPath === "/src" || pkg.rootPath.startsWith(`${normalizedPath}/`));
   }
 
   private virtualDirectoryRepos(path: string): SourceRepo[] | null {
@@ -1231,38 +1229,8 @@ export async function discardProcessSourceChanges(
 function visibleSourcePackages(
   records: InstalledPackageRecord[],
   identity: ProcessIdentity,
-  mounts?: ProcessMount[] | null,
 ): SourcePackage[] {
   const pathNames = packageSourcePathNameMap(records);
-  const normalizedMounts = normalizeSourceMounts(mounts);
-  if (normalizedMounts.length > 0) {
-    const packages: SourcePackage[] = [];
-    for (const mount of normalizedMounts) {
-      const record = sourceRecordForMount(records, mount);
-      if (!record) {
-        continue;
-      }
-      const defaultName = pathNames.get(record) ?? packageSourcePathNameForRecord(record, records);
-      const mountPath = normalizePath(mount.mountPath);
-      packages.push(sourcePackageForRecord(
-        record,
-        identity,
-        sourceNameForMountPath(mountPath, defaultName),
-        {
-          mountPath,
-          repo: mount.repo,
-          sourceRef: mount.ref,
-          sourceSubdir: normalizeRepoPath(mount.subdir) || ".",
-          resolvedCommit: mount.resolvedCommit,
-        },
-      ));
-    }
-    return packages.sort((left, right) => left.mountPath.localeCompare(right.mountPath));
-  }
-  if (mounts) {
-    return [];
-  }
-
   const packages: SourcePackage[] = [];
   for (const record of records) {
     const name = pathNames.get(record);
@@ -1276,17 +1244,11 @@ function visibleSourcePackages(
 
 function visibleSourceRepos(
   summaries?: RepoSummary[] | null,
-  records?: InstalledPackageRecord[],
-  mounts?: ProcessMount[] | null,
 ): SourceRepo[] {
-  const hiddenPackageRepos = mounts ? packageSourceRepos(records ?? []) : null;
   const repos = new Map<string, SourceRepo>();
   for (const summary of summaries ?? []) {
     const parsed = sourceRepoForSummary(summary);
     if (!parsed) {
-      continue;
-    }
-    if (hiddenPackageRepos?.has(parsed.repo)) {
       continue;
     }
     repos.set(parsed.repo, parsed);
@@ -1297,19 +1259,6 @@ function visibleSourceRepos(
   });
 }
 
-function packageSourceRepos(records: InstalledPackageRecord[]): Set<string> {
-  const repos = new Set<string>();
-  for (const record of records) {
-    try {
-      const parsed = parseRepoSlug(record.manifest.source.repo);
-      repos.add(`${parsed.owner}/${parsed.repo}`);
-    } catch {
-      continue;
-    }
-  }
-  return repos;
-}
-
 function sourceRepoForSummary(summary: RepoSummary): SourceRepo | null {
   try {
     const parsed = parseRepoSlug(summary.repo || `${summary.owner}/${summary.name}`);
@@ -1317,7 +1266,7 @@ function sourceRepoForSummary(summary: RepoSummary): SourceRepo | null {
       owner: parsed.owner,
       name: parsed.repo,
       repo: `${parsed.owner}/${parsed.repo}`,
-      mountPath: `/src/repos/${parsed.owner}/${parsed.repo}`,
+      rootPath: `/src/repos/${parsed.owner}/${parsed.repo}`,
       ref: DEFAULT_REPO_REF,
       writable: summary.writable,
     };
@@ -1351,14 +1300,11 @@ function sourcePackageForOptions(
   options: ProcessSourceBackendOptions,
   record: InstalledPackageRecord,
 ): SourcePackage {
-  const packages = visibleSourcePackages(options.packages, options.identity, options.mounts);
+  const packages = visibleSourcePackages(options.packages, options.identity);
   const targetKey = packageSourceRecordKey(record);
   const found = packages.find((pkg) => packageSourceRecordKey(pkg.record) === targetKey);
   if (found) {
     return found;
-  }
-  if (options.mounts) {
-    throw new Error(`Package source is not mounted: ${record.manifest.name}`);
   }
   return sourcePackageForRecord(record, options.identity, packageSourcePathNameForRecord(record, options.packages));
 }
@@ -1368,7 +1314,7 @@ function sourcePackageForRecord(
   identity: ProcessIdentity,
   name = packageSourcePathName(record),
   source?: {
-    mountPath?: string;
+    rootPath?: string;
     repo?: string;
     sourceRef?: string;
     sourceSubdir?: string;
@@ -1379,7 +1325,7 @@ function sourcePackageForRecord(
   return {
     record,
     name,
-    mountPath: source?.mountPath ?? defaultPackageSourceMountPath(name),
+    rootPath: source?.rootPath ?? defaultPackageSourceRootPath(name),
     repo: source?.repo ?? manifestSource.repo,
     sourceRef: source?.sourceRef ?? manifestSource.ref,
     sourceSubdir: normalizeRepoPath(source?.sourceSubdir ?? manifestSource.subdir) || ".",
@@ -1388,41 +1334,8 @@ function sourcePackageForRecord(
   };
 }
 
-function normalizeSourceMounts(mounts: ProcessMount[] | null | undefined): ProcessMount[] {
-  return (mounts ?? [])
-    .filter((mount) => mount.kind === "ripgit-source")
-    .map((mount) => ({
-      ...mount,
-      mountPath: normalizePath(mount.mountPath),
-      subdir: normalizeRepoPath(mount.subdir) || ".",
-    }))
-    .filter((mount) => mount.mountPath === "/src" || mount.mountPath.startsWith("/src/"));
-}
-
-function sourceRecordForMount(
-  records: InstalledPackageRecord[],
-  mount: ProcessMount,
-): InstalledPackageRecord | null {
-  if (!mount.packageId) {
-    return null;
-  }
-  if (mount.scope) {
-    const mountKey = packageSourceRecordKey({ packageId: mount.packageId, scope: mount.scope });
-    return records.find((record) => packageSourceRecordKey(record) === mountKey) ?? null;
-  }
-  return records.find((record) => record.packageId === mount.packageId) ?? null;
-}
-
-function defaultPackageSourceMountPath(name: string): string {
+function defaultPackageSourceRootPath(name: string): string {
   return `/src/packages/${name}`;
-}
-
-function sourceNameForMountPath(mountPath: string, fallback: string): string {
-  const parts = normalizePath(mountPath).split("/").filter(Boolean);
-  if (parts[0] === "src" && parts[1] === "packages" && parts[2]) {
-    return parts[2];
-  }
-  return sanitizePackageSourcePathSegment(parts.join("-")) || fallback;
 }
 
 function compareSourcePathEntries<T extends Pick<InstalledPackageRecord, "packageId" | "scope" | "manifest">>(

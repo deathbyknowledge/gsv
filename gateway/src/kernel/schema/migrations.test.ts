@@ -31,7 +31,7 @@ function createTableStatement(name: string): string {
 describe("kernel schema migrations", () => {
   it("starts the kernel component at a v1 baseline", () => {
     expect(KERNEL_SCHEMA_COMPONENT).toBe("kernel");
-    expect(KERNEL_MIGRATIONS).toHaveLength(2);
+    expect(KERNEL_MIGRATIONS).toHaveLength(3);
     expect(KERNEL_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_kernel_schema",
@@ -39,6 +39,10 @@ describe("kernel schema migrations", () => {
     expect(KERNEL_MIGRATIONS[1]).toMatchObject({
       id: 2,
       name: "remove_device_lifecycle",
+    });
+    expect(KERNEL_MIGRATIONS[2]).toMatchObject({
+      id: 3,
+      name: "remove_process_mounts",
     });
   });
 
@@ -87,6 +91,10 @@ describe("kernel schema migrations", () => {
     expect(processes).toContain("cwd TEXT NOT NULL");
     expect(processes).toContain("context_files_json TEXT NOT NULL DEFAULT '[]'");
     expect(processes).toContain("active_conversation_id TEXT");
+  });
+
+  it("removes obsolete process mount metadata", () => {
+    expect(normalizedStatements()).toContain("ALTER TABLE processes DROP COLUMN mounts");
   });
 
   it("includes current indexes owned by the kernel stores", () => {

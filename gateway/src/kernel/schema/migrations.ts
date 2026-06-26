@@ -1,6 +1,7 @@
 import { runSqlMigrations, type SqlMigration } from "../../schema/runner";
 import { KERNEL_V001_INITIAL_SCHEMA } from "./v001_initial";
 import { KERNEL_V002_REMOVE_DEVICE_LIFECYCLE } from "./v002_remove_device_lifecycle";
+import { KERNEL_V003_REMOVE_PROCESS_MOUNTS } from "./v003_remove_process_mounts";
 
 // Used by Kernel DO startup before the individual stores initialize.
 export const KERNEL_SCHEMA_COMPONENT = "kernel";
@@ -8,6 +9,7 @@ export const KERNEL_SCHEMA_COMPONENT = "kernel";
 export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V001_INITIAL_SCHEMA,
   KERNEL_V002_REMOVE_DEVICE_LIFECYCLE,
+  KERNEL_V003_REMOVE_PROCESS_MOUNTS,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {

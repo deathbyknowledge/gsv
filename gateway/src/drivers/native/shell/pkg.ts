@@ -34,7 +34,6 @@ import {
 } from "../../../kernel/repo";
 import {
   packageRouteBase,
-  packageScopeEquals,
   visiblePackageScopesForActor,
   type InstalledPackageRecord,
   type PackageEntrypoint,
@@ -340,38 +339,7 @@ function currentSourcePackage(ctx: KernelContext, cwd: string): InstalledPackage
       return found;
     }
   }
-  return currentMountedSourcePackage(ctx, normalizedCwd, packages);
-}
-
-function currentMountedSourcePackage(
-  ctx: KernelContext,
-  normalizedCwd: string,
-  packages: InstalledPackageRecord[],
-): InstalledPackageRecord | null {
-  const mounts = ctx.processId ? ctx.procs.getMounts(ctx.processId) : [];
-  let matchedMount: (typeof mounts)[number] | undefined;
-  let matchedLength = -1;
-  for (const mount of mounts) {
-    const mountPath = normalizePath(mount.mountPath);
-    if (
-      mount.kind !== "ripgit-source" ||
-      !mount.packageId ||
-      (normalizedCwd !== mountPath && !normalizedCwd.startsWith(`${mountPath}/`))
-    ) {
-      continue;
-    }
-    if (mountPath.length > matchedLength) {
-      matchedMount = mount;
-      matchedLength = mountPath.length;
-    }
-  }
-  if (!matchedMount?.packageId) {
-    return null;
-  }
-  return packages.find((candidate) =>
-    candidate.packageId === matchedMount.packageId &&
-    (!matchedMount.scope || packageScopeEquals(candidate.scope, matchedMount.scope))
-  ) ?? null;
+  return null;
 }
 
 async function runPkgSourceCommand(args: string[], ctx: KernelContext, cwd: string): Promise<ExecResult> {
@@ -433,7 +401,6 @@ function processSourceOptions(ctx: KernelContext) {
     storage: ctx.env.STORAGE,
     ripgit: ctx.env.RIPGIT ? new RipgitClient(ctx.env.RIPGIT) : null,
     packages: ctx.packages.list({ scopes: visiblePackageScopesForShellContext(ctx) }),
-    mounts: ctx.processId ? ctx.procs.getMounts(ctx.processId) : null,
     processId: ctx.processId ?? null,
     config: ctx.config,
   };

@@ -133,7 +133,6 @@ function createBash(
     ripgit: ctx.env.RIPGIT ? new RipgitClient(ctx.env.RIPGIT) : null,
     packages: ctx.packages.list({ scopes: visiblePackageScopesForActor(packageScopeOwner) }),
     repos: handleRepoList(undefined, ctx).repos,
-    mounts: ctx.processId ? ctx.procs.getMounts(ctx.processId) : null,
     processId: ctx.processId ?? null,
     config: ctx.config,
   });

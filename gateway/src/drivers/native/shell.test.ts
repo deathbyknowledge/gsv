@@ -140,9 +140,6 @@ function makeContext(options?: {
     } as never,
     devices: options?.devices ?? null as never,
     procs: {
-      getMounts() {
-        return [];
-      },
       get() {
         return {
           profile: "task",
@@ -229,7 +226,7 @@ describe("native shell execution", () => {
     expect(result.error).toContain("real failure");
   });
 
-  it("uses the owning human's package scopes for agent-backed fs mounts", async () => {
+  it("uses the owning human's package scopes for agent-backed fs", async () => {
     const humanPackage = makePackage({
       packageId: "user:1000:human-tools",
       scope: { kind: "user", uid: 1000 },
@@ -263,15 +260,6 @@ describe("native shell execution", () => {
       },
       procs: {
         getOwnerUid: vi.fn(() => 1000),
-        getMounts: vi.fn(() => [{
-          kind: "ripgit-source",
-          packageId: humanPackage.packageId,
-          mountPath: "/src/packages/human-tools",
-          repo: "root/pkg-test",
-          ref: "main",
-          subdir: ".",
-          resolvedCommit: "abc123",
-        }]),
       } as unknown as KernelContext["procs"],
     });
 
@@ -470,7 +458,6 @@ describe("proc native command", () => {
               cwd: IDENTITY.cwd,
               profile: "init",
               state: "running",
-              mounts: [],
               contextFiles: [],
               createdAt: 1,
             };
@@ -507,7 +494,6 @@ describe("proc native command", () => {
       cwd: IDENTITY.cwd,
       profile: "task",
       state: "running",
-      mounts: [],
       contextFiles: [],
       createdAt: 1,
     };
@@ -571,7 +557,6 @@ describe("proc native command", () => {
             return null;
           },
           getOwnerUid: vi.fn(() => IDENTITY.uid),
-          getMounts: vi.fn(() => []),
           spawn,
         } as unknown as KernelContext["procs"],
         ipcCalls: ipcCalls as unknown as KernelContext["ipcCalls"],
@@ -632,7 +617,6 @@ describe("proc native command", () => {
                 home: "/home/shared-agent",
                 cwd: "/home/shared-agent",
                 state: "idle",
-                mounts: [],
                 contextFiles: [],
                 createdAt: 1,
               };
@@ -707,7 +691,6 @@ describe("proc native command", () => {
                 home: IDENTITY.home,
                 cwd: IDENTITY.cwd,
                 state: "idle",
-                mounts: [],
                 contextFiles: [],
                 createdAt: 1,
               };
@@ -1601,29 +1584,6 @@ describe("pkg shell command", () => {
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain('"ref": "stable"');
     expect(result.stdout).not.toContain('"ref": "dev"');
-    expect(result.stderr).toBe("");
-  });
-
-  it("defaults to the current package from custom source mounts", async () => {
-    const result = await handleShellExec(
-      { input: "pkg manifest", cwd: "/src/package/src" },
-      makeContext({
-        procs: {
-          getMounts: vi.fn(() => [{
-            kind: "ripgit-source",
-            mountPath: "/src/package",
-            packageId: "import:root/pkg-test:.",
-            repo: "root/pkg-test",
-            ref: "main",
-            resolvedCommit: "abc123",
-            subdir: ".",
-          }]),
-        } as Partial<KernelContext["procs"]>,
-      }),
-    );
-
-    expect(result.ok).toBe(true);
-    expect(result.stdout).toContain('"name": "sample-console"');
     expect(result.stderr).toBe("");
   });
 

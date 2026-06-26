@@ -20,7 +20,7 @@ export {
   diffProcessSourceChanges,
   discardProcessSourceChanges,
   getProcessSourceStatus,
-  isProcessSourceMountPath,
+  isProcessSourcePath,
   packageSourcePathNameForRecord,
   packageSourcePathNameMap,
   packageSourcePathName,

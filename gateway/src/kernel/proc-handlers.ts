@@ -19,7 +19,6 @@ import type {
   ProcIpcSendArgs,
   ProcIpcSendResult,
   ProcSpawnAssignment,
-  ProcSpawnMountSpec,
   ProcSpawnArgs,
   ProcSpawnResult,
   ProcSendArgs,
@@ -27,17 +26,7 @@ import type {
 import type { InteractionOrigin } from "../syscalls/interaction-origin";
 import { sendFrameToProcess } from "../shared/utils";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
-import type { ProcessMount } from "./processes";
-import {
-  normalizePath,
-  packageSourcePathNameForRecord,
-  resolveUserPath,
-} from "../fs";
-import { resolveInstalledPackage } from "./pkg";
-import {
-  type InstalledPackageRecord,
-  visiblePackageScopesForActor,
-} from "./packages";
+import { resolveUserPath } from "../fs";
 import { ensureDefaultConversationExecutor, ensurePersonalAgent } from "./agents";
 import { accountIdentity } from "./accounts";
 import { canOwnerDelegateRunAs } from "./account-access";
@@ -97,8 +86,7 @@ export async function handleProcSpawn(
   const explicitRunAs = typeof args.runAs === "string" && args.runAs.trim().length > 0;
   const hasCustomSpawnOptions =
     args.assignment !== undefined ||
-    args.cwd !== undefined ||
-    args.mounts !== undefined;
+    args.cwd !== undefined;
 
   // An interactive, top-level spawn with no explicit run-as targets the caller's
   // default ("inbox") conversation with their personal agent — the stable
@@ -199,15 +187,9 @@ export async function handleProcSpawn(
     baseIdentity = agent.identity;
   }
 
-  const hasRequestedMounts = args.mounts !== undefined;
-  const materializedMounts = materializeSpawnMounts(args.mounts, ctx, ownerUid);
-  if (!materializedMounts.ok) {
-    return { ok: false, error: materializedMounts.error };
-  }
-
   const spawnIdentity: ProcessIdentity = {
     ...baseIdentity,
-    cwd: resolveSpawnCwd(args.cwd, baseIdentity, hasRequestedMounts ? materializedMounts.mounts : []),
+    cwd: resolveSpawnCwd(args.cwd, baseIdentity),
   };
 
   const interactive = args.interactive ?? true;
@@ -218,7 +200,6 @@ export async function handleProcSpawn(
     interactive,
     label: args.label,
     cwd: spawnIdentity.cwd,
-    mounts: materializedMounts.mounts,
     contextFiles: args.assignment?.contextFiles ?? [],
   });
 
@@ -778,96 +759,12 @@ function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-type SpawnMountOutcome =
-  | {
-      ok: true;
-      mounts: ProcessMount[];
-    }
-  | {
-      ok: false;
-      error: string;
-    };
-
-type SpawnMountSpecWithRecord = {
-  spec: ProcSpawnMountSpec;
-  record: InstalledPackageRecord;
-};
-
-function materializeSpawnMounts(
-  specs: ProcSpawnMountSpec[] | undefined,
-  ctx: KernelContext,
-  ownerUid: number,
-): SpawnMountOutcome {
-  const mounts: ProcessMount[] = [];
-  const seen = new Set<string>();
-  const sourcePackages = ctx.packages.list({ scopes: visiblePackageScopesForActor({ uid: ownerUid }) });
-  const specsToMount: SpawnMountSpecWithRecord[] = specs
-    ? specs.map((spec) => ({ spec, record: resolveInstalledPackage(spec.packageId, ctx) }))
-    : sourcePackages.map((record) => ({
-      spec: { kind: "package-source" as const, packageId: record.packageId },
-      record,
-    }));
-
-  for (const { spec, record } of specsToMount) {
-    const requestedMountPath = typeof spec.mountPath === "string" && spec.mountPath.trim()
-      ? spec.mountPath
-      : defaultMountPathForPackage(spec, record, sourcePackages);
-    const mountPath = normalizePath(requestedMountPath);
-    if (mountPath === "/" || !mountPath.startsWith("/src")) {
-      return { ok: false, error: `Unsupported mount path: ${mountPath}` };
-    }
-    if (seen.has(mountPath)) {
-      return { ok: false, error: `Conflicting package source mount path: ${mountPath}` };
-    }
-    seen.add(mountPath);
-
-    mounts.push({
-      kind: "ripgit-source",
-      mountPath,
-      packageId: record.packageId,
-      scope: record.scope,
-      repo: record.manifest.source.repo,
-      ref: record.manifest.source.ref,
-      resolvedCommit: record.manifest.source.resolvedCommit ?? null,
-      subdir: spec.kind === "package-source" ? record.manifest.source.subdir : ".",
-    });
-  }
-
-  return { ok: true, mounts };
-}
-
-function defaultMountPathForPackage(
-  spec: ProcSpawnMountSpec,
-  record: InstalledPackageRecord,
-  sourcePackages: InstalledPackageRecord[],
-): string {
-  if (spec.kind === "package-repo") {
-    return `/src/repos/${packageSourceRepoPathName(record)}`;
-  }
-  return `/src/packages/${packageSourcePathNameForRecord(record, sourcePackages)}`;
-}
-
-function packageSourceRepoPathName(record: InstalledPackageRecord): string {
-  return sanitizeMountPathSegment(record.manifest.source.repo) || sanitizeMountPathSegment(record.packageId) || "repo";
-}
-
-function sanitizeMountPathSegment(value: string): string {
-  return value.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
-}
-
-function defaultMountCwd(mounts: ProcessMount[]): string | null {
-  return mounts.find((mount) => mount.mountPath.startsWith("/src/packages/"))?.mountPath
-    ?? mounts[0]?.mountPath
-    ?? null;
-}
-
 function resolveSpawnCwd(
   cwd: string | undefined,
   baseIdentity: ProcessIdentity,
-  mounts: ProcessMount[],
 ): string {
   if (typeof cwd === "string" && cwd.trim().length > 0) {
     return resolveUserPath(cwd, baseIdentity.home, baseIdentity.cwd);
   }
-  return defaultMountCwd(mounts) ?? baseIdentity.cwd;
+  return baseIdentity.cwd;
 }

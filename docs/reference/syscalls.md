@@ -482,7 +482,7 @@ Runtime behavior:
 |---|---|---|
 | `proc.list` | `handleProcList` | Reads the kernel process registry. Root defaults to all processes; non-root defaults to own uid, though an explicit `uid` is currently honored by the handler. |
 | `proc.profile.list` | `handleProcProfileList` | Returns system AI profiles plus enabled package-backed profiles visible to the caller. Package entries are sorted by package name and display name. |
-| `proc.spawn` | `handleProcSpawn` | Validates the AI profile, resolves package profiles, materializes workspace and mounts, registers the process, sends kernel-only `proc.setidentity`, and optionally sends the initial prompt. `init` is singleton; other profiles get UUID pids. |
+| `proc.spawn` | `handleProcSpawn` | Resolves the run-as identity, registers the process, sends kernel-only `proc.setidentity`, and optionally sends the initial prompt. A default interactive top-level spawn reuses the caller's default conversation executor; custom spawns get UUID pids. |
 | `proc.send` | Process DO `handleProcSend` | Defaults `pid` to `init:<uid>` when forwarded and `conversationId` to `default`. Stores media, appends a user message, starts a run if idle, or queues the message if a run is active. Touches workspace activity before forwarding. |
 | `proc.ipc.send` | `handleProcIpcSend` | Process-callable same-owner IPC. Validates that the caller is a registered process, the target exists, and source/target uids match, then sends kernel-only `proc.ipc.deliver` to the target Process DO. The target receives a visible user message envelope and starts or queues a run. |
 | `proc.ipc.call` | `handleProcIpcCall` | Process-callable bounded same-owner IPC. Creates a call id and deadline, delivers the request to the target process, and later sends either `ipc.reply` or `ipc.timeout` to the source process. The syscall returns after acceptance, not after the target replies. |
@@ -503,20 +503,11 @@ Runtime behavior:
 | `proc.conversation.segments` | Process DO | Lists recorded lifecycle segments for `conversationId` or `default`, including archive paths and summary marker ids. |
 | `proc.reset` | Process DO | Checkpoints workspace, archives every non-empty conversation under `/var/sessions/<username>/<pid>/<archiveId>/`, clears active execution state, queues, process media, and all conversation messages, then increments conversation generations. |
 | `proc.ipc.deliver` | Process DO direct path | Kernel-only through public dispatch. Delivers the validated IPC envelope from the kernel into the target conversation. |
-| `proc.setidentity` | Process DO direct path | Kernel-only through public dispatch. Stores pid, identity, profile, and assignment context; `assignment.autoStart` can create a run immediately. |
+| `proc.setidentity` | Process DO direct path | Kernel-only through public dispatch. Stores pid, identity, interaction mode, assignment context, and conversation hydration pointers; `assignment.autoStart` can create a run immediately. |
 
 ```ts
-type ProcWorkspaceSpec =
-  | { mode: "none" }
-  | { mode: "new"; label?: string; kind?: "thread" | "app" | "shared" }
-  | { mode: "inherit" }
-  | { mode: "attach"; workspaceId: string };
-
 type ProcContextFile = { name: string; text: string };
 type ProcSpawnAssignment = { contextFiles: ProcContextFile[]; autoStart?: boolean };
-type ProcSpawnMountSpec =
-  | { kind: "package-source"; packageId: string; mountPath?: string }
-  | { kind: "package-repo"; packageId: string; mountPath?: string };
 
 type ProcHilRequest = {
   requestId: string;
@@ -594,7 +585,7 @@ type ProcIpcCallResult =
 type ProcessSyscalls = {
   "proc.list": {
     args: { uid?: number };
-    result: { processes: Array<{ pid: string; uid: number; profile: AiContextProfile; parentPid: string | null; state: string; label: string | null; createdAt: number; workspaceId: string | null; cwd: string }> };
+    result: { processes: Array<{ pid: string; uid: number; username: string; interactive: boolean; parentPid: string | null; state: string; activeRunId: string | null; activeConversationId: string | null; queuedCount: number; lastActiveAt: number | null; label: string | null; createdAt: number; cwd: string; isDefaultConversation?: boolean }> };
   };
 
   "proc.profile.list": {
@@ -603,8 +594,8 @@ type ProcessSyscalls = {
   };
 
   "proc.spawn": {
-    args: { profile: AiContextProfile; label?: string; prompt?: string; assignment?: ProcSpawnAssignment; parentPid?: string; workspace?: ProcWorkspaceSpec; mounts?: ProcSpawnMountSpec[] };
-    result: { ok: true; pid: string; label?: string; profile: AiContextProfile; workspaceId: string | null; cwd: string } | OperationError;
+    args: { runAs?: string; interactive?: boolean; fresh?: boolean; label?: string; prompt?: string; assignment?: ProcSpawnAssignment; parentPid?: string; cwd?: string };
+    result: { ok: true; pid: string; label?: string; cwd: string } | OperationError;
   };
 
   "proc.send": {
@@ -708,7 +699,7 @@ type ProcessSyscalls = {
   };
 
   "proc.setidentity": {
-    args: { pid: string; identity: ProcessIdentity; profile: AiContextProfile; assignment?: ProcSpawnAssignment };
+    args: { pid: string; identity: ProcessIdentity; interactive?: boolean; assignment?: ProcSpawnAssignment; conversationId?: string; hydrateFrom?: string };
     result: { ok: true; startedRunId?: string };
   };
 };
@@ -1224,7 +1215,7 @@ type ScheduleExpression =
   | { kind: "cron"; expr: string; timezone: string };
 
 type ScheduleTarget =
-  | { kind: "process.spawn"; profile?: string; label?: string; prompt: string; parentPid?: string; workspace?: unknown; mounts?: unknown[]; assignment?: unknown }
+  | { kind: "process.spawn"; runAs?: string; label?: string; prompt: string; parentPid?: string; cwd?: string; assignment?: unknown }
   | { kind: "process.event"; pid: string; conversationId?: string; message: string; data?: Record<string, unknown> };
 
 type ScheduleRecord = {

@@ -70,7 +70,6 @@ function makeContext(
     label: "sam-agent (sam)",
     parentPid: null,
     createdAt: 1,
-    mounts: [],
     contextFiles: [],
   };
   const helperAgent = {

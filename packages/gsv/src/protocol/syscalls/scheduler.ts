@@ -1,7 +1,4 @@
-import type {
-  ProcSpawnAssignment,
-  ProcSpawnMountSpec,
-} from "./proc";
+import type { ProcSpawnAssignment } from "./proc";
 
 export type ScheduleExpression =
   | { kind: "at"; atMs: number }
@@ -24,7 +21,6 @@ export type ScheduleTarget =
       prompt: string;
       parentPid?: string;
       cwd?: string;
-      mounts?: ProcSpawnMountSpec[];
       assignment?: ProcSpawnAssignment;
     }
   | {

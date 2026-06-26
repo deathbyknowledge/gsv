@@ -117,7 +117,6 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
     lastActiveAt: null,
     label: "Alpha",
     createdAt: 100,
-    mounts: [],
     contextFiles: [{ name: "brief.md", text: "Brief" }],
   };
   const otherProcessRecord = {
