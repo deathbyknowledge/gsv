@@ -1,7 +1,7 @@
 import type { ComponentChildren } from "preact";
 import "./IconButton.css";
 
-export type IconButtonGlyph = "back" | "arrowBack" | "menu" | "max" | "min" | "close" | "plus" | "help" | "attention";
+export type IconButtonGlyph = "back" | "arrowBack" | "menu" | "max" | "min" | "close" | "plus" | "help" | "attention" | "refresh" | "newTab";
 export type IconButtonSize = "small" | "medium" | "large" | number;
 
 export interface IconButtonProps {
@@ -112,6 +112,19 @@ const GLYPHS: Record<IconButtonGlyph, ComponentChildren> = {
       >
         !
       </text>
+    </svg>
+  ),
+  refresh: (
+    <svg width="50%" height="50%" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square">
+      <path d="M12.5 4.5 A5 5 0 1 0 13.2 9.5" />
+      <path d="M12.5 1.5 L12.5 4.5 L9.5 4.5" />
+    </svg>
+  ),
+  newTab: (
+    <svg width="50%" height="50%" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square">
+      <path d="M8 3 L3 3 L3 13 L13 13 L13 8" />
+      <path d="M9 7 L13 3" />
+      <path d="M9.5 3 L13 3 L13 6.5" />
     </svg>
   ),
 };

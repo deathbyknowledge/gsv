@@ -23,6 +23,7 @@ import {
 } from "../domain/agentPresentation";
 import type {
   ConsoleAccount,
+  ConsoleAdapter,
   ConsoleAdapterAccount,
   ConsoleConfigEntry,
   ConsoleMcpServer,
@@ -39,6 +40,10 @@ import {
   statusForProcess,
   toneForProcess,
 } from "../runtime/runtimePresentation";
+import {
+  type MessengerFamily,
+  messengerFamilies,
+} from "../messengers/messengerPresentation";
 
 type OverviewRow = {
   id: string;
@@ -136,17 +141,14 @@ function targetRow(target: ConsoleTarget): OverviewRow {
   };
 }
 
-function adapterRow(adapter: ConsoleAdapterAccount): OverviewRow {
-  const hasError = adapter.error.trim().length > 0;
-  const connected = adapter.connected && !hasError;
-  const accountLabel = adapter.accountId.trim();
+function familyRow(family: MessengerFamily): OverviewRow {
   return {
-    id: `${adapter.adapter}:${adapter.accountId}`,
-    icon: adapter.adapter === "telegram" ? "telegram" : adapter.adapter === "discord" ? "discord" : adapter.adapter === "whatsapp" ? "messenger" : "chat",
-    label: formatTokenLabel(adapter.adapter),
-    meta: joinMeta([accountLabel, hasError ? adapter.error : undefined]),
-    tone: connected ? "online" : hasError ? "error" : "idle",
-    statusLabel: hasError ? "ERROR" : undefined,
+    id: family.adapter,
+    icon: family.adapter === "telegram" ? "telegram" : "discord",
+    label: formatTokenLabel(family.adapter),
+    tone: family.status.tone,
+    statusLabel: family.status.label,
+    meta: family.status.tooltip ?? undefined,
   };
 }
 
@@ -217,10 +219,6 @@ function crewCards(accounts: readonly ConsoleAccount[], processes: readonly Cons
 
 function sortTargets(targets: readonly ConsoleTarget[]): ConsoleTarget[] {
   return [...targets].sort((left, right) => Number(right.online) - Number(left.online) || left.label.localeCompare(right.label));
-}
-
-function sortAdapters(adapters: readonly ConsoleAdapterAccount[]): ConsoleAdapterAccount[] {
-  return [...adapters].sort((left, right) => Number(right.connected) - Number(left.connected) || left.adapter.localeCompare(right.adapter));
 }
 
 function sortPackages(packages: readonly ConsolePackage[]): ConsolePackage[] {
@@ -653,6 +651,7 @@ function ModelsTasksPanel({
 
 function FleetPanel({
   adapters,
+  adapterInventory,
   integrations,
   onOpenListCreate,
   onOpenListDetail,
@@ -660,6 +659,7 @@ function FleetPanel({
   targets,
 }: {
   adapters: readonly ConsoleAdapterAccount[];
+  adapterInventory: readonly ConsoleAdapter[];
   integrations: readonly ConsoleMcpServer[];
   onOpenListCreate?: OpenListCreate;
   onOpenListDetail?: OpenListDetail;
@@ -667,7 +667,7 @@ function FleetPanel({
   targets: readonly ConsoleTarget[];
 }) {
   const targetRows = sortTargets(targets).map(targetRow);
-  const adapterRows = sortAdapters(adapters).map(adapterRow);
+  const adapterRows = messengerFamilies(adapters, adapterInventory).map(familyRow);
   const integrationRows = sortMcpServers(integrations).map(integrationRow);
   const openList = (surface: ConsoleOverviewTarget) => onOpenSurface ? () => onOpenSurface(surface) : undefined;
   const openDetail = (kind: ConsoleListKind, row: OverviewRow, surface: ConsoleOverviewTarget) => (
@@ -700,7 +700,7 @@ function FleetPanel({
               title="MESSENGERS"
               onClick={openList("messengers")}
             />
-            {adapterRows.length === 0 ? <EmptyRow label="NO MESSENGERS" /> : rowLimit(adapterRows, 3).map((row) => (
+            {rowLimit(adapterRows, 3).map((row) => (
               <MiniRow key={row.id} row={row} onClick={openDetail("messengers", row, "messengers")} />
             ))}
             <AddRow label="CONNECT MESSENGER" onClick={openCreate("messengers", "messengers")} />
@@ -807,6 +807,7 @@ export function SettingsOverviewDashboard({
       <div class="gsv-settings-right">
         <FleetPanel
           adapters={data.adapters}
+          adapterInventory={data.adapterInventory}
           integrations={data.mcpServers}
           onOpenListCreate={onOpenListCreate}
           onOpenListDetail={onOpenListDetail}

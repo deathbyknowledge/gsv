@@ -1,0 +1,39 @@
+.gsv-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--link, #8fb6ff);
+  font-family: var(--gsv-font-mono);
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  text-decoration: none;
+  cursor: pointer;
+  transition: color 120ms ease;
+}
+
+.gsv-link-label {
+  border-bottom: 1px solid var(--link, #8fb6ff);
+  padding-bottom: 2px;
+  transition: border-color 120ms ease;
+}
+
+.gsv-link:hover,
+.gsv-link:focus-visible {
+  color: var(--link-hover, #b8d2ff);
+}
+
+.gsv-link:hover .gsv-link-label,
+.gsv-link:focus-visible .gsv-link-label {
+  border-color: var(--link-hover, #b8d2ff);
+}
+
+.gsv-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 1px;
+}
+
+.gsv-link-arrow {
+  font-size: 12px;
+  line-height: 1;
+}

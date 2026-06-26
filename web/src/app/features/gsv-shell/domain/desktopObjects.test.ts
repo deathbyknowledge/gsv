@@ -140,10 +140,17 @@ describe("buildDesktopObjectsFromConsole", () => {
       kind: "machines",
       detailId: "hank-linux",
     });
+    expect(objects.find((object) => object.id === "messengers")?.children).toHaveLength(2);
     expect(objects.find((object) => object.id === "messengers")?.children[0]?.route).toEqual({
       kind: "messengers",
-      detailId: "discord:crew",
+      detailId: "telegram",
     });
+    expect(objects.find((object) => object.id === "messengers")?.children[1]?.route).toEqual({
+      kind: "messengers",
+      detailId: "discord",
+    });
+    expect(objects.find((object) => object.id === "messengers")?.children[0]?.statusLabel).toBe("NOT ENABLED");
+    expect(objects.find((object) => object.id === "messengers")?.children[1]?.statusLabel).toBe("CONNECTED");
     expect(objects.find((object) => object.id === "integrations")?.children[0]?.route).toEqual({
       kind: "integrations",
       detailId: "custom-mcp",

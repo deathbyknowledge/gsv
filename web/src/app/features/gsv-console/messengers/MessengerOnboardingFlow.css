@@ -1,165 +1,132 @@
-.gsv-messenger-onboarding {
+/* Connect messenger bot — object-detail header + a progressive-disclosure
+   wizard (one large, well-spaced step at a time). Header mirrors
+   ConsoleDetailPage so it reads as the same family as the detail pages. */
+.gsv-connect {
+  flex: 1;
+  min-width: 0; /* shrink to the console column instead of min-content */
   min-height: 100%;
-  display: grid;
-  place-items: start center;
-  padding: clamp(18px, 3vw, 34px);
+  background: transparent;
+  /* respond to the column's OWN width, not the viewport (ChatDock/rail vary it) */
+  container-type: inline-size;
+  container-name: connect;
 }
 
-.gsv-messenger-onboarding-shell {
-  width: min(760px, 100%);
-  display: grid;
-  gap: 18px;
+.gsv-connect-shell {
+  width: min(720px, 100%);
+  margin: 0 auto;
+  /* generous bottom room so the in-card footer clears the floating chat dock */
+  padding: 34px 26px 104px;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
 }
 
-.gsv-messenger-onboarding-head {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: start;
-  gap: 15px;
-}
+/* Header + blurb use the shared ConsoleDetailHeader / .gsv-console-detail-blurb. */
 
-.gsv-messenger-onboarding-head > div {
-  min-width: 0;
-}
-
-.gsv-messenger-onboarding-kicker {
-  display: block;
-  margin-bottom: 7px;
-  color: var(--accent);
-  font-size: 9px;
-  letter-spacing: 0.18em;
-}
-
-.gsv-messenger-onboarding-head h2 {
-  margin: 0;
-  color: var(--text-hi);
-  font-size: clamp(21px, 3vw, 32px);
-  line-height: 1;
-  letter-spacing: 0;
-  text-transform: uppercase;
-}
-
-.gsv-messenger-onboarding-head p {
-  margin: 10px 0 0;
-  max-width: 62ch;
-  color: var(--label);
-  font-family: var(--gsv-font-prose);
-  font-size: 13px;
-  line-height: 1.45;
-}
-
-.gsv-messenger-onboarding-stepper {
+/* ── Stepper ──────────────────────────────────────────────────────── */
+.gsv-connect-stepper {
   display: flex;
   justify-content: center;
-  padding: 2px 0 4px;
+  padding: 6px 0 2px;
 }
 
-.gsv-messenger-onboarding-stepper .gsv-sp,
-.gsv-messenger-onboarding-stepper .gsv-sp-step {
-  pointer-events: none;
+/* ── Current step panel (large + spaced) ──────────────────────────── */
+.gsv-connect-step {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-raised);
+  background: var(--panel);
+  box-shadow: inset 0 0 0 1px var(--frame-inset), 0 0 30px rgba(80, 70, 180, 0.1);
 }
 
-.gsv-messenger-flow-panel {
-  display: grid;
-  gap: 22px;
-  padding: 0;
-  overflow: hidden;
+.gsv-connect-step-body {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-height: 200px;
+  padding: 32px 36px 36px;
 }
 
-.gsv-messenger-flow-panel > .gsv-messenger-form-grid,
-.gsv-messenger-flow-panel > .gsv-messenger-form-note,
-.gsv-messenger-flow-panel > .gsv-messenger-form-error,
-.gsv-messenger-flow-panel > .gsv-messenger-challenge,
-.gsv-messenger-flow-panel > p {
-  margin-inline: 22px;
-}
-
-.gsv-messenger-form-grid {
-  display: grid;
-  gap: 18px;
-}
-
-.gsv-messenger-form-grid .lr {
-  border: 1px solid var(--rule-inner) !important;
-  background: rgba(11, 8, 30, 0.48) !important;
-}
-
-.gsv-messenger-form-note,
-.gsv-messenger-form-error {
+.gsv-connect-step-desc {
   margin: 0;
+  max-width: 560px;
+  color: var(--label);
   font-family: var(--gsv-font-prose);
-  font-size: 13px;
-  line-height: 1.55;
+  font-size: 14px;
+  line-height: 1.65;
+  text-wrap: pretty;
 }
 
-.gsv-messenger-form-note {
-  color: var(--online);
-}
-
-.gsv-messenger-form-error {
-  color: var(--error);
-}
-
-.gsv-messenger-challenge {
-  display: grid;
-  gap: 16px;
-  padding: 18px;
-}
-
-.gsv-messenger-challenge p,
-.gsv-messenger-challenge small {
-  margin: 0;
-  color: #9d96d8;
-  font-family: var(--gsv-font-prose);
-  font-size: 13px;
-  line-height: 1.55;
-}
-
-.gsv-messenger-challenge img {
-  width: min(280px, 100%);
-  image-rendering: pixelated;
-  background: #fff;
-}
-
-.gsv-messenger-challenge pre {
-  max-width: 100%;
-  overflow: auto;
-  margin: 0;
-  padding: 14px;
-  border: 1px solid var(--rule-inner);
-  color: var(--text);
-  background: #08061d;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.gsv-messenger-flow-actions {
+.gsv-connect-step-links {
   display: flex;
   flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 16px 20px 20px;
-  border-top: 1px solid var(--rule-inner);
+  gap: 18px;
+  margin-top: 4px;
 }
 
-@media (max-width: 520px) {
-  .gsv-messenger-onboarding {
-    padding: 18px 14px;
+.gsv-connect-token-field {
+  margin-top: 6px;
+  max-width: 520px;
+}
+
+/* ── Success step ─────────────────────────────────────────────────── */
+.gsv-connect-caps {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ListRow rows sit under the THINGS YOU CAN DO SectionHeader, framed like the
+   detail-page sections (border with the header capping the top). */
+.gsv-connect-caps-rows {
+  border: 1px solid var(--border);
+  border-top: none;
+}
+
+/* ── Footer nav — lives INSIDE the card so it can never sit under the
+   floating ChatDock launcher (bottom-right of the viewport). ── */
+.gsv-connect-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 18px 36px 20px;
+  border-top: 1px solid var(--border);
+}
+
+@container connect (max-width: 680px) {
+  .gsv-connect-shell {
+    padding: 22px 16px 96px;
   }
 
-  .gsv-messenger-onboarding-head {
-    grid-template-columns: auto minmax(0, 1fr);
+  .gsv-connect-step-body {
+    padding: 24px 20px 26px;
   }
 
-  .gsv-messenger-onboarding-head > span:last-child {
-    grid-column: 2;
+  .gsv-connect-actions {
+    flex-direction: column-reverse;
+    padding: 16px 20px 18px;
   }
 
-  .gsv-messenger-flow-panel > .gsv-messenger-form-grid,
-  .gsv-messenger-flow-panel > .gsv-messenger-form-note,
-  .gsv-messenger-flow-panel > .gsv-messenger-form-error,
-  .gsv-messenger-flow-panel > .gsv-messenger-challenge,
-  .gsv-messenger-flow-panel > p {
-    margin-inline: 16px;
+  .gsv-connect-actions .gsv-btn {
+    width: 100%;
+  }
+}
+
+/* Below ~520px the four stepper labels collide — keep just the numbered dots. */
+@container connect (max-width: 520px) {
+  .gsv-connect-stepper .gsv-sp-label {
+    display: none;
+  }
+
+  .gsv-connect-shell {
+    padding: 20px 14px 96px;
+  }
+
+  .gsv-connect-step-body {
+    padding: 22px 16px 24px;
+  }
+
+  .gsv-connect-actions {
+    padding: 16px 16px 18px;
   }
 }
