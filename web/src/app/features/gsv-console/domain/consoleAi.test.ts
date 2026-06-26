@@ -3,6 +3,7 @@ import type { ConsoleConfigEntry } from "./consoleModels";
 import {
   defaultModelLabelForConfig,
   modelConfigCount,
+  modelProfilesForConfig,
   overrideConfigEntries,
 } from "./consoleAi";
 
@@ -21,5 +22,30 @@ describe("console AI config classification", () => {
       "gateway/theme",
       "gateway/api_key",
     ]);
+  });
+
+  it("omits sensitive values from parsed model profiles", () => {
+    const profiles = modelProfilesForConfig([
+      {
+        key: "users/1/ai/model_profiles",
+        value: JSON.stringify({
+          profiles: [{
+            id: "fast",
+            name: "Fast",
+            values: {
+              "config/ai/provider": "openai",
+              "config/ai/model": "gpt-5",
+              "config/ai/api_key": "sk-secret",
+            },
+          }],
+        }),
+        redacted: false,
+      },
+    ], 1);
+
+    expect(profiles[0].values).toEqual({
+      "config/ai/provider": "openai",
+      "config/ai/model": "gpt-5",
+    });
   });
 });

@@ -23,6 +23,7 @@ import type {
 import {
   AGENT_MODEL_FIELDS,
   MODEL_PROFILE_FIELDS,
+  MODEL_PROFILE_SECRET_FIELDS,
   RUNTIME_SETTING_GROUPS,
   TOOL_MODEL_GROUPS,
   buildUserAiOverrideKey,
@@ -33,6 +34,7 @@ import {
   effectiveAiValuesForViewer,
   isSensitiveSettingKey,
   modelDisplayName,
+  modelProfileSecretConfigKey,
   modelProfileSummary,
   modelProfilesConfigKey,
   modelProfilesForConfig,
@@ -294,22 +296,24 @@ function ModelSettingsDetail({
       typeLabel="GSV · MODEL PRESET"
       statusLabel={profile ? "SAVED" : "DRAFT"}
       tone={profile ? "online" : "idle"}
-      blurb="Reusable named model stack for agents. Credentials are managed on the default or tool model settings."
+      blurb="Reusable named model stack for agents, including provider credentials when a preset needs its own key."
       parentLabel="MODELS"
       onBack={onBack}
     >
       <ModelProfileForm
+        config={config}
         defaultValues={effectiveValues}
         editable={editable}
         profile={profile}
         profiles={profiles}
+        viewer={viewer}
         onCancel={onBack}
         onDelete={profile ? async () => {
           await saveModelProfiles(viewer, profiles, deleteModelProfile(profiles, profile.id), onSaveEntries);
           onBack();
         } : undefined}
-        onMakeDefault={profile ? async () => {
-          await makeProfileDefault(viewer, profile, onSaveEntries);
+        onMakeDefault={profile ? async (values) => {
+          await makeProfileDefault(viewer, { ...profile, values }, onSaveEntries);
         } : undefined}
         onSave={async (name, values) => {
           const nextProfiles = profile
@@ -487,14 +491,37 @@ async function saveModelProfiles(
   nextProfiles: readonly ConsoleModelProfile[],
   onSaveEntries: (entries: readonly SaveConsoleConfigInput[]) => Promise<void>,
 ): Promise<void> {
-  void currentProfiles;
   if (viewer.uid === null) {
     throw new Error("A signed-in account is required to save model presets.");
   }
-  await onSaveEntries([{
+  const nextIds = new Set(nextProfiles.map((profile) => profile.id));
+  const entries: SaveConsoleConfigInput[] = [{
     key: modelProfilesConfigKey(viewer.uid),
     value: serializeModelProfiles(nextProfiles),
-  }]);
+  }];
+  for (const profile of nextProfiles) {
+    for (const field of MODEL_PROFILE_SECRET_FIELDS) {
+      const value = profile.values[field.key] ?? "";
+      if (value.length > 0) {
+        entries.push({
+          key: modelProfileSecretConfigKey(viewer.uid, profile.id, field.key),
+          value,
+        });
+      }
+    }
+  }
+  for (const profile of currentProfiles) {
+    if (nextIds.has(profile.id)) {
+      continue;
+    }
+    for (const field of MODEL_PROFILE_SECRET_FIELDS) {
+      entries.push({
+        key: modelProfileSecretConfigKey(viewer.uid, profile.id, field.key),
+        value: "",
+      });
+    }
+  }
+  await onSaveEntries(entries);
 }
 
 async function makeProfileDefault(
@@ -505,29 +532,39 @@ async function makeProfileDefault(
   if (viewer.uid === null) {
     throw new Error("A signed-in account is required to update the default model.");
   }
-  await onSaveEntries(MODEL_PROFILE_FIELDS.map((field) => ({
-    key: viewer.isRoot ? field.key : buildUserAiOverrideKey(viewer.uid!, field.key),
-    value: profile.values[field.key] ?? "",
-  })));
+  await onSaveEntries(MODEL_PROFILE_FIELDS.flatMap((field) => {
+    const value = profile.values[field.key] ?? "";
+    if (isSensitiveSettingKey(field.key) && value.length === 0) {
+      return [];
+    }
+    return [{
+      key: viewer.isRoot ? field.key : buildUserAiOverrideKey(viewer.uid!, field.key),
+      value,
+    }];
+  }));
 }
 
 function ModelProfileForm({
+  config,
   defaultValues,
   editable,
   profile,
   profiles,
+  viewer,
   onCancel,
   onDelete,
   onMakeDefault,
   onSave,
 }: {
+  config: readonly ConsoleConfigEntry[];
   defaultValues: Record<string, string>;
   editable: boolean;
   profile: ConsoleModelProfile | null;
   profiles: readonly ConsoleModelProfile[];
+  viewer: SettingsViewer;
   onCancel: () => void;
   onDelete?: () => Promise<void>;
-  onMakeDefault?: () => Promise<void>;
+  onMakeDefault?: (values: Record<string, string>) => Promise<void>;
   onSave: (name: string, values: Record<string, string>) => Promise<void>;
 }) {
   const initialValues = useMemo(
@@ -569,7 +606,7 @@ function ModelProfileForm({
       <div class="gsv-console-settings-form-head">
         <div>
           <h3>{profile ? "Edit Preset" : "New Preset"}</h3>
-          <p>Presets store provider, model, reasoning, and context limits. Credentials stay in model settings.</p>
+          <p>Presets store provider, model, API key, reasoning, and context limits.</p>
         </div>
       </div>
       <div class="gsv-console-settings-fields">
@@ -587,6 +624,7 @@ function ModelProfileForm({
             field={field}
             key={field.key}
             disabled={!editable || pending}
+            redacted={isModelProfileFieldRedacted(config, viewer, profile, field)}
             value={drafts[field.key] ?? ""}
             onChange={(value) => setDrafts((current) => ({ ...current, [field.key]: value }))}
           />
@@ -605,7 +643,7 @@ function ModelProfileForm({
             variant="secondary"
             label="MAKE DEFAULT"
             disabled={!editable || pending}
-            onClick={() => void run(onMakeDefault, "Default updated")}
+            onClick={() => void run(() => onMakeDefault(drafts), "Default updated")}
           />
         ) : null}
         <Button variant="secondary" label="CANCEL" disabled={pending} onClick={onCancel} />
@@ -813,6 +851,19 @@ function isFieldRedacted(
   const writeEntry = configEntryForKey(config, writeKey);
   const readEntry = configEntryForKey(config, field.key);
   return writeEntry?.redacted === true || readEntry?.redacted === true || field.kind === "password";
+}
+
+function isModelProfileFieldRedacted(
+  config: readonly ConsoleConfigEntry[],
+  viewer: SettingsViewer,
+  profile: ConsoleModelProfile | null,
+  field: ConsoleSettingField,
+): boolean {
+  if (!profile || viewer.uid === null || !isSensitiveSettingKey(field.key)) {
+    return false;
+  }
+  const entry = configEntryForKey(config, modelProfileSecretConfigKey(viewer.uid, profile.id, field.key));
+  return entry?.redacted === true;
 }
 
 function serializeSettingValue(field: ConsoleSettingField, value: string): string {

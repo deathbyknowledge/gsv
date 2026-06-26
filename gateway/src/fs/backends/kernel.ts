@@ -24,6 +24,7 @@ import {
 import type { ProcessRecord } from "../../kernel/processes";
 import {
   PROCESS_AI_CONFIG_KEYS,
+  PROCESS_AI_CONFIG_SECRET_KEYS,
   normalizeProcessAiConfigValues,
   processAiConfigDirEntries,
   processAiConfigSuffix,
@@ -505,10 +506,25 @@ export class KernelMountBackend implements MountBackend {
       return profiles
         .map(normalizeProcAiModelProfile)
         .filter((profile): profile is ProcAiModelProfile => profile !== null)
+        .map((profile) => this.hydrateProcAiProfileSecrets(ownerUid, profile))
         .sort((left, right) => right.updatedAt - left.updatedAt || left.name.localeCompare(right.name));
     } catch {
       return [];
     }
+  }
+
+  private hydrateProcAiProfileSecrets(ownerUid: number, profile: ProcAiModelProfile): ProcAiModelProfile {
+    if (!this.kernel) {
+      return profile;
+    }
+    const values = { ...profile.values };
+    for (const key of PROCESS_AI_CONFIG_SECRET_KEYS) {
+      const value = this.kernel.config.get(procAiModelProfileSecretConfigKey(ownerUid, profile.id, key));
+      if (value) {
+        values[key] = value;
+      }
+    }
+    return { ...profile, values };
   }
 
   private findProcAiProfile(ownerUid: number, selector: string): ProcAiModelProfile | null {
@@ -1405,6 +1421,10 @@ function normalizeProfileText(value: unknown): string {
 
 function normalizeProfileTimestamp(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+function procAiModelProfileSecretConfigKey(ownerUid: number, profileId: string, configKey: string): string {
+  return `users/${ownerUid}/ai/model_profiles/${profileId}/${processAiConfigSuffix(configKey)}`;
 }
 
 type PackageInfoFileKind = "list" | "manifest" | "refs";
