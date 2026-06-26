@@ -59,12 +59,14 @@ export function LibraryPage({ route = { view: "index" }, onRouteChange }: Librar
       library.activeRoute.view === "editor" &&
       library.editorMarkdown !== (library.state.selectedNote?.markdown ?? "");
     const captureDirty =
-      library.ingestPath.trim().length > 0 ||
-      library.ingestTitle.trim().length > 0 ||
-      library.ingestSummary.trim().length > 0;
+      library.activeRoute.view === "capture" &&
+      (library.ingestPath.trim().length > 0 ||
+        library.ingestTitle.trim().length > 0 ||
+        library.ingestSummary.trim().length > 0);
     const buildDirty =
-      library.buildPath.trim().length > 0 ||
-      library.buildDbTitle.trim().length > 0;
+      library.activeRoute.view === "build" &&
+      (library.buildPath.trim().length > 0 ||
+        library.buildDbTitle.trim().length > 0);
     const collectionDirty =
       library.createCollectionOpen &&
       (library.newCollectionTitle.trim().length > 0 ||
