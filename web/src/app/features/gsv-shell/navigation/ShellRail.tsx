@@ -5,12 +5,16 @@ import { IconButton } from "../../../components/ui/IconButton";
 import {
   type DesktopChildObject,
   type DesktopObject,
+  type DesktopObjectId,
   type ShellSurfaceId,
 } from "../domain/shellModel";
 
 type ShellRailProps = {
   activeSurface: ShellSurfaceId;
   activeTabKey: string | null;
+  /** view of the active settings route — distinguishes the GSV Settings surface
+   *  from crew/tasks/config/object views that also live on "settings". */
+  settingsView: string;
   desktopObjects: readonly DesktopObject[];
   collapsed: boolean;
   onToggleCollapsed: () => void;
@@ -18,6 +22,7 @@ type ShellRailProps = {
   onOpenControlMenu: () => void;
   onOpenSurface: (surface: ShellSurfaceId) => void;
   onOpenObject: (child: DesktopChildObject) => void;
+  onCreateObject: (section: DesktopObjectId) => void;
 };
 
 const GLYPH_ICON: Record<string, string> = {
@@ -27,13 +32,20 @@ const GLYPH_ICON: Record<string, string> = {
   applications: "stars",
 };
 
+/** Label for each section's "create" entry at the bottom of its drawer. */
+const CREATE_LABEL: Record<string, string> = {
+  machines: "+ PROVISION MACHINE",
+  messengers: "+ CONNECT MESSENGER",
+  integrations: "+ ADD INTEGRATION",
+  applications: "+ IMPORT APPLICATION",
+};
+
 /** Drawer id for the GSV system-surfaces section (the one non-object section). */
 const GSV_DRAWER = "gsv";
 
-/** Surfaces that belong to the GSV system drawer (FILES/LIBRARY/TERMINAL/SETTINGS).
- *  Note: "settings" also hosts object-detail views, so GSV is only treated as the
- *  active section when no object/data section claims the active route first. */
-const GSV_SURFACES: ShellSurfaceId[] = ["files", "library", "terminal", "settings"];
+/** Unambiguous GSV system surfaces. "settings" is handled separately because it
+ *  is overloaded (crew/tasks/config/object-detail all route through it). */
+const GSV_PLAIN_SURFACES: ShellSurfaceId[] = ["files", "library", "terminal"];
 
 const GSV_RAIL_ITEMS: { label: string; surface: ShellSurfaceId }[] = [
   { label: "FILES", surface: "files" },
@@ -81,6 +93,7 @@ function GsvMark({ size = 22 }: { size?: number }) {
 export function ShellRail({
   activeSurface,
   activeTabKey,
+  settingsView,
   desktopObjects,
   collapsed,
   onToggleCollapsed,
@@ -88,6 +101,7 @@ export function ShellRail({
   onOpenControlMenu,
   onOpenSurface,
   onOpenObject,
+  onCreateObject,
 }: ShellRailProps) {
   const totalObjects = desktopObjects.reduce((sum, object) => sum + object.children.length, 0);
 
@@ -103,22 +117,26 @@ export function ShellRail({
     if (section) {
       return section.id;
     }
-    if (GSV_SURFACES.includes(activeSurface)) {
+    if (GSV_PLAIN_SURFACES.includes(activeSurface)) {
+      return GSV_DRAWER;
+    }
+    // "settings" is overloaded — only the GSV Settings overview (not crew/tasks/
+    // config/object-detail, which also live on "settings") counts as GSV.
+    if (activeSurface === "settings" && settingsView === "overview") {
       return GSV_DRAWER;
     }
     return null;
-  }, [desktopObjects, activeSurface, activeTabKey]);
+  }, [desktopObjects, activeSurface, activeTabKey, settingsView]);
 
-  // Accordion: exactly one drawer open. It tracks the active section, but the
-  // GSV drawer can also be opened manually (GSV is not itself a surface). When
-  // navigation moves to a new section, the open drawer follows it (others close).
-  const [openDrawer, setOpenDrawer] = useState<string | null>(null);
+  // Accordion: exactly one drawer open, derived purely from the active route.
+  // GSV is the only drawer that opens without navigating (it is not a surface),
+  // so a manual toggle overrides the route-following selection until the active
+  // section next changes.
+  const [gsvManualOpen, setGsvManualOpen] = useState(false);
   useEffect(() => {
-    if (activeSectionId) {
-      setOpenDrawer(activeSectionId);
-    }
+    setGsvManualOpen(false);
   }, [activeSectionId]);
-  const effectiveOpen = openDrawer ?? activeSectionId;
+  const effectiveOpen = gsvManualOpen ? GSV_DRAWER : activeSectionId;
 
   const isSectionActive = (object: DesktopObject): boolean =>
     activeSurface === object.id ||
@@ -169,14 +187,24 @@ export function ShellRail({
             <span class="gsv-rail-spine" aria-hidden="true" />
             {desktopObjects.map((object) => {
               const expanded = effectiveOpen === object.id;
+              const openSection = () => {
+                if (isSectionActive(object)) {
+                  return; // already in this section — leave the current object alone
+                }
+                if (object.children.length > 0) {
+                  onOpenObject(object.children[0]); // auto-open the first object
+                } else {
+                  onOpenSurface(object.id); // empty section → its connect/landing
+                }
+              };
               return (
                 <Fragment key={object.id}>
                   <button
                     type="button"
                     class={`gsv-rail-row${isSectionActive(object) ? " is-active" : ""}${expanded ? " is-expanded" : ""}`}
                     title={`${object.label}: ${object.meta}, ${object.statusLabel}`}
-                    aria-expanded={object.children.length > 0 ? expanded : undefined}
-                    onClick={() => onOpenSurface(object.id)}
+                    aria-expanded={expanded}
+                    onClick={openSection}
                   >
                     <span class="gsv-rail-node-icon">
                       <span class="gsv-rail-node-disc">
@@ -188,7 +216,7 @@ export function ShellRail({
                     </span>
                     <i style={{ background: statusColor(object.status), color: statusColor(object.status) }} />
                   </button>
-                  {expanded && object.children.length > 0 ? (
+                  {expanded ? (
                     <div class="gsv-rail-subitems" aria-label={`${object.label} objects`}>
                       {object.children.map((child) => (
                         <button
@@ -201,6 +229,13 @@ export function ShellRail({
                           {child.label}
                         </button>
                       ))}
+                      <button
+                        type="button"
+                        class="gsv-rail-subitem gsv-rail-subitem-create"
+                        onClick={() => onCreateObject(object.id)}
+                      >
+                        {CREATE_LABEL[object.id] ?? "+ NEW"}
+                      </button>
                     </div>
                   ) : null}
                 </Fragment>
@@ -210,7 +245,7 @@ export function ShellRail({
               type="button"
               class={`gsv-rail-row gsv-rail-gsv${gsvActive ? " is-active" : ""}${effectiveOpen === GSV_DRAWER ? " is-expanded" : ""}`}
               aria-expanded={effectiveOpen === GSV_DRAWER}
-              onClick={() => setOpenDrawer(effectiveOpen === GSV_DRAWER ? null : GSV_DRAWER)}
+              onClick={() => setGsvManualOpen((open) => !open)}
             >
               <span class="gsv-rail-node-icon">
                 <span class="gsv-rail-node-disc is-gsv">
@@ -227,7 +262,7 @@ export function ShellRail({
                   <button
                     key={item.surface}
                     type="button"
-                    class={`gsv-rail-subitem${activeSurface === item.surface ? " is-active" : ""}`}
+                    class={`gsv-rail-subitem${gsvActive && activeSurface === item.surface ? " is-active" : ""}`}
                     onClick={() => onOpenSurface(item.surface)}
                   >
                     {item.label}

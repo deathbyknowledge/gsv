@@ -1247,6 +1247,20 @@
   box-shadow: 0 0 8px var(--accent-bright);
 }
 
+/* The "create" entry at the bottom of a section drawer reads as an action,
+   not an object — dimmer, accented on hover. */
+.gsv-shell-rail:not(.is-collapsed) .gsv-rail-subitem-create {
+  color: var(--accent);
+  font-size: 11px;
+  opacity: 0.85;
+}
+
+.gsv-shell-rail:not(.is-collapsed) .gsv-rail-subitem-create:hover,
+.gsv-shell-rail:not(.is-collapsed) .gsv-rail-subitem-create:focus-visible {
+  color: var(--accent-bright);
+  opacity: 1;
+}
+
 .gsv-rail-tabs {
   position: relative;
   flex: none;

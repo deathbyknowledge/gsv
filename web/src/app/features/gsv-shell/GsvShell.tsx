@@ -23,6 +23,7 @@ import { ShellStatusBar } from "./navigation/ShellStatusBar";
 import { UnsavedGuardProvider, useUnsavedGuardController } from "./unsaved/unsavedGuard";
 import {
   shellSurfaceLabel,
+  type DesktopObjectId,
   type ShellLibraryRoute,
   type ShellSettingsRoute,
   type ShellSurfaceId,
@@ -365,6 +366,9 @@ export function GsvShell({
   const guardedOpenObject = (child: Parameters<typeof shell.openObject>[0]): void => {
     guard.requestLeave(() => shell.openObject(child));
   };
+  const createSectionObject = (section: DesktopObjectId): void => {
+    guard.requestLeave(() => shell.openSettingsRoute({ view: "list", kind: section, createNew: true }));
+  };
   const openSettingsRoute = (target: SettingsRouteTarget): void => {
     guard.requestLeave(() => shell.openSettingsRoute(shellSettingsRouteForTarget(target)));
   };
@@ -402,6 +406,7 @@ export function GsvShell({
             <ShellRail
               activeSurface={shell.activeSurface}
               activeTabKey={shell.activeTabKey}
+              settingsView={activeSettingsRoute.view}
               desktopObjects={desktopObjects}
               collapsed={shell.railCollapsed}
               onToggleCollapsed={shell.toggleRailCollapsed}
@@ -409,6 +414,7 @@ export function GsvShell({
               onOpenControlMenu={shell.openControlMenu}
               onOpenSurface={openShellSurface}
               onOpenObject={guardedOpenObject}
+              onCreateObject={createSectionObject}
             />
           ) : null}
 
