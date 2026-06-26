@@ -4,6 +4,7 @@ import { ListRow, type ListRowStatus } from "../../../components/ui/ListRow";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
 import type { StatusTone } from "../../../components/ui/StatusDot";
 import { ConsoleDetailHeader } from "./ConsoleDetailHeader";
+import { useUnsavedGuardLeave } from "../../gsv-shell/unsaved/unsavedGuard";
 import "./ConsoleDetailPage.css";
 
 export type ConsoleDetailRow = {
@@ -55,6 +56,11 @@ export function ConsoleDetailPage({
   typeLabel,
 }: ConsoleDetailPageProps) {
   const hasSections = sections.some((section) => section.rows.length > 0);
+  // The "BACK TO …" control unmounts the detail body just like shell nav does,
+  // so route it through the unsaved guard to prompt before discarding edits in
+  // any child form (settings field groups, model presets, etc.).
+  const requestLeave = useUnsavedGuardLeave();
+  const handleBack = () => requestLeave(onBack);
 
   return (
     <section class="gsv-console-detail-page">
@@ -116,7 +122,7 @@ export function ConsoleDetailPage({
               onClick={onPrimary}
             />
           ) : null}
-          <Button variant="secondary" label={`BACK TO ${parentLabel}`} onClick={onBack} />
+          <Button variant="secondary" label={`BACK TO ${parentLabel}`} onClick={handleBack} />
         </div>
       </div>
     </section>
