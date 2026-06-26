@@ -8,8 +8,8 @@ import { SectionHeader } from "../../../components/ui/SectionHeader";
 import { Stepper } from "../../../components/ui/Stepper";
 import { TextInput } from "../../../components/ui/TextInput";
 import { ConsoleDetailHeader } from "../components/ConsoleDetailHeader";
-import type { ConnectConsoleAdapterResult } from "../backend/consoleService";
-import { useConnectConsoleAdapter } from "../hooks/useConsoleData";
+import type { ConnectConsoleAdapterResult, IdentityLinkMutationResult } from "../backend/consoleService";
+import { useConnectConsoleAdapter, useConsumeIdentityLinkCode } from "../hooks/useConsoleData";
 import { BOTFATHER_URL, DISCORD_DEVELOPER_URL, MESSENGER_CAPABILITIES, adapterDocUrl } from "./messengerDocs";
 import { adapterDetailId, adapterName, deriveTelegramAccountId, iconForAdapterName } from "./messengerPresentation";
 import "./MessengerOnboardingFlow.css";
@@ -24,10 +24,16 @@ type MessengerOnboardingFlowProps = {
 const STEP_CREATE = 0;
 const STEP_TOKEN = 1;
 const STEP_CONNECT = 2;
-const STEP_ONLINE = 3;
+const STEP_LINK = 3;
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : error ? String(error) : "";
+}
+
+function linkedText(result: IdentityLinkMutationResult): string {
+  return result.link
+    ? `${adapterName(result.link.adapter)} / ${result.link.actorId}`
+    : "Messenger identity";
 }
 
 export function MessengerOnboardingFlow({
@@ -36,16 +42,22 @@ export function MessengerOnboardingFlow({
   onConnected,
 }: MessengerOnboardingFlowProps): JSX.Element {
   const connect = useConnectConsoleAdapter();
+  const consumeLinkCode = useConsumeIdentityLinkCode();
   const [step, setStep] = useState(STEP_CREATE);
   const [token, setToken] = useState("");
+  const [linkCode, setLinkCode] = useState("");
   const [result, setResult] = useState<ConnectConsoleAdapterResult | null>(null);
   const [formError, setFormError] = useState("");
+  const [linkError, setLinkError] = useState("");
+  const [linkResultText, setLinkResultText] = useState("");
 
   const isTelegram = adapterId === "telegram";
   const name = adapterName(adapterId);
   const docUrl = adapterDocUrl(adapterId);
-  const connected = step === STEP_ONLINE;
+  const botConnected = Boolean(result?.ok);
+  const linked = linkResultText.length > 0;
   const canSubmit = token.trim().length > 0 && !connect.isPending;
+  const canLinkUser = botConnected && linkCode.trim().length > 0 && !consumeLinkCode.isPending;
   // Steps 1-2 are performed on the messaging platform; 3-4 happen inside GSV.
   const onPlatform = step <= STEP_TOKEN;
 
@@ -58,7 +70,7 @@ export function MessengerOnboardingFlow({
     setStep((current) => current - 1);
   };
   const goToStep = (target: number) => {
-    if (connected || target >= step) return;
+    if (linked || target >= step) return;
     setStep(target);
   };
 
@@ -76,12 +88,30 @@ export function MessengerOnboardingFlow({
       });
       if (next.ok) {
         setResult(next);
-        setStep(STEP_ONLINE);
+        setLinkCode("");
+        setLinkError("");
+        setLinkResultText("");
+        setStep(STEP_LINK);
         return;
       }
       setFormError(next.error || next.message);
     } catch (error) {
       setFormError(errorText(error));
+    }
+  };
+
+  const submitLinkCode = async () => {
+    if (!canLinkUser) {
+      return;
+    }
+    setLinkError("");
+    setLinkResultText("");
+    try {
+      const next = await consumeLinkCode.mutateAsync({ code: linkCode });
+      setLinkCode("");
+      setLinkResultText(linkedText(next));
+    } catch (error) {
+      setLinkError(errorText(error));
     }
   };
 
@@ -109,7 +139,7 @@ export function MessengerOnboardingFlow({
         ? "Generate an access token"
         : step === STEP_CONNECT
           ? "Insert your access token"
-          : "Messenger-bot online!";
+          : "Link your GSV user";
 
   return (
     <section class="gsv-connect">
@@ -118,8 +148,8 @@ export function MessengerOnboardingFlow({
           icon={iconForAdapterName(adapterId)}
           title={`Connect ${name} bot`}
           typeLabel={`${name.toUpperCase()} · NEW MESSENGER`}
-          statusLabel={connected ? "CONNECTED" : "NOT CONNECTED"}
-          tone={connected ? "online" : "idle"}
+          statusLabel={linked ? "LINKED" : botConnected ? "CONNECTED" : "NOT CONNECTED"}
+          tone={botConnected ? "online" : "idle"}
         />
 
         <p class="gsv-console-detail-blurb">
@@ -133,7 +163,7 @@ export function MessengerOnboardingFlow({
             l0="CREATE BOT"
             l1="GET TOKEN"
             l2="CONNECT"
-            l3="ONLINE"
+            l3="LINK USER"
             size="medium"
             width={520}
             onChange={goToStep}
@@ -143,7 +173,7 @@ export function MessengerOnboardingFlow({
         <div class="gsv-connect-step">
           <SectionHeader
             title={stepTitle}
-            meta={onPlatform ? `IN ${name.toUpperCase()}` : "IN GSV"}
+            meta={step === STEP_LINK ? "FINALIZE" : onPlatform ? `IN ${name.toUpperCase()}` : "IN GSV"}
             divider
           />
           <div class="gsv-connect-step-body">
@@ -206,35 +236,84 @@ export function MessengerOnboardingFlow({
             ) : (
               <>
                 <p class="gsv-connect-step-desc">
-                  Your {name} bot is connected. Start messaging your GSV — open a chat and ask it to message your bot,
-                  or message the bot directly.
+                  Your {name} bot account has been created. Message the bot from the user account you want to link,
+                  then paste the authorization code it sends back.
                 </p>
-                <div class="gsv-connect-caps">
-                  <SectionHeader title="THINGS YOU CAN DO" titleSize="section" divider />
-                  <div class="gsv-connect-caps-rows">
-                    {MESSENGER_CAPABILITIES.map((cap) => (
-                      <ListRow key={cap.title} label={cap.title} sub={cap.detail} status="none" />
-                    ))}
+                <Alert
+                  variant={linked ? "success" : "attention"}
+                  title={linked ? "USER LINKED" : `MESSAGE YOUR ${name.toUpperCase()} BOT`}
+                  text={linked
+                    ? `${linkResultText} can now authenticate with this GSV.`
+                    : "Send the bot a message, wait for its link code response, and enter that code here to finish setup."}
+                />
+                {!linked ? (
+                  <div class="gsv-connect-token-field">
+                    <TextInput
+                      label="AUTHORIZATION CODE"
+                      size="large"
+                      requirement="required"
+                      value={linkCode}
+                      placeholder="ABC123"
+                      clearable
+                      status={linkError ? "error" : "none"}
+                      message={linkError}
+                      onChange={(value) => {
+                        if (linkError) setLinkError("");
+                        setLinkCode(value);
+                      }}
+                      inputProps={{
+                        autoComplete: "one-time-code",
+                        name: "messengerIdentityLinkCode",
+                        onKeyDown: (event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            void submitLinkCode();
+                          }
+                        },
+                      }}
+                    />
                   </div>
-                </div>
-                <div class="gsv-connect-step-links">
-                  <Link href={docUrl} arrow>Read the docs</Link>
-                </div>
-                {result?.challenge ? (
-                  <Alert
-                    variant="warning"
-                    text="This adapter returned an extra authentication step — open the bot detail to finish it."
-                  />
+                ) : null}
+                {linked ? (
+                  <>
+                    <div class="gsv-connect-caps">
+                      <SectionHeader title="THINGS YOU CAN DO" titleSize="section" divider />
+                      <div class="gsv-connect-caps-rows">
+                        {MESSENGER_CAPABILITIES.map((cap) => (
+                          <ListRow key={cap.title} label={cap.title} sub={cap.detail} status="none" />
+                        ))}
+                      </div>
+                    </div>
+                    <div class="gsv-connect-step-links">
+                      <Link href={docUrl} arrow>Read the docs</Link>
+                    </div>
+                    {result?.challenge ? (
+                      <Alert
+                        variant="warning"
+                        text="This adapter returned an extra authentication step — open the bot detail to finish it."
+                      />
+                    ) : null}
+                  </>
                 ) : null}
               </>
             )}
           </div>
 
           <div class="gsv-connect-actions">
-            {step === STEP_ONLINE ? (
+            {step === STEP_LINK && linked ? (
               <>
                 <Button variant="secondary" label="VIEW BOT" onClick={goToDetail} />
                 <Button variant="primary" label="DONE" onClick={onBack} />
+              </>
+            ) : step === STEP_LINK ? (
+              <>
+                <Button variant="secondary" label="BACK" disabled={consumeLinkCode.isPending} onClick={goBack} />
+                <Button
+                  variant="primary"
+                  label={consumeLinkCode.isPending ? "LINKING" : "LINK USER"}
+                  disabled={!canLinkUser}
+                  onClick={submitLinkCode}
+                />
               </>
             ) : step === STEP_CONNECT ? (
               <>

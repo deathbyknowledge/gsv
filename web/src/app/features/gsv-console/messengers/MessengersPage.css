@@ -58,13 +58,6 @@
   padding: 26px;
 }
 
-.gsv-messengers-link-code {
-  min-width: 0;
-  display: flex;
-  justify-content: center;
-  padding: 24px 26px 0;
-}
-
 /* ── Card ─────────────────────────────────────────────────────────── */
 .gsv-messenger-card {
   min-width: 0;

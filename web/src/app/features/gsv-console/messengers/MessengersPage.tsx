@@ -30,7 +30,6 @@ import {
 import { useConsoleListSelection } from "../hooks/useConsoleListSelection";
 import { MessengerDetailPage } from "./MessengerDetailPage";
 import { linksForMessengerAccount } from "./MessengerIdentityLinks";
-import { MessengerLinkCodePanel } from "./MessengerLinkCodePanel";
 import { MessengerOnboardingFlow } from "./MessengerOnboardingFlow";
 import {
   SUPPORTED_MESSENGER_ADAPTERS,
@@ -188,8 +187,6 @@ function MessengerCard({
 function MessengersRoster({
   adapters,
   identityLinks,
-  identityLinksError,
-  identityLinksRefreshing,
   onConnect,
   onOpenDetail,
   onOpenPlatform,
@@ -197,8 +194,6 @@ function MessengersRoster({
 }: {
   adapters: readonly ConsoleAdapter[];
   identityLinks: readonly ConsoleIdentityLink[];
-  identityLinksError?: string;
-  identityLinksRefreshing: boolean;
   onConnect: (adapter: ConsoleAdapter) => void;
   onOpenDetail: (account: ConsoleAdapterAccount) => void;
   onOpenPlatform: (adapter: ConsoleAdapter) => void;
@@ -214,13 +209,6 @@ function MessengersRoster({
     <section class="gsv-messengers">
       <div class="gsv-messengers-panel">
         <SectionHeader title="MESSENGERS" meta={meta} divider />
-        <div class="gsv-messengers-link-code">
-          <MessengerLinkCodePanel
-            errorText={identityLinksError}
-            linkCount={identityLinks.length}
-            refreshing={identityLinksRefreshing}
-          />
-        </div>
         <div class="gsv-messengers-grid">
           {platforms.map((adapter) => (
             <MessengerCard
@@ -423,8 +411,6 @@ export function MessengersPage({
             <MessengersRoster
               adapters={data}
               identityLinks={identityLinks.links}
-              identityLinksError={identityLinksError}
-              identityLinksRefreshing={identityLinksRefreshing}
               onConnect={openCreate}
               onOpenDetail={openDetail}
               onOpenPlatform={openPlatform}
