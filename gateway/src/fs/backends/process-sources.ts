@@ -852,8 +852,19 @@ export async function commitRepoSourceChanges(
   const requestedBranch = explicitBranch || (!state && repo.baseRef === repo.ref)
     ? branch
     : undefined;
+  const expectedBranchBaseRef = !explicitBranch && !state && repo.baseRef !== repo.ref
+    ? repo.baseRef
+    : undefined;
   const repoRef = parseRepoSlug(repo.repo);
-  const targetRef = await resolveSourceCommitTarget(options.ripgit, repoRef, branch, state, overlay, requestedBranch);
+  const targetRef = await resolveSourceCommitTarget(
+    options.ripgit,
+    repoRef,
+    branch,
+    state,
+    overlay,
+    requestedBranch,
+    expectedBranchBaseRef,
+  );
   const ops = await overlayApplyOps(options.storage, options.ripgit, target, overlay, targetRef.opsBaseRef);
   if (ops.length === 0) {
     const nextState = sourceBranchStateForTarget(state, branch, targetRef, null);
@@ -1104,6 +1115,7 @@ async function resolveSourceCommitTarget(
   state: SourceBranchState | null,
   overlay: SourceOverlayManifest,
   requestedBranch: string | undefined,
+  expectedBranchBaseRef: string | undefined,
 ): Promise<{
   opsBaseRef: string;
   applyBaseRef: string;
@@ -1116,6 +1128,17 @@ async function resolveSourceCommitTarget(
       applyBaseRef: overlay.baseRef,
       branchBaseRef: state.baseRef,
       expectedHead: state.head,
+    };
+  }
+
+  if (expectedBranchBaseRef?.trim()) {
+    const refs = await ripgit.refs(repo);
+    const targetHead = refs.heads?.[branch] ?? null;
+    return {
+      opsBaseRef: expectedBranchBaseRef,
+      applyBaseRef: expectedBranchBaseRef,
+      branchBaseRef: expectedBranchBaseRef,
+      expectedHead: targetHead ? expectedBranchBaseRef : null,
     };
   }
 

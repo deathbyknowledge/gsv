@@ -488,6 +488,60 @@ describe("createProcessSourceBackend", () => {
     expect(applyCalls[0][5]).toEqual({ baseRef: "commit123" });
   });
 
+  it("locks default package source commits to the installed branch head", async () => {
+    const config = makeConfig();
+    const storage = makeBucket();
+    const applyCalls: any[] = [];
+    const readCalls: Array<{ repo: { owner: string; repo: string; branch?: string }; path: string }> = [];
+    const ripgit = {
+      readPath: async (repo: { owner: string; repo: string; branch?: string }, path: string) => {
+        readCalls.push({ repo, path });
+        return { kind: "missing" };
+      },
+      refs: async () => ({ heads: { "feature/review": "movedhead456" }, tags: {} }),
+      apply: async (...args: any[]) => {
+        applyCalls.push(args);
+        return { head: "featurehead123" };
+      },
+    } as any;
+    const repos = [makeRepo("sam/pkg-test", {
+      kind: "package",
+      writable: true,
+      ref: "feature/review",
+      baseRef: "commit123",
+    })];
+    const backend = createProcessSourceBackend({
+      identity: IDENTITY,
+      storage,
+      repos,
+      processId: "task:source",
+      config,
+      ripgit,
+    });
+
+    await backend!.writeFile("/src/repos/sam/pkg-test/packages/sample-console/src/index.ts", "export const review = true;\n");
+    await commitRepoSourceChanges({
+      identity: IDENTITY,
+      storage,
+      repos,
+      processId: "task:source",
+      config,
+      ripgit,
+    }, "sam/pkg-test", { message: "repo: update package" });
+
+    expect(readCalls).toEqual([{
+      repo: { owner: "sam", repo: "pkg-test", branch: "commit123" },
+      path: "packages/sample-console/src/index.ts",
+    }]);
+    expect(applyCalls).toHaveLength(1);
+    expect(applyCalls[0][0]).toEqual({
+      owner: "sam",
+      repo: "pkg-test",
+      branch: "feature/review",
+    });
+    expect(applyCalls[0][5]).toEqual({ baseRef: "commit123", expectedHead: "commit123" });
+  });
+
   it("reads package subdirectories through the canonical repo path", async () => {
     const readCalls: Array<{ repo: { owner: string; repo: string; branch?: string }; path: string }> = [];
     const backend = createProcessSourceBackend({
