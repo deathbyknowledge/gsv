@@ -428,6 +428,59 @@ describe("createProcessSourceBackend", () => {
     }]);
   });
 
+  it("selects package source refs by source subdirectory", async () => {
+    const readCalls: Array<{ repo: { owner: string; repo: string; branch?: string }; path: string }> = [];
+    const backend = createProcessSourceBackend({
+      identity: IDENTITY,
+      storage: makeBucket(),
+      repos: [makeRepo("root/gsv", {
+        kind: "package",
+        writable: false,
+        ref: "feature/a",
+        baseRef: "commit-a",
+        sources: [
+          {
+            kind: "package",
+            packageId: "pkg-a",
+            name: "Package A",
+            subdir: "packages/a",
+            ref: "feature/a",
+            baseRef: "commit-a",
+          },
+          {
+            kind: "package",
+            packageId: "pkg-b",
+            name: "Package B",
+            subdir: "packages/b",
+            ref: "feature/b",
+            baseRef: "commit-b",
+          },
+        ],
+      })],
+      processId: "task:source",
+      config: makeConfig(),
+      ripgit: {
+        readPath: async (repo: { owner: string; repo: string; branch?: string }, path: string) => {
+          readCalls.push({ repo, path });
+          if (repo.branch === "commit-b" && path === "packages/b/src/index.ts") {
+            return {
+              kind: "file",
+              bytes: new TextEncoder().encode("export const b = true;\n"),
+              size: 23,
+            };
+          }
+          return { kind: "missing" };
+        },
+      } as any,
+    });
+
+    await expect(backend!.readFile("/src/repos/root/gsv/packages/b/src/index.ts")).resolves.toContain("b = true");
+    expect(readCalls).toEqual([{
+      repo: { owner: "root", repo: "gsv", branch: "commit-b" },
+      path: "packages/b/src/index.ts",
+    }]);
+  });
+
   it("commits package source repos to the package source ref by default", async () => {
     const config = makeConfig();
     const storage = makeBucket();
@@ -540,6 +593,87 @@ describe("createProcessSourceBackend", () => {
       branch: "feature/review",
     });
     expect(applyCalls[0][5]).toEqual({ baseRef: "commit123", expectedHead: "commit123" });
+  });
+
+  it("commits the matching same-repo package source from --here paths", async () => {
+    const config = makeConfig();
+    const storage = makeBucket();
+    const applyCalls: any[] = [];
+    const readCalls: Array<{ repo: { owner: string; repo: string; branch?: string }; path: string }> = [];
+    const ripgit = {
+      readPath: async (repo: { owner: string; repo: string; branch?: string }, path: string) => {
+        readCalls.push({ repo, path });
+        return { kind: "missing" };
+      },
+      refs: async () => ({ heads: {}, tags: {} }),
+      apply: async (...args: any[]) => {
+        applyCalls.push(args);
+        return { head: "feature-b-head" };
+      },
+    } as any;
+    const repos = [makeRepo("sam/mono", {
+      kind: "package",
+      writable: true,
+      ref: "feature/a",
+      baseRef: "commit-a",
+      sources: [
+        {
+          kind: "package",
+          packageId: "pkg-a",
+          name: "Package A",
+          subdir: "packages/a",
+          ref: "feature/a",
+          baseRef: "commit-a",
+        },
+        {
+          kind: "package",
+          packageId: "pkg-b",
+          name: "Package B",
+          subdir: "packages/b",
+          ref: "feature/b",
+          baseRef: "commit-b",
+        },
+      ],
+    })];
+    const backend = createProcessSourceBackend({
+      identity: IDENTITY,
+      storage,
+      repos,
+      processId: "task:source",
+      config,
+      ripgit,
+    });
+
+    await backend!.writeFile("/src/repos/sam/mono/packages/b/src/index.ts", "export const b = true;\n");
+    const result = await commitRepoSourceChanges({
+      identity: IDENTITY,
+      storage,
+      repos,
+      processId: "task:source",
+      config,
+      ripgit,
+    }, "sam/mono", {
+      message: "repo: update package b",
+      sourcePath: "/src/repos/sam/mono/packages/b",
+    });
+
+    expect(result).toMatchObject({
+      sourceRef: "feature/b",
+      baseRef: "commit-b",
+      branch: "feature/b",
+      head: "feature-b-head",
+    });
+    expect(readCalls).toEqual([{
+      repo: { owner: "sam", repo: "mono", branch: "commit-b" },
+      path: "packages/b/src/index.ts",
+    }]);
+    expect(applyCalls).toHaveLength(1);
+    expect(applyCalls[0][0]).toEqual({
+      owner: "sam",
+      repo: "mono",
+      branch: "feature/b",
+    });
+    expect(applyCalls[0][5]).toEqual({ baseRef: "commit-b" });
   });
 
   it("reads package subdirectories through the canonical repo path", async () => {

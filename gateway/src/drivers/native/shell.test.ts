@@ -1586,14 +1586,29 @@ describe("pkg shell command", () => {
 
   it("uses the package source ref for repo log from /src/repos", async () => {
     const calls: string[] = [];
-    const packageRecord = makePackage({
+    const packageA = makePackage({
+      packageId: "import:root/pkg-test:packages/a",
       manifest: {
         ...makePackage().manifest,
+        name: "sample-a",
         source: {
           repo: "root/pkg-test",
-          ref: "feature/review",
-          subdir: ".",
-          resolvedCommit: "commit123",
+          ref: "feature/a",
+          subdir: "packages/a",
+          resolvedCommit: "commit-a",
+        },
+      },
+    });
+    const packageB = makePackage({
+      packageId: "import:root/pkg-test:packages/b",
+      manifest: {
+        ...makePackage().manifest,
+        name: "sample-b",
+        source: {
+          repo: "root/pkg-test",
+          ref: "feature/b",
+          subdir: "packages/b",
+          resolvedCommit: "commit-b",
         },
       },
     });
@@ -1602,9 +1617,9 @@ describe("pkg shell command", () => {
         const url = new URL(String(input));
         calls.push(url.toString());
         expect(url.pathname).toBe("/hyperspace/repos/root/pkg-test/log");
-        expect(url.searchParams.get("ref")).toBe("feature/review");
+        expect(url.searchParams.get("ref")).toBe("feature/b");
         return Response.json([{
-          hash: "commit123",
+          hash: "commit-b",
           tree_hash: "tree123",
           author: "Sam",
           author_email: "sam@gsv.local",
@@ -1619,12 +1634,12 @@ describe("pkg shell command", () => {
     } as Fetcher;
 
     const result = await handleShellExec(
-      { input: "rgit log --here", cwd: "/src/repos/root/pkg-test/src" },
-      makeContext({ capabilities: ["repo.log"], pkg: packageRecord, ripgit }),
+      { input: "rgit log --here", cwd: "/src/repos/root/pkg-test/packages/b/src" },
+      makeContext({ capabilities: ["repo.log"], packages: [packageA, packageB], ripgit }),
     );
 
     expect(result.ok).toBe(true);
-    expect(result.stdout).toContain("commit123");
+    expect(result.stdout).toContain("commit-b");
     expect(result.stdout).toContain("package update");
     expect(result.stderr).toBe("");
     expect(calls).toHaveLength(1);

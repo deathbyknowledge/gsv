@@ -33,6 +33,7 @@ import { requireCommandCapability } from "./common";
 type RepoTarget = {
   repo: string;
   nextIndex: number;
+  sourcePath?: string;
 };
 
 export function buildRgitCommands(ctx: KernelContext) {
@@ -114,7 +115,7 @@ async function runRgitCommand(
     case "status": {
       requireCommandCapability(ctx, "repo.list");
       const target = parseRepoTarget(rest, cwd);
-      const result = await getRepoSourceStatus(processSourceOptions(ctx), target.repo);
+      const result = await getRepoSourceStatus(processSourceOptions(ctx), target.repo, target.sourcePath);
       return { stdout: formatRepoStatus(result), stderr: "", exitCode: 0 };
     }
     case "diff": {
@@ -129,7 +130,7 @@ async function runRgitCommand(
         return { stdout: formatRepoDiff(result), stderr: "", exitCode: 0 };
       }
       requireCommandCapability(ctx, "repo.read");
-      const diff = await diffRepoSourceChanges(processSourceOptions(ctx), parsed.repo);
+      const diff = await diffRepoSourceChanges(processSourceOptions(ctx), parsed.repo, parsed.sourcePath);
       return { stdout: diff, stderr: "", exitCode: 0 };
     }
     case "compare": {
@@ -144,6 +145,7 @@ async function runRgitCommand(
       const result = await commitRepoSourceChanges(processSourceOptions(ctx), parsed.repo, {
         message: parsed.message,
         ...(parsed.branch ? { branch: parsed.branch } : {}),
+        ...(parsed.sourcePath ? { sourcePath: parsed.sourcePath } : {}),
       });
       return {
         stdout: result.committed
@@ -156,8 +158,8 @@ async function runRgitCommand(
     case "discard": {
       requireCommandCapability(ctx, "repo.apply");
       const target = parseRepoTarget(rest, cwd);
-      const before = await getRepoSourceStatus(processSourceOptions(ctx), target.repo);
-      await discardRepoSourceChanges(processSourceOptions(ctx), target.repo);
+      const before = await getRepoSourceStatus(processSourceOptions(ctx), target.repo, target.sourcePath);
+      await discardRepoSourceChanges(processSourceOptions(ctx), target.repo, target.sourcePath);
       return {
         stdout: `discarded ${before.changes.length} staged repo change(s) for ${target.repo}\n`,
         stderr: "",
@@ -211,23 +213,48 @@ function processSourceOptions(ctx: KernelContext) {
   };
 }
 
-function withDefaultRepoRef<T extends { repo: string; ref?: string }>(parsed: T, ctx: KernelContext): T {
+function withDefaultRepoRef<T extends { repo: string; ref?: string; sourcePath?: string }>(parsed: T, ctx: KernelContext): T {
   if (parsed.ref) {
     return parsed;
   }
-  const ref = defaultRepoRef(ctx, parsed.repo);
+  const ref = defaultRepoRef(ctx, parsed.repo, parsed.sourcePath);
   return ref ? { ...parsed, ref } : parsed;
 }
 
-function defaultRepoRef(ctx: KernelContext, repo: string): string | null {
+function defaultRepoRef(ctx: KernelContext, repo: string, sourcePath?: string): string | null {
   const found = handleRepoList(undefined, ctx).repos.find((summary) => summary.repo === repo);
-  return found?.ref ?? null;
+  if (!found) {
+    return null;
+  }
+  const source = sourcePath ? repoSourceForPath(found, sourcePath) : null;
+  return source?.ref ?? found.ref ?? null;
+}
+
+function repoSourceForPath(
+  summary: RepoListResult["repos"][number],
+  sourcePath: string,
+): NonNullable<RepoListResult["repos"][number]["sources"]>[number] | null {
+  const rootPath = `/src/repos/${summary.repo}`;
+  if (sourcePath !== rootPath && !sourcePath.startsWith(`${rootPath}/`)) {
+    return null;
+  }
+  const relativePath = sourcePath === rootPath
+    ? ""
+    : normalizeRepoPath(sourcePath.slice(rootPath.length + 1));
+  const matches = (summary.sources ?? [])
+    .map((source) => ({
+      source,
+      subdir: normalizeRepoPath(source.subdir),
+    }))
+    .filter((entry) => pathIsWithin(relativePath, entry.subdir))
+    .sort((left, right) => right.subdir.length - left.subdir.length);
+  return matches[0]?.source ?? null;
 }
 
 function parseRepoTarget(args: string[], cwd: string, startIndex = 0): RepoTarget {
   const current = String(args[startIndex] ?? "").trim();
   if (current === "--here") {
-    return { repo: repoFromCwd(cwd), nextIndex: startIndex + 1 };
+    return { ...repoTargetFromCwd(cwd), nextIndex: startIndex + 1 };
   }
   if (!current) {
     throw new Error("repo is required; pass owner/repo or --here from under /src/repos/{owner}/{repo}");
@@ -235,12 +262,15 @@ function parseRepoTarget(args: string[], cwd: string, startIndex = 0): RepoTarge
   return { repo: normalizeRepoArg(current), nextIndex: startIndex + 1 };
 }
 
-function repoFromCwd(cwd: string): string {
+function repoTargetFromCwd(cwd: string): { repo: string; sourcePath: string } {
   const match = cwd.match(/^\/src\/repos\/([^/]+)\/([^/]+)(?:\/|$)/);
   if (!match) {
     throw new Error("--here requires cwd under /src/repos/{owner}/{repo}");
   }
-  return `${match[1]}/${match[2]}`;
+  return {
+    repo: `${match[1]}/${match[2]}`,
+    sourcePath: cwd,
+  };
 }
 
 function normalizeRepoArg(raw: string): string {
@@ -249,6 +279,20 @@ function normalizeRepoArg(raw: string): string {
     throw new Error(`Invalid repo: ${raw}`);
   }
   return `${owner}/${repo}`;
+}
+
+function normalizeRepoPath(path: string | null | undefined): string {
+  return String(path ?? "")
+    .trim()
+    .split("/")
+    .filter((segment) => segment !== "" && segment !== ".")
+    .join("/");
+}
+
+function pathIsWithin(path: string, maybeParent: string): boolean {
+  const normalizedPath = normalizeRepoPath(path);
+  const normalizedParent = normalizeRepoPath(maybeParent);
+  return !normalizedParent || normalizedPath === normalizedParent || normalizedPath.startsWith(`${normalizedParent}/`);
 }
 
 function parseListArgs(args: string[]): { owner?: string } {
@@ -269,9 +313,12 @@ function parseListArgs(args: string[]): { owner?: string } {
   return parsed;
 }
 
-function parseReadArgs(args: string[], cwd: string): { repo: string; ref?: string; path?: string } {
+function parseReadArgs(args: string[], cwd: string): { repo: string; ref?: string; path?: string; sourcePath?: string } {
   const target = parseRepoTarget(args, cwd);
-  const parsed: { repo: string; ref?: string; path?: string } = { repo: target.repo };
+  const parsed: { repo: string; ref?: string; path?: string; sourcePath?: string } = {
+    repo: target.repo,
+    ...(target.sourcePath ? { sourcePath: target.sourcePath } : {}),
+  };
   for (let index = target.nextIndex; index < args.length; index += 1) {
     const current = args[index];
     if (current === "--ref") {
@@ -290,9 +337,12 @@ function parseReadArgs(args: string[], cwd: string): { repo: string; ref?: strin
   return parsed;
 }
 
-function parseSearchArgs(args: string[], cwd: string): { repo: string; ref?: string; query: string; prefix?: string } {
+function parseSearchArgs(args: string[], cwd: string): { repo: string; ref?: string; query: string; prefix?: string; sourcePath?: string } {
   const target = parseRepoTarget(args, cwd);
-  const parsed: { repo: string; ref?: string; query?: string; prefix?: string } = { repo: target.repo };
+  const parsed: { repo: string; ref?: string; query?: string; prefix?: string; sourcePath?: string } = {
+    repo: target.repo,
+    ...(target.sourcePath ? { sourcePath: target.sourcePath } : {}),
+  };
   for (let index = target.nextIndex; index < args.length; index += 1) {
     const current = args[index];
     if (current === "--ref") {
@@ -314,12 +364,15 @@ function parseSearchArgs(args: string[], cwd: string): { repo: string; ref?: str
   if (!parsed.query) {
     throw new Error("Usage: rgit search <repo|--here> <query> [--prefix PATH] [--ref REF]");
   }
-  return parsed as { repo: string; ref?: string; query: string; prefix?: string };
+  return parsed as { repo: string; ref?: string; query: string; prefix?: string; sourcePath?: string };
 }
 
-function parseLogArgs(args: string[], cwd: string): { repo: string; ref?: string; limit?: number; offset?: number } {
+function parseLogArgs(args: string[], cwd: string): { repo: string; ref?: string; limit?: number; offset?: number; sourcePath?: string } {
   const target = parseRepoTarget(args, cwd);
-  const parsed: { repo: string; ref?: string; limit?: number; offset?: number } = { repo: target.repo };
+  const parsed: { repo: string; ref?: string; limit?: number; offset?: number; sourcePath?: string } = {
+    repo: target.repo,
+    ...(target.sourcePath ? { sourcePath: target.sourcePath } : {}),
+  };
   for (let index = target.nextIndex; index < args.length; index += 1) {
     const current = args[index];
     if (current === "--ref") {
@@ -342,9 +395,12 @@ function parseLogArgs(args: string[], cwd: string): { repo: string; ref?: string
   return parsed;
 }
 
-function parseDiffArgs(args: string[], cwd: string): { repo: string; commit?: string; context?: number } {
+function parseDiffArgs(args: string[], cwd: string): { repo: string; commit?: string; context?: number; sourcePath?: string } {
   const target = parseRepoTarget(args, cwd);
-  const parsed: { repo: string; commit?: string; context?: number } = { repo: target.repo };
+  const parsed: { repo: string; commit?: string; context?: number; sourcePath?: string } = {
+    repo: target.repo,
+    ...(target.sourcePath ? { sourcePath: target.sourcePath } : {}),
+  };
   for (let index = target.nextIndex; index < args.length; index += 1) {
     const current = args[index];
     if (current === "--context") {
@@ -385,9 +441,12 @@ function parseCompareArgs(args: string[], cwd: string): { repo: string; base: st
   return { ...parsed, base, head };
 }
 
-function parseCommitArgs(args: string[], cwd: string): { repo: string; message: string; branch?: string } {
+function parseCommitArgs(args: string[], cwd: string): { repo: string; message: string; branch?: string; sourcePath?: string } {
   const target = parseRepoTarget(args, cwd);
-  const parsed: { repo: string; message?: string; branch?: string } = { repo: target.repo };
+  const parsed: { repo: string; message?: string; branch?: string; sourcePath?: string } = {
+    repo: target.repo,
+    ...(target.sourcePath ? { sourcePath: target.sourcePath } : {}),
+  };
   for (let index = target.nextIndex; index < args.length; index += 1) {
     const current = args[index];
     if (current === "--message" || current === "-m") {
@@ -405,7 +464,7 @@ function parseCommitArgs(args: string[], cwd: string): { repo: string; message: 
   if (!parsed.message) {
     throw new Error("Usage: rgit commit <repo|--here> --message TEXT [--branch BRANCH]");
   }
-  return parsed as { repo: string; message: string; branch?: string };
+  return parsed as { repo: string; message: string; branch?: string; sourcePath?: string };
 }
 
 function parseCreateArgs(args: string[]): { repo: string; ref?: string; description?: string } {

@@ -20,6 +20,7 @@ import type {
   RepoRefsResult,
   RepoSearchArgs,
   RepoSearchResult,
+  RepoSourceSummary,
   RepoSummary,
 } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "./context";
@@ -59,6 +60,7 @@ export function handleRepoList(
     }
     const ref = existing.ref ?? summary.ref;
     const baseRef = existing.baseRef ?? summary.baseRef;
+    const sources = mergeRepoSources(existing.sources, summary.sources);
     repos.set(summary.repo, {
       ...existing,
       writable: existing.writable || summary.writable,
@@ -66,6 +68,7 @@ export function handleRepoList(
       kind: existing.kind === "user" ? summary.kind : existing.kind,
       ...(ref ? { ref } : {}),
       ...(baseRef ? { baseRef } : {}),
+      ...(sources.length > 0 ? { sources } : {}),
       updatedAt: Math.max(existing.updatedAt ?? 0, summary.updatedAt ?? 0) || undefined,
     });
   };
@@ -75,9 +78,18 @@ export function handleRepoList(
   const packageScopeIdentity = repoPackageScopeIdentity(ctx, identity.process);
   for (const record of ctx.packages.list({ scopes: visiblePackageScopesForActor(packageScopeIdentity) })) {
     const repo = parseRepoSlug(record.manifest.source.repo);
+    const sourceRefs = packageSourceRefFields(record.manifest.source.ref, record.manifest.source.resolvedCommit);
     add({
       ...toSummary(repo, "package", ctx),
-      ...packageSourceRefFields(record.manifest.source.ref, record.manifest.source.resolvedCommit),
+      ...sourceRefs,
+      sources: [{
+        kind: "package",
+        packageId: record.packageId,
+        name: record.manifest.name,
+        subdir: normalizePackageSourceSubdir(record.manifest.source.subdir),
+        ...sourceRefs,
+        updatedAt: record.updatedAt,
+      }],
       description: record.manifest.name,
       updatedAt: record.updatedAt,
     });
@@ -467,6 +479,33 @@ function packageSourceRefFields(
 function normalizeSummaryRef(ref: string | null | undefined): string | null {
   const normalized = typeof ref === "string" ? ref.trim() : "";
   return normalized || null;
+}
+
+function normalizePackageSourceSubdir(subdir: string | null | undefined): string {
+  const normalized = typeof subdir === "string"
+    ? subdir.trim().replace(/^\/+|\/+$/g, "")
+    : "";
+  return normalized || ".";
+}
+
+function mergeRepoSources(
+  existing: RepoSourceSummary[] | undefined,
+  incoming: RepoSourceSummary[] | undefined,
+): RepoSourceSummary[] {
+  const merged = new Map<string, RepoSourceSummary>();
+  for (const source of [...existing ?? [], ...incoming ?? []]) {
+    const key = [
+      source.kind,
+      source.packageId ?? "",
+      source.subdir,
+      source.ref ?? "",
+      source.baseRef ?? "",
+    ].join("\0");
+    if (!merged.has(key)) {
+      merged.set(key, source);
+    }
+  }
+  return [...merged.values()];
 }
 
 function repoPackageScopeIdentity(ctx: KernelContext, fallback: ProcessIdentity): ProcessIdentity {

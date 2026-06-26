@@ -47,6 +47,9 @@ type SourceRepo = {
   rootPath: string;
   ref: string;
   baseRef: string;
+  matchSubdir: string;
+  sourceKey: string;
+  defaultSource: boolean;
   writable: boolean;
 };
 
@@ -455,20 +458,7 @@ class ProcessSourceBackend implements MountBackend {
     relativePath: string;
     normalizedPath: string;
   } | null {
-    const normalizedPath = normalizePath(path);
-    const repo = this.repos.find((candidate) =>
-      normalizedPath === candidate.rootPath || normalizedPath.startsWith(`${candidate.rootPath}/`)
-    );
-    if (!repo) {
-      return null;
-    }
-    return {
-      repo,
-      relativePath: normalizedPath === repo.rootPath
-        ? ""
-        : normalizeRepoPath(normalizedPath.slice(repo.rootPath.length + 1)),
-      normalizedPath,
-    };
+    return resolveSourceRepoPath(this.repos, path);
   }
 
   private virtualDirectoryEntries(path: string): string[] | null {
@@ -745,8 +735,9 @@ class ProcessSourceBackend implements MountBackend {
 export async function getRepoSourceStatus(
   options: ProcessSourceBackendOptions,
   repoSlug: string,
+  sourcePath?: string,
 ): Promise<RepoSourceStatus> {
-  const repo = sourceRepoForOptions(options, repoSlug);
+  const repo = sourceRepoForOptions(options, repoSlug, sourcePath);
   const target = sourcePackageForRepo(repo);
   const state = readSourceBranchState(options.config ?? null, options.processId ?? null, target.record);
   const overlay = await readOverlayManifest(
@@ -761,11 +752,12 @@ export async function getRepoSourceStatus(
 export async function diffRepoSourceChanges(
   options: ProcessSourceBackendOptions,
   repoSlug: string,
+  sourcePath?: string,
 ): Promise<string> {
   if (!options.ripgit) {
     throw new Error("RIPGIT binding is required");
   }
-  const repo = sourceRepoForOptions(options, repoSlug);
+  const repo = sourceRepoForOptions(options, repoSlug, sourcePath);
   const target = sourcePackageForRepo(repo);
   const state = readSourceBranchState(options.config ?? null, options.processId ?? null, target.record);
   const overlay = await readOverlayManifest(
@@ -814,7 +806,7 @@ export async function diffRepoSourceChanges(
 export async function commitRepoSourceChanges(
   options: ProcessSourceBackendOptions,
   repoSlug: string,
-  args: { message: string; branch?: string },
+  args: { message: string; branch?: string; sourcePath?: string },
 ): Promise<RepoSourceCommitResult> {
   if (!options.ripgit) {
     throw new Error("RIPGIT binding is required");
@@ -833,7 +825,7 @@ export async function commitRepoSourceChanges(
     throw new Error("message is required");
   }
 
-  const repo = sourceRepoForOptions(options, repoSlug);
+  const repo = sourceRepoForOptions(options, repoSlug, args.sourcePath);
   if (!repo.writable) {
     throw new Error(`Repo is read-only: ${repo.repo}`);
   }
@@ -904,6 +896,7 @@ export async function commitRepoSourceChanges(
 export async function discardRepoSourceChanges(
   options: ProcessSourceBackendOptions,
   repoSlug: string,
+  sourcePath?: string,
 ): Promise<RepoSourceStatus> {
   if (!options.storage) {
     throw new Error("Repo overlay storage is required");
@@ -911,7 +904,7 @@ export async function discardRepoSourceChanges(
   if (!options.processId) {
     throw new Error("Repo changes require a process context");
   }
-  const repo = sourceRepoForOptions(options, repoSlug);
+  const repo = sourceRepoForOptions(options, repoSlug, sourcePath);
   const target = sourcePackageForRepo(repo);
   const state = readSourceBranchState(options.config ?? null, options.processId, target.record);
   const overlay = await readOverlayManifest(
@@ -933,11 +926,27 @@ function visibleSourceRepos(
     if (!parsed) {
       continue;
     }
-    repos.set(parsed.repo, parsed);
+    repos.set(parsed.sourceKey, parsed);
+    for (const source of summary.sources ?? []) {
+      const packageSource = sourceRepoForPackageSource(summary, source);
+      if (packageSource) {
+        repos.set(packageSource.sourceKey, packageSource);
+      }
+    }
   }
   return [...repos.values()].sort((left, right) => {
     const owner = left.owner.localeCompare(right.owner);
-    return owner !== 0 ? owner : left.name.localeCompare(right.name);
+    if (owner !== 0) {
+      return owner;
+    }
+    const name = left.name.localeCompare(right.name);
+    if (name !== 0) {
+      return name;
+    }
+    if (left.defaultSource !== right.defaultSource) {
+      return left.defaultSource ? -1 : 1;
+    }
+    return left.matchSubdir.localeCompare(right.matchSubdir);
   });
 }
 
@@ -952,6 +961,45 @@ function sourceRepoForSummary(summary: RepoSummary): SourceRepo | null {
       rootPath: `/src/repos/${parsed.owner}/${parsed.repo}`,
       ref,
       baseRef: sourceBaseRefForSummary(summary, ref),
+      matchSubdir: "",
+      sourceKey: `repo:${parsed.owner}/${parsed.repo}`,
+      defaultSource: true,
+      writable: summary.writable,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function sourceRepoForPackageSource(
+  summary: RepoSummary,
+  source: NonNullable<RepoSummary["sources"]>[number],
+): SourceRepo | null {
+  if (source.kind !== "package") {
+    return null;
+  }
+  try {
+    const parsed = parseRepoSlug(summary.repo || `${summary.owner}/${summary.name}`);
+    const ref = sourceRefForSourceSummary(source, sourceRefForSummary(summary));
+    const baseRef = sourceBaseRefForSourceSummary(source, ref);
+    const subdir = normalizeRepoPath(source.subdir);
+    return {
+      owner: parsed.owner,
+      name: parsed.repo,
+      repo: `${parsed.owner}/${parsed.repo}`,
+      rootPath: `/src/repos/${parsed.owner}/${parsed.repo}`,
+      ref,
+      baseRef,
+      matchSubdir: subdir === "." ? "" : subdir,
+      sourceKey: [
+        "repo-source",
+        `${parsed.owner}/${parsed.repo}`,
+        source.packageId ?? "",
+        subdir,
+        ref,
+        baseRef,
+      ].join(":"),
+      defaultSource: false,
       writable: summary.writable,
     };
   } catch {
@@ -971,6 +1019,24 @@ function sourceBaseRefForSummary(summary: RepoSummary, fallback: string): string
     : fallback;
 }
 
+function sourceRefForSourceSummary(
+  source: NonNullable<RepoSummary["sources"]>[number],
+  fallback: string,
+): string {
+  return typeof source.ref === "string" && source.ref.trim().length > 0
+    ? source.ref.trim()
+    : fallback;
+}
+
+function sourceBaseRefForSourceSummary(
+  source: NonNullable<RepoSummary["sources"]>[number],
+  fallback: string,
+): string {
+  return typeof source.baseRef === "string" && source.baseRef.trim().length > 0
+    ? source.baseRef.trim()
+    : fallback;
+}
+
 function throwMissingSourcePath(path: string): never {
   const normalizedPath = normalizePath(path);
   throw new Error(`ENOENT: no such source repo '${normalizedPath}'. Create repos with rgit create owner/repo and edit them under /src/repos/{owner}/{repo}.`);
@@ -979,19 +1045,83 @@ function throwMissingSourcePath(path: string): never {
 function sourceRepoForOptions(
   options: ProcessSourceBackendOptions,
   repoSlug: string,
+  sourcePath?: string,
 ): SourceRepo {
   const normalizedRepo = normalizeRepoSlug(repoSlug);
   const repos = visibleSourceRepos(options.repos);
-  const found = repos.find((repo) => repo.repo === normalizedRepo);
+  const resolved = sourcePath ? resolveSourceRepoPath(repos, sourcePath) : null;
+  if (resolved?.repo.repo === normalizedRepo) {
+    return resolved.repo;
+  }
+  const found = repos.find((repo) => repo.repo === normalizedRepo && repo.defaultSource)
+    ?? repos.find((repo) => repo.repo === normalizedRepo);
   if (!found) {
     throw new Error(`Repo is not visible: ${normalizedRepo}`);
   }
   return found;
 }
 
+function resolveSourceRepoPath(repos: SourceRepo[], path: string): {
+  repo: SourceRepo;
+  relativePath: string;
+  normalizedPath: string;
+} | null {
+  const normalizedPath = normalizePath(path);
+  const matches = repos
+    .map((repo) => {
+      if (normalizedPath !== repo.rootPath && !normalizedPath.startsWith(`${repo.rootPath}/`)) {
+        return null;
+      }
+      const relativePath = normalizedPath === repo.rootPath
+        ? ""
+        : normalizeRepoPath(normalizedPath.slice(repo.rootPath.length + 1));
+      if (!sourceRepoMatchesRelativePath(repo, relativePath)) {
+        return null;
+      }
+      return { repo, relativePath, normalizedPath };
+    })
+    .filter((match): match is { repo: SourceRepo; relativePath: string; normalizedPath: string } => !!match)
+    .sort(compareResolvedSourceRepoMatches);
+
+  if (matches.length === 0) {
+    return null;
+  }
+  const best = matches[0];
+  const tied = matches.filter((match) =>
+    match.repo.matchSubdir.length === best.repo.matchSubdir.length
+  );
+  const identities = new Set(tied.map((match) => sourceRepoIdentity(match.repo)));
+  if (identities.size > 1 && normalizedPath !== best.repo.rootPath) {
+    throw new Error(`Ambiguous source refs for '${normalizedPath}'. Use a path that selects one package source subdir.`);
+  }
+  return best;
+}
+
+function sourceRepoMatchesRelativePath(repo: SourceRepo, relativePath: string): boolean {
+  return pathIsWithin(relativePath, repo.matchSubdir);
+}
+
+function compareResolvedSourceRepoMatches(
+  left: { repo: SourceRepo },
+  right: { repo: SourceRepo },
+): number {
+  const subdir = right.repo.matchSubdir.length - left.repo.matchSubdir.length;
+  if (subdir !== 0) {
+    return subdir;
+  }
+  if (left.repo.defaultSource !== right.repo.defaultSource) {
+    return left.repo.defaultSource ? 1 : -1;
+  }
+  return left.repo.sourceKey.localeCompare(right.repo.sourceKey);
+}
+
+function sourceRepoIdentity(repo: SourceRepo): string {
+  return `${repo.ref}\0${repo.baseRef}`;
+}
+
 function sourcePackageForRepo(repo: SourceRepo): SourcePackage {
   const record = {
-    packageId: `repo:${repo.repo}`,
+    packageId: repo.sourceKey,
     scope: { kind: "global" },
     manifest: {
       name: repo.repo,

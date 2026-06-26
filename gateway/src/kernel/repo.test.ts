@@ -53,11 +53,13 @@ function makeContext(
   fetcher: Fetcher,
   configSeed: Record<string, string> = {},
   packages: Array<{
+    packageId?: string;
     manifest: {
       name?: string;
       source: {
         repo: string;
         ref?: string;
+        subdir?: string;
         resolvedCommit?: string | null;
       };
     };
@@ -419,6 +421,7 @@ describe("repo syscalls", () => {
           source: {
             repo: "root/gsv",
             ref: "feature/wiki",
+            subdir: "packages/wiki",
             resolvedCommit: "commit123",
           },
         },
@@ -435,9 +438,77 @@ describe("repo syscalls", () => {
       public: false,
       ref: "feature/wiki",
       baseRef: "commit123",
+      sources: [{
+        kind: "package",
+        packageId: undefined,
+        name: "Wiki",
+        subdir: "packages/wiki",
+        ref: "feature/wiki",
+        baseRef: "commit123",
+        updatedAt: 200,
+      }],
       description: "Wiki",
       updatedAt: 200,
     });
+  });
+
+  it("keeps same-repo package source refs separate when listing repos", () => {
+    const ctx = makeContext(makeFetcher(() => {
+      throw new Error("ripgit should not be called");
+    }), {}, [
+      {
+        packageId: "pkg-a",
+        manifest: {
+          name: "Package A",
+          source: {
+            repo: "root/gsv",
+            ref: "feature/a",
+            subdir: "packages/a",
+            resolvedCommit: "commit-a",
+          },
+        },
+        updatedAt: 100,
+      },
+      {
+        packageId: "pkg-b",
+        manifest: {
+          name: "Package B",
+          source: {
+            repo: "root/gsv",
+            ref: "feature/b",
+            subdir: "packages/b",
+            resolvedCommit: "commit-b",
+          },
+        },
+        updatedAt: 200,
+      },
+    ]);
+
+    expect(handleRepoList({}, ctx).repos).toContainEqual(expect.objectContaining({
+      repo: "root/gsv",
+      ref: "feature/a",
+      baseRef: "commit-a",
+      sources: [
+        {
+          kind: "package",
+          packageId: "pkg-a",
+          name: "Package A",
+          subdir: "packages/a",
+          ref: "feature/a",
+          baseRef: "commit-a",
+          updatedAt: 100,
+        },
+        {
+          kind: "package",
+          packageId: "pkg-b",
+          name: "Package B",
+          subdir: "packages/b",
+          ref: "feature/b",
+          baseRef: "commit-b",
+          updatedAt: 200,
+        },
+      ],
+    }));
   });
 
   it("allows reads from public repos owned by another user", async () => {
