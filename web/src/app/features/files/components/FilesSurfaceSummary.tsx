@@ -1081,8 +1081,7 @@ export function FilesSurfaceSummary() {
     }
   };
 
-  // The ConfirmModal's confirmPhrase guard keeps its button disabled until the
-  // typed path matches, so onConfirm only fires once the path is confirmed.
+  // Runs the delete once the user confirms via the ConfirmModal's DELETE button.
   const confirmDelete = async () => {
     if (!deleteRequest || filesMutations.remove.isPending) {
       return;
