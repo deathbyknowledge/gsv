@@ -1460,10 +1460,12 @@ describe("GsvFs Linux-like runtime views", () => {
     expect(local).toMatchObject({
       profile: { id: "fast-stack", name: "Fast Stack" },
       values: {
-        "config/ai/api_key": "redacted",
-        "config/ai/image/read/api_key": "redacted",
+        "config/ai/provider": "openai",
+        "config/ai/model": "gpt-4.1-mini",
       },
     });
+    expect(local.values).not.toHaveProperty("config/ai/api_key");
+    expect(local.values).not.toHaveProperty("config/ai/image/read/api_key");
 
     const effective = JSON.parse(await fs.readFile("/proc/task-alpha/ai/effective.json"));
     expect(effective.values).toMatchObject({

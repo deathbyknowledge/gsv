@@ -27,7 +27,10 @@ import type {
   AiTranscriptionCreateResult,
   ContextFile,
 } from "../syscalls/ai";
-import type { ProcAiConfigGetResult } from "../syscalls/proc";
+import type {
+  ProcAiConfigGetResult,
+  ProcAiConfigProfileRef,
+} from "../syscalls/proc";
 import type { ToolDefinition, SyscallName } from "../syscalls";
 import { intoSyscallTool, isRoutableSyscall } from "../syscalls";
 import {
@@ -87,7 +90,11 @@ import {
 } from "@humansandmachines/gsv/protocol";
 import { collectPromptSkillIndex } from "./skills";
 import { listVisibleTargets, targetToAiDevice } from "./targets";
-import { normalizeProcessAiConfigValues } from "../process/ai-config";
+import {
+  normalizeProcessAiConfigValues,
+  PROCESS_AI_CONFIG_SECRET_KEYS,
+  processAiModelProfileSecretConfigKey,
+} from "../process/ai-config";
 import { sendFrameToProcess } from "../shared/utils";
 
 const SYSCALL_TOOLS: Record<string, ToolDefinition> = {
@@ -156,7 +163,14 @@ export async function handleAiConfig(
   const uid = ctx.identity?.process.uid ?? 0;
   const owner = resolveOwnerIdentity(ctx);
   const accountConfigUids = resolveAiConfigAccountUids(uid, owner);
-  const processOverrides = normalizeProcessAiConfigValues(args?.processOverrides ?? {});
+  const input = args && typeof args === "object" ? args : ({} as AiConfigArgs);
+  const processOverrides = resolveEffectiveAiProcessOverrides(
+    ctx,
+    uid,
+    owner,
+    input.processOverrides,
+    input.processProfile,
+  );
 
   const provider =
     resolveAiProcessConfigValue(processOverrides, "provider") ??
@@ -531,7 +545,7 @@ async function resolveAiMediaConfigForContext(ctx: KernelContext): Promise<NonNu
   const uid = ctx.identity?.process.uid ?? 0;
   const owner = resolveOwnerIdentity(ctx);
   const accountConfigUids = resolveAiConfigAccountUids(uid, owner);
-  const processOverrides = await resolveAiProcessOverridesForContext(ctx);
+  const processOverrides = await resolveAiProcessOverridesForContext(ctx, uid, owner);
   const apiKey =
     resolveAiProcessConfigValue(processOverrides, "api_key") ??
     resolveAiConfigValue(ctx.config, accountConfigUids, "api_key") ??
@@ -540,7 +554,11 @@ async function resolveAiMediaConfigForContext(ctx: KernelContext): Promise<NonNu
   return resolveAiMediaConfig(ctx.config, accountConfigUids, apiKey, processOverrides);
 }
 
-async function resolveAiProcessOverridesForContext(ctx: KernelContext): Promise<Record<string, string>> {
+async function resolveAiProcessOverridesForContext(
+  ctx: KernelContext,
+  uid: number,
+  owner: ProcessIdentity | null,
+): Promise<Record<string, string>> {
   if (!ctx.processId) {
     return {};
   }
@@ -564,7 +582,70 @@ async function resolveAiProcessOverridesForContext(ctx: KernelContext): Promise<
   if (!result.ok || !result.config) {
     return {};
   }
-  return normalizeProcessAiConfigValues(result.config.values);
+  return resolveEffectiveAiProcessOverrides(
+    ctx,
+    uid,
+    owner,
+    result.config.values,
+    result.config.profile,
+  );
+}
+
+function resolveEffectiveAiProcessOverrides(
+  ctx: KernelContext,
+  uid: number,
+  owner: ProcessIdentity | null,
+  processOverrides: Record<string, unknown> | undefined,
+  processProfile: ProcAiConfigProfileRef | null | undefined,
+): Record<string, string> {
+  const profileSecretOverrides = resolveAiProfileSecretOverrides(
+    ctx.config,
+    resolveAiProfileOwnerUid(ctx, uid, owner),
+    processProfile,
+  );
+  const normalizedOverrides = normalizeProcessAiConfigValues(processOverrides ?? {});
+  return {
+    ...profileSecretOverrides,
+    ...normalizedOverrides,
+  };
+}
+
+function resolveAiProfileOwnerUid(
+  ctx: KernelContext,
+  uid: number,
+  owner: ProcessIdentity | null,
+): number {
+  if (owner) {
+    return owner.uid;
+  }
+  if (ctx.processId) {
+    const processOwnerUid = ctx.procs.getOwnerUid(ctx.processId);
+    if (processOwnerUid !== null) {
+      return processOwnerUid;
+    }
+  }
+  return uid;
+}
+
+function resolveAiProfileSecretOverrides(
+  config: KernelContext["config"],
+  ownerUid: number,
+  profile: ProcAiConfigProfileRef | null | undefined,
+): Record<string, string> {
+  const profileId = normalizeOptionalString(profile?.id);
+  if (!profileId) {
+    return {};
+  }
+  const values: Record<string, string> = {};
+  for (const key of PROCESS_AI_CONFIG_SECRET_KEYS) {
+    const value = normalizeOptionalString(
+      config.get(processAiModelProfileSecretConfigKey(ownerUid, profileId, key)),
+    );
+    if (value) {
+      values[key] = value;
+    }
+  }
+  return values;
 }
 
 function resolveAiMediaConfig(

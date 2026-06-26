@@ -24,7 +24,10 @@ import {
 import type { ProcessRecord } from "../../kernel/processes";
 import {
   PROCESS_AI_CONFIG_KEYS,
+  PROCESS_AI_CONFIG_SECRET_KEYS,
+  omitProcessAiConfigSecrets,
   parseProcessAiModelProfiles,
+  processAiModelProfileSecretConfigKey,
   processAiConfigDirEntries,
   processAiConfigSuffix,
   processAiPathToConfigKey,
@@ -362,7 +365,7 @@ export class KernelMountBackend implements MountBackend {
     }
 
     if (attr === "effective.json") {
-      const effective = this.buildProcAiEffectiveValues(proc, local?.values ?? {});
+      const effective = this.buildProcAiEffectiveValues(proc, local?.values ?? {}, local?.profile);
       return jsonText({
         profile: local?.profile ?? null,
         values: redactProcessAiConfigValues(effective),
@@ -374,7 +377,7 @@ export class KernelMountBackend implements MountBackend {
       return undefined;
     }
 
-    const effective = this.buildProcAiEffectiveValues(proc, local?.values ?? {});
+    const effective = this.buildProcAiEffectiveValues(proc, local?.values ?? {}, local?.profile);
     if (!Object.prototype.hasOwnProperty.call(effective, key)) {
       return undefined;
     }
@@ -441,7 +444,7 @@ export class KernelMountBackend implements MountBackend {
       proc.processId,
       "proc.ai.config.set",
       {
-        values: profile.values,
+        values: omitProcessAiConfigSecrets(profile.values),
         profile: {
           id: profile.id,
           name: profile.name,
@@ -468,6 +471,7 @@ export class KernelMountBackend implements MountBackend {
   private buildProcAiEffectiveValues(
     proc: ProcessRecord,
     localValues: Record<string, string>,
+    profile: ProcAiConfigSnapshot["profile"] | null | undefined,
   ): Record<string, string> {
     const values: Record<string, string> = {};
     const accountUids = proc.ownerUid === proc.uid ? [proc.uid] : [proc.uid, proc.ownerUid];
@@ -482,6 +486,17 @@ export class KernelMountBackend implements MountBackend {
       value ??= this.kernel?.config?.get(key) ?? null;
       if (value !== null) {
         values[key] = value;
+      }
+    }
+
+    if (profile?.id) {
+      for (const key of PROCESS_AI_CONFIG_SECRET_KEYS) {
+        const value = this.kernel?.config?.get(
+          processAiModelProfileSecretConfigKey(proc.ownerUid, profile.id, key),
+        ) ?? null;
+        if (value !== null) {
+          values[key] = value;
+        }
       }
     }
 

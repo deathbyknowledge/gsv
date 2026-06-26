@@ -43,7 +43,10 @@ import { accountIdentity } from "./accounts";
 import { canOwnerDelegateRunAs } from "./account-access";
 import { resolvePackageAgentRunAs } from "./package-agents";
 import { DEFAULT_CONVERSATION_ID } from "../process/conversations";
-import { findProcessAiModelProfile } from "../process/ai-config";
+import {
+  findProcessAiModelProfile,
+  omitProcessAiConfigSecrets,
+} from "../process/ai-config";
 
 const DEFAULT_IPC_CALL_TIMEOUT_MS = 60_000;
 const MIN_IPC_CALL_TIMEOUT_MS = 1_000;
@@ -524,6 +527,8 @@ export async function forwardToProcess(
 
   const processFrame = frame.call === "proc.send"
     ? withProcSendOrigin(frame, ctx)
+    : frame.call === "proc.ai.config.get"
+      ? withRedactedProcAiConfigGet(frame as RequestFrame<"proc.ai.config.get">)
     : frame.call === "proc.ai.config.set"
       ? withProcAiConfigProfile(frame as RequestFrame<"proc.ai.config.set">, ctx, proc.ownerUid)
       : frame;
@@ -566,6 +571,21 @@ export async function forwardToProcess(
   return { ok: true, status: "delivered" };
 }
 
+function withRedactedProcAiConfigGet(
+  frame: RequestFrame<"proc.ai.config.get">,
+): RequestFrame<"proc.ai.config.get"> {
+  const args = frame.args && typeof frame.args === "object"
+    ? frame.args as Record<string, unknown>
+    : {};
+  return {
+    ...frame,
+    args: {
+      ...args,
+      redacted: true,
+    },
+  };
+}
+
 function withProcAiConfigProfile(
   frame: RequestFrame<"proc.ai.config.set">,
   ctx: KernelContext,
@@ -593,7 +613,6 @@ function withProcAiConfigProfile(
     ctx.config.get(`users/${ownerUid}/ai/model_profiles`),
     ownerUid,
     selector,
-    (key) => ctx.config.get(key),
   );
   if (!profile) {
     throw new Error(`AI model profile not found: ${selector}`);
@@ -602,7 +621,7 @@ function withProcAiConfigProfile(
   return {
     ...frame,
     args: {
-      values: profile.values,
+      values: omitProcessAiConfigSecrets(profile.values),
       profile: {
         id: profile.id,
         name: profile.name,

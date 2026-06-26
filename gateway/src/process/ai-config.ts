@@ -179,6 +179,16 @@ export function redactProcessAiConfigValues(values: Record<string, string>): Rec
   return redacted;
 }
 
+export function omitProcessAiConfigSecrets(values: Record<string, string>): Record<string, string> {
+  const visible: Record<string, string> = {};
+  for (const [key, value] of Object.entries(values)) {
+    if (!PROCESS_AI_CONFIG_SECRET_KEYS.has(key)) {
+      visible[key] = value;
+    }
+  }
+  return visible;
+}
+
 export function redactProcessAiConfigValue(key: string, value: string | null | undefined): string {
   if (!value) {
     return "";

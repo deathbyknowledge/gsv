@@ -284,7 +284,7 @@ describe("proc handlers", () => {
     );
   });
 
-  it("hydrates process AI profile secrets before forwarding profile selectors", async () => {
+  it("forwards process AI profile selectors without materializing profile secrets", async () => {
     sendFrameToProcessMock.mockResolvedValue({
       type: "res",
       id: "ai-profile-1",
@@ -356,15 +356,63 @@ describe("proc handlers", () => {
           values: {
             "config/ai/provider": "openai",
             "config/ai/model": "gpt-4.1-mini",
-            "config/ai/api_key": "sk-chat",
             "config/ai/image/read/provider": "openai",
             "config/ai/image/read/model": "gpt-4o",
-            "config/ai/image/read/api_key": "sk-image",
           },
           profile: {
             id: "fast-stack",
             name: "Fast Stack",
           },
+        },
+      }),
+    );
+  });
+
+  it("forces forwarded process AI config reads to stay redacted", async () => {
+    sendFrameToProcessMock.mockResolvedValue({
+      type: "res",
+      id: "ai-config-get-1",
+      ok: true,
+      data: {
+        ok: true,
+        pid: "proc-1",
+        config: {
+          version: 1,
+          values: {
+            "config/ai/api_key": "redacted",
+          },
+          updatedAt: 1,
+        },
+      },
+    } satisfies ResponseFrame);
+    const ctx = {
+      identity: {
+        role: "user",
+        process: IDENTITY,
+        capabilities: ["proc.ai.config.get"],
+      },
+      procs: {
+        get: vi.fn(() => ({ uid: 2000, ownerUid: IDENTITY.uid })),
+      },
+    } as unknown as KernelContext;
+
+    await forwardToProcess({
+      type: "req",
+      id: "ai-config-get-1",
+      call: "proc.ai.config.get",
+      args: {
+        pid: "proc-1",
+        redacted: false,
+      },
+    } as RequestFrame, ctx);
+
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      "proc-1",
+      expect.objectContaining({
+        call: "proc.ai.config.get",
+        args: {
+          pid: "proc-1",
+          redacted: true,
         },
       }),
     );
