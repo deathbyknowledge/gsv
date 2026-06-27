@@ -45,7 +45,6 @@ not present in upstream's 16-grid folder, so those fall back to 32.
 | coach        | stars     | icons/stars.svg    |
 | files        | folder    | icons/folder.svg   |
 | settings     | cog       | icons/cog.svg      |
-| satellite    | rss       | icons/rss.svg      |
 | add          | plus      | icons/plus.svg     |
 | library      | pencil    | icons/pencil.svg   |
 | terminal     | terminal  | icons/terminal.svg |

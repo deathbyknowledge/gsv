@@ -238,11 +238,11 @@
   flex: none;
 }
 
-.gsv-settings-satellites-block {
+.gsv-settings-applications-block {
   flex: 1;
 }
 
-.gsv-settings-satellites-block .gsv-settings-section-rows {
+.gsv-settings-applications-block .gsv-settings-section-rows {
   min-height: 0;
 }
 
