@@ -3022,16 +3022,13 @@ export class Process extends Host<Env> {
     streamSeq?: StreamSeqCounter;
   }): Promise<AssistantMessage | null> {
     const executor = this.resolveAiTextExecutor(options.config);
-    if (executor.kind === "kernel") {
-      return await this.generateAssistantResponseViaKernel(options);
+    if (this.isLocalAiTextExecutor(executor)) {
+      return await this.generateAssistantResponseLocally(options);
     }
-    if (executor.kind === "device") {
-      throw new Error(`AI text executor is not available: device:${executor.target}`);
-    }
-    if (executor.pid !== this.pid) {
-      throw new Error(`AI text process executor is not available: ${executor.pid}`);
-    }
-    return await this.generateAssistantResponseLocally(options);
+    return await this.generateAssistantResponseViaKernel({
+      ...options,
+      target: this.resolveAiTextGenerateTarget(executor),
+    });
   }
 
   private async generateAssistantResponseLocally(options: {
@@ -3104,11 +3101,13 @@ export class Process extends Host<Env> {
     aiTextGenerateConfig?: AiTextGenerateConfig;
     context: Context;
     sessionAffinityKey?: string;
+    target?: string;
   }): Promise<AssistantMessage> {
     const result = await this.kernelRpc("ai.text.generate", this.buildAiTextGenerateArgs({
       config: options.aiTextGenerateConfig,
       context: options.context,
       sessionAffinityKey: options.sessionAffinityKey,
+      target: options.target,
     }));
     return result.message as unknown as AssistantMessage;
   }
@@ -3121,20 +3120,15 @@ export class Process extends Host<Env> {
     sessionAffinityKey: string;
   }): Promise<string> {
     const executor = this.resolveAiTextExecutor(options.config);
-    if (executor.kind === "kernel") {
+    if (!this.isLocalAiTextExecutor(executor)) {
       const result = await this.kernelRpc("ai.text.generate", this.buildAiTextGenerateArgs({
         config: options.aiTextGenerateConfig,
         context: options.context,
         options: options.options,
         sessionAffinityKey: options.sessionAffinityKey,
+        target: this.resolveAiTextGenerateTarget(executor),
       }));
       return result.text ?? "";
-    }
-    if (executor.kind === "device") {
-      throw new Error(`AI text executor is not available: device:${executor.target}`);
-    }
-    if (executor.pid !== this.pid) {
-      throw new Error(`AI text process executor is not available: ${executor.pid}`);
     }
     const generation = this.generation as unknown;
     if (!isGenerationService(generation)) {
@@ -3168,9 +3162,11 @@ export class Process extends Host<Env> {
     context: Context;
     options?: AiTextGenerateOptions;
     sessionAffinityKey?: string;
+    target?: string;
   }): ArgsOf<"ai.text.generate"> {
     const config = options.config ?? this.buildAiTextGenerateConfig();
     return {
+      ...(options.target ? { target: options.target } : {}),
       systemPrompt: options.context.systemPrompt,
       messages: options.context.messages as ArgsOf<"ai.text.generate">["messages"],
       ...(options.context.tools && options.context.tools.length > 0
@@ -3199,6 +3195,14 @@ export class Process extends Host<Env> {
 
   private resolveAiTextExecutor(config: AiConfigResult): AiConfigResult["executor"] {
     return config.executor ?? { kind: "process", pid: this.pid };
+  }
+
+  private isLocalAiTextExecutor(executor: AiConfigResult["executor"]): boolean {
+    return executor.kind === "process" && executor.pid === this.pid;
+  }
+
+  private resolveAiTextGenerateTarget(executor: AiConfigResult["executor"]): string | undefined {
+    return executor.kind === "device" ? executor.target : undefined;
   }
 
   private recordUnpersistedAssistantUsage(

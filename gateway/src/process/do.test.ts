@@ -2065,6 +2065,90 @@ describe("Process DO — mechanical", () => {
         content: "kernel hello",
       });
     });
+
+    it("routes device text executors through ai.text.generate target", async () => {
+      const pid = "mech-chat-device-executor";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const kernelCalls: Array<{ call: string; args: any }> = [];
+        process.kernelRpc = async (call: string, args: any) => {
+          kernelCalls.push({ call, args });
+          return {
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "device routed" }],
+              api: "test",
+              provider: "device",
+              model: "local-model",
+              usage: {
+                input: 1,
+                output: 1,
+                cacheRead: 0,
+                cacheWrite: 0,
+                totalTokens: 2,
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+              },
+              stopReason: "stop",
+              timestamp: Date.now(),
+            },
+            provider: "device",
+            model: "local-model",
+            text: "device routed",
+          };
+        };
+        process.generation = {
+          [GENERATION_SERVICE_MARKER]: true,
+          async generate() {
+            throw new Error("process-local generate should not be used");
+          },
+          async generateText() {
+            throw new Error("process-local generateText should not be used");
+          },
+        };
+
+        const message = await process.generateAssistantResponse({
+          runId: "run-chat-device-executor",
+          conversationId: "default",
+          config: {
+            executor: { kind: "device", target: "local-gpu" },
+            provider: "device",
+            model: "local-model",
+            apiKey: "",
+            maxTokens: 8192,
+            contextWindowTokens: 200000,
+            contextWindowSource: "config",
+            maxContextBytes: 32768,
+            generationTimeoutMs: 180000,
+            capabilities: [],
+          },
+          context: {
+            systemPrompt: "Test system prompt.",
+            messages: [{ role: "user", content: "use device", timestamp: Date.now() }],
+          },
+          sessionAffinityKey: pid,
+        });
+        return { kernelCalls, message };
+      });
+
+      expect(result.kernelCalls).toHaveLength(1);
+      expect(result.kernelCalls[0]).toMatchObject({
+        call: "ai.text.generate",
+        args: {
+          target: "local-gpu",
+          systemPrompt: "Test system prompt.",
+          messages: [{
+            role: "user",
+            content: "use device",
+          }],
+        },
+      });
+      expect(result.message).toMatchObject({
+        role: "assistant",
+        content: [{ type: "text", text: "device routed" }],
+      });
+    });
   });
 
   describe("proc.send", () => {
