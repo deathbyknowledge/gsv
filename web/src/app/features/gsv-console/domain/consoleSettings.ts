@@ -51,6 +51,7 @@ export const AGENT_MODEL_FIELDS: readonly ConsoleSettingField[] = [
     label: "API key",
     description: "Provider credential. Leave empty for local or bound providers.",
     kind: "password",
+    placeholder: "sk-...",
   },
   {
     key: "config/ai/reasoning",
@@ -109,6 +110,7 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
         label: "API key",
         description: "Optional credential. Falls back to the agent API key when empty.",
         kind: "password",
+        placeholder: "sk-...",
       },
       {
         key: "config/ai/image/read/input_format",
@@ -172,6 +174,7 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
         label: "API key",
         description: "Optional credential. Falls back to the agent API key when empty.",
         kind: "password",
+        placeholder: "sk-...",
       },
     ],
   },
@@ -199,6 +202,7 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
         label: "API key",
         description: "Optional credential. Falls back to the agent API key when empty.",
         kind: "password",
+        placeholder: "sk-...",
       },
       {
         key: "config/ai/transcription/max_bytes",
@@ -232,6 +236,7 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
         label: "API key",
         description: "Optional credential. Falls back to the agent API key when empty.",
         kind: "password",
+        placeholder: "sk-...",
       },
       {
         key: "config/ai/speech/speaker",
