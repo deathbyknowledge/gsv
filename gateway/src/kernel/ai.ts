@@ -300,6 +300,7 @@ export async function handleAiTextGenerate(
   const input = args && typeof args === "object" ? args : ({} as AiTextGenerateArgs);
   const target = normalizeOptionalString(input.target) ?? "gsv";
   if (target !== "gsv") {
+    // TODO: implement device ai gen + routing.
     throw new Error(`AI text generation target is not available: ${target}`);
   }
 
