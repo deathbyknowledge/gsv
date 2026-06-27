@@ -38,7 +38,7 @@ const GLYPH_ICON: Record<string, string> = {
   machines: "computer",
   messengers: "chat",
   integrations: "weblink",
-  applications: "stars",
+  applications: "satellite",
 };
 
 /** Sections that show a "create" entry in their drawer. The label is the same

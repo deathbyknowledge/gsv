@@ -11,7 +11,7 @@ import type { PackageListKind } from "../domain/consoleListTypes";
 import type { ConsolePackage } from "../domain/consoleModels";
 
 export function iconForPackage(pkg: ConsolePackage, kind: PackageListKind): string {
-  if (isApplicationPackage(pkg)) return "rss";
+  if (isApplicationPackage(pkg)) return "satellite";
   if (pkg.runtime === "web-ui") return "stars";
   if (pkg.runtime === "node") return "terminal";
   return "pencil";
