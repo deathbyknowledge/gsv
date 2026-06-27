@@ -204,6 +204,69 @@ describe("chat transcript rows", () => {
     ]));
   });
 
+  it("drops stream fallback tool rows when concrete tool events arrive", () => {
+    let state = emptyChatRuntimeState("pid-1", "default");
+
+    state = applyChatSignal(state, "proc.run.started", {
+      pid: "pid-1",
+      runId: "run-1",
+      conversationId: "default",
+    }, { pid: "pid-1", conversationId: "default" }).state;
+
+    state = applyChatSignal(state, "proc.run.stream", {
+      pid: "pid-1",
+      runId: "run-1",
+      conversationId: "default",
+      event: {
+        type: "toolcall_start",
+        contentIndex: 0,
+        toolCall: {
+          type: "toolCall",
+          name: "Shell",
+          arguments: { input: "pwd" },
+        },
+      },
+    }, { pid: "pid-1", conversationId: "default" }).state;
+
+    expect(state.rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        role: "tool",
+        status: "planning",
+        toolCallId: "run-1:tool:0",
+      }),
+    ]));
+
+    state = applyChatSignal(state, "proc.run.tool.started", {
+      pid: "pid-1",
+      runId: "run-1",
+      conversationId: "default",
+      callId: "call-1",
+      name: "Shell",
+      syscall: "shell.exec",
+      args: { input: "pwd" },
+    }, { pid: "pid-1", conversationId: "default" }).state;
+
+    state = applyChatSignal(state, "proc.run.tool.finished", {
+      pid: "pid-1",
+      runId: "run-1",
+      conversationId: "default",
+      callId: "call-1",
+      name: "Shell",
+      syscall: "shell.exec",
+      ok: true,
+      output: "done",
+    }, { pid: "pid-1", conversationId: "default" }).state;
+
+    expect(state.rows.filter((row) => row.toolCallId === "run-1:tool:0")).toHaveLength(0);
+    expect(state.rows.filter((row) => row.role === "tool" || row.role === "toolResult")).toEqual([
+      expect.objectContaining({
+        role: "toolResult",
+        status: "done",
+        toolCallId: "call-1",
+      }),
+    ]);
+  });
+
   it("replaces one optimistic user row when the persisted message signal arrives", () => {
     let state = addOptimisticUserMessage(
       emptyChatRuntimeState("pid-1", "default"),

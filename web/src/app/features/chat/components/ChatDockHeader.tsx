@@ -112,6 +112,7 @@ export function ChatDockHeader({
         <button
           type="button"
           class="gsv-chat-agent-model"
+          data-chat-popover-trigger="model"
           onClick={() => onTogglePopover("model")}
           aria-haspopup="menu"
           aria-expanded={openPopover === "model"}
@@ -125,6 +126,7 @@ export function ChatDockHeader({
         <button
           type="button"
           class="gsv-chat-agent-activity"
+          data-chat-popover-trigger="tasks"
           onClick={() => onTogglePopover("tasks")}
           aria-haspopup="menu"
           aria-expanded={openPopover === "tasks"}
@@ -178,6 +180,7 @@ export function ChatDockHeader({
         <button
           type="button"
           class="gsv-chat-context-control"
+          data-chat-popover-trigger="context"
           title={contextTitle}
           onClick={() => onTogglePopover("context")}
           aria-haspopup="menu"
