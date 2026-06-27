@@ -301,6 +301,14 @@ describe("media native commands", () => {
     expect(help.ok).toBe(true);
     expect(help.stdout).toContain("llm [OPTIONS] PROMPT...");
 
+    const manual = await handleShellExec(
+      { input: "man llm" },
+      makeContext({ capabilities: [] }),
+    );
+    expect(manual.ok).toBe(true);
+    expect(manual.stdout).toContain("LLM(1)");
+    expect(manual.stdout).toContain("ai.text.generate");
+
     const denied = await handleShellExec(
       { input: "llm hello" },
       makeContext({ capabilities: [] }),

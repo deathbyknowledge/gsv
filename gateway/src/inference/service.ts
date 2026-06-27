@@ -150,8 +150,8 @@ export function isGenerationService(value: unknown): value is GenerationService 
 }
 
 /**
- * Extract usable text from a generation for non-conversational purposes such as
- * compaction summaries and thread titles.
+ * Extract usable text from a generation for non-conversational callers such as
+ * compaction summaries and ai.text.generate.
  *
  * Reasoning models (notably Workers AI ones such as kimi-k2.6) sometimes emit
  * their answer in a reasoning/thinking channel and produce no separate text
