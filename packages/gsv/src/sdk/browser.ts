@@ -96,6 +96,7 @@ declare global {
     __GSV_APP_BOOT__?: PackageAppBoot;
     __GSV_BACKEND_READY__?: Promise<unknown>;
     __GSV_APP_RUNTIME__?: PackageAppRuntimeChrome;
+    __GSV_APP_SESSION_FETCH_BRIDGE__?: true;
     backend?: unknown;
   }
 }
@@ -384,6 +385,86 @@ async function getHostClient(): Promise<HostClient> {
   return await host.connectHost();
 }
 
+let nativeAppSessionFetch: typeof fetch | null = null;
+
+function currentLocationHref(): string {
+  return globalThis.window?.location?.href ?? "http://localhost";
+}
+
+function isRequestInput(value: RequestInfo | URL): value is Request {
+  return typeof Request !== "undefined" && value instanceof Request;
+}
+
+function fetchInputUrl(input: RequestInfo | URL): string {
+  if (typeof input === "string") {
+    return input;
+  }
+  if (input instanceof URL) {
+    return input.toString();
+  }
+  return input.url;
+}
+
+function normalizeRouteBase(routeBase: string): string {
+  return routeBase.length > 1 && routeBase.endsWith("/") ? routeBase.slice(0, -1) : routeBase;
+}
+
+function isAppSessionFetchUrl(url: URL, boot: PackageAppBoot): boolean {
+  const routeBaseUrl = new URL(boot.routeBase, currentLocationHref());
+  const routeBase = normalizeRouteBase(routeBaseUrl.pathname);
+  return url.origin === routeBaseUrl.origin
+    && (url.pathname === routeBase || url.pathname.startsWith(`${routeBase}/`));
+}
+
+function appSessionFetchBoot(input: RequestInfo | URL): PackageAppBoot | null {
+  if (!isEmbeddedInHost() || !hasAppBoot()) {
+    return null;
+  }
+  const boot = getAppBoot();
+  let url: URL;
+  try {
+    url = new URL(fetchInputUrl(input), currentLocationHref());
+  } catch {
+    return null;
+  }
+  return isAppSessionFetchUrl(url, boot) ? boot : null;
+}
+
+function buildHostFetchRequest(input: RequestInfo | URL, init?: RequestInit): Request {
+  if (isRequestInput(input) && init === undefined) {
+    return input.clone();
+  }
+  if (typeof input === "string") {
+    return new Request(new URL(input, currentLocationHref()).toString(), init);
+  }
+  return new Request(input, init);
+}
+
+async function fetchAppSessionThroughHost(
+  nativeFetch: typeof fetch,
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> {
+  const boot = appSessionFetchBoot(input);
+  if (!boot) {
+    return await nativeFetch(input, init);
+  }
+  const request = buildHostFetchRequest(input, init);
+  return await (await getHostClient()).fetchAppSession(boot, request);
+}
+
+export function installAppSessionFetchBridge(): void {
+  if (!globalThis.window || globalThis.window.__GSV_APP_SESSION_FETCH_BRIDGE__ || typeof globalThis.fetch !== "function") {
+    return;
+  }
+  const nativeFetch = globalThis.fetch.bind(globalThis) as typeof fetch;
+  nativeAppSessionFetch = nativeFetch;
+  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    return fetchAppSessionThroughHost(nativeFetch, input, init);
+  }) as typeof fetch;
+  globalThis.window.__GSV_APP_SESSION_FETCH_BRIDGE__ = true;
+}
+
 async function connectHostBackendTransport(boot: PackageAppBoot): Promise<BackendTransport> {
   const host = await getHostClient();
   const socket = await host.connectBackendSocket(boot);
@@ -614,7 +695,8 @@ async function refreshAppSession(boot: PackageAppBoot): Promise<PackageAppBoot> 
       }
     }
     if (nextBoot === undefined) {
-      const response = await fetch(buildRpcSessionRefreshUrl(boot), {
+      const directFetch = nativeAppSessionFetch ?? globalThis.fetch.bind(globalThis);
+      const response = await directFetch(buildRpcSessionRefreshUrl(boot), {
         method: "POST",
         credentials: "same-origin",
         headers: {
@@ -842,3 +924,5 @@ export function onAppEvent(listener: AppEventListener): () => void {
     appEventListeners.delete(listener);
   };
 }
+
+installAppSessionFetchBridge();

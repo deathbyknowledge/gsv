@@ -38,6 +38,7 @@ export type HostClient = {
   setDirty(dirty: boolean): Promise<void>;
   requestNewWindow(route?: string): Promise<string | null>;
   refreshAppSession(boot: PackageAppBoot): Promise<PackageAppBoot>;
+  fetchAppSession(boot: PackageAppBoot, request: Request): Promise<Response>;
   connectBackendSocket(boot: PackageAppBoot): Promise<HostBackendSocket>;
 };
 
@@ -73,6 +74,20 @@ type HostBackendSocketRecord = {
   messageListeners: Set<(data: string) => void>;
   closeListeners: Set<(event: HostBackendCloseEvent) => void>;
   errorListeners: Set<(error: Error) => void>;
+};
+
+type HostAppSessionFetchRequest = {
+  url: string;
+  method: string;
+  headers: string[][];
+  body: ArrayBuffer | null;
+};
+
+type HostAppSessionFetchResponse = {
+  status?: unknown;
+  statusText?: unknown;
+  headers?: unknown;
+  body?: unknown;
 };
 
 const HOST_CONNECT_REQUEST = "gsv-host-connect-request";
@@ -120,6 +135,50 @@ function toHostStatus(value: { state?: string } | undefined): HostStatus {
 
 function createHostConnectRequestId(): string {
   return `host-connect-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+async function serializeAppSessionFetchRequest(request: Request): Promise<HostAppSessionFetchRequest> {
+  const headers: string[][] = [];
+  request.headers.forEach((value, name) => {
+    headers.push([name, value]);
+  });
+  const method = request.method.toUpperCase();
+  const body = method === "GET" || method === "HEAD"
+    ? null
+    : await request.clone().arrayBuffer();
+  return {
+    url: request.url,
+    method,
+    headers,
+    body,
+  };
+}
+
+function appSessionFetchResponseHeaders(value: unknown): Headers {
+  const headers = new Headers();
+  if (!Array.isArray(value)) {
+    return headers;
+  }
+  for (const entry of value) {
+    if (Array.isArray(entry) && entry.length === 2 && typeof entry[0] === "string" && typeof entry[1] === "string") {
+      headers.append(entry[0], entry[1]);
+    }
+  }
+  return headers;
+}
+
+function responseStatusAllowsBody(status: number): boolean {
+  return status !== 101 && status !== 204 && status !== 205 && status !== 304;
+}
+
+function deserializeAppSessionFetchResponse(value: HostAppSessionFetchResponse): Response {
+  const status = typeof value.status === "number" ? value.status : 200;
+  const body = responseStatusAllowsBody(status) && value.body instanceof ArrayBuffer ? value.body : null;
+  return new Response(body, {
+    status,
+    statusText: typeof value.statusText === "string" ? value.statusText : "",
+    headers: appSessionFetchResponseHeaders(value.headers),
+  });
 }
 
 async function createHostClient(): Promise<HostClient> {
@@ -329,6 +388,14 @@ async function createHostClient(): Promise<HostClient> {
     },
     refreshAppSession: async (boot) => {
       return await rpc<PackageAppBoot>("appSession.refresh", { boot });
+    },
+    fetchAppSession: async (boot, request) => {
+      const fetchRequest = await serializeAppSessionFetchRequest(request);
+      const response = await rpc<HostAppSessionFetchResponse>("appSession.fetch", {
+        boot,
+        request: fetchRequest,
+      });
+      return deserializeAppSessionFetchResponse(response);
     },
     connectBackendSocket: async (boot) => {
       const result = await rpc<{ connectionId?: unknown }>("backend.connect", { boot });

@@ -11,7 +11,7 @@ let windowListeners: Map<string, Set<EventListenerOrEventListenerObject>>;
 beforeEach(() => {
   windowListeners = new Map<string, Set<EventListenerOrEventListenerObject>>();
   vi.stubGlobal("window", {
-    location: { origin: "http://localhost" },
+    location: { href: "http://localhost/shell", origin: "http://localhost" },
     addEventListener: vi.fn((type: string, listener: EventListenerOrEventListenerObject) => {
       const typeListeners = windowListeners.get(type) ?? new Set<EventListenerOrEventListenerObject>();
       typeListeners.add(listener);
@@ -107,6 +107,42 @@ async function connectBridge(
   iframe.dispatchLoad();
 
   expect(hostMessage).toMatchObject({ type: "gsv-host-connect" });
+  expect(hostPorts[0]).toBeInstanceOf(MessagePort);
+  const port = hostPorts[0] as MessagePort;
+  port.start();
+  return { controller, port };
+}
+
+async function connectPackageBridge(
+  gatewayClient: Parameters<typeof attachHostBridge>[1],
+): Promise<{ controller: ReturnType<typeof attachHostBridge>; port: MessagePort }> {
+  let hostMessage: unknown = null;
+  let hostPorts: readonly MessagePort[] = [];
+  const iframe = createIframeMock((message: unknown, _targetOrigin: string, ports?: Transferable[]) => {
+    hostMessage = message;
+    hostPorts = (ports ?? []) as MessagePort[];
+  });
+  const iframeWindow = iframe.contentWindow;
+
+  const controller = attachHostBridge(iframe, gatewayClient, null, APP_SESSION);
+  iframe.dispatchLoad();
+  dispatchWindowMessage({
+    origin: "null",
+    source: iframeWindow,
+    data: {
+      type: "gsv-host-connect-request",
+      requestId: "package-bridge",
+      boot: {
+        sessionId: APP_SESSION.sessionId,
+        clientId: APP_SESSION.clientId,
+      },
+    },
+  });
+
+  expect(hostMessage).toMatchObject({
+    type: "gsv-host-connect",
+    requestId: "package-bridge",
+  });
   expect(hostPorts[0]).toBeInstanceOf(MessagePort);
   const port = hostPorts[0] as MessagePort;
   port.start();
@@ -306,5 +342,79 @@ describe("attachHostBridge", () => {
     });
 
     controller.destroy();
+  });
+
+  it("proxies same-session package fetches through the host", async () => {
+    const gatewayClient = createHostStatusClient();
+    const fetchMock = vi.fn(async (request: Request) => {
+      expect(request.url).toBe("http://localhost/apps/sessions/session-1/clients/client-1/api/notes");
+      expect(request.method).toBe("POST");
+      expect(request.credentials).toBe("same-origin");
+      expect(request.redirect).toBe("error");
+      expect(request.headers.get("content-type")).toBe("text/plain");
+      expect(request.headers.get("x-package")).toBe("yes");
+      expect(request.headers.get("cookie")).toBeNull();
+      expect(request.headers.get("authorization")).toBeNull();
+      expect(await request.text()).toBe("hello");
+      return new Response("ok", {
+        status: 202,
+        statusText: "Accepted",
+        headers: {
+          "x-test": "1",
+        },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { controller, port } = await connectPackageBridge(gatewayClient);
+
+    const result = await rpc(port, "appSession.fetch", {
+      boot: APP_SESSION,
+      request: {
+        url: `${APP_SESSION.routeBase}/api/notes`,
+        method: "POST",
+        headers: [
+          ["content-type", "text/plain"],
+          ["x-package", "yes"],
+          ["cookie", "bad=1"],
+          ["authorization", "Bearer bad"],
+        ],
+        body: new TextEncoder().encode("hello").buffer,
+      },
+    }) as { ok: boolean; data?: { body?: ArrayBuffer; headers?: string[][]; status?: number; statusText?: string } };
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result.ok).toBe(true);
+    expect(result.data).toMatchObject({
+      status: 202,
+      statusText: "Accepted",
+      headers: expect.arrayContaining([["x-test", "1"]]),
+    });
+    expect(new TextDecoder().decode(result.data?.body)).toBe("ok");
+
+    controller.destroy();
+    port.close();
+  });
+
+  it("rejects package fetches outside the app session", async () => {
+    const gatewayClient = createHostStatusClient();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const { controller, port } = await connectPackageBridge(gatewayClient);
+
+    const result = await rpc(port, "appSession.fetch", {
+      boot: APP_SESSION,
+      request: {
+        url: "/ws",
+        method: "GET",
+        headers: [],
+      },
+    }) as { ok: boolean; error?: string };
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("outside the app session");
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    controller.destroy();
+    port.close();
   });
 });

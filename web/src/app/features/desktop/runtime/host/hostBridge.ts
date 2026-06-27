@@ -6,6 +6,7 @@ type HostRpcMethod =
   | "setDirty"
   | "requestNewWindow"
   | "appSession.refresh"
+  | "appSession.fetch"
   | "backend.connect"
   | "backend.send"
   | "backend.close";
@@ -88,6 +89,13 @@ type HostBackendConnection = {
   socket: WebSocket;
 };
 
+type HostAppSessionFetchRequest = {
+  url: string;
+  method?: string;
+  headers?: unknown;
+  body?: unknown;
+};
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object") {
     return null;
@@ -123,8 +131,12 @@ function appClientRefreshUrl(session: HostAppSession): string {
   return `${session.routeBase}/refresh`;
 }
 
+function windowLocationHref(): string {
+  return window.location.href || window.location.origin;
+}
+
 function buildRpcWebSocketUrl(rpcBase: string): string {
-  const url = new URL(rpcBase, window.location.href);
+  const url = new URL(rpcBase, windowLocationHref());
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   return url.toString();
 }
@@ -146,6 +158,90 @@ function validateSessionPayload(appSession: HostAppSession | null, payload: unkn
     throw new Error("Package app session mismatch");
   }
   return appSession;
+}
+
+function normalizeRouteBase(routeBase: string): string {
+  return routeBase.length > 1 && routeBase.endsWith("/") ? routeBase.slice(0, -1) : routeBase;
+}
+
+function isAppSessionFetchUrl(url: URL, session: HostAppSession): boolean {
+  const routeBase = normalizeRouteBase(session.routeBase);
+  return url.origin === window.location.origin
+    && (url.pathname === routeBase || url.pathname.startsWith(`${routeBase}/`));
+}
+
+function appSessionFetchHeaders(value: unknown): Headers {
+  const headers = new Headers();
+  if (value === undefined || value === null) {
+    return headers;
+  }
+  if (!Array.isArray(value)) {
+    throw new Error("Invalid package app fetch headers");
+  }
+  for (const entry of value) {
+    if (!Array.isArray(entry) || entry.length !== 2 || typeof entry[0] !== "string" || typeof entry[1] !== "string") {
+      throw new Error("Invalid package app fetch headers");
+    }
+    const name = entry[0].toLowerCase();
+    if (name === "authorization" || name === "cookie" || name === "host" || name === "connection" || name === "content-length") {
+      continue;
+    }
+    headers.append(entry[0], entry[1]);
+  }
+  return headers;
+}
+
+function appSessionFetchBody(method: string, value: unknown): BodyInit | undefined {
+  if (method === "GET" || method === "HEAD" || value === undefined || value === null) {
+    return undefined;
+  }
+  if (value instanceof ArrayBuffer) {
+    return value;
+  }
+  if (ArrayBuffer.isView(value) && value.buffer instanceof ArrayBuffer) {
+    const view = value as ArrayBufferView<ArrayBuffer>;
+    return view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength);
+  }
+  throw new Error("Invalid package app fetch body");
+}
+
+function buildAppSessionFetchRequest(appSession: HostAppSession | null, payload: unknown): Request {
+  const session = validateSessionPayload(appSession, payload);
+  const record = asRecord(payload);
+  const request = asRecord(record?.request) as HostAppSessionFetchRequest | null;
+  if (!request || typeof request.url !== "string") {
+    throw new Error("Invalid package app fetch request");
+  }
+  const url = new URL(request.url, windowLocationHref());
+  if (!isAppSessionFetchUrl(url, session)) {
+    throw new Error("Package app fetch URL is outside the app session");
+  }
+  const method = (typeof request.method === "string" && request.method.trim() ? request.method : "GET").toUpperCase();
+  return new Request(url.toString(), {
+    method,
+    headers: appSessionFetchHeaders(request.headers),
+    body: appSessionFetchBody(method, request.body),
+    credentials: "same-origin",
+    redirect: "error",
+  });
+}
+
+async function serializeAppSessionFetchResponse(response: Response): Promise<unknown> {
+  const headers: string[][] = [];
+  response.headers.forEach((value, name) => {
+    headers.push([name, value]);
+  });
+  return {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+    body: await response.arrayBuffer(),
+  };
+}
+
+async function fetchAppSession(appSession: HostAppSession | null, payload: unknown): Promise<unknown> {
+  const request = buildAppSessionFetchRequest(appSession, payload);
+  return await serializeAppSessionFetchResponse(await fetch(request));
 }
 
 function validateConnectRequest(appSession: HostAppSession | null, payload: unknown): boolean {
@@ -234,6 +330,9 @@ async function handleRpc(
     }
     case "appSession.refresh": {
       return await refreshAppSession(appSession, message.payload);
+    }
+    case "appSession.fetch": {
+      return await fetchAppSession(appSession, message.payload);
     }
     case "backend.connect": {
       const session = validateSessionPayload(appSession, message.payload);
