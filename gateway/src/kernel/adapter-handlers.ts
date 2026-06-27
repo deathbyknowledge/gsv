@@ -35,6 +35,7 @@ import { canOwnerRunAsAccount } from "./account-access";
 import { isLocked } from "../auth/shadow";
 import { DEFAULT_CONVERSATION_ID } from "../process/conversations";
 import type { AdapterStatusRecord } from "./adapter-status";
+import type { IdentityLinkRecord } from "./identity-links";
 
 type AdapterServiceBinding = Fetcher & Partial<AdapterWorkerInterface>;
 type ProcSendData = {
@@ -183,7 +184,7 @@ export async function handleAdapterSend(
   if (!adapter) return { ok: false, error: "adapter is required" };
   if (!accountId) return { ok: false, error: "accountId is required" };
   if (!args.surface?.id?.trim()) return { ok: false, error: "surface.id is required" };
-  if (!canSendToAdapterAccount(ctx, adapter, accountId)) {
+  if (!canSendToAdapterSurface(ctx, adapter, accountId, args.surface)) {
     return { ok: false, error: "Permission denied" };
   }
 
@@ -213,7 +214,12 @@ export async function handleAdapterSend(
   };
 }
 
-function canSendToAdapterAccount(ctx: KernelContext, adapter: string, accountId: string): boolean {
+function canSendToAdapterSurface(
+  ctx: KernelContext,
+  adapter: string,
+  accountId: string,
+  surface: AdapterSurface,
+): boolean {
   const identity = ctx.identity;
   if (!identity) {
     return false;
@@ -228,10 +234,41 @@ function canSendToAdapterAccount(ctx: KernelContext, adapter: string, accountId:
     return true;
   }
   const ownerUid = resolveCallerOwnerUid(ctx);
-  return ctx.adapters.identityLinks.list(ownerUid).some((link) =>
-    link.adapter.trim().toLowerCase() === adapter &&
-    link.accountId.trim() === accountId
+  const links = ctx.adapters.identityLinks.list(ownerUid).filter((link) =>
+    link.adapter.trim().toLowerCase() === adapter && link.accountId.trim() === accountId
   );
+  if (links.length === 0) {
+    return false;
+  }
+  return links.some((link) => linkAllowsAdapterSurface(link, surface))
+    || callerOwnsAdapterSurfaceRoute(ctx, adapter, accountId, surface, ownerUid);
+}
+
+function linkAllowsAdapterSurface(link: IdentityLinkRecord, surface: AdapterSurface): boolean {
+  const surfaceKind = surface.kind;
+  const surfaceId = surface.id.trim();
+  const linkedSurfaceKind = metadataString(link.metadata, "surfaceKind");
+  const linkedSurfaceId = metadataString(link.metadata, "surfaceId");
+  if (linkedSurfaceKind && linkedSurfaceId) {
+    return linkedSurfaceKind === surfaceKind && linkedSurfaceId === surfaceId;
+  }
+  return surfaceKind === "dm" && link.actorId.trim() === surfaceId;
+}
+
+function callerOwnsAdapterSurfaceRoute(
+  ctx: KernelContext,
+  adapter: string,
+  accountId: string,
+  surface: AdapterSurface,
+  ownerUid: number,
+): boolean {
+  const route = ctx.adapters.surfaceRoutes.get(adapter, accountId, surface.kind, surface.id.trim());
+  return route?.uid === ownerUid;
+}
+
+function metadataString(metadata: Record<string, unknown> | null | undefined, key: string): string {
+  const value = metadata?.[key];
+  return typeof value === "string" ? value.trim() : "";
 }
 
 export async function handleAdapterShellExec(
