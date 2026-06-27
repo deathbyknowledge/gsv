@@ -41,18 +41,12 @@ export function DesktopHint({ lines, minimizedText, collapse = false, played = f
     }
   }, [collapse]);
 
-  // Intro typewriter — runs once per login, then minimizes. Skipped while the
-  // intro has already played (played=true). Keyed on `played` so it re-arms when
-  // a fresh login flips the flag back to false: the desktop subtree stays mounted
-  // across lock/unlock (the shell is hidden, not unmounted), so without this the
-  // intro would only ever play on the very first login.
+  // Intro typewriter — runs once per login, then minimizes. Skipped entirely if
+  // the intro already played (played=true on mount). The parent gives this
+  // component a per-login `key`, so a fresh login remounts it (cancelling any
+  // in-flight timer via cleanup) and replays the intro from the top.
   useEffect(() => {
     if (played) return;
-
-    // Reset the visual state so the intro types out again from the top.
-    setMinimized(collapseRef.current);
-    setShown(lines.map(() => ""));
-    setCaret(0);
 
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -91,7 +85,7 @@ export function DesktopHint({ lines, minimizedText, collapse = false, played = f
       if (timer) clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [played]);
+  }, []);
 
   return (
     <div class={`gsv-space-hint${minimized ? " is-min" : ""}`}>

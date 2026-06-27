@@ -32,6 +32,8 @@ type GsvDesktopProps = {
   onOpenSurface: (surface: ShellSurfaceId) => void;
   /** Whether the hint intro has already played this login (skip it if so). */
   hintShown: boolean;
+  /** Per-login token; used as the hint's remount key so each login replays it. */
+  hintToken: number;
   /** Called once when the hint intro finishes (or is skipped via a node click). */
   onHintShown: () => void;
 };
@@ -113,6 +115,7 @@ export function GsvDesktop({
   onOpenObject,
   onOpenSurface,
   hintShown,
+  hintToken,
   onHintShown,
 }: GsvDesktopProps) {
   const selectedObject = selectedObjectId
@@ -284,6 +287,7 @@ export function GsvDesktop({
       </div>
 
       <DesktopHint
+        key={hintToken}
         lines={DESKTOP_HINT}
         minimizedText={DESKTOP_HINT_MIN}
         collapse={selectedObject != null}
