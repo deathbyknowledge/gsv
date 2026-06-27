@@ -10,6 +10,7 @@ import { buildCoreCommands } from "./core";
 import { buildCpCommand } from "./cp";
 import { buildCrontabCommand } from "./crontab";
 import { buildLsCommand } from "./ls";
+import { buildLlmCommand } from "./llm";
 import { buildMediaCommands } from "./media";
 import { buildMcpCommand } from "./mcp";
 import { buildPackageCommands, buildPkgCommand } from "./pkg";
@@ -32,6 +33,7 @@ export function buildCustomCommands(
 ) {
   const coreCommands = buildCoreCommands(fs, identity, ctx);
   const ls = buildLsCommand(fs, identity, ctx);
+  const llm = buildLlmCommand(ctx);
   const stat = buildStatCommand(fs, identity, ctx);
   const cp = buildCpCommand(ctx, options?.fsCopyTransport);
   const crontab = buildCrontabCommand(fs, ctx);
@@ -64,6 +66,7 @@ export function buildCustomCommands(
     ...rgitCommands,
     sched,
     ...targets,
+    llm,
     ...mediaCommands,
     pkg,
     skills,

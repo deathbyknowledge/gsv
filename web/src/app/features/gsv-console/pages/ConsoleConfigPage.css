@@ -73,11 +73,19 @@
 
 .gsv-console-settings-status {
   min-width: 0;
-  color: var(--online);
+  color: #9a95cf;
   font-size: 10px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
   overflow-wrap: anywhere;
+}
+
+.gsv-console-settings-status.is-success {
+  color: var(--online);
+}
+
+.gsv-console-settings-status.is-error {
+  color: var(--error);
 }
 
 .gsv-console-secret-field {

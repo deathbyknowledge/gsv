@@ -35,6 +35,7 @@ import {
   effectiveAiValuesForViewer,
   isSensitiveSettingKey,
   modelDisplayName,
+  modelValidationValuesFromProfileDrafts,
   modelProfileSecretConfigKey,
   modelProfileSummary,
   modelProfilesConfigKey,
@@ -51,6 +52,7 @@ import {
   useConsoleAccounts,
   useConsoleConfig,
   useSaveConsoleConfigEntries,
+  useValidateConsoleModelConfig,
 } from "../hooks/useConsoleData";
 import "./ConsoleConfigPage.css";
 
@@ -76,6 +78,13 @@ type RuntimeSelection = {
   id: string;
 };
 
+type ValidateModelSettingsInput = {
+  values: Record<string, string>;
+  presetId?: string;
+};
+
+type SettingsStatusTone = "pending" | "success" | "error";
+
 type SettingsFieldGroupProps = {
   config: readonly ConsoleConfigEntry[];
   description: string;
@@ -85,6 +94,7 @@ type SettingsFieldGroupProps = {
   meta?: string;
   onSave: (entries: readonly SaveConsoleConfigInput[]) => Promise<void>;
   title: string;
+  validateBeforeSave?: (values: Record<string, string>) => Promise<void>;
   writeKeyForField: (field: ConsoleSettingField) => string;
 };
 
@@ -142,6 +152,7 @@ function ModelSettingsPage({
   viewer: SettingsViewer;
 }) {
   const saveConfig = useSaveConsoleConfigEntries();
+  const validateModelConfig = useValidateConsoleModelConfig();
   const [selection, setSelection] = useState<ModelSelection | null>(null);
   const effectiveValues = useMemo(
     () => effectiveAiValuesForViewer(config, viewer.uid),
@@ -160,6 +171,9 @@ function ModelSettingsPage({
     }
     await saveConfig.mutateAsync({ entries });
   };
+  const validateModelSettings = async (input: ValidateModelSettingsInput) => {
+    await validateModelConfig.mutateAsync(input);
+  };
 
   if (selection) {
     return (
@@ -173,6 +187,7 @@ function ModelSettingsPage({
         viewer={viewer}
         onBack={() => setSelection(null)}
         onSaveEntries={saveEntries}
+        onValidateModelConfig={validateModelSettings}
       />
     );
   }
@@ -215,6 +230,7 @@ function ModelSettingsDetail({
   viewer,
   onBack,
   onSaveEntries,
+  onValidateModelConfig,
 }: {
   config: readonly ConsoleConfigEntry[];
   editable: boolean;
@@ -225,6 +241,7 @@ function ModelSettingsDetail({
   viewer: SettingsViewer;
   onBack: () => void;
   onSaveEntries: (entries: readonly SaveConsoleConfigInput[]) => Promise<void>;
+  onValidateModelConfig: (input: ValidateModelSettingsInput) => Promise<void>;
 }) {
   if (selection.kind === "default") {
     return (
@@ -248,6 +265,7 @@ function ModelSettingsDetail({
           initialValues={effectiveValues}
           meta={scopeLabel}
           title="Default Agent Model"
+          validateBeforeSave={(values) => onValidateModelConfig({ values })}
           writeKeyForField={(field) => viewer.isRoot || viewer.uid === null
             ? field.key
             : buildUserAiOverrideKey(viewer.uid, field.key)}
@@ -318,6 +336,7 @@ function ModelSettingsDetail({
         onMakeDefault={profile ? async (values) => {
           await makeProfileDefault(config, viewer, { ...profile, values }, onSaveEntries);
         } : undefined}
+        onValidate={onValidateModelConfig}
         onSave={async (name, values, clearedSecretKeys) => {
           const nextProfiles = profile
             ? updateModelProfile(profiles, profile.id, name, values)
@@ -570,6 +589,7 @@ function ModelProfileForm({
   onCancel,
   onDelete,
   onMakeDefault,
+  onValidate,
   onSave,
 }: {
   config: readonly ConsoleConfigEntry[];
@@ -581,6 +601,7 @@ function ModelProfileForm({
   onCancel: () => void;
   onDelete?: () => Promise<void>;
   onMakeDefault?: (values: Record<string, string>) => Promise<void>;
+  onValidate: (input: ValidateModelSettingsInput) => Promise<void>;
   onSave: (
     name: string,
     values: Record<string, string>,
@@ -595,13 +616,17 @@ function ModelProfileForm({
   const [drafts, setDrafts] = useState(initialValues);
   const [clearedSecretKeys, setClearedSecretKeys] = useState<Set<string>>(() => new Set());
   const [pending, setPending] = useState(false);
+  const [pendingLabel, setPendingLabel] = useState("");
   const [statusText, setStatusText] = useState("");
+  const [statusTone, setStatusTone] = useState<SettingsStatusTone>("success");
 
   useEffect(() => {
     setName(profile?.name ?? "");
     setDrafts(initialValues);
     setClearedSecretKeys(new Set());
+    setPendingLabel("");
     setStatusText("");
+    setStatusTone("success");
   }, [initialValues, profile]);
 
   const duplicateName = profiles.some((candidate) =>
@@ -618,17 +643,32 @@ function ModelProfileForm({
     JSON.stringify(drafts) !== JSON.stringify(initialValues);
   useUnsavedGuard(() => dirty);
 
-  const run = async (action: () => Promise<void>, successText: string) => {
+  const run = async (action: () => Promise<void>, successText: string, label = "SAVING") => {
     setPending(true);
+    setPendingLabel(label);
     setStatusText("");
+    setStatusTone("pending");
     try {
       await action();
+      setStatusTone("success");
       setStatusText(successText);
     } catch (error) {
+      setStatusTone("error");
       setStatusText(errorMessage(error));
     } finally {
+      setPendingLabel("");
       setPending(false);
     }
+  };
+  const validateDrafts = async () => {
+    const validationValues = modelValidationValuesFromProfileDrafts(drafts, clearedSecretKeys);
+    setPendingLabel("TESTING");
+    setStatusTone("pending");
+    setStatusText("Testing model...");
+    await onValidate({
+      values: validationValues,
+      ...(profile && !clearedSecretKeys.has("config/ai/api_key") ? { presetId: profile.id } : {}),
+    });
   };
 
   return (
@@ -667,6 +707,7 @@ function ModelProfileForm({
                 return next;
               });
               setDrafts((current) => ({ ...current, [field.key]: value }));
+              setStatusText("");
             }}
             onClearRedacted={() => {
               setClearedSecretKeys((current) => new Set(current).add(field.key));
@@ -676,20 +717,30 @@ function ModelProfileForm({
           />
         ))}
       </div>
-      {statusText ? <div class="gsv-console-settings-status">{statusText}</div> : null}
+      <SettingsStatus text={statusText} tone={statusTone} />
       <div class="gsv-console-settings-actions">
         <Button
           variant="primary"
-          label={pending ? "SAVING" : "SAVE PRESET"}
+          label={pending ? pendingLabel || "SAVING" : "TEST & SAVE PRESET"}
           disabled={!canSave || pending}
-          onClick={() => void run(() => onSave(name, drafts, clearedProfileSecretKeys), "Saved")}
+          onClick={() => void run(async () => {
+            await validateDrafts();
+            setPendingLabel("SAVING");
+            setStatusText("Model test passed. Saving preset...");
+            await onSave(name, drafts, clearedProfileSecretKeys);
+          }, "Saved", "TESTING")}
         />
         {profile && onMakeDefault ? (
           <Button
             variant="secondary"
-            label="MAKE DEFAULT"
+            label="TEST & MAKE DEFAULT"
             disabled={!editable || pending}
-            onClick={() => void run(() => onMakeDefault(drafts), "Default updated")}
+            onClick={() => void run(async () => {
+              await validateDrafts();
+              setPendingLabel("UPDATING");
+              setStatusText("Model test passed. Updating default...");
+              await onMakeDefault(drafts);
+            }, "Default updated", "TESTING")}
           />
         ) : null}
         <Button variant="secondary" label="CANCEL" disabled={pending} onClick={onCancel} />
@@ -698,7 +749,7 @@ function ModelProfileForm({
             variant="dangerGhost"
             label="DELETE"
             disabled={!editable || pending}
-            onClick={() => void run(onDelete, "Deleted")}
+            onClick={() => void run(onDelete, "Deleted", "DELETING")}
           />
         ) : null}
       </div>
@@ -715,6 +766,7 @@ function SettingsFieldGroup({
   meta,
   onSave,
   title,
+  validateBeforeSave,
   writeKeyForField,
 }: SettingsFieldGroupProps) {
   const initialDraftEntries = fields.map((field): [string, string] => [
@@ -729,12 +781,16 @@ function SettingsFieldGroup({
   const [drafts, setDrafts] = useState<Record<string, string>>(initialDrafts);
   const [clearedSensitiveKeys, setClearedSensitiveKeys] = useState<Set<string>>(() => new Set());
   const [pending, setPending] = useState(false);
+  const [pendingLabel, setPendingLabel] = useState("");
   const [statusText, setStatusText] = useState("");
+  const [statusTone, setStatusTone] = useState<SettingsStatusTone>("success");
 
   useEffect(() => {
     setDrafts(initialDrafts);
     setClearedSensitiveKeys(new Set());
+    setPendingLabel("");
     setStatusText("");
+    setStatusTone("success");
   }, [initialDrafts]);
 
   const changedEntries = fields.flatMap((field) => {
@@ -768,14 +824,35 @@ function SettingsFieldGroup({
       return;
     }
     setPending(true);
+    setPendingLabel(validateBeforeSave ? "TESTING" : "SAVING");
     setStatusText("");
+    setStatusTone("pending");
     try {
+      if (validateBeforeSave) {
+        const validationDrafts = { ...drafts };
+        for (const field of fields) {
+          if (
+            isSensitiveSettingKey(field.key) &&
+            validationDrafts[field.key] === "" &&
+            !clearedSensitiveKeys.has(field.key)
+          ) {
+            delete validationDrafts[field.key];
+          }
+        }
+        setStatusText("Testing model...");
+        await validateBeforeSave(validationDrafts);
+        setPendingLabel("SAVING");
+        setStatusText("Model test passed. Saving settings...");
+      }
       await onSave(changedEntries);
       setClearedSensitiveKeys(new Set());
+      setStatusTone("success");
       setStatusText("Saved");
     } catch (error) {
+      setStatusTone("error");
       setStatusText(errorMessage(error));
     } finally {
+      setPendingLabel("");
       setPending(false);
     }
   };
@@ -818,9 +895,14 @@ function SettingsFieldGroup({
           />
         ))}
       </div>
-      {statusText ? <div class="gsv-console-settings-status">{statusText}</div> : null}
+      <SettingsStatus text={statusText} tone={statusTone} />
       <div class="gsv-console-settings-actions">
-        <Button variant="primary" label={pending ? "SAVING" : "SAVE CHANGES"} disabled={!editable || !dirty || pending} onClick={() => void save()} />
+        <Button
+          variant="primary"
+          label={pending ? pendingLabel || "SAVING" : validateBeforeSave ? "TEST & SAVE" : "SAVE CHANGES"}
+          disabled={!editable || !dirty || pending}
+          onClick={() => void save()}
+        />
         <Button
           variant="secondary"
           label="RESET"
@@ -834,6 +916,18 @@ function SettingsFieldGroup({
       </div>
     </Surface>
   );
+}
+
+function SettingsStatus({
+  text,
+  tone,
+}: {
+  text: string;
+  tone: SettingsStatusTone;
+}) {
+  return text ? (
+    <div class={`gsv-console-settings-status is-${tone}`}>{text}</div>
+  ) : null;
 }
 
 function SettingFieldInput({

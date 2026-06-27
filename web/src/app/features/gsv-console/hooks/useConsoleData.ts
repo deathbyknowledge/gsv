@@ -27,6 +27,7 @@ import {
   saveConsoleConfigEntries,
   saveConsoleAgentBehavior,
   saveConsoleAgentContext,
+  validateConsoleModelConfig,
   type AddConsoleMcpServerInput,
   type ConnectConsoleAdapterInput,
   type ConnectConsoleAdapterResult,
@@ -50,6 +51,8 @@ import {
   type SaveConsoleConfigResult,
   type SaveConsoleAgentContextInput,
   type SaveConsoleAgentContextResult,
+  type ValidateConsoleModelConfigInput,
+  type ValidateConsoleModelConfigResult,
 } from "../backend/consoleService";
 import { summarizeConsoleOverview } from "../domain/consoleNormalization";
 import type {
@@ -466,6 +469,14 @@ export function useSaveConsoleConfigEntries() {
         queryClient.invalidateQueries({ queryKey: consoleOverviewQueryKey }),
       ]);
     },
+  });
+}
+
+export function useValidateConsoleModelConfig() {
+  const { client } = useGateway();
+
+  return useMutation<ValidateConsoleModelConfigResult, Error, ValidateConsoleModelConfigInput>({
+    mutationFn: (input) => validateConsoleModelConfig(client, input),
   });
 }
 

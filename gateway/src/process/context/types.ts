@@ -8,7 +8,6 @@ export type PromptRipgitClient = Pick<RipgitClient, "readPath">;
 
 export type PromptAssemblyInput = {
   config: AiConfigResult;
-  purpose: "chat.reply" | "thread.resume";
   identity: ProcessIdentity;
   /** Owning human's identity, when the process runs as a distinct agent account. */
   ownerIdentity?: ProcessIdentity;

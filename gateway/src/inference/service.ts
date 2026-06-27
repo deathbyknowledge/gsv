@@ -7,7 +7,7 @@ import type {
   ThinkingLevel,
 } from "@earendil-works/pi-ai";
 import { completeSimple, streamSimple } from "@earendil-works/pi-ai";
-import type { AiConfigResult } from "../syscalls/ai";
+import type { AiConfigResult, AiTextGenerateOptions } from "../syscalls/ai";
 import { completeWithWorkersAi, isWorkersAiProvider, streamWithWorkersAi } from "./workers-ai";
 import { withTimeout } from "./timeout";
 import { resolveModelThinkingLevel, resolvePiAiModel } from "./model-registry";
@@ -16,20 +16,17 @@ import {
   formatProviderErrorMessage,
 } from "./errors";
 
-type GenerationPurpose =
-  | "chat.reply"
-  | "compaction.summary"
-  | "thread.title"
-  | "mcp.analysis";
+const GENERATION_SERVICE_MARKER = "__gsvGenerationService";
 
 type GenerateRequest = {
-  purpose: GenerationPurpose;
   config: AiConfigResult;
   context: Context;
+  options?: AiTextGenerateOptions;
   sessionAffinityKey?: string;
 };
 
 type GenerationService = {
+  readonly [GENERATION_SERVICE_MARKER]: true;
   generate(request: GenerateRequest): Promise<AssistantMessage>;
   stream(request: GenerateRequest): AssistantMessageEventStream;
   generateText(request: GenerateRequest): Promise<string>;
@@ -48,7 +45,7 @@ const DEFAULT_GENERATION_TIMEOUT_MS = 180_000;
 export function createGenerationService(): GenerationService {
   const stream = (request: GenerateRequest): AssistantMessageEventStream => {
     const options = resolveGenerationOptions(request);
-    const generationTimeoutMs = resolveGenerationTimeoutMs(request.config);
+    const generationTimeoutMs = resolveGenerationTimeoutMs(request.config, request.options);
     if (isWorkersAiProvider(options.modelProvider)) {
       return streamWithWorkersAi({
         modelName: options.modelName,
@@ -81,7 +78,7 @@ export function createGenerationService(): GenerationService {
 
   const generate = async (request: GenerateRequest): Promise<AssistantMessage> => {
     const options = resolveGenerationOptions(request);
-    const generationTimeoutMs = resolveGenerationTimeoutMs(request.config);
+    const generationTimeoutMs = resolveGenerationTimeoutMs(request.config, request.options);
     if (isWorkersAiProvider(options.modelProvider)) {
       return completeWithWorkersAi({
         modelName: options.modelName,
@@ -116,6 +113,7 @@ export function createGenerationService(): GenerationService {
   };
 
   return {
+    [GENERATION_SERVICE_MARKER]: true,
     generate,
     stream,
     async generateText(request: GenerateRequest): Promise<string> {
@@ -143,9 +141,17 @@ export function createGenerationService(): GenerationService {
   };
 }
 
+export function isGenerationService(value: unknown): value is GenerationService {
+  return Boolean(
+    value &&
+    typeof value === "object" &&
+    (value as { [GENERATION_SERVICE_MARKER]?: unknown })[GENERATION_SERVICE_MARKER] === true,
+  );
+}
+
 /**
- * Extract usable text from a generation for non-conversational purposes such as
- * compaction summaries and thread titles.
+ * Extract usable text from a generation for non-conversational callers such as
+ * compaction summaries and ai.text.generate.
  *
  * Reasoning models (notably Workers AI ones such as kimi-k2.6) sometimes emit
  * their answer in a reasoning/thinking channel and produce no separate text
@@ -171,7 +177,6 @@ export function extractGeneratedText(response: AssistantMessage): string {
 
 export function describeGeneratedTextFailure(
   request: {
-    purpose: string;
     config: Pick<AiConfigResult, "provider" | "model">;
   },
   response: AssistantMessage,
@@ -185,59 +190,60 @@ export function describeGeneratedTextFailure(
       model: request.config.model,
     });
   }
-  return `Generation for ${request.purpose} returned no text`;
+  return "Generation returned no text";
 }
 
 export function resolveGenerationOptions(
   request: GenerateRequest,
 ): ResolvedGenerationOptions {
-  const { config, purpose } = request;
-  const baseReasoning: ThinkingLevel | undefined =
-    generationReasoningFromLevel(resolveModelThinkingLevel(config.provider, config.model, config.reasoning))
-      ?? undefined;
-
-  switch (purpose) {
-    case "thread.title":
-      return {
-        modelProvider: config.provider,
-        modelName: config.model,
-        apiKey: config.apiKey,
-        reasoning: undefined,
-        maxTokens: Math.min(config.maxTokens, 64),
-      };
-    case "compaction.summary":
-      return {
-        modelProvider: config.provider,
-        modelName: config.model,
-        apiKey: config.apiKey,
-        reasoning: undefined,
-        maxTokens: Math.min(config.maxTokens, 768),
-      };
-    case "mcp.analysis":
-      return {
-        modelProvider: config.provider,
-        modelName: config.model,
-        apiKey: config.apiKey,
-        reasoning: baseReasoning,
-        maxTokens: config.maxTokens,
-      };
-    case "chat.reply":
-    default:
-      return {
-        modelProvider: config.provider,
-        modelName: config.model,
-        apiKey: config.apiKey,
-        reasoning: baseReasoning,
-        maxTokens: config.maxTokens,
-      };
-  }
+  const { config } = request;
+  return {
+    modelProvider: config.provider,
+    modelName: config.model,
+    apiKey: config.apiKey,
+    reasoning: resolveGenerationReasoning(config, request.options),
+    maxTokens: resolveGenerationMaxTokens(config, request.options),
+  };
 }
 
-export function resolveGenerationTimeoutMs(config: AiConfigResult): number {
-  const timeoutMs = (config as Partial<AiConfigResult>).generationTimeoutMs;
+export function resolveGenerationTimeoutMs(
+  config: AiConfigResult,
+  options?: Pick<AiTextGenerateOptions, "timeoutMs">,
+): number {
+  const timeoutMs = normalizePositiveNumber(options?.timeoutMs)
+    ?? (config as Partial<AiConfigResult>).generationTimeoutMs;
   return typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0
     ? timeoutMs
     : DEFAULT_GENERATION_TIMEOUT_MS;
+}
+
+function resolveGenerationReasoning(
+  config: AiConfigResult,
+  options?: Pick<AiTextGenerateOptions, "reasoning">,
+): ThinkingLevel | undefined {
+  const requested = options?.reasoning;
+  if (requested === "off") {
+    return undefined;
+  }
+  const level = requested && requested !== "inherit"
+    ? requested
+    : config.reasoning;
+  return generationReasoningFromLevel(resolveModelThinkingLevel(config.provider, config.model, level))
+    ?? undefined;
+}
+
+function resolveGenerationMaxTokens(
+  config: AiConfigResult,
+  options?: Pick<AiTextGenerateOptions, "maxTokens">,
+): number {
+  const maxTokens = normalizePositiveNumber(options?.maxTokens);
+  return maxTokens ? Math.min(config.maxTokens, Math.floor(maxTokens)) : config.maxTokens;
+}
+
+function normalizePositiveNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? value
+    : null;
 }
 
 function generationReasoningFromLevel(level: ReturnType<typeof resolveModelThinkingLevel>): ThinkingLevel | null {

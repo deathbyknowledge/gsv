@@ -3,9 +3,7 @@ import { resolvePromptProviders } from "./selection";
 
 export async function assembleSystemPrompt(
   input: PromptAssemblyInput,
-  providers: PromptContextProvider[] = resolvePromptProviders(
-    input.purpose,
-  ),
+  providers: PromptContextProvider[] = resolvePromptProviders(),
 ): Promise<string> {
   const contextSections: PromptSection[] = [];
   const regularParts: string[] = [];

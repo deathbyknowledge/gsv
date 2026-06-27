@@ -8,6 +8,7 @@ import {
   modelProfileSecretConfigKey,
   modelProfilesConfigKey,
   modelProfilesForConfig,
+  modelValidationValuesFromProfileDrafts,
   redactModelProfilesConfigValue,
   serializeModelProfiles,
 } from "./consoleSettings";
@@ -87,6 +88,25 @@ describe("console settings domain", () => {
       "config/ai/api_key": "",
       "config/ai/image/read/api_key": "",
     });
+  });
+
+  it("omits blank profile secrets from validation unless explicitly cleared", () => {
+    const drafts = {
+      "config/ai/provider": "openai",
+      "config/ai/model": "gpt-5",
+      "config/ai/api_key": "",
+      "config/ai/reasoning": "low",
+    };
+
+    expect(modelValidationValuesFromProfileDrafts(drafts)).toEqual({
+      "config/ai/provider": "openai",
+      "config/ai/model": "gpt-5",
+      "config/ai/reasoning": "low",
+    });
+    expect(modelValidationValuesFromProfileDrafts(
+      drafts,
+      new Set(["config/ai/api_key"]),
+    )).toEqual(drafts);
   });
 
   it("merges personal ai overrides over system values", () => {

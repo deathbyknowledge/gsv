@@ -1,7 +1,5 @@
-import type { Context } from "@earendil-works/pi-ai";
 import type { KernelContext } from "../context";
-import { handleAiConfig } from "../ai";
-import { createGenerationService } from "../../inference/service";
+import { handleAiTextGenerate } from "../ai";
 import type {
   OnboardingDraft,
   OnboardingAssistPatch,
@@ -35,31 +33,25 @@ export async function handleSysSetupAssist(
     throw new Error("System already initialized");
   }
 
-  const config = await handleAiConfig({}, ctx);
-  const generation = createGenerationService();
-  const context: Context = {
+  const result = await handleAiTextGenerate({
     systemPrompt: SETUP_ASSIST_SYSTEM_PROMPT,
-    messages: [
-      {
-        role: "user",
-        content: JSON.stringify({
-          lane: args.lane,
-          draft: redactDraft(args.draft),
-          messages: args.messages.slice(-8),
-        }, null, 2),
-        timestamp: Date.now(),
-      },
-    ],
-  };
-
-  const raw = await generation.generateText({
-    purpose: "mcp.analysis",
-    config,
-    context,
+    messages: [{
+      role: "user",
+      content: JSON.stringify({
+        lane: args.lane,
+        draft: redactDraft(args.draft),
+        messages: args.messages.slice(-8),
+      }, null, 2),
+      timestamp: Date.now(),
+    }],
     sessionAffinityKey: "setup-assist",
-  });
+  }, ctx);
 
-  return parseAssistResponse(raw);
+  if (result.message.stopReason === "error" || result.message.stopReason === "aborted") {
+    throw new Error(result.message.errorMessage || `Setup assist generation ended with ${result.message.stopReason}`);
+  }
+
+  return parseAssistResponse(result.text ?? "");
 }
 
 function parseAssistResponse(raw: string): SysSetupAssistResult {

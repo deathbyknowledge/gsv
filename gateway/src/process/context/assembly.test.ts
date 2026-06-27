@@ -9,6 +9,7 @@ import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { accountHomeRepoRef } from "../../fs";
 
 const CONFIG: AiConfigResult = {
+  executor: { kind: "process", pid: "proc-test" },
   provider: "anthropic",
   model: "claude-sonnet-4-20250514",
   apiKey: "test-key",
@@ -334,7 +335,6 @@ describe("createHomeContextProvider", () => {
 function makeInput(overrides: Partial<PromptAssemblyInput> = {}): PromptAssemblyInput {
   return {
     config: CONFIG,
-    purpose: "chat.reply",
     identity: IDENTITY,
     devices: [],
     mcpServers: [],

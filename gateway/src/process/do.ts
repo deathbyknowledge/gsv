@@ -18,11 +18,13 @@ import type {
   ResponseErrFrame,
   SignalFrame,
 } from "../protocol/frames";
-import type { ResultOf, SyscallName, ToolDefinition } from "../syscalls";
+import type { ArgsOf, ResultOf, SyscallName, ToolDefinition } from "../syscalls";
 import type { CodeModeExecArgs, CodeModeRunArgs, CodeModeRunResult } from "../syscalls/codemode";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type {
   AiConfigResult,
+  AiTextGenerateConfig,
+  AiTextGenerateOptions,
   AiToolsDevice,
 } from "../syscalls/ai";
 import { COMPACTION_SUMMARY_SYSTEM_PROMPT } from "../prompts/compaction";
@@ -103,7 +105,7 @@ import type {
   UserMessage,
   ImageContent,
 } from "@earendil-works/pi-ai";
-import { createGenerationService } from "../inference/service";
+import { createGenerationService, isGenerationService } from "../inference/service";
 import {
   errorMessageFromUnknown,
   formatProviderErrorMessage,
@@ -189,6 +191,7 @@ type RunState = {
   conversationId: string;
   pendingRuntimeEvents?: number;
   config?: AiConfigResult;
+  aiTextGenerateConfig?: AiTextGenerateConfig;
   tools?: ToolDefinition[];
   devices?: AiToolsDevice[];
   mcpServers?: string[];
@@ -1908,18 +1911,28 @@ export class Process extends Host<Env> {
       throw new Error("AI config unavailable");
     }
 
-    const generated = await this.generation.generateText({
-      purpose: "compaction.summary",
+    const context = buildCompactionSummaryContext(messages);
+    const generationOptions: AiTextGenerateOptions = {
+      maxTokens: 768,
+      reasoning: "off",
+    };
+    const aiTextGenerateConfig = this.currentRun?.config === config
+      ? this.currentRun.aiTextGenerateConfig
+      : undefined;
+    const generated = await this.generateCompactionText({
       config,
-      context: buildCompactionSummaryContext(messages),
+      aiTextGenerateConfig,
+      context,
+      options: generationOptions,
       sessionAffinityKey: `${this.pid}:compaction`,
-    }).catch((error: unknown) => {
-      const message = errorMessageFromUnknown(error);
-      throw new Error(formatProviderErrorMessage(message, {
-        provider: config.provider,
-        model: config.model,
-      }) || message);
-    });
+    })
+      .catch((error: unknown) => {
+        const message = errorMessageFromUnknown(error);
+        throw new Error(formatProviderErrorMessage(message, {
+          provider: config.provider,
+          model: config.model,
+        }) || message);
+      });
     const summary = generated.trim();
     if (!summary) {
       throw new Error("summary generation returned empty text");
@@ -2682,6 +2695,7 @@ export class Process extends Host<Env> {
 
     // Step 3: Load config + tools (first tick only, cached on run state)
     if (!run.config) {
+      run.aiTextGenerateConfig = this.buildAiTextGenerateConfig();
       run.config = await this.resolveAiConfig();
       if (await this.handleRunStopped(runId)) {
         return;
@@ -2705,7 +2719,6 @@ export class Process extends Host<Env> {
     if (!run.systemPrompt) {
       run.systemPrompt = await assembleSystemPrompt({
         config: run.config!,
-        purpose: "chat.reply",
         identity: this.identity,
         ownerIdentity: run.config?.owner ?? undefined,
         devices: run.devices ?? [],
@@ -2781,8 +2794,8 @@ export class Process extends Host<Env> {
         response = await this.generateAssistantResponse({
           runId,
           conversationId,
-          purpose: "chat.reply",
           config: run.config!,
+          aiTextGenerateConfig: run.aiTextGenerateConfig,
           context,
           sessionAffinityKey: this.pid,
           streamSeq,
@@ -3002,16 +3015,35 @@ export class Process extends Host<Env> {
   private async generateAssistantResponse(options: {
     runId: string;
     conversationId: string;
-    purpose: "chat.reply";
     config: AiConfigResult;
+    aiTextGenerateConfig?: AiTextGenerateConfig;
+    context: Context;
+    sessionAffinityKey?: string;
+    streamSeq?: StreamSeqCounter;
+  }): Promise<AssistantMessage | null> {
+    const executor = this.resolveAiTextExecutor(options.config);
+    if (this.isLocalAiTextExecutor(executor)) {
+      return await this.generateAssistantResponseLocally(options);
+    }
+    return await this.generateAssistantResponseViaKernel({
+      ...options,
+      target: this.resolveAiTextGenerateTarget(executor),
+    });
+  }
+
+  private async generateAssistantResponseLocally(options: {
+    runId: string;
+    conversationId: string;
+    config: AiConfigResult;
+    aiTextGenerateConfig?: AiTextGenerateConfig;
     context: Context;
     sessionAffinityKey?: string;
     streamSeq?: StreamSeqCounter;
   }): Promise<AssistantMessage | null> {
     const stream = options.config.generationStreaming !== "off" &&
       typeof this.generation.stream === "function"
+      // TODO: add ai.text.stream
       ? this.generation.stream({
-        purpose: options.purpose,
         config: options.config,
         context: options.context,
         sessionAffinityKey: options.sessionAffinityKey,
@@ -3019,8 +3051,24 @@ export class Process extends Host<Env> {
       : null;
 
     if (!stream) {
-      return this.generation.generate({
-        purpose: options.purpose,
+      const generation = this.generation as unknown;
+      if (!isGenerationService(generation)) {
+        const injected = generation as {
+          generate?: (request: {
+            config: AiConfigResult;
+            context: Context;
+            sessionAffinityKey?: string;
+          }) => Promise<AssistantMessage>;
+        };
+        if (typeof injected.generate === "function") {
+          return injected.generate({
+            config: options.config,
+            context: options.context,
+            sessionAffinityKey: options.sessionAffinityKey,
+          });
+        }
+      }
+      return await this.generation.generate({
         config: options.config,
         context: options.context,
         sessionAffinityKey: options.sessionAffinityKey,
@@ -3046,6 +3094,115 @@ export class Process extends Host<Env> {
     }
 
     return response ?? await stream.result();
+  }
+
+  private async generateAssistantResponseViaKernel(options: {
+    config: AiConfigResult;
+    aiTextGenerateConfig?: AiTextGenerateConfig;
+    context: Context;
+    sessionAffinityKey?: string;
+    target?: string;
+  }): Promise<AssistantMessage> {
+    const result = await this.kernelRpc("ai.text.generate", this.buildAiTextGenerateArgs({
+      config: options.aiTextGenerateConfig,
+      context: options.context,
+      sessionAffinityKey: options.sessionAffinityKey,
+      target: options.target,
+    }));
+    return result.message as unknown as AssistantMessage;
+  }
+
+  private async generateCompactionText(options: {
+    config: AiConfigResult;
+    aiTextGenerateConfig?: AiTextGenerateConfig;
+    context: Context;
+    options: AiTextGenerateOptions;
+    sessionAffinityKey: string;
+  }): Promise<string> {
+    const executor = this.resolveAiTextExecutor(options.config);
+    if (!this.isLocalAiTextExecutor(executor)) {
+      const result = await this.kernelRpc("ai.text.generate", this.buildAiTextGenerateArgs({
+        config: options.aiTextGenerateConfig,
+        context: options.context,
+        options: options.options,
+        sessionAffinityKey: options.sessionAffinityKey,
+        target: this.resolveAiTextGenerateTarget(executor),
+      }));
+      return result.text ?? "";
+    }
+    const generation = this.generation as unknown;
+    if (!isGenerationService(generation)) {
+      const injected = generation as {
+        generateText?: (request: {
+          config: AiConfigResult;
+          context: Context;
+          options?: AiTextGenerateOptions;
+          sessionAffinityKey?: string;
+        }) => Promise<string>;
+      };
+      if (typeof injected.generateText === "function") {
+        return await injected.generateText({
+          config: options.config,
+          context: options.context,
+          options: options.options,
+          sessionAffinityKey: options.sessionAffinityKey,
+        });
+      }
+    }
+    return await this.generation.generateText({
+      config: options.config,
+      context: options.context,
+      options: options.options,
+      sessionAffinityKey: options.sessionAffinityKey,
+    });
+  }
+
+  private buildAiTextGenerateArgs(options: {
+    config?: AiTextGenerateConfig;
+    context: Context;
+    options?: AiTextGenerateOptions;
+    sessionAffinityKey?: string;
+    target?: string;
+  }): ArgsOf<"ai.text.generate"> {
+    const config = options.config ?? this.buildAiTextGenerateConfig();
+    return {
+      ...(options.target ? { target: options.target } : {}),
+      systemPrompt: options.context.systemPrompt,
+      messages: options.context.messages as ArgsOf<"ai.text.generate">["messages"],
+      ...(options.context.tools && options.context.tools.length > 0
+        ? { tools: options.context.tools as ArgsOf<"ai.text.generate">["tools"] }
+        : {}),
+      ...(config ? { config } : {}),
+      ...(options.options ? { options: options.options } : {}),
+      ...(options.sessionAffinityKey ? { sessionAffinityKey: options.sessionAffinityKey } : {}),
+    };
+  }
+
+  private buildAiTextGenerateConfig(): AiTextGenerateConfig | undefined {
+    const snapshot = this.store.getAiConfigSnapshot();
+    if (!snapshot) {
+      return undefined;
+    }
+    const config: AiTextGenerateConfig = {};
+    if (Object.keys(snapshot.values).length > 0) {
+      config.processOverrides = { ...snapshot.values };
+    }
+    if (snapshot.profile) {
+      config.processProfile = snapshot.profile;
+    }
+    return config.processOverrides || config.processProfile ? config : undefined;
+  }
+
+  private resolveAiTextExecutor(config: AiConfigResult): AiConfigResult["executor"] {
+    return config.executor ?? { kind: "process", pid: this.pid };
+  }
+
+  private isLocalAiTextExecutor(executor: AiConfigResult["executor"]): boolean {
+    return executor.kind === "process" && executor.pid === this.pid;
+  }
+
+  private resolveAiTextGenerateTarget(executor: AiConfigResult["executor"]): string | undefined {
+    return executor.kind === "device" ? executor.target : undefined;
   }
 
   private recordUnpersistedAssistantUsage(
