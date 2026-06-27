@@ -24,6 +24,7 @@ type MakeContextOptions = {
   identityLinks?: Record<string, unknown>;
   routePid?: string | null;
   processId?: string;
+  callerOwnerUid?: number;
 };
 
 function makeStorageBucket() {
@@ -181,6 +182,7 @@ function makeContext(
       service: "test",
       capabilities: [],
     },
+    callerOwnerUid: options.callerOwnerUid,
   } as unknown as KernelContext;
 }
 
@@ -1284,5 +1286,56 @@ describe("adapter lifecycle handlers", () => {
       media: undefined,
       replyToId: undefined,
     });
+  });
+
+  it("uses the caller owner uid when adapter.send runs from an agent process", async () => {
+    const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "msg-1" }));
+    const listLinks = vi.fn(() => [{
+      adapter: "whatsapp",
+      accountId: "primary",
+      actorId: "wa:+123",
+      uid: 1000,
+      linkedByUid: 1000,
+      createdAt: 1,
+      metadata: null,
+    }]);
+    const status = {
+      upsert: vi.fn(),
+      list: vi.fn(() => []),
+    };
+    const ctx = makeContext({ CHANNEL_WHATSAPP: { adapterSend } }, status, {
+      callerOwnerUid: 1000,
+      identity: {
+        role: "user",
+        process: {
+          uid: 1001,
+          gid: 1001,
+          gids: [1000],
+          username: "sam-agent",
+          home: "/home/sam-agent",
+          cwd: "/home/sam-agent",
+        },
+        capabilities: ["adapter.send"],
+      },
+      identityLinks: {
+        list: listLinks,
+      },
+    });
+
+    const result = await handleAdapterSend({
+      adapter: "WhatsApp",
+      accountId: "primary",
+      surface: { kind: "dm", id: "wa:+123" },
+      text: "hello",
+    }, ctx);
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      adapter: "whatsapp",
+      accountId: "primary",
+      messageId: "msg-1",
+    }));
+    expect(listLinks).toHaveBeenCalledWith(1000);
+    expect(adapterSend).toHaveBeenCalled();
   });
 });

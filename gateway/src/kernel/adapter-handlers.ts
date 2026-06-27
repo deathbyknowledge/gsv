@@ -227,7 +227,8 @@ function canSendToAdapterAccount(ctx: KernelContext, adapter: string, accountId:
   if (identity.process.uid === 0) {
     return true;
   }
-  return ctx.adapters.identityLinks.list(identity.process.uid).some((link) =>
+  const ownerUid = resolveCallerOwnerUid(ctx);
+  return ctx.adapters.identityLinks.list(ownerUid).some((link) =>
     link.adapter.trim().toLowerCase() === adapter &&
     link.accountId.trim() === accountId
   );
