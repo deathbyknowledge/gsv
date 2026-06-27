@@ -80,6 +80,9 @@ export async function handleSysTokenCreate(
   }
 
   const kind = parseTokenKind(raw.kind);
+  if (kind === "service" && !isRoot) {
+    throw new Error("Permission denied: only root may create service tokens");
+  }
   const defaultRole = ROLE_BY_KIND[kind];
   const allowedRole = raw.allowedRole === undefined
     ? defaultRole
@@ -91,6 +94,9 @@ export async function handleSysTokenCreate(
   const allowedDeviceId = parseOptionalString(raw.allowedDeviceId);
   if (allowedDeviceId && allowedRole !== "driver") {
     throw new Error("allowedDeviceId is only valid for driver-bound tokens");
+  }
+  if (allowedRole === "driver" && !allowedDeviceId) {
+    throw new Error("allowedDeviceId is required for driver-bound tokens");
   }
 
   const issued = await ctx.auth.issueToken({

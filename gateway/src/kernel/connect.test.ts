@@ -476,7 +476,12 @@ describe("handleConnect", () => {
     const rootHash = await hashPassword("root-password");
     await ctx.auth.bootstrap();
     await ctx.auth.setPassword("root", rootHash);
-    const issued = await ctx.auth.issueToken({ uid: 0, kind: "node", label: "macbook" });
+    const issued = await ctx.auth.issueToken({
+      uid: 0,
+      kind: "node",
+      label: "macbook",
+      allowedDeviceId: "macbook",
+    });
     const result = await handleConnect(
       {
         protocol: 1,
@@ -573,7 +578,12 @@ describe("handleConnect", () => {
     const rootHash = await hashPassword("root-password");
     await ctx.auth.bootstrap();
     await ctx.auth.setPassword("root", rootHash);
-    const issued = await ctx.auth.issueToken({ uid: 0, kind: "node", label: "macbook" });
+    const issued = await ctx.auth.issueToken({
+      uid: 0,
+      kind: "node",
+      label: "macbook",
+      allowedDeviceId: "macbook",
+    });
     const result = await handleConnect(
       {
         protocol: 1,

@@ -269,15 +269,18 @@ describe("DeviceRegistry", () => {
     expect(updated!.label).toBe("server");
   });
 
-  it("resets owner-authored metadata when a device id changes owner", () => {
+  it("rejects registration when a device id belongs to another owner", () => {
     registry.register("server", 1000, 1000, ["fs.*"], "linux", "0.1.0");
     registry.setMetadata("server", { label: "Old Server", description: "Old owner note" });
 
-    registry.register("server", 2000, 2000, ["fs.*"], "linux", "0.2.0");
+    const result = registry.register("server", 2000, 2000, ["fs.*"], "linux", "0.2.0");
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain("already belongs to another user");
+
     const updated = registry.get("server");
-    expect(updated!.owner_uid).toBe(2000);
-    expect(updated!.label).toBe("server");
-    expect(updated!.description).toBe("");
+    expect(updated!.owner_uid).toBe(1000);
+    expect(updated!.label).toBe("Old Server");
+    expect(updated!.description).toBe("Old owner note");
   });
 
   it("stores owner-authored device metadata", () => {
