@@ -1,5 +1,5 @@
 import type { StatusTone } from "../../../components/ui/StatusDot";
-import type { ConsolePackage } from "../domain/consoleModels";
+import type { ConsoleAccount, ConsolePackage } from "../domain/consoleModels";
 
 export type ApplicationImportStep = "import" | "review";
 
@@ -48,6 +48,10 @@ export function normalizePackageImportDraft(draft: PackageImportDraft): PackageI
 
 export function isPackageImportDraftReady(draft: PackageImportDraft): boolean {
   return normalizePackageImportDraft(draft).source.length > 0;
+}
+
+export function isEligibleApplicationReviewer(account: ConsoleAccount): boolean {
+  return account.runnable && account.relation !== "self";
 }
 
 export function parsePackageImportSource(raw: string): PackageImportSource {

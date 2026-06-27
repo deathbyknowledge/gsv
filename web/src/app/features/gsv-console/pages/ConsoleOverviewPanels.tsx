@@ -723,7 +723,7 @@ function FleetPanel({
   );
 }
 
-function SatellitesPanel({
+function ApplicationsPanel({
   applications,
   onOpenListCreate,
   onOpenListDetail,
@@ -744,12 +744,8 @@ function SatellitesPanel({
     : openList;
 
   return (
-    <section class="gsv-settings-block gsv-settings-satellites-block">
+    <section class="gsv-settings-block gsv-settings-applications-block">
       <ActionSectionHeader
-        title="SATELLITES"
-        onClick={openList}
-      />
-      <MiniHeading
         title="APPLICATIONS"
         onClick={openList}
       />
@@ -814,7 +810,7 @@ export function SettingsOverviewDashboard({
           onOpenSurface={onOpenSurface}
           targets={data.targets}
         />
-        <SatellitesPanel
+        <ApplicationsPanel
           applications={applications}
           onOpenListCreate={onOpenListCreate}
           onOpenListDetail={onOpenListDetail}

@@ -20,6 +20,7 @@ import { useConsoleAccounts } from "../hooks/useConsoleData";
 import {
   APPLICATION_IMPORT_STEP_LABELS,
   applicationImportStepIndex,
+  isEligibleApplicationReviewer,
   isConsoleApplicationPackage,
   isPackageImportDraftReady,
   packageCapabilitySummary,
@@ -92,7 +93,7 @@ export function ApplicationImportFlow({
   const accounts = useConsoleAccounts();
   const flow = usePackageImportFlow({ knownPackages: packages });
   const reviewerAccounts = useMemo(
-    () => accounts.accounts.filter((account) => account.runnable),
+    () => accounts.accounts.filter(isEligibleApplicationReviewer),
     [accounts.accounts],
   );
   const reviewerOptions = reviewerAccounts.length > 0
@@ -129,10 +130,13 @@ export function ApplicationImportFlow({
   const enableError = errorText(flow.enableMutation.error);
 
   useEffect(() => {
-    if (flow.draft.reviewerUsername || reviewerAccounts.length === 0) {
+    if (reviewerAccounts.some((account) => account.username === flow.draft.reviewerUsername)) {
       return;
     }
-    flow.updateDraft({ reviewerUsername: reviewerAccounts[0].username });
+    const reviewerUsername = reviewerAccounts[0]?.username ?? "";
+    if (flow.draft.reviewerUsername !== reviewerUsername) {
+      flow.updateDraft({ reviewerUsername });
+    }
   }, [flow.draft.reviewerUsername, reviewerAccounts]);
 
   useEffect(() => {
@@ -344,7 +348,7 @@ export function ApplicationImportFlow({
         <header class="application-import-head">
           <IconButton glyph="arrowBack" size="medium" title="Back to applications" onClick={onBack} />
           <div>
-            <span class="application-import-kicker">SATELLITES / NEW APPLICATION</span>
+            <span class="application-import-kicker">APPLICATIONS / NEW APPLICATION</span>
             <h2>Add application</h2>
             <p>Import a package source, review the declared behavior, then enable it for the web UI.</p>
           </div>
