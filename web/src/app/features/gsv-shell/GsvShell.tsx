@@ -477,6 +477,7 @@ export function GsvShell({
                     shell.setGsvOpen((value) => !value);
                     shell.setSelectedObjectId(null);
                   }}
+                  onCloseGsv={() => shell.setGsvOpen(false)}
                   onCreateObject={(id) => {
                     shell.openSettingsRoute({ view: "list", kind: id, createNew: true });
                   }}

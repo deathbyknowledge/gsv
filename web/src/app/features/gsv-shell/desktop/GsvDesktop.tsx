@@ -28,6 +28,7 @@ type GsvDesktopProps = {
   gsvOpen: boolean;
   onSelectObject: (id: DesktopObjectId | null) => void;
   onToggleGsv: () => void;
+  onCloseGsv: () => void;
   onCreateObject: (id: DesktopObjectId) => void;
   onOpenObject: (child: DesktopChildObject) => void;
   onOpenSurface: (surface: ShellSurfaceId) => void;
@@ -112,6 +113,7 @@ export function GsvDesktop({
   gsvOpen,
   onSelectObject,
   onToggleGsv,
+  onCloseGsv,
   onCreateObject,
   onOpenObject,
   onOpenSurface,
@@ -150,7 +152,10 @@ export function GsvDesktop({
   const closeGsvControls = () => {
     if (gsvHoverTimer.current) clearTimeout(gsvHoverTimer.current);
     setGsvHovered(false);
-    if (gsvOpen) onToggleGsv();
+    // Idempotent close — not the functional toggle. Outside-click also calls
+    // onSelectObject(null), which already clears gsvOpen in the parent; a toggle
+    // here would flip it back open within the same batched update.
+    if (gsvOpen) onCloseGsv();
   };
   useEffect(() => () => {
     if (gsvHoverTimer.current) clearTimeout(gsvHoverTimer.current);
@@ -210,8 +215,11 @@ export function GsvDesktop({
       sec.scrollTo({ top: target });
 
       if (cards) {
-        const cardsTop = cards.getBoundingClientRect().top - secTop + scrollTop;
-        const avail = viewportH - (cardsTop - target) - bottomGap;
+        // Measure after the scroll settled, in viewport coords (no scrollTop):
+        // scrollTo may have moved us from the pre-scroll `scrollTop`, so reusing
+        // it here would overestimate `avail` and let the grid clip below the fold.
+        const cardsViewportTop = cards.getBoundingClientRect().top - secTop;
+        const avail = viewportH - cardsViewportTop - bottomGap;
         if (cards.scrollHeight > avail + 1 && avail > 120) {
           cards.style.maxHeight = `${Math.floor(avail)}px`;
           cards.style.overflowY = "auto";
