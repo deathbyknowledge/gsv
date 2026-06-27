@@ -513,6 +513,19 @@ export function profileValuesFromDrafts(values: Record<string, string>): Record<
   return normalizeProfileValues(values);
 }
 
+export function modelValidationValuesFromProfileDrafts(
+  values: Record<string, string>,
+  clearedSecretKeys: ReadonlySet<string> = new Set(),
+): Record<string, string> {
+  const validationValues = { ...values };
+  for (const field of MODEL_PROFILE_SECRET_FIELDS) {
+    if (validationValues[field.key] === "" && !clearedSecretKeys.has(field.key)) {
+      delete validationValues[field.key];
+    }
+  }
+  return validationValues;
+}
+
 export function modelProfileSummary(values: Record<string, string>): string {
   const provider = cleanValue(values["config/ai/provider"]) || "provider";
   const model = cleanValue(values["config/ai/model"]) || "model";

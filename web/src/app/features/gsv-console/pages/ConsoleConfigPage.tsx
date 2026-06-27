@@ -35,6 +35,7 @@ import {
   effectiveAiValuesForViewer,
   isSensitiveSettingKey,
   modelDisplayName,
+  modelValidationValuesFromProfileDrafts,
   modelProfileSecretConfigKey,
   modelProfileSummary,
   modelProfilesConfigKey,
@@ -660,12 +661,7 @@ function ModelProfileForm({
     }
   };
   const validateDrafts = async () => {
-    const validationValues = { ...drafts };
-    for (const field of MODEL_PROFILE_SECRET_FIELDS) {
-      if (profile && !clearedSecretKeys.has(field.key) && validationValues[field.key] === "") {
-        delete validationValues[field.key];
-      }
-    }
+    const validationValues = modelValidationValuesFromProfileDrafts(drafts, clearedSecretKeys);
     setPendingLabel("TESTING");
     setStatusTone("pending");
     setStatusText("Testing model...");
