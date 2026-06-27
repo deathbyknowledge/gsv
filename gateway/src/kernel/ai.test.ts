@@ -513,6 +513,47 @@ describe("handleAiConfig", () => {
     });
   });
 
+  it("preserves explicit blank API key overrides for text generation", async () => {
+    generateMock.mockImplementationOnce(async (request: any) => {
+      expect(request.config).toMatchObject({
+        executor: { kind: "kernel" },
+        provider: "anthropic",
+        model: "claude-test",
+        apiKey: "",
+      });
+      return {
+        role: "assistant",
+        content: [{ type: "text", text: "pong" }],
+        api: "test",
+        provider: "anthropic",
+        model: "claude-test",
+        usage: {
+          input: 1,
+          output: 1,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 2,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: "stop",
+        timestamp: 1,
+      };
+    });
+
+    await handleAiTextGenerate({
+      messages: [{ role: "user", content: "ping" }],
+      config: {
+        overrides: {
+          "config/ai/provider": "anthropic",
+          "config/ai/model": "claude-test",
+          "config/ai/api_key": "",
+        },
+      },
+    }, makeAiConfigContext({
+      "users/1000/ai/api_key": "saved-key",
+    }));
+  });
+
   it("falls back to the owning human's AI config for agent processes", async () => {
     const result = await handleAiConfig({}, makeAiConfigContext({
       "users/1000/ai/provider": "owner-provider",

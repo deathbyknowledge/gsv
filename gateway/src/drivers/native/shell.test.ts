@@ -9,6 +9,20 @@ import type { DeviceRecord } from "../../kernel/devices";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { InstalledPackageRecord } from "../../kernel/packages";
 
+const generateMock = vi.hoisted(() => vi.fn());
+
+vi.mock("../../inference/service", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../inference/service")>();
+  return {
+    ...actual,
+    createGenerationService: () => ({
+      generate: generateMock,
+      stream: vi.fn(),
+      generateText: vi.fn(),
+    }),
+  };
+});
+
 vi.mock("../../shared/utils", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../shared/utils")>();
   return {
@@ -21,6 +35,7 @@ const sendFrameToProcessMock = vi.mocked(sendFrameToProcess);
 
 beforeEach(() => {
   sendFrameToProcessMock.mockReset();
+  generateMock.mockReset();
 });
 
 const IDENTITY: ProcessIdentity = {
@@ -315,6 +330,36 @@ describe("media native commands", () => {
     );
     expect(denied.exitCode).toBe(1);
     expect(denied.stderr).toContain("Permission denied: ai.text.generate");
+  });
+
+  it("fails llm when text generation returns an error message", async () => {
+    generateMock.mockResolvedValueOnce({
+      role: "assistant",
+      content: [],
+      api: "test",
+      provider: "workers-ai",
+      model: "@cf/test/model",
+      usage: {
+        input: 1,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 1,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      stopReason: "error",
+      errorMessage: "billing required",
+    });
+
+    const result = await handleShellExec(
+      { input: "llm hello" },
+      makeContext({ capabilities: ["ai.text.generate"] }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("llm: billing required");
   });
 
   it("runs standalone media commands through the configured AI media paths", async () => {

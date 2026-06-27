@@ -1,6 +1,7 @@
 import { defineCommand, type Command, type CommandContext, type ExecResult } from "just-bash";
 import type {
   AiTextGenerateConfig,
+  AiTextGenerateResult,
   AiTextGenerateOptions,
 } from "../../../syscalls/ai";
 import { handleAiTextGenerate } from "../../../kernel/ai";
@@ -51,10 +52,20 @@ async function runLlm(
     sessionAffinityKey: "shell:llm",
   }, ctx);
 
+  assertSuccessfulGeneration(result);
+
   if (hasOption(parsed, "json")) {
     return okJson(result);
   }
   return ok(`${result.text ?? ""}\n`);
+}
+
+function assertSuccessfulGeneration(result: AiTextGenerateResult): void {
+  const stopReason = result.message.stopReason;
+  if (stopReason !== "error" && stopReason !== "aborted") {
+    return;
+  }
+  throw new Error(result.message.errorMessage || `generation ended with ${stopReason}`);
 }
 
 function buildLlmConfig(parsed: ParsedArgs): AiTextGenerateConfig | undefined {

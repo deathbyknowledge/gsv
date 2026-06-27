@@ -104,7 +104,7 @@ import { collectPromptSkillIndex } from "./skills";
 import { listVisibleTargets, targetToAiDevice } from "./targets";
 import {
   findProcessAiModelProfile,
-  normalizeProcessAiConfigValues,
+  isProcessAiConfigKey,
   omitProcessAiConfigSecrets,
   PROCESS_AI_CONFIG_SECRET_KEYS,
   processAiModelProfileSecretConfigKey,
@@ -322,6 +322,21 @@ export async function handleAiTextGenerate(
   };
 }
 
+function normalizeAiProcessOverrideValues(raw: Record<string, unknown>): Record<string, string> {
+  const values: Record<string, string> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (!isProcessAiConfigKey(key)) {
+      continue;
+    }
+    const normalized = String(value ?? "").trim();
+    if (!normalized && !PROCESS_AI_CONFIG_SECRET_KEYS.has(key)) {
+      continue;
+    }
+    values[key] = normalized;
+  }
+  return values;
+}
+
 export async function handleAiTranscriptionCreate(
   args: AiTranscriptionCreateArgs,
   ctx: KernelContext,
@@ -535,7 +550,7 @@ async function resolveAiTextGenerationConfig(
   ctx: KernelContext,
 ): Promise<AiConfigResult> {
   const requested = input && typeof input === "object" ? input : undefined;
-  const overrides = normalizeProcessAiConfigValues({
+  const overrides = normalizeAiProcessOverrideValues({
     ...(requested?.processOverrides ?? {}),
     ...(requested?.overrides ?? {}),
   });
@@ -830,7 +845,7 @@ function resolveEffectiveAiProcessOverrides(
     resolveAiProfileOwnerUid(ctx, uid, owner),
     processProfile,
   );
-  const normalizedOverrides = normalizeProcessAiConfigValues(processOverrides ?? {});
+  const normalizedOverrides = normalizeAiProcessOverrideValues(processOverrides ?? {});
   return {
     ...profileSecretOverrides,
     ...normalizedOverrides,
