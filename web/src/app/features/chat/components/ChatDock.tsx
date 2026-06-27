@@ -19,7 +19,7 @@ import {
   applyChatLiveActivityToAgent,
   deriveChatLiveActivity,
 } from "../domain/activity";
-import type { ChatHilDecision, ChatRunState } from "../domain/processes";
+import type { ChatHilDecision, ChatProcessSummary, ChatRunState } from "../domain/processes";
 import {
   useAbortChatProcess,
   useCompactChatConversation,
@@ -675,13 +675,16 @@ export function ChatDock({
     setOpenPopover((current) => current === popover ? null : popover);
   };
 
-  const openTaskProcess = (processId: string) => {
+  const openTaskProcess = (processId: string, process: ChatProcessSummary | null) => {
     const targetProcessId = processId.trim();
     if (!targetProcessId || !onSelectAgent) {
       return;
     }
     setOpenPopover(null);
-    onSelectAgent({ processId: targetProcessId });
+    onSelectAgent({
+      processId: targetProcessId,
+      ...(process ? { process } : {}),
+    });
   };
 
   const closePopoverFromOutsideClick = (event: JSX.TargetedMouseEvent<HTMLElement>) => {

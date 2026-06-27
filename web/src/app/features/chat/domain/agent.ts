@@ -1,9 +1,12 @@
+import type { ChatProcessSummary } from "./processes";
+
 export type ChatAgentStatus = "online" | "idle" | "error" | "live";
 export type ChatAgentTaskStatus = "running" | "idle" | "error";
 export type ChatProcessStatusTone = "online" | "error" | "idle" | "update" | "live" | "warn";
 
 export type ChatAgentTaskData = {
   name: string;
+  process?: ChatProcessSummary;
   processId?: string;
   status?: ChatAgentTaskStatus;
 };
@@ -52,6 +55,7 @@ export type ChatAgentData = {
 
 export type ChatAgentTaskView = {
   name: string;
+  process: ChatProcessSummary | null;
   processId: string;
   status: ChatAgentTaskStatus;
 };
@@ -71,6 +75,7 @@ export type ChatAgentCrewView = {
 
 export type ChatAgentSelection = {
   agentId?: string;
+  process?: ChatProcessSummary;
   processId?: string;
   runAs?: string;
 };
@@ -156,6 +161,7 @@ function normalizeTasks(
   return (tasks ?? [])
     .map((task) => ({
       name: task.name.trim(),
+      process: task.process ?? null,
       processId: task.processId?.trim() ?? "",
       status: task.status ?? fallbackStatus,
     }))

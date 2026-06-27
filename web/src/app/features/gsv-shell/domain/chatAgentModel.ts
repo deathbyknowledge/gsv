@@ -135,7 +135,38 @@ function chatProcessTask(process: ChatProcessSummary): ChatAgentTaskData {
   const status = taskStatusForRunState(process.runState);
   const name = process.title;
 
-  return { name, processId: process.pid, status };
+  return { name, process, processId: process.pid, status };
+}
+
+function consoleRunState(process: ConsoleProcess): ChatProcessSummary["runState"] {
+  if (process.activeRunId !== null || process.state === "running") {
+    return "running";
+  }
+  if (process.queuedCount > 0 || process.state === "queued") {
+    return "queued";
+  }
+  return "idle";
+}
+
+function chatProcessFromConsoleProcess(process: ConsoleProcess): ChatProcessSummary {
+  return {
+    pid: process.pid,
+    uid: process.uid ?? 0,
+    username: process.username,
+    interactive: process.interactive,
+    parentPid: process.parentPid,
+    state: process.rawState || process.state,
+    runState: consoleRunState(process),
+    activeRunId: process.activeRunId,
+    activeConversationId: process.activeConversationId,
+    queuedCount: process.queuedCount,
+    lastActiveAt: process.lastActiveAt,
+    label: process.label,
+    title: process.label || process.pid,
+    createdAt: process.createdAt ?? 0,
+    cwd: process.cwd,
+    isDefaultConversation: false,
+  };
 }
 
 function consoleTaskStatus(process: ConsoleProcess): ChatAgentTaskStatus {
@@ -151,6 +182,7 @@ function consoleTaskStatus(process: ConsoleProcess): ChatAgentTaskStatus {
 function consoleProcessTask(process: ConsoleProcess): ChatAgentTaskData {
   return {
     name: process.label || process.pid,
+    process: chatProcessFromConsoleProcess(process),
     processId: process.pid,
     status: consoleTaskStatus(process),
   };
@@ -179,7 +211,6 @@ function sortConsoleProcesses(
 
 function processMatchesActiveIdentity(process: ConsoleProcess, activeProcess: ChatProcessSummary): boolean {
   return process.pid === activeProcess.pid
-    || process.uid === activeProcess.uid
     || (process.username.length > 0 && process.username === activeProcess.username);
 }
 
@@ -214,7 +245,7 @@ function tasksForActiveAgent(
 }
 
 function ownsActiveChatIdentity(activeProcess: ChatProcessSummary, process: ChatProcessSummary): boolean {
-  return process.uid === activeProcess.uid || process.username === activeProcess.username;
+  return process.username.length > 0 && process.username === activeProcess.username;
 }
 
 function tasksForAccount(processes: readonly ConsoleProcess[]): ChatAgentTaskData[] {

@@ -280,7 +280,7 @@ export function GsvShell({
   const selectChatAgent = (selection: ChatAgentSelection): void => {
     if (selection.processId) {
       setSelectedChatPid(selection.processId);
-      setPendingChatProcess(null);
+      setPendingChatProcess(selection.process ?? null);
       setSelectedChatAgentId(null);
       setSelectedChatConversationId(null);
       return;

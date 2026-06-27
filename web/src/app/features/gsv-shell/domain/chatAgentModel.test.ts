@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildChatAgentViewModel } from "../../chat/domain/agent";
+import { buildChatAgentViewModel, type ChatAgentTaskData } from "../../chat/domain/agent";
 import type { ChatProcessSummary } from "../../chat/domain/processes";
 import type { ConsoleAccount, ConsoleProcess } from "../../gsv-console/domain/consoleModels";
 import { buildShellChatAgent } from "./chatAgentModel";
@@ -48,6 +48,14 @@ function consoleProcess(input: Partial<ConsoleProcess> & Pick<ConsoleProcess, "p
     lastActiveAt: null,
     ...input,
   };
+}
+
+function taskSummary(tasks: readonly ChatAgentTaskData[]) {
+  return tasks.map((task) => ({
+    name: task.name,
+    processId: task.processId,
+    status: task.status,
+  }));
 }
 
 describe("shell chat agent model", () => {
@@ -136,10 +144,11 @@ describe("shell chat agent model", () => {
     });
 
     expect(agent?.tasksTotal).toBe(2);
-    expect(agent?.tasks).toEqual([
+    expect(taskSummary(agent?.tasks ?? [])).toEqual([
       { name: "Active build", processId: "proc:run", status: "running" },
       { name: "Idle research", processId: "proc:idle", status: "idle" },
     ]);
+    expect(agent?.tasks?.[0]?.process?.pid).toBe("proc:run");
     expect(agent?.activity).toBe("RUNNING");
   });
 
@@ -189,6 +198,29 @@ describe("shell chat agent model", () => {
     expect(agent?.activity).toBe("idle");
   });
 
+  it("does not group unrelated owner-owned processes when no agent account is resolved", () => {
+    const activeProcess = process({
+      pid: "proc:pkg",
+      uid: 1000,
+      username: "pkg#builder",
+      title: "Package build",
+    });
+    const agent = buildShellChatAgent({
+      activeProcess,
+      accounts: [account({ uid: 1000, username: "sam", relation: "self", displayName: "Sam" })],
+      chatProcesses: [activeProcess],
+      config: [],
+      consoleProcesses: [
+        consoleProcess({ pid: "proc:scout", uid: 1000, username: "scout", label: "Scout task" }),
+      ],
+      statusLabel: "idle",
+    });
+
+    expect(taskSummary(agent?.tasks ?? [])).toEqual([
+      { name: "Package build", processId: "proc:pkg", status: "idle" },
+    ]);
+  });
+
   it("keeps the active chat task when console overview is stale", () => {
     const activeProcess = process({ pid: "proc:new", uid: 7, username: "scout", title: "New task" });
     const agent = buildShellChatAgent({
@@ -202,10 +234,15 @@ describe("shell chat agent model", () => {
       statusLabel: "idle",
     });
 
-    expect(agent?.tasks).toEqual([
+    expect(taskSummary(agent?.tasks ?? [])).toEqual([
       { name: "New task", processId: "proc:new", status: "idle" },
       { name: "Older task", processId: "proc:old", status: "idle" },
     ]);
+    expect(agent?.tasks?.[1]?.process).toMatchObject({
+      pid: "proc:old",
+      title: "Older task",
+      username: "scout",
+    });
   });
 
   it("uses the owner model override as an inherited default for agent chats", () => {

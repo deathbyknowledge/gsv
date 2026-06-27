@@ -3,7 +3,7 @@ import { Progress } from "../../../components/ui/Progress";
 import { StatusDot } from "../../../components/ui/StatusDot";
 import type { StatusTone } from "../../../components/ui/StatusDot";
 import type { ChatAgentViewModel, ChatModelProfileData } from "../domain/agent";
-import type { ChatHistory, ChatProcessAiConfig } from "../domain/processes";
+import type { ChatHistory, ChatProcessAiConfig, ChatProcessSummary } from "../domain/processes";
 import { formatCount, shortId } from "./chatUiFormat";
 
 export type ChatPopoverId = "model" | "tasks" | "context";
@@ -20,7 +20,7 @@ type ChatDockPopoversProps = {
   onApplyModelProfile: (profile: ChatModelProfileData) => void;
   onOpenModels: () => void;
   onOpenTasks: () => void;
-  onOpenTaskProcess: (processId: string) => void;
+  onOpenTaskProcess: (processId: string, process: ChatProcessSummary | null) => void;
   onStartNewTask: () => void;
   onClearProcessAiConfig: () => void;
   onSetReasoning: (reasoning: string) => void;
@@ -215,7 +215,7 @@ export function ChatDockPopovers({
                   type="button"
                   class="gsv-chat-task-row is-clickable"
                   key={`${task.processId}-${task.status}`}
-                  onClick={() => onOpenTaskProcess(task.processId)}
+                  onClick={() => onOpenTaskProcess(task.processId, task.process)}
                 >
                   {content}
                 </button>
