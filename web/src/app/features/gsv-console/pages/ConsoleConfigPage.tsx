@@ -82,6 +82,8 @@ type ValidateModelSettingsInput = {
   presetId?: string;
 };
 
+type SettingsStatusTone = "pending" | "success" | "error";
+
 type SettingsFieldGroupProps = {
   config: readonly ConsoleConfigEntry[];
   description: string;
@@ -613,13 +615,17 @@ function ModelProfileForm({
   const [drafts, setDrafts] = useState(initialValues);
   const [clearedSecretKeys, setClearedSecretKeys] = useState<Set<string>>(() => new Set());
   const [pending, setPending] = useState(false);
+  const [pendingLabel, setPendingLabel] = useState("");
   const [statusText, setStatusText] = useState("");
+  const [statusTone, setStatusTone] = useState<SettingsStatusTone>("success");
 
   useEffect(() => {
     setName(profile?.name ?? "");
     setDrafts(initialValues);
     setClearedSecretKeys(new Set());
+    setPendingLabel("");
     setStatusText("");
+    setStatusTone("success");
   }, [initialValues, profile]);
 
   const duplicateName = profiles.some((candidate) =>
@@ -636,19 +642,26 @@ function ModelProfileForm({
     JSON.stringify(drafts) !== JSON.stringify(initialValues);
   useUnsavedGuard(() => dirty);
 
-  const run = async (action: () => Promise<void>, successText: string) => {
+  const run = async (action: () => Promise<void>, successText: string, label = "SAVING") => {
     setPending(true);
+    setPendingLabel(label);
     setStatusText("");
+    setStatusTone("pending");
     try {
       await action();
+      setStatusTone("success");
       setStatusText(successText);
     } catch (error) {
+      setStatusTone("error");
       setStatusText(errorMessage(error));
     } finally {
+      setPendingLabel("");
       setPending(false);
     }
   };
   const validateDrafts = async () => {
+    setPendingLabel("TESTING");
+    setStatusTone("pending");
     setStatusText("Testing model...");
     await onValidate({
       values: drafts,
@@ -692,6 +705,7 @@ function ModelProfileForm({
                 return next;
               });
               setDrafts((current) => ({ ...current, [field.key]: value }));
+              setStatusText("");
             }}
             onClearRedacted={() => {
               setClearedSecretKeys((current) => new Set(current).add(field.key));
@@ -701,28 +715,30 @@ function ModelProfileForm({
           />
         ))}
       </div>
-      {statusText ? <div class="gsv-console-settings-status">{statusText}</div> : null}
+      <SettingsStatus text={statusText} tone={statusTone} />
       <div class="gsv-console-settings-actions">
         <Button
           variant="primary"
-          label={pending ? "SAVING" : "SAVE PRESET"}
+          label={pending ? pendingLabel || "SAVING" : "TEST & SAVE PRESET"}
           disabled={!canSave || pending}
           onClick={() => void run(async () => {
             await validateDrafts();
-            setStatusText("Saving preset...");
+            setPendingLabel("SAVING");
+            setStatusText("Model test passed. Saving preset...");
             await onSave(name, drafts, clearedProfileSecretKeys);
-          }, "Saved")}
+          }, "Saved", "TESTING")}
         />
         {profile && onMakeDefault ? (
           <Button
             variant="secondary"
-            label="MAKE DEFAULT"
+            label="TEST & MAKE DEFAULT"
             disabled={!editable || pending}
             onClick={() => void run(async () => {
               await validateDrafts();
-              setStatusText("Updating default...");
+              setPendingLabel("UPDATING");
+              setStatusText("Model test passed. Updating default...");
               await onMakeDefault(drafts);
-            }, "Default updated")}
+            }, "Default updated", "TESTING")}
           />
         ) : null}
         <Button variant="secondary" label="CANCEL" disabled={pending} onClick={onCancel} />
@@ -731,7 +747,7 @@ function ModelProfileForm({
             variant="dangerGhost"
             label="DELETE"
             disabled={!editable || pending}
-            onClick={() => void run(onDelete, "Deleted")}
+            onClick={() => void run(onDelete, "Deleted", "DELETING")}
           />
         ) : null}
       </div>
@@ -763,12 +779,16 @@ function SettingsFieldGroup({
   const [drafts, setDrafts] = useState<Record<string, string>>(initialDrafts);
   const [clearedSensitiveKeys, setClearedSensitiveKeys] = useState<Set<string>>(() => new Set());
   const [pending, setPending] = useState(false);
+  const [pendingLabel, setPendingLabel] = useState("");
   const [statusText, setStatusText] = useState("");
+  const [statusTone, setStatusTone] = useState<SettingsStatusTone>("success");
 
   useEffect(() => {
     setDrafts(initialDrafts);
     setClearedSensitiveKeys(new Set());
+    setPendingLabel("");
     setStatusText("");
+    setStatusTone("success");
   }, [initialDrafts]);
 
   const changedEntries = fields.flatMap((field) => {
@@ -802,19 +822,25 @@ function SettingsFieldGroup({
       return;
     }
     setPending(true);
+    setPendingLabel(validateBeforeSave ? "TESTING" : "SAVING");
     setStatusText("");
+    setStatusTone("pending");
     try {
       if (validateBeforeSave) {
         setStatusText("Testing model...");
         await validateBeforeSave(drafts);
-        setStatusText("Saving settings...");
+        setPendingLabel("SAVING");
+        setStatusText("Model test passed. Saving settings...");
       }
       await onSave(changedEntries);
       setClearedSensitiveKeys(new Set());
+      setStatusTone("success");
       setStatusText("Saved");
     } catch (error) {
+      setStatusTone("error");
       setStatusText(errorMessage(error));
     } finally {
+      setPendingLabel("");
       setPending(false);
     }
   };
@@ -857,9 +883,14 @@ function SettingsFieldGroup({
           />
         ))}
       </div>
-      {statusText ? <div class="gsv-console-settings-status">{statusText}</div> : null}
+      <SettingsStatus text={statusText} tone={statusTone} />
       <div class="gsv-console-settings-actions">
-        <Button variant="primary" label={pending ? "SAVING" : "SAVE CHANGES"} disabled={!editable || !dirty || pending} onClick={() => void save()} />
+        <Button
+          variant="primary"
+          label={pending ? pendingLabel || "SAVING" : validateBeforeSave ? "TEST & SAVE" : "SAVE CHANGES"}
+          disabled={!editable || !dirty || pending}
+          onClick={() => void save()}
+        />
         <Button
           variant="secondary"
           label="RESET"
@@ -873,6 +904,18 @@ function SettingsFieldGroup({
       </div>
     </Surface>
   );
+}
+
+function SettingsStatus({
+  text,
+  tone,
+}: {
+  text: string;
+  tone: SettingsStatusTone;
+}) {
+  return text ? (
+    <div class={`gsv-console-settings-status is-${tone}`}>{text}</div>
+  ) : null;
 }
 
 function SettingFieldInput({
