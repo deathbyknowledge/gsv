@@ -3,7 +3,7 @@ import {
   buildOpenAppRoute,
   type OpenAppRequest,
 } from "./app-link";
-import { getAppBoot, hasAppBoot } from "./browser";
+import { getAppBoot, hasAppBoot, type PackageAppBoot } from "./browser";
 
 export type HostStatus = {
   connected: boolean;
@@ -37,12 +37,43 @@ export type HostClient = {
   setBadge(badge: string | null): Promise<void>;
   setDirty(dirty: boolean): Promise<void>;
   requestNewWindow(route?: string): Promise<string | null>;
+  refreshAppSession(boot: PackageAppBoot): Promise<PackageAppBoot>;
+  connectBackendSocket(boot: PackageAppBoot): Promise<HostBackendSocket>;
 };
 
 type HostPortMessage =
   | { type: "rpc-result"; id: string; ok: true; data?: unknown }
   | { type: "rpc-result"; id: string; ok: false; error: string }
-  | { type: "status"; status: { state?: string } };
+  | { type: "status"; status: { state?: string } }
+  | { type: "backend-message"; connectionId: string; data: string }
+  | { type: "backend-close"; connectionId: string; code: number; reason: string; wasClean: boolean }
+  | { type: "backend-error"; connectionId: string; error: string };
+
+export type HostBackendCloseEvent = {
+  code: number;
+  reason: string;
+  wasClean: boolean;
+};
+
+export type HostBackendSocket = {
+  readonly connectionId: string;
+  readonly readyState: "open" | "closed";
+  send(data: string): Promise<void>;
+  close(): void;
+  addEventListener(type: "message", listener: (data: string) => void): void;
+  addEventListener(type: "close", listener: (event: HostBackendCloseEvent) => void): void;
+  addEventListener(type: "error", listener: (error: Error) => void): void;
+  removeEventListener(type: "message", listener: (data: string) => void): void;
+  removeEventListener(type: "close", listener: (event: HostBackendCloseEvent) => void): void;
+  removeEventListener(type: "error", listener: (error: Error) => void): void;
+};
+
+type HostBackendSocketRecord = {
+  state: "open" | "closed";
+  messageListeners: Set<(data: string) => void>;
+  closeListeners: Set<(event: HostBackendCloseEvent) => void>;
+  errorListeners: Set<(error: Error) => void>;
+};
 
 const HOST_CONNECT_REQUEST = "gsv-host-connect-request";
 const HOST_CONNECT_RESPONSE = "gsv-host-connect";
@@ -64,8 +95,17 @@ export function openApp(request: OpenAppRequest): void {
   const detail = { request };
   try {
     if (window.parent && window.parent !== window) {
-      window.parent.postMessage({ type: OPEN_APP_EVENT, detail }, window.location.origin);
-      window.parent.dispatchEvent(new CustomEvent(OPEN_APP_EVENT, { detail }));
+      const route = buildOpenAppRoute(request, window.location.href);
+      void connectHost()
+        .then((host) => host.requestNewWindow(route))
+        .catch(() => {
+          try {
+            window.parent.postMessage({ type: OPEN_APP_EVENT, detail }, "*");
+            window.parent.dispatchEvent(new CustomEvent(OPEN_APP_EVENT, { detail }));
+          } catch {
+            window.location.href = route;
+          }
+        });
       return;
     }
   } catch {
@@ -88,7 +128,7 @@ async function createHostClient(): Promise<HostClient> {
     const requestId = createHostConnectRequestId();
 
     const onMessage = (event: MessageEvent): void => {
-      if (event.origin !== window.location.origin) {
+      if (event.source !== window.parent) {
         return;
       }
       const record = event.data as { requestId?: unknown; type?: unknown } | null;
@@ -115,7 +155,7 @@ async function createHostClient(): Promise<HostClient> {
           type: HOST_CONNECT_REQUEST,
           requestId,
         },
-        window.location.origin,
+        "*",
       );
     } catch {
       // The timeout above reports hosts that cannot accept bridge requests.
@@ -126,6 +166,7 @@ async function createHostClient(): Promise<HostClient> {
   let latestStatus: HostStatus = { connected: false };
   const pending = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
   const statusListeners = new Set<HostStatusHandler>();
+  const backendSockets = new Map<string, HostBackendSocketRecord>();
 
   const rpc = <T>(method: string, payload?: unknown): Promise<T> => {
     const id = `host-rpc-${++sequence}`;
@@ -166,9 +207,102 @@ async function createHostClient(): Promise<HostClient> {
       return;
     }
 
+    if (message.type === "backend-message") {
+      const socket = backendSockets.get(message.connectionId);
+      if (!socket || socket.state === "closed") {
+        return;
+      }
+      for (const listener of socket.messageListeners) {
+        listener(message.data);
+      }
+      return;
+    }
+
+    if (message.type === "backend-close") {
+      const socket = backendSockets.get(message.connectionId);
+      if (!socket) {
+        return;
+      }
+      socket.state = "closed";
+      backendSockets.delete(message.connectionId);
+      const closeEvent = {
+        code: message.code,
+        reason: message.reason,
+        wasClean: message.wasClean,
+      };
+      for (const listener of socket.closeListeners) {
+        listener(closeEvent);
+      }
+      return;
+    }
+
+    if (message.type === "backend-error") {
+      const socket = backendSockets.get(message.connectionId);
+      if (!socket || socket.state === "closed") {
+        return;
+      }
+      const error = new Error(message.error);
+      for (const listener of socket.errorListeners) {
+        listener(error);
+      }
+      return;
+    }
+
     void message;
   };
   port.start();
+
+  const createHostBackendSocket = (connectionId: string): HostBackendSocket => {
+    const record: HostBackendSocketRecord = {
+      state: "open",
+      messageListeners: new Set(),
+      closeListeners: new Set(),
+      errorListeners: new Set(),
+    };
+    backendSockets.set(connectionId, record);
+    return {
+      connectionId,
+      get readyState() {
+        return record.state;
+      },
+      send: async (data) => {
+        if (record.state === "closed") {
+          throw new Error("package backend socket is closed");
+        }
+        await rpc("backend.send", { connectionId, data });
+      },
+      close: () => {
+        if (record.state === "closed") {
+          return;
+        }
+        record.state = "closed";
+        backendSockets.delete(connectionId);
+        void rpc("backend.close", { connectionId }).catch(() => {});
+      },
+      addEventListener: (type, listener) => {
+        if (type === "message") {
+          record.messageListeners.add(listener as (data: string) => void);
+          return;
+        }
+        if (type === "close") {
+          record.closeListeners.add(listener as (event: HostBackendCloseEvent) => void);
+          return;
+        }
+        record.errorListeners.add(listener as (error: Error) => void);
+      },
+      removeEventListener: (type, listener) => {
+        if (type === "message") {
+          record.messageListeners.delete(listener as (data: string) => void);
+          return;
+        }
+        if (type === "close") {
+          record.closeListeners.delete(listener as (event: HostBackendCloseEvent) => void);
+          return;
+        }
+        record.errorListeners.delete(listener as (error: Error) => void);
+      },
+    };
+  };
 
   return {
     getStatus: () => latestStatus,
@@ -191,6 +325,16 @@ async function createHostClient(): Promise<HostClient> {
     requestNewWindow: async (route) => {
       const result = await rpc<{ windowId?: unknown }>("requestNewWindow", { route });
       return typeof result.windowId === "string" ? result.windowId : null;
+    },
+    refreshAppSession: async (boot) => {
+      return await rpc<PackageAppBoot>("appSession.refresh", { boot });
+    },
+    connectBackendSocket: async (boot) => {
+      const result = await rpc<{ connectionId?: unknown }>("backend.connect", { boot });
+      if (typeof result.connectionId !== "string") {
+        throw new Error("package backend bridge returned an invalid connection");
+      }
+      return createHostBackendSocket(result.connectionId);
     },
   };
 }

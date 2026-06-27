@@ -6,17 +6,19 @@ type IframeMock = HTMLIFrameElement & {
   dispatchLoad(): void;
 };
 
+let windowListeners: Map<string, Set<EventListenerOrEventListenerObject>>;
+
 beforeEach(() => {
-  const listeners = new Map<string, Set<EventListenerOrEventListenerObject>>();
+  windowListeners = new Map<string, Set<EventListenerOrEventListenerObject>>();
   vi.stubGlobal("window", {
     location: { origin: "http://localhost" },
     addEventListener: vi.fn((type: string, listener: EventListenerOrEventListenerObject) => {
-      const typeListeners = listeners.get(type) ?? new Set<EventListenerOrEventListenerObject>();
+      const typeListeners = windowListeners.get(type) ?? new Set<EventListenerOrEventListenerObject>();
       typeListeners.add(listener);
-      listeners.set(type, typeListeners);
+      windowListeners.set(type, typeListeners);
     }),
     removeEventListener: vi.fn((type: string, listener: EventListenerOrEventListenerObject) => {
-      listeners.get(type)?.delete(listener);
+      windowListeners.get(type)?.delete(listener);
     }),
   });
 });
@@ -72,6 +74,16 @@ function createIframeMock(
       }
     },
   } as unknown as IframeMock;
+}
+
+function dispatchWindowMessage(event: Partial<MessageEvent<unknown>>): void {
+  for (const listener of windowListeners.get("message") ?? []) {
+    if (typeof listener === "function") {
+      listener(event as MessageEvent<unknown>);
+    } else {
+      listener.handleEvent(event as MessageEvent<unknown>);
+    }
+  }
 }
 
 async function connectBridge(
@@ -165,5 +177,41 @@ describe("attachHostBridge", () => {
 
     controller.destroy();
     port.close();
+  });
+
+  it("accepts opaque-origin connect requests only from the exact iframe window", () => {
+    const gatewayClient = createHostStatusClient();
+    let hostMessage: unknown = null;
+    const iframe = createIframeMock((message: unknown) => {
+      hostMessage = message;
+    });
+    const iframeWindow = iframe.contentWindow;
+
+    const controller = attachHostBridge(iframe, gatewayClient);
+    dispatchWindowMessage({
+      origin: "null",
+      source: { postMessage: vi.fn() } as unknown as MessageEventSource,
+      data: {
+        type: "gsv-host-connect-request",
+        requestId: "wrong-source",
+      },
+    });
+    dispatchWindowMessage({
+      origin: "null",
+      source: iframeWindow,
+      data: {
+        type: "gsv-host-connect-request",
+        requestId: "opaque-request",
+      },
+    });
+
+    iframe.dispatchLoad();
+
+    expect(hostMessage).toMatchObject({
+      type: "gsv-host-connect",
+      requestId: "opaque-request",
+    });
+
+    controller.destroy();
   });
 });

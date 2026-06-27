@@ -4,7 +4,11 @@ type HostRpcMethod =
   | "setTitle"
   | "setBadge"
   | "setDirty"
-  | "requestNewWindow";
+  | "requestNewWindow"
+  | "appSession.refresh"
+  | "backend.connect"
+  | "backend.send"
+  | "backend.close";
 
 type HostRpcMessage = {
   type: "rpc";
@@ -32,12 +36,31 @@ type HostStatusMessage = {
   status: GsvClientStatus;
 };
 
+type HostBackendMessage =
+  | {
+      type: "backend-message";
+      connectionId: string;
+      data: string;
+    }
+  | {
+      type: "backend-close";
+      connectionId: string;
+      code: number;
+      reason: string;
+      wasClean: boolean;
+    }
+  | {
+      type: "backend-error";
+      connectionId: string;
+      error: string;
+    };
+
 type HostConnectMessage = {
   type: "gsv-host-connect";
   requestId?: string;
 };
 
-type HostPortMessage = HostRpcMessage | HostRpcResultMessage | HostStatusMessage;
+type HostPortMessage = HostRpcMessage | HostRpcResultMessage | HostStatusMessage | HostBackendMessage;
 
 export type HostBridgeController = {
   destroy: () => void;
@@ -52,6 +75,17 @@ type HostChromeController = {
 
 type HostStatusClient = {
   onStatus: (listener: (status: GsvClientStatus) => void) => () => void;
+};
+
+type HostAppSession = {
+  sessionId: string;
+  clientId: string;
+  routeBase: string;
+  rpcBase: string;
+};
+
+type HostBackendConnection = {
+  socket: WebSocket;
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -77,8 +111,95 @@ function postMessage(port: MessagePort, message: HostPortMessage): void {
   port.postMessage(message);
 }
 
+function appClientRouteBase(sessionId: string, clientId: string): string {
+  return `/apps/sessions/${encodeURIComponent(sessionId)}/clients/${encodeURIComponent(clientId)}`;
+}
+
+function appClientRpcBase(sessionId: string, clientId: string): string {
+  return `${appClientRouteBase(sessionId, clientId)}/socket`;
+}
+
+function appClientRefreshUrl(session: HostAppSession): string {
+  return `${session.routeBase}/refresh`;
+}
+
+function buildRpcWebSocketUrl(rpcBase: string): string {
+  const url = new URL(rpcBase, window.location.href);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  return url.toString();
+}
+
+function validateSessionPayload(appSession: HostAppSession | null, payload: unknown): HostAppSession {
+  if (!appSession) {
+    throw new Error("Package app session is unavailable");
+  }
+  const record = asRecord(payload);
+  const boot = asRecord(record?.boot);
+  const expectedRouteBase = appClientRouteBase(appSession.sessionId, appSession.clientId);
+  const expectedRpcBase = appClientRpcBase(appSession.sessionId, appSession.clientId);
+  if (
+    boot?.sessionId !== appSession.sessionId ||
+    boot?.clientId !== appSession.clientId ||
+    boot?.routeBase !== expectedRouteBase ||
+    boot?.rpcBase !== expectedRpcBase
+  ) {
+    throw new Error("Package app session mismatch");
+  }
+  return appSession;
+}
+
+async function refreshAppSession(appSession: HostAppSession | null, payload: unknown): Promise<unknown> {
+  const session = validateSessionPayload(appSession, payload);
+  const response = await fetch(appClientRefreshUrl(session), {
+    method: "POST",
+    credentials: "same-origin",
+    headers: {
+      "accept": "application/json",
+    },
+  });
+  if (!response.ok) {
+    const message = await response.text().catch(() => "");
+    throw new Error(message || `package app session refresh failed (${response.status})`);
+  }
+  return await response.json();
+}
+
+function waitForSocketOpen(socket: WebSocket): Promise<void> {
+  if (socket.readyState === WebSocket.OPEN) {
+    return Promise.resolve();
+  }
+  if (socket.readyState === WebSocket.CLOSING || socket.readyState === WebSocket.CLOSED) {
+    return Promise.reject(new Error("package backend socket closed"));
+  }
+  return new Promise((resolve, reject) => {
+    const cleanup = (): void => {
+      socket.removeEventListener("open", onOpen);
+      socket.removeEventListener("error", onError);
+      socket.removeEventListener("close", onClose);
+    };
+    const onOpen = (): void => {
+      cleanup();
+      resolve();
+    };
+    const onError = (): void => {
+      cleanup();
+      reject(new Error("package backend socket error"));
+    };
+    const onClose = (event: CloseEvent): void => {
+      cleanup();
+      reject(new Error(`package backend socket closed (${event.code})`));
+    };
+    socket.addEventListener("open", onOpen);
+    socket.addEventListener("error", onError);
+    socket.addEventListener("close", onClose);
+  });
+}
+
 async function handleRpc(
   chrome: HostChromeController | null,
+  appSession: HostAppSession | null,
+  backendConnections: Map<string, HostBackendConnection>,
+  port: MessagePort,
   message: HostRpcMessage,
 ): Promise<unknown> {
   switch (message.method) {
@@ -102,6 +223,74 @@ async function handleRpc(
       const route = asString(payload?.route) ?? undefined;
       return { windowId: chrome?.requestNewWindow(route) ?? null };
     }
+    case "appSession.refresh": {
+      return await refreshAppSession(appSession, message.payload);
+    }
+    case "backend.connect": {
+      const session = validateSessionPayload(appSession, message.payload);
+      const connectionId = `backend:${session.sessionId}:${session.clientId}:${crypto.randomUUID()}`;
+      const socket = new WebSocket(buildRpcWebSocketUrl(session.rpcBase));
+      backendConnections.set(connectionId, { socket });
+      socket.addEventListener("message", (event) => {
+        if (typeof event.data === "string") {
+          postMessage(port, { type: "backend-message", connectionId, data: event.data });
+        }
+      });
+      socket.addEventListener("close", (event) => {
+        backendConnections.delete(connectionId);
+        postMessage(port, {
+          type: "backend-close",
+          connectionId,
+          code: event.code,
+          reason: event.reason,
+          wasClean: event.wasClean,
+        });
+      });
+      socket.addEventListener("error", () => {
+        postMessage(port, {
+          type: "backend-error",
+          connectionId,
+          error: "package backend socket error",
+        });
+      });
+      try {
+        await waitForSocketOpen(socket);
+      } catch (error) {
+        backendConnections.delete(connectionId);
+        if (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN) {
+          socket.close(1000, "open failed");
+        }
+        throw error;
+      }
+      return { connectionId };
+    }
+    case "backend.send": {
+      const payload = asRecord(message.payload);
+      const connectionId = asString(payload?.connectionId);
+      const data = asString(payload?.data);
+      if (!connectionId || data === null) {
+        throw new Error("Invalid backend frame");
+      }
+      const connection = backendConnections.get(connectionId);
+      if (!connection || connection.socket.readyState !== WebSocket.OPEN) {
+        throw new Error("package backend socket is closed");
+      }
+      connection.socket.send(data);
+      return { ok: true };
+    }
+    case "backend.close": {
+      const payload = asRecord(message.payload);
+      const connectionId = asString(payload?.connectionId);
+      if (!connectionId) {
+        return { ok: true };
+      }
+      const connection = backendConnections.get(connectionId);
+      backendConnections.delete(connectionId);
+      if (connection && (connection.socket.readyState === WebSocket.CONNECTING || connection.socket.readyState === WebSocket.OPEN)) {
+        connection.socket.close(1000, "client reconnect");
+      }
+      return { ok: true };
+    }
   }
 
   throw new Error(`Unsupported host RPC method: ${String(message.method)}`);
@@ -111,9 +300,11 @@ export function attachHostBridge(
   iframe: HTMLIFrameElement,
   gatewayClient: HostStatusClient,
   chrome: HostChromeController | null = null,
+  appSession: HostAppSession | null = null,
 ): HostBridgeController {
   let port: MessagePort | null = null;
   let unsubscribeStatus: (() => void) | null = null;
+  const backendConnections = new Map<string, HostBackendConnection>();
   let iframeLoaded = false;
   let pendingConnectRequestId: string | undefined;
   let destroyed = false;
@@ -123,6 +314,12 @@ export function attachHostBridge(
     unsubscribeStatus = null;
     port?.close();
     port = null;
+    for (const connection of backendConnections.values()) {
+      if (connection.socket.readyState === WebSocket.CONNECTING || connection.socket.readyState === WebSocket.OPEN) {
+        connection.socket.close(1000, "host bridge closed");
+      }
+    }
+    backendConnections.clear();
   };
 
   const connect = (requestId?: string): void => {
@@ -141,7 +338,7 @@ export function attachHostBridge(
         return;
       }
 
-      void handleRpc(chrome, message as HostRpcMessage)
+      void handleRpc(chrome, appSession, backendConnections, channel.port1, message as HostRpcMessage)
         .then((data) => {
           postMessage(channel.port1, {
             type: "rpc-result",
@@ -166,7 +363,7 @@ export function attachHostBridge(
         type: "gsv-host-connect",
         requestId,
       } satisfies HostConnectMessage,
-      window.location.origin,
+      "*",
       [channel.port2],
     );
 
@@ -185,7 +382,7 @@ export function attachHostBridge(
   };
 
   const onConnectRequest = (event: MessageEvent<unknown>): void => {
-    if (destroyed || event.origin !== window.location.origin || event.source !== iframe.contentWindow) {
+    if (destroyed || event.source !== iframe.contentWindow) {
       return;
     }
     const record = asRecord(event.data);

@@ -1,3 +1,5 @@
+import type { HostBackendCloseEvent, HostBackendSocket, HostClient } from "./host";
+
 export type PackageAppBoot = {
   packageId: string;
   packageName: string;
@@ -53,11 +55,25 @@ type RemoteBackend = {
 
 type BackendConnection = {
   backend: RemoteBackend;
-  socket: WebSocket;
+  transport: BackendTransport;
   broken: boolean;
   reconnectOnClose: boolean;
   pending: Map<string, PendingBackendRequest>;
   request<T = unknown>(call: string, args?: unknown): Promise<T>;
+};
+
+type BackendTransportCloseEvent = {
+  code: number;
+  reason?: string;
+};
+
+type BackendTransport = {
+  readonly readyState: "connecting" | "open" | "closing" | "closed";
+  send(data: string): Promise<void>;
+  close(): void;
+  addEventListener(type: "message", listener: (data: unknown) => void): void;
+  addEventListener(type: "close", listener: (event: BackendTransportCloseEvent) => void): void;
+  addEventListener(type: "error", listener: (error: unknown) => void): void;
 };
 
 type BackendProxyControl = {
@@ -253,6 +269,151 @@ class BackendRpcError extends Error {
   }
 }
 
+function webSocketReadyState(socket: WebSocket): BackendTransport["readyState"] {
+  if (socket.readyState === WebSocket.CONNECTING) {
+    return "connecting";
+  }
+  if (socket.readyState === WebSocket.OPEN) {
+    return "open";
+  }
+  if (socket.readyState === WebSocket.CLOSING) {
+    return "closing";
+  }
+  return "closed";
+}
+
+function createWebSocketBackendTransport(socket: WebSocket): BackendTransport {
+  return {
+    get readyState() {
+      return webSocketReadyState(socket);
+    },
+    send: async (data) => {
+      socket.send(data);
+    },
+    close: () => {
+      if (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN) {
+        socket.close(1000, "client reconnect");
+      }
+    },
+    addEventListener: (type, listener) => {
+      if (type === "message") {
+        const onMessage = listener as (data: unknown) => void;
+        socket.addEventListener("message", (event) => onMessage(event.data));
+        return;
+      }
+      if (type === "close") {
+        const onClose = listener as (event: BackendTransportCloseEvent) => void;
+        socket.addEventListener("close", (event) => onClose({
+          code: event.code,
+          reason: event.reason,
+        }));
+        return;
+      }
+      const onError = listener as (error: unknown) => void;
+      socket.addEventListener("error", (event) => onError(event));
+    },
+  };
+}
+
+function createHostBackendTransport(socket: HostBackendSocket): BackendTransport {
+  return {
+    get readyState() {
+      return socket.readyState;
+    },
+    send: async (data) => {
+      await socket.send(data);
+    },
+    close: () => {
+      socket.close();
+    },
+    addEventListener: (type, listener) => {
+      if (type === "message") {
+        socket.addEventListener("message", listener as (data: string) => void);
+        return;
+      }
+      if (type === "close") {
+        const onClose = listener as (event: BackendTransportCloseEvent) => void;
+        socket.addEventListener("close", (event: HostBackendCloseEvent) => onClose({
+          code: event.code,
+          reason: event.reason,
+        }));
+        return;
+      }
+      socket.addEventListener("error", listener as (error: Error) => void);
+    },
+  };
+}
+
+function waitForWebSocketOpen(socket: WebSocket): Promise<void> {
+  if (socket.readyState === WebSocket.OPEN) {
+    return Promise.resolve();
+  }
+  if (socket.readyState === WebSocket.CLOSING || socket.readyState === WebSocket.CLOSED) {
+    return Promise.reject(new BackendTransportClosedError("package backend socket closed"));
+  }
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      socket.removeEventListener("open", onOpen);
+      socket.removeEventListener("error", onError);
+      socket.removeEventListener("close", onClose);
+    };
+    const onOpen = () => {
+      cleanup();
+      resolve();
+    };
+    const onError = (event: Event) => {
+      cleanup();
+      reject(new BackendTransportClosedError(event));
+    };
+    const onClose = (event: CloseEvent) => {
+      cleanup();
+      reject(new BackendTransportClosedError(`package backend socket closed (${event.code})`));
+    };
+    socket.addEventListener("open", onOpen);
+    socket.addEventListener("error", onError);
+    socket.addEventListener("close", onClose);
+  });
+}
+
+function isEmbeddedInHost(): boolean {
+  return Boolean(globalThis.window?.parent && globalThis.window.parent !== globalThis.window);
+}
+
+async function getHostClient(): Promise<HostClient> {
+  const host = await import("./host");
+  return await host.connectHost();
+}
+
+async function connectHostBackendTransport(boot: PackageAppBoot): Promise<BackendTransport> {
+  const host = await getHostClient();
+  const socket = await host.connectBackendSocket(boot);
+  return createHostBackendTransport(socket);
+}
+
+async function connectDirectBackendTransport(boot: PackageAppBoot): Promise<BackendTransport> {
+  const socket = new WebSocket(buildRpcWebSocketUrl(boot.rpcBase));
+  try {
+    await waitForWebSocketOpen(socket);
+  } catch (error) {
+    if (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN) {
+      socket.close(1000, "open failed");
+    }
+    throw error;
+  }
+  return createWebSocketBackendTransport(socket);
+}
+
+async function connectBackendFrameTransport(boot: PackageAppBoot): Promise<BackendTransport> {
+  if (isEmbeddedInHost()) {
+    try {
+      return await connectHostBackendTransport(boot);
+    } catch (error) {
+      console.warn("[gsv-package] host backend bridge failed; trying direct socket", error);
+    }
+  }
+  return await connectDirectBackendTransport(boot);
+}
+
 function resetBackendConnection(): void {
   const previousConnection = backendConnectionPromise;
   backendConnectionPromise = null;
@@ -266,21 +427,21 @@ function resetBackendConnection(): void {
       connection.reconnectOnClose = false;
       connection.broken = true;
       rejectPendingBackendRequests(connection, new BackendTransportClosedError("client reconnect"));
-      closeBackendSocket(connection.socket);
+      closeBackendTransport(connection.transport);
     })
     .catch(() => {});
 }
 
-function closeBackendSocket(socket: WebSocket): void {
-  if (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN) {
-    socket.close(1000, "client reconnect");
+function closeBackendTransport(transport: BackendTransport): void {
+  if (transport.readyState === "connecting" || transport.readyState === "open") {
+    transport.close();
   }
 }
 
 function shouldRetryBackendCall(connection: BackendConnection | null, error: unknown): boolean {
   return error instanceof BackendTransportClosedError
     || Boolean(connection?.broken)
-    || Boolean(connection && connection.socket.readyState !== WebSocket.OPEN);
+    || Boolean(connection && connection.transport.readyState !== "open");
 }
 
 function shouldMaintainBackendConnection(): boolean {
@@ -321,43 +482,12 @@ function rejectPendingBackendRequests(connection: BackendConnection, error: unkn
   connection.pending.clear();
 }
 
-function waitForSocketOpen(socket: WebSocket): Promise<void> {
-  if (socket.readyState === WebSocket.OPEN) {
-    return Promise.resolve();
-  }
-  if (socket.readyState === WebSocket.CLOSING || socket.readyState === WebSocket.CLOSED) {
-    return Promise.reject(new BackendTransportClosedError("package backend socket closed"));
-  }
-  return new Promise((resolve, reject) => {
-    const cleanup = () => {
-      socket.removeEventListener("open", onOpen);
-      socket.removeEventListener("error", onError);
-      socket.removeEventListener("close", onClose);
-    };
-    const onOpen = () => {
-      cleanup();
-      resolve();
-    };
-    const onError = (event: Event) => {
-      cleanup();
-      reject(new BackendTransportClosedError(event));
-    };
-    const onClose = (event: CloseEvent) => {
-      cleanup();
-      reject(new BackendTransportClosedError(`package backend socket closed (${event.code})`));
-    };
-    socket.addEventListener("open", onOpen);
-    socket.addEventListener("error", onError);
-    socket.addEventListener("close", onClose);
-  });
-}
-
 function sendBackendRequest<T = unknown>(
   connection: BackendConnection,
   call: string,
   args?: unknown,
 ): Promise<T> {
-  if (connection.broken || connection.socket.readyState !== WebSocket.OPEN) {
+  if (connection.broken || connection.transport.readyState !== "open") {
     return Promise.reject(new BackendTransportClosedError("package backend socket is closed"));
   }
 
@@ -374,12 +504,10 @@ function sendBackendRequest<T = unknown>(
       resolve: (value) => resolve(value as T),
       reject,
     });
-    try {
-      connection.socket.send(JSON.stringify(frame));
-    } catch (error) {
+    void connection.transport.send(JSON.stringify(frame)).catch((error) => {
       connection.pending.delete(id);
       reject(new BackendTransportClosedError(error));
-    }
+    });
   });
 }
 
@@ -477,20 +605,30 @@ async function refreshAppSession(boot: PackageAppBoot): Promise<PackageAppBoot> 
   }
 
   const refresh = (async () => {
-    const response = await fetch(buildRpcSessionRefreshUrl(boot), {
-      method: "POST",
-      credentials: "same-origin",
-      headers: {
-        "accept": "application/json",
-      },
-    });
-
-    if (!response.ok) {
-      const message = await response.text().catch(() => "");
-      throw new Error(message || `package app session refresh failed (${response.status})`);
+    let nextBoot: unknown;
+    if (isEmbeddedInHost()) {
+      try {
+        nextBoot = await (await getHostClient()).refreshAppSession(boot);
+      } catch (error) {
+        console.warn("[gsv-package] host app session refresh failed; trying direct refresh", error);
+      }
     }
+    if (nextBoot === undefined) {
+      const response = await fetch(buildRpcSessionRefreshUrl(boot), {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "accept": "application/json",
+        },
+      });
 
-    const nextBoot = await response.json();
+      if (!response.ok) {
+        const message = await response.text().catch(() => "");
+        throw new Error(message || `package app session refresh failed (${response.status})`);
+      }
+
+      nextBoot = await response.json();
+    }
     if (!isPackageAppBoot(nextBoot)) {
       throw new Error("package app session refresh returned an invalid bootstrap payload");
     }
@@ -558,56 +696,53 @@ async function connectBackendTransport(): Promise<BackendConnection> {
     return backendConnectionPromise;
   }
   setRuntimeStatus(appRuntimeReady ? "reconnecting" : "connecting");
-  let boot = getAppBoot();
-  if (!boot.hasBackend) {
-    const error = new Error("package app has no backend rpc");
-    setAppError(error);
-    throw error;
-  }
-  if (shouldRefreshAppSession(boot)) {
-    boot = await refreshAppSession(boot);
-  }
-  const socket = new WebSocket(buildRpcWebSocketUrl(boot.rpcBase));
-  const connection: BackendConnection = {
-    backend: {
-      invoke(method: string, args?: unknown) {
-        return connection.request("backend.invoke", { method, args });
-      },
-    },
-    socket,
-    broken: socket.readyState === WebSocket.CLOSING || socket.readyState === WebSocket.CLOSED,
-    reconnectOnClose: true,
-    pending: new Map(),
-    request<T = unknown>(call: string, args?: unknown): Promise<T> {
-      return sendBackendRequest<T>(connection, call, args);
-    },
-  };
   let ready: Promise<BackendConnection>;
-  const isCurrentConnection = () => backendConnectionPromise === ready;
-  const markTransportBroken = (cause: unknown) => {
-    const shouldReconnect = connection.reconnectOnClose && shouldMaintainBackendConnection();
-    connection.broken = true;
-    if (isCurrentConnection()) {
-      clearAppSessionRefreshTimer();
-    }
-    rejectPendingBackendRequests(connection, new BackendTransportClosedError(cause));
-    if (backendConnectionPromise === ready) {
-      resetBackendConnection();
-      if (shouldReconnect) {
-        scheduleBackendReconnect();
-      }
-    }
-  };
-  socket.addEventListener("message", (event) => {
-    handleBackendFrame(connection, event.data);
-  });
-  socket.addEventListener("close", (event) => {
-    markTransportBroken(`package backend socket closed (${event.code})`);
-  });
-  socket.addEventListener("error", markTransportBroken);
-
   ready = (async () => {
-    await waitForSocketOpen(socket);
+    let boot = getAppBoot();
+    if (!boot.hasBackend) {
+      throw new Error("package app has no backend rpc");
+    }
+    if (shouldRefreshAppSession(boot)) {
+      boot = await refreshAppSession(boot);
+    }
+    const transport = await connectBackendFrameTransport(boot);
+    let connection: BackendConnection;
+    const isCurrentConnection = () => backendConnectionPromise === ready;
+    const markTransportBroken = (cause: unknown) => {
+      const shouldReconnect = connection.reconnectOnClose && shouldMaintainBackendConnection();
+      connection.broken = true;
+      if (isCurrentConnection()) {
+        clearAppSessionRefreshTimer();
+      }
+      rejectPendingBackendRequests(connection, new BackendTransportClosedError(cause));
+      if (backendConnectionPromise === ready) {
+        resetBackendConnection();
+        if (shouldReconnect) {
+          scheduleBackendReconnect();
+        }
+      }
+    };
+    connection = {
+      backend: {
+        invoke(method: string, args?: unknown) {
+          return connection.request("backend.invoke", { method, args });
+        },
+      },
+      transport,
+      broken: transport.readyState === "closing" || transport.readyState === "closed",
+      reconnectOnClose: true,
+      pending: new Map(),
+      request<T = unknown>(call: string, args?: unknown): Promise<T> {
+        return sendBackendRequest<T>(connection, call, args);
+      },
+    };
+    transport.addEventListener("message", (data) => {
+      handleBackendFrame(connection, data);
+    });
+    transport.addEventListener("close", (event) => {
+      markTransportBroken(`package backend socket closed (${event.code})`);
+    });
+    transport.addEventListener("error", markTransportBroken);
     setRuntimeStatus("connected");
     backendReconnectAttempts = 0;
     clearBackendReconnectTimer();
@@ -620,9 +755,8 @@ async function connectBackendTransport(): Promise<BackendConnection> {
     if (backendConnectionPromise === ready) {
       resetBackendConnection();
     }
-    const nextError = connection.broken ? new BackendTransportClosedError(error) : error;
-    setAppError(nextError);
-    throw nextError;
+    setAppError(error);
+    throw error;
   });
   backendConnectionPromise = ready;
   if (globalThis.window) {
