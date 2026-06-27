@@ -40,6 +40,7 @@ type ChatDockHeaderProps = {
   onOpenAgentPanel: () => void;
   onOpenModels: () => void;
   onOpenTasks: () => void;
+  onOpenTaskProcess: (processId: string) => void;
   onStartNewTask: () => void;
   onSetReasoning: (reasoning: string) => void;
   onStartProcess: () => void;
@@ -81,6 +82,7 @@ export function ChatDockHeader({
   onOpenAgentPanel,
   onOpenModels,
   onOpenTasks,
+  onOpenTaskProcess,
   onStartNewTask,
   onSetReasoning,
   onStartProcess,
@@ -214,6 +216,7 @@ export function ChatDockHeader({
         onClearProcessAiConfig={onClearProcessAiConfig}
         onOpenModels={onOpenModels}
         onOpenTasks={onOpenTasks}
+        onOpenTaskProcess={onOpenTaskProcess}
         onStartNewTask={onStartNewTask}
         onSetReasoning={onSetReasoning}
       />

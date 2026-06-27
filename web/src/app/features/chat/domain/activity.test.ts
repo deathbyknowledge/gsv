@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deriveChatLiveActivity } from "./activity";
+import { applyChatLiveActivityToAgent, deriveChatLiveActivity } from "./activity";
 import { emptyChatRuntimeState } from "./transcript";
 
 describe("chat live activity", () => {
@@ -91,6 +91,34 @@ describe("chat live activity", () => {
       activity: "Writing reply",
       runStateLabel: "writing reply",
       statusLabel: "writing reply",
+    });
+  });
+
+  it("updates live status without replacing the agent process task list", () => {
+    const agent = {
+      activity: "RUNNING",
+      status: "live" as const,
+      statusLabel: "RUNNING",
+      tasksTotal: 2,
+      tasks: [
+        { name: "Active build", processId: "proc:active", status: "running" as const },
+        { name: "Queued review", processId: "proc:queued", status: "running" as const },
+      ],
+    };
+    const patched = applyChatLiveActivityToAgent(agent, {
+      activity: "Reading package.json",
+      agentStatus: "live",
+      runStateLabel: "using tools",
+      status: "live",
+      statusLabel: "using tools",
+      tasks: [{ name: "Reading package.json", status: "running" }],
+    }, "proc:active");
+
+    expect(patched).toMatchObject({
+      activity: "Reading package.json",
+      statusLabel: "using tools",
+      tasksTotal: 2,
+      tasks: agent.tasks,
     });
   });
 });

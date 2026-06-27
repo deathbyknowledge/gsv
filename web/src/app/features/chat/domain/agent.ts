@@ -4,6 +4,7 @@ export type ChatProcessStatusTone = "online" | "error" | "idle" | "update" | "li
 
 export type ChatAgentTaskData = {
   name: string;
+  processId?: string;
   status?: ChatAgentTaskStatus;
 };
 
@@ -51,6 +52,7 @@ export type ChatAgentData = {
 
 export type ChatAgentTaskView = {
   name: string;
+  processId: string;
   status: ChatAgentTaskStatus;
 };
 
@@ -154,6 +156,7 @@ function normalizeTasks(
   return (tasks ?? [])
     .map((task) => ({
       name: task.name.trim(),
+      processId: task.processId?.trim() ?? "",
       status: task.status ?? fallbackStatus,
     }))
     .filter((task) => task.name.length > 0);

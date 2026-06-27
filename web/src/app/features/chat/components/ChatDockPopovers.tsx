@@ -20,6 +20,7 @@ type ChatDockPopoversProps = {
   onApplyModelProfile: (profile: ChatModelProfileData) => void;
   onOpenModels: () => void;
   onOpenTasks: () => void;
+  onOpenTaskProcess: (processId: string) => void;
   onStartNewTask: () => void;
   onClearProcessAiConfig: () => void;
   onSetReasoning: (reasoning: string) => void;
@@ -84,6 +85,7 @@ export function ChatDockPopovers({
   onClearProcessAiConfig,
   onOpenModels,
   onOpenTasks,
+  onOpenTaskProcess,
   onStartNewTask,
   onSetReasoning,
   openPopover,
@@ -198,13 +200,31 @@ export function ChatDockPopovers({
                 <span class="gsv-chat-task-name">No process activity</span>
                 <small>IDLE</small>
               </div>
-            ) : activeAgent.tasks.map((task) => (
-              <div class="gsv-chat-task-row" key={`${task.status}-${task.name}`}>
-                <StatusDot tone={taskStatusTone(task.status)} size={8} />
-                <span class="gsv-chat-task-name">{task.name}</span>
-                <small>{taskStatusLabel(task.status)}</small>
-              </div>
-            ))}
+            ) : activeAgent.tasks.map((task) => {
+              const canOpen = task.processId.length > 0;
+              const content = (
+                <>
+                  <StatusDot tone={taskStatusTone(task.status)} size={8} />
+                  <span class="gsv-chat-task-name">{task.name}</span>
+                  <small>{taskStatusLabel(task.status)}</small>
+                </>
+              );
+
+              return canOpen ? (
+                <button
+                  type="button"
+                  class="gsv-chat-task-row is-clickable"
+                  key={`${task.processId}-${task.status}`}
+                  onClick={() => onOpenTaskProcess(task.processId)}
+                >
+                  {content}
+                </button>
+              ) : (
+                <div class="gsv-chat-task-row" key={`${task.name}-${task.status}`}>
+                  {content}
+                </div>
+              );
+            })}
           </div>
           <button
             type="button"

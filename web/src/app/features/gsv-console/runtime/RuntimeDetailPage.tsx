@@ -1,10 +1,12 @@
 import { useState } from "preact/hooks";
 import { Button } from "../../../components/ui/Button";
 import { ConfirmModal } from "../../../components/ui/ConfirmModal";
+import { dispatchTargetChatProcess } from "../../chat/domain/targetChatProcess";
 import { ConsoleDetailPage } from "../components/ConsoleDetailPage";
 import type { ConsoleProcess } from "../domain/consoleModels";
 import { useRunConsoleProcessAction } from "../hooks/useConsoleData";
 import {
+  iconForProcess,
   processBlurb,
   processDetailSections,
   statusForProcess,
@@ -25,6 +27,12 @@ export function RuntimeDetailPage({ onBack, process }: RuntimeDetailPageProps) {
   const canAbort = process.state === "running" || process.activeRunId !== null || process.queuedCount > 0;
   const runAction = (kind: TaskAction) => {
     action.mutate({ pid: process.pid, action: kind });
+  };
+  const openChat = () => {
+    dispatchTargetChatProcess({
+      pid: process.pid,
+      conversationId: process.activeConversationId,
+    });
   };
   const confirm = confirmAction ? taskActionConfirmation(confirmAction, process) : null;
 
@@ -54,13 +62,15 @@ export function RuntimeDetailPage({ onBack, process }: RuntimeDetailPageProps) {
             {action.isError ? <span class="gsv-runtime-task-action-error">{action.error.message}</span> : null}
           </div>
         )}
-        icon="list"
+        icon={iconForProcess(process)}
         title={process.label}
         typeLabel="GSV · TASK"
         statusLabel={statusForProcess(process)}
         tone={toneForProcess(process)}
         blurb={processBlurb(process)}
-        parentLabel="RUNTIME"
+        parentLabel="TASKS"
+        primaryLabel="OPEN CHAT"
+        onPrimary={openChat}
         sections={processDetailSections(process)}
         onBack={onBack}
       />

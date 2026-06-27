@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildChatAgentViewModel } from "../../chat/domain/agent";
 import type { ChatProcessSummary } from "../../chat/domain/processes";
-import type { ConsoleAccount } from "../../gsv-console/domain/consoleModels";
+import type { ConsoleAccount, ConsoleProcess } from "../../gsv-console/domain/consoleModels";
 import { buildShellChatAgent } from "./chatAgentModel";
 
 function account(input: Partial<ConsoleAccount> & Pick<ConsoleAccount, "uid" | "username" | "relation">): ConsoleAccount {
@@ -28,6 +28,24 @@ function process(input: Partial<ChatProcessSummary> & Pick<ChatProcessSummary, "
     createdAt: 1,
     cwd: "/home/scout",
     isDefaultConversation: false,
+    ...input,
+  };
+}
+
+function consoleProcess(input: Partial<ConsoleProcess> & Pick<ConsoleProcess, "pid" | "uid" | "username">): ConsoleProcess {
+  return {
+    label: input.pid,
+    state: "idle",
+    rawState: "idle",
+    profile: "task",
+    cwd: "/home/scout",
+    parentPid: null,
+    interactive: true,
+    activeRunId: null,
+    activeConversationId: null,
+    queuedCount: 0,
+    createdAt: 1,
+    lastActiveAt: null,
     ...input,
   };
 }
@@ -99,6 +117,32 @@ describe("shell chat agent model", () => {
     expect(view.crew.find((member) => member.id === "account:9")?.startable).toBe(true);
   });
 
+  it("lists visible console processes for an account-backed agent", () => {
+    const agent = buildShellChatAgent({
+      activeProcess: null,
+      accounts: [
+        account({ uid: 7, username: "scout", relation: "agent", displayName: "Scout" }),
+        account({ uid: 9, username: "builder", relation: "agent", displayName: "Builder" }),
+      ],
+      chatProcesses: [],
+      config: [],
+      consoleProcesses: [
+        consoleProcess({ pid: "proc:idle", uid: 7, username: "scout", label: "Idle research", createdAt: 10 }),
+        consoleProcess({ pid: "proc:run", uid: 7, username: "scout", label: "Active build", state: "running", activeRunId: "run-1", createdAt: 5 }),
+        consoleProcess({ pid: "proc:other", uid: 9, username: "builder", label: "Other agent" }),
+      ],
+      selectedAgentId: "account:7",
+      statusLabel: "no process",
+    });
+
+    expect(agent?.tasksTotal).toBe(2);
+    expect(agent?.tasks).toEqual([
+      { name: "Active build", processId: "proc:run", status: "running" },
+      { name: "Idle research", processId: "proc:idle", status: "idle" },
+    ]);
+    expect(agent?.activity).toBe("RUNNING");
+  });
+
   it("uses the process id only for process-backed active chat", () => {
     const activeProcess = process({ pid: "proc:scout", uid: 7, username: "scout" });
     const agent = buildShellChatAgent({
@@ -121,6 +165,28 @@ describe("shell chat agent model", () => {
     expect(agent?.processId).toBe("proc:scout");
     expect(view.processId).toBe("proc:scout");
     expect(view.runAs).toBe("scout");
+  });
+
+  it("keeps all console processes for the active agent in the task list", () => {
+    const activeProcess = process({ pid: "proc:active", uid: 7, username: "scout", title: "Active chat" });
+    const agent = buildShellChatAgent({
+      activeProcess,
+      accounts: [account({ uid: 7, username: "scout", relation: "agent", displayName: "Scout" })],
+      chatProcesses: [activeProcess],
+      config: [],
+      consoleProcesses: [
+        consoleProcess({ pid: "proc:active", uid: 7, username: "scout", label: "Active chat", createdAt: 20 }),
+        consoleProcess({ pid: "proc:queued", uid: 7, username: "scout", label: "Queued review", queuedCount: 2, createdAt: 30 }),
+        consoleProcess({ pid: "proc:other", uid: 8, username: "builder", label: "Other agent" }),
+      ],
+      statusLabel: "idle",
+    });
+
+    expect(agent?.tasksTotal).toBe(2);
+    expect(agent?.tasks?.map((task) => task.processId)).toEqual(["proc:active", "proc:queued"]);
+    expect(agent?.tasks?.map((task) => task.name)).toEqual(["Active chat", "Queued review"]);
+    expect(agent?.statusLabel).toBe("idle");
+    expect(agent?.activity).toBe("idle");
   });
 
   it("uses the owner model override as an inherited default for agent chats", () => {
