@@ -122,6 +122,39 @@ describe("package artifacts", () => {
     }
   });
 
+  it("preserves schemes in outbound allowlist entries", async () => {
+    const artifact: PackageArtifact = {
+      hash: "sha256:abc123",
+      mainModule: "__gsv__/main.ts",
+      modules: [
+        {
+          path: "__gsv__/main.ts",
+          kind: "esm",
+          content: "export default {};",
+        },
+      ],
+    };
+    const fetchMock = vi.fn(async () => new Response("ok"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const code = packageArtifactToWorkerCode(artifact, undefined, {
+        egress: {
+          mode: "allowlist",
+          allow: ["https://api.example.test", "http://legacy.example.test:8080"],
+        },
+      });
+
+      await expect(code.globalOutbound?.fetch("https://api.example.test/v1")).resolves.toBeInstanceOf(Response);
+      await expect(code.globalOutbound?.fetch("http://api.example.test/v1")).rejects.toThrow("Outbound request denied");
+      await expect(code.globalOutbound?.fetch("http://legacy.example.test:8080/v1")).resolves.toBeInstanceOf(Response);
+      await expect(code.globalOutbound?.fetch("https://legacy.example.test:8080/v1")).rejects.toThrow("Outbound request denied");
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("prevents allowlisted outbound fetches from automatically following redirects", async () => {
     const artifact: PackageArtifact = {
       hash: "sha256:abc123",

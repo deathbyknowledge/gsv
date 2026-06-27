@@ -564,7 +564,7 @@ function normalizeOutboundAllowEntry(entry: string): string | null {
     if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
       return null;
     }
-    return parsed.host;
+    return outboundAllowKey(parsed);
   } catch {
     return null;
   }
@@ -578,8 +578,11 @@ function outboundRequest(input: RequestInfo | URL, init?: RequestInit): Request 
 }
 
 function isOutboundAllowed(url: URL, allow: ReadonlySet<string>): boolean {
-  const host = url.host.toLowerCase();
-  return allow.has(host);
+  return allow.has(outboundAllowKey(url));
+}
+
+function outboundAllowKey(url: URL): string {
+  return `${url.protocol}//${url.host.toLowerCase()}`;
 }
 
 function runtimeAccessForReview(input: {
