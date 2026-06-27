@@ -3,7 +3,8 @@ export type AiProviderOption = {
   label: string;
 };
 
-// Keep this to providers GSV can configure with its current provider/model/API key fields.
+// Keep this to providers GSV can configure for chat/default model paths with
+// its current provider/model/API key fields.
 export const AI_PROVIDER_OPTIONS: ReadonlyArray<AiProviderOption> = [
   { value: "workers-ai", label: "Workers AI (gateway binding)" },
   { value: "ant-ling", label: "Ant Ling" },
@@ -39,12 +40,20 @@ export const AI_PROVIDER_OPTIONS: ReadonlyArray<AiProviderOption> = [
   { value: "zai-coding-cn", label: "Z.ai Coding China" },
 ];
 
-export function aiProviderOptionsForValue(value: string): AiProviderOption[] {
-  if (!value.trim() || AI_PROVIDER_OPTIONS.some((option) => option.value === value)) {
-    return [...AI_PROVIDER_OPTIONS];
+export const AI_OPENAI_WORKERS_PROVIDER_OPTIONS: ReadonlyArray<AiProviderOption> = [
+  { value: "workers-ai", label: "Workers AI (gateway binding)" },
+  { value: "openai", label: "OpenAI" },
+];
+
+export function aiProviderOptionsForValue(
+  value: string,
+  baseOptions: ReadonlyArray<AiProviderOption> = AI_PROVIDER_OPTIONS,
+): AiProviderOption[] {
+  if (!value.trim() || baseOptions.some((option) => option.value === value)) {
+    return [...baseOptions];
   }
   return [
-    ...AI_PROVIDER_OPTIONS,
+    ...baseOptions,
     { value, label: `${value} (custom)` },
   ];
 }

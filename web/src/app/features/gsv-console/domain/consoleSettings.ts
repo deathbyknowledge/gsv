@@ -1,5 +1,8 @@
 import type { ConsoleAccount, ConsoleConfigEntry } from "./consoleModels";
-import { AI_PROVIDER_OPTIONS } from "../../../domain/aiProviders";
+import {
+  AI_OPENAI_WORKERS_PROVIDER_OPTIONS,
+  AI_PROVIDER_OPTIONS,
+} from "../../../domain/aiProviders";
 
 export type ConsoleSettingKind = "text" | "textarea" | "password" | "number" | "checkbox" | "select" | "readonly";
 
@@ -164,7 +167,7 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
         description: "Provider used for image generation.",
         kind: "select",
         placeholder: "workers-ai",
-        options: AI_PROVIDER_OPTIONS,
+        options: AI_OPENAI_WORKERS_PROVIDER_OPTIONS,
       },
       {
         key: "config/ai/image/generation/model",
@@ -193,7 +196,7 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
         description: "Provider used by transcription requests.",
         kind: "select",
         placeholder: "workers-ai",
-        options: AI_PROVIDER_OPTIONS,
+        options: AI_OPENAI_WORKERS_PROVIDER_OPTIONS,
       },
       {
         key: "config/ai/transcription/model",
@@ -228,7 +231,7 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
         description: "Provider used by speech synthesis.",
         kind: "select",
         placeholder: "workers-ai",
-        options: AI_PROVIDER_OPTIONS,
+        options: AI_OPENAI_WORKERS_PROVIDER_OPTIONS,
       },
       {
         key: "config/ai/speech/model",

@@ -974,7 +974,7 @@ function SettingFieldInput({
 
   if (field.kind === "select") {
     const options = field.key.endsWith("/provider") || field.key === "config/ai/provider"
-      ? aiProviderOptionsForValue(value)
+      ? aiProviderOptionsForValue(value, field.options)
       : [...(field.options ?? [])];
     const optionLabels = options.map((option) => option.label);
     const selectedIndex = Math.max(0, options.findIndex((option) => option.value === value));
