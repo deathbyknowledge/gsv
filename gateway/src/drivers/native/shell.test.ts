@@ -1479,7 +1479,7 @@ describe("pkg shell command", () => {
     const result = await handleShellExec(
       { input: `sched add --json '${JSON.stringify(args)}'` },
       makeContext({
-        capabilities: ["sched.add"],
+        capabilities: ["sched.add", "proc.send"],
         procs: {
           get: vi.fn(() => ({
             uid: IDENTITY.uid,
