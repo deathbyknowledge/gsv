@@ -1,4 +1,5 @@
 import type { OnboardingDetailStep, OnboardingDraft } from "@humansandmachines/gsv/protocol";
+import { useEffect } from "preact/hooks";
 import { Checkbox } from "../../../components/ui/Checkbox";
 import { Select } from "../../../components/ui/Select";
 import { TextInput } from "../../../components/ui/TextInput";
@@ -30,6 +31,22 @@ export function SystemDetails({
   const aiProviderOptions = aiProviderOptionsForValue(draft.ai.provider);
   const aiProviderLabels = aiProviderOptions.map((option) => option.label);
   const aiProviderIndex = aiProviderSelectIndex(aiProviderOptions, draft.ai.provider);
+  const defaultAiProvider = aiProviderOptions[0]?.value ?? "";
+
+  useEffect(() => {
+    if (!showAiRows || draft.ai.provider.trim() || !defaultAiProvider) {
+      return;
+    }
+    updateDraft((current) => {
+      if (!advancedSectionsVisible(current) || !current.ai.enabled || current.ai.provider.trim()) {
+        return current;
+      }
+      return {
+        ...current,
+        ai: { ...current.ai, provider: defaultAiProvider },
+      };
+    });
+  }, [defaultAiProvider, draft.ai.provider, showAiRows, updateDraft]);
 
   return (
     <section class="onboarding-section gsv-setup-preferences" data-setup-detail-step="system" hidden={draft.stage !== "details" || activeStep !== "system"}>
@@ -138,7 +155,13 @@ export function SystemDetails({
               disabled={!showAdvanced}
               onChange={(checked) => updateDraft((current) => ({
                 ...current,
-                ai: { ...current.ai, enabled: checked },
+                ai: {
+                  ...current.ai,
+                  enabled: checked,
+                  provider: checked && !current.ai.provider.trim()
+                    ? defaultAiProvider
+                    : current.ai.provider,
+                },
               }))}
             />
           </div>
