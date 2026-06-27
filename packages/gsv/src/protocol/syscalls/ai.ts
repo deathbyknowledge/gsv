@@ -44,9 +44,23 @@ export type ContextFile = {
   text: string;
 };
 
+export type AiTextExecutor =
+  | {
+      kind: "process";
+      pid: string;
+    }
+  | {
+      kind: "kernel";
+    }
+  | {
+      kind: "device";
+      target: string;
+    };
+
 export type AiConfigResult = {
   /** Owning human's identity when the process runs as a distinct agent account. */
   owner?: ProcessIdentity | null;
+  executor: AiTextExecutor;
   provider: string;
   model: string;
   apiKey: string;

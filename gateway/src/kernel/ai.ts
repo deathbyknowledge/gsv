@@ -271,6 +271,7 @@ export async function handleAiConfig(
 
   return {
     owner,
+    executor: resolveAiTextExecutor(ctx),
     provider,
     model,
     apiKey,
@@ -536,7 +537,10 @@ async function resolveAiTextGenerationConfig(
   const overrides = normalizeProcessAiConfigValues(requested?.overrides ?? {});
   const preset = requested?.preset;
   if (!preset) {
-    return await handleAiConfig(Object.keys(overrides).length > 0 ? { processOverrides: overrides } : {}, ctx);
+    return withAiTextExecutor(
+      await handleAiConfig(Object.keys(overrides).length > 0 ? { processOverrides: overrides } : {}, ctx),
+      { kind: "kernel" },
+    );
   }
 
   const selector = normalizeOptionalString(preset.id) ?? normalizeOptionalString(preset.name);
@@ -556,7 +560,7 @@ async function resolveAiTextGenerationConfig(
     throw new Error(`AI model preset not found: ${selector}`);
   }
 
-  return await handleAiConfig({
+  const config = await handleAiConfig({
     processOverrides: {
       ...omitProcessAiConfigSecrets(profile.values),
       ...overrides,
@@ -567,6 +571,27 @@ async function resolveAiTextGenerationConfig(
       appliedAt: Date.now(),
     },
   }, ctx);
+  return withAiTextExecutor(config, { kind: "kernel" });
+}
+
+function resolveAiTextExecutor(ctx: KernelContext): AiConfigResult["executor"] {
+  if (ctx.processId) {
+    return {
+      kind: "process",
+      pid: ctx.processId,
+    };
+  }
+  return { kind: "kernel" };
+}
+
+function withAiTextExecutor(
+  config: AiConfigResult,
+  executor: AiConfigResult["executor"],
+): AiConfigResult {
+  return {
+    ...config,
+    executor,
+  };
 }
 
 function normalizeAiTextGenerationContext(input: AiTextGenerateArgs): Context {

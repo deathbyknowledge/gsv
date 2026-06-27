@@ -367,6 +367,19 @@ describe("handleAiConfig", () => {
     }))).resolves.toMatchObject({ generationStreaming: "auto" });
   });
 
+  it("returns the text executor for kernel and process callers", async () => {
+    await expect(handleAiConfig({}, makeAiConfigContext()))
+      .resolves.toMatchObject({ executor: { kind: "kernel" } });
+    await expect(handleAiConfig({}, makeAiConfigContext({}, {
+      processId: "task-1",
+    }))).resolves.toMatchObject({
+      executor: {
+        kind: "process",
+        pid: "task-1",
+      },
+    });
+  });
+
   it("returns the resolved process capabilities", async () => {
     const result = await handleAiConfig({}, makeAiConfigContext({}, {
       capabilities: ["codemode.run", "net.fetch"],
@@ -378,6 +391,7 @@ describe("handleAiConfig", () => {
   it("generates text with preset config and explicit generation options", async () => {
     generateMock.mockImplementationOnce(async (request: any) => {
       expect(request.config).toMatchObject({
+        executor: { kind: "kernel" },
         provider: "anthropic",
         model: "claude-test",
         apiKey: "preset-secret",
@@ -433,7 +447,10 @@ describe("handleAiConfig", () => {
       messages: [{ role: "user", content: "ping" }],
       config: { preset: { name: "Fast" } },
       options: { maxTokens: 64, reasoning: "off" },
-    }, ctx);
+    }, {
+      ...ctx,
+      processId: "task-1",
+    });
 
     expect(result).toMatchObject({
       provider: "anthropic",
