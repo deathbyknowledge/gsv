@@ -154,6 +154,7 @@ async function createHostClient(): Promise<HostClient> {
         {
           type: HOST_CONNECT_REQUEST,
           requestId,
+          ...(hasAppBoot() ? { boot: getAppBoot() } : {}),
         },
         "*",
       );

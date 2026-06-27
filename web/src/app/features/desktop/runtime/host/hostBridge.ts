@@ -148,6 +148,15 @@ function validateSessionPayload(appSession: HostAppSession | null, payload: unkn
   return appSession;
 }
 
+function validateConnectRequest(appSession: HostAppSession | null, payload: unknown): boolean {
+  if (!appSession) {
+    return true;
+  }
+  const record = asRecord(payload);
+  const boot = asRecord(record?.boot);
+  return boot?.sessionId === appSession.sessionId && boot?.clientId === appSession.clientId;
+}
+
 async function refreshAppSession(appSession: HostAppSession | null, payload: unknown): Promise<unknown> {
   const session = validateSessionPayload(appSession, payload);
   const response = await fetch(appClientRefreshUrl(session), {
@@ -306,8 +315,10 @@ export function attachHostBridge(
   let unsubscribeStatus: (() => void) | null = null;
   const backendConnections = new Map<string, HostBackendConnection>();
   let iframeLoaded = false;
+  let pendingConnectRequested = false;
   let pendingConnectRequestId: string | undefined;
   let destroyed = false;
+  let frameInvalidated = false;
 
   const cleanup = (): void => {
     unsubscribeStatus?.();
@@ -323,7 +334,7 @@ export function attachHostBridge(
   };
 
   const connect = (requestId?: string): void => {
-    if (destroyed || !iframe.contentWindow) {
+    if (destroyed || frameInvalidated || !iframe.contentWindow) {
       return;
     }
 
@@ -376,28 +387,45 @@ export function attachHostBridge(
   };
 
   const onLoad = (): void => {
+    if (destroyed) {
+      return;
+    }
+    if (iframeLoaded) {
+      frameInvalidated = true;
+      pendingConnectRequested = false;
+      pendingConnectRequestId = undefined;
+      cleanup();
+      return;
+    }
     iframeLoaded = true;
-    connect(pendingConnectRequestId);
+    if (!appSession || pendingConnectRequested) {
+      connect(pendingConnectRequestId);
+    }
+    pendingConnectRequested = false;
     pendingConnectRequestId = undefined;
   };
 
   const onConnectRequest = (event: MessageEvent<unknown>): void => {
-    if (destroyed || event.source !== iframe.contentWindow) {
+    if (destroyed || frameInvalidated || event.source !== iframe.contentWindow) {
       return;
     }
     const record = asRecord(event.data);
     if (!record || record.type !== "gsv-host-connect-request") {
       return;
     }
+    if (!validateConnectRequest(appSession, record)) {
+      return;
+    }
     const requestId = asString(record.requestId) ?? undefined;
     if (!iframeLoaded) {
+      pendingConnectRequested = true;
       pendingConnectRequestId = requestId;
       return;
     }
     connect(requestId);
   };
 
-  iframe.addEventListener("load", onLoad, { once: true });
+  iframe.addEventListener("load", onLoad);
   window.addEventListener("message", onConnectRequest);
 
   return {

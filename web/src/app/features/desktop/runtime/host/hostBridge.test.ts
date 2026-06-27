@@ -86,6 +86,13 @@ function dispatchWindowMessage(event: Partial<MessageEvent<unknown>>): void {
   }
 }
 
+const APP_SESSION = {
+  sessionId: "session-1",
+  clientId: "client-1",
+  routeBase: "/apps/sessions/session-1/clients/client-1",
+  rpcBase: "/apps/sessions/session-1/clients/client-1/socket",
+};
+
 async function connectBridge(
   gatewayClient: Parameters<typeof attachHostBridge>[1],
 ): Promise<{ controller: ReturnType<typeof attachHostBridge>; port: MessagePort }> {
@@ -210,6 +217,92 @@ describe("attachHostBridge", () => {
     expect(hostMessage).toMatchObject({
       type: "gsv-host-connect",
       requestId: "opaque-request",
+    });
+
+    controller.destroy();
+  });
+
+  it("requires matching app session data before handing a port to package frames", () => {
+    const gatewayClient = createHostStatusClient();
+    const hostMessages: unknown[] = [];
+    const iframe = createIframeMock((message: unknown) => {
+      hostMessages.push(message);
+    });
+    const iframeWindow = iframe.contentWindow;
+
+    const controller = attachHostBridge(iframe, gatewayClient, null, APP_SESSION);
+    iframe.dispatchLoad();
+
+    dispatchWindowMessage({
+      origin: "null",
+      source: iframeWindow,
+      data: {
+        type: "gsv-host-connect-request",
+        requestId: "missing-boot",
+      },
+    });
+    dispatchWindowMessage({
+      origin: "null",
+      source: iframeWindow,
+      data: {
+        type: "gsv-host-connect-request",
+        requestId: "wrong-boot",
+        boot: { sessionId: "session-1", clientId: "other-client" },
+      },
+    });
+    dispatchWindowMessage({
+      origin: "null",
+      source: iframeWindow,
+      data: {
+        type: "gsv-host-connect-request",
+        requestId: "matching-boot",
+        boot: { sessionId: "session-1", clientId: "client-1" },
+      },
+    });
+
+    expect(hostMessages).toHaveLength(1);
+    expect(hostMessages[0]).toMatchObject({
+      type: "gsv-host-connect",
+      requestId: "matching-boot",
+    });
+
+    controller.destroy();
+  });
+
+  it("refuses bridge reconnects after the iframe navigates", () => {
+    const gatewayClient = createHostStatusClient();
+    const hostMessages: unknown[] = [];
+    const iframe = createIframeMock((message: unknown) => {
+      hostMessages.push(message);
+    });
+    const iframeWindow = iframe.contentWindow;
+
+    const controller = attachHostBridge(iframe, gatewayClient, null, APP_SESSION);
+    dispatchWindowMessage({
+      origin: "null",
+      source: iframeWindow,
+      data: {
+        type: "gsv-host-connect-request",
+        requestId: "initial",
+        boot: { sessionId: "session-1", clientId: "client-1" },
+      },
+    });
+    iframe.dispatchLoad();
+    iframe.dispatchLoad();
+    dispatchWindowMessage({
+      origin: "null",
+      source: iframeWindow,
+      data: {
+        type: "gsv-host-connect-request",
+        requestId: "after-navigation",
+        boot: { sessionId: "session-1", clientId: "client-1" },
+      },
+    });
+
+    expect(hostMessages).toHaveLength(1);
+    expect(hostMessages[0]).toMatchObject({
+      type: "gsv-host-connect",
+      requestId: "initial",
     });
 
     controller.destroy();
