@@ -48,6 +48,7 @@ import settingsList from "./stories/SettingsList.story";
 import objectDetail from "./stories/ObjectDetail.story";
 import filesRedesign from "./stories/FilesRedesign.story";
 import iconMenu from "./stories/IconMenu.story";
+import desktopHint from "./stories/DesktopHint.story";
 import consoleHeader from "./stories/ConsoleHeader.story";
 import breadcrumbs from "./stories/Breadcrumbs.story";
 import statusBar from "./stories/StatusBar.story";
@@ -103,6 +104,7 @@ const STORIES: Story[] = [
   sectionHeader,
   addAction,
   iconMenu,
+  desktopHint,
   consoleHeader,
   breadcrumbs,
   statusBar,

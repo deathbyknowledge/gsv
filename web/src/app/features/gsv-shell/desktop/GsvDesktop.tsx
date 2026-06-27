@@ -1,6 +1,7 @@
 import type { JSX } from "preact";
 import { AddAction } from "../../../components/ui/AddAction";
 import { GsvMark } from "../../../components/ui/GsvMark";
+import { DesktopHint } from "./DesktopHint";
 import { IconMenu } from "../../../components/ui/IconMenu";
 import { ObjectCard } from "../../../components/ui/ObjectCard";
 import { StatusDot } from "../../../components/ui/StatusDot";
@@ -15,6 +16,9 @@ import {
 
 export type DesktopInventoryState = "ready" | "loading" | "offline" | "error";
 
+const DESKTOP_HINT = ["> CLICK A NODE TO EXPLORE", "> CLICK GSV FOR CONTROLS"];
+const DESKTOP_HINT_MIN = "CLICK A NODE TO EXPLORE · CLICK GSV FOR CONTROLS";
+
 type GsvDesktopProps = {
   desktopObjects: readonly DesktopObject[];
   inventoryMessage: string;
@@ -26,6 +30,10 @@ type GsvDesktopProps = {
   onCreateObject: (id: DesktopObjectId) => void;
   onOpenObject: (child: DesktopChildObject) => void;
   onOpenSurface: (surface: ShellSurfaceId) => void;
+  /** Whether the hint intro has already played this login (skip it if so). */
+  hintShown: boolean;
+  /** Called once when the hint intro finishes (or is skipped via a node click). */
+  onHintShown: () => void;
 };
 
 function objectCardStatus(status: ShellStatus) {
@@ -104,6 +112,8 @@ export function GsvDesktop({
   onCreateObject,
   onOpenObject,
   onOpenSurface,
+  hintShown,
+  onHintShown,
 }: GsvDesktopProps) {
   const selectedObject = selectedObjectId
     ? desktopObjects.find((object) => object.id === selectedObjectId) ?? null
@@ -146,17 +156,18 @@ export function GsvDesktop({
         <p>{hudStatus}</p>
       </header>
 
-      <div
-        class="gsv-space-tree"
-        onClick={(event) => {
-          event.stopPropagation();
-        }}
-      >
+      {/* The tree fills the desktop; clicks on its empty space intentionally
+          bubble to the section handler to deselect. Interactive children below
+          stop propagation so they don't trigger a deselect. */}
+      <div class="gsv-space-tree">
         <div class="gsv-space-gsv">
           <button
             type="button"
             class={`gsv-space-gsv-button${gsvOpen ? " is-open" : ""}`}
-            onClick={onToggleGsv}
+            onClick={(event) => {
+              event.stopPropagation();
+              onToggleGsv();
+            }}
           >
             <span class="gsv-space-gsv-cross" aria-hidden="true" />
             <GsvMark variant="master" size={50} />
@@ -167,7 +178,11 @@ export function GsvDesktop({
         {gsvOpen ? (
           <>
             <span class="gsv-space-control-line" aria-hidden="true" />
-            <div class="gsv-space-control-popover" aria-label="GSV controls">
+            <div
+              class="gsv-space-control-popover"
+              aria-label="GSV controls"
+              onClick={(event) => event.stopPropagation()}
+            >
               <IconMenu
                 title="GSV // CONTROL"
                 width={386}
@@ -203,7 +218,8 @@ export function GsvDesktop({
                   class={`gsv-space-tile-button${selectedObjectId === object.id ? " is-selected" : ""}`}
                   aria-pressed={selectedObjectId === object.id ? "true" : "false"}
                   title={`${object.label}: ${object.meta}, ${object.statusLabel}`}
-                  onClick={() => {
+                  onClick={(event) => {
+                    event.stopPropagation();
                     onSelectObject(selectedObjectId === object.id ? null : object.id);
                   }}
                 >
@@ -225,7 +241,11 @@ export function GsvDesktop({
         )}
 
         {selectedObject ? (
-          <aside class="gsv-object-strip" aria-label={`${selectedObject.label} objects`}>
+          <aside
+            class="gsv-object-strip"
+            aria-label={`${selectedObject.label} objects`}
+            onClick={(event) => event.stopPropagation()}
+          >
             <header>
               <span>{selectedObject.label} · OBJECTS</span>
               <small>{selectedObject.meta}</small>
@@ -263,9 +283,13 @@ export function GsvDesktop({
         ) : null}
       </div>
 
-      <div class="gsv-space-hint">
-        {selectedObject ? "CLICK A CHILD TO OPEN · CLICK EMPTY SPACE TO EXIT" : "CLICK A NODE TO EXPLORE · CLICK GSV FOR CONTROLS"}
-      </div>
+      <DesktopHint
+        lines={DESKTOP_HINT}
+        minimizedText={DESKTOP_HINT_MIN}
+        collapse={selectedObject != null}
+        played={hintShown}
+        onPlayed={onHintShown}
+      />
     </section>
   );
 }

@@ -1,0 +1,81 @@
+.gsv-space-hint {
+  position: absolute;
+  z-index: 8;
+  left: 50%;
+  bottom: 44px;
+  transform: translateX(-50%);
+  pointer-events: none;
+  text-align: center;
+  color: var(--update);
+  font-family: var(--gsv-font-mono);
+}
+
+.gsv-space-hint-screen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+/* Minimized footer — back to the original small size, kept amber. */
+.gsv-space-hint.is-min {
+  bottom: 16px;
+}
+
+.gsv-space-hint-min {
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  white-space: nowrap;
+  text-transform: uppercase;
+  opacity: 0.82;
+  text-shadow: 0 0 6px rgba(255, 210, 77, 0.28);
+  animation: gsvHintFadeIn 0.45s ease both;
+}
+
+@keyframes gsvHintFadeIn {
+  from { opacity: 0; }
+  to { opacity: 0.82; }
+}
+
+.gsv-space-hint-line {
+  /* reserve height so the readout never shifts while typing */
+  min-height: 1.9em;
+  font-size: 15px;
+  line-height: 1.9;
+  letter-spacing: 0.16em;
+  white-space: nowrap;
+  text-transform: uppercase;
+  text-shadow:
+    0 0 10px rgba(255, 210, 77, 0.4),
+    0 0 2px rgba(255, 210, 77, 0.6);
+}
+
+.gsv-space-hint-caret {
+  display: inline-block;
+  width: 0.58em;
+  height: 1.02em;
+  margin-left: 4px;
+  vertical-align: -0.15em;
+  background: currentColor;
+  box-shadow: 0 0 8px rgba(255, 210, 77, 0.5);
+  animation: gsvHintCaret 1.05s steps(1) infinite;
+}
+
+@keyframes gsvHintCaret {
+  0%, 50% { opacity: 1; }
+  50.01%, 100% { opacity: 0; }
+}
+
+/* Visually-hidden full copy — the typed animation itself is decorative. */
+.gsv-space-hint-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  overflow: hidden;
+  white-space: nowrap;
+}
