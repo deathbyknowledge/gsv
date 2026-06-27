@@ -3,7 +3,7 @@ import type { AiToolsDevice } from "../syscalls/ai";
 import type { AdapterTarget } from "./adapter-targets";
 import { getVisibleAdapterTarget, listVisibleAdapterTargets } from "./adapter-targets";
 import { hasCapability } from "./capabilities";
-import type { KernelContext } from "./context";
+import { resolveCallerOwnerUid, type KernelContext } from "./context";
 import type { DeviceRecord } from "./devices";
 
 export type TargetKind = "native-device" | "browser" | "adapter";
@@ -216,13 +216,17 @@ function deviceRecordToTarget(ctx: KernelContext, record: DeviceRecord): TargetD
 
 function adapterTargetToDescriptor(ctx: KernelContext, target: AdapterTarget): TargetDescriptor {
   const identity = ctx.identity?.process;
+  const ownerUid = ctx.identity?.role === "user"
+    ? resolveCallerOwnerUid(ctx)
+    : identity?.uid ?? 0;
   const online = target.status.connected && target.status.authenticated;
   return {
     targetId: target.targetId,
     kind: "adapter",
     providerId: "adapter",
-    ownerUid: identity?.uid ?? 0,
-    ownerUsername: identity?.username ?? null,
+    ownerUid,
+    ownerUsername: ctx.auth?.getPasswdByUid(ownerUid)?.username
+      ?? (identity?.uid === ownerUid ? identity.username : null),
     label: target.label,
     description: target.description,
     platform: "adapter",

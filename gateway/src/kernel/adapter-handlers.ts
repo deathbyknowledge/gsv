@@ -24,7 +24,7 @@ import type {
   AdapterStatusArgs,
   AdapterStatusResult,
 } from "../syscalls/adapter";
-import type { KernelContext } from "./context";
+import { resolveCallerOwnerUid, type KernelContext } from "./context";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { RequestFrame } from "../protocol/frames";
 import { sendFrameToProcess } from "../shared/utils";
@@ -372,7 +372,7 @@ function visibleAdapterAccounts(
     return [];
   }
 
-  const links = ctx.adapters.identityLinks.list(identity.process.uid);
+  const links = ctx.adapters.identityLinks.list(resolveCallerOwnerUid(ctx));
   const seen = new Set<string>();
   const accounts: Array<{ adapter: string; accountId: string }> = [];
   for (const link of links) {
@@ -407,7 +407,7 @@ function canSeeAllAdapterStatuses(ctx: KernelContext): boolean {
   if (identity.role === "service") {
     return true;
   }
-  return identity.role === "user" && identity.process.uid === 0;
+  return identity.role === "user" && resolveCallerOwnerUid(ctx) === 0;
 }
 
 export async function handleAdapterInbound(

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { KernelContext } from "../context";
 import {
   handleSysDeviceList,
@@ -21,7 +21,13 @@ type FakeDeviceRecord = {
   disconnected_at: number | null;
 };
 
-function makeContext(uid: number, records: FakeDeviceRecord[], accessibleDeviceIds: string[] = []): KernelContext {
+function makeContext(
+  uid: number,
+  records: FakeDeviceRecord[],
+  accessibleDeviceIds: string[] = [],
+  options: { ownerUid?: number; processId?: string } = {},
+): KernelContext {
+  const ownerUid = options.ownerUid ?? uid;
   const byId = new Map(records.map((record) => [record.device_id, record]));
 
   const devices = {
@@ -54,6 +60,7 @@ function makeContext(uid: number, records: FakeDeviceRecord[], accessibleDeviceI
   };
 
   return {
+    processId: options.processId,
     identity: {
       role: "user",
       process: {
@@ -65,6 +72,19 @@ function makeContext(uid: number, records: FakeDeviceRecord[], accessibleDeviceI
         cwd: uid === 0 ? "/root" : `/home/user${uid}`,
       },
       capabilities: ["*"],
+    },
+    auth: {
+      getPasswdByUid: (lookupUid: number) => ({
+        uid: lookupUid,
+        gid: lookupUid,
+        username: lookupUid === 0 ? "root" : `user${lookupUid}`,
+        gecos: "",
+        home: lookupUid === 0 ? "/root" : `/home/user${lookupUid}`,
+        shell: "/bin/init",
+      }),
+    },
+    procs: {
+      getOwnerUid: () => ownerUid,
     },
     devices: devices as unknown as KernelContext["devices"],
   } as KernelContext;
@@ -159,6 +179,57 @@ describe("sys.device handlers", () => {
       expect.objectContaining({
         deviceId: "adapter:whatsapp:primary",
         label: "WhatsApp",
+        platform: "adapter",
+        online: true,
+      }),
+    ]);
+  });
+
+  it("includes owner-linked adapter command targets for agent process callers", () => {
+    const listLinks = vi.fn((filterUid?: number) =>
+      filterUid === 1000
+        ? [{
+            adapter: "telegram",
+            accountId: "bot",
+            actorId: "telegram:user:1",
+            uid: 1000,
+            createdAt: 1,
+            linkedByUid: 1000,
+            metadata: null,
+          }]
+        : []
+    );
+    const ctx = {
+      ...makeContext(2000, [], [], { ownerUid: 1000, processId: "proc-agent" }),
+      env: {
+        CHANNEL_TELEGRAM: { adapterShellExec: () => undefined },
+      },
+      adapters: {
+        identityLinks: {
+          list: listLinks,
+        },
+        status: {
+          list: () => [{
+            adapter: "telegram",
+            accountId: "bot",
+            connected: true,
+            authenticated: true,
+            mode: "polling",
+            updatedAt: 2,
+          }],
+        },
+      },
+    } as unknown as KernelContext;
+
+    const result = handleSysDeviceList({}, ctx);
+
+    expect(listLinks).toHaveBeenCalledWith(1000);
+    expect(result.devices).toEqual([
+      expect.objectContaining({
+        deviceId: "adapter:telegram:bot",
+        ownerUid: 1000,
+        ownerUsername: "user1000",
+        label: "Telegram",
         platform: "adapter",
         online: true,
       }),

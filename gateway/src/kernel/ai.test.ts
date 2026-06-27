@@ -263,6 +263,59 @@ describe("handleAiTools", () => {
     expect(JSON.stringify(shell?.inputSchema)).toContain("adapter:whatsapp:primary");
   });
 
+  it("advertises owner-linked adapter targets for service-account agent processes", async () => {
+    const listLinks = vi.fn((filterUid?: number) =>
+      filterUid === 1000
+        ? [{
+            adapter: "telegram",
+            accountId: "bot",
+            actorId: "telegram:user:1",
+            uid: 1000,
+            createdAt: 1,
+            linkedByUid: 1000,
+            metadata: null,
+          }]
+        : []
+    );
+    const ctx = {
+      ...makeContext("ready", {
+        uid: 2000,
+        ownerUid: 1000,
+        processId: "proc-agent",
+      }),
+      env: {
+        CHANNEL_TELEGRAM: { adapterShellExec: vi.fn() },
+      },
+      adapters: {
+        identityLinks: {
+          list: listLinks,
+        },
+        status: {
+          list: vi.fn(() => [{
+            adapter: "telegram",
+            accountId: "bot",
+            connected: true,
+            authenticated: true,
+            mode: "polling",
+            updatedAt: 2,
+          }]),
+        },
+      },
+    } as unknown as KernelContext;
+
+    const result = await handleAiTools(ctx);
+
+    expect(listLinks).toHaveBeenCalledWith(1000);
+    expect(result.devices).toContainEqual(expect.objectContaining({
+      id: "adapter:telegram:bot",
+      label: "Telegram",
+      platform: "adapter",
+      implements: ["shell.exec"],
+    }));
+    const shell = result.tools.find((tool) => tool.name === "Shell");
+    expect(JSON.stringify(shell?.inputSchema)).toContain("adapter:telegram:bot");
+  });
+
   it("caps routable tool target descriptions when many targets are online", async () => {
     const records = Array.from({ length: 12 }, (_value, index) =>
       makeDevice({ device_id: `node-${String(index + 1).padStart(2, "0")}` })

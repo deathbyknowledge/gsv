@@ -8,14 +8,18 @@ import {
 
 function makeContext(options: {
   uid?: number;
+  ownerUid?: number;
+  processId?: string;
   env?: Record<string, unknown>;
   links?: Array<{ adapter: string; accountId: string; uid: number }>;
   statuses?: Array<{ adapter: string; accountId: string; connected: boolean; authenticated: boolean }>;
 }): KernelContext {
   const uid = options.uid ?? 1000;
+  const ownerUid = options.ownerUid ?? uid;
   const statuses = options.statuses ?? [];
   return {
     env: options.env ?? {},
+    processId: options.processId,
     identity: {
       role: "user",
       process: {
@@ -27,6 +31,11 @@ function makeContext(options: {
         cwd: uid === 0 ? "/root" : "/home/sam",
       },
       capabilities: ["*"],
+    },
+    procs: {
+      getOwnerUid: vi.fn((processId: string) =>
+        processId === options.processId ? ownerUid : null
+      ),
     },
     adapters: {
       identityLinks: {
@@ -93,6 +102,26 @@ describe("adapter target helpers", () => {
 
     expect(targets.map((target) => target.targetId)).toEqual(["adapter:whatsapp:primary"]);
     expect(targets[0].label).toBe("WhatsApp");
+  });
+
+  it("lists owner-linked adapter command targets for agent process callers", () => {
+    const ctx = makeContext({
+      uid: 2000,
+      ownerUid: 1000,
+      processId: "proc-agent",
+      env: {
+        CHANNEL_TELEGRAM: { adapterShellExec: vi.fn() },
+      },
+      links: [{ adapter: "telegram", accountId: "bot", uid: 1000 }],
+      statuses: [
+        { adapter: "telegram", accountId: "bot", connected: true, authenticated: true },
+      ],
+    });
+
+    const targets = listVisibleAdapterTargets(ctx);
+
+    expect(ctx.adapters.identityLinks.list).toHaveBeenCalledWith(1000);
+    expect(targets.map((target) => target.targetId)).toEqual(["adapter:telegram:bot"]);
   });
 
   it("hides adapters without shell command support", () => {

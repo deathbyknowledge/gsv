@@ -22,6 +22,7 @@ type MakeContextOptions = {
   identity?: KernelContext["identity"];
   identityLinks?: Record<string, unknown>;
   routePid?: string | null;
+  processId?: string;
 };
 
 function makeStorageBucket() {
@@ -86,6 +87,7 @@ function makeContext(
       STORAGE: makeStorageBucket(),
       ...env,
     },
+    processId: options.processId,
     auth: {
       getPasswdByUid: vi.fn((uid: number) => {
         if (uid === human.uid) return human;
@@ -370,6 +372,84 @@ describe("adapter lifecycle handlers", () => {
     ]);
   });
 
+  it("adapter.list uses owning human links for agent process callers", () => {
+    const rows = [
+      {
+        adapter: "telegram",
+        accountId: "bot",
+        connected: true,
+        authenticated: true,
+        mode: "polling",
+        lastActivity: 123,
+        error: null,
+        extra: null,
+        updatedAt: 456,
+      },
+    ];
+    const status = {
+      upsert: vi.fn(),
+      list: vi.fn((adapter: string, accountId?: string) =>
+        rows.filter((row) => row.adapter === adapter && (!accountId || row.accountId === accountId))
+      ),
+      listAll: vi.fn(() => rows),
+    };
+    const listLinks = vi.fn((filterUid?: number) =>
+      filterUid === 1000
+        ? [
+            {
+              adapter: "telegram",
+              accountId: "bot",
+              actorId: "sam-telegram",
+              uid: 1000,
+              createdAt: 1,
+              linkedByUid: 1000,
+              metadata: null,
+            },
+          ]
+        : []
+    );
+    const ctx = makeContext(
+      {
+        CHANNEL_TELEGRAM: { adapterStatus: vi.fn() },
+      },
+      status,
+      {
+        processId: "pid-1",
+        identity: {
+          role: "user",
+          process: {
+            uid: 1001,
+            gid: 1001,
+            gids: [1000],
+            username: "sam-agent",
+            home: "/home/sam-agent",
+            cwd: "/home/sam-agent",
+          },
+          capabilities: ["adapter.list"],
+        },
+        identityLinks: {
+          list: listLinks,
+        },
+      },
+    );
+
+    const result = handleAdapterList({}, ctx);
+
+    expect(listLinks).toHaveBeenCalledWith(1000);
+    expect(result.adapters).toEqual([
+      expect.objectContaining({
+        adapter: "telegram",
+        accounts: [
+          expect.objectContaining({
+            accountId: "bot",
+            connected: true,
+            authenticated: true,
+          }),
+        ],
+      }),
+    ]);
+  });
+
   it("adapter.status filters non-root status refreshes to visible accounts", async () => {
     const rows = [
       {
@@ -465,6 +545,88 @@ describe("adapter lifecycle handlers", () => {
     expect(result.accounts).toEqual([
       expect.objectContaining({
         accountId: "primary",
+        connected: true,
+        authenticated: true,
+      }),
+    ]);
+  });
+
+  it("adapter.status uses owning human links for agent process callers", async () => {
+    const rows = [
+      {
+        adapter: "telegram",
+        accountId: "bot",
+        connected: true,
+        authenticated: true,
+        mode: "polling",
+        lastActivity: 123,
+        error: null,
+        extra: null,
+        updatedAt: 456,
+      },
+    ];
+    const adapterStatus = vi.fn(async () => [
+      {
+        accountId: "bot",
+        connected: true,
+        authenticated: true,
+        mode: "polling",
+      },
+    ]);
+    const status = {
+      upsert: vi.fn(),
+      list: vi.fn((adapter: string, accountId?: string) =>
+        rows.filter((row) => row.adapter === adapter && (!accountId || row.accountId === accountId))
+      ),
+      listAll: vi.fn(() => rows),
+    };
+    const listLinks = vi.fn((filterUid?: number) =>
+      filterUid === 1000
+        ? [
+            {
+              adapter: "telegram",
+              accountId: "bot",
+              actorId: "sam-telegram",
+              uid: 1000,
+              createdAt: 1,
+              linkedByUid: 1000,
+              metadata: null,
+            },
+          ]
+        : []
+    );
+    const ctx = makeContext(
+      {
+        CHANNEL_TELEGRAM: { adapterStatus },
+      },
+      status,
+      {
+        processId: "pid-1",
+        identity: {
+          role: "user",
+          process: {
+            uid: 1001,
+            gid: 1001,
+            gids: [1000],
+            username: "sam-agent",
+            home: "/home/sam-agent",
+            cwd: "/home/sam-agent",
+          },
+          capabilities: ["adapter.status"],
+        },
+        identityLinks: {
+          list: listLinks,
+        },
+      },
+    );
+
+    const result = await handleAdapterStatus({ adapter: "telegram" }, ctx);
+
+    expect(listLinks).toHaveBeenCalledWith(1000);
+    expect(adapterStatus).toHaveBeenCalledWith("bot");
+    expect(result.accounts).toEqual([
+      expect.objectContaining({
+        accountId: "bot",
         connected: true,
         authenticated: true,
       }),
