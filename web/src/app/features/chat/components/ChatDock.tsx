@@ -667,6 +667,20 @@ export function ChatDock({
     setOpenPopover((current) => current === popover ? null : popover);
   };
 
+  const closePopoverFromOutsideClick = (event: JSX.TargetedMouseEvent<HTMLElement>) => {
+    if (!openPopover || !(event.target instanceof Element)) {
+      return;
+    }
+    if (event.target.closest(".gsv-chat-popover")) {
+      return;
+    }
+    const trigger = event.target.closest("[data-chat-popover-trigger]");
+    if (trigger?.getAttribute("data-chat-popover-trigger") === openPopover) {
+      return;
+    }
+    setOpenPopover(null);
+  };
+
   if (!open) {
     return (
       <button type="button" class="gsv-chat-min" onClick={onToggleOpen}>
@@ -687,6 +701,7 @@ export function ChatDock({
       class={`gsv-chat${dragging ? " is-dragging" : ""}`}
       aria-label="Chat"
       style={{ width: `${width}px` }}
+      onClickCapture={closePopoverFromOutsideClick}
     >
       <div class="gsv-chat-resize" onMouseDown={onResizeStart} title="Resize chat" />
       {agentPanelOpen ? (

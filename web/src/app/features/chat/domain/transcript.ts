@@ -409,11 +409,11 @@ function compareTranscriptRows(left: ChatTranscriptRow, right: ChatTranscriptRow
 }
 
 function transcriptRowSortValue(row: ChatTranscriptRow): number {
-  if (typeof row.messageId === "number") {
-    return row.messageId * 1000;
-  }
   if (typeof row.timestamp === "number" && Number.isFinite(row.timestamp)) {
     return row.timestamp;
+  }
+  if (typeof row.messageId === "number") {
+    return row.messageId;
   }
   return Number.MAX_SAFE_INTEGER;
 }
@@ -832,7 +832,7 @@ function streamToolCallBlock(event: Record<string, unknown>): Record<string, unk
 }
 
 function upsertToolRow(rows: ChatTranscriptRow[], row: ChatTranscriptRow): ChatTranscriptRow[] {
-  const next = rows.slice();
+  const next = dropSupersededStreamPlanningRows(rows, row);
   const index = next.findIndex((candidate) =>
     (candidate.role === "tool" || candidate.role === "toolResult") &&
     candidate.toolCallId === row.toolCallId
@@ -848,6 +848,32 @@ function upsertToolRow(rows: ChatTranscriptRow[], row: ChatTranscriptRow): ChatT
   }
   next.push(row);
   return next;
+}
+
+function dropSupersededStreamPlanningRows(
+  rows: ChatTranscriptRow[],
+  row: ChatTranscriptRow,
+): ChatTranscriptRow[] {
+  const runId = row.runId;
+  const toolCallId = row.toolCallId;
+  if (!runId || !toolCallId || isStreamFallbackToolCallId(runId, toolCallId)) {
+    return rows.slice();
+  }
+  return rows.filter((candidate) => {
+    if (
+      candidate.runId !== runId
+      || candidate.role !== "tool"
+      || candidate.status !== "planning"
+      || !candidate.toolCallId
+    ) {
+      return true;
+    }
+    return !isStreamFallbackToolCallId(runId, candidate.toolCallId);
+  });
+}
+
+function isStreamFallbackToolCallId(runId: string, toolCallId: string): boolean {
+  return toolCallId.startsWith(`${runId}:tool:`);
 }
 
 function extractAssistantHistory(content: unknown, fallbackText: string): AssistantHistory {

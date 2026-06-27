@@ -75,11 +75,11 @@ function rowMergeKey(row: ChatTranscriptRow): string {
 }
 
 function rowSortValue(row: ChatTranscriptRow): number {
-  if (typeof row.messageId === "number") {
-    return row.messageId * 1000;
-  }
   if (typeof row.timestamp === "number" && Number.isFinite(row.timestamp)) {
     return row.timestamp;
+  }
+  if (typeof row.messageId === "number") {
+    return row.messageId;
   }
   return Number.MAX_SAFE_INTEGER;
 }
@@ -96,6 +96,28 @@ function isTransientAssistantRow(row: ChatTranscriptRow): boolean {
   return row.role === "assistant"
     && Boolean(row.runId)
     && !row.id.startsWith("message:");
+}
+
+function isToolActivityRow(row: ChatTranscriptRow): boolean {
+  return row.role === "tool" || row.role === "toolResult";
+}
+
+function isStreamFallbackToolRow(row: ChatTranscriptRow): boolean {
+  const runId = row.runId;
+  const toolCallId = row.toolCallId;
+  if (!runId || !toolCallId) {
+    return false;
+  }
+  return row.role === "tool"
+    && row.status === "planning"
+    && toolCallId.startsWith(`${runId}:tool:`);
+}
+
+function isConcreteToolRow(row: ChatTranscriptRow): boolean {
+  return isToolActivityRow(row)
+    && Boolean(row.runId)
+    && Boolean(row.toolCallId)
+    && !isStreamFallbackToolRow(row);
 }
 
 function isPersistedAssistantRow(row: ChatTranscriptRow): boolean {
@@ -170,17 +192,38 @@ function removeMatchedTransientAssistantRows(
   ));
 }
 
+function removeSupersededStreamToolRows(
+  currentRows: readonly ChatTranscriptRow[],
+  nextRows: readonly ChatTranscriptRow[],
+): ChatTranscriptRow[] {
+  const runsWithConcreteTools = new Set(
+    nextRows
+      .filter(isConcreteToolRow)
+      .map((row) => row.runId)
+      .filter((runId): runId is string => Boolean(runId)),
+  );
+  if (runsWithConcreteTools.size === 0) {
+    return [...currentRows];
+  }
+  return currentRows.filter((row) => (
+    !isStreamFallbackToolRow(row) || !row.runId || !runsWithConcreteTools.has(row.runId)
+  ));
+}
+
 function reconcileTransientRows(
   currentRows: readonly ChatTranscriptRow[],
   nextRows: readonly ChatTranscriptRow[],
 ): ChatTranscriptRow[] {
-  return removeMatchedTransientAssistantRows(
-    removeMatchedOptimisticUserRows(currentRows, nextRows),
+  return removeSupersededStreamToolRows(
+    removeMatchedTransientAssistantRows(
+      removeMatchedOptimisticUserRows(currentRows, nextRows),
+      nextRows,
+    ),
     nextRows,
   );
 }
 
-function mergeTranscriptRows(
+export function mergeTranscriptRows(
   currentRows: readonly ChatTranscriptRow[],
   nextRows: readonly ChatTranscriptRow[],
 ): ChatTranscriptRow[] {
