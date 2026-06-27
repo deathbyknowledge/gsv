@@ -51,6 +51,7 @@ import {
   useConsoleAccounts,
   useConsoleConfig,
   useSaveConsoleConfigEntries,
+  useValidateConsoleModelConfig,
 } from "../hooks/useConsoleData";
 import "./ConsoleConfigPage.css";
 
@@ -76,6 +77,11 @@ type RuntimeSelection = {
   id: string;
 };
 
+type ValidateModelSettingsInput = {
+  values: Record<string, string>;
+  presetId?: string;
+};
+
 type SettingsFieldGroupProps = {
   config: readonly ConsoleConfigEntry[];
   description: string;
@@ -85,6 +91,7 @@ type SettingsFieldGroupProps = {
   meta?: string;
   onSave: (entries: readonly SaveConsoleConfigInput[]) => Promise<void>;
   title: string;
+  validateBeforeSave?: (values: Record<string, string>) => Promise<void>;
   writeKeyForField: (field: ConsoleSettingField) => string;
 };
 
@@ -142,6 +149,7 @@ function ModelSettingsPage({
   viewer: SettingsViewer;
 }) {
   const saveConfig = useSaveConsoleConfigEntries();
+  const validateModelConfig = useValidateConsoleModelConfig();
   const [selection, setSelection] = useState<ModelSelection | null>(null);
   const effectiveValues = useMemo(
     () => effectiveAiValuesForViewer(config, viewer.uid),
@@ -160,6 +168,9 @@ function ModelSettingsPage({
     }
     await saveConfig.mutateAsync({ entries });
   };
+  const validateModelSettings = async (input: ValidateModelSettingsInput) => {
+    await validateModelConfig.mutateAsync(input);
+  };
 
   if (selection) {
     return (
@@ -173,6 +184,7 @@ function ModelSettingsPage({
         viewer={viewer}
         onBack={() => setSelection(null)}
         onSaveEntries={saveEntries}
+        onValidateModelConfig={validateModelSettings}
       />
     );
   }
@@ -215,6 +227,7 @@ function ModelSettingsDetail({
   viewer,
   onBack,
   onSaveEntries,
+  onValidateModelConfig,
 }: {
   config: readonly ConsoleConfigEntry[];
   editable: boolean;
@@ -225,6 +238,7 @@ function ModelSettingsDetail({
   viewer: SettingsViewer;
   onBack: () => void;
   onSaveEntries: (entries: readonly SaveConsoleConfigInput[]) => Promise<void>;
+  onValidateModelConfig: (input: ValidateModelSettingsInput) => Promise<void>;
 }) {
   if (selection.kind === "default") {
     return (
@@ -248,6 +262,7 @@ function ModelSettingsDetail({
           initialValues={effectiveValues}
           meta={scopeLabel}
           title="Default Agent Model"
+          validateBeforeSave={(values) => onValidateModelConfig({ values })}
           writeKeyForField={(field) => viewer.isRoot || viewer.uid === null
             ? field.key
             : buildUserAiOverrideKey(viewer.uid, field.key)}
@@ -318,6 +333,7 @@ function ModelSettingsDetail({
         onMakeDefault={profile ? async (values) => {
           await makeProfileDefault(config, viewer, { ...profile, values }, onSaveEntries);
         } : undefined}
+        onValidate={onValidateModelConfig}
         onSave={async (name, values, clearedSecretKeys) => {
           const nextProfiles = profile
             ? updateModelProfile(profiles, profile.id, name, values)
@@ -570,6 +586,7 @@ function ModelProfileForm({
   onCancel,
   onDelete,
   onMakeDefault,
+  onValidate,
   onSave,
 }: {
   config: readonly ConsoleConfigEntry[];
@@ -581,6 +598,7 @@ function ModelProfileForm({
   onCancel: () => void;
   onDelete?: () => Promise<void>;
   onMakeDefault?: (values: Record<string, string>) => Promise<void>;
+  onValidate: (input: ValidateModelSettingsInput) => Promise<void>;
   onSave: (
     name: string,
     values: Record<string, string>,
@@ -629,6 +647,13 @@ function ModelProfileForm({
     } finally {
       setPending(false);
     }
+  };
+  const validateDrafts = async () => {
+    setStatusText("Testing model...");
+    await onValidate({
+      values: drafts,
+      ...(profile && !clearedSecretKeys.has("config/ai/api_key") ? { presetId: profile.id } : {}),
+    });
   };
 
   return (
@@ -682,14 +707,22 @@ function ModelProfileForm({
           variant="primary"
           label={pending ? "SAVING" : "SAVE PRESET"}
           disabled={!canSave || pending}
-          onClick={() => void run(() => onSave(name, drafts, clearedProfileSecretKeys), "Saved")}
+          onClick={() => void run(async () => {
+            await validateDrafts();
+            setStatusText("Saving preset...");
+            await onSave(name, drafts, clearedProfileSecretKeys);
+          }, "Saved")}
         />
         {profile && onMakeDefault ? (
           <Button
             variant="secondary"
             label="MAKE DEFAULT"
             disabled={!editable || pending}
-            onClick={() => void run(() => onMakeDefault(drafts), "Default updated")}
+            onClick={() => void run(async () => {
+              await validateDrafts();
+              setStatusText("Updating default...");
+              await onMakeDefault(drafts);
+            }, "Default updated")}
           />
         ) : null}
         <Button variant="secondary" label="CANCEL" disabled={pending} onClick={onCancel} />
@@ -715,6 +748,7 @@ function SettingsFieldGroup({
   meta,
   onSave,
   title,
+  validateBeforeSave,
   writeKeyForField,
 }: SettingsFieldGroupProps) {
   const initialDraftEntries = fields.map((field): [string, string] => [
@@ -770,6 +804,11 @@ function SettingsFieldGroup({
     setPending(true);
     setStatusText("");
     try {
+      if (validateBeforeSave) {
+        setStatusText("Testing model...");
+        await validateBeforeSave(drafts);
+        setStatusText("Saving settings...");
+      }
       await onSave(changedEntries);
       setClearedSensitiveKeys(new Set());
       setStatusText("Saved");

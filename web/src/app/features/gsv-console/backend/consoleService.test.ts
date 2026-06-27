@@ -11,6 +11,7 @@ import {
   saveConsoleConfig,
   saveConsoleConfigEntries,
   saveConsoleAgentBehavior,
+  validateConsoleModelConfig,
 } from "./consoleService";
 
 function createMockClient(uid: number | string = 42) {
@@ -398,6 +399,136 @@ describe("console agent service", () => {
       key: "config/ai/model",
       value: "@cf/test/model",
     });
+  });
+
+  it("validates text model settings through ai.text.generate", async () => {
+    const call = vi.fn(async () => ({
+      provider: "anthropic",
+      model: "claude-test",
+      text: "ok",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "ok" }],
+        api: "test",
+        provider: "anthropic",
+        model: "claude-test",
+        usage: {
+          input: 1,
+          output: 1,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 2,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: "stop",
+      },
+    }));
+
+    await expect(validateConsoleModelConfig({ call } as any, {
+      values: {
+        "config/ai/provider": " anthropic ",
+        "config/ai/model": " claude-test ",
+        "config/ai/api_key": " sk-live ",
+        "config/ai/reasoning": " high ",
+        "config/ai/max_context_bytes": "12345",
+      },
+    })).resolves.toEqual({
+      ok: true,
+      provider: "anthropic",
+      model: "claude-test",
+    });
+
+    expect(call).toHaveBeenCalledWith("ai.text.generate", expect.objectContaining({
+      config: {
+        overrides: {
+          "config/ai/provider": "anthropic",
+          "config/ai/model": "claude-test",
+          "config/ai/api_key": "sk-live",
+          "config/ai/reasoning": "high",
+        },
+      },
+      options: {
+        maxTokens: 16,
+        reasoning: "off",
+        timeoutMs: 30_000,
+      },
+      sessionAffinityKey: "gsv-console:model-validation",
+    }));
+  });
+
+  it("validates saved presets by preset id", async () => {
+    const call = vi.fn(async () => ({
+      provider: "workers-ai",
+      model: "@cf/test/model",
+      text: "ok",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "ok" }],
+        api: "test",
+        provider: "workers-ai",
+        model: "@cf/test/model",
+        usage: {
+          input: 1,
+          output: 1,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 2,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: "stop",
+      },
+    }));
+
+    await validateConsoleModelConfig({ call } as any, {
+      presetId: "fast-stack",
+      values: {
+        "config/ai/provider": "workers-ai",
+        "config/ai/model": "@cf/test/model",
+        "config/ai/api_key": "",
+      },
+    });
+
+    expect(call).toHaveBeenCalledWith("ai.text.generate", expect.objectContaining({
+      config: {
+        preset: { id: "fast-stack" },
+        overrides: {
+          "config/ai/provider": "workers-ai",
+          "config/ai/model": "@cf/test/model",
+        },
+      },
+    }));
+  });
+
+  it("rejects model validation errors without echoing secrets", async () => {
+    const call = vi.fn(async () => ({
+      provider: "anthropic",
+      model: "claude-test",
+      message: {
+        role: "assistant",
+        content: [],
+        api: "test",
+        provider: "anthropic",
+        model: "claude-test",
+        usage: {
+          input: 1,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 1,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: "error",
+        errorMessage: "bad key sk-secret-value",
+      },
+    }));
+
+    await expect(validateConsoleModelConfig({ call } as any, {
+      values: {
+        "config/ai/provider": "anthropic",
+        "config/ai/model": "claude-test",
+        "config/ai/api_key": "sk-secret-value",
+      },
+    })).rejects.toThrow("bad key redacted");
   });
 
   it("runs process actions through proc syscalls", async () => {

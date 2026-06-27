@@ -1,4 +1,5 @@
 import type { GSVClient } from "@humansandmachines/gsv/client";
+import type { AiTextGenerateConfig } from "@humansandmachines/gsv/protocol";
 import {
   buildConsoleOverviewData,
   normalizeAccountsPayload,
@@ -24,9 +25,18 @@ import type {
   ConsoleProcess,
   ConsoleTarget,
 } from "../domain/consoleModels";
+import { isSensitiveSettingKey } from "../domain/consoleSettings";
 export type { AgentApprovalAction } from "../domain/consoleAgentBehavior";
 
 export const DEFAULT_CONSOLE_ADAPTERS = ["whatsapp", "discord", "telegram"] as const;
+const TEXT_MODEL_VALIDATION_KEYS = [
+  "config/ai/provider",
+  "config/ai/model",
+  "config/ai/api_key",
+  "config/ai/reasoning",
+] as const;
+const MODEL_VALIDATION_SYSTEM_PROMPT = "You are validating a text-generation model configuration. Reply with exactly: ok";
+const MODEL_VALIDATION_USER_MESSAGE = "Reply with ok.";
 
 export type ConsoleClient = Pick<GSVClient, "call" | "proc" | "pkg" | "account" | "sys">;
 
@@ -95,6 +105,17 @@ export type SaveConsoleConfigEntriesInput = {
 export type SaveConsoleConfigEntriesResult = {
   ok: true;
   written: number;
+};
+
+export type ValidateConsoleModelConfigInput = {
+  values: Record<string, string>;
+  presetId?: string;
+};
+
+export type ValidateConsoleModelConfigResult = {
+  ok: true;
+  provider: string;
+  model: string;
 };
 
 export type ConsoleProcessAction = "abort" | "reset" | "kill";
@@ -259,6 +280,55 @@ export async function saveConsoleConfigEntries(
     written += 1;
   }
   return { ok: true, written };
+}
+
+export async function validateConsoleModelConfig(
+  client: Pick<GSVClient, "call">,
+  input: ValidateConsoleModelConfigInput,
+): Promise<ValidateConsoleModelConfigResult> {
+  const presetId = input.presetId?.trim();
+  const overrides = modelValidationOverrides(input.values);
+  const model = overrides["config/ai/model"] || input.values["config/ai/model"]?.trim();
+  if (!presetId && !model) {
+    throw new Error("model is required");
+  }
+
+  const config: AiTextGenerateConfig = {
+    ...(presetId ? { preset: { id: presetId } } : {}),
+    ...(Object.keys(overrides).length > 0 ? { overrides } : {}),
+  };
+  const secretValues = Object.entries(overrides)
+    .filter(([key, value]) => isSensitiveSettingKey(key) && value.length > 0)
+    .map(([, value]) => value);
+
+  try {
+    const result = await client.call("ai.text.generate", {
+      systemPrompt: MODEL_VALIDATION_SYSTEM_PROMPT,
+      messages: [{
+        role: "user",
+        content: MODEL_VALIDATION_USER_MESSAGE,
+        timestamp: Date.now(),
+      }],
+      config,
+      options: {
+        maxTokens: 16,
+        reasoning: "off",
+        timeoutMs: 30_000,
+      },
+      sessionAffinityKey: "gsv-console:model-validation",
+    });
+    const stopReason = result.message.stopReason;
+    if (stopReason === "error" || stopReason === "aborted") {
+      throw new Error(result.message.errorMessage || `model validation ended with ${stopReason}`);
+    }
+    return {
+      ok: true,
+      provider: result.provider,
+      model: result.model,
+    };
+  } catch (error) {
+    throw new Error(sanitizeModelValidationError(error, secretValues));
+  }
 }
 
 export async function runConsoleProcessAction(
@@ -617,6 +687,32 @@ function normalizeIdentityLinkField(value: string, field: string): string {
     throw new Error(`${field} is required`);
   }
   return normalized;
+}
+
+function modelValidationOverrides(values: Record<string, string>): Record<string, string> {
+  const overrides: Record<string, string> = {};
+  for (const key of TEXT_MODEL_VALIDATION_KEYS) {
+    const value = values[key]?.trim();
+    if (value) {
+      overrides[key] = value;
+    }
+  }
+  return overrides;
+}
+
+function sanitizeModelValidationError(error: unknown, secretValues: readonly string[]): string {
+  let message = error instanceof Error ? error.message : error ? String(error) : "model validation failed";
+  for (const secret of secretValues) {
+    if (secret.length < 4) {
+      continue;
+    }
+    message = message.replace(new RegExp(escapeRegExp(secret), "g"), "redacted");
+  }
+  return message || "model validation failed";
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 async function loadAdapterPayloads(client: Pick<GSVClient, "call">, adapters?: readonly string[]): Promise<unknown[]> {
