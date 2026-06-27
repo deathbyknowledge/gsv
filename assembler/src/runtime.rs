@@ -513,6 +513,7 @@ function serveStaticAsset(request, routeBase, env) {{
       headers: {{
         "content-type": "text/html; charset=utf-8",
         "cache-control": "no-store",
+        "access-control-allow-origin": "*",
       }},
     }});
   }}
@@ -533,6 +534,7 @@ function serveStaticAsset(request, routeBase, env) {{
     headers: {{
       "content-type": asset.contentType,
       "cache-control": "no-store",
+      "access-control-allow-origin": "*",
     }},
   }});
 }}

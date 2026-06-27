@@ -329,6 +329,7 @@ fn builds_runtime_artifact_with_wrapper_and_hash() {
         "const BROWSER_ENTRY = \"/public/gsv/packages/__GSV_ARTIFACT_HASH__/browser/src/main.js\";"
     ));
     assert!(wrapper.contains("const APP_SHELL_HTML = \"<!doctype html>"));
+    assert!(wrapper.contains("\"access-control-allow-origin\": \"*\""));
     assert!(!package_definition.contains("\"@humansandmachines/gsv/sdk\""));
     assert!(package_definition.contains("\"../node_modules/@humansandmachines/gsv/dist/sdk.js\""));
 }
