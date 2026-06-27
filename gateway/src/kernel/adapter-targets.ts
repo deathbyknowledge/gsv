@@ -1,5 +1,5 @@
 import type { AdapterStatusRecord } from "./adapter-status";
-import type { KernelContext } from "./context";
+import { resolveCallerOwnerUid, type KernelContext } from "./context";
 
 export type AdapterTarget = {
   targetId: string;
@@ -115,14 +115,15 @@ function visibleAdapterStatuses(ctx: KernelContext): AdapterStatusRecord[] {
     return [];
   }
 
-  if (identity.process.uid === 0) {
+  const ownerUid = resolveCallerOwnerUid(ctx);
+  if (ownerUid === 0) {
     const statusStore = adapters.status as typeof adapters.status & {
       listAll?: () => AdapterStatusRecord[];
     };
     return typeof statusStore.listAll === "function" ? statusStore.listAll() : [];
   }
 
-  const links = adapters.identityLinks?.list(identity.process.uid) ?? [];
+  const links = adapters.identityLinks?.list(ownerUid) ?? [];
   const seen = new Set<string>();
   const statuses: AdapterStatusRecord[] = [];
   for (const link of links) {
