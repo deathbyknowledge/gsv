@@ -5,6 +5,10 @@ import type { StatusTone } from "../../components/ui/StatusDot";
 import { AppFramePage } from "../apps/components/AppFramePage";
 import { ChatDock, type StartedChatProcess } from "../chat/components/ChatDock";
 import type { ChatAgentData, ChatAgentSelection, ChatProcessSummary } from "../chat/domain";
+import {
+  normalizeTargetChatProcess,
+  TARGET_CHAT_PROCESS_EVENT,
+} from "../chat/domain/targetChatProcess";
 import { useChatProcessList } from "../chat/hooks";
 import type {
   ConsoleOverviewCounts,
@@ -41,13 +45,6 @@ type GsvShellProps = {
   sessionUsername: string;
   mobileHomeDate: string;
   onLockSession: () => void;
-};
-
-const TARGET_CHAT_PROCESS_EVENT = "gsv:target-chat-process";
-
-type TargetChatProcess = {
-  conversationId: string | null;
-  pid: string;
 };
 
 function statusForRunState(runState?: string): StatusTone {
@@ -167,32 +164,6 @@ function shellSettingsRouteForTarget(target: SettingsRouteTarget): ShellSettings
   return { view: "config", kind: target };
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null;
-}
-
-function asTrimmedString(value: unknown): string {
-  return typeof value === "string" ? value.trim() : "";
-}
-
-function normalizeTargetChatProcess(value: unknown): TargetChatProcess | null {
-  const record = asRecord(value);
-  if (!record) {
-    return null;
-  }
-  const pid = asTrimmedString(record.pid) || asTrimmedString(record.processId);
-  if (!pid) {
-    return null;
-  }
-  const conversationId = asTrimmedString(record.conversationId);
-  return {
-    pid,
-    conversationId: conversationId || null,
-  };
-}
-
 export function GsvShell({
   notificationOpenSurface,
   notificationUnreadCount,
@@ -309,7 +280,7 @@ export function GsvShell({
   const selectChatAgent = (selection: ChatAgentSelection): void => {
     if (selection.processId) {
       setSelectedChatPid(selection.processId);
-      setPendingChatProcess(null);
+      setPendingChatProcess(selection.process ?? null);
       setSelectedChatAgentId(null);
       setSelectedChatConversationId(null);
       return;

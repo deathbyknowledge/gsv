@@ -11,6 +11,7 @@ import {
   buildChatAgentViewModel,
   formatChatReasoningLabel,
   type ChatAgentData,
+  type ChatAgentStatus,
   type ChatAgentSelection,
   type ChatModelProfileData,
 } from "../domain/agent";
@@ -18,7 +19,7 @@ import {
   applyChatLiveActivityToAgent,
   deriveChatLiveActivity,
 } from "../domain/activity";
-import type { ChatHilDecision, ChatRunState } from "../domain/processes";
+import type { ChatHilDecision, ChatProcessSummary, ChatRunState } from "../domain/processes";
 import {
   useAbortChatProcess,
   useCompactChatConversation,
@@ -76,6 +77,13 @@ type ChatDockProps = {
 
 function formatRunStateLabel(runState: ChatRunState | string | undefined): string {
   return runState ? runState.replaceAll("_", " ") : "idle";
+}
+
+function agentStatusTone(status: ChatAgentStatus | undefined): StatusTone | null {
+  if (status === "error" || status === "idle" || status === "live" || status === "online") {
+    return status;
+  }
+  return null;
 }
 
 function errorMessage(error: unknown, fallback: string): string {
@@ -267,13 +275,13 @@ export function ChatDock({
   const { history: processHistory, runtime } = chatRuntime;
   const pendingHil = runtime.pendingHil;
   const liveActivity = useMemo(() => deriveChatLiveActivity(runtime), [runtime]);
-  const effectiveStatus = liveActivity?.status ?? status;
-  const effectiveStatusLabel = liveActivity?.statusLabel ?? statusLabel;
   const effectiveAgent = useMemo(() => applyChatLiveActivityToAgent(
     agent,
     liveActivity,
     activeProcessId,
   ), [activeProcessId, agent, liveActivity]);
+  const effectiveStatus = liveActivity?.status ?? agentStatusTone(effectiveAgent?.status) ?? status;
+  const effectiveStatusLabel = liveActivity?.statusLabel ?? effectiveAgent?.statusLabel ?? statusLabel;
 
   useEffect(() => {
     if (!open) {
@@ -667,6 +675,18 @@ export function ChatDock({
     setOpenPopover((current) => current === popover ? null : popover);
   };
 
+  const openTaskProcess = (processId: string, process: ChatProcessSummary | null) => {
+    const targetProcessId = processId.trim();
+    if (!targetProcessId || !onSelectAgent) {
+      return;
+    }
+    setOpenPopover(null);
+    onSelectAgent({
+      processId: targetProcessId,
+      ...(process ? { process } : {}),
+    });
+  };
+
   const closePopoverFromOutsideClick = (event: JSX.TargetedMouseEvent<HTMLElement>) => {
     if (!openPopover || !(event.target instanceof Element)) {
       return;
@@ -775,6 +795,7 @@ export function ChatDock({
           setOpenPopover(null);
           (onOpenTasks ?? onOpenCrew)();
         }}
+        onOpenTaskProcess={openTaskProcess}
         onStartNewTask={prepareNewTask}
         onStartProcess={startProcess}
         onApplyModelProfile={applyProcessAiProfile}

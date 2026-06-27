@@ -5,7 +5,7 @@ import { Progress } from "../../../components/ui/Progress";
 import { StatusDot } from "../../../components/ui/StatusDot";
 import type { StatusTone } from "../../../components/ui/StatusDot";
 import type { ChatAgentViewModel, ChatModelProfileData } from "../domain/agent";
-import type { ChatHistory, ChatProcessAiConfig } from "../domain/processes";
+import type { ChatHistory, ChatProcessAiConfig, ChatProcessSummary } from "../domain/processes";
 import { ChatDockPopovers, type ChatPopoverId } from "./ChatDockPopovers";
 
 type ChatDockHeaderProps = {
@@ -40,6 +40,7 @@ type ChatDockHeaderProps = {
   onOpenAgentPanel: () => void;
   onOpenModels: () => void;
   onOpenTasks: () => void;
+  onOpenTaskProcess: (processId: string, process: ChatProcessSummary | null) => void;
   onStartNewTask: () => void;
   onSetReasoning: (reasoning: string) => void;
   onStartProcess: () => void;
@@ -81,6 +82,7 @@ export function ChatDockHeader({
   onOpenAgentPanel,
   onOpenModels,
   onOpenTasks,
+  onOpenTaskProcess,
   onStartNewTask,
   onSetReasoning,
   onStartProcess,
@@ -214,6 +216,7 @@ export function ChatDockHeader({
         onClearProcessAiConfig={onClearProcessAiConfig}
         onOpenModels={onOpenModels}
         onOpenTasks={onOpenTasks}
+        onOpenTaskProcess={onOpenTaskProcess}
         onStartNewTask={onStartNewTask}
         onSetReasoning={onSetReasoning}
       />

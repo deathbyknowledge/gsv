@@ -26,43 +26,58 @@ export function statusForProcess(process: ConsoleProcess): string {
   return "IDLE";
 }
 
+export function iconForProcess(process: ConsoleProcess): string {
+  return process.interactive ? "chat" : "list";
+}
+
 export function processSub(process: ConsoleProcess): string {
-  return process.username || uidLabel(process.uid) || process.pid;
+  return compactText(
+    [process.username || uidLabel(process.uid), process.cwd],
+    process.pid,
+  );
 }
 
 export function processBlurb(process: ConsoleProcess): string {
+  const owner = process.username || uidLabel(process.uid) || "unknown owner";
   return compactText(
-    [process.username, process.profile, process.cwd],
-    "Process runtime state and active conversation context.",
+    [`${statusForProcess(process).toLowerCase()} task`, owner, process.profile, process.cwd],
+    "Process-backed task with conversation state and runtime controls.",
   );
 }
 
 export function processDetailSections(process: ConsoleProcess): ConsoleDetailSection[] {
   return [
     {
-      title: "PROCESS",
+      title: "STATE",
       meta: statusForProcess(process),
       rows: liveRows([
-        detailRow("pid", "PROCESS ID", process.pid),
-        detailRow("state", "STATE", process.rawState || statusForProcess(process), {
+        detailRow("state", "CURRENT STATE", process.rawState || statusForProcess(process), {
           status: listRowStatusForTone(toneForProcess(process)),
           statusLabel: statusForProcess(process),
         }),
-        detailRow("owner", "OWNER", process.username || uidLabel(process.uid)),
-        detailRow("profile", "PROFILE", process.profile),
-        detailRow("workspace", "WORKSPACE", process.cwd),
-        detailRow("interactive", "INTERACTIVE", process.interactive),
+        detailRow("active-run", "ACTIVE RUN", process.activeRunId),
+        detailRow("queued", "QUEUED MESSAGES", process.queuedCount),
+        detailRow("last-active", "LAST ACTIVE", process.lastActiveAt === null ? "" : formatAge(process.lastActiveAt)),
+        detailRow("created", "CREATED", process.createdAt === null ? "" : formatAge(process.createdAt)),
       ]),
     },
     {
-      title: "RUN",
-      meta: process.activeRunId ? "ACTIVE" : process.queuedCount > 0 ? "QUEUED" : "IDLE",
+      title: "OWNER",
+      meta: process.username || uidLabel(process.uid),
       rows: liveRows([
-        detailRow("active-run", "ACTIVE RUN", process.activeRunId),
+        detailRow("owner", "RUN AS", process.username || uidLabel(process.uid)),
+        detailRow("profile", "PROFILE", process.profile),
+        detailRow("interactive", "HIL APPROVALS", process.interactive),
+        detailRow("parent", "PARENT TASK", process.parentPid),
+      ]),
+    },
+    {
+      title: "WORKSPACE",
+      meta: process.activeConversationId ? "CONVERSATION" : "CONTEXT",
+      rows: liveRows([
+        detailRow("workspace", "WORKSPACE", process.cwd),
         detailRow("conversation", "CONVERSATION", process.activeConversationId),
-        detailRow("queued", "QUEUED MESSAGES", process.queuedCount),
-        detailRow("created", "CREATED", process.createdAt === null ? "" : formatAge(process.createdAt)),
-        detailRow("last-active", "LAST ACTIVE", process.lastActiveAt === null ? "" : formatAge(process.lastActiveAt)),
+        detailRow("pid", "PROCESS ID", process.pid),
       ]),
     },
   ];

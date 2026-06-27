@@ -9,6 +9,7 @@ import { useConsoleListSelection } from "../hooks/useConsoleListSelection";
 import { useConsoleProcesses } from "../hooks/useConsoleData";
 import { RuntimeDetailPage } from "./RuntimeDetailPage";
 import {
+  iconForProcess,
   processSub,
   statusForProcess,
   toneForProcess,
@@ -36,12 +37,12 @@ function RuntimeConsoleSection({
 }) {
   return (
     <SettingsListPanel
-      title="RUNTIME"
-      meta={refreshing ? "REFRESHING" : `${processes.length} PROCESSES`}
-      emptyLabel="NO PROCESSES"
+      title="TASKS"
+      meta={refreshing ? "REFRESHING" : `${processes.length} TASK${processes.length === 1 ? "" : "S"}`}
+      emptyLabel="NO TASKS"
       rows={processes.map((process) => ({
         id: process.pid,
-        icon: "list",
+        icon: iconForProcess(process),
         label: process.label,
         sub: processSub(process),
         tone: toneForProcess(process),
@@ -80,7 +81,7 @@ export function RuntimePage({
     <ConsolePage flush>
       <ConsoleResourceBoundary
         resource={resourceWithLocalEmptyState(processes.resource)}
-        emptyLabel="NO PROCESSES"
+        emptyLabel="NO TASKS"
         errorLabel="RUNTIME"
         render={(data) => (
           selectedDetail?.kind === "tasks"

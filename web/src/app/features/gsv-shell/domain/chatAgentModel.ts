@@ -92,6 +92,10 @@ function processActivityTime(process: ChatProcessSummary): number {
   return process.lastActiveAt ?? process.createdAt;
 }
 
+function consoleProcessActivityTime(process: ConsoleProcess): number {
+  return process.lastActiveAt ?? process.createdAt ?? 0;
+}
+
 function representativeProcess(
   processes: readonly ChatProcessSummary[],
   activeProcess: ChatProcessSummary | null,
@@ -129,29 +133,123 @@ function accountProcessStatus(input: {
 
 function chatProcessTask(process: ChatProcessSummary): ChatAgentTaskData {
   const status = taskStatusForRunState(process.runState);
-  const name = process.activeRunId
-    ? `Run ${process.activeRunId.slice(0, 8)}`
-    : process.queuedCount > 0
-      ? `${process.queuedCount} queued`
-      : process.title;
+  const name = process.title;
 
-  return { name, status };
+  return { name, process, processId: process.pid, status };
+}
+
+function consoleRunState(process: ConsoleProcess): ChatProcessSummary["runState"] {
+  if (process.activeRunId !== null || process.state === "running") {
+    return "running";
+  }
+  if (process.queuedCount > 0 || process.state === "queued") {
+    return "queued";
+  }
+  return "idle";
+}
+
+function chatProcessFromConsoleProcess(process: ConsoleProcess): ChatProcessSummary {
+  return {
+    pid: process.pid,
+    uid: process.uid ?? 0,
+    username: process.username,
+    interactive: process.interactive,
+    parentPid: process.parentPid,
+    state: process.rawState || process.state,
+    runState: consoleRunState(process),
+    activeRunId: process.activeRunId,
+    activeConversationId: process.activeConversationId,
+    queuedCount: process.queuedCount,
+    lastActiveAt: process.lastActiveAt,
+    label: process.label,
+    title: process.label || process.pid,
+    createdAt: process.createdAt ?? 0,
+    cwd: process.cwd,
+    isDefaultConversation: false,
+  };
+}
+
+function consoleTaskStatus(process: ConsoleProcess): ChatAgentTaskStatus {
+  if (process.state === "unknown") {
+    return "error";
+  }
+  if (isRunningConsoleProcess(process) || isQueuedConsoleProcess(process)) {
+    return "running";
+  }
+  return "idle";
+}
+
+function consoleProcessTask(process: ConsoleProcess): ChatAgentTaskData {
+  return {
+    name: process.label || process.pid,
+    process: chatProcessFromConsoleProcess(process),
+    processId: process.pid,
+    status: consoleTaskStatus(process),
+  };
+}
+
+function consoleProcessRank(process: ConsoleProcess, activePid?: string): number {
+  if (activePid && process.pid === activePid) return 0;
+  if (process.state === "unknown") return 1;
+  if (isRunningConsoleProcess(process)) return 2;
+  if (isQueuedConsoleProcess(process)) return 3;
+  return 4;
+}
+
+function sortConsoleProcesses(
+  processes: readonly ConsoleProcess[],
+  activePid?: string,
+): ConsoleProcess[] {
+  return [...processes].sort((left, right) => {
+    const leftRank = consoleProcessRank(left, activePid);
+    const rightRank = consoleProcessRank(right, activePid);
+    return leftRank - rightRank
+      || consoleProcessActivityTime(right) - consoleProcessActivityTime(left)
+      || left.label.localeCompare(right.label);
+  });
+}
+
+function processMatchesActiveIdentity(process: ConsoleProcess, activeProcess: ChatProcessSummary): boolean {
+  return process.pid === activeProcess.pid
+    || (process.username.length > 0 && process.username === activeProcess.username);
 }
 
 function tasksForActiveAgent(
   activeProcess: ChatProcessSummary,
   activeAccount: ConsoleAccount | null,
   chatProcesses: readonly ChatProcessSummary[],
+  consoleProcesses: readonly ConsoleProcess[],
 ): ChatAgentTaskData[] {
-  const ownedProcesses = activeAccount
+  const ownedConsoleProcesses = activeAccount
+    ? consoleProcesses.filter((process) => ownsConsoleProcess(activeAccount, process))
+    : consoleProcesses.filter((process) => processMatchesActiveIdentity(process, activeProcess));
+  const tasks = sortConsoleProcesses(ownedConsoleProcesses, activeProcess.pid).map(consoleProcessTask);
+  const activeTaskPresent = tasks.some((task) => task.processId === activeProcess.pid);
+
+  if (tasks.length > 0) {
+    return activeTaskPresent ? tasks : [chatProcessTask(activeProcess), ...tasks];
+  }
+
+  const ownedChatProcesses = activeAccount
     ? chatProcesses.filter((process) => ownsChatProcess(activeAccount, process))
-    : [activeProcess];
-  const tasks = ownedProcesses
-    .filter((process) => process.activeRunId || process.queuedCount > 0 || process.pid === activeProcess.pid)
-    .slice(0, 5)
+    : chatProcesses.filter((process) => process.pid === activeProcess.pid || ownsActiveChatIdentity(activeProcess, process));
+  const chatTasks = [...ownedChatProcesses]
+    .sort((left, right) => {
+      const leftRank = left.pid === activeProcess.pid ? 0 : isRunningChatProcess(left) ? 1 : isQueuedChatProcess(left) ? 2 : 3;
+      const rightRank = right.pid === activeProcess.pid ? 0 : isRunningChatProcess(right) ? 1 : isQueuedChatProcess(right) ? 2 : 3;
+      return leftRank - rightRank || processActivityTime(right) - processActivityTime(left);
+    })
     .map(chatProcessTask);
 
-  return tasks.length > 0 ? tasks : [chatProcessTask(activeProcess)];
+  return chatTasks.length > 0 ? chatTasks : [chatProcessTask(activeProcess)];
+}
+
+function ownsActiveChatIdentity(activeProcess: ChatProcessSummary, process: ChatProcessSummary): boolean {
+  return process.username.length > 0 && process.username === activeProcess.username;
+}
+
+function tasksForAccount(processes: readonly ConsoleProcess[]): ChatAgentTaskData[] {
+  return sortConsoleProcesses(processes).map(consoleProcessTask);
 }
 
 function accountAgentId(account: ConsoleAccount): string {
@@ -311,6 +409,7 @@ function accountBackedAgent(input: {
   const primaryIndex = Math.max(0, accountList.findIndex((account) => account.uid === primaryAccount.uid));
   const ownedChatProcesses = input.chatProcesses.filter((process) => ownsChatProcess(primaryAccount, process));
   const ownedConsoleProcesses = input.consoleProcesses.filter((process) => ownsConsoleProcess(primaryAccount, process));
+  const tasks = tasksForAccount(ownedConsoleProcesses);
   const status = accountProcessStatus({
     account: primaryAccount,
     chatProcesses: ownedChatProcesses,
@@ -344,8 +443,8 @@ function accountBackedAgent(input: {
     modelIsDefault: behavior.modelIsDefault,
     reasoningLabel: behavior.reasoningLabel,
     permission: behavior.permission,
-    tasksTotal: 0,
-    tasks: [],
+    tasksTotal: tasks.length,
+    tasks,
     crew,
   };
 }
@@ -382,7 +481,7 @@ export function buildShellChatAgent({
   const activeAccountIndex = activeAccount
     ? Math.max(0, accountList.findIndex((account) => account.uid === activeAccount.uid))
     : Math.max(0, chatProcesses.findIndex((process) => process.pid === activeProcess.pid));
-  const tasks = tasksForActiveAgent(activeProcess, activeAccount, chatProcesses);
+  const tasks = tasksForActiveAgent(activeProcess, activeAccount, chatProcesses, consoleProcesses);
   const behavior = activeAccount
     ? behaviorViewForAccount(activeAccount, config, modelLabels, viewer?.uid)
     : defaultBehaviorView(config, modelLabels);

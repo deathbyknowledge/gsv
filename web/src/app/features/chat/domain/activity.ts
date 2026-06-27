@@ -255,8 +255,6 @@ export function applyChatLiveActivityToAgent(
     activity: activity.activity,
     status: activity.agentStatus,
     statusLabel: activity.statusLabel,
-    tasks: activity.tasks,
-    tasksTotal: activity.tasks.length,
     ...(patchedCrew ? { crew: patchedCrew } : {}),
   };
 }

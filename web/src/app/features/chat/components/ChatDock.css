@@ -840,6 +840,23 @@
   border-bottom: 1px solid var(--rule-inner);
 }
 
+button.gsv-chat-task-row {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid var(--rule-inner);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-family: var(--gsv-font-mono);
+  text-align: left;
+}
+
+button.gsv-chat-task-row:hover,
+button.gsv-chat-task-row:focus-visible {
+  background: #171441;
+  outline: none;
+}
+
 .gsv-chat-task-name {
   flex: 1;
   min-width: 0;

@@ -3,7 +3,7 @@ import { Progress } from "../../../components/ui/Progress";
 import { StatusDot } from "../../../components/ui/StatusDot";
 import type { StatusTone } from "../../../components/ui/StatusDot";
 import type { ChatAgentViewModel, ChatModelProfileData } from "../domain/agent";
-import type { ChatHistory, ChatProcessAiConfig } from "../domain/processes";
+import type { ChatHistory, ChatProcessAiConfig, ChatProcessSummary } from "../domain/processes";
 import { formatCount, shortId } from "./chatUiFormat";
 
 export type ChatPopoverId = "model" | "tasks" | "context";
@@ -20,6 +20,7 @@ type ChatDockPopoversProps = {
   onApplyModelProfile: (profile: ChatModelProfileData) => void;
   onOpenModels: () => void;
   onOpenTasks: () => void;
+  onOpenTaskProcess: (processId: string, process: ChatProcessSummary | null) => void;
   onStartNewTask: () => void;
   onClearProcessAiConfig: () => void;
   onSetReasoning: (reasoning: string) => void;
@@ -84,6 +85,7 @@ export function ChatDockPopovers({
   onClearProcessAiConfig,
   onOpenModels,
   onOpenTasks,
+  onOpenTaskProcess,
   onStartNewTask,
   onSetReasoning,
   openPopover,
@@ -198,13 +200,31 @@ export function ChatDockPopovers({
                 <span class="gsv-chat-task-name">No process activity</span>
                 <small>IDLE</small>
               </div>
-            ) : activeAgent.tasks.map((task) => (
-              <div class="gsv-chat-task-row" key={`${task.status}-${task.name}`}>
-                <StatusDot tone={taskStatusTone(task.status)} size={8} />
-                <span class="gsv-chat-task-name">{task.name}</span>
-                <small>{taskStatusLabel(task.status)}</small>
-              </div>
-            ))}
+            ) : activeAgent.tasks.map((task) => {
+              const canOpen = task.processId.length > 0;
+              const content = (
+                <>
+                  <StatusDot tone={taskStatusTone(task.status)} size={8} />
+                  <span class="gsv-chat-task-name">{task.name}</span>
+                  <small>{taskStatusLabel(task.status)}</small>
+                </>
+              );
+
+              return canOpen ? (
+                <button
+                  type="button"
+                  class="gsv-chat-task-row is-clickable"
+                  key={`${task.processId}-${task.status}`}
+                  onClick={() => onOpenTaskProcess(task.processId, task.process)}
+                >
+                  {content}
+                </button>
+              ) : (
+                <div class="gsv-chat-task-row" key={`${task.name}-${task.status}`}>
+                  {content}
+                </div>
+              );
+            })}
           </div>
           <button
             type="button"
