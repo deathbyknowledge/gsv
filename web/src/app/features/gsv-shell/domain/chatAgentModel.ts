@@ -193,9 +193,10 @@ function tasksForActiveAgent(
     ? consoleProcesses.filter((process) => ownsConsoleProcess(activeAccount, process))
     : consoleProcesses.filter((process) => processMatchesActiveIdentity(process, activeProcess));
   const tasks = sortConsoleProcesses(ownedConsoleProcesses, activeProcess.pid).map(consoleProcessTask);
+  const activeTaskPresent = tasks.some((task) => task.processId === activeProcess.pid);
 
   if (tasks.length > 0) {
-    return tasks;
+    return activeTaskPresent ? tasks : [chatProcessTask(activeProcess), ...tasks];
   }
 
   const ownedChatProcesses = activeAccount

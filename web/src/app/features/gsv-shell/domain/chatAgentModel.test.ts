@@ -189,6 +189,25 @@ describe("shell chat agent model", () => {
     expect(agent?.activity).toBe("idle");
   });
 
+  it("keeps the active chat task when console overview is stale", () => {
+    const activeProcess = process({ pid: "proc:new", uid: 7, username: "scout", title: "New task" });
+    const agent = buildShellChatAgent({
+      activeProcess,
+      accounts: [account({ uid: 7, username: "scout", relation: "agent", displayName: "Scout" })],
+      chatProcesses: [activeProcess],
+      config: [],
+      consoleProcesses: [
+        consoleProcess({ pid: "proc:old", uid: 7, username: "scout", label: "Older task", createdAt: 30 }),
+      ],
+      statusLabel: "idle",
+    });
+
+    expect(agent?.tasks).toEqual([
+      { name: "New task", processId: "proc:new", status: "idle" },
+      { name: "Older task", processId: "proc:old", status: "idle" },
+    ]);
+  });
+
   it("uses the owner model override as an inherited default for agent chats", () => {
     const agent = buildShellChatAgent({
       activeProcess: null,
