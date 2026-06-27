@@ -23,7 +23,6 @@ import type { CodeModeExecArgs, CodeModeRunArgs, CodeModeRunResult } from "../sy
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type {
   AiConfigResult,
-  AiTextGenerateArgs,
   AiTextGenerateOptions,
   AiToolsDevice,
 } from "../syscalls/ai";
@@ -676,39 +675,6 @@ function buildCompactionSummaryContext(messages: MessageRecord[]): Context {
       },
     ],
   };
-}
-
-function toAiTextTool(tool: Tool): NonNullable<AiTextGenerateArgs["tools"]>[number] {
-  return {
-    name: tool.name,
-    description: tool.description,
-    parameters: tool.parameters as Record<string, unknown>,
-  };
-}
-
-function aiTextOverridesFromConfig(config: AiConfigResult): Record<string, string> {
-  return compactStringRecord({
-    "config/ai/provider": config.provider,
-    "config/ai/model": config.model,
-    "config/ai/api_key": config.apiKey,
-    "config/ai/reasoning": config.reasoning,
-    "config/ai/max_tokens": String(config.maxTokens),
-    "config/ai/context_window_tokens": config.contextWindowTokens === null
-      ? undefined
-      : String(config.contextWindowTokens),
-    "config/ai/max_context_bytes": String(config.maxContextBytes),
-    "config/ai/generation/timeout_ms": String(config.generationTimeoutMs),
-  });
-}
-
-function compactStringRecord(input: Record<string, string | undefined>): Record<string, string> {
-  const output: Record<string, string> = {};
-  for (const [key, value] of Object.entries(input)) {
-    if (value !== undefined && value.trim().length > 0) {
-      output[key] = value;
-    }
-  }
-  return output;
 }
 
 function renderCompactionTranscriptWindow(messages: MessageRecord[], maxChars: number): string {
@@ -3048,6 +3014,7 @@ export class Process extends Host<Env> {
   }): Promise<AssistantMessage | null> {
     const stream = options.config.generationStreaming !== "off" &&
       typeof this.generation.stream === "function"
+      // TODO: add ai.text.stream
       ? this.generation.stream({
         config: options.config,
         context: options.context,
@@ -3073,12 +3040,11 @@ export class Process extends Host<Env> {
           });
         }
       }
-      const result = await this.kernelRpc("ai.text.generate", this.buildAiTextGenerateArgs({
+      return await this.generation.generate({
         config: options.config,
         context: options.context,
         sessionAffinityKey: options.sessionAffinityKey,
-      }));
-      return result.message as unknown as AssistantMessage;
+      });
     }
 
     let seq = options.streamSeq?.value ?? 0;
@@ -3127,40 +3093,12 @@ export class Process extends Host<Env> {
         });
       }
     }
-    const result = await this.kernelRpc("ai.text.generate", this.buildAiTextGenerateArgs(options));
-    if (result.text) {
-      return result.text;
-    }
-    if (
-      (result.message.stopReason === "error" || result.message.stopReason === "aborted") &&
-      result.message.errorMessage
-    ) {
-      throw new Error(formatProviderErrorMessage(result.message.errorMessage, {
-        provider: options.config.provider,
-        model: options.config.model,
-      }) || result.message.errorMessage);
-    }
-    return "";
-  }
-
-  private buildAiTextGenerateArgs(options: {
-    context: Context;
-    config: AiConfigResult;
-    options?: AiTextGenerateOptions;
-    sessionAffinityKey?: string;
-  }): AiTextGenerateArgs {
-    return {
-      systemPrompt: options.context.systemPrompt,
-      messages: options.context.messages as unknown as AiTextGenerateArgs["messages"],
-      ...(options.context.tools && options.context.tools.length > 0
-        ? { tools: options.context.tools.map(toAiTextTool) }
-        : {}),
-      config: {
-        overrides: aiTextOverridesFromConfig(options.config),
-      },
-      ...(options.options ? { options: options.options } : {}),
-      ...(options.sessionAffinityKey ? { sessionAffinityKey: options.sessionAffinityKey } : {}),
-    };
+    return await this.generation.generateText({
+      config: options.config,
+      context: options.context,
+      options: options.options,
+      sessionAffinityKey: options.sessionAffinityKey,
+    });
   }
 
   private recordUnpersistedAssistantUsage(

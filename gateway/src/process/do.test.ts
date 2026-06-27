@@ -16,6 +16,7 @@ const ROOT_IDENTITY: ProcessIdentity = {
   cwd: "/root",
 };
 const DEFAULT_PROFILE = "task" as const;
+const GENERATION_SERVICE_MARKER = "__gsvGenerationService";
 
 function makeReq(call: string, args: unknown): RequestFrame {
   return { type: "req", id: crypto.randomUUID(), call, args } as RequestFrame;
@@ -69,6 +70,7 @@ async function stubGeneration(
   await runInDurableObject(stub, (instance: Process) => {
     const process = instance as any;
     process.generation = {
+      [GENERATION_SERVICE_MARKER]: true,
       async generate(request: any) {
         const text = await generate(request);
         return {
@@ -1871,6 +1873,7 @@ describe("Process DO — mechanical", () => {
           emitted.push({ signal, payload });
         };
         process.generation = {
+          [GENERATION_SERVICE_MARKER]: true,
           stream() {
             throw new Error("stream generation should not be used");
           },
@@ -3394,6 +3397,7 @@ describe("Process DO — mechanical", () => {
           emitted.push({ signal, payload });
         };
         process.generation = {
+          [GENERATION_SERVICE_MARKER]: true,
           async generate(request: any) {
             const serialized = JSON.stringify(request.context);
             expect(serialized).toContain("Context that must stay live.");
@@ -3498,6 +3502,7 @@ describe("Process DO — mechanical", () => {
           emitted.push({ signal, payload });
         };
         process.generation = {
+          [GENERATION_SERVICE_MARKER]: true,
           async generate() {
             throw new Error("chat generation should not run after compaction failure");
           },
@@ -3580,6 +3585,7 @@ describe("Process DO — mechanical", () => {
           emitted.push({ signal, payload });
         };
         process.generation = {
+          [GENERATION_SERVICE_MARKER]: true,
           async generate() {
             throw new Error("chat generation should not run after abort");
           },
