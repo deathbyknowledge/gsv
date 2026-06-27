@@ -714,7 +714,13 @@ function validateScheduleTargetAccess(target: ScheduleTarget, ctx: KernelContext
   if (target.kind === "command.exec" && !hasCapability(ctx.identity?.capabilities ?? [], "shell.exec")) {
     throw new Error("Permission denied: shell.exec");
   }
+  if (target.kind === "process.spawn" && !hasCapability(ctx.identity?.capabilities ?? [], "proc.spawn")) {
+    throw new Error("Permission denied: proc.spawn");
+  }
   if (target.kind === "process.event") {
+    if (!hasCapability(ctx.identity?.capabilities ?? [], "proc.send")) {
+      throw new Error("Permission denied: proc.send");
+    }
     const proc = ctx.procs.get(target.pid);
     if (!proc) {
       throw new Error(`Process not found: ${target.pid}`);

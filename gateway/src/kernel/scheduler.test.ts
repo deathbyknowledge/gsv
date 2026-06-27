@@ -303,6 +303,54 @@ describe("scheduler", () => {
     }, ctx)).rejects.toThrow("Permission denied: shell.exec");
   });
 
+  it("requires proc.spawn access for process spawn schedules", async () => {
+    const ctx = makeSchedulerContext({
+      identity: {
+        role: "user",
+        process: USER_IDENTITY,
+        capabilities: ["sched.add"],
+      },
+      schedules: {
+        create: vi.fn(),
+      } as unknown as ScheduleStore,
+    });
+
+    await expect(handleSchedulerAdd({
+      name: "spawn",
+      expression: { kind: "after", afterMs: 1_000 },
+      target: { kind: "process.spawn", prompt: "Run the scheduled task." },
+    }, ctx)).rejects.toThrow("Permission denied: proc.spawn");
+  });
+
+  it("requires proc.send access for process event schedules", async () => {
+    const ctx = makeSchedulerContext({
+      identity: {
+        role: "user",
+        process: USER_IDENTITY,
+        capabilities: ["sched.add"],
+      },
+      procs: {
+        get: vi.fn(() => ({
+          processId: "proc:target",
+          ownerUid: USER_IDENTITY.uid,
+        })),
+      } as unknown as KernelContext["procs"],
+      schedules: {
+        create: vi.fn(),
+      } as unknown as ScheduleStore,
+    });
+
+    await expect(handleSchedulerAdd({
+      name: "event",
+      expression: { kind: "after", afterMs: 1_000 },
+      target: {
+        kind: "process.event",
+        pid: "proc:target",
+        message: "Run the pulse.",
+      },
+    }, ctx)).rejects.toThrow("Permission denied: proc.send");
+  });
+
   it("lists only the caller owner for non-root, even when ownerUid is supplied", () => {
     const list = vi.fn(() => ({ records: [], count: 0 }));
     const ctx = makeSchedulerContext({
