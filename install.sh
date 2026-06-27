@@ -112,39 +112,28 @@ validate_channel() {
     esac
 }
 
-github_api_get() {
-    local url="$1"
-
-    if command -v curl > /dev/null 2>&1; then
-        curl -fsSL \
-            -H "Accept: application/vnd.github+json" \
-            -H "User-Agent: gsv-installer" \
-            "$url"
-        return
-    fi
-
-    if command -v wget > /dev/null 2>&1; then
-        wget -q -O - \
-            --header="Accept: application/vnd.github+json" \
-            --header="User-Agent: gsv-installer" \
-            "$url"
-        return
-    fi
-
-    error "curl or wget required"
-    exit 1
-}
-
-cache_bust_url_if_dev() {
+cache_bust_url_if_mutable() {
     local release_ref="$1"
     local url="$2"
 
-    if [ "$release_ref" != "$DEV_RELEASE_TAG" ]; then
+    if [ "$release_ref" != "latest" ] && [ "$release_ref" != "$DEV_RELEASE_TAG" ]; then
         printf '%s\n' "$url"
         return
     fi
 
     printf '%s?ts=%s\n' "$url" "$(date +%s)"
+}
+
+release_asset_url() {
+    local release_ref="$1"
+    local asset="$2"
+
+    if [ "$release_ref" = "latest" ]; then
+        printf 'https://github.com/%s/releases/latest/download/%s\n' "$REPO" "$asset"
+        return
+    fi
+
+    printf 'https://github.com/%s/releases/download/%s/%s\n' "$REPO" "$release_ref" "$asset"
 }
 
 resolve_release_ref() {
@@ -156,59 +145,11 @@ resolve_release_ref() {
     validate_channel
 
     if [ "$CHANNEL" = "stable" ]; then
-        local response
-        response=$(github_api_get "https://api.github.com/repos/${REPO}/releases/latest")
-        local tag
-        tag=$(printf '%s' "$response" | tr -d '\n' | sed -n 's/.*"tag_name":"\([^"]*\)".*/\1/p')
-        if [ -z "$tag" ]; then
-            error "Could not resolve latest stable release tag"
-            exit 1
-        fi
-        printf '%s\n' "$tag"
+        printf '%s\n' "latest"
         return
     fi
 
-    local response
-    local tag
-    if response=$(github_api_get "https://api.github.com/repos/${REPO}/releases/tags/${DEV_RELEASE_TAG}" 2>/dev/null); then
-        tag=$(printf '%s' "$response" | tr -d '\n' | sed -n 's/.*"tag_name":"\([^"]*\)".*/\1/p')
-        if [ -n "$tag" ]; then
-            printf '%s\n' "$tag"
-            return
-        fi
-    fi
-
-    response=$(github_api_get "https://api.github.com/repos/${REPO}/releases?per_page=20")
-    tag=$(
-        printf '%s' "$response" \
-          | tr -d '\n' \
-          | grep -Eo '"tag_name":"[^"]*"|"draft":[^,}]*|"prerelease":[^,}]*' \
-          | awk -F: '
-              /"tag_name"/ {
-                  tag=$2
-                  gsub(/"/, "", tag)
-                  draft=""
-                  prerelease=""
-                  next
-              }
-              /"draft"/ {
-                  draft=$2
-                  next
-              }
-              /"prerelease"/ {
-                  prerelease=$2
-                  if (draft == "false" && (tag == "dev" || (prerelease == "true" && tag ~ /^v[0-9]+\.[0-9]+\.[0-9]+-[0-9A-Za-z.-]+$/))) {
-                      print tag
-                      exit
-                  }
-              }
-          '
-    )
-    if [ -z "$tag" ]; then
-        error "Could not resolve latest dev prerelease tag"
-        exit 1
-    fi
-    printf '%s\n' "$tag"
+    printf '%s\n' "$DEV_RELEASE_TAG"
 }
 
 # ============================================================================
@@ -219,8 +160,9 @@ download_cli() {
     local release_ref
     release_ref="$(resolve_release_ref)"
 
-    local url="https://github.com/${REPO}/releases/download/${release_ref}/${BINARY_NAME}"
-    url="$(cache_bust_url_if_dev "$release_ref" "$url")"
+    local url
+    url="$(release_asset_url "$release_ref" "$BINARY_NAME")"
+    url="$(cache_bust_url_if_mutable "$release_ref" "$url")"
     local tmp_dir=$(mktemp -d)
     local tmp_file="${tmp_dir}/gsv"
     

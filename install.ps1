@@ -29,20 +29,21 @@ function Write-Warn([string]$Message) {
   Write-Host "  !! $Message" -ForegroundColor Yellow
 }
 
-function Get-GithubJson([string]$Url) {
-  Invoke-RestMethod -Headers @{
-    Accept = "application/vnd.github+json"
-    "User-Agent" = "gsv-installer"
-  } -Uri $Url
-}
-
-function Add-CacheBustIfDev([string]$ReleaseRef, [string]$Url) {
-  if ($ReleaseRef -ne $DevReleaseTag) {
+function Add-CacheBustIfMutable([string]$ReleaseRef, [string]$Url) {
+  if ($ReleaseRef -ne "latest" -and $ReleaseRef -ne $DevReleaseTag) {
     return $Url
   }
 
   $separator = if ($Url.Contains("?")) { "&" } else { "?" }
   return "$Url${separator}ts=$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())"
+}
+
+function ReleaseAssetUrl([string]$ReleaseRef, [string]$Asset) {
+  if ($ReleaseRef -eq "latest") {
+    return "https://github.com/$Repo/releases/latest/download/$Asset"
+  }
+
+  return "https://github.com/$Repo/releases/download/$ReleaseRef/$Asset"
 }
 
 function Resolve-ReleaseTag {
@@ -51,34 +52,14 @@ function Resolve-ReleaseTag {
   }
 
   if ($Channel -eq "stable") {
-    $release = Get-GithubJson "https://api.github.com/repos/$Repo/releases/latest"
-    if (-not $release.tag_name) {
-      throw "Could not resolve latest stable release tag"
-    }
-    return [string]$release.tag_name
+    return "latest"
   }
 
   if ($Channel -ne "dev") {
     throw "Invalid GSV_CHANNEL '$Channel' (must be 'stable' or 'dev')"
   }
 
-  try {
-    $release = Get-GithubJson "https://api.github.com/repos/$Repo/releases/tags/$DevReleaseTag"
-    if ($release.tag_name) {
-      return [string]$release.tag_name
-    }
-  } catch {
-  }
-
-  $releases = Get-GithubJson "https://api.github.com/repos/$Repo/releases?per_page=20"
-  foreach ($release in $releases) {
-    $tag = [string]$release.tag_name
-    if (-not $release.draft -and ($tag -eq $DevReleaseTag -or ($release.prerelease -and $tag -match "^v\d+\.\d+\.\d+-[0-9A-Za-z.-]+$"))) {
-      return $tag
-    }
-  }
-
-  throw "Could not resolve latest dev prerelease tag"
+  return $DevReleaseTag
 }
 
 function Ensure-ConfigFile {
@@ -137,8 +118,8 @@ function Persist-ReleaseChannel {
 
 function Install-GsvCli {
   $releaseRef = Resolve-ReleaseTag
-  $downloadUrl = Add-CacheBustIfDev $releaseRef "https://github.com/$Repo/releases/download/$releaseRef/$BinaryName"
-  $checksumUrl = Add-CacheBustIfDev $releaseRef "https://github.com/$Repo/releases/download/$releaseRef/checksums.txt"
+  $downloadUrl = Add-CacheBustIfMutable $releaseRef (ReleaseAssetUrl $releaseRef $BinaryName)
+  $checksumUrl = Add-CacheBustIfMutable $releaseRef (ReleaseAssetUrl $releaseRef "checksums.txt")
   $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString("N"))
   $tempFile = Join-Path $tempDir "gsv.exe"
   $targetPath = Join-Path $InstallDir "gsv.exe"

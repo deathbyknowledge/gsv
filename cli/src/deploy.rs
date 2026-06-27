@@ -226,142 +226,16 @@ macro_rules! println {
     }};
 }
 
-#[derive(Debug, Clone, Deserialize)]
-struct GitHubRelease {
-    tag_name: String,
-    #[serde(default)]
-    prerelease: bool,
-    #[serde(default)]
-    draft: bool,
-}
-
-fn is_semver_release_tag(tag: &str) -> bool {
-    let Some(body) = tag.trim().strip_prefix('v') else {
-        return false;
-    };
-
-    let (core, prerelease) = match body.split_once('-') {
-        Some((value, suffix)) => (value, Some(suffix)),
-        None => (body, None),
-    };
-
-    let mut parts = core.split('.');
-    if !parts
-        .by_ref()
-        .take(3)
-        .all(|part| !part.is_empty() && part.chars().all(|ch| ch.is_ascii_digit()))
-    {
-        return false;
-    }
-    if parts.next().is_some() {
-        return false;
-    }
-
-    match prerelease {
-        Some(value) => {
-            !value.is_empty()
-                && value.split('.').all(|part| {
-                    !part.is_empty()
-                        && part
-                            .chars()
-                            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-')
-                })
-        }
-        None => true,
-    }
-}
-
-fn is_semver_prerelease_tag(tag: &str) -> bool {
-    is_semver_release_tag(tag) && tag.contains('-')
-}
-
 fn is_dev_channel_release_tag(tag: &str) -> bool {
     tag.trim().eq_ignore_ascii_case(DEV_RELEASE_TAG)
 }
 
-fn select_latest_prerelease_tag(releases: &[GitHubRelease]) -> Option<String> {
-    releases.iter().find_map(|release| {
-        if release.draft || !release.prerelease || !is_semver_prerelease_tag(&release.tag_name) {
-            return None;
-        }
-        Some(release.tag_name.clone())
-    })
+fn is_latest_channel_release_tag(tag: &str) -> bool {
+    tag.trim().eq_ignore_ascii_case("latest")
 }
 
-fn select_dev_channel_release_tag(releases: &[GitHubRelease]) -> Option<String> {
-    releases
-        .iter()
-        .find_map(|release| {
-            if release.draft || !is_dev_channel_release_tag(&release.tag_name) {
-                return None;
-            }
-            Some(release.tag_name.clone())
-        })
-        .or_else(|| select_latest_prerelease_tag(releases))
-}
-
-async fn fetch_latest_stable_release_tag(
-    client: &reqwest::Client,
-) -> Result<String, Box<dyn std::error::Error>> {
-    let url = format!(
-        "https://api.github.com/repos/{}/{}/releases/latest",
-        REPO_OWNER, REPO_NAME
-    );
-    let release: GitHubRelease = client
-        .get(url)
-        .header("User-Agent", "gsv-cli")
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
-    if !is_semver_release_tag(&release.tag_name) || is_semver_prerelease_tag(&release.tag_name) {
-        return Err(format!("Latest stable release tag is invalid: {}", release.tag_name).into());
-    }
-    Ok(release.tag_name)
-}
-
-async fn fetch_latest_dev_release_tag(
-    client: &reqwest::Client,
-) -> Result<String, Box<dyn std::error::Error>> {
-    let fixed_url = format!(
-        "https://api.github.com/repos/{}/{}/releases/tags/{}",
-        REPO_OWNER, REPO_NAME, DEV_RELEASE_TAG
-    );
-    let fixed_response = client
-        .get(&fixed_url)
-        .header("User-Agent", "gsv-cli")
-        .send()
-        .await?;
-    if fixed_response.status() != reqwest::StatusCode::NOT_FOUND {
-        let release: GitHubRelease = fixed_response.error_for_status()?.json().await?;
-        if release.draft {
-            return Err("Dev channel release is still a draft".into());
-        }
-        if !is_dev_channel_release_tag(&release.tag_name) {
-            return Err(format!(
-                "Dev channel release tag is invalid: expected {}, got {}",
-                DEV_RELEASE_TAG, release.tag_name
-            )
-            .into());
-        }
-        return Ok(release.tag_name);
-    }
-
-    let url = format!(
-        "https://api.github.com/repos/{}/{}/releases?per_page=20",
-        REPO_OWNER, REPO_NAME
-    );
-    let releases: Vec<GitHubRelease> = client
-        .get(url)
-        .header("User-Agent", "gsv-cli")
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
-    select_dev_channel_release_tag(&releases)
-        .ok_or_else(|| "No dev channel release found on GitHub releases".into())
+fn is_mutable_release_tag(tag: &str) -> bool {
+    is_latest_channel_release_tag(tag) || is_dev_channel_release_tag(tag)
 }
 
 #[derive(Debug, Deserialize)]
@@ -605,6 +479,13 @@ pub fn available_components() -> &'static [&'static str] {
 }
 
 fn base_release_url(tag: &str) -> String {
+    if is_latest_channel_release_tag(tag) {
+        return format!(
+            "https://github.com/{}/{}/releases/latest/download",
+            REPO_OWNER, REPO_NAME
+        );
+    }
+
     format!(
         "https://github.com/{}/{}/releases/download/{}",
         REPO_OWNER, REPO_NAME, tag
@@ -613,7 +494,7 @@ fn base_release_url(tag: &str) -> String {
 
 fn release_download_url(tag: &str, file_name: &str) -> String {
     let base = format!("{}/{}", base_release_url(tag), file_name);
-    if !is_dev_channel_release_tag(tag) {
+    if !is_mutable_release_tag(tag) {
         return base;
     }
 
@@ -664,11 +545,11 @@ pub fn normalize_components(raw: &[String]) -> Result<Vec<String>, Box<dyn std::
 }
 
 pub async fn resolve_release_tag(version: &str) -> Result<String, Box<dyn std::error::Error>> {
-    let client = reqwest::Client::builder().http1_only().build()?;
-    match version.trim().to_ascii_lowercase().as_str() {
-        "latest" | "stable" => fetch_latest_stable_release_tag(&client).await,
-        "dev" => fetch_latest_dev_release_tag(&client).await,
-        _ => Ok(version.to_string()),
+    let trimmed = version.trim();
+    match trimmed.to_ascii_lowercase().as_str() {
+        "latest" | "stable" => Ok("latest".to_string()),
+        "dev" => Ok(DEV_RELEASE_TAG.to_string()),
+        _ => Ok(trimmed.to_string()),
     }
 }
 
@@ -982,7 +863,7 @@ pub async fn fetch_bundles(
     let tag = resolve_release_tag(version).await?;
     let checksums_url = release_download_url(&tag, BUNDLE_CHECKSUMS);
     let client = reqwest::Client::new();
-    let refresh_mutable_dev = is_dev_channel_release_tag(&tag);
+    let refresh_mutable_ref = is_mutable_release_tag(&tag);
 
     println!("Fetching checksums: {}", checksums_url);
     let checksums_resp = client
@@ -1010,7 +891,7 @@ Use a newer release tag or publish a release that includes Cloudflare bundles.",
         let bundle_url = release_download_url(&tag, bundle_file);
         let component_dir = version_root.join(component);
 
-        if component_dir.exists() && !(force || refresh_mutable_dev) {
+        if component_dir.exists() && !(force || refresh_mutable_ref) {
             println!(
                 "Skipping {} (already exists, use --force to overwrite)",
                 component
@@ -3360,70 +3241,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn semver_release_tag_detection_accepts_expected_tags() {
-        assert!(is_semver_release_tag("v0.1.0"));
-        assert!(is_semver_release_tag("v0.1.0-dev.42"));
-        assert!(!is_semver_release_tag("0.1.0"));
-        assert!(!is_semver_release_tag("stable"));
-    }
-
-    #[test]
-    fn prerelease_detection_distinguishes_stable_and_dev_tags() {
-        assert!(!is_semver_prerelease_tag("v0.1.0"));
-        assert!(is_semver_prerelease_tag("v0.1.0-dev.42"));
-    }
-
-    #[test]
     fn dev_channel_release_detection_accepts_fixed_dev_tag() {
         assert!(is_dev_channel_release_tag("dev"));
         assert!(is_dev_channel_release_tag("DEV"));
         assert!(!is_dev_channel_release_tag("v0.1.0-dev.42"));
     }
 
-    #[test]
-    fn latest_prerelease_selection_skips_drafts_and_non_semver_tags() {
-        let releases = vec![
-            GitHubRelease {
-                tag_name: "dev".to_string(),
-                prerelease: true,
-                draft: false,
-            },
-            GitHubRelease {
-                tag_name: "v0.2.0-dev.43".to_string(),
-                prerelease: true,
-                draft: true,
-            },
-            GitHubRelease {
-                tag_name: "v0.2.0-dev.42".to_string(),
-                prerelease: true,
-                draft: false,
-            },
-        ];
-
-        assert_eq!(
-            select_latest_prerelease_tag(&releases),
-            Some("v0.2.0-dev.42".to_string())
-        );
+    #[tokio::test]
+    async fn release_resolution_uses_direct_channel_refs() {
+        assert_eq!(resolve_release_tag("latest").await.unwrap(), "latest");
+        assert_eq!(resolve_release_tag("stable").await.unwrap(), "latest");
+        assert_eq!(resolve_release_tag("dev").await.unwrap(), "dev");
+        assert_eq!(resolve_release_tag(" v0.2.9 ").await.unwrap(), "v0.2.9");
     }
 
     #[test]
-    fn dev_channel_selection_prefers_fixed_dev_tag() {
-        let releases = vec![
-            GitHubRelease {
-                tag_name: "v0.2.0-dev.42".to_string(),
-                prerelease: true,
-                draft: false,
-            },
-            GitHubRelease {
-                tag_name: "dev".to_string(),
-                prerelease: true,
-                draft: false,
-            },
-        ];
+    fn release_download_url_uses_direct_channel_asset_urls() {
+        let latest = release_download_url("latest", BUNDLE_CHECKSUMS);
+        assert!(latest.starts_with(
+            "https://github.com/deathbyknowledge/gsv/releases/latest/download/cloudflare-checksums.txt?ts="
+        ));
+
+        let dev = release_download_url("dev", BUNDLE_CHECKSUMS);
+        assert!(dev.starts_with(
+            "https://github.com/deathbyknowledge/gsv/releases/download/dev/cloudflare-checksums.txt?ts="
+        ));
 
         assert_eq!(
-            select_dev_channel_release_tag(&releases),
-            Some("dev".to_string())
+            release_download_url("v0.2.9", BUNDLE_CHECKSUMS),
+            "https://github.com/deathbyknowledge/gsv/releases/download/v0.2.9/cloudflare-checksums.txt"
         );
     }
 
