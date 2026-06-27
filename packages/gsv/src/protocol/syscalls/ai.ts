@@ -211,6 +211,8 @@ export type AiTextGenerateConfig = {
     name?: string;
   };
   overrides?: Record<string, string>;
+  processOverrides?: Record<string, string>;
+  processProfile?: ProcAiConfigProfileRef | null;
 };
 
 export type AiTextGenerateArgs = {

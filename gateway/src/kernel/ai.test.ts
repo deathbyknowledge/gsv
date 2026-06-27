@@ -459,6 +459,60 @@ describe("handleAiConfig", () => {
     });
   });
 
+  it("generates text with process snapshot config in the kernel", async () => {
+    generateMock.mockImplementationOnce(async (request: any) => {
+      expect(request.config).toMatchObject({
+        executor: { kind: "kernel" },
+        provider: "anthropic",
+        model: "claude-process",
+        apiKey: "profile-secret",
+      });
+      return {
+        role: "assistant",
+        content: [{ type: "text", text: "snapshot pong" }],
+        api: "test",
+        provider: "anthropic",
+        model: "claude-process",
+        usage: {
+          input: 1,
+          output: 1,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 2,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: "stop",
+        timestamp: 1,
+      };
+    });
+
+    const result = await handleAiTextGenerate({
+      systemPrompt: "Be direct.",
+      messages: [{ role: "user", content: "ping" }],
+      config: {
+        processOverrides: {
+          "config/ai/provider": "anthropic",
+          "config/ai/model": "claude-process",
+        },
+        processProfile: {
+          id: "fast-stack",
+          name: "Fast Stack",
+          appliedAt: 1,
+        },
+      },
+    }, makeAiConfigContext({
+      "users/1000/ai/model_profiles/fast-stack/api_key": "profile-secret",
+    }, {
+      processId: "task-1",
+    }));
+
+    expect(result).toMatchObject({
+      provider: "anthropic",
+      model: "claude-process",
+      text: "snapshot pong",
+    });
+  });
+
   it("falls back to the owning human's AI config for agent processes", async () => {
     const result = await handleAiConfig({}, makeAiConfigContext({
       "users/1000/ai/provider": "owner-provider",

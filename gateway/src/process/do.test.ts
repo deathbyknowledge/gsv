@@ -624,6 +624,7 @@ describe("Process DO — mechanical", () => {
           queued: false,
           conversationId: "default",
           config: {
+            executor: { kind: "process", pid },
             profile: "task",
             provider: "workers-ai",
             model: "@cf/nvidia/nemotron-3-120b-a12b",
@@ -1931,6 +1932,138 @@ describe("Process DO — mechanical", () => {
       const outputSignal = (emitted as Array<{ signal: string; payload: any }>)
         .find((entry) => entry.signal === "proc.run.output");
       expect(outputSignal?.payload.text).toBe("hello");
+    });
+
+    it("routes kernel text executors through ai.text.generate", async () => {
+      const pid = "mech-chat-kernel-executor";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const kernelCalls: Array<{ call: string; args: any }> = [];
+        process.sendSignal = async () => {};
+        process.kernelRpc = async (call: string, args: any) => {
+          kernelCalls.push({ call, args });
+          if (call !== "ai.text.generate") {
+            throw new Error(`unexpected kernel syscall: ${call}`);
+          }
+          return {
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "kernel hello" }],
+              api: "test",
+              provider: "anthropic",
+              model: "claude-process",
+              usage: {
+                input: 4,
+                output: 2,
+                cacheRead: 0,
+                cacheWrite: 0,
+                totalTokens: 6,
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+              },
+              stopReason: "stop",
+              timestamp: Date.now(),
+            },
+            provider: "anthropic",
+            model: "claude-process",
+            text: "kernel hello",
+          };
+        };
+        process.generation = {
+          [GENERATION_SERVICE_MARKER]: true,
+          stream() {
+            throw new Error("process-local stream should not be used");
+          },
+          async generate() {
+            throw new Error("process-local generate should not be used");
+          },
+          async generateText() {
+            throw new Error("process-local generateText should not be used");
+          },
+        };
+
+        process.store.setAiConfigSnapshot({
+          version: 1,
+          values: {
+            "config/ai/provider": "anthropic",
+            "config/ai/model": "claude-process",
+          },
+          profile: {
+            id: "fast-stack",
+            name: "Fast Stack",
+            appliedAt: 1,
+          },
+          updatedAt: 1,
+        });
+        process.store.appendMessage("user", "use kernel");
+        process.currentRun = {
+          runId: "run-chat-kernel-executor",
+          queued: false,
+          conversationId: "default",
+          config: {
+            executor: { kind: "kernel" },
+            provider: "anthropic",
+            model: "claude-process",
+            apiKey: "",
+            reasoning: "off",
+            maxTokens: 8192,
+            contextWindowTokens: 200000,
+            contextWindowSource: "config",
+            maxContextBytes: 32768,
+            generationTimeoutMs: 180000,
+            generationStreaming: "auto",
+            capabilities: [],
+          },
+          tools: [{
+            name: "Read",
+            description: "Read a file",
+            inputSchema: {
+              type: "object",
+              properties: { path: { type: "string" } },
+              required: ["path"],
+            },
+          }],
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+        await process.continueAgentLoop("run-chat-kernel-executor");
+        return {
+          kernelCalls,
+          messages: process.store.getMessages(),
+        };
+      });
+
+      expect(result.kernelCalls).toHaveLength(1);
+      expect(result.kernelCalls[0]).toMatchObject({
+        call: "ai.text.generate",
+        args: {
+          systemPrompt: "Test system prompt.",
+          messages: [{
+            role: "user",
+            content: "use kernel",
+          }],
+          tools: [{
+            name: "Read",
+          }],
+          config: {
+            processOverrides: {
+              "config/ai/provider": "anthropic",
+              "config/ai/model": "claude-process",
+            },
+            processProfile: {
+              id: "fast-stack",
+              name: "Fast Stack",
+              appliedAt: 1,
+            },
+          },
+        },
+      });
+      expect(result.messages[result.messages.length - 1]).toMatchObject({
+        role: "assistant",
+        content: "kernel hello",
+      });
     });
   });
 

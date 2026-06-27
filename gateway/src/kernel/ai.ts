@@ -534,11 +534,23 @@ async function resolveAiTextGenerationConfig(
   ctx: KernelContext,
 ): Promise<AiConfigResult> {
   const requested = input && typeof input === "object" ? input : undefined;
-  const overrides = normalizeProcessAiConfigValues(requested?.overrides ?? {});
+  const overrides = normalizeProcessAiConfigValues({
+    ...(requested?.processOverrides ?? {}),
+    ...(requested?.overrides ?? {}),
+  });
+  const processProfile = requested?.processProfile;
   const preset = requested?.preset;
   if (!preset) {
     return withAiTextExecutor(
-      await handleAiConfig(Object.keys(overrides).length > 0 ? { processOverrides: overrides } : {}, ctx),
+      await handleAiConfig(
+        Object.keys(overrides).length > 0 || processProfile
+          ? {
+              processOverrides: overrides,
+              processProfile: processProfile ?? null,
+            }
+          : {},
+        ctx,
+      ),
       { kind: "kernel" },
     );
   }

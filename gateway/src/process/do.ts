@@ -18,11 +18,12 @@ import type {
   ResponseErrFrame,
   SignalFrame,
 } from "../protocol/frames";
-import type { ResultOf, SyscallName, ToolDefinition } from "../syscalls";
+import type { ArgsOf, ResultOf, SyscallName, ToolDefinition } from "../syscalls";
 import type { CodeModeExecArgs, CodeModeRunArgs, CodeModeRunResult } from "../syscalls/codemode";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type {
   AiConfigResult,
+  AiTextGenerateConfig,
   AiTextGenerateOptions,
   AiToolsDevice,
 } from "../syscalls/ai";
@@ -190,6 +191,7 @@ type RunState = {
   conversationId: string;
   pendingRuntimeEvents?: number;
   config?: AiConfigResult;
+  aiTextGenerateConfig?: AiTextGenerateConfig;
   tools?: ToolDefinition[];
   devices?: AiToolsDevice[];
   mcpServers?: string[];
@@ -1914,8 +1916,12 @@ export class Process extends Host<Env> {
       maxTokens: 768,
       reasoning: "off",
     };
+    const aiTextGenerateConfig = this.currentRun?.config === config
+      ? this.currentRun.aiTextGenerateConfig
+      : undefined;
     const generated = await this.generateCompactionText({
       config,
+      aiTextGenerateConfig,
       context,
       options: generationOptions,
       sessionAffinityKey: `${this.pid}:compaction`,
@@ -2689,6 +2695,7 @@ export class Process extends Host<Env> {
 
     // Step 3: Load config + tools (first tick only, cached on run state)
     if (!run.config) {
+      run.aiTextGenerateConfig = this.buildAiTextGenerateConfig();
       run.config = await this.resolveAiConfig();
       if (await this.handleRunStopped(runId)) {
         return;
@@ -2788,6 +2795,7 @@ export class Process extends Host<Env> {
           runId,
           conversationId,
           config: run.config!,
+          aiTextGenerateConfig: run.aiTextGenerateConfig,
           context,
           sessionAffinityKey: this.pid,
           streamSeq,
@@ -3008,6 +3016,29 @@ export class Process extends Host<Env> {
     runId: string;
     conversationId: string;
     config: AiConfigResult;
+    aiTextGenerateConfig?: AiTextGenerateConfig;
+    context: Context;
+    sessionAffinityKey?: string;
+    streamSeq?: StreamSeqCounter;
+  }): Promise<AssistantMessage | null> {
+    const executor = this.resolveAiTextExecutor(options.config);
+    if (executor.kind === "kernel") {
+      return await this.generateAssistantResponseViaKernel(options);
+    }
+    if (executor.kind === "device") {
+      throw new Error(`AI text executor is not available: device:${executor.target}`);
+    }
+    if (executor.pid !== this.pid) {
+      throw new Error(`AI text process executor is not available: ${executor.pid}`);
+    }
+    return await this.generateAssistantResponseLocally(options);
+  }
+
+  private async generateAssistantResponseLocally(options: {
+    runId: string;
+    conversationId: string;
+    config: AiConfigResult;
+    aiTextGenerateConfig?: AiTextGenerateConfig;
     context: Context;
     sessionAffinityKey?: string;
     streamSeq?: StreamSeqCounter;
@@ -3068,12 +3099,43 @@ export class Process extends Host<Env> {
     return response ?? await stream.result();
   }
 
+  private async generateAssistantResponseViaKernel(options: {
+    config: AiConfigResult;
+    aiTextGenerateConfig?: AiTextGenerateConfig;
+    context: Context;
+    sessionAffinityKey?: string;
+  }): Promise<AssistantMessage> {
+    const result = await this.kernelRpc("ai.text.generate", this.buildAiTextGenerateArgs({
+      config: options.aiTextGenerateConfig,
+      context: options.context,
+      sessionAffinityKey: options.sessionAffinityKey,
+    }));
+    return result.message as unknown as AssistantMessage;
+  }
+
   private async generateCompactionText(options: {
     config: AiConfigResult;
+    aiTextGenerateConfig?: AiTextGenerateConfig;
     context: Context;
     options: AiTextGenerateOptions;
     sessionAffinityKey: string;
   }): Promise<string> {
+    const executor = this.resolveAiTextExecutor(options.config);
+    if (executor.kind === "kernel") {
+      const result = await this.kernelRpc("ai.text.generate", this.buildAiTextGenerateArgs({
+        config: options.aiTextGenerateConfig,
+        context: options.context,
+        options: options.options,
+        sessionAffinityKey: options.sessionAffinityKey,
+      }));
+      return result.text ?? "";
+    }
+    if (executor.kind === "device") {
+      throw new Error(`AI text executor is not available: device:${executor.target}`);
+    }
+    if (executor.pid !== this.pid) {
+      throw new Error(`AI text process executor is not available: ${executor.pid}`);
+    }
     const generation = this.generation as unknown;
     if (!isGenerationService(generation)) {
       const injected = generation as {
@@ -3099,6 +3161,44 @@ export class Process extends Host<Env> {
       options: options.options,
       sessionAffinityKey: options.sessionAffinityKey,
     });
+  }
+
+  private buildAiTextGenerateArgs(options: {
+    config?: AiTextGenerateConfig;
+    context: Context;
+    options?: AiTextGenerateOptions;
+    sessionAffinityKey?: string;
+  }): ArgsOf<"ai.text.generate"> {
+    const config = options.config ?? this.buildAiTextGenerateConfig();
+    return {
+      systemPrompt: options.context.systemPrompt,
+      messages: options.context.messages as ArgsOf<"ai.text.generate">["messages"],
+      ...(options.context.tools && options.context.tools.length > 0
+        ? { tools: options.context.tools as ArgsOf<"ai.text.generate">["tools"] }
+        : {}),
+      ...(config ? { config } : {}),
+      ...(options.options ? { options: options.options } : {}),
+      ...(options.sessionAffinityKey ? { sessionAffinityKey: options.sessionAffinityKey } : {}),
+    };
+  }
+
+  private buildAiTextGenerateConfig(): AiTextGenerateConfig | undefined {
+    const snapshot = this.store.getAiConfigSnapshot();
+    if (!snapshot) {
+      return undefined;
+    }
+    const config: AiTextGenerateConfig = {};
+    if (Object.keys(snapshot.values).length > 0) {
+      config.processOverrides = { ...snapshot.values };
+    }
+    if (snapshot.profile) {
+      config.processProfile = snapshot.profile;
+    }
+    return config.processOverrides || config.processProfile ? config : undefined;
+  }
+
+  private resolveAiTextExecutor(config: AiConfigResult): AiConfigResult["executor"] {
+    return config.executor ?? { kind: "process", pid: this.pid };
   }
 
   private recordUnpersistedAssistantUsage(
