@@ -177,12 +177,15 @@ export async function handleAdapterSend(
   args: AdapterSendArgs,
   ctx: KernelContext,
 ): Promise<AdapterSendResult> {
-  const adapter = args.adapter.trim();
+  const adapter = args.adapter.trim().toLowerCase();
   const accountId = args.accountId.trim();
 
   if (!adapter) return { ok: false, error: "adapter is required" };
   if (!accountId) return { ok: false, error: "accountId is required" };
   if (!args.surface?.id?.trim()) return { ok: false, error: "surface.id is required" };
+  if (!canSendToAdapterAccount(ctx, adapter, accountId)) {
+    return { ok: false, error: "Permission denied" };
+  }
 
   const service = resolveAdapterService(ctx.env, adapter);
   if (!service || typeof service.adapterSend !== "function") {
@@ -208,6 +211,26 @@ export async function handleAdapterSend(
     surfaceId: args.surface.id,
     messageId: result.messageId,
   };
+}
+
+function canSendToAdapterAccount(ctx: KernelContext, adapter: string, accountId: string): boolean {
+  const identity = ctx.identity;
+  if (!identity) {
+    return false;
+  }
+  if (identity.role === "service") {
+    return true;
+  }
+  if (identity.role !== "user") {
+    return false;
+  }
+  if (identity.process.uid === 0) {
+    return true;
+  }
+  return ctx.adapters.identityLinks.list(identity.process.uid).some((link) =>
+    link.adapter.trim().toLowerCase() === adapter &&
+    link.accountId.trim() === accountId
+  );
 }
 
 export async function handleAdapterShellExec(

@@ -5,6 +5,7 @@ import {
   handleAdapterDisconnect,
   handleAdapterInbound,
   handleAdapterList,
+  handleAdapterSend,
   handleAdapterStatus,
 } from "./adapter-handlers";
 import { sendFrameToProcess } from "../shared/utils";
@@ -1194,5 +1195,94 @@ describe("adapter lifecycle handlers", () => {
       expect.stringMatching(/^proc:/),
       1000,
     );
+  });
+
+  it("denies adapter.send for non-root users without a linked account", async () => {
+    const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "msg-1" }));
+    const status = {
+      upsert: vi.fn(),
+      list: vi.fn(() => []),
+    };
+    const ctx = makeContext({ CHANNEL_WHATSAPP: { adapterSend } }, status, {
+      identity: {
+        role: "user",
+        process: {
+          uid: 1000,
+          gid: 1000,
+          gids: [1000],
+          username: "sam",
+          home: "/home/sam",
+          cwd: "/home/sam",
+        },
+        capabilities: ["adapter.send"],
+      },
+      identityLinks: {
+        list: vi.fn(() => []),
+      },
+    });
+
+    const result = await handleAdapterSend({
+      adapter: "WhatsApp",
+      accountId: "primary",
+      surface: { kind: "dm", id: "wa:+123" },
+      text: "hello",
+    }, ctx);
+
+    expect(result).toEqual({ ok: false, error: "Permission denied" });
+    expect(adapterSend).not.toHaveBeenCalled();
+  });
+
+  it("allows adapter.send for non-root users with a linked account", async () => {
+    const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "msg-1" }));
+    const status = {
+      upsert: vi.fn(),
+      list: vi.fn(() => []),
+    };
+    const ctx = makeContext({ CHANNEL_WHATSAPP: { adapterSend } }, status, {
+      identity: {
+        role: "user",
+        process: {
+          uid: 1000,
+          gid: 1000,
+          gids: [1000],
+          username: "sam",
+          home: "/home/sam",
+          cwd: "/home/sam",
+        },
+        capabilities: ["adapter.send"],
+      },
+      identityLinks: {
+        list: vi.fn(() => [{
+          adapter: "whatsapp",
+          accountId: "primary",
+          actorId: "wa:+123",
+          uid: 1000,
+          linkedByUid: 1000,
+          createdAt: 1,
+          metadata: null,
+        }]),
+      },
+    });
+
+    const result = await handleAdapterSend({
+      adapter: "WhatsApp",
+      accountId: "primary",
+      surface: { kind: "dm", id: "wa:+123" },
+      text: "hello",
+    }, ctx);
+
+    expect(result).toEqual({
+      ok: true,
+      adapter: "whatsapp",
+      accountId: "primary",
+      surfaceId: "wa:+123",
+      messageId: "msg-1",
+    });
+    expect(adapterSend).toHaveBeenCalledWith("primary", {
+      surface: { kind: "dm", id: "wa:+123" },
+      text: "hello",
+      media: undefined,
+      replyToId: undefined,
+    });
   });
 });

@@ -53,6 +53,9 @@ export function handleSysLink(
   ctx: KernelContext,
 ): SysLinkResult {
   const identity = requireUserIdentity(ctx);
+  if (identity.process.uid !== 0) {
+    throw new Error("Permission denied: manual links require root");
+  }
 
   const adapter = normalizeRequired(args.adapter, "adapter");
   const accountId = normalizeRequired(args.accountId, "accountId");
