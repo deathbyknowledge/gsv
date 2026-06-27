@@ -70,11 +70,19 @@ export function createAccountHomeBackend(
   );
 }
 
+export function isAccountHomeReservedPath(path: string): boolean {
+  const normalized = normalizePath(path);
+  return homeUsernameFromPath(normalized) !== null
+    || normalized === "/root"
+    || normalized.startsWith("/root/");
+}
+
 class AccountHomeMountBackend implements MountBackend {
   constructor(
     private readonly client: RipgitClient,
     private readonly fallback: R2MountBackend,
     private readonly identity: ProcessIdentity,
+    private readonly allowHomeR2Fallback = true,
   ) {}
 
   private get repo() {
@@ -113,6 +121,12 @@ class AccountHomeMountBackend implements MountBackend {
     const kind = this.classify(normalized);
 
     if (kind === "other" || kind === "home") {
+      if (!this.allowHomeR2Fallback) {
+        if (kind === "home") {
+          throw new Error(`EISDIR: illegal operation on a directory, read '${normalized}'`);
+        }
+        throwPermissionDenied(normalized);
+      }
       return this.fallback.readFileBuffer(normalized);
     }
 
@@ -136,6 +150,9 @@ class AccountHomeMountBackend implements MountBackend {
     const kind = this.classify(normalized);
 
     if (kind === "other" || kind === "home") {
+      if (!this.allowHomeR2Fallback) {
+        throwPermissionDenied(normalized);
+      }
       await this.fallback.writeFile(normalized, content);
       return;
     }
@@ -156,6 +173,9 @@ class AccountHomeMountBackend implements MountBackend {
     const kind = this.classify(normalized);
 
     if (kind === "other" || kind === "home") {
+      if (!this.allowHomeR2Fallback) {
+        throwPermissionDenied(normalized);
+      }
       await this.fallback.appendFile(normalized, content);
       return;
     }
@@ -181,6 +201,9 @@ class AccountHomeMountBackend implements MountBackend {
       return true;
     }
     if (kind === "other") {
+      if (!this.allowHomeR2Fallback) {
+        return false;
+      }
       return this.fallback.exists(normalized);
     }
     if (kind === "context-root" || kind === "skills-root") {
@@ -211,6 +234,9 @@ class AccountHomeMountBackend implements MountBackend {
       return this.makeDirectoryStat();
     }
     if (kind === "other") {
+      if (!this.allowHomeR2Fallback) {
+        throwPermissionDenied(normalized);
+      }
       return this.fallback.stat(normalized);
     }
     if (kind === "context-root" || kind === "skills-root") {
@@ -263,6 +289,9 @@ class AccountHomeMountBackend implements MountBackend {
       return;
     }
     if (kind === "other") {
+      if (!this.allowHomeR2Fallback) {
+        throwPermissionDenied(normalized);
+      }
       await this.fallback.mkdir(normalized, options);
       return;
     }
@@ -283,8 +312,10 @@ class AccountHomeMountBackend implements MountBackend {
     const entries = new Set<string>();
 
     if (kind === "home") {
-      for (const name of await this.fallback.readdir(normalized).catch(() => [] as string[])) {
-        entries.add(name);
+      if (this.allowHomeR2Fallback) {
+        for (const name of await this.fallback.readdir(normalized).catch(() => [] as string[])) {
+          entries.add(name);
+        }
       }
       entries.add("context.d");
       entries.add("skills.d");
@@ -327,6 +358,9 @@ class AccountHomeMountBackend implements MountBackend {
       throw new Error(`EPERM: cannot remove home mount '${normalized}'`);
     }
     if (kind === "other") {
+      if (!this.allowHomeR2Fallback) {
+        throwPermissionDenied(normalized);
+      }
       await this.fallback.rm(normalized, options);
       return;
     }
@@ -380,15 +414,20 @@ class AccountHomeMountBackend implements MountBackend {
     const kind = this.classify(normalized);
 
     if (kind === "other") {
+      if (!this.allowHomeR2Fallback) {
+        throwPermissionDenied(normalized);
+      }
       return this.fallback.search!(normalized, query, include);
     }
 
     const combined = new Map<string, FsSearchBackendResult["matches"][number]>();
 
     if (kind === "home") {
-      const fallbackMatches = await this.fallback.search!(normalized, query, include).catch(() => ({ matches: [] as FsSearchBackendResult["matches"] }));
-      for (const match of fallbackMatches.matches) {
-        combined.set(`${match.path}:${match.line}:${match.content}`, match);
+      if (this.allowHomeR2Fallback) {
+        const fallbackMatches = await this.fallback.search!(normalized, query, include).catch(() => ({ matches: [] as FsSearchBackendResult["matches"] }));
+        for (const match of fallbackMatches.matches) {
+          combined.set(`${match.path}:${match.line}:${match.content}`, match);
+        }
       }
       for (const match of await this.searchRepo(query)) {
         combined.set(`${match.path}:${match.line}:${match.content}`, match);
@@ -417,6 +456,9 @@ class AccountHomeMountBackend implements MountBackend {
     const kind = this.classify(normalized);
 
     if (kind === "other" || kind === "home") {
+      if (!this.allowHomeR2Fallback) {
+        throwPermissionDenied(normalized);
+      }
       await this.fallback.symlink(target, normalized);
       return;
     }
@@ -445,6 +487,9 @@ class AccountHomeMountBackend implements MountBackend {
     const kind = this.classify(normalized);
 
     if (kind === "other" || kind === "home") {
+      if (!this.allowHomeR2Fallback) {
+        throwPermissionDenied(normalized);
+      }
       return this.fallback.readlink(normalized);
     }
 
@@ -694,13 +739,17 @@ class DelegatingAccountHomeMountBackend implements MountBackend {
         this.client,
         new R2MountBackend(this.bucket, this.viewerIdentity),
         targetIdentity,
+        this.isRoot,
       );
       this.delegates.set(username, delegate);
     }
 
-    const targetHome = normalizePath(entry.home);
-    return normalized === targetHome || delegate.handlesOverlayPath(normalized) ? delegate : null;
+    return delegate.handles(normalized) ? delegate : null;
   }
+}
+
+function throwPermissionDenied(path: string): never {
+  throw new Error(`EACCES: permission denied, '${path}'`);
 }
 
 function asBytes(content: FileContent): Uint8Array {

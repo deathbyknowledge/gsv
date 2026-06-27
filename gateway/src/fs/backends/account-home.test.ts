@@ -32,6 +32,15 @@ const PERSONAL_AGENT: ProcessIdentity = {
   cwd: "/home/alice-agent",
 };
 
+const BOB: ProcessIdentity = {
+  uid: 1001,
+  gid: 1001,
+  gids: [1001],
+  username: "bob",
+  home: "/home/bob",
+  cwd: "/home/bob",
+};
+
 const fakeRipgit = {
   fetch: async (_input: RequestInfo | URL, _init?: RequestInit) =>
     new Response("not found", { status: 404 }),
@@ -68,6 +77,16 @@ function getPasswdByUid(uid: number) {
       shell: "/bin/init",
     };
   }
+  if (uid === BOB.uid) {
+    return {
+      username: BOB.username,
+      uid: BOB.uid,
+      gid: BOB.gid,
+      gecos: BOB.username,
+      home: BOB.home,
+      shell: "/bin/init",
+    };
+  }
   return null;
 }
 
@@ -77,6 +96,7 @@ const auth = {
     if (username === ALICE.username) return getPasswdByUid(ALICE.uid);
     if (username === PERSONAL_AGENT.username) return getPasswdByUid(PERSONAL_AGENT.uid);
     if (username === PACKAGE_AGENT.username) return getPasswdByUid(PACKAGE_AGENT.uid);
+    if (username === BOB.username) return getPasswdByUid(BOB.uid);
     return null;
   },
   getPersonalAgentUid(ownerUid: number) {
@@ -104,6 +124,13 @@ const auth = {
         members: [],
       };
     }
+    if (gid === BOB.gid) {
+      return {
+        name: BOB.username,
+        gid: BOB.gid,
+        members: [],
+      };
+    }
     return null;
   },
   getGroupByName(name: string) {
@@ -118,7 +145,7 @@ const auth = {
 };
 
 async function clearHomeStorage(): Promise<void> {
-  for (const prefix of ["home/alice", "home/alice-agent", "home/wiki-builder"]) {
+  for (const prefix of ["home/alice", "home/alice-agent", "home/wiki-builder", "home/bob"]) {
     let cursor: string | undefined;
     do {
       const listed = await env.STORAGE.list({ prefix, cursor });
@@ -149,28 +176,26 @@ describe("AccountHomeMountBackend delegated routing", () => {
     await clearHomeStorage();
   });
 
-  it("delegates target home root and home repo overlay paths", () => {
+  it("reserves target home paths for delegated routing", () => {
     const backend = createDelegatingBackend();
 
     expect(backend?.handles("/home/wiki-builder")).toBe(true);
     expect(backend?.handles("/home/wiki-builder/context.d/persona.md")).toBe(true);
     expect(backend?.handles("/home/wiki-builder/skills.d/workflow.md")).toBe(true);
-
-    expect(backend?.handles("/home/wiki-builder/profiles.d/default/notes.md")).toBe(false);
-    expect(backend?.handles("/home/wiki-builder/knowledge/inbox/item.md")).toBe(false);
-    expect(backend?.handles("/home/wiki-builder/conversations/default/history")).toBe(false);
-    expect(backend?.handles("/home/wiki-builder/notes.txt")).toBe(false);
+    expect(backend?.handles("/home/wiki-builder/profiles.d/default/notes.md")).toBe(true);
+    expect(backend?.handles("/home/wiki-builder/knowledge/inbox/item.md")).toBe(true);
+    expect(backend?.handles("/home/wiki-builder/conversations/default/history")).toBe(true);
+    expect(backend?.handles("/home/wiki-builder/notes.txt")).toBe(true);
   });
 
-  it("lets a personal agent reach its owner's home root and home repo overlay paths", () => {
+  it("reserves owner home paths for a personal agent", () => {
     const backend = createPersonalAgentBackend();
 
     expect(backend?.handles("/home/alice")).toBe(true);
     expect(backend?.handles("/home/alice/context.d/persona.md")).toBe(true);
     expect(backend?.handles("/home/alice/skills.d/workflow.md")).toBe(true);
-
-    expect(backend?.handles("/home/alice/knowledge/inbox/item.md")).toBe(false);
-    expect(backend?.handles("/home/alice/conversations/default/history")).toBe(false);
+    expect(backend?.handles("/home/alice/knowledge/inbox/item.md")).toBe(true);
+    expect(backend?.handles("/home/alice/conversations/default/history")).toBe(true);
     expect(backend?.handles("/home/wiki-builder/context.d/persona.md")).toBe(true);
   });
 
@@ -195,17 +220,16 @@ describe("AccountHomeMountBackend delegated routing", () => {
 
     await expect(fs.readdir("/home/wiki-builder")).resolves.toEqual([
       "context.d",
-      "conversations",
       "skills.d",
     ]);
   });
 
-  it("does not read target R2-backed files through the delegated target identity", async () => {
+  it("denies delegated reads, lists, searches, and writes for target R2-backed files", async () => {
     await env.STORAGE.put("home/wiki-builder/conversations/default/history", "secret transcript", {
       customMetadata: {
         uid: String(PACKAGE_AGENT.uid),
         gid: String(PACKAGE_AGENT.gid),
-        mode: "600",
+        mode: "644",
       },
     });
 
@@ -219,6 +243,48 @@ describe("AccountHomeMountBackend delegated routing", () => {
     );
 
     await expect(fs.readFile("/home/wiki-builder/conversations/default/history"))
+      .rejects
+      .toThrow("EACCES");
+    await expect(fs.readdir("/home/wiki-builder/conversations/default"))
+      .rejects
+      .toThrow("EACCES");
+    await expect(fs.search("/home/wiki-builder/conversations", "secret"))
+      .rejects
+      .toThrow("EACCES");
+    await expect(fs.writeFile("/home/wiki-builder/conversations/default/history", "changed"))
+      .rejects
+      .toThrow("EACCES");
+  });
+
+  it("denies unauthorized account-home paths instead of falling through to R2", async () => {
+    await env.STORAGE.put("home/bob/public.txt", "bob public data", {
+      httpMetadata: { contentType: "text/plain" },
+      customMetadata: {
+        uid: String(BOB.uid),
+        gid: String(BOB.gid),
+        mode: "644",
+      },
+    });
+
+    const fs = new GsvFs(
+      env.STORAGE,
+      ALICE,
+      undefined,
+      undefined,
+      null,
+      createDelegatingBackend(),
+    );
+
+    await expect(fs.readFile("/home/bob/public.txt"))
+      .rejects
+      .toThrow("EACCES");
+    await expect(fs.readdir("/home/bob"))
+      .rejects
+      .toThrow("EACCES");
+    await expect(fs.search("/home/bob", "public"))
+      .rejects
+      .toThrow("EACCES");
+    await expect(fs.writeFile("/home/bob/public.txt", "changed"))
       .rejects
       .toThrow("EACCES");
   });
