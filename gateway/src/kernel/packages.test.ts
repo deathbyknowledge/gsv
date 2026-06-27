@@ -121,4 +121,45 @@ describe("package artifacts", () => {
       vi.unstubAllGlobals();
     }
   });
+
+  it("prevents allowlisted outbound fetches from automatically following redirects", async () => {
+    const artifact: PackageArtifact = {
+      hash: "sha256:abc123",
+      mainModule: "__gsv__/main.ts",
+      modules: [
+        {
+          path: "__gsv__/main.ts",
+          kind: "esm",
+          content: "export default {};",
+        },
+      ],
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const request = input instanceof Request ? input : new Request(input);
+      expect(request.url).toBe("https://api.example.test/redirect");
+      expect(request.redirect).toBe("manual");
+      return new Response(null, {
+        status: 302,
+        headers: {
+          location: "https://blocked.example.test/final",
+        },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const code = packageArtifactToWorkerCode(artifact, undefined, {
+        egress: { mode: "allowlist", allow: ["api.example.test"] },
+      });
+
+      const response = await code.globalOutbound?.fetch("https://api.example.test/redirect", {
+        redirect: "follow",
+      });
+
+      expect(response?.status).toBe(302);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });

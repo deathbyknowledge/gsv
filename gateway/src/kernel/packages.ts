@@ -533,11 +533,12 @@ function packageGlobalOutbound(egress: PackageRuntimeAccess["egress"]): Fetcher 
   const allow = normalizeOutboundAllowlist(egress.allow);
   return {
     fetch(input: RequestInfo | URL, init?: RequestInit) {
-      const url = outboundUrl(input);
+      const request = outboundRequest(input, init);
+      const url = new URL(request.url);
       if (!isOutboundAllowed(url, allow)) {
         return Promise.reject(new Error(`Outbound request denied: ${url.origin}`));
       }
-      return fetch(input, init);
+      return fetch(request);
     },
   } as Fetcher;
 }
@@ -569,11 +570,11 @@ function normalizeOutboundAllowEntry(entry: string): string | null {
   }
 }
 
-function outboundUrl(input: RequestInfo | URL): URL {
-  if (input instanceof Request) {
-    return new URL(input.url);
-  }
-  return new URL(String(input));
+function outboundRequest(input: RequestInfo | URL, init?: RequestInit): Request {
+  return new Request(input, {
+    ...init,
+    redirect: "manual",
+  });
 }
 
 function isOutboundAllowed(url: URL, allow: ReadonlySet<string>): boolean {
