@@ -176,6 +176,38 @@ function appClientKeyFor(sessionId: string, clientId: string): string {
 
 const APP_SOCKET_TAG = "app-client";
 
+function stableJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(stableJsonValue);
+  }
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return Object.fromEntries(
+      Object.keys(record)
+        .sort()
+        .flatMap((key) => {
+          const normalized = stableJsonValue(record[key]);
+          return normalized === undefined ? [] : [[key, normalized]];
+        }),
+    );
+  }
+  return value;
+}
+
+export function appRunnerWorkerCodeKey(props: {
+  appFrame: { uid: number };
+  packageId: string;
+  artifact: { hash: string; runtimeAccess?: PackageRuntimeAccess };
+}): string {
+  return [
+    "app-runtime",
+    String(props.appFrame.uid),
+    props.packageId,
+    props.artifact.hash,
+    encodeURIComponent(JSON.stringify(stableJsonValue(props.artifact.runtimeAccess ?? null))),
+  ].join(":");
+}
+
 class AppSocketError extends Error {
   constructor(
     readonly code: number,
@@ -931,12 +963,7 @@ export class AppRunner extends DurableObject<Env> {
   }
 
   #codeKey(props: AppRunnerProps): string {
-    return [
-      "app-runtime",
-      String(props.appFrame.uid),
-      props.packageId,
-      props.artifact.hash,
-    ].join(":");
+    return appRunnerWorkerCodeKey(props);
   }
 
   async #runDueRpcSchedule(record: AppRpcScheduleRecord): Promise<void> {
