@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { ConsoleConfigEntry } from "./consoleModels";
+import { AI_PROVIDER_OPTIONS } from "../../../domain/aiProviders";
 import {
   buildUserAiOverrideKey,
+  AGENT_MODEL_FIELDS,
+  TOOL_MODEL_GROUPS,
   createModelProfile,
   effectiveAiValuesForViewer,
   modelDisplayName,
@@ -14,6 +17,23 @@ import {
 } from "./consoleSettings";
 
 describe("console settings domain", () => {
+  it("uses readable provider choices for all model provider fields", () => {
+    const providerFields = [
+      AGENT_MODEL_FIELDS.find((field) => field.key === "config/ai/provider"),
+      ...TOOL_MODEL_GROUPS.map((group) => group.fields.find((field) => field.key.endsWith("/provider"))),
+    ];
+
+    const providerValues = AI_PROVIDER_OPTIONS.map((option) => option.value);
+    expect(providerValues).toContain("workers-ai");
+    expect(providerValues).toContain("openai");
+    expect(providerValues).not.toContain("amazon-bedrock");
+    expect(providerValues).not.toContain("cloudflare-ai-gateway");
+    expect(providerValues).not.toContain("cloudflare-workers-ai");
+    expect(providerValues).not.toContain("openai-codex");
+    expect(AI_PROVIDER_OPTIONS.find((option) => option.value === "workers-ai")?.label).toBe("Workers AI (gateway binding)");
+    expect(providerFields.every((field) => field?.kind === "select" && field.options === AI_PROVIDER_OPTIONS)).toBe(true);
+  });
+
   it("keeps model profile credentials out of serialized preset metadata", () => {
     const profiles = createModelProfile([], "Deep Research", {
       "config/ai/provider": "openai",

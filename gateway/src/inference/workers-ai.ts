@@ -14,7 +14,8 @@ import type {
   ToolResultMessage,
   UserMessage,
 } from "@earendil-works/pi-ai";
-import { calculateCost, createAssistantMessageEventStream, getModels } from "@earendil-works/pi-ai";
+import { calculateCost, createAssistantMessageEventStream } from "@earendil-works/pi-ai";
+import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import { TimeoutError, isTimeoutError, withTimeout } from "./timeout";
 
 export const WORKERS_AI_PROVIDER = "workers-ai";
@@ -1132,7 +1133,7 @@ function applyWorkersAiUsageCost(modelName: string, usage: AssistantMessage["usa
 }
 
 function resolveWorkersAiPricingModel(modelName: string) {
-  return getModels(PI_WORKERS_AI_PROVIDER).find((model) => model.id === modelName) ?? null;
+  return getBuiltinModels(PI_WORKERS_AI_PROVIDER).find((model) => model.id === modelName) ?? null;
 }
 
 function convertMessage(message: Message): WorkersAiMessage[] {

@@ -109,6 +109,14 @@ export function Select(props: SelectProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const row = listRef.current?.children.item(highlight);
+    if (row instanceof HTMLElement) {
+      row.scrollIntoView({ block: "nearest" });
+    }
+  }, [highlight, isOpen]);
+
   const openList = () => {
     if (disabled) return;
     setHighlight(idx);
@@ -213,6 +221,7 @@ export function Select(props: SelectProps) {
         </button>
         {isOpen ? (
           <div
+            class="gsv-sel-list"
             id={listId}
             ref={listRef}
             role="listbox"

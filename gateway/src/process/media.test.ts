@@ -1,11 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { env } from "cloudflare:test";
 
-vi.mock("@earendil-works/pi-ai", async () => {
-  const actual = await vi.importActual<typeof import("@earendil-works/pi-ai")>("@earendil-works/pi-ai");
+vi.mock("../inference/pi-ai", () => {
   return {
-    ...actual,
-    completeSimple: vi.fn(async () => ({
+    completePiAiSimple: vi.fn(async () => ({
       role: "assistant",
       content: [{ type: "text", text: "pi-ai image description" }],
       api: "test",
@@ -22,18 +20,10 @@ vi.mock("@earendil-works/pi-ai", async () => {
       stopReason: "stop",
       timestamp: 0,
     })),
-    getProviders: vi.fn(() => ["openai"]),
-    getModels: vi.fn((provider: string) => provider === "openai"
-      ? [{ id: "gpt-4o", provider: "openai", api: "openai-responses" }]
-      : []),
   };
 });
 
-import {
-  completeSimple,
-  getModels,
-  getProviders,
-} from "@earendil-works/pi-ai";
+import { completePiAiSimple } from "../inference/pi-ai";
 import {
   DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
   DEFAULT_IMAGE_READING_MODEL,
@@ -275,9 +265,7 @@ describe("process media", () => {
 
     const media = parseStoredProcessMedia(raw);
     expect(media[0].description).toBe("pi-ai image description");
-    expect(getProviders).toHaveBeenCalled();
-    expect(getModels).toHaveBeenCalledWith("openai");
-    expect(completeSimple).toHaveBeenCalledWith(
+    expect(completePiAiSimple).toHaveBeenCalledWith(
       expect.objectContaining({ id: "gpt-4o" }),
       {
         messages: [

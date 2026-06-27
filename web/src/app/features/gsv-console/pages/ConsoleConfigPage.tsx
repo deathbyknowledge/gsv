@@ -6,6 +6,7 @@ import { Surface } from "../../../components/ui/Surface";
 import { Tag } from "../../../components/ui/Tag";
 import { TextArea } from "../../../components/ui/TextArea";
 import { TextInput } from "../../../components/ui/TextInput";
+import { aiProviderOptionsForValue } from "../../../domain/aiProviders";
 import { ConsoleDetailPage } from "../components/ConsoleDetailPage";
 import { useUnsavedGuard } from "../../gsv-shell/unsaved/unsavedGuard";
 import {
@@ -972,7 +973,9 @@ function SettingFieldInput({
   }
 
   if (field.kind === "select") {
-    const options = field.options ?? [];
+    const options = field.key.endsWith("/provider") || field.key === "config/ai/provider"
+      ? aiProviderOptionsForValue(value)
+      : [...(field.options ?? [])];
     const optionLabels = options.map((option) => option.label);
     const selectedIndex = Math.max(0, options.findIndex((option) => option.value === value));
     return (

@@ -4,6 +4,7 @@ import { Select } from "../../../components/ui/Select";
 import { TextInput } from "../../../components/ui/TextInput";
 import { Toggle } from "../../../components/ui/Toggle";
 import { InfoTip } from "../../../components/ui/InfoTip";
+import { aiProviderOptionsForValue, aiProviderSelectIndex } from "../../../domain/aiProviders";
 import { advancedSectionsVisible } from "../sessionDomain";
 import "./SystemDetails.css";
 
@@ -26,6 +27,9 @@ export function SystemDetails({
     ? timezoneOptions
     : [...timezoneOptions, draft.system.timezone].filter(Boolean).sort((left, right) => left.localeCompare(right));
   const timezoneIndex = Math.max(0, options.indexOf(draft.system.timezone));
+  const aiProviderOptions = aiProviderOptionsForValue(draft.ai.provider);
+  const aiProviderLabels = aiProviderOptions.map((option) => option.label);
+  const aiProviderIndex = aiProviderSelectIndex(aiProviderOptions, draft.ai.provider);
 
   return (
     <section class="onboarding-section gsv-setup-preferences" data-setup-detail-step="system" hidden={draft.stage !== "details" || activeStep !== "system"}>
@@ -139,15 +143,15 @@ export function SystemDetails({
             />
           </div>
           <div data-setup-ai-provider-row hidden={!showAiRows}>
-            <TextInput
+            <Select
               label="AI service"
-              placeholder="openai"
+              block
+              options={aiProviderLabels}
+              value={aiProviderIndex}
               disabled={!showAiRows}
-              value={draft.ai.provider}
-              inputProps={{ "data-setup-ai-provider": true, autoComplete: "off" }}
-              onChange={(value) => updateDraft((current) => ({
+              onChange={(index) => updateDraft((current) => ({
                 ...current,
-                ai: { ...current.ai, provider: value },
+                ai: { ...current.ai, provider: aiProviderOptions[index]?.value ?? "" },
               }))}
             />
           </div>
