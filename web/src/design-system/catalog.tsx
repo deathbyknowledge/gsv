@@ -1,5 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
 import { STORY_GROUP_ORDER, type Story, type StoryGroup } from "./story";
+import { Search } from "../app/components/ui/Search";
 
 // ── Story registry ────────────────────────────────────────────────────────
 // Each ported component contributes one story file. Add the import + registry
@@ -175,11 +176,23 @@ const TABS: { id: Tab; label: string }[] = [
 
 export function Catalog() {
   const [tab, setTab] = useState<Tab>("components");
+  const [query, setQuery] = useState("");
+
+  const noun = tab === "templates" ? "templates" : "components";
+
+  // Case-insensitive match across the searchable fields of a story.
+  const q = query.trim().toLowerCase();
+  const matchesQuery = (s: Story) =>
+    q === "" ||
+    s.title.toLowerCase().includes(q) ||
+    s.group.toLowerCase().includes(q) ||
+    (s.blurb?.toLowerCase().includes(q) ?? false);
 
   // Templates live in their own tab; everything else is the Components tab.
+  // Search narrows within the active tab.
   const tabStories = STORIES.filter((s) =>
     tab === "templates" ? s.group === "Templates" : s.group !== "Templates",
-  );
+  ).filter(matchesQuery);
 
   const byGroup = new Map<StoryGroup, Story[]>();
   for (const story of tabStories) {
@@ -200,6 +213,15 @@ export function Catalog() {
       <header class="ds-topbar">
         <h1>GSV Design System</h1>
         <span class="ds-sub">migration preview · web/ port</span>
+        <div class="ds-search">
+          <Search
+            value={query}
+            placeholder={`Search ${noun}…`}
+            size="small"
+            block
+            onChange={setQuery}
+          />
+        </div>
         <div class="ds-tabs">
           {TABS.map((t) => (
             <button
@@ -233,14 +255,20 @@ export function Catalog() {
           ))}
         </nav>
         <main class="ds-main">
-          {groups.map((group) => (
-            <div key={group}>
-              <h2 class="ds-group-head">{group}</h2>
-              {byGroup.get(group)!.map((story) => (
-                <StoryCard key={story.title} story={story} />
-              ))}
+          {tabStories.length === 0 ? (
+            <div class="ds-empty">
+              No {noun} match “{query.trim()}”.
             </div>
-          ))}
+          ) : (
+            groups.map((group) => (
+              <div key={group}>
+                <h2 class="ds-group-head">{group}</h2>
+                {byGroup.get(group)!.map((story) => (
+                  <StoryCard key={story.title} story={story} />
+                ))}
+              </div>
+            ))
+          )}
         </main>
       </div>
     </div>
