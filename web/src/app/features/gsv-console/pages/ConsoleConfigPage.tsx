@@ -660,11 +660,17 @@ function ModelProfileForm({
     }
   };
   const validateDrafts = async () => {
+    const validationValues = { ...drafts };
+    for (const field of MODEL_PROFILE_SECRET_FIELDS) {
+      if (profile && !clearedSecretKeys.has(field.key) && validationValues[field.key] === "") {
+        delete validationValues[field.key];
+      }
+    }
     setPendingLabel("TESTING");
     setStatusTone("pending");
     setStatusText("Testing model...");
     await onValidate({
-      values: drafts,
+      values: validationValues,
       ...(profile && !clearedSecretKeys.has("config/ai/api_key") ? { presetId: profile.id } : {}),
     });
   };
@@ -827,8 +833,18 @@ function SettingsFieldGroup({
     setStatusTone("pending");
     try {
       if (validateBeforeSave) {
+        const validationDrafts = { ...drafts };
+        for (const field of fields) {
+          if (
+            isSensitiveSettingKey(field.key) &&
+            validationDrafts[field.key] === "" &&
+            !clearedSensitiveKeys.has(field.key)
+          ) {
+            delete validationDrafts[field.key];
+          }
+        }
         setStatusText("Testing model...");
-        await validateBeforeSave(drafts);
+        await validateBeforeSave(validationDrafts);
         setPendingLabel("SAVING");
         setStatusText("Model test passed. Saving settings...");
       }

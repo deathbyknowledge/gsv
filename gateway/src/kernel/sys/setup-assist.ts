@@ -47,6 +47,10 @@ export async function handleSysSetupAssist(
     sessionAffinityKey: "setup-assist",
   }, ctx);
 
+  if (result.message.stopReason === "error" || result.message.stopReason === "aborted") {
+    throw new Error(result.message.errorMessage || `Setup assist generation ended with ${result.message.stopReason}`);
+  }
+
   return parseAssistResponse(result.text ?? "");
 }
 

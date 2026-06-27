@@ -484,6 +484,48 @@ describe("console agent service", () => {
       values: {
         "config/ai/provider": "workers-ai",
         "config/ai/model": "@cf/test/model",
+      },
+    });
+
+    expect(call).toHaveBeenCalledWith("ai.text.generate", expect.objectContaining({
+      config: {
+        preset: { id: "fast-stack" },
+        overrides: {
+          "config/ai/provider": "workers-ai",
+          "config/ai/model": "@cf/test/model",
+        },
+      },
+    }));
+  });
+
+  it("validates explicit API key clears as empty overrides", async () => {
+    const call = vi.fn(async () => ({
+      provider: "workers-ai",
+      model: "@cf/test/model",
+      text: "ok",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "ok" }],
+        api: "test",
+        provider: "workers-ai",
+        model: "@cf/test/model",
+        usage: {
+          input: 1,
+          output: 1,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 2,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: "stop",
+      },
+    }));
+
+    await validateConsoleModelConfig({ call } as any, {
+      presetId: "fast-stack",
+      values: {
+        "config/ai/provider": "workers-ai",
+        "config/ai/model": "@cf/test/model",
         "config/ai/api_key": "",
       },
     });
@@ -494,6 +536,7 @@ describe("console agent service", () => {
         overrides: {
           "config/ai/provider": "workers-ai",
           "config/ai/model": "@cf/test/model",
+          "config/ai/api_key": "",
         },
       },
     }));

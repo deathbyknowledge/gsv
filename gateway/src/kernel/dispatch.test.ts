@@ -352,6 +352,44 @@ describe("dispatch", () => {
     expect(registerRoute).not.toHaveBeenCalled();
   });
 
+  it("preserves ai.text.generate target for native AI routing checks", async () => {
+    const deps = {
+      connections: new Map(),
+      registerRoute: vi.fn(),
+      shellSessions: {
+        get: vi.fn(),
+      },
+    } as unknown as DispatchDeps;
+    const frame = {
+      type: "req",
+      id: "req_ai",
+      call: "ai.text.generate",
+      args: { target: "local-gpu", messages: [] },
+    } as RequestFrame<"ai.text.generate">;
+
+    const result = await dispatch(
+      frame,
+      { type: "process", id: "proc_1" },
+      makeContext(),
+      deps,
+    );
+
+    expect(result).toEqual({
+      handled: true,
+      response: {
+        type: "res",
+        id: "req_ai",
+        ok: false,
+        error: {
+          code: 500,
+          message: "AI text generation target is not available: local-gpu",
+        },
+      },
+    });
+    expect(frame.args).toEqual({ target: "local-gpu", messages: [] });
+    expect(deps.registerRoute).not.toHaveBeenCalled();
+  });
+
   it("routes adapter shell targets through adapter workers", async () => {
     const adapterShellExec = vi.fn(async () => ({
       status: "completed" as const,

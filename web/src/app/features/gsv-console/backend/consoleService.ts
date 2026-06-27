@@ -692,9 +692,8 @@ function normalizeIdentityLinkField(value: string, field: string): string {
 function modelValidationOverrides(values: Record<string, string>): Record<string, string> {
   const overrides: Record<string, string> = {};
   for (const key of TEXT_MODEL_VALIDATION_KEYS) {
-    const value = values[key]?.trim();
-    if (value) {
-      overrides[key] = value;
+    if (Object.prototype.hasOwnProperty.call(values, key)) {
+      overrides[key] = (values[key] ?? "").trim();
     }
   }
   return overrides;

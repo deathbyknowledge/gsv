@@ -3,7 +3,7 @@
  *
  * Switch-based — every syscall is explicitly mapped for full visibility.
  * `target` is extracted at the dispatch boundary and stripped before
- * native handlers see it.
+ * native handlers see it unless the native syscall explicitly consumes it.
  *
  * Returns a ResponseFrame for native-handled syscalls, or `null` when
  * the request was forwarded to a device (response will arrive later via
@@ -194,6 +194,7 @@ export type DispatchResult =
   | { handled: false };
 
 const DEFAULT_DEVICE_TTL_MS = 60_000;
+const NATIVE_TARGET_SYSCALLS = new Set<SyscallName>(["ai.text.generate"]);
 
 export async function dispatch(
   frame: RequestFrame,
@@ -257,7 +258,7 @@ export async function dispatch(
     return routeToTarget(frame, routedTarget, origin, ctx, deps);
   }
 
-  if (target) {
+  if (target && !preservesNativeTarget(frame.call)) {
     delete raw.target;
   }
 
@@ -266,6 +267,10 @@ export async function dispatch(
     handled: true,
     response: result,
   };
+}
+
+function preservesNativeTarget(call: SyscallName): boolean {
+  return NATIVE_TARGET_SYSCALLS.has(call);
 }
 
 async function dispatchNative(
