@@ -389,7 +389,9 @@ fn builds_runtime_artifact_for_declarative_backend_and_commands() {
     assert!(
         wrapper.contains("function buildDaemonClient(env, props, daemonOverride, triggerOverride)")
     );
-    assert!(wrapper.contains("function buildStorageClient(env)"));
+    assert!(wrapper.contains("props?.runtimeAccess?.daemon?.rpcSchedules !== true"));
+    assert!(wrapper.contains("function buildStorageClient(env, props)"));
+    assert!(wrapper.contains("props?.runtimeAccess?.storage?.sql !== true"));
     assert!(wrapper.contains("function buildAppClient(env, props)"));
     assert!(wrapper.contains("typeof api.packageSqlExec !== \"function\""));
     assert!(wrapper.contains("async invoke(method, args)"));

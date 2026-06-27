@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import gsvPackageInfo from "@humansandmachines/gsv/package.json";
 import {
   handlePkgCreate,
+  handlePkgCheckout,
   handlePkgInstall,
   handlePkgList,
   handlePkgPublicList,
@@ -960,5 +961,171 @@ describe("pkg syscalls", () => {
     );
     expect(fetcher.calls.some((call) => new URL(call.url).pathname.endsWith("/apply"))).toBe(false);
     expect(install).not.toHaveBeenCalled();
+  });
+
+  it("invalidates review and disables an approved package when checkout changes code", async () => {
+    const record = {
+      ...makeInstalledPackageRecord({
+        packageId: "import:alice/weather:.",
+        name: "weather",
+        sourceSubdir: ".",
+      }),
+      enabled: true,
+      reviewRequired: true,
+      reviewedAt: 123,
+      manifest: {
+        ...makeInstalledPackageRecord({
+          packageId: "import:alice/weather:.",
+          name: "weather",
+          sourceSubdir: ".",
+        }).manifest,
+        source: {
+          repo: "alice/weather",
+          ref: "main",
+          subdir: ".",
+          resolvedCommit: "oldhead123",
+        },
+        capabilities: {
+          egress: { mode: "none" as const },
+        },
+      },
+      artifact: {
+        hash: "sha256:old",
+        mainModule: "src/main.ts",
+        modulePaths: ["src/main.ts"],
+      },
+    };
+    const fetcher = makeFetcher((url) => {
+      if (url.pathname === "/hyperspace/repos/alice/weather/packages/analyze") {
+        expect(url.searchParams.get("ref")).toBe("feature");
+        return Response.json({
+          ok: true,
+          source: {
+            repo: "alice/weather",
+            ref: "feature",
+            resolved_commit: "newhead456",
+            subdir: ".",
+          },
+          package_root: ".",
+          identity: {
+            package_json_name: "@alice/weather",
+            version: "0.1.0",
+            display_name: "Weather Desk",
+          },
+          package_json: {
+            name: "@alice/weather",
+            version: "0.1.0",
+            type: "module",
+            dependencies: { "@humansandmachines/gsv": GSV_SDK_PACKAGE_VERSION },
+            dev_dependencies: {},
+          },
+          definition: {
+            meta: {
+              display_name: "Weather Desk",
+              description: "Weather command center.",
+              icon: null,
+              window: null,
+              capabilities: {
+                kernel: [],
+                outbound: [],
+              },
+            },
+            commands: [],
+            browser: {
+              entry: "./src/main.ts",
+              assets: [],
+            },
+            backend: null,
+          },
+          diagnostics: [],
+          analysis_hash: "analysis456",
+        });
+      }
+      if (url.pathname === "/hyperspace/repos/alice/weather/packages/snapshot") {
+        expect(url.searchParams.get("ref")).toBe("newhead456");
+        return Response.json({
+          source: {
+            repo: "alice/weather",
+            ref: "feature",
+            resolved_commit: "newhead456",
+            subdir: ".",
+          },
+          package_root: ".",
+          files: {
+            "package.json": "{}",
+            "src/package.ts": "export default {};",
+            "src/main.ts": "export {};",
+          },
+        });
+      }
+      if (url.pathname === "/hyperspace/repos/alice/weather/read") {
+        return new Response("missing", { status: 404 });
+      }
+      throw new Error(`unexpected ripgit request: ${url.pathname}`);
+    });
+    const install = vi.fn(async (input) => ({
+      packageId: input.packageId,
+      scope: input.scope,
+      manifest: input.manifest,
+      artifact: {
+        hash: input.artifact.hash,
+        mainModule: input.artifact.mainModule,
+        modulePaths: input.artifact.modules.map((module: { path: string }) => module.path),
+      },
+      grants: input.grants,
+      enabled: input.enabled,
+      reviewRequired: input.reviewRequired,
+      reviewedAt: input.reviewedAt,
+      installedAt: input.installedAt ?? 1,
+      updatedAt: input.updatedAt ?? 2,
+    }));
+    const ctx = {
+      env: {
+        RIPGIT: fetcher,
+        ASSEMBLER: {
+          assemblePackage: vi.fn(async () => ({
+            ok: true,
+            source: {
+              repo: "alice/weather",
+              ref: "feature",
+              resolved_commit: "newhead456",
+              subdir: ".",
+            },
+            analysis_hash: "analysis456",
+            target: "dynamic-worker",
+            artifact: {
+              hash: "sha256:new",
+              main_module: "src/main.ts",
+              modules: [
+                { path: "src/main.ts", kind: "source-module", content: "export {};" },
+              ],
+            },
+            diagnostics: [],
+          })),
+        },
+      },
+      config: makeConfig(),
+      packages: {
+        resolve: vi.fn(() => record),
+        list: vi.fn(() => []),
+        install,
+      },
+      identity: makeRootIdentity(),
+    } as unknown as KernelContext;
+
+    const result = await handlePkgCheckout({ packageId: record.packageId, ref: "feature" }, ctx);
+
+    expect(install).toHaveBeenCalledWith(expect.objectContaining({
+      enabled: false,
+      reviewedAt: null,
+      reviewRequired: true,
+    }));
+    expect(result.package).toMatchObject({
+      enabled: false,
+      review: {
+        required: true,
+        approvedAt: null,
+      },
+    });
   });
 });

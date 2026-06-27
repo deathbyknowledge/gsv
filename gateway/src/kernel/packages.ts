@@ -117,6 +117,7 @@ export interface PackageArtifactMetadata {
   compatibilityFlags?: string[];
   modulePaths: string[];
   publicFilePaths?: string[];
+  runtimeAccess?: PackageRuntimeAccess;
 }
 
 export interface PackageEntrypoint {
@@ -211,6 +212,12 @@ export interface PackageCapabilityDeclaration {
     mode: PackageEgressMode;
     allow?: string[];
   };
+  daemon?: {
+    rpcSchedules?: boolean;
+  };
+  storage?: {
+    sql?: boolean;
+  };
   tails?: string[];
 }
 
@@ -241,6 +248,25 @@ export interface PackageGrantSet {
   egress?: {
     mode: PackageEgressMode;
     allow?: string[];
+  };
+  daemon?: {
+    rpcSchedules?: boolean;
+  };
+  storage?: {
+    sql?: boolean;
+  };
+}
+
+export interface PackageRuntimeAccess {
+  egress?: {
+    mode: PackageEgressMode;
+    allow?: string[];
+  };
+  daemon?: {
+    rpcSchedules?: boolean;
+  };
+  storage?: {
+    sql?: boolean;
   };
 }
 
@@ -459,6 +485,7 @@ export function resolvePackageProfileReference(
 export function packageArtifactToWorkerCode(
   artifact: PackageArtifact,
   env?: Record<string, unknown>,
+  runtimeAccess?: PackageRuntimeAccess,
 ): WorkerLoaderWorkerCode {
   const modules: Record<string, WorkerLoaderModule | string> = {};
 
@@ -492,6 +519,82 @@ export function packageArtifactToWorkerCode(
     mainModule: artifact.mainModule,
     modules,
     env,
+    globalOutbound: packageGlobalOutbound(runtimeAccess?.egress),
+  };
+}
+
+function packageGlobalOutbound(egress: PackageRuntimeAccess["egress"]): Fetcher | null | undefined {
+  if (!egress || egress.mode === "none") {
+    return null;
+  }
+  if (egress.mode === "inherit") {
+    return undefined;
+  }
+  const allow = normalizeOutboundAllowlist(egress.allow);
+  return {
+    fetch(input: RequestInfo | URL, init?: RequestInit) {
+      const url = outboundUrl(input);
+      if (!isOutboundAllowed(url, allow)) {
+        return Promise.reject(new Error(`Outbound request denied: ${url.origin}`));
+      }
+      return fetch(input, init);
+    },
+  } as Fetcher;
+}
+
+function normalizeOutboundAllowlist(allow: readonly string[] | undefined): Set<string> {
+  const values = new Set<string>();
+  for (const entry of allow ?? []) {
+    const normalized = normalizeOutboundAllowEntry(entry);
+    if (normalized) {
+      values.add(normalized);
+    }
+  }
+  return values;
+}
+
+function normalizeOutboundAllowEntry(entry: string): string | null {
+  const trimmed = entry.trim().toLowerCase();
+  if (!trimmed) {
+    return null;
+  }
+  try {
+    const parsed = new URL(trimmed.includes("://") ? trimmed : `https://${trimmed}`);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+      return null;
+    }
+    return parsed.host;
+  } catch {
+    return null;
+  }
+}
+
+function outboundUrl(input: RequestInfo | URL): URL {
+  if (input instanceof Request) {
+    return new URL(input.url);
+  }
+  return new URL(String(input));
+}
+
+function isOutboundAllowed(url: URL, allow: ReadonlySet<string>): boolean {
+  const host = url.host.toLowerCase();
+  return allow.has(host);
+}
+
+function runtimeAccessForReview(input: {
+  reviewRequired: boolean;
+  reviewedAt?: number | null;
+  grants?: PackageGrantSet;
+}): PackageRuntimeAccess {
+  if (input.reviewRequired && !input.reviewedAt) {
+    return {
+      egress: { mode: "none" },
+    };
+  }
+  return {
+    egress: input.grants?.egress ?? { mode: "none" },
+    ...(input.grants?.daemon?.rpcSchedules ? { daemon: { rpcSchedules: true } } : {}),
+    ...(input.grants?.storage?.sql ? { storage: { sql: true } } : {}),
   };
 }
 
@@ -499,6 +602,12 @@ type LegacyPackageIcon = PackageIcon | { kind: "asset"; module: string };
 type StoredPackageEntrypoint = Omit<PackageEntrypoint, "icon"> & { icon?: LegacyPackageIcon };
 type StoredPackageManifest = Omit<PackageManifest, "entrypoints"> & {
   entrypoints: StoredPackageEntrypoint[];
+};
+type PackageSourceCapabilities = {
+  kernel?: readonly string[];
+  outbound?: readonly string[];
+  daemon?: readonly string[];
+  storage?: readonly string[];
 };
 
 function normalizeStoredManifest(
@@ -575,7 +684,10 @@ export class PackageStore {
   async install(input: PackageInstallRecordInput): Promise<InstalledPackageRecord> {
     const now = Date.now();
     const manifest = normalizeStoredManifest(input.manifest, input.artifact);
-    const artifactMetadata = artifactMetadataFromArtifact(input.artifact);
+    const artifactMetadata = {
+      ...artifactMetadataFromArtifact(input.artifact),
+      runtimeAccess: runtimeAccessForReview(input),
+    };
     const record: InstalledPackageRecord = {
       ...input,
       manifest,
@@ -719,9 +831,19 @@ export class PackageStore {
     const existing = this.get(packageId, scope);
     if (!existing) return false;
 
+    const artifactMetadata = {
+      ...existing.artifact,
+      runtimeAccess: runtimeAccessForReview({
+        reviewRequired: existing.reviewRequired,
+        reviewedAt,
+        grants: existing.grants,
+      }),
+    };
+
     this.sql.exec(
-      "UPDATE packages SET reviewed_at = ?, updated_at = ? WHERE package_id = ? AND scope_key = ?",
+      "UPDATE packages SET reviewed_at = ?, artifact_meta_json = ?, updated_at = ? WHERE package_id = ? AND scope_key = ?",
       reviewedAt,
+      JSON.stringify(artifactMetadata),
       Date.now(),
       packageId,
       packageScopeKey(scope),
@@ -762,17 +884,27 @@ type RowShape = {
 
 function toRecord(row: RowShape): InstalledPackageRecord {
   const artifact = parseJson<PackageArtifactMetadata>(row.artifact_meta_json);
+  const grants = row.grants_json ? parseJson<PackageGrantSet>(row.grants_json) : undefined;
+  const reviewRequired = row.review_required !== 0;
+  const reviewedAt = row.reviewed_at ?? null;
   return {
     packageId: row.package_id,
     scope: scopeFromRow(row),
     manifest: normalizeStoredManifest(
       parseJson<StoredPackageManifest>(row.manifest_json),
     ),
-    artifact,
-    grants: row.grants_json ? parseJson<PackageGrantSet>(row.grants_json) : undefined,
+    artifact: {
+      ...artifact,
+      runtimeAccess: artifact.runtimeAccess ?? runtimeAccessForReview({
+        reviewRequired,
+        reviewedAt,
+        grants,
+      }),
+    },
+    grants,
     enabled: row.enabled !== 0,
-    reviewRequired: row.review_required !== 0,
-    reviewedAt: row.reviewed_at ?? null,
+    reviewRequired,
+    reviewedAt,
     installedAt: row.installed_at,
     updatedAt: row.updated_at,
   };
@@ -838,8 +970,11 @@ async function resolvePackageFromRipgitNativeBuild(
   assertAssemblySucceeded(build);
 
   const packageName = packageNameFromPackageJsonName(analysis.package_json.name);
-  const kernelSyscalls = uniqueStrings(analysis.definition.meta.capabilities.kernel);
-  const outboundAllowlist = uniqueStrings(analysis.definition.meta.capabilities.outbound);
+  const sourceCapabilities = analysis.definition.meta.capabilities as PackageSourceCapabilities;
+  const kernelSyscalls = uniqueStrings(sourceCapabilities.kernel);
+  const outboundAllowlist = uniqueStrings(sourceCapabilities.outbound);
+  const daemonCapabilities = uniqueStrings(sourceCapabilities.daemon);
+  const storageCapabilities = uniqueStrings(sourceCapabilities.storage);
   const routeBase = packageRouteBase(packageName);
   const artifact = convertAssembledArtifact(build);
   const icon = toNativePackageIcon(analysis.definition.meta.icon, artifact);
@@ -915,6 +1050,12 @@ async function resolvePackageFromRipgitNativeBuild(
           : {
               mode: "none",
             },
+        ...(daemonCapabilities.includes("rpc-schedules")
+          ? { daemon: { rpcSchedules: true } }
+          : {}),
+        ...(storageCapabilities.includes("sql")
+          ? { storage: { sql: true } }
+          : {}),
       },
     },
     artifact,

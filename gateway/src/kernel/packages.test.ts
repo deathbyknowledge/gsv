@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   packageArtifactPublicBase,
+  packageArtifactToWorkerCode,
   storePackageArtifact,
   type PackageArtifact,
 } from "./packages";
@@ -75,5 +76,49 @@ describe("package artifacts", () => {
 
   it("derives a stable public base from an artifact hash", () => {
     expect(packageArtifactPublicBase("sha256:abc123")).toBe("/public/gsv/packages/sha256-abc123");
+  });
+
+  it("defaults dynamic worker outbound fetch to denied", () => {
+    const artifact: PackageArtifact = {
+      hash: "sha256:abc123",
+      mainModule: "__gsv__/main.ts",
+      modules: [
+        {
+          path: "__gsv__/main.ts",
+          kind: "esm",
+          content: "export default {};",
+        },
+      ],
+    };
+
+    expect(packageArtifactToWorkerCode(artifact).globalOutbound).toBeNull();
+  });
+
+  it("creates an allowlisted outbound fetcher for approved egress", async () => {
+    const artifact: PackageArtifact = {
+      hash: "sha256:abc123",
+      mainModule: "__gsv__/main.ts",
+      modules: [
+        {
+          path: "__gsv__/main.ts",
+          kind: "esm",
+          content: "export default {};",
+        },
+      ],
+    };
+    const fetchMock = vi.fn(async () => new Response("ok"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const code = packageArtifactToWorkerCode(artifact, undefined, {
+        egress: { mode: "allowlist", allow: ["api.example.test"] },
+      });
+
+      await expect(code.globalOutbound?.fetch("https://api.example.test/v1")).resolves.toBeInstanceOf(Response);
+      await expect(code.globalOutbound?.fetch("https://blocked.example.test/v1")).rejects.toThrow("Outbound request denied");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

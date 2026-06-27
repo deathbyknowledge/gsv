@@ -79,6 +79,10 @@ pub struct PackageCapabilityDefinition {
     pub kernel: Vec<String>,
     #[serde(default)]
     pub outbound: Vec<String>,
+    #[serde(default)]
+    pub daemon: Vec<String>,
+    #[serde(default)]
+    pub storage: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

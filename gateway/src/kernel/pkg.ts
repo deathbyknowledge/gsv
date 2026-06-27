@@ -37,6 +37,7 @@ import gsvPackageInfo from "@humansandmachines/gsv/package.json";
 import type {
   InstalledPackageRecord,
   PackageBindingGrant,
+  PackageCapabilityDeclaration,
   PackageGrantSet,
   PackageInstallScope,
   PackageManifest,
@@ -257,10 +258,14 @@ export async function handlePkgAdd(
   const existing = ctx.packages.get(packageId, scope);
   const isBuiltinSource = resolved.manifest.source.repo === "root/gsv";
   const requestedEnable = typeof args.enable === "boolean" ? args.enable : undefined;
+  const grants = grantsForManifest(resolved.manifest);
+  const reviewRequired = !isBuiltinSource;
+  const reviewedAt = reviewRequired
+    ? reviewedAtForPackageUpdate(existing, resolved.manifest, resolved.artifact.hash)
+    : Date.now();
   const enabled = isBuiltinSource
     ? (requestedEnable ?? existing?.enabled ?? true)
-    : (existing?.enabled ?? false);
-  const grants = grantsForManifest(resolved.manifest);
+    : (reviewedAt ? existing?.enabled ?? false : false);
   const updated = await ctx.packages.install({
     packageId,
     scope,
@@ -268,8 +273,8 @@ export async function handlePkgAdd(
     artifact: resolved.artifact,
     grants,
     enabled,
-    reviewRequired: !isBuiltinSource,
-    reviewedAt: isBuiltinSource ? Date.now() : existing?.reviewedAt ?? null,
+    reviewRequired,
+    reviewedAt,
     installedAt: existing?.installedAt,
     updatedAt: Date.now(),
   });
@@ -281,7 +286,8 @@ export async function handlePkgAdd(
       existing.enabled !== updated.enabled ||
       existing.artifact.hash !== updated.artifact.hash ||
       existing.manifest.source.ref !== updated.manifest.source.ref ||
-      (existing.manifest.source.resolvedCommit ?? null) !== (updated.manifest.source.resolvedCommit ?? null),
+      (existing.manifest.source.resolvedCommit ?? null) !== (updated.manifest.source.resolvedCommit ?? null) ||
+      existing.reviewedAt !== updated.reviewedAt,
     imported: {
       repo: `${repo.owner}/${repo.repo}`,
       remoteUrl: imported.remoteUrl,
@@ -427,15 +433,16 @@ export async function handlePkgCheckout(
     throw new Error(`Package source mismatch: expected ${record.manifest.name}, got ${resolved.manifest.name}`);
   }
 
+  const invalidatedReview = reviewInvalidated(record, resolved.manifest, resolved.artifact.hash);
   const updated = await ctx.packages.install({
     packageId: record.packageId,
     scope: record.scope,
     manifest: resolved.manifest,
     artifact: resolved.artifact,
-    grants: record.grants,
-    enabled: record.enabled,
+    grants: grantsForManifest(resolved.manifest),
+    enabled: invalidatedReview ? false : record.enabled,
     reviewRequired: record.reviewRequired,
-    reviewedAt: record.reviewedAt ?? null,
+    reviewedAt: reviewedAtForPackageUpdate(record, resolved.manifest, resolved.artifact.hash),
     installedAt: record.installedAt,
     updatedAt: Date.now(),
   });
@@ -445,7 +452,9 @@ export async function handlePkgCheckout(
     changed:
       record.manifest.source.ref !== ref ||
       (record.manifest.source.resolvedCommit ?? null) !== (updated.manifest.source.resolvedCommit ?? null) ||
-      record.artifact.hash !== updated.artifact.hash,
+      record.artifact.hash !== updated.artifact.hash ||
+      record.reviewedAt !== updated.reviewedAt ||
+      record.enabled !== updated.enabled,
     package: toPkgSummary(updated, ctx),
   };
 }
@@ -977,7 +986,94 @@ function grantsForManifest(manifest: PackageManifest): PackageGrantSet {
     egress: manifest.capabilities?.egress ?? {
       mode: "none",
     },
+    ...(manifest.capabilities?.daemon?.rpcSchedules ? { daemon: { rpcSchedules: true } } : {}),
+    ...(manifest.capabilities?.storage?.sql ? { storage: { sql: true } } : {}),
   };
+}
+
+function reviewedAtForPackageUpdate(
+  existing: InstalledPackageRecord | null | undefined,
+  manifest: PackageManifest,
+  artifactHash: string,
+): number | null {
+  if (!existing?.reviewRequired) {
+    return existing?.reviewedAt ?? null;
+  }
+  return reviewInvalidated(existing, manifest, artifactHash)
+    ? null
+    : existing.reviewedAt ?? null;
+}
+
+function reviewInvalidated(
+  existing: InstalledPackageRecord | null | undefined,
+  manifest: PackageManifest,
+  artifactHash: string,
+): boolean {
+  if (!existing?.reviewRequired || !existing.reviewedAt) {
+    return false;
+  }
+  return existing.artifact.hash !== artifactHash ||
+    packageCapabilitySurface(existing.manifest) !== packageCapabilitySurface(manifest);
+}
+
+function packageCapabilitySurface(manifest: PackageManifest): string {
+  return stableJson({
+    capabilities: normalizePackageCapabilities(manifest.capabilities),
+    entrypoints: manifest.entrypoints.map((entrypoint) => ({
+      kind: entrypoint.kind,
+      name: entrypoint.name,
+      syscalls: uniqueSorted(entrypoint.syscalls ?? []),
+    })).sort(compareStableJson),
+    profiles: (manifest.profiles ?? []).map((profile) => ({
+      name: profile.name,
+      capabilities: uniqueSorted(profile.capabilities ?? []),
+    })).sort(compareStableJson),
+  });
+}
+
+function normalizePackageCapabilities(capabilities: PackageCapabilityDeclaration | undefined): Record<string, unknown> {
+  return {
+    bindings: (capabilities?.bindings ?? []).map((binding) => ({
+      binding: binding.binding,
+      kind: binding.kind,
+      interfaceName: binding.interfaceName,
+      required: binding.required,
+    })).sort(compareStableJson),
+    egress: capabilities?.egress
+      ? {
+          mode: capabilities.egress.mode,
+          allow: uniqueSorted(capabilities.egress.allow ?? []),
+        }
+      : { mode: "none", allow: [] },
+    daemon: {
+      rpcSchedules: capabilities?.daemon?.rpcSchedules === true,
+    },
+    storage: {
+      sql: capabilities?.storage?.sql === true,
+    },
+    tails: uniqueSorted(capabilities?.tails ?? []),
+  };
+}
+
+function uniqueSorted(values: readonly string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))].sort();
+}
+
+function compareStableJson(left: unknown, right: unknown): number {
+  return stableJson(left).localeCompare(stableJson(right));
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(stableJson).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
 }
 
 function requireIdentity(ctx: KernelContext): NonNullable<KernelContext["identity"]> {
