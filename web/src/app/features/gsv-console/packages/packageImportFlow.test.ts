@@ -15,8 +15,9 @@ function account(patch: Partial<ConsoleAccount>): ConsoleAccount {
 }
 
 describe("package import flow", () => {
-  it("excludes self from application reviewer choices", () => {
+  it("limits application reviewer choices to runnable agent accounts", () => {
     expect(isEligibleApplicationReviewer(account({ relation: "self", username: "owner" }))).toBe(false);
+    expect(isEligibleApplicationReviewer(account({ relation: "human", username: "shared-human" }))).toBe(false);
     expect(isEligibleApplicationReviewer(account({ relation: "personal-agent", username: "agent" }))).toBe(true);
     expect(isEligibleApplicationReviewer(account({ relation: "agent", username: "reviewer" }))).toBe(true);
     expect(isEligibleApplicationReviewer(account({ relation: "agent", runnable: false }))).toBe(false);

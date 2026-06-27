@@ -51,7 +51,8 @@ export function isPackageImportDraftReady(draft: PackageImportDraft): boolean {
 }
 
 export function isEligibleApplicationReviewer(account: ConsoleAccount): boolean {
-  return account.runnable && account.relation !== "self";
+  return account.runnable
+    && (account.relation === "personal-agent" || account.relation === "agent");
 }
 
 export function parsePackageImportSource(raw: string): PackageImportSource {
