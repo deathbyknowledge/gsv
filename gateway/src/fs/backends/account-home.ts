@@ -306,6 +306,9 @@ class AccountHomeMountBackend implements MountBackend {
     const kind = this.classify(normalized);
 
     if (kind === "other") {
+      if (!this.allowHomeR2Fallback) {
+        throwPermissionDenied(normalized);
+      }
       return this.fallback.readdir(normalized);
     }
 

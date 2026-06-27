@@ -248,6 +248,9 @@ describe("AccountHomeMountBackend delegated routing", () => {
     await expect(fs.readdir("/home/wiki-builder/conversations/default"))
       .rejects
       .toThrow("EACCES");
+    await expect(createDelegatingBackend()?.readdir("/home/wiki-builder/conversations/default"))
+      .rejects
+      .toThrow("EACCES");
     await expect(fs.search("/home/wiki-builder/conversations", "secret"))
       .rejects
       .toThrow("EACCES");
