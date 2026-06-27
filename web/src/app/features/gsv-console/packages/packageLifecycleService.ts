@@ -8,6 +8,7 @@ import {
   mergeReviewPackageContext,
   normalizePackageImportDraft,
   parsePackageImportSource,
+  packageSourcePathForPackage,
   type PackageImportDraft,
   type PackageReviewProcess,
 } from "./packageImportFlow";
@@ -42,6 +43,7 @@ export async function startConsolePackageReview(
     label: `Review ${input.package.name}`,
     ...(input.reviewerUsername ? { runAs: input.reviewerUsername } : {}),
     interactive: true,
+    cwd: packageSourcePathForPackage(input.package, packages),
     prompt: buildPackageReviewPrompt(input.package, packages),
     assignment: {
       contextFiles: [{
@@ -49,9 +51,6 @@ export async function startConsolePackageReview(
         text: buildPackageReviewAssignmentContext(input.package, packages),
       }],
     },
-    mounts: [
-      { kind: "package-source", packageId: input.package.packageId },
-    ],
   });
 
   return normalizeSpawnResult(spawned);

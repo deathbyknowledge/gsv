@@ -22,7 +22,6 @@ import {
 import type { KernelContext } from "../../kernel/context";
 import { resolveCallerOwnerUid } from "../../kernel/context";
 import { createCronFileService } from "../../kernel/crontab";
-import { visiblePackageScopesForActor } from "../../kernel/packages";
 import { handleRepoList } from "../../kernel/repo";
 import type { ShellExecArgs, ShellExecResult } from "../../syscalls/shell";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
@@ -131,9 +130,7 @@ function createBash(
     identity,
     storage: ctx.env.STORAGE,
     ripgit: ctx.env.RIPGIT ? new RipgitClient(ctx.env.RIPGIT) : null,
-    packages: ctx.packages.list({ scopes: visiblePackageScopesForActor(packageScopeOwner) }),
     repos: handleRepoList(undefined, ctx).repos,
-    mounts: ctx.processId ? ctx.procs.getMounts(ctx.processId) : null,
     processId: ctx.processId ?? null,
     config: ctx.config,
   });

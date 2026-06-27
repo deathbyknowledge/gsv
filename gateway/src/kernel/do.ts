@@ -2506,7 +2506,6 @@ export class Kernel extends Host<Env> {
         prompt: target.prompt,
         parentPid: target.parentPid,
         cwd: target.cwd,
-        mounts: target.mounts,
         assignment: target.assignment,
         ...(runAs ? { runAs } : {}),
       }, ctx);

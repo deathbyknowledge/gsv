@@ -389,12 +389,20 @@ export async function handlePkgCreate(
 }
 
 export async function handlePkgSync(
-  _args: PkgSyncArgs | undefined,
+  args: PkgSyncArgs | undefined,
   ctx: KernelContext,
 ): Promise<PkgSyncResult> {
-  await ctx.packages.seedBuiltinPackages([]);
+  const packageId = typeof args?.packageId === "string" ? args.packageId.trim() : "";
+  if (!packageId) {
+    throw new Error("packageId is required");
+  }
+  const record = requirePackage(packageId, ctx);
+  const ref = typeof args?.ref === "string" && args.ref.trim().length > 0
+    ? args.ref.trim()
+    : record.manifest.source.ref;
+  const result = await handlePkgCheckout({ packageId: record.packageId, ref }, ctx);
   return {
-    packages: [],
+    packages: [result.package],
   };
 }
 
@@ -831,7 +839,7 @@ function buildWebUiPackageScaffold(input: {
       "",
       input.description,
       "",
-      "This package was scaffolded by GSV. Edit `src/main.ts`, `src/styles.css`, and `src/package.ts`, then run `pkg source commit --message \"...\"` and `pkg checkout <branch>` when you want to install committed source changes.",
+      "This package was scaffolded by GSV. Edit the package files under `/src/repos`, inspect changes with `rgit diff --here`, commit with `rgit commit --here --message \"...\"`, then run `pkg update <package> --ref <branch>` when you want to install committed source changes.",
       "",
     ].join("\n"),
   };

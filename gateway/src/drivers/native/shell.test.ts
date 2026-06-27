@@ -105,6 +105,7 @@ function makeContext(options?: {
   scheduleScheduleWake?: KernelContext["scheduleScheduleWake"];
   identity?: ProcessIdentity;
   aiRun?: (model: string, input: Record<string, unknown>) => Promise<unknown>;
+  ripgit?: Fetcher;
 }): KernelContext {
   const records = [...(options?.packages ?? [options?.pkg ?? makePackage()])];
   const identity = options?.identity ?? IDENTITY;
@@ -118,7 +119,7 @@ function makeContext(options?: {
   return {
     env: {
       STORAGE: env.STORAGE,
-      RIPGIT: {} as Fetcher,
+      RIPGIT: options?.ripgit ?? {} as Fetcher,
       LOADER: { get() { throw new Error("LOADER should not be used in pkg shell tests"); } },
       ...(options?.aiRun ? { AI: { run: vi.fn(options.aiRun) } } : {}),
     } as unknown as Env,
@@ -140,9 +141,6 @@ function makeContext(options?: {
     } as never,
     devices: options?.devices ?? null as never,
     procs: {
-      getMounts() {
-        return [];
-      },
       get() {
         return {
           profile: "task",
@@ -229,7 +227,7 @@ describe("native shell execution", () => {
     expect(result.error).toContain("real failure");
   });
 
-  it("uses the owning human's package scopes for agent-backed fs mounts", async () => {
+  it("uses the owning human's package scopes for agent-backed fs", async () => {
     const humanPackage = makePackage({
       packageId: "user:1000:human-tools",
       scope: { kind: "user", uid: 1000 },
@@ -237,6 +235,12 @@ describe("native shell execution", () => {
       manifest: {
         ...makePackage().manifest,
         name: "human-tools",
+        source: {
+          repo: "root/human-tools",
+          ref: "main",
+          subdir: ".",
+          resolvedCommit: "abc123",
+        },
         entrypoints: [{ name: "Human Tool", kind: "command", command: "human-tool" }],
       },
     });
@@ -247,6 +251,12 @@ describe("native shell execution", () => {
       manifest: {
         ...makePackage().manifest,
         name: "agent-tools",
+        source: {
+          repo: "root/agent-tools",
+          ref: "main",
+          subdir: ".",
+          resolvedCommit: "abc123",
+        },
         entrypoints: [{ name: "Agent Tool", kind: "command", command: "agent-tool" }],
       },
     });
@@ -263,19 +273,10 @@ describe("native shell execution", () => {
       },
       procs: {
         getOwnerUid: vi.fn(() => 1000),
-        getMounts: vi.fn(() => [{
-          kind: "ripgit-source",
-          packageId: humanPackage.packageId,
-          mountPath: "/src/packages/human-tools",
-          repo: "root/pkg-test",
-          ref: "main",
-          subdir: ".",
-          resolvedCommit: "abc123",
-        }]),
       } as unknown as KernelContext["procs"],
     });
 
-    const sourceList = await handleFsRead({ path: "/src/packages" }, ctx);
+    const sourceList = await handleFsRead({ path: "/src/repos/root" }, ctx);
     expect(sourceList.ok).toBe(true);
     if (sourceList.ok) {
       expect(sourceList.directories).toContain("human-tools");
@@ -470,7 +471,6 @@ describe("proc native command", () => {
               cwd: IDENTITY.cwd,
               profile: "init",
               state: "running",
-              mounts: [],
               contextFiles: [],
               createdAt: 1,
             };
@@ -507,7 +507,6 @@ describe("proc native command", () => {
       cwd: IDENTITY.cwd,
       profile: "task",
       state: "running",
-      mounts: [],
       contextFiles: [],
       createdAt: 1,
     };
@@ -571,7 +570,6 @@ describe("proc native command", () => {
             return null;
           },
           getOwnerUid: vi.fn(() => IDENTITY.uid),
-          getMounts: vi.fn(() => []),
           spawn,
         } as unknown as KernelContext["procs"],
         ipcCalls: ipcCalls as unknown as KernelContext["ipcCalls"],
@@ -632,7 +630,6 @@ describe("proc native command", () => {
                 home: "/home/shared-agent",
                 cwd: "/home/shared-agent",
                 state: "idle",
-                mounts: [],
                 contextFiles: [],
                 createdAt: 1,
               };
@@ -707,7 +704,6 @@ describe("proc native command", () => {
                 home: IDENTITY.home,
                 cwd: IDENTITY.cwd,
                 state: "idle",
-                mounts: [],
                 contextFiles: [],
                 createdAt: 1,
               };
@@ -1553,78 +1549,100 @@ describe("pkg shell command", () => {
     expect(result.stdout).toContain("error\tProcess not found: missing");
   });
 
-  it("defaults to the current package source for manifest inspection", async () => {
+  it("requires an explicit package for manifest inspection", async () => {
     const result = await handleShellExec(
-      { input: "pkg manifest", cwd: "/src/packages/sample-console" },
+      { input: "pkg manifest", cwd: "/src/repos/root/pkg-test" },
       makeContext(),
     );
 
     expect(result.ok).toBe(true);
-    expect(result.stdout).toContain('"name": "sample-console"');
-    expect(result.stderr).toBe("");
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("packageId is required");
   });
 
-  it("preserves scoped package identity when defaulting from the source cwd", async () => {
-    const packageId = "import:root/pkg-test:.";
-    const globalPackage = makePackage({
-      packageId,
-      scope: { kind: "global" },
-      manifest: {
-        ...makePackage().manifest,
-        source: {
-          repo: "root/pkg-test",
-          ref: "stable",
-          subdir: ".",
-          resolvedCommit: "global123",
-        },
-      },
-    });
-    const userPackage = makePackage({
-      packageId,
-      scope: { kind: "user", uid: 1000 },
-      manifest: {
-        ...makePackage().manifest,
-        source: {
-          repo: "root/pkg-test",
-          ref: "dev",
-          subdir: ".",
-          resolvedCommit: "user123",
-        },
-      },
-    });
-
+  it("shows package source as a repo path", async () => {
     const result = await handleShellExec(
-      { input: "pkg manifest", cwd: "/src/packages/sample-console--root-pkg-test" },
-      makeContext({ packages: [userPackage, globalPackage] }),
+      { input: "pkg source sample-console" },
+      makeContext(),
     );
 
     expect(result.ok).toBe(true);
-    expect(result.stdout).toContain('"ref": "stable"');
-    expect(result.stdout).not.toContain('"ref": "dev"');
+    expect(result.stdout).toContain("repo: root/pkg-test");
+    expect(result.stdout).toContain("path: /src/repos/root/pkg-test");
     expect(result.stderr).toBe("");
   });
 
-  it("defaults to the current package from custom source mounts", async () => {
+  it("uses explicit --here for repo status from /src/repos", async () => {
     const result = await handleShellExec(
-      { input: "pkg manifest", cwd: "/src/package/src" },
-      makeContext({
-        procs: {
-          getMounts: vi.fn(() => [{
-            kind: "ripgit-source",
-            mountPath: "/src/package",
-            packageId: "import:root/pkg-test:.",
-            repo: "root/pkg-test",
-            ref: "main",
-            resolvedCommit: "abc123",
-            subdir: ".",
-          }]),
-        } as Partial<KernelContext["procs"]>,
-      }),
+      { input: "rgit status --here", cwd: "/src/repos/root/pkg-test/src" },
+      makeContext({ capabilities: ["repo.list"] }),
     );
 
     expect(result.ok).toBe(true);
-    expect(result.stdout).toContain('"name": "sample-console"');
+    expect(result.stdout).toContain("Repo: root/pkg-test");
+    expect(result.stdout).toContain("No staged changes.");
     expect(result.stderr).toBe("");
+  });
+
+  it("uses the package source ref for repo log from /src/repos", async () => {
+    const calls: string[] = [];
+    const packageA = makePackage({
+      packageId: "import:root/pkg-test:packages/a",
+      manifest: {
+        ...makePackage().manifest,
+        name: "sample-a",
+        source: {
+          repo: "root/pkg-test",
+          ref: "feature/a",
+          subdir: "packages/a",
+          resolvedCommit: "commit-a",
+        },
+      },
+    });
+    const packageB = makePackage({
+      packageId: "import:root/pkg-test:packages/b",
+      manifest: {
+        ...makePackage().manifest,
+        name: "sample-b",
+        source: {
+          repo: "root/pkg-test",
+          ref: "feature/b",
+          subdir: "packages/b",
+          resolvedCommit: "commit-b",
+        },
+      },
+    });
+    const ripgit = {
+      async fetch(input: RequestInfo | URL) {
+        const url = new URL(String(input));
+        calls.push(url.toString());
+        expect(url.pathname).toBe("/hyperspace/repos/root/pkg-test/log");
+        expect(url.searchParams.get("ref")).toBe("feature/b");
+        return Response.json([{
+          hash: "commit-b",
+          tree_hash: "tree123",
+          author: "Sam",
+          author_email: "sam@gsv.local",
+          author_time: 1,
+          committer: "Sam",
+          committer_email: "sam@gsv.local",
+          commit_time: 1,
+          message: "package update",
+          parents: [],
+        }]);
+      },
+    } as Fetcher;
+
+    const result = await handleShellExec(
+      { input: "rgit log --here", cwd: "/src/repos/root/pkg-test/packages/b/src" },
+      makeContext({ capabilities: ["repo.log"], packages: [packageA, packageB], ripgit }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("commit-b");
+    expect(result.stdout).toContain("package update");
+    expect(result.stderr).toBe("");
+    expect(calls).toHaveLength(1);
   });
 
   it("shows review status in pkg list output", async () => {
@@ -1640,7 +1658,7 @@ describe("pkg shell command", () => {
 
   it("enables an approved package through pkg enable", async () => {
     const result = await handleShellExec(
-      { input: "pkg enable", cwd: "/src/packages/sample-console" },
+      { input: "pkg enable sample-console" },
       makeContext({
         capabilities: ["pkg.install"],
         pkg: makePackage({
@@ -1834,7 +1852,7 @@ describe("pkg shell command", () => {
     });
 
     const result = await handleShellExec(
-      { input: "pkg manifest", cwd: "/src/packages/human-tools" },
+      { input: "pkg manifest human-tools" },
       makeContext({
         capabilities: ["pkg.list"],
         packages: [humanPackage, agentPackage],

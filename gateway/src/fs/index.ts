@@ -15,20 +15,20 @@ export { KernelMountBackend } from "./backends/kernel";
 export { createAccountHomeBackend } from "./backends/account-home";
 export { createPackageBackend, isPackageMountPath } from "./backends/packages";
 export {
-  commitProcessSourceChanges,
   createProcessSourceBackend,
-  diffProcessSourceChanges,
-  discardProcessSourceChanges,
-  getProcessSourceStatus,
-  isProcessSourceMountPath,
-  packageSourcePathNameForRecord,
+  commitRepoSourceChanges,
+  diffRepoSourceChanges,
+  discardRepoSourceChanges,
+  getRepoSourceStatus,
+  isProcessSourcePath,
   packageSourcePathNameMap,
+  packageSourceRepoPath,
   packageSourcePathName,
 } from "./backends/process-sources";
 export type {
-  ProcessSourceChangeSummary,
-  ProcessSourceCommitResult,
-  ProcessSourceStatus,
+  RepoSourceCommitResult,
+  RepoSourceStatus,
+  SourceChangeSummary,
 } from "./backends/process-sources";
 export { R2MountBackend } from "./backends/r2";
 export { RipgitClient } from "./ripgit/client";

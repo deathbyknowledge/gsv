@@ -10,7 +10,7 @@ GSV uses several storage planes. The Kernel chooses the plane based on whether t
 | Process SQLite | Process Durable Object SQL | Active messages, pending tool calls, message queue, HIL state, process-local metadata. |
 | AppRunner SQLite/KV | AppRunner Durable Object storage | Package runtime SQL, daemon schedules, loaded package runtime props. |
 | R2 `STORAGE` bucket | Cloudflare R2 | Ordinary virtual filesystem files, process media, process archives, package artifacts, CLI download mirrors. |
-| ripgit | `RIPGIT` binding | Versioned home knowledge, workspaces, package source repositories, mounted source trees. |
+| ripgit | `RIPGIT` binding | Versioned home knowledge, workspaces, package source repositories, and source trees. |
 
 ## Virtual Filesystem Mapping
 
@@ -24,8 +24,8 @@ The native `fs.*` and `shell.exec` handlers use `GsvFs`, a Linux-like virtual fi
 | `~/skills.d/*` | ripgit home repo, with R2 fallback | User-global reusable process skills. |
 | `~/knowledge/*` | ripgit home repo | Durable knowledge databases. |
 | Other home files | R2 | Stored as ordinary objects with uid/gid/mode metadata. |
+| `/src/repos/{owner}/{repo}` | ripgit repo plus R2 overlay | Visible source repositories. Writable repos stage process-local edits in R2 until explicit `rgit commit`. |
 | `/workspaces/{workspaceId}` | ripgit workspace repo | Mutable, versioned task workspace. |
-| `/src/packages/{packageName}` | ripgit package source plus R2 overlay | Visible installed package source. Writable owned sources stage process-local edits in R2 until explicit commit. |
 | `/usr/local/bin/*` | package mount | Read-only package command shims. |
 | Everything else | R2 | Default object-backed filesystem. |
 
@@ -44,7 +44,7 @@ Kernel SQLite is the authoritative control-plane store. Important tables include
 | `group_capabilities` | Capability grants by group id. |
 | `devices`, `device_access` | Registered devices and group access. |
 | `routing_table` | In-flight device-routed syscalls. |
-| `processes` | Process registry, identity, cwd, workspace, mounts, state. |
+| `processes` | Process registry, identity, cwd, workspace, state. |
 | `workspaces` | Workspace metadata. Actual workspace files live in ripgit. |
 | `packages` | Installed package manifests, scopes, grants, and artifact hashes. |
 | `identity_links`, `surface_routes`, `link_challenges` | Adapter actor links and inbound surface routing. |
@@ -75,11 +75,12 @@ R2 remains the byte store. The current runtime uses these key families:
 | `var/media/{uid}/{pid}/{uuid}.{ext}` | Process media handling | Uploaded or adapter-provided media attached to process messages. |
 | `var/sessions/{username}/{pid}/{archiveId}.jsonl.gz` | Process reset/kill archive | Gzipped JSONL transcript archive. |
 | `runtime/package-artifacts/{hash}.json` | Package install/sync | Package worker artifact loaded by AppRunner. |
-| `downloads/cli/{channel}/{asset}` | `sys.bootstrap` CLI mirroring | Downloadable CLI binaries. |
-| `downloads/cli/{channel}/{asset}.sha256` | `sys.bootstrap` CLI mirroring | CLI checksums. |
-| `downloads/cli/default-channel.txt` | `sys.bootstrap` | Default CLI release channel. |
-| `process-source-overlays/{pid}/{packageId}/manifest.json` | Package source mount, `pkg source` | Manifest of staged package source edits for one process/package. |
-| `process-source-overlays/{pid}/{packageId}/files/{path}` | Package source mount, `pkg source` | Staged file content for package source puts. |
+| `public/gsv/downloads/cli/{channel}/{asset}` | `sys.bootstrap` CLI mirroring | Downloadable CLI binaries served through `/public/*`. |
+| `public/gsv/downloads/cli/{channel}/{asset}.sha256` | `sys.bootstrap` CLI mirroring | CLI checksums served through `/public/*`. |
+| `public/gsv/downloads/cli/default-channel.txt` | `sys.bootstrap` | Default CLI release channel. |
+| `public/gsv/downloads/cli/install.{sh,ps1}` | `sys.bootstrap` | Static CLI install scripts served through `/public/*`. |
+| `process-source-overlays/{pid}/{sourceKey}/manifest.json` | `/src/repos`, `rgit` | Manifest of staged source edits for one process/repo. |
+| `process-source-overlays/{pid}/{sourceKey}/files/{path}` | `/src/repos`, `rgit` | Staged file content for source puts. |
 
 Process media is deleted by prefix when the process is reset or killed. Package artifacts are content-addressed by hash and referenced from the Kernel `packages` table.
 
@@ -89,9 +90,10 @@ ripgit stores versioned content. It is used anywhere history, diffs, search, or 
 
 | Repository | Ref Helper | Mounted At | Purpose |
 |---|---|---|---|
-| `{username}/home` | `homeKnowledgeRepoRef(username)` | `~/context.d`, `~/skills.d`, `~/knowledge` | Home context, skills, and knowledge databases. |
+| `{username}/home` | `accountHomeRepoRef(username)` | `~/context.d`, `~/skills.d`, `~/knowledge` | Home context, account-local skills, and knowledge databases. |
+| Wiki repos, for example `root/gsv-manual` or `{owner}/{wiki}` | repo manifest `wiki.json` | Wiki app, `/src/repos/{owner}/{wiki}`, `repo.*` | Durable markdown knowledge databases. |
+| Package source repos, for example `root/gsv` or `{owner}/{repo}` | package manifest `source.repo` | `/src/repos/{owner}/{repo}`, `repo.*`, `rgit` | Installed package source, review context, and generic repo operations. |
 | `{username}/{workspaceId}` | `workspaceRepoRef(workspaceId, username)` | `/workspaces/{workspaceId}` | Task workspace files and checkpoints. |
-| Package source repos, for example `root/gsv` or `{owner}/{repo}` | package manifest `source.repo` | `/src/packages/{packageName}`, `repo.*` | Installed package source, review context, and generic repo operations. |
 
 The `root/gsv` repository may contain a top-level `skills/` directory. Bootstrap
 copies those files into user home repos under `skills.d/` when they are missing.
@@ -106,7 +108,7 @@ Workspace repos contain platform metadata under `.gsv/`:
 .gsv/processes/{pid}/chat.jsonl
 ```
 
-Package source mounts are always visible for installed packages the process identity can see. Sources owned by the current user are writable through a process-local R2 overlay; `pkg source status`, `pkg source diff`, `pkg source commit`, and `pkg source discard` make commit/discard explicit. Other package sources are read-only. Workspace and home knowledge repos are writable through the filesystem; generic repository operations use `repo.*`, and Wiki-specific behavior uses the higher-level knowledge interface.
+Generic visible repos are available under `/src/repos/{owner}/{repo}`. Repos writable by the process identity accept `fs.write`, `fs.edit`, and `fs.delete`, but those writes stage into a process-local R2 overlay. Use `rgit status`, `rgit diff`, `rgit commit`, and `rgit discard` to inspect, commit, or discard staged repo edits. Read-only visible repos still support read and search. `pkg source <package>` reports the package's source repo path; package lifecycle stays under `pkg`, while repository history and source edits stay under `rgit`. Wiki-specific behavior uses the higher-level Wiki app and CLI on top of the same repo storage.
 
 ## Package Runtime Storage
 

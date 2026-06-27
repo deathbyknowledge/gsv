@@ -3,7 +3,7 @@
  *
  * Explicit mount routing:
  *   /proc/*, /dev/*, /sys/*, /var/{spool,log}/*, /etc/{passwd,shadow,group,cron.d} → KernelMountBackend
- *   /src/{packages,repos}/*                             → Process source/ripgit repo backend
+ *   /src/repos/*                                       → Process source/ripgit repo backend
  *   /usr/local/bin/*                                      → Package backend
  *   everything else                                           → R2 backend
  *
@@ -38,7 +38,7 @@ import type {
 import { R2MountBackend } from "./backends/r2";
 import { KernelMountBackend } from "./backends/kernel";
 import { isPackageMountPath } from "./backends/packages";
-import { isProcessSourceMountPath } from "./backends/process-sources";
+import { isProcessSourcePath } from "./backends/process-sources";
 import { normalizePath } from "./utils";
 
 const MAX_SYMLINK_DEPTH = 16;
@@ -50,7 +50,7 @@ export class GsvFs implements IFileSystem {
   private readonly kernel: KernelRefs | null;
   private readonly r2Backend: MountBackend;
   private readonly kernelBackend: MountBackend;
-  private readonly sourceMountBackend: MountBackend | null;
+  private readonly sourceBackend: MountBackend | null;
   private readonly accountHomeBackend: MountBackend | null;
   private readonly packageBackend: MountBackend | null;
 
@@ -59,7 +59,7 @@ export class GsvFs implements IFileSystem {
     identity: ProcessIdentity,
     kernel?: KernelRefs,
     selfPid?: string,
-    sourceMountBackend?: MountBackend | null,
+    sourceBackend?: MountBackend | null,
     accountHomeBackend?: MountBackend | null,
     packageBackend?: MountBackend | null,
   ) {
@@ -67,7 +67,7 @@ export class GsvFs implements IFileSystem {
     this.kernel = kernel ?? null;
     this.r2Backend = new R2MountBackend(bucket, identity);
     this.kernelBackend = new KernelMountBackend(identity, this.kernel, selfPid ?? null);
-    this.sourceMountBackend = sourceMountBackend ?? null;
+    this.sourceBackend = sourceBackend ?? null;
     this.accountHomeBackend = accountHomeBackend ?? null;
     this.packageBackend = packageBackend ?? null;
   }
@@ -415,11 +415,11 @@ export class GsvFs implements IFileSystem {
   }
 
   private backendForPath(path: string): MountBackend {
-    if (isProcessSourceMountPath(path)) {
-      if (!this.sourceMountBackend) {
-        throw new Error(`ENOSYS: source mount backend is unavailable for '${path}'`);
+    if (isProcessSourcePath(path)) {
+      if (!this.sourceBackend) {
+        throw new Error(`ENOSYS: source backend is unavailable for '${path}'`);
       }
-      return this.sourceMountBackend;
+      return this.sourceBackend;
     }
 
     if (this.accountHomeBackend?.handles(path)) {
@@ -462,7 +462,7 @@ export class GsvFs implements IFileSystem {
       }
     }
 
-    if (this.sourceMountBackend) {
+    if (this.sourceBackend) {
       entries.add("src");
     }
 

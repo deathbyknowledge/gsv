@@ -13,12 +13,14 @@ import type {
   RepoListResult,
   RepoLogArgs,
   RepoLogResult,
+  ProcessIdentity,
   RepoReadArgs,
   RepoReadResult,
   RepoRefsArgs,
   RepoRefsResult,
   RepoSearchArgs,
   RepoSearchResult,
+  RepoSourceSummary,
   RepoSummary,
 } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "./context";
@@ -56,21 +58,38 @@ export function handleRepoList(
       repos.set(summary.repo, summary);
       return;
     }
+    const ref = existing.ref ?? summary.ref;
+    const baseRef = existing.baseRef ?? summary.baseRef;
+    const sources = mergeRepoSources(existing.sources, summary.sources);
     repos.set(summary.repo, {
       ...existing,
       writable: existing.writable || summary.writable,
       public: existing.public || summary.public,
       kind: existing.kind === "user" ? summary.kind : existing.kind,
+      ...(ref ? { ref } : {}),
+      ...(baseRef ? { baseRef } : {}),
+      ...(sources.length > 0 ? { sources } : {}),
       updatedAt: Math.max(existing.updatedAt ?? 0, summary.updatedAt ?? 0) || undefined,
     });
   };
 
   add(toSummary(accountHomeRepoRef(identity.process.username), "home", ctx));
 
-  for (const record of ctx.packages.list({ scopes: visiblePackageScopesForActor(identity.process) })) {
+  const packageScopeIdentity = repoPackageScopeIdentity(ctx, identity.process);
+  for (const record of ctx.packages.list({ scopes: visiblePackageScopesForActor(packageScopeIdentity) })) {
     const repo = parseRepoSlug(record.manifest.source.repo);
+    const sourceRefs = packageSourceRefFields(record.manifest.source.ref, record.manifest.source.resolvedCommit);
     add({
       ...toSummary(repo, "package", ctx),
+      ...sourceRefs,
+      sources: [{
+        kind: "package",
+        packageId: record.packageId,
+        name: record.manifest.name,
+        subdir: normalizePackageSourceSubdir(record.manifest.source.subdir),
+        ...sourceRefs,
+        updatedAt: record.updatedAt,
+      }],
       description: record.manifest.name,
       updatedAt: record.updatedAt,
     });
@@ -395,7 +414,8 @@ function canReadRepo(rawRepo: string, ctx: KernelContext): boolean {
   if (isRepoPublic(repoSlug(repo), ctx.config)) {
     return true;
   }
-  const scopes = visiblePackageScopesForActor(ctx.identity?.process);
+  const identity = requireIdentity(ctx);
+  const scopes = visiblePackageScopesForActor(repoPackageScopeIdentity(ctx, identity.process));
   return ctx.packages.list({ scopes }).some((record) => record.manifest.source.repo === repoSlug(repo));
 }
 
@@ -441,6 +461,69 @@ function toSummary(
     kind,
     writable: canWriteRepo(slug, ctx),
     public: isRepoPublic(slug, ctx.config),
+  };
+}
+
+function packageSourceRefFields(
+  sourceRef: string | null | undefined,
+  resolvedCommit: string | null | undefined,
+): Pick<RepoSummary, "ref" | "baseRef"> {
+  const ref = normalizeSummaryRef(sourceRef);
+  const baseRef = normalizeSummaryRef(resolvedCommit);
+  return {
+    ...(ref ? { ref } : {}),
+    ...(baseRef ? { baseRef } : {}),
+  };
+}
+
+function normalizeSummaryRef(ref: string | null | undefined): string | null {
+  const normalized = typeof ref === "string" ? ref.trim() : "";
+  return normalized || null;
+}
+
+function normalizePackageSourceSubdir(subdir: string | null | undefined): string {
+  const normalized = typeof subdir === "string"
+    ? subdir.trim().replace(/^\/+|\/+$/g, "")
+    : "";
+  return normalized || ".";
+}
+
+function mergeRepoSources(
+  existing: RepoSourceSummary[] | undefined,
+  incoming: RepoSourceSummary[] | undefined,
+): RepoSourceSummary[] {
+  const merged = new Map<string, RepoSourceSummary>();
+  for (const source of [...existing ?? [], ...incoming ?? []]) {
+    const key = [
+      source.kind,
+      source.packageId ?? "",
+      source.subdir,
+      source.ref ?? "",
+      source.baseRef ?? "",
+    ].join("\0");
+    if (!merged.has(key)) {
+      merged.set(key, source);
+    }
+  }
+  return [...merged.values()];
+}
+
+function repoPackageScopeIdentity(ctx: KernelContext, fallback: ProcessIdentity): ProcessIdentity {
+  const ownerUid = resolveCallerOwnerUid(ctx);
+  if (ownerUid === fallback.uid) {
+    return fallback;
+  }
+  const owner = ctx.auth?.getPasswdByUid(ownerUid);
+  if (!owner) {
+    return { ...fallback, uid: ownerUid };
+  }
+  return {
+    uid: owner.uid,
+    gid: owner.gid,
+    gids: ctx.auth?.resolveGids(owner.username, owner.gid) ?? [owner.gid],
+    username: owner.username,
+    home: owner.home,
+    cwd: owner.home,
   };
 }
 

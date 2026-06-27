@@ -122,14 +122,14 @@ export function buildPackageReviewPrompt(pkg: ConsolePackage, packages: readonly
   const entrypoints = pkg.entrypoints.length > 0
     ? pkg.entrypoints.map((entrypoint) => `${entrypoint.name}:${entrypoint.kind}`).join(", ")
     : "none";
-  const sourcePath = `/src/packages/${packageSourcePathNameForPackage(pkg, packages)}`;
+  const sourcePath = packageSourcePathForPackage(pkg, packages);
 
   return [
     `Review the imported package "${pkg.name}".`,
     "",
     `Current directory is already ${sourcePath}.`,
     `The package source is available at ${sourcePath}.`,
-    "Source writes are staged in the review process. Use pkg source status/diff to inspect staged changes; do not commit unless explicitly asked.",
+    "Source writes are staged in the review process. Use rgit status --here and rgit diff --here to inspect staged changes; do not commit unless explicitly asked.",
     "",
     `Source repo: ${pkg.sourceRepo || "unknown"}`,
     `Source ref: ${pkg.sourceRef || "main"}`,
@@ -138,14 +138,14 @@ export function buildPackageReviewPrompt(pkg: ConsolePackage, packages: readonly
     `Entrypoints: ${entrypoints}`,
     "",
     "Review workflow:",
-    "1. Start with pkg manifest, pkg capabilities, pkg refs, and pkg log.",
+    "1. Start with pkg manifest, pkg capabilities, pkg source, rgit refs --here, and rgit log --here.",
     `2. Inspect ${sourcePath}, prioritizing manifest, entrypoints, and system integration points.`,
     "3. Search for network access, parent-window messaging, host bridge use, process spawning, filesystem writes, shell execution, eval, and destructive actions.",
     "4. If a command fails, note it briefly and continue with other evidence. Do not guess.",
     "5. Keep tool use tight. Do not narrate trivial navigation or run placeholder commands.",
     "",
     "Use normal filesystem and shell exploration plus the pkg CLI.",
-    "Helpful commands: ls, find, grep, cat, pkg manifest, pkg capabilities, pkg refs, pkg log, pkg source status, pkg source diff.",
+    "Helpful commands: ls, find, grep, cat, pkg manifest, pkg capabilities, pkg source, rgit refs --here, rgit log --here, rgit status --here, rgit diff --here.",
     "Focus on requested capabilities, suspicious behavior, hidden network or shell access, destructive actions, and whether it should be enabled.",
     "Call out privileged integrations explicitly, including host bridge access, parent-window messaging, and process spawning if present.",
     "Conclude with a short verdict: approve or do not approve, followed by a concise evidence-based summary.",
@@ -153,12 +153,12 @@ export function buildPackageReviewPrompt(pkg: ConsolePackage, packages: readonly
 }
 
 export function buildPackageReviewAssignmentContext(pkg: ConsolePackage, packages: readonly ConsolePackage[]): string {
-  const sourcePath = `/src/packages/${packageSourcePathNameForPackage(pkg, packages)}`;
+  const sourcePath = packageSourcePathForPackage(pkg, packages);
   return [
     "# Package Review",
     "",
     `You are reviewing the imported package "${pkg.name}".`,
-    `The package source is mounted at ${sourcePath}, and the process starts there.`,
+    `The package source is available at ${sourcePath}, and the process starts there.`,
     "",
     "Treat this as a focused code review for whether the package should be enabled.",
     "Prioritize manifest, entrypoints, declared capabilities, host bridge usage, filesystem writes, shell execution, process spawning, network access, eval, and destructive actions.",
@@ -167,85 +167,15 @@ export function buildPackageReviewAssignmentContext(pkg: ConsolePackage, package
   ].join("\n");
 }
 
-function packageSourcePathNameForPackage(pkg: ConsolePackage, packages: readonly ConsolePackage[]): string {
-  const names = packageSourcePathNameMap(packages);
-  const targetKey = packageSourceRecordKey(pkg);
-  for (const [record, name] of names) {
-    if (packageSourceRecordKey(record) === targetKey) {
-      return name;
-    }
-  }
-  return packageSourcePathName(pkg);
+export function packageSourcePathForPackage(pkg: ConsolePackage, _packages: readonly ConsolePackage[]): string {
+  const repo = normalizeSourcePathPart(pkg.sourceRepo);
+  const subdir = normalizeSourcePathPart(pkg.sourceSubdir);
+  const root = `/src/repos/${repo}`;
+  return subdir && subdir !== "." ? `${root}/${subdir}` : root;
 }
 
-function packageSourcePathNameMap(packages: readonly ConsolePackage[]): Map<ConsolePackage, string> {
-  const entries = packages.map((pkg) => ({
-    pkg,
-    baseName: packageSourcePathName(pkg) || sanitizeSourcePathSegment(pkg.packageId) || "package",
-  }));
-  const counts = new Map<string, number>();
-  for (const entry of entries) {
-    counts.set(entry.baseName, (counts.get(entry.baseName) ?? 0) + 1);
-  }
-
-  const used = new Set<string>();
-  const result = new Map<ConsolePackage, string>();
-  for (const entry of entries.sort(compareSourcePathEntries)) {
-    const collides = (counts.get(entry.baseName) ?? 0) > 1;
-    const preferred = collides
-      ? `${entry.baseName}--${packageSourcePathDisambiguator(entry.pkg)}`
-      : entry.baseName;
-    const name = uniqueSourcePathName(preferred, used);
-    used.add(name);
-    result.set(entry.pkg, name);
-  }
-  return result;
-}
-
-function compareSourcePathEntries(
-  left: { pkg: ConsolePackage; baseName: string },
-  right: { pkg: ConsolePackage; baseName: string },
-): number {
-  const name = left.baseName.localeCompare(right.baseName);
-  if (name !== 0) {
-    return name;
-  }
-  const source = sourcePathDisambiguationKey(left.pkg).localeCompare(sourcePathDisambiguationKey(right.pkg));
-  if (source !== 0) {
-    return source;
-  }
-  return packageSourceRecordKey(left.pkg).localeCompare(packageSourceRecordKey(right.pkg));
-}
-
-function packageSourcePathName(pkg: ConsolePackage): string {
-  return sanitizeSourcePathSegment(pkg.name);
-}
-
-function packageSourcePathDisambiguator(pkg: ConsolePackage): string {
-  return sanitizeSourcePathSegment(sourcePathDisambiguationKey(pkg))
-    || sanitizeSourcePathSegment(pkg.packageId)
-    || "package";
-}
-
-function sourcePathDisambiguationKey(pkg: ConsolePackage): string {
-  const subdir = pkg.sourceSubdir.trim().replace(/^\/+|\/+$/g, "");
-  return subdir && subdir !== "."
-    ? `${pkg.sourceRepo}-${subdir}`
-    : pkg.sourceRepo;
-}
-
-function sanitizeSourcePathSegment(value: string): string {
-  return value.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
-}
-
-function uniqueSourcePathName(preferred: string, used: Set<string>): string {
-  let candidate = preferred || "package";
-  let index = 2;
-  while (used.has(candidate)) {
-    candidate = `${preferred || "package"}-${index}`;
-    index += 1;
-  }
-  return candidate;
+function normalizeSourcePathPart(value: string): string {
+  return value.trim().replace(/^\/+|\/+$/g, "").replace(/\/+/g, "/");
 }
 
 function packageSourceRecordKey(pkg: ConsolePackage): string {

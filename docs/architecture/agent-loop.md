@@ -72,10 +72,11 @@ and profile context can template values such as `identity.username`, `identity.c
 lexically and bounded by `config/ai/max_context_bytes`.
 
 Skill sources follow the same layered shape: profile `skills.d`, `~/skills.d`,
-workspace `.gsv/skills.d`, and visible package `/src/packages/<package>/skills.d`.
-The prompt tells processes to use `skills list`, `skills search`, `skills show`,
-`skills files`, and `skills read` rather than embedding long source paths in the
-index.
+workspace `.gsv/skills.d`, and visible package source repos. Use
+`pkg source <package>` to locate package-provided skill files under
+`/src/repos/<owner>/<repo>`. The prompt tells processes to use `skills list`,
+`skills search`, `skills show`, `skills files`, and `skills read` rather than
+embedding long source paths in the index.
 
 System-provided skills live in the root GSV source tree under `skills/` and are
 seeded into user home `skills.d` during bootstrap when missing.

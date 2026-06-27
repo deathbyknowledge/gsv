@@ -11,15 +11,19 @@ pub(crate) async fn run_packages(
     let client = KernelClient::connect_user(url, auth, |_| {}).await?;
 
     match action {
-        PackagesAction::Sync => {
-            let payload = client.request_ok("pkg.sync", Some(json!({}))).await?;
+        PackagesAction::Sync { package, r#ref } => {
+            let mut args = json!({ "packageId": package });
+            if let Some(source_ref) = r#ref {
+                args["ref"] = json!(source_ref);
+            }
+            let payload = client.request_ok("pkg.sync", Some(args)).await?;
             let packages = payload
                 .get("packages")
                 .and_then(|value| value.as_array())
                 .cloned()
                 .unwrap_or_default();
 
-            println!("Synced {} builtin package(s).", packages.len());
+            println!("Synced {} package(s).", packages.len());
             for package in packages {
                 if let Some(name) = package.get("name").and_then(|value| value.as_str()) {
                     let version = package

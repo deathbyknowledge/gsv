@@ -204,6 +204,25 @@ Current behavior:
 - bindings accept `string`, `number`, `boolean`, and `null`
 - booleans are stored as numeric SQLite values
 
+## Ship source changes
+
+After changing a package source tree under `/src/repos`:
+
+```bash
+rgit diff owner/repo
+rgit commit owner/repo --message "update package"
+pkg update <package> --ref main
+```
+
+Use `repo.import` or the console's **Pull upstream** action to fetch upstream
+changes into a deployed `root/gsv`. The pull records
+`refs/remotes/upstream/<ref>` and fast-forwards the local branch only when safe.
+If local commits diverged, merge upstream first and then update affected
+packages explicitly.
+
+If you changed the package runtime, SDK, assembler, or Gateway code, redeploy
+the relevant infrastructure before updating installed packages.
+
 ## See also
 
 - [Applications](../how-to/applications)
