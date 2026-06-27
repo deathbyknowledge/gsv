@@ -5,7 +5,7 @@ import type { Story } from "../story";
 const story: Story = {
   title: "ObjectCard",
   group: "Data Display",
-  blurb: "object dialog card · header icon + name + status · type · blurb",
+  blurb: "object card · icon + category + name + status · description on hover",
   render: () => (
     <div class="ds-col">
       <div class="ds-cell">

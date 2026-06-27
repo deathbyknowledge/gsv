@@ -119,6 +119,16 @@
     radial-gradient(1100px 720px at 50% -4%, rgba(150, 140, 255, 0.07), transparent 58%),
     var(--void);
   font-family: var(--gsv-font-mono);
+}
+
+/* The tree scrolls inside here; the section stays a fixed viewport so the HUD,
+   hint, and background layers remain pinned while many child objects scroll. */
+.gsv-space-scroll {
+  position: relative;
+  z-index: 2;
+  height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--rule-section) #0c0a22;
 }
@@ -636,18 +646,6 @@
   text-align: center;
 }
 
-.gsv-object-strip header span {
-  font-size: 10px;
-  letter-spacing: 0.26em;
-}
-
-.gsv-object-strip header small {
-  color: var(--text-dim);
-  font-size: 9px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-
 .gsv-object-strip header strong {
   display: inline-flex;
   align-items: center;
@@ -665,29 +663,30 @@
   grid-template-columns: repeat(auto-fit, minmax(220px, 236px));
   justify-content: center;
   gap: 18px;
+  /* When the strip is pinned and the cards overflow, JS caps max-height and
+     turns this into the lone scroll region (see GsvDesktop position effect). */
+  scrollbar-width: thin;
+  scrollbar-color: var(--rule-section) transparent;
+}
+
+.gsv-object-strip > div[style*="overflow"] {
+  padding: 2px 6px 2px 2px;
 }
 
 .gsv-object-strip-add {
   width: 236px;
-  min-height: 118px;
   display: flex;
 }
 
-.gsv-object-strip-add > div,
-.gsv-object-strip-add .aa {
+/* Stretch the connect card to the grid row height so it matches the object
+   cards sitting beside it. */
+.gsv-object-strip-add > div {
+  display: flex;
   width: 100%;
-  min-height: 118px;
 }
 
-.gsv-object-strip-empty {
-  min-width: 238px;
-  border: 1px solid var(--border);
-  background: var(--panel);
-  color: var(--text-dim);
-  padding: 18px;
-  text-align: center;
-  font-size: 10px;
-  letter-spacing: 0.18em;
+.gsv-object-strip-add .aa {
+  width: 100%;
 }
 
 /* .gsv-space-hint styles live with the DesktopHint component (DesktopHint.css). */
