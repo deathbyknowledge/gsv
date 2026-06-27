@@ -9,6 +9,7 @@ import { Search } from "../app/components/ui/Search";
 import foundationsTokens from "./stories/Tokens.story";
 import typography from "./stories/Typography.story";
 import icons from "./stories/Icons.story";
+import gsvMark from "./stories/GsvMark.story";
 import scrollbar from "./stories/Scrollbar.story";
 import button from "./stories/Button.story";
 import textInput from "./stories/TextInput.story";
@@ -65,6 +66,7 @@ const STORIES: Story[] = [
   foundationsTokens,
   typography,
   icons,
+  gsvMark,
   scrollbar,
   // Forms
   button,

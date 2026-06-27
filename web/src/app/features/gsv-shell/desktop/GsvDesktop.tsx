@@ -1,5 +1,6 @@
 import type { JSX } from "preact";
 import { AddAction } from "../../../components/ui/AddAction";
+import { GsvMark } from "../../../components/ui/GsvMark";
 import { IconMenu } from "../../../components/ui/IconMenu";
 import { ObjectCard } from "../../../components/ui/ObjectCard";
 import { StatusDot } from "../../../components/ui/StatusDot";
@@ -51,19 +52,6 @@ function branchCountStyle(count: number): JSX.CSSProperties {
   } as JSX.CSSProperties;
 }
 
-function GsvMark() {
-  return (
-    <svg width="50" height="50" viewBox="0 0 16 16" aria-hidden="true">
-      <g fill="var(--text-hi)" shape-rendering="crispEdges">
-        <rect x="7" y="1" width="2" height="2" />
-        <rect x="6" y="3" width="4" height="6" />
-        <rect x="4" y="6" width="2" height="3" />
-        <rect x="10" y="6" width="2" height="3" />
-        <rect x="7" y="11" width="2" height="3" fill="#a9a4ff" />
-      </g>
-    </svg>
-  );
-}
 
 function SpaceGlyphs() {
   const glyphs = ["+", "*", ":", "o", "+", "*", "o", ":", "*", "-", "+", "*", ":", "o", "+", "*", ":", "o"];
@@ -171,7 +159,7 @@ export function GsvDesktop({
             onClick={onToggleGsv}
           >
             <span class="gsv-space-gsv-cross" aria-hidden="true" />
-            <GsvMark />
+            <GsvMark variant="master" size={50} />
           </button>
           <div class="gsv-space-gsv-label">GSV</div>
         </div>
