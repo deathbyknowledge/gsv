@@ -311,6 +311,7 @@ export function GsvDesktop({
                 <IconMenu
                   title="GSV // CONTROL"
                   width={386}
+                  autoFocus={gsvOpen}
                   onClose={closeGsvControls}
                   onFiles={() => onOpenSurface("files")}
                   onLibrary={() => onOpenSurface("library")}
