@@ -11,12 +11,20 @@
  */
 
 import { resolveCallerOwnerUid, type KernelContext } from "./context";
+import type { Context, Message, Tool } from "@earendil-works/pi-ai";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type {
   AiToolsResult,
   AiToolsDevice,
   AiConfigArgs,
   AiConfigResult,
+  AiAssistantMessage,
+  AiTextGenerateArgs,
+  AiTextGenerateConfig,
+  AiTextGenerateOptions,
+  AiTextGenerateResult,
+  AiTextMessage,
+  AiTextTool,
   AiImageGenerateArgs,
   AiImageGenerateResult,
   AiImageReadArgs,
@@ -52,6 +60,10 @@ import {
   resolveWorkersAiModelContextWindow,
 } from "../inference/workers-ai";
 import { resolveModelContextWindowFromRegistry } from "../inference/model-registry";
+import {
+  createGenerationService,
+  extractGeneratedText,
+} from "../inference/service";
 import {
   DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
   DEFAULT_MAX_AUDIO_TRANSCRIPTION_BYTES,
@@ -91,7 +103,9 @@ import {
 import { collectPromptSkillIndex } from "./skills";
 import { listVisibleTargets, targetToAiDevice } from "./targets";
 import {
+  findProcessAiModelProfile,
   normalizeProcessAiConfigValues,
+  omitProcessAiConfigSecrets,
   PROCESS_AI_CONFIG_SECRET_KEYS,
   processAiModelProfileSecretConfigKey,
 } from "../process/ai-config";
@@ -275,6 +289,34 @@ export async function handleAiConfig(
     generationTimeoutMs,
     generationStreaming,
     media,
+  };
+}
+
+export async function handleAiTextGenerate(
+  args: AiTextGenerateArgs,
+  ctx: KernelContext,
+): Promise<AiTextGenerateResult> {
+  const input = args && typeof args === "object" ? args : ({} as AiTextGenerateArgs);
+  const target = normalizeOptionalString(input.target) ?? "gsv";
+  if (target !== "gsv") {
+    throw new Error(`AI text generation target is not available: ${target}`);
+  }
+
+  const config = await resolveAiTextGenerationConfig(input.config, ctx);
+  const context = normalizeAiTextGenerationContext(input);
+  const options = normalizeAiTextGenerateOptions(input.options);
+  const response = await createGenerationService().generate({
+    config,
+    context,
+    ...(options ? { options } : {}),
+    sessionAffinityKey: normalizeOptionalString(input.sessionAffinityKey),
+  });
+  const text = extractGeneratedText(response);
+  return {
+    message: response as unknown as AiAssistantMessage,
+    provider: response.provider || config.provider,
+    model: response.model || config.model,
+    ...(text ? { text } : {}),
   };
 }
 
@@ -484,6 +526,153 @@ export async function handleAiSpeechCreate(
     ...(result.encoding ? { encoding: result.encoding } : {}),
     ...(result.container ? { container: result.container } : {}),
   };
+}
+
+async function resolveAiTextGenerationConfig(
+  input: AiTextGenerateConfig | undefined,
+  ctx: KernelContext,
+): Promise<AiConfigResult> {
+  const requested = input && typeof input === "object" ? input : undefined;
+  const overrides = normalizeProcessAiConfigValues(requested?.overrides ?? {});
+  const preset = requested?.preset;
+  if (!preset) {
+    return await handleAiConfig(Object.keys(overrides).length > 0 ? { processOverrides: overrides } : {}, ctx);
+  }
+
+  const selector = normalizeOptionalString(preset.id) ?? normalizeOptionalString(preset.name);
+  if (!selector) {
+    throw new Error("config.preset requires id or name");
+  }
+
+  const uid = ctx.identity?.process.uid ?? 0;
+  const owner = resolveOwnerIdentity(ctx);
+  const ownerUid = resolveAiProfileOwnerUid(ctx, uid, owner);
+  const profile = findProcessAiModelProfile(
+    ctx.config.get(`users/${ownerUid}/ai/model_profiles`),
+    ownerUid,
+    selector,
+  );
+  if (!profile) {
+    throw new Error(`AI model preset not found: ${selector}`);
+  }
+
+  return await handleAiConfig({
+    processOverrides: {
+      ...omitProcessAiConfigSecrets(profile.values),
+      ...overrides,
+    },
+    processProfile: {
+      id: profile.id,
+      name: profile.name,
+      appliedAt: Date.now(),
+    },
+  }, ctx);
+}
+
+function normalizeAiTextGenerationContext(input: AiTextGenerateArgs): Context {
+  if (!Array.isArray(input.messages)) {
+    throw new Error("messages must be an array");
+  }
+  const tools = Array.isArray(input.tools)
+    ? input.tools.map(normalizeAiTextTool)
+    : undefined;
+  return {
+    systemPrompt: typeof input.systemPrompt === "string" ? input.systemPrompt : "",
+    messages: input.messages.map(normalizeAiTextMessage),
+    ...(tools && tools.length > 0 ? { tools } : {}),
+  };
+}
+
+function normalizeAiTextMessage(message: AiTextMessage, index: number): Message {
+  if (!message || typeof message !== "object") {
+    throw new Error(`messages[${index}] must be an object`);
+  }
+  const timestamp = normalizeTimestamp((message as { timestamp?: unknown }).timestamp);
+  if (message.role === "user") {
+    return {
+      ...message,
+      timestamp,
+    } as unknown as Message;
+  }
+  if (message.role === "assistant") {
+    return {
+      ...message,
+      timestamp,
+    } as unknown as Message;
+  }
+  if (message.role === "toolResult") {
+    return {
+      ...message,
+      timestamp,
+    } as unknown as Message;
+  }
+  throw new Error(`messages[${index}].role is unsupported`);
+}
+
+function normalizeAiTextTool(tool: AiTextTool, index: number): Tool {
+  if (!tool || typeof tool !== "object") {
+    throw new Error(`tools[${index}] must be an object`);
+  }
+  const name = normalizeOptionalString(tool.name);
+  if (!name) {
+    throw new Error(`tools[${index}].name is required`);
+  }
+  return {
+    name,
+    description: typeof tool.description === "string" ? tool.description : "",
+    parameters: tool.parameters && typeof tool.parameters === "object"
+      ? tool.parameters as Tool["parameters"]
+      : {},
+  };
+}
+
+function normalizeAiTextGenerateOptions(
+  input: AiTextGenerateOptions | undefined,
+): AiTextGenerateOptions | undefined {
+  if (!input || typeof input !== "object") {
+    return undefined;
+  }
+  const options: AiTextGenerateOptions = {};
+  const maxTokens = normalizePositiveNumber(input.maxTokens);
+  if (maxTokens !== undefined) {
+    options.maxTokens = Math.floor(maxTokens);
+  }
+  const timeoutMs = normalizePositiveNumber(input.timeoutMs);
+  if (timeoutMs !== undefined) {
+    options.timeoutMs = Math.floor(timeoutMs);
+  }
+  const reasoning = normalizeAiTextGenerationReasoning(input.reasoning);
+  if (reasoning) {
+    options.reasoning = reasoning;
+  }
+  return Object.keys(options).length > 0 ? options : undefined;
+}
+
+function normalizeAiTextGenerationReasoning(
+  value: unknown,
+): AiTextGenerateOptions["reasoning"] | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (
+    normalized === "inherit" ||
+    normalized === "off" ||
+    normalized === "minimal" ||
+    normalized === "low" ||
+    normalized === "medium" ||
+    normalized === "high" ||
+    normalized === "xhigh"
+  ) {
+    return normalized;
+  }
+  throw new Error("options.reasoning must be inherit, off, minimal, low, medium, high, or xhigh");
+}
+
+function normalizeTimestamp(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? value
+    : Date.now();
 }
 
 /**

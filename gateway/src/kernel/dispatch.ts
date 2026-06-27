@@ -33,6 +33,7 @@ import {
   handleAiImageGenerate,
   handleAiImageRead,
   handleAiSpeechCreate,
+  handleAiTextGenerate,
   handleAiTools,
   handleAiTranscriptionCreate,
 } from "./ai";
@@ -468,6 +469,9 @@ async function dispatchNative(
         break;
       case "ai.config":
         data = await handleAiConfig(frame.args, ctx);
+        break;
+      case "ai.text.generate":
+        data = await handleAiTextGenerate(frame.args, ctx);
         break;
       case "ai.transcription.create":
         data = await handleAiTranscriptionCreate(frame.args, ctx);

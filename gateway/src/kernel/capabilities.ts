@@ -47,6 +47,7 @@ const DEFAULT_CAPABILITIES: [number, string[]][] = [
     "repo.refs",
     "repo.search",
     "sched.*",
+    "ai.text.generate",
     "ai.image.generate",
     "ai.image.read",
     "ai.transcription.create",

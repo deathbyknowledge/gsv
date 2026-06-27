@@ -48,7 +48,6 @@ const CONTEXT: Context = {
 describe("resolveGenerationOptions", () => {
   it("preserves configured reasoning for chat replies", () => {
     const result = resolveGenerationOptions({
-      purpose: "chat.reply",
       config: CONFIG,
       context: CONTEXT,
     });
@@ -59,7 +58,6 @@ describe("resolveGenerationOptions", () => {
 
   it("clamps unsupported reasoning for Workers AI models", () => {
     const result = resolveGenerationOptions({
-      purpose: "chat.reply",
       config: {
         ...CONFIG,
         provider: "workers-ai",
@@ -74,7 +72,6 @@ describe("resolveGenerationOptions", () => {
 
   it("clamps unsupported reasoning for pi-ai models", () => {
     const result = resolveGenerationOptions({
-      purpose: "chat.reply",
       config: {
         ...CONFIG,
         provider: "google",
@@ -89,7 +86,6 @@ describe("resolveGenerationOptions", () => {
 
   it("uses the closest supported reasoning when a model cannot turn reasoning off", () => {
     const result = resolveGenerationOptions({
-      purpose: "chat.reply",
       config: {
         ...CONFIG,
         provider: "openai",
@@ -102,11 +98,14 @@ describe("resolveGenerationOptions", () => {
     expect(result.reasoning).toBe("minimal");
   });
 
-  it("disables reasoning and constrains tokens for compaction summaries", () => {
+  it("disables reasoning and constrains tokens when explicitly requested", () => {
     const result = resolveGenerationOptions({
-      purpose: "compaction.summary",
       config: CONFIG,
       context: CONTEXT,
+      options: {
+        maxTokens: 768,
+        reasoning: "off",
+      },
     });
 
     expect(result.reasoning).toBeUndefined();
@@ -147,7 +146,6 @@ describe("describeGeneratedTextFailure", () => {
     message.errorMessage = "insufficient funds";
 
     expect(describeGeneratedTextFailure({
-      purpose: "compaction.summary",
       config: {
         provider: "deepseek",
         model: "deepseek-chat",
@@ -160,18 +158,21 @@ describe("describeGeneratedTextFailure", () => {
 
   it("falls back to the generic no-text message when there is no provider error", () => {
     expect(describeGeneratedTextFailure({
-      purpose: "compaction.summary",
       config: {
         provider: "test",
         model: "test",
       },
-    }, assistantMessage([]))).toBe("Generation for compaction.summary returned no text");
+    }, assistantMessage([]))).toBe("Generation returned no text");
   });
 });
 
 describe("resolveGenerationTimeoutMs", () => {
   it("uses the configured generation timeout", () => {
     expect(resolveGenerationTimeoutMs(CONFIG)).toBe(180000);
+  });
+
+  it("lets callers provide a shorter generation timeout", () => {
+    expect(resolveGenerationTimeoutMs(CONFIG, { timeoutMs: 1000 })).toBe(1000);
   });
 
   it("defaults legacy persisted configs without a generation timeout", () => {

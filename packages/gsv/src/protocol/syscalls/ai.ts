@@ -90,6 +90,132 @@ export type AiConfigResult = {
   };
 };
 
+export type AiTextContent = {
+  type: "text";
+  text: string;
+  textSignature?: string;
+};
+
+export type AiThinkingContent = {
+  type: "thinking";
+  thinking: string;
+  thinkingSignature?: string;
+  redacted?: boolean;
+};
+
+export type AiImageContent = {
+  type: "image";
+  data: string;
+  mimeType: string;
+};
+
+export type AiToolCall = {
+  type: "toolCall";
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+  thoughtSignature?: string;
+};
+
+export type AiUsageCost = {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  total: number;
+};
+
+export type AiUsage = {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  cacheWrite1h?: number;
+  totalTokens: number;
+  cost: AiUsageCost;
+};
+
+export type AiStopReason = "stop" | "length" | "toolUse" | "error" | "aborted";
+
+export type AiUserMessage = {
+  role: "user";
+  content: string | Array<AiTextContent | AiImageContent>;
+  timestamp?: number;
+};
+
+export type AiAssistantMessage = {
+  role: "assistant";
+  content: Array<AiTextContent | AiThinkingContent | AiToolCall>;
+  api: string;
+  provider: string;
+  model: string;
+  responseModel?: string;
+  responseId?: string;
+  diagnostics?: unknown[];
+  usage: AiUsage;
+  stopReason: AiStopReason;
+  errorMessage?: string;
+  timestamp?: number;
+};
+
+export type AiToolResultMessage = {
+  role: "toolResult";
+  toolCallId: string;
+  toolName: string;
+  content: Array<AiTextContent | AiImageContent>;
+  details?: unknown;
+  isError: boolean;
+  timestamp?: number;
+};
+
+export type AiTextMessage = AiUserMessage | AiAssistantMessage | AiToolResultMessage;
+
+export type AiTextTool = {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+};
+
+export type AiTextGenerationReasoning =
+  | "inherit"
+  | "off"
+  | "minimal"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh";
+
+export type AiTextGenerateOptions = {
+  maxTokens?: number;
+  reasoning?: AiTextGenerationReasoning;
+  timeoutMs?: number;
+};
+
+export type AiTextGenerateConfig = {
+  preset?: {
+    id?: string;
+    name?: string;
+  };
+  overrides?: Record<string, string>;
+};
+
+export type AiTextGenerateArgs = {
+  target?: string;
+  systemPrompt?: string;
+  messages: AiTextMessage[];
+  tools?: AiTextTool[];
+  config?: AiTextGenerateConfig;
+  options?: AiTextGenerateOptions;
+  sessionAffinityKey?: string;
+};
+
+export type AiTextGenerateResult = {
+  message: AiAssistantMessage;
+  provider: string;
+  model: string;
+  text?: string;
+};
+
 export type AiTranscriptionCreateArgs = {
   audio: {
     data: string;

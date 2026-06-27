@@ -191,6 +191,7 @@ describe("CapabilityStore", () => {
       "ai.image.generate",
       "ai.image.read",
       "ai.speech.create",
+      "ai.text.generate",
       "ai.transcription.create",
       "app.*",
       "codemode.*",

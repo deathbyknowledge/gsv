@@ -2,11 +2,27 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { KernelContext } from "./context";
 import type { DeviceRecord } from "./devices";
 import { sendFrameToProcess } from "../shared/utils";
+
+const generateMock = vi.hoisted(() => vi.fn());
+
+vi.mock("../inference/service", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../inference/service")>();
+  return {
+    ...actual,
+    createGenerationService: () => ({
+      generate: generateMock,
+      stream: vi.fn(),
+      generateText: vi.fn(),
+    }),
+  };
+});
+
 import {
   handleAiConfig,
   handleAiImageGenerate,
   handleAiImageRead,
   handleAiSpeechCreate,
+  handleAiTextGenerate,
   handleAiTools,
   handleAiTranscriptionCreate,
 } from "./ai";
@@ -31,6 +47,7 @@ const sendFrameToProcessMock = vi.mocked(sendFrameToProcess);
 
 beforeEach(() => {
   sendFrameToProcessMock.mockReset();
+  generateMock.mockReset();
 });
 
 function makeDevice(partial: Partial<DeviceRecord> & { device_id: string }): DeviceRecord {
@@ -356,6 +373,73 @@ describe("handleAiConfig", () => {
     }));
 
     expect(result.capabilities).toEqual(["codemode.run", "net.fetch"]);
+  });
+
+  it("generates text with preset config and explicit generation options", async () => {
+    generateMock.mockImplementationOnce(async (request: any) => {
+      expect(request.config).toMatchObject({
+        provider: "anthropic",
+        model: "claude-test",
+        apiKey: "preset-secret",
+      });
+      expect(request.context).toMatchObject({
+        systemPrompt: "Be direct.",
+        messages: [{
+          role: "user",
+          content: "ping",
+        }],
+      });
+      expect(request.options).toEqual({
+        maxTokens: 64,
+        reasoning: "off",
+      });
+      return {
+        role: "assistant",
+        content: [{ type: "text", text: "pong" }],
+        api: "test",
+        provider: "anthropic",
+        model: "claude-test",
+        usage: {
+          input: 1,
+          output: 1,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 2,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: "stop",
+        timestamp: 1,
+      };
+    });
+    const ctx = makeAiConfigContext({
+      "users/1000/ai/model_profiles": JSON.stringify({
+        profiles: [{
+          id: "preset-1",
+          name: "Fast",
+          values: {
+            "config/ai/provider": "anthropic",
+            "config/ai/model": "claude-test",
+            "config/ai/api_key": "redacted",
+          },
+          createdAt: 1,
+          updatedAt: 2,
+        }],
+      }),
+      "users/1000/ai/model_profiles/preset-1/api_key": "preset-secret",
+    });
+
+    const result = await handleAiTextGenerate({
+      systemPrompt: "Be direct.",
+      messages: [{ role: "user", content: "ping" }],
+      config: { preset: { name: "Fast" } },
+      options: { maxTokens: 64, reasoning: "off" },
+    }, ctx);
+
+    expect(result).toMatchObject({
+      provider: "anthropic",
+      model: "claude-test",
+      text: "pong",
+    });
   });
 
   it("falls back to the owning human's AI config for agent processes", async () => {

@@ -293,6 +293,22 @@ describe("native shell execution", () => {
 });
 
 describe("media native commands", () => {
+  it("registers the llm command and enforces text generation capability", async () => {
+    const help = await handleShellExec(
+      { input: "llm --help" },
+      makeContext({ capabilities: [] }),
+    );
+    expect(help.ok).toBe(true);
+    expect(help.stdout).toContain("llm [OPTIONS] PROMPT...");
+
+    const denied = await handleShellExec(
+      { input: "llm hello" },
+      makeContext({ capabilities: [] }),
+    );
+    expect(denied.exitCode).toBe(1);
+    expect(denied.stderr).toContain("Permission denied: ai.text.generate");
+  });
+
   it("runs standalone media commands through the configured AI media paths", async () => {
     const result = await handleShellExec(
       {

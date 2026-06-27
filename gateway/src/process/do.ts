@@ -23,6 +23,8 @@ import type { CodeModeExecArgs, CodeModeRunArgs, CodeModeRunResult } from "../sy
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type {
   AiConfigResult,
+  AiTextGenerateArgs,
+  AiTextGenerateOptions,
   AiToolsDevice,
 } from "../syscalls/ai";
 import { COMPACTION_SUMMARY_SYSTEM_PROMPT } from "../prompts/compaction";
@@ -103,7 +105,7 @@ import type {
   UserMessage,
   ImageContent,
 } from "@earendil-works/pi-ai";
-import { createGenerationService } from "../inference/service";
+import { createGenerationService, isGenerationService } from "../inference/service";
 import {
   errorMessageFromUnknown,
   formatProviderErrorMessage,
@@ -674,6 +676,39 @@ function buildCompactionSummaryContext(messages: MessageRecord[]): Context {
       },
     ],
   };
+}
+
+function toAiTextTool(tool: Tool): NonNullable<AiTextGenerateArgs["tools"]>[number] {
+  return {
+    name: tool.name,
+    description: tool.description,
+    parameters: tool.parameters as Record<string, unknown>,
+  };
+}
+
+function aiTextOverridesFromConfig(config: AiConfigResult): Record<string, string> {
+  return compactStringRecord({
+    "config/ai/provider": config.provider,
+    "config/ai/model": config.model,
+    "config/ai/api_key": config.apiKey,
+    "config/ai/reasoning": config.reasoning,
+    "config/ai/max_tokens": String(config.maxTokens),
+    "config/ai/context_window_tokens": config.contextWindowTokens === null
+      ? undefined
+      : String(config.contextWindowTokens),
+    "config/ai/max_context_bytes": String(config.maxContextBytes),
+    "config/ai/generation/timeout_ms": String(config.generationTimeoutMs),
+  });
+}
+
+function compactStringRecord(input: Record<string, string | undefined>): Record<string, string> {
+  const output: Record<string, string> = {};
+  for (const [key, value] of Object.entries(input)) {
+    if (value !== undefined && value.trim().length > 0) {
+      output[key] = value;
+    }
+  }
+  return output;
 }
 
 function renderCompactionTranscriptWindow(messages: MessageRecord[], maxChars: number): string {
@@ -1908,18 +1943,24 @@ export class Process extends Host<Env> {
       throw new Error("AI config unavailable");
     }
 
-    const generated = await this.generation.generateText({
-      purpose: "compaction.summary",
+    const context = buildCompactionSummaryContext(messages);
+    const generationOptions: AiTextGenerateOptions = {
+      maxTokens: 768,
+      reasoning: "off",
+    };
+    const generated = await this.generateCompactionText({
       config,
-      context: buildCompactionSummaryContext(messages),
+      context,
+      options: generationOptions,
       sessionAffinityKey: `${this.pid}:compaction`,
-    }).catch((error: unknown) => {
-      const message = errorMessageFromUnknown(error);
-      throw new Error(formatProviderErrorMessage(message, {
-        provider: config.provider,
-        model: config.model,
-      }) || message);
-    });
+    })
+      .catch((error: unknown) => {
+        const message = errorMessageFromUnknown(error);
+        throw new Error(formatProviderErrorMessage(message, {
+          provider: config.provider,
+          model: config.model,
+        }) || message);
+      });
     const summary = generated.trim();
     if (!summary) {
       throw new Error("summary generation returned empty text");
@@ -2705,7 +2746,6 @@ export class Process extends Host<Env> {
     if (!run.systemPrompt) {
       run.systemPrompt = await assembleSystemPrompt({
         config: run.config!,
-        purpose: "chat.reply",
         identity: this.identity,
         ownerIdentity: run.config?.owner ?? undefined,
         devices: run.devices ?? [],
@@ -2781,7 +2821,6 @@ export class Process extends Host<Env> {
         response = await this.generateAssistantResponse({
           runId,
           conversationId,
-          purpose: "chat.reply",
           config: run.config!,
           context,
           sessionAffinityKey: this.pid,
@@ -3002,7 +3041,6 @@ export class Process extends Host<Env> {
   private async generateAssistantResponse(options: {
     runId: string;
     conversationId: string;
-    purpose: "chat.reply";
     config: AiConfigResult;
     context: Context;
     sessionAffinityKey?: string;
@@ -3011,7 +3049,6 @@ export class Process extends Host<Env> {
     const stream = options.config.generationStreaming !== "off" &&
       typeof this.generation.stream === "function"
       ? this.generation.stream({
-        purpose: options.purpose,
         config: options.config,
         context: options.context,
         sessionAffinityKey: options.sessionAffinityKey,
@@ -3019,12 +3056,29 @@ export class Process extends Host<Env> {
       : null;
 
     if (!stream) {
-      return this.generation.generate({
-        purpose: options.purpose,
+      const generation = this.generation as unknown;
+      if (!isGenerationService(generation)) {
+        const injected = generation as {
+          generate?: (request: {
+            config: AiConfigResult;
+            context: Context;
+            sessionAffinityKey?: string;
+          }) => Promise<AssistantMessage>;
+        };
+        if (typeof injected.generate === "function") {
+          return injected.generate({
+            config: options.config,
+            context: options.context,
+            sessionAffinityKey: options.sessionAffinityKey,
+          });
+        }
+      }
+      const result = await this.kernelRpc("ai.text.generate", this.buildAiTextGenerateArgs({
         config: options.config,
         context: options.context,
         sessionAffinityKey: options.sessionAffinityKey,
-      });
+      }));
+      return result.message as unknown as AssistantMessage;
     }
 
     let seq = options.streamSeq?.value ?? 0;
@@ -3046,6 +3100,67 @@ export class Process extends Host<Env> {
     }
 
     return response ?? await stream.result();
+  }
+
+  private async generateCompactionText(options: {
+    config: AiConfigResult;
+    context: Context;
+    options: AiTextGenerateOptions;
+    sessionAffinityKey: string;
+  }): Promise<string> {
+    const generation = this.generation as unknown;
+    if (!isGenerationService(generation)) {
+      const injected = generation as {
+        generateText?: (request: {
+          config: AiConfigResult;
+          context: Context;
+          options?: AiTextGenerateOptions;
+          sessionAffinityKey?: string;
+        }) => Promise<string>;
+      };
+      if (typeof injected.generateText === "function") {
+        return await injected.generateText({
+          config: options.config,
+          context: options.context,
+          options: options.options,
+          sessionAffinityKey: options.sessionAffinityKey,
+        });
+      }
+    }
+    const result = await this.kernelRpc("ai.text.generate", this.buildAiTextGenerateArgs(options));
+    if (result.text) {
+      return result.text;
+    }
+    if (
+      (result.message.stopReason === "error" || result.message.stopReason === "aborted") &&
+      result.message.errorMessage
+    ) {
+      throw new Error(formatProviderErrorMessage(result.message.errorMessage, {
+        provider: options.config.provider,
+        model: options.config.model,
+      }) || result.message.errorMessage);
+    }
+    return "";
+  }
+
+  private buildAiTextGenerateArgs(options: {
+    context: Context;
+    config: AiConfigResult;
+    options?: AiTextGenerateOptions;
+    sessionAffinityKey?: string;
+  }): AiTextGenerateArgs {
+    return {
+      systemPrompt: options.context.systemPrompt,
+      messages: options.context.messages as unknown as AiTextGenerateArgs["messages"],
+      ...(options.context.tools && options.context.tools.length > 0
+        ? { tools: options.context.tools.map(toAiTextTool) }
+        : {}),
+      config: {
+        overrides: aiTextOverridesFromConfig(options.config),
+      },
+      ...(options.options ? { options: options.options } : {}),
+      ...(options.sessionAffinityKey ? { sessionAffinityKey: options.sessionAffinityKey } : {}),
+    };
   }
 
   private recordUnpersistedAssistantUsage(

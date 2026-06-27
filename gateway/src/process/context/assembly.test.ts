@@ -334,7 +334,6 @@ describe("createHomeContextProvider", () => {
 function makeInput(overrides: Partial<PromptAssemblyInput> = {}): PromptAssemblyInput {
   return {
     config: CONFIG,
-    purpose: "chat.reply",
     identity: IDENTITY,
     devices: [],
     mcpServers: [],

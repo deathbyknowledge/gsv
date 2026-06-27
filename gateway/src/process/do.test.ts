@@ -3024,7 +3024,7 @@ describe("Process DO — mechanical", () => {
             throw new Error("unexpected chat generation");
           },
           async generateText(request: any) {
-            expect(request.purpose).toBe("compaction.summary");
+            expect(request.options).toMatchObject({ maxTokens: 768, reasoning: "off" });
             expect(request.context.messages[0].content).toContain("old user goal");
             return "Generated compact summary.";
           },
@@ -3424,7 +3424,7 @@ describe("Process DO — mechanical", () => {
             };
           },
           async generateText(request: any) {
-            expect(request.purpose).toBe("compaction.summary");
+            expect(request.options).toMatchObject({ maxTokens: 768, reasoning: "off" });
             expect(JSON.stringify(request.context)).toContain("old context A");
             return "Auto compact summary.";
           },
@@ -3502,7 +3502,7 @@ describe("Process DO — mechanical", () => {
             throw new Error("chat generation should not run after compaction failure");
           },
           async generateText(request: any) {
-            expect(request.purpose).toBe("compaction.summary");
+            expect(request.options).toMatchObject({ maxTokens: 768, reasoning: "off" });
             throw new Error("insufficient funds");
           },
         };
@@ -3584,7 +3584,7 @@ describe("Process DO — mechanical", () => {
             throw new Error("chat generation should not run after abort");
           },
           async generateText(request: any) {
-            expect(request.purpose).toBe("compaction.summary");
+            expect(request.options).toMatchObject({ maxTokens: 768, reasoning: "off" });
             await process.handleProcAbort();
             return "Summary that should not be applied.";
           },
