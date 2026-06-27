@@ -29,6 +29,7 @@ describe("console settings domain", () => {
     expect(providerValues).toContain("workers-ai");
     expect(providerValues).toContain("openai");
     expect(providerValues).not.toContain("amazon-bedrock");
+    expect(providerValues).not.toContain("azure-openai-responses");
     expect(providerValues).not.toContain("cloudflare-ai-gateway");
     expect(providerValues).not.toContain("cloudflare-workers-ai");
     expect(providerValues).not.toContain("openai-codex");

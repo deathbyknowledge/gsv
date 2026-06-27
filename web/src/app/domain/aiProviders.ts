@@ -9,7 +9,6 @@ export const AI_PROVIDER_OPTIONS: ReadonlyArray<AiProviderOption> = [
   { value: "workers-ai", label: "Workers AI (gateway binding)" },
   { value: "ant-ling", label: "Ant Ling" },
   { value: "anthropic", label: "Anthropic" },
-  { value: "azure-openai-responses", label: "Azure OpenAI Responses" },
   { value: "cerebras", label: "Cerebras" },
   { value: "deepseek", label: "DeepSeek" },
   { value: "fireworks", label: "Fireworks AI" },
