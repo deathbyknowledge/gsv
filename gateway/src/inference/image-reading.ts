@@ -4,8 +4,8 @@ import type {
   TextContent,
   ThinkingContent,
 } from "@earendil-works/pi-ai";
-import { completeSimple } from "@earendil-works/pi-ai";
 import { resolvePiAiModel } from "./model-registry";
+import { completePiAiSimple } from "./pi-ai";
 import { withTimeout } from "./timeout";
 import { isWorkersAiProvider } from "./workers-ai";
 
@@ -101,7 +101,7 @@ export async function readImageWithPiAi(
 
   try {
     const response = await withTimeout(
-      completeSimple(model, buildImageReadingContext({
+      completePiAiSimple(model, buildImageReadingContext({
         data: base64,
         mimeType: request.mimeType,
         prompt: normalizeOptionalText(request.prompt) || DEFAULT_IMAGE_READING_PROMPT,

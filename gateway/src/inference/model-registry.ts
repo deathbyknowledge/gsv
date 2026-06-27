@@ -1,10 +1,9 @@
 import {
   clampThinkingLevel,
-  getModels,
-  getProviders,
   type KnownProvider,
   type ModelThinkingLevel,
 } from "@earendil-works/pi-ai";
+import { getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 
 const WORKERS_AI_REGISTRY_PROVIDER: KnownProvider = "cloudflare-workers-ai";
 const MODEL_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const satisfies readonly ModelThinkingLevel[];
@@ -14,7 +13,7 @@ export function resolvePiAiModel(provider: string, modelName: string) {
   if (!isKnownPiAiProvider(provider)) {
     throw new Error(`Unknown model provider: ${provider}`);
   }
-  const model = getModels(provider).find((candidate) => candidate.id === modelName);
+  const model = getBuiltinModels(provider).find((candidate) => candidate.id === modelName);
   if (!model) {
     throw new Error(`Model not found: ${provider}/${modelName}`);
   }
@@ -22,7 +21,7 @@ export function resolvePiAiModel(provider: string, modelName: string) {
 }
 
 export function isKnownPiAiProvider(provider: string): provider is KnownProvider {
-  return getProviders().includes(provider as KnownProvider);
+  return getBuiltinProviders().includes(provider as KnownProvider);
 }
 
 export function normalizeModelThinkingLevel(value: unknown): ModelThinkingLevel | null {
@@ -48,7 +47,7 @@ export function resolveModelMetadata(provider: string, modelName: string) {
   if (!isKnownPiAiProvider(registryProvider)) {
     return null;
   }
-  return getModels(registryProvider).find((candidate) => candidate.id === modelName) ?? null;
+  return getBuiltinModels(registryProvider).find((candidate) => candidate.id === modelName) ?? null;
 }
 
 export function resolveModelContextWindowFromRegistry(provider: string, modelName: string): number | null {

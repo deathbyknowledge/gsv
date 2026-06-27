@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { ConsoleConfigEntry } from "./consoleModels";
 import {
+  AI_OPENAI_WORKERS_PROVIDER_OPTIONS,
+  AI_PROVIDER_OPTIONS,
+} from "../../../domain/aiProviders";
+import {
   buildUserAiOverrideKey,
+  AGENT_MODEL_FIELDS,
+  TOOL_MODEL_GROUPS,
   createModelProfile,
   effectiveAiValuesForViewer,
   modelDisplayName,
@@ -14,6 +20,29 @@ import {
 } from "./consoleSettings";
 
 describe("console settings domain", () => {
+  it("uses readable provider choices for all model provider fields", () => {
+    const agentProviderField = AGENT_MODEL_FIELDS.find((field) => field.key === "config/ai/provider");
+    const toolProviderField = (groupId: string) =>
+      TOOL_MODEL_GROUPS.find((group) => group.id === groupId)?.fields.find((field) => field.key.endsWith("/provider"));
+
+    const providerValues = AI_PROVIDER_OPTIONS.map((option) => option.value);
+    expect(providerValues).toContain("workers-ai");
+    expect(providerValues).toContain("openai");
+    expect(providerValues).not.toContain("amazon-bedrock");
+    expect(providerValues).not.toContain("azure-openai-responses");
+    expect(providerValues).not.toContain("cloudflare-ai-gateway");
+    expect(providerValues).not.toContain("cloudflare-workers-ai");
+    expect(providerValues).not.toContain("openai-codex");
+    expect(AI_PROVIDER_OPTIONS.find((option) => option.value === "workers-ai")?.label).toBe("Workers AI (gateway binding)");
+    expect(agentProviderField?.kind).toBe("select");
+    expect(agentProviderField?.options).toBe(AI_PROVIDER_OPTIONS);
+    expect(toolProviderField("image-read")?.options).toBe(AI_PROVIDER_OPTIONS);
+    expect(toolProviderField("image-generation")?.options).toBe(AI_OPENAI_WORKERS_PROVIDER_OPTIONS);
+    expect(toolProviderField("transcription")?.options).toBe(AI_OPENAI_WORKERS_PROVIDER_OPTIONS);
+    expect(toolProviderField("speech")?.options).toBe(AI_OPENAI_WORKERS_PROVIDER_OPTIONS);
+    expect(AI_OPENAI_WORKERS_PROVIDER_OPTIONS.map((option) => option.value)).toEqual(["workers-ai", "openai"]);
+  });
+
   it("keeps model profile credentials out of serialized preset metadata", () => {
     const profiles = createModelProfile([], "Deep Research", {
       "config/ai/provider": "openai",

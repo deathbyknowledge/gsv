@@ -1,4 +1,8 @@
 import type { ConsoleAccount, ConsoleConfigEntry } from "./consoleModels";
+import {
+  AI_OPENAI_WORKERS_PROVIDER_OPTIONS,
+  AI_PROVIDER_OPTIONS,
+} from "../../../domain/aiProviders";
 
 export type ConsoleSettingKind = "text" | "textarea" | "password" | "number" | "checkbox" | "select" | "readonly";
 
@@ -9,7 +13,7 @@ export type ConsoleSettingField = {
   kind: ConsoleSettingKind;
   placeholder?: string;
   rows?: number;
-  options?: Array<{ value: string; label: string }>;
+  options?: ReadonlyArray<{ value: string; label: string }>;
 };
 
 export type ConsoleSettingGroup = {
@@ -36,8 +40,9 @@ export const AGENT_MODEL_FIELDS: readonly ConsoleSettingField[] = [
     key: "config/ai/provider",
     label: "Provider",
     description: "LLM provider used by agent runs.",
-    kind: "text",
+    kind: "select",
     placeholder: "workers-ai",
+    options: AI_PROVIDER_OPTIONS,
   },
   {
     key: "config/ai/model",
@@ -95,8 +100,9 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
         key: "config/ai/image/read/provider",
         label: "Provider",
         description: "Provider used to describe images.",
-        kind: "text",
+        kind: "select",
         placeholder: "workers-ai",
+        options: AI_PROVIDER_OPTIONS,
       },
       {
         key: "config/ai/image/read/model",
@@ -159,8 +165,9 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
         key: "config/ai/image/generation/provider",
         label: "Provider",
         description: "Provider used for image generation.",
-        kind: "text",
+        kind: "select",
         placeholder: "workers-ai",
+        options: AI_OPENAI_WORKERS_PROVIDER_OPTIONS,
       },
       {
         key: "config/ai/image/generation/model",
@@ -187,8 +194,9 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
         key: "config/ai/transcription/provider",
         label: "Provider",
         description: "Provider used by transcription requests.",
-        kind: "text",
+        kind: "select",
         placeholder: "workers-ai",
+        options: AI_OPENAI_WORKERS_PROVIDER_OPTIONS,
       },
       {
         key: "config/ai/transcription/model",
@@ -221,8 +229,9 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
         key: "config/ai/speech/provider",
         label: "Provider",
         description: "Provider used by speech synthesis.",
-        kind: "text",
+        kind: "select",
         placeholder: "workers-ai",
+        options: AI_OPENAI_WORKERS_PROVIDER_OPTIONS,
       },
       {
         key: "config/ai/speech/model",

@@ -61,6 +61,11 @@
 .gsv-sel-lg .gsv-sel-val {
   font-size: 13px;
 }
+.gsv-sel-list {
+  max-height: min(320px, 42vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
 .gsv-sel-row {
   appearance: none;
   width: 100%;

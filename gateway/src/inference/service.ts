@@ -6,11 +6,11 @@ import type {
   ThinkingContent,
   ThinkingLevel,
 } from "@earendil-works/pi-ai";
-import { completeSimple, streamSimple } from "@earendil-works/pi-ai";
 import type { AiConfigResult, AiTextGenerateOptions } from "../syscalls/ai";
 import { completeWithWorkersAi, isWorkersAiProvider, streamWithWorkersAi } from "./workers-ai";
 import { withTimeout } from "./timeout";
 import { resolveModelThinkingLevel, resolvePiAiModel } from "./model-registry";
+import { completePiAiSimple, streamPiAiSimple } from "./pi-ai";
 import {
   errorMessageFromUnknown,
   formatProviderErrorMessage,
@@ -62,7 +62,7 @@ export function createGenerationService(): GenerationService {
     const timeout = setTimeout(() => {
       controller.abort(new Error(generationTimeoutMessage(generationTimeoutMs)));
     }, generationTimeoutMs);
-    const result = streamSimple(model, request.context, {
+    const result = streamPiAiSimple(model, request.context, {
       apiKey: options.apiKey,
       reasoning: options.reasoning,
       maxTokens: options.maxTokens,
@@ -97,7 +97,7 @@ export function createGenerationService(): GenerationService {
     }, generationTimeoutMs);
     try {
       return await withTimeout(
-        completeSimple(model, request.context, {
+        completePiAiSimple(model, request.context, {
           apiKey: options.apiKey,
           reasoning: options.reasoning,
           maxTokens: options.maxTokens,
