@@ -158,6 +158,41 @@ describe("chat transcript rows", () => {
     expect(rows[2]).toMatchObject({ role: "toolResult", toolCallId: "call-1" });
   });
 
+  it("does not add an empty activity row for a run starting", () => {
+    let state = addOptimisticUserMessage(
+      emptyChatRuntimeState("pid-1", "default"),
+      "hello",
+      "default",
+    );
+
+    state = applyChatSignal(state, "proc.run.started", {
+      pid: "pid-1",
+      runId: "run-1",
+      conversationId: "default",
+    }, { pid: "pid-1", conversationId: "default" }).state;
+
+    state = applyChatSignal(state, "proc.run.stream", {
+      pid: "pid-1",
+      runId: "run-1",
+      conversationId: "default",
+      event: {
+        type: "start",
+        partial: {
+          content: [],
+        },
+      },
+    }, { pid: "pid-1", conversationId: "default" }).state;
+
+    expect(state.rows).toEqual([
+      expect.objectContaining({
+        role: "user",
+        text: "hello",
+      }),
+    ]);
+    expect(state.runState).toBe("running");
+    expect(state.activeRunId).toBe("run-1");
+  });
+
   it("applies live stream, tool, and HIL signals for the active process", () => {
     let state = emptyChatRuntimeState("pid-1", "default");
 

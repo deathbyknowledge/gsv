@@ -435,9 +435,9 @@
   outline: none;
 }
 
-.gsv-shell-root .gsv-chat-context-control {
-  width: auto !important;
-  height: auto !important;
+.gsv-shell-root .gsv-chat-actions .gsv-chat-context-control {
+  width: auto;
+  height: auto;
   max-width: 156px;
   min-height: 27px;
   display: inline-flex;
@@ -454,27 +454,27 @@
   text-transform: uppercase;
 }
 
-.gsv-shell-root .gsv-chat-context-control:hover,
-.gsv-shell-root .gsv-chat-context-control:focus-visible {
+.gsv-shell-root .gsv-chat-actions .gsv-chat-context-control:hover,
+.gsv-shell-root .gsv-chat-actions .gsv-chat-context-control:focus-visible {
   border-color: var(--dashed);
   background: #100e2a;
   color: #e6e4ff;
   outline: none;
 }
 
-.gsv-shell-root .gsv-chat-context-control .gsv-pr {
+.gsv-shell-root .gsv-chat-actions .gsv-chat-context-control .gsv-pr {
   flex: none;
 }
 
-.gsv-shell-root .gsv-chat-context-control .gsv-pr {
+.gsv-shell-root .gsv-chat-actions .gsv-chat-context-control .gsv-pr {
   gap: 0;
 }
 
-.gsv-shell-root .gsv-chat-context-control .gsv-pr-track {
+.gsv-shell-root .gsv-chat-actions .gsv-chat-context-control .gsv-pr-track {
   height: 5px;
 }
 
-.gsv-shell-root .gsv-chat-context-control > span:last-child {
+.gsv-shell-root .gsv-chat-actions .gsv-chat-context-control > span:last-child {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2895,12 +2895,12 @@ button.gsv-chat-task-row:focus-visible {
     font-size: 8.5px;
   }
 
-  .gsv-shell-root .gsv-chat-context-control {
+  .gsv-shell-root .gsv-chat-actions .gsv-chat-context-control {
     max-width: 104px;
     padding-inline: 6px;
   }
 
-  .gsv-shell-root .gsv-chat-context-control .gsv-pr {
+  .gsv-shell-root .gsv-chat-actions .gsv-chat-context-control .gsv-pr {
     display: none;
   }
 

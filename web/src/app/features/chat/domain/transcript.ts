@@ -165,7 +165,6 @@ export function applyChatSignal(
         activeRunId: runId ?? state.activeRunId,
         conversationId: asString(record?.conversationId) ?? state.conversationId,
         pendingHil: null,
-        rows: runId ? ensureThinkingRow(state.rows, runId) : state.rows,
         runState: "running",
       },
     };
@@ -594,7 +593,7 @@ function applyStreamEvent(
   event: Record<string, unknown>,
 ): ChatTranscriptRow[] {
   const eventType = asString(event.type);
-  if (eventType === "start" || eventType === "thinking_start") {
+  if (eventType === "thinking_start") {
     return ensureThinkingRow(rows, runId);
   }
 
