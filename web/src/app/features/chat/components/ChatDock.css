@@ -160,6 +160,8 @@
 
 .gsv-chat-transcript-virtual {
   position: relative;
+  min-width: 0;
+  max-width: 100%;
   min-height: 100%;
 }
 
@@ -167,6 +169,8 @@
   position: absolute;
   inset-inline: 0;
   top: 0;
+  min-width: 0;
+  max-width: 100%;
   will-change: transform;
 }
 
@@ -1243,7 +1247,7 @@ button.gsv-chat-task-row:focus-visible {
 .gsv-chat-hil {
   flex: none;
   position: relative;
-  margin: 12px 14px 0;
+  margin: 0 14px 12px;
   border: 1px solid var(--border);
   background: linear-gradient(180deg, #100e2a, var(--node-bg));
   color: #cdd2e0;
@@ -1664,6 +1668,8 @@ button.gsv-chat-task-row:focus-visible {
 .gsv-chat-assistant-rich {
   display: grid;
   gap: 8px;
+  min-width: 0;
+  max-width: 100%;
   color: #cdd2e0;
   font-family: "Space Grotesk", sans-serif;
   font-size: 13.5px;
@@ -1671,6 +1677,8 @@ button.gsv-chat-task-row:focus-visible {
 }
 
 .gsv-chat-rich-text {
+  min-width: 0;
+  max-width: 100%;
   color: inherit;
   font: inherit;
   line-height: inherit;
@@ -1739,6 +1747,32 @@ button.gsv-chat-task-row:focus-visible {
   padding-left: 9px;
 }
 
+.gsv-chat-rich-text pre {
+  max-width: 100%;
+  max-height: 320px;
+  margin: 0 0 0.55em;
+  overflow: auto;
+  border: 1px solid var(--rule-inner);
+  background: #0c0a22;
+  color: #d7ffbd;
+  font-family: var(--gsv-font-mono);
+  font-size: 11.5px;
+  line-height: 1.55;
+  padding: 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.gsv-chat-rich-text pre code {
+  display: block;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+}
+
 .gsv-chat-rich-text code {
   border: 1px solid var(--rule-inner);
   background: #0c0a22;
@@ -1761,7 +1795,10 @@ button.gsv-chat-task-row:focus-visible {
 }
 
 .gsv-chat-code-block {
+  min-width: 0;
+  max-width: 100%;
   margin: 0;
+  overflow: hidden;
   border: 1px solid var(--rule-inner);
   background: #0c0a22;
 }
@@ -1771,6 +1808,7 @@ button.gsv-chat-task-row:focus-visible {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+  min-width: 0;
   padding: 7px 9px;
   border-bottom: 1px solid var(--rule-inner);
   color: #9aa4b8;
@@ -1805,6 +1843,7 @@ button.gsv-chat-task-row:focus-visible {
 }
 
 .gsv-chat-code-block pre {
+  max-width: 100%;
   max-height: 320px;
   margin: 0;
   overflow: auto;
@@ -1813,7 +1852,15 @@ button.gsv-chat-task-row:focus-visible {
   font-family: var(--gsv-font-mono);
   font-size: 11.5px;
   line-height: 1.55;
-  white-space: pre;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.gsv-chat-code-block code {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .gsv-chat-reasoning-toggle {

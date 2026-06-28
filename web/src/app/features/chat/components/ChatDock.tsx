@@ -807,14 +807,6 @@ export function ChatDock({
         onTogglePopover={togglePopover}
       />
 
-      {pendingHil ? (
-        <ChatApprovalBanner
-          busy={hilDecision.isPending}
-          pendingHil={pendingHil}
-          onDecision={decidePendingHil}
-        />
-      ) : null}
-
       <ChatConversationBar
         activeConversationId={selectedConversationId}
         conversations={conversations.data ?? []}
@@ -887,6 +879,14 @@ export function ChatDock({
         processId={activeProcessId}
         state={transcriptState}
       />
+
+      {pendingHil ? (
+        <ChatApprovalBanner
+          busy={hilDecision.isPending}
+          pendingHil={pendingHil}
+          onDecision={decidePendingHil}
+        />
+      ) : null}
 
       <MessageInput
         attachments={draftAttachments}
