@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  BROWSER_EXTENSION_DOWNLOAD_URL,
+  MACHINE_PLATFORM_OPTIONS,
+  buildBrowserExtensionConfig,
   buildMachineBootstrapCommand,
   buildMachineInstallCommand,
+  defaultMachineName,
   expiresAtFromDays,
   machineDeviceIdFromName,
   normalizeExpiresDays,
@@ -14,6 +18,19 @@ describe("machineProvision", () => {
     expect(machineDeviceIdFromName("!!!")).toBe("machine");
   });
 
+  it("uses a short browser target id by default", () => {
+    expect(defaultMachineName("browser")).toBe("Chrome");
+    expect(machineDeviceIdFromName(defaultMachineName("browser"))).toBe("chrome");
+  });
+
+  it("presents browser as an extension target", () => {
+    expect(MACHINE_PLATFORM_OPTIONS.find((option) => option.id === "browser")).toMatchObject({
+      meta: "Browser extension",
+      dotIcon: "chrome",
+    });
+    expect(BROWSER_EXTENSION_DOWNLOAD_URL).toContain("gsv-browser-extension.zip");
+  });
+
   it("builds platform install commands from the web origin", () => {
     expect(buildMachineInstallCommand("https://gsv.example.com/", "linux")).toBe(
       "curl -fsSL https://gsv.example.com/public/gsv/downloads/cli/install.sh | bash -s -- https://gsv.example.com",
@@ -21,6 +38,21 @@ describe("machineProvision", () => {
     expect(buildMachineInstallCommand("https://gsv.example.com", "windows")).toBe(
       "$env:GSV_BASE_URL='https://gsv.example.com'; irm https://gsv.example.com/public/gsv/downloads/cli/install.ps1 | iex",
     );
+    expect(buildMachineInstallCommand("https://gsv.example.com", "browser")).toBe("");
+  });
+
+  it("builds browser extension option values", () => {
+    expect(buildBrowserExtensionConfig({
+      origin: "https://gsv.example.com",
+      username: " hank ",
+      deviceId: " chrome ",
+      token: " gsv_node_secret ",
+    })).toEqual({
+      gatewayUrl: "wss://gsv.example.com/ws",
+      username: "hank",
+      token: "gsv_node_secret",
+      deviceId: "chrome",
+    });
   });
 
   it("builds bootstrap commands with websocket gateway config", () => {

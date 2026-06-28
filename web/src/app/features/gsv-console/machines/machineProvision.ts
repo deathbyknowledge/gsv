@@ -1,4 +1,4 @@
-export type MachineProvisionPlatform = "mac" | "windows" | "linux";
+export type MachineProvisionPlatform = "mac" | "windows" | "linux" | "browser";
 
 export type MachineProvisionStep = "platform" | "details" | "install" | "connect" | "success";
 
@@ -26,6 +26,9 @@ export const MACHINE_PROVISION_STEP_LABELS = [
   "SUCCESS",
 ] as const;
 
+export const BROWSER_EXTENSION_DOWNLOAD_URL =
+  "https://github.com/deathbyknowledge/gsv/releases/latest/download/gsv-browser-extension.zip";
+
 export const MACHINE_PLATFORM_OPTIONS: MachineProvisionPlatformOption[] = [
   {
     id: "mac",
@@ -48,6 +51,13 @@ export const MACHINE_PLATFORM_OPTIONS: MachineProvisionPlatformOption[] = [
     commandLabel: "Linux / bash",
     dotIcon: "redhat",
   },
+  {
+    id: "browser",
+    label: "BROWSER",
+    meta: "Browser extension",
+    commandLabel: "Extension options",
+    dotIcon: "chrome",
+  },
 ];
 
 const DEFAULT_EXPIRES_DAYS = 30;
@@ -66,6 +76,9 @@ export function defaultMachineName(platform: MachineProvisionPlatform): string {
   }
   if (platform === "windows") {
     return "Windows workstation";
+  }
+  if (platform === "browser") {
+    return "Chrome";
   }
   return "Linux machine";
 }
@@ -94,11 +107,33 @@ export function expiresAtFromDays(days: number, now = Date.now()): number {
 }
 
 export function buildMachineInstallCommand(origin: string, platform: MachineProvisionPlatform): string {
+  if (platform === "browser") {
+    return "";
+  }
   const normalizedOrigin = trimTrailingSlash(origin);
   if (platform === "windows") {
     return `$env:GSV_BASE_URL='${normalizedOrigin}'; irm ${normalizedOrigin}/public/gsv/downloads/cli/install.ps1 | iex`;
   }
   return `curl -fsSL ${normalizedOrigin}/public/gsv/downloads/cli/install.sh | bash -s -- ${normalizedOrigin}`;
+}
+
+export function buildBrowserExtensionConfig(input: {
+  origin: string;
+  username: string;
+  deviceId: string;
+  token: string;
+}): {
+  gatewayUrl: string;
+  username: string;
+  token: string;
+  deviceId: string;
+} {
+  return {
+    gatewayUrl: buildGatewayWsUrl(input.origin),
+    username: input.username.trim() || "root",
+    token: input.token.trim(),
+    deviceId: input.deviceId.trim(),
+  };
 }
 
 export function buildMachineBootstrapCommand(input: {
