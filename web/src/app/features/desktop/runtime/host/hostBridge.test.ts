@@ -360,6 +360,7 @@ describe("attachHostBridge", () => {
         status: 202,
         statusText: "Accepted",
         headers: {
+          "set-cookie": "gsv_session=bad",
           "x-test": "1",
         },
       });
@@ -389,6 +390,9 @@ describe("attachHostBridge", () => {
       statusText: "Accepted",
       headers: expect.arrayContaining([["x-test", "1"]]),
     });
+    expect(result.data?.headers).not.toEqual(expect.arrayContaining([
+      ["set-cookie", "gsv_session=bad"],
+    ]));
     expect(new TextDecoder().decode(result.data?.body)).toBe("ok");
 
     controller.destroy();

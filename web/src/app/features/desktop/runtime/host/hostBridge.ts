@@ -229,6 +229,9 @@ function buildAppSessionFetchRequest(appSession: HostAppSession | null, payload:
 async function serializeAppSessionFetchResponse(response: Response): Promise<unknown> {
   const headers: string[][] = [];
   response.headers.forEach((value, name) => {
+    if (isAppSessionFetchResponseHeaderBlocked(name)) {
+      return;
+    }
     headers.push([name, value]);
   });
   return {
@@ -237,6 +240,11 @@ async function serializeAppSessionFetchResponse(response: Response): Promise<unk
     headers,
     body: await response.arrayBuffer(),
   };
+}
+
+function isAppSessionFetchResponseHeaderBlocked(name: string): boolean {
+  const lowerName = name.toLowerCase();
+  return lowerName === "set-cookie" || lowerName === "set-cookie2";
 }
 
 async function fetchAppSession(appSession: HostAppSession | null, payload: unknown): Promise<unknown> {
