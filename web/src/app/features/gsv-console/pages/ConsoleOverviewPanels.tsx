@@ -3,6 +3,7 @@ import { AddAction } from "../../../components/ui/AddAction";
 import { AsciiPlanet } from "../../../components/ui/AsciiPlanet";
 import { CrewAddTile, CrewTile } from "../../../components/ui/CrewTile";
 import { ListRow, type ListRowStatus } from "../../../components/ui/ListRow";
+import { OBJECT_GLYPH_ICON } from "../../../components/ui/objectGlyph";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
 import { StatusDot, type StatusTone } from "../../../components/ui/StatusDot";
 import { Surface } from "../../../components/ui/Surface";
@@ -158,7 +159,7 @@ function integrationRow(server: ConsoleMcpServer): OverviewRow {
   const ready = server.state === "ready";
   return {
     id: server.serverId,
-    icon: "weblink",
+    icon: OBJECT_GLYPH_ICON.integrations,
     label: server.name,
     meta: joinMeta([
       server.tools.length ? `${server.tools.length} tools` : undefined,
@@ -175,7 +176,7 @@ function applicationRow(pkg: ConsolePackage): OverviewRow {
   const status = packageStatus(pkg);
   return {
     id: pkg.packageId,
-    icon: "rss",
+    icon: OBJECT_GLYPH_ICON.applications,
     label: pkg.name,
     meta: packageSourceLabel(pkg),
     tone: status.tone,
