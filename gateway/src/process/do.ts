@@ -4991,7 +4991,7 @@ function formatInteractionOriginForContext(origin: InteractionOrigin | undefined
   if (origin.kind === "adapter") {
     const adapter = titleCase(origin.adapter);
     const surface = formatAdapterSurfaceForContext(origin.surface);
-    const actor = origin.actorLabel || origin.actorId;
+    const actor = origin.surface.kind === "dm" ? null : origin.actorLabel || origin.actorId;
     return [
       adapter,
       surface ? ` ${surface}` : "",
@@ -5029,7 +5029,7 @@ function formatClientOriginForContext(platform: string | undefined, clientId: st
 function formatAdapterSurfaceForContext(surface: AdapterSurface): string {
   const label = surface.name || surface.handle || surface.id;
   if (surface.kind === "dm") {
-    return `direct message${label ? ` ${label}` : ""}`;
+    return "direct message";
   }
   if (surface.kind === "thread") {
     const thread = surface.threadId ? ` thread ${surface.threadId}` : "";
