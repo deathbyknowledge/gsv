@@ -200,6 +200,7 @@ async function fileToDraftAttachment(file: File): Promise<DraftAttachment> {
   const mimeType = file.type || "application/octet-stream";
   const type = inferAttachmentType(file);
   const sizeLabel = formatAttachmentSize(file.size);
+  const label = file.name || (type === "image" ? "pasted image" : "attachment");
   const randomId = typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
     : Math.random().toString(36).slice(2);
@@ -210,7 +211,7 @@ async function fileToDraftAttachment(file: File): Promise<DraftAttachment> {
     data,
     filename: file.name || undefined,
     size: file.size,
-    label: file.name || "attachment",
+    label,
     meta: [type, sizeLabel].filter(Boolean).join(" · "),
   };
 }
@@ -514,7 +515,7 @@ export function ChatDock({
     });
   };
 
-  const handleFiles = (files: FileList | null) => {
+  const handleFiles = (files: FileList | readonly File[] | null) => {
     if (!files || files.length === 0) {
       return;
     }
