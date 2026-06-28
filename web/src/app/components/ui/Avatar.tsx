@@ -11,6 +11,8 @@ export interface AvatarProps {
   size?: number;
   /** Corner status dot. */
   status?: AvatarStatus;
+  /** Fill the tile edge-to-edge instead of the padded pixel-art float. */
+  cover?: boolean;
 }
 
 const DOT_COLOR: Record<AvatarStatus, string> = {
@@ -22,13 +24,13 @@ const DOT_COLOR: Record<AvatarStatus, string> = {
 
 /** Avatar — ported from Avatar.dc.html. Wraps AgentImage and overlays a
  *  status corner-dot. */
-export function Avatar({ agent, src, size = 44, status = "online" }: AvatarProps) {
+export function Avatar({ agent, src, size = 44, status = "online", cover = false }: AvatarProps) {
   const dotColor = DOT_COLOR[status] ?? DOT_COLOR.online;
   const dotGlow = status === "idle" ? "none" : `0 0 7px ${dotColor}`;
 
   return (
     <div style={{ position: "relative", display: "inline-flex" }}>
-      <AgentImage agent={agent} src={src} size={size} />
+      <AgentImage agent={agent} src={src} size={size} cover={cover} />
       <span
         style={{
           position: "absolute",

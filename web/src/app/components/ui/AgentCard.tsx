@@ -21,6 +21,8 @@ export interface AgentCardProps {
   initialPermission?: string;
   tasksTotal?: number;
   active?: boolean;
+  /** Fill the avatar tile edge-to-edge (full-frame portrait). */
+  avatarCover?: boolean;
   showActions?: boolean;
   saved?: boolean;
   readOnly?: boolean;
@@ -92,6 +94,7 @@ export function AgentCard(props: AgentCardProps) {
     tasksTotal,
     active = true,
     showActions = true,
+    avatarCover = false,
     saved = false,
     readOnly = false,
     models = DEFAULT_MODELS,
@@ -187,7 +190,7 @@ export function AgentCard(props: AgentCardProps) {
       <div style={headerStyle}>
         {onAvatarClick ? (
           <div class="gsv-ac-fade" style={{ position: "relative", flex: "none", cursor: "pointer" }}>
-            <Avatar src={imgSrc} status={status} size={44} />
+            <Avatar src={imgSrc} status={status} size={44} cover={avatarCover} />
             <button
               type="button"
               aria-label={`Open ${agentName}`}
@@ -197,7 +200,7 @@ export function AgentCard(props: AgentCardProps) {
           </div>
         ) : (
           <div class="gsv-ac-fade" style={{ position: "relative", flex: "none" }}>
-            <Avatar src={imgSrc} status={status} size={44} />
+            <Avatar src={imgSrc} status={status} size={44} cover={avatarCover} />
           </div>
         )}
         <div style={{ minWidth: 0, flex: 1, display: "flex", alignItems: "baseline", gap: "9px", flexWrap: "wrap" }}>

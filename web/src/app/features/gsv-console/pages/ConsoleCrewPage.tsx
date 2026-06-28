@@ -147,6 +147,7 @@ function CrewRoster({
             tasks={card.tasks}
             tasksTotal={card.processes.length}
             active={card.active}
+            avatarCover={!isHumanCrewAccount(card.account)}
             showActions={false}
             readOnly
           />
