@@ -155,14 +155,10 @@ export function ShellRail({
     if (isSectionActive(object)) {
       return; // already in this section — leave the current object alone
     }
-    // Applications open as native app frames — jarring to launch from a section
-    // click — so route to the applications list page instead of auto-opening
-    // one. Empty sections also go to their landing.
-    if (object.id === "applications" || object.children.length === 0) {
-      onOpenSurface(object.id);
-      return;
-    }
-    onOpenObject(object.children[0]); // auto-open the first object
+    // Every section routes to its own list page. Drilling into a specific
+    // object is done from the list itself or the expanded drawer subitems —
+    // never by auto-opening the first child on a section click.
+    onOpenSurface(object.id);
   };
 
   if (collapsed) {
