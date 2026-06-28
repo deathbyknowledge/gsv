@@ -458,34 +458,9 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname;
 
-    // Route: /account/:accountId/...
-    const accountMatch = path.match(/^\/account\/([^\/]+)(\/.*)?$/);
-    if (accountMatch) {
-      const accountId = accountMatch[1];
-      const subPath = accountMatch[2] || "/status";
-      
-      // Get or create the DO for this account
-      const id = env.WHATSAPP_ACCOUNT.idFromName(accountId);
-      const stub = env.WHATSAPP_ACCOUNT.get(id);
-      
-      // Forward request to DO with adjusted path and X-Account-Id header
-      const doUrl = new URL(request.url);
-      doUrl.pathname = subPath;
-      const headers = new Headers(request.headers);
-      headers.set("X-Account-Id", accountId);
-      
-      return stub.fetch(new Request(doUrl.toString(), {
-        method: request.method,
-        headers,
-        body: request.body,
-      }));
-    }
-
-    // List accounts (would need separate tracking)
-    if (path === "/accounts") {
-      return Response.json({
-        message: "Account listing not yet implemented. Use /account/:accountId/status to check a specific account.",
-      });
+    // Account control is only available through the service-binding RPC entrypoint.
+    if (path === "/accounts" || path.startsWith("/account/")) {
+      return new Response("Not Found", { status: 404 });
     }
 
     // Health check
@@ -493,14 +468,6 @@ export default {
       return Response.json({
         service: "gsv-channel-whatsapp",
         status: "ok",
-        usage: {
-          login: "POST /account/:accountId/login",
-          logout: "POST /account/:accountId/logout",
-          start: "POST /account/:accountId/start",
-          stop: "POST /account/:accountId/stop",
-          wake: "POST /account/:accountId/wake",
-          status: "GET /account/:accountId/status",
-        },
       });
     }
 

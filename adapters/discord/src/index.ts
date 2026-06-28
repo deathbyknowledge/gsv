@@ -53,7 +53,6 @@ interface Env {
 }
 
 const DISCORD_API = "https://discord.com/api/v10";
-const DISCORD_INVITE_PERMISSIONS = 101376; // View Channels + Send Messages + Attach Files + Read Message History
 
 /**
  * Discord Channel Entrypoint
@@ -591,120 +590,12 @@ export default {
       return Response.json({
         service: "gsv-channel-discord",
         status: "ok",
-        hasToken: !!env.DISCORD_BOT_TOKEN,
       });
     }
 
-    // GET /setup - Verify bot configuration and show setup info
-    if (url.pathname === "/setup" && request.method === "GET") {
-      const botToken = env.DISCORD_BOT_TOKEN;
-      if (!botToken) {
-        return Response.json({
-          ok: false,
-          error: "DISCORD_BOT_TOKEN not configured",
-          help: "Set via: wrangler secret put DISCORD_BOT_TOKEN",
-        }, { status: 400 });
-      }
-
-      // Fetch bot info from Discord API
-      try {
-        const response = await fetch("https://discord.com/api/v10/users/@me", {
-          headers: { Authorization: `Bot ${botToken}` },
-        });
-
-        if (!response.ok) {
-          const error = await response.text();
-          return Response.json({
-            ok: false,
-            error: `Discord API error: ${response.status}`,
-            details: error,
-            help: "Check that your bot token is valid",
-          }, { status: 400 });
-        }
-
-        const bot = await response.json<{ id: string; username: string; discriminator: string }>();
-        
-        // Fetch application info for invite URL
-        const appResponse = await fetch("https://discord.com/api/v10/oauth2/applications/@me", {
-          headers: { Authorization: `Bot ${botToken}` },
-        });
-        
-        let appId = "UNKNOWN";
-        if (appResponse.ok) {
-          const app = await appResponse.json<{ id: string }>();
-          appId = app.id;
-        }
-
-        const inviteUrl = `https://discord.com/oauth2/authorize?client_id=${appId}&permissions=${DISCORD_INVITE_PERMISSIONS}&scope=bot`;
-
-        return Response.json({
-          ok: true,
-          bot: {
-            id: bot.id,
-            username: bot.username,
-            tag: `${bot.username}#${bot.discriminator}`,
-          },
-          applicationId: appId,
-          inviteUrl,
-          setup: {
-            step1: "Ensure MESSAGE_CONTENT intent is enabled in Discord Developer Portal",
-            step2: `Invite bot to server (with Attach Files permission): ${inviteUrl}`,
-            step3: "Start the bot: POST /start",
-          },
-        });
-      } catch (e) {
-        return Response.json({
-          ok: false,
-          error: `Failed to verify bot: ${e}`,
-        }, { status: 500 });
-      }
-    }
-
-    // POST /start?accountId=xxx
-    if (url.pathname === "/start" && request.method === "POST") {
-      const accountId = url.searchParams.get("accountId") || "default";
-      const botToken = env.DISCORD_BOT_TOKEN;
-      if (!botToken) {
-        return Response.json({ ok: false, error: "No bot token configured" }, { status: 400 });
-      }
-      
-      const id = env.DISCORD_GATEWAY.idFromName(accountId);
-      const gateway = env.DISCORD_GATEWAY.get(id) as unknown as DiscordGatewayStub;
-      
-      try {
-        await gateway.start(botToken, accountId);
-        return Response.json({ ok: true, accountId });
-      } catch (e) {
-        return Response.json({ ok: false, error: String(e) }, { status: 500 });
-      }
-    }
-
-    // POST /stop?accountId=xxx
-    if (url.pathname === "/stop" && request.method === "POST") {
-      const accountId = url.searchParams.get("accountId") || "default";
-      const id = env.DISCORD_GATEWAY.idFromName(accountId);
-      const gateway = env.DISCORD_GATEWAY.get(id) as unknown as DiscordGatewayStub;
-      
-      try {
-        await gateway.stop();
-        return Response.json({ ok: true, accountId });
-      } catch (e) {
-        return Response.json({ ok: false, error: String(e) }, { status: 500 });
-      }
-    }
-
-    // GET /status?accountId=xxx
-    if (url.pathname === "/status" && request.method === "GET") {
-      const accountId = url.searchParams.get("accountId") || "default";
-      const id = env.DISCORD_GATEWAY.idFromName(accountId);
-      const gateway = env.DISCORD_GATEWAY.get(id) as unknown as DiscordGatewayStub;
-      
-      try {
-        const status = await gateway.getStatus();
-        return Response.json(status);
-      } catch (e) {
-        return Response.json({ error: String(e) }, { status: 500 });
-      }
+    // Adapter setup, lifecycle, and account status are service-binding only.
+    if (url.pathname === "/setup" || url.pathname === "/start" || url.pathname === "/stop" || url.pathname === "/status") {
+      return new Response("Not Found", { status: 404 });
     }
 
     return new Response("Not Found", { status: 404 });

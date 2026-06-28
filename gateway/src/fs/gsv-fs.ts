@@ -37,6 +37,7 @@ import type {
 } from "./mount";
 import { R2MountBackend } from "./backends/r2";
 import { KernelMountBackend } from "./backends/kernel";
+import { isAccountHomeReservedPath } from "./backends/account-home";
 import { isPackageMountPath } from "./backends/packages";
 import { isProcessSourcePath } from "./backends/process-sources";
 import { normalizePath } from "./utils";
@@ -361,11 +362,16 @@ export class GsvFs implements IFileSystem {
     options?: { allowMissingFinal?: boolean },
     depth = 0,
   ): Promise<string> {
+    const normalized = normalizePath(path);
+    if (this.accountHomeBackend && isAccountHomeReservedPath(normalized) && !this.accountHomeBackend.handles(normalized)) {
+      throw new Error(`EACCES: permission denied, '${normalized}'`);
+    }
+
     if (depth > MAX_SYMLINK_DEPTH) {
       throw new Error(`ELOOP: too many symbolic links, '${path}'`);
     }
 
-    const parts = normalizePath(path).split("/").filter(Boolean);
+    const parts = normalized.split("/").filter(Boolean);
     if (parts.length === 0) {
       return "/";
     }
@@ -424,6 +430,10 @@ export class GsvFs implements IFileSystem {
 
     if (this.accountHomeBackend?.handles(path)) {
       return this.accountHomeBackend;
+    }
+
+    if (this.accountHomeBackend && isAccountHomeReservedPath(path)) {
+      throw new Error(`EACCES: permission denied, '${normalizePath(path)}'`);
     }
 
     if (isPackageMountPath(path)) {

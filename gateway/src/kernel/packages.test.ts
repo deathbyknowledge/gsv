@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   packageArtifactPublicBase,
+  packageArtifactToWorkerCode,
   storePackageArtifact,
   type PackageArtifact,
 } from "./packages";
@@ -75,5 +76,123 @@ describe("package artifacts", () => {
 
   it("derives a stable public base from an artifact hash", () => {
     expect(packageArtifactPublicBase("sha256:abc123")).toBe("/public/gsv/packages/sha256-abc123");
+  });
+
+  it("defaults dynamic worker outbound fetch to denied", () => {
+    const artifact: PackageArtifact = {
+      hash: "sha256:abc123",
+      mainModule: "__gsv__/main.ts",
+      modules: [
+        {
+          path: "__gsv__/main.ts",
+          kind: "esm",
+          content: "export default {};",
+        },
+      ],
+    };
+
+    expect(packageArtifactToWorkerCode(artifact).globalOutbound).toBeNull();
+  });
+
+  it("creates an allowlisted outbound fetcher for approved egress", async () => {
+    const artifact: PackageArtifact = {
+      hash: "sha256:abc123",
+      mainModule: "__gsv__/main.ts",
+      modules: [
+        {
+          path: "__gsv__/main.ts",
+          kind: "esm",
+          content: "export default {};",
+        },
+      ],
+    };
+    const fetchMock = vi.fn(async () => new Response("ok"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const code = packageArtifactToWorkerCode(artifact, undefined, {
+        egress: { mode: "allowlist", allow: ["api.example.test"] },
+      });
+
+      await expect(code.globalOutbound?.fetch("https://api.example.test/v1")).resolves.toBeInstanceOf(Response);
+      await expect(code.globalOutbound?.fetch("https://blocked.example.test/v1")).rejects.toThrow("Outbound request denied");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("preserves schemes in outbound allowlist entries", async () => {
+    const artifact: PackageArtifact = {
+      hash: "sha256:abc123",
+      mainModule: "__gsv__/main.ts",
+      modules: [
+        {
+          path: "__gsv__/main.ts",
+          kind: "esm",
+          content: "export default {};",
+        },
+      ],
+    };
+    const fetchMock = vi.fn(async () => new Response("ok"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const code = packageArtifactToWorkerCode(artifact, undefined, {
+        egress: {
+          mode: "allowlist",
+          allow: ["https://api.example.test", "http://legacy.example.test:8080"],
+        },
+      });
+
+      await expect(code.globalOutbound?.fetch("https://api.example.test/v1")).resolves.toBeInstanceOf(Response);
+      await expect(code.globalOutbound?.fetch("http://api.example.test/v1")).rejects.toThrow("Outbound request denied");
+      await expect(code.globalOutbound?.fetch("http://legacy.example.test:8080/v1")).resolves.toBeInstanceOf(Response);
+      await expect(code.globalOutbound?.fetch("https://legacy.example.test:8080/v1")).rejects.toThrow("Outbound request denied");
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("prevents allowlisted outbound fetches from automatically following redirects", async () => {
+    const artifact: PackageArtifact = {
+      hash: "sha256:abc123",
+      mainModule: "__gsv__/main.ts",
+      modules: [
+        {
+          path: "__gsv__/main.ts",
+          kind: "esm",
+          content: "export default {};",
+        },
+      ],
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const request = input instanceof Request ? input : new Request(input);
+      expect(request.url).toBe("https://api.example.test/redirect");
+      expect(request.redirect).toBe("manual");
+      return new Response(null, {
+        status: 302,
+        headers: {
+          location: "https://blocked.example.test/final",
+        },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const code = packageArtifactToWorkerCode(artifact, undefined, {
+        egress: { mode: "allowlist", allow: ["api.example.test"] },
+      });
+
+      const response = await code.globalOutbound?.fetch("https://api.example.test/redirect", {
+        redirect: "follow",
+      });
+
+      expect(response?.status).toBe(302);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

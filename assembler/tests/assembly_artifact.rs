@@ -329,6 +329,7 @@ fn builds_runtime_artifact_with_wrapper_and_hash() {
         "const BROWSER_ENTRY = \"/public/gsv/packages/__GSV_ARTIFACT_HASH__/browser/src/main.js\";"
     ));
     assert!(wrapper.contains("const APP_SHELL_HTML = \"<!doctype html>"));
+    assert!(wrapper.contains("\"access-control-allow-origin\": \"*\""));
     assert!(!package_definition.contains("\"@humansandmachines/gsv/sdk\""));
     assert!(package_definition.contains("\"../node_modules/@humansandmachines/gsv/dist/sdk.js\""));
 }
@@ -389,7 +390,9 @@ fn builds_runtime_artifact_for_declarative_backend_and_commands() {
     assert!(
         wrapper.contains("function buildDaemonClient(env, props, daemonOverride, triggerOverride)")
     );
-    assert!(wrapper.contains("function buildStorageClient(env)"));
+    assert!(wrapper.contains("props?.runtimeAccess?.daemon?.rpcSchedules !== true"));
+    assert!(wrapper.contains("function buildStorageClient(env, props)"));
+    assert!(wrapper.contains("props?.runtimeAccess?.storage?.sql !== true"));
     assert!(wrapper.contains("function buildAppClient(env, props)"));
     assert!(wrapper.contains("typeof api.packageSqlExec !== \"function\""));
     assert!(wrapper.contains("async invoke(method, args)"));

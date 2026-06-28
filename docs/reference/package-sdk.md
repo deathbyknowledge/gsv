@@ -17,6 +17,8 @@ type PackageDefinition = {
     capabilities?: {
       kernel?: string[];
       outbound?: string[];
+      daemon?: string[];
+      storage?: string[];
     };
   };
   browser?: {
@@ -45,8 +47,13 @@ Example:
 ```ts
 capabilities: {
   kernel: ["repo.read", "repo.search", "fs.read"],
+  daemon: ["rpc-schedules"],
+  storage: ["sql"],
 },
 ```
+
+`meta.capabilities.daemon` requests package daemon APIs such as RPC schedules.
+`meta.capabilities.storage` requests package-scoped storage APIs such as SQL.
 
 ## Backend
 

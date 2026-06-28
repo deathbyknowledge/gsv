@@ -61,25 +61,20 @@ describe("sys.link handlers", () => {
     };
   });
 
-  it("links to caller uid by default", () => {
+  it("rejects manual links for non-root callers", () => {
     const ctx = makeContext(1000, adapters);
-    const result = handleSysLink(
-      {
-        adapter: "WhatsApp",
-        accountId: "default",
-        actorId: "wa:+123",
-      },
-      ctx,
-    );
 
-    expect(adapters.identityLinks.link).toHaveBeenCalledWith(
-      "whatsapp",
-      "default",
-      "wa:+123",
-      1000,
-      1000,
-    );
-    expect(result.link?.uid).toBe(1000);
+    expect(() =>
+      handleSysLink(
+        {
+          adapter: "WhatsApp",
+          accountId: "default",
+          actorId: "wa:+123",
+        },
+        ctx,
+      ),
+    ).toThrow("Permission denied: manual links require root");
+    expect(adapters.identityLinks.link).not.toHaveBeenCalled();
   });
 
   it("allows root to link for another uid", () => {

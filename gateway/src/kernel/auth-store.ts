@@ -396,7 +396,14 @@ export class AuthStore {
     if (options.role && tokenRow.allowed_role && tokenRow.allowed_role !== options.role) {
       return { ok: false, error: "Authentication failed" };
     }
-    if (
+    if (options.role === "driver") {
+      if (!options.deviceId || !tokenRow.allowed_device_id) {
+        return { ok: false, error: "Authentication failed" };
+      }
+      if (tokenRow.allowed_device_id !== options.deviceId) {
+        return { ok: false, error: "Authentication failed" };
+      }
+    } else if (
       options.deviceId &&
       tokenRow.allowed_device_id &&
       tokenRow.allowed_device_id !== options.deviceId
@@ -435,6 +442,9 @@ export class AuthStore {
     const tokenPrefix = rawToken.slice(0, 16);
     const tokenHash = await hashToken(rawToken);
     const allowedRole = input.allowedRole ?? defaultRoleForKind(input.kind);
+    if (allowedRole === "driver" && !input.allowedDeviceId) {
+      throw new Error("allowedDeviceId is required for driver-bound tokens");
+    }
 
     this.sql.exec(
       `INSERT INTO auth_tokens

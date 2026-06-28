@@ -93,6 +93,7 @@ import {
 import type { AppClientSessionContext } from "../protocol/app-session";
 import { listLocalPublicPackages } from "./pkg";
 import { isRepoPublic } from "./repo-visibility";
+import { canReadRepo, canWriteRepo } from "./repo";
 import { handleProcSpawn } from "./proc-handlers";
 import { ensureDefaultConversationExecutor } from "./agents";
 import { handleShellExec } from "../drivers/native/shell";
@@ -627,14 +628,23 @@ export class Kernel extends Host<Env> {
     }
 
     const capabilities = this.caps.resolve(auth.identity.gids);
+    const identity: ConnectionIdentity = {
+      role: "user",
+      process: {
+        ...auth.identity,
+        cwd: auth.identity.home,
+      },
+      capabilities,
+    };
+    const repoRef = `${owner}/${repo}`;
+    const repoCtx = this.buildServiceContext(identity);
+
     if (input.write) {
-      if (owner === "system") {
-        if (auth.identity.uid !== 0 && !hasCapability(capabilities, "*")) {
-          return { ok: false, status: 403, message: "Only root may push system repositories" };
-        }
-      } else if (auth.identity.username !== owner && auth.identity.uid !== 0 && !hasCapability(capabilities, "*")) {
+      if (!canWriteRepo(repoRef, repoCtx)) {
         return { ok: false, status: 403, message: "Forbidden" };
       }
+    } else if (!canReadRepo(repoRef, repoCtx)) {
+      return { ok: false, status: 403, message: "Forbidden" };
     }
 
     return {
@@ -2177,7 +2187,16 @@ export class Kernel extends Host<Env> {
     }
   }
 
-  private handleRes(_connection: Connection, frame: ResponseFrame): void {
+  private handleRes(connection: Connection<ConnectionState>, frame: ResponseFrame): void {
+    const route = this.routes.get(frame.id);
+    if (!route) {
+      return;
+    }
+
+    if (!this.isConnectionForDevice(connection, route.deviceId)) {
+      return;
+    }
+
     const consumed = this.routes.consume(frame.id);
     if (!consumed) {
       return;

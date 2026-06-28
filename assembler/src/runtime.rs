@@ -323,6 +323,9 @@ function buildKernelClient(env, props, kernelOverride) {{
 }}
 
 function buildDaemonClient(env, props, daemonOverride, triggerOverride) {{
+  if (props?.runtimeAccess?.daemon?.rpcSchedules !== true) {{
+    return undefined;
+  }}
   const api = env.GSV_API;
   const daemonClient = daemonOverride ?? (
     api
@@ -372,7 +375,10 @@ function buildDaemonClient(env, props, daemonOverride, triggerOverride) {{
   }};
 }}
 
-function buildStorageClient(env) {{
+function buildStorageClient(env, props) {{
+  if (props?.runtimeAccess?.storage?.sql !== true) {{
+    return undefined;
+  }}
   const api = env.GSV_API;
   if (!api || typeof api.packageSqlExec !== "function") {{
     return undefined;
@@ -423,7 +429,7 @@ function createBaseContext(metaOverrides, props, env, kernelOverride, daemonOver
     app: buildAppClient(env, props),
     daemon: buildDaemonClient(env, props, daemonOverride, daemonTrigger),
     kernel: buildKernelClient(env, props, kernelOverride),
-    storage: buildStorageClient(env),
+    storage: buildStorageClient(env, props),
   }};
 }}
 
@@ -507,6 +513,7 @@ function serveStaticAsset(request, routeBase, env) {{
       headers: {{
         "content-type": "text/html; charset=utf-8",
         "cache-control": "no-store",
+        "access-control-allow-origin": "*",
       }},
     }});
   }}
@@ -527,6 +534,7 @@ function serveStaticAsset(request, routeBase, env) {{
     headers: {{
       "content-type": asset.contentType,
       "cache-control": "no-store",
+      "access-control-allow-origin": "*",
     }},
   }});
 }}
