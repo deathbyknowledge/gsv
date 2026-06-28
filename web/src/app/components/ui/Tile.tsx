@@ -1,8 +1,9 @@
 import type { JSX } from "preact";
 import { Icon } from "./Icon";
+import { OBJECT_GLYPH_ICON, type ObjectGlyph } from "./objectGlyph";
 import "./Tile.css";
 
-export type TileGlyph = "machines" | "messengers" | "integrations" | "applications";
+export type TileGlyph = ObjectGlyph;
 export type TileStatus = "online" | "error" | "idle" | "warn" | "live" | "update";
 
 export interface TileProps {
@@ -27,14 +28,6 @@ const STATUS_VAR: Record<TileStatus, string> = {
   update: "var(--update)",
 };
 
-// glyph key → Icon name (the source drew a dot glyph per key; we use the
-// shared Icon set for the same object categories).
-const GLYPH_ICON: Record<TileGlyph, string> = {
-  machines: "computer",
-  messengers: "chat",
-  integrations: "weblink",
-  applications: "satellite",
-};
 
 /** Tile — ported from Tile.dc.html. 96px object tile with a glyph icon and a
  *  corner status dot, plus an "anchor" (GSV) circular variant. */
@@ -161,7 +154,7 @@ export function Tile({
             />
           ) : (
             <Icon
-              name={GLYPH_ICON[glyph] ?? GLYPH_ICON.machines}
+              name={OBJECT_GLYPH_ICON[glyph] ?? OBJECT_GLYPH_ICON.machines}
               size={iconSize}
               dotMatrix={16}
               title={iconTitle ?? labelText}

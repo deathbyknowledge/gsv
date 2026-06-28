@@ -1,9 +1,10 @@
 import type { ComponentChildren } from "preact";
 import type { JSX } from "preact";
 import { Icon } from "./Icon";
+import { OBJECT_GLYPH_ICON, type ObjectGlyph } from "./objectGlyph";
 import "./ObjectCard.css";
 
-export type ObjectCardGlyph = "machines" | "messengers" | "integrations" | "applications";
+export type ObjectCardGlyph = ObjectGlyph;
 export type ObjectCardStatus = "online" | "error" | "idle" | "warn" | "live";
 
 export interface ObjectCardProps {
@@ -29,14 +30,6 @@ const STATUS_VAR: Record<ObjectCardStatus, string> = {
   live: "var(--live)",
 };
 
-// glyph key → Icon name (fallback when no `icon` node is passed).
-const GLYPH_ICON: Record<ObjectCardGlyph, string> = {
-  machines: "computer",
-  messengers: "chat",
-  integrations: "weblink",
-  applications: "satellite",
-};
-
 /** ObjectCard — object card with a compact category + name head and a status
  *  dot. The description is revealed on hover. */
 export function ObjectCard({
@@ -51,7 +44,7 @@ export function ObjectCard({
 }: ObjectCardProps) {
   const dc = STATUS_VAR[status] ?? STATUS_VAR.online;
   const hasIcon = icon !== undefined && icon !== null && icon !== "";
-  const iconEl = hasIcon ? icon : <Icon name={GLYPH_ICON[glyph] ?? GLYPH_ICON.machines} size={20} color="var(--accent-bright)" />;
+  const iconEl = hasIcon ? icon : <Icon name={OBJECT_GLYPH_ICON[glyph] ?? OBJECT_GLYPH_ICON.machines} size={20} color="var(--accent-bright)" />;
 
   const dotStyle: JSX.CSSProperties = {
     background: dc,

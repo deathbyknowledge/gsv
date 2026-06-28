@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "preact/hooks";
 import { GsvMark } from "../../../components/ui/GsvMark";
 import { Icon } from "../../../components/ui/Icon";
 import { IconButton } from "../../../components/ui/IconButton";
+import { OBJECT_GLYPH_ICON, type ObjectGlyph } from "../../../components/ui/objectGlyph";
 import {
   type DesktopChildObject,
   type DesktopObject,
@@ -35,12 +36,6 @@ type ShellRailProps = {
   onCreateObject: (section: DesktopObjectId) => void;
 };
 
-const GLYPH_ICON: Record<string, string> = {
-  machines: "computer",
-  messengers: "chat",
-  integrations: "weblink",
-  applications: "satellite",
-};
 
 /** Sections that show a "create" entry in their drawer. The label is the same
  *  for every section. Messengers are intentionally absent — connecting a
@@ -185,7 +180,7 @@ export function ShellRail({
             title={object.label}
             onClick={() => openSection(object)}
           >
-            <Icon name={GLYPH_ICON[object.glyph]} size={19} />
+            <Icon name={OBJECT_GLYPH_ICON[object.glyph as ObjectGlyph]} size={19} />
             <span class="gsv-rail-status-dot" style={{ background: statusColor(object.status), color: statusColor(object.status) }} />
           </button>
         ))}
@@ -225,7 +220,7 @@ export function ShellRail({
                   >
                     <span class="gsv-rail-node-icon">
                       <span class="gsv-rail-node-disc">
-                        <Icon name={GLYPH_ICON[object.glyph]} size={19} />
+                        <Icon name={OBJECT_GLYPH_ICON[object.glyph as ObjectGlyph]} size={19} />
                       </span>
                     </span>
                     <span class="gsv-rail-row-copy">
