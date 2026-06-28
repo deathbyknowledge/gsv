@@ -21,6 +21,7 @@ import type { ConsoleListKind } from "../domain/consoleListTypes";
 import {
   CREW_HUMAN_IMAGE,
   agentImageSrcForIndex,
+  isConsoleAgentAccount,
   isHumanCrewAccount,
   orderedCrewAccounts,
 } from "../domain/agentPresentation";
@@ -545,11 +546,15 @@ function CrewPanel({
   processes: readonly ConsoleProcess[];
 }) {
   const cards = crewCards(accounts, processes);
+  const humanCount = accounts.filter(isHumanCrewAccount).length;
+  const agentCount = accounts.filter(isConsoleAgentAccount).length;
+  const crewMeta = `${humanCount} HUMAN${humanCount === 1 ? "" : "S"} / ${agentCount} AGENT${agentCount === 1 ? "" : "S"}`;
 
   return (
     <section class="gsv-settings-block gsv-settings-crew-block">
       <ActionSectionHeader
         title="CREW"
+        meta={crewMeta}
         onClick={onOpenSurface ? () => onOpenSurface("crew") : undefined}
       />
       <div class="gsv-settings-crew-grid">

@@ -102,7 +102,7 @@ export function ChatDockHeader({
           aria-expanded={agentPanelOpen}
         >
           <span class="gsv-chat-avatar">
-            <Avatar src={activeAgent.imageSrc} status={activeAgent.status} size={42} />
+            <Avatar src={activeAgent.imageSrc} status={activeAgent.status} size={42} cover />
           </span>
           <span class="gsv-chat-agent-name-row">
             <strong>{activeAgent.name}</strong>

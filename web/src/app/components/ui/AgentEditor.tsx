@@ -15,6 +15,8 @@ export type AgentEditorMode = "new" | "manage";
 export interface AgentEditorProps {
   mode?: AgentEditorMode;
   avatarSrc?: string;
+  /** Fill the avatar tile edge-to-edge (full-frame portrait). */
+  avatarCover?: boolean;
   containerWidth?: number;
   initialName?: string;
   initialRole?: string;
@@ -159,7 +161,7 @@ function defaults(mode: AgentEditorMode, props: AgentEditorProps): Defaults {
  *  TextInput/TextArea/Select/Segmented/Button atoms; FILES has a raw code editor
  *  (deliberately not a labelled field) + delete-confirm modal. */
 export function AgentEditor(props: AgentEditorProps) {
-  const { avatarSrc, containerWidth } = props;
+  const { avatarSrc, avatarCover = false, containerWidth } = props;
   const mode: AgentEditorMode = props.mode ?? "new";
   const isNew = mode !== "manage";
   const readOnly = props.readOnly === true;
@@ -509,7 +511,7 @@ export function AgentEditor(props: AgentEditorProps) {
 
                 {/* right identity column */}
                 <div style={identityStyle}>
-                  <Avatar src={imgSrc} status={status} size={58} />
+                  <Avatar src={imgSrc} status={status} size={58} cover={avatarCover} />
                   <div style="text-align:right;">
                     <div style="font-size:11px;letter-spacing:.18em;color:#7d78b8;">{meta.metaLabel}</div>
                     <div style="font-size:13px;letter-spacing:.1em;color:#cdd5e6;margin-top:6px;">{meta.created}</div>
@@ -524,7 +526,7 @@ export function AgentEditor(props: AgentEditorProps) {
                 {/* identity strip */}
                 <div style="display:flex;flex-direction:column;gap:18px;margin-bottom:26px;">
                   <div style="display:flex;align-items:center;gap:16px;">
-                    <Avatar src={imgSrc} status={status} size={52} />
+                    <Avatar src={imgSrc} status={status} size={52} cover={avatarCover} />
                     <div>
                       <div style="font-size:11px;letter-spacing:.18em;color:#7d78b8;">{meta.metaLabel}</div>
                       <div style="font-size:13px;letter-spacing:.1em;color:#cdd5e6;margin-top:6px;">{meta.created}</div>

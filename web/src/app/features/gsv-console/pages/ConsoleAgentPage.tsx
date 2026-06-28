@@ -28,8 +28,10 @@ import {
   serializeApprovalPolicy,
 } from "../domain/consoleAgentBehavior";
 import {
+  CREW_HUMAN_IMAGE,
   agentImageSrcForAccount,
   agentImageSrcForIndex,
+  isHumanCrewAccount,
   labelForConsoleAccountRelation,
 } from "../domain/agentPresentation";
 import {
@@ -162,7 +164,8 @@ function AgentEditorSurface({
           <AgentEditor
             key={`${account.uid}:${context.dataUpdatedAt}:${processes.length}:${behavior.model}:${behavior.permission}:${resolvedModelLabels.join("\u0000")}`}
             mode="manage"
-            avatarSrc={agentImageSrcForAccount(account, accounts)}
+            avatarSrc={isHumanCrewAccount(account) ? CREW_HUMAN_IMAGE : agentImageSrcForAccount(account, accounts)}
+            avatarCover={!isHumanCrewAccount(account)}
             containerWidth={width || undefined}
             initialName={account.displayName}
             initialRole={labelForConsoleAccountRelation(account.relation)}
@@ -240,6 +243,7 @@ function NewAgentEditorSurface({
             key="new-agent-draft"
             mode="new"
             avatarSrc={agentImageSrcForIndex(accountCount)}
+            avatarCover
             containerWidth={width || undefined}
             initialRole="AGENT"
             initialDescription=""

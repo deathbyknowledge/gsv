@@ -704,7 +704,7 @@ export function ChatDock({
   if (!open) {
     return (
       <button type="button" class="gsv-chat-min" onClick={onToggleOpen}>
-        <AgentImage src={activeAgent.imageSrc} size={40} />
+        <AgentImage src={activeAgent.imageSrc} size={40} cover />
         <span class="gsv-chat-min-copy">
           <strong>{activeAgent.name}</strong>
           <small>
