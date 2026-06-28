@@ -23,6 +23,14 @@ describe("shellRoutes", () => {
     expect(shellRouteFromLocation(location("/tasks"))).toEqual(route);
   });
 
+  it("uses /repositories for the native repository page", () => {
+    const route: ShellRoute = { surface: "repositories" };
+
+    expect(shellRouteToPath(route)).toBe("/repositories");
+    expect(shellRouteFromLocation(location("/repositories"))).toEqual(route);
+    expect(shellRouteFromLocation(location("/repos"))).toEqual(route);
+  });
+
   it("round-trips settings list detail routes", () => {
     const route: ShellRoute = {
       surface: "settings",
