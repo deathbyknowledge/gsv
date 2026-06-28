@@ -8,6 +8,11 @@ export interface SectionHeaderProps {
   density?: "default" | "compact";
   title?: string;
   meta?: string;
+  /** Lower-priority trailing word after `meta` (e.g. "CONFIGURED" in
+   *  "5/6 CONFIGURED"). It is the first thing dropped under tight space — wire a
+   *  container query against `.gsv-section-header-metaword` to hide it — so the
+   *  leading `meta` token (the count) and the title both survive. */
+  metaWord?: string;
   divider?: boolean;
   titleSize?: "section" | "title";
   /** Heading level for the title element. Defaults to 2 → <h2>. The title is
@@ -41,6 +46,7 @@ export function SectionHeader({
   density = "default",
   title = "THE SHIP",
   meta = "",
+  metaWord = "",
   divider = false,
   titleSize,
   headingLevel = 2,
@@ -49,7 +55,11 @@ export function SectionHeader({
   onClick,
 }: SectionHeaderProps) {
   const hasMeta = !!meta;
+  const hasMetaWord = !!metaWord;
   const hasActions = actions != null && actions !== false;
+  // Full-row click: only safe when there are no independently-clickable actions
+  // (a stretched overlay would cover them). The title stays the accessible name.
+  const rowClick = !!onClick && !hasActions;
   const rootStyle: JSX.CSSProperties = {
     display: "flex",
     alignItems: "center",
@@ -70,6 +80,7 @@ export function SectionHeader({
     "gsv-section-header",
     density === "compact" ? "is-compact" : "",
     onClick ? "is-clickable" : "",
+    rowClick ? "is-rowclick" : "",
     className,
   ].filter(Boolean).join(" ");
 
@@ -152,6 +163,9 @@ export function SectionHeader({
         // meta is the dim eyebrow string (var(--meta)); pinned right, never
         // shrinks. (Contrast: --meta is intentionally dim per design tokens.)
         <span class="gsv-section-header-meta" style={{ marginLeft: "auto", flex: "none", fontSize: "10px", letterSpacing: ".16em", color: "var(--meta)" }}>{meta}</span>
+      ) : null}
+      {hasMetaWord ? (
+        <span class="gsv-section-header-metaword" style={{ marginLeft: hasMeta ? undefined : "auto", flex: "none", fontSize: "10px", letterSpacing: ".16em", color: "var(--meta)" }}>{metaWord}</span>
       ) : null}
       {chevron ? <span class="gsv-section-header-chevron" aria-hidden="true" /> : null}
       {hasActions ? (

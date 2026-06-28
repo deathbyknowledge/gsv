@@ -62,7 +62,14 @@ export type ConsoleConfigKind = "models" | "overrides";
 
 type ConsoleConfigPageProps = {
   kind: ConsoleConfigKind;
+  /** Optional model selection to open immediately (e.g. "default" deep-links to
+   *  the Default Agent Model detail page). */
+  select?: string;
 };
+
+function modelSelectionFromParam(select: string | undefined): ModelSelection | null {
+  return select === "default" ? { kind: "default" } : null;
+}
 
 type SettingsViewer = {
   account: ConsoleAccount | null;
@@ -102,7 +109,7 @@ type SettingsFieldGroupProps = {
 
 type ClearedProfileSecretKeys = ReadonlyMap<string, ReadonlySet<string>>;
 
-export function ConsoleConfigPage({ kind }: ConsoleConfigPageProps) {
+export function ConsoleConfigPage({ kind, select }: ConsoleConfigPageProps) {
   const config = useConsoleConfig();
   const accounts = useConsoleAccounts();
 
@@ -117,6 +124,7 @@ export function ConsoleConfigPage({ kind }: ConsoleConfigPageProps) {
             accounts={accounts.accounts}
             config={data}
             kind={kind}
+            select={select}
           />
         )}
       />
@@ -128,10 +136,12 @@ function ConsoleSettingsPanel({
   accounts,
   config,
   kind,
+  select,
 }: {
   accounts: readonly ConsoleAccount[];
   config: readonly ConsoleConfigEntry[];
   kind: ConsoleConfigKind;
+  select?: string;
 }) {
   const viewerAccount = viewerAccountForSettings(accounts);
   const viewer: SettingsViewer = {
@@ -141,7 +151,7 @@ function ConsoleSettingsPanel({
   };
 
   if (kind === "models") {
-    return <ModelSettingsPage config={config} viewer={viewer} />;
+    return <ModelSettingsPage config={config} viewer={viewer} select={select} />;
   }
   return <RuntimeSettingsPage config={config} viewer={viewer} />;
 }
@@ -149,13 +159,15 @@ function ConsoleSettingsPanel({
 function ModelSettingsPage({
   config,
   viewer,
+  select,
 }: {
   config: readonly ConsoleConfigEntry[];
   viewer: SettingsViewer;
+  select?: string;
 }) {
   const saveConfig = useSaveConsoleConfigEntries();
   const validateModelConfig = useValidateConsoleModelConfig();
-  const [selection, setSelection] = useState<ModelSelection | null>(null);
+  const [selection, setSelection] = useState<ModelSelection | null>(() => modelSelectionFromParam(select));
   const effectiveValues = useMemo(
     () => effectiveAiValuesForViewer(config, viewer.uid),
     [config, viewer.uid],
@@ -404,7 +416,7 @@ function RuntimeSettingsPage({
 
   return (
     <section class="gsv-console-settings-index">
-      <SectionHeader title="OVERRIDES" headingLevel={2} divider />
+      <SectionHeader title="RUNTIME" headingLevel={2} divider />
       {RUNTIME_SETTING_GROUPS.map((group) => (
         <SettingsListPanel
           key={group.id}

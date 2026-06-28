@@ -22,6 +22,19 @@
   background: var(--hover-nav) !important;
 }
 
+/* Full-row click: stretch the title button over the whole header so a click
+   anywhere fires it. Only applied when there are no `actions` (is-rowclick),
+   so action controls in headers that have them stay independently clickable. */
+.gsv-section-header.is-rowclick {
+  position: relative;
+}
+
+.gsv-section-header.is-rowclick .gsv-section-header-titlebtn::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+
 .gsv-section-header-titlebtn:focus-visible {
   outline: 1px solid var(--accent);
   outline-offset: 2px;
@@ -38,8 +51,9 @@
   filter: drop-shadow(0 0 4px rgba(150, 140, 255, 0.6));
 }
 
-/* When meta precedes the chevron, meta already owns the margin-left:auto push,
-   so the chevron sits snug after it. */
-.gsv-section-header-meta + .gsv-section-header-chevron {
+/* When meta / metaword precede the chevron, they already own the margin-left:auto
+   push, so the chevron sits snug after them. */
+.gsv-section-header-meta + .gsv-section-header-chevron,
+.gsv-section-header-metaword + .gsv-section-header-chevron {
   margin-left: 0;
 }

@@ -70,7 +70,7 @@ type CrewCard = {
 };
 
 type OverviewSurface = Exclude<ShellSurfaceId, "desktop" | "app">;
-export type ConsoleOverviewTarget = OverviewSurface | "models" | "new-agent" | "overrides" | "tasks";
+export type ConsoleOverviewTarget = OverviewSurface | "models" | "model-default" | "new-agent" | "overrides" | "tasks";
 export type OpenSurface = (surface: ConsoleOverviewTarget) => void;
 export type OpenAgent = (accountUid: number) => void;
 export type OpenListDetail = (kind: ConsoleListKind, detailId: string, detailLabel?: string) => void;
@@ -294,11 +294,13 @@ function shipInventoryLabel(data: ConsoleOverviewData): string {
 function MiniHeading({
   title,
   meta,
+  metaWord,
   onClick,
   showChevron = Boolean(onClick),
 }: {
   title: string;
   meta?: string;
+  metaWord?: string;
   onClick?: () => void;
   showChevron?: boolean;
 }) {
@@ -309,6 +311,7 @@ function MiniHeading({
       density="compact"
       divider
       meta={meta}
+      metaWord={metaWord}
       onClick={onClick}
       title={title}
     />
@@ -354,19 +357,16 @@ function AddRow({ label, onClick }: { label: string; onClick?: () => void }) {
   );
 }
 
-function toolModelIcon(groupId: string): string {
-  switch (groupId) {
-    case "image-generation":
-      return "doticons/pencil";
-    case "image-read":
-      return "doticons/camera";
-    case "speech":
-      return "doticons/volume";
-    case "transcription":
-      return "doticons/microphone";
-    default:
-      return "cog";
+/** Model name without the trailing parameter-size tokens (e.g. "120B", "A12B",
+ *  "8x7B", "70M"). Pure version numbers like the "3" in "Nemotron 3" are kept. */
+function modelCoreName(value: string): string {
+  const full = modelDisplayName(value);
+  if (!full) {
+    return "";
   }
+  const sizeToken = /^a?\d+(?:\.\d+)?(?:x\d+)?[bm]$/i;
+  const kept = full.split(" ").filter((token) => !sizeToken.test(token));
+  return kept.join(" ") || full;
 }
 
 function modelValueForGroup(values: Record<string, string>, groupId: string): string {
@@ -377,44 +377,36 @@ function modelValueForGroup(values: Record<string, string>, groupId: string): st
 
 function overviewModelRows(
   values: Record<string, string>,
+  otherConfigured: number,
+  otherTotal: number,
   profileCount: number,
 ): OverviewRow[] {
   const agentModel = values["config/ai/model"] ?? "";
-  const defaultModelLabel = modelDisplayName(agentModel) || "Not configured";
-  const rows: OverviewRow[] = [
+  const provider = (values["config/ai/provider"] ?? "").trim();
+  return [
     {
       id: "default-agent-model",
       icon: "stars",
-      label: "Default Agent Model",
-      meta: defaultModelLabel,
+      // Inverted: the model name is the primary (white) label, the provider name
+      // is the dim (blue) sub beneath it.
+      label: modelCoreName(agentModel) || "Not configured",
+      meta: provider ? formatTokenLabel(provider) : "Default Model",
       tone: agentModel ? "online" : "idle",
       statusLabel: agentModel ? "DEFAULT" : "EMPTY",
     },
     {
-      id: "model-presets",
+      // Collapsed: "Other Models" with the configured count on the right and the
+      // preset count as the dim sub line.
+      id: "other-models",
       icon: "stars",
-      label: "Model Presets",
+      label: "Other Models",
       meta: profileCount === 0
-        ? "No saved presets"
-        : `${profileCount} saved preset${profileCount === 1 ? "" : "s"}`,
-      tone: profileCount > 0 ? "online" : "idle",
-      statusLabel: profileCount > 0 ? "SAVED" : "EMPTY",
+        ? "No model presets"
+        : `${profileCount} model preset${profileCount === 1 ? "" : "s"}`,
+      tone: otherConfigured > 0 ? "online" : "idle",
+      statusLabel: `${otherConfigured}/${otherTotal}`,
     },
   ];
-
-  for (const group of TOOL_MODEL_GROUPS) {
-    const model = modelValueForGroup(values, group.id);
-    rows.push({
-      id: group.id,
-      icon: toolModelIcon(group.id),
-      label: group.title,
-      meta: model ? modelDisplayName(model) : group.description,
-      tone: model ? "online" : "idle",
-      statusLabel: model ? "CONFIGURED" : "EMPTY",
-    });
-  }
-
-  return rows;
 }
 
 function processOverviewRow(process: ConsoleProcess): OverviewRow {
@@ -498,9 +490,7 @@ function ShipPanel({
           <div class="gsv-settings-mini-cell">
             <MiniHeading title="INSTANCE" />
             <ListRow
-              chevron={Boolean(onOpenSurface)}
               label={instanceName}
-              onClick={onOpenSurface ? () => onOpenSurface("overrides") : undefined}
               status="none"
               style={OVERVIEW_STATE_ROW_STYLE}
               tag={timezone}
@@ -510,7 +500,10 @@ function ShipPanel({
         )}
         right={(
           <div class="gsv-settings-mini-cell">
-            <MiniHeading title="RUNTIME" />
+            <MiniHeading
+              title="RUNTIME"
+              onClick={onOpenSurface ? () => onOpenSurface("overrides") : undefined}
+            />
             <ListRow
               chevron={Boolean(onOpenSurface)}
               className="gsv-settings-overrides-state"
@@ -592,10 +585,17 @@ function ModelsTasksPanel({
   const viewer = viewerAccountForSettings(accounts);
   const modelValues = effectiveAiValuesForViewer(config, viewer?.uid);
   const profiles = modelProfilesForConfig(config, viewer?.uid);
-  const modelRows = overviewModelRows(modelValues, profiles.length);
-  const configuredModels = modelRows.filter((row) => row.tone === "online").length;
+  const defaultModelSet = (modelValues["config/ai/model"] ?? "").trim().length > 0;
+  const otherModelsTotal = TOOL_MODEL_GROUPS.length;
+  const otherModelsConfigured = TOOL_MODEL_GROUPS.filter(
+    (group) => modelValueForGroup(modelValues, group.id).trim().length > 0,
+  ).length;
+  const modelRows = overviewModelRows(modelValues, otherModelsConfigured, otherModelsTotal, profiles.length);
+  const configuredModels = (defaultModelSet ? 1 : 0) + otherModelsConfigured;
+  const totalModels = 1 + otherModelsTotal;
   const visibleProcesses = rowLimit(sortProcessesForOverview(processes), DEEP_CELL_ROW_LIMIT);
   const openModels = onOpenSurface ? () => onOpenSurface("models") : undefined;
+  const openDefaultModel = onOpenSurface ? () => onOpenSurface("model-default") : undefined;
   const openTasks = onOpenSurface ? () => onOpenSurface("tasks") : undefined;
   const openTaskDetail = (process: ConsoleProcess) => (
     onOpenListDetail
@@ -618,12 +618,17 @@ function ModelsTasksPanel({
         <Surface class="gsv-settings-deep-cell" flush>
           <MiniHeading
             title="MODELS"
-            meta={`${configuredModels}/${modelRows.length} CONFIGURED`}
+            meta={`${configuredModels}/${totalModels}`}
+            metaWord="CONFIGURED"
             onClick={openModels}
           />
           <div class="gsv-settings-overview-list">
             {rowLimit(modelRows, DEEP_CELL_ROW_LIMIT).map((row) => (
-              <MiniRow key={row.id} row={row} onClick={openModels} />
+              <MiniRow
+                key={row.id}
+                row={row}
+                onClick={row.id === "default-agent-model" ? openDefaultModel : openModels}
+              />
             ))}
           </div>
         </Surface>
@@ -704,7 +709,6 @@ function FleetPanel({
             {rowLimit(adapterRows, 3).map((row) => (
               <MiniRow key={row.id} row={row} onClick={openDetail("messengers", row, "messengers")} />
             ))}
-            <AddRow label="CONNECT MESSENGER" onClick={openCreate("messengers", "messengers")} />
           </div>
         )}
         right={(

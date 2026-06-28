@@ -96,7 +96,7 @@ function settingsRouteLabel(route: SettingsRoute): string {
     return "AGENT";
   }
   if (route.view === "config") {
-    return route.kind === "models" ? "MODELS" : "OVERRIDES";
+    return route.kind === "models" ? "MODELS" : "RUNTIME";
   }
   if (route.createNew) {
     if (route.kind === "machines") return "NEW MACHINE";
@@ -137,7 +137,7 @@ function settingsRouteTail(route: SettingsRoute): string {
     return "GSV · CREW";
   }
   if (route.view === "config") {
-    return route.kind === "models" ? "GSV · MODELS" : "GSV · OVERRIDES";
+    return route.kind === "models" ? "GSV · MODELS" : "GSV · RUNTIME";
   }
   if (route.kind === "tasks") {
     return "GSV · RUNTIME";
@@ -234,6 +234,10 @@ export function GsvConsole({
   const openSettingsSurface = (surface: ConsoleOverviewTarget) => {
     if (surface === "settings") {
       navigateSettingsRoute({ view: "overview" });
+      return;
+    }
+    if (surface === "model-default") {
+      navigateSettingsRoute({ view: "config", kind: "models", select: "default" });
       return;
     }
     if (surface === "models" || surface === "overrides") {
@@ -335,7 +339,7 @@ export function GsvConsole({
               onSelectionChange: (selection) => handleSettingsListSelectionChange(settingsRoute.kind, selection),
             })
           ) : settingsRoute.view === "config" ? (
-            <ConsoleConfigPage kind={settingsRoute.kind} />
+            <ConsoleConfigPage kind={settingsRoute.kind} select={settingsRoute.select} />
           ) : settingsRoute.view === "crew" ? (
             <ConsoleCrewPage onManageAgent={openSettingsAgent} onCreateAgent={openSettingsNewAgent} />
           ) : (

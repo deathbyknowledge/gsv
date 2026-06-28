@@ -23,7 +23,7 @@ export type ShellSettingsListKind = DesktopObjectId | "library" | "tasks";
 export type ShellSettingsRoute =
   | { view: "overview" }
   | { view: "list"; kind: ShellSettingsListKind; detailId?: string; detailLabel?: string; createNew?: boolean }
-  | { view: "config"; kind: "models" | "overrides" }
+  | { view: "config"; kind: "models" | "overrides"; select?: string }
   | { view: "crew" }
   | { view: "agent"; accountUid: number | null; createNew?: boolean };
 
