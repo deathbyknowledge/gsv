@@ -96,7 +96,6 @@ export function ConsoleAgentPage({
               modelLabels={modelLabels}
               ownerUid={viewerAccountForAgents(data)?.uid ?? null}
               processResource={processes.resource}
-              onBackToCrew={onBackToCrew}
             />
           );
         }}
@@ -112,7 +111,6 @@ function AgentEditorSurface({
   modelLabels,
   ownerUid,
   processResource,
-  onBackToCrew,
 }: {
   account: ConsoleAccount;
   accounts: readonly ConsoleAccount[];
@@ -120,7 +118,6 @@ function AgentEditorSurface({
   modelLabels: string[];
   ownerUid: number | null;
   processResource: ConsoleResourceState<ConsoleProcess[]>;
-  onBackToCrew: () => void;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
@@ -199,7 +196,6 @@ function AgentEditorSurface({
                 });
               }
             }}
-            onBack={onBackToCrew}
           />
         </div>
       </div>
@@ -261,7 +257,6 @@ function NewAgentEditorSurface({
                 onBackToCrew();
               }, 0);
             }}
-            onBack={onBackToCrew}
           />
         </div>
       </div>

@@ -280,6 +280,11 @@ export function GsvConsole({
             notLast: true,
           },
           { label: settingsListDetailLabel(settingsRoute) },
+        ] : settingsRoute.view === "agent" ? [
+          // The agent editor is reached via Crew; keep CREW in the trail now that
+          // the editor no longer renders its own breadcrumb.
+          { label: "CREW", onClick: () => guardedSettingsNavigate({ view: "crew" }), notLast: true },
+          { label: settingsRouteLabel(settingsRoute) },
         ] : inNestedSettings ? [{ label: settingsRouteLabel(settingsRoute) }] : []),
       ]
     : [

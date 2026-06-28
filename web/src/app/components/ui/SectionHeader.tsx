@@ -1,4 +1,4 @@
-import type { JSX } from "preact";
+import type { ComponentChildren, JSX } from "preact";
 import "../../../styles/gsv-type.css";
 import "./SectionHeader.css";
 
@@ -10,12 +10,31 @@ export interface SectionHeaderProps {
   meta?: string;
   divider?: boolean;
   titleSize?: "section" | "title";
+  /** Heading level for the title element. Defaults to 2 → <h2>. The title is
+   *  always a real heading for a11y; this controls which level. */
+  headingLevel?: 1 | 2 | 3 | 4 | 5 | 6;
+  /** Accessible name for the clickable (onClick) variant. Use when the title is
+   *  glyph-only or otherwise not descriptive. */
+  ariaLabel?: string;
+  /** Right-aligned interactive controls (e.g. a close ✕ or page actions). They
+   *  sit after `meta`, never shrink, and keep their own focus/labels. Safe to
+   *  combine with `onClick`: the title is the row button, so actions stay
+   *  independently clickable. */
+  actions?: ComponentChildren;
   onClick?: () => void;
 }
 
+type HeadingTag = "h1" | "h2" | "h3" | "h4" | "h5" | "h6";
+
 /** SectionHeader — ported from SectionHeader.dc.html. Header bar with a square
- *  accent dot, Departure Mono title, optional meta (right-aligned) and a
- *  divider variant (bottom rule instead of full border). */
+ *  accent dot, Departure Mono title, optional meta (right-aligned), optional
+ *  actions slot (far right), and a divider variant (bottom rule instead of full
+ *  border).
+ *
+ *  The title is always a real heading element (<h{headingLevel}>). When
+ *  `onClick` is set, only the title becomes the interactive button — the row
+ *  itself is never a button — so the heading semantics survive and any `actions`
+ *  remain independently clickable. */
 export function SectionHeader({
   chevron = false,
   className = "",
@@ -24,9 +43,13 @@ export function SectionHeader({
   meta = "",
   divider = false,
   titleSize = "section",
+  headingLevel = 2,
+  ariaLabel,
+  actions,
   onClick,
 }: SectionHeaderProps) {
   const hasMeta = !!meta;
+  const hasActions = actions != null && actions !== false;
   const rootStyle: JSX.CSSProperties = {
     display: "flex",
     alignItems: "center",
@@ -39,6 +62,9 @@ export function SectionHeader({
     fontFamily: "var(--gsv-font-mono)",
     textAlign: "left",
     width: "100%",
+    // min-width:0 so the header never overflows a narrow docked column and the
+    // title can ellipsize inside it.
+    minWidth: 0,
   };
   const rootClass = [
     "gsv-section-header",
@@ -47,9 +73,60 @@ export function SectionHeader({
     className,
   ].filter(Boolean).join(" ");
 
-  const content = (
-    <>
+  const Heading = (`h${headingLevel}` as HeadingTag);
+
+  // Type class + the existing inline title look. margin:0 resets default
+  // heading margins so layout is identical to the old <span>.
+  const titleClass = titleSize === "title" ? "gsv-title" : "gsv-section";
+  const titleVisualStyle: JSX.CSSProperties = {
+    color: "var(--text-title)",
+    textShadow: "0 0 5px rgba(150,140,255,.3)",
+    margin: 0,
+  };
+  // Truncation: the title is the flexible child — it shrinks and ellipsizes so
+  // it never collides with meta/actions. App docks panels, so viewport @media
+  // won't fire for narrow columns; flex + min-width:0 handles it instead.
+  const titleTruncStyle: JSX.CSSProperties = {
+    flex: "1 1 auto",
+    minWidth: 0,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  };
+
+  const heading = onClick ? (
+    <Heading class={`gsv-section-header-title ${titleClass}`} style={{ ...titleVisualStyle, ...titleTruncStyle }}>
+      <button
+        type="button"
+        class="gsv-section-header-titlebtn"
+        aria-label={ariaLabel}
+        onClick={onClick}
+        style={{
+          display: "block",
+          width: "100%",
+          textAlign: "left",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {title}
+      </button>
+    </Heading>
+  ) : (
+    <Heading
+      class={`gsv-section-header-title ${titleClass}`}
+      aria-label={ariaLabel}
+      style={{ ...titleVisualStyle, ...titleTruncStyle }}
+    >
+      {title}
+    </Heading>
+  );
+
+  return (
+    <div class={rootClass} data-clickable={onClick ? "true" : undefined} style={rootStyle}>
       <span
+        aria-hidden="true"
         style={{
           width: "7px",
           height: "7px",
@@ -59,29 +136,18 @@ export function SectionHeader({
           boxShadow: "0 0 8px var(--accent)",
         }}
       />
-      <span
-        class={titleSize === "title" ? "gsv-title" : "gsv-section"}
-        style={{
-          color: "var(--text-title)",
-          textShadow: "0 0 5px rgba(150,140,255,.3)",
-        }}
-      >
-        {title}
-      </span>
+      {heading}
       {hasMeta ? (
-        <span class="gsv-section-header-meta" style={{ marginLeft: "auto", fontSize: "10px", letterSpacing: ".16em", color: "var(--meta)" }}>{meta}</span>
+        // meta is the dim eyebrow string (var(--meta)); pinned right, never
+        // shrinks. (Contrast: --meta is intentionally dim per design tokens.)
+        <span class="gsv-section-header-meta" style={{ marginLeft: "auto", flex: "none", fontSize: "10px", letterSpacing: ".16em", color: "var(--meta)" }}>{meta}</span>
       ) : null}
       {chevron ? <span class="gsv-section-header-chevron" aria-hidden="true" /> : null}
-    </>
-  );
-
-  return onClick ? (
-    <button type="button" class={rootClass} data-clickable="true" style={rootStyle} onClick={onClick}>
-      {content}
-    </button>
-  ) : (
-    <div class={rootClass} style={rootStyle}>
-      {content}
+      {hasActions ? (
+        <span class="gsv-section-header-actions" style={{ marginLeft: hasMeta ? undefined : "auto", flex: "none", display: "inline-flex", alignItems: "center", gap: density === "compact" ? "8px" : "11px" }}>
+          {actions}
+        </span>
+      ) : null}
     </div>
   );
 }

@@ -8,7 +8,7 @@ import { Button } from "./Button";
 import { Avatar, type AvatarStatus } from "./Avatar";
 import { Tabs } from "./Tabs";
 import { ConfirmModal } from "./ConfirmModal";
-import { useUnsavedGuard, useUnsavedGuardLeave } from "../../features/gsv-shell/unsaved/unsavedGuard";
+import { useUnsavedGuard } from "../../features/gsv-shell/unsaved/unsavedGuard";
 
 export type AgentEditorMode = "new" | "manage";
 
@@ -34,7 +34,6 @@ export interface AgentEditorProps {
   filesReadOnly?: boolean;
   onCreate?: (draft: AgentEditorDraft) => Promise<void> | void;
   onSave?: (draft: AgentEditorDraft) => Promise<void> | void;
-  onBack?: () => void;
 }
 
 type TaskStatus = "running" | "error" | "idle" | "online";
@@ -160,7 +159,7 @@ function defaults(mode: AgentEditorMode, props: AgentEditorProps): Defaults {
  *  TextInput/TextArea/Select/Segmented/Button atoms; FILES has a raw code editor
  *  (deliberately not a labelled field) + delete-confirm modal. */
 export function AgentEditor(props: AgentEditorProps) {
-  const { avatarSrc, containerWidth, onBack } = props;
+  const { avatarSrc, containerWidth } = props;
   const mode: AgentEditorMode = props.mode ?? "new";
   const isNew = mode !== "manage";
   const readOnly = props.readOnly === true;
@@ -216,7 +215,6 @@ export function AgentEditor(props: AgentEditorProps) {
   // ---- responsive ----
   const W = containerWidth != null ? containerWidth : w || 1100;
   const narrow = W < 720;
-  const tight = W < 470;
 
   // ---- folder tabs ----
   const tabOrder: ("general" | "files" | "tasks")[] =
@@ -248,12 +246,10 @@ export function AgentEditor(props: AgentEditorProps) {
     files.some(
       (f, i) => f.label !== meta.files[i]?.label || f.content !== (f.orig ?? f.content),
     );
+  // Registers the editor's dirty state so the shell ConsoleHeader back/nav (the
+  // single source of navigation for this surface) prompts before discarding
+  // unsaved edits — the editor no longer renders its own back/breadcrumb.
   useUnsavedGuard(() => dirty);
-  // The editor's own back controls (back arrow, CREW crumb) unmount the editor
-  // just like shell nav does, so route them through the same guard to prompt
-  // before discarding unsaved edits.
-  const requestLeave = useUnsavedGuardLeave();
-  const guardedBack = onBack ? () => requestLeave(onBack) : undefined;
 
   // ---- tasks ----
   const dotColorFor = (st: TaskStatus) =>
@@ -262,7 +258,6 @@ export function AgentEditor(props: AgentEditorProps) {
     st === "error" ? "var(--error)" : st === "idle" ? "#9a95cf" : "var(--online)";
   const TASKS = meta.tasks || [];
 
-  const crumbLast = isNew ? "NEW AGENT" : (name || "AGENT").toUpperCase();
   const nameDisplay = name || "NEW AGENT";
   const roleDisplay = role || "UNASSIGNED ROLE";
 
@@ -361,9 +356,6 @@ export function AgentEditor(props: AgentEditorProps) {
 
   // ---- styles ----
   const padStyle = "position:relative;z-index:2;";
-  const barStyle =
-    "position:relative;z-index:2;display:flex;align-items:center;" +
-    (narrow ? "gap:12px;padding:16px 16px;" : "gap:18px;padding:22px 30px;");
   const panelStyle =
     "position:relative;z-index:2;display:flex;flex-direction:column;min-height:" +
     (narrow ? "480px" : "560px") + ";";
@@ -372,13 +364,6 @@ export function AgentEditor(props: AgentEditorProps) {
     : "display:flex;flex-direction:column;padding:28px 32px 40px;gap:22px;";
   const identityStyle = "order:-1;display:flex;flex-direction:row;align-items:center;gap:16px;width:100%;";
   const secPad = narrow ? "padding:20px 16px 28px;" : "padding:28px 32px 36px;";
-  const crumbRowStyle =
-    "display:flex;align-items:center;flex-wrap:wrap;gap:" +
-    (narrow ? "6px" : "10px") +
-    ";font-size:" +
-    (narrow ? "10.5px" : "12.5px") +
-    ";letter-spacing:.14em;";
-  const showFullCrumb = !tight;
 
   return (
     <div
@@ -399,43 +384,8 @@ export function AgentEditor(props: AgentEditorProps) {
       </div>
 
       <div style={padStyle}>
-        {/* ============ TOP BAR ============ */}
-        <div style={barStyle}>
-          <button
-            type="button"
-            aria-label="Back to crew"
-            class="gsv-ae-back"
-            disabled={!onBack}
-            onClick={guardedBack}
-          >
-            <svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square">
-              <path d="M9.5 3.5 L5 8 L9.5 12.5" />
-              <path d="M5 8 H13" />
-            </svg>
-          </button>
-          <div style={crumbRowStyle}>
-            {showFullCrumb ? (
-              <>
-                <span class="gsv-ae-crumb-dim">GSV</span>
-                <span style="color:var(--rule-section);">›</span>
-                <span class="gsv-ae-crumb-dim">SETTINGS</span>
-                <span style="color:var(--rule-section);">›</span>
-              </>
-            ) : null}
-            <button
-              type="button"
-              class="gsv-ae-crumb-crew"
-              disabled={!onBack}
-              onClick={guardedBack}
-            >
-              CREW
-            </button>
-            <span style="color:var(--rule-section);">›</span>
-            <span style="color:var(--text-hi);text-shadow:0 0 7px rgba(150,140,255,.45);">{crumbLast}</span>
-          </div>
-        </div>
-
         {/* ============ PANEL ============ */}
+        {/* Navigation (back + breadcrumb) is owned by the shell ConsoleHeader. */}
         <div style={panelStyle}>
           {/* ===== FOLDER TAB BAR ===== */}
           <Tabs

@@ -51,6 +51,7 @@ import iconMenu from "./stories/IconMenu.story";
 import desktopHint from "./stories/DesktopHint.story";
 import consoleHeader from "./stories/ConsoleHeader.story";
 import breadcrumbs from "./stories/Breadcrumbs.story";
+import pageHeader from "./stories/PageHeader.story";
 import statusBar from "./stories/StatusBar.story";
 import messageInput from "./stories/MessageInput.story";
 import systemMessage from "./stories/SystemMessage.story";
@@ -107,6 +108,7 @@ const STORIES: Story[] = [
   desktopHint,
   consoleHeader,
   breadcrumbs,
+  pageHeader,
   statusBar,
   messageInput,
   systemMessage,
