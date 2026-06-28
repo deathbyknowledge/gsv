@@ -10,7 +10,7 @@ const DEFAULT_CONFIG: ExtensionConfig = {
   gatewayUrl: "ws://localhost:8787/ws",
   username: "",
   token: "",
-  deviceId: "browser:chrome",
+  deviceId: "chrome",
   autoConnect: true,
 };
 
