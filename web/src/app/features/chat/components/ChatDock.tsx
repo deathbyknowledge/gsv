@@ -543,7 +543,8 @@ export function ChatDock({
   };
 
   const handleSendMessage = async (message: string) => {
-    const media = draftAttachments.map((attachment): ProcMediaInput => ({
+    const sentAttachments = draftAttachments;
+    const media = sentAttachments.map((attachment): ProcMediaInput => ({
       type: attachment.type,
       mimeType: attachment.mimeType,
       ...(attachment.data ? { data: attachment.data } : {}),
@@ -553,17 +554,27 @@ export function ChatDock({
       ...(attachment.duration ? { duration: attachment.duration } : {}),
       ...(attachment.transcription ? { transcription: attachment.transcription } : {}),
     }));
+    if (sentAttachments.length > 0) {
+      setAttachmentError("");
+      setDraftAttachments([]);
+    }
     let sent = false;
     try {
       sent = await sendChatDraft(message, media);
-    } catch {
+    } catch (error) {
+      if (sentAttachments.length > 0) {
+        setDraftAttachments((current) => sentAttachments.concat(current));
+      }
+      setAttachmentError(errorMessage(error, "Message could not be sent."));
       return;
     }
     if (!sent) {
+      if (sentAttachments.length > 0) {
+        setDraftAttachments((current) => sentAttachments.concat(current));
+      }
       return;
     }
-    revokeDraftAttachments(draftAttachments);
-    setDraftAttachments([]);
+    revokeDraftAttachments(sentAttachments);
   };
 
   const branchFromMessage = (messageId: number) => {
