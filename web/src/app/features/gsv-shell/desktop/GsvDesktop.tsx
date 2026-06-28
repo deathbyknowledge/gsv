@@ -1,5 +1,7 @@
 import type { JSX } from "preact";
 import { AddAction } from "../../../components/ui/AddAction";
+import { GsvMark } from "../../../components/ui/GsvMark";
+import { DesktopHint } from "./DesktopHint";
 import { IconMenu } from "../../../components/ui/IconMenu";
 import { ObjectCard } from "../../../components/ui/ObjectCard";
 import { StatusDot } from "../../../components/ui/StatusDot";
@@ -14,6 +16,9 @@ import {
 
 export type DesktopInventoryState = "ready" | "loading" | "offline" | "error";
 
+const DESKTOP_HINT = ["> CLICK A NODE TO EXPLORE", "> CLICK GSV FOR CONTROLS"];
+const DESKTOP_HINT_MIN = "CLICK A NODE TO EXPLORE · CLICK GSV FOR CONTROLS";
+
 type GsvDesktopProps = {
   desktopObjects: readonly DesktopObject[];
   inventoryMessage: string;
@@ -25,6 +30,12 @@ type GsvDesktopProps = {
   onCreateObject: (id: DesktopObjectId) => void;
   onOpenObject: (child: DesktopChildObject) => void;
   onOpenSurface: (surface: ShellSurfaceId) => void;
+  /** Whether the hint intro has already played this login (skip it if so). */
+  hintShown: boolean;
+  /** Per-login token; used as the hint's remount key so each login replays it. */
+  hintToken: number;
+  /** Called once when the hint intro finishes (or is skipped via a node click). */
+  onHintShown: () => void;
 };
 
 function objectCardStatus(status: ShellStatus) {
@@ -51,19 +62,6 @@ function branchCountStyle(count: number): JSX.CSSProperties {
   } as JSX.CSSProperties;
 }
 
-function GsvMark() {
-  return (
-    <svg width="50" height="50" viewBox="0 0 16 16" aria-hidden="true">
-      <g fill="var(--text-hi)" shape-rendering="crispEdges">
-        <rect x="7" y="1" width="2" height="2" />
-        <rect x="6" y="3" width="4" height="6" />
-        <rect x="4" y="6" width="2" height="3" />
-        <rect x="10" y="6" width="2" height="3" />
-        <rect x="7" y="11" width="2" height="3" fill="#a9a4ff" />
-      </g>
-    </svg>
-  );
-}
 
 function SpaceGlyphs() {
   const glyphs = ["+", "*", ":", "o", "+", "*", "o", ":", "*", "-", "+", "*", ":", "o", "+", "*", ":", "o"];
@@ -116,6 +114,9 @@ export function GsvDesktop({
   onCreateObject,
   onOpenObject,
   onOpenSurface,
+  hintShown,
+  hintToken,
+  onHintShown,
 }: GsvDesktopProps) {
   const selectedObject = selectedObjectId
     ? desktopObjects.find((object) => object.id === selectedObjectId) ?? null
@@ -158,20 +159,21 @@ export function GsvDesktop({
         <p>{hudStatus}</p>
       </header>
 
-      <div
-        class="gsv-space-tree"
-        onClick={(event) => {
-          event.stopPropagation();
-        }}
-      >
+      {/* The tree fills the desktop; clicks on its empty space intentionally
+          bubble to the section handler to deselect. Interactive children below
+          stop propagation so they don't trigger a deselect. */}
+      <div class="gsv-space-tree">
         <div class="gsv-space-gsv">
           <button
             type="button"
             class={`gsv-space-gsv-button${gsvOpen ? " is-open" : ""}`}
-            onClick={onToggleGsv}
+            onClick={(event) => {
+              event.stopPropagation();
+              onToggleGsv();
+            }}
           >
             <span class="gsv-space-gsv-cross" aria-hidden="true" />
-            <GsvMark />
+            <GsvMark variant="master" size={50} />
           </button>
           <div class="gsv-space-gsv-label">GSV</div>
         </div>
@@ -179,7 +181,11 @@ export function GsvDesktop({
         {gsvOpen ? (
           <>
             <span class="gsv-space-control-line" aria-hidden="true" />
-            <div class="gsv-space-control-popover" aria-label="GSV controls">
+            <div
+              class="gsv-space-control-popover"
+              aria-label="GSV controls"
+              onClick={(event) => event.stopPropagation()}
+            >
               <IconMenu
                 title="GSV // CONTROL"
                 width={386}
@@ -215,7 +221,8 @@ export function GsvDesktop({
                   class={`gsv-space-tile-button${selectedObjectId === object.id ? " is-selected" : ""}`}
                   aria-pressed={selectedObjectId === object.id ? "true" : "false"}
                   title={`${object.label}: ${object.meta}, ${object.statusLabel}`}
-                  onClick={() => {
+                  onClick={(event) => {
+                    event.stopPropagation();
                     onSelectObject(selectedObjectId === object.id ? null : object.id);
                   }}
                 >
@@ -237,7 +244,11 @@ export function GsvDesktop({
         )}
 
         {selectedObject ? (
-          <aside class="gsv-object-strip" aria-label={`${selectedObject.label} objects`}>
+          <aside
+            class="gsv-object-strip"
+            aria-label={`${selectedObject.label} objects`}
+            onClick={(event) => event.stopPropagation()}
+          >
             <header>
               <span>{selectedObject.label} · OBJECTS</span>
               <small>{selectedObject.meta}</small>
@@ -275,9 +286,14 @@ export function GsvDesktop({
         ) : null}
       </div>
 
-      <div class="gsv-space-hint">
-        {selectedObject ? "CLICK A CHILD TO OPEN · CLICK EMPTY SPACE TO EXIT" : "CLICK A NODE TO EXPLORE · CLICK GSV FOR CONTROLS"}
-      </div>
+      <DesktopHint
+        key={hintToken}
+        lines={DESKTOP_HINT}
+        minimizedText={DESKTOP_HINT_MIN}
+        collapse={selectedObject != null}
+        played={hintShown}
+        onPlayed={onHintShown}
+      />
     </section>
   );
 }

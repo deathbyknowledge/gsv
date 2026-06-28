@@ -20,6 +20,7 @@ export const DOTICONS: string[] = [
   "pencil",
   "powershell",
   "redhat",
+  "satellite",
   "stars",
   "vimeo",
   "volume",

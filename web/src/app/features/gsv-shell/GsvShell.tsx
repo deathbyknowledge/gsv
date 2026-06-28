@@ -190,6 +190,21 @@ export function GsvShell({
   const shell = useGsvShellState({ rootRef, desktopObjects });
   const guard = useUnsavedGuardController();
 
+  // The desktop hint types out once per login, then stays minimized. This flag
+  // lives in the persistent shell so it survives GsvDesktop remounts (surface
+  // navigation); it resets when the session becomes ready again (a new login).
+  const [desktopHintShown, setDesktopHintShown] = useState(false);
+  // Bumped on each login (desktopVisible → true) and used as a remount key for
+  // the hint, so a fresh login replays the intro from the top even if the user
+  // locked/unlocked mid-intro — remounting cancels the prior run's timer.
+  const [desktopHintToken, setDesktopHintToken] = useState(0);
+  useEffect(() => {
+    if (desktopVisible) {
+      setDesktopHintShown(false);
+      setDesktopHintToken((token) => token + 1);
+    }
+  }, [desktopVisible]);
+
   const [selectedChatPid, setSelectedChatPid] = useState<string | null>(null);
   const [selectedChatAgentId, setSelectedChatAgentId] = useState<string | null>(null);
   const [selectedChatConversationId, setSelectedChatConversationId] = useState<string | null>(null);
@@ -467,6 +482,9 @@ export function GsvShell({
                   }}
                   onOpenSurface={openShellSurface}
                   onOpenObject={guardedOpenObject}
+                  hintShown={desktopHintShown}
+                  hintToken={desktopHintToken}
+                  onHintShown={() => setDesktopHintShown(true)}
                 />
               </>
             )}

@@ -32,7 +32,7 @@ const GLYPH_ICON: Record<ObjectCardGlyph, string> = {
   machines: "computer",
   messengers: "chat",
   integrations: "weblink",
-  applications: "stars",
+  applications: "satellite",
 };
 
 /** ObjectCard — object dialog card with icon, status, type, and blurb. */

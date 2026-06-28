@@ -1,5 +1,6 @@
 import { Fragment } from "preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
+import { GsvMark } from "../../../components/ui/GsvMark";
 import { Icon } from "../../../components/ui/Icon";
 import { IconButton } from "../../../components/ui/IconButton";
 import {
@@ -38,7 +39,7 @@ const GLYPH_ICON: Record<string, string> = {
   machines: "computer",
   messengers: "chat",
   integrations: "weblink",
-  applications: "stars",
+  applications: "satellite",
 };
 
 /** Sections that show a "create" entry in their drawer. The label is the same
@@ -84,20 +85,6 @@ function statusColor(status: string): string {
     return "var(--live)";
   }
   return "var(--online)";
-}
-
-function GsvMark({ size = 22 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 16 16" aria-hidden="true">
-      <g fill="var(--text-hi)" shape-rendering="crispEdges">
-        <rect x="7" y="1" width="2" height="2" />
-        <rect x="6" y="3" width="4" height="6" />
-        <rect x="4" y="6" width="2" height="3" />
-        <rect x="10" y="6" width="2" height="3" />
-        <rect x="7" y="11" width="2" height="3" fill="#a9a4ff" />
-      </g>
-    </svg>
-  );
 }
 
 export function ShellRail({

@@ -32,9 +32,9 @@
   top: 0;
   z-index: 10;
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 16px;
-  padding: 18px 32px;
+  padding: 14px 32px;
   background: color-mix(in srgb, var(--void) 86%, transparent);
   backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--border);
@@ -47,8 +47,12 @@
   text-transform: uppercase;
 }
 
-.ds-tabs {
+.ds-search {
   margin-left: auto;
+  width: 240px;
+}
+
+.ds-tabs {
   display: inline-flex;
   gap: 0;
   border: 1px solid var(--border);
@@ -82,6 +86,13 @@
   letter-spacing: 0.18em;
   color: var(--text-dim);
   text-transform: uppercase;
+}
+
+.ds-empty {
+  padding: 64px 36px;
+  color: var(--text-dim);
+  font-size: 12px;
+  letter-spacing: 0.08em;
 }
 
 .ds-layout {
@@ -142,6 +153,16 @@
 @media (max-width: 880px) {
   .ds-nav {
     display: none;
+  }
+  /* Reclaim topbar width: drop the subtitle and let the search shrink so the
+     title and tab switcher stay on one line. */
+  .ds-topbar .ds-sub {
+    display: none;
+  }
+  .ds-search {
+    width: auto;
+    flex: 1 1 0;
+    min-width: 0;
   }
 }
 

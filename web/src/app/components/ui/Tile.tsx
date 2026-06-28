@@ -33,7 +33,7 @@ const GLYPH_ICON: Record<TileGlyph, string> = {
   machines: "computer",
   messengers: "chat",
   integrations: "weblink",
-  applications: "stars",
+  applications: "satellite",
 };
 
 /** Tile — ported from Tile.dc.html. 96px object tile with a glyph icon and a

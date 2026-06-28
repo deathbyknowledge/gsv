@@ -690,18 +690,7 @@
   letter-spacing: 0.18em;
 }
 
-.gsv-space-hint {
-  position: absolute;
-  z-index: 8;
-  left: 50%;
-  bottom: 16px;
-  transform: translateX(-50%);
-  color: #42495c;
-  font-size: 10px;
-  letter-spacing: 0.18em;
-  pointer-events: none;
-  white-space: nowrap;
-}
+/* .gsv-space-hint styles live with the DesktopHint component (DesktopHint.css). */
 
 .gsv-desktop-tab-stack {
   position: absolute;
