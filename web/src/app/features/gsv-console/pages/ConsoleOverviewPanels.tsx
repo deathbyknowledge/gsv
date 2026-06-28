@@ -685,10 +685,9 @@ function FleetPanel({
 
   return (
     <section class="gsv-settings-block gsv-settings-fleet-block">
-      <ActionSectionHeader
-        title="FLEET"
-        onClick={openList("machines")}
-      />
+      {/* FLEET is a grouping label (machines / messengers / integrations) with
+          no page of its own — not clickable. */}
+      <ActionSectionHeader title="FLEET" />
       <MiniHeading
         title="MACHINES"
         onClick={openList("machines")}
