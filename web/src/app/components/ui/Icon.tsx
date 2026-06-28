@@ -17,7 +17,6 @@ export interface IconProps {
 
 const DOTICON_ALIAS: Record<string, string> = {
   add: "circlePlus",
-  applications: "satellite",
   computer: "box",
   files: "folder",
   integrations: "weblink",
