@@ -6,6 +6,9 @@ export interface IconMenuProps {
   title?: string;
   /** Popover width in px (280–480). */
   width?: number;
+  /** Move focus to the first action on mount. Disable for hover previews so the
+   *  menu doesn't steal focus from another control just by being shown. */
+  autoFocus?: boolean;
   onClose?: () => void;
   onFiles?: () => void;
   onLibrary?: () => void;
@@ -18,6 +21,7 @@ export interface IconMenuProps {
 export function IconMenu({
   title = "GSV // CONTROL",
   width = 386,
+  autoFocus = true,
   onClose,
   onFiles,
   onLibrary,
@@ -26,14 +30,17 @@ export function IconMenu({
 }: IconMenuProps) {
   const rootRef = useRef<HTMLDivElement>(null);
 
-  // On mount: move focus to the first enabled action button (or the close button).
+  // Move focus to the first enabled action button (or the close button) once the
+  // menu is genuinely opened. Keyed on autoFocus so a hover preview that later
+  // becomes a real open (without remounting) still pulls focus at that point.
   useEffect(() => {
+    if (!autoFocus) return;
     const root = rootRef.current;
     if (!root) return;
     const firstEnabledCell = root.querySelector<HTMLButtonElement>(".gsv-im-cell:not(:disabled)");
     const closeButton = root.querySelector<HTMLButtonElement>(".gsv-im-close");
     (firstEnabledCell ?? closeButton)?.focus();
-  }, []);
+  }, [autoFocus]);
 
   // Escape closes the menu.
   useEffect(() => {

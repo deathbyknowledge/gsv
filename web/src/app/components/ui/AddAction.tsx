@@ -6,6 +6,8 @@ export type AddActionVariant = "row" | "tile";
 export interface AddActionProps {
   variant?: AddActionVariant;
   label?: string;
+  /** Tile width in px. Omitted → fills its container (the object strip sets it). */
+  width?: number;
   onClick?: () => void;
 }
 
@@ -20,7 +22,7 @@ const PlusGlyph = () => (
 
 /** AddAction — ported from AddAction.dc.html. Dashed "add new" affordance in two
  *  variants: a full-width row (with hover + chevron) and a stacked tile. */
-export function AddAction({ variant = "row", label, onClick }: AddActionProps) {
+export function AddAction({ variant = "row", label, width, onClick }: AddActionProps) {
   const text = label ?? (variant === "tile" ? "NEW AGENT" : "CONNECT NEW MACHINE");
   const rowStyle: JSX.CSSProperties = {
     width: "100%",
@@ -40,20 +42,24 @@ export function AddAction({ variant = "row", label, onClick }: AddActionProps) {
     textAlign: "left",
     transition: "background .12s",
   };
+  // Tile mirrors the ObjectCard head: a dashed "+" box on the left, label inline,
+  // sized to match the object cards (the strip stretches it to the grid cell).
   const tileStyle: JSX.CSSProperties = {
     appearance: "none",
+    boxSizing: "border-box",
+    ...(width != null ? { width: `${width}px` } : {}),
     border: "1px dashed var(--dashed)",
     background: "var(--panel)",
     color: "inherit",
-    display: "inline-flex",
-    flexDirection: "column",
+    display: "flex",
     alignItems: "center",
-    gap: "9px",
-    padding: "18px 26px",
+    gap: "11px",
+    padding: "12px 13px",
     cursor: onClick ? "pointer" : "default",
     font: "inherit",
     fontFamily: "var(--gsv-font-mono)",
-    textAlign: "center",
+    textAlign: "left",
+    transition: "background .12s, border-color .12s",
   };
   const rowContent = (
     <>
@@ -70,10 +76,11 @@ export function AddAction({ variant = "row", label, onClick }: AddActionProps) {
   );
   const tileContent = (
     <>
-      <div
+      <span
         style={{
-          width: "30px",
-          height: "30px",
+          flex: "none",
+          width: "26px",
+          height: "26px",
           border: "1px dashed var(--dashed)",
           display: "flex",
           alignItems: "center",
@@ -82,8 +89,8 @@ export function AddAction({ variant = "row", label, onClick }: AddActionProps) {
         }}
       >
         <PlusGlyph />
-      </div>
-      <div style={{ fontSize: "10px", letterSpacing: ".06em", color: "var(--text-title)" }}>{text}</div>
+      </span>
+      <span style={{ fontSize: "11px", letterSpacing: ".06em", color: "var(--text-title)" }}>{text}</span>
     </>
   );
 

@@ -14,9 +14,9 @@ const story: Story = {
         </div>
       </div>
       <div class="ds-cell">
-        <div class="ds-label">Tile</div>
+        <div class="ds-label">Tile · matches the object cards ("+" left, label inline)</div>
         <div class="ds-row">
-          <AddAction variant="tile" label="NEW AGENT" />
+          <AddAction variant="tile" label="CONNECT NEW MACHINE" width={238} />
         </div>
       </div>
     </div>

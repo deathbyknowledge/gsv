@@ -1,6 +1,91 @@
-/* ObjectCard — hover state ported from ObjectCard.dc.html <helmet><style>. */
-.gsv-objcard:hover {
-  border-color: #9a94ff !important;
-  box-shadow: 0 0 18px rgba(150, 140, 255, 0.3), 0 12px 30px rgba(0, 0, 0, 0.55) !important;
-  background: linear-gradient(180deg, var(--hover), var(--panel)) !important;
+/* ObjectCard — compact category + name head, description revealed on hover.
+   Visual language follows the desktop Tile (panel base, accent lift on hover). */
+.gsv-objcard {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(180deg, #100e2a, var(--node-bg));
+  border: 1px solid var(--border);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+  cursor: pointer;
+  font-family: var(--gsv-font-mono);
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.2s, background 0.15s;
+}
+
+.gsv-objcard:hover,
+.gsv-objcard:focus-within {
+  border-color: #a9a4ff;
+  box-shadow: 0 0 18px rgba(150, 140, 255, 0.3), 0 12px 30px rgba(0, 0, 0, 0.55);
+  background: linear-gradient(180deg, var(--hover), var(--panel));
+  transform: translateY(-2px);
+}
+
+.gsv-objcard-head {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 12px 13px;
+}
+
+.gsv-objcard-icon {
+  display: flex;
+  flex: none;
+  color: var(--accent-bright);
+}
+
+.gsv-objcard-label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+}
+
+.gsv-objcard-cat {
+  font-size: 8px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.gsv-objcard-name {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  font-weight: 500;
+  color: var(--accent-bright);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gsv-objcard-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+/* Description — collapsed by default, revealed on hover (kept in the DOM so it
+   stays available to assistive tech). */
+.gsv-objcard-desc {
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  border-top: 1px solid transparent;
+  transition: max-height 0.22s ease, opacity 0.18s ease, border-color 0.22s ease;
+}
+
+.gsv-objcard:hover .gsv-objcard-desc,
+.gsv-objcard:focus-within .gsv-objcard-desc {
+  max-height: 140px;
+  opacity: 1;
+  border-top-color: var(--border);
+}
+
+.gsv-objcard-desc p {
+  margin: 0;
+  padding: 11px 13px;
+  font-size: 10px;
+  line-height: 1.55;
+  color: #9089d4;
+  text-wrap: pretty;
 }
