@@ -48,7 +48,7 @@ export function ConsoleHeader({
         alignItems: "center",
         justifyContent: "space-between",
         gap: "16px",
-        padding: "16px 26px",
+        padding: "16px 20px",
         borderBottom: "1px solid var(--border)",
         fontFamily: "var(--gsv-font-mono)",
       }}
@@ -65,17 +65,6 @@ export function ConsoleHeader({
             <path d="M9 0 L0 6 L9 12 Z" fill="var(--accent)" />
           </svg>
         </button>
-        <span
-          style={{
-            width: "8px",
-            height: "8px",
-            borderRadius: "50%",
-            flex: "none",
-            background: "var(--live)",
-            boxShadow: "0 0 9px var(--live)",
-            animation: "gsvPulse 1.5s ease-in-out infinite",
-          }}
-        />
         <Breadcrumbs items={items} size="medium" />
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: "12px", flex: "none" }}>

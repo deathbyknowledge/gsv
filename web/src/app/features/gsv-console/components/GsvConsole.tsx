@@ -96,7 +96,7 @@ function settingsRouteLabel(route: SettingsRoute): string {
     return "AGENT";
   }
   if (route.view === "config") {
-    return route.kind === "models" ? "MODELS" : "RUNTIME";
+    return route.kind === "models" ? "MODELS" : "OVERRIDES";
   }
   if (route.createNew) {
     if (route.kind === "machines") return "NEW MACHINE";
@@ -137,7 +137,7 @@ function settingsRouteTail(route: SettingsRoute): string {
     return "GSV · CREW";
   }
   if (route.view === "config") {
-    return route.kind === "models" ? "GSV · MODELS" : "GSV · RUNTIME";
+    return route.kind === "models" ? "GSV · MODELS" : "GSV · OVERRIDES";
   }
   if (route.kind === "tasks") {
     return "GSV · RUNTIME";

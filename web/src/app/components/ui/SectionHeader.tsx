@@ -42,7 +42,7 @@ export function SectionHeader({
   title = "THE SHIP",
   meta = "",
   divider = false,
-  titleSize = "section",
+  titleSize,
   headingLevel = 2,
   ariaLabel,
   actions,
@@ -77,7 +77,18 @@ export function SectionHeader({
 
   // Type class + the existing inline title look. margin:0 resets default
   // heading margins so layout is identical to the old <span>.
-  const titleClass = titleSize === "title" ? "gsv-title" : "gsv-section";
+  // Title size: an explicit `titleSize` wins; otherwise it derives from the
+  // heading level down the DS type scale (Title > Section > Sub-label) so an
+  // <h3> is smaller than an <h2> by definition.
+  const titleClass = titleSize === "title"
+    ? "gsv-title"
+    : titleSize === "section"
+      ? "gsv-section"
+      : headingLevel <= 1
+        ? "gsv-title"
+        : headingLevel === 2
+          ? "gsv-section"
+          : "gsv-sublabel";
   const titleVisualStyle: JSX.CSSProperties = {
     color: "var(--text-title)",
     textShadow: "0 0 5px rgba(150,140,255,.3)",

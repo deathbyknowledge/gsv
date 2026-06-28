@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { Button } from "../../../components/ui/Button";
 import { Checkbox } from "../../../components/ui/Checkbox";
+import { SectionHeader } from "../../../components/ui/SectionHeader";
 import { Select } from "../../../components/ui/Select";
 import { Surface } from "../../../components/ui/Surface";
 import { Tag } from "../../../components/ui/Tag";
@@ -195,11 +196,13 @@ function ModelSettingsPage({
 
   return (
     <section class="gsv-console-settings-index">
+      <SectionHeader title="MODELS" headingLevel={2} divider />
       <SettingsListPanel
         title="DEFAULT AGENT MODEL"
         meta={scopeLabel}
         emptyLabel="NO DEFAULT MODEL"
         fitContent
+        headingLevel={3}
         rows={[defaultModelRow(effectiveValues, () => setSelection({ kind: "default" }))]}
       />
       <SettingsListPanel
@@ -207,6 +210,7 @@ function ModelSettingsPage({
         meta={`${profiles.length} PRESET${profiles.length === 1 ? "" : "S"}`}
         emptyLabel="NO MODEL PRESETS"
         fitContent
+        headingLevel={3}
         action={{ label: "NEW MODEL PRESET", onClick: canEditAi ? () => setSelection({ kind: "new-profile" }) : undefined }}
         rows={profiles.map((profile) => profileRow(profile, () => setSelection({ kind: "profile", id: profile.id })))}
       />
@@ -215,6 +219,7 @@ function ModelSettingsPage({
         meta={`${TOOL_MODEL_GROUPS.length} STACKS`}
         emptyLabel="NO TOOL MODELS"
         fitContent
+        headingLevel={3}
         rows={TOOL_MODEL_GROUPS.map((group) => toolModelRow(group, effectiveValues, () => setSelection({ kind: "tool", id: group.id })))}
       />
     </section>
@@ -399,6 +404,7 @@ function RuntimeSettingsPage({
 
   return (
     <section class="gsv-console-settings-index">
+      <SectionHeader title="OVERRIDES" headingLevel={2} divider />
       {RUNTIME_SETTING_GROUPS.map((group) => (
         <SettingsListPanel
           key={group.id}
@@ -406,6 +412,7 @@ function RuntimeSettingsPage({
           meta={canEditRuntime ? "EDITABLE" : "ROOT REQUIRED"}
           emptyLabel={`NO ${group.title.toUpperCase()} SETTINGS`}
           fitContent
+          headingLevel={3}
           rows={[runtimeGroupRow(group, config, () => setSelection({ id: group.id }))]}
         />
       ))}
