@@ -85,6 +85,53 @@ describe("contextToWorkersAiMessages", () => {
       tool_call_id: "call_1",
     });
   });
+
+  it("uses stored image descriptions for Workers AI text models", () => {
+    const context: Context = {
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "What is in this screenshot?" },
+            {
+              type: "text",
+              text: "Attached image \"screen.png\" [image/png] 3 B\nImage description: A settings page with a Save button.",
+            },
+            { type: "image", data: "AQID", mimeType: "image/png" },
+          ],
+          timestamp: 1,
+        },
+      ],
+    };
+
+    const messages = contextToWorkersAiMessages(context);
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.content).toContain("Image description: A settings page with a Save button.");
+    expect(messages[0]?.content).not.toContain("multi-modality");
+    expect(messages[0]?.content).not.toContain("Attached image omitted");
+  });
+
+  it("keeps an explicit omission note when no image description is available", () => {
+    const context: Context = {
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "What is in this image?" },
+            { type: "image", data: "AQID", mimeType: "image/png" },
+          ],
+          timestamp: 1,
+        },
+      ],
+    };
+
+    const messages = contextToWorkersAiMessages(context);
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.content).toContain("Attached image omitted");
+    expect(messages[0]?.content).not.toContain("multi-modality");
+  });
 });
 
 describe("buildWorkersAiInput", () => {

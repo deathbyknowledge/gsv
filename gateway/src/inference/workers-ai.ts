@@ -1212,12 +1212,20 @@ function serializeUserContent(
 function serializeTextBlocks(
   blocks: Array<TextContent | ImageContent>,
 ): string {
+  const hasImageTextFallback = blocks.some((block) => (
+    block.type === "text" && hasStoredImageTextFallback(block.text)
+  ));
   const text = blocks.flatMap((block) => {
     if (block.type === "text") return [block.text];
-    return ["[The user tried to attach an image but the current model has no multi-modality capabilities]"];
+    if (hasImageTextFallback) return [];
+    return ["\n[Attached image omitted: no image description was available for this Workers AI text model.]"];
   }).join("");
 
   return text;
+}
+
+function hasStoredImageTextFallback(text: string): boolean {
+  return text.includes("\nImage description:");
 }
 
 function normalizeWorkersAiToolCalls(toolCalls: unknown): ToolCall[] {
