@@ -22,6 +22,7 @@ import { ConsoleCrewPage } from "../pages/ConsoleCrewPage";
 import { ConsoleOverviewPage, type ConsoleOverviewTarget } from "../pages/ConsoleOverviewPage";
 import { RuntimePage } from "../runtime/RuntimePage";
 import { ListTemplateMockPage } from "../list-template/ListTemplateMockPage";
+import { CardListTemplateMockPage } from "../card-template/CardListTemplateMockPage";
 
 type GsvConsoleProps = {
   activeSurface: Exclude<ShellSurfaceId, "desktop" | "app">;
@@ -73,7 +74,7 @@ function surfaceTail(surface: ShellSurfaceId): string {
   if (surface === "crew" || surface === "agent") {
     return "GSV · CREW";
   }
-  if (surface === "list-template") {
+  if (surface === "list-template" || surface === "card-template") {
     return "GSV · TEMPLATE";
   }
   return "GSV · CONTROL";
@@ -390,6 +391,8 @@ export function GsvConsole({
             onOpenSectionCreate={onOpenSectionCreate}
             onOpenChat={onOpenChat}
           />
+        ) : activeSurface === "card-template" ? (
+          <CardListTemplateMockPage onOpenChat={onOpenChat} />
         ) : (
           null
         )}

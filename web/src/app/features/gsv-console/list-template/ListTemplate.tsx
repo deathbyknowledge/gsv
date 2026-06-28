@@ -1,13 +1,12 @@
 import type { ComponentChildren } from "preact";
-import { AsciiPlanet } from "../../../components/ui/AsciiPlanet";
 import { Button } from "../../../components/ui/Button";
-import { DesktopHint } from "../../gsv-shell/desktop/DesktopHint";
 import { ListRow, type ListRowStatus } from "../../../components/ui/ListRow";
 import { Search } from "../../../components/ui/Search";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
 import type { StatusTone } from "../../../components/ui/StatusDot";
 import type { TagTone } from "../../../components/ui/Tag";
 import { listRowStatusForTone } from "../components/consoleDetailRows";
+import { TemplateEmptyState } from "./TemplateEmptyState";
 import "./ListTemplate.css";
 
 export type ListTemplateRow = {
@@ -64,22 +63,6 @@ function ListTemplateRowView({ row }: { row: ListTemplateRow }) {
   );
 }
 
-/** Empty state: a full-bleed placeholder banner (no border, ship-visual style)
- *  over a "NO <OBJECT>" label in the amber desktop terminal lettering. */
-function ListTemplateEmpty({ object }: { object: string }) {
-  const label = `NO ${object}`;
-  return (
-    <div class="gsv-list-template-empty">
-      <div class="gsv-list-template-empty-banner">
-        <AsciiPlanet variant="moon" formDuration={3.4} label={label} />
-      </div>
-      <div class="gsv-list-template-empty-hint">
-        <DesktopHint lines={[`> ${label}`]} minimizedText={label} />
-      </div>
-    </div>
-  );
-}
-
 /** The LIST page template: one header, then a body split into an ACTION column
  *  (search / filters / connect-new) and a LIST column (items or empty state). */
 export function ListTemplate({
@@ -126,7 +109,7 @@ export function ListTemplate({
 
         <section class="gsv-list-template-list">
           {rows.length === 0 ? (
-            <ListTemplateEmpty object={emptyObject} />
+            <TemplateEmptyState object={emptyObject} />
           ) : (
             rows.map((row) => <ListTemplateRowView key={row.id} row={row} />)
           )}

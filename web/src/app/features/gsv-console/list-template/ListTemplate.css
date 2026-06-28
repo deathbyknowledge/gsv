@@ -86,64 +86,6 @@
   opacity: 1;
 }
 
-/* Empty state — full-bleed banner (no border, ship-visual style) above a
-   "NO <OBJECT>" label in the amber desktop terminal lettering. */
-.gsv-list-template-empty {
-  display: flex;
-  flex-direction: column;
-}
-
-.gsv-list-template-empty-banner {
-  position: relative;
-  height: 200px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  background: radial-gradient(120% 120% at 50% 38%, #171441, #08061a 75%);
-  box-shadow: inset 0 0 40px rgba(80, 70, 180, 0.18);
-}
-
-/* Corner brackets, lifted from the ship visual. */
-.gsv-list-template-empty-banner::before {
-  content: "";
-  position: absolute;
-  inset: 8px;
-  pointer-events: none;
-  background:
-    linear-gradient(var(--bracket), var(--bracket)) left top / 9px 1px no-repeat,
-    linear-gradient(var(--bracket), var(--bracket)) left top / 1px 9px no-repeat,
-    linear-gradient(var(--bracket), var(--bracket)) right top / 9px 1px no-repeat,
-    linear-gradient(var(--bracket), var(--bracket)) right top / 1px 9px no-repeat,
-    linear-gradient(var(--bracket), var(--bracket)) left bottom / 9px 1px no-repeat,
-    linear-gradient(var(--bracket), var(--bracket)) left bottom / 1px 9px no-repeat,
-    linear-gradient(var(--bracket), var(--bracket)) right bottom / 9px 1px no-repeat,
-    linear-gradient(var(--bracket), var(--bracket)) right bottom / 1px 9px no-repeat;
-}
-
-/* Empty label uses the DesktopHint terminal readout. It is absolute-positioned
-   for the desktop HUD, so re-home it inline and lift the minimized resting size
-   so the "NO <OBJECT>" label stays prominent. */
-.gsv-list-template-empty-hint {
-  padding: 26px 24px 0;
-  text-align: center;
-}
-
-.gsv-list-template-empty-hint .gsv-space-hint {
-  position: static;
-  transform: none;
-}
-
-.gsv-list-template-empty-hint .gsv-space-hint.is-min {
-  bottom: auto;
-}
-
-.gsv-list-template-empty-hint .gsv-space-hint-min {
-  font-size: 15px;
-  letter-spacing: 0.16em;
-  opacity: 1;
-}
-
 /* iPad and below: action bar stacks ON TOP of the list and lays its controls
    out horizontally — search + filters left, primary button right. */
 @media (max-width: 1024px) {

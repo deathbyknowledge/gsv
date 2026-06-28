@@ -109,7 +109,7 @@ function PlatformStatusBadge({ adapter }: { adapter: ConsoleAdapter }) {
 
 const MAX_CARD_BOTS = 2;
 
-function MessengerCard({
+export function MessengerCard({
   adapter,
   identityLinks,
   onConnect,
