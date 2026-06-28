@@ -438,12 +438,12 @@
 .gsv-shell-root .gsv-chat-context-control {
   width: auto !important;
   height: auto !important;
-  max-width: 148px;
+  max-width: 156px;
   min-height: 27px;
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  padding: 4px 8px;
+  padding: 4px 11px;
   border: 1px solid var(--border);
   background: #0c0a22;
   color: #b6b1ff;
