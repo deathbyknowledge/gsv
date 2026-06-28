@@ -450,6 +450,8 @@ export function GsvShell({
                         onClose={closeActiveScreen}
                         onOpenApp={openAppById}
                         onOpenSurface={openShellSurface}
+                        onOpenSectionCreate={createSectionObject}
+                        onOpenChat={() => shell.setChatOpen(true)}
                         onLibraryRouteChange={shell.syncActiveLibraryRoute}
                         onSettingsRouteChange={shell.syncActiveSettingsRoute}
                         libraryRoute={activeLibraryRoute}

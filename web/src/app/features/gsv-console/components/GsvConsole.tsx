@@ -5,6 +5,7 @@ import { FilesPage } from "../../files/FilesPage";
 import { TerminalPage } from "../../terminal/TerminalPage";
 import {
   shellSurfaceLabel,
+  type DesktopObjectId,
   type ShellLibraryRoute,
   type ShellSettingsRoute,
   type ShellSurfaceId,
@@ -20,6 +21,7 @@ import { ConsoleConfigPage } from "../pages/ConsoleConfigPage";
 import { ConsoleCrewPage } from "../pages/ConsoleCrewPage";
 import { ConsoleOverviewPage, type ConsoleOverviewTarget } from "../pages/ConsoleOverviewPage";
 import { RuntimePage } from "../runtime/RuntimePage";
+import { ListTemplateMockPage } from "../list-template/ListTemplateMockPage";
 
 type GsvConsoleProps = {
   activeSurface: Exclude<ShellSurfaceId, "desktop" | "app">;
@@ -29,6 +31,8 @@ type GsvConsoleProps = {
   onLibraryRouteChange?: (route: ShellLibraryRoute) => void;
   onOpenApp?: (appId: string, title?: string) => void;
   onOpenSurface?: (surface: Exclude<ShellSurfaceId, "desktop" | "app">) => void;
+  onOpenSectionCreate?: (kind: DesktopObjectId) => void;
+  onOpenChat?: () => void;
   onSettingsRouteChange?: (route: SettingsRoute) => void;
   settingsRoute?: SettingsRoute;
 };
@@ -57,6 +61,9 @@ function surfaceTail(surface: ShellSurfaceId): string {
   if (surface === "messengers") {
     return "GSV · MESSENGERS";
   }
+  if (surface === "machines") {
+    return "GSV · MACHINES";
+  }
   if (surface === "integrations") {
     return "GSV · INTEGRATIONS";
   }
@@ -65,6 +72,9 @@ function surfaceTail(surface: ShellSurfaceId): string {
   }
   if (surface === "crew" || surface === "agent") {
     return "GSV · CREW";
+  }
+  if (surface === "list-template") {
+    return "GSV · TEMPLATE";
   }
   return "GSV · CONTROL";
 }
@@ -140,7 +150,7 @@ function settingsRouteTail(route: SettingsRoute): string {
     return route.kind === "models" ? "GSV · MODELS" : "GSV · RUNTIME";
   }
   if (route.kind === "tasks") {
-    return "GSV · RUNTIME";
+    return "GSV · TASKS";
   }
   return surfaceTail(route.kind);
 }
@@ -153,6 +163,8 @@ export function GsvConsole({
   onLibraryRouteChange,
   onOpenApp,
   onOpenSurface,
+  onOpenSectionCreate,
+  onOpenChat,
   onSettingsRouteChange,
   settingsRoute = { view: "overview" },
 }: GsvConsoleProps) {
@@ -207,7 +219,7 @@ export function GsvConsole({
     } = {},
   ) => {
     if (kind === "tasks") {
-      return <RuntimePage {...options} />;
+      return <RuntimePage {...options} onNewTask={onOpenChat} />;
     }
     if (kind === "machines") {
       return <MachinesPage {...options} />;
@@ -351,7 +363,7 @@ export function GsvConsole({
             />
           )
         ) : activeSurface === "runtime" ? (
-          <RuntimePage />
+          <RuntimePage onNewTask={onOpenChat} />
         ) : activeSurface === "crew" ? (
           <ConsoleCrewPage onManageAgent={openAgent} />
         ) : activeSurface === "agent" ? (
@@ -373,6 +385,11 @@ export function GsvConsole({
           <FilesPage />
         ) : activeSurface === "terminal" ? (
           <TerminalPage />
+        ) : activeSurface === "list-template" ? (
+          <ListTemplateMockPage
+            onOpenSectionCreate={onOpenSectionCreate}
+            onOpenChat={onOpenChat}
+          />
         ) : (
           null
         )}

@@ -12,6 +12,11 @@ function isQueuedProcess(process: ConsoleProcess): boolean {
   return process.state === "queued" || process.queuedCount > 0;
 }
 
+/** Running or queued — the tasks that count toward the "N/M ACTIVE" header. */
+export function isActiveProcess(process: ConsoleProcess): boolean {
+  return process.state === "running" || isQueuedProcess(process);
+}
+
 export function toneForProcess(process: ConsoleProcess): StatusTone {
   if (process.state === "running") return "live";
   if (isQueuedProcess(process)) return "update";

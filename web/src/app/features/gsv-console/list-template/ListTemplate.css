@@ -1,0 +1,204 @@
+/* LIST page template — one header, then a body split into an ACTION column and
+   a LIST column. Frame tokens mirror the Settings Overview. */
+.gsv-list-template {
+  flex: 1 0 auto;
+  min-height: 100%;
+  margin-bottom: 88px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-raised);
+  background: var(--panel);
+  box-shadow:
+    inset 0 0 0 1px #060414,
+    0 0 30px rgba(80, 70, 180, 0.1);
+}
+
+.gsv-list-template-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+}
+
+.gsv-list-template-action,
+.gsv-list-template-list {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Action column: stacked controls, connect-new pinned to the bottom. */
+.gsv-list-template-action {
+  border-right: 1px solid var(--rule-section);
+  gap: 16px;
+  padding: 16px;
+}
+
+.gsv-list-template-search,
+.gsv-list-template-filters {
+  min-width: 0;
+}
+
+.gsv-list-template-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Compact controls — search, filter and the connect button share one height so
+   they line up cleanly (especially when the action bar is horizontal). */
+.gsv-list-template-action .gsv-ti-wrap,
+.gsv-list-template-action .gsv-sel-trig,
+.gsv-list-template-connect .gsv-btn {
+  height: 34px;
+  box-sizing: border-box;
+}
+
+/* List column rows — match the SettingsListPanel row treatment. */
+.gsv-list-template-row {
+  border-bottom: 1px solid var(--rule-inner);
+}
+
+.gsv-list-template-row:last-child {
+  border-bottom: 0;
+}
+
+.gsv-list-template-row .lr {
+  min-height: 43px;
+  padding: 13px 16px;
+}
+
+.gsv-list-template-row .lr[data-clickable="true"]:hover,
+.gsv-list-template-row .lr[data-clickable="true"]:focus-visible {
+  background: var(--hover) !important;
+  outline: none;
+}
+
+/* Row chevron is a hover/focus affordance only (matches the Settings Overview). */
+.gsv-list-template .lr-chevron {
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.gsv-list-template-row .lr[data-clickable="true"]:hover .lr-chevron,
+.gsv-list-template-row .lr[data-clickable="true"]:focus-visible .lr-chevron {
+  opacity: 1;
+}
+
+/* Empty state — full-bleed banner (no border, ship-visual style) above a
+   "NO <OBJECT>" label in the amber desktop terminal lettering. */
+.gsv-list-template-empty {
+  display: flex;
+  flex-direction: column;
+}
+
+.gsv-list-template-empty-banner {
+  position: relative;
+  height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: radial-gradient(120% 120% at 50% 38%, #171441, #08061a 75%);
+  box-shadow: inset 0 0 40px rgba(80, 70, 180, 0.18);
+}
+
+/* Corner brackets, lifted from the ship visual. */
+.gsv-list-template-empty-banner::before {
+  content: "";
+  position: absolute;
+  inset: 8px;
+  pointer-events: none;
+  background:
+    linear-gradient(var(--bracket), var(--bracket)) left top / 9px 1px no-repeat,
+    linear-gradient(var(--bracket), var(--bracket)) left top / 1px 9px no-repeat,
+    linear-gradient(var(--bracket), var(--bracket)) right top / 9px 1px no-repeat,
+    linear-gradient(var(--bracket), var(--bracket)) right top / 1px 9px no-repeat,
+    linear-gradient(var(--bracket), var(--bracket)) left bottom / 9px 1px no-repeat,
+    linear-gradient(var(--bracket), var(--bracket)) left bottom / 1px 9px no-repeat,
+    linear-gradient(var(--bracket), var(--bracket)) right bottom / 9px 1px no-repeat,
+    linear-gradient(var(--bracket), var(--bracket)) right bottom / 1px 9px no-repeat;
+}
+
+/* Empty label uses the DesktopHint terminal readout. It is absolute-positioned
+   for the desktop HUD, so re-home it inline and lift the minimized resting size
+   so the "NO <OBJECT>" label stays prominent. */
+.gsv-list-template-empty-hint {
+  padding: 26px 24px 0;
+  text-align: center;
+}
+
+.gsv-list-template-empty-hint .gsv-space-hint {
+  position: static;
+  transform: none;
+}
+
+.gsv-list-template-empty-hint .gsv-space-hint.is-min {
+  bottom: auto;
+}
+
+.gsv-list-template-empty-hint .gsv-space-hint-min {
+  font-size: 15px;
+  letter-spacing: 0.16em;
+  opacity: 1;
+}
+
+/* iPad and below: action bar stacks ON TOP of the list and lays its controls
+   out horizontally — search + filters left, primary button right. */
+@media (max-width: 1024px) {
+  /* Action bar sizes to its content (auto); the list fills the rest (1fr) —
+     without this the grid stretches the bar to half the height. */
+  .gsv-list-template-body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto 1fr;
+  }
+
+  .gsv-list-template-action {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    border-right: 0;
+    border-bottom: 1px solid var(--rule-section);
+  }
+
+  .gsv-list-template-search {
+    flex: 1 1 240px;
+    min-width: 0;
+  }
+
+  .gsv-list-template-filters {
+    flex: 0 0 auto;
+    flex-direction: row;
+    width: 180px;
+  }
+
+  .gsv-list-template-connect {
+    flex: 0 0 auto;
+    margin-left: auto;
+  }
+
+  .gsv-list-template-connect .gsv-btn {
+    display: inline-flex;
+    width: auto;
+  }
+
+  /* One control (connect only): centered. */
+  .gsv-list-template-action[data-actions="1"] {
+    justify-content: center;
+  }
+
+  .gsv-list-template-action[data-actions="1"] .gsv-list-template-connect {
+    margin-left: 0;
+  }
+
+  /* Two controls: always a single inline row. */
+  .gsv-list-template-action[data-actions="2"] {
+    flex-wrap: nowrap;
+  }
+
+  /* Three controls: search owns the first row, filter + connect the second. */
+  .gsv-list-template-action[data-actions="3"] .gsv-list-template-search {
+    flex-basis: 100%;
+  }
+}

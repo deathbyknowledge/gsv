@@ -15,6 +15,7 @@ const TOP_LEVEL_SURFACES: Record<string, Exclude<ShellSurfaceId, "desktop" | "ap
   files: "files",
   integrations: "integrations",
   library: "library",
+  "list-template": "list-template",
   machines: "machines",
   messengers: "messengers",
   tasks: "runtime",

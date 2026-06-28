@@ -11,7 +11,8 @@ export type ShellSurfaceId =
   | "runtime"
   | "files"
   | "library"
-  | "terminal";
+  | "terminal"
+  | "list-template";
 
 export type DesktopObjectId = "machines" | "messengers" | "integrations" | "applications";
 export type ShellStatus = "online" | "error" | "idle" | "warn" | "live" | "update";
@@ -161,6 +162,8 @@ export function shellSurfaceLabel(surface: ShellSurfaceId): string {
       return "LIBRARY";
     case "terminal":
       return "TERMINAL";
+    case "list-template":
+      return "LIST TEMPLATE";
     case "desktop":
     default:
       return "DESKTOP";

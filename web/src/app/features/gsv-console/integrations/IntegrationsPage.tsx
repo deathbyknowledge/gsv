@@ -1,4 +1,5 @@
-import { SettingsListPanel } from "../components/SettingsListPanel";
+import { useMemo, useState } from "preact/hooks";
+import { ListTemplate } from "../list-template/ListTemplate";
 import {
   ConsolePage,
   ConsoleResourceBoundary,
@@ -42,24 +43,33 @@ function IntegrationsConsoleSection({
   refreshing: boolean;
   servers: readonly ConsoleMcpServer[];
 }) {
+  const [query, setQuery] = useState("");
   const ready = servers.filter((server) => server.state === "ready");
-
-  return (
-    <SettingsListPanel
-      title="INTEGRATIONS"
-      meta={refreshing ? "REFRESHING" : `${ready.length}/${servers.length} READY`}
-      emptyLabel="NO MCP SERVERS"
-      rows={servers.map((server) => ({
+  const rows = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return servers
+      .filter((server) => !q || server.name.toLowerCase().includes(q))
+      .map((server) => ({
         id: integrationDetailId(server),
         icon: integrationIcon(server),
         label: server.name,
         sub: mcpServerSub(server),
         tone: toneForMcpServer(server),
         statusLabel: statusForMcpServer(server),
-        tag: server.state === "authenticating" ? { label: "SIGN-IN", tone: "warn" } : undefined,
+        tag: server.state === "authenticating" ? { label: "SIGN-IN", tone: "warn" as const } : undefined,
         onOpen: () => onOpenDetail(server),
-      }))}
-      action={{ label: "NEW INTEGRATION", onClick: onOpenCreate }}
+      }));
+  }, [servers, query, onOpenDetail]);
+
+  return (
+    <ListTemplate
+      listTitle="INTEGRATIONS"
+      listMeta={refreshing ? "REFRESHING" : `${ready.length}/${servers.length} READY`}
+      emptyObject="INTEGRATIONS"
+      rows={rows}
+      connectLabel="NEW INTEGRATION"
+      onConnect={onOpenCreate}
+      search={{ value: query, placeholder: "Search integrations…", onChange: setQuery }}
     />
   );
 }

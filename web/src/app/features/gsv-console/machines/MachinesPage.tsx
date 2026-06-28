@@ -1,4 +1,5 @@
-import { SettingsListPanel } from "../components/SettingsListPanel";
+import { useMemo, useState } from "preact/hooks";
+import { ListTemplate } from "../list-template/ListTemplate";
 import {
   ConsolePage,
   ConsoleResourceBoundary,
@@ -41,14 +42,13 @@ function MachinesConsoleSection({
   targets: readonly ConsoleTarget[];
   refreshing: boolean;
 }) {
+  const [query, setQuery] = useState("");
   const onlineCount = targets.filter((target) => target.online).length;
-
-  return (
-    <SettingsListPanel
-      title="MACHINES"
-      meta={refreshing ? "REFRESHING" : `${onlineCount}/${targets.length} ONLINE`}
-      emptyLabel="NO MACHINES"
-      rows={targets.map((target) => ({
+  const rows = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return targets
+      .filter((target) => !q || target.label.toLowerCase().includes(q))
+      .map((target) => ({
         id: target.deviceId,
         icon: iconForTarget(target),
         label: target.label,
@@ -56,8 +56,18 @@ function MachinesConsoleSection({
         tone: toneForTarget(target),
         statusLabel: statusForTarget(target),
         onOpen: () => onOpenDetail(target),
-      }))}
-      action={{ label: "CONNECT NEW MACHINE", onClick: onOpenCreate }}
+      }));
+  }, [targets, query, onOpenDetail]);
+
+  return (
+    <ListTemplate
+      listTitle="MACHINES"
+      listMeta={refreshing ? "REFRESHING" : `${onlineCount}/${targets.length} ONLINE`}
+      emptyObject="MACHINES"
+      rows={rows}
+      connectLabel="CONNECT NEW MACHINE"
+      onConnect={onOpenCreate}
+      search={{ value: query, placeholder: "Search machines…", onChange: setQuery }}
     />
   );
 }
