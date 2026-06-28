@@ -321,14 +321,22 @@ function CodeBlock({ code, language }: { code: string; language: string }) {
   );
 }
 
-function AssistantText({ text }: { text: string }) {
+function StreamingText({ text }: { text: string }) {
+  return <div class="gsv-chat-rich-text is-streaming">{text}</div>;
+}
+
+function AssistantText({ streaming = false, text }: { streaming?: boolean; text: string }) {
+  const blocks = streaming ? (
+    <StreamingText text={text} />
+  ) : assistantBlocks(text).map((block, index) => block.kind === "code" ? (
+    <CodeBlock code={block.code} language={block.language} key={`code:${index}`} />
+  ) : (
+    <MarkdownText text={block.text} key={`text:${index}`} />
+  ));
+
   return (
     <div class="gsv-chat-assistant-rich">
-      {assistantBlocks(text).map((block, index) => block.kind === "code" ? (
-        <CodeBlock code={block.code} language={block.language} key={`code:${index}`} />
-      ) : (
-        <MarkdownText text={block.text} key={`text:${index}`} />
-      ))}
+      {blocks}
     </div>
   );
 }
@@ -1286,7 +1294,7 @@ function AssistantProcessMessage({
         copyAriaLabel={copied ? "Copied assistant message" : "Copy assistant message"}
         onCopy={onCopy}
       >
-        <AssistantText text={assistantText} />
+        <AssistantText text={assistantText} streaming={message.streaming === true} />
       </SystemMessage>
       {reasoning && reasoningOpen ? (
         <div class="gsv-chat-assistant-reasoning">

@@ -204,6 +204,53 @@ describe("chat transcript rows", () => {
     ]));
   });
 
+  it("uses stream partial snapshots as authoritative assistant text", () => {
+    let state = emptyChatRuntimeState("pid-1", "default");
+
+    state = applyChatSignal(state, "proc.run.started", {
+      pid: "pid-1",
+      runId: "run-1",
+      conversationId: "default",
+    }, { pid: "pid-1", conversationId: "default" }).state;
+
+    state = applyChatSignal(state, "proc.run.stream", {
+      pid: "pid-1",
+      runId: "run-1",
+      conversationId: "default",
+      event: {
+        type: "text_delta",
+        contentIndex: 0,
+        delta: "world",
+        partial: {
+          content: [{ type: "text", text: "Hello world" }],
+        },
+      },
+    }, { pid: "pid-1", conversationId: "default" }).state;
+
+    state = applyChatSignal(state, "proc.run.stream", {
+      pid: "pid-1",
+      runId: "run-1",
+      conversationId: "default",
+      event: {
+        type: "text_delta",
+        contentIndex: 0,
+        delta: "!",
+        partial: {
+          content: [{ type: "text", text: "Hello world!" }],
+        },
+      },
+    }, { pid: "pid-1", conversationId: "default" }).state;
+
+    expect(state.rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        role: "assistant",
+        runId: "run-1",
+        text: "Hello world!",
+        streaming: true,
+      }),
+    ]));
+  });
+
   it("drops stream fallback tool rows when concrete tool events arrive", () => {
     let state = emptyChatRuntimeState("pid-1", "default");
 

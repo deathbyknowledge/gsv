@@ -443,7 +443,7 @@
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  padding: 4px 8px 4px 6px;
+  padding: 4px 8px;
   border: 1px solid var(--border);
   background: #0c0a22;
   color: #b6b1ff;
@@ -462,7 +462,6 @@
   outline: none;
 }
 
-.gsv-shell-root .gsv-chat-context-control .gsv-icon,
 .gsv-shell-root .gsv-chat-context-control .gsv-pr {
   flex: none;
 }
@@ -911,11 +910,6 @@ button.gsv-chat-task-row:focus-visible {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-}
-
-.gsv-chat-context-heading .gsv-icon {
-  flex: none;
-  color: #9f98ff;
 }
 
 .gsv-chat-context-grid {
@@ -1685,6 +1679,10 @@ button.gsv-chat-task-row:focus-visible {
   white-space: normal;
   overflow-wrap: anywhere;
   text-wrap: pretty;
+}
+
+.gsv-chat-rich-text.is-streaming {
+  white-space: pre-wrap;
 }
 
 .gsv-chat-rich-text > :first-child {

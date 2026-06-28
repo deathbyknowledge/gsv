@@ -599,6 +599,10 @@ function applyStreamEvent(
   }
 
   if (eventType === "text_delta") {
+    const partialText = extractStreamPartialText(event);
+    if (partialText !== null) {
+      return setAssistantStreamText(rows, runId, partialText);
+    }
     const delta = asString(event.delta) ?? "";
     return delta ? appendAssistantDelta(rows, runId, delta) : rows;
   }
@@ -661,6 +665,57 @@ function appendAssistantDelta(rows: ChatTranscriptRow[], runId: string, delta: s
     streaming: true,
   });
   return next;
+}
+
+function setAssistantStreamText(rows: ChatTranscriptRow[], runId: string, text: string): ChatTranscriptRow[] {
+  const next = dropEmptyTransientRows(rows, runId).slice();
+  const index = findLastIndex(next, (row) => row.role === "assistant" && row.runId === runId && !row.id.startsWith("message:"));
+  const now = Date.now();
+  if (index >= 0) {
+    next[index] = {
+      ...next[index],
+      text,
+      status: "streaming",
+      streaming: true,
+    };
+    return next;
+  }
+  next.push({
+    id: `assistant:${runId}`,
+    role: "assistant",
+    text,
+    timestamp: now,
+    time: formatTranscriptTime(now),
+    runId,
+    status: "streaming",
+    streaming: true,
+  });
+  return next;
+}
+
+function extractStreamPartialText(event: Record<string, unknown>): string | null {
+  const partial = asRecord(event.partial);
+  const content = Array.isArray(partial?.content) ? partial.content : [];
+  const contentIndex = asNumber(event.contentIndex);
+  if (contentIndex !== null && Number.isInteger(contentIndex)) {
+    const indexed = extractTextContent(content[contentIndex]);
+    if (indexed !== null) {
+      return indexed;
+    }
+  }
+
+  for (const block of content) {
+    const text = extractTextContent(block);
+    if (text !== null) {
+      return text;
+    }
+  }
+  return null;
+}
+
+function extractTextContent(value: unknown): string | null {
+  const record = asRecord(value);
+  return record?.type === "text" && typeof record.text === "string" ? record.text : null;
 }
 
 function appendAssistantThinkingDelta(rows: ChatTranscriptRow[], runId: string, delta: string): ChatTranscriptRow[] {
