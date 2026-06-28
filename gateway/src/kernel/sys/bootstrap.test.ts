@@ -165,6 +165,9 @@ describe("handleSysBootstrap", () => {
         },
       ],
     );
+    expect(ctx.config.set).toHaveBeenCalledWith("repos/root/gsv/created_at", expect.any(String));
+    expect(ctx.config.set).toHaveBeenCalledWith("repos/root/gsv/description", "GSV System Source");
+    expect(ctx.config.set).toHaveBeenCalledWith("repos/root/gsv/visibility", "public");
     expect(ctx.config.set).toHaveBeenCalledWith("repos/root/gsv-manual/description", "GSV Manual");
     expect(ctx.config.set).toHaveBeenCalledWith("repos/root/gsv-manual/visibility", "public");
     expect(inferDefaultCliChannelMock).toHaveBeenCalledWith("main");

@@ -137,16 +137,19 @@ export async function handleSysBootstrap(
 
   try {
     const limitBootstrap = createBootstrapLimiter(BOOTSTRAP_OUTBOUND_SLOTS);
-    const rootImportPromise = limitBootstrap(1, () =>
-      timeBootstrapStep(timings, "import-root-gsv", () => ripgit.importFromUpstream(
+    const rootImportPromise = limitBootstrap(1, async () => {
+      const importedRoot = await timeBootstrapStep(timings, "import-root-gsv", () => ripgit.importFromUpstream(
         ROOT_GSV_REPO,
         actorName,
         `${actorName}@gsv.local`,
         `bootstrap root/gsv from ${remoteUrl}#${ref}`,
         remoteUrl,
         ref,
-      ))
-    );
+      ));
+      registerBootstrapRepo(ctx, ROOT_GSV_REPO, "GSV System Source");
+      setPublicRepo(ctx, ROOT_GSV_REPO);
+      return importedRoot;
+    });
     const manualImportPromise = limitBootstrap(1, async () => {
       const importedManual = await timeBootstrapStep(timings, "import-gsv-manual", () => ripgit.importFromUpstream(
         ROOT_GSV_MANUAL_REPO,
