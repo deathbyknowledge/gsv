@@ -6,7 +6,6 @@ import { hasCapability } from "./capabilities";
 import { resolveCallerOwnerUid, type KernelContext } from "./context";
 import type { DeviceRecord } from "./devices";
 
-export type TargetKind = "native-device" | "browser" | "adapter";
 export type TargetProviderId = "device" | "adapter";
 
 export type TargetRoute =
@@ -15,7 +14,6 @@ export type TargetRoute =
 
 export type TargetDescriptor = {
   targetId: string;
-  kind: TargetKind;
   providerId: TargetProviderId;
   ownerUid: number;
   ownerUsername: string | null;
@@ -195,7 +193,6 @@ export function targetToDeviceDetail(target: TargetDescriptor): SysDeviceDetail 
 function deviceRecordToTarget(ctx: KernelContext, record: DeviceRecord): TargetDescriptor {
   return {
     targetId: record.device_id,
-    kind: isBrowserDevice(record) ? "browser" : "native-device",
     providerId: "device",
     ownerUid: record.owner_uid,
     ownerUsername: ctx.auth?.getPasswdByUid(record.owner_uid)?.username ?? null,
@@ -222,7 +219,6 @@ function adapterTargetToDescriptor(ctx: KernelContext, target: AdapterTarget): T
   const online = target.status.connected && target.status.authenticated;
   return {
     targetId: target.targetId,
-    kind: "adapter",
     providerId: "adapter",
     ownerUid,
     ownerUsername: ctx.auth?.getPasswdByUid(ownerUid)?.username
@@ -244,10 +240,4 @@ function adapterTargetToDescriptor(ctx: KernelContext, target: AdapterTarget): T
       accountId: target.accountId,
     },
   };
-}
-
-function isBrowserDevice(record: DeviceRecord): boolean {
-  return record.device_id.startsWith("browser:")
-    || record.platform === "browser"
-    || record.platform === "browser-extension";
 }

@@ -49,7 +49,6 @@ export function machineDetailSections(target: ConsoleTarget): ConsoleDetailSecti
           status: listRowStatusForTone(toneForTarget(target)),
           statusLabel: statusForTarget(target),
         }),
-        detailRow("kind", "KIND", formatTokenLabel(target.kind)),
         detailRow("platform", "PLATFORM", target.platform),
         detailRow("version", "VERSION", target.version),
         detailRow("owner", "OWNER", target.ownerUsername || uidLabel(target.ownerUid)),

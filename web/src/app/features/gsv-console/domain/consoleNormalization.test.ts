@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeConfigPayload } from "./consoleNormalization";
+import { normalizeConfigPayload, normalizeTargetsPayload } from "./consoleNormalization";
 
 describe("console normalization", () => {
   it("redacts secrets nested inside model profile config values", () => {
@@ -32,5 +32,19 @@ describe("console normalization", () => {
         },
       }],
     });
+  });
+
+  it("infers target presentation kind from device id and platform", () => {
+    expect(normalizeTargetsPayload({
+      devices: [
+        { deviceId: "browser:brave", label: "Brave", platform: "browser-extension", online: true },
+        { deviceId: "adapter:discord:ops", label: "Discord", platform: "adapter", online: true },
+        { deviceId: "macbook", label: "MacBook", platform: "darwin", online: true },
+      ],
+    })).toMatchObject([
+      { deviceId: "browser:brave", kind: "browser" },
+      { deviceId: "adapter:discord:ops", kind: "adapter" },
+      { deviceId: "macbook", kind: "native-device" },
+    ]);
   });
 });
