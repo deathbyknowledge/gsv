@@ -6,6 +6,8 @@ import "./CrewTile.css";
 export interface CrewTileProps {
   active?: boolean;
   className?: string;
+  /** Fill the portrait tile edge-to-edge (full-frame portrait). */
+  cover?: boolean;
   imageIndex?: number;
   imageSrc?: string;
   name: string;
@@ -28,6 +30,7 @@ function classNames(...parts: readonly (false | null | string | undefined)[]): s
 export function CrewTile({
   active = false,
   className,
+  cover = false,
   imageIndex,
   imageSrc,
   name,
@@ -39,7 +42,7 @@ export function CrewTile({
   const content = (
     <>
       <span class="gsv-crew-tile-portrait">
-        <AgentImage agent={imageIndex} src={imageSrc} size={54} />
+        <AgentImage agent={imageIndex} src={imageSrc} size={54} cover={cover} />
       </span>
       <strong>{name}</strong>
       <span class="gsv-crew-tile-status">

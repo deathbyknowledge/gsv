@@ -21,10 +21,12 @@ import {
   type AgentApprovalAction,
 } from "../domain/consoleAgentBehavior";
 import {
+  CREW_HUMAN_IMAGE,
   agentImageSrcForIndex,
   isConsoleAgentAccount,
+  isHumanCrewAccount,
   labelForConsoleAccountRelation,
-  sortedConsoleAccounts,
+  orderedCrewAccounts,
 } from "../domain/agentPresentation";
 import {
   useConsoleAccounts,
@@ -167,21 +169,6 @@ function handleCardKeyDown(
   }
   event.preventDefault();
   onManageAgent(uid);
-}
-
-const CREW_HUMAN_IMAGE = "/img/orb.png";
-
-function isHumanCrewAccount(account: ConsoleAccount): boolean {
-  return account.relation === "self" || account.relation === "human";
-}
-
-/** Crew display order: humans first, then agents in their existing rank order. */
-function orderedCrewAccounts(accounts: readonly ConsoleAccount[]): ConsoleAccount[] {
-  const sorted = sortedConsoleAccounts(accounts);
-  return [
-    ...sorted.filter(isHumanCrewAccount),
-    ...sorted.filter((account) => !isHumanCrewAccount(account)),
-  ];
 }
 
 function buildCrewCard(

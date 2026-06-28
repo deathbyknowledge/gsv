@@ -19,8 +19,10 @@ import {
 } from "../domain/consoleSettings";
 import type { ConsoleListKind } from "../domain/consoleListTypes";
 import {
+  CREW_HUMAN_IMAGE,
   agentImageSrcForIndex,
-  sortedConsoleAccounts,
+  isHumanCrewAccount,
+  orderedCrewAccounts,
 } from "../domain/agentPresentation";
 import type {
   ConsoleAccount,
@@ -65,6 +67,7 @@ type CrewCard = {
   name: string;
   meta: string;
   imageSrc: string;
+  cover: boolean;
   tone: StatusTone;
   statusLabel: string;
 };
@@ -207,15 +210,24 @@ function accountStatus(account: ConsoleAccount, processes: readonly ConsoleProce
 }
 
 function crewCards(accounts: readonly ConsoleAccount[], processes: readonly ConsoleProcess[]): CrewCard[] {
-  return sortedConsoleAccounts(accounts)
-    .slice(0, 3)
-    .map((account, index) => ({
+  const ordered = orderedCrewAccounts(accounts).slice(0, 3);
+  let agentIndex = 0;
+  return ordered.map((account) => {
+    const human = isHumanCrewAccount(account);
+    // Human is shown first, online, with the padded orb; agents get the
+    // full-frame portraits.
+    const status = human
+      ? { meta: "you", statusLabel: "ONLINE", tone: "online" as StatusTone }
+      : accountStatus(account, processes);
+    return {
       id: String(account.uid),
       accountUid: account.uid,
-      imageSrc: agentImageSrcForIndex(index),
+      imageSrc: human ? CREW_HUMAN_IMAGE : agentImageSrcForIndex(agentIndex++),
+      cover: !human,
       name: account.displayName,
-      ...accountStatus(account, processes),
-    }));
+      ...status,
+    };
+  });
 }
 
 function sortTargets(targets: readonly ConsoleTarget[]): ConsoleTarget[] {
@@ -543,6 +555,7 @@ function CrewPanel({
       <div class="gsv-settings-crew-grid">
         {cards.length === 0 ? <EmptyRow label="NO CREW ACCOUNTS" /> : cards.map((card) => (
           <CrewTile
+            cover={card.cover}
             imageSrc={card.imageSrc}
             key={card.id}
             name={card.name}

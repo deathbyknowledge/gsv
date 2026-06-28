@@ -16,6 +16,22 @@ export function isConsoleAgentAccount(account: ConsoleAccount): boolean {
   return account.relation === "personal-agent" || account.relation === "agent";
 }
 
+/** The human (the user) keeps the orb portrait; agents use the agent images. */
+export const CREW_HUMAN_IMAGE = "/img/orb.png";
+
+export function isHumanCrewAccount(account: ConsoleAccount): boolean {
+  return account.relation === "self" || account.relation === "human";
+}
+
+/** Crew display order: humans first, then agents in their existing rank order. */
+export function orderedCrewAccounts(accounts: readonly ConsoleAccount[]): ConsoleAccount[] {
+  const sorted = sortedConsoleAccounts(accounts);
+  return [
+    ...sorted.filter(isHumanCrewAccount),
+    ...sorted.filter((account) => !isHumanCrewAccount(account)),
+  ];
+}
+
 export function rankConsoleAccount(account: ConsoleAccount): number {
   if (account.relation === "personal-agent") return 0;
   if (account.relation === "agent") return 1;
