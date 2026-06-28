@@ -8,6 +8,8 @@ export type PackageWindowMeta = {
 export type PackageCapabilityMeta = {
   kernel?: string[];
   outbound?: string[];
+  daemon?: string[];
+  storage?: string[];
 };
 
 export type PackageMeta = {

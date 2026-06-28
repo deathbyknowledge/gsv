@@ -45,6 +45,8 @@ export type PackageAssemblyAnalysis = {
       capabilities: {
         kernel: string[];
         outbound: string[];
+        daemon: string[];
+        storage: string[];
       };
     };
     commands: Array<{

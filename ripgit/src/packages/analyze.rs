@@ -48,6 +48,8 @@ pub struct ExtractedPackageWindowMeta {
 pub struct ExtractedPackageCapabilityMeta {
     pub kernel: Vec<String>,
     pub outbound: Vec<String>,
+    pub daemon: Vec<String>,
+    pub storage: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -617,6 +619,8 @@ fn extract_meta(
     let mut capabilities = ExtractedPackageCapabilityMeta {
         kernel: Vec::new(),
         outbound: Vec::new(),
+        daemon: Vec::new(),
+        storage: Vec::new(),
     };
 
     for property in object.properties.iter() {
@@ -748,6 +752,8 @@ fn extract_capabilities(
 
     let mut kernel = Vec::new();
     let mut outbound = Vec::new();
+    let mut daemon = Vec::new();
+    let mut storage = Vec::new();
 
     for property in object.properties.iter() {
         let ObjectPropertyKind::ObjectProperty(prop) = property else {
@@ -763,6 +769,8 @@ fn extract_capabilities(
         match key.as_str() {
             "kernel" => kernel = values.unwrap_or_default(),
             "outbound" => outbound = values.unwrap_or_default(),
+            "daemon" => daemon = values.unwrap_or_default(),
+            "storage" => storage = values.unwrap_or_default(),
             other => diagnostics.push(simple_diagnostic(
                 PackageDiagnosticSeverity::Error,
                 "unknown-capability-key",
@@ -774,7 +782,12 @@ fn extract_capabilities(
         }
     }
 
-    Some(ExtractedPackageCapabilityMeta { kernel, outbound })
+    Some(ExtractedPackageCapabilityMeta {
+        kernel,
+        outbound,
+        daemon,
+        storage,
+    })
 }
 
 fn extract_named_handlers(
@@ -1298,6 +1311,8 @@ mod tests {
               capabilities: {
                 kernel: ["fs.read"],
                 outbound: ["https://*"],
+                daemon: ["rpc-schedules"],
+                storage: ["sql"],
               },
             },
             cli: {
@@ -1324,6 +1339,14 @@ mod tests {
         assert_eq!(definition.commands[0].name, "inspect");
         assert_eq!(definition.tasks.len(), 1);
         assert_eq!(analysis.identity.package_json_name, "@gsv/example-tools");
+        assert_eq!(
+            definition.meta.capabilities.daemon,
+            vec!["rpc-schedules".to_string()]
+        );
+        assert_eq!(
+            definition.meta.capabilities.storage,
+            vec!["sql".to_string()]
+        );
     }
 
     #[test]
