@@ -5,13 +5,11 @@ import {
   getVisibleTarget,
   listVisibleTargets,
   type TargetDescriptor,
-  type TargetKind,
 } from "../../../kernel/targets";
 import { requireCommandCapability, requireShellOptionValue } from "./common";
 
 type TargetListEntry = {
   id: string;
-  kind: TargetKind | "gsv";
   provider: string;
   owner: string;
   label: string;
@@ -33,7 +31,6 @@ type ListOptions = {
   json: boolean;
   limit: number;
   offset: number;
-  kind: TargetListEntry["kind"] | null;
   query: string | null;
 };
 
@@ -95,7 +92,6 @@ function listTargets(options: ListOptions, ctx: KernelContext): ExecResult {
     ...listVisibleTargets(ctx, { includeOffline: options.includeOffline }).map(targetToEntry),
   ]
     .filter((entry) => options.includeOffline || entry.online)
-    .filter((entry) => !options.kind || entry.kind === options.kind)
     .filter((entry) => !options.query || targetMatchesQuery(entry, options.query))
     .sort((left, right) => {
       if (left.id === "gsv") return -1;
@@ -117,11 +113,11 @@ function listTargets(options: ListOptions, ctx: KernelContext): ExecResult {
     };
   }
 
-  const lines = ["TARGET\tKIND\tSTATE\tPLATFORM\tCAPS\tLABEL"];
+  const lines = ["TARGET\tPROVIDER\tSTATE\tPLATFORM\tCAPS\tLABEL"];
   for (const entry of page) {
     lines.push([
       entry.id,
-      entry.kind,
+      entry.provider,
       entry.online ? "online" : "offline",
       entry.platform || "-",
       summarizeCapabilities(entry.implements),
@@ -158,7 +154,6 @@ function showTarget(args: string[], ctx: KernelContext, commandName: "targets" |
 
   const lines = [
     `target: ${entry.id}`,
-    `kind: ${entry.kind}`,
     `provider: ${entry.provider}`,
     `state: ${entry.online ? "online" : "offline"}`,
     `owner: ${entry.owner}`,
@@ -184,7 +179,6 @@ function parseTargetListOptions(args: string[], requireQuery = false): ListOptio
     json: false,
     limit: DEFAULT_TARGET_LIMIT,
     offset: 0,
-    kind: null,
     query: null,
   };
   const positional: string[] = [];
@@ -213,11 +207,6 @@ function parseTargetListOptions(args: string[], requireQuery = false): ListOptio
       options.offset = parseNonNegativeInteger(requireShellOptionValue(args[index], current), current);
       continue;
     }
-    if (current === "--kind") {
-      index += 1;
-      options.kind = parseTargetKind(requireShellOptionValue(args[index], current));
-      continue;
-    }
     if (current === "--search" || current === "-q") {
       index += 1;
       options.query = requireShellOptionValue(args[index], current).trim().toLowerCase();
@@ -230,7 +219,7 @@ function parseTargetListOptions(args: string[], requireQuery = false): ListOptio
     options.query = positional.join(" ").trim().toLowerCase();
   }
   if (requireQuery && !options.query) {
-    throw new Error("usage: targets search <query> [--kind gsv|native-device|browser|adapter] [--all] [--limit N] [--offset N] [--json]");
+    throw new Error("usage: targets search <query> [--all] [--limit N] [--offset N] [--json]");
   }
   return options;
 }
@@ -269,21 +258,9 @@ function parseNonNegativeInteger(value: string, option: string): number {
   return Number.parseInt(value, 10);
 }
 
-function parseTargetKind(value: string): TargetListEntry["kind"] {
-  const normalized = value.trim().toLowerCase();
-  if (normalized === "gsv") return "gsv";
-  if (normalized === "browser") return "browser";
-  if (normalized === "adapter") return "adapter";
-  if (normalized === "device" || normalized === "native" || normalized === "native-device") {
-    return "native-device";
-  }
-  throw new Error(`unknown target kind: ${value}`);
-}
-
 function targetMatchesQuery(entry: TargetListEntry, query: string): boolean {
   const haystack = [
     entry.id,
-    entry.kind,
     entry.provider,
     entry.owner,
     entry.label,
@@ -302,7 +279,6 @@ function targetToEntryOrNull(target: TargetDescriptor | null): TargetListEntry |
 function targetToEntry(target: TargetDescriptor): TargetListEntry {
   return {
     id: target.targetId,
-    kind: target.kind,
     provider: target.providerId,
     owner: target.ownerUsername
       ? `${target.ownerUsername} (uid ${target.ownerUid})`
@@ -328,7 +304,6 @@ function gsvTarget(ctx: KernelContext): TargetListEntry {
   const now = Date.now();
   return {
     id: "gsv",
-    kind: "gsv",
     provider: "kernel",
     owner: "system",
     label: "GSV",
@@ -365,7 +340,7 @@ function formatTimestamp(value: number | null): string {
 
 function targetsUsage(commandName: "targets" | "devices"): string {
   return [
-    `Usage: ${commandName} list [--all] [--kind gsv|native-device|browser|adapter] [--search QUERY] [--limit N] [--offset N] [--json]`,
+    `Usage: ${commandName} list [--all] [--search QUERY] [--limit N] [--offset N] [--json]`,
     `Usage: ${commandName} search <query> [--all] [--limit N] [--offset N] [--json]`,
     `Usage: ${commandName} show <target-id> [--json]`,
     "",

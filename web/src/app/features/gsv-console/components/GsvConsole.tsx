@@ -2,6 +2,7 @@ import { useState } from "preact/hooks";
 import { ConsoleHeader, type ConsoleCrumb } from "../../../components/ui/ConsoleHeader";
 import { useUnsavedGuardLeave } from "../../gsv-shell/unsaved/unsavedGuard";
 import { FilesPage } from "../../files/FilesPage";
+import { RepositoriesPage } from "../../repositories/RepositoriesPage";
 import { TerminalPage } from "../../terminal/TerminalPage";
 import {
   shellSurfaceLabel,
@@ -44,6 +45,9 @@ function isPackageSettingsKind(kind: ConsoleListKind): kind is PackageListKind {
 function surfaceTail(surface: ShellSurfaceId): string {
   if (surface === "files") {
     return "GSV · STORAGE";
+  }
+  if (surface === "repositories") {
+    return "GSV · REPOSITORIES";
   }
   if (surface === "library") {
     return "GSV · LIBRARY";
@@ -362,6 +366,8 @@ export function GsvConsole({
           />
         ) : activeSurface === "files" ? (
           <FilesPage />
+        ) : activeSurface === "repositories" ? (
+          <RepositoriesPage />
         ) : activeSurface === "terminal" ? (
           <TerminalPage />
         ) : (

@@ -11,6 +11,7 @@ export interface IconMenuProps {
   autoFocus?: boolean;
   onClose?: () => void;
   onFiles?: () => void;
+  onRepositories?: () => void;
   onLibrary?: () => void;
   onTerminal?: () => void;
   onSettings?: () => void;
@@ -24,6 +25,7 @@ export function IconMenu({
   autoFocus = true,
   onClose,
   onFiles,
+  onRepositories,
   onLibrary,
   onTerminal,
   onSettings,
@@ -103,7 +105,7 @@ export function IconMenu({
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(4,minmax(0,1fr))",
+          gridTemplateColumns: "repeat(5,minmax(0,1fr))",
           gap: "1px",
           background: "var(--rule-inner)",
           padding: "1px",
@@ -120,6 +122,10 @@ export function IconMenu({
         <button type="button" disabled={!onTerminal} onClick={onTerminal} class="gsv-im-cell" style={{ color: "var(--accent-bright)" }}>
           <Icon name="terminal" size={22} />
           <span style={{ fontSize: "9px", letterSpacing: ".16em", color: "#7d78b8" }}>TERMINAL</span>
+        </button>
+        <button type="button" disabled={!onRepositories} onClick={onRepositories} class="gsv-im-cell" style={{ color: "var(--accent-bright)" }}>
+          <Icon name="doticons/branch" size={22} dotMatrix={16} />
+          <span style={{ fontSize: "9px", letterSpacing: ".16em", color: "#7d78b8" }}>REPOS</span>
         </button>
         <button type="button" disabled={!onSettings} onClick={onSettings} class="gsv-im-cell" style={{ color: "#b6b1ff" }}>
           <Icon name="cog" size={22} />

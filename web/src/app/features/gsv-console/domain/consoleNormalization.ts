@@ -232,7 +232,7 @@ function normalizeTarget(value: unknown): ConsoleTarget | null {
 
   return {
     deviceId,
-    kind: normalizeTargetKind(record.kind, platform),
+    kind: normalizeTargetKind(deviceId, platform),
     ownerUid: numberOrNull(record.ownerUid),
     ownerUsername: nonEmptyString(record.ownerUsername),
     label: nonEmptyString(record.label) ?? deviceId,
@@ -429,12 +429,20 @@ function normalizeProcessState(rawState: string, activeRunId: string | null, que
   return "unknown";
 }
 
-function normalizeTargetKind(rawKind: unknown, platform: string): ConsoleTargetKind {
-  if (rawKind === "native-device" || rawKind === "browser" || rawKind === "adapter") {
-    return rawKind;
+function normalizeTargetKind(deviceId: string, platform: string): ConsoleTargetKind {
+  const normalizedPlatform = platform.trim().toLowerCase();
+  const normalizedDeviceId = deviceId.trim().toLowerCase();
+  if (
+    normalizedDeviceId.startsWith("browser:") ||
+    normalizedPlatform === "browser" ||
+    normalizedPlatform === "browser-extension"
+  ) {
+    return "browser";
   }
-  if (platform === "browser") return "browser";
-  if (platform) return "native-device";
+  if (normalizedDeviceId.startsWith("adapter:") || normalizedPlatform === "adapter") {
+    return "adapter";
+  }
+  if (normalizedPlatform) return "native-device";
   return "unknown";
 }
 

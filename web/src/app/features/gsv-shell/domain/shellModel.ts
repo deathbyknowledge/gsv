@@ -10,6 +10,7 @@ export type ShellSurfaceId =
   | "applications"
   | "runtime"
   | "files"
+  | "repositories"
   | "library"
   | "terminal";
 
@@ -115,6 +116,12 @@ export const SYSTEM_DOCK_ITEMS: SystemDockItem[] = [
     description: "Direct shell access to GSV and connected machines.",
   },
   {
+    id: "repositories",
+    label: "REPOS",
+    icon: "doticons/branch",
+    description: "Browse ripgit repositories, source history, search, and diffs.",
+  },
+  {
     id: "settings",
     label: "SETTINGS",
     icon: "cog",
@@ -157,6 +164,8 @@ export function shellSurfaceLabel(surface: ShellSurfaceId): string {
       return "RUNTIME";
     case "files":
       return "FILES";
+    case "repositories":
+      return "REPOSITORIES";
     case "library":
       return "LIBRARY";
     case "terminal":
@@ -188,6 +197,16 @@ export function shellTabForSurface(surface: ShellPageSurfaceId): ShellPageTab {
       kind: "system",
       icon: "folder",
       type: "GSV · STORAGE",
+    };
+  }
+  if (surface === "repositories") {
+    return {
+      key: "sys:repositories",
+      surface,
+      title,
+      kind: "system",
+      icon: "doticons/branch",
+      type: "GSV · REPOSITORIES",
     };
   }
   if (surface === "library") {

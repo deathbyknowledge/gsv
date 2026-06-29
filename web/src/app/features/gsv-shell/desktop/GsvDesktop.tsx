@@ -314,6 +314,7 @@ export function GsvDesktop({
                   autoFocus={gsvOpen}
                   onClose={closeGsvControls}
                   onFiles={() => onOpenSurface("files")}
+                  onRepositories={() => onOpenSurface("repositories")}
                   onLibrary={() => onOpenSurface("library")}
                   onTerminal={() => onOpenSurface("terminal")}
                   onSettings={() => onOpenSurface("settings")}

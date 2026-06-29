@@ -518,6 +518,7 @@ export function GsvShell({
                         width={386}
                         onClose={() => shell.setPickerId(null)}
                         onFiles={() => openShellSurface("files")}
+                        onRepositories={() => openShellSurface("repositories")}
                         onLibrary={() => openShellSurface("library")}
                         onTerminal={() => openShellSurface("terminal")}
                         onSettings={() => openShellSurface("settings")}

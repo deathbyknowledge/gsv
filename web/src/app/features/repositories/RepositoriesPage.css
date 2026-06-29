@@ -1,0 +1,564 @@
+.repositories-surface {
+  position: relative;
+  min-height: 0;
+  height: 100%;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
+  border: 1px solid var(--border-raised);
+  background: var(--panel);
+  box-shadow:
+    inset 0 0 0 1px var(--shadow-deep),
+    0 0 30px rgba(80, 70, 180, 0.1);
+}
+
+.repositories-header-bar {
+  min-width: 0;
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 14px;
+  border-bottom: 1px solid var(--rule-section);
+  background: color-mix(in srgb, var(--panel) 92%, var(--shadow-deep));
+}
+
+.repositories-header-tags {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-bottom: 5px;
+}
+
+.repositories-header-actions {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 1px;
+  margin-left: auto;
+}
+
+.repositories-pull-button {
+  appearance: none;
+  height: 34px;
+  min-width: 88px;
+  border: 1px solid var(--border-raised);
+  background: var(--field);
+  color: var(--accent-bright);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 12px;
+  cursor: pointer;
+  font: 11px/1 var(--gsv-font-mono);
+  letter-spacing: 0.1em;
+}
+
+.repositories-pull-button:not(:disabled):hover,
+.repositories-pull-button:not(:disabled):focus-visible {
+  background: var(--hover);
+  color: var(--text);
+  outline: none;
+}
+
+.repositories-pull-button:not(:disabled):focus-visible {
+  box-shadow: inset 0 0 0 1px var(--accent-bright);
+}
+
+.repositories-pull-button:disabled {
+  cursor: default;
+  opacity: 0.52;
+}
+
+.repositories-pull-button.is-busy {
+  color: var(--live);
+}
+
+.repositories-pull-status {
+  min-width: 0;
+  flex: 1 1 220px;
+  max-width: 520px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--rule-inner);
+  background: color-mix(in srgb, var(--field) 76%, transparent);
+  color: var(--text-muted);
+  font: 10px/1 var(--gsv-font-mono);
+  letter-spacing: 0.1em;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.repositories-pull-status span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.repositories-pull-status.is-online {
+  color: var(--online);
+}
+
+.repositories-pull-status.is-warn {
+  color: var(--warn);
+}
+
+.repositories-pull-status.is-error {
+  color: var(--error);
+}
+
+.repositories-workspace {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.repositories-tabbar {
+  position: relative;
+  min-width: 0;
+  border-bottom: 1px solid var(--rule-section);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: end;
+  background: var(--void);
+}
+
+.repositories-tab-panel {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+}
+
+.repositories-breadcrumbs-container {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--rule-inner);
+  background: color-mix(in srgb, var(--panel) 92%, var(--shadow-deep));
+}
+
+.repositories-breadcrumbs-container .gsv-bc {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.repositories-breadcrumbs-actions {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.repositories-browser-toolbar,
+.repositories-editor-toolbar {
+  min-width: 0;
+  border-bottom: 1px solid var(--rule-section);
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.repositories-toolbar-row {
+  min-width: 0;
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.repositories-toolbar-search {
+  min-width: 0;
+  flex: 0 1 280px;
+  display: block;
+}
+
+.repositories-toolbar-actions {
+  min-width: 0;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.repositories-toolbar-actions .gsv-btn {
+  min-height: 34px;
+  flex: none;
+}
+
+.repositories-browser-list,
+.repositories-search-results,
+.repositories-history-list,
+.repositories-file-view,
+.repositories-diff-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.repositories-browser-list {
+  outline: none;
+}
+
+.repositories-list-summary {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  min-width: 0;
+  border-bottom: 1px solid var(--rule-inner);
+  background: color-mix(in srgb, var(--panel) 86%, var(--field-deep));
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+}
+
+.repositories-object-row {
+  border-bottom: 1px solid var(--rule-inner) !important;
+}
+
+.repositories-object-row.is-selected {
+  background: var(--active) !important;
+  box-shadow: inset 2px 0 0 var(--accent-bright);
+}
+
+.repositories-row-wrap {
+  position: relative;
+}
+
+.repositories-row-action {
+  position: absolute;
+  top: 50%;
+  right: 40px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.repositories-row-wrap:hover .repositories-row-action,
+.repositories-row-action:focus-within {
+  opacity: 1;
+}
+
+.repositories-search-row,
+.repositories-commit-row {
+  width: 100%;
+  min-height: 60px;
+  border: 0;
+  border-bottom: 1px solid var(--rule-inner);
+  appearance: none;
+  background: transparent;
+  color: inherit;
+  display: grid;
+  gap: 12px;
+  align-items: center;
+  padding: 11px 14px;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.repositories-search-row {
+  grid-template-columns: minmax(150px, 0.7fr) 92px minmax(0, 1fr);
+}
+
+.repositories-commit-row {
+  grid-template-columns: minmax(0, 1fr) 140px 96px;
+}
+
+.repositories-search-row:hover,
+.repositories-search-row:focus-visible,
+.repositories-commit-row:hover,
+.repositories-commit-row:focus-visible {
+  background: var(--hover);
+  outline: none;
+}
+
+.repositories-search-path,
+.repositories-search-preview,
+.repositories-commit-message,
+.repositories-commit-meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.repositories-search-path,
+.repositories-commit-message {
+  color: var(--text);
+  font-size: 11px;
+}
+
+.repositories-search-line,
+.repositories-commit-hash {
+  color: var(--accent);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.repositories-search-preview,
+.repositories-commit-meta {
+  color: var(--text-muted);
+  font-family: var(--gsv-font-prose);
+  font-size: 12px;
+}
+
+.repositories-state {
+  min-height: 280px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  color: var(--text-muted);
+}
+
+.repositories-state-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.repositories-state-copy strong {
+  color: var(--text);
+  font-family: var(--gsv-font-mono);
+  font-size: 12px;
+  letter-spacing: 0.14em;
+}
+
+.repositories-state-copy span {
+  max-width: 520px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.repositories-file-view {
+  display: flex;
+  flex-direction: column;
+}
+
+.repositories-file-meta {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--rule-inner);
+  background: color-mix(in srgb, var(--panel) 86%, var(--field-deep));
+}
+
+.repositories-file-meta small {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.repositories-code-block {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  margin: 0;
+  padding: 0;
+  background: var(--field-deep);
+}
+
+.repositories-code-line {
+  min-width: max-content;
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: 12px;
+  padding: 0 14px 0 0;
+  font-family: var(--gsv-font-mono);
+  font-size: 12px;
+  line-height: 1.65;
+  letter-spacing: 0;
+  color: var(--text);
+  white-space: pre;
+}
+
+.repositories-code-line-number {
+  user-select: none;
+  text-align: right;
+  color: var(--text-dim);
+  background: color-mix(in srgb, var(--field-deep) 80%, var(--shadow-deep));
+  padding-right: 10px;
+}
+
+.repositories-code-line-content {
+  min-width: 0;
+}
+
+.repositories-diff-scroll {
+  background: var(--field-deep);
+}
+
+.repositories-diff-view {
+  min-width: 0;
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+}
+
+.repositories-diff-head,
+.repositories-diff-file > header {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.repositories-diff-head {
+  padding: 10px 12px;
+  border: 1px solid var(--rule-inner);
+  background: var(--panel);
+}
+
+.repositories-diff-head > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.repositories-diff-head strong,
+.repositories-diff-file strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-family: var(--gsv-font-mono);
+  font-size: 12px;
+  letter-spacing: 0;
+}
+
+.repositories-diff-head span {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.repositories-diff-file {
+  min-width: 0;
+  border: 1px solid var(--rule-inner);
+  background: var(--panel);
+}
+
+.repositories-diff-file > header {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--rule-inner);
+}
+
+.repositories-diff-hunk-head {
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--rule-inner);
+  background: color-mix(in srgb, var(--panel) 80%, var(--shadow-deep));
+  color: var(--accent);
+  font-family: var(--gsv-font-mono);
+  font-size: 11px;
+}
+
+.repositories-diff-lines {
+  overflow-x: auto;
+}
+
+.repositories-diff-line {
+  min-width: max-content;
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  gap: 8px;
+  padding: 0 12px;
+  font-family: var(--gsv-font-mono);
+  font-size: 12px;
+  line-height: 1.65;
+  letter-spacing: 0;
+  white-space: pre;
+}
+
+.repositories-diff-line > span:first-child {
+  color: var(--text-dim);
+}
+
+.repositories-diff-line.is-add {
+  background: rgba(94, 242, 160, 0.09);
+  color: #bffbd6;
+}
+
+.repositories-diff-line.is-delete {
+  background: rgba(255, 111, 140, 0.09);
+  color: #ffc4cf;
+}
+
+.repositories-diff-line.is-binary {
+  color: var(--warn);
+}
+
+.repositories-empty-inline {
+  padding: 18px 14px;
+  color: var(--text-muted);
+  font-family: var(--gsv-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+}
+
+.repositories-compare-controls {
+  min-width: 0;
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 14px;
+  border-bottom: 1px solid var(--rule-section);
+  background: color-mix(in srgb, var(--panel) 92%, var(--shadow-deep));
+}
+
+@media (max-width: 760px) {
+  .repositories-header-bar,
+  .repositories-toolbar-row,
+  .repositories-editor-toolbar,
+  .repositories-compare-controls {
+    align-items: stretch;
+  }
+
+  .repositories-header-bar .gsv-fld,
+  .repositories-compare-controls .gsv-fld {
+    width: 100% !important;
+  }
+
+  .repositories-header-actions,
+  .repositories-toolbar-search,
+  .repositories-toolbar-actions {
+    flex: 1 1 100%;
+    margin-left: 0;
+  }
+
+  .repositories-pull-button {
+    width: 100%;
+  }
+
+  .repositories-pull-status {
+    flex: 1 1 100%;
+    max-width: none;
+  }
+
+  .repositories-search-row,
+  .repositories-commit-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

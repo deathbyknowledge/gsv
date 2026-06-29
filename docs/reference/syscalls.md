@@ -811,7 +811,7 @@ Runtime behavior:
 | `repo.diff` | `handleRepoDiff` | Reads one commit diff. Requires `commit`; `context` defaults to 3 and clamps to 0-20. |
 | `repo.compare` | `handleRepoCompare` | Compares `base` and `head` refs or hashes. `stat: true` omits hunks from ripgit. |
 | `repo.apply` | `handleRepoApply` | Atomically commits `put`, `delete`, and `move` operations to one ref. `expectedHead` enables optimistic concurrency. `allowEmpty` permits an empty commit. |
-| `repo.import` | `handleRepoImport` | Imports or refreshes a repo from an upstream Git URL/ref into a local ripgit repo. |
+| `repo.import` | `handleRepoImport` | Imports or refreshes a repo from an upstream Git URL/ref into a local ripgit repo. Omit `remoteUrl` to pull from the repo's stored upstream. |
 
 Write access is intentionally narrower than read access. Non-root users can write repos owned by their username. Public repos and visible package source repos are readable but not writable unless ownership also matches. Native shell writes under `/src/repos` stage in a process-local overlay until `rgit commit` or `rgit discard`.
 
@@ -843,7 +843,7 @@ type RepoSyscalls = {
 
   "repo.refs": {
     args: { repo: string };
-    result: { repo: string; heads: Record<string, string>; tags: Record<string, string> };
+    result: { repo: string; heads: Record<string, string>; tags: Record<string, string>; remotes?: Record<string, string> };
   };
 
   "repo.read": {
@@ -879,8 +879,8 @@ type RepoSyscalls = {
   };
 
   "repo.import": {
-    args: { repo: string; ref?: string; remoteUrl: string; remoteRef?: string; message?: string };
-    result: { repo: string; ref: string; head: string | null; changed: boolean; remoteUrl: string; remoteRef: string };
+    args: { repo: string; ref?: string; remoteUrl?: string; remoteRef?: string; message?: string };
+    result: { repo: string; ref: string; head: string | null; changed: boolean; remoteUrl: string; remoteRef: string; trackingRef?: string; upstreamHead?: string; upstreamChanged?: boolean; localChanged?: boolean; diverged?: boolean };
   };
 };
 ```

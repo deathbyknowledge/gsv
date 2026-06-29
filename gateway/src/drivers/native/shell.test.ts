@@ -443,23 +443,23 @@ describe("targets native command", () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(result.stdout).toContain("TARGET\tKIND\tSTATE\tPLATFORM\tCAPS\tLABEL");
-    expect(result.stdout).toContain("gsv\tgsv\tonline\tcloudflare-worker");
+    expect(result.stdout).toContain("TARGET\tPROVIDER\tSTATE\tPLATFORM\tCAPS\tLABEL");
+    expect(result.stdout).toContain("gsv\tkernel\tonline\tcloudflare-worker");
     expect(result.stdout).toContain("Showing 1-2 of 3");
 
-    const browserList = await handleShellExec(
-      { input: "targets list --kind browser" },
+    const browserSearch = await handleShellExec(
+      { input: "targets search browser-extension" },
       makeContext({ capabilities: ["sys.device.list"], devices }),
     );
-    expect(browserList.ok).toBe(true);
-    expect(browserList.stdout).toContain("rearden:brave\tbrowser\tonline\tbrowser-extension");
+    expect(browserSearch.ok).toBe(true);
+    expect(browserSearch.stdout).toContain("rearden:brave\tdevice\tonline\tbrowser-extension");
 
     const alias = await handleShellExec(
       { input: "devices search macbook" },
       makeContext({ capabilities: ["sys.device.list"], devices }),
     );
     expect(alias.ok).toBe(true);
-    expect(alias.stdout).toContain("macbook\tnative-device\tonline\tdarwin");
+    expect(alias.stdout).toContain("macbook\tdevice\tonline\tdarwin");
   });
 
   it("shows target details", async () => {
@@ -485,7 +485,7 @@ describe("targets native command", () => {
 
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("target: macbook");
-    expect(result.stdout).toContain("kind: native-device");
+    expect(result.stdout).toContain("provider: device");
     expect(result.stdout).toContain("owner: sam (uid 1000)");
     expect(result.stdout).toContain("- shell.exec");
     expect(result.stdout).toContain("- fs.read");
