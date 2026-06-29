@@ -54,6 +54,7 @@ import {
   createCompareTab,
   createFileTab,
   createHistoryTab,
+  retargetBrowserTab,
   tabLabel,
   type RepositoryBrowserTab,
   type RepositoryCompareTab,
@@ -917,6 +918,11 @@ export function RepositoriesPage() {
     const nextTab = createBrowserTab(repo.repo, ref, normalizeRepoPath(path));
     const existing = tabs.find((tab) => tab.id === nextTab.id);
     if (existing) {
+      setTabs((currentTabs) => currentTabs.map((tab) => (
+        tab.id === existing.id && tab.kind === "browser"
+          ? retargetBrowserTab(tab, nextTab.path)
+          : tab
+      )));
       setActiveTabId(existing.id);
       return;
     }

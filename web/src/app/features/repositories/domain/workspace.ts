@@ -1,5 +1,5 @@
 import type { RepositorySummary } from "./models";
-import { pathBasename, shortHash } from "./presentation";
+import { normalizeRepoPath, pathBasename, shortHash } from "./presentation";
 
 export type RepositoryBrowserTab = {
   id: string;
@@ -81,6 +81,16 @@ export function createBrowserTab(repo: string, ref: string, path = ""): Reposito
     path,
     commandInput: "",
     commandInputKey: 0,
+    searchQuery: "",
+  };
+}
+
+export function retargetBrowserTab(tab: RepositoryBrowserTab, path: string): RepositoryBrowserTab {
+  return {
+    ...tab,
+    path: normalizeRepoPath(path),
+    commandInput: "",
+    commandInputKey: tab.commandInputKey + 1,
     searchQuery: "",
   };
 }
