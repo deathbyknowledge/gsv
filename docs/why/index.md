@@ -1,6 +1,6 @@
 # Why GSV?
 
-Your AI assistant lives on one box. Your life doesn't.
+An AI assistant lives on one box. Your life doesn't.
 
 You've got a laptop, maybe a home server, a phone. Today's self-hosted agents make you pick *one* of those to run the brain, then keep that machine awake forever. Turn it off and your assistant goes dark. Every other device you own just sits there.
 
