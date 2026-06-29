@@ -1,4 +1,3 @@
-import { Breadcrumbs } from "../../../components/ui/Breadcrumbs";
 import { Icon } from "../../../components/ui/Icon";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
 import { Stepper } from "../../../components/ui/Stepper";
@@ -40,15 +39,11 @@ export function ConnectFlowShell({ flow, current, onStep }: ConnectFlowShellProp
 
   return (
     <div class="gsv-cf">
-      {/* Row 1 + 2 — breadcrumb trail + page header (title + status). */}
-      <div class="gsv-cf-head">
-        <div class="gsv-cf-crumbs">
-          <Breadcrumbs size="small" items={[{ label: flow.parentLabel }, { label: "CONNECT" }]} />
-        </div>
-        <SectionHeader divider title={flow.title} meta={step.status} headingLevel={2} />
-      </div>
+      {/* Page header — title + status. The breadcrumb trail is supplied by the
+          shell's top bar (ConsoleHeader), not duplicated here. */}
+      <SectionHeader divider title={flow.title} meta={step.status} headingLevel={2} />
 
-      {/* Row 3 — action bar: icon tile + 2-line description, with the stepper below. */}
+      {/* Action bar — icon tile + 2-line description, with the stepper below. */}
       <div class="gsv-cf-bar">
         <div class="gsv-cf-bar-lead">
           <span class="gsv-cf-icon">

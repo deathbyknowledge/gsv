@@ -9,17 +9,7 @@
   background: transparent;
 }
 
-/* Row 1 + 2 — breadcrumb trail over the page header. */
-.gsv-cf-head {
-  display: flex;
-  flex-direction: column;
-}
-
-.gsv-cf-crumbs {
-  padding: 14px 20px 0;
-}
-
-/* Row 3 — action bar: icon tile + 2-line description, stepper below. */
+/* Action bar — icon tile + 2-line description, stepper below. */
 .gsv-cf-bar {
   display: flex;
   flex-direction: column;
