@@ -70,6 +70,20 @@
   gap: 18px;
 }
 
+/* Step title — desktop yellow, left-aligned, no box/divider. The step's own
+   description paragraph follows it in the body. */
+.gsv-cf-step-title {
+  margin: 0;
+  text-align: left;
+  color: var(--update);
+  text-shadow: 0 0 9px rgba(255, 210, 77, 0.3);
+}
+
+/* Pull the description tight under the title (override the body's flex gap). */
+.gsv-cf-step-title + .gsv-cf-desc {
+  margin-top: -8px;
+}
+
 /* Shared step building blocks ----------------------------------------------- */
 
 /* Footer button row at the bottom of a step (BACK / CONTINUE etc). */

@@ -74,10 +74,13 @@ export function ConnectFlowShell({ flow, current, onStep }: ConnectFlowShellProp
         </div>
       </div>
 
-      {/* Body — current step. */}
+      {/* Body — current step. Left-aligned desktop-yellow title, description
+          (rendered by the step body) below it; no nested section header. */}
       <div class="gsv-cf-body">
-        <SectionHeader title={step.title} meta={step.meta} divider />
-        <div class="gsv-cf-step">{step.render(nav)}</div>
+        <div class="gsv-cf-step">
+          <h3 class="gsv-cf-step-title gsv-section">{step.title}</h3>
+          {step.render(nav)}
+        </div>
       </div>
     </div>
   );
