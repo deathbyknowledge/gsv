@@ -1,76 +1,6 @@
-.application-import {
-  min-height: 100%;
-  display: grid;
-  place-items: start center;
-  padding: clamp(18px, 3vw, 34px);
-  color: var(--text);
-  font-family: var(--gsv-font-mono);
-}
-
-.application-import-shell {
-  width: min(790px, 100%);
-  display: grid;
-  gap: 18px;
-}
-
-.application-import-head {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: start;
-  gap: 15px;
-}
-
-.application-import-head > div {
-  min-width: 0;
-}
-
-.application-import-kicker {
-  display: block;
-  margin-bottom: 7px;
-  color: var(--accent);
-  font-size: 9px;
-  letter-spacing: 0.18em;
-}
-
-.application-import-head h2 {
-  margin: 0;
-  color: var(--text-hi);
-  font-size: clamp(21px, 3vw, 32px);
-  line-height: 1;
-  letter-spacing: 0;
-  text-transform: uppercase;
-}
-
-.application-import-head p {
-  margin: 10px 0 0;
-  max-width: 62ch;
-  color: var(--label);
-  font-family: var(--gsv-font-prose);
-  font-size: 13px;
-  line-height: 1.45;
-}
-
-.application-import-stepper {
-  display: flex;
-  justify-content: center;
-  padding: 2px 0 4px;
-}
-
-.application-import-stepper .gsv-sp,
-.application-import-stepper .gsv-sp-step {
-  pointer-events: none;
-}
-
-.application-import-card {
-  padding: 0;
-  overflow: hidden;
-}
-
-.application-import-card-body {
-  display: grid;
-  gap: 18px;
-  padding: 22px;
-}
+/* Live panels for the application import → review flow. The page chrome
+   (header, action bar, stepper, step title, footers) is owned by
+   ConnectFlowShell / .gsv-cf-*; only the flow-specific bodies live here. */
 
 .application-import-copy {
   margin: 0;
@@ -181,14 +111,6 @@
   letter-spacing: 0.08em;
 }
 
-.application-import-card-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  padding: 16px 20px 20px;
-  border-top: 1px solid var(--rule-inner);
-}
-
 .application-import-footnote {
   display: flex;
   align-items: center;
@@ -197,28 +119,7 @@
 }
 
 @media (max-width: 760px) {
-  .application-import {
-    padding: 14px;
-  }
-
-  .application-import-head {
-    grid-template-columns: auto minmax(0, 1fr);
-  }
-
-  .application-import-head > span:last-child {
-    grid-column: 1 / -1;
-    justify-self: start;
-  }
-
   .application-import-source-grid {
     grid-template-columns: 1fr;
-  }
-
-  .application-import-card-actions {
-    flex-direction: column-reverse;
-  }
-
-  .application-import-card-actions .gsv-btn {
-    width: 100%;
   }
 }
