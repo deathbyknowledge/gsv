@@ -63,7 +63,7 @@ function firstHistoryMessageId(history: ChatHistory | null): number | null {
 
 function rowMergeKey(row: ChatTranscriptRow): string {
   if ((row.role === "tool" || row.role === "toolResult") && row.toolCallId) {
-    return `tool:${row.toolCallId}`;
+    return row.runId ? `tool:${row.runId}:${row.toolCallId}` : `tool:${row.toolCallId}`;
   }
   if (typeof row.messageId === "number") {
     return `message:${row.messageId}:${row.role ?? "message"}`;
@@ -224,7 +224,11 @@ function reconcileTransientRows(
 }
 
 function shouldKeepCurrentToolRow(current: ChatTranscriptRow, next: ChatTranscriptRow): boolean {
+  const sameRun = current.runId || next.runId
+    ? current.runId === next.runId
+    : true;
   return isConcreteToolRow(current)
+    && sameRun
     && current.status !== "planning"
     && next.role === "tool"
     && next.status === "planning"

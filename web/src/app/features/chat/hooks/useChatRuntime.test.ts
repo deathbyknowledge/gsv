@@ -142,4 +142,56 @@ describe("chat runtime row merging", () => {
       },
     ]);
   });
+
+  it("keeps same fallback tool ids from different runs separate", () => {
+    const startedAt = 1_782_600_000_000;
+    const currentRows = [
+      row({
+        id: "tool:workers-ai-tool-1",
+        role: "toolResult",
+        text: "done",
+        messageId: 2,
+        runId: "run-1",
+        status: "done",
+        timestamp: startedAt,
+        toolCallId: "workers-ai-tool-1",
+        toolName: "Read",
+        toolOutput: { content: "old" },
+      }),
+    ];
+    const nextRows = [
+      row({
+        id: "tool:workers-ai-tool-1",
+        role: "tool",
+        text: "Preparing Read",
+        messageId: 4,
+        runId: "run-2",
+        status: "planning",
+        timestamp: startedAt + 1_000,
+        toolArgs: { path: "/tmp/new.txt" },
+        toolCallId: "workers-ai-tool-1",
+        toolName: "Read",
+      }),
+    ];
+
+    expect(mergeTranscriptRows(currentRows, nextRows).map((item) => ({
+      role: item.role,
+      runId: item.runId,
+      status: item.status,
+      toolCallId: item.toolCallId,
+    }))).toEqual([
+      {
+        role: "toolResult",
+        runId: "run-1",
+        status: "done",
+        toolCallId: "workers-ai-tool-1",
+      },
+      {
+        role: "tool",
+        runId: "run-2",
+        status: "planning",
+        toolCallId: "workers-ai-tool-1",
+      },
+    ]);
+  });
 });
