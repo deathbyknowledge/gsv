@@ -37,6 +37,7 @@ import {
   formatCommitAuthor,
   formatRepositoryOption,
   initialRefForRepository,
+  isLocalBranchRef,
   normalizeRepoPath,
   parentRepoPath,
   pathBasename,
@@ -108,10 +109,7 @@ function repositoryForTab(tab: RepositoryWorkspaceTab | null, repos: readonly Re
 }
 
 function isPullableRef(ref: string, refs: RepositoryRefs | null | undefined): boolean {
-  if (!ref || ref.startsWith("refs/remotes/") || ref.startsWith("refs/tags/")) {
-    return false;
-  }
-  return refs?.tags[ref] ? false : true;
+  return isLocalBranchRef(refs, ref);
 }
 
 function pullDisabledReason({

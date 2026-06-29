@@ -73,6 +73,10 @@ export function refsToOptions(refs: RepositoryRefs | null | undefined, activeRef
   return [...options];
 }
 
+export function isLocalBranchRef(refs: RepositoryRefs | null | undefined, ref: string): boolean {
+  return Boolean(ref && refs?.heads[ref]);
+}
+
 export function refHash(refs: RepositoryRefs | null | undefined, ref: string): string | null {
   if (!refs || !ref) {
     return null;
