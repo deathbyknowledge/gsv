@@ -5,7 +5,7 @@ The browser extension gives GSV control over your browser — navigate, read pag
 ## Connect your browser
 
 1. In GSV, open **Machines → Connect new machine** and select **Browser.** Give it a name or leave the default.
-2. Follow the instructions on that screen. The extension download is also available directly here: [gsv-browser-extension.zip](https://github.com/deathbyknowledge/gsv/releases/download/dev/gsv-browser-extension.zip). Click **Next.**
+2. Follow the instructions on that screen. The extension download is also available directly here: [gsv-browser-extension.zip](https://github.com/deathbyknowledge/gsv/releases/download/v0.2.9/gsv-browser-extension.zip). Click **Next.**
 3. Open the extension, go to **Settings**, and paste in the values shown in the GSV web UI.
 4. Click **Check connection** to confirm it's live.
 
