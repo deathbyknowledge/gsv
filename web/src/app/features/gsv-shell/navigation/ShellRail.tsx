@@ -60,9 +60,9 @@ const GSV_PLAIN_SURFACES: ShellSurfaceId[] = ["files", "repositories", "library"
 
 const GSV_RAIL_ITEMS: { label: string; surface: ShellSurfaceId }[] = [
   { label: "FILES", surface: "files" },
-  { label: "REPOS", surface: "repositories" },
   { label: "LIBRARY", surface: "library" },
   { label: "TERMINAL", surface: "terminal" },
+  { label: "REPOS", surface: "repositories" },
   { label: "SETTINGS", surface: "settings" },
 ];
 

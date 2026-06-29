@@ -26,6 +26,7 @@ const DOTICON_ALIAS: Record<string, string> = {
   machines: "box",
   messengers: "chat",
   plus: "circlePlus",
+  repositories: "branch",
   settings: "cog",
   terminal: "powershell",
   whatsapp: "messenger",

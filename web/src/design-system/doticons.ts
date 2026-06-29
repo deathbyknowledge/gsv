@@ -5,6 +5,7 @@ export const DOTICONS: string[] = [
   "apple",
   "arrowRight",
   "box",
+  "branch",
   "camera",
   "chat",
   "circleDots",

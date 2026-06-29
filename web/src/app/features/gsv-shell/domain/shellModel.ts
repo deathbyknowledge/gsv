@@ -104,12 +104,6 @@ export const SYSTEM_DOCK_ITEMS: SystemDockItem[] = [
     description: "Ship filesystem, datasets, logs, and build artifacts.",
   },
   {
-    id: "repositories",
-    label: "REPOS",
-    icon: "folder",
-    description: "Browse ripgit repositories, source history, search, and diffs.",
-  },
-  {
     id: "library",
     label: "LIBRARY",
     icon: "pencil",
@@ -120,6 +114,12 @@ export const SYSTEM_DOCK_ITEMS: SystemDockItem[] = [
     label: "TERMINAL",
     icon: "terminal",
     description: "Direct shell access to GSV and connected machines.",
+  },
+  {
+    id: "repositories",
+    label: "REPOS",
+    icon: "doticons/branch",
+    description: "Browse ripgit repositories, source history, search, and diffs.",
   },
   {
     id: "settings",
@@ -205,7 +205,7 @@ export function shellTabForSurface(surface: ShellPageSurfaceId): ShellPageTab {
       surface,
       title,
       kind: "system",
-      icon: "folder",
+      icon: "doticons/branch",
       type: "GSV · REPOSITORIES",
     };
   }
