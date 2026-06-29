@@ -1,6 +1,6 @@
 # Why GSV?
 
-Your AI assistant lives on one box. Your life doesn't.
+An AI assistant lives on one box. Your life doesn't.
 
 You've got a laptop, maybe a home server, a phone. Today's self-hosted agents make you pick *one* of those to run the brain, then keep that machine awake forever. Turn it off and your assistant goes dark. Every other device you own just sits there.
 
@@ -23,11 +23,11 @@ GSV is MIT-licensed and open from the ground up — read every line yourself. It
 Two things we keep straight, because you'll check:
 
 - **Open-source is true today.** All the code is public, MIT-licensed.
-- **Full self-hosting off Cloudflare is on the roadmap, not shipped yet.** Today GSV runs in your own Cloudflare account rather than fully on your own metal. We'd rather say that plainly than imply control that doesn't exist yet.
+- **Full self-hosting off Cloudflare is on the roadmap, not shipped yet.** The runtime beneath GSV is open source, so the path to your own metal is real — not yet supported, but not a promise we can't keep.
 
 ## What it costs
 
-From about **$5/mo** for Cloudflare infra, plus your own model costs. That's it.
+From about **$5/mo** for Cloudflare infra, plus your own model costs. That's it!
 
 ## Where we are
 

@@ -169,7 +169,7 @@ export default defineConfig({
 
     socialLinks: [
       { icon: "github", link: "https://github.com/deathbyknowledge/gsv" },
-      { icon: "x", link: "https://x.com/humachinesinc" },
+      { icon: "x", link: "https://x.com/gsvspace" },
       { icon: "discord", link: "https://discord.gg/hy9ExJJFvn" },
     ],
 
