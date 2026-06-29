@@ -54,5 +54,7 @@ Now that GSV is running:
 - [Bring your own model](/how-to/bring-your-own-model) — use a provider key instead of the Cloudflare default.
 - [Connect a messenger](/how-to/messengers) — talk to GSV from Telegram or Discord.
 - [Add integrations](/how-to/integrations) — wire in MCP servers.
+- [Web access](/how-to/browse-web) — let your agent browse your web like you can.
 - [Install an application](/how-to/applications)
+- [Examples](/examples/index) — see some examples on how to use GSV.
 - [FAQ](/get-started/faq) — common questions about cost, devices, memory, and more.

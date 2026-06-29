@@ -2,7 +2,7 @@
 
 ![gsv](https://github.com/user-attachments/assets/e50a394b-e568-4306-bb48-e3b532c01eda)
 
-> ***A mind for your machines, by [Humans & Machines, Inc.](https://humansandmachin.es)***
+> ***a mind for your machines***
 
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![Release](https://img.shields.io/github/v/release/deathbyknowledge/gsv)](https://github.com/deathbyknowledge/gsv/releases)
