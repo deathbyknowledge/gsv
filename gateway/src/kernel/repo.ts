@@ -5,6 +5,8 @@ import type {
   RepoCompareResult,
   RepoCreateArgs,
   RepoCreateResult,
+  RepoDeleteArgs,
+  RepoDeleteResult,
   RepoDiffArgs,
   RepoDiffResult,
   RepoImportArgs,
@@ -28,7 +30,7 @@ import { resolveCallerOwnerUid } from "./context";
 import { RipgitClient, type RipgitApplyOp, type RipgitRepoRef } from "../fs/ripgit/client";
 import { accountHomeRepoRef } from "../fs/ripgit/repos";
 import { visiblePackageScopesForActor } from "./packages";
-import { isRepoPublic } from "./repo-visibility";
+import { isRepoPublic, repoVisibilityConfigKey } from "./repo-visibility";
 import { canOwnerDelegateRunAs } from "./account-access";
 
 const TEXT_DECODER = new TextDecoder();
@@ -378,6 +380,28 @@ export async function handleRepoImport(
   if (typeof imported.localChanged === "boolean") result.localChanged = imported.localChanged;
   if (typeof imported.diverged === "boolean") result.diverged = imported.diverged;
   return result;
+}
+
+export async function handleRepoDelete(
+  args: RepoDeleteArgs,
+  ctx: KernelContext,
+): Promise<RepoDeleteResult> {
+  const repo = parseRepoSlug(args.repo);
+  assertCanWriteRepo(repo, ctx);
+  const slug = repoSlug(repo);
+  const dependents = ctx.packages.list().filter((record) => record.manifest.source.repo === slug);
+  if (dependents.length > 0) {
+    const names = dependents.map((record) => record.manifest.name || record.packageId).slice(0, 3).join(", ");
+    const suffix = dependents.length > 3 ? `, +${dependents.length - 3}` : "";
+    throw new Error(`Repository ${slug} backs installed packages: ${names}${suffix}`);
+  }
+
+  await requireRipgitClient(ctx).deleteRepository(repo);
+  unregisterRepo(ctx, repo);
+  return {
+    deleted: true,
+    repo: slug,
+  };
 }
 
 function requireIdentity(ctx: KernelContext): NonNullable<KernelContext["identity"]> {
@@ -752,6 +776,16 @@ function registerRepo(
   if (typeof description === "string" && description.trim().length > 0) {
     ctx.config.set(repoConfigKey(repo, "description"), description.trim());
   }
+}
+
+function unregisterRepo(
+  ctx: KernelContext,
+  repo: Pick<RipgitRepoRef, "owner" | "repo">,
+): void {
+  for (const field of ["created_at", "updated_at", "description"]) {
+    ctx.config.delete(repoConfigKey(repo, field));
+  }
+  ctx.config.delete(repoVisibilityConfigKey(repo));
 }
 
 function repoConfigKey(repo: Pick<RipgitRepoRef, "owner" | "repo">, field: string): string {

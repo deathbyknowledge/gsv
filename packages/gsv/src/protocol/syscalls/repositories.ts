@@ -251,3 +251,12 @@ export type RepoImportResult = {
   localChanged?: boolean;
   diverged?: boolean;
 };
+
+export type RepoDeleteArgs = {
+  repo: string;
+};
+
+export type RepoDeleteResult = {
+  deleted: boolean;
+  repo: string;
+};

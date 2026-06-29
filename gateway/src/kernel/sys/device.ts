@@ -4,6 +4,8 @@ import type {
   SysDeviceListResult,
   SysDeviceGetArgs,
   SysDeviceGetResult,
+  SysDeviceDeleteArgs,
+  SysDeviceDeleteResult,
   SysDeviceUpdateArgs,
   SysDeviceUpdateResult,
 } from "@humansandmachines/gsv/protocol";
@@ -86,5 +88,48 @@ export function handleSysDeviceUpdate(
   });
   return {
     device: updated ? targetToDeviceDetail(updated) : null,
+  };
+}
+
+export function handleSysDeviceDelete(
+  args: SysDeviceDeleteArgs,
+  ctx: KernelContext,
+): SysDeviceDeleteResult {
+  const identity = ctx.identity?.process;
+  if (!identity) {
+    throw new Error("Authentication required");
+  }
+
+  const raw = (args ?? {}) as { deviceId?: unknown };
+  const deviceId = typeof raw.deviceId === "string" ? raw.deviceId.trim() : "";
+  if (!deviceId) {
+    throw new Error("sys.device.delete requires deviceId");
+  }
+
+  const device = ctx.devices.get(deviceId);
+  if (!device || !ctx.devices.canAccess(deviceId, identity.uid, identity.gids)) {
+    return { deleted: false, deviceId, revokedTokens: 0 };
+  }
+  if (identity.uid !== 0 && device.owner_uid !== identity.uid) {
+    throw new Error("Permission denied: machine forgetting is owner-managed");
+  }
+
+  const revokedTokens = ctx.auth
+    .listTokens(identity.uid === 0 ? undefined : identity.uid)
+    .filter((token) =>
+      token.kind === "node" &&
+      token.allowedDeviceId === deviceId &&
+      token.revokedAt === null
+    )
+    .reduce((count, token) => (
+      ctx.auth.revokeToken(token.tokenId, "machine forgotten", identity.uid === 0 ? undefined : identity.uid)
+        ? count + 1
+        : count
+    ), 0);
+
+  return {
+    deleted: ctx.devices.remove(deviceId),
+    deviceId,
+    revokedTokens,
   };
 }

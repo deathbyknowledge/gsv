@@ -367,6 +367,16 @@ export type SysDeviceUpdateResult = {
   device: SysDeviceDetail | null;
 };
 
+export type SysDeviceDeleteArgs = {
+  deviceId: string;
+};
+
+export type SysDeviceDeleteResult = {
+  deleted: boolean;
+  deviceId: string;
+  revokedTokens: number;
+};
+
 export type SysOAuthConnectionKind = "ai-provider" | "mcp-server" | "generic";
 
 export type SysOAuthStartArgs = {
