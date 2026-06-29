@@ -13,6 +13,7 @@ import type {
   ConsoleOverviewData,
   ConsolePackage,
   ConsolePackageEntrypoint,
+  ConsolePackageProfile,
   ConsolePackageRuntime,
   ConsoleProcess,
   ConsoleProcessState,
@@ -256,6 +257,7 @@ function normalizePackage(value: unknown): ConsolePackage | null {
   const scope = asRecord(record.scope);
   const review = asRecord(record.review);
   const entrypoints = asArray(record.entrypoints).map(normalizeEntrypoint).filter((entry): entry is ConsolePackageEntrypoint => entry !== null);
+  const profiles = asArray(record.profiles).map(normalizePackageProfile).filter((entry): entry is ConsolePackageProfile => entry !== null);
   const runtime = normalizePackageRuntime(record.runtime);
 
   return {
@@ -279,6 +281,7 @@ function normalizePackage(value: unknown): ConsolePackage | null {
     bindingNames: asArray(record.bindingNames).map(stringOrEmpty).filter(Boolean).sort(),
     entrypoints,
     uiEntrypoints: entrypoints.filter((entry) => entry.kind === "ui"),
+    profiles,
   };
 }
 
@@ -297,6 +300,29 @@ function normalizeEntrypoint(value: unknown): ConsolePackageEntrypoint | null {
     route: stringOrEmpty(record.route),
     command: stringOrEmpty(record.command),
     syscalls: asArray(record.syscalls).map(stringOrEmpty).filter(Boolean).sort(),
+  };
+}
+
+function normalizePackageProfile(value: unknown): ConsolePackageProfile | null {
+  const record = asRecord(value);
+  const name = nonEmptyString(record?.name);
+  if (!record || !name) {
+    return null;
+  }
+
+  const account = asRecord(record.account);
+  return {
+    name,
+    displayName: nonEmptyString(record.displayName) ?? name,
+    description: stringOrEmpty(record.description),
+    icon: stringOrEmpty(record.icon),
+    capabilities: asArray(record.capabilities).map(stringOrEmpty).filter(Boolean).sort(),
+    account: {
+      runAs: stringOrEmpty(account?.runAs),
+      username: stringOrEmpty(account?.username),
+      provisioned: typeof account?.provisioned === "boolean" ? account.provisioned : null,
+      runnable: typeof account?.runnable === "boolean" ? account.runnable : null,
+    },
   };
 }
 

@@ -1,6 +1,12 @@
 import type { KernelContext } from "./context";
 import { resolveCallerOwnerUid } from "./context";
-import { provisionEnabledPackagesForCaller, provisionPackageAgents, revokePackageAgentAccess } from "./package-agents";
+import {
+  packageAgentAccessGroup,
+  packageAgentUsername,
+  provisionEnabledPackagesForCaller,
+  provisionPackageAgents,
+  revokePackageAgentAccess,
+} from "./package-agents";
 import type {
   PkgAddArgs,
   PkgAddResult,
@@ -31,6 +37,7 @@ import type {
   PkgPublicSetArgs,
   PkgPublicSetResult,
   PkgCatalogEntry,
+  PkgProfileSummary,
   PkgSummary,
 } from "@humansandmachines/gsv/protocol";
 import gsvPackageInfo from "@humansandmachines/gsv/package.json";
@@ -1151,13 +1158,7 @@ function toPkgSummary(record: InstalledPackageRecord, ctx: KernelContext): PkgSu
       syscalls: entrypoint.syscalls,
       windowDefaults: entrypoint.windowDefaults,
     })),
-    profiles: (record.manifest.profiles ?? []).map((profile) => ({
-      name: profile.name,
-      displayName: profile.displayName,
-      description: profile.description,
-      icon: profile.icon,
-      capabilities: profile.capabilities,
-    })),
+    profiles: (record.manifest.profiles ?? []).map((profile) => toProfileSummary(record, profile, ctx)),
     bindingNames: (record.manifest.capabilities?.bindings ?? []).map((binding) => binding.binding),
     review: {
       required: record.reviewRequired,
@@ -1190,14 +1191,43 @@ function toCatalogEntry(record: InstalledPackageRecord): PkgCatalogEntry {
       syscalls: entrypoint.syscalls,
       windowDefaults: entrypoint.windowDefaults,
     })),
-    profiles: (record.manifest.profiles ?? []).map((profile) => ({
-      name: profile.name,
-      displayName: profile.displayName,
-      description: profile.description,
-      icon: profile.icon,
-      capabilities: profile.capabilities,
-    })),
+    profiles: (record.manifest.profiles ?? []).map((profile) => toProfileSummary(record, profile)),
     bindingNames: (record.manifest.capabilities?.bindings ?? []).map((binding) => binding.binding),
+  };
+}
+
+function toProfileSummary(
+  record: InstalledPackageRecord,
+  profile: NonNullable<InstalledPackageRecord["manifest"]["profiles"]>[number],
+  ctx?: KernelContext,
+): PkgProfileSummary {
+  const username = packageAgentUsername(record.manifest.name, profile.name);
+  const account: PkgProfileSummary["account"] = {
+    runAs: `${record.manifest.name}#${profile.name}`,
+    username,
+  };
+
+  if (ctx?.auth) {
+    const entry = ctx.auth.getPasswdByUsername(username);
+    const ownerUid = ctx.identity ? resolveCallerOwnerUid(ctx) : undefined;
+    const ownerName = typeof ownerUid === "number"
+      ? ctx.auth.getPasswdByUid(ownerUid)?.username
+      : undefined;
+    const group = ctx.auth.getGroupByName(packageAgentAccessGroup(username));
+    account.provisioned = Boolean(entry);
+    account.runnable = record.enabled && Boolean(entry) && (
+      ownerUid === 0 ||
+      Boolean(ownerName && group?.members.includes(ownerName))
+    );
+  }
+
+  return {
+    name: profile.name,
+    displayName: profile.displayName,
+    description: profile.description,
+    icon: profile.icon,
+    capabilities: profile.capabilities,
+    account,
   };
 }
 

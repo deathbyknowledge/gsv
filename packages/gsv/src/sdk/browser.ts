@@ -1,4 +1,5 @@
 import type { HostBackendCloseEvent, HostBackendSocket, HostClient } from "./host";
+import type { GsvClientCall, GsvClientNamespaces } from "../client";
 
 export type PackageAppBoot = {
   packageId: string;
@@ -81,6 +82,14 @@ type BackendProxyControl = {
   reconnect(): Promise<void>;
 };
 
+export type PackageGsvClient = GsvClientNamespaces & {
+  call: GsvClientCall;
+  request: GsvClientCall;
+  backend<T = unknown>(): Promise<T>;
+  getBackend<T = unknown>(): Promise<T>;
+  boot(): PackageAppBoot;
+};
+
 export type AppEventListener = (event: string, payload: unknown) => void;
 export type AppRuntimeStatus = "booting" | "connecting" | "connected" | "loading" | "ready" | "reconnecting" | "error";
 
@@ -115,6 +124,7 @@ export function hasAppBoot(): boolean {
 
 let backendConnectionPromise: Promise<BackendConnection> | null = null;
 let backendProxy: unknown = null;
+let gsvClient: PackageGsvClient | null = null;
 let appSessionRefreshPromise: Promise<PackageAppBoot> | null = null;
 let appRuntimeReady = false;
 let connectedReadyFallback: ReturnType<typeof setTimeout> | null = null;
@@ -489,7 +499,7 @@ async function connectBackendFrameTransport(boot: PackageAppBoot): Promise<Backe
     try {
       return await connectHostBackendTransport(boot);
     } catch (error) {
-      console.warn("[gsv-package] host backend bridge failed; trying direct socket", error);
+      throw new Error(`GSV host backend bridge failed: ${formatErrorMessage(error)}`);
     }
   }
   return await connectDirectBackendTransport(boot);
@@ -526,7 +536,7 @@ function shouldRetryBackendCall(connection: BackendConnection | null, error: unk
 }
 
 function shouldMaintainBackendConnection(): boolean {
-  return Boolean(backendProxy) || appEventListeners.size > 0;
+  return Boolean(backendProxy) || Boolean(gsvClient) || appEventListeners.size > 0;
 }
 
 function scheduleBackendReconnect(): void {
@@ -714,10 +724,6 @@ async function refreshAppSession(boot: PackageAppBoot): Promise<PackageAppBoot> 
     if (!isPackageAppBoot(nextBoot)) {
       throw new Error("package app session refresh returned an invalid bootstrap payload");
     }
-    if (!nextBoot.hasBackend) {
-      throw new Error("package app has no backend rpc");
-    }
-
     if (globalThis.window) {
       globalThis.window.__GSV_APP_BOOT__ = nextBoot;
     }
@@ -773,7 +779,15 @@ function emitAppEvent(event: string, payload: unknown): void {
   }
 }
 
-async function connectBackendTransport(): Promise<BackendConnection> {
+type BackendTransportOptions = {
+  requireBackend?: boolean;
+};
+
+async function connectBackendTransport(options: BackendTransportOptions = {}): Promise<BackendConnection> {
+  const requireBackend = options.requireBackend !== false;
+  if (requireBackend && !getAppBoot().hasBackend) {
+    throw new Error("package app has no backend rpc");
+  }
   if (backendConnectionPromise) {
     return backendConnectionPromise;
   }
@@ -781,9 +795,6 @@ async function connectBackendTransport(): Promise<BackendConnection> {
   let ready: Promise<BackendConnection>;
   ready = (async () => {
     let boot = getAppBoot();
-    if (!boot.hasBackend) {
-      throw new Error("package app has no backend rpc");
-    }
     if (shouldRefreshAppSession(boot)) {
       boot = await refreshAppSession(boot);
     }
@@ -850,7 +861,7 @@ async function connectBackendTransport(): Promise<BackendConnection> {
 async function invokeBackend(method: string, args?: unknown): Promise<unknown> {
   let connection: BackendConnection | null = null;
   try {
-    connection = await connectBackendTransport();
+    connection = await connectBackendTransport({ requireBackend: true });
     return await connection.backend.invoke(method, args);
   } catch (error) {
     if (!shouldRetryBackendCall(connection, error)) {
@@ -860,7 +871,7 @@ async function invokeBackend(method: string, args?: unknown): Promise<unknown> {
 
   resetBackendConnection();
   setRuntimeStatus(appRuntimeReady ? "reconnecting" : "connecting");
-  const nextConnection = await connectBackendTransport();
+  const nextConnection = await connectBackendTransport({ requireBackend: true });
   return nextConnection.backend.invoke(method, args);
 }
 
@@ -879,7 +890,7 @@ function createBackendProxy<T = unknown>(): T {
       if (prop === "reconnect") {
         return async () => {
           resetBackendConnection();
-          await connectBackendTransport();
+          await connectBackendTransport({ requireBackend: true });
         };
       }
       if (typeof prop !== "string") {
@@ -892,6 +903,74 @@ function createBackendProxy<T = unknown>(): T {
     globalThis.window.backend = backendProxy;
   }
   return backendProxy as T;
+}
+
+async function requestKernel<T = unknown>(call: string, args?: unknown): Promise<T> {
+  let connection: BackendConnection | null = null;
+  try {
+    connection = await connectBackendTransport({ requireBackend: false });
+    return await connection.request<T>("kernel.request", { call, args });
+  } catch (error) {
+    if (!shouldRetryBackendCall(connection, error)) {
+      throw error;
+    }
+  }
+
+  resetBackendConnection();
+  setRuntimeStatus(appRuntimeReady ? "reconnecting" : "connecting");
+  const nextConnection = await connectBackendTransport({ requireBackend: false });
+  return await nextConnection.request<T>("kernel.request", { call, args });
+}
+
+function createNamespaceProxy(path: string[]): unknown {
+  return new Proxy(() => undefined, {
+    get(_target, prop) {
+      if (prop === "then") {
+        return undefined;
+      }
+      if (typeof prop !== "string") {
+        return undefined;
+      }
+      return createNamespaceProxy([...path, prop]);
+    },
+    apply(_target, _thisArg, args) {
+      return requestKernel(path.join("."), args[0]);
+    },
+  });
+}
+
+export function getGsvClient(): PackageGsvClient {
+  if (gsvClient) {
+    return gsvClient;
+  }
+  const root = new Proxy({} as PackageGsvClient, {
+    get(_target, prop) {
+      if (prop === "then") {
+        return undefined;
+      }
+      if (prop === "call" || prop === "request") {
+        return requestKernel;
+      }
+      if (prop === "backend" || prop === "getBackend") {
+        return getBackend;
+      }
+      if (prop === "boot") {
+        return getAppBoot;
+      }
+      if (typeof prop !== "string") {
+        return undefined;
+      }
+      return createNamespaceProxy([prop]);
+    },
+  });
+  gsvClient = root;
+  return root;
+}
+
+export async function createGsvClient(): Promise<PackageGsvClient> {
+  const client = getGsvClient();
+  await connectBackendTransport({ requireBackend: false });
+  return client;
 }
 
 function buildRpcWebSocketUrl(rpcBase: string): string {
@@ -909,8 +988,11 @@ function buildRpcSessionRefreshUrl(boot: PackageAppBoot): string {
 }
 
 export async function connectBackend<T = unknown>(): Promise<T> {
+  if (!getAppBoot().hasBackend) {
+    throw new Error("package app has no backend rpc");
+  }
   const proxy = createBackendProxy<T>();
-  await connectBackendTransport();
+  await connectBackendTransport({ requireBackend: true });
   return proxy;
 }
 

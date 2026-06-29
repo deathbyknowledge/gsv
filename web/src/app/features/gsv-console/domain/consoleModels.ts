@@ -45,6 +45,20 @@ export type ConsolePackageEntrypoint = {
   syscalls: string[];
 };
 
+export type ConsolePackageProfile = {
+  name: string;
+  displayName: string;
+  description: string;
+  icon: string;
+  capabilities: string[];
+  account: {
+    runAs: string;
+    username: string;
+    provisioned: boolean | null;
+    runnable: boolean | null;
+  };
+};
+
 export type ConsolePackage = {
   packageId: string;
   name: string;
@@ -66,6 +80,7 @@ export type ConsolePackage = {
   bindingNames: string[];
   entrypoints: ConsolePackageEntrypoint[];
   uiEntrypoints: ConsolePackageEntrypoint[];
+  profiles: ConsolePackageProfile[];
 };
 
 export type ConsoleAccountRelation = "self" | "personal-agent" | "agent" | "human" | "unknown";

@@ -109,6 +109,7 @@ export function packageCapabilitySummary(pkg: ConsolePackage): string {
   const parts = [
     packageRuntimeLabel(pkg.runtime),
     pkg.entrypoints.length > 0 ? `${pkg.entrypoints.length} entrypoint${pkg.entrypoints.length === 1 ? "" : "s"}` : "",
+    pkg.profiles.length > 0 ? `${pkg.profiles.length} service profile${pkg.profiles.length === 1 ? "" : "s"}` : "",
     pkg.bindingNames.length > 0 ? `${pkg.bindingNames.length} binding${pkg.bindingNames.length === 1 ? "" : "s"}` : "",
   ].filter(Boolean);
   return parts.join(" / ") || "PACKAGE";
@@ -127,6 +128,9 @@ export function buildPackageReviewPrompt(pkg: ConsolePackage, packages: readonly
   const entrypoints = pkg.entrypoints.length > 0
     ? pkg.entrypoints.map((entrypoint) => `${entrypoint.name}:${entrypoint.kind}`).join(", ")
     : "none";
+  const profiles = pkg.profiles.length > 0
+    ? pkg.profiles.map((profile) => `${profile.account.runAs || profile.name} -> ${profile.account.username || "account pending"}`).join(", ")
+    : "none";
   const sourcePath = packageSourcePathForPackage(pkg, packages);
 
   return [
@@ -141,6 +145,7 @@ export function buildPackageReviewPrompt(pkg: ConsolePackage, packages: readonly
     `Subdir: ${pkg.sourceSubdir || "."}`,
     `Declared bindings: ${bindings}`,
     `Entrypoints: ${entrypoints}`,
+    `Service profiles: ${profiles}`,
     "",
     "Review workflow:",
     "1. Start with pkg manifest, pkg capabilities, pkg source, rgit refs --here, and rgit log --here.",

@@ -82,6 +82,7 @@ const appPackage: ConsolePackage = {
     command: "",
     syscalls: [],
   }],
+  profiles: [],
 };
 
 const integrationPackage: ConsolePackage = {

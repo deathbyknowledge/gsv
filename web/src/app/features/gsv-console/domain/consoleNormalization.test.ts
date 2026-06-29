@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeConfigPayload, normalizeTargetsPayload } from "./consoleNormalization";
+import { normalizeConfigPayload, normalizePackagesPayload, normalizeTargetsPayload } from "./consoleNormalization";
 
 describe("console normalization", () => {
   it("redacts secrets nested inside model profile config values", () => {
@@ -46,5 +46,41 @@ describe("console normalization", () => {
       { deviceId: "adapter:discord:ops", kind: "adapter" },
       { deviceId: "macbook", kind: "native-device" },
     ]);
+  });
+
+  it("normalizes package service profiles and account state", () => {
+    const [pkg] = normalizePackagesPayload({
+      packages: [{
+        packageId: "import:team/strudel-live:.",
+        name: "strudel-live",
+        runtime: "dynamic-worker",
+        enabled: true,
+        profiles: [{
+          name: "coproducer",
+          displayName: "Co-producer",
+          capabilities: ["proc.history"],
+          account: {
+            runAs: "strudel-live#coproducer",
+            username: "strudel-live-coproducer",
+            provisioned: true,
+            runnable: true,
+          },
+        }],
+      }],
+    });
+
+    expect(pkg.profiles).toEqual([{
+      name: "coproducer",
+      displayName: "Co-producer",
+      description: "",
+      icon: "",
+      capabilities: ["proc.history"],
+      account: {
+        runAs: "strudel-live#coproducer",
+        username: "strudel-live-coproducer",
+        provisioned: true,
+        runnable: true,
+      },
+    }]);
   });
 });

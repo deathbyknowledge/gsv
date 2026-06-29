@@ -20,6 +20,10 @@ import {
   resolveInstalledPackage,
 } from "../../../kernel/pkg";
 import {
+  packageAgentUsername,
+  packageAgentAccessGroup,
+} from "../../../kernel/package-agents";
+import {
   packageRouteBase,
   visiblePackageScopesForActor,
   type InstalledPackageRecord,
@@ -335,6 +339,13 @@ function formatPkgStatus(pkg: InstalledPackageRecord, ctx: KernelContext): strin
   const entrypoints = pkg.manifest.entrypoints.length > 0
     ? pkg.manifest.entrypoints.map((entry) => `${entry.name}:${entry.kind}`).join(", ")
     : "none";
+  const profiles = (pkg.manifest.profiles ?? []).map((profile) => {
+    const username = packageAgentUsername(pkg.manifest.name, profile.name);
+    const provisioned = ctx.auth.getPasswdByUsername(username) ? "installed" : "not installed";
+    const group = ctx.auth.getGroupByName(packageAgentAccessGroup(username));
+    const access = group?.members.length ? `, access ${group.members.join(",")}` : "";
+    return `${profile.name} (${pkg.manifest.name}#${profile.name} -> ${username}, ${provisioned}${access})`;
+  });
   return [
     `package: ${pkg.manifest.name}`,
     `packageId: ${pkg.packageId}`,
@@ -348,6 +359,7 @@ function formatPkgStatus(pkg: InstalledPackageRecord, ctx: KernelContext): strin
     `resolvedCommit: ${pkg.manifest.source.resolvedCommit ?? "unknown"}`,
     `bindings: ${bindings.length > 0 ? bindings.join(", ") : "none"}`,
     `entrypoints: ${entrypoints}`,
+    `profiles: ${profiles.length > 0 ? profiles.join(", ") : "none"}`,
     "",
   ].join("\n");
 }
