@@ -508,7 +508,7 @@ async function connectBackendFrameTransport(boot: PackageAppBoot): Promise<Backe
     try {
       return await connectHostBackendTransport(boot);
     } catch (error) {
-      throw new Error(`GSV host backend bridge failed: ${formatErrorMessage(error)}`);
+      console.warn("[gsv-package] host backend bridge failed; trying direct socket", error);
     }
   }
   return await connectDirectBackendTransport(boot);
