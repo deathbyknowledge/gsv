@@ -195,6 +195,80 @@
   padding: 14px;
 }
 
+/* Narrow panel (chat dragged wide or a small window): stack the workspace so
+   the left panel moves to the top — the action bar becomes a horizontal row
+   (index) and the outline becomes a top dropdown (reader). Driven by the
+   ResizeObserver on the library root, so it tracks the panel, not the viewport. */
+.gsv-library.is-narrow .gsv-library-workspace {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.gsv-library.is-narrow .gsv-library-action {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  border-right: 0;
+  border-bottom: 1px solid var(--rule-section, var(--line));
+}
+
+.gsv-library.is-narrow .gsv-library-action > :first-child {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.gsv-library.is-narrow .gsv-library-outline-panel {
+  border-right: 0;
+  border-bottom: 1px solid var(--rule-section, var(--line));
+}
+
+/* Reader outline as a dropdown (narrow only). */
+.gsv-library-outline-dd > summary {
+  list-style: none;
+}
+
+.gsv-library-outline-summary {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-height: 44px;
+  padding: 12px 16px;
+  cursor: pointer;
+  color: var(--text-title);
+  font-family: var(--gsv-font-mono);
+  font-size: 12px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+.gsv-library-outline-summary::-webkit-details-marker {
+  display: none;
+}
+
+.gsv-library-outline-dot {
+  width: 6px;
+  height: 6px;
+  background: var(--accent);
+}
+
+.gsv-library-outline-count {
+  color: var(--meta);
+}
+
+.gsv-library-outline-summary::after {
+  content: "";
+  margin-left: auto;
+  border-left: 6px solid var(--accent);
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  transition: transform 0.15s ease;
+}
+
+.gsv-library-outline-dd[open] .gsv-library-outline-summary::after {
+  transform: rotate(90deg);
+}
+
 .gsv-library-browser-list {
   flex: 1 1 auto;
   min-height: 0;

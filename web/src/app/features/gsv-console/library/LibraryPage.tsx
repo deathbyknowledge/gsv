@@ -50,9 +50,32 @@ type PreviewState = {
   request: LibraryPreviewRequest;
 };
 
+const LIBRARY_NARROW_WIDTH = 720;
+
 export function LibraryPage({ route = { view: "index" }, onRouteChange }: LibraryPageProps) {
   const requestLeave = useUnsavedGuardLeave();
   const library = useLibraryWorkspace(route, onRouteChange, requestLeave);
+
+  // Respond to the PANEL width (chat resize + window resize), not the viewport:
+  // observe the library root so the workspace can stack and the action bar /
+  // outline move to the top when the panel is narrow. A callback ref attaches
+  // the observer once the root mounts (after the loading/error gates).
+  const [narrow, setNarrow] = useState(false);
+  const narrowObserverRef = useRef<ResizeObserver | null>(null);
+  const rootRef = useCallback((node: HTMLDivElement | null) => {
+    narrowObserverRef.current?.disconnect();
+    narrowObserverRef.current = null;
+    if (!node) {
+      return;
+    }
+    const measure = () => setNarrow(node.getBoundingClientRect().width < LIBRARY_NARROW_WIDTH);
+    measure();
+    if (typeof ResizeObserver !== "undefined") {
+      const observer = new ResizeObserver(measure);
+      observer.observe(node);
+      narrowObserverRef.current = observer;
+    }
+  }, []);
 
   useUnsavedGuard(() => {
     const editorNote = library.state.selectedNote;
@@ -109,11 +132,11 @@ export function LibraryPage({ route = { view: "index" }, onRouteChange }: Librar
 
   return (
     <ConsolePage flush>
-      <div class="gsv-library" aria-label="GSV library">
+      <div class={`gsv-library${narrow ? " is-narrow" : ""}`} aria-label="GSV library" ref={rootRef}>
         {library.error ? <StatusBanner tone="error" label={library.error} /> : null}
         {!library.error && library.notice ? <StatusBanner tone="live" label={library.notice} /> : null}
         {library.activeRoute.view === "reader" ? (
-          <LibraryReader library={library} />
+          <LibraryReader library={library} narrow={narrow} />
         ) : library.activeRoute.view === "editor" ? (
           <LibraryEditor library={library} />
         ) : library.activeRoute.view === "capture" ? (
@@ -373,8 +396,10 @@ function SearchResults({
   );
 }
 
-function LibraryReader({ library }: { library: LibraryRuntime }) {
+function LibraryReader({ library, narrow }: { library: LibraryRuntime; narrow: boolean }) {
   const note = library.state.selectedNote;
+  // When narrow, the outline collapses into a top dropdown (closed by default).
+  const [outlineOpen, setOutlineOpen] = useState(false);
   const [previewState, setPreviewState] = useState<PreviewState | null>(null);
   const [previewPayload, setPreviewPayload] = useState<LibraryPreviewPayload | null>(null);
   const [previewLoadingKey, setPreviewLoadingKey] = useState<string | null>(null);
@@ -516,26 +541,44 @@ function LibraryReader({ library }: { library: LibraryRuntime }) {
   ];
   const backFolder = belowBase.length ? belowBase[belowBase.length - 1].path : "";
 
+  const outlineRows = library.pageHeadings.length === 0 ? (
+    <div class="gsv-library-empty-row">NO HEADINGS</div>
+  ) : library.pageHeadings.map((heading) => (
+    <a
+      class={`gsv-library-outline-row level-${heading.level}`}
+      href={`#${heading.id}`}
+      key={heading.id}
+    >
+      {heading.text}
+    </a>
+  ));
+
   return (
     <div class="gsv-library-index">
       <LibraryCollectionBar library={library} />
       <div class="gsv-library-workspace">
-        {/* OUTLINE takes the left panel (the action-bar slot on the index). */}
+        {/* OUTLINE takes the left panel on wide screens; when narrow it moves to
+            the top and collapses into a dropdown. */}
         <section class="gsv-library-outline-panel">
-          <SectionHeader title="OUTLINE" meta={`${library.pageHeadings.length}`} divider />
-          <div class="gsv-library-outline-scroll">
-            {library.pageHeadings.length === 0 ? (
-              <div class="gsv-library-empty-row">NO HEADINGS</div>
-            ) : library.pageHeadings.map((heading) => (
-              <a
-                class={`gsv-library-outline-row level-${heading.level}`}
-                href={`#${heading.id}`}
-                key={heading.id}
-              >
-                {heading.text}
-              </a>
-            ))}
-          </div>
+          {narrow ? (
+            <details
+              class="gsv-library-outline-dd"
+              open={outlineOpen}
+              onToggle={(event) => setOutlineOpen((event.currentTarget as HTMLDetailsElement).open)}
+            >
+              <summary class="gsv-library-outline-summary">
+                <span class="gsv-library-outline-dot" aria-hidden="true" />
+                OUTLINE
+                <span class="gsv-library-outline-count">{library.pageHeadings.length}</span>
+              </summary>
+              <div class="gsv-library-outline-scroll">{outlineRows}</div>
+            </details>
+          ) : (
+            <>
+              <SectionHeader title="OUTLINE" meta={`${library.pageHeadings.length}`} divider />
+              <div class="gsv-library-outline-scroll">{outlineRows}</div>
+            </>
+          )}
         </section>
         <section class="gsv-library-browser">
           <div class="gsv-library-browser-crumbs">
