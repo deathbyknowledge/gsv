@@ -1,0 +1,218 @@
+/* Connect-new flow shell — simplified page chrome shared by all four flows.
+   Mirrors ConsoleDetailPage rows 2–3 (header + action bar) with the wizard
+   stepper as the action, then the current step body. */
+.gsv-cf {
+  flex: 1;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: transparent;
+}
+
+/* Row 1 + 2 — breadcrumb trail over the page header. */
+.gsv-cf-head {
+  display: flex;
+  flex-direction: column;
+}
+
+.gsv-cf-crumbs {
+  padding: 14px 20px 0;
+}
+
+/* Row 3 — action bar: icon tile + 2-line description, stepper below. */
+.gsv-cf-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px 26px;
+  border-bottom: 1px solid var(--rule-section);
+}
+
+.gsv-cf-bar-lead {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.gsv-cf-icon {
+  width: 52px;
+  height: 52px;
+  flex: none;
+  border: 1px solid var(--border);
+  background: linear-gradient(180deg, #100e2a, var(--node-bg));
+  color: var(--accent-bright);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45), inset 0 0 18px rgba(80, 70, 180, 0.18);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gsv-cf-desc {
+  min-width: 0;
+  margin: 0;
+  max-width: 560px;
+  color: var(--prose-dim);
+  font-family: var(--gsv-font-prose);
+  font-size: 13.5px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.gsv-cf-bar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+/* Body — the current step. */
+.gsv-cf-body {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 28px 26px 72px;
+}
+
+.gsv-cf-step {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* Shared step building blocks ----------------------------------------------- */
+
+/* Footer button row at the bottom of a step (BACK / CONTINUE etc). */
+.gsv-cf-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.gsv-cf-footer-spacer {
+  flex: 1 1 auto;
+}
+
+/* Field grid for the form steps (details, endpoint, import). */
+.gsv-cf-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 18px;
+}
+
+/* A selectable tile grid (platforms, providers). */
+.gsv-cf-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 14px;
+}
+
+/* Copy-able command block (install / connect / bootstrap commands). */
+.gsv-cf-cmd {
+  border: 1px solid var(--border);
+  background: var(--node-bg, #0a0822);
+}
+
+.gsv-cf-cmd-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--rule-inner);
+}
+
+.gsv-cf-cmd-title {
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-hi, #cbc7ff);
+}
+
+.gsv-cf-cmd-meta {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--meta, #7d78b8);
+}
+
+.gsv-cf-cmd-copy {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--accent-bright, #b3aeff);
+  font: inherit;
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+  cursor: pointer;
+}
+
+.gsv-cf-cmd-body {
+  margin: 0;
+  padding: 14px;
+  overflow-x: auto;
+  color: #d9d5ff;
+  font-family: var(--gsv-font-mono);
+  font-size: 12.5px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* Centered "waiting" / "success" caps inside a step. */
+.gsv-cf-cap {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.gsv-cf-cap-mark {
+  width: 46px;
+  height: 46px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  background: linear-gradient(180deg, #100e2a, var(--node-bg));
+  color: var(--accent-bright);
+}
+
+.gsv-cf-cap-text {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.gsv-cf-cap-title {
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  color: var(--text-hi, #f4f2ff);
+}
+
+.gsv-cf-cap-sub {
+  font-family: var(--gsv-font-prose);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--prose-dim);
+}
+
+/* A framed list (capabilities, summary rows). */
+.gsv-cf-framed {
+  border: 1px solid var(--border);
+  background: var(--panel);
+}
+
+@media (max-width: 720px) {
+  .gsv-cf-body {
+    padding: 24px 18px 72px;
+  }
+  .gsv-cf-bar {
+    padding: 16px 18px;
+  }
+}

@@ -23,6 +23,7 @@ import { ConsoleOverviewPage, type ConsoleOverviewTarget } from "../pages/Consol
 import { RuntimePage } from "../runtime/RuntimePage";
 import { ListTemplateMockPage } from "../list-template/ListTemplateMockPage";
 import { CardListTemplateMockPage } from "../card-template/CardListTemplateMockPage";
+import { ConnectFlowsMockPage } from "../connect-flows/ConnectFlowsMockPage";
 
 type GsvConsoleProps = {
   activeSurface: Exclude<ShellSurfaceId, "desktop" | "app">;
@@ -76,6 +77,9 @@ function surfaceTail(surface: ShellSurfaceId): string {
   }
   if (surface === "list-template" || surface === "card-template") {
     return "GSV · TEMPLATE";
+  }
+  if (surface === "connect-flows") {
+    return "GSV · CONNECT";
   }
   return "GSV · CONTROL";
 }
@@ -393,6 +397,8 @@ export function GsvConsole({
           />
         ) : activeSurface === "card-template" ? (
           <CardListTemplateMockPage onOpenChat={onOpenChat} />
+        ) : activeSurface === "connect-flows" ? (
+          <ConnectFlowsMockPage onOpenChat={onOpenChat} />
         ) : (
           null
         )}

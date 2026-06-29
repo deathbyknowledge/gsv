@@ -1,0 +1,15 @@
+/* Mock-page-only controls for the connect-flows surface. The shared toolbar
+   styles come from list-template/ListTemplateMockPage.css. */
+.gsv-cf-mock-stepnav {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.gsv-cf-mock-stepcount {
+  font-family: var(--gsv-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  color: var(--meta, #7d78b8);
+  white-space: nowrap;
+}
