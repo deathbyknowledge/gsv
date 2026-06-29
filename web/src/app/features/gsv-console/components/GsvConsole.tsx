@@ -35,6 +35,9 @@ type GsvConsoleProps = {
   onOpenSurface?: (surface: Exclude<ShellSurfaceId, "desktop" | "app">) => void;
   onOpenSectionCreate?: (kind: DesktopObjectId) => void;
   onOpenChat?: () => void;
+  /** Start a fresh task (Tasks list NEW TASK) — opens the dock AND spawns a new
+   *  process, unlike onOpenChat which only reveals the dock. */
+  onNewTask?: () => void;
   onSettingsRouteChange?: (route: SettingsRoute) => void;
   settingsRoute?: SettingsRoute;
 };
@@ -170,6 +173,7 @@ export function GsvConsole({
   onOpenSurface,
   onOpenSectionCreate,
   onOpenChat,
+  onNewTask,
   onSettingsRouteChange,
   settingsRoute = { view: "overview" },
 }: GsvConsoleProps) {
@@ -256,7 +260,7 @@ export function GsvConsole({
     } = {},
   ) => {
     if (kind === "tasks") {
-      return <RuntimePage {...options} onNewTask={onOpenChat} />;
+      return <RuntimePage {...options} onNewTask={onNewTask ?? onOpenChat} />;
     }
     if (kind === "machines") {
       return <MachinesPage {...options} />;
@@ -418,7 +422,7 @@ export function GsvConsole({
             />
           )
         ) : activeSurface === "runtime" ? (
-          <RuntimePage key={surfaceDetailSeq} onNewTask={onOpenChat} onSelectionChange={setSurfaceDetail} />
+          <RuntimePage key={surfaceDetailSeq} onNewTask={onNewTask ?? onOpenChat} onSelectionChange={setSurfaceDetail} />
         ) : activeSurface === "crew" ? (
           <ConsoleCrewPage onManageAgent={openAgent} onCreateAgent={openNewAgent} />
         ) : activeSurface === "agent" ? (

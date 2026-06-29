@@ -209,6 +209,13 @@ export function GsvShell({
   const [selectedChatAgentId, setSelectedChatAgentId] = useState<string | null>(null);
   const [selectedChatConversationId, setSelectedChatConversationId] = useState<string | null>(null);
   const [pendingChatProcess, setPendingChatProcess] = useState<ChatProcessSummary | null>(null);
+  // Bumped by NEW TASK actions to ask the chat dock for a fresh task (rather than
+  // just reopening the dock on whatever was last selected).
+  const [newTaskSignal, setNewTaskSignal] = useState(0);
+  const requestNewTask = () => {
+    shell.setChatOpen(true);
+    setNewTaskSignal((value) => value + 1);
+  };
   const chatProcesses = useChatProcessList();
   const chatProcessList = chatProcesses.data ?? [];
   const selectedListedChatProcess = selectedChatPid
@@ -452,6 +459,7 @@ export function GsvShell({
                         onOpenSurface={openShellSurface}
                         onOpenSectionCreate={createSectionObject}
                         onOpenChat={() => shell.setChatOpen(true)}
+                        onNewTask={requestNewTask}
                         onLibraryRouteChange={shell.syncActiveLibraryRoute}
                         onSettingsRouteChange={shell.syncActiveSettingsRoute}
                         libraryRoute={activeLibraryRoute}
@@ -533,6 +541,7 @@ export function GsvShell({
         </main>
 
         <ChatDock
+          newTaskSignal={newTaskSignal}
           open={shell.chatOpen}
           width={shell.resolvedChatWidth}
           activeConversationId={selectedChatConversationId ?? activeChatProcess?.activeConversationId ?? null}

@@ -392,7 +392,7 @@ export function AgentEditor(props: AgentEditorProps) {
             Same full-width header as the list/detail pages: name + status. */}
         <SectionHeader
           className="gsv-ae-header"
-          title={name}
+          title={nameDisplay}
           meta={status.toUpperCase()}
           divider
           headingLevel={2}
