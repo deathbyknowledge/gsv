@@ -227,6 +227,8 @@ describe("repo syscalls", () => {
     const fetcher = makeFetcher((url, init) => {
       expect(url.pathname).toBe("/alice/demo");
       expect(init?.method).toBe("DELETE");
+      const headers = new Headers(init?.headers);
+      expect(headers.get("X-Ripgit-Actor-Name")).toBe("alice");
       return new Response("deleted");
     });
     const ctx = makeContext(fetcher, {

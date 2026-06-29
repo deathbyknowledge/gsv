@@ -347,10 +347,13 @@ export class RipgitClient {
     };
   }
 
-  async deleteRepository(repo: RipgitRepoRef): Promise<boolean> {
+  async deleteRepository(repo: RipgitRepoRef, actor: string): Promise<boolean> {
     const response = await this.binding.fetch(this.makeRepositoryUrl(repo), {
       method: "DELETE",
-      headers: this.makeInternalHeaders(),
+      headers: {
+        ...this.makeInternalHeaders(),
+        "X-Ripgit-Actor-Name": actor,
+      },
     });
     if (!response.ok) {
       throw new Error(await this.readError(response, `delete '${repo.owner}/${repo.repo}'`));

@@ -396,7 +396,8 @@ export async function handleRepoDelete(
     throw new Error(`Repository ${slug} backs installed packages: ${names}${suffix}`);
   }
 
-  await requireRipgitClient(ctx).deleteRepository(repo);
+  const actor = requireIdentity(ctx).process;
+  await requireRipgitClient(ctx).deleteRepository(repo, actor.username);
   unregisterRepo(ctx, repo);
   return {
     deleted: true,
