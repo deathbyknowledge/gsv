@@ -38,8 +38,8 @@
 
 .gsv-library-page-head span,
 .gsv-library-page-head p {
-  color: var(--text-dim);
-  font-size: 9px;
+  color: var(--meta);
+  font-size: 10px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
 }
@@ -47,8 +47,8 @@
 .gsv-library-page-head h2 {
   margin: 6px 0 0;
   overflow: hidden;
-  color: var(--text);
-  font-size: 17px;
+  color: var(--text-hi);
+  font-size: 19px;
   letter-spacing: 0.1em;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -91,6 +91,85 @@
   min-height: 0;
   padding: 14px;
   overflow: hidden;
+}
+
+/* Collection bar — top strip mirroring the FILES machine bar (collection level). */
+.gsv-library-collection-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+  padding: 14px;
+  border-bottom: 1px solid var(--rule-section, var(--line));
+  background: color-mix(in srgb, var(--panel) 92%, var(--shadow-deep, #000));
+}
+
+.gsv-library-collection-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 9px;
+  color: var(--meta);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.gsv-library-collection-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+/* Body — left action panel (page level) + page browser (FILES folder drill). */
+.gsv-library-workspace {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
+}
+
+.gsv-library-action {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  border-right: 1px solid var(--rule-section, var(--line));
+}
+
+.gsv-library-browser {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.gsv-library-browser-crumbs {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--rule-inner, var(--line-soft));
+}
+
+.gsv-library-browser-label {
+  color: var(--meta);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.gsv-library-browser-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
 }
 
 .gsv-library-panel {
@@ -319,8 +398,8 @@
 .gsv-library-source-ref-head span,
 .gsv-library-source-ref > div:last-child {
   overflow: hidden;
-  color: var(--text-dim);
-  font-size: 9px;
+  color: var(--meta);
+  font-size: 10px;
   letter-spacing: 0.12em;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -338,7 +417,7 @@
   padding: 11px 14px;
   border-bottom: 1px solid var(--line-soft);
   color: var(--text);
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 0.08em;
   text-decoration: none;
 }
@@ -454,8 +533,8 @@
   min-height: 34px;
   padding: 0 10px 0 12px;
   border-bottom: 1px solid var(--line);
-  color: var(--text-dim);
-  font-size: 9px;
+  color: var(--meta);
+  font-size: 10px;
   letter-spacing: 0.16em;
 }
 
