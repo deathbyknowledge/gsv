@@ -5088,6 +5088,7 @@ describe("Process DO — mechanical", () => {
       await runInDurableObject(stub, async (instance: Process) => {
         const process = instance as any;
         const continuedRunIds: string[] = [];
+        const scheduledRunIds: string[] = [];
 
         process.currentRun = {
           runId: "run-multi-tool-batch",
@@ -5098,6 +5099,9 @@ describe("Process DO — mechanical", () => {
         process.sendSignal = async () => {};
         process.continueAgentLoop = async (runId: string) => {
           continuedRunIds.push(runId);
+        };
+        process.scheduleTick = (runId: string) => {
+          scheduledRunIds.push(runId);
         };
         process.dispatchSyscall = async (
           dispatchRunId: string,
@@ -5141,7 +5145,8 @@ describe("Process DO — mechanical", () => {
           data: { path: "/tmp/two.txt", content: "second" },
         });
 
-        expect(continuedRunIds).toEqual(["run-multi-tool-batch"]);
+        expect(continuedRunIds).toEqual([]);
+        expect(scheduledRunIds).toEqual(["run-multi-tool-batch"]);
       });
     });
   });

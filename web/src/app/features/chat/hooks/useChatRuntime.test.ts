@@ -58,4 +58,88 @@ describe("chat runtime row merging", () => {
       "tool:call-1",
     ]);
   });
+
+  it("keeps live running tool rows over stale persisted planning rows", () => {
+    const startedAt = 1_782_600_000_000;
+    const currentRows = [
+      row({
+        id: "tool:call-codemode",
+        role: "tool",
+        text: "Running CodeMode",
+        runId: "run-1",
+        status: "running",
+        timestamp: startedAt + 100,
+        toolArgs: { code: "for (const device of devices) await inspect(device)" },
+        toolCallId: "call-codemode",
+        toolName: "CodeMode",
+        toolSyscall: "codemode.exec",
+      }),
+    ];
+    const nextRows = [
+      row({
+        id: "tool:call-codemode",
+        role: "tool",
+        text: "Preparing CodeMode",
+        messageId: 2,
+        runId: "run-1",
+        status: "planning",
+        timestamp: startedAt,
+        toolArgs: { code: "for (const device of devices) await inspect(device)" },
+        toolCallId: "call-codemode",
+        toolName: "CodeMode",
+        toolSyscall: "codemode.exec",
+      }),
+    ];
+
+    expect(mergeTranscriptRows(currentRows, nextRows)).toMatchObject([
+      {
+        id: "tool:call-codemode",
+        role: "tool",
+        status: "running",
+        toolCallId: "call-codemode",
+      },
+    ]);
+  });
+
+  it("lets completed tool results replace live running tool rows", () => {
+    const startedAt = 1_782_600_000_000;
+    const currentRows = [
+      row({
+        id: "tool:call-codemode",
+        role: "tool",
+        text: "Running CodeMode",
+        runId: "run-1",
+        status: "running",
+        timestamp: startedAt,
+        toolArgs: { code: "for (const device of devices) await inspect(device)" },
+        toolCallId: "call-codemode",
+        toolName: "CodeMode",
+        toolSyscall: "codemode.exec",
+      }),
+    ];
+    const nextRows = [
+      row({
+        id: "tool:call-codemode",
+        role: "toolResult",
+        text: "done",
+        messageId: 3,
+        runId: "run-1",
+        status: "done",
+        timestamp: startedAt + 1_000,
+        toolCallId: "call-codemode",
+        toolName: "CodeMode",
+        toolOutput: { status: "completed" },
+        toolSyscall: "codemode.exec",
+      }),
+    ];
+
+    expect(mergeTranscriptRows(currentRows, nextRows)).toMatchObject([
+      {
+        id: "tool:call-codemode",
+        role: "toolResult",
+        status: "done",
+        toolCallId: "call-codemode",
+      },
+    ]);
+  });
 });
