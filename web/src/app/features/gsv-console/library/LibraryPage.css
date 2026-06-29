@@ -166,6 +166,37 @@
   text-transform: uppercase;
 }
 
+/* Reader: the EDIT action sits at the right of the breadcrumb row. */
+.gsv-library-crumbs-action {
+  margin-left: auto;
+  display: inline-flex;
+}
+
+/* Reader OUTLINE — occupies the left panel (the action-bar slot on the index). */
+.gsv-library-outline-panel {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-right: 1px solid var(--rule-section, var(--line));
+}
+
+.gsv-library-outline-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px 0;
+}
+
+/* Reader body — markdown content fills the main pane below the breadcrumb. */
+.gsv-library-reader-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  padding: 14px;
+}
+
 .gsv-library-browser-list {
   flex: 1 1 auto;
   min-height: 0;
@@ -262,6 +293,8 @@
 }
 
 .gsv-library-reader {
+  flex: 1 1 auto;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -414,22 +447,28 @@
 
 .gsv-library-outline-row {
   display: block;
-  padding: 11px 14px;
-  border-bottom: 1px solid var(--line-soft);
-  color: var(--text);
+  padding: 9px 14px;
+  color: var(--warn);
   font-size: 11px;
   letter-spacing: 0.08em;
-  text-decoration: none;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: color-mix(in srgb, var(--warn) 50%, transparent);
+}
+
+.gsv-library-outline-row:hover,
+.gsv-library-outline-row:focus-visible {
+  filter: brightness(1.18);
+  text-decoration-color: var(--warn);
+  outline: none;
 }
 
 .gsv-library-outline-row.level-3 {
   padding-left: 24px;
-  color: var(--text-dim);
 }
 
 .gsv-library-outline-row.level-4 {
   padding-left: 34px;
-  color: var(--text-dim);
 }
 
 .gsv-library-editor,

@@ -92,6 +92,11 @@ export function useLibraryWorkspace(
   const [editorMarkdown, setEditorMarkdown] = useState("");
   const [newPageTitle, setNewPageTitle] = useState("");
   const [createCollectionOpen, setCreateCollectionOpen] = useState(false);
+  // Which folder the page browser is showing (a local page path like
+  // "pages/accounts-access", or "" for the collection's content root). Lifted
+  // here so it survives opening a page — the reader's breadcrumb and Back reuse
+  // it to return to the right folder. Resets when the collection changes.
+  const [browserFolder, setBrowserFolder] = useState("");
   const [newCollectionTitle, setNewCollectionTitle] = useState("");
   const [newCollectionId, setNewCollectionId] = useState("");
   const [ingestTarget, setIngestTarget] = useState("gsv");
@@ -106,6 +111,10 @@ export function useLibraryWorkspace(
   useEffect(() => {
     setSearchDraft(loadArgs.q ?? "");
   }, [loadArgs.q]);
+
+  useEffect(() => {
+    setBrowserFolder("");
+  }, [selectedDb]);
 
   useEffect(() => {
     if (activeRoute.view !== "editor") {
@@ -198,6 +207,8 @@ export function useLibraryWorkspace(
 
   return {
     activeRoute,
+    browserFolder,
+    setBrowserFolder,
     connected,
     createCollectionOpen,
     editorMarkdown,

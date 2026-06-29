@@ -128,23 +128,20 @@ export function LibraryPage({ route = { view: "index" }, onRouteChange }: Librar
   );
 }
 
-function LibraryIndex({ library }: { library: LibraryRuntime }) {
+/** Collection bar — every collection-level control (mirrors the FILES machine
+ *  bar). Shared by the index and the reader so all views share one shell. */
+function LibraryCollectionBar({ library }: { library: LibraryRuntime }) {
   const { dbs } = library.state;
   const selectedDb = library.state.selectedDb;
   const selectedCollection = dbs.find((collection) => collection.id === selectedDb) ?? null;
-  const searching = library.state.searchQuery.trim().length > 0;
-  const searchResults = sortLibraryEntries(library.state.searchMatches ?? []);
   const pageCount = library.state.pages.length;
-  const collectionLabel = selectedCollection ? selectedCollection.title : "LIBRARY";
   const collectionOptions = dbs.length
     ? dbs.map((collection) => collection.title.toUpperCase())
     : ["NO COLLECTIONS"];
   const selectedIndex = Math.max(0, dbs.findIndex((collection) => collection.id === selectedDb));
 
   return (
-    <div class="gsv-library-index">
-      {/* Collection bar — every collection-level control lives here (mirrors the
-          FILES machine bar): pick a collection, see its status, create / build one. */}
+    <>
       <header class="gsv-library-collection-bar">
         <Select
           label="COLLECTION"
@@ -180,6 +177,19 @@ function LibraryIndex({ library }: { library: LibraryRuntime }) {
         </div>
       </header>
       {library.createCollectionOpen ? <CreateCollectionBox library={library} /> : null}
+    </>
+  );
+}
+
+function LibraryIndex({ library }: { library: LibraryRuntime }) {
+  const selectedDb = library.state.selectedDb;
+  const searching = library.state.searchQuery.trim().length > 0;
+  const searchResults = sortLibraryEntries(library.state.searchMatches ?? []);
+  const collectionLabel = library.state.dbs.find((collection) => collection.id === selectedDb)?.title ?? "LIBRARY";
+
+  return (
+    <div class="gsv-library-index">
+      <LibraryCollectionBar library={library} />
 
       {/* Body — left action panel (page-level: search + create inside the
           collection) beside a FILES-style page browser. */}
@@ -229,6 +239,8 @@ function LibraryIndex({ library }: { library: LibraryRuntime }) {
               collectionLabel={collectionLabel}
               db={selectedDb}
               entries={library.state.pages}
+              folder={library.browserFolder}
+              onFolderChange={library.setBrowserFolder}
               onOpenPage={library.openPage}
             />
           )}
@@ -244,11 +256,16 @@ function FolderBrowser({
   collectionLabel,
   db,
   entries,
+  folder,
+  onFolderChange,
   onOpenPage,
 }: {
   collectionLabel: string;
   db: string;
   entries: readonly LibraryEntry[];
+  /** Current folder (local page path, or "" for the content root). Controlled. */
+  folder: string;
+  onFolderChange: (folder: string) => void;
   onOpenPage: (path: string) => void;
 }) {
   const tree = useMemo(() => buildLibraryTree(entries, db), [db, entries]);
@@ -258,10 +275,8 @@ function FolderBrowser({
   const overview = tree.children.find((child) => child.kind === "file" && child.path === "index.md") ?? null;
   const contentRoot = tree.children.find((child) => child.kind === "folder" && child.name === "pages") ?? tree;
   const basePath = contentRoot.path;
-  const [folderPath, setFolderPath] = useState(basePath);
-  useEffect(() => {
-    setFolderPath(basePath);
-  }, [db, basePath]);
+  // "" (the default / reset value) resolves to the content root.
+  const folderPath = folder || basePath;
 
   // Walk from the tree root to the current folder.
   const chain: LibraryTreeNode[] = [];
@@ -279,11 +294,11 @@ function FolderBrowser({
   const baseDepth = basePath ? basePath.split("/").filter(Boolean).length : 0;
   const belowBase = chain.slice(baseDepth);
   const crumbs: Crumb[] = [
-    { label: collectionLabel, onClick: () => setFolderPath(basePath) },
-    ...belowBase.map((folder) => ({ label: folder.title, onClick: () => setFolderPath(folder.path) })),
+    { label: collectionLabel, onClick: () => onFolderChange("") },
+    ...belowBase.map((node) => ({ label: node.title, onClick: () => onFolderChange(node.path) })),
   ];
   const goUp = folderPath !== basePath
-    ? () => setFolderPath(belowBase.length > 1 ? belowBase[belowBase.length - 2].path : basePath)
+    ? () => onFolderChange(belowBase.length > 1 ? belowBase[belowBase.length - 2].path : "")
     : undefined;
 
   const atBase = folderPath === basePath;
@@ -318,7 +333,7 @@ function FolderBrowser({
             icon="folder"
             key={child.id}
             label={child.title}
-            onClick={() => setFolderPath(child.path)}
+            onClick={() => onFolderChange(child.path)}
             status="none"
             sub={`${child.count} ${child.count === 1 ? "page" : "pages"}`}
             tag="DIR"
@@ -470,51 +485,87 @@ function LibraryReader({ library }: { library: LibraryRuntime }) {
   }
   const db = library.activeRoute.db;
 
+  // Continue the browser trail into the open page — collection / <folders> /
+  // <page> — deriving the folders from the page path so Back and the folder
+  // crumbs return to the right place in the browser (same shell as the index).
+  const tree = buildLibraryTree(library.state.pages, db);
+  const localPath = localLibraryPath(note.path, db);
+  const contentRoot = tree.children.find((child) => child.kind === "folder" && child.name === "pages") ?? tree;
+  const basePath = contentRoot.path;
+  const baseDepth = basePath ? basePath.split("/").filter(Boolean).length : 0;
+  const folderChain: LibraryTreeNode[] = [];
+  let node = tree;
+  for (const part of localPath.split("/").filter(Boolean).slice(0, -1)) {
+    const next = node.children.find((child) => child.kind !== "file" && child.name === part);
+    if (!next) {
+      break;
+    }
+    folderChain.push(next);
+    node = next;
+  }
+  const belowBase = folderChain.slice(baseDepth);
+  const collectionLabel = library.state.dbs.find((collection) => collection.id === db)?.title ?? "LIBRARY";
+  const openFolder = (folderPath: string) => {
+    library.setBrowserFolder(folderPath);
+    library.navigate({ view: "index", db });
+  };
+  const crumbs: Crumb[] = [
+    { label: collectionLabel, onClick: () => openFolder("") },
+    ...belowBase.map((folder) => ({ label: folder.title, onClick: () => openFolder(folder.path) })),
+    { label: note.title },
+  ];
+  const backFolder = belowBase.length ? belowBase[belowBase.length - 1].path : "";
+
   return (
-    <div class="gsv-library-reader-page">
-      <LibraryPageHeader
-        eyebrow={library.activeRoute.db}
-        title={note.title}
-        meta={note.path}
-        actions={(
-          <>
-            {/* Back to the library index is owned by the breadcrumb now. */}
-            <Button
-              variant="primary"
-              label="EDIT"
-              onClick={() => library.navigate({
-                view: "editor",
-                db,
-                path: localLibraryPath(note.path, db),
-              })}
-            />
-          </>
-        )}
-      />
-      <div class="gsv-library-reader-grid">
-        <Surface class="gsv-library-reader" level={2}>
-          <LibraryMarkdownView
-            note={note}
-            selectedDb={db}
-            onOpenPage={openPage}
-            onPreviewClose={closePreview}
-            onPreviewOpen={openPreview}
-          />
-        </Surface>
-        <Surface class="gsv-library-outline" level={1}>
+    <div class="gsv-library-index">
+      <LibraryCollectionBar library={library} />
+      <div class="gsv-library-workspace">
+        {/* OUTLINE takes the left panel (the action-bar slot on the index). */}
+        <section class="gsv-library-outline-panel">
           <SectionHeader title="OUTLINE" meta={`${library.pageHeadings.length}`} divider />
-          {library.pageHeadings.length === 0 ? (
-            <div class="gsv-library-empty-row">NO HEADINGS</div>
-          ) : library.pageHeadings.map((heading) => (
-            <a
-              class={`gsv-library-outline-row level-${heading.level}`}
-              href={`#${heading.id}`}
-              key={heading.id}
-            >
-              {heading.text}
-            </a>
-          ))}
-        </Surface>
+          <div class="gsv-library-outline-scroll">
+            {library.pageHeadings.length === 0 ? (
+              <div class="gsv-library-empty-row">NO HEADINGS</div>
+            ) : library.pageHeadings.map((heading) => (
+              <a
+                class={`gsv-library-outline-row level-${heading.level}`}
+                href={`#${heading.id}`}
+                key={heading.id}
+              >
+                {heading.text}
+              </a>
+            ))}
+          </div>
+        </section>
+        <section class="gsv-library-browser">
+          <div class="gsv-library-browser-crumbs">
+            <Breadcrumbs
+              items={crumbs}
+              size="medium"
+              maxVisible={4}
+              onBack={() => openFolder(backFolder)}
+              currentAriaCurrent="location"
+            />
+            <span class="gsv-library-crumbs-action">
+              <Button
+                variant="primary"
+                label="EDIT"
+                onClick={() => library.navigate({ view: "editor", db, path: localLibraryPath(note.path, db) })}
+              />
+            </span>
+          </div>
+          <div class="gsv-library-reader-body">
+            <Surface class="gsv-library-reader" level={2}>
+              <LibraryMarkdownView
+                note={note}
+                selectedDb={db}
+                onOpenPage={openPage}
+                onPreviewClose={closePreview}
+                onPreviewOpen={openPreview}
+              />
+            </Surface>
+          </div>
+        </section>
       </div>
       <LibraryPreviewLayer
         data={previewPayload}
