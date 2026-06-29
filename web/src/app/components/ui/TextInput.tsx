@@ -87,7 +87,7 @@ export function TextInput(props: TextInputProps) {
       .filter(Boolean)
       .join(" ") || undefined;
 
-  const rootClass = `gsv-ti ${SIZE_CLASS[size]}${rawStatus ? ` is-${statusKey}` : ""}`;
+  const rootClass = `gsv-fld gsv-ti ${SIZE_CLASS[size]}${rawStatus ? ` is-${statusKey}` : ""}`;
   const wrapClass = `gsv-ti-wrap ${disabled ? "is-disabled" : readonly ? "is-readonly" : ""}`.trim();
 
   const emit = (next: string) => {
@@ -100,15 +100,15 @@ export function TextInput(props: TextInputProps) {
   return (
     <div class={rootClass}>
       {hasLabelRow ? (
-        <div class="gsv-ti-labelrow">
-          <span class="gsv-ti-label" id={`${fieldId}-label`}>
+        <div class="gsv-fld-lab">
+          <span class="gsv-fld-lab-t" id={`${fieldId}-label`}>
             {label}
-            {req ? <span class="gsv-ti-req"> {req === "required" ? "· REQUIRED" : "· OPTIONAL"}</span> : null}
+            {req ? <span class="gsv-fld-req"> {req === "required" ? "· REQUIRED" : "· OPTIONAL"}</span> : null}
           </span>
           {info ? <InfoTip text={info} /> : null}
         </div>
       ) : null}
-      {description ? <div class="gsv-ti-desc" id={`${fieldId}-desc`}>{description}</div> : null}
+      {description ? <div class="gsv-fld-desc" id={`${fieldId}-desc`}>{description}</div> : null}
       <div class={wrapClass}>
         {prefix ? <span class="gsv-ti-affix">{prefix}</span> : null}
         <input
@@ -148,15 +148,13 @@ export function TextInput(props: TextInputProps) {
         {suffix ? <span class="gsv-ti-affix">{suffix}</span> : null}
       </div>
       {hasStatusRow ? (
-        <div class="gsv-ti-statusrow">
+        <div class="gsv-fld-stat" style={showCounter ? { justifyContent: "flex-end" } : undefined}>
           {hasStatusMsg ? (
-            <span class="gsv-ti-right">
-              <span class="gsv-ti-dot" />
-              <span class="gsv-ti-msg" id={`${fieldId}-msg`}>{message}</span>
-            </span>
-          ) : (
-            <span />
-          )}
+            <>
+              <span class="gsv-fld-dot" />
+              <span class="gsv-fld-msg" id={`${fieldId}-msg`}>{message}</span>
+            </>
+          ) : null}
           {showCounter ? <span class="gsv-ti-counter">{counterText}</span> : null}
         </div>
       ) : null}

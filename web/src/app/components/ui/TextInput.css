@@ -8,6 +8,7 @@
 .gsv-ti-wrap {
   display: flex;
   align-items: center;
+  width: 100%;
   gap: 9px;
   background: #0a0822;
   border: 1px solid #4a449e;
@@ -72,11 +73,11 @@
   font-size: 16px;
 }
 .gsv-ti-lg .gsv-ti-wrap {
-  padding: 13px 15px;
+  padding: 12px 14px;
 }
 .gsv-ti-lg .gsv-ti-input {
-  font-size: 20px;
-  font-weight: 700;
+  font-size: 17px;
+  font-weight: 600;
 }
 .gsv-ti-affix {
   flex: none;
@@ -130,84 +131,87 @@
   color: #ffb3c2;
   outline: none;
 }
-.gsv-ti-labelrow {
+.gsv-ti-counter {
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  color: #565199;
+}
+
+/* Shared field shell — kept in sync with the .gsv-fld block in Select.css /
+   Counter.css / Radio.css / Segmented.css so TextInput is self-contained. */
+.gsv-fld {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.gsv-fld-lab {
   display: flex;
   align-items: center;
   gap: 8px;
   margin-bottom: 8px;
   min-height: 13px;
 }
-.gsv-ti-desc {
-  font-size: 10px;
-  line-height: 1.5;
-  letter-spacing: 0.02em;
-  color: #7d78b8;
-  margin-bottom: 10px;
-  max-width: 52ch;
-}
-.gsv-ti-statusrow {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 14px;
-  margin-top: 8px;
-  min-height: 13px;
-}
-.gsv-ti-label {
+.gsv-fld-lab-t {
   font-size: 9.5px;
   letter-spacing: 0.22em;
   text-transform: uppercase;
   color: #b3aee2;
 }
-.gsv-ti-req {
+.gsv-fld-req {
+  font-size: 9.5px;
   color: #7d78b8;
   letter-spacing: 0.14em;
 }
-.gsv-ti-right {
+.gsv-fld-desc {
+  font-size: 10px;
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+  color: #7d78b8;
+  margin-bottom: 10px;
+  max-width: 46ch;
+}
+.gsv-fld-stat {
   display: flex;
   align-items: center;
   gap: 6px;
+  margin-top: 8px;
+  min-height: 13px;
 }
-.gsv-ti-msg {
-  font-size: 9.5px;
-  letter-spacing: 0.1em;
-}
-.gsv-ti-dot {
+.gsv-fld-dot {
   width: 6px;
   height: 6px;
   flex: none;
   border-radius: 1px;
 }
-.gsv-ti-counter {
+.gsv-fld-msg {
   font-size: 9.5px;
   letter-spacing: 0.1em;
-  color: #565199;
 }
-.gsv-ti.is-error .gsv-ti-msg {
+.gsv-fld.is-error .gsv-fld-msg {
   color: #ff6f8c;
 }
-.gsv-ti.is-error .gsv-ti-dot {
+.gsv-fld.is-error .gsv-fld-dot {
   background: #ff6f8c;
   box-shadow: 0 0 6px #ff6f8c;
 }
-.gsv-ti.is-success .gsv-ti-msg {
+.gsv-fld.is-success .gsv-fld-msg {
   color: #5ef2a0;
 }
-.gsv-ti.is-success .gsv-ti-dot {
+.gsv-fld.is-success .gsv-fld-dot {
   background: #5ef2a0;
   box-shadow: 0 0 6px #5ef2a0;
 }
-.gsv-ti.is-info .gsv-ti-msg {
+.gsv-fld.is-info .gsv-fld-msg {
   color: #8f8aff;
 }
-.gsv-ti.is-info .gsv-ti-dot {
+.gsv-fld.is-info .gsv-fld-dot {
   background: #8f8aff;
   box-shadow: 0 0 6px #8f8aff;
 }
-.gsv-ti.is-warn .gsv-ti-msg {
+.gsv-fld.is-warn .gsv-fld-msg {
   color: #e0a64c;
 }
-.gsv-ti.is-warn .gsv-ti-dot {
+.gsv-fld.is-warn .gsv-fld-dot {
   background: #e0a64c;
   box-shadow: 0 0 6px #e0a64c;
 }
