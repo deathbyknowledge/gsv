@@ -76,6 +76,100 @@ describe("chat transcript rows", () => {
     });
   });
 
+  it("keeps fallback tool ids scoped to their run when folding history", () => {
+    const rows = transcriptRowsFromHistory(history([
+      {
+        id: 1,
+        clientId: "1",
+        role: "assistant",
+        runId: "run-1",
+        content: {
+          text: "",
+          toolCalls: [
+            {
+              id: "workers-ai-tool-1",
+              name: "Read",
+              arguments: { path: "/tmp/old.txt" },
+            },
+          ],
+        },
+        text: "",
+        timestamp: 1,
+        origin: undefined,
+        metadata: undefined,
+      },
+      {
+        id: 2,
+        clientId: "2",
+        role: "toolResult",
+        runId: "run-1",
+        content: {
+          toolName: "Read",
+          toolCallId: "workers-ai-tool-1",
+          output: "old",
+          ok: true,
+        },
+        text: "old",
+        timestamp: 2,
+        origin: undefined,
+        metadata: undefined,
+      },
+      {
+        id: 3,
+        clientId: "3",
+        role: "assistant",
+        runId: "run-2",
+        content: {
+          text: "",
+          toolCalls: [
+            {
+              id: "workers-ai-tool-1",
+              name: "Read",
+              arguments: { path: "/tmp/new.txt" },
+            },
+          ],
+        },
+        text: "",
+        timestamp: 3,
+        origin: undefined,
+        metadata: undefined,
+      },
+      {
+        id: 4,
+        clientId: "4",
+        role: "toolResult",
+        runId: "run-2",
+        content: {
+          toolName: "Read",
+          toolCallId: "workers-ai-tool-1",
+          output: "new",
+          ok: true,
+        },
+        text: "new",
+        timestamp: 4,
+        origin: undefined,
+        metadata: undefined,
+      },
+    ]));
+
+    expect(rows).toEqual([
+      expect.objectContaining({
+        role: "toolResult",
+        runId: "run-1",
+        toolArgs: { path: "/tmp/old.txt" },
+        toolCallId: "workers-ai-tool-1",
+        toolOutput: "old",
+      }),
+      expect.objectContaining({
+        role: "toolResult",
+        runId: "run-2",
+        toolArgs: { path: "/tmp/new.txt" },
+        toolCallId: "workers-ai-tool-1",
+        toolOutput: "new",
+      }),
+    ]);
+  });
+
   it("keeps historical tool activity before later conversation messages", () => {
     const rows = transcriptRowsFromHistory(history([
       {
@@ -372,6 +466,101 @@ describe("chat transcript rows", () => {
         role: "toolResult",
         status: "done",
         toolCallId: "call-1",
+      }),
+    ]);
+  });
+
+  it("keeps live fallback tool ids scoped to their run", () => {
+    let state = emptyChatRuntimeState("pid-1", "default");
+
+    state = applyChatSignal(state, "proc.run.started", {
+      pid: "pid-1",
+      runId: "run-1",
+      conversationId: "default",
+    }, { pid: "pid-1", conversationId: "default" }).state;
+
+    state = applyChatSignal(state, "proc.run.tool.started", {
+      pid: "pid-1",
+      runId: "run-1",
+      conversationId: "default",
+      callId: "workers-ai-tool-1",
+      name: "Read",
+      syscall: "fs.read",
+      args: { path: "/tmp/old.txt" },
+    }, { pid: "pid-1", conversationId: "default" }).state;
+
+    state = applyChatSignal(state, "proc.run.tool.finished", {
+      pid: "pid-1",
+      runId: "run-1",
+      conversationId: "default",
+      callId: "workers-ai-tool-1",
+      name: "Read",
+      syscall: "fs.read",
+      ok: true,
+      output: "old",
+    }, { pid: "pid-1", conversationId: "default" }).state;
+
+    state = applyChatSignal(state, "proc.run.started", {
+      pid: "pid-1",
+      runId: "run-2",
+      conversationId: "default",
+    }, { pid: "pid-1", conversationId: "default" }).state;
+
+    state = applyChatSignal(state, "proc.run.tool.started", {
+      pid: "pid-1",
+      runId: "run-2",
+      conversationId: "default",
+      callId: "workers-ai-tool-1",
+      name: "Read",
+      syscall: "fs.read",
+      args: { path: "/tmp/new.txt" },
+    }, { pid: "pid-1", conversationId: "default" }).state;
+
+    expect(state.rows.filter((row) => row.role === "tool" || row.role === "toolResult")).toEqual([
+      expect.objectContaining({
+        role: "toolResult",
+        runId: "run-1",
+        status: "done",
+        toolArgs: { path: "/tmp/old.txt" },
+        toolCallId: "workers-ai-tool-1",
+        toolOutput: "old",
+      }),
+      expect.objectContaining({
+        role: "tool",
+        runId: "run-2",
+        status: "running",
+        toolArgs: { path: "/tmp/new.txt" },
+        toolCallId: "workers-ai-tool-1",
+      }),
+    ]);
+
+    state = applyChatSignal(state, "proc.run.tool.finished", {
+      pid: "pid-1",
+      runId: "run-2",
+      conversationId: "default",
+      callId: "workers-ai-tool-1",
+      name: "Read",
+      syscall: "fs.read",
+      ok: true,
+      output: "new",
+    }, { pid: "pid-1", conversationId: "default" }).state;
+
+    expect(state.rows.filter((row) => row.role === "tool" || row.role === "toolResult")).toEqual([
+      expect.objectContaining({
+        role: "toolResult",
+        runId: "run-1",
+        status: "done",
+        toolArgs: { path: "/tmp/old.txt" },
+        toolCallId: "workers-ai-tool-1",
+        toolOutput: "old",
+      }),
+      expect.objectContaining({
+        role: "toolResult",
+        runId: "run-2",
+        status: "done",
+        toolArgs: { path: "/tmp/new.txt" },
+        toolCallId: "workers-ai-tool-1",
+        toolOutput: "new",
       }),
     ]);
   });

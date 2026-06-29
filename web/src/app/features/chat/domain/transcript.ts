@@ -365,10 +365,7 @@ export function transcriptRowsFromHistory(history: ChatHistory): ChatTranscriptR
           status: parsed.ok ? "done" as const : "error" as const,
           meta: parsed.syscall ?? undefined,
         };
-        const existingIndex = rows.findIndex((candidate) =>
-          (candidate.role === "tool" || candidate.role === "toolResult") &&
-          candidate.toolCallId === parsed.callId
-        );
+        const existingIndex = rows.findIndex((candidate) => sameToolActivityRow(candidate, row));
         if (existingIndex >= 0) {
           rows[existingIndex] = {
             ...rows[existingIndex],
@@ -415,6 +412,26 @@ function transcriptRowSortValue(row: ChatTranscriptRow): number {
     return row.messageId;
   }
   return Number.MAX_SAFE_INTEGER;
+}
+
+function isToolActivityRow(row: Pick<ChatTranscriptRow, "role">): boolean {
+  return row.role === "tool" || row.role === "toolResult";
+}
+
+function sameToolActivityRow(
+  left: Pick<ChatTranscriptRow, "role" | "runId" | "toolCallId">,
+  right: Pick<ChatTranscriptRow, "role" | "runId" | "toolCallId">,
+): boolean {
+  if (!isToolActivityRow(left) || !isToolActivityRow(right) || !left.toolCallId || !right.toolCallId) {
+    return false;
+  }
+  if (left.toolCallId !== right.toolCallId) {
+    return false;
+  }
+  if (left.runId || right.runId) {
+    return left.runId === right.runId;
+  }
+  return true;
 }
 
 export function formatTranscriptTime(timestamp: number | null | undefined): string {
@@ -807,9 +824,9 @@ function toolRowFromFinished(
 ): ChatTranscriptRow {
   const now = Date.now();
   const callId = asString(record?.callId) ?? `tool:${now}`;
-  const existing = rows.find((row) =>
-    (row.role === "tool" || row.role === "toolResult") && row.toolCallId === callId
-  );
+  const runId = asString(record?.runId) ?? undefined;
+  const lookup = { role: "toolResult" as const, runId, toolCallId: callId };
+  const existing = rows.find((row) => sameToolActivityRow(row, lookup));
   const toolName = asString(record?.name) ?? existing?.toolName ?? "Tool";
   const syscall = inferToolSyscall(toolName, asString(record?.syscall) ?? existing?.toolSyscall);
   const ok = record?.ok !== false;
@@ -826,7 +843,7 @@ function toolRowFromFinished(
     toolName,
     toolOutput: output,
     toolSyscall: syscall,
-    runId: asString(record?.runId) ?? existing?.runId,
+    runId: runId ?? existing?.runId,
     isError: !ok,
     status: ok ? "done" : "error",
     meta: syscall ?? undefined,
@@ -877,10 +894,7 @@ function streamToolCallBlock(event: Record<string, unknown>): Record<string, unk
 
 function upsertToolRow(rows: ChatTranscriptRow[], row: ChatTranscriptRow): ChatTranscriptRow[] {
   const next = dropSupersededStreamPlanningRows(rows, row);
-  const index = next.findIndex((candidate) =>
-    (candidate.role === "tool" || candidate.role === "toolResult") &&
-    candidate.toolCallId === row.toolCallId
-  );
+  const index = next.findIndex((candidate) => sameToolActivityRow(candidate, row));
   if (index >= 0) {
     next[index] = {
       ...next[index],
