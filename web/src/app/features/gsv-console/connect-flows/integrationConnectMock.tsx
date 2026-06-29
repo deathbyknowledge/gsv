@@ -54,7 +54,7 @@ export const integrationConnectFlow: ConnectFlowDef = {
           <div class="gsv-cf-fields">
             <TextInput
               label="NAME"
-              description="Display name agents will see."
+              info="Display name agents will see."
               requirement="required"
               value="GitHub"
               placeholder="GitHub"
@@ -62,7 +62,7 @@ export const integrationConnectFlow: ConnectFlowDef = {
             />
             <TextInput
               label="SERVER URL"
-              description="MCP endpoint URL."
+              info="MCP endpoint URL."
               requirement="required"
               value="https://api.githubcopilot.com/mcp/"
               placeholder="https://example.com/mcp"
@@ -73,7 +73,7 @@ export const integrationConnectFlow: ConnectFlowDef = {
           <div class="gsv-cf-fields">
             <Select
               label="TRANSPORT"
-              description="Auto works for most MCP servers."
+              info="Auto works for most MCP servers."
               requirement="optional"
               options={["AUTO", "STREAMABLE HTTP", "SSE"]}
               value={0}
@@ -83,14 +83,14 @@ export const integrationConnectFlow: ConnectFlowDef = {
           <div class="gsv-cf-fields">
             <TextInput
               label="HEADER NAME"
-              description="Custom header sent on every request."
+              info="Custom header sent on every request."
               value="Authorization"
               placeholder="Authorization"
               clearable
             />
             <TextInput
               label="VALUE"
-              description="Header value."
+              info="Header value."
               type="password"
               value="Bearer ghp_mock"
               placeholder="Bearer token"

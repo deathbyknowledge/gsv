@@ -131,7 +131,7 @@ export const machineConnectFlow: ConnectFlowDef = {
               label="DEVICE ID"
               value="studio-macbook"
               placeholder="studio-macbook"
-              description="Used by CLI and routing"
+              info="Used by CLI and routing"
             />
             <TextInput label="TOKEN EXPIRY" value="30" suffix="DAYS" />
           </div>

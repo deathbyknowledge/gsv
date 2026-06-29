@@ -37,7 +37,7 @@ export const applicationConnectFlow: ConnectFlowDef = {
               label="PUBLIC REPOSITORY"
               value="https://github.com/team/weather.git"
               placeholder="https://github.com/team/package.git"
-              description="Repo slug or remote URL"
+              info="Repo slug or remote URL"
               requirement="required"
               status="success"
               message="Source ready"
@@ -47,17 +47,13 @@ export const applicationConnectFlow: ConnectFlowDef = {
               label="REF"
               value="main"
               placeholder="main"
-              description="Branch, tag, or commit"
-              status="info"
-              message="Branch, tag, or commit"
+              info="Branch, tag, or commit"
             />
             <TextInput
               label="SUBDIRECTORY"
               value="."
               placeholder="."
-              description="Package root in the repo"
-              status="info"
-              message="Package root in the repo"
+              info="Package root in the repo"
             />
           </div>
           <Checkbox
