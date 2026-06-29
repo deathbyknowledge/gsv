@@ -11,6 +11,29 @@
   width: 100%;
 }
 
+/* Opt-in back control for non-route-backed callers (config details), so they
+   keep a path to the parent list when the shell breadcrumb doesn't provide one. */
+.gsv-console-detail-back {
+  align-self: flex-start;
+  margin: 14px 20px 0;
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  color: var(--meta, #8c86c8);
+  font-family: var(--gsv-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 0.12s;
+}
+
+.gsv-console-detail-back:hover,
+.gsv-console-detail-back:focus-visible {
+  color: var(--text-hi, #cbc7ff);
+  outline: none;
+}
+
 .gsv-console-detail-shell {
   display: flex;
   flex-direction: column;

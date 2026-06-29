@@ -8,7 +8,7 @@ import { TextArea } from "../../../components/ui/TextArea";
 import { TextInput } from "../../../components/ui/TextInput";
 import { aiProviderOptionsForValue } from "../../../domain/aiProviders";
 import { ConsoleDetailPage } from "../components/ConsoleDetailPage";
-import { useUnsavedGuard } from "../../gsv-shell/unsaved/unsavedGuard";
+import { useUnsavedGuard, useUnsavedGuardLeave } from "../../gsv-shell/unsaved/unsavedGuard";
 import {
   ConsolePage,
   ConsoleResourceBoundary,
@@ -166,6 +166,7 @@ function ModelSettingsPage({
 }) {
   const saveConfig = useSaveConsoleConfigEntries();
   const validateModelConfig = useValidateConsoleModelConfig();
+  const requestLeave = useUnsavedGuardLeave();
   const [selection, setSelection] = useState<ModelSelection | null>(() => modelSelectionFromParam(select));
   const effectiveValues = useMemo(
     () => effectiveAiValuesForViewer(config, viewer.uid),
@@ -198,7 +199,7 @@ function ModelSettingsPage({
         scopeLabel={scopeLabel}
         selection={selection}
         viewer={viewer}
-        onBack={() => setSelection(null)}
+        onBack={() => requestLeave(() => setSelection(null))}
         onSaveEntries={saveEntries}
         onValidateModelConfig={validateModelSettings}
       />
@@ -270,6 +271,7 @@ function ModelSettingsDetail({
         tone={editable ? "online" : "idle"}
         blurb="Fallback model stack used when an agent inherits model behavior."
         parentLabel="MODELS"
+        showBack
         onBack={onBack}
       >
         <SettingsFieldGroup
@@ -303,6 +305,7 @@ function ModelSettingsDetail({
         tone={editable ? "online" : "idle"}
         blurb={group.description}
         parentLabel="MODELS"
+        showBack
         onBack={onBack}
       >
         <SettingsFieldGroup
@@ -336,6 +339,7 @@ function ModelSettingsDetail({
       tone={profile ? "online" : "idle"}
       blurb="Reusable named model stack for agents, including provider credentials when a preset needs its own key."
       parentLabel="MODELS"
+      showBack
       onBack={onBack}
     >
       <ModelProfileForm
@@ -376,6 +380,7 @@ function RuntimeSettingsPage({
   viewer: SettingsViewer;
 }) {
   const saveConfig = useSaveConsoleConfigEntries();
+  const requestLeave = useUnsavedGuardLeave();
   const [selection, setSelection] = useState<RuntimeSelection | null>(null);
   const canEditRuntime = viewer.isRoot;
 
@@ -397,7 +402,8 @@ function RuntimeSettingsPage({
         tone={canEditRuntime ? "online" : "idle"}
         blurb={group.description}
         parentLabel="RUNTIME"
-        onBack={() => setSelection(null)}
+        showBack
+        onBack={() => requestLeave(() => setSelection(null))}
       >
         <SettingsFieldGroup
           config={config}

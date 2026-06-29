@@ -174,6 +174,7 @@ export function GsvConsole({
   settingsRoute = { view: "overview" },
 }: GsvConsoleProps) {
   const [selectedAgentUid, setSelectedAgentUid] = useState<number | null>(null);
+  const [agentCreateNew, setAgentCreateNew] = useState(false);
   // Track the open detail of the active top-level list surface (machines /
   // messengers / integrations / applications / runtime). Settings surfaces drive
   // their own breadcrumb via the settings route; these don't, so without this a
@@ -185,10 +186,15 @@ export function GsvConsole({
     setSurfaceDetail(null);
   }, [activeSurface]);
   const clearSurfaceDetail = () => {
-    setSurfaceDetail(null);
-    // The surface owns its selection internally (uncontrolled), so remount it
-    // via a key bump to drop back to the list.
-    setSurfaceDetailSeq((seq) => seq + 1);
+    // Route through the unsaved guard so a dirty create/detail flow (e.g.
+    // CONNECT NEW MACHINE, messenger onboarding) prompts before its draft is
+    // discarded — same as settings detail navigation.
+    requestLeave(() => {
+      setSurfaceDetail(null);
+      // The surface owns its selection internally (uncontrolled), so remount it
+      // via a key bump to drop back to the list.
+      setSurfaceDetailSeq((seq) => seq + 1);
+    });
   };
   const navigateSettingsRoute = (route: SettingsRoute) => {
     onSettingsRouteChange?.(route);
@@ -203,7 +209,17 @@ export function GsvConsole({
   const guardedSettingsNavigate = (route: SettingsRoute) => requestLeave(() => navigateSettingsRoute(route));
   const openAgent = (uid: number) => {
     setSelectedAgentUid(uid);
+    setAgentCreateNew(false);
     onOpenSurface?.("agent");
+  };
+  const openNewAgent = () => {
+    setSelectedAgentUid(null);
+    setAgentCreateNew(true);
+    onOpenSurface?.("agent");
+  };
+  const onTopLevelAgentCreated = (uid: number) => {
+    setSelectedAgentUid(uid);
+    setAgentCreateNew(false);
   };
   const backToCrew = () => onOpenSurface?.("crew");
   const openSettingsAgent = (uid: number) => {
@@ -404,9 +420,14 @@ export function GsvConsole({
         ) : activeSurface === "runtime" ? (
           <RuntimePage key={surfaceDetailSeq} onNewTask={onOpenChat} onSelectionChange={setSurfaceDetail} />
         ) : activeSurface === "crew" ? (
-          <ConsoleCrewPage onManageAgent={openAgent} />
+          <ConsoleCrewPage onManageAgent={openAgent} onCreateAgent={openNewAgent} />
         ) : activeSurface === "agent" ? (
-          <ConsoleAgentPage accountUid={selectedAgentUid} onBackToCrew={backToCrew} />
+          <ConsoleAgentPage
+            accountUid={selectedAgentUid}
+            createNew={agentCreateNew}
+            onAgentCreated={onTopLevelAgentCreated}
+            onBackToCrew={backToCrew}
+          />
         ) : activeSurface === "machines" ? (
           <MachinesPage key={surfaceDetailSeq} onSelectionChange={setSurfaceDetail} />
         ) : activeSurface === "messengers" ? (

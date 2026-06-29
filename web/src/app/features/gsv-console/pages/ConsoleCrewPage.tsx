@@ -123,7 +123,7 @@ function CrewRoster({
       listMeta={crewMeta}
       emptyObject="CREW"
       isEmpty={visibleCards.length === 0}
-      connectLabel="NEW AGENT"
+      connectLabel={onCreateAgent ? "NEW AGENT" : undefined}
       onConnect={onCreateAgent}
       search={{ value: query, placeholder: "Search crew…", onChange: setQuery }}
     >

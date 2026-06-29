@@ -26,10 +26,16 @@ type ConsoleDetailPageProps = {
   blurb: string;
   children?: ComponentChildren;
   icon: string;
-  /** Retained for callers; back navigation is now handled by the breadcrumb. */
+  /** Back navigation. For surfaces whose detail is reflected in the shell
+   *  breadcrumb this is handled there (so `showBack` stays off); non-route-backed
+   *  callers (e.g. the model/runtime config details) set `showBack` to render a
+   *  local back control wired to this. */
   onBack: () => void;
   onPrimary?: () => void;
   parentLabel: string;
+  /** Render a "← {parentLabel}" back control. Use when the shell breadcrumb does
+   *  not already provide a path back to the parent list. */
+  showBack?: boolean;
   pendingLabel?: string;
   primaryLabel?: string;
   sections?: readonly ConsoleDetailSection[];
@@ -44,10 +50,13 @@ export function ConsoleDetailPage({
   blurb,
   children,
   icon,
+  onBack,
   onPrimary,
+  parentLabel,
   pendingLabel = "PENDING SURFACE",
   primaryLabel,
   sections = [],
+  showBack = false,
   statusLabel,
   title,
 }: ConsoleDetailPageProps) {
@@ -61,6 +70,11 @@ export function ConsoleDetailPage({
 
   return (
     <section class="gsv-console-detail-page">
+      {showBack ? (
+        <button type="button" class="gsv-console-detail-back" onClick={onBack}>
+          <span aria-hidden="true">←</span> {parentLabel}
+        </button>
+      ) : null}
       {/* Row 2 — full-width page header (title + status), like the list pages. */}
       <SectionHeader
         className="gsv-console-detail-header"
