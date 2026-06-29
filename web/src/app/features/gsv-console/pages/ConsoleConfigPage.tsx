@@ -177,6 +177,15 @@ function ModelSettingsPage({
   const validateModelConfig = useValidateConsoleModelConfig();
   const requestLeave = useUnsavedGuardLeave();
   const [selection, setSelection] = useState<ModelSelection | null>(() => modelSelectionFromParam(select));
+  // The state is seeded once above, but this component stays mounted across
+  // settings-route changes, so browser back/forward (or any external route
+  // update) that changes `select` must be reflected here — otherwise the URL and
+  // the shown detail desync. `select` only ever encodes the "default" detail;
+  // locally-opened profile/tool details keep it undefined, so the effect only
+  // fires on default deep-link/clear and never clobbers a local selection.
+  useEffect(() => {
+    setSelection(modelSelectionFromParam(select));
+  }, [select]);
   const effectiveValues = useMemo(
     () => effectiveAiValuesForViewer(config, viewer.uid),
     [config, viewer.uid],
