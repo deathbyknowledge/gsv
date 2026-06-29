@@ -183,9 +183,7 @@
 }
 
 .gsv-library-outline-scroll {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: auto;
+  flex: 0 0 auto;
   padding: 6px 0;
 }
 
