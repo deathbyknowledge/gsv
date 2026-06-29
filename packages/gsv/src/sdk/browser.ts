@@ -57,6 +57,7 @@ type RemoteBackend = {
 type BackendConnection = {
   backend: RemoteBackend;
   transport: BackendTransport;
+  requireBackend: boolean;
   broken: boolean;
   reconnectOnClose: boolean;
   pending: Map<string, PendingBackendRequest>;
@@ -80,6 +81,14 @@ type BackendTransport = {
 type BackendProxyControl = {
   invoke(method: string, args?: unknown): Promise<unknown>;
   reconnect(): Promise<void>;
+};
+
+type BackendTransportOptions = {
+  requireBackend?: boolean;
+};
+
+type ResolvedBackendTransportOptions = {
+  requireBackend: boolean;
 };
 
 export type PackageGsvClient = GsvClientNamespaces & {
@@ -539,7 +548,7 @@ function shouldMaintainBackendConnection(): boolean {
   return Boolean(backendProxy) || Boolean(gsvClient) || appEventListeners.size > 0;
 }
 
-function scheduleBackendReconnect(): void {
+function scheduleBackendReconnect(options: ResolvedBackendTransportOptions): void {
   if (backendReconnectTimer !== null || !shouldMaintainBackendConnection()) {
     return;
   }
@@ -550,13 +559,13 @@ function scheduleBackendReconnect(): void {
   setRuntimeStatus(appRuntimeReady ? "reconnecting" : "connecting");
   backendReconnectTimer = setTimeout(() => {
     backendReconnectTimer = null;
-    void connectBackendTransport()
+    void connectBackendTransport(options)
       .then(() => {
         backendReconnectAttempts = 0;
       })
       .catch((error) => {
         console.warn("[gsv-package] backend reconnect failed", error);
-        scheduleBackendReconnect();
+        scheduleBackendReconnect(options);
       });
   }, delay);
 }
@@ -690,6 +699,12 @@ function shouldRefreshAppSession(boot: PackageAppBoot): boolean {
   return boot.expiresAt <= Date.now() + APP_SESSION_REFRESH_LEEWAY_MS;
 }
 
+function resolveBackendTransportOptions(options: BackendTransportOptions = {}): ResolvedBackendTransportOptions {
+  return {
+    requireBackend: options.requireBackend !== false,
+  };
+}
+
 async function refreshAppSession(boot: PackageAppBoot): Promise<PackageAppBoot> {
   if (appSessionRefreshPromise) {
     return appSessionRefreshPromise;
@@ -754,8 +769,14 @@ function scheduleAppSessionRefresh(
       return;
     }
     void refreshAppSession(getAppBoot())
-      .then((nextBoot) => {
-        scheduleAppSessionRefresh(connection, nextBoot, isCurrentConnection);
+      .then(() => {
+        if (connection.broken || !isCurrentConnection()) {
+          return;
+        }
+        resetBackendConnection();
+        scheduleBackendReconnect({
+          requireBackend: connection.requireBackend,
+        });
       })
       .catch((error) => {
         console.warn("[gsv-package] app session refresh failed", error);
@@ -779,17 +800,22 @@ function emitAppEvent(event: string, payload: unknown): void {
   }
 }
 
-type BackendTransportOptions = {
-  requireBackend?: boolean;
-};
-
 async function connectBackendTransport(options: BackendTransportOptions = {}): Promise<BackendConnection> {
-  const requireBackend = options.requireBackend !== false;
-  if (requireBackend && !getAppBoot().hasBackend) {
+  const resolvedOptions = resolveBackendTransportOptions(options);
+  if (resolvedOptions.requireBackend && !getAppBoot().hasBackend) {
     throw new Error("package app has no backend rpc");
   }
   if (backendConnectionPromise) {
-    return backendConnectionPromise;
+    const currentConnectionPromise = backendConnectionPromise;
+    const currentConnection = await currentConnectionPromise;
+    if (!shouldRefreshAppSession(getAppBoot())) {
+      return currentConnection;
+    }
+    await refreshAppSession(getAppBoot());
+    if (backendConnectionPromise === currentConnectionPromise) {
+      resetBackendConnection();
+    }
+    return connectBackendTransport(resolvedOptions);
   }
   setRuntimeStatus(appRuntimeReady ? "reconnecting" : "connecting");
   let ready: Promise<BackendConnection>;
@@ -811,7 +837,9 @@ async function connectBackendTransport(options: BackendTransportOptions = {}): P
       if (backendConnectionPromise === ready) {
         resetBackendConnection();
         if (shouldReconnect) {
-          scheduleBackendReconnect();
+          scheduleBackendReconnect({
+            requireBackend: connection.requireBackend,
+          });
         }
       }
     };
@@ -822,6 +850,7 @@ async function connectBackendTransport(options: BackendTransportOptions = {}): P
         },
       },
       transport,
+      requireBackend: resolvedOptions.requireBackend,
       broken: transport.readyState === "closing" || transport.readyState === "closed",
       reconnectOnClose: true,
       pending: new Map(),
