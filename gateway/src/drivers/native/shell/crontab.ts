@@ -111,10 +111,6 @@ function parseCrontabArgs(args: string[], ctx: KernelContext): {
     file = arg;
   }
 
-  if (ctx.identity!.process.uid !== 0 && username !== ctx.identity!.process.username) {
-    throw new Error(`Permission denied: cannot access crontab for ${username}`);
-  }
-
   if (action) {
     if (file) {
       throw new Error("cannot combine action flags with a crontab file");

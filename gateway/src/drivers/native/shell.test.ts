@@ -1362,6 +1362,7 @@ describe("pkg shell command", () => {
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("sched add --json JSON");
     expect(result.stdout).toContain("Use crontab");
+    expect(result.stdout).toContain("--all includes disabled schedules");
     expect(result.stdout).toContain("sched run <id>");
     expect(result.stderr).toBe("");
   });
@@ -1509,6 +1510,179 @@ describe("pkg shell command", () => {
     expect(listed.stdout).toBe("CRON_TZ=Europe/Amsterdam\n0 9 * * * proc spawn --as sam-agent --non-interactive --label daily-brief \"Daily brief\"\n");
   });
 
+  it("lists agent-installed user crontabs through the owning user's sched view", async () => {
+    const agent: ProcessIdentity = {
+      uid: 2000,
+      gid: 2000,
+      gids: [2000],
+      username: "sam-agent",
+      home: "/home/sam-agent",
+      cwd: "/home/sam-agent",
+    };
+    const wake = vi.fn(async () => "wake-1");
+    const cronFiles = new Map<string, {
+      path: string;
+      ownerUid: number | null;
+      content: string;
+      createdAtMs: number;
+      updatedAtMs: number;
+    }>();
+    const links = new Map<string, string[]>();
+    const schedules = new Map<string, any>();
+    const create = vi.fn((input) => {
+      const record = {
+        id: `sched-${schedules.size + 1}`,
+        ownerUid: input.ownerUid,
+        creator: input.creator,
+        runAs: input.runAs,
+        name: input.name,
+        description: input.description,
+        enabled: input.enabled,
+        expression: input.expression,
+        target: input.target,
+        overlapPolicy: "skip",
+        createdAtMs: input.now,
+        updatedAtMs: input.now,
+        state: {
+          nextRunAtMs: input.now + 60_000,
+          runningAtMs: null,
+          lastRunAtMs: null,
+          lastStatus: null,
+          lastError: null,
+          lastDurationMs: null,
+          runCount: 0,
+        },
+      };
+      schedules.set(record.id, { ...record, wakeScheduleId: null });
+      return record;
+    });
+    const auth = {
+      getPasswdByUsername: vi.fn((username: string) => {
+        if (username === IDENTITY.username) {
+          return {
+            username: IDENTITY.username,
+            uid: IDENTITY.uid,
+            gid: IDENTITY.gid,
+            gecos: "",
+            home: IDENTITY.home,
+            shell: "/bin/init",
+          };
+        }
+        if (username === agent.username) {
+          return {
+            username: agent.username,
+            uid: agent.uid,
+            gid: agent.gid,
+            gecos: "",
+            home: agent.home,
+            shell: "/bin/init",
+          };
+        }
+        return null;
+      }),
+      getPasswdByUid: vi.fn((uid: number) => {
+        if (uid === IDENTITY.uid) {
+          return {
+            username: IDENTITY.username,
+            uid: IDENTITY.uid,
+            gid: IDENTITY.gid,
+            gecos: "",
+            home: IDENTITY.home,
+            shell: "/bin/init",
+          };
+        }
+        if (uid === agent.uid) {
+          return {
+            username: agent.username,
+            uid: agent.uid,
+            gid: agent.gid,
+            gecos: "",
+            home: agent.home,
+            shell: "/bin/init",
+          };
+        }
+        return null;
+      }),
+      resolveGids: vi.fn((username: string) => username === agent.username ? agent.gids : IDENTITY.gids),
+    } as unknown as KernelContext["auth"];
+    const ctx = makeContext({
+      identity: agent,
+      capabilities: ["sched.add", "sched.remove", "sched.list"],
+      auth,
+      caps: {
+        resolve: vi.fn(() => ["shell.exec"]),
+      } as unknown as KernelContext["caps"],
+      procs: {
+        getOwnerUid: vi.fn(() => IDENTITY.uid),
+      } as Partial<KernelContext["procs"]>,
+      schedules: {
+        create,
+        setWakeScheduleId: vi.fn(),
+        getStored: vi.fn((id: string) => schedules.get(id) ?? null),
+        remove: vi.fn((id: string) => {
+          const existing = schedules.get(id) ?? null;
+          schedules.delete(id);
+          return existing;
+        }),
+        list: vi.fn((args) => {
+          const records = [...schedules.values()]
+            .filter((schedule) => args.ownerUid === undefined || schedule.ownerUid === args.ownerUid)
+            .filter((schedule) => args.includeDisabled || schedule.enabled)
+            .map(({ wakeScheduleId: _wakeScheduleId, ...record }) => record);
+          return { records, count: records.length };
+        }),
+        getCronFile: vi.fn((path: string) => cronFiles.get(path) ?? null),
+        listCronFiles: vi.fn(() => [...cronFiles.values()]),
+        upsertCronFile: vi.fn((input) => {
+          const record = {
+            path: input.path,
+            ownerUid: input.ownerUid,
+            content: input.content,
+            createdAtMs: input.now,
+            updatedAtMs: input.now,
+          };
+          cronFiles.set(input.path, record);
+          return record;
+        }),
+        removeCronFile: vi.fn((path: string) => {
+          const existing = cronFiles.get(path) ?? null;
+          cronFiles.delete(path);
+          return existing;
+        }),
+        cronFileScheduleIds: vi.fn((path: string) => links.get(path) ?? []),
+        clearCronFileScheduleLinks: vi.fn((path: string) => links.delete(path)),
+        linkCronFileSchedule: vi.fn((path: string, scheduleId: string) => {
+          links.set(path, [...(links.get(path) ?? []), scheduleId]);
+        }),
+      } as unknown as KernelContext["schedules"],
+      scheduleScheduleWake: wake,
+    });
+    await env.STORAGE.put(
+      "home/sam-agent/jobs.cron",
+      "*/5 * * * * printf 'agent cron fired\\n'\n",
+    );
+
+    const result = await handleShellExec(
+      { input: "crontab jobs.cron && sched list --all" },
+      ctx,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stderr).toBe("");
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      ownerUid: IDENTITY.uid,
+      runAs: expect.objectContaining({
+        uid: agent.uid,
+        username: agent.username,
+      }),
+      name: "cron /var/spool/cron/sam-agent:1",
+    }));
+    expect(result.stdout).toContain("sched-1\tyes\t");
+    expect(result.stdout).toContain("crontab:/var/spool/cron/sam-agent:1");
+    expect(result.stdout).toContain("cron /var/spool/cron/sam-agent:1");
+    expect(result.stdout).toContain("cmd:printf 'agent cron fired\\n'");
+  });
+
   it("keeps sched add as a low-level JSON compatibility path", async () => {
     const wake = vi.fn(async () => "wake-1");
     const setWakeScheduleId = vi.fn();
@@ -1614,7 +1788,7 @@ describe("pkg shell command", () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(result.stdout).toContain("LAST\tERROR");
+    expect(result.stdout).toContain("LAST\tERROR\tSOURCE");
     expect(result.stdout).toContain("error\tProcess not found: missing");
   });
 

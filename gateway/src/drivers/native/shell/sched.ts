@@ -37,7 +37,7 @@ async function runSchedCommand(args: string[], ctx: KernelContext): Promise<Exec
     case "list": {
       requireCommandCapability(ctx, "sched.list");
       const result = handleSchedulerList({ includeDisabled: rest.includes("--all") }, ctx);
-      const lines = ["ID\tENABLED\tNEXT\tLAST\tERROR\tNAME\tTARGET"];
+      const lines = ["ID\tENABLED\tNEXT\tLAST\tERROR\tSOURCE\tNAME\tTARGET"];
       for (const schedule of result.schedules) {
         lines.push([
           schedule.id,
@@ -45,6 +45,7 @@ async function runSchedCommand(args: string[], ctx: KernelContext): Promise<Exec
           schedule.state.nextRunAtMs === null ? "-" : new Date(schedule.state.nextRunAtMs).toISOString(),
           schedule.state.lastStatus ?? "-",
           formatScheduleListText(schedule.state.lastError),
+          formatScheduleSource(schedule.description),
           schedule.name,
           formatScheduleTarget(schedule.target),
         ].join("\t"));
@@ -128,6 +129,14 @@ function formatScheduleListText(value: string | null | undefined): string {
   return value.replace(/[\t\r\n]+/g, " ").slice(0, 120);
 }
 
+function formatScheduleSource(description: string | null | undefined): string {
+  const prefix = "Installed from ";
+  if (description?.startsWith(prefix)) {
+    return `crontab:${formatScheduleListText(description.slice(prefix.length))}`;
+  }
+  return "-";
+}
+
 function schedUsage(): string {
   return [
     "Usage:",
@@ -140,6 +149,8 @@ function schedUsage(): string {
     "",
     "Use crontab -l, crontab FILE, crontab -r, or /var/spool/cron/<user>",
     "for normal scheduled jobs. sched is the lower-level schedule inspector.",
+    "--all includes disabled schedules, not other users' schedules.",
+    "Crontab-backed schedule ids are regenerated when the crontab is reinstalled.",
     "",
   ].join("\n");
 }
