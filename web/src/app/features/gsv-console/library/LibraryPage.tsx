@@ -252,34 +252,47 @@ function FolderBrowser({
   onOpenPage: (path: string) => void;
 }) {
   const tree = useMemo(() => buildLibraryTree(entries, db), [db, entries]);
-  const [folderPath, setFolderPath] = useState("");
+  // `pages/` is the content root and `index.md` is the collection home: start
+  // the browser INSIDE pages/ (so the real section folders show at the top
+  // instead of a "Pages" wrapper) and pin Overview at the top.
+  const overview = tree.children.find((child) => child.kind === "file" && child.path === "index.md") ?? null;
+  const contentRoot = tree.children.find((child) => child.kind === "folder" && child.name === "pages") ?? tree;
+  const basePath = contentRoot.path;
+  const [folderPath, setFolderPath] = useState(basePath);
   useEffect(() => {
-    setFolderPath("");
-  }, [db]);
+    setFolderPath(basePath);
+  }, [db, basePath]);
 
-  // Walk to the current folder, collecting ancestors for the breadcrumb trail.
-  const ancestors: LibraryTreeNode[] = [];
+  // Walk from the tree root to the current folder.
+  const chain: LibraryTreeNode[] = [];
   let current = tree;
   for (const part of folderPath.split("/").filter(Boolean)) {
     const next = current.children.find((child) => child.kind !== "file" && child.name === part);
     if (!next) {
       break;
     }
-    ancestors.push(next);
+    chain.push(next);
     current = next;
   }
 
+  // Breadcrumb: the collection IS the content root; only show folders below it.
+  const baseDepth = basePath ? basePath.split("/").filter(Boolean).length : 0;
+  const belowBase = chain.slice(baseDepth);
   const crumbs: Crumb[] = [
-    { label: collectionLabel, onClick: () => setFolderPath("") },
-    ...ancestors.map((folder) => ({ label: folder.title, onClick: () => setFolderPath(folder.path) })),
+    { label: collectionLabel, onClick: () => setFolderPath(basePath) },
+    ...belowBase.map((folder) => ({ label: folder.title, onClick: () => setFolderPath(folder.path) })),
   ];
-  const goUp = folderPath
-    ? () => setFolderPath(ancestors.length > 1 ? ancestors[ancestors.length - 2].path : "")
+  const goUp = folderPath !== basePath
+    ? () => setFolderPath(belowBase.length > 1 ? belowBase[belowBase.length - 2].path : basePath)
     : undefined;
 
-  const children = [...current.children].sort((left, right) =>
-    (left.kind === "file" ? 1 : 0) - (right.kind === "file" ? 1 : 0)
-    || left.title.localeCompare(right.title));
+  const atBase = folderPath === basePath;
+  const byTitle = (left: LibraryTreeNode, right: LibraryTreeNode) => left.title.localeCompare(right.title);
+  const folders = current.children.filter((child) => child.kind === "folder").sort(byTitle);
+  const files = current.children
+    .filter((child) => child.kind === "file" && child.path !== "index.md")
+    .sort(byTitle);
+  const rows: LibraryTreeNode[] = [...(atBase && overview ? [overview] : []), ...folders, ...files];
 
   return (
     <>
@@ -287,9 +300,9 @@ function FolderBrowser({
         <Breadcrumbs items={crumbs} size="medium" maxVisible={4} onBack={goUp} currentAriaCurrent="location" />
       </div>
       <div class="gsv-library-browser-list">
-        {children.length === 0 ? (
+        {rows.length === 0 ? (
           <div class="gsv-library-empty-row">NO PAGES</div>
-        ) : children.map((child) => child.kind === "file" ? (
+        ) : rows.map((child) => child.kind === "file" ? (
           <ListRow
             chevron
             icon={child.path === "index.md" ? "pencil" : "doticons/file"}
