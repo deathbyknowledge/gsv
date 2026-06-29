@@ -79,6 +79,33 @@
   color: var(--live);
 }
 
+.repositories-delete-button {
+  border-color: #5a2b3a;
+  color: #ff8fa3;
+}
+
+.repositories-delete-button:not(:disabled):hover,
+.repositories-delete-button:not(:disabled):focus-visible {
+  background: #2a1420;
+  color: #ffb3c2;
+}
+
+.repositories-confirm-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(4, 3, 16, 0.66);
+}
+
+.repositories-confirm-wrap {
+  width: 440px;
+  max-width: 100%;
+}
+
 .repositories-pull-status {
   min-width: 0;
   flex: 1 1 220px;

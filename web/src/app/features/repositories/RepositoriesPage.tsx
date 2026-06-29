@@ -2,6 +2,7 @@ import type { JSX } from "preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { Breadcrumbs } from "../../components/ui/Breadcrumbs";
 import { Button } from "../../components/ui/Button";
+import { ConfirmModal } from "../../components/ui/ConfirmModal";
 import { Icon } from "../../components/ui/Icon";
 import { IconButton } from "../../components/ui/IconButton";
 import { ListRow } from "../../components/ui/ListRow";
@@ -67,6 +68,7 @@ import {
   useRepositories,
   useRepositoryCommits,
   useRepositoryCompare,
+  useRepositoryDeleteMutation,
   useRepositoryDiff,
   useRepositoryPath,
   useRepositoryPullMutation,
@@ -130,6 +132,23 @@ function pullDisabledReason({
   if (!repo) return "Select a repository";
   if (!repo.writable) return "Repository is read-only";
   if (!isPullableRef(ref, refs)) return "Select a local branch";
+  return "";
+}
+
+function deleteDisabledReason({
+  connected,
+  repo,
+  pending,
+}: {
+  connected: boolean;
+  repo: RepositorySummary | null;
+  pending: boolean;
+}): string {
+  if (pending) return "Deleting repository";
+  if (!connected) return "Gateway offline";
+  if (!repo) return "Select a repository";
+  if (!repo.writable) return "Repository is read-only";
+  if (repo.sources.length > 0) return "Remove packages using this repository first";
   return "";
 }
 
@@ -805,6 +824,7 @@ export function RepositoriesPage() {
   const [previewTabId, setPreviewTabId] = useState<string | null>(null);
   const [knownCommits, setKnownCommits] = useState<Record<string, RepositoryCommit>>({});
   const [pullNotice, setPullNotice] = useState<PullNotice | null>(null);
+  const [confirmDeleteRepo, setConfirmDeleteRepo] = useState<RepositorySummary | null>(null);
 
   useEffect(() => {
     setTabs((currentTabs) => {
@@ -894,6 +914,7 @@ export function RepositoriesPage() {
     context: 3,
   }, canQuery && Boolean(activeCompareTab));
   const pullMutation = useRepositoryPullMutation();
+  const deleteMutation = useRepositoryDeleteMutation();
 
   useEffect(() => {
     setPullNotice(null);
@@ -910,6 +931,11 @@ export function RepositoriesPage() {
     ref: activeRef,
     refs: refsQuery.data,
     pending: pullMutation.isPending,
+  });
+  const activeDeleteDisabledReason = deleteDisabledReason({
+    connected,
+    repo: activeRepo,
+    pending: deleteMutation.isPending,
   });
 
   const focusOrOpenBrowserTab = (repo: RepositorySummary, ref = initialRefForRepository(repo), path = "") => {
@@ -1054,6 +1080,32 @@ export function RepositoriesPage() {
     }
   };
 
+  const deleteRepositoryNow = async (repo: RepositorySummary) => {
+    setPullNotice(null);
+    try {
+      const result = await deleteMutation.mutateAsync({ repo: repo.repo });
+      setTabs((currentTabs) => currentTabs.filter((tab) => tab.repo !== repo.repo));
+      setPreviewTabId((current) => {
+        if (!current) return current;
+        const previewTab = tabs.find((tab) => tab.id === current);
+        return previewTab?.repo === repo.repo ? null : current;
+      });
+      setActiveTabId((current) => {
+        const currentTab = tabs.find((tab) => tab.id === current);
+        return currentTab?.repo === repo.repo ? "" : current;
+      });
+      setPullNotice({
+        tone: result.deleted ? "online" : "idle",
+        text: result.deleted ? `DELETED ${result.repo}` : `REPOSITORY NOT FOUND | ${result.repo}`,
+      });
+    } catch (error) {
+      setPullNotice({
+        tone: "error",
+        text: queryErrorText(error) || "DELETE FAILED",
+      });
+    }
+  };
+
   return (
     <ConsolePage flush>
       <ConsoleResourceBoundary
@@ -1112,6 +1164,21 @@ export function RepositoriesPage() {
                 >
                   {pullMutation.isPending ? <Spinner size={14} /> : <Icon name="branch" family="doticons" size={16} />}
                   <span>{pullMutation.isPending ? "PULLING" : "PULL"}</span>
+                </button>
+                <button
+                  type="button"
+                  class={`repositories-pull-button repositories-delete-button${deleteMutation.isPending ? " is-busy" : ""}`}
+                  disabled={Boolean(activeDeleteDisabledReason)}
+                  title={activeDeleteDisabledReason || "Delete repository"}
+                  aria-label="Delete repository"
+                  onClick={() => {
+                    if (activeRepo) {
+                      setConfirmDeleteRepo(activeRepo);
+                    }
+                  }}
+                >
+                  {deleteMutation.isPending ? <Spinner size={14} /> : null}
+                  <span>{deleteMutation.isPending ? "DELETING" : "DELETE"}</span>
                 </button>
               </span>
               {pullNotice ? (
@@ -1242,6 +1309,25 @@ export function RepositoriesPage() {
                 />
               ) : null}
             </section>
+            {confirmDeleteRepo ? (
+              <div class="repositories-confirm-layer" onClick={() => setConfirmDeleteRepo(null)}>
+                <div class="repositories-confirm-wrap" onClick={(event) => event.stopPropagation()}>
+                  <ConfirmModal
+                    title="CONFIRM DELETE"
+                    message={`Delete repository "${confirmDeleteRepo.repo}"?`}
+                    note="The ripgit repository and stored content are removed. Installed package-backed repositories must be detached first."
+                    confirmLabel="DELETE REPOSITORY"
+                    confirmPhrase={confirmDeleteRepo.repo}
+                    confirmInputPlaceholder={confirmDeleteRepo.repo}
+                    onCancel={() => setConfirmDeleteRepo(null)}
+                    onConfirm={() => {
+                      void deleteRepositoryNow(confirmDeleteRepo);
+                      setConfirmDeleteRepo(null);
+                    }}
+                  />
+                </div>
+              </div>
+            ) : null}
           </div>
         )}
       />

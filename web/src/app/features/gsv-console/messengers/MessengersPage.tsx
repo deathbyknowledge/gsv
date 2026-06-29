@@ -27,6 +27,7 @@ import {
   useConsoleAccounts,
   useConsoleAdapterInventory,
   useConsoleIdentityLinks,
+  useDisconnectConsoleAdapter,
 } from "../hooks/useConsoleData";
 import { useConsoleListSelection } from "../hooks/useConsoleListSelection";
 import { MessengerDetailPage } from "./MessengerDetailPage";
@@ -290,6 +291,9 @@ function renderMessengerDetail(
   identityLinksRefreshing: boolean,
   id: string,
   onBack: () => void,
+  onDisconnect: (account: ConsoleAdapterAccount) => void,
+  disconnecting: boolean,
+  disconnectError: string | undefined,
   onReconnect: (account: ConsoleAdapterAccount) => void,
 ) {
   const parsed = parseAdapterDetailId(id);
@@ -306,6 +310,9 @@ function renderMessengerDetail(
       identityLinksError={identityLinksError}
       identityLinksRefreshing={identityLinksRefreshing}
       onBack={onBack}
+      onDisconnect={onDisconnect}
+      disconnecting={disconnecting}
+      disconnectError={disconnectError}
       onReconnect={onReconnect}
     />
   ) : null;
@@ -320,6 +327,7 @@ export function MessengersPage({
   const adapters = useConsoleAdapterInventory({ enabled: true });
   const accounts = useConsoleAccounts({ enabled: true });
   const identityLinks = useConsoleIdentityLinks({ enabled: true });
+  const disconnectAdapter = useDisconnectConsoleAdapter();
   const [preferredAdapter, setPreferredAdapter] = useState<string | null>(null);
   const { selectedDetail, selectDetail } = useConsoleListSelection({
     initialCreate,
@@ -343,6 +351,13 @@ export function MessengersPage({
   const reconnect = (account: ConsoleAdapterAccount) => {
     setPreferredAdapter(account.adapter);
     selectDetail({ kind: "messengers", id: NEW_DETAIL_ID, createNew: true, label: `Reconnect ${adapterName(account.adapter)}` });
+  };
+
+  const disconnect = (account: ConsoleAdapterAccount) => {
+    void disconnectAdapter.mutateAsync({
+      adapter: account.adapter,
+      accountId: account.accountId,
+    }).then(() => selectDetail(null));
   };
 
   return (
@@ -401,6 +416,9 @@ export function MessengersPage({
               identityLinksRefreshing,
               selectedDetail.id,
               () => selectDetail(null),
+              disconnect,
+              disconnectAdapter.isPending,
+              disconnectAdapter.error?.message,
               reconnect,
             );
             if (detail) {

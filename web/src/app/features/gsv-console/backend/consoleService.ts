@@ -137,6 +137,16 @@ export type CreateMachineNodeTokenInput = {
   expiresAt?: number | null;
 };
 
+export type DeleteConsoleMachineInput = {
+  deviceId: string;
+};
+
+export type DeleteConsoleMachineResult = {
+  deleted: boolean;
+  deviceId: string;
+  revokedTokens: number;
+};
+
 export type ConsumeIdentityLinkCodeInput = {
   code: string;
 };
@@ -508,6 +518,25 @@ export async function createMachineNodeToken(
   };
 }
 
+export async function deleteConsoleMachine(
+  client: Pick<GSVClient, "call">,
+  input: DeleteConsoleMachineInput,
+): Promise<DeleteConsoleMachineResult> {
+  const deviceId = input.deviceId.trim();
+  if (!deviceId) {
+    throw new Error("device id is required");
+  }
+
+  const result = await client.call("sys.device.delete", { deviceId }) as Record<string, unknown>;
+  return {
+    deleted: result.deleted === true,
+    deviceId: stringOr(deviceId, result.deviceId),
+    revokedTokens: typeof result.revokedTokens === "number" && Number.isFinite(result.revokedTokens)
+      ? Math.max(0, Math.floor(result.revokedTokens))
+      : 0,
+  };
+}
+
 export async function loadConsoleAdapterAccounts(
   client: Pick<GSVClient, "call">,
   adapters?: readonly string[],
@@ -570,9 +599,12 @@ export async function disconnectConsoleAdapter(
   }
 
   const result = await client.call("adapter.disconnect", { adapter, accountId }) as Record<string, unknown>;
+  if (result.ok !== true) {
+    throw new Error(stringOr(stringOr("Disconnect failed", result.message), result.error));
+  }
   return {
-    ok: result.ok === true,
-    message: stringOr(result.ok === true ? "Disconnected" : "Disconnect failed", result.message),
+    ok: true,
+    message: stringOr("Disconnected", result.message),
     error: stringOr("", result.error),
   };
 }
