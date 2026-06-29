@@ -128,6 +128,7 @@ export default defineConfig({
             { text: "Connect a Messenger", link: "/how-to/messengers" },
             { text: "Bring Your Own Model", link: "/how-to/bring-your-own-model" },
             { text: "Integrations (MCP)", link: "/how-to/integrations" },
+            { text: "Browse the Web", link: "/how-to/browse-web" },
             { text: "Applications", link: "/how-to/applications" },
           ],
         },
