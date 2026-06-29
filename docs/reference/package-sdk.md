@@ -35,12 +35,13 @@ type PackageDefinition = {
 };
 ```
 
-Import the manifest helper from `@gsv/package/manifest`.
+Import package SDK helpers from `@humansandmachines/gsv/sdk`.
 
 `meta.capabilities.kernel` is the package's syscall grant list. Declare only the
-calls the backend or CLI entrypoints actually need. Use `repo.*` when a package
-needs to inspect or edit ripgit repositories, and `pkg.*` only for package
-lifecycle operations such as install, checkout, review, and public visibility.
+calls the browser, backend, or CLI entrypoints actually need. Use `repo.*` when
+a package needs to inspect or edit ripgit repositories, and `pkg.*` only for
+package lifecycle operations such as install, checkout, review, and public
+visibility.
 
 Example:
 
@@ -55,9 +56,25 @@ capabilities: {
 `meta.capabilities.daemon` requests package daemon APIs such as RPC schedules.
 `meta.capabilities.storage` requests package-scoped storage APIs such as SQL.
 
+## Service Profiles
+
+Packages can declare service-account profiles with files under
+`profiles/<name>/`:
+
+- `context.d/*.md` supplies the profile prompt/context and is required.
+- `description.md` supplies human-readable review/UI text.
+- `capabilities.json` optionally lists the profile agent's syscall grants.
+
+When an enabled package has profiles, the gateway provisions one package-agent
+account per profile and grants the enabling human run-as access. The run-as
+reference uses `package-name#profile-name`; for example
+`strudel-live#coproducer`. Package summaries expose each profile's
+`account.runAs`, deterministic `account.username`, and, for installed packages,
+`account.provisioned` plus `account.runnable`.
+
 ## Backend
 
-Import the backend base class from `@gsv/package/backend`.
+Import the backend base class from `@humansandmachines/gsv/sdk`.
 
 ```ts
 export default class ExampleBackend extends PackageBackendEntrypoint {
@@ -93,9 +110,30 @@ Reserved built-ins:
 
 Every other public method is exposed as backend RPC.
 
-## Browser helpers
+## Browser Client
 
-Import browser helpers from `@gsv/package/browser`.
+Import browser helpers from `@humansandmachines/gsv/sdk`.
+
+### `createGsvClient()`
+
+Creates a package-scoped GSV client. The SDK chooses the right transport for the
+runtime: inside the GSV shell it uses the host bridge and shell-owned app
+session, while standalone/dev contexts may use the direct app-session route.
+
+```ts
+const gsv = await createGsvClient();
+
+await gsv.request("fs.read", { path: "/notes/today.md" });
+await gsv.fs.read({ path: "/notes/today.md" });
+```
+
+The gateway evaluates requests with the package app principal and the
+manifest-declared `meta.capabilities.kernel` allowlist.
+
+### `getGsvClient()`
+
+Returns the same package-scoped client proxy without eagerly opening the app
+session channel.
 
 ### `getAppBoot()`
 
@@ -108,7 +146,6 @@ type PackageAppBoot = {
   routeBase: string;
   rpcBase: string;
   sessionId: string;
-  sessionSecret: string;
   clientId: string;
   expiresAt: number;
   hasBackend: boolean;
@@ -125,7 +162,7 @@ Connects to the package backend RPC surface and returns a stable proxy.
 
 Behavior:
 
-- opens the backend websocket session on first use
+- opens the app-session channel on first use
 - caches the backend proxy for reuse
 - reconnects automatically on transport disconnect and retries the failed call
   once
@@ -137,7 +174,7 @@ Alias for `connectBackend<T>()`.
 
 ## CLI
 
-Import CLI helpers from `@gsv/package/cli`.
+Import CLI helpers from `@humansandmachines/gsv/sdk`.
 
 ```ts
 type PackageCommandContext = {

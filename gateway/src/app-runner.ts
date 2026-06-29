@@ -568,6 +568,8 @@ export class AppRunner extends DurableObject<Env> {
     switch (frame.call) {
       case "backend.invoke":
         return this.#invokeBackendFromSocket(ws, frame.args);
+      case "kernel.request":
+        return this.#kernelRequestFromSocket(ws, frame.args);
       case "app.ping":
         return { ok: true, timestamp: Date.now() };
       default:
@@ -587,6 +589,29 @@ export class AppRunner extends DurableObject<Env> {
     }
     const runtime = this.#runtimeForAppFrame(client.appFrame, client.session);
     return this.invokeAppRpc(method, record?.args, runtime);
+  }
+
+  async #kernelRequestFromSocket(ws: WebSocket, args: unknown): Promise<unknown> {
+    const client = this.#clientForSocket(ws);
+    if (!client) {
+      throw new AppSocketError(401, "App socket is not connected");
+    }
+    const record = this.#record(args);
+    const call = typeof record?.call === "string" ? record.call.trim() : "";
+    if (!call) {
+      throw new AppSocketError(400, "kernel.request requires call");
+    }
+    const kernel = await getAgentByName(this.env.KERNEL, "singleton") as unknown as KernelAppStub;
+    const response = await kernel.appRequest(client.appFrame, {
+      type: "req",
+      id: crypto.randomUUID(),
+      call,
+      args: record?.args,
+    } as RequestFrame);
+    if (!response.ok) {
+      throw new AppSocketError(response.error.code, response.error.message);
+    }
+    return response.data;
   }
 
   async #gsvFetch(request: AppHttpRequest, runtime: AppRuntimeContext): Promise<AppHttpResponse> {

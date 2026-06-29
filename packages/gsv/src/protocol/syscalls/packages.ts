@@ -30,6 +30,12 @@ export type PkgProfileSummary = {
   description?: string;
   icon?: string;
   capabilities?: string[];
+  account: {
+    runAs: string;
+    username: string;
+    provisioned?: boolean;
+    runnable?: boolean;
+  };
 };
 
 export type PkgSummary = {

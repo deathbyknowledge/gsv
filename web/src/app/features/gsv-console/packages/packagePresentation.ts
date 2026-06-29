@@ -54,6 +54,7 @@ export function packageSub(pkg: ConsolePackage): string {
   return compactText([
     pkg.version ? `v${pkg.version}` : "",
     runtimeLabel(pkg.runtime),
+    pkg.profiles.length > 0 ? `${pkg.profiles.length} service profile${pkg.profiles.length === 1 ? "" : "s"}` : "",
     pkg.sourceRepo,
     pkg.sourceRef,
   ], pkg.packageId);
@@ -111,5 +112,32 @@ export function packageDetailSections(pkg: ConsolePackage): ConsoleDetailSection
         detailRow("bindings", "BINDINGS", pkg.bindingNames.join(" / ")),
       ]),
     },
+    {
+      title: "PROFILES",
+      meta: `${pkg.profiles.length}`,
+      rows: liveRows(pkg.profiles.map((profile) => detailRow(
+        `profile-${profile.name}`,
+        profile.displayName || profile.name,
+        profileSummary(profile),
+        profile.account.provisioned === null
+          ? {}
+          : {
+              status: listRowStatusForTone(profile.account.provisioned ? "online" : "idle"),
+              statusLabel: profile.account.provisioned ? "INSTALLED" : "NOT INSTALLED",
+            },
+      ))),
+    },
   ];
+}
+
+function profileSummary(profile: ConsolePackage["profiles"][number]): string {
+  return [
+    profile.account.runAs,
+    profile.account.username ? `account ${profile.account.username}` : "",
+    profile.account.runnable === true ? "runnable" : "",
+    profile.account.runnable === false ? "not runnable" : "",
+    profile.capabilities.length > 0
+      ? `${profile.capabilities.length} extra cap${profile.capabilities.length === 1 ? "" : "s"}`
+      : "no extra caps",
+  ].filter(Boolean).join(" / ");
 }

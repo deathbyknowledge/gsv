@@ -583,13 +583,6 @@ async function handlePackageAppSocketRequest(
       headers: { "cache-control": "no-store" },
     });
   }
-  if (!resolved.hasRpc) {
-    return new Response("Package app has no backend rpc", {
-      status: 404,
-      headers: { "cache-control": "no-store" },
-    });
-  }
-
   const runner = ctx.exports.AppRunner.getByName(buildAppRunnerName(resolved.auth.uid, resolved.packageId));
   await runner.ensureRuntime({
     packageId: resolved.packageId,
