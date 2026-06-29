@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { Button } from "../../../components/ui/Button";
 import { Checkbox } from "../../../components/ui/Checkbox";
+import { ConfirmModal } from "../../../components/ui/ConfirmModal";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
 import { Select } from "../../../components/ui/Select";
 import { Surface } from "../../../components/ui/Surface";
@@ -681,6 +682,7 @@ function ModelProfileForm({
   const [pendingLabel, setPendingLabel] = useState("");
   const [statusText, setStatusText] = useState("");
   const [statusTone, setStatusTone] = useState<SettingsStatusTone>("success");
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   useEffect(() => {
     setName(profile?.name ?? "");
@@ -689,6 +691,7 @@ function ModelProfileForm({
     setPendingLabel("");
     setStatusText("");
     setStatusTone("success");
+    setConfirmDelete(false);
   }, [initialValues, profile]);
 
   const duplicateName = profiles.some((candidate) =>
@@ -734,88 +737,109 @@ function ModelProfileForm({
   };
 
   return (
-    <Surface level={1} class="gsv-console-model-form">
-      <div class="gsv-console-settings-fields">
-        <div class="gsv-console-settings-field">
-          <TextInput
-            label="PRESET NAME"
-            placeholder="Deep Research"
-            value={name}
-            disabled={!editable || pending}
-            status={duplicateName ? "error" : "none"}
-            message={duplicateName ? "NAME ALREADY EXISTS" : ""}
-            onChange={setName}
-          />
-        </div>
-        {MODEL_PROFILE_FIELDS.map((field) => (
-          <div
-            class={`gsv-console-settings-field${field.half ? " is-half" : ""}`}
-            key={field.key}
-          >
-            <SettingFieldInput
-              field={field}
+    <>
+      <Surface level={1} class="gsv-console-model-form">
+        <div class="gsv-console-settings-fields">
+          <div class="gsv-console-settings-field">
+            <TextInput
+              label="PRESET NAME"
+              placeholder="Deep Research"
+              value={name}
               disabled={!editable || pending}
-              cleared={clearedSecretKeys.has(field.key)}
-              redacted={isModelProfileFieldRedacted(config, viewer, profile, field)}
-              value={drafts[field.key] ?? ""}
-              onChange={(value) => {
-                setClearedSecretKeys((current) => {
-                  if (!current.has(field.key)) {
-                    return current;
-                  }
-                  const next = new Set(current);
-                  next.delete(field.key);
-                  return next;
-                });
-                setDrafts((current) => ({ ...current, [field.key]: value }));
-                setStatusText("");
-              }}
-              onClearRedacted={() => {
-                setClearedSecretKeys((current) => new Set(current).add(field.key));
-                setDrafts((current) => ({ ...current, [field.key]: "" }));
-                setStatusText("");
+              status={duplicateName ? "error" : "none"}
+              message={duplicateName ? "NAME ALREADY EXISTS" : ""}
+              onChange={setName}
+            />
+          </div>
+          {MODEL_PROFILE_FIELDS.map((field) => (
+            <div
+              class={`gsv-console-settings-field${field.half ? " is-half" : ""}`}
+              key={field.key}
+            >
+              <SettingFieldInput
+                field={field}
+                disabled={!editable || pending}
+                cleared={clearedSecretKeys.has(field.key)}
+                redacted={isModelProfileFieldRedacted(config, viewer, profile, field)}
+                value={drafts[field.key] ?? ""}
+                onChange={(value) => {
+                  setClearedSecretKeys((current) => {
+                    if (!current.has(field.key)) {
+                      return current;
+                    }
+                    const next = new Set(current);
+                    next.delete(field.key);
+                    return next;
+                  });
+                  setDrafts((current) => ({ ...current, [field.key]: value }));
+                  setStatusText("");
+                }}
+                onClearRedacted={() => {
+                  setClearedSecretKeys((current) => new Set(current).add(field.key));
+                  setDrafts((current) => ({ ...current, [field.key]: "" }));
+                  setStatusText("");
+                }}
+              />
+            </div>
+          ))}
+        </div>
+        <SettingsStatus text={statusText} tone={statusTone} />
+        <div class="gsv-console-settings-actions">
+          <Button
+            variant="primary"
+            label={pending ? pendingLabel || "SAVING" : "TEST & SAVE PRESET"}
+            disabled={!canSave || pending}
+            onClick={() => void run(async () => {
+              await validateDrafts();
+              setPendingLabel("SAVING");
+              setStatusText("Model test passed. Saving preset...");
+              await onSave(name, drafts, clearedProfileSecretKeys);
+            }, "Saved", "TESTING")}
+          />
+          {profile && onMakeDefault ? (
+            <Button
+              variant="secondary"
+              label="TEST & MAKE DEFAULT"
+              disabled={!editable || pending}
+              onClick={() => void run(async () => {
+                await validateDrafts();
+                setPendingLabel("UPDATING");
+                setStatusText("Model test passed. Updating default...");
+                await onMakeDefault(drafts);
+              }, "Default updated", "TESTING")}
+            />
+          ) : null}
+          <Button variant="secondary" label="CANCEL" disabled={pending} onClick={onCancel} />
+          {profile && onDelete ? (
+            <Button
+              variant="dangerGhost"
+              label="DELETE"
+              disabled={!editable || pending}
+              onClick={() => setConfirmDelete(true)}
+            />
+          ) : null}
+        </div>
+      </Surface>
+      {profile && onDelete && confirmDelete ? (
+        <div class="gsv-console-confirm-layer" onClick={() => setConfirmDelete(false)}>
+          <div class="gsv-console-confirm-wrap" onClick={(event) => event.stopPropagation()}>
+            <ConfirmModal
+              title="CONFIRM DELETE"
+              message={`Delete model preset "${profile.name}"?`}
+              note="The preset is removed and stored secret fields for this preset are cleared."
+              confirmLabel="DELETE PRESET"
+              confirmPhrase={profile.name}
+              confirmInputPlaceholder={profile.name}
+              onCancel={() => setConfirmDelete(false)}
+              onConfirm={() => {
+                setConfirmDelete(false);
+                void run(onDelete, "Deleted", "DELETING");
               }}
             />
           </div>
-        ))}
-      </div>
-      <SettingsStatus text={statusText} tone={statusTone} />
-      <div class="gsv-console-settings-actions">
-        <Button
-          variant="primary"
-          label={pending ? pendingLabel || "SAVING" : "TEST & SAVE PRESET"}
-          disabled={!canSave || pending}
-          onClick={() => void run(async () => {
-            await validateDrafts();
-            setPendingLabel("SAVING");
-            setStatusText("Model test passed. Saving preset...");
-            await onSave(name, drafts, clearedProfileSecretKeys);
-          }, "Saved", "TESTING")}
-        />
-        {profile && onMakeDefault ? (
-          <Button
-            variant="secondary"
-            label="TEST & MAKE DEFAULT"
-            disabled={!editable || pending}
-            onClick={() => void run(async () => {
-              await validateDrafts();
-              setPendingLabel("UPDATING");
-              setStatusText("Model test passed. Updating default...");
-              await onMakeDefault(drafts);
-            }, "Default updated", "TESTING")}
-          />
-        ) : null}
-        <Button variant="secondary" label="CANCEL" disabled={pending} onClick={onCancel} />
-        {profile && onDelete ? (
-          <Button
-            variant="dangerGhost"
-            label="DELETE"
-            disabled={!editable || pending}
-            onClick={() => void run(onDelete, "Deleted", "DELETING")}
-          />
-        ) : null}
-      </div>
-    </Surface>
+        </div>
+      ) : null}
+    </>
   );
 }
 
