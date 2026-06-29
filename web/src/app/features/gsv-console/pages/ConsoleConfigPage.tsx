@@ -64,6 +64,10 @@ type ConsoleConfigPageProps = {
   /** Optional model selection to open immediately (e.g. "default" deep-links to
    *  the Default Agent Model detail page). */
   select?: string;
+  /** Clears the deep-link `select` from the settings route/URL — called when a
+   *  `select`-opened detail navigates back, so the URL doesn't stay pinned to
+   *  the detail (which would reopen it on reload). */
+  onClearSelect?: () => void;
 };
 
 function modelSelectionFromParam(select: string | undefined): ModelSelection | null {
@@ -108,7 +112,7 @@ type SettingsFieldGroupProps = {
 
 type ClearedProfileSecretKeys = ReadonlyMap<string, ReadonlySet<string>>;
 
-export function ConsoleConfigPage({ kind, select }: ConsoleConfigPageProps) {
+export function ConsoleConfigPage({ kind, select, onClearSelect }: ConsoleConfigPageProps) {
   const config = useConsoleConfig();
   const accounts = useConsoleAccounts();
 
@@ -124,6 +128,7 @@ export function ConsoleConfigPage({ kind, select }: ConsoleConfigPageProps) {
             config={data}
             kind={kind}
             select={select}
+            onClearSelect={onClearSelect}
           />
         )}
       />
@@ -136,11 +141,13 @@ function ConsoleSettingsPanel({
   config,
   kind,
   select,
+  onClearSelect,
 }: {
   accounts: readonly ConsoleAccount[];
   config: readonly ConsoleConfigEntry[];
   kind: ConsoleConfigKind;
   select?: string;
+  onClearSelect?: () => void;
 }) {
   const viewerAccount = viewerAccountForSettings(accounts);
   const viewer: SettingsViewer = {
@@ -150,7 +157,7 @@ function ConsoleSettingsPanel({
   };
 
   if (kind === "models") {
-    return <ModelSettingsPage config={config} viewer={viewer} select={select} />;
+    return <ModelSettingsPage config={config} viewer={viewer} select={select} onClearSelect={onClearSelect} />;
   }
   return <RuntimeSettingsPage config={config} viewer={viewer} />;
 }
@@ -159,10 +166,12 @@ function ModelSettingsPage({
   config,
   viewer,
   select,
+  onClearSelect,
 }: {
   config: readonly ConsoleConfigEntry[];
   viewer: SettingsViewer;
   select?: string;
+  onClearSelect?: () => void;
 }) {
   const saveConfig = useSaveConsoleConfigEntries();
   const validateModelConfig = useValidateConsoleModelConfig();
@@ -199,7 +208,15 @@ function ModelSettingsPage({
         scopeLabel={scopeLabel}
         selection={selection}
         viewer={viewer}
-        onBack={() => requestLeave(() => setSelection(null))}
+        onBack={() => requestLeave(() => {
+          setSelection(null);
+          // A detail opened via the `select` deep-link still has it pinned in
+          // the settings route/URL; clear it so back returns to the list URL
+          // instead of reopening the detail on reload.
+          if (select) {
+            onClearSelect?.();
+          }
+        })}
         onSaveEntries={saveEntries}
         onValidateModelConfig={validateModelSettings}
       />

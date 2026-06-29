@@ -410,7 +410,11 @@ export function GsvConsole({
               onSelectionChange: (selection) => handleSettingsListSelectionChange(settingsRoute.kind, selection),
             })
           ) : settingsRoute.view === "config" ? (
-            <ConsoleConfigPage kind={settingsRoute.kind} select={settingsRoute.select} />
+            <ConsoleConfigPage
+              kind={settingsRoute.kind}
+              select={settingsRoute.select}
+              onClearSelect={() => navigateSettingsRoute({ view: "config", kind: settingsRoute.kind })}
+            />
           ) : settingsRoute.view === "crew" ? (
             <ConsoleCrewPage onManageAgent={openSettingsAgent} onCreateAgent={openSettingsNewAgent} />
           ) : (
