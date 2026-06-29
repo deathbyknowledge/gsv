@@ -33,6 +33,88 @@
   padding-bottom: 5px;
 }
 
+.repositories-header-actions {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 1px;
+  margin-left: auto;
+}
+
+.repositories-pull-button {
+  appearance: none;
+  height: 34px;
+  min-width: 88px;
+  border: 1px solid var(--border-raised);
+  background: var(--field);
+  color: var(--accent-bright);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 12px;
+  cursor: pointer;
+  font: 11px/1 var(--gsv-font-mono);
+  letter-spacing: 0.1em;
+}
+
+.repositories-pull-button:not(:disabled):hover,
+.repositories-pull-button:not(:disabled):focus-visible {
+  background: var(--hover);
+  color: var(--text);
+  outline: none;
+}
+
+.repositories-pull-button:not(:disabled):focus-visible {
+  box-shadow: inset 0 0 0 1px var(--accent-bright);
+}
+
+.repositories-pull-button:disabled {
+  cursor: default;
+  opacity: 0.52;
+}
+
+.repositories-pull-button.is-busy {
+  color: var(--live);
+}
+
+.repositories-pull-status {
+  min-width: 0;
+  flex: 1 1 220px;
+  max-width: 520px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--rule-inner);
+  background: color-mix(in srgb, var(--field) 76%, transparent);
+  color: var(--text-muted);
+  font: 10px/1 var(--gsv-font-mono);
+  letter-spacing: 0.1em;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.repositories-pull-status span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.repositories-pull-status.is-online {
+  color: var(--online);
+}
+
+.repositories-pull-status.is-warn {
+  color: var(--warn);
+}
+
+.repositories-pull-status.is-error {
+  color: var(--error);
+}
+
 .repositories-workspace {
   min-width: 0;
   min-height: 0;
@@ -459,10 +541,20 @@
     width: 100% !important;
   }
 
+  .repositories-header-actions,
   .repositories-toolbar-search,
   .repositories-toolbar-actions {
     flex: 1 1 100%;
     margin-left: 0;
+  }
+
+  .repositories-pull-button {
+    width: 100%;
+  }
+
+  .repositories-pull-status {
+    flex: 1 1 100%;
+    max-width: none;
   }
 
   .repositories-search-row,

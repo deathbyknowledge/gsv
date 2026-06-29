@@ -1,4 +1,4 @@
-import { useQuery, type UseQueryResult } from "@tanstack/preact-query";
+import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/preact-query";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import type { ConsoleResourceState } from "../../gsv-console/domain/consoleModels";
 import {
@@ -6,18 +6,21 @@ import {
   listRepositories,
   listRepositoryCommits,
   listRepositoryRefs,
+  pullRepository,
   readRepositoryDiff,
   readRepositoryPath,
   searchRepository,
   type RepositoryCompareArgs,
   type RepositoryDiffArgs,
   type RepositoryLogArgs,
+  type RepositoryPullArgs,
   type RepositoryReadArgs,
   type RepositorySearchArgs,
 } from "../backend/repositoriesService";
 import type { RepositorySummary } from "../domain/models";
 
 export const repositoriesQueryKey = ["repositories", "list"] as const;
+const repositoriesQueryKeyRoot = ["repositories"] as const;
 
 export function repositoryRefsQueryKey(repo: string) {
   return ["repositories", "refs", repo] as const;
@@ -135,6 +138,18 @@ export function useRepositoryCompare(args: RepositoryCompareArgs, enabled = true
     queryKey: repositoryCompareQueryKey(args),
     enabled: enabled && connected && args.repo.trim().length > 0 && args.base.trim().length > 0 && args.head.trim().length > 0,
     queryFn: async () => compareRepositoryRefs(client, args),
+  });
+}
+
+export function useRepositoryPullMutation() {
+  const { client } = useGateway();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (args: RepositoryPullArgs) => pullRepository(client, args),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: repositoriesQueryKeyRoot });
+    },
   });
 }
 

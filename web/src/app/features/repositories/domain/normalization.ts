@@ -5,6 +5,7 @@ import type {
   RepositoryDiffResult,
   RepositoryDiffStats,
   RepositoryKind,
+  RepositoryPullResult,
   RepositoryReadResult,
   RepositoryRefs,
   RepositorySearchResult,
@@ -117,6 +118,29 @@ export function normalizeRepositoryCompare(payload: unknown): RepositoryCompareR
     stats: normalizeStats(record?.stats),
     files: asArray<Record<string, unknown>>(record?.files).map(normalizeDiffFile),
   };
+}
+
+export function normalizeRepositoryPull(payload: unknown): RepositoryPullResult {
+  const record = asRecord(payload);
+  const result: RepositoryPullResult = {
+    repo: asString(record?.repo),
+    ref: asString(record?.ref),
+    head: asString(record?.head) || null,
+    changed: record?.changed === true,
+    remoteUrl: asString(record?.remoteUrl) || asString(record?.remote_url),
+    remoteRef: asString(record?.remoteRef) || asString(record?.remote_ref),
+  };
+  const trackingRef = asString(record?.trackingRef) || asString(record?.tracking_ref);
+  const upstreamHead = asString(record?.upstreamHead) || asString(record?.upstream_head);
+  const upstreamChanged = asOptionalBoolean(record?.upstreamChanged ?? record?.upstream_changed);
+  const localChanged = asOptionalBoolean(record?.localChanged ?? record?.local_changed);
+  const diverged = record?.diverged;
+  if (trackingRef) result.trackingRef = trackingRef;
+  if (upstreamHead) result.upstreamHead = upstreamHead;
+  if (typeof upstreamChanged === "boolean") result.upstreamChanged = upstreamChanged;
+  if (typeof localChanged === "boolean") result.localChanged = localChanged;
+  if (typeof diverged === "boolean") result.diverged = diverged;
+  return result;
 }
 
 function normalizeRepositorySummary(entry: Record<string, unknown>): RepositorySummary | null {
@@ -254,6 +278,10 @@ function asNumber(value: unknown): number {
 
 function asOptionalNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function asOptionalBoolean(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
 }
 
 function normalizeLimit(value: unknown): number {

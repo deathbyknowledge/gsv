@@ -137,3 +137,17 @@ export type RepositoryCompareResult = {
   stats: RepositoryDiffStats;
   files: RepositoryDiffFile[];
 };
+
+export type RepositoryPullResult = {
+  repo: string;
+  ref: string;
+  head: string | null;
+  changed: boolean;
+  remoteUrl: string;
+  remoteRef: string;
+  trackingRef?: string;
+  upstreamHead?: string;
+  upstreamChanged?: boolean;
+  localChanged?: boolean;
+  diverged?: boolean;
+};

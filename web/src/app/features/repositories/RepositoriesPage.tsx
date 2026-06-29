@@ -2,6 +2,7 @@ import type { JSX } from "preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { Breadcrumbs } from "../../components/ui/Breadcrumbs";
 import { Button } from "../../components/ui/Button";
+import { Icon } from "../../components/ui/Icon";
 import { IconButton } from "../../components/ui/IconButton";
 import { ListRow } from "../../components/ui/ListRow";
 import { Search } from "../../components/ui/Search";
@@ -20,7 +21,9 @@ import {
 import { RepositoryDiffView } from "./components/RepositoryDiffView";
 import type {
   RepositoryCommit,
+  RepositoryPullResult,
   RepositoryReadResult,
+  RepositoryRefs,
   RepositorySearchResult,
   RepositorySummary,
   RepositoryTreeEntry,
@@ -64,6 +67,7 @@ import {
   useRepositoryCompare,
   useRepositoryDiff,
   useRepositoryPath,
+  useRepositoryPullMutation,
   useRepositoryRefs,
   useRepositorySearch,
 } from "./hooks/useRepositoryQueries";
@@ -79,6 +83,10 @@ const COMPACT_ROW_STYLE: JSX.CSSProperties = {
 };
 
 type StateKind = "loading" | "error" | "empty" | "offline";
+type PullNotice = {
+  tone: StatusTone;
+  text: string;
+};
 
 const STATE_TONE: Record<StateKind, StatusTone> = {
   loading: "live",
@@ -96,6 +104,55 @@ function repositoryForTab(tab: RepositoryWorkspaceTab | null, repos: readonly Re
     return null;
   }
   return repos.find((repo) => repo.repo === tab.repo) ?? null;
+}
+
+function isPullableRef(ref: string, refs: RepositoryRefs | null | undefined): boolean {
+  if (!ref || ref.startsWith("refs/remotes/") || ref.startsWith("refs/tags/")) {
+    return false;
+  }
+  return refs?.tags[ref] ? false : true;
+}
+
+function pullDisabledReason({
+  connected,
+  repo,
+  ref,
+  refs,
+  pending,
+}: {
+  connected: boolean;
+  repo: RepositorySummary | null;
+  ref: string;
+  refs: RepositoryRefs | null | undefined;
+  pending: boolean;
+}): string {
+  if (pending) return "Pulling upstream";
+  if (!connected) return "Gateway offline";
+  if (!repo) return "Select a repository";
+  if (!repo.writable) return "Repository is read-only";
+  if (!isPullableRef(ref, refs)) return "Select a local branch";
+  return "";
+}
+
+function pullNoticeForResult(result: RepositoryPullResult): PullNotice {
+  const upstream = result.upstreamHead ?? result.head;
+  const upstreamLabel = upstream ? shortHash(upstream) : result.remoteRef || "upstream";
+  if (result.diverged) {
+    return {
+      tone: "warn",
+      text: `UPSTREAM FETCHED ${upstreamLabel} | LOCAL BRANCH DIVERGED`,
+    };
+  }
+  if (result.changed) {
+    return {
+      tone: "online",
+      text: `PULLED ${shortHash(result.head ?? "") || result.remoteRef}`,
+    };
+  }
+  return {
+    tone: "idle",
+    text: `UP TO DATE | ${result.remoteRef || result.ref}`,
+  };
 }
 
 function RepositoriesStateMessage({
@@ -748,6 +805,7 @@ export function RepositoriesPage() {
   const [activeTabId, setActiveTabId] = useState("");
   const [previewTabId, setPreviewTabId] = useState<string | null>(null);
   const [knownCommits, setKnownCommits] = useState<Record<string, RepositoryCommit>>({});
+  const [pullNotice, setPullNotice] = useState<PullNotice | null>(null);
 
   useEffect(() => {
     setTabs((currentTabs) => {
@@ -836,12 +894,24 @@ export function RepositoriesPage() {
     head: activeCompareTab?.head ?? "",
     context: 3,
   }, canQuery && Boolean(activeCompareTab));
+  const pullMutation = useRepositoryPullMutation();
+
+  useEffect(() => {
+    setPullNotice(null);
+  }, [activeRepo?.repo, activeRef]);
 
   const tabLabels = tabs.map((tab) => tabLabel(tab, repositoryForTab(tab, repos)));
   const activeIndex = Math.max(0, tabs.findIndex((tab) => tab.id === activeTabId));
   const activeRepoIndex = Math.max(0, repos.findIndex((repo) => repo.repo === activeTab?.repo));
   const activeRefIndex = Math.max(0, refOptions.indexOf(activeRef));
   const previewIndex = tabs.findIndex((tab) => tab.id === previewTabId);
+  const activePullDisabledReason = pullDisabledReason({
+    connected,
+    repo: activeRepo,
+    ref: activeRef,
+    refs: refsQuery.data,
+    pending: pullMutation.isPending,
+  });
 
   const focusOrOpenBrowserTab = (repo: RepositorySummary, ref = initialRefForRepository(repo), path = "") => {
     const nextTab = createBrowserTab(repo.repo, ref, normalizeRepoPath(path));
@@ -961,6 +1031,25 @@ export function RepositoriesPage() {
     }
   };
 
+  const pullActiveRepository = async () => {
+    if (!activeRepo || !activeRef || activePullDisabledReason) {
+      return;
+    }
+    setPullNotice(null);
+    try {
+      const result = await pullMutation.mutateAsync({
+        repo: activeRepo.repo,
+        ref: activeRef,
+      });
+      setPullNotice(pullNoticeForResult(result));
+    } catch (error) {
+      setPullNotice({
+        tone: "error",
+        text: queryErrorText(error) || "PULL FAILED",
+      });
+    }
+  };
+
   return (
     <ConsolePage flush>
       <ConsoleResourceBoundary
@@ -1004,6 +1093,27 @@ export function RepositoriesPage() {
                   <Tag tone={activeRepo.public ? "online" : "idle"} label={activeRepo.public ? "PUBLIC" : "PRIVATE"} boxed />
                   <Tag tone={activeRepo.writable ? "online" : "idle"} label={activeRepo.writable ? "WRITABLE" : "READ ONLY"} boxed />
                   {activeRepo.updatedAt ? <Tag tone="idle" label={`UPDATED ${formatAge(activeRepo.updatedAt)}`} boxed /> : null}
+                </span>
+              ) : null}
+              <span class="repositories-header-actions">
+                <button
+                  type="button"
+                  class={`repositories-pull-button${pullMutation.isPending ? " is-busy" : ""}`}
+                  disabled={Boolean(activePullDisabledReason)}
+                  title={activePullDisabledReason || "Pull upstream"}
+                  aria-label="Pull upstream"
+                  onClick={() => {
+                    void pullActiveRepository();
+                  }}
+                >
+                  {pullMutation.isPending ? <Spinner size={14} /> : <Icon name="branch" family="doticons" size={16} />}
+                  <span>{pullMutation.isPending ? "PULLING" : "PULL"}</span>
+                </button>
+              </span>
+              {pullNotice ? (
+                <span class={`repositories-pull-status is-${pullNotice.tone}`} role={pullNotice.tone === "error" ? "alert" : "status"}>
+                  <StatusDot tone={pullNotice.tone} size={7} />
+                  <span>{pullNotice.text}</span>
                 </span>
               ) : null}
             </div>

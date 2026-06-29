@@ -3,6 +3,7 @@ import type {
   RepositoryCompareResult,
   RepositoryCommitsPage,
   RepositoryDiffResult,
+  RepositoryPullResult,
   RepositoryReadResult,
   RepositoryRefs,
   RepositorySearchResult,
@@ -13,6 +14,7 @@ import {
   normalizeRepositoryCompare,
   normalizeRepositoryDiff,
   normalizeRepositoryList,
+  normalizeRepositoryPull,
   normalizeRepositoryRead,
   normalizeRepositoryRefs,
   normalizeRepositorySearch,
@@ -53,6 +55,11 @@ export type RepositoryCompareArgs = {
   head: string;
   context?: number;
   stat?: boolean;
+};
+
+export type RepositoryPullArgs = {
+  repo: string;
+  ref?: string;
 };
 
 const DEFAULT_COMMIT_LIMIT = 20;
@@ -127,6 +134,14 @@ export async function compareRepositoryRefs(client: RepositoriesClient, args: Re
     stat: args.stat === true ? true : undefined,
   });
   return normalizeRepositoryCompare(payload);
+}
+
+export async function pullRepository(client: RepositoriesClient, args: RepositoryPullArgs): Promise<RepositoryPullResult> {
+  const payload = await client.call<unknown>("repo.import", {
+    repo: args.repo,
+    ref: args.ref || undefined,
+  });
+  return normalizeRepositoryPull(payload);
 }
 
 function normalizeCommitLimit(value: unknown): number {
