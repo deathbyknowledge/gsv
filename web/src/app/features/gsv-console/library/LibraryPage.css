@@ -73,7 +73,6 @@
 }
 
 .gsv-library-index,
-.gsv-library-reader-page,
 .gsv-library-editor-page,
 .gsv-library-form-page {
   flex: 1 1 auto;
@@ -83,20 +82,11 @@
   overflow: hidden;
 }
 
-.gsv-library-index-grid {
-  flex: 1 1 auto;
-  display: grid;
-  grid-template-columns: minmax(240px, 300px) minmax(360px, 1fr) minmax(260px, 340px);
-  gap: 14px;
-  min-height: 0;
-  padding: 14px;
-  overflow: hidden;
-}
-
 /* Collection bar — top strip mirroring the FILES machine bar (collection level). */
 .gsv-library-collection-bar {
   flex: 0 0 auto;
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-end;
   gap: 14px;
   padding: 14px;
@@ -275,20 +265,6 @@
   overflow: auto;
 }
 
-.gsv-library-panel {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.gsv-library-panel-body,
-.gsv-library-tree-scroll {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: auto;
-}
-
 .gsv-library-empty-row {
   padding: 16px 18px;
   color: var(--text-dim);
@@ -305,59 +281,12 @@
   padding: 14px;
 }
 
-.gsv-library-search-zone {
-  flex: 0 0 auto;
-  border-bottom: 1px solid var(--line-soft);
-}
-
-.gsv-library-search {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-  padding: 12px;
-}
-
-.gsv-library-search .gsv-btn-link {
-  grid-column: 1 / -1;
-  justify-self: start;
-}
-
 .gsv-library-search-results {
   display: flex;
   flex-direction: column;
 }
 
-.gsv-library-tree {
-  padding: 4px 0 12px;
-}
-
-.gsv-library-tree-row {
-  padding-left: calc(var(--library-tree-depth, 0) * 18px);
-}
-
-.gsv-library-tree-folder [role="group"] {
-  border-left: 1px solid color-mix(in srgb, var(--line-soft) 70%, transparent);
-  margin-left: calc((var(--library-tree-depth, 0) * 18px) + 19px);
-}
-
-.gsv-library-authoring-stack {
-  display: grid;
-  gap: 14px;
-  padding: 16px;
-}
-
-.gsv-library-reader-grid {
-  flex: 1 1 auto;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(200px, 270px);
-  gap: 14px;
-  min-height: 0;
-  padding: 14px;
-  overflow: hidden;
-}
-
 .gsv-library-reader,
-.gsv-library-outline,
 .gsv-library-editor,
 .gsv-library-form-panel,
 .gsv-library-empty-state {
@@ -509,12 +438,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   text-transform: uppercase;
-}
-
-.gsv-library-outline {
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
 }
 
 .gsv-library-outline-row {
@@ -682,12 +605,6 @@
 }
 
 @media (max-width: 1040px) {
-  .gsv-library-index-grid,
-  .gsv-library-reader-grid {
-    grid-template-columns: 1fr;
-    overflow: auto;
-  }
-
   .gsv-library-page-head {
     grid-template-columns: 1fr;
     align-items: start;
