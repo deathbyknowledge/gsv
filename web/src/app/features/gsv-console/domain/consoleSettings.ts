@@ -14,6 +14,10 @@ export type ConsoleSettingField = {
   placeholder?: string;
   rows?: number;
   options?: ReadonlyArray<{ value: string; label: string }>;
+  /** Input size for the field control. Defaults to medium. */
+  size?: "small" | "medium" | "large";
+  /** Render at half width so two fields can share a row. */
+  half?: boolean;
 };
 
 export type ConsoleSettingGroup = {
@@ -43,6 +47,7 @@ export const AGENT_MODEL_FIELDS: readonly ConsoleSettingField[] = [
     kind: "select",
     placeholder: "workers-ai",
     options: AI_PROVIDER_OPTIONS,
+    size: "large",
   },
   {
     key: "config/ai/model",
@@ -50,6 +55,7 @@ export const AGENT_MODEL_FIELDS: readonly ConsoleSettingField[] = [
     description: "Model identifier passed to the selected provider.",
     kind: "text",
     placeholder: "@cf/nvidia/nemotron-3-120b-a12b",
+    size: "large",
   },
   {
     key: "config/ai/api_key",
@@ -57,12 +63,14 @@ export const AGENT_MODEL_FIELDS: readonly ConsoleSettingField[] = [
     description: "Provider credential. Leave empty for local or bound providers.",
     kind: "password",
     placeholder: "sk-...",
+    size: "large",
   },
   {
     key: "config/ai/reasoning",
     label: "Reasoning",
     description: "Reasoning effort hint for models that support extended thinking.",
     kind: "select",
+    size: "small",
     options: [
       { value: "off", label: "Off" },
       { value: "minimal", label: "Minimal" },
@@ -77,12 +85,16 @@ export const AGENT_MODEL_FIELDS: readonly ConsoleSettingField[] = [
     label: "Max tokens",
     description: "Upper bound for generated response size.",
     kind: "number",
+    size: "small",
+    half: true,
   },
   {
     key: "config/ai/max_context_bytes",
-    label: "Max context bytes",
+    label: "Max bytes",
     description: "Maximum bytes of home context injected into prompts.",
     kind: "number",
+    size: "small",
+    half: true,
   },
 ];
 

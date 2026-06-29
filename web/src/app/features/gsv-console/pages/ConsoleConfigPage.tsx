@@ -4,7 +4,6 @@ import { Checkbox } from "../../../components/ui/Checkbox";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
 import { Select } from "../../../components/ui/Select";
 import { Surface } from "../../../components/ui/Surface";
-import { Tag } from "../../../components/ui/Tag";
 import { TextArea } from "../../../components/ui/TextArea";
 import { TextInput } from "../../../components/ui/TextInput";
 import { aiProviderOptionsForValue } from "../../../domain/aiProviders";
@@ -693,48 +692,48 @@ function ModelProfileForm({
 
   return (
     <Surface level={1} class="gsv-console-model-form">
-      <div class="gsv-console-settings-form-head">
-        <div>
-          <h3>{profile ? "Edit Preset" : "New Preset"}</h3>
-          <p>Presets store provider, model, API key, reasoning, and context limits.</p>
-        </div>
-      </div>
       <div class="gsv-console-settings-fields">
-        <TextInput
-          label="PRESET NAME"
-          placeholder="Deep Research"
-          value={name}
-          disabled={!editable || pending}
-          status={duplicateName ? "error" : "none"}
-          message={duplicateName ? "NAME ALREADY EXISTS" : ""}
-          onChange={setName}
-        />
-        {MODEL_PROFILE_FIELDS.map((field) => (
-          <SettingFieldInput
-            field={field}
-            key={field.key}
+        <div class="gsv-console-settings-field">
+          <TextInput
+            label="PRESET NAME"
+            placeholder="Deep Research"
+            value={name}
             disabled={!editable || pending}
-            cleared={clearedSecretKeys.has(field.key)}
-            redacted={isModelProfileFieldRedacted(config, viewer, profile, field)}
-            value={drafts[field.key] ?? ""}
-            onChange={(value) => {
-              setClearedSecretKeys((current) => {
-                if (!current.has(field.key)) {
-                  return current;
-                }
-                const next = new Set(current);
-                next.delete(field.key);
-                return next;
-              });
-              setDrafts((current) => ({ ...current, [field.key]: value }));
-              setStatusText("");
-            }}
-            onClearRedacted={() => {
-              setClearedSecretKeys((current) => new Set(current).add(field.key));
-              setDrafts((current) => ({ ...current, [field.key]: "" }));
-              setStatusText("");
-            }}
+            status={duplicateName ? "error" : "none"}
+            message={duplicateName ? "NAME ALREADY EXISTS" : ""}
+            onChange={setName}
           />
+        </div>
+        {MODEL_PROFILE_FIELDS.map((field) => (
+          <div
+            class={`gsv-console-settings-field${field.half ? " is-half" : ""}`}
+            key={field.key}
+          >
+            <SettingFieldInput
+              field={field}
+              disabled={!editable || pending}
+              cleared={clearedSecretKeys.has(field.key)}
+              redacted={isModelProfileFieldRedacted(config, viewer, profile, field)}
+              value={drafts[field.key] ?? ""}
+              onChange={(value) => {
+                setClearedSecretKeys((current) => {
+                  if (!current.has(field.key)) {
+                    return current;
+                  }
+                  const next = new Set(current);
+                  next.delete(field.key);
+                  return next;
+                });
+                setDrafts((current) => ({ ...current, [field.key]: value }));
+                setStatusText("");
+              }}
+              onClearRedacted={() => {
+                setClearedSecretKeys((current) => new Set(current).add(field.key));
+                setDrafts((current) => ({ ...current, [field.key]: "" }));
+                setStatusText("");
+              }}
+            />
+          </div>
         ))}
       </div>
       <SettingsStatus text={statusText} tone={statusTone} />
@@ -779,13 +778,10 @@ function ModelProfileForm({
 
 function SettingsFieldGroup({
   config,
-  description,
   editable,
   fields,
   initialValues,
-  meta,
   onSave,
-  title,
   validateBeforeSave,
   writeKeyForField,
 }: SettingsFieldGroupProps) {
@@ -879,40 +875,37 @@ function SettingsFieldGroup({
 
   return (
     <Surface level={1} class="gsv-console-settings-group">
-      <div class="gsv-console-settings-form-head">
-        <div>
-          <h3>{title}</h3>
-          <p>{description}</p>
-        </div>
-        {meta ? <Tag label={meta} tone={editable ? "accent" : "idle"} boxed /> : null}
-      </div>
       <div class="gsv-console-settings-fields">
         {fields.map((field) => (
-          <SettingFieldInput
-            disabled={!editable || pending || field.kind === "readonly"}
-            field={field}
+          <div
+            class={`gsv-console-settings-field${field.half ? " is-half" : ""}`}
             key={field.key}
-            cleared={clearedSensitiveKeys.has(field.key)}
-            redacted={isFieldRedacted(config, field, writeKeyForField(field))}
-            value={drafts[field.key] ?? ""}
-            onChange={(value) => {
-              setStatusText("");
-              setClearedSensitiveKeys((current) => {
-                if (!current.has(field.key)) {
-                  return current;
-                }
-                const next = new Set(current);
-                next.delete(field.key);
-                return next;
-              });
-              setDrafts((current) => ({ ...current, [field.key]: value }));
-            }}
-            onClearRedacted={() => {
-              setClearedSensitiveKeys((current) => new Set(current).add(field.key));
-              setDrafts((current) => ({ ...current, [field.key]: "" }));
-              setStatusText("");
-            }}
-          />
+          >
+            <SettingFieldInput
+              disabled={!editable || pending || field.kind === "readonly"}
+              field={field}
+              cleared={clearedSensitiveKeys.has(field.key)}
+              redacted={isFieldRedacted(config, field, writeKeyForField(field))}
+              value={drafts[field.key] ?? ""}
+              onChange={(value) => {
+                setStatusText("");
+                setClearedSensitiveKeys((current) => {
+                  if (!current.has(field.key)) {
+                    return current;
+                  }
+                  const next = new Set(current);
+                  next.delete(field.key);
+                  return next;
+                });
+                setDrafts((current) => ({ ...current, [field.key]: value }));
+              }}
+              onClearRedacted={() => {
+                setClearedSensitiveKeys((current) => new Set(current).add(field.key));
+                setDrafts((current) => ({ ...current, [field.key]: "" }));
+                setStatusText("");
+              }}
+            />
+          </div>
         ))}
       </div>
       <SettingsStatus text={statusText} tone={statusTone} />
@@ -984,6 +977,7 @@ function SettingFieldInput({
         description={description}
         placeholder={placeholder}
         rows={field.rows ?? 4}
+        size={field.size}
         value={value}
         disabled={disabled}
         onChange={onChange}
@@ -1004,7 +998,8 @@ function SettingFieldInput({
         options={optionLabels}
         value={selectedIndex}
         disabled={disabled}
-        width={420}
+        size={field.size}
+        block
         onChange={(index) => onChange(options[index]?.value ?? "")}
       />
     );
@@ -1066,6 +1061,7 @@ function SettingFieldInput({
       label={field.label}
       description={description}
       placeholder={placeholder}
+      size={field.size}
       value={value}
       readonly={field.kind === "readonly"}
       disabled={disabled}
