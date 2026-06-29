@@ -1,4 +1,4 @@
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import { ConsoleHeader, type ConsoleCrumb } from "../../../components/ui/ConsoleHeader";
 import { useUnsavedGuardLeave } from "../../gsv-shell/unsaved/unsavedGuard";
 import { FilesPage } from "../../files/FilesPage";
@@ -174,6 +174,22 @@ export function GsvConsole({
   settingsRoute = { view: "overview" },
 }: GsvConsoleProps) {
   const [selectedAgentUid, setSelectedAgentUid] = useState<number | null>(null);
+  // Track the open detail of the active top-level list surface (machines /
+  // messengers / integrations / applications / runtime). Settings surfaces drive
+  // their own breadcrumb via the settings route; these don't, so without this a
+  // detail opened from a top-level surface leaves no breadcrumb path back to the
+  // list and the header back jumps all the way to the desktop.
+  const [surfaceDetail, setSurfaceDetail] = useState<ConsoleListSelection | null>(null);
+  const [surfaceDetailSeq, setSurfaceDetailSeq] = useState(0);
+  useEffect(() => {
+    setSurfaceDetail(null);
+  }, [activeSurface]);
+  const clearSurfaceDetail = () => {
+    setSurfaceDetail(null);
+    // The surface owns its selection internally (uncontrolled), so remount it
+    // via a key bump to drop back to the list.
+    setSurfaceDetailSeq((seq) => seq + 1);
+  };
   const navigateSettingsRoute = (route: SettingsRoute) => {
     onSettingsRouteChange?.(route);
   };
@@ -308,6 +324,20 @@ export function GsvConsole({
           { label: settingsRouteLabel(settingsRoute) },
         ] : inNestedSettings ? [{ label: settingsRouteLabel(settingsRoute) }] : []),
       ]
+    : activeSurface === "agent"
+    ? [
+        // The top-level agent editor is reached from Crew; keep CREW in the trail
+        // as the way back (the editor no longer renders its own breadcrumb).
+        { label: "GSV", onClick: onBackToDesktop, notLast: true },
+        { label: "CREW", onClick: backToCrew, notLast: true },
+        { label: shellSurfaceLabel(activeSurface) },
+      ]
+    : surfaceDetail
+    ? [
+        { label: "GSV", onClick: onBackToDesktop, notLast: true },
+        { label: shellSurfaceLabel(activeSurface), onClick: clearSurfaceDetail, notLast: true },
+        { label: surfaceDetail.createNew ? "NEW" : surfaceDetail.detailLabel || "DETAIL" },
+      ]
     : [
         { label: "GSV", onClick: onBackToDesktop, notLast: true },
         { label: shellSurfaceLabel(activeSurface) },
@@ -324,6 +354,10 @@ export function GsvConsole({
         }
         guardedSettingsNavigate({ view: "overview" });
       }
+    : activeSurface === "agent"
+    ? backToCrew
+    : surfaceDetail
+    ? clearSurfaceDetail
     : onBackToDesktop;
   const tail = activeSurface === "settings" ? settingsRouteTail(settingsRoute) : surfaceTail(activeSurface);
 
@@ -368,19 +402,19 @@ export function GsvConsole({
             />
           )
         ) : activeSurface === "runtime" ? (
-          <RuntimePage onNewTask={onOpenChat} />
+          <RuntimePage key={surfaceDetailSeq} onNewTask={onOpenChat} onSelectionChange={setSurfaceDetail} />
         ) : activeSurface === "crew" ? (
           <ConsoleCrewPage onManageAgent={openAgent} />
         ) : activeSurface === "agent" ? (
           <ConsoleAgentPage accountUid={selectedAgentUid} onBackToCrew={backToCrew} />
         ) : activeSurface === "machines" ? (
-          <MachinesPage />
+          <MachinesPage key={surfaceDetailSeq} onSelectionChange={setSurfaceDetail} />
         ) : activeSurface === "messengers" ? (
-          <MessengersPage />
+          <MessengersPage key={surfaceDetailSeq} onSelectionChange={setSurfaceDetail} />
         ) : activeSurface === "integrations" ? (
-          <IntegrationsPage />
+          <IntegrationsPage key={surfaceDetailSeq} onSelectionChange={setSurfaceDetail} />
         ) : activeSurface === "applications" ? (
-          <PackageListPage kind="applications" onOpenApp={onOpenApp} />
+          <PackageListPage key={surfaceDetailSeq} kind="applications" onOpenApp={onOpenApp} onSelectionChange={setSurfaceDetail} />
         ) : activeSurface === "library" ? (
           <LibraryPage
             route={libraryRoute}
