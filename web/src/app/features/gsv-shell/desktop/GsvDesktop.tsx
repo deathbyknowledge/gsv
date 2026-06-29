@@ -293,7 +293,7 @@ export function GsvDesktop({
               }}
             >
               <span class="gsv-space-gsv-cross" aria-hidden="true" />
-              <GsvMark variant="master" size={50} />
+              <GsvMark variant="white" size={50} />
             </button>
             <div class="gsv-space-gsv-label">GSV</div>
           </div>
