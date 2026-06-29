@@ -135,6 +135,23 @@
   gap: 12px;
 }
 
+.gsv-console-detail-actions {
+  min-width: 0;
+  display: contents;
+}
+
+.gsv-console-detail-action-error {
+  min-width: min(100%, 240px);
+  max-width: 100%;
+  align-self: center;
+  color: var(--error);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Still used by the messenger onboarding flow (shares ConsoleDetailHeader). */
 .gsv-console-detail-blurb {
   max-width: 640px;

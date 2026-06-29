@@ -472,25 +472,23 @@ export async function handlePkgRemove(
 ): Promise<PkgRemoveResult> {
   const record = requirePackage(args.packageId, ctx);
   assertMutablePackageAccess(record, ctx);
-  if (record.enabled) {
-    const updated = ctx.packages.setEnabled(record.packageId, false, record.scope);
-    if (!updated) {
-      throw new Error(`Failed to disable package: ${record.packageId}`);
-    }
-  }
 
-  // Revoke the disabling human's run-as rights for this package's agents. Use
+  // Revoke the removing human's run-as rights for this package's agents. Use
   // the owning human (not the run-as account): from a personal-agent process,
   // ctx.identity.process.uid is the agent, so revoking that would leave the
-  // human in the access group and still able to spawn the disabled agent.
+  // human in the access group and still able to spawn the removed agent.
   const humanUid = ctx.identity ? resolveCallerOwnerUid(ctx) : undefined;
   if (typeof humanUid === "number" && (record.manifest.profiles?.length ?? 0) > 0) {
     revokePackageAgentAccess(ctx, record, humanUid);
   }
+  const removed = ctx.packages.remove(record.packageId, record.scope);
+  if (!removed) {
+    throw new Error(`Failed to remove package: ${record.packageId}`);
+  }
 
   return {
-    changed: record.enabled,
-    package: toPkgSummary(requirePackage(record.packageId, ctx), ctx),
+    changed: true,
+    package: toPkgSummary({ ...record, enabled: false, updatedAt: Date.now() }, ctx),
   };
 }
 
