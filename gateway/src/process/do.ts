@@ -828,7 +828,7 @@ export class Process extends Host<Env> {
     }
 
     if (this.store.isRunResolved(pending.runId)) {
-      await this.continueAgentLoop(pending.runId);
+      this.scheduleTick(pending.runId);
     }
   }
 
