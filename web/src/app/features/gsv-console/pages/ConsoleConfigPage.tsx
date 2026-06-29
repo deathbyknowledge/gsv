@@ -207,6 +207,17 @@ function ModelSettingsPage({
     await validateModelConfig.mutateAsync(input);
   };
 
+  // Leave the open detail and return to the list. A detail opened via the
+  // `select` deep-link still has it pinned in the settings route/URL, so clear
+  // that too — otherwise back leaves the list rendered at the detail URL and a
+  // reload reopens it.
+  const exitDetail = () => {
+    setSelection(null);
+    if (select) {
+      onClearSelect?.();
+    }
+  };
+
   if (selection) {
     return (
       <ModelSettingsDetail
@@ -217,15 +228,11 @@ function ModelSettingsPage({
         scopeLabel={scopeLabel}
         selection={selection}
         viewer={viewer}
-        onBack={() => requestLeave(() => {
-          setSelection(null);
-          // A detail opened via the `select` deep-link still has it pinned in
-          // the settings route/URL; clear it so back returns to the list URL
-          // instead of reopening the detail on reload.
-          if (select) {
-            onClearSelect?.();
-          }
-        })}
+        // User-initiated Back/Cancel: guard so a dirty draft prompts first.
+        onBack={() => requestLeave(exitDetail)}
+        // Successful create/delete: the draft is saved, so return directly
+        // without a spurious "Discard changes?" prompt.
+        onCompleted={exitDetail}
         onSaveEntries={saveEntries}
         onValidateModelConfig={validateModelSettings}
       />
@@ -273,6 +280,7 @@ function ModelSettingsDetail({
   selection,
   viewer,
   onBack,
+  onCompleted,
   onSaveEntries,
   onValidateModelConfig,
 }: {
@@ -283,7 +291,10 @@ function ModelSettingsDetail({
   scopeLabel: string;
   selection: ModelSelection;
   viewer: SettingsViewer;
+  /** Guarded user-initiated Back/Cancel. */
   onBack: () => void;
+  /** Unguarded return after a successful create/delete (draft already saved). */
+  onCompleted: () => void;
   onSaveEntries: (entries: readonly SaveConsoleConfigInput[]) => Promise<void>;
   onValidateModelConfig: (input: ValidateModelSettingsInput) => Promise<void>;
 }) {
@@ -378,7 +389,7 @@ function ModelSettingsDetail({
         onCancel={onBack}
         onDelete={profile ? async () => {
           await saveModelProfiles(viewer, profiles, deleteModelProfile(profiles, profile.id), onSaveEntries);
-          onBack();
+          onCompleted();
         } : undefined}
         onMakeDefault={profile ? async (values) => {
           await makeProfileDefault(config, viewer, { ...profile, values }, onSaveEntries);
@@ -390,7 +401,7 @@ function ModelSettingsDetail({
             : createModelProfile(profiles, name, values);
           await saveModelProfiles(viewer, profiles, nextProfiles, onSaveEntries, clearedSecretKeys);
           if (!profile) {
-            onBack();
+            onCompleted();
           }
         }}
       />
