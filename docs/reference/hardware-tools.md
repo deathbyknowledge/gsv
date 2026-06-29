@@ -81,6 +81,7 @@ Inspect descriptors with:
 - `sys.device.list`
 - `sys.device.get`
 - `sys.device.update` to change the owner-managed `description`
+- `sys.device.delete` to forget an owned physical device, disconnect any live device socket, and revoke device-bound node tokens
 - `Read` with `target: "gsv"` and `path: "/sys/devices"`
 
 ## Native `gsv` Target
