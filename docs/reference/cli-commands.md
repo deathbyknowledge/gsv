@@ -40,15 +40,22 @@ Commands run inside the gateway OS context, not directly on your local machine.
 Use `:quit`, `:exit`, or `:q` to leave.
 
 Inside the gateway shell, `proc` is the process IPC userland command and
-`sched` manages Kernel schedules:
+`crontab` is the normal scheduling interface. `sched` is the lower-level
+inspector/control command for the Kernel schedule records that back cron jobs
+and other schedule targets:
 
 ```bash
 proc self
 proc list
 proc send <pid> [--conversation id] [--metadata-json json] <message>
 proc call <pid> [--conversation id] [--metadata-json json] [--timeout 60s] <message>
+crontab -l
+crontab FILE
+crontab -r
 sched list [--all]
-sched add --name NAME (--cron EXPR [--timezone TZ] | --every DURATION | --after DURATION | --at TIME) <prompt/message>
+sched add --json JSON
+sched enable <id>
+sched disable <id>
 sched remove <id>
 sched run <id> [--force]
 ```
@@ -57,6 +64,14 @@ sched run <id> [--force]
 the source process receives either `ipc.reply` or `ipc.timeout` in its default
 conversation. `proc self` prints the current GSV process id; the shell also
 exports it as `GSV_PID`.
+
+Use `crontab FILE` or write `/var/spool/cron/<user>` for recurring shell-command
+automation. The crontab file is the desired state: reinstalling it deletes and
+recreates the linked Kernel schedule rows, so crontab-backed `sched` ids are not
+stable. Use `sched list` to inspect next fire time, last status, error, source,
+and target. `sched list --all` includes disabled schedules; it does not mean all
+users. `sched add --json` is a low-level compatibility path for direct
+`sched.*` payloads, not the recommended way to create ordinary cron jobs.
 
 ## Process Commands
 

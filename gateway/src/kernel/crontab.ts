@@ -1,7 +1,9 @@
 import type { PasswdEntry } from "../auth/passwd";
 import type { ConnectionIdentity, ProcessIdentity } from "@humansandmachines/gsv/protocol";
+import { canOwnerDelegateRunAs } from "./account-access";
 import { hasCapability } from "./capabilities";
 import type { KernelContext } from "./context";
+import { resolveCallerOwnerUid } from "./context";
 import {
   armSchedule,
   normalizeScheduleExpression,
@@ -160,8 +162,11 @@ async function replaceCronFile(
 
   for (const job of input.jobs) {
     const process = processIdentityForUser(ctx, job.user);
+    const ownerUid = input.ownerUid === null
+      ? job.user.uid
+      : scheduleOwnerUidForUserCrontab(ctx, job.user);
     const schedule = store.create({
-      ownerUid: job.user.uid,
+      ownerUid,
       creator: principalFromIdentity(requireActor(ctx), ctx.processId),
       runAs: principalFromProcess(process),
       name: `cron ${input.path}:${job.lineNumber}`,
@@ -350,9 +355,9 @@ function requireUser(ctx: KernelContext, username: string): PasswdEntry {
 
 function assertCanManageUserCrontab(ctx: KernelContext, user: PasswdEntry): void {
   const actorUid = requireActor(ctx).process.uid;
-  if (actorUid !== 0 && actorUid !== user.uid) {
-    throw new Error(`Permission denied: cannot access crontab for ${user.username}`);
-  }
+  if (actorUid === 0 || actorUid === user.uid) return;
+  if (canOwnerDelegateRunAs(ctx.auth, resolveCallerOwnerUid(ctx), user)) return;
+  throw new Error(`Permission denied: cannot access crontab for ${user.username}`);
 }
 
 function assertRoot(ctx: KernelContext, action: string): void {
@@ -370,6 +375,17 @@ function processIdentityForUser(ctx: KernelContext, user: PasswdEntry): ProcessI
     home: user.home,
     cwd: user.home,
   };
+}
+
+function scheduleOwnerUidForUserCrontab(ctx: KernelContext, user: PasswdEntry): number {
+  const actorUid = requireActor(ctx).process.uid;
+  if (actorUid === 0) {
+    return user.uid;
+  }
+  if (actorUid === user.uid || canOwnerDelegateRunAs(ctx.auth, resolveCallerOwnerUid(ctx), user)) {
+    return resolveCallerOwnerUid(ctx);
+  }
+  return user.uid;
 }
 
 function principalFromIdentity(identity: ConnectionIdentity, processId?: string): SchedulePrincipal {

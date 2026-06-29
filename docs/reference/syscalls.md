@@ -1197,11 +1197,17 @@ Scheduler syscalls are Kernel-owned. Schedule records live in Kernel SQLite,
 GSV computes timezone-aware next fire times, and Cloudflare Agent schedules are
 used only as concrete wake-ups.
 
+The normal user-facing interface for recurring shell-command jobs is `crontab`
+or `/var/spool/cron/<user>`. Cron files are desired state: installing or
+rewriting a crontab removes and recreates the linked `sched.*` records, so
+crontab-backed schedule ids are operational ids, not stable cron identifiers.
+Use `sched.list` for status, last result, source, and low-level control.
+
 Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `sched.list` | `handleSchedulerList` | Lists schedules visible to the caller. Non-root callers see their own schedules; root may pass `ownerUid`. |
+| `sched.list` | `handleSchedulerList` | Lists schedules visible to the caller. Non-root callers see schedules for their owning user; root may pass `ownerUid`. |
 | `sched.add` | `handleSchedulerAdd` | Creates a user-owned schedule, validates the expression and target, computes the next run, and arms a Kernel wake. |
 | `sched.update` | `handleSchedulerUpdate` | Updates schedule metadata, expression, enabled state, or target, then re-arms the wake. |
 | `sched.remove` | `handleSchedulerRemove` | Removes a schedule and cancels its pending wake when present. |
@@ -1215,6 +1221,7 @@ type ScheduleExpression =
   | { kind: "cron"; expr: string; timezone: string };
 
 type ScheduleTarget =
+  | { kind: "command.exec"; command: string; cwd?: string; timeoutMs?: number }
   | { kind: "process.spawn"; runAs?: string; label?: string; prompt: string; parentPid?: string; cwd?: string; assignment?: unknown }
   | { kind: "process.event"; pid: string; conversationId?: string; message: string; data?: Record<string, unknown> };
 
