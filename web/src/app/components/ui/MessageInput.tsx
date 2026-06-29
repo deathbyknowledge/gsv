@@ -24,7 +24,7 @@ export interface MessageInputProps {
   disabled?: boolean;
   focusKey?: number;
   onChange?: (value: string) => void;
-  onFiles?: (files: FileList | null) => void;
+  onFiles?: (files: FileList | readonly File[] | null) => void;
   onRemoveAttachment?: (id: string) => void;
   onSend?: (message: string) => void;
   onStop?: () => void;
@@ -82,6 +82,34 @@ function StopGlyph() {
       <rect x="4" y="4" width="8" height="8" fill="currentColor" />
     </svg>
   );
+}
+
+function isImageFile(file: File): boolean {
+  return file.type.toLowerCase().startsWith("image/")
+    || /\.(avif|bmp|gif|heic|heif|jpe?g|png|tiff?|webp)$/i.test(file.name);
+}
+
+function clipboardImageFiles(data: DataTransfer | null): File[] {
+  if (!data) {
+    return [];
+  }
+
+  const files: File[] = [];
+  for (const item of Array.from(data.items)) {
+    if (item.kind !== "file") {
+      continue;
+    }
+    const file = item.getAsFile();
+    if (file && isImageFile(file)) {
+      files.push(file);
+    }
+  }
+
+  if (files.length > 0) {
+    return files;
+  }
+
+  return Array.from(data.files).filter(isImageFile);
 }
 
 /** MessageInput — autosizing composer with optional attachments and run control. */
@@ -154,6 +182,17 @@ export function MessageInput({
     event.preventDefault();
     submitDraft();
   };
+  const handlePaste = (event: JSX.TargetedClipboardEvent<HTMLFormElement>) => {
+    if (!onFiles || disabled || busy) {
+      return;
+    }
+    const imageFiles = clipboardImageFiles(event.clipboardData);
+    if (imageFiles.length === 0) {
+      return;
+    }
+    event.preventDefault();
+    onFiles(imageFiles);
+  };
   const submitDraft = () => {
     if (!canSubmit) {
       return;
@@ -192,7 +231,7 @@ export function MessageInput({
           ))}
         </div>
       ) : null}
-      <form class="gsv-mi-bar" onSubmit={handleSubmit}>
+      <form class="gsv-mi-bar" onSubmit={handleSubmit} onPaste={handlePaste}>
         {onFiles ? (
           <label class="gsv-mi-icon gsv-mi-file" title="Attach files" aria-label="Attach files">
             <LeadGlyph />

@@ -366,11 +366,29 @@ export class R2MountBackend implements MountBackend {
 
   async search(path: string, query: string, include?: string): Promise<FsSearchBackendResult> {
     const prefix = normalizePath(path);
+    const key = toKey(prefix);
     const searchPrefix = prefix.endsWith("/") ? prefix : prefix + "/";
     const needle = query;
 
     const matches: FsSearchBackendResult["matches"] = [];
     let truncated = false;
+
+    if (key) {
+      const direct = await this.bucket.get(key);
+      if (direct && !isDirectoryMarker(direct)) {
+        truncated = await this.searchObject({
+          displayPath: prefix,
+          include,
+          key,
+          matches,
+          object: direct,
+          query: needle,
+          throwOnDenied: true,
+        });
+        return { matches, truncated };
+      }
+    }
+
     let cursor: string | undefined;
 
     outer:
@@ -384,23 +402,21 @@ export class R2MountBackend implements MountBackend {
       for (const obj of listed.objects) {
         if (include && !matchGlob(include, obj.key)) continue;
 
-        const contentType = obj.httpMetadata?.contentType || "text/plain";
-        if (!isTextContentType(contentType)) continue;
-
         const full = await this.bucket.get(obj.key);
         if (!full) continue;
+        if (isDirectoryMarker(full) || isSymlink(full)) continue;
 
-        const text = await full.text();
-        const lines = text.split("\n");
-
-        for (let i = 0; i < lines.length; i++) {
-          if (lines[i].includes(needle)) {
-            matches.push({ path: "/" + obj.key, line: i + 1, content: lines[i] });
-            if (matches.length >= MAX_SEARCH_MATCHES) {
-              truncated = true;
-              break outer;
-            }
-          }
+        truncated = await this.searchObject({
+          displayPath: "/" + obj.key,
+          include: undefined,
+          key: obj.key,
+          matches,
+          object: full,
+          query: needle,
+          throwOnDenied: false,
+        });
+        if (truncated) {
+          break outer;
         }
       }
 
@@ -408,6 +424,62 @@ export class R2MountBackend implements MountBackend {
     } while (cursor);
 
     return { matches, truncated };
+  }
+
+  private async searchObject({
+    displayPath,
+    include,
+    key,
+    matches,
+    object,
+    query,
+    throwOnDenied,
+  }: {
+    displayPath: string;
+    include: string | undefined;
+    key: string;
+    matches: FsSearchBackendResult["matches"];
+    object: R2ObjectBody;
+    query: string;
+    throwOnDenied: boolean;
+  }): Promise<boolean> {
+    if (include && !matchGlob(include, key)) {
+      return false;
+    }
+    if (isSymlink(object)) {
+      if (throwOnDenied) {
+        throw new Error(`EINVAL: invalid argument, search '${displayPath}' is a symbolic link`);
+      }
+      return false;
+    }
+
+    try {
+      this.assertMode(object, READ_BIT, displayPath);
+    } catch (err) {
+      if (throwOnDenied) {
+        throw err;
+      }
+      return false;
+    }
+
+    const contentType = object.httpMetadata?.contentType || "text/plain";
+    if (!isTextContentType(contentType)) {
+      return false;
+    }
+
+    const text = await object.text();
+    const lines = text.split("\n");
+
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].includes(query)) {
+        matches.push({ path: displayPath, line: i + 1, content: lines[i] });
+        if (matches.length >= MAX_SEARCH_MATCHES) {
+          return true;
+        }
+      }
+    }
+
+    return false;
   }
 
   async chmod(path: string, mode: number): Promise<void> {

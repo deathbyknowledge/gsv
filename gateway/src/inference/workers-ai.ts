@@ -1212,12 +1212,29 @@ function serializeUserContent(
 function serializeTextBlocks(
   blocks: Array<TextContent | ImageContent>,
 ): string {
-  const text = blocks.flatMap((block) => {
-    if (block.type === "text") return [block.text];
-    return ["[The user tried to attach an image but the current model has no multi-modality capabilities]"];
-  }).join("");
+  const parts: string[] = [];
+  let nextImageHasTextFallback = false;
 
-  return text;
+  for (const block of blocks) {
+    if (block.type === "text") {
+      parts.push(block.text);
+      nextImageHasTextFallback = hasStoredImageTextFallback(block.text);
+      continue;
+    }
+
+    if (nextImageHasTextFallback) {
+      nextImageHasTextFallback = false;
+      continue;
+    }
+
+    parts.push("\n[Attached image omitted: no image description was available for this Workers AI text model.]");
+  }
+
+  return parts.join("");
+}
+
+function hasStoredImageTextFallback(text: string): boolean {
+  return text.includes("\nImage description:");
 }
 
 function normalizeWorkersAiToolCalls(toolCalls: unknown): ToolCall[] {
