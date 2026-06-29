@@ -26,9 +26,6 @@ export function ProvisioningScreen({
     <AuthLayout background="galaxy" visible={visible} surfaceClass="gsv-auth-surface-setup">
       <div class="gsv-provision" data-session-provisioning-view>
         <div class="gsv-provision-head">
-          <span class="gsv-provision-spinner" aria-hidden="true">
-            <Spinner size={26} />
-          </span>
           <span class="gsv-provision-kicker">First-time setup · Setting up</span>
           <h2 class="gsv-provision-title" data-session-provisioning-title>{copy.title}</h2>
           <p class="gsv-provision-sub" data-session-provisioning-copy>{copy.copy}</p>
