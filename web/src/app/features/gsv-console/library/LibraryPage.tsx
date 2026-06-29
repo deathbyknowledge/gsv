@@ -543,11 +543,7 @@ function LibraryReader({ library }: { library: LibraryRuntime }) {
         meta={note.path}
         actions={(
           <>
-            <Button
-              variant="secondary"
-              label="LIBRARY"
-              onClick={() => library.navigate({ view: "index", db })}
-            />
+            {/* Back to the library index is owned by the breadcrumb now. */}
             <Button
               variant="primary"
               label="EDIT"
@@ -602,17 +598,11 @@ function LibraryEditor({ library }: { library: LibraryRuntime }) {
   const editingExisting = library.activeRoute.view === "editor" && Boolean(library.activeRoute.path);
   return (
     <div class="gsv-library-editor-page">
+      {/* Back to the library index is owned by the breadcrumb now. */}
       <LibraryPageHeader
         eyebrow={db || "LIBRARY"}
         title={editingExisting ? "Edit Page" : "Write Page"}
         meta={library.editorPath || "NEW PAGE"}
-        actions={(
-          <Button
-            variant="secondary"
-            label="BACK"
-            onClick={() => db ? library.navigate({ view: "index", db }) : library.navigate({ view: "index" })}
-          />
-        )}
       />
       <Surface class="gsv-library-editor" level={2}>
         <div class="gsv-library-editor-meta">
@@ -657,7 +647,6 @@ function LibraryCapture({ library }: { library: LibraryRuntime }) {
         eyebrow={db || "LIBRARY"}
         title="Capture Source"
         meta="CREATE SOURCE-BACKED PAGE"
-        actions={<Button variant="secondary" label="BACK" onClick={() => db ? library.navigate({ view: "index", db }) : library.navigate({ view: "index" })} />}
       />
       <Surface class="gsv-library-form-panel" level={2}>
         <div class="gsv-library-form-grid">
@@ -711,7 +700,6 @@ function LibraryBuild({ library }: { library: LibraryRuntime }) {
         eyebrow={db || "LIBRARY"}
         title="Build From Directory"
         meta="BACKGROUND AGENT"
-        actions={<Button variant="secondary" label="BACK" onClick={() => db ? library.navigate({ view: "index", db }) : library.navigate({ view: "index" })} />}
       />
       <Surface class="gsv-library-form-panel" level={2}>
         <div class="gsv-library-form-grid">

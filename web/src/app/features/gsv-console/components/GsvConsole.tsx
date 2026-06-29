@@ -151,6 +151,22 @@ function hasSettingsListDetail(route: SettingsRoute): route is Extract<SettingsR
   return route.view === "list" && (Boolean(route.detailId) || route.createNew === true);
 }
 
+/** The breadcrumb label for a non-index library view, or null on the index.
+ *  Library runs its own internal route, so the shell maps it to a detail crumb
+ *  (GSV → LIBRARY → [page/view]) the same way other surfaces show their detail. */
+function libraryDetailLabel(route: ShellLibraryRoute): string | null {
+  if (route.view === "reader") return libraryPageName(route.path);
+  if (route.view === "editor") return route.path ? libraryPageName(route.path) : "NEW PAGE";
+  if (route.view === "capture") return "NEW PAGE";
+  if (route.view === "build") return "BUILD";
+  return null;
+}
+
+function libraryPageName(path: string): string {
+  const base = path.split("/").pop() || path;
+  return base.replace(/\.[^.]+$/, "").toUpperCase();
+}
+
 function settingsRouteTail(route: SettingsRoute): string {
   if (route.view === "overview") {
     return "GSV · CONTROL";
@@ -330,6 +346,15 @@ export function GsvConsole({
 
   const inNestedSettings = activeSurface === "settings" && settingsRoute.view !== "overview";
   const inSettingsListDetail = activeSurface === "settings" && hasSettingsListDetail(settingsRoute);
+  // Library drives its own internal route; surface its non-index views as a
+  // detail crumb so the breadcrumb (and header back-arrow) own the path back to
+  // the index, instead of leaving the trail stuck at LIBRARY.
+  const libraryDetail = libraryDetailLabel(libraryRoute);
+  const inLibrary = activeSurface === "library"
+    || (activeSurface === "settings" && settingsRoute.view === "list" && settingsRoute.kind === "library");
+  const goLibraryIndex = () => onLibraryRouteChange?.(
+    libraryRoute.db ? { view: "index", db: libraryRoute.db } : { view: "index" },
+  );
   const crumbs: ConsoleCrumb[] = activeSurface === "settings"
     ? [
         { label: "GSV", onClick: onBackToDesktop, notLast: true },
@@ -356,6 +381,10 @@ export function GsvConsole({
           // back, so the detail renders no in-page back button.
           { label: settingsRouteLabel(settingsRoute), onClick: settingsConfigDetail.onExit, notLast: true },
           { label: settingsConfigDetail.label },
+        ] : settingsRoute.view === "list" && settingsRoute.kind === "library" && libraryDetail ? [
+          // Library sub-view inside settings: LIBRARY (→ index) → [page/view].
+          { label: shellSurfaceLabel("library"), onClick: goLibraryIndex, notLast: true },
+          { label: libraryDetail },
         ] : inNestedSettings ? [{ label: settingsRouteLabel(settingsRoute) }] : []),
       ]
     : activeSurface === "agent"
@@ -365,6 +394,13 @@ export function GsvConsole({
         { label: "GSV", onClick: onBackToDesktop, notLast: true },
         { label: "CREW", onClick: backToCrew, notLast: true },
         { label: shellSurfaceLabel(activeSurface) },
+      ]
+    : activeSurface === "library" && libraryDetail
+    ? [
+        // Top-level Library: GSV → LIBRARY (→ index) → [page/view].
+        { label: "GSV", onClick: onBackToDesktop, notLast: true },
+        { label: shellSurfaceLabel(activeSurface), onClick: goLibraryIndex, notLast: true },
+        { label: libraryDetail },
       ]
     : surfaceDetail
     ? [
@@ -390,8 +426,14 @@ export function GsvConsole({
           settingsConfigDetail.onExit();
           return;
         }
+        if (settingsRoute.view === "list" && settingsRoute.kind === "library" && libraryDetail) {
+          goLibraryIndex();
+          return;
+        }
         guardedSettingsNavigate({ view: "overview" });
       }
+    : activeSurface === "library" && libraryDetail
+    ? goLibraryIndex
     : activeSurface === "agent"
     ? backToCrew
     : surfaceDetail
