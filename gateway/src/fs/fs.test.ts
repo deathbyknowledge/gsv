@@ -1638,4 +1638,44 @@ describe("GsvFs search", () => {
       },
     ]);
   });
+
+  it("searches a specific file path", async () => {
+    await putFile(`${TEST_PREFIX}nested_test.txt`, "nested\nsearchtest\n", {
+      uid: "1000", gid: "1000", mode: "644",
+    });
+    await putFile(`${TEST_PREFIX}other.txt`, "searchtest outside target\n", {
+      uid: "1000", gid: "1000", mode: "644",
+    });
+
+    const fs = makeFs(SAM);
+    const result = await fs.search(`/${TEST_PREFIX}nested_test.txt`, "searchtest");
+
+    expect(result.matches).toEqual([
+      {
+        path: `/${TEST_PREFIX}nested_test.txt`,
+        line: 2,
+        content: "searchtest",
+      },
+    ]);
+  });
+
+  it("does not return unreadable files from broad searches", async () => {
+    await putFile(`${TEST_PREFIX}private.txt`, "secret-needle\n", {
+      uid: "1001", gid: "1001", mode: "600",
+    });
+    await putFile(`${TEST_PREFIX}public.txt`, "secret-needle\n", {
+      uid: "1000", gid: "1000", mode: "644",
+    });
+
+    const fs = makeFs(SAM);
+    const result = await fs.search(`/${TEST_PREFIX}`, "secret-needle");
+
+    expect(result.matches).toEqual([
+      {
+        path: `/${TEST_PREFIX}public.txt`,
+        line: 1,
+        content: "secret-needle",
+      },
+    ]);
+  });
 });

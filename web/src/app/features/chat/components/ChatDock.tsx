@@ -204,6 +204,7 @@ async function fileToDraftAttachment(file: File): Promise<DraftAttachment> {
   const mimeType = file.type || "application/octet-stream";
   const type = inferAttachmentType(file);
   const sizeLabel = formatAttachmentSize(file.size);
+  const label = file.name || (type === "image" ? "pasted image" : "attachment");
   const randomId = typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
     : Math.random().toString(36).slice(2);
@@ -214,7 +215,7 @@ async function fileToDraftAttachment(file: File): Promise<DraftAttachment> {
     data,
     filename: file.name || undefined,
     size: file.size,
-    label: file.name || "attachment",
+    label,
     meta: [type, sizeLabel].filter(Boolean).join(" · "),
   };
 }
@@ -519,7 +520,7 @@ export function ChatDock({
     });
   };
 
-  const handleFiles = (files: FileList | null) => {
+  const handleFiles = (files: FileList | readonly File[] | null) => {
     if (!files || files.length === 0) {
       return;
     }
@@ -547,7 +548,8 @@ export function ChatDock({
   };
 
   const handleSendMessage = async (message: string) => {
-    const media = draftAttachments.map((attachment): ProcMediaInput => ({
+    const sentAttachments = draftAttachments;
+    const media = sentAttachments.map((attachment): ProcMediaInput => ({
       type: attachment.type,
       mimeType: attachment.mimeType,
       ...(attachment.data ? { data: attachment.data } : {}),
@@ -557,17 +559,27 @@ export function ChatDock({
       ...(attachment.duration ? { duration: attachment.duration } : {}),
       ...(attachment.transcription ? { transcription: attachment.transcription } : {}),
     }));
+    if (sentAttachments.length > 0) {
+      setAttachmentError("");
+      setDraftAttachments([]);
+    }
     let sent = false;
     try {
       sent = await sendChatDraft(message, media);
-    } catch {
+    } catch (error) {
+      if (sentAttachments.length > 0) {
+        setDraftAttachments((current) => sentAttachments.concat(current));
+      }
+      setAttachmentError(errorMessage(error, "Message could not be sent."));
       return;
     }
     if (!sent) {
+      if (sentAttachments.length > 0) {
+        setDraftAttachments((current) => sentAttachments.concat(current));
+      }
       return;
     }
-    revokeDraftAttachments(draftAttachments);
-    setDraftAttachments([]);
+    revokeDraftAttachments(sentAttachments);
   };
 
   const branchFromMessage = (messageId: number) => {
@@ -824,14 +836,6 @@ export function ChatDock({
         onTogglePopover={togglePopover}
       />
 
-      {pendingHil ? (
-        <ChatApprovalBanner
-          busy={hilDecision.isPending}
-          pendingHil={pendingHil}
-          onDecision={decidePendingHil}
-        />
-      ) : null}
-
       <ChatConversationBar
         activeConversationId={selectedConversationId}
         conversations={conversations.data ?? []}
@@ -904,6 +908,14 @@ export function ChatDock({
         processId={activeProcessId}
         state={transcriptState}
       />
+
+      {pendingHil ? (
+        <ChatApprovalBanner
+          busy={hilDecision.isPending}
+          pendingHil={pendingHil}
+          onDecision={decidePendingHil}
+        />
+      ) : null}
 
       <MessageInput
         attachments={draftAttachments}

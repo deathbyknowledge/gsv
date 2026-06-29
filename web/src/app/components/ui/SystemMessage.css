@@ -2,6 +2,8 @@
 .gsv-sm {
   display: flex;
   gap: 11px;
+  min-width: 0;
+  max-width: 100%;
   font-family: "Space Grotesk", sans-serif;
 }
 
@@ -23,6 +25,8 @@
 }
 
 .gsv-sm-text {
+  min-width: 0;
+  max-width: 100%;
   font-size: 13.5px;
   line-height: 1.55;
   color: #cdd2e0;

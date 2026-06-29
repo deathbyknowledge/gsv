@@ -1,7 +1,8 @@
 /* Flow-specific bits kept after porting to ConnectFlowShell. Page chrome,
    command blocks, form grid and summary frames now use the shared `.gsv-cf-*`
-   classes; only the interactive platform tile button and the connect-step
-   status rows (issue token / waiting / inline messages) remain bespoke. */
+   classes; only the interactive platform tile button, the connect-step status
+   rows (issue token / waiting / inline messages), and the browser-extension
+   install + Options-page value blocks remain bespoke. */
 
 .machine-platform-tile-button {
   width: 100%;
@@ -85,8 +86,164 @@
   font-size: 12px;
 }
 
+/* Browser-extension install instructions + Options-page connection values
+   (the `browser` target variant of the install/pair steps). */
+.machine-browser-install,
+.machine-extension-values {
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+}
+
+.machine-browser-install-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--rule-inner);
+  background: color-mix(in srgb, var(--header-bar) 82%, transparent);
+}
+
+.machine-browser-install-head > div {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.machine-browser-install-head span {
+  color: var(--text-title);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.machine-browser-install-head small {
+  color: var(--text-dim);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.machine-download-link {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 29px;
+  border: 1px solid var(--border-raised);
+  background: var(--active);
+  color: var(--accent-bright);
+  font-family: var(--gsv-font-mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-decoration: none;
+  padding: 7px 10px;
+}
+
+.machine-download-link:hover,
+.machine-download-link:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  color: var(--text-hi);
+}
+
+.machine-install-steps {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.machine-install-steps li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  padding: 13px 14px;
+  border-bottom: 1px solid var(--rule-inner);
+}
+
+.machine-install-steps li:last-child {
+  border-bottom: 0;
+}
+
+.machine-install-steps li > span {
+  width: 21px;
+  height: 21px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border-raised);
+  color: var(--accent-bright);
+  font-size: 9px;
+  line-height: 1;
+}
+
+.machine-install-steps p {
+  margin: 0;
+  color: var(--label);
+  font-family: var(--gsv-font-prose);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.machine-install-steps code,
+.machine-install-steps strong {
+  color: var(--text-hi);
+  font-family: var(--gsv-font-mono);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.machine-extension-values {
+  display: grid;
+}
+
+.machine-extension-value {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 13px 14px;
+  border-bottom: 1px solid var(--rule-inner);
+}
+
+.machine-extension-value:last-child {
+  border-bottom: 0;
+}
+
+.machine-extension-value > div {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+}
+
+.machine-extension-value span {
+  color: var(--text-title);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.machine-extension-value code {
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-family: var(--gsv-font-mono);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 @media (max-width: 720px) {
   .machine-platform-tile-button {
     min-height: 0;
+  }
+
+  .machine-extension-value {
+    grid-template-columns: 1fr;
+  }
+
+  .machine-browser-install-head {
+    align-items: stretch;
+    flex-direction: column;
   }
 }

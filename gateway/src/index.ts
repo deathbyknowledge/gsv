@@ -394,6 +394,14 @@ export function packageWorkerPath(routeBase: string, suffix: string): string {
   return `${routeBase}${suffix}`;
 }
 
+export function packageAppClientResponseHeaders(response: Response): Headers {
+  const headers = new Headers(response.headers);
+  headers.delete("content-length");
+  headers.delete("set-cookie");
+  headers.delete("set-cookie2");
+  return headers;
+}
+
 function buildPackageWorkerRequest(
   request: Request,
   resolved: ResolvedPackageRoute,
@@ -660,8 +668,7 @@ async function withPackageAppClientSession(
   response: Response,
   resolved: ResolvedPackageRoute,
 ): Promise<Response> {
-  const headers = new Headers(response.headers);
-  headers.delete("content-length");
+  const headers = packageAppClientResponseHeaders(response);
 
   if (isHtmlResponse(response)) {
     const html = await response.text();

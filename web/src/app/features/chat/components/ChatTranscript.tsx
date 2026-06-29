@@ -321,14 +321,22 @@ function CodeBlock({ code, language }: { code: string; language: string }) {
   );
 }
 
-function AssistantText({ text }: { text: string }) {
+function StreamingText({ text }: { text: string }) {
+  return <div class="gsv-chat-rich-text is-streaming">{text}</div>;
+}
+
+function AssistantText({ streaming = false, text }: { streaming?: boolean; text: string }) {
+  const blocks = streaming ? (
+    <StreamingText text={text} />
+  ) : assistantBlocks(text).map((block, index) => block.kind === "code" ? (
+    <CodeBlock code={block.code} language={block.language} key={`code:${index}`} />
+  ) : (
+    <MarkdownText text={block.text} key={`text:${index}`} />
+  ));
+
   return (
     <div class="gsv-chat-assistant-rich">
-      {assistantBlocks(text).map((block, index) => block.kind === "code" ? (
-        <CodeBlock code={block.code} language={block.language} key={`code:${index}`} />
-      ) : (
-        <MarkdownText text={block.text} key={`text:${index}`} />
-      ))}
+      {blocks}
     </div>
   );
 }
@@ -812,10 +820,11 @@ function buildTranscriptRenderItems(messages: readonly ChatDockMessage[]): Trans
 
     const firstMessage = entries[0]?.message;
     const identifier = firstMessage?.runId || firstMessage?.toolCallId || firstMessage?.id || `activity:${startIndex}`;
+    const stableKey = firstMessage?.id || identifier;
     items.push({
       kind: "activityGroup",
       entries,
-      id: `activity-group:${identifier}:${startIndex}`,
+      id: `activity-group:${identifier}:${stableKey}`,
       index: startIndex,
     });
   }
@@ -1194,12 +1203,16 @@ function ToolEntry({ tool }: { tool: ChatDockMessage }) {
 function RunActivityCard({ entries }: { entries: readonly TranscriptActivityEntry[] }) {
   const status = activityGroupStatus(entries);
   const [expanded, setExpanded] = useState(status === "running");
+  const wasRunningRef = useRef(status === "running");
   const runId = entries.find((entry) => entry.message.runId)?.message.runId;
   const title = activityGroupTitle(entries);
   const statusLabel = status === "error" ? "ERROR" : status === "running" ? "RUNNING" : "DONE";
 
   useEffect(() => {
-    setExpanded(status === "running");
+    if (status === "running" && !wasRunningRef.current) {
+      setExpanded(true);
+    }
+    wasRunningRef.current = status === "running";
   }, [status]);
 
   return (
@@ -1286,7 +1299,7 @@ function AssistantProcessMessage({
         copyAriaLabel={copied ? "Copied assistant message" : "Copy assistant message"}
         onCopy={onCopy}
       >
-        <AssistantText text={assistantText} />
+        <AssistantText text={assistantText} streaming={message.streaming === true} />
       </SystemMessage>
       {reasoning && reasoningOpen ? (
         <div class="gsv-chat-assistant-reasoning">

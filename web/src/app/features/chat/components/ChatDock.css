@@ -160,6 +160,8 @@
 
 .gsv-chat-transcript-virtual {
   position: relative;
+  min-width: 0;
+  max-width: 100%;
   min-height: 100%;
 }
 
@@ -167,6 +169,8 @@
   position: absolute;
   inset-inline: 0;
   top: 0;
+  min-width: 0;
+  max-width: 100%;
   will-change: transform;
 }
 
@@ -431,15 +435,15 @@
   outline: none;
 }
 
-.gsv-shell-root .gsv-chat-context-control {
-  width: auto !important;
-  height: auto !important;
-  max-width: 148px;
+.gsv-shell-root .gsv-chat-actions .gsv-chat-context-control {
+  width: auto;
+  height: auto;
+  max-width: 156px;
   min-height: 27px;
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  padding: 4px 8px 4px 6px;
+  padding: 4px 11px;
   border: 1px solid var(--border);
   background: #0c0a22;
   color: #b6b1ff;
@@ -450,28 +454,27 @@
   text-transform: uppercase;
 }
 
-.gsv-shell-root .gsv-chat-context-control:hover,
-.gsv-shell-root .gsv-chat-context-control:focus-visible {
+.gsv-shell-root .gsv-chat-actions .gsv-chat-context-control:hover,
+.gsv-shell-root .gsv-chat-actions .gsv-chat-context-control:focus-visible {
   border-color: var(--dashed);
   background: #100e2a;
   color: #e6e4ff;
   outline: none;
 }
 
-.gsv-shell-root .gsv-chat-context-control .gsv-icon,
-.gsv-shell-root .gsv-chat-context-control .gsv-pr {
+.gsv-shell-root .gsv-chat-actions .gsv-chat-context-control .gsv-pr {
   flex: none;
 }
 
-.gsv-shell-root .gsv-chat-context-control .gsv-pr {
+.gsv-shell-root .gsv-chat-actions .gsv-chat-context-control .gsv-pr {
   gap: 0;
 }
 
-.gsv-shell-root .gsv-chat-context-control .gsv-pr-track {
+.gsv-shell-root .gsv-chat-actions .gsv-chat-context-control .gsv-pr-track {
   height: 5px;
 }
 
-.gsv-shell-root .gsv-chat-context-control > span:last-child {
+.gsv-shell-root .gsv-chat-actions .gsv-chat-context-control > span:last-child {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -909,11 +912,6 @@ button.gsv-chat-task-row:focus-visible {
   gap: 7px;
 }
 
-.gsv-chat-context-heading .gsv-icon {
-  flex: none;
-  color: #9f98ff;
-}
-
 .gsv-chat-context-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -1243,7 +1241,7 @@ button.gsv-chat-task-row:focus-visible {
 .gsv-chat-hil {
   flex: none;
   position: relative;
-  margin: 12px 14px 0;
+  margin: 0 14px 12px;
   border: 1px solid var(--border);
   background: linear-gradient(180deg, #100e2a, var(--node-bg));
   color: #cdd2e0;
@@ -1664,6 +1662,8 @@ button.gsv-chat-task-row:focus-visible {
 .gsv-chat-assistant-rich {
   display: grid;
   gap: 8px;
+  min-width: 0;
+  max-width: 100%;
   color: #cdd2e0;
   font-family: "Space Grotesk", sans-serif;
   font-size: 13.5px;
@@ -1671,12 +1671,18 @@ button.gsv-chat-task-row:focus-visible {
 }
 
 .gsv-chat-rich-text {
+  min-width: 0;
+  max-width: 100%;
   color: inherit;
   font: inherit;
   line-height: inherit;
   white-space: normal;
   overflow-wrap: anywhere;
   text-wrap: pretty;
+}
+
+.gsv-chat-rich-text.is-streaming {
+  white-space: pre-wrap;
 }
 
 .gsv-chat-rich-text > :first-child {
@@ -1739,6 +1745,32 @@ button.gsv-chat-task-row:focus-visible {
   padding-left: 9px;
 }
 
+.gsv-chat-rich-text pre {
+  max-width: 100%;
+  max-height: 320px;
+  margin: 0 0 0.55em;
+  overflow: auto;
+  border: 1px solid var(--rule-inner);
+  background: #0c0a22;
+  color: #d7ffbd;
+  font-family: var(--gsv-font-mono);
+  font-size: 11.5px;
+  line-height: 1.55;
+  padding: 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.gsv-chat-rich-text pre code {
+  display: block;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+}
+
 .gsv-chat-rich-text code {
   border: 1px solid var(--rule-inner);
   background: #0c0a22;
@@ -1761,7 +1793,10 @@ button.gsv-chat-task-row:focus-visible {
 }
 
 .gsv-chat-code-block {
+  min-width: 0;
+  max-width: 100%;
   margin: 0;
+  overflow: hidden;
   border: 1px solid var(--rule-inner);
   background: #0c0a22;
 }
@@ -1771,6 +1806,7 @@ button.gsv-chat-task-row:focus-visible {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+  min-width: 0;
   padding: 7px 9px;
   border-bottom: 1px solid var(--rule-inner);
   color: #9aa4b8;
@@ -1805,6 +1841,7 @@ button.gsv-chat-task-row:focus-visible {
 }
 
 .gsv-chat-code-block pre {
+  max-width: 100%;
   max-height: 320px;
   margin: 0;
   overflow: auto;
@@ -1813,7 +1850,15 @@ button.gsv-chat-task-row:focus-visible {
   font-family: var(--gsv-font-mono);
   font-size: 11.5px;
   line-height: 1.55;
-  white-space: pre;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.gsv-chat-code-block code {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .gsv-chat-reasoning-toggle {
@@ -2850,12 +2895,12 @@ button.gsv-chat-task-row:focus-visible {
     font-size: 8.5px;
   }
 
-  .gsv-shell-root .gsv-chat-context-control {
+  .gsv-shell-root .gsv-chat-actions .gsv-chat-context-control {
     max-width: 104px;
     padding-inline: 6px;
   }
 
-  .gsv-shell-root .gsv-chat-context-control .gsv-pr {
+  .gsv-shell-root .gsv-chat-actions .gsv-chat-context-control .gsv-pr {
     display: none;
   }
 

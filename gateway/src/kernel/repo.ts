@@ -406,7 +406,7 @@ function assertCanWriteRepo(repo: RipgitRepoRef, ctx: KernelContext): void {
   }
 }
 
-function canReadRepo(rawRepo: string, ctx: KernelContext): boolean {
+export function canReadRepo(rawRepo: string, ctx: KernelContext): boolean {
   const repo = parseRepoSlug(rawRepo);
   if (canWriteRepo(repoSlug(repo), ctx)) {
     return true;
@@ -419,7 +419,7 @@ function canReadRepo(rawRepo: string, ctx: KernelContext): boolean {
   return ctx.packages.list({ scopes }).some((record) => record.manifest.source.repo === repoSlug(repo));
 }
 
-function canWriteRepo(rawRepo: string, ctx: KernelContext): boolean {
+export function canWriteRepo(rawRepo: string, ctx: KernelContext): boolean {
   const repo = parseRepoSlug(rawRepo);
   const identity = requireIdentity(ctx);
   if (identity.process.uid === 0 || identity.capabilities.includes("*")) {

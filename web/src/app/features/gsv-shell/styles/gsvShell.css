@@ -1745,7 +1745,7 @@
 .gsv-shell-statusbar > div:first-child {
   width: 100%;
   border-top: 0 !important;
-  padding-right: max(236px, calc(var(--gsv-chat-width, 0px) + 24px)) !important;
+  padding-right: 236px !important;
 }
 
 .gsv-status-actions {
@@ -1887,7 +1887,7 @@
   }
 
   .gsv-shell-statusbar > div:first-child {
-    padding-right: max(216px, calc(var(--gsv-chat-width, 0px) + 20px)) !important;
+    padding-right: 216px !important;
   }
 
   .gsv-status-actions > span:first-child {

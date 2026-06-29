@@ -76,6 +76,20 @@ describe("sys.token handlers", () => {
     expect(result.token.allowedRole).toBe("driver");
   });
 
+  it("requires driver tokens to be bound to a device id", async () => {
+    const ctx = makeContext(0, auth);
+
+    await expect(
+      handleSysTokenCreate(
+        {
+          kind: "node",
+        },
+        ctx,
+      ),
+    ).rejects.toThrow("allowedDeviceId is required for driver-bound tokens");
+    expect(auth.issueToken).not.toHaveBeenCalled();
+  });
+
   it("rejects non-root create for another uid", async () => {
     const ctx = makeContext(1000, auth);
 
@@ -88,6 +102,20 @@ describe("sys.token handlers", () => {
         ctx,
       ),
     ).rejects.toThrow("Permission denied: cannot create tokens for another user");
+    expect(auth.issueToken).not.toHaveBeenCalled();
+  });
+
+  it("rejects service token creation for non-root callers", async () => {
+    const ctx = makeContext(1000, auth);
+
+    await expect(
+      handleSysTokenCreate(
+        {
+          kind: "service",
+        },
+        ctx,
+      ),
+    ).rejects.toThrow("Permission denied: only root may create service tokens");
     expect(auth.issueToken).not.toHaveBeenCalled();
   });
 

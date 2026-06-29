@@ -165,7 +165,6 @@ export function applyChatSignal(
         activeRunId: runId ?? state.activeRunId,
         conversationId: asString(record?.conversationId) ?? state.conversationId,
         pendingHil: null,
-        rows: runId ? ensureThinkingRow(state.rows, runId) : state.rows,
         runState: "running",
       },
     };
@@ -594,11 +593,15 @@ function applyStreamEvent(
   event: Record<string, unknown>,
 ): ChatTranscriptRow[] {
   const eventType = asString(event.type);
-  if (eventType === "start" || eventType === "thinking_start") {
+  if (eventType === "thinking_start") {
     return ensureThinkingRow(rows, runId);
   }
 
   if (eventType === "text_delta") {
+    const partialText = extractStreamPartialText(event);
+    if (partialText !== null) {
+      return setAssistantStreamText(rows, runId, partialText);
+    }
     const delta = asString(event.delta) ?? "";
     return delta ? appendAssistantDelta(rows, runId, delta) : rows;
   }
@@ -661,6 +664,47 @@ function appendAssistantDelta(rows: ChatTranscriptRow[], runId: string, delta: s
     streaming: true,
   });
   return next;
+}
+
+function setAssistantStreamText(rows: ChatTranscriptRow[], runId: string, text: string): ChatTranscriptRow[] {
+  const next = dropEmptyTransientRows(rows, runId).slice();
+  const index = findLastIndex(next, (row) => row.role === "assistant" && row.runId === runId && !row.id.startsWith("message:"));
+  const now = Date.now();
+  if (index >= 0) {
+    next[index] = {
+      ...next[index],
+      text,
+      status: "streaming",
+      streaming: true,
+    };
+    return next;
+  }
+  next.push({
+    id: `assistant:${runId}`,
+    role: "assistant",
+    text,
+    timestamp: now,
+    time: formatTranscriptTime(now),
+    runId,
+    status: "streaming",
+    streaming: true,
+  });
+  return next;
+}
+
+function extractStreamPartialText(event: Record<string, unknown>): string | null {
+  const partial = asRecord(event.partial);
+  const content = Array.isArray(partial?.content) ? partial.content : [];
+  const textBlocks = content.flatMap((block) => {
+    const text = extractTextContent(block);
+    return text !== null ? [text] : [];
+  });
+  return textBlocks.length > 0 ? textBlocks.join("") : null;
+}
+
+function extractTextContent(value: unknown): string | null {
+  const record = asRecord(value);
+  return record?.type === "text" && typeof record.text === "string" ? record.text : null;
 }
 
 function appendAssistantThinkingDelta(rows: ChatTranscriptRow[], runId: string, delta: string): ChatTranscriptRow[] {

@@ -5,6 +5,7 @@ import {
   handleAdapterDisconnect,
   handleAdapterInbound,
   handleAdapterList,
+  handleAdapterSend,
   handleAdapterStatus,
 } from "./adapter-handlers";
 import { sendFrameToProcess } from "../shared/utils";
@@ -22,7 +23,9 @@ type MakeContextOptions = {
   identity?: KernelContext["identity"];
   identityLinks?: Record<string, unknown>;
   routePid?: string | null;
+  surfaceRoute?: Record<string, unknown> | null;
   processId?: string;
+  callerOwnerUid?: number;
 };
 
 function makeStorageBucket() {
@@ -168,6 +171,7 @@ function makeContext(
       },
       surfaceRoutes: {
         resolvePid: vi.fn(() => options.routePid === undefined ? "pid-1" : options.routePid),
+        get: vi.fn(() => options.surfaceRoute ?? null),
         setRoute: vi.fn(),
         clearRoute: vi.fn(() => Boolean(options.routePid === undefined ? "pid-1" : options.routePid)),
       },
@@ -180,6 +184,7 @@ function makeContext(
       service: "test",
       capabilities: [],
     },
+    callerOwnerUid: options.callerOwnerUid,
   } as unknown as KernelContext;
 }
 
@@ -1194,5 +1199,300 @@ describe("adapter lifecycle handlers", () => {
       expect.stringMatching(/^proc:/),
       1000,
     );
+  });
+
+  it("denies adapter.send for non-root users without a linked account", async () => {
+    const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "msg-1" }));
+    const status = {
+      upsert: vi.fn(),
+      list: vi.fn(() => []),
+    };
+    const ctx = makeContext({ CHANNEL_WHATSAPP: { adapterSend } }, status, {
+      identity: {
+        role: "user",
+        process: {
+          uid: 1000,
+          gid: 1000,
+          gids: [1000],
+          username: "sam",
+          home: "/home/sam",
+          cwd: "/home/sam",
+        },
+        capabilities: ["adapter.send"],
+      },
+      identityLinks: {
+        list: vi.fn(() => []),
+      },
+    });
+
+    const result = await handleAdapterSend({
+      adapter: "WhatsApp",
+      accountId: "primary",
+      surface: { kind: "dm", id: "wa:+123" },
+      text: "hello",
+    }, ctx);
+
+    expect(result).toEqual({ ok: false, error: "Permission denied" });
+    expect(adapterSend).not.toHaveBeenCalled();
+  });
+
+  it("allows adapter.send for non-root users with a linked account", async () => {
+    const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "msg-1" }));
+    const status = {
+      upsert: vi.fn(),
+      list: vi.fn(() => []),
+    };
+    const ctx = makeContext({ CHANNEL_WHATSAPP: { adapterSend } }, status, {
+      identity: {
+        role: "user",
+        process: {
+          uid: 1000,
+          gid: 1000,
+          gids: [1000],
+          username: "sam",
+          home: "/home/sam",
+          cwd: "/home/sam",
+        },
+        capabilities: ["adapter.send"],
+      },
+      identityLinks: {
+        list: vi.fn(() => [{
+          adapter: "whatsapp",
+          accountId: "primary",
+          actorId: "wa:+123",
+          uid: 1000,
+          linkedByUid: 1000,
+          createdAt: 1,
+          metadata: null,
+        }]),
+      },
+    });
+
+    const result = await handleAdapterSend({
+      adapter: "WhatsApp",
+      accountId: "primary",
+      surface: { kind: "dm", id: "wa:+123" },
+      text: "hello",
+    }, ctx);
+
+    expect(result).toEqual({
+      ok: true,
+      adapter: "whatsapp",
+      accountId: "primary",
+      surfaceId: "wa:+123",
+      messageId: "msg-1",
+    });
+    expect(adapterSend).toHaveBeenCalledWith("primary", {
+      surface: { kind: "dm", id: "wa:+123" },
+      text: "hello",
+      media: undefined,
+      replyToId: undefined,
+    });
+  });
+
+  it("denies adapter.send to an unlinked surface on the same account", async () => {
+    const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "msg-1" }));
+    const status = {
+      upsert: vi.fn(),
+      list: vi.fn(() => []),
+    };
+    const ctx = makeContext({ CHANNEL_WHATSAPP: { adapterSend } }, status, {
+      identity: {
+        role: "user",
+        process: {
+          uid: 1000,
+          gid: 1000,
+          gids: [1000],
+          username: "sam",
+          home: "/home/sam",
+          cwd: "/home/sam",
+        },
+        capabilities: ["adapter.send"],
+      },
+      identityLinks: {
+        list: vi.fn(() => [{
+          adapter: "whatsapp",
+          accountId: "primary",
+          actorId: "wa:+123",
+          uid: 1000,
+          linkedByUid: 1000,
+          createdAt: 1,
+          metadata: null,
+        }]),
+      },
+    });
+
+    const result = await handleAdapterSend({
+      adapter: "WhatsApp",
+      accountId: "primary",
+      surface: { kind: "dm", id: "wa:+999" },
+      text: "hello",
+    }, ctx);
+
+    expect(result).toEqual({ ok: false, error: "Permission denied" });
+    expect(adapterSend).not.toHaveBeenCalled();
+  });
+
+  it("allows adapter.send to the linked challenge surface", async () => {
+    const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "msg-1" }));
+    const status = {
+      upsert: vi.fn(),
+      list: vi.fn(() => []),
+    };
+    const ctx = makeContext({ CHANNEL_DISCORD: { adapterSend } }, status, {
+      identity: {
+        role: "user",
+        process: {
+          uid: 1000,
+          gid: 1000,
+          gids: [1000],
+          username: "sam",
+          home: "/home/sam",
+          cwd: "/home/sam",
+        },
+        capabilities: ["adapter.send"],
+      },
+      identityLinks: {
+        list: vi.fn(() => [{
+          adapter: "discord",
+          accountId: "bot",
+          actorId: "discord:user:42",
+          uid: 1000,
+          linkedByUid: 1000,
+          createdAt: 1,
+          metadata: {
+            surfaceKind: "dm",
+            surfaceId: "discord:dm:99",
+          },
+        }]),
+      },
+    });
+
+    const result = await handleAdapterSend({
+      adapter: "Discord",
+      accountId: "bot",
+      surface: { kind: "dm", id: "discord:dm:99" },
+      text: "hello",
+    }, ctx);
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      adapter: "discord",
+      accountId: "bot",
+      messageId: "msg-1",
+    }));
+    expect(adapterSend).toHaveBeenCalled();
+  });
+
+  it("allows adapter.send to a routed surface owned by the caller", async () => {
+    const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "msg-1" }));
+    const status = {
+      upsert: vi.fn(),
+      list: vi.fn(() => []),
+    };
+    const ctx = makeContext({ CHANNEL_DISCORD: { adapterSend } }, status, {
+      surfaceRoute: {
+        adapter: "discord",
+        accountId: "bot",
+        surfaceKind: "channel",
+        surfaceId: "channel-1",
+        uid: 1000,
+        pid: "pid-1",
+        updatedAt: 1,
+        updatedByUid: 1000,
+      },
+      identity: {
+        role: "user",
+        process: {
+          uid: 1000,
+          gid: 1000,
+          gids: [1000],
+          username: "sam",
+          home: "/home/sam",
+          cwd: "/home/sam",
+        },
+        capabilities: ["adapter.send"],
+      },
+      identityLinks: {
+        list: vi.fn(() => [{
+          adapter: "discord",
+          accountId: "bot",
+          actorId: "discord:user:42",
+          uid: 1000,
+          linkedByUid: 1000,
+          createdAt: 1,
+          metadata: {
+            surfaceKind: "dm",
+            surfaceId: "discord:dm:99",
+          },
+        }]),
+      },
+    });
+
+    const result = await handleAdapterSend({
+      adapter: "Discord",
+      accountId: "bot",
+      surface: { kind: "channel", id: "channel-1" },
+      text: "hello channel",
+    }, ctx);
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      adapter: "discord",
+      accountId: "bot",
+      messageId: "msg-1",
+    }));
+    expect(adapterSend).toHaveBeenCalled();
+  });
+
+  it("uses the caller owner uid when adapter.send runs from an agent process", async () => {
+    const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "msg-1" }));
+    const listLinks = vi.fn(() => [{
+      adapter: "whatsapp",
+      accountId: "primary",
+      actorId: "wa:+123",
+      uid: 1000,
+      linkedByUid: 1000,
+      createdAt: 1,
+      metadata: null,
+    }]);
+    const status = {
+      upsert: vi.fn(),
+      list: vi.fn(() => []),
+    };
+    const ctx = makeContext({ CHANNEL_WHATSAPP: { adapterSend } }, status, {
+      callerOwnerUid: 1000,
+      identity: {
+        role: "user",
+        process: {
+          uid: 1001,
+          gid: 1001,
+          gids: [1000],
+          username: "sam-agent",
+          home: "/home/sam-agent",
+          cwd: "/home/sam-agent",
+        },
+        capabilities: ["adapter.send"],
+      },
+      identityLinks: {
+        list: listLinks,
+      },
+    });
+
+    const result = await handleAdapterSend({
+      adapter: "WhatsApp",
+      accountId: "primary",
+      surface: { kind: "dm", id: "wa:+123" },
+      text: "hello",
+    }, ctx);
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      adapter: "whatsapp",
+      accountId: "primary",
+      messageId: "msg-1",
+    }));
+    expect(listLinks).toHaveBeenCalledWith(1000);
+    expect(adapterSend).toHaveBeenCalled();
   });
 });

@@ -188,7 +188,6 @@ export function ChatDockHeader({
           aria-haspopup="menu"
           aria-expanded={openPopover === "context"}
         >
-          <Icon name="stars" size={14} />
           {contextPercent !== null ? (
             <Progress value={contextPercent} label="" showValue={false} size="medium" width={46} />
           ) : null}

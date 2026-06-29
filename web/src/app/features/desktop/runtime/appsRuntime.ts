@@ -180,7 +180,7 @@ function attachIframeRuntimeStatus(
   };
 
   const onMessage = (event: MessageEvent<unknown>): void => {
-    if (event.origin !== window.location.origin || event.source !== iframe.contentWindow) {
+    if (event.source !== iframe.contentWindow) {
       return;
     }
     const record = asRecord(event.data);
@@ -330,6 +330,7 @@ function createPackageAppInstance(app: DesktopApp, gatewayClient: AppRuntimeGsvC
       iframe.style.border = "0";
       iframe.style.display = "block";
       iframe.setAttribute("allow", "clipboard-read; clipboard-write");
+      iframe.setAttribute("sandbox", "allow-scripts allow-forms allow-popups allow-downloads");
 
       destroyActiveFrameControllers();
       loader.setPhase("frame", "Preparing secure frame");
@@ -340,6 +341,11 @@ function createPackageAppInstance(app: DesktopApp, gatewayClient: AppRuntimeGsvC
         setBadge: context.setBadge,
         setDirty: context.setDirty,
         requestNewWindow: context.requestNewWindow,
+      }, {
+        sessionId: launch.sessionId,
+        clientId: launch.clientId,
+        routeBase: `/apps/sessions/${encodeURIComponent(launch.sessionId)}/clients/${encodeURIComponent(launch.clientId)}`,
+        rpcBase: `/apps/sessions/${encodeURIComponent(launch.sessionId)}/clients/${encodeURIComponent(launch.clientId)}/socket`,
       });
       iframe.src = launch.launchUrl;
       loader.attachIframe(iframe);

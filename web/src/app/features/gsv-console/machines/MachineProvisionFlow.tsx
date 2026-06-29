@@ -15,9 +15,11 @@ import type { ConnectFlowDef } from "../connect-flows/connectFlowTypes";
 import type { ConsoleTarget } from "../domain/consoleModels";
 import { useConsoleTargets, useCreateMachineNodeToken } from "../hooks/useConsoleData";
 import {
+  BROWSER_EXTENSION_DOWNLOAD_URL,
   MACHINE_PLATFORM_OPTIONS,
   MACHINE_PROVISION_STEP_LABELS,
   MACHINE_PROVISION_STEPS,
+  buildBrowserExtensionConfig,
   buildMachineBootstrapCommand,
   buildMachineInstallCommand,
   defaultMachineName,
@@ -36,7 +38,7 @@ type MachineProvisionFlowProps = {
   onOpenMachine?: (target: ConsoleTarget) => void;
 };
 
-type CopyTarget = "install" | "connect";
+type CopyTarget = "install" | "connect" | "gateway" | "username" | "token" | "deviceId";
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : error ? String(error) : "";
@@ -118,6 +120,32 @@ function CommandBlock({
   );
 }
 
+/** A single labelled, copyable value for the browser-extension Options page. */
+function ExtensionValueRow({
+  label,
+  value,
+  copied,
+  onCopy,
+}: {
+  label: string;
+  value: string;
+  copied: boolean;
+  onCopy: () => void;
+}) {
+  return (
+    <div class="machine-extension-value">
+      <div>
+        <span>{label}</span>
+        <code>{value}</code>
+      </div>
+      <button type="button" class="gsv-cf-cmd-copy" onClick={onCopy}>
+        <Icon name="bookmark" size={12} />
+        <span>{copied ? "COPIED" : "COPY"}</span>
+      </button>
+    </div>
+  );
+}
+
 export function MachineProvisionFlow({
   onBack,
   onOpenMachine,
@@ -137,6 +165,10 @@ export function MachineProvisionFlow({
   const [checkMessage, setCheckMessage] = useState("");
   const origin = window.location.origin;
   const selectedPlatform = platformOption(platform);
+  const isBrowserTarget = platform === "browser";
+  const stepLabels = isBrowserTarget
+    ? ["TARGET", "DETAILS", "EXTENSION", "PAIR", "SUCCESS"]
+    : MACHINE_PROVISION_STEP_LABELS;
   const knownTarget = targets.targets.find((target) => target.deviceId === deviceId.trim()) ?? null;
   const expires = normalizeExpiresDays(expiresDays);
   const detailsReady = machineName.trim().length > 0 && deviceId.trim().length > 0;
@@ -144,7 +176,15 @@ export function MachineProvisionFlow({
     () => buildMachineInstallCommand(origin, platform),
     [origin, platform],
   );
-  const bootstrapCommand = issuedToken
+  const browserConfig = issuedToken
+    ? buildBrowserExtensionConfig({
+        origin,
+        username: snapshot.username || "root",
+        deviceId,
+        token: issuedToken.token,
+      })
+    : null;
+  const bootstrapCommand = issuedToken && !isBrowserTarget
     ? buildMachineBootstrapCommand({
         origin,
         platform,
@@ -245,10 +285,12 @@ export function MachineProvisionFlow({
       return;
     }
     if (nextTarget) {
-      setCheckMessage("Machine registered. Waiting for it to come online.");
+      setCheckMessage(`${isBrowserTarget ? "Browser target" : "Machine"} registered. Waiting for it to come online.`);
       return;
     }
-    setCheckMessage("Machine not detected yet. Run the connect command on the target.");
+    setCheckMessage(isBrowserTarget
+      ? "Browser target not detected yet. Save the extension options and connect."
+      : "Machine not detected yet. Run the connect command on the target.");
   };
 
   // Header status string for the current step, computed from live state.
@@ -261,26 +303,28 @@ export function MachineProvisionFlow({
 
   // Build the flow definition fresh each render so step bodies capture live
   // state and the header status stays live. Step bodies own only their content
-  // + footer button row; the shell renders the title/status/stepper.
+  // + footer button row; the shell renders the title/status/stepper. The
+  // browser-extension target swaps in its own copy, steps, and labels.
   const flow: ConnectFlowDef = {
     key: "machines",
     navLabel: "MACHINES",
     parentLabel: "MACHINES",
-    icon: "computer",
-    title: "Connect machine",
-    blurb:
-      "Provision a native device token, install the CLI, and attach the machine to the fleet · Mac, Windows, or Linux.",
+    icon: isBrowserTarget ? "bookmark" : "computer",
+    title: isBrowserTarget ? "Connect browser extension" : "Connect machine",
+    blurb: isBrowserTarget
+      ? "Provision a driver token and attach the GSV browser extension to the fleet · Chrome, Brave, Edge, or another Chromium browser."
+      : "Provision a native device token, install the CLI, and attach the machine to the fleet · Mac, Windows, or Linux.",
     steps: [
       {
         key: "platform",
-        label: MACHINE_PROVISION_STEP_LABELS[0],
+        label: stepLabels[0],
         title: "SELECT PLATFORM",
         meta: "STEP 1 / 5",
         status: headerStatus,
         render: () => (
           <>
             <p class="gsv-cf-desc" style={{ margin: 0 }}>
-              Choose the operating system for the machine you are adding to the fleet.
+              Choose the target type you are adding to the fleet.
             </p>
             <div class="gsv-cf-tiles">
               {MACHINE_PLATFORM_OPTIONS.map((option) => (
@@ -316,7 +360,7 @@ export function MachineProvisionFlow({
       },
       {
         key: "details",
-        label: MACHINE_PROVISION_STEP_LABELS[1],
+        label: stepLabels[1],
         title: "DEVICE DETAILS",
         meta: "STEP 2 / 5",
         status: headerStatus,
@@ -324,22 +368,22 @@ export function MachineProvisionFlow({
           <>
             <div class="gsv-cf-fields">
               <TextInput
-                label="MACHINE NAME"
+                label={isBrowserTarget ? "BROWSER NAME" : "MACHINE NAME"}
                 value={machineName}
-                placeholder="Studio MacBook"
+                placeholder={isBrowserTarget ? "Chrome" : "Studio MacBook"}
                 clearable
                 status={machineName.trim() ? "success" : "warning"}
-                message={machineName.trim() ? "Display label ready" : "Machine name required"}
+                message={machineName.trim() ? "Display label ready" : `${isBrowserTarget ? "Browser" : "Machine"} name required`}
                 onChange={updateMachineName}
               />
               <TextInput
                 key={`device-${deviceId}`}
                 label="DEVICE ID"
                 value={deviceId}
-                placeholder="studio-macbook"
+                placeholder={isBrowserTarget ? "chrome" : "studio-macbook"}
                 clearable
                 status={deviceId.trim() ? "success" : "warning"}
-                message={deviceId.trim() ? "Used by CLI and routing" : "Device id required"}
+                message={deviceId.trim() ? (isBrowserTarget ? "Use this exact value in the extension" : "Used by CLI and routing") : "Device id required"}
                 onChange={updateDeviceId}
               />
               <TextInput
@@ -357,7 +401,7 @@ export function MachineProvisionFlow({
             </div>
             <div class="gsv-cf-framed">
               <ListRow
-                icon="computer"
+                icon={isBrowserTarget ? "bookmark" : "computer"}
                 label={machineName || "New machine"}
                 sub={`${deviceId || "device-id"} / ${selectedPlatform.commandLabel}`}
                 status={detailsReady ? "online" : "warn"}
@@ -380,34 +424,82 @@ export function MachineProvisionFlow({
       },
       {
         key: "install",
-        label: MACHINE_PROVISION_STEP_LABELS[2],
-        title: "INSTALL CLI",
+        label: stepLabels[2],
+        title: isBrowserTarget ? "INSTALL EXTENSION" : "INSTALL CLI",
         meta: "STEP 3 / 5",
         status: headerStatus,
         render: () => (
-          <>
-            <p class="gsv-cf-desc" style={{ margin: 0 }}>
-              Run this installer on the machine you want GSV to control.
-            </p>
-            <CommandBlock
-              title="INSTALL COMMAND"
-              meta={selectedPlatform.commandLabel}
-              value={installCommand}
-              copied={copied === "install"}
-              onCopy={() => void copyCommand("install", installCommand)}
-            />
-            <div class="gsv-cf-footer">
-              <Button variant="secondary" label="BACK" onClick={() => setStep("details")} />
-              <span class="gsv-cf-footer-spacer" />
-              <Button variant="primary" label="CLI INSTALLED" onClick={() => setStep("connect")} />
-            </div>
-          </>
+          isBrowserTarget ? (
+            <>
+              <p class="gsv-cf-desc" style={{ margin: 0 }}>
+                Install the GSV browser extension as an unpacked extension, then open its Options page.
+              </p>
+              <section class="machine-browser-install" aria-label="Browser extension install steps">
+                <div class="machine-browser-install-head">
+                  <div>
+                    <span>GSV Browser Extension</span>
+                    <small>ZIP package / unpacked install</small>
+                  </div>
+                  <a
+                    class="machine-download-link"
+                    href={BROWSER_EXTENSION_DOWNLOAD_URL}
+                    target="_blank"
+                    rel="noreferrer"
+                    download
+                  >
+                    DOWNLOAD ZIP
+                  </a>
+                </div>
+                <ol class="machine-install-steps">
+                  <li>
+                    <span>1</span>
+                    <p>Download and unzip <code>gsv-browser-extension.zip</code>.</p>
+                  </li>
+                  <li>
+                    <span>2</span>
+                    <p>Open <code>chrome://extensions</code> in Chrome, Brave, Edge, or another Chromium browser.</p>
+                  </li>
+                  <li>
+                    <span>3</span>
+                    <p>Enable <strong>Developer mode</strong>, choose <strong>Load unpacked</strong>, and select the unzipped extension folder.</p>
+                  </li>
+                  <li>
+                    <span>4</span>
+                    <p>Open the extension Options page. The next step gives you the exact connection values.</p>
+                  </li>
+                </ol>
+              </section>
+              <div class="gsv-cf-footer">
+                <Button variant="secondary" label="BACK" onClick={() => setStep("details")} />
+                <span class="gsv-cf-footer-spacer" />
+                <Button variant="primary" label="EXTENSION READY" onClick={() => setStep("connect")} />
+              </div>
+            </>
+          ) : (
+            <>
+              <p class="gsv-cf-desc" style={{ margin: 0 }}>
+                Run this installer on the machine you want GSV to control.
+              </p>
+              <CommandBlock
+                title="INSTALL COMMAND"
+                meta={selectedPlatform.commandLabel}
+                value={installCommand}
+                copied={copied === "install"}
+                onCopy={() => void copyCommand("install", installCommand)}
+              />
+              <div class="gsv-cf-footer">
+                <Button variant="secondary" label="BACK" onClick={() => setStep("details")} />
+                <span class="gsv-cf-footer-spacer" />
+                <Button variant="primary" label="CLI INSTALLED" onClick={() => setStep("connect")} />
+              </div>
+            </>
+          )
         ),
       },
       {
         key: "connect",
-        label: MACHINE_PROVISION_STEP_LABELS[3],
-        title: "CONNECT MACHINE",
+        label: stepLabels[3],
+        title: isBrowserTarget ? "PAIR EXTENSION" : "CONNECT MACHINE",
         meta: "STEP 4 / 5",
         status: headerStatus,
         render: () => (
@@ -416,12 +508,49 @@ export function MachineProvisionFlow({
               <div class="machine-issue-token">
                 <StatusDot tone={createToken.isPending ? "live" : "update"} size={9} />
                 <div>
-                  <strong>{createToken.isPending ? "ISSUING NODE TOKEN" : "ISSUE NODE TOKEN"}</strong>
+                  <strong>
+                    {createToken.isPending
+                      ? `ISSUING ${isBrowserTarget ? "DRIVER" : "NODE"} TOKEN`
+                      : `ISSUE ${isBrowserTarget ? "DRIVER" : "NODE"} TOKEN`}
+                  </strong>
                   <span>
                     The token is scoped to {deviceId || "this device"} and expires in {expires} days.
+                    {isBrowserTarget ? " The extension device id must match this target." : ""}
                   </span>
                 </div>
               </div>
+            ) : isBrowserTarget && browserConfig ? (
+              <>
+                <p class="gsv-cf-desc" style={{ margin: 0 }}>
+                  Paste these values into the GSV browser extension Options page, then save and connect.
+                </p>
+                <section class="machine-extension-values" aria-label="Browser extension connection values">
+                  <ExtensionValueRow
+                    label="Gateway WebSocket URL"
+                    value={browserConfig.gatewayUrl}
+                    copied={copied === "gateway"}
+                    onCopy={() => void copyCommand("gateway", browserConfig.gatewayUrl)}
+                  />
+                  <ExtensionValueRow
+                    label="Username"
+                    value={browserConfig.username}
+                    copied={copied === "username"}
+                    onCopy={() => void copyCommand("username", browserConfig.username)}
+                  />
+                  <ExtensionValueRow
+                    label="Driver token"
+                    value={browserConfig.token}
+                    copied={copied === "token"}
+                    onCopy={() => void copyCommand("token", browserConfig.token)}
+                  />
+                  <ExtensionValueRow
+                    label="Device id"
+                    value={browserConfig.deviceId}
+                    copied={copied === "deviceId"}
+                    onCopy={() => void copyCommand("deviceId", browserConfig.deviceId)}
+                  />
+                </section>
+              </>
             ) : (
               <>
                 <p class="gsv-cf-desc" style={{ margin: 0 }}>
@@ -445,7 +574,7 @@ export function MachineProvisionFlow({
             {issuedToken && !knownTarget?.online ? (
               <div class="machine-waiting">
                 <Spinner size={15} />
-                <span>{knownTarget ? "Registered. Waiting for online status." : "Waiting for device registration."}</span>
+                <span>{knownTarget ? "Registered. Waiting for online status." : `Waiting for ${isBrowserTarget ? "browser target" : "device"} registration.`}</span>
               </div>
             ) : null}
             <div class="gsv-cf-footer">
@@ -454,7 +583,7 @@ export function MachineProvisionFlow({
               {!issuedToken ? (
                 <Button
                   variant="primary"
-                  label={createToken.isPending ? "ISSUING" : "ISSUE TOKEN"}
+                  label={createToken.isPending ? "ISSUING" : `ISSUE ${isBrowserTarget ? "DRIVER" : "NODE"} TOKEN`}
                   disabled={!detailsReady || createToken.isPending}
                   onClick={() => void issueToken()}
                 />
@@ -472,7 +601,7 @@ export function MachineProvisionFlow({
       },
       {
         key: "success",
-        label: MACHINE_PROVISION_STEP_LABELS[4],
+        label: stepLabels[4],
         title: "SUCCESS",
         meta: "STEP 5 / 5",
         status: headerStatus,
@@ -480,19 +609,21 @@ export function MachineProvisionFlow({
           <>
             <div class="gsv-cf-cap">
               <span class="gsv-cf-cap-mark">
-                <Icon name="computer" size={26} />
+                <Icon name={isBrowserTarget ? "bookmark" : "computer"} size={26} />
               </span>
               <div class="gsv-cf-cap-text">
                 <span class="gsv-cf-cap-title">{machineName || deviceId} is connected</span>
                 <span class="gsv-cf-cap-sub">
-                  The machine is now part of the GSV fleet and can be used by Files, Terminal, and agent tools.
+                  {isBrowserTarget
+                    ? "The browser target is now available to GSV agents for browser-local tools."
+                    : "The machine is now part of the GSV fleet and can be used by Files, Terminal, and agent tools."}
                 </span>
               </div>
             </div>
             <div class="gsv-cf-framed">
               {knownTarget ? (
                 <ListRow
-                  icon="computer"
+                  icon={isBrowserTarget ? "bookmark" : "computer"}
                   label={knownTarget.label}
                   sub={targetSub(knownTarget)}
                   status={knownTarget.online ? "online" : "idle"}
@@ -501,7 +632,7 @@ export function MachineProvisionFlow({
                 />
               ) : (
                 <ListRow
-                  icon="computer"
+                  icon={isBrowserTarget ? "bookmark" : "computer"}
                   label={machineName || deviceId}
                   sub={deviceId}
                   status="online"
@@ -515,7 +646,7 @@ export function MachineProvisionFlow({
               <span class="gsv-cf-footer-spacer" />
               <Button
                 variant="primary"
-                label="OPEN MACHINE"
+                label={isBrowserTarget ? "OPEN TARGET" : "OPEN MACHINE"}
                 disabled={!knownTarget || !onOpenMachine}
                 onClick={() => {
                   if (knownTarget) {

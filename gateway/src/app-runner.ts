@@ -5,6 +5,7 @@ import {
   packageArtifactPublicBase,
   packageArtifactToWorkerCode,
   type PackageArtifactMetadata,
+  type PackageRuntimeAccess,
 } from "./kernel/packages";
 import { encodeBase64Bytes } from "./shared/base64";
 import type { AppFrameContext, PackageAppSignalWatchInfo } from "./protocol/app-frame";
@@ -152,6 +153,7 @@ type AppRunnerDaemonStub = Rpc.RpcTargetBranded & {
 
 type GsvApiBindingProps = {
   appRunnerName: string;
+  runtimeAccess?: PackageRuntimeAccess;
 };
 
 const PROPS_KEY = "app-runner:props";
@@ -173,6 +175,38 @@ function appClientKeyFor(sessionId: string, clientId: string): string {
 }
 
 const APP_SOCKET_TAG = "app-client";
+
+function stableJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(stableJsonValue);
+  }
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return Object.fromEntries(
+      Object.keys(record)
+        .sort()
+        .flatMap((key) => {
+          const normalized = stableJsonValue(record[key]);
+          return normalized === undefined ? [] : [[key, normalized]];
+        }),
+    );
+  }
+  return value;
+}
+
+export function appRunnerWorkerCodeKey(props: {
+  appFrame: { uid: number };
+  packageId: string;
+  artifact: { hash: string; runtimeAccess?: PackageRuntimeAccess };
+}): string {
+  return [
+    "app-runtime",
+    String(props.appFrame.uid),
+    props.packageId,
+    props.artifact.hash,
+    encodeURIComponent(JSON.stringify(stableJsonValue(props.artifact.runtimeAccess ?? null))),
+  ].join(":");
+}
 
 class AppSocketError extends Error {
   constructor(
@@ -201,18 +235,22 @@ export class GsvApiBinding extends WorkerEntrypoint<Env, GsvApiBindingProps> {
   }
 
   async upsertRpcSchedule(input: unknown): Promise<unknown> {
+    this.#requireDaemonAccess();
     return this.#getRunner().upsertRpcSchedule(input);
   }
 
   async removeRpcSchedule(key: string): Promise<{ removed: boolean }> {
+    this.#requireDaemonAccess();
     return this.#getRunner().removeRpcSchedule(key);
   }
 
   async listRpcSchedules(): Promise<unknown[]> {
+    this.#requireDaemonAccess();
     return this.#getRunner().listRpcSchedules();
   }
 
   async packageSqlExec(statement: string, bindings?: unknown[]): Promise<unknown[]> {
+    this.#requireStorageSqlAccess();
     return this.#getRunner().packageSqlExec(statement, bindings);
   }
 
@@ -231,6 +269,18 @@ export class GsvApiBinding extends WorkerEntrypoint<Env, GsvApiBindingProps> {
       throw new Error("GSV_API requires appRunnerName");
     }
     return this.ctx.exports.AppRunner.getByName(runnerName) as unknown as AppRunnerDaemonStub;
+  }
+
+  #requireDaemonAccess(): void {
+    if (this.ctx.props?.runtimeAccess?.daemon?.rpcSchedules !== true) {
+      throw new Error("Package daemon capability is not approved");
+    }
+  }
+
+  #requireStorageSqlAccess(): void {
+    if (this.ctx.props?.runtimeAccess?.storage?.sql !== true) {
+      throw new Error("Package storage sql capability is not approved");
+    }
   }
 }
 
@@ -299,6 +349,7 @@ export class AppRunner extends DurableObject<Env> {
       && previous.routeBase === props.routeBase
       && previous.entrypointName === props.entrypointName
       && previous.artifact.hash === props.artifact.hash
+      && JSON.stringify(previous.artifact.runtimeAccess ?? null) === JSON.stringify(props.artifact.runtimeAccess ?? null)
       && previous.appFrame.uid === props.appFrame.uid
       && previous.appFrame.routeBase === props.appFrame.routeBase
       && previous.appFrame.entrypointName === props.appFrame.entrypointName
@@ -848,13 +899,14 @@ export class AppRunner extends DurableObject<Env> {
         GSV_API: this.ctx.exports.GsvApiBinding({
           props: {
             appRunnerName: buildAppRunnerName(props.appFrame.uid, props.packageId),
+            runtimeAccess: props.artifact.runtimeAccess,
           },
         }),
         GSV_PACKAGE_NAME: props.packageName,
         GSV_PACKAGE_ID: props.packageId,
         GSV_ROUTE_BASE: props.routeBase,
         GSV_PACKAGE_PUBLIC_BASE: packageArtifactPublicBase(props.artifact.hash),
-      }),
+      }, props.artifact.runtimeAccess),
     );
   }
 
@@ -868,6 +920,7 @@ export class AppRunner extends DurableObject<Env> {
       packageName: props.packageName,
       routeBase: props.routeBase,
       appFrame: runtime.appFrame,
+      ...(props.artifact.runtimeAccess ? { runtimeAccess: props.artifact.runtimeAccess } : {}),
       ...(runtime.appSession ? { appSession: runtime.appSession } : {}),
       ...(runtime.daemonTrigger ? { daemonTrigger: runtime.daemonTrigger } : {}),
       ...(extras ?? {}),
@@ -910,12 +963,7 @@ export class AppRunner extends DurableObject<Env> {
   }
 
   #codeKey(props: AppRunnerProps): string {
-    return [
-      "app-runtime",
-      String(props.appFrame.uid),
-      props.packageId,
-      props.artifact.hash,
-    ].join(":");
+    return appRunnerWorkerCodeKey(props);
   }
 
   async #runDueRpcSchedule(record: AppRpcScheduleRecord): Promise<void> {

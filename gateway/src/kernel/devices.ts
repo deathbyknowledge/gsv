@@ -59,6 +59,9 @@ export class DeviceRegistry {
     const now = Date.now();
     const existing = this.get(deviceId);
     const sameOwner = existing?.owner_uid === ownerUid;
+    if (existing && !sameOwner) {
+      return { ok: false, error: `Device id already belongs to another user: ${deviceId}` };
+    }
     const label = normalizeDeviceLabel(
       options.label ?? (sameOwner ? existing?.label : undefined),
       deviceId,

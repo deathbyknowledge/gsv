@@ -6,17 +6,19 @@ type IframeMock = HTMLIFrameElement & {
   dispatchLoad(): void;
 };
 
+let windowListeners: Map<string, Set<EventListenerOrEventListenerObject>>;
+
 beforeEach(() => {
-  const listeners = new Map<string, Set<EventListenerOrEventListenerObject>>();
+  windowListeners = new Map<string, Set<EventListenerOrEventListenerObject>>();
   vi.stubGlobal("window", {
-    location: { origin: "http://localhost" },
+    location: { href: "http://localhost/shell", origin: "http://localhost" },
     addEventListener: vi.fn((type: string, listener: EventListenerOrEventListenerObject) => {
-      const typeListeners = listeners.get(type) ?? new Set<EventListenerOrEventListenerObject>();
+      const typeListeners = windowListeners.get(type) ?? new Set<EventListenerOrEventListenerObject>();
       typeListeners.add(listener);
-      listeners.set(type, typeListeners);
+      windowListeners.set(type, typeListeners);
     }),
     removeEventListener: vi.fn((type: string, listener: EventListenerOrEventListenerObject) => {
-      listeners.get(type)?.delete(listener);
+      windowListeners.get(type)?.delete(listener);
     }),
   });
 });
@@ -74,6 +76,23 @@ function createIframeMock(
   } as unknown as IframeMock;
 }
 
+function dispatchWindowMessage(event: Partial<MessageEvent<unknown>>): void {
+  for (const listener of windowListeners.get("message") ?? []) {
+    if (typeof listener === "function") {
+      listener(event as MessageEvent<unknown>);
+    } else {
+      listener.handleEvent(event as MessageEvent<unknown>);
+    }
+  }
+}
+
+const APP_SESSION = {
+  sessionId: "session-1",
+  clientId: "client-1",
+  routeBase: "/apps/sessions/session-1/clients/client-1",
+  rpcBase: "/apps/sessions/session-1/clients/client-1/socket",
+};
+
 async function connectBridge(
   gatewayClient: Parameters<typeof attachHostBridge>[1],
 ): Promise<{ controller: ReturnType<typeof attachHostBridge>; port: MessagePort }> {
@@ -88,6 +107,42 @@ async function connectBridge(
   iframe.dispatchLoad();
 
   expect(hostMessage).toMatchObject({ type: "gsv-host-connect" });
+  expect(hostPorts[0]).toBeInstanceOf(MessagePort);
+  const port = hostPorts[0] as MessagePort;
+  port.start();
+  return { controller, port };
+}
+
+async function connectPackageBridge(
+  gatewayClient: Parameters<typeof attachHostBridge>[1],
+): Promise<{ controller: ReturnType<typeof attachHostBridge>; port: MessagePort }> {
+  let hostMessage: unknown = null;
+  let hostPorts: readonly MessagePort[] = [];
+  const iframe = createIframeMock((message: unknown, _targetOrigin: string, ports?: Transferable[]) => {
+    hostMessage = message;
+    hostPorts = (ports ?? []) as MessagePort[];
+  });
+  const iframeWindow = iframe.contentWindow;
+
+  const controller = attachHostBridge(iframe, gatewayClient, null, APP_SESSION);
+  iframe.dispatchLoad();
+  dispatchWindowMessage({
+    origin: "null",
+    source: iframeWindow,
+    data: {
+      type: "gsv-host-connect-request",
+      requestId: "package-bridge",
+      boot: {
+        sessionId: APP_SESSION.sessionId,
+        clientId: APP_SESSION.clientId,
+      },
+    },
+  });
+
+  expect(hostMessage).toMatchObject({
+    type: "gsv-host-connect",
+    requestId: "package-bridge",
+  });
   expect(hostPorts[0]).toBeInstanceOf(MessagePort);
   const port = hostPorts[0] as MessagePort;
   port.start();
@@ -162,6 +217,206 @@ describe("attachHostBridge", () => {
     expect(windowResult).toMatchObject({ ok: true, data: { windowId: "window-2" } });
     expect(chrome.setTitle).toHaveBeenCalledWith("Chat");
     expect(chrome.requestNewWindow).toHaveBeenCalledWith("/apps/files/");
+
+    controller.destroy();
+    port.close();
+  });
+
+  it("accepts opaque-origin connect requests only from the exact iframe window", () => {
+    const gatewayClient = createHostStatusClient();
+    let hostMessage: unknown = null;
+    const iframe = createIframeMock((message: unknown) => {
+      hostMessage = message;
+    });
+    const iframeWindow = iframe.contentWindow;
+
+    const controller = attachHostBridge(iframe, gatewayClient);
+    dispatchWindowMessage({
+      origin: "null",
+      source: { postMessage: vi.fn() } as unknown as MessageEventSource,
+      data: {
+        type: "gsv-host-connect-request",
+        requestId: "wrong-source",
+      },
+    });
+    dispatchWindowMessage({
+      origin: "null",
+      source: iframeWindow,
+      data: {
+        type: "gsv-host-connect-request",
+        requestId: "opaque-request",
+      },
+    });
+
+    iframe.dispatchLoad();
+
+    expect(hostMessage).toMatchObject({
+      type: "gsv-host-connect",
+      requestId: "opaque-request",
+    });
+
+    controller.destroy();
+  });
+
+  it("requires matching app session data before handing a port to package frames", () => {
+    const gatewayClient = createHostStatusClient();
+    const hostMessages: unknown[] = [];
+    const iframe = createIframeMock((message: unknown) => {
+      hostMessages.push(message);
+    });
+    const iframeWindow = iframe.contentWindow;
+
+    const controller = attachHostBridge(iframe, gatewayClient, null, APP_SESSION);
+    iframe.dispatchLoad();
+
+    dispatchWindowMessage({
+      origin: "null",
+      source: iframeWindow,
+      data: {
+        type: "gsv-host-connect-request",
+        requestId: "missing-boot",
+      },
+    });
+    dispatchWindowMessage({
+      origin: "null",
+      source: iframeWindow,
+      data: {
+        type: "gsv-host-connect-request",
+        requestId: "wrong-boot",
+        boot: { sessionId: "session-1", clientId: "other-client" },
+      },
+    });
+    dispatchWindowMessage({
+      origin: "null",
+      source: iframeWindow,
+      data: {
+        type: "gsv-host-connect-request",
+        requestId: "matching-boot",
+        boot: { sessionId: "session-1", clientId: "client-1" },
+      },
+    });
+
+    expect(hostMessages).toHaveLength(1);
+    expect(hostMessages[0]).toMatchObject({
+      type: "gsv-host-connect",
+      requestId: "matching-boot",
+    });
+
+    controller.destroy();
+  });
+
+  it("refuses bridge reconnects after the iframe navigates", () => {
+    const gatewayClient = createHostStatusClient();
+    const hostMessages: unknown[] = [];
+    const iframe = createIframeMock((message: unknown) => {
+      hostMessages.push(message);
+    });
+    const iframeWindow = iframe.contentWindow;
+
+    const controller = attachHostBridge(iframe, gatewayClient, null, APP_SESSION);
+    dispatchWindowMessage({
+      origin: "null",
+      source: iframeWindow,
+      data: {
+        type: "gsv-host-connect-request",
+        requestId: "initial",
+        boot: { sessionId: "session-1", clientId: "client-1" },
+      },
+    });
+    iframe.dispatchLoad();
+    iframe.dispatchLoad();
+    dispatchWindowMessage({
+      origin: "null",
+      source: iframeWindow,
+      data: {
+        type: "gsv-host-connect-request",
+        requestId: "after-navigation",
+        boot: { sessionId: "session-1", clientId: "client-1" },
+      },
+    });
+
+    expect(hostMessages).toHaveLength(1);
+    expect(hostMessages[0]).toMatchObject({
+      type: "gsv-host-connect",
+      requestId: "initial",
+    });
+
+    controller.destroy();
+  });
+
+  it("proxies same-session package fetches through the host", async () => {
+    const gatewayClient = createHostStatusClient();
+    const fetchMock = vi.fn(async (request: Request) => {
+      expect(request.url).toBe("http://localhost/apps/sessions/session-1/clients/client-1/api/notes");
+      expect(request.method).toBe("POST");
+      expect(request.credentials).toBe("same-origin");
+      expect(request.redirect).toBe("error");
+      expect(request.headers.get("content-type")).toBe("text/plain");
+      expect(request.headers.get("x-package")).toBe("yes");
+      expect(request.headers.get("cookie")).toBeNull();
+      expect(request.headers.get("authorization")).toBeNull();
+      expect(await request.text()).toBe("hello");
+      return new Response("ok", {
+        status: 202,
+        statusText: "Accepted",
+        headers: {
+          "set-cookie": "gsv_session=bad",
+          "x-test": "1",
+        },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { controller, port } = await connectPackageBridge(gatewayClient);
+
+    const result = await rpc(port, "appSession.fetch", {
+      boot: APP_SESSION,
+      request: {
+        url: `${APP_SESSION.routeBase}/api/notes`,
+        method: "POST",
+        headers: [
+          ["content-type", "text/plain"],
+          ["x-package", "yes"],
+          ["cookie", "bad=1"],
+          ["authorization", "Bearer bad"],
+        ],
+        body: new TextEncoder().encode("hello").buffer,
+      },
+    }) as { ok: boolean; data?: { body?: ArrayBuffer; headers?: string[][]; status?: number; statusText?: string } };
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result.ok).toBe(true);
+    expect(result.data).toMatchObject({
+      status: 202,
+      statusText: "Accepted",
+      headers: expect.arrayContaining([["x-test", "1"]]),
+    });
+    expect(result.data?.headers).not.toEqual(expect.arrayContaining([
+      ["set-cookie", "gsv_session=bad"],
+    ]));
+    expect(new TextDecoder().decode(result.data?.body)).toBe("ok");
+
+    controller.destroy();
+    port.close();
+  });
+
+  it("rejects package fetches outside the app session", async () => {
+    const gatewayClient = createHostStatusClient();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const { controller, port } = await connectPackageBridge(gatewayClient);
+
+    const result = await rpc(port, "appSession.fetch", {
+      boot: APP_SESSION,
+      request: {
+        url: "/ws",
+        method: "GET",
+        headers: [],
+      },
+    }) as { ok: boolean; error?: string };
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("outside the app session");
+    expect(fetchMock).not.toHaveBeenCalled();
 
     controller.destroy();
     port.close();

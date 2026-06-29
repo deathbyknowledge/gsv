@@ -246,7 +246,6 @@ export function ChatDockPopovers({
         <div class="gsv-chat-popover gsv-chat-context-popover" role="menu" aria-label="Context state">
           <header>
             <span class="gsv-chat-context-heading">
-              <Icon name="stars" size={12} />
               <span>CONTEXT</span>
             </span>
             <small>{contextPercent !== null ? `${contextPercent}% · ${contextLevel}` : contextLevel}</small>

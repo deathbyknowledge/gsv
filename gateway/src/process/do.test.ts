@@ -680,14 +680,19 @@ describe("Process DO — mechanical", () => {
             const first = request.context.messages[0];
             const second = request.context.messages[1];
             const third = request.context.messages[2];
+            const fourth = request.context.messages[3];
             expect(first.role).toBe("user");
-            expect(first.content).toContain("[From: WhatsApp group GSV Dev from @sam]");
-            expect(first.content).toContain("check this from the group");
+            expect(first.content).toContain("[From: Telegram direct message]");
+            expect(first.content).not.toContain("Steve James");
+            expect(first.content).toContain("hello from telegram");
             expect(second.role).toBe("user");
-            expect(second.content).toBe("same source follow-up");
+            expect(second.content).toContain("[From: WhatsApp group GSV Dev from @sam]");
+            expect(second.content).toContain("check this from the group");
             expect(third.role).toBe("user");
-            expect(third.content).toContain("[From: GSV Web Desktop]");
-            expect(third.content).toContain("now from chat");
+            expect(third.content).toBe("same source follow-up");
+            expect(fourth.role).toBe("user");
+            expect(fourth.content).toContain("[From: GSV Web Desktop]");
+            expect(fourth.content).toContain("now from chat");
             return {
               role: "assistant",
               content: [{ type: "text", text: "noted" }],
@@ -703,6 +708,17 @@ describe("Process DO — mechanical", () => {
           },
         };
 
+        process.store.appendMessage("user", "hello from telegram", {
+          origin: JSON.stringify({
+            kind: "adapter",
+            adapter: "telegram",
+            accountId: "primary",
+            surface: { kind: "dm", id: "telegram-chat-1", name: "Steve James" },
+            actorId: "telegram:user:1",
+            actorLabel: "Steve James",
+            messageId: "tg-msg-1",
+          }),
+        });
         process.store.appendMessage("user", "check this from the group", {
           origin: JSON.stringify({
             kind: "adapter",
@@ -757,6 +773,7 @@ describe("Process DO — mechanical", () => {
 
         const messages = process.store.getMessages();
         expect(messages.map((message: any) => message.content)).toEqual([
+          "hello from telegram",
           "check this from the group",
           "same source follow-up",
           "now from chat",

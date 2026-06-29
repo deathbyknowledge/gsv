@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { KernelContext } from "./context";
 import {
+  canReadRepo,
+  canWriteRepo,
   handleRepoApply,
   handleRepoCompare,
   handleRepoCreate,
@@ -298,6 +300,8 @@ describe("repo syscalls", () => {
       throw new Error("ripgit should not be called");
     }));
 
+    expect(canReadRepo("bob/private", ctx)).toBe(false);
+
     await expect(handleRepoRead({
       repo: "bob/private",
       path: "README.md",
@@ -400,6 +404,8 @@ describe("repo syscalls", () => {
         },
       },
     ]);
+
+    expect(canReadRepo("root/gsv", ctx)).toBe(true);
 
     await expect(handleRepoRead({
       repo: "root/gsv",
@@ -523,6 +529,9 @@ describe("repo syscalls", () => {
     const ctx = makeContext(fetcher, {
       "repos/bob/public/visibility": "public",
     });
+
+    expect(canReadRepo("bob/public", ctx)).toBe(true);
+    expect(canWriteRepo("bob/public", ctx)).toBe(false);
 
     await expect(handleRepoRead({
       repo: "bob/public",

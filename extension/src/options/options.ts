@@ -71,7 +71,7 @@ appEl.innerHTML = `
         <label class="field" data-field="deviceId">
           <span>Device id</span>
           <span class="input-action">
-            <input name="deviceId" type="text" placeholder="rearden:brave" autocomplete="off">
+            <input name="deviceId" type="text" placeholder="chrome or rearden:brave" autocomplete="off">
             <button type="button" data-action="generate-device-id">Generate</button>
             <button type="button" data-action="copy-device-id">Copy</button>
           </span>
@@ -80,7 +80,7 @@ appEl.innerHTML = `
 
         <label class="check-row">
           <input name="autoConnect" type="checkbox">
-          <span>Auto-connect when Chrome starts</span>
+          <span>Auto-connect when the browser starts</span>
         </label>
       </div>
 
@@ -625,6 +625,9 @@ async function fallbackHostLabel(): Promise<string> {
 
 function hostLabelFromDeviceId(deviceId: string): string | null {
   const [host, browser] = deviceId.split(":");
+  if (!browser) {
+    return null;
+  }
   const normalized = slugDevicePart(host);
   if (!normalized || normalized === "browser" || normalized === slugDevicePart(browser)) {
     return null;
