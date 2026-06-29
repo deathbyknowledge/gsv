@@ -1,10 +1,9 @@
 import type { ComponentChildren } from "preact";
 import { Button } from "../../../components/ui/Button";
+import { Icon } from "../../../components/ui/Icon";
 import { ListRow, type ListRowStatus } from "../../../components/ui/ListRow";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
 import type { StatusTone } from "../../../components/ui/StatusDot";
-import { ConsoleDetailHeader } from "./ConsoleDetailHeader";
-import { useUnsavedGuardLeave } from "../../gsv-shell/unsaved/unsavedGuard";
 import "./ConsoleDetailPage.css";
 
 export type ConsoleDetailRow = {
@@ -27,6 +26,7 @@ type ConsoleDetailPageProps = {
   blurb: string;
   children?: ComponentChildren;
   icon: string;
+  /** Retained for callers; back navigation is now handled by the breadcrumb. */
   onBack: () => void;
   onPrimary?: () => void;
   parentLabel: string;
@@ -44,37 +44,65 @@ export function ConsoleDetailPage({
   blurb,
   children,
   icon,
-  onBack,
   onPrimary,
-  parentLabel,
   pendingLabel = "PENDING SURFACE",
   primaryLabel,
   sections = [],
   statusLabel,
   title,
-  tone,
-  typeLabel,
 }: ConsoleDetailPageProps) {
   const hasSections = sections.some((section) => section.rows.length > 0);
-  // The "BACK TO …" control unmounts the detail body just like shell nav does,
-  // so route it through the unsaved guard to prompt before discarding edits in
-  // any child form (settings field groups, model presets, etc.).
-  const requestLeave = useUnsavedGuardLeave();
-  const handleBack = () => requestLeave(onBack);
+  const hasActions = Boolean(primaryLabel) || (actions != null && actions !== false);
+  // Break the description into two lines: the trailing " · " segment (e.g.
+  // "last seen 2m ago", "connected over sse") drops to a second line.
+  const descSep = blurb.lastIndexOf(" · ");
+  const descPrimary = descSep > 0 ? blurb.slice(0, descSep) : blurb;
+  const descSecondary = descSep > 0 ? blurb.slice(descSep + 3) : "";
 
   return (
     <section class="gsv-console-detail-page">
+      {/* Row 2 — full-width page header (title + status), like the list pages. */}
+      <SectionHeader
+        className="gsv-console-detail-header"
+        title={title}
+        meta={statusLabel}
+        divider
+        headingLevel={2}
+      />
+
+      {/* Row 3 — action bar: icon tile + description, with the action below.
+          Back navigation lives in the breadcrumb, so there is no BACK button. */}
+      <div class="gsv-console-detail-bar">
+        <div class="gsv-console-detail-bar-lead">
+          <span class="gsv-console-detail-icon">
+            <Icon name={icon} size={30} />
+          </span>
+          <p class="gsv-console-detail-desc">
+            {descPrimary}
+            {descSecondary ? (
+              <>
+                <br />
+                {descSecondary}
+              </>
+            ) : null}
+          </p>
+        </div>
+        {hasActions ? (
+          <div class="gsv-console-detail-bar-actions">
+            {actions}
+            {primaryLabel ? (
+              <Button
+                variant="primary"
+                label={primaryLabel}
+                disabled={!onPrimary}
+                onClick={onPrimary}
+              />
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+
       <div class="gsv-console-detail-shell">
-        <ConsoleDetailHeader
-          icon={icon}
-          title={title}
-          typeLabel={typeLabel}
-          statusLabel={statusLabel}
-          tone={tone}
-        />
-
-        <p class="gsv-console-detail-blurb">{blurb}</p>
-
         {hasSections ? (
           <div class="gsv-console-detail-sections">
             {sections.map((section) => (
@@ -111,19 +139,6 @@ export function ConsoleDetailPage({
             <span>[ {title} · {pendingLabel} ]</span>
           </div>
         ) : null}
-
-        <div class="gsv-console-detail-actions">
-          {actions}
-          {primaryLabel ? (
-            <Button
-              variant="primary"
-              label={primaryLabel}
-              disabled={!onPrimary}
-              onClick={onPrimary}
-            />
-          ) : null}
-          <Button variant="secondary" label={`BACK TO ${parentLabel}`} onClick={handleBack} />
-        </div>
       </div>
     </section>
   );

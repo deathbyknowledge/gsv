@@ -7,6 +7,7 @@ import { Segmented } from "./Segmented";
 import { Button } from "./Button";
 import { Avatar, type AvatarStatus } from "./Avatar";
 import { Tabs } from "./Tabs";
+import { SectionHeader } from "./SectionHeader";
 import { ConfirmModal } from "./ConfirmModal";
 import { useUnsavedGuard } from "../../features/gsv-shell/unsaved/unsavedGuard";
 
@@ -387,7 +388,15 @@ export function AgentEditor(props: AgentEditorProps) {
 
       <div style={padStyle}>
         {/* ============ PANEL ============ */}
-        {/* Navigation (back + breadcrumb) is owned by the shell ConsoleHeader. */}
+        {/* Navigation (back + breadcrumb) is owned by the shell ConsoleHeader.
+            Same full-width header as the list/detail pages: name + status. */}
+        <SectionHeader
+          className="gsv-ae-header"
+          title={name}
+          meta={status.toUpperCase()}
+          divider
+          headingLevel={2}
+        />
         <div style={panelStyle}>
           {/* ===== FOLDER TAB BAR ===== */}
           <Tabs
