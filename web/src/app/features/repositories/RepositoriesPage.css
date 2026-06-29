@@ -1,4 +1,8 @@
 .repositories-surface {
+  /* Reflow off the PANEL width, not the viewport — so the template responds
+     when the chat is dragged wider. */
+  container-type: inline-size;
+  container-name: panel;
   position: relative;
   min-height: 0;
   height: 100%;
@@ -20,6 +24,8 @@
   flex-wrap: wrap;
   gap: 12px;
   padding: 14px;
+  /* Reading-width: full-width band, keep controls aligned to the centered column. */
+  padding-inline: max(14px, var(--gsv-gutter));
   border-bottom: 1px solid var(--rule-section);
   background: color-mix(in srgb, var(--panel) 92%, var(--shadow-deep));
 }
@@ -130,6 +136,8 @@
   grid-template-columns: minmax(0, 1fr);
   align-items: end;
   background: var(--void);
+  /* Reading-width: full-width tab strip, align tabs to the centered column. */
+  padding-inline: var(--gsv-gutter);
 }
 
 .repositories-tab-panel {
@@ -141,12 +149,21 @@
   background: var(--panel);
 }
 
+/* Reading-width: the panel's SectionTitle is a full-width SectionHeader strip
+   (inline padding 14px 20px from the DS component) — center its inner content
+   while it stays full-width. */
+.repositories-tab-panel > .gsv-section-header {
+  padding-inline: max(20px, var(--gsv-gutter)) !important;
+}
+
 .repositories-breadcrumbs-container {
   min-width: 0;
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 8px 14px;
+  /* Reading-width: full-width band. */
+  padding-inline: max(14px, var(--gsv-gutter));
   border-bottom: 1px solid var(--rule-inner);
   background: color-mix(in srgb, var(--panel) 92%, var(--shadow-deep));
 }
@@ -170,6 +187,8 @@
   display: grid;
   gap: 12px;
   padding: 14px;
+  /* Reading-width: full-width toolbar band, keep controls in the centered column. */
+  padding-inline: max(14px, var(--gsv-gutter));
 }
 
 .repositories-toolbar-row {
@@ -225,10 +244,15 @@
   align-items: center;
   gap: 8px;
   padding: 10px 14px;
+  /* Reading-width: full-width list header. */
+  padding-inline: max(14px, var(--gsv-gutter));
 }
 
 .repositories-object-row {
   border-bottom: 1px solid var(--rule-inner) !important;
+  /* Reading-width: rows fill the full-width list; the row sets padding inline
+     (COMPACT_ROW_STYLE: 12px 14px), so override with !important, base 14px. */
+  padding-inline: max(14px, var(--gsv-gutter)) !important;
 }
 
 .repositories-object-row.is-selected {
@@ -243,7 +267,8 @@
 .repositories-row-action {
   position: absolute;
   top: 50%;
-  right: 40px;
+  /* Reading-width: track the centered column so the action stays inside it. */
+  right: calc(40px + var(--gsv-gutter));
   transform: translateY(-50%);
   display: inline-flex;
   align-items: center;
@@ -269,6 +294,8 @@
   gap: 12px;
   align-items: center;
   padding: 11px 14px;
+  /* Reading-width: full-width result/commit rows. */
+  padding-inline: max(14px, var(--gsv-gutter));
   text-align: left;
   cursor: pointer;
   font: inherit;
@@ -361,6 +388,8 @@
   flex-wrap: wrap;
   gap: 8px;
   padding: 10px 14px;
+  /* Reading-width: full-width file meta band. */
+  padding-inline: max(14px, var(--gsv-gutter));
   border-bottom: 1px solid var(--rule-inner);
   background: color-mix(in srgb, var(--panel) 86%, var(--field-deep));
 }
@@ -414,6 +443,8 @@
   display: grid;
   gap: 14px;
   padding: 14px;
+  /* Reading-width: full-width diff region (its scroll parent spans the panel). */
+  padding-inline: max(14px, var(--gsv-gutter));
 }
 
 .repositories-diff-head,
@@ -511,6 +542,8 @@
 
 .repositories-empty-inline {
   padding: 18px 14px;
+  /* Reading-width: full-width inline notice inside the results region. */
+  padding-inline: max(14px, var(--gsv-gutter));
   color: var(--text-muted);
   font-family: var(--gsv-font-mono);
   font-size: 10px;
@@ -524,11 +557,13 @@
   flex-wrap: wrap;
   gap: 12px;
   padding: 14px;
+  /* Reading-width: full-width compare toolbar band. */
+  padding-inline: max(14px, var(--gsv-gutter));
   border-bottom: 1px solid var(--rule-section);
   background: color-mix(in srgb, var(--panel) 92%, var(--shadow-deep));
 }
 
-@media (max-width: 760px) {
+@container panel (max-width: 760px) {
   .repositories-header-bar,
   .repositories-toolbar-row,
   .repositories-editor-toolbar,

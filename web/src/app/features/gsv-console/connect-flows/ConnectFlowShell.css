@@ -2,6 +2,10 @@
    Mirrors ConsoleDetailPage rows 2–3 (header + action bar) with the wizard
    stepper as the action, then the current step body. */
 .gsv-cf {
+  /* Reflow off the PANEL width, not the viewport — so the template responds
+     when the chat is dragged wider. */
+  container-type: inline-size;
+  container-name: panel;
   flex: 1;
   min-height: 100%;
   display: flex;
@@ -212,7 +216,7 @@
   background: var(--panel);
 }
 
-@media (max-width: 720px) {
+@container panel (max-width: 720px) {
   .gsv-cf-body {
     padding: 24px 18px 72px;
   }

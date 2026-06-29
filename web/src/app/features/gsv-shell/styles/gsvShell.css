@@ -1712,6 +1712,17 @@
   padding: 20px;
 }
 
+/* Large-screen reading width. Strips (title bars, toolbars) stay full-width;
+   their inner content and the page content align to this centered column via
+   `padding-inline: max(<base>, var(--gsv-gutter))`. The gutter is 0 until the
+   panel exceeds the cap, then grows to center the column. `100%` resolves
+   against the using element's containing block (the full-width strip = the
+   panel), so it tracks the panel, not the viewport — no breakpoint needed. */
+:root {
+  --gsv-content-cap: 1440px;
+  --gsv-gutter: max(0px, calc((100% - var(--gsv-content-cap)) / 2));
+}
+
 .gsv-console-page.is-flush .gsv-console-page-body {
   padding: 0;
   display: flex;

@@ -32,6 +32,11 @@ const DEFAULT_CHAT_WIDTH = 460;
 const EXPANDED_RAIL_WIDTH = 262;
 const COLLAPSED_RAIL_WIDTH = 64;
 const MIN_CONSOLE_WIDTH = 360;
+// Smallest the center panel may be squeezed to while dragging the chat wider.
+// At this width the page templates reflow to their single-column mobile layout
+// (see the @container panel breakpoints), so the chat's effective max width is
+// the collapsed rail plus this readable mobile floor.
+const MIN_CONSOLE_DRAG_WIDTH = 320;
 const MIN_DESKTOP_TREE_WIDTH = 600;
 const MIN_DESKTOP_RAIL_CANVAS_WIDTH = 40;
 const STACKED_LAYOUT_WIDTH = 760;
@@ -168,7 +173,7 @@ export function useGsvShellState({
     stackedLayout ? MIN_STACKED_CHAT_HEIGHT : MIN_CHAT_WIDTH,
     stackedLayout
       ? rootHeight - MIN_STACKED_WORLD_HEIGHT
-      : rootWidth - (inPageZone ? COLLAPSED_RAIL_WIDTH + MIN_CONSOLE_WIDTH : COLLAPSED_RAIL_WIDTH),
+      : rootWidth - (inPageZone ? COLLAPSED_RAIL_WIDTH + MIN_CONSOLE_DRAG_WIDTH : COLLAPSED_RAIL_WIDTH),
   );
   const resolvedChatWidth = clamp(chatWidth, stackedLayout ? MIN_STACKED_CHAT_HEIGHT : MIN_CHAT_WIDTH, maxChatWidth);
   const mainWidth = rootWidth - (!stackedLayout && chatOpen ? resolvedChatWidth : 0);
@@ -360,7 +365,7 @@ export function useGsvShellState({
       return;
     }
 
-    const reserve = inPageZone ? COLLAPSED_RAIL_WIDTH + MIN_CONSOLE_WIDTH : COLLAPSED_RAIL_WIDTH;
+    const reserve = inPageZone ? COLLAPSED_RAIL_WIDTH + MIN_CONSOLE_DRAG_WIDTH : COLLAPSED_RAIL_WIDTH;
     const stackedDrag = rect.width <= STACKED_LAYOUT_WIDTH;
     const minChatExtent = stackedDrag ? MIN_STACKED_CHAT_HEIGHT : MIN_CHAT_WIDTH;
     const maxChatExtent = Math.max(

@@ -1,3 +1,4 @@
+import { createPortal } from "preact/compat";
 import { useEffect, useRef, useState } from "preact/hooks";
 import "./AgentEditor.css";
 import { TextInput } from "./TextInput";
@@ -362,11 +363,15 @@ export function AgentEditor(props: AgentEditorProps) {
   const panelStyle =
     "position:relative;z-index:2;display:flex;flex-direction:column;min-height:" +
     (narrow ? "480px" : "560px") + ";";
+  // Big-screen reading width: center tab content into the shared column while
+  // the header/tab strips stay full-width. The gutter is 0 below the cap.
   const genWrapStyle = narrow
-    ? "display:flex;flex-direction:column;padding:22px 16px 30px;gap:20px;"
-    : "display:flex;flex-direction:column;padding:28px 32px 40px;gap:22px;";
+    ? "display:flex;flex-direction:column;padding:22px 16px 30px;gap:20px;padding-inline:max(16px,var(--gsv-gutter));"
+    : "display:flex;flex-direction:column;padding:28px 32px 40px;gap:22px;padding-inline:max(32px,var(--gsv-gutter));";
   const identityStyle = "order:-1;display:flex;flex-direction:row;align-items:center;gap:16px;width:100%;";
-  const secPad = narrow ? "padding:20px 16px 28px;" : "padding:28px 32px 36px;";
+  const secPad = narrow
+    ? "padding:20px 16px 28px;padding-inline:max(16px,var(--gsv-gutter));"
+    : "padding:28px 32px 36px;padding-inline:max(32px,var(--gsv-gutter));";
 
   return (
     <div
@@ -633,8 +638,9 @@ export function AgentEditor(props: AgentEditorProps) {
               </div>
             ) : null}
 
-            {/* DELETE CONFIRM MODAL */}
-            {deleteOpen ? (
+            {/* DELETE CONFIRM MODAL — portaled to <body> so the editor's panel
+                container (container-type) doesn't trap its viewport-fixed scrim. */}
+            {deleteOpen ? createPortal(
               <div class="gsv-ae-modal-scrim" onClick={onCancelDelete}>
                 <div class="gsv-ae-modal-wrap" onClick={(event) => event.stopPropagation()}>
                   <ConfirmModal
@@ -645,7 +651,8 @@ export function AgentEditor(props: AgentEditorProps) {
                     onConfirm={onConfirmDelete}
                   />
                 </div>
-              </div>
+              </div>,
+              document.body,
             ) : null}
           </div>
         </div>

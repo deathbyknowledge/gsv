@@ -1,6 +1,10 @@
 /* LIST page template — one header, then a body split into an ACTION column and
    a LIST column. Frame tokens mirror the Settings Overview. */
 .gsv-list-template {
+  /* Drive the body layout off the PANEL width (not the viewport) so the
+     template reflows when the chat is dragged wider, not just on small screens. */
+  container-type: inline-size;
+  container-name: panel;
   flex: 1 0 auto;
   min-height: 100%;
   margin-bottom: 88px;
@@ -18,6 +22,16 @@
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+  /* Big screens: center the action+list column to the reading cap; the panel
+     border and the header divider above still span full width. */
+  padding-inline: var(--gsv-gutter);
+}
+
+/* The title bar is a full-width strip — only its inner content indents to the
+   centered column. !important beats SectionHeader's inline padding (left/right
+   only; its vertical padding is preserved). */
+.gsv-list-template-header {
+  padding-inline: max(20px, var(--gsv-gutter)) !important;
 }
 
 .gsv-list-template-action,
@@ -86,9 +100,10 @@
   opacity: 1;
 }
 
-/* iPad and below: action bar stacks ON TOP of the list and lays its controls
-   out horizontally — search + filters left, primary button right. */
-@media (max-width: 1024px) {
+/* Narrow panel (iPad and below, or chat dragged wide): action bar stacks ON TOP
+   of the list and lays its controls out horizontally — search + filters left,
+   primary button right. Keyed to the PANEL container, not the viewport. */
+@container panel (max-width: 1024px) {
   /* Action bar sizes to its content (auto); the list fills the rest (1fr) —
      without this the grid stretches the bar to half the height. */
   .gsv-list-template-body {
@@ -142,5 +157,30 @@
   /* Three controls: search owns the first row, filter + connect the second. */
   .gsv-list-template-action[data-actions="3"] .gsv-list-template-search {
     flex-basis: 100%;
+  }
+}
+
+/* Phone-width panel: the horizontal action bar gets cramped, so stack every
+   control full-width for a readable mobile experience. */
+@container panel (max-width: 480px) {
+  .gsv-list-template-action {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .gsv-list-template-search,
+  .gsv-list-template-filters,
+  .gsv-list-template-connect {
+    flex: 0 0 auto;
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .gsv-list-template-filters {
+    flex-direction: column;
+  }
+
+  .gsv-list-template-connect .gsv-btn {
+    width: 100%;
   }
 }
