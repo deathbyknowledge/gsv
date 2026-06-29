@@ -46,7 +46,7 @@ type Star = {
   base: number;
 };
 
-type GalaxyScanConfig = {
+export type GalaxyScanConfig = {
   text: string;
   cols: number;
   rows: number;
@@ -67,7 +67,7 @@ const T_FORM = 5.0;
 const T_SETTLE = 0.85;
 const T_SETTLE_END = T_FORM + T_SETTLE;
 const T_DANCE = T_SETTLE_END + 0.6;
-const T_MORPH = 11.4 + T_SETTLE;
+export const GALAXY_SCAN_FINAL_SECONDS = 11.4 + T_SETTLE;
 const TARGET_SCALE = 0.6;
 const FOREGROUND_GLOW = "0 0 5px rgba(140,120,235,.55),0 0 14px rgba(110,95,209,.28)";
 
@@ -98,7 +98,7 @@ function smoother(value: number): number {
   return x * x * x * (x * (x * 6 - 15) + 10);
 }
 
-function waitForFonts(): Promise<unknown> {
+export function waitForGalaxyScanFonts(): Promise<unknown> {
   const fontSet = (document as Document & { fonts?: FontFaceSet }).fonts;
   if (!fontSet) {
     return Promise.resolve();
@@ -110,11 +110,11 @@ function waitForFonts(): Promise<unknown> {
   ]);
 }
 
-function shouldReduceMotion(): boolean {
+export function shouldReduceGalaxyScanMotion(): boolean {
   return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
 }
 
-class AsciiGalaxyScanRenderer {
+export class AsciiGalaxyScanRenderer {
   private readonly cx: number;
   private readonly cy: number;
   private readonly cosP = Math.cos(PA);
@@ -217,7 +217,7 @@ class AsciiGalaxyScanRenderer {
   renderFrame(preEl: HTMLPreElement, elapsed: number, allowGlitch: boolean): void {
     const rows = this.buildFrameRows(elapsed);
 
-    if (allowGlitch && elapsed > T_MORPH - 0.6) {
+    if (allowGlitch && elapsed > GALAXY_SCAN_FINAL_SECONDS - 0.6) {
       this.applyGlitch(rows, elapsed, preEl);
     } else {
       this.resetForeground(preEl);
@@ -245,7 +245,7 @@ class AsciiGalaxyScanRenderer {
     if (t <= T_DANCE) {
       return ROT_RATE * t;
     }
-    const k = Math.min(1, (t - T_DANCE) / (T_MORPH - T_DANCE));
+    const k = Math.min(1, (t - T_DANCE) / (GALAXY_SCAN_FINAL_SECONDS - T_DANCE));
     return ROT_RATE * (T_DANCE + 0.8 * easeOut(Math.min(1, k / 0.6)));
   }
 
@@ -353,9 +353,9 @@ class AsciiGalaxyScanRenderer {
 
   private buildFrameRows(elapsed: number): string[] {
     const { cols, rows } = this.config;
-    const t = Math.min(elapsed, T_MORPH);
+    const t = Math.min(elapsed, GALAXY_SCAN_FINAL_SECONDS);
     const rot = this.rotAt(t);
-    const morphK = (t - T_DANCE) / (T_MORPH - T_DANCE);
+    const morphK = (t - T_DANCE) / (GALAXY_SCAN_FINAL_SECONDS - T_DANCE);
 
     this.brightness.fill(0);
     this.chars.fill(" ");
@@ -591,7 +591,7 @@ export function AsciiGalaxyScan({
     let startedAt = performance.now();
     let replayShown = false;
     const frameMs = 1000 / Math.max(1, frameRate);
-    const shouldAnimate = animate && !(respectReducedMotion && shouldReduceMotion());
+    const shouldAnimate = animate && !(respectReducedMotion && shouldReduceGalaxyScanMotion());
 
     const hideReplay = () => {
       replayShown = false;
@@ -625,7 +625,7 @@ export function AsciiGalaxyScan({
         }
         renderer.renderFrame(foregroundEl, elapsed, true);
 
-        if (showReplay && replayEl && !replayShown && elapsed > T_MORPH + 1.5) {
+        if (showReplay && replayEl && !replayShown && elapsed > GALAXY_SCAN_FINAL_SECONDS + 1.5) {
           replayShown = true;
           replayEl.style.opacity = "1";
         }
@@ -644,7 +644,7 @@ export function AsciiGalaxyScan({
 
     replayEl?.addEventListener("click", replay);
 
-    void waitForFonts().then(() => {
+    void waitForGalaxyScanFonts().then(() => {
       if (cancelled) {
         return;
       }
@@ -661,7 +661,7 @@ export function AsciiGalaxyScan({
       }
 
       if (!shouldAnimate) {
-        renderer.renderFrame(foregroundEl, T_MORPH, false);
+        renderer.renderFrame(foregroundEl, GALAXY_SCAN_FINAL_SECONDS, false);
         if (showReplay && replayEl) {
           replayEl.style.opacity = "1";
         }

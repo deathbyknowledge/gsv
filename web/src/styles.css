@@ -3718,8 +3718,8 @@ button:disabled {
   height: 100%;
   min-height: 0;
   overflow: hidden;
-  background: #f5f7fb;
-  color: #1f3340;
+  background: #050414;
+  color: var(--text-main);
 }
 
 .app-launch-iframe-stage {
@@ -3728,7 +3728,7 @@ button:disabled {
   min-width: 0;
   min-height: 0;
   opacity: 0;
-  background: #ffffff;
+  background: #050414;
   transition: opacity 360ms ease;
 }
 
@@ -3752,8 +3752,11 @@ button:disabled {
   padding: 0;
   overflow: hidden;
   background:
-    repeating-linear-gradient(0deg, rgba(36, 63, 84, 0.028) 0 1px, transparent 1px 9px),
-    linear-gradient(180deg, rgba(250, 252, 255, 0.96) 0%, rgba(242, 247, 251, 0.96) 56%, rgba(234, 242, 248, 0.96) 100%);
+    linear-gradient(rgba(150, 140, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(150, 140, 255, 0.035) 1px, transparent 1px),
+    radial-gradient(ellipse 78% 72% at 50% 50%, rgba(128, 113, 221, 0.12), transparent 68%),
+    #050414;
+  background-size: 42px 42px, 42px 42px, auto, auto;
   opacity: 1;
   pointer-events: auto;
   transition: opacity 360ms ease, visibility 360ms ease;
@@ -3785,35 +3788,72 @@ button:disabled {
   overflow: hidden;
   border: 0;
   border-radius: 0;
-  background:
-    repeating-linear-gradient(90deg, rgba(42, 82, 105, 0.026) 0 1px, transparent 1px 24px),
-    repeating-linear-gradient(0deg, rgba(42, 82, 105, 0.022) 0 1px, transparent 1px 18px),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.42), rgba(228, 239, 247, 0.36)),
-    #f6f9fc;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.92),
-    inset 0 -28px 62px rgba(53, 91, 112, 0.08);
+  background: #07060f;
+  box-shadow: inset 0 0 0 1px rgba(128, 113, 221, 0.1);
+  isolation: isolate;
 }
 
-.app-launch-blackhole-frame {
-  position: relative;
+.app-launch-galaxy-pre {
+  position: absolute;
+  inset: 0;
   z-index: 1;
-  display: block;
-  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   margin: 0;
   overflow: hidden;
-  color: #203746;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 600;
-  line-height: 1.08;
+  font-family: var(--gsv-font-mono), var(--font-mono);
+  font-size: 8px;
+  font-variant-ligatures: none;
+  font-weight: 400;
+  line-height: 8px;
   letter-spacing: 0;
-  text-align: left;
+  pointer-events: none;
   white-space: pre;
-  text-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.74),
-    0 0 10px rgba(18, 116, 143, 0.1);
+  -webkit-font-smoothing: none;
+  text-rendering: geometricPrecision;
   user-select: none;
+}
+
+.app-launch-galaxy-nebula {
+  color: #272350;
+}
+
+.app-launch-galaxy-stars {
+  color: #5d5798;
+  text-shadow: 0 0 4px rgba(128, 113, 221, 0.4);
+}
+
+.app-launch-galaxy-foreground {
+  color: #8071dd;
+  text-shadow:
+    0 0 5px rgba(140, 120, 235, 0.55),
+    0 0 14px rgba(110, 95, 209, 0.28);
+}
+
+.app-launch-galaxy-texture {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.app-launch-galaxy-scanlines {
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0) 0,
+    rgba(0, 0, 0, 0) 2px,
+    rgba(0, 0, 0, 0.22) 3px
+  );
+  mix-blend-mode: multiply;
+}
+
+.app-launch-galaxy-vignette {
+  background: radial-gradient(
+    ellipse 86% 84% at 50% 50%,
+    rgba(0, 0, 0, 0) 66%,
+    rgba(0, 0, 0, 0.42) 100%
+  );
 }
 
 .app-launch-copy {
@@ -3828,8 +3868,11 @@ button:disabled {
   border: 0;
 }
 
-.app-launch-host.is-error .app-launch-blackhole-frame {
-  color: #8f302b;
+.app-launch-host.is-error .app-launch-galaxy-foreground {
+  color: #f0767d;
+  text-shadow:
+    0 0 5px rgba(240, 118, 125, 0.55),
+    0 0 14px rgba(190, 76, 104, 0.28);
 }
 
 @media (prefers-reduced-motion: reduce) {
