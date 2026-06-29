@@ -73,6 +73,10 @@ type ChatDockProps = {
   onProcessStarted?: (process: StartedChatProcess) => void;
   onSelectConversation?: (conversationId: string) => void;
   onSelectAgent?: (selection: ChatAgentSelection) => void;
+  /** Increment to request a fresh task (e.g. the Tasks list NEW TASK action):
+   *  opens the dock and spawns a new interactive process rather than reopening
+   *  whatever was last selected. */
+  newTaskSignal?: number;
 };
 
 function formatRunStateLabel(runState: ChatRunState | string | undefined): string {
@@ -237,6 +241,7 @@ export function ChatDock({
   onProcessStarted,
   onSelectConversation,
   onSelectAgent,
+  newTaskSignal = 0,
 }: ChatDockProps) {
   const [agentPanelOpen, setAgentPanelOpen] = useState(false);
   const [draftAttachments, setDraftAttachments] = useState<DraftAttachment[]>([]);
@@ -616,6 +621,18 @@ export function ChatDock({
     });
   };
 
+  // External fresh-task request (e.g. the Tasks list NEW TASK action). Fire on
+  // each increment of the signal; the initial value never triggers a spawn.
+  const lastNewTaskSignal = useRef(newTaskSignal);
+  useEffect(() => {
+    if (newTaskSignal !== lastNewTaskSignal.current) {
+      lastNewTaskSignal.current = newTaskSignal;
+      if (newTaskSignal > 0) {
+        prepareNewTask();
+      }
+    }
+  }, [newTaskSignal]);
+
   const requestFreeContext = () => {
     if (!canFreeContext) {
       return;
@@ -716,7 +733,7 @@ export function ChatDock({
   if (!open) {
     return (
       <button type="button" class="gsv-chat-min" onClick={onToggleOpen}>
-        <AgentImage src={activeAgent.imageSrc} size={40} />
+        <AgentImage src={activeAgent.imageSrc} size={40} cover />
         <span class="gsv-chat-min-copy">
           <strong>{activeAgent.name}</strong>
           <small>

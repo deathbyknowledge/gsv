@@ -19,37 +19,33 @@
   gap: 18px;
 }
 
-.gsv-console-settings-form-head {
-  min-width: 0;
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 14px;
-}
-
-.gsv-console-settings-form-head h3 {
-  margin: 0;
-  color: var(--text-hi);
-  font-size: 13px;
-  font-weight: 500;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-}
-
-.gsv-console-settings-form-head p {
-  max-width: 72ch;
-  margin: 8px 0 0;
-  color: #8d86cf;
-  font-family: var(--gsv-font-prose);
-  font-size: 13px;
-  line-height: 1.55;
-}
-
+/* Field stack: each field is full-width on its own row; fields flagged `half`
+   share a row (e.g. MAX TOKENS / MAX BYTES). */
 .gsv-console-settings-fields {
   min-width: 0;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
+  align-items: start;
+  gap: 22px;
+}
+
+.gsv-console-settings-field {
+  min-width: 0;
+  grid-column: 1 / -1;
+}
+
+.gsv-console-settings-field.is-half {
+  grid-column: auto;
+}
+
+/* Half fields sit side by side — reserve two description lines on both so the
+   input boxes line up regardless of description length. */
+.gsv-console-settings-field.is-half .gsv-fld-desc {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: 3.2em;
 }
 
 .gsv-console-settings-fields .gsv-ta,
@@ -58,10 +54,6 @@
 .gsv-console-settings-fields .gsv-cb-fld,
 .gsv-console-settings-fields .gsv-console-secret-field {
   min-width: 0;
-}
-
-.gsv-console-settings-fields .gsv-ta {
-  grid-column: 1 / -1;
 }
 
 .gsv-console-settings-actions {
@@ -150,16 +142,6 @@
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-}
-
-@media (max-width: 720px) {
-  .gsv-console-settings-fields {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .gsv-console-settings-form-head {
-    flex-direction: column;
-  }
 }
 
 @media (max-width: 520px) {

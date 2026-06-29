@@ -14,7 +14,10 @@ const TOP_LEVEL_SURFACES: Record<string, Exclude<ShellSurfaceId, "desktop" | "ap
   crew: "crew",
   files: "files",
   integrations: "integrations",
+  "card-template": "card-template",
+  "connect-flows": "connect-flows",
   library: "library",
+  "list-template": "list-template",
   machines: "machines",
   messengers: "messengers",
   repositories: "repositories",
@@ -80,7 +83,8 @@ function settingsRouteFromParts(parts: readonly string[]): ShellSettingsRoute {
     return { view: "crew" };
   }
   if (section === "models" || section === "overrides") {
-    return { view: "config", kind: section };
+    const select = parts[2] ? decodeSegment(parts[2]) : undefined;
+    return select ? { view: "config", kind: section, select } : { view: "config", kind: section };
   }
   if (section === "agent") {
     if (parts[2] === "new") {
@@ -201,7 +205,8 @@ function formatSettingsRoute(route: ShellSettingsRoute | undefined): string {
     return "/settings/crew";
   }
   if (route.view === "config") {
-    return `/settings/${route.kind}`;
+    const base = `/settings/${route.kind}`;
+    return route.select ? `${base}/${encodeSegment(route.select)}` : base;
   }
   if (route.view === "agent") {
     if (route.createNew) {

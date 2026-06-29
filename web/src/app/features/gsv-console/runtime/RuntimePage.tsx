@@ -1,4 +1,5 @@
-import { SettingsListPanel } from "../components/SettingsListPanel";
+import { useMemo, useState } from "preact/hooks";
+import { ListTemplate } from "../list-template/ListTemplate";
 import {
   ConsolePage,
   ConsoleResourceBoundary,
@@ -10,6 +11,7 @@ import { useConsoleProcesses } from "../hooks/useConsoleData";
 import { RuntimeDetailPage } from "./RuntimeDetailPage";
 import {
   iconForProcess,
+  isActiveProcess,
   processSub,
   statusForProcess,
   toneForProcess,
@@ -20,6 +22,8 @@ type RuntimePageProps = {
   initialDetailId?: string | null;
   initialDetailLabel?: string | null;
   onSelectionChange?: (selection: ConsoleListSelection | null) => void;
+  /** Connect-new for tasks opens a fresh chat. */
+  onNewTask?: () => void;
 };
 
 function resourceWithLocalEmptyState<T>(resource: ConsoleResourceState<T>): ConsoleResourceState<T> {
@@ -27,20 +31,22 @@ function resourceWithLocalEmptyState<T>(resource: ConsoleResourceState<T>): Cons
 }
 
 function RuntimeConsoleSection({
+  onNewTask,
   onOpenDetail,
   processes,
   refreshing,
 }: {
+  onNewTask?: () => void;
   onOpenDetail: (process: ConsoleProcess) => void;
   processes: readonly ConsoleProcess[];
   refreshing: boolean;
 }) {
-  return (
-    <SettingsListPanel
-      title="TASKS"
-      meta={refreshing ? "REFRESHING" : `${processes.length} TASK${processes.length === 1 ? "" : "S"}`}
-      emptyLabel="NO TASKS"
-      rows={processes.map((process) => ({
+  const [query, setQuery] = useState("");
+  const rows = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return processes
+      .filter((process) => !q || process.label.toLowerCase().includes(q))
+      .map((process) => ({
         id: process.pid,
         icon: iconForProcess(process),
         label: process.label,
@@ -48,7 +54,18 @@ function RuntimeConsoleSection({
         tone: toneForProcess(process),
         statusLabel: statusForProcess(process),
         onOpen: () => onOpenDetail(process),
-      }))}
+      }));
+  }, [processes, query, onOpenDetail]);
+
+  return (
+    <ListTemplate
+      listTitle="TASKS"
+      listMeta={refreshing ? "REFRESHING" : `${processes.filter(isActiveProcess).length}/${processes.length} ACTIVE`}
+      emptyObject="TASKS"
+      rows={rows}
+      connectLabel="NEW TASK"
+      onConnect={onNewTask}
+      search={{ value: query, placeholder: "Search tasks…", onChange: setQuery }}
     />
   );
 }
@@ -67,6 +84,7 @@ export function RuntimePage({
   initialDetailId = null,
   initialDetailLabel = null,
   onSelectionChange,
+  onNewTask,
 }: RuntimePageProps) {
   const processes = useConsoleProcesses({ enabled: true });
   const { selectedDetail, selectDetail } = useConsoleListSelection({
@@ -82,11 +100,12 @@ export function RuntimePage({
       <ConsoleResourceBoundary
         resource={resourceWithLocalEmptyState(processes.resource)}
         emptyLabel="NO TASKS"
-        errorLabel="RUNTIME"
+        errorLabel="TASKS"
         render={(data) => (
           selectedDetail?.kind === "tasks"
             ? renderRuntimeDetail(data, selectedDetail.id, () => selectDetail(null)) ?? (
               <RuntimeConsoleSection
+                onNewTask={onNewTask}
                 onOpenDetail={(process) => selectDetail({ kind: "tasks", id: process.pid, label: process.label })}
                 processes={data}
                 refreshing={processes.resource.isRefreshing}
@@ -94,6 +113,7 @@ export function RuntimePage({
             )
             : (
               <RuntimeConsoleSection
+                onNewTask={onNewTask}
                 onOpenDetail={(process) => selectDetail({ kind: "tasks", id: process.pid, label: process.label })}
                 processes={data}
                 refreshing={processes.resource.isRefreshing}

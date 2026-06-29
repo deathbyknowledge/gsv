@@ -3,6 +3,7 @@ import { Button } from "../../../components/ui/Button";
 import { Icon } from "../../../components/ui/Icon";
 import { ListRow, type ListRowStatus } from "../../../components/ui/ListRow";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
+import { CardListTemplate } from "../card-template/CardListTemplate";
 import { Tag, type TagTone } from "../../../components/ui/Tag";
 import { Tooltip } from "../../../components/ui/Tooltip";
 import { listRowStatusForTone } from "../components/consoleDetailRows";
@@ -109,7 +110,7 @@ function PlatformStatusBadge({ adapter }: { adapter: ConsoleAdapter }) {
 
 const MAX_CARD_BOTS = 2;
 
-function MessengerCard({
+export function MessengerCard({
   adapter,
   identityLinks,
   onConnect,
@@ -206,23 +207,23 @@ function MessengersRoster({
     : `${platforms.length} SERVICES / ${connected} CONNECTED`;
 
   return (
-    <section class="gsv-messengers">
-      <div class="gsv-messengers-panel">
-        <SectionHeader title="MESSENGERS" meta={meta} divider />
-        <div class="gsv-messengers-grid">
-          {platforms.map((adapter) => (
-            <MessengerCard
-              key={adapter.adapter}
-              adapter={adapter}
-              identityLinks={identityLinks}
-              onConnect={onConnect}
-              onOpenDetail={onOpenDetail}
-              onOpenPlatform={onOpenPlatform}
-            />
-          ))}
-        </div>
-      </div>
-    </section>
+    <CardListTemplate
+      listTitle="MESSENGERS"
+      listMeta={meta}
+      emptyObject="MESSENGERS"
+      isEmpty={platforms.length === 0}
+    >
+      {platforms.map((adapter) => (
+        <MessengerCard
+          key={adapter.adapter}
+          adapter={adapter}
+          identityLinks={identityLinks}
+          onConnect={onConnect}
+          onOpenDetail={onOpenDetail}
+          onOpenPlatform={onOpenPlatform}
+        />
+      ))}
+    </CardListTemplate>
   );
 }
 

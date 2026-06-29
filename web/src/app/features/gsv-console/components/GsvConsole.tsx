@@ -1,4 +1,4 @@
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import { ConsoleHeader, type ConsoleCrumb } from "../../../components/ui/ConsoleHeader";
 import { useUnsavedGuardLeave } from "../../gsv-shell/unsaved/unsavedGuard";
 import { FilesPage } from "../../files/FilesPage";
@@ -6,6 +6,7 @@ import { RepositoriesPage } from "../../repositories/RepositoriesPage";
 import { TerminalPage } from "../../terminal/TerminalPage";
 import {
   shellSurfaceLabel,
+  type DesktopObjectId,
   type ShellLibraryRoute,
   type ShellSettingsRoute,
   type ShellSurfaceId,
@@ -21,6 +22,9 @@ import { ConsoleConfigPage } from "../pages/ConsoleConfigPage";
 import { ConsoleCrewPage } from "../pages/ConsoleCrewPage";
 import { ConsoleOverviewPage, type ConsoleOverviewTarget } from "../pages/ConsoleOverviewPage";
 import { RuntimePage } from "../runtime/RuntimePage";
+import { ListTemplateMockPage } from "../list-template/ListTemplateMockPage";
+import { CardListTemplateMockPage } from "../card-template/CardListTemplateMockPage";
+import { ConnectFlowsMockPage } from "../connect-flows/ConnectFlowsMockPage";
 
 type GsvConsoleProps = {
   activeSurface: Exclude<ShellSurfaceId, "desktop" | "app">;
@@ -30,6 +34,11 @@ type GsvConsoleProps = {
   onLibraryRouteChange?: (route: ShellLibraryRoute) => void;
   onOpenApp?: (appId: string, title?: string) => void;
   onOpenSurface?: (surface: Exclude<ShellSurfaceId, "desktop" | "app">) => void;
+  onOpenSectionCreate?: (kind: DesktopObjectId) => void;
+  onOpenChat?: () => void;
+  /** Start a fresh task (Tasks list NEW TASK) — opens the dock AND spawns a new
+   *  process, unlike onOpenChat which only reveals the dock. */
+  onNewTask?: () => void;
   onSettingsRouteChange?: (route: SettingsRoute) => void;
   settingsRoute?: SettingsRoute;
 };
@@ -61,6 +70,9 @@ function surfaceTail(surface: ShellSurfaceId): string {
   if (surface === "messengers") {
     return "GSV · MESSENGERS";
   }
+  if (surface === "machines") {
+    return "GSV · MACHINES";
+  }
   if (surface === "integrations") {
     return "GSV · INTEGRATIONS";
   }
@@ -69,6 +81,12 @@ function surfaceTail(surface: ShellSurfaceId): string {
   }
   if (surface === "crew" || surface === "agent") {
     return "GSV · CREW";
+  }
+  if (surface === "list-template" || surface === "card-template") {
+    return "GSV · TEMPLATE";
+  }
+  if (surface === "connect-flows") {
+    return "GSV · CONNECT";
   }
   return "GSV · CONTROL";
 }
@@ -144,7 +162,7 @@ function settingsRouteTail(route: SettingsRoute): string {
     return route.kind === "models" ? "GSV · MODELS" : "GSV · RUNTIME";
   }
   if (route.kind === "tasks") {
-    return "GSV · RUNTIME";
+    return "GSV · TASKS";
   }
   return surfaceTail(route.kind);
 }
@@ -157,10 +175,35 @@ export function GsvConsole({
   onLibraryRouteChange,
   onOpenApp,
   onOpenSurface,
+  onOpenSectionCreate,
+  onOpenChat,
+  onNewTask,
   onSettingsRouteChange,
   settingsRoute = { view: "overview" },
 }: GsvConsoleProps) {
   const [selectedAgentUid, setSelectedAgentUid] = useState<number | null>(null);
+  const [agentCreateNew, setAgentCreateNew] = useState(false);
+  // Track the open detail of the active top-level list surface (machines /
+  // messengers / integrations / applications / runtime). Settings surfaces drive
+  // their own breadcrumb via the settings route; these don't, so without this a
+  // detail opened from a top-level surface leaves no breadcrumb path back to the
+  // list and the header back jumps all the way to the desktop.
+  const [surfaceDetail, setSurfaceDetail] = useState<ConsoleListSelection | null>(null);
+  const [surfaceDetailSeq, setSurfaceDetailSeq] = useState(0);
+  useEffect(() => {
+    setSurfaceDetail(null);
+  }, [activeSurface]);
+  const clearSurfaceDetail = () => {
+    // Route through the unsaved guard so a dirty create/detail flow (e.g.
+    // CONNECT NEW MACHINE, messenger onboarding) prompts before its draft is
+    // discarded — same as settings detail navigation.
+    requestLeave(() => {
+      setSurfaceDetail(null);
+      // The surface owns its selection internally (uncontrolled), so remount it
+      // via a key bump to drop back to the list.
+      setSurfaceDetailSeq((seq) => seq + 1);
+    });
+  };
   const navigateSettingsRoute = (route: SettingsRoute) => {
     onSettingsRouteChange?.(route);
   };
@@ -174,7 +217,17 @@ export function GsvConsole({
   const guardedSettingsNavigate = (route: SettingsRoute) => requestLeave(() => navigateSettingsRoute(route));
   const openAgent = (uid: number) => {
     setSelectedAgentUid(uid);
+    setAgentCreateNew(false);
     onOpenSurface?.("agent");
+  };
+  const openNewAgent = () => {
+    setSelectedAgentUid(null);
+    setAgentCreateNew(true);
+    onOpenSurface?.("agent");
+  };
+  const onTopLevelAgentCreated = (uid: number) => {
+    setSelectedAgentUid(uid);
+    setAgentCreateNew(false);
   };
   const backToCrew = () => onOpenSurface?.("crew");
   const openSettingsAgent = (uid: number) => {
@@ -211,7 +264,7 @@ export function GsvConsole({
     } = {},
   ) => {
     if (kind === "tasks") {
-      return <RuntimePage {...options} />;
+      return <RuntimePage {...options} onNewTask={onNewTask ?? onOpenChat} />;
     }
     if (kind === "machines") {
       return <MachinesPage {...options} />;
@@ -238,6 +291,10 @@ export function GsvConsole({
   const openSettingsSurface = (surface: ConsoleOverviewTarget) => {
     if (surface === "settings") {
       navigateSettingsRoute({ view: "overview" });
+      return;
+    }
+    if (surface === "model-default") {
+      navigateSettingsRoute({ view: "config", kind: "models", select: "default" });
       return;
     }
     if (surface === "models" || surface === "overrides") {
@@ -284,7 +341,26 @@ export function GsvConsole({
             notLast: true,
           },
           { label: settingsListDetailLabel(settingsRoute) },
+        ] : settingsRoute.view === "agent" ? [
+          // The agent editor is reached via Crew; keep CREW in the trail now that
+          // the editor no longer renders its own breadcrumb.
+          { label: "CREW", onClick: () => guardedSettingsNavigate({ view: "crew" }), notLast: true },
+          { label: settingsRouteLabel(settingsRoute) },
         ] : inNestedSettings ? [{ label: settingsRouteLabel(settingsRoute) }] : []),
+      ]
+    : activeSurface === "agent"
+    ? [
+        // The top-level agent editor is reached from Crew; keep CREW in the trail
+        // as the way back (the editor no longer renders its own breadcrumb).
+        { label: "GSV", onClick: onBackToDesktop, notLast: true },
+        { label: "CREW", onClick: backToCrew, notLast: true },
+        { label: shellSurfaceLabel(activeSurface) },
+      ]
+    : surfaceDetail
+    ? [
+        { label: "GSV", onClick: onBackToDesktop, notLast: true },
+        { label: shellSurfaceLabel(activeSurface), onClick: clearSurfaceDetail, notLast: true },
+        { label: surfaceDetail.createNew ? "NEW" : surfaceDetail.detailLabel || "DETAIL" },
       ]
     : [
         { label: "GSV", onClick: onBackToDesktop, notLast: true },
@@ -302,6 +378,10 @@ export function GsvConsole({
         }
         guardedSettingsNavigate({ view: "overview" });
       }
+    : activeSurface === "agent"
+    ? backToCrew
+    : surfaceDetail
+    ? clearSurfaceDetail
     : onBackToDesktop;
   const tail = activeSurface === "settings" ? settingsRouteTail(settingsRoute) : surfaceTail(activeSurface);
 
@@ -334,7 +414,11 @@ export function GsvConsole({
               onSelectionChange: (selection) => handleSettingsListSelectionChange(settingsRoute.kind, selection),
             })
           ) : settingsRoute.view === "config" ? (
-            <ConsoleConfigPage kind={settingsRoute.kind} />
+            <ConsoleConfigPage
+              kind={settingsRoute.kind}
+              select={settingsRoute.select}
+              onClearSelect={() => navigateSettingsRoute({ view: "config", kind: settingsRoute.kind })}
+            />
           ) : settingsRoute.view === "crew" ? (
             <ConsoleCrewPage onManageAgent={openSettingsAgent} onCreateAgent={openSettingsNewAgent} />
           ) : (
@@ -346,19 +430,24 @@ export function GsvConsole({
             />
           )
         ) : activeSurface === "runtime" ? (
-          <RuntimePage />
+          <RuntimePage key={surfaceDetailSeq} onNewTask={onNewTask ?? onOpenChat} onSelectionChange={setSurfaceDetail} />
         ) : activeSurface === "crew" ? (
-          <ConsoleCrewPage onManageAgent={openAgent} />
+          <ConsoleCrewPage onManageAgent={openAgent} onCreateAgent={openNewAgent} />
         ) : activeSurface === "agent" ? (
-          <ConsoleAgentPage accountUid={selectedAgentUid} onBackToCrew={backToCrew} />
+          <ConsoleAgentPage
+            accountUid={selectedAgentUid}
+            createNew={agentCreateNew}
+            onAgentCreated={onTopLevelAgentCreated}
+            onBackToCrew={backToCrew}
+          />
         ) : activeSurface === "machines" ? (
-          <MachinesPage />
+          <MachinesPage key={surfaceDetailSeq} onSelectionChange={setSurfaceDetail} />
         ) : activeSurface === "messengers" ? (
-          <MessengersPage />
+          <MessengersPage key={surfaceDetailSeq} onSelectionChange={setSurfaceDetail} />
         ) : activeSurface === "integrations" ? (
-          <IntegrationsPage />
+          <IntegrationsPage key={surfaceDetailSeq} onSelectionChange={setSurfaceDetail} />
         ) : activeSurface === "applications" ? (
-          <PackageListPage kind="applications" onOpenApp={onOpenApp} />
+          <PackageListPage key={surfaceDetailSeq} kind="applications" onOpenApp={onOpenApp} onSelectionChange={setSurfaceDetail} />
         ) : activeSurface === "library" ? (
           <LibraryPage
             route={libraryRoute}
@@ -370,6 +459,15 @@ export function GsvConsole({
           <RepositoriesPage />
         ) : activeSurface === "terminal" ? (
           <TerminalPage />
+        ) : activeSurface === "list-template" ? (
+          <ListTemplateMockPage
+            onOpenSectionCreate={onOpenSectionCreate}
+            onOpenChat={onOpenChat}
+          />
+        ) : activeSurface === "card-template" ? (
+          <CardListTemplateMockPage onOpenChat={onOpenChat} />
+        ) : activeSurface === "connect-flows" ? (
+          <ConnectFlowsMockPage onOpenChat={onOpenChat} />
         ) : (
           null
         )}

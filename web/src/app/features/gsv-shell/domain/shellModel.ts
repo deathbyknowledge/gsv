@@ -12,7 +12,10 @@ export type ShellSurfaceId =
   | "files"
   | "repositories"
   | "library"
-  | "terminal";
+  | "terminal"
+  | "list-template"
+  | "card-template"
+  | "connect-flows";
 
 export type DesktopObjectId = "machines" | "messengers" | "integrations" | "applications";
 export type ShellStatus = "online" | "error" | "idle" | "warn" | "live" | "update";
@@ -24,7 +27,7 @@ export type ShellSettingsListKind = DesktopObjectId | "library" | "tasks";
 export type ShellSettingsRoute =
   | { view: "overview" }
   | { view: "list"; kind: ShellSettingsListKind; detailId?: string; detailLabel?: string; createNew?: boolean }
-  | { view: "config"; kind: "models" | "overrides" }
+  | { view: "config"; kind: "models" | "overrides"; select?: string }
   | { view: "crew" }
   | { view: "agent"; accountUid: number | null; createNew?: boolean };
 
@@ -170,6 +173,12 @@ export function shellSurfaceLabel(surface: ShellSurfaceId): string {
       return "LIBRARY";
     case "terminal":
       return "TERMINAL";
+    case "list-template":
+      return "LIST TEMPLATE";
+    case "card-template":
+      return "CARD TEMPLATE";
+    case "connect-flows":
+      return "CONNECT FLOWS";
     case "desktop":
     default:
       return "DESKTOP";

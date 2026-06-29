@@ -1,0 +1,19 @@
+/* Dev-only mock controls bar above the template — not part of the template.
+   The controls themselves are design-system Segmented / Toggle elements. */
+.gsv-list-mock-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border: 1px dashed var(--border);
+  background: var(--panel);
+  font-family: var(--font-mono);
+}
+
+.gsv-list-mock-tag {
+  font-size: 9px;
+  letter-spacing: 0.24em;
+  color: var(--accent);
+}

@@ -46,11 +46,13 @@ import crewPage from "./stories/CrewPage.story";
 import agentDetail from "./stories/AgentDetail.story";
 import settingsList from "./stories/SettingsList.story";
 import objectDetail from "./stories/ObjectDetail.story";
+import consoleDetailHeader from "./stories/ConsoleDetailHeader.story";
 import filesRedesign from "./stories/FilesRedesign.story";
 import iconMenu from "./stories/IconMenu.story";
 import desktopHint from "./stories/DesktopHint.story";
 import consoleHeader from "./stories/ConsoleHeader.story";
 import breadcrumbs from "./stories/Breadcrumbs.story";
+import pageHeader from "./stories/PageHeader.story";
 import statusBar from "./stories/StatusBar.story";
 import messageInput from "./stories/MessageInput.story";
 import systemMessage from "./stories/SystemMessage.story";
@@ -107,6 +109,7 @@ const STORIES: Story[] = [
   desktopHint,
   consoleHeader,
   breadcrumbs,
+  pageHeader,
   statusBar,
   messageInput,
   systemMessage,
@@ -124,6 +127,7 @@ const STORIES: Story[] = [
   agentDetail,
   settingsList,
   objectDetail,
+  consoleDetailHeader,
   filesRedesign,
 ];
 

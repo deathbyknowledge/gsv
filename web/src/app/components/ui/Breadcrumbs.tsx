@@ -17,6 +17,11 @@ export interface BreadcrumbsProps {
   size?: BreadcrumbsSize;
   /** When items.length exceeds this, collapse the middle into a single "…". */
   maxVisible?: number;
+  /** Accessible name + tooltip for the back button. Default "Up one level". */
+  backLabel?: string;
+  /** aria-current value for the current crumb. Default "page"; directory-trail
+   *  consumers may prefer "location". */
+  currentAriaCurrent?: "page" | "location" | "step" | "true";
 }
 
 const SIZE_CLASS: Record<BreadcrumbsSize, string> = {
@@ -41,6 +46,8 @@ interface Node {
   onClick?: () => void;
   /** Hover title — for the ellipsis, the list of hidden labels. */
   title?: string;
+  /** For the ellipsis: full accessible name describing the collapsed levels. */
+  ariaLabel?: string;
 }
 
 /**
@@ -68,13 +75,15 @@ function buildNodes(items: Crumb[], maxVisible?: number): Node[] {
   const tail = items.slice(n - tailCount);
   const hidden = items.slice(1, n - tailCount);
   const deepestHidden = hidden[hidden.length - 1];
+  const hiddenLabels = hidden.map((c) => c.label);
 
   const ellipsis: Node = {
     kind: "ellipsis",
     label: "…",
     current: false,
     onClick: deepestHidden?.onClick,
-    title: hidden.map((c) => c.label).join(" / "),
+    title: hiddenLabels.join(" / "),
+    ariaLabel: `${hidden.length} hidden ${hidden.length === 1 ? "level" : "levels"}: ${hiddenLabels.join(", ")}`,
   };
 
   return [toNode(head, 0), ellipsis, ...tail.map((c, i) => toNode(c, n - tailCount + i))];
@@ -84,7 +93,14 @@ function buildNodes(items: Crumb[], maxVisible?: number): Node[] {
  *  button. Earlier crumbs are buttons (when clickable); the last is the current
  *  page. Labels ellipsize rather than hard-clip; long trails collapse via
  *  `maxVisible`. */
-export function Breadcrumbs({ items, onBack, size = "medium", maxVisible }: BreadcrumbsProps) {
+export function Breadcrumbs({
+  items,
+  onBack,
+  size = "medium",
+  maxVisible,
+  backLabel = "Up one level",
+  currentAriaCurrent = "page",
+}: BreadcrumbsProps) {
   const nodes = buildNodes(items, maxVisible);
   const rootClass = `gsv-bc ${SIZE_CLASS[size]}`;
 
@@ -92,7 +108,7 @@ export function Breadcrumbs({ items, onBack, size = "medium", maxVisible }: Brea
     <nav class={rootClass} aria-label="Breadcrumb">
       {onBack ? (
         <span class="gsv-bc-back">
-          <IconButton glyph="arrowBack" size={BACK_SIZE[size]} title="Up one level" onClick={onBack} />
+          <IconButton glyph="arrowBack" size={BACK_SIZE[size]} title={backLabel} ariaLabel={backLabel} onClick={onBack} />
         </span>
       ) : null}
       <ol class="gsv-bc-list">
@@ -100,18 +116,18 @@ export function Breadcrumbs({ items, onBack, size = "medium", maxVisible }: Brea
           const clickable = typeof node.onClick === "function";
           const last = i === nodes.length - 1;
           return (
-            <Fragment key={i}>
+            <Fragment key={`${node.kind}:${node.label}:${i}`}>
               <li class={node.current ? "gsv-bc-item gsv-bc-item-current" : "gsv-bc-item"}>
                 {node.kind === "ellipsis" ? (
                   clickable ? (
-                    <button type="button" class="gsv-bc-crumb gsv-bc-ellipsis" title={node.title} onClick={node.onClick}>
+                    <button type="button" class="gsv-bc-crumb gsv-bc-ellipsis" title={node.title} aria-label={node.ariaLabel} onClick={node.onClick}>
                       {node.label}
                     </button>
                   ) : (
-                    <span class="gsv-bc-crumb gsv-bc-ellipsis" title={node.title}>{node.label}</span>
+                    <span class="gsv-bc-crumb gsv-bc-ellipsis" title={node.title} role="img" aria-label={node.ariaLabel}>{node.label}</span>
                   )
                 ) : node.current ? (
-                  <span class="gsv-bc-crumb gsv-bc-current" aria-current="page">{node.label}</span>
+                  <span class="gsv-bc-crumb gsv-bc-current" aria-current={currentAriaCurrent}>{node.label}</span>
                 ) : clickable ? (
                   <button type="button" class="gsv-bc-crumb" onClick={node.onClick}>{node.label}</button>
                 ) : (

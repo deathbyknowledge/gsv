@@ -1,8 +1,8 @@
 import type { JSX } from "preact";
+import { useMemo, useState } from "preact/hooks";
 import { AgentCard, type AgentTask } from "../../../components/ui/AgentCard";
 import type { AvatarStatus } from "../../../components/ui/Avatar";
-import { CrewAddTile } from "../../../components/ui/CrewTile";
-import { SectionHeader } from "../../../components/ui/SectionHeader";
+import { CardListTemplate } from "../card-template/CardListTemplate";
 import {
   ConsolePage,
   ConsoleResourceBoundary,
@@ -21,9 +21,12 @@ import {
   type AgentApprovalAction,
 } from "../domain/consoleAgentBehavior";
 import {
+  CREW_HUMAN_IMAGE,
   agentImageSrcForIndex,
+  isConsoleAgentAccount,
+  isHumanCrewAccount,
   labelForConsoleAccountRelation,
-  sortedConsoleAccounts,
+  orderedCrewAccounts,
 } from "../domain/agentPresentation";
 import {
   useConsoleAccounts,
@@ -90,74 +93,69 @@ function CrewRoster({
   onManageAgent?: (uid: number) => void;
   onCreateAgent?: () => void;
 }) {
+  const [query, setQuery] = useState("");
   const processes = processResource.data ?? [];
-  const sortedAccounts = sortedConsoleAccounts(accounts);
   const modelLabels = modelLabelsForConfig(config);
-  const ownerUid = viewerAccountForCrew(sortedAccounts)?.uid ?? null;
-  const cards = sortedAccounts.map((account, index) => buildCrewCard(
-    account,
-    processes,
-    index,
-    config,
-    modelLabels,
-    ownerUid,
-  ));
-  const running = cards.filter((card) => card.processes.some(isRunningProcess)).length;
-  const runnable = cards.filter((card) => card.account.runnable).length;
-  const accountCount = cards.length;
-  const telemetryLabel = processResource.isRefreshing
-    ? "REFRESHING"
-    : processResource.isError
-      ? "TELEMETRY ERROR"
-      : processResource.isUnavailable
-        ? "TELEMETRY OFFLINE"
-        : `${processes.length} PROCESS ${processes.length === 1 ? "TRACE" : "TRACES"}`;
+  // Humans first; agents keep their existing rank order after.
+  const ordered = orderedCrewAccounts(accounts);
+  const ownerUid = viewerAccountForCrew(ordered)?.uid ?? null;
+  let agentImageIndex = 0;
+  const cards = ordered.map((account) => {
+    const human = isHumanCrewAccount(account);
+    // Human keeps the orb; agents cycle the agent portraits.
+    const imageSrc = human ? CREW_HUMAN_IMAGE : agentImageSrcForIndex(agentImageIndex++);
+    return buildCrewCard(account, processes, imageSrc, human, config, modelLabels, ownerUid);
+  });
+  const humanCount = accounts.filter(isHumanCrewAccount).length;
+  const machineCount = accounts.filter(isConsoleAgentAccount).length;
+  const crewMeta = `${humanCount} HUMAN${humanCount === 1 ? "" : "S"} / ${machineCount} MACHINE${machineCount === 1 ? "" : "S"}`;
+
+  const visibleCards = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return q
+      ? cards.filter((card) => card.account.displayName.toLowerCase().includes(q))
+      : cards;
+  }, [cards, query]);
 
   return (
-    <section class="gsv-console-crew">
-      <div class="gsv-console-crew-panel">
-        <SectionHeader
-          title="CREW"
-          meta={`${accountCount} ACCOUNTS / ${runnable} RUNNABLE / ${running} RUNNING / ${telemetryLabel}`}
-          divider
-        />
-        <div class="gsv-console-crew-grid">
-          {cards.map((card) => (
-            <div
-              class="gsv-console-crew-card-shell"
-              data-clickable={onManageAgent ? "true" : undefined}
-              key={card.account.uid}
-              onClick={onManageAgent ? () => onManageAgent(card.account.uid) : undefined}
-              onKeyDown={onManageAgent ? (event) => handleCardKeyDown(event, card.account.uid, onManageAgent) : undefined}
-              tabIndex={onManageAgent ? 0 : undefined}
-            >
-              <AgentCard
-                agentName={card.account.displayName}
-                agentRole={card.role}
-                description={card.description}
-                imgSrc={card.imageSrc}
-                status={card.status}
-                initialModel={card.model}
-                initialPermission={card.permission}
-                modelIsDefault={card.modelIsDefault}
-                models={card.modelOptions}
-                tasks={card.tasks}
-                tasksTotal={card.processes.length}
-                active={card.active}
-                showActions={false}
-                readOnly
-              />
-            </div>
-          ))}
-          <CrewAddTile
-            className="gsv-console-crew-add-tile"
-            description="Spin up a new crew member with its own persona & files"
-            label="NEW AGENT"
-            onClick={onCreateAgent}
+    <CardListTemplate
+      listTitle="CREW"
+      listMeta={crewMeta}
+      emptyObject="CREW"
+      isEmpty={visibleCards.length === 0}
+      connectLabel={onCreateAgent ? "NEW AGENT" : undefined}
+      onConnect={onCreateAgent}
+      search={{ value: query, placeholder: "Search crew…", onChange: setQuery }}
+    >
+      {visibleCards.map((card) => (
+        <div
+          class="gsv-console-crew-card-shell"
+          data-clickable={onManageAgent ? "true" : undefined}
+          key={card.account.uid}
+          onClick={onManageAgent ? () => onManageAgent(card.account.uid) : undefined}
+          onKeyDown={onManageAgent ? (event) => handleCardKeyDown(event, card.account.uid, onManageAgent) : undefined}
+          tabIndex={onManageAgent ? 0 : undefined}
+        >
+          <AgentCard
+            agentName={card.account.displayName}
+            agentRole={card.role}
+            description={card.description}
+            imgSrc={card.imageSrc}
+            status={card.status}
+            initialModel={card.model}
+            initialPermission={card.permission}
+            modelIsDefault={card.modelIsDefault}
+            models={card.modelOptions}
+            tasks={card.tasks}
+            tasksTotal={card.processes.length}
+            active={card.active}
+            avatarCover={!isHumanCrewAccount(card.account)}
+            showActions={false}
+            readOnly
           />
         </div>
-      </div>
-    </section>
+      ))}
+    </CardListTemplate>
   );
 }
 
@@ -176,7 +174,8 @@ function handleCardKeyDown(
 function buildCrewCard(
   account: ConsoleAccount,
   processes: readonly ConsoleProcess[],
-  index: number,
+  imageSrc: string,
+  isHuman: boolean,
   config: readonly ConsoleConfigEntry[],
   modelLabels: readonly string[],
   ownerUid: number | null,
@@ -188,12 +187,15 @@ function buildCrewCard(
   const running = ownedProcesses.some(isRunningProcess);
   const unknown = ownedProcesses.some((process) => process.state === "unknown");
   const role = labelForConsoleAccountRelation(account.relation);
-  const status: AvatarStatus = unknown ? "error" : running || queued ? "live" : account.runnable ? "idle" : "idle";
+  // The human is always shown online; agents reflect their process state.
+  const status: AvatarStatus = isHuman
+    ? "online"
+    : unknown ? "error" : running || queued ? "live" : "idle";
 
   return {
     account,
     processes: ownedProcesses,
-    imageSrc: agentImageSrcForIndex(index),
+    imageSrc,
     role,
     description: accountDescription(account),
     status,

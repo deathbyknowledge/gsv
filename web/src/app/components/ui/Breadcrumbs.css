@@ -5,7 +5,12 @@
   display: flex;
   align-items: center;
   gap: 10px;
+  /* Bound to the parent: take available width but never push past it. min-width:0
+     lets the flex children shrink; max-width:100% caps the box; overflow:hidden
+     guarantees no crumb can leak past the container edge. */
   min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
   box-sizing: border-box;
   font-family: var(--gsv-font-mono);
 }
@@ -22,7 +27,11 @@
 .gsv-bc-list {
   display: flex;
   align-items: center;
+  /* Participate in the parent's width and absorb the remaining space, so the
+     crumbs flex within the bounded root instead of overflowing it. */
+  flex: 1 1 auto;
   min-width: 0;
+  overflow: hidden;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -31,24 +40,29 @@
 .gsv-bc-item {
   display: flex;
   align-items: center;
-  /* Earlier crumbs absorb the squeeze: shrink (but never grow) so their label
-     can ellipsize first. */
-  flex: 0 1 auto;
+  /* Earlier crumbs absorb the squeeze: a high shrink factor means they give up
+     width (and ellipsize) first, before the current crumb is touched. */
+  flex: 0 9999 auto;
   min-width: 0;
 }
 
-/* Current page wins the width contest: it does not shrink, so it stays fully
-   readable as long as it physically fits. Earlier crumbs + separators give up
-   their width first. */
+/* Current page wins the width contest but is not exempt from it. It shrinks
+   LAST (earlier crumbs + separators give up their width first, so the current
+   crumb reads in full whenever the trail fits), yet it can still ellipsize as a
+   final fallback when it alone exceeds the container — never overflowing.
+   A min-width floor keeps a readable stub visible even in the tightest column. */
 .gsv-bc-item-current {
-  flex: 0 0 auto;
-  min-width: 0;
+  flex: 0 1 auto;
+  min-width: 3ch;
+  overflow: hidden;
 }
 
-/* Crumbs (button + static) share one base so hover/focus stay consistent. */
+/* Crumbs (button + static) share one base so hover/focus stay consistent.
+   No fixed cap: width is container-relative via the flex parents above, so the
+   crumb shrinks and ellipsizes to fit instead of clamping at an arbitrary ch. */
 .gsv-bc-crumb {
   display: block;
-  max-width: 22ch;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -80,12 +94,14 @@ button.gsv-bc-crumb:focus-visible {
   color: #cbc7ff;
 }
 
-/* Current page: brighter, static. Priority crumb — drop the max-width clamp and
-   keep nowrap so it renders in full while earlier crumbs ellipsize. */
+/* Current page: brighter, static. Priority crumb — renders in full while earlier
+   crumbs ellipsize first (it shrinks last, via .gsv-bc-item-current). It keeps
+   the base max-width:100% so that when it alone exceeds the container it
+   ellipsizes too, rather than overflowing. */
 .gsv-bc-current {
-  max-width: none;
   white-space: nowrap;
   color: var(--text-hi);
+  text-shadow: 0 0 6px rgba(150, 140, 255, 0.4);
   cursor: default;
 }
 

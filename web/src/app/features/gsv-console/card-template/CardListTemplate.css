@@ -1,0 +1,100 @@
+/* CARD list template — one header, a horizontal action bar on top, then a
+   full-width card grid. Frame tokens mirror the Settings Overview / table. */
+.gsv-card-template {
+  flex: 1 0 auto;
+  min-height: 100%;
+  margin-bottom: 88px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-raised);
+  background: var(--panel);
+  box-shadow:
+    inset 0 0 0 1px #060414,
+    0 0 30px rgba(80, 70, 180, 0.1);
+}
+
+/* Action bar — search + filters on the left, primary connect on the right. */
+.gsv-card-template-action {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 16px;
+  border-bottom: 1px solid var(--rule-section);
+}
+
+.gsv-card-template-search {
+  flex: 1 1 240px;
+  min-width: 0;
+  max-width: 420px;
+}
+
+.gsv-card-template-filters {
+  flex: 0 0 auto;
+  width: 180px;
+  display: flex;
+  gap: 10px;
+}
+
+.gsv-card-template-connect {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+/* Compact controls share one height so the bar lines up. */
+.gsv-card-template-action .gsv-ti-wrap,
+.gsv-card-template-action .gsv-sel-trig,
+.gsv-card-template-connect .gsv-btn {
+  height: 34px;
+  box-sizing: border-box;
+}
+
+.gsv-card-template-connect .gsv-btn {
+  display: inline-flex;
+  width: auto;
+}
+
+/* One control (connect only): centered. */
+.gsv-card-template-action[data-actions="1"] {
+  justify-content: center;
+}
+
+.gsv-card-template-action[data-actions="1"] .gsv-card-template-connect {
+  margin-left: 0;
+}
+
+/* Three controls in a tight bar: search takes the first row. */
+@media (max-width: 720px) {
+  .gsv-card-template-action[data-actions="3"] .gsv-card-template-search {
+    flex-basis: 100%;
+    max-width: none;
+  }
+}
+
+/* Card grid — full width, responsive auto-fill. */
+.gsv-card-template-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.gsv-card-template-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  align-items: stretch;
+  gap: 16px;
+  padding: 16px;
+}
+
+/* Card shell — a DS Surface (border + panel bg) tuned for bare cards like
+   AgentCard: edge-to-edge (no Surface padding), square, full card height + glow.
+   Self-bordered cards (e.g. MessengerCard) go in the grid directly. */
+.gsv-surface.gsv-card-cell {
+  min-height: 430px;
+  padding: 0;
+  border-radius: 0;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 0 22px rgba(60, 52, 150, 0.12);
+}

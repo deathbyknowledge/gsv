@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "preact/hooks";
 import { GsvMark } from "../../../components/ui/GsvMark";
 import { Icon } from "../../../components/ui/Icon";
 import { IconButton } from "../../../components/ui/IconButton";
+import { OBJECT_GLYPH_ICON, type ObjectGlyph } from "../../../components/ui/objectGlyph";
 import {
   type DesktopChildObject,
   type DesktopObject,
@@ -35,12 +36,6 @@ type ShellRailProps = {
   onCreateObject: (section: DesktopObjectId) => void;
 };
 
-const GLYPH_ICON: Record<string, string> = {
-  machines: "computer",
-  messengers: "chat",
-  integrations: "weblink",
-  applications: "satellite",
-};
 
 /** Sections that show a "create" entry in their drawer. The label is the same
  *  for every section. Messengers are intentionally absent — connecting a
@@ -161,14 +156,10 @@ export function ShellRail({
     if (isSectionActive(object)) {
       return; // already in this section — leave the current object alone
     }
-    // Applications open as native app frames — jarring to launch from a section
-    // click — so route to the applications list page instead of auto-opening
-    // one. Empty sections also go to their landing.
-    if (object.id === "applications" || object.children.length === 0) {
-      onOpenSurface(object.id);
-      return;
-    }
-    onOpenObject(object.children[0]); // auto-open the first object
+    // Every section routes to its own list page. Drilling into a specific
+    // object is done from the list itself or the expanded drawer subitems —
+    // never by auto-opening the first child on a section click.
+    onOpenSurface(object.id);
   };
 
   if (collapsed) {
@@ -186,7 +177,7 @@ export function ShellRail({
             title={object.label}
             onClick={() => openSection(object)}
           >
-            <Icon name={GLYPH_ICON[object.glyph]} size={19} />
+            <Icon name={OBJECT_GLYPH_ICON[object.glyph as ObjectGlyph]} size={19} />
             <span class="gsv-rail-status-dot" style={{ background: statusColor(object.status), color: statusColor(object.status) }} />
           </button>
         ))}
@@ -226,7 +217,7 @@ export function ShellRail({
                   >
                     <span class="gsv-rail-node-icon">
                       <span class="gsv-rail-node-disc">
-                        <Icon name={GLYPH_ICON[object.glyph]} size={19} />
+                        <Icon name={OBJECT_GLYPH_ICON[object.glyph as ObjectGlyph]} size={19} />
                       </span>
                     </span>
                     <span class="gsv-rail-row-copy">

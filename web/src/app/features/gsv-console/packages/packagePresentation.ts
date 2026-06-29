@@ -1,3 +1,4 @@
+import { OBJECT_GLYPH_ICON } from "../../../components/ui/objectGlyph";
 import type { StatusTone } from "../../../components/ui/StatusDot";
 import { isNativeWebPackageName } from "../../packages/nativePackages";
 import {
@@ -11,7 +12,9 @@ import type { PackageListKind } from "../domain/consoleListTypes";
 import type { ConsolePackage } from "../domain/consoleModels";
 
 export function iconForPackage(pkg: ConsolePackage, kind: PackageListKind): string {
-  if (isApplicationPackage(pkg)) return "satellite";
+  // Applications use the shared object-level icon (single source of truth) so
+  // the list rows always match the desktop tile / nav rail / object card.
+  if (isApplicationPackage(pkg)) return OBJECT_GLYPH_ICON.applications;
   if (pkg.runtime === "web-ui") return "stars";
   if (pkg.runtime === "node") return "terminal";
   return "pencil";

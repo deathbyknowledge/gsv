@@ -24,7 +24,7 @@ function ChatAgentCrewTile({
 }) {
   const content = (
     <>
-      <Avatar src={member.imageSrc} status={member.status} size={50} />
+      <Avatar src={member.imageSrc} status={member.status} size={50} cover />
       <strong>{member.name}</strong>
       <span>{member.statusLabel}</span>
     </>
@@ -80,6 +80,7 @@ export function ActiveAgentPanel({
           agentRole={agent.role}
           description={agent.description}
           imgSrc={agent.imageSrc}
+          avatarCover
           status={agent.status}
           initialModel={agent.modelValue}
           initialPermission={agent.permission}

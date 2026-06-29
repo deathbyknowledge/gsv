@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { Button } from "../../../components/ui/Button";
 import { Checkbox } from "../../../components/ui/Checkbox";
+import { SectionHeader } from "../../../components/ui/SectionHeader";
 import { Select } from "../../../components/ui/Select";
 import { Surface } from "../../../components/ui/Surface";
-import { Tag } from "../../../components/ui/Tag";
 import { TextArea } from "../../../components/ui/TextArea";
 import { TextInput } from "../../../components/ui/TextInput";
 import { aiProviderOptionsForValue } from "../../../domain/aiProviders";
 import { ConsoleDetailPage } from "../components/ConsoleDetailPage";
-import { useUnsavedGuard } from "../../gsv-shell/unsaved/unsavedGuard";
+import { useUnsavedGuard, useUnsavedGuardLeave } from "../../gsv-shell/unsaved/unsavedGuard";
 import {
   ConsolePage,
   ConsoleResourceBoundary,
@@ -61,7 +61,18 @@ export type ConsoleConfigKind = "models" | "overrides";
 
 type ConsoleConfigPageProps = {
   kind: ConsoleConfigKind;
+  /** Optional model selection to open immediately (e.g. "default" deep-links to
+   *  the Default Agent Model detail page). */
+  select?: string;
+  /** Clears the deep-link `select` from the settings route/URL — called when a
+   *  `select`-opened detail navigates back, so the URL doesn't stay pinned to
+   *  the detail (which would reopen it on reload). */
+  onClearSelect?: () => void;
 };
+
+function modelSelectionFromParam(select: string | undefined): ModelSelection | null {
+  return select === "default" ? { kind: "default" } : null;
+}
 
 type SettingsViewer = {
   account: ConsoleAccount | null;
@@ -101,7 +112,7 @@ type SettingsFieldGroupProps = {
 
 type ClearedProfileSecretKeys = ReadonlyMap<string, ReadonlySet<string>>;
 
-export function ConsoleConfigPage({ kind }: ConsoleConfigPageProps) {
+export function ConsoleConfigPage({ kind, select, onClearSelect }: ConsoleConfigPageProps) {
   const config = useConsoleConfig();
   const accounts = useConsoleAccounts();
 
@@ -116,6 +127,8 @@ export function ConsoleConfigPage({ kind }: ConsoleConfigPageProps) {
             accounts={accounts.accounts}
             config={data}
             kind={kind}
+            select={select}
+            onClearSelect={onClearSelect}
           />
         )}
       />
@@ -127,10 +140,14 @@ function ConsoleSettingsPanel({
   accounts,
   config,
   kind,
+  select,
+  onClearSelect,
 }: {
   accounts: readonly ConsoleAccount[];
   config: readonly ConsoleConfigEntry[];
   kind: ConsoleConfigKind;
+  select?: string;
+  onClearSelect?: () => void;
 }) {
   const viewerAccount = viewerAccountForSettings(accounts);
   const viewer: SettingsViewer = {
@@ -140,7 +157,7 @@ function ConsoleSettingsPanel({
   };
 
   if (kind === "models") {
-    return <ModelSettingsPage config={config} viewer={viewer} />;
+    return <ModelSettingsPage config={config} viewer={viewer} select={select} onClearSelect={onClearSelect} />;
   }
   return <RuntimeSettingsPage config={config} viewer={viewer} />;
 }
@@ -148,13 +165,27 @@ function ConsoleSettingsPanel({
 function ModelSettingsPage({
   config,
   viewer,
+  select,
+  onClearSelect,
 }: {
   config: readonly ConsoleConfigEntry[];
   viewer: SettingsViewer;
+  select?: string;
+  onClearSelect?: () => void;
 }) {
   const saveConfig = useSaveConsoleConfigEntries();
   const validateModelConfig = useValidateConsoleModelConfig();
-  const [selection, setSelection] = useState<ModelSelection | null>(null);
+  const requestLeave = useUnsavedGuardLeave();
+  const [selection, setSelection] = useState<ModelSelection | null>(() => modelSelectionFromParam(select));
+  // The state is seeded once above, but this component stays mounted across
+  // settings-route changes, so browser back/forward (or any external route
+  // update) that changes `select` must be reflected here — otherwise the URL and
+  // the shown detail desync. `select` only ever encodes the "default" detail;
+  // locally-opened profile/tool details keep it undefined, so the effect only
+  // fires on default deep-link/clear and never clobbers a local selection.
+  useEffect(() => {
+    setSelection(modelSelectionFromParam(select));
+  }, [select]);
   const effectiveValues = useMemo(
     () => effectiveAiValuesForViewer(config, viewer.uid),
     [config, viewer.uid],
@@ -176,6 +207,17 @@ function ModelSettingsPage({
     await validateModelConfig.mutateAsync(input);
   };
 
+  // Leave the open detail and return to the list. A detail opened via the
+  // `select` deep-link still has it pinned in the settings route/URL, so clear
+  // that too — otherwise back leaves the list rendered at the detail URL and a
+  // reload reopens it.
+  const exitDetail = () => {
+    setSelection(null);
+    if (select) {
+      onClearSelect?.();
+    }
+  };
+
   if (selection) {
     return (
       <ModelSettingsDetail
@@ -186,7 +228,11 @@ function ModelSettingsPage({
         scopeLabel={scopeLabel}
         selection={selection}
         viewer={viewer}
-        onBack={() => setSelection(null)}
+        // User-initiated Back/Cancel: guard so a dirty draft prompts first.
+        onBack={() => requestLeave(exitDetail)}
+        // Successful create/delete: the draft is saved, so return directly
+        // without a spurious "Discard changes?" prompt.
+        onCompleted={exitDetail}
         onSaveEntries={saveEntries}
         onValidateModelConfig={validateModelSettings}
       />
@@ -195,11 +241,13 @@ function ModelSettingsPage({
 
   return (
     <section class="gsv-console-settings-index">
+      <SectionHeader title="MODELS" headingLevel={2} divider />
       <SettingsListPanel
         title="DEFAULT AGENT MODEL"
         meta={scopeLabel}
         emptyLabel="NO DEFAULT MODEL"
         fitContent
+        headingLevel={3}
         rows={[defaultModelRow(effectiveValues, () => setSelection({ kind: "default" }))]}
       />
       <SettingsListPanel
@@ -207,6 +255,7 @@ function ModelSettingsPage({
         meta={`${profiles.length} PRESET${profiles.length === 1 ? "" : "S"}`}
         emptyLabel="NO MODEL PRESETS"
         fitContent
+        headingLevel={3}
         action={{ label: "NEW MODEL PRESET", onClick: canEditAi ? () => setSelection({ kind: "new-profile" }) : undefined }}
         rows={profiles.map((profile) => profileRow(profile, () => setSelection({ kind: "profile", id: profile.id })))}
       />
@@ -215,6 +264,7 @@ function ModelSettingsPage({
         meta={`${TOOL_MODEL_GROUPS.length} STACKS`}
         emptyLabel="NO TOOL MODELS"
         fitContent
+        headingLevel={3}
         rows={TOOL_MODEL_GROUPS.map((group) => toolModelRow(group, effectiveValues, () => setSelection({ kind: "tool", id: group.id })))}
       />
     </section>
@@ -230,6 +280,7 @@ function ModelSettingsDetail({
   selection,
   viewer,
   onBack,
+  onCompleted,
   onSaveEntries,
   onValidateModelConfig,
 }: {
@@ -240,7 +291,10 @@ function ModelSettingsDetail({
   scopeLabel: string;
   selection: ModelSelection;
   viewer: SettingsViewer;
+  /** Guarded user-initiated Back/Cancel. */
   onBack: () => void;
+  /** Unguarded return after a successful create/delete (draft already saved). */
+  onCompleted: () => void;
   onSaveEntries: (entries: readonly SaveConsoleConfigInput[]) => Promise<void>;
   onValidateModelConfig: (input: ValidateModelSettingsInput) => Promise<void>;
 }) {
@@ -254,6 +308,7 @@ function ModelSettingsDetail({
         tone={editable ? "online" : "idle"}
         blurb="Fallback model stack used when an agent inherits model behavior."
         parentLabel="MODELS"
+        showBack
         onBack={onBack}
       >
         <SettingsFieldGroup
@@ -287,6 +342,7 @@ function ModelSettingsDetail({
         tone={editable ? "online" : "idle"}
         blurb={group.description}
         parentLabel="MODELS"
+        showBack
         onBack={onBack}
       >
         <SettingsFieldGroup
@@ -320,6 +376,7 @@ function ModelSettingsDetail({
       tone={profile ? "online" : "idle"}
       blurb="Reusable named model stack for agents, including provider credentials when a preset needs its own key."
       parentLabel="MODELS"
+      showBack
       onBack={onBack}
     >
       <ModelProfileForm
@@ -332,7 +389,7 @@ function ModelSettingsDetail({
         onCancel={onBack}
         onDelete={profile ? async () => {
           await saveModelProfiles(viewer, profiles, deleteModelProfile(profiles, profile.id), onSaveEntries);
-          onBack();
+          onCompleted();
         } : undefined}
         onMakeDefault={profile ? async (values) => {
           await makeProfileDefault(config, viewer, { ...profile, values }, onSaveEntries);
@@ -344,7 +401,7 @@ function ModelSettingsDetail({
             : createModelProfile(profiles, name, values);
           await saveModelProfiles(viewer, profiles, nextProfiles, onSaveEntries, clearedSecretKeys);
           if (!profile) {
-            onBack();
+            onCompleted();
           }
         }}
       />
@@ -360,6 +417,7 @@ function RuntimeSettingsPage({
   viewer: SettingsViewer;
 }) {
   const saveConfig = useSaveConsoleConfigEntries();
+  const requestLeave = useUnsavedGuardLeave();
   const [selection, setSelection] = useState<RuntimeSelection | null>(null);
   const canEditRuntime = viewer.isRoot;
 
@@ -381,7 +439,8 @@ function RuntimeSettingsPage({
         tone={canEditRuntime ? "online" : "idle"}
         blurb={group.description}
         parentLabel="RUNTIME"
-        onBack={() => setSelection(null)}
+        showBack
+        onBack={() => requestLeave(() => setSelection(null))}
       >
         <SettingsFieldGroup
           config={config}
@@ -399,6 +458,7 @@ function RuntimeSettingsPage({
 
   return (
     <section class="gsv-console-settings-index">
+      <SectionHeader title="RUNTIME" headingLevel={2} divider />
       {RUNTIME_SETTING_GROUPS.map((group) => (
         <SettingsListPanel
           key={group.id}
@@ -406,6 +466,7 @@ function RuntimeSettingsPage({
           meta={canEditRuntime ? "EDITABLE" : "ROOT REQUIRED"}
           emptyLabel={`NO ${group.title.toUpperCase()} SETTINGS`}
           fitContent
+          headingLevel={3}
           rows={[runtimeGroupRow(group, config, () => setSelection({ id: group.id }))]}
         />
       ))}
@@ -674,48 +735,48 @@ function ModelProfileForm({
 
   return (
     <Surface level={1} class="gsv-console-model-form">
-      <div class="gsv-console-settings-form-head">
-        <div>
-          <h3>{profile ? "Edit Preset" : "New Preset"}</h3>
-          <p>Presets store provider, model, API key, reasoning, and context limits.</p>
-        </div>
-      </div>
       <div class="gsv-console-settings-fields">
-        <TextInput
-          label="PRESET NAME"
-          placeholder="Deep Research"
-          value={name}
-          disabled={!editable || pending}
-          status={duplicateName ? "error" : "none"}
-          message={duplicateName ? "NAME ALREADY EXISTS" : ""}
-          onChange={setName}
-        />
-        {MODEL_PROFILE_FIELDS.map((field) => (
-          <SettingFieldInput
-            field={field}
-            key={field.key}
+        <div class="gsv-console-settings-field">
+          <TextInput
+            label="PRESET NAME"
+            placeholder="Deep Research"
+            value={name}
             disabled={!editable || pending}
-            cleared={clearedSecretKeys.has(field.key)}
-            redacted={isModelProfileFieldRedacted(config, viewer, profile, field)}
-            value={drafts[field.key] ?? ""}
-            onChange={(value) => {
-              setClearedSecretKeys((current) => {
-                if (!current.has(field.key)) {
-                  return current;
-                }
-                const next = new Set(current);
-                next.delete(field.key);
-                return next;
-              });
-              setDrafts((current) => ({ ...current, [field.key]: value }));
-              setStatusText("");
-            }}
-            onClearRedacted={() => {
-              setClearedSecretKeys((current) => new Set(current).add(field.key));
-              setDrafts((current) => ({ ...current, [field.key]: "" }));
-              setStatusText("");
-            }}
+            status={duplicateName ? "error" : "none"}
+            message={duplicateName ? "NAME ALREADY EXISTS" : ""}
+            onChange={setName}
           />
+        </div>
+        {MODEL_PROFILE_FIELDS.map((field) => (
+          <div
+            class={`gsv-console-settings-field${field.half ? " is-half" : ""}`}
+            key={field.key}
+          >
+            <SettingFieldInput
+              field={field}
+              disabled={!editable || pending}
+              cleared={clearedSecretKeys.has(field.key)}
+              redacted={isModelProfileFieldRedacted(config, viewer, profile, field)}
+              value={drafts[field.key] ?? ""}
+              onChange={(value) => {
+                setClearedSecretKeys((current) => {
+                  if (!current.has(field.key)) {
+                    return current;
+                  }
+                  const next = new Set(current);
+                  next.delete(field.key);
+                  return next;
+                });
+                setDrafts((current) => ({ ...current, [field.key]: value }));
+                setStatusText("");
+              }}
+              onClearRedacted={() => {
+                setClearedSecretKeys((current) => new Set(current).add(field.key));
+                setDrafts((current) => ({ ...current, [field.key]: "" }));
+                setStatusText("");
+              }}
+            />
+          </div>
         ))}
       </div>
       <SettingsStatus text={statusText} tone={statusTone} />
@@ -760,13 +821,10 @@ function ModelProfileForm({
 
 function SettingsFieldGroup({
   config,
-  description,
   editable,
   fields,
   initialValues,
-  meta,
   onSave,
-  title,
   validateBeforeSave,
   writeKeyForField,
 }: SettingsFieldGroupProps) {
@@ -860,40 +918,37 @@ function SettingsFieldGroup({
 
   return (
     <Surface level={1} class="gsv-console-settings-group">
-      <div class="gsv-console-settings-form-head">
-        <div>
-          <h3>{title}</h3>
-          <p>{description}</p>
-        </div>
-        {meta ? <Tag label={meta} tone={editable ? "accent" : "idle"} boxed /> : null}
-      </div>
       <div class="gsv-console-settings-fields">
         {fields.map((field) => (
-          <SettingFieldInput
-            disabled={!editable || pending || field.kind === "readonly"}
-            field={field}
+          <div
+            class={`gsv-console-settings-field${field.half ? " is-half" : ""}`}
             key={field.key}
-            cleared={clearedSensitiveKeys.has(field.key)}
-            redacted={isFieldRedacted(config, field, writeKeyForField(field))}
-            value={drafts[field.key] ?? ""}
-            onChange={(value) => {
-              setStatusText("");
-              setClearedSensitiveKeys((current) => {
-                if (!current.has(field.key)) {
-                  return current;
-                }
-                const next = new Set(current);
-                next.delete(field.key);
-                return next;
-              });
-              setDrafts((current) => ({ ...current, [field.key]: value }));
-            }}
-            onClearRedacted={() => {
-              setClearedSensitiveKeys((current) => new Set(current).add(field.key));
-              setDrafts((current) => ({ ...current, [field.key]: "" }));
-              setStatusText("");
-            }}
-          />
+          >
+            <SettingFieldInput
+              disabled={!editable || pending || field.kind === "readonly"}
+              field={field}
+              cleared={clearedSensitiveKeys.has(field.key)}
+              redacted={isFieldRedacted(config, field, writeKeyForField(field))}
+              value={drafts[field.key] ?? ""}
+              onChange={(value) => {
+                setStatusText("");
+                setClearedSensitiveKeys((current) => {
+                  if (!current.has(field.key)) {
+                    return current;
+                  }
+                  const next = new Set(current);
+                  next.delete(field.key);
+                  return next;
+                });
+                setDrafts((current) => ({ ...current, [field.key]: value }));
+              }}
+              onClearRedacted={() => {
+                setClearedSensitiveKeys((current) => new Set(current).add(field.key));
+                setDrafts((current) => ({ ...current, [field.key]: "" }));
+                setStatusText("");
+              }}
+            />
+          </div>
         ))}
       </div>
       <SettingsStatus text={statusText} tone={statusTone} />
@@ -965,6 +1020,7 @@ function SettingFieldInput({
         description={description}
         placeholder={placeholder}
         rows={field.rows ?? 4}
+        size={field.size}
         value={value}
         disabled={disabled}
         onChange={onChange}
@@ -985,7 +1041,8 @@ function SettingFieldInput({
         options={optionLabels}
         value={selectedIndex}
         disabled={disabled}
-        width={420}
+        size={field.size}
+        block
         onChange={(index) => onChange(options[index]?.value ?? "")}
       />
     );
@@ -1047,6 +1104,7 @@ function SettingFieldInput({
       label={field.label}
       description={description}
       placeholder={placeholder}
+      size={field.size}
       value={value}
       readonly={field.kind === "readonly"}
       disabled={disabled}

@@ -2,24 +2,23 @@ import { useEffect, useMemo, useState } from "preact/hooks";
 import { useUnsavedGuard, useUnsavedGuardLeave } from "../../gsv-shell/unsaved/unsavedGuard";
 import { Button } from "../../../components/ui/Button";
 import { Icon } from "../../../components/ui/Icon";
-import { IconButton } from "../../../components/ui/IconButton";
 import { ListRow } from "../../../components/ui/ListRow";
-import { SectionHeader } from "../../../components/ui/SectionHeader";
 import { Spinner } from "../../../components/ui/Spinner";
 import { StatusDot } from "../../../components/ui/StatusDot";
-import { Stepper } from "../../../components/ui/Stepper";
-import { Surface } from "../../../components/ui/Surface";
 import { Tag } from "../../../components/ui/Tag";
 import { TextInput } from "../../../components/ui/TextInput";
 import { Tile } from "../../../components/ui/Tile";
 import { useSession } from "../../../services/session/SessionProvider";
 import type { IssuedMachineNodeToken } from "../backend/consoleService";
+import { ConnectFlowShell } from "../connect-flows/ConnectFlowShell";
+import type { ConnectFlowDef } from "../connect-flows/connectFlowTypes";
 import type { ConsoleTarget } from "../domain/consoleModels";
 import { useConsoleTargets, useCreateMachineNodeToken } from "../hooks/useConsoleData";
 import {
   BROWSER_EXTENSION_DOWNLOAD_URL,
   MACHINE_PLATFORM_OPTIONS,
   MACHINE_PROVISION_STEP_LABELS,
+  MACHINE_PROVISION_STEPS,
   buildBrowserExtensionConfig,
   buildMachineBootstrapCommand,
   buildMachineInstallCommand,
@@ -90,6 +89,9 @@ async function copyText(value: string): Promise<boolean> {
   }
 }
 
+/** Copy-able command block — header (title + meta + COPY) over a <pre> body,
+ *  styled with the shared `.gsv-cf-cmd*` classes from the shell. Keeps the real
+ *  copy handler. */
 function CommandBlock({
   title,
   meta,
@@ -104,22 +106,21 @@ function CommandBlock({
   onCopy: () => void;
 }) {
   return (
-    <section class="machine-command">
-      <header>
-        <div>
-          <span>{title}</span>
-          <small>{meta}</small>
-        </div>
-        <button type="button" class="machine-copy-button" onClick={onCopy}>
-          <Icon name="bookmark" size={13} />
+    <section class="gsv-cf-cmd">
+      <header class="gsv-cf-cmd-head">
+        <span class="gsv-cf-cmd-title">{title}</span>
+        <span class="gsv-cf-cmd-meta">{meta}</span>
+        <button type="button" class="gsv-cf-cmd-copy" onClick={onCopy}>
+          <Icon name="bookmark" size={12} />
           <span>{copied ? "COPIED" : "COPY"}</span>
         </button>
       </header>
-      <pre>{value}</pre>
+      <pre class="gsv-cf-cmd-body">{value}</pre>
     </section>
   );
 }
 
+/** A single labelled, copyable value for the browser-extension Options page. */
 function ExtensionValueRow({
   label,
   value,
@@ -137,8 +138,8 @@ function ExtensionValueRow({
         <span>{label}</span>
         <code>{value}</code>
       </div>
-      <button type="button" class="machine-copy-button" onClick={onCopy}>
-        <Icon name="bookmark" size={13} />
+      <button type="button" class="gsv-cf-cmd-copy" onClick={onCopy}>
+        <Icon name="bookmark" size={12} />
         <span>{copied ? "COPIED" : "COPY"}</span>
       </button>
     </div>
@@ -169,7 +170,6 @@ export function MachineProvisionFlow({
     ? ["TARGET", "DETAILS", "EXTENSION", "PAIR", "SUCCESS"]
     : MACHINE_PROVISION_STEP_LABELS;
   const knownTarget = targets.targets.find((target) => target.deviceId === deviceId.trim()) ?? null;
-  const currentStep = stepIndex(step);
   const expires = normalizeExpiresDays(expiresDays);
   const detailsReady = machineName.trim().length > 0 && deviceId.trim().length > 0;
   const installCommand = useMemo(
@@ -293,14 +293,40 @@ export function MachineProvisionFlow({
       : "Machine not detected yet. Run the connect command on the target.");
   };
 
-  const renderStep = () => {
-    if (step === "platform") {
-      return (
-        <>
-          <SectionHeader title="SELECT PLATFORM" meta="STEP 1 / 5" divider />
-          <div class="machine-card-body">
-            <p class="machine-card-copy">Choose the target type you are adding to the fleet.</p>
-            <div class="machine-platform-grid">
+  // Header status string for the current step, computed from live state.
+  const headerStatus =
+    step === "success"
+      ? knownTarget
+        ? targetStatus(knownTarget)
+        : "CONNECTED"
+      : targetStatus(knownTarget);
+
+  // Build the flow definition fresh each render so step bodies capture live
+  // state and the header status stays live. Step bodies own only their content
+  // + footer button row; the shell renders the title/status/stepper. The
+  // browser-extension target swaps in its own copy, steps, and labels.
+  const flow: ConnectFlowDef = {
+    key: "machines",
+    navLabel: "MACHINES",
+    parentLabel: "MACHINES",
+    icon: isBrowserTarget ? "bookmark" : "computer",
+    title: isBrowserTarget ? "Connect browser extension" : "Connect machine",
+    blurb: isBrowserTarget
+      ? "Provision a driver token and attach the GSV browser extension to the fleet · Chrome, Brave, Edge, or another Chromium browser."
+      : "Provision a native device token, install the CLI, and attach the machine to the fleet · Mac, Windows, or Linux.",
+    steps: [
+      {
+        key: "platform",
+        label: stepLabels[0],
+        title: "SELECT PLATFORM",
+        meta: "STEP 1 / 5",
+        status: headerStatus,
+        render: () => (
+          <>
+            <p class="gsv-cf-desc" style={{ margin: 0 }}>
+              Choose the target type you are adding to the fleet.
+            </p>
+            <div class="gsv-cf-tiles">
               {MACHINE_PLATFORM_OPTIONS.map((option) => (
                 <button
                   type="button"
@@ -324,21 +350,23 @@ export function MachineProvisionFlow({
                 </button>
               ))}
             </div>
-          </div>
-          <footer class="machine-card-actions">
-            <Button variant="secondary" label="BACK TO MACHINES" onClick={guardedBack} />
-            <Button variant="primary" label="CONTINUE" onClick={() => setStep("details")} />
-          </footer>
-        </>
-      );
-    }
-
-    if (step === "details") {
-      return (
-        <>
-          <SectionHeader title="DEVICE DETAILS" meta="STEP 2 / 5" divider />
-          <div class="machine-card-body">
-            <div class="machine-detail-grid">
+            <div class="gsv-cf-footer">
+              <Button variant="secondary" label="BACK TO MACHINES" onClick={guardedBack} />
+              <span class="gsv-cf-footer-spacer" />
+              <Button variant="primary" label="CONTINUE" onClick={() => setStep("details")} />
+            </div>
+          </>
+        ),
+      },
+      {
+        key: "details",
+        label: stepLabels[1],
+        title: "DEVICE DETAILS",
+        meta: "STEP 2 / 5",
+        status: headerStatus,
+        render: () => (
+          <>
+            <div class="gsv-cf-fields">
               <TextInput
                 label={isBrowserTarget ? "BROWSER NAME" : "MACHINE NAME"}
                 value={machineName}
@@ -371,7 +399,7 @@ export function MachineProvisionFlow({
                 }}
               />
             </div>
-            <div class="machine-detail-summary">
+            <div class="gsv-cf-framed">
               <ListRow
                 icon={isBrowserTarget ? "bookmark" : "computer"}
                 label={machineName || "New machine"}
@@ -381,27 +409,31 @@ export function MachineProvisionFlow({
                 statusDotPlacement="trailing"
               />
             </div>
-          </div>
-          <footer class="machine-card-actions">
-            <Button variant="secondary" label="BACK" onClick={() => setStep("platform")} />
-            <Button
-              variant="primary"
-              label="CONTINUE"
-              disabled={!detailsReady}
-              onClick={() => setStep("install")}
-            />
-          </footer>
-        </>
-      );
-    }
-
-    if (step === "install") {
-      if (isBrowserTarget) {
-        return (
-          <>
-            <SectionHeader title="INSTALL EXTENSION" meta="STEP 3 / 5" divider />
-            <div class="machine-card-body">
-              <p class="machine-card-copy">Install the GSV browser extension as an unpacked extension, then open its Options page.</p>
+            <div class="gsv-cf-footer">
+              <Button variant="secondary" label="BACK" onClick={() => setStep("platform")} />
+              <span class="gsv-cf-footer-spacer" />
+              <Button
+                variant="primary"
+                label="CONTINUE"
+                disabled={!detailsReady}
+                onClick={() => setStep("install")}
+              />
+            </div>
+          </>
+        ),
+      },
+      {
+        key: "install",
+        label: stepLabels[2],
+        title: isBrowserTarget ? "INSTALL EXTENSION" : "INSTALL CLI",
+        meta: "STEP 3 / 5",
+        status: headerStatus,
+        render: () => (
+          isBrowserTarget ? (
+            <>
+              <p class="gsv-cf-desc" style={{ margin: 0 }}>
+                Install the GSV browser extension as an unpacked extension, then open its Options page.
+              </p>
               <section class="machine-browser-install" aria-label="Browser extension install steps">
                 <div class="machine-browser-install-head">
                   <div>
@@ -437,41 +469,41 @@ export function MachineProvisionFlow({
                   </li>
                 </ol>
               </section>
-            </div>
-            <footer class="machine-card-actions">
-              <Button variant="secondary" label="BACK" onClick={() => setStep("details")} />
-              <Button variant="primary" label="EXTENSION READY" onClick={() => setStep("connect")} />
-            </footer>
-          </>
-        );
-      }
-
-      return (
-        <>
-          <SectionHeader title="INSTALL CLI" meta="STEP 3 / 5" divider />
-          <div class="machine-card-body">
-            <p class="machine-card-copy">Run this installer on the machine you want GSV to control.</p>
-            <CommandBlock
-              title="INSTALL COMMAND"
-              meta={selectedPlatform.commandLabel}
-              value={installCommand}
-              copied={copied === "install"}
-              onCopy={() => void copyCommand("install", installCommand)}
-            />
-          </div>
-          <footer class="machine-card-actions">
-            <Button variant="secondary" label="BACK" onClick={() => setStep("details")} />
-            <Button variant="primary" label="CLI INSTALLED" onClick={() => setStep("connect")} />
-          </footer>
-        </>
-      );
-    }
-
-    if (step === "connect") {
-      return (
-        <>
-          <SectionHeader title={isBrowserTarget ? "PAIR EXTENSION" : "CONNECT MACHINE"} meta="STEP 4 / 5" divider />
-          <div class="machine-card-body">
+              <div class="gsv-cf-footer">
+                <Button variant="secondary" label="BACK" onClick={() => setStep("details")} />
+                <span class="gsv-cf-footer-spacer" />
+                <Button variant="primary" label="EXTENSION READY" onClick={() => setStep("connect")} />
+              </div>
+            </>
+          ) : (
+            <>
+              <p class="gsv-cf-desc" style={{ margin: 0 }}>
+                Run this installer on the machine you want GSV to control.
+              </p>
+              <CommandBlock
+                title="INSTALL COMMAND"
+                meta={selectedPlatform.commandLabel}
+                value={installCommand}
+                copied={copied === "install"}
+                onCopy={() => void copyCommand("install", installCommand)}
+              />
+              <div class="gsv-cf-footer">
+                <Button variant="secondary" label="BACK" onClick={() => setStep("details")} />
+                <span class="gsv-cf-footer-spacer" />
+                <Button variant="primary" label="CLI INSTALLED" onClick={() => setStep("connect")} />
+              </div>
+            </>
+          )
+        ),
+      },
+      {
+        key: "connect",
+        label: stepLabels[3],
+        title: isBrowserTarget ? "PAIR EXTENSION" : "CONNECT MACHINE",
+        meta: "STEP 4 / 5",
+        status: headerStatus,
+        render: () => (
+          <>
             {!issuedToken ? (
               <div class="machine-issue-token">
                 <StatusDot tone={createToken.isPending ? "live" : "update"} size={9} />
@@ -489,7 +521,9 @@ export function MachineProvisionFlow({
               </div>
             ) : isBrowserTarget && browserConfig ? (
               <>
-                <p class="machine-card-copy">Paste these values into the GSV browser extension Options page, then save and connect.</p>
+                <p class="gsv-cf-desc" style={{ margin: 0 }}>
+                  Paste these values into the GSV browser extension Options page, then save and connect.
+                </p>
                 <section class="machine-extension-values" aria-label="Browser extension connection values">
                   <ExtensionValueRow
                     label="Gateway WebSocket URL"
@@ -519,7 +553,9 @@ export function MachineProvisionFlow({
               </>
             ) : (
               <>
-                <p class="machine-card-copy">Run this command on the machine after the CLI installer completes.</p>
+                <p class="gsv-cf-desc" style={{ margin: 0 }}>
+                  Run this command on the machine after the CLI installer completes.
+                </p>
                 <CommandBlock
                   title="CONNECT COMMAND"
                   meta={`${deviceId} / token ${issuedToken.tokenPrefix}`}
@@ -541,116 +577,99 @@ export function MachineProvisionFlow({
                 <span>{knownTarget ? "Registered. Waiting for online status." : `Waiting for ${isBrowserTarget ? "browser target" : "device"} registration.`}</span>
               </div>
             ) : null}
-          </div>
-          <footer class="machine-card-actions">
-            <Button variant="secondary" label="BACK" disabled={createToken.isPending} onClick={() => setStep("install")} />
-            {!issuedToken ? (
+            <div class="gsv-cf-footer">
+              <Button variant="secondary" label="BACK" disabled={createToken.isPending} onClick={() => setStep("install")} />
+              <span class="gsv-cf-footer-spacer" />
+              {!issuedToken ? (
+                <Button
+                  variant="primary"
+                  label={createToken.isPending ? "ISSUING" : `ISSUE ${isBrowserTarget ? "DRIVER" : "NODE"} TOKEN`}
+                  disabled={!detailsReady || createToken.isPending}
+                  onClick={() => void issueToken()}
+                />
+              ) : (
+                <Button
+                  variant="primary"
+                  label={targets.isFetching ? "CHECKING" : "CHECK CONNECTION"}
+                  disabled={targets.isFetching}
+                  onClick={() => void checkConnection()}
+                />
+              )}
+            </div>
+          </>
+        ),
+      },
+      {
+        key: "success",
+        label: stepLabels[4],
+        title: "SUCCESS",
+        meta: "STEP 5 / 5",
+        status: headerStatus,
+        render: () => (
+          <>
+            <div class="gsv-cf-cap">
+              <span class="gsv-cf-cap-mark">
+                <Icon name={isBrowserTarget ? "bookmark" : "computer"} size={26} />
+              </span>
+              <div class="gsv-cf-cap-text">
+                <span class="gsv-cf-cap-title">{machineName || deviceId} is connected</span>
+                <span class="gsv-cf-cap-sub">
+                  {isBrowserTarget
+                    ? "The browser target is now available to GSV agents for browser-local tools."
+                    : "The machine is now part of the GSV fleet and can be used by Files, Terminal, and agent tools."}
+                </span>
+              </div>
+            </div>
+            <div class="gsv-cf-framed">
+              {knownTarget ? (
+                <ListRow
+                  icon={isBrowserTarget ? "bookmark" : "computer"}
+                  label={knownTarget.label}
+                  sub={targetSub(knownTarget)}
+                  status={knownTarget.online ? "online" : "idle"}
+                  statusLabel={targetStatus(knownTarget)}
+                  statusDotPlacement="trailing"
+                />
+              ) : (
+                <ListRow
+                  icon={isBrowserTarget ? "bookmark" : "computer"}
+                  label={machineName || deviceId}
+                  sub={deviceId}
+                  status="online"
+                  statusLabel="CONNECTED"
+                  statusDotPlacement="trailing"
+                />
+              )}
+            </div>
+            <div class="gsv-cf-footer">
+              <Button variant="secondary" label="BACK TO MACHINES" onClick={guardedBack} />
+              <span class="gsv-cf-footer-spacer" />
               <Button
                 variant="primary"
-                label={createToken.isPending ? "ISSUING" : `ISSUE ${isBrowserTarget ? "DRIVER" : "NODE"} TOKEN`}
-                disabled={!detailsReady || createToken.isPending}
-                onClick={() => void issueToken()}
+                label={isBrowserTarget ? "OPEN TARGET" : "OPEN MACHINE"}
+                disabled={!knownTarget || !onOpenMachine}
+                onClick={() => {
+                  if (knownTarget) {
+                    onOpenMachine?.(knownTarget);
+                  }
+                }}
               />
-            ) : (
-              <Button
-                variant="primary"
-                label={targets.isFetching ? "CHECKING" : "CHECK CONNECTION"}
-                disabled={targets.isFetching}
-                onClick={() => void checkConnection()}
-              />
-            )}
-          </footer>
-        </>
-      );
-    }
-
-    return (
-      <>
-        <SectionHeader title="SUCCESS" meta="STEP 5 / 5" divider />
-        <div class="machine-card-body">
-          <div class="machine-success-mark">
-            <Icon name={isBrowserTarget ? "bookmark" : "computer"} size={30} />
-          </div>
-          <h3>{machineName || deviceId} is connected</h3>
-          <p class="machine-card-copy">
-            {isBrowserTarget
-              ? "The browser target is now available to GSV agents for browser-local tools."
-              : "The machine is now part of the GSV fleet and can be used by Files, Terminal, and agent tools."}
-          </p>
-          <div class="machine-detail-summary">
-            {knownTarget ? (
-              <ListRow
-                icon={isBrowserTarget ? "bookmark" : "computer"}
-                label={knownTarget.label}
-                sub={targetSub(knownTarget)}
-                status={knownTarget.online ? "online" : "idle"}
-                statusLabel={targetStatus(knownTarget)}
-                statusDotPlacement="trailing"
-              />
-            ) : (
-              <ListRow
-                icon={isBrowserTarget ? "bookmark" : "computer"}
-                label={machineName || deviceId}
-                sub={deviceId}
-                status="online"
-                statusLabel="CONNECTED"
-                statusDotPlacement="trailing"
-              />
-            )}
-          </div>
-        </div>
-        <footer class="machine-card-actions">
-          <Button variant="secondary" label="BACK TO MACHINES" onClick={guardedBack} />
-          <Button
-            variant="primary"
-            label={isBrowserTarget ? "OPEN TARGET" : "OPEN MACHINE"}
-            disabled={!knownTarget || !onOpenMachine}
-            onClick={() => {
-              if (knownTarget) {
-                onOpenMachine?.(knownTarget);
-              }
-            }}
-          />
-        </footer>
-      </>
-    );
+            </div>
+          </>
+        ),
+      },
+    ],
   };
 
-  return (
-    <section class="machine-provision">
-      <div class="machine-provision-shell">
-        <header class="machine-provision-head">
-          <IconButton glyph="arrowBack" size="medium" title="Back to machines" onClick={guardedBack} />
-          <div>
-            <span class="machine-provision-kicker">FLEET / {isBrowserTarget ? "NEW BROWSER" : "NEW MACHINE"}</span>
-            <h2>{isBrowserTarget ? "Connect browser extension" : "Connect new machine"}</h2>
-            <p>
-              {isBrowserTarget
-                ? "Provision a driver token and attach the browser extension to GSV."
-                : "Provision a native device token, install the CLI, and attach the machine to GSV."}
-            </p>
-          </div>
-          <Tag tone={knownTarget?.online ? "online" : issuedToken ? "update" : "idle"} label={targetStatus(knownTarget)} boxed dot />
-        </header>
+  const current = stepIndex(step);
 
-        <div class="machine-provision-stepper" aria-label={isBrowserTarget ? "Browser extension connection progress" : "Machine connection progress"}>
-          <Stepper
-            count={5}
-            current={currentStep}
-            l0={stepLabels[0]}
-            l1={stepLabels[1]}
-            l2={stepLabels[2]}
-            l3={stepLabels[3]}
-            l4={stepLabels[4]}
-            width={620}
-            size="small"
-          />
-        </div>
+  // Allow only backward navigation to already-visited steps; forward jumps are
+  // gated by the per-step CONTINUE handlers above.
+  const onStep = (target: number) => {
+    if (target < current) {
+      setStep(MACHINE_PROVISION_STEPS[target]);
+    }
+  };
 
-        <Surface class="machine-provision-card" level={2}>
-          {renderStep()}
-        </Surface>
-      </div>
-    </section>
-  );
+  return <ConnectFlowShell flow={flow} current={current} onStep={onStep} />;
 }

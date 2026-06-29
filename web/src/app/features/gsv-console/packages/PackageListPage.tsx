@@ -1,4 +1,5 @@
-import { SettingsListPanel } from "../components/SettingsListPanel";
+import { useMemo, useState } from "preact/hooks";
+import { ListTemplate } from "../list-template/ListTemplate";
 import {
   ConsolePage,
   ConsoleResourceBoundary,
@@ -53,28 +54,37 @@ function PackageConsoleSection({
   packages: readonly ConsolePackage[];
   refreshing: boolean;
 }) {
+  // NOTE: Applications uses the shared (table) LIST template for now. This is a
+  // placeholder — Applications is slated to move to the CARD template (an
+  // application-card grid) in a future pass. See list-template/ListTemplate.
+  const [query, setQuery] = useState("");
   const title = packageListTitle(kind);
   const noun = packageListNoun(kind);
-  const action = kind === "applications"
-      ? { label: "NEW APPLICATION", onClick: onOpenCreate }
-      : undefined;
-
-  return (
-    <SettingsListPanel
-      title={title}
-      meta={refreshing ? "REFRESHING" : `${packages.length} ${noun}${packages.length === 1 ? "" : "S"}`}
-      emptyLabel={`NO ${noun}S`}
-      rows={packages.map((pkg) => ({
+  const rows = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return packages
+      .filter((pkg) => !q || pkg.name.toLowerCase().includes(q))
+      .map((pkg) => ({
         id: pkg.packageId,
         icon: iconForPackage(pkg, kind),
         label: pkg.name,
         sub: packageSub(pkg),
         tone: toneForPackage(pkg),
         statusLabel: statusForPackage(pkg),
-        tag: pkg.reviewPending ? { label: "UPDATE", tone: "update" } : undefined,
+        tag: pkg.reviewPending ? { label: "UPDATE", tone: "update" as const } : undefined,
         onOpen: () => onOpenDetail(pkg),
-      }))}
-      action={action}
+      }));
+  }, [packages, query, kind, onOpenDetail]);
+
+  return (
+    <ListTemplate
+      listTitle={title}
+      listMeta={refreshing ? "REFRESHING" : `${packages.length} ${noun}${packages.length === 1 ? "" : "S"}`}
+      emptyObject={`${noun}S`}
+      rows={rows}
+      connectLabel={`NEW ${noun}`}
+      onConnect={onOpenCreate}
+      search={{ value: query, placeholder: `Search ${noun.toLowerCase()}s…`, onChange: setQuery }}
     />
   );
 }

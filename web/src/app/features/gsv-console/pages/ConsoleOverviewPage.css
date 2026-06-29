@@ -112,6 +112,36 @@
   min-height: 32px;
 }
 
+/* Chevrons (section headers + list rows) are a hover/focus affordance only.
+   The AddAction "connect new" arrow is a separate element and stays visible. */
+.gsv-settings-overview .gsv-section-header-chevron,
+.gsv-settings-overview .lr-chevron {
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.gsv-settings-overview .gsv-section-header.is-clickable:hover .gsv-section-header-chevron,
+.gsv-settings-overview .gsv-section-header.is-clickable:focus-within .gsv-section-header-chevron,
+.gsv-settings-overview .lr[data-clickable="true"]:hover .lr-chevron,
+.gsv-settings-overview .lr[data-clickable="true"]:focus-visible .lr-chevron {
+  opacity: 1;
+}
+
+/* Truncation priority: the section title is the protected element — it never
+   shrinks; the meta string yields and ellipsizes instead. (Overview titles are
+   short fixed strings, so flex-shrink:0 won't overflow.) */
+.gsv-settings-overview .gsv-section-header-title {
+  flex-shrink: 0 !important;
+}
+
+.gsv-settings-overview .gsv-section-header-meta {
+  flex: 0 1 auto !important;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .gsv-settings-terminal-state {
   min-height: 55px;
   display: flex;
@@ -171,6 +201,15 @@
   flex: 1;
   display: flex;
   flex-direction: column;
+  container-type: inline-size;
+}
+
+/* When a deep cell (e.g. MODELS) gets narrow, drop the trailing meta word —
+   "5/6 CONFIGURED" collapses to "5/6", keeping the count and the title. */
+@container (max-width: 220px) {
+  .gsv-settings-deep-cell .gsv-section-header-metaword {
+    display: none;
+  }
 }
 
 .gsv-settings-model-task-split {

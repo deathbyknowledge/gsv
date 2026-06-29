@@ -5,11 +5,14 @@ export interface AgentImageProps {
   src?: string;
   /** Box diameter in px (28–80). */
   size?: number;
+  /** Fill the tile edge-to-edge (object-fit: cover) instead of the padded,
+   *  pixel-art float. Use for full-frame portraits. */
+  cover?: boolean;
 }
 
 /** AgentImage — ported from AgentImage.dc.html. Pixel crew portrait in a
  *  rounded, glowing tile. Size buckets keep the portrait crisp at any scale. */
-export function AgentImage({ agent, src, size = 50 }: AgentImageProps) {
+export function AgentImage({ agent, src, size = 50, cover = false }: AgentImageProps) {
   const sz = Number(size) || 50;
   // agent index → raster portrait; explicit src wins
   const idx = agent === undefined || agent === null ? null : Number(agent) || 0;
@@ -38,11 +41,13 @@ export function AgentImage({ agent, src, size = 50 }: AgentImageProps) {
       <img
         src={imgSrc}
         alt="agent"
-        style={{
-          height: `${imgH}px`,
-          imageRendering: "pixelated",
-          filter: `drop-shadow(0 0 ${glow}px rgba(150,140,255,.4))`,
-        }}
+        style={cover
+          ? { width: "100%", height: "100%", objectFit: "cover", display: "block" }
+          : {
+            height: `${imgH}px`,
+            imageRendering: "pixelated",
+            filter: `drop-shadow(0 0 ${glow}px rgba(150,140,255,.4))`,
+          }}
       />
     </div>
   );
