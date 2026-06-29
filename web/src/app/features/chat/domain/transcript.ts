@@ -695,21 +695,11 @@ function setAssistantStreamText(rows: ChatTranscriptRow[], runId: string, text: 
 function extractStreamPartialText(event: Record<string, unknown>): string | null {
   const partial = asRecord(event.partial);
   const content = Array.isArray(partial?.content) ? partial.content : [];
-  const contentIndex = asNumber(event.contentIndex);
-  if (contentIndex !== null && Number.isInteger(contentIndex)) {
-    const indexed = extractTextContent(content[contentIndex]);
-    if (indexed !== null) {
-      return indexed;
-    }
-  }
-
-  for (const block of content) {
+  const textBlocks = content.flatMap((block) => {
     const text = extractTextContent(block);
-    if (text !== null) {
-      return text;
-    }
-  }
-  return null;
+    return text !== null ? [text] : [];
+  });
+  return textBlocks.length > 0 ? textBlocks.join("") : null;
 }
 
 function extractTextContent(value: unknown): string | null {

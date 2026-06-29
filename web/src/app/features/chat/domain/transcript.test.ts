@@ -284,6 +284,33 @@ describe("chat transcript rows", () => {
         streaming: true,
       }),
     ]));
+
+    state = applyChatSignal(state, "proc.run.stream", {
+      pid: "pid-1",
+      runId: "run-1",
+      conversationId: "default",
+      event: {
+        type: "text_delta",
+        contentIndex: 2,
+        delta: " Later block.",
+        partial: {
+          content: [
+            { type: "text", text: "Hello world!" },
+            { type: "toolCall", name: "Read", arguments: {} },
+            { type: "text", text: " Later block." },
+          ],
+        },
+      },
+    }, { pid: "pid-1", conversationId: "default" }).state;
+
+    expect(state.rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        role: "assistant",
+        runId: "run-1",
+        text: "Hello world! Later block.",
+        streaming: true,
+      }),
+    ]));
   });
 
   it("drops stream fallback tool rows when concrete tool events arrive", () => {
