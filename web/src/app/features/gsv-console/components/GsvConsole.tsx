@@ -18,7 +18,7 @@ import { MachinesPage } from "../machines/MachinesPage";
 import { MessengersPage } from "../messengers/MessengersPage";
 import { PackageListPage } from "../packages/PackageListPage";
 import { ConsoleAgentPage } from "../pages/ConsoleAgentPage";
-import { ConsoleConfigPage } from "../pages/ConsoleConfigPage";
+import { ConsoleConfigPage, type ConsoleConfigDetail } from "../pages/ConsoleConfigPage";
 import { ConsoleCrewPage } from "../pages/ConsoleCrewPage";
 import { ConsoleOverviewPage, type ConsoleOverviewTarget } from "../pages/ConsoleOverviewPage";
 import { RuntimePage } from "../runtime/RuntimePage";
@@ -190,6 +190,10 @@ export function GsvConsole({
   // list and the header back jumps all the way to the desktop.
   const [surfaceDetail, setSurfaceDetail] = useState<ConsoleListSelection | null>(null);
   const [surfaceDetailSeq, setSurfaceDetailSeq] = useState(0);
+  // The open model/runtime config detail (reported by ConsoleConfigPage), so the
+  // breadcrumb shows SETTINGS → MODELS → [detail] and the header back-arrow exits
+  // the detail — replacing the in-page back button.
+  const [settingsConfigDetail, setSettingsConfigDetail] = useState<ConsoleConfigDetail | null>(null);
   useEffect(() => {
     setSurfaceDetail(null);
   }, [activeSurface]);
@@ -346,6 +350,12 @@ export function GsvConsole({
           // the editor no longer renders its own breadcrumb.
           { label: "CREW", onClick: () => guardedSettingsNavigate({ view: "crew" }), notLast: true },
           { label: settingsRouteLabel(settingsRoute) },
+        ] : settingsRoute.view === "config" && settingsConfigDetail ? [
+          // Config detail: SETTINGS → MODELS/RUNTIME → [detail]. The parent crumb
+          // exits the detail (back to the list); the breadcrumb owns the path
+          // back, so the detail renders no in-page back button.
+          { label: settingsRouteLabel(settingsRoute), onClick: settingsConfigDetail.onExit, notLast: true },
+          { label: settingsConfigDetail.label },
         ] : inNestedSettings ? [{ label: settingsRouteLabel(settingsRoute) }] : []),
       ]
     : activeSurface === "agent"
@@ -374,6 +384,10 @@ export function GsvConsole({
         }
         if (inSettingsListDetail && settingsRoute.view === "list") {
           guardedSettingsNavigate({ view: "list", kind: settingsRoute.kind });
+          return;
+        }
+        if (settingsRoute.view === "config" && settingsConfigDetail) {
+          settingsConfigDetail.onExit();
           return;
         }
         guardedSettingsNavigate({ view: "overview" });
@@ -418,6 +432,7 @@ export function GsvConsole({
               kind={settingsRoute.kind}
               select={settingsRoute.select}
               onClearSelect={() => navigateSettingsRoute({ view: "config", kind: settingsRoute.kind })}
+              onDetailChange={setSettingsConfigDetail}
             />
           ) : settingsRoute.view === "crew" ? (
             <ConsoleCrewPage onManageAgent={openSettingsAgent} onCreateAgent={openSettingsNewAgent} />

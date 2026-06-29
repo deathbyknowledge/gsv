@@ -59,6 +59,11 @@ import "./ConsoleConfigPage.css";
 
 export type ConsoleConfigKind = "models" | "overrides";
 
+/** The open config detail, reported up so the shell can render the breadcrumb
+ *  trail (SETTINGS → MODELS → [detail]) and route the back-arrow. `onExit` runs
+ *  the same guarded back as the detail's own controls. */
+export type ConsoleConfigDetail = { label: string; onExit: () => void };
+
 type ConsoleConfigPageProps = {
   kind: ConsoleConfigKind;
   /** Optional model selection to open immediately (e.g. "default" deep-links to
@@ -68,6 +73,9 @@ type ConsoleConfigPageProps = {
    *  `select`-opened detail navigates back, so the URL doesn't stay pinned to
    *  the detail (which would reopen it on reload). */
   onClearSelect?: () => void;
+  /** Reports the open detail (or null on the list) so the breadcrumb owns the
+   *  path back — replaces the in-page back button. */
+  onDetailChange?: (detail: ConsoleConfigDetail | null) => void;
 };
 
 function modelSelectionFromParam(select: string | undefined): ModelSelection | null {
@@ -112,7 +120,7 @@ type SettingsFieldGroupProps = {
 
 type ClearedProfileSecretKeys = ReadonlyMap<string, ReadonlySet<string>>;
 
-export function ConsoleConfigPage({ kind, select, onClearSelect }: ConsoleConfigPageProps) {
+export function ConsoleConfigPage({ kind, select, onClearSelect, onDetailChange }: ConsoleConfigPageProps) {
   const config = useConsoleConfig();
   const accounts = useConsoleAccounts();
 
@@ -129,6 +137,7 @@ export function ConsoleConfigPage({ kind, select, onClearSelect }: ConsoleConfig
             kind={kind}
             select={select}
             onClearSelect={onClearSelect}
+            onDetailChange={onDetailChange}
           />
         )}
       />
@@ -142,12 +151,14 @@ function ConsoleSettingsPanel({
   kind,
   select,
   onClearSelect,
+  onDetailChange,
 }: {
   accounts: readonly ConsoleAccount[];
   config: readonly ConsoleConfigEntry[];
   kind: ConsoleConfigKind;
   select?: string;
   onClearSelect?: () => void;
+  onDetailChange?: (detail: ConsoleConfigDetail | null) => void;
 }) {
   const viewerAccount = viewerAccountForSettings(accounts);
   const viewer: SettingsViewer = {
@@ -157,9 +168,9 @@ function ConsoleSettingsPanel({
   };
 
   if (kind === "models") {
-    return <ModelSettingsPage config={config} viewer={viewer} select={select} onClearSelect={onClearSelect} />;
+    return <ModelSettingsPage config={config} viewer={viewer} select={select} onClearSelect={onClearSelect} onDetailChange={onDetailChange} />;
   }
-  return <RuntimeSettingsPage config={config} viewer={viewer} />;
+  return <RuntimeSettingsPage config={config} viewer={viewer} onDetailChange={onDetailChange} />;
 }
 
 function ModelSettingsPage({
@@ -167,11 +178,13 @@ function ModelSettingsPage({
   viewer,
   select,
   onClearSelect,
+  onDetailChange,
 }: {
   config: readonly ConsoleConfigEntry[];
   viewer: SettingsViewer;
   select?: string;
   onClearSelect?: () => void;
+  onDetailChange?: (detail: ConsoleConfigDetail | null) => void;
 }) {
   const saveConfig = useSaveConsoleConfigEntries();
   const validateModelConfig = useValidateConsoleModelConfig();
@@ -217,6 +230,23 @@ function ModelSettingsPage({
       onClearSelect?.();
     }
   };
+
+  // Report the open detail to the shell so the breadcrumb shows the trail and
+  // owns the path back (no in-page back button). The label mirrors the detail's
+  // own title.
+  const detailLabel = !selection
+    ? null
+    : selection.kind === "default"
+    ? "DEFAULT AGENT MODEL"
+    : selection.kind === "new-profile"
+    ? "NEW MODEL PRESET"
+    : selection.kind === "tool"
+    ? (TOOL_MODEL_GROUPS.find((group) => group.id === selection.id)?.title ?? "TOOL MODEL").toUpperCase()
+    : (profiles.find((profile) => profile.id === selection.id)?.name ?? "MODEL PRESET").toUpperCase();
+  useEffect(() => {
+    onDetailChange?.(detailLabel ? { label: detailLabel, onExit: () => requestLeave(exitDetail) } : null);
+  }, [detailLabel]);
+  useEffect(() => () => onDetailChange?.(null), []);
 
   if (selection) {
     return (
@@ -308,7 +338,6 @@ function ModelSettingsDetail({
         tone={editable ? "online" : "idle"}
         blurb="Fallback model stack used when an agent inherits model behavior."
         parentLabel="MODELS"
-        showBack
         onBack={onBack}
       >
         <SettingsFieldGroup
@@ -342,7 +371,6 @@ function ModelSettingsDetail({
         tone={editable ? "online" : "idle"}
         blurb={group.description}
         parentLabel="MODELS"
-        showBack
         onBack={onBack}
       >
         <SettingsFieldGroup
@@ -376,7 +404,6 @@ function ModelSettingsDetail({
       tone={profile ? "online" : "idle"}
       blurb="Reusable named model stack for agents, including provider credentials when a preset needs its own key."
       parentLabel="MODELS"
-      showBack
       onBack={onBack}
     >
       <ModelProfileForm
@@ -412,14 +439,26 @@ function ModelSettingsDetail({
 function RuntimeSettingsPage({
   config,
   viewer,
+  onDetailChange,
 }: {
   config: readonly ConsoleConfigEntry[];
   viewer: SettingsViewer;
+  onDetailChange?: (detail: ConsoleConfigDetail | null) => void;
 }) {
   const saveConfig = useSaveConsoleConfigEntries();
   const requestLeave = useUnsavedGuardLeave();
   const [selection, setSelection] = useState<RuntimeSelection | null>(null);
   const canEditRuntime = viewer.isRoot;
+
+  // Report the open detail so the breadcrumb owns the path back (no in-page
+  // back button) — same trail as the model config: SETTINGS → RUNTIME → [detail].
+  const detailLabel = selection
+    ? (RUNTIME_SETTING_GROUPS.find((group) => group.id === selection.id)?.title ?? "RUNTIME").toUpperCase()
+    : null;
+  useEffect(() => {
+    onDetailChange?.(detailLabel ? { label: detailLabel, onExit: () => requestLeave(() => setSelection(null)) } : null);
+  }, [detailLabel]);
+  useEffect(() => () => onDetailChange?.(null), []);
 
   const saveEntries = async (entries: readonly SaveConsoleConfigInput[]) => {
     if (entries.length === 0) {
@@ -439,7 +478,6 @@ function RuntimeSettingsPage({
         tone={canEditRuntime ? "online" : "idle"}
         blurb={group.description}
         parentLabel="RUNTIME"
-        showBack
         onBack={() => requestLeave(() => setSelection(null))}
       >
         <SettingsFieldGroup
