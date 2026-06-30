@@ -56,6 +56,7 @@ export const REPO_DIFF = "repo.diff";
 export const REPO_COMPARE = "repo.compare";
 export const REPO_APPLY = "repo.apply";
 export const REPO_IMPORT = "repo.import";
+export const REPO_DELETE = "repo.delete";
 
 // System
 export const SYS_CONNECT = "sys.connect";
@@ -66,6 +67,7 @@ export const SYS_CONFIG_SET = "sys.config.set";
 export const SYS_DEVICE_LIST = "sys.device.list";
 export const SYS_DEVICE_GET = "sys.device.get";
 export const SYS_DEVICE_UPDATE = "sys.device.update";
+export const SYS_DEVICE_DELETE = "sys.device.delete";
 export const SYS_OAUTH_START = "sys.oauth.start";
 export const SYS_OAUTH_LIST = "sys.oauth.list";
 export const SYS_OAUTH_FORGET = "sys.oauth.forget";

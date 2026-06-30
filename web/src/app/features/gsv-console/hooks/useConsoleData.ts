@@ -7,6 +7,7 @@ import {
   consumeIdentityLinkCode,
   createMachineNodeToken,
   createConsoleAgent,
+  deleteConsoleMachine,
   disconnectConsoleAdapter,
   loadConsoleAdapters,
   loadConsoleAgentContext,
@@ -35,6 +36,8 @@ import {
   type CreateMachineNodeTokenInput,
   type CreateConsoleAgentInput,
   type CreateConsoleAgentResult,
+  type DeleteConsoleMachineInput,
+  type DeleteConsoleMachineResult,
   type ConsoleAgentContextFile,
   type IdentityLinkMutationResult,
   type IssuedMachineNodeToken,
@@ -501,6 +504,21 @@ export function useCreateMachineNodeToken() {
 
   return useMutation<IssuedMachineNodeToken, Error, CreateMachineNodeTokenInput>({
     mutationFn: (input) => createMachineNodeToken(client, input),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: consoleTargetsQueryKey }),
+        queryClient.invalidateQueries({ queryKey: consoleOverviewQueryKey }),
+      ]);
+    },
+  });
+}
+
+export function useDeleteConsoleMachine() {
+  const { client } = useGateway();
+  const queryClient = useQueryClient();
+
+  return useMutation<DeleteConsoleMachineResult, Error, DeleteConsoleMachineInput>({
+    mutationFn: (input) => deleteConsoleMachine(client, input),
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: consoleTargetsQueryKey }),

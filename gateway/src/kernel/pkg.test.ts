@@ -364,21 +364,17 @@ describe("pkg syscalls", () => {
   });
 
   it("allows removing a former builtin GSV console package", async () => {
-    let enabled = true;
     const record = makeInstalledPackageRecord({
       packageId: "builtin:gsv@0.1.0",
       name: "gsv",
       sourceSubdir: "packages/gsv",
     });
-    const setEnabled = vi.fn(() => {
-      enabled = false;
-      return true;
-    });
+    const remove = vi.fn(() => true);
     const ctx = {
       config: makeConfig(),
       packages: {
-        resolve: vi.fn(() => ({ ...record, enabled })),
-        setEnabled,
+        resolve: vi.fn(() => record),
+        remove,
       },
       identity: makeRootIdentity(),
     } as unknown as KernelContext;
@@ -390,7 +386,7 @@ describe("pkg syscalls", () => {
         enabled: false,
       },
     });
-    expect(setEnabled).toHaveBeenCalledWith(record.packageId, false, record.scope);
+    expect(remove).toHaveBeenCalledWith(record.packageId, record.scope);
   });
 
   it("scaffolds a user-owned package repo and installs the resolved package", async () => {

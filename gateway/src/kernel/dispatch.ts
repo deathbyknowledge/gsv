@@ -46,7 +46,7 @@ import {
 } from "./proc-handlers";
 import { handleAccountCreate, handleAccountList } from "./agents";
 import { handleSysConfigGet, handleSysConfigSet } from "./sys/config";
-import { handleSysDeviceGet, handleSysDeviceList, handleSysDeviceUpdate } from "./sys/device";
+import { handleSysDeviceDelete, handleSysDeviceGet, handleSysDeviceList, handleSysDeviceUpdate } from "./sys/device";
 import { handleSysBootstrap } from "./sys/bootstrap";
 import { handleSysSetupAssist } from "./sys/setup-assist";
 import {
@@ -68,6 +68,7 @@ import {
   handleRepoApply,
   handleRepoCompare,
   handleRepoCreate,
+  handleRepoDelete,
   handleRepoDiff,
   handleRepoImport,
   handleRepoList,
@@ -467,6 +468,9 @@ async function dispatchNative(
       case "repo.import":
         data = await handleRepoImport(frame.args, ctx);
         break;
+      case "repo.delete":
+        data = await handleRepoDelete(frame.args, ctx);
+        break;
 
       // --- ai.* ---
       case "ai.tools":
@@ -516,6 +520,9 @@ async function dispatchNative(
         break;
       case "sys.device.update":
         data = handleSysDeviceUpdate(frame.args, ctx);
+        break;
+      case "sys.device.delete":
+        data = handleSysDeviceDelete(frame.args, ctx);
         break;
       case "sys.oauth.start":
         data = await handleSysOAuthStart(frame.args, ctx);

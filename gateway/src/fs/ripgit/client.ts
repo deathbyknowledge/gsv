@@ -347,6 +347,20 @@ export class RipgitClient {
     };
   }
 
+  async deleteRepository(repo: RipgitRepoRef, actor: string): Promise<boolean> {
+    const response = await this.binding.fetch(this.makeRepositoryUrl(repo), {
+      method: "DELETE",
+      headers: {
+        ...this.makeInternalHeaders(),
+        "X-Ripgit-Actor-Name": actor,
+      },
+    });
+    if (!response.ok) {
+      throw new Error(await this.readError(response, `delete '${repo.owner}/${repo.repo}'`));
+    }
+    return true;
+  }
+
   async search(
     repo: RipgitRepoRef,
     query: string,
@@ -468,6 +482,12 @@ export class RipgitClient {
   private makeReadUrl(repo: RipgitRepoRef, path: string): URL {
     return this.makeUrl(
       `/hyperspace/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/read?ref=${encodeURIComponent(repo.branch ?? DEFAULT_BRANCH)}&path=${encodeURIComponent(path)}`,
+    );
+  }
+
+  private makeRepositoryUrl(repo: RipgitRepoRef): URL {
+    return this.makeUrl(
+      `/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}`,
     );
   }
 

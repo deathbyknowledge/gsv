@@ -6,6 +6,7 @@ import {
   handleRepoApply,
   handleRepoCompare,
   handleRepoCreate,
+  handleRepoDelete,
   handleRepoImport,
   handleRepoList,
   handleRepoRead,
@@ -220,6 +221,53 @@ describe("repo syscalls", () => {
       remoteRef: "main",
     });
     expect(ctx.config.get("repos/alice/demo/created_at")).not.toBeNull();
+  });
+
+  it("deletes a writable repository and unregisters repo metadata", async () => {
+    const fetcher = makeFetcher((url, init) => {
+      expect(url.pathname).toBe("/alice/demo");
+      expect(init?.method).toBe("DELETE");
+      const headers = new Headers(init?.headers);
+      expect(headers.get("X-Ripgit-Actor-Name")).toBe("alice");
+      return new Response("deleted");
+    });
+    const ctx = makeContext(fetcher, {
+      "repos/alice/demo/created_at": "1",
+      "repos/alice/demo/updated_at": "2",
+      "repos/alice/demo/description": "Demo",
+      "repos/alice/demo/visibility": "public",
+    });
+
+    const result = await handleRepoDelete({ repo: "alice/demo" }, ctx);
+
+    expect(result).toEqual({
+      deleted: true,
+      repo: "alice/demo",
+    });
+    expect(ctx.config.get("repos/alice/demo/created_at")).toBeNull();
+    expect(ctx.config.get("repos/alice/demo/updated_at")).toBeNull();
+    expect(ctx.config.get("repos/alice/demo/description")).toBeNull();
+    expect(ctx.config.get("repos/alice/demo/visibility")).toBeNull();
+  });
+
+  it("refuses to delete repositories backing installed packages", async () => {
+    const fetcher = makeFetcher(() => {
+      throw new Error("ripgit should not be called");
+    });
+    const ctx = makeContext(fetcher, {}, [{
+      packageId: "pkg-demo",
+      manifest: {
+        name: "Demo Package",
+        source: {
+          repo: "alice/demo",
+        },
+      },
+    }]);
+
+    await expect(handleRepoDelete({ repo: "alice/demo" }, ctx)).rejects.toThrow(
+      "Repository alice/demo backs installed packages: Demo Package",
+    );
+    expect(fetcher.calls).toHaveLength(0);
   });
 
   it("pulls from the configured upstream when no remote url is supplied", async () => {

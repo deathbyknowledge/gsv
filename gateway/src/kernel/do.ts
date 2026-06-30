@@ -1662,6 +1662,24 @@ export class Kernel extends Host<Env> {
     return false;
   }
 
+  private disconnectDeviceConnections(deviceId: string, reason: string): void {
+    let closed = false;
+    for (const [connId, conn] of Array.from(this.connections)) {
+      if (!this.isConnectionForDevice(conn, deviceId)) {
+        continue;
+      }
+
+      closed = true;
+      conn.close(1000, reason);
+      this.connections.delete(connId);
+      this.runRoutes.clearForConnection(connId);
+    }
+
+    if (closed) {
+      this.failRoutesForDevice(deviceId);
+    }
+  }
+
   private async scheduleIpcCallTimeout(callId: string, delayMs: number): Promise<string> {
     const sched = await this.schedule(
       Math.max(1, delayMs / 1000),
@@ -1828,6 +1846,18 @@ export class Kernel extends Host<Env> {
 
   private applyPostDispatchEffects(frame: RequestFrame, response: ResponseFrame): void {
     if (!response.ok) return;
+
+    if (frame.call === "sys.device.delete") {
+      const data = (response as {
+        data?: {
+          deleted?: unknown;
+          deviceId?: unknown;
+        };
+      }).data;
+      if (data?.deleted === true && typeof data.deviceId === "string") {
+        this.disconnectDeviceConnections(data.deviceId, "Machine forgotten");
+      }
+    }
 
     if (
       frame.call === "pkg.add" ||

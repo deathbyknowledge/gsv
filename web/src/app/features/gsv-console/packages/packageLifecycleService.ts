@@ -70,6 +70,37 @@ export async function approveAndEnableConsolePackage(
   return normalizeConsolePackageResult(installed.package);
 }
 
+export async function syncConsolePackage(
+  client: Pick<PackageLifecycleClient, "pkg">,
+  pkg: ConsolePackage,
+): Promise<ConsolePackage> {
+  const result = await client.pkg.sync({ packageId: pkg.packageId });
+  return normalizeConsolePackageFromList(result.packages, pkg.packageId);
+}
+
+export async function checkoutConsolePackage(
+  client: Pick<PackageLifecycleClient, "pkg">,
+  input: { package: ConsolePackage; ref: string },
+): Promise<ConsolePackage> {
+  const ref = input.ref.trim();
+  if (!ref) {
+    throw new Error("source ref is required");
+  }
+  const result = await client.pkg.checkout({
+    packageId: input.package.packageId,
+    ref,
+  });
+  return normalizeConsolePackageResult(result.package);
+}
+
+export async function removeConsolePackage(
+  client: Pick<PackageLifecycleClient, "pkg">,
+  pkg: ConsolePackage,
+): Promise<ConsolePackage> {
+  const result = await client.pkg.remove({ packageId: pkg.packageId });
+  return normalizeConsolePackageResult(result.package);
+}
+
 function normalizeConsolePackageResult(pkg: PkgSummary): ConsolePackage {
   const packages = normalizePackagesPayload({ packages: [pkg] });
   const normalized = packages[0];
@@ -77,6 +108,15 @@ function normalizeConsolePackageResult(pkg: PkgSummary): ConsolePackage {
     throw new Error("Package request did not return a package.");
   }
   return normalized;
+}
+
+function normalizeConsolePackageFromList(packages: readonly PkgSummary[], packageId: string): ConsolePackage {
+  const normalized = normalizePackagesPayload({ packages });
+  const pkg = normalized.find((entry) => entry.packageId === packageId) ?? normalized[0];
+  if (!pkg) {
+    throw new Error("Package request did not return a package.");
+  }
+  return pkg;
 }
 
 function normalizeSpawnResult(result: ProcSpawnResult): PackageReviewProcess {

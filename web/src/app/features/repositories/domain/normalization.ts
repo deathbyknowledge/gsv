@@ -1,6 +1,7 @@
 import type {
   RepositoryCommit,
   RepositoryCompareResult,
+  RepositoryDeleteResult,
   RepositoryDiffFile,
   RepositoryDiffResult,
   RepositoryDiffStats,
@@ -141,6 +142,14 @@ export function normalizeRepositoryPull(payload: unknown): RepositoryPullResult 
   if (typeof localChanged === "boolean") result.localChanged = localChanged;
   if (typeof diverged === "boolean") result.diverged = diverged;
   return result;
+}
+
+export function normalizeRepositoryDelete(payload: unknown, fallbackRepo: string): RepositoryDeleteResult {
+  const record = asRecord(payload);
+  return {
+    repo: asString(record?.repo) || fallbackRepo,
+    deleted: record?.deleted === true,
+  };
 }
 
 function normalizeRepositorySummary(entry: Record<string, unknown>): RepositorySummary | null {

@@ -10,7 +10,11 @@ import {
 } from "../domain/consoleListTypes";
 import type { ConsoleMcpServer, ConsoleResourceState } from "../domain/consoleModels";
 import { useConsoleListSelection } from "../hooks/useConsoleListSelection";
-import { useConsoleMcpServers, useRefreshConsoleMcpServer } from "../hooks/useConsoleData";
+import {
+  useConsoleMcpServers,
+  useRefreshConsoleMcpServer,
+  useRemoveConsoleMcpServer,
+} from "../hooks/useConsoleData";
 import { IntegrationDetailPage } from "./IntegrationDetailPage";
 import { IntegrationOnboardingFlow } from "./IntegrationOnboardingFlow";
 import {
@@ -86,6 +90,7 @@ export function IntegrationsPage({
 }: IntegrationsPageProps) {
   const servers = useConsoleMcpServers({ enabled: true });
   const refreshServer = useRefreshConsoleMcpServer();
+  const removeServer = useRemoveConsoleMcpServer();
   const { selectedDetail, selectDetail } = useConsoleListSelection({
     initialCreate,
     initialDetailId,
@@ -117,8 +122,13 @@ export function IntegrationsPage({
                 <IntegrationDetailPage
                   server={server}
                   refreshing={refreshServer.isPending}
+                  removing={removeServer.isPending}
+                  actionError={refreshServer.error?.message ?? removeServer.error?.message}
                   onBack={() => selectDetail(null)}
                   onRefresh={(serverId) => void refreshServer.mutateAsync(serverId)}
+                  onRemove={(serverId) => {
+                    void removeServer.mutateAsync(serverId).then(() => selectDetail(null));
+                  }}
                 />
               );
             }

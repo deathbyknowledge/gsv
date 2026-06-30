@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { KernelContext } from "../context";
 import {
+  handleSysDeviceDelete,
   handleSysDeviceList,
   handleSysDeviceGet,
   handleSysDeviceUpdate,
@@ -57,7 +58,54 @@ function makeContext(
       }
       return true;
     },
+    remove: vi.fn((deviceId: string) => byId.delete(deviceId)),
   };
+  const tokens = [
+    {
+      tokenId: "tok-active-alpha",
+      uid: ownerUid,
+      kind: "node",
+      label: null,
+      tokenPrefix: "alpha",
+      allowedRole: "driver",
+      allowedDeviceId: "node-alpha",
+      createdAt: 1,
+      lastUsedAt: null,
+      expiresAt: null,
+      revokedAt: null,
+      revokedReason: null,
+    },
+    {
+      tokenId: "tok-revoked-alpha",
+      uid: ownerUid,
+      kind: "node",
+      label: null,
+      tokenPrefix: "alpha-old",
+      allowedRole: "driver",
+      allowedDeviceId: "node-alpha",
+      createdAt: 1,
+      lastUsedAt: null,
+      expiresAt: null,
+      revokedAt: 2,
+      revokedReason: "old",
+    },
+    {
+      tokenId: "tok-beta",
+      uid: ownerUid,
+      kind: "node",
+      label: null,
+      tokenPrefix: "beta",
+      allowedRole: "driver",
+      allowedDeviceId: "node-beta",
+      createdAt: 1,
+      lastUsedAt: null,
+      expiresAt: null,
+      revokedAt: null,
+      revokedReason: null,
+    },
+  ];
+  const listTokens = vi.fn(() => tokens);
+  const revokeToken = vi.fn(() => true);
 
   return {
     processId: options.processId,
@@ -82,6 +130,8 @@ function makeContext(
         home: lookupUid === 0 ? "/root" : `/home/user${lookupUid}`,
         shell: "/bin/init",
       }),
+      listTokens,
+      revokeToken,
     },
     procs: {
       getOwnerUid: () => ownerUid,
@@ -329,5 +379,28 @@ describe("sys.device handlers", () => {
       deviceId: "node-alpha",
       description: "not mine",
     }, ctx)).toThrow("Permission denied: device metadata is owner-managed");
+  });
+
+  it("deletes an owned physical machine and revokes active node tokens", () => {
+    const ctx = makeContext(1000, records.map((record) => ({ ...record })));
+    const result = handleSysDeviceDelete({ deviceId: "node-alpha" }, ctx);
+
+    expect(result).toEqual({
+      deleted: true,
+      deviceId: "node-alpha",
+      revokedTokens: 1,
+    });
+    expect(ctx.devices.remove).toHaveBeenCalledWith("node-alpha");
+    expect(ctx.auth.revokeToken).toHaveBeenCalledWith("tok-active-alpha", "machine forgotten", 1000);
+    expect(ctx.auth.revokeToken).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects deleting a shared machine owned by another user", () => {
+    const ctx = makeContext(1001, records.map((record) => ({ ...record })), ["node-alpha"]);
+
+    expect(() => handleSysDeviceDelete({ deviceId: "node-alpha" }, ctx)).toThrow(
+      "Permission denied: machine forgetting is owner-managed",
+    );
+    expect(ctx.devices.remove).not.toHaveBeenCalled();
   });
 });

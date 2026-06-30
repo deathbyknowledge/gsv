@@ -10,7 +10,7 @@ import {
 } from "../domain/consoleListTypes";
 import type { ConsoleResourceState, ConsoleTarget } from "../domain/consoleModels";
 import { useConsoleListSelection } from "../hooks/useConsoleListSelection";
-import { useConsoleTargets } from "../hooks/useConsoleData";
+import { useConsoleTargets, useDeleteConsoleMachine } from "../hooks/useConsoleData";
 import { MachineDetailPage } from "./MachineDetailPage";
 import { MachineProvisionFlow } from "./MachineProvisionFlow";
 import {
@@ -76,9 +76,20 @@ function renderMachineDetail(
   targets: readonly ConsoleTarget[],
   id: string,
   onBack: () => void,
+  onDelete: (target: ConsoleTarget) => void,
+  deleting: boolean,
+  deleteError: string | undefined,
 ) {
   const target = targets.find((entry) => entry.deviceId === id);
-  return target ? <MachineDetailPage target={target} onBack={onBack} /> : null;
+  return target ? (
+    <MachineDetailPage
+      target={target}
+      deleting={deleting}
+      deleteError={deleteError}
+      onBack={onBack}
+      onDelete={onDelete}
+    />
+  ) : null;
 }
 
 export function MachinesPage({
@@ -88,6 +99,7 @@ export function MachinesPage({
   onSelectionChange,
 }: MachinesPageProps) {
   const targets = useConsoleTargets({ enabled: true });
+  const deleteMachine = useDeleteConsoleMachine();
   const { selectedDetail, selectDetail } = useConsoleListSelection({
     initialCreate,
     initialDetailId,
@@ -111,7 +123,16 @@ export function MachinesPage({
                   onOpenMachine={(target) => selectDetail({ kind: "machines", id: target.deviceId, label: target.label })}
                 />
               )
-              : renderMachineDetail(data, selectedDetail.id, () => selectDetail(null))) ?? (
+              : renderMachineDetail(
+                data,
+                selectedDetail.id,
+                () => selectDetail(null),
+                (target) => {
+                  void deleteMachine.mutateAsync({ deviceId: target.deviceId }).then(() => selectDetail(null));
+                },
+                deleteMachine.isPending,
+                deleteMachine.error?.message,
+              )) ?? (
               <MachinesConsoleSection
                 onOpenCreate={() => selectDetail({ kind: "machines", id: NEW_DETAIL_ID, createNew: true })}
                 onOpenDetail={(target) => selectDetail({ kind: "machines", id: target.deviceId, label: target.label })}

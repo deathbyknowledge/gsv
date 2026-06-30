@@ -3,6 +3,7 @@ import { useGateway } from "../../../services/gateway/GatewayProvider";
 import type { ConsoleResourceState } from "../../gsv-console/domain/consoleModels";
 import {
   compareRepositoryRefs,
+  deleteRepository,
   listRepositories,
   listRepositoryCommits,
   listRepositoryRefs,
@@ -11,6 +12,7 @@ import {
   readRepositoryPath,
   searchRepository,
   type RepositoryCompareArgs,
+  type RepositoryDeleteArgs,
   type RepositoryDiffArgs,
   type RepositoryLogArgs,
   type RepositoryPullArgs,
@@ -147,6 +149,18 @@ export function useRepositoryPullMutation() {
 
   return useMutation({
     mutationFn: async (args: RepositoryPullArgs) => pullRepository(client, args),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: repositoriesQueryKeyRoot });
+    },
+  });
+}
+
+export function useRepositoryDeleteMutation() {
+  const { client } = useGateway();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (args: RepositoryDeleteArgs) => deleteRepository(client, args),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: repositoriesQueryKeyRoot });
     },

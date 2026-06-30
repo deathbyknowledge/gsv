@@ -2,6 +2,7 @@ import type { GSVClient } from "@humansandmachines/gsv/client";
 import type {
   RepositoryCompareResult,
   RepositoryCommitsPage,
+  RepositoryDeleteResult,
   RepositoryDiffResult,
   RepositoryPullResult,
   RepositoryReadResult,
@@ -12,6 +13,7 @@ import type {
 import {
   normalizeRepositoryCommitsPage,
   normalizeRepositoryCompare,
+  normalizeRepositoryDelete,
   normalizeRepositoryDiff,
   normalizeRepositoryList,
   normalizeRepositoryPull,
@@ -60,6 +62,10 @@ export type RepositoryCompareArgs = {
 export type RepositoryPullArgs = {
   repo: string;
   ref?: string;
+};
+
+export type RepositoryDeleteArgs = {
+  repo: string;
 };
 
 const DEFAULT_COMMIT_LIMIT = 20;
@@ -142,6 +148,15 @@ export async function pullRepository(client: RepositoriesClient, args: Repositor
     ref: args.ref || undefined,
   });
   return normalizeRepositoryPull(payload);
+}
+
+export async function deleteRepository(client: RepositoriesClient, args: RepositoryDeleteArgs): Promise<RepositoryDeleteResult> {
+  const repo = args.repo.trim();
+  if (!repo) {
+    throw new Error("repository is required");
+  }
+  const payload = await client.call<unknown>("repo.delete", { repo });
+  return normalizeRepositoryDelete(payload, repo);
 }
 
 function normalizeCommitLimit(value: unknown): number {

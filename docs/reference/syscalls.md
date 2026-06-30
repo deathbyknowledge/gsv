@@ -721,7 +721,7 @@ Runtime behavior:
 | `pkg.checkout` | `handlePkgCheckout` | Re-resolves an existing package at a new ref and replaces manifest and artifact while preserving grants, enabled state, review flags, and install time. Requires mutable package access. |
 | `pkg.install` | `handlePkgInstall` | Enables an installed package. Errors if review is required and not approved. Idempotent when already enabled. |
 | `pkg.review.approve` | `handlePkgReviewApprove` | Sets review approval metadata for review-required packages. If review is not required, returns unchanged. |
-| `pkg.remove` | `handlePkgRemove` | Disables the package; it does not delete the row. Cannot disable the package named `packages`. |
+| `pkg.remove` | `handlePkgRemove` | Removes the package row and revokes the caller owner's run-as access for package agents. Returns a disabled summary of the removed package. |
 | `pkg.remote.list` | `handlePkgRemoteList` | Lists current user package catalog remotes from config, sorted by name. Requires identity. |
 | `pkg.remote.add` | `handlePkgRemoteAdd` | Stores a current-user remote config key. Remote names must be alphanumeric with dashes; URLs must be HTTP or HTTPS and are normalized. |
 | `pkg.remote.remove` | `handlePkgRemoteRemove` | Deletes a current-user remote config key. Returns whether anything was removed. |
@@ -812,6 +812,7 @@ Runtime behavior:
 | `repo.compare` | `handleRepoCompare` | Compares `base` and `head` refs or hashes. `stat: true` omits hunks from ripgit. |
 | `repo.apply` | `handleRepoApply` | Atomically commits `put`, `delete`, and `move` operations to one ref. `expectedHead` enables optimistic concurrency. `allowEmpty` permits an empty commit. |
 | `repo.import` | `handleRepoImport` | Imports or refreshes a repo from an upstream Git URL/ref into a local ripgit repo. Omit `remoteUrl` to pull from the repo's stored upstream. |
+| `repo.delete` | `handleRepoDelete` | Deletes a writable ripgit repository and unregisters its repo metadata. Refuses repositories still backing installed packages. |
 
 Write access is intentionally narrower than read access. Non-root users can write repos owned by their username. Public repos and visible package source repos are readable but not writable unless ownership also matches. Native shell writes under `/src/repos` stage in a process-local overlay until `rgit commit` or `rgit discard`.
 
@@ -882,6 +883,11 @@ type RepoSyscalls = {
     args: { repo: string; ref?: string; remoteUrl?: string; remoteRef?: string; message?: string };
     result: { repo: string; ref: string; head: string | null; changed: boolean; remoteUrl: string; remoteRef: string; trackingRef?: string; upstreamHead?: string; upstreamChanged?: boolean; localChanged?: boolean; diverged?: boolean };
   };
+
+  "repo.delete": {
+    args: { repo: string };
+    result: { deleted: boolean; repo: string };
+  };
 };
 ```
 
@@ -902,6 +908,7 @@ Runtime behavior:
 | `sys.device.list` | `handleSysDeviceList` | Lists devices accessible by owner uid or group ACL. Root sees all. Defaults to online devices only unless `includeOffline` is true. |
 | `sys.device.get` | `handleSysDeviceGet` | Reads one device descriptor. Missing or inaccessible devices return `device: null` rather than a permission error. |
 | `sys.device.update` | `handleSysDeviceUpdate` | Updates owner-managed device metadata. Root or the device owner may update the process-visible `description`; group-only device access can use the device but cannot edit its metadata. Missing or inaccessible devices return `device: null`. |
+| `sys.device.delete` | `handleSysDeviceDelete` | Forgets an owned physical device, disconnects any live device socket, and revokes active node tokens bound to that device. Group-only access cannot forget. Missing or inaccessible devices return `deleted: false`. |
 | `sys.workspace.list` | `handleSysWorkspaceList` | Lists workspaces for caller uid by default. Root may request any uid; non-root may only request self. Adds active process summary and process count. |
 | `sys.oauth.start` | `handleSysOAuthStart` | Starts an OAuth authorization-code + PKCE flow for an AI provider, MCP server, or generic integration. Returns an authorization URL and pending flow summary. Redirects must target `/oauth/callback` on the deployed GSV origin. Non-root is scoped to self. |
 | `sys.oauth.list` | `handleSysOAuthList` | Lists OAuth account summaries without access or refresh tokens. Non-root is scoped to self; root can list all or one uid. `includePending: true` also returns unexpired pending flows. |
@@ -976,6 +983,11 @@ type SystemSyscalls = {
   "sys.device.update": {
     args: { deviceId: string; description: string };
     result: { device: ({ deviceId: string; ownerUid: number; description: string; platform: string; version: string; online: boolean; lastSeenAt: number; implements: string[]; firstSeenAt: number; connectedAt: number | null; disconnectedAt: number | null }) | null };
+  };
+
+  "sys.device.delete": {
+    args: { deviceId: string };
+    result: { deleted: boolean; deviceId: string; revokedTokens: number };
   };
 
   "sys.workspace.list": {

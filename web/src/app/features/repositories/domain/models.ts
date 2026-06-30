@@ -151,3 +151,8 @@ export type RepositoryPullResult = {
   localChanged?: boolean;
   diverged?: boolean;
 };
+
+export type RepositoryDeleteResult = {
+  repo: string;
+  deleted: boolean;
+};
