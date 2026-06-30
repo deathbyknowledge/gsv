@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
-import { useUnsavedGuard, useUnsavedGuardLeave } from "../../gsv-shell/unsaved/unsavedGuard";
+import { useUnsavedGuard } from "../../gsv-shell/unsaved/unsavedGuard";
 import { Button } from "../../../components/ui/Button";
 import { Icon } from "../../../components/ui/Icon";
 import { ListRow } from "../../../components/ui/ListRow";
@@ -202,10 +202,6 @@ export function MachineProvisionFlow({
       deviceIdTouched ||
       expiresDays.trim() !== "30")
   );
-  // The flow's own back controls unmount the wizard like shell nav does, so
-  // route them through the guard to prompt before discarding the draft.
-  const requestLeave = useUnsavedGuardLeave();
-  const guardedBack = () => requestLeave(onBack);
 
   useEffect(() => {
     if (!issuedToken || step !== "connect") {
@@ -351,7 +347,6 @@ export function MachineProvisionFlow({
               ))}
             </div>
             <div class="gsv-cf-footer">
-              <Button variant="secondary" label="BACK TO MACHINES" onClick={guardedBack} />
               <span class="gsv-cf-footer-spacer" />
               <Button variant="primary" label="CONTINUE" onClick={() => setStep("details")} />
             </div>
@@ -642,7 +637,6 @@ export function MachineProvisionFlow({
               )}
             </div>
             <div class="gsv-cf-footer">
-              <Button variant="secondary" label="BACK TO MACHINES" onClick={guardedBack} />
               <span class="gsv-cf-footer-spacer" />
               <Button
                 variant="primary"

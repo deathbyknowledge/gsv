@@ -38,8 +38,8 @@
 
 .gsv-library-page-head span,
 .gsv-library-page-head p {
-  color: var(--text-dim);
-  font-size: 9px;
+  color: var(--meta);
+  font-size: 10px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
 }
@@ -47,8 +47,8 @@
 .gsv-library-page-head h2 {
   margin: 6px 0 0;
   overflow: hidden;
-  color: var(--text);
-  font-size: 17px;
+  color: var(--text-hi);
+  font-size: 19px;
   letter-spacing: 0.1em;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -73,7 +73,6 @@
 }
 
 .gsv-library-index,
-.gsv-library-reader-page,
 .gsv-library-editor-page,
 .gsv-library-form-page {
   flex: 1 1 auto;
@@ -83,25 +82,184 @@
   overflow: hidden;
 }
 
-.gsv-library-index-grid {
-  flex: 1 1 auto;
-  display: grid;
-  grid-template-columns: minmax(240px, 300px) minmax(360px, 1fr) minmax(260px, 340px);
+/* Collection bar — top strip mirroring the FILES machine bar (collection level). */
+.gsv-library-collection-bar {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
   gap: 14px;
-  min-height: 0;
   padding: 14px;
-  overflow: hidden;
+  border-bottom: 1px solid var(--rule-section, var(--line));
+  background: color-mix(in srgb, var(--panel) 92%, var(--shadow-deep, #000));
 }
 
-.gsv-library-panel {
+.gsv-library-collection-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 9px;
+  color: var(--meta);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.gsv-library-collection-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+/* Body — left action panel (page level) + page browser (FILES folder drill). */
+.gsv-library-workspace {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
+}
+
+.gsv-library-action {
+  min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  border-right: 1px solid var(--rule-section, var(--line));
+}
+
+.gsv-library-browser {
+  min-width: 0;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
 }
 
-.gsv-library-panel-body,
-.gsv-library-tree-scroll {
+.gsv-library-browser-crumbs {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--rule-inner, var(--line-soft));
+}
+
+.gsv-library-browser-label {
+  color: var(--meta);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+/* Reader: the EDIT action sits at the right of the breadcrumb row. */
+.gsv-library-crumbs-action {
+  margin-left: auto;
+  display: inline-flex;
+}
+
+/* Reader OUTLINE — occupies the left panel (the action-bar slot on the index). */
+.gsv-library-outline-panel {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-right: 1px solid var(--rule-section, var(--line));
+}
+
+.gsv-library-outline-scroll {
+  flex: 0 0 auto;
+  padding: 6px 0;
+}
+
+/* Reader body — markdown content fills the main pane below the breadcrumb. */
+.gsv-library-reader-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  padding: 14px;
+}
+
+/* Narrow panel (chat dragged wide or a small window): stack the workspace so
+   the left panel moves to the top — the action bar becomes a horizontal row
+   (index) and the outline becomes a top dropdown (reader). Driven by the
+   ResizeObserver on the library root, so it tracks the panel, not the viewport. */
+.gsv-library.is-narrow .gsv-library-workspace {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.gsv-library.is-narrow .gsv-library-action {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  border-right: 0;
+  border-bottom: 1px solid var(--rule-section, var(--line));
+}
+
+.gsv-library.is-narrow .gsv-library-action > :first-child {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.gsv-library.is-narrow .gsv-library-outline-panel {
+  border-right: 0;
+  border-bottom: 1px solid var(--rule-section, var(--line));
+}
+
+/* Reader outline as a dropdown (narrow only). */
+.gsv-library-outline-dd > summary {
+  list-style: none;
+}
+
+.gsv-library-outline-summary {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-height: 44px;
+  padding: 12px 16px;
+  cursor: pointer;
+  color: var(--text-title);
+  font-family: var(--gsv-font-mono);
+  font-size: 12px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+.gsv-library-outline-summary::-webkit-details-marker {
+  display: none;
+}
+
+.gsv-library-outline-dot {
+  width: 6px;
+  height: 6px;
+  background: var(--accent);
+}
+
+.gsv-library-outline-count {
+  color: var(--meta);
+}
+
+.gsv-library-outline-summary::after {
+  content: "";
+  margin-left: auto;
+  border-left: 6px solid var(--accent);
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  transition: transform 0.15s ease;
+}
+
+.gsv-library-outline-dd[open] .gsv-library-outline-summary::after {
+  transform: rotate(90deg);
+}
+
+.gsv-library-browser-list {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
@@ -123,59 +281,12 @@
   padding: 14px;
 }
 
-.gsv-library-search-zone {
-  flex: 0 0 auto;
-  border-bottom: 1px solid var(--line-soft);
-}
-
-.gsv-library-search {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-  padding: 12px;
-}
-
-.gsv-library-search .gsv-btn-link {
-  grid-column: 1 / -1;
-  justify-self: start;
-}
-
 .gsv-library-search-results {
   display: flex;
   flex-direction: column;
 }
 
-.gsv-library-tree {
-  padding: 4px 0 12px;
-}
-
-.gsv-library-tree-row {
-  padding-left: calc(var(--library-tree-depth, 0) * 18px);
-}
-
-.gsv-library-tree-folder [role="group"] {
-  border-left: 1px solid color-mix(in srgb, var(--line-soft) 70%, transparent);
-  margin-left: calc((var(--library-tree-depth, 0) * 18px) + 19px);
-}
-
-.gsv-library-authoring-stack {
-  display: grid;
-  gap: 14px;
-  padding: 16px;
-}
-
-.gsv-library-reader-grid {
-  flex: 1 1 auto;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(200px, 270px);
-  gap: 14px;
-  min-height: 0;
-  padding: 14px;
-  overflow: hidden;
-}
-
 .gsv-library-reader,
-.gsv-library-outline,
 .gsv-library-editor,
 .gsv-library-form-panel,
 .gsv-library-empty-state {
@@ -183,6 +294,8 @@
 }
 
 .gsv-library-reader {
+  flex: 1 1 auto;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -319,38 +432,38 @@
 .gsv-library-source-ref-head span,
 .gsv-library-source-ref > div:last-child {
   overflow: hidden;
-  color: var(--text-dim);
-  font-size: 9px;
+  color: var(--meta);
+  font-size: 10px;
   letter-spacing: 0.12em;
   text-overflow: ellipsis;
   white-space: nowrap;
   text-transform: uppercase;
 }
 
-.gsv-library-outline {
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
 .gsv-library-outline-row {
   display: block;
-  padding: 11px 14px;
-  border-bottom: 1px solid var(--line-soft);
-  color: var(--text);
-  font-size: 10px;
+  padding: 9px 14px;
+  color: var(--warn);
+  font-size: 11px;
   letter-spacing: 0.08em;
-  text-decoration: none;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: color-mix(in srgb, var(--warn) 50%, transparent);
+}
+
+.gsv-library-outline-row:hover,
+.gsv-library-outline-row:focus-visible {
+  filter: brightness(1.18);
+  text-decoration-color: var(--warn);
+  outline: none;
 }
 
 .gsv-library-outline-row.level-3 {
   padding-left: 24px;
-  color: var(--text-dim);
 }
 
 .gsv-library-outline-row.level-4 {
   padding-left: 34px;
-  color: var(--text-dim);
 }
 
 .gsv-library-editor,
@@ -454,8 +567,8 @@
   min-height: 34px;
   padding: 0 10px 0 12px;
   border-bottom: 1px solid var(--line);
-  color: var(--text-dim);
-  font-size: 9px;
+  color: var(--meta);
+  font-size: 10px;
   letter-spacing: 0.16em;
 }
 
@@ -492,12 +605,6 @@
 }
 
 @media (max-width: 1040px) {
-  .gsv-library-index-grid,
-  .gsv-library-reader-grid {
-    grid-template-columns: 1fr;
-    overflow: auto;
-  }
-
   .gsv-library-page-head {
     grid-template-columns: 1fr;
     align-items: start;

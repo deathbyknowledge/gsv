@@ -42,7 +42,7 @@ const WIKI_MANIFEST_KIND = "gsv.wiki";
 
 export async function loadLibraryWorkspace(
   client: LibraryClient,
-  args: { db?: string; path?: string; q?: string },
+  args: { db?: string; path?: string; q?: string; newPage?: boolean },
 ): Promise<LibraryWorkspaceState> {
   let errorText = "";
   let selectedDb = String(args.db ?? "").trim();
@@ -70,15 +70,22 @@ export async function loadLibraryWorkspace(
       errorText ||= formatError(error);
     }
 
-    selectedPath = normalizeDbScopedLibraryPath(args.path ?? "", selectedDb) || `${selectedDb}/index.md`;
-    try {
-      selectedNote = await readLibraryNote(client, collection, selectedPath);
-      if (!selectedNote && !args.path && pages.length > 0) {
-        selectedPath = pages[0].path;
+    // A new-page editor route carries no path. Without this guard the loader
+    // defaults the path to `${db}/index.md` and returns the collection Overview
+    // as the selected note, so the blank editor would bind to (and overwrite)
+    // index.md on save. Leave the note unselected; the editor generates a fresh
+    // page path of its own.
+    if (!args.newPage) {
+      selectedPath = normalizeDbScopedLibraryPath(args.path ?? "", selectedDb) || `${selectedDb}/index.md`;
+      try {
         selectedNote = await readLibraryNote(client, collection, selectedPath);
+        if (!selectedNote && !args.path && pages.length > 0) {
+          selectedPath = pages[0].path;
+          selectedNote = await readLibraryNote(client, collection, selectedPath);
+        }
+      } catch (error) {
+        errorText ||= formatError(error);
       }
-    } catch (error) {
-      errorText ||= formatError(error);
     }
 
     if (searchQuery) {

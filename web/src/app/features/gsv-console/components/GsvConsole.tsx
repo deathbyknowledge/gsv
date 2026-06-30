@@ -18,7 +18,7 @@ import { MachinesPage } from "../machines/MachinesPage";
 import { MessengersPage } from "../messengers/MessengersPage";
 import { PackageListPage } from "../packages/PackageListPage";
 import { ConsoleAgentPage } from "../pages/ConsoleAgentPage";
-import { ConsoleConfigPage } from "../pages/ConsoleConfigPage";
+import { ConsoleConfigPage, type ConsoleConfigDetail } from "../pages/ConsoleConfigPage";
 import { ConsoleCrewPage } from "../pages/ConsoleCrewPage";
 import { ConsoleOverviewPage, type ConsoleOverviewTarget } from "../pages/ConsoleOverviewPage";
 import { RuntimePage } from "../runtime/RuntimePage";
@@ -151,6 +151,22 @@ function hasSettingsListDetail(route: SettingsRoute): route is Extract<SettingsR
   return route.view === "list" && (Boolean(route.detailId) || route.createNew === true);
 }
 
+/** The breadcrumb label for a non-index library view, or null on the index.
+ *  Library runs its own internal route, so the shell maps it to a detail crumb
+ *  (GSV → LIBRARY → [page/view]) the same way other surfaces show their detail. */
+function libraryDetailLabel(route: ShellLibraryRoute): string | null {
+  if (route.view === "reader") return libraryPageName(route.path);
+  if (route.view === "editor") return route.path ? libraryPageName(route.path) : "NEW PAGE";
+  if (route.view === "capture") return "NEW PAGE";
+  if (route.view === "build") return "BUILD";
+  return null;
+}
+
+function libraryPageName(path: string): string {
+  const base = path.split("/").pop() || path;
+  return base.replace(/\.[^.]+$/, "").toUpperCase();
+}
+
 function settingsRouteTail(route: SettingsRoute): string {
   if (route.view === "overview") {
     return "GSV · CONTROL";
@@ -190,6 +206,10 @@ export function GsvConsole({
   // list and the header back jumps all the way to the desktop.
   const [surfaceDetail, setSurfaceDetail] = useState<ConsoleListSelection | null>(null);
   const [surfaceDetailSeq, setSurfaceDetailSeq] = useState(0);
+  // The open model/runtime config detail (reported by ConsoleConfigPage), so the
+  // breadcrumb shows SETTINGS → MODELS → [detail] and the header back-arrow exits
+  // the detail — replacing the in-page back button.
+  const [settingsConfigDetail, setSettingsConfigDetail] = useState<ConsoleConfigDetail | null>(null);
   useEffect(() => {
     setSurfaceDetail(null);
   }, [activeSurface]);
@@ -326,6 +346,19 @@ export function GsvConsole({
 
   const inNestedSettings = activeSurface === "settings" && settingsRoute.view !== "overview";
   const inSettingsListDetail = activeSurface === "settings" && hasSettingsListDetail(settingsRoute);
+  // Library drives its own internal route; surface its non-index views as a
+  // detail crumb so the breadcrumb (and header back-arrow) own the path back to
+  // the index, instead of leaving the trail stuck at LIBRARY.
+  const libraryDetail = libraryDetailLabel(libraryRoute);
+  const inLibrary = activeSurface === "library"
+    || (activeSurface === "settings" && settingsRoute.view === "list" && settingsRoute.kind === "library");
+  // Route through the unsaved guard: leaving a dirty page editor / capture /
+  // build form via the LIBRARY crumb or header back-arrow must prompt first,
+  // the same as Library's own in-page BACK controls (which go through
+  // useLibraryWorkspace's guarded navigate).
+  const goLibraryIndex = () => requestLeave(() => onLibraryRouteChange?.(
+    libraryRoute.db ? { view: "index", db: libraryRoute.db } : { view: "index" },
+  ));
   const crumbs: ConsoleCrumb[] = activeSurface === "settings"
     ? [
         { label: "GSV", onClick: onBackToDesktop, notLast: true },
@@ -346,6 +379,16 @@ export function GsvConsole({
           // the editor no longer renders its own breadcrumb.
           { label: "CREW", onClick: () => guardedSettingsNavigate({ view: "crew" }), notLast: true },
           { label: settingsRouteLabel(settingsRoute) },
+        ] : settingsRoute.view === "config" && settingsConfigDetail ? [
+          // Config detail: SETTINGS → MODELS/RUNTIME → [detail]. The parent crumb
+          // exits the detail (back to the list); the breadcrumb owns the path
+          // back, so the detail renders no in-page back button.
+          { label: settingsRouteLabel(settingsRoute), onClick: settingsConfigDetail.onExit, notLast: true },
+          { label: settingsConfigDetail.label },
+        ] : settingsRoute.view === "list" && settingsRoute.kind === "library" && libraryDetail ? [
+          // Library sub-view inside settings: LIBRARY (→ index) → [page/view].
+          { label: shellSurfaceLabel("library"), onClick: goLibraryIndex, notLast: true },
+          { label: libraryDetail },
         ] : inNestedSettings ? [{ label: settingsRouteLabel(settingsRoute) }] : []),
       ]
     : activeSurface === "agent"
@@ -355,6 +398,13 @@ export function GsvConsole({
         { label: "GSV", onClick: onBackToDesktop, notLast: true },
         { label: "CREW", onClick: backToCrew, notLast: true },
         { label: shellSurfaceLabel(activeSurface) },
+      ]
+    : activeSurface === "library" && libraryDetail
+    ? [
+        // Top-level Library: GSV → LIBRARY (→ index) → [page/view].
+        { label: "GSV", onClick: onBackToDesktop, notLast: true },
+        { label: shellSurfaceLabel(activeSurface), onClick: goLibraryIndex, notLast: true },
+        { label: libraryDetail },
       ]
     : surfaceDetail
     ? [
@@ -376,8 +426,18 @@ export function GsvConsole({
           guardedSettingsNavigate({ view: "list", kind: settingsRoute.kind });
           return;
         }
+        if (settingsRoute.view === "config" && settingsConfigDetail) {
+          settingsConfigDetail.onExit();
+          return;
+        }
+        if (settingsRoute.view === "list" && settingsRoute.kind === "library" && libraryDetail) {
+          goLibraryIndex();
+          return;
+        }
         guardedSettingsNavigate({ view: "overview" });
       }
+    : activeSurface === "library" && libraryDetail
+    ? goLibraryIndex
     : activeSurface === "agent"
     ? backToCrew
     : surfaceDetail
@@ -418,6 +478,7 @@ export function GsvConsole({
               kind={settingsRoute.kind}
               select={settingsRoute.select}
               onClearSelect={() => navigateSettingsRoute({ view: "config", kind: settingsRoute.kind })}
+              onDetailChange={setSettingsConfigDetail}
             />
           ) : settingsRoute.view === "crew" ? (
             <ConsoleCrewPage onManageAgent={openSettingsAgent} onCreateAgent={openSettingsNewAgent} />

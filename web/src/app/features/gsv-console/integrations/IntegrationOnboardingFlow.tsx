@@ -1,5 +1,5 @@
 import { useState } from "preact/hooks";
-import { useUnsavedGuard, useUnsavedGuardLeave } from "../../gsv-shell/unsaved/unsavedGuard";
+import { useUnsavedGuard } from "../../gsv-shell/unsaved/unsavedGuard";
 import { Button } from "../../../components/ui/Button";
 import { Icon } from "../../../components/ui/Icon";
 import { Select } from "../../../components/ui/Select";
@@ -128,10 +128,6 @@ export function IntegrationOnboardingFlow({ onBack, onCreated }: IntegrationOnbo
       transportIndex !== 0 ||
       headers.some((row) => row.key.trim().length > 0 || row.value.trim().length > 0))
   );
-  // The flow's own back controls unmount it like shell nav does, so route them
-  // through the guard to prompt before discarding the in-progress connection.
-  const requestLeave = useUnsavedGuardLeave();
-  const guardedBack = () => requestLeave(onBack);
 
   const submit = async () => {
     if (!canSubmit) {
@@ -253,7 +249,6 @@ export function IntegrationOnboardingFlow({ onBack, onCreated }: IntegrationOnbo
             ) : null}
 
             <div class="gsv-cf-footer">
-              <Button variant="secondary" label="BACK" disabled={addServer.isPending} onClick={guardedBack} />
               <span class="gsv-cf-footer-spacer" />
               <Button
                 variant="primary"
@@ -290,7 +285,6 @@ export function IntegrationOnboardingFlow({ onBack, onCreated }: IntegrationOnbo
             ) : null}
 
             <div class="gsv-cf-footer">
-              <Button variant="secondary" label="BACK" onClick={guardedBack} />
               <span class="gsv-cf-footer-spacer" />
               {created ? (
                 <Button variant="primary" label="VIEW INTEGRATION" onClick={() => onCreated(created)} />

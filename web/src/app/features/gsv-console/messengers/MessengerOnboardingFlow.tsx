@@ -192,7 +192,6 @@ export function MessengerOnboardingFlow({
               <Link href={docUrl} arrow>Need help? Documentation</Link>
             </div>
             <div class="gsv-cf-footer">
-              <Button variant="secondary" label="CANCEL" onClick={goBack} />
               <span class="gsv-cf-footer-spacer" />
               <Button variant="primary" label="NEXT" onClick={goNext} />
             </div>

@@ -1,11 +1,13 @@
-import type { ComponentChildren, JSX } from "preact";
+import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { ShellLibraryRoute } from "../../gsv-shell/domain/shellModel";
-import { AddAction } from "../../../components/ui/AddAction";
+import { Breadcrumbs, type Crumb } from "../../../components/ui/Breadcrumbs";
 import { Button } from "../../../components/ui/Button";
 import { Icon } from "../../../components/ui/Icon";
 import { ListRow } from "../../../components/ui/ListRow";
+import { Search } from "../../../components/ui/Search";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
+import { Select } from "../../../components/ui/Select";
 import { StatusDot } from "../../../components/ui/StatusDot";
 import { Surface } from "../../../components/ui/Surface";
 import { TextArea } from "../../../components/ui/TextArea";
@@ -15,7 +17,6 @@ import {
   ConsolePageState,
 } from "../components/ConsolePageTemplate";
 import {
-  ancestorFolderPaths,
   buildLibraryTree,
   libraryEntrySub,
   localLibraryPath,
@@ -28,7 +29,6 @@ import {
 import { useLibraryWorkspace } from "./useLibraryWorkspace";
 import { useUnsavedGuard, useUnsavedGuardLeave } from "../../gsv-shell/unsaved/unsavedGuard";
 import type {
-  LibraryCollection,
   LibraryEntry,
   LibraryPreviewPayload,
   LibraryPreviewRequest,
@@ -50,9 +50,32 @@ type PreviewState = {
   request: LibraryPreviewRequest;
 };
 
+const LIBRARY_NARROW_WIDTH = 720;
+
 export function LibraryPage({ route = { view: "index" }, onRouteChange }: LibraryPageProps) {
   const requestLeave = useUnsavedGuardLeave();
   const library = useLibraryWorkspace(route, onRouteChange, requestLeave);
+
+  // Respond to the PANEL width (chat resize + window resize), not the viewport:
+  // observe the library root so the workspace can stack and the action bar /
+  // outline move to the top when the panel is narrow. A callback ref attaches
+  // the observer once the root mounts (after the loading/error gates).
+  const [narrow, setNarrow] = useState(false);
+  const narrowObserverRef = useRef<ResizeObserver | null>(null);
+  const rootRef = useCallback((node: HTMLDivElement | null) => {
+    narrowObserverRef.current?.disconnect();
+    narrowObserverRef.current = null;
+    if (!node) {
+      return;
+    }
+    const measure = () => setNarrow(node.getBoundingClientRect().width < LIBRARY_NARROW_WIDTH);
+    measure();
+    if (typeof ResizeObserver !== "undefined") {
+      const observer = new ResizeObserver(measure);
+      observer.observe(node);
+      narrowObserverRef.current = observer;
+    }
+  }, []);
 
   useUnsavedGuard(() => {
     const editorNote = library.state.selectedNote;
@@ -73,9 +96,17 @@ export function LibraryPage({ route = { view: "index" }, onRouteChange }: Librar
       library.activeRoute.view === "build" &&
       (library.buildPath.trim().length > 0 ||
         library.buildDbTitle.trim().length > 0 ||
-        library.buildTarget !== "gsv");
+        library.buildTarget !== "gsv" ||
+        // DESTINATION ID is auto-seeded to the collection id, so a length check
+        // can't tell "untouched" from "typed". Dirty only when it diverges from
+        // that seed (activeRoute.db, falling back to the selected collection).
+        (library.buildDbId.trim().length > 0 &&
+          library.buildDbId !== (library.activeRoute.db ?? library.state.selectedDb ?? "")));
     const collectionDirty =
-      library.activeRoute.view === "index" &&
+      // The collection bar (NEW COLLECTION draft) renders on both the index and
+      // the reader, so a draft typed from either view must register as dirty —
+      // guarding only the index dropped reader-opened drafts without a prompt.
+      (library.activeRoute.view === "index" || library.activeRoute.view === "reader") &&
       library.createCollectionOpen &&
       (library.newCollectionTitle.trim().length > 0 ||
         library.newCollectionId.trim().length > 0);
@@ -109,11 +140,11 @@ export function LibraryPage({ route = { view: "index" }, onRouteChange }: Librar
 
   return (
     <ConsolePage flush>
-      <div class="gsv-library" aria-label="GSV library">
+      <div class={`gsv-library${narrow ? " is-narrow" : ""}`} aria-label="GSV library" ref={rootRef}>
         {library.error ? <StatusBanner tone="error" label={library.error} /> : null}
         {!library.error && library.notice ? <StatusBanner tone="live" label={library.notice} /> : null}
         {library.activeRoute.view === "reader" ? (
-          <LibraryReader library={library} />
+          <LibraryReader library={library} narrow={narrow} />
         ) : library.activeRoute.view === "editor" ? (
           <LibraryEditor library={library} />
         ) : library.activeRoute.view === "capture" ? (
@@ -128,153 +159,221 @@ export function LibraryPage({ route = { view: "index" }, onRouteChange }: Librar
   );
 }
 
+/** Collection bar — every collection-level control (mirrors the FILES machine
+ *  bar). Shared by the index and the reader so all views share one shell. */
+function LibraryCollectionBar({ library }: { library: LibraryRuntime }) {
+  const { dbs } = library.state;
+  const selectedDb = library.state.selectedDb;
+  const selectedCollection = dbs.find((collection) => collection.id === selectedDb) ?? null;
+  const pageCount = library.state.pages.length;
+  const collectionOptions = dbs.length
+    ? dbs.map((collection) => collection.title.toUpperCase())
+    : ["NO COLLECTIONS"];
+  const selectedIndex = Math.max(0, dbs.findIndex((collection) => collection.id === selectedDb));
+
+  return (
+    <>
+      <header class="gsv-library-collection-bar">
+        <Select
+          label="COLLECTION"
+          size="medium"
+          width={280}
+          disabled={dbs.length === 0}
+          options={collectionOptions}
+          value={selectedIndex}
+          onChange={(index) => {
+            const next = dbs[index];
+            if (next) {
+              library.openCollection(next.id);
+            }
+          }}
+        />
+        {selectedCollection ? (
+          <span class="gsv-library-collection-meta">
+            <StatusDot tone={selectedCollection.writable ? "online" : "idle"} size={7} />
+            {selectedCollection.writable ? "WRITE" : "READ"} · {pageCount} {pageCount === 1 ? "PAGE" : "PAGES"}
+          </span>
+        ) : null}
+        <div class="gsv-library-collection-actions">
+          <Button
+            variant="primary"
+            label={library.createCollectionOpen ? "CLOSE" : "NEW COLLECTION"}
+            onClick={() => library.createCollectionOpen
+              ? library.closeCreateCollection()
+              : library.setCreateCollectionOpen(true)}
+          />
+          <Button
+            variant="secondary"
+            label="BUILD"
+            onClick={() => library.openBuild()}
+          />
+        </div>
+      </header>
+      {library.createCollectionOpen ? <CreateCollectionBox library={library} /> : null}
+    </>
+  );
+}
+
 function LibraryIndex({ library }: { library: LibraryRuntime }) {
   const selectedDb = library.state.selectedDb;
-  const pages = sortLibraryEntries(library.state.searchMatches ?? library.state.pages);
   const searching = library.state.searchQuery.trim().length > 0;
+  const searchResults = sortLibraryEntries(library.state.searchMatches ?? []);
+  const collectionLabel = library.state.dbs.find((collection) => collection.id === selectedDb)?.title ?? "LIBRARY";
 
   return (
     <div class="gsv-library-index">
-      <LibraryPageHeader
-        eyebrow="LIBRARY"
-        title={selectedDb ? collectionTitle(library.state.dbs, selectedDb) : "Knowledge Library"}
-        meta={selectedDb ? selectedDb : "SELECT COLLECTION"}
-        actions={(
-          <>
-            <Button
-              variant="secondary"
-              label="BUILD"
-              onClick={() => library.navigate({ view: "build", ...(selectedDb ? { db: selectedDb } : {}) })}
-            />
-            <Button
-              variant="primary"
-              label="NEW PAGE"
-              disabled={!selectedDb}
-              onClick={() => selectedDb ? library.navigate({ view: "editor", db: selectedDb }) : undefined}
-            />
-          </>
-        )}
-      />
+      <LibraryCollectionBar library={library} />
 
-      <div class="gsv-library-index-grid">
-        <Surface class="gsv-library-panel gsv-library-collections" level={2}>
-          <SectionHeader title="COLLECTIONS" meta={`${library.state.dbs.length}`} divider />
-          <div class="gsv-library-panel-body">
-            {library.state.dbs.length === 0 ? (
-              <div class="gsv-library-empty-row">NO COLLECTIONS</div>
-            ) : library.state.dbs.map((collection) => (
-              <CollectionRow
-                collection={collection}
-                key={collection.id}
-                selected={collection.id === selectedDb}
-                onOpen={() => library.openCollection(collection.id)}
-              />
-            ))}
-            <AddAction
-              variant="row"
-              label={library.createCollectionOpen ? "CLOSE CREATOR" : "NEW COLLECTION"}
-              onClick={() => library.setCreateCollectionOpen((open) => !open)}
-            />
-          </div>
-          {library.createCollectionOpen ? <CreateCollectionBox library={library} /> : null}
-        </Surface>
-
-        <Surface class="gsv-library-panel gsv-library-tree-panel" level={2}>
-          <SectionHeader
-            title={searching ? "SEARCH RESULTS" : "PAGES"}
-            meta={searching ? `${pages.length} MATCHES` : `${pages.length}`}
-            divider
+      {/* Body — left action panel (page-level: search + create inside the
+          collection) beside a FILES-style page browser. */}
+      <div class="gsv-library-workspace">
+        <section class="gsv-library-action">
+          <Search
+            block
+            placeholder="Search pages"
+            disabled={!selectedDb}
+            value={library.searchDraft}
+            onChange={library.setSearchDraft}
+            onSearch={() => library.applySearch()}
           />
-          <div class="gsv-library-search-zone">
-            <form
-              class="gsv-library-search"
-              onSubmit={(event) => {
-                event.preventDefault();
-                library.applySearch();
-              }}
-            >
-              <TextInput
-                label=""
-                placeholder="Search pages"
-                clearable
-                size="small"
-                value={library.searchDraft}
-                onChange={library.setSearchDraft}
-              />
-              <Button variant="secondary" label="SEARCH" type="submit" />
-              {searching ? <Button variant="link" label="CLEAR" onClick={library.clearSearch} /> : null}
-            </form>
-          </div>
-          <div class="gsv-library-tree-scroll">
-            {!selectedDb ? (
-              <div class="gsv-library-empty-row">SELECT COLLECTION</div>
-            ) : searching ? (
-              <SearchResults db={selectedDb} entries={pages} onOpenPage={library.openPage} />
-            ) : (
-              <LibraryTree
-                db={selectedDb}
-                entries={pages}
-                selectedPath=""
-                onOpenPage={library.openPage}
-              />
-            )}
-          </div>
-        </Surface>
+          {searching ? (
+            <Button variant="link" label="CLEAR SEARCH" onClick={library.clearSearch} />
+          ) : null}
+          <Button
+            variant="primary"
+            label="WRITE PAGE"
+            disabled={!selectedDb || library.mutating}
+            onClick={() => library.openEditor()}
+          />
+          <Button
+            variant="secondary"
+            label="CAPTURE SOURCE"
+            disabled={!selectedDb}
+            onClick={() => library.openCapture()}
+          />
+        </section>
 
-        <Surface class="gsv-library-panel gsv-library-actions-panel" level={2}>
-          <SectionHeader title="AUTHORING" meta={selectedDb || "IDLE"} divider />
-          <div class="gsv-library-authoring-stack">
-            <TextInput
-              label="PAGE TITLE"
-              placeholder="New page title"
-              value={library.newPageTitle}
-              onChange={library.setNewPageTitle}
+        <section class="gsv-library-browser">
+          {!selectedDb ? (
+            <div class="gsv-library-empty-row">SELECT COLLECTION</div>
+          ) : searching ? (
+            <>
+              <div class="gsv-library-browser-crumbs">
+                <span class="gsv-library-browser-label">
+                  SEARCH RESULTS · {searchResults.length} {searchResults.length === 1 ? "MATCH" : "MATCHES"}
+                </span>
+              </div>
+              <div class="gsv-library-browser-list">
+                <SearchResults db={selectedDb} entries={searchResults} onOpenPage={library.openPage} />
+              </div>
+            </>
+          ) : (
+            <FolderBrowser
+              collectionLabel={collectionLabel}
+              db={selectedDb}
+              entries={library.state.pages}
+              folder={library.browserFolder}
+              onFolderChange={library.setBrowserFolder}
+              onOpenPage={library.openPage}
             />
-            <Button
-              variant="primary"
-              label="WRITE PAGE"
-              disabled={!selectedDb || library.mutating}
-              onClick={library.createPageDraft}
-            />
-            <Button
-              variant="secondary"
-              label="CAPTURE SOURCE"
-              disabled={!selectedDb}
-              onClick={() => selectedDb ? library.navigate({ view: "capture", db: selectedDb }) : undefined}
-            />
-            <Button
-              variant="secondary"
-              label="BUILD FROM DIRECTORY"
-              onClick={() => library.navigate({ view: "build", ...(selectedDb ? { db: selectedDb } : {}) })}
-            />
-          </div>
-        </Surface>
+          )}
+        </section>
       </div>
     </div>
   );
 }
 
-function CollectionRow({
-  collection,
-  onOpen,
-  selected,
+/** FILES-style page browser: drill through the collection's folder tree with a
+ *  breadcrumb trail. Folders synthesize from the flat page paths (buildLibraryTree). */
+function FolderBrowser({
+  collectionLabel,
+  db,
+  entries,
+  folder,
+  onFolderChange,
+  onOpenPage,
 }: {
-  collection: LibraryCollection;
-  onOpen: () => void;
-  selected: boolean;
+  collectionLabel: string;
+  db: string;
+  entries: readonly LibraryEntry[];
+  /** Current folder (local page path, or "" for the content root). Controlled. */
+  folder: string;
+  onFolderChange: (folder: string) => void;
+  onOpenPage: (path: string) => void;
 }) {
+  const tree = useMemo(() => buildLibraryTree(entries, db), [db, entries]);
+  // `pages/` is the content root and `index.md` is the collection home: start
+  // the browser INSIDE pages/ (so the real section folders show at the top
+  // instead of a "Pages" wrapper) and pin Overview at the top.
+  const overview = tree.children.find((child) => child.kind === "file" && child.path === "index.md") ?? null;
+  const contentRoot = tree.children.find((child) => child.kind === "folder" && child.name === "pages") ?? tree;
+  const basePath = contentRoot.path;
+  // "" (the default / reset value) resolves to the content root.
+  const folderPath = folder || basePath;
+
+  // Walk from the tree root to the current folder.
+  const chain: LibraryTreeNode[] = [];
+  let current = tree;
+  for (const part of folderPath.split("/").filter(Boolean)) {
+    const next = current.children.find((child) => child.kind !== "file" && child.name === part);
+    if (!next) {
+      break;
+    }
+    chain.push(next);
+    current = next;
+  }
+
+  // Breadcrumb: the collection IS the content root; only show folders below it.
+  const baseDepth = basePath ? basePath.split("/").filter(Boolean).length : 0;
+  const belowBase = chain.slice(baseDepth);
+  const crumbs: Crumb[] = [
+    { label: collectionLabel, onClick: () => onFolderChange("") },
+    ...belowBase.map((node) => ({ label: node.title, onClick: () => onFolderChange(node.path) })),
+  ];
+  const goUp = folderPath !== basePath
+    ? () => onFolderChange(belowBase.length > 1 ? belowBase[belowBase.length - 2].path : "")
+    : undefined;
+
+  const atBase = folderPath === basePath;
+  const byTitle = (left: LibraryTreeNode, right: LibraryTreeNode) => left.title.localeCompare(right.title);
+  const folders = current.children.filter((child) => child.kind === "folder").sort(byTitle);
+  const files = current.children
+    .filter((child) => child.kind === "file" && child.path !== "index.md")
+    .sort(byTitle);
+  const rows: LibraryTreeNode[] = [...(atBase && overview ? [overview] : []), ...folders, ...files];
+
   return (
-    <ListRow
-      active={selected}
-      chevron
-      icon="pencil"
-      label={collection.title}
-      onClick={onOpen}
-      status={collection.writable ? "online" : "idle"}
-      statusDotPlacement="trailing"
-      statusLabel={collection.writable ? "WRITE" : "READ"}
-      sub={collection.id}
-    />
+    <>
+      <div class="gsv-library-browser-crumbs">
+        <Breadcrumbs items={crumbs} size="medium" maxVisible={4} onBack={goUp} currentAriaCurrent="location" />
+      </div>
+      <div class="gsv-library-browser-list">
+        {rows.length === 0 ? (
+          <div class="gsv-library-empty-row">NO PAGES</div>
+        ) : rows.map((child) => child.kind === "file" ? (
+          <ListRow
+            chevron
+            icon={child.path === "index.md" ? "pencil" : "doticons/file"}
+            key={child.id}
+            label={child.title}
+            onClick={() => child.entry ? onOpenPage(child.entry.path) : undefined}
+            status="none"
+            sub={child.entry ? libraryEntrySub(child.entry, db) : child.path}
+          />
+        ) : (
+          <ListRow
+            chevron
+            icon="folder"
+            key={child.id}
+            label={child.title}
+            onClick={() => onFolderChange(child.path)}
+            status="none"
+            sub={`${child.count} ${child.count === 1 ? "page" : "pages"}`}
+            tag="DIR"
+          />
+        ))}
+      </div>
+    </>
   );
 }
 
@@ -307,124 +406,10 @@ function SearchResults({
   );
 }
 
-function LibraryTree({
-  db,
-  entries,
-  onOpenPage,
-  selectedPath,
-}: {
-  db: string;
-  entries: readonly LibraryEntry[];
-  onOpenPage: (path: string) => void;
-  selectedPath: string;
-}) {
-  const tree = useMemo(() => buildLibraryTree(entries, db), [db, entries]);
-  const selectedLocalPath = selectedPath ? localLibraryPath(selectedPath, db) : "";
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set(ancestorFolderPaths(selectedLocalPath)));
-
-  const toggle = (path: string) => {
-    setExpanded((current) => {
-      const next = new Set(current);
-      if (next.has(path)) {
-        next.delete(path);
-      } else {
-        next.add(path);
-      }
-      return next;
-    });
-  };
-
-  if (tree.children.length === 0) {
-    return <div class="gsv-library-empty-row">NO PAGES</div>;
-  }
-
-  return (
-    <div class="gsv-library-tree" role="tree">
-      {tree.children.map((node) => (
-        <LibraryTreeNodeView
-          db={db}
-          expanded={expanded}
-          key={node.id}
-          node={node}
-          onOpenPage={onOpenPage}
-          onToggle={toggle}
-          selectedLocalPath={selectedLocalPath}
-          depth={0}
-        />
-      ))}
-    </div>
-  );
-}
-
-function LibraryTreeNodeView({
-  db,
-  depth,
-  expanded,
-  node,
-  onOpenPage,
-  onToggle,
-  selectedLocalPath,
-}: {
-  db: string;
-  depth: number;
-  expanded: Set<string>;
-  node: LibraryTreeNode;
-  onOpenPage: (path: string) => void;
-  onToggle: (path: string) => void;
-  selectedLocalPath: string;
-}) {
-  if (node.kind === "file") {
-    return (
-      <div class="gsv-library-tree-row" style={{ "--library-tree-depth": depth } as JSX.CSSProperties}>
-        <ListRow
-          active={Boolean(selectedLocalPath && selectedLocalPath === node.path)}
-          chevron
-          icon={node.path === "index.md" ? "pencil" : "doticons/file"}
-          label={node.title}
-          onClick={() => node.entry ? onOpenPage(node.entry.path) : undefined}
-          status="none"
-          sub={node.entry ? libraryEntrySub(node.entry, db) : node.path}
-        />
-      </div>
-    );
-  }
-
-  const open = expanded.has(node.path);
-  return (
-    <div class="gsv-library-tree-folder" role="treeitem" aria-expanded={open}>
-      <div class="gsv-library-tree-row" style={{ "--library-tree-depth": depth } as JSX.CSSProperties}>
-        <ListRow
-          chevron
-          icon="folder"
-          label={node.title}
-          onClick={() => onToggle(node.path)}
-          status="none"
-          sub={`${node.count} ${node.count === 1 ? "page" : "pages"}`}
-          tag={open ? "OPEN" : undefined}
-        />
-      </div>
-      {open ? (
-        <div role="group">
-          {node.children.map((child) => (
-            <LibraryTreeNodeView
-              db={db}
-              depth={depth + 1}
-              expanded={expanded}
-              key={child.id}
-              node={child}
-              onOpenPage={onOpenPage}
-              onToggle={onToggle}
-              selectedLocalPath={selectedLocalPath}
-            />
-          ))}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function LibraryReader({ library }: { library: LibraryRuntime }) {
+function LibraryReader({ library, narrow }: { library: LibraryRuntime; narrow: boolean }) {
   const note = library.state.selectedNote;
+  // When narrow, the outline collapses into a top dropdown (closed by default).
+  const [outlineOpen, setOutlineOpen] = useState(false);
   const [previewState, setPreviewState] = useState<PreviewState | null>(null);
   const [previewPayload, setPreviewPayload] = useState<LibraryPreviewPayload | null>(null);
   const [previewLoadingKey, setPreviewLoadingKey] = useState<string | null>(null);
@@ -535,55 +520,105 @@ function LibraryReader({ library }: { library: LibraryRuntime }) {
   }
   const db = library.activeRoute.db;
 
+  // Continue the browser trail into the open page — collection / <folders> /
+  // <page> — deriving the folders from the page path so Back and the folder
+  // crumbs return to the right place in the browser (same shell as the index).
+  const tree = buildLibraryTree(library.state.pages, db);
+  const localPath = localLibraryPath(note.path, db);
+  const contentRoot = tree.children.find((child) => child.kind === "folder" && child.name === "pages") ?? tree;
+  const basePath = contentRoot.path;
+  const baseDepth = basePath ? basePath.split("/").filter(Boolean).length : 0;
+  const folderChain: LibraryTreeNode[] = [];
+  let node = tree;
+  for (const part of localPath.split("/").filter(Boolean).slice(0, -1)) {
+    const next = node.children.find((child) => child.kind !== "file" && child.name === part);
+    if (!next) {
+      break;
+    }
+    folderChain.push(next);
+    node = next;
+  }
+  const belowBase = folderChain.slice(baseDepth);
+  const collectionLabel = library.state.dbs.find((collection) => collection.id === db)?.title ?? "LIBRARY";
+  const openFolder = (folderPath: string) => {
+    library.setBrowserFolder(folderPath);
+    library.navigate({ view: "index", db });
+  };
+  const crumbs: Crumb[] = [
+    { label: collectionLabel, onClick: () => openFolder("") },
+    ...belowBase.map((folder) => ({ label: folder.title, onClick: () => openFolder(folder.path) })),
+    { label: note.title },
+  ];
+  const backFolder = belowBase.length ? belowBase[belowBase.length - 1].path : "";
+
+  const outlineRows = library.pageHeadings.length === 0 ? (
+    <div class="gsv-library-empty-row">NO HEADINGS</div>
+  ) : library.pageHeadings.map((heading) => (
+    <a
+      class={`gsv-library-outline-row level-${heading.level}`}
+      href={`#${heading.id}`}
+      key={heading.id}
+    >
+      {heading.text}
+    </a>
+  ));
+
   return (
-    <div class="gsv-library-reader-page">
-      <LibraryPageHeader
-        eyebrow={library.activeRoute.db}
-        title={note.title}
-        meta={note.path}
-        actions={(
-          <>
-            <Button
-              variant="secondary"
-              label="LIBRARY"
-              onClick={() => library.navigate({ view: "index", db })}
-            />
-            <Button
-              variant="primary"
-              label="EDIT"
-              onClick={() => library.navigate({
-                view: "editor",
-                db,
-                path: localLibraryPath(note.path, db),
-              })}
-            />
-          </>
-        )}
-      />
-      <div class="gsv-library-reader-grid">
-        <Surface class="gsv-library-reader" level={2}>
-          <LibraryMarkdownView
-            note={note}
-            selectedDb={db}
-            onOpenPage={openPage}
-            onPreviewClose={closePreview}
-            onPreviewOpen={openPreview}
-          />
-        </Surface>
-        <Surface class="gsv-library-outline" level={1}>
-          <SectionHeader title="OUTLINE" meta={`${library.pageHeadings.length}`} divider />
-          {library.pageHeadings.length === 0 ? (
-            <div class="gsv-library-empty-row">NO HEADINGS</div>
-          ) : library.pageHeadings.map((heading) => (
-            <a
-              class={`gsv-library-outline-row level-${heading.level}`}
-              href={`#${heading.id}`}
-              key={heading.id}
+    <div class="gsv-library-index">
+      <LibraryCollectionBar library={library} />
+      <div class="gsv-library-workspace">
+        {/* OUTLINE takes the left panel on wide screens; when narrow it moves to
+            the top and collapses into a dropdown. */}
+        <section class="gsv-library-outline-panel">
+          {narrow ? (
+            <details
+              class="gsv-library-outline-dd"
+              open={outlineOpen}
+              onToggle={(event) => setOutlineOpen((event.currentTarget as HTMLDetailsElement).open)}
             >
-              {heading.text}
-            </a>
-          ))}
-        </Surface>
+              <summary class="gsv-library-outline-summary">
+                <span class="gsv-library-outline-dot" aria-hidden="true" />
+                OUTLINE
+                <span class="gsv-library-outline-count">{library.pageHeadings.length}</span>
+              </summary>
+              <div class="gsv-library-outline-scroll">{outlineRows}</div>
+            </details>
+          ) : (
+            <>
+              <SectionHeader title="OUTLINE" meta={`${library.pageHeadings.length}`} divider />
+              <div class="gsv-library-outline-scroll">{outlineRows}</div>
+            </>
+          )}
+        </section>
+        <section class="gsv-library-browser">
+          <div class="gsv-library-browser-crumbs">
+            <Breadcrumbs
+              items={crumbs}
+              size="medium"
+              maxVisible={4}
+              onBack={() => openFolder(backFolder)}
+              currentAriaCurrent="location"
+            />
+            <span class="gsv-library-crumbs-action">
+              <Button
+                variant="primary"
+                label="EDIT"
+                onClick={() => library.navigate({ view: "editor", db, path: localLibraryPath(note.path, db) })}
+              />
+            </span>
+          </div>
+          <div class="gsv-library-reader-body">
+            <Surface class="gsv-library-reader" level={2}>
+              <LibraryMarkdownView
+                note={note}
+                selectedDb={db}
+                onOpenPage={openPage}
+                onPreviewClose={closePreview}
+                onPreviewOpen={openPreview}
+              />
+            </Surface>
+          </div>
+        </section>
       </div>
       <LibraryPreviewLayer
         data={previewPayload}
@@ -602,17 +637,11 @@ function LibraryEditor({ library }: { library: LibraryRuntime }) {
   const editingExisting = library.activeRoute.view === "editor" && Boolean(library.activeRoute.path);
   return (
     <div class="gsv-library-editor-page">
+      {/* Back to the library index is owned by the breadcrumb now. */}
       <LibraryPageHeader
         eyebrow={db || "LIBRARY"}
         title={editingExisting ? "Edit Page" : "Write Page"}
         meta={library.editorPath || "NEW PAGE"}
-        actions={(
-          <Button
-            variant="secondary"
-            label="BACK"
-            onClick={() => db ? library.navigate({ view: "index", db }) : library.navigate({ view: "index" })}
-          />
-        )}
       />
       <Surface class="gsv-library-editor" level={2}>
         <div class="gsv-library-editor-meta">
@@ -657,7 +686,6 @@ function LibraryCapture({ library }: { library: LibraryRuntime }) {
         eyebrow={db || "LIBRARY"}
         title="Capture Source"
         meta="CREATE SOURCE-BACKED PAGE"
-        actions={<Button variant="secondary" label="BACK" onClick={() => db ? library.navigate({ view: "index", db }) : library.navigate({ view: "index" })} />}
       />
       <Surface class="gsv-library-form-panel" level={2}>
         <div class="gsv-library-form-grid">
@@ -711,7 +739,6 @@ function LibraryBuild({ library }: { library: LibraryRuntime }) {
         eyebrow={db || "LIBRARY"}
         title="Build From Directory"
         meta="BACKGROUND AGENT"
-        actions={<Button variant="secondary" label="BACK" onClick={() => db ? library.navigate({ view: "index", db }) : library.navigate({ view: "index" })} />}
       />
       <Surface class="gsv-library-form-panel" level={2}>
         <div class="gsv-library-form-grid">
@@ -802,7 +829,7 @@ function CreateCollectionBox({ library }: { library: LibraryRuntime }) {
           variant="secondary"
           label="CANCEL"
           disabled={library.mutating}
-          onClick={() => library.setCreateCollectionOpen(false)}
+          onClick={() => library.closeCreateCollection()}
         />
         <Button
           variant="primary"
@@ -878,9 +905,6 @@ function StatusBanner({
   );
 }
 
-function collectionTitle(collections: readonly LibraryCollection[], db: string): string {
-  return collections.find((collection) => collection.id === db)?.title || db;
-}
 
 function previewRequestKey(request: LibraryPreviewRequest): string {
   if (request.kind === "page") {
