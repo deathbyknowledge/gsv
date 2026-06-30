@@ -352,9 +352,13 @@ export function GsvConsole({
   const libraryDetail = libraryDetailLabel(libraryRoute);
   const inLibrary = activeSurface === "library"
     || (activeSurface === "settings" && settingsRoute.view === "list" && settingsRoute.kind === "library");
-  const goLibraryIndex = () => onLibraryRouteChange?.(
+  // Route through the unsaved guard: leaving a dirty page editor / capture /
+  // build form via the LIBRARY crumb or header back-arrow must prompt first,
+  // the same as Library's own in-page BACK controls (which go through
+  // useLibraryWorkspace's guarded navigate).
+  const goLibraryIndex = () => requestLeave(() => onLibraryRouteChange?.(
     libraryRoute.db ? { view: "index", db: libraryRoute.db } : { view: "index" },
-  );
+  ));
   const crumbs: ConsoleCrumb[] = activeSurface === "settings"
     ? [
         { label: "GSV", onClick: onBackToDesktop, notLast: true },
