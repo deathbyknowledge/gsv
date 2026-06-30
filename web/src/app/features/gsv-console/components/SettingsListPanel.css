@@ -13,6 +13,14 @@
   min-height: 0;
 }
 
+/* Reading-width: the panel header is a full-width SectionHeader strip (DS inline
+   padding 14px 20px) — center its inner content while the bar stays full-width.
+   The panel is a full-width child of the single-column `.gsv-console-settings-index`
+   grid, so `100%` in the gutter resolves to the panel width. */
+.gsv-console-settings-list > .gsv-section-header {
+  padding-inline: max(20px, var(--gsv-gutter)) !important;
+}
+
 .gsv-console-settings-list-body {
   display: grid;
 }
@@ -32,6 +40,8 @@
 .gsv-console-settings-list-row .lr {
   min-height: 43px;
   padding: 13px 16px;
+  /* Reading-width: full-width list rows, align row content to the centered column. */
+  padding-inline: max(16px, var(--gsv-gutter));
 }
 
 .gsv-console-settings-list-row .lr[data-clickable="true"]:hover,
@@ -53,11 +63,15 @@
   border: 0 !important;
   background: transparent !important;
   padding: 13px 16px !important;
+  /* Reading-width: full-width action row; padding is !important here, base 16px. */
+  padding-inline: max(16px, var(--gsv-gutter)) !important;
 }
 
 .gsv-console-settings-empty {
   min-height: 54px;
   padding: 18px;
+  /* Reading-width: full-width empty-state band. */
+  padding-inline: max(18px, var(--gsv-gutter));
   color: var(--text-dim);
   font-size: 10px;
   letter-spacing: 0.08em;
