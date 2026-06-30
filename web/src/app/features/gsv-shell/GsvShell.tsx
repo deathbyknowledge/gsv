@@ -403,7 +403,11 @@ export function GsvShell({
     settingsDetailId: activeSettingsDetailId,
     desktopObjects,
     collapsed: shell.railCollapsed,
-    onToggleCollapsed: shell.toggleRailCollapsed,
+    // On mobile the rail is a full-height drawer (never the collapsed icon rail),
+    // so its "Hide menu" control closes the drawer instead of toggling collapse —
+    // which would be a no-op there. (On the home menu the control is hidden via
+    // CSS, since there is nothing to return to behind it.)
+    onToggleCollapsed: shell.mobileLayout ? shell.closeMobilePanels : shell.toggleRailCollapsed,
     onBackToDesktop: shell.desktopCollapsed ? guardedRevealDesktop : guardedBackToDesktop,
     onOpenControlMenu: shell.openControlMenu,
     onOpenSurface: openShellSurface,

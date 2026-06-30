@@ -2003,6 +2003,13 @@
   border-right: 0;
 }
 
+/* The home menu is the screen itself — there's nothing to hide it back to, so
+   drop the rail's "Hide menu" control here. (On the in-page drawer it stays and
+   closes the drawer; see onToggleCollapsed in GsvShell.) */
+.gsv-mobile-menu-home .gsv-rail-menu {
+  display: none;
+}
+
 /* The vertical rail drag-divider is a desktop-only resize affordance. */
 .gsv-shell-viewport.is-mobile .gsv-console-rail-handle {
   display: none;
