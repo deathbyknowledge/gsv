@@ -11,7 +11,7 @@
 [![Docs](https://img.shields.io/badge/docs-gsv.space-111)](https://gsv.space)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/deathbyknowledge/gsv)
 
-**🛸 Public beta — coming before July. Issues and PRs very welcome.**
+**🟢🚀 Public beta is here! Issues and PRs very welcome.**
 
 Most personal AI agents run on one host you pick and keep alive — a laptop, a VPS, a container. GSV turns all your devices into a single computer. It spans your laptop, server, and phone at once, lets an agent act on whichever one fits, and runs on the edge in your own Cloudflare account; your keys, your data, no host to provision or babysit. From ~$5/mo infra plus your own model costs.
 
