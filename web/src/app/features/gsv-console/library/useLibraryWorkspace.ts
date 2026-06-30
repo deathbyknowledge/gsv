@@ -392,8 +392,13 @@ export function useLibraryWorkspace(
   };
 }
 
-function loadArgsForRoute(route: ShellLibraryRoute): { db?: string; path?: string; q?: string } {
-  if (route.view === "reader" || route.view === "editor") {
+function loadArgsForRoute(route: ShellLibraryRoute): { db?: string; path?: string; q?: string; newPage?: boolean } {
+  if (route.view === "editor") {
+    // A path-less editor route is a brand-new page: tell the loader not to fall
+    // back to the collection index.md (which the editor would then overwrite).
+    return route.path ? { db: route.db, path: route.path } : { db: route.db, newPage: true };
+  }
+  if (route.view === "reader") {
     return {
       db: route.db,
       path: route.path,
