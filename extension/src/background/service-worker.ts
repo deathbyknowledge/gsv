@@ -25,7 +25,7 @@ import { createBrowserTargetDriver, type BrowserTargetActivity } from "./driver"
 const client = new GSVClient();
 const driver = client.driver({
   platform: "browser-extension",
-  version: "0.2.9",
+  version: "0.3.0",
   keepalive: { intervalMs: 25_000 },
 });
 let diagnostics: ExtensionDiagnostics = emptyDiagnostics();
