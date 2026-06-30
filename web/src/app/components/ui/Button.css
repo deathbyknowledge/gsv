@@ -91,7 +91,7 @@
   font-size: 11.5px;
   letter-spacing: 0.16em;
   padding: 11px 30px;
-  background: #238a58;
+  background: #1c7d4c; /* darkened from #238a58 for AA: white label now 5.0:1 */
   border-color: #37b875;
   color: #f3fff8;
   box-shadow: 0 0 18px rgba(94, 242, 160, 0.28);
@@ -99,7 +99,7 @@
 }
 .gsv-btn-success:not(.is-disabled):hover,
 .gsv-btn-success:not(.is-disabled):focus-visible {
-  background: #2fa66c;
+  background: #1e8352; /* was #2fa66c (3.0:1); now white label 4.6:1 */
   border-color: #5ef2a0;
   box-shadow: 0 0 28px rgba(94, 242, 160, 0.52);
   outline: none;

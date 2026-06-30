@@ -98,7 +98,7 @@
 
 .command-palette-item small,
 .command-palette-empty {
-  color: rgba(16, 37, 61, 0.6);
+  color: rgba(16, 37, 61, 0.8); /* darker on the light palette panel (was .6, 3.3:1; now >=5.2:1) */
   font-size: 0.72rem;
 }
 
