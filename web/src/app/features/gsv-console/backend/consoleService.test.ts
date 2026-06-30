@@ -11,6 +11,7 @@ import {
   saveConsoleConfig,
   saveConsoleConfigEntries,
   saveConsoleAgentBehavior,
+  saveConsoleAgentContext,
   validateConsoleModelConfig,
 } from "./consoleService";
 
@@ -286,6 +287,7 @@ describe("console agent service", () => {
       role: "SCOUT",
       description: "Tracks fleet signals.",
       model: "NEMOTRON 3",
+      reasoning: "high",
       approval,
       files: [
         {
@@ -316,6 +318,10 @@ describe("console agent service", () => {
       key: "users/42/ai/tools/approval",
       value: approval,
     });
+    expect(setConfig).toHaveBeenNthCalledWith(3, {
+      key: "users/42/ai/reasoning",
+      value: "high",
+    });
   });
 
   it("does not create blank behavior overrides when new agent settings inherit defaults", async () => {
@@ -326,6 +332,7 @@ describe("console agent service", () => {
       role: "AGENT",
       description: "",
       model: "",
+      reasoning: "",
       approval: "",
       files: [],
     });
@@ -339,6 +346,7 @@ describe("console agent service", () => {
     await saveConsoleAgentBehavior(client, {
       uid: 42,
       model: "",
+      reasoning: "",
       approval: "",
     });
 
@@ -349,6 +357,80 @@ describe("console agent service", () => {
     expect(setConfig).toHaveBeenNthCalledWith(2, {
       key: "users/42/ai/tools/approval",
       value: "",
+    });
+    expect(setConfig).toHaveBeenNthCalledWith(3, {
+      key: "users/42/ai/reasoning",
+      value: "",
+    });
+  });
+
+  it("can save model and reasoning without touching tool approval", async () => {
+    const { client, setConfig } = createMockClient(42);
+
+    await saveConsoleAgentBehavior(client, {
+      uid: 42,
+      model: "NEMOTRON 3",
+      reasoning: "medium",
+    });
+
+    expect(setConfig).toHaveBeenNthCalledWith(1, {
+      key: "users/42/ai/model",
+      value: "NEMOTRON 3",
+    });
+    expect(setConfig).toHaveBeenNthCalledWith(2, {
+      key: "users/42/ai/reasoning",
+      value: "medium",
+    });
+    expect(setConfig).toHaveBeenCalledTimes(2);
+  });
+
+  it("reconciles renamed and deleted agent context files", async () => {
+    const call = vi.fn(async () => ({ ok: true }));
+
+    await expect(saveConsoleAgentContext({ call } as any, {
+      username: "scout-agent",
+      baseNames: ["old-notes.md", "remove-me.md"],
+      files: [
+        {
+          label: "renamed-notes.md",
+          name: "renamed-notes.md",
+          origName: "old-notes.md",
+          content: "# Notes\n\nUpdated.",
+          orig: "# Notes\n\nOriginal.",
+        },
+      ],
+    })).resolves.toEqual({ written: 1, deleted: 2 });
+
+    expect(call).toHaveBeenNthCalledWith(1, "fs.write", {
+      path: "/home/scout-agent/context.d/renamed-notes.md",
+      content: "# Notes\n\nUpdated.",
+    });
+    expect(call).toHaveBeenNthCalledWith(2, "fs.delete", {
+      path: "/home/scout-agent/context.d/old-notes.md",
+    });
+    expect(call).toHaveBeenNthCalledWith(3, "fs.delete", {
+      path: "/home/scout-agent/context.d/remove-me.md",
+    });
+  });
+
+  it("writes newly added agent context files even when seeded from a draft", async () => {
+    const call = vi.fn(async () => ({ ok: true }));
+
+    await expect(saveConsoleAgentContext({ call } as any, {
+      username: "scout-agent",
+      baseNames: [],
+      files: [
+        {
+          label: "UNTITLED",
+          name: "new-plan.md",
+          content: "# Untitled\n\n",
+        },
+      ],
+    })).resolves.toEqual({ written: 1, deleted: 0 });
+
+    expect(call).toHaveBeenCalledWith("fs.write", {
+      path: "/home/scout-agent/context.d/new-plan.md",
+      content: "# Untitled\n\n",
     });
   });
 

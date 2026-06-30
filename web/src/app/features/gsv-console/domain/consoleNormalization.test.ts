@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { normalizeConfigPayload, normalizePackagesPayload, normalizeTargetsPayload } from "./consoleNormalization";
+import {
+  normalizeAccountsPayload,
+  normalizeConfigPayload,
+  normalizePackagesPayload,
+  normalizeTargetsPayload,
+} from "./consoleNormalization";
 
 describe("console normalization", () => {
   it("redacts secrets nested inside model profile config values", () => {
@@ -82,5 +87,21 @@ describe("console normalization", () => {
         runnable: true,
       },
     }]);
+  });
+
+  it("normalizes resolved account capabilities", () => {
+    expect(normalizeAccountsPayload({
+      accounts: [{
+        uid: 2000,
+        username: "scout",
+        displayName: "Scout",
+        relation: "agent",
+        runnable: true,
+        capabilities: ["repo.read", "fs.*", "", "shell.*"],
+      }],
+    })[0]).toMatchObject({
+      username: "scout",
+      capabilities: ["fs.*", "repo.read", "shell.*"],
+    });
   });
 });

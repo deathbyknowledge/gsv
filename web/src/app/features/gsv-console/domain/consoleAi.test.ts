@@ -4,6 +4,7 @@ import {
   defaultModelLabelForConfig,
   modelConfigCount,
   modelLabelsForConfig,
+  modelOptionsForConfig,
   modelProfilesForConfig,
   overrideConfigEntries,
 } from "./consoleAi";
@@ -73,5 +74,37 @@ describe("console AI config classification", () => {
     ]);
 
     expect(labels).toEqual(["system-llm", "agent-llm", "profile-llm"]);
+  });
+
+  it("builds readable model dropdown options while preserving raw model ids", () => {
+    const options = modelOptionsForConfig([
+      { key: "config/ai/model", value: "anthropic/claude-sonnet-4.5", redacted: false },
+      {
+        key: "users/1/ai/model_profiles",
+        value: JSON.stringify({
+          profiles: [{
+            id: "deep-review",
+            name: "Deep Review",
+            values: {
+              "config/ai/model": "openai/gpt-5.1",
+            },
+          }],
+        }),
+        redacted: false,
+      },
+    ]);
+
+    expect(options).toEqual([
+      {
+        value: "anthropic/claude-sonnet-4.5",
+        label: "Claude Sonnet 4 5",
+        description: "anthropic/claude-sonnet-4.5",
+      },
+      {
+        value: "openai/gpt-5.1",
+        label: "Deep Review",
+        description: "openai/gpt-5.1",
+      },
+    ]);
   });
 });

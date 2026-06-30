@@ -10,6 +10,7 @@ function account(patch: Partial<ConsoleAccount>): ConsoleAccount {
     relation: "personal-agent",
     runnable: true,
     gecos: "",
+    capabilities: [],
     ...patch,
   };
 }

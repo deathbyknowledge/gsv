@@ -3,6 +3,8 @@ import {
   AgentEditor,
   type AgentEditorDraft,
   type AgentEditorFile,
+  type AgentEditorModelOption,
+  type AgentEditorTab,
   type AgentEditorTask,
 } from "../../../components/ui/AgentEditor";
 import type { AvatarStatus } from "../../../components/ui/Avatar";
@@ -18,12 +20,14 @@ import type {
   ConsoleProcess,
   ConsoleResourceState,
 } from "../domain/consoleModels";
-import { modelLabelsForConfig } from "../domain/consoleAi";
+import { modelOptionsForConfig, type ConsoleModelOption } from "../domain/consoleAi";
 import {
-  approvalActionFromValue,
   behaviorForAccount,
+  defaultApprovalPolicyForConfig,
+  GLOBAL_APPROVAL_CONFIG_KEY,
   inheritedModelLabelForAccount,
-  modelLabelsForAccount,
+  inheritedReasoningForAccount,
+  modelOptionsForAccount,
   parseApprovalPolicy,
   serializeApprovalPolicy,
 } from "../domain/consoleAgentBehavior";
@@ -42,6 +46,7 @@ import {
   useCreateConsoleAgent,
   useSaveConsoleAgentBehavior,
   useSaveConsoleAgentContext,
+  useSaveConsoleConfig,
 } from "../hooks/useConsoleData";
 import "./ConsoleAgentPage.css";
 
@@ -61,17 +66,21 @@ export function ConsoleAgentPage({
   const accounts = useConsoleAccounts();
   const config = useConsoleConfig();
   const processes = useConsoleProcesses();
-  const modelLabels = modelLabelsForConfig(config.config);
+  const modelOptions = modelOptionsForConfig(config.config);
   const ownerUid = viewerAccountForAgents(accounts.resource.data ?? [])?.uid ?? null;
   const inheritedNewAgentModel = inheritedModelLabelForAccount(config.config, -1, ownerUid);
-  const newAgentModelLabels = modelLabelsForAccount(modelLabels, "", inheritedNewAgentModel);
+  const inheritedNewAgentReasoning = inheritedReasoningForAccount(config.config, -1, ownerUid);
+  const defaultApprovalPolicy = defaultApprovalPolicyForConfig(config.config);
+  const newAgentModelOptions = modelOptionsForAccount(modelOptions, "", inheritedNewAgentModel);
 
   if (createNew) {
     return (
       <ConsolePage flush>
         <NewAgentEditorSurface
           accountCount={accounts.resource.data?.length ?? 0}
-          modelLabels={newAgentModelLabels}
+          modelOptions={newAgentModelOptions}
+          inheritedReasoning={inheritedNewAgentReasoning}
+          defaultApprovalPolicy={defaultApprovalPolicy}
           onAgentCreated={onAgentCreated}
           onBackToCrew={onBackToCrew}
         />
@@ -95,7 +104,7 @@ export function ConsoleAgentPage({
               account={account}
               accounts={data}
               config={config.config}
-              modelLabels={modelLabels}
+              modelOptions={modelOptions}
               ownerUid={viewerAccountForAgents(data)?.uid ?? null}
               processResource={processes.resource}
             />
@@ -110,30 +119,44 @@ function AgentEditorSurface({
   account,
   accounts,
   config,
-  modelLabels,
+  modelOptions,
   ownerUid,
   processResource,
 }: {
   account: ConsoleAccount;
   accounts: readonly ConsoleAccount[];
   config: readonly ConsoleConfigEntry[];
-  modelLabels: string[];
+  modelOptions: ConsoleModelOption[];
   ownerUid: number | null;
   processResource: ConsoleResourceState<ConsoleProcess[]>;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
+  const [activeEditorTab, setActiveEditorTab] = useState<AgentEditorTab>("general");
   const processes = (processResource.data ?? []).filter((process) => ownsProcess(account, process));
   const context = useConsoleAgentContext(account.username);
   const saveBehavior = useSaveConsoleAgentBehavior();
   const saveContext = useSaveConsoleAgentContext();
-  const contextEditable = context.files.length > 0
-    && !context.resource.isLoading
+  const saveConfig = useSaveConsoleConfig();
+  const contextEditable = !context.resource.isLoading
+    && !context.resource.isUnavailable
     && !context.resource.isError;
-  const behavior = behaviorForAccount(config, account.uid);
+  const accountBehavior = behaviorForAccount(config, account.uid);
+  const editsGlobalApproval = isHumanCrewAccount(account);
+  const defaultApprovalPolicy = defaultApprovalPolicyForConfig(config);
+  const behavior = editsGlobalApproval
+    ? {
+        ...accountBehavior,
+        approval: defaultApprovalPolicy,
+        approvalInherited: false,
+        approvalOverride: defaultApprovalPolicy,
+        permission: parseApprovalPolicy(defaultApprovalPolicy).default,
+      }
+    : accountBehavior;
   const behaviorEditable = account.runnable;
   const inheritedModelLabel = inheritedModelLabelForAccount(config, account.uid, ownerUid);
-  const resolvedModelLabels = modelLabelsForAccount(modelLabels, behavior.model, inheritedModelLabel);
+  const inheritedReasoning = inheritedReasoningForAccount(config, account.uid, ownerUid);
+  const resolvedModelOptions = modelOptionsForAccount(modelOptions, behavior.model, inheritedModelLabel);
   const files = editorFilesForAccount({
     account,
     contextFiles: context.files,
@@ -162,7 +185,15 @@ function AgentEditorSurface({
       <div class="gsv-console-agent-frame">
         <div class="gsv-console-agent-panel" ref={rootRef}>
           <AgentEditor
-            key={`${account.uid}:${context.dataUpdatedAt}:${processes.length}:${behavior.model}:${behavior.permission}:${resolvedModelLabels.join("\u0000")}`}
+            key={[
+              account.uid,
+              context.dataUpdatedAt,
+              processes.length,
+              behavior.model,
+              behavior.reasoning,
+              behavior.approval,
+              modelOptionsKey(resolvedModelOptions),
+            ].join(":")}
             mode="manage"
             avatarSrc={isHumanCrewAccount(account) ? CREW_HUMAN_IMAGE : agentImageSrcForAccount(account, accounts)}
             avatarCover={!isHumanCrewAccount(account)}
@@ -171,31 +202,44 @@ function AgentEditorSurface({
             initialRole={labelForConsoleAccountRelation(account.relation)}
             initialDescription={accountDescription(account)}
             initialModel={behavior.model}
+            initialReasoning={behavior.reasoning}
+            inheritedReasoning={inheritedReasoning}
             initialPermission={behavior.permission}
+            initialApprovalPolicy={behavior.approval}
+            approvalPolicySourceLabel={approvalSourceLabel(editsGlobalApproval, behavior.approvalInherited)}
+            approvalPolicySourceDescription={approvalSourceDescription(editsGlobalApproval, behavior.approvalInherited)}
+            capabilities={account.capabilities}
             createdLabel={String(account.uid)}
             metaLabel="UID:"
             status={avatarStatusForProcesses(account, processes)}
-            models={resolvedModelLabels}
+            models={resolvedModelOptions}
             tasks={tasksForProcesses(processes)}
             files={files}
             identityReadOnly
             behaviorReadOnly={!behaviorEditable}
             filesReadOnly={!contextEditable}
+            initialTab={activeEditorTab}
+            onTabChange={setActiveEditorTab}
             onSave={async (draft) => {
               if (behaviorEditable) {
                 await saveBehavior.mutateAsync({
                   uid: account.uid,
                   model: draft.modelIndex === 0 ? "" : draft.model,
-                  approval: serializeApprovalPolicy({
-                    ...parseApprovalPolicy(behavior.approval),
-                    default: approvalActionFromValue(draft.permission),
-                  }),
+                  reasoning: draft.reasoningIndex === 0 ? "" : draft.reasoning,
+                  ...(editsGlobalApproval ? {} : { approval: approvalForAgentSave(draft.approvalPolicy, behavior) }),
+                });
+              }
+              if (editsGlobalApproval) {
+                await saveConfig.mutateAsync({
+                  key: GLOBAL_APPROVAL_CONFIG_KEY,
+                  value: normalizedApprovalPolicy(draft.approvalPolicy),
                 });
               }
               if (contextEditable) {
                 await saveContext.mutateAsync({
                   username: account.username,
                   files: draft.files,
+                  baseNames: context.files.map((file) => file.name),
                 });
               }
             }}
@@ -208,12 +252,16 @@ function AgentEditorSurface({
 
 function NewAgentEditorSurface({
   accountCount,
-  modelLabels,
+  modelOptions,
+  inheritedReasoning,
+  defaultApprovalPolicy,
   onAgentCreated,
   onBackToCrew,
 }: {
   accountCount: number;
-  modelLabels: string[];
+  modelOptions: AgentEditorModelOption[];
+  inheritedReasoning: string;
+  defaultApprovalPolicy: string;
   onAgentCreated?: (uid: number) => void;
   onBackToCrew: () => void;
 }) {
@@ -247,12 +295,16 @@ function NewAgentEditorSurface({
             containerWidth={width || undefined}
             initialRole="AGENT"
             initialDescription=""
+            initialApprovalPolicy={defaultApprovalPolicy}
+            approvalPolicySourceLabel="Inherited default"
+            approvalPolicySourceDescription="New agents use this default policy unless you change tool approval before creating them."
             createdLabel="DRAFT"
             metaLabel="STATUS:"
             status="idle"
-            models={modelLabels}
+            models={modelOptions}
+            inheritedReasoning={inheritedReasoning}
             onCreate={async (draft) => {
-              const created = await createAgent.mutateAsync(agentDraftToCreateInput(draft));
+              const created = await createAgent.mutateAsync(agentDraftToCreateInput(draft, defaultApprovalPolicy));
               window.setTimeout(() => {
                 if (created.uid !== null) {
                   onAgentCreated?.(created.uid);
@@ -268,22 +320,64 @@ function NewAgentEditorSurface({
   );
 }
 
-function agentDraftToCreateInput(draft: AgentEditorDraft) {
+function agentDraftToCreateInput(draft: AgentEditorDraft, defaultApprovalPolicy: string) {
   return {
     name: draft.name,
     role: draft.role,
     description: draft.description,
     model: draft.modelIndex === 0 ? "" : draft.model,
-    approval: serializeApprovalPolicy({
-      default: approvalActionFromValue(draft.permission),
-      rules: [],
-    }),
+    reasoning: draft.reasoningIndex === 0 ? "" : draft.reasoning,
+    approval: approvalOverrideForInheritedPolicy(draft.approvalPolicy, defaultApprovalPolicy),
     files: draft.files.map((file) => ({
       label: file.label,
+      name: file.name,
       content: file.content,
       orig: file.orig,
     })),
   };
+}
+
+function normalizedApprovalPolicy(raw: string): string {
+  return serializeApprovalPolicy(parseApprovalPolicy(raw));
+}
+
+function approvalOverrideForInheritedPolicy(draftApproval: string, inheritedApproval: string): string {
+  const normalizedDraft = normalizedApprovalPolicy(draftApproval);
+  const normalizedInherited = normalizedApprovalPolicy(inheritedApproval);
+  return normalizedDraft === normalizedInherited ? "" : normalizedDraft;
+}
+
+function approvalForAgentSave(
+  draftApproval: string,
+  behavior: ReturnType<typeof behaviorForAccount>,
+): string {
+  return behavior.approvalInherited
+    ? approvalOverrideForInheritedPolicy(draftApproval, behavior.approval)
+    : normalizedApprovalPolicy(draftApproval);
+}
+
+function approvalSourceLabel(editsGlobalApproval: boolean, inherited: boolean): string {
+  if (editsGlobalApproval) return "System default";
+  return inherited ? "Inherited default" : "Agent override";
+}
+
+function approvalSourceDescription(editsGlobalApproval: boolean, inherited: boolean): string {
+  if (editsGlobalApproval) {
+    return "This global policy applies to agents that do not define their own tool approval override.";
+  }
+  if (inherited) {
+    return "This agent has no tool approval override and uses the global default policy.";
+  }
+  return "This agent has its own tool approval policy.";
+}
+
+function modelOptionsKey(options: readonly AgentEditorModelOption[]): string {
+  return options.map((option) => {
+    if (typeof option === "string") {
+      return option;
+    }
+    return `${option.value ?? ""}:${option.label}:${option.description ?? ""}`;
+  }).join("\u0000");
 }
 
 function selectAccount(accounts: readonly ConsoleAccount[], accountUid: number | null): ConsoleAccount | null {
@@ -381,7 +475,7 @@ function editorFilesForAccount({
     }];
   }
   if (contextFiles.length > 0) {
-    return contextFiles.map((file) => ({ ...file }));
+    return contextFiles.map((file) => ({ ...file, origName: file.name }));
   }
   if (contextError.trim().length > 0) {
     return [{
@@ -390,7 +484,7 @@ function editorFilesForAccount({
       orig: `# Context\n\n${contextError}`,
     }];
   }
-  return filesForAccount(account, processes, processResource);
+  return [];
 }
 
 function processFileContent(

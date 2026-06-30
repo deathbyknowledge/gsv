@@ -82,6 +82,19 @@
   color: #aaa5d8;
 }
 
+.gsv-ae-empty-context {
+  min-height: 220px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--rule-inner);
+  background: color-mix(in srgb, var(--panel-2) 86%, transparent);
+  color: var(--text-dim);
+  font-family: var(--gsv-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+}
+
 .gsv-ae-readonly-note {
   color: var(--text-dim);
   font-size: 10px;

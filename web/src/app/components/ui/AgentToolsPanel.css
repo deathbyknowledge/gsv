@@ -1,0 +1,83 @@
+.gsv-tools-panel {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  max-width: 640px;
+}
+
+.gsv-tools-bar {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.gsv-tools-title {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.gsv-tools-title > span:first-child {
+  color: var(--label);
+  font-size: 9.5px;
+  letter-spacing: 0.2em;
+}
+
+.gsv-tools-bar-actions {
+  min-width: 0;
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.gsv-tools-bar-actions .gsv-btn {
+  min-height: 30px;
+  padding: 8px 12px;
+  font-size: 9px;
+}
+
+.gsv-tools-rule-list {
+  display: grid;
+  gap: 10px;
+}
+
+.gsv-tools-rule {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(170px, auto) auto;
+  align-items: end;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--rule-inner);
+  background: color-mix(in srgb, var(--panel) 86%, var(--void));
+}
+
+.gsv-tools-rule-conditions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+@container panel (max-width: 700px) {
+  .gsv-tools-bar,
+  .gsv-tools-rule {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .gsv-tools-bar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .gsv-tools-bar-actions,
+  .gsv-tools-bar-actions .gsv-btn {
+    width: 100%;
+  }
+}
