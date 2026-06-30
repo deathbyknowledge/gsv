@@ -7,6 +7,13 @@
   color: var(--text-dim);
 }
 
+/* Big screens: the title bar is a full-width strip; only its inner content
+   indents to the centered reading column (!important beats SectionHeader's
+   inline left/right padding; vertical padding is preserved). */
+.gsv-ae-header {
+  padding-inline: max(20px, var(--gsv-gutter)) !important;
+}
+
 /* code editor scrollbar (from source <style> .gsv-ed rules) */
 .gsv-ed::-webkit-scrollbar {
   width: 9px;

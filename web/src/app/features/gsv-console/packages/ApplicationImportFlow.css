@@ -118,7 +118,9 @@
   padding: 12px 14px;
 }
 
-@media (max-width: 760px) {
+/* Reflow off the PANEL width, not the viewport — these bodies render inside
+   ConnectFlowShell's .gsv-cf, which owns the `panel` container. */
+@container panel (max-width: 760px) {
   .application-import-source-grid {
     grid-template-columns: 1fr;
   }

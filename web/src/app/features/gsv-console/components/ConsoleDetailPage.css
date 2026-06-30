@@ -1,4 +1,10 @@
 .gsv-console-detail-page {
+  /* Reflow off the PANEL width (not the viewport) so spacing/typography tighten
+     when the chat is dragged wide, not only on small screens. The confirm
+     overlay is a sibling (not a descendant), so inline-size containment here
+     does not trap its fixed positioning. */
+  container-type: inline-size;
+  container-name: panel;
   flex: 1;
   min-height: 100%;
   display: flex;
@@ -9,6 +15,9 @@
 /* Row-2 header: full-width bar, flush under the breadcrumb — like the list pages. */
 .gsv-console-detail-header.gsv-section-header {
   width: 100%;
+  /* Full-width title strip; inner content indents to the centered reading
+     column on big screens (!important beats SectionHeader's inline padding). */
+  padding-inline: max(20px, var(--gsv-gutter)) !important;
 }
 
 /* Opt-in back control for non-route-backed callers (config details), so they
@@ -39,6 +48,10 @@
   flex-direction: column;
   gap: 24px;
   padding: 28px 26px 72px;
+  /* Big screens: center the detail content to the reading column. (The narrow
+     @container rules below re-set padding for small panels, where the gutter is
+     0 anyway, so they take precedence as intended.) */
+  padding-inline: max(26px, var(--gsv-gutter));
 }
 
 .gsv-console-detail-head {
@@ -104,6 +117,8 @@
   gap: 16px;
   padding: 18px 26px;
   border-bottom: 1px solid var(--rule-section);
+  /* Big screens: strip stays full-width; content aligns to the reading column. */
+  padding-inline: max(26px, var(--gsv-gutter));
 }
 
 .gsv-console-detail-bar-lead {
@@ -262,13 +277,13 @@
   max-width: 100%;
 }
 
-@media (max-width: 720px) {
+@container panel (max-width: 720px) {
   .gsv-console-detail-shell {
     padding: 24px 24px 72px;
   }
 }
 
-@media (max-width: 520px) {
+@container panel (max-width: 520px) {
   .gsv-console-detail-shell {
     padding: 18px 14px 64px;
   }

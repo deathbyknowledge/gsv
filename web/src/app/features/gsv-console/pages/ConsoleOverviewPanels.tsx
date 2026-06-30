@@ -800,8 +800,9 @@ export function SettingsOverviewDashboard({
   const applications = visiblePackages.filter(isApplicationPackage);
 
   return (
-    <div class="gsv-settings-overview" aria-label="GSV settings overview">
-      <div class="gsv-settings-left">
+    <div class="gsv-settings-overview-frame">
+      <div class="gsv-settings-overview" aria-label="GSV settings overview">
+        <div class="gsv-settings-left">
         <ShipPanel
           config={data.config}
           data={data}
@@ -838,6 +839,7 @@ export function SettingsOverviewDashboard({
           onOpenListDetail={onOpenListDetail}
           onOpenSurface={onOpenSurface}
         />
+      </div>
       </div>
     </div>
   );

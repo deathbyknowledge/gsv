@@ -1712,6 +1712,17 @@
   padding: 20px;
 }
 
+/* Large-screen reading width. Strips (title bars, toolbars) stay full-width;
+   their inner content and the page content align to this centered column via
+   `padding-inline: max(<base>, var(--gsv-gutter))`. The gutter is 0 until the
+   panel exceeds the cap, then grows to center the column. `100%` resolves
+   against the using element's containing block (the full-width strip = the
+   panel), so it tracks the panel, not the viewport — no breakpoint needed. */
+:root {
+  --gsv-content-cap: 1440px;
+  --gsv-gutter: max(0px, calc((100% - var(--gsv-content-cap)) / 2));
+}
+
 .gsv-console-page.is-flush .gsv-console-page-body {
   padding: 0;
   display: flex;
@@ -1896,18 +1907,6 @@
 }
 
 @media (max-width: 760px) {
-  .gsv-shell-viewport {
-    flex-direction: column;
-  }
-
-  .gsv-shell-viewport.is-chat-dragging {
-    cursor: ns-resize;
-  }
-
-  .gsv-shell-world {
-    min-height: 0;
-  }
-
   .gsv-space-hud {
     left: 16px;
     right: 16px;
@@ -1961,4 +1960,140 @@
   .gsv-status-actions > span:nth-last-child(2) {
     display: none;
   }
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Mobile layout. The center panel is the home screen; the menu (rail) and chat
+   become full-height drawers revealed by swiping left/right (or tapping the
+   edge-arrow affordances). Everything here is gated on `.is-mobile`, which the
+   shell adds below MOBILE_LAYOUT_WIDTH — so the transforms can't leak onto
+   desktop and the JS layout flag and CSS can't drift across a media breakpoint.
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* Menu drawer (in a page): lift the in-flow rail — the direct child of the world
+   row — out and slide it over the center panel from the left. The `> ` keeps
+   this off the home menu (which is a rail nested in the canvas, below). The rail
+   only renders in-flow inside a page surface, so swipe-to-menu is a no-op on the
+   desktop home, where the left affordance is hidden. */
+.gsv-shell-viewport.is-mobile .gsv-shell-world > .gsv-shell-rail {
+  position: absolute;
+  z-index: 40;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: min(320px, 86vw);
+  transform: translateX(-100%);
+  transition: transform 0.24s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 22px 0 60px rgba(0, 0, 0, 0.5);
+}
+
+.gsv-shell-viewport.is-mobile.is-pane-menu .gsv-shell-world > .gsv-shell-rail {
+  transform: translateX(0);
+}
+
+/* Mobile home: the stacked menu fills the canvas in place of the node view. */
+.gsv-mobile-menu-home {
+  position: absolute;
+  inset: 0;
+  display: flex;
+}
+
+.gsv-mobile-menu-home .gsv-shell-rail {
+  width: 100%;
+  border-right: 0;
+}
+
+/* The home menu is the screen itself — there's nothing to hide it back to, so
+   drop the rail's "Hide menu" control here. (On the in-page drawer it stays and
+   closes the drawer; see onToggleCollapsed in GsvShell.) */
+.gsv-mobile-menu-home .gsv-rail-menu {
+  display: none;
+}
+
+/* The vertical rail drag-divider is a desktop-only resize affordance. */
+.gsv-shell-viewport.is-mobile .gsv-console-rail-handle {
+  display: none;
+}
+
+/* Scrim behind the menu drawer; the chat drawer is full-bleed so it needs none. */
+.gsv-mobile-scrim {
+  position: absolute;
+  z-index: 38;
+  inset: 0;
+  background: rgba(4, 3, 16, 0.55);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.24s ease;
+}
+
+.gsv-shell-viewport.is-pane-menu .gsv-mobile-scrim {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Edge affordances: a thin tab on each side of the center pane with a chevron
+   pointing the way the reveal-swipe travels (left edge → swipe right for the
+   menu; right edge → swipe left for the chat). Hidden once a drawer is open. */
+.gsv-mobile-edge {
+  position: absolute;
+  z-index: 30;
+  top: 50%;
+  width: 22px;
+  height: 64px;
+  transform: translateY(-50%);
+  border: 1px solid var(--border);
+  background: rgba(10, 8, 29, 0.72);
+  color: var(--label);
+  cursor: pointer;
+  opacity: 0.9;
+  transition: opacity 0.18s ease, color 0.18s ease, background 0.18s ease;
+}
+
+.gsv-mobile-edge.is-menu {
+  left: 0;
+  border-left: 0;
+  border-radius: 0 9px 9px 0;
+}
+
+.gsv-mobile-edge.is-chat {
+  right: 0;
+  border-right: 0;
+  border-radius: 9px 0 0 9px;
+}
+
+.gsv-mobile-edge:hover,
+.gsv-mobile-edge:focus-visible {
+  opacity: 1;
+  color: var(--text-hi);
+  background: rgba(20, 16, 48, 0.92);
+  outline: none;
+}
+
+/* CSS chevron — a small square with two adjacent borders, rotated to a point
+   (no icon asset needed). is-menu points right (›), is-chat points left (‹). */
+.gsv-mobile-edge::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 7px;
+  height: 7px;
+  border-style: solid;
+  border-color: currentColor;
+}
+
+.gsv-mobile-edge.is-menu::before {
+  border-width: 1.5px 1.5px 0 0;
+  transform: translate(-60%, -50%) rotate(45deg);
+}
+
+.gsv-mobile-edge.is-chat::before {
+  border-width: 0 0 1.5px 1.5px;
+  transform: translate(-40%, -50%) rotate(45deg);
+}
+
+.gsv-shell-viewport.is-pane-menu .gsv-mobile-edge,
+.gsv-shell-viewport.is-pane-chat .gsv-mobile-edge {
+  opacity: 0;
+  pointer-events: none;
 }

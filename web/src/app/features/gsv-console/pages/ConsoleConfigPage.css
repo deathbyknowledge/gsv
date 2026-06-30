@@ -1,4 +1,9 @@
 .gsv-console-settings-index {
+  /* Reflow off the PANEL width, not the viewport — so the template responds when
+     the chat is dragged wider. This also makes the nested SettingsListPanels
+     query against the panel width rather than the screen. */
+  container-type: inline-size;
+  container-name: panel;
   flex: 1;
   min-height: 100%;
   display: grid;
@@ -9,6 +14,15 @@
 
 .gsv-console-settings-index .gsv-console-settings-list {
   min-height: 0;
+}
+
+/* Reading-width: the index "MODELS"/"RUNTIME" SectionHeader is a full-width
+   strip (DS inline padding 14px 20px) — center its inner content while it stays
+   full-width. The settings panels stack full-width below in a single-column
+   grid, so the gutter is applied per-band (here + in SettingsListPanel.css),
+   not on the grid container. */
+.gsv-console-settings-index > .gsv-section-header {
+  padding-inline: max(20px, var(--gsv-gutter)) !important;
 }
 
 .gsv-console-settings-group,
@@ -144,7 +158,11 @@
   gap: 8px;
 }
 
-@media (max-width: 520px) {
+/* `.gsv-console-settings-group` / `.gsv-console-model-form` render inside the
+   detail page, which already establishes the `panel` container; the index
+   section establishes its own (above), so both groups of rules query the panel
+   width rather than the viewport. */
+@container panel (max-width: 520px) {
   .gsv-console-settings-index {
     gap: 14px;
   }

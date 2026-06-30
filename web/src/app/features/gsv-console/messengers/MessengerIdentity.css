@@ -87,7 +87,10 @@
   line-height: 1.5;
 }
 
-@media (max-width: 620px) {
+/* Reflow off the PANEL width (the enclosing `.gsv-console-detail-page` sets
+   container-type/name: panel), not the viewport — so the template responds
+   when the chat is dragged wider. */
+@container panel (max-width: 620px) {
   .gsv-messenger-link-code-body {
     grid-template-columns: minmax(0, 1fr);
     align-items: stretch;

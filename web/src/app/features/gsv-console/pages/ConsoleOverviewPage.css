@@ -1,3 +1,16 @@
+/* Container wrapper: the overview grid resizes itself at the breakpoints below,
+   and an element can't query its own width — so the `panel` container lives on
+   this frame, letting the grid reflow off the PANEL width (not the viewport)
+   when the chat is dragged wider. */
+.gsv-settings-overview-frame {
+  container-type: inline-size;
+  container-name: panel;
+  flex: 1 0 auto;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
 .gsv-settings-overview {
   flex: 1 0 auto;
   min-height: 100%;
@@ -285,7 +298,7 @@
   min-height: 0;
 }
 
-@media (max-width: 760px) {
+@container panel (max-width: 760px) {
   .gsv-settings-overview {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -299,7 +312,7 @@
   }
 }
 
-@media (max-width: 540px) {
+@container panel (max-width: 540px) {
   .gsv-settings-split,
   .gsv-settings-crew-grid {
     grid-template-columns: minmax(0, 1fr);

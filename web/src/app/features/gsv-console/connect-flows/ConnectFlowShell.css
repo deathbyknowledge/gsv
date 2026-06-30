@@ -2,6 +2,10 @@
    Mirrors ConsoleDetailPage rows 2–3 (header + action bar) with the wizard
    stepper as the action, then the current step body. */
 .gsv-cf {
+  /* Reflow off the PANEL width, not the viewport — so the template responds
+     when the chat is dragged wider. */
+  container-type: inline-size;
+  container-name: panel;
   flex: 1;
   min-height: 100%;
   display: flex;
@@ -16,6 +20,9 @@
   gap: 16px;
   padding: 18px 26px;
   border-bottom: 1px solid var(--rule-section);
+  /* Big screens: strip stays full-width; content aligns to the reading column
+     (matches ConsoleDetailPage so the wizard pages cap like the detail pages). */
+  padding-inline: max(26px, var(--gsv-gutter));
 }
 
 .gsv-cf-bar-lead {
@@ -61,6 +68,8 @@
   flex-direction: column;
   gap: 20px;
   padding: 28px 26px 72px;
+  /* Big screens: center the step content to the reading column. */
+  padding-inline: max(26px, var(--gsv-gutter));
 }
 
 .gsv-cf-step {
@@ -212,7 +221,7 @@
   background: var(--panel);
 }
 
-@media (max-width: 720px) {
+@container panel (max-width: 720px) {
   .gsv-cf-body {
     padding: 24px 18px 72px;
   }

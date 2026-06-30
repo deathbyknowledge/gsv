@@ -1,3 +1,4 @@
+import type { JSX } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { IconMenu } from "../../components/ui/IconMenu";
 import { StatusDot } from "../../components/ui/StatusDot";
@@ -393,6 +394,87 @@ export function GsvShell({
     ? shell.activePageTab?.libraryRoute ?? { view: "index" }
     : { view: "index" };
 
+  const railProps = {
+    activeSurface: shell.activeSurface,
+    activeTabKey: shell.activeTabKey,
+    settingsView: activeSettingsRoute.view,
+    createSection: activeCreateSection,
+    settingsKind: activeSettingsKind,
+    settingsDetailId: activeSettingsDetailId,
+    desktopObjects,
+    collapsed: shell.railCollapsed,
+    // On mobile the rail is a full-height drawer (never the collapsed icon rail),
+    // so its "Hide menu" control closes the drawer instead of toggling collapse —
+    // which would be a no-op there. (On the home menu the control is hidden via
+    // CSS, since there is nothing to return to behind it.)
+    onToggleCollapsed: shell.mobileLayout ? shell.closeMobilePanels : shell.toggleRailCollapsed,
+    onBackToDesktop: shell.desktopCollapsed ? guardedRevealDesktop : guardedBackToDesktop,
+    onOpenControlMenu: shell.openControlMenu,
+    onOpenSurface: openShellSurface,
+    onOpenObject: guardedOpenObject,
+    onCreateObject: createSectionObject,
+  };
+
+  // Mobile layout: the center panel is the home screen; the menu (rail) and chat
+  // are full-height drawers revealed by swiping (or tapping the edge arrows). On
+  // the home (desktop) surface the node view is replaced by the stacked menu.
+  const mobilePane: "menu" | "chat" | "center" = shell.mobileMenuOpen
+    ? "menu"
+    : shell.chatOpen
+      ? "chat"
+      : "center";
+
+  // Navigating from the menu drawer returns to the center pane (the new page
+  // sits underneath the open drawer otherwise). Mobile-only so it never closes
+  // the chat on desktop, where navigation and the chat dock coexist.
+  useEffect(() => {
+    if (shell.mobileLayout) {
+      shell.closeMobilePanels();
+    }
+    // closeMobilePanels is recreated each render; depend on the route + layout.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shell.activeSurface, shell.activeTabKey, shell.mobileLayout]);
+
+  const swipeStartRef = useRef<{ x: number; y: number } | null>(null);
+  const handleViewportTouchStart = (event: JSX.TargetedTouchEvent<HTMLDivElement>): void => {
+    if (!shell.mobileLayout || event.touches.length !== 1) {
+      swipeStartRef.current = null;
+      return;
+    }
+    const touch = event.touches[0];
+    swipeStartRef.current = { x: touch.clientX, y: touch.clientY };
+  };
+  const handleViewportTouchEnd = (event: JSX.TargetedTouchEvent<HTMLDivElement>): void => {
+    const start = swipeStartRef.current;
+    swipeStartRef.current = null;
+    if (!start || !shell.mobileLayout) {
+      return;
+    }
+    const touch = event.changedTouches[0];
+    const dx = touch.clientX - start.x;
+    const dy = touch.clientY - start.y;
+    // Require a clear, horizontally-dominant swipe so vertical scrolling and
+    // small taps don't move panes.
+    if (Math.abs(dx) < 56 || Math.abs(dx) < Math.abs(dy) * 1.4) {
+      return;
+    }
+    if (dx < 0) {
+      // Swipe left → reveal chat, or close the menu drawer.
+      if (shell.mobileMenuOpen) {
+        shell.closeMobilePanels();
+      } else if (!shell.chatOpen) {
+        shell.setChatOpen(true);
+      }
+    } else {
+      // Swipe right → reveal menu, or close the chat drawer.
+      if (shell.chatOpen) {
+        shell.setChatOpen(false);
+      } else if (!shell.mobileMenuOpen && shell.showRail) {
+        shell.openMobileMenu();
+      }
+    }
+  };
+
   return (
     <UnsavedGuardProvider value={guard.contextValue}>
     <div
@@ -402,30 +484,15 @@ export function GsvShell({
     >
       <div
         ref={rootRef}
-        class={`gsv-shell-viewport${shell.chatOpen ? " has-chat" : ""}${shell.chatDragging ? " is-chat-dragging" : ""}`}
+        class={`gsv-shell-viewport${shell.chatOpen ? " has-chat" : ""}${shell.chatDragging ? " is-chat-dragging" : ""}${shell.mobileLayout ? ` is-mobile is-pane-${mobilePane}` : ""}`}
+        onTouchStart={handleViewportTouchStart}
+        onTouchEnd={handleViewportTouchEnd}
       >
         <main
           class={`gsv-shell-world${shell.activeSurface !== "desktop" ? " has-page" : ""}${shell.desktopCollapsed ? " is-desktop-collapsed" : ""}${shell.railCollapsed ? " is-rail-collapsed" : ""}`}
           style={{ "--gsv-rail-width": `${shell.showRail ? (shell.railCollapsed ? 64 : 262) : 0}px` }}
         >
-          {shell.showRail ? (
-            <ShellRail
-              activeSurface={shell.activeSurface}
-              activeTabKey={shell.activeTabKey}
-              settingsView={activeSettingsRoute.view}
-              createSection={activeCreateSection}
-              settingsKind={activeSettingsKind}
-              settingsDetailId={activeSettingsDetailId}
-              desktopObjects={desktopObjects}
-              collapsed={shell.railCollapsed}
-              onToggleCollapsed={shell.toggleRailCollapsed}
-              onBackToDesktop={shell.desktopCollapsed ? guardedRevealDesktop : guardedBackToDesktop}
-              onOpenControlMenu={shell.openControlMenu}
-              onOpenSurface={openShellSurface}
-              onOpenObject={guardedOpenObject}
-              onCreateObject={createSectionObject}
-            />
-          ) : null}
+          {shell.showRail ? <ShellRail {...railProps} /> : null}
 
           <section class="gsv-shell-canvas" aria-label={shellSurfaceLabel(shell.activeSurface)}>
             {shell.activeSurface !== "desktop" ? (
@@ -471,6 +538,11 @@ export function GsvShell({
               </>
             ) : shell.desktopCollapsed ? (
               <CollapsedDesktop />
+            ) : shell.mobileLayout ? (
+              // Mobile home: the stacked menu replaces the desktop node view.
+              <div class="gsv-mobile-menu-home">
+                <ShellRail {...railProps} />
+              </div>
             ) : (
               <>
                 <GsvDesktop
@@ -564,6 +636,33 @@ export function GsvShell({
           userLabel={sessionUsername}
           onSelectAgent={selectChatAgent}
         />
+
+        {shell.mobileLayout ? (
+          <>
+            {/* Scrim behind the menu drawer; tap to return to the center pane. */}
+            <div
+              class="gsv-mobile-scrim"
+              onClick={shell.closeMobilePanels}
+              aria-hidden="true"
+            />
+            {/* Discrete edge affordances: chevrons hint the swipe that reveals
+                each full-height drawer (right → menu, left → chat). */}
+            {shell.showRail ? (
+              <button
+                type="button"
+                class="gsv-mobile-edge is-menu"
+                aria-label="Open menu"
+                onClick={shell.openMobileMenu}
+              />
+            ) : null}
+            <button
+              type="button"
+              class="gsv-mobile-edge is-chat"
+              aria-label="Open chat"
+              onClick={() => shell.setChatOpen(true)}
+            />
+          </>
+        ) : null}
       </div>
 
       <ShellStatusBar

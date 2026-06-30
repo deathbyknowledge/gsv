@@ -1,3 +1,4 @@
+import { createPortal } from "preact/compat";
 import { useState } from "preact/hooks";
 import { Button } from "../../../components/ui/Button";
 import { ConfirmModal } from "../../../components/ui/ConfirmModal";
@@ -128,18 +129,25 @@ export function MessengerIdentityLinks({
         <p class="gsv-messenger-identity-error">{removeLink.error.message}</p>
       ) : null}
       {confirmUnlink ? (
-        <div class="gsv-console-confirm-layer" onClick={() => setConfirmUnlink(null)}>
-          <div class="gsv-console-confirm-wrap" onClick={(event) => event.stopPropagation()}>
-            <ConfirmModal
-              title="CONFIRM UNLINK"
-              message={`Unlink ${confirmUnlink.actorId} from ${messenger.accountId}?`}
-              note="Future messages from this external identity will not resolve to the linked GSV account."
-              confirmLabel={removeLink.isPending ? "REMOVING" : "UNLINK"}
-              onCancel={() => setConfirmUnlink(null)}
-              onConfirm={() => void unlink(confirmUnlink)}
-            />
-          </div>
-        </div>
+        // Portal to <body>: the parent ConsoleDetailPage sets `container-type`,
+        // which makes it the containing block for fixed descendants — so without
+        // this the scrim resolves against the panel and can't cover the shell
+        // (matching the AgentEditor delete-modal portal).
+        createPortal(
+          <div class="gsv-console-confirm-layer" onClick={() => setConfirmUnlink(null)}>
+            <div class="gsv-console-confirm-wrap" onClick={(event) => event.stopPropagation()}>
+              <ConfirmModal
+                title="CONFIRM UNLINK"
+                message={`Unlink ${confirmUnlink.actorId} from ${messenger.accountId}?`}
+                note="Future messages from this external identity will not resolve to the linked GSV account."
+                confirmLabel={removeLink.isPending ? "REMOVING" : "UNLINK"}
+                onCancel={() => setConfirmUnlink(null)}
+                onConfirm={() => void unlink(confirmUnlink)}
+              />
+            </div>
+          </div>,
+          document.body,
+        )
       ) : null}
     </>
   );

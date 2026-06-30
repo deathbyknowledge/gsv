@@ -1,4 +1,9 @@
 .gsv-console-agent {
+  /* Reflow off the PANEL width, not the viewport — so the editor padding
+     tightens when the chat is dragged wider. The delete-confirm scrim is
+     portaled to <body>, so this container does not trap its fixed positioning. */
+  container-type: inline-size;
+  container-name: panel;
   flex: 1;
   min-height: 100%;
   display: flex;
@@ -23,7 +28,7 @@
   min-height: 100% !important;
 }
 
-@media (max-width: 680px) {
+@container panel (max-width: 680px) {
   .gsv-console-agent-frame {
     padding: 16px;
   }

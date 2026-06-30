@@ -1,6 +1,10 @@
 /* CARD list template — one header, a horizontal action bar on top, then a
    full-width card grid. Frame tokens mirror the Settings Overview / table. */
 .gsv-card-template {
+  /* Reflow off the PANEL width (not the viewport) so the bar + grid respond
+     when the chat is dragged wider, not only on small screens. */
+  container-type: inline-size;
+  container-name: panel;
   flex: 1 0 auto;
   min-height: 100%;
   margin-bottom: 88px;
@@ -21,6 +25,9 @@
   gap: 16px;
   padding: 16px;
   border-bottom: 1px solid var(--rule-section);
+  /* Big screens: toolbar strip stays full-width (border spans the panel); its
+     controls align to the centered reading column. */
+  padding-inline: max(16px, var(--gsv-gutter));
 }
 
 .gsv-card-template-search {
@@ -63,11 +70,33 @@
   margin-left: 0;
 }
 
-/* Three controls in a tight bar: search takes the first row. */
-@media (max-width: 720px) {
+/* Three controls in a tight panel: search takes the first row. Keyed to the
+   PANEL container, not the viewport. */
+@container panel (max-width: 720px) {
   .gsv-card-template-action[data-actions="3"] .gsv-card-template-search {
     flex-basis: 100%;
     max-width: none;
+  }
+}
+
+/* Phone-width panel: stack the action bar so controls stay legible. */
+@container panel (max-width: 480px) {
+  .gsv-card-template-action {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .gsv-card-template-search,
+  .gsv-card-template-filters,
+  .gsv-card-template-connect {
+    flex: 0 0 auto;
+    width: 100%;
+    max-width: none;
+    margin-left: 0;
+  }
+
+  .gsv-card-template-connect .gsv-btn {
+    width: 100%;
   }
 }
 
@@ -81,10 +110,20 @@
 
 .gsv-card-template-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  /* min(100%, 300px) keeps a single column from overflowing once the panel is
+     narrower than the 300px card minimum. */
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
   align-items: stretch;
   gap: 16px;
   padding: 16px;
+  /* Big screens: center the card grid to the reading column. */
+  padding-inline: max(16px, var(--gsv-gutter));
+}
+
+/* Title bar is a full-width strip; only its inner content indents to the
+   centered column (!important beats SectionHeader's inline left/right padding). */
+.gsv-card-template-header {
+  padding-inline: max(20px, var(--gsv-gutter)) !important;
 }
 
 /* Card shell — a DS Surface (border + panel bg) tuned for bare cards like
