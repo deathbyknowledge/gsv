@@ -278,8 +278,79 @@ export function useLibraryWorkspace(
     navigate: guardedNavigate,
     openCollection: (db: string) => guardedNavigate({ view: "index", db }),
     openEditor: (path?: string) => {
-      if (selectedDb) {
-        guardedNavigate({ view: "editor", db: selectedDb, ...(path ? { path: localLibraryPath(path, selectedDb) } : {}) });
+      if (!selectedDb) {
+        return;
+      }
+      const target: ShellLibraryRoute = path
+        ? { view: "editor", db: selectedDb, path: localLibraryPath(path, selectedDb) }
+        : { view: "editor", db: selectedDb };
+      const proceed = () => {
+        // Opening a fresh blank page: clear any leftover editor draft so the
+        // initializer rebuilds it from scratch. Without this, the `!editorPath`
+        // guard in the editor effect skips re-init and a previously-discarded
+        // draft reappears (and could be saved by accident). Editing an existing
+        // page passes a path; selectedNote then repopulates the editor.
+        if (!path) {
+          setEditorPath("");
+          setEditorMarkdown("");
+        }
+        navigate(target);
+      };
+      if (requestLeave) {
+        requestLeave(proceed);
+      } else {
+        proceed();
+      }
+    },
+    openBuild: () => {
+      const proceed = () => {
+        // Fresh build draft: clear leftover fields so a previously-discarded
+        // build doesn't reappear (and can't be submitted by accident). buildDbId
+        // is re-seeded from the collection by the effect once cleared.
+        setBuildPath("");
+        setBuildDbTitle("");
+        setBuildTarget("gsv");
+        setBuildDbId("");
+        navigate({ view: "build", ...(selectedDb ? { db: selectedDb } : {}) });
+      };
+      if (requestLeave) {
+        requestLeave(proceed);
+      } else {
+        proceed();
+      }
+    },
+    openCapture: () => {
+      if (!selectedDb) {
+        return;
+      }
+      const proceed = () => {
+        // Fresh capture draft: clear leftover ingest fields for the same reason.
+        setIngestPath("");
+        setIngestTitle("");
+        setIngestSummary("");
+        setIngestTarget("gsv");
+        navigate({ view: "capture", db: selectedDb });
+      };
+      if (requestLeave) {
+        requestLeave(proceed);
+      } else {
+        proceed();
+      }
+    },
+    closeCreateCollection: () => {
+      // Closing the NEW COLLECTION box discards its draft. Route through the
+      // guard (the collection probe is still live on index/reader) so a typed
+      // title/id prompts first, then clear the draft once the close goes through
+      // — otherwise the abandoned text silently reappears on the next open.
+      const proceed = () => {
+        setCreateCollectionOpen(false);
+        setNewCollectionTitle("");
+        setNewCollectionId("");
+      };
+      if (requestLeave) {
+        requestLeave(proceed);
+      } else {
+        proceed();
       }
     },
     openPage: (path: string) => {

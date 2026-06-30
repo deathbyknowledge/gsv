@@ -96,9 +96,17 @@ export function LibraryPage({ route = { view: "index" }, onRouteChange }: Librar
       library.activeRoute.view === "build" &&
       (library.buildPath.trim().length > 0 ||
         library.buildDbTitle.trim().length > 0 ||
-        library.buildTarget !== "gsv");
+        library.buildTarget !== "gsv" ||
+        // DESTINATION ID is auto-seeded to the collection id, so a length check
+        // can't tell "untouched" from "typed". Dirty only when it diverges from
+        // that seed (activeRoute.db, falling back to the selected collection).
+        (library.buildDbId.trim().length > 0 &&
+          library.buildDbId !== (library.activeRoute.db ?? library.state.selectedDb ?? "")));
     const collectionDirty =
-      library.activeRoute.view === "index" &&
+      // The collection bar (NEW COLLECTION draft) renders on both the index and
+      // the reader, so a draft typed from either view must register as dirty —
+      // guarding only the index dropped reader-opened drafts without a prompt.
+      (library.activeRoute.view === "index" || library.activeRoute.view === "reader") &&
       library.createCollectionOpen &&
       (library.newCollectionTitle.trim().length > 0 ||
         library.newCollectionId.trim().length > 0);
@@ -190,12 +198,14 @@ function LibraryCollectionBar({ library }: { library: LibraryRuntime }) {
           <Button
             variant="primary"
             label={library.createCollectionOpen ? "CLOSE" : "NEW COLLECTION"}
-            onClick={() => library.setCreateCollectionOpen((open) => !open)}
+            onClick={() => library.createCollectionOpen
+              ? library.closeCreateCollection()
+              : library.setCreateCollectionOpen(true)}
           />
           <Button
             variant="secondary"
             label="BUILD"
-            onClick={() => library.navigate({ view: "build", ...(selectedDb ? { db: selectedDb } : {}) })}
+            onClick={() => library.openBuild()}
           />
         </div>
       </header>
@@ -239,7 +249,7 @@ function LibraryIndex({ library }: { library: LibraryRuntime }) {
             variant="secondary"
             label="CAPTURE SOURCE"
             disabled={!selectedDb}
-            onClick={() => selectedDb ? library.navigate({ view: "capture", db: selectedDb }) : undefined}
+            onClick={() => library.openCapture()}
           />
         </section>
 
@@ -819,7 +829,7 @@ function CreateCollectionBox({ library }: { library: LibraryRuntime }) {
           variant="secondary"
           label="CANCEL"
           disabled={library.mutating}
-          onClick={() => library.setCreateCollectionOpen(false)}
+          onClick={() => library.closeCreateCollection()}
         />
         <Button
           variant="primary"
