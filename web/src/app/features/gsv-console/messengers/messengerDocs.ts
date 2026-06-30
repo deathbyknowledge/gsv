@@ -1,10 +1,10 @@
-// External documentation per adapter (GSV adapters repo).
+// External documentation per adapter (GSV docs site).
 export const ADAPTER_DOC_URLS: Record<string, string> = {
-  telegram: "https://github.com/deathbyknowledge/gsv/tree/main/adapters/telegram",
-  discord: "https://github.com/deathbyknowledge/gsv/tree/main/adapters/discord",
+  telegram: "https://docs.gsv.space/how-to/messengers#telegram",
+  discord: "https://docs.gsv.space/how-to/messengers#discord",
 };
 
-const ADAPTERS_ROOT_URL = "https://github.com/deathbyknowledge/gsv/tree/main/adapters";
+const ADAPTERS_ROOT_URL = "https://docs.gsv.space/how-to/messengers";
 
 // Returns the doc URL for an adapter, falling back to the adapters root.
 export function adapterDocUrl(adapter: string): string {
