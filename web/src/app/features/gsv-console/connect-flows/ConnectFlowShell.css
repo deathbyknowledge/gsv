@@ -20,6 +20,9 @@
   gap: 16px;
   padding: 18px 26px;
   border-bottom: 1px solid var(--rule-section);
+  /* Big screens: strip stays full-width; content aligns to the reading column
+     (matches ConsoleDetailPage so the wizard pages cap like the detail pages). */
+  padding-inline: max(26px, var(--gsv-gutter));
 }
 
 .gsv-cf-bar-lead {
@@ -65,6 +68,8 @@
   flex-direction: column;
   gap: 20px;
   padding: 28px 26px 72px;
+  /* Big screens: center the step content to the reading column. */
+  padding-inline: max(26px, var(--gsv-gutter));
 }
 
 .gsv-cf-step {

@@ -394,8 +394,26 @@ export function GsvShell({
     ? shell.activePageTab?.libraryRoute ?? { view: "index" }
     : { view: "index" };
 
+  const railProps = {
+    activeSurface: shell.activeSurface,
+    activeTabKey: shell.activeTabKey,
+    settingsView: activeSettingsRoute.view,
+    createSection: activeCreateSection,
+    settingsKind: activeSettingsKind,
+    settingsDetailId: activeSettingsDetailId,
+    desktopObjects,
+    collapsed: shell.railCollapsed,
+    onToggleCollapsed: shell.toggleRailCollapsed,
+    onBackToDesktop: shell.desktopCollapsed ? guardedRevealDesktop : guardedBackToDesktop,
+    onOpenControlMenu: shell.openControlMenu,
+    onOpenSurface: openShellSurface,
+    onOpenObject: guardedOpenObject,
+    onCreateObject: createSectionObject,
+  };
+
   // Mobile layout: the center panel is the home screen; the menu (rail) and chat
-  // are full-height drawers revealed by swiping (or tapping the edge arrows).
+  // are full-height drawers revealed by swiping (or tapping the edge arrows). On
+  // the home (desktop) surface the node view is replaced by the stacked menu.
   const mobilePane: "menu" | "chat" | "center" = shell.mobileMenuOpen
     ? "menu"
     : shell.chatOpen
@@ -470,24 +488,7 @@ export function GsvShell({
           class={`gsv-shell-world${shell.activeSurface !== "desktop" ? " has-page" : ""}${shell.desktopCollapsed ? " is-desktop-collapsed" : ""}${shell.railCollapsed ? " is-rail-collapsed" : ""}`}
           style={{ "--gsv-rail-width": `${shell.showRail ? (shell.railCollapsed ? 64 : 262) : 0}px` }}
         >
-          {shell.showRail ? (
-            <ShellRail
-              activeSurface={shell.activeSurface}
-              activeTabKey={shell.activeTabKey}
-              settingsView={activeSettingsRoute.view}
-              createSection={activeCreateSection}
-              settingsKind={activeSettingsKind}
-              settingsDetailId={activeSettingsDetailId}
-              desktopObjects={desktopObjects}
-              collapsed={shell.railCollapsed}
-              onToggleCollapsed={shell.toggleRailCollapsed}
-              onBackToDesktop={shell.desktopCollapsed ? guardedRevealDesktop : guardedBackToDesktop}
-              onOpenControlMenu={shell.openControlMenu}
-              onOpenSurface={openShellSurface}
-              onOpenObject={guardedOpenObject}
-              onCreateObject={createSectionObject}
-            />
-          ) : null}
+          {shell.showRail ? <ShellRail {...railProps} /> : null}
 
           <section class="gsv-shell-canvas" aria-label={shellSurfaceLabel(shell.activeSurface)}>
             {shell.activeSurface !== "desktop" ? (
@@ -533,6 +534,11 @@ export function GsvShell({
               </>
             ) : shell.desktopCollapsed ? (
               <CollapsedDesktop />
+            ) : shell.mobileLayout ? (
+              // Mobile home: the stacked menu replaces the desktop node view.
+              <div class="gsv-mobile-menu-home">
+                <ShellRail {...railProps} />
+              </div>
             ) : (
               <>
                 <GsvDesktop

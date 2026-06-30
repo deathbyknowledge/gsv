@@ -1970,10 +1970,12 @@
    desktop and the JS layout flag and CSS can't drift across a media breakpoint.
    ────────────────────────────────────────────────────────────────────────── */
 
-/* Menu drawer: lift the rail out of the flex row and slide it over the center
-   panel from the left. (The rail only renders inside a page surface, so swipe-
-   to-menu is a no-op on the desktop home, where the left affordance is hidden.) */
-.gsv-shell-viewport.is-mobile .gsv-shell-rail {
+/* Menu drawer (in a page): lift the in-flow rail — the direct child of the world
+   row — out and slide it over the center panel from the left. The `> ` keeps
+   this off the home menu (which is a rail nested in the canvas, below). The rail
+   only renders in-flow inside a page surface, so swipe-to-menu is a no-op on the
+   desktop home, where the left affordance is hidden. */
+.gsv-shell-viewport.is-mobile .gsv-shell-world > .gsv-shell-rail {
   position: absolute;
   z-index: 40;
   top: 0;
@@ -1985,8 +1987,20 @@
   box-shadow: 22px 0 60px rgba(0, 0, 0, 0.5);
 }
 
-.gsv-shell-viewport.is-mobile.is-pane-menu .gsv-shell-rail {
+.gsv-shell-viewport.is-mobile.is-pane-menu .gsv-shell-world > .gsv-shell-rail {
   transform: translateX(0);
+}
+
+/* Mobile home: the stacked menu fills the canvas in place of the node view. */
+.gsv-mobile-menu-home {
+  position: absolute;
+  inset: 0;
+  display: flex;
+}
+
+.gsv-mobile-menu-home .gsv-shell-rail {
+  width: 100%;
+  border-right: 0;
 }
 
 /* The vertical rail drag-divider is a desktop-only resize affordance. */
