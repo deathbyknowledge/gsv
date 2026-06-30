@@ -39,9 +39,10 @@ const MIN_CONSOLE_WIDTH = 360;
 const MIN_CONSOLE_DRAG_WIDTH = 320;
 const MIN_DESKTOP_TREE_WIDTH = 600;
 const MIN_DESKTOP_RAIL_CANVAS_WIDTH = 40;
-const STACKED_LAYOUT_WIDTH = 760;
-const MIN_STACKED_CHAT_HEIGHT = 300;
-const MIN_STACKED_WORLD_HEIGHT = 260;
+// Below this panel width the shell switches to the mobile layout: the center
+// panel is the home screen, and the menu (rail) and chat become full-height
+// drawers revealed by swiping left/right (see GsvShell mobile pane handling).
+const MOBILE_LAYOUT_WIDTH = 760;
 const SHELL_TABS_STORAGE_KEY = "gsv.shell.tabs.v1";
 
 type UseGsvShellStateArgs = {
@@ -123,7 +124,6 @@ export function useGsvShellState({
   const [initialRoute] = useState<ShellRoute>(() => readInitialRoute());
   const initialTab = shellTabForRoute(initialRoute);
   const [rootWidth, setRootWidth] = useState(1280);
-  const [rootHeight, setRootHeight] = useState(760);
   const [activeSurface, setActiveSurface] = useState<ShellSurfaceId>(() => surfaceForRoute(initialRoute));
   const [openTabs, setOpenTabs] = useState<ShellPageTab[]>(() => {
     const persistedTabs = readPersistedTabs();
@@ -137,6 +137,9 @@ export function useGsvShellState({
   const [chatOpen, setChatOpen] = useState(false);
   const [chatWidth, setChatWidth] = useState(DEFAULT_CHAT_WIDTH);
   const [chatDragging, setChatDragging] = useState(false);
+  // Mobile-only: the menu (rail) drawer. Chat reuses chatOpen; the two are kept
+  // mutually exclusive below so only one full-height drawer shows at a time.
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   // Set while dragging the rail divider, so the trailing click doesn't also toggle.
   const railDraggedRef = useRef(false);
 
@@ -149,7 +152,6 @@ export function useGsvShellState({
     const update = () => {
       const rect = node.getBoundingClientRect();
       setRootWidth(rect.width);
-      setRootHeight(rect.height);
     };
     update();
 
@@ -168,23 +170,33 @@ export function useGsvShellState({
   }, [openTabs]);
 
   const inPageZone = activeSurface !== "desktop";
-  const stackedLayout = rootWidth <= STACKED_LAYOUT_WIDTH;
+  const mobileLayout = rootWidth <= MOBILE_LAYOUT_WIDTH;
+  // Desktop chat resize math. On mobile the chat is a full-height drawer that
+  // overlays the center panel, so it no longer steals panel width and this is
+  // unused (the resize handle is hidden — see the mobile rules in ChatDock.css).
   const maxChatWidth = Math.max(
-    stackedLayout ? MIN_STACKED_CHAT_HEIGHT : MIN_CHAT_WIDTH,
-    stackedLayout
-      ? rootHeight - MIN_STACKED_WORLD_HEIGHT
-      : rootWidth - (inPageZone ? COLLAPSED_RAIL_WIDTH + MIN_CONSOLE_DRAG_WIDTH : COLLAPSED_RAIL_WIDTH),
+    MIN_CHAT_WIDTH,
+    rootWidth - (inPageZone ? COLLAPSED_RAIL_WIDTH + MIN_CONSOLE_DRAG_WIDTH : COLLAPSED_RAIL_WIDTH),
   );
-  const resolvedChatWidth = clamp(chatWidth, stackedLayout ? MIN_STACKED_CHAT_HEIGHT : MIN_CHAT_WIDTH, maxChatWidth);
-  const mainWidth = rootWidth - (!stackedLayout && chatOpen ? resolvedChatWidth : 0);
-  const desktopCollapsed = !stackedLayout && !inPageZone && chatOpen && mainWidth < MIN_DESKTOP_TREE_WIDTH;
-  const autoRailCollapsed = !stackedLayout && chatOpen && (
+  const resolvedChatWidth = clamp(chatWidth, MIN_CHAT_WIDTH, maxChatWidth);
+  const mainWidth = rootWidth - (!mobileLayout && chatOpen ? resolvedChatWidth : 0);
+  const desktopCollapsed = !mobileLayout && !inPageZone && chatOpen && mainWidth < MIN_DESKTOP_TREE_WIDTH;
+  const autoRailCollapsed = !mobileLayout && chatOpen && (
     inPageZone
       ? mainWidth - EXPANDED_RAIL_WIDTH < MIN_CONSOLE_WIDTH
       : desktopCollapsed && mainWidth - EXPANDED_RAIL_WIDTH < MIN_DESKTOP_RAIL_CANVAS_WIDTH
   );
-  const railCollapsed = manualRailCollapsed || autoRailCollapsed;
+  // On mobile the rail is the full-height menu drawer, always shown expanded.
+  const railCollapsed = !mobileLayout && (manualRailCollapsed || autoRailCollapsed);
   const showRail = inPageZone || desktopCollapsed;
+
+  // Mobile drawers are mutually exclusive and only exist in the mobile layout:
+  // leaving that layout, or opening the chat, closes the menu drawer.
+  useEffect(() => {
+    if (!mobileLayout || chatOpen) {
+      setMobileMenuOpen(false);
+    }
+  }, [mobileLayout, chatOpen]);
   const selectedObject = getDesktopObject(desktopObjects, selectedObjectId);
   const activePageTab = activeTabKey ? openTabs.find((tab) => tab.key === activeTabKey) ?? null : null;
 
@@ -366,20 +378,11 @@ export function useGsvShellState({
     }
 
     const reserve = inPageZone ? COLLAPSED_RAIL_WIDTH + MIN_CONSOLE_DRAG_WIDTH : COLLAPSED_RAIL_WIDTH;
-    const stackedDrag = rect.width <= STACKED_LAYOUT_WIDTH;
-    const minChatExtent = stackedDrag ? MIN_STACKED_CHAT_HEIGHT : MIN_CHAT_WIDTH;
-    const maxChatExtent = Math.max(
-      minChatExtent,
-      stackedDrag ? rect.height - MIN_STACKED_WORLD_HEIGHT : rect.width - reserve,
-    );
+    const maxChatExtent = Math.max(MIN_CHAT_WIDTH, rect.width - reserve);
     setChatDragging(true);
 
     const onMove = (moveEvent: MouseEvent) => {
-      const nextWidth = clamp(
-        stackedDrag ? rect.bottom - moveEvent.clientY : rect.right - moveEvent.clientX,
-        minChatExtent,
-        maxChatExtent,
-      );
+      const nextWidth = clamp(rect.right - moveEvent.clientX, MIN_CHAT_WIDTH, maxChatExtent);
       setChatWidth(nextWidth);
     };
     const onUp = () => {
@@ -445,6 +448,18 @@ export function useGsvShellState({
     setChatWidth(maxChatWidth);
   };
 
+  // Mobile pane controls. The menu and chat are full-height drawers over the
+  // center panel; opening one closes the other (chatOpen also closes the menu
+  // via the effect above, covering the non-mobile-menu open paths).
+  const openMobileMenu = (): void => {
+    setChatOpen(false);
+    setMobileMenuOpen(true);
+  };
+  const closeMobilePanels = (): void => {
+    setMobileMenuOpen(false);
+    setChatOpen(false);
+  };
+
   const pickerTitle = "GSV // CONTROL";
   const pickerSubtitle = "System surfaces";
 
@@ -462,10 +477,14 @@ export function useGsvShellState({
     chatDragging,
     chatOpen,
     closeActiveScreen,
+    closeMobilePanels,
     desktopCollapsed,
     gsvOpen,
     maxChatWidth,
+    mobileLayout,
+    mobileMenuOpen,
     openControlMenu,
+    openMobileMenu,
     openObject,
     openAppRoute,
     openSettingsRoute,

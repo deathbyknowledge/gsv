@@ -16,15 +16,6 @@
   min-height: 0;
 }
 
-/* Reading-width: the index "MODELS"/"RUNTIME" SectionHeader is a full-width
-   strip (DS inline padding 14px 20px) — center its inner content while it stays
-   full-width. The settings panels stack full-width below in a single-column
-   grid, so the gutter is applied per-band (here + in SettingsListPanel.css),
-   not on the grid container. */
-.gsv-console-settings-index > .gsv-section-header {
-  padding-inline: max(20px, var(--gsv-gutter)) !important;
-}
-
 .gsv-console-settings-group,
 .gsv-console-model-form {
   min-width: 0;

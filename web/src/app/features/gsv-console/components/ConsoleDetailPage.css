@@ -15,9 +15,6 @@
 /* Row-2 header: full-width bar, flush under the breadcrumb — like the list pages. */
 .gsv-console-detail-header.gsv-section-header {
   width: 100%;
-  /* Full-width title strip; inner content indents to the centered reading
-     column on big screens (!important beats SectionHeader's inline padding). */
-  padding-inline: max(20px, var(--gsv-gutter)) !important;
 }
 
 /* Opt-in back control for non-route-backed callers (config details), so they
@@ -48,10 +45,6 @@
   flex-direction: column;
   gap: 24px;
   padding: 28px 26px 72px;
-  /* Big screens: center the detail content to the reading column. (The narrow
-     @container rules below re-set padding for small panels, where the gutter is
-     0 anyway, so they take precedence as intended.) */
-  padding-inline: max(26px, var(--gsv-gutter));
 }
 
 .gsv-console-detail-head {
@@ -117,8 +110,6 @@
   gap: 16px;
   padding: 18px 26px;
   border-bottom: 1px solid var(--rule-section);
-  /* Big screens: strip stays full-width; content aligns to the reading column. */
-  padding-inline: max(26px, var(--gsv-gutter));
 }
 
 .gsv-console-detail-bar-lead {

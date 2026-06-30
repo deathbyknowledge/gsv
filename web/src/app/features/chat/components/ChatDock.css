@@ -2915,25 +2915,32 @@ button.gsv-chat-task-row:focus-visible {
   }
 }
 
-@media (max-width: 760px) {
-  .gsv-chat {
-    width: 100% !important;
-    max-width: none;
-    min-width: 0;
-    height: min(var(--gsv-chat-width), calc(100% - 240px));
-    min-height: min(300px, 48%);
-    max-height: calc(100% - 220px);
-    border-top: 1px solid var(--border);
-    border-left: 0;
-  }
+/* Mobile: the chat is a full-height drawer that slides in over the center panel
+   from the right (see the shell's mobile pane handling in gsvShell.css). It only
+   mounts when open, so it animates in on entry; closing simply unmounts it. */
+.gsv-shell-viewport.is-mobile .gsv-chat {
+  position: absolute;
+  z-index: 45;
+  inset: 0;
+  width: 100% !important;
+  max-width: none;
+  min-width: 0;
+  height: 100%;
+  border-left: 0;
+  animation: gsvMobileChatIn 0.24s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
 
-  .gsv-chat-resize {
-    top: -3px;
-    right: 0;
-    bottom: auto;
-    left: 0;
-    width: auto;
-    height: 7px;
-    cursor: ns-resize;
+/* The drag-to-resize handle is desktop-only; mobile drawers are full-bleed. */
+.gsv-shell-viewport.is-mobile .gsv-chat-resize,
+.gsv-shell-viewport.is-mobile .gsv-chat-min {
+  display: none;
+}
+
+@keyframes gsvMobileChatIn {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
   }
 }
