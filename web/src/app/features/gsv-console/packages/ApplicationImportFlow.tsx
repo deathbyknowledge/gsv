@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from "preact/hooks";
-import { useUnsavedGuard, useUnsavedGuardLeave } from "../../gsv-shell/unsaved/unsavedGuard";
+import { useUnsavedGuard } from "../../gsv-shell/unsaved/unsavedGuard";
 import { Button } from "../../../components/ui/Button";
 import { Checkbox } from "../../../components/ui/Checkbox";
 import { Icon } from "../../../components/ui/Icon";
@@ -157,11 +157,6 @@ export function ApplicationImportFlow({
     return () => window.clearInterval(timer);
   }, [reviewPid, reviewHistory.refetch]);
 
-  // The wizard's own back controls unmount it like shell nav does, so route
-  // them through the guard to prompt before discarding the import draft.
-  const requestLeave = useUnsavedGuardLeave();
-  const guardedBack = () => requestLeave(onBack);
-
   const openImportedPackage = (pkg: ConsolePackage | null) => {
     if (pkg && onOpenPackage) {
       onOpenPackage(pkg);
@@ -246,7 +241,6 @@ export function ApplicationImportFlow({
       {importError ? <div class="application-import-inline-error" role="alert">{importError}</div> : null}
       {footnote}
       <div class="gsv-cf-footer">
-        <Button variant="secondary" label="BACK TO APPLICATIONS" disabled={flow.importMutation.isPending} onClick={guardedBack} />
         <span class="gsv-cf-footer-spacer" />
         <Button
           variant="primary"
