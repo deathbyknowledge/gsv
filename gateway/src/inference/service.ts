@@ -18,6 +18,12 @@ import {
 
 const GENERATION_SERVICE_MARKER = "__gsvGenerationService";
 
+const OPENROUTER_ATTR_HEADERS = {
+  "HTTP-Referer": "https://gsv.space",
+  "X-OpenRouter-Title": "GSV",
+  "X-OpenRouter-Categories": "personal-agent",
+};
+
 type GenerateRequest = {
   config: AiConfigResult;
   context: Context;
@@ -68,6 +74,9 @@ export function createGenerationService(): GenerationService {
       maxTokens: options.maxTokens,
       signal: controller.signal,
       timeoutMs: generationTimeoutMs,
+      headers: {
+        ...(options.modelProvider === "openrouter" ? OPENROUTER_ATTR_HEADERS : {})
+      },
     });
     void result.result().then(
       () => clearTimeout(timeout),
@@ -103,6 +112,9 @@ export function createGenerationService(): GenerationService {
           maxTokens: options.maxTokens,
           signal: controller.signal,
           timeoutMs: generationTimeoutMs,
+          headers: {
+            ...(options.modelProvider === "openrouter" ? OPENROUTER_ATTR_HEADERS : {})
+          },
         }),
         generationTimeoutMs,
         generationTimeoutMessage(generationTimeoutMs),
