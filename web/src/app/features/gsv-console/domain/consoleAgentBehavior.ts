@@ -52,11 +52,12 @@ const DEFAULT_APPROVAL_POLICY: ApprovalPolicy = {
 export function behaviorForAccount(
   config: readonly ConsoleConfigEntry[],
   uid: number,
+  ownerUid?: number | null,
 ): ConsoleAgentBehavior {
   const model = modelOverrideForAccount(config, uid);
   const reasoning = reasoningOverrideForAccount(config, uid);
   const approvalOverride = approvalOverrideForAccount(config, uid);
-  const approval = approvalOverride || defaultApprovalPolicyForConfig(config);
+  const approval = approvalOverride || defaultApprovalPolicyForConfig(config, ownerUid);
 
   return {
     approval,
@@ -68,9 +69,15 @@ export function behaviorForAccount(
   };
 }
 
-export function defaultApprovalPolicyForConfig(config: readonly ConsoleConfigEntry[]): string {
+export function defaultApprovalPolicyForConfig(
+  config: readonly ConsoleConfigEntry[],
+  ownerUid?: number | null,
+): string {
+  const ownerApproval = typeof ownerUid === "number" && Number.isFinite(ownerUid)
+    ? approvalOverrideForAccount(config, ownerUid)
+    : "";
   const configured = configValue(config, GLOBAL_APPROVAL_CONFIG_KEY);
-  return configured || serializeApprovalPolicy(DEFAULT_APPROVAL_POLICY);
+  return ownerApproval || configured || serializeApprovalPolicy(DEFAULT_APPROVAL_POLICY);
 }
 
 export function approvalOverrideForAccount(config: readonly ConsoleConfigEntry[], uid: number): string {

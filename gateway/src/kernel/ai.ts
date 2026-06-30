@@ -238,9 +238,10 @@ export async function handleAiConfig(
   const systemContextFiles = listConfigContextFiles(config, "config/ai/context.d");
 
   // Persona and context come from the run-as account's home (the home.context
-  // provider reads /home/<account>/context.d). Tool approval is per account
-  // (keyed by the run-as uid).
-  const accountApprovalPolicy = resolveAccountApprovalPolicy(config, uid);
+  // provider reads /home/<account>/context.d). Tool approval follows the same
+  // account default order as model config, so humans can own defaults for their
+  // agents while agents can still override them.
+  const accountApprovalPolicy = resolveAccountApprovalPolicy(config, accountConfigUids);
 
   const maxContextBytes = parseInt(
     resolveAiProcessConfigValue(processOverrides, "max_context_bytes") ??
@@ -1103,15 +1104,17 @@ function isOpenAiConfigProvider(provider: string): boolean {
 }
 
 /**
- * Tool approval policy for an account (keyed by run-as uid), falling back to
- * the global default.
+ * Tool approval policy for the effective account chain, falling back to the
+ * system default.
  */
-function resolveAccountApprovalPolicy(config: KernelContext["config"], uid: number): string | null {
-  return (
-    config.get(`users/${uid}/ai/tools/approval`) ??
-    config.get("config/ai/tools/approval") ??
-    null
-  );
+function resolveAccountApprovalPolicy(config: KernelContext["config"], accountUids: readonly number[]): string | null {
+  for (const uid of accountUids) {
+    const value = config.get(`users/${uid}/ai/tools/approval`);
+    if (value !== null) {
+      return value;
+    }
+  }
+  return config.get("config/ai/tools/approval") ?? null;
 }
 
 function listConfigContextFiles(config: KernelContext["config"], prefix: string): ContextFile[] {

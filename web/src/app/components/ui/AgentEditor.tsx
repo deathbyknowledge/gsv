@@ -681,6 +681,7 @@ export function AgentEditor(props: AgentEditorProps) {
         <div style={panelStyle}>
           {/* ===== FOLDER TAB BAR ===== */}
           <Tabs
+            className="gsv-ae-tabs"
             tabs={tabOrder.map(tabTitle)}
             value={activeIdx}
             onChange={(index) => setActiveTab(tabOrder[index] || "general")}

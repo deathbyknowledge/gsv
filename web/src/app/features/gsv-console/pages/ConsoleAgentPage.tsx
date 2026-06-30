@@ -24,7 +24,6 @@ import { modelOptionsForConfig, type ConsoleModelOption } from "../domain/consol
 import {
   behaviorForAccount,
   defaultApprovalPolicyForConfig,
-  GLOBAL_APPROVAL_CONFIG_KEY,
   inheritedModelLabelForAccount,
   inheritedReasoningForAccount,
   modelOptionsForAccount,
@@ -46,7 +45,6 @@ import {
   useCreateConsoleAgent,
   useSaveConsoleAgentBehavior,
   useSaveConsoleAgentContext,
-  useSaveConsoleConfig,
 } from "../hooks/useConsoleData";
 import "./ConsoleAgentPage.css";
 
@@ -70,7 +68,7 @@ export function ConsoleAgentPage({
   const ownerUid = viewerAccountForAgents(accounts.resource.data ?? [])?.uid ?? null;
   const inheritedNewAgentModel = inheritedModelLabelForAccount(config.config, -1, ownerUid);
   const inheritedNewAgentReasoning = inheritedReasoningForAccount(config.config, -1, ownerUid);
-  const defaultApprovalPolicy = defaultApprovalPolicyForConfig(config.config);
+  const defaultApprovalPolicy = defaultApprovalPolicyForConfig(config.config, ownerUid);
   const newAgentModelOptions = modelOptionsForAccount(modelOptions, "", inheritedNewAgentModel);
 
   if (createNew) {
@@ -137,22 +135,11 @@ function AgentEditorSurface({
   const context = useConsoleAgentContext(account.username);
   const saveBehavior = useSaveConsoleAgentBehavior();
   const saveContext = useSaveConsoleAgentContext();
-  const saveConfig = useSaveConsoleConfig();
   const contextEditable = !context.resource.isLoading
     && !context.resource.isUnavailable
     && !context.resource.isError;
-  const accountBehavior = behaviorForAccount(config, account.uid);
-  const editsGlobalApproval = isHumanCrewAccount(account);
-  const defaultApprovalPolicy = defaultApprovalPolicyForConfig(config);
-  const behavior = editsGlobalApproval
-    ? {
-        ...accountBehavior,
-        approval: defaultApprovalPolicy,
-        approvalInherited: false,
-        approvalOverride: defaultApprovalPolicy,
-        permission: parseApprovalPolicy(defaultApprovalPolicy).default,
-      }
-    : accountBehavior;
+  const behavior = behaviorForAccount(config, account.uid, ownerUid);
+  const editsUserDefaults = isHumanCrewAccount(account);
   const behaviorEditable = account.runnable;
   const inheritedModelLabel = inheritedModelLabelForAccount(config, account.uid, ownerUid);
   const inheritedReasoning = inheritedReasoningForAccount(config, account.uid, ownerUid);
@@ -206,8 +193,8 @@ function AgentEditorSurface({
             inheritedReasoning={inheritedReasoning}
             initialPermission={behavior.permission}
             initialApprovalPolicy={behavior.approval}
-            approvalPolicySourceLabel={approvalSourceLabel(editsGlobalApproval, behavior.approvalInherited)}
-            approvalPolicySourceDescription={approvalSourceDescription(editsGlobalApproval, behavior.approvalInherited)}
+            approvalPolicySourceLabel={approvalSourceLabel(editsUserDefaults, behavior.approvalInherited)}
+            approvalPolicySourceDescription={approvalSourceDescription(editsUserDefaults, behavior.approvalInherited)}
             capabilities={account.capabilities}
             createdLabel={String(account.uid)}
             metaLabel="UID:"
@@ -226,13 +213,7 @@ function AgentEditorSurface({
                   uid: account.uid,
                   model: draft.modelIndex === 0 ? "" : draft.model,
                   reasoning: draft.reasoningIndex === 0 ? "" : draft.reasoning,
-                  ...(editsGlobalApproval ? {} : { approval: approvalForAgentSave(draft.approvalPolicy, behavior) }),
-                });
-              }
-              if (editsGlobalApproval) {
-                await saveConfig.mutateAsync({
-                  key: GLOBAL_APPROVAL_CONFIG_KEY,
-                  value: normalizedApprovalPolicy(draft.approvalPolicy),
+                  approval: approvalForAgentSave(draft.approvalPolicy, behavior),
                 });
               }
               if (contextEditable) {
@@ -296,8 +277,8 @@ function NewAgentEditorSurface({
             initialRole="AGENT"
             initialDescription=""
             initialApprovalPolicy={defaultApprovalPolicy}
-            approvalPolicySourceLabel="Inherited default"
-            approvalPolicySourceDescription="New agents use this default policy unless you change tool approval before creating them."
+            approvalPolicySourceLabel="Your default"
+            approvalPolicySourceDescription="New agents use your default policy unless you change tool approval before creating them."
             createdLabel="DRAFT"
             metaLabel="STATUS:"
             status="idle"
@@ -356,17 +337,17 @@ function approvalForAgentSave(
     : normalizedApprovalPolicy(draftApproval);
 }
 
-function approvalSourceLabel(editsGlobalApproval: boolean, inherited: boolean): string {
-  if (editsGlobalApproval) return "System default";
+function approvalSourceLabel(editsUserDefaults: boolean, inherited: boolean): string {
+  if (editsUserDefaults) return "Your default";
   return inherited ? "Inherited default" : "Agent override";
 }
 
-function approvalSourceDescription(editsGlobalApproval: boolean, inherited: boolean): string {
-  if (editsGlobalApproval) {
-    return "This global policy applies to agents that do not define their own tool approval override.";
+function approvalSourceDescription(editsUserDefaults: boolean, inherited: boolean): string {
+  if (editsUserDefaults) {
+    return "Your agents use this policy unless an individual agent has its own tool approval override.";
   }
   if (inherited) {
-    return "This agent has no tool approval override and uses the global default policy.";
+    return "This agent has no tool approval override and uses your default tool approval policy.";
   }
   return "This agent has its own tool approval policy.";
 }

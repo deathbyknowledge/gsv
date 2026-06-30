@@ -14,6 +14,25 @@
   padding-inline: max(20px, var(--gsv-gutter)) !important;
 }
 
+.gsv-ae-tabs {
+  isolation: isolate;
+}
+
+.gsv-ae-tabs::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 -2px;
+  z-index: 0;
+  pointer-events: none;
+  background-color: var(--void);
+  background-image:
+    linear-gradient(rgba(150, 140, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(150, 140, 255, 0.04) 1px, transparent 1px);
+  background-size: 46px 46px;
+  background-attachment: fixed;
+  box-shadow: 0 14px 22px rgba(4, 3, 16, 0.42);
+}
+
 /* code editor scrollbar (from source <style> .gsv-ed rules) */
 .gsv-ed::-webkit-scrollbar {
   width: 9px;
