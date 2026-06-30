@@ -260,3 +260,14 @@ export type RepoDeleteResult = {
   deleted: boolean;
   repo: string;
 };
+
+export type RepoVisibilitySetArgs = {
+  repo: string;
+  public: boolean;
+};
+
+export type RepoVisibilitySetResult = {
+  changed: boolean;
+  repo: string;
+  public: boolean;
+};

@@ -156,3 +156,9 @@ export type RepositoryDeleteResult = {
   repo: string;
   deleted: boolean;
 };
+
+export type RepositoryVisibilityResult = {
+  repo: string;
+  public: boolean;
+  changed: boolean;
+};

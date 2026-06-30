@@ -9,6 +9,7 @@ import type {
   RepositoryRefs,
   RepositorySearchResult,
   RepositorySummary,
+  RepositoryVisibilityResult,
 } from "../domain/models";
 import {
   normalizeRepositoryCommitsPage,
@@ -20,6 +21,7 @@ import {
   normalizeRepositoryRead,
   normalizeRepositoryRefs,
   normalizeRepositorySearch,
+  normalizeRepositoryVisibility,
 } from "../domain/normalization";
 import { normalizeRepoPath } from "../domain/presentation";
 
@@ -66,6 +68,11 @@ export type RepositoryPullArgs = {
 
 export type RepositoryDeleteArgs = {
   repo: string;
+};
+
+export type RepositoryVisibilityArgs = {
+  repo: string;
+  public: boolean;
 };
 
 const DEFAULT_COMMIT_LIMIT = 20;
@@ -157,6 +164,19 @@ export async function deleteRepository(client: RepositoriesClient, args: Reposit
   }
   const payload = await client.call<unknown>("repo.delete", { repo });
   return normalizeRepositoryDelete(payload, repo);
+}
+
+export async function setRepositoryVisibility(
+  client: RepositoriesClient,
+  args: RepositoryVisibilityArgs,
+): Promise<RepositoryVisibilityResult> {
+  const repo = args.repo.trim();
+  if (!repo) {
+    throw new Error("repository is required");
+  }
+  const nextPublic = args.public === true;
+  const payload = await client.call<unknown>("repo.visibility.set", { repo, public: nextPublic });
+  return normalizeRepositoryVisibility(payload, repo, nextPublic);
 }
 
 function normalizeCommitLimit(value: unknown): number {

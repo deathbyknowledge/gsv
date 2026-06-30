@@ -11,6 +11,7 @@ import {
   readRepositoryDiff,
   readRepositoryPath,
   searchRepository,
+  setRepositoryVisibility,
   type RepositoryCompareArgs,
   type RepositoryDeleteArgs,
   type RepositoryDiffArgs,
@@ -18,6 +19,7 @@ import {
   type RepositoryPullArgs,
   type RepositoryReadArgs,
   type RepositorySearchArgs,
+  type RepositoryVisibilityArgs,
 } from "../backend/repositoriesService";
 import type { RepositorySummary } from "../domain/models";
 
@@ -161,6 +163,18 @@ export function useRepositoryDeleteMutation() {
 
   return useMutation({
     mutationFn: async (args: RepositoryDeleteArgs) => deleteRepository(client, args),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: repositoriesQueryKeyRoot });
+    },
+  });
+}
+
+export function useRepositoryVisibilityMutation() {
+  const { client } = useGateway();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (args: RepositoryVisibilityArgs) => setRepositoryVisibility(client, args),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: repositoriesQueryKeyRoot });
     },
