@@ -188,7 +188,7 @@
   background-color: var(--panel);
   background-image:
     repeating-linear-gradient(45deg, #100d28 0, #100d28 12px, #0b0922 12px, #0b0922 24px);
-  color: var(--idle);
+  color: var(--text-dim); /* was --idle (#6661a0 status color, sub-AA as text) → readable dim-text token */
   /* size from .gsv-label (11px); 0.18em tracking kept intentionally */
   letter-spacing: 0.18em;
   text-align: center;

@@ -443,7 +443,7 @@
   color: #b6b1ff;
   cursor: pointer;
   font-family: var(--gsv-font-mono);
-  font-size: 9px;
+  font-size: 0.625rem; /* 9px → .gsv-sublabel floor (10px) */
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -808,7 +808,7 @@
   color: #9aa4b8;
   cursor: pointer;
   font-family: var(--gsv-font-mono);
-  font-size: 8.5px;
+  font-size: 0.625rem; /* 8.5px → .gsv-sublabel floor (10px) */
   letter-spacing: 0.1em;
 }
 
@@ -1338,7 +1338,7 @@ button.gsv-chat-task-row:focus-visible {
   padding: 0 12px;
   cursor: pointer;
   font-family: var(--gsv-font-mono);
-  font-size: 9px;
+  font-size: 0.625rem; /* 9px → .gsv-sublabel floor (10px) */
   letter-spacing: 0.12em;
 }
 
@@ -1398,7 +1398,7 @@ button.gsv-chat-task-row:focus-visible {
   color: #9aa4b8;
   padding: 0 7px;
   font-family: var(--gsv-font-mono);
-  font-size: 9px;
+  font-size: 0.625rem; /* 9px → .gsv-sublabel floor (10px) */
   letter-spacing: 0.08em;
   cursor: pointer;
 }
@@ -1449,7 +1449,7 @@ button.gsv-chat-task-row:focus-visible {
   padding: 0 8px;
   cursor: pointer;
   font-family: var(--gsv-font-mono);
-  font-size: 9px;
+  font-size: 0.625rem; /* 9px → .gsv-sublabel floor (10px) */
   letter-spacing: 0.08em;
 }
 
@@ -1502,7 +1502,7 @@ button.gsv-chat-task-row:focus-visible {
 .gsv-chat-archive-segments button,
 .gsv-chat-archive-empty {
   font-family: var(--gsv-font-mono);
-  font-size: 8.5px;
+  font-size: 0.625rem; /* 8.5px → .gsv-sublabel floor (10px) */
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
@@ -1801,7 +1801,7 @@ button.gsv-chat-task-row:focus-visible {
   border-bottom: 1px solid var(--rule-inner);
   color: #9aa4b8;
   font-family: var(--gsv-font-mono);
-  font-size: 8.5px;
+  font-size: 0.625rem; /* 8.5px → .gsv-sublabel floor (10px) */
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
@@ -2357,7 +2357,7 @@ button.gsv-chat-task-row:focus-visible {
   align-items: center;
   color: #9a94ff;
   cursor: pointer;
-  font-size: 8.5px;
+  font-size: 0.625rem; /* 8.5px → .gsv-sublabel floor (10px) */
   letter-spacing: 0.16em;
 }
 
@@ -2365,7 +2365,7 @@ button.gsv-chat-task-row:focus-visible {
   display: block;
   margin: 8px 0 4px;
   color: #7d78b8;
-  font-size: 8px;
+  font-size: 0.625rem; /* 8px → .gsv-sublabel floor (10px) */
   letter-spacing: 0.16em;
 }
 
@@ -2606,7 +2606,7 @@ button.gsv-chat-task-row:focus-visible {
   color: #9a94ff;
   cursor: pointer;
   font-family: var(--gsv-font-mono);
-  font-size: 8px;
+  font-size: 0.625rem; /* 8px → .gsv-sublabel floor (10px) */
   letter-spacing: 0.16em;
   padding: 0;
 }
@@ -2642,7 +2642,7 @@ button.gsv-chat-task-row:focus-visible {
   display: block;
   margin: 7px 0 4px;
   color: #7d78b8;
-  font-size: 8px;
+  font-size: 0.625rem; /* 8px → .gsv-sublabel floor (10px) */
   letter-spacing: 0.16em;
 }
 
@@ -2699,7 +2699,7 @@ button.gsv-chat-task-row:focus-visible {
   align-items: center;
   color: #9a94ff;
   cursor: pointer;
-  font-size: 8.5px;
+  font-size: 0.625rem; /* 8.5px → .gsv-sublabel floor (10px) */
   letter-spacing: 0.16em;
 }
 
@@ -2707,7 +2707,7 @@ button.gsv-chat-task-row:focus-visible {
   display: block;
   margin: 7px 0 4px;
   color: #7d78b8;
-  font-size: 8px;
+  font-size: 0.625rem; /* 8px → .gsv-sublabel floor (10px) */
   letter-spacing: 0.16em;
 }
 
@@ -2764,7 +2764,7 @@ button.gsv-chat-task-row:focus-visible {
   padding: 0 12px;
   cursor: pointer;
   font-family: var(--gsv-font-mono);
-  font-size: 9px;
+  font-size: 0.625rem; /* 9px → .gsv-sublabel floor (10px) */
   letter-spacing: 0.12em;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.42);
 }
@@ -2785,7 +2785,7 @@ button.gsv-chat-task-row:focus-visible {
   padding: 0 12px;
   cursor: pointer;
   font-family: var(--gsv-font-mono);
-  font-size: 9px;
+  font-size: 0.625rem; /* 9px → .gsv-sublabel floor (10px) */
   letter-spacing: 0.12em;
 }
 
@@ -2825,7 +2825,7 @@ button.gsv-chat-task-row:focus-visible {
   padding: 0 11px;
   cursor: pointer;
   font-family: var(--gsv-font-mono);
-  font-size: 9px;
+  font-size: 0.625rem; /* 9px → .gsv-sublabel floor (10px) */
   letter-spacing: 0.12em;
 }
 
@@ -2879,7 +2879,7 @@ button.gsv-chat-task-row:focus-visible {
 
   .gsv-shell-root .gsv-chat-agent-model {
     gap: 5px;
-    font-size: 8.5px;
+    font-size: 0.625rem; /* 8.5px → .gsv-sublabel floor (10px) */
   }
 
   .gsv-shell-root .gsv-chat-actions .gsv-chat-context-control {

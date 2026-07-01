@@ -53,7 +53,7 @@
 .notifications-delivery-row .gsv-btn {
   flex: none;
   padding: 7px 11px;
-  font-size: 9px;
+  font-size: 0.625rem; /* 9px → .gsv-sublabel floor (10px) */
   letter-spacing: 0.12em;
 }
 

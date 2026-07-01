@@ -13,7 +13,7 @@
 }
 
 .gsv-list-mock-tag {
-  font-size: 9px;
+  font-size: 0.625rem; /* 9px → .gsv-sublabel floor (10px) */
   letter-spacing: 0.24em;
   color: var(--accent);
 }
