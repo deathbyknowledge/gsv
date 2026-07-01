@@ -430,7 +430,7 @@
 
 .gsv-space-gsv-label {
   color: var(--text-hi);
-  /* size + family from .gsv-section (16px); bold weight + tracking kept */
+  /* size + family from .gsv-section (14px, down from 16px); bold weight + tracking kept */
   font-weight: 700;
   letter-spacing: 0.22em;
   text-shadow: 0 0 8px rgba(150, 140, 255, 0.5);

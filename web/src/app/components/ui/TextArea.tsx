@@ -97,7 +97,7 @@ export function TextArea(props: TextAreaProps) {
           {info ? <InfoTip text={info} /> : null}
         </div>
       ) : null}
-      {hasDesc ? <div class="gsv-ta-desc gsv-sublabel" id={`${fieldId}-desc`}>{description}</div> : null}
+      {hasDesc ? <div class="gsv-ta-desc gsv-paragraph-small" id={`${fieldId}-desc`}>{description}</div> : null}
       <textarea
         {...textareaProps}
         class={boxClass}

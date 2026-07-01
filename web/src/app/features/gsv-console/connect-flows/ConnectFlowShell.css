@@ -201,13 +201,15 @@
 }
 
 .gsv-cf-cap-title {
-  /* size + family from .gsv-paragraph-small (12px); tracking kept intentionally */
+  /* size + family from .gsv-paragraph (14px mono); tracking kept intentionally.
+     Kept a step above .gsv-cf-cap-sub so the title out-ranks its subtitle. */
   letter-spacing: 0.04em;
   color: var(--text-hi, #f4f2ff);
 }
 
 .gsv-cf-cap-sub {
-  /* size + family + line-height from .gsv-prose (13px reading) */
+  /* size + family + line-height from .gsv-prose-sm (12px) — one step below the
+     14px mono title so the title/subtitle hierarchy reads correctly. */
   color: var(--prose-dim);
 }
 

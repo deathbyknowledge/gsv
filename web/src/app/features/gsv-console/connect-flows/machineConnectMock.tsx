@@ -194,8 +194,8 @@ export const machineConnectFlow: ConnectFlowDef = {
           <div class="gsv-cf-cap">
             <Spinner size={18} />
             <div class="gsv-cf-cap-text">
-              <span class="gsv-cf-cap-title gsv-paragraph-small">Waiting for device registration.</span>
-              <span class="gsv-cf-cap-sub gsv-prose">
+              <span class="gsv-cf-cap-title gsv-paragraph">Waiting for device registration.</span>
+              <span class="gsv-cf-cap-sub gsv-prose-sm">
                 Leave this open — the machine appears the moment it checks in with the gateway.
               </span>
             </div>
@@ -222,8 +222,8 @@ export const machineConnectFlow: ConnectFlowDef = {
               <Icon name="computer" size={26} />
             </span>
             <div class="gsv-cf-cap-text">
-              <span class="gsv-cf-cap-title gsv-paragraph-small">Studio MacBook is connected</span>
-              <span class="gsv-cf-cap-sub gsv-prose">
+              <span class="gsv-cf-cap-title gsv-paragraph">Studio MacBook is connected</span>
+              <span class="gsv-cf-cap-sub gsv-prose-sm">
                 The machine is now part of the GSV fleet and can be used by Files, Terminal, and agent tools.
               </span>
             </div>

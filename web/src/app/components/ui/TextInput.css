@@ -163,7 +163,7 @@
   letter-spacing: 0.14em;
 }
 .gsv-fld-desc {
-  /* size from .gsv-sublabel (10px); line-height + tracking kept */
+  /* size from .gsv-paragraph-small (12px); line-height + tracking kept */
   line-height: 1.5;
   letter-spacing: 0.02em;
   color: #7d78b8;

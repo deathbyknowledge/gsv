@@ -71,7 +71,7 @@ export function Checkbox(props: CheckboxProps) {
 
   return (
     <div class={fldClass}>
-      {description ? <div class="gsv-cb-desc gsv-sublabel">{description}</div> : null}
+      {description ? <div class="gsv-cb-desc gsv-paragraph-small">{description}</div> : null}
       <span class="gsv-cb-labelrow">
         <label class={rootClass}>
           <input

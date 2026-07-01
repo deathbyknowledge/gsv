@@ -101,7 +101,7 @@ export function Counter(props: CounterProps) {
         </div>
       ) : null}
       {description ? (
-        <div class="gsv-fld-desc gsv-sublabel" id={descId}>
+        <div class="gsv-fld-desc gsv-paragraph-small" id={descId}>
           {description}
         </div>
       ) : null}

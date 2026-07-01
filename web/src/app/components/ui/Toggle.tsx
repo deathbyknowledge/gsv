@@ -57,7 +57,7 @@ export function Toggle(props: ToggleProps) {
 
   return (
     <div class={fldClass}>
-      {description ? <div class="gsv-tg-desc gsv-sublabel">{description}</div> : null}
+      {description ? <div class="gsv-tg-desc gsv-paragraph-small">{description}</div> : null}
       <span class="gsv-tg-labelrow">
         <label class={rootClass}>
           <input

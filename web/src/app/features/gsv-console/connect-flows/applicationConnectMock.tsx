@@ -111,8 +111,8 @@ export const applicationConnectFlow: ConnectFlowDef = {
               <Tag tone="online" label="OK" />
             </span>
             <div class="gsv-cf-cap-text">
-              <div class="gsv-cf-cap-title gsv-paragraph-small">AGENT REVIEW · research-agent</div>
-              <div class="gsv-cf-cap-sub gsv-prose">
+              <div class="gsv-cf-cap-title gsv-paragraph">AGENT REVIEW · research-agent</div>
+              <div class="gsv-cf-cap-sub gsv-prose-sm">
                 Reviewed 14 files. No dangerous syscalls or network exfiltration
                 found. Declares KV + FETCH bindings only, scoped to the package
                 worker. No process spawning, shell execution, or eval. Verdict:

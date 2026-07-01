@@ -103,12 +103,12 @@ export function TextInput(props: TextInputProps) {
         <div class="gsv-fld-lab">
           <span class="gsv-fld-lab-t gsv-sublabel" id={`${fieldId}-label`}>
             {label}
-            {req ? <span class="gsv-fld-req gsv-sublabel">{req === "required" ? "· REQUIRED" : "· OPTIONAL"}</span> : null}
+            {req ? <span class="gsv-fld-req gsv-sublabel"> {req === "required" ? "· REQUIRED" : "· OPTIONAL"}</span> : null}
           </span>
           {info ? <InfoTip text={info} /> : null}
         </div>
       ) : null}
-      {description ? <div class="gsv-fld-desc gsv-sublabel" id={`${fieldId}-desc`}>{description}</div> : null}
+      {description ? <div class="gsv-fld-desc gsv-paragraph-small" id={`${fieldId}-desc`}>{description}</div> : null}
       <div class={wrapClass}>
         {prefix ? <span class="gsv-ti-affix gsv-label">{prefix}</span> : null}
         <input
