@@ -1,51 +1,81 @@
+import { useLayoutEffect, useState } from "preact/hooks";
 import type { Story } from "../story";
+
+/**
+ * SOURCE OF TRUTH: web/src/styles/gsv-tokens.css. Each swatch names a token and
+ * reads its *computed* value off :root, so the printed hex can never drift from
+ * the chip (which fills from the same var). Edit gsv-tokens.css; this follows.
+ */
 
 interface Swatch {
   name: string;
   varName: string;
-  value: string;
 }
 
 const SURFACES: Swatch[] = [
-  { name: "void", varName: "--void", value: "#07061a" },
-  { name: "panel", varName: "--panel", value: "#0a0820" },
-  { name: "panel-2", varName: "--panel-2", value: "#0a0822" },
-  { name: "node-bg", varName: "--node-bg", value: "#0b0a1e" },
-  { name: "header-bar", varName: "--header-bar", value: "#13112e" },
-  { name: "frame-lo", varName: "--frame-lo", value: "#08061c" },
-  { name: "frame-hi", varName: "--frame-hi", value: "#161240" },
+  { name: "void", varName: "--void" },
+  { name: "panel", varName: "--panel" },
+  { name: "panel-2", varName: "--panel-2" },
+  { name: "node-bg", varName: "--node-bg" },
+  { name: "header-bar", varName: "--header-bar" },
+  { name: "frame-lo", varName: "--frame-lo" },
+  { name: "frame-hi", varName: "--frame-hi" },
 ];
 const LINES: Swatch[] = [
-  { name: "border", varName: "--border", value: "#322e74" },
-  { name: "border-raised", varName: "--border-raised", value: "#4a449e" },
-  { name: "rule-inner", varName: "--rule-inner", value: "#25224d" },
-  { name: "rule-section", varName: "--rule-section", value: "#3a3676" },
-  { name: "bracket", varName: "--bracket", value: "#6b66c4" },
-  { name: "dashed", varName: "--dashed", value: "#5a52a8" },
+  { name: "border", varName: "--border" },
+  { name: "border-raised", varName: "--border-raised" },
+  { name: "rule-inner", varName: "--rule-inner" },
+  { name: "rule-section", varName: "--rule-section" },
+  { name: "bracket", varName: "--bracket" },
+  { name: "dashed", varName: "--dashed" },
 ];
 const TEXT: Swatch[] = [
-  { name: "text-hi", varName: "--text-hi", value: "#f4f2ff" },
-  { name: "text", varName: "--text", value: "#efeefe" },
-  { name: "text-title", varName: "--text-title", value: "#e2dfff" },
-  { name: "accent", varName: "--accent", value: "#b3aeff" },
-  { name: "accent-bright", varName: "--accent-bright", value: "#cbc7ff" },
-  { name: "label", varName: "--label", value: "#b3aee2" },
-  { name: "node-label", varName: "--node-label", value: "#c4bfee" },
-  { name: "text-dim", varName: "--text-dim", value: "#565199" },
+  { name: "text-hi", varName: "--text-hi" },
+  { name: "text", varName: "--text" },
+  { name: "text-title", varName: "--text-title" },
+  { name: "accent", varName: "--accent" },
+  { name: "accent-bright", varName: "--accent-bright" },
+  { name: "label", varName: "--label" },
+  { name: "node-label", varName: "--node-label" },
+  { name: "text-muted", varName: "--text-muted" },
+  { name: "prose-dim", varName: "--prose-dim" },
+  { name: "meta", varName: "--meta" },
+  { name: "text-dim", varName: "--text-dim" },
 ];
 const STATUS: Swatch[] = [
-  { name: "online", varName: "--online", value: "#5ef2a0" },
-  { name: "error", varName: "--error", value: "#ff6f8c" },
-  { name: "idle", varName: "--idle", value: "#6661a0" },
-  { name: "update", varName: "--update", value: "#ffd24d" },
-  { name: "live", varName: "--live", value: "#8f8aff" },
+  { name: "online", varName: "--online" },
+  { name: "error", varName: "--error" },
+  { name: "idle", varName: "--idle" },
+  { name: "update", varName: "--update" },
+  { name: "live", varName: "--live" },
 ];
 const ACTION: Swatch[] = [
-  { name: "primary-hi", varName: "--primary-hi", value: "#6b62c4" },
-  { name: "danger", varName: "--danger", value: "#a8324a" },
-  { name: "danger-hi", varName: "--danger-hi", value: "#c4445f" },
-  { name: "warn", varName: "--warn", value: "#e0a64c" },
+  { name: "primary-hi", varName: "--primary-hi" },
+  { name: "danger", varName: "--danger" },
+  { name: "danger-hi", varName: "--danger-hi" },
+  { name: "warn", varName: "--warn" },
 ];
+
+function tokenValue(varName: string): string {
+  if (typeof document === "undefined") return "";
+  return getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+}
+
+function SwatchCell({ swatch }: { swatch: Swatch }) {
+  const [value, setValue] = useState("");
+  useLayoutEffect(() => setValue(tokenValue(swatch.varName)), [swatch.varName]);
+  return (
+    <div class="ds-swatch">
+      <div class="ds-swatch-chip" style={{ background: `var(${swatch.varName})` }} />
+      <div class="ds-swatch-meta">
+        <div class="ds-swatch-name">{swatch.name}</div>
+        <div class="ds-swatch-val">
+          {swatch.varName} · {value}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function SwatchGrid({ label, swatches }: { label: string; swatches: Swatch[] }) {
   return (
@@ -53,15 +83,7 @@ function SwatchGrid({ label, swatches }: { label: string; swatches: Swatch[] }) 
       <div class="ds-label">{label}</div>
       <div class="ds-swatches">
         {swatches.map((s) => (
-          <div class="ds-swatch" key={s.varName}>
-            <div class="ds-swatch-chip" style={{ background: `var(${s.varName})` }} />
-            <div class="ds-swatch-meta">
-              <div class="ds-swatch-name">{s.name}</div>
-              <div class="ds-swatch-val">
-                {s.varName} · {s.value}
-              </div>
-            </div>
-          </div>
+          <SwatchCell key={s.varName} swatch={s} />
         ))}
       </div>
     </div>
