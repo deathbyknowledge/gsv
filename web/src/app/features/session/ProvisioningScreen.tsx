@@ -26,16 +26,16 @@ export function ProvisioningScreen({
     <AuthLayout background="galaxy" visible={visible} surfaceClass="gsv-auth-surface-setup">
       <div class="gsv-provision" data-session-provisioning-view>
         <div class="gsv-provision-head">
-          <span class="gsv-provision-kicker">First-time setup · Setting up</span>
-          <h2 class="gsv-provision-title" data-session-provisioning-title>{copy.title}</h2>
-          <p class="gsv-provision-sub" data-session-provisioning-copy>{copy.copy}</p>
+          <span class="gsv-provision-kicker gsv-sublabel">First-time setup · Setting up</span>
+          <h2 class="gsv-provision-title gsv-prose-display" data-session-provisioning-title>{copy.title}</h2>
+          <p class="gsv-provision-sub gsv-prose" data-session-provisioning-copy>{copy.copy}</p>
         </div>
 
         <Progress indeterminate label="" showValue={false} width={600} />
 
         <div class="gsv-provision-note">
-          <strong>Keep this tab open</strong>
-          <p>This can take a few seconds while GSV prepares your workspace.</p>
+          <strong class="gsv-sublabel">Keep this tab open</strong>
+          <p class="gsv-prose-sm">This can take a few seconds while GSV prepares your workspace.</p>
         </div>
 
         <ol class="gsv-provision-steps" aria-label="Setup progress">
@@ -43,8 +43,8 @@ export function ProvisioningScreen({
             <li class="gsv-provision-step" key={step.title}>
               <span class="gsv-provision-step-marker" aria-hidden="true" />
               <div class="gsv-provision-step-text">
-                <strong>{step.title}</strong>
-                <p>{step.copy}</p>
+                <strong class="gsv-prose">{step.title}</strong>
+                <p class="gsv-prose-sm">{step.copy}</p>
               </div>
             </li>
           ))}

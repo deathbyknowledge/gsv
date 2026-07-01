@@ -110,7 +110,7 @@
   gap: 9px;
 }
 .gsv-cb-desc {
-  font-size: 10px;
+  /* size from .gsv-paragraph-small (12px) */
   line-height: 1.5;
   letter-spacing: 0.02em;
   color: #7d78b8;
@@ -129,7 +129,7 @@
   border-radius: 1px;
 }
 .gsv-cb-msg {
-  font-size: 9.5px;
+  /* size from .gsv-sublabel (10px, up from 9.5px sub-floor) */
   letter-spacing: 0.1em;
 }
 .gsv-cb-fld.is-error .gsv-cb-msg {

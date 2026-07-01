@@ -456,7 +456,7 @@ export function NotificationsPanel({
               </div>
             </div>
 
-            <div class="notifications-delivery-row">
+            <div class="notifications-delivery-row gsv-sublabel">
               <StatusDot tone={deliveryTone(permission)} size={7} />
               <span>{deliveryStateLabel(permission)}</span>
               {showEnableSystem ? (
@@ -469,7 +469,7 @@ export function NotificationsPanel({
             </div>
 
             {notifications.length === 0 ? (
-              <div class="notifications-empty">
+              <div class="notifications-empty gsv-sublabel">
                 <StatusDot tone="idle" size={7} />
                 <span>NO NOTIFICATIONS</span>
               </div>
@@ -521,8 +521,8 @@ export function NotificationsPanel({
               <StatusDot tone={levelTone(notification.level)} size={7} />
               <Tag label={notification.level.toUpperCase()} tone={levelTagTone(notification.level)} boxed />
             </div>
-            <div class="notification-toast-title">{notification.title}</div>
-            {notification.body ? <div class="notification-toast-body">{notification.body}</div> : null}
+            <div class="notification-toast-title gsv-listitem">{notification.title}</div>
+            {notification.body ? <div class="notification-toast-body gsv-prose-sm">{notification.body}</div> : null}
           </Surface>
         ))}
       </div>

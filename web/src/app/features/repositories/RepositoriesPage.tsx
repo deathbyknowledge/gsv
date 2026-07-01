@@ -482,12 +482,12 @@ function SearchResults({
           key={`${match.path}:${match.line}:${index}`}
           onClick={() => onOpenFile(match.path)}
         >
-          <span class="repositories-search-path">{match.path}</span>
-          <span class="repositories-search-line">LINE {match.line}</span>
-          <span class="repositories-search-preview">{match.content}</span>
+          <span class="repositories-search-path gsv-label">{match.path}</span>
+          <span class="repositories-search-line gsv-sublabel">LINE {match.line}</span>
+          <span class="repositories-search-preview gsv-prose-sm">{match.content}</span>
         </button>
       ))}
-      {payload.truncated ? <div class="repositories-empty-inline">RESULTS TRUNCATED BY RIPGIT</div> : null}
+      {payload.truncated ? <div class="repositories-empty-inline gsv-sublabel">RESULTS TRUNCATED BY RIPGIT</div> : null}
     </div>
   );
 }
@@ -777,9 +777,9 @@ function HistoryTabView({
               key={commit.hash}
               onClick={() => onSelectCommit(commit)}
             >
-              <span class="repositories-commit-message">{firstLine(commit.message)}</span>
-              <span class="repositories-commit-meta">{formatCommitAuthor(commit)} · {formatAge(commit.commitTime)}</span>
-              <span class="repositories-commit-hash">{shortHash(commit.hash)}</span>
+              <span class="repositories-commit-message gsv-label">{firstLine(commit.message)}</span>
+              <span class="repositories-commit-meta gsv-prose-sm">{formatCommitAuthor(commit)} · {formatAge(commit.commitTime)}</span>
+              <span class="repositories-commit-hash gsv-sublabel">{shortHash(commit.hash)}</span>
             </button>
           ))}
         </div>
@@ -1339,7 +1339,7 @@ export function RepositoriesPage() {
                 </button>
               </span>
               {pullNotice ? (
-                <span class={`repositories-pull-status is-${pullNotice.tone}`} role={pullNotice.tone === "error" ? "alert" : "status"}>
+                <span class={`repositories-pull-status gsv-sublabel is-${pullNotice.tone}`} role={pullNotice.tone === "error" ? "alert" : "status"}>
                   <StatusDot tone={pullNotice.tone} size={7} />
                   <span>{pullNotice.text}</span>
                 </span>

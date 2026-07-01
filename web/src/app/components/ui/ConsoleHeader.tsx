@@ -68,7 +68,7 @@ export function ConsoleHeader({
         <Breadcrumbs items={items} size="medium" />
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: "12px", flex: "none" }}>
-        <span style={{ fontSize: "11px", letterSpacing: ".18em", color: "var(--text-dim)" }}>{tail}</span>
+        <span class="gsv-label" style={{ letterSpacing: ".18em", color: "var(--text-dim)" }}>{tail}</span>
         {onClose ? (
           <IconButton glyph="close" size="small" title="Close" ariaLabel="Close screen" onClick={onClose} />
         ) : null}

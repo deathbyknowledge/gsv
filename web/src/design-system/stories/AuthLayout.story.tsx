@@ -31,8 +31,8 @@ function SamplePanel() {
         fontFamily: "var(--gsv-font-mono)",
       }}
     >
-      <div style={{ fontSize: "13px", letterSpacing: "0.22em", color: "var(--text-title)" }}>PANEL SLOT</div>
-      <div style={{ fontSize: "10px", letterSpacing: "0.06em", color: "var(--text-dim)", marginTop: "8px" }}>
+      <div class="gsv-paragraph" style={{ letterSpacing: "0.22em", color: "var(--text-title)" }}>PANEL SLOT</div>
+      <div class="gsv-sublabel" style={{ letterSpacing: "0.06em", color: "var(--text-dim)", marginTop: "8px" }}>
         right-aligned content (login / setup wizard)
       </div>
     </div>

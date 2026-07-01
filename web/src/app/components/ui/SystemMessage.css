@@ -25,9 +25,9 @@
 }
 
 .gsv-sm-text {
+  /* size + family from .gsv-prose (13px); line-height kept as an override */
   min-width: 0;
   max-width: 100%;
-  font-size: 13.5px;
   line-height: 1.55;
   color: #cdd2e0;
   overflow-wrap: anywhere;
@@ -36,12 +36,11 @@
 }
 
 .gsv-sm-meta {
+  /* size + family from .gsv-sublabel (10px, up from 9px sub-floor); tracking kept */
   display: flex;
   align-items: center;
   gap: 10px;
   margin-top: 5px;
-  font-family: var(--gsv-font-mono);
-  font-size: 9px;
   letter-spacing: 0.1em;
   color: var(--text-dim);
 }

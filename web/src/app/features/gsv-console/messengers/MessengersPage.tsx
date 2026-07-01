@@ -136,17 +136,17 @@ export function MessengerCard({
           <Icon name={iconForAdapterName(adapter.adapter)} size={26} />
         </span>
         <div class="gsv-messenger-card-heading">
-          <span class="gsv-messenger-card-name">{platform}</span>
+          <span class="gsv-messenger-card-name gsv-section">{platform}</span>
           <PlatformStatusBadge adapter={adapter} />
         </div>
       </header>
 
       <div class="gsv-messenger-card-body">
-        <p class="gsv-messenger-card-blurb">{platformBlurb(adapter.adapter)}</p>
+        <p class="gsv-messenger-card-blurb gsv-prose-sm">{platformBlurb(adapter.adapter)}</p>
 
         {bots.length > 0 ? (
           <div class="gsv-messenger-card-bots">
-            <div class="gsv-messenger-card-bots-label">
+            <div class="gsv-messenger-card-bots-label gsv-sublabel">
               {bots.length} {bots.length === 1 ? "BOT" : "BOTS"}
             </div>
             {visible.map((account) => (
@@ -163,14 +163,14 @@ export function MessengerCard({
               />
             ))}
             {extra > 0 ? (
-              <button type="button" class="gsv-messenger-card-more" onClick={() => onOpenPlatform(adapter)}>
+              <button type="button" class="gsv-messenger-card-more gsv-label" onClick={() => onOpenPlatform(adapter)}>
                 <span>{extra} more messenger{extra === 1 ? "" : "s"}</span>
                 <span class="gsv-messenger-card-more-chevron" aria-hidden="true">›</span>
               </button>
             ) : null}
           </div>
         ) : (
-          <div class="gsv-messenger-card-hint">No bot connected yet.</div>
+          <div class="gsv-messenger-card-hint gsv-label">No bot connected yet.</div>
         )}
       </div>
 

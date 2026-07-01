@@ -99,7 +99,7 @@ export function MessengerLinkCodePanel({
         />
       </div>
       {notice || linkErrorText ? (
-        <div class="gsv-messenger-link-code-notice">
+        <div class="gsv-messenger-link-code-notice gsv-prose">
           <Tag tone={notice?.tone ?? "error"} label={notice?.label ?? "ERROR"} boxed dot />
           <span>{notice?.text ?? linkErrorText}</span>
         </div>

@@ -66,7 +66,7 @@ export function AddAction({ variant = "row", label, width, onClick }: AddActionP
       <span style={{ display: "flex", color: "var(--accent)" }}>
         <PlusGlyph />
       </span>
-      <span style={{ fontSize: "11px", letterSpacing: ".04em", color: "var(--text-title)" }}>{text}</span>
+      <span class="gsv-label" style={{ letterSpacing: ".04em", color: "var(--text-title)" }}>{text}</span>
       <span style={{ marginLeft: "auto" }}>
         <svg width="9" height="12" viewBox="0 0 9 12" aria-hidden="true" style={{ display: "block", filter: "drop-shadow(0 0 3px rgba(150,140,255,.5))" }}>
           <path d="M0 0 L9 6 L0 12 Z" fill="var(--accent)" />
@@ -90,7 +90,7 @@ export function AddAction({ variant = "row", label, width, onClick }: AddActionP
       >
         <PlusGlyph />
       </span>
-      <span style={{ fontSize: "11px", letterSpacing: ".06em", color: "var(--text-title)" }}>{text}</span>
+      <span class="gsv-label" style={{ letterSpacing: ".06em", color: "var(--text-title)" }}>{text}</span>
     </>
   );
 

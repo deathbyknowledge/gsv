@@ -50,6 +50,7 @@ export function StatusBar({
 
   return (
     <div
+      class="gsv-sublabel"
       style={{
         height: "30px",
         background: "var(--node-bg)",
@@ -58,8 +59,7 @@ export function StatusBar({
         alignItems: "center",
         justifyContent: justify,
         padding: "0 18px",
-        fontFamily: "var(--gsv-font-mono)",
-        fontSize: "10px",
+        // font-family + size (10px) from .gsv-sublabel; tracking kept as inline override
         letterSpacing: ".14em",
         color: "var(--text-dim)",
       }}

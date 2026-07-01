@@ -115,8 +115,8 @@
 }
 
 .gsv-ae-readonly-note {
+  /* size from .gsv-sublabel (10px) */
   color: var(--text-dim);
-  font-size: 10px;
   letter-spacing: 0.14em;
 }
 

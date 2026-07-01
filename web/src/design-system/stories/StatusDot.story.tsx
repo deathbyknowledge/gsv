@@ -15,7 +15,7 @@ const story: Story = {
           {TONES.map((tone) => (
             <span key={tone} style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
               <StatusDot tone={tone} size={10} />
-              <span style={{ fontSize: "9px", letterSpacing: "0.16em", color: "var(--text-dim)", textTransform: "uppercase" }}>
+              <span class="gsv-sublabel" style={{ letterSpacing: "0.16em", color: "var(--text-dim)", textTransform: "uppercase" }}>
                 {tone}
               </span>
             </span>

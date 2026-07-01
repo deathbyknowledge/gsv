@@ -11,7 +11,7 @@
   font: inherit;
   color: inherit;
   cursor: default;
-  font-size: 11px;
+  font-size: 0.6875rem; /* 11px — value from .gsv-label (kept inline so the bare-trigger inherit override still wins) */
   letter-spacing: 0.06em;
   color: #b3aeff;
   border-bottom: 1px dashed #6b62c4;
@@ -37,7 +37,7 @@
   background: var(--accent);
   border: 1px solid var(--accent-bright);
   color: var(--void);
-  font-size: 10px;
+  /* size + family from .gsv-sublabel (10px); line-height + tracking kept */
   letter-spacing: 0.06em;
   line-height: 1.55;
   padding: 7px 10px;

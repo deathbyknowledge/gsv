@@ -210,7 +210,7 @@ export function MessageInput({
       {attachments.length > 0 ? (
         <div class="gsv-mi-attachments">
           {attachments.map((attachment) => (
-            <span class="gsv-mi-chip" key={attachment.id}>
+            <span class="gsv-mi-chip gsv-sublabel" key={attachment.id}>
               <Icon name="file" family="doticons" size={13} />
               <span>
                 <strong>{attachment.label}</strong>
@@ -292,7 +292,7 @@ export function MessageInput({
         </button>
       </form>
       {user || cost ? (
-        <div class="gsv-mi-meta">
+        <div class="gsv-mi-meta gsv-sublabel">
           {cost ? (
             <span class="gsv-mi-cost-wrap">
               <Tooltip text={cost} position="top">

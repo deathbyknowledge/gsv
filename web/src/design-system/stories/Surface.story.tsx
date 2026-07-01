@@ -4,10 +4,10 @@ import type { Story } from "../story";
 
 const sample = (title: string, body: string) => (
   <>
-    <div style={{ color: "var(--text-title)", fontSize: "12px", letterSpacing: "0.08em", marginBottom: "6px" }}>
+    <div class="gsv-listitem" style={{ color: "var(--text-title)", letterSpacing: "0.08em", marginBottom: "6px" }}>
       {title}
     </div>
-    <div style={{ color: "var(--text-dim)", fontSize: "11px", lineHeight: 1.5 }}>{body}</div>
+    <div class="gsv-label" style={{ color: "var(--text-dim)", lineHeight: 1.5 }}>{body}</div>
   </>
 );
 

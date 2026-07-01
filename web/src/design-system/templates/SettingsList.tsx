@@ -132,7 +132,7 @@ export function SettingsList() {
                 paddingRight: "20px",
               }}
             >
-              <span style={{ fontSize: "9px", letterSpacing: ".12em", color: "var(--text-dim)" }}>{m.statusLabel}</span>
+              <span class="gsv-sublabel" style={{ letterSpacing: ".12em", color: "var(--text-dim)" }}>{m.statusLabel}</span>
               <StatusDot tone={m.tone} size={8} />
               <span style={{ display: "inline-flex", alignItems: "center" }}>
                 <svg width="9" height="12" viewBox="0 0 9 12" style={{ filter: "drop-shadow(0 0 3px rgba(150,140,255,.5))" }}>

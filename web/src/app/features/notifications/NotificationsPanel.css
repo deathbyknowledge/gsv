@@ -38,7 +38,7 @@
   border-bottom: 1px solid var(--rule-inner);
   background: color-mix(in srgb, var(--panel) 86%, #ffffff 2%);
   color: #8c86c8;
-  font-size: 9.5px;
+  /* size + family from .gsv-sublabel (10px, up from 9.5px); tracking kept */
   letter-spacing: 0.12em;
 }
 
@@ -53,7 +53,7 @@
 .notifications-delivery-row .gsv-btn {
   flex: none;
   padding: 7px 11px;
-  font-size: 9px;
+  font-size: 0.625rem; /* 9px → .gsv-sublabel floor (10px) */
   letter-spacing: 0.12em;
 }
 
@@ -114,7 +114,7 @@
   justify-content: center;
   gap: 10px;
   color: #7d78b8;
-  font-size: 10px;
+  /* size + family from .gsv-sublabel (10px); tracking kept */
   letter-spacing: 0.12em;
 }
 
@@ -163,16 +163,14 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-hi);
-  font-size: 12px;
+  /* size + family from .gsv-listitem (12px); tracking kept */
   letter-spacing: 0.06em;
 }
 
 .notification-toast-body {
   margin-top: 5px;
   color: #a8a2dc;
-  font-family: var(--gsv-font-prose);
-  font-size: 12px;
-  line-height: 1.45;
+  /* size + family + line-height from .gsv-prose-sm (12px prose) */
   overflow-wrap: anywhere;
 }
 

@@ -47,7 +47,7 @@
 }
 .gsv-sg-sm .gsv-sg-seg {
   padding: 6px 0;
-  font-size: 9px;
+  font-size: 0.625rem; /* 9px → .gsv-sublabel floor (10px) */
 }
 .gsv-sg-md .gsv-sg-seg {
   padding: 9px 0;
@@ -70,19 +70,18 @@
   min-height: 13px;
 }
 .gsv-fld-lab-t {
-  font-size: 9.5px;
+  /* size from .gsv-sublabel (10px, very-wide .22em HUD eyebrow, up from 9.5px) */
   letter-spacing: 0.22em;
   text-transform: uppercase;
   color: #b3aee2;
 }
 .gsv-fld-req {
-  font-size: 9.5px;
+  /* size from .gsv-sublabel (10px, up from 9.5px) */
   color: #7d78b8;
   letter-spacing: 0.14em;
 }
 .gsv-fld-desc {
-  font-size: 10px;
-  line-height: 1.5;
+  /* size + line-height from .gsv-paragraph-small (12px reading, up from 10px) */
   letter-spacing: 0.02em;
   color: #7d78b8;
   margin-bottom: 10px;
@@ -102,7 +101,7 @@
   border-radius: 1px;
 }
 .gsv-fld-msg {
-  font-size: 9.5px;
+  /* size from .gsv-sublabel (10px, up from 9.5px) */
   letter-spacing: 0.1em;
 }
 .gsv-fld.is-error .gsv-fld-msg {

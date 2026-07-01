@@ -62,7 +62,7 @@ function TopRow({ machineIndex, online }: { machineIndex: number; online?: boole
         {online ? (
           <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
             <StatusDot tone="online" size={8} />
-            <span style={{ fontSize: "9px", letterSpacing: ".14em", color: "var(--online)" }}>ONLINE</span>
+            <span class="gsv-sublabel" style={{ letterSpacing: ".14em", color: "var(--online)" }}>ONLINE</span>
           </span>
         ) : null}
       </div>
@@ -245,7 +245,7 @@ function StateC() {
           background: "var(--header-bar)",
         }}
       >
-        <span style={{ fontSize: "11px", letterSpacing: ".06em", color: "var(--text)", flex: "1 1 auto", minWidth: 0 }}>
+        <span class="gsv-label" style={{ letterSpacing: ".06em", color: "var(--text)", flex: "1 1 auto", minWidth: 0 }}>
           ~/project/README.md
         </span>
         <Button variant="secondary" label="SHOW FOLDER" onClick={noop} />
@@ -276,7 +276,7 @@ function StateC() {
       >
         <span style={{ display: "inline-flex", alignItems: "center", gap: "8px", flex: "1 1 auto" }}>
           <StatusDot tone="warn" size={8} />
-          <span style={{ fontSize: "9px", letterSpacing: ".14em", color: "var(--warn)" }}>UNSAVED CHANGES</span>
+          <span class="gsv-sublabel" style={{ letterSpacing: ".14em", color: "var(--warn)" }}>UNSAVED CHANGES</span>
         </span>
         <Button variant="secondary" label="RESET" onClick={noop} />
         <Button variant="primary" label="SAVE" onClick={noop} />

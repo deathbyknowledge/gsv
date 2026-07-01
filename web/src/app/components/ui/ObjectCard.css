@@ -41,14 +41,13 @@
 }
 
 .gsv-objcard-cat {
-  font-size: 8px;
-  letter-spacing: 0.22em;
+  /* size + tracking from .gsv-sublabel (10px, up from 8px sub-floor) */
   text-transform: uppercase;
   color: var(--text-dim);
 }
 
 .gsv-objcard-name {
-  font-size: 12px;
+  /* size + family from .gsv-listitem (12px); semibold + tracking kept intentionally */
   letter-spacing: 0.08em;
   font-weight: 500;
   color: var(--accent-bright);
@@ -82,10 +81,9 @@
 }
 
 .gsv-objcard-desc p {
+  /* size + line-height from .gsv-paragraph-small (12px reading, up from 10px) */
   margin: 0;
   padding: 11px 13px;
-  font-size: 10px;
-  line-height: 1.55;
-  color: #9089d4;
+  color: var(--prose-dim);
   text-wrap: pretty;
 }

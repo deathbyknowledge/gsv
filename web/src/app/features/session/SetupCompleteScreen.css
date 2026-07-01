@@ -42,17 +42,15 @@
   box-shadow: 0 0 14px color-mix(in srgb, var(--online) 45%, transparent);
 }
 .gsv-complete-kicker {
-  font-family: var(--gsv-font-mono);
-  font-size: 9px;
+  /* size + family from .gsv-sublabel (10px, up from 9px); tracking kept wider */
   letter-spacing: 0.28em;
   text-transform: uppercase;
   color: var(--text-dim);
   margin-bottom: 9px;
 }
 .gsv-complete-title {
+  /* size + family + line-height from .gsv-prose-display (22px hero) */
   margin: 0;
-  font-family: var(--gsv-font-prose);
-  font-size: 22px;
   font-weight: 600;
   letter-spacing: 0.005em;
   color: var(--text-hi);
@@ -65,17 +63,14 @@
   gap: 6px;
 }
 .gsv-complete-k {
-  font-family: var(--gsv-font-mono);
+  /* size + family from .gsv-label (11px); weight 400 + wide tracking kept */
   font-weight: 400;
-  font-size: 11px;
   letter-spacing: 0.32em;
   text-transform: uppercase;
   color: var(--label);
 }
 .gsv-complete-v {
-  font-family: var(--gsv-font-mono);
-  font-weight: 400;
-  font-size: 13px;
+  /* size + family from .gsv-paragraph-small (13px reading); tracking kept */
   letter-spacing: 0.04em;
   color: var(--text);
   overflow-wrap: anywhere;
@@ -103,15 +98,13 @@
   gap: 10px;
 }
 .gsv-complete-more-title {
+  /* size + family + line-height from .gsv-prose-heading (16px, up from 15px) */
   margin: 0;
-  font-family: var(--gsv-font-prose);
-  font-size: 15px;
   font-weight: 600;
   color: var(--text-hi);
 }
 .gsv-complete-more-tag {
-  font-family: var(--gsv-font-mono);
-  font-size: 9px;
+  /* size + family from .gsv-sublabel (10px, up from 9px); tracking matches */
   letter-spacing: 0.2em;
   text-transform: uppercase;
   color: var(--accent-bright);
@@ -139,8 +132,7 @@
   gap: 12px;
 }
 .gsv-complete-more-item-title {
-  font-family: var(--gsv-font-prose);
-  font-size: 13px;
+  /* size + family from .gsv-prose (13px); medium weight + line-height kept */
   font-weight: 500;
   line-height: 1.45;
   color: var(--text-hi);
@@ -164,16 +156,16 @@
   outline-offset: 2px;
 }
 .gsv-complete-meta {
+  /* size + family from .gsv-prose-sm (12px caption); line-height kept */
   margin: 0;
-  font-family: var(--gsv-font-prose);
-  font-size: 12px;
   line-height: 1.5;
   color: #9d98d4;
 }
 
 .gsv-complete-alert {
+  /* size from .gsv-label (11px); no JSX handle (className prop) → value-normalized */
   margin: 0;
-  font-size: 11px;
+  font-size: 0.6875rem;
   letter-spacing: 0.06em;
   color: var(--error);
 }
@@ -193,8 +185,7 @@
   padding: 8px 18px;
   background: var(--node-bg);
   border-top: 1px solid var(--border);
-  font-family: var(--gsv-font-mono);
-  font-size: 10px;
+  /* size + family from .gsv-sublabel (10px); tracking kept narrower */
   letter-spacing: 0.1em;
   color: var(--text-dim);
   white-space: nowrap;

@@ -60,8 +60,8 @@ export function Alert({ variant = "info", title, text, icon, children }: AlertPr
     <div class={`gsv-alert ${VARIANT_CLASS[variant]}`} role="note">
       {iconNode}
       <div class="gsv-alert-body">
-        {title ? <div class="gsv-alert-title">{title}</div> : null}
-        {text ? <p class="gsv-alert-text">{text}</p> : null}
+        {title ? <div class="gsv-alert-title gsv-label">{title}</div> : null}
+        {text ? <p class="gsv-alert-text gsv-prose">{text}</p> : null}
         {children}
       </div>
     </div>

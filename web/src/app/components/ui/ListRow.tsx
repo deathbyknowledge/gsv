@@ -104,14 +104,13 @@ export function ListRow({
       {hasDot && statusDotPlacement === "leading" ? <span class={dotClass} style={dotStyle} /> : null}
       <div class="lr-main" style={{ flex: "1 1 0", minWidth: 0, maxWidth: "100%", overflow: "hidden" }}>
         <div
-          class="lr-label"
+          class="lr-label gsv-listitem"
           style={{
             maxWidth: "100%",
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
-            fontSize: "12.5px",
-            letterSpacing: ".04em",
+            /* size + .04em tracking from .gsv-listitem */
             color: "var(--text)",
           }}
         >
@@ -119,13 +118,13 @@ export function ListRow({
         </div>
         {sub ? (
           <div
-            class="lr-sub"
+            class="lr-sub gsv-sublabel"
             style={{
               maxWidth: "100%",
               overflow: "hidden",
               textOverflow: "ellipsis",
               whiteSpace: "nowrap",
-              fontSize: "10px",
+              /* size from .gsv-sublabel; .04em tracking kept intentionally */
               letterSpacing: ".04em",
               color: "#8c86c8",
               marginTop: "6px",
@@ -137,7 +136,7 @@ export function ListRow({
       </div>
       {tag ? <span class="lr-tag" style={{ flex: "none" }}><Tag label={tag} tone={tagTone} boxed /></span> : null}
       {statusLabel ? (
-        <span class="lr-status" style={{ flex: "none", fontSize: "9px", letterSpacing: ".12em", color: STATUS_TEXT[dotKey] }}>
+        <span class="lr-status gsv-sublabel" style={{ flex: "none", /* size from .gsv-sublabel; .12em tracking kept */ letterSpacing: ".12em", color: STATUS_TEXT[dotKey] }}>
           {statusLabel}
         </span>
       ) : null}

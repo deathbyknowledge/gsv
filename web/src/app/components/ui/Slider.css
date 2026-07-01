@@ -17,12 +17,12 @@
   min-width: 0;
 }
 .gsv-sl-label {
-  font-size: 9.5px;
+  /* size from .gsv-sublabel (10px, very-wide .22em HUD eyebrow, up from 9.5px) */
   letter-spacing: 0.22em;
   color: #b3aee2;
 }
 .gsv-sl-num {
-  font-size: 10px;
+  /* size from .gsv-sublabel (10px) */
   letter-spacing: 0.06em;
   color: #cbc7ff;
 }
@@ -65,14 +65,13 @@
   pointer-events: none;
 }
 .gsv-sl-req {
-  font-size: 9.5px;
+  /* size from .gsv-sublabel (10px, up from 9.5px) */
   color: #7d78b8;
   letter-spacing: 0.14em;
   margin-left: 7px;
 }
 .gsv-sl-desc {
-  font-size: 10px;
-  line-height: 1.5;
+  /* size + line-height from .gsv-paragraph-small (12px reading, up from 10px) */
   letter-spacing: 0.02em;
   color: #7d78b8;
   max-width: 46ch;
@@ -90,7 +89,7 @@
   border-radius: 1px;
 }
 .gsv-sl-msg {
-  font-size: 9.5px;
+  /* size from .gsv-sublabel (10px, up from 9.5px) */
   letter-spacing: 0.1em;
 }
 .gsv-sl.is-error .gsv-sl-msg {

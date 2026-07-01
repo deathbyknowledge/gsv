@@ -1,40 +1,123 @@
 /* GSV typography utilities — Departure Mono machine scale.
  * Values transcribed from the Typography story type scale. Each class sets
  * font-family/size/weight/letter-spacing only (no color/margin) so they
- * compose freely. px is intentional for now — a later pass converts the whole
- * system to rem. */
+ * compose freely.
+ *
+ * Sizing convention (a11y pass):
+ *   - font-size in rem (root = browser default 16px) so text honors the
+ *     user's font-size preference; px equivalent noted inline.
+ *   - 0.75rem (12px) is the floor for primary text. Only .gsv-sublabel dips
+ *     below it (10px) and must be reserved for non-primary chrome.
+ *   - letter-spacing stays in em so tracking scales with each element's size.
+ *   - line-height stays unitless (added where titles / multi-line need it).
+ */
 
 .gsv-title {
   font-family: var(--gsv-font-mono);
   font-weight: 700;
-  font-size: 19px;
+  font-size: 1.1875rem; /* 19px */
+  line-height: 1.2;
   letter-spacing: 0.14em;
 }
 
 .gsv-section {
   font-family: var(--gsv-font-mono);
   font-weight: 600;
-  font-size: 13.5px;
+  font-size: 0.875rem; /* 14px */
   letter-spacing: 0.2em;
 }
 
 .gsv-sublabel {
+  /* Exception to the 12px floor — non-primary chrome only (eyebrows, hints). */
   font-family: var(--gsv-font-mono);
   font-weight: 500;
-  font-size: 10px;
+  font-size: 0.625rem; /* 10px */
   letter-spacing: 0.2em;
 }
 
 .gsv-listitem {
   font-family: var(--gsv-font-mono);
   font-weight: 400;
-  font-size: 11px;
+  font-size: 0.75rem; /* 12px (raised from 11px to the floor) */
   letter-spacing: 0.04em;
 }
 
 .gsv-meta {
   font-family: var(--gsv-font-mono);
   font-weight: 400;
-  font-size: 11px;
+  font-size: 0.75rem; /* 12px (raised from 11px to the floor) */
   letter-spacing: 0.32em;
+}
+
+.gsv-label {
+  /* Non-primary control / object label tier (11px) — sits between
+   * .gsv-sublabel (10px) and .gsv-listitem (12px). Non-primary use only. */
+  font-family: var(--gsv-font-mono);
+  font-weight: 500;
+  font-size: 0.6875rem; /* 11px */
+  letter-spacing: 0.08em;
+}
+
+/* Paragraph scale — Departure Mono (kept for consistency with library/HUD
+ * copy). For reading copy and descriptions; the readability win comes from the
+ * broader line-height per WCAG 1.4.12, not a font change. */
+
+.gsv-paragraph {
+  font-family: var(--gsv-font-mono);
+  font-weight: 400;
+  font-size: 0.875rem; /* 14px */
+  line-height: 1.55;
+  letter-spacing: 0.01em;
+}
+
+.gsv-paragraph-small {
+  font-family: var(--gsv-font-mono);
+  font-weight: 400;
+  font-size: 0.75rem; /* 12px */
+  line-height: 1.5;
+  letter-spacing: 0.01em;
+}
+
+/* Prose scale — Space Grotesk (--gsv-font-prose). For the app's running copy
+ * (onboarding, console flows, chat, notifications) where Space Grotesk reads
+ * better than the machine mono. All >= 12px (floor); subtle 0.01em tracking. */
+
+.gsv-prose-display {
+  font-family: var(--gsv-font-prose);
+  font-weight: 600;
+  font-size: 1.375rem; /* 22px */
+  line-height: 1.15;
+  letter-spacing: 0.01em;
+}
+
+.gsv-prose-heading {
+  font-family: var(--gsv-font-prose);
+  font-weight: 600;
+  font-size: 1rem; /* 16px */
+  line-height: 1.2;
+  letter-spacing: 0.01em;
+}
+
+.gsv-prose-lead {
+  font-family: var(--gsv-font-prose);
+  font-weight: 400;
+  font-size: 0.875rem; /* 14px */
+  line-height: 1.6;
+  letter-spacing: 0.01em;
+}
+
+.gsv-prose {
+  font-family: var(--gsv-font-prose);
+  font-weight: 400;
+  font-size: 0.8125rem; /* 13px — default body copy */
+  line-height: 1.5;
+  letter-spacing: 0.01em;
+}
+
+.gsv-prose-sm {
+  font-family: var(--gsv-font-prose);
+  font-weight: 400;
+  font-size: 0.75rem; /* 12px — dense body / captions */
+  line-height: 1.45;
+  letter-spacing: 0.01em;
 }

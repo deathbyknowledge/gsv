@@ -11,9 +11,8 @@ const story: Story = {
         <div class="ds-label">After a label</div>
         <div class="ds-row" style={{ alignItems: "center", gap: "6px" }}>
           <span
+            class="gsv-label"
             style={{
-              fontFamily: "var(--gsv-font-mono)",
-              fontSize: "11px",
               letterSpacing: "0.32em",
               textTransform: "uppercase",
               color: "var(--label)",

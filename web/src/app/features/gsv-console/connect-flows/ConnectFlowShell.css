@@ -46,13 +46,11 @@
 }
 
 .gsv-cf-desc {
+  /* size + family + line-height from .gsv-prose (13px reading) */
   min-width: 0;
   margin: 0;
   max-width: 560px;
   color: var(--prose-dim);
-  font-family: var(--gsv-font-prose);
-  font-size: 13.5px;
-  line-height: 1.5;
   overflow-wrap: anywhere;
 }
 
@@ -136,14 +134,14 @@
 }
 
 .gsv-cf-cmd-title {
-  font-size: 10px;
+  /* size + family from .gsv-sublabel (10px); tracking kept intentionally */
   letter-spacing: 0.18em;
   text-transform: uppercase;
   color: var(--text-hi, #cbc7ff);
 }
 
 .gsv-cf-cmd-meta {
-  font-size: 10px;
+  /* size + family from .gsv-sublabel (10px); tracking kept intentionally */
   letter-spacing: 0.12em;
   color: var(--meta, #7d78b8);
 }
@@ -157,7 +155,7 @@
   background: transparent;
   color: var(--accent-bright, #b3aeff);
   font: inherit;
-  font-size: 9.5px;
+  font-size: 0.625rem; /* 9.5px → .gsv-sublabel floor (10px) */
   letter-spacing: 0.16em;
   cursor: pointer;
 }
@@ -203,15 +201,15 @@
 }
 
 .gsv-cf-cap-title {
-  font-size: 13px;
+  /* size + family from .gsv-paragraph (14px mono); tracking kept intentionally.
+     Kept a step above .gsv-cf-cap-sub so the title out-ranks its subtitle. */
   letter-spacing: 0.04em;
   color: var(--text-hi, #f4f2ff);
 }
 
 .gsv-cf-cap-sub {
-  font-family: var(--gsv-font-prose);
-  font-size: 12.5px;
-  line-height: 1.5;
+  /* size + family + line-height from .gsv-prose-sm (12px) — one step below the
+     14px mono title so the title/subtitle hierarchy reads correctly. */
   color: var(--prose-dim);
 }
 

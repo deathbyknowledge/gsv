@@ -96,9 +96,9 @@ export function IconMenu({
               animation: "gsvPulse 1.5s ease-in-out infinite",
             }}
           />
-          <span style={{ fontSize: "11px", letterSpacing: ".24em", color: "var(--accent-bright)" }}>{title}</span>
+          <span class="gsv-label" style={{ letterSpacing: ".24em", color: "var(--accent-bright)" }}>{title}</span>
         </div>
-        <button type="button" aria-label="Close menu" class="gsv-im-close" disabled={!onClose} onClick={onClose}>
+        <button type="button" aria-label="Close menu" class="gsv-im-close gsv-label" disabled={!onClose} onClick={onClose}>
           [ X ]
         </button>
       </div>
@@ -113,23 +113,23 @@ export function IconMenu({
       >
         <button type="button" disabled={!onFiles} onClick={onFiles} class="gsv-im-cell" style={{ color: "var(--accent-bright)" }}>
           <Icon name="folder" size={22} />
-          <span style={{ fontSize: "9px", letterSpacing: ".16em", color: "#7d78b8" }}>FILES</span>
+          <span class="gsv-sublabel" style={{ letterSpacing: ".16em", color: "#7d78b8" }}>FILES</span>
         </button>
         <button type="button" disabled={!onLibrary} onClick={onLibrary} class="gsv-im-cell" style={{ color: "var(--accent-bright)" }}>
           <Icon name="pencil" size={22} />
-          <span style={{ fontSize: "9px", letterSpacing: ".16em", color: "#7d78b8" }}>LIBRARY</span>
+          <span class="gsv-sublabel" style={{ letterSpacing: ".16em", color: "#7d78b8" }}>LIBRARY</span>
         </button>
         <button type="button" disabled={!onTerminal} onClick={onTerminal} class="gsv-im-cell" style={{ color: "var(--accent-bright)" }}>
           <Icon name="terminal" size={22} />
-          <span style={{ fontSize: "9px", letterSpacing: ".16em", color: "#7d78b8" }}>TERMINAL</span>
+          <span class="gsv-sublabel" style={{ letterSpacing: ".16em", color: "#7d78b8" }}>TERMINAL</span>
         </button>
         <button type="button" disabled={!onRepositories} onClick={onRepositories} class="gsv-im-cell" style={{ color: "var(--accent-bright)" }}>
           <Icon name="doticons/branch" size={22} dotMatrix={16} />
-          <span style={{ fontSize: "9px", letterSpacing: ".16em", color: "#7d78b8" }}>REPOS</span>
+          <span class="gsv-sublabel" style={{ letterSpacing: ".16em", color: "#7d78b8" }}>REPOS</span>
         </button>
         <button type="button" disabled={!onSettings} onClick={onSettings} class="gsv-im-cell" style={{ color: "#b6b1ff" }}>
           <Icon name="cog" size={22} />
-          <span style={{ fontSize: "9px", letterSpacing: ".16em", color: "#b6b1ff" }}>SETTINGS</span>
+          <span class="gsv-sublabel" style={{ letterSpacing: ".16em", color: "#b6b1ff" }}>SETTINGS</span>
         </button>
       </div>
     </div>

@@ -341,7 +341,7 @@ export function MachineProvisionFlow({
                     status={platform === option.id ? "update" : "idle"}
                     selected={platform === option.id}
                   />
-                  <span class="machine-platform-meta">{option.meta}</span>
+                  <span class="machine-platform-meta gsv-prose-sm">{option.meta}</span>
                   <Tag tone={platform === option.id ? "accent" : "idle"} label={option.commandLabel.toUpperCase()} boxed />
                 </button>
               ))}
@@ -561,13 +561,13 @@ export function MachineProvisionFlow({
               </>
             )}
             {createError ? (
-              <div class="machine-inline-error" role="alert">{createError}</div>
+              <div class="machine-inline-error gsv-sublabel" role="alert">{createError}</div>
             ) : null}
             {checkMessage ? (
-              <div class="machine-inline-info" role="status">{checkMessage}</div>
+              <div class="machine-inline-info gsv-prose-sm" role="status">{checkMessage}</div>
             ) : null}
             {issuedToken && !knownTarget?.online ? (
-              <div class="machine-waiting">
+              <div class="machine-waiting gsv-prose-sm">
                 <Spinner size={15} />
                 <span>{knownTarget ? "Registered. Waiting for online status." : `Waiting for ${isBrowserTarget ? "browser target" : "device"} registration.`}</span>
               </div>

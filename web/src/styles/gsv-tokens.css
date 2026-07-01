@@ -44,8 +44,8 @@
   --node-label:    #c4bfee;  /* node text                     */
   --text-muted:    #8c86c8;  /* muted body / secondary copy   */
   --prose-dim:     #9089d4;  /* dim prose / blurb body        */
-  --meta:          #7d78b8;  /* eyebrow / meta / counts       */
-  --text-dim:      #565199;  /* meta / dimmest                */
+  --meta:          #8983bf;  /* eyebrow / meta / counts (AA: >=5.3:1)  */
+  --text-dim:      #837ebd;  /* dimmest text (AA: >=5.0:1 on header-bar) */
 
   /* — status — */
   --online:        #5ef2a0;  /* live / healthy / running      */

@@ -134,12 +134,12 @@ export function Segmented(props: SegmentedProps) {
     <div class={fldClass} style={{ width: `${width}px`, maxWidth: "100%" }}>
       {hasFldLabel ? (
         <div class="gsv-fld-lab">
-          <span class="gsv-fld-lab-t" id={labelId}>{label}</span>
-          {req ? <span class="gsv-fld-req">{req === "required" ? "· REQUIRED" : "· OPTIONAL"}</span> : null}
+          <span class="gsv-fld-lab-t gsv-sublabel" id={labelId}>{label}</span>
+          {req ? <span class="gsv-fld-req gsv-sublabel">{req === "required" ? "· REQUIRED" : "· OPTIONAL"}</span> : null}
           {info ? <InfoTip text={info} /> : null}
         </div>
       ) : null}
-      {description.length > 0 ? <div class="gsv-fld-desc" id={descId}>{description}</div> : null}
+      {description.length > 0 ? <div class="gsv-fld-desc gsv-paragraph-small" id={descId}>{description}</div> : null}
       <div
         class={rootClass}
         style={{ width: "100%" }}
@@ -156,7 +156,7 @@ export function Segmented(props: SegmentedProps) {
       {hasStatus ? (
         <div class="gsv-fld-stat">
           <span class="gsv-fld-dot" />
-          <span class="gsv-fld-msg" id={msgId}>{message}</span>
+          <span class="gsv-fld-msg gsv-sublabel" id={msgId}>{message}</span>
         </div>
       ) : null}
     </div>

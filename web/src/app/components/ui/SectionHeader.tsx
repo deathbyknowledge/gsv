@@ -1,5 +1,4 @@
 import type { ComponentChildren, JSX } from "preact";
-import "../../../styles/gsv-type.css";
 import "./SectionHeader.css";
 
 export interface SectionHeaderProps {
@@ -162,10 +161,10 @@ export function SectionHeader({
       {hasMeta ? (
         // meta is the dim eyebrow string (var(--meta)); pinned right, never
         // shrinks. (Contrast: --meta is intentionally dim per design tokens.)
-        <span class="gsv-section-header-meta" style={{ marginLeft: "auto", flex: "none", fontSize: "10px", letterSpacing: ".16em", color: "var(--meta)" }}>{meta}</span>
+        <span class="gsv-section-header-meta gsv-sublabel" style={{ marginLeft: "auto", flex: "none", letterSpacing: ".16em", color: "var(--meta)" }}>{meta}</span>
       ) : null}
       {hasMetaWord ? (
-        <span class="gsv-section-header-metaword" style={{ marginLeft: hasMeta ? undefined : "auto", flex: "none", fontSize: "10px", letterSpacing: ".16em", color: "var(--meta)" }}>{metaWord}</span>
+        <span class="gsv-section-header-metaword gsv-sublabel" style={{ marginLeft: hasMeta ? undefined : "auto", flex: "none", letterSpacing: ".16em", color: "var(--meta)" }}>{metaWord}</span>
       ) : null}
       {chevron ? <span class="gsv-section-header-chevron" aria-hidden="true" /> : null}
       {hasActions ? (

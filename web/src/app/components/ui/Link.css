@@ -3,9 +3,7 @@
   align-items: center;
   gap: 6px;
   color: var(--link, #8fb6ff);
-  font-family: var(--gsv-font-mono);
-  font-size: 13px;
-  letter-spacing: 0.04em;
+  /* family + size + .04em tracking from .gsv-listitem */
   text-decoration: none;
   cursor: pointer;
   transition: color 120ms ease;

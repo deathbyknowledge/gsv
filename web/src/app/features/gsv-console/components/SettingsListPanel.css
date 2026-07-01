@@ -73,7 +73,7 @@
   /* Reading-width: full-width empty-state band. */
   padding-inline: max(18px, var(--gsv-gutter));
   color: var(--text-dim);
-  font-size: 10px;
+  /* size from .gsv-sublabel (10px); 0.08em tracking kept intentionally */
   letter-spacing: 0.08em;
   overflow: hidden;
   text-overflow: ellipsis;

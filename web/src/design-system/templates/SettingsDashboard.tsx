@@ -153,13 +153,12 @@ function CategorySection({ cat }: { cat: Category }) {
         </span>
         {/* Small sub-meta word (HOSTS / CHANNELS / LINKED …), under the count. */}
         <span
+          class="gsv-sublabel"
           style={{
             position: "absolute",
             right: "44px",
             top: "50%",
             transform: "translateY(6px)",
-            fontFamily: "var(--gsv-font-mono)",
-            fontSize: "9px",
             letterSpacing: ".16em",
             color: "var(--text-dim)",
             pointerEvents: "none",
@@ -188,14 +187,14 @@ function CategorySection({ cat }: { cat: Category }) {
             <Icon name={it.icon} size={18} />
           </span>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: "12.5px", letterSpacing: ".04em", color: "var(--text)" }}>{it.label}</div>
+            <div class="gsv-listitem" style={{ letterSpacing: ".04em", color: "var(--text)" }}>{it.label}</div>
           </div>
           {it.tag ? <Tag tone={it.tag.tone} label={it.tag.label} boxed /> : null}
           {it.statusLabel ? (
             <span
+              class="gsv-sublabel"
               style={{
                 flex: "none",
-                fontSize: "9px",
                 letterSpacing: ".12em",
                 color: TONE_STATUS_TEXT[it.tone],
               }}

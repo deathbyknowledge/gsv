@@ -1,36 +1,63 @@
+import { useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { Story } from "../story";
 
 /**
  * Typography. Two faces, per the design system:
- *   · Departure Mono — the machine: labels, HUD, readouts (the type scale below).
- *   · Space Grotesk  — human prose: chat bubbles, section intros.
- * Both self-hosted in web/public/fonts/ (OFL). Scale values are transcribed from
- * the source design-system spec.
+ *   · Departure Mono — the machine: labels, HUD, readouts.
+ *   · Space Grotesk  — human prose: chat bubbles, section intros, console flows.
+ * Both self-hosted in web/public/fonts/ (OFL).
+ *
+ * SOURCE OF TRUTH: web/src/styles/gsv-type.css. Every row below renders its
+ * sample with the real `.gsv-*` utility class and reads the *computed* size /
+ * weight / tracking back off the element — so this page can never drift from
+ * the live scale again. To change a tier, edit gsv-type.css; this doc follows.
  */
 
-interface Spec {
-  name: string;
-  weight: number;
-  size: number; // px
-  tracking: string; // em
+interface Tier {
+  cls: string; // utility class, without the leading dot
   sample: string;
+  note?: string; // when to reach for it
 }
 
-// Departure Mono machine scale (from the source: "Title 700/19/.14em", etc.)
-const SCALE: Spec[] = [
-  { name: "Title", weight: 700, size: 19, tracking: "0.14em", sample: "GENERAL SYSTEMS VEHICLE" },
-  { name: "Section", weight: 600, size: 13.5, tracking: "0.2em", sample: "THE SHIP" },
-  { name: "Sub-label", weight: 500, size: 10, tracking: "0.2em", sample: "HOSTS" },
-  { name: "List item", weight: 400, size: 11, tracking: "0.04em", sample: "<hank-linux>" },
-  { name: "Meta / HUD", weight: 400, size: 11, tracking: "0.32em", sample: "CONTEXT 50%" },
+// Departure Mono — machine scale (labels · HUD · readouts), largest first.
+const MONO: Tier[] = [
+  { cls: "gsv-title", sample: "GENERAL SYSTEMS VEHICLE", note: "page + card titles" },
+  { cls: "gsv-section", sample: "THE SHIP", note: "section headings" },
+  { cls: "gsv-paragraph", sample: "Aye, captain — the roster is standing by for orders.", note: "mono running copy" },
+  { cls: "gsv-listitem", sample: "<hank-linux>", note: "list rows, values" },
+  { cls: "gsv-meta", sample: "CONTEXT 50%", note: "wide-tracked HUD readouts" },
+  { cls: "gsv-paragraph-small", sample: "Dense mono copy where space is tight.", note: "compact mono copy" },
+  { cls: "gsv-label", sample: "STANDBY", note: "control + object labels" },
+  { cls: "gsv-sublabel", sample: "HOSTS", note: "non-primary chrome, eyebrows (sub-floor exception)" },
 ];
 
-function Row({ spec }: { spec: Spec }) {
+// Space Grotesk — human prose (chat, onboarding, console flows), largest first.
+const PROSE: Tier[] = [
+  { cls: "gsv-prose-display", sample: "General Systems Vehicle", note: "hero / display headings" },
+  { cls: "gsv-prose-heading", sample: "Opening a crew berth", note: "prose headings" },
+  { cls: "gsv-prose-lead", sample: "Wiring the new agent into the roster — ready in a moment.", note: "lead paragraphs" },
+  { cls: "gsv-prose", sample: "Default body copy for running prose across the console flows.", note: "default body copy" },
+  { cls: "gsv-prose-sm", sample: "Dense body copy and captions where the layout is tight.", note: "dense body / captions" },
+];
+
+function Row({ tier }: { tier: Tier }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [spec, setSpec] = useState("");
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const cs = getComputedStyle(el);
+    const size = parseFloat(cs.fontSize) || 0;
+    const ls = parseFloat(cs.letterSpacing) || 0; // px ("normal" → NaN → 0)
+    const em = size ? Number((ls / size).toFixed(3)) : 0;
+    const px = Math.round(size * 100) / 100;
+    setSpec(`${cs.fontWeight} · ${px}px · ${em}em`);
+  }, [tier.cls]);
   return (
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "150px 1fr",
+        gridTemplateColumns: "220px 1fr",
         alignItems: "baseline",
         gap: "20px",
         padding: "14px 0",
@@ -38,21 +65,18 @@ function Row({ spec }: { spec: Spec }) {
       }}
     >
       <div>
-        <div style={{ fontSize: "11px", letterSpacing: "0.08em", color: "var(--text-title)" }}>{spec.name}</div>
-        <div style={{ fontSize: "9px", letterSpacing: "0.06em", color: "var(--text-dim)", marginTop: "4px" }}>
-          {spec.weight} · {spec.size}px · {spec.tracking}
+        <div style={{ fontFamily: "var(--gsv-font-mono)", fontSize: "0.6875rem", letterSpacing: "0.04em", color: "var(--text-title)" }}>
+          .{tier.cls}
         </div>
+        <div style={{ fontFamily: "var(--gsv-font-mono)", fontSize: "0.625rem", letterSpacing: "0.04em", color: "var(--text-dim)", marginTop: "4px" }}>
+          {spec}
+        </div>
+        {tier.note ? (
+          <div style={{ fontFamily: "var(--gsv-font-prose)", fontSize: "0.75rem", color: "var(--meta)", marginTop: "4px" }}>{tier.note}</div>
+        ) : null}
       </div>
-      <div
-        style={{
-          fontFamily: "var(--gsv-font-mono)",
-          fontWeight: spec.weight,
-          fontSize: `${spec.size}px`,
-          letterSpacing: spec.tracking,
-          color: "var(--text-hi)",
-        }}
-      >
-        {spec.sample}
+      <div ref={ref} class={tier.cls} style={{ color: "var(--text-hi)", minWidth: 0, overflowWrap: "anywhere" }}>
+        {tier.sample}
       </div>
     </div>
   );
@@ -61,46 +85,24 @@ function Row({ spec }: { spec: Spec }) {
 const story: Story = {
   title: "Typography",
   group: "Foundations",
-  blurb: "Departure Mono (machine) + Space Grotesk (prose) · self-hosted, OFL",
+  blurb: "Departure Mono (machine) + Space Grotesk (prose) · self-hosted, OFL · live from gsv-type.css",
   render: () => (
     <div class="ds-col">
       <div class="ds-cell">
         <div class="ds-label">Departure Mono · machine scale (labels · HUD · readouts)</div>
         <div style={{ marginTop: "6px" }}>
-          {SCALE.map((s) => (
-            <Row key={s.name} spec={s} />
+          {MONO.map((t) => (
+            <Row key={t.cls} tier={t} />
           ))}
         </div>
       </div>
 
       <div class="ds-cell">
-        <div class="ds-label">Space Grotesk · human prose (chat bubbles · section intros)</div>
-        <p
-          style={{
-            fontFamily: "var(--gsv-font-prose)",
-            fontWeight: 400,
-            fontSize: "14px",
-            lineHeight: 1.55,
-            letterSpacing: "0.01em",
-            color: "var(--text)",
-            maxWidth: "56ch",
-            margin: "12px 0 0",
-          }}
-        >
-          Aye, captain. Opening a crew berth and wiring the new agent into the roster — it'll be
-          ready to take orders in a moment.
-        </p>
-        <div
-          style={{
-            fontFamily: "var(--gsv-font-prose)",
-            fontWeight: 700,
-            fontSize: "20px",
-            letterSpacing: "0.01em",
-            color: "var(--text-hi)",
-            marginTop: "14px",
-          }}
-        >
-          The quick brown fox · 0123456789
+        <div class="ds-label">Space Grotesk · human prose (chat bubbles · onboarding · console flows)</div>
+        <div style={{ marginTop: "6px" }}>
+          {PROSE.map((t) => (
+            <Row key={t.cls} tier={t} />
+          ))}
         </div>
       </div>
 
@@ -109,7 +111,7 @@ const story: Story = {
         <div
           style={{
             fontFamily: "var(--gsv-font-mono)",
-            fontSize: "15px",
+            fontSize: "0.9375rem",
             letterSpacing: "0.06em",
             color: "var(--text)",
             marginTop: "10px",

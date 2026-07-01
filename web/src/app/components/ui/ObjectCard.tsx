@@ -56,13 +56,13 @@ export function ObjectCard({
       <div class="gsv-objcard-head">
         <span class="gsv-objcard-icon">{iconEl}</span>
         <span class="gsv-objcard-label">
-          <span class="gsv-objcard-cat">{type}</span>
-          <span class="gsv-objcard-name">{label}</span>
+          <span class="gsv-objcard-cat gsv-sublabel">{type}</span>
+          <span class="gsv-objcard-name gsv-listitem">{label}</span>
         </span>
         <span class="gsv-objcard-dot" style={dotStyle} />
       </div>
       <div class="gsv-objcard-desc">
-        <p>{blurb}</p>
+        <p class="gsv-paragraph-small">{blurb}</p>
       </div>
     </div>
   );

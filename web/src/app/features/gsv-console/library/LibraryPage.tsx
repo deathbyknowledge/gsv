@@ -189,7 +189,7 @@ function LibraryCollectionBar({ library }: { library: LibraryRuntime }) {
           }}
         />
         {selectedCollection ? (
-          <span class="gsv-library-collection-meta">
+          <span class="gsv-library-collection-meta gsv-sublabel">
             <StatusDot tone={selectedCollection.writable ? "online" : "idle"} size={7} />
             {selectedCollection.writable ? "WRITE" : "READ"} · {pageCount} {pageCount === 1 ? "PAGE" : "PAGES"}
           </span>
@@ -255,11 +255,11 @@ function LibraryIndex({ library }: { library: LibraryRuntime }) {
 
         <section class="gsv-library-browser">
           {!selectedDb ? (
-            <div class="gsv-library-empty-row">SELECT COLLECTION</div>
+            <div class="gsv-library-empty-row gsv-sublabel">SELECT COLLECTION</div>
           ) : searching ? (
             <>
               <div class="gsv-library-browser-crumbs">
-                <span class="gsv-library-browser-label">
+                <span class="gsv-library-browser-label gsv-label">
                   SEARCH RESULTS · {searchResults.length} {searchResults.length === 1 ? "MATCH" : "MATCHES"}
                 </span>
               </div>
@@ -349,7 +349,7 @@ function FolderBrowser({
       </div>
       <div class="gsv-library-browser-list">
         {rows.length === 0 ? (
-          <div class="gsv-library-empty-row">NO PAGES</div>
+          <div class="gsv-library-empty-row gsv-sublabel">NO PAGES</div>
         ) : rows.map((child) => child.kind === "file" ? (
           <ListRow
             chevron
@@ -387,7 +387,7 @@ function SearchResults({
   onOpenPage: (path: string) => void;
 }) {
   if (entries.length === 0) {
-    return <div class="gsv-library-empty-row">NO MATCHES</div>;
+    return <div class="gsv-library-empty-row gsv-sublabel">NO MATCHES</div>;
   }
   return (
     <div class="gsv-library-search-results">
@@ -552,10 +552,10 @@ function LibraryReader({ library, narrow }: { library: LibraryRuntime; narrow: b
   const backFolder = belowBase.length ? belowBase[belowBase.length - 1].path : "";
 
   const outlineRows = library.pageHeadings.length === 0 ? (
-    <div class="gsv-library-empty-row">NO HEADINGS</div>
+    <div class="gsv-library-empty-row gsv-sublabel">NO HEADINGS</div>
   ) : library.pageHeadings.map((heading) => (
     <a
-      class={`gsv-library-outline-row level-${heading.level}`}
+      class={`gsv-library-outline-row gsv-label level-${heading.level}`}
       href={`#${heading.id}`}
       key={heading.id}
     >
@@ -576,7 +576,7 @@ function LibraryReader({ library, narrow }: { library: LibraryRuntime; narrow: b
               open={outlineOpen}
               onToggle={(event) => setOutlineOpen((event.currentTarget as HTMLDetailsElement).open)}
             >
-              <summary class="gsv-library-outline-summary">
+              <summary class="gsv-library-outline-summary gsv-listitem">
                 <span class="gsv-library-outline-dot" aria-hidden="true" />
                 OUTLINE
                 <span class="gsv-library-outline-count">{library.pageHeadings.length}</span>
@@ -875,12 +875,12 @@ function LibraryPreviewLayer({
         onMouseLeave={onPreviewLeave}
         style={{ left: `${left}px`, top: `${top}px` }}
       >
-        <div class="gsv-library-preview-head">
+        <div class="gsv-library-preview-head gsv-sublabel">
           <span>{state.request.kind === "page" ? "PAGE PREVIEW" : "SOURCE PREVIEW"}</span>
           <button type="button" aria-label="Close preview" onClick={onClose}>×</button>
         </div>
         <div
-          class="gsv-library-preview-body"
+          class="gsv-library-preview-body gsv-paragraph-small"
           dangerouslySetInnerHTML={{
             __html: loading ? '<div class="gsv-library-preview-empty">Loading preview...</div>' : renderPreviewBodyHtml(data ?? { ok: false, error: "Preview unavailable." }),
           }}
@@ -898,7 +898,7 @@ function StatusBanner({
   tone: "error" | "live";
 }) {
   return (
-    <div class={`gsv-library-status is-${tone}`} role={tone === "error" ? "alert" : "status"}>
+    <div class={`gsv-library-status gsv-sublabel is-${tone}`} role={tone === "error" ? "alert" : "status"}>
       <StatusDot tone={tone} size={7} />
       <span>{label}</span>
     </div>

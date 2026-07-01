@@ -127,7 +127,8 @@
   border: 1px solid var(--rule-inner);
   background: color-mix(in srgb, var(--field) 76%, transparent);
   color: var(--text-muted);
-  font: 10px/1 var(--gsv-font-mono);
+  /* size + family from .gsv-sublabel (10px); line-height + tracking kept */
+  line-height: 1;
   letter-spacing: 0.1em;
   white-space: nowrap;
   overflow: hidden;
@@ -479,23 +480,22 @@
 
 .repositories-search-path,
 .repositories-commit-message {
+  /* size from .gsv-label (11px) */
   color: var(--text);
-  font-size: 11px;
 }
 
 .repositories-search-line,
 .repositories-commit-hash {
+  /* size from .gsv-sublabel (10px, up from 9px); tracking + transform kept */
   color: var(--accent);
-  font-size: 9px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
 
 .repositories-search-preview,
 .repositories-commit-meta {
+  /* size + family from .gsv-prose-sm (12px) */
   color: var(--text-muted);
-  font-family: var(--gsv-font-prose);
-  font-size: 12px;
 }
 
 .repositories-state {
@@ -516,13 +516,13 @@
 .repositories-state-copy strong {
   color: var(--text);
   font-family: var(--gsv-font-mono);
-  font-size: 12px;
+  font-size: 0.75rem; /* value-normalized from 12px (.gsv-listitem scale) */
   letter-spacing: 0.14em;
 }
 
 .repositories-state-copy span {
   max-width: 520px;
-  font-size: 12px;
+  font-size: 0.75rem; /* value-normalized from 12px (.gsv-paragraph-small scale) */
   line-height: 1.5;
 }
 
@@ -546,7 +546,7 @@
 
 .repositories-file-meta small {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: 0.6875rem; /* value-normalized from 11px (.gsv-label scale) */
 }
 
 .repositories-code-block {
@@ -626,13 +626,13 @@
   white-space: nowrap;
   color: var(--text);
   font-family: var(--gsv-font-mono);
-  font-size: 12px;
+  font-size: 0.75rem; /* value-normalized from 12px (.gsv-listitem scale) */
   letter-spacing: 0;
 }
 
 .repositories-diff-head span {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: 0.6875rem; /* value-normalized from 11px (.gsv-label scale) */
 }
 
 .repositories-diff-file {
@@ -691,12 +691,11 @@
 }
 
 .repositories-empty-inline {
+  /* size + family from .gsv-sublabel (10px); tracking kept */
   padding: 18px 14px;
   /* Reading-width: full-width inline notice inside the results region. */
   padding-inline: max(14px, var(--gsv-gutter));
   color: var(--text-muted);
-  font-family: var(--gsv-font-mono);
-  font-size: 10px;
   letter-spacing: 0.12em;
 }
 

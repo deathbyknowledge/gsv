@@ -37,8 +37,8 @@ export function Progress({
     <div class={rootClass} style={{ width: `${width}px`, maxWidth: "100%" }}>
       {hasTop ? (
         <div class="gsv-pr-top">
-          <span class="gsv-pr-label">{label}</span>
-          {showVal ? <span class="gsv-pr-num">{`${pct}%`}</span> : null}
+          <span class="gsv-pr-label gsv-sublabel">{label}</span>
+          {showVal ? <span class="gsv-pr-num gsv-sublabel">{`${pct}%`}</span> : null}
         </div>
       ) : null}
       <div class="gsv-pr-track">

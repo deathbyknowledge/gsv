@@ -398,12 +398,12 @@ function SearchResults({
           key={`${match.path}:${match.line ?? "match"}:${index}`}
           onClick={() => onOpenFile(match.path)}
         >
-          <span class="files-search-path">{match.path}</span>
-          <span class="files-search-line">{formatSearchMatchLine(match)}</span>
-          <span class="files-search-preview">{match.content}</span>
+          <span class="files-search-path gsv-label">{match.path}</span>
+          <span class="files-search-line gsv-sublabel">{formatSearchMatchLine(match)}</span>
+          <span class="files-search-preview gsv-prose-sm">{match.content}</span>
         </button>
       ))}
-      {payload.truncated ? <div class="files-search-truncated">RESULTS TRUNCATED BY TARGET</div> : null}
+      {payload.truncated ? <div class="files-search-truncated gsv-sublabel">RESULTS TRUNCATED BY TARGET</div> : null}
     </div>
   );
 }
@@ -455,7 +455,7 @@ function CreateFilePanel({
           />
         </label>
         <div class="files-create-footer">
-          <span class="files-editor-status">
+          <span class="files-editor-status gsv-sublabel">
             <StatusDot tone={pending ? "live" : state.pathInput.trim() ? "online" : "idle"} size={8} />
             <span>{pending ? "CREATING" : resolvedPath || "PATH REQUIRED"}</span>
           </span>
@@ -778,7 +778,7 @@ function FileTabView({
         <FilesStateMessage kind="empty" title="NOT A FILE" detail="This tab path no longer resolves to editable file content." />
       ) : (
         <div class="files-file-view">
-          <div class="files-file-meta">
+          <div class="files-file-meta gsv-sublabel">
             <Tag tone="idle" label="FILE" boxed />
             {formatFileStats(file) ? <small>{formatFileStats(file)}</small> : null}
           </div>
@@ -799,7 +799,7 @@ function FileTabView({
                 onInput={(event) => onDraftChange(event.currentTarget.value)}
               />
               <div class="files-editor-footer">
-                <span class="files-editor-status">
+                <span class="files-editor-status gsv-sublabel">
                   <StatusDot tone={statusTone} size={8} />
                   <span>{editorStatus}</span>
                   <small>{dirty ? "DRAFT MODIFIED" : `${draft.length.toLocaleString()} CHARS`}</small>

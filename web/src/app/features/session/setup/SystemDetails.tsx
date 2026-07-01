@@ -60,7 +60,7 @@ export function SystemDetails({
               text="A separate admin password adds a second check for sensitive system actions."
             />
           </h3>
-          <p>Choose whether sensitive admin actions need a second password.</p>
+          <p class="gsv-prose-sm">Choose whether sensitive admin actions need a second password.</p>
         </div>
         <div class="system-details-fields">
           <div data-setup-admin-custom>
@@ -116,7 +116,7 @@ export function SystemDetails({
       <div class="gsv-setup-preference-group">
         <div class="gsv-setup-section-head">
           <h3>Timezone</h3>
-          <p>Used for schedules, calendars, and timestamp displays.</p>
+          <p class="gsv-prose-sm">Used for schedules, calendars, and timestamp displays.</p>
         </div>
         <div class="system-details-fields">
           <Select
@@ -145,7 +145,7 @@ export function SystemDetails({
               text="These settings choose the default AI service GSV uses after setup. You can change them later from settings."
             />
           </h3>
-          <p>Keep the default AI path, or choose the AI service and model from the start.</p>
+          <p class="gsv-prose-sm">Keep the default AI path, or choose the AI service and model from the start.</p>
         </div>
         <div class="system-details-fields">
           <div data-setup-ai-enabled>
@@ -218,7 +218,7 @@ export function SystemDetails({
               text="System files are the built-in apps and settings GSV starts with. Advanced users can point this at a Git repository or remote URL; Version can be a branch, tag, or commit."
             />
           </h3>
-          <p>Use the official system files, or choose a repository and version you control.</p>
+          <p class="gsv-prose-sm">Use the official system files, or choose a repository and version you control.</p>
         </div>
         <div class="system-details-fields">
           <div data-setup-source-enabled>
@@ -271,7 +271,7 @@ export function SystemDetails({
               text="A setup key lets another machine connect to this workspace. Only create one now if you are ready to connect a device."
             />
           </h3>
-          <p>Create a setup key now if you want another machine to connect immediately.</p>
+          <p class="gsv-prose-sm">Create a setup key now if you want another machine to connect immediately.</p>
         </div>
         <div class="system-details-fields">
           <div data-setup-node-enabled>

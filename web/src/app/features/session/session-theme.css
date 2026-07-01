@@ -37,7 +37,7 @@
   --accent-bright: #cbc7ff;
   --label: #b3aee2;
   --node-label: #c4bfee;
-  --text-dim: #565199;
+  --text-dim: #837ebd; /* dimmest text — AA-legible (was #565199, 2.6:1) */
 
   /* status */
   --online: #5ef2a0;

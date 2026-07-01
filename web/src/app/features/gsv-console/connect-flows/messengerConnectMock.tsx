@@ -60,7 +60,7 @@ export const messengerConnectFlow: ConnectFlowDef = {
             variant="attention"
             text="Do this step in Telegram — finish it there, then come back to GSV."
           />
-          <p class="gsv-cf-desc">
+          <p class="gsv-cf-desc gsv-prose">
             Open BotFather in Telegram and create a new bot to act as your GSV's
             messenger. Send <code>/newbot</code>, pick a name and username, and
             BotFather will set up the account for you.
@@ -86,7 +86,7 @@ export const messengerConnectFlow: ConnectFlowDef = {
             variant="attention"
             text="Do this step in Telegram — finish it there, then come back to GSV."
           />
-          <p class="gsv-cf-desc">
+          <p class="gsv-cf-desc gsv-prose">
             Once the bot is created, BotFather hands you an access token. Copy it —
             you'll paste it into GSV in the next step to connect the bot.
           </p>
@@ -106,7 +106,7 @@ export const messengerConnectFlow: ConnectFlowDef = {
       tone: "warn",
       render: (nav) => (
         <div style={bodyStyle}>
-          <p class="gsv-cf-desc">
+          <p class="gsv-cf-desc gsv-prose">
             Paste the token below to connect your Telegram bot to GSV.
           </p>
           <TextInput

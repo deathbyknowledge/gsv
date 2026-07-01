@@ -1219,7 +1219,7 @@ function SettingsStatus({
   tone: SettingsStatusTone;
 }) {
   return text ? (
-    <div class={`gsv-console-settings-status is-${tone}`}>{text}</div>
+    <div class={`gsv-console-settings-status gsv-sublabel is-${tone}`}>{text}</div>
   ) : null;
 }
 
@@ -1300,8 +1300,8 @@ function SettingFieldInput({
   if (field.kind === "password" && redacted && !replacingRedacted) {
     return (
       <div class="gsv-console-secret-field">
-        <div class="gsv-console-secret-label">{field.label}</div>
-        <div class="gsv-console-secret-desc">{description}</div>
+        <div class="gsv-console-secret-label gsv-sublabel">{field.label}</div>
+        <div class="gsv-console-secret-desc gsv-prose-sm">{description}</div>
         <div class={`gsv-console-secret-state${cleared ? " is-cleared" : ""}`}>
           <span>{cleared ? "WILL BE CLEARED" : "CONFIGURED"}</span>
           <small>{cleared ? "Save changes to remove this token." : "Stored value is hidden."}</small>

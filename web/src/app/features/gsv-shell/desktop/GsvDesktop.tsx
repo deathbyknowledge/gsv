@@ -295,7 +295,7 @@ export function GsvDesktop({
               <span class="gsv-space-gsv-cross" aria-hidden="true" />
               <GsvMark variant="white" size={50} />
             </button>
-            <div class="gsv-space-gsv-label">GSV</div>
+            <div class="gsv-space-gsv-label gsv-section">GSV</div>
           </div>
 
           {gsvActive ? (
@@ -363,7 +363,7 @@ export function GsvDesktop({
               </div>
             </>
           ) : (
-            <div class={`gsv-space-inventory-state is-${inventoryState}`}>
+            <div class={`gsv-space-inventory-state gsv-sublabel is-${inventoryState}`}>
               <StatusDot tone={inventoryState === "error" ? "error" : inventoryState === "offline" ? "idle" : "warn"} size={8} />
               <span>{inventoryMessage}</span>
             </div>

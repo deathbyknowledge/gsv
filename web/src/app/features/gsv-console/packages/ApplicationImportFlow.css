@@ -3,11 +3,9 @@
    ConnectFlowShell / .gsv-cf-*; only the flow-specific bodies live here. */
 
 .application-import-copy {
+  /* size + line-height + family from .gsv-prose (13px prose) */
   margin: 0;
   color: var(--label);
-  font-family: var(--gsv-font-prose);
-  font-size: 13px;
-  line-height: 1.5;
 }
 
 .application-import-source-grid {
@@ -75,8 +73,9 @@
 }
 
 .application-import-agent-review-head strong {
+  /* value-normalized to .gsv-label (11px); no JSX class handle on <strong> */
   color: var(--text-title);
-  font-size: 11px;
+  font-size: 0.6875rem;
   letter-spacing: 0.14em;
 }
 
@@ -85,9 +84,11 @@
 .application-import-review-empty,
 .application-import-inline-info,
 .application-import-footnote {
+  /* value-normalized to .gsv-prose-sm (12px prose); shared rule spans a
+     non-handle descendant (…head span), so normalized rather than classed */
   color: var(--label);
   font-family: var(--gsv-font-prose);
-  font-size: 12px;
+  font-size: 0.75rem;
   line-height: 1.45;
 }
 
@@ -104,10 +105,10 @@
 }
 
 .application-import-inline-error {
+  /* size from .gsv-sublabel (10px); 0.08em tracking kept intentionally */
   padding: 14px;
   border-color: color-mix(in srgb, var(--error) 55%, var(--border));
   color: var(--error);
-  font-size: 10px;
   letter-spacing: 0.08em;
 }
 

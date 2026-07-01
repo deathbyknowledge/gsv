@@ -45,7 +45,7 @@ export function CrewTile({
         <AgentImage agent={imageIndex} src={imageSrc} size={54} cover={cover} />
       </span>
       <strong>{name}</strong>
-      <span class="gsv-crew-tile-status">
+      <span class="gsv-crew-tile-status gsv-sublabel">
         <StatusDot tone={tone} size={8} />
         {statusLabel}
       </span>
@@ -76,7 +76,7 @@ export function CrewAddTile({
         <Icon name="plus" size={16} />
       </span>
       <strong>{label}</strong>
-      {description ? <small class="gsv-crew-tile-description">{description}</small> : null}
+      {description ? <small class="gsv-crew-tile-description gsv-sublabel">{description}</small> : null}
     </>
   );
 

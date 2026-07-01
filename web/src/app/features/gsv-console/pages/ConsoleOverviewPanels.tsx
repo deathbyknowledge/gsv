@@ -355,7 +355,7 @@ function MiniRow({ row, showIcon = true, onClick }: { row: OverviewRow; showIcon
 
 function EmptyRow({ label }: { label: string }) {
   return (
-    <div class="gsv-settings-empty-row">
+    <div class="gsv-settings-empty-row gsv-sublabel">
       <StatusDot tone="idle" size={7} />
       <span>{label}</span>
     </div>
@@ -495,8 +495,8 @@ function ShipPanel({
         <div class="gsv-settings-ship-orbit">
           <AsciiPlanet variant="moon" formDuration={3.4} label="GSV ship scan" />
         </div>
-        <span class="gsv-settings-scan">{shipInventoryLabel(data)}</span>
-        <span class="gsv-settings-ship-id">GSV</span>
+        <span class="gsv-settings-scan gsv-sublabel">{shipInventoryLabel(data)}</span>
+        <span class="gsv-settings-ship-id gsv-sublabel">GSV</span>
       </div>
       <SplitCells
         left={(

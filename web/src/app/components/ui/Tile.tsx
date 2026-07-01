@@ -100,7 +100,7 @@ export function Tile({
             </g>
           </svg>
         </div>
-        <span style={{ fontSize: "11px", letterSpacing: ".16em", color: labelColor }}>{labelText}</span>
+        <span class="gsv-label" style={{ letterSpacing: ".16em", color: labelColor }}>{labelText}</span>
       </div>
     );
   }
@@ -162,7 +162,7 @@ export function Tile({
           )}
         </span>
       </div>
-      <span style={{ fontSize: "11px", letterSpacing: ".16em", color: labelColor }}>{labelText}</span>
+      <span class="gsv-label" style={{ letterSpacing: ".16em", color: labelColor }}>{labelText}</span>
     </div>
   );
 }

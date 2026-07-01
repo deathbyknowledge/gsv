@@ -27,7 +27,7 @@ export function RepositoryDiffView({ diff, title }: RepositoryDiffViewProps) {
         )}
       </header>
       {diff.files.length === 0 ? (
-        <div class="repositories-empty-inline">NO CHANGED FILES</div>
+        <div class="repositories-empty-inline gsv-sublabel">NO CHANGED FILES</div>
       ) : diff.files.map((file) => (
         <DiffFile key={`${file.path}:${file.status}:${file.oldHash ?? ""}:${file.newHash ?? ""}`} file={file} />
       ))}
@@ -43,7 +43,7 @@ function DiffFile({ file }: { file: RepositoryDiffFile }) {
         <Tag tone={diffStatusTone(file.status)} label={diffStatusLabel(file.status)} boxed />
       </header>
       {file.hunks.length === 0 ? (
-        <div class="repositories-empty-inline">NO TEXT HUNKS AVAILABLE</div>
+        <div class="repositories-empty-inline gsv-sublabel">NO TEXT HUNKS AVAILABLE</div>
       ) : file.hunks.map((hunk) => (
         <section class="repositories-diff-hunk" key={`${file.path}:${hunk.oldStart}:${hunk.newStart}`}>
           <div class="repositories-diff-hunk-head">@@ -{hunk.oldStart},{hunk.oldCount} +{hunk.newStart},{hunk.newCount} @@</div>

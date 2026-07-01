@@ -34,10 +34,9 @@
 }
 
 .machine-platform-meta {
+  /* size + family from .gsv-prose-sm (12px prose) */
   min-height: 34px;
   color: var(--label);
-  font-family: var(--gsv-font-prose);
-  font-size: 12px;
   line-height: 1.35;
 }
 
@@ -61,29 +60,28 @@
 
 .machine-issue-token strong {
   color: var(--text-title);
-  font-size: 11px;
+  font-size: 0.6875rem; /* value-normalized to .gsv-label (11px) */
   letter-spacing: 0.14em;
 }
 
 .machine-issue-token span {
   color: var(--label);
   font-family: var(--gsv-font-prose);
-  font-size: 12px;
+  font-size: 0.75rem; /* value-normalized to .gsv-prose-sm (12px prose) */
   line-height: 1.4;
 }
 
 .machine-inline-error {
+  /* size from .gsv-sublabel (10px); tracking kept */
   border-color: color-mix(in srgb, var(--error) 55%, var(--border));
   color: var(--error);
-  font-size: 10px;
   letter-spacing: 0.08em;
 }
 
 .machine-inline-info,
 .machine-waiting {
+  /* size + family from .gsv-prose-sm (12px prose) */
   color: var(--label);
-  font-family: var(--gsv-font-prose);
-  font-size: 12px;
 }
 
 /* Browser-extension install instructions + Options-page connection values
@@ -112,14 +110,14 @@
 
 .machine-browser-install-head span {
   color: var(--text-title);
-  font-size: 10px;
+  font-size: 0.625rem; /* value-normalized to .gsv-sublabel (10px) */
   letter-spacing: 0.16em;
   text-transform: uppercase;
 }
 
 .machine-browser-install-head small {
   color: var(--text-dim);
-  font-size: 9px;
+  font-size: 0.625rem; /* value-normalized to .gsv-sublabel floor (10px, up from 9px) */
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
@@ -134,7 +132,7 @@
   background: var(--active);
   color: var(--accent-bright);
   font-family: var(--gsv-font-mono);
-  font-size: 9px;
+  font-size: 0.625rem; /* 9px → .gsv-sublabel floor (10px) */
   letter-spacing: 0.14em;
   text-decoration: none;
   padding: 7px 10px;
@@ -175,7 +173,7 @@
   place-items: center;
   border: 1px solid var(--border-raised);
   color: var(--accent-bright);
-  font-size: 9px;
+  font-size: 0.625rem; /* value-normalized to .gsv-sublabel floor (10px, up from 9px) */
   line-height: 1;
 }
 
@@ -183,7 +181,7 @@
   margin: 0;
   color: var(--label);
   font-family: var(--gsv-font-prose);
-  font-size: 12px;
+  font-size: 0.75rem; /* value-normalized to .gsv-prose-sm (12px prose) */
   line-height: 1.45;
 }
 
@@ -220,7 +218,7 @@
 
 .machine-extension-value span {
   color: var(--text-title);
-  font-size: 10px;
+  font-size: 0.625rem; /* value-normalized to .gsv-sublabel (10px) */
   letter-spacing: 0.14em;
   text-transform: uppercase;
 }

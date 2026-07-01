@@ -70,7 +70,7 @@
   min-height: 13px;
 }
 .gsv-ta-desc {
-  font-size: 10px;
+  /* size from .gsv-paragraph-small (12px); line-height + tracking kept */
   line-height: 1.5;
   letter-spacing: 0.02em;
   color: #7d78b8;
@@ -86,7 +86,7 @@
   min-height: 13px;
 }
 .gsv-ta-label {
-  font-size: 9.5px;
+  /* size from .gsv-sublabel (10px, up from 9.5px sub-floor); tracking kept */
   letter-spacing: 0.22em;
   color: #b3aee2;
 }
@@ -100,7 +100,7 @@
   gap: 6px;
 }
 .gsv-ta-msg {
-  font-size: 9.5px;
+  /* size from .gsv-sublabel (10px, up from 9.5px sub-floor); tracking kept */
   letter-spacing: 0.1em;
 }
 .gsv-ta-dot {
@@ -110,7 +110,7 @@
   border-radius: 1px;
 }
 .gsv-ta-counter {
-  font-size: 9.5px;
+  /* size from .gsv-sublabel (10px, up from 9.5px sub-floor); tracking kept */
   letter-spacing: 0.1em;
   color: #565199;
 }

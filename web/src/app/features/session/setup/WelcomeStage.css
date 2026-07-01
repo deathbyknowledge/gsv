@@ -31,9 +31,8 @@
 }
 
 .gsv-setup-mode-kicker {
+  /* size + family from .gsv-sublabel (10px, up from 8.5px); tracking kept wider */
   display: block;
-  font-family: var(--gsv-font-mono);
-  font-size: 8.5px;
   letter-spacing: 0.26em;
   text-transform: uppercase;
   color: var(--text-dim);
@@ -44,9 +43,8 @@
 }
 
 .gsv-setup-mode-card strong {
+  /* size + family from .gsv-section (14px uppercase heading); tracking kept narrower */
   display: block;
-  font-family: var(--gsv-font-mono);
-  font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -55,10 +53,9 @@
 }
 
 .gsv-setup-mode-card p {
+  /* size + family from .gsv-prose-sm (12px); line-height kept */
   display: block;
   margin: 0;
-  font-family: var(--gsv-font-prose);
-  font-size: 12px;
   line-height: 1.5;
   color: #9d98d4;
 }
