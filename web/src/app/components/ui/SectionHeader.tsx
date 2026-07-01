@@ -1,5 +1,4 @@
 import type { ComponentChildren, JSX } from "preact";
-import "../../../styles/gsv-type.css";
 import "./SectionHeader.css";
 
 export interface SectionHeaderProps {
