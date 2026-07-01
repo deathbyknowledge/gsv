@@ -4125,7 +4125,7 @@ describe("Process DO — mechanical", () => {
         expect(JSON.parse(process.store.getValue("toolApprovalOverrides"))).toEqual([
           {
             match: "fs.read",
-            when: { target: "gsv" },
+            target: "gsv",
             action: "auto",
           },
         ]);

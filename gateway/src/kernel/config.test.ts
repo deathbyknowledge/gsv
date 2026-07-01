@@ -165,21 +165,12 @@ describe("ConfigStore", () => {
     }
   });
 
-  it("defines a global default tool approval policy where workers can run ordinary shell commands", () => {
+  it("defines a global default tool approval policy with explicit guarded tool kinds", () => {
     const policy = JSON.parse(SYSTEM_CONFIG_DEFAULTS["config/ai/tools/approval"]);
 
     expect(policy.default).toBe("auto");
-    expect(policy.rules).not.toContainEqual({ match: "shell.exec", action: "ask" });
-    expect(policy.rules).toContainEqual({
-      match: "shell.exec",
-      when: { anyTag: ["destructive", "privileged", "network", "mutating", "unclassified"] },
-      action: "ask",
-    });
-    expect(policy.rules).toContainEqual({
-      match: "net.fetch",
-      when: { anyTag: ["network", "mutating"] },
-      action: "ask",
-    });
+    expect(policy.rules).toContainEqual({ match: "shell.exec", action: "ask" });
+    expect(policy.rules).toContainEqual({ match: "net.fetch", action: "ask" });
     expect(policy.rules).toContainEqual({ match: "fs.delete", action: "ask" });
   });
 });

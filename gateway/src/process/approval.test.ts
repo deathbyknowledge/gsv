@@ -1,20 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import {
   DEFAULT_TOOL_APPROVAL_POLICY,
-  buildToolApprovalFacts,
   parseToolApprovalPolicy,
   resolveToolApproval,
 } from "./approval";
-
-const IDENTITY: ProcessIdentity = {
-  uid: 1000,
-  gid: 1000,
-  gids: [1000],
-  username: "hank",
-  home: "/home/hank",
-  cwd: "/home/hank/project",
-};
 
 describe("tool approval policy", () => {
   it("parses policy JSON and keeps defaults on invalid input", () => {
@@ -29,103 +18,35 @@ describe("tool approval policy", () => {
     });
   });
 
-  it("defaults ordinary worker shell commands to auto while guarding risky commands", () => {
-    const ordinary = resolveToolApproval(
-      DEFAULT_TOOL_APPROVAL_POLICY,
-      "shell.exec",
-      { target: "gsv", input: "pwd" },
-      IDENTITY,
-      "task",
-    );
-    expect(ordinary.action).toBe("auto");
-
-    const destructive = resolveToolApproval(
-      DEFAULT_TOOL_APPROVAL_POLICY,
-      "shell.exec",
-      { target: "gsv", input: "rm -rf build" },
-      IDENTITY,
-      "task",
-    );
-    expect(destructive.action).toBe("ask");
+  it("normalizes legacy target conditions to target scopes", () => {
+    expect(parseToolApprovalPolicy(JSON.stringify({
+      default: "auto",
+      rules: [
+        {
+          match: "shell.exec",
+          when: { anyTag: ["network"], target: "device" },
+          action: "ask",
+        },
+      ],
+    }))).toEqual({
+      default: "auto",
+      rules: [{ match: "shell.exec", target: "targets/*", action: "ask" }],
+    });
   });
 
-  it("classifies shell commands through the parser instead of substring boundaries", () => {
-    const tabbed = resolveToolApproval(
-      DEFAULT_TOOL_APPROVAL_POLICY,
-      "shell.exec",
-      { target: "gsv", input: "rm\t-rf build" },
-      IDENTITY,
-      "task",
-    );
-    expect(tabbed.action).toBe("ask");
-    expect(tabbed.facts.tags).toContain("destructive");
-
-    const newline = resolveToolApproval(
-      DEFAULT_TOOL_APPROVAL_POLICY,
-      "shell.exec",
-      { target: "gsv", input: "sudo\npwd" },
-      IDENTITY,
-      "task",
-    );
-    expect(newline.action).toBe("ask");
-    expect(newline.facts.tags).toContain("privileged");
+  it("asks for default guarded tool kinds", () => {
+    expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "shell.exec").action).toBe("ask");
+    expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "net.fetch").action).toBe("ask");
+    expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "fs.delete").action).toBe("ask");
+    expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "sys.mcp.call").action).toBe("ask");
+    expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "fs.read").action).toBe("auto");
   });
 
-  it("requires approval for unclassified shell commands", () => {
-    const resolution = resolveToolApproval(
-      DEFAULT_TOOL_APPROVAL_POLICY,
-      "shell.exec",
-      { target: "gsv", input: "node -e 'console.log(1)'" },
-      IDENTITY,
-      "task",
-    );
-    expect(resolution.action).toBe("ask");
-    expect(resolution.facts.tags).toContain("unclassified");
-  });
-
-  it("requires approval for network and mutating shell commands", () => {
-    const network = resolveToolApproval(
-      DEFAULT_TOOL_APPROVAL_POLICY,
-      "shell.exec",
-      { target: "gsv", input: "curl https://example.com" },
-      IDENTITY,
-      "task",
-    );
-    expect(network.action).toBe("ask");
-    expect(network.facts.tags).toContain("network");
-
-    const redirect = resolveToolApproval(
-      DEFAULT_TOOL_APPROVAL_POLICY,
-      "shell.exec",
-      { target: "gsv", input: "echo key >> ~/.ssh/authorized_keys" },
-      IDENTITY,
-      "task",
-    );
-    expect(redirect.action).toBe("ask");
-    expect(redirect.facts.tags).toContain("mutating");
-  });
-
-  it("requires approval for CodeMode fetches", () => {
-    const get = resolveToolApproval(
-      DEFAULT_TOOL_APPROVAL_POLICY,
-      "net.fetch",
-      { url: "https://example.com", method: "GET" },
-      IDENTITY,
-      "task",
-    );
-    expect(get.action).toBe("ask");
-    expect(get.facts.tags).toContain("network");
-
-    const post = resolveToolApproval(
-      DEFAULT_TOOL_APPROVAL_POLICY,
-      "net.fetch",
-      { url: "https://example.com", method: "POST" },
-      IDENTITY,
-      "task",
-    );
-    expect(post.action).toBe("ask");
-    expect(post.facts.tags).toContain("network");
-    expect(post.facts.tags).toContain("mutating");
+  it("resolves native and connected targets from tool args", () => {
+    expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "shell.exec").target).toBe("gsv");
+    expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "shell.exec", { target: "gateway" }).target).toBe("gsv");
+    expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "shell.exec", { target: "macbook" }).target).toBe("macbook");
+    expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "shell.exec", { sessionId: "sh_123" }).target).toBe("targets/*");
   });
 
   it("prefers exact syscall rules over domain wildcards", () => {
@@ -137,65 +58,47 @@ describe("tool approval policy", () => {
       ],
     }));
 
-    const resolution = resolveToolApproval(policy, "fs.read", { path: "/tmp/a" }, IDENTITY);
+    const resolution = resolveToolApproval(policy, "fs.read");
     expect(resolution.action).toBe("ask");
     expect(resolution.matchedRule).toBe("fs.read");
   });
 
-  it("matches conditional rules on tags, args, and target", () => {
+  it("matches domain wildcards when exact rules are absent", () => {
+    const policy = parseToolApprovalPolicy(JSON.stringify({
+      default: "auto",
+      rules: [{ match: "repo.*", action: "ask" }],
+    }));
+
+    const resolution = resolveToolApproval(policy, "repo.delete");
+    expect(resolution.action).toBe("ask");
+    expect(resolution.matchedRule).toBe("repo.*");
+  });
+
+  it("prefers target-specific rules over generic tool rules", () => {
     const policy = parseToolApprovalPolicy(JSON.stringify({
       default: "auto",
       rules: [
-        {
-          match: "shell.exec",
-          when: {
-            anyTag: ["network"],
-            target: "device",
-            argPrefix: { input: "curl" },
-          },
-          action: "ask",
-        },
+        { match: "shell.exec", action: "ask" },
+        { match: "shell.exec", target: "targets/*", action: "deny" },
+        { match: "shell.exec", target: "macbook", action: "auto" },
       ],
     }));
 
-    const resolution = resolveToolApproval(policy, "shell.exec", {
-      input: "curl https://example.com",
-      target: "macbook",
-    }, IDENTITY);
-
-    expect(resolution.action).toBe("ask");
-    expect(resolution.facts.tags).toContain("network");
-    expect(resolution.facts.target).toBe("device");
+    expect(resolveToolApproval(policy, "shell.exec", { target: "gsv" }).action).toBe("ask");
+    expect(resolveToolApproval(policy, "shell.exec", { target: "linux-box" }).action).toBe("deny");
+    expect(resolveToolApproval(policy, "shell.exec", { target: "macbook" }).action).toBe("auto");
   });
 
-  it("classifies shell session continuations as device-targeted", () => {
+  it("lets target-specific wildcards override generic exact rules", () => {
     const policy = parseToolApprovalPolicy(JSON.stringify({
       default: "auto",
       rules: [
-        {
-          match: "shell.exec",
-          when: { target: "device" },
-          action: "ask",
-        },
+        { match: "shell.exec", action: "ask" },
+        { match: "shell.*", target: "macbook", action: "auto" },
       ],
     }));
 
-    const resolution = resolveToolApproval(policy, "shell.exec", {
-      sessionId: "sh_123",
-      input: "rm -rf build",
-    }, IDENTITY);
-
-    expect(resolution.action).toBe("ask");
-    expect(resolution.facts.target).toBe("device");
-    expect(resolution.facts.tags).toContain("remote");
-    expect(resolution.facts.tags).toContain("destructive");
-  });
-
-  it("builds path tags for filesystem syscalls", () => {
-    const facts = buildToolApprovalFacts("fs.delete", { path: "../.env" }, IDENTITY);
-    expect(facts.tags).toContain("destructive");
-    expect(facts.tags).toContain("hidden-path");
-    expect(facts.tags).toContain("outside-cwd");
-    expect(facts.path).toBe("/home/hank/.env");
+    expect(resolveToolApproval(policy, "shell.exec", { target: "macbook" }).action).toBe("auto");
+    expect(resolveToolApproval(policy, "shell.exec", { target: "gsv" }).action).toBe("ask");
   });
 });

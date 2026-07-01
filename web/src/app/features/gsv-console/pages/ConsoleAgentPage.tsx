@@ -7,6 +7,7 @@ import {
   type AgentEditorTab,
   type AgentEditorTask,
 } from "../../../components/ui/AgentEditor";
+import type { AgentToolTarget } from "../../../components/ui/AgentToolsPanel";
 import type { AvatarStatus } from "../../../components/ui/Avatar";
 import type { ConsoleAgentContextFile } from "../backend/consoleService";
 import {
@@ -19,6 +20,7 @@ import type {
   ConsoleConfigEntry,
   ConsoleProcess,
   ConsoleResourceState,
+  ConsoleTarget,
 } from "../domain/consoleModels";
 import { modelOptionsForConfig, type ConsoleModelOption } from "../domain/consoleAi";
 import {
@@ -42,6 +44,7 @@ import {
   useConsoleAccounts,
   useConsoleConfig,
   useConsoleProcesses,
+  useConsoleTargets,
   useCreateConsoleAgent,
   useSaveConsoleAgentBehavior,
   useSaveConsoleAgentContext,
@@ -64,7 +67,9 @@ export function ConsoleAgentPage({
   const accounts = useConsoleAccounts();
   const config = useConsoleConfig();
   const processes = useConsoleProcesses();
+  const targets = useConsoleTargets();
   const modelOptions = modelOptionsForConfig(config.config);
+  const toolTargets = agentToolTargetsForConsoleTargets(targets.targets);
   const ownerUid = viewerAccountForAgents(accounts.resource.data ?? [])?.uid ?? null;
   const inheritedNewAgentModel = inheritedModelLabelForAccount(config.config, -1, ownerUid);
   const inheritedNewAgentReasoning = inheritedReasoningForAccount(config.config, -1, ownerUid);
@@ -77,6 +82,7 @@ export function ConsoleAgentPage({
         <NewAgentEditorSurface
           accountCount={accounts.resource.data?.length ?? 0}
           modelOptions={newAgentModelOptions}
+          toolTargets={toolTargets}
           inheritedReasoning={inheritedNewAgentReasoning}
           defaultApprovalPolicy={defaultApprovalPolicy}
           onAgentCreated={onAgentCreated}
@@ -103,6 +109,7 @@ export function ConsoleAgentPage({
               accounts={data}
               config={config.config}
               modelOptions={modelOptions}
+              toolTargets={toolTargets}
               ownerUid={viewerAccountForAgents(data)?.uid ?? null}
               processResource={processes.resource}
             />
@@ -118,6 +125,7 @@ function AgentEditorSurface({
   accounts,
   config,
   modelOptions,
+  toolTargets,
   ownerUid,
   processResource,
 }: {
@@ -125,6 +133,7 @@ function AgentEditorSurface({
   accounts: readonly ConsoleAccount[];
   config: readonly ConsoleConfigEntry[];
   modelOptions: ConsoleModelOption[];
+  toolTargets: readonly AgentToolTarget[];
   ownerUid: number | null;
   processResource: ConsoleResourceState<ConsoleProcess[]>;
 }) {
@@ -196,6 +205,7 @@ function AgentEditorSurface({
             approvalPolicySourceLabel={approvalSourceLabel(editsUserDefaults, behavior.approvalInherited)}
             approvalPolicySourceDescription={approvalSourceDescription(editsUserDefaults, behavior.approvalInherited)}
             capabilities={account.capabilities}
+            toolTargets={[...toolTargets]}
             createdLabel={String(account.uid)}
             metaLabel="UID:"
             status={avatarStatusForProcesses(account, processes)}
@@ -234,6 +244,7 @@ function AgentEditorSurface({
 function NewAgentEditorSurface({
   accountCount,
   modelOptions,
+  toolTargets,
   inheritedReasoning,
   defaultApprovalPolicy,
   onAgentCreated,
@@ -241,6 +252,7 @@ function NewAgentEditorSurface({
 }: {
   accountCount: number;
   modelOptions: AgentEditorModelOption[];
+  toolTargets: readonly AgentToolTarget[];
   inheritedReasoning: string;
   defaultApprovalPolicy: string;
   onAgentCreated?: (uid: number) => void;
@@ -283,6 +295,7 @@ function NewAgentEditorSurface({
             metaLabel="STATUS:"
             status="idle"
             models={modelOptions}
+            toolTargets={[...toolTargets]}
             inheritedReasoning={inheritedReasoning}
             onCreate={async (draft) => {
               const created = await createAgent.mutateAsync(agentDraftToCreateInput(draft, defaultApprovalPolicy));
@@ -359,6 +372,15 @@ function modelOptionsKey(options: readonly AgentEditorModelOption[]): string {
     }
     return `${option.value ?? ""}:${option.label}:${option.description ?? ""}`;
   }).join("\u0000");
+}
+
+function agentToolTargetsForConsoleTargets(targets: readonly ConsoleTarget[]): AgentToolTarget[] {
+  return targets.map((target) => ({
+    id: target.deviceId,
+    label: target.label || target.deviceId,
+    online: target.online,
+    implements: target.implements,
+  }));
 }
 
 function selectAccount(accounts: readonly ConsoleAccount[], accountUid: number | null): ConsoleAccount | null {

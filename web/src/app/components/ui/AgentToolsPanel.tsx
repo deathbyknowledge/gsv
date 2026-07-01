@@ -1,24 +1,16 @@
 import { Button } from "./Button";
+import { IconButton } from "./IconButton";
 import { InfoTip } from "./InfoTip";
 import { Segmented } from "./Segmented";
 import { Select, type SelectOption } from "./Select";
-import { Surface } from "./Surface";
 import { Tag } from "./Tag";
 import "./AgentToolsPanel.css";
 
 export type AgentToolApprovalAction = "auto" | "ask" | "deny";
 
-export type AgentToolApprovalCondition = {
-  anyTag?: string[];
-  allTags?: string[];
-  argEquals?: Record<string, string | number | boolean>;
-  argPrefix?: Record<string, string>;
-  target?: "gsv" | "device";
-};
-
 export type AgentToolApprovalRule = {
   match: string;
-  when?: AgentToolApprovalCondition;
+  target?: string;
   action: AgentToolApprovalAction;
 };
 
@@ -27,11 +19,19 @@ export type AgentToolApprovalPolicy = {
   rules: AgentToolApprovalRule[];
 };
 
+export type AgentToolTarget = {
+  id: string;
+  label?: string;
+  online?: boolean;
+  implements?: readonly string[];
+};
+
 export interface AgentToolsPanelProps {
   policy: AgentToolApprovalPolicy;
   sourceLabel?: string;
   sourceDescription?: string;
   capabilities?: readonly string[];
+  targets?: readonly AgentToolTarget[];
   disabled?: boolean;
   onChange: (policy: AgentToolApprovalPolicy) => void;
 }
@@ -142,24 +142,26 @@ const APPROVAL_MATCH_OPTIONS: SelectOption[] = CAPABILITY_FAMILIES.flatMap((fami
   })),
 );
 const APPROVAL_MATCH_VALUES = CAPABILITY_FAMILIES.flatMap((family) => family.options.map((option) => option.match));
-const TAG_LABELS: Record<string, string> = {
-  destructive: "Destructive",
-  privileged: "Privileged",
-  network: "Network",
-  mutating: "Changes state",
-  unclassified: "Unclassified",
+const BUILTIN_TARGET_OPTIONS: SelectOption[] = [
+  {
+    label: "All",
+    value: "",
+  },
+  {
+    label: "GSV computer",
+    value: "gsv",
+  },
+];
+const LEGACY_EXTERNAL_TARGET_OPTION: SelectOption = {
+  group: "Stored target",
+  label: "All external targets",
+  value: "targets/*",
 };
 
 function actionLabel(action: AgentToolApprovalAction): string {
-  if (action === "auto") return "Allow automatically";
+  if (action === "auto") return "Allow";
   if (action === "deny") return "Deny";
-  return "Ask first";
-}
-
-function actionDescription(action: AgentToolApprovalAction): string {
-  if (action === "auto") return "No confirmation prompt.";
-  if (action === "deny") return "Never run matching tools.";
-  return "Request confirmation before running.";
+  return "Ask";
 }
 
 function defaultOverrideAction(defaultAction: AgentToolApprovalAction): AgentToolApprovalAction {
@@ -218,29 +220,57 @@ function optionValue(option: SelectOption): string {
   return typeof option === "string" ? option : option.value ?? option.label;
 }
 
-function conditionLabels(when: AgentToolApprovalCondition | undefined): string[] {
-  if (!when) {
-    return [];
+function targetOptionsForRule(target: string | undefined, targets: readonly AgentToolTarget[]): SelectOption[] {
+  const targetOptions = targets
+    .filter((candidate) => candidate.id.trim().length > 0)
+    .map((candidate) => {
+      const label = candidate.label?.trim() || candidate.id;
+      return {
+        group: "Targets",
+        label,
+        value: candidate.id,
+      };
+    });
+  const knownValues = new Set([
+    ...BUILTIN_TARGET_OPTIONS.map((option) => typeof option === "string" ? option : option.value ?? option.label),
+    ...targetOptions.map((option) => option.value ?? option.label),
+  ]);
+  const baseOptions = target === "targets/*"
+    ? [...BUILTIN_TARGET_OPTIONS, LEGACY_EXTERNAL_TARGET_OPTION, ...targetOptions]
+    : [...BUILTIN_TARGET_OPTIONS, ...targetOptions];
+  if (!target || knownValues.has(target) || target === "targets/*") {
+    return baseOptions;
   }
-  const labels: string[] = [];
-  if (when.target) labels.push(when.target === "gsv" ? "GSV target" : "Device target");
-  if (when.anyTag?.length) labels.push(`${when.anyTag.map(tagLabel).join(" or ")}`);
-  if (when.allTags?.length) labels.push(`${when.allTags.map(tagLabel).join(" + ")}`);
-  for (const [key, value] of Object.entries(when.argEquals ?? {})) {
-    labels.push(`${argumentLabel(key)} is ${String(value)}`);
-  }
-  for (const [key, value] of Object.entries(when.argPrefix ?? {})) {
-    labels.push(`${argumentLabel(key)} starts with ${value}`);
-  }
-  return labels;
+  return [
+    ...baseOptions,
+    {
+      group: "Stored target",
+      label: target,
+      value: target,
+    },
+  ];
 }
 
-function tagLabel(tag: string): string {
-  return TAG_LABELS[tag] ?? tag;
+function targetIndexForRule(target: string | undefined, targets: readonly AgentToolTarget[]): number {
+  const options = targetOptionsForRule(target, targets);
+  const value = target ?? "";
+  const index = options.findIndex((option) => typeof option !== "string" && (option.value ?? option.label) === value);
+  return index >= 0 ? index : 0;
 }
 
-function argumentLabel(key: string): string {
-  return key.replace(/[_-]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+function updateRuleTarget(
+  policy: AgentToolApprovalPolicy,
+  index: number,
+  target: string,
+): AgentToolApprovalPolicy {
+  const patch: Partial<AgentToolApprovalRule> = target ? { target } : { target: undefined };
+  const next = updateRule(policy, index, patch);
+  return {
+    ...next,
+    rules: next.rules.map((rule, candidate) => candidate === index && !target
+      ? { match: rule.match, action: rule.action }
+      : rule),
+  };
 }
 
 function actionIndex(action: AgentToolApprovalAction): number {
@@ -251,6 +281,7 @@ export function AgentToolsPanel({
   policy,
   sourceLabel,
   sourceDescription,
+  targets = [],
   disabled = false,
   onChange,
 }: AgentToolsPanelProps) {
@@ -289,53 +320,80 @@ export function AgentToolsPanel({
       />
 
       {policy.rules.length > 0 ? (
-        <Surface level={1} class="gsv-tools-rules">
-          <div class="gsv-tools-rule-list">
+        <div class="gsv-tools-overrides" role="table" aria-label="Tool approval overrides">
+          <div class="gsv-tools-overrides-head" role="row">
+            <span role="columnheader">TOOL</span>
+            <span class="gsv-tools-column-head" role="columnheader">
+              TARGET
+              <InfoTip
+                text="Where this override applies: all targets, the GSV computer, or one named target."
+                position="top"
+                label="Target scope"
+              />
+            </span>
+            <span class="gsv-tools-column-head" role="columnheader">
+              ACTION
+              <InfoTip
+                text="What happens when the tool and target match: allow it, ask for confirmation, or deny it."
+                position="top"
+                label="Approval action"
+              />
+            </span>
+            <span role="columnheader" aria-label="Actions" />
+          </div>
+          <div class="gsv-tools-rule-list" role="rowgroup">
             {policy.rules.map((rule, index) => {
-              const conditions = conditionLabels(rule.when);
               const matchOptions = matchOptionsForRule(rule.match);
+              const targetOptions = targetOptionsForRule(rule.target, targets);
               return (
-                <div class="gsv-tools-rule" key={index}>
-                  <Select
-                    label={index === 0 ? "TOOL" : ""}
-                    options={matchOptions}
-                    value={matchIndexForRule(rule.match)}
-                    width={280}
-                    size="small"
-                    disabled={disabled}
-                    onChange={(selected) => onChange(updateRule(policy, index, { match: optionValue(matchOptions[selected] ?? matchOptions[0] ?? "fs.*") }))}
-                  />
-                  <Select
-                    label={index === 0 ? "ACTION" : ""}
-                    options={APPROVAL_ACTIONS.map((action) => ({
-                      label: actionLabel(action),
-                      value: action,
-                      description: actionDescription(action),
-                    }))}
-                    value={actionIndex(rule.action)}
-                    width={190}
-                    size="small"
-                    disabled={disabled}
-                    onChange={(selected) => onChange(updateRule(policy, index, { action: APPROVAL_ACTIONS[selected] ?? "ask" }))}
-                  />
-                  <Button
-                    variant="dangerGhost"
-                    label="REMOVE"
-                    disabled={disabled}
-                    onClick={() => onChange(removeRule(policy, index))}
-                  />
-                  {conditions.length > 0 ? (
-                    <div class="gsv-tools-rule-conditions">
-                      {conditions.map((condition) => (
-                        <Tag key={condition} tone="accent" label={condition.toUpperCase()} boxed />
-                      ))}
-                    </div>
-                  ) : null}
+                <div class="gsv-tools-rule" role="row" key={index}>
+                  <div class="gsv-tools-rule-tool" role="cell">
+                    <Select
+                      options={matchOptions}
+                      value={matchIndexForRule(rule.match)}
+                      width={280}
+                      size="small"
+                      disabled={disabled}
+                      onChange={(selected) => onChange(updateRule(policy, index, { match: optionValue(matchOptions[selected] ?? matchOptions[0] ?? "fs.*") }))}
+                    />
+                  </div>
+                  <div class="gsv-tools-rule-target" role="cell">
+                    <Select
+                      options={targetOptions}
+                      value={targetIndexForRule(rule.target, targets)}
+                      width={190}
+                      size="small"
+                      disabled={disabled}
+                      onChange={(selected) => onChange(updateRuleTarget(policy, index, optionValue(targetOptions[selected] ?? targetOptions[0] ?? "")))}
+                    />
+                  </div>
+                  <div class="gsv-tools-rule-action" role="cell">
+                    <Select
+                      options={APPROVAL_ACTIONS.map((action) => ({
+                        label: actionLabel(action),
+                        value: action,
+                      }))}
+                      value={actionIndex(rule.action)}
+                      width={170}
+                      size="small"
+                      disabled={disabled}
+                      onChange={(selected) => onChange(updateRule(policy, index, { action: APPROVAL_ACTIONS[selected] ?? "ask" }))}
+                    />
+                  </div>
+                  <div class="gsv-tools-rule-delete" role="cell">
+                    <IconButton
+                      glyph="close"
+                      size="small"
+                      title="Delete override"
+                      disabled={disabled}
+                      onClick={() => onChange(removeRule(policy, index))}
+                    />
+                  </div>
                 </div>
               );
             })}
           </div>
-        </Surface>
+        </div>
       ) : null}
     </section>
   );

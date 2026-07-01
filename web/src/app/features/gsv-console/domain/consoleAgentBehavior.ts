@@ -9,21 +9,13 @@ export type AgentApprovalAction = "auto" | "ask" | "deny";
 
 export type ApprovalRule = {
   match: string;
-  when?: ApprovalRuleCondition;
+  target?: string;
   action: AgentApprovalAction;
 };
 
 export type ApprovalPolicy = {
   default: AgentApprovalAction;
   rules: ApprovalRule[];
-};
-
-export type ApprovalRuleCondition = {
-  anyTag?: string[];
-  allTags?: string[];
-  argEquals?: Record<string, string | number | boolean>;
-  argPrefix?: Record<string, string>;
-  target?: "gsv" | "device";
 };
 
 export type ConsoleAgentBehavior = {
@@ -42,8 +34,8 @@ export const GLOBAL_APPROVAL_CONFIG_KEY = "config/ai/tools/approval";
 const DEFAULT_APPROVAL_POLICY: ApprovalPolicy = {
   default: "auto",
   rules: [
-    { match: "shell.exec", when: { anyTag: ["destructive", "privileged", "network", "mutating", "unclassified"] }, action: "ask" },
-    { match: "net.fetch", when: { anyTag: ["network", "mutating"] }, action: "ask" },
+    { match: "shell.exec", action: "ask" },
+    { match: "net.fetch", action: "ask" },
     { match: "fs.delete", action: "ask" },
     { match: "sys.mcp.call", action: "ask" },
   ],
@@ -173,6 +165,31 @@ export function approvalActionFromValue(value: unknown): AgentApprovalAction {
   return APPROVAL_ACTIONS.includes(value as AgentApprovalAction) ? value as AgentApprovalAction : "ask";
 }
 
+function approvalTargetFromValue(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === "*" || trimmed.toLowerCase() === "any") {
+    return undefined;
+  }
+  if (trimmed === "device" || trimmed === "devices/*") {
+    return "targets/*";
+  }
+  if (trimmed === "gateway" || trimmed === "local") {
+    return "gsv";
+  }
+  return trimmed;
+}
+
+function legacyApprovalTarget(value: unknown): string | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const target = (value as { target?: unknown }).target;
+  return approvalTargetFromValue(target === "device" ? "targets/*" : target);
+}
+
 export function parseApprovalPolicy(raw: string): ApprovalPolicy {
   const trimmed = raw.trim();
   if (!trimmed) {
@@ -185,11 +202,11 @@ export function parseApprovalPolicy(raw: string): ApprovalPolicy {
           .map((entry) => {
             const record = entry && typeof entry === "object" ? entry as Record<string, unknown> : {};
             const match = typeof record.match === "string" ? record.match.trim() : "";
-            const when = normalizeApprovalRuleCondition(record.when);
+            const target = approvalTargetFromValue(record.target) ?? legacyApprovalTarget(record.when);
             return match
               ? {
                   match,
-                  ...(when ? { when } : {}),
+                  ...(target ? { target } : {}),
                   action: approvalActionFromValue(record.action),
                 }
               : null;
@@ -203,54 +220,6 @@ export function parseApprovalPolicy(raw: string): ApprovalPolicy {
   } catch {
     return DEFAULT_APPROVAL_POLICY;
   }
-}
-
-function normalizeApprovalRuleCondition(value: unknown): ApprovalRuleCondition | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return undefined;
-  }
-  const record = value as Record<string, unknown>;
-  const anyTag = normalizeStringArray(record.anyTag);
-  const allTags = normalizeStringArray(record.allTags);
-  const argEquals = normalizePrimitiveRecord(record.argEquals);
-  const argPrefix = normalizeStringRecord(record.argPrefix);
-  const target = record.target === "gsv" || record.target === "device" ? record.target : undefined;
-  if (!anyTag && !allTags && !argEquals && !argPrefix && !target) {
-    return undefined;
-  }
-  return {
-    ...(anyTag ? { anyTag } : {}),
-    ...(allTags ? { allTags } : {}),
-    ...(argEquals ? { argEquals } : {}),
-    ...(argPrefix ? { argPrefix } : {}),
-    ...(target ? { target } : {}),
-  };
-}
-
-function normalizeStringArray(value: unknown): string[] | undefined {
-  if (!Array.isArray(value)) {
-    return undefined;
-  }
-  const items = value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0);
-  return items.length > 0 ? items : undefined;
-}
-
-function normalizePrimitiveRecord(value: unknown): Record<string, string | number | boolean> | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return undefined;
-  }
-  const entries = Object.entries(value).filter(([, entry]) =>
-    typeof entry === "string" || typeof entry === "number" || typeof entry === "boolean",
-  );
-  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
-}
-
-function normalizeStringRecord(value: unknown): Record<string, string> | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return undefined;
-  }
-  const entries = Object.entries(value).filter(([, entry]) => typeof entry === "string" && entry.trim().length > 0);
-  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
 export function serializeApprovalPolicy(policy: ApprovalPolicy): string {

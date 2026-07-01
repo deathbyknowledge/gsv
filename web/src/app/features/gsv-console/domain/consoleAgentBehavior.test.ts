@@ -63,4 +63,24 @@ describe("console agent behavior", () => {
   it("keeps explicit ask-only approval policies serializable", () => {
     expect(serializeApprovalPolicy({ default: "ask", rules: [] })).toBe('{"default":"ask","rules":[]}');
   });
+
+  it("normalizes approval target scopes", () => {
+    const policy = parseApprovalPolicy(JSON.stringify({
+      default: "auto",
+      rules: [
+        { match: "shell.exec", target: "gateway", action: "ask" },
+        { match: "shell.exec", when: { target: "device" }, action: "deny" },
+        { match: "fs.read", target: "macbook", action: "auto" },
+      ],
+    }));
+
+    expect(policy.rules).toEqual([
+      { match: "shell.exec", target: "gsv", action: "ask" },
+      { match: "shell.exec", target: "targets/*", action: "deny" },
+      { match: "fs.read", target: "macbook", action: "auto" },
+    ]);
+    expect(serializeApprovalPolicy(policy)).toBe(
+      '{"default":"auto","rules":[{"match":"shell.exec","target":"gsv","action":"ask"},{"match":"shell.exec","target":"targets/*","action":"deny"},{"match":"fs.read","target":"macbook","action":"auto"}]}',
+    );
+  });
 });

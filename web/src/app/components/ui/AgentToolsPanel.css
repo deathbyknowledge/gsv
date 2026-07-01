@@ -41,32 +41,87 @@
   font-size: 9px;
 }
 
-.gsv-tools-rule-list {
+.gsv-tools-overrides {
+  min-width: 0;
   display: grid;
-  gap: 10px;
+  border-top: 1px solid var(--rule-inner);
+  border-bottom: 1px solid var(--rule-inner);
 }
 
+.gsv-tools-overrides-head,
 .gsv-tools-rule {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(170px, auto) auto;
-  align-items: end;
-  gap: 10px;
-  padding: 12px;
-  border: 1px solid var(--rule-inner);
-  background: color-mix(in srgb, var(--panel) 86%, var(--void));
+  grid-template-columns: minmax(180px, 1fr) minmax(150px, 190px) minmax(150px, 190px) auto;
+  align-items: center;
+  gap: 12px;
 }
 
-.gsv-tools-rule-conditions {
-  grid-column: 1 / -1;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+.gsv-tools-overrides-head {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--rule-inner);
+  color: var(--label);
+  font-family: var(--gsv-font-mono);
+  font-size: 9px;
+  letter-spacing: 0.18em;
+}
+
+.gsv-tools-column-head {
+  display: inline-flex;
+  align-items: center;
   min-width: 0;
+  gap: 6px;
+}
+
+.gsv-tools-column-head .gsv-infotip {
+  letter-spacing: 0;
+}
+
+.gsv-tools-rule-list {
+  display: grid;
+  min-width: 0;
+}
+
+.gsv-tools-rule {
+  padding: 10px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--rule-inner) 72%, transparent);
+}
+
+.gsv-tools-rule:last-child {
+  border-bottom: 0;
+}
+
+.gsv-tools-rule-tool,
+.gsv-tools-rule-target,
+.gsv-tools-rule-action,
+.gsv-tools-rule-delete {
+  min-width: 0;
+}
+
+.gsv-tools-rule-action {
+  min-width: 0;
+}
+
+.gsv-tools-rule-delete {
+  display: flex;
+  justify-content: flex-end;
+  justify-self: end;
+}
+
+.gsv-tools-rule-delete .gsv-ibtn,
+.gsv-tools-rule-delete .gsv-ibtn-disabled {
+  justify-self: end;
+  color: var(--danger-hi);
+}
+
+.gsv-tools-rule-delete .gsv-ibtn:hover {
+  border-color: var(--danger-hi);
+  color: var(--danger-hi);
 }
 
 @container panel (max-width: 700px) {
   .gsv-tools-bar,
+  .gsv-tools-overrides-head,
   .gsv-tools-rule {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -77,7 +132,16 @@
   }
 
   .gsv-tools-bar-actions,
-  .gsv-tools-bar-actions .gsv-btn {
+  .gsv-tools-bar-actions .gsv-btn,
+  .gsv-tools-rule-delete {
     width: 100%;
+  }
+
+  .gsv-tools-overrides-head {
+    display: none;
+  }
+
+  .gsv-tools-rule-delete {
+    justify-self: end;
   }
 }

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "preact/hooks";
 import {
   AgentToolsPanel,
   type AgentToolApprovalPolicy,
+  type AgentToolTarget,
 } from "../../../components/ui/AgentToolsPanel";
 import { Button } from "../../../components/ui/Button";
 import { Checkbox } from "../../../components/ui/Checkbox";
@@ -26,6 +27,7 @@ import type { SaveConsoleConfigInput } from "../backend/consoleService";
 import type {
   ConsoleAccount,
   ConsoleConfigEntry,
+  ConsoleTarget,
 } from "../domain/consoleModels";
 import {
   GLOBAL_APPROVAL_CONFIG_KEY,
@@ -62,6 +64,7 @@ import {
 import {
   useConsoleAccounts,
   useConsoleConfig,
+  useConsoleTargets,
   useSaveConsoleConfigEntries,
   useValidateConsoleModelConfig,
 } from "../hooks/useConsoleData";
@@ -134,6 +137,7 @@ const TOOL_APPROVAL_RUNTIME_ID = "tool-approval";
 export function ConsoleConfigPage({ kind, select, onClearSelect, onDetailChange }: ConsoleConfigPageProps) {
   const config = useConsoleConfig();
   const accounts = useConsoleAccounts();
+  const targets = useConsoleTargets();
 
   return (
     <ConsolePage flush>
@@ -146,6 +150,7 @@ export function ConsoleConfigPage({ kind, select, onClearSelect, onDetailChange 
             accounts={accounts.accounts}
             config={data}
             kind={kind}
+            targets={toolTargetsForConsoleTargets(targets.targets)}
             select={select}
             onClearSelect={onClearSelect}
             onDetailChange={onDetailChange}
@@ -160,6 +165,7 @@ function ConsoleSettingsPanel({
   accounts,
   config,
   kind,
+  targets,
   select,
   onClearSelect,
   onDetailChange,
@@ -167,6 +173,7 @@ function ConsoleSettingsPanel({
   accounts: readonly ConsoleAccount[];
   config: readonly ConsoleConfigEntry[];
   kind: ConsoleConfigKind;
+  targets: readonly AgentToolTarget[];
   select?: string;
   onClearSelect?: () => void;
   onDetailChange?: (detail: ConsoleConfigDetail | null) => void;
@@ -181,7 +188,7 @@ function ConsoleSettingsPanel({
   if (kind === "models") {
     return <ModelSettingsPage config={config} viewer={viewer} select={select} onClearSelect={onClearSelect} onDetailChange={onDetailChange} />;
   }
-  return <RuntimeSettingsPage config={config} viewer={viewer} onDetailChange={onDetailChange} />;
+  return <RuntimeSettingsPage config={config} targets={targets} viewer={viewer} onDetailChange={onDetailChange} />;
 }
 
 function ModelSettingsPage({
@@ -449,10 +456,12 @@ function ModelSettingsDetail({
 
 function RuntimeSettingsPage({
   config,
+  targets,
   viewer,
   onDetailChange,
 }: {
   config: readonly ConsoleConfigEntry[];
+  targets: readonly AgentToolTarget[];
   viewer: SettingsViewer;
   onDetailChange?: (detail: ConsoleConfigDetail | null) => void;
 }) {
@@ -494,6 +503,7 @@ function RuntimeSettingsPage({
           <ToolApprovalSettingsGroup
             config={config}
             editable={canEditRuntime}
+            targets={targets}
             onSave={saveEntries}
           />
         </ConsoleDetailPage>
@@ -677,13 +687,24 @@ function serverRuntimeSummary(config: readonly ConsoleConfigEntry[]): string {
   return `${name} · ${timezone} · ${version}`;
 }
 
+function toolTargetsForConsoleTargets(targets: readonly ConsoleTarget[]): AgentToolTarget[] {
+  return targets.map((target) => ({
+    id: target.deviceId,
+    label: target.label || target.deviceId,
+    online: target.online,
+    implements: target.implements,
+  }));
+}
+
 function ToolApprovalSettingsGroup({
   config,
   editable,
+  targets,
   onSave,
 }: {
   config: readonly ConsoleConfigEntry[];
   editable: boolean;
+  targets: readonly AgentToolTarget[];
   onSave: (entries: readonly SaveConsoleConfigInput[]) => Promise<void>;
 }) {
   const rawPolicy = configValueForKey(config, GLOBAL_APPROVAL_CONFIG_KEY);
@@ -733,6 +754,7 @@ function ToolApprovalSettingsGroup({
         policy={policy}
         sourceLabel="System fallback"
         sourceDescription="Used only when neither a user default nor an agent override is configured."
+        targets={targets}
         disabled={!editable || pending}
         onChange={(nextPolicy) => {
           setPolicy(nextPolicy);

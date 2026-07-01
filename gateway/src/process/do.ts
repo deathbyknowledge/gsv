@@ -131,9 +131,9 @@ import {
   type PendingHilRecord,
 } from "./store";
 import {
-  buildToolApprovalFacts,
   parseToolApprovalPolicy,
   resolveToolApproval,
+  resolveToolApprovalTarget,
   type ToolApprovalRule,
   type ToolApprovalPolicy,
 } from "./approval";
@@ -4001,12 +4001,7 @@ export class Process extends Host<Env> {
           continue;
         }
 
-        const approval = resolveToolApproval(
-          approvalPolicy,
-          syscall,
-          tc.arguments,
-          this.identity,
-        );
+        const approval = resolveToolApproval(approvalPolicy, syscall, tc.arguments);
 
         if (approval.action === "deny") {
           await this.appendSyntheticToolResult(
@@ -4215,12 +4210,7 @@ export class Process extends Host<Env> {
 
     const toolCallId = `codemode-${crypto.randomUUID()}`;
     const toolName = "Fetch";
-    const approval = resolveToolApproval(
-      approvalPolicy,
-      NET_FETCH,
-      args,
-      this.identity,
-    );
+    const approval = resolveToolApproval(approvalPolicy, NET_FETCH, args);
 
     if (approval.action === "deny") {
       throw new Error(`Tool execution denied by policy: ${NET_FETCH}`);
@@ -4334,12 +4324,7 @@ export class Process extends Host<Env> {
 
     const toolCallId = `codemode-${crypto.randomUUID()}`;
     const toolName = SYSCALL_TOOL_NAMES[call] ?? call;
-    const approval = resolveToolApproval(
-      approvalPolicy,
-      call,
-      args,
-      this.identity,
-    );
+    const approval = resolveToolApproval(approvalPolicy, call, args);
 
     if (approval.action === "deny") {
       throw new Error(`Tool execution denied by policy: ${call}`);
@@ -4582,7 +4567,7 @@ export class Process extends Host<Env> {
   }
 
   private rememberToolApproval(pendingHil: PendingHilRecord, run: RunState): boolean {
-    const rule = this.buildToolApprovalOverride(pendingHil);
+    const rule = this.buildToolApprovalOverride(pendingHil.syscall, pendingHil.args);
     const overrides = this.loadToolApprovalOverrides();
     const key = approvalRuleKey(rule);
     const alreadyStored = overrides.some((override) => approvalRuleKey(override) === key);
@@ -4599,17 +4584,11 @@ export class Process extends Host<Env> {
     return true;
   }
 
-  private buildToolApprovalOverride(pendingHil: PendingHilRecord): ToolApprovalRule {
-    const facts = buildToolApprovalFacts(
-      pendingHil.syscall,
-      pendingHil.args,
-      this.identity,
-    );
+  private buildToolApprovalOverride(syscall: string, args: unknown): ToolApprovalRule {
+    const target = resolveToolApprovalTarget(syscall, args);
     return {
-      match: pendingHil.syscall,
-      when: {
-        target: facts.target,
-      },
+      match: syscall,
+      target,
       action: "auto",
     };
   }
@@ -5110,7 +5089,7 @@ function formatGenerationFailure(
 function approvalRuleKey(rule: ToolApprovalRule): string {
   return JSON.stringify({
     match: rule.match,
-    when: rule.when ?? null,
+    target: rule.target ?? null,
     action: rule.action,
   });
 }

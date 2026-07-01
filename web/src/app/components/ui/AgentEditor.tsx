@@ -12,9 +12,9 @@ import { ConfirmModal } from "./ConfirmModal";
 import {
   AgentToolsPanel,
   type AgentToolApprovalAction,
-  type AgentToolApprovalCondition,
   type AgentToolApprovalPolicy,
   type AgentToolApprovalRule,
+  type AgentToolTarget,
 } from "./AgentToolsPanel";
 import { useUnsavedGuard } from "../../features/gsv-shell/unsaved/unsavedGuard";
 
@@ -43,6 +43,7 @@ export interface AgentEditorProps {
   approvalPolicySourceLabel?: string;
   approvalPolicySourceDescription?: string;
   capabilities?: string[];
+  toolTargets?: AgentToolTarget[];
   files?: AgentEditorFile[];
   tasks?: AgentEditorTask[];
   readOnly?: boolean;
@@ -109,8 +110,8 @@ const REASONING_VALUES = ["", "off", "minimal", "low", "medium", "high", "xhigh"
 const DEFAULT_APPROVAL_POLICY: AgentToolApprovalPolicy = {
   default: "auto",
   rules: [
-    { match: "shell.exec", when: { anyTag: ["destructive", "privileged", "network", "mutating", "unclassified"] }, action: "ask" },
-    { match: "net.fetch", when: { anyTag: ["network", "mutating"] }, action: "ask" },
+    { match: "shell.exec", action: "ask" },
+    { match: "net.fetch", action: "ask" },
     { match: "fs.delete", action: "ask" },
     { match: "sys.mcp.call", action: "ask" },
   ],
@@ -166,52 +167,29 @@ function permissionForValue(value: string | undefined): AgentToolApprovalAction 
   return value === "auto" || value === "deny" || value === "ask" ? value : "ask";
 }
 
-function normalizeApprovalCondition(value: unknown): AgentToolApprovalCondition | undefined {
+function approvalTargetFromValue(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === "*" || trimmed.toLowerCase() === "any") {
+    return undefined;
+  }
+  if (trimmed === "device" || trimmed === "devices/*") {
+    return "targets/*";
+  }
+  if (trimmed === "gateway" || trimmed === "local") {
+    return "gsv";
+  }
+  return trimmed;
+}
+
+function legacyApprovalTarget(value: unknown): string | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return undefined;
   }
-  const record = value as Record<string, unknown>;
-  const anyTag = normalizeStringArray(record.anyTag);
-  const allTags = normalizeStringArray(record.allTags);
-  const argEquals = normalizePrimitiveRecord(record.argEquals);
-  const argPrefix = normalizeStringRecord(record.argPrefix);
-  const target = record.target === "gsv" || record.target === "device" ? record.target : undefined;
-  if (!anyTag && !allTags && !argEquals && !argPrefix && !target) {
-    return undefined;
-  }
-  return {
-    ...(anyTag ? { anyTag } : {}),
-    ...(allTags ? { allTags } : {}),
-    ...(argEquals ? { argEquals } : {}),
-    ...(argPrefix ? { argPrefix } : {}),
-    ...(target ? { target } : {}),
-  };
-}
-
-function normalizeStringArray(value: unknown): string[] | undefined {
-  if (!Array.isArray(value)) {
-    return undefined;
-  }
-  const items = value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0);
-  return items.length > 0 ? items : undefined;
-}
-
-function normalizePrimitiveRecord(value: unknown): Record<string, string | number | boolean> | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return undefined;
-  }
-  const entries = Object.entries(value).filter(([, entry]) =>
-    typeof entry === "string" || typeof entry === "number" || typeof entry === "boolean",
-  );
-  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
-}
-
-function normalizeStringRecord(value: unknown): Record<string, string> | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return undefined;
-  }
-  const entries = Object.entries(value).filter(([, entry]) => typeof entry === "string" && entry.trim().length > 0);
-  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+  const target = (value as { target?: unknown }).target;
+  return approvalTargetFromValue(target === "device" ? "targets/*" : target);
 }
 
 function parseApprovalPolicy(raw: string | undefined, fallbackAction: string | undefined): AgentToolApprovalPolicy {
@@ -231,10 +209,10 @@ function parseApprovalPolicy(raw: string | undefined, fallbackAction: string | u
             if (!match) {
               return null;
             }
-            const when = normalizeApprovalCondition(record.when);
+            const target = approvalTargetFromValue(record.target) ?? legacyApprovalTarget(record.when);
             return {
               match,
-              ...(when ? { when } : {}),
+              ...(target ? { target } : {}),
               action: permissionForValue(String(record.action ?? "")),
             };
           })
@@ -255,7 +233,7 @@ function serializeApprovalPolicy(policy: AgentToolApprovalPolicy): string {
   const rules = policy.rules
     .map((rule) => ({
       match: rule.match.trim(),
-      ...(rule.when ? { when: rule.when } : {}),
+      ...(rule.target ? { target: rule.target } : {}),
       action: permissionForValue(rule.action),
     }))
     .filter((rule) => rule.match.length > 0);
@@ -782,6 +760,7 @@ export function AgentEditor(props: AgentEditorProps) {
                     sourceLabel={props.approvalPolicySourceLabel}
                     sourceDescription={props.approvalPolicySourceDescription}
                     capabilities={props.capabilities}
+                    targets={props.toolTargets}
                     disabled={behaviorReadOnly}
                     onChange={setApprovalPolicy}
                   />
