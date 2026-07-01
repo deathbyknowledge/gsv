@@ -222,6 +222,7 @@ describe("CapabilityStore", () => {
       "repo.read",
       "repo.refs",
       "repo.search",
+      "repo.visibility.set",
       "sched.*",
       "shell.*",
       "signal.*",

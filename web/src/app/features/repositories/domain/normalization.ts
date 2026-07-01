@@ -13,6 +13,7 @@ import type {
   RepositorySourceSummary,
   RepositorySummary,
   RepositoryTreeEntry,
+  RepositoryVisibilityResult,
 } from "./models";
 
 const DEFAULT_COMMIT_PAGE_SIZE = 20;
@@ -149,6 +150,15 @@ export function normalizeRepositoryDelete(payload: unknown, fallbackRepo: string
   return {
     repo: asString(record?.repo) || fallbackRepo,
     deleted: record?.deleted === true,
+  };
+}
+
+export function normalizeRepositoryVisibility(payload: unknown, fallbackRepo: string, fallbackPublic: boolean): RepositoryVisibilityResult {
+  const record = asRecord(payload);
+  return {
+    repo: asString(record?.repo) || fallbackRepo,
+    public: typeof record?.public === "boolean" ? record.public : fallbackPublic,
+    changed: record?.changed === true,
   };
 }
 

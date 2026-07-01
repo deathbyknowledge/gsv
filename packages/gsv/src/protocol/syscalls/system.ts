@@ -106,6 +106,8 @@ export type AccountSummary = {
   relation: AccountRelation;
   /** Whether the caller may run processes as this account. */
   runnable: boolean;
+  /** Resolved runtime capabilities for this account's process identity. */
+  capabilities?: string[];
   gecos?: string;
 };
 

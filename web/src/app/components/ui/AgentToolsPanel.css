@@ -1,0 +1,147 @@
+.gsv-tools-panel {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  max-width: 640px;
+}
+
+.gsv-tools-bar {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.gsv-tools-title {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.gsv-tools-title > span:first-child {
+  color: var(--label);
+  font-size: 9.5px;
+  letter-spacing: 0.2em;
+}
+
+.gsv-tools-bar-actions {
+  min-width: 0;
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.gsv-tools-bar-actions .gsv-btn {
+  min-height: 30px;
+  padding: 8px 12px;
+  font-size: 9px;
+}
+
+.gsv-tools-overrides {
+  min-width: 0;
+  display: grid;
+  border-top: 1px solid var(--rule-inner);
+  border-bottom: 1px solid var(--rule-inner);
+}
+
+.gsv-tools-overrides-head,
+.gsv-tools-rule {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(150px, 190px) minmax(150px, 190px) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.gsv-tools-overrides-head {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--rule-inner);
+  color: var(--label);
+  font-family: var(--gsv-font-mono);
+  font-size: 9px;
+  letter-spacing: 0.18em;
+}
+
+.gsv-tools-column-head {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 6px;
+}
+
+.gsv-tools-column-head .gsv-infotip {
+  letter-spacing: 0;
+}
+
+.gsv-tools-rule-list {
+  display: grid;
+  min-width: 0;
+}
+
+.gsv-tools-rule {
+  padding: 10px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--rule-inner) 72%, transparent);
+}
+
+.gsv-tools-rule:last-child {
+  border-bottom: 0;
+}
+
+.gsv-tools-rule-tool,
+.gsv-tools-rule-target,
+.gsv-tools-rule-action,
+.gsv-tools-rule-delete {
+  min-width: 0;
+}
+
+.gsv-tools-rule-action {
+  min-width: 0;
+}
+
+.gsv-tools-rule-delete {
+  display: flex;
+  justify-content: flex-end;
+  justify-self: end;
+}
+
+.gsv-tools-rule-delete .gsv-ibtn,
+.gsv-tools-rule-delete .gsv-ibtn-disabled {
+  justify-self: end;
+  color: var(--danger-hi);
+}
+
+.gsv-tools-rule-delete .gsv-ibtn:hover {
+  border-color: var(--danger-hi);
+  color: var(--danger-hi);
+}
+
+@container panel (max-width: 700px) {
+  .gsv-tools-bar,
+  .gsv-tools-overrides-head,
+  .gsv-tools-rule {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .gsv-tools-bar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .gsv-tools-bar-actions,
+  .gsv-tools-bar-actions .gsv-btn,
+  .gsv-tools-rule-delete {
+    width: 100%;
+  }
+
+  .gsv-tools-overrides-head {
+    display: none;
+  }
+
+  .gsv-tools-rule-delete {
+    justify-self: end;
+  }
+}

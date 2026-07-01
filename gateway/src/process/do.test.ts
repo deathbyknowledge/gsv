@@ -4125,7 +4125,7 @@ describe("Process DO — mechanical", () => {
         expect(JSON.parse(process.store.getValue("toolApprovalOverrides"))).toEqual([
           {
             match: "fs.read",
-            when: { target: "gsv" },
+            target: "gsv",
             action: "auto",
           },
         ]);
@@ -5147,6 +5147,92 @@ describe("Process DO — mechanical", () => {
 
         expect(continuedRunIds).toEqual([]);
         expect(scheduledRunIds).toEqual(["run-multi-tool-batch"]);
+      });
+    });
+
+    it("uses the recorded shell session device for continuation approvals", async () => {
+      const pid = "mech-res-shell-session-target";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const dispatched: unknown[] = [];
+        process.sendSignal = async () => {};
+        process.scheduleTick = () => {};
+        process.dispatchSyscall = async (
+          _runId: string,
+          _id: string,
+          _call: string,
+          args: unknown,
+        ) => {
+          dispatched.push(args);
+        };
+
+        process.store.register(
+          "call-shell-start",
+          "run-shell-start",
+          "shell.exec",
+          { input: "npm test", target: "macbook" },
+        );
+        await process.handleRes({
+          type: "res",
+          id: "call-shell-start",
+          ok: true,
+          data: { status: "running", output: "", sessionId: "sh_macbook" },
+        });
+
+        expect(process.store.getValue("shellSessionTarget:sh_macbook")).toBe("macbook");
+
+        process.currentRun = {
+          runId: "run-shell-continuation",
+          queued: false,
+          conversationId: "default",
+          approvalPolicy: {
+            default: "auto",
+            rules: [{ match: "shell.exec", target: "macbook", action: "deny" }],
+          },
+        };
+
+        await process.processToolCalls("run-shell-continuation", [
+          { type: "toolCall", id: "call-shell-poll", name: "Shell", arguments: { input: "", sessionId: "sh_macbook" } },
+        ]);
+
+        expect(dispatched).toEqual([]);
+        const messages = process.store.getMessages();
+        expect(messages[messages.length - 1].content).toContain("Tool execution denied by policy");
+      });
+    });
+
+    it("fails shell continuations when the session device is unknown", async () => {
+      const pid = "mech-res-shell-session-unknown-target";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const dispatched: unknown[] = [];
+        process.sendSignal = async () => {};
+        process.dispatchSyscall = async (_runId: string, _id: string, _call: string, args: unknown) => {
+          dispatched.push(args);
+        };
+        process.currentRun = {
+          runId: "run-shell-unknown-continuation",
+          queued: false,
+          conversationId: "default",
+          approvalPolicy: {
+            default: "auto",
+            rules: [{ match: "shell.exec", target: "macbook", action: "deny" }],
+          },
+        };
+
+        await process.processToolCalls("run-shell-unknown-continuation", [
+          { type: "toolCall", id: "call-shell-unknown-poll", name: "Shell", arguments: { input: "", sessionId: "sh_unknown" } },
+        ]);
+
+        expect(dispatched).toEqual([]);
+        const messages = process.store.getMessages();
+        expect(messages[messages.length - 1].content).toContain(
+          "Shell session continuation requires an explicit target",
+        );
       });
     });
   });

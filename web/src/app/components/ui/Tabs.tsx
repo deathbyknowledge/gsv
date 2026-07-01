@@ -6,6 +6,7 @@ export interface TabsProps {
   value?: number;
   onChange?: (i: number) => void;
   onClose?: (i: number) => void;
+  className?: string;
   width?: number;
   sticky?: boolean;
   /** Index of a transient "preview" tab (VS Code peek-tab semantics). The matching
@@ -18,7 +19,7 @@ export interface TabsProps {
  *  continuous glowing rail. The active tab is transparent (revealing the host
  *  surface); unselected tabs draw their own outline. Geometry is derived from
  *  the bar's measured width via a ResizeObserver. */
-export function Tabs({ tabs, value, onChange, onClose, width, sticky = false, previewIndex }: TabsProps) {
+export function Tabs({ tabs, value, onChange, onClose, className = "", width, sticky = false, previewIndex }: TabsProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const tabRefs = useRef<(HTMLDivElement | null)[]>([]);
   const [hover, setHover] = useState(-1);
@@ -170,8 +171,10 @@ export function Tabs({ tabs, value, onChange, onClose, width, sticky = false, pr
     (sticky ? "position:sticky;top:0;" : "position:relative;") +
     "z-index:6;display:flex;align-items:flex-end;overflow:visible;padding:" + (narrow ? "12px 12px 0" : "16px 30px 0") + ";background:transparent;";
 
+  const rootClass = ["gsv-tabs", className].filter(Boolean).join(" ");
+
   return (
-    <div ref={rootRef} role="tablist" style={barStyle}>
+    <div ref={rootRef} role="tablist" class={rootClass} style={barStyle}>
       {railSvg}
       {tabList.map((label, i) => (
         <div

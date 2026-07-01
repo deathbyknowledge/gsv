@@ -860,6 +860,15 @@ button.gsv-chat-task-row:focus-visible {
   outline: none;
 }
 
+.gsv-chat-task-row.is-current {
+  background: rgba(132, 122, 255, 0.08);
+}
+
+.gsv-chat-task-row.is-current .gsv-chat-task-name,
+.gsv-chat-task-row.is-current small {
+  color: #e6e4ff;
+}
+
 .gsv-chat-task-name {
   flex: 1;
   min-width: 0;

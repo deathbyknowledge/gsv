@@ -76,6 +76,7 @@ import {
   handleRepoRead,
   handleRepoRefs,
   handleRepoSearch,
+  handleRepoVisibilitySet,
 } from "./repo";
 import {
   handleSysTokenCreate,
@@ -470,6 +471,9 @@ async function dispatchNative(
         break;
       case "repo.delete":
         data = await handleRepoDelete(frame.args, ctx);
+        break;
+      case "repo.visibility.set":
+        data = handleRepoVisibilitySet(frame.args, ctx);
         break;
 
       // --- ai.* ---

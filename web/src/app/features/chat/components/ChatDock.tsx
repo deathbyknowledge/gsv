@@ -790,6 +790,7 @@ export function ChatDock({
       {openPopover ? <button type="button" class="gsv-chat-popover-scrim" aria-label="Close chat menu" onClick={() => setOpenPopover(null)} /> : null}
       <ChatDockHeader
         activeAgent={activeAgent}
+        activeProcessId={activeProcessId}
         agentPanelOpen={agentPanelOpen}
         atMax={atMax}
         canAbortRun={canAbortRun}

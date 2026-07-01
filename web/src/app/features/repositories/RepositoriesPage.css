@@ -1,4 +1,7 @@
 .repositories-surface {
+  /* Repositories is a full-pane browser/diff workspace. Keep it full-width on
+     wide panels while preserving the panel-width container queries below. */
+  --gsv-gutter: 0px;
   /* Reflow off the PANEL width, not the viewport — so the template responds
      when the chat is dragged wider. */
   container-type: inline-size;
@@ -8,7 +11,7 @@
   height: 100%;
   box-sizing: border-box;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   grid-template-columns: minmax(0, 1fr);
   border: 1px solid var(--border-raised);
   background: var(--panel);
@@ -146,6 +149,126 @@
 
 .repositories-pull-status.is-error {
   color: var(--error);
+}
+
+.repositories-access-panel.gsv-surface {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  padding: 8px 14px;
+  padding-inline: max(14px, var(--gsv-gutter));
+  border: 0;
+  border-bottom: 1px solid var(--rule-section);
+  border-radius: 0;
+  background: color-mix(in srgb, var(--panel) 94%, var(--field-deep));
+}
+
+.repositories-access-empty {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  color: var(--text-dim);
+  font-family: var(--gsv-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+}
+
+.repositories-clone-compact {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.repositories-clone-actions {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.repositories-clone-primary,
+.repositories-visibility-control {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.repositories-visibility-control {
+  margin-left: auto;
+  justify-content: flex-end;
+}
+
+.repositories-visibility-disabled {
+  color: var(--text-muted);
+  font-family: var(--gsv-font-prose);
+  font-size: 11px;
+}
+
+.repositories-clone-actions .gsv-btn {
+  min-height: 30px;
+  padding: 8px 12px;
+  font-size: 9px;
+}
+
+.repositories-clone-toggle {
+  appearance: none;
+  min-height: 30px;
+  border: 1px solid var(--border-raised);
+  background: var(--field);
+  color: var(--accent-bright);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 11px;
+  cursor: pointer;
+  font: 10px/1 var(--gsv-font-mono);
+  letter-spacing: 0.12em;
+}
+
+.repositories-clone-toggle:not(:disabled):hover,
+.repositories-clone-toggle:not(:disabled):focus-visible,
+.repositories-clone-toggle.is-open {
+  background: var(--hover);
+  color: var(--text);
+  outline: none;
+}
+
+.repositories-clone-toggle:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--accent-bright);
+}
+
+.repositories-clone-details {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  max-width: 760px;
+}
+
+.repositories-clone-details code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid var(--rule-inner);
+  background: color-mix(in srgb, var(--field-deep) 80%, transparent);
+  color: var(--text);
+  padding: 7px 9px;
+  font-family: var(--gsv-font-mono);
+  font-size: 11px;
+  letter-spacing: 0;
+}
+
+.repositories-clone-details .gsv-btn {
+  min-height: 29px;
+  padding: 7px 12px;
+  font-size: 9px;
+  letter-spacing: 0.12em;
 }
 
 .repositories-workspace {
@@ -592,10 +715,33 @@
 
 @container panel (max-width: 760px) {
   .repositories-header-bar,
+  .repositories-access-panel.gsv-surface,
   .repositories-toolbar-row,
   .repositories-editor-toolbar,
   .repositories-compare-controls {
     align-items: stretch;
+  }
+
+  .repositories-clone-details {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+    gap: 6px;
+  }
+
+  .repositories-clone-primary,
+  .repositories-visibility-control {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .repositories-visibility-control {
+    margin-left: 0;
+  }
+
+  .repositories-clone-actions .gsv-btn,
+  .repositories-clone-toggle,
+  .repositories-clone-details .gsv-btn {
+    width: 100%;
   }
 
   .repositories-header-bar .gsv-fld,

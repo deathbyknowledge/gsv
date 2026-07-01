@@ -1,4 +1,5 @@
 import type { ConsoleConfigEntry } from "./consoleModels";
+import { modelDisplayName } from "./consoleSettings";
 
 export const DEFAULT_MODEL_LABEL = "GATEWAY DEFAULT";
 
@@ -8,6 +9,12 @@ export type ConsoleModelProfile = {
   values: Record<string, string>;
   createdAt: number;
   updatedAt: number;
+};
+
+export type ConsoleModelOption = {
+  value: string;
+  label: string;
+  description?: string;
 };
 
 const PRIMARY_MODEL_KEY_RE = /^(?:config\/ai|users\/\d+\/ai)\/model$/;
@@ -65,6 +72,50 @@ export function modelLabelsForConfig(config: readonly ConsoleConfigEntry[]): str
   return labels;
 }
 
+export function modelOptionsForConfig(config: readonly ConsoleConfigEntry[]): ConsoleModelOption[] {
+  const defaultModel = defaultModelLabelForConfig(config);
+  const options: ConsoleModelOption[] = [];
+  const seen = new Map<string, number>();
+
+  const addOption = (value: string, option: Partial<Omit<ConsoleModelOption, "value">> = {}) => {
+    const model = normalizeModelLabel(value);
+    if (!model) {
+      return;
+    }
+    const key = model.toLowerCase();
+    const next = modelOptionForValue(model, option);
+    const existingIndex = seen.get(key);
+    if (existingIndex === undefined) {
+      seen.set(key, options.length);
+      options.push(next);
+      return;
+    }
+    const existing = options[existingIndex];
+    if (option.label && existing.label === modelDisplayLabel(existing.value)) {
+      options[existingIndex] = next;
+    } else if (option.description && !existing.description) {
+      options[existingIndex] = { ...existing, description: option.description };
+    }
+  };
+
+  addOption(defaultModel);
+
+  for (const entry of config) {
+    if (isModelConfigEntry(entry)) {
+      addOption(entry.value);
+    }
+  }
+
+  for (const profile of profileModelOptionsForConfig(config)) {
+    addOption(profile.value, {
+      label: profile.label,
+      description: profile.description,
+    });
+  }
+
+  return options;
+}
+
 function profileModelLabelsForConfig(config: readonly ConsoleConfigEntry[]): string[] {
   return config.flatMap((entry) => {
     if (entry.redacted || !MODEL_PROFILES_KEY_RE.test(entry.key) || !entry.value.trim()) {
@@ -78,6 +129,33 @@ function profileModelLabelsForConfig(config: readonly ConsoleConfigEntry[]): str
         .filter((profile): profile is ConsoleModelProfile => profile !== null)
         .map((profile) => profile.values["config/ai/model"]?.trim() ?? "")
         .filter(Boolean);
+    } catch {
+      return [];
+    }
+  });
+}
+
+function profileModelOptionsForConfig(config: readonly ConsoleConfigEntry[]): ConsoleModelOption[] {
+  return config.flatMap((entry) => {
+    if (entry.redacted || !MODEL_PROFILES_KEY_RE.test(entry.key) || !entry.value.trim()) {
+      return [];
+    }
+    try {
+      const payload = JSON.parse(entry.value) as { profiles?: unknown[] };
+      const profiles = Array.isArray(payload.profiles) ? payload.profiles : [];
+      return profiles
+        .map(normalizeModelProfile)
+        .filter((profile): profile is ConsoleModelProfile => profile !== null)
+        .map((profile) => {
+          const model = profile.values["config/ai/model"]?.trim() ?? "";
+          return model
+            ? modelOptionForValue(model, {
+                label: profile.name,
+                description: modelOptionDescription(model),
+              })
+            : null;
+        })
+        .filter((option): option is ConsoleModelOption => option !== null);
     } catch {
       return [];
     }
@@ -178,4 +256,29 @@ function normalizeProfileId(value: unknown): string {
 
 function normalizeTimestamp(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+export function modelOptionForValue(
+  value: string,
+  option: Partial<Omit<ConsoleModelOption, "value">> = {},
+): ConsoleModelOption {
+  const model = normalizeModelLabel(value);
+  return {
+    value: model,
+    label: normalizeModelOptionLabel(option.label) || modelDisplayLabel(model),
+    description: normalizeModelOptionLabel(option.description) || modelOptionDescription(model),
+  };
+}
+
+function modelDisplayLabel(value: string): string {
+  return modelDisplayName(value) || value;
+}
+
+function modelOptionDescription(value: string): string | undefined {
+  const display = modelDisplayLabel(value);
+  return display && display !== value ? value : undefined;
+}
+
+function normalizeModelOptionLabel(value: string | undefined): string {
+  return String(value ?? "").trim().replace(/\s+/g, " ");
 }

@@ -14,6 +14,25 @@
   padding-inline: max(20px, var(--gsv-gutter)) !important;
 }
 
+.gsv-ae-tabs {
+  isolation: isolate;
+}
+
+.gsv-ae-tabs::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 -2px;
+  z-index: 0;
+  pointer-events: none;
+  background-color: var(--void);
+  background-image:
+    linear-gradient(rgba(150, 140, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(150, 140, 255, 0.04) 1px, transparent 1px);
+  background-size: 46px 46px;
+  background-attachment: fixed;
+  box-shadow: 0 14px 22px rgba(4, 3, 16, 0.42);
+}
+
 /* code editor scrollbar (from source <style> .gsv-ed rules) */
 .gsv-ed::-webkit-scrollbar {
   width: 9px;
@@ -80,6 +99,19 @@
 .gsv-ae-editor:read-only {
   cursor: default;
   color: #aaa5d8;
+}
+
+.gsv-ae-empty-context {
+  min-height: 220px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--rule-inner);
+  background: color-mix(in srgb, var(--panel-2) 86%, transparent);
+  color: var(--text-dim);
+  font-family: var(--gsv-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
 }
 
 .gsv-ae-readonly-note {

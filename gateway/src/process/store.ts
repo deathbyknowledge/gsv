@@ -64,6 +64,13 @@ export type ToolCallRecord = {
   error: string | null;
 };
 
+export type PendingToolCallRecord = {
+  id: string;
+  runId: string;
+  call: SyscallName;
+  args: unknown;
+};
+
 export type MessageRole = "user" | "assistant" | "system" | "toolResult";
 
 export type MessageRecord = {
@@ -630,13 +637,23 @@ export class ProcessStore {
     );
   }
 
-  getPending(id: string): { id: string; runId: string } | null {
-    const rows = [...this.sql.exec<{ id: string; run_id: string }>(
-      "SELECT id, run_id FROM pending_tool_calls WHERE id = ? AND status = 'pending'",
+  getPending(id: string): PendingToolCallRecord | null {
+    const rows = [...this.sql.exec<{
+      id: string;
+      run_id: string;
+      call: SyscallName;
+      args_json: string | null;
+    }>(
+      "SELECT id, run_id, call, args_json FROM pending_tool_calls WHERE id = ? AND status = 'pending'",
       id,
     )];
     if (rows.length === 0) return null;
-    return { id: rows[0].id, runId: rows[0].run_id };
+    return {
+      id: rows[0].id,
+      runId: rows[0].run_id,
+      call: rows[0].call,
+      args: rows[0].args_json ? JSON.parse(rows[0].args_json) : null,
+    };
   }
 
   isRunResolved(runId: string): boolean {

@@ -617,6 +617,7 @@ describe("handleAiConfig", () => {
       "users/1000/ai/context_window_tokens": "2222",
       "users/1000/ai/max_context_bytes": "4321",
       "users/1000/ai/generation/timeout_ms": "90000",
+      "users/1000/ai/tools/approval": '{"default":"deny","rules":[]}',
     }, {
       uid: 2000,
       ownerUid: 1000,
@@ -637,6 +638,7 @@ describe("handleAiConfig", () => {
     expect(result.contextWindowSource).toBe("config");
     expect(result.maxContextBytes).toBe(4321);
     expect(result.generationTimeoutMs).toBe(90000);
+    expect(result.accountApprovalPolicy).toBe('{"default":"deny","rules":[]}');
   });
 
   it("prefers agent AI config over the owning human's config", async () => {
@@ -647,6 +649,8 @@ describe("handleAiConfig", () => {
       "users/2000/ai/provider": "agent-provider",
       "users/2000/ai/model": "agent-model",
       "users/2000/ai/api_key": "agent-key",
+      "users/1000/ai/tools/approval": '{"default":"deny","rules":[]}',
+      "users/2000/ai/tools/approval": '{"default":"auto","rules":[]}',
     }, {
       uid: 2000,
       ownerUid: 1000,
@@ -656,6 +660,7 @@ describe("handleAiConfig", () => {
     expect(result.provider).toBe("agent-provider");
     expect(result.model).toBe("agent-model");
     expect(result.apiKey).toBe("agent-key");
+    expect(result.accountApprovalPolicy).toBe('{"default":"auto","rules":[]}');
   });
 
   it("prefers process AI config overrides over account and system config", async () => {

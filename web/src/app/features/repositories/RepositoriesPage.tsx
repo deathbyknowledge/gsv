@@ -5,6 +5,7 @@ import { Button } from "../../components/ui/Button";
 import { ConfirmModal } from "../../components/ui/ConfirmModal";
 import { Icon } from "../../components/ui/Icon";
 import { IconButton } from "../../components/ui/IconButton";
+import { InfoTip } from "../../components/ui/InfoTip";
 import { ListRow } from "../../components/ui/ListRow";
 import { Search } from "../../components/ui/Search";
 import { SectionHeader } from "../../components/ui/SectionHeader";
@@ -74,6 +75,7 @@ import {
   useRepositoryPullMutation,
   useRepositoryRefs,
   useRepositorySearch,
+  useRepositoryVisibilityMutation,
 } from "./hooks/useRepositoryQueries";
 import "./RepositoriesPage.css";
 
@@ -152,6 +154,22 @@ function deleteDisabledReason({
   return "";
 }
 
+function visibilityDisabledReason({
+  connected,
+  repo,
+  pending,
+}: {
+  connected: boolean;
+  repo: RepositorySummary | null;
+  pending: boolean;
+}): string {
+  if (pending) return "Updating repository visibility";
+  if (!connected) return "Gateway offline";
+  if (!repo) return "Select a repository";
+  if (!repo.writable) return "Repository is read-only";
+  return "";
+}
+
 function pullNoticeForResult(result: RepositoryPullResult): PullNotice {
   const upstream = result.upstreamHead ?? result.head;
   const upstreamLabel = upstream ? shortHash(upstream) : result.remoteRef || "upstream";
@@ -171,6 +189,122 @@ function pullNoticeForResult(result: RepositoryPullResult): PullNotice {
     tone: "idle",
     text: `UP TO DATE | ${result.remoteRef || result.ref}`,
   };
+}
+
+function gatewayOrigin(): string {
+  if (typeof window === "undefined") {
+    return "";
+  }
+  return window.location.origin.replace(/\/+$/, "");
+}
+
+function repositoryCloneUrl(repo: RepositorySummary): string {
+  const owner = encodeURIComponent(repo.owner);
+  const name = encodeURIComponent(repo.name);
+  const prefix = gatewayOrigin();
+  return `${prefix}/git/${owner}/${name}.git`;
+}
+
+async function copyRepositoryText(value: string): Promise<void> {
+  if (!navigator.clipboard?.writeText) {
+    throw new Error("clipboard API unavailable");
+  }
+  await navigator.clipboard.writeText(value);
+}
+
+function RepositoryAccessPanel({
+  connected,
+  repo,
+  pending,
+  onVisibilityChange,
+}: {
+  connected: boolean;
+  repo: RepositorySummary | null;
+  pending: boolean;
+  onVisibilityChange: (nextPublic: boolean) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!copied) {
+      return;
+    }
+    const timeout = window.setTimeout(() => setCopied(false), 1400);
+    return () => window.clearTimeout(timeout);
+  }, [copied]);
+
+  if (!repo) {
+    return (
+      <Surface class="repositories-access-panel repositories-access-panel-empty" level={1}>
+        <div class="repositories-access-empty">
+          <strong>NO REPOSITORY SELECTED</strong>
+        </div>
+      </Surface>
+    );
+  }
+
+  const cloneUrl = repositoryCloneUrl(repo);
+  const disabledReason = visibilityDisabledReason({ connected, repo, pending });
+  const visibilityActionLabel = pending
+    ? "UPDATING"
+    : repo.public ? "MAKE PRIVATE" : "MAKE PUBLIC";
+
+  const copyCloneUrl = () => {
+    void copyRepositoryText(cloneUrl)
+      .then(() => setCopied(true))
+      .catch(() => setCopied(false));
+  };
+
+  return (
+    <Surface class="repositories-access-panel" level={1}>
+      <div class="repositories-clone-compact">
+        <div class="repositories-clone-actions">
+          <span class="repositories-clone-primary">
+            <button
+              type="button"
+              class={`repositories-clone-toggle${open ? " is-open" : ""}`}
+              aria-expanded={open}
+              onClick={() => setOpen((value) => !value)}
+            >
+              <Icon name="branch" family="doticons" size={15} />
+              <span>GIT URL</span>
+            </button>
+            <InfoTip
+              label="Git URL help"
+              position="bottom"
+              text="Use this Git URL from a terminal or Git client to push or pull through the GSV gateway."
+            />
+          </span>
+          <span class="repositories-visibility-control">
+            <Tag tone={repo.public ? "online" : "idle"} label={repo.public ? "PUBLIC" : "PRIVATE"} boxed size="medium" />
+            <InfoTip
+              label="Visibility help"
+              position="bottom"
+              text="Public allows unauthenticated Git pull and clone. Private requires authentication for reads. Push always requires write access."
+            />
+            <Button
+              variant={repo.public ? "secondary" : "primary"}
+              label={visibilityActionLabel}
+              disabled={Boolean(disabledReason)}
+              onClick={() => onVisibilityChange(!repo.public)}
+            />
+            {disabledReason ? <span class="repositories-visibility-disabled">{disabledReason}</span> : null}
+          </span>
+        </div>
+        {open ? (
+          <div class="repositories-clone-details">
+            <code>{cloneUrl}</code>
+            <Button
+              variant="secondary"
+              label={copied ? "COPIED" : "COPY GIT URL"}
+              onClick={copyCloneUrl}
+            />
+          </div>
+        ) : null}
+      </div>
+    </Surface>
+  );
 }
 
 function RepositoriesStateMessage({
@@ -915,6 +1049,7 @@ export function RepositoriesPage() {
   }, canQuery && Boolean(activeCompareTab));
   const pullMutation = useRepositoryPullMutation();
   const deleteMutation = useRepositoryDeleteMutation();
+  const visibilityMutation = useRepositoryVisibilityMutation();
 
   useEffect(() => {
     setPullNotice(null);
@@ -1106,6 +1241,28 @@ export function RepositoriesPage() {
     }
   };
 
+  const setActiveRepositoryVisibility = async (nextPublic: boolean) => {
+    if (!activeRepo || visibilityDisabledReason({ connected, repo: activeRepo, pending: visibilityMutation.isPending })) {
+      return;
+    }
+    setPullNotice(null);
+    try {
+      const result = await visibilityMutation.mutateAsync({
+        repo: activeRepo.repo,
+        public: nextPublic,
+      });
+      setPullNotice({
+        tone: result.public ? "online" : "idle",
+        text: `${result.repo} IS NOW ${result.public ? "PUBLIC" : "PRIVATE"}`,
+      });
+    } catch (error) {
+      setPullNotice({
+        tone: "error",
+        text: queryErrorText(error) || "VISIBILITY UPDATE FAILED",
+      });
+    }
+  };
+
   return (
     <ConsolePage flush>
       <ConsoleResourceBoundary
@@ -1188,6 +1345,12 @@ export function RepositoriesPage() {
                 </span>
               ) : null}
             </div>
+            <RepositoryAccessPanel
+              connected={connected}
+              repo={activeRepo}
+              pending={visibilityMutation.isPending}
+              onVisibilityChange={setActiveRepositoryVisibility}
+            />
             <section class="repositories-workspace" aria-label="Repositories workspace">
               <div class="repositories-tabbar">
                 <Tabs

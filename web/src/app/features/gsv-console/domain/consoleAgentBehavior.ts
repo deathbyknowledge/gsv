@@ -1,10 +1,15 @@
 import type { ConsoleConfigEntry } from "./consoleModels";
-import { defaultModelLabelForConfig } from "./consoleAi";
+import {
+  defaultModelLabelForConfig,
+  modelOptionForValue,
+  type ConsoleModelOption,
+} from "./consoleAi";
 
 export type AgentApprovalAction = "auto" | "ask" | "deny";
 
 export type ApprovalRule = {
   match: string;
+  target?: string;
   action: AgentApprovalAction;
 };
 
@@ -15,6 +20,8 @@ export type ApprovalPolicy = {
 
 export type ConsoleAgentBehavior = {
   approval: string;
+  approvalInherited: boolean;
+  approvalOverride: string;
   model: string;
   permission: AgentApprovalAction;
   reasoning: string;
@@ -22,21 +29,51 @@ export type ConsoleAgentBehavior = {
 
 export const APPROVAL_ACTIONS: AgentApprovalAction[] = ["auto", "ask", "deny"];
 export const DEFAULT_REASONING_EFFORT = "medium";
+export const GLOBAL_APPROVAL_CONFIG_KEY = "config/ai/tools/approval";
+
+const DEFAULT_APPROVAL_POLICY: ApprovalPolicy = {
+  default: "auto",
+  rules: [
+    { match: "shell.exec", action: "ask" },
+    { match: "net.fetch", action: "ask" },
+    { match: "fs.delete", action: "ask" },
+    { match: "sys.mcp.call", action: "ask" },
+  ],
+};
 
 export function behaviorForAccount(
   config: readonly ConsoleConfigEntry[],
   uid: number,
+  ownerUid?: number | null,
 ): ConsoleAgentBehavior {
   const model = modelOverrideForAccount(config, uid);
   const reasoning = reasoningOverrideForAccount(config, uid);
-  const approval = configValue(config, `users/${uid}/ai/tools/approval`);
+  const approvalOverride = approvalOverrideForAccount(config, uid);
+  const approval = approvalOverride || defaultApprovalPolicyForConfig(config, ownerUid);
 
   return {
     approval,
+    approvalInherited: !approvalOverride,
+    approvalOverride,
     model,
     permission: parseApprovalPolicy(approval).default,
     reasoning,
   };
+}
+
+export function defaultApprovalPolicyForConfig(
+  config: readonly ConsoleConfigEntry[],
+  ownerUid?: number | null,
+): string {
+  const ownerApproval = typeof ownerUid === "number" && Number.isFinite(ownerUid)
+    ? approvalOverrideForAccount(config, ownerUid)
+    : "";
+  const configured = configValue(config, GLOBAL_APPROVAL_CONFIG_KEY);
+  return ownerApproval || configured || serializeApprovalPolicy(DEFAULT_APPROVAL_POLICY);
+}
+
+export function approvalOverrideForAccount(config: readonly ConsoleConfigEntry[], uid: number): string {
+  return configValue(config, `users/${uid}/ai/tools/approval`);
 }
 
 export function modelOverrideForAccount(config: readonly ConsoleConfigEntry[], uid: number): string {
@@ -89,6 +126,38 @@ export function modelLabelsForAccount(
   return [primaryLabel ?? "GATEWAY DEFAULT", trimmedModel, ...rest];
 }
 
+export function modelOptionsForAccount(
+  options: readonly ConsoleModelOption[],
+  model: string,
+  inheritedLabel?: string,
+): ConsoleModelOption[] {
+  const defaultValue = inheritedLabel?.trim();
+  const baseOptions = defaultValue
+    ? [
+        inheritedModelOption(defaultValue, options.find((option) => option.value.trim().toLowerCase() === defaultValue.toLowerCase())),
+        ...options.filter((option) => option.value.trim().toLowerCase() !== defaultValue.toLowerCase()),
+      ]
+    : [...options];
+  const trimmedModel = model.trim();
+  if (!trimmedModel || baseOptions.some((option) => option.value.trim() === trimmedModel)) {
+    return baseOptions;
+  }
+  const [primaryOption, ...rest] = baseOptions;
+  return [
+    primaryOption ?? inheritedModelOption("GATEWAY DEFAULT"),
+    modelOptionForValue(trimmedModel),
+    ...rest,
+  ];
+}
+
+function inheritedModelOption(value: string, option?: ConsoleModelOption): ConsoleModelOption {
+  const base = option ?? modelOptionForValue(value);
+  return {
+    ...base,
+    label: `Inherit: ${base.label}`,
+  };
+}
+
 export function approvalActionFromValue(value: unknown): AgentApprovalAction {
   if (value === "allow") {
     return "auto";
@@ -96,10 +165,35 @@ export function approvalActionFromValue(value: unknown): AgentApprovalAction {
   return APPROVAL_ACTIONS.includes(value as AgentApprovalAction) ? value as AgentApprovalAction : "ask";
 }
 
+function approvalTargetFromValue(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === "*" || trimmed.toLowerCase() === "any") {
+    return undefined;
+  }
+  if (trimmed === "device" || trimmed === "devices/*") {
+    return "targets/*";
+  }
+  if (trimmed === "gateway" || trimmed === "local") {
+    return "gsv";
+  }
+  return trimmed;
+}
+
+function legacyApprovalTarget(value: unknown): string | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const target = (value as { target?: unknown }).target;
+  return approvalTargetFromValue(target === "device" ? "targets/*" : target);
+}
+
 export function parseApprovalPolicy(raw: string): ApprovalPolicy {
   const trimmed = raw.trim();
   if (!trimmed) {
-    return { default: "ask", rules: [] };
+    return DEFAULT_APPROVAL_POLICY;
   }
   try {
     const parsed = JSON.parse(trimmed) as { default?: unknown; rules?: unknown };
@@ -108,20 +202,27 @@ export function parseApprovalPolicy(raw: string): ApprovalPolicy {
           .map((entry) => {
             const record = entry && typeof entry === "object" ? entry as Record<string, unknown> : {};
             const match = typeof record.match === "string" ? record.match.trim() : "";
-            return match ? { match, action: approvalActionFromValue(record.action) } : null;
+            const target = approvalTargetFromValue(record.target) ?? legacyApprovalTarget(record.when);
+            return match
+              ? {
+                  match,
+                  ...(target ? { target } : {}),
+                  action: approvalActionFromValue(record.action),
+                }
+              : null;
           })
           .filter((rule): rule is ApprovalRule => rule !== null)
       : [];
-    return { default: approvalActionFromValue(parsed.default), rules };
+    return {
+      default: parsed.default === undefined ? DEFAULT_APPROVAL_POLICY.default : approvalActionFromValue(parsed.default),
+      rules: Array.isArray(parsed.rules) ? rules : DEFAULT_APPROVAL_POLICY.rules,
+    };
   } catch {
-    return { default: "ask", rules: [] };
+    return DEFAULT_APPROVAL_POLICY;
   }
 }
 
 export function serializeApprovalPolicy(policy: ApprovalPolicy): string {
-  if (policy.default === "ask" && policy.rules.length === 0) {
-    return "";
-  }
   return JSON.stringify({ default: policy.default, rules: policy.rules });
 }
 

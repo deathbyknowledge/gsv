@@ -341,6 +341,7 @@ function normalizeAccount(value: unknown): ConsoleAccount | null {
     relation: normalizeAccountRelation(record.relation),
     runnable: record.runnable === true,
     gecos: stringOrEmpty(record.gecos),
+    capabilities: asArray(record.capabilities).map(stringOrEmpty).filter(Boolean).sort(),
   };
 }
 
