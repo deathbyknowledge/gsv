@@ -326,6 +326,7 @@ const SYSCALL_NAMES = [
   "repo.apply",
   "repo.import",
   "repo.delete",
+  "repo.visibility.set",
   "sys.connect",
   "sys.setup.assist",
   "sys.setup",

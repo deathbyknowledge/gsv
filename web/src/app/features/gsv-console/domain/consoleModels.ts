@@ -92,6 +92,7 @@ export type ConsoleAccount = {
   relation: ConsoleAccountRelation;
   runnable: boolean;
   gecos: string;
+  capabilities: string[];
 };
 
 export type ConsoleAdapterAccount = {

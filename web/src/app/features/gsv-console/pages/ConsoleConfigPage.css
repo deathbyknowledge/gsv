@@ -33,6 +33,10 @@
   gap: 18px;
 }
 
+.gsv-console-tool-approval-settings .gsv-tools-panel {
+  max-width: 760px;
+}
+
 /* Field stack: each field is full-width on its own row; fields flagged `half`
    share a row (e.g. MAX TOKENS / MAX BYTES). */
 .gsv-console-settings-fields {

@@ -10,6 +10,7 @@ export type ChatPopoverId = "model" | "tasks" | "context";
 
 type ChatDockPopoversProps = {
   activeAgent: ChatAgentViewModel;
+  activeProcessId: string;
   context: ChatHistory["context"] | null;
   contextLevel: string;
   contextModel: string;
@@ -74,6 +75,7 @@ function modelProfileIsActive(
 
 export function ChatDockPopovers({
   activeAgent,
+  activeProcessId,
   context,
   contextLevel,
   contextModel,
@@ -202,19 +204,21 @@ export function ChatDockPopovers({
               </div>
             ) : activeAgent.tasks.map((task) => {
               const canOpen = task.processId.length > 0;
+              const current = canOpen && task.processId === activeProcessId;
               const content = (
                 <>
                   <StatusDot tone={taskStatusTone(task.status)} size={8} />
                   <span class="gsv-chat-task-name">{task.name}</span>
-                  <small>{taskStatusLabel(task.status)}</small>
+                  <small>{current ? "CURRENT" : taskStatusLabel(task.status)}</small>
                 </>
               );
 
               return canOpen ? (
                 <button
                   type="button"
-                  class="gsv-chat-task-row is-clickable"
+                  class={`gsv-chat-task-row is-clickable${current ? " is-current" : ""}`}
                   key={`${task.processId}-${task.status}`}
+                  aria-current={current ? "true" : undefined}
                   onClick={() => onOpenTaskProcess(task.processId, task.process)}
                 >
                   {content}

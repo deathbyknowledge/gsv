@@ -22,6 +22,8 @@ import type {
   RepoRefsResult,
   RepoSearchArgs,
   RepoSearchResult,
+  RepoVisibilitySetArgs,
+  RepoVisibilitySetResult,
   RepoSourceSummary,
   RepoSummary,
 } from "@humansandmachines/gsv/protocol";
@@ -30,7 +32,7 @@ import { resolveCallerOwnerUid } from "./context";
 import { RipgitClient, type RipgitApplyOp, type RipgitRepoRef } from "../fs/ripgit/client";
 import { accountHomeRepoRef } from "../fs/ripgit/repos";
 import { visiblePackageScopesForActor } from "./packages";
-import { isRepoPublic, repoVisibilityConfigKey } from "./repo-visibility";
+import { isRepoPublic, repoVisibilityConfigKey, setRepoVisibility } from "./repo-visibility";
 import { canOwnerDelegateRunAs } from "./account-access";
 
 const TEXT_DECODER = new TextDecoder();
@@ -402,6 +404,23 @@ export async function handleRepoDelete(
   return {
     deleted: true,
     repo: slug,
+  };
+}
+
+export function handleRepoVisibilitySet(
+  args: RepoVisibilitySetArgs,
+  ctx: KernelContext,
+): RepoVisibilitySetResult {
+  const repo = parseRepoSlug(args.repo);
+  assertCanWriteRepo(repo, ctx);
+  const slug = repoSlug(repo);
+  const nextPublic = args.public === true;
+  const previousPublic = isRepoPublic(slug, ctx.config);
+  setRepoVisibility(slug, nextPublic ? "public" : "private", ctx.config);
+  return {
+    changed: previousPublic !== nextPublic,
+    repo: slug,
+    public: nextPublic,
   };
 }
 

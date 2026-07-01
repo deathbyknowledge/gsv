@@ -3,16 +3,24 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import "./AgentEditor.css";
 import { TextInput } from "./TextInput";
 import { TextArea } from "./TextArea";
-import { Select } from "./Select";
-import { Segmented } from "./Segmented";
+import { Select, type SelectOption } from "./Select";
 import { Button } from "./Button";
 import { Avatar, type AvatarStatus } from "./Avatar";
 import { Tabs } from "./Tabs";
 import { SectionHeader } from "./SectionHeader";
 import { ConfirmModal } from "./ConfirmModal";
+import {
+  AgentToolsPanel,
+  type AgentToolApprovalAction,
+  type AgentToolApprovalPolicy,
+  type AgentToolApprovalRule,
+  type AgentToolTarget,
+} from "./AgentToolsPanel";
 import { useUnsavedGuard } from "../../features/gsv-shell/unsaved/unsavedGuard";
 
 export type AgentEditorMode = "new" | "manage";
+export type AgentEditorTab = "general" | "files" | "tasks";
+export type AgentEditorModelOption = SelectOption;
 
 export interface AgentEditorProps {
   mode?: AgentEditorMode;
@@ -26,9 +34,16 @@ export interface AgentEditorProps {
   createdLabel?: string;
   metaLabel?: string;
   status?: AvatarStatus;
-  models?: string[];
+  models?: AgentEditorModelOption[];
   initialModel?: string;
+  initialReasoning?: string;
+  inheritedReasoning?: string;
   initialPermission?: string;
+  initialApprovalPolicy?: string;
+  approvalPolicySourceLabel?: string;
+  approvalPolicySourceDescription?: string;
+  capabilities?: string[];
+  toolTargets?: AgentToolTarget[];
   files?: AgentEditorFile[];
   tasks?: AgentEditorTask[];
   readOnly?: boolean;
@@ -36,6 +51,8 @@ export interface AgentEditorProps {
   identityReadOnly?: boolean;
   behaviorReadOnly?: boolean;
   filesReadOnly?: boolean;
+  initialTab?: AgentEditorTab;
+  onTabChange?: (tab: AgentEditorTab) => void;
   onCreate?: (draft: AgentEditorDraft) => Promise<void> | void;
   onSave?: (draft: AgentEditorDraft) => Promise<void> | void;
 }
@@ -45,6 +62,7 @@ type TaskStatus = "running" | "error" | "idle" | "online";
 export interface AgentEditorFile {
   label: string;
   name?: string;
+  origName?: string;
   content: string;
   orig?: string;
 }
@@ -55,7 +73,10 @@ export interface AgentEditorDraft {
   description: string;
   model: string;
   modelIndex: number;
+  reasoning: string;
+  reasoningIndex: number;
   permission: string;
+  approvalPolicy: string;
   files: AgentEditorFile[];
 }
 
@@ -72,34 +93,157 @@ interface Defaults {
   metaLabel: string;
   status: AvatarStatus;
   model: number;
-  perm: string;
+  reasoning: number;
+  approvalPolicy: AgentToolApprovalPolicy;
+  approvalPolicyRaw: string;
   files: AgentEditorFile[];
   tasks: AgentEditorTask[];
 }
 
-const MODELS = ["INHERIT DEFAULT", "GATEWAY DEFAULT", "FAST MODEL", "DEEP MODEL"];
-const PERMS = ["auto", "ask", "deny"];
+const MODELS: AgentEditorModelOption[] = [
+  { label: "INHERIT DEFAULT", value: "" },
+  { label: "GATEWAY DEFAULT", value: "GATEWAY DEFAULT" },
+  { label: "FAST MODEL", value: "FAST MODEL" },
+  { label: "DEEP MODEL", value: "DEEP MODEL" },
+];
+const REASONING_VALUES = ["", "off", "minimal", "low", "medium", "high", "xhigh"];
+const DEFAULT_APPROVAL_POLICY: AgentToolApprovalPolicy = {
+  default: "auto",
+  rules: [
+    { match: "shell.exec", action: "ask" },
+    { match: "net.fetch", action: "ask" },
+    { match: "fs.delete", action: "ask" },
+    { match: "sys.mcp.call", action: "ask" },
+  ],
+};
 
-function modelIndexForValue(value: string | undefined, options: readonly string[] | undefined): number {
+function optionValue(option: AgentEditorModelOption): string {
+  return typeof option === "string" ? option : option.value ?? option.label;
+}
+
+function modelIndexForValue(value: string | undefined, options: readonly AgentEditorModelOption[] | undefined): number {
   const trimmed = value?.trim() ?? "";
   if (!trimmed) {
     return 0;
   }
   const modelOptions = options && options.length > 0 ? options : MODELS;
-  const index = modelOptions.findIndex((option) => option.trim() === trimmed);
+  const index = modelOptions.findIndex((option) => optionValue(option).trim() === trimmed);
   return index >= 0 ? index : 0;
 }
 
-function permissionForValue(value: string | undefined): string {
+function reasoningIndexForValue(value: string | undefined): number {
+  const trimmed = value?.trim().toLowerCase() ?? "";
+  if (!trimmed || trimmed === "inherit") {
+    return 0;
+  }
+  const index = REASONING_VALUES.indexOf(trimmed);
+  return index >= 0 ? index : 0;
+}
+
+function reasoningOptionLabel(value: string): string {
+  if (!value) return "Inherit default";
+  if (value === "xhigh") return "Extra high";
+  return `${value.charAt(0).toUpperCase()}${value.slice(1)}`;
+}
+
+function reasoningOptions(inherited: string | undefined): SelectOption[] {
+  const inheritedLabel = inherited?.trim();
+  return REASONING_VALUES.map((value) => value
+    ? { label: reasoningOptionLabel(value), value }
+    : {
+        label: inheritedLabel ? `Inherit: ${reasoningOptionLabel(inheritedLabel)}` : "Inherit default",
+        value: "",
+      });
+}
+
+function tabTitle(tab: AgentEditorTab): string {
+  return tab === "files" ? "CONTEXT" : tab.toUpperCase();
+}
+
+function permissionForValue(value: string | undefined): AgentToolApprovalAction {
   if (value === "allow") {
     return "auto";
   }
-  return PERMS.includes(value ?? "") ? value as string : "ask";
+  return value === "auto" || value === "deny" || value === "ask" ? value : "ask";
+}
+
+function approvalTargetFromValue(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === "*" || trimmed.toLowerCase() === "any") {
+    return undefined;
+  }
+  if (trimmed === "device" || trimmed === "devices/*") {
+    return "targets/*";
+  }
+  if (trimmed === "gateway" || trimmed === "local") {
+    return "gsv";
+  }
+  return trimmed;
+}
+
+function legacyApprovalTarget(value: unknown): string | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const target = (value as { target?: unknown }).target;
+  return approvalTargetFromValue(target === "device" ? "targets/*" : target);
+}
+
+function parseApprovalPolicy(raw: string | undefined, fallbackAction: string | undefined): AgentToolApprovalPolicy {
+  const trimmed = raw?.trim() ?? "";
+  if (!trimmed) {
+    return fallbackAction
+      ? { default: permissionForValue(fallbackAction), rules: [] }
+      : DEFAULT_APPROVAL_POLICY;
+  }
+  try {
+    const parsed = JSON.parse(trimmed) as { default?: unknown; rules?: unknown };
+    const rules = Array.isArray(parsed.rules)
+      ? parsed.rules
+          .map((entry): AgentToolApprovalRule | null => {
+            const record = entry && typeof entry === "object" ? entry as Record<string, unknown> : {};
+            const match = typeof record.match === "string" ? record.match.trim() : "";
+            if (!match) {
+              return null;
+            }
+            const target = approvalTargetFromValue(record.target) ?? legacyApprovalTarget(record.when);
+            return {
+              match,
+              ...(target ? { target } : {}),
+              action: permissionForValue(String(record.action ?? "")),
+            };
+          })
+          .filter((rule): rule is AgentToolApprovalRule => rule !== null)
+      : [];
+    return {
+      default: parsed.default === undefined ? DEFAULT_APPROVAL_POLICY.default : permissionForValue(String(parsed.default ?? "")),
+      rules: Array.isArray(parsed.rules) ? rules : DEFAULT_APPROVAL_POLICY.rules,
+    };
+  } catch {
+    return fallbackAction
+      ? { default: permissionForValue(fallbackAction), rules: [] }
+      : DEFAULT_APPROVAL_POLICY;
+  }
+}
+
+function serializeApprovalPolicy(policy: AgentToolApprovalPolicy): string {
+  const rules = policy.rules
+    .map((rule) => ({
+      match: rule.match.trim(),
+      ...(rule.target ? { target: rule.target } : {}),
+      action: permissionForValue(rule.action),
+    }))
+    .filter((rule) => rule.match.length > 0);
+  return JSON.stringify({ default: policy.default, rules });
 }
 
 function defaults(mode: AgentEditorMode, props: AgentEditorProps): Defaults {
-  const files = props.files && props.files.length > 0 ? props.files : null;
+  const files = props.files ?? null;
   const tasks = props.tasks && props.tasks.length > 0 ? props.tasks : null;
+  const approvalPolicy = parseApprovalPolicy(props.initialApprovalPolicy, props.initialPermission);
 
   if (mode === "manage") {
     return {
@@ -110,7 +254,9 @@ function defaults(mode: AgentEditorMode, props: AgentEditorProps): Defaults {
       metaLabel: props.metaLabel ?? "CREATED:",
       status: props.status ?? "online",
       model: modelIndexForValue(props.initialModel, props.models),
-      perm: permissionForValue(props.initialPermission),
+      reasoning: reasoningIndexForValue(props.initialReasoning),
+      approvalPolicy,
+      approvalPolicyRaw: serializeApprovalPolicy(approvalPolicy),
       files: files ?? [
         {
           label: "PERSONA",
@@ -141,7 +287,9 @@ function defaults(mode: AgentEditorMode, props: AgentEditorProps): Defaults {
     metaLabel: props.metaLabel ?? "CREATED:",
     status: props.status ?? "idle",
     model: modelIndexForValue(props.initialModel, props.models),
-    perm: permissionForValue(props.initialPermission),
+    reasoning: reasoningIndexForValue(props.initialReasoning),
+    approvalPolicy,
+    approvalPolicyRaw: serializeApprovalPolicy(approvalPolicy),
     files: files ?? [
       {
         label: "PERSONA",
@@ -158,10 +306,85 @@ function defaults(mode: AgentEditorMode, props: AgentEditorProps): Defaults {
   };
 }
 
+function fileLabel(file: AgentEditorFile, index: number): string {
+  return file.label.trim() || file.name?.trim() || `SECTION ${index + 1}`;
+}
+
+function fileName(file: AgentEditorFile, index: number): string {
+  const explicit = file.name?.trim();
+  if (explicit) {
+    return explicit;
+  }
+  const label = file.label.trim();
+  if (label.toUpperCase() === "PERSONA") {
+    return "05-persona.md";
+  }
+  const base = label.toLowerCase().replace(/\.md$/i, "").replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
+  return `${base || `file-${index + 1}`}.md`;
+}
+
+function sectionSlug(label: string, index: number): string {
+  const slug = label
+    .trim()
+    .replace(/\.md$/i, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug || `section-${index + 1}`;
+}
+
+function contextOrderPrefix(file: AgentEditorFile, index: number): string {
+  const existing = (file.name ?? file.origName ?? "").match(/^(\d+)-/);
+  if (existing) {
+    return `${existing[1]}-`;
+  }
+  if (fileLabel(file, index).toUpperCase() === "PERSONA") {
+    return "05-";
+  }
+  return `${String((index + 1) * 10).padStart(2, "0")}-`;
+}
+
+function contextFileNameForSection(
+  label: string,
+  index: number,
+  file: AgentEditorFile,
+  files: readonly AgentEditorFile[],
+): string {
+  const prefix = contextOrderPrefix(file, index);
+  const baseName = `${prefix}${sectionSlug(label, index)}.md`;
+  const used = new Set(
+    files
+      .filter((candidate) => candidate !== file)
+      .map((candidate, candidateIndex) => fileName(candidate, candidateIndex).toLowerCase()),
+  );
+  if (!used.has(baseName.toLowerCase())) {
+    return baseName;
+  }
+  let suffix = 2;
+  while (used.has(`${prefix}${sectionSlug(label, index)}-${suffix}.md`.toLowerCase())) {
+    suffix += 1;
+  }
+  return `${prefix}${sectionSlug(label, index)}-${suffix}.md`;
+}
+
+function nextUntitledSection(files: readonly AgentEditorFile[]): { label: string; name: string } {
+  const names = new Set(files.map((file, index) => fileName(file, index).toLowerCase()));
+  let index = 1;
+  while (true) {
+    const label = index === 1 ? "Untitled" : `Untitled ${index}`;
+    const file: AgentEditorFile = { label, content: "" };
+    const name = contextFileNameForSection(label, files.length, file, files);
+    if (!names.has(name.toLowerCase())) {
+      return { label, name };
+    }
+    index += 1;
+  }
+}
+
 /** AgentEditor — composite ported from Agent Editor.dc.html. A full agent
- *  authoring surface with GENERAL / FILES / TASKS folder tabs. GENERAL composes
- *  TextInput/TextArea/Select/Segmented/Button atoms; FILES has a raw code editor
- *  (deliberately not a labelled field) + delete-confirm modal. */
+ *  authoring surface with GENERAL / CONTEXT / TASKS folder tabs. GENERAL composes
+ *  TextInput/TextArea/Select/Segmented/Button atoms; CONTEXT has a markdown
+ *  editor + delete-confirm modal. */
 export function AgentEditor(props: AgentEditorProps) {
   const { avatarSrc, avatarCover = false, containerWidth } = props;
   const mode: AgentEditorMode = props.mode ?? "new";
@@ -172,14 +395,16 @@ export function AgentEditor(props: AgentEditorProps) {
   const behaviorReadOnly = props.behaviorReadOnly ?? generalReadOnly;
   const filesReadOnly = props.filesReadOnly ?? readOnly;
   const modelOptions = props.models && props.models.length > 0 ? props.models : MODELS;
+  const reasonOptions = reasoningOptions(props.inheritedReasoning);
 
   const metaRef = useRef<Defaults>(defaults(mode, props));
   const meta = metaRef.current;
 
-  const [tab, setTab] = useState<"general" | "files" | "tasks">("general");
+  const [tab, setTabState] = useState<AgentEditorTab>(props.initialTab ?? "general");
   const [fileIdx, setFileIdx] = useState(0);
-  const [perm, setPerm] = useState(meta.perm);
+  const [approvalPolicy, setApprovalPolicy] = useState<AgentToolApprovalPolicy>(meta.approvalPolicy);
   const [model, setModel] = useState(meta.model);
+  const [reasoning, setReasoning] = useState(meta.reasoning);
   const [name, setName] = useState(meta.name);
   const [role, setRole] = useState(meta.role);
   const [desc, setDesc] = useState(meta.desc);
@@ -192,6 +417,11 @@ export function AgentEditor(props: AgentEditorProps) {
   const [formNonce, setFormNonce] = useState(0);
 
   const flashTimer = useRef<number | undefined>(undefined);
+
+  const setActiveTab = (next: AgentEditorTab) => {
+    setTabState(next);
+    props.onTabChange?.(next);
+  };
 
   useEffect(() => {
     const onResize = () => setW(window.innerWidth);
@@ -221,15 +451,22 @@ export function AgentEditor(props: AgentEditorProps) {
   const narrow = W < 720;
 
   // ---- folder tabs ----
-  const tabOrder: ("general" | "files" | "tasks")[] =
+  const tabOrder: AgentEditorTab[] =
     !isNew && (meta.tasks || []).length > 0 ? ["general", "files", "tasks"] : ["general", "files"];
   const activeIdx = Math.max(0, tabOrder.indexOf(tab));
+
+  useEffect(() => {
+    if (!tabOrder.includes(tab)) {
+      setActiveTab("general");
+    }
+  }, [tab, tabOrder.join("|")]);
 
   // ---- avatar ----
   const imgSrc = avatarSrc ?? "img/agent-0.png";
   const status = meta.status;
 
   // ---- files ----
+  const hasContextSections = files.length > 0;
   const curFile = files[fileIdx] || files[0] || { label: "", content: "" };
 
   const setFileContent = (v: string) => {
@@ -245,10 +482,11 @@ export function AgentEditor(props: AgentEditorProps) {
     role !== meta.role ||
     desc !== meta.desc ||
     model !== meta.model ||
-    perm !== meta.perm ||
+    reasoning !== meta.reasoning ||
+    serializeApprovalPolicy(approvalPolicy) !== meta.approvalPolicyRaw ||
     files.length !== meta.files.length ||
     files.some(
-      (f, i) => f.label !== meta.files[i]?.label || f.content !== (f.orig ?? f.content),
+      (f, i) => f.label !== meta.files[i]?.label || f.name !== meta.files[i]?.name || f.content !== (f.orig ?? f.content),
     );
   // Registers the editor's dirty state so the shell ConsoleHeader back/nav (the
   // single source of navigation for this surface) prompts before discarding
@@ -265,9 +503,6 @@ export function AgentEditor(props: AgentEditorProps) {
   const nameDisplay = name || "NEW AGENT";
   const roleDisplay = role || "UNASSIGNED ROLE";
 
-  const permVal = PERMS.indexOf(perm) < 0 ? 1 : PERMS.indexOf(perm);
-  const segWidth = narrow ? 600 : 300;
-
   // ---- handlers ----
   const onContent = (e: Event) => {
     if (!filesReadOnly) {
@@ -276,8 +511,23 @@ export function AgentEditor(props: AgentEditorProps) {
   };
   const onAddFile = () => {
     if (filesReadOnly) return;
-    setFiles((s) => [...s, { label: "UNTITLED", content: "# Untitled\n\n", orig: "# Untitled\n\n" }]);
+    const next = nextUntitledSection(files);
+    setFiles((s) => [...s, { label: next.label, name: next.name, content: "# Untitled\n\n" }]);
     setFileIdx(files.length);
+    setFlash("");
+    setFormError("");
+  };
+  const setCurrentSectionName = (value: string) => {
+    if (filesReadOnly) return;
+    setFiles((s) => s.map((f, i) => (
+      i === fileIdx
+        ? {
+            ...f,
+            label: value,
+            name: contextFileNameForSection(value, i, f, s),
+          }
+        : f
+    )));
     setFlash("");
     setFormError("");
   };
@@ -293,9 +543,12 @@ export function AgentEditor(props: AgentEditorProps) {
     name,
     role,
     description: desc,
-    model: modelOptions[model] ?? "",
+    model: optionValue(modelOptions[model] ?? ""),
     modelIndex: model,
-    permission: perm,
+    reasoning: REASONING_VALUES[reasoning] ?? "",
+    reasoningIndex: reasoning,
+    permission: approvalPolicy.default,
+    approvalPolicy: serializeApprovalPolicy(approvalPolicy),
     files: files.map((file) => ({ ...file })),
   });
   const errorText = (error: unknown): string => {
@@ -335,15 +588,16 @@ export function AgentEditor(props: AgentEditorProps) {
     setRole(meta.role);
     setDesc(meta.desc);
     setModel(meta.model);
-    setPerm(meta.perm);
+    setReasoning(meta.reasoning);
+    setApprovalPolicy(meta.approvalPolicy);
     setFormNonce((n) => n + 1);
     setFormError("");
     setFlash("");
   };
 
-  const delName = curFile.label;
+  const delName = hasContextSections ? fileLabel(curFile, fileIdx) : "context section";
   const onDelete = () => {
-    if (!filesReadOnly) setDeleteOpen(true);
+    if (!filesReadOnly && hasContextSections) setDeleteOpen(true);
   };
   const onCancelDelete = () => setDeleteOpen(false);
   const onConfirmDelete = () => {
@@ -405,9 +659,10 @@ export function AgentEditor(props: AgentEditorProps) {
         <div style={panelStyle}>
           {/* ===== FOLDER TAB BAR ===== */}
           <Tabs
-            tabs={tabOrder.map((label) => label.toUpperCase())}
+            className="gsv-ae-tabs"
+            tabs={tabOrder.map(tabTitle)}
             value={activeIdx}
-            onChange={(index) => setTab(tabOrder[index] || "general")}
+            onChange={(index) => setActiveTab(tabOrder[index] || "general")}
             width={W}
             sticky
           />
@@ -479,17 +734,35 @@ export function AgentEditor(props: AgentEditorProps) {
                     />
                   </div>
 
-                  {/* TOOL PERMISSIONS */}
-                  <Segmented
-                    key={`seg-perm-${formNonce}`}
-                    l0="ALLOW"
-                    l1="ASK"
-                    l2="DENY"
-                    value={permVal}
-                    onChange={behaviorReadOnly ? undefined : (i) => setPerm(PERMS[i] || "ask")}
-                    width={segWidth}
-                    label="TOOL PERMISSIONS"
+                  {/* REASONING */}
+                  <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+                    <span style="font-size:9.5px;letter-spacing:.22em;color:var(--label);">REASONING</span>
+                    {reasoning === 0 ? (
+                      <span style="font-size:9.5px;letter-spacing:.08em;color:var(--live);">
+                        (<span style="border-bottom:1px solid var(--live);">AI DEFAULT</span>)
+                      </span>
+                    ) : null}
+                  </div>
+                  <div style="max-width:300px;margin-bottom:30px;">
+                    <Select
+                      key={`sel-reasoning-${formNonce}`}
+                      options={reasonOptions}
+                      value={reasoning}
+                      onChange={behaviorReadOnly ? undefined : setReasoning}
+                      width={300}
+                      disabled={behaviorReadOnly}
+                    />
+                  </div>
+
+                  <AgentToolsPanel
+                    key={`tools-${formNonce}`}
+                    policy={approvalPolicy}
+                    sourceLabel={props.approvalPolicySourceLabel}
+                    sourceDescription={props.approvalPolicySourceDescription}
+                    capabilities={props.capabilities}
+                    targets={props.toolTargets}
                     disabled={behaviorReadOnly}
+                    onChange={setApprovalPolicy}
                   />
 
                   {/* GENERAL actions */}
@@ -534,7 +807,7 @@ export function AgentEditor(props: AgentEditorProps) {
               </div>
             ) : null}
 
-            {/* ---------- FILES ---------- */}
+            {/* ---------- CONTEXT ---------- */}
             {tab === "files" ? (
               <div style={secPad}>
                 {/* identity strip */}
@@ -554,10 +827,11 @@ export function AgentEditor(props: AgentEditorProps) {
                   </div>
                 </div>
 
-                {/* file folder tabs */}
+                {/* context section tabs */}
                 <div style="display:flex;align-items:flex-start;gap:30px;flex-wrap:wrap;padding-bottom:24px;border-bottom:1px solid var(--rule-inner);margin-bottom:22px;">
                   {files.map((f, i) => (
                     <button
+                      key={`${f.origName ?? f.name ?? f.label}-${i}`}
                       type="button"
                       class="gsv-ae-file-tab"
                       onClick={() => {
@@ -571,7 +845,7 @@ export function AgentEditor(props: AgentEditorProps) {
                         <rect x="1" y="4" width="14" height="9" />
                       </svg>
                       <span class="gsv-sublabel" style={`letter-spacing:.1em;color:${i === fileIdx ? "var(--text)" : "#9a95cf"};line-height:1.35;`}>
-                        {f.label}
+                        {fileLabel(f, i)}
                       </span>
                     </button>
                   ))}
@@ -585,25 +859,41 @@ export function AgentEditor(props: AgentEditorProps) {
                       <path d="M1.5 3.5 H6.5 V4.5" />
                       <rect x="1.5" y="4.5" width="13" height="8" />
                     </svg>
-                    <span class="gsv-sublabel" style="letter-spacing:.1em;color:var(--accent);border-bottom:1px solid var(--accent);padding-bottom:1px;">NEW FILE</span>
+                    <span class="gsv-sublabel" style="letter-spacing:.1em;color:var(--accent);border-bottom:1px solid var(--accent);padding-bottom:1px;">NEW SECTION</span>
                   </button>
                 </div>
 
-                {/* current file label */}
-                <div class="gsv-sublabel" style="letter-spacing:.2em;color:var(--label);margin-bottom:11px;">{curFile.label}</div>
+                {hasContextSections ? (
+                  <>
+                    <div style="max-width:520px;margin-bottom:16px;">
+                      <TextInput
+                        value={fileLabel(curFile, fileIdx)}
+                        onChange={setCurrentSectionName}
+                        placeholder="Operating notes"
+                        size="medium"
+                        label="SECTION NAME"
+                        readonly={filesReadOnly}
+                      />
+                    </div>
 
-                {/* editor */}
-                <textarea
-                  class="gsv-ed gsv-ae-editor"
-                  value={curFile.content}
-                  onInput={onContent}
-                  spellcheck={false}
-                  readOnly={filesReadOnly}
-                />
+                    {/* editor */}
+                    <textarea
+                      class="gsv-ed gsv-ae-editor"
+                      value={curFile.content}
+                      onInput={onContent}
+                      spellcheck={false}
+                      readOnly={filesReadOnly}
+                    />
+                  </>
+                ) : (
+                  <div class="gsv-ae-empty-context">
+                    <strong>NO CONTEXT SECTIONS</strong>
+                  </div>
+                )}
 
                 {/* actions */}
                 <div style="display:flex;align-items:center;gap:12px;margin-top:16px;">
-                  <Button variant="dangerGhost" label="DELETE" onClick={onDelete} disabled={filesReadOnly} />
+                  <Button variant="dangerGhost" label="DELETE" onClick={onDelete} disabled={filesReadOnly || !hasContextSections} />
                   <span style="flex:1;" />
                   {filesReadOnly ? (
                     <span class="gsv-ae-readonly-note gsv-sublabel">READ ONLY</span>
@@ -614,7 +904,7 @@ export function AgentEditor(props: AgentEditorProps) {
                   ) : flash ? (
                     <span class="gsv-sublabel" style="letter-spacing:.14em;color:var(--online);">{flash}</span>
                   ) : null}
-                  <Button variant="secondary" label="RESET" onClick={onReset} disabled={filesReadOnly || pendingAction !== null} />
+                  <Button variant="secondary" label="RESET" onClick={onReset} disabled={filesReadOnly || !hasContextSections || pendingAction !== null} />
                   <Button variant="primary" label="SAVE" onClick={onSave} disabled={filesReadOnly || pendingAction !== null} />
                 </div>
               </div>

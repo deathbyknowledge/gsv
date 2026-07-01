@@ -9,6 +9,7 @@ function account(input: Partial<ConsoleAccount> & Pick<ConsoleAccount, "uid" | "
     displayName: input.username,
     runnable: true,
     gecos: "",
+    capabilities: [],
     ...input,
   };
 }

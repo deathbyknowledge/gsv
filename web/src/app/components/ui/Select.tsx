@@ -5,12 +5,18 @@ import "./Select.css";
 export type SelectSize = "small" | "medium" | "large";
 export type SelectStatus = "none" | "error" | "success" | "info" | "warning";
 export type SelectRequirement = "none" | "required" | "optional";
+export type SelectOption = string | {
+  label: string;
+  value?: string;
+  description?: string;
+  group?: string;
+};
 
 export interface SelectProps {
   o0?: string;
   o1?: string;
   o2?: string;
-  options?: string[];
+  options?: SelectOption[];
   value?: number;
   size?: SelectSize;
   disabled?: boolean;
@@ -70,7 +76,7 @@ export function Select(props: SelectProps) {
   }, []);
 
   const arr = Array.isArray(options) ? options.filter((x) => x != null) : null;
-  const opts = arr && arr.length ? arr : [o0, o1, o2];
+  const opts = (arr && arr.length ? arr : [o0, o1, o2]).map(normalizeSelectOption);
 
   const controlled = props.value !== undefined;
   const rawIdx = controlled ? props.value ?? 0 : internalIdx;
@@ -111,7 +117,7 @@ export function Select(props: SelectProps) {
 
   useEffect(() => {
     if (!isOpen) return;
-    const row = listRef.current?.children.item(highlight);
+    const row = document.getElementById(optId(highlight));
     if (row instanceof HTMLElement) {
       row.scrollIntoView({ block: "nearest" });
     }
@@ -212,7 +218,10 @@ export function Select(props: SelectProps) {
           onClick={toggle}
           onKeyDown={onTriggerKeyDown}
         >
-          <span class="gsv-sel-val">{opts[idx]}</span>
+          <span class="gsv-sel-val">
+            <span>{opts[idx].label}</span>
+            {opts[idx].description ? <small>{opts[idx].description}</small> : null}
+          </span>
           <span style={{ marginLeft: "auto", display: "flex" }}>
             <svg width="9" height="6" viewBox="0 0 9 6" aria-hidden="true">
               <path d="M0 0 L9 0 L4.5 6 Z" fill="#b3aeff" />
@@ -242,37 +251,48 @@ export function Select(props: SelectProps) {
               outline: "none",
             }}
           >
-            {opts.map((optLabel, i) => (
-              <button
-                type="button"
-                class={`gsv-sel-row${i === highlight ? " is-highlighted" : ""}`}
-                key={i}
-                id={optId(i)}
-                role="option"
-                aria-selected={i === idx}
-                tabIndex={-1}
-                style={i === idx ? { background: "#171441" } : undefined}
-                onClick={() => pick(i)}
-                onMouseEnter={() => setHighlight(i)}
-              >
-                <span class="gsv-label" style={{ letterSpacing: ".03em", color: i === idx ? "#fff" : "#c4bfee" }}>
-                  {optLabel}
-                </span>
-                {i === idx ? (
-                  <span
-                    aria-hidden="true"
-                    style={{
-                      marginLeft: "auto",
-                      width: "6px",
-                      height: "6px",
-                      borderRadius: "50%",
-                      background: "#cbc7ff",
-                      boxShadow: "0 0 6px #cbc7ff",
-                    }}
-                  />
-                ) : null}
-              </button>
-            ))}
+            {opts.flatMap((option, i) => {
+              const previousGroup = i > 0 ? opts[i - 1]?.group : "";
+              const showGroup = option.group && option.group !== previousGroup;
+              const row = (
+                <button
+                  type="button"
+                  class={`gsv-sel-row${i === highlight ? " is-highlighted" : ""}`}
+                  key={`option:${i}`}
+                  id={optId(i)}
+                  role="option"
+                  aria-selected={i === idx}
+                  tabIndex={-1}
+                  style={i === idx ? { background: "#171441" } : undefined}
+                  onClick={() => pick(i)}
+                  onMouseEnter={() => setHighlight(i)}
+                >
+                  <span class="gsv-sel-row-copy" style={{ color: i === idx ? "#fff" : "#c4bfee" }}>
+                    <span>{option.label}</span>
+                    {option.description ? <small>{option.description}</small> : null}
+                  </span>
+                  {i === idx ? (
+                    <span
+                      aria-hidden="true"
+                      style={{
+                        marginLeft: "auto",
+                        width: "6px",
+                        height: "6px",
+                        borderRadius: "50%",
+                        background: "#cbc7ff",
+                        boxShadow: "0 0 6px #cbc7ff",
+                      }}
+                    />
+                  ) : null}
+                </button>
+              );
+              return showGroup
+                ? [
+                    <div class="gsv-sel-group" role="presentation" key={`group:${option.group}:${i}`}>{option.group}</div>,
+                    row,
+                  ]
+                : [row];
+            })}
           </div>
         ) : null}
       </div>
@@ -284,4 +304,18 @@ export function Select(props: SelectProps) {
       ) : null}
     </div>
   );
+}
+
+function normalizeSelectOption(option: SelectOption): { label: string; value: string; description: string; group: string } {
+  if (typeof option === "string") {
+    return { label: option, value: option, description: "", group: "" };
+  }
+  const label = String(option.label ?? "").trim();
+  const value = String(option.value ?? label).trim();
+  return {
+    label: label || value,
+    value,
+    description: String(option.description ?? "").trim(),
+    group: String(option.group ?? "").trim(),
+  };
 }

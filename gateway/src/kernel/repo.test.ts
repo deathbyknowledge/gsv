@@ -10,6 +10,7 @@ import {
   handleRepoImport,
   handleRepoList,
   handleRepoRead,
+  handleRepoVisibilitySet,
 } from "./repo";
 
 type FetchCall = {
@@ -267,6 +268,28 @@ describe("repo syscalls", () => {
     await expect(handleRepoDelete({ repo: "alice/demo" }, ctx)).rejects.toThrow(
       "Repository alice/demo backs installed packages: Demo Package",
     );
+    expect(fetcher.calls).toHaveLength(0);
+  });
+
+  it("updates repo visibility metadata", () => {
+    const fetcher = makeFetcher(() => {
+      throw new Error("ripgit should not be called");
+    });
+    const ctx = makeContext(fetcher);
+
+    expect(handleRepoVisibilitySet({ repo: "alice/demo", public: true }, ctx)).toEqual({
+      changed: true,
+      repo: "alice/demo",
+      public: true,
+    });
+    expect(ctx.config.get("repos/alice/demo/visibility")).toBe("public");
+
+    expect(handleRepoVisibilitySet({ repo: "alice/demo", public: false }, ctx)).toEqual({
+      changed: true,
+      repo: "alice/demo",
+      public: false,
+    });
+    expect(ctx.config.get("repos/alice/demo/visibility")).toBeNull();
     expect(fetcher.calls).toHaveLength(0);
   });
 

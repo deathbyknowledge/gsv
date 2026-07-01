@@ -1,4 +1,9 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
+import {
+  AgentToolsPanel,
+  type AgentToolApprovalPolicy,
+  type AgentToolTarget,
+} from "../../../components/ui/AgentToolsPanel";
 import { Button } from "../../../components/ui/Button";
 import { Checkbox } from "../../../components/ui/Checkbox";
 import { ConfirmModal } from "../../../components/ui/ConfirmModal";
@@ -22,7 +27,13 @@ import type { SaveConsoleConfigInput } from "../backend/consoleService";
 import type {
   ConsoleAccount,
   ConsoleConfigEntry,
+  ConsoleTarget,
 } from "../domain/consoleModels";
+import {
+  GLOBAL_APPROVAL_CONFIG_KEY,
+  parseApprovalPolicy,
+  serializeApprovalPolicy,
+} from "../domain/consoleAgentBehavior";
 import {
   AGENT_MODEL_FIELDS,
   MODEL_PROFILE_FIELDS,
@@ -53,6 +64,7 @@ import {
 import {
   useConsoleAccounts,
   useConsoleConfig,
+  useConsoleTargets,
   useSaveConsoleConfigEntries,
   useValidateConsoleModelConfig,
 } from "../hooks/useConsoleData";
@@ -120,10 +132,12 @@ type SettingsFieldGroupProps = {
 };
 
 type ClearedProfileSecretKeys = ReadonlyMap<string, ReadonlySet<string>>;
+const TOOL_APPROVAL_RUNTIME_ID = "tool-approval";
 
 export function ConsoleConfigPage({ kind, select, onClearSelect, onDetailChange }: ConsoleConfigPageProps) {
   const config = useConsoleConfig();
   const accounts = useConsoleAccounts();
+  const targets = useConsoleTargets();
 
   return (
     <ConsolePage flush>
@@ -136,6 +150,7 @@ export function ConsoleConfigPage({ kind, select, onClearSelect, onDetailChange 
             accounts={accounts.accounts}
             config={data}
             kind={kind}
+            targets={toolTargetsForConsoleTargets(targets.targets)}
             select={select}
             onClearSelect={onClearSelect}
             onDetailChange={onDetailChange}
@@ -150,6 +165,7 @@ function ConsoleSettingsPanel({
   accounts,
   config,
   kind,
+  targets,
   select,
   onClearSelect,
   onDetailChange,
@@ -157,6 +173,7 @@ function ConsoleSettingsPanel({
   accounts: readonly ConsoleAccount[];
   config: readonly ConsoleConfigEntry[];
   kind: ConsoleConfigKind;
+  targets: readonly AgentToolTarget[];
   select?: string;
   onClearSelect?: () => void;
   onDetailChange?: (detail: ConsoleConfigDetail | null) => void;
@@ -171,7 +188,7 @@ function ConsoleSettingsPanel({
   if (kind === "models") {
     return <ModelSettingsPage config={config} viewer={viewer} select={select} onClearSelect={onClearSelect} onDetailChange={onDetailChange} />;
   }
-  return <RuntimeSettingsPage config={config} viewer={viewer} onDetailChange={onDetailChange} />;
+  return <RuntimeSettingsPage config={config} targets={targets} viewer={viewer} onDetailChange={onDetailChange} />;
 }
 
 function ModelSettingsPage({
@@ -439,10 +456,12 @@ function ModelSettingsDetail({
 
 function RuntimeSettingsPage({
   config,
+  targets,
   viewer,
   onDetailChange,
 }: {
   config: readonly ConsoleConfigEntry[];
+  targets: readonly AgentToolTarget[];
   viewer: SettingsViewer;
   onDetailChange?: (detail: ConsoleConfigDetail | null) => void;
 }) {
@@ -454,7 +473,7 @@ function RuntimeSettingsPage({
   // Report the open detail so the breadcrumb owns the path back (no in-page
   // back button) — same trail as the model config: SETTINGS → RUNTIME → [detail].
   const detailLabel = selection
-    ? (RUNTIME_SETTING_GROUPS.find((group) => group.id === selection.id)?.title ?? "RUNTIME").toUpperCase()
+    ? runtimeSelectionTitle(selection.id)
     : null;
   useEffect(() => {
     onDetailChange?.(detailLabel ? { label: detailLabel, onExit: () => requestLeave(() => setSelection(null)) } : null);
@@ -469,6 +488,28 @@ function RuntimeSettingsPage({
   };
 
   if (selection) {
+    if (selection.id === TOOL_APPROVAL_RUNTIME_ID) {
+      return (
+        <ConsoleDetailPage
+          icon="cog"
+          title="TOOL APPROVAL"
+          typeLabel="GSV · RUNTIME"
+          statusLabel={canEditRuntime ? "SYSTEM FALLBACK" : "ROOT REQUIRED"}
+          tone={canEditRuntime ? "online" : "idle"}
+          blurb="Fallback tool approval policy used when neither a user nor an agent defines one."
+          parentLabel="RUNTIME"
+          onBack={() => requestLeave(() => setSelection(null))}
+        >
+          <ToolApprovalSettingsGroup
+            config={config}
+            editable={canEditRuntime}
+            targets={targets}
+            onSave={saveEntries}
+          />
+        </ConsoleDetailPage>
+      );
+    }
+
     const group = RUNTIME_SETTING_GROUPS.find((candidate) => candidate.id === selection.id) ?? RUNTIME_SETTING_GROUPS[0];
     return (
       <ConsoleDetailPage
@@ -498,6 +539,14 @@ function RuntimeSettingsPage({
   return (
     <section class="gsv-console-settings-index">
       <SectionHeader title="RUNTIME" headingLevel={2} divider />
+      <SettingsListPanel
+        title="TOOL APPROVAL"
+        meta={canEditRuntime ? "SYSTEM FALLBACK" : "ROOT REQUIRED"}
+        emptyLabel="NO TOOL APPROVAL SETTINGS"
+        fitContent
+        headingLevel={3}
+        rows={[toolApprovalRuntimeRow(config, () => setSelection({ id: TOOL_APPROVAL_RUNTIME_ID }))]}
+      />
       {RUNTIME_SETTING_GROUPS.map((group) => (
         <SettingsListPanel
           key={group.id}
@@ -511,6 +560,13 @@ function RuntimeSettingsPage({
       ))}
     </section>
   );
+}
+
+function runtimeSelectionTitle(selectionId: string): string {
+  if (selectionId === TOOL_APPROVAL_RUNTIME_ID) {
+    return "TOOL APPROVAL";
+  }
+  return (RUNTIME_SETTING_GROUPS.find((group) => group.id === selectionId)?.title ?? "RUNTIME").toUpperCase();
 }
 
 function defaultModelRow(values: Record<string, string>, onOpen: () => void): SettingsListRow {
@@ -574,6 +630,29 @@ function toolModelIcon(groupId: string): string {
   }
 }
 
+function toolApprovalRuntimeRow(
+  config: readonly ConsoleConfigEntry[],
+  onOpen: () => void,
+): SettingsListRow {
+  const policy = parseApprovalPolicy(configValueForKey(config, GLOBAL_APPROVAL_CONFIG_KEY));
+  const rules = policy.rules.length;
+  return {
+    id: TOOL_APPROVAL_RUNTIME_ID,
+    icon: "cog",
+    label: "Tool approval fallback",
+    sub: `${approvalActionLabel(policy.default)} · ${rules} override${rules === 1 ? "" : "s"}`,
+    statusLabel: "FALLBACK",
+    tone: "online",
+    onOpen,
+  };
+}
+
+function approvalActionLabel(action: AgentToolApprovalPolicy["default"]): string {
+  if (action === "auto") return "Allow automatically";
+  if (action === "deny") return "Deny by default";
+  return "Ask first";
+}
+
 function runtimeGroupRow(
   group: ConsoleSettingGroup,
   config: readonly ConsoleConfigEntry[],
@@ -606,6 +685,102 @@ function serverRuntimeSummary(config: readonly ConsoleConfigEntry[]): string {
   const timezone = configValueForKey(config, "config/server/timezone") || "UTC";
   const version = configValueForKey(config, "config/server/version") || "version";
   return `${name} · ${timezone} · ${version}`;
+}
+
+function toolTargetsForConsoleTargets(targets: readonly ConsoleTarget[]): AgentToolTarget[] {
+  return targets.map((target) => ({
+    id: target.deviceId,
+    label: target.label || target.deviceId,
+    online: target.online,
+    implements: target.implements,
+  }));
+}
+
+function ToolApprovalSettingsGroup({
+  config,
+  editable,
+  targets,
+  onSave,
+}: {
+  config: readonly ConsoleConfigEntry[];
+  editable: boolean;
+  targets: readonly AgentToolTarget[];
+  onSave: (entries: readonly SaveConsoleConfigInput[]) => Promise<void>;
+}) {
+  const rawPolicy = configValueForKey(config, GLOBAL_APPROVAL_CONFIG_KEY);
+  const initialPolicy = useMemo<AgentToolApprovalPolicy>(
+    () => parseApprovalPolicy(rawPolicy),
+    [rawPolicy],
+  );
+  const initialSignature = serializeApprovalPolicy(initialPolicy);
+  const [policy, setPolicy] = useState<AgentToolApprovalPolicy>(initialPolicy);
+  const [pending, setPending] = useState(false);
+  const [statusText, setStatusText] = useState("");
+  const [statusTone, setStatusTone] = useState<SettingsStatusTone>("success");
+
+  useEffect(() => {
+    setPolicy(initialPolicy);
+    setStatusText("");
+    setStatusTone("success");
+    setPending(false);
+  }, [initialSignature]);
+
+  const draftSignature = serializeApprovalPolicy(policy);
+  const dirty = draftSignature !== initialSignature;
+  useUnsavedGuard(() => dirty);
+
+  const save = async () => {
+    if (!dirty || pending) {
+      return;
+    }
+    setPending(true);
+    setStatusText("");
+    setStatusTone("pending");
+    try {
+      await onSave([{ key: GLOBAL_APPROVAL_CONFIG_KEY, value: draftSignature }]);
+      setStatusTone("success");
+      setStatusText("Saved");
+    } catch (error) {
+      setStatusTone("error");
+      setStatusText(errorMessage(error));
+    } finally {
+      setPending(false);
+    }
+  };
+
+  return (
+    <Surface level={1} class="gsv-console-settings-group gsv-console-tool-approval-settings">
+      <AgentToolsPanel
+        policy={policy}
+        sourceLabel="System fallback"
+        sourceDescription="Used only when neither a user default nor an agent override is configured."
+        targets={targets}
+        disabled={!editable || pending}
+        onChange={(nextPolicy) => {
+          setPolicy(nextPolicy);
+          setStatusText("");
+        }}
+      />
+      <SettingsStatus text={statusText} tone={statusTone} />
+      <div class="gsv-console-settings-actions">
+        <Button
+          variant="primary"
+          label={pending ? "SAVING" : "SAVE CHANGES"}
+          disabled={!editable || !dirty || pending}
+          onClick={() => void save()}
+        />
+        <Button
+          variant="secondary"
+          label="RESET"
+          disabled={!dirty || pending}
+          onClick={() => {
+            setPolicy(initialPolicy);
+            setStatusText("");
+          }}
+        />
+      </div>
+    </Surface>
+  );
 }
 
 async function saveModelProfiles(

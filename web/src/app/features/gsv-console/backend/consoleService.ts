@@ -43,6 +43,7 @@ export type ConsoleClient = Pick<GSVClient, "call" | "proc" | "pkg" | "account" 
 export type ConsoleAgentContextFileDraft = {
   label: string;
   name?: string;
+  origName?: string;
   content: string;
   orig?: string;
 };
@@ -57,6 +58,7 @@ export type CreateConsoleAgentInput = {
   role: string;
   description: string;
   model?: string;
+  reasoning?: string;
   approval?: string;
   files: readonly ConsoleAgentContextFileDraft[];
 };
@@ -70,16 +72,19 @@ export type CreateConsoleAgentResult = {
 export type SaveConsoleAgentContextInput = {
   username: string;
   files: readonly ConsoleAgentContextFileDraft[];
+  baseNames?: readonly string[];
 };
 
 export type SaveConsoleAgentContextResult = {
   written: number;
+  deleted: number;
 };
 
 export type SaveConsoleAgentBehaviorInput = {
   uid: number;
   model: string;
-  approval: string;
+  reasoning: string;
+  approval?: string;
 };
 
 export type SaveConsoleAgentBehaviorResult = {
@@ -403,6 +408,7 @@ export async function loadConsoleAgentContext(
     const content = stripLineNumbers(result.content);
     files.push({
       name,
+      origName: name,
       label: displayContextFileLabel(name),
       content,
       orig: content,
@@ -452,25 +458,50 @@ export async function saveConsoleAgentContext(
   }
 
   let written = 0;
+  let deleted = 0;
+  const baseNames = new Set(
+    (input.baseNames ?? [])
+      .map((name) => normalizeContextFileName(name))
+      .filter((name): name is string => name !== null),
+  );
+  const desiredNames = new Set<string>();
   for (const file of input.files) {
-    if (!isChangedContextFile(file)) {
-      continue;
-    }
     const name = normalizeContextFileName(file.name ?? file.label);
     if (!name) {
       throw new Error("valid context file names are required");
     }
-    const result = await client.call("fs.write", {
-      path: `${contextDir(username)}/${name}`,
-      content: file.content,
-    }) as { ok?: boolean; error?: string };
-    if (result.ok === false) {
-      throw new Error(result.error || `failed to write ${name}`);
+    desiredNames.add(name);
+    if (file.content.trim().length === 0) {
+      continue;
     }
-    written += 1;
+    const origName = normalizeContextFileName(file.origName ?? file.name ?? file.label);
+    const renamed = origName !== null && origName !== name;
+    if (renamed || isChangedContextFile(file)) {
+      const result = await client.call("fs.write", {
+        path: `${contextDir(username)}/${name}`,
+        content: file.content,
+      }) as { ok?: boolean; error?: string };
+      if (result.ok === false) {
+        throw new Error(result.error || `failed to write ${name}`);
+      }
+      written += 1;
+    }
   }
 
-  return { written };
+  for (const name of baseNames) {
+    if (desiredNames.has(name)) {
+      continue;
+    }
+    const result = await client.call("fs.delete", {
+      path: `${contextDir(username)}/${name}`,
+    }) as { ok?: boolean; error?: string };
+    if (result.ok === false) {
+      throw new Error(result.error || `failed to delete ${name}`);
+    }
+    deleted += 1;
+  }
+
+  return { written, deleted };
 }
 
 export async function saveConsoleAgentBehavior(
@@ -803,6 +834,7 @@ async function loadOptionalPayload(load: () => Promise<unknown>): Promise<unknow
 
 type AgentBehaviorConfigDraft = {
   model?: string;
+  reasoning?: string;
   approval?: string;
 };
 
@@ -813,19 +845,26 @@ async function saveAgentBehaviorConfig(
   options: { includeEmpty?: boolean } = {},
 ): Promise<void> {
   const model = input.model?.trim() ?? "";
+  const reasoning = input.reasoning?.trim() ?? "";
   const approval = input.approval?.trim() ?? "";
   const writes: Promise<unknown>[] = [];
 
-  if (options.includeEmpty || model) {
+  if (input.model !== undefined && (options.includeEmpty || model)) {
     writes.push(client.sys.config.set({
       key: `users/${uid}/ai/model`,
       value: model,
     }));
   }
-  if (options.includeEmpty || approval) {
+  if (input.approval !== undefined && (options.includeEmpty || approval)) {
     writes.push(client.sys.config.set({
       key: `users/${uid}/ai/tools/approval`,
       value: approval,
+    }));
+  }
+  if (input.reasoning !== undefined && (options.includeEmpty || reasoning)) {
+    writes.push(client.sys.config.set({
+      key: `users/${uid}/ai/reasoning`,
+      value: reasoning,
     }));
   }
 

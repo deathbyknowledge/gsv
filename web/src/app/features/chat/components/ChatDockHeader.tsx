@@ -10,6 +10,7 @@ import { ChatDockPopovers, type ChatPopoverId } from "./ChatDockPopovers";
 
 type ChatDockHeaderProps = {
   activeAgent: ChatAgentViewModel;
+  activeProcessId: string;
   agentPanelOpen: boolean;
   atMax: boolean;
   canAbortRun: boolean;
@@ -52,6 +53,7 @@ type ChatDockHeaderProps = {
 
 export function ChatDockHeader({
   activeAgent,
+  activeProcessId,
   agentPanelOpen,
   atMax,
   canAbortRun,
@@ -197,6 +199,7 @@ export function ChatDockHeader({
 
       <ChatDockPopovers
         activeAgent={activeAgent}
+        activeProcessId={activeProcessId}
         context={context}
         contextLevel={contextLevel}
         contextModel={contextModel}

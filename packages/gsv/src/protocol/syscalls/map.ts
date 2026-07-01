@@ -147,6 +147,8 @@ import type {
   RepoRefsResult,
   RepoSearchArgs,
   RepoSearchResult,
+  RepoVisibilitySetArgs,
+  RepoVisibilitySetResult,
 } from "./repositories";
 import type {
   AccountCreateArgs,
@@ -345,6 +347,7 @@ export type SyscallDomains = {
   "repo.apply": { args: RepoApplyArgs; result: RepoApplyResult };
   "repo.import": { args: RepoImportArgs; result: RepoImportResult };
   "repo.delete": { args: RepoDeleteArgs; result: RepoDeleteResult };
+  "repo.visibility.set": { args: RepoVisibilitySetArgs; result: RepoVisibilitySetResult };
 
   "sys.connect": { args: ConnectArgs; result: ConnectResult };
   "sys.setup.assist": { args: SysSetupAssistArgs; result: SysSetupAssistResult };

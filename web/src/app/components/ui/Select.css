@@ -35,13 +35,25 @@
   pointer-events: none;
 }
 .gsv-sel-val {
-  letter-spacing: 0.03em;
+  display: grid;
+  gap: 2px;
   color: #f4f2ff;
   flex: 1;
   min-width: 0;
+}
+.gsv-sel-val > span,
+.gsv-sel-val > small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.gsv-sel-val > span {
+  letter-spacing: 0.03em;
+}
+.gsv-sel-val > small {
+  color: #8f89c8;
+  font-size: 9px;
+  letter-spacing: 0.01em;
 }
 .gsv-sel-sm .gsv-sel-trig {
   padding: 7px 10px;
@@ -81,6 +93,36 @@
   font: inherit;
   text-align: left;
   transition: background 0.12s;
+}
+.gsv-sel-group {
+  padding: 9px 12px 5px;
+  border-top: 1px solid #25224d;
+  color: #7d78b8;
+  font-family: var(--gsv-font-mono);
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+.gsv-sel-group:first-child {
+  border-top: 0;
+}
+.gsv-sel-row-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  font-size: 11px;
+  letter-spacing: 0.03em;
+}
+.gsv-sel-row-copy > span,
+.gsv-sel-row-copy > small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gsv-sel-row-copy > small {
+  color: #8f89c8;
+  font-size: 9.5px;
+  letter-spacing: 0.01em;
 }
 .gsv-sel-row:hover,
 .gsv-sel-row:focus-visible,
