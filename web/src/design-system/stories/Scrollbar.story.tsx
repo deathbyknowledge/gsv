@@ -27,9 +27,8 @@ const story: Story = {
           {lines.map((n) => (
             <div
               key={n}
+              class="gsv-label"
               style={{
-                fontFamily: "var(--gsv-font-mono)",
-                fontSize: "11px",
                 letterSpacing: "0.04em",
                 color: "var(--text)",
               }}

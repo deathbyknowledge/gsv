@@ -24,9 +24,7 @@
   padding: 12px 18px 16px;
   border-top: 1px solid var(--rule-inner);
   color: var(--text);
-  font-family: var(--gsv-font-prose);
-  font-size: 12.5px;
-  line-height: 1.45;
+  /* size + family + line-height from .gsv-prose (13px) */
 }
 
 .gsv-messenger-link-code-notice > span:last-child {
@@ -68,10 +66,10 @@
 }
 
 .gsv-messenger-identity-empty {
+  /* size from .gsv-sublabel (10px); tracking + uppercase kept intentionally */
   min-height: 54px;
   padding: 18px;
   color: var(--text-dim);
-  font-size: 10px;
   letter-spacing: 0.08em;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -80,11 +78,9 @@
 }
 
 .gsv-messenger-identity-error {
+  /* size + family + line-height from .gsv-prose (13px) */
   margin: -12px 0 0;
   color: var(--error);
-  font-family: var(--gsv-font-prose);
-  font-size: 12.5px;
-  line-height: 1.5;
 }
 
 /* Reflow off the PANEL width (the enclosing `.gsv-console-detail-page` sets

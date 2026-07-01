@@ -18,7 +18,7 @@ export interface LinkProps {
  *  middle-click, and right-click "open in new tab" all behave natively. */
 export function Link({ href, children, external, arrow = false, className = "", onClick }: LinkProps) {
   const isExternal = external ?? /^https?:\/\//i.test(href);
-  const cls = ["gsv-link", className].filter(Boolean).join(" ");
+  const cls = ["gsv-link", "gsv-listitem", className].filter(Boolean).join(" ");
 
   return (
     <a

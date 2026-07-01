@@ -71,7 +71,7 @@ export function Checkbox(props: CheckboxProps) {
 
   return (
     <div class={fldClass}>
-      {description ? <div class="gsv-cb-desc">{description}</div> : null}
+      {description ? <div class="gsv-cb-desc gsv-sublabel">{description}</div> : null}
       <span class="gsv-cb-labelrow">
         <label class={rootClass}>
           <input
@@ -96,7 +96,7 @@ export function Checkbox(props: CheckboxProps) {
       {hasStat ? (
         <div class="gsv-cb-stat">
           <span class="gsv-cb-dot" />
-          <span class="gsv-cb-msg" id={`${fieldId}-msg`}>{message}</span>
+          <span class="gsv-cb-msg gsv-sublabel" id={`${fieldId}-msg`}>{message}</span>
         </div>
       ) : null}
     </div>

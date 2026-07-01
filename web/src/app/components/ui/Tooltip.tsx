@@ -40,7 +40,7 @@ export function Tooltip({
       >
         {bare ? children : trigger}
       </button>
-      <span class="gsv-tt-bub" id={bubbleId} role="tooltip">
+      <span class="gsv-tt-bub gsv-sublabel" id={bubbleId} role="tooltip">
         {text}
         <span class="gsv-tt-arrow" />
       </span>

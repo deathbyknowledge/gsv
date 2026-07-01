@@ -46,13 +46,13 @@ export function SetupCompleteScreen({
               <path d="M3.5 8.5 L6.5 11.5 L12.5 4.5" />
             </svg>
           </span>
-          <span class="gsv-complete-kicker">First-time setup · Complete</span>
-          <h2 class="gsv-complete-title">Your workspace is ready</h2>
+          <span class="gsv-complete-kicker gsv-sublabel">First-time setup · Complete</span>
+          <h2 class="gsv-complete-title gsv-prose-display">Your workspace is ready</h2>
         </div>
 
         <div class="gsv-complete-account">
-          <span class="gsv-complete-k">Account</span>
-          <span class="gsv-complete-v" data-setup-result-username>{result.username}</span>
+          <span class="gsv-complete-k gsv-label">Account</span>
+          <span class="gsv-complete-v gsv-paragraph-small" data-setup-result-username>{result.username}</span>
         </div>
 
         <div class="gsv-complete-actions">
@@ -70,13 +70,13 @@ export function SetupCompleteScreen({
 
         <section class="gsv-complete-more">
           <div class="gsv-complete-more-head">
-            <h3 class="gsv-complete-more-title">Get more out of GSV</h3>
-            <span class="gsv-complete-more-tag">Optional</span>
+            <h3 class="gsv-complete-more-title gsv-prose-heading">Get more out of GSV</h3>
+            <span class="gsv-complete-more-tag gsv-sublabel">Optional</span>
           </div>
 
           <div class="gsv-complete-more-item">
             <div class="gsv-complete-more-item-head">
-              <span class="gsv-complete-more-item-title" data-setup-result-cli-label>
+              <span class="gsv-complete-more-item-title gsv-prose" data-setup-result-cli-label>
                 Install it on your machine to run commands via terminal
               </span>
               <Button
@@ -93,12 +93,12 @@ export function SetupCompleteScreen({
               readOnly
               value={result.cliCommand}
             />
-            <p class="gsv-complete-meta" data-setup-result-cli-meta>{result.cliMeta}</p>
+            <p class="gsv-complete-meta gsv-prose-sm" data-setup-result-cli-meta>{result.cliMeta}</p>
           </div>
 
           <div class="gsv-complete-more-item" data-setup-node-result hidden={!result.node.visible}>
             <div class="gsv-complete-more-item-head">
-              <span class="gsv-complete-more-item-title" data-setup-result-node-label>
+              <span class="gsv-complete-more-item-title gsv-prose" data-setup-result-node-label>
                 Connect other devices
               </span>
               <Button
@@ -115,13 +115,13 @@ export function SetupCompleteScreen({
               readOnly
               value={result.node.command}
             />
-            <p class="gsv-complete-meta" data-setup-result-node-meta>{result.node.meta}</p>
+            <p class="gsv-complete-meta gsv-prose-sm" data-setup-result-node-meta>{result.node.meta}</p>
           </div>
         </section>
 
         <SessionError className="gsv-complete-alert" message={completeError} />
 
-        <footer class="gsv-complete-statusbar">
+        <footer class="gsv-complete-statusbar gsv-sublabel">
           <span class="gsv-complete-status-online">
             <StatusDot tone="online" size={7} />
             GSV Online

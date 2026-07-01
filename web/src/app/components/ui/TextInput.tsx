@@ -101,16 +101,16 @@ export function TextInput(props: TextInputProps) {
     <div class={rootClass}>
       {hasLabelRow ? (
         <div class="gsv-fld-lab">
-          <span class="gsv-fld-lab-t" id={`${fieldId}-label`}>
+          <span class="gsv-fld-lab-t gsv-sublabel" id={`${fieldId}-label`}>
             {label}
-            {req ? <span class="gsv-fld-req"> {req === "required" ? "· REQUIRED" : "· OPTIONAL"}</span> : null}
+            {req ? <span class="gsv-fld-req gsv-sublabel">{req === "required" ? "· REQUIRED" : "· OPTIONAL"}</span> : null}
           </span>
           {info ? <InfoTip text={info} /> : null}
         </div>
       ) : null}
-      {description ? <div class="gsv-fld-desc" id={`${fieldId}-desc`}>{description}</div> : null}
+      {description ? <div class="gsv-fld-desc gsv-sublabel" id={`${fieldId}-desc`}>{description}</div> : null}
       <div class={wrapClass}>
-        {prefix ? <span class="gsv-ti-affix">{prefix}</span> : null}
+        {prefix ? <span class="gsv-ti-affix gsv-label">{prefix}</span> : null}
         <input
           {...inputProps}
           class="gsv-ti-input"
@@ -136,7 +136,7 @@ export function TextInput(props: TextInputProps) {
         {isPassword ? (
           <button
             type="button"
-            class="gsv-ti-btn"
+            class="gsv-ti-btn gsv-sublabel"
             disabled={disabled}
             aria-pressed={revealed}
             aria-label={revealed ? "Hide password" : "Show password"}
@@ -145,17 +145,17 @@ export function TextInput(props: TextInputProps) {
             {revealed ? "HIDE" : "SHOW"}
           </button>
         ) : null}
-        {suffix ? <span class="gsv-ti-affix">{suffix}</span> : null}
+        {suffix ? <span class="gsv-ti-affix gsv-label">{suffix}</span> : null}
       </div>
       {hasStatusRow ? (
         <div class="gsv-fld-stat" style={showCounter ? { justifyContent: "flex-end" } : undefined}>
           {hasStatusMsg ? (
             <>
               <span class="gsv-fld-dot" />
-              <span class="gsv-fld-msg" id={`${fieldId}-msg`}>{message}</span>
+              <span class="gsv-fld-msg gsv-sublabel" id={`${fieldId}-msg`}>{message}</span>
             </>
           ) : null}
-          {showCounter ? <span class="gsv-ti-counter">{counterText}</span> : null}
+          {showCounter ? <span class="gsv-ti-counter gsv-sublabel">{counterText}</span> : null}
         </div>
       ) : null}
     </div>

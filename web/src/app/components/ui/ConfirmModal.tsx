@@ -124,7 +124,7 @@ export function ConfirmModal({
         }}
       >
         <span style={{ width: "7px", height: "7px", flex: "none", borderRadius: "1px", background: "var(--warn)", boxShadow: "0 0 8px var(--warn)" }} />
-        <span id={titleId} style={{ fontSize: "11px", letterSpacing: ".2em", color: "#e8d7b0" }}>{title}</span>
+        <span id={titleId} class="gsv-label" style={{ letterSpacing: ".2em", color: "#e8d7b0" }}>{title}</span>
         <button type="button" class="gsv-cm-close" aria-label="Close modal" onClick={onCancel}>
           {"✕"}
         </button>
@@ -146,8 +146,8 @@ export function ConfirmModal({
           <rect x="11.1" y="16" width="1.8" height="1.8" fill="var(--warn)" stroke="none" />
         </svg>
         <div style={{ paddingTop: "2px", fontFamily: "'Space Grotesk',sans-serif" }}>
-          <div id={descId} style={{ fontSize: "13.5px", lineHeight: "1.65", color: "var(--text)" }}>{message}</div>
-          <div style={{ fontSize: "11px", color: "#9a95cf", marginTop: "9px", letterSpacing: ".04em" }}>{note}</div>
+          <div id={descId} class="gsv-prose" style={{ lineHeight: "1.65", color: "var(--text)" }}>{message}</div>
+          <div class="gsv-prose-sm" style={{ color: "#9a95cf", marginTop: "9px", letterSpacing: ".04em" }}>{note}</div>
           {children ? <div class="gsv-cm-extra">{children}</div> : null}
         </div>
       </div>

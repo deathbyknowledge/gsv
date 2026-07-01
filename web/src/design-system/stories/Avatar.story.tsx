@@ -15,7 +15,7 @@ const story: Story = {
           {STATUSES.map((status) => (
             <span key={status} style={{ display: "inline-flex", flexDirection: "column", alignItems: "center", gap: "6px" }}>
               <Avatar agent={0} size={44} status={status} />
-              <span style={{ fontSize: "9px", letterSpacing: "0.16em", color: "var(--text-dim)", textTransform: "uppercase" }}>
+              <span class="gsv-sublabel" style={{ letterSpacing: "0.16em", color: "var(--text-dim)", textTransform: "uppercase" }}>
                 {status}
               </span>
             </span>

@@ -41,7 +41,7 @@
 }
 .ds-topbar h1 {
   margin: 0;
-  font-size: 15px;
+  font-size: 0.9375rem; /* 15px */
   letter-spacing: 0.34em;
   color: var(--text-hi);
   text-transform: uppercase;
@@ -59,7 +59,7 @@
 }
 .ds-tab {
   font-family: var(--gsv-font-mono);
-  font-size: 10px;
+  font-size: 0.625rem; /* 10px */
   letter-spacing: 0.2em;
   text-transform: uppercase;
   padding: 8px 18px;
@@ -82,7 +82,7 @@
   color: var(--accent-bright);
 }
 .ds-topbar .ds-sub {
-  font-size: 10px;
+  font-size: 0.625rem; /* 10px */
   letter-spacing: 0.18em;
   color: var(--text-dim);
   text-transform: uppercase;
@@ -91,7 +91,7 @@
 .ds-empty {
   padding: 64px 36px;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: 0.75rem; /* 12px */
   letter-spacing: 0.08em;
 }
 
@@ -116,7 +116,7 @@
   margin-bottom: 18px;
 }
 .ds-nav-grouphead {
-  font-size: 9px;
+  font-size: 0.625rem; /* 9px → raised to 10px floor */
   letter-spacing: 0.26em;
   color: var(--accent);
   text-transform: uppercase;
@@ -125,7 +125,7 @@
 .ds-nav-link {
   display: block;
   padding: 4px 8px;
-  font-size: 10.5px;
+  font-size: 0.65625rem; /* 10.5px */
   letter-spacing: 0.08em;
   color: var(--text-dim);
   text-decoration: none;
@@ -170,7 +170,7 @@
   margin: 56px 0 8px;
   padding-bottom: 10px;
   border-bottom: 1px solid var(--rule-section);
-  font-size: 11px;
+  font-size: 0.6875rem; /* 11px */
   letter-spacing: 0.3em;
   color: var(--accent);
   text-transform: uppercase;
@@ -200,13 +200,13 @@
 }
 .ds-story-head h2 {
   margin: 0;
-  font-size: 12px;
+  font-size: 0.75rem; /* 12px */
   letter-spacing: 0.22em;
   color: var(--text-title);
   text-transform: uppercase;
 }
 .ds-story-head .ds-blurb {
-  font-size: 10px;
+  font-size: 0.625rem; /* 10px */
   letter-spacing: 0.04em;
   color: var(--text-dim);
 }
@@ -243,7 +243,7 @@
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
 }
 .ds-label {
-  font-size: 8.5px;
+  font-size: 0.625rem; /* 8.5px → raised to 10px floor */
   letter-spacing: 0.2em;
   color: var(--text-dim);
   text-transform: uppercase;
@@ -273,12 +273,12 @@
   border-top: 1px solid var(--rule-inner);
 }
 .ds-swatch-name {
-  font-size: 10px;
+  font-size: 0.625rem; /* 10px */
   letter-spacing: 0.06em;
   color: var(--text);
 }
 .ds-swatch-val {
-  font-size: 9px;
+  font-size: 0.625rem; /* 9px → raised to 10px floor */
   letter-spacing: 0.04em;
   color: var(--text-dim);
   margin-top: 3px;

@@ -78,7 +78,7 @@ export function SettingsListPanel({
       <SectionHeader title={title} meta={meta} divider headingLevel={headingLevel} />
       <div class="gsv-console-settings-list-body">
         {rows.length === 0 ? (
-          <div class="gsv-console-settings-empty">{emptyLabel}</div>
+          <div class="gsv-console-settings-empty gsv-sublabel">{emptyLabel}</div>
         ) : rows.map((row) => (
           <SettingsListRowView key={row.id} row={row} />
         ))}

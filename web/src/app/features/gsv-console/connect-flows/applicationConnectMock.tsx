@@ -28,7 +28,7 @@ export const applicationConnectFlow: ConnectFlowDef = {
       tone: "idle",
       render: (nav) => (
         <>
-          <p class="gsv-cf-desc" style={{ maxWidth: "none" }}>
+          <p class="gsv-cf-desc gsv-prose" style={{ maxWidth: "none" }}>
             Import a web UI package from a git source. The package is added
             disabled, then reviewed and enabled from the next step.
           </p>
@@ -111,8 +111,8 @@ export const applicationConnectFlow: ConnectFlowDef = {
               <Tag tone="online" label="OK" />
             </span>
             <div class="gsv-cf-cap-text">
-              <div class="gsv-cf-cap-title">AGENT REVIEW · research-agent</div>
-              <div class="gsv-cf-cap-sub">
+              <div class="gsv-cf-cap-title gsv-paragraph-small">AGENT REVIEW · research-agent</div>
+              <div class="gsv-cf-cap-sub gsv-prose">
                 Reviewed 14 files. No dangerous syscalls or network exfiltration
                 found. Declares KV + FETCH bindings only, scoped to the package
                 worker. No process spawning, shell execution, or eval. Verdict:

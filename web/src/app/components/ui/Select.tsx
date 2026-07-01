@@ -191,12 +191,12 @@ export function Select(props: SelectProps) {
     <div class={fldClass} style={block ? { width: "100%" } : { width: `${width}px`, maxWidth: "100%" }}>
       {hasFldLabel ? (
         <div class="gsv-fld-lab">
-          <span class="gsv-fld-lab-t" id={label.length > 0 ? labelId : undefined}>{label}</span>
-          {req ? <span class="gsv-fld-req">{req === "required" ? "· REQUIRED" : "· OPTIONAL"}</span> : null}
+          <span class="gsv-fld-lab-t gsv-sublabel" id={label.length > 0 ? labelId : undefined}>{label}</span>
+          {req ? <span class="gsv-fld-req gsv-sublabel">{req === "required" ? "· REQUIRED" : "· OPTIONAL"}</span> : null}
           {info ? <InfoTip text={info} /> : null}
         </div>
       ) : null}
-      {description.length > 0 ? <div class="gsv-fld-desc" id={descId}>{description}</div> : null}
+      {description.length > 0 ? <div class="gsv-fld-desc gsv-paragraph-small" id={descId}>{description}</div> : null}
       <div ref={rootRef} class={rootClass} style={{ width: "100%" }}>
         <button
           type="button"
@@ -255,7 +255,7 @@ export function Select(props: SelectProps) {
                 onClick={() => pick(i)}
                 onMouseEnter={() => setHighlight(i)}
               >
-                <span style={{ fontSize: "11px", letterSpacing: ".03em", color: i === idx ? "#fff" : "#c4bfee" }}>
+                <span class="gsv-label" style={{ letterSpacing: ".03em", color: i === idx ? "#fff" : "#c4bfee" }}>
                   {optLabel}
                 </span>
                 {i === idx ? (
@@ -279,7 +279,7 @@ export function Select(props: SelectProps) {
       {hasStatus ? (
         <div class="gsv-fld-stat">
           <span class="gsv-fld-dot" aria-hidden="true" />
-          <span class="gsv-fld-msg" id={msgId}>{message}</span>
+          <span class="gsv-fld-msg gsv-sublabel" id={msgId}>{message}</span>
         </div>
       ) : null}
     </div>

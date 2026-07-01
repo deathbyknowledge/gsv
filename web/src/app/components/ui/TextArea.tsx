@@ -90,14 +90,14 @@ export function TextArea(props: TextAreaProps) {
     <div class={rootClass}>
       {hasLabelRow ? (
         <div class="gsv-ta-labelrow">
-          <span class="gsv-ta-label" id={`${fieldId}-label`}>
+          <span class="gsv-ta-label gsv-sublabel" id={`${fieldId}-label`}>
             {label}
             {req ? <span class="gsv-ta-req"> {req === "required" ? "· REQUIRED" : "· OPTIONAL"}</span> : null}
           </span>
           {info ? <InfoTip text={info} /> : null}
         </div>
       ) : null}
-      {hasDesc ? <div class="gsv-ta-desc" id={`${fieldId}-desc`}>{description}</div> : null}
+      {hasDesc ? <div class="gsv-ta-desc gsv-sublabel" id={`${fieldId}-desc`}>{description}</div> : null}
       <textarea
         {...textareaProps}
         class={boxClass}
@@ -118,10 +118,10 @@ export function TextArea(props: TextAreaProps) {
           {hasStatusMsg ? (
             <span class="gsv-ta-right">
               <span class="gsv-ta-dot" />
-              <span class="gsv-ta-msg" id={`${fieldId}-msg`}>{message}</span>
+              <span class="gsv-ta-msg gsv-sublabel" id={`${fieldId}-msg`}>{message}</span>
             </span>
           ) : null}
-          {showCounter ? <span class="gsv-ta-counter">{counterText}</span> : null}
+          {showCounter ? <span class="gsv-ta-counter gsv-sublabel">{counterText}</span> : null}
         </div>
       ) : null}
     </div>

@@ -92,14 +92,14 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.86rem;
+  /* size + family from .gsv-prose (13px); semibold kept */
   font-weight: 650;
 }
 
 .command-palette-item small,
 .command-palette-empty {
   color: rgba(16, 37, 61, 0.8); /* darker on the light palette panel (was .6, 3.3:1; now >=5.2:1) */
-  font-size: 0.72rem;
+  font-size: 0.75rem; /* size from .gsv-prose-sm (12px) */
 }
 
 .command-palette-item.is-active,
@@ -235,7 +235,7 @@
   .command-palette-item small,
   .command-palette-empty {
     color: rgba(255, 255, 255, 0.56);
-    font-size: 0.72rem;
+    font-size: 0.75rem; /* size from .gsv-prose-sm (12px) */
   }
 
   .command-palette-item.is-active,

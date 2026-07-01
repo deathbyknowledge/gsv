@@ -240,12 +240,12 @@ export function IntegrationOnboardingFlow({ onBack, onCreated }: IntegrationOnbo
                   />
                 </div>
                 <HeaderFields rows={headers} onAdd={addHeader} onRemove={removeHeader} onUpdate={updateHeader} />
-                {!headersResult.ok ? <p class="gsv-integration-form-error">{headersResult.error}</p> : null}
+                {!headersResult.ok ? <p class="gsv-integration-form-error gsv-prose">{headersResult.error}</p> : null}
               </Surface>
             ) : null}
 
             {formError || addServer.error ? (
-              <p class="gsv-integration-form-error">{formError || errorText(addServer.error)}</p>
+              <p class="gsv-integration-form-error gsv-prose">{formError || errorText(addServer.error)}</p>
             ) : null}
 
             <div class="gsv-cf-footer">
@@ -281,7 +281,7 @@ export function IntegrationOnboardingFlow({ onBack, onCreated }: IntegrationOnbo
             ) : null}
 
             {created ? (
-              <p class="gsv-integration-form-note">{created.name} · {statusForMcpServer(created)}</p>
+              <p class="gsv-integration-form-note gsv-prose">{created.name} · {statusForMcpServer(created)}</p>
             ) : null}
 
             <div class="gsv-cf-footer">

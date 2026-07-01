@@ -1,9 +1,12 @@
 .gsv-integration-form-note,
 .gsv-integration-form-error,
 .gsv-integration-auth-panel p {
+  /* size normalized to .gsv-prose (13px); .form-note/.form-error carry the
+     class in JSX, the auth-panel descendant p relies on this rule. 1.55
+     line-height kept intentionally. */
   margin: 0;
   font-family: var(--gsv-font-prose);
-  font-size: 13px;
+  font-size: 0.8125rem;
   line-height: 1.55;
 }
 
@@ -32,10 +35,11 @@
 }
 
 .gsv-integration-headers > p {
+  /* size normalized to .gsv-prose (13px) — child p has no JSX class handle */
   margin: 0;
   color: var(--label);
   font-family: var(--gsv-font-prose);
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
 .gsv-integration-header-row {

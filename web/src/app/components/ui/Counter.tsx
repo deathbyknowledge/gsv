@@ -91,17 +91,17 @@ export function Counter(props: CounterProps) {
     >
       {hasFldLabel ? (
         <div class="gsv-fld-lab">
-          <span class="gsv-fld-lab-t" id={labelId}>
+          <span class="gsv-fld-lab-t gsv-sublabel" id={labelId}>
             {label}
           </span>
           {req ? (
-            <span class="gsv-fld-req">{req === "required" ? "· REQUIRED" : "· OPTIONAL"}</span>
+            <span class="gsv-fld-req gsv-sublabel">{req === "required" ? "· REQUIRED" : "· OPTIONAL"}</span>
           ) : null}
           {info ? <InfoTip text={info} /> : null}
         </div>
       ) : null}
       {description ? (
-        <div class="gsv-fld-desc" id={descId}>
+        <div class="gsv-fld-desc gsv-sublabel" id={descId}>
           {description}
         </div>
       ) : null}
@@ -150,7 +150,7 @@ export function Counter(props: CounterProps) {
       {hasStat ? (
         <div class="gsv-fld-stat" id={msgId}>
           <span class="gsv-fld-dot" />
-          <span class="gsv-fld-msg">{message}</span>
+          <span class="gsv-fld-msg gsv-sublabel">{message}</span>
         </div>
       ) : null}
     </div>

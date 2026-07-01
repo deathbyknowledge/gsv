@@ -152,7 +152,7 @@
 
 .files-field > span {
   color: var(--label);
-  font-size: 9.5px;
+  font-size: 0.625rem; /* value-normalized from 9.5px (.gsv-sublabel scale) */
   letter-spacing: 0.18em;
   text-transform: uppercase;
 }
@@ -291,27 +291,26 @@
 }
 
 .files-search-path {
+  /* size from .gsv-label (11px) */
   color: var(--text);
-  font-size: 11px;
 }
 
 .files-search-line {
+  /* size from .gsv-sublabel (10px, up from 9px); tracking kept */
   color: var(--accent);
-  font-size: 9px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
 
 .files-search-preview {
+  /* size + family from .gsv-prose-sm (12px) */
   color: var(--text-muted);
-  font-family: var(--gsv-font-prose);
-  font-size: 12px;
 }
 
 .files-search-truncated {
+  /* size from .gsv-sublabel (10px); tracking kept */
   padding: 12px 14px;
   color: var(--warn);
-  font-size: 10px;
   letter-spacing: 0.12em;
 }
 
@@ -339,7 +338,7 @@
 
 .files-state-copy strong {
   color: var(--text-title);
-  font-size: 11px;
+  font-size: 0.6875rem; /* value-normalized from 11px (.gsv-label scale) */
   font-weight: 500;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -349,7 +348,7 @@
   max-width: 440px;
   color: var(--text-muted);
   font-family: var(--gsv-font-prose);
-  font-size: 13px;
+  font-size: 0.8125rem; /* value-normalized from 13px (.gsv-prose scale) */
   letter-spacing: 0;
   line-height: 1.5;
   overflow-wrap: anywhere;
@@ -402,7 +401,7 @@
 
 .files-inline-copy strong {
   color: var(--text-title);
-  font-size: 10px;
+  font-size: 0.625rem; /* value-normalized from 10px (.gsv-sublabel scale) */
   font-weight: 500;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -412,7 +411,7 @@
   min-width: 0;
   color: var(--text-muted);
   font-family: var(--gsv-font-prose);
-  font-size: 12px;
+  font-size: 0.75rem; /* value-normalized from 12px (.gsv-prose-sm scale) */
   letter-spacing: 0;
   line-height: 1.45;
   overflow-wrap: anywhere;
@@ -438,12 +437,12 @@
 }
 
 .files-editor-status {
+  /* size from .gsv-sublabel (10px); tracking + transform kept */
   min-width: 0;
   display: inline-flex;
   align-items: center;
   gap: 8px;
   color: var(--text-muted);
-  font-size: 10px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
 }
@@ -456,7 +455,7 @@
 
 .files-editor-status small {
   color: #6f69ad;
-  font-size: 9px;
+  font-size: 0.625rem; /* value-normalized from 9px (.gsv-sublabel scale) */
   letter-spacing: 0.08em;
 }
 
@@ -484,6 +483,7 @@
 }
 
 .files-file-meta {
+  /* size from .gsv-sublabel (10px); tracking kept (0) */
   position: sticky;
   top: 0;
   z-index: 1;
@@ -493,7 +493,6 @@
   flex-wrap: wrap;
   gap: 9px;
   color: var(--text-dim);
-  font-size: 10px;
   letter-spacing: 0;
   background: var(--panel);
   padding-bottom: 2px;
@@ -501,7 +500,7 @@
 
 .files-file-meta small {
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: 0.625rem; /* value-normalized from 10px (.gsv-sublabel scale) */
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }

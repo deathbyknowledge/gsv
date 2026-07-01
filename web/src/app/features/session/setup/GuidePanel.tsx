@@ -48,9 +48,9 @@ export function GuidePanel({
     <aside class="gsv-guide-panel" data-setup-guide-panel hidden={!showPanel}>
       <div class="gsv-guide-head">
         <div class="gsv-guide-head-text">
-          <p class="gsv-guide-kicker">Setup guide</p>
-          <h3 class="gsv-guide-title">Ask for help shaping the plan</h3>
-          <p class="gsv-guide-copy">Questions? The assistant can help you pick the right option. For your safety, secret fields remain in the form.</p>
+          <p class="gsv-guide-kicker gsv-sublabel">Setup guide</p>
+          <h3 class="gsv-guide-title gsv-prose-heading">Ask for help shaping the plan</h3>
+          <p class="gsv-guide-copy gsv-prose">Questions? The assistant can help you pick the right option. For your safety, secret fields remain in the form.</p>
         </div>
         <button type="button" class="gsv-guide-close" aria-label="Close setup assistant" onClick={onClose}>
           <svg width="14" height="14" viewBox="0 0 16 16" stroke="currentColor" stroke-width="1.6" stroke-linecap="square">
@@ -62,14 +62,14 @@ export function GuidePanel({
       <div class="gsv-guide-log" data-setup-guide-log ref={guideLogRef}>
         {snapshot.messages.map((entry, index) => (
           <article class={`gsv-guide-msg gsv-guide-msg-${entry.role}`} data-role={entry.role} key={`${entry.role}-${index}`}>
-            <span class="gsv-guide-msg-who">{entry.role === "user" ? "You" : "Guide"}</span>
-            <p>{entry.content}</p>
+            <span class="gsv-guide-msg-who gsv-sublabel">{entry.role === "user" ? "You" : "Guide"}</span>
+            <p class="gsv-prose">{entry.content}</p>
           </article>
         ))}
         {snapshot.busy ? (
           <article class="gsv-guide-msg gsv-guide-msg-assistant is-pending" data-role="assistant">
-            <span class="gsv-guide-msg-who">Guide</span>
-            <p>Working on it</p>
+            <span class="gsv-guide-msg-who gsv-sublabel">Guide</span>
+            <p class="gsv-prose">Working on it</p>
           </article>
         ) : null}
       </div>

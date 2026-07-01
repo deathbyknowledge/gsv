@@ -335,7 +335,7 @@ export function TerminalSurfaceSummary() {
                   onClick={(event) => event.stopPropagation()}
                 >
                   <Surface class="terminal-host-menu" level={2}>
-                    <div class="terminal-host-menu-head">HOST</div>
+                    <div class="terminal-host-menu-head gsv-sublabel">HOST</div>
                     <div class="terminal-host-menu-list">
                       {targetOptions.map((target) => (
                         <ListRow
@@ -351,13 +351,13 @@ export function TerminalSurfaceSummary() {
                         />
                       ))}
                       {targets.resource.isLoading ? (
-                        <div class="terminal-host-state">
+                        <div class="terminal-host-state gsv-sublabel">
                           <Spinner size={13} />
                           <span>Loading machines</span>
                         </div>
                       ) : null}
                       {targets.resource.isError ? (
-                        <div class="terminal-host-state is-error">
+                        <div class="terminal-host-state gsv-sublabel is-error">
                           {targets.resource.errorText || "Unable to load machines."}
                         </div>
                       ) : null}

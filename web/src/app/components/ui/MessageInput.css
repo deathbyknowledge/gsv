@@ -33,8 +33,7 @@
   background: #0c0a22;
   color: #cdd2e0;
   padding: 3px 5px 3px 7px;
-  font-family: var(--gsv-font-mono);
-  font-size: 9.5px;
+  /* family + size from .gsv-sublabel; .05em tracking kept intentionally */
   letter-spacing: 0.05em;
 }
 
@@ -192,8 +191,7 @@
   align-items: center;
   justify-content: space-between;
   margin-top: 8px;
-  font-family: var(--gsv-font-mono);
-  font-size: 9.5px;
+  /* family + size from .gsv-sublabel; .1em tracking kept intentionally */
   letter-spacing: 0.1em;
 }
 

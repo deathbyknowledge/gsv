@@ -41,18 +41,18 @@
   gap: 5px;
 }
 .gsv-setup-section-head h3 {
+  /* size + family + weight from .gsv-section (14px, w600); .12em tracking kept intentionally */
   margin: 0;
   font-family: var(--gsv-font-mono);
-  font-size: 12px;
+  font-size: 0.875rem; /* 14px — .gsv-section */
   font-weight: 600;
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--text-title);
 }
 .gsv-setup-section-head p {
+  /* size + family from .gsv-prose-sm (12px); line-height kept */
   margin: 0;
-  font-family: var(--gsv-font-prose);
-  font-size: 12px;
   line-height: 1.5;
   color: var(--text-dim);
 }

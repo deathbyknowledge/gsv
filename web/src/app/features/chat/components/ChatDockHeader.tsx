@@ -105,7 +105,7 @@ export function ChatDockHeader({
             <Avatar src={activeAgent.imageSrc} status={activeAgent.status} size={42} cover />
           </span>
           <span class="gsv-chat-agent-name-row">
-            <strong>{activeAgent.name}</strong>
+            <strong class="gsv-prose-heading">{activeAgent.name}</strong>
             <svg class="gsv-chat-agent-chevron" width="8" height="10" viewBox="0 0 8 10" aria-hidden="true">
               <path d="M1 1 L6 5 L1 9" fill="none" stroke="currentColor" stroke-width="1.4" />
             </svg>
@@ -113,7 +113,7 @@ export function ChatDockHeader({
         </button>
         <button
           type="button"
-          class="gsv-chat-agent-model"
+          class="gsv-chat-agent-model gsv-sublabel"
           data-chat-popover-trigger="model"
           onClick={() => onTogglePopover("model")}
           aria-haspopup="menu"
@@ -127,7 +127,7 @@ export function ChatDockHeader({
         </button>
         <button
           type="button"
-          class="gsv-chat-agent-activity"
+          class="gsv-chat-agent-activity gsv-prose-sm"
           data-chat-popover-trigger="tasks"
           onClick={() => onTogglePopover("tasks")}
           aria-haspopup="menu"

@@ -13,7 +13,7 @@
   align-items: center;
   gap: 8px;
   color: var(--text-dim);
-  font-size: 9px;
+  font-size: 0.625rem; /* 9px → .gsv-sublabel rem (no in-scope handle) */
   letter-spacing: 0.14em;
   text-transform: uppercase;
 }

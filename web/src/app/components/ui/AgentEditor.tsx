@@ -461,9 +461,9 @@ export function AgentEditor(props: AgentEditorProps) {
 
                   {/* MODEL */}
                   <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
-                    <span style="font-size:9.5px;letter-spacing:.22em;color:var(--label);">MODEL</span>
+                    <span class="gsv-sublabel" style="letter-spacing:.22em;color:var(--label);">MODEL</span>
                     {model === 0 ? (
-                      <span style="font-size:9.5px;letter-spacing:.08em;color:var(--live);">
+                      <span class="gsv-sublabel" style="letter-spacing:.08em;color:var(--live);">
                         (<span style="border-bottom:1px solid var(--live);">AI DEFAULT</span>)
                       </span>
                     ) : null}
@@ -495,11 +495,11 @@ export function AgentEditor(props: AgentEditorProps) {
                   {/* GENERAL actions */}
                   <div style="display:flex;align-items:center;gap:12px;margin-top:42px;">
                     {identityReadOnly && behaviorReadOnly ? (
-                      <span class="gsv-ae-readonly-note">READ ONLY</span>
+                      <span class="gsv-ae-readonly-note gsv-sublabel">READ ONLY</span>
                     ) : formError ? (
-                      <span style="font-size:10px;letter-spacing:.12em;color:var(--error);">{formError}</span>
+                      <span class="gsv-sublabel" style="letter-spacing:.12em;color:var(--error);">{formError}</span>
                     ) : flash ? (
-                      <span style="font-size:10px;letter-spacing:.14em;color:var(--online);">{flash}</span>
+                      <span class="gsv-sublabel" style="letter-spacing:.14em;color:var(--online);">{flash}</span>
                     ) : null}
                     <span style="flex:1;" />
                     {isNew ? (
@@ -527,8 +527,8 @@ export function AgentEditor(props: AgentEditorProps) {
                 <div style={identityStyle}>
                   <Avatar src={imgSrc} status={status} size={58} cover={avatarCover} />
                   <div style="text-align:right;">
-                    <div style="font-size:11px;letter-spacing:.18em;color:#7d78b8;">{meta.metaLabel}</div>
-                    <div style="font-size:13px;letter-spacing:.1em;color:#cdd5e6;margin-top:6px;">{meta.created}</div>
+                    <div class="gsv-label" style="letter-spacing:.18em;color:#7d78b8;">{meta.metaLabel}</div>
+                    <div class="gsv-paragraph-small" style="letter-spacing:.1em;color:#cdd5e6;margin-top:6px;">{meta.created}</div>
                   </div>
                 </div>
               </div>
@@ -542,15 +542,15 @@ export function AgentEditor(props: AgentEditorProps) {
                   <div style="display:flex;align-items:center;gap:16px;">
                     <Avatar src={imgSrc} status={status} size={52} cover={avatarCover} />
                     <div>
-                      <div style="font-size:11px;letter-spacing:.18em;color:#7d78b8;">{meta.metaLabel}</div>
-                      <div style="font-size:13px;letter-spacing:.1em;color:#cdd5e6;margin-top:6px;">{meta.created}</div>
+                      <div class="gsv-label" style="letter-spacing:.18em;color:#7d78b8;">{meta.metaLabel}</div>
+                      <div class="gsv-paragraph-small" style="letter-spacing:.1em;color:#cdd5e6;margin-top:6px;">{meta.created}</div>
                     </div>
                   </div>
                   <div>
-                    <div style="font-family:var(--gsv-font-mono);font-weight:700;font-size:22px;letter-spacing:.04em;color:var(--text-hi);text-shadow:0 0 8px rgba(150,140,255,.4);">
+                    <div class="gsv-title" style="letter-spacing:.04em;color:var(--text-hi);text-shadow:0 0 8px rgba(150,140,255,.4);">
                       {nameDisplay}
                     </div>
-                    <div style="font-size:11px;letter-spacing:.16em;color:#a8a2dc;margin-top:8px;">{roleDisplay}</div>
+                    <div class="gsv-label" style="letter-spacing:.16em;color:#a8a2dc;margin-top:8px;">{roleDisplay}</div>
                   </div>
                 </div>
 
@@ -570,7 +570,7 @@ export function AgentEditor(props: AgentEditorProps) {
                         <rect x="1" y="2" width="6" height="2" />
                         <rect x="1" y="4" width="14" height="9" />
                       </svg>
-                      <span style={`font-size:10px;letter-spacing:.1em;color:${i === fileIdx ? "var(--text)" : "#9a95cf"};line-height:1.35;`}>
+                      <span class="gsv-sublabel" style={`letter-spacing:.1em;color:${i === fileIdx ? "var(--text)" : "#9a95cf"};line-height:1.35;`}>
                         {f.label}
                       </span>
                     </button>
@@ -585,12 +585,12 @@ export function AgentEditor(props: AgentEditorProps) {
                       <path d="M1.5 3.5 H6.5 V4.5" />
                       <rect x="1.5" y="4.5" width="13" height="8" />
                     </svg>
-                    <span style="font-size:10px;letter-spacing:.1em;color:var(--accent);border-bottom:1px solid var(--accent);padding-bottom:1px;">NEW FILE</span>
+                    <span class="gsv-sublabel" style="letter-spacing:.1em;color:var(--accent);border-bottom:1px solid var(--accent);padding-bottom:1px;">NEW FILE</span>
                   </button>
                 </div>
 
                 {/* current file label */}
-                <div style="font-size:10px;letter-spacing:.2em;color:var(--label);margin-bottom:11px;">{curFile.label}</div>
+                <div class="gsv-sublabel" style="letter-spacing:.2em;color:var(--label);margin-bottom:11px;">{curFile.label}</div>
 
                 {/* editor */}
                 <textarea
@@ -606,13 +606,13 @@ export function AgentEditor(props: AgentEditorProps) {
                   <Button variant="dangerGhost" label="DELETE" onClick={onDelete} disabled={filesReadOnly} />
                   <span style="flex:1;" />
                   {filesReadOnly ? (
-                    <span class="gsv-ae-readonly-note">READ ONLY</span>
+                    <span class="gsv-ae-readonly-note gsv-sublabel">READ ONLY</span>
                   ) : formError ? (
-                    <span style="font-size:10px;letter-spacing:.12em;color:var(--error);">{formError}</span>
+                    <span class="gsv-sublabel" style="letter-spacing:.12em;color:var(--error);">{formError}</span>
                   ) : pendingAction === "save" ? (
-                    <span style="font-size:10px;letter-spacing:.14em;color:var(--accent);">SAVING</span>
+                    <span class="gsv-sublabel" style="letter-spacing:.14em;color:var(--accent);">SAVING</span>
                   ) : flash ? (
-                    <span style="font-size:10px;letter-spacing:.14em;color:var(--online);">{flash}</span>
+                    <span class="gsv-sublabel" style="letter-spacing:.14em;color:var(--online);">{flash}</span>
                   ) : null}
                   <Button variant="secondary" label="RESET" onClick={onReset} disabled={filesReadOnly || pendingAction !== null} />
                   <Button variant="primary" label="SAVE" onClick={onSave} disabled={filesReadOnly || pendingAction !== null} />
@@ -623,15 +623,15 @@ export function AgentEditor(props: AgentEditorProps) {
             {/* ---------- TASKS ---------- */}
             {tab === "tasks" ? (
               <div style={secPad}>
-                <div style="font-size:10px;letter-spacing:.2em;color:var(--label);margin-bottom:18px;">
+                <div class="gsv-sublabel" style="letter-spacing:.2em;color:var(--label);margin-bottom:18px;">
                   TASKS ({TASKS.length})
                 </div>
                 <div style="border:1px solid var(--border);background:var(--panel-2);">
                   {TASKS.map((t, i) => (
                     <div style={`display:flex;align-items:center;gap:12px;padding:14px 16px;${i < TASKS.length - 1 ? "border-bottom:1px solid var(--rule-inner);" : ""}`}>
                       <span style={`width:8px;height:8px;border-radius:50%;flex:none;display:inline-block;background:${dotColorFor(t.status)};${t.status !== "idle" ? `box-shadow:0 0 7px ${dotColorFor(t.status)};` : ""}`} />
-                      <span style="font-size:12px;letter-spacing:.03em;color:var(--text);flex:1;min-width:0;">{t.name}</span>
-                      <span style={`font-size:9px;letter-spacing:.14em;color:${colFor(t.status)};`}>{t.status.toUpperCase()}</span>
+                      <span class="gsv-listitem" style="letter-spacing:.03em;color:var(--text);flex:1;min-width:0;">{t.name}</span>
+                      <span class="gsv-sublabel" style={`letter-spacing:.14em;color:${colFor(t.status)};`}>{t.status.toUpperCase()}</span>
                     </div>
                   ))}
                 </div>

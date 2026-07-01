@@ -89,8 +89,8 @@
   color: #cbc7ff;
   background: rgba(20, 16, 40, 0.55);
   backdrop-filter: blur(3px);
+  /* size from .gsv-label (11px); mono fallback stack + .22em tracking kept */
   font-family: var(--gsv-font-mono), ui-monospace, monospace;
-  font-size: 11px;
   letter-spacing: 0.22em;
   line-height: 1;
   text-shadow: 0 0 8px rgba(140, 120, 235, 0.5);

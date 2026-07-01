@@ -20,8 +20,8 @@ export function ConsoleDetailHeader({ icon, title, typeLabel, statusLabel, tone 
         <Icon name={icon} size={30} />
       </span>
       <div class="gsv-console-detail-title">
-        <h2>{title}</h2>
-        <div>
+        <h2 class="gsv-title">{title}</h2>
+        <div class="gsv-sublabel">
           <span>{typeLabel}</span>
           <StatusDot tone={tone} size={7} />
           <span>{statusLabel}</span>

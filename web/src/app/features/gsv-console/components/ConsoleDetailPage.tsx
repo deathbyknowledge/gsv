@@ -71,7 +71,7 @@ export function ConsoleDetailPage({
   return (
     <section class="gsv-console-detail-page">
       {showBack ? (
-        <button type="button" class="gsv-console-detail-back" onClick={onBack}>
+        <button type="button" class="gsv-console-detail-back gsv-sublabel" onClick={onBack}>
           <span aria-hidden="true">←</span> {parentLabel}
         </button>
       ) : null}
@@ -91,7 +91,7 @@ export function ConsoleDetailPage({
           <span class="gsv-console-detail-icon">
             <Icon name={icon} size={30} />
           </span>
-          <p class="gsv-console-detail-desc">
+          <p class="gsv-console-detail-desc gsv-prose">
             {descPrimary}
             {descSecondary ? (
               <>
@@ -145,7 +145,7 @@ export function ConsoleDetailPage({
         {children ? (
           <div class="gsv-console-detail-custom">{children}</div>
         ) : !hasSections ? (
-          <div class="gsv-console-detail-pending-panel">
+          <div class="gsv-console-detail-pending-panel gsv-label">
             <span class="gsv-detail-corner is-top-left" aria-hidden="true" />
             <span class="gsv-detail-corner is-top-right" aria-hidden="true" />
             <span class="gsv-detail-corner is-bottom-left" aria-hidden="true" />

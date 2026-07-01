@@ -99,10 +99,9 @@
 }
 
 .gsv-messenger-card-name {
+  /* size + family from .gsv-section (14px); bold + tighter tracking kept intentionally */
   min-width: 0;
   overflow-wrap: anywhere;
-  font-family: var(--gsv-font-mono);
-  font-size: 15px;
   font-weight: 700;
   letter-spacing: 0.14em;
   color: var(--text-hi);
@@ -118,9 +117,8 @@
 }
 
 .gsv-messenger-card-blurb {
+  /* size + family from .gsv-prose-sm (12px); wider line-height + tracking kept intentionally */
   margin: 0;
-  font-family: var(--gsv-font-prose);
-  font-size: 11px;
   line-height: 1.65;
   letter-spacing: 0.03em;
   color: var(--prose-dim);
@@ -133,8 +131,7 @@
 }
 
 .gsv-messenger-card-bots-label {
-  font-family: var(--gsv-font-mono);
-  font-size: 9.5px;
+  /* size + family from .gsv-sublabel (10px, up from 9.5px sub-floor); .22em tracking kept */
   letter-spacing: 0.22em;
   color: var(--meta);
   padding-bottom: 2px;
@@ -145,7 +142,7 @@
 }
 
 .gsv-messenger-card-hint {
-  font-size: 10.5px;
+  /* size from .gsv-label (11px); tracking kept intentionally */
   letter-spacing: 0.06em;
   color: var(--text-dim);
 }
@@ -161,8 +158,7 @@
   background: transparent;
   border: none;
   border-top: 1px solid var(--rule-inner);
-  font-family: var(--gsv-font-mono);
-  font-size: 11px;
+  /* size + family from .gsv-label (11px); tracking kept intentionally */
   letter-spacing: 0.04em;
   color: var(--link);
   cursor: pointer;

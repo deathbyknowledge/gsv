@@ -41,8 +41,8 @@ export function SystemMessage({
         </svg>
       </div>
       <div class="gsv-sm-body">
-        <div class="gsv-sm-text">{children ?? text}</div>
-        <div class="gsv-sm-meta">
+        <div class="gsv-sm-text gsv-prose">{children ?? text}</div>
+        <div class="gsv-sm-meta gsv-sublabel">
           {time ? <span>{time}</span> : null}
           {meta}
           <button

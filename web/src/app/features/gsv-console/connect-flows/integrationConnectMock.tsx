@@ -120,7 +120,7 @@ export const integrationConnectFlow: ConnectFlowDef = {
             title="SIGN-IN REQUIRED"
             text="GitHub needs you to authorize GSV in a browser tab to finish connecting."
           />
-          <p class="gsv-cf-cap-sub" style={{ margin: 0 }}>
+          <p class="gsv-cf-cap-sub gsv-prose" style={{ margin: 0 }}>
             We'll open the provider's OAuth page. Once you approve access, GSV
             discovers the server's tools automatically.
           </p>
@@ -142,8 +142,8 @@ export const integrationConnectFlow: ConnectFlowDef = {
               <Icon name="weblink" size={22} title="GitHub" />
             </span>
             <span class="gsv-cf-cap-text">
-              <span class="gsv-cf-cap-title">GitHub is ready</span>
-              <span class="gsv-cf-cap-sub">
+              <span class="gsv-cf-cap-title gsv-paragraph-small">GitHub is ready</span>
+              <span class="gsv-cf-cap-sub gsv-prose">
                 12 tools · 4 resources now available to your agents.
               </span>
             </span>

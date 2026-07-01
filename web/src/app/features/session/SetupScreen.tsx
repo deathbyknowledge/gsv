@@ -119,7 +119,7 @@ export function SetupScreen({
                 <Button variant="secondary" label="Back" disabled={busy} onClick={onBack} />
               ) : null}
               <span class="gsv-setup-nav-spacer">
-                <span class="gsv-setup-stepcount">
+                <span class="gsv-setup-stepcount gsv-sublabel">
                   {current + 1} / 3
                 </span>
               </span>

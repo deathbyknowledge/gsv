@@ -50,9 +50,8 @@
 }
 /* Label — Meta / HUD type, label colour. */
 .review-row-k {
-  font-family: var(--gsv-font-mono);
+  /* size + family from .gsv-label (11px); weight 400 + wide tracking kept */
   font-weight: 400;
-  font-size: 11px;
   letter-spacing: 0.32em;
   text-transform: uppercase;
   color: var(--label);
@@ -65,10 +64,7 @@
   min-width: 0;
 }
 .review-row-v {
-  font-family: var(--gsv-font-mono);
-  font-weight: 400;
-  font-size: 11px;
-  letter-spacing: 0.04em;
+  /* size + family + tracking from .gsv-listitem (12px, up from 11px) */
   color: var(--text);
   text-align: right;
   text-decoration: underline dashed #6b62c4;
@@ -89,18 +85,16 @@
   border-top: 1px solid var(--border);
 }
 .gsv-setup-review-notes strong {
+  /* size + family from .gsv-sublabel (10px, up from 9px); tracking matches */
   display: block;
-  font-family: var(--gsv-font-mono);
-  font-size: 9px;
   letter-spacing: 0.2em;
   text-transform: uppercase;
   color: var(--accent);
   margin-bottom: 6px;
 }
 .gsv-setup-review-notes p {
+  /* size + family from .gsv-prose-sm (12px); line-height kept */
   margin: 0;
-  font-family: var(--gsv-font-prose);
-  font-size: 12px;
   line-height: 1.5;
   color: #9d98d4;
 }

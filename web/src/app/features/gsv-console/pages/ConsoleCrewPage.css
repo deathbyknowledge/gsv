@@ -56,8 +56,7 @@
   padding: 26px;
 }
 
-.gsv-console-crew-card-shell,
-.gsv-console-crew-add-tile {
+.gsv-console-crew-card-shell {
   min-width: 0;
   min-height: 430px;
   border: 1px solid var(--border);
@@ -88,63 +87,6 @@
 
 .gsv-console-crew-card-shell > div:first-child {
   flex: 1 1 auto;
-}
-
-.gsv-console-crew-add-tile {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 18px;
-  padding: 0;
-  border-style: dashed;
-  border-color: var(--border-raised);
-  background: var(--panel);
-  color: inherit;
-  font: inherit;
-  text-align: center;
-}
-
-.gsv-console-crew-add-tile .gsv-crew-tile-add-icon {
-  width: 54px;
-  height: 54px;
-  border-color: var(--dashed);
-}
-
-.gsv-console-crew-add-tile .gsv-crew-tile-add-icon .gsv-icon {
-  width: 26px !important;
-  height: 26px !important;
-}
-
-.gsv-console-crew-add-tile strong {
-  color: var(--text-title);
-  font-size: 11px;
-  letter-spacing: 0.2em;
-}
-
-.gsv-console-crew-add-tile .gsv-crew-tile-description {
-  max-width: 200px;
-  color: #7d78b8;
-  font-size: 9.5px;
-  letter-spacing: 0.1em;
-  line-height: 1.5;
-}
-
-button.gsv-console-crew-add-tile {
-  cursor: pointer;
-  transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
-}
-
-button.gsv-console-crew-add-tile:hover,
-button.gsv-console-crew-add-tile:focus-visible {
-  border-color: var(--primary-hi);
-  background: #0e0b2a;
-  box-shadow: 0 0 28px rgba(150, 140, 255, 0.2);
-  outline: none;
-}
-
-button.gsv-console-crew-add-tile:active {
-  transform: translateY(1px);
 }
 
 @container crew (max-width: 680px) {

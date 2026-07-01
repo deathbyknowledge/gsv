@@ -150,7 +150,7 @@ function CommandPaletteView({
                 <span class="command-palette-icon" aria-hidden="true">
                   <DesktopAppIconGlyph icon={item.icon} />
                 </span>
-                <span class="command-palette-label">{item.label}</span>
+                <span class="command-palette-label gsv-prose">{item.label}</span>
                 <small>{item.meta}</small>
               </button>
             </li>

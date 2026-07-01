@@ -93,9 +93,9 @@ export function MessengerIdentityLinks({
         <SectionHeader title="LINKED IDENTITIES" meta={meta} divider />
         <div class="gsv-messenger-identity-list">
           {errorText ? (
-            <div class="gsv-messenger-identity-empty">IDENTITY LINKS UNAVAILABLE / {errorText}</div>
+            <div class="gsv-messenger-identity-empty gsv-sublabel">IDENTITY LINKS UNAVAILABLE / {errorText}</div>
           ) : links.length === 0 ? (
-            <div class="gsv-messenger-identity-empty">NO LINKED IDENTITIES</div>
+            <div class="gsv-messenger-identity-empty gsv-sublabel">NO LINKED IDENTITIES</div>
           ) : links.map((link) => {
             const removing = removeLink.isPending && sameLink(removeLink.variables, link);
             return (
@@ -126,7 +126,7 @@ export function MessengerIdentityLinks({
         </div>
       </section>
       {removeLink.isError ? (
-        <p class="gsv-messenger-identity-error">{removeLink.error.message}</p>
+        <p class="gsv-messenger-identity-error gsv-prose">{removeLink.error.message}</p>
       ) : null}
       {confirmUnlink ? (
         // Portal to <body>: the parent ConsoleDetailPage sets `container-type`,

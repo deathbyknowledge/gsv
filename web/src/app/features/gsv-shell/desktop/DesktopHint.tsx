@@ -91,11 +91,11 @@ export function DesktopHint({ lines, minimizedText, collapse = false, played = f
     <div class={`gsv-space-hint${minimized ? " is-min" : ""}`}>
       <span class="gsv-space-hint-sr">{minimizedText}</span>
       {minimized ? (
-        <div class="gsv-space-hint-min" aria-hidden="true">{minimizedText}</div>
+        <div class="gsv-space-hint-min gsv-sublabel" aria-hidden="true">{minimizedText}</div>
       ) : (
         <div class="gsv-space-hint-screen" aria-hidden="true">
           {lines.map((_, li) => (
-            <div class="gsv-space-hint-line" key={li}>
+            <div class="gsv-space-hint-line gsv-section" key={li}>
               <span>{shown[li]}</span>
               {li === caret ? <span class="gsv-space-hint-caret" /> : null}
             </div>

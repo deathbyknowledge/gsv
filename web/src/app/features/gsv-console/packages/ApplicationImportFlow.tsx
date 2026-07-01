@@ -184,7 +184,7 @@ export function ApplicationImportFlow({
 
   const renderImportStep = () => (
     <>
-      <p class="application-import-copy">Import a web UI package from a git source. The package is added disabled, then reviewed and enabled from the next step.</p>
+      <p class="application-import-copy gsv-prose">Import a web UI package from a git source. The package is added disabled, then reviewed and enabled from the next step.</p>
       <div class="application-import-source-grid">
         <TextInput
           label="PUBLIC REPOSITORY"
@@ -238,7 +238,7 @@ export function ApplicationImportFlow({
           />
         </div>
       ) : null}
-      {importError ? <div class="application-import-inline-error" role="alert">{importError}</div> : null}
+      {importError ? <div class="application-import-inline-error gsv-sublabel" role="alert">{importError}</div> : null}
       {footnote}
       <div class="gsv-cf-footer">
         <span class="gsv-cf-footer-spacer" />
@@ -312,7 +312,7 @@ export function ApplicationImportFlow({
               </div>
             )}
             {reviewError ? (
-              <div class="application-import-inline-error" role="alert">{reviewError}</div>
+              <div class="application-import-inline-error gsv-sublabel" role="alert">{reviewError}</div>
             ) : null}
             {reviewError && pkg ? (
               <Button
@@ -327,7 +327,7 @@ export function ApplicationImportFlow({
           <div class="application-import-inline-info" role="status">Agent review was skipped for this import.</div>
         )}
 
-        {enableError ? <div class="application-import-inline-error" role="alert">{enableError}</div> : null}
+        {enableError ? <div class="application-import-inline-error gsv-sublabel" role="alert">{enableError}</div> : null}
         {footnote}
         <div class="gsv-cf-footer">
           <Button

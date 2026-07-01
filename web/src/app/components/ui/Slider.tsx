@@ -143,19 +143,19 @@ export function Slider(props: SliderProps) {
       {hasTop ? (
         <div class="gsv-sl-top">
           <span class="gsv-sl-labelgroup">
-            <span class="gsv-sl-label" id={hasLabel ? `${fieldId}-label` : undefined}>
+            <span class="gsv-sl-label gsv-sublabel" id={hasLabel ? `${fieldId}-label` : undefined}>
               {label}
               {req ? (
-                <span class="gsv-sl-req">{req === "required" ? "· REQUIRED" : "· OPTIONAL"}</span>
+                <span class="gsv-sl-req gsv-sublabel">{req === "required" ? "· REQUIRED" : "· OPTIONAL"}</span>
               ) : null}
             </span>
             {info ? <InfoTip text={info} /> : null}
           </span>
-          {showValue ? <span class="gsv-sl-num">{value}</span> : null}
+          {showValue ? <span class="gsv-sl-num gsv-sublabel">{value}</span> : null}
         </div>
       ) : null}
       {description ? (
-        <div class="gsv-sl-desc" id={`${fieldId}-desc`}>
+        <div class="gsv-sl-desc gsv-paragraph-small" id={`${fieldId}-desc`}>
           {description}
         </div>
       ) : null}
@@ -181,7 +181,7 @@ export function Slider(props: SliderProps) {
       {hasStat ? (
         <div class="gsv-sl-stat">
           <span class="gsv-sl-dot" />
-          <span class="gsv-sl-msg" id={`${fieldId}-msg`}>
+          <span class="gsv-sl-msg gsv-sublabel" id={`${fieldId}-msg`}>
             {message}
           </span>
         </div>

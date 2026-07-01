@@ -12,12 +12,12 @@
   gap: 12px;
 }
 .gsv-pr-label {
-  font-size: 9.5px;
+  /* size from .gsv-sublabel (10px, very-wide .22em HUD eyebrow, up from 9.5px) */
   letter-spacing: 0.22em;
   color: #b3aee2;
 }
 .gsv-pr-num {
-  font-size: 10px;
+  /* size from .gsv-sublabel (10px) */
   letter-spacing: 0.06em;
   color: #cbc7ff;
 }

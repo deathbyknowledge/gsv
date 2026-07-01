@@ -15,8 +15,8 @@
   min-height: 34px;
   padding: 0 16px;
   border-bottom: 1px solid var(--line);
+  /* size from .gsv-sublabel (10px) */
   color: var(--text);
-  font-size: 10px;
   letter-spacing: 0.1em;
 }
 
@@ -39,7 +39,7 @@
 .gsv-library-page-head span,
 .gsv-library-page-head p {
   color: var(--meta);
-  font-size: 10px;
+  font-size: 0.625rem; /* was 10px → .gsv-sublabel */
   letter-spacing: 0.16em;
   text-transform: uppercase;
 }
@@ -48,7 +48,7 @@
   margin: 6px 0 0;
   overflow: hidden;
   color: var(--text-hi);
-  font-size: 19px;
+  font-size: 1.1875rem; /* was 19px → .gsv-title */
   letter-spacing: 0.1em;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -99,8 +99,8 @@
   align-items: center;
   gap: 8px;
   padding-bottom: 9px;
+  /* size from .gsv-sublabel (10px) */
   color: var(--meta);
-  font-size: 10px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
   white-space: nowrap;
@@ -150,8 +150,8 @@
 }
 
 .gsv-library-browser-label {
+  /* size from .gsv-label (11px) */
   color: var(--meta);
-  font-size: 11px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
 }
@@ -225,9 +225,8 @@
   min-height: 44px;
   padding: 12px 16px;
   cursor: pointer;
+  /* size + family from .gsv-listitem (12px mono); wide tracking kept */
   color: var(--text-title);
-  font-family: var(--gsv-font-mono);
-  font-size: 12px;
   letter-spacing: 0.2em;
   text-transform: uppercase;
 }
@@ -267,8 +266,8 @@
 
 .gsv-library-empty-row {
   padding: 16px 18px;
+  /* size from .gsv-sublabel (10px) */
   color: var(--text-dim);
-  font-size: 10px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
 }
@@ -330,21 +329,21 @@
 }
 
 .gsv-library-markdown h1 {
-  font-size: 18px;
+  font-size: 1.1875rem; /* was 18px → .gsv-title */
 }
 
 .gsv-library-markdown h2 {
-  font-size: 14px;
+  font-size: 0.875rem; /* was 14px → .gsv-section */
 }
 
 .gsv-library-markdown h3 {
   color: var(--accent);
-  font-size: 12px;
+  font-size: 0.75rem; /* was 12px → .gsv-listitem */
 }
 
 .gsv-library-markdown h4 {
   color: var(--text);
-  font-size: 11px;
+  font-size: 0.6875rem; /* was 11px → .gsv-label */
 }
 
 .gsv-library-markdown p,
@@ -390,7 +389,7 @@
 .gsv-library-markdown table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 11px;
+  font-size: 0.6875rem; /* was 11px → .gsv-label */
 }
 
 .gsv-library-markdown th,
@@ -410,7 +409,7 @@
 .gsv-library-empty-copy,
 .gsv-library-preview-empty {
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: 0.6875rem; /* was 11px → .gsv-label */
   letter-spacing: 0.08em;
 }
 
@@ -433,7 +432,7 @@
 .gsv-library-source-ref > div:last-child {
   overflow: hidden;
   color: var(--meta);
-  font-size: 10px;
+  font-size: 0.625rem; /* was 10px → .gsv-sublabel */
   letter-spacing: 0.12em;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -443,8 +442,8 @@
 .gsv-library-outline-row {
   display: block;
   padding: 9px 14px;
+  /* size from .gsv-label (11px) */
   color: var(--warn);
-  font-size: 11px;
   letter-spacing: 0.08em;
   text-decoration: underline;
   text-underline-offset: 2px;
@@ -524,7 +523,7 @@
 .gsv-library-empty-state h2 {
   margin: 0;
   color: var(--text);
-  font-size: 15px;
+  font-size: 0.875rem; /* was 15px → .gsv-section */
   letter-spacing: 0.16em;
 }
 
@@ -532,7 +531,7 @@
   max-width: 480px;
   margin: 0;
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: 0.75rem; /* was 11px → .gsv-paragraph-small */
   line-height: 1.7;
 }
 
@@ -567,8 +566,8 @@
   min-height: 34px;
   padding: 0 10px 0 12px;
   border-bottom: 1px solid var(--line);
+  /* size from .gsv-sublabel (10px) */
   color: var(--meta);
-  font-size: 10px;
   letter-spacing: 0.16em;
 }
 
@@ -586,8 +585,8 @@
 .gsv-library-preview-body {
   overflow: auto;
   padding: 14px;
+  /* size from .gsv-paragraph-small (12px reading); line-height kept */
   color: var(--text);
-  font-size: 11px;
   line-height: 1.6;
 }
 

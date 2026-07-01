@@ -335,7 +335,7 @@ function AssistantText({ streaming = false, text }: { streaming?: boolean; text:
   ));
 
   return (
-    <div class="gsv-chat-assistant-rich">
+    <div class="gsv-chat-assistant-rich gsv-prose">
       {blocks}
     </div>
   );
@@ -929,7 +929,7 @@ function UserMessage({
   return (
     <div class="gsv-chat-user-message">
       <div class="gsv-chat-user-message-inner">
-        {message.text ? <div class="gsv-chat-user-message-text">{message.text}</div> : null}
+        {message.text ? <div class="gsv-chat-user-message-text gsv-prose">{message.text}</div> : null}
         {message.media?.length ? (
           <div class="gsv-chat-media-list">
             {message.media.map((media, index) => (
@@ -937,7 +937,7 @@ function UserMessage({
             ))}
           </div>
         ) : null}
-        <div class="gsv-chat-user-message-meta">
+        <div class="gsv-chat-user-message-meta gsv-sublabel">
           {message.time ? <span>{message.time}</span> : null}
           {origin ? <span title={origin}>{origin}</span> : null}
           {message.messageId && onBranch ? (
@@ -1031,7 +1031,7 @@ function ToolResultMessage({
 
       <header class="gsv-chat-tool-card-head">
         <span class="gsv-chat-tool-card-dot" aria-hidden="true" />
-        <strong>{title}</strong>
+        <strong class="gsv-prose">{title}</strong>
         <small>{status}</small>
       </header>
 
@@ -1150,7 +1150,7 @@ function ReasoningEntry({ message }: { message: ChatDockMessage }) {
     <div class={`gsv-chat-tool-entry gsv-chat-reasoning-entry${message.streaming ? " is-running" : " is-done"}`}>
       <span class="gsv-chat-tool-entry-status" aria-hidden="true" />
       <div class="gsv-chat-tool-entry-main">
-        <strong>{message.streaming ? "Thinking" : "Reasoned"}</strong>
+        <strong class="gsv-prose">{message.streaming ? "Thinking" : "Reasoned"}</strong>
       </div>
       <EntryControls
         expanded={expanded}
@@ -1177,7 +1177,7 @@ function ToolEntry({ tool }: { tool: ChatDockMessage }) {
     <div class={`gsv-chat-tool-entry is-${tone}`}>
       <span class="gsv-chat-tool-entry-status" aria-hidden="true" />
       <div class="gsv-chat-tool-entry-main">
-        <strong>{toolActivityTitle(tool)}</strong>
+        <strong class="gsv-prose">{toolActivityTitle(tool)}</strong>
       </div>
       <EntryControls
         expanded={expanded}
@@ -1224,7 +1224,7 @@ function RunActivityCard({ entries }: { entries: readonly TranscriptActivityEntr
 
       <header class="gsv-chat-tool-group-head">
         <span class="gsv-chat-tool-group-dot" aria-hidden="true" />
-        <strong>{title}</strong>
+        <strong class="gsv-prose">{title}</strong>
         <small>{statusLabel}</small>
         <button
           type="button"
@@ -1377,7 +1377,7 @@ function ProcessMessage({
       </div>
       <div class="gsv-chat-message-body">
         {showHead ? (
-          <div class="gsv-chat-message-head">
+          <div class="gsv-chat-message-head gsv-sublabel">
             <span>{label}</span>
             {message.meta ? <small>{message.meta}</small> : null}
           </div>
@@ -1393,7 +1393,7 @@ function ProcessMessage({
             ))}
           </div>
         ) : null}
-        <div class="gsv-chat-message-meta">
+        <div class="gsv-chat-message-meta gsv-sublabel">
           {message.time ? <span>{message.time}</span> : null}
           {origin ? <span title={origin}>{origin}</span> : null}
           <CopyButton
@@ -1488,8 +1488,8 @@ function TranscriptState({
 }) {
   return (
     <div class={`gsv-chat-empty gsv-chat-empty-${tone}`}>
-      <strong>{title}</strong>
-      <span>{description}</span>
+      <strong class="gsv-listitem">{title}</strong>
+      <span class="gsv-prose">{description}</span>
       {action ? <div class="gsv-chat-empty-action">{action}</div> : null}
     </div>
   );

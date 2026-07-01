@@ -208,11 +208,9 @@ export function AgentCard(props: AgentCardProps) {
             <button
               type="button"
               onClick={onAvatarClick}
-              class="gsv-ac-fade"
+              class="gsv-ac-fade gsv-title"
               style={{
-                fontFamily: MONO,
-                fontWeight: 700,
-                fontSize: "17px",
+                /* size/family from .gsv-title (19px); .06em tracking + line-height 1 kept */
                 letterSpacing: ".06em",
                 color: "var(--text-hi)",
                 textShadow: "0 0 7px rgba(150,140,255,.4)",
@@ -224,11 +222,9 @@ export function AgentCard(props: AgentCardProps) {
             </button>
           ) : (
             <span
-              class="gsv-ac-fade"
+              class="gsv-ac-fade gsv-title"
               style={{
-                fontFamily: MONO,
-                fontWeight: 700,
-                fontSize: "17px",
+                /* size/family from .gsv-title (19px); .06em tracking + line-height 1 kept */
                 letterSpacing: ".06em",
                 color: "var(--text-hi)",
                 textShadow: "0 0 7px rgba(150,140,255,.4)",
@@ -238,7 +234,7 @@ export function AgentCard(props: AgentCardProps) {
               {agentName}
             </span>
           )}
-          <span style={{ fontFamily: MONO, fontSize: "9.5px", letterSpacing: ".16em", color: "#8f8ac0" }}>{agentRole}</span>
+          <span class="gsv-sublabel" style={{ letterSpacing: ".16em", color: "#8f8ac0" }}>{agentRole}</span>
         </div>
         {showSwitch ? (
           <button
@@ -259,14 +255,12 @@ export function AgentCard(props: AgentCardProps) {
               </svg>
             </span>
             <span
-              class="gsv-ac-switch"
+              class="gsv-ac-switch gsv-sublabel"
               style={{
                 display: "inline-flex",
                 alignItems: "center",
                 gap: "5px",
                 cursor: "pointer",
-                fontFamily: MONO,
-                fontSize: "9.5px",
                 letterSpacing: ".14em",
                 color: "var(--warn)",
                 borderBottom: "1px solid var(--warn)",
@@ -310,13 +304,12 @@ export function AgentCard(props: AgentCardProps) {
         {/* model */}
         <div>
           <div
+            class="gsv-sublabel"
             style={{
               display: "flex",
               alignItems: "center",
               gap: "6px",
               marginBottom: "9px",
-              fontFamily: MONO,
-              fontSize: "10px",
               letterSpacing: ".18em",
               color: "var(--label)",
             }}
@@ -333,7 +326,7 @@ export function AgentCard(props: AgentCardProps) {
 
         {/* tool permissions */}
         <div>
-          <div style={{ marginBottom: "9px", fontFamily: MONO, fontSize: "10px", letterSpacing: ".18em", color: "var(--label)" }}>
+          <div class="gsv-sublabel" style={{ marginBottom: "9px", letterSpacing: ".18em", color: "var(--label)" }}>
             TOOL PERMISSIONS
           </div>
           <Segmented l0="ALLOW" l1="ASK" l2="DENY" value={permVal} onChange={onPerm} width={220} disabled={readOnly} />
@@ -341,7 +334,7 @@ export function AgentCard(props: AgentCardProps) {
 
         {/* tasks */}
         <div>
-          <div style={{ marginBottom: "9px", fontFamily: MONO, fontSize: "10px", letterSpacing: ".18em", color: "var(--label)" }}>
+          <div class="gsv-sublabel" style={{ marginBottom: "9px", letterSpacing: ".18em", color: "var(--label)" }}>
             TASKS ({resolvedTasksTotal})
           </div>
           <div style={{ position: "relative" }}>
@@ -360,7 +353,7 @@ export function AgentCard(props: AgentCardProps) {
               }}
             >
               <span style={dotFor(cur.status)} />
-              <span style={{ fontFamily: MONO, fontSize: "11.5px", letterSpacing: ".03em", color: "var(--text)" }}>{cur.name}</span>
+              <span class="gsv-listitem" style={{ letterSpacing: ".03em", color: "var(--text)" }}>{cur.name}</span>
               <span style={{ marginLeft: "auto", display: "flex" }}>
                 <svg width="9" height="6" viewBox="0 0 9 6" style={{ display: "block" }}>
                   <path d="M0 0 L9 0 L4.5 6 Z" fill="var(--accent)" />
@@ -404,10 +397,10 @@ export function AgentCard(props: AgentCardProps) {
                     }}
                   >
                     <span style={dotFor(t.status)} />
-                    <span style={{ fontFamily: MONO, fontSize: "11px", letterSpacing: ".03em", color: "var(--text)", minWidth: 0, flex: 1 }}>
+                    <span class="gsv-label" style={{ letterSpacing: ".03em", color: "var(--text)", minWidth: 0, flex: 1 }}>
                       {t.name}
                     </span>
-                    <span style={{ fontFamily: MONO, fontSize: "8.5px", letterSpacing: ".14em", color: colFor(t.status) }}>
+                    <span class="gsv-sublabel" style={{ letterSpacing: ".14em", color: colFor(t.status) }}>
                       {t.status.toUpperCase()}
                     </span>
                   </div>
@@ -420,7 +413,7 @@ export function AgentCard(props: AgentCardProps) {
         {/* manage */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "-2px" }}>
           {isSaved ? (
-            <span style={{ display: "inline-flex", alignItems: "center", gap: "6px", fontFamily: MONO, fontSize: "10px", letterSpacing: ".16em", color: "var(--online)" }}>
+            <span class="gsv-sublabel" style={{ display: "inline-flex", alignItems: "center", gap: "6px", letterSpacing: ".16em", color: "var(--online)" }}>
               {"✓"} SAVED
             </span>
           ) : (
@@ -428,14 +421,12 @@ export function AgentCard(props: AgentCardProps) {
           )}
           <span
             onClick={onManage}
-            class="gsv-ac-manage"
+            class="gsv-ac-manage gsv-sublabel"
             style={{
               display: "inline-flex",
               alignItems: "center",
               gap: "7px",
               cursor: "pointer",
-              fontFamily: MONO,
-              fontSize: "10px",
               letterSpacing: ".16em",
               color: "var(--accent)",
               borderBottom: "1px solid var(--accent)",

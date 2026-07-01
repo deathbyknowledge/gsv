@@ -43,7 +43,7 @@ button.gsv-crew-tile:focus-visible {
   overflow: hidden;
   color: var(--text);
   font-family: var(--gsv-font-mono);
-  font-size: 11px;
+  font-size: 0.6875rem; /* size from .gsv-label */
   font-weight: 500;
   letter-spacing: 0.04em;
   line-height: 1.2;
@@ -53,6 +53,7 @@ button.gsv-crew-tile:focus-visible {
 }
 
 .gsv-crew-tile-status {
+  /* size from .gsv-sublabel (10px, up from 9px sub-floor) */
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -60,7 +61,6 @@ button.gsv-crew-tile:focus-visible {
   overflow: hidden;
   color: #a8a2dc;
   font-family: var(--gsv-font-mono);
-  font-size: 9px;
   letter-spacing: 0.05em;
   line-height: 1.2;
   text-overflow: ellipsis;
@@ -84,10 +84,10 @@ button.gsv-crew-tile:focus-visible {
 }
 
 .gsv-crew-tile-description {
+  /* size from .gsv-sublabel (10px, up from 9.5px sub-floor) */
   max-width: 200px;
   color: #7d78b8;
   font-family: var(--gsv-font-mono);
-  font-size: 9.5px;
   font-weight: 400;
   letter-spacing: 0.1em;
   line-height: 1.5;

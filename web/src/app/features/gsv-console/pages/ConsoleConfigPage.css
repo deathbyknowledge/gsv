@@ -78,9 +78,9 @@
 }
 
 .gsv-console-settings-status {
+  /* size + family from .gsv-sublabel (10px); tracking + transform kept */
   min-width: 0;
   color: #9a95cf;
-  font-size: 10px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
   overflow-wrap: anywhere;
@@ -101,18 +101,15 @@
 }
 
 .gsv-console-secret-label {
+  /* size + family from .gsv-sublabel (10px); tracking + transform kept */
   color: var(--text-hi);
-  font-family: var(--gsv-font-mono);
-  font-size: 10px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
 }
 
 .gsv-console-secret-desc {
+  /* size + family + line-height from .gsv-prose-sm (12px) */
   color: #8f89c6;
-  font-family: var(--gsv-font-prose);
-  font-size: 12px;
-  line-height: 1.45;
 }
 
 .gsv-console-secret-state {
@@ -134,7 +131,7 @@
 .gsv-console-secret-state span {
   color: var(--online);
   font-family: var(--gsv-font-mono);
-  font-size: 11px;
+  font-size: 0.6875rem; /* 11px, normalized to .gsv-label */
   font-weight: 700;
   letter-spacing: 0.14em;
 }
@@ -146,7 +143,7 @@
 .gsv-console-secret-state small {
   color: #8f89c6;
   font-family: var(--gsv-font-mono);
-  font-size: 9px;
+  font-size: 0.625rem; /* 9px, normalized up to .gsv-sublabel floor */
   letter-spacing: 0.1em;
   text-align: right;
   text-transform: uppercase;

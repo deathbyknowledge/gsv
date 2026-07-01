@@ -735,8 +735,8 @@ export function ChatDock({
       <button type="button" class="gsv-chat-min" onClick={onToggleOpen}>
         <AgentImage src={activeAgent.imageSrc} size={40} cover />
         <span class="gsv-chat-min-copy">
-          <strong>{activeAgent.name}</strong>
-          <small>
+          <strong class="gsv-prose-heading">{activeAgent.name}</strong>
+          <small class="gsv-label">
             {activeAgent.activity}
             <i />
           </small>

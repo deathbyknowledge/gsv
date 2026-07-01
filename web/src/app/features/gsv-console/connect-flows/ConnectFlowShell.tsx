@@ -49,7 +49,7 @@ export function ConnectFlowShell({ flow, current, onStep }: ConnectFlowShellProp
           <span class="gsv-cf-icon">
             <Icon name={flow.icon} size={30} />
           </span>
-          <p class="gsv-cf-desc">
+          <p class="gsv-cf-desc gsv-prose">
             {descPrimary}
             {descSecondary ? (
               <>

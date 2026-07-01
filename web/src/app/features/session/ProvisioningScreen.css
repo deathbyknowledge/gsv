@@ -38,26 +38,22 @@
   color: var(--accent-bright);
 }
 .gsv-provision-kicker {
-  font-family: var(--gsv-font-mono);
-  font-size: 9px;
+  /* size + family from .gsv-sublabel (10px, up from 9px); tracking kept wider */
   letter-spacing: 0.28em;
   text-transform: uppercase;
   color: var(--text-dim);
   margin-bottom: 9px;
 }
 .gsv-provision-title {
+  /* size + family + line-height from .gsv-prose-display (22px hero) */
   margin: 0;
-  font-family: var(--gsv-font-prose);
-  font-size: 22px;
   font-weight: 600;
   letter-spacing: 0.005em;
   color: var(--text-hi);
 }
 .gsv-provision-sub {
+  /* size + family + line-height from .gsv-prose (13px reading) */
   margin: 8px 0 0;
-  font-family: var(--gsv-font-prose);
-  font-size: 13px;
-  line-height: 1.5;
   color: #9d98d4;
 }
 
@@ -71,16 +67,14 @@
   background: var(--panel-2);
 }
 .gsv-provision-note strong {
-  font-family: var(--gsv-font-mono);
-  font-size: 9px;
+  /* size + family from .gsv-sublabel (10px, up from 9px); tracking matches */
   letter-spacing: 0.2em;
   text-transform: uppercase;
   color: var(--accent-bright);
 }
 .gsv-provision-note p {
+  /* size + family from .gsv-prose-sm (12px); line-height kept */
   margin: 0;
-  font-family: var(--gsv-font-prose);
-  font-size: 12px;
   line-height: 1.5;
   color: #9d98d4;
 }
@@ -115,15 +109,13 @@
   min-width: 0;
 }
 .gsv-provision-step-text strong {
-  font-family: var(--gsv-font-prose);
-  font-size: 13px;
+  /* size + family from .gsv-prose (13px); semibold kept */
   font-weight: 600;
   color: var(--text-hi);
 }
 .gsv-provision-step-text p {
+  /* size + family from .gsv-prose-sm (12px); line-height kept */
   margin: 0;
-  font-family: var(--gsv-font-prose);
-  font-size: 12px;
   line-height: 1.5;
   color: #9d98d4;
 }

@@ -32,8 +32,8 @@ function CommandBlock({ title, meta, value }: { title: string; meta: string; val
   return (
     <section class="gsv-cf-cmd">
       <header class="gsv-cf-cmd-head">
-        <span class="gsv-cf-cmd-title">{title}</span>
-        <span class="gsv-cf-cmd-meta">{meta}</span>
+        <span class="gsv-cf-cmd-title gsv-sublabel">{title}</span>
+        <span class="gsv-cf-cmd-meta gsv-sublabel">{meta}</span>
         <button type="button" class="gsv-cf-cmd-copy">
           <Icon name="bookmark" size={12} />
           <span>COPY</span>
@@ -62,7 +62,7 @@ export const machineConnectFlow: ConnectFlowDef = {
       tone: "idle",
       render: (nav) => (
         <>
-          <p class="gsv-cf-desc" style={{ margin: 0 }}>
+          <p class="gsv-cf-desc gsv-prose" style={{ margin: 0 }}>
             Choose the operating system for the machine you are adding to the fleet.
           </p>
           <div class="gsv-cf-tiles">
@@ -94,7 +94,7 @@ export const machineConnectFlow: ConnectFlowDef = {
                     status={selected ? "update" : "idle"}
                     selected={selected}
                   />
-                  <span style={{ fontSize: "10px", letterSpacing: ".1em", color: "#8c86c8" }}>
+                  <span class="gsv-sublabel" style={{ letterSpacing: ".1em", color: "#8c86c8" }}>
                     {option.meta}
                   </span>
                   <Tag tone={selected ? "accent" : "idle"} label={option.command} boxed />
@@ -162,7 +162,7 @@ export const machineConnectFlow: ConnectFlowDef = {
       tone: "warn",
       render: (nav) => (
         <>
-          <p class="gsv-cf-desc" style={{ margin: 0 }}>
+          <p class="gsv-cf-desc gsv-prose" style={{ margin: 0 }}>
             Run this installer on the machine you want GSV to control.
           </p>
           <CommandBlock title="INSTALL COMMAND" meta="macOS / zsh" value={INSTALL_COMMAND} />
@@ -183,7 +183,7 @@ export const machineConnectFlow: ConnectFlowDef = {
       tone: "warn",
       render: (nav) => (
         <>
-          <p class="gsv-cf-desc" style={{ margin: 0 }}>
+          <p class="gsv-cf-desc gsv-prose" style={{ margin: 0 }}>
             Run this command on the machine after the CLI installer completes.
           </p>
           <CommandBlock
@@ -194,8 +194,8 @@ export const machineConnectFlow: ConnectFlowDef = {
           <div class="gsv-cf-cap">
             <Spinner size={18} />
             <div class="gsv-cf-cap-text">
-              <span class="gsv-cf-cap-title">Waiting for device registration.</span>
-              <span class="gsv-cf-cap-sub">
+              <span class="gsv-cf-cap-title gsv-paragraph-small">Waiting for device registration.</span>
+              <span class="gsv-cf-cap-sub gsv-prose">
                 Leave this open — the machine appears the moment it checks in with the gateway.
               </span>
             </div>
@@ -222,8 +222,8 @@ export const machineConnectFlow: ConnectFlowDef = {
               <Icon name="computer" size={26} />
             </span>
             <div class="gsv-cf-cap-text">
-              <span class="gsv-cf-cap-title">Studio MacBook is connected</span>
-              <span class="gsv-cf-cap-sub">
+              <span class="gsv-cf-cap-title gsv-paragraph-small">Studio MacBook is connected</span>
+              <span class="gsv-cf-cap-sub gsv-prose">
                 The machine is now part of the GSV fleet and can be used by Files, Terminal, and agent tools.
               </span>
             </div>

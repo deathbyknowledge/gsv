@@ -172,7 +172,7 @@ export function CrewPage({ containerWidth, onNew, onManage, onBack }: CrewPagePr
               <path d="M5 8 H13" />
             </svg>
           </span>
-          <div style={{ display: "flex", alignItems: "center", gap: "10px", fontSize: "12.5px", letterSpacing: ".18em" }}>
+          <div class="gsv-listitem" style={{ display: "flex", alignItems: "center", gap: "10px", letterSpacing: ".18em" }}>
             <span class="gsv-crew-crumb" style={{ color: "var(--text-dim)", cursor: "pointer" }}>
               GSV
             </span>
@@ -216,17 +216,15 @@ export function CrewPage({ containerWidth, onNew, onManage, onBack }: CrewPagePr
               }}
             />
             <span
+              class="gsv-section"
               style={{
-                fontWeight: 600,
-                fontSize: "13.5px",
-                letterSpacing: ".2em",
                 color: "var(--text-title)",
                 textShadow: "0 0 5px rgba(150,140,255,.3)",
               }}
             >
               CREW
             </span>
-            <span style={{ marginLeft: "auto", fontSize: "10px", letterSpacing: ".16em", color: "#7d78b8" }}>
+            <span class="gsv-sublabel" style={{ marginLeft: "auto", letterSpacing: ".16em", color: "#7d78b8" }}>
               {crewCount} AGENTS {"·"} {runningCount} RUNNING
             </span>
           </div>
@@ -296,10 +294,10 @@ export function CrewPage({ containerWidth, onNew, onManage, onBack }: CrewPagePr
                   </g>
                 </svg>
               </div>
-              <div style={{ fontSize: "11px", letterSpacing: ".2em", color: "var(--text-title)" }}>NEW AGENT</div>
+              <div class="gsv-label" style={{ letterSpacing: ".2em", color: "var(--text-title)" }}>NEW AGENT</div>
               <div
+                class="gsv-sublabel"
                 style={{
-                  fontSize: "9.5px",
                   letterSpacing: ".1em",
                   color: "#7d78b8",
                   maxWidth: "200px",

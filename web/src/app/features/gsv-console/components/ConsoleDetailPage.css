@@ -29,8 +29,7 @@
   border: 0;
   background: transparent;
   color: var(--meta, #8c86c8);
-  font-family: var(--gsv-font-mono);
-  font-size: 10px;
+  /* size + family from .gsv-sublabel (10px); 0.16em tracking kept intentionally */
   letter-spacing: 0.16em;
   text-transform: uppercase;
   cursor: pointer;
@@ -85,7 +84,7 @@
   margin: 0;
   overflow-wrap: anywhere;
   color: var(--text-hi);
-  font-size: 20px;
+  /* size + family from .gsv-title; weight/tracking/line-height kept intentionally */
   font-weight: 500;
   line-height: 1.08;
   letter-spacing: 0.08em;
@@ -100,7 +99,7 @@
   gap: 12px;
   row-gap: 6px;
   color: #a8a2dc;
-  font-size: 10px;
+  /* size from .gsv-sublabel (10px); 0.16em tracking kept intentionally */
   letter-spacing: 0.16em;
   text-transform: uppercase;
 }
@@ -133,9 +132,7 @@
   margin: 0;
   max-width: 560px;
   color: var(--prose-dim);
-  font-family: var(--gsv-font-prose);
-  font-size: 13.5px;
-  line-height: 1.5;
+  /* size + family + line-height from .gsv-prose (13px) */
   overflow-wrap: anywhere;
   /* break into (at most) two lines */
   display: -webkit-box;
@@ -160,7 +157,7 @@
   max-width: 100%;
   align-self: center;
   color: var(--error);
-  font-size: 10px;
+  font-size: 0.625rem; /* 10px → .gsv-sublabel rem (handle in *DetailPage.tsx, out of scope) */
   letter-spacing: 0.08em;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -173,7 +170,7 @@
   margin: 0;
   color: var(--prose-dim);
   font-family: var(--gsv-font-prose);
-  font-size: 14px;
+  font-size: 0.875rem; /* 14px → .gsv-prose-lead rem (messenger-flow markup, out of scope) */
   line-height: 1.65;
   overflow-wrap: anywhere;
   text-wrap: pretty;
@@ -192,7 +189,7 @@
   background-image:
     repeating-linear-gradient(45deg, #100d28 0, #100d28 12px, #0b0922 12px, #0b0922 24px);
   color: var(--idle);
-  font-size: 11px;
+  /* size from .gsv-label (11px); 0.18em tracking kept intentionally */
   letter-spacing: 0.18em;
   text-align: center;
   text-transform: uppercase;
@@ -254,7 +251,7 @@
   max-width: 100%;
   align-self: center;
   color: var(--error);
-  font-size: 10px;
+  font-size: 0.625rem; /* 10px → .gsv-sublabel rem (handle in RuntimeDetailPage.tsx, out of scope) */
   letter-spacing: 0.08em;
   overflow: hidden;
   text-overflow: ellipsis;

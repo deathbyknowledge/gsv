@@ -694,7 +694,7 @@ export function AsciiGalaxyScan({
         </>
       ) : null}
       {showReplay ? (
-        <button ref={replayRef} type="button" class="gsv-ascii-galaxy-replay" aria-label={`Replay ${text} ASCII galaxy scan`}>
+        <button ref={replayRef} type="button" class="gsv-ascii-galaxy-replay gsv-label" aria-label={`Replay ${text} ASCII galaxy scan`}>
           <span class="gsv-ascii-galaxy-replay-icon" aria-hidden="true">↻</span>
           Replay
         </button>

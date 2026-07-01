@@ -31,8 +31,7 @@
   min-width: 0;
 }
 .gsv-alert-title {
-  font-family: var(--gsv-font-mono);
-  font-size: 11px;
+  /* size + family from .gsv-label (11px); weight 600 + .14em tracking kept intentionally */
   font-weight: 600;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -42,9 +41,8 @@
   margin-top: 5px;
 }
 .gsv-alert-text {
+  /* size + line-height from .gsv-prose (13px, up from 12.5px) */
   margin: 0;
-  font-size: 12.5px;
-  line-height: 1.5;
   /* A very light variation of the status colour — tied to the variant but kept
      legible by mixing mostly toward the light text token. */
   color: color-mix(in srgb, var(--alert-color) 25%, var(--text));

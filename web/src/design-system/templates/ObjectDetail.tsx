@@ -64,8 +64,8 @@ export function ObjectDetail() {
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
                 <span
+                  class="gsv-title"
                   style={{
-                    fontSize: "20px",
                     letterSpacing: ".08em",
                     fontWeight: 500,
                     color: "var(--text-hi)",
@@ -75,9 +75,9 @@ export function ObjectDetail() {
                   Gmail
                 </span>
                 <StatusDot tone="online" size={8} />
-                <span style={{ fontSize: "9px", letterSpacing: ".14em", color: "var(--online)" }}>ONLINE</span>
+                <span class="gsv-sublabel" style={{ letterSpacing: ".14em", color: "var(--online)" }}>ONLINE</span>
               </div>
-              <div style={{ fontSize: "8px", letterSpacing: ".22em", color: "var(--text-dim)", marginTop: "8px" }}>
+              <div class="gsv-sublabel" style={{ letterSpacing: ".22em", color: "var(--text-dim)", marginTop: "8px" }}>
                 INTEGRATION · MESSENGER
               </div>
             </div>
@@ -85,9 +85,8 @@ export function ObjectDetail() {
 
           {/* Prose blurb */}
           <p
+            class="gsv-prose-lead"
             style={{
-              fontFamily: "var(--gsv-font-prose)",
-              fontSize: "14px",
               lineHeight: 1.65,
               color: "#9089d4",
               margin: "20px 0 32px",

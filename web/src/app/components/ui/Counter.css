@@ -85,18 +85,18 @@
   min-height: 13px;
 }
 .gsv-fld-lab-t {
-  font-size: 9.5px;
+  /* size from .gsv-sublabel (10px, up from 9.5px very-wide eyebrow) */
   letter-spacing: 0.22em;
   text-transform: uppercase;
   color: #b3aee2;
 }
 .gsv-fld-req {
-  font-size: 9.5px;
+  /* size from .gsv-sublabel (10px, up from 9.5px sub-floor) */
   color: #7d78b8;
   letter-spacing: 0.14em;
 }
 .gsv-fld-desc {
-  font-size: 10px;
+  /* size from .gsv-sublabel (10px) */
   line-height: 1.5;
   letter-spacing: 0.02em;
   color: #7d78b8;
@@ -117,7 +117,7 @@
   border-radius: 1px;
 }
 .gsv-fld-msg {
-  font-size: 9.5px;
+  /* size from .gsv-sublabel (10px, up from 9.5px sub-floor) */
   letter-spacing: 0.1em;
 }
 .gsv-fld.is-error .gsv-fld-msg {

@@ -80,12 +80,12 @@ export function Radio(props: RadioProps) {
     <div class={fldClass}>
       {hasFldLabel ? (
         <div class="gsv-fld-lab">
-          <span class="gsv-fld-lab-t" id={labelId}>{label}</span>
-          {req ? <span class="gsv-fld-req">{fldReq}</span> : null}
+          <span class="gsv-fld-lab-t gsv-sublabel" id={labelId}>{label}</span>
+          {req ? <span class="gsv-fld-req gsv-sublabel">{fldReq}</span> : null}
           {info ? <InfoTip text={info} /> : null}
         </div>
       ) : null}
-      {description ? <div class="gsv-fld-desc" id={descId}>{description}</div> : null}
+      {description ? <div class="gsv-fld-desc gsv-paragraph-small" id={descId}>{description}</div> : null}
       <div
         class={rootClass}
         role="radiogroup"
@@ -111,7 +111,7 @@ export function Radio(props: RadioProps) {
       {hasStat ? (
         <div class="gsv-fld-stat">
           <span class="gsv-fld-dot" />
-          <span class="gsv-fld-msg" id={msgId}>{message}</span>
+          <span class="gsv-fld-msg gsv-sublabel" id={msgId}>{message}</span>
         </div>
       ) : null}
     </div>
