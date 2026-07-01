@@ -217,6 +217,8 @@ type StreamSeqCounter = {
 
 type CodeModeResponseWaiter = {
   runId: string | null;
+  call: SyscallName;
+  args: Record<string, unknown>;
   resolve: (frame: ResponseFrame) => void;
   reject: (error: Error) => void;
   timeoutId: ReturnType<typeof setTimeout>;
@@ -234,6 +236,11 @@ type ProcessArchiveResult = {
   archives: ProcArchiveEntry[];
 };
 
+type PreparedToolArgs = {
+  args: unknown;
+  missingShellSessionTarget: boolean;
+};
+
 type ArchivedMessageRecord = {
   id?: number;
   runId?: string;
@@ -249,6 +256,9 @@ type ArchivedMessageRecord = {
 };
 
 const TOOL_APPROVAL_OVERRIDES_KEY = "toolApprovalOverrides";
+const SHELL_SESSION_TARGET_KEY_PREFIX = "shellSessionTarget:";
+const UNKNOWN_SHELL_SESSION_TARGET_MESSAGE =
+  "Shell session continuation requires an explicit target because this process does not know which device owns the session";
 const PROCESS_MEDIA_CACHE_LIMIT = 32;
 const MAX_PROCESS_MEDIA_READ_BYTES = 25 * 1024 * 1024;
 const CODE_MODE_NESTED_SYSCALL_TIMEOUT_MS = 55_000;
@@ -261,6 +271,12 @@ function normalizeOptionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0
     ? value.trim()
     : undefined;
+}
+
+function asPlainRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
 }
 
 function normalizeRequiredText(value: unknown): string | null {
@@ -798,6 +814,13 @@ export class Process extends Host<Env> {
     if (codeModeWaiter) {
       this.codeModeResponses.delete(frame.id);
       clearTimeout(codeModeWaiter.timeoutId);
+      if (frame.ok) {
+        this.rememberShellSessionTargetFromResult(
+          codeModeWaiter.call,
+          codeModeWaiter.args,
+          frame.data ?? null,
+        );
+      }
       codeModeWaiter.resolve(frame);
       return;
     }
@@ -811,6 +834,7 @@ export class Process extends Host<Env> {
     }
 
     if (frame.ok) {
+      this.rememberShellSessionTargetFromResult(pending.call, pending.args, frame.data ?? null);
       this.store.resolve(frame.id, frame.data ?? null);
     } else {
       this.store.fail(frame.id, frame.error.message);
@@ -3750,19 +3774,26 @@ export class Process extends Host<Env> {
     args: unknown,
   ): Promise<void> {
     const run = this.currentRun;
+    const prepared = this.prepareToolArgs(call, args);
+    const dispatchArgs = prepared.args;
     this.store.register(
       id,
       runId,
       call,
-      args,
+      dispatchArgs,
       run?.runId === runId ? run.conversationId : DEFAULT_CONVERSATION_ID,
     );
+
+    if (prepared.missingShellSessionTarget) {
+      this.store.fail(id, UNKNOWN_SHELL_SESSION_TARGET_MESSAGE);
+      return;
+    }
 
     const reqFrame: RequestFrame = {
       type: "req",
       id,
       call,
-      args,
+      args: dispatchArgs,
     } as RequestFrame;
 
     const response = await sendFrameToKernel(this.pid, reqFrame);
@@ -3770,7 +3801,9 @@ export class Process extends Host<Env> {
     if (response && response.type === "res") {
       const res = response;
       if (res.ok) {
-        this.store.resolve(id, (res as { data?: unknown }).data);
+        const data = (res as { data?: unknown }).data;
+        this.rememberShellSessionTargetFromResult(call, dispatchArgs, data ?? null);
+        this.store.resolve(id, data);
       } else {
         this.store.fail(
           id,
@@ -4001,7 +4034,18 @@ export class Process extends Host<Env> {
           continue;
         }
 
-        const approval = resolveToolApproval(approvalPolicy, syscall, tc.arguments);
+        const prepared = this.prepareToolArgs(syscall as SyscallName, tc.arguments);
+        if (prepared.missingShellSessionTarget) {
+          await this.appendSyntheticToolResult(
+            runId,
+            tc.id,
+            syscall,
+            UNKNOWN_SHELL_SESSION_TARGET_MESSAGE,
+          );
+          continue;
+        }
+        const toolArgs = prepared.args;
+        const approval = resolveToolApproval(approvalPolicy, syscall, toolArgs);
 
         if (approval.action === "deny") {
           await this.appendSyntheticToolResult(
@@ -4031,7 +4075,7 @@ export class Process extends Host<Env> {
             toolCallId: tc.id,
             toolName: tc.name,
             syscall,
-            args: tc.arguments as Record<string, unknown>,
+            args: asPlainRecord(toolArgs) ?? {},
             remainingToolCalls: toolCalls.slice(index + 1),
             createdAt: Date.now(),
           };
@@ -4043,7 +4087,7 @@ export class Process extends Host<Env> {
         await this.sendSignal("proc.run.tool.started", {
           name: tc.name,
           syscall,
-          args: tc.arguments,
+          args: toolArgs,
           callId: tc.id,
           pid: this.pid,
           runId,
@@ -4066,7 +4110,7 @@ export class Process extends Host<Env> {
             runId,
             tc.id,
             syscall as SyscallName,
-            tc.arguments,
+            toolArgs,
           );
         }
         if (await this.handleRunStopped(runId)) {
@@ -4324,7 +4368,12 @@ export class Process extends Host<Env> {
 
     const toolCallId = `codemode-${crypto.randomUUID()}`;
     const toolName = SYSCALL_TOOL_NAMES[call] ?? call;
-    const approval = resolveToolApproval(approvalPolicy, call, args);
+    const prepared = this.prepareToolArgs(call, args);
+    if (prepared.missingShellSessionTarget) {
+      throw new Error(UNKNOWN_SHELL_SESSION_TARGET_MESSAGE);
+    }
+    const toolArgs = asPlainRecord(prepared.args) ?? args;
+    const approval = resolveToolApproval(approvalPolicy, call, toolArgs);
 
     if (approval.action === "deny") {
       throw new Error(`Tool execution denied by policy: ${call}`);
@@ -4341,7 +4390,7 @@ export class Process extends Host<Env> {
         toolCallId,
         toolName,
         call,
-        args,
+        toolArgs,
       );
       if (!approved) {
         throw new Error(`Tool execution was not approved: ${call}`);
@@ -4351,7 +4400,7 @@ export class Process extends Host<Env> {
     await this.sendSignal("proc.run.tool.started", {
       name: toolName,
       syscall: call,
-      args,
+      args: toolArgs,
       callId: toolCallId,
       pid: this.pid,
       runId,
@@ -4367,7 +4416,7 @@ export class Process extends Host<Env> {
         runId,
         toolCallId,
         call,
-        args,
+        toolArgs,
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -4418,11 +4467,16 @@ export class Process extends Host<Env> {
     args: Record<string, unknown>,
   ): Promise<unknown> {
     const id = `codemode-${crypto.randomUUID()}`;
+    const prepared = this.prepareToolArgs(call, args);
+    if (prepared.missingShellSessionTarget) {
+      throw new Error(UNKNOWN_SHELL_SESSION_TARGET_MESSAGE);
+    }
+    const toolArgs = asPlainRecord(prepared.args) ?? args;
     const response = await this.dispatchCodeModeSyscall(
       null,
       id,
       call,
-      args,
+      toolArgs,
     );
 
     if (response.ok) {
@@ -4491,7 +4545,7 @@ export class Process extends Host<Env> {
         this.codeModeResponses.delete(id);
         reject(new Error(`Timed out waiting for ${call}`));
       }, CODE_MODE_NESTED_SYSCALL_TIMEOUT_MS);
-      this.codeModeResponses.set(id, { runId, resolve, reject, timeoutId });
+      this.codeModeResponses.set(id, { runId, call, args, resolve, reject, timeoutId });
     });
 
     try {
@@ -4501,6 +4555,9 @@ export class Process extends Host<Env> {
         if (waiter) {
           this.codeModeResponses.delete(id);
           clearTimeout(waiter.timeoutId);
+        }
+        if (response.ok) {
+          this.rememberShellSessionTargetFromResult(call, args, response.data ?? null);
         }
         return response;
       }
@@ -4566,6 +4623,68 @@ export class Process extends Host<Env> {
     return run.approvalPolicy;
   }
 
+  private prepareToolArgs(syscall: SyscallName, args: unknown): PreparedToolArgs {
+    if (syscall !== "shell.exec") {
+      return { args, missingShellSessionTarget: false };
+    }
+
+    const record = asPlainRecord(args);
+    if (!record) {
+      return { args, missingShellSessionTarget: false };
+    }
+
+    if (normalizeOptionalString(record.target)) {
+      return { args, missingShellSessionTarget: false };
+    }
+
+    const sessionId = normalizeOptionalString(record.sessionId);
+    if (!sessionId) {
+      return { args, missingShellSessionTarget: false };
+    }
+
+    const target = this.loadShellSessionTarget(sessionId);
+    if (!target) {
+      return { args, missingShellSessionTarget: true };
+    }
+
+    return {
+      args: { ...record, target },
+      missingShellSessionTarget: false,
+    };
+  }
+
+  private rememberShellSessionTargetFromResult(
+    syscall: string,
+    args: unknown,
+    result: unknown,
+  ): void {
+    if (syscall !== "shell.exec") {
+      return;
+    }
+
+    const resultRecord = asPlainRecord(result);
+    const sessionId = normalizeOptionalString(resultRecord?.sessionId);
+    if (!sessionId) {
+      return;
+    }
+
+    const target = resolveToolApprovalTarget(syscall, args);
+    if (target === "targets/*") {
+      return;
+    }
+
+    this.store.setValue(this.shellSessionTargetKey(sessionId), target);
+  }
+
+  private loadShellSessionTarget(sessionId: string): string | null {
+    const target = this.store.getValue(this.shellSessionTargetKey(sessionId));
+    return normalizeOptionalString(target) ?? null;
+  }
+
+  private shellSessionTargetKey(sessionId: string): string {
+    return `${SHELL_SESSION_TARGET_KEY_PREFIX}${sessionId}`;
+  }
+
   private rememberToolApproval(pendingHil: PendingHilRecord, run: RunState): boolean {
     const rule = this.buildToolApprovalOverride(pendingHil.syscall, pendingHil.args);
     const overrides = this.loadToolApprovalOverrides();
@@ -4585,7 +4704,8 @@ export class Process extends Host<Env> {
   }
 
   private buildToolApprovalOverride(syscall: string, args: unknown): ToolApprovalRule {
-    const target = resolveToolApprovalTarget(syscall, args);
+    const prepared = this.prepareToolArgs(syscall as SyscallName, args);
+    const target = resolveToolApprovalTarget(syscall, prepared.args);
     return {
       match: syscall,
       target,
