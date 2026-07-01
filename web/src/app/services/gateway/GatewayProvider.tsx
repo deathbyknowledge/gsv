@@ -19,7 +19,7 @@ function createWebGsvClient(): GSVClient {
   return new GSVClient({
     client: {
       id: "gsv-ui",
-      version: "0.3.0",
+      version: "0.3.1",
       platform: "browser",
       role: "user",
     },
