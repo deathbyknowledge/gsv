@@ -281,7 +281,7 @@ function NewAgentEditorSurface({
       <div class="gsv-console-agent-frame">
         <div class="gsv-console-agent-panel" ref={rootRef}>
           <AgentEditor
-            key="new-agent-draft"
+            key={`new-agent-draft:${normalizedApprovalPolicy(defaultApprovalPolicy)}`}
             mode="new"
             avatarSrc={agentImageSrcForIndex(accountCount)}
             avatarCover
