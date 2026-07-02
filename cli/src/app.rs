@@ -164,23 +164,14 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
         },
         Commands::Device { action } => match action {
             DeviceAction::Run { id, workspace } => {
-                run_with_auto_setup_retry(
-                    &url,
+                let device_id = resolve_device_id(id.clone(), &cfg);
+                let workspace = resolve_device_workspace(workspace.clone(), &cfg);
+                let auth = resolve_device_gateway_auth(
                     &cfg,
+                    cli_token_override.clone(),
                     cli_user_override.clone(),
-                    cli_password_override.clone(),
-                    || async {
-                        let device_id = resolve_device_id(id.clone(), &cfg);
-                        let workspace = resolve_device_workspace(workspace.clone(), &cfg);
-                        let auth = resolve_device_gateway_auth(
-                            &cfg,
-                            cli_token_override.clone(),
-                            cli_user_override.clone(),
-                        )?;
-                        run_device(&url, auth, device_id, workspace).await
-                    },
-                )
-                .await
+                )?;
+                run_device(&url, auth, device_id, workspace).await
             }
             DeviceAction::Install { id, workspace } => run_device_service(
                 DeviceServiceAction::Install { id, workspace },

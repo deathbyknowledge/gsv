@@ -599,6 +599,14 @@ pub(crate) async fn run_device(
             .instrument(exec_event_span),
         );
 
+        macro_rules! shutdown_device {
+            ($signal:expr) => {{
+                exec_event_collector.abort();
+                info!(event = "shutdown", signal = %$signal);
+                return Ok(());
+            }};
+        }
+
         const CONNECT_TIMEOUT: tokio::time::Duration = tokio::time::Duration::from_secs(30);
         const INITIAL_RETRY_DELAY: tokio::time::Duration = tokio::time::Duration::from_secs(3);
         const MAX_RETRY_DELAY: tokio::time::Duration = tokio::time::Duration::from_secs(300);
@@ -611,7 +619,7 @@ pub(crate) async fn run_device(
                 all_tools_with_workspace_for_device(workspace.clone(), device_id.clone()),
             );
 
-            let conn = match tokio::time::timeout(
+            let conn_attempt = tokio::time::timeout(
                 CONNECT_TIMEOUT,
                 KernelClient::connect_driver(
                     url,
@@ -623,9 +631,13 @@ pub(crate) async fn run_device(
                     auth.clone(),
                     |_frame| {},
                 ),
-            )
-            .await
-            {
+            );
+            let conn_attempt = tokio::select! {
+                signal = &mut shutdown => shutdown_device!(signal),
+                result = conn_attempt => result,
+            };
+
+            let conn = match conn_attempt {
                 Ok(Ok(c)) => {
                     retry_delay = INITIAL_RETRY_DELAY;
                     c.into_connection()
@@ -645,7 +657,10 @@ pub(crate) async fn run_device(
                         error = %e,
                         retry_seconds = retry_delay.as_secs(),
                     );
-                    tokio::time::sleep(retry_delay).await;
+                    tokio::select! {
+                        signal = &mut shutdown => shutdown_device!(signal),
+                        _ = tokio::time::sleep(retry_delay) => {}
+                    }
                     retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
                     continue;
                 }
@@ -655,7 +670,10 @@ pub(crate) async fn run_device(
                         timeout_seconds = CONNECT_TIMEOUT.as_secs(),
                         retry_seconds = retry_delay.as_secs(),
                     );
-                    tokio::time::sleep(retry_delay).await;
+                    tokio::select! {
+                        signal = &mut shutdown => shutdown_device!(signal),
+                        _ = tokio::time::sleep(retry_delay) => {}
+                    }
                     retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
                     continue;
                 }
@@ -719,9 +737,7 @@ pub(crate) async fn run_device(
             loop {
                 tokio::select! {
                     signal = &mut shutdown => {
-                        exec_event_collector.abort();
-                        info!(event = "shutdown", signal = %signal);
-                        return Ok(());
+                        shutdown_device!(signal);
                     }
                     _ = tokio::time::sleep(tokio::time::Duration::from_secs(1)) => {
                         if conn.is_disconnected() {
@@ -729,7 +745,10 @@ pub(crate) async fn run_device(
                                 event = "connect.lost",
                                 retry_seconds = 3,
                             );
-                            tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+                            tokio::select! {
+                                signal = &mut shutdown => shutdown_device!(signal),
+                                _ = tokio::time::sleep(tokio::time::Duration::from_secs(3)) => {}
+                            }
                             break; // Break inner loop to reconnect
                         }
 
@@ -744,7 +763,10 @@ pub(crate) async fn run_device(
 
                         if tokio::time::Instant::now() >= next_keepalive_at {
                             let payload = b"gsv-keepalive".to_vec();
-                            let keepalive = tokio::time::timeout(keepalive_timeout, conn.send_ping(payload)).await;
+                            let keepalive = tokio::select! {
+                                signal = &mut shutdown => shutdown_device!(signal),
+                                result = tokio::time::timeout(keepalive_timeout, conn.send_ping(payload)) => result,
+                            };
 
                             match keepalive {
                                 Ok(Ok(())) => {
@@ -756,7 +778,10 @@ pub(crate) async fn run_device(
                                         error = %e,
                                         retry_seconds = 3,
                                     );
-                                    tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+                                    tokio::select! {
+                                        signal = &mut shutdown => shutdown_device!(signal),
+                                        _ = tokio::time::sleep(tokio::time::Duration::from_secs(3)) => {}
+                                    }
                                     break;
                                 }
                                 Err(_) => {
@@ -765,7 +790,10 @@ pub(crate) async fn run_device(
                                         timeout_seconds = 10,
                                         retry_seconds = 3,
                                     );
-                                    tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+                                    tokio::select! {
+                                        signal = &mut shutdown => shutdown_device!(signal),
+                                        _ = tokio::time::sleep(tokio::time::Duration::from_secs(3)) => {}
+                                    }
                                     break;
                                 }
                             }
