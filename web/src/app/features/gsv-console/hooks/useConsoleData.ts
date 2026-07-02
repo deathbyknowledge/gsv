@@ -150,7 +150,17 @@ export function useConsoleProcesses(options: ConsoleQueryOptions = {}) {
 
 export function useConsoleTargets(options: ConsoleQueryOptions = {}) {
   const { client, connected } = useGateway();
+  const queryClient = useQueryClient();
   const enabled = connected && (options.enabled ?? true);
+
+  useEffect(() => {
+    return client.onSignal((signal) => {
+      if (signal === "device.status") {
+        void queryClient.invalidateQueries({ queryKey: consoleTargetsQueryKey });
+      }
+    });
+  }, [client, queryClient]);
+
   const query = useQuery<ConsoleTarget[]>({
     queryKey: consoleTargetsQueryKey,
     enabled,

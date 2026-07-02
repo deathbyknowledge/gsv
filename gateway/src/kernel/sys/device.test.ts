@@ -178,6 +178,7 @@ describe("sys.device handlers", () => {
     expect(result.devices.map((device) => device.deviceId)).toEqual(["node-alpha"]);
     expect(result.devices[0].label).toBe("Alpha");
     expect(result.devices[0].description).toBe("Linux home server");
+    expect(result.devices[0].implements).toEqual(["fs.*", "shell.*"]);
   });
 
   it("accepts empty args payloads for list", () => {
@@ -228,6 +229,7 @@ describe("sys.device handlers", () => {
     expect(result.devices).toEqual([
       expect.objectContaining({
         deviceId: "adapter:whatsapp:primary",
+        implements: ["shell.exec"],
         label: "WhatsApp",
         platform: "adapter",
         online: true,
@@ -277,6 +279,7 @@ describe("sys.device handlers", () => {
     expect(result.devices).toEqual([
       expect.objectContaining({
         deviceId: "adapter:telegram:bot",
+        implements: ["shell.exec"],
         ownerUid: 1000,
         ownerUsername: "user1000",
         label: "Telegram",

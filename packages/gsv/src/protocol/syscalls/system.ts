@@ -334,6 +334,7 @@ export type SysDeviceSummary = {
   ownerUsername: string | null;
   label: string;
   description: string;
+  implements: string[];
   platform: string;
   version: string;
   online: boolean;
@@ -349,7 +350,6 @@ export type SysDeviceGetArgs = {
 };
 
 export type SysDeviceDetail = SysDeviceSummary & {
-  implements: string[];
   firstSeenAt: number;
   connectedAt: number | null;
   disconnectedAt: number | null;
