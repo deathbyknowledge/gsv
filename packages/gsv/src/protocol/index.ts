@@ -1,6 +1,7 @@
 export type * from "./syscalls/system";
 export type * from "./syscalls/fs";
 export type * from "./syscalls/shell";
+export type * from "./syscalls/net";
 export type * from "./syscalls/codemode";
 export type * from "./syscalls/packages";
 export type * from "./syscalls/repositories";

@@ -213,6 +213,7 @@ export type GsvAiNamespace = GsvClientNamespaces["ai"];
 export type GsvAppNamespace = GsvClientNamespaces["app"];
 export type GsvCodeModeNamespace = GsvClientNamespaces["codemode"];
 export type GsvFsNamespace = GsvClientNamespaces["fs"];
+export type GsvNetNamespace = GsvClientNamespaces["net"];
 export type GsvNotificationNamespace = GsvClientNamespaces["notification"];
 export type GsvPkgNamespace = GsvClientNamespaces["pkg"];
 export type GsvProcNamespace = GsvClientNamespaces["proc"];
@@ -241,6 +242,7 @@ const DEFAULT_REQUEST_TIMEOUTS_MS: Record<string, number> = {
   "fs.transfer.stat": LONG_RUNNING_REQUEST_TIMEOUT_MS,
   "fs.transfer.send": LONG_RUNNING_REQUEST_TIMEOUT_MS,
   "fs.transfer.receive": LONG_RUNNING_REQUEST_TIMEOUT_MS,
+  "net.fetch": LONG_RUNNING_REQUEST_TIMEOUT_MS,
   "ai.text.generate": AI_TEXT_GENERATION_REQUEST_TIMEOUT_MS,
   "ai.transcription.create": LONG_RUNNING_REQUEST_TIMEOUT_MS,
   "ai.image.read": LONG_RUNNING_REQUEST_TIMEOUT_MS,
@@ -266,6 +268,7 @@ const SYSCALL_NAMES = [
   "fs.transfer.send",
   "fs.transfer.receive",
   "shell.exec",
+  "net.fetch",
   "app.open",
   "app.attach",
   "app.list",

@@ -47,6 +47,7 @@ import {
 import { handleAccountCreate, handleAccountList } from "./agents";
 import { handleSysConfigGet, handleSysConfigSet } from "./sys/config";
 import { handleSysDeviceDelete, handleSysDeviceGet, handleSysDeviceList, handleSysDeviceUpdate } from "./sys/device";
+import { handleNetFetch } from "./net";
 import { handleSysBootstrap } from "./sys/bootstrap";
 import { handleSysSetupAssist } from "./sys/setup-assist";
 import {
@@ -332,7 +333,14 @@ async function dispatchNative(
             receiveDeviceBinaryStream: deps.receiveDeviceBinaryStream,
             sendDeviceBinaryFrame: deps.sendDeviceBinaryFrame,
           },
+          netFetchTransport: {
+            requestDevice: deps.requestDevice,
+          },
         });
+        break;
+
+      case "net.fetch":
+        data = await handleNetFetch(frame.args, ctx);
         break;
 
       case "app.open":
@@ -484,7 +492,9 @@ async function dispatchNative(
         data = await handleAiConfig(frame.args, ctx);
         break;
       case "ai.text.generate":
-        data = await handleAiTextGenerate(frame.args, ctx);
+        data = await handleAiTextGenerate(frame.args, ctx, {
+          requestDevice: deps.requestDevice,
+        });
         break;
       case "ai.transcription.create":
         data = await handleAiTranscriptionCreate(frame.args, ctx);

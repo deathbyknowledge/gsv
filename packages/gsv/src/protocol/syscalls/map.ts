@@ -19,6 +19,7 @@ import type {
   FsWriteResult,
 } from "./fs";
 import type { ShellExecArgs, ShellExecResult } from "./shell";
+import type { NetFetchArgs, NetFetchResult } from "./net";
 import type {
   AppAttachArgs,
   AppCloseArgs,
@@ -279,6 +280,8 @@ export type SyscallDomains = {
   "fs.transfer.receive": { args: FsTransferReceiveArgs; result: FsTransferReceiveResult };
 
   "shell.exec": { args: ShellExecArgs; result: ShellExecResult };
+
+  "net.fetch": { args: NetFetchArgs; result: NetFetchResult };
 
   "app.open": { args: AppOpenArgs; result: AppLaunchResult };
   "app.attach": { args: AppAttachArgs; result: AppLaunchResult };
