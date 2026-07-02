@@ -902,7 +902,8 @@ Runtime behavior:
 | `sys.connect` | `handleConnect` | First request on a WebSocket connection. Authenticates, assigns identity, returns capabilities as `syscalls`, returns signal list, registers driver devices, closes older same-client connections, and starts/reconciles the user init process. Setup mode rejects with `425` and `next: "sys.setup"`. |
 | `sys.setup.assist` | `handleSysSetupAssist` | Pre-connect setup helper. Uses app AI config to guide onboarding, redacts secrets from drafts, and only accepts whitelisted non-secret patches from model output. Rejected if already connected or initialized. |
 | `sys.setup` | `handleSysSetup` | Pre-connect setup-mode bootstrap. Creates first user, root password, groups/home, optional timezone, optional AI config, optional node token, home layout, and optional system bootstrap. Username, password, and timezone are validated. |
-| `sys.bootstrap` | `handleSysBootstrap` | Imports `root/gsv`, seeds builtin packages, mirrors stable/dev CLI assets, stores default CLI channel, and broadcasts `pkg.changed`. Explicit args win; otherwise `GSV_BOOTSTRAP_UPSTREAM` can override the default `deathbyknowledge/gsv#main`; it accepts `owner/repo`, a git URL, or either form with `#ref`. `GSV_BOOTSTRAP_REF` can set or override the env ref separately. Requires `RIPGIT` and storage. |
+| `sys.bootstrap` | `handleSysBootstrap` | Imports `root/gsv`, seeds builtin packages, refreshes hosted stable/dev CLI assets, stores default CLI channel, and broadcasts `pkg.changed`. Explicit args win; otherwise `GSV_BOOTSTRAP_UPSTREAM` can override the default `deathbyknowledge/gsv#main`; it accepts `owner/repo`, a git URL, or either form with `#ref`. `GSV_BOOTSTRAP_REF` can set or override the env ref separately. Requires `RIPGIT` and storage. |
+| `sys.cli.refresh` | `handleSysCliRefresh` | Refreshes hosted stable/dev CLI binaries, checksums, install scripts, and the default CLI channel in storage without re-running system bootstrap. If `defaultChannel` is omitted, the existing stored default is preserved, falling back to `dev` when missing. The Kernel also schedules this refresh once per server version after an authenticated user connection so old upgrade CLIs can still reseed hosted binaries. |
 | `sys.config.get` | `handleSysConfigGet` | Reads exact config key or visible prefix. Root sees all; non-root sees own `users/<uid>/` keys and non-sensitive `config/` keys. Sensitive names such as password, token, secret, and api key are hidden from non-root. |
 | `sys.config.set` | `handleSysConfigSet` | Writes a config value. Root can write any key; non-root can write only own user-overridable keys, currently under `users/<uid>/ai/`. Values are coerced with `String(value)`. |
 | `sys.device.list` | `handleSysDeviceList` | Lists devices accessible by owner uid or group ACL. Root sees all. Defaults to online devices only unless `includeOffline` is true. |
@@ -957,7 +958,12 @@ type SystemSyscalls = {
 
   "sys.bootstrap": {
     args: { remoteUrl?: string; repo?: string; ref?: string };
-    result: { repo: string; remoteUrl: string; ref: string; head: string | null; changed: boolean; cli: { defaultChannel: "stable" | "dev"; mirroredChannels: Array<"stable" | "dev">; assets: string[] }; packages: BootstrapPackageSummary[] };
+    result: { repo: string; remoteUrl: string; ref: string; head: string | null; changed: boolean; cli: { defaultChannel: "stable" | "dev"; mirroredChannels: Array<"stable" | "dev">; assets: string[]; refreshedAt: number }; packages: BootstrapPackageSummary[] };
+  };
+
+  "sys.cli.refresh": {
+    args: { defaultChannel?: "stable" | "dev" };
+    result: { defaultChannel: "stable" | "dev"; mirroredChannels: Array<"stable" | "dev">; assets: string[]; refreshedAt: number };
   };
 
   "sys.config.get": {

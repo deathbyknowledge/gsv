@@ -63,6 +63,7 @@ import { sendFrameToProcess } from "../shared/utils";
 import { handleSysSetup as handleKernelSetup } from "./sys/setup";
 import { buildAppRunnerName } from "../protocol/app-session";
 import { handleSysSetupAssist } from "./sys/setup-assist";
+import { refreshCliDownloads } from "./sys/cli";
 import {
   completeOAuthCallback as completeOAuthCallbackFlow,
   type OAuthCallbackInput,
@@ -107,6 +108,10 @@ import { runKernelSqlMigrations } from "./schema/migrations";
 
 const SERVER_VERSION = "0.3.1";
 const KERNEL_BINARY_DEVICE_ID = "__gsv_kernel__";
+const CLI_DOWNLOADS_REFRESHED_VERSION_KEY = "config/downloads/cli/refreshed_for_version";
+const CLI_DOWNLOADS_REFRESH_ATTEMPT_KEY = "config/downloads/cli/refresh_attempt_at";
+const CLI_DOWNLOADS_REFRESHED_AT_KEY = "config/downloads/cli/refreshed_at";
+const CLI_DOWNLOADS_REFRESH_RETRY_MS = 15 * 60 * 1000;
 
 type ConnectionState = {
   step: "pending" | "connected";
@@ -211,6 +216,7 @@ export class Kernel extends Host<Env> {
   private readonly binaryRoutes = new Map<number, BinaryRoute>();
   private readonly binaryRoutesByRequest = new Map<string, Set<number>>();
   private readonly pendingBinaryStreams = new Map<number, PendingBinaryStream>();
+  private cliDownloadsRefresh: Promise<void> | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -2156,9 +2162,48 @@ export class Kernel extends Host<Env> {
       const freshIdentity = outcome.identity.process;
       await this.ensureUserDefaultExecutor(ctx, freshIdentity);
       this.reconcileOwnedIdentities(freshIdentity.uid);
+      this.scheduleCliDownloadsRefreshForVersion();
     }
 
     this.sendOk(connection, frame.id, outcome.result);
+  }
+
+  private scheduleCliDownloadsRefreshForVersion(): void {
+    if (!this.env.STORAGE) {
+      return;
+    }
+    if (this.config.get(CLI_DOWNLOADS_REFRESHED_VERSION_KEY) === SERVER_VERSION) {
+      return;
+    }
+    if (this.cliDownloadsRefresh) {
+      return;
+    }
+
+    const lastAttemptAt = Number(this.config.get(CLI_DOWNLOADS_REFRESH_ATTEMPT_KEY) ?? "0");
+    if (Number.isFinite(lastAttemptAt) && Date.now() - lastAttemptAt < CLI_DOWNLOADS_REFRESH_RETRY_MS) {
+      return;
+    }
+
+    this.config.set(CLI_DOWNLOADS_REFRESH_ATTEMPT_KEY, String(Date.now()));
+    const refresh = this.refreshCliDownloadsForVersion().finally(() => {
+      this.cliDownloadsRefresh = null;
+    });
+    this.cliDownloadsRefresh = refresh;
+    this.ctx.waitUntil(refresh);
+  }
+
+  private async refreshCliDownloadsForVersion(): Promise<void> {
+    try {
+      const result = await refreshCliDownloads(this.env.STORAGE);
+      this.config.set(CLI_DOWNLOADS_REFRESHED_VERSION_KEY, SERVER_VERSION);
+      this.config.set(CLI_DOWNLOADS_REFRESHED_AT_KEY, String(result.refreshedAt));
+      console.info(
+        `[Kernel] refreshed hosted CLI downloads for ${SERVER_VERSION} channels=${result.mirroredChannels.join(",")} default=${result.defaultChannel}`,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[Kernel] hosted CLI refresh for ${SERVER_VERSION} failed: ${message}`);
+    }
   }
 
   private async handleSysSetup(

@@ -227,6 +227,7 @@ describe("CapabilityStore", () => {
       "shell.*",
       "signal.*",
       "sys.bootstrap",
+      "sys.cli.refresh",
       "sys.config.get",
       "sys.config.set",
       "sys.device.delete",

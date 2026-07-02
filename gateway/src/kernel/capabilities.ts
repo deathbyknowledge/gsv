@@ -61,6 +61,7 @@ const DEFAULT_CAPABILITIES: [number, string[]][] = [
     "sys.config.get",
     "sys.config.set",
     "sys.bootstrap",
+    "sys.cli.refresh",
     "sys.device.get",
     "sys.device.list",
     "sys.device.update",

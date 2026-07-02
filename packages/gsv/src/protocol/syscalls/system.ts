@@ -251,6 +251,19 @@ export type SysBootstrapArgs = {
 
 export type SysCliReleaseChannel = "stable" | "dev";
 
+export type SysCliDownloadsResult = {
+  defaultChannel: SysCliReleaseChannel;
+  mirroredChannels: SysCliReleaseChannel[];
+  assets: string[];
+  refreshedAt: number;
+};
+
+export type SysCliRefreshArgs = {
+  defaultChannel?: SysCliReleaseChannel;
+};
+
+export type SysCliRefreshResult = SysCliDownloadsResult;
+
 export type SysBootstrapResult = {
   repo: string;
   remoteUrl: string;
@@ -264,11 +277,7 @@ export type SysBootstrapResult = {
     head: string | null;
     changed: boolean;
   };
-  cli: {
-    defaultChannel: SysCliReleaseChannel;
-    mirroredChannels: SysCliReleaseChannel[];
-    assets: string[];
-  };
+  cli: SysCliDownloadsResult;
   packages: Array<{
     packageId: string;
     name: string;
