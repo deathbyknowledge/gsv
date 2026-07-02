@@ -679,11 +679,12 @@ describe("handleAiConfig", () => {
     expect(result.apiKey).toBe("profile-key");
   });
 
-  it("resolves fallback model presets from selected profiles", async () => {
+  it("resolves fallback model presets from account fallback config", async () => {
     const result = await handleAiConfig({}, makeAiConfigContext({
       "config/ai/provider": "workers-ai",
       "config/ai/model": "@cf/default/model",
       "users/2000/ai/model_profile": "fast-stack",
+      "users/2000/ai/fallback_model_profile": "safe-stack",
       "users/1000/ai/model_profiles": JSON.stringify({
         profiles: [
           {
@@ -694,7 +695,6 @@ describe("handleAiConfig", () => {
               "config/ai/model": "zai-glm-4.7",
               "config/ai/base_url": "http://127.0.0.1:8080/v1",
               "config/ai/provider_style": "openai-chat-completions",
-              "config/ai/fallback_model_profile": "safe-stack",
               "config/ai/api_key": "redacted",
             },
             createdAt: 1,

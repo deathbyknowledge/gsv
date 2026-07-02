@@ -7,6 +7,7 @@ import {
 import {
   buildUserAiOverrideKey,
   AGENT_MODEL_FIELDS,
+  MODEL_PROFILE_FIELDS,
   TOOL_MODEL_GROUPS,
   createModelProfile,
   effectiveAiValuesForViewer,
@@ -47,6 +48,7 @@ describe("console settings domain", () => {
     const profiles = createModelProfile([], "Deep Research", {
       "config/ai/provider": "openai",
       "config/ai/model": "gpt-5",
+      "config/ai/fallback_model_profile": "backup-stack",
       "config/ai/api_key": "sk-secret",
       "config/ai/reasoning": "high",
       "config/ai/max_tokens": "8192",
@@ -65,6 +67,7 @@ describe("console settings domain", () => {
         "config/ai/max_context_bytes": "65536",
       },
     });
+    expect(profiles[0].values["config/ai/fallback_model_profile"]).toBeUndefined();
 
     const serialized = JSON.parse(serializeModelProfiles(profiles)) as {
       profiles: Array<{ values: Record<string, string> }>;
@@ -76,6 +79,11 @@ describe("console settings domain", () => {
       "config/ai/max_tokens": "8192",
       "config/ai/max_context_bytes": "65536",
     });
+  });
+
+  it("keeps fallback selection out of model preset fields", () => {
+    expect(AGENT_MODEL_FIELDS.some((field) => field.key === "config/ai/fallback_model_profile")).toBe(true);
+    expect(MODEL_PROFILE_FIELDS.some((field) => field.key === "config/ai/fallback_model_profile")).toBe(false);
   });
 
   it("reads viewer model profiles and hydrates separate credential config", () => {

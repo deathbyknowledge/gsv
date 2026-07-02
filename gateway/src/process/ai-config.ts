@@ -45,6 +45,9 @@ export const PROCESS_AI_CONFIG_KEYS = [
 ] as const;
 
 const PROCESS_AI_CONFIG_KEY_SET = new Set<string>(PROCESS_AI_CONFIG_KEYS);
+const PROCESS_AI_MODEL_PROFILE_EXCLUDED_KEYS = new Set<string>([
+  "config/ai/fallback_model_profile",
+]);
 
 export const PROCESS_AI_CONFIG_SECRET_KEYS = new Set<string>(
   PROCESS_AI_CONFIG_KEYS.filter((key) => key === "config/ai/api_key" || key.endsWith("/api_key")),
@@ -287,11 +290,19 @@ function normalizeProcessAiModelProfile(raw: unknown): ProcessAiModelProfile | n
     id,
     name,
     values: record.values && typeof record.values === "object" && !Array.isArray(record.values)
-      ? normalizeProcessAiConfigValues(record.values as Record<string, unknown>)
+      ? normalizeProcessAiModelProfileValues(record.values as Record<string, unknown>)
       : {},
     createdAt: normalizeProfileTimestamp(record.createdAt),
     updatedAt: normalizeProfileTimestamp(record.updatedAt),
   };
+}
+
+function normalizeProcessAiModelProfileValues(raw: Record<string, unknown>): Record<string, string> {
+  const values = normalizeProcessAiConfigValues(raw);
+  for (const key of PROCESS_AI_MODEL_PROFILE_EXCLUDED_KEYS) {
+    delete values[key];
+  }
+  return values;
 }
 
 function hydrateProcessAiModelProfileSecrets(

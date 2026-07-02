@@ -38,6 +38,7 @@ export type ConsoleModelProfile = {
 const MODEL_PROFILES_VERSION = 1;
 const MODEL_PROFILE_KEY = "model_profiles";
 const MAX_PROFILE_NAME_LENGTH = 80;
+const MODEL_FALLBACK_PROFILE_KEY = "config/ai/fallback_model_profile";
 
 export const AGENT_MODEL_FIELDS: readonly ConsoleSettingField[] = [
   {
@@ -135,7 +136,8 @@ export const AGENT_MODEL_FIELDS: readonly ConsoleSettingField[] = [
   },
 ];
 
-export const MODEL_PROFILE_FIELDS: readonly ConsoleSettingField[] = AGENT_MODEL_FIELDS;
+export const MODEL_PROFILE_FIELDS: readonly ConsoleSettingField[] = AGENT_MODEL_FIELDS
+  .filter((field) => field.key !== MODEL_FALLBACK_PROFILE_KEY);
 export const MODEL_PROFILE_SECRET_FIELDS: readonly ConsoleSettingField[] = MODEL_PROFILE_FIELDS
   .filter((field) => isSensitiveSettingKey(field.key));
 
