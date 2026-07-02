@@ -16,6 +16,7 @@ type RoutedFetchInit = RequestInit & { timeoutMs?: number };
 
 const NET_FETCH_CALL = "net.fetch";
 const DEFAULT_NET_FETCH_TIMEOUT_MS = 60_000;
+export const MAX_NET_FETCH_RESPONSE_BYTES = 32 * 1024 * 1024;
 
 export async function handleNetFetch(
   args: NetFetchArgs,
@@ -132,7 +133,7 @@ export async function requestToNetFetchArgs(request: Request): Promise<NetFetchA
 }
 
 async function netFetchResultFromResponse(response: Response): Promise<NetFetchResult> {
-  const bodyBytes = new Uint8Array(await response.arrayBuffer());
+  const bodyBytes = await readNetFetchResponseBody(response);
   const headers: Record<string, string> = {};
   response.headers.forEach((value, key) => {
     headers[key] = value;
@@ -148,6 +149,57 @@ async function netFetchResultFromResponse(response: Response): Promise<NetFetchR
     ...(bodyText !== null ? { bodyText } : {}),
     bodyBytes: bodyBytes.byteLength,
   };
+}
+
+export async function readNetFetchResponseBody(
+  response: Response,
+  maxBytes = MAX_NET_FETCH_RESPONSE_BYTES,
+): Promise<Uint8Array> {
+  const contentLength = parseContentLength(response.headers.get("content-length"));
+  if (contentLength !== null && contentLength > maxBytes) {
+    throw new Error(formatNetFetchResponseSizeError(contentLength, maxBytes));
+  }
+  if (!response.body) {
+    return new Uint8Array();
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      if (!value || value.byteLength === 0) {
+        continue;
+      }
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel(formatNetFetchResponseSizeError(total, maxBytes)).catch(() => {});
+        throw new Error(formatNetFetchResponseSizeError(total, maxBytes));
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  if (chunks.length === 0) {
+    return new Uint8Array();
+  }
+  if (chunks.length === 1) {
+    return chunks[0];
+  }
+
+  const body = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body;
 }
 
 async function withAbortSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
@@ -230,6 +282,18 @@ export function normalizeNetFetchTimeoutMs(value: unknown): number {
 
 function isNullBodyStatus(status: number): boolean {
   return status === 204 || status === 205 || status === 304;
+}
+
+function parseContentLength(value: string | null): number | null {
+  if (!value) {
+    return null;
+  }
+  const parsed = Number(value.trim());
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function formatNetFetchResponseSizeError(actualBytes: number, maxBytes: number): string {
+  return `net.fetch response body exceeds limit (${actualBytes} bytes, max ${maxBytes})`;
 }
 
 function decodeUtf8(bytes: Uint8Array): string | null {
