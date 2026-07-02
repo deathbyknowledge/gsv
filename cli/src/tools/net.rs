@@ -2,7 +2,8 @@ use crate::protocol::ToolDefinition;
 use crate::tools::Tool;
 use async_trait::async_trait;
 use base64::Engine;
-use reqwest::Method;
+use futures_util::StreamExt;
+use reqwest::{Method, StatusCode};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -74,6 +75,7 @@ impl Tool for NetFetchTool {
             .unwrap_or("GET")
             .parse::<Method>()
             .map_err(|e| format!("Invalid method: {}", e))?;
+        let should_read_body = method != Method::HEAD;
         let timeout_ms = args.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS).max(1);
         let client = reqwest::Client::builder()
             .timeout(Duration::from_millis(timeout_ms))
@@ -107,17 +109,8 @@ impl Tool for NetFetchTool {
             }
         }
 
-        let body = response
-            .bytes()
-            .await
-            .map_err(|e| format!("Failed to read response body: {}", e))?;
-        if body.len() > MAX_RESPONSE_BYTES {
-            return Err(format!(
-                "Response body exceeds limit ({} bytes, max {})",
-                body.len(),
-                MAX_RESPONSE_BYTES
-            ));
-        }
+        let body =
+            read_limited_response_body(response, should_read_body, MAX_RESPONSE_BYTES).await?;
         let body_base64 = base64::engine::general_purpose::STANDARD.encode(&body);
         let body_text = std::str::from_utf8(&body).ok().map(str::to_string);
 
@@ -131,5 +124,135 @@ impl Tool for NetFetchTool {
             "bodyText": body_text,
             "bodyBytes": body.len(),
         }))
+    }
+}
+
+async fn read_limited_response_body(
+    response: reqwest::Response,
+    should_read_body: bool,
+    max_bytes: usize,
+) -> Result<Vec<u8>, String> {
+    if !should_read_body || is_null_body_status(response.status()) {
+        return Ok(Vec::new());
+    }
+    if let Some(content_length) = response.content_length() {
+        if content_length > max_bytes as u64 {
+            return Err(format_response_size_error(content_length, max_bytes));
+        }
+    }
+
+    let mut body = Vec::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("Failed to read response body: {}", e))?;
+        if chunk.is_empty() {
+            continue;
+        }
+        let next_len = body
+            .len()
+            .checked_add(chunk.len())
+            .ok_or_else(|| format_response_size_error(u64::MAX, max_bytes))?;
+        if next_len > max_bytes {
+            return Err(format_response_size_error(next_len as u64, max_bytes));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
+fn is_null_body_status(status: StatusCode) -> bool {
+    status == StatusCode::NO_CONTENT
+        || status == StatusCode::RESET_CONTENT
+        || status == StatusCode::NOT_MODIFIED
+}
+
+fn format_response_size_error(actual_bytes: u64, max_bytes: usize) -> String {
+    format!(
+        "Response body exceeds limit ({} bytes, max {})",
+        actual_bytes, max_bytes
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
+
+    #[tokio::test]
+    async fn allows_head_response_with_large_content_length() {
+        let (url, server) = serve_once(
+            format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                MAX_RESPONSE_BYTES + 1
+            )
+            .into_bytes(),
+        );
+
+        let result = NetFetchTool::new()
+            .execute(json!({
+                "url": url,
+                "method": "HEAD",
+            }))
+            .await
+            .unwrap();
+        server.join().unwrap();
+
+        assert_eq!(result.get("status").and_then(Value::as_u64), Some(200));
+        assert_eq!(result.get("bodyBytes").and_then(Value::as_u64), Some(0));
+        assert_eq!(result.get("bodyBase64").and_then(Value::as_str), Some(""));
+    }
+
+    #[tokio::test]
+    async fn rejects_declared_oversized_response_before_reading_body() {
+        let (url, server) = serve_once(
+            format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                MAX_RESPONSE_BYTES + 1
+            )
+            .into_bytes(),
+        );
+
+        let error = NetFetchTool::new()
+            .execute(json!({ "url": url }))
+            .await
+            .unwrap_err();
+        server.join().unwrap();
+
+        assert_eq!(
+            error,
+            format!(
+                "Response body exceeds limit ({} bytes, max {})",
+                MAX_RESPONSE_BYTES + 1,
+                MAX_RESPONSE_BYTES
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_streamed_response_that_exceeds_limit() {
+        let (url, server) =
+            serve_once(b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nabcd".to_vec());
+        let response = reqwest::Client::new().get(url).send().await.unwrap();
+
+        let error = read_limited_response_body(response, true, 3)
+            .await
+            .unwrap_err();
+        server.join().unwrap();
+
+        assert_eq!(error, "Response body exceeds limit (4 bytes, max 3)");
+    }
+
+    fn serve_once(response: Vec<u8>) -> (String, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 4096];
+            let _ = stream.read(&mut request);
+            stream.write_all(&response).unwrap();
+        });
+        (format!("http://{}", addr), handle)
     }
 }

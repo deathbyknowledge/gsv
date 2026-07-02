@@ -36,7 +36,7 @@ whoami = "1"
 # TLS backends - use native-tls by default (respects system certs)
 # CI builds for Linux use rustls feature to avoid OpenSSL dependency
 tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "multipart"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "stream"] }
 sha2 = "0.10"
 base64 = "0.22"
 blake3 = "1.5"
