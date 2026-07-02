@@ -123,8 +123,8 @@ export function shouldUseCustomProvider(input: {
 export function streamWithCustomProvider(
   request: CustomProviderGenerationRequest,
 ): AssistantMessageEventStream {
-  if (shouldUseRoutedFetch(request)) {
-    return streamWithRoutedFetch(request);
+  if (shouldUseFetchImplementation(request)) {
+    return streamWithCustomFetch(request);
   }
   const { models, model } = buildCustomProviderModels(request);
   return models.streamSimple(model, request.context, buildCustomProviderOptions(request));
@@ -133,8 +133,8 @@ export function streamWithCustomProvider(
 export function completeWithCustomProvider(
   request: CustomProviderGenerationRequest,
 ): Promise<AssistantMessage> {
-  if (shouldUseRoutedFetch(request)) {
-    return streamWithRoutedFetch(request).result();
+  if (shouldUseFetchImplementation(request)) {
+    return streamWithCustomFetch(request).result();
   }
   const { models, model } = buildCustomProviderModels(request);
   return models.completeSimple(model, request.context, buildCustomProviderOptions(request));
@@ -144,20 +144,22 @@ function shouldUseRoutedFetch(request: CustomProviderGenerationRequest): boolean
   return Boolean(request.fetch && request.fetch !== fetch);
 }
 
-function streamWithRoutedFetch(
+function shouldUseFetchImplementation(request: CustomProviderGenerationRequest): boolean {
+  const provider = normalizeProviderId(request.provider);
+  const style = resolveCustomProviderStyle(provider, request.providerStyle);
+  return style === "openai-chat-completions" || style === "openai-responses" || shouldUseRoutedFetch(request);
+}
+
+function streamWithCustomFetch(
   request: CustomProviderGenerationRequest,
 ): AssistantMessageEventStream {
-  const fetchImpl = request.fetch;
-  if (!fetchImpl) {
-    throw new Error("Custom provider routed fetch is not available");
-  }
-
+  const fetchImpl = request.fetch ?? fetch;
   const provider = normalizeProviderId(request.provider);
   const style = resolveCustomProviderStyle(provider, request.providerStyle);
   const baseUrl = resolveCustomBaseUrl(provider, style, request.baseUrl);
   const model = customModelForRequest(request, provider, style, baseUrl);
   if (style === "anthropic-messages") {
-    throw new Error("Anthropic-compatible custom providers do not support device-routed fetch yet");
+    throw new Error("Anthropic-compatible custom providers do not support fetch-based custom transport yet");
   }
   return style === "openai-responses"
     ? streamOpenAIResponsesWithFetch(fetchImpl, model as Model<"openai-responses">, request)
@@ -580,20 +582,85 @@ async function consumeOpenAICompletionsEvents(
 }
 
 async function* parseSseJson(response: Response): AsyncIterable<unknown> {
-  const body = await response.text();
-  const events = body.split(/\r?\n\r?\n/);
-  for (const event of events) {
-    const data = event
-      .split(/\r?\n/)
-      .filter((line) => line.startsWith("data:"))
-      .map((line) => line.slice(5).trimStart())
-      .join("\n")
-      .trim();
-    if (!data || data === "[DONE]") {
-      continue;
-    }
-    yield JSON.parse(data);
+  if (!response.body) {
+    yield* parseSseJsonText(await response.text());
+    return;
   }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      let boundary = findSseEventBoundary(buffer);
+      while (boundary) {
+        const event = buffer.slice(0, boundary.index);
+        buffer = buffer.slice(boundary.index + boundary.length);
+        const parsed = parseSseJsonEvent(event);
+        if (parsed !== undefined) {
+          yield parsed;
+        }
+        boundary = findSseEventBoundary(buffer);
+      }
+    }
+    buffer += decoder.decode();
+    if (buffer.trim().length > 0) {
+      const parsed = parseSseJsonEvent(buffer);
+      if (parsed !== undefined) {
+        yield parsed;
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+function* parseSseJsonText(body: string): Iterable<unknown> {
+  let buffer = body;
+  let boundary = findSseEventBoundary(buffer);
+  while (boundary) {
+    const event = buffer.slice(0, boundary.index);
+    buffer = buffer.slice(boundary.index + boundary.length);
+    const parsed = parseSseJsonEvent(event);
+    if (parsed !== undefined) {
+      yield parsed;
+    }
+    boundary = findSseEventBoundary(buffer);
+  }
+  if (buffer.trim().length > 0) {
+    const parsed = parseSseJsonEvent(buffer);
+    if (parsed !== undefined) {
+      yield parsed;
+    }
+  }
+}
+
+function findSseEventBoundary(buffer: string): { index: number; length: number } | null {
+  const candidates = [
+    { index: buffer.indexOf("\r\n\r\n"), length: 4 },
+    { index: buffer.indexOf("\n\n"), length: 2 },
+    { index: buffer.indexOf("\r\r"), length: 2 },
+  ].filter((candidate) => candidate.index >= 0);
+  candidates.sort((left, right) => left.index - right.index || right.length - left.length);
+  return candidates[0] ?? null;
+}
+
+function parseSseJsonEvent(event: string): unknown | undefined {
+  const data = event
+    .split(/\r\n|\r|\n/)
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trimStart())
+    .join("\n")
+    .trim();
+  if (!data || data === "[DONE]") {
+    return undefined;
+  }
+  return JSON.parse(data);
 }
 
 function pushStreamError(

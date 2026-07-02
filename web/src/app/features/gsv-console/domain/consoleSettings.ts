@@ -81,7 +81,7 @@ export const AGENT_MODEL_FIELDS: readonly ConsoleSettingField[] = [
   {
     key: "config/ai/transport_target",
     label: "Transport target",
-    description: "Where custom provider HTTP exits. Use gsv for the Worker or a connected target id.",
+    description: "Where custom provider HTTP exits: the Worker or a net.fetch-capable machine.",
     kind: "text",
     placeholder: "gsv",
     size: "large",
