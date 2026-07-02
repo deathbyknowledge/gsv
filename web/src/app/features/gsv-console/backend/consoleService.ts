@@ -32,6 +32,9 @@ export const DEFAULT_CONSOLE_ADAPTERS = ["whatsapp", "discord", "telegram"] as c
 const TEXT_MODEL_VALIDATION_KEYS = [
   "config/ai/provider",
   "config/ai/model",
+  "config/ai/base_url",
+  "config/ai/provider_style",
+  "config/ai/transport_target",
   "config/ai/api_key",
   "config/ai/reasoning",
 ] as const;

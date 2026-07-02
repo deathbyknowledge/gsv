@@ -1410,6 +1410,7 @@ describe("GsvFs Linux-like runtime views", () => {
 
     await expect(fs.readdir("/proc/task-alpha/ai")).resolves.toEqual([
       "api_key",
+      "base_url",
       "context_window_tokens",
       "effective.json",
       "generation",
@@ -1421,9 +1422,11 @@ describe("GsvFs Linux-like runtime views", () => {
       "profile",
       "profiles",
       "provider",
+      "provider_style",
       "reasoning",
       "speech",
       "transcription",
+      "transport_target",
     ]);
     await expect(fs.readdir("/proc/task-alpha/ai/image/read")).resolves.toEqual([
       "api_key",

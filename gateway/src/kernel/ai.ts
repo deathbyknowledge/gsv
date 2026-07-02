@@ -64,6 +64,7 @@ import {
   createGenerationService,
   extractGeneratedText,
 } from "../inference/service";
+import { createRoutedFetch, normalizeTarget, type NetFetchDeviceTransport } from "./net";
 import {
   DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
   DEFAULT_MAX_AUDIO_TRANSCRIPTION_BYTES,
@@ -198,6 +199,24 @@ export async function handleAiConfig(
     config.get("config/ai/model") ??
     "@cf/nvidia/nemotron-3-120b-a12b";
 
+  const baseUrl =
+    resolveAiProcessConfigValue(processOverrides, "base_url") ??
+    resolveAiConfigValue(config, accountConfigUids, "base_url") ??
+    config.get("config/ai/base_url") ??
+    "";
+
+  const providerStyle =
+    resolveAiProcessConfigValue(processOverrides, "provider_style") ??
+    resolveAiConfigValue(config, accountConfigUids, "provider_style") ??
+    config.get("config/ai/provider_style") ??
+    "auto";
+
+  const transportTarget =
+    resolveAiProcessConfigValue(processOverrides, "transport_target") ??
+    resolveAiConfigValue(config, accountConfigUids, "transport_target") ??
+    config.get("config/ai/transport_target") ??
+    "gsv";
+
   const apiKey =
     resolveAiProcessConfigValue(processOverrides, "api_key") ??
     resolveAiConfigValue(config, accountConfigUids, "api_key") ??
@@ -276,6 +295,9 @@ export async function handleAiConfig(
     provider,
     model,
     apiKey,
+    ...(baseUrl.trim().length > 0 ? { baseUrl: baseUrl.trim() } : {}),
+    providerStyle: providerStyle.trim().toLowerCase() || "auto",
+    transportTarget: normalizeTarget(transportTarget),
     reasoning,
     maxTokens,
     contextWindowTokens,
@@ -297,6 +319,7 @@ export async function handleAiConfig(
 export async function handleAiTextGenerate(
   args: AiTextGenerateArgs,
   ctx: KernelContext,
+  transport?: NetFetchDeviceTransport,
 ): Promise<AiTextGenerateResult> {
   const input = args && typeof args === "object" ? args : ({} as AiTextGenerateArgs);
   const target = normalizeOptionalString(input.target) ?? "gsv";
@@ -308,7 +331,9 @@ export async function handleAiTextGenerate(
   const config = await resolveAiTextGenerationConfig(input.config, ctx);
   const context = normalizeAiTextGenerationContext(input);
   const options = normalizeAiTextGenerateOptions(input.options);
-  const response = await createGenerationService().generate({
+  const response = await createGenerationService({
+    fetch: createRoutedFetch(ctx, transport, config.transportTarget),
+  }).generate({
     config,
     context,
     ...(options ? { options } : {}),

@@ -9,6 +9,9 @@ export const PROCESS_AI_CONFIG_KEY_PREFIX = "config/ai/";
 export const PROCESS_AI_CONFIG_KEYS = [
   "config/ai/provider",
   "config/ai/model",
+  "config/ai/base_url",
+  "config/ai/provider_style",
+  "config/ai/transport_target",
   "config/ai/api_key",
   "config/ai/reasoning",
   "config/ai/max_tokens",

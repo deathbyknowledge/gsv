@@ -64,6 +64,9 @@ export type AiConfigResult = {
   provider: string;
   model: string;
   apiKey: string;
+  baseUrl?: string;
+  providerStyle?: string;
+  transportTarget?: string;
   reasoning?: string;
   maxTokens: number;
   contextWindowTokens: number | null;

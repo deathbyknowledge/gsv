@@ -15,6 +15,11 @@ import {
   errorMessageFromUnknown,
   formatProviderErrorMessage,
 } from "./errors";
+import {
+  completeWithCustomProvider,
+  shouldUseCustomProvider,
+  streamWithCustomProvider,
+} from "./custom-provider";
 
 const GENERATION_SERVICE_MARKER = "__gsvGenerationService";
 
@@ -38,17 +43,26 @@ type GenerationService = {
   generateText(request: GenerateRequest): Promise<string>;
 };
 
+type GenerationServiceOptions = {
+  fetch?: typeof fetch;
+};
+
 type ResolvedGenerationOptions = {
   modelProvider: string;
   modelName: string;
   apiKey: string;
+  baseUrl?: string;
+  providerStyle?: string;
+  fetch?: typeof fetch;
   reasoning?: ThinkingLevel;
   maxTokens: number;
 };
 
 const DEFAULT_GENERATION_TIMEOUT_MS = 180_000;
 
-export function createGenerationService(): GenerationService {
+export function createGenerationService(
+  serviceOptions: GenerationServiceOptions = {},
+): GenerationService {
   const stream = (request: GenerateRequest): AssistantMessageEventStream => {
     const options = resolveGenerationOptions(request);
     const generationTimeoutMs = resolveGenerationTimeoutMs(request.config, request.options);
@@ -61,6 +75,38 @@ export function createGenerationService(): GenerationService {
         sessionAffinityKey: request.sessionAffinityKey,
         timeoutMs: generationTimeoutMs,
       });
+    }
+    if (shouldUseCustomProvider({
+      provider: options.modelProvider,
+      baseUrl: options.baseUrl,
+      providerStyle: options.providerStyle,
+    })) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => {
+        controller.abort(new Error(generationTimeoutMessage(generationTimeoutMs)));
+      }, generationTimeoutMs);
+      const result = streamWithCustomProvider({
+        provider: options.modelProvider,
+        model: options.modelName,
+        apiKey: options.apiKey,
+        baseUrl: options.baseUrl,
+        providerStyle: options.providerStyle,
+        fetch: options.fetch ?? serviceOptions.fetch,
+        contextWindowTokens: request.config.contextWindowTokens,
+        maxTokens: options.maxTokens,
+        context: request.context,
+        options: {
+          reasoning: options.reasoning,
+          maxTokens: options.maxTokens,
+          signal: controller.signal,
+          timeoutMs: generationTimeoutMs,
+        },
+      });
+      void result.result().then(
+        () => clearTimeout(timeout),
+        () => clearTimeout(timeout),
+      );
+      return result;
     }
 
     const model = resolvePiAiModel(options.modelProvider, options.modelName);
@@ -97,6 +143,41 @@ export function createGenerationService(): GenerationService {
         sessionAffinityKey: request.sessionAffinityKey,
         timeoutMs: generationTimeoutMs,
       });
+    }
+    if (shouldUseCustomProvider({
+      provider: options.modelProvider,
+      baseUrl: options.baseUrl,
+      providerStyle: options.providerStyle,
+    })) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => {
+        controller.abort(new Error(generationTimeoutMessage(generationTimeoutMs)));
+      }, generationTimeoutMs);
+      try {
+        return await withTimeout(
+          completeWithCustomProvider({
+            provider: options.modelProvider,
+            model: options.modelName,
+            apiKey: options.apiKey,
+            baseUrl: options.baseUrl,
+            providerStyle: options.providerStyle,
+            fetch: options.fetch ?? serviceOptions.fetch,
+            contextWindowTokens: request.config.contextWindowTokens,
+            maxTokens: options.maxTokens,
+            context: request.context,
+            options: {
+              reasoning: options.reasoning,
+              maxTokens: options.maxTokens,
+              signal: controller.signal,
+              timeoutMs: generationTimeoutMs,
+            },
+          }),
+          generationTimeoutMs,
+          generationTimeoutMessage(generationTimeoutMs),
+        );
+      } finally {
+        clearTimeout(timeout);
+      }
     }
 
     const model = resolvePiAiModel(options.modelProvider, options.modelName);
@@ -213,6 +294,9 @@ export function resolveGenerationOptions(
     modelProvider: config.provider,
     modelName: config.model,
     apiKey: config.apiKey,
+    baseUrl: config.baseUrl,
+    providerStyle: config.providerStyle,
+    fetch: undefined,
     reasoning: resolveGenerationReasoning(config, request.options),
     maxTokens: resolveGenerationMaxTokens(config, request.options),
   };

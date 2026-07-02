@@ -43,6 +43,12 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   "config/ai/provider": "workers-ai",
   // The model identifier for the LLM provider
   "config/ai/model": "@cf/nvidia/nemotron-3-120b-a12b",
+  // Optional custom provider base URL. Leave empty to use the built-in provider endpoint.
+  "config/ai/base_url": "",
+  // Optional custom provider API style: auto, openai-chat-completions, openai-responses, or anthropic-messages.
+  "config/ai/provider_style": "auto",
+  // Where custom provider HTTP requests exit: gsv/worker or a connected device id.
+  "config/ai/transport_target": "gsv",
   // API key for the LLM provider. Empty is valid for local providers such as Workers AI.
   "config/ai/api_key": "",
   // Reasoning effort/mode hint passed to the model (off, minimal, low, medium, high, xhigh).
