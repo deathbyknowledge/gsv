@@ -2,7 +2,6 @@ import type {
   SysCliDownloadsResult,
   SysUpdateArgs,
   SysUpdateResult,
-  SysUpdateTarget,
 } from "@humansandmachines/gsv/protocol";
 import {
   CLI_BINARY_ASSETS,
@@ -25,8 +24,6 @@ export type CliDownloadsRefreshOptions = {
   limit?: CliRefreshLimit;
 };
 
-const ALL_UPDATE_TARGETS: readonly SysUpdateTarget[] = ["artifacts.cli"];
-
 export async function handleSysUpdate(
   args: SysUpdateArgs | undefined,
   ctx: KernelContext,
@@ -35,23 +32,16 @@ export async function handleSysUpdate(
     throw new Error("STORAGE binding is required for system update");
   }
 
-  const targets = parseUpdateTargets(args?.targets);
-  const defaultChannel = parseRequestedDefaultChannel(args?.options?.["artifacts.cli"]?.defaultChannel);
+  const defaultChannel = parseRequestedChannel(args?.channel);
   const startedAt = Date.now();
   try {
-    const updates: SysUpdateResult["updates"] = [];
-    if (targets.includes("artifacts.cli")) {
-      updates.push({
-        target: "artifacts.cli",
-        cli: await refreshCliDownloads(ctx.env.STORAGE, { defaultChannel }),
-      });
-    }
+    const cli = await refreshCliDownloads(ctx.env.STORAGE, { defaultChannel });
     console.info(
-      `[sys.update] updated targets=${targets.join(",")} in ${Date.now() - startedAt}ms`,
+      `[sys.update] updated hosted CLI downloads in ${Date.now() - startedAt}ms`,
     );
     return {
       updatedAt: Date.now(),
-      updates,
+      cli,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -101,42 +91,15 @@ async function defaultLimit<T>(run: () => T | Promise<T>): Promise<T> {
   return await run();
 }
 
-function parseRequestedDefaultChannel(value: unknown): CliReleaseChannel | undefined {
+function parseRequestedChannel(value: unknown): CliReleaseChannel | undefined {
   if (value === undefined) {
     return undefined;
   }
   const channel = parseCliReleaseChannel(value);
   if (!channel) {
-    throw new Error("sys.update artifacts.cli defaultChannel must be stable or dev");
+    throw new Error("sys.update channel must be stable or dev");
   }
   return channel;
-}
-
-function parseUpdateTargets(value: unknown): SysUpdateTarget[] {
-  if (value === undefined) {
-    return [...ALL_UPDATE_TARGETS];
-  }
-  if (!Array.isArray(value)) {
-    throw new Error("sys.update targets must be an array");
-  }
-  if (value.length === 0) {
-    return [...ALL_UPDATE_TARGETS];
-  }
-
-  const targets: SysUpdateTarget[] = [];
-  for (const rawTarget of value) {
-    if (!isUpdateTarget(rawTarget)) {
-      throw new Error(`Unsupported sys.update target: ${String(rawTarget)}`);
-    }
-    if (!targets.includes(rawTarget)) {
-      targets.push(rawTarget);
-    }
-  }
-  return targets;
-}
-
-function isUpdateTarget(value: unknown): value is SysUpdateTarget {
-  return (ALL_UPDATE_TARGETS as readonly unknown[]).includes(value);
 }
 
 async function allSettledOrThrow<T extends readonly unknown[]>(

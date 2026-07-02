@@ -258,23 +258,13 @@ export type SysCliDownloadsResult = {
   refreshedAt: number;
 };
 
-export type SysUpdateTarget = "artifacts.cli";
-
 export type SysUpdateArgs = {
-  targets?: SysUpdateTarget[];
-  options?: {
-    "artifacts.cli"?: {
-      defaultChannel?: SysCliReleaseChannel;
-    };
-  };
+  channel?: SysCliReleaseChannel;
 };
 
 export type SysUpdateResult = {
   updatedAt: number;
-  updates: Array<{
-    target: "artifacts.cli";
-    cli: SysCliDownloadsResult;
-  }>;
+  cli: SysCliDownloadsResult;
 };
 
 export type SysBootstrapResult = {

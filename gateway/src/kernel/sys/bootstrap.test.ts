@@ -320,14 +320,7 @@ describe("handleSysUpdate", () => {
   it("updates mirrored CLI artifacts without bootstrapping source repos", async () => {
     const ctx = makeContext();
 
-    const result = await handleSysUpdate({
-      targets: ["artifacts.cli"],
-      options: {
-        "artifacts.cli": {
-          defaultChannel: "stable",
-        },
-      },
-    }, ctx);
+    const result = await handleSysUpdate({ channel: "stable" }, ctx);
 
     expect(importFromUpstreamMock).not.toHaveBeenCalled();
     expect(applyMock).not.toHaveBeenCalled();
@@ -339,15 +332,12 @@ describe("handleSysUpdate", () => {
     expect(storeCliInstallScriptsMock).toHaveBeenCalledWith(ctx.env.STORAGE);
     expect(result).toEqual({
       updatedAt: expect.any(Number),
-      updates: [{
-        target: "artifacts.cli",
-        cli: {
-          defaultChannel: "stable",
-          mirroredChannels: ["stable", "dev"],
-          assets: ["gsv-darwin-arm64", "gsv-linux-x64"],
-          refreshedAt: expect.any(Number),
-        },
-      }],
+      cli: {
+        defaultChannel: "stable",
+        mirroredChannels: ["stable", "dev"],
+        assets: ["gsv-darwin-arm64", "gsv-linux-x64"],
+        refreshedAt: expect.any(Number),
+      },
     });
   });
 
@@ -359,6 +349,6 @@ describe("handleSysUpdate", () => {
 
     expect(readDefaultCliChannelMock).toHaveBeenCalledWith(ctx.env.STORAGE);
     expect(storeDefaultCliChannelMock).toHaveBeenCalledWith(ctx.env.STORAGE, "stable");
-    expect(result.updates[0].cli.defaultChannel).toBe("stable");
+    expect(result.cli.defaultChannel).toBe("stable");
   });
 });

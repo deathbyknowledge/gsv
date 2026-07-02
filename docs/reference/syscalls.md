@@ -925,7 +925,7 @@ Runtime behavior:
 | `sys.unlink` | `handleSysUnlink` | User-role only. Removes an adapter identity link. Missing links return `removed: false`; non-root can unlink only self-owned links. |
 | `sys.link.list` | `handleSysLinkList` | User-role only. Lists identity links newest-first. Non-root is implicitly scoped to self; root may list all or filter by uid. |
 | `sys.link.consume` | `handleSysLinkConsume` | User-role only. Consumes an uppercase link challenge code for the caller uid, marks the challenge used, and creates/replaces the identity link. Invalid, expired, or used codes throw. |
-| `sys.update` | `handleSysUpdate` | Runs explicit system update targets without re-running bootstrap. Current target: `artifacts.cli`, which refreshes hosted stable/dev CLI binaries, checksums, install scripts, and the default CLI channel in storage. If the target option `defaultChannel` is omitted, the existing stored default is preserved, falling back to `dev` when missing. The Kernel also schedules `artifacts.cli` once per server version after an authenticated user connection so old upgrade CLIs can still reseed hosted binaries. |
+| `sys.update` | `handleSysUpdate` | Runs system-managed update work without re-running bootstrap. Today this refreshes hosted stable/dev CLI binaries, checksums, install scripts, and the default CLI channel in storage. If `channel` is omitted, the existing stored default is preserved, falling back to `dev` when missing. The Kernel also schedules this once per server version after an authenticated user connection so old upgrade CLIs can still reseed hosted binaries. |
 
 `sys.connect`, `sys.setup`, and `sys.setup.assist` are special-cased before normal auth/capability dispatch. Other `sys.*` calls require a connected identity and are denied in setup mode.
 
@@ -962,8 +962,8 @@ type SystemSyscalls = {
   };
 
   "sys.update": {
-    args: { targets?: Array<"artifacts.cli">; options?: { "artifacts.cli"?: { defaultChannel?: "stable" | "dev" } } };
-    result: { updatedAt: number; updates: Array<{ target: "artifacts.cli"; cli: { defaultChannel: "stable" | "dev"; mirroredChannels: Array<"stable" | "dev">; assets: string[]; refreshedAt: number } }> };
+    args: { channel?: "stable" | "dev" };
+    result: { updatedAt: number; cli: { defaultChannel: "stable" | "dev"; mirroredChannels: Array<"stable" | "dev">; assets: string[]; refreshedAt: number } };
   };
 
   "sys.config.get": {

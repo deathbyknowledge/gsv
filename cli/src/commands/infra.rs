@@ -320,31 +320,10 @@ async fn refresh_hosted_cli_downloads_after_gateway_deploy(
         }
     };
 
-    let mut args = json!({
-        "targets": ["artifacts.cli"],
-    });
-    if let Some(channel) = default_channel {
-        args["options"] = json!({
-            "artifacts.cli": {
-                "defaultChannel": channel,
-            },
-        });
-    }
-    match client.request_ok("sys.update", Some(args)).await {
+    let args = default_channel.map(|channel| json!({ "channel": channel }));
+    match client.request_ok("sys.update", args).await {
         Ok(payload) => {
-            let cli_update = payload
-                .get("updates")
-                .and_then(Value::as_array)
-                .and_then(|updates| {
-                    updates.iter().find(|update| {
-                        update
-                            .get("target")
-                            .and_then(Value::as_str)
-                            .map(|target| target == "artifacts.cli")
-                            .unwrap_or(false)
-                    })
-                })
-                .and_then(|update| update.get("cli"));
+            let cli_update = payload.get("cli");
             let default_channel = cli_update
                 .and_then(|cli| cli.get("defaultChannel"))
                 .and_then(Value::as_str)
