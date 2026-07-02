@@ -61,7 +61,7 @@ export function createRoutedFetch(
   return async (input, init) => {
     const request = new Request(input, init);
     const args = await requestToNetFetchArgs(request);
-    const timeoutMs = normalizeTimeoutMs((init as RoutedFetchInit | undefined)?.timeoutMs);
+    const timeoutMs = normalizeNetFetchTimeoutMs((init as RoutedFetchInit | undefined)?.timeoutMs);
     args.timeoutMs = timeoutMs;
     const result = await withAbortSignal(
       transport.requestDevice(normalizedTarget, NET_FETCH_CALL, args, timeoutMs),
@@ -105,11 +105,11 @@ async function normalizeNetFetchRequest(args: NetFetchArgs): Promise<{
     method,
     headers,
     ...(body !== undefined ? { body } : {}),
-    timeoutMs: normalizeTimeoutMs(input.timeoutMs),
+    timeoutMs: normalizeNetFetchTimeoutMs(input.timeoutMs),
   };
 }
 
-async function requestToNetFetchArgs(request: Request): Promise<NetFetchArgs> {
+export async function requestToNetFetchArgs(request: Request): Promise<NetFetchArgs> {
   const headers: Record<string, string> = {};
   request.headers.forEach((value, key) => {
     headers[key] = value;
@@ -174,7 +174,7 @@ function abortError(reason: unknown): Error {
   return reason instanceof Error ? reason : new Error("The operation was aborted");
 }
 
-function responseFromNetFetchResult(raw: unknown): Response {
+export function responseFromNetFetchResult(raw: unknown): Response {
   if (!raw || typeof raw !== "object") {
     throw new Error("net.fetch returned an invalid response");
   }
@@ -183,9 +183,10 @@ function responseFromNetFetchResult(raw: unknown): Response {
   if (!Number.isInteger(status) || status < 100 || status > 599) {
     throw new Error("net.fetch returned an invalid HTTP status");
   }
-  const body = typeof result.bodyBase64 === "string"
+  const bodyBytes = typeof result.bodyBase64 === "string"
     ? base64ToBytes(result.bodyBase64)
     : new Uint8Array();
+  const body: BodyInit | null = isNullBodyStatus(status) ? null : bodyBytes;
   return new Response(body, {
     status,
     statusText: typeof result.statusText === "string" ? result.statusText : "",
@@ -221,10 +222,14 @@ function normalizeMethod(value: unknown): string {
   return method;
 }
 
-function normalizeTimeoutMs(value: unknown): number {
+export function normalizeNetFetchTimeoutMs(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0
     ? Math.floor(value)
     : DEFAULT_NET_FETCH_TIMEOUT_MS;
+}
+
+function isNullBodyStatus(status: number): boolean {
+  return status === 204 || status === 205 || status === 304;
 }
 
 function decodeUtf8(bytes: Uint8Array): string | null {

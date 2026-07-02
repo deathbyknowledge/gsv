@@ -184,6 +184,12 @@ import {
 } from "./ai-config";
 import { runProcessSqlMigrations } from "./schema/migrations";
 import { hasCapability } from "../kernel/capabilities";
+import {
+  normalizeNetFetchTimeoutMs,
+  normalizeTarget,
+  requestToNetFetchArgs,
+  responseFromNetFetchResult,
+} from "../kernel/net";
 
 type RunState = {
   runId: string;
@@ -214,6 +220,8 @@ type RunFinishOptions = {
 type StreamSeqCounter = {
   value: number;
 };
+
+type RoutedFetchInit = RequestInit & { timeoutMs?: number };
 
 type CodeModeResponseWaiter = {
   runId: string | null;
@@ -3146,6 +3154,7 @@ export class Process extends Host<Env> {
     sessionAffinityKey?: string;
     streamSeq?: StreamSeqCounter;
   }): Promise<AssistantMessage | null> {
+    const routedFetch = this.createGenerationFetch(options.config);
     const stream = !hasAiConfigFallbacks(options.config) &&
       options.config.generationStreaming !== "off" &&
       typeof this.generation.stream === "function"
@@ -3153,6 +3162,7 @@ export class Process extends Host<Env> {
       ? this.generation.stream({
         config: options.config,
         context: options.context,
+        ...(routedFetch ? { fetch: routedFetch } : {}),
         sessionAffinityKey: options.sessionAffinityKey,
       })
       : null;
@@ -3164,6 +3174,7 @@ export class Process extends Host<Env> {
           generate?: (request: {
             config: AiConfigResult;
             context: Context;
+            fetch?: typeof fetch;
             sessionAffinityKey?: string;
           }) => Promise<AssistantMessage>;
         };
@@ -3171,6 +3182,7 @@ export class Process extends Host<Env> {
           return injected.generate({
             config: options.config,
             context: options.context,
+            ...(routedFetch ? { fetch: routedFetch } : {}),
             sessionAffinityKey: options.sessionAffinityKey,
           });
         }
@@ -3178,6 +3190,7 @@ export class Process extends Host<Env> {
       return await this.generation.generate({
         config: options.config,
         context: options.context,
+        ...(routedFetch ? { fetch: routedFetch } : {}),
         sessionAffinityKey: options.sessionAffinityKey,
       });
     }
@@ -3237,6 +3250,7 @@ export class Process extends Host<Env> {
       }));
       return result.text ?? "";
     }
+    const routedFetch = this.createGenerationFetch(options.config);
     const generation = this.generation as unknown;
     if (!isGenerationService(generation)) {
       const injected = generation as {
@@ -3244,6 +3258,7 @@ export class Process extends Host<Env> {
           config: AiConfigResult;
           context: Context;
           options?: AiTextGenerateOptions;
+          fetch?: typeof fetch;
           sessionAffinityKey?: string;
         }) => Promise<string>;
       };
@@ -3252,6 +3267,7 @@ export class Process extends Host<Env> {
           config: options.config,
           context: options.context,
           options: options.options,
+          ...(routedFetch ? { fetch: routedFetch } : {}),
           sessionAffinityKey: options.sessionAffinityKey,
         });
       }
@@ -3260,6 +3276,7 @@ export class Process extends Host<Env> {
       config: options.config,
       context: options.context,
       options: options.options,
+      ...(routedFetch ? { fetch: routedFetch } : {}),
       sessionAffinityKey: options.sessionAffinityKey,
     });
   }
@@ -3574,6 +3591,27 @@ export class Process extends Host<Env> {
       throw new Error((response as ResponseErrFrame).error.message);
     }
     return response.data as ResultOf<T>;
+  }
+
+  private createGenerationFetch(config: AiConfigResult): typeof fetch | undefined {
+    const target = normalizeTarget(config.transportTarget);
+    if (target === "gsv") {
+      return undefined;
+    }
+    return async (input, init) => {
+      const request = new Request(input, init);
+      const args = await requestToNetFetchArgs(request);
+      const timeoutMs = normalizeNetFetchTimeoutMs((init as RoutedFetchInit | undefined)?.timeoutMs);
+      const result = await withAbortSignal(
+        this.kernelRpc("net.fetch", {
+          ...args,
+          target,
+          timeoutMs,
+        }),
+        request.signal,
+      );
+      return responseFromNetFetchResult(result);
+    };
   }
 
   private async resolveAiConfig(): Promise<AiConfigResult> {
@@ -5387,6 +5425,30 @@ function isFallbackEligibleAssistantResponse(response: AssistantMessage): boolea
 
 function formatAiModelStackLabel(config: Pick<AiConfigResult, "provider" | "model">): string {
   return `${config.provider}/${config.model}`;
+}
+
+async function withAbortSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) {
+    throw abortError(signal.reason);
+  }
+  return await new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(abortError(signal.reason));
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
+}
+
+function abortError(reason: unknown): Error {
+  return reason instanceof Error ? reason : new Error("The operation was aborted");
 }
 
 function formatGenerationFailure(

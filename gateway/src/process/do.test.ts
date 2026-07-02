@@ -46,6 +46,10 @@ function visibleAssistantText(messages: Array<{ role: string; content: string }>
     .join("\n");
 }
 
+function openAiChatSseChunk(payload: Record<string, unknown>): string {
+  return `data: ${JSON.stringify(payload)}\n\n`;
+}
+
 function testUsage(input = 0, output = 0) {
   return {
     input,
@@ -2299,6 +2303,94 @@ describe("Process DO — mechanical", () => {
       expect(result.message).toMatchObject({
         role: "assistant",
         content: [{ type: "text", text: "device routed" }],
+      });
+    });
+
+    it("routes process custom-provider fetches through the configured transport target", async () => {
+      const pid = "mech-chat-custom-provider-transport-target";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const kernelCalls: Array<{ call: string; args: any }> = [];
+        process.sendSignal = async () => {};
+        process.kernelRpc = async (call: string, args: any) => {
+          kernelCalls.push({ call, args });
+          if (call !== "net.fetch") {
+            throw new Error(`unexpected kernel syscall: ${call}`);
+          }
+          const requestBody = atob(String(args.bodyBase64 ?? ""));
+          expect(args).toMatchObject({
+            target: "linux-machine",
+            url: "http://localhost:18081/v1/chat/completions",
+            method: "POST",
+          });
+          expect(JSON.parse(requestBody)).toMatchObject({
+            model: "local-chat",
+            stream: true,
+          });
+
+          const body = [
+            openAiChatSseChunk({
+              id: "chatcmpl-device",
+              model: "local-chat",
+              choices: [{ delta: { content: "device hello" } }],
+            }),
+            openAiChatSseChunk({
+              choices: [{ delta: {}, finish_reason: "stop" }],
+              usage: { prompt_tokens: 3, completion_tokens: 2 },
+            }),
+            "data: [DONE]\n\n",
+          ].join("");
+          return {
+            ok: true,
+            url: args.url,
+            status: 200,
+            statusText: "OK",
+            headers: { "content-type": "text/event-stream" },
+            bodyBase64: btoa(body),
+            bodyText: body,
+            bodyBytes: body.length,
+          };
+        };
+
+        process.store.appendMessage("user", "use local gateway");
+        process.currentRun = {
+          runId: "run-chat-custom-provider-transport-target",
+          queued: false,
+          conversationId: "default",
+          config: {
+            provider: "custom",
+            model: "local-chat",
+            apiKey: "",
+            baseUrl: "http://localhost:18081/v1",
+            providerStyle: "openai-chat-completions",
+            transportTarget: "linux-machine",
+            reasoning: "off",
+            maxTokens: 8192,
+            contextWindowTokens: 200000,
+            contextWindowSource: "config",
+            maxContextBytes: 32768,
+            generationTimeoutMs: 180000,
+            generationStreaming: "auto",
+            capabilities: [],
+          },
+          tools: [],
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+        await process.continueAgentLoop("run-chat-custom-provider-transport-target");
+        return {
+          kernelCalls,
+          messages: process.store.getMessages(),
+        };
+      });
+
+      expect(result.kernelCalls).toHaveLength(1);
+      expect(result.messages[result.messages.length - 1]).toMatchObject({
+        role: "assistant",
+        content: "device hello",
       });
     });
   });

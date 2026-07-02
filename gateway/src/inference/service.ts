@@ -33,6 +33,7 @@ type GenerateRequest = {
   config: AiConfigResult;
   context: Context;
   options?: AiTextGenerateOptions;
+  fetch?: typeof fetch;
   sessionAffinityKey?: string;
 };
 
@@ -296,7 +297,7 @@ export function resolveGenerationOptions(
     apiKey: config.apiKey,
     baseUrl: config.baseUrl,
     providerStyle: config.providerStyle,
-    fetch: undefined,
+    fetch: request.fetch,
     reasoning: resolveGenerationReasoning(config, request.options),
     maxTokens: resolveGenerationMaxTokens(config, request.options),
   };
