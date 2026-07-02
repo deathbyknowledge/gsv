@@ -1,6 +1,8 @@
 import type {
-  SysCliRefreshArgs,
-  SysCliRefreshResult,
+  SysCliDownloadsResult,
+  SysUpdateArgs,
+  SysUpdateResult,
+  SysUpdateTarget,
 } from "@humansandmachines/gsv/protocol";
 import {
   CLI_BINARY_ASSETS,
@@ -23,25 +25,37 @@ export type CliDownloadsRefreshOptions = {
   limit?: CliRefreshLimit;
 };
 
-export async function handleSysCliRefresh(
-  args: SysCliRefreshArgs | undefined,
+const ALL_UPDATE_TARGETS: readonly SysUpdateTarget[] = ["artifacts.cli"];
+
+export async function handleSysUpdate(
+  args: SysUpdateArgs | undefined,
   ctx: KernelContext,
-): Promise<SysCliRefreshResult> {
+): Promise<SysUpdateResult> {
   if (!ctx.env.STORAGE) {
-    throw new Error("STORAGE binding is required for CLI refresh");
+    throw new Error("STORAGE binding is required for system update");
   }
 
-  const defaultChannel = parseRequestedDefaultChannel(args?.defaultChannel);
+  const targets = parseUpdateTargets(args?.targets);
+  const defaultChannel = parseRequestedDefaultChannel(args?.options?.["artifacts.cli"]?.defaultChannel);
   const startedAt = Date.now();
   try {
-    const result = await refreshCliDownloads(ctx.env.STORAGE, { defaultChannel });
+    const updates: SysUpdateResult["updates"] = [];
+    if (targets.includes("artifacts.cli")) {
+      updates.push({
+        target: "artifacts.cli",
+        cli: await refreshCliDownloads(ctx.env.STORAGE, { defaultChannel }),
+      });
+    }
     console.info(
-      `[sys.cli.refresh] refreshed channels=${result.mirroredChannels.join(",")} default=${result.defaultChannel} in ${Date.now() - startedAt}ms`,
+      `[sys.update] updated targets=${targets.join(",")} in ${Date.now() - startedAt}ms`,
     );
-    return result;
+    return {
+      updatedAt: Date.now(),
+      updates,
+    };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error(`[sys.cli.refresh] failed after ${Date.now() - startedAt}ms: ${message}`);
+    console.error(`[sys.update] failed after ${Date.now() - startedAt}ms: ${message}`);
     throw error;
   }
 }
@@ -49,7 +63,7 @@ export async function handleSysCliRefresh(
 export async function refreshCliDownloads(
   bucket: R2Bucket,
   options: CliDownloadsRefreshOptions = {},
-): Promise<SysCliRefreshResult> {
+): Promise<SysCliDownloadsResult> {
   const step = options.step ?? defaultStep;
   const limit = options.limit ?? defaultLimit;
   const defaultChannel = options.defaultChannel
@@ -93,9 +107,36 @@ function parseRequestedDefaultChannel(value: unknown): CliReleaseChannel | undef
   }
   const channel = parseCliReleaseChannel(value);
   if (!channel) {
-    throw new Error("sys.cli.refresh defaultChannel must be stable or dev");
+    throw new Error("sys.update artifacts.cli defaultChannel must be stable or dev");
   }
   return channel;
+}
+
+function parseUpdateTargets(value: unknown): SysUpdateTarget[] {
+  if (value === undefined) {
+    return [...ALL_UPDATE_TARGETS];
+  }
+  if (!Array.isArray(value)) {
+    throw new Error("sys.update targets must be an array");
+  }
+  if (value.length === 0) {
+    return [...ALL_UPDATE_TARGETS];
+  }
+
+  const targets: SysUpdateTarget[] = [];
+  for (const rawTarget of value) {
+    if (!isUpdateTarget(rawTarget)) {
+      throw new Error(`Unsupported sys.update target: ${String(rawTarget)}`);
+    }
+    if (!targets.includes(rawTarget)) {
+      targets.push(rawTarget);
+    }
+  }
+  return targets;
+}
+
+function isUpdateTarget(value: unknown): value is SysUpdateTarget {
+  return (ALL_UPDATE_TARGETS as readonly unknown[]).includes(value);
 }
 
 async function allSettledOrThrow<T extends readonly unknown[]>(

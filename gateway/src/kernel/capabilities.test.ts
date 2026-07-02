@@ -227,7 +227,6 @@ describe("CapabilityStore", () => {
       "shell.*",
       "signal.*",
       "sys.bootstrap",
-      "sys.cli.refresh",
       "sys.config.get",
       "sys.config.set",
       "sys.device.delete",
@@ -249,6 +248,7 @@ describe("CapabilityStore", () => {
       "sys.token.list",
       "sys.token.revoke",
       "sys.unlink",
+      "sys.update",
     ]);
   });
 

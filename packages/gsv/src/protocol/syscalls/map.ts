@@ -160,8 +160,6 @@ import type {
   ConnectResult,
   SysBootstrapArgs,
   SysBootstrapResult,
-  SysCliRefreshArgs,
-  SysCliRefreshResult,
   SysConfigGetArgs,
   SysConfigGetResult,
   SysConfigSetArgs,
@@ -208,6 +206,8 @@ import type {
   SysTokenRevokeResult,
   SysUnlinkArgs,
   SysUnlinkResult,
+  SysUpdateArgs,
+  SysUpdateResult,
 } from "./system";
 import type {
   SchedulerAddArgs,
@@ -358,7 +358,6 @@ export type SyscallDomains = {
   "sys.setup.assist": { args: SysSetupAssistArgs; result: SysSetupAssistResult };
   "sys.setup": { args: SysSetupArgs; result: SysSetupResult };
   "sys.bootstrap": { args: SysBootstrapArgs; result: SysBootstrapResult };
-  "sys.cli.refresh": { args: SysCliRefreshArgs; result: SysCliRefreshResult };
   "sys.config.get": { args: SysConfigGetArgs; result: SysConfigGetResult };
   "sys.config.set": { args: SysConfigSetArgs; result: SysConfigSetResult };
   "sys.device.list": { args: SysDeviceListArgs; result: SysDeviceListResult };
@@ -380,6 +379,7 @@ export type SyscallDomains = {
   "sys.unlink": { args: SysUnlinkArgs; result: SysUnlinkResult };
   "sys.link.list": { args: SysLinkListArgs; result: SysLinkListResult };
   "sys.link.consume": { args: SysLinkConsumeArgs; result: SysLinkConsumeResult };
+  "sys.update": { args: SysUpdateArgs; result: SysUpdateResult };
 
   "account.create": { args: AccountCreateArgs; result: AccountCreateResult };
   "account.list": { args: AccountListArgs; result: AccountListResult };

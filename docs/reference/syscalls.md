@@ -903,7 +903,6 @@ Runtime behavior:
 | `sys.setup.assist` | `handleSysSetupAssist` | Pre-connect setup helper. Uses app AI config to guide onboarding, redacts secrets from drafts, and only accepts whitelisted non-secret patches from model output. Rejected if already connected or initialized. |
 | `sys.setup` | `handleSysSetup` | Pre-connect setup-mode bootstrap. Creates first user, root password, groups/home, optional timezone, optional AI config, optional node token, home layout, and optional system bootstrap. Username, password, and timezone are validated. |
 | `sys.bootstrap` | `handleSysBootstrap` | Imports `root/gsv`, seeds builtin packages, refreshes hosted stable/dev CLI assets, stores default CLI channel, and broadcasts `pkg.changed`. Explicit args win; otherwise `GSV_BOOTSTRAP_UPSTREAM` can override the default `deathbyknowledge/gsv#main`; it accepts `owner/repo`, a git URL, or either form with `#ref`. `GSV_BOOTSTRAP_REF` can set or override the env ref separately. Requires `RIPGIT` and storage. |
-| `sys.cli.refresh` | `handleSysCliRefresh` | Refreshes hosted stable/dev CLI binaries, checksums, install scripts, and the default CLI channel in storage without re-running system bootstrap. If `defaultChannel` is omitted, the existing stored default is preserved, falling back to `dev` when missing. The Kernel also schedules this refresh once per server version after an authenticated user connection so old upgrade CLIs can still reseed hosted binaries. |
 | `sys.config.get` | `handleSysConfigGet` | Reads exact config key or visible prefix. Root sees all; non-root sees own `users/<uid>/` keys and non-sensitive `config/` keys. Sensitive names such as password, token, secret, and api key are hidden from non-root. |
 | `sys.config.set` | `handleSysConfigSet` | Writes a config value. Root can write any key; non-root can write only own user-overridable keys, currently under `users/<uid>/ai/`. Values are coerced with `String(value)`. |
 | `sys.device.list` | `handleSysDeviceList` | Lists devices accessible by owner uid or group ACL. Root sees all. Defaults to online devices only unless `includeOffline` is true. |
@@ -926,6 +925,7 @@ Runtime behavior:
 | `sys.unlink` | `handleSysUnlink` | User-role only. Removes an adapter identity link. Missing links return `removed: false`; non-root can unlink only self-owned links. |
 | `sys.link.list` | `handleSysLinkList` | User-role only. Lists identity links newest-first. Non-root is implicitly scoped to self; root may list all or filter by uid. |
 | `sys.link.consume` | `handleSysLinkConsume` | User-role only. Consumes an uppercase link challenge code for the caller uid, marks the challenge used, and creates/replaces the identity link. Invalid, expired, or used codes throw. |
+| `sys.update` | `handleSysUpdate` | Runs explicit system update targets without re-running bootstrap. Current target: `artifacts.cli`, which refreshes hosted stable/dev CLI binaries, checksums, install scripts, and the default CLI channel in storage. If the target option `defaultChannel` is omitted, the existing stored default is preserved, falling back to `dev` when missing. The Kernel also schedules `artifacts.cli` once per server version after an authenticated user connection so old upgrade CLIs can still reseed hosted binaries. |
 
 `sys.connect`, `sys.setup`, and `sys.setup.assist` are special-cased before normal auth/capability dispatch. Other `sys.*` calls require a connected identity and are denied in setup mode.
 
@@ -961,9 +961,9 @@ type SystemSyscalls = {
     result: { repo: string; remoteUrl: string; ref: string; head: string | null; changed: boolean; cli: { defaultChannel: "stable" | "dev"; mirroredChannels: Array<"stable" | "dev">; assets: string[]; refreshedAt: number }; packages: BootstrapPackageSummary[] };
   };
 
-  "sys.cli.refresh": {
-    args: { defaultChannel?: "stable" | "dev" };
-    result: { defaultChannel: "stable" | "dev"; mirroredChannels: Array<"stable" | "dev">; assets: string[]; refreshedAt: number };
+  "sys.update": {
+    args: { targets?: Array<"artifacts.cli">; options?: { "artifacts.cli"?: { defaultChannel?: "stable" | "dev" } } };
+    result: { updatedAt: number; updates: Array<{ target: "artifacts.cli"; cli: { defaultChannel: "stable" | "dev"; mirroredChannels: Array<"stable" | "dev">; assets: string[]; refreshedAt: number } }> };
   };
 
   "sys.config.get": {

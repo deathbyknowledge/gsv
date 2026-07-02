@@ -4,7 +4,7 @@ import { RipgitClient, type RipgitRepoRef } from "../../fs/ripgit/client";
 import { inferDefaultCliChannel } from "../../downloads/cli";
 import { seedRepoSkillsToHome } from "./skills-seed";
 import { setRepoVisibility } from "../repo-visibility";
-import { refreshCliDownloads } from "./cli";
+import { refreshCliDownloads } from "./update";
 
 const DEFAULT_GSV_UPSTREAM_URL = "https://github.com/deathbyknowledge/gsv";
 const DEFAULT_GSV_UPSTREAM_REF = "main";

@@ -62,7 +62,6 @@ export const REPO_DELETE = "repo.delete";
 export const SYS_CONNECT = "sys.connect";
 export const SYS_SETUP = "sys.setup";
 export const SYS_BOOTSTRAP = "sys.bootstrap";
-export const SYS_CLI_REFRESH = "sys.cli.refresh";
 export const SYS_CONFIG_GET = "sys.config.get";
 export const SYS_CONFIG_SET = "sys.config.set";
 export const SYS_DEVICE_LIST = "sys.device.list";
@@ -84,6 +83,7 @@ export const SYS_LINK_CONSUME = "sys.link.consume";
 export const SYS_LINK = "sys.link";
 export const SYS_UNLINK = "sys.unlink";
 export const SYS_LINK_LIST = "sys.link.list";
+export const SYS_UPDATE = "sys.update";
 
 // Scheduler (cron)
 export const SCHED_LIST = "sched.list";

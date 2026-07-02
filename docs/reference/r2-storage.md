@@ -75,10 +75,10 @@ R2 remains the byte store. The current runtime uses these key families:
 | `var/media/{uid}/{pid}/{uuid}.{ext}` | Process media handling | Uploaded or adapter-provided media attached to process messages. |
 | `var/sessions/{username}/{pid}/{archiveId}.jsonl.gz` | Process reset/kill archive | Gzipped JSONL transcript archive. |
 | `runtime/package-artifacts/{hash}.json` | Package install/sync | Package worker artifact loaded by AppRunner. |
-| `public/gsv/downloads/cli/{channel}/{asset}` | `sys.bootstrap`, `sys.cli.refresh`, Kernel version refresh | Downloadable CLI binaries served through `/public/*`. |
-| `public/gsv/downloads/cli/{channel}/{asset}.sha256` | `sys.bootstrap`, `sys.cli.refresh`, Kernel version refresh | CLI checksums served through `/public/*`. |
-| `public/gsv/downloads/cli/default-channel.txt` | `sys.bootstrap`, `sys.cli.refresh`, Kernel version refresh | Default CLI release channel. |
-| `public/gsv/downloads/cli/install.{sh,ps1}` | `sys.bootstrap`, `sys.cli.refresh`, Kernel version refresh | Static CLI install scripts served through `/public/*`. |
+| `public/gsv/downloads/cli/{channel}/{asset}` | `sys.bootstrap`, `sys.update` `artifacts.cli`, Kernel version refresh | Downloadable CLI binaries served through `/public/*`. |
+| `public/gsv/downloads/cli/{channel}/{asset}.sha256` | `sys.bootstrap`, `sys.update` `artifacts.cli`, Kernel version refresh | CLI checksums served through `/public/*`. |
+| `public/gsv/downloads/cli/default-channel.txt` | `sys.bootstrap`, `sys.update` `artifacts.cli`, Kernel version refresh | Default CLI release channel. |
+| `public/gsv/downloads/cli/install.{sh,ps1}` | `sys.bootstrap`, `sys.update` `artifacts.cli`, Kernel version refresh | Static CLI install scripts served through `/public/*`. |
 | `process-source-overlays/{pid}/{sourceKey}/manifest.json` | `/src/repos`, `rgit` | Manifest of staged source edits for one process/repo. |
 | `process-source-overlays/{pid}/{sourceKey}/files/{path}` | `/src/repos`, `rgit` | Staged file content for source puts. |
 

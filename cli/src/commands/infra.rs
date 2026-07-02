@@ -320,17 +320,37 @@ async fn refresh_hosted_cli_downloads_after_gateway_deploy(
         }
     };
 
-    let args = default_channel
-        .map(|channel| json!({ "defaultChannel": channel }))
-        .unwrap_or_else(|| json!({}));
-    match client.request_ok("sys.cli.refresh", Some(args)).await {
+    let mut args = json!({
+        "targets": ["artifacts.cli"],
+    });
+    if let Some(channel) = default_channel {
+        args["options"] = json!({
+            "artifacts.cli": {
+                "defaultChannel": channel,
+            },
+        });
+    }
+    match client.request_ok("sys.update", Some(args)).await {
         Ok(payload) => {
-            let default_channel = payload
-                .get("defaultChannel")
+            let cli_update = payload
+                .get("updates")
+                .and_then(Value::as_array)
+                .and_then(|updates| {
+                    updates.iter().find(|update| {
+                        update
+                            .get("target")
+                            .and_then(Value::as_str)
+                            .map(|target| target == "artifacts.cli")
+                            .unwrap_or(false)
+                    })
+                })
+                .and_then(|update| update.get("cli"));
+            let default_channel = cli_update
+                .and_then(|cli| cli.get("defaultChannel"))
                 .and_then(Value::as_str)
                 .unwrap_or("unknown");
-            let channel_count = payload
-                .get("mirroredChannels")
+            let channel_count = cli_update
+                .and_then(|cli| cli.get("mirroredChannels"))
                 .and_then(Value::as_array)
                 .map(Vec::len)
                 .unwrap_or(0);

@@ -49,7 +49,7 @@ import { handleSysConfigGet, handleSysConfigSet } from "./sys/config";
 import { handleSysDeviceDelete, handleSysDeviceGet, handleSysDeviceList, handleSysDeviceUpdate } from "./sys/device";
 import { handleNetFetch } from "./net";
 import { handleSysBootstrap } from "./sys/bootstrap";
-import { handleSysCliRefresh } from "./sys/cli";
+import { handleSysUpdate } from "./sys/update";
 import { handleSysSetupAssist } from "./sys/setup-assist";
 import {
   handlePkgAdd,
@@ -521,8 +521,8 @@ async function dispatchNative(
       case "sys.bootstrap":
         data = await handleSysBootstrap(frame.args, ctx);
         break;
-      case "sys.cli.refresh":
-        data = await handleSysCliRefresh(frame.args, ctx);
+      case "sys.update":
+        data = await handleSysUpdate(frame.args, ctx);
         break;
       case "sys.config.get":
         data = handleSysConfigGet(frame.args, ctx);

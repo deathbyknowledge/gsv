@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { KernelContext } from "../context";
 import { handleSysBootstrap } from "./bootstrap";
-import { handleSysCliRefresh } from "./cli";
+import { handleSysUpdate } from "./update";
 
 const { importFromUpstreamMock, readPathMock, applyMock } = vi.hoisted(() => ({
   importFromUpstreamMock: vi.fn(),
@@ -308,7 +308,7 @@ describe("handleSysBootstrap", () => {
   });
 });
 
-describe("handleSysCliRefresh", () => {
+describe("handleSysUpdate", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mirrorCliChannelMock.mockResolvedValue(undefined);
@@ -317,10 +317,17 @@ describe("handleSysCliRefresh", () => {
     storeCliInstallScriptsMock.mockResolvedValue(undefined);
   });
 
-  it("refreshes mirrored CLI assets without bootstrapping source repos", async () => {
+  it("updates mirrored CLI artifacts without bootstrapping source repos", async () => {
     const ctx = makeContext();
 
-    const result = await handleSysCliRefresh({ defaultChannel: "stable" }, ctx);
+    const result = await handleSysUpdate({
+      targets: ["artifacts.cli"],
+      options: {
+        "artifacts.cli": {
+          defaultChannel: "stable",
+        },
+      },
+    }, ctx);
 
     expect(importFromUpstreamMock).not.toHaveBeenCalled();
     expect(applyMock).not.toHaveBeenCalled();
@@ -331,10 +338,16 @@ describe("handleSysCliRefresh", () => {
     expect(storeDefaultCliChannelMock).toHaveBeenCalledWith(ctx.env.STORAGE, "stable");
     expect(storeCliInstallScriptsMock).toHaveBeenCalledWith(ctx.env.STORAGE);
     expect(result).toEqual({
-      defaultChannel: "stable",
-      mirroredChannels: ["stable", "dev"],
-      assets: ["gsv-darwin-arm64", "gsv-linux-x64"],
-      refreshedAt: expect.any(Number),
+      updatedAt: expect.any(Number),
+      updates: [{
+        target: "artifacts.cli",
+        cli: {
+          defaultChannel: "stable",
+          mirroredChannels: ["stable", "dev"],
+          assets: ["gsv-darwin-arm64", "gsv-linux-x64"],
+          refreshedAt: expect.any(Number),
+        },
+      }],
     });
   });
 
@@ -342,10 +355,10 @@ describe("handleSysCliRefresh", () => {
     const ctx = makeContext();
     readDefaultCliChannelMock.mockResolvedValue("stable");
 
-    const result = await handleSysCliRefresh(undefined, ctx);
+    const result = await handleSysUpdate(undefined, ctx);
 
     expect(readDefaultCliChannelMock).toHaveBeenCalledWith(ctx.env.STORAGE);
     expect(storeDefaultCliChannelMock).toHaveBeenCalledWith(ctx.env.STORAGE, "stable");
-    expect(result.defaultChannel).toBe("stable");
+    expect(result.updates[0].cli.defaultChannel).toBe("stable");
   });
 });

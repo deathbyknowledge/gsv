@@ -63,7 +63,7 @@ import { sendFrameToProcess } from "../shared/utils";
 import { handleSysSetup as handleKernelSetup } from "./sys/setup";
 import { buildAppRunnerName } from "../protocol/app-session";
 import { handleSysSetupAssist } from "./sys/setup-assist";
-import { refreshCliDownloads } from "./sys/cli";
+import { refreshCliDownloads } from "./sys/update";
 import {
   completeOAuthCallback as completeOAuthCallbackFlow,
   type OAuthCallbackInput,
