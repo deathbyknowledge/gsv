@@ -31,7 +31,7 @@ struct DestroyCommandOptions {
     wizard: bool,
     api_token: Option<String>,
     account_id: Option<String>,
-    keep_node: bool,
+    keep_device: bool,
 }
 
 struct DestroyDeployOptions {
@@ -117,7 +117,7 @@ pub(crate) async fn run_infra(
             wizard,
             api_token,
             account_id,
-            keep_node,
+            keep_device,
         } => {
             run_destroy_command(
                 cfg,
@@ -130,7 +130,7 @@ pub(crate) async fn run_infra(
                     wizard,
                     api_token,
                     account_id,
-                    keep_node,
+                    keep_device,
                 },
             )
             .await
@@ -332,7 +332,7 @@ async fn run_destroy_command(
         wizard,
         api_token,
         account_id,
-        keep_node,
+        keep_device,
     } = options;
     let all = if !all && component.is_empty() {
         true
@@ -355,8 +355,8 @@ async fn run_destroy_command(
     )
     .await?;
 
-    if keep_node {
-        println!("Skipped device daemon uninstall (--keep-node).");
+    if keep_device {
+        println!("Skipped device daemon uninstall (--keep-device).");
         return Ok(());
     }
 

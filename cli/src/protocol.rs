@@ -115,12 +115,12 @@ pub struct ServerInfo {
 }
 
 // ---------------------------------------------------------------------------
-//  Exec event (node → gateway signal for background process status)
+//  Exec event (device → gateway signal for background process status)
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct NodeExecEventParams {
+pub struct DeviceExecEventParams {
     pub event_id: String,
     pub session_id: String,
     pub event: String,

@@ -106,23 +106,25 @@ The device daemon exposes local hardware-style capabilities to the Kernel:
 the device ID selects which implementation receives a driver request.
 
 `run` starts a foreground driver. `install` creates and starts a launchd agent on
-macOS or a systemd user unit on Linux. The daemon logs to `~/.gsv/logs/node.log`;
-`logs` tails that file with `-l, --lines` defaulting to `100`.
+macOS or a systemd user unit on Linux. The daemon writes daily rotated JSONL logs
+under `~/.gsv/logs/device.log*`; `logs` tails the latest file with `-l, --lines`
+defaulting to `100`. Foreground logs use compact text by default; set
+`GSV_DEVICE_CONSOLE_FORMAT=json` or `GSV_DEVICE_CONSOLE_FORMAT=quiet` to change that.
 
-Device identity resolves as `--id`, then local `node.id`, then
-`node-<hostname>`. Workspace resolves as `--workspace`, then `node.workspace`,
-then the current directory. The command name is `device`, but local config still
-uses `node.*` keys because those are the persisted driver fields. A persistent
-daemon should have `gateway.username` and `node.token` configured, usually from
-`gsv auth setup --node-id ...` or `gsv auth token create --kind node --device ...`
-followed by `gsv config --local set node.token ...`.
+Device identity resolves as `--id`, then local `device.id`, then
+`device-<hostname>`. Workspace resolves as `--workspace`, then
+`device.workspace`, then the current directory. A persistent daemon should have
+`gateway.username` and `device.token` configured, usually from
+`gsv auth setup --device-id ...` or
+`gsv auth token create --kind device --device ...` followed by
+`gsv config --local set device.token ...`.
 
 ## Auth Commands
 
 ```bash
 gsv auth setup [--username USER] [--new-password PASS] [--root-password PASS] \
   [--ai-provider ID] [--ai-model MODEL] [--ai-api-key KEY] \
-  [--node-id ID] [--node-label LABEL] [--node-expires-at UNIX_MS]
+  [--device-id ID] [--device-label LABEL] [--device-expires-at UNIX_MS]
 gsv auth login [--username USER] [--password PASS] [--ttl-hours N]
 gsv auth logout
 gsv auth link [CODE]
@@ -132,9 +134,9 @@ gsv auth unlink --adapter ID --account-id ACCOUNT --actor-id ACTOR
 ```
 
 `setup` initializes a gateway in setup mode, optionally configures AI provider
-settings, and can issue a device token with `--node-id`, `--node-label`, and
-`--node-expires-at` (Unix milliseconds). Interactive setup prompts for missing
-values and saves `gateway.username`, `node.id`, and `node.token` when issued.
+settings, and can issue a device token with `--device-id`, `--device-label`, and
+`--device-expires-at` (Unix milliseconds). Interactive setup prompts for missing
+values and saves `gateway.username`, `device.id`, and `device.token` when issued.
 
 `login` creates a short-lived user token with `sys.token.create` and caches it
 locally. The default TTL is 8 hours. `logout` clears only the cached local session
@@ -147,13 +149,13 @@ account, and actor identifiers manually.
 ### Auth Tokens
 
 ```bash
-gsv auth token create [--kind node|service|user] [--uid UID] [--label LABEL] \
+gsv auth token create [--kind device|service|user] [--uid UID] [--label LABEL] \
   [--role driver|service|user] [--device DEVICE] [--expires-at UNIX_MS]
 gsv auth token list [--uid UID]
 gsv auth token revoke TOKEN_ID [--reason TEXT] [--uid UID]
 ```
 
-`node` is the default token kind. Use `--device` to bind a driver token to one
+`device` is the default token kind. Use `--device` to bind a driver token to one
 device ID. `--uid` is for root-managed token operations.
 
 ## Config Commands
@@ -183,7 +185,7 @@ With `--local`, commands edit `~/.config/gsv/config.toml`. Supported local keys:
 `gateway.session_expires_at_ms`, `cloudflare.account_id`,
 `cloudflare.api_token`, `release.channel`, `r2.account_id`,
 `r2.access_key_id`, `r2.secret_access_key`, `r2.bucket`,
-`session.default_key`, `node.id`, `node.token`, `node.workspace`,
+`session.default_key`, `device.id`, `device.token`, `device.workspace`,
 `channels.whatsapp.url`, and `channels.whatsapp.token`. `release.channel` must
 be `stable` or `dev`; token and secret values are masked on local `get`.
 
@@ -233,8 +235,8 @@ Both accept `--bundle-dir PATH` for local bundles, `--api-token` or
 
 `destroy` tears down Workers. If no component or `--all` is supplied, it targets
 all components. `--delete-bucket` removes the shared R2 bucket; `--purge-bucket`
-must be combined with it. Unless `--keep-node` is passed, `destroy` also attempts
-to uninstall the local device service.
+must be combined with it. Unless `--keep-device` is passed, `destroy` also
+attempts to uninstall the local device service.
 
 ## Version
 
@@ -250,7 +252,6 @@ Prints build metadata for the installed CLI.
 | Old command | Current command |
 | --- | --- |
 | `gsv client` | `gsv chat` |
-| `gsv node` | `gsv device` |
 | `gsv session` | `gsv proc` |
 | `gsv local-config` | `gsv config --local` |
 | `gsv deploy` | `gsv infra` |

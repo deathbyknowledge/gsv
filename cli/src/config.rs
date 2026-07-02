@@ -33,9 +33,9 @@ pub struct CliConfig {
     #[serde(default)]
     pub r2: R2Config,
 
-    /// Node defaults (for `gsv node` and daemon service)
-    #[serde(default)]
-    pub node: NodeConfig,
+    /// Device defaults (for `gsv device` and daemon service)
+    #[serde(default, alias = "node")]
+    pub device: DeviceConfig,
 
     /// Default session settings
     #[serde(default)]
@@ -114,11 +114,11 @@ pub struct R2Config {
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
-pub struct NodeConfig {
-    /// Node ID (namespace prefix for tools)
+pub struct DeviceConfig {
+    /// Device ID
     pub id: Option<String>,
 
-    /// Node-specific gateway token (driver auth)
+    /// Device gateway token
     pub token: Option<String>,
 
     /// Workspace directory for file tools
@@ -282,19 +282,19 @@ impl CliConfig {
         normalize_session_key(raw)
     }
 
-    /// Get default node ID (if configured)
-    pub fn default_node_id(&self) -> Option<String> {
-        self.node.id.clone()
+    /// Get default device ID (if configured)
+    pub fn default_device_id(&self) -> Option<String> {
+        self.device.id.clone()
     }
 
-    /// Get default node workspace (if configured)
-    pub fn default_node_workspace(&self) -> Option<PathBuf> {
-        self.node.workspace.clone()
+    /// Get default device workspace (if configured)
+    pub fn default_device_workspace(&self) -> Option<PathBuf> {
+        self.device.workspace.clone()
     }
 
-    /// Get default node token (if configured)
-    pub fn default_node_token(&self) -> Option<String> {
-        self.node.token.clone()
+    /// Get default device token (if configured)
+    pub fn default_device_token(&self) -> Option<String> {
+        self.device.token.clone()
     }
 
     /// Get the GSV home directory (~/.gsv)
@@ -368,10 +368,10 @@ token = "your-token-here"
 # Default session key
 default_key = "agent:main:cli:dm:main"
 
-[node]
-# Optional defaults used by 'gsv node'
-# id = "node-macbook"
-# token = "your-node-token"
+[device]
+# Optional defaults used by 'gsv device'
+# id = "device-macbook"
+# token = "your-device-token"
 # workspace = "/Users/you/projects"
 
 [channels.whatsapp]

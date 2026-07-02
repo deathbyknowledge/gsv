@@ -11,11 +11,11 @@ use std::time::Duration;
 
 type DynError = Box<dyn std::error::Error>;
 
-const NODE_SYSTEMD_UNIT_NAME: &str = "gsvd.service";
+const DEVICE_SYSTEMD_UNIT_NAME: &str = "gsvd.service";
 #[cfg(any(test, target_os = "macos"))]
-const NODE_LAUNCHD_LABEL: &str = "gsvd";
+const DEVICE_LAUNCHD_LABEL: &str = "gsvd";
 #[cfg(target_os = "windows")]
-const NODE_WINDOWS_TASK_NAME: &str = "gsvd";
+const DEVICE_WINDOWS_TASK_NAME: &str = "gsvd";
 const LOG_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
 struct DeviceServiceInstallSpec {
@@ -23,7 +23,6 @@ struct DeviceServiceInstallSpec {
     exe_path: PathBuf,
     args: Vec<String>,
     path_env: Option<String>,
-    log_path: PathBuf,
 }
 
 impl DeviceServiceInstallSpec {
@@ -35,7 +34,6 @@ impl DeviceServiceInstallSpec {
             exe_path,
             args: vec!["device".to_string(), "run".to_string()],
             path_env: device_service_path(),
-            log_path: logger::node_log_path()?,
         })
     }
 }
@@ -84,7 +82,7 @@ pub fn status_device_service() -> Result<(), DynError> {
 }
 
 pub fn show_device_service_logs(lines: usize, follow: bool) -> Result<(), DynError> {
-    let log_path = logger::node_log_path()?;
+    let log_path = logger::device_log_path()?;
     if !log_path.exists() {
         return Err(format!("Log file not found: {}", log_path.display()).into());
     }
@@ -514,8 +512,8 @@ impl DeviceServiceManager for SystemdUserServiceManager {
                 .arg("--user")
                 .arg("enable")
                 .arg("--now")
-                .arg(NODE_SYSTEMD_UNIT_NAME),
-            "Failed to enable/start node service",
+                .arg(DEVICE_SYSTEMD_UNIT_NAME),
+            "Failed to enable/start device service",
         )?;
 
         println!("Installed systemd unit: {}", unit_path.display());
@@ -543,7 +541,7 @@ impl DeviceServiceManager for SystemdUserServiceManager {
             }
         }
 
-        println!("Logs: {}", spec.log_path.display());
+        println!("Logs: {}", logger::device_log_pattern()?);
         Ok(())
     }
 
@@ -553,8 +551,8 @@ impl DeviceServiceManager for SystemdUserServiceManager {
                 .arg("--user")
                 .arg("disable")
                 .arg("--now")
-                .arg(NODE_SYSTEMD_UNIT_NAME),
-            "Failed to disable/stop node service",
+                .arg(DEVICE_SYSTEMD_UNIT_NAME),
+            "Failed to disable/stop device service",
         );
 
         let unit_path = systemd_user_unit_path()?;
@@ -573,8 +571,8 @@ impl DeviceServiceManager for SystemdUserServiceManager {
             Command::new("systemctl")
                 .arg("--user")
                 .arg("start")
-                .arg(NODE_SYSTEMD_UNIT_NAME),
-            "Failed to start node service",
+                .arg(DEVICE_SYSTEMD_UNIT_NAME),
+            "Failed to start device service",
         )
     }
 
@@ -583,8 +581,8 @@ impl DeviceServiceManager for SystemdUserServiceManager {
             Command::new("systemctl")
                 .arg("--user")
                 .arg("restart")
-                .arg(NODE_SYSTEMD_UNIT_NAME),
-            "Failed to restart node service",
+                .arg(DEVICE_SYSTEMD_UNIT_NAME),
+            "Failed to restart device service",
         )
     }
 
@@ -593,8 +591,8 @@ impl DeviceServiceManager for SystemdUserServiceManager {
             Command::new("systemctl")
                 .arg("--user")
                 .arg("stop")
-                .arg(NODE_SYSTEMD_UNIT_NAME),
-            "Failed to stop node service",
+                .arg(DEVICE_SYSTEMD_UNIT_NAME),
+            "Failed to stop device service",
         )
     }
 
@@ -604,8 +602,8 @@ impl DeviceServiceManager for SystemdUserServiceManager {
                 .arg("--user")
                 .arg("status")
                 .arg("--no-pager")
-                .arg(NODE_SYSTEMD_UNIT_NAME),
-            "Failed to read node service status",
+                .arg(DEVICE_SYSTEMD_UNIT_NAME),
+            "Failed to read device service status",
         )
     }
 }
@@ -616,7 +614,7 @@ fn systemd_user_unit_path() -> Result<PathBuf, DynError> {
     Ok(config_dir
         .join("systemd")
         .join("user")
-        .join(NODE_SYSTEMD_UNIT_NAME))
+        .join(DEVICE_SYSTEMD_UNIT_NAME))
 }
 
 #[cfg(target_os = "linux")]
@@ -658,12 +656,10 @@ impl DeviceServiceManager for LaunchdUserServiceManager {
             fs::create_dir_all(parent)?;
         }
 
-        if let Some(parent) = spec.log_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
+        fs::create_dir_all(logger::device_log_dir()?)?;
 
         let path_env_block = launchd_path_environment_block(spec.path_env.as_deref());
-        let plist = launchd_plist_contents(NODE_LAUNCHD_LABEL, spec, &path_env_block);
+        let plist = launchd_plist_contents(DEVICE_LAUNCHD_LABEL, spec, &path_env_block);
         fs::write(&plist_path, plist)?;
 
         let domain = launchd_domain()?;
@@ -689,7 +685,7 @@ impl DeviceServiceManager for LaunchdUserServiceManager {
         )?;
 
         println!("Installed launchd agent: {}", plist_path.display());
-        println!("Logs: {}", spec.log_path.display());
+        println!("Logs: {}", logger::device_log_pattern()?);
         Ok(())
     }
 
@@ -776,7 +772,7 @@ fn launchd_plist_path() -> Result<PathBuf, DynError> {
     Ok(home
         .join("Library")
         .join("LaunchAgents")
-        .join(format!("{}.plist", NODE_LAUNCHD_LABEL)))
+        .join(format!("{}.plist", DEVICE_LAUNCHD_LABEL)))
 }
 
 #[cfg(target_os = "macos")]
@@ -794,7 +790,7 @@ fn launchd_domain() -> Result<String, DynError> {
 
 #[cfg(target_os = "macos")]
 fn launchd_target() -> Result<String, DynError> {
-    Ok(format!("{}/{}", launchd_domain()?, NODE_LAUNCHD_LABEL))
+    Ok(format!("{}/{}", launchd_domain()?, DEVICE_LAUNCHD_LABEL))
 }
 
 #[cfg(target_os = "windows")]
@@ -806,29 +802,29 @@ impl DeviceServiceManager for WindowsTaskServiceManager {
         Ok(Command::new("schtasks")
             .arg("/query")
             .arg("/tn")
-            .arg(NODE_WINDOWS_TASK_NAME)
+            .arg(DEVICE_WINDOWS_TASK_NAME)
             .status()?
             .success())
     }
 
     fn install(&self, spec: &DeviceServiceInstallSpec) -> Result<(), DynError> {
         let user_id = current_windows_user_id();
-        let script = windows_task_registration_script(NODE_WINDOWS_TASK_NAME, &user_id, spec);
+        let script = windows_task_registration_script(DEVICE_WINDOWS_TASK_NAME, &user_id, spec);
         run_windows_powershell_script(&script, "Failed to register Windows scheduled task")?;
 
         run_command_capture(
             Command::new("schtasks")
                 .arg("/run")
                 .arg("/tn")
-                .arg(NODE_WINDOWS_TASK_NAME),
+                .arg(DEVICE_WINDOWS_TASK_NAME),
             "Failed to start Windows scheduled task",
         )?;
 
         println!(
             "Installed Windows scheduled task: {}",
-            NODE_WINDOWS_TASK_NAME
+            DEVICE_WINDOWS_TASK_NAME
         );
-        println!("Logs: {}", spec.log_path.display());
+        println!("Logs: {}", logger::device_log_pattern()?);
         Ok(())
     }
 
@@ -837,14 +833,14 @@ impl DeviceServiceManager for WindowsTaskServiceManager {
             Command::new("schtasks")
                 .arg("/end")
                 .arg("/tn")
-                .arg(NODE_WINDOWS_TASK_NAME),
+                .arg(DEVICE_WINDOWS_TASK_NAME),
             "Failed to stop Windows scheduled task",
         );
         run_command_capture(
             Command::new("schtasks")
                 .arg("/delete")
                 .arg("/tn")
-                .arg(NODE_WINDOWS_TASK_NAME)
+                .arg(DEVICE_WINDOWS_TASK_NAME)
                 .arg("/f"),
             "Failed to delete Windows scheduled task",
         )
@@ -855,7 +851,7 @@ impl DeviceServiceManager for WindowsTaskServiceManager {
             Command::new("schtasks")
                 .arg("/run")
                 .arg("/tn")
-                .arg(NODE_WINDOWS_TASK_NAME),
+                .arg(DEVICE_WINDOWS_TASK_NAME),
             "Failed to start Windows scheduled task",
         )
     }
@@ -865,7 +861,7 @@ impl DeviceServiceManager for WindowsTaskServiceManager {
             Command::new("schtasks")
                 .arg("/end")
                 .arg("/tn")
-                .arg(NODE_WINDOWS_TASK_NAME),
+                .arg(DEVICE_WINDOWS_TASK_NAME),
             "Failed to stop Windows scheduled task",
         );
         self.start()
@@ -876,7 +872,7 @@ impl DeviceServiceManager for WindowsTaskServiceManager {
             Command::new("schtasks")
                 .arg("/end")
                 .arg("/tn")
-                .arg(NODE_WINDOWS_TASK_NAME),
+                .arg(DEVICE_WINDOWS_TASK_NAME),
             "Failed to stop Windows scheduled task",
         )
     }
@@ -886,7 +882,7 @@ impl DeviceServiceManager for WindowsTaskServiceManager {
             Command::new("schtasks")
                 .arg("/query")
                 .arg("/tn")
-                .arg(NODE_WINDOWS_TASK_NAME)
+                .arg(DEVICE_WINDOWS_TASK_NAME)
                 .arg("/fo")
                 .arg("LIST")
                 .arg("/v"),
@@ -929,7 +925,6 @@ mod tests {
             exe_path: PathBuf::from("/Applications/GSV/gsv"),
             args: vec!["device".to_string(), "run".to_string()],
             path_env: Some("/opt/bin:/usr/bin".to_string()),
-            log_path: PathBuf::from("/tmp/node.log"),
         }
     }
 
@@ -981,7 +976,7 @@ mod tests {
 
     #[test]
     fn test_launchd_plist_contents_uses_device_run_entrypoint() {
-        let plist = launchd_plist_contents(NODE_LAUNCHD_LABEL, &test_spec(), "");
+        let plist = launchd_plist_contents(DEVICE_LAUNCHD_LABEL, &test_spec(), "");
         assert!(plist.contains("<string>device</string>"));
         assert!(plist.contains("<string>run</string>"));
         assert!(!plist.contains("<string>node</string>"));

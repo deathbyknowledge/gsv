@@ -2,7 +2,7 @@ use clap::Parser;
 use gsv::config::CliConfig;
 
 use crate::auth_flow::{
-    resolve_node_gateway_auth, run_auth_login, run_auth_logout, run_auth_setup,
+    resolve_device_gateway_auth, run_auth_login, run_auth_logout, run_auth_setup,
     run_with_auto_setup_and_login_retry, run_with_auto_setup_retry, AuthSetupOptions,
 };
 use crate::cli::{
@@ -10,7 +10,7 @@ use crate::cli::{
 };
 use crate::commands;
 use crate::device::{
-    resolve_node_id, resolve_node_workspace, run_node, run_device_service, run_shell,
+    resolve_device_id, resolve_device_workspace, run_device, run_device_service, run_shell,
 };
 use crate::local_config::run_local_config;
 use crate::version::run_version;
@@ -114,9 +114,9 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 ai_provider,
                 ai_model,
                 ai_api_key,
-                node_id,
-                node_label,
-                node_expires_at,
+                device_id,
+                device_label,
+                device_expires_at,
             } => {
                 run_auth_setup(
                     &url,
@@ -128,9 +128,9 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
                         ai_provider,
                         ai_model,
                         ai_api_key,
-                        node_id,
-                        node_label,
-                        node_expires_at,
+                        device_id,
+                        device_label,
+                        device_expires_at,
                     },
                 )
                 .await
@@ -170,14 +170,14 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
                     cli_user_override.clone(),
                     cli_password_override.clone(),
                     || async {
-                        let node_id = resolve_node_id(id.clone(), &cfg);
-                        let workspace = resolve_node_workspace(workspace.clone(), &cfg);
-                        let auth = resolve_node_gateway_auth(
+                        let device_id = resolve_device_id(id.clone(), &cfg);
+                        let workspace = resolve_device_workspace(workspace.clone(), &cfg);
+                        let auth = resolve_device_gateway_auth(
                             &cfg,
                             cli_token_override.clone(),
                             cli_user_override.clone(),
                         )?;
-                        run_node(&url, auth, node_id, workspace).await
+                        run_device(&url, auth, device_id, workspace).await
                     },
                 )
                 .await

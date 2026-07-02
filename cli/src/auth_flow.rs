@@ -16,9 +16,9 @@ pub(crate) struct AuthSetupOptions {
     pub(crate) ai_provider: Option<String>,
     pub(crate) ai_model: Option<String>,
     pub(crate) ai_api_key: Option<String>,
-    pub(crate) node_id: Option<String>,
-    pub(crate) node_label: Option<String>,
-    pub(crate) node_expires_at: Option<i64>,
+    pub(crate) device_id: Option<String>,
+    pub(crate) device_label: Option<String>,
+    pub(crate) device_expires_at: Option<i64>,
 }
 
 struct LoginRetryOptions<'a> {
@@ -478,14 +478,14 @@ async fn resolve_interactive_gateway_auth(
         .await
 }
 
-pub(crate) fn resolve_node_gateway_auth(
+pub(crate) fn resolve_device_gateway_auth(
     cfg: &CliConfig,
     token: Option<String>,
     cli_username: Option<String>,
 ) -> Result<GatewayAuth, Box<dyn std::error::Error>> {
     let username = resolve_gateway_username(cfg, cli_username);
     let token =
-        normalize_auth_field(token).or_else(|| normalize_auth_field(cfg.default_node_token()));
+        normalize_auth_field(token).or_else(|| normalize_auth_field(cfg.default_device_token()));
 
     if token.is_some() && username.is_none() {
         return Err("Username is required when using --token for device auth".into());
@@ -493,7 +493,7 @@ pub(crate) fn resolve_node_gateway_auth(
 
     if username.is_some() && token.is_none() {
         return Err(
-            "Missing non-interactive device credential. Set --token or `gsv config --local set node.token ...`."
+            "Missing non-interactive device credential. Set --token or `gsv config --local set device.token ...`."
                 .into(),
         );
     }
@@ -519,9 +519,9 @@ pub(crate) async fn run_auth_setup(
         ai_provider,
         ai_model,
         ai_api_key,
-        node_id,
-        node_label,
-        node_expires_at,
+        device_id,
+        device_label,
+        device_expires_at,
     } = options;
     let cli_username = normalize_auth_field(username);
     let cfg_username = normalize_auth_field(cfg.gateway_username());
@@ -531,9 +531,9 @@ pub(crate) async fn run_auth_setup(
     let mut ai_provider = normalize_auth_field(ai_provider).map(|p| p.to_ascii_lowercase());
     let mut ai_model = normalize_auth_field(ai_model);
     let mut ai_api_key = ai_api_key.filter(|value| !value.trim().is_empty());
-    let mut node_id = normalize_auth_field(node_id).or_else(|| cfg.node.id.clone());
-    let mut node_label = normalize_auth_field(node_label);
-    let mut node_expires_at = node_expires_at;
+    let mut device_id = normalize_auth_field(device_id).or_else(|| cfg.device.id.clone());
+    let mut device_label = normalize_auth_field(device_label);
+    let mut device_expires_at = device_expires_at;
 
     if can_prompt_interactively() && cli_username.is_none() {
         let default_username = match cfg_username.as_deref() {
@@ -605,26 +605,26 @@ pub(crate) async fn run_auth_setup(
         }
 
         let mut wants_device_token =
-            node_id.is_some() || node_label.is_some() || node_expires_at.is_some();
+            device_id.is_some() || device_label.is_some() || device_expires_at.is_some();
         if !wants_device_token {
             wants_device_token = prompt_yes_no("Issue a device token now?", true)?;
         }
         if wants_device_token {
-            if node_id.is_none() {
-                let default_device_id = cfg.node.id.clone().unwrap_or_else(|| {
+            if device_id.is_none() {
+                let default_device_id = cfg.device.id.clone().unwrap_or_else(|| {
                     format!(
                         "device-{}",
                         whoami::fallible::hostname().unwrap_or_else(|_| "local".to_string())
                     )
                 });
-                node_id = prompt_line("Device ID for token binding", Some(&default_device_id))?;
+                device_id = prompt_line("Device ID for token binding", Some(&default_device_id))?;
             }
 
-            if node_label.is_none() {
-                node_label = prompt_line("Device token label (optional)", None)?;
+            if device_label.is_none() {
+                device_label = prompt_line("Device token label (optional)", None)?;
             }
 
-            if node_expires_at.is_none() {
+            if device_expires_at.is_none() {
                 let expiry_days = prompt_line(
                     "Device token expiry in days (leave empty for no expiry)",
                     None,
@@ -636,7 +636,7 @@ pub(crate) async fn run_auth_setup(
                     if days <= 0 {
                         return Err("Expiry days must be greater than zero".into());
                     }
-                    node_expires_at =
+                    device_expires_at =
                         Some(Utc::now().timestamp_millis() + (days * 24 * 60 * 60 * 1000));
                 }
             }
@@ -677,17 +677,18 @@ pub(crate) async fn run_auth_setup(
         payload["ai"] = ai;
     }
 
-    if let Some(node_id) = node_id {
-        let mut node = json!({
-            "deviceId": node_id,
+    if let Some(device_id) = device_id {
+        let mut device = json!({
+            "deviceId": device_id,
         });
-        if let Some(label) = node_label {
-            node["label"] = json!(label);
+        if let Some(label) = device_label {
+            device["label"] = json!(label);
         }
-        if let Some(expires_at) = node_expires_at {
-            node["expiresAt"] = json!(expires_at);
+        if let Some(expires_at) = device_expires_at {
+            device["expiresAt"] = json!(expires_at);
         }
-        payload["node"] = node;
+        // Gateway setup still accepts the original compatibility field name.
+        payload["node"] = device;
     }
 
     let conn = Connection::connect_without_handshake(url, |_| {}).await?;
@@ -722,15 +723,15 @@ pub(crate) async fn run_auth_setup(
         saved_fields.push("gateway.username");
     }
 
-    if let Some(node_token) = setup.node_token.as_ref() {
-        if local_cfg.node.token.as_deref() != Some(node_token.token.as_str()) {
-            local_cfg.node.token = Some(node_token.token.clone());
-            saved_fields.push("node.token");
+    if let Some(device_token) = setup.device_token.as_ref() {
+        if local_cfg.device.token.as_deref() != Some(device_token.token.as_str()) {
+            local_cfg.device.token = Some(device_token.token.clone());
+            saved_fields.push("device.token");
         }
-        if let Some(device_id) = node_token.allowed_device_id.as_deref() {
-            if local_cfg.node.id.as_deref() != Some(device_id) {
-                local_cfg.node.id = Some(device_id.to_string());
-                saved_fields.push("node.id");
+        if let Some(device_id) = device_token.allowed_device_id.as_deref() {
+            if local_cfg.device.id.as_deref() != Some(device_id) {
+                local_cfg.device.id = Some(device_id.to_string());
+                saved_fields.push("device.id");
             }
         }
     }
@@ -751,18 +752,21 @@ pub(crate) async fn run_auth_setup(
         }
     );
 
-    if let Some(node_token) = setup.node_token {
+    if let Some(device_token) = setup.device_token {
         println!(
-            "Node token issued: {} ({})",
-            node_token.token_id, node_token.token_prefix
+            "Device token issued: {} ({})",
+            device_token.token_id, device_token.token_prefix
         );
         println!(
-            "Node binding: {}",
-            node_token.allowed_device_id.as_deref().unwrap_or("<none>")
+            "Device binding: {}",
+            device_token
+                .allowed_device_id
+                .as_deref()
+                .unwrap_or("<none>")
         );
         println!(
-            "Node token expires: {}",
-            node_token
+            "Device token expires: {}",
+            device_token
                 .expires_at
                 .map(format_unix_ms)
                 .unwrap_or_else(|| "never".to_string())
@@ -838,7 +842,8 @@ pub(crate) fn run_auth_logout() -> Result<(), Box<dyn std::error::Error>> {
 struct SysSetupPayload {
     user: SysSetupUser,
     root_locked: bool,
-    node_token: Option<SysSetupNodeToken>,
+    #[serde(rename = "nodeToken")]
+    device_token: Option<SysSetupDeviceToken>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -850,7 +855,7 @@ struct SysSetupUser {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct SysSetupNodeToken {
+struct SysSetupDeviceToken {
     token_id: String,
     token: String,
     token_prefix: String,

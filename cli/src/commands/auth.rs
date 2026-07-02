@@ -303,7 +303,7 @@ fn print_token_create(token: &SysTokenIssuedPayload) {
     println!("id: {}", token.token_id);
     println!("prefix: {}", token.token_prefix);
     println!("uid: {}", token.uid);
-    println!("kind: {}", token.kind);
+    println!("kind: {}", display_token_kind(&token.kind));
     println!(
         "role: {}",
         token.allowed_role.as_deref().unwrap_or("<none>")
@@ -349,7 +349,7 @@ fn print_token_list(tokens: &[SysTokenRecordPayload]) {
             token.token_id,
             token.token_prefix,
             token.uid,
-            token.kind,
+            display_token_kind(&token.kind),
             token.allowed_role.as_deref().unwrap_or("-"),
             token.allowed_device_id.as_deref().unwrap_or("-"),
             status
@@ -372,6 +372,14 @@ fn print_token_list(tokens: &[SysTokenRecordPayload]) {
         }
     }
 }
+
+fn display_token_kind(kind: &str) -> &str {
+    match kind {
+        "node" => "device",
+        other => other,
+    }
+}
+
 fn print_link_list(links: &[SysLinkPayload]) {
     for link in links {
         println!(
