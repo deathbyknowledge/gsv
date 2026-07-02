@@ -66,6 +66,14 @@ export const AGENT_MODEL_FIELDS: readonly ConsoleSettingField[] = [
     size: "large",
   },
   {
+    key: "config/ai/fallback_model_profile",
+    label: "Fallback preset",
+    description: "Preset to try if the selected model stack fails.",
+    kind: "select",
+    size: "large",
+    options: [{ value: "", label: "None" }],
+  },
+  {
     key: "config/ai/provider_style",
     label: "Provider style",
     description: "Request API used for custom endpoints.",
@@ -670,6 +678,11 @@ function normalizeProfileValues(values: Record<string, unknown>): Record<string,
 
 function normalizeProfileStorageValues(values: Record<string, unknown>): Record<string, string> {
   const normalized = normalizeProfileValues(values);
+  for (const [key, value] of Object.entries(normalized)) {
+    if (!value.trim()) {
+      delete normalized[key];
+    }
+  }
   for (const field of MODEL_PROFILE_SECRET_FIELDS) {
     delete normalized[field.key];
   }

@@ -1413,6 +1413,7 @@ describe("GsvFs Linux-like runtime views", () => {
       "base_url",
       "context_window_tokens",
       "effective.json",
+      "fallback_model_profile",
       "generation",
       "image",
       "local.json",

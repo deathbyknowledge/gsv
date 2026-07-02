@@ -679,6 +679,67 @@ describe("handleAiConfig", () => {
     expect(result.apiKey).toBe("profile-key");
   });
 
+  it("resolves fallback model presets from selected profiles", async () => {
+    const result = await handleAiConfig({}, makeAiConfigContext({
+      "config/ai/provider": "workers-ai",
+      "config/ai/model": "@cf/default/model",
+      "users/2000/ai/model_profile": "fast-stack",
+      "users/1000/ai/model_profiles": JSON.stringify({
+        profiles: [
+          {
+            id: "fast-stack",
+            name: "Fast Stack",
+            values: {
+              "config/ai/provider": "custom",
+              "config/ai/model": "zai-glm-4.7",
+              "config/ai/base_url": "http://127.0.0.1:8080/v1",
+              "config/ai/provider_style": "openai-chat-completions",
+              "config/ai/fallback_model_profile": "safe-stack",
+              "config/ai/api_key": "redacted",
+            },
+            createdAt: 1,
+            updatedAt: 2,
+          },
+          {
+            id: "safe-stack",
+            name: "Safe Stack",
+            values: {
+              "config/ai/provider": "openrouter",
+              "config/ai/model": "openai/gpt-5-mini",
+              "config/ai/base_url": "https://openrouter.ai/api/v1",
+              "config/ai/provider_style": "openai-chat-completions",
+              "config/ai/api_key": "redacted",
+              "config/ai/max_tokens": "4096",
+            },
+            createdAt: 1,
+            updatedAt: 3,
+          },
+        ],
+      }),
+      "users/1000/ai/model_profiles/fast-stack/api_key": "profile-key",
+      "users/1000/ai/model_profiles/safe-stack/api_key": "fallback-key",
+    }, {
+      uid: 2000,
+      ownerUid: 1000,
+      processId: "task-1",
+    }));
+
+    expect(result.provider).toBe("custom");
+    expect(result.model).toBe("zai-glm-4.7");
+    expect(result.fallbacks).toEqual([
+      expect.objectContaining({
+        profileId: "safe-stack",
+        profileName: "Safe Stack",
+        provider: "openrouter",
+        model: "openai/gpt-5-mini",
+        baseUrl: "https://openrouter.ai/api/v1",
+        providerStyle: "openai-chat-completions",
+        apiKey: "fallback-key",
+        maxTokens: 4096,
+      }),
+    ]);
+  });
+
   it("resolves legacy raw agent model overrides through matching owner profiles", async () => {
     const result = await handleAiConfig({}, makeAiConfigContext({
       "config/ai/provider": "workers-ai",

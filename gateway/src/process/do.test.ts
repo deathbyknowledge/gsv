@@ -1317,6 +1317,121 @@ describe("Process DO — mechanical", () => {
       });
     });
 
+    it("switches to a fallback model after an explicit provider error response", async () => {
+      const pid = "mech-chat-provider-error-fallback";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const emitted: Array<{ signal: string; payload: unknown }> = [];
+        const calls: Array<{ provider: string; model: string }> = [];
+        process.sendSignal = async (signal: string, payload: unknown) => {
+          emitted.push({ signal, payload });
+        };
+        process.generation = {
+          async generate(request: any) {
+            calls.push({
+              provider: request.config.provider,
+              model: request.config.model,
+            });
+            if (calls.length === 1) {
+              return {
+                role: "assistant",
+                content: [],
+                api: "test",
+                provider: request.config.provider,
+                model: request.config.model,
+                stopReason: "error",
+                errorMessage: "Custom provider HTTP 403: not authenticated",
+                usage: testUsage(1, 0),
+                timestamp: Date.now(),
+              };
+            }
+            return {
+              role: "assistant",
+              content: [{ type: "text", text: "fallback pong" }],
+              api: "test",
+              provider: request.config.provider,
+              model: request.config.model,
+              stopReason: "stop",
+              usage: testUsage(2, 3),
+              timestamp: Date.now(),
+            };
+          },
+          async generateText() {
+            return "unused";
+          },
+        };
+
+        process.store.appendMessage("user", "fail over please");
+        process.currentRun = {
+          runId: "run-chat-provider-error-fallback",
+          queued: false,
+          conversationId: "default",
+          config: {
+            profile: "task",
+            provider: "custom",
+            model: "zai-glm-4.7",
+            apiKey: "bad-key",
+            reasoning: "high",
+            maxTokens: 8192,
+            contextWindowTokens: 256000,
+            contextWindowSource: "config",
+            maxContextBytes: 32768,
+            fallbacks: [{
+              profileId: "safe-stack",
+              profileName: "Safe Stack",
+              provider: "openrouter",
+              model: "openai/gpt-5-mini",
+              apiKey: "fallback-key",
+              providerStyle: "openai-chat-completions",
+              transportTarget: "gsv",
+              maxTokens: 4096,
+              contextWindowTokens: 128000,
+              contextWindowSource: "config",
+              generationTimeoutMs: 180000,
+              generationStreaming: "auto",
+            }],
+          },
+          tools: [],
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+        await process.continueAgentLoop("run-chat-provider-error-fallback");
+        return {
+          calls,
+          emitted,
+          messages: process.store.getMessages(),
+        };
+      });
+
+      expect(result.calls).toEqual([
+        { provider: "custom", model: "zai-glm-4.7" },
+        { provider: "openrouter", model: "openai/gpt-5-mini" },
+      ]);
+      expect(result.messages.map((message: any) => [message.role, message.content])).toEqual([
+        ["user", "fail over please"],
+        ["assistant", "fallback pong"],
+      ]);
+      const retry = result.emitted.find((entry) => entry.signal === "proc.run.retrying")?.payload as any;
+      expect(retry).toMatchObject({
+        pid,
+        runId: "run-chat-provider-error-fallback",
+        conversationId: "default",
+        reason: "Custom provider HTTP 403: not authenticated",
+        fallback: {
+          from: { provider: "custom", model: "zai-glm-4.7" },
+          to: { provider: "openrouter", model: "openai/gpt-5-mini" },
+        },
+      });
+      const finished = result.emitted.find((entry) => entry.signal === "proc.run.finished")?.payload as any;
+      expect(finished).toMatchObject({
+        status: "ok",
+        reason: "turn.complete",
+      });
+    });
+
     it("surfaces thrown provider context overflow separately from generation errors", async () => {
       const pid = "mech-chat-provider-context-overflow-throw";
       const stub = await initProcess(pid, ROOT_IDENTITY);

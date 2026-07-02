@@ -18,6 +18,7 @@ import type {
   AiToolsResult,
   AiToolsDevice,
   AiConfigArgs,
+  AiConfigFallback,
   AiConfigResult,
   AiAssistantMessage,
   AiTextGenerateArgs,
@@ -130,6 +131,21 @@ const DEFAULT_GENERATION_TIMEOUT_MS = 180_000;
 const DEFAULT_GENERATION_STREAMING = "auto";
 
 type AiAccountProfileOverrides = Map<number, Record<string, string>>;
+type AiModelStackConfig = Pick<
+  AiConfigResult,
+  | "provider"
+  | "model"
+  | "apiKey"
+  | "baseUrl"
+  | "providerStyle"
+  | "transportTarget"
+  | "reasoning"
+  | "maxTokens"
+  | "contextWindowTokens"
+  | "contextWindowSource"
+  | "generationTimeoutMs"
+  | "generationStreaming"
+>;
 const ACCOUNT_MODEL_PROFILE_INFERENCE_BLOCKERS = [
   "provider",
   "base_url",
@@ -293,6 +309,30 @@ export async function handleAiConfig(
     resolveAiConfigValue(config, accountConfigUids, accountProfileOverrides, "generation/streaming") ??
     config.get("config/ai/generation/streaming"),
   );
+  const fallbackModelProfile =
+    resolveAiProcessConfigValue(processOverrides, "fallback_model_profile") ??
+    resolveAiConfigValue(config, accountConfigUids, accountProfileOverrides, "fallback_model_profile") ??
+    config.get("config/ai/fallback_model_profile") ??
+    "";
+  const fallbacks = await resolveAiFallbackConfigs({
+    config,
+    accountUids: accountConfigUids,
+    selector: fallbackModelProfile,
+    primary: {
+      provider,
+      model,
+      apiKey,
+      ...(baseUrl.trim().length > 0 ? { baseUrl: baseUrl.trim() } : {}),
+      providerStyle: providerStyle.trim().toLowerCase() || "auto",
+      transportTarget: normalizeTarget(transportTarget),
+      reasoning,
+      maxTokens,
+      contextWindowTokens,
+      contextWindowSource,
+      generationTimeoutMs,
+      generationStreaming,
+    },
+  });
   const media = resolveAiMediaConfig(config, accountConfigUids, accountProfileOverrides, apiKey, processOverrides);
   const timezone = config.get("config/server/timezone") ?? "UTC";
   const skillIndex = await collectPromptSkillIndex(ctx).catch((error) => {
@@ -325,6 +365,7 @@ export async function handleAiConfig(
     maxContextBytes,
     generationTimeoutMs,
     generationStreaming,
+    ...(fallbacks.length > 0 ? { fallbacks } : {}),
     media,
   };
 }
@@ -828,6 +869,145 @@ function resolveAiProcessConfigValue(
   return Object.prototype.hasOwnProperty.call(processOverrides, fullKey)
     ? processOverrides[fullKey]
     : null;
+}
+
+async function resolveAiFallbackConfigs(options: {
+  config: KernelContext["config"];
+  accountUids: number[];
+  selector: string;
+  primary: AiModelStackConfig;
+}): Promise<AiConfigFallback[]> {
+  const selector = normalizeOptionalString(options.selector);
+  if (!selector || options.accountUids.length === 0) {
+    return [];
+  }
+  const profile = findAiAccountModelProfile(
+    options.config,
+    options.accountUids,
+    options.accountUids[0],
+    selector,
+  );
+  if (!profile) {
+    return [];
+  }
+  const fallback = await resolveAiFallbackModelStack(
+    options.config,
+    options.accountUids,
+    profile.values,
+  );
+  if (isSameAiModelStack(options.primary, fallback)) {
+    return [];
+  }
+  return [{
+    profileId: profile.id,
+    profileName: profile.name,
+    ...fallback,
+  }];
+}
+
+async function resolveAiFallbackModelStack(
+  config: KernelContext["config"],
+  accountUids: number[],
+  profileOverrides: Record<string, string>,
+): Promise<AiModelStackConfig> {
+  const emptyProfileOverrides: AiAccountProfileOverrides = new Map();
+  const provider =
+    resolveAiProcessConfigValue(profileOverrides, "provider") ??
+    resolveAiConfigValue(config, accountUids, emptyProfileOverrides, "provider") ??
+    config.get("config/ai/provider") ??
+    "workers-ai";
+  const model =
+    resolveAiProcessConfigValue(profileOverrides, "model") ??
+    resolveAiConfigValue(config, accountUids, emptyProfileOverrides, "model") ??
+    config.get("config/ai/model") ??
+    "@cf/nvidia/nemotron-3-120b-a12b";
+  const baseUrl =
+    resolveAiProcessConfigValue(profileOverrides, "base_url") ??
+    resolveAiConfigValue(config, accountUids, emptyProfileOverrides, "base_url") ??
+    config.get("config/ai/base_url") ??
+    "";
+  const providerStyle =
+    resolveAiProcessConfigValue(profileOverrides, "provider_style") ??
+    resolveAiConfigValue(config, accountUids, emptyProfileOverrides, "provider_style") ??
+    config.get("config/ai/provider_style") ??
+    "auto";
+  const transportTarget =
+    resolveAiProcessConfigValue(profileOverrides, "transport_target") ??
+    resolveAiConfigValue(config, accountUids, emptyProfileOverrides, "transport_target") ??
+    config.get("config/ai/transport_target") ??
+    "gsv";
+  const apiKey =
+    resolveAiProcessConfigValue(profileOverrides, "api_key") ??
+    resolveAiConfigValue(config, accountUids, emptyProfileOverrides, "api_key") ??
+    config.get("config/ai/api_key") ??
+    "";
+  const reasoning =
+    resolveAiProcessConfigValue(profileOverrides, "reasoning") ??
+    resolveAiConfigValue(config, accountUids, emptyProfileOverrides, "reasoning") ??
+    config.get("config/ai/reasoning") ??
+    undefined;
+  const maxTokens = parseInt(
+    resolveAiProcessConfigValue(profileOverrides, "max_tokens") ??
+    resolveAiConfigValue(config, accountUids, emptyProfileOverrides, "max_tokens") ??
+    config.get("config/ai/max_tokens") ??
+    "8192",
+    10,
+  );
+  const contextWindowOverride = parsePositiveInt(
+    resolveAiProcessConfigValue(profileOverrides, "context_window_tokens") ??
+    resolveAiConfigValue(config, accountUids, emptyProfileOverrides, "context_window_tokens"),
+  );
+  const modelContextWindow = await resolveModelContextWindow(provider, model);
+  const configuredContextWindow = parsePositiveInt(
+    config.get("config/ai/context_window_tokens"),
+  );
+  const contextWindowTokens =
+    contextWindowOverride ?? modelContextWindow ?? configuredContextWindow ?? null;
+  const contextWindowSource = contextWindowOverride !== null
+    ? "config"
+    : modelContextWindow !== null
+      ? "model"
+      : configuredContextWindow !== null
+        ? "config"
+        : "unknown";
+  const generationTimeoutMs = parsePositiveInt(
+    resolveAiProcessConfigValue(profileOverrides, "generation/timeout_ms"),
+  ) ?? parsePositiveInt(
+    resolveAiConfigValue(config, accountUids, emptyProfileOverrides, "generation/timeout_ms"),
+  ) ?? parsePositiveInt(
+    config.get("config/ai/generation/timeout_ms"),
+  ) ?? DEFAULT_GENERATION_TIMEOUT_MS;
+  const generationStreaming = normalizeGenerationStreaming(
+    resolveAiProcessConfigValue(profileOverrides, "generation/streaming") ??
+    resolveAiConfigValue(config, accountUids, emptyProfileOverrides, "generation/streaming") ??
+    config.get("config/ai/generation/streaming"),
+  );
+
+  return {
+    provider,
+    model,
+    apiKey,
+    ...(baseUrl.trim().length > 0 ? { baseUrl: baseUrl.trim() } : {}),
+    providerStyle: providerStyle.trim().toLowerCase() || "auto",
+    transportTarget: normalizeTarget(transportTarget),
+    reasoning,
+    maxTokens,
+    contextWindowTokens,
+    contextWindowSource,
+    generationTimeoutMs,
+    generationStreaming,
+  };
+}
+
+function isSameAiModelStack(
+  left: AiModelStackConfig,
+  right: AiModelStackConfig,
+): boolean {
+  return left.provider.trim().toLowerCase() === right.provider.trim().toLowerCase() &&
+    left.model.trim().toLowerCase() === right.model.trim().toLowerCase() &&
+    (left.baseUrl ?? "").trim() === (right.baseUrl ?? "").trim() &&
+    (left.providerStyle ?? "auto").trim().toLowerCase() === (right.providerStyle ?? "auto").trim().toLowerCase() &&
+    normalizeTarget(left.transportTarget) === normalizeTarget(right.transportTarget);
 }
 
 async function resolveAiMediaConfigForContext(ctx: KernelContext): Promise<NonNullable<AiConfigResult["media"]>> {

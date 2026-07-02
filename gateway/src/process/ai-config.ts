@@ -12,6 +12,7 @@ export const PROCESS_AI_CONFIG_KEYS = [
   "config/ai/base_url",
   "config/ai/provider_style",
   "config/ai/transport_target",
+  "config/ai/fallback_model_profile",
   "config/ai/api_key",
   "config/ai/reasoning",
   "config/ai/max_tokens",

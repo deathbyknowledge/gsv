@@ -126,6 +126,7 @@ type SettingsFieldGroupProps = {
   fields: readonly ConsoleSettingField[];
   initialValues?: Record<string, string>;
   meta?: string;
+  modelProfiles?: readonly ConsoleModelProfile[];
   onSave: (entries: readonly SaveConsoleConfigInput[]) => Promise<void>;
   targets?: readonly AgentToolTarget[];
   title: string;
@@ -137,6 +138,7 @@ type ClearedProfileSecretKeys = ReadonlyMap<string, ReadonlySet<string>>;
 const TOOL_APPROVAL_RUNTIME_ID = "tool-approval";
 const MODEL_ADVANCED_FIELD_KEYS = new Set([
   "config/ai/base_url",
+  "config/ai/fallback_model_profile",
   "config/ai/provider_style",
   "config/ai/transport_target",
   "config/ai/reasoning",
@@ -388,6 +390,7 @@ function ModelSettingsDetail({
           fields={AGENT_MODEL_FIELDS}
           initialValues={effectiveValues}
           meta={scopeLabel}
+          modelProfiles={profiles}
           targets={targets}
           title="Default Agent Model"
           validateBeforeSave={(values) => onValidateModelConfig({ values })}
@@ -983,6 +986,8 @@ function ModelProfileForm({
       <SettingFieldInput
         field={field}
         disabled={!editable || pending}
+        modelProfiles={profiles}
+        excludeModelProfileId={profile?.id}
         targets={targets}
         cleared={clearedSecretKeys.has(field.key)}
         redacted={isModelProfileFieldRedacted(config, viewer, profile, field)}
@@ -1098,6 +1103,7 @@ function SettingsFieldGroup({
   editable,
   fields,
   initialValues,
+  modelProfiles = [],
   onSave,
   targets = [],
   validateBeforeSave,
@@ -1200,6 +1206,7 @@ function SettingsFieldGroup({
       <SettingFieldInput
         disabled={!editable || pending || field.kind === "readonly"}
         field={field}
+        modelProfiles={modelProfiles}
         targets={targets}
         cleared={clearedSensitiveKeys.has(field.key)}
         redacted={isFieldRedacted(config, field, writeKeyForField(field))}
@@ -1309,9 +1316,11 @@ function splitModelSettingsFields(fields: readonly ConsoleSettingField[]): {
 
 function shouldOpenModelAdvancedFields(values: Record<string, string>): boolean {
   const baseUrl = values["config/ai/base_url"]?.trim() ?? "";
+  const fallbackModelProfile = values["config/ai/fallback_model_profile"]?.trim() ?? "";
   const providerStyle = values["config/ai/provider_style"]?.trim() ?? "";
   const transportTarget = values[MODEL_TRANSPORT_TARGET_KEY]?.trim() ?? "";
   return baseUrl.length > 0 ||
+    fallbackModelProfile.length > 0 ||
     (providerStyle.length > 0 && providerStyle !== "auto") ||
     (transportTarget.length > 0 && transportTarget !== "gsv");
 }
@@ -1331,7 +1340,9 @@ function SettingsStatus({
 function SettingFieldInput({
   cleared = false,
   disabled,
+  excludeModelProfileId,
   field,
+  modelProfiles = [],
   redacted = false,
   targets = [],
   value,
@@ -1340,7 +1351,9 @@ function SettingFieldInput({
 }: {
   cleared?: boolean;
   disabled: boolean;
+  excludeModelProfileId?: string;
   field: ConsoleSettingField;
+  modelProfiles?: readonly ConsoleModelProfile[];
   redacted?: boolean;
   targets?: readonly AgentToolTarget[];
   value: string;
@@ -1371,6 +1384,24 @@ function SettingFieldInput({
         size={field.size}
         block
         onChange={(index) => onChange(selectOptionValue(options[index]) || "gsv")}
+      />
+    );
+  }
+
+  if (field.key === "config/ai/fallback_model_profile") {
+    const options = fallbackModelProfileOptionsForValue(value, modelProfiles, excludeModelProfileId);
+    const selectedValue = value.trim();
+    const selectedIndex = Math.max(0, options.findIndex((option) => selectOptionValue(option) === selectedValue));
+    return (
+      <Select
+        label={field.label}
+        description={description}
+        options={options}
+        value={selectedIndex}
+        disabled={disabled}
+        size={field.size}
+        block
+        onChange={(index) => onChange(selectOptionValue(options[index]) || "")}
       />
     );
   }
@@ -1476,6 +1507,36 @@ function SettingFieldInput({
       onChange={onChange}
     />
   );
+}
+
+function fallbackModelProfileOptionsForValue(
+  value: string,
+  profiles: readonly ConsoleModelProfile[],
+  excludeProfileId?: string,
+): SelectOption[] {
+  const profileOptions = profiles
+    .filter((profile) => profile.id !== excludeProfileId)
+    .map((profile) => ({
+      label: profile.name,
+      value: profile.id,
+      description: modelProfileSummary(profile.values),
+    }));
+  const options: SelectOption[] = [
+    { label: "None", value: "" },
+    ...profileOptions,
+  ];
+  const selectedValue = value.trim();
+  if (!selectedValue || options.some((option) => selectOptionValue(option) === selectedValue)) {
+    return options;
+  }
+  return [
+    ...options,
+    {
+      label: selectedValue,
+      value: selectedValue,
+      description: "Stored fallback preset is not currently available.",
+    },
+  ];
 }
 
 function transportTargetOptionsForValue(
