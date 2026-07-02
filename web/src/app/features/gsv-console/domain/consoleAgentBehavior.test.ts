@@ -4,6 +4,7 @@ import {
   behaviorForAccount,
   defaultApprovalPolicyForConfig,
   GLOBAL_APPROVAL_CONFIG_KEY,
+  inheritedFallbackModelLabelForAccount,
   parseApprovalPolicy,
   serializeApprovalPolicy,
 } from "./consoleAgentBehavior";
@@ -57,6 +58,49 @@ describe("console agent behavior", () => {
     expect(behavior.modelProfile).toBe("fast-stack");
     expect(behavior.model).toBe("model-profile:fast-stack");
     expect(behavior.modelLabel).toBe("Fast Stack");
+  });
+
+  it("resolves agent fallback preset overrides through the owning user", () => {
+    const config: ConsoleConfigEntry[] = [
+      { key: "users/2000/ai/fallback_model_profile", value: "safe-stack", redacted: false },
+      { key: "users/1000/ai/fallback_model_profile", value: "owner-stack", redacted: false },
+      {
+        key: "users/1000/ai/model_profiles",
+        value: JSON.stringify({
+          profiles: [
+            {
+              id: "safe-stack",
+              name: "Safe Stack",
+              values: {
+                "config/ai/provider": "openrouter",
+                "config/ai/model": "openai/gpt-5-mini",
+              },
+              createdAt: 1,
+              updatedAt: 2,
+            },
+            {
+              id: "owner-stack",
+              name: "Owner Stack",
+              values: {
+                "config/ai/provider": "workers-ai",
+                "config/ai/model": "@cf/owner/model",
+              },
+              createdAt: 1,
+              updatedAt: 3,
+            },
+          ],
+        }),
+        redacted: false,
+      },
+    ];
+
+    const behavior = behaviorForAccount(config, 2000, 1000);
+
+    expect(behavior.fallbackModelProfile).toBe("safe-stack");
+    expect(behavior.fallbackModel).toBe("model-profile:safe-stack");
+    expect(behavior.fallbackModelLabel).toBe("Safe Stack");
+    expect(behavior.fallbackModelInherited).toBe(false);
+    expect(inheritedFallbackModelLabelForAccount(config, 2000, 1000)).toBe("Owner Stack");
   });
 
   it("treats legacy raw model overrides as a matching owner profile", () => {

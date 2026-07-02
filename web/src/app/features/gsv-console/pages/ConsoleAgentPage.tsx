@@ -22,10 +22,17 @@ import type {
   ConsoleResourceState,
   ConsoleTarget,
 } from "../domain/consoleModels";
-import { modelOptionsForConfig, type ConsoleModelOption } from "../domain/consoleAi";
+import {
+  modelOptionsForConfig,
+  modelProfileOptionValue,
+  modelProfileSummary,
+  modelProfilesForConfig,
+  type ConsoleModelOption,
+} from "../domain/consoleAi";
 import {
   behaviorForAccount,
   defaultApprovalPolicyForConfig,
+  inheritedFallbackModelLabelForAccount,
   inheritedModelLabelForAccount,
   inheritedReasoningForAccount,
   modelOptionsForAccount,
@@ -72,9 +79,11 @@ export function ConsoleAgentPage({
   const toolTargets = agentToolTargetsForConsoleTargets(targets.targets);
   const ownerUid = viewerAccountForAgents(accounts.resource.data ?? [])?.uid ?? null;
   const inheritedNewAgentModel = inheritedModelLabelForAccount(config.config, -1, ownerUid);
+  const inheritedNewAgentFallback = inheritedFallbackModelLabelForAccount(config.config, -1, ownerUid);
   const inheritedNewAgentReasoning = inheritedReasoningForAccount(config.config, -1, ownerUid);
   const defaultApprovalPolicy = defaultApprovalPolicyForConfig(config.config, ownerUid);
   const newAgentModelOptions = modelOptionsForAccount(modelOptions, "", inheritedNewAgentModel);
+  const newAgentFallbackOptions = fallbackModelOptionsForAccount(config.config, null, ownerUid, "", inheritedNewAgentFallback);
 
   if (createNew) {
     return (
@@ -82,6 +91,7 @@ export function ConsoleAgentPage({
         <NewAgentEditorSurface
           accountCount={accounts.resource.data?.length ?? 0}
           modelOptions={newAgentModelOptions}
+          fallbackModelOptions={newAgentFallbackOptions}
           toolTargets={toolTargets}
           inheritedReasoning={inheritedNewAgentReasoning}
           defaultApprovalPolicy={defaultApprovalPolicy}
@@ -151,8 +161,16 @@ function AgentEditorSurface({
   const editsUserDefaults = isHumanCrewAccount(account);
   const behaviorEditable = account.runnable;
   const inheritedModelLabel = inheritedModelLabelForAccount(config, account.uid, ownerUid);
+  const inheritedFallbackModelLabel = inheritedFallbackModelLabelForAccount(config, account.uid, ownerUid);
   const inheritedReasoning = inheritedReasoningForAccount(config, account.uid, ownerUid);
   const resolvedModelOptions = modelOptionsForAccount(modelOptions, behavior.model, inheritedModelLabel);
+  const fallbackModelOptions = fallbackModelOptionsForAccount(
+    config,
+    account.uid,
+    ownerUid,
+    behavior.fallbackModel,
+    inheritedFallbackModelLabel,
+  );
   const files = editorFilesForAccount({
     account,
     contextFiles: context.files,
@@ -186,9 +204,11 @@ function AgentEditorSurface({
               context.dataUpdatedAt,
               processes.length,
               behavior.model,
+              behavior.fallbackModel,
               behavior.reasoning,
               behavior.approval,
               modelOptionsKey(resolvedModelOptions),
+              modelOptionsKey(fallbackModelOptions),
             ].join(":")}
             mode="manage"
             avatarSrc={isHumanCrewAccount(account) ? CREW_HUMAN_IMAGE : agentImageSrcForAccount(account, accounts)}
@@ -198,6 +218,7 @@ function AgentEditorSurface({
             initialRole={labelForConsoleAccountRelation(account.relation)}
             initialDescription={accountDescription(account)}
             initialModel={behavior.model}
+            initialFallbackModel={behavior.fallbackModel}
             initialReasoning={behavior.reasoning}
             inheritedReasoning={inheritedReasoning}
             initialPermission={behavior.permission}
@@ -210,6 +231,7 @@ function AgentEditorSurface({
             metaLabel="UID:"
             status={avatarStatusForProcesses(account, processes)}
             models={resolvedModelOptions}
+            fallbackModels={fallbackModelOptions}
             tasks={tasksForProcesses(processes)}
             files={files}
             identityReadOnly
@@ -222,6 +244,7 @@ function AgentEditorSurface({
                 await saveBehavior.mutateAsync({
                   uid: account.uid,
                   model: draft.modelIndex === 0 ? "" : draft.model,
+                  fallbackModel: draft.fallbackModelIndex === 0 ? "" : draft.fallbackModel,
                   reasoning: draft.reasoningIndex === 0 ? "" : draft.reasoning,
                   approval: approvalForAgentSave(draft.approvalPolicy, behavior),
                 });
@@ -244,6 +267,7 @@ function AgentEditorSurface({
 function NewAgentEditorSurface({
   accountCount,
   modelOptions,
+  fallbackModelOptions,
   toolTargets,
   inheritedReasoning,
   defaultApprovalPolicy,
@@ -252,6 +276,7 @@ function NewAgentEditorSurface({
 }: {
   accountCount: number;
   modelOptions: AgentEditorModelOption[];
+  fallbackModelOptions: AgentEditorModelOption[];
   toolTargets: readonly AgentToolTarget[];
   inheritedReasoning: string;
   defaultApprovalPolicy: string;
@@ -295,6 +320,7 @@ function NewAgentEditorSurface({
             metaLabel="STATUS:"
             status="idle"
             models={modelOptions}
+            fallbackModels={fallbackModelOptions}
             toolTargets={[...toolTargets]}
             inheritedReasoning={inheritedReasoning}
             onCreate={async (draft) => {
@@ -320,6 +346,7 @@ function agentDraftToCreateInput(draft: AgentEditorDraft, defaultApprovalPolicy:
     role: draft.role,
     description: draft.description,
     model: draft.modelIndex === 0 ? "" : draft.model,
+    fallbackModel: draft.fallbackModelIndex === 0 ? "" : draft.fallbackModel,
     reasoning: draft.reasoningIndex === 0 ? "" : draft.reasoning,
     approval: approvalOverrideForInheritedPolicy(draft.approvalPolicy, defaultApprovalPolicy),
     files: draft.files.map((file) => ({
@@ -372,6 +399,57 @@ function modelOptionsKey(options: readonly AgentEditorModelOption[]): string {
     }
     return `${option.value ?? ""}:${option.label}:${option.description ?? ""}`;
   }).join("\u0000");
+}
+
+function fallbackModelOptionsForAccount(
+  config: readonly ConsoleConfigEntry[],
+  uid: number | null,
+  ownerUid: number | null,
+  selectedValue: string,
+  inheritedLabel: string,
+): AgentEditorModelOption[] {
+  const inherited = inheritedLabel.trim();
+  const options: AgentEditorModelOption[] = [{
+    value: "",
+    label: inherited ? `Inherit: ${inherited}` : "Inherit fallback",
+    description: inherited ? "Uses the inherited fallback preset." : "No fallback override.",
+  }];
+  const seen = new Set([""]);
+
+  const addProfileOptions = (profileUid: number | null) => {
+    if (profileUid === null || !Number.isFinite(profileUid)) {
+      return;
+    }
+    for (const profile of modelProfilesForConfig(config, profileUid)) {
+      const value = modelProfileOptionValue(profile.id);
+      const key = value.trim().toLowerCase();
+      if (!value || seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      options.push({
+        value,
+        label: profile.name,
+        description: modelProfileSummary(profile),
+      });
+    }
+  };
+
+  addProfileOptions(uid);
+  if (ownerUid !== uid) {
+    addProfileOptions(ownerUid);
+  }
+
+  const selected = selectedValue.trim();
+  if (selected && !seen.has(selected.toLowerCase())) {
+    options.push({
+      value: selected,
+      label: selected.replace(/^model-profile:/i, ""),
+      description: "Stored fallback preset is not currently available.",
+    });
+  }
+
+  return options;
 }
 
 function agentToolTargetsForConsoleTargets(targets: readonly ConsoleTarget[]): AgentToolTarget[] {

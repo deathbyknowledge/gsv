@@ -346,6 +346,7 @@ describe("console agent service", () => {
     await saveConsoleAgentBehavior(client, {
       uid: 42,
       model: "",
+      fallbackModel: "",
       reasoning: "",
       approval: "",
     });
@@ -359,10 +360,14 @@ describe("console agent service", () => {
       value: "",
     });
     expect(setConfig).toHaveBeenNthCalledWith(3, {
-      key: "users/42/ai/tools/approval",
+      key: "users/42/ai/fallback_model_profile",
       value: "",
     });
     expect(setConfig).toHaveBeenNthCalledWith(4, {
+      key: "users/42/ai/tools/approval",
+      value: "",
+    });
+    expect(setConfig).toHaveBeenNthCalledWith(5, {
       key: "users/42/ai/reasoning",
       value: "",
     });
@@ -414,6 +419,35 @@ describe("console agent service", () => {
       value: "medium",
     });
     expect(setConfig).toHaveBeenCalledTimes(3);
+  });
+
+  it("persists selected fallback presets as account fallback references", async () => {
+    const { client, setConfig } = createMockClient(42);
+
+    await saveConsoleAgentBehavior(client, {
+      uid: 42,
+      model: "model-profile:fast-stack",
+      fallbackModel: "model-profile:safe-stack",
+      reasoning: "medium",
+    });
+
+    expect(setConfig).toHaveBeenNthCalledWith(1, {
+      key: "users/42/ai/model_profile",
+      value: "fast-stack",
+    });
+    expect(setConfig).toHaveBeenNthCalledWith(2, {
+      key: "users/42/ai/model",
+      value: "",
+    });
+    expect(setConfig).toHaveBeenNthCalledWith(3, {
+      key: "users/42/ai/fallback_model_profile",
+      value: "safe-stack",
+    });
+    expect(setConfig).toHaveBeenNthCalledWith(4, {
+      key: "users/42/ai/reasoning",
+      value: "medium",
+    });
+    expect(setConfig).toHaveBeenCalledTimes(4);
   });
 
   it("reconciles renamed and deleted agent context files", async () => {

@@ -62,6 +62,7 @@ export type CreateConsoleAgentInput = {
   role: string;
   description: string;
   model?: string;
+  fallbackModel?: string;
   reasoning?: string;
   approval?: string;
   files: readonly ConsoleAgentContextFileDraft[];
@@ -87,6 +88,7 @@ export type SaveConsoleAgentContextResult = {
 export type SaveConsoleAgentBehaviorInput = {
   uid: number;
   model: string;
+  fallbackModel?: string;
   reasoning: string;
   approval?: string;
 };
@@ -838,6 +840,7 @@ async function loadOptionalPayload(load: () => Promise<unknown>): Promise<unknow
 
 type AgentBehaviorConfigDraft = {
   model?: string;
+  fallbackModel?: string;
   reasoning?: string;
   approval?: string;
 };
@@ -849,6 +852,7 @@ async function saveAgentBehaviorConfig(
   options: { includeEmpty?: boolean } = {},
 ): Promise<void> {
   const model = input.model?.trim() ?? "";
+  const fallbackModel = input.fallbackModel?.trim() ?? "";
   const reasoning = input.reasoning?.trim() ?? "";
   const approval = input.approval?.trim() ?? "";
   const writes: Promise<unknown>[] = [];
@@ -864,6 +868,12 @@ async function saveAgentBehaviorConfig(
     writes.push(client.sys.config.set({
       key: `users/${uid}/ai/model`,
       value: modelProfile ? "" : model,
+    }));
+  }
+  if (input.fallbackModel !== undefined && (options.includeEmpty || fallbackModel)) {
+    writes.push(client.sys.config.set({
+      key: `users/${uid}/ai/fallback_model_profile`,
+      value: modelProfileIdFromOptionValue(fallbackModel) ?? fallbackModel,
     }));
   }
   if (input.approval !== undefined && (options.includeEmpty || approval)) {

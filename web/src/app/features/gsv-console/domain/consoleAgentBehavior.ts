@@ -26,6 +26,10 @@ export type ConsoleAgentBehavior = {
   approvalInherited: boolean;
   approvalOverride: string;
   model: string;
+  fallbackModel: string;
+  fallbackModelInherited: boolean;
+  fallbackModelLabel: string;
+  fallbackModelProfile: string;
   modelLabel: string;
   modelProfile: string;
   permission: AgentApprovalAction;
@@ -68,6 +72,11 @@ export function behaviorForAccount(
   const modelLabel = explicitModelProfile
     ? modelProfileLabelForAccount(config, uid, ownerUid, explicitModelProfile)
     : inferredModelProfile?.name ?? modelOverride;
+  const fallbackModelProfile = fallbackModelProfileOverrideForAccount(config, uid);
+  const fallbackModel = fallbackModelProfile ? modelProfileOptionValue(fallbackModelProfile) : "";
+  const fallbackModelLabel = fallbackModelProfile
+    ? modelProfileLabelForAccount(config, uid, ownerUid, fallbackModelProfile)
+    : "";
   const reasoning = reasoningOverrideForAccount(config, uid);
   const approvalOverride = approvalOverrideForAccount(config, uid);
   const approval = approvalOverride || defaultApprovalPolicyForConfig(config, ownerUid);
@@ -77,6 +86,10 @@ export function behaviorForAccount(
     approvalInherited: !approvalOverride,
     approvalOverride,
     model,
+    fallbackModel,
+    fallbackModelInherited: !fallbackModelProfile,
+    fallbackModelLabel,
+    fallbackModelProfile,
     modelLabel,
     modelProfile,
     permission: parseApprovalPolicy(approval).default,
@@ -107,6 +120,10 @@ export function modelProfileOverrideForAccount(config: readonly ConsoleConfigEnt
   return configValue(config, `users/${uid}/ai/model_profile`);
 }
 
+export function fallbackModelProfileOverrideForAccount(config: readonly ConsoleConfigEntry[], uid: number): string {
+  return configValue(config, `users/${uid}/ai/fallback_model_profile`);
+}
+
 export function inheritedModelLabelForAccount(
   config: readonly ConsoleConfigEntry[],
   uid: number,
@@ -116,6 +133,18 @@ export function inheritedModelLabelForAccount(
     ? modelLabelOverrideForAccount(config, ownerUid)
     : "";
   return ownerModel || defaultModelLabelForConfig(config);
+}
+
+export function inheritedFallbackModelLabelForAccount(
+  config: readonly ConsoleConfigEntry[],
+  uid: number,
+  ownerUid?: number | null,
+): string {
+  const ownerFallback = typeof ownerUid === "number" && Number.isFinite(ownerUid) && ownerUid !== uid
+    ? fallbackModelLabelOverrideForAccount(config, ownerUid, null)
+    : "";
+  const systemFallback = fallbackModelLabelForSelector(config, uid, ownerUid, configValue(config, "config/ai/fallback_model_profile"));
+  return ownerFallback || systemFallback;
 }
 
 export function reasoningOverrideForAccount(config: readonly ConsoleConfigEntry[], uid: number): string {
@@ -191,6 +220,23 @@ function modelLabelOverrideForAccount(config: readonly ConsoleConfigEntry[], uid
     return modelProfileLabelForAccount(config, uid, null, profile);
   }
   return modelOverrideForAccount(config, uid);
+}
+
+function fallbackModelLabelOverrideForAccount(
+  config: readonly ConsoleConfigEntry[],
+  uid: number,
+  ownerUid: number | null | undefined,
+): string {
+  return fallbackModelLabelForSelector(config, uid, ownerUid, fallbackModelProfileOverrideForAccount(config, uid));
+}
+
+function fallbackModelLabelForSelector(
+  config: readonly ConsoleConfigEntry[],
+  uid: number,
+  ownerUid: number | null | undefined,
+  selector: string,
+): string {
+  return selector.trim() ? modelProfileLabelForAccount(config, uid, ownerUid, selector) : "";
 }
 
 function modelProfileLabelForAccount(
