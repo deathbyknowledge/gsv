@@ -377,7 +377,7 @@ describe("Process DO — mechanical", () => {
         key: "config/ai/model",
         value: "gpt-4.2",
       })) as ResponseOkFrame;
-      expect((patchResponse.data as any).config.profile).toBeUndefined();
+      expect((patchResponse.data as any).config.profile).toMatchObject({ id: "fast", name: "Fast" });
       expect((patchResponse.data as any).config.values["config/ai/model"]).toBe("gpt-4.2");
 
       const clearResponse = await stub.recvFrame(makeReq("proc.ai.config.set", { clear: true })) as ResponseOkFrame;
@@ -405,6 +405,26 @@ describe("Process DO — mechanical", () => {
 
       const getResponse = await stub.recvFrame(makeReq("proc.ai.config.get", { redacted: false })) as ResponseOkFrame;
       expect((getResponse.data as any).config).toMatchObject({
+        profile: { id: "fast", name: "Fast" },
+        values: {},
+      });
+
+      const patchResponse = await stub.recvFrame(makeReq("proc.ai.config.set", {
+        key: "config/ai/reasoning",
+        value: "high",
+      })) as ResponseOkFrame;
+      expect((patchResponse.data as any).config).toMatchObject({
+        profile: { id: "fast", name: "Fast" },
+        values: {
+          "config/ai/reasoning": "high",
+        },
+      });
+
+      const clearFieldResponse = await stub.recvFrame(makeReq("proc.ai.config.set", {
+        key: "config/ai/reasoning",
+        value: "",
+      })) as ResponseOkFrame;
+      expect((clearFieldResponse.data as any).config).toMatchObject({
         profile: { id: "fast", name: "Fast" },
         values: {},
       });

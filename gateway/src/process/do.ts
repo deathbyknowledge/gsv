@@ -1151,13 +1151,13 @@ export class Process extends Host<Env> {
         delete values[args.key];
       }
 
-      if (Object.keys(values).length === 0) {
+      const snapshot = createProcessAiConfigSnapshot(values, current?.profile);
+      if (Object.keys(snapshot.values).length === 0 && !snapshot.profile) {
         this.store.clearAiConfigSnapshot();
         await this.emitProcChanged(["ai.config"], { aiConfig: null });
         return { ok: true, pid: this.pid, config: null };
       }
 
-      const snapshot = createProcessAiConfigSnapshot(values);
       this.store.setAiConfigSnapshot(snapshot);
       const redacted = redactProcessAiConfigSnapshot(snapshot);
       await this.emitProcChanged(["ai.config"], { aiConfig: redacted });
