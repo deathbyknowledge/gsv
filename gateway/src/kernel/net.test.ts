@@ -45,6 +45,16 @@ describe("responseFromNetFetchResult", () => {
     );
   });
 
+  it("allows no-body responses with large declared content lengths", async () => {
+    const response = new Response(null, {
+      headers: {
+        "content-length": String(MAX_NET_FETCH_RESPONSE_BYTES + 1),
+      },
+    });
+
+    await expect(readNetFetchResponseBody(response)).resolves.toHaveLength(0);
+  });
+
   it("rejects streamed responses that exceed the response cap", async () => {
     const response = new Response(new ReadableStream<Uint8Array>({
       start(controller) {

@@ -155,12 +155,12 @@ export async function readNetFetchResponseBody(
   response: Response,
   maxBytes = MAX_NET_FETCH_RESPONSE_BYTES,
 ): Promise<Uint8Array> {
+  if (!response.body) {
+    return new Uint8Array();
+  }
   const contentLength = parseContentLength(response.headers.get("content-length"));
   if (contentLength !== null && contentLength > maxBytes) {
     throw new Error(formatNetFetchResponseSizeError(contentLength, maxBytes));
-  }
-  if (!response.body) {
-    return new Uint8Array();
   }
 
   const reader = response.body.getReader();
