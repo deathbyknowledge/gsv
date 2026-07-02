@@ -108,6 +108,7 @@ import {
   findProcessAiModelProfile,
   isProcessAiConfigKey,
   omitProcessAiConfigSecrets,
+  parseProcessAiModelProfiles,
   PROCESS_AI_CONFIG_SECRET_KEYS,
   processAiModelProfileSecretConfigKey,
 } from "../process/ai-config";
@@ -129,6 +130,13 @@ const DEFAULT_GENERATION_TIMEOUT_MS = 180_000;
 const DEFAULT_GENERATION_STREAMING = "auto";
 
 type AiAccountProfileOverrides = Map<number, Record<string, string>>;
+const ACCOUNT_MODEL_PROFILE_INFERENCE_BLOCKERS = [
+  "provider",
+  "base_url",
+  "provider_style",
+  "transport_target",
+  "api_key",
+] as const;
 
 export async function handleAiTools(
   ctx: KernelContext,
@@ -898,11 +906,17 @@ function resolveAiAccountProfileOverrides(
 ): AiAccountProfileOverrides {
   const overrides: AiAccountProfileOverrides = new Map();
   for (const accountUid of accountUids) {
-    const selector = normalizeOptionalString(config.get(`users/${accountUid}/ai/model_profile`));
+    const explicitSelector = normalizeOptionalString(config.get(`users/${accountUid}/ai/model_profile`));
+    const inferredSelector = explicitSelector
+      ? undefined
+      : inferAiAccountModelProfileSelector(config, accountUid);
+    const selector = explicitSelector ?? inferredSelector;
     if (!selector) {
       continue;
     }
-    const profile = findAiAccountModelProfile(config, accountUids, accountUid, selector);
+    const profile = findAiAccountModelProfile(config, accountUids, accountUid, selector, {
+      matchModel: Boolean(inferredSelector),
+    });
     if (profile) {
       overrides.set(accountUid, profile.values);
     }
@@ -915,23 +929,49 @@ function findAiAccountModelProfile(
   accountUids: number[],
   accountUid: number,
   selector: string,
+  options: { matchModel?: boolean } = {},
 ) {
+  const normalized = selector.trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
   const ownerCandidates = [
     accountUid,
     ...accountUids.filter((candidateUid) => candidateUid !== accountUid),
   ];
   for (const ownerUid of ownerCandidates) {
-    const profile = findProcessAiModelProfile(
+    const profiles = parseProcessAiModelProfiles(
       config.get(`users/${ownerUid}/ai/model_profiles`),
       ownerUid,
-      selector,
       (key) => config.get(key),
+    );
+    const profile = profiles.find((candidate) =>
+      candidate.id.toLowerCase() === normalized ||
+      candidate.name.toLowerCase() === normalized ||
+      (
+        options.matchModel === true &&
+        candidate.values["config/ai/model"]?.trim().toLowerCase() === normalized
+      )
     );
     if (profile) {
       return profile;
     }
   }
   return null;
+}
+
+function inferAiAccountModelProfileSelector(
+  config: KernelContext["config"],
+  accountUid: number,
+): string | undefined {
+  const model = normalizeOptionalString(config.get(`users/${accountUid}/ai/model`));
+  if (!model) {
+    return undefined;
+  }
+  const hasProviderStackOverride = ACCOUNT_MODEL_PROFILE_INFERENCE_BLOCKERS.some((key) =>
+    normalizeOptionalString(config.get(`users/${accountUid}/ai/${key}`)),
+  );
+  return hasProviderStackOverride ? undefined : model;
 }
 
 function resolveAiProfileOwnerUid(

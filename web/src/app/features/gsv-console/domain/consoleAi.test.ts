@@ -107,4 +107,38 @@ describe("console AI config classification", () => {
       },
     ]);
   });
+
+  it("prefers saved profile options over duplicate user raw model overrides", () => {
+    const options = modelOptionsForConfig([
+      { key: "config/ai/model", value: "@cf/default/model", redacted: false },
+      { key: "users/2/ai/model", value: "zai-glm-4.7", redacted: false },
+      {
+        key: "users/1/ai/model_profiles",
+        value: JSON.stringify({
+          profiles: [{
+            id: "fast-stack",
+            name: "Fast Stack",
+            values: {
+              "config/ai/provider": "custom",
+              "config/ai/model": "zai-glm-4.7",
+            },
+          }],
+        }),
+        redacted: false,
+      },
+    ]);
+
+    expect(options).toEqual([
+      {
+        value: "@cf/default/model",
+        label: "Model",
+        description: "@cf/default/model",
+      },
+      {
+        value: "model-profile:fast-stack",
+        label: "Fast Stack",
+        description: "custom · zai-glm-4.7",
+      },
+    ]);
+  });
 });

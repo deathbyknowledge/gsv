@@ -679,6 +679,71 @@ describe("handleAiConfig", () => {
     expect(result.apiKey).toBe("profile-key");
   });
 
+  it("resolves legacy raw agent model overrides through matching owner profiles", async () => {
+    const result = await handleAiConfig({}, makeAiConfigContext({
+      "config/ai/provider": "workers-ai",
+      "config/ai/model": "@cf/default/model",
+      "users/2000/ai/model": "zai-glm-4.7",
+      "users/1000/ai/model_profiles": JSON.stringify({
+        profiles: [{
+          id: "fast-stack",
+          name: "Fast Stack",
+          values: {
+            "config/ai/provider": "custom",
+            "config/ai/model": "zai-glm-4.7",
+            "config/ai/base_url": "http://127.0.0.1:8080/v1",
+            "config/ai/provider_style": "openai-chat-completions",
+            "config/ai/api_key": "redacted",
+          },
+          createdAt: 1,
+          updatedAt: 2,
+        }],
+      }),
+      "users/1000/ai/model_profiles/fast-stack/api_key": "profile-key",
+    }, {
+      uid: 2000,
+      ownerUid: 1000,
+      processId: "task-1",
+    }));
+
+    expect(result.provider).toBe("custom");
+    expect(result.model).toBe("zai-glm-4.7");
+    expect(result.baseUrl).toBe("http://127.0.0.1:8080/v1");
+    expect(result.providerStyle).toBe("openai-chat-completions");
+    expect(result.apiKey).toBe("profile-key");
+  });
+
+  it("does not infer a profile when raw agent provider fields are configured", async () => {
+    const result = await handleAiConfig({}, makeAiConfigContext({
+      "config/ai/provider": "workers-ai",
+      "config/ai/model": "@cf/default/model",
+      "users/2000/ai/provider": "custom",
+      "users/2000/ai/model": "zai-glm-4.7",
+      "users/2000/ai/base_url": "http://raw.example/v1",
+      "users/1000/ai/model_profiles": JSON.stringify({
+        profiles: [{
+          id: "fast-stack",
+          name: "Fast Stack",
+          values: {
+            "config/ai/provider": "profile-provider",
+            "config/ai/model": "zai-glm-4.7",
+            "config/ai/base_url": "http://profile.example/v1",
+          },
+          createdAt: 1,
+          updatedAt: 2,
+        }],
+      }),
+    }, {
+      uid: 2000,
+      ownerUid: 1000,
+      processId: "task-1",
+    }));
+
+    expect(result.provider).toBe("custom");
+    expect(result.model).toBe("zai-glm-4.7");
+    expect(result.baseUrl).toBe("http://raw.example/v1");
+  });
+
   it("prefers agent AI config over the owning human's config", async () => {
     const result = await handleAiConfig({}, makeAiConfigContext({
       "users/1000/ai/provider": "owner-provider",

@@ -4,6 +4,7 @@ import {
   modelProfileOptionValue,
   modelProfilesForConfig,
   modelOptionForValue,
+  type ConsoleModelProfile,
   type ConsoleModelOption,
 } from "./consoleAi";
 
@@ -34,6 +35,13 @@ export type ConsoleAgentBehavior = {
 export const APPROVAL_ACTIONS: AgentApprovalAction[] = ["auto", "ask", "deny"];
 export const DEFAULT_REASONING_EFFORT = "medium";
 export const GLOBAL_APPROVAL_CONFIG_KEY = "config/ai/tools/approval";
+const MODEL_PROFILE_INFERENCE_BLOCKING_KEYS = [
+  "provider",
+  "base_url",
+  "provider_style",
+  "transport_target",
+  "api_key",
+] as const;
 
 const DEFAULT_APPROVAL_POLICY: ApprovalPolicy = {
   default: "auto",
@@ -50,10 +58,16 @@ export function behaviorForAccount(
   uid: number,
   ownerUid?: number | null,
 ): ConsoleAgentBehavior {
-  const modelProfile = modelProfileOverrideForAccount(config, uid);
+  const explicitModelProfile = modelProfileOverrideForAccount(config, uid);
   const modelOverride = modelOverrideForAccount(config, uid);
+  const inferredModelProfile = explicitModelProfile
+    ? null
+    : modelProfileForRawModelOverride(config, uid, ownerUid, modelOverride);
+  const modelProfile = explicitModelProfile || inferredModelProfile?.id || "";
   const model = modelProfile ? modelProfileOptionValue(modelProfile) : modelOverride;
-  const modelLabel = modelProfile ? modelProfileLabelForAccount(config, uid, ownerUid, modelProfile) : modelOverride;
+  const modelLabel = explicitModelProfile
+    ? modelProfileLabelForAccount(config, uid, ownerUid, explicitModelProfile)
+    : inferredModelProfile?.name ?? modelOverride;
   const reasoning = reasoningOverrideForAccount(config, uid);
   const approvalOverride = approvalOverrideForAccount(config, uid);
   const approval = approvalOverride || defaultApprovalPolicyForConfig(config, ownerUid);
@@ -185,24 +199,51 @@ function modelProfileLabelForAccount(
   ownerUid: number | null | undefined,
   selector: string,
 ): string {
+  return modelProfileForSelector(config, uid, ownerUid, selector)?.name || selector;
+}
+
+function modelProfileForRawModelOverride(
+  config: readonly ConsoleConfigEntry[],
+  uid: number,
+  ownerUid: number | null | undefined,
+  rawModel: string,
+): ConsoleModelProfile | null {
+  const model = rawModel.trim();
+  if (!model || hasAccountProviderStackOverride(config, uid)) {
+    return null;
+  }
+  return modelProfileForSelector(config, uid, ownerUid, model, { matchModel: true });
+}
+
+function modelProfileForSelector(
+  config: readonly ConsoleConfigEntry[],
+  uid: number,
+  ownerUid: number | null | undefined,
+  selector: string,
+  options: { matchModel?: boolean } = {},
+): ConsoleModelProfile | null {
   const accountProfiles = modelProfilesForConfig(config, uid);
   const ownerProfiles = typeof ownerUid === "number" && Number.isFinite(ownerUid) && ownerUid !== uid
     ? modelProfilesForConfig(config, ownerUid)
     : [];
-  return profileLabelForSelector(accountProfiles, ownerProfiles, selector) || selector;
+  const normalized = selector.trim().toLowerCase();
+  return [...accountProfiles, ...ownerProfiles].find((candidate) =>
+    candidate.id.toLowerCase() === normalized ||
+    candidate.name.toLowerCase() === normalized ||
+    (
+      options.matchModel === true &&
+      candidate.values["config/ai/model"]?.trim().toLowerCase() === normalized
+    )
+  ) ?? null;
 }
 
-function profileLabelForSelector(
-  primaryProfiles: ReturnType<typeof modelProfilesForConfig>,
-  fallbackProfiles: ReturnType<typeof modelProfilesForConfig>,
-  selector: string,
-): string {
-  const normalized = selector.trim().toLowerCase();
-  const profile = [...primaryProfiles, ...fallbackProfiles].find((candidate) =>
-    candidate.id.toLowerCase() === normalized ||
-    candidate.name.toLowerCase() === normalized
+function hasAccountProviderStackOverride(config: readonly ConsoleConfigEntry[], uid: number): boolean {
+  return MODEL_PROFILE_INFERENCE_BLOCKING_KEYS.some((key) =>
+    config.some((entry) =>
+      entry.key === `users/${uid}/ai/${key}` &&
+      (entry.redacted || entry.value.trim().length > 0)
+    )
   );
-  return profile?.name ?? "";
 }
 
 export function approvalActionFromValue(value: unknown): AgentApprovalAction {

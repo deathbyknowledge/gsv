@@ -76,6 +76,9 @@ export function modelLabelsForConfig(config: readonly ConsoleConfigEntry[]): str
 
 export function modelOptionsForConfig(config: readonly ConsoleConfigEntry[]): ConsoleModelOption[] {
   const defaultModel = defaultModelLabelForConfig(config);
+  const profileModels = new Set(
+    profileModelLabelsForConfig(config).map((model) => model.trim().toLowerCase()).filter(Boolean),
+  );
   const options: ConsoleModelOption[] = [];
   const seen = new Map<string, number>();
 
@@ -104,6 +107,10 @@ export function modelOptionsForConfig(config: readonly ConsoleConfigEntry[]): Co
 
   for (const entry of config) {
     if (isModelConfigEntry(entry)) {
+      const value = entry.value.trim().toLowerCase();
+      if (entry.key.startsWith("users/") && profileModels.has(value)) {
+        continue;
+      }
       addOption(entry.value);
     }
   }
