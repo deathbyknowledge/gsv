@@ -351,14 +351,18 @@ describe("console agent service", () => {
     });
 
     expect(setConfig).toHaveBeenNthCalledWith(1, {
-      key: "users/42/ai/model",
+      key: "users/42/ai/model_profile",
       value: "",
     });
     expect(setConfig).toHaveBeenNthCalledWith(2, {
-      key: "users/42/ai/tools/approval",
+      key: "users/42/ai/model",
       value: "",
     });
     expect(setConfig).toHaveBeenNthCalledWith(3, {
+      key: "users/42/ai/tools/approval",
+      value: "",
+    });
+    expect(setConfig).toHaveBeenNthCalledWith(4, {
       key: "users/42/ai/reasoning",
       value: "",
     });
@@ -374,14 +378,42 @@ describe("console agent service", () => {
     });
 
     expect(setConfig).toHaveBeenNthCalledWith(1, {
+      key: "users/42/ai/model_profile",
+      value: "",
+    });
+    expect(setConfig).toHaveBeenNthCalledWith(2, {
       key: "users/42/ai/model",
       value: "NEMOTRON 3",
     });
-    expect(setConfig).toHaveBeenNthCalledWith(2, {
+    expect(setConfig).toHaveBeenNthCalledWith(3, {
       key: "users/42/ai/reasoning",
       value: "medium",
     });
-    expect(setConfig).toHaveBeenCalledTimes(2);
+    expect(setConfig).toHaveBeenCalledTimes(3);
+  });
+
+  it("persists selected model presets as profile references", async () => {
+    const { client, setConfig } = createMockClient(42);
+
+    await saveConsoleAgentBehavior(client, {
+      uid: 42,
+      model: "model-profile:fast-stack",
+      reasoning: "medium",
+    });
+
+    expect(setConfig).toHaveBeenNthCalledWith(1, {
+      key: "users/42/ai/model_profile",
+      value: "fast-stack",
+    });
+    expect(setConfig).toHaveBeenNthCalledWith(2, {
+      key: "users/42/ai/model",
+      value: "",
+    });
+    expect(setConfig).toHaveBeenNthCalledWith(3, {
+      key: "users/42/ai/reasoning",
+      value: "medium",
+    });
+    expect(setConfig).toHaveBeenCalledTimes(3);
   });
 
   it("reconciles renamed and deleted agent context files", async () => {

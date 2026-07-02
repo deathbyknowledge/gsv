@@ -17,6 +17,8 @@ export type ConsoleModelOption = {
   description?: string;
 };
 
+export const MODEL_PROFILE_OPTION_PREFIX = "model-profile:";
+
 const PRIMARY_MODEL_KEY_RE = /^(?:config\/ai|users\/\d+\/ai)\/model$/;
 const AGENT_BEHAVIOR_CONFIG_KEY_RE = /^users\/[^/]+\/ai\//i;
 const MODEL_PROFILES_KEY_RE = /^users\/(\d+)\/ai\/model_profiles$/;
@@ -149,9 +151,9 @@ function profileModelOptionsForConfig(config: readonly ConsoleConfigEntry[]): Co
         .map((profile) => {
           const model = profile.values["config/ai/model"]?.trim() ?? "";
           return model
-            ? modelOptionForValue(model, {
+            ? modelOptionForValue(modelProfileOptionValue(profile.id), {
                 label: profile.name,
-                description: modelOptionDescription(model),
+                description: modelProfileSummary(profile),
               })
             : null;
         })
@@ -195,6 +197,20 @@ export function modelProfileSummary(profile: ConsoleModelProfile): string {
     profile.values["config/ai/provider"],
     profile.values["config/ai/model"],
   ].map((value) => value?.trim()).filter(Boolean).join(" · ") || "Saved AI config";
+}
+
+export function modelProfileOptionValue(profileId: string): string {
+  const normalized = normalizeProfileId(profileId);
+  return normalized ? `${MODEL_PROFILE_OPTION_PREFIX}${normalized}` : "";
+}
+
+export function modelProfileIdFromOptionValue(value: string): string | null {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized.startsWith(MODEL_PROFILE_OPTION_PREFIX)) {
+    return null;
+  }
+  const profileId = normalizeProfileId(normalized.slice(MODEL_PROFILE_OPTION_PREFIX.length));
+  return profileId || null;
 }
 
 export function modelConfigEntries(config: readonly ConsoleConfigEntry[]): ConsoleConfigEntry[] {

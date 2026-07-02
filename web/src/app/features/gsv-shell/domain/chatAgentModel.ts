@@ -347,13 +347,13 @@ function behaviorViewForAccount(
   modelLabels: readonly string[],
   ownerUid?: number | null,
 ): AgentBehaviorView {
-  const behavior = behaviorForAccount(config, account.uid);
+  const behavior = behaviorForAccount(config, account.uid, ownerUid);
   const modelValue = behavior.model.trim();
   const inheritedModelLabel = inheritedModelLabelForAccount(config, account.uid, ownerUid);
   const reasoning = behavior.reasoning.trim() || inheritedReasoningForAccount(config, account.uid, ownerUid);
   return {
-    modelLabel: modelValue || inheritedModelLabel,
-    modelOptions: modelLabelsForAccount(modelLabels, modelValue, inheritedModelLabel),
+    modelLabel: behavior.modelLabel || inheritedModelLabel,
+    modelOptions: modelLabelsForAccount(modelLabels, behavior.modelLabel || modelValue, inheritedModelLabel),
     modelValue,
     modelIsDefault: modelValue.length === 0,
     reasoningLabel: formatChatReasoningLabel(reasoning),

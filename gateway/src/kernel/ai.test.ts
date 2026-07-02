@@ -641,11 +641,62 @@ describe("handleAiConfig", () => {
     expect(result.accountApprovalPolicy).toBe('{"default":"deny","rules":[]}');
   });
 
+  it("resolves agent model profile references through the owning human", async () => {
+    const result = await handleAiConfig({}, makeAiConfigContext({
+      "config/ai/provider": "workers-ai",
+      "config/ai/model": "@cf/default/model",
+      "users/2000/ai/model_profile": "fast-stack",
+      "users/2000/ai/provider": "stale-provider",
+      "users/2000/ai/model": "stale-model",
+      "users/1000/ai/model_profiles": JSON.stringify({
+        profiles: [{
+          id: "fast-stack",
+          name: "Fast Stack",
+          values: {
+            "config/ai/provider": "custom",
+            "config/ai/model": "zai-glm-4.7",
+            "config/ai/base_url": "http://127.0.0.1:8080/v1",
+            "config/ai/provider_style": "openai-chat-completions",
+            "config/ai/transport_target": "linux-machine",
+            "config/ai/api_key": "redacted",
+          },
+          createdAt: 1,
+          updatedAt: 2,
+        }],
+      }),
+      "users/1000/ai/model_profiles/fast-stack/api_key": "profile-key",
+    }, {
+      uid: 2000,
+      ownerUid: 1000,
+      processId: "task-1",
+    }));
+
+    expect(result.provider).toBe("custom");
+    expect(result.model).toBe("zai-glm-4.7");
+    expect(result.baseUrl).toBe("http://127.0.0.1:8080/v1");
+    expect(result.providerStyle).toBe("openai-chat-completions");
+    expect(result.transportTarget).toBe("linux-machine");
+    expect(result.apiKey).toBe("profile-key");
+  });
+
   it("prefers agent AI config over the owning human's config", async () => {
     const result = await handleAiConfig({}, makeAiConfigContext({
       "users/1000/ai/provider": "owner-provider",
       "users/1000/ai/model": "owner-model",
       "users/1000/ai/api_key": "owner-key",
+      "users/1000/ai/model_profile": "owner-stack",
+      "users/1000/ai/model_profiles": JSON.stringify({
+        profiles: [{
+          id: "owner-stack",
+          name: "Owner Stack",
+          values: {
+            "config/ai/provider": "owner-profile-provider",
+            "config/ai/model": "owner-profile-model",
+          },
+          createdAt: 1,
+          updatedAt: 2,
+        }],
+      }),
       "users/2000/ai/provider": "agent-provider",
       "users/2000/ai/model": "agent-model",
       "users/2000/ai/api_key": "agent-key",

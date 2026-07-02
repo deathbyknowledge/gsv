@@ -101,7 +101,7 @@ describe("console AI config classification", () => {
         description: "anthropic/claude-sonnet-4.5",
       },
       {
-        value: "openai/gpt-5.1",
+        value: "model-profile:deep-review",
         label: "Deep Review",
         description: "openai/gpt-5.1",
       },

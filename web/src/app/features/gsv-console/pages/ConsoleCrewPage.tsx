@@ -181,7 +181,7 @@ function buildCrewCard(
   ownerUid: number | null,
 ): CrewCardModel {
   const ownedProcesses = processes.filter((process) => ownsProcess(account, process));
-  const behavior = behaviorForAccount(config, account.uid);
+  const behavior = behaviorForAccount(config, account.uid, ownerUid);
   const inheritedModelLabel = inheritedModelLabelForAccount(config, account.uid, ownerUid);
   const queued = ownedProcesses.some(isQueuedProcess);
   const running = ownedProcesses.some(isRunningProcess);
@@ -201,9 +201,9 @@ function buildCrewCard(
     status,
     tasks: tasksForProcesses(ownedProcesses),
     active: account.runnable,
-    model: behavior.model,
+    model: behavior.modelLabel,
     modelIsDefault: behavior.model.trim().length === 0,
-    modelOptions: modelLabelsForAccount(modelLabels, behavior.model, inheritedModelLabel),
+    modelOptions: modelLabelsForAccount(modelLabels, behavior.modelLabel || behavior.model, inheritedModelLabel),
     permission: behavior.permission,
   };
 }

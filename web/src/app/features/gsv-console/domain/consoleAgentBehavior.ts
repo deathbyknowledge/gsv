@@ -1,6 +1,8 @@
 import type { ConsoleConfigEntry } from "./consoleModels";
 import {
   defaultModelLabelForConfig,
+  modelProfileOptionValue,
+  modelProfilesForConfig,
   modelOptionForValue,
   type ConsoleModelOption,
 } from "./consoleAi";
@@ -23,6 +25,8 @@ export type ConsoleAgentBehavior = {
   approvalInherited: boolean;
   approvalOverride: string;
   model: string;
+  modelLabel: string;
+  modelProfile: string;
   permission: AgentApprovalAction;
   reasoning: string;
 };
@@ -46,7 +50,10 @@ export function behaviorForAccount(
   uid: number,
   ownerUid?: number | null,
 ): ConsoleAgentBehavior {
-  const model = modelOverrideForAccount(config, uid);
+  const modelProfile = modelProfileOverrideForAccount(config, uid);
+  const modelOverride = modelOverrideForAccount(config, uid);
+  const model = modelProfile ? modelProfileOptionValue(modelProfile) : modelOverride;
+  const modelLabel = modelProfile ? modelProfileLabelForAccount(config, uid, ownerUid, modelProfile) : modelOverride;
   const reasoning = reasoningOverrideForAccount(config, uid);
   const approvalOverride = approvalOverrideForAccount(config, uid);
   const approval = approvalOverride || defaultApprovalPolicyForConfig(config, ownerUid);
@@ -56,6 +63,8 @@ export function behaviorForAccount(
     approvalInherited: !approvalOverride,
     approvalOverride,
     model,
+    modelLabel,
+    modelProfile,
     permission: parseApprovalPolicy(approval).default,
     reasoning,
   };
@@ -80,13 +89,17 @@ export function modelOverrideForAccount(config: readonly ConsoleConfigEntry[], u
   return configValue(config, `users/${uid}/ai/model`);
 }
 
+export function modelProfileOverrideForAccount(config: readonly ConsoleConfigEntry[], uid: number): string {
+  return configValue(config, `users/${uid}/ai/model_profile`);
+}
+
 export function inheritedModelLabelForAccount(
   config: readonly ConsoleConfigEntry[],
   uid: number,
   ownerUid?: number | null,
 ): string {
   const ownerModel = typeof ownerUid === "number" && Number.isFinite(ownerUid) && ownerUid !== uid
-    ? modelOverrideForAccount(config, ownerUid)
+    ? modelLabelOverrideForAccount(config, ownerUid)
     : "";
   return ownerModel || defaultModelLabelForConfig(config);
 }
@@ -156,6 +169,40 @@ function inheritedModelOption(value: string, option?: ConsoleModelOption): Conso
     ...base,
     label: `Inherit: ${base.label}`,
   };
+}
+
+function modelLabelOverrideForAccount(config: readonly ConsoleConfigEntry[], uid: number): string {
+  const profile = modelProfileOverrideForAccount(config, uid);
+  if (profile) {
+    return modelProfileLabelForAccount(config, uid, null, profile);
+  }
+  return modelOverrideForAccount(config, uid);
+}
+
+function modelProfileLabelForAccount(
+  config: readonly ConsoleConfigEntry[],
+  uid: number,
+  ownerUid: number | null | undefined,
+  selector: string,
+): string {
+  const accountProfiles = modelProfilesForConfig(config, uid);
+  const ownerProfiles = typeof ownerUid === "number" && Number.isFinite(ownerUid) && ownerUid !== uid
+    ? modelProfilesForConfig(config, ownerUid)
+    : [];
+  return profileLabelForSelector(accountProfiles, ownerProfiles, selector) || selector;
+}
+
+function profileLabelForSelector(
+  primaryProfiles: ReturnType<typeof modelProfilesForConfig>,
+  fallbackProfiles: ReturnType<typeof modelProfilesForConfig>,
+  selector: string,
+): string {
+  const normalized = selector.trim().toLowerCase();
+  const profile = [...primaryProfiles, ...fallbackProfiles].find((candidate) =>
+    candidate.id.toLowerCase() === normalized ||
+    candidate.name.toLowerCase() === normalized
+  );
+  return profile?.name ?? "";
 }
 
 export function approvalActionFromValue(value: unknown): AgentApprovalAction {

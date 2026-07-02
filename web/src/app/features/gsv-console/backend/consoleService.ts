@@ -25,6 +25,7 @@ import type {
   ConsoleProcess,
   ConsoleTarget,
 } from "../domain/consoleModels";
+import { modelProfileIdFromOptionValue } from "../domain/consoleAi";
 import { isSensitiveSettingKey } from "../domain/consoleSettings";
 export type { AgentApprovalAction } from "../domain/consoleAgentBehavior";
 
@@ -853,9 +854,16 @@ async function saveAgentBehaviorConfig(
   const writes: Promise<unknown>[] = [];
 
   if (input.model !== undefined && (options.includeEmpty || model)) {
+    const modelProfile = modelProfileIdFromOptionValue(model);
+    if (options.includeEmpty || modelProfile) {
+      writes.push(client.sys.config.set({
+        key: `users/${uid}/ai/model_profile`,
+        value: modelProfile ?? "",
+      }));
+    }
     writes.push(client.sys.config.set({
       key: `users/${uid}/ai/model`,
-      value: model,
+      value: modelProfile ? "" : model,
     }));
   }
   if (input.approval !== undefined && (options.includeEmpty || approval)) {
