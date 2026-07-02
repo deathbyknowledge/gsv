@@ -309,14 +309,27 @@ export async function handleAiConfig(
     resolveAiConfigValue(config, accountConfigUids, accountProfileOverrides, "generation/streaming") ??
     config.get("config/ai/generation/streaming"),
   );
+  const processFallbackModelProfile = resolveAiProcessConfigValue(processOverrides, "fallback_model_profile");
+  const accountFallbackModelProfile = resolveAiConfigValue(
+    config,
+    accountConfigUids,
+    accountProfileOverrides,
+    "fallback_model_profile",
+  );
+  const systemFallbackModelProfile = config.get("config/ai/fallback_model_profile");
   const fallbackModelProfile =
-    resolveAiProcessConfigValue(processOverrides, "fallback_model_profile") ??
-    resolveAiConfigValue(config, accountConfigUids, accountProfileOverrides, "fallback_model_profile") ??
-    config.get("config/ai/fallback_model_profile") ??
+    processFallbackModelProfile ??
+    accountFallbackModelProfile ??
+    systemFallbackModelProfile ??
     "";
+  const fallbackAccountUids = processFallbackModelProfile === null &&
+    accountFallbackModelProfile === null &&
+    systemFallbackModelProfile !== null
+    ? withRootAiProfileScope(accountConfigUids)
+    : accountConfigUids;
   const fallbacks = await resolveAiFallbackConfigs({
     config,
-    accountUids: accountConfigUids,
+    accountUids: fallbackAccountUids,
     selector: fallbackModelProfile,
     primary: {
       provider,
@@ -837,6 +850,10 @@ function resolveAiConfigAccountUids(uid: number, owner: ProcessIdentity | null):
     return [uid];
   }
   return [uid, owner.uid];
+}
+
+function withRootAiProfileScope(accountUids: number[]): number[] {
+  return accountUids.includes(0) ? accountUids : [0, ...accountUids];
 }
 
 function resolveAiConfigValue(

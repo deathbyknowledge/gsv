@@ -740,6 +740,48 @@ describe("handleAiConfig", () => {
     ]);
   });
 
+  it("resolves system fallback model presets from root profiles for non-root runs", async () => {
+    const result = await handleAiConfig({}, makeAiConfigContext({
+      "config/ai/provider": "workers-ai",
+      "config/ai/model": "@cf/default/model",
+      "config/ai/fallback_model_profile": "root-safe-stack",
+      "users/0/ai/model_profiles": JSON.stringify({
+        profiles: [{
+          id: "root-safe-stack",
+          name: "Root Safe Stack",
+          values: {
+            "config/ai/provider": "openrouter",
+            "config/ai/model": "openai/gpt-5-mini",
+            "config/ai/base_url": "https://openrouter.ai/api/v1",
+            "config/ai/provider_style": "openai-chat-completions",
+            "config/ai/api_key": "redacted",
+            "config/ai/max_tokens": "4096",
+          },
+          createdAt: 1,
+          updatedAt: 2,
+        }],
+      }),
+      "users/0/ai/model_profiles/root-safe-stack/api_key": "root-fallback-key",
+    }, {
+      uid: 2000,
+      ownerUid: 1000,
+      processId: "task-1",
+    }));
+
+    expect(result.fallbacks).toEqual([
+      expect.objectContaining({
+        profileId: "root-safe-stack",
+        profileName: "Root Safe Stack",
+        provider: "openrouter",
+        model: "openai/gpt-5-mini",
+        baseUrl: "https://openrouter.ai/api/v1",
+        providerStyle: "openai-chat-completions",
+        apiKey: "root-fallback-key",
+        maxTokens: 4096,
+      }),
+    ]);
+  });
+
   it("resolves legacy raw agent model overrides through matching owner profiles", async () => {
     const result = await handleAiConfig({}, makeAiConfigContext({
       "config/ai/provider": "workers-ai",
