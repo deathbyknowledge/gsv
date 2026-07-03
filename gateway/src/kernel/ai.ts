@@ -58,6 +58,7 @@ import { FS_SEARCH_DEFINITION } from "../syscalls/search";
 import { SHELL_EXEC_DEFINITION } from "../syscalls/shell";
 import { CODEMODE_EXEC_DEFINITION } from "../syscalls/codemode";
 import {
+  DEFAULT_WORKERS_AI_MODEL,
   isWorkersAiProvider,
   resolveWorkersAiModelContextWindow,
 } from "../inference/workers-ai";
@@ -226,7 +227,7 @@ export async function handleAiConfig(
     resolveAiProcessConfigValue(processOverrides, "model") ??
     resolveAiConfigValue(config, accountConfigUids, accountProfileOverrides, "model") ??
     config.get("config/ai/model") ??
-    "@cf/nvidia/nemotron-3-120b-a12b";
+    DEFAULT_WORKERS_AI_MODEL;
 
   const baseUrl =
     resolveAiProcessConfigValue(processOverrides, "base_url") ??
@@ -958,7 +959,7 @@ async function resolveAiFallbackModelStack(
     resolveAiProcessConfigValue(profileOverrides, "model") ??
     resolveAiConfigValue(config, accountUids, emptyProfileOverrides, "model") ??
     config.get("config/ai/model") ??
-    "@cf/nvidia/nemotron-3-120b-a12b";
+    DEFAULT_WORKERS_AI_MODEL;
   const baseUrl =
     resolveAiProcessConfigValue(profileOverrides, "base_url") ??
     resolveAiConfigValue(config, accountUids, emptyProfileOverrides, "base_url") ??

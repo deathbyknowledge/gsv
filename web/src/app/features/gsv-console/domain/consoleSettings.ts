@@ -66,7 +66,7 @@ export const AGENT_MODEL_FIELDS: readonly ConsoleSettingField[] = [
     description: "Model identifier passed to the selected provider.",
     kind: "text",
     requirement: "required",
-    placeholder: "@cf/nvidia/nemotron-3-120b-a12b",
+    placeholder: "@cf/zai-org/glm-5.2",
     size: "large",
   },
   {

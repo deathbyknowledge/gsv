@@ -136,8 +136,8 @@ const story: Story = {
               title: "MODEL",
               meta: "PERSONAL OVERRIDE",
               rows: [
-                { id: "provider", label: "PROVIDER", sub: "nvidia" },
-                { id: "model", label: "MODEL", sub: "nemotron-3-120b-a12b" },
+                { id: "provider", label: "PROVIDER", sub: "zai-org" },
+                { id: "model", label: "MODEL", sub: "glm-5.2" },
                 { id: "reasoning", label: "REASONING", sub: "default" },
                 { id: "context", label: "MAX CONTEXT", sub: "256000 tokens" },
               ],

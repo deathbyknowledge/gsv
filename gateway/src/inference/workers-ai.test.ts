@@ -13,6 +13,7 @@ import {
   normalizeWorkersAiResponse,
   streamWithWorkersAi,
 } from "./workers-ai";
+import { DEFAULT_WORKERS_AI_FALLBACK_MODEL } from "./default-models";
 
 describe("contextToWorkersAiMessages", () => {
   it("serializes system, assistant tool calls, and tool results", () => {
@@ -216,6 +217,33 @@ describe("buildWorkersAiInput", () => {
 
     expect(input.reasoning_effort).toBe("high");
     expect(input.chat_template_kwargs).toEqual({ enable_thinking: true });
+  });
+
+  it("uses the Kimi thinking flag for the shipped fallback model", () => {
+    const input = buildWorkersAiInput({
+      modelName: DEFAULT_WORKERS_AI_FALLBACK_MODEL,
+      maxTokens: 256,
+      reasoning: "medium",
+      context: {
+        messages: [],
+      },
+    });
+
+    expect(input.reasoning_effort).toBe("medium");
+    expect(input.chat_template_kwargs).toEqual({ thinking: true });
+  });
+
+  it("disables Kimi thinking with the Kimi-specific flag", () => {
+    const input = buildWorkersAiInput({
+      modelName: DEFAULT_WORKERS_AI_FALLBACK_MODEL,
+      maxTokens: 256,
+      context: {
+        messages: [],
+      },
+    });
+
+    expect(input.reasoning_effort).toBeUndefined();
+    expect(input.chat_template_kwargs).toEqual({ thinking: false });
   });
 
   it("builds session affinity headers when requested", () => {
