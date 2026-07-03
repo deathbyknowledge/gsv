@@ -4,6 +4,7 @@ import "./AgentEditor.css";
 import { TextInput } from "./TextInput";
 import { TextArea } from "./TextArea";
 import { Select, type SelectOption } from "./Select";
+import { InfoTip } from "./InfoTip";
 import { Button } from "./Button";
 import { Avatar, type AvatarStatus } from "./Avatar";
 import { Tabs } from "./Tabs";
@@ -124,6 +125,9 @@ const DEFAULT_APPROVAL_POLICY: AgentToolApprovalPolicy = {
     { match: "sys.mcp.call", action: "ask" },
   ],
 };
+const MODEL_SETTING_INFO = "Primary model stack for this agent. Inherit uses the resolved account or system AI default; choosing another value stores an agent override.";
+const FALLBACK_SETTING_INFO = "Backup model preset to try when the primary stack fails. Inherit uses the account or system fallback; choosing another value stores an agent fallback override.";
+const REASONING_SETTING_INFO = "Reasoning effort hint passed to supported models. Inherit uses the account or system reasoning default; choosing another value stores an agent override.";
 
 function optionValue(option: AgentEditorModelOption): string {
   return typeof option === "string" ? option : option.value ?? option.label;
@@ -735,11 +739,7 @@ export function AgentEditor(props: AgentEditorProps) {
                   {/* MODEL */}
                   <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
                     <span class="gsv-sublabel" style="letter-spacing:.22em;color:var(--label);">MODEL</span>
-                    {model === 0 ? (
-                      <span class="gsv-sublabel" style="letter-spacing:.08em;color:var(--live);">
-                        (<span style="border-bottom:1px solid var(--live);">AI DEFAULT</span>)
-                      </span>
-                    ) : null}
+                    <InfoTip text={MODEL_SETTING_INFO} position="right" label="Model setting info" />
                   </div>
                   <div style="max-width:420px;margin-bottom:30px;">
                     <Select
@@ -755,11 +755,7 @@ export function AgentEditor(props: AgentEditorProps) {
                   {/* FALLBACK MODEL */}
                   <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
                     <span class="gsv-sublabel" style="letter-spacing:.22em;color:var(--label);">FALLBACK</span>
-                    {fallbackModel === 0 ? (
-                      <span class="gsv-sublabel" style="letter-spacing:.08em;color:var(--live);">
-                        (<span style="border-bottom:1px solid var(--live);">INHERIT</span>)
-                      </span>
-                    ) : null}
+                    <InfoTip text={FALLBACK_SETTING_INFO} position="right" label="Fallback setting info" />
                   </div>
                   <div style="max-width:420px;margin-bottom:30px;">
                     <Select
@@ -775,11 +771,7 @@ export function AgentEditor(props: AgentEditorProps) {
                   {/* REASONING */}
                   <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
                     <span style="font-size:9.5px;letter-spacing:.22em;color:var(--label);">REASONING</span>
-                    {reasoning === 0 ? (
-                      <span style="font-size:9.5px;letter-spacing:.08em;color:var(--live);">
-                        (<span style="border-bottom:1px solid var(--live);">AI DEFAULT</span>)
-                      </span>
-                    ) : null}
+                    <InfoTip text={REASONING_SETTING_INFO} position="right" label="Reasoning setting info" />
                   </div>
                   <div style="max-width:300px;margin-bottom:30px;">
                     <Select
