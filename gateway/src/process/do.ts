@@ -2779,55 +2779,64 @@ export class Process extends Host<Env> {
     }
 
     // Step 5: Build pi-ai Context
-    const pendingRuntimeEventsInContext = this.currentRun?.runId === runId
-      ? this.currentRun.pendingRuntimeEvents ?? 0
-      : 0;
-    let piMessages = await this.buildContextMessages(conversationId);
-    this.consumeRuntimeEventsInContext(runId, pendingRuntimeEventsInContext);
     const tools: Tool[] = (run.tools ?? []).map((t) => ({
       name: t.name,
       description: t.description,
       parameters: t.inputSchema as Tool["parameters"],
     }));
 
-    let context: Context = {
-      systemPrompt: run.systemPrompt,
-      messages: piMessages,
-      tools: tools.length > 0 ? tools : undefined,
-    };
-
-    const initialContextState = await this.updateContextState(runId, conversationId, run.config!, context);
-    if (await this.handleRunStopped(runId)) {
-      return;
-    }
-
-    const contextPreflight = await this.applyConversationContextPolicy(
-      runId,
-      conversationId,
-      run.config!,
-      initialContextState,
-    );
-    if (contextPreflight === "stopped") {
-      return;
-    }
-    if (contextPreflight === "compacted") {
-      if (await this.handleRunStopped(runId)) {
-        return;
-      }
-      const pendingRuntimeEventsInCompactedContext = this.currentRun?.runId === runId
+    const buildGenerationContext = async (): Promise<Context> => {
+      const pendingRuntimeEventsInContext = this.currentRun?.runId === runId
         ? this.currentRun.pendingRuntimeEvents ?? 0
         : 0;
-      piMessages = await this.buildContextMessages(conversationId);
-      this.consumeRuntimeEventsInContext(runId, pendingRuntimeEventsInCompactedContext);
-      context = {
+      const messages = await this.buildContextMessages(conversationId);
+      this.consumeRuntimeEventsInContext(runId, pendingRuntimeEventsInContext);
+      return {
         systemPrompt: run.systemPrompt,
-        messages: piMessages,
+        messages,
         tools: tools.length > 0 ? tools : undefined,
       };
-      await this.updateContextState(runId, conversationId, run.config!, context);
+    };
+
+    let context: Context = {
+      systemPrompt: run.systemPrompt,
+      messages: [],
+      tools: tools.length > 0 ? tools : undefined,
+    };
+    const prepareGenerationContext = async (
+      config: AiConfigResult,
+    ): Promise<"ready" | "stopped"> => {
+      context = await buildGenerationContext();
+      const contextState = await this.updateContextState(runId, conversationId, config, context);
       if (await this.handleRunStopped(runId)) {
-        return;
+        return "stopped";
       }
+
+      const contextPreflight = await this.applyConversationContextPolicy(
+        runId,
+        conversationId,
+        config,
+        contextState,
+      );
+      if (contextPreflight === "stopped") {
+        return "stopped";
+      }
+      if (contextPreflight === "compacted") {
+        if (await this.handleRunStopped(runId)) {
+          return "stopped";
+        }
+        context = await buildGenerationContext();
+        await this.updateContextState(runId, conversationId, config, context);
+        if (await this.handleRunStopped(runId)) {
+          return "stopped";
+        }
+      }
+      return "ready";
+    };
+
+    const contextPreflight = await prepareGenerationContext(run.config!);
+    if (contextPreflight === "stopped") {
+      return;
     }
 
     // Step 6: Call LLM
@@ -2869,7 +2878,10 @@ export class Process extends Host<Env> {
       };
       run.config = fallback.config;
       this.currentRun = run;
-      await this.updateContextState(runId, conversationId, run.config, context);
+      const fallbackContextPreflight = await prepareGenerationContext(run.config);
+      if (fallbackContextPreflight === "stopped") {
+        return "stopped";
+      }
       return await this.handleRunStopped(runId) ? "stopped" : "switched";
     };
     let attempt = 1;
@@ -3118,12 +3130,7 @@ export class Process extends Host<Env> {
       metadata: assistantMetadata,
     });
 
-    piMessages = await this.buildContextMessages(conversationId);
-    context = {
-      systemPrompt: run.systemPrompt,
-      messages: piMessages,
-      tools: tools.length > 0 ? tools : undefined,
-    };
+    context = await buildGenerationContext();
     await this.updateContextState(runId, conversationId, run.config!, context, response.usage, assistantMetadata?.usage);
     if (await this.handleRunStopped(runId)) {
       return;

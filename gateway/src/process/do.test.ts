@@ -1445,6 +1445,140 @@ describe("Process DO — mechanical", () => {
       });
     });
 
+    it("reapplies context policy after switching to a smaller fallback model", async () => {
+      const pid = "mech-chat-fallback-auto-compact";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const emitted: Array<{ signal: string; payload: unknown }> = [];
+        const calls: Array<{ provider: string; model: string; context: string }> = [];
+        const compactionConfigs: Array<{ provider: string; model: string }> = [];
+        process.sendSignal = async (signal: string, payload: unknown) => {
+          emitted.push({ signal, payload });
+        };
+        process.generation = {
+          async generate(request: any) {
+            calls.push({
+              provider: request.config.provider,
+              model: request.config.model,
+              context: JSON.stringify(request.context),
+            });
+            if (calls.length === 1) {
+              return {
+                role: "assistant",
+                content: [],
+                api: "test",
+                provider: request.config.provider,
+                model: request.config.model,
+                stopReason: "error",
+                errorMessage: "Custom provider HTTP 403: not authenticated",
+                usage: testUsage(1, 0),
+                timestamp: Date.now(),
+              };
+            }
+            return {
+              role: "assistant",
+              content: [{ type: "text", text: "fallback after compaction" }],
+              api: "test",
+              provider: request.config.provider,
+              model: request.config.model,
+              stopReason: "stop",
+              usage: testUsage(20, 3),
+              timestamp: Date.now(),
+            };
+          },
+          async generateText(request: any) {
+            compactionConfigs.push({
+              provider: request.config.provider,
+              model: request.config.model,
+            });
+            expect(JSON.stringify(request.context)).toContain("old context A");
+            return "Fallback compact summary.";
+          },
+        };
+
+        process.store.appendMessage("user", `old context A ${"x".repeat(200)}`);
+        process.store.appendMessage("assistant", `old context B ${"y".repeat(200)}`);
+        process.store.appendMessage("user", "Context that must stay live.");
+        process.store.setValue("conversationPolicy:default", JSON.stringify({
+          conversationId: "default",
+          overflow: "auto-compact",
+          compactAtPressure: 0.01,
+          keepLast: 1,
+          updatedAt: Date.now(),
+        }));
+        process.currentRun = {
+          runId: "run-chat-fallback-auto-compact",
+          queued: false,
+          conversationId: "default",
+          config: {
+            profile: "task",
+            provider: "custom",
+            model: "large-primary",
+            apiKey: "bad-key",
+            reasoning: "off",
+            maxTokens: 100,
+            contextWindowTokens: 100000,
+            contextWindowSource: "config",
+            maxContextBytes: 32768,
+            fallbacks: [{
+              profileId: "small-fallback",
+              profileName: "Small Fallback",
+              provider: "openrouter",
+              model: "small-fallback",
+              apiKey: "fallback-key",
+              providerStyle: "openai-chat-completions",
+              transportTarget: "gsv",
+              maxTokens: 100,
+              contextWindowTokens: 1000,
+              contextWindowSource: "config",
+              generationTimeoutMs: 180000,
+              generationStreaming: "auto",
+            }],
+          },
+          tools: [],
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+        await process.continueAgentLoop("run-chat-fallback-auto-compact");
+        return {
+          calls,
+          compactionConfigs,
+          emitted,
+          messages: process.store.getMessages(),
+          segments: process.store.listConversationSegments(),
+        };
+      });
+
+      expect(result.calls).toHaveLength(2);
+      expect(result.calls[0]).toMatchObject({ provider: "custom", model: "large-primary" });
+      expect(result.calls[0].context).toContain("old context A");
+      expect(result.calls[0].context).not.toContain("Fallback compact summary.");
+      expect(result.calls[1]).toMatchObject({ provider: "openrouter", model: "small-fallback" });
+      expect(result.calls[1].context).toContain("Fallback compact summary.");
+      expect(result.calls[1].context).toContain("Context that must stay live.");
+      expect(result.calls[1].context).not.toContain("old context A");
+      expect(result.compactionConfigs).toEqual([
+        { provider: "openrouter", model: "small-fallback" },
+      ]);
+      expect(result.messages.map((message: any) => [message.role, message.content])).toEqual([
+        ["system", expect.stringContaining("Fallback compact summary.")],
+        ["user", "Context that must stay live."],
+        ["assistant", "fallback after compaction"],
+      ]);
+      expect(result.segments).toHaveLength(1);
+      const lifecycleEvents = result.emitted
+        .filter((entry) => entry.signal === "proc.changed")
+        .map((entry) => (entry.payload as any).event)
+        .filter(Boolean);
+      expect(lifecycleEvents).toEqual([
+        "conversation.compacted",
+        "conversation.auto_compacted",
+      ]);
+    });
+
     it("switches to a fallback credential for the same model stack", async () => {
       const pid = "mech-chat-provider-error-credential-fallback";
       const stub = await initProcess(pid, ROOT_IDENTITY);
