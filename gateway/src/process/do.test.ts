@@ -2433,6 +2433,7 @@ describe("Process DO — mechanical", () => {
             target: "linux-machine",
             url: "http://localhost:18081/v1/chat/completions",
             method: "POST",
+            timeoutMs: 180000,
           });
           expect(JSON.parse(requestBody)).toMatchObject({
             model: "local-chat",
