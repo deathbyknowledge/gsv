@@ -143,7 +143,7 @@ function makeContext(options?: {
     config: {
       get(key: string) {
         if (key === "config/server/name") return "gsv";
-        if (key === "config/server/version") return "0.3.1";
+        if (key === "config/server/version") return "0.3.2";
         return configValues.get(key) ?? null;
       },
       list(prefix: string) {
@@ -213,7 +213,7 @@ function makeContext(options?: {
       capabilities: options?.capabilities ?? ["pkg.list", "repo.refs", "repo.log"],
     },
     processId: "task:pkg",
-    serverVersion: "0.3.1",
+    serverVersion: "0.3.2",
     getAppRunner: options?.getAppRunner,
     scheduleIpcCallTimeout: options?.scheduleIpcCallTimeout,
     scheduleScheduleWake: options?.scheduleScheduleWake,
