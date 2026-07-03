@@ -1900,7 +1900,7 @@ describe("Process DO — mechanical", () => {
       ]));
     });
 
-    it("mirrors provider stream events as proc.run.stream signals", async () => {
+    it("mirrors provider stream events as proc.run.stream signals with fallbacks configured", async () => {
       const pid = "mech-chat-stream";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
@@ -1963,6 +1963,20 @@ describe("Process DO — mechanical", () => {
             contextWindowTokens: 256000,
             contextWindowSource: "config",
             maxContextBytes: 32768,
+            fallbacks: [{
+              profileId: "backup-stack",
+              profileName: "Backup Stack",
+              provider: "workers-ai",
+              model: "@cf/moonshotai/kimi-k2.6",
+              apiKey: "",
+              providerStyle: "auto",
+              transportTarget: "gsv",
+              maxTokens: 8192,
+              contextWindowTokens: 256000,
+              contextWindowSource: "config",
+              generationTimeoutMs: 180000,
+              generationStreaming: "auto",
+            }],
           },
           tools: [],
           devices: [],

@@ -3183,8 +3183,7 @@ export class Process extends Host<Env> {
     streamSeq?: StreamSeqCounter;
   }): Promise<AssistantMessage | null> {
     const routedFetch = this.createGenerationFetch(options.config);
-    const stream = !hasAiConfigFallbacks(options.config) &&
-      options.config.generationStreaming !== "off" &&
+    const stream = options.config.generationStreaming !== "off" &&
       typeof this.generation.stream === "function"
       // TODO: add ai.text.stream
       ? this.generation.stream({
@@ -5397,10 +5396,6 @@ function parseArchivedMessageRole(value: unknown): MessageRole {
     return value;
   }
   throw new Error(`invalid archived message role: ${String(value)}`);
-}
-
-function hasAiConfigFallbacks(config: AiConfigResult): boolean {
-  return Array.isArray(config.fallbacks) && config.fallbacks.length > 0;
 }
 
 function nextAiConfigFallback(
