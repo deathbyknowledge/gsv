@@ -253,7 +253,7 @@ function serializeApprovalPolicy(policy: AgentToolApprovalPolicy): string {
 
 function defaults(mode: AgentEditorMode, props: AgentEditorProps): Defaults {
   const files = props.files ?? null;
-  const tasks = props.tasks && props.tasks.length > 0 ? props.tasks : null;
+  const tasks = props.tasks ?? null;
   const approvalPolicy = parseApprovalPolicy(props.initialApprovalPolicy, props.initialPermission);
 
   if (mode === "manage") {
