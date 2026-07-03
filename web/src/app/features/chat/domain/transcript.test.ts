@@ -76,6 +76,88 @@ describe("chat transcript rows", () => {
     });
   });
 
+  it("keeps backup model metadata on assistant history rows", () => {
+    const rows = transcriptRowsFromHistory(history([
+      {
+        id: 1,
+        clientId: "1",
+        role: "assistant",
+        runId: "run-1",
+        content: { text: "Recovered answer.", toolCalls: [] },
+        text: "Recovered answer.",
+        timestamp: 1,
+        origin: undefined,
+        metadata: {
+          fallback: {
+            used: true,
+            from: { provider: "custom", model: "zai-glm-4.7" },
+            to: { provider: "openrouter", model: "openai/gpt-5-mini" },
+            reason: "Custom provider HTTP 403: not authenticated",
+          },
+        },
+      },
+    ]));
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      role: "assistant",
+      text: "Recovered answer.",
+      backupModel: {
+        from: { provider: "custom", model: "zai-glm-4.7" },
+        to: { provider: "openrouter", model: "openai/gpt-5-mini" },
+        reason: "Custom provider HTTP 403: not authenticated",
+      },
+    });
+  });
+
+  it("keeps backup model metadata visible for tool-only assistant history rows", () => {
+    const rows = transcriptRowsFromHistory(history([
+      {
+        id: 1,
+        clientId: "1",
+        role: "assistant",
+        runId: "run-1",
+        content: {
+          text: "",
+          toolCalls: [
+            {
+              id: "call-1",
+              name: "Read",
+              arguments: { path: "/tmp/a.txt" },
+            },
+          ],
+        },
+        text: "",
+        timestamp: 1,
+        origin: undefined,
+        metadata: {
+          fallback: {
+            used: true,
+            from: { provider: "custom", model: "zai-glm-4.7" },
+            to: { provider: "openrouter", model: "openai/gpt-5-mini" },
+          },
+        },
+      },
+    ]));
+
+    expect(rows).toEqual([
+      expect.objectContaining({
+        id: "backup:1",
+        role: "assistant",
+        text: "",
+        backupModel: {
+          from: { provider: "custom", model: "zai-glm-4.7" },
+          to: { provider: "openrouter", model: "openai/gpt-5-mini" },
+        },
+      }),
+      expect.objectContaining({
+        role: "tool",
+        toolCallId: "call-1",
+        toolName: "Read",
+      }),
+    ]);
+  });
+
   it("keeps fallback tool ids scoped to their run when folding history", () => {
     const rows = transcriptRowsFromHistory(history([
       {
@@ -285,6 +367,67 @@ describe("chat transcript rows", () => {
     ]);
     expect(state.runState).toBe("running");
     expect(state.activeRunId).toBe("run-1");
+  });
+
+  it("moves live backup model status onto the assistant answer", () => {
+    let state = emptyChatRuntimeState("pid-1", "default");
+
+    state = applyChatSignal(state, "proc.run.started", {
+      pid: "pid-1",
+      runId: "run-1",
+      conversationId: "default",
+    }, { pid: "pid-1", conversationId: "default" }).state;
+
+    state = applyChatSignal(state, "proc.run.retrying", {
+      pid: "pid-1",
+      runId: "run-1",
+      conversationId: "default",
+      reason: "Custom provider HTTP 403: not authenticated",
+      fallback: {
+        from: { provider: "custom", model: "zai-glm-4.7" },
+        to: { provider: "openrouter", model: "openai/gpt-5-mini" },
+      },
+    }, { pid: "pid-1", conversationId: "default" }).state;
+
+    expect(state.rows).toEqual([
+      expect.objectContaining({
+        id: "backup:run-1",
+        role: "assistant",
+        text: "",
+        streaming: true,
+        backupModel: {
+          from: { provider: "custom", model: "zai-glm-4.7" },
+          to: { provider: "openrouter", model: "openai/gpt-5-mini" },
+        },
+      }),
+    ]);
+
+    state = applyChatSignal(state, "proc.run.output", {
+      pid: "pid-1",
+      runId: "run-1",
+      conversationId: "default",
+      text: "Recovered answer.",
+      fallback: {
+        used: true,
+        from: { provider: "custom", model: "zai-glm-4.7" },
+        to: { provider: "openrouter", model: "openai/gpt-5-mini" },
+        reason: "Custom provider HTTP 403: not authenticated",
+      },
+    }, { pid: "pid-1", conversationId: "default" }).state;
+
+    expect(state.rows).toEqual([
+      expect.objectContaining({
+        id: "assistant:run-1",
+        role: "assistant",
+        text: "Recovered answer.",
+        streaming: false,
+        backupModel: {
+          from: { provider: "custom", model: "zai-glm-4.7" },
+          to: { provider: "openrouter", model: "openai/gpt-5-mini" },
+          reason: "Custom provider HTTP 403: not authenticated",
+        },
+      }),
+    ]);
   });
 
   it("applies live stream, tool, and HIL signals for the active process", () => {

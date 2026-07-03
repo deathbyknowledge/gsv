@@ -1418,6 +1418,15 @@ describe("Process DO — mechanical", () => {
         ["user", "fail over please"],
         ["assistant", "fallback pong"],
       ]);
+      const assistant = result.messages.find((message: any) => message.role === "assistant");
+      expect(JSON.parse(assistant.metadata)).toMatchObject({
+        fallback: {
+          used: true,
+          from: { provider: "custom", model: "zai-glm-4.7" },
+          to: { provider: "openrouter", model: "openai/gpt-5-mini" },
+          reason: "Custom provider HTTP 403: not authenticated",
+        },
+      });
       const retry = result.emitted.find((entry) => entry.signal === "proc.run.retrying")?.payload as any;
       expect(retry).toMatchObject({
         pid,

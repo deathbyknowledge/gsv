@@ -302,6 +302,7 @@ function normalizeStringArray(value: unknown): string[] {
 function buildAssistantMessageMetadata(
   response: AssistantMessage,
   config: AiConfigResult,
+  fallback?: MessageMetadata["fallback"],
 ): MessageMetadata | undefined {
   const usage = assistantUsageToProcUsageState(
     response.usage,
@@ -316,9 +317,17 @@ function buildAssistantMessageMetadata(
       responseId: response.responseId,
       stopReason: response.stopReason,
     },
+    fallback,
     usage,
   });
   return metadata ?? undefined;
+}
+
+function modelMetadataFromAiConfig(config: AiConfigResult): NonNullable<MessageMetadata["fallback"]>["from"] {
+  return {
+    provider: config.provider,
+    model: config.model,
+  };
 }
 
 function assistantUsageToProcUsageState(
@@ -2823,6 +2832,7 @@ export class Process extends Host<Env> {
     const primaryConfig = run.config!;
     const fallbackConfigs = primaryConfig.fallbacks ?? [];
     let fallbackIndex = 0;
+    let activeFallbackMetadata: MessageMetadata["fallback"] | undefined;
     const switchToFallback = async (
       reason: string,
       failedResponse?: AssistantMessage,
@@ -2847,6 +2857,12 @@ export class Process extends Host<Env> {
       if (fallbackState === "stopped") {
         return "stopped";
       }
+      activeFallbackMetadata = {
+        used: true,
+        from: modelMetadataFromAiConfig(run.config!),
+        to: modelMetadataFromAiConfig(fallback.config),
+        reason,
+      };
       run.config = fallback.config;
       this.currentRun = run;
       await this.updateContextState(runId, conversationId, run.config, context);
@@ -3077,6 +3093,7 @@ export class Process extends Host<Env> {
       await this.sendSignal("proc.run.output", {
         text,
         thinking: thinkingBlocks,
+        ...(activeFallbackMetadata ? { fallback: activeFallbackMetadata } : {}),
         pid: this.pid,
         runId,
         conversationId,
@@ -3086,7 +3103,7 @@ export class Process extends Host<Env> {
       }
     }
 
-    const assistantMetadata = buildAssistantMessageMetadata(response, run.config!);
+    const assistantMetadata = buildAssistantMessageMetadata(response, run.config!, activeFallbackMetadata);
     this.store.appendMessage("assistant", text, {
       conversationId,
       runId,

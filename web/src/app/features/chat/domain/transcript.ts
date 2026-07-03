@@ -15,6 +15,18 @@ export type ChatTranscriptRowStatus =
   | "streaming"
   | "thinking";
 
+export type ChatBackupModelInfo = {
+  from?: {
+    provider?: string;
+    model?: string;
+  };
+  to?: {
+    provider?: string;
+    model?: string;
+  };
+  reason?: string;
+};
+
 export type ChatTranscriptRow = {
   id: string;
   isError?: boolean;
@@ -35,6 +47,7 @@ export type ChatTranscriptRow = {
   status?: ChatTranscriptRowStatus;
   streaming?: boolean;
   thinking?: string[];
+  backupModel?: ChatBackupModelInfo;
 };
 
 export type ChatRuntimeState = {
@@ -193,6 +206,7 @@ export function applyChatSignal(
   if (signal === "proc.run.retrying") {
     const record = asRecord(payload);
     const runId = asString(record?.runId);
+    const fallback = normalizeBackupModelInfo(record?.fallback);
     return {
       matched: true,
       refreshHistory: false,
@@ -200,7 +214,11 @@ export function applyChatSignal(
         ...state,
         activeRunId: runId ?? state.activeRunId,
         pendingHil: null,
-        rows: runId ? ensureThinkingRow(clearTransientRowsForRun(state.rows, runId), runId) : state.rows,
+        rows: runId
+          ? fallback
+            ? upsertBackupModelRow(clearTransientRowsForRun(state.rows, runId), runId, fallback, true)
+            : ensureThinkingRow(clearTransientRowsForRun(state.rows, runId), runId)
+          : state.rows,
         runState: "running",
       },
     };
@@ -310,6 +328,7 @@ export function transcriptRowsFromHistory(history: ChatHistory): ChatTranscriptR
   history.messages.forEach((message, index) => {
     if (message.role === "assistant") {
       const parsed = extractAssistantHistory(message.content, message.text);
+      const backupModel = normalizeBackupModelInfo(message.metadata?.fallback);
       if (parsed.text.trim() || parsed.thinking.length > 0) {
         rows.push({
           id: `message:${message.clientId}`,
@@ -321,7 +340,22 @@ export function transcriptRowsFromHistory(history: ChatHistory): ChatTranscriptR
           timestamp: message.timestamp,
           time: formatTranscriptTime(message.timestamp),
           runId: message.runId ?? undefined,
+          ...(backupModel ? { backupModel } : {}),
           status: "done",
+        });
+      } else if (backupModel) {
+        rows.push({
+          id: `backup:${message.clientId}`,
+          role: "assistant",
+          text: "",
+          messageId: message.id,
+          origin: message.origin,
+          timestamp: message.timestamp,
+          time: formatTranscriptTime(message.timestamp),
+          runId: message.runId ?? undefined,
+          backupModel,
+          status: "done",
+          streaming: false,
         });
       }
       for (const toolCall of parsed.toolCalls) {
@@ -572,6 +606,7 @@ function applyAssistantOutput(
 ): ChatTranscriptRow[] {
   const text = asString(record?.text) ?? "";
   const thinking = extractThinkingBlocks(record);
+  const backupModel = normalizeBackupModelInfo(record?.fallback) ?? backupModelForRun(rows, runId);
   if (!text.trim() && thinking.length === 0) {
     return runId ? finishRowsForRun(rows, runId) : rows;
   }
@@ -584,11 +619,12 @@ function applyAssistantOutput(
     timestamp,
     time: formatTranscriptTime(timestamp),
     ...(runId ? { runId } : {}),
+    ...(backupModel ? { backupModel } : {}),
     status: "done",
     streaming: false,
   };
 
-  const next = dropEmptyTransientRows(rows, runId).slice();
+  const next = dropTransientAssistantRowsForOutput(rows, runId).slice();
   const existingIndex = runId
     ? findLastIndex(next, (row) => row.role === "assistant" && row.runId === runId && !row.id.startsWith("message:"))
     : -1;
@@ -641,7 +677,7 @@ function applyStreamEvent(
 }
 
 function ensureThinkingRow(rows: ChatTranscriptRow[], runId: string): ChatTranscriptRow[] {
-  if (rows.some((row) => row.role === "assistant" && row.runId === runId && !row.text.trim())) {
+  if (rows.some((row) => row.role === "assistant" && row.runId === runId && !row.text.trim() && !row.backupModel)) {
     return rows;
   }
   const now = Date.now();
@@ -658,13 +694,15 @@ function ensureThinkingRow(rows: ChatTranscriptRow[], runId: string): ChatTransc
 }
 
 function appendAssistantDelta(rows: ChatTranscriptRow[], runId: string, delta: string): ChatTranscriptRow[] {
-  const next = dropEmptyTransientRows(rows, runId).slice();
+  const backupModel = backupModelForRun(rows, runId);
+  const next = dropTransientAssistantRowsForOutput(rows, runId).slice();
   const index = findLastIndex(next, (row) => row.role === "assistant" && row.runId === runId && !row.id.startsWith("message:"));
   const now = Date.now();
   if (index >= 0) {
     next[index] = {
       ...next[index],
       text: `${next[index].text}${delta}`,
+      ...(backupModel && !next[index].backupModel ? { backupModel } : {}),
       status: "streaming",
       streaming: true,
     };
@@ -677,6 +715,7 @@ function appendAssistantDelta(rows: ChatTranscriptRow[], runId: string, delta: s
     timestamp: now,
     time: formatTranscriptTime(now),
     runId,
+    ...(backupModel ? { backupModel } : {}),
     status: "streaming",
     streaming: true,
   });
@@ -684,13 +723,15 @@ function appendAssistantDelta(rows: ChatTranscriptRow[], runId: string, delta: s
 }
 
 function setAssistantStreamText(rows: ChatTranscriptRow[], runId: string, text: string): ChatTranscriptRow[] {
-  const next = dropEmptyTransientRows(rows, runId).slice();
+  const backupModel = backupModelForRun(rows, runId);
+  const next = dropTransientAssistantRowsForOutput(rows, runId).slice();
   const index = findLastIndex(next, (row) => row.role === "assistant" && row.runId === runId && !row.id.startsWith("message:"));
   const now = Date.now();
   if (index >= 0) {
     next[index] = {
       ...next[index],
       text,
+      ...(backupModel && !next[index].backupModel ? { backupModel } : {}),
       status: "streaming",
       streaming: true,
     };
@@ -703,6 +744,7 @@ function setAssistantStreamText(rows: ChatTranscriptRow[], runId: string, text: 
     timestamp: now,
     time: formatTranscriptTime(now),
     runId,
+    ...(backupModel ? { backupModel } : {}),
     status: "streaming",
     streaming: true,
   });
@@ -757,7 +799,7 @@ function appendAssistantThinkingDelta(rows: ChatTranscriptRow[], runId: string, 
 
 function finishRowsForRun(rows: ChatTranscriptRow[], runId: string): ChatTranscriptRow[] {
   return rows
-    .filter((row) => !(row.role === "assistant" && row.runId === runId && !row.text.trim() && !(row.thinking?.length)))
+    .filter((row) => !(row.role === "assistant" && row.runId === runId && !row.text.trim() && !(row.thinking?.length) && !row.backupModel))
     .map((row) => {
       if (row.runId !== runId || !row.streaming) {
         return row;
@@ -793,8 +835,59 @@ function dropEmptyTransientRows(rows: ChatTranscriptRow[], runId?: string | null
     if (runId && row.runId !== runId) {
       return true;
     }
+    return row.text.trim().length > 0 || Boolean(row.thinking?.length) || Boolean(row.backupModel);
+  });
+}
+
+function dropTransientAssistantRowsForOutput(rows: ChatTranscriptRow[], runId?: string | null): ChatTranscriptRow[] {
+  return rows.filter((row) => {
+    if (row.role !== "assistant" || row.id.startsWith("message:")) {
+      return true;
+    }
+    if (runId && row.runId !== runId) {
+      return true;
+    }
     return row.text.trim().length > 0 || Boolean(row.thinking?.length);
   });
+}
+
+function backupModelForRun(rows: ChatTranscriptRow[], runId: string | null | undefined): ChatBackupModelInfo | null {
+  if (!runId) {
+    return null;
+  }
+  const row = [...rows].reverse().find((candidate) => candidate.runId === runId && candidate.backupModel);
+  return row?.backupModel ?? null;
+}
+
+function upsertBackupModelRow(
+  rows: ChatTranscriptRow[],
+  runId: string,
+  backupModel: ChatBackupModelInfo,
+  running: boolean,
+): ChatTranscriptRow[] {
+  const next = rows.slice();
+  const index = next.findIndex((row) => row.id === `backup:${runId}`);
+  const now = Date.now();
+  const row: ChatTranscriptRow = {
+    id: `backup:${runId}`,
+    role: "assistant",
+    text: "",
+    timestamp: now,
+    time: formatTranscriptTime(now),
+    runId,
+    backupModel,
+    status: running ? "running" : "done",
+    streaming: running,
+  };
+  if (index >= 0) {
+    next[index] = {
+      ...next[index],
+      ...row,
+    };
+    return next;
+  }
+  next.push(row);
+  return next;
 }
 
 function toolRowFromStarted(record: Record<string, unknown> | null): ChatTranscriptRow {
@@ -1078,6 +1171,40 @@ function extractMessageMedia(value: unknown): unknown[] {
 function normalizeInteractionOrigin(value: unknown): InteractionOrigin | undefined {
   const record = asRecord(value);
   return typeof record?.kind === "string" ? record as unknown as InteractionOrigin : undefined;
+}
+
+function normalizeBackupModelInfo(value: unknown): ChatBackupModelInfo | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+  const from = normalizeBackupModelRef(record.from);
+  const to = normalizeBackupModelRef(record.to);
+  const reason = asString(record.reason);
+  if (!from && !to && !reason && record.used !== true) {
+    return null;
+  }
+  return {
+    ...(from ? { from } : {}),
+    ...(to ? { to } : {}),
+    ...(reason ? { reason } : {}),
+  };
+}
+
+function normalizeBackupModelRef(value: unknown): ChatBackupModelInfo["from"] | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+  const provider = asString(record.provider);
+  const model = asString(record.model);
+  if (!provider && !model) {
+    return null;
+  }
+  return {
+    ...(provider ? { provider } : {}),
+    ...(model ? { model } : {}),
+  };
 }
 
 function formatToolInput(value: unknown): string {

@@ -15,6 +15,7 @@ import type {
   ProcContextFile,
   ProcContextState,
   ProcMessageMetadata,
+  ProcMessageModelMetadata,
   ProcMessageProviderMetadata,
   ProcUsageCost,
   ProcUsageCostSource,
@@ -1418,12 +1419,14 @@ export function normalizeMessageMetadata(value: unknown): MessageMetadata | null
     return null;
   }
   const provider = normalizeProviderMetadata(record.provider);
+  const fallback = normalizeFallbackMetadata(record.fallback);
   const usage = normalizeUsageState(record.usage);
-  if (!provider && !usage) {
+  if (!provider && !fallback && !usage) {
     return null;
   }
   return {
     ...(provider ? { provider } : {}),
+    ...(fallback ? { fallback } : {}),
     ...(usage ? { usage } : {}),
   };
 }
@@ -1447,6 +1450,41 @@ function normalizeProviderMetadata(value: unknown): MessageProviderMetadata | nu
   if (responseId) provider.responseId = responseId;
   if (stopReason) provider.stopReason = stopReason;
   return Object.keys(provider).length > 0 ? provider : null;
+}
+
+function normalizeFallbackMetadata(value: unknown): MessageMetadata["fallback"] | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+  const from = normalizeModelMetadata(record.from);
+  const to = normalizeModelMetadata(record.to);
+  const reason = normalizeOptionalNonEmptyString(record.reason);
+  if (!from && !to && !reason && record.used !== true) {
+    return null;
+  }
+  return {
+    used: true,
+    ...(from ? { from } : {}),
+    ...(to ? { to } : {}),
+    ...(reason ? { reason } : {}),
+  };
+}
+
+function normalizeModelMetadata(value: unknown): ProcMessageModelMetadata | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+  const provider = normalizeOptionalNonEmptyString(record.provider);
+  const model = normalizeOptionalNonEmptyString(record.model);
+  if (!provider && !model) {
+    return null;
+  }
+  return {
+    ...(provider ? { provider } : {}),
+    ...(model ? { model } : {}),
+  };
 }
 
 export function normalizeUsageState(value: unknown): ProcUsageState | null {

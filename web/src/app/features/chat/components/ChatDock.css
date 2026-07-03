@@ -1879,6 +1879,20 @@ button.gsv-chat-task-row:focus-visible {
   outline: none;
 }
 
+.gsv-chat-backup-model-badge {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: #c8c4ff;
+  padding: 1px 5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .gsv-chat-reasoning-toggle i {
   display: inline-block;
   font-style: normal;
