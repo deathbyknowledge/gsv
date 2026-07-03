@@ -11,6 +11,20 @@ afterEach(() => {
 });
 
 describe("responseFromNetFetchResult", () => {
+  it("preserves the routed response final URL", () => {
+    const response = responseFromNetFetchResult({
+      ok: true,
+      url: "https://example.test/final",
+      status: 200,
+      statusText: "OK",
+      headers: {},
+      bodyBase64: "",
+      bodyBytes: 0,
+    });
+
+    expect(response.url).toBe("https://example.test/final");
+  });
+
   it("rebuilds null-body status responses without a body", async () => {
     for (const status of [204, 205, 304]) {
       const response = responseFromNetFetchResult({

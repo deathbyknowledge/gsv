@@ -239,13 +239,19 @@ export function responseFromNetFetchResult(raw: unknown): Response {
     ? base64ToBytes(result.bodyBase64)
     : new Uint8Array();
   const body: BodyInit | null = isNullBodyStatus(status) ? null : bodyBytes;
-  return new Response(body, {
+  const response = new Response(body, {
     status,
     statusText: typeof result.statusText === "string" ? result.statusText : "",
     headers: result.headers && typeof result.headers === "object"
       ? result.headers as Record<string, string>
       : undefined,
   });
+  if (typeof result.url === "string" && result.url.length > 0) {
+    try {
+      Object.defineProperty(response, "url", { value: result.url });
+    } catch {}
+  }
+  return response;
 }
 
 function normalizeHttpUrl(value: unknown): string {
