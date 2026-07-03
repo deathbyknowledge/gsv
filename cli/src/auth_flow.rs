@@ -8,7 +8,7 @@ use serde_json::json;
 use std::future::Future;
 use std::io::{self, IsTerminal};
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct AuthSetupOptions {
     pub(crate) username: Option<String>,
     pub(crate) password: Option<String>,
@@ -88,12 +88,38 @@ pub(crate) async fn run_with_auto_setup_retry<F, Fut>(
     cfg: &CliConfig,
     setup_username: Option<String>,
     setup_password: Option<String>,
+    attempt: F,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<(), Box<dyn std::error::Error>>>,
+{
+    run_with_auto_setup_options_retry(
+        url,
+        cfg,
+        AuthSetupOptions {
+            username: setup_username,
+            password: setup_password,
+            ..AuthSetupOptions::default()
+        },
+        attempt,
+    )
+    .await
+}
+
+pub(crate) async fn run_with_auto_setup_options_retry<F, Fut>(
+    url: &str,
+    cfg: &CliConfig,
+    setup_options: AuthSetupOptions,
     mut attempt: F,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = Result<(), Box<dyn std::error::Error>>>,
 {
+    let setup_username = setup_options.username.clone();
+    let setup_password = setup_options.password.clone();
+
     if gateway_is_in_setup_mode(url).await? {
         if !can_prompt_interactively() && (setup_username.is_none() || setup_password.is_none()) {
             return Err(
@@ -103,16 +129,7 @@ where
         }
 
         println!("Gateway is in setup mode. Starting setup wizard...");
-        run_auth_setup(
-            url,
-            cfg,
-            AuthSetupOptions {
-                username: setup_username.clone(),
-                password: setup_password.clone(),
-                ..AuthSetupOptions::default()
-            },
-        )
-        .await?;
+        run_auth_setup(url, cfg, setup_options.clone()).await?;
     }
 
     match attempt().await {
@@ -131,16 +148,7 @@ where
             }
 
             println!("Gateway is in setup mode. Starting setup wizard...");
-            run_auth_setup(
-                url,
-                cfg,
-                AuthSetupOptions {
-                    username: setup_username,
-                    password: setup_password,
-                    ..AuthSetupOptions::default()
-                },
-            )
-            .await?;
+            run_auth_setup(url, cfg, setup_options).await?;
 
             attempt().await
         }

@@ -3,7 +3,8 @@ use gsv::config::CliConfig;
 
 use crate::auth_flow::{
     resolve_device_gateway_auth, run_auth_login, run_auth_logout, run_auth_setup,
-    run_with_auto_setup_and_login_retry, run_with_auto_setup_retry, AuthSetupOptions,
+    run_with_auto_setup_and_login_retry, run_with_auto_setup_options_retry,
+    run_with_auto_setup_retry, AuthSetupOptions,
 };
 use crate::cli::{
     AuthAction, Cli, Commands, ConfigAction, DeviceAction, DeviceServiceAction, LocalConfigAction,
@@ -166,12 +167,26 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
             DeviceAction::Run { id, workspace } => {
                 let device_id = resolve_device_id(id.clone(), &cfg);
                 let workspace = resolve_device_workspace(workspace.clone(), &cfg);
-                let auth = resolve_device_gateway_auth(
+                run_with_auto_setup_options_retry(
+                    &url,
                     &cfg,
-                    cli_token_override.clone(),
-                    cli_user_override.clone(),
-                )?;
-                run_device(&url, auth, device_id, workspace).await
+                    AuthSetupOptions {
+                        username: cli_user_override.clone(),
+                        password: cli_password_override.clone(),
+                        device_id: Some(device_id.clone()),
+                        ..AuthSetupOptions::default()
+                    },
+                    || async {
+                        let attempt_cfg = CliConfig::load();
+                        let auth = resolve_device_gateway_auth(
+                            &attempt_cfg,
+                            cli_token_override.clone(),
+                            cli_user_override.clone(),
+                        )?;
+                        run_device(&url, auth, device_id.clone(), workspace.clone()).await
+                    },
+                )
+                .await
             }
             DeviceAction::Install { id, workspace } => run_device_service(
                 DeviceServiceAction::Install { id, workspace },
