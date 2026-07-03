@@ -607,6 +607,60 @@ describe("handleAiConfig", () => {
     }));
   });
 
+  it("preserves explicit blank base URL overrides for preset text generation", async () => {
+    generateMock.mockImplementationOnce(async (request: any) => {
+      expect(request.config).toMatchObject({
+        executor: { kind: "kernel" },
+        provider: "custom",
+        model: "local-chat",
+        providerStyle: "openai-chat-completions",
+      });
+      expect(request.config.baseUrl).toBeUndefined();
+      return {
+        role: "assistant",
+        content: [{ type: "text", text: "pong" }],
+        api: "test",
+        provider: "custom",
+        model: "local-chat",
+        usage: {
+          input: 1,
+          output: 1,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 2,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: "stop",
+        timestamp: 1,
+      };
+    });
+
+    await handleAiTextGenerate({
+      messages: [{ role: "user", content: "ping" }],
+      config: {
+        preset: { id: "local" },
+        overrides: {
+          "config/ai/base_url": "",
+        },
+      },
+    }, makeAiConfigContext({
+      "users/1000/ai/model_profiles": JSON.stringify({
+        profiles: [{
+          id: "local",
+          name: "Local",
+          values: {
+            "config/ai/provider": "custom",
+            "config/ai/model": "local-chat",
+            "config/ai/base_url": "http://old.example/v1",
+            "config/ai/provider_style": "openai-chat-completions",
+          },
+          createdAt: 1,
+          updatedAt: 2,
+        }],
+      }),
+    }));
+  });
+
   it("does not build a routed fetch for non-custom text generation targets", async () => {
     generateMock.mockImplementationOnce(async (request: any) => {
       expect(request.config).toMatchObject({

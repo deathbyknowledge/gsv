@@ -433,14 +433,17 @@ function createCustomProviderFetch(
   return createRoutedFetch(ctx, transport, config.transportTarget);
 }
 
-function normalizeAiProcessOverrideValues(raw: Record<string, unknown>): Record<string, string> {
+function normalizeAiProcessOverrideValues(
+  raw: Record<string, unknown>,
+  options: { preserveEmpty?: boolean } = {},
+): Record<string, string> {
   const values: Record<string, string> = {};
   for (const [key, value] of Object.entries(raw)) {
     if (!isProcessAiConfigKey(key)) {
       continue;
     }
     const normalized = String(value ?? "").trim();
-    if (!normalized && !PROCESS_AI_CONFIG_SECRET_KEYS.has(key)) {
+    if (!normalized && !options.preserveEmpty && !PROCESS_AI_CONFIG_SECRET_KEYS.has(key)) {
       continue;
     }
     values[key] = normalized;
@@ -661,10 +664,10 @@ async function resolveAiTextGenerationConfig(
   ctx: KernelContext,
 ): Promise<AiConfigResult> {
   const requested = input && typeof input === "object" ? input : undefined;
-  const overrides = normalizeAiProcessOverrideValues({
-    ...(requested?.processOverrides ?? {}),
-    ...(requested?.overrides ?? {}),
-  });
+  const overrides = {
+    ...normalizeAiProcessOverrideValues(requested?.processOverrides ?? {}),
+    ...normalizeAiProcessOverrideValues(requested?.overrides ?? {}, { preserveEmpty: true }),
+  };
   const processProfile = requested?.processProfile;
   const preset = requested?.preset;
   if (!preset) {

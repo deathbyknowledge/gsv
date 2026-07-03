@@ -690,6 +690,50 @@ describe("console agent service", () => {
     }));
   });
 
+  it("validates explicit base URL clears as empty overrides", async () => {
+    const call = vi.fn(async () => ({
+      provider: "custom",
+      model: "local-chat",
+      text: "ok",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "ok" }],
+        api: "test",
+        provider: "custom",
+        model: "local-chat",
+        usage: {
+          input: 1,
+          output: 1,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 2,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: "stop",
+      },
+    }));
+
+    await validateConsoleModelConfig({ call } as any, {
+      presetId: "local",
+      values: {
+        "config/ai/provider": "custom",
+        "config/ai/model": "local-chat",
+        "config/ai/base_url": "",
+      },
+    });
+
+    expect(call).toHaveBeenCalledWith("ai.text.generate", expect.objectContaining({
+      config: {
+        preset: { id: "local" },
+        overrides: {
+          "config/ai/provider": "custom",
+          "config/ai/model": "local-chat",
+          "config/ai/base_url": "",
+        },
+      },
+    }));
+  });
+
   it("rejects model validation errors without echoing secrets", async () => {
     const call = vi.fn(async () => ({
       provider: "anthropic",
