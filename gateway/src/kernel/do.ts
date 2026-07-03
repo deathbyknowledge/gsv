@@ -28,6 +28,11 @@ import type { PkgPublicListResult } from "@humansandmachines/gsv/protocol";
 import type {
   AdapterOutboundMessage,
 } from "../adapter-interface";
+import type {
+  SysCliDownloadsResult,
+  SysUpdateArgs,
+  SysUpdateResult,
+} from "@humansandmachines/gsv/protocol";
 import { AuthStore } from "./auth-store";
 import { CapabilityStore, hasCapability } from "./capabilities";
 import { ConfigStore } from "./config";
@@ -63,7 +68,10 @@ import { sendFrameToProcess } from "../shared/utils";
 import { handleSysSetup as handleKernelSetup } from "./sys/setup";
 import { buildAppRunnerName } from "../protocol/app-session";
 import { handleSysSetupAssist } from "./sys/setup-assist";
-import { refreshCliDownloads } from "./sys/update";
+import {
+  handleSysUpdate as handleSysUpdateDirect,
+  refreshCliDownloads,
+} from "./sys/update";
 import {
   completeOAuthCallback as completeOAuthCallbackFlow,
   type OAuthCallbackInput,
@@ -1252,6 +1260,7 @@ export class Kernel extends Host<Env> {
       receiveDeviceBinaryStream: this.receiveDeviceBinaryStream.bind(this),
       receiveBinaryStream: this.receiveBinaryStream.bind(this),
       sendDeviceBinaryFrame: this.sendDeviceBinaryFrame.bind(this),
+      handleSysUpdate: this.handleSysUpdate.bind(this),
     };
   }
 
@@ -2185,18 +2194,57 @@ export class Kernel extends Host<Env> {
     }
 
     this.config.set(CLI_DOWNLOADS_REFRESH_ATTEMPT_KEY, String(Date.now()));
-    const refresh = this.refreshCliDownloadsForVersion().finally(() => {
-      this.cliDownloadsRefresh = null;
-    });
-    this.cliDownloadsRefresh = refresh;
+    const refresh = this.withCliDownloadsRefreshSlot(() => this.refreshCliDownloadsForVersion());
     this.ctx.waitUntil(refresh);
+  }
+
+  private async handleSysUpdate(
+    args: SysUpdateArgs | undefined,
+    ctx: KernelContext,
+  ): Promise<SysUpdateResult> {
+    const result = await this.withCliDownloadsRefreshSlot(
+      () => handleSysUpdateDirect(args, ctx),
+      { waitForExisting: true },
+    );
+    this.recordCliDownloadsRefresh(result.cli);
+    return result;
+  }
+
+  private async withCliDownloadsRefreshSlot<T>(
+    run: () => Promise<T>,
+    options: { waitForExisting?: boolean } = {},
+  ): Promise<T> {
+    const previousRefresh = options.waitForExisting ? this.cliDownloadsRefresh : null;
+    let releaseSlot: () => void = () => {};
+    const slot = new Promise<void>((resolve) => {
+      releaseSlot = resolve;
+    });
+    const trackedSlot = slot.finally(() => {
+      if (this.cliDownloadsRefresh === trackedSlot) {
+        this.cliDownloadsRefresh = null;
+      }
+    });
+    this.cliDownloadsRefresh = trackedSlot;
+
+    try {
+      if (previousRefresh) {
+        await previousRefresh;
+      }
+      return await run();
+    } finally {
+      releaseSlot();
+    }
+  }
+
+  private recordCliDownloadsRefresh(result: SysCliDownloadsResult): void {
+    this.config.set(CLI_DOWNLOADS_REFRESHED_VERSION_KEY, SERVER_VERSION);
+    this.config.set(CLI_DOWNLOADS_REFRESHED_AT_KEY, String(result.refreshedAt));
   }
 
   private async refreshCliDownloadsForVersion(): Promise<void> {
     try {
       const result = await refreshCliDownloads(this.env.STORAGE);
-      this.config.set(CLI_DOWNLOADS_REFRESHED_VERSION_KEY, SERVER_VERSION);
-      this.config.set(CLI_DOWNLOADS_REFRESHED_AT_KEY, String(result.refreshedAt));
+      this.recordCliDownloadsRefresh(result);
       console.info(
         `[Kernel] refreshed hosted CLI downloads for ${SERVER_VERSION} channels=${result.mirroredChannels.join(",")} default=${result.defaultChannel}`,
       );

@@ -12,6 +12,10 @@
 
 import type { Connection } from "agents";
 import type { RequestFrame, ResponseFrame } from "../protocol/frames";
+import type {
+  SysUpdateArgs,
+  SysUpdateResult,
+} from "@humansandmachines/gsv/protocol";
 import { isRoutableSyscall, type SyscallName } from "../syscalls";
 import type { KernelContext } from "./context";
 import type { RouteOrigin } from "./routing";
@@ -49,7 +53,7 @@ import { handleSysConfigGet, handleSysConfigSet } from "./sys/config";
 import { handleSysDeviceDelete, handleSysDeviceGet, handleSysDeviceList, handleSysDeviceUpdate } from "./sys/device";
 import { handleNetFetch } from "./net";
 import { handleSysBootstrap } from "./sys/bootstrap";
-import { handleSysUpdate } from "./sys/update";
+import { handleSysUpdate as handleSysUpdateDirect } from "./sys/update";
 import { handleSysSetupAssist } from "./sys/setup-assist";
 import {
   handlePkgAdd,
@@ -191,6 +195,7 @@ export type DispatchDeps = {
     flags: number,
     payload?: Uint8Array,
   ) => void;
+  handleSysUpdate?: (args: SysUpdateArgs | undefined, ctx: KernelContext) => Promise<SysUpdateResult>;
 };
 
 export type DispatchResult =
@@ -522,7 +527,7 @@ async function dispatchNative(
         data = await handleSysBootstrap(frame.args, ctx);
         break;
       case "sys.update":
-        data = await handleSysUpdate(frame.args, ctx);
+        data = await (deps.handleSysUpdate ?? handleSysUpdateDirect)(frame.args, ctx);
         break;
       case "sys.config.get":
         data = handleSysConfigGet(frame.args, ctx);

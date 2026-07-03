@@ -171,6 +171,51 @@ describe("dispatch", () => {
     }));
   });
 
+  it("uses the coordinated sys.update handler when supplied", async () => {
+    const updateResult = {
+      updatedAt: 123,
+      cli: {
+        defaultChannel: "stable",
+        mirroredChannels: ["stable", "dev"],
+        assets: ["gsv-linux-x64"],
+        refreshedAt: 456,
+      },
+    };
+    const deps = {
+      connections: new Map(),
+      registerRoute: vi.fn(),
+      shellSessions: {
+        get: vi.fn(),
+      },
+      handleSysUpdate: vi.fn(async () => updateResult),
+    } as unknown as DispatchDeps;
+    const ctx = makeContext();
+    const frame = {
+      type: "req",
+      id: "req_update",
+      call: "sys.update",
+      args: { channel: "stable" },
+    } as RequestFrame<"sys.update">;
+
+    const result = await dispatch(
+      frame,
+      { type: "process", id: "proc_1" },
+      ctx,
+      deps,
+    );
+
+    expect(deps.handleSysUpdate).toHaveBeenCalledWith({ channel: "stable" }, ctx);
+    expect(result).toEqual({
+      handled: true,
+      response: {
+        type: "res",
+        id: "req_update",
+        ok: true,
+        data: updateResult,
+      },
+    });
+  });
+
   it("fails routed syscalls before sending when route registration fails", async () => {
     const send = vi.fn();
     const registerRoute = vi.fn(async () => {
