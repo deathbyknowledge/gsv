@@ -173,6 +173,7 @@ export function targetToDeviceSummary(target: TargetDescriptor): SysDeviceSummar
     ownerUsername: target.ownerUsername,
     label: target.label,
     description: target.description,
+    implements: target.implements,
     platform: target.platform,
     version: target.version,
     online: target.online,

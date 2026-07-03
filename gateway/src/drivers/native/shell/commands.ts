@@ -2,6 +2,7 @@ import { defineCommand } from "just-bash";
 import type { ExecResult } from "just-bash";
 import { GsvFs } from "../../../fs/gsv-fs";
 import type { KernelContext } from "../../../kernel/context";
+import type { NetFetchDeviceTransport } from "../../../kernel/net";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { FsCopyDeviceTransport } from "../fs";
 import { buildNotifyCommands } from "../notify-shell";
@@ -13,6 +14,7 @@ import { buildLsCommand } from "./ls";
 import { buildLlmCommand } from "./llm";
 import { buildMediaCommands } from "./media";
 import { buildMcpCommand } from "./mcp";
+import { buildNetCommands } from "./net";
 import { buildPackageCommands, buildPkgCommand } from "./pkg";
 import { buildProcCommand } from "./proc";
 import { buildRgitCommands } from "./rgit";
@@ -23,6 +25,7 @@ import { buildTargetsCommands } from "./targets";
 
 export type NativeShellCommandOptions = {
   fsCopyTransport?: FsCopyDeviceTransport;
+  netFetchTransport?: NetFetchDeviceTransport;
 };
 
 export function buildCustomCommands(
@@ -33,7 +36,7 @@ export function buildCustomCommands(
 ) {
   const coreCommands = buildCoreCommands(fs, identity, ctx);
   const ls = buildLsCommand(fs, identity, ctx);
-  const llm = buildLlmCommand(ctx);
+  const llm = buildLlmCommand(ctx, options?.netFetchTransport);
   const stat = buildStatCommand(fs, identity, ctx);
   const cp = buildCpCommand(ctx, options?.fsCopyTransport);
   const crontab = buildCrontabCommand(fs, ctx);
@@ -46,6 +49,7 @@ export function buildCustomCommands(
   const sched = buildSchedCommand(ctx);
   const targets = buildTargetsCommands(ctx);
   const mediaCommands = buildMediaCommands(fs, ctx);
+  const netCommands = buildNetCommands(ctx, options?.netFetchTransport);
   const notifyCommands = buildNotifyCommands(ctx);
   const packageCommands = buildPackageCommands(identity, ctx);
   const flynn = defineCommand("flynn", async (): Promise<ExecResult> => ({
@@ -66,6 +70,7 @@ export function buildCustomCommands(
     ...rgitCommands,
     sched,
     ...targets,
+    ...netCommands,
     llm,
     ...mediaCommands,
     pkg,

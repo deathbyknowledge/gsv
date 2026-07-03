@@ -1,4 +1,4 @@
-use crate::protocol::{NodeExecEventParams, ToolDefinition};
+use crate::protocol::{DeviceExecEventParams, ToolDefinition};
 use crate::tools::Tool;
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -65,22 +65,22 @@ struct ProcessState {
     started_notified: bool,
 }
 
-static EXEC_EVENT_BUS: OnceLock<broadcast::Sender<NodeExecEventParams>> = OnceLock::new();
+static EXEC_EVENT_BUS: OnceLock<broadcast::Sender<DeviceExecEventParams>> = OnceLock::new();
 static PROCESS_REGISTRY: OnceLock<Arc<AsyncMutex<HashMap<String, ProcessHandle>>>> =
     OnceLock::new();
 
-fn exec_event_bus() -> &'static broadcast::Sender<NodeExecEventParams> {
+fn exec_event_bus() -> &'static broadcast::Sender<DeviceExecEventParams> {
     EXEC_EVENT_BUS.get_or_init(|| {
         let (tx, _rx) = broadcast::channel(256);
         tx
     })
 }
 
-pub fn subscribe_exec_events() -> broadcast::Receiver<NodeExecEventParams> {
+pub fn subscribe_exec_events() -> broadcast::Receiver<DeviceExecEventParams> {
     exec_event_bus().subscribe()
 }
 
-fn emit_exec_event(event: NodeExecEventParams) {
+fn emit_exec_event(event: DeviceExecEventParams) {
     let _ = exec_event_bus().send(event);
 }
 
@@ -390,7 +390,7 @@ async fn mark_backgrounded(handle: &ProcessHandle, call_id: Option<String>) -> P
     state.backgrounded = true;
     if !state.started_notified {
         state.started_notified = true;
-        emit_exec_event(NodeExecEventParams {
+        emit_exec_event(DeviceExecEventParams {
             event_id: Uuid::new_v4().to_string(),
             session_id: state.session_id.clone(),
             event: "started".to_string(),
@@ -529,7 +529,7 @@ async fn launch_managed_process(
         let session_id = snapshot.session_id.clone();
 
         if should_emit_event {
-            emit_exec_event(NodeExecEventParams {
+            emit_exec_event(DeviceExecEventParams {
                 event_id: Uuid::new_v4().to_string(),
                 session_id: session_id.clone(),
                 event: event_name,

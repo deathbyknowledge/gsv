@@ -83,6 +83,7 @@ export const SYS_LINK_CONSUME = "sys.link.consume";
 export const SYS_LINK = "sys.link";
 export const SYS_UNLINK = "sys.unlink";
 export const SYS_LINK_LIST = "sys.link.list";
+export const SYS_UPDATE = "sys.update";
 
 // Scheduler (cron)
 export const SCHED_LIST = "sched.list";

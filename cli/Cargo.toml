@@ -25,6 +25,9 @@ dirs = "5"
 glob = "0.3"
 walkdir = "2"
 async-trait = "0.1"
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 toml = "0.8"
 qrcode = "0.14"
 cliclack = "0.3.8"
@@ -33,7 +36,7 @@ whoami = "1"
 # TLS backends - use native-tls by default (respects system certs)
 # CI builds for Linux use rustls feature to avoid OpenSSL dependency
 tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "multipart"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "stream"] }
 sha2 = "0.10"
 base64 = "0.22"
 blake3 = "1.5"

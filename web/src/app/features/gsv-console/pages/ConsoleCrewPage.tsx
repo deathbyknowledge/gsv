@@ -39,6 +39,7 @@ type CrewCardModel = {
   account: ConsoleAccount;
   processes: ConsoleProcess[];
   imageSrc: string;
+  displayName: string;
   role: string;
   description: string;
   status: AvatarStatus;
@@ -113,7 +114,10 @@ function CrewRoster({
   const visibleCards = useMemo(() => {
     const q = query.trim().toLowerCase();
     return q
-      ? cards.filter((card) => card.account.displayName.toLowerCase().includes(q))
+      ? cards.filter((card) =>
+          card.displayName.toLowerCase().includes(q) ||
+          card.account.displayName.toLowerCase().includes(q)
+        )
       : cards;
   }, [cards, query]);
 
@@ -137,7 +141,7 @@ function CrewRoster({
           tabIndex={onManageAgent ? 0 : undefined}
         >
           <AgentCard
-            agentName={card.account.displayName}
+            agentName={card.displayName}
             agentRole={card.role}
             description={card.description}
             imgSrc={card.imageSrc}
@@ -181,7 +185,7 @@ function buildCrewCard(
   ownerUid: number | null,
 ): CrewCardModel {
   const ownedProcesses = processes.filter((process) => ownsProcess(account, process));
-  const behavior = behaviorForAccount(config, account.uid);
+  const behavior = behaviorForAccount(config, account.uid, ownerUid);
   const inheritedModelLabel = inheritedModelLabelForAccount(config, account.uid, ownerUid);
   const queued = ownedProcesses.some(isQueuedProcess);
   const running = ownedProcesses.some(isRunningProcess);
@@ -196,14 +200,15 @@ function buildCrewCard(
     account,
     processes: ownedProcesses,
     imageSrc,
+    displayName: isHuman ? "Defaults" : account.displayName,
     role,
-    description: accountDescription(account),
+    description: isHuman ? "These are your preferences, applied to all your agents." : accountDescription(account),
     status,
     tasks: tasksForProcesses(ownedProcesses),
     active: account.runnable,
-    model: behavior.model,
+    model: behavior.modelLabel,
     modelIsDefault: behavior.model.trim().length === 0,
-    modelOptions: modelLabelsForAccount(modelLabels, behavior.model, inheritedModelLabel),
+    modelOptions: modelLabelsForAccount(modelLabels, behavior.modelLabel || behavior.model, inheritedModelLabel),
     permission: behavior.permission,
   };
 }

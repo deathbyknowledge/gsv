@@ -8,18 +8,20 @@ use gsv::config::CliConfig;
 use gsv::connection::{Connection, GatewayRpcError};
 use gsv::device_service;
 use gsv::kernel_client::{GatewayAuth, KernelClient};
-use gsv::logger::{self, NodeLogger};
+use gsv::logger;
 use gsv::protocol::{
-    ErrorShape, Frame, NodeExecEventParams, RequestFrame, ResponseFrame, SignalFrame,
+    DeviceExecEventParams, ErrorShape, Frame, RequestFrame, ResponseFrame, SignalFrame,
 };
 use gsv::tools::{all_tools_with_workspace_for_device, subscribe_exec_events, Tool};
 use serde_json::json;
+use tracing::{error, info, info_span, warn, Instrument};
 
 use crate::cli::DeviceServiceAction;
 
 mod transfer;
 
-const MAX_NODE_EXEC_EVENT_OUTBOX: usize = 2048;
+const MAX_DEVICE_EXEC_EVENT_OUTBOX: usize = 2048;
+const DEVICE_DRIVER_IMPLEMENTS: &[&str] = &["fs.*", "shell.exec", "net.fetch"];
 
 #[cfg(unix)]
 async fn wait_for_shutdown_signal() -> &'static str {
@@ -40,42 +42,42 @@ async fn wait_for_shutdown_signal() -> &'static str {
     "SIGINT"
 }
 
-pub(crate) fn resolve_node_id(cli_node_id: Option<String>, cfg: &CliConfig) -> String {
-    cli_node_id
-        .or_else(|| cfg.default_node_id())
+pub(crate) fn resolve_device_id(cli_device_id: Option<String>, cfg: &CliConfig) -> String {
+    cli_device_id
+        .or_else(|| cfg.default_device_id())
         .unwrap_or_else(|| {
             let hostname = hostname::get()
                 .map(|h| h.to_string_lossy().to_string())
                 .unwrap_or_else(|_| "unknown".to_string());
-            format!("node-{}", hostname)
+            format!("device-{}", hostname)
         })
 }
 
-pub(crate) fn resolve_node_workspace(cli_workspace: Option<PathBuf>, cfg: &CliConfig) -> PathBuf {
+pub(crate) fn resolve_device_workspace(cli_workspace: Option<PathBuf>, cfg: &CliConfig) -> PathBuf {
     cli_workspace
-        .or_else(|| cfg.default_node_workspace())
+        .or_else(|| cfg.default_device_workspace())
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
 }
 
-fn persist_node_defaults(
+fn persist_device_defaults(
     cfg: &CliConfig,
-    node_id: Option<String>,
+    device_id: Option<String>,
     workspace: Option<PathBuf>,
 ) -> Result<(String, PathBuf, bool), Box<dyn std::error::Error>> {
-    let node_id = resolve_node_id(node_id, cfg);
-    let workspace = resolve_node_workspace(workspace, cfg);
+    let device_id = resolve_device_id(device_id, cfg);
+    let workspace = resolve_device_workspace(workspace, cfg);
     let workspace = workspace.canonicalize().unwrap_or(workspace);
 
     let mut local_cfg = CliConfig::load();
     let mut changed = false;
 
-    if local_cfg.node.id.as_deref() != Some(node_id.as_str()) {
-        local_cfg.node.id = Some(node_id.clone());
+    if local_cfg.device.id.as_deref() != Some(device_id.as_str()) {
+        local_cfg.device.id = Some(device_id.clone());
         changed = true;
     }
 
-    if local_cfg.node.workspace.as_ref() != Some(&workspace) {
-        local_cfg.node.workspace = Some(workspace.clone());
+    if local_cfg.device.workspace.as_ref() != Some(&workspace) {
+        local_cfg.device.workspace = Some(workspace.clone());
         changed = true;
     }
 
@@ -83,7 +85,7 @@ fn persist_node_defaults(
         local_cfg.save()?;
     }
 
-    Ok((node_id, workspace, changed))
+    Ok((device_id, workspace, changed))
 }
 
 fn persist_gateway_overrides(
@@ -143,12 +145,12 @@ pub(crate) fn run_device_service(
                 gateway_username_override,
                 gateway_token_override,
             )?;
-            let (node_id, workspace, node_defaults_changed) =
-                persist_node_defaults(cfg, id, workspace)?;
+            let (device_id, workspace, device_defaults_changed) =
+                persist_device_defaults(cfg, id, workspace)?;
 
             device_service::install_device_service()?;
 
-            if gateway_overrides_changed || node_defaults_changed {
+            if gateway_overrides_changed || device_defaults_changed {
                 device_service::restart_device_service()?;
             }
 
@@ -157,8 +159,8 @@ pub(crate) fn run_device_service(
                 println!("Saved gateway connection overrides to local config.");
             }
             println!(
-                "Saved defaults: node.id={}, node.workspace={}",
-                node_id,
+                "Saved defaults: device.id={}, device.workspace={}",
+                device_id,
                 workspace.display()
             );
             println!("\nCheck status:");
@@ -205,7 +207,7 @@ pub(crate) fn run_device_service(
     Ok(())
 }
 
-fn exec_event_outbox_len(outbox: &Arc<Mutex<VecDeque<NodeExecEventParams>>>) -> usize {
+fn exec_event_outbox_len(outbox: &Arc<Mutex<VecDeque<DeviceExecEventParams>>>) -> usize {
     outbox.lock().map(|queue| queue.len()).unwrap_or(0)
 }
 
@@ -216,33 +218,25 @@ enum ExecEventSendOutcome {
 }
 
 fn queue_exec_event_for_retry(
-    outbox: &Arc<Mutex<VecDeque<NodeExecEventParams>>>,
-    event: NodeExecEventParams,
-    logger: &NodeLogger,
+    outbox: &Arc<Mutex<VecDeque<DeviceExecEventParams>>>,
+    event: DeviceExecEventParams,
 ) {
     let mut queue = match outbox.lock() {
         Ok(queue) => queue,
         Err(error) => {
-            logger.error(
-                "node.exec.event.outbox_lock_failed",
-                json!({
-                    "error": error.to_string(),
-                }),
-            );
+            error!(event = "device.exec.event.outbox_lock_failed", error = %error);
             return;
         }
     };
 
-    if queue.len() >= MAX_NODE_EXEC_EVENT_OUTBOX {
+    if queue.len() >= MAX_DEVICE_EXEC_EVENT_OUTBOX {
         if let Some(dropped) = queue.pop_front() {
-            logger.warn(
-                "node.exec.event.outbox_drop_oldest",
-                json!({
-                    "eventId": dropped.event_id,
-                    "sessionId": dropped.session_id,
-                    "event": dropped.event,
-                    "maxOutbox": MAX_NODE_EXEC_EVENT_OUTBOX,
-                }),
+            warn!(
+                event = "device.exec.event.outbox_drop_oldest",
+                event_id = %dropped.event_id,
+                session_id = %dropped.session_id,
+                exec_event = %dropped.event,
+                max_outbox = MAX_DEVICE_EXEC_EVENT_OUTBOX,
             );
         }
     }
@@ -251,12 +245,11 @@ fn queue_exec_event_for_retry(
 }
 
 async fn flush_exec_event_outbox_with_sender<F, Fut>(
-    outbox: &Arc<Mutex<VecDeque<NodeExecEventParams>>>,
-    logger: &NodeLogger,
+    outbox: &Arc<Mutex<VecDeque<DeviceExecEventParams>>>,
     mut send_event: F,
 ) -> usize
 where
-    F: FnMut(NodeExecEventParams) -> Fut,
+    F: FnMut(DeviceExecEventParams) -> Fut,
     Fut: Future<Output = ExecEventSendOutcome>,
 {
     let mut sent = 0usize;
@@ -265,12 +258,7 @@ where
         let next_event = match outbox.lock() {
             Ok(queue) => queue.front().cloned(),
             Err(error) => {
-                logger.error(
-                    "node.exec.event.outbox_lock_failed",
-                    json!({
-                        "error": error.to_string(),
-                    }),
-                );
+                error!(event = "device.exec.event.outbox_lock_failed", error = %error);
                 return sent;
             }
         };
@@ -287,14 +275,12 @@ where
                 sent += 1;
             }
             ExecEventSendOutcome::Drop(error) => {
-                logger.error(
-                    "node.exec.event.serialize_failed",
-                    json!({
-                        "eventId": event.event_id,
-                        "sessionId": event.session_id,
-                        "event": event.event,
-                        "error": error,
-                    }),
+                error!(
+                    event = "device.exec.event.serialize_failed",
+                    event_id = %event.event_id,
+                    session_id = %event.session_id,
+                    exec_event = %event.event,
+                    error = %error,
                 );
                 if let Ok(mut queue) = outbox.lock() {
                     let _ = queue.pop_front();
@@ -302,15 +288,13 @@ where
                 continue;
             }
             ExecEventSendOutcome::Retry(error) => {
-                logger.warn(
-                    "node.exec.event.send_failed",
-                    json!({
-                        "eventId": event.event_id,
-                        "sessionId": event.session_id,
-                        "event": event.event,
-                        "error": error,
-                        "outboxDepth": exec_event_outbox_len(outbox),
-                    }),
+                warn!(
+                    event = "device.exec.event.send_failed",
+                    event_id = %event.event_id,
+                    session_id = %event.session_id,
+                    exec_event = %event.event,
+                    error = %error,
+                    outbox_depth = exec_event_outbox_len(outbox),
                 );
                 return sent;
             }
@@ -320,10 +304,9 @@ where
 
 async fn flush_exec_event_outbox(
     conn: &Arc<Connection>,
-    outbox: &Arc<Mutex<VecDeque<NodeExecEventParams>>>,
-    logger: &NodeLogger,
+    outbox: &Arc<Mutex<VecDeque<DeviceExecEventParams>>>,
 ) -> usize {
-    flush_exec_event_outbox_with_sender(outbox, logger, |event| {
+    flush_exec_event_outbox_with_sender(outbox, |event| {
         let conn = Arc::clone(conn);
         async move {
             let payload = match serde_json::to_value(&event) {
@@ -358,6 +341,7 @@ fn syscall_to_tool_name(call: &str) -> Option<&'static str> {
         "fs.search" => Some("Search"),
         "fs.delete" => Some("Delete"),
         "shell.exec" => Some("Shell"),
+        "net.fetch" => Some("Fetch"),
         _ => None,
     }
 }
@@ -367,12 +351,29 @@ async fn handle_driver_request(
     tools: &[Box<dyn Tool>],
     workspace: &Path,
     req: &RequestFrame,
-    logger: &NodeLogger,
     binary_inbox: &transfer::BinaryFrameInbox,
 ) {
     let args = req.args.clone().unwrap_or(serde_json::Value::Null);
 
     let call = req.call.as_str();
+    if call == "net.fetch" {
+        let method = args
+            .get("method")
+            .and_then(|value| value.as_str())
+            .unwrap_or("GET");
+        let url = args
+            .get("url")
+            .and_then(|value| value.as_str())
+            .map(redact_url_for_log)
+            .unwrap_or_else(|| "<missing>".to_string());
+        info!(
+            event = "net.fetch.start",
+            request_id = %req.id,
+            method = %method,
+            url = %url,
+        );
+    }
+
     let result = if let Some(transfer_result) =
         transfer::handle_transfer_syscall(call, args.clone(), workspace, conn, binary_inbox).await
     {
@@ -384,13 +385,31 @@ async fn handle_driver_request(
     };
 
     let response = match result {
-        Ok(data) => Frame::Res(ResponseFrame {
-            id: req.id.clone(),
-            ok: true,
-            data: Some(data),
-            error: None,
-        }),
+        Ok(data) => {
+            if call == "net.fetch" {
+                info!(
+                    event = "net.fetch.ok",
+                    request_id = %req.id,
+                    status = ?data.get("status").and_then(|value| value.as_u64()),
+                    ok = ?data.get("ok").and_then(|value| value.as_bool()),
+                    body_bytes = ?data.get("bodyBytes").and_then(|value| value.as_u64()),
+                );
+            }
+            Frame::Res(ResponseFrame {
+                id: req.id.clone(),
+                ok: true,
+                data: Some(data),
+                error: None,
+            })
+        }
         Err(message) => {
+            if call == "net.fetch" {
+                warn!(
+                    event = "net.fetch.failed",
+                    request_id = %req.id,
+                    error = %message,
+                );
+            }
             if req.call.starts_with("fs.") {
                 Frame::Res(ResponseFrame {
                     id: req.id.clone(),
@@ -420,26 +439,33 @@ async fn handle_driver_request(
     match serde_json::to_string(&response) {
         Ok(text) => {
             if let Err(e) = conn.send_raw(text).await {
-                logger.error(
-                    "driver.response.send_failed",
-                    json!({
-                        "requestId": req.id,
-                        "call": req.call,
-                        "error": e.to_string(),
-                    }),
+                error!(
+                    event = "driver.response.send_failed",
+                    request_id = %req.id,
+                    call = %req.call,
+                    error = %e,
                 );
             }
         }
         Err(e) => {
-            logger.error(
-                "driver.response.serialize_failed",
-                json!({
-                    "requestId": req.id,
-                    "call": req.call,
-                    "error": e.to_string(),
-                }),
+            error!(
+                event = "driver.response.serialize_failed",
+                request_id = %req.id,
+                call = %req.call,
+                error = %e,
             );
         }
+    }
+}
+
+fn redact_url_for_log(raw_url: &str) -> String {
+    match reqwest::Url::parse(raw_url) {
+        Ok(mut url) => {
+            url.set_query(None);
+            url.set_fragment(None);
+            url.to_string()
+        }
+        Err(_) => "<invalid>".to_string(),
     }
 }
 
@@ -527,263 +553,265 @@ pub(crate) async fn run_shell(
     Ok(())
 }
 
-pub(crate) async fn run_node(
+pub(crate) async fn run_device(
     url: &str,
     auth: GatewayAuth,
-    node_id: String,
+    device_id: String,
     workspace: PathBuf,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let logger = NodeLogger::new(&node_id, &workspace)?;
-    let log_path = logger::node_log_path()?;
-    logger.info(
-        "node.start",
-        json!({
-            "url": url,
-            "logPath": log_path.display().to_string(),
-            "logMaxBytes": logger::node_log_max_bytes(),
-            "logMaxFiles": logger::node_log_max_files(),
-        }),
-    );
+    let _logging_guard = logger::init_device_logging()?;
+    let workspace_label = workspace.display().to_string();
+    let device_span = info_span!("device", device_id = %device_id, workspace = %workspace_label);
 
-    let shutdown = wait_for_shutdown_signal();
-    tokio::pin!(shutdown);
-
-    let exec_event_outbox: Arc<Mutex<VecDeque<NodeExecEventParams>>> =
-        Arc::new(Mutex::new(VecDeque::new()));
-    let outbox_for_exec_events = exec_event_outbox.clone();
-    let logger_for_exec_events = logger.clone();
-    let mut exec_events = subscribe_exec_events();
-    let exec_event_collector = tokio::spawn(async move {
-        loop {
-            match exec_events.recv().await {
-                Ok(event) => {
-                    queue_exec_event_for_retry(
-                        &outbox_for_exec_events,
-                        event,
-                        &logger_for_exec_events,
-                    );
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                    logger_for_exec_events.warn(
-                        "node.exec.event.lagged",
-                        json!({
-                            "skipped": skipped,
-                        }),
-                    );
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                    break;
-                }
-            }
-        }
-    });
-
-    const CONNECT_TIMEOUT: tokio::time::Duration = tokio::time::Duration::from_secs(30);
-    const INITIAL_RETRY_DELAY: tokio::time::Duration = tokio::time::Duration::from_secs(3);
-    const MAX_RETRY_DELAY: tokio::time::Duration = tokio::time::Duration::from_secs(300);
-    let mut retry_delay = INITIAL_RETRY_DELAY;
-
-    loop {
-        logger.info("connect.attempt", json!({ "url": url }));
-
-        let tools_for_handler: Arc<Vec<Box<dyn Tool>>> = Arc::new(
-            all_tools_with_workspace_for_device(workspace.clone(), node_id.clone()),
+    let run = async move {
+        let log_pattern = logger::device_log_pattern()?;
+        info!(
+            event = "device.start",
+            url = %url,
+            log_path = %log_pattern,
+            log_rotation = "daily",
         );
 
-        let conn = match tokio::time::timeout(
-            CONNECT_TIMEOUT,
-            KernelClient::connect_driver(
-                url,
-                node_id.clone(),
-                vec!["fs.*".to_string(), "shell.exec".to_string()],
-                auth.clone(),
-                |_frame| {},
-            ),
-        )
-        .await
-        {
-            Ok(Ok(c)) => {
-                retry_delay = INITIAL_RETRY_DELAY;
-                c.into_connection()
-            }
-            Ok(Err(e)) => {
-                if let Some(rpc_error) = e.downcast_ref::<GatewayRpcError>() {
-                    if rpc_error.is_setup_required() {
-                        logger.error(
-                            "connect.setup_required",
-                            json!({
-                                "error": rpc_error.to_string(),
-                            }),
-                        );
-                        return Err(e);
+        let shutdown = wait_for_shutdown_signal();
+        tokio::pin!(shutdown);
+
+        let exec_event_outbox: Arc<Mutex<VecDeque<DeviceExecEventParams>>> =
+            Arc::new(Mutex::new(VecDeque::new()));
+        let outbox_for_exec_events = exec_event_outbox.clone();
+        let mut exec_events = subscribe_exec_events();
+        let exec_event_span = tracing::Span::current();
+        let exec_event_collector = tokio::spawn(
+            async move {
+                loop {
+                    match exec_events.recv().await {
+                        Ok(event) => {
+                            queue_exec_event_for_retry(&outbox_for_exec_events, event);
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                            warn!(event = "device.exec.event.lagged", skipped);
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                            break;
+                        }
                     }
                 }
-                logger.error(
-                    "connect.failed",
-                    json!({
-                        "error": e.to_string(),
-                        "retrySeconds": retry_delay.as_secs(),
-                    }),
-                );
-                tokio::time::sleep(retry_delay).await;
-                retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
-                continue;
             }
-            Err(_) => {
-                logger.error(
-                    "connect.timeout",
-                    json!({
-                        "timeoutSeconds": CONNECT_TIMEOUT.as_secs(),
-                        "retrySeconds": retry_delay.as_secs(),
-                    }),
-                );
-                tokio::time::sleep(retry_delay).await;
-                retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
-                continue;
-            }
-        };
-
-        logger.info(
-            "connect.ok",
-            json!({
-                "implements": ["fs.*", "shell.*"],
-            }),
+            .instrument(exec_event_span),
         );
 
-        let conn = Arc::new(conn);
-        let binary_inbox = transfer::BinaryFrameInbox::new();
-        let binary_inbox_for_handler = binary_inbox.clone();
-        conn.set_binary_handler(move |data| {
-            binary_inbox_for_handler.push(data);
-        })
-        .await;
+        macro_rules! shutdown_device {
+            ($signal:expr) => {{
+                exec_event_collector.abort();
+                info!(event = "shutdown", signal = %$signal);
+                return Ok(());
+            }};
+        }
 
-        let conn_clone = conn.clone();
-        let tools_clone = tools_for_handler.clone();
-        let workspace_clone = workspace.clone();
-        let logger_clone = logger.clone();
-        let binary_inbox_clone = binary_inbox.clone();
+        const CONNECT_TIMEOUT: tokio::time::Duration = tokio::time::Duration::from_secs(30);
+        const INITIAL_RETRY_DELAY: tokio::time::Duration = tokio::time::Duration::from_secs(3);
+        const MAX_RETRY_DELAY: tokio::time::Duration = tokio::time::Duration::from_secs(300);
+        let mut retry_delay = INITIAL_RETRY_DELAY;
 
-        // In the new OS architecture, the kernel sends req frames directly to
-        // the driver. We dispatch based on `call` and respond with a res frame.
-        conn.set_frame_handler(move |frame| {
-            let conn = conn_clone.clone();
-            let tools = tools_clone.clone();
-            let workspace = workspace_clone.clone();
-            let logger = logger_clone.clone();
-            let binary_inbox = binary_inbox_clone.clone();
+        loop {
+            info!(event = "connect.attempt", url = %url);
 
-            tokio::spawn(async move {
-                if let Frame::Req(req) = frame {
-                    handle_driver_request(&conn, &tools, &workspace, &req, &logger, &binary_inbox)
-                        .await;
-                }
-            });
-        })
-        .await;
-
-        let flushed = flush_exec_event_outbox(&conn, &exec_event_outbox, &logger).await;
-        if flushed > 0 {
-            logger.info(
-                "node.exec.event.flushed",
-                json!({
-                    "sent": flushed,
-                    "remaining": exec_event_outbox_len(&exec_event_outbox),
-                }),
+            let tools_for_handler: Arc<Vec<Box<dyn Tool>>> = Arc::new(
+                all_tools_with_workspace_for_device(workspace.clone(), device_id.clone()),
             );
-        }
 
-        let keepalive_interval = tokio::time::Duration::from_secs(240);
-        let keepalive_timeout = tokio::time::Duration::from_secs(10);
-        logger.info(
-            "connect.ok",
-            json!({
-                "keepaliveSeconds": keepalive_interval.as_secs(),
-            }),
-        );
-        let mut next_keepalive_at = tokio::time::Instant::now() + keepalive_interval;
+            let conn_attempt = tokio::time::timeout(
+                CONNECT_TIMEOUT,
+                KernelClient::connect_driver(
+                    url,
+                    device_id.clone(),
+                    DEVICE_DRIVER_IMPLEMENTS
+                        .iter()
+                        .map(|item| item.to_string())
+                        .collect(),
+                    auth.clone(),
+                    |_frame| {},
+                ),
+            );
+            let conn_attempt = tokio::select! {
+                signal = &mut shutdown => shutdown_device!(signal),
+                result = conn_attempt => result,
+            };
 
-        // Monitor for disconnection or Ctrl+C
-        loop {
-            tokio::select! {
-                signal = &mut shutdown => {
-                    exec_event_collector.abort();
-                    logger.info("shutdown", json!({ "signal": signal }));
-                    return Ok(());
+            let conn = match conn_attempt {
+                Ok(Ok(c)) => {
+                    retry_delay = INITIAL_RETRY_DELAY;
+                    c.into_connection()
                 }
-                _ = tokio::time::sleep(tokio::time::Duration::from_secs(1)) => {
-                    if conn.is_disconnected() {
-                        logger.warn(
-                            "connect.lost",
-                            json!({
-                                "retrySeconds": 3,
-                            }),
-                        );
-                        tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
-                        break; // Break inner loop to reconnect
+                Ok(Err(e)) => {
+                    if let Some(rpc_error) = e.downcast_ref::<GatewayRpcError>() {
+                        if rpc_error.is_setup_required() {
+                            error!(
+                                event = "connect.setup_required",
+                                error = %rpc_error,
+                            );
+                            return Err(e);
+                        }
                     }
-
-                    let flushed = flush_exec_event_outbox(&conn, &exec_event_outbox, &logger).await;
-                    if flushed > 0 {
-                        logger.info(
-                            "node.exec.event.flushed",
-                            json!({
-                                "sent": flushed,
-                                "remaining": exec_event_outbox_len(&exec_event_outbox),
-                            }),
-                        );
+                    error!(
+                        event = "connect.failed",
+                        error = %e,
+                        retry_seconds = retry_delay.as_secs(),
+                    );
+                    tokio::select! {
+                        signal = &mut shutdown => shutdown_device!(signal),
+                        _ = tokio::time::sleep(retry_delay) => {}
                     }
+                    retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
+                    continue;
+                }
+                Err(_) => {
+                    error!(
+                        event = "connect.timeout",
+                        timeout_seconds = CONNECT_TIMEOUT.as_secs(),
+                        retry_seconds = retry_delay.as_secs(),
+                    );
+                    tokio::select! {
+                        signal = &mut shutdown => shutdown_device!(signal),
+                        _ = tokio::time::sleep(retry_delay) => {}
+                    }
+                    retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
+                    continue;
+                }
+            };
 
-                    if tokio::time::Instant::now() >= next_keepalive_at {
-                        let payload = b"gsv-keepalive".to_vec();
-                        let keepalive = tokio::time::timeout(keepalive_timeout, conn.send_ping(payload)).await;
+            info!(event = "connect.ok", implements = ?DEVICE_DRIVER_IMPLEMENTS);
 
-                        match keepalive {
-                            Ok(Ok(())) => {
-                                next_keepalive_at = tokio::time::Instant::now() + keepalive_interval;
+            let conn = Arc::new(conn);
+            let binary_inbox = transfer::BinaryFrameInbox::new();
+            let binary_inbox_for_handler = binary_inbox.clone();
+            conn.set_binary_handler(move |data| {
+                binary_inbox_for_handler.push(data);
+            })
+            .await;
+
+            let conn_clone = conn.clone();
+            let tools_clone = tools_for_handler.clone();
+            let workspace_clone = workspace.clone();
+            let binary_inbox_clone = binary_inbox.clone();
+            let request_span = tracing::Span::current();
+
+            // In the new OS architecture, the kernel sends req frames directly to
+            // the driver. We dispatch based on `call` and respond with a res frame.
+            conn.set_frame_handler(move |frame| {
+                let conn = conn_clone.clone();
+                let tools = tools_clone.clone();
+                let workspace = workspace_clone.clone();
+                let binary_inbox = binary_inbox_clone.clone();
+                let request_span = request_span.clone();
+
+                tokio::spawn(
+                    async move {
+                        if let Frame::Req(req) = frame {
+                            handle_driver_request(&conn, &tools, &workspace, &req, &binary_inbox)
+                                .await;
+                        }
+                    }
+                    .instrument(request_span),
+                );
+            })
+            .await;
+
+            let flushed = flush_exec_event_outbox(&conn, &exec_event_outbox).await;
+            if flushed > 0 {
+                info!(
+                    event = "device.exec.event.flushed",
+                    sent = flushed,
+                    remaining = exec_event_outbox_len(&exec_event_outbox),
+                );
+            }
+
+            let keepalive_interval = tokio::time::Duration::from_secs(240);
+            let keepalive_timeout = tokio::time::Duration::from_secs(10);
+            info!(
+                event = "connect.keepalive_configured",
+                keepalive_seconds = keepalive_interval.as_secs(),
+            );
+            let mut next_keepalive_at = tokio::time::Instant::now() + keepalive_interval;
+
+            // Monitor for disconnection or Ctrl+C
+            loop {
+                tokio::select! {
+                    signal = &mut shutdown => {
+                        shutdown_device!(signal);
+                    }
+                    _ = tokio::time::sleep(tokio::time::Duration::from_secs(1)) => {
+                        if conn.is_disconnected() {
+                            warn!(
+                                event = "connect.lost",
+                                retry_seconds = 3,
+                            );
+                            tokio::select! {
+                                signal = &mut shutdown => shutdown_device!(signal),
+                                _ = tokio::time::sleep(tokio::time::Duration::from_secs(3)) => {}
                             }
-                            Ok(Err(e)) => {
-                                logger.warn(
-                                    "keepalive.request_error",
-                                    json!({
-                                        "error": e.to_string(),
-                                        "retrySeconds": 3,
-                                    }),
-                                );
-                                tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
-                                break;
-                            }
-                            Err(_) => {
-                                logger.warn(
-                                    "keepalive.timeout",
-                                    json!({
-                                        "timeoutSeconds": 10,
-                                        "retrySeconds": 3,
-                                    }),
-                                );
-                                tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
-                                break;
+                            break; // Break inner loop to reconnect
+                        }
+
+                        let flushed = flush_exec_event_outbox(&conn, &exec_event_outbox).await;
+                        if flushed > 0 {
+                            info!(
+                                event = "device.exec.event.flushed",
+                                sent = flushed,
+                                remaining = exec_event_outbox_len(&exec_event_outbox),
+                            );
+                        }
+
+                        if tokio::time::Instant::now() >= next_keepalive_at {
+                            let payload = b"gsv-keepalive".to_vec();
+                            let keepalive = tokio::select! {
+                                signal = &mut shutdown => shutdown_device!(signal),
+                                result = tokio::time::timeout(keepalive_timeout, conn.send_ping(payload)) => result,
+                            };
+
+                            match keepalive {
+                                Ok(Ok(())) => {
+                                    next_keepalive_at = tokio::time::Instant::now() + keepalive_interval;
+                                }
+                                Ok(Err(e)) => {
+                                    warn!(
+                                        event = "keepalive.request_error",
+                                        error = %e,
+                                        retry_seconds = 3,
+                                    );
+                                    tokio::select! {
+                                        signal = &mut shutdown => shutdown_device!(signal),
+                                        _ = tokio::time::sleep(tokio::time::Duration::from_secs(3)) => {}
+                                    }
+                                    break;
+                                }
+                                Err(_) => {
+                                    warn!(
+                                        event = "keepalive.timeout",
+                                        timeout_seconds = 10,
+                                        retry_seconds = 3,
+                                    );
+                                    tokio::select! {
+                                        signal = &mut shutdown => shutdown_device!(signal),
+                                        _ = tokio::time::sleep(tokio::time::Duration::from_secs(3)) => {}
+                                    }
+                                    break;
+                                }
                             }
                         }
                     }
                 }
             }
         }
-    }
+    };
+
+    run.instrument(device_span).await
 }
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn test_logger() -> NodeLogger {
-        let log_path =
-            std::env::temp_dir().join(format!("gsv-node-test-{}.log", uuid::Uuid::new_v4()));
-        NodeLogger::with_path("test-node", "/tmp", &log_path, 1024 * 1024, 1)
-            .expect("create test logger")
-    }
-
-    fn test_exec_event(index: usize) -> NodeExecEventParams {
-        NodeExecEventParams {
+    fn test_exec_event(index: usize) -> DeviceExecEventParams {
+        DeviceExecEventParams {
             event_id: format!("event-{index}"),
             session_id: format!("session-{index}"),
             event: "finished".to_string(),
@@ -798,21 +826,20 @@ mod tests {
 
     #[test]
     fn test_queue_exec_event_for_retry_drops_oldest_when_full() {
-        let logger = test_logger();
-        let outbox: Arc<Mutex<VecDeque<NodeExecEventParams>>> =
+        let outbox: Arc<Mutex<VecDeque<DeviceExecEventParams>>> =
             Arc::new(Mutex::new(VecDeque::new()));
 
-        for i in 0..=MAX_NODE_EXEC_EVENT_OUTBOX {
-            queue_exec_event_for_retry(&outbox, test_exec_event(i), &logger);
+        for i in 0..=MAX_DEVICE_EXEC_EVENT_OUTBOX {
+            queue_exec_event_for_retry(&outbox, test_exec_event(i));
         }
 
         let queue = outbox.lock().expect("outbox lock");
-        assert_eq!(queue.len(), MAX_NODE_EXEC_EVENT_OUTBOX);
+        assert_eq!(queue.len(), MAX_DEVICE_EXEC_EVENT_OUTBOX);
         assert_eq!(
             queue.front().map(|event| event.event_id.as_str()),
             Some("event-1")
         );
-        let expected_last = format!("event-{MAX_NODE_EXEC_EVENT_OUTBOX}");
+        let expected_last = format!("event-{MAX_DEVICE_EXEC_EVENT_OUTBOX}");
         assert_eq!(
             queue.back().map(|event| event.event_id.as_str()),
             Some(expected_last.as_str())
@@ -821,12 +848,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_flush_exec_event_outbox_retry_keeps_event_queued() {
-        let logger = test_logger();
-        let outbox: Arc<Mutex<VecDeque<NodeExecEventParams>>> =
+        let outbox: Arc<Mutex<VecDeque<DeviceExecEventParams>>> =
             Arc::new(Mutex::new(VecDeque::new()));
-        queue_exec_event_for_retry(&outbox, test_exec_event(1), &logger);
+        queue_exec_event_for_retry(&outbox, test_exec_event(1));
 
-        let sent = flush_exec_event_outbox_with_sender(&outbox, &logger, |_event| async {
+        let sent = flush_exec_event_outbox_with_sender(&outbox, |_event| async {
             ExecEventSendOutcome::Retry("simulated send failure".to_string())
         })
         .await;

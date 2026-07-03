@@ -47,7 +47,8 @@ The AI runtime resolves per-user values first, then falls back to system default
 | System Key | User Override | Default | Description |
 |---|---|---|---|
 | `config/ai/provider` | `users/{uid}/ai/provider` | `workers-ai` | Provider adapter. |
-| `config/ai/model` | `users/{uid}/ai/model` | `@cf/nvidia/nemotron-3-120b-a12b` | Provider model identifier. |
+| `config/ai/model` | `users/{uid}/ai/model` | `@cf/zai-org/glm-5.2` | Provider model identifier. |
+| `config/ai/fallback_model_profile` | `users/{uid}/ai/fallback_model_profile` | `workers-ai-kimi-k2-6` | Saved model profile to try if the selected model fails. |
 | `config/ai/api_key` | `users/{uid}/ai/api_key` | empty | Provider credential. Sensitive. |
 | `config/ai/reasoning` | `users/{uid}/ai/reasoning` | `medium` | Reasoning mode hint: `off`, `minimal`, `low`, `medium`, `high`, or `xhigh`. Unsupported values are clamped to the nearest model-supported level at generation time. |
 | `config/ai/max_tokens` | `users/{uid}/ai/max_tokens` | `8192` | Maximum output tokens. |

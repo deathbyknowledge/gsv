@@ -6,6 +6,7 @@ import type {
 } from "../../../syscalls/ai";
 import { handleAiTextGenerate } from "../../../kernel/ai";
 import type { KernelContext } from "../../../kernel/context";
+import type { NetFetchDeviceTransport } from "../../../kernel/net";
 import { requireCommandCapability, requireShellOptionValue } from "./common";
 
 type ParsedArgs = {
@@ -13,10 +14,13 @@ type ParsedArgs = {
   positionals: string[];
 };
 
-export function buildLlmCommand(ctx: KernelContext): Command {
+export function buildLlmCommand(
+  ctx: KernelContext,
+  transport?: NetFetchDeviceTransport,
+): Command {
   return defineCommand("llm", async (args, commandCtx): Promise<ExecResult> => {
     try {
-      return await runLlm(args, commandCtx, ctx);
+      return await runLlm(args, commandCtx, ctx, transport);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return { stdout: "", stderr: `llm: ${message}\n`, exitCode: 1 };
@@ -28,6 +32,7 @@ async function runLlm(
   args: string[],
   shellCtx: CommandContext,
   ctx: KernelContext,
+  transport?: NetFetchDeviceTransport,
 ): Promise<ExecResult> {
   const parsed = parseArgs(args, {
     boolean: ["help", "json"],
@@ -40,17 +45,21 @@ async function runLlm(
 
   requireCommandCapability(ctx, "ai.text.generate");
   const prompt = readTextArgument(parsed.positionals, shellCtx);
-  const result = await handleAiTextGenerate({
-    systemPrompt: optionValue(parsed, "system"),
-    messages: [{
-      role: "user",
-      content: prompt,
-      timestamp: Date.now(),
-    }],
-    config: buildLlmConfig(parsed),
-    options: buildLlmOptions(parsed),
-    sessionAffinityKey: "shell:llm",
-  }, ctx);
+  const result = await handleAiTextGenerate(
+    {
+      systemPrompt: optionValue(parsed, "system"),
+      messages: [{
+        role: "user",
+        content: prompt,
+        timestamp: Date.now(),
+      }],
+      config: buildLlmConfig(parsed),
+      options: buildLlmOptions(parsed),
+      sessionAffinityKey: "shell:llm",
+    },
+    ctx,
+    transport,
+  );
 
   assertSuccessfulGeneration(result);
 

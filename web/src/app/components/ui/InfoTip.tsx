@@ -23,7 +23,7 @@ export function InfoTip({ text, position = "top", label = "More info" }: InfoTip
   return (
     <span class={`gsv-tt ${POS_CLASS[position]} gsv-infotip`}>
       <IconButton glyph="help" ghost size={16} ariaLabel={label} ariaDescribedBy={bubbleId} />
-      <span class="gsv-tt-bub" id={bubbleId} role="tooltip">
+      <span class="gsv-tt-bub gsv-sublabel" id={bubbleId} role="tooltip">
         {text}
         <span class="gsv-tt-arrow" />
       </span>

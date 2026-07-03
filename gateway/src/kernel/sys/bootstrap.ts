@@ -1,16 +1,10 @@
 import type { KernelContext } from "../context";
 import type { SysBootstrapArgs, SysBootstrapResult } from "@humansandmachines/gsv/protocol";
 import { RipgitClient, type RipgitRepoRef } from "../../fs/ripgit/client";
-import {
-  CLI_BINARY_ASSETS,
-  CLI_RELEASE_CHANNELS,
-  inferDefaultCliChannel,
-  mirrorCliChannel,
-  storeCliInstallScripts,
-  storeDefaultCliChannel,
-} from "../../downloads/cli";
+import { inferDefaultCliChannel } from "../../downloads/cli";
 import { seedRepoSkillsToHome } from "./skills-seed";
 import { setRepoVisibility } from "../repo-visibility";
+import { refreshCliDownloads } from "./update";
 
 const DEFAULT_GSV_UPSTREAM_URL = "https://github.com/deathbyknowledge/gsv";
 const DEFAULT_GSV_UPSTREAM_REF = "main";
@@ -188,38 +182,15 @@ export async function handleSysBootstrap(
       ))
     );
 
-    const mirrorCliPromise = (async () => {
-      const mirroredChannels = await allSettledOrThrow(CLI_RELEASE_CHANNELS.map(async (channel) => {
-        await limitBootstrap(
-          1,
-          () => timeBootstrapStep(timings, `mirror-cli:${channel}`, () => mirrorCliChannel(storage, channel)),
-        );
-        return channel;
-      }));
-      await allSettledOrThrow([
-        limitBootstrap(
-          1,
-          () => timeBootstrapStep(
-            timings,
-            "store-default-cli-channel",
-            () => storeDefaultCliChannel(storage, defaultCliChannel),
-          ),
-        ),
-        limitBootstrap(
-          1,
-          () => timeBootstrapStep(
-            timings,
-            "store-cli-install-scripts",
-            () => storeCliInstallScripts(storage),
-          ),
-        ),
-      ]);
-      return mirroredChannels;
-    })();
+    const refreshCliPromise = refreshCliDownloads(storage, {
+      defaultChannel: defaultCliChannel,
+      limit: (run) => limitBootstrap(1, run),
+      step: (label, run) => timeBootstrapStep(timings, label, run),
+    });
 
-    const [, mirroredChannels, importedManual] = await allSettledOrThrow([
+    const [, cli, importedManual] = await allSettledOrThrow([
       seedSkillsPromise,
-      mirrorCliPromise,
+      refreshCliPromise,
       manualImportPromise,
     ]);
 
@@ -240,11 +211,7 @@ export async function handleSysBootstrap(
         head: importedManual.head ?? null,
         changed: importedManual.changed,
       },
-      cli: {
-        defaultChannel: defaultCliChannel,
-        mirroredChannels,
-        assets: [...CLI_BINARY_ASSETS],
-      },
+      cli,
       packages: [],
     };
   } catch (error) {

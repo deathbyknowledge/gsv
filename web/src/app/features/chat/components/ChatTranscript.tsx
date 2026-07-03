@@ -3,7 +3,9 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import DOMPurify from "dompurify";
 import { parse as parseMarkdown } from "marked";
 import { SystemMessage } from "../../../components/ui/SystemMessage";
+import { Tooltip } from "../../../components/ui/Tooltip";
 import type {
+  ChatBackupModelInfo,
   ChatTranscriptRow,
   ChatTranscriptRowRole,
 } from "../domain/transcript";
@@ -38,6 +40,7 @@ type CopyState = {
 };
 
 type TranscriptActivityEntry =
+  | { kind: "backup"; message: ChatDockMessage }
   | { kind: "reasoning"; message: ChatDockMessage }
   | { kind: "tool"; message: ChatDockMessage };
 
@@ -341,6 +344,14 @@ function AssistantText({ streaming = false, text }: { streaming?: boolean; text:
   );
 }
 
+function BackupModelBadge({ backupModel }: { backupModel: ChatBackupModelInfo }) {
+  return (
+    <Tooltip text={backupModelDetails(backupModel)} position="top">
+      <span class="gsv-chat-backup-model-badge">Backup</span>
+    </Tooltip>
+  );
+}
+
 function formatToolDetailValue(value: unknown): string {
   if (value === undefined) {
     return "";
@@ -394,6 +405,27 @@ function basenamePath(value: string): string {
 function truncateInline(value: string, maxLength: number): string {
   const compact = value.replace(/\s+/g, " ").trim();
   return compact.length <= maxLength ? compact : `${compact.slice(0, maxLength - 3).trim()}...`;
+}
+
+function modelRefLabel(ref: ChatBackupModelInfo["from"] | undefined): string {
+  const provider = ref?.provider?.trim();
+  const model = ref?.model?.trim();
+  if (provider && model) {
+    return `${provider} / ${model}`;
+  }
+  return model || provider || "selected model";
+}
+
+function backupModelSummary(backupModel: ChatBackupModelInfo): string {
+  return `The selected model failed, so GSV continued with ${modelRefLabel(backupModel.to)}.`;
+}
+
+function backupModelDetails(backupModel: ChatBackupModelInfo): string {
+  const lines = [backupModelSummary(backupModel)];
+  if (backupModel.reason) {
+    lines.push(`Reason: ${backupModel.reason}`);
+  }
+  return lines.join("\n");
 }
 
 function lowercaseFirst(value: string): string {
@@ -768,12 +800,22 @@ function isReasoningOnlyMessage(message: ChatDockMessage): boolean {
     && (Boolean(reasoningText(message)) || message.streaming === true);
 }
 
+function isBackupModelOnlyMessage(message: ChatDockMessage): boolean {
+  return normalizedRole(message.role) === "assistant"
+    && Boolean(message.backupModel)
+    && !message.text.trim()
+    && !reasoningText(message);
+}
+
 function isToolMessage(message: ChatDockMessage): boolean {
   const role = normalizedRole(message.role);
   return role === "tool" || role === "toolResult";
 }
 
 function activityEntryForMessage(message: ChatDockMessage): TranscriptActivityEntry | null {
+  if (isBackupModelOnlyMessage(message)) {
+    return { kind: "backup", message };
+  }
   if (isToolMessage(message)) {
     return { kind: "tool", message };
   }
@@ -860,11 +902,11 @@ function estimateRenderItemHeight(item: TranscriptRenderItem): number {
 function estimateKeyForRenderItem(item: TranscriptRenderItem): string {
   if (item.kind === "activityGroup") {
     const signature = item.entries
-      .map((entry) => `${entry.kind}:${entry.message.id}:${entry.message.status ?? ""}:${entry.message.text.length}:${reasoningText(entry.message).length}`)
+      .map((entry) => `${entry.kind}:${entry.message.id}:${entry.message.status ?? ""}:${entry.message.text.length}:${reasoningText(entry.message).length}:${entry.message.backupModel ? "backup" : ""}`)
       .join("|");
     return `${item.id}:${signature}`;
   }
-  return `${item.id}:${item.message.status ?? ""}:${item.message.text.length}:${reasoningText(item.message).length}:${item.message.media?.length ?? 0}`;
+  return `${item.id}:${item.message.status ?? ""}:${item.message.text.length}:${reasoningText(item.message).length}:${item.message.backupModel ? "backup" : ""}:${item.message.media?.length ?? 0}`;
 }
 
 function buildVirtualEntries({
@@ -1100,6 +1142,7 @@ function activityDuration(entries: readonly TranscriptActivityEntry[]): string {
 
 function activityGroupTitle(entries: readonly TranscriptActivityEntry[]): string {
   const tools = entries.filter((entry) => entry.kind === "tool").map((entry) => entry.message);
+  const backups = entries.filter((entry) => entry.kind === "backup");
   const status = activityGroupStatus(entries);
   const duration = activityDuration(entries);
 
@@ -1108,6 +1151,9 @@ function activityGroupTitle(entries: readonly TranscriptActivityEntry[]): string
   }
   if (tools.length > 0) {
     return toolGroupTitle(tools);
+  }
+  if (backups.length > 0) {
+    return status === "running" ? "switching to backup model" : "used backup model";
   }
   return status === "running" ? "thinking" : "reasoned";
 }
@@ -1162,6 +1208,33 @@ function ReasoningEntry({ message }: { message: ChatDockMessage }) {
       {text && expanded ? (
         <div class="gsv-chat-tool-entry-detail-body">
           <pre>{text}</pre>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function BackupModelEntry({ message }: { message: ChatDockMessage }) {
+  const [expanded, setExpanded] = useState(false);
+  const backupModel = message.backupModel;
+  const details = backupModel ? backupModelDetails(backupModel) : "";
+  const running = message.streaming === true || message.status === "running";
+  return (
+    <div class={`gsv-chat-tool-entry gsv-chat-backup-model-entry${running ? " is-running" : " is-done"}`}>
+      <span class="gsv-chat-tool-entry-status" aria-hidden="true" />
+      <div class="gsv-chat-tool-entry-main">
+        <strong class="gsv-prose">{running ? "Switching to backup model" : "Backup model used"}</strong>
+      </div>
+      <EntryControls
+        expanded={expanded}
+        hasDetails={Boolean(details)}
+        label="DETAILS"
+        status={running ? "RUNNING" : "DONE"}
+        onToggle={() => setExpanded((value) => !value)}
+      />
+      {details && expanded ? (
+        <div class="gsv-chat-tool-entry-detail-body">
+          <pre>{details}</pre>
         </div>
       ) : null}
     </div>
@@ -1245,11 +1318,15 @@ function RunActivityCard({ entries }: { entries: readonly TranscriptActivityEntr
           </div>
 
           <div class="gsv-chat-tool-entry-list">
-            {entries.map((entry, index) => entry.kind === "reasoning" ? (
-              <ReasoningEntry key={`reasoning:${entry.message.id}:${index}`} message={entry.message} />
-            ) : (
-              <ToolEntry key={`tool:${entry.message.toolCallId || entry.message.id}:${index}`} tool={entry.message} />
-            ))}
+            {entries.map((entry, index) => {
+              if (entry.kind === "backup") {
+                return <BackupModelEntry key={`backup:${entry.message.id}:${index}`} message={entry.message} />;
+              }
+              if (entry.kind === "reasoning") {
+                return <ReasoningEntry key={`reasoning:${entry.message.id}:${index}`} message={entry.message} />;
+              }
+              return <ToolEntry key={`tool:${entry.message.toolCallId || entry.message.id}:${index}`} tool={entry.message} />;
+            })}
           </div>
         </>
       ) : null}
@@ -1275,22 +1352,28 @@ function AssistantProcessMessage({
   const assistantText = message.text.trim()
     ? message.text
     : message.streaming ? "Thinking..." : "";
+  const hasMeta = Boolean(message.backupModel || reasoning);
 
   return (
     <>
       <SystemMessage
         text={assistantText}
         time={message.time}
-        meta={reasoning ? (
-          <button
-            type="button"
-            class="gsv-chat-reasoning-toggle"
-            aria-expanded={reasoningOpen}
-            onClick={() => setReasoningOpen((value) => !value)}
-          >
-            <i aria-hidden="true" data-expanded={reasoningOpen ? "true" : undefined}>{">"}</i>
-            REASONING
-          </button>
+        meta={hasMeta ? (
+          <>
+            {message.backupModel ? <BackupModelBadge backupModel={message.backupModel} /> : null}
+            {reasoning ? (
+              <button
+                type="button"
+                class="gsv-chat-reasoning-toggle"
+                aria-expanded={reasoningOpen}
+                onClick={() => setReasoningOpen((value) => !value)}
+              >
+                <i aria-hidden="true" data-expanded={reasoningOpen ? "true" : undefined}>{">"}</i>
+                REASONING
+              </button>
+            ) : null}
+          </>
         ) : null}
         copyLabel={copyButtonLabel(copied, failed)}
         copyDisabled={!assistantText.trim()}

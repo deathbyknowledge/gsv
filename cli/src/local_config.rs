@@ -60,9 +60,13 @@ pub(crate) fn run_local_config(
                 "r2.access_key_id" => cfg.r2.access_key_id.map(|s| mask_secret_prefix(&s, 8)),
                 "r2.bucket" => cfg.r2.bucket,
                 "session.default_key" => cfg.session.default_key,
-                "node.id" => cfg.node.id,
-                "node.token" => cfg.node.token.map(|s| mask_secret_edges(&s, 4, 4)),
-                "node.workspace" => cfg.node.workspace.map(|path| path.display().to_string()),
+                "device.id" | "node.id" => cfg.device.id,
+                "device.token" | "node.token" => {
+                    cfg.device.token.map(|s| mask_secret_edges(&s, 4, 4))
+                }
+                "device.workspace" | "node.workspace" => {
+                    cfg.device.workspace.map(|path| path.display().to_string())
+                }
                 _ => {
                     eprintln!("Unknown config key: {}", key);
                     eprintln!("\nValid keys:");
@@ -72,7 +76,7 @@ pub(crate) fn run_local_config(
                     eprintln!("  release.channel");
                     eprintln!("  r2.account_id, r2.access_key_id, r2.bucket");
                     eprintln!("  session.default_key");
-                    eprintln!("  node.id, node.token, node.workspace");
+                    eprintln!("  device.id, device.token, device.workspace");
                     return Ok(());
                 }
             };
@@ -118,9 +122,11 @@ pub(crate) fn run_local_config(
                 "session.default_key" => {
                     cfg.session.default_key = Some(config::normalize_session_key(&value))
                 }
-                "node.id" => cfg.node.id = Some(value.clone()),
-                "node.token" => cfg.node.token = Some(value.clone()),
-                "node.workspace" => cfg.node.workspace = Some(PathBuf::from(value.clone())),
+                "device.id" | "node.id" => cfg.device.id = Some(value.clone()),
+                "device.token" | "node.token" => cfg.device.token = Some(value.clone()),
+                "device.workspace" | "node.workspace" => {
+                    cfg.device.workspace = Some(PathBuf::from(value.clone()))
+                }
                 "channels.whatsapp.url" => cfg.channels.whatsapp.url = Some(value.clone()),
                 "channels.whatsapp.token" => cfg.channels.whatsapp.token = Some(value.clone()),
                 _ => {

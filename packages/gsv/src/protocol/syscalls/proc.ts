@@ -255,8 +255,21 @@ export type ProcMessageProviderMetadata = {
   stopReason?: string;
 };
 
+export type ProcMessageModelMetadata = {
+  provider?: string;
+  model?: string;
+};
+
+export type ProcMessageFallbackMetadata = {
+  used: true;
+  from?: ProcMessageModelMetadata;
+  to?: ProcMessageModelMetadata;
+  reason?: string;
+};
+
 export type ProcMessageMetadata = {
   provider?: ProcMessageProviderMetadata;
+  fallback?: ProcMessageFallbackMetadata;
   usage?: ProcUsageState;
 };
 

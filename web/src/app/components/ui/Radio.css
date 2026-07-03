@@ -10,6 +10,12 @@
   position: relative;
   display: inline-flex;
   align-items: center;
+  min-width: 0;
+  gap: 2px;
+}
+.gsv-rd-click {
+  display: inline-flex;
+  align-items: center;
   gap: 10px;
   cursor: pointer;
 }
@@ -30,7 +36,7 @@
   justify-content: center;
   transition: border-color 0.12s;
 }
-.gsv-rd-opt:hover .gsv-rd-ring {
+.gsv-rd-click:hover .gsv-rd-ring {
   border-color: #a9a4ff;
 }
 .gsv-rd-input:focus-visible + .gsv-rd-ring {
@@ -48,6 +54,9 @@
   letter-spacing: 0.04em;
   color: #a8a2dc;
   transition: color 0.12s;
+}
+.gsv-rd-opt .gsv-infotip {
+  margin-inline-start: 0;
 }
 .gsv-rd-opt.is-on .gsv-rd-label {
   color: #efeefe;

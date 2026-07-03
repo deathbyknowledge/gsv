@@ -74,11 +74,80 @@
   min-width: 0;
 }
 
+.gsv-console-advanced-fields {
+  min-width: 0;
+  display: grid;
+  gap: 14px;
+}
+
+.gsv-console-advanced-fields > summary {
+  list-style: none;
+}
+
+.gsv-console-advanced-fields > summary::-webkit-details-marker {
+  display: none;
+}
+
+.gsv-console-advanced-summary {
+  min-height: 34px;
+  border-top: 1px solid rgba(154, 149, 207, 0.2);
+  border-bottom: 1px solid rgba(154, 149, 207, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  color: #c7c2ee;
+  font-family: var(--gsv-font-mono);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.gsv-console-advanced-summary span:last-child {
+  color: #8f89c6;
+  font-size: 0.625rem;
+}
+
+.gsv-console-advanced-fields-grid {
+  padding-top: 2px;
+}
+
 .gsv-console-settings-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
   align-items: center;
+}
+
+.gsv-console-model-wizard {
+  align-content: start;
+}
+
+.gsv-console-model-wizard-copy {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.gsv-console-model-wizard-copy h3 {
+  margin: 0;
+  color: var(--update);
+  font-family: var(--gsv-font-mono);
+  font-size: 0.875rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.gsv-console-model-wizard-copy p {
+  max-width: 58ch;
+  margin: 0;
+  color: var(--prose-dim);
+  font-family: var(--gsv-font-prose);
+  font-size: 0.8125rem;
+  line-height: 1.5;
 }
 
 .gsv-console-settings-status {
@@ -104,16 +173,19 @@
   gap: 8px;
 }
 
+.gsv-console-secret-label-row {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 13px;
+}
+
 .gsv-console-secret-label {
   /* size + family from .gsv-sublabel (10px); tracking + transform kept */
   color: var(--text-hi);
   letter-spacing: 0.16em;
   text-transform: uppercase;
-}
-
-.gsv-console-secret-desc {
-  /* size + family + line-height from .gsv-prose-sm (12px) */
-  color: #8f89c6;
 }
 
 .gsv-console-secret-state {

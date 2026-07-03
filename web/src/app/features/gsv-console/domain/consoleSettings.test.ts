@@ -7,6 +7,7 @@ import {
 import {
   buildUserAiOverrideKey,
   AGENT_MODEL_FIELDS,
+  MODEL_PROFILE_FIELDS,
   TOOL_MODEL_GROUPS,
   createModelProfile,
   effectiveAiValuesForViewer,
@@ -28,12 +29,13 @@ describe("console settings domain", () => {
     const providerValues = AI_PROVIDER_OPTIONS.map((option) => option.value);
     expect(providerValues).toContain("workers-ai");
     expect(providerValues).toContain("openai");
+    expect(providerValues).toContain("cloudflare-ai-gateway");
     expect(providerValues).not.toContain("amazon-bedrock");
     expect(providerValues).not.toContain("azure-openai-responses");
-    expect(providerValues).not.toContain("cloudflare-ai-gateway");
     expect(providerValues).not.toContain("cloudflare-workers-ai");
     expect(providerValues).not.toContain("openai-codex");
     expect(AI_PROVIDER_OPTIONS.find((option) => option.value === "workers-ai")?.label).toBe("Workers AI (gateway binding)");
+    expect(AI_PROVIDER_OPTIONS.find((option) => option.value === "cloudflare-ai-gateway")?.label).toBe("Cloudflare AI Gateway");
     expect(agentProviderField?.kind).toBe("select");
     expect(agentProviderField?.options).toBe(AI_PROVIDER_OPTIONS);
     expect(toolProviderField("image-read")?.options).toBe(AI_PROVIDER_OPTIONS);
@@ -47,6 +49,7 @@ describe("console settings domain", () => {
     const profiles = createModelProfile([], "Deep Research", {
       "config/ai/provider": "openai",
       "config/ai/model": "gpt-5",
+      "config/ai/fallback_model_profile": "backup-stack",
       "config/ai/api_key": "sk-secret",
       "config/ai/reasoning": "high",
       "config/ai/max_tokens": "8192",
@@ -65,6 +68,7 @@ describe("console settings domain", () => {
         "config/ai/max_context_bytes": "65536",
       },
     });
+    expect(profiles[0].values["config/ai/fallback_model_profile"]).toBeUndefined();
 
     const serialized = JSON.parse(serializeModelProfiles(profiles)) as {
       profiles: Array<{ values: Record<string, string> }>;
@@ -76,6 +80,11 @@ describe("console settings domain", () => {
       "config/ai/max_tokens": "8192",
       "config/ai/max_context_bytes": "65536",
     });
+  });
+
+  it("keeps fallback selection out of model preset fields", () => {
+    expect(AGENT_MODEL_FIELDS.some((field) => field.key === "config/ai/fallback_model_profile")).toBe(true);
+    expect(MODEL_PROFILE_FIELDS.some((field) => field.key === "config/ai/fallback_model_profile")).toBe(false);
   });
 
   it("reads viewer model profiles and hydrates separate credential config", () => {
@@ -148,6 +157,59 @@ describe("console settings domain", () => {
     expect(effectiveAiValuesForViewer(config, 42)).toMatchObject({
       "config/ai/provider": "workers-ai",
       "config/ai/model": "anthropic/claude",
+    });
+  });
+
+  it("reflects selected model profiles in viewer ai defaults", () => {
+    const profiles = createModelProfile([], "Fast Stack", {
+      "config/ai/provider": "custom",
+      "config/ai/model": "zai-glm-4.7",
+      "config/ai/base_url": "https://provider.example/v1",
+      "config/ai/provider_style": "openai-chat-completions",
+      "config/ai/api_key": "sk-profile",
+      "config/ai/reasoning": "low",
+    }, 1000);
+    const config: ConsoleConfigEntry[] = [
+      { key: "config/ai/provider", value: "workers-ai", redacted: false },
+      { key: "config/ai/model", value: "@cf/default/model", redacted: false },
+      { key: "users/42/ai/model_profile", value: profiles[0].id, redacted: false },
+      { key: "users/42/ai/provider", value: "workers-ai", redacted: false },
+      { key: "users/42/ai/model", value: "stale-model", redacted: false },
+      { key: modelProfilesConfigKey(42), value: serializeModelProfiles(profiles), redacted: false },
+      {
+        key: modelProfileSecretConfigKey(42, profiles[0].id, "config/ai/api_key"),
+        value: "sk-profile",
+        redacted: false,
+      },
+    ];
+
+    expect(effectiveAiValuesForViewer(config, 42)).toMatchObject({
+      "config/ai/provider": "custom",
+      "config/ai/model": "zai-glm-4.7",
+      "config/ai/base_url": "https://provider.example/v1",
+      "config/ai/provider_style": "openai-chat-completions",
+      "config/ai/api_key": "sk-profile",
+      "config/ai/reasoning": "low",
+    });
+  });
+
+  it("infers profile-backed defaults from raw model overrides when the provider stack is not overridden", () => {
+    const profiles = createModelProfile([], "Fast Stack", {
+      "config/ai/provider": "custom",
+      "config/ai/model": "zai-glm-4.7",
+      "config/ai/base_url": "https://provider.example/v1",
+    }, 1000);
+    const config: ConsoleConfigEntry[] = [
+      { key: "config/ai/provider", value: "workers-ai", redacted: false },
+      { key: "config/ai/model", value: "@cf/default/model", redacted: false },
+      { key: "users/42/ai/model", value: "zai-glm-4.7", redacted: false },
+      { key: modelProfilesConfigKey(42), value: serializeModelProfiles(profiles), redacted: false },
+    ];
+
+    expect(effectiveAiValuesForViewer(config, 42)).toMatchObject({
+      "config/ai/provider": "custom",
+      "config/ai/model": "zai-glm-4.7",
+      "config/ai/base_url": "https://provider.example/v1",
     });
   });
 

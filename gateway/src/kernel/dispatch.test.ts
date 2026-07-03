@@ -3,13 +3,13 @@ import { dispatch, type DispatchDeps } from "./dispatch";
 import type { KernelContext } from "./context";
 import type { RequestFrame } from "../protocol/frames";
 
-function deviceRecord(deviceId: string, online: boolean) {
+function deviceRecord(deviceId: string, online: boolean, implementsList = ["fs.*", "shell.*"]) {
   return {
     device_id: deviceId,
     owner_uid: 1000,
     label: deviceId,
     description: "",
-    implements: ["fs.*", "shell.*"],
+    implements: implementsList,
     platform: "browser",
     version: "test",
     online,
@@ -100,6 +100,120 @@ describe("dispatch", () => {
     }));
     expect(registerRoute.mock.invocationCallOrder[0]).toBeLessThan(send.mock.invocationCallOrder[0]);
     expect(cancelRoute).not.toHaveBeenCalled();
+  });
+
+  it("uses the requested net.fetch timeout for routed device route ttl", async () => {
+    const send = vi.fn();
+    const registerRoute = vi.fn(async () => ({ cancel: vi.fn() }));
+    const deps = {
+      connections: new Map([
+        ["conn_1", {
+          state: {
+            identity: {
+              role: "driver",
+              process: { uid: 1000, gid: 1000, gids: [1000], username: "sam", home: "/home/sam" },
+              capabilities: ["*"],
+              device: "linux-machine",
+              implements: ["net.fetch"],
+            },
+          },
+          send,
+        }],
+      ]),
+      registerRoute,
+      shellSessions: {
+        get: vi.fn(),
+      },
+    } as unknown as DispatchDeps;
+    const ctx = {
+      ...makeContext(),
+      devices: {
+        canAccess: vi.fn(() => true),
+        get: vi.fn(() => deviceRecord("linux-machine", true, ["net.fetch"])),
+      },
+    } as unknown as KernelContext;
+    const frame = {
+      type: "req",
+      id: "req_fetch",
+      call: "net.fetch",
+      args: {
+        target: "linux-machine",
+        url: "https://provider.example/v1/chat/completions",
+        method: "POST",
+        timeoutMs: 180_000,
+      },
+    } as RequestFrame<"net.fetch">;
+
+    const result = await dispatch(
+      frame,
+      { type: "process", id: "proc_1" },
+      ctx,
+      deps,
+    );
+
+    expect(result).toEqual({ handled: false });
+    expect(registerRoute).toHaveBeenCalledWith({
+      id: "req_fetch",
+      call: "net.fetch",
+      origin: { type: "process", id: "proc_1" },
+      deviceId: "linux-machine",
+      ttlMs: 180_000,
+    });
+    expect(send).toHaveBeenCalledWith(JSON.stringify({
+      type: "req",
+      id: "req_fetch",
+      call: "net.fetch",
+      args: {
+        url: "https://provider.example/v1/chat/completions",
+        method: "POST",
+        timeoutMs: 180_000,
+      },
+    }));
+  });
+
+  it("uses the coordinated sys.update handler when supplied", async () => {
+    const updateResult = {
+      updatedAt: 123,
+      cli: {
+        defaultChannel: "stable",
+        mirroredChannels: ["stable", "dev"],
+        assets: ["gsv-linux-x64"],
+        refreshedAt: 456,
+      },
+    };
+    const deps = {
+      connections: new Map(),
+      registerRoute: vi.fn(),
+      shellSessions: {
+        get: vi.fn(),
+      },
+      handleSysUpdate: vi.fn(async () => updateResult),
+    } as unknown as DispatchDeps;
+    const ctx = makeContext();
+    const frame = {
+      type: "req",
+      id: "req_update",
+      call: "sys.update",
+      args: { channel: "stable" },
+    } as RequestFrame<"sys.update">;
+
+    const result = await dispatch(
+      frame,
+      { type: "process", id: "proc_1" },
+      ctx,
+      deps,
+    );
+
+    expect(deps.handleSysUpdate).toHaveBeenCalledWith({ channel: "stable" }, ctx);
+    expect(result).toEqual({
+      handled: true,
+      response: {
+        type: "res",
+        id: "req_update",
+        ok: true,
+        data: updateResult,
+      },
+    });
   });
 
   it("fails routed syscalls before sending when route registration fails", async () => {

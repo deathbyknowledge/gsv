@@ -36,12 +36,13 @@ export interface AgentEditorProps {
   status?: AvatarStatus;
   models?: AgentEditorModelOption[];
   initialModel?: string;
+  fallbackModels?: AgentEditorModelOption[];
+  initialFallbackModel?: string;
   initialReasoning?: string;
   inheritedReasoning?: string;
   initialPermission?: string;
   initialApprovalPolicy?: string;
   approvalPolicySourceLabel?: string;
-  approvalPolicySourceDescription?: string;
   capabilities?: string[];
   toolTargets?: AgentToolTarget[];
   files?: AgentEditorFile[];
@@ -73,6 +74,8 @@ export interface AgentEditorDraft {
   description: string;
   model: string;
   modelIndex: number;
+  fallbackModel: string;
+  fallbackModelIndex: number;
   reasoning: string;
   reasoningIndex: number;
   permission: string;
@@ -93,6 +96,7 @@ interface Defaults {
   metaLabel: string;
   status: AvatarStatus;
   model: number;
+  fallbackModel: number;
   reasoning: number;
   approvalPolicy: AgentToolApprovalPolicy;
   approvalPolicyRaw: string;
@@ -106,6 +110,9 @@ const MODELS: AgentEditorModelOption[] = [
   { label: "FAST MODEL", value: "FAST MODEL" },
   { label: "DEEP MODEL", value: "DEEP MODEL" },
 ];
+const FALLBACK_MODELS: AgentEditorModelOption[] = [
+  { label: "INHERIT FALLBACK", value: "" },
+];
 const REASONING_VALUES = ["", "off", "minimal", "low", "medium", "high", "xhigh"];
 const DEFAULT_APPROVAL_POLICY: AgentToolApprovalPolicy = {
   default: "auto",
@@ -116,6 +123,9 @@ const DEFAULT_APPROVAL_POLICY: AgentToolApprovalPolicy = {
     { match: "sys.mcp.call", action: "ask" },
   ],
 };
+const MODEL_SETTING_INFO = "Which AI this agent uses to respond. Inherit uses the default model.";
+const FALLBACK_SETTING_INFO = "Backup AI to try if the main one fails. Inherit uses the default backup, if one is set.";
+const REASONING_SETTING_INFO = "How much the AI thinks before replying. Higher can help with hard tasks, but may be slower.";
 
 function optionValue(option: AgentEditorModelOption): string {
   return typeof option === "string" ? option : option.value ?? option.label;
@@ -242,7 +252,7 @@ function serializeApprovalPolicy(policy: AgentToolApprovalPolicy): string {
 
 function defaults(mode: AgentEditorMode, props: AgentEditorProps): Defaults {
   const files = props.files ?? null;
-  const tasks = props.tasks && props.tasks.length > 0 ? props.tasks : null;
+  const tasks = props.tasks ?? null;
   const approvalPolicy = parseApprovalPolicy(props.initialApprovalPolicy, props.initialPermission);
 
   if (mode === "manage") {
@@ -254,6 +264,7 @@ function defaults(mode: AgentEditorMode, props: AgentEditorProps): Defaults {
       metaLabel: props.metaLabel ?? "CREATED:",
       status: props.status ?? "online",
       model: modelIndexForValue(props.initialModel, props.models),
+      fallbackModel: modelIndexForValue(props.initialFallbackModel, props.fallbackModels ?? FALLBACK_MODELS),
       reasoning: reasoningIndexForValue(props.initialReasoning),
       approvalPolicy,
       approvalPolicyRaw: serializeApprovalPolicy(approvalPolicy),
@@ -287,6 +298,7 @@ function defaults(mode: AgentEditorMode, props: AgentEditorProps): Defaults {
     metaLabel: props.metaLabel ?? "CREATED:",
     status: props.status ?? "idle",
     model: modelIndexForValue(props.initialModel, props.models),
+    fallbackModel: modelIndexForValue(props.initialFallbackModel, props.fallbackModels ?? FALLBACK_MODELS),
     reasoning: reasoningIndexForValue(props.initialReasoning),
     approvalPolicy,
     approvalPolicyRaw: serializeApprovalPolicy(approvalPolicy),
@@ -395,6 +407,9 @@ export function AgentEditor(props: AgentEditorProps) {
   const behaviorReadOnly = props.behaviorReadOnly ?? generalReadOnly;
   const filesReadOnly = props.filesReadOnly ?? readOnly;
   const modelOptions = props.models && props.models.length > 0 ? props.models : MODELS;
+  const fallbackModelOptions = props.fallbackModels && props.fallbackModels.length > 0
+    ? props.fallbackModels
+    : FALLBACK_MODELS;
   const reasonOptions = reasoningOptions(props.inheritedReasoning);
 
   const metaRef = useRef<Defaults>(defaults(mode, props));
@@ -404,6 +419,7 @@ export function AgentEditor(props: AgentEditorProps) {
   const [fileIdx, setFileIdx] = useState(0);
   const [approvalPolicy, setApprovalPolicy] = useState<AgentToolApprovalPolicy>(meta.approvalPolicy);
   const [model, setModel] = useState(meta.model);
+  const [fallbackModel, setFallbackModel] = useState(meta.fallbackModel);
   const [reasoning, setReasoning] = useState(meta.reasoning);
   const [name, setName] = useState(meta.name);
   const [role, setRole] = useState(meta.role);
@@ -482,6 +498,7 @@ export function AgentEditor(props: AgentEditorProps) {
     role !== meta.role ||
     desc !== meta.desc ||
     model !== meta.model ||
+    fallbackModel !== meta.fallbackModel ||
     reasoning !== meta.reasoning ||
     serializeApprovalPolicy(approvalPolicy) !== meta.approvalPolicyRaw ||
     files.length !== meta.files.length ||
@@ -545,6 +562,8 @@ export function AgentEditor(props: AgentEditorProps) {
     description: desc,
     model: optionValue(modelOptions[model] ?? ""),
     modelIndex: model,
+    fallbackModel: optionValue(fallbackModelOptions[fallbackModel] ?? ""),
+    fallbackModelIndex: fallbackModel,
     reasoning: REASONING_VALUES[reasoning] ?? "",
     reasoningIndex: reasoning,
     permission: approvalPolicy.default,
@@ -588,6 +607,7 @@ export function AgentEditor(props: AgentEditorProps) {
     setRole(meta.role);
     setDesc(meta.desc);
     setModel(meta.model);
+    setFallbackModel(meta.fallbackModel);
     setReasoning(meta.reasoning);
     setApprovalPolicy(meta.approvalPolicy);
     setFormNonce((n) => n + 1);
@@ -683,6 +703,7 @@ export function AgentEditor(props: AgentEditorProps) {
                       placeholder="Name your agent"
                       size="large"
                       label="NAME"
+                      requirement="required"
                       readonly={identityReadOnly}
                     />
                   </div>
@@ -696,6 +717,7 @@ export function AgentEditor(props: AgentEditorProps) {
                       placeholder="e.g. PERSONAL AGENT"
                       size="medium"
                       label="ROLE"
+                      requirement="required"
                       readonly={identityReadOnly}
                     />
                   </div>
@@ -710,22 +732,22 @@ export function AgentEditor(props: AgentEditorProps) {
                       rows={3}
                       size="medium"
                       label="DESCRIPTION"
+                      requirement="optional"
                       readonly={identityReadOnly}
                     />
                   </div>
 
-                  {/* MODEL */}
-                  <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
-                    <span class="gsv-sublabel" style="letter-spacing:.22em;color:var(--label);">MODEL</span>
-                    {model === 0 ? (
-                      <span class="gsv-sublabel" style="letter-spacing:.08em;color:var(--live);">
-                        (<span style="border-bottom:1px solid var(--live);">AI DEFAULT</span>)
-                      </span>
-                    ) : null}
+                  <div class="gsv-ae-overrides-heading" aria-hidden="true">
+                    <span>OVERRIDES</span>
                   </div>
+
+                  {/* MODEL */}
                   <div style="max-width:420px;margin-bottom:30px;">
                     <Select
                       key={`sel-model-${formNonce}`}
+                      label="MODEL"
+                      info={MODEL_SETTING_INFO}
+                      requirement="optional"
                       options={modelOptions}
                       value={model}
                       onChange={behaviorReadOnly ? undefined : setModel}
@@ -734,18 +756,28 @@ export function AgentEditor(props: AgentEditorProps) {
                     />
                   </div>
 
-                  {/* REASONING */}
-                  <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
-                    <span style="font-size:9.5px;letter-spacing:.22em;color:var(--label);">REASONING</span>
-                    {reasoning === 0 ? (
-                      <span style="font-size:9.5px;letter-spacing:.08em;color:var(--live);">
-                        (<span style="border-bottom:1px solid var(--live);">AI DEFAULT</span>)
-                      </span>
-                    ) : null}
+                  {/* FALLBACK MODEL */}
+                  <div style="max-width:420px;margin-bottom:30px;">
+                    <Select
+                      key={`sel-fallback-model-${formNonce}`}
+                      label="FALLBACK"
+                      info={FALLBACK_SETTING_INFO}
+                      requirement="optional"
+                      options={fallbackModelOptions}
+                      value={fallbackModel}
+                      onChange={behaviorReadOnly ? undefined : setFallbackModel}
+                      width={420}
+                      disabled={behaviorReadOnly}
+                    />
                   </div>
+
+                  {/* REASONING */}
                   <div style="max-width:300px;margin-bottom:30px;">
                     <Select
                       key={`sel-reasoning-${formNonce}`}
+                      label="REASONING"
+                      info={REASONING_SETTING_INFO}
+                      requirement="optional"
                       options={reasonOptions}
                       value={reasoning}
                       onChange={behaviorReadOnly ? undefined : setReasoning}
@@ -758,7 +790,6 @@ export function AgentEditor(props: AgentEditorProps) {
                     key={`tools-${formNonce}`}
                     policy={approvalPolicy}
                     sourceLabel={props.approvalPolicySourceLabel}
-                    sourceDescription={props.approvalPolicySourceDescription}
                     capabilities={props.capabilities}
                     targets={props.toolTargets}
                     disabled={behaviorReadOnly}

@@ -19,6 +19,7 @@ import type {
   FsWriteResult,
 } from "./fs";
 import type { ShellExecArgs, ShellExecResult } from "./shell";
+import type { NetFetchArgs, NetFetchResult } from "./net";
 import type {
   AppAttachArgs,
   AppCloseArgs,
@@ -205,6 +206,8 @@ import type {
   SysTokenRevokeResult,
   SysUnlinkArgs,
   SysUnlinkResult,
+  SysUpdateArgs,
+  SysUpdateResult,
 } from "./system";
 import type {
   SchedulerAddArgs,
@@ -279,6 +282,8 @@ export type SyscallDomains = {
   "fs.transfer.receive": { args: FsTransferReceiveArgs; result: FsTransferReceiveResult };
 
   "shell.exec": { args: ShellExecArgs; result: ShellExecResult };
+
+  "net.fetch": { args: NetFetchArgs; result: NetFetchResult };
 
   "app.open": { args: AppOpenArgs; result: AppLaunchResult };
   "app.attach": { args: AppAttachArgs; result: AppLaunchResult };
@@ -374,6 +379,7 @@ export type SyscallDomains = {
   "sys.unlink": { args: SysUnlinkArgs; result: SysUnlinkResult };
   "sys.link.list": { args: SysLinkListArgs; result: SysLinkListResult };
   "sys.link.consume": { args: SysLinkConsumeArgs; result: SysLinkConsumeResult };
+  "sys.update": { args: SysUpdateArgs; result: SysUpdateResult };
 
   "account.create": { args: AccountCreateArgs; result: AccountCreateResult };
   "account.list": { args: AccountListArgs; result: AccountListResult };

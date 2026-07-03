@@ -25,6 +25,7 @@ import type {
   ConsoleProcess,
   ConsoleTarget,
 } from "../domain/consoleModels";
+import { modelProfileIdFromOptionValue } from "../domain/consoleAi";
 import { isSensitiveSettingKey } from "../domain/consoleSettings";
 export type { AgentApprovalAction } from "../domain/consoleAgentBehavior";
 
@@ -32,6 +33,9 @@ export const DEFAULT_CONSOLE_ADAPTERS = ["whatsapp", "discord", "telegram"] as c
 const TEXT_MODEL_VALIDATION_KEYS = [
   "config/ai/provider",
   "config/ai/model",
+  "config/ai/base_url",
+  "config/ai/provider_style",
+  "config/ai/transport_target",
   "config/ai/api_key",
   "config/ai/reasoning",
 ] as const;
@@ -58,6 +62,7 @@ export type CreateConsoleAgentInput = {
   role: string;
   description: string;
   model?: string;
+  fallbackModel?: string;
   reasoning?: string;
   approval?: string;
   files: readonly ConsoleAgentContextFileDraft[];
@@ -83,6 +88,7 @@ export type SaveConsoleAgentContextResult = {
 export type SaveConsoleAgentBehaviorInput = {
   uid: number;
   model: string;
+  fallbackModel?: string;
   reasoning: string;
   approval?: string;
 };
@@ -834,6 +840,7 @@ async function loadOptionalPayload(load: () => Promise<unknown>): Promise<unknow
 
 type AgentBehaviorConfigDraft = {
   model?: string;
+  fallbackModel?: string;
   reasoning?: string;
   approval?: string;
 };
@@ -845,14 +852,28 @@ async function saveAgentBehaviorConfig(
   options: { includeEmpty?: boolean } = {},
 ): Promise<void> {
   const model = input.model?.trim() ?? "";
+  const fallbackModel = input.fallbackModel?.trim() ?? "";
   const reasoning = input.reasoning?.trim() ?? "";
   const approval = input.approval?.trim() ?? "";
   const writes: Promise<unknown>[] = [];
 
   if (input.model !== undefined && (options.includeEmpty || model)) {
+    const modelProfile = modelProfileIdFromOptionValue(model);
+    if (options.includeEmpty || modelProfile) {
+      writes.push(client.sys.config.set({
+        key: `users/${uid}/ai/model_profile`,
+        value: modelProfile ?? "",
+      }));
+    }
     writes.push(client.sys.config.set({
       key: `users/${uid}/ai/model`,
-      value: model,
+      value: modelProfile ? "" : model,
+    }));
+  }
+  if (input.fallbackModel !== undefined && (options.includeEmpty || fallbackModel)) {
+    writes.push(client.sys.config.set({
+      key: `users/${uid}/ai/fallback_model_profile`,
+      value: modelProfileIdFromOptionValue(fallbackModel) ?? fallbackModel,
     }));
   }
   if (input.approval !== undefined && (options.includeEmpty || approval)) {

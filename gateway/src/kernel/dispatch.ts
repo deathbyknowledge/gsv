@@ -12,6 +12,10 @@
 
 import type { Connection } from "agents";
 import type { RequestFrame, ResponseFrame } from "../protocol/frames";
+import type {
+  SysUpdateArgs,
+  SysUpdateResult,
+} from "@humansandmachines/gsv/protocol";
 import { isRoutableSyscall, type SyscallName } from "../syscalls";
 import type { KernelContext } from "./context";
 import type { RouteOrigin } from "./routing";
@@ -47,7 +51,9 @@ import {
 import { handleAccountCreate, handleAccountList } from "./agents";
 import { handleSysConfigGet, handleSysConfigSet } from "./sys/config";
 import { handleSysDeviceDelete, handleSysDeviceGet, handleSysDeviceList, handleSysDeviceUpdate } from "./sys/device";
+import { handleNetFetch } from "./net";
 import { handleSysBootstrap } from "./sys/bootstrap";
+import { handleSysUpdate as handleSysUpdateDirect } from "./sys/update";
 import { handleSysSetupAssist } from "./sys/setup-assist";
 import {
   handlePkgAdd,
@@ -189,6 +195,7 @@ export type DispatchDeps = {
     flags: number,
     payload?: Uint8Array,
   ) => void;
+  handleSysUpdate?: (args: SysUpdateArgs | undefined, ctx: KernelContext) => Promise<SysUpdateResult>;
 };
 
 export type DispatchResult =
@@ -332,7 +339,14 @@ async function dispatchNative(
             receiveDeviceBinaryStream: deps.receiveDeviceBinaryStream,
             sendDeviceBinaryFrame: deps.sendDeviceBinaryFrame,
           },
+          netFetchTransport: {
+            requestDevice: deps.requestDevice,
+          },
         });
+        break;
+
+      case "net.fetch":
+        data = await handleNetFetch(frame.args, ctx);
         break;
 
       case "app.open":
@@ -484,7 +498,9 @@ async function dispatchNative(
         data = await handleAiConfig(frame.args, ctx);
         break;
       case "ai.text.generate":
-        data = await handleAiTextGenerate(frame.args, ctx);
+        data = await handleAiTextGenerate(frame.args, ctx, {
+          requestDevice: deps.requestDevice,
+        });
         break;
       case "ai.transcription.create":
         data = await handleAiTranscriptionCreate(frame.args, ctx);
@@ -509,6 +525,9 @@ async function dispatchNative(
         return errFrame(frame.id, 400, "sys.setup handled separately");
       case "sys.bootstrap":
         data = await handleSysBootstrap(frame.args, ctx);
+        break;
+      case "sys.update":
+        data = await (deps.handleSysUpdate ?? handleSysUpdateDirect)(frame.args, ctx);
         break;
       case "sys.config.get":
         data = handleSysConfigGet(frame.args, ctx);
@@ -724,13 +743,14 @@ async function routeToTarget(
 
   let route: { cancel: () => void } | null = null;
   let binaryRoute: { cancel: () => void } | null = null;
+  const ttlMs = routedFrameTtlMs(frame);
   try {
     route = await deps.registerRoute({
       id: frame.id,
       call: frame.call,
       origin,
       deviceId: target.targetId,
-      ttlMs: DEFAULT_DEVICE_TTL_MS,
+      ttlMs,
     });
     const streamId = transferStreamId(frame.call, frame.args);
     if (streamId !== null) {
@@ -739,7 +759,7 @@ async function routeToTarget(
         streamId,
         origin,
         deviceId: target.targetId,
-        ttlMs: DEFAULT_DEVICE_TTL_MS,
+        ttlMs,
       });
     }
   } catch (error) {
@@ -769,6 +789,20 @@ async function routeToTarget(
   }
 
   return { handled: false };
+}
+
+function routedFrameTtlMs(frame: RequestFrame): number {
+  if (frame.call !== "net.fetch") {
+    return DEFAULT_DEVICE_TTL_MS;
+  }
+  if (!frame.args || typeof frame.args !== "object") {
+    return DEFAULT_DEVICE_TTL_MS;
+  }
+  const timeoutMs = (frame.args as { timeoutMs?: unknown }).timeoutMs;
+  if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return DEFAULT_DEVICE_TTL_MS;
+  }
+  return Math.max(1, Math.floor(timeoutMs));
 }
 
 function transferStreamId(call: string, args: unknown): number | null {

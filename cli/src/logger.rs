@@ -1,208 +1,165 @@
-use serde_json::json;
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::fs;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
-const DEFAULT_NODE_LOG_MAX_BYTES: u64 = 10 * 1024 * 1024;
-const DEFAULT_NODE_LOG_MAX_FILES: usize = 5;
+use tracing_appender::non_blocking::WorkerGuard;
+use tracing_subscriber::fmt;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::EnvFilter;
 
-pub fn node_log_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
+const DEVICE_LOG_FILE_PREFIX: &str = "device.log";
+const LEGACY_NODE_LOG_FILE_PREFIX: &str = "node.log";
+
+enum ConsoleLogFormat {
+    Text,
+    Json,
+    Quiet,
+}
+
+pub struct DeviceLoggingGuard {
+    _file_guard: WorkerGuard,
+}
+
+pub fn device_log_dir() -> Result<PathBuf, Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("Could not determine home directory")?;
-    Ok(home.join(".gsv").join("logs").join("node.log"))
+    Ok(home.join(".gsv").join("logs"))
 }
 
-fn parse_env_u64(name: &str) -> Option<u64> {
-    std::env::var(name)
-        .ok()
-        .and_then(|v| v.trim().parse::<u64>().ok())
-        .filter(|v| *v > 0)
+pub fn device_log_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    if let Some(path) = latest_device_log_path()? {
+        return Ok(path);
+    }
+    Ok(device_log_dir()?.join(DEVICE_LOG_FILE_PREFIX))
 }
 
-fn parse_env_usize(name: &str) -> Option<usize> {
-    std::env::var(name)
-        .ok()
-        .and_then(|v| v.trim().parse::<usize>().ok())
-        .filter(|v| *v > 0)
+pub fn device_log_pattern() -> Result<String, Box<dyn std::error::Error>> {
+    Ok(format!(
+        "{}{}{}*",
+        device_log_dir()?.display(),
+        std::path::MAIN_SEPARATOR,
+        DEVICE_LOG_FILE_PREFIX,
+    ))
 }
 
-pub fn node_log_max_bytes() -> u64 {
-    parse_env_u64("GSV_NODE_LOG_MAX_BYTES").unwrap_or(DEFAULT_NODE_LOG_MAX_BYTES)
+pub fn init_device_logging() -> Result<DeviceLoggingGuard, Box<dyn std::error::Error>> {
+    let log_dir = device_log_dir()?;
+    fs::create_dir_all(&log_dir)?;
+
+    let file_appender = tracing_appender::rolling::daily(&log_dir, DEVICE_LOG_FILE_PREFIX);
+    let (file_writer, file_guard) = tracing_appender::non_blocking(file_appender);
+    let env_filter = tracing_env_filter();
+    let console_ansi = std::io::stdout().is_terminal();
+
+    let file_layer = fmt::layer()
+        .json()
+        .flatten_event(true)
+        .with_current_span(true)
+        .with_span_list(true)
+        .with_ansi(false)
+        .with_writer(file_writer);
+
+    let subscriber = tracing_subscriber::registry()
+        .with(env_filter)
+        .with(file_layer);
+
+    match device_console_log_format() {
+        ConsoleLogFormat::Text => subscriber
+            .with(
+                fmt::layer()
+                    .compact()
+                    .with_target(false)
+                    .with_ansi(console_ansi),
+            )
+            .try_init()?,
+        ConsoleLogFormat::Json => subscriber
+            .with(
+                fmt::layer()
+                    .json()
+                    .flatten_event(true)
+                    .with_current_span(true)
+                    .with_span_list(true)
+                    .with_ansi(false),
+            )
+            .try_init()?,
+        ConsoleLogFormat::Quiet => subscriber.try_init()?,
+    }
+
+    Ok(DeviceLoggingGuard {
+        _file_guard: file_guard,
+    })
 }
 
-pub fn node_log_max_files() -> usize {
-    parse_env_usize("GSV_NODE_LOG_MAX_FILES").unwrap_or(DEFAULT_NODE_LOG_MAX_FILES)
+fn tracing_env_filter() -> EnvFilter {
+    EnvFilter::try_from_env("GSV_DEVICE_LOG")
+        .or_else(|_| EnvFilter::try_from_env("GSV_NODE_LOG"))
+        .or_else(|_| EnvFilter::try_from_env("RUST_LOG"))
+        .unwrap_or_else(|_| EnvFilter::new("info"))
 }
 
-pub fn rotated_log_path(base: &Path, index: usize) -> PathBuf {
-    PathBuf::from(format!("{}.{}", base.to_string_lossy(), index))
+fn device_console_log_format() -> ConsoleLogFormat {
+    let value = std::env::var("GSV_DEVICE_CONSOLE_FORMAT")
+        .or_else(|_| std::env::var("GSV_DEVICE_LOG_CONSOLE"))
+        .or_else(|_| std::env::var("GSV_NODE_CONSOLE_FORMAT"))
+        .or_else(|_| std::env::var("GSV_NODE_LOG_CONSOLE"))
+        .unwrap_or_default()
+        .trim()
+        .to_lowercase();
+    match value.as_str() {
+        "json" | "jsonl" => ConsoleLogFormat::Json,
+        "quiet" | "none" | "off" => ConsoleLogFormat::Quiet,
+        _ => ConsoleLogFormat::Text,
+    }
 }
 
-struct NodeLoggerInner {
-    path: PathBuf,
-    file: fs::File,
-    current_size: u64,
-    max_bytes: u64,
-    max_files: usize,
-}
+fn latest_device_log_path() -> Result<Option<PathBuf>, Box<dyn std::error::Error>> {
+    let log_dir = device_log_dir()?;
+    if !log_dir.exists() {
+        return Ok(None);
+    }
 
-impl NodeLoggerInner {
-    fn open(
-        path: &Path,
-        max_bytes: u64,
-        max_files: usize,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
+    let mut latest: Option<(SystemTime, PathBuf)> = None;
+    for entry in fs::read_dir(log_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if !is_device_log_file(&path) {
+            continue;
         }
+        let modified = entry
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .unwrap_or(UNIX_EPOCH);
+        if latest
+            .as_ref()
+            .map(|(latest_modified, _)| modified > *latest_modified)
+            .unwrap_or(true)
+        {
+            latest = Some((modified, path));
+        }
+    }
 
-        let file = OpenOptions::new().create(true).append(true).open(path)?;
-        let current_size = file.metadata().map(|m| m.len()).unwrap_or(0);
+    Ok(latest.map(|(_, path)| path))
+}
 
-        Ok(Self {
-            path: path.to_path_buf(),
-            file,
-            current_size,
-            max_bytes,
-            max_files: max_files.max(1),
+fn is_device_log_file(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| {
+            name.starts_with(DEVICE_LOG_FILE_PREFIX)
+                || name.starts_with(LEGACY_NODE_LOG_FILE_PREFIX)
         })
-    }
-
-    fn rotate_if_needed(&mut self, incoming: usize) -> Result<(), Box<dyn std::error::Error>> {
-        let incoming = incoming as u64;
-        if self.current_size + incoming <= self.max_bytes {
-            return Ok(());
-        }
-
-        self.file.flush()?;
-
-        let oldest = rotated_log_path(&self.path, self.max_files);
-        if oldest.exists() {
-            let _ = fs::remove_file(&oldest);
-        }
-
-        if self.max_files > 1 {
-            for i in (1..self.max_files).rev() {
-                let src = rotated_log_path(&self.path, i);
-                if src.exists() {
-                    let dst = rotated_log_path(&self.path, i + 1);
-                    let _ = fs::rename(&src, &dst);
-                }
-            }
-        }
-
-        if self.path.exists() {
-            let _ = fs::rename(&self.path, rotated_log_path(&self.path, 1));
-        }
-
-        self.file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&self.path)?;
-        self.current_size = 0;
-
-        Ok(())
-    }
-
-    fn write_line(&mut self, line: &str) -> Result<(), Box<dyn std::error::Error>> {
-        let incoming = line.len() + 1;
-        self.rotate_if_needed(incoming)?;
-        self.file.write_all(line.as_bytes())?;
-        self.file.write_all(b"\n")?;
-        self.file.flush()?;
-        self.current_size += incoming as u64;
-        Ok(())
-    }
+        .unwrap_or(false)
+        && path.is_file()
 }
 
-#[derive(Clone)]
-pub struct NodeLogger {
-    inner: Arc<Mutex<NodeLoggerInner>>,
-    node_id: String,
-    workspace: String,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-impl NodeLogger {
-    pub fn new(node_id: &str, workspace: &Path) -> Result<Self, Box<dyn std::error::Error>> {
-        let path = node_log_path()?;
-        let inner = NodeLoggerInner::open(&path, node_log_max_bytes(), node_log_max_files())?;
-        Ok(Self {
-            inner: Arc::new(Mutex::new(inner)),
-            node_id: node_id.to_string(),
-            workspace: workspace.display().to_string(),
-        })
-    }
-
-    pub fn with_path(
-        node_id: &str,
-        workspace: &str,
-        path: &Path,
-        max_bytes: u64,
-        max_files: usize,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        let inner = NodeLoggerInner::open(path, max_bytes, max_files)?;
-        Ok(Self {
-            inner: Arc::new(Mutex::new(inner)),
-            node_id: node_id.to_string(),
-            workspace: workspace.to_string(),
-        })
-    }
-
-    pub fn info(&self, event: &str, fields: serde_json::Value) {
-        self.log("INFO", event, fields);
-    }
-
-    pub fn warn(&self, event: &str, fields: serde_json::Value) {
-        self.log("WARN", event, fields);
-    }
-
-    pub fn error(&self, event: &str, fields: serde_json::Value) {
-        self.log("ERROR", event, fields);
-    }
-
-    pub fn log(&self, level: &str, event: &str, fields: serde_json::Value) {
-        let mut obj = serde_json::Map::new();
-        obj.insert(
-            "ts".to_string(),
-            json!(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
-        );
-        obj.insert("level".to_string(), json!(level));
-        obj.insert("component".to_string(), json!("node"));
-        obj.insert("event".to_string(), json!(event));
-        obj.insert("nodeId".to_string(), json!(self.node_id));
-        obj.insert("workspace".to_string(), json!(self.workspace));
-
-        match fields {
-            serde_json::Value::Object(map) => {
-                for (k, v) in map {
-                    obj.insert(k, v);
-                }
-            }
-            serde_json::Value::Null => {}
-            other => {
-                obj.insert("data".to_string(), other);
-            }
-        }
-
-        let line = serde_json::Value::Object(obj).to_string();
-
-        if level == "ERROR" {
-            eprintln!("{}", line);
-        } else {
-            println!("{}", line);
-        }
-
-        let mut guard = match self.inner.lock() {
-            Ok(guard) => guard,
-            Err(_) => {
-                eprintln!("Failed to acquire node log writer lock");
-                return;
-            }
-        };
-
-        if let Err(err) = guard.write_line(&line) {
-            eprintln!("Failed to write node log file: {}", err);
-        }
+    #[test]
+    fn device_log_pattern_points_at_rotated_device_logs() {
+        let pattern = device_log_pattern().expect("device log pattern");
+        assert!(pattern.ends_with("device.log*"));
     }
 }

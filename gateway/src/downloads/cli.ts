@@ -17,6 +17,13 @@ export const CLI_BINARY_ASSETS = [
 
 export type CliBinaryAsset = typeof CLI_BINARY_ASSETS[number];
 
+export function parseCliReleaseChannel(value: unknown): CliReleaseChannel | null {
+  if (value === "stable" || value === "dev") {
+    return value;
+  }
+  return null;
+}
+
 export function inferDefaultCliChannel(ref: string): CliReleaseChannel {
   const normalized = ref.trim().toLowerCase();
   if (
@@ -68,6 +75,14 @@ export async function storeDefaultCliChannel(
       cacheControl: "no-store",
     },
   });
+}
+
+export async function readDefaultCliChannel(bucket: R2Bucket): Promise<CliReleaseChannel | null> {
+  const object = await bucket.get(CLI_DEFAULT_CHANNEL_KEY);
+  if (!object) {
+    return null;
+  }
+  return parseCliReleaseChannel((await object.text()).trim());
 }
 
 export async function storeCliInstallScripts(bucket: R2Bucket): Promise<void> {

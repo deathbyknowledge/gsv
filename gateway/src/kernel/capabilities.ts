@@ -68,6 +68,7 @@ const DEFAULT_CAPABILITIES: [number, string[]][] = [
     "sys.oauth.forget",
     "sys.oauth.list",
     "sys.oauth.start",
+    "sys.update",
     "sys.mcp.add",
     "sys.mcp.call",
     "sys.mcp.list",

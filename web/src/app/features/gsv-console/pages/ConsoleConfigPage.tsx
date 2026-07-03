@@ -1,3 +1,4 @@
+import type { ComponentChildren } from "preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
 import {
   AgentToolsPanel,
@@ -7,8 +8,11 @@ import {
 import { Button } from "../../../components/ui/Button";
 import { Checkbox } from "../../../components/ui/Checkbox";
 import { ConfirmModal } from "../../../components/ui/ConfirmModal";
+import { InfoTip } from "../../../components/ui/InfoTip";
+import { Radio } from "../../../components/ui/Radio";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
-import { Select } from "../../../components/ui/Select";
+import { Select, type SelectOption } from "../../../components/ui/Select";
+import { Stepper } from "../../../components/ui/Stepper";
 import { Surface } from "../../../components/ui/Surface";
 import { TextArea } from "../../../components/ui/TextArea";
 import { TextInput } from "../../../components/ui/TextInput";
@@ -117,6 +121,7 @@ type ValidateModelSettingsInput = {
 };
 
 type SettingsStatusTone = "pending" | "success" | "error";
+type ModelProfileStep = 0 | 1 | 2 | 3;
 
 type SettingsFieldGroupProps = {
   config: readonly ConsoleConfigEntry[];
@@ -125,7 +130,9 @@ type SettingsFieldGroupProps = {
   fields: readonly ConsoleSettingField[];
   initialValues?: Record<string, string>;
   meta?: string;
+  modelProfiles?: readonly ConsoleModelProfile[];
   onSave: (entries: readonly SaveConsoleConfigInput[]) => Promise<void>;
+  targets?: readonly AgentToolTarget[];
   title: string;
   validateBeforeSave?: (values: Record<string, string>) => Promise<void>;
   writeKeyForField: (field: ConsoleSettingField) => string;
@@ -133,6 +140,34 @@ type SettingsFieldGroupProps = {
 
 type ClearedProfileSecretKeys = ReadonlyMap<string, ReadonlySet<string>>;
 const TOOL_APPROVAL_RUNTIME_ID = "tool-approval";
+const MODEL_ADVANCED_FIELD_KEYS = new Set([
+  "config/ai/base_url",
+  "config/ai/fallback_model_profile",
+  "config/ai/provider_style",
+  "config/ai/transport_target",
+  "config/ai/reasoning",
+  "config/ai/max_tokens",
+  "config/ai/max_context_bytes",
+]);
+const MODEL_TRANSPORT_TARGET_KEY = "config/ai/transport_target";
+const CUSTOM_ENDPOINT_CONNECT_FIELD_KEYS = [
+  "config/ai/model",
+  "config/ai/base_url",
+  "config/ai/provider_style",
+  MODEL_TRANSPORT_TARGET_KEY,
+  "config/ai/api_key",
+] as const;
+const PROVIDER_CONNECT_FIELD_KEYS = [
+  "config/ai/provider",
+  "config/ai/model",
+  "config/ai/api_key",
+] as const;
+const GSV_TRANSPORT_TARGET_OPTION: SelectOption = {
+  label: "GSV Worker",
+  value: "gsv",
+  description: "Send HTTP from the gateway Worker runtime.",
+};
+const MODEL_PROFILE_STEP_LABELS = ["TYPE", "NAME", "CONNECT", "OPTIONS"] as const;
 
 export function ConsoleConfigPage({ kind, select, onClearSelect, onDetailChange }: ConsoleConfigPageProps) {
   const config = useConsoleConfig();
@@ -186,19 +221,21 @@ function ConsoleSettingsPanel({
   };
 
   if (kind === "models") {
-    return <ModelSettingsPage config={config} viewer={viewer} select={select} onClearSelect={onClearSelect} onDetailChange={onDetailChange} />;
+    return <ModelSettingsPage config={config} targets={targets} viewer={viewer} select={select} onClearSelect={onClearSelect} onDetailChange={onDetailChange} />;
   }
   return <RuntimeSettingsPage config={config} targets={targets} viewer={viewer} onDetailChange={onDetailChange} />;
 }
 
 function ModelSettingsPage({
   config,
+  targets,
   viewer,
   select,
   onClearSelect,
   onDetailChange,
 }: {
   config: readonly ConsoleConfigEntry[];
+  targets: readonly AgentToolTarget[];
   viewer: SettingsViewer;
   select?: string;
   onClearSelect?: () => void;
@@ -257,10 +294,10 @@ function ModelSettingsPage({
     : selection.kind === "default"
     ? "DEFAULT AGENT MODEL"
     : selection.kind === "new-profile"
-    ? "NEW MODEL PRESET"
+    ? "NEW MODEL"
     : selection.kind === "tool"
     ? (TOOL_MODEL_GROUPS.find((group) => group.id === selection.id)?.title ?? "TOOL MODEL").toUpperCase()
-    : (profiles.find((profile) => profile.id === selection.id)?.name ?? "MODEL PRESET").toUpperCase();
+    : (profiles.find((profile) => profile.id === selection.id)?.name ?? "MODEL").toUpperCase();
   useEffect(() => {
     onDetailChange?.(detailLabel ? { label: detailLabel, onExit: () => requestLeave(exitDetail) } : null);
   }, [detailLabel]);
@@ -275,6 +312,7 @@ function ModelSettingsPage({
         profiles={profiles}
         scopeLabel={scopeLabel}
         selection={selection}
+        targets={targets}
         viewer={viewer}
         // User-initiated Back/Cancel: guard so a dirty draft prompts first.
         onBack={() => requestLeave(exitDetail)}
@@ -299,12 +337,12 @@ function ModelSettingsPage({
         rows={[defaultModelRow(effectiveValues, () => setSelection({ kind: "default" }))]}
       />
       <SettingsListPanel
-        title="MODEL PRESETS"
-        meta={`${profiles.length} PRESET${profiles.length === 1 ? "" : "S"}`}
-        emptyLabel="NO MODEL PRESETS"
+        title="SAVED MODELS"
+        meta={`${profiles.length} MODEL${profiles.length === 1 ? "" : "S"}`}
+        emptyLabel="NO SAVED MODELS"
         fitContent
         headingLevel={3}
-        action={{ label: "NEW MODEL PRESET", onClick: canEditAi ? () => setSelection({ kind: "new-profile" }) : undefined }}
+        action={{ label: "NEW MODEL", onClick: canEditAi ? () => setSelection({ kind: "new-profile" }) : undefined }}
         rows={profiles.map((profile) => profileRow(profile, () => setSelection({ kind: "profile", id: profile.id })))}
       />
       <SettingsListPanel
@@ -326,6 +364,7 @@ function ModelSettingsDetail({
   profiles,
   scopeLabel,
   selection,
+  targets,
   viewer,
   onBack,
   onCompleted,
@@ -338,6 +377,7 @@ function ModelSettingsDetail({
   profiles: readonly ConsoleModelProfile[];
   scopeLabel: string;
   selection: ModelSelection;
+  targets: readonly AgentToolTarget[];
   viewer: SettingsViewer;
   /** Guarded user-initiated Back/Cancel. */
   onBack: () => void;
@@ -346,6 +386,12 @@ function ModelSettingsDetail({
   onSaveEntries: (entries: readonly SaveConsoleConfigInput[]) => Promise<void>;
   onValidateModelConfig: (input: ValidateModelSettingsInput) => Promise<void>;
 }) {
+  const [newProfileStep, setNewProfileStep] = useState<ModelProfileStep>(0);
+
+  useEffect(() => {
+    setNewProfileStep(0);
+  }, [selection.kind, selection.kind === "profile" ? selection.id : ""]);
+
   if (selection.kind === "default") {
     return (
       <ConsoleDetailPage
@@ -367,6 +413,8 @@ function ModelSettingsDetail({
           fields={AGENT_MODEL_FIELDS}
           initialValues={effectiveValues}
           meta={scopeLabel}
+          modelProfiles={profiles}
+          targets={targets}
           title="Default Agent Model"
           validateBeforeSave={(values) => onValidateModelConfig({ values })}
           writeKeyForField={(field) => viewer.isRoot || viewer.uid === null
@@ -411,16 +459,29 @@ function ModelSettingsDetail({
   const profile = selection.kind === "profile"
     ? profiles.find((candidate) => candidate.id === selection.id) ?? null
     : null;
-  const title = profile?.name.toUpperCase() ?? "NEW MODEL PRESET";
+  const isNewProfile = selection.kind === "new-profile";
+  const title = profile?.name.toUpperCase() ?? "NEW MODEL";
 
   return (
     <ConsoleDetailPage
+      actions={isNewProfile ? (
+        <Stepper
+          size="small"
+          width={520}
+          current={newProfileStep}
+          onChange={(index) => setNewProfileStep(Math.max(0, Math.min(index, newProfileStep)) as ModelProfileStep)}
+          l0={MODEL_PROFILE_STEP_LABELS[0]}
+          l1={MODEL_PROFILE_STEP_LABELS[1]}
+          l2={MODEL_PROFILE_STEP_LABELS[2]}
+          l3={MODEL_PROFILE_STEP_LABELS[3]}
+        />
+      ) : undefined}
       icon="stars"
       title={title}
-      typeLabel="GSV · MODEL PRESET"
+      typeLabel="GSV · MODEL"
       statusLabel={profile ? "SAVED" : "DRAFT"}
       tone={profile ? "online" : "idle"}
-      blurb="Reusable named model stack for agents, including provider credentials when a preset needs its own key."
+      blurb="Reusable model configuration for agents, including provider credentials when this model needs its own key."
       parentLabel="MODELS"
       onBack={onBack}
     >
@@ -430,7 +491,10 @@ function ModelSettingsDetail({
         editable={editable}
         profile={profile}
         profiles={profiles}
+        step={newProfileStep}
+        targets={targets}
         viewer={viewer}
+        onStepChange={setNewProfileStep}
         onCancel={onBack}
         onDelete={profile ? async () => {
           await saveModelProfiles(viewer, profiles, deleteModelProfile(profiles, profile.id), onSaveEntries);
@@ -589,8 +653,8 @@ function profileRow(profile: ConsoleModelProfile, onOpen: () => void): SettingsL
     id: profile.id,
     icon: "stars",
     label: profile.name,
-    sub: modelDisplayName(model) || model || "Model behavior preset",
-    statusLabel: model ? "PRESET" : "INCOMPLETE",
+    sub: modelDisplayName(model) || model || "Saved model configuration",
+    statusLabel: model ? "MODEL" : "INCOMPLETE",
     tone: model ? "online" : "warn",
     tag: { label: modelDisplayName(model) || "MODEL", tone: "info" },
     onOpen,
@@ -649,7 +713,7 @@ function toolApprovalRuntimeRow(
 
 function approvalActionLabel(action: AgentToolApprovalPolicy["default"]): string {
   if (action === "auto") return "Allow automatically";
-  if (action === "deny") return "Deny by default";
+  if (action === "deny") return "Block by default";
   return "Ask first";
 }
 
@@ -753,7 +817,6 @@ function ToolApprovalSettingsGroup({
       <AgentToolsPanel
         policy={policy}
         sourceLabel="System fallback"
-        sourceDescription="Used only when neither a user default nor an agent override is configured."
         targets={targets}
         disabled={!editable || pending}
         onChange={(nextPolicy) => {
@@ -791,7 +854,7 @@ async function saveModelProfiles(
   clearedSecretKeys: ClearedProfileSecretKeys = new Map(),
 ): Promise<void> {
   if (viewer.uid === null) {
-    throw new Error("A signed-in account is required to save model presets.");
+    throw new Error("A signed-in account is required to save models.");
   }
   const nextIds = new Set(nextProfiles.map((profile) => profile.id));
   const entries: SaveConsoleConfigInput[] = [{
@@ -861,10 +924,13 @@ function ModelProfileForm({
   editable,
   profile,
   profiles,
+  step = 0,
+  targets,
   viewer,
   onCancel,
   onDelete,
   onMakeDefault,
+  onStepChange,
   onValidate,
   onSave,
 }: {
@@ -873,10 +939,13 @@ function ModelProfileForm({
   editable: boolean;
   profile: ConsoleModelProfile | null;
   profiles: readonly ConsoleModelProfile[];
+  step?: ModelProfileStep;
+  targets: readonly AgentToolTarget[];
   viewer: SettingsViewer;
   onCancel: () => void;
   onDelete?: () => Promise<void>;
   onMakeDefault?: (values: Record<string, string>) => Promise<void>;
+  onStepChange?: (step: ModelProfileStep) => void;
   onValidate: (input: ValidateModelSettingsInput) => Promise<void>;
   onSave: (
     name: string,
@@ -885,7 +954,13 @@ function ModelProfileForm({
   ) => Promise<void>;
 }) {
   const initialValues = useMemo(
-    () => profile ? profile.values : profileValuesFromDrafts(defaultValues),
+    () => {
+      const values = profile ? profile.values : profileValuesFromDrafts(defaultValues);
+      if (!profile && !values["config/ai/provider"]?.trim()) {
+        return { ...values, "config/ai/provider": defaultBuiltInProvider(defaultValues, "") };
+      }
+      return values;
+    },
     [defaultValues, profile],
   );
   const [name, setName] = useState(profile?.name ?? "");
@@ -911,7 +986,13 @@ function ModelProfileForm({
     candidate.id !== profile?.id &&
     candidate.name.toLowerCase() === name.trim().toLowerCase()
   );
-  const canSave = editable && name.trim().length > 0 && !duplicateName && drafts["config/ai/model"]?.trim();
+  const isCustomEndpoint = isCustomModelProvider(drafts["config/ai/provider"] ?? "");
+  const modelReady = Boolean(drafts["config/ai/model"]?.trim());
+  const nameReady = name.trim().length > 0 && !duplicateName;
+  const connectionReady = isCustomEndpoint
+    ? modelReady && Boolean(drafts["config/ai/base_url"]?.trim())
+    : modelReady && Boolean(drafts["config/ai/provider"]?.trim());
+  const canSave = editable && nameReady && connectionReady;
   const clearedProfileSecretKeys = profile
     ? new Map([[profile.id, clearedSecretKeys]])
     : new Map<string, ReadonlySet<string>>();
@@ -948,66 +1029,197 @@ function ModelProfileForm({
       ...(profile && !clearedSecretKeys.has("config/ai/api_key") ? { presetId: profile.id } : {}),
     });
   };
+  const profileFields = splitModelSettingsFields(MODEL_PROFILE_FIELDS);
+  const newProfileConnectionFields = newModelConnectionFields(MODEL_PROFILE_FIELDS, isCustomEndpoint);
+  const newProfileAdvancedFields = newModelAdvancedFields(profileFields.advanced, newProfileConnectionFields);
+  const advancedResetKey = `${profile?.id ?? "new"}:${JSON.stringify(initialValues)}`;
+  const setModelType = (customEndpoint: boolean) => {
+    setDrafts((current) => ({
+      ...current,
+      "config/ai/provider": customEndpoint
+        ? "custom"
+        : defaultBuiltInProvider(defaultValues, current["config/ai/provider"] ?? ""),
+    }));
+    setStatusText("");
+  };
+  const renderModelTypeField = () => (
+    <div class="gsv-console-settings-field">
+      <Radio
+        label="MODEL TYPE"
+        info="Choose how GSV connects to this model."
+        requirement="required"
+        options={[
+          {
+            label: "Custom endpoint",
+            info: "Use your own OpenAI-compatible or Anthropic-compatible API endpoint.",
+          },
+          {
+            label: "Provider",
+            info: "Use one of GSV's built-in provider integrations.",
+          },
+        ]}
+        value={isCustomEndpoint ? 0 : 1}
+        disabled={!editable || pending}
+        onChange={(index) => setModelType(index === 0)}
+      />
+    </div>
+  );
+  const renderNameField = () => (
+    <div class="gsv-console-settings-field">
+      <TextInput
+        label="MODEL NAME"
+        info="Friendly name shown in model pickers."
+        requirement="required"
+        placeholder="Deep Research"
+        value={name}
+        disabled={!editable || pending}
+        status={duplicateName ? "error" : "none"}
+        message={duplicateName ? "NAME ALREADY EXISTS" : ""}
+        onChange={setName}
+      />
+    </div>
+  );
+  const renderProfileField = (field: ConsoleSettingField) => (
+    <div
+      class={`gsv-console-settings-field${field.half ? " is-half" : ""}`}
+      key={field.key}
+    >
+      <SettingFieldInput
+        field={field}
+        disabled={!editable || pending}
+        modelProfiles={profiles}
+        excludeModelProfileId={profile?.id}
+        targets={targets}
+        cleared={clearedSecretKeys.has(field.key)}
+        redacted={isModelProfileFieldRedacted(config, viewer, profile, field)}
+        value={drafts[field.key] ?? ""}
+        onChange={(value) => {
+          setClearedSecretKeys((current) => {
+            if (!current.has(field.key)) {
+              return current;
+            }
+            const next = new Set(current);
+            next.delete(field.key);
+            return next;
+          });
+          setDrafts((current) => ({ ...current, [field.key]: value }));
+          setStatusText("");
+        }}
+        onClearRedacted={() => {
+          setClearedSecretKeys((current) => new Set(current).add(field.key));
+          setDrafts((current) => ({ ...current, [field.key]: "" }));
+          setStatusText("");
+        }}
+      />
+    </div>
+  );
+  const runTestAndSave = () => void run(async () => {
+    await validateDrafts();
+    setPendingLabel("SAVING");
+    setStatusText("Model test passed. Saving model...");
+    await onSave(name, drafts, clearedProfileSecretKeys);
+  }, "Saved", "TESTING");
+
+  if (!profile) {
+    const clampedStep = Math.max(0, Math.min(step, MODEL_PROFILE_STEP_LABELS.length - 1)) as ModelProfileStep;
+    const canContinue = editable && !pending && (
+      clampedStep === 0 ? true :
+      clampedStep === 1 ? nameReady :
+      clampedStep === 2 ? connectionReady :
+      Boolean(canSave)
+    );
+    const goNext = () => {
+      if (!canContinue) {
+        return;
+      }
+      setStatusText("");
+      onStepChange?.(Math.min(3, clampedStep + 1) as ModelProfileStep);
+    };
+    const stepTitle = clampedStep === 0
+      ? "Choose model type"
+      : clampedStep === 1
+      ? "Name the model"
+      : clampedStep === 2
+      ? "Connect the provider"
+      : "Tune advanced settings";
+    const stepDescription = clampedStep === 0
+      ? "Choose whether this model uses a custom endpoint or a built-in provider."
+      : clampedStep === 1
+      ? "Choose a name that will make sense when selecting this model for an agent."
+      : clampedStep === 2
+      ? isCustomEndpoint
+        ? "Set the endpoint, model id, and origin machine used to reach this model."
+        : "Set the provider, model id, and credential needed to test this model."
+      : "Only set these when the provider needs a custom endpoint, origin machine, or generation limits.";
+
+    return (
+      <Surface level={1} class="gsv-console-model-form gsv-console-model-wizard">
+        <div class="gsv-console-model-wizard-copy">
+          <h3>{stepTitle}</h3>
+          <p>{stepDescription}</p>
+        </div>
+        {clampedStep === 0 ? (
+          <div class="gsv-console-settings-fields">
+            {renderModelTypeField()}
+          </div>
+        ) : clampedStep === 1 ? (
+          <div class="gsv-console-settings-fields">
+            {renderNameField()}
+          </div>
+        ) : clampedStep === 2 ? (
+          <div class="gsv-console-settings-fields">
+            {newProfileConnectionFields.map(renderProfileField)}
+          </div>
+        ) : (
+          <div class="gsv-console-settings-fields">
+            {newProfileAdvancedFields.map(renderProfileField)}
+          </div>
+        )}
+        <SettingsStatus text={statusText} tone={statusTone} />
+        <div class="gsv-console-settings-actions">
+          <Button
+            variant="secondary"
+            label="BACK"
+            disabled={pending || clampedStep === 0}
+            onClick={() => {
+              setStatusText("");
+              onStepChange?.(Math.max(0, clampedStep - 1) as ModelProfileStep);
+            }}
+          />
+          <Button
+            variant="primary"
+            label={pending ? pendingLabel || "SAVING" : clampedStep === 3 ? "TEST & SAVE MODEL" : "CONTINUE"}
+            disabled={!canContinue}
+            onClick={clampedStep === 3 ? runTestAndSave : goNext}
+          />
+          <Button variant="secondary" label="CANCEL" disabled={pending} onClick={onCancel} />
+        </div>
+      </Surface>
+    );
+  }
 
   return (
     <>
       <Surface level={1} class="gsv-console-model-form">
         <div class="gsv-console-settings-fields">
-          <div class="gsv-console-settings-field">
-            <TextInput
-              label="PRESET NAME"
-              placeholder="Deep Research"
-              value={name}
-              disabled={!editable || pending}
-              status={duplicateName ? "error" : "none"}
-              message={duplicateName ? "NAME ALREADY EXISTS" : ""}
-              onChange={setName}
-            />
-          </div>
-          {MODEL_PROFILE_FIELDS.map((field) => (
-            <div
-              class={`gsv-console-settings-field${field.half ? " is-half" : ""}`}
-              key={field.key}
-            >
-              <SettingFieldInput
-                field={field}
-                disabled={!editable || pending}
-                cleared={clearedSecretKeys.has(field.key)}
-                redacted={isModelProfileFieldRedacted(config, viewer, profile, field)}
-                value={drafts[field.key] ?? ""}
-                onChange={(value) => {
-                  setClearedSecretKeys((current) => {
-                    if (!current.has(field.key)) {
-                      return current;
-                    }
-                    const next = new Set(current);
-                    next.delete(field.key);
-                    return next;
-                  });
-                  setDrafts((current) => ({ ...current, [field.key]: value }));
-                  setStatusText("");
-                }}
-                onClearRedacted={() => {
-                  setClearedSecretKeys((current) => new Set(current).add(field.key));
-                  setDrafts((current) => ({ ...current, [field.key]: "" }));
-                  setStatusText("");
-                }}
-              />
-            </div>
-          ))}
+          {renderNameField()}
+          {profileFields.primary.map(renderProfileField)}
         </div>
+        {profileFields.advanced.length > 0 ? (
+          <AdvancedSettingsFields
+            initialOpen={shouldOpenModelAdvancedFields(initialValues)}
+            resetKey={advancedResetKey}
+          >
+            {profileFields.advanced.map(renderProfileField)}
+          </AdvancedSettingsFields>
+        ) : null}
         <SettingsStatus text={statusText} tone={statusTone} />
         <div class="gsv-console-settings-actions">
           <Button
             variant="primary"
-            label={pending ? pendingLabel || "SAVING" : "TEST & SAVE PRESET"}
+            label={pending ? pendingLabel || "SAVING" : "TEST & SAVE MODEL"}
             disabled={!canSave || pending}
-            onClick={() => void run(async () => {
-              await validateDrafts();
-              setPendingLabel("SAVING");
-              setStatusText("Model test passed. Saving preset...");
-              await onSave(name, drafts, clearedProfileSecretKeys);
-            }, "Saved", "TESTING")}
+            onClick={runTestAndSave}
           />
           {profile && onMakeDefault ? (
             <Button
@@ -1038,9 +1250,9 @@ function ModelProfileForm({
           <div class="gsv-console-confirm-wrap" onClick={(event) => event.stopPropagation()}>
             <ConfirmModal
               title="CONFIRM DELETE"
-              message={`Delete model preset "${profile.name}"?`}
-              note="The preset is removed and stored secret fields for this preset are cleared."
-              confirmLabel="DELETE PRESET"
+              message={`Delete model "${profile.name}"?`}
+              note="The model is removed and stored secret fields for this model are cleared."
+              confirmLabel="DELETE MODEL"
               confirmPhrase={profile.name}
               confirmInputPlaceholder={profile.name}
               onCancel={() => setConfirmDelete(false)}
@@ -1061,7 +1273,9 @@ function SettingsFieldGroup({
   editable,
   fields,
   initialValues,
+  modelProfiles = [],
   onSave,
+  targets = [],
   validateBeforeSave,
   writeKeyForField,
 }: SettingsFieldGroupProps) {
@@ -1114,6 +1328,8 @@ function SettingsFieldGroup({
   });
   const dirty = changedEntries.length > 0;
   useUnsavedGuard(() => dirty);
+  const fieldGroups = splitModelSettingsFields(fields);
+  const advancedResetKey = initialDraftsSignature;
 
   const save = async () => {
     if (!dirty || pending) {
@@ -1152,42 +1368,53 @@ function SettingsFieldGroup({
       setPending(false);
     }
   };
+  const renderSettingField = (field: ConsoleSettingField) => (
+    <div
+      class={`gsv-console-settings-field${field.half ? " is-half" : ""}`}
+      key={field.key}
+    >
+      <SettingFieldInput
+        disabled={!editable || pending || field.kind === "readonly"}
+        field={field}
+        modelProfiles={modelProfiles}
+        targets={targets}
+        cleared={clearedSensitiveKeys.has(field.key)}
+        redacted={isFieldRedacted(config, field, writeKeyForField(field))}
+        value={drafts[field.key] ?? ""}
+        onChange={(value) => {
+          setStatusText("");
+          setClearedSensitiveKeys((current) => {
+            if (!current.has(field.key)) {
+              return current;
+            }
+            const next = new Set(current);
+            next.delete(field.key);
+            return next;
+          });
+          setDrafts((current) => ({ ...current, [field.key]: value }));
+        }}
+        onClearRedacted={() => {
+          setClearedSensitiveKeys((current) => new Set(current).add(field.key));
+          setDrafts((current) => ({ ...current, [field.key]: "" }));
+          setStatusText("");
+        }}
+      />
+    </div>
+  );
 
   return (
     <Surface level={1} class="gsv-console-settings-group">
       <div class="gsv-console-settings-fields">
-        {fields.map((field) => (
-          <div
-            class={`gsv-console-settings-field${field.half ? " is-half" : ""}`}
-            key={field.key}
-          >
-            <SettingFieldInput
-              disabled={!editable || pending || field.kind === "readonly"}
-              field={field}
-              cleared={clearedSensitiveKeys.has(field.key)}
-              redacted={isFieldRedacted(config, field, writeKeyForField(field))}
-              value={drafts[field.key] ?? ""}
-              onChange={(value) => {
-                setStatusText("");
-                setClearedSensitiveKeys((current) => {
-                  if (!current.has(field.key)) {
-                    return current;
-                  }
-                  const next = new Set(current);
-                  next.delete(field.key);
-                  return next;
-                });
-                setDrafts((current) => ({ ...current, [field.key]: value }));
-              }}
-              onClearRedacted={() => {
-                setClearedSensitiveKeys((current) => new Set(current).add(field.key));
-                setDrafts((current) => ({ ...current, [field.key]: "" }));
-                setStatusText("");
-              }}
-            />
-          </div>
-        ))}
+        {fieldGroups.primary.map(renderSettingField)}
       </div>
+      {fieldGroups.advanced.length > 0 ? (
+        <AdvancedSettingsFields
+          initialOpen={shouldOpenModelAdvancedFields(initialDrafts)}
+          resetKey={advancedResetKey}
+        >
+          {fieldGroups.advanced.map(renderSettingField)}
+        </AdvancedSettingsFields>
+      ) : null}
       <SettingsStatus text={statusText} tone={statusTone} />
       <div class="gsv-console-settings-actions">
         <Button
@@ -1211,6 +1438,104 @@ function SettingsFieldGroup({
   );
 }
 
+function AdvancedSettingsFields({
+  children,
+  initialOpen,
+  resetKey,
+}: {
+  children: ComponentChildren;
+  initialOpen: boolean;
+  resetKey: string;
+}) {
+  const [open, setOpen] = useState(initialOpen);
+
+  useEffect(() => {
+    setOpen(initialOpen);
+  }, [initialOpen, resetKey]);
+
+  return (
+    <details
+      class="gsv-console-advanced-fields"
+      open={open}
+      onToggle={(event) => setOpen((event.currentTarget as HTMLDetailsElement).open)}
+    >
+      <summary class="gsv-console-advanced-summary">
+        <span>Advanced</span>
+        <span aria-hidden="true">{open ? "HIDE" : "SHOW"}</span>
+      </summary>
+      <div class="gsv-console-settings-fields gsv-console-advanced-fields-grid">
+        {children}
+      </div>
+    </details>
+  );
+}
+
+function splitModelSettingsFields(fields: readonly ConsoleSettingField[]): {
+  primary: readonly ConsoleSettingField[];
+  advanced: readonly ConsoleSettingField[];
+} {
+  const hasAdvancedModelFields = fields.some((field) => MODEL_ADVANCED_FIELD_KEYS.has(field.key));
+  if (!hasAdvancedModelFields) {
+    return { primary: fields, advanced: [] };
+  }
+  return {
+    primary: fields.filter((field) => !MODEL_ADVANCED_FIELD_KEYS.has(field.key)),
+    advanced: fields.filter((field) => MODEL_ADVANCED_FIELD_KEYS.has(field.key)),
+  };
+}
+
+function newModelConnectionFields(
+  fields: readonly ConsoleSettingField[],
+  customEndpoint: boolean,
+): ConsoleSettingField[] {
+  const keys = customEndpoint ? CUSTOM_ENDPOINT_CONNECT_FIELD_KEYS : PROVIDER_CONNECT_FIELD_KEYS;
+  return keys.flatMap((key) => {
+    const field = fields.find((candidate) => candidate.key === key);
+    if (!field) {
+      return [];
+    }
+    return [customEndpoint && key === "config/ai/base_url"
+      ? { ...field, requirement: "required" as const }
+      : field];
+  });
+}
+
+function newModelAdvancedFields(
+  advancedFields: readonly ConsoleSettingField[],
+  connectionFields: readonly ConsoleSettingField[],
+): ConsoleSettingField[] {
+  const connectionKeys = new Set(connectionFields.map((field) => field.key));
+  return advancedFields.filter((field) => !connectionKeys.has(field.key));
+}
+
+function isCustomModelProvider(provider: string): boolean {
+  return provider.trim() === "custom";
+}
+
+function defaultBuiltInProvider(
+  defaultValues: Record<string, string>,
+  currentProvider: string,
+): string {
+  for (const candidate of [currentProvider, defaultValues["config/ai/provider"], "workers-ai"]) {
+    const value = candidate?.trim() ?? "";
+    if (value.length > 0 && !isCustomModelProvider(value)) {
+      return value;
+    }
+  }
+  return "workers-ai";
+}
+
+function shouldOpenModelAdvancedFields(values: Record<string, string>): boolean {
+  const baseUrl = values["config/ai/base_url"]?.trim() ?? "";
+  const fallbackModelProfile = values["config/ai/fallback_model_profile"]?.trim() ?? "";
+  const providerStyle = values["config/ai/provider_style"]?.trim() ?? "";
+  const transportTarget = values[MODEL_TRANSPORT_TARGET_KEY]?.trim() ?? "";
+  return baseUrl.length > 0 ||
+    fallbackModelProfile.length > 0 ||
+    (providerStyle.length > 0 && providerStyle !== "auto") ||
+    (transportTarget.length > 0 && transportTarget !== "gsv");
+}
+
 function SettingsStatus({
   text,
   tone,
@@ -1226,16 +1551,22 @@ function SettingsStatus({
 function SettingFieldInput({
   cleared = false,
   disabled,
+  excludeModelProfileId,
   field,
+  modelProfiles = [],
   redacted = false,
+  targets = [],
   value,
   onChange,
   onClearRedacted,
 }: {
   cleared?: boolean;
   disabled: boolean;
+  excludeModelProfileId?: string;
   field: ConsoleSettingField;
+  modelProfiles?: readonly ConsoleModelProfile[];
   redacted?: boolean;
+  targets?: readonly AgentToolTarget[];
   value: string;
   onChange: (value: string) => void;
   onClearRedacted?: () => void;
@@ -1250,11 +1581,50 @@ function SettingFieldInput({
     }
   }, [redacted]);
 
+  if (field.key === MODEL_TRANSPORT_TARGET_KEY) {
+    const options = transportTargetOptionsForValue(value, targets);
+    const selectedValue = normalizedTransportTargetValue(value);
+    const selectedIndex = Math.max(0, options.findIndex((option) => selectOptionValue(option) === selectedValue));
+    return (
+      <Select
+        label={field.label}
+        info={description}
+        requirement={field.requirement}
+        options={options}
+        value={selectedIndex}
+        disabled={disabled}
+        size={field.size}
+        block
+        onChange={(index) => onChange(selectOptionValue(options[index]) || "gsv")}
+      />
+    );
+  }
+
+  if (field.key === "config/ai/fallback_model_profile") {
+    const options = fallbackModelProfileOptionsForValue(value, modelProfiles, excludeModelProfileId);
+    const selectedValue = value.trim();
+    const selectedIndex = Math.max(0, options.findIndex((option) => selectOptionValue(option) === selectedValue));
+    return (
+      <Select
+        label={field.label}
+        info={description}
+        requirement={field.requirement}
+        options={options}
+        value={selectedIndex}
+        disabled={disabled}
+        size={field.size}
+        block
+        onChange={(index) => onChange(selectOptionValue(options[index]) || "")}
+      />
+    );
+  }
+
   if (field.kind === "textarea") {
     return (
       <TextArea
         label={field.label}
-        description={description}
+        info={description}
+        requirement={field.requirement}
         placeholder={placeholder}
         rows={field.rows ?? 4}
         size={field.size}
@@ -1274,7 +1644,8 @@ function SettingFieldInput({
     return (
       <Select
         label={field.label}
-        description={description}
+        info={description}
+        requirement={field.requirement}
         options={optionLabels}
         value={selectedIndex}
         disabled={disabled}
@@ -1289,7 +1660,8 @@ function SettingFieldInput({
     return (
       <Checkbox
         label={field.label}
-        description={description}
+        info={description}
+        requirement={field.requirement}
         checked={value === "true"}
         disabled={disabled}
         onChange={(checked) => onChange(checked ? "true" : "false")}
@@ -1300,8 +1672,15 @@ function SettingFieldInput({
   if (field.kind === "password" && redacted && !replacingRedacted) {
     return (
       <div class="gsv-console-secret-field">
-        <div class="gsv-console-secret-label gsv-sublabel">{field.label}</div>
-        <div class="gsv-console-secret-desc gsv-prose-sm">{description}</div>
+        <div class="gsv-console-secret-label-row">
+          <span class="gsv-console-secret-label gsv-sublabel">
+            {field.label}
+            {field.requirement && field.requirement !== "none" ? (
+              <span class="gsv-fld-req gsv-sublabel"> {field.requirement === "required" ? "· REQUIRED" : "· OPTIONAL"}</span>
+            ) : null}
+          </span>
+          <InfoTip text={description} />
+        </div>
         <div class={`gsv-console-secret-state${cleared ? " is-cleared" : ""}`}>
           <span>{cleared ? "WILL BE CLEARED" : "CONFIGURED"}</span>
           <small>{cleared ? "Save changes to remove this token." : "Stored value is hidden."}</small>
@@ -1339,7 +1718,8 @@ function SettingFieldInput({
   return (
     <TextInput
       label={field.label}
-      description={description}
+      info={description}
+      requirement={field.requirement}
       placeholder={placeholder}
       size={field.size}
       value={value}
@@ -1351,6 +1731,97 @@ function SettingFieldInput({
       onChange={onChange}
     />
   );
+}
+
+function fallbackModelProfileOptionsForValue(
+  value: string,
+  profiles: readonly ConsoleModelProfile[],
+  excludeProfileId?: string,
+): SelectOption[] {
+  const profileOptions = profiles
+    .filter((profile) => profile.id !== excludeProfileId)
+    .map((profile) => ({
+      label: profile.name,
+      value: profile.id,
+      description: modelProfileSummary(profile.values),
+    }));
+  const options: SelectOption[] = [
+    { label: "None", value: "" },
+    ...profileOptions,
+  ];
+  const selectedValue = value.trim();
+  if (!selectedValue || options.some((option) => selectOptionValue(option) === selectedValue)) {
+    return options;
+  }
+  return [
+    ...options,
+    {
+      label: selectedValue,
+      value: selectedValue,
+      description: "Stored fallback model is not currently available.",
+    },
+  ];
+}
+
+function transportTargetOptionsForValue(
+  value: string,
+  targets: readonly AgentToolTarget[],
+): SelectOption[] {
+  const targetOptions: SelectOption[] = targets
+    .filter((target) => target.id.trim().length > 0 && targetImplementsCapability(target, "net.fetch"))
+    .slice()
+    .sort((left, right) => {
+      if (left.online !== right.online) {
+        return left.online === false ? 1 : -1;
+      }
+      return (left.label || left.id).localeCompare(right.label || right.id);
+    })
+    .map((target) => {
+      const label = target.label?.trim() || target.id;
+      return {
+        group: "Machines",
+        label: target.online === false ? `${label} (offline)` : label,
+        value: target.id,
+        description: target.id,
+      };
+    });
+  const options = [GSV_TRANSPORT_TARGET_OPTION, ...targetOptions];
+  const selectedValue = normalizedTransportTargetValue(value);
+  if (options.some((option) => selectOptionValue(option) === selectedValue)) {
+    return options;
+  }
+  return [
+    ...options,
+    {
+      group: "Stored machine",
+      label: selectedValue,
+      value: selectedValue,
+      description: "Stored machine is not currently available with net.fetch.",
+    },
+  ];
+}
+
+function targetImplementsCapability(target: AgentToolTarget, capability: string): boolean {
+  return (target.implements ?? []).some((pattern) => {
+    if (pattern === "*" || pattern === capability) {
+      return true;
+    }
+    if (pattern.endsWith(".*")) {
+      return capability.startsWith(pattern.slice(0, -1));
+    }
+    return false;
+  });
+}
+
+function normalizedTransportTargetValue(value: string): string {
+  return value.trim() || "gsv";
+}
+
+function selectOptionValue(option: SelectOption | undefined): string {
+  if (!option) {
+    return "";
+  }
+  return typeof option === "string" ? option : option.value ?? option.label;
 }
 
 function isFieldRedacted(

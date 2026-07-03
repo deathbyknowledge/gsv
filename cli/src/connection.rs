@@ -263,7 +263,7 @@ impl Connection {
                 let hostname = hostname::get()
                     .map(|h| h.to_string_lossy().to_string())
                     .unwrap_or_else(|_| "unknown".to_string());
-                format!("node-{}", hostname)
+                format!("device-{}", hostname)
             } else {
                 format!("client-{}", uuid::Uuid::new_v4())
             }

@@ -5,6 +5,12 @@
   vertical-align: middle;
   margin-inline-start: 6px;
 }
+.gsv-fld-lab .gsv-infotip,
+.gsv-ta-labelrow .gsv-infotip,
+.gsv-cb-labelrow .gsv-infotip,
+.gsv-console-secret-label-row .gsv-infotip {
+  margin-inline-start: -4px;
+}
 .gsv-infotip .gsv-ibtn-ghost {
   /* nudge the circle to sit centred on the label cap-height */
   margin-top: -1px;

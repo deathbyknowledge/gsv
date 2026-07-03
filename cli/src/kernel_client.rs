@@ -64,7 +64,7 @@ impl KernelClient {
 
     pub async fn connect_driver(
         url: &str,
-        node_id: String,
+        device_id: String,
         implements: Vec<String>,
         auth: GatewayAuth,
         on_frame: impl Fn(Frame) + Send + Sync + 'static,
@@ -74,7 +74,7 @@ impl KernelClient {
             ConnectOptions {
                 url: url.to_string(),
                 role: "driver".to_string(),
-                client_id: Some(node_id),
+                client_id: Some(device_id),
                 implements: Some(implements),
                 auth_username: auth.username,
                 auth_password: auth.password,

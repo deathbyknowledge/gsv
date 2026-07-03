@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { ConfigStore, SYSTEM_CONFIG_DEFAULTS } from "./config";
+import {
+  DEFAULT_WORKERS_AI_FALLBACK_MODEL,
+  DEFAULT_WORKERS_AI_FALLBACK_PROFILE_ID,
+  DEFAULT_WORKERS_AI_MODEL,
+} from "../inference/default-models";
 
 type Row = Record<string, unknown>;
 
@@ -123,6 +128,24 @@ describe("ConfigStore", () => {
     expect(values.get("config/ai/model")).toBe("claude-sonnet-4-20250514");
     expect(values.get("config/ai/generation/streaming")).toBe("auto");
     expect(values.get("config/ai/context.d/00-gsv.md")).toContain("[Process Event]:");
+  });
+
+  it("ships a Workers AI primary model and root fallback profile", () => {
+    const store = new ConfigStore(createMockSql());
+    const rootProfiles = JSON.parse(store.get("users/0/ai/model_profiles") ?? "{}") as {
+      profiles?: Array<{ id?: string; values?: Record<string, string> }>;
+    };
+    const fallbackProfile = rootProfiles.profiles?.find((profile) =>
+      profile.id === DEFAULT_WORKERS_AI_FALLBACK_PROFILE_ID
+    );
+
+    expect(store.get("config/ai/provider")).toBe("workers-ai");
+    expect(store.get("config/ai/model")).toBe(DEFAULT_WORKERS_AI_MODEL);
+    expect(store.get("config/ai/fallback_model_profile")).toBe(DEFAULT_WORKERS_AI_FALLBACK_PROFILE_ID);
+    expect(fallbackProfile?.values).toMatchObject({
+      "config/ai/provider": "workers-ai",
+      "config/ai/model": DEFAULT_WORKERS_AI_FALLBACK_MODEL,
+    });
   });
 
   it("list(prefix with trailing slash) behaves the same", () => {

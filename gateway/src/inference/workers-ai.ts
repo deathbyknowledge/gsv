@@ -16,11 +16,12 @@ import type {
 } from "@earendil-works/pi-ai";
 import { calculateCost, createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
+import { DEFAULT_WORKERS_AI_MODEL } from "./default-models";
 import { TimeoutError, isTimeoutError, withTimeout } from "./timeout";
 
 export const WORKERS_AI_PROVIDER = "workers-ai";
 export const WORKERS_AI_PROVIDER_ALIAS = "workersai";
-export const DEFAULT_WORKERS_AI_MODEL = "@cf/nvidia/nemotron-3-120b-a12b";
+export { DEFAULT_WORKERS_AI_MODEL };
 
 const WORKERS_AI_API = "workers-ai-binding";
 const PI_WORKERS_AI_PROVIDER = "cloudflare-workers-ai";
@@ -59,6 +60,7 @@ type WorkersAiRunInput = AiTextGenerationInput & {
   chat_template_kwargs?: {
     enable_thinking?: boolean;
     clear_thinking?: boolean;
+    thinking?: boolean;
   };
 };
 
@@ -997,7 +999,14 @@ export function buildWorkersAiInput(
     input.parallel_tool_calls = true;
   }
 
-  if (request.reasoning) {
+  if (usesWorkersAiThinkingFlag(request.modelName)) {
+    if (request.reasoning) {
+      input.reasoning_effort = request.reasoning;
+    }
+    input.chat_template_kwargs = {
+      thinking: Boolean(request.reasoning),
+    };
+  } else if (request.reasoning) {
     input.reasoning_effort = request.reasoning;
     input.chat_template_kwargs = {
       enable_thinking: true,
@@ -1010,6 +1019,10 @@ export function buildWorkersAiInput(
   }
 
   return input;
+}
+
+function usesWorkersAiThinkingFlag(modelName: string): boolean {
+  return modelName.trim().toLowerCase() === "@cf/moonshotai/kimi-k2.6";
 }
 
 export function buildWorkersAiRunOptions(

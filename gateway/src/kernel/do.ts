@@ -24,10 +24,16 @@ import {
 } from "@humansandmachines/gsv/protocol";
 import type { ProcHilRequest } from "../syscalls/proc";
 import type { SyscallName } from "../syscalls";
+import type { NetFetchArgs, NetFetchResult } from "../syscalls/net";
 import type { PkgPublicListResult } from "@humansandmachines/gsv/protocol";
 import type {
   AdapterOutboundMessage,
 } from "../adapter-interface";
+import type {
+  SysCliDownloadsResult,
+  SysUpdateArgs,
+  SysUpdateResult,
+} from "@humansandmachines/gsv/protocol";
 import { AuthStore } from "./auth-store";
 import { CapabilityStore, hasCapability } from "./capabilities";
 import { ConfigStore } from "./config";
@@ -64,6 +70,10 @@ import { handleSysSetup as handleKernelSetup } from "./sys/setup";
 import { buildAppRunnerName } from "../protocol/app-session";
 import { handleSysSetupAssist } from "./sys/setup-assist";
 import {
+  handleSysUpdate as handleSysUpdateDirect,
+  refreshCliDownloads,
+} from "./sys/update";
+import {
   completeOAuthCallback as completeOAuthCallbackFlow,
   type OAuthCallbackInput,
   type OAuthCallbackResult,
@@ -97,6 +107,7 @@ import { canReadRepo, canWriteRepo } from "./repo";
 import { handleProcSpawn } from "./proc-handlers";
 import { ensureDefaultConversationExecutor } from "./agents";
 import { handleShellExec } from "../drivers/native/shell";
+import { getVisibleTarget, targetCanHandle } from "./targets";
 import type {
   ScheduleRecord,
   ScheduleRunResult,
@@ -107,6 +118,10 @@ import { runKernelSqlMigrations } from "./schema/migrations";
 
 const SERVER_VERSION = "0.3.1";
 const KERNEL_BINARY_DEVICE_ID = "__gsv_kernel__";
+const CLI_DOWNLOADS_REFRESHED_VERSION_KEY = "config/downloads/cli/refreshed_for_version";
+const CLI_DOWNLOADS_REFRESH_ATTEMPT_KEY = "config/downloads/cli/refresh_attempt_at";
+const CLI_DOWNLOADS_REFRESHED_AT_KEY = "config/downloads/cli/refreshed_at";
+const CLI_DOWNLOADS_REFRESH_RETRY_MS = 15 * 60 * 1000;
 
 type ConnectionState = {
   step: "pending" | "connected";
@@ -134,6 +149,11 @@ type ProcSendData = {
   status?: string;
   runId?: string;
   queued?: boolean;
+};
+
+type ProcessNetFetchOptions = {
+  ttlMs?: number;
+  internalPurpose?: "model-transport";
 };
 
 type ResolvePackageAppRpcInput = {
@@ -211,6 +231,7 @@ export class Kernel extends Host<Env> {
   private readonly binaryRoutes = new Map<number, BinaryRoute>();
   private readonly binaryRoutesByRequest = new Map<string, Set<number>>();
   private readonly pendingBinaryStreams = new Map<number, PendingBinaryStream>();
+  private cliDownloadsRefresh: Promise<void> | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -437,6 +458,66 @@ export class Kernel extends Host<Env> {
     }
 
     return null;
+  }
+
+  async requestProcessNetFetch(
+    processId: string,
+    target: string,
+    args: NetFetchArgs,
+    options: ProcessNetFetchOptions = {},
+  ): Promise<NetFetchResult> {
+    return await this.requestProcessDevice(processId, {
+      target,
+      call: "net.fetch",
+      args,
+      ttlMs: options.ttlMs,
+      skipCapabilityCheck: options.internalPurpose === "model-transport",
+    }) as NetFetchResult;
+  }
+
+  private async requestProcessDevice(
+    processId: string,
+    request: {
+      target: string;
+      call: SyscallName;
+      args: unknown;
+      ttlMs?: number;
+      skipCapabilityCheck?: boolean;
+    },
+  ): Promise<unknown> {
+    await this.ready;
+    const ctx = this.buildProcessContext(processId);
+    if (!ctx) {
+      throw new Error("Unknown process");
+    }
+    if (
+      !request.skipCapabilityCheck &&
+      !isInternalOnlySyscall(request.call) &&
+      !hasCapability(ctx.identity!.capabilities, request.call)
+    ) {
+      throw new Error(`Permission denied: ${request.call}`);
+    }
+
+    const target = getVisibleTarget(ctx, request.target, { includeOffline: true });
+    if (!target) {
+      throw new Error(`Access denied to device: ${request.target}`);
+    }
+    if (target.providerId !== "device" || target.route.kind !== "connection") {
+      throw new Error(`Target does not support device requests: ${request.target}`);
+    }
+    if (!target.online) {
+      throw new Error(`Device offline: ${target.targetId}`);
+    }
+    if (!targetCanHandle(target, request.call)) {
+      throw new Error(`Device ${target.targetId} does not implement ${request.call}`);
+    }
+
+    return await this.requestDevice(
+      target.targetId,
+      request.call,
+      request.args,
+      request.ttlMs,
+    );
   }
 
   /**
@@ -1057,9 +1138,33 @@ export class Kernel extends Host<Env> {
   }
 
   private async handleProcessReq(processId: string, frame: RequestFrame): Promise<ResponseFrame | null> {
+    const ctx = this.buildProcessContext(processId);
+    if (!ctx) {
+      return errFrame(frame.id, 404, "Unknown process");
+    }
+
+    if (
+      !isInternalOnlySyscall(frame.call) &&
+      !hasCapability(ctx.identity!.capabilities, frame.call)
+    ) {
+      return errFrame(frame.id, 403, `Permission denied: ${frame.call}`);
+    }
+
+    const origin: RouteOrigin = { type: "process", id: processId };
+    const result = await dispatch(frame, origin, ctx, this.buildDispatchDeps());
+
+    if (result.handled) {
+      this.applyPostDispatchEffects(frame, result.response);
+      return result.response;
+    }
+
+    return null;
+  }
+
+  private buildProcessContext(processId: string): KernelContext | null {
     const identity = this.procs.getIdentity(processId);
     if (!identity) {
-      return errFrame(frame.id, 404, "Unknown process");
+      return null;
     }
 
     const connIdentity: ConnectionIdentity = {
@@ -1068,14 +1173,7 @@ export class Kernel extends Host<Env> {
       capabilities: this.caps.resolve(identity.gids),
     };
 
-    if (
-      !isInternalOnlySyscall(frame.call) &&
-      !hasCapability(connIdentity.capabilities, frame.call)
-    ) {
-      return errFrame(frame.id, 403, `Permission denied: ${frame.call}`);
-    }
-
-    const ctx: KernelContext = {
+    return {
       env: this.env,
       auth: this.auth,
       caps: this.caps,
@@ -1111,16 +1209,6 @@ export class Kernel extends Host<Env> {
       refreshMcpServerConnection: this.refreshMcpServerConnection.bind(this),
       callMcpTool: this.callMcpTool.bind(this),
     };
-
-    const origin: RouteOrigin = { type: "process", id: processId };
-    const result = await dispatch(frame, origin, ctx, this.buildDispatchDeps());
-
-    if (result.handled) {
-      this.applyPostDispatchEffects(frame, result.response);
-      return result.response;
-    }
-
-    return null;
   }
 
   private async handleServiceReq(frame: RequestFrame): Promise<ResponseFrame> {
@@ -1246,6 +1334,7 @@ export class Kernel extends Host<Env> {
       receiveDeviceBinaryStream: this.receiveDeviceBinaryStream.bind(this),
       receiveBinaryStream: this.receiveBinaryStream.bind(this),
       sendDeviceBinaryFrame: this.sendDeviceBinaryFrame.bind(this),
+      handleSysUpdate: this.handleSysUpdate.bind(this),
     };
   }
 
@@ -2156,9 +2245,87 @@ export class Kernel extends Host<Env> {
       const freshIdentity = outcome.identity.process;
       await this.ensureUserDefaultExecutor(ctx, freshIdentity);
       this.reconcileOwnedIdentities(freshIdentity.uid);
+      this.scheduleCliDownloadsRefreshForVersion();
     }
 
     this.sendOk(connection, frame.id, outcome.result);
+  }
+
+  private scheduleCliDownloadsRefreshForVersion(): void {
+    if (!this.env.STORAGE) {
+      return;
+    }
+    if (this.config.get(CLI_DOWNLOADS_REFRESHED_VERSION_KEY) === SERVER_VERSION) {
+      return;
+    }
+    if (this.cliDownloadsRefresh) {
+      return;
+    }
+
+    const lastAttemptAt = Number(this.config.get(CLI_DOWNLOADS_REFRESH_ATTEMPT_KEY) ?? "0");
+    if (Number.isFinite(lastAttemptAt) && Date.now() - lastAttemptAt < CLI_DOWNLOADS_REFRESH_RETRY_MS) {
+      return;
+    }
+
+    this.config.set(CLI_DOWNLOADS_REFRESH_ATTEMPT_KEY, String(Date.now()));
+    const refresh = this.withCliDownloadsRefreshSlot(() => this.refreshCliDownloadsForVersion());
+    this.ctx.waitUntil(refresh);
+  }
+
+  private async handleSysUpdate(
+    args: SysUpdateArgs | undefined,
+    ctx: KernelContext,
+  ): Promise<SysUpdateResult> {
+    const result = await this.withCliDownloadsRefreshSlot(
+      () => handleSysUpdateDirect(args, ctx),
+      { waitForExisting: true },
+    );
+    this.recordCliDownloadsRefresh(result.cli);
+    return result;
+  }
+
+  private async withCliDownloadsRefreshSlot<T>(
+    run: () => Promise<T>,
+    options: { waitForExisting?: boolean } = {},
+  ): Promise<T> {
+    const previousRefresh = options.waitForExisting ? this.cliDownloadsRefresh : null;
+    let releaseSlot: () => void = () => {};
+    const slot = new Promise<void>((resolve) => {
+      releaseSlot = resolve;
+    });
+    const trackedSlot = slot.finally(() => {
+      if (this.cliDownloadsRefresh === trackedSlot) {
+        this.cliDownloadsRefresh = null;
+      }
+    });
+    this.cliDownloadsRefresh = trackedSlot;
+
+    try {
+      if (previousRefresh) {
+        await previousRefresh;
+      }
+      return await run();
+    } finally {
+      releaseSlot();
+    }
+  }
+
+  private recordCliDownloadsRefresh(result: SysCliDownloadsResult): void {
+    this.config.set(CLI_DOWNLOADS_REFRESHED_VERSION_KEY, SERVER_VERSION);
+    this.config.set(CLI_DOWNLOADS_REFRESHED_AT_KEY, String(result.refreshedAt));
+  }
+
+  private async refreshCliDownloadsForVersion(): Promise<void> {
+    try {
+      const result = await refreshCliDownloads(this.env.STORAGE);
+      this.recordCliDownloadsRefresh(result);
+      console.info(
+        `[Kernel] refreshed hosted CLI downloads for ${SERVER_VERSION} channels=${result.mirroredChannels.join(",")} default=${result.defaultChannel}`,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[Kernel] hosted CLI refresh for ${SERVER_VERSION} failed: ${message}`);
+    }
   }
 
   private async handleSysSetup(

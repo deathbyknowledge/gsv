@@ -12,6 +12,7 @@ export type { ToolDefinition } from "@humansandmachines/gsv/protocol";
 type SyscallDomain =
   | "fs"
   | "shell"
+  | "net"
   | "app"
   | "codemode"
   | "proc"
@@ -32,9 +33,10 @@ function domainOf(syscall: SyscallName): SyscallDomain {
 /**
  * Domains that support device routing via the `target` field.
  * `shell` always requires a device target. `fs` can be native (R2) or device.
+ * `net` can exit either from the gateway Worker or from a connected device.
  * `proc` is kernel-internal (no device routing).
  */
-const ROUTABLE_DOMAINS: SyscallDomain[] = ["fs", "shell"];
+const ROUTABLE_DOMAINS: SyscallDomain[] = ["fs", "shell", "net"];
 const TARGET_SCHEMA_INLINE_LIMIT = 10;
 
 /**

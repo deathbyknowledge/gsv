@@ -251,6 +251,22 @@ export type SysBootstrapArgs = {
 
 export type SysCliReleaseChannel = "stable" | "dev";
 
+export type SysCliDownloadsResult = {
+  defaultChannel: SysCliReleaseChannel;
+  mirroredChannels: SysCliReleaseChannel[];
+  assets: string[];
+  refreshedAt: number;
+};
+
+export type SysUpdateArgs = {
+  channel?: SysCliReleaseChannel;
+};
+
+export type SysUpdateResult = {
+  updatedAt: number;
+  cli: SysCliDownloadsResult;
+};
+
 export type SysBootstrapResult = {
   repo: string;
   remoteUrl: string;
@@ -264,11 +280,7 @@ export type SysBootstrapResult = {
     head: string | null;
     changed: boolean;
   };
-  cli: {
-    defaultChannel: SysCliReleaseChannel;
-    mirroredChannels: SysCliReleaseChannel[];
-    assets: string[];
-  };
+  cli: SysCliDownloadsResult;
   packages: Array<{
     packageId: string;
     name: string;
@@ -334,6 +346,7 @@ export type SysDeviceSummary = {
   ownerUsername: string | null;
   label: string;
   description: string;
+  implements: string[];
   platform: string;
   version: string;
   online: boolean;
@@ -349,7 +362,6 @@ export type SysDeviceGetArgs = {
 };
 
 export type SysDeviceDetail = SysDeviceSummary & {
-  implements: string[];
   firstSeenAt: number;
   connectedAt: number | null;
   disconnectedAt: number | null;

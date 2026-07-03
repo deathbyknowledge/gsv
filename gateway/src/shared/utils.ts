@@ -3,6 +3,7 @@ import { Kernel } from "../kernel/do";
 import { env } from "cloudflare:workers";
 import { Process } from "../process/do";
 import type { Frame } from "../protocol/frames";
+import type { NetFetchArgs, NetFetchResult } from "../syscalls/net";
 
 export const isWebSocketRequest = (request: Request) =>
   request.method === "GET" && request.headers.get("upgrade") === "websocket";
@@ -10,6 +11,11 @@ export const isWebSocketRequest = (request: Request) =>
 // don't break the ✨illusion✨
 type ProcessPtr = DurableObjectStub<Process>;
 type KernelPtr = DurableObjectStub<Kernel>;
+
+export type RequestProcessNetFetchOptions = {
+  ttlMs?: number;
+  internalPurpose?: "model-transport";
+};
 
 export async function getKernelPtr(): Promise<KernelPtr> {
   return await getAgentByName(env.KERNEL, "singleton");
@@ -26,6 +32,17 @@ export async function sendFrameToKernel(
   const kernel = await getKernelPtr();
   return kernel.recvFrame(processId, frame);
 }
+
+export async function requestProcessNetFetch(
+  processId: string,
+  target: string,
+  args: NetFetchArgs,
+  options: RequestProcessNetFetchOptions = {},
+): Promise<NetFetchResult> {
+  const kernel = await getKernelPtr();
+  return kernel.requestProcessNetFetch(processId, target, args, options);
+}
+
 export async function sendFrameToProcess(
   pid: string,
   frame: Frame,

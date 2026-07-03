@@ -19,6 +19,12 @@ import {
   GSV_RUNTIME_FACTS,
   GSV_TARGET_CONTEXT,
 } from "../prompts/system";
+import {
+  DEFAULT_WORKERS_AI_FALLBACK_MODEL,
+  DEFAULT_WORKERS_AI_FALLBACK_PROFILE_ID,
+  DEFAULT_WORKERS_AI_FALLBACK_PROFILE_NAME,
+  DEFAULT_WORKERS_AI_MODEL,
+} from "../inference/default-models";
 
 // =============================================================================
 // System config defaults — every field documented.
@@ -37,12 +43,37 @@ const WORKER_TOOL_APPROVAL_POLICY = JSON.stringify({
   ],
 });
 
+const DEFAULT_ROOT_MODEL_PROFILES = JSON.stringify({
+  version: 1,
+  profiles: [{
+    id: DEFAULT_WORKERS_AI_FALLBACK_PROFILE_ID,
+    name: DEFAULT_WORKERS_AI_FALLBACK_PROFILE_NAME,
+    values: {
+      "config/ai/provider": "workers-ai",
+      "config/ai/model": DEFAULT_WORKERS_AI_FALLBACK_MODEL,
+      "config/ai/provider_style": "auto",
+      "config/ai/transport_target": "gsv",
+      "config/ai/reasoning": "medium",
+      "config/ai/max_tokens": "8192",
+      "config/ai/max_context_bytes": "32768",
+    },
+    createdAt: 1,
+    updatedAt: 1,
+  }],
+});
+
 export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   // -- AI / LLM ---------------------------------------------------------------
   // The LLM provider to use (workers-ai, anthropic, openai, google, mistral, etc.)
   "config/ai/provider": "workers-ai",
   // The model identifier for the LLM provider
-  "config/ai/model": "@cf/nvidia/nemotron-3-120b-a12b",
+  "config/ai/model": DEFAULT_WORKERS_AI_MODEL,
+  // Optional custom provider base URL. Leave empty to use the built-in provider endpoint.
+  "config/ai/base_url": "",
+  // Optional custom provider API style: auto, openai-chat-completions, openai-responses, or anthropic-messages.
+  "config/ai/provider_style": "auto",
+  // Where custom provider HTTP requests exit: gsv/worker or a connected device id.
+  "config/ai/transport_target": "gsv",
   // API key for the LLM provider. Empty is valid for local providers such as Workers AI.
   "config/ai/api_key": "",
   // Reasoning effort/mode hint passed to the model (off, minimal, low, medium, high, xhigh).
@@ -66,6 +97,10 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   "config/ai/generation/timeout_ms": "180000",
   // Generation streaming transport: auto streams when supported, off forces final-output only.
   "config/ai/generation/streaming": "auto",
+  // Saved model profile id used when the primary text model fails.
+  "config/ai/fallback_model_profile": DEFAULT_WORKERS_AI_FALLBACK_PROFILE_ID,
+  // Root-owned shipped model profiles referenced by global defaults.
+  "users/0/ai/model_profiles": DEFAULT_ROOT_MODEL_PROFILES,
   // Default media model stack used by process attachments and AI syscalls.
   "config/ai/image/read/provider": "workers-ai",
   "config/ai/image/read/model": "@cf/google/gemma-4-26b-a4b-it",

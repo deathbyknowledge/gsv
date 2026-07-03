@@ -4,6 +4,7 @@ import "./Checkbox.css";
 
 export type CheckboxSize = "small" | "medium" | "large";
 export type CheckboxStatus = "none" | "error" | "success" | "info" | "warning";
+export type CheckboxRequirement = "none" | "required" | "optional";
 
 export interface CheckboxProps {
   checked?: boolean;
@@ -13,6 +14,7 @@ export interface CheckboxProps {
   label?: string;
   info?: string;
   description?: string;
+  requirement?: CheckboxRequirement;
   status?: CheckboxStatus;
   message?: string;
   onChange?: (checked: boolean) => void;
@@ -34,6 +36,7 @@ export function Checkbox(props: CheckboxProps) {
     label = "RUN IN BACKGROUND",
     info = "",
     description = "",
+    requirement = "none",
     status = "none",
     message = "",
     onChange,
@@ -59,6 +62,8 @@ export function Checkbox(props: CheckboxProps) {
   const rawStat = status && status !== "none" ? status : "";
   const statKey = rawStat === "warning" ? "warn" : rawStat;
   const hasStat = !!rawStat && message.length > 0;
+  const req = requirement && requirement !== "none" ? requirement : "";
+  const fldReq = req === "required" ? "· REQUIRED" : "· OPTIONAL";
 
   const rootClass = `gsv-cb ${SIZE_CLASS[size]}${on ? " is-on" : ""}${disabled ? " is-disabled" : ""}`;
   const fldClass = `gsv-cb-fld${hasStat ? ` is-${statKey}` : ""}`;
@@ -89,7 +94,12 @@ export function Checkbox(props: CheckboxProps) {
             {on ? <span class="gsv-cb-fill gsv-cb-on" /> : null}
             {indeterminate ? <span class="gsv-cb-fill gsv-cb-dash" /> : null}
           </span>
-          {label.length > 0 ? <span class="gsv-cb-label">{label}</span> : null}
+          {label.length > 0 ? (
+            <span class="gsv-cb-label">
+              {label}
+              {req ? <span class="gsv-fld-req gsv-sublabel"> {fldReq}</span> : null}
+            </span>
+          ) : null}
         </label>
         {info ? <InfoTip text={info} /> : null}
       </span>

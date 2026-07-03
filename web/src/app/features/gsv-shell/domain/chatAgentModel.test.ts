@@ -301,6 +301,46 @@ describe("shell chat agent model", () => {
     expect(agent?.reasoningLabel).toBe("LOW");
   });
 
+  it("shows owner model presets selected on an agent", () => {
+    const activeProcess = process({ pid: "proc:scout", uid: 1001, username: "scout" });
+    const agent = buildShellChatAgent({
+      activeProcess,
+      accounts: [
+        account({ uid: 1000, username: "sam", relation: "self", displayName: "Sam" }),
+        account({ uid: 1001, username: "scout", relation: "agent", displayName: "Scout" }),
+      ],
+      chatProcesses: [activeProcess],
+      config: [
+        { key: "config/ai/model", value: "system-model", redacted: false },
+        { key: "users/1001/ai/model_profile", value: "fast-stack", redacted: false },
+        {
+          key: "users/1000/ai/model_profiles",
+          value: JSON.stringify({
+            profiles: [{
+              id: "fast-stack",
+              name: "Fast Stack",
+              values: {
+                "config/ai/provider": "custom",
+                "config/ai/model": "zai-glm-4.7",
+              },
+              createdAt: 1,
+              updatedAt: 2,
+            }],
+          }),
+          redacted: false,
+        },
+      ],
+      consoleProcesses: [],
+      sessionUsername: "sam",
+      statusLabel: "idle",
+    });
+
+    expect(agent?.modelLabel).toBe("Fast Stack");
+    expect(agent?.modelValue).toBe("model-profile:fast-stack");
+    expect(agent?.modelOptions).toContain("Fast Stack");
+    expect(agent?.modelOptions).not.toContain("model-profile:fast-stack");
+  });
+
   it("exposes viewer model profiles instead of raw model config fields", () => {
     const agent = buildShellChatAgent({
       activeProcess: null,

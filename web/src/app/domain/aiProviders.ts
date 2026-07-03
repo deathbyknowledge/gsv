@@ -7,9 +7,11 @@ export type AiProviderOption = {
 // its current provider/model/API key fields.
 export const AI_PROVIDER_OPTIONS: ReadonlyArray<AiProviderOption> = [
   { value: "workers-ai", label: "Workers AI (gateway binding)" },
+  { value: "custom", label: "Custom endpoint" },
   { value: "ant-ling", label: "Ant Ling" },
   { value: "anthropic", label: "Anthropic" },
   { value: "cerebras", label: "Cerebras" },
+  { value: "cloudflare-ai-gateway", label: "Cloudflare AI Gateway" },
   { value: "deepseek", label: "DeepSeek" },
   { value: "fireworks", label: "Fireworks AI" },
   { value: "github-copilot", label: "GitHub Copilot" },

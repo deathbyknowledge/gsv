@@ -46,6 +46,10 @@ function visibleAssistantText(messages: Array<{ role: string; content: string }>
     .join("\n");
 }
 
+function openAiChatSseChunk(payload: Record<string, unknown>): string {
+  return `data: ${JSON.stringify(payload)}\n\n`;
+}
+
 function testUsage(input = 0, output = 0) {
   return {
     input,
@@ -377,7 +381,7 @@ describe("Process DO — mechanical", () => {
         key: "config/ai/model",
         value: "gpt-4.2",
       })) as ResponseOkFrame;
-      expect((patchResponse.data as any).config.profile).toBeUndefined();
+      expect((patchResponse.data as any).config.profile).toMatchObject({ id: "fast", name: "Fast" });
       expect((patchResponse.data as any).config.values["config/ai/model"]).toBe("gpt-4.2");
 
       const clearResponse = await stub.recvFrame(makeReq("proc.ai.config.set", { clear: true })) as ResponseOkFrame;
@@ -405,6 +409,26 @@ describe("Process DO — mechanical", () => {
 
       const getResponse = await stub.recvFrame(makeReq("proc.ai.config.get", { redacted: false })) as ResponseOkFrame;
       expect((getResponse.data as any).config).toMatchObject({
+        profile: { id: "fast", name: "Fast" },
+        values: {},
+      });
+
+      const patchResponse = await stub.recvFrame(makeReq("proc.ai.config.set", {
+        key: "config/ai/reasoning",
+        value: "high",
+      })) as ResponseOkFrame;
+      expect((patchResponse.data as any).config).toMatchObject({
+        profile: { id: "fast", name: "Fast" },
+        values: {
+          "config/ai/reasoning": "high",
+        },
+      });
+
+      const clearFieldResponse = await stub.recvFrame(makeReq("proc.ai.config.set", {
+        key: "config/ai/reasoning",
+        value: "",
+      })) as ResponseOkFrame;
+      expect((clearFieldResponse.data as any).config).toMatchObject({
         profile: { id: "fast", name: "Fast" },
         values: {},
       });
@@ -1297,6 +1321,364 @@ describe("Process DO — mechanical", () => {
       });
     });
 
+    it("switches to a fallback model after an explicit provider error response", async () => {
+      const pid = "mech-chat-provider-error-fallback";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const emitted: Array<{ signal: string; payload: unknown }> = [];
+        const calls: Array<{ provider: string; model: string }> = [];
+        process.sendSignal = async (signal: string, payload: unknown) => {
+          emitted.push({ signal, payload });
+        };
+        process.generation = {
+          async generate(request: any) {
+            calls.push({
+              provider: request.config.provider,
+              model: request.config.model,
+            });
+            if (calls.length === 1) {
+              return {
+                role: "assistant",
+                content: [],
+                api: "test",
+                provider: request.config.provider,
+                model: request.config.model,
+                stopReason: "error",
+                errorMessage: "Custom provider HTTP 403: not authenticated",
+                usage: testUsage(1, 0),
+                timestamp: Date.now(),
+              };
+            }
+            return {
+              role: "assistant",
+              content: [{ type: "text", text: "fallback pong" }],
+              api: "test",
+              provider: request.config.provider,
+              model: request.config.model,
+              stopReason: "stop",
+              usage: testUsage(2, 3),
+              timestamp: Date.now(),
+            };
+          },
+          async generateText() {
+            return "unused";
+          },
+        };
+
+        process.store.appendMessage("user", "fail over please");
+        process.currentRun = {
+          runId: "run-chat-provider-error-fallback",
+          queued: false,
+          conversationId: "default",
+          config: {
+            profile: "task",
+            provider: "custom",
+            model: "zai-glm-4.7",
+            apiKey: "bad-key",
+            reasoning: "high",
+            maxTokens: 8192,
+            contextWindowTokens: 256000,
+            contextWindowSource: "config",
+            maxContextBytes: 32768,
+            fallbacks: [{
+              profileId: "safe-stack",
+              profileName: "Safe Stack",
+              provider: "openrouter",
+              model: "openai/gpt-5-mini",
+              apiKey: "fallback-key",
+              providerStyle: "openai-chat-completions",
+              transportTarget: "gsv",
+              maxTokens: 4096,
+              contextWindowTokens: 128000,
+              contextWindowSource: "config",
+              generationTimeoutMs: 180000,
+              generationStreaming: "auto",
+            }],
+          },
+          tools: [],
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+        await process.continueAgentLoop("run-chat-provider-error-fallback");
+        return {
+          calls,
+          emitted,
+          messages: process.store.getMessages(),
+        };
+      });
+
+      expect(result.calls).toEqual([
+        { provider: "custom", model: "zai-glm-4.7" },
+        { provider: "openrouter", model: "openai/gpt-5-mini" },
+      ]);
+      expect(result.messages.map((message: any) => [message.role, message.content])).toEqual([
+        ["user", "fail over please"],
+        ["assistant", "fallback pong"],
+      ]);
+      const assistant = result.messages.find((message: any) => message.role === "assistant");
+      expect(JSON.parse(assistant.metadata)).toMatchObject({
+        fallback: {
+          used: true,
+          from: { provider: "custom", model: "zai-glm-4.7" },
+          to: { provider: "openrouter", model: "openai/gpt-5-mini" },
+          reason: "Custom provider HTTP 403: not authenticated",
+        },
+      });
+      const retry = result.emitted.find((entry) => entry.signal === "proc.run.retrying")?.payload as any;
+      expect(retry).toMatchObject({
+        pid,
+        runId: "run-chat-provider-error-fallback",
+        conversationId: "default",
+        reason: "Custom provider HTTP 403: not authenticated",
+        fallback: {
+          from: { provider: "custom", model: "zai-glm-4.7" },
+          to: { provider: "openrouter", model: "openai/gpt-5-mini" },
+        },
+      });
+      const finished = result.emitted.find((entry) => entry.signal === "proc.run.finished")?.payload as any;
+      expect(finished).toMatchObject({
+        status: "ok",
+        reason: "turn.complete",
+      });
+    });
+
+    it("reapplies context policy after switching to a smaller fallback model", async () => {
+      const pid = "mech-chat-fallback-auto-compact";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const emitted: Array<{ signal: string; payload: unknown }> = [];
+        const calls: Array<{ provider: string; model: string; context: string }> = [];
+        const compactionConfigs: Array<{ provider: string; model: string }> = [];
+        process.sendSignal = async (signal: string, payload: unknown) => {
+          emitted.push({ signal, payload });
+        };
+        process.generation = {
+          async generate(request: any) {
+            calls.push({
+              provider: request.config.provider,
+              model: request.config.model,
+              context: JSON.stringify(request.context),
+            });
+            if (calls.length === 1) {
+              return {
+                role: "assistant",
+                content: [],
+                api: "test",
+                provider: request.config.provider,
+                model: request.config.model,
+                stopReason: "error",
+                errorMessage: "Custom provider HTTP 403: not authenticated",
+                usage: testUsage(1, 0),
+                timestamp: Date.now(),
+              };
+            }
+            return {
+              role: "assistant",
+              content: [{ type: "text", text: "fallback after compaction" }],
+              api: "test",
+              provider: request.config.provider,
+              model: request.config.model,
+              stopReason: "stop",
+              usage: testUsage(20, 3),
+              timestamp: Date.now(),
+            };
+          },
+          async generateText(request: any) {
+            compactionConfigs.push({
+              provider: request.config.provider,
+              model: request.config.model,
+            });
+            expect(JSON.stringify(request.context)).toContain("old context A");
+            return "Fallback compact summary.";
+          },
+        };
+
+        process.store.appendMessage("user", `old context A ${"x".repeat(200)}`);
+        process.store.appendMessage("assistant", `old context B ${"y".repeat(200)}`);
+        process.store.appendMessage("user", "Context that must stay live.");
+        process.store.setValue("conversationPolicy:default", JSON.stringify({
+          conversationId: "default",
+          overflow: "auto-compact",
+          compactAtPressure: 0.01,
+          keepLast: 1,
+          updatedAt: Date.now(),
+        }));
+        process.currentRun = {
+          runId: "run-chat-fallback-auto-compact",
+          queued: false,
+          conversationId: "default",
+          config: {
+            profile: "task",
+            provider: "custom",
+            model: "large-primary",
+            apiKey: "bad-key",
+            reasoning: "off",
+            maxTokens: 100,
+            contextWindowTokens: 100000,
+            contextWindowSource: "config",
+            maxContextBytes: 32768,
+            fallbacks: [{
+              profileId: "small-fallback",
+              profileName: "Small Fallback",
+              provider: "openrouter",
+              model: "small-fallback",
+              apiKey: "fallback-key",
+              providerStyle: "openai-chat-completions",
+              transportTarget: "gsv",
+              maxTokens: 100,
+              contextWindowTokens: 1000,
+              contextWindowSource: "config",
+              generationTimeoutMs: 180000,
+              generationStreaming: "auto",
+            }],
+          },
+          tools: [],
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+        await process.continueAgentLoop("run-chat-fallback-auto-compact");
+        return {
+          calls,
+          compactionConfigs,
+          emitted,
+          messages: process.store.getMessages(),
+          segments: process.store.listConversationSegments(),
+        };
+      });
+
+      expect(result.calls).toHaveLength(2);
+      expect(result.calls[0]).toMatchObject({ provider: "custom", model: "large-primary" });
+      expect(result.calls[0].context).toContain("old context A");
+      expect(result.calls[0].context).not.toContain("Fallback compact summary.");
+      expect(result.calls[1]).toMatchObject({ provider: "openrouter", model: "small-fallback" });
+      expect(result.calls[1].context).toContain("Fallback compact summary.");
+      expect(result.calls[1].context).toContain("Context that must stay live.");
+      expect(result.calls[1].context).not.toContain("old context A");
+      expect(result.compactionConfigs).toEqual([
+        { provider: "openrouter", model: "small-fallback" },
+      ]);
+      expect(result.messages.map((message: any) => [message.role, message.content])).toEqual([
+        ["system", expect.stringContaining("Fallback compact summary.")],
+        ["user", "Context that must stay live."],
+        ["assistant", "fallback after compaction"],
+      ]);
+      expect(result.segments).toHaveLength(1);
+      const lifecycleEvents = result.emitted
+        .filter((entry) => entry.signal === "proc.changed")
+        .map((entry) => (entry.payload as any).event)
+        .filter(Boolean);
+      expect(lifecycleEvents).toEqual([
+        "conversation.compacted",
+        "conversation.auto_compacted",
+      ]);
+    });
+
+    it("switches to a fallback credential for the same model stack", async () => {
+      const pid = "mech-chat-provider-error-credential-fallback";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const calls: Array<{ provider: string; model: string; apiKey: string }> = [];
+        process.sendSignal = async () => {};
+        process.generation = {
+          async generate(request: any) {
+            calls.push({
+              provider: request.config.provider,
+              model: request.config.model,
+              apiKey: request.config.apiKey,
+            });
+            if (calls.length === 1) {
+              return {
+                role: "assistant",
+                content: [],
+                api: "test",
+                provider: request.config.provider,
+                model: request.config.model,
+                stopReason: "error",
+                errorMessage: "Custom provider HTTP 403: quota exceeded",
+                usage: testUsage(1, 0),
+                timestamp: Date.now(),
+              };
+            }
+            return {
+              role: "assistant",
+              content: [{ type: "text", text: "secondary key pong" }],
+              api: "test",
+              provider: request.config.provider,
+              model: request.config.model,
+              stopReason: "stop",
+              usage: testUsage(2, 3),
+              timestamp: Date.now(),
+            };
+          },
+          async generateText() {
+            return "unused";
+          },
+        };
+
+        process.store.appendMessage("user", "try another key");
+        process.currentRun = {
+          runId: "run-chat-provider-error-credential-fallback",
+          queued: false,
+          conversationId: "default",
+          config: {
+            profile: "task",
+            provider: "openrouter",
+            model: "openai/gpt-5-mini",
+            apiKey: "primary-key",
+            baseUrl: "https://openrouter.ai/api/v1",
+            providerStyle: "openai-chat-completions",
+            transportTarget: "gsv",
+            reasoning: "off",
+            maxTokens: 4096,
+            contextWindowTokens: 128000,
+            contextWindowSource: "config",
+            maxContextBytes: 32768,
+            fallbacks: [{
+              profileId: "secondary-credential",
+              profileName: "Secondary Credential",
+              provider: "openrouter",
+              model: "openai/gpt-5-mini",
+              apiKey: "secondary-key",
+              baseUrl: "https://openrouter.ai/api/v1",
+              providerStyle: "openai-chat-completions",
+              transportTarget: "gsv",
+              maxTokens: 4096,
+              contextWindowTokens: 128000,
+              contextWindowSource: "config",
+              generationTimeoutMs: 180000,
+              generationStreaming: "auto",
+            }],
+          },
+          tools: [],
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+        await process.continueAgentLoop("run-chat-provider-error-credential-fallback");
+        return {
+          calls,
+          messages: process.store.getMessages(),
+        };
+      });
+
+      expect(result.calls).toEqual([
+        { provider: "openrouter", model: "openai/gpt-5-mini", apiKey: "primary-key" },
+        { provider: "openrouter", model: "openai/gpt-5-mini", apiKey: "secondary-key" },
+      ]);
+      expect(result.messages.map((message: any) => [message.role, message.content])).toEqual([
+        ["user", "try another key"],
+        ["assistant", "secondary key pong"],
+      ]);
+    });
+
     it("surfaces thrown provider context overflow separately from generation errors", async () => {
       const pid = "mech-chat-provider-context-overflow-throw";
       const stub = await initProcess(pid, ROOT_IDENTITY);
@@ -1518,7 +1900,7 @@ describe("Process DO — mechanical", () => {
       ]));
     });
 
-    it("mirrors provider stream events as proc.run.stream signals", async () => {
+    it("mirrors provider stream events as proc.run.stream signals with fallbacks configured", async () => {
       const pid = "mech-chat-stream";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
@@ -1581,6 +1963,20 @@ describe("Process DO — mechanical", () => {
             contextWindowTokens: 256000,
             contextWindowSource: "config",
             maxContextBytes: 32768,
+            fallbacks: [{
+              profileId: "backup-stack",
+              profileName: "Backup Stack",
+              provider: "workers-ai",
+              model: "@cf/moonshotai/kimi-k2.6",
+              apiKey: "",
+              providerStyle: "auto",
+              transportTarget: "gsv",
+              maxTokens: 8192,
+              contextWindowTokens: 256000,
+              contextWindowSource: "config",
+              generationTimeoutMs: 180000,
+              generationStreaming: "auto",
+            }],
           },
           tools: [],
           devices: [],
@@ -2164,6 +2560,96 @@ describe("Process DO — mechanical", () => {
       expect(result.message).toMatchObject({
         role: "assistant",
         content: [{ type: "text", text: "device routed" }],
+      });
+    });
+
+    it("routes process custom-provider fetches through the kernel device request path", async () => {
+      const pid = "mech-chat-custom-provider-transport-target";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const deviceRequests: Array<{ target: string; call: string; args: any; ttlMs?: number }> = [];
+        process.sendSignal = async () => {};
+        process.kernelRpc = async (call: string, args: any) => {
+          throw new Error(`unexpected synchronous kernel syscall: ${call}`);
+        };
+        process.requestKernelNetFetch = async (target: string, args: any, ttlMs?: number) => {
+          deviceRequests.push({ target, call: "net.fetch", args, ttlMs });
+          const requestBody = atob(String(args.bodyBase64 ?? ""));
+          expect(target).toBe("linux-machine");
+          expect(ttlMs).toBe(180000);
+          expect(args).toMatchObject({
+            url: "http://localhost:18081/v1/chat/completions",
+            method: "POST",
+            timeoutMs: 180000,
+          });
+          expect(JSON.parse(requestBody)).toMatchObject({
+            model: "local-chat",
+            stream: true,
+          });
+
+          const body = [
+            openAiChatSseChunk({
+              id: "chatcmpl-device",
+              model: "local-chat",
+              choices: [{ delta: { content: "device hello" } }],
+            }),
+            openAiChatSseChunk({
+              choices: [{ delta: {}, finish_reason: "stop" }],
+              usage: { prompt_tokens: 3, completion_tokens: 2 },
+            }),
+            "data: [DONE]\n\n",
+          ].join("");
+          return {
+            ok: true,
+            url: args.url,
+            status: 200,
+            statusText: "OK",
+            headers: { "content-type": "text/event-stream" },
+            bodyBase64: btoa(body),
+            bodyText: body,
+            bodyBytes: body.length,
+          };
+        };
+
+        process.store.appendMessage("user", "use local gateway");
+        process.currentRun = {
+          runId: "run-chat-custom-provider-transport-target",
+          queued: false,
+          conversationId: "default",
+          config: {
+            provider: "custom",
+            model: "local-chat",
+            apiKey: "",
+            baseUrl: "http://localhost:18081/v1",
+            providerStyle: "openai-chat-completions",
+            transportTarget: "linux-machine",
+            reasoning: "off",
+            maxTokens: 8192,
+            contextWindowTokens: 200000,
+            contextWindowSource: "config",
+            maxContextBytes: 32768,
+            generationTimeoutMs: 180000,
+            generationStreaming: "auto",
+            capabilities: [],
+          },
+          tools: [],
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+        await process.continueAgentLoop("run-chat-custom-provider-transport-target");
+        return {
+          deviceRequests,
+          messages: process.store.getMessages(),
+        };
+      });
+
+      expect(result.deviceRequests).toHaveLength(1);
+      expect(result.messages[result.messages.length - 1]).toMatchObject({
+        role: "assistant",
+        content: "device hello",
       });
     });
   });

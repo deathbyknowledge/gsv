@@ -97,7 +97,7 @@ pub(crate) enum Commands {
 pub(crate) enum DeviceAction {
     /// Run the device in the foreground
     Run {
-        /// Device ID (default: hostname)
+        /// Device ID (default: device-<hostname>)
         #[arg(long)]
         id: Option<String>,
 
@@ -108,7 +108,7 @@ pub(crate) enum DeviceAction {
 
     /// Install and start device daemon service
     Install {
-        /// Node ID (saved to local config during install)
+        /// Device ID (saved to local config during install)
         #[arg(long)]
         id: Option<String>,
 
@@ -261,8 +261,8 @@ pub(crate) enum InfraAction {
         account_id: Option<String>,
 
         /// Keep local device daemon installed
-        #[arg(long)]
-        keep_node: bool,
+        #[arg(long = "keep-device", alias = "keep-node")]
+        keep_device: bool,
     },
 }
 
@@ -283,7 +283,7 @@ pub(crate) enum PackagesAction {
 pub(crate) enum DeviceServiceAction {
     /// Install and start device daemon service
     Install {
-        /// Node ID (saved to local config during install)
+        /// Device ID (saved to local config during install)
         #[arg(long)]
         id: Option<String>,
 
@@ -423,17 +423,17 @@ pub(crate) enum AuthAction {
         #[arg(long)]
         ai_api_key: Option<String>,
 
-        /// Optional node id to pre-issue a driver token for
-        #[arg(long)]
-        node_id: Option<String>,
+        /// Optional device id to pre-issue a device token for
+        #[arg(long = "device-id", alias = "node-id")]
+        device_id: Option<String>,
 
-        /// Optional node token label
-        #[arg(long)]
-        node_label: Option<String>,
+        /// Optional device token label
+        #[arg(long = "device-label", alias = "node-label")]
+        device_label: Option<String>,
 
-        /// Optional node token expiry unix ms
-        #[arg(long)]
-        node_expires_at: Option<i64>,
+        /// Optional device token expiry unix ms
+        #[arg(long = "device-expires-at", alias = "node-expires-at")]
+        device_expires_at: Option<i64>,
     },
 
     /// Manage auth tokens
@@ -448,7 +448,7 @@ pub(crate) enum AuthTokenAction {
     /// Create a new auth token
     Create {
         /// Token kind
-        #[arg(long, value_enum, default_value = "node")]
+        #[arg(long, value_enum, default_value = "device")]
         kind: TokenKindArg,
 
         /// Optional owner uid (root only)
@@ -463,7 +463,7 @@ pub(crate) enum AuthTokenAction {
         #[arg(long, value_enum)]
         role: Option<TokenRoleArg>,
 
-        /// Optional device binding (driver/node tokens only)
+        /// Optional device binding (device tokens only)
         #[arg(long)]
         device: Option<String>,
 
@@ -496,7 +496,8 @@ pub(crate) enum AuthTokenAction {
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
 pub(crate) enum TokenKindArg {
-    Node,
+    #[value(alias = "node")]
+    Device,
     Service,
     User,
 }
@@ -504,7 +505,7 @@ pub(crate) enum TokenKindArg {
 impl TokenKindArg {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
-            Self::Node => "node",
+            Self::Device => "node",
             Self::Service => "service",
             Self::User => "user",
         }
@@ -648,12 +649,12 @@ pub(crate) enum AdapterAction {
 pub(crate) enum LocalConfigAction {
     /// Get a config value
     Get {
-        /// Config key (e.g., "gateway.url", "gateway.username", "gateway.token", "node.token", "node.workspace")
+        /// Config key (e.g., "gateway.url", "gateway.username", "gateway.token", "device.token", "device.workspace")
         key: String,
     },
     /// Set a config value
     Set {
-        /// Config key (e.g., "gateway.url", "gateway.username", "gateway.token", "node.token", "node.workspace")
+        /// Config key (e.g., "gateway.url", "gateway.username", "gateway.token", "device.token", "device.workspace")
         key: String,
         /// Value to set
         value: String,

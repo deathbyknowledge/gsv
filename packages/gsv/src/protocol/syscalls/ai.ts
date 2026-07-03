@@ -64,6 +64,9 @@ export type AiConfigResult = {
   provider: string;
   model: string;
   apiKey: string;
+  baseUrl?: string;
+  providerStyle?: string;
+  transportTarget?: string;
   reasoning?: string;
   maxTokens: number;
   contextWindowTokens: number | null;
@@ -78,6 +81,7 @@ export type AiConfigResult = {
   maxContextBytes: number;
   generationTimeoutMs: number;
   generationStreaming?: "auto" | "off";
+  fallbacks?: AiConfigFallback[];
   media?: {
     transcriptionProvider: string;
     transcriptionModel: string;
@@ -102,6 +106,23 @@ export type AiConfigResult = {
     speechMaxChars: number;
     speechTimeoutMs: number;
   };
+};
+
+export type AiConfigFallback = {
+  profileId?: string;
+  profileName?: string;
+  provider: string;
+  model: string;
+  apiKey: string;
+  baseUrl?: string;
+  providerStyle?: string;
+  transportTarget?: string;
+  reasoning?: string;
+  maxTokens: number;
+  contextWindowTokens: number | null;
+  contextWindowSource: "model" | "config" | "unknown";
+  generationTimeoutMs: number;
+  generationStreaming?: "auto" | "off";
 };
 
 export type AiTextContent = {

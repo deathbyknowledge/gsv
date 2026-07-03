@@ -607,6 +607,101 @@ describe("handleAiConfig", () => {
     }));
   });
 
+  it("preserves explicit blank base URL overrides for preset text generation", async () => {
+    generateMock.mockImplementationOnce(async (request: any) => {
+      expect(request.config).toMatchObject({
+        executor: { kind: "kernel" },
+        provider: "custom",
+        model: "local-chat",
+        providerStyle: "openai-chat-completions",
+      });
+      expect(request.config.baseUrl).toBeUndefined();
+      return {
+        role: "assistant",
+        content: [{ type: "text", text: "pong" }],
+        api: "test",
+        provider: "custom",
+        model: "local-chat",
+        usage: {
+          input: 1,
+          output: 1,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 2,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: "stop",
+        timestamp: 1,
+      };
+    });
+
+    await handleAiTextGenerate({
+      messages: [{ role: "user", content: "ping" }],
+      config: {
+        preset: { id: "local" },
+        overrides: {
+          "config/ai/base_url": "",
+        },
+      },
+    }, makeAiConfigContext({
+      "users/1000/ai/model_profiles": JSON.stringify({
+        profiles: [{
+          id: "local",
+          name: "Local",
+          values: {
+            "config/ai/provider": "custom",
+            "config/ai/model": "local-chat",
+            "config/ai/base_url": "http://old.example/v1",
+            "config/ai/provider_style": "openai-chat-completions",
+          },
+          createdAt: 1,
+          updatedAt: 2,
+        }],
+      }),
+    }));
+  });
+
+  it("does not build a routed fetch for non-custom text generation targets", async () => {
+    generateMock.mockImplementationOnce(async (request: any) => {
+      expect(request.config).toMatchObject({
+        executor: { kind: "kernel" },
+        provider: "anthropic",
+        model: "claude-test",
+        transportTarget: "linux-machine",
+      });
+      return {
+        role: "assistant",
+        content: [{ type: "text", text: "pong" }],
+        api: "test",
+        provider: "anthropic",
+        model: "claude-test",
+        usage: {
+          input: 1,
+          output: 1,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 2,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: "stop",
+        timestamp: 1,
+      };
+    });
+
+    const result = await handleAiTextGenerate({
+      messages: [{ role: "user", content: "ping" }],
+      config: {
+        overrides: {
+          "config/ai/provider": "anthropic",
+          "config/ai/model": "claude-test",
+          "config/ai/transport_target": "linux-machine",
+        },
+      },
+    }, makeAiConfigContext());
+
+    expect(result.text).toBe("pong");
+  });
+
   it("falls back to the owning human's AI config for agent processes", async () => {
     const result = await handleAiConfig({}, makeAiConfigContext({
       "users/1000/ai/provider": "owner-provider",
@@ -641,11 +736,269 @@ describe("handleAiConfig", () => {
     expect(result.accountApprovalPolicy).toBe('{"default":"deny","rules":[]}');
   });
 
+  it("resolves agent model profile references through the owning human", async () => {
+    const result = await handleAiConfig({}, makeAiConfigContext({
+      "config/ai/provider": "workers-ai",
+      "config/ai/model": "@cf/default/model",
+      "users/2000/ai/model_profile": "fast-stack",
+      "users/2000/ai/provider": "stale-provider",
+      "users/2000/ai/model": "stale-model",
+      "users/1000/ai/model_profiles": JSON.stringify({
+        profiles: [{
+          id: "fast-stack",
+          name: "Fast Stack",
+          values: {
+            "config/ai/provider": "custom",
+            "config/ai/model": "zai-glm-4.7",
+            "config/ai/base_url": "http://127.0.0.1:8080/v1",
+            "config/ai/provider_style": "openai-chat-completions",
+            "config/ai/transport_target": "linux-machine",
+            "config/ai/api_key": "redacted",
+          },
+          createdAt: 1,
+          updatedAt: 2,
+        }],
+      }),
+      "users/1000/ai/model_profiles/fast-stack/api_key": "profile-key",
+    }, {
+      uid: 2000,
+      ownerUid: 1000,
+      processId: "task-1",
+    }));
+
+    expect(result.provider).toBe("custom");
+    expect(result.model).toBe("zai-glm-4.7");
+    expect(result.baseUrl).toBe("http://127.0.0.1:8080/v1");
+    expect(result.providerStyle).toBe("openai-chat-completions");
+    expect(result.transportTarget).toBe("linux-machine");
+    expect(result.apiKey).toBe("profile-key");
+  });
+
+  it("resolves fallback model presets from account fallback config", async () => {
+    const result = await handleAiConfig({}, makeAiConfigContext({
+      "config/ai/provider": "workers-ai",
+      "config/ai/model": "@cf/default/model",
+      "users/2000/ai/model_profile": "fast-stack",
+      "users/2000/ai/fallback_model_profile": "safe-stack",
+      "users/1000/ai/model_profiles": JSON.stringify({
+        profiles: [
+          {
+            id: "fast-stack",
+            name: "Fast Stack",
+            values: {
+              "config/ai/provider": "custom",
+              "config/ai/model": "zai-glm-4.7",
+              "config/ai/base_url": "http://127.0.0.1:8080/v1",
+              "config/ai/provider_style": "openai-chat-completions",
+              "config/ai/api_key": "redacted",
+            },
+            createdAt: 1,
+            updatedAt: 2,
+          },
+          {
+            id: "safe-stack",
+            name: "Safe Stack",
+            values: {
+              "config/ai/provider": "openrouter",
+              "config/ai/model": "openai/gpt-5-mini",
+              "config/ai/base_url": "https://openrouter.ai/api/v1",
+              "config/ai/provider_style": "openai-chat-completions",
+              "config/ai/api_key": "redacted",
+              "config/ai/max_tokens": "4096",
+            },
+            createdAt: 1,
+            updatedAt: 3,
+          },
+        ],
+      }),
+      "users/1000/ai/model_profiles/fast-stack/api_key": "profile-key",
+      "users/1000/ai/model_profiles/safe-stack/api_key": "fallback-key",
+    }, {
+      uid: 2000,
+      ownerUid: 1000,
+      processId: "task-1",
+    }));
+
+    expect(result.provider).toBe("custom");
+    expect(result.model).toBe("zai-glm-4.7");
+    expect(result.fallbacks).toEqual([
+      expect.objectContaining({
+        profileId: "safe-stack",
+        profileName: "Safe Stack",
+        provider: "openrouter",
+        model: "openai/gpt-5-mini",
+        baseUrl: "https://openrouter.ai/api/v1",
+        providerStyle: "openai-chat-completions",
+        apiKey: "fallback-key",
+        maxTokens: 4096,
+      }),
+    ]);
+  });
+
+  it("keeps fallback presets that only change credentials", async () => {
+    const result = await handleAiConfig({}, makeAiConfigContext({
+      "users/1000/ai/provider": "openrouter",
+      "users/1000/ai/model": "openai/gpt-5-mini",
+      "users/1000/ai/base_url": "https://openrouter.ai/api/v1",
+      "users/1000/ai/provider_style": "openai-chat-completions",
+      "users/1000/ai/api_key": "primary-key",
+      "users/1000/ai/fallback_model_profile": "secondary-credential",
+      "users/1000/ai/model_profiles": JSON.stringify({
+        profiles: [{
+          id: "secondary-credential",
+          name: "Secondary Credential",
+          values: {
+            "config/ai/provider": "openrouter",
+            "config/ai/model": "openai/gpt-5-mini",
+            "config/ai/base_url": "https://openrouter.ai/api/v1",
+            "config/ai/provider_style": "openai-chat-completions",
+            "config/ai/api_key": "redacted",
+          },
+          createdAt: 1,
+          updatedAt: 2,
+        }],
+      }),
+      "users/1000/ai/model_profiles/secondary-credential/api_key": "secondary-key",
+    }));
+
+    expect(result.fallbacks).toEqual([
+      expect.objectContaining({
+        profileId: "secondary-credential",
+        profileName: "Secondary Credential",
+        provider: "openrouter",
+        model: "openai/gpt-5-mini",
+        baseUrl: "https://openrouter.ai/api/v1",
+        providerStyle: "openai-chat-completions",
+        apiKey: "secondary-key",
+      }),
+    ]);
+  });
+
+  it("resolves system fallback model presets from root profiles for non-root runs", async () => {
+    const result = await handleAiConfig({}, makeAiConfigContext({
+      "config/ai/provider": "workers-ai",
+      "config/ai/model": "@cf/default/model",
+      "config/ai/fallback_model_profile": "root-safe-stack",
+      "users/0/ai/model_profiles": JSON.stringify({
+        profiles: [{
+          id: "root-safe-stack",
+          name: "Root Safe Stack",
+          values: {
+            "config/ai/provider": "openrouter",
+            "config/ai/model": "openai/gpt-5-mini",
+            "config/ai/base_url": "https://openrouter.ai/api/v1",
+            "config/ai/provider_style": "openai-chat-completions",
+            "config/ai/api_key": "redacted",
+            "config/ai/max_tokens": "4096",
+          },
+          createdAt: 1,
+          updatedAt: 2,
+        }],
+      }),
+      "users/0/ai/model_profiles/root-safe-stack/api_key": "root-fallback-key",
+    }, {
+      uid: 2000,
+      ownerUid: 1000,
+      processId: "task-1",
+    }));
+
+    expect(result.fallbacks).toEqual([
+      expect.objectContaining({
+        profileId: "root-safe-stack",
+        profileName: "Root Safe Stack",
+        provider: "openrouter",
+        model: "openai/gpt-5-mini",
+        baseUrl: "https://openrouter.ai/api/v1",
+        providerStyle: "openai-chat-completions",
+        apiKey: "root-fallback-key",
+        maxTokens: 4096,
+      }),
+    ]);
+  });
+
+  it("resolves legacy raw agent model overrides through matching owner profiles", async () => {
+    const result = await handleAiConfig({}, makeAiConfigContext({
+      "config/ai/provider": "workers-ai",
+      "config/ai/model": "@cf/default/model",
+      "users/2000/ai/model": "zai-glm-4.7",
+      "users/1000/ai/model_profiles": JSON.stringify({
+        profiles: [{
+          id: "fast-stack",
+          name: "Fast Stack",
+          values: {
+            "config/ai/provider": "custom",
+            "config/ai/model": "zai-glm-4.7",
+            "config/ai/base_url": "http://127.0.0.1:8080/v1",
+            "config/ai/provider_style": "openai-chat-completions",
+            "config/ai/api_key": "redacted",
+          },
+          createdAt: 1,
+          updatedAt: 2,
+        }],
+      }),
+      "users/1000/ai/model_profiles/fast-stack/api_key": "profile-key",
+    }, {
+      uid: 2000,
+      ownerUid: 1000,
+      processId: "task-1",
+    }));
+
+    expect(result.provider).toBe("custom");
+    expect(result.model).toBe("zai-glm-4.7");
+    expect(result.baseUrl).toBe("http://127.0.0.1:8080/v1");
+    expect(result.providerStyle).toBe("openai-chat-completions");
+    expect(result.apiKey).toBe("profile-key");
+  });
+
+  it("does not infer a profile when raw agent provider fields are configured", async () => {
+    const result = await handleAiConfig({}, makeAiConfigContext({
+      "config/ai/provider": "workers-ai",
+      "config/ai/model": "@cf/default/model",
+      "users/2000/ai/provider": "custom",
+      "users/2000/ai/model": "zai-glm-4.7",
+      "users/2000/ai/base_url": "http://raw.example/v1",
+      "users/1000/ai/model_profiles": JSON.stringify({
+        profiles: [{
+          id: "fast-stack",
+          name: "Fast Stack",
+          values: {
+            "config/ai/provider": "profile-provider",
+            "config/ai/model": "zai-glm-4.7",
+            "config/ai/base_url": "http://profile.example/v1",
+          },
+          createdAt: 1,
+          updatedAt: 2,
+        }],
+      }),
+    }, {
+      uid: 2000,
+      ownerUid: 1000,
+      processId: "task-1",
+    }));
+
+    expect(result.provider).toBe("custom");
+    expect(result.model).toBe("zai-glm-4.7");
+    expect(result.baseUrl).toBe("http://raw.example/v1");
+  });
+
   it("prefers agent AI config over the owning human's config", async () => {
     const result = await handleAiConfig({}, makeAiConfigContext({
       "users/1000/ai/provider": "owner-provider",
       "users/1000/ai/model": "owner-model",
       "users/1000/ai/api_key": "owner-key",
+      "users/1000/ai/model_profile": "owner-stack",
+      "users/1000/ai/model_profiles": JSON.stringify({
+        profiles: [{
+          id: "owner-stack",
+          name: "Owner Stack",
+          values: {
+            "config/ai/provider": "owner-profile-provider",
+            "config/ai/model": "owner-profile-model",
+          },
+          createdAt: 1,
+          updatedAt: 2,
+        }],
+      }),
       "users/2000/ai/provider": "agent-provider",
       "users/2000/ai/model": "agent-model",
       "users/2000/ai/api_key": "agent-key",

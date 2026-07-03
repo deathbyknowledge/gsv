@@ -5,12 +5,14 @@ import {
 } from "../../../domain/aiProviders";
 
 export type ConsoleSettingKind = "text" | "textarea" | "password" | "number" | "checkbox" | "select" | "readonly";
+export type ConsoleSettingRequirement = "none" | "required" | "optional";
 
 export type ConsoleSettingField = {
   key: string;
   label: string;
   description: string;
   kind: ConsoleSettingKind;
+  requirement?: ConsoleSettingRequirement;
   placeholder?: string;
   rows?: number;
   options?: ReadonlyArray<{ value: string; label: string }>;
@@ -38,6 +40,14 @@ export type ConsoleModelProfile = {
 const MODEL_PROFILES_VERSION = 1;
 const MODEL_PROFILE_KEY = "model_profiles";
 const MAX_PROFILE_NAME_LENGTH = 80;
+const MODEL_FALLBACK_PROFILE_KEY = "config/ai/fallback_model_profile";
+const ACCOUNT_MODEL_PROFILE_INFERENCE_BLOCKERS = [
+  "provider",
+  "base_url",
+  "provider_style",
+  "transport_target",
+  "api_key",
+] as const;
 
 export const AGENT_MODEL_FIELDS: readonly ConsoleSettingField[] = [
   {
@@ -45,6 +55,7 @@ export const AGENT_MODEL_FIELDS: readonly ConsoleSettingField[] = [
     label: "Provider",
     description: "LLM provider used by agent runs.",
     kind: "select",
+    requirement: "required",
     placeholder: "workers-ai",
     options: AI_PROVIDER_OPTIONS,
     size: "large",
@@ -54,14 +65,57 @@ export const AGENT_MODEL_FIELDS: readonly ConsoleSettingField[] = [
     label: "Model",
     description: "Model identifier passed to the selected provider.",
     kind: "text",
-    placeholder: "@cf/nvidia/nemotron-3-120b-a12b",
+    requirement: "required",
+    placeholder: "@cf/zai-org/glm-5.2",
+    size: "large",
+  },
+  {
+    key: "config/ai/base_url",
+    label: "Base URL",
+    description: "Custom endpoint base URL for gateway or compatible providers.",
+    kind: "text",
+    requirement: "optional",
+    placeholder: "https://gateway.example.com/v1",
+    size: "large",
+  },
+  {
+    key: "config/ai/fallback_model_profile",
+    label: "Fallback model",
+    description: "Saved model to try if the selected model fails.",
+    kind: "select",
+    requirement: "optional",
+    size: "large",
+    options: [{ value: "", label: "None" }],
+  },
+  {
+    key: "config/ai/provider_style",
+    label: "Provider style",
+    description: "Request API used for custom endpoints.",
+    kind: "select",
+    requirement: "optional",
+    size: "large",
+    options: [
+      { value: "auto", label: "Auto" },
+      { value: "openai-chat-completions", label: "OpenAI /v1/chat/completions" },
+      { value: "openai-responses", label: "OpenAI /v1/responses" },
+      { value: "anthropic-messages", label: "Anthropic /v1/messages" },
+    ],
+  },
+  {
+    key: "config/ai/transport_target",
+    label: "Origin machine",
+    description: "Where custom provider HTTP requests start: the GSV Worker or a machine with network fetch support.",
+    kind: "text",
+    requirement: "optional",
+    placeholder: "gsv",
     size: "large",
   },
   {
     key: "config/ai/api_key",
     label: "API key",
-    description: "Provider credential. Leave empty for local or bound providers.",
+    description: "Provider credential for endpoints that require one.",
     kind: "password",
+    requirement: "optional",
     placeholder: "sk-...",
     size: "large",
   },
@@ -70,6 +124,7 @@ export const AGENT_MODEL_FIELDS: readonly ConsoleSettingField[] = [
     label: "Reasoning",
     description: "Reasoning effort hint for models that support extended thinking.",
     kind: "select",
+    requirement: "optional",
     size: "small",
     options: [
       { value: "off", label: "Off" },
@@ -85,6 +140,7 @@ export const AGENT_MODEL_FIELDS: readonly ConsoleSettingField[] = [
     label: "Max tokens",
     description: "Upper bound for generated response size.",
     kind: "number",
+    requirement: "optional",
     size: "small",
     half: true,
   },
@@ -93,12 +149,14 @@ export const AGENT_MODEL_FIELDS: readonly ConsoleSettingField[] = [
     label: "Max bytes",
     description: "Maximum bytes of home context injected into prompts.",
     kind: "number",
+    requirement: "optional",
     size: "small",
     half: true,
   },
 ];
 
-export const MODEL_PROFILE_FIELDS: readonly ConsoleSettingField[] = AGENT_MODEL_FIELDS;
+export const MODEL_PROFILE_FIELDS: readonly ConsoleSettingField[] = AGENT_MODEL_FIELDS
+  .filter((field) => field.key !== MODEL_FALLBACK_PROFILE_KEY);
 export const MODEL_PROFILE_SECRET_FIELDS: readonly ConsoleSettingField[] = MODEL_PROFILE_FIELDS
   .filter((field) => isSensitiveSettingKey(field.key));
 
@@ -113,6 +171,7 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
         label: "Provider",
         description: "Provider used to describe images.",
         kind: "select",
+        requirement: "required",
         placeholder: "workers-ai",
         options: AI_PROVIDER_OPTIONS,
       },
@@ -121,13 +180,15 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
         label: "Model",
         description: "Vision model used to generate image descriptions.",
         kind: "text",
+        requirement: "required",
         placeholder: "@cf/google/gemma-4-26b-a4b-it",
       },
       {
         key: "config/ai/image/read/api_key",
         label: "API key",
-        description: "Optional credential. Falls back to the agent API key when empty.",
+        description: "Credential for providers that require one. Falls back to the agent API key when empty.",
         kind: "password",
+        requirement: "optional",
         placeholder: "sk-...",
       },
       {
@@ -135,6 +196,7 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
         label: "Input mode",
         description: "Request shape used when sending image content.",
         kind: "select",
+        requirement: "optional",
         options: [
           { value: "auto", label: "Auto" },
           { value: "chat", label: "Chat vision" },
@@ -146,24 +208,28 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
         label: "Max bytes",
         description: "Maximum stored image size sent to the image-reading model.",
         kind: "number",
+        requirement: "optional",
       },
       {
         key: "config/ai/image/read/max_tokens",
         label: "Max tokens",
         description: "Maximum text tokens generated by the image-reading model.",
         kind: "number",
+        requirement: "optional",
       },
       {
         key: "config/ai/image/read/timeout_ms",
         label: "Timeout",
         description: "Maximum time to wait for image description generation.",
         kind: "number",
+        requirement: "optional",
       },
       {
         key: "config/ai/image/read/prompt",
         label: "Prompt",
         description: "Instruction used when converting images into text context.",
         kind: "textarea",
+        requirement: "optional",
         rows: 4,
       },
     ],
@@ -178,6 +244,7 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
         label: "Provider",
         description: "Provider used for image generation.",
         kind: "select",
+        requirement: "required",
         placeholder: "workers-ai",
         options: AI_OPENAI_WORKERS_PROVIDER_OPTIONS,
       },
@@ -186,13 +253,15 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
         label: "Model",
         description: "Default model for image generation.",
         kind: "text",
+        requirement: "required",
         placeholder: "@cf/black-forest-labs/flux-1-schnell",
       },
       {
         key: "config/ai/image/generation/api_key",
         label: "API key",
-        description: "Optional credential. Falls back to the agent API key when empty.",
+        description: "Credential for providers that require one. Falls back to the agent API key when empty.",
         kind: "password",
+        requirement: "optional",
         placeholder: "sk-...",
       },
     ],
@@ -207,6 +276,7 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
         label: "Provider",
         description: "Provider used by transcription requests.",
         kind: "select",
+        requirement: "required",
         placeholder: "workers-ai",
         options: AI_OPENAI_WORKERS_PROVIDER_OPTIONS,
       },
@@ -215,13 +285,15 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
         label: "Model",
         description: "Speech-to-text model used for audio attachments.",
         kind: "text",
+        requirement: "required",
         placeholder: "@cf/openai/whisper-large-v3-turbo",
       },
       {
         key: "config/ai/transcription/api_key",
         label: "API key",
-        description: "Optional credential. Falls back to the agent API key when empty.",
+        description: "Credential for providers that require one. Falls back to the agent API key when empty.",
         kind: "password",
+        requirement: "optional",
         placeholder: "sk-...",
       },
       {
@@ -229,6 +301,7 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
         label: "Max bytes",
         description: "Maximum audio payload size accepted for transcription.",
         kind: "number",
+        requirement: "optional",
       },
     ],
   },
@@ -242,6 +315,7 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
         label: "Provider",
         description: "Provider used by speech synthesis.",
         kind: "select",
+        requirement: "required",
         placeholder: "workers-ai",
         options: AI_OPENAI_WORKERS_PROVIDER_OPTIONS,
       },
@@ -250,13 +324,15 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
         label: "Model",
         description: "Text-to-speech model used by speech synthesis.",
         kind: "text",
+        requirement: "required",
         placeholder: "@cf/deepgram/aura-2-en",
       },
       {
         key: "config/ai/speech/api_key",
         label: "API key",
-        description: "Optional credential. Falls back to the agent API key when empty.",
+        description: "Credential for providers that require one. Falls back to the agent API key when empty.",
         kind: "password",
+        requirement: "optional",
         placeholder: "sk-...",
       },
       {
@@ -264,6 +340,7 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
         label: "Speaker",
         description: "Default voice or speaker.",
         kind: "text",
+        requirement: "optional",
         placeholder: "luna",
       },
       {
@@ -271,6 +348,7 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
         label: "Encoding",
         description: "Default audio encoding for synthesized speech.",
         kind: "text",
+        requirement: "optional",
         placeholder: "mp3",
       },
       {
@@ -278,12 +356,14 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
         label: "Max chars",
         description: "Maximum normalized text length accepted for speech synthesis.",
         kind: "number",
+        requirement: "optional",
       },
       {
         key: "config/ai/speech/timeout_ms",
         label: "Timeout",
         description: "Maximum time to wait for speech synthesis.",
         kind: "number",
+        requirement: "optional",
       },
     ],
   },
@@ -411,13 +491,71 @@ export function effectiveAiValuesForViewer(
   if (typeof uid !== "number" || !Number.isFinite(uid)) {
     return values;
   }
+  const profileValues = effectiveAiProfileValuesForViewer(config, uid);
   for (const field of allAiSettingFields()) {
-    const overrideValue = configValueForKey(config, buildUserAiOverrideKey(uid, field.key));
-    if (overrideValue !== "") {
+    const profileValue = cleanValue(profileValues[field.key]);
+    const overrideValue = cleanValue(configValueForKey(config, buildUserAiOverrideKey(uid, field.key)));
+    if (profileValue !== "") {
+      values[field.key] = profileValue;
+    } else if (overrideValue !== "") {
       values[field.key] = overrideValue;
     }
   }
   return values;
+}
+
+function effectiveAiProfileValuesForViewer(
+  config: readonly ConsoleConfigEntry[],
+  uid: number,
+): Record<string, string> {
+  const explicitSelector = cleanValue(configValueForKey(config, `users/${uid}/ai/model_profile`));
+  const inferredSelector = explicitSelector
+    ? ""
+    : inferAiProfileSelectorForViewer(config, uid);
+  const selector = explicitSelector || inferredSelector;
+  if (!selector) {
+    return {};
+  }
+  const profile = findAiProfileForViewer(config, uid, selector, {
+    matchModel: Boolean(inferredSelector),
+  });
+  return profile?.values ?? {};
+}
+
+function inferAiProfileSelectorForViewer(
+  config: readonly ConsoleConfigEntry[],
+  uid: number,
+): string {
+  const model = cleanValue(configValueForKey(config, buildUserAiOverrideKey(uid, "config/ai/model")));
+  if (!model) {
+    return "";
+  }
+  const hasProviderStackOverride = ACCOUNT_MODEL_PROFILE_INFERENCE_BLOCKERS.some((key) => {
+    const overrideKey = `users/${uid}/ai/${key}`;
+    const entry = configEntryForKey(config, overrideKey);
+    return entry?.redacted === true || cleanValue(entry?.value) !== "";
+  });
+  return hasProviderStackOverride ? "" : model;
+}
+
+function findAiProfileForViewer(
+  config: readonly ConsoleConfigEntry[],
+  uid: number,
+  selector: string,
+  options: { matchModel?: boolean } = {},
+): ConsoleModelProfile | null {
+  const normalized = selector.trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+  return modelProfilesForConfig(config, uid).find((candidate) =>
+    candidate.id.toLowerCase() === normalized ||
+    candidate.name.toLowerCase() === normalized ||
+    (
+      options.matchModel === true &&
+      cleanValue(candidate.values["config/ai/model"]).toLowerCase() === normalized
+    )
+  ) ?? null;
 }
 
 export function modelProfilesForConfig(
@@ -641,6 +779,11 @@ function normalizeProfileValues(values: Record<string, unknown>): Record<string,
 
 function normalizeProfileStorageValues(values: Record<string, unknown>): Record<string, string> {
   const normalized = normalizeProfileValues(values);
+  for (const [key, value] of Object.entries(normalized)) {
+    if (!value.trim()) {
+      delete normalized[key];
+    }
+  }
   for (const field of MODEL_PROFILE_SECRET_FIELDS) {
     delete normalized[field.key];
   }

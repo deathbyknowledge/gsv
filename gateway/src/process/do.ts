@@ -156,7 +156,10 @@ import {
   isWorkersAiProvider,
 } from "../inference/workers-ai";
 import { assembleSystemPrompt } from "./context";
-import { sendFrameToKernel } from "../shared/utils";
+import {
+  requestProcessNetFetch,
+  sendFrameToKernel,
+} from "../shared/utils";
 import {
   NET_FETCH,
   CODEMODE_EXEC,
@@ -184,6 +187,13 @@ import {
 } from "./ai-config";
 import { runProcessSqlMigrations } from "./schema/migrations";
 import { hasCapability } from "../kernel/capabilities";
+import {
+  normalizeNetFetchTimeoutMs,
+  normalizeTarget,
+  requestToNetFetchArgs,
+  responseFromNetFetchResult,
+} from "../kernel/net";
+import type { NetFetchArgs, NetFetchResult } from "../syscalls/net";
 
 type RunState = {
   runId: string;
@@ -214,6 +224,8 @@ type RunFinishOptions = {
 type StreamSeqCounter = {
   value: number;
 };
+
+type RoutedFetchInit = RequestInit & { timeoutMs?: number };
 
 type CodeModeResponseWaiter = {
   runId: string | null;
@@ -294,6 +306,7 @@ function normalizeStringArray(value: unknown): string[] {
 function buildAssistantMessageMetadata(
   response: AssistantMessage,
   config: AiConfigResult,
+  fallback?: MessageMetadata["fallback"],
 ): MessageMetadata | undefined {
   const usage = assistantUsageToProcUsageState(
     response.usage,
@@ -308,9 +321,17 @@ function buildAssistantMessageMetadata(
       responseId: response.responseId,
       stopReason: response.stopReason,
     },
+    fallback,
     usage,
   });
   return metadata ?? undefined;
+}
+
+function modelMetadataFromAiConfig(config: AiConfigResult): NonNullable<MessageMetadata["fallback"]>["from"] {
+  return {
+    provider: config.provider,
+    model: config.model,
+  };
 }
 
 function assistantUsageToProcUsageState(
@@ -1151,13 +1172,13 @@ export class Process extends Host<Env> {
         delete values[args.key];
       }
 
-      if (Object.keys(values).length === 0) {
+      const snapshot = createProcessAiConfigSnapshot(values, current?.profile);
+      if (Object.keys(snapshot.values).length === 0 && !snapshot.profile) {
         this.store.clearAiConfigSnapshot();
         await this.emitProcChanged(["ai.config"], { aiConfig: null });
         return { ok: true, pid: this.pid, config: null };
       }
 
-      const snapshot = createProcessAiConfigSnapshot(values);
       this.store.setAiConfigSnapshot(snapshot);
       const redacted = redactProcessAiConfigSnapshot(snapshot);
       await this.emitProcChanged(["ai.config"], { aiConfig: redacted });
@@ -2758,61 +2779,113 @@ export class Process extends Host<Env> {
     }
 
     // Step 5: Build pi-ai Context
-    const pendingRuntimeEventsInContext = this.currentRun?.runId === runId
-      ? this.currentRun.pendingRuntimeEvents ?? 0
-      : 0;
-    let piMessages = await this.buildContextMessages(conversationId);
-    this.consumeRuntimeEventsInContext(runId, pendingRuntimeEventsInContext);
     const tools: Tool[] = (run.tools ?? []).map((t) => ({
       name: t.name,
       description: t.description,
       parameters: t.inputSchema as Tool["parameters"],
     }));
 
-    let context: Context = {
-      systemPrompt: run.systemPrompt,
-      messages: piMessages,
-      tools: tools.length > 0 ? tools : undefined,
-    };
-
-    const initialContextState = await this.updateContextState(runId, conversationId, run.config!, context);
-    if (await this.handleRunStopped(runId)) {
-      return;
-    }
-
-    const contextPreflight = await this.applyConversationContextPolicy(
-      runId,
-      conversationId,
-      run.config!,
-      initialContextState,
-    );
-    if (contextPreflight === "stopped") {
-      return;
-    }
-    if (contextPreflight === "compacted") {
-      if (await this.handleRunStopped(runId)) {
-        return;
-      }
-      const pendingRuntimeEventsInCompactedContext = this.currentRun?.runId === runId
+    const buildGenerationContext = async (): Promise<Context> => {
+      const pendingRuntimeEventsInContext = this.currentRun?.runId === runId
         ? this.currentRun.pendingRuntimeEvents ?? 0
         : 0;
-      piMessages = await this.buildContextMessages(conversationId);
-      this.consumeRuntimeEventsInContext(runId, pendingRuntimeEventsInCompactedContext);
-      context = {
+      const messages = await this.buildContextMessages(conversationId);
+      this.consumeRuntimeEventsInContext(runId, pendingRuntimeEventsInContext);
+      return {
         systemPrompt: run.systemPrompt,
-        messages: piMessages,
+        messages,
         tools: tools.length > 0 ? tools : undefined,
       };
-      await this.updateContextState(runId, conversationId, run.config!, context);
+    };
+
+    let context: Context = {
+      systemPrompt: run.systemPrompt,
+      messages: [],
+      tools: tools.length > 0 ? tools : undefined,
+    };
+    const prepareGenerationContext = async (
+      config: AiConfigResult,
+    ): Promise<"ready" | "stopped"> => {
+      context = await buildGenerationContext();
+      const contextState = await this.updateContextState(runId, conversationId, config, context);
       if (await this.handleRunStopped(runId)) {
-        return;
+        return "stopped";
       }
+
+      const contextPreflight = await this.applyConversationContextPolicy(
+        runId,
+        conversationId,
+        config,
+        contextState,
+      );
+      if (contextPreflight === "stopped") {
+        return "stopped";
+      }
+      if (contextPreflight === "compacted") {
+        if (await this.handleRunStopped(runId)) {
+          return "stopped";
+        }
+        context = await buildGenerationContext();
+        await this.updateContextState(runId, conversationId, config, context);
+        if (await this.handleRunStopped(runId)) {
+          return "stopped";
+        }
+      }
+      return "ready";
+    };
+
+    const contextPreflight = await prepareGenerationContext(run.config!);
+    if (contextPreflight === "stopped") {
+      return;
     }
 
     // Step 6: Call LLM
     let response: AssistantMessage | null = null;
     const streamSeq: StreamSeqCounter = { value: 0 };
-    for (let attempt = 1; attempt <= MAX_RETRYABLE_GENERATION_ATTEMPTS; attempt += 1) {
+    const primaryConfig = run.config!;
+    const fallbackConfigs = primaryConfig.fallbacks ?? [];
+    let fallbackIndex = 0;
+    let activeFallbackMetadata: MessageMetadata["fallback"] | undefined;
+    const switchToFallback = async (
+      reason: string,
+      failedResponse?: AssistantMessage,
+    ): Promise<"switched" | "stopped" | "none"> => {
+      const fallback = nextAiConfigFallback(primaryConfig, run.config!, fallbackConfigs, fallbackIndex);
+      if (!fallback) {
+        return "none";
+      }
+      fallbackIndex = fallback.nextIndex;
+      if (failedResponse) {
+        this.recordUnpersistedAssistantUsage(conversationId, failedResponse, run.config!);
+      }
+      const fallbackState = await this.beginGenerationFallback({
+        runId,
+        conversationId,
+        reason,
+        from: run.config!,
+        to: fallback.config,
+        fallbackIndex,
+        fallbackCount: fallbackConfigs.length,
+      });
+      if (fallbackState === "stopped") {
+        return "stopped";
+      }
+      activeFallbackMetadata = {
+        used: true,
+        from: modelMetadataFromAiConfig(run.config!),
+        to: modelMetadataFromAiConfig(fallback.config),
+        reason,
+      };
+      run.config = fallback.config;
+      this.currentRun = run;
+      const fallbackContextPreflight = await prepareGenerationContext(run.config);
+      if (fallbackContextPreflight === "stopped") {
+        return "stopped";
+      }
+      return await this.handleRunStopped(runId) ? "stopped" : "switched";
+    };
+    let attempt = 1;
+    while (attempt <= MAX_RETRYABLE_GENERATION_ATTEMPTS) {
       try {
         this.activeRunPhase = { runId, phase: "generation" };
         response = await this.generateAssistantResponse({
@@ -2843,6 +2916,15 @@ export class Process extends Host<Env> {
           model: run.config!.model,
           contextWindowTokens: run.config!.contextWindowTokens,
         })) {
+          const fallbackState = await switchToFallback(errorMsg);
+          if (fallbackState === "stopped") {
+            return;
+          }
+          if (fallbackState === "switched") {
+            attempt = 1;
+            response = null;
+            continue;
+          }
           console.error(`[Process] LLM context overflow:`, e);
           await this.finishProviderContextOverflowRun(
             runId,
@@ -2867,6 +2949,16 @@ export class Process extends Host<Env> {
           if (retryState === "stopped") {
             return;
           }
+          attempt += 1;
+          continue;
+        }
+        const fallbackState = await switchToFallback(errorMsg);
+        if (fallbackState === "stopped") {
+          return;
+        }
+        if (fallbackState === "switched") {
+          attempt = 1;
+          response = null;
           continue;
         }
         const displayError = formatGenerationFailure(errorMsg, {
@@ -2893,16 +2985,45 @@ export class Process extends Host<Env> {
         return;
       }
 
-      if (!response || isProviderContextOverflow(response, run.config!.contextWindowTokens)) {
+      if (!response) {
+        break;
+      }
+
+      if (isProviderContextOverflow(response, run.config!.contextWindowTokens)) {
+        const errorMsg = response.errorMessage ?? describeAssistantResponseFailure(response) ?? "Provider context overflow";
+        const fallbackState = await switchToFallback(errorMsg, response);
+        if (fallbackState === "stopped") {
+          return;
+        }
+        if (fallbackState === "switched") {
+          attempt = 1;
+          response = null;
+          continue;
+        }
         break;
       }
 
       const responseFailure = describeAssistantResponseFailure(response);
+      if (!responseFailure) {
+        break;
+      }
+
       if (
-        !responseFailure ||
         !isRetryableAssistantResponseFailure(response, responseFailure) ||
         attempt >= MAX_RETRYABLE_GENERATION_ATTEMPTS
       ) {
+        if (isFallbackEligibleAssistantResponse(response)) {
+          const errorMsg = response.errorMessage ?? responseFailure;
+          const fallbackState = await switchToFallback(errorMsg, response);
+          if (fallbackState === "stopped") {
+            return;
+          }
+          if (fallbackState === "switched") {
+            attempt = 1;
+            response = null;
+            continue;
+          }
+        }
         break;
       }
 
@@ -2920,6 +3041,7 @@ export class Process extends Host<Env> {
       if (retryState === "stopped") {
         return;
       }
+      attempt += 1;
       continue;
     }
 
@@ -2987,6 +3109,7 @@ export class Process extends Host<Env> {
       await this.sendSignal("proc.run.output", {
         text,
         thinking: thinkingBlocks,
+        ...(activeFallbackMetadata ? { fallback: activeFallbackMetadata } : {}),
         pid: this.pid,
         runId,
         conversationId,
@@ -2996,7 +3119,7 @@ export class Process extends Host<Env> {
       }
     }
 
-    const assistantMetadata = buildAssistantMessageMetadata(response, run.config!);
+    const assistantMetadata = buildAssistantMessageMetadata(response, run.config!, activeFallbackMetadata);
     this.store.appendMessage("assistant", text, {
       conversationId,
       runId,
@@ -3007,12 +3130,7 @@ export class Process extends Host<Env> {
       metadata: assistantMetadata,
     });
 
-    piMessages = await this.buildContextMessages(conversationId);
-    context = {
-      systemPrompt: run.systemPrompt,
-      messages: piMessages,
-      tools: tools.length > 0 ? tools : undefined,
-    };
+    context = await buildGenerationContext();
     await this.updateContextState(runId, conversationId, run.config!, context, response.usage, assistantMetadata?.usage);
     if (await this.handleRunStopped(runId)) {
       return;
@@ -3064,12 +3182,14 @@ export class Process extends Host<Env> {
     sessionAffinityKey?: string;
     streamSeq?: StreamSeqCounter;
   }): Promise<AssistantMessage | null> {
+    const routedFetch = this.createGenerationFetch(options.config);
     const stream = options.config.generationStreaming !== "off" &&
       typeof this.generation.stream === "function"
       // TODO: add ai.text.stream
       ? this.generation.stream({
         config: options.config,
         context: options.context,
+        ...(routedFetch ? { fetch: routedFetch } : {}),
         sessionAffinityKey: options.sessionAffinityKey,
       })
       : null;
@@ -3081,6 +3201,7 @@ export class Process extends Host<Env> {
           generate?: (request: {
             config: AiConfigResult;
             context: Context;
+            fetch?: typeof fetch;
             sessionAffinityKey?: string;
           }) => Promise<AssistantMessage>;
         };
@@ -3088,6 +3209,7 @@ export class Process extends Host<Env> {
           return injected.generate({
             config: options.config,
             context: options.context,
+            ...(routedFetch ? { fetch: routedFetch } : {}),
             sessionAffinityKey: options.sessionAffinityKey,
           });
         }
@@ -3095,6 +3217,7 @@ export class Process extends Host<Env> {
       return await this.generation.generate({
         config: options.config,
         context: options.context,
+        ...(routedFetch ? { fetch: routedFetch } : {}),
         sessionAffinityKey: options.sessionAffinityKey,
       });
     }
@@ -3154,6 +3277,7 @@ export class Process extends Host<Env> {
       }));
       return result.text ?? "";
     }
+    const routedFetch = this.createGenerationFetch(options.config);
     const generation = this.generation as unknown;
     if (!isGenerationService(generation)) {
       const injected = generation as {
@@ -3161,6 +3285,7 @@ export class Process extends Host<Env> {
           config: AiConfigResult;
           context: Context;
           options?: AiTextGenerateOptions;
+          fetch?: typeof fetch;
           sessionAffinityKey?: string;
         }) => Promise<string>;
       };
@@ -3169,6 +3294,7 @@ export class Process extends Host<Env> {
           config: options.config,
           context: options.context,
           options: options.options,
+          ...(routedFetch ? { fetch: routedFetch } : {}),
           sessionAffinityKey: options.sessionAffinityKey,
         });
       }
@@ -3177,6 +3303,7 @@ export class Process extends Host<Env> {
       config: options.config,
       context: options.context,
       options: options.options,
+      ...(routedFetch ? { fetch: routedFetch } : {}),
       sessionAffinityKey: options.sessionAffinityKey,
     });
   }
@@ -3493,6 +3620,43 @@ export class Process extends Host<Env> {
     return response.data as ResultOf<T>;
   }
 
+  private createGenerationFetch(config: AiConfigResult): typeof fetch | undefined {
+    const target = normalizeTarget(config.transportTarget);
+    if (target === "gsv") {
+      return undefined;
+    }
+    return async (input, init) => {
+      const request = new Request(input, init);
+      const args = await requestToNetFetchArgs(request);
+      const timeoutMs = normalizeNetFetchTimeoutMs((init as RoutedFetchInit | undefined)?.timeoutMs);
+      const result = await withAbortSignal(
+        this.requestKernelNetFetch(
+          target,
+          {
+            ...args,
+            timeoutMs,
+          },
+          timeoutMs,
+        ),
+        request.signal,
+      );
+      return responseFromNetFetchResult(result);
+    };
+  }
+
+  private async requestKernelNetFetch(
+    target: string,
+    args: NetFetchArgs,
+    ttlMs?: number,
+  ): Promise<NetFetchResult> {
+    return await requestProcessNetFetch(
+      this.pid,
+      target,
+      args,
+      { ttlMs, internalPurpose: "model-transport" },
+    );
+  }
+
   private async resolveAiConfig(): Promise<AiConfigResult> {
     const snapshot = this.store.getAiConfigSnapshot();
     return await this.kernelRpc("ai.config", snapshot
@@ -3583,6 +3747,45 @@ export class Process extends Host<Env> {
       options.reason,
     );
     return await this.handleRunStopped(options.runId) ? "stopped" : "retry";
+  }
+
+  private async beginGenerationFallback(options: {
+    runId: string;
+    conversationId: string;
+    reason: string;
+    from: AiConfigResult;
+    to: AiConfigResult;
+    fallbackIndex: number;
+    fallbackCount: number;
+  }): Promise<"fallback" | "stopped"> {
+    console.warn(
+      `[Process] Switching LLM generation from ${formatAiModelStackLabel(options.from)} ` +
+      `to fallback ${formatAiModelStackLabel(options.to)}: ${options.reason}`,
+    );
+    if (await this.handleRunStopped(options.runId)) {
+      return "stopped";
+    }
+    await this.sendSignal("proc.run.retrying", {
+      pid: this.pid,
+      runId: options.runId,
+      conversationId: normalizeConversationId(options.conversationId),
+      attempt: options.fallbackIndex,
+      nextAttempt: options.fallbackIndex + 1,
+      maxAttempts: options.fallbackCount + 1,
+      reason: options.reason,
+      fallback: {
+        from: {
+          provider: options.from.provider,
+          model: options.from.model,
+        },
+        to: {
+          provider: options.to.provider,
+          model: options.to.model,
+        },
+      },
+      timestamp: Date.now(),
+    });
+    return await this.handleRunStopped(options.runId) ? "stopped" : "fallback";
   }
 
   private async emitRunFinished(run: RunState, options: RunFinishOptions): Promise<void> {
@@ -5193,6 +5396,99 @@ function parseArchivedMessageRole(value: unknown): MessageRole {
     return value;
   }
   throw new Error(`invalid archived message role: ${String(value)}`);
+}
+
+function nextAiConfigFallback(
+  primary: AiConfigResult,
+  current: AiConfigResult,
+  fallbacks: NonNullable<AiConfigResult["fallbacks"]>,
+  startIndex: number,
+): { config: AiConfigResult; nextIndex: number } | null {
+  for (let index = startIndex; index < fallbacks.length; index += 1) {
+    const config = aiConfigWithFallback(primary, fallbacks[index]);
+    if (!isSameAiRuntimeModelStack(current, config)) {
+      return { config, nextIndex: index + 1 };
+    }
+  }
+  return null;
+}
+
+function aiConfigWithFallback(
+  primary: AiConfigResult,
+  fallback: NonNullable<AiConfigResult["fallbacks"]>[number],
+): AiConfigResult {
+  const {
+    fallbacks: _fallbacks,
+    provider: _provider,
+    model: _model,
+    apiKey: _apiKey,
+    baseUrl: _baseUrl,
+    providerStyle: _providerStyle,
+    transportTarget: _transportTarget,
+    reasoning: _reasoning,
+    maxTokens: _maxTokens,
+    contextWindowTokens: _contextWindowTokens,
+    contextWindowSource: _contextWindowSource,
+    generationTimeoutMs: _generationTimeoutMs,
+    generationStreaming: _generationStreaming,
+    ...base
+  } = primary;
+  return {
+    ...base,
+    provider: fallback.provider,
+    model: fallback.model,
+    apiKey: fallback.apiKey,
+    ...(fallback.baseUrl ? { baseUrl: fallback.baseUrl } : {}),
+    providerStyle: fallback.providerStyle,
+    transportTarget: fallback.transportTarget,
+    reasoning: fallback.reasoning,
+    maxTokens: fallback.maxTokens,
+    contextWindowTokens: fallback.contextWindowTokens,
+    contextWindowSource: fallback.contextWindowSource,
+    generationTimeoutMs: fallback.generationTimeoutMs,
+    generationStreaming: fallback.generationStreaming,
+  };
+}
+
+function isSameAiRuntimeModelStack(left: AiConfigResult, right: AiConfigResult): boolean {
+  return left.provider.trim().toLowerCase() === right.provider.trim().toLowerCase() &&
+    left.model.trim().toLowerCase() === right.model.trim().toLowerCase() &&
+    left.apiKey === right.apiKey &&
+    (left.baseUrl ?? "").trim() === (right.baseUrl ?? "").trim() &&
+    (left.providerStyle ?? "auto").trim().toLowerCase() === (right.providerStyle ?? "auto").trim().toLowerCase() &&
+    (left.transportTarget ?? "gsv").trim() === (right.transportTarget ?? "gsv").trim();
+}
+
+function isFallbackEligibleAssistantResponse(response: AssistantMessage): boolean {
+  return response.stopReason === "error" || response.stopReason === "aborted";
+}
+
+function formatAiModelStackLabel(config: Pick<AiConfigResult, "provider" | "model">): string {
+  return `${config.provider}/${config.model}`;
+}
+
+async function withAbortSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) {
+    throw abortError(signal.reason);
+  }
+  return await new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(abortError(signal.reason));
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
+}
+
+function abortError(reason: unknown): Error {
+  return reason instanceof Error ? reason : new Error("The operation was aborted");
 }
 
 function formatGenerationFailure(

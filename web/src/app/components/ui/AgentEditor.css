@@ -114,6 +114,20 @@
   letter-spacing: 0.16em;
 }
 
+.gsv-ae-overrides-heading {
+  min-width: 0;
+  margin: 0 0 16px;
+  border-top: 1px solid color-mix(in srgb, var(--rule-inner) 82%, transparent);
+  padding-top: 18px;
+}
+
+.gsv-ae-overrides-heading > span {
+  color: var(--label);
+  font-family: var(--gsv-font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.2em;
+}
+
 .gsv-ae-readonly-note {
   /* size from .gsv-sublabel (10px) */
   color: var(--text-dim);

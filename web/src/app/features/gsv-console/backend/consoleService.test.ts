@@ -346,19 +346,28 @@ describe("console agent service", () => {
     await saveConsoleAgentBehavior(client, {
       uid: 42,
       model: "",
+      fallbackModel: "",
       reasoning: "",
       approval: "",
     });
 
     expect(setConfig).toHaveBeenNthCalledWith(1, {
-      key: "users/42/ai/model",
+      key: "users/42/ai/model_profile",
       value: "",
     });
     expect(setConfig).toHaveBeenNthCalledWith(2, {
-      key: "users/42/ai/tools/approval",
+      key: "users/42/ai/model",
       value: "",
     });
     expect(setConfig).toHaveBeenNthCalledWith(3, {
+      key: "users/42/ai/fallback_model_profile",
+      value: "",
+    });
+    expect(setConfig).toHaveBeenNthCalledWith(4, {
+      key: "users/42/ai/tools/approval",
+      value: "",
+    });
+    expect(setConfig).toHaveBeenNthCalledWith(5, {
       key: "users/42/ai/reasoning",
       value: "",
     });
@@ -374,14 +383,71 @@ describe("console agent service", () => {
     });
 
     expect(setConfig).toHaveBeenNthCalledWith(1, {
+      key: "users/42/ai/model_profile",
+      value: "",
+    });
+    expect(setConfig).toHaveBeenNthCalledWith(2, {
       key: "users/42/ai/model",
       value: "NEMOTRON 3",
     });
-    expect(setConfig).toHaveBeenNthCalledWith(2, {
+    expect(setConfig).toHaveBeenNthCalledWith(3, {
       key: "users/42/ai/reasoning",
       value: "medium",
     });
-    expect(setConfig).toHaveBeenCalledTimes(2);
+    expect(setConfig).toHaveBeenCalledTimes(3);
+  });
+
+  it("persists selected model presets as profile references", async () => {
+    const { client, setConfig } = createMockClient(42);
+
+    await saveConsoleAgentBehavior(client, {
+      uid: 42,
+      model: "model-profile:fast-stack",
+      reasoning: "medium",
+    });
+
+    expect(setConfig).toHaveBeenNthCalledWith(1, {
+      key: "users/42/ai/model_profile",
+      value: "fast-stack",
+    });
+    expect(setConfig).toHaveBeenNthCalledWith(2, {
+      key: "users/42/ai/model",
+      value: "",
+    });
+    expect(setConfig).toHaveBeenNthCalledWith(3, {
+      key: "users/42/ai/reasoning",
+      value: "medium",
+    });
+    expect(setConfig).toHaveBeenCalledTimes(3);
+  });
+
+  it("persists selected fallback presets as account fallback references", async () => {
+    const { client, setConfig } = createMockClient(42);
+
+    await saveConsoleAgentBehavior(client, {
+      uid: 42,
+      model: "model-profile:fast-stack",
+      fallbackModel: "model-profile:safe-stack",
+      reasoning: "medium",
+    });
+
+    expect(setConfig).toHaveBeenNthCalledWith(1, {
+      key: "users/42/ai/model_profile",
+      value: "fast-stack",
+    });
+    expect(setConfig).toHaveBeenNthCalledWith(2, {
+      key: "users/42/ai/model",
+      value: "",
+    });
+    expect(setConfig).toHaveBeenNthCalledWith(3, {
+      key: "users/42/ai/fallback_model_profile",
+      value: "safe-stack",
+    });
+    expect(setConfig).toHaveBeenNthCalledWith(4, {
+      key: "users/42/ai/reasoning",
+      value: "medium",
+    });
+    expect(setConfig).toHaveBeenCalledTimes(4);
   });
 
   it("reconciles renamed and deleted agent context files", async () => {
@@ -619,6 +685,50 @@ describe("console agent service", () => {
           "config/ai/provider": "workers-ai",
           "config/ai/model": "@cf/test/model",
           "config/ai/api_key": "",
+        },
+      },
+    }));
+  });
+
+  it("validates explicit base URL clears as empty overrides", async () => {
+    const call = vi.fn(async () => ({
+      provider: "custom",
+      model: "local-chat",
+      text: "ok",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "ok" }],
+        api: "test",
+        provider: "custom",
+        model: "local-chat",
+        usage: {
+          input: 1,
+          output: 1,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 2,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: "stop",
+      },
+    }));
+
+    await validateConsoleModelConfig({ call } as any, {
+      presetId: "local",
+      values: {
+        "config/ai/provider": "custom",
+        "config/ai/model": "local-chat",
+        "config/ai/base_url": "",
+      },
+    });
+
+    expect(call).toHaveBeenCalledWith("ai.text.generate", expect.objectContaining({
+      config: {
+        preset: { id: "local" },
+        overrides: {
+          "config/ai/provider": "custom",
+          "config/ai/model": "local-chat",
+          "config/ai/base_url": "",
         },
       },
     }));

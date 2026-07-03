@@ -54,3 +54,160 @@ describe("Kernel device connection cleanup", () => {
     expect(kernel.failRoutesForDevice).toHaveBeenCalledWith("node-alpha");
   });
 });
+
+describe("Kernel CLI download refresh coordination", () => {
+  it("runs explicit refreshes after an in-flight automatic refresh", async () => {
+    const kernel = Object.create(Kernel.prototype) as {
+      cliDownloadsRefresh: Promise<void> | null;
+      withCliDownloadsRefreshSlot<T>(
+        run: () => Promise<T>,
+        options?: { waitForExisting?: boolean },
+      ): Promise<T>;
+    };
+    kernel.cliDownloadsRefresh = null;
+    const order: string[] = [];
+    let releaseAutoRefresh: () => void = () => {};
+
+    const automaticRefresh = kernel.withCliDownloadsRefreshSlot(async () => {
+      order.push("auto:start");
+      await new Promise<void>((resolve) => {
+        releaseAutoRefresh = resolve;
+      });
+      order.push("auto:end");
+    });
+
+    let explicitStarted = false;
+    const explicitRefresh = kernel.withCliDownloadsRefreshSlot(async () => {
+      explicitStarted = true;
+      order.push("explicit");
+      return "updated";
+    }, { waitForExisting: true });
+
+    await Promise.resolve();
+    expect(explicitStarted).toBe(false);
+
+    releaseAutoRefresh();
+
+    await expect(explicitRefresh).resolves.toBe("updated");
+    await automaticRefresh;
+    expect(order).toEqual(["auto:start", "auto:end", "explicit"]);
+  });
+});
+
+describe("Kernel process device requests", () => {
+  function buildKernelForDeviceRequest(options: {
+    capabilities?: string[];
+    implements?: string[];
+  } = {}) {
+    const device = {
+      device_id: "linux-machine",
+      owner_uid: 0,
+      label: "Linux machine",
+      description: "",
+      implements: options.implements ?? ["net.fetch"],
+      platform: "linux",
+      version: "test",
+      online: true,
+      first_seen_at: 1,
+      last_seen_at: 2,
+      connected_at: 2,
+      disconnected_at: null,
+    };
+    const requestDevice = vi.fn(async () => ({
+      ok: true,
+      url: "https://example.com",
+      status: 204,
+      statusText: "No Content",
+      headers: {},
+      bodyBase64: "",
+      bodyBytes: 0,
+    }));
+    const kernel = Object.create(Kernel.prototype) as {
+      ready: Promise<void>;
+      env: Record<string, never>;
+      procs: { getIdentity: ReturnType<typeof vi.fn> };
+      caps: { resolve: ReturnType<typeof vi.fn> };
+      devices: {
+        canAccess: ReturnType<typeof vi.fn>;
+        get: ReturnType<typeof vi.fn>;
+      };
+      requestDevice: typeof requestDevice;
+      requestProcessNetFetch(
+        processId: string,
+        target: string,
+        args: { url: string; timeoutMs: number },
+        options?: { ttlMs?: number; internalPurpose?: "model-transport" },
+      ): Promise<unknown>;
+    };
+    kernel.ready = Promise.resolve();
+    kernel.env = {};
+    kernel.procs = { getIdentity: vi.fn(() => ({
+      uid: 0,
+      gid: 0,
+      gids: [0],
+      username: "root",
+      home: "/root",
+      cwd: "/root",
+    })) };
+    kernel.caps = { resolve: vi.fn(() => options.capabilities ?? ["net.fetch"]) };
+    kernel.devices = {
+      canAccess: vi.fn(() => true),
+      get: vi.fn(() => device),
+    };
+    kernel.requestDevice = requestDevice;
+    return { kernel, requestDevice };
+  }
+
+  it("validates the process target and calls requestDevice", async () => {
+    const { kernel, requestDevice } = buildKernelForDeviceRequest();
+
+    const result = await kernel.requestProcessNetFetch(
+      "proc_1",
+      "linux-machine",
+      { url: "https://example.com", timeoutMs: 180000 },
+      { ttlMs: 180000 },
+    );
+
+    expect(result).toMatchObject({ ok: true, status: 204 });
+    expect(kernel.procs.getIdentity).toHaveBeenCalledWith("proc_1");
+    expect(kernel.devices.canAccess).toHaveBeenCalledWith("linux-machine", 0, [0]);
+    expect(requestDevice).toHaveBeenCalledWith(
+      "linux-machine",
+      "net.fetch",
+      { url: "https://example.com", timeoutMs: 180000 },
+      180000,
+    );
+  });
+
+  it("requires net.fetch capability for default process net fetches", async () => {
+    const { kernel, requestDevice } = buildKernelForDeviceRequest({ capabilities: [] });
+
+    await expect(kernel.requestProcessNetFetch(
+      "proc_1",
+      "linux-machine",
+      { url: "https://example.com", timeoutMs: 180000 },
+      { ttlMs: 180000 },
+    )).rejects.toThrow("Permission denied: net.fetch");
+
+    expect(requestDevice).not.toHaveBeenCalled();
+  });
+
+  it("allows internal model transport net fetches without tool capability", async () => {
+    const { kernel, requestDevice } = buildKernelForDeviceRequest({ capabilities: [] });
+
+    const result = await kernel.requestProcessNetFetch(
+      "proc_1",
+      "linux-machine",
+      { url: "https://example.com", timeoutMs: 180000 },
+      { ttlMs: 180000, internalPurpose: "model-transport" },
+    );
+
+    expect(result).toMatchObject({ ok: true, status: 204 });
+    expect(requestDevice).toHaveBeenCalledWith(
+      "linux-machine",
+      "net.fetch",
+      { url: "https://example.com", timeoutMs: 180000 },
+      180000,
+    );
+  });
+});
