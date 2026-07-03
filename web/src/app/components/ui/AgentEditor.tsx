@@ -125,9 +125,9 @@ const DEFAULT_APPROVAL_POLICY: AgentToolApprovalPolicy = {
     { match: "sys.mcp.call", action: "ask" },
   ],
 };
-const MODEL_SETTING_INFO = "Primary model stack for this agent. Inherit uses the resolved account or system AI default; choosing another value stores an agent override.";
-const FALLBACK_SETTING_INFO = "Backup model preset to try when the primary stack fails. Inherit uses the account or system fallback; choosing another value stores an agent fallback override.";
-const REASONING_SETTING_INFO = "Reasoning effort hint passed to supported models. Inherit uses the account or system reasoning default; choosing another value stores an agent override.";
+const MODEL_SETTING_INFO = "Which AI this agent uses to respond. Inherit uses the default model.";
+const FALLBACK_SETTING_INFO = "Backup AI to try if the main one fails. Inherit uses the default backup, if one is set.";
+const REASONING_SETTING_INFO = "How much the AI thinks before replying. Higher can help with hard tasks, but may be slower.";
 
 function optionValue(option: AgentEditorModelOption): string {
   return typeof option === "string" ? option : option.value ?? option.label;
