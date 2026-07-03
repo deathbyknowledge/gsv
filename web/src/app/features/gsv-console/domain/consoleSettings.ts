@@ -5,12 +5,14 @@ import {
 } from "../../../domain/aiProviders";
 
 export type ConsoleSettingKind = "text" | "textarea" | "password" | "number" | "checkbox" | "select" | "readonly";
+export type ConsoleSettingRequirement = "none" | "required" | "optional";
 
 export type ConsoleSettingField = {
   key: string;
   label: string;
   description: string;
   kind: ConsoleSettingKind;
+  requirement?: ConsoleSettingRequirement;
   placeholder?: string;
   rows?: number;
   options?: ReadonlyArray<{ value: string; label: string }>;
@@ -46,6 +48,7 @@ export const AGENT_MODEL_FIELDS: readonly ConsoleSettingField[] = [
     label: "Provider",
     description: "LLM provider used by agent runs.",
     kind: "select",
+    requirement: "required",
     placeholder: "workers-ai",
     options: AI_PROVIDER_OPTIONS,
     size: "large",
@@ -55,14 +58,16 @@ export const AGENT_MODEL_FIELDS: readonly ConsoleSettingField[] = [
     label: "Model",
     description: "Model identifier passed to the selected provider.",
     kind: "text",
+    requirement: "required",
     placeholder: "@cf/nvidia/nemotron-3-120b-a12b",
     size: "large",
   },
   {
     key: "config/ai/base_url",
     label: "Base URL",
-    description: "Optional custom endpoint base URL. Leave empty for the provider default.",
+    description: "Custom endpoint base URL for gateway or compatible providers.",
     kind: "text",
+    requirement: "optional",
     placeholder: "https://gateway.example.com/v1",
     size: "large",
   },
@@ -71,6 +76,7 @@ export const AGENT_MODEL_FIELDS: readonly ConsoleSettingField[] = [
     label: "Fallback model",
     description: "Saved model to try if the selected model fails.",
     kind: "select",
+    requirement: "optional",
     size: "large",
     options: [{ value: "", label: "None" }],
   },
@@ -79,6 +85,7 @@ export const AGENT_MODEL_FIELDS: readonly ConsoleSettingField[] = [
     label: "Provider style",
     description: "Request API used for custom endpoints.",
     kind: "select",
+    requirement: "optional",
     size: "large",
     options: [
       { value: "auto", label: "Auto" },
@@ -92,14 +99,16 @@ export const AGENT_MODEL_FIELDS: readonly ConsoleSettingField[] = [
     label: "Origin machine",
     description: "Where custom provider HTTP requests start: the GSV Worker or a machine with network fetch support.",
     kind: "text",
+    requirement: "optional",
     placeholder: "gsv",
     size: "large",
   },
   {
     key: "config/ai/api_key",
     label: "API key",
-    description: "Provider credential. Leave empty for local or bound providers.",
+    description: "Provider credential for endpoints that require one.",
     kind: "password",
+    requirement: "optional",
     placeholder: "sk-...",
     size: "large",
   },
@@ -108,6 +117,7 @@ export const AGENT_MODEL_FIELDS: readonly ConsoleSettingField[] = [
     label: "Reasoning",
     description: "Reasoning effort hint for models that support extended thinking.",
     kind: "select",
+    requirement: "optional",
     size: "small",
     options: [
       { value: "off", label: "Off" },
@@ -123,6 +133,7 @@ export const AGENT_MODEL_FIELDS: readonly ConsoleSettingField[] = [
     label: "Max tokens",
     description: "Upper bound for generated response size.",
     kind: "number",
+    requirement: "optional",
     size: "small",
     half: true,
   },
@@ -131,6 +142,7 @@ export const AGENT_MODEL_FIELDS: readonly ConsoleSettingField[] = [
     label: "Max bytes",
     description: "Maximum bytes of home context injected into prompts.",
     kind: "number",
+    requirement: "optional",
     size: "small",
     half: true,
   },
@@ -152,6 +164,7 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
         label: "Provider",
         description: "Provider used to describe images.",
         kind: "select",
+        requirement: "required",
         placeholder: "workers-ai",
         options: AI_PROVIDER_OPTIONS,
       },
@@ -160,13 +173,15 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
         label: "Model",
         description: "Vision model used to generate image descriptions.",
         kind: "text",
+        requirement: "required",
         placeholder: "@cf/google/gemma-4-26b-a4b-it",
       },
       {
         key: "config/ai/image/read/api_key",
         label: "API key",
-        description: "Optional credential. Falls back to the agent API key when empty.",
+        description: "Credential for providers that require one. Falls back to the agent API key when empty.",
         kind: "password",
+        requirement: "optional",
         placeholder: "sk-...",
       },
       {
@@ -174,6 +189,7 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
         label: "Input mode",
         description: "Request shape used when sending image content.",
         kind: "select",
+        requirement: "optional",
         options: [
           { value: "auto", label: "Auto" },
           { value: "chat", label: "Chat vision" },
@@ -185,24 +201,28 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
         label: "Max bytes",
         description: "Maximum stored image size sent to the image-reading model.",
         kind: "number",
+        requirement: "optional",
       },
       {
         key: "config/ai/image/read/max_tokens",
         label: "Max tokens",
         description: "Maximum text tokens generated by the image-reading model.",
         kind: "number",
+        requirement: "optional",
       },
       {
         key: "config/ai/image/read/timeout_ms",
         label: "Timeout",
         description: "Maximum time to wait for image description generation.",
         kind: "number",
+        requirement: "optional",
       },
       {
         key: "config/ai/image/read/prompt",
         label: "Prompt",
         description: "Instruction used when converting images into text context.",
         kind: "textarea",
+        requirement: "optional",
         rows: 4,
       },
     ],
@@ -217,6 +237,7 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
         label: "Provider",
         description: "Provider used for image generation.",
         kind: "select",
+        requirement: "required",
         placeholder: "workers-ai",
         options: AI_OPENAI_WORKERS_PROVIDER_OPTIONS,
       },
@@ -225,13 +246,15 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
         label: "Model",
         description: "Default model for image generation.",
         kind: "text",
+        requirement: "required",
         placeholder: "@cf/black-forest-labs/flux-1-schnell",
       },
       {
         key: "config/ai/image/generation/api_key",
         label: "API key",
-        description: "Optional credential. Falls back to the agent API key when empty.",
+        description: "Credential for providers that require one. Falls back to the agent API key when empty.",
         kind: "password",
+        requirement: "optional",
         placeholder: "sk-...",
       },
     ],
@@ -246,6 +269,7 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
         label: "Provider",
         description: "Provider used by transcription requests.",
         kind: "select",
+        requirement: "required",
         placeholder: "workers-ai",
         options: AI_OPENAI_WORKERS_PROVIDER_OPTIONS,
       },
@@ -254,13 +278,15 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
         label: "Model",
         description: "Speech-to-text model used for audio attachments.",
         kind: "text",
+        requirement: "required",
         placeholder: "@cf/openai/whisper-large-v3-turbo",
       },
       {
         key: "config/ai/transcription/api_key",
         label: "API key",
-        description: "Optional credential. Falls back to the agent API key when empty.",
+        description: "Credential for providers that require one. Falls back to the agent API key when empty.",
         kind: "password",
+        requirement: "optional",
         placeholder: "sk-...",
       },
       {
@@ -268,6 +294,7 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
         label: "Max bytes",
         description: "Maximum audio payload size accepted for transcription.",
         kind: "number",
+        requirement: "optional",
       },
     ],
   },
@@ -281,6 +308,7 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
         label: "Provider",
         description: "Provider used by speech synthesis.",
         kind: "select",
+        requirement: "required",
         placeholder: "workers-ai",
         options: AI_OPENAI_WORKERS_PROVIDER_OPTIONS,
       },
@@ -289,13 +317,15 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
         label: "Model",
         description: "Text-to-speech model used by speech synthesis.",
         kind: "text",
+        requirement: "required",
         placeholder: "@cf/deepgram/aura-2-en",
       },
       {
         key: "config/ai/speech/api_key",
         label: "API key",
-        description: "Optional credential. Falls back to the agent API key when empty.",
+        description: "Credential for providers that require one. Falls back to the agent API key when empty.",
         kind: "password",
+        requirement: "optional",
         placeholder: "sk-...",
       },
       {
@@ -303,6 +333,7 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
         label: "Speaker",
         description: "Default voice or speaker.",
         kind: "text",
+        requirement: "optional",
         placeholder: "luna",
       },
       {
@@ -310,6 +341,7 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
         label: "Encoding",
         description: "Default audio encoding for synthesized speech.",
         kind: "text",
+        requirement: "optional",
         placeholder: "mp3",
       },
       {
@@ -317,12 +349,14 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
         label: "Max chars",
         description: "Maximum normalized text length accepted for speech synthesis.",
         kind: "number",
+        requirement: "optional",
       },
       {
         key: "config/ai/speech/timeout_ms",
         label: "Timeout",
         description: "Maximum time to wait for speech synthesis.",
         kind: "number",
+        requirement: "optional",
       },
     ],
   },

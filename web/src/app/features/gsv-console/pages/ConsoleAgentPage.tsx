@@ -179,6 +179,7 @@ function AgentEditorSurface({
     processes,
     processResource,
   });
+  const editorTasks = isHumanCrewAccount(account) ? [] : tasksForProcesses(processes);
 
   useLayoutEffect(() => {
     const node = rootRef.current;
@@ -231,7 +232,7 @@ function AgentEditorSurface({
             status={avatarStatusForProcesses(account, processes)}
             models={resolvedModelOptions}
             fallbackModels={fallbackModelOptions}
-            tasks={tasksForProcesses(processes)}
+            tasks={editorTasks}
             files={files}
             identityReadOnly
             behaviorReadOnly={!behaviorEditable}

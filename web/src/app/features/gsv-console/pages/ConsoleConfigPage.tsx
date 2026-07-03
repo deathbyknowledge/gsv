@@ -1010,6 +1010,7 @@ function ModelProfileForm({
       <TextInput
         label="MODEL NAME"
         info="Friendly name shown in model pickers."
+        requirement="required"
         placeholder="Deep Research"
         value={name}
         disabled={!editable || pending}
@@ -1063,7 +1064,7 @@ function ModelProfileForm({
   if (!profile) {
     const clampedStep = Math.max(0, Math.min(step, MODEL_PROFILE_STEP_LABELS.length - 1)) as ModelProfileStep;
     const nameReady = name.trim().length > 0 && !duplicateName;
-    const connectionReady = Boolean(drafts["config/ai/model"]?.trim());
+    const connectionReady = Boolean(drafts["config/ai/provider"]?.trim()) && Boolean(drafts["config/ai/model"]?.trim());
     const canContinue = editable && !pending && (
       clampedStep === 0 ? nameReady :
       clampedStep === 1 ? connectionReady :
@@ -1080,7 +1081,7 @@ function ModelProfileForm({
       ? "Name the model"
       : clampedStep === 1
       ? "Connect the provider"
-      : "Tune optional settings";
+      : "Tune advanced settings";
     const stepDescription = clampedStep === 0
       ? "Choose a name that will make sense when selecting this model for an agent."
       : clampedStep === 1
@@ -1479,6 +1480,7 @@ function SettingFieldInput({
       <Select
         label={field.label}
         info={description}
+        requirement={field.requirement}
         options={options}
         value={selectedIndex}
         disabled={disabled}
@@ -1497,6 +1499,7 @@ function SettingFieldInput({
       <Select
         label={field.label}
         info={description}
+        requirement={field.requirement}
         options={options}
         value={selectedIndex}
         disabled={disabled}
@@ -1512,6 +1515,7 @@ function SettingFieldInput({
       <TextArea
         label={field.label}
         info={description}
+        requirement={field.requirement}
         placeholder={placeholder}
         rows={field.rows ?? 4}
         size={field.size}
@@ -1532,6 +1536,7 @@ function SettingFieldInput({
       <Select
         label={field.label}
         info={description}
+        requirement={field.requirement}
         options={optionLabels}
         value={selectedIndex}
         disabled={disabled}
@@ -1558,7 +1563,12 @@ function SettingFieldInput({
     return (
       <div class="gsv-console-secret-field">
         <div class="gsv-console-secret-label-row">
-          <span class="gsv-console-secret-label gsv-sublabel">{field.label}</span>
+          <span class="gsv-console-secret-label gsv-sublabel">
+            {field.label}
+            {field.requirement && field.requirement !== "none" ? (
+              <span class="gsv-fld-req gsv-sublabel"> {field.requirement === "required" ? "· REQUIRED" : "· OPTIONAL"}</span>
+            ) : null}
+          </span>
           <InfoTip text={description} />
         </div>
         <div class={`gsv-console-secret-state${cleared ? " is-cleared" : ""}`}>
@@ -1599,6 +1609,7 @@ function SettingFieldInput({
     <TextInput
       label={field.label}
       info={description}
+      requirement={field.requirement}
       placeholder={placeholder}
       size={field.size}
       value={value}
