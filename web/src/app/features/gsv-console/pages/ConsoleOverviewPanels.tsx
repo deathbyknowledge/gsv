@@ -225,7 +225,7 @@ function crewCards(accounts: readonly ConsoleAccount[], processes: readonly Cons
       accountUid: account.uid,
       imageSrc: human ? CREW_HUMAN_IMAGE : agentImageSrcForIndex(agentIndex++),
       cover: !human,
-      name: human ? "Default agent profiles / preferences" : account.displayName,
+      name: human ? "Default agent preferences" : account.displayName,
       ...status,
     };
   });
