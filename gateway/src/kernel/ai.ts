@@ -66,6 +66,7 @@ import {
   createGenerationService,
   extractGeneratedText,
 } from "../inference/service";
+import { shouldUseCustomProvider } from "../inference/custom-provider";
 import { createRoutedFetch, normalizeTarget, type NetFetchDeviceTransport } from "./net";
 import {
   DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
@@ -398,9 +399,8 @@ export async function handleAiTextGenerate(
   const config = await resolveAiTextGenerationConfig(input.config, ctx);
   const context = normalizeAiTextGenerationContext(input);
   const options = normalizeAiTextGenerateOptions(input.options);
-  const response = await createGenerationService({
-    fetch: createRoutedFetch(ctx, transport, config.transportTarget),
-  }).generate({
+  const generationFetch = createCustomProviderFetch(ctx, transport, config);
+  const response = await createGenerationService(generationFetch ? { fetch: generationFetch } : {}).generate({
     config,
     context,
     ...(options ? { options } : {}),
@@ -413,6 +413,24 @@ export async function handleAiTextGenerate(
     model: response.model || config.model,
     ...(text ? { text } : {}),
   };
+}
+
+function createCustomProviderFetch(
+  ctx: KernelContext,
+  transport: NetFetchDeviceTransport | undefined,
+  config: AiConfigResult,
+): typeof fetch | undefined {
+  if (normalizeTarget(config.transportTarget) === "gsv") {
+    return undefined;
+  }
+  if (!shouldUseCustomProvider({
+    provider: config.provider,
+    baseUrl: config.baseUrl,
+    providerStyle: config.providerStyle,
+  })) {
+    return undefined;
+  }
+  return createRoutedFetch(ctx, transport, config.transportTarget);
 }
 
 function normalizeAiProcessOverrideValues(raw: Record<string, unknown>): Record<string, string> {

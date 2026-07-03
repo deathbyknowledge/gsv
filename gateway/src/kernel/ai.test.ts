@@ -607,6 +607,47 @@ describe("handleAiConfig", () => {
     }));
   });
 
+  it("does not build a routed fetch for non-custom text generation targets", async () => {
+    generateMock.mockImplementationOnce(async (request: any) => {
+      expect(request.config).toMatchObject({
+        executor: { kind: "kernel" },
+        provider: "anthropic",
+        model: "claude-test",
+        transportTarget: "linux-machine",
+      });
+      return {
+        role: "assistant",
+        content: [{ type: "text", text: "pong" }],
+        api: "test",
+        provider: "anthropic",
+        model: "claude-test",
+        usage: {
+          input: 1,
+          output: 1,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 2,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: "stop",
+        timestamp: 1,
+      };
+    });
+
+    const result = await handleAiTextGenerate({
+      messages: [{ role: "user", content: "ping" }],
+      config: {
+        overrides: {
+          "config/ai/provider": "anthropic",
+          "config/ai/model": "claude-test",
+          "config/ai/transport_target": "linux-machine",
+        },
+      },
+    }, makeAiConfigContext());
+
+    expect(result.text).toBe("pong");
+  });
+
   it("falls back to the owning human's AI config for agent processes", async () => {
     const result = await handleAiConfig({}, makeAiConfigContext({
       "users/1000/ai/provider": "owner-provider",
