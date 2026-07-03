@@ -421,11 +421,7 @@ function backupModelSummary(backupModel: ChatBackupModelInfo): string {
 }
 
 function backupModelDetails(backupModel: ChatBackupModelInfo): string {
-  const lines = [
-    backupModelSummary(backupModel),
-    `From: ${modelRefLabel(backupModel.from)}`,
-    `To: ${modelRefLabel(backupModel.to)}`,
-  ];
+  const lines = [backupModelSummary(backupModel)];
   if (backupModel.reason) {
     lines.push(`Reason: ${backupModel.reason}`);
   }
