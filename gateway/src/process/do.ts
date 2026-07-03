@@ -156,7 +156,10 @@ import {
   isWorkersAiProvider,
 } from "../inference/workers-ai";
 import { assembleSystemPrompt } from "./context";
-import { sendFrameToKernel } from "../shared/utils";
+import {
+  requestProcessNetFetch,
+  sendFrameToKernel,
+} from "../shared/utils";
 import {
   NET_FETCH,
   CODEMODE_EXEC,
@@ -190,6 +193,7 @@ import {
   requestToNetFetchArgs,
   responseFromNetFetchResult,
 } from "../kernel/net";
+import type { NetFetchArgs, NetFetchResult } from "../syscalls/net";
 
 type RunState = {
   runId: string;
@@ -3620,15 +3624,31 @@ export class Process extends Host<Env> {
       const args = await requestToNetFetchArgs(request);
       const timeoutMs = normalizeNetFetchTimeoutMs((init as RoutedFetchInit | undefined)?.timeoutMs);
       const result = await withAbortSignal(
-        this.kernelRpc("net.fetch", {
-          ...args,
+        this.requestKernelNetFetch(
           target,
+          {
+            ...args,
+            timeoutMs,
+          },
           timeoutMs,
-        }),
+        ),
         request.signal,
       );
       return responseFromNetFetchResult(result);
     };
+  }
+
+  private async requestKernelNetFetch(
+    target: string,
+    args: NetFetchArgs,
+    ttlMs?: number,
+  ): Promise<NetFetchResult> {
+    return await requestProcessNetFetch(
+      this.pid,
+      target,
+      args,
+      ttlMs,
+    );
   }
 
   private async resolveAiConfig(): Promise<AiConfigResult> {

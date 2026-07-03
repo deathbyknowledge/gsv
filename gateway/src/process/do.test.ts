@@ -2415,22 +2415,23 @@ describe("Process DO — mechanical", () => {
       });
     });
 
-    it("routes process custom-provider fetches through the configured transport target", async () => {
+    it("routes process custom-provider fetches through the kernel device request path", async () => {
       const pid = "mech-chat-custom-provider-transport-target";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
       const result = await runInDurableObject(stub, async (instance: Process) => {
         const process = instance as any;
-        const kernelCalls: Array<{ call: string; args: any }> = [];
+        const deviceRequests: Array<{ target: string; call: string; args: any; ttlMs?: number }> = [];
         process.sendSignal = async () => {};
         process.kernelRpc = async (call: string, args: any) => {
-          kernelCalls.push({ call, args });
-          if (call !== "net.fetch") {
-            throw new Error(`unexpected kernel syscall: ${call}`);
-          }
+          throw new Error(`unexpected synchronous kernel syscall: ${call}`);
+        };
+        process.requestKernelNetFetch = async (target: string, args: any, ttlMs?: number) => {
+          deviceRequests.push({ target, call: "net.fetch", args, ttlMs });
           const requestBody = atob(String(args.bodyBase64 ?? ""));
+          expect(target).toBe("linux-machine");
+          expect(ttlMs).toBe(180000);
           expect(args).toMatchObject({
-            target: "linux-machine",
             url: "http://localhost:18081/v1/chat/completions",
             method: "POST",
             timeoutMs: 180000,
@@ -2492,12 +2493,12 @@ describe("Process DO — mechanical", () => {
         };
         await process.continueAgentLoop("run-chat-custom-provider-transport-target");
         return {
-          kernelCalls,
+          deviceRequests,
           messages: process.store.getMessages(),
         };
       });
 
-      expect(result.kernelCalls).toHaveLength(1);
+      expect(result.deviceRequests).toHaveLength(1);
       expect(result.messages[result.messages.length - 1]).toMatchObject({
         role: "assistant",
         content: "device hello",

@@ -24,6 +24,7 @@ import {
 } from "@humansandmachines/gsv/protocol";
 import type { ProcHilRequest } from "../syscalls/proc";
 import type { SyscallName } from "../syscalls";
+import type { NetFetchArgs, NetFetchResult } from "../syscalls/net";
 import type { PkgPublicListResult } from "@humansandmachines/gsv/protocol";
 import type {
   AdapterOutboundMessage,
@@ -106,6 +107,7 @@ import { canReadRepo, canWriteRepo } from "./repo";
 import { handleProcSpawn } from "./proc-handlers";
 import { ensureDefaultConversationExecutor } from "./agents";
 import { handleShellExec } from "../drivers/native/shell";
+import { getVisibleTarget, targetCanHandle } from "./targets";
 import type {
   ScheduleRecord,
   ScheduleRunResult,
@@ -451,6 +453,63 @@ export class Kernel extends Host<Env> {
     }
 
     return null;
+  }
+
+  async requestProcessNetFetch(
+    processId: string,
+    target: string,
+    args: NetFetchArgs,
+    ttlMs?: number,
+  ): Promise<NetFetchResult> {
+    return await this.requestProcessDevice(processId, {
+      target,
+      call: "net.fetch",
+      args,
+      ttlMs,
+    }) as NetFetchResult;
+  }
+
+  private async requestProcessDevice(
+    processId: string,
+    request: {
+      target: string;
+      call: SyscallName;
+      args: unknown;
+      ttlMs?: number;
+    },
+  ): Promise<unknown> {
+    await this.ready;
+    const ctx = this.buildProcessContext(processId);
+    if (!ctx) {
+      throw new Error("Unknown process");
+    }
+    if (
+      !isInternalOnlySyscall(request.call) &&
+      !hasCapability(ctx.identity!.capabilities, request.call)
+    ) {
+      throw new Error(`Permission denied: ${request.call}`);
+    }
+
+    const target = getVisibleTarget(ctx, request.target, { includeOffline: true });
+    if (!target) {
+      throw new Error(`Access denied to device: ${request.target}`);
+    }
+    if (target.providerId !== "device" || target.route.kind !== "connection") {
+      throw new Error(`Target does not support device requests: ${request.target}`);
+    }
+    if (!target.online) {
+      throw new Error(`Device offline: ${target.targetId}`);
+    }
+    if (!targetCanHandle(target, request.call)) {
+      throw new Error(`Device ${target.targetId} does not implement ${request.call}`);
+    }
+
+    return await this.requestDevice(
+      target.targetId,
+      request.call,
+      request.args,
+      request.ttlMs,
+    );
   }
 
   /**
@@ -1071,9 +1130,33 @@ export class Kernel extends Host<Env> {
   }
 
   private async handleProcessReq(processId: string, frame: RequestFrame): Promise<ResponseFrame | null> {
+    const ctx = this.buildProcessContext(processId);
+    if (!ctx) {
+      return errFrame(frame.id, 404, "Unknown process");
+    }
+
+    if (
+      !isInternalOnlySyscall(frame.call) &&
+      !hasCapability(ctx.identity!.capabilities, frame.call)
+    ) {
+      return errFrame(frame.id, 403, `Permission denied: ${frame.call}`);
+    }
+
+    const origin: RouteOrigin = { type: "process", id: processId };
+    const result = await dispatch(frame, origin, ctx, this.buildDispatchDeps());
+
+    if (result.handled) {
+      this.applyPostDispatchEffects(frame, result.response);
+      return result.response;
+    }
+
+    return null;
+  }
+
+  private buildProcessContext(processId: string): KernelContext | null {
     const identity = this.procs.getIdentity(processId);
     if (!identity) {
-      return errFrame(frame.id, 404, "Unknown process");
+      return null;
     }
 
     const connIdentity: ConnectionIdentity = {
@@ -1082,14 +1165,7 @@ export class Kernel extends Host<Env> {
       capabilities: this.caps.resolve(identity.gids),
     };
 
-    if (
-      !isInternalOnlySyscall(frame.call) &&
-      !hasCapability(connIdentity.capabilities, frame.call)
-    ) {
-      return errFrame(frame.id, 403, `Permission denied: ${frame.call}`);
-    }
-
-    const ctx: KernelContext = {
+    return {
       env: this.env,
       auth: this.auth,
       caps: this.caps,
@@ -1125,16 +1201,6 @@ export class Kernel extends Host<Env> {
       refreshMcpServerConnection: this.refreshMcpServerConnection.bind(this),
       callMcpTool: this.callMcpTool.bind(this),
     };
-
-    const origin: RouteOrigin = { type: "process", id: processId };
-    const result = await dispatch(frame, origin, ctx, this.buildDispatchDeps());
-
-    if (result.handled) {
-      this.applyPostDispatchEffects(frame, result.response);
-      return result.response;
-    }
-
-    return null;
   }
 
   private async handleServiceReq(frame: RequestFrame): Promise<ResponseFrame> {

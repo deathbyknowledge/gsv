@@ -3,6 +3,7 @@ import { Kernel } from "../kernel/do";
 import { env } from "cloudflare:workers";
 import { Process } from "../process/do";
 import type { Frame } from "../protocol/frames";
+import type { NetFetchArgs, NetFetchResult } from "../syscalls/net";
 
 export const isWebSocketRequest = (request: Request) =>
   request.method === "GET" && request.headers.get("upgrade") === "websocket";
@@ -26,6 +27,17 @@ export async function sendFrameToKernel(
   const kernel = await getKernelPtr();
   return kernel.recvFrame(processId, frame);
 }
+
+export async function requestProcessNetFetch(
+  processId: string,
+  target: string,
+  args: NetFetchArgs,
+  ttlMs?: number,
+): Promise<NetFetchResult> {
+  const kernel = await getKernelPtr();
+  return kernel.requestProcessNetFetch(processId, target, args, ttlMs);
+}
+
 export async function sendFrameToProcess(
   pid: string,
   frame: Frame,
