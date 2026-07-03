@@ -41,6 +41,13 @@ const MODEL_PROFILES_VERSION = 1;
 const MODEL_PROFILE_KEY = "model_profiles";
 const MAX_PROFILE_NAME_LENGTH = 80;
 const MODEL_FALLBACK_PROFILE_KEY = "config/ai/fallback_model_profile";
+const ACCOUNT_MODEL_PROFILE_INFERENCE_BLOCKERS = [
+  "provider",
+  "base_url",
+  "provider_style",
+  "transport_target",
+  "api_key",
+] as const;
 
 export const AGENT_MODEL_FIELDS: readonly ConsoleSettingField[] = [
   {
@@ -484,13 +491,71 @@ export function effectiveAiValuesForViewer(
   if (typeof uid !== "number" || !Number.isFinite(uid)) {
     return values;
   }
+  const profileValues = effectiveAiProfileValuesForViewer(config, uid);
   for (const field of allAiSettingFields()) {
-    const overrideValue = configValueForKey(config, buildUserAiOverrideKey(uid, field.key));
-    if (overrideValue !== "") {
+    const profileValue = cleanValue(profileValues[field.key]);
+    const overrideValue = cleanValue(configValueForKey(config, buildUserAiOverrideKey(uid, field.key)));
+    if (profileValue !== "") {
+      values[field.key] = profileValue;
+    } else if (overrideValue !== "") {
       values[field.key] = overrideValue;
     }
   }
   return values;
+}
+
+function effectiveAiProfileValuesForViewer(
+  config: readonly ConsoleConfigEntry[],
+  uid: number,
+): Record<string, string> {
+  const explicitSelector = cleanValue(configValueForKey(config, `users/${uid}/ai/model_profile`));
+  const inferredSelector = explicitSelector
+    ? ""
+    : inferAiProfileSelectorForViewer(config, uid);
+  const selector = explicitSelector || inferredSelector;
+  if (!selector) {
+    return {};
+  }
+  const profile = findAiProfileForViewer(config, uid, selector, {
+    matchModel: Boolean(inferredSelector),
+  });
+  return profile?.values ?? {};
+}
+
+function inferAiProfileSelectorForViewer(
+  config: readonly ConsoleConfigEntry[],
+  uid: number,
+): string {
+  const model = cleanValue(configValueForKey(config, buildUserAiOverrideKey(uid, "config/ai/model")));
+  if (!model) {
+    return "";
+  }
+  const hasProviderStackOverride = ACCOUNT_MODEL_PROFILE_INFERENCE_BLOCKERS.some((key) => {
+    const overrideKey = `users/${uid}/ai/${key}`;
+    const entry = configEntryForKey(config, overrideKey);
+    return entry?.redacted === true || cleanValue(entry?.value) !== "";
+  });
+  return hasProviderStackOverride ? "" : model;
+}
+
+function findAiProfileForViewer(
+  config: readonly ConsoleConfigEntry[],
+  uid: number,
+  selector: string,
+  options: { matchModel?: boolean } = {},
+): ConsoleModelProfile | null {
+  const normalized = selector.trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+  return modelProfilesForConfig(config, uid).find((candidate) =>
+    candidate.id.toLowerCase() === normalized ||
+    candidate.name.toLowerCase() === normalized ||
+    (
+      options.matchModel === true &&
+      cleanValue(candidate.values["config/ai/model"]).toLowerCase() === normalized
+    )
+  ) ?? null;
 }
 
 export function modelProfilesForConfig(

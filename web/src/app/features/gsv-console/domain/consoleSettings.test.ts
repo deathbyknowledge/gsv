@@ -160,6 +160,59 @@ describe("console settings domain", () => {
     });
   });
 
+  it("reflects selected model profiles in viewer ai defaults", () => {
+    const profiles = createModelProfile([], "Fast Stack", {
+      "config/ai/provider": "custom",
+      "config/ai/model": "zai-glm-4.7",
+      "config/ai/base_url": "https://provider.example/v1",
+      "config/ai/provider_style": "openai-chat-completions",
+      "config/ai/api_key": "sk-profile",
+      "config/ai/reasoning": "low",
+    }, 1000);
+    const config: ConsoleConfigEntry[] = [
+      { key: "config/ai/provider", value: "workers-ai", redacted: false },
+      { key: "config/ai/model", value: "@cf/default/model", redacted: false },
+      { key: "users/42/ai/model_profile", value: profiles[0].id, redacted: false },
+      { key: "users/42/ai/provider", value: "workers-ai", redacted: false },
+      { key: "users/42/ai/model", value: "stale-model", redacted: false },
+      { key: modelProfilesConfigKey(42), value: serializeModelProfiles(profiles), redacted: false },
+      {
+        key: modelProfileSecretConfigKey(42, profiles[0].id, "config/ai/api_key"),
+        value: "sk-profile",
+        redacted: false,
+      },
+    ];
+
+    expect(effectiveAiValuesForViewer(config, 42)).toMatchObject({
+      "config/ai/provider": "custom",
+      "config/ai/model": "zai-glm-4.7",
+      "config/ai/base_url": "https://provider.example/v1",
+      "config/ai/provider_style": "openai-chat-completions",
+      "config/ai/api_key": "sk-profile",
+      "config/ai/reasoning": "low",
+    });
+  });
+
+  it("infers profile-backed defaults from raw model overrides when the provider stack is not overridden", () => {
+    const profiles = createModelProfile([], "Fast Stack", {
+      "config/ai/provider": "custom",
+      "config/ai/model": "zai-glm-4.7",
+      "config/ai/base_url": "https://provider.example/v1",
+    }, 1000);
+    const config: ConsoleConfigEntry[] = [
+      { key: "config/ai/provider", value: "workers-ai", redacted: false },
+      { key: "config/ai/model", value: "@cf/default/model", redacted: false },
+      { key: "users/42/ai/model", value: "zai-glm-4.7", redacted: false },
+      { key: modelProfilesConfigKey(42), value: serializeModelProfiles(profiles), redacted: false },
+    ];
+
+    expect(effectiveAiValuesForViewer(config, 42)).toMatchObject({
+      "config/ai/provider": "custom",
+      "config/ai/model": "zai-glm-4.7",
+      "config/ai/base_url": "https://provider.example/v1",
+    });
+  });
+
   it("formats raw provider model ids for list labels", () => {
     expect(modelDisplayName("@cf/google/gemma-4-26b-a4b-it")).toBe("Gemma 4 26B A4B IT");
     expect(modelDisplayName("anthropic/claude-sonnet-4.5")).toBe("Claude Sonnet 4 5");

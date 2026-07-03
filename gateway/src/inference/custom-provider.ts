@@ -175,14 +175,16 @@ function streamOpenAICompletionsWithFetch(
   void (async () => {
     const output = emptyAssistantMessage(model);
     try {
-      const compat = resolvedOpenAICompletionsCompat();
+      const compat = resolvedOpenAICompletionsCompat(model);
       const payload: Record<string, unknown> = {
         model: model.id,
         messages: convertMessages(model, request.context, compat as never),
         stream: true,
-        stream_options: { include_usage: true },
         max_tokens: request.options?.maxTokens ?? request.maxTokens,
       };
+      if (supportsOpenAIChatStreamingUsage(model)) {
+        payload.stream_options = { include_usage: true };
+      }
       if (request.context.tools && request.context.tools.length > 0) {
         payload.tools = convertChatTools(request.context.tools);
       }
@@ -733,12 +735,16 @@ function mapOpenAIStopReason(reason: string | null): AssistantMessage["stopReaso
   return "stop";
 }
 
-function resolvedOpenAICompletionsCompat(): Record<string, unknown> {
+function supportsOpenAIChatStreamingUsage(model: Model<"openai-completions">): boolean {
+  return model.provider === "openai" && model.baseUrl === DEFAULT_OPENAI_BASE_URL;
+}
+
+function resolvedOpenAICompletionsCompat(model: Model<"openai-completions">): Record<string, unknown> {
   return {
     supportsStore: false,
     supportsDeveloperRole: false,
     supportsReasoningEffort: false,
-    supportsUsageInStreaming: true,
+    supportsUsageInStreaming: supportsOpenAIChatStreamingUsage(model),
     maxTokensField: "max_tokens",
     requiresToolResultName: false,
     requiresAssistantAfterToolResult: false,

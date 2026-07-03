@@ -36,10 +36,41 @@ describe("streamWithCustomProvider", () => {
 
     const message = await stream.result();
     const init = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
+    const payload = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(new Headers(init?.headers).has("authorization")).toBe(false);
+    expect(payload.stream_options).toBeUndefined();
     expect(message.content).toEqual([{ type: "text", text: "pong" }]);
+  });
+
+  it("requests streamed usage only for native OpenAI chat completions", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response([
+      openAiChatSseChunk({ id: "chatcmpl-test", model: "gpt-4o-mini", choices: [{ delta: { content: "pong" } }] }),
+      openAiChatSseChunk({
+        choices: [{ delta: {}, finish_reason: "stop" }],
+        usage: { prompt_tokens: 2, completion_tokens: 1 },
+      }),
+      "data: [DONE]\n\n",
+    ].join(""), {
+      headers: { "content-type": "text/event-stream" },
+    }));
+
+    const stream = streamWithCustomProvider({
+      provider: "openai",
+      model: "gpt-4o-mini",
+      providerStyle: "openai-chat-completions",
+      fetch: fetchMock,
+      maxTokens: 32,
+      context: CONTEXT,
+    });
+
+    await stream.result();
+    const [url, init] = fetchMock.mock.calls[0] ?? [];
+    const payload = JSON.parse(String((init as RequestInit | undefined)?.body ?? "{}")) as Record<string, unknown>;
+
+    expect(url).toBe("https://api.openai.com/v1/chat/completions");
+    expect(payload.stream_options).toEqual({ include_usage: true });
   });
 
   it("emits OpenAI chat completion deltas before the SSE response closes", async () => {
