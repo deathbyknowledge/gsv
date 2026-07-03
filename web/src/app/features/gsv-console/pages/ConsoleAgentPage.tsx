@@ -224,7 +224,6 @@ function AgentEditorSurface({
             initialPermission={behavior.permission}
             initialApprovalPolicy={behavior.approval}
             approvalPolicySourceLabel={approvalSourceLabel(editsUserDefaults, behavior.approvalInherited)}
-            approvalPolicySourceDescription={approvalSourceDescription(editsUserDefaults, behavior.approvalInherited)}
             capabilities={account.capabilities}
             toolTargets={[...toolTargets]}
             createdLabel={String(account.uid)}
@@ -315,7 +314,6 @@ function NewAgentEditorSurface({
             initialDescription=""
             initialApprovalPolicy={defaultApprovalPolicy}
             approvalPolicySourceLabel="Your default"
-            approvalPolicySourceDescription="New agents use your default policy unless you change tool approval before creating them."
             createdLabel="DRAFT"
             metaLabel="STATUS:"
             status="idle"
@@ -380,16 +378,6 @@ function approvalForAgentSave(
 function approvalSourceLabel(editsUserDefaults: boolean, inherited: boolean): string {
   if (editsUserDefaults) return "Your default";
   return inherited ? "Inherited default" : "Agent override";
-}
-
-function approvalSourceDescription(editsUserDefaults: boolean, inherited: boolean): string {
-  if (editsUserDefaults) {
-    return "Your agents use this policy unless an individual agent has its own tool approval override.";
-  }
-  if (inherited) {
-    return "This agent has no tool approval override and uses your default tool approval policy.";
-  }
-  return "This agent has its own tool approval policy.";
 }
 
 function modelOptionsKey(options: readonly AgentEditorModelOption[]): string {

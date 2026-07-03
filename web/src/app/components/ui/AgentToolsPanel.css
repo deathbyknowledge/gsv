@@ -18,13 +18,17 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 
 .gsv-tools-title > span:first-child {
   color: var(--label);
   font-size: 9.5px;
   letter-spacing: 0.2em;
+}
+
+.gsv-tools-title .gsv-infotip {
+  margin-inline-start: 0;
 }
 
 .gsv-tools-bar-actions {

@@ -44,7 +44,6 @@ export interface AgentEditorProps {
   initialPermission?: string;
   initialApprovalPolicy?: string;
   approvalPolicySourceLabel?: string;
-  approvalPolicySourceDescription?: string;
   capabilities?: string[];
   toolTargets?: AgentToolTarget[];
   files?: AgentEditorFile[];
@@ -737,7 +736,7 @@ export function AgentEditor(props: AgentEditorProps) {
                   </div>
 
                   {/* MODEL */}
-                  <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+                  <div style="display:flex;align-items:center;gap:0;margin-bottom:10px;">
                     <span class="gsv-sublabel" style="letter-spacing:.22em;color:var(--label);">MODEL</span>
                     <InfoTip text={MODEL_SETTING_INFO} position="right" label="Model setting info" />
                   </div>
@@ -753,7 +752,7 @@ export function AgentEditor(props: AgentEditorProps) {
                   </div>
 
                   {/* FALLBACK MODEL */}
-                  <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+                  <div style="display:flex;align-items:center;gap:0;margin-bottom:10px;">
                     <span class="gsv-sublabel" style="letter-spacing:.22em;color:var(--label);">FALLBACK</span>
                     <InfoTip text={FALLBACK_SETTING_INFO} position="right" label="Fallback setting info" />
                   </div>
@@ -769,7 +768,7 @@ export function AgentEditor(props: AgentEditorProps) {
                   </div>
 
                   {/* REASONING */}
-                  <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+                  <div style="display:flex;align-items:center;gap:0;margin-bottom:10px;">
                     <span style="font-size:9.5px;letter-spacing:.22em;color:var(--label);">REASONING</span>
                     <InfoTip text={REASONING_SETTING_INFO} position="right" label="Reasoning setting info" />
                   </div>
@@ -788,7 +787,6 @@ export function AgentEditor(props: AgentEditorProps) {
                     key={`tools-${formNonce}`}
                     policy={approvalPolicy}
                     sourceLabel={props.approvalPolicySourceLabel}
-                    sourceDescription={props.approvalPolicySourceDescription}
                     capabilities={props.capabilities}
                     targets={props.toolTargets}
                     disabled={behaviorReadOnly}

@@ -779,7 +779,6 @@ function ToolApprovalSettingsGroup({
       <AgentToolsPanel
         policy={policy}
         sourceLabel="System fallback"
-        sourceDescription="Used only when neither a user default nor an agent override is configured."
         targets={targets}
         disabled={!editable || pending}
         onChange={(nextPolicy) => {

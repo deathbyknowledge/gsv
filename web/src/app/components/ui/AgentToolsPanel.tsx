@@ -29,7 +29,6 @@ export type AgentToolTarget = {
 export interface AgentToolsPanelProps {
   policy: AgentToolApprovalPolicy;
   sourceLabel?: string;
-  sourceDescription?: string;
   capabilities?: readonly string[];
   targets?: readonly AgentToolTarget[];
   disabled?: boolean;
@@ -48,6 +47,7 @@ type ApprovalMatchOption = {
 };
 
 const APPROVAL_ACTIONS: AgentToolApprovalAction[] = ["auto", "ask", "deny"];
+const TOOL_APPROVAL_INFO = "Tools let agents take actions like reading files or running commands. Approvals decide what can happen automatically, what asks first, and what is blocked.";
 const CAPABILITY_FAMILIES: CapabilityFamily[] = [
   {
     label: "Filesystem",
@@ -280,7 +280,6 @@ function actionIndex(action: AgentToolApprovalAction): number {
 export function AgentToolsPanel({
   policy,
   sourceLabel,
-  sourceDescription,
   targets = [],
   disabled = false,
   onChange,
@@ -292,10 +291,8 @@ export function AgentToolsPanel({
       <div class="gsv-tools-bar">
         <div class="gsv-tools-title">
           <span>TOOL APPROVAL</span>
+          <InfoTip text={TOOL_APPROVAL_INFO} position="right" label="Tool approval info" />
           {normalizedSource ? <Tag tone="info" label={normalizedSource.toUpperCase()} boxed /> : null}
-          {sourceDescription ? (
-            <InfoTip text={sourceDescription} position="right" label="Tool approval policy source" />
-          ) : null}
         </div>
         <div class="gsv-tools-bar-actions">
           <Button
