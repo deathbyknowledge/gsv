@@ -29,12 +29,13 @@ describe("console settings domain", () => {
     const providerValues = AI_PROVIDER_OPTIONS.map((option) => option.value);
     expect(providerValues).toContain("workers-ai");
     expect(providerValues).toContain("openai");
+    expect(providerValues).toContain("cloudflare-ai-gateway");
     expect(providerValues).not.toContain("amazon-bedrock");
     expect(providerValues).not.toContain("azure-openai-responses");
-    expect(providerValues).not.toContain("cloudflare-ai-gateway");
     expect(providerValues).not.toContain("cloudflare-workers-ai");
     expect(providerValues).not.toContain("openai-codex");
     expect(AI_PROVIDER_OPTIONS.find((option) => option.value === "workers-ai")?.label).toBe("Workers AI (gateway binding)");
+    expect(AI_PROVIDER_OPTIONS.find((option) => option.value === "cloudflare-ai-gateway")?.label).toBe("Cloudflare AI Gateway");
     expect(agentProviderField?.kind).toBe("select");
     expect(agentProviderField?.options).toBe(AI_PROVIDER_OPTIONS);
     expect(toolProviderField("image-read")?.options).toBe(AI_PROVIDER_OPTIONS);
