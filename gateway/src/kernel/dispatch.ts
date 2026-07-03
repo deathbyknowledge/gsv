@@ -738,13 +738,14 @@ async function routeToTarget(
 
   let route: { cancel: () => void } | null = null;
   let binaryRoute: { cancel: () => void } | null = null;
+  const ttlMs = routedFrameTtlMs(frame);
   try {
     route = await deps.registerRoute({
       id: frame.id,
       call: frame.call,
       origin,
       deviceId: target.targetId,
-      ttlMs: DEFAULT_DEVICE_TTL_MS,
+      ttlMs,
     });
     const streamId = transferStreamId(frame.call, frame.args);
     if (streamId !== null) {
@@ -753,7 +754,7 @@ async function routeToTarget(
         streamId,
         origin,
         deviceId: target.targetId,
-        ttlMs: DEFAULT_DEVICE_TTL_MS,
+        ttlMs,
       });
     }
   } catch (error) {
@@ -783,6 +784,20 @@ async function routeToTarget(
   }
 
   return { handled: false };
+}
+
+function routedFrameTtlMs(frame: RequestFrame): number {
+  if (frame.call !== "net.fetch") {
+    return DEFAULT_DEVICE_TTL_MS;
+  }
+  if (!frame.args || typeof frame.args !== "object") {
+    return DEFAULT_DEVICE_TTL_MS;
+  }
+  const timeoutMs = (frame.args as { timeoutMs?: unknown }).timeoutMs;
+  if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return DEFAULT_DEVICE_TTL_MS;
+  }
+  return Math.max(1, Math.floor(timeoutMs));
 }
 
 function transferStreamId(call: string, args: unknown): number | null {
