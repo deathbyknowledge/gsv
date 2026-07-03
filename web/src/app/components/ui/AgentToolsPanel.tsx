@@ -142,9 +142,14 @@ const APPROVAL_MATCH_OPTIONS: SelectOption[] = CAPABILITY_FAMILIES.flatMap((fami
   })),
 );
 const APPROVAL_MATCH_VALUES = CAPABILITY_FAMILIES.flatMap((family) => family.options.map((option) => option.match));
+const APPROVAL_MATCH_LABELS = new Map(
+  CAPABILITY_FAMILIES.flatMap((family) =>
+    family.options.map((option) => [option.match, option.label] as const)
+  ),
+);
 const BUILTIN_TARGET_OPTIONS: SelectOption[] = [
   {
-    label: "All",
+    label: "All machines",
     value: "",
   },
   {
@@ -153,10 +158,27 @@ const BUILTIN_TARGET_OPTIONS: SelectOption[] = [
   },
 ];
 const LEGACY_EXTERNAL_TARGET_OPTION: SelectOption = {
-  group: "Stored target",
-  label: "All external targets",
+  group: "Stored machine",
+  label: "All machines",
   value: "targets/*",
 };
+
+export function humanToolCapabilityLabel(capability: string): string {
+  const normalized = capability.trim();
+  if (!normalized) {
+    return "Capability";
+  }
+  const known = APPROVAL_MATCH_LABELS.get(normalized);
+  if (known) {
+    return known;
+  }
+  return normalized
+    .replace(/\.\*/g, "")
+    .split(/[._:-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
 
 function actionLabel(action: AgentToolApprovalAction): string {
   if (action === "auto") return "Allow";
@@ -226,7 +248,7 @@ function targetOptionsForRule(target: string | undefined, targets: readonly Agen
     .map((candidate) => {
       const label = candidate.label?.trim() || candidate.id;
       return {
-        group: "Targets",
+        group: "Machines",
         label,
         value: candidate.id,
       };
@@ -244,7 +266,7 @@ function targetOptionsForRule(target: string | undefined, targets: readonly Agen
   return [
     ...baseOptions,
     {
-      group: "Stored target",
+      group: "Stored machine",
       label: target,
       value: target,
     },
@@ -321,17 +343,17 @@ export function AgentToolsPanel({
           <div class="gsv-tools-overrides-head" role="row">
             <span role="columnheader">TOOL</span>
             <span class="gsv-tools-column-head" role="columnheader">
-              TARGET
+              MACHINE
               <InfoTip
-                text="Where this override applies: all targets, the GSV computer, or one named target."
+                text="Where this override applies: every machine, the GSV computer, or one named machine."
                 position="top"
-                label="Target scope"
+                label="Machine scope"
               />
             </span>
             <span class="gsv-tools-column-head" role="columnheader">
               ACTION
               <InfoTip
-                text="What happens when the tool and target match: allow it, ask for confirmation, or deny it."
+                text="What happens when the tool and machine match: allow it, ask for confirmation, or deny it."
                 position="top"
                 label="Approval action"
               />

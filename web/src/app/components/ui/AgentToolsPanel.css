@@ -115,12 +115,6 @@
 .gsv-tools-rule-delete .gsv-ibtn,
 .gsv-tools-rule-delete .gsv-ibtn-disabled {
   justify-self: end;
-  color: var(--danger-hi);
-}
-
-.gsv-tools-rule-delete .gsv-ibtn:hover {
-  border-color: var(--danger-hi);
-  color: var(--danger-hi);
 }
 
 @container panel (max-width: 700px) {
