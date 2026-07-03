@@ -36,7 +36,7 @@ export function Segmented(props: SegmentedProps) {
   const {
     l0 = "ALLOW",
     l1 = "ASK",
-    l2 = "DENY",
+    l2 = "BLOCK",
     l3 = "",
     size = "medium",
     disabled = false,

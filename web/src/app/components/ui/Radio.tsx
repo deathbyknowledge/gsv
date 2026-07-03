@@ -5,12 +5,17 @@ import "./Radio.css";
 export type RadioSize = "small" | "medium" | "large";
 export type RadioStatus = "none" | "error" | "success" | "info" | "warning";
 export type RadioRequirement = "none" | "required" | "optional";
+export type RadioOption = string | {
+  label: string;
+  info?: string;
+};
 
 export interface RadioProps {
   o0?: string;
   o1?: string;
   o2?: string;
   o3?: string;
+  options?: RadioOption[];
   value?: number;
   size?: RadioSize;
   disabled?: boolean;
@@ -33,10 +38,11 @@ const SIZE_CLASS: Record<RadioSize, string> = {
  *  to four option labels, with optional field label/desc/requirement/status. */
 export function Radio(props: RadioProps) {
   const {
-    o0 = "ALLOW",
-    o1 = "ASK",
-    o2 = "DENY",
+    o0 = "OPTION 1",
+    o1 = "OPTION 2",
+    o2 = "",
     o3 = "",
+    options,
     size = "medium",
     disabled = false,
     label = "",
@@ -52,8 +58,10 @@ export function Radio(props: RadioProps) {
   const nameRef = useRef(`gsv-radio-${Math.random().toString(36).slice(2)}`);
   const groupId = useId();
 
-  const opts = [o0, o1, o2, o3].filter((x) => x != null && x !== "");
-  const labels = opts.length ? opts : ["ALLOW", "ASK", "DENY"];
+  const explicitOptions = Array.isArray(options) ? options.filter((option) => option != null) : [];
+  const shorthandOptions = [o0, o1, o2, o3].filter((x) => x != null && x !== "");
+  const opts = (explicitOptions.length ? explicitOptions : shorthandOptions.length ? shorthandOptions : ["OPTION 1", "OPTION 2"])
+    .map(normalizeRadioOption);
   const idx = idxState === undefined ? props.value ?? 0 : idxState;
 
   const req = requirement && requirement !== "none" ? requirement : "";
@@ -93,19 +101,22 @@ export function Radio(props: RadioProps) {
         aria-describedby={describedBy}
         aria-invalid={status === "error" ? true : undefined}
       >
-        {labels.map((optLabel, i) => (
-          <label class={`gsv-rd-opt${i === idx ? " is-on" : ""}`} key={i}>
-            <input
-              checked={i === idx}
-              class="gsv-rd-input"
-              disabled={disabled}
-              name={nameRef.current}
-              type="radio"
-              onChange={() => pick(i)}
-            />
-            <span class="gsv-rd-ring">{i === idx ? <span class="gsv-rd-dot" /> : null}</span>
-            <span class="gsv-rd-label">{optLabel}</span>
-          </label>
+        {opts.map((option, i) => (
+          <span class={`gsv-rd-opt${i === idx ? " is-on" : ""}`} key={i}>
+            <label class="gsv-rd-click">
+              <input
+                checked={i === idx}
+                class="gsv-rd-input"
+                disabled={disabled}
+                name={nameRef.current}
+                type="radio"
+                onChange={() => pick(i)}
+              />
+              <span class="gsv-rd-ring">{i === idx ? <span class="gsv-rd-dot" /> : null}</span>
+              <span class="gsv-rd-label">{option.label}</span>
+            </label>
+            {option.info ? <InfoTip text={option.info} position="right" label={`${option.label} info`} /> : null}
+          </span>
         ))}
       </div>
       {hasStat ? (
@@ -116,4 +127,14 @@ export function Radio(props: RadioProps) {
       ) : null}
     </div>
   );
+}
+
+function normalizeRadioOption(option: RadioOption): { label: string; info: string } {
+  if (typeof option === "string") {
+    return { label: option, info: "" };
+  }
+  return {
+    label: option.label,
+    info: option.info ?? "",
+  };
 }

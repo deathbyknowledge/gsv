@@ -9,6 +9,7 @@ import { Button } from "../../../components/ui/Button";
 import { Checkbox } from "../../../components/ui/Checkbox";
 import { ConfirmModal } from "../../../components/ui/ConfirmModal";
 import { InfoTip } from "../../../components/ui/InfoTip";
+import { Radio } from "../../../components/ui/Radio";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
 import { Select, type SelectOption } from "../../../components/ui/Select";
 import { Stepper } from "../../../components/ui/Stepper";
@@ -120,7 +121,7 @@ type ValidateModelSettingsInput = {
 };
 
 type SettingsStatusTone = "pending" | "success" | "error";
-type ModelProfileStep = 0 | 1 | 2;
+type ModelProfileStep = 0 | 1 | 2 | 3;
 
 type SettingsFieldGroupProps = {
   config: readonly ConsoleConfigEntry[];
@@ -149,12 +150,24 @@ const MODEL_ADVANCED_FIELD_KEYS = new Set([
   "config/ai/max_context_bytes",
 ]);
 const MODEL_TRANSPORT_TARGET_KEY = "config/ai/transport_target";
+const CUSTOM_ENDPOINT_CONNECT_FIELD_KEYS = [
+  "config/ai/model",
+  "config/ai/base_url",
+  "config/ai/provider_style",
+  MODEL_TRANSPORT_TARGET_KEY,
+  "config/ai/api_key",
+] as const;
+const PROVIDER_CONNECT_FIELD_KEYS = [
+  "config/ai/provider",
+  "config/ai/model",
+  "config/ai/api_key",
+] as const;
 const GSV_TRANSPORT_TARGET_OPTION: SelectOption = {
   label: "GSV Worker",
   value: "gsv",
   description: "Send HTTP from the gateway Worker runtime.",
 };
-const MODEL_PROFILE_STEP_LABELS = ["NAME", "CONNECT", "OPTIONS"] as const;
+const MODEL_PROFILE_STEP_LABELS = ["TYPE", "NAME", "CONNECT", "OPTIONS"] as const;
 
 export function ConsoleConfigPage({ kind, select, onClearSelect, onDetailChange }: ConsoleConfigPageProps) {
   const config = useConsoleConfig();
@@ -454,12 +467,13 @@ function ModelSettingsDetail({
       actions={isNewProfile ? (
         <Stepper
           size="small"
-          width={420}
+          width={520}
           current={newProfileStep}
           onChange={(index) => setNewProfileStep(Math.max(0, Math.min(index, newProfileStep)) as ModelProfileStep)}
           l0={MODEL_PROFILE_STEP_LABELS[0]}
           l1={MODEL_PROFILE_STEP_LABELS[1]}
           l2={MODEL_PROFILE_STEP_LABELS[2]}
+          l3={MODEL_PROFILE_STEP_LABELS[3]}
         />
       ) : undefined}
       icon="stars"
@@ -699,7 +713,7 @@ function toolApprovalRuntimeRow(
 
 function approvalActionLabel(action: AgentToolApprovalPolicy["default"]): string {
   if (action === "auto") return "Allow automatically";
-  if (action === "deny") return "Deny by default";
+  if (action === "deny") return "Block by default";
   return "Ask first";
 }
 
@@ -940,7 +954,13 @@ function ModelProfileForm({
   ) => Promise<void>;
 }) {
   const initialValues = useMemo(
-    () => profile ? profile.values : profileValuesFromDrafts(defaultValues),
+    () => {
+      const values = profile ? profile.values : profileValuesFromDrafts(defaultValues);
+      if (!profile && !values["config/ai/provider"]?.trim()) {
+        return { ...values, "config/ai/provider": defaultBuiltInProvider(defaultValues, "") };
+      }
+      return values;
+    },
     [defaultValues, profile],
   );
   const [name, setName] = useState(profile?.name ?? "");
@@ -966,7 +986,13 @@ function ModelProfileForm({
     candidate.id !== profile?.id &&
     candidate.name.toLowerCase() === name.trim().toLowerCase()
   );
-  const canSave = editable && name.trim().length > 0 && !duplicateName && Boolean(drafts["config/ai/model"]?.trim());
+  const isCustomEndpoint = isCustomModelProvider(drafts["config/ai/provider"] ?? "");
+  const modelReady = Boolean(drafts["config/ai/model"]?.trim());
+  const nameReady = name.trim().length > 0 && !duplicateName;
+  const connectionReady = isCustomEndpoint
+    ? modelReady && Boolean(drafts["config/ai/base_url"]?.trim())
+    : modelReady && Boolean(drafts["config/ai/provider"]?.trim());
+  const canSave = editable && nameReady && connectionReady;
   const clearedProfileSecretKeys = profile
     ? new Map([[profile.id, clearedSecretKeys]])
     : new Map<string, ReadonlySet<string>>();
@@ -1004,7 +1030,40 @@ function ModelProfileForm({
     });
   };
   const profileFields = splitModelSettingsFields(MODEL_PROFILE_FIELDS);
+  const newProfileConnectionFields = newModelConnectionFields(MODEL_PROFILE_FIELDS, isCustomEndpoint);
+  const newProfileAdvancedFields = newModelAdvancedFields(profileFields.advanced, newProfileConnectionFields);
   const advancedResetKey = `${profile?.id ?? "new"}:${JSON.stringify(initialValues)}`;
+  const setModelType = (customEndpoint: boolean) => {
+    setDrafts((current) => ({
+      ...current,
+      "config/ai/provider": customEndpoint
+        ? "custom"
+        : defaultBuiltInProvider(defaultValues, current["config/ai/provider"] ?? ""),
+    }));
+    setStatusText("");
+  };
+  const renderModelTypeField = () => (
+    <div class="gsv-console-settings-field">
+      <Radio
+        label="MODEL TYPE"
+        info="Choose how GSV connects to this model."
+        requirement="required"
+        options={[
+          {
+            label: "Custom endpoint",
+            info: "Use your own OpenAI-compatible or Anthropic-compatible API endpoint.",
+          },
+          {
+            label: "Provider",
+            info: "Use one of GSV's built-in provider integrations.",
+          },
+        ]}
+        value={isCustomEndpoint ? 0 : 1}
+        disabled={!editable || pending}
+        onChange={(index) => setModelType(index === 0)}
+      />
+    </div>
+  );
   const renderNameField = () => (
     <div class="gsv-console-settings-field">
       <TextInput
@@ -1063,11 +1122,10 @@ function ModelProfileForm({
 
   if (!profile) {
     const clampedStep = Math.max(0, Math.min(step, MODEL_PROFILE_STEP_LABELS.length - 1)) as ModelProfileStep;
-    const nameReady = name.trim().length > 0 && !duplicateName;
-    const connectionReady = Boolean(drafts["config/ai/provider"]?.trim()) && Boolean(drafts["config/ai/model"]?.trim());
     const canContinue = editable && !pending && (
-      clampedStep === 0 ? nameReady :
-      clampedStep === 1 ? connectionReady :
+      clampedStep === 0 ? true :
+      clampedStep === 1 ? nameReady :
+      clampedStep === 2 ? connectionReady :
       Boolean(canSave)
     );
     const goNext = () => {
@@ -1075,17 +1133,23 @@ function ModelProfileForm({
         return;
       }
       setStatusText("");
-      onStepChange?.(Math.min(2, clampedStep + 1) as ModelProfileStep);
+      onStepChange?.(Math.min(3, clampedStep + 1) as ModelProfileStep);
     };
     const stepTitle = clampedStep === 0
-      ? "Name the model"
+      ? "Choose model type"
       : clampedStep === 1
+      ? "Name the model"
+      : clampedStep === 2
       ? "Connect the provider"
       : "Tune advanced settings";
     const stepDescription = clampedStep === 0
-      ? "Choose a name that will make sense when selecting this model for an agent."
+      ? "Choose whether this model uses a custom endpoint or a built-in provider."
       : clampedStep === 1
-      ? "Set the provider, model id, and credential needed to test this model."
+      ? "Choose a name that will make sense when selecting this model for an agent."
+      : clampedStep === 2
+      ? isCustomEndpoint
+        ? "Set the endpoint, model id, and origin machine used to reach this model."
+        : "Set the provider, model id, and credential needed to test this model."
       : "Only set these when the provider needs a custom endpoint, origin machine, or generation limits.";
 
     return (
@@ -1096,15 +1160,19 @@ function ModelProfileForm({
         </div>
         {clampedStep === 0 ? (
           <div class="gsv-console-settings-fields">
-            {renderNameField()}
+            {renderModelTypeField()}
           </div>
         ) : clampedStep === 1 ? (
           <div class="gsv-console-settings-fields">
-            {profileFields.primary.map(renderProfileField)}
+            {renderNameField()}
+          </div>
+        ) : clampedStep === 2 ? (
+          <div class="gsv-console-settings-fields">
+            {newProfileConnectionFields.map(renderProfileField)}
           </div>
         ) : (
           <div class="gsv-console-settings-fields">
-            {profileFields.advanced.map(renderProfileField)}
+            {newProfileAdvancedFields.map(renderProfileField)}
           </div>
         )}
         <SettingsStatus text={statusText} tone={statusTone} />
@@ -1120,9 +1188,9 @@ function ModelProfileForm({
           />
           <Button
             variant="primary"
-            label={pending ? pendingLabel || "SAVING" : clampedStep === 2 ? "TEST & SAVE MODEL" : "CONTINUE"}
+            label={pending ? pendingLabel || "SAVING" : clampedStep === 3 ? "TEST & SAVE MODEL" : "CONTINUE"}
             disabled={!canContinue}
-            onClick={clampedStep === 2 ? runTestAndSave : goNext}
+            onClick={clampedStep === 3 ? runTestAndSave : goNext}
           />
           <Button variant="secondary" label="CANCEL" disabled={pending} onClick={onCancel} />
         </div>
@@ -1416,6 +1484,47 @@ function splitModelSettingsFields(fields: readonly ConsoleSettingField[]): {
   };
 }
 
+function newModelConnectionFields(
+  fields: readonly ConsoleSettingField[],
+  customEndpoint: boolean,
+): ConsoleSettingField[] {
+  const keys = customEndpoint ? CUSTOM_ENDPOINT_CONNECT_FIELD_KEYS : PROVIDER_CONNECT_FIELD_KEYS;
+  return keys.flatMap((key) => {
+    const field = fields.find((candidate) => candidate.key === key);
+    if (!field) {
+      return [];
+    }
+    return [customEndpoint && key === "config/ai/base_url"
+      ? { ...field, requirement: "required" as const }
+      : field];
+  });
+}
+
+function newModelAdvancedFields(
+  advancedFields: readonly ConsoleSettingField[],
+  connectionFields: readonly ConsoleSettingField[],
+): ConsoleSettingField[] {
+  const connectionKeys = new Set(connectionFields.map((field) => field.key));
+  return advancedFields.filter((field) => !connectionKeys.has(field.key));
+}
+
+function isCustomModelProvider(provider: string): boolean {
+  return provider.trim() === "custom";
+}
+
+function defaultBuiltInProvider(
+  defaultValues: Record<string, string>,
+  currentProvider: string,
+): string {
+  for (const candidate of [currentProvider, defaultValues["config/ai/provider"], "workers-ai"]) {
+    const value = candidate?.trim() ?? "";
+    if (value.length > 0 && !isCustomModelProvider(value)) {
+      return value;
+    }
+  }
+  return "workers-ai";
+}
+
 function shouldOpenModelAdvancedFields(values: Record<string, string>): boolean {
   const baseUrl = values["config/ai/base_url"]?.trim() ?? "";
   const fallbackModelProfile = values["config/ai/fallback_model_profile"]?.trim() ?? "";
@@ -1552,6 +1661,7 @@ function SettingFieldInput({
       <Checkbox
         label={field.label}
         info={description}
+        requirement={field.requirement}
         checked={value === "true"}
         disabled={disabled}
         onChange={(checked) => onChange(checked ? "true" : "false")}

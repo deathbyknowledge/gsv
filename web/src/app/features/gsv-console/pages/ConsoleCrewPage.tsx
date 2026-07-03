@@ -39,6 +39,7 @@ type CrewCardModel = {
   account: ConsoleAccount;
   processes: ConsoleProcess[];
   imageSrc: string;
+  displayName: string;
   role: string;
   description: string;
   status: AvatarStatus;
@@ -113,7 +114,10 @@ function CrewRoster({
   const visibleCards = useMemo(() => {
     const q = query.trim().toLowerCase();
     return q
-      ? cards.filter((card) => card.account.displayName.toLowerCase().includes(q))
+      ? cards.filter((card) =>
+          card.displayName.toLowerCase().includes(q) ||
+          card.account.displayName.toLowerCase().includes(q)
+        )
       : cards;
   }, [cards, query]);
 
@@ -137,7 +141,7 @@ function CrewRoster({
           tabIndex={onManageAgent ? 0 : undefined}
         >
           <AgentCard
-            agentName={card.account.displayName}
+            agentName={card.displayName}
             agentRole={card.role}
             description={card.description}
             imgSrc={card.imageSrc}
@@ -196,8 +200,9 @@ function buildCrewCard(
     account,
     processes: ownedProcesses,
     imageSrc,
+    displayName: isHuman ? "Default agent profiles / preferences" : account.displayName,
     role,
-    description: accountDescription(account),
+    description: isHuman ? "These are your preferences, applied to all your agents." : accountDescription(account),
     status,
     tasks: tasksForProcesses(ownedProcesses),
     active: account.runnable,

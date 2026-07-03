@@ -329,7 +329,7 @@ export function AgentCard(props: AgentCardProps) {
           <div class="gsv-sublabel" style={{ marginBottom: "9px", letterSpacing: ".18em", color: "var(--label)" }}>
             TOOL PERMISSIONS
           </div>
-          <Segmented l0="ALLOW" l1="ASK" l2="DENY" value={permVal} onChange={onPerm} width={220} disabled={readOnly} />
+          <Segmented l0="ALLOW" l1="ASK" l2="BLOCK" value={permVal} onChange={onPerm} width={220} disabled={readOnly} />
         </div>
 
         {/* tasks */}

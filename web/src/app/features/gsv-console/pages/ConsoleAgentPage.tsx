@@ -217,7 +217,7 @@ function AgentEditorSurface({
             containerWidth={width || undefined}
             initialName={account.displayName}
             initialRole={labelForConsoleAccountRelation(account.relation)}
-            initialDescription={accountDescription(account)}
+            initialDescription={accountDescription(account, editsUserDefaults)}
             initialModel={behavior.model}
             initialFallbackModel={behavior.fallbackModel}
             initialReasoning={behavior.reasoning}
@@ -580,7 +580,10 @@ function processFileContent(
   ].join("\n");
 }
 
-function accountDescription(account: ConsoleAccount): string {
+function accountDescription(account: ConsoleAccount, editsUserDefaults = false): string {
+  if (editsUserDefaults) {
+    return "These are your preferences, applied to all your agents.";
+  }
   if (account.gecos.trim().length > 0) {
     return account.gecos;
   }

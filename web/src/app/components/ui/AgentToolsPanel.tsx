@@ -182,7 +182,7 @@ export function humanToolCapabilityLabel(capability: string): string {
 
 function actionLabel(action: AgentToolApprovalAction): string {
   if (action === "auto") return "Allow";
-  if (action === "deny") return "Deny";
+  if (action === "deny") return "Block";
   return "Ask";
 }
 
@@ -329,7 +329,7 @@ export function AgentToolsPanel({
       <Segmented
         l0="ALLOW"
         l1="ASK"
-        l2="DENY"
+        l2="BLOCK"
         value={actionIndex(policy.default)}
         onChange={disabled ? undefined : (index) => onChange({ ...policy, default: APPROVAL_ACTIONS[index] ?? "ask" })}
         width={300}
@@ -353,7 +353,7 @@ export function AgentToolsPanel({
             <span class="gsv-tools-column-head" role="columnheader">
               ACTION
               <InfoTip
-                text="What happens when the tool and machine match: allow it, ask for confirmation, or deny it."
+                text="What happens when the tool and machine match: allow it, ask for confirmation, or block it."
                 position="top"
                 label="Approval action"
               />

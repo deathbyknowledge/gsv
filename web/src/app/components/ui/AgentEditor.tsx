@@ -4,7 +4,6 @@ import "./AgentEditor.css";
 import { TextInput } from "./TextInput";
 import { TextArea } from "./TextArea";
 import { Select, type SelectOption } from "./Select";
-import { InfoTip } from "./InfoTip";
 import { Button } from "./Button";
 import { Avatar, type AvatarStatus } from "./Avatar";
 import { Tabs } from "./Tabs";
@@ -704,6 +703,7 @@ export function AgentEditor(props: AgentEditorProps) {
                       placeholder="Name your agent"
                       size="large"
                       label="NAME"
+                      requirement="required"
                       readonly={identityReadOnly}
                     />
                   </div>
@@ -717,6 +717,7 @@ export function AgentEditor(props: AgentEditorProps) {
                       placeholder="e.g. PERSONAL AGENT"
                       size="medium"
                       label="ROLE"
+                      requirement="required"
                       readonly={identityReadOnly}
                     />
                   </div>
@@ -731,18 +732,22 @@ export function AgentEditor(props: AgentEditorProps) {
                       rows={3}
                       size="medium"
                       label="DESCRIPTION"
+                      requirement="optional"
                       readonly={identityReadOnly}
                     />
                   </div>
 
-                  {/* MODEL */}
-                  <div style="display:flex;align-items:center;gap:0;margin-bottom:10px;">
-                    <span class="gsv-sublabel" style="letter-spacing:.22em;color:var(--label);">MODEL</span>
-                    <InfoTip text={MODEL_SETTING_INFO} position="right" label="Model setting info" />
+                  <div class="gsv-ae-overrides-heading" aria-hidden="true">
+                    <span>OVERRIDES</span>
                   </div>
+
+                  {/* MODEL */}
                   <div style="max-width:420px;margin-bottom:30px;">
                     <Select
                       key={`sel-model-${formNonce}`}
+                      label="MODEL"
+                      info={MODEL_SETTING_INFO}
+                      requirement="optional"
                       options={modelOptions}
                       value={model}
                       onChange={behaviorReadOnly ? undefined : setModel}
@@ -752,13 +757,12 @@ export function AgentEditor(props: AgentEditorProps) {
                   </div>
 
                   {/* FALLBACK MODEL */}
-                  <div style="display:flex;align-items:center;gap:0;margin-bottom:10px;">
-                    <span class="gsv-sublabel" style="letter-spacing:.22em;color:var(--label);">FALLBACK</span>
-                    <InfoTip text={FALLBACK_SETTING_INFO} position="right" label="Fallback setting info" />
-                  </div>
                   <div style="max-width:420px;margin-bottom:30px;">
                     <Select
                       key={`sel-fallback-model-${formNonce}`}
+                      label="FALLBACK"
+                      info={FALLBACK_SETTING_INFO}
+                      requirement="optional"
                       options={fallbackModelOptions}
                       value={fallbackModel}
                       onChange={behaviorReadOnly ? undefined : setFallbackModel}
@@ -768,13 +772,12 @@ export function AgentEditor(props: AgentEditorProps) {
                   </div>
 
                   {/* REASONING */}
-                  <div style="display:flex;align-items:center;gap:0;margin-bottom:10px;">
-                    <span style="font-size:9.5px;letter-spacing:.22em;color:var(--label);">REASONING</span>
-                    <InfoTip text={REASONING_SETTING_INFO} position="right" label="Reasoning setting info" />
-                  </div>
                   <div style="max-width:300px;margin-bottom:30px;">
                     <Select
                       key={`sel-reasoning-${formNonce}`}
+                      label="REASONING"
+                      info={REASONING_SETTING_INFO}
+                      requirement="optional"
                       options={reasonOptions}
                       value={reasoning}
                       onChange={behaviorReadOnly ? undefined : setReasoning}
