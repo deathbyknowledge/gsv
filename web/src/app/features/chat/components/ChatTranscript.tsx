@@ -3,6 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import DOMPurify from "dompurify";
 import { parse as parseMarkdown } from "marked";
 import { SystemMessage } from "../../../components/ui/SystemMessage";
+import { Tooltip } from "../../../components/ui/Tooltip";
 import type {
   ChatBackupModelInfo,
   ChatTranscriptRow,
@@ -345,9 +346,9 @@ function AssistantText({ streaming = false, text }: { streaming?: boolean; text:
 
 function BackupModelBadge({ backupModel }: { backupModel: ChatBackupModelInfo }) {
   return (
-    <span class="gsv-chat-backup-model-badge" title={backupModelDetails(backupModel)}>
-      Backup
-    </span>
+    <Tooltip text={backupModelDetails(backupModel)} position="top">
+      <span class="gsv-chat-backup-model-badge">Backup</span>
+    </Tooltip>
   );
 }
 
