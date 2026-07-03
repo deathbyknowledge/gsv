@@ -362,6 +362,85 @@ describe("media native commands", () => {
     expect(result.stderr).toContain("llm: billing required");
   });
 
+  it("uses the native net.fetch transport for llm presets with an origin machine", async () => {
+    generateMock.mockImplementationOnce(async (request: any) => {
+      expect(request.config).toMatchObject({
+        provider: "custom",
+        model: "local-model",
+        baseUrl: "http://127.0.0.1:18081/v1",
+        providerStyle: "openai-chat-completions",
+        transportTarget: "linux-machine",
+      });
+      return {
+        role: "assistant",
+        content: [{ type: "text", text: "pong" }],
+        api: "test",
+        provider: "custom",
+        model: "local-model",
+        usage: {
+          input: 1,
+          output: 1,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 2,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: "stop",
+        timestamp: 1,
+      };
+    });
+
+    const device = makeDevice({
+      device_id: "linux-machine",
+      implements: ["net.fetch"],
+    });
+    const devices = {
+      canAccess: vi.fn(() => true),
+      get: vi.fn(() => device),
+      listForUser: vi.fn(() => [device]),
+    } as unknown as KernelContext["devices"];
+    const requestDevice = vi.fn();
+
+    const result = await handleShellExec(
+      { input: "llm --preset local hello" },
+      makeContext({
+        capabilities: ["ai.text.generate"],
+        devices,
+        config: {
+          "users/1000/ai/model_profiles": JSON.stringify({
+            profiles: [{
+              id: "local",
+              name: "Local",
+              values: {
+                "config/ai/provider": "custom",
+                "config/ai/model": "local-model",
+                "config/ai/base_url": "http://127.0.0.1:18081/v1",
+                "config/ai/provider_style": "openai-chat-completions",
+                "config/ai/transport_target": "linux-machine",
+                "config/ai/api_key": "redacted",
+              },
+              createdAt: 1,
+              updatedAt: 1,
+            }],
+          }),
+          "users/1000/ai/model_profiles/local/api_key": "local-key",
+        },
+      }),
+      {
+        netFetchTransport: {
+          requestDevice,
+        },
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe("pong\n");
+    expect(result.stderr).toBe("");
+    expect(generateMock).toHaveBeenCalledOnce();
+    expect(devices.canAccess).toHaveBeenCalledWith("linux-machine", 1000, [1000, 100]);
+  });
+
   it("runs standalone media commands through the configured AI media paths", async () => {
     const result = await handleShellExec(
       {

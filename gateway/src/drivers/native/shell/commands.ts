@@ -36,7 +36,7 @@ export function buildCustomCommands(
 ) {
   const coreCommands = buildCoreCommands(fs, identity, ctx);
   const ls = buildLsCommand(fs, identity, ctx);
-  const llm = buildLlmCommand(ctx);
+  const llm = buildLlmCommand(ctx, options?.netFetchTransport);
   const stat = buildStatCommand(fs, identity, ctx);
   const cp = buildCpCommand(ctx, options?.fsCopyTransport);
   const crontab = buildCrontabCommand(fs, ctx);

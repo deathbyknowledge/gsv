@@ -346,7 +346,7 @@ function AssistantText({ streaming = false, text }: { streaming?: boolean; text:
 function BackupModelBadge({ backupModel }: { backupModel: ChatBackupModelInfo }) {
   return (
     <span class="gsv-chat-backup-model-badge" title={backupModelDetails(backupModel)}>
-      Backup model used
+      Backup
     </span>
   );
 }
