@@ -1436,6 +1436,106 @@ describe("Process DO — mechanical", () => {
       });
     });
 
+    it("switches to a fallback credential for the same model stack", async () => {
+      const pid = "mech-chat-provider-error-credential-fallback";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const calls: Array<{ provider: string; model: string; apiKey: string }> = [];
+        process.sendSignal = async () => {};
+        process.generation = {
+          async generate(request: any) {
+            calls.push({
+              provider: request.config.provider,
+              model: request.config.model,
+              apiKey: request.config.apiKey,
+            });
+            if (calls.length === 1) {
+              return {
+                role: "assistant",
+                content: [],
+                api: "test",
+                provider: request.config.provider,
+                model: request.config.model,
+                stopReason: "error",
+                errorMessage: "Custom provider HTTP 403: quota exceeded",
+                usage: testUsage(1, 0),
+                timestamp: Date.now(),
+              };
+            }
+            return {
+              role: "assistant",
+              content: [{ type: "text", text: "secondary key pong" }],
+              api: "test",
+              provider: request.config.provider,
+              model: request.config.model,
+              stopReason: "stop",
+              usage: testUsage(2, 3),
+              timestamp: Date.now(),
+            };
+          },
+          async generateText() {
+            return "unused";
+          },
+        };
+
+        process.store.appendMessage("user", "try another key");
+        process.currentRun = {
+          runId: "run-chat-provider-error-credential-fallback",
+          queued: false,
+          conversationId: "default",
+          config: {
+            profile: "task",
+            provider: "openrouter",
+            model: "openai/gpt-5-mini",
+            apiKey: "primary-key",
+            baseUrl: "https://openrouter.ai/api/v1",
+            providerStyle: "openai-chat-completions",
+            transportTarget: "gsv",
+            reasoning: "off",
+            maxTokens: 4096,
+            contextWindowTokens: 128000,
+            contextWindowSource: "config",
+            maxContextBytes: 32768,
+            fallbacks: [{
+              profileId: "secondary-credential",
+              profileName: "Secondary Credential",
+              provider: "openrouter",
+              model: "openai/gpt-5-mini",
+              apiKey: "secondary-key",
+              baseUrl: "https://openrouter.ai/api/v1",
+              providerStyle: "openai-chat-completions",
+              transportTarget: "gsv",
+              maxTokens: 4096,
+              contextWindowTokens: 128000,
+              contextWindowSource: "config",
+              generationTimeoutMs: 180000,
+              generationStreaming: "auto",
+            }],
+          },
+          tools: [],
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+        await process.continueAgentLoop("run-chat-provider-error-credential-fallback");
+        return {
+          calls,
+          messages: process.store.getMessages(),
+        };
+      });
+
+      expect(result.calls).toEqual([
+        { provider: "openrouter", model: "openai/gpt-5-mini", apiKey: "primary-key" },
+        { provider: "openrouter", model: "openai/gpt-5-mini", apiKey: "secondary-key" },
+      ]);
+      expect(result.messages.map((message: any) => [message.role, message.content])).toEqual([
+        ["user", "try another key"],
+        ["assistant", "secondary key pong"],
+      ]);
+    });
+
     it("surfaces thrown provider context overflow separately from generation errors", async () => {
       const pid = "mech-chat-provider-context-overflow-throw";
       const stub = await initProcess(pid, ROOT_IDENTITY);

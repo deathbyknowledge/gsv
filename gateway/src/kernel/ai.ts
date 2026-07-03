@@ -1040,6 +1040,7 @@ function isSameAiModelStack(
 ): boolean {
   return left.provider.trim().toLowerCase() === right.provider.trim().toLowerCase() &&
     left.model.trim().toLowerCase() === right.model.trim().toLowerCase() &&
+    left.apiKey === right.apiKey &&
     (left.baseUrl ?? "").trim() === (right.baseUrl ?? "").trim() &&
     (left.providerStyle ?? "auto").trim().toLowerCase() === (right.providerStyle ?? "auto").trim().toLowerCase() &&
     normalizeTarget(left.transportTarget) === normalizeTarget(right.transportTarget);

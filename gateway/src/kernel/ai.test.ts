@@ -781,6 +781,45 @@ describe("handleAiConfig", () => {
     ]);
   });
 
+  it("keeps fallback presets that only change credentials", async () => {
+    const result = await handleAiConfig({}, makeAiConfigContext({
+      "users/1000/ai/provider": "openrouter",
+      "users/1000/ai/model": "openai/gpt-5-mini",
+      "users/1000/ai/base_url": "https://openrouter.ai/api/v1",
+      "users/1000/ai/provider_style": "openai-chat-completions",
+      "users/1000/ai/api_key": "primary-key",
+      "users/1000/ai/fallback_model_profile": "secondary-credential",
+      "users/1000/ai/model_profiles": JSON.stringify({
+        profiles: [{
+          id: "secondary-credential",
+          name: "Secondary Credential",
+          values: {
+            "config/ai/provider": "openrouter",
+            "config/ai/model": "openai/gpt-5-mini",
+            "config/ai/base_url": "https://openrouter.ai/api/v1",
+            "config/ai/provider_style": "openai-chat-completions",
+            "config/ai/api_key": "redacted",
+          },
+          createdAt: 1,
+          updatedAt: 2,
+        }],
+      }),
+      "users/1000/ai/model_profiles/secondary-credential/api_key": "secondary-key",
+    }));
+
+    expect(result.fallbacks).toEqual([
+      expect.objectContaining({
+        profileId: "secondary-credential",
+        profileName: "Secondary Credential",
+        provider: "openrouter",
+        model: "openai/gpt-5-mini",
+        baseUrl: "https://openrouter.ai/api/v1",
+        providerStyle: "openai-chat-completions",
+        apiKey: "secondary-key",
+      }),
+    ]);
+  });
+
   it("resolves system fallback model presets from root profiles for non-root runs", async () => {
     const result = await handleAiConfig({}, makeAiConfigContext({
       "config/ai/provider": "workers-ai",
