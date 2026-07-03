@@ -400,7 +400,7 @@ function fallbackModelOptionsForAccount(
   const options: AgentEditorModelOption[] = [{
     value: "",
     label: inherited ? `Inherit: ${inherited}` : "Inherit fallback",
-    description: inherited ? "Uses the inherited fallback preset." : "No fallback override.",
+    description: inherited ? "Uses the inherited fallback model." : "No fallback override.",
   }];
   const seen = new Set([""]);
 
@@ -433,7 +433,7 @@ function fallbackModelOptionsForAccount(
     options.push({
       value: selected,
       label: selected.replace(/^model-profile:/i, ""),
-      description: "Stored fallback preset is not currently available.",
+      description: "Stored fallback model is not currently available.",
     });
   }
 

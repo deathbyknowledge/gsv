@@ -68,8 +68,8 @@ export const AGENT_MODEL_FIELDS: readonly ConsoleSettingField[] = [
   },
   {
     key: "config/ai/fallback_model_profile",
-    label: "Fallback preset",
-    description: "Preset to try if the selected model stack fails.",
+    label: "Fallback model",
+    description: "Saved model to try if the selected model fails.",
     kind: "select",
     size: "large",
     options: [{ value: "", label: "None" }],
@@ -89,8 +89,8 @@ export const AGENT_MODEL_FIELDS: readonly ConsoleSettingField[] = [
   },
   {
     key: "config/ai/transport_target",
-    label: "Transport target",
-    description: "Where custom provider HTTP exits: the Worker or a net.fetch-capable machine.",
+    label: "Origin machine",
+    description: "Where custom provider HTTP requests start: the GSV Worker or a machine with network fetch support.",
     kind: "text",
     placeholder: "gsv",
     size: "large",

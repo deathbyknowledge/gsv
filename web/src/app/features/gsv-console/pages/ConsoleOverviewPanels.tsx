@@ -409,13 +409,13 @@ function overviewModelRows(
     },
     {
       // Collapsed: "Other Models" with the configured count on the right and the
-      // preset count as the dim sub line.
+      // saved model count as the dim sub line.
       id: "other-models",
       icon: "stars",
       label: "Other Models",
       meta: profileCount === 0
-        ? "No model presets"
-        : `${profileCount} model preset${profileCount === 1 ? "" : "s"}`,
+        ? "No saved models"
+        : `${profileCount} saved model${profileCount === 1 ? "" : "s"}`,
       tone: otherConfigured > 0 ? "online" : "idle",
       statusLabel: `${otherConfigured}/${otherTotal}`,
     },
