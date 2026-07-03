@@ -200,7 +200,7 @@ function buildCrewCard(
     account,
     processes: ownedProcesses,
     imageSrc,
-    displayName: isHuman ? "Default agent preferences" : account.displayName,
+    displayName: isHuman ? "Defaults" : account.displayName,
     role,
     description: isHuman ? "These are your preferences, applied to all your agents." : accountDescription(account),
     status,
