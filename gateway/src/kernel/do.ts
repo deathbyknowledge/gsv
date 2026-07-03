@@ -151,6 +151,11 @@ type ProcSendData = {
   queued?: boolean;
 };
 
+type ProcessNetFetchOptions = {
+  ttlMs?: number;
+  internalPurpose?: "model-transport";
+};
+
 type ResolvePackageAppRpcInput = {
   packageName?: string;
   sessionId: string;
@@ -459,13 +464,14 @@ export class Kernel extends Host<Env> {
     processId: string,
     target: string,
     args: NetFetchArgs,
-    ttlMs?: number,
+    options: ProcessNetFetchOptions = {},
   ): Promise<NetFetchResult> {
     return await this.requestProcessDevice(processId, {
       target,
       call: "net.fetch",
       args,
-      ttlMs,
+      ttlMs: options.ttlMs,
+      skipCapabilityCheck: options.internalPurpose === "model-transport",
     }) as NetFetchResult;
   }
 
@@ -476,6 +482,7 @@ export class Kernel extends Host<Env> {
       call: SyscallName;
       args: unknown;
       ttlMs?: number;
+      skipCapabilityCheck?: boolean;
     },
   ): Promise<unknown> {
     await this.ready;
@@ -484,6 +491,7 @@ export class Kernel extends Host<Env> {
       throw new Error("Unknown process");
     }
     if (
+      !request.skipCapabilityCheck &&
       !isInternalOnlySyscall(request.call) &&
       !hasCapability(ctx.identity!.capabilities, request.call)
     ) {

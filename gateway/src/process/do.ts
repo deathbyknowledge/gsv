@@ -3654,7 +3654,7 @@ export class Process extends Host<Env> {
       this.pid,
       target,
       args,
-      ttlMs,
+      { ttlMs, internalPurpose: "model-transport" },
     );
   }
 

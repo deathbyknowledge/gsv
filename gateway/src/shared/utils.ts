@@ -12,6 +12,11 @@ export const isWebSocketRequest = (request: Request) =>
 type ProcessPtr = DurableObjectStub<Process>;
 type KernelPtr = DurableObjectStub<Kernel>;
 
+export type RequestProcessNetFetchOptions = {
+  ttlMs?: number;
+  internalPurpose?: "model-transport";
+};
+
 export async function getKernelPtr(): Promise<KernelPtr> {
   return await getAgentByName(env.KERNEL, "singleton");
 }
@@ -32,10 +37,10 @@ export async function requestProcessNetFetch(
   processId: string,
   target: string,
   args: NetFetchArgs,
-  ttlMs?: number,
+  options: RequestProcessNetFetchOptions = {},
 ): Promise<NetFetchResult> {
   const kernel = await getKernelPtr();
-  return kernel.requestProcessNetFetch(processId, target, args, ttlMs);
+  return kernel.requestProcessNetFetch(processId, target, args, options);
 }
 
 export async function sendFrameToProcess(
