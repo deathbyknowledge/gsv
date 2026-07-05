@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { OnboardingDraft } from "@humansandmachines/gsv/protocol";
 import type { SessionPhase, SessionSnapshot } from "../../services/session/sessionService";
-import { resolveVisibleView, validateSetupDetails, type PendingAction } from "./sessionDomain";
+import {
+  buildNodeBootstrapCommand,
+  resolveVisibleView,
+  validateSetupDetails,
+  type PendingAction,
+} from "./sessionDomain";
 
 function snapshot(phase: SessionPhase): SessionSnapshot {
   return {
@@ -97,5 +102,22 @@ describe("validateSetupDetails", () => {
       step: "account",
     });
     expect(result.message).not.toContain("^[a-z_]");
+  });
+});
+
+describe("buildNodeBootstrapCommand", () => {
+  it("uses gsv.exe for Windows follow-up commands", () => {
+    expect(buildNodeBootstrapCommand(
+      "https://gsv.example.com",
+      "windows",
+      "studio-pc",
+      "tok",
+    )).toBe([
+      "$env:GSV_BASE_URL='https://gsv.example.com'; irm https://gsv.example.com/public/gsv/downloads/cli/install.ps1 | iex",
+      "gsv.exe config --local set gateway.url \"wss://gsv.example.com/ws\"",
+      "gsv.exe config --local set node.id \"studio-pc\"",
+      "gsv.exe config --local set node.token \"tok\"",
+      "gsv.exe device install --id \"studio-pc\" --workspace \"$HOME\"",
+    ].join("\n"));
   });
 });
