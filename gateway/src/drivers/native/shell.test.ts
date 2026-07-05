@@ -2302,6 +2302,60 @@ describe("pkg shell command", () => {
     expect(result.stdout).toContain("/src/repos/root/gsv-manual/pages/auth.md\t12\tAuth links route users to setup.");
   });
 
+  it("preserves explicit wiki index search prefixes", async () => {
+    const searchPrefixes: Array<string | null> = [];
+    const ripgit = {
+      async fetch(input: RequestInfo | URL) {
+        const url = new URL(String(input));
+        if (url.pathname.endsWith("/read")) {
+          const repo = url.pathname.includes("/root/gsv-manual/");
+          const path = url.searchParams.get("path");
+          if (repo && path === "wiki.json") {
+            return new Response(JSON.stringify({
+              kind: "gsv.wiki",
+              version: 1,
+              id: "gsv-manual",
+              title: "GSV Manual",
+            }), {
+              headers: {
+                "Content-Type": "text/plain",
+                "X-Blob-Size": "80",
+              },
+            });
+          }
+          return new Response("missing", { status: 404 });
+        }
+        if (url.pathname === "/hyperspace/repos/root/gsv-manual/search") {
+          searchPrefixes.push(url.searchParams.get("prefix"));
+          return Response.json({
+            ok: true,
+            matches: [
+              { path: "index.md", line: 4, content: "Auth overview." },
+            ],
+          });
+        }
+        return new Response(`unexpected ${url.pathname}`, { status: 500 });
+      },
+    } as Fetcher;
+
+    const result = await handleShellExec(
+      { input: "wiki search auth --prefix gsv-manual/index.md" },
+      makeContext({
+        capabilities: ["repo.list", "repo.read", "repo.search"],
+        config: {
+          "repos/root/gsv-manual/created_at": "1",
+          "repos/root/gsv-manual/visibility": "public",
+        },
+        ripgit,
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.exitCode).toBe(0);
+    expect(searchPrefixes).toEqual(["index.md"]);
+    expect(result.stdout).toContain("/src/repos/root/gsv-manual/index.md\t4\tAuth overview.");
+  });
+
   it("does not allow packages to shadow the wiki command", async () => {
     const calls: Array<{ kind: "ensure" | "run"; value: unknown }> = [];
     const runner = {

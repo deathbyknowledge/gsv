@@ -359,10 +359,19 @@ function searchTargets(
 
   const direct = splitWikiPath(normalized, collections);
   if (direct) {
-    return [{ collection: direct.collection, localPath: direct.localPath === "index.md" ? "" : direct.localPath }];
+    return [{
+      collection: direct.collection,
+      localPath: isCollectionRootPrefix(normalized, direct.collection) ? "" : direct.localPath,
+    }];
   }
 
   return collections.map((collection) => ({ collection, localPath: normalized }));
+}
+
+function isCollectionRootPrefix(path: string, collection: WikiCollection): boolean {
+  return path === collection.id
+    || path === collection.repo
+    || collection.repo.endsWith(`/${path}`);
 }
 
 async function initWikiCollection(
