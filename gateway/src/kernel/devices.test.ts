@@ -1,24 +1,20 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { DeviceRegistry } from "./devices";
-
-type Row = Record<string, unknown>;
+import {
+  createMockSqlTables,
+  handleMockSchemaStatement,
+  mockSqlRows,
+  type MockSqlRow,
+} from "../test-support/mock-sql";
 
 function createMockSql() {
-  const tables = new Map<string, Row[]>();
+  const { getTable } = createMockSqlTables();
 
-  function getTable(name: string): Row[] {
-    if (!tables.has(name)) tables.set(name, []);
-    return tables.get(name)!;
-  }
-
-  function exec<T = Row>(query: string, ...bindings: unknown[]) {
+  function exec<T = MockSqlRow>(query: string, ...bindings: unknown[]) {
     const q = query.trim();
 
-    if (q.startsWith("CREATE TABLE IF NOT EXISTS")) {
-      const match = q.match(/CREATE TABLE IF NOT EXISTS (\w+)/);
-      if (match) getTable(match[1]);
-      return { toArray: () => [] as T[] };
-    }
+    const schemaResult = handleMockSchemaStatement<T>(q, getTable);
+    if (schemaResult) return schemaResult;
 
     if (q.startsWith("INSERT OR IGNORE INTO device_access")) {
       const table = getTable("device_access");
@@ -27,7 +23,7 @@ function createMockSql() {
         (r) => r.device_id === deviceId && r.gid === gid,
       );
       if (!exists) table.push({ device_id: deviceId, gid });
-      return { toArray: () => [] as T[] };
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("INSERT INTO devices")) {
@@ -58,7 +54,7 @@ function createMockSql() {
         connected_at,
         disconnected_at: null,
       });
-      return { toArray: () => [] as T[] };
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("UPDATE devices SET\n          owner_uid")) {
@@ -78,7 +74,7 @@ function createMockSql() {
         row.connected_at = connected_at;
         row.disconnected_at = null;
       }
-      return { toArray: () => [] as T[] };
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("UPDATE devices SET online = 1")) {
@@ -91,7 +87,7 @@ function createMockSql() {
         row.disconnected_at = null;
         row.last_seen_at = connected_at;
       }
-      return { toArray: () => [] as T[] };
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("UPDATE devices SET label")) {
@@ -103,7 +99,7 @@ function createMockSql() {
         row.description = description;
         row.last_seen_at = last_seen_at;
       }
-      return { toArray: () => [] as T[] };
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("UPDATE devices SET online = 0")) {
@@ -115,14 +111,14 @@ function createMockSql() {
         row.disconnected_at = disconnected_at;
         row.last_seen_at = last_seen_at;
       }
-      return { toArray: () => [] as T[] };
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("SELECT * FROM devices WHERE device_id")) {
       const table = getTable("devices");
       const [deviceId] = bindings as [string];
       const rows = table.filter((r) => r.device_id === deviceId);
-      return { toArray: () => rows as T[] };
+      return mockSqlRows(rows as T[]);
     }
 
     if (q.startsWith("SELECT * FROM devices ORDER BY")) {
@@ -130,7 +126,7 @@ function createMockSql() {
       const sorted = [...table].sort((a, b) =>
         (a.device_id as string).localeCompare(b.device_id as string),
       );
-      return { toArray: () => sorted as T[] };
+      return mockSqlRows(sorted as T[]);
     }
 
     if (q.startsWith("SELECT DISTINCT d.* FROM devices")) {
@@ -138,7 +134,7 @@ function createMockSql() {
       const accessTable = getTable("device_access");
       const [ownerUid, ...gids] = bindings as [number, ...number[]];
       const seen = new Set<string>();
-      const results: Row[] = [];
+      const results: MockSqlRow[] = [];
       for (const row of table) {
         const id = row.device_id as string;
         if (seen.has(id)) continue;
@@ -158,7 +154,7 @@ function createMockSql() {
       results.sort((a, b) =>
         (a.device_id as string).localeCompare(b.device_id as string),
       );
-      return { toArray: () => results as T[] };
+      return mockSqlRows(results as T[]);
     }
 
     if (q.startsWith("SELECT * FROM devices WHERE owner_uid")) {
@@ -169,7 +165,7 @@ function createMockSql() {
         .sort((a, b) =>
           (a.device_id as string).localeCompare(b.device_id as string),
         );
-      return { toArray: () => rows as T[] };
+      return mockSqlRows(rows as T[]);
     }
 
     if (q.startsWith("SELECT * FROM devices WHERE online")) {
@@ -177,7 +173,7 @@ function createMockSql() {
       const rows = table
         .filter((r) => r.online === 1)
         .sort((a, b) => (a.device_id as string).localeCompare(b.device_id as string));
-      return { toArray: () => rows as T[] };
+      return mockSqlRows(rows as T[]);
     }
 
     if (q.startsWith("SELECT gid FROM device_access WHERE device_id = ? AND gid IN")) {
@@ -186,7 +182,7 @@ function createMockSql() {
       const rows = table.filter(
         (r) => r.device_id === deviceId && gids.includes(r.gid as number),
       );
-      return { toArray: () => rows as T[] };
+      return mockSqlRows(rows as T[]);
     }
 
     if (q.startsWith("SELECT gid FROM device_access WHERE device_id = ? ORDER")) {
@@ -195,7 +191,7 @@ function createMockSql() {
       const rows = table
         .filter((r) => r.device_id === deviceId)
         .sort((a, b) => (a.gid as number) - (b.gid as number));
-      return { toArray: () => rows as T[] };
+      return mockSqlRows(rows as T[]);
     }
 
     if (q.startsWith("DELETE FROM device_access")) {
@@ -207,7 +203,7 @@ function createMockSql() {
           table.splice(index, 1);
         }
       }
-      return { toArray: () => [] as T[] };
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("DELETE FROM devices")) {
@@ -215,10 +211,10 @@ function createMockSql() {
       const [deviceId] = bindings as [string];
       const idx = table.findIndex((r) => r.device_id === deviceId);
       if (idx >= 0) table.splice(idx, 1);
-      return { toArray: () => [] as T[] };
+      return mockSqlRows<T>();
     }
 
-    return { toArray: () => [] as T[] };
+    return mockSqlRows<T>();
   }
 
   return { exec };

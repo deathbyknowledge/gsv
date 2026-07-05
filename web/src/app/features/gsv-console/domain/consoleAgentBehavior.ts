@@ -1,4 +1,5 @@
 import type { ConsoleConfigEntry } from "./consoleModels";
+import { approvalTargetFromValue } from "../../../domain/agentApproval";
 import {
   defaultModelLabelForConfig,
   modelProfileOptionValue,
@@ -297,23 +298,6 @@ export function approvalActionFromValue(value: unknown): AgentApprovalAction {
     return "auto";
   }
   return APPROVAL_ACTIONS.includes(value as AgentApprovalAction) ? value as AgentApprovalAction : "ask";
-}
-
-function approvalTargetFromValue(value: unknown): string | undefined {
-  if (typeof value !== "string") {
-    return undefined;
-  }
-  const trimmed = value.trim();
-  if (!trimmed || trimmed === "*" || trimmed.toLowerCase() === "any") {
-    return undefined;
-  }
-  if (trimmed === "device" || trimmed === "devices/*") {
-    return "targets/*";
-  }
-  if (trimmed === "gateway" || trimmed === "local") {
-    return "gsv";
-  }
-  return trimmed;
 }
 
 function legacyApprovalTarget(value: unknown): string | undefined {

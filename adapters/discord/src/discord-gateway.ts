@@ -12,6 +12,12 @@ import type {
   ChannelAccountStatus,
   ChannelMedia,
 } from "./types";
+import type {
+  AdapterInboundMessage,
+  AdapterInboundResult,
+  GatewayFrame,
+  GatewayRequestFrame,
+} from "../../shared/src/types";
 
 const DISCORD_GATEWAY_URL = "https://discord.com/api/v10/gateway";
 
@@ -46,64 +52,6 @@ const BYTE_TO_BASE64_CHUNK_SIZE = 0x1000; // 4KB (avoids argument-list stack ove
 type GatewayChannelBinding = Fetcher & {
   serviceFrame: (frame: GatewayFrame) => Promise<GatewayFrame | null>;
 };
-
-type AdapterInboundMessage = {
-  messageId: string;
-  surface: {
-    kind: "dm" | "group" | "channel" | "thread";
-    id: string;
-    name?: string;
-    handle?: string;
-    threadId?: string;
-  };
-  actor?: {
-    id: string;
-    name?: string;
-    handle?: string;
-  };
-  text: string;
-  media?: ChannelMedia[];
-  replyToId?: string;
-  replyToText?: string;
-  timestamp?: number;
-  wasMentioned?: boolean;
-};
-
-type AdapterInboundResult = {
-  ok: boolean;
-  reply?: {
-    text: string;
-    replyToId?: string;
-  };
-  challenge?: {
-    code: string;
-    prompt: string;
-    expiresAt: number;
-  };
-  droppedReason?: string;
-  error?: string;
-};
-
-type GatewayRequestFrame = {
-  type: "req";
-  id: string;
-  call: string;
-  args: unknown;
-};
-
-type GatewayResponseFrame = {
-  type: "res";
-  id: string;
-  ok: boolean;
-  data?: unknown;
-  error?: {
-    code?: number;
-    message: string;
-    details?: unknown;
-  };
-};
-
-type GatewayFrame = GatewayRequestFrame | GatewayResponseFrame;
 
 type DiscordAttachment = {
   id: string;

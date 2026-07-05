@@ -1,34 +1,24 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppSessionStore } from "./app-sessions";
-
-type Row = Record<string, unknown>;
-
-function result<T = Row>(rows: T[] = []) {
-  return {
-    toArray: () => rows,
-    *[Symbol.iterator]() {
-      yield* rows;
-    },
-  };
-}
+import { mockSqlRows, type MockSqlRow } from "../test-support/mock-sql";
 
 function createMockSql() {
-  const sessions = new Map<string, Row>();
-  const clients = new Map<string, Row>();
-  const keys = new Map<string, Row>();
+  const sessions = new Map<string, MockSqlRow>();
+  const clients = new Map<string, MockSqlRow>();
+  const keys = new Map<string, MockSqlRow>();
   const clientKey = (sessionId: string, clientId: string) => `${sessionId}:${clientId}`;
 
-  function exec<T = Row>(query: string, ...bindings: unknown[]) {
+  function exec<T = MockSqlRow>(query: string, ...bindings: unknown[]) {
     const q = query.trim();
 
     if (q.startsWith("DROP TABLE IF EXISTS")) {
-      return result<T>();
+      return mockSqlRows<T>();
     }
     if (q.startsWith("CREATE TABLE IF NOT EXISTS")) {
-      return result<T>();
+      return mockSqlRows<T>();
     }
     if (q.startsWith("CREATE INDEX IF NOT EXISTS")) {
-      return result<T>();
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("DELETE FROM app_session_client_keys WHERE expires_at <= ?")) {
@@ -38,7 +28,7 @@ function createMockSql() {
           keys.delete(keyId);
         }
       }
-      return result<T>();
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("DELETE FROM app_session_clients WHERE expires_at <= ?")) {
@@ -48,7 +38,7 @@ function createMockSql() {
           clients.delete(key);
         }
       }
-      return result<T>();
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("DELETE FROM app_sessions WHERE expires_at <= ?")) {
@@ -58,7 +48,7 @@ function createMockSql() {
           sessions.delete(sessionId);
         }
       }
-      return result<T>();
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("DELETE FROM app_session_client_keys WHERE session_id NOT IN")) {
@@ -67,7 +57,7 @@ function createMockSql() {
           keys.delete(keyId);
         }
       }
-      return result<T>();
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("DELETE FROM app_session_clients WHERE session_id NOT IN")) {
@@ -76,7 +66,7 @@ function createMockSql() {
           clients.delete(key);
         }
       }
-      return result<T>();
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("INSERT INTO app_sessions")) {
@@ -118,7 +108,7 @@ function createMockSql() {
         expires_at: expiresAt,
         closed_at: closedAt,
       });
-      return result<T>();
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("INSERT INTO app_session_clients")) {
@@ -138,7 +128,7 @@ function createMockSql() {
         expires_at: expiresAt,
         closed_at: closedAt,
       });
-      return result<T>();
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("INSERT INTO app_session_client_keys")) {
@@ -160,18 +150,18 @@ function createMockSql() {
         expires_at: expiresAt,
         revoked_at: revokedAt,
       });
-      return result<T>();
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("SELECT * FROM app_sessions WHERE session_id = ?")) {
       const [sessionId] = bindings as [string];
       const row = sessions.get(sessionId);
-      return result<T>(row ? [row as T] : []);
+      return mockSqlRows<T>(row ? [row as T] : []);
     }
 
     if (q.startsWith("SELECT * FROM app_sessions") && q.includes("WHERE uid = ?")) {
       const [uid, now] = bindings as [number, number];
-      return result<T>([...sessions.values()]
+      return mockSqlRows<T>([...sessions.values()]
         .filter((row) => row.uid === uid && row.closed_at === null && (row.expires_at as number) > now)
         .sort((left, right) => {
           const leftTime = (left.last_used_at as number | null) ?? (left.created_at as number);
@@ -183,12 +173,12 @@ function createMockSql() {
     if (q.startsWith("SELECT * FROM app_session_clients") && q.includes("client_id = ?")) {
       const [sessionId, clientId] = bindings as [string, string];
       const row = clients.get(clientKey(sessionId, clientId));
-      return result<T>(row ? [row as T] : []);
+      return mockSqlRows<T>(row ? [row as T] : []);
     }
 
     if (q.startsWith("SELECT * FROM app_session_clients")) {
       const [sessionId, now] = bindings as [string, number];
-      return result<T>([...clients.values()]
+      return mockSqlRows<T>([...clients.values()]
         .filter((row) => row.session_id === sessionId && row.closed_at === null && (row.expires_at as number) > now)
         .sort((left, right) => {
           const leftTime = (left.last_used_at as number | null) ?? (left.created_at as number);
@@ -199,7 +189,7 @@ function createMockSql() {
 
     if (q.startsWith("SELECT * FROM app_session_client_keys")) {
       const [sessionId, now] = bindings as [string, number];
-      return result<T>([...keys.values()]
+      return mockSqlRows<T>([...keys.values()]
         .filter((row) => row.session_id === sessionId && row.revoked_at === null && (row.expires_at as number) > now) as T[]);
     }
 
@@ -210,7 +200,7 @@ function createMockSql() {
         row.last_used_at = lastUsedAt;
         row.expires_at = Math.max(row.expires_at as number, expiresAt);
       }
-      return result<T>();
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("UPDATE app_sessions SET last_used_at = ?")) {
@@ -219,7 +209,7 @@ function createMockSql() {
       if (row) {
         row.last_used_at = lastUsedAt;
       }
-      return result<T>();
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("UPDATE app_session_clients SET last_used_at = ?, expires_at = ?")) {
@@ -229,7 +219,7 @@ function createMockSql() {
         row.last_used_at = lastUsedAt;
         row.expires_at = expiresAt;
       }
-      return result<T>();
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("UPDATE app_session_clients SET last_used_at = ?")) {
@@ -238,7 +228,7 @@ function createMockSql() {
       if (row) {
         row.last_used_at = lastUsedAt;
       }
-      return result<T>();
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("UPDATE app_session_client_keys SET expires_at = ?")) {
@@ -247,7 +237,7 @@ function createMockSql() {
       if (row) {
         row.expires_at = expiresAt;
       }
-      return result<T>();
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("UPDATE app_sessions SET closed_at = ?")) {
@@ -256,7 +246,7 @@ function createMockSql() {
       if (row) {
         row.closed_at = closedAt;
       }
-      return result<T>();
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("UPDATE app_session_clients SET closed_at = ?") && q.includes("client_id = ?")) {
@@ -265,7 +255,7 @@ function createMockSql() {
       if (row && row.closed_at === null) {
         row.closed_at = closedAt;
       }
-      return result<T>();
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("UPDATE app_session_clients SET closed_at = ?")) {
@@ -275,7 +265,7 @@ function createMockSql() {
           row.closed_at = closedAt;
         }
       }
-      return result<T>();
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("UPDATE app_session_client_keys SET revoked_at = ?") && q.includes("client_id = ?")) {
@@ -285,7 +275,7 @@ function createMockSql() {
           row.revoked_at = revokedAt;
         }
       }
-      return result<T>();
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("UPDATE app_session_client_keys SET revoked_at = ?")) {
@@ -295,7 +285,7 @@ function createMockSql() {
           row.revoked_at = revokedAt;
         }
       }
-      return result<T>();
+      return mockSqlRows<T>();
     }
 
     throw new Error(`unexpected query: ${q}`);

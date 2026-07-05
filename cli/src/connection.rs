@@ -333,26 +333,7 @@ impl Connection {
         args: Option<Value>,
         timeout: Duration,
     ) -> Result<ResponseFrame, Box<dyn std::error::Error>> {
-        if self.is_disconnected() {
-            return Err("Connection is disconnected".into());
-        }
-
-        let req = RequestFrame::new(call, args);
-        let id = req.id.clone();
-
-        let (tx, rx) = oneshot::channel();
-        {
-            let mut pending = self.pending.lock().await;
-            pending.insert(id.clone(), tx);
-        }
-
-        let frame = Frame::Req(req);
-        let msg = Message::Text(serde_json::to_string(&frame)?);
-        if let Err(error) = self.tx.send(msg).await {
-            let mut pending = self.pending.lock().await;
-            pending.remove(&id);
-            return Err(error.into());
-        }
+        let (id, rx) = self.send_request_frame(call, args).await?;
 
         match tokio::time::timeout(timeout, rx).await {
             Ok(Ok(res)) => Ok(res),
@@ -370,6 +351,18 @@ impl Connection {
         call: &str,
         args: Option<Value>,
     ) -> Result<ResponseFrame, Box<dyn std::error::Error>> {
+        let (_id, rx) = self.send_request_frame(call, args).await?;
+        let res = rx
+            .await
+            .map_err(|error| format!("Connection closed while waiting for response: {}", error))?;
+        Ok(res)
+    }
+
+    async fn send_request_frame(
+        &self,
+        call: &str,
+        args: Option<Value>,
+    ) -> Result<(String, oneshot::Receiver<ResponseFrame>), Box<dyn std::error::Error>> {
         if self.is_disconnected() {
             return Err("Connection is disconnected".into());
         }
@@ -391,10 +384,7 @@ impl Connection {
             return Err(error.into());
         }
 
-        let res = rx
-            .await
-            .map_err(|error| format!("Connection closed while waiting for response: {}", error))?;
-        Ok(res)
+        Ok((id, rx))
     }
 }
 

@@ -5,25 +5,21 @@ import {
   DEFAULT_WORKERS_AI_FALLBACK_PROFILE_ID,
   DEFAULT_WORKERS_AI_MODEL,
 } from "../inference/default-models";
-
-type Row = Record<string, unknown>;
+import {
+  createMockSqlTables,
+  handleMockSchemaStatement,
+  mockSqlRows,
+  type MockSqlRow,
+} from "../test-support/mock-sql";
 
 function createMockSql() {
-  const tables = new Map<string, Row[]>();
+  const { getTable } = createMockSqlTables();
 
-  function getTable(name: string): Row[] {
-    if (!tables.has(name)) tables.set(name, []);
-    return tables.get(name)!;
-  }
-
-  function exec<T = Row>(query: string, ...bindings: unknown[]) {
+  function exec<T = MockSqlRow>(query: string, ...bindings: unknown[]) {
     const q = query.trim();
 
-    if (q.startsWith("CREATE TABLE IF NOT EXISTS")) {
-      const match = q.match(/CREATE TABLE IF NOT EXISTS (\w+)/);
-      if (match) getTable(match[1]);
-      return { toArray: () => [] as T[] };
-    }
+    const schemaResult = handleMockSchemaStatement<T>(q, getTable);
+    if (schemaResult) return schemaResult;
 
     if (q.startsWith("INSERT OR REPLACE INTO config_kv")) {
       const table = getTable("config_kv");
@@ -34,7 +30,7 @@ function createMockSql() {
       } else {
         table.push({ key, value });
       }
-      return { toArray: () => [] as T[] };
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("SELECT value FROM config_kv WHERE key = ?")) {
@@ -42,7 +38,7 @@ function createMockSql() {
       const [key] = bindings as [string];
       const row = table.find((record) => record.key === key);
       const rows = row ? [{ value: row.value as string }] : [];
-      return { toArray: () => rows as T[] };
+      return mockSqlRows(rows as T[]);
     }
 
     if (q.startsWith("DELETE FROM config_kv WHERE key = ?")) {
@@ -50,7 +46,7 @@ function createMockSql() {
       const [key] = bindings as [string];
       const idx = table.findIndex((record) => record.key === key);
       if (idx >= 0) table.splice(idx, 1);
-      return { toArray: () => [] as T[] };
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("SELECT key, value FROM config_kv WHERE key LIKE ? ORDER BY key")) {
@@ -64,7 +60,7 @@ function createMockSql() {
           value: String(record.value),
         }))
         .sort((a, b) => a.key.localeCompare(b.key));
-      return { toArray: () => rows as T[] };
+      return mockSqlRows(rows as T[]);
     }
 
     if (q.startsWith("SELECT key, value FROM config_kv ORDER BY key")) {
@@ -75,10 +71,10 @@ function createMockSql() {
           value: String(record.value),
         }))
         .sort((a, b) => a.key.localeCompare(b.key));
-      return { toArray: () => rows as T[] };
+      return mockSqlRows(rows as T[]);
     }
 
-    return { toArray: () => [] as T[] };
+    return mockSqlRows<T>();
   }
 
   return { exec } as SqlStorage;

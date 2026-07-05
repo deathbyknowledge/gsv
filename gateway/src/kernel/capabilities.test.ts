@@ -4,29 +4,25 @@ import {
   hasCapability,
   isValidCapability,
 } from "./capabilities";
-
-type Row = Record<string, unknown>;
+import {
+  createMockSqlTables,
+  handleMockSchemaStatement,
+  mockSqlRows,
+  type MockSqlRow,
+} from "../test-support/mock-sql";
 
 function createMockSql() {
-  const tables = new Map<string, Row[]>();
+  const { tables, getTable } = createMockSqlTables();
 
-  function getTable(name: string): Row[] {
-    if (!tables.has(name)) tables.set(name, []);
-    return tables.get(name)!;
-  }
-
-  function exec<T = Row>(query: string, ...bindings: unknown[]) {
+  function exec<T = MockSqlRow>(query: string, ...bindings: unknown[]) {
     const q = query.trim();
 
-    if (q.startsWith("CREATE TABLE IF NOT EXISTS")) {
-      const match = q.match(/CREATE TABLE IF NOT EXISTS (\w+)/);
-      if (match) getTable(match[1]);
-      return { toArray: () => [] as T[] };
-    }
+    const schemaResult = handleMockSchemaStatement<T>(q, getTable);
+    if (schemaResult) return schemaResult;
 
     if (q.startsWith("SELECT COUNT")) {
       const table = getTable("group_capabilities");
-      return { toArray: () => [{ cnt: table.length }] as T[] };
+      return mockSqlRows([{ cnt: table.length }] as T[]);
     }
 
     if (q.startsWith("INSERT OR IGNORE")) {
@@ -36,14 +32,14 @@ function createMockSql() {
         (r) => r.gid === gid && r.capability === capability,
       );
       if (!exists) table.push({ gid, capability });
-      return { toArray: () => [] as T[] };
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("INSERT INTO")) {
       const table = getTable("group_capabilities");
       const [gid, capability] = bindings as [number, string];
       table.push({ gid, capability });
-      return { toArray: () => [] as T[] };
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("DELETE FROM")) {
@@ -53,7 +49,7 @@ function createMockSql() {
         (r) => r.gid === gid && r.capability === capability,
       );
       if (idx >= 0) table.splice(idx, 1);
-      return { toArray: () => [] as T[] };
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("SELECT DISTINCT capability")) {
@@ -63,9 +59,7 @@ function createMockSql() {
       for (const row of table) {
         if (gids.includes(row.gid as number)) caps.add(row.capability as string);
       }
-      return {
-        toArray: () => Array.from(caps).map((c) => ({ capability: c })) as T[],
-      };
+      return mockSqlRows(Array.from(caps).map((c) => ({ capability: c })) as T[]);
     }
 
     if (q.startsWith("SELECT gid, capability")) {
@@ -77,17 +71,17 @@ function createMockSql() {
           .sort((a, b) =>
             (a.capability as string).localeCompare(b.capability as string),
           );
-        return { toArray: () => filtered as T[] };
+        return mockSqlRows(filtered as T[]);
       }
       const sorted = [...table].sort((a, b) => {
         const gidDiff = (a.gid as number) - (b.gid as number);
         if (gidDiff !== 0) return gidDiff;
         return (a.capability as string).localeCompare(b.capability as string);
       });
-      return { toArray: () => sorted as T[] };
+      return mockSqlRows(sorted as T[]);
     }
 
-    return { toArray: () => [] as T[] };
+    return mockSqlRows<T>();
   }
 
   return { exec, _tables: tables };

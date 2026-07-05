@@ -1,58 +1,54 @@
 import { describe, expect, it } from "vitest";
 import { ProcessRegistry } from "./processes";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
-
-type Row = Record<string, unknown>;
+import {
+  handleMockSchemaStatement,
+  mockSqlRows,
+  type MockSqlRow,
+} from "../test-support/mock-sql";
 
 function createMockSql() {
-  const table = new Map<string, Row>();
+  const table = new Map<string, MockSqlRow>();
 
-  function rows<T>(items: T[]) {
-    return Object.assign(items, {
-      toArray: () => items,
-    });
-  }
-
-  function exec<T = Row>(query: string, ...bindings: unknown[]) {
+  function exec<T = MockSqlRow>(query: string, ...bindings: unknown[]) {
     const q = query.trim();
 
-    if (q.startsWith("CREATE TABLE IF NOT EXISTS")) {
-      return rows([] as T[]);
-    }
+    const schemaResult = handleMockSchemaStatement<T>(q);
+    if (schemaResult) return schemaResult;
 
     if (q.startsWith("UPDATE processes SET owner_uid = uid")) {
       for (const row of table.values()) {
         if (row.owner_uid === null || row.owner_uid === undefined) row.owner_uid = row.uid;
       }
-      return rows([] as T[]);
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("UPDATE processes SET cwd = home")) {
       for (const row of table.values()) {
         if (!row.cwd) row.cwd = row.home;
       }
-      return rows([] as T[]);
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("UPDATE processes SET context_files_json = '[]'")) {
       for (const row of table.values()) {
         if (!row.context_files_json) row.context_files_json = "[]";
       }
-      return rows([] as T[]);
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("UPDATE processes SET queued_count = 0")) {
       for (const row of table.values()) {
         if (typeof row.queued_count !== "number" || row.queued_count < 0) row.queued_count = 0;
       }
-      return rows([] as T[]);
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("UPDATE processes SET state = 'idle'")) {
       for (const row of table.values()) {
         if (!row.state || row.state === "paused" || row.state === "killed") row.state = "idle";
       }
-      return rows([] as T[]);
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("INSERT OR REPLACE INTO processes")) {
@@ -106,41 +102,41 @@ function createMockSql() {
         label,
         created_at,
       });
-      return rows([] as T[]);
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("SELECT uid, gid, gids, username, home, cwd FROM processes WHERE process_id = ?")) {
       const [processId] = bindings as [string];
       const row = table.get(processId);
-      return rows((row ? [row] : []) as T[]);
+      return mockSqlRows((row ? [row] : []) as T[]);
     }
 
     if (q.startsWith("SELECT owner_uid, uid FROM processes WHERE process_id = ?")) {
       const [processId] = bindings as [string];
       const row = table.get(processId);
-      return rows((row ? [{ owner_uid: row.owner_uid ?? null, uid: row.uid }] : []) as T[]);
+      return mockSqlRows((row ? [{ owner_uid: row.owner_uid ?? null, uid: row.uid }] : []) as T[]);
     }
 
     if (q.startsWith("SELECT context_files_json FROM processes WHERE process_id = ?")) {
       const [processId] = bindings as [string];
       const row = table.get(processId);
-      return rows((row ? [{ context_files_json: row.context_files_json ?? "[]" }] : []) as T[]);
+      return mockSqlRows((row ? [{ context_files_json: row.context_files_json ?? "[]" }] : []) as T[]);
     }
 
     if (q.startsWith("SELECT * FROM processes WHERE process_id = ?")) {
       const [processId] = bindings as [string];
       const row = table.get(processId);
-      return rows((row ? [row] : []) as T[]);
+      return mockSqlRows((row ? [row] : []) as T[]);
     }
 
     if (q.startsWith("SELECT * FROM processes WHERE owner_uid = ?")) {
       const [ownerUid] = bindings as [number];
       const matches = [...table.values()].filter((row) => (row.owner_uid ?? row.uid) === ownerUid);
-      return rows(matches as T[]);
+      return mockSqlRows(matches as T[]);
     }
 
     if (q.startsWith("SELECT * FROM processes ORDER BY")) {
-      return rows([...table.values()] as T[]);
+      return mockSqlRows([...table.values()] as T[]);
     }
 
     if (q.startsWith("UPDATE processes\n          SET state = ?")) {
@@ -160,7 +156,7 @@ function createMockSql() {
         row.queued_count = queued_count;
         row.last_active_at = last_active_at;
       }
-      return rows([] as T[]);
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("UPDATE processes SET state = ?")) {
@@ -170,7 +166,7 @@ function createMockSql() {
         row.state = state;
         row.last_active_at = lastActiveAt;
       }
-      return rows([] as T[]);
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("UPDATE processes")) {
@@ -185,26 +181,26 @@ function createMockSql() {
         row.home = home;
         row.cwd = cwd;
       }
-      return rows([] as T[]);
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("SELECT process_id FROM processes WHERE process_id = ?")) {
       const [processId] = bindings as [string];
       const row = table.get(processId);
-      return rows((row ? [{ process_id: processId }] : []) as T[]);
+      return mockSqlRows((row ? [{ process_id: processId }] : []) as T[]);
     }
 
     if (q.startsWith("DELETE FROM processes WHERE process_id = ?")) {
       const [processId] = bindings as [string];
       table.delete(processId);
-      return rows([] as T[]);
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("SELECT COUNT(*) as cnt FROM processes")) {
-      return rows([{ cnt: table.size }] as T[]);
+      return mockSqlRows([{ cnt: table.size }] as T[]);
     }
 
-    return rows([] as T[]);
+    return mockSqlRows<T>();
   }
 
   return { exec };

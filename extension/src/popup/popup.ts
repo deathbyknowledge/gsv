@@ -1,5 +1,12 @@
 import "./popup.css";
 import { connectionText, escapeHtml, sendUiMessage, timeAgo } from "../shared/ui-client";
+import {
+  browserTargetHeadline,
+  browserTargetTone,
+  liveAccessCount,
+  liveAccessText,
+  recordingGrantText,
+} from "../shared/status-format";
 import type { ExtensionUiState, RuntimeResponse } from "../shared/ui-state";
 
 const app = document.querySelector<HTMLElement>("#app");
@@ -103,7 +110,7 @@ function render(): void {
 
       <section class="plate plate--${escapeHtml(stateTone(state))}">
         <span class="plate-label">${escapeHtml(state.connection.state)}</span>
-        <h1>${escapeHtml(headline(state))}</h1>
+        <h1>${escapeHtml(browserTargetHeadline(state))}</h1>
         <p title="${escapeHtml(state.config.gatewayUrl)}">${escapeHtml(detail(state))}</p>
       </section>
 
@@ -139,19 +146,6 @@ function render(): void {
   `;
 }
 
-function headline(state: ExtensionUiState): string {
-  if (liveAccessCount(state) > 0) {
-    return "Agent using this browser";
-  }
-  if (state.connection.state === "connected") {
-    return "Ready";
-  }
-  if (state.connection.state === "connecting") {
-    return "Connecting";
-  }
-  return "Offline";
-}
-
 function detail(state: ExtensionUiState): string {
   if (liveAccessCount(state) > 0) {
     return "Use Stop All to release active browser capture.";
@@ -163,39 +157,7 @@ function detail(state: ExtensionUiState): string {
 }
 
 function stateTone(state: ExtensionUiState): string {
-  if (liveAccessCount(state) > 0) {
-    return "active";
-  }
-  return state.connection.state;
-}
-
-function liveAccessCount(state: ExtensionUiState): number {
-  return state.sensitive.networkCaptures
-    + state.sensitive.mediaRecordings
-    + state.sensitive.debuggerTabs.length;
-}
-
-function liveAccessText(state: ExtensionUiState): string {
-  const parts: string[] = [];
-  if (state.sensitive.networkCaptures > 0) {
-    parts.push(`${state.sensitive.networkCaptures} network capture${state.sensitive.networkCaptures === 1 ? "" : "s"}`);
-  }
-  if (state.sensitive.mediaRecordings > 0) {
-    parts.push(`${state.sensitive.mediaRecordings} media recording${state.sensitive.mediaRecordings === 1 ? "" : "s"}`);
-  }
-  if (state.sensitive.debuggerTabs.length > 0) {
-    parts.push(`${state.sensitive.debuggerTabs.length} debugger tab${state.sensitive.debuggerTabs.length === 1 ? "" : "s"}`);
-  }
-  return parts.join(" / ");
-}
-
-function recordingGrantText(state: ExtensionUiState): string {
-  const grant = state.media.captureGrant;
-  if (!grant) {
-    return "";
-  }
-  const label = grant.title || grant.url || `tab ${grant.tabId}`;
-  return `${label} / ${timeUntil(grant.expiresAt)}`;
+  return browserTargetTone(state);
 }
 
 function lastSeen(state: ExtensionUiState): string {
@@ -205,19 +167,4 @@ function lastSeen(state: ExtensionUiState): string {
 
 function busyAttr(action: string): string {
   return busyAction === action ? "disabled" : "";
-}
-
-function timeUntil(iso: string): string {
-  const then = Date.parse(iso);
-  if (!Number.isFinite(then)) {
-    return "expires soon";
-  }
-  const seconds = Math.max(0, Math.ceil((then - Date.now()) / 1000));
-  if (seconds <= 0) {
-    return "expired";
-  }
-  if (seconds < 60) {
-    return `${seconds}s left`;
-  }
-  return `${Math.ceil(seconds / 60)}m left`;
 }

@@ -1,5 +1,6 @@
 import "./options.css";
 import { normalizeGatewayUrl, type ExtensionConfig } from "../shared/config";
+import { liveAccessText } from "../shared/status-format";
 import {
   connectionText,
   escapeHtml,
@@ -364,7 +365,7 @@ function renderState(): void {
   runtimeDetailsEl.innerHTML = [
     detailRow("Target id", state.targetId),
     detailRow("Gateway", state.gatewayHost),
-    detailRow("Live access", liveAccessText(state)),
+    detailRow("Live access", liveAccessText(state) || "None"),
     detailRow("Auto-connect", state.config.autoConnect ? "On" : "Off"),
   ].join("");
   diagnosticsDetailsEl.innerHTML = [
@@ -642,18 +643,4 @@ function slugDevicePart(value: unknown): string {
     .replace(/['"]/g, "")
     .replace(/[^a-z0-9._-]+/g, "-")
     .replace(/^-+|-+$/g, "");
-}
-
-function liveAccessText(state: ExtensionUiState): string {
-  const parts: string[] = [];
-  if (state.sensitive.networkCaptures > 0) {
-    parts.push(`${state.sensitive.networkCaptures} network`);
-  }
-  if (state.sensitive.mediaRecordings > 0) {
-    parts.push(`${state.sensitive.mediaRecordings} media`);
-  }
-  if (state.sensitive.debuggerTabs.length > 0) {
-    parts.push(`${state.sensitive.debuggerTabs.length} debugger`);
-  }
-  return parts.length > 0 ? parts.join(" / ") : "None";
 }

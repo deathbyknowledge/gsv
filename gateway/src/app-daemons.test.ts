@@ -4,19 +4,16 @@ import {
   computeInitialNextRunAt,
   computeRecurringNextRunAt,
 } from "./app-daemons";
-
-type Row = Record<string, unknown>;
+import {
+  handleMockSchemaStatement,
+  mockSqlRows,
+  type MockSqlRow,
+} from "./test-support/mock-sql";
 
 function createMockSql() {
-  const table = new Map<string, Row>();
+  const table = new Map<string, MockSqlRow>();
 
-  function rows<T>(items: T[]) {
-    return Object.assign(items, {
-      toArray: () => items,
-    });
-  }
-
-  function sortRecords(records: Row[]): Row[] {
+  function sortRecords(records: MockSqlRow[]): MockSqlRow[] {
     return [...records].sort((left, right) => {
       const leftNext = typeof left.next_run_at === "number" ? left.next_run_at : Number.MAX_SAFE_INTEGER;
       const rightNext = typeof right.next_run_at === "number" ? right.next_run_at : Number.MAX_SAFE_INTEGER;
@@ -27,24 +24,20 @@ function createMockSql() {
     });
   }
 
-  function exec<T = Row>(query: string, ...bindings: unknown[]) {
+  function exec<T = MockSqlRow>(query: string, ...bindings: unknown[]) {
     const q = query.trim();
 
-    if (
-      q.startsWith("CREATE TABLE IF NOT EXISTS") ||
-      q.startsWith("CREATE INDEX IF NOT EXISTS")
-    ) {
-      return rows([] as T[]);
-    }
+    const schemaResult = handleMockSchemaStatement<T>(q);
+    if (schemaResult) return schemaResult;
 
     if (q.startsWith("SELECT * FROM app_rpc_schedules WHERE schedule_key = ?")) {
       const [key] = bindings as [string];
       const row = table.get(key);
-      return rows((row ? [row] : []) as T[]);
+      return mockSqlRows((row ? [row] : []) as T[]);
     }
 
     if (q.startsWith("SELECT * FROM app_rpc_schedules ORDER BY")) {
-      return rows(sortRecords([...table.values()]) as T[]);
+      return mockSqlRows(sortRecords([...table.values()]) as T[]);
     }
 
     if (q.startsWith("INSERT OR REPLACE INTO app_rpc_schedules")) {
@@ -95,13 +88,13 @@ function createMockSql() {
         last_error,
         last_duration_ms,
       });
-      return rows([] as T[]);
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("DELETE FROM app_rpc_schedules WHERE schedule_key = ?")) {
       const [key] = bindings as [string];
       table.delete(key);
-      return rows([] as T[]);
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("SELECT * FROM app_rpc_schedules WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= ?")) {
@@ -112,17 +105,17 @@ function createMockSql() {
           && typeof row.next_run_at === "number"
           && row.next_run_at <= now),
       );
-      return rows(matches as T[]);
+      return mockSqlRows(matches as T[]);
     }
 
     if (q.startsWith("SELECT next_run_at FROM app_rpc_schedules WHERE enabled = 1 AND next_run_at IS NOT NULL")) {
       const match = sortRecords(
         [...table.values()].filter((row) => row.enabled === 1 && typeof row.next_run_at === "number"),
       )[0];
-      return rows((match ? [{ next_run_at: match.next_run_at }] : []) as T[]);
+      return mockSqlRows((match ? [{ next_run_at: match.next_run_at }] : []) as T[]);
     }
 
-    return rows([] as T[]);
+    return mockSqlRows<T>();
   }
 
   return { exec };

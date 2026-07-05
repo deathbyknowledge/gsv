@@ -1,4 +1,9 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
+import {
+  isHelpCommand,
+  parseAttachArgs,
+  parseShellWords,
+} from "../../shared/src/command";
 import type {
   AdapterAccountStatus,
   AdapterActivity,
@@ -177,7 +182,7 @@ export class TelegramChannel
     }
 
     if (command === "attach") {
-      const { chatId, url, filename, caption } = parseAttachArgs(tokens.slice(1));
+      const { targetId: chatId, url, filename, caption } = parseAttachArgs(tokens.slice(1));
       if (!chatId || !url) {
         return shellFail(
           "usage: attach <chat-id-or-handle> <url> [--filename <name>] [caption]",
@@ -338,65 +343,6 @@ export default {
     return new Response("Not Found", { status: 404 });
   },
 };
-
-function parseShellWords(input: string): string[] {
-  const tokens: string[] = [];
-  const pattern = /"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|(\S+)/g;
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(input.trim())) !== null) {
-    const token = match[1] ?? match[2] ?? match[3] ?? "";
-    tokens.push(token.replace(/\\(["'\\])/g, "$1"));
-  }
-  return tokens;
-}
-
-function isHelpCommand(command: string): boolean {
-  return command === "help" || command === "-h" || command === "--help";
-}
-
-function parseAttachArgs(tokens: string[]): {
-  chatId?: string;
-  url?: string;
-  filename?: string;
-  caption: string;
-} {
-  const [chatId, url, ...rest] = tokens;
-  if (rest.length === 0) {
-    return { chatId, url, caption: "" };
-  }
-
-  if (rest[0] === "--filename" || rest[0] === "-f") {
-    const [, filename, ...captionParts] = rest;
-    return {
-      chatId,
-      url,
-      filename,
-      caption: captionParts.join(" ").trim(),
-    };
-  }
-
-  const [candidate, ...captionParts] = rest;
-  if (looksLikeFilename(candidate)) {
-    return {
-      chatId,
-      url,
-      filename: candidate,
-      caption: captionParts.join(" ").trim(),
-    };
-  }
-
-  return {
-    chatId,
-    url,
-    caption: rest.join(" ").trim(),
-  };
-}
-
-function looksLikeFilename(value: string | undefined): value is string {
-  if (!value) return false;
-  if (value.includes("/") || value.includes("\\")) return true;
-  return /^[^/?#\s]+\.[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value);
-}
 
 function telegramSurface(id: string): AdapterSurface {
   const trimmed = id.trim();

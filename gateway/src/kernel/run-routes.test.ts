@@ -1,20 +1,19 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RunRouteStore } from "./run-routes";
-
-type Row = Record<string, unknown>;
+import {
+  handleMockSchemaStatement,
+  mockSqlRows,
+  type MockSqlRow,
+} from "../test-support/mock-sql";
 
 function createMockSql() {
-  const table = new Map<string, Row>();
+  const table = new Map<string, MockSqlRow>();
 
-  function exec<T = Row>(query: string, ...bindings: unknown[]) {
+  function exec<T = MockSqlRow>(query: string, ...bindings: unknown[]) {
     const q = query.trim();
 
-    if (q.startsWith("CREATE TABLE IF NOT EXISTS")) {
-      return { toArray: () => [] as T[] };
-    }
-    if (q.startsWith("CREATE INDEX IF NOT EXISTS")) {
-      return { toArray: () => [] as T[] };
-    }
+    const schemaResult = handleMockSchemaStatement<T>(q);
+    if (schemaResult) return schemaResult;
 
     if (q.startsWith("INSERT OR REPLACE INTO run_routes")) {
       const [
@@ -56,7 +55,7 @@ function createMockSql() {
         created_at: createdAt,
         expires_at: expiresAt,
       });
-      return { toArray: () => [] as T[] };
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("SELECT COUNT(*) as cnt FROM run_routes WHERE expires_at <= ?")) {
@@ -67,7 +66,7 @@ function createMockSql() {
           count += 1;
         }
       }
-      return { toArray: () => [{ cnt: count }] as T[] };
+      return mockSqlRows([{ cnt: count }] as T[]);
     }
 
     if (q.startsWith("DELETE FROM run_routes WHERE expires_at <= ?")) {
@@ -77,19 +76,19 @@ function createMockSql() {
           table.delete(runId);
         }
       }
-      return { toArray: () => [] as T[] };
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("SELECT run_id, route_kind, uid, connection_id, adapter, account_id")) {
       const [runId] = bindings as [string];
       const row = table.get(runId);
-      return { toArray: () => (row ? [row] : []) as T[] };
+      return mockSqlRows((row ? [row] : []) as T[]);
     }
 
     if (q.startsWith("DELETE FROM run_routes WHERE run_id = ?")) {
       const [runId] = bindings as [string];
       table.delete(runId);
-      return { toArray: () => [] as T[] };
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("DELETE FROM run_routes WHERE route_kind = 'connection' AND connection_id = ?")) {
@@ -102,10 +101,10 @@ function createMockSql() {
           table.delete(runId);
         }
       }
-      return { toArray: () => [] as T[] };
+      return mockSqlRows<T>();
     }
 
-    return { toArray: () => [] as T[] };
+    return mockSqlRows<T>();
   }
 
   return { exec };

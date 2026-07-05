@@ -9,91 +9,25 @@
  * calls send() via Service Binding which may be a different worker invocation).
  */
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
-
-// ============================================================================
-// Types
-// ============================================================================
-
-type ChannelPeer = {
-  kind: "dm" | "group" | "channel" | "thread";
-  id: string;
-  name?: string;
-};
-
-type ChannelSender = {
-  id: string;
-  name?: string;
-};
-
-type ChannelMedia = {
-  type: "image" | "audio" | "video" | "document";
-  mimeType: string;
-  data?: string;
-  url?: string;
-  filename?: string;
-};
-
-type ChannelInboundMessage = {
-  messageId: string;
-  peer: ChannelPeer;
-  sender?: ChannelSender;
-  text: string;
-  media?: ChannelMedia[];
-  timestamp?: number;
-  replyToId?: string;
-  replyToText?: string;
-  wasMentioned?: boolean;
-};
-
-type ChannelOutboundMessage = {
-  peer: ChannelPeer;
-  text: string;
-  replyToId?: string;
-  media?: ChannelMedia[];
-};
-
-type ChannelAccountStatus = {
-  accountId: string;
-  connected: boolean;
-  authenticated: boolean;
-  mode?: string;
-  error?: string;
-};
-
-type ChannelCapabilities = {
-  chatTypes: Array<"dm" | "group" | "channel" | "thread">;
-  media: boolean;
-  reactions: boolean;
-  threads: boolean;
-  typing: boolean;
-  editing: boolean;
-  deletion: boolean;
-};
-
-type StartResult = { ok: true } | { ok: false; error: string };
-type StopResult = { ok: true } | { ok: false; error: string };
-type SendResult = { ok: true; messageId?: string } | { ok: false; error: string };
-type ShellExecArgs = { input: string };
-type ShellExecResult =
-  | {
-      status: "completed";
-      output: string;
-      exitCode: number;
-      ok: true;
-      pid: number;
-      stdout: string;
-      stderr: string;
-    }
-  | {
-      status: "failed";
-      output: string;
-      error: string;
-      exitCode: number;
-      ok: false;
-      pid: number;
-      stdout: string;
-      stderr: string;
-    };
+import {
+  isHelpCommand,
+  parseAttachArgs,
+  parseShellWords,
+} from "../../shared/src/command";
+import type {
+  ChannelAccountStatus,
+  ChannelCapabilities,
+  ChannelInboundMessage,
+  ChannelMedia,
+  ChannelOutboundMessage,
+  ChannelPeer,
+  ChannelSender,
+  SendResult,
+  ShellExecArgs,
+  ShellExecResult,
+  StartResult,
+  StopResult,
+} from "../../shared/src/types";
 
 type GatewayChannelBinding = Fetcher & {
   channelInbound: (
@@ -341,7 +275,7 @@ export class TestChannel extends WorkerEntrypoint<Env> {
     }
 
     if (command === "attach") {
-      const { surfaceId, url, filename, caption } = parseAttachArgs(tokens.slice(1));
+      const { targetId: surfaceId, url, filename, caption } = parseAttachArgs(tokens.slice(1));
       if (!surfaceId || !url) {
         return shellFail("usage: attach <surface-id> <url> [--filename <name>] [caption]");
       }
@@ -445,65 +379,6 @@ export default {
     return new Response("Not Found", { status: 404 });
   },
 };
-
-function parseShellWords(input: string): string[] {
-  const tokens: string[] = [];
-  const pattern = /"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|(\S+)/g;
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(input.trim())) !== null) {
-    const token = match[1] ?? match[2] ?? match[3] ?? "";
-    tokens.push(token.replace(/\\(["'\\])/g, "$1"));
-  }
-  return tokens;
-}
-
-function isHelpCommand(command: string): boolean {
-  return command === "help" || command === "-h" || command === "--help";
-}
-
-function parseAttachArgs(tokens: string[]): {
-  surfaceId?: string;
-  url?: string;
-  filename?: string;
-  caption: string;
-} {
-  const [surfaceId, url, ...rest] = tokens;
-  if (rest.length === 0) {
-    return { surfaceId, url, caption: "" };
-  }
-
-  if (rest[0] === "--filename" || rest[0] === "-f") {
-    const [, filename, ...captionParts] = rest;
-    return {
-      surfaceId,
-      url,
-      filename,
-      caption: captionParts.join(" ").trim(),
-    };
-  }
-
-  const [candidate, ...captionParts] = rest;
-  if (looksLikeFilename(candidate)) {
-    return {
-      surfaceId,
-      url,
-      filename: candidate,
-      caption: captionParts.join(" ").trim(),
-    };
-  }
-
-  return {
-    surfaceId,
-    url,
-    caption: rest.join(" ").trim(),
-  };
-}
-
-function looksLikeFilename(value: string | undefined): value is string {
-  if (!value) return false;
-  if (value.includes("/") || value.includes("\\")) return true;
-  return /^[^/?#\s]+\.[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value);
-}
 
 async function mediaFromUrl(url: string, filename?: string): Promise<ChannelMedia> {
   let mimeType = "application/octet-stream";

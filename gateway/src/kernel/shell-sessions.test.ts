@@ -1,17 +1,19 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ShellSessionStore } from "./shell-sessions";
-
-type Row = Record<string, unknown>;
+import {
+  handleMockSchemaStatement,
+  mockSqlRows,
+  type MockSqlRow,
+} from "../test-support/mock-sql";
 
 function createMockSql() {
-  const table = new Map<string, Row>();
+  const table = new Map<string, MockSqlRow>();
 
-  function exec<T = Row>(query: string, ...bindings: unknown[]) {
+  function exec<T = MockSqlRow>(query: string, ...bindings: unknown[]) {
     const q = query.trim();
 
-    if (q.startsWith("CREATE TABLE IF NOT EXISTS") || q.startsWith("CREATE INDEX IF NOT EXISTS")) {
-      return { toArray: () => [] as T[] };
-    }
+    const schemaResult = handleMockSchemaStatement<T>(q);
+    if (schemaResult) return schemaResult;
 
     if (q.startsWith("INSERT OR REPLACE INTO shell_sessions")) {
       const [
@@ -34,13 +36,13 @@ function createMockSql() {
         updated_at: updatedAt,
         expires_at: expiresAt,
       });
-      return { toArray: () => [] as T[] };
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("SELECT * FROM shell_sessions WHERE session_id = ?")) {
       const [sessionId] = bindings as [string];
       const row = table.get(sessionId);
-      return { toArray: () => (row ? [row] : []) as T[] };
+      return mockSqlRows((row ? [row] : []) as T[]);
     }
 
     if (q.startsWith("UPDATE shell_sessions")) {
@@ -63,13 +65,13 @@ function createMockSql() {
           }
         }
       }
-      return { toArray: () => [] as T[] };
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("DELETE FROM shell_sessions WHERE session_id = ?")) {
       const [sessionId] = bindings as [string];
       table.delete(sessionId);
-      return { toArray: () => [] as T[] };
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("DELETE FROM shell_sessions WHERE expires_at")) {
@@ -79,10 +81,10 @@ function createMockSql() {
           table.delete(sessionId);
         }
       }
-      return { toArray: () => [] as T[] };
+      return mockSqlRows<T>();
     }
 
-    return { toArray: () => [] as T[] };
+    return mockSqlRows<T>();
   }
 
   return { exec };

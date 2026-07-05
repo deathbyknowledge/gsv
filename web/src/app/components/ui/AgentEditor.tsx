@@ -9,6 +9,7 @@ import { Avatar, type AvatarStatus } from "./Avatar";
 import { Tabs } from "./Tabs";
 import { SectionHeader } from "./SectionHeader";
 import { ConfirmModal } from "./ConfirmModal";
+import { approvalTargetFromValue } from "../../domain/agentApproval";
 import {
   AgentToolsPanel,
   type AgentToolApprovalAction,
@@ -175,23 +176,6 @@ function permissionForValue(value: string | undefined): AgentToolApprovalAction 
     return "auto";
   }
   return value === "auto" || value === "deny" || value === "ask" ? value : "ask";
-}
-
-function approvalTargetFromValue(value: unknown): string | undefined {
-  if (typeof value !== "string") {
-    return undefined;
-  }
-  const trimmed = value.trim();
-  if (!trimmed || trimmed === "*" || trimmed.toLowerCase() === "any") {
-    return undefined;
-  }
-  if (trimmed === "device" || trimmed === "devices/*") {
-    return "targets/*";
-  }
-  if (trimmed === "gateway" || trimmed === "local") {
-    return "gsv";
-  }
-  return trimmed;
 }
 
 function legacyApprovalTarget(value: unknown): string | undefined {
