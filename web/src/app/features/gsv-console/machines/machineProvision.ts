@@ -148,13 +148,18 @@ export function buildMachineBootstrapCommand(input: {
   const deviceId = escapeCliValue(input.deviceId.trim());
   const token = escapeCliValue(input.token.trim());
   const workspace = input.platform === "windows" ? "\"$HOME\"" : "~/";
+  const cli = cliExecutableName(input.platform);
 
   return [
-    `gsv config --local set gateway.url "${gatewayWs}"`,
-    `gsv config --local set gateway.username "${username}"`,
-    `gsv config --local set node.token "${token}"`,
-    `gsv device install --id "${deviceId}" --workspace ${workspace}`,
+    `${cli} config --local set gateway.url "${gatewayWs}"`,
+    `${cli} config --local set gateway.username "${username}"`,
+    `${cli} config --local set node.token "${token}"`,
+    `${cli} device install --id "${deviceId}" --workspace ${workspace}`,
   ].join("\n");
+}
+
+function cliExecutableName(platform: MachineProvisionPlatform): string {
+  return platform === "windows" ? "gsv.exe" : "gsv";
 }
 
 function buildGatewayWsUrl(origin: string): string {

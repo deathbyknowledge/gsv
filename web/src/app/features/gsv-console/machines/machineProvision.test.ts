@@ -70,6 +70,21 @@ describe("machineProvision", () => {
     ].join("\n"));
   });
 
+  it("uses the Windows executable name in bootstrap commands", () => {
+    expect(buildMachineBootstrapCommand({
+      origin: "https://gsv.example.com",
+      platform: "windows",
+      username: "hank",
+      deviceId: "studio-pc",
+      token: "tok",
+    })).toBe([
+      "gsv.exe config --local set gateway.url \"wss://gsv.example.com/ws\"",
+      "gsv.exe config --local set gateway.username \"hank\"",
+      "gsv.exe config --local set node.token \"tok\"",
+      "gsv.exe device install --id \"studio-pc\" --workspace \"$HOME\"",
+    ].join("\n"));
+  });
+
   it("bounds token expiry days", () => {
     expect(normalizeExpiresDays("")).toBe(30);
     expect(normalizeExpiresDays("-5")).toBe(30);
