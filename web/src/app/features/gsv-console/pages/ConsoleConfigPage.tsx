@@ -1724,6 +1724,7 @@ function newModelConnectionFields(
         ...field,
         requirement: "required" as const,
         description: "OpenAI Codex requests from the GSV Worker may be blocked by provider network checks. Try one of your machines instead.",
+        preferGsvLast: true,
       }];
     }
     return [
@@ -1843,7 +1844,9 @@ function SettingFieldInput({
   }, [redacted]);
 
   if (field.key === MODEL_TRANSPORT_TARGET_KEY) {
-    const options = transportTargetOptionsForValue(value, targets);
+    const options = transportTargetOptionsForValue(value, targets, {
+      preferGsvLast: field.preferGsvLast === true,
+    });
     const selectedValue = normalizedTransportTargetValue(value);
     const selectedIndex = Math.max(0, options.findIndex((option) => selectOptionValue(option) === selectedValue));
     return (
@@ -2027,6 +2030,7 @@ function fallbackModelProfileOptionsForValue(
 function transportTargetOptionsForValue(
   value: string,
   targets: readonly AgentToolTarget[],
+  options: { preferGsvLast?: boolean } = {},
 ): SelectOption[] {
   const targetOptions: SelectOption[] = targets
     .filter((target) => target.id.trim().length > 0 && targetImplementsCapability(target, "net.fetch"))
@@ -2046,13 +2050,15 @@ function transportTargetOptionsForValue(
         description: target.id,
       };
     });
-  const options = [GSV_TRANSPORT_TARGET_OPTION, ...targetOptions];
+  const baseOptions = options.preferGsvLast
+    ? [...targetOptions, GSV_TRANSPORT_TARGET_OPTION]
+    : [GSV_TRANSPORT_TARGET_OPTION, ...targetOptions];
   const selectedValue = normalizedTransportTargetValue(value);
-  if (options.some((option) => selectOptionValue(option) === selectedValue)) {
-    return options;
+  if (baseOptions.some((option) => selectOptionValue(option) === selectedValue)) {
+    return baseOptions;
   }
   return [
-    ...options,
+    ...baseOptions,
     {
       group: "Stored machine",
       label: selectedValue,
