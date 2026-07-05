@@ -6,11 +6,11 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy --minify",
     "build:worker": "bash ../scripts/worker-build.sh ripgit --release",
-    "test": "npm run build:worker && NODE_OPTIONS='--experimental-vm-modules' vitest run"
+    "test": "npm run build:worker && NODE_OPTIONS='--experimental-vm-modules' vitest run --passWithNoTests"
   },
   "devDependencies": {
     "miniflare": "4.20260317.1",
-    "vitest": "3.2.4",
+    "vitest": "^4.1.9",
     "wrangler": "^4.83.0"
   }
 }
