@@ -639,13 +639,38 @@ describe("console agent service", () => {
           createdAt: 1,
           updatedAt: 2,
           lastUsedAt: null,
-          metadata: {},
+          metadata: { chatgptAccountId: "chatgpt-account-1" },
         },
       ],
     }));
 
     await expect(checkConsoleOpenAiCodexOAuth({ call } as any)).resolves.toEqual({ connected: true });
     expect(call).toHaveBeenCalledWith("sys.oauth.list", {});
+  });
+
+  it("treats OpenAI Codex OAuth without account metadata as disconnected", async () => {
+    const call = vi.fn(async () => ({
+      accounts: [
+        {
+          uid: 42,
+          kind: "ai-provider",
+          provider: "openai-codex",
+          accountKey: "default",
+          label: "OpenAI Codex",
+          scope: "openid profile email offline_access",
+          resource: null,
+          clientId: "app_EMoamEEZ73f0CkXaXp7hrann",
+          tokenType: "Bearer",
+          expiresAt: 1_700_000_000,
+          createdAt: 1,
+          updatedAt: 2,
+          lastUsedAt: null,
+          metadata: {},
+        },
+      ],
+    }));
+
+    await expect(checkConsoleOpenAiCodexOAuth({ call } as any)).resolves.toEqual({ connected: false });
   });
 
   it("validates text model settings through ai.text.generate", async () => {

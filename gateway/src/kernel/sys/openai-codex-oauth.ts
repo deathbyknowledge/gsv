@@ -186,15 +186,9 @@ export function openAICodexAccountNeedsRefresh(
     && account.expiresAt <= now + OPENAI_CODEX_REFRESH_SKEW_MS;
 }
 
-export function extractOpenAICodexAccountId(accessToken: string): string | null {
+export function extractOpenAICodexAccountId(token: string): string | null {
   try {
-    const payload = decodeJwtPayload(accessToken);
-    const auth = payload[OPENAI_CODEX_JWT_CLAIM_PATH];
-    if (!auth || typeof auth !== "object" || Array.isArray(auth)) {
-      return null;
-    }
-    const accountId = (auth as Record<string, unknown>).chatgpt_account_id;
-    return typeof accountId === "string" && accountId.trim() ? accountId.trim() : null;
+    return accountIdFromJwtPayload(decodeJwtPayload(token));
   } catch {
     return null;
   }
@@ -222,16 +216,19 @@ async function exchangeOpenAICodexToken(
   const accessToken = stringField(json, "access_token");
   const refreshToken = stringField(json, "refresh_token") ??
     (operation === "refresh" ? fallbackRefreshToken ?? null : null);
+  const idToken = stringField(json, "id_token");
   const expiresIn = positiveNumberField(json, "expires_in");
   if (!accessToken || !refreshToken || expiresIn === null) {
     throw new Error(`OpenAI Codex token ${operation} response missing fields: ${JSON.stringify(json)}`);
   }
+  const accountId = extractOpenAICodexAccountId(accessToken)
+    ?? (idToken ? extractOpenAICodexAccountId(idToken) : null);
   return {
     accessToken,
     refreshToken,
     tokenType: stringField(json, "token_type") ?? "Bearer",
     expiresAt: Date.now() + expiresIn * 1000,
-    accountId: extractOpenAICodexAccountId(accessToken),
+    accountId,
   };
 }
 
@@ -305,6 +302,23 @@ function positiveNumberField(record: Record<string, unknown>, key: string): numb
   return typeof number === "number" && Number.isFinite(number) && number > 0
     ? Math.floor(number)
     : null;
+}
+
+function accountIdFromJwtPayload(payload: Record<string, unknown>): string | null {
+  const auth = objectField(payload[OPENAI_CODEX_JWT_CLAIM_PATH]);
+  return stringValue(auth?.chatgpt_account_id)
+    ?? stringValue(payload.chatgpt_account_id)
+    ?? stringValue(payload.account_id);
+}
+
+function objectField(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function stringValue(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 function decodeJwtPayload(token: string): Record<string, unknown> {

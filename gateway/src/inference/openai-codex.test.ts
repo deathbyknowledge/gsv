@@ -6,11 +6,20 @@ import {
 } from "./openai-codex";
 
 function codexToken(accountId = "acct-test"): string {
-  const payload = Buffer.from(JSON.stringify({
+  return jwtToken({
     "https://api.openai.com/auth": {
       chatgpt_account_id: accountId,
     },
-  })).toString("base64url");
+  });
+}
+
+function jwtToken(payload: Record<string, unknown>): string {
+  const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  return `header.${encoded}.signature`;
+}
+
+function bareCodexToken(): string {
+  const payload = Buffer.from(JSON.stringify({ sub: "user-1" })).toString("base64url");
   return `header.${payload}.signature`;
 }
 
@@ -128,6 +137,34 @@ describe("OpenAI Codex routed fetch transport", () => {
       parallel_tool_calls: true,
     });
     expect(body).not.toHaveProperty("max_output_tokens");
+  });
+
+  it("uses an OAuth account id supplied outside the access token", async () => {
+    let capturedInit: RequestInit | undefined;
+    const accessToken = bareCodexToken();
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      capturedInit = init;
+      return sseResponse(codexTextEvents());
+    });
+
+    const result = await completeWithOpenAiCodexFetch({
+      model: codexModel(),
+      context: {
+        systemPrompt: "Reply briefly.",
+        messages: [{ role: "user", content: "Say ok" }],
+      },
+      fetch: fetchMock as unknown as typeof fetch,
+      options: {
+        apiKey: accessToken,
+        openAiCodexAccountId: "acct-from-metadata",
+      },
+    });
+
+    const headers = new Headers(capturedInit?.headers);
+
+    expect(result.stopReason).toBe("stop");
+    expect(headers.get("authorization")).toBe(`Bearer ${accessToken}`);
+    expect(headers.get("chatgpt-account-id")).toBe("acct-from-metadata");
   });
 
   it("handles CRLF-delimited Codex SSE frames", async () => {

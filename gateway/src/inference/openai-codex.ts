@@ -20,7 +20,11 @@ type OpenAiCodexFetchRequest = {
   model: Model<Api>;
   context: Context;
   fetch: typeof fetch;
-  options?: SimpleStreamOptions;
+  options?: OpenAiCodexFetchOptions;
+};
+
+type OpenAiCodexFetchOptions = SimpleStreamOptions & {
+  openAiCodexAccountId?: string;
 };
 
 type RoutedRequestInit = RequestInit & { timeoutMs?: number };
@@ -50,7 +54,7 @@ export function streamWithOpenAiCodexFetch(
         throw new Error(`No API key for provider: ${request.model.provider}`);
       }
 
-      const accountId = extractAccountId(apiKey);
+      const accountId = normalizeAccountId(request.options?.openAiCodexAccountId) ?? extractAccountId(apiKey);
       let body: unknown = buildRequestBody(request.model, request.context, request.options);
       const nextBody = await request.options?.onPayload?.(body, request.model);
       if (nextBody !== undefined) {
@@ -139,7 +143,7 @@ function emptyOpenAiCodexMessage(model: Model<Api>): AssistantMessage {
 function buildRequestBody(
   model: Model<Api>,
   context: Context,
-  options: SimpleStreamOptions | undefined,
+  options: OpenAiCodexFetchOptions | undefined,
 ): Record<string, unknown> {
   const body: Record<string, unknown> = {
     model: model.id,
@@ -182,7 +186,7 @@ function buildRequestBody(
 
 function buildSseHeaders(
   model: Model<Api>,
-  options: SimpleStreamOptions | undefined,
+  options: OpenAiCodexFetchOptions | undefined,
   accountId: string,
   apiKey: string,
 ): Headers {
@@ -206,6 +210,10 @@ function buildSseHeaders(
     headers.set("x-client-request-id", options.sessionId);
   }
   return headers;
+}
+
+function normalizeAccountId(value: string | undefined): string | null {
+  return value && value.trim() ? value.trim() : null;
 }
 
 function resolveCodexUrl(baseUrl: string | undefined): string {

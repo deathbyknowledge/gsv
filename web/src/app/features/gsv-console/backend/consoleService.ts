@@ -396,7 +396,8 @@ export async function checkConsoleOpenAiCodexOAuth(
     connected: result.accounts.some((account) =>
       account.kind === "ai-provider" &&
       account.provider === OPENAI_CODEX_PROVIDER &&
-      account.accountKey === "default"
+      account.accountKey === "default" &&
+      hasOpenAiCodexAccountId(account.metadata)
     ),
   };
 }
@@ -815,6 +816,14 @@ function modelValidationOverrides(values: Record<string, string>): Record<string
     }
   }
   return overrides;
+}
+
+function hasOpenAiCodexAccountId(metadata: unknown): boolean {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return false;
+  }
+  const accountId = (metadata as Record<string, unknown>).chatgptAccountId;
+  return typeof accountId === "string" && accountId.trim().length > 0;
 }
 
 function sanitizeModelValidationError(error: unknown, secretValues: readonly string[]): string {

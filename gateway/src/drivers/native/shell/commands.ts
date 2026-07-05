@@ -15,6 +15,7 @@ import { buildLlmCommand } from "./llm";
 import { buildMediaCommands } from "./media";
 import { buildMcpCommand } from "./mcp";
 import { buildNetCommands } from "./net";
+import { buildOAuthCommand } from "./oauth";
 import { buildPackageCommands, buildPkgCommand } from "./pkg";
 import { buildProcCommand } from "./proc";
 import { buildRgitCommands } from "./rgit";
@@ -52,6 +53,7 @@ export function buildCustomCommands(
   const targets = buildTargetsCommands(ctx);
   const mediaCommands = buildMediaCommands(fs, ctx);
   const netCommands = buildNetCommands(ctx, options?.netFetchTransport);
+  const oauth = buildOAuthCommand(ctx);
   const notifyCommands = buildNotifyCommands(ctx);
   const packageCommands = buildPackageCommands(identity, ctx);
   const flynn = defineCommand("flynn", async (): Promise<ExecResult> => ({
@@ -73,6 +75,7 @@ export function buildCustomCommands(
     sched,
     ...targets,
     ...netCommands,
+    oauth,
     llm,
     ...mediaCommands,
     pkg,

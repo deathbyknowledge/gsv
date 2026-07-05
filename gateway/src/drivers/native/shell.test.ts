@@ -115,6 +115,7 @@ function makeContext(options?: {
   caps?: KernelContext["caps"];
   schedules?: KernelContext["schedules"];
   ipcCalls?: KernelContext["ipcCalls"];
+  oauth?: KernelContext["oauth"];
   getAppRunner?: KernelContext["getAppRunner"];
   scheduleIpcCallTimeout?: KernelContext["scheduleIpcCallTimeout"];
   scheduleScheduleWake?: KernelContext["scheduleScheduleWake"];
@@ -208,6 +209,11 @@ function makeContext(options?: {
         return updated;
       },
     } as never,
+    oauth: options?.oauth ?? {
+      listAccounts: vi.fn(() => []),
+      listFlows: vi.fn(() => []),
+      deleteAccount: vi.fn(() => false),
+    } as unknown as KernelContext["oauth"],
     adapters: null as never,
     runRoutes: null as never,
     schedules: options?.schedules,
@@ -310,6 +316,84 @@ describe("native shell execution", () => {
       expect(binList.files).toContain("human-tool");
       expect(binList.files).not.toContain("agent-tool");
     }
+  });
+});
+
+describe("oauth native command", () => {
+  function oauthAccount(metadata: Record<string, unknown> = {}) {
+    return {
+      accountId: "acct-codex",
+      uid: 1000,
+      kind: "ai-provider",
+      provider: "openai-codex",
+      accountKey: "default",
+      label: "OpenAI Codex",
+      scope: "openid profile email offline_access",
+      resource: null,
+      clientId: "app_EMoamEEZ73f0CkXaXp7hrann",
+      tokenType: "Bearer",
+      expiresAt: 1_800_000_000_000,
+      createdAt: 1_700_000_000_000,
+      updatedAt: 1_700_000_000_000,
+      lastUsedAt: null,
+      metadata,
+    };
+  }
+
+  it("lists OAuth accounts with Codex readiness", async () => {
+    const oauth = {
+      listAccounts: vi.fn(() => [oauthAccount({ chatgptAccountId: "chatgpt-account-1" })]),
+      listFlows: vi.fn(() => []),
+      deleteAccount: vi.fn(),
+    } as unknown as KernelContext["oauth"];
+
+    const result = await handleShellExec(
+      { input: "oauth list" },
+      makeContext({ capabilities: ["sys.oauth.list"], oauth }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("acct-codex");
+    expect(result.stdout).toContain("openai-codex");
+    expect(result.stdout).toContain("ready");
+  });
+
+  it("reports Codex OAuth status as not ready without account metadata", async () => {
+    const oauth = {
+      listAccounts: vi.fn(() => [oauthAccount()]),
+      listFlows: vi.fn(() => []),
+      deleteAccount: vi.fn(),
+    } as unknown as KernelContext["oauth"];
+
+    const result = await handleShellExec(
+      { input: "oauth codex status" },
+      makeContext({ capabilities: ["sys.oauth.list"], oauth }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toContain("connected=yes");
+    expect(result.stdout).toContain("ready=no");
+  });
+
+  it("forgets OAuth accounts", async () => {
+    const deleteAccount = vi.fn(() => true);
+    const oauth = {
+      listAccounts: vi.fn(() => []),
+      listFlows: vi.fn(() => []),
+      deleteAccount,
+    } as unknown as KernelContext["oauth"];
+
+    const result = await handleShellExec(
+      { input: "oauth forget acct-codex" },
+      makeContext({ capabilities: ["sys.oauth.forget"], oauth }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("forgot acct-codex");
+    expect(deleteAccount).toHaveBeenCalledWith("acct-codex", 1000);
   });
 });
 

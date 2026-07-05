@@ -459,6 +459,22 @@ describe("handleAiConfig", () => {
     };
   }
 
+  function fakeCodexAccessToken(accountId: string): string {
+    return fakeJwtToken({
+      "https://api.openai.com/auth": {
+        chatgpt_account_id: accountId,
+      },
+    });
+  }
+
+  function fakeJwtToken(payload: Record<string, unknown>): string {
+    return [
+      Buffer.from("{}").toString("base64url"),
+      Buffer.from(JSON.stringify(payload)).toString("base64url"),
+      "sig",
+    ].join(".");
+  }
+
   it("resolves the generation streaming switch", async () => {
     await expect(handleAiConfig({}, makeAiConfigContext()))
       .resolves.toMatchObject({ generationStreaming: "auto", system: { timezone: "UTC" } });
@@ -503,6 +519,7 @@ describe("handleAiConfig", () => {
       oauthAccounts: [
         makeOAuthAccount({
           accessToken: "codex-access-token",
+          metadata: { chatgptAccountId: "chatgpt-account-1" },
         }),
       ],
     });
@@ -513,6 +530,7 @@ describe("handleAiConfig", () => {
       provider: "openai-codex",
       model: "gpt-5.5",
       apiKey: "codex-access-token",
+      openAiCodex: { accountId: "chatgpt-account-1" },
     });
     expect(result.media?.imageGenerationApiKey).toBe("");
     expect(ctx.oauth.findAccountByIdentity).toHaveBeenCalledWith(
@@ -522,6 +540,86 @@ describe("handleAiConfig", () => {
       "default",
     );
     expect(ctx.oauth.markAccountUsed).toHaveBeenCalledWith("acct-codex", 1000);
+  });
+
+  it("uses a stored OpenAI Codex OAuth account when a stale provider key exists", async () => {
+    const ctx = makeAiConfigContext({
+      "users/1000/ai/provider": "openai-codex",
+      "users/1000/ai/model": "gpt-5.5",
+      "users/1000/ai/api_key": "stale-codex-token",
+    }, {
+      oauthAccounts: [
+        makeOAuthAccount({
+          accessToken: "codex-oauth-access-token",
+          metadata: { chatgptAccountId: "chatgpt-account-1" },
+        }),
+      ],
+    });
+
+    const result = await handleAiConfig({}, ctx);
+
+    expect(result).toMatchObject({
+      provider: "openai-codex",
+      model: "gpt-5.5",
+      apiKey: "codex-oauth-access-token",
+      openAiCodex: { accountId: "chatgpt-account-1" },
+    });
+    expect(ctx.oauth.findAccountByIdentity).toHaveBeenCalledWith(
+      1000,
+      "ai-provider",
+      "openai-codex",
+      "default",
+    );
+  });
+
+  it("refreshes a stored OpenAI Codex OAuth account to backfill missing account metadata", async () => {
+    const accessToken = fakeJwtToken({ sub: "user-1" });
+    const refreshedAccessToken = fakeJwtToken({ sub: "user-1" });
+    const idToken = fakeCodexAccessToken("chatgpt-account-1");
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      access_token: refreshedAccessToken,
+      id_token: idToken,
+      token_type: "Bearer",
+      expires_in: 3600,
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }));
+    const ctx = makeAiConfigContext({
+      "users/1000/ai/provider": "openai-codex",
+      "users/1000/ai/model": "gpt-5.5",
+    }, {
+      oauthAccounts: [
+        makeOAuthAccount({
+          accessToken,
+          refreshToken: "codex-refresh-token",
+          metadata: {},
+        }),
+      ],
+    });
+
+    try {
+      const result = await handleAiConfig({}, ctx);
+      const refreshBody = fetchSpy.mock.calls[0]?.[1]?.body as URLSearchParams;
+
+      expect(result).toMatchObject({
+        provider: "openai-codex",
+        model: "gpt-5.5",
+        apiKey: refreshedAccessToken,
+        openAiCodex: { accountId: "chatgpt-account-1" },
+      });
+      expect(refreshBody.get("grant_type")).toBe("refresh_token");
+      expect(refreshBody.get("refresh_token")).toBe("codex-refresh-token");
+      expect(ctx.oauth.upsertAccount).toHaveBeenCalledWith(expect.objectContaining({
+        accessToken: refreshedAccessToken,
+        metadata: expect.objectContaining({
+          chatgptAccountId: "chatgpt-account-1",
+        }),
+      }));
+      expect(ctx.oauth.markAccountUsed).toHaveBeenCalledWith("acct-refresh", 1000);
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 
   it("uses the root OpenAI Codex OAuth account for inherited global config", async () => {
@@ -537,11 +635,13 @@ describe("handleAiConfig", () => {
           accountId: "acct-user-codex",
           uid: 1000,
           accessToken: "user-codex-access-token",
+          metadata: { chatgptAccountId: "chatgpt-user-account" },
         }),
         makeOAuthAccount({
           accountId: "acct-root-codex",
           uid: 0,
           accessToken: "root-codex-access-token",
+          metadata: { chatgptAccountId: "chatgpt-root-account" },
         }),
       ],
     });
@@ -552,6 +652,7 @@ describe("handleAiConfig", () => {
       provider: "openai-codex",
       model: "gpt-5.5",
       apiKey: "root-codex-access-token",
+      openAiCodex: { accountId: "chatgpt-root-account" },
     });
     expect(ctx.oauth.findAccountByIdentity).toHaveBeenCalledWith(
       0,
@@ -560,6 +661,41 @@ describe("handleAiConfig", () => {
       "default",
     );
     expect(ctx.oauth.markAccountUsed).toHaveBeenCalledWith("acct-root-codex", 0);
+  });
+
+  it("uses the root OpenAI Codex OAuth account for global config even when a stale global key exists", async () => {
+    const ctx = makeAiConfigContext({
+      "config/ai/provider": "openai-codex",
+      "config/ai/model": "gpt-5.5",
+      "config/ai/api_key": "stale-root-codex-token",
+    }, {
+      uid: 2000,
+      ownerUid: 1000,
+      processId: "task-1",
+      oauthAccounts: [
+        makeOAuthAccount({
+          accountId: "acct-root-codex",
+          uid: 0,
+          accessToken: "root-codex-access-token",
+          metadata: { chatgptAccountId: "chatgpt-root-account" },
+        }),
+      ],
+    });
+
+    const result = await handleAiConfig({}, ctx);
+
+    expect(result).toMatchObject({
+      provider: "openai-codex",
+      model: "gpt-5.5",
+      apiKey: "root-codex-access-token",
+      openAiCodex: { accountId: "chatgpt-root-account" },
+    });
+    expect(ctx.oauth.findAccountByIdentity).toHaveBeenCalledWith(
+      0,
+      "ai-provider",
+      "openai-codex",
+      "default",
+    );
   });
 
   it("generates text with preset config and explicit generation options", async () => {
@@ -851,6 +987,7 @@ describe("handleAiConfig", () => {
         oauthAccounts: [
           makeOAuthAccount({
             accessToken: "codex-access-token",
+            metadata: { chatgptAccountId: "chatgpt-account-1" },
           }),
         ],
       }),

@@ -59,6 +59,7 @@ type ResolvedGenerationOptions = {
   apiKey: string;
   baseUrl?: string;
   providerStyle?: string;
+  openAiCodexAccountId?: string;
   fetch?: typeof fetch;
   reasoning?: ThinkingLevel;
   maxTokens: number;
@@ -125,7 +126,7 @@ export function createGenerationService(
       controller.abort(new Error(generationTimeoutMessage(generationTimeoutMs)));
     }, generationTimeoutMs);
     const openAiCodexFetch = options.modelProvider === OPENAI_CODEX_PROVIDER
-      ? options.fetch ?? serviceOptions.fetch
+      ? options.fetch ?? serviceOptions.fetch ?? fetch
       : undefined;
     if (openAiCodexFetch) {
       const result = streamWithOpenAiCodexFetch({
@@ -134,6 +135,7 @@ export function createGenerationService(
         fetch: openAiCodexFetch,
         options: {
           apiKey: options.apiKey,
+          ...(options.openAiCodexAccountId ? { openAiCodexAccountId: options.openAiCodexAccountId } : {}),
           reasoning: options.reasoning,
           maxTokens: options.maxTokens,
           signal: controller.signal,
@@ -224,7 +226,7 @@ export function createGenerationService(
       controller.abort(new Error(generationTimeoutMessage(generationTimeoutMs)));
     }, generationTimeoutMs);
     const openAiCodexFetch = options.modelProvider === OPENAI_CODEX_PROVIDER
-      ? options.fetch ?? serviceOptions.fetch
+      ? options.fetch ?? serviceOptions.fetch ?? fetch
       : undefined;
     try {
       if (openAiCodexFetch) {
@@ -235,6 +237,7 @@ export function createGenerationService(
             fetch: openAiCodexFetch,
             options: {
               apiKey: options.apiKey,
+              ...(options.openAiCodexAccountId ? { openAiCodexAccountId: options.openAiCodexAccountId } : {}),
               reasoning: options.reasoning,
               maxTokens: options.maxTokens,
               signal: controller.signal,
@@ -370,12 +373,14 @@ export function resolveGenerationOptions(
   request: GenerateRequest,
 ): ResolvedGenerationOptions {
   const { config } = request;
+  const openAiCodexAccountId = config.openAiCodex?.accountId?.trim();
   return {
     modelProvider: config.provider,
     modelName: config.model,
     apiKey: config.apiKey,
     baseUrl: config.baseUrl,
     providerStyle: config.providerStyle,
+    ...(openAiCodexAccountId ? { openAiCodexAccountId } : {}),
     fetch: request.fetch,
     reasoning: resolveGenerationReasoning(config, request.options),
     maxTokens: resolveGenerationMaxTokens(config, request.options),

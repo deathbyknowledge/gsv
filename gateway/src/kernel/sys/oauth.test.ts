@@ -97,13 +97,17 @@ function encodeBase64Url(value: string): string {
 }
 
 function fakeCodexAccessToken(accountId: string): string {
+  return fakeJwtToken({
+    "https://api.openai.com/auth": {
+      chatgpt_account_id: accountId,
+    },
+  });
+}
+
+function fakeJwtToken(payload: Record<string, unknown>): string {
   return [
     encodeBase64Url("{}"),
-    encodeBase64Url(JSON.stringify({
-      "https://api.openai.com/auth": {
-        chatgpt_account_id: accountId,
-      },
-    })),
+    encodeBase64Url(JSON.stringify(payload)),
     "sig",
   ].join(".");
 }
@@ -293,7 +297,8 @@ describe("sys.oauth handlers", () => {
         interval_seconds: "5",
       },
     });
-    const accessToken = fakeCodexAccessToken("chatgpt-account-1");
+    const accessToken = fakeJwtToken({ sub: "user-1" });
+    const idToken = fakeCodexAccessToken("chatgpt-account-1");
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (String(input) === "https://auth.openai.com/api/accounts/deviceauth/token") {
         return new Response(JSON.stringify({
@@ -312,6 +317,7 @@ describe("sys.oauth handlers", () => {
       expect(body.get("redirect_uri")).toBe("https://auth.openai.com/deviceauth/callback");
       return new Response(JSON.stringify({
         access_token: accessToken,
+        id_token: idToken,
         refresh_token: "refresh-token-1",
         token_type: "Bearer",
         expires_in: 3600,

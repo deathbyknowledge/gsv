@@ -67,6 +67,9 @@ export type AiConfigResult = {
   baseUrl?: string;
   providerStyle?: string;
   transportTarget?: string;
+  openAiCodex?: {
+    accountId?: string;
+  };
   reasoning?: string;
   maxTokens: number;
   contextWindowTokens: number | null;
@@ -117,6 +120,9 @@ export type AiConfigFallback = {
   baseUrl?: string;
   providerStyle?: string;
   transportTarget?: string;
+  openAiCodex?: {
+    accountId?: string;
+  };
   reasoning?: string;
   maxTokens: number;
   contextWindowTokens: number | null;

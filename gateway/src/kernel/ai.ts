@@ -142,6 +142,7 @@ type AiModelStackConfig = Pick<
   | "baseUrl"
   | "providerStyle"
   | "transportTarget"
+  | "openAiCodex"
   | "reasoning"
   | "maxTokens"
   | "contextWindowTokens"
@@ -258,17 +259,17 @@ export async function handleAiConfig(
     "";
   const oauthAccountConfigUids = shouldResolveRootOpenAiCodexOAuth({
     provider,
-    configuredApiKey: apiKey,
     providerFromGlobalConfig: processProvider === null && accountProvider === null && systemProvider !== null,
   })
     ? withRootAiProfileScope(accountConfigUids)
     : accountConfigUids;
-  const resolvedApiKey = await resolveAiProviderOAuthApiKey(
+  const resolvedOAuth = await resolveAiProviderOAuthApiKey(
     ctx,
     oauthAccountConfigUids,
     provider,
     apiKey,
   );
+  const resolvedApiKey = resolvedOAuth.apiKey;
 
   const reasoning =
     resolveAiProcessConfigValue(processOverrides, "reasoning") ??
@@ -357,6 +358,9 @@ export async function handleAiConfig(
       ...(baseUrl.trim().length > 0 ? { baseUrl: baseUrl.trim() } : {}),
       providerStyle: providerStyle.trim().toLowerCase() || "auto",
       transportTarget: normalizeTarget(transportTarget),
+      ...(resolvedOAuth.openAiCodexAccountId
+        ? { openAiCodex: { accountId: resolvedOAuth.openAiCodexAccountId } }
+        : {}),
       reasoning,
       maxTokens,
       contextWindowTokens,
@@ -389,6 +393,9 @@ export async function handleAiConfig(
     ...(baseUrl.trim().length > 0 ? { baseUrl: baseUrl.trim() } : {}),
     providerStyle: providerStyle.trim().toLowerCase() || "auto",
     transportTarget: normalizeTarget(transportTarget),
+    ...(resolvedOAuth.openAiCodexAccountId
+      ? { openAiCodex: { accountId: resolvedOAuth.openAiCodexAccountId } }
+      : {}),
     reasoning,
     maxTokens,
     contextWindowTokens,
@@ -906,16 +913,13 @@ function withRootAiProfileScope(accountUids: number[]): number[] {
 
 function shouldResolveRootOpenAiCodexOAuth({
   provider,
-  configuredApiKey,
   providerFromGlobalConfig,
 }: {
   provider: string;
-  configuredApiKey: string;
   providerFromGlobalConfig: boolean;
 }): boolean {
   return providerFromGlobalConfig &&
-    provider.trim().toLowerCase() === "openai-codex" &&
-    configuredApiKey.trim().length === 0;
+    provider.trim().toLowerCase() === "openai-codex";
 }
 
 function resolveAiConfigValue(
@@ -1021,7 +1025,8 @@ async function resolveAiFallbackModelStack(
     resolveAiConfigValue(config, accountUids, emptyProfileOverrides, "api_key") ??
     config.get("config/ai/api_key") ??
     "";
-  const resolvedApiKey = await resolveAiProviderOAuthApiKey(ctx, accountUids, provider, apiKey);
+  const resolvedOAuth = await resolveAiProviderOAuthApiKey(ctx, accountUids, provider, apiKey);
+  const resolvedApiKey = resolvedOAuth.apiKey;
   const reasoning =
     resolveAiProcessConfigValue(profileOverrides, "reasoning") ??
     resolveAiConfigValue(config, accountUids, emptyProfileOverrides, "reasoning") ??
@@ -1071,6 +1076,9 @@ async function resolveAiFallbackModelStack(
     ...(baseUrl.trim().length > 0 ? { baseUrl: baseUrl.trim() } : {}),
     providerStyle: providerStyle.trim().toLowerCase() || "auto",
     transportTarget: normalizeTarget(transportTarget),
+    ...(resolvedOAuth.openAiCodexAccountId
+      ? { openAiCodex: { accountId: resolvedOAuth.openAiCodexAccountId } }
+      : {}),
     reasoning,
     maxTokens,
     contextWindowTokens,
@@ -1089,7 +1097,8 @@ function isSameAiModelStack(
     left.apiKey === right.apiKey &&
     (left.baseUrl ?? "").trim() === (right.baseUrl ?? "").trim() &&
     (left.providerStyle ?? "auto").trim().toLowerCase() === (right.providerStyle ?? "auto").trim().toLowerCase() &&
-    normalizeTarget(left.transportTarget) === normalizeTarget(right.transportTarget);
+    normalizeTarget(left.transportTarget) === normalizeTarget(right.transportTarget) &&
+    (left.openAiCodex?.accountId ?? "") === (right.openAiCodex?.accountId ?? "");
 }
 
 async function resolveAiMediaConfigForContext(ctx: KernelContext): Promise<NonNullable<AiConfigResult["media"]>> {

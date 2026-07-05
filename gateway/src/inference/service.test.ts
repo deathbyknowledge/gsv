@@ -139,9 +139,9 @@ describe("resolveGenerationOptions", () => {
 });
 
 describe("createGenerationService", () => {
-  it("forces SSE transport and forwards session affinity for OpenAI Codex", async () => {
+  it("uses the GSV OpenAI Codex transport and forwards session affinity", async () => {
     const message = assistantMessage([{ type: "text", text: "pong" }]);
-    completePiAiSimpleMock.mockResolvedValueOnce(message);
+    completeWithOpenAiCodexFetchMock.mockResolvedValueOnce(message);
 
     await createGenerationService().generate({
       config: {
@@ -149,23 +149,27 @@ describe("createGenerationService", () => {
         provider: "openai-codex",
         model: "gpt-5.5",
         apiKey: "codex-access-token",
+        openAiCodex: { accountId: "chatgpt-account-1" },
       },
       context: CONTEXT,
       sessionAffinityKey: "process-1",
     });
 
-    expect(completePiAiSimpleMock).toHaveBeenCalledWith(
-      expect.objectContaining({
+    expect(completeWithOpenAiCodexFetchMock).toHaveBeenCalledWith(expect.objectContaining({
+      model: expect.objectContaining({
         id: "gpt-5.5",
         provider: "openai-codex",
       }),
-      CONTEXT,
-      expect.objectContaining({
+      context: CONTEXT,
+      fetch: expect.any(Function),
+      options: expect.objectContaining({
         apiKey: "codex-access-token",
+        openAiCodexAccountId: "chatgpt-account-1",
         transport: "sse",
         sessionId: "process-1",
       }),
-    );
+    }));
+    expect(completePiAiSimpleMock).not.toHaveBeenCalled();
   });
 
   it("reports a missing OpenAI Codex connection before calling pi-ai", async () => {
@@ -193,6 +197,7 @@ describe("createGenerationService", () => {
         provider: "openai-codex",
         model: "gpt-5.4-mini",
         apiKey: "codex-access-token",
+        openAiCodex: { accountId: "chatgpt-account-1" },
       },
       context: CONTEXT,
       sessionAffinityKey: "process-1",
@@ -203,6 +208,7 @@ describe("createGenerationService", () => {
       context: CONTEXT,
       options: expect.objectContaining({
         apiKey: "codex-access-token",
+        openAiCodexAccountId: "chatgpt-account-1",
         transport: "sse",
         sessionId: "process-1",
       }),
