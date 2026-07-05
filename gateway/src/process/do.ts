@@ -873,7 +873,7 @@ export class Process extends Host<Env> {
     }
 
     if (this.store.isRunResolved(pending.runId)) {
-      this.scheduleTick(pending.runId);
+      await this.scheduleTick(pending.runId);
     }
   }
 
@@ -916,7 +916,7 @@ export class Process extends Host<Env> {
               conversationId: DEFAULT_CONVERSATION_ID,
             };
             await this.emitRunStarted(startedRunId, DEFAULT_CONVERSATION_ID, "assignment.autostart");
-            this.scheduleTick(startedRunId);
+            await this.scheduleTick(startedRunId);
           }
           data = { ok: true, startedRunId };
           break;
@@ -1096,7 +1096,7 @@ export class Process extends Host<Env> {
     });
     this.currentRun = { runId, queued: false, conversationId };
     await this.emitRunStarted(runId, conversationId, "proc.send");
-    this.scheduleTick(runId);
+    await this.scheduleTick(runId);
 
     return { ok: true, status: "started", runId };
   }
@@ -1259,7 +1259,7 @@ export class Process extends Host<Env> {
     });
     this.currentRun = { runId, queued: false, conversationId };
     await this.emitRunStarted(runId, conversationId, "proc.ipc.deliver");
-    this.scheduleTick(runId);
+    await this.scheduleTick(runId);
 
     return {
       ok: true,
@@ -1447,7 +1447,7 @@ export class Process extends Host<Env> {
     }
 
     if (!nextPendingHil && this.store.isRunResolved(pendingHil.runId)) {
-      this.scheduleTick(pendingHil.runId);
+      await this.scheduleTick(pendingHil.runId);
     }
 
     return {
@@ -2507,6 +2507,7 @@ export class Process extends Host<Env> {
     // all live DO storage rather than keeping a reset stub around. A future
     // executor gets a fresh DO (and hydrates from the home archive on resume).
     await this.ctx.storage.deleteAll();
+    this._ensureSchema();
     runProcessSqlMigrations(this.ctx.storage);
     this.store.ensureConversation(DEFAULT_CONVERSATION_ID);
 
@@ -2567,9 +2568,9 @@ export class Process extends Host<Env> {
    * Schedule the next agent loop tick using the DO scheduler.
    * Each tick resets the subrequest counter.
    */
-  private scheduleTick(runId: string): void {
+  private async scheduleTick(runId: string): Promise<void> {
     const next = new Date(Date.now() + 10);
-    this.schedule(next, "tick", runId);
+    await this.schedule(next, "tick", runId);
   }
 
   private async appendRuntimeMessage(
@@ -2613,7 +2614,7 @@ export class Process extends Host<Env> {
         conversationId: DEFAULT_CONVERSATION_ID,
       };
       await this.emitRunStarted(runId, DEFAULT_CONVERSATION_ID, "signal.watch");
-      this.scheduleTick(runId);
+      await this.scheduleTick(runId);
     }
   }
 
@@ -2655,7 +2656,7 @@ export class Process extends Host<Env> {
         conversationId: DEFAULT_CONVERSATION_ID,
       };
       await this.emitRunStarted(nextRunId, DEFAULT_CONVERSATION_ID, "delegated-task");
-      this.scheduleTick(nextRunId);
+      await this.scheduleTick(nextRunId);
     }
   }
 
@@ -2676,7 +2677,7 @@ export class Process extends Host<Env> {
         conversationId,
       };
       await this.emitRunStarted(runId, conversationId, "schedule.event");
-      this.scheduleTick(runId);
+      await this.scheduleTick(runId);
     }
   }
 
@@ -3142,7 +3143,7 @@ export class Process extends Host<Env> {
         return;
       }
       if (!pendingHil && this.store.isRunResolved(runId)) {
-        this.scheduleTick(runId);
+        await this.scheduleTick(runId);
       }
     } else {
       await this.finishRun({
@@ -3206,7 +3207,7 @@ export class Process extends Host<Env> {
           }) => Promise<AssistantMessage>;
         };
         if (typeof injected.generate === "function") {
-          return injected.generate({
+          return await injected.generate({
             config: options.config,
             context: options.context,
             ...(routedFetch ? { fetch: routedFetch } : {}),
@@ -5012,7 +5013,7 @@ export class Process extends Host<Env> {
       conversationId: next.conversationId,
     };
     await this.emitRunStarted(next.runId, next.conversationId, "queue.promote");
-    this.scheduleTick(next.runId);
+    await this.scheduleTick(next.runId);
     return next.runId;
   }
 }
