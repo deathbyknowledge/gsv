@@ -217,11 +217,14 @@ export async function handleAiConfig(
     input.processProfile,
   );
   const accountProfileOverrides = resolveAiAccountProfileOverrides(config, accountConfigUids);
+  const processProvider = resolveAiProcessConfigValue(processOverrides, "provider");
+  const accountProvider = resolveAiConfigValue(config, accountConfigUids, accountProfileOverrides, "provider");
+  const systemProvider = config.get("config/ai/provider");
 
   const provider =
-    resolveAiProcessConfigValue(processOverrides, "provider") ??
-    resolveAiConfigValue(config, accountConfigUids, accountProfileOverrides, "provider") ??
-    config.get("config/ai/provider") ??
+    processProvider ??
+    accountProvider ??
+    systemProvider ??
     "workers-ai";
 
   const model =
@@ -253,9 +256,16 @@ export async function handleAiConfig(
     resolveAiConfigValue(config, accountConfigUids, accountProfileOverrides, "api_key") ??
     config.get("config/ai/api_key") ??
     "";
+  const oauthAccountConfigUids = shouldResolveRootOpenAiCodexOAuth({
+    provider,
+    configuredApiKey: apiKey,
+    providerFromGlobalConfig: processProvider === null && accountProvider === null && systemProvider !== null,
+  })
+    ? withRootAiProfileScope(accountConfigUids)
+    : accountConfigUids;
   const resolvedApiKey = await resolveAiProviderOAuthApiKey(
     ctx,
-    accountConfigUids,
+    oauthAccountConfigUids,
     provider,
     apiKey,
   );
@@ -892,6 +902,20 @@ function resolveAiConfigAccountUids(uid: number, owner: ProcessIdentity | null):
 
 function withRootAiProfileScope(accountUids: number[]): number[] {
   return accountUids.includes(0) ? accountUids : [0, ...accountUids];
+}
+
+function shouldResolveRootOpenAiCodexOAuth({
+  provider,
+  configuredApiKey,
+  providerFromGlobalConfig,
+}: {
+  provider: string;
+  configuredApiKey: string;
+  providerFromGlobalConfig: boolean;
+}): boolean {
+  return providerFromGlobalConfig &&
+    provider.trim().toLowerCase() === "openai-codex" &&
+    configuredApiKey.trim().length === 0;
 }
 
 function resolveAiConfigValue(

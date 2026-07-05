@@ -524,6 +524,44 @@ describe("handleAiConfig", () => {
     expect(ctx.oauth.markAccountUsed).toHaveBeenCalledWith("acct-codex", 1000);
   });
 
+  it("uses the root OpenAI Codex OAuth account for inherited global config", async () => {
+    const ctx = makeAiConfigContext({
+      "config/ai/provider": "openai-codex",
+      "config/ai/model": "gpt-5.5",
+    }, {
+      uid: 2000,
+      ownerUid: 1000,
+      processId: "task-1",
+      oauthAccounts: [
+        makeOAuthAccount({
+          accountId: "acct-user-codex",
+          uid: 1000,
+          accessToken: "user-codex-access-token",
+        }),
+        makeOAuthAccount({
+          accountId: "acct-root-codex",
+          uid: 0,
+          accessToken: "root-codex-access-token",
+        }),
+      ],
+    });
+
+    const result = await handleAiConfig({}, ctx);
+
+    expect(result).toMatchObject({
+      provider: "openai-codex",
+      model: "gpt-5.5",
+      apiKey: "root-codex-access-token",
+    });
+    expect(ctx.oauth.findAccountByIdentity).toHaveBeenCalledWith(
+      0,
+      "ai-provider",
+      "openai-codex",
+      "default",
+    );
+    expect(ctx.oauth.markAccountUsed).toHaveBeenCalledWith("acct-root-codex", 0);
+  });
+
   it("generates text with preset config and explicit generation options", async () => {
     generateMock.mockImplementationOnce(async (request: any) => {
       expect(request.config).toMatchObject({
