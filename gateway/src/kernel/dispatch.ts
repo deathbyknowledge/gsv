@@ -90,6 +90,8 @@ import {
   handleSysTokenRevoke,
 } from "./sys/token";
 import {
+  handleSysOAuthDevicePoll,
+  handleSysOAuthDeviceStart,
   handleSysOAuthForget,
   handleSysOAuthList,
   handleSysOAuthStart,
@@ -549,6 +551,12 @@ async function dispatchNative(
         break;
       case "sys.oauth.start":
         data = await handleSysOAuthStart(frame.args, ctx);
+        break;
+      case "sys.oauth.device.start":
+        data = await handleSysOAuthDeviceStart(frame.args, ctx);
+        break;
+      case "sys.oauth.device.poll":
+        data = await handleSysOAuthDevicePoll(frame.args, ctx);
         break;
       case "sys.oauth.list":
         data = handleSysOAuthList(frame.args, ctx);

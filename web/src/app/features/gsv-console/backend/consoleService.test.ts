@@ -1,17 +1,20 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  checkConsoleOpenAiCodexOAuth,
   consumeIdentityLinkCode,
   createMachineNodeToken,
   createConsoleAgent,
   loadConsoleIdentityLinks,
   loadConsoleAdapterAccounts,
   loadConsoleAdapters,
+  pollConsoleOpenAiCodexOAuth,
   removeIdentityLink,
   runConsoleProcessAction,
   saveConsoleConfig,
   saveConsoleConfigEntries,
   saveConsoleAgentBehavior,
   saveConsoleAgentContext,
+  startConsoleOpenAiCodexOAuth,
   validateConsoleModelConfig,
 } from "./consoleService";
 
@@ -549,6 +552,102 @@ describe("console agent service", () => {
     });
   });
 
+  it("starts OpenAI Codex OAuth through the device-code syscall", async () => {
+    const call = vi.fn(async () => ({
+      flow: {
+        flowId: "flow-1",
+        uid: 42,
+        kind: "ai-provider",
+        provider: "openai-codex",
+        accountKey: "default",
+        label: "OpenAI Codex",
+        authorizationEndpoint: "https://auth.openai.com/codex/device",
+        tokenEndpoint: "https://auth.openai.com/oauth/token",
+        clientId: "app_EMoamEEZ73f0CkXaXp7hrann",
+        redirectUri: "https://auth.openai.com/deviceauth/callback",
+        scope: "openid profile email offline_access",
+        resource: null,
+        createdAt: 1,
+        expiresAt: 901,
+      },
+      provider: "openai-codex",
+      userCode: "ABCD-EFGH",
+      verificationUrl: "https://auth.openai.com/codex/device",
+      intervalSeconds: 5,
+      expiresAt: 901,
+    }));
+
+    await expect(startConsoleOpenAiCodexOAuth({ call } as any))
+      .resolves.toMatchObject({
+        provider: "openai-codex",
+        userCode: "ABCD-EFGH",
+        verificationUrl: "https://auth.openai.com/codex/device",
+      });
+    expect(call).toHaveBeenCalledWith("sys.oauth.device.start", {
+      kind: "ai-provider",
+      provider: "openai-codex",
+    });
+  });
+
+  it("polls OpenAI Codex OAuth through the device-code syscall", async () => {
+    const call = vi.fn(async () => ({
+      status: "pending",
+      flow: {
+        flowId: "flow-1",
+        uid: 42,
+        kind: "ai-provider",
+        provider: "openai-codex",
+        accountKey: "default",
+        label: "OpenAI Codex",
+        authorizationEndpoint: "https://auth.openai.com/codex/device",
+        tokenEndpoint: "https://auth.openai.com/oauth/token",
+        clientId: "app_EMoamEEZ73f0CkXaXp7hrann",
+        redirectUri: "https://auth.openai.com/deviceauth/callback",
+        scope: "openid profile email offline_access",
+        resource: null,
+        createdAt: 1,
+        expiresAt: 901,
+      },
+      intervalSeconds: 5,
+      expiresAt: 901,
+    }));
+
+    await expect(pollConsoleOpenAiCodexOAuth({ call } as any, { flowId: "flow-1" }))
+      .resolves.toMatchObject({
+        status: "pending",
+        intervalSeconds: 5,
+      });
+    expect(call).toHaveBeenCalledWith("sys.oauth.device.poll", {
+      flowId: "flow-1",
+    });
+  });
+
+  it("checks whether OpenAI Codex OAuth is already connected", async () => {
+    const call = vi.fn(async () => ({
+      accounts: [
+        {
+          uid: 42,
+          kind: "ai-provider",
+          provider: "openai-codex",
+          accountKey: "default",
+          label: "OpenAI Codex",
+          scope: "openid profile email offline_access",
+          resource: null,
+          clientId: "app_EMoamEEZ73f0CkXaXp7hrann",
+          tokenType: "Bearer",
+          expiresAt: 1_700_000_000,
+          createdAt: 1,
+          updatedAt: 2,
+          lastUsedAt: null,
+          metadata: {},
+        },
+      ],
+    }));
+
+    await expect(checkConsoleOpenAiCodexOAuth({ call } as any)).resolves.toEqual({ connected: true });
+    expect(call).toHaveBeenCalledWith("sys.oauth.list", {});
+  });
+
   it("validates text model settings through ai.text.generate", async () => {
     const call = vi.fn(async () => ({
       provider: "anthropic",
@@ -602,6 +701,73 @@ describe("console agent service", () => {
       },
       sessionAffinityKey: "gsv-console:model-validation",
     }));
+  });
+
+  it("validates OpenAI Codex model settings through live generation", async () => {
+    const call = vi.fn(async () => ({
+      provider: "openai-codex",
+      model: "gpt-5.5",
+      text: "ok",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "ok" }],
+        api: "test",
+        provider: "openai-codex",
+        model: "gpt-5.5",
+        usage: {
+          input: 1,
+          output: 1,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 2,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: "stop",
+      },
+    }));
+
+    await expect(validateConsoleModelConfig({ call } as any, {
+      values: {
+        "config/ai/provider": " openai-codex ",
+        "config/ai/model": " gpt-5.5 ",
+      },
+    })).resolves.toEqual({
+      ok: true,
+      provider: "openai-codex",
+      model: "gpt-5.5",
+    });
+
+    expect(call).toHaveBeenCalledWith("ai.text.generate", expect.objectContaining({
+      config: {
+        overrides: {
+          "config/ai/provider": "openai-codex",
+          "config/ai/model": "gpt-5.5",
+        },
+      },
+      sessionAffinityKey: "gsv-console:model-validation",
+    }));
+  });
+
+  it("sanitizes HTML block pages from model validation errors", async () => {
+    const call = vi.fn(async () => {
+      throw new Error("<html><body><p>Unable to load site</p><span>Ray ID:a1663d565f5cfeb1</span></body></html>");
+    });
+
+    let caught: Error | null = null;
+    try {
+      await validateConsoleModelConfig({ call } as any, {
+        values: {
+          "config/ai/provider": "anthropic",
+          "config/ai/model": "claude-test",
+        },
+      });
+    } catch (error) {
+      caught = error as Error;
+    }
+
+    expect(caught?.message).toContain("Provider returned an HTML challenge or block page");
+    expect(caught?.message).not.toContain("<html>");
+    expect(caught?.message).not.toContain("Ray ID");
   });
 
   it("validates saved presets by preset id", async () => {

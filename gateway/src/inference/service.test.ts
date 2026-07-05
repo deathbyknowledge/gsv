@@ -1,5 +1,22 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const completePiAiSimpleMock = vi.hoisted(() => vi.fn());
+const streamPiAiSimpleMock = vi.hoisted(() => vi.fn());
+const completeWithOpenAiCodexFetchMock = vi.hoisted(() => vi.fn());
+const streamWithOpenAiCodexFetchMock = vi.hoisted(() => vi.fn());
+
+vi.mock("./pi-ai", () => ({
+  completePiAiSimple: completePiAiSimpleMock,
+  streamPiAiSimple: streamPiAiSimpleMock,
+}));
+
+vi.mock("./openai-codex", () => ({
+  completeWithOpenAiCodexFetch: completeWithOpenAiCodexFetchMock,
+  streamWithOpenAiCodexFetch: streamWithOpenAiCodexFetchMock,
+}));
+
 import {
+  createGenerationService,
   describeGeneratedTextFailure,
   extractGeneratedText,
   resolveGenerationOptions,
@@ -45,6 +62,13 @@ const CONTEXT: Context = {
   systemPrompt: "",
   messages: [],
 };
+
+beforeEach(() => {
+  completePiAiSimpleMock.mockReset();
+  streamPiAiSimpleMock.mockReset();
+  completeWithOpenAiCodexFetchMock.mockReset();
+  streamWithOpenAiCodexFetchMock.mockReset();
+});
 
 describe("resolveGenerationOptions", () => {
   it("preserves configured reasoning for chat replies", () => {
@@ -111,6 +135,109 @@ describe("resolveGenerationOptions", () => {
 
     expect(result.reasoning).toBeUndefined();
     expect(result.maxTokens).toBe(768);
+  });
+});
+
+describe("createGenerationService", () => {
+  it("forces SSE transport and forwards session affinity for OpenAI Codex", async () => {
+    const message = assistantMessage([{ type: "text", text: "pong" }]);
+    completePiAiSimpleMock.mockResolvedValueOnce(message);
+
+    await createGenerationService().generate({
+      config: {
+        ...CONFIG,
+        provider: "openai-codex",
+        model: "gpt-5.5",
+        apiKey: "codex-access-token",
+      },
+      context: CONTEXT,
+      sessionAffinityKey: "process-1",
+    });
+
+    expect(completePiAiSimpleMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "gpt-5.5",
+        provider: "openai-codex",
+      }),
+      CONTEXT,
+      expect.objectContaining({
+        apiKey: "codex-access-token",
+        transport: "sse",
+        sessionId: "process-1",
+      }),
+    );
+  });
+
+  it("reports a missing OpenAI Codex connection before calling pi-ai", async () => {
+    await expect(createGenerationService().generate({
+      config: {
+        ...CONFIG,
+        provider: "openai-codex",
+        model: "gpt-5.5",
+        apiKey: "",
+      },
+      context: CONTEXT,
+    })).rejects.toThrow("OpenAI Codex is not connected");
+
+    expect(completePiAiSimpleMock).not.toHaveBeenCalled();
+  });
+
+  it("uses the routed OpenAI Codex transport when a fetch implementation is provided", async () => {
+    const message = assistantMessage([{ type: "text", text: "pong" }]);
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    completeWithOpenAiCodexFetchMock.mockResolvedValueOnce(message);
+
+    await createGenerationService({ fetch: fetchImpl }).generate({
+      config: {
+        ...CONFIG,
+        provider: "openai-codex",
+        model: "gpt-5.4-mini",
+        apiKey: "codex-access-token",
+      },
+      context: CONTEXT,
+      sessionAffinityKey: "process-1",
+    });
+
+    expect(completeWithOpenAiCodexFetchMock).toHaveBeenCalledWith(expect.objectContaining({
+      fetch: fetchImpl,
+      context: CONTEXT,
+      options: expect.objectContaining({
+        apiKey: "codex-access-token",
+        transport: "sse",
+        sessionId: "process-1",
+      }),
+    }));
+    expect(completePiAiSimpleMock).not.toHaveBeenCalled();
+  });
+
+  it("does not route OpenAI Codex through the generic custom-provider path when custom fields are set", async () => {
+    const message = assistantMessage([{ type: "text", text: "pong" }]);
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    completeWithOpenAiCodexFetchMock.mockResolvedValueOnce(message);
+
+    await createGenerationService({ fetch: fetchImpl }).generate({
+      config: {
+        ...CONFIG,
+        provider: "openai-codex",
+        model: "gpt-5.4-mini",
+        apiKey: "codex-access-token",
+        baseUrl: "https://chatgpt.com/backend-api",
+        providerStyle: "openai-responses",
+      },
+      context: CONTEXT,
+      sessionAffinityKey: "process-1",
+    });
+
+    expect(completeWithOpenAiCodexFetchMock).toHaveBeenCalledWith(expect.objectContaining({
+      fetch: fetchImpl,
+      context: CONTEXT,
+      options: expect.objectContaining({
+        apiKey: "codex-access-token",
+        transport: "sse",
+        sessionId: "process-1",
+      }),
+    }));
+    expect(completePiAiSimpleMock).not.toHaveBeenCalled();
   });
 });
 

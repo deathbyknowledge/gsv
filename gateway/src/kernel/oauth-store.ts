@@ -155,6 +155,26 @@ export class OAuthStore {
     return flowFromRow(row);
   }
 
+  getFlow(flowId: string, uid?: number, now = Date.now()): OAuthFlowRecord | null {
+    const rows = uid === undefined
+      ? this.sql.exec<OAuthFlowRow>(
+        "SELECT * FROM oauth_flows WHERE flow_id = ?",
+        flowId,
+      ).toArray()
+      : this.sql.exec<OAuthFlowRow>(
+        "SELECT * FROM oauth_flows WHERE flow_id = ? AND uid = ?",
+        flowId,
+        uid,
+      ).toArray();
+    const row = rows[0];
+    if (!row) return null;
+    if (row.expires_at <= now) {
+      this.deleteFlow(row.flow_id);
+      return null;
+    }
+    return flowFromRow(row);
+  }
+
   listFlows(uid?: number, now = Date.now()): OAuthFlowRecord[] {
     this.cleanupExpiredFlows(now);
     const rows = uid === undefined

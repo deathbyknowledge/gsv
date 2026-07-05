@@ -49,6 +49,7 @@ import {
   type CodeModeMcpToolSource,
 } from "../codemode/mcp";
 import { hasCapability } from "./capabilities";
+import { resolveAiProviderOAuthApiKey } from "./ai-oauth";
 
 import { FS_READ_DEFINITION } from "../syscalls/read";
 import { FS_WRITE_DEFINITION } from "../syscalls/write";
@@ -216,11 +217,14 @@ export async function handleAiConfig(
     input.processProfile,
   );
   const accountProfileOverrides = resolveAiAccountProfileOverrides(config, accountConfigUids);
+  const processProvider = resolveAiProcessConfigValue(processOverrides, "provider");
+  const accountProvider = resolveAiConfigValue(config, accountConfigUids, accountProfileOverrides, "provider");
+  const systemProvider = config.get("config/ai/provider");
 
   const provider =
-    resolveAiProcessConfigValue(processOverrides, "provider") ??
-    resolveAiConfigValue(config, accountConfigUids, accountProfileOverrides, "provider") ??
-    config.get("config/ai/provider") ??
+    processProvider ??
+    accountProvider ??
+    systemProvider ??
     "workers-ai";
 
   const model =
@@ -252,6 +256,19 @@ export async function handleAiConfig(
     resolveAiConfigValue(config, accountConfigUids, accountProfileOverrides, "api_key") ??
     config.get("config/ai/api_key") ??
     "";
+  const oauthAccountConfigUids = shouldResolveRootOpenAiCodexOAuth({
+    provider,
+    configuredApiKey: apiKey,
+    providerFromGlobalConfig: processProvider === null && accountProvider === null && systemProvider !== null,
+  })
+    ? withRootAiProfileScope(accountConfigUids)
+    : accountConfigUids;
+  const resolvedApiKey = await resolveAiProviderOAuthApiKey(
+    ctx,
+    oauthAccountConfigUids,
+    provider,
+    apiKey,
+  );
 
   const reasoning =
     resolveAiProcessConfigValue(processOverrides, "reasoning") ??
@@ -330,13 +347,13 @@ export async function handleAiConfig(
     ? withRootAiProfileScope(accountConfigUids)
     : accountConfigUids;
   const fallbacks = await resolveAiFallbackConfigs({
-    config,
+    ctx,
     accountUids: fallbackAccountUids,
     selector: fallbackModelProfile,
     primary: {
       provider,
       model,
-      apiKey,
+      apiKey: resolvedApiKey,
       ...(baseUrl.trim().length > 0 ? { baseUrl: baseUrl.trim() } : {}),
       providerStyle: providerStyle.trim().toLowerCase() || "auto",
       transportTarget: normalizeTarget(transportTarget),
@@ -348,7 +365,13 @@ export async function handleAiConfig(
       generationStreaming,
     },
   });
-  const media = resolveAiMediaConfig(config, accountConfigUids, accountProfileOverrides, apiKey, processOverrides);
+  const media = resolveAiMediaConfig(
+    config,
+    accountConfigUids,
+    accountProfileOverrides,
+    apiKey,
+    processOverrides,
+  );
   const timezone = config.get("config/server/timezone") ?? "UTC";
   const skillIndex = await collectPromptSkillIndex(ctx).catch((error) => {
     console.warn(
@@ -362,7 +385,7 @@ export async function handleAiConfig(
     executor: resolveAiTextExecutor(ctx),
     provider,
     model,
-    apiKey,
+    apiKey: resolvedApiKey,
     ...(baseUrl.trim().length > 0 ? { baseUrl: baseUrl.trim() } : {}),
     providerStyle: providerStyle.trim().toLowerCase() || "auto",
     transportTarget: normalizeTarget(transportTarget),
@@ -400,7 +423,7 @@ export async function handleAiTextGenerate(
   const config = await resolveAiTextGenerationConfig(input.config, ctx);
   const context = normalizeAiTextGenerationContext(input);
   const options = normalizeAiTextGenerateOptions(input.options);
-  const generationFetch = createCustomProviderFetch(ctx, transport, config);
+  const generationFetch = createProviderFetch(ctx, transport, config);
   const response = await createGenerationService(generationFetch ? { fetch: generationFetch } : {}).generate({
     config,
     context,
@@ -416,7 +439,7 @@ export async function handleAiTextGenerate(
   };
 }
 
-function createCustomProviderFetch(
+function createProviderFetch(
   ctx: KernelContext,
   transport: NetFetchDeviceTransport | undefined,
   config: AiConfigResult,
@@ -424,11 +447,14 @@ function createCustomProviderFetch(
   if (normalizeTarget(config.transportTarget) === "gsv") {
     return undefined;
   }
-  if (!shouldUseCustomProvider({
-    provider: config.provider,
-    baseUrl: config.baseUrl,
-    providerStyle: config.providerStyle,
-  })) {
+  if (
+    config.provider !== "openai-codex" &&
+    !shouldUseCustomProvider({
+      provider: config.provider,
+      baseUrl: config.baseUrl,
+      providerStyle: config.providerStyle,
+    })
+  ) {
     return undefined;
   }
   return createRoutedFetch(ctx, transport, config.transportTarget);
@@ -878,6 +904,20 @@ function withRootAiProfileScope(accountUids: number[]): number[] {
   return accountUids.includes(0) ? accountUids : [0, ...accountUids];
 }
 
+function shouldResolveRootOpenAiCodexOAuth({
+  provider,
+  configuredApiKey,
+  providerFromGlobalConfig,
+}: {
+  provider: string;
+  configuredApiKey: string;
+  providerFromGlobalConfig: boolean;
+}): boolean {
+  return providerFromGlobalConfig &&
+    provider.trim().toLowerCase() === "openai-codex" &&
+    configuredApiKey.trim().length === 0;
+}
+
 function resolveAiConfigValue(
   config: KernelContext["config"],
   accountUids: number[],
@@ -911,7 +951,7 @@ function resolveAiProcessConfigValue(
 }
 
 async function resolveAiFallbackConfigs(options: {
-  config: KernelContext["config"];
+  ctx: KernelContext;
   accountUids: number[];
   selector: string;
   primary: AiModelStackConfig;
@@ -921,7 +961,7 @@ async function resolveAiFallbackConfigs(options: {
     return [];
   }
   const profile = findAiAccountModelProfile(
-    options.config,
+    options.ctx.config,
     options.accountUids,
     options.accountUids[0],
     selector,
@@ -930,7 +970,7 @@ async function resolveAiFallbackConfigs(options: {
     return [];
   }
   const fallback = await resolveAiFallbackModelStack(
-    options.config,
+    options.ctx,
     options.accountUids,
     profile.values,
   );
@@ -945,10 +985,11 @@ async function resolveAiFallbackConfigs(options: {
 }
 
 async function resolveAiFallbackModelStack(
-  config: KernelContext["config"],
+  ctx: KernelContext,
   accountUids: number[],
   profileOverrides: Record<string, string>,
 ): Promise<AiModelStackConfig> {
+  const config = ctx.config;
   const emptyProfileOverrides: AiAccountProfileOverrides = new Map();
   const provider =
     resolveAiProcessConfigValue(profileOverrides, "provider") ??
@@ -980,6 +1021,7 @@ async function resolveAiFallbackModelStack(
     resolveAiConfigValue(config, accountUids, emptyProfileOverrides, "api_key") ??
     config.get("config/ai/api_key") ??
     "";
+  const resolvedApiKey = await resolveAiProviderOAuthApiKey(ctx, accountUids, provider, apiKey);
   const reasoning =
     resolveAiProcessConfigValue(profileOverrides, "reasoning") ??
     resolveAiConfigValue(config, accountUids, emptyProfileOverrides, "reasoning") ??
@@ -1025,7 +1067,7 @@ async function resolveAiFallbackModelStack(
   return {
     provider,
     model,
-    apiKey,
+    apiKey: resolvedApiKey,
     ...(baseUrl.trim().length > 0 ? { baseUrl: baseUrl.trim() } : {}),
     providerStyle: providerStyle.trim().toLowerCase() || "auto",
     transportTarget: normalizeTarget(transportTarget),

@@ -1,19 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { KernelContext } from "./context";
 import type { DeviceRecord } from "./devices";
+import type { OAuthAccountRecord } from "./oauth-store";
 import { sendFrameToProcess } from "../shared/utils";
 
 const generateMock = vi.hoisted(() => vi.fn());
+const createGenerationServiceMock = vi.hoisted(() => vi.fn((_options?: unknown) => ({
+  generate: generateMock,
+  stream: vi.fn(),
+  generateText: vi.fn(),
+})));
 
 vi.mock("../inference/service", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../inference/service")>();
   return {
     ...actual,
-    createGenerationService: () => ({
-      generate: generateMock,
-      stream: vi.fn(),
-      generateText: vi.fn(),
-    }),
+    createGenerationService: createGenerationServiceMock,
   };
 });
 
@@ -48,6 +50,7 @@ const sendFrameToProcessMock = vi.mocked(sendFrameToProcess);
 beforeEach(() => {
   sendFrameToProcessMock.mockReset();
   generateMock.mockReset();
+  createGenerationServiceMock.mockClear();
 });
 
 function makeDevice(partial: Partial<DeviceRecord> & { device_id: string }): DeviceRecord {
@@ -360,10 +363,17 @@ describe("handleAiTools", () => {
 describe("handleAiConfig", () => {
   function makeAiConfigContext(
     config: Record<string, string> = {},
-    options: { uid?: number; processId?: string; ownerUid?: number; capabilities?: string[] } = {},
+    options: {
+      uid?: number;
+      processId?: string;
+      ownerUid?: number;
+      capabilities?: string[];
+      oauthAccounts?: OAuthAccountRecord[];
+    } = {},
   ): KernelContext {
     const uid = options.uid ?? 1000;
     const ownerUid = options.ownerUid ?? uid;
+    const oauthAccounts = options.oauthAccounts ?? [];
     return {
       identity: {
         role: "user",
@@ -400,9 +410,53 @@ describe("handleAiConfig", () => {
       procs: {
         getOwnerUid: vi.fn(() => ownerUid),
       },
+      oauth: {
+        findAccountByIdentity: vi.fn((
+          lookupUid: number,
+          kind: string,
+          provider: string,
+          accountKey: string,
+        ) => oauthAccounts.find((account) =>
+          account.uid === lookupUid &&
+          account.kind === kind &&
+          account.provider === provider &&
+          account.accountKey === accountKey,
+        ) ?? null),
+        markAccountUsed: vi.fn(() => true),
+        upsertAccount: vi.fn((input) => ({
+          accountId: "acct-refresh",
+          ...input,
+          createdAt: 1_800_000_000_000,
+          updatedAt: 1_800_000_000_000,
+          lastUsedAt: null,
+          metadata: input.metadata ?? {},
+        })),
+      },
       processId: options.processId,
       env: {},
     } as unknown as KernelContext;
+  }
+
+  function makeOAuthAccount(partial: Partial<OAuthAccountRecord>): OAuthAccountRecord {
+    return {
+      accountId: partial.accountId ?? "acct-codex",
+      uid: partial.uid ?? 1000,
+      kind: partial.kind ?? "ai-provider",
+      provider: partial.provider ?? "openai-codex",
+      accountKey: partial.accountKey ?? "default",
+      label: partial.label ?? "OpenAI Codex",
+      scope: partial.scope ?? "openid profile email offline_access",
+      resource: partial.resource ?? null,
+      clientId: partial.clientId ?? "openai-codex-device",
+      tokenType: partial.tokenType ?? "Bearer",
+      accessToken: partial.accessToken ?? "codex-access-token",
+      refreshToken: partial.refreshToken ?? "codex-refresh-token",
+      expiresAt: partial.expiresAt ?? 1_900_000_000_000,
+      createdAt: partial.createdAt ?? 1_800_000_000_000,
+      updatedAt: partial.updatedAt ?? 1_800_000_000_000,
+      lastUsedAt: partial.lastUsedAt ?? null,
+      metadata: partial.metadata ?? {},
+    };
   }
 
   it("resolves the generation streaming switch", async () => {
@@ -439,6 +493,73 @@ describe("handleAiConfig", () => {
     }));
 
     expect(result.capabilities).toEqual(["codemode.run", "net.fetch"]);
+  });
+
+  it("uses a stored OpenAI Codex OAuth account when the provider key is blank", async () => {
+    const ctx = makeAiConfigContext({
+      "users/1000/ai/provider": "openai-codex",
+      "users/1000/ai/model": "gpt-5.5",
+    }, {
+      oauthAccounts: [
+        makeOAuthAccount({
+          accessToken: "codex-access-token",
+        }),
+      ],
+    });
+
+    const result = await handleAiConfig({}, ctx);
+
+    expect(result).toMatchObject({
+      provider: "openai-codex",
+      model: "gpt-5.5",
+      apiKey: "codex-access-token",
+    });
+    expect(result.media?.imageGenerationApiKey).toBe("");
+    expect(ctx.oauth.findAccountByIdentity).toHaveBeenCalledWith(
+      1000,
+      "ai-provider",
+      "openai-codex",
+      "default",
+    );
+    expect(ctx.oauth.markAccountUsed).toHaveBeenCalledWith("acct-codex", 1000);
+  });
+
+  it("uses the root OpenAI Codex OAuth account for inherited global config", async () => {
+    const ctx = makeAiConfigContext({
+      "config/ai/provider": "openai-codex",
+      "config/ai/model": "gpt-5.5",
+    }, {
+      uid: 2000,
+      ownerUid: 1000,
+      processId: "task-1",
+      oauthAccounts: [
+        makeOAuthAccount({
+          accountId: "acct-user-codex",
+          uid: 1000,
+          accessToken: "user-codex-access-token",
+        }),
+        makeOAuthAccount({
+          accountId: "acct-root-codex",
+          uid: 0,
+          accessToken: "root-codex-access-token",
+        }),
+      ],
+    });
+
+    const result = await handleAiConfig({}, ctx);
+
+    expect(result).toMatchObject({
+      provider: "openai-codex",
+      model: "gpt-5.5",
+      apiKey: "root-codex-access-token",
+    });
+    expect(ctx.oauth.findAccountByIdentity).toHaveBeenCalledWith(
+      0,
+      "ai-provider",
+      "openai-codex",
+      "default",
+    );
+    expect(ctx.oauth.markAccountUsed).toHaveBeenCalledWith("acct-root-codex", 0);
   });
 
   it("generates text with preset config and explicit generation options", async () => {
@@ -700,6 +821,64 @@ describe("handleAiConfig", () => {
     }, makeAiConfigContext());
 
     expect(result.text).toBe("pong");
+    expect(createGenerationServiceMock).toHaveBeenCalledWith({});
+  });
+
+  it("builds a routed fetch for OpenAI Codex text generation targets", async () => {
+    generateMock.mockImplementationOnce(async () => ({
+      role: "assistant",
+      content: [{ type: "text", text: "pong" }],
+      api: "test",
+      provider: "openai-codex",
+      model: "gpt-5.4-mini",
+      usage: {
+        input: 1,
+        output: 1,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 2,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      stopReason: "stop",
+      timestamp: 1,
+    }));
+    const device = makeDevice({
+      device_id: "linux-machine",
+      implements: ["net.fetch"],
+    });
+    const ctx = {
+      ...makeAiConfigContext({}, {
+        oauthAccounts: [
+          makeOAuthAccount({
+            accessToken: "codex-access-token",
+          }),
+        ],
+      }),
+      devices: {
+        canAccess: vi.fn(() => true),
+        get: vi.fn(() => device),
+        listForUser: vi.fn(() => [device]),
+      },
+    } as unknown as KernelContext;
+
+    const result = await handleAiTextGenerate({
+      messages: [{ role: "user", content: "ping" }],
+      config: {
+        overrides: {
+          "config/ai/provider": "openai-codex",
+          "config/ai/model": "gpt-5.4-mini",
+          "config/ai/api_key": "",
+          "config/ai/transport_target": "linux-machine",
+        },
+      },
+    }, ctx, {
+      requestDevice: vi.fn(),
+    });
+
+    expect(result.text).toBe("pong");
+    expect(createGenerationServiceMock).toHaveBeenCalledWith({
+      fetch: expect.any(Function),
+    });
   });
 
   it("falls back to the owning human's AI config for agent processes", async () => {

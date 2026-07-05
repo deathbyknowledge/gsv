@@ -190,6 +190,10 @@ import type {
   SysMcpRemoveResult,
   SysOAuthForgetArgs,
   SysOAuthForgetResult,
+  SysOAuthDevicePollArgs,
+  SysOAuthDevicePollResult,
+  SysOAuthDeviceStartArgs,
+  SysOAuthDeviceStartResult,
   SysOAuthListArgs,
   SysOAuthListResult,
   SysOAuthStartArgs,
@@ -365,6 +369,8 @@ export type SyscallDomains = {
   "sys.device.update": { args: SysDeviceUpdateArgs; result: SysDeviceUpdateResult };
   "sys.device.delete": { args: SysDeviceDeleteArgs; result: SysDeviceDeleteResult };
   "sys.oauth.start": { args: SysOAuthStartArgs; result: SysOAuthStartResult };
+  "sys.oauth.device.start": { args: SysOAuthDeviceStartArgs; result: SysOAuthDeviceStartResult };
+  "sys.oauth.device.poll": { args: SysOAuthDevicePollArgs; result: SysOAuthDevicePollResult };
   "sys.oauth.list": { args: SysOAuthListArgs; result: SysOAuthListResult };
   "sys.oauth.forget": { args: SysOAuthForgetArgs; result: SysOAuthForgetResult };
   "sys.mcp.add": { args: SysMcpAddArgs; result: SysMcpAddResult };

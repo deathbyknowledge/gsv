@@ -33,9 +33,10 @@ describe("console settings domain", () => {
     expect(providerValues).not.toContain("amazon-bedrock");
     expect(providerValues).not.toContain("azure-openai-responses");
     expect(providerValues).not.toContain("cloudflare-workers-ai");
-    expect(providerValues).not.toContain("openai-codex");
+    expect(providerValues).toContain("openai-codex");
     expect(AI_PROVIDER_OPTIONS.find((option) => option.value === "workers-ai")?.label).toBe("Workers AI (gateway binding)");
     expect(AI_PROVIDER_OPTIONS.find((option) => option.value === "cloudflare-ai-gateway")?.label).toBe("Cloudflare AI Gateway");
+    expect(AI_PROVIDER_OPTIONS.find((option) => option.value === "openai-codex")?.label).toBe("OpenAI Codex (ChatGPT)");
     expect(agentProviderField?.kind).toBe("select");
     expect(agentProviderField?.options).toBe(AI_PROVIDER_OPTIONS);
     expect(toolProviderField("image-read")?.options).toBe(AI_PROVIDER_OPTIONS);

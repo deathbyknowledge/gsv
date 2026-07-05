@@ -71,6 +71,11 @@
   line-height: 1.4;
 }
 
+.machine-run-mode {
+  display: flex;
+  justify-content: flex-start;
+}
+
 .machine-inline-error {
   /* size from .gsv-sublabel (10px); tracking kept */
   border-color: color-mix(in srgb, var(--error) 55%, var(--border));

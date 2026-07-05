@@ -8,6 +8,7 @@ import { StatusDot } from "../../../components/ui/StatusDot";
 import { Tag } from "../../../components/ui/Tag";
 import { TextInput } from "../../../components/ui/TextInput";
 import { Tile } from "../../../components/ui/Tile";
+import { Toggle } from "../../../components/ui/Toggle";
 import { useSession } from "../../../services/session/SessionProvider";
 import type { IssuedMachineNodeToken } from "../backend/consoleService";
 import { ConnectFlowShell } from "../connect-flows/ConnectFlowShell";
@@ -22,6 +23,7 @@ import {
   buildBrowserExtensionConfig,
   buildMachineBootstrapCommand,
   buildMachineInstallCommand,
+  buildMachineRunCommand,
   defaultMachineName,
   expiresAtFromDays,
   machineDeviceIdFromName,
@@ -163,6 +165,7 @@ export function MachineProvisionFlow({
   const [issuedToken, setIssuedToken] = useState<IssuedMachineNodeToken | null>(null);
   const [copied, setCopied] = useState<CopyTarget | null>(null);
   const [checkMessage, setCheckMessage] = useState("");
+  const [oneShotRun, setOneShotRun] = useState(false);
   const origin = window.location.origin;
   const selectedPlatform = platformOption(platform);
   const isBrowserTarget = platform === "browser";
@@ -193,6 +196,16 @@ export function MachineProvisionFlow({
         token: issuedToken.token,
       })
     : "";
+  const runCommand = issuedToken && !isBrowserTarget
+    ? buildMachineRunCommand({
+        origin,
+        platform,
+        username: snapshot.username || "root",
+        deviceId,
+        token: issuedToken.token,
+      })
+    : "";
+  const connectCommand = oneShotRun ? runCommand : bootstrapCommand;
   const createError = errorText(createToken.error);
 
   useUnsavedGuard(() =>
@@ -551,12 +564,22 @@ export function MachineProvisionFlow({
                 <p class="gsv-cf-desc" style={{ margin: 0 }}>
                   Run this command on the machine after the CLI installer completes.
                 </p>
+                <div class="machine-run-mode">
+                  <Toggle
+                    label="ONE-SHOT RUN"
+                    size="small"
+                    on={oneShotRun}
+                    status={oneShotRun ? "info" : "none"}
+                    message={oneShotRun ? "FOREGROUND / NO DAEMON" : ""}
+                    onChange={setOneShotRun}
+                  />
+                </div>
                 <CommandBlock
                   title="CONNECT COMMAND"
-                  meta={`${deviceId} / token ${issuedToken.tokenPrefix}`}
-                  value={bootstrapCommand}
+                  meta={`${deviceId} / token ${issuedToken.tokenPrefix}${oneShotRun ? " / one-shot" : ""}`}
+                  value={connectCommand}
                   copied={copied === "connect"}
-                  onCopy={() => void copyCommand("connect", bootstrapCommand)}
+                  onCopy={() => void copyCommand("connect", connectCommand)}
                 />
               </>
             )}

@@ -20,6 +20,8 @@ export type ConsoleSettingField = {
   size?: "small" | "medium" | "large";
   /** Render at half width so two fields can share a row. */
   half?: boolean;
+  /** Keep the GSV Worker target available, but show machine targets first. */
+  preferGsvLast?: boolean;
 };
 
 export type ConsoleSettingGroup = {

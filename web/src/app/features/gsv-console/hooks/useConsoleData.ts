@@ -3,6 +3,7 @@ import { useEffect, useMemo } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import {
   addConsoleMcpServer,
+  checkConsoleOpenAiCodexOAuth,
   connectConsoleAdapter,
   consumeIdentityLinkCode,
   createMachineNodeToken,
@@ -20,6 +21,7 @@ import {
   loadConsolePackages,
   loadConsoleProcesses,
   loadConsoleTargets,
+  pollConsoleOpenAiCodexOAuth,
   refreshConsoleMcpServer,
   removeIdentityLink,
   removeConsoleMcpServer,
@@ -28,8 +30,10 @@ import {
   saveConsoleConfigEntries,
   saveConsoleAgentBehavior,
   saveConsoleAgentContext,
+  startConsoleOpenAiCodexOAuth,
   validateConsoleModelConfig,
   type AddConsoleMcpServerInput,
+  type CheckConsoleOpenAiCodexOAuthResult,
   type ConnectConsoleAdapterInput,
   type ConnectConsoleAdapterResult,
   type ConsumeIdentityLinkCodeInput,
@@ -42,6 +46,8 @@ import {
   type IdentityLinkMutationResult,
   type IssuedMachineNodeToken,
   type LoadConsoleOverviewOptions,
+  type PollConsoleOpenAiCodexOAuthInput,
+  type PollConsoleOpenAiCodexOAuthResult,
   type RemoveIdentityLinkInput,
   type RemoveIdentityLinkResult,
   type RunConsoleProcessActionInput,
@@ -54,6 +60,7 @@ import {
   type SaveConsoleConfigResult,
   type SaveConsoleAgentContextInput,
   type SaveConsoleAgentContextResult,
+  type StartConsoleOpenAiCodexOAuthResult,
   type ValidateConsoleModelConfigInput,
   type ValidateConsoleModelConfigResult,
 } from "../backend/consoleService";
@@ -490,6 +497,30 @@ export function useValidateConsoleModelConfig() {
 
   return useMutation<ValidateConsoleModelConfigResult, Error, ValidateConsoleModelConfigInput>({
     mutationFn: (input) => validateConsoleModelConfig(client, input),
+  });
+}
+
+export function useStartConsoleOpenAiCodexOAuth() {
+  const { client } = useGateway();
+
+  return useMutation<StartConsoleOpenAiCodexOAuthResult, Error, void>({
+    mutationFn: () => startConsoleOpenAiCodexOAuth(client),
+  });
+}
+
+export function usePollConsoleOpenAiCodexOAuth() {
+  const { client } = useGateway();
+
+  return useMutation<PollConsoleOpenAiCodexOAuthResult, Error, PollConsoleOpenAiCodexOAuthInput>({
+    mutationFn: (input) => pollConsoleOpenAiCodexOAuth(client, input),
+  });
+}
+
+export function useCheckConsoleOpenAiCodexOAuth() {
+  const { client } = useGateway();
+
+  return useMutation<CheckConsoleOpenAiCodexOAuthResult, Error, void>({
+    mutationFn: () => checkConsoleOpenAiCodexOAuth(client),
   });
 }
 

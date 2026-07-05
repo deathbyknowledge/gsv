@@ -52,6 +52,40 @@ describe("formatProviderErrorMessage", () => {
   it("preserves unrelated provider errors", () => {
     expect(formatProviderErrorMessage("invalid api key")).toBe("invalid api key");
   });
+
+  it("summarizes HTML challenge pages without exposing raw markup", () => {
+    const message = formatProviderErrorMessage(
+      "<html><body><p>Unable to load site</p><span>Ray ID:a1663d565f5cfeb1</span></body></html>",
+      {
+        provider: "openai-codex",
+        model: "gpt-5.5",
+      },
+    );
+
+    expect(message).toBe([
+      "Provider returned an HTML challenge or block page from openai-codex/gpt-5.5 instead of a model response.",
+      "Check VPN/network access to the provider, or run GSV from an environment that can reach it.",
+    ].join("\n"));
+    expect(message).not.toContain("<html>");
+    expect(message).not.toContain("Ray ID");
+  });
+
+  it("preserves response diagnostics while summarizing HTML challenges", () => {
+    const message = formatProviderErrorMessage(
+      "OpenAI Codex HTTP 403; content-type=text/html; cf-ray=ray-123; request-id=req-123: <html><body>Unable to load site</body></html>",
+      {
+        provider: "openai-codex",
+        model: "gpt-5.4-mini",
+      },
+    );
+
+    expect(message).toBe([
+      "Provider returned an HTML challenge or block page from openai-codex/gpt-5.4-mini instead of a model response.",
+      "Response: HTTP 403; content-type=text/html; cf-ray=ray-123; request-id=req-123",
+      "Check VPN/network access to the provider, or run GSV from an environment that can reach it.",
+    ].join("\n"));
+    expect(message).not.toContain("<html>");
+  });
 });
 
 describe("provider context overflow errors", () => {

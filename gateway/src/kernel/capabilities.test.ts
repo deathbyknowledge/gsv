@@ -235,6 +235,8 @@ describe("CapabilityStore", () => {
       "sys.mcp.list",
       "sys.mcp.refresh",
       "sys.mcp.remove",
+      "sys.oauth.device.poll",
+      "sys.oauth.device.start",
       "sys.oauth.forget",
       "sys.oauth.list",
       "sys.oauth.start",

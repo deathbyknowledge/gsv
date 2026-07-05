@@ -9,6 +9,7 @@ import { Button } from "../../../components/ui/Button";
 import { Checkbox } from "../../../components/ui/Checkbox";
 import { ConfirmModal } from "../../../components/ui/ConfirmModal";
 import { InfoTip } from "../../../components/ui/InfoTip";
+import { Link } from "../../../components/ui/Link";
 import { Radio } from "../../../components/ui/Radio";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
 import { Select, type SelectOption } from "../../../components/ui/Select";
@@ -66,10 +67,13 @@ import {
   type ConsoleSettingGroup,
 } from "../domain/consoleSettings";
 import {
+  useCheckConsoleOpenAiCodexOAuth,
   useConsoleAccounts,
   useConsoleConfig,
+  usePollConsoleOpenAiCodexOAuth,
   useConsoleTargets,
   useSaveConsoleConfigEntries,
+  useStartConsoleOpenAiCodexOAuth,
   useValidateConsoleModelConfig,
 } from "../hooks/useConsoleData";
 import "./ConsoleConfigPage.css";
@@ -120,6 +124,24 @@ type ValidateModelSettingsInput = {
   presetId?: string;
 };
 
+type OpenAiCodexOAuthStart = {
+  flowId: string;
+  userCode: string;
+  verificationUrl: string;
+  intervalSeconds: number;
+  expiresAt: number;
+};
+
+type OpenAiCodexOAuthPoll =
+  | {
+      status: "pending";
+      intervalSeconds: number;
+      expiresAt: number;
+    }
+  | {
+      status: "complete";
+    };
+
 type SettingsStatusTone = "pending" | "success" | "error";
 type ModelProfileStep = 0 | 1 | 2 | 3;
 
@@ -131,7 +153,10 @@ type SettingsFieldGroupProps = {
   initialValues?: Record<string, string>;
   meta?: string;
   modelProfiles?: readonly ConsoleModelProfile[];
+  onCheckOpenAiCodexOAuth?: () => Promise<boolean>;
+  onPollOpenAiCodexOAuth?: (flowId: string) => Promise<OpenAiCodexOAuthPoll>;
   onSave: (entries: readonly SaveConsoleConfigInput[]) => Promise<void>;
+  onStartOpenAiCodexOAuth?: () => Promise<OpenAiCodexOAuthStart>;
   targets?: readonly AgentToolTarget[];
   title: string;
   validateBeforeSave?: (values: Record<string, string>) => Promise<void>;
@@ -149,18 +174,36 @@ const MODEL_ADVANCED_FIELD_KEYS = new Set([
   "config/ai/max_tokens",
   "config/ai/max_context_bytes",
 ]);
+const MODEL_PROVIDER_FIELD_KEY = "config/ai/provider";
+const MODEL_BASE_URL_FIELD_KEY = "config/ai/base_url";
+const MODEL_PROVIDER_STYLE_FIELD_KEY = "config/ai/provider_style";
+const MODEL_API_KEY_FIELD_KEY = "config/ai/api_key";
 const MODEL_TRANSPORT_TARGET_KEY = "config/ai/transport_target";
+const OPENAI_CODEX_PROVIDER = "openai-codex";
+const OPENAI_CODEX_DEFAULT_MODEL = "gpt-5.5";
+const OPENAI_CODEX_TRANSPORT_TARGET_DESCRIPTION =
+  "OpenAI Codex requests from the GSV Worker may be blocked by provider network checks. Try one of your machines instead.";
+const OPENAI_CODEX_IGNORED_PROFILE_FIELD_KEYS = new Set([
+  MODEL_API_KEY_FIELD_KEY,
+  MODEL_BASE_URL_FIELD_KEY,
+  MODEL_PROVIDER_STYLE_FIELD_KEY,
+]);
 const CUSTOM_ENDPOINT_CONNECT_FIELD_KEYS = [
   "config/ai/model",
-  "config/ai/base_url",
-  "config/ai/provider_style",
+  MODEL_BASE_URL_FIELD_KEY,
+  MODEL_PROVIDER_STYLE_FIELD_KEY,
   MODEL_TRANSPORT_TARGET_KEY,
-  "config/ai/api_key",
+  MODEL_API_KEY_FIELD_KEY,
 ] as const;
 const PROVIDER_CONNECT_FIELD_KEYS = [
-  "config/ai/provider",
+  MODEL_PROVIDER_FIELD_KEY,
   "config/ai/model",
-  "config/ai/api_key",
+  MODEL_API_KEY_FIELD_KEY,
+] as const;
+const OPENAI_CODEX_CONNECT_FIELD_KEYS = [
+  MODEL_PROVIDER_FIELD_KEY,
+  "config/ai/model",
+  MODEL_TRANSPORT_TARGET_KEY,
 ] as const;
 const GSV_TRANSPORT_TARGET_OPTION: SelectOption = {
   label: "GSV Worker",
@@ -243,6 +286,9 @@ function ModelSettingsPage({
 }) {
   const saveConfig = useSaveConsoleConfigEntries();
   const validateModelConfig = useValidateConsoleModelConfig();
+  const startOpenAiCodexOAuth = useStartConsoleOpenAiCodexOAuth();
+  const pollOpenAiCodexOAuth = usePollConsoleOpenAiCodexOAuth();
+  const checkOpenAiCodexOAuth = useCheckConsoleOpenAiCodexOAuth();
   const requestLeave = useUnsavedGuardLeave();
   const [selection, setSelection] = useState<ModelSelection | null>(() => modelSelectionFromParam(select));
   // The state is seeded once above, but this component stays mounted across
@@ -273,6 +319,31 @@ function ModelSettingsPage({
   };
   const validateModelSettings = async (input: ValidateModelSettingsInput) => {
     await validateModelConfig.mutateAsync(input);
+  };
+  const startOpenAiCodexLogin = async (): Promise<OpenAiCodexOAuthStart> => {
+    const result = await startOpenAiCodexOAuth.mutateAsync();
+    return {
+      flowId: result.flow.flowId,
+      userCode: result.userCode,
+      verificationUrl: result.verificationUrl,
+      intervalSeconds: result.intervalSeconds,
+      expiresAt: result.expiresAt,
+    };
+  };
+  const pollOpenAiCodexLogin = async (flowId: string): Promise<OpenAiCodexOAuthPoll> => {
+    const result = await pollOpenAiCodexOAuth.mutateAsync({ flowId });
+    if (result.status === "complete") {
+      return { status: "complete" };
+    }
+    return {
+      status: "pending",
+      intervalSeconds: result.intervalSeconds,
+      expiresAt: result.expiresAt,
+    };
+  };
+  const checkOpenAiCodexLogin = async (): Promise<boolean> => {
+    const result = await checkOpenAiCodexOAuth.mutateAsync();
+    return result.connected;
   };
 
   // Leave the open detail and return to the list. A detail opened via the
@@ -320,6 +391,9 @@ function ModelSettingsPage({
         // without a spurious "Discard changes?" prompt.
         onCompleted={exitDetail}
         onSaveEntries={saveEntries}
+        onCheckOpenAiCodexOAuth={checkOpenAiCodexLogin}
+        onStartOpenAiCodexOAuth={startOpenAiCodexLogin}
+        onPollOpenAiCodexOAuth={pollOpenAiCodexLogin}
         onValidateModelConfig={validateModelSettings}
       />
     );
@@ -367,8 +441,11 @@ function ModelSettingsDetail({
   targets,
   viewer,
   onBack,
+  onCheckOpenAiCodexOAuth,
   onCompleted,
+  onPollOpenAiCodexOAuth,
   onSaveEntries,
+  onStartOpenAiCodexOAuth,
   onValidateModelConfig,
 }: {
   config: readonly ConsoleConfigEntry[];
@@ -381,9 +458,12 @@ function ModelSettingsDetail({
   viewer: SettingsViewer;
   /** Guarded user-initiated Back/Cancel. */
   onBack: () => void;
+  onCheckOpenAiCodexOAuth: () => Promise<boolean>;
   /** Unguarded return after a successful create/delete (draft already saved). */
   onCompleted: () => void;
+  onPollOpenAiCodexOAuth: (flowId: string) => Promise<OpenAiCodexOAuthPoll>;
   onSaveEntries: (entries: readonly SaveConsoleConfigInput[]) => Promise<void>;
+  onStartOpenAiCodexOAuth: () => Promise<OpenAiCodexOAuthStart>;
   onValidateModelConfig: (input: ValidateModelSettingsInput) => Promise<void>;
 }) {
   const [newProfileStep, setNewProfileStep] = useState<ModelProfileStep>(0);
@@ -420,7 +500,10 @@ function ModelSettingsDetail({
           writeKeyForField={(field) => viewer.isRoot || viewer.uid === null
             ? field.key
             : buildUserAiOverrideKey(viewer.uid, field.key)}
+          onCheckOpenAiCodexOAuth={onCheckOpenAiCodexOAuth}
+          onPollOpenAiCodexOAuth={onPollOpenAiCodexOAuth}
           onSave={onSaveEntries}
+          onStartOpenAiCodexOAuth={onStartOpenAiCodexOAuth}
         />
       </ConsoleDetailPage>
     );
@@ -450,7 +533,10 @@ function ModelSettingsDetail({
           writeKeyForField={(field) => viewer.isRoot || viewer.uid === null
             ? field.key
             : buildUserAiOverrideKey(viewer.uid, field.key)}
+          onCheckOpenAiCodexOAuth={onCheckOpenAiCodexOAuth}
+          onPollOpenAiCodexOAuth={onPollOpenAiCodexOAuth}
           onSave={onSaveEntries}
+          onStartOpenAiCodexOAuth={onStartOpenAiCodexOAuth}
         />
       </ConsoleDetailPage>
     );
@@ -500,9 +586,12 @@ function ModelSettingsDetail({
           await saveModelProfiles(viewer, profiles, deleteModelProfile(profiles, profile.id), onSaveEntries);
           onCompleted();
         } : undefined}
-        onMakeDefault={profile ? async (values) => {
-          await makeProfileDefault(config, viewer, { ...profile, values }, onSaveEntries);
+        onMakeDefault={profile ? async (values, clearedSecretKeys) => {
+          await makeProfileDefault(config, viewer, { ...profile, values }, onSaveEntries, clearedSecretKeys);
         } : undefined}
+        onCheckOpenAiCodexOAuth={onCheckOpenAiCodexOAuth}
+        onPollOpenAiCodexOAuth={onPollOpenAiCodexOAuth}
+        onStartOpenAiCodexOAuth={onStartOpenAiCodexOAuth}
         onValidate={onValidateModelConfig}
         onSave={async (name, values, clearedSecretKeys) => {
           const nextProfiles = profile
@@ -897,14 +986,19 @@ async function makeProfileDefault(
   viewer: SettingsViewer,
   profile: ConsoleModelProfile,
   onSaveEntries: (entries: readonly SaveConsoleConfigInput[]) => Promise<void>,
+  clearedSecretKeys: ClearedProfileSecretKeys = new Map(),
 ): Promise<void> {
   if (viewer.uid === null) {
     throw new Error("A signed-in account is required to update the default model.");
   }
+  const clearedForProfile = clearedSecretKeys.get(profile.id);
   await onSaveEntries(MODEL_PROFILE_FIELDS.flatMap((field): SaveConsoleConfigInput[] => {
     const key = viewer.isRoot ? field.key : buildUserAiOverrideKey(viewer.uid!, field.key);
     const value = profile.values[field.key] ?? "";
     if (isSensitiveSettingKey(field.key) && value.length === 0) {
+      if (clearedForProfile?.has(field.key)) {
+        return [{ key, value: "" }];
+      }
       const copyFromKey = modelProfileSecretConfigKey(viewer.uid!, profile.id, field.key);
       if (configEntryForKey(config, copyFromKey)?.redacted === true) {
         return [{ key, copyFromKey }];
@@ -928,9 +1022,12 @@ function ModelProfileForm({
   targets,
   viewer,
   onCancel,
+  onCheckOpenAiCodexOAuth,
   onDelete,
   onMakeDefault,
+  onPollOpenAiCodexOAuth,
   onStepChange,
+  onStartOpenAiCodexOAuth,
   onValidate,
   onSave,
 }: {
@@ -943,9 +1040,15 @@ function ModelProfileForm({
   targets: readonly AgentToolTarget[];
   viewer: SettingsViewer;
   onCancel: () => void;
+  onCheckOpenAiCodexOAuth: () => Promise<boolean>;
   onDelete?: () => Promise<void>;
-  onMakeDefault?: (values: Record<string, string>) => Promise<void>;
+  onMakeDefault?: (
+    values: Record<string, string>,
+    clearedSecretKeys: ClearedProfileSecretKeys,
+  ) => Promise<void>;
+  onPollOpenAiCodexOAuth: (flowId: string) => Promise<OpenAiCodexOAuthPoll>;
   onStepChange?: (step: ModelProfileStep) => void;
+  onStartOpenAiCodexOAuth: () => Promise<OpenAiCodexOAuthStart>;
   onValidate: (input: ValidateModelSettingsInput) => Promise<void>;
   onSave: (
     name: string,
@@ -972,6 +1075,23 @@ function ModelProfileForm({
   const [statusTone, setStatusTone] = useState<SettingsStatusTone>("success");
   const [confirmDelete, setConfirmDelete] = useState(false);
 
+  const duplicateName = profiles.some((candidate) =>
+    candidate.id !== profile?.id &&
+    candidate.name.toLowerCase() === name.trim().toLowerCase()
+  );
+  const isCustomEndpoint = isCustomModelProvider(drafts[MODEL_PROVIDER_FIELD_KEY] ?? "");
+  const isOpenAiCodexProvider = normalizeProviderValue(drafts[MODEL_PROVIDER_FIELD_KEY] ?? "") === OPENAI_CODEX_PROVIDER;
+  const codexLogin = useOpenAiCodexLogin({
+    active: isOpenAiCodexProvider,
+    resetKey: `${profile?.id ?? "new"}:${JSON.stringify(initialValues)}`,
+    onCheckOpenAiCodexOAuth,
+    onPollOpenAiCodexOAuth,
+    onStartOpenAiCodexOAuth,
+    setPendingLabel,
+    setStatusText,
+    setStatusTone,
+  });
+
   useEffect(() => {
     setName(profile?.name ?? "");
     setDrafts(initialValues);
@@ -982,19 +1102,29 @@ function ModelProfileForm({
     setConfirmDelete(false);
   }, [initialValues, profile]);
 
-  const duplicateName = profiles.some((candidate) =>
-    candidate.id !== profile?.id &&
-    candidate.name.toLowerCase() === name.trim().toLowerCase()
-  );
-  const isCustomEndpoint = isCustomModelProvider(drafts["config/ai/provider"] ?? "");
   const modelReady = Boolean(drafts["config/ai/model"]?.trim());
   const nameReady = name.trim().length > 0 && !duplicateName;
+  const codexOriginReady = !isOpenAiCodexProvider ||
+    normalizedTransportTargetValue(drafts[MODEL_TRANSPORT_TARGET_KEY] ?? "") !== "gsv";
   const connectionReady = isCustomEndpoint
     ? modelReady && Boolean(drafts["config/ai/base_url"]?.trim())
-    : modelReady && Boolean(drafts["config/ai/provider"]?.trim());
+    : isOpenAiCodexProvider
+    ? modelReady && Boolean(drafts[MODEL_PROVIDER_FIELD_KEY]?.trim()) && codexOriginReady
+    : modelReady && Boolean(drafts[MODEL_PROVIDER_FIELD_KEY]?.trim());
   const canSave = editable && nameReady && connectionReady;
+  const effectiveDrafts = isOpenAiCodexProvider
+    ? {
+        ...drafts,
+        [MODEL_API_KEY_FIELD_KEY]: "",
+        [MODEL_BASE_URL_FIELD_KEY]: "",
+        [MODEL_PROVIDER_STYLE_FIELD_KEY]: "",
+      }
+    : drafts;
+  const effectiveClearedSecretKeys = isOpenAiCodexProvider
+    ? new Set([...clearedSecretKeys, MODEL_API_KEY_FIELD_KEY])
+    : clearedSecretKeys;
   const clearedProfileSecretKeys = profile
-    ? new Map([[profile.id, clearedSecretKeys]])
+    ? new Map([[profile.id, effectiveClearedSecretKeys]])
     : new Map<string, ReadonlySet<string>>();
 
   const dirty = name !== (profile?.name ?? "") ||
@@ -1020,25 +1150,47 @@ function ModelProfileForm({
     }
   };
   const validateDrafts = async () => {
-    const validationValues = modelValidationValuesFromProfileDrafts(drafts, clearedSecretKeys);
+    const validationValues = modelValidationValuesFromProfileDrafts(effectiveDrafts, effectiveClearedSecretKeys);
     setPendingLabel("TESTING");
     setStatusTone("pending");
-    setStatusText("Testing model...");
+    setStatusText(isOpenAiCodexProvider ? "Verifying OpenAI Codex settings..." : "Testing model...");
     await onValidate({
       values: validationValues,
-      ...(profile && !clearedSecretKeys.has("config/ai/api_key") ? { presetId: profile.id } : {}),
+      ...(profile && !effectiveClearedSecretKeys.has(MODEL_API_KEY_FIELD_KEY) ? { presetId: profile.id } : {}),
     });
   };
-  const profileFields = splitModelSettingsFields(MODEL_PROFILE_FIELDS);
-  const newProfileConnectionFields = newModelConnectionFields(MODEL_PROFILE_FIELDS, isCustomEndpoint);
+  const validateDraftsWithOpenAiCodexLogin = async () => {
+    try {
+      await codexLogin.ensureConnected();
+      await validateDrafts();
+    } catch (error) {
+      if (!isOpenAiCodexProvider || !isMissingOpenAiCodexCredentialError(error)) {
+        throw error;
+      }
+      codexLogin.resetConnected();
+      await codexLogin.connect();
+      await validateDrafts();
+    }
+  };
+  const visibleModelProfileFields = isOpenAiCodexProvider
+    ? MODEL_PROFILE_FIELDS.filter((field) => !OPENAI_CODEX_IGNORED_PROFILE_FIELD_KEYS.has(field.key))
+    : MODEL_PROFILE_FIELDS;
+  const profileFields = splitModelSettingsFields(visibleModelProfileFields);
+  const newProfileConnectionFields = newModelConnectionFields(
+    visibleModelProfileFields,
+    isCustomEndpoint,
+    isOpenAiCodexProvider,
+  );
   const newProfileAdvancedFields = newModelAdvancedFields(profileFields.advanced, newProfileConnectionFields);
+  const editProfilePrimaryFields = isOpenAiCodexProvider ? newProfileConnectionFields : profileFields.primary;
+  const editProfileAdvancedFields = isOpenAiCodexProvider ? newProfileAdvancedFields : profileFields.advanced;
   const advancedResetKey = `${profile?.id ?? "new"}:${JSON.stringify(initialValues)}`;
   const setModelType = (customEndpoint: boolean) => {
     setDrafts((current) => ({
       ...current,
-      "config/ai/provider": customEndpoint
+      [MODEL_PROVIDER_FIELD_KEY]: customEndpoint
         ? "custom"
-        : defaultBuiltInProvider(defaultValues, current["config/ai/provider"] ?? ""),
+        : defaultBuiltInProvider(defaultValues, current[MODEL_PROVIDER_FIELD_KEY] ?? ""),
     }));
     setStatusText("");
   };
@@ -1102,7 +1254,28 @@ function ModelProfileForm({
             next.delete(field.key);
             return next;
           });
-          setDrafts((current) => ({ ...current, [field.key]: value }));
+          setDrafts((current) => {
+            const next = { ...current, [field.key]: value };
+            if (
+              field.key === MODEL_PROVIDER_FIELD_KEY &&
+              normalizeProviderValue(value) === OPENAI_CODEX_PROVIDER &&
+              normalizeProviderValue(current[MODEL_PROVIDER_FIELD_KEY] ?? "") !== OPENAI_CODEX_PROVIDER &&
+              shouldApplyOpenAiCodexDefaultModel(current, defaultValues)
+            ) {
+              next["config/ai/model"] = OPENAI_CODEX_DEFAULT_MODEL;
+            }
+            if (
+              field.key === MODEL_PROVIDER_FIELD_KEY &&
+              normalizeProviderValue(value) === OPENAI_CODEX_PROVIDER &&
+              normalizeProviderValue(current[MODEL_PROVIDER_FIELD_KEY] ?? "") !== OPENAI_CODEX_PROVIDER
+            ) {
+              const targetId = firstAvailableFetchTargetId(targets);
+              if (targetId && normalizedTransportTargetValue(current[MODEL_TRANSPORT_TARGET_KEY] ?? "") === "gsv") {
+                next[MODEL_TRANSPORT_TARGET_KEY] = targetId;
+              }
+            }
+            return next;
+          });
           setStatusText("");
         }}
         onClearRedacted={() => {
@@ -1113,11 +1286,21 @@ function ModelProfileForm({
       />
     </div>
   );
+  const renderOpenAiCodexLogin = () => isOpenAiCodexProvider ? (
+    <OpenAiCodexLoginField
+      auth={codexLogin.auth}
+      codexOriginReady={codexOriginReady}
+      editable={editable}
+      pending={pending}
+      pendingLabel={pendingLabel}
+      onConnect={() => void run(codexLogin.connect, "Connected", "CONNECTING")}
+    />
+  ) : null;
   const runTestAndSave = () => void run(async () => {
-    await validateDrafts();
+    await validateDraftsWithOpenAiCodexLogin();
     setPendingLabel("SAVING");
-    setStatusText("Model test passed. Saving model...");
-    await onSave(name, drafts, clearedProfileSecretKeys);
+    setStatusText(isOpenAiCodexProvider ? "OpenAI Codex verified. Saving model..." : "Model test passed. Saving model...");
+    await onSave(name, effectiveDrafts, clearedProfileSecretKeys);
   }, "Saved", "TESTING");
 
   if (!profile) {
@@ -1149,6 +1332,8 @@ function ModelProfileForm({
       : clampedStep === 2
       ? isCustomEndpoint
         ? "Set the endpoint, model id, and origin machine used to reach this model."
+        : isOpenAiCodexProvider
+        ? "Set the provider, model id, and ChatGPT login used to test this model."
         : "Set the provider, model id, and credential needed to test this model."
       : "Only set these when the provider needs a custom endpoint, origin machine, or generation limits.";
 
@@ -1169,6 +1354,7 @@ function ModelProfileForm({
         ) : clampedStep === 2 ? (
           <div class="gsv-console-settings-fields">
             {newProfileConnectionFields.map(renderProfileField)}
+            {renderOpenAiCodexLogin()}
           </div>
         ) : (
           <div class="gsv-console-settings-fields">
@@ -1203,14 +1389,15 @@ function ModelProfileForm({
       <Surface level={1} class="gsv-console-model-form">
         <div class="gsv-console-settings-fields">
           {renderNameField()}
-          {profileFields.primary.map(renderProfileField)}
+          {editProfilePrimaryFields.map(renderProfileField)}
+          {renderOpenAiCodexLogin()}
         </div>
-        {profileFields.advanced.length > 0 ? (
+        {editProfileAdvancedFields.length > 0 ? (
           <AdvancedSettingsFields
             initialOpen={shouldOpenModelAdvancedFields(initialValues)}
             resetKey={advancedResetKey}
           >
-            {profileFields.advanced.map(renderProfileField)}
+            {editProfileAdvancedFields.map(renderProfileField)}
           </AdvancedSettingsFields>
         ) : null}
         <SettingsStatus text={statusText} tone={statusTone} />
@@ -1227,10 +1414,10 @@ function ModelProfileForm({
               label="TEST & MAKE DEFAULT"
               disabled={!editable || pending}
               onClick={() => void run(async () => {
-                await validateDrafts();
+                await validateDraftsWithOpenAiCodexLogin();
                 setPendingLabel("UPDATING");
-                setStatusText("Model test passed. Updating default...");
-                await onMakeDefault(drafts);
+                setStatusText(isOpenAiCodexProvider ? "OpenAI Codex verified. Updating default..." : "Model test passed. Updating default...");
+                await onMakeDefault(effectiveDrafts, clearedProfileSecretKeys);
               }, "Default updated", "TESTING")}
             />
           ) : null}
@@ -1268,13 +1455,141 @@ function ModelProfileForm({
   );
 }
 
+function useOpenAiCodexLogin({
+  active,
+  resetKey,
+  onCheckOpenAiCodexOAuth,
+  onPollOpenAiCodexOAuth,
+  onStartOpenAiCodexOAuth,
+  setPendingLabel,
+  setStatusText,
+  setStatusTone,
+}: {
+  active: boolean;
+  resetKey: string;
+  onCheckOpenAiCodexOAuth: () => Promise<boolean>;
+  onPollOpenAiCodexOAuth: (flowId: string) => Promise<OpenAiCodexOAuthPoll>;
+  onStartOpenAiCodexOAuth: () => Promise<OpenAiCodexOAuthStart>;
+  setPendingLabel: (value: string) => void;
+  setStatusText: (value: string) => void;
+  setStatusTone: (value: SettingsStatusTone) => void;
+}) {
+  const [auth, setAuth] = useState<OpenAiCodexOAuthStart | null>(null);
+  const [connected, setConnected] = useState(false);
+
+  useEffect(() => {
+    setAuth(null);
+    setConnected(false);
+  }, [active, resetKey]);
+
+  const connect = async () => {
+    setPendingLabel("CONNECTING");
+    setStatusTone("pending");
+    setStatusText("Starting OpenAI Codex login...");
+    setConnected(false);
+    const started = await onStartOpenAiCodexOAuth();
+    setAuth(started);
+    globalThis.open?.(started.verificationUrl, "_blank", "noopener,noreferrer");
+    setStatusText(`Enter code ${started.userCode} in OpenAI Codex login.`);
+
+    let intervalSeconds = Math.max(1, started.intervalSeconds);
+    let expiresAt = started.expiresAt;
+    while (Date.now() < expiresAt) {
+      await delay(intervalSeconds * 1000);
+      const poll = await onPollOpenAiCodexOAuth(started.flowId);
+      if (poll.status === "complete") {
+        setConnected(true);
+        setStatusText("OpenAI Codex connected.");
+        return;
+      }
+      intervalSeconds = Math.max(1, poll.intervalSeconds);
+      expiresAt = poll.expiresAt;
+      setAuth((current) => current?.flowId === started.flowId
+        ? { ...current, intervalSeconds, expiresAt }
+        : current);
+    }
+    throw new Error("OpenAI Codex login expired. Start a new login and try again.");
+  };
+
+  const ensureConnected = async () => {
+    if (!active || connected) {
+      return;
+    }
+    setPendingLabel("CHECKING");
+    setStatusTone("pending");
+    setStatusText("Checking OpenAI Codex login...");
+    if (await onCheckOpenAiCodexOAuth()) {
+      setConnected(true);
+      setStatusText("OpenAI Codex connected.");
+      return;
+    }
+    await connect();
+  };
+
+  return {
+    auth,
+    connect,
+    ensureConnected,
+    resetConnected: () => setConnected(false),
+  };
+}
+
+function OpenAiCodexLoginField({
+  auth,
+  codexOriginReady,
+  editable,
+  pending,
+  pendingLabel,
+  onConnect,
+}: {
+  auth: OpenAiCodexOAuthStart | null;
+  codexOriginReady: boolean;
+  editable: boolean;
+  pending: boolean;
+  pendingLabel: string;
+  onConnect: () => void;
+}) {
+  return (
+    <div class="gsv-console-settings-field gsv-console-codex-login-field">
+      <TextInput
+        label="OPENAI CODEX LOGIN"
+        info="Connect a ChatGPT account with Codex access."
+        placeholder="Start login to get a code"
+        value={auth?.userCode ?? ""}
+        readonly
+      />
+      {auth ? (
+        <Link href={auth.verificationUrl} external arrow>
+          OpenAI Codex login
+        </Link>
+      ) : null}
+      {!codexOriginReady ? (
+        <div class="gsv-console-settings-status gsv-sublabel is-pending">
+          Choose a machine origin before testing Codex.
+        </div>
+      ) : null}
+      <div class="gsv-console-settings-actions">
+        <Button
+          variant="secondary"
+          label={pending && pendingLabel === "CONNECTING" ? "CONNECTING" : "CONNECT OPENAI CODEX"}
+          disabled={!editable || pending}
+          onClick={onConnect}
+        />
+      </div>
+    </div>
+  );
+}
+
 function SettingsFieldGroup({
   config,
   editable,
   fields,
   initialValues,
   modelProfiles = [],
+  onCheckOpenAiCodexOAuth,
+  onPollOpenAiCodexOAuth,
   onSave,
+  onStartOpenAiCodexOAuth,
   targets = [],
   validateBeforeSave,
   writeKeyForField,
@@ -1294,6 +1609,22 @@ function SettingsFieldGroup({
   const [pendingLabel, setPendingLabel] = useState("");
   const [statusText, setStatusText] = useState("");
   const [statusTone, setStatusTone] = useState<SettingsStatusTone>("success");
+  const isOpenAiCodexSettings = normalizeProviderValue(drafts[MODEL_PROVIDER_FIELD_KEY] ?? "") === OPENAI_CODEX_PROVIDER;
+  const hasOpenAiCodexOAuth = Boolean(
+    onCheckOpenAiCodexOAuth &&
+    onPollOpenAiCodexOAuth &&
+    onStartOpenAiCodexOAuth,
+  );
+  const codexLogin = useOpenAiCodexLogin({
+    active: isOpenAiCodexSettings && hasOpenAiCodexOAuth,
+    resetKey: initialDraftsSignature,
+    onCheckOpenAiCodexOAuth: onCheckOpenAiCodexOAuth ?? unavailableOpenAiCodexCheck,
+    onPollOpenAiCodexOAuth: onPollOpenAiCodexOAuth ?? unavailableOpenAiCodexPoll,
+    onStartOpenAiCodexOAuth: onStartOpenAiCodexOAuth ?? unavailableOpenAiCodexStart,
+    setPendingLabel,
+    setStatusText,
+    setStatusTone,
+  });
 
   useEffect(() => {
     setDrafts(initialDrafts);
@@ -1328,8 +1659,74 @@ function SettingsFieldGroup({
   });
   const dirty = changedEntries.length > 0;
   useUnsavedGuard(() => dirty);
-  const fieldGroups = splitModelSettingsFields(fields);
+  const entriesToSave = isOpenAiCodexSettings
+    ? withOpenAiCodexApiKeyClear(changedEntries, fields, writeKeyForField)
+    : changedEntries;
+  const fieldGroups = settingFieldGroupsForProvider(fields, isOpenAiCodexSettings);
   const advancedResetKey = initialDraftsSignature;
+  const codexOriginReady = !isOpenAiCodexSettings ||
+    normalizedTransportTargetValue(drafts[MODEL_TRANSPORT_TARGET_KEY] ?? "") !== "gsv";
+  const validationDrafts = isOpenAiCodexSettings
+    ? {
+        ...drafts,
+        [MODEL_API_KEY_FIELD_KEY]: "",
+        [MODEL_BASE_URL_FIELD_KEY]: "",
+        [MODEL_PROVIDER_STYLE_FIELD_KEY]: "",
+      }
+    : drafts;
+  const effectiveClearedSensitiveKeys = isOpenAiCodexSettings
+    ? new Set([...clearedSensitiveKeys, MODEL_API_KEY_FIELD_KEY])
+    : clearedSensitiveKeys;
+
+  const validateSettings = async () => {
+    if (!validateBeforeSave) {
+      return;
+    }
+    const values = { ...validationDrafts };
+    for (const field of fields) {
+      if (
+        isSensitiveSettingKey(field.key) &&
+        values[field.key] === "" &&
+        !effectiveClearedSensitiveKeys.has(field.key)
+      ) {
+        delete values[field.key];
+      }
+    }
+    setPendingLabel("TESTING");
+    setStatusText(isOpenAiCodexSettings ? "Verifying OpenAI Codex settings..." : "Testing model...");
+    await validateBeforeSave(values);
+  };
+
+  const validateSettingsWithOpenAiCodexLogin = async () => {
+    try {
+      await codexLogin.ensureConnected();
+      await validateSettings();
+    } catch (error) {
+      if (!isOpenAiCodexSettings || !isMissingOpenAiCodexCredentialError(error)) {
+        throw error;
+      }
+      codexLogin.resetConnected();
+      await codexLogin.connect();
+      await validateSettings();
+    }
+  };
+  const run = async (action: () => Promise<void>, successText: string, label = "SAVING") => {
+    setPending(true);
+    setPendingLabel(label);
+    setStatusText("");
+    setStatusTone("pending");
+    try {
+      await action();
+      setStatusTone("success");
+      setStatusText(successText);
+    } catch (error) {
+      setStatusTone("error");
+      setStatusText(errorMessage(error));
+    } finally {
+      setPendingLabel("");
+      setPending(false);
+    }
+  };
 
   const save = async () => {
     if (!dirty || pending) {
@@ -1341,22 +1738,19 @@ function SettingsFieldGroup({
     setStatusTone("pending");
     try {
       if (validateBeforeSave) {
-        const validationDrafts = { ...drafts };
-        for (const field of fields) {
-          if (
-            isSensitiveSettingKey(field.key) &&
-            validationDrafts[field.key] === "" &&
-            !clearedSensitiveKeys.has(field.key)
-          ) {
-            delete validationDrafts[field.key];
-          }
+        if (isOpenAiCodexSettings && hasOpenAiCodexOAuth) {
+          await validateSettingsWithOpenAiCodexLogin();
+        } else {
+          await validateSettings();
         }
-        setStatusText("Testing model...");
-        await validateBeforeSave(validationDrafts);
         setPendingLabel("SAVING");
-        setStatusText("Model test passed. Saving settings...");
+        setStatusText(isOpenAiCodexSettings ? "OpenAI Codex verified. Saving settings..." : "Model test passed. Saving settings...");
+      } else if (isOpenAiCodexSettings && hasOpenAiCodexOAuth) {
+        await codexLogin.ensureConnected();
+        setPendingLabel("SAVING");
+        setStatusText("OpenAI Codex connected. Saving settings...");
       }
-      await onSave(changedEntries);
+      await onSave(entriesToSave);
       setClearedSensitiveKeys(new Set());
       setStatusTone("success");
       setStatusText("Saved");
@@ -1375,7 +1769,7 @@ function SettingsFieldGroup({
     >
       <SettingFieldInput
         disabled={!editable || pending || field.kind === "readonly"}
-        field={field}
+        field={openAiCodexSettingsField(field, isOpenAiCodexSettings)}
         modelProfiles={modelProfiles}
         targets={targets}
         cleared={clearedSensitiveKeys.has(field.key)}
@@ -1384,14 +1778,42 @@ function SettingsFieldGroup({
         onChange={(value) => {
           setStatusText("");
           setClearedSensitiveKeys((current) => {
-            if (!current.has(field.key)) {
-              return current;
+            let next = current;
+            if (current.has(field.key)) {
+              next = new Set(current);
+              next.delete(field.key);
             }
-            const next = new Set(current);
-            next.delete(field.key);
+            if (field.key === MODEL_PROVIDER_FIELD_KEY) {
+              const selectingCodex = normalizeProviderValue(value) === OPENAI_CODEX_PROVIDER;
+              const wasCodex = normalizeProviderValue(drafts[MODEL_PROVIDER_FIELD_KEY] ?? "") === OPENAI_CODEX_PROVIDER;
+              if (selectingCodex) {
+                next = next === current ? new Set(current) : next;
+                next.add(MODEL_API_KEY_FIELD_KEY);
+              } else if (wasCodex && next.has(MODEL_API_KEY_FIELD_KEY)) {
+                next = next === current ? new Set(current) : next;
+                next.delete(MODEL_API_KEY_FIELD_KEY);
+              }
+            }
             return next;
           });
-          setDrafts((current) => ({ ...current, [field.key]: value }));
+          setDrafts((current) => {
+            const next = { ...current, [field.key]: value };
+            if (
+              field.key === MODEL_PROVIDER_FIELD_KEY &&
+              normalizeProviderValue(value) === OPENAI_CODEX_PROVIDER &&
+              normalizeProviderValue(current[MODEL_PROVIDER_FIELD_KEY] ?? "") !== OPENAI_CODEX_PROVIDER
+            ) {
+              next[MODEL_API_KEY_FIELD_KEY] = "";
+              if (shouldApplyOpenAiCodexDefaultModel(current, initialDrafts)) {
+                next["config/ai/model"] = OPENAI_CODEX_DEFAULT_MODEL;
+              }
+              const targetId = firstAvailableFetchTargetId(targets);
+              if (targetId && normalizedTransportTargetValue(current[MODEL_TRANSPORT_TARGET_KEY] ?? "") === "gsv") {
+                next[MODEL_TRANSPORT_TARGET_KEY] = targetId;
+              }
+            }
+            return next;
+          });
         }}
         onClearRedacted={() => {
           setClearedSensitiveKeys((current) => new Set(current).add(field.key));
@@ -1406,6 +1828,16 @@ function SettingsFieldGroup({
     <Surface level={1} class="gsv-console-settings-group">
       <div class="gsv-console-settings-fields">
         {fieldGroups.primary.map(renderSettingField)}
+        {isOpenAiCodexSettings && hasOpenAiCodexOAuth ? (
+          <OpenAiCodexLoginField
+            auth={codexLogin.auth}
+            codexOriginReady={codexOriginReady}
+            editable={editable}
+            pending={pending}
+            pendingLabel={pendingLabel}
+            onConnect={() => void run(codexLogin.connect, "Connected", "CONNECTING")}
+          />
+        ) : null}
       </div>
       {fieldGroups.advanced.length > 0 ? (
         <AdvancedSettingsFields
@@ -1420,7 +1852,7 @@ function SettingsFieldGroup({
         <Button
           variant="primary"
           label={pending ? pendingLabel || "SAVING" : validateBeforeSave ? "TEST & SAVE" : "SAVE CHANGES"}
-          disabled={!editable || !dirty || pending}
+          disabled={!editable || !dirty || pending || !codexOriginReady}
           onClick={() => void save()}
         />
         <Button
@@ -1484,19 +1916,82 @@ function splitModelSettingsFields(fields: readonly ConsoleSettingField[]): {
   };
 }
 
+function settingFieldGroupsForProvider(
+  fields: readonly ConsoleSettingField[],
+  openAiCodexProvider: boolean,
+): {
+  primary: readonly ConsoleSettingField[];
+  advanced: readonly ConsoleSettingField[];
+} {
+  const visibleFields = openAiCodexProvider
+    ? fields.filter((field) => !OPENAI_CODEX_IGNORED_PROFILE_FIELD_KEYS.has(field.key))
+    : fields;
+  const groups = splitModelSettingsFields(visibleFields);
+  if (!openAiCodexProvider) {
+    return groups;
+  }
+  const transportTarget = groups.advanced.find((field) => field.key === MODEL_TRANSPORT_TARGET_KEY);
+  if (!transportTarget) {
+    return groups;
+  }
+  return {
+    primary: [...groups.primary, transportTarget],
+    advanced: groups.advanced.filter((field) => field.key !== MODEL_TRANSPORT_TARGET_KEY),
+  };
+}
+
+function withOpenAiCodexApiKeyClear(
+  entries: readonly SaveConsoleConfigInput[],
+  fields: readonly ConsoleSettingField[],
+  writeKeyForField: (field: ConsoleSettingField) => string,
+): readonly SaveConsoleConfigInput[] {
+  const apiKeyField = fields.find((field) => field.key === MODEL_API_KEY_FIELD_KEY);
+  if (!apiKeyField) {
+    return entries;
+  }
+  const writeKey = writeKeyForField(apiKeyField);
+  if (entries.some((entry) => entry.key === writeKey)) {
+    return entries;
+  }
+  return [
+    ...entries,
+    {
+      key: writeKey,
+      value: "",
+    },
+  ];
+}
+
 function newModelConnectionFields(
   fields: readonly ConsoleSettingField[],
   customEndpoint: boolean,
+  openAiCodexProvider = false,
 ): ConsoleSettingField[] {
-  const keys = customEndpoint ? CUSTOM_ENDPOINT_CONNECT_FIELD_KEYS : PROVIDER_CONNECT_FIELD_KEYS;
+  const keys = customEndpoint
+    ? CUSTOM_ENDPOINT_CONNECT_FIELD_KEYS
+    : openAiCodexProvider
+    ? OPENAI_CODEX_CONNECT_FIELD_KEYS
+    : PROVIDER_CONNECT_FIELD_KEYS;
   return keys.flatMap((key) => {
     const field = fields.find((candidate) => candidate.key === key);
     if (!field) {
       return [];
     }
-    return [customEndpoint && key === "config/ai/base_url"
+    if (openAiCodexProvider && key === MODEL_TRANSPORT_TARGET_KEY) {
+      return [{
+        ...field,
+        requirement: "required" as const,
+        description: OPENAI_CODEX_TRANSPORT_TARGET_DESCRIPTION,
+        preferGsvLast: true,
+      }];
+    }
+    return [
+      (
+        customEndpoint && key === MODEL_BASE_URL_FIELD_KEY
+      )
       ? { ...field, requirement: "required" as const }
-      : field];
+      : field,
+    ];
   });
 }
 
@@ -1508,8 +2003,59 @@ function newModelAdvancedFields(
   return advancedFields.filter((field) => !connectionKeys.has(field.key));
 }
 
+function openAiCodexSettingsField(
+  field: ConsoleSettingField,
+  openAiCodexProvider: boolean,
+): ConsoleSettingField {
+  if (!openAiCodexProvider || field.key !== MODEL_TRANSPORT_TARGET_KEY) {
+    return field;
+  }
+  return {
+    ...field,
+    description: OPENAI_CODEX_TRANSPORT_TARGET_DESCRIPTION,
+    preferGsvLast: true,
+  };
+}
+
 function isCustomModelProvider(provider: string): boolean {
   return provider.trim() === "custom";
+}
+
+function normalizeProviderValue(provider: string): string {
+  return provider.trim().toLowerCase();
+}
+
+function shouldApplyOpenAiCodexDefaultModel(
+  drafts: Record<string, string>,
+  defaultValues: Record<string, string>,
+): boolean {
+  const currentModel = drafts["config/ai/model"]?.trim() ?? "";
+  const inheritedModel = defaultValues["config/ai/model"]?.trim() ?? "";
+  return !currentModel ||
+    currentModel === inheritedModel ||
+    currentModel.startsWith("@cf/");
+}
+
+function isMissingOpenAiCodexCredentialError(error: unknown): boolean {
+  const message = errorMessage(error);
+  return /no api key for provider:\s*openai-codex/i.test(message) ||
+    /openai codex.*(?:connect|login|credential|account)/i.test(message);
+}
+
+async function unavailableOpenAiCodexCheck(): Promise<boolean> {
+  throw new Error("OpenAI Codex login is not available in this settings view.");
+}
+
+async function unavailableOpenAiCodexStart(): Promise<OpenAiCodexOAuthStart> {
+  throw new Error("OpenAI Codex login is not available in this settings view.");
+}
+
+async function unavailableOpenAiCodexPoll(): Promise<OpenAiCodexOAuthPoll> {
+  throw new Error("OpenAI Codex login is not available in this settings view.");
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function defaultBuiltInProvider(
@@ -1582,7 +2128,9 @@ function SettingFieldInput({
   }, [redacted]);
 
   if (field.key === MODEL_TRANSPORT_TARGET_KEY) {
-    const options = transportTargetOptionsForValue(value, targets);
+    const options = transportTargetOptionsForValue(value, targets, {
+      preferGsvLast: field.preferGsvLast === true,
+    });
     const selectedValue = normalizedTransportTargetValue(value);
     const selectedIndex = Math.max(0, options.findIndex((option) => selectOptionValue(option) === selectedValue));
     return (
@@ -1766,6 +2314,7 @@ function fallbackModelProfileOptionsForValue(
 function transportTargetOptionsForValue(
   value: string,
   targets: readonly AgentToolTarget[],
+  options: { preferGsvLast?: boolean } = {},
 ): SelectOption[] {
   const targetOptions: SelectOption[] = targets
     .filter((target) => target.id.trim().length > 0 && targetImplementsCapability(target, "net.fetch"))
@@ -1785,13 +2334,15 @@ function transportTargetOptionsForValue(
         description: target.id,
       };
     });
-  const options = [GSV_TRANSPORT_TARGET_OPTION, ...targetOptions];
+  const baseOptions = options.preferGsvLast
+    ? [...targetOptions, GSV_TRANSPORT_TARGET_OPTION]
+    : [GSV_TRANSPORT_TARGET_OPTION, ...targetOptions];
   const selectedValue = normalizedTransportTargetValue(value);
-  if (options.some((option) => selectOptionValue(option) === selectedValue)) {
-    return options;
+  if (baseOptions.some((option) => selectOptionValue(option) === selectedValue)) {
+    return baseOptions;
   }
   return [
-    ...options,
+    ...baseOptions,
     {
       group: "Stored machine",
       label: selectedValue,
@@ -1799,6 +2350,18 @@ function transportTargetOptionsForValue(
       description: "Stored machine is not currently available with net.fetch.",
     },
   ];
+}
+
+function firstAvailableFetchTargetId(targets: readonly AgentToolTarget[]): string | null {
+  const [target] = targets
+    .filter((candidate) =>
+      candidate.id.trim().length > 0 &&
+      candidate.online !== false &&
+      targetImplementsCapability(candidate, "net.fetch")
+    )
+    .slice()
+    .sort((left, right) => (left.label || left.id).localeCompare(right.label || right.id));
+  return target?.id ?? null;
 }
 
 function targetImplementsCapability(target: AgentToolTarget, capability: string): boolean {

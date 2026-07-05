@@ -1,6 +1,10 @@
 import type {
   SysOAuthAccountSummary,
   SysOAuthConnectionKind,
+  SysOAuthDevicePollArgs,
+  SysOAuthDevicePollResult,
+  SysOAuthDeviceStartArgs,
+  SysOAuthDeviceStartResult,
   SysOAuthFlowSummary,
   SysOAuthForgetArgs,
   SysOAuthForgetResult,
@@ -16,9 +20,23 @@ import type {
   OAuthFlowRecord,
   OAuthStore,
 } from "../oauth-store";
+import {
+  OPENAI_CODEX_ACCOUNT_KEY,
+  OPENAI_CODEX_CLIENT_ID,
+  OPENAI_CODEX_DEVICE_REDIRECT_URI,
+  OPENAI_CODEX_DEVICE_TOKEN_URL,
+  OPENAI_CODEX_DEVICE_VERIFICATION_URL,
+  OPENAI_CODEX_PROVIDER,
+  OPENAI_CODEX_SCOPE,
+  OPENAI_CODEX_TOKEN_URL,
+  exchangeOpenAICodexAuthorizationCode,
+  pollOpenAICodexDeviceFlow,
+  startOpenAICodexDeviceFlow,
+} from "./openai-codex-oauth";
 
 const OAUTH_FLOW_TTL_MS = 10 * 60 * 1000;
 const OAUTH_KINDS = new Set<OAuthConnectionKind>(["ai-provider", "mcp-server", "generic"]);
+const OAUTH_DEVICE_FLOW_KIND: OAuthConnectionKind = "ai-provider";
 const EXTRA_AUTH_RESERVED_PARAMS = new Set([
   "client_id",
   "code_challenge",
@@ -210,6 +228,143 @@ export async function handleSysOAuthStart(
   return {
     authorizationUrl: authorizationUrl.toString(),
     flow: summarizeFlow(flow),
+  };
+}
+
+export async function handleSysOAuthDeviceStart(
+  args: SysOAuthDeviceStartArgs,
+  ctx: KernelContext,
+  fetcher: typeof fetch = fetch,
+): Promise<SysOAuthDeviceStartResult> {
+  const callerUid = requireUid(ctx);
+  const isRoot = callerUid === 0;
+  const raw = args as Record<string, unknown>;
+  const targetUid = parseOptionalUid(raw.uid) ?? callerUid;
+  if (!isRoot && targetUid !== callerUid) {
+    throw new Error("Permission denied: cannot start OAuth for another user");
+  }
+
+  const provider = parseRequiredString(raw.provider, "provider", 200);
+  if (provider !== OPENAI_CODEX_PROVIDER) {
+    throw new Error(`Unsupported OAuth device provider: ${provider}`);
+  }
+  const kind = parseKind(raw.kind);
+  if (kind !== OAUTH_DEVICE_FLOW_KIND) {
+    throw new Error("OpenAI Codex device OAuth must use kind: ai-provider");
+  }
+  const accountKey = parseOptionalString(raw.accountKey, "accountKey", 200) ?? OPENAI_CODEX_ACCOUNT_KEY;
+  const label = parseOptionalString(raw.label, "label", 200) ?? "OpenAI Codex";
+  const now = Date.now();
+  ctx.oauth.cleanupExpiredFlows(now);
+
+  const device = await startOpenAICodexDeviceFlow(fetcher);
+  const stateHash = await sha256Hex(createOpaqueToken());
+  const flow = ctx.oauth.createFlow({
+    stateHash,
+    uid: targetUid,
+    kind,
+    provider,
+    accountKey,
+    label,
+    authorizationEndpoint: OPENAI_CODEX_DEVICE_VERIFICATION_URL,
+    tokenEndpoint: OPENAI_CODEX_TOKEN_URL,
+    clientId: OPENAI_CODEX_CLIENT_ID,
+    redirectUri: OPENAI_CODEX_DEVICE_REDIRECT_URI,
+    scope: OPENAI_CODEX_SCOPE,
+    resource: null,
+    extraAuthParams: {
+      device_auth_id: device.deviceAuthId,
+      user_code: device.userCode,
+      verification_uri: device.verificationUrl,
+      interval_seconds: String(device.intervalSeconds),
+      device_token_endpoint: OPENAI_CODEX_DEVICE_TOKEN_URL,
+    },
+    codeVerifier: "",
+    createdAt: now,
+    expiresAt: now + device.expiresInSeconds * 1000,
+  });
+
+  return {
+    flow: summarizeFlow(flow),
+    provider,
+    userCode: device.userCode,
+    verificationUrl: device.verificationUrl,
+    intervalSeconds: device.intervalSeconds,
+    expiresAt: flow.expiresAt,
+  };
+}
+
+export async function handleSysOAuthDevicePoll(
+  args: SysOAuthDevicePollArgs,
+  ctx: KernelContext,
+  fetcher: typeof fetch = fetch,
+): Promise<SysOAuthDevicePollResult> {
+  const callerUid = requireUid(ctx);
+  const isRoot = callerUid === 0;
+  const raw = args as Record<string, unknown>;
+  const requestedUid = parseOptionalUid(raw.uid);
+  if (!isRoot && requestedUid !== undefined && requestedUid !== callerUid) {
+    throw new Error("Permission denied: cannot poll OAuth for another user");
+  }
+
+  const flowId = parseRequiredString(raw.flowId, "flowId", 200);
+  const effectiveUid = isRoot ? requestedUid : callerUid;
+  const flow = ctx.oauth.getFlow(flowId, effectiveUid);
+  if (!flow) {
+    throw new Error("OAuth device flow not found or expired");
+  }
+  if (flow.kind !== OAUTH_DEVICE_FLOW_KIND || flow.provider !== OPENAI_CODEX_PROVIDER) {
+    throw new Error("OAuth device flow is not an OpenAI Codex flow");
+  }
+
+  const deviceAuthId = flow.extraAuthParams.device_auth_id;
+  const userCode = flow.extraAuthParams.user_code;
+  if (!deviceAuthId || !userCode) {
+    throw new Error("OAuth device flow is missing device metadata");
+  }
+  const intervalSeconds = parsePositiveInt(flow.extraAuthParams.interval_seconds) ?? 5;
+  const poll = await pollOpenAICodexDeviceFlow({
+    deviceAuthId,
+    userCode,
+    intervalSeconds,
+  }, fetcher);
+  if (poll.status === "pending") {
+    return {
+      status: "pending",
+      flow: summarizeFlow(flow),
+      intervalSeconds: poll.intervalSeconds ?? intervalSeconds,
+      expiresAt: flow.expiresAt,
+    };
+  }
+
+  const token = await exchangeOpenAICodexAuthorizationCode(
+    poll.authorizationCode,
+    poll.codeVerifier,
+    fetcher,
+  );
+  const now = Date.now();
+  const account = ctx.oauth.upsertAccount({
+    uid: flow.uid,
+    kind: flow.kind,
+    provider: flow.provider,
+    accountKey: flow.accountKey,
+    label: flow.label,
+    scope: flow.scope,
+    resource: flow.resource,
+    clientId: flow.clientId,
+    tokenType: token.tokenType,
+    accessToken: token.accessToken,
+    refreshToken: token.refreshToken,
+    expiresAt: token.expiresAt,
+    metadata: {
+      authorizedAt: now,
+      ...(token.accountId ? { chatgptAccountId: token.accountId } : {}),
+    },
+  });
+  ctx.oauth.deleteFlow(flow.flowId);
+  return {
+    status: "complete",
+    account: summarizeAccount(account),
   };
 }
 
@@ -433,6 +588,12 @@ function numberField(record: Record<string, unknown>, key: string): number | nul
     return null;
   }
   return Math.floor(value);
+}
+
+function parsePositiveInt(value: unknown): number | null {
+  if (typeof value !== "string") return null;
+  const parsed = Number(value.trim());
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
 async function createPkcePair(): Promise<{ verifier: string; challenge: string }> {
