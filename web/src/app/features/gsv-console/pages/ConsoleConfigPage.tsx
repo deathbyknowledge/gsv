@@ -575,8 +575,8 @@ function ModelSettingsDetail({
           await saveModelProfiles(viewer, profiles, deleteModelProfile(profiles, profile.id), onSaveEntries);
           onCompleted();
         } : undefined}
-        onMakeDefault={profile ? async (values) => {
-          await makeProfileDefault(config, viewer, { ...profile, values }, onSaveEntries);
+        onMakeDefault={profile ? async (values, clearedSecretKeys) => {
+          await makeProfileDefault(config, viewer, { ...profile, values }, onSaveEntries, clearedSecretKeys);
         } : undefined}
         onCheckOpenAiCodexOAuth={onCheckOpenAiCodexOAuth}
         onPollOpenAiCodexOAuth={onPollOpenAiCodexOAuth}
@@ -975,14 +975,19 @@ async function makeProfileDefault(
   viewer: SettingsViewer,
   profile: ConsoleModelProfile,
   onSaveEntries: (entries: readonly SaveConsoleConfigInput[]) => Promise<void>,
+  clearedSecretKeys: ClearedProfileSecretKeys = new Map(),
 ): Promise<void> {
   if (viewer.uid === null) {
     throw new Error("A signed-in account is required to update the default model.");
   }
+  const clearedForProfile = clearedSecretKeys.get(profile.id);
   await onSaveEntries(MODEL_PROFILE_FIELDS.flatMap((field): SaveConsoleConfigInput[] => {
     const key = viewer.isRoot ? field.key : buildUserAiOverrideKey(viewer.uid!, field.key);
     const value = profile.values[field.key] ?? "";
     if (isSensitiveSettingKey(field.key) && value.length === 0) {
+      if (clearedForProfile?.has(field.key)) {
+        return [{ key, value: "" }];
+      }
       const copyFromKey = modelProfileSecretConfigKey(viewer.uid!, profile.id, field.key);
       if (configEntryForKey(config, copyFromKey)?.redacted === true) {
         return [{ key, copyFromKey }];
@@ -1026,7 +1031,10 @@ function ModelProfileForm({
   onCancel: () => void;
   onCheckOpenAiCodexOAuth: () => Promise<boolean>;
   onDelete?: () => Promise<void>;
-  onMakeDefault?: (values: Record<string, string>) => Promise<void>;
+  onMakeDefault?: (
+    values: Record<string, string>,
+    clearedSecretKeys: ClearedProfileSecretKeys,
+  ) => Promise<void>;
   onPollOpenAiCodexOAuth: (flowId: string) => Promise<OpenAiCodexOAuthPoll>;
   onStepChange?: (step: ModelProfileStep) => void;
   onStartOpenAiCodexOAuth: () => Promise<OpenAiCodexOAuthStart>;
@@ -1442,7 +1450,7 @@ function ModelProfileForm({
                 await validateDraftsWithOpenAiCodexLogin();
                 setPendingLabel("UPDATING");
                 setStatusText(isOpenAiCodexProvider ? "OpenAI Codex verified. Updating default..." : "Model test passed. Updating default...");
-                await onMakeDefault(effectiveDrafts);
+                await onMakeDefault(effectiveDrafts, clearedProfileSecretKeys);
               }, "Default updated", "TESTING")}
             />
           ) : null}
