@@ -56,6 +56,15 @@
   grid-column: auto;
 }
 
+.gsv-console-codex-login-field {
+  display: grid;
+  gap: 12px;
+}
+
+.gsv-console-codex-login-field .gsv-console-settings-actions {
+  margin-top: 2px;
+}
+
 /* Half fields sit side by side — reserve two description lines on both so the
    input boxes line up regardless of description length. */
 .gsv-console-settings-field.is-half .gsv-fld-desc {

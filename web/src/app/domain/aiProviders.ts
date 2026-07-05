@@ -27,6 +27,7 @@ export const AI_PROVIDER_OPTIONS: ReadonlyArray<AiProviderOption> = [
   { value: "moonshotai-cn", label: "Moonshot AI China" },
   { value: "nvidia", label: "NVIDIA" },
   { value: "openai", label: "OpenAI" },
+  { value: "openai-codex", label: "OpenAI Codex (ChatGPT)" },
   { value: "opencode", label: "OpenCode" },
   { value: "opencode-go", label: "OpenCode Go" },
   { value: "openrouter", label: "OpenRouter" },

@@ -20,6 +20,10 @@ import {
   shouldUseCustomProvider,
   streamWithCustomProvider,
 } from "./custom-provider";
+import {
+  completeWithOpenAiCodexFetch,
+  streamWithOpenAiCodexFetch,
+} from "./openai-codex";
 
 const GENERATION_SERVICE_MARKER = "__gsvGenerationService";
 
@@ -28,6 +32,7 @@ const OPENROUTER_ATTR_HEADERS = {
   "X-OpenRouter-Title": "GSV",
   "X-OpenRouter-Categories": "personal-agent",
 };
+const OPENAI_CODEX_PROVIDER = "openai-codex";
 
 type GenerateRequest = {
   config: AiConfigResult;
@@ -77,11 +82,14 @@ export function createGenerationService(
         timeoutMs: generationTimeoutMs,
       });
     }
-    if (shouldUseCustomProvider({
-      provider: options.modelProvider,
-      baseUrl: options.baseUrl,
-      providerStyle: options.providerStyle,
-    })) {
+    if (
+      options.modelProvider !== OPENAI_CODEX_PROVIDER &&
+      shouldUseCustomProvider({
+        provider: options.modelProvider,
+        baseUrl: options.baseUrl,
+        providerStyle: options.providerStyle,
+      })
+    ) {
       const controller = new AbortController();
       const timeout = setTimeout(() => {
         controller.abort(new Error(generationTimeoutMessage(generationTimeoutMs)));
@@ -110,19 +118,44 @@ export function createGenerationService(
       return result;
     }
 
+    assertOpenAiCodexCredential(options.modelProvider, options.apiKey);
     const model = resolvePiAiModel(options.modelProvider, options.modelName);
     const controller = new AbortController();
     const timeout = setTimeout(() => {
       controller.abort(new Error(generationTimeoutMessage(generationTimeoutMs)));
     }, generationTimeoutMs);
+    const openAiCodexFetch = options.modelProvider === OPENAI_CODEX_PROVIDER
+      ? options.fetch ?? serviceOptions.fetch
+      : undefined;
+    if (openAiCodexFetch) {
+      const result = streamWithOpenAiCodexFetch({
+        model,
+        context: request.context,
+        fetch: openAiCodexFetch,
+        options: {
+          apiKey: options.apiKey,
+          reasoning: options.reasoning,
+          maxTokens: options.maxTokens,
+          signal: controller.signal,
+          timeoutMs: generationTimeoutMs,
+          ...resolvePiAiTransportOptions(options.modelProvider, request.sessionAffinityKey),
+        },
+      });
+      void result.result().then(
+        () => clearTimeout(timeout),
+        () => clearTimeout(timeout),
+      );
+      return result;
+    }
     const result = streamPiAiSimple(model, request.context, {
       apiKey: options.apiKey,
       reasoning: options.reasoning,
       maxTokens: options.maxTokens,
       signal: controller.signal,
       timeoutMs: generationTimeoutMs,
+      ...resolvePiAiTransportOptions(options.modelProvider, request.sessionAffinityKey),
       headers: {
-        ...(options.modelProvider === "openrouter" ? OPENROUTER_ATTR_HEADERS : {})
+        ...(options.modelProvider === "openrouter" ? OPENROUTER_ATTR_HEADERS : {}),
       },
     });
     void result.result().then(
@@ -145,11 +178,14 @@ export function createGenerationService(
         timeoutMs: generationTimeoutMs,
       });
     }
-    if (shouldUseCustomProvider({
-      provider: options.modelProvider,
-      baseUrl: options.baseUrl,
-      providerStyle: options.providerStyle,
-    })) {
+    if (
+      options.modelProvider !== OPENAI_CODEX_PROVIDER &&
+      shouldUseCustomProvider({
+        provider: options.modelProvider,
+        baseUrl: options.baseUrl,
+        providerStyle: options.providerStyle,
+      })
+    ) {
       const controller = new AbortController();
       const timeout = setTimeout(() => {
         controller.abort(new Error(generationTimeoutMessage(generationTimeoutMs)));
@@ -181,12 +217,35 @@ export function createGenerationService(
       }
     }
 
+    assertOpenAiCodexCredential(options.modelProvider, options.apiKey);
     const model = resolvePiAiModel(options.modelProvider, options.modelName);
     const controller = new AbortController();
     const timeout = setTimeout(() => {
       controller.abort(new Error(generationTimeoutMessage(generationTimeoutMs)));
     }, generationTimeoutMs);
+    const openAiCodexFetch = options.modelProvider === OPENAI_CODEX_PROVIDER
+      ? options.fetch ?? serviceOptions.fetch
+      : undefined;
     try {
+      if (openAiCodexFetch) {
+        return await withTimeout(
+          completeWithOpenAiCodexFetch({
+            model,
+            context: request.context,
+            fetch: openAiCodexFetch,
+            options: {
+              apiKey: options.apiKey,
+              reasoning: options.reasoning,
+              maxTokens: options.maxTokens,
+              signal: controller.signal,
+              timeoutMs: generationTimeoutMs,
+              ...resolvePiAiTransportOptions(options.modelProvider, request.sessionAffinityKey),
+            },
+          }),
+          generationTimeoutMs,
+          generationTimeoutMessage(generationTimeoutMs),
+        );
+      }
       return await withTimeout(
         completePiAiSimple(model, request.context, {
           apiKey: options.apiKey,
@@ -194,8 +253,9 @@ export function createGenerationService(
           maxTokens: options.maxTokens,
           signal: controller.signal,
           timeoutMs: generationTimeoutMs,
+          ...resolvePiAiTransportOptions(options.modelProvider, request.sessionAffinityKey),
           headers: {
-            ...(options.modelProvider === "openrouter" ? OPENROUTER_ATTR_HEADERS : {})
+            ...(options.modelProvider === "openrouter" ? OPENROUTER_ATTR_HEADERS : {}),
           },
         }),
         generationTimeoutMs,
@@ -241,6 +301,25 @@ export function isGenerationService(value: unknown): value is GenerationService 
     typeof value === "object" &&
     (value as { [GENERATION_SERVICE_MARKER]?: unknown })[GENERATION_SERVICE_MARKER] === true,
   );
+}
+
+function resolvePiAiTransportOptions(
+  provider: string,
+  sessionAffinityKey?: string,
+): { transport?: "sse"; sessionId?: string } {
+  if (provider !== OPENAI_CODEX_PROVIDER) {
+    return {};
+  }
+  return {
+    transport: "sse",
+    ...(sessionAffinityKey ? { sessionId: sessionAffinityKey } : {}),
+  };
+}
+
+function assertOpenAiCodexCredential(provider: string, apiKey: string): void {
+  if (provider === OPENAI_CODEX_PROVIDER && !apiKey.trim()) {
+    throw new Error("OpenAI Codex is not connected. Connect OpenAI Codex before using this model.");
+  }
 }
 
 /**

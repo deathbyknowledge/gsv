@@ -14,6 +14,11 @@ const BILLING_ERROR_PATTERN =
   /\b(?:http\s*402|error\s*code:\s*402|402|payment[\s_-]+required|insufficient[\s_-]+(?:funds|credits|balance|quota)|out[\s_-]+of[\s_-]+(?:credits?|quota)|no[\s_-]+(?:credits?|quota)|billing|payment|balance(?:[\s_-]+low)?|credits?|quota[\s_-]+exceeded|exceeded[\s_-]+quota)\b/i;
 const RATE_LIMIT_ERROR_PATTERN =
   /\b(?:rate\s*limit(?:ed)?|too\s+many\s+requests|http\s*429|429)\b/i;
+const HTML_DOCUMENT_PATTERN = /(?:<!doctype\s+html|<html[\s>])/i;
+const HTML_CHALLENGE_OR_BLOCK_PATTERN =
+  /\b(?:unable\s+to\s+load\s+site|ray\s+id|cf-ray|cdn-cgi\/challenge-platform|cloudflare|vpn)\b/i;
+const PROVIDER_RESPONSE_DIAGNOSTIC_PATTERN =
+  /\b(?:HTTP\s+\d{3}|content-type=[^;\s]+|cf-ray=[^;\s]+|request-id=[^;\s]+)/gi;
 
 type ProviderErrorClassifier = {
   name: string;
@@ -113,6 +118,11 @@ export function formatProviderErrorMessage(
   }
 
   const normalized = normalizeErrorText(trimmed);
+  const htmlError = formatHtmlProviderErrorMessage(normalized, context);
+  if (htmlError) {
+    return htmlError;
+  }
+
   const source = formatProviderSource(context);
   if (isProviderAccountErrorText(normalized)) {
     return [
@@ -226,6 +236,36 @@ function formatProviderModelLabel(context: ProviderErrorContext | undefined): st
 
 function normalizeErrorText(message: string): string {
   return message.trim().replace(/\s+/g, " ");
+}
+
+function formatHtmlProviderErrorMessage(
+  message: string,
+  context: ProviderErrorContext | undefined,
+): string | null {
+  if (!HTML_DOCUMENT_PATTERN.test(message)) {
+    return null;
+  }
+  const source = formatProviderSource(context);
+  if (HTML_CHALLENGE_OR_BLOCK_PATTERN.test(message)) {
+    const lines = [
+      `Provider returned an HTML challenge or block page${source} instead of a model response.`,
+    ];
+    const diagnostics = extractProviderResponseDiagnostics(message);
+    if (diagnostics) {
+      lines.push(`Response: ${diagnostics}`);
+    }
+    lines.push("Check VPN/network access to the provider, or run GSV from an environment that can reach it.");
+    return lines.join("\n");
+  }
+  return `Provider returned an HTML error page${source} instead of a model response.`;
+}
+
+function extractProviderResponseDiagnostics(message: string): string {
+  return Array.from(message.matchAll(PROVIDER_RESPONSE_DIAGNOSTIC_PATTERN))
+    .map((match) => match[0])
+    .map((value) => value.replace(/[,:]+$/, ""))
+    .filter((value, index, values) => values.indexOf(value) === index)
+    .join("; ");
 }
 
 function normalizeOptionalErrorText(value: unknown): string | null {

@@ -1,5 +1,10 @@
 import type { GSVClient } from "@humansandmachines/gsv/client";
-import type { AiTextGenerateConfig } from "@humansandmachines/gsv/protocol";
+import type {
+  AiTextGenerateConfig,
+  SysOAuthDevicePollResult,
+  SysOAuthDeviceStartResult,
+  SysOAuthListResult,
+} from "@humansandmachines/gsv/protocol";
 import {
   buildConsoleOverviewData,
   normalizeAccountsPayload,
@@ -41,6 +46,10 @@ const TEXT_MODEL_VALIDATION_KEYS = [
 ] as const;
 const MODEL_VALIDATION_SYSTEM_PROMPT = "You are validating a text-generation model configuration. Reply with exactly: ok";
 const MODEL_VALIDATION_USER_MESSAGE = "Reply with ok.";
+const OPENAI_CODEX_PROVIDER = "openai-codex";
+const HTML_DOCUMENT_PATTERN = /(?:<!doctype\s+html|<html[\s>])/i;
+const HTML_CHALLENGE_OR_BLOCK_PATTERN =
+  /\b(?:unable\s+to\s+load\s+site|ray\s+id|cf-ray|cdn-cgi\/challenge-platform|cloudflare|vpn)\b/i;
 
 export type ConsoleClient = Pick<GSVClient, "call" | "proc" | "pkg" | "account" | "sys">;
 
@@ -127,6 +136,15 @@ export type ValidateConsoleModelConfigResult = {
   ok: true;
   provider: string;
   model: string;
+};
+
+export type StartConsoleOpenAiCodexOAuthResult = SysOAuthDeviceStartResult;
+export type PollConsoleOpenAiCodexOAuthInput = {
+  flowId: string;
+};
+export type PollConsoleOpenAiCodexOAuthResult = SysOAuthDevicePollResult;
+export type CheckConsoleOpenAiCodexOAuthResult = {
+  connected: boolean;
 };
 
 export type ConsoleProcessAction = "abort" | "reset" | "kill";
@@ -350,6 +368,37 @@ export async function validateConsoleModelConfig(
   } catch (error) {
     throw new Error(sanitizeModelValidationError(error, secretValues));
   }
+}
+
+export async function startConsoleOpenAiCodexOAuth(
+  client: Pick<GSVClient, "call">,
+): Promise<StartConsoleOpenAiCodexOAuthResult> {
+  return await client.call("sys.oauth.device.start", {
+    kind: "ai-provider",
+    provider: "openai-codex",
+  });
+}
+
+export async function pollConsoleOpenAiCodexOAuth(
+  client: Pick<GSVClient, "call">,
+  input: PollConsoleOpenAiCodexOAuthInput,
+): Promise<PollConsoleOpenAiCodexOAuthResult> {
+  return await client.call("sys.oauth.device.poll", {
+    flowId: input.flowId,
+  });
+}
+
+export async function checkConsoleOpenAiCodexOAuth(
+  client: Pick<GSVClient, "call">,
+): Promise<CheckConsoleOpenAiCodexOAuthResult> {
+  const result = await client.call("sys.oauth.list", {}) as SysOAuthListResult;
+  return {
+    connected: result.accounts.some((account) =>
+      account.kind === "ai-provider" &&
+      account.provider === OPENAI_CODEX_PROVIDER &&
+      account.accountKey === "default"
+    ),
+  };
 }
 
 export async function runConsoleProcessAction(
@@ -770,6 +819,7 @@ function modelValidationOverrides(values: Record<string, string>): Record<string
 
 function sanitizeModelValidationError(error: unknown, secretValues: readonly string[]): string {
   let message = error instanceof Error ? error.message : error ? String(error) : "model validation failed";
+  message = sanitizeHtmlModelValidationError(message);
   for (const secret of secretValues) {
     if (secret.length < 4) {
       continue;
@@ -777,6 +827,19 @@ function sanitizeModelValidationError(error: unknown, secretValues: readonly str
     message = message.replace(new RegExp(escapeRegExp(secret), "g"), "redacted");
   }
   return message || "model validation failed";
+}
+
+function sanitizeHtmlModelValidationError(message: string): string {
+  if (!HTML_DOCUMENT_PATTERN.test(message)) {
+    return message;
+  }
+  if (HTML_CHALLENGE_OR_BLOCK_PATTERN.test(message)) {
+    return [
+      "Provider returned an HTML challenge or block page instead of a model response.",
+      "Check VPN/network access to the provider, or run GSV from an environment that can reach it.",
+    ].join(" ");
+  }
+  return "Provider returned an HTML error page instead of a model response.";
 }
 
 function escapeRegExp(value: string): string {
