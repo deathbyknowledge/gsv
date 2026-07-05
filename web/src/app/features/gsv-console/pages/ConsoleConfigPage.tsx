@@ -178,6 +178,8 @@ const MODEL_API_KEY_FIELD_KEY = "config/ai/api_key";
 const MODEL_TRANSPORT_TARGET_KEY = "config/ai/transport_target";
 const OPENAI_CODEX_PROVIDER = "openai-codex";
 const OPENAI_CODEX_DEFAULT_MODEL = "gpt-5.5";
+const OPENAI_CODEX_TRANSPORT_TARGET_DESCRIPTION =
+  "OpenAI Codex requests from the GSV Worker may be blocked by provider network checks. Try one of your machines instead.";
 const OPENAI_CODEX_IGNORED_PROFILE_FIELD_KEYS = new Set([
   MODEL_API_KEY_FIELD_KEY,
   MODEL_BASE_URL_FIELD_KEY,
@@ -1288,6 +1290,16 @@ function ModelProfileForm({
             ) {
               next["config/ai/model"] = OPENAI_CODEX_DEFAULT_MODEL;
             }
+            if (
+              field.key === MODEL_PROVIDER_FIELD_KEY &&
+              normalizeProviderValue(value) === OPENAI_CODEX_PROVIDER &&
+              normalizeProviderValue(current[MODEL_PROVIDER_FIELD_KEY] ?? "") !== OPENAI_CODEX_PROVIDER
+            ) {
+              const targetId = firstAvailableFetchTargetId(targets);
+              if (targetId && normalizedTransportTargetValue(current[MODEL_TRANSPORT_TARGET_KEY] ?? "") === "gsv") {
+                next[MODEL_TRANSPORT_TARGET_KEY] = targetId;
+              }
+            }
             return next;
           });
           setStatusText("");
@@ -1550,6 +1562,7 @@ function SettingsFieldGroup({
   useUnsavedGuard(() => dirty);
   const fieldGroups = splitModelSettingsFields(fields);
   const advancedResetKey = initialDraftsSignature;
+  const isOpenAiCodexSettings = normalizeProviderValue(drafts[MODEL_PROVIDER_FIELD_KEY] ?? "") === OPENAI_CODEX_PROVIDER;
 
   const save = async () => {
     if (!dirty || pending) {
@@ -1595,7 +1608,7 @@ function SettingsFieldGroup({
     >
       <SettingFieldInput
         disabled={!editable || pending || field.kind === "readonly"}
-        field={field}
+        field={openAiCodexSettingsField(field, isOpenAiCodexSettings)}
         modelProfiles={modelProfiles}
         targets={targets}
         cleared={clearedSensitiveKeys.has(field.key)}
@@ -1604,14 +1617,42 @@ function SettingsFieldGroup({
         onChange={(value) => {
           setStatusText("");
           setClearedSensitiveKeys((current) => {
-            if (!current.has(field.key)) {
-              return current;
+            let next = current;
+            if (current.has(field.key)) {
+              next = new Set(current);
+              next.delete(field.key);
             }
-            const next = new Set(current);
-            next.delete(field.key);
+            if (field.key === MODEL_PROVIDER_FIELD_KEY) {
+              const selectingCodex = normalizeProviderValue(value) === OPENAI_CODEX_PROVIDER;
+              const wasCodex = normalizeProviderValue(drafts[MODEL_PROVIDER_FIELD_KEY] ?? "") === OPENAI_CODEX_PROVIDER;
+              if (selectingCodex) {
+                next = next === current ? new Set(current) : next;
+                next.add(MODEL_API_KEY_FIELD_KEY);
+              } else if (wasCodex && next.has(MODEL_API_KEY_FIELD_KEY)) {
+                next = next === current ? new Set(current) : next;
+                next.delete(MODEL_API_KEY_FIELD_KEY);
+              }
+            }
             return next;
           });
-          setDrafts((current) => ({ ...current, [field.key]: value }));
+          setDrafts((current) => {
+            const next = { ...current, [field.key]: value };
+            if (
+              field.key === MODEL_PROVIDER_FIELD_KEY &&
+              normalizeProviderValue(value) === OPENAI_CODEX_PROVIDER &&
+              normalizeProviderValue(current[MODEL_PROVIDER_FIELD_KEY] ?? "") !== OPENAI_CODEX_PROVIDER
+            ) {
+              next[MODEL_API_KEY_FIELD_KEY] = "";
+              if (shouldApplyOpenAiCodexDefaultModel(current, initialDrafts)) {
+                next["config/ai/model"] = OPENAI_CODEX_DEFAULT_MODEL;
+              }
+              const targetId = firstAvailableFetchTargetId(targets);
+              if (targetId && normalizedTransportTargetValue(current[MODEL_TRANSPORT_TARGET_KEY] ?? "") === "gsv") {
+                next[MODEL_TRANSPORT_TARGET_KEY] = targetId;
+              }
+            }
+            return next;
+          });
         }}
         onClearRedacted={() => {
           setClearedSensitiveKeys((current) => new Set(current).add(field.key));
@@ -1723,7 +1764,7 @@ function newModelConnectionFields(
       return [{
         ...field,
         requirement: "required" as const,
-        description: "OpenAI Codex requests from the GSV Worker may be blocked by provider network checks. Try one of your machines instead.",
+        description: OPENAI_CODEX_TRANSPORT_TARGET_DESCRIPTION,
         preferGsvLast: true,
       }];
     }
@@ -1743,6 +1784,20 @@ function newModelAdvancedFields(
 ): ConsoleSettingField[] {
   const connectionKeys = new Set(connectionFields.map((field) => field.key));
   return advancedFields.filter((field) => !connectionKeys.has(field.key));
+}
+
+function openAiCodexSettingsField(
+  field: ConsoleSettingField,
+  openAiCodexProvider: boolean,
+): ConsoleSettingField {
+  if (!openAiCodexProvider || field.key !== MODEL_TRANSPORT_TARGET_KEY) {
+    return field;
+  }
+  return {
+    ...field,
+    description: OPENAI_CODEX_TRANSPORT_TARGET_DESCRIPTION,
+    preferGsvLast: true,
+  };
 }
 
 function isCustomModelProvider(provider: string): boolean {
@@ -2066,6 +2121,18 @@ function transportTargetOptionsForValue(
       description: "Stored machine is not currently available with net.fetch.",
     },
   ];
+}
+
+function firstAvailableFetchTargetId(targets: readonly AgentToolTarget[]): string | null {
+  const [target] = targets
+    .filter((candidate) =>
+      candidate.id.trim().length > 0 &&
+      candidate.online !== false &&
+      targetImplementsCapability(candidate, "net.fetch")
+    )
+    .slice()
+    .sort((left, right) => (left.label || left.id).localeCompare(right.label || right.id));
+  return target?.id ?? null;
 }
 
 function targetImplementsCapability(target: AgentToolTarget, capability: string): boolean {
