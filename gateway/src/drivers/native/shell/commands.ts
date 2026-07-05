@@ -22,6 +22,7 @@ import { buildSchedCommand } from "./sched";
 import { buildSkillsCommand } from "./skills";
 import { buildStatCommand } from "./stat";
 import { buildTargetsCommands } from "./targets";
+import { buildWikiCommand } from "./wiki";
 
 export type NativeShellCommandOptions = {
   fsCopyTransport?: FsCopyDeviceTransport;
@@ -44,6 +45,7 @@ export function buildCustomCommands(
   const mcp = buildMcpCommand(ctx);
   const pkg = buildPkgCommand(ctx);
   const skills = buildSkillsCommand(fs, ctx, identity);
+  const wiki = buildWikiCommand(ctx);
   const proc = buildProcCommand(ctx);
   const rgitCommands = buildRgitCommands(ctx);
   const sched = buildSchedCommand(ctx);
@@ -75,6 +77,7 @@ export function buildCustomCommands(
     ...mediaCommands,
     pkg,
     skills,
+    wiki,
     flynn,
     ...notifyCommands,
     ...packageCommands,

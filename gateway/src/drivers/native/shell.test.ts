@@ -146,6 +146,12 @@ function makeContext(options?: {
         if (key === "config/server/version") return "0.3.2";
         return configValues.get(key) ?? null;
       },
+      set(key: string, value: string) {
+        configValues.set(key, value);
+      },
+      delete(key: string) {
+        return configValues.delete(key);
+      },
       list(prefix: string) {
         const normalized = prefix.endsWith("/") ? prefix : `${prefix}/`;
         return [...configValues.entries()]
@@ -2195,6 +2201,105 @@ describe("pkg shell command", () => {
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain('"name": "human-tools"');
     expect(result.stderr).toBe("");
+  });
+
+  it("initializes wiki databases through the native wiki command", async () => {
+    const applyBodies: unknown[] = [];
+    const ripgit = {
+      async fetch(input: RequestInfo | URL, init?: RequestInit) {
+        const url = new URL(String(input));
+        if (url.pathname === "/hyperspace/repos/sam/memory/refs") {
+          return Response.json({ heads: {}, tags: {} });
+        }
+        if (url.pathname === "/hyperspace/repos/sam/memory/read") {
+          return new Response("missing", { status: 404 });
+        }
+        if (url.pathname === "/hyperspace/repos/sam/memory/apply") {
+          const body = typeof init?.body === "string" ? JSON.parse(init.body) : {};
+          applyBodies.push(body);
+          return Response.json({ ok: true, head: `head-${applyBodies.length}` });
+        }
+        return new Response(`unexpected ${url.pathname}`, { status: 500 });
+      },
+    } as Fetcher;
+
+    const result = await handleShellExec(
+      { input: 'wiki db init memory --title "Sam Memory"' },
+      makeContext({ capabilities: ["repo.create", "repo.apply", "repo.read"], ripgit }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("created /src/repos/sam/memory");
+    expect(applyBodies).toHaveLength(2);
+    const initBody = applyBodies[1] as {
+      message?: string;
+      ops?: Array<{ type?: string; path?: string; contentBytes?: number[] }>;
+    };
+    expect(initBody.message).toBe("wiki: init memory");
+    expect(initBody.ops).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "put", path: "wiki.json" }),
+        expect.objectContaining({ type: "put", path: "index.md" }),
+        expect.objectContaining({ type: "put", path: "pages/.dir" }),
+      ]),
+    );
+    const indexOp = initBody.ops?.find((op) => op.path === "index.md");
+    expect(indexOp?.contentBytes).toBeDefined();
+    const indexContent = new TextDecoder().decode(new Uint8Array(indexOp?.contentBytes ?? []));
+    expect(indexContent).toContain("# Sam Memory");
+  });
+
+  it("searches wiki collections and returns source repo file refs", async () => {
+    const ripgit = {
+      async fetch(input: RequestInfo | URL) {
+        const url = new URL(String(input));
+        if (url.pathname.endsWith("/read")) {
+          const repo = url.pathname.includes("/root/gsv-manual/");
+          const path = url.searchParams.get("path");
+          if (repo && path === "wiki.json") {
+            return new Response(JSON.stringify({
+              kind: "gsv.wiki",
+              version: 1,
+              id: "gsv-manual",
+              title: "GSV Manual",
+            }), {
+              headers: {
+                "Content-Type": "text/plain",
+                "X-Blob-Size": "80",
+              },
+            });
+          }
+          return new Response("missing", { status: 404 });
+        }
+        if (url.pathname === "/hyperspace/repos/root/gsv-manual/search") {
+          return Response.json({
+            ok: true,
+            matches: [
+              { path: "pages/auth.md", line: 12, content: "Auth links route users to setup." },
+            ],
+          });
+        }
+        return new Response(`unexpected ${url.pathname}`, { status: 500 });
+      },
+    } as Fetcher;
+
+    const result = await handleShellExec(
+      { input: "wiki search auth --prefix gsv-manual" },
+      makeContext({
+        capabilities: ["repo.list", "repo.read", "repo.search"],
+        config: {
+          "repos/root/gsv-manual/created_at": "1",
+          "repos/root/gsv-manual/visibility": "public",
+        },
+        ripgit,
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("PATH\tLINE\tSNIPPET");
+    expect(result.stdout).toContain("/src/repos/root/gsv-manual/pages/auth.md\t12\tAuth links route users to setup.");
   });
 
   it("does not allow packages to shadow the wiki command", async () => {
