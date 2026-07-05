@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { KernelContext } from "../context";
-import type { OAuthFlowRecord } from "../oauth-store";
+import type { OAuthAccountRecord, OAuthFlowRecord } from "../oauth-store";
 import {
   completeOAuthCallback,
   handleSysOAuthDevicePoll,
@@ -9,6 +9,9 @@ import {
   handleSysOAuthList,
   handleSysOAuthStart,
 } from "./oauth";
+import {
+  refreshOpenAICodexAccount,
+} from "./openai-codex-oauth";
 
 type FakeOAuth = {
   cleanupExpiredFlows: ReturnType<typeof vi.fn>;
@@ -339,6 +342,59 @@ describe("sys.oauth handlers", () => {
     expect(oauth.deleteFlow).toHaveBeenCalledWith("flow-1");
     expect(JSON.stringify(result)).not.toContain(accessToken);
     expect(JSON.stringify(result)).not.toContain("refresh-token-1");
+  });
+
+  it("preserves an existing OpenAI Codex refresh token when refresh omits rotation", async () => {
+    const accessToken = fakeCodexAccessToken("chatgpt-account-2");
+    const account: OAuthAccountRecord = {
+      accountId: "acct-codex",
+      uid: 1000,
+      kind: "ai-provider",
+      provider: "openai-codex",
+      accountKey: "default",
+      label: "OpenAI Codex",
+      scope: "openid profile email offline_access",
+      resource: null,
+      clientId: "app_EMoamEEZ73f0CkXaXp7hrann",
+      tokenType: "Bearer",
+      accessToken: "old-access-token",
+      refreshToken: "stored-refresh-token",
+      expiresAt: 1_700_000_010_000,
+      createdAt: 1_600_000_000_000,
+      updatedAt: 1_600_000_000_000,
+      lastUsedAt: null,
+      metadata: { chatgptAccountId: "chatgpt-account-1" },
+    };
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const body = init?.body as URLSearchParams;
+      expect(String(input)).toBe("https://auth.openai.com/oauth/token");
+      expect(body.get("grant_type")).toBe("refresh_token");
+      expect(body.get("refresh_token")).toBe("stored-refresh-token");
+      return new Response(JSON.stringify({
+        access_token: accessToken,
+        token_type: "Bearer",
+        expires_in: 3600,
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    const result = await refreshOpenAICodexAccount(oauth as any, account, fetcher);
+
+    expect(result.refreshToken).toBe("stored-refresh-token");
+    expect(oauth.upsertAccount).toHaveBeenCalledWith(expect.objectContaining({
+      uid: 1000,
+      provider: "openai-codex",
+      accountKey: "default",
+      accessToken,
+      refreshToken: "stored-refresh-token",
+      expiresAt: 1_700_003_600_000,
+      metadata: {
+        chatgptAccountId: "chatgpt-account-2",
+        refreshedAt: 1_700_000_000_000,
+      },
+    }));
   });
 
   it("lists only caller accounts for non-root users", () => {

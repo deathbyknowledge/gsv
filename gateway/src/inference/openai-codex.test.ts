@@ -22,8 +22,58 @@ function codexModel() {
   return model;
 }
 
-function sseResponse(events: Array<Record<string, unknown>>): Response {
-  const body = events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("");
+function codexTextEvents(text = "ok"): Array<Record<string, unknown>> {
+  return [
+    {
+      type: "response.created",
+      response: { id: "resp_1" },
+    },
+    {
+      type: "response.output_item.added",
+      item: { id: "msg_1", type: "message", role: "assistant", status: "in_progress", content: [] },
+    },
+    {
+      type: "response.content_part.added",
+      output_index: 0,
+      content_index: 0,
+      part: { type: "output_text", text: "", annotations: [] },
+    },
+    {
+      type: "response.output_text.delta",
+      output_index: 0,
+      content_index: 0,
+      delta: text,
+    },
+    {
+      type: "response.output_item.done",
+      output_index: 0,
+      item: {
+        id: "msg_1",
+        type: "message",
+        role: "assistant",
+        status: "completed",
+        content: [{ type: "output_text", text, annotations: [] }],
+      },
+    },
+    {
+      type: "response.completed",
+      response: {
+        id: "resp_1",
+        model: "gpt-5.4-mini",
+        status: "completed",
+        usage: {
+          input_tokens: 1,
+          output_tokens: 1,
+          total_tokens: 2,
+          input_tokens_details: { cached_tokens: 0 },
+        },
+      },
+    },
+  ];
+}
+
+function sseResponse(events: Array<Record<string, unknown>>, separator = "\n\n"): Response {
+  const body = events.map((event) => `data: ${JSON.stringify(event)}${separator}`).join("");
   return new Response(body, {
     status: 200,
     headers: {
@@ -40,53 +90,7 @@ describe("OpenAI Codex routed fetch transport", () => {
     const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       capturedUrl = String(url);
       capturedInit = init;
-      return sseResponse([
-        {
-          type: "response.created",
-          response: { id: "resp_1" },
-        },
-        {
-          type: "response.output_item.added",
-          item: { id: "msg_1", type: "message", role: "assistant", status: "in_progress", content: [] },
-        },
-        {
-          type: "response.content_part.added",
-          output_index: 0,
-          content_index: 0,
-          part: { type: "output_text", text: "", annotations: [] },
-        },
-        {
-          type: "response.output_text.delta",
-          output_index: 0,
-          content_index: 0,
-          delta: "ok",
-        },
-        {
-          type: "response.output_item.done",
-          output_index: 0,
-          item: {
-            id: "msg_1",
-            type: "message",
-            role: "assistant",
-            status: "completed",
-            content: [{ type: "output_text", text: "ok", annotations: [] }],
-          },
-        },
-        {
-          type: "response.completed",
-          response: {
-            id: "resp_1",
-            model: "gpt-5.4-mini",
-            status: "completed",
-            usage: {
-              input_tokens: 1,
-              output_tokens: 1,
-              total_tokens: 2,
-              input_tokens_details: { cached_tokens: 0 },
-            },
-          },
-        },
-      ]);
+      return sseResponse(codexTextEvents());
     });
 
     const result = await completeWithOpenAiCodexFetch({
@@ -124,6 +128,25 @@ describe("OpenAI Codex routed fetch transport", () => {
       parallel_tool_calls: true,
     });
     expect(body).not.toHaveProperty("max_output_tokens");
+  });
+
+  it("handles CRLF-delimited Codex SSE frames", async () => {
+    const fetchMock = vi.fn(async () => sseResponse(codexTextEvents(), "\r\n\r\n"));
+
+    const result = await completeWithOpenAiCodexFetch({
+      model: codexModel(),
+      context: {
+        systemPrompt: "Reply briefly.",
+        messages: [{ role: "user", content: "Say ok" }],
+      },
+      fetch: fetchMock as unknown as typeof fetch,
+      options: {
+        apiKey: codexToken("acct-123"),
+      },
+    });
+
+    expect(result.stopReason).toBe("stop");
+    expect(result.content).toContainEqual(expect.objectContaining({ type: "text", text: "ok" }));
   });
 
   it("includes non-secret response diagnostics on HTML challenge errors", async () => {

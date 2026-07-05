@@ -156,7 +156,7 @@ export async function refreshOpenAICodexAccount(
     grant_type: "refresh_token",
     refresh_token: account.refreshToken,
     client_id: OPENAI_CODEX_CLIENT_ID,
-  }, "refresh", fetcher);
+  }, "refresh", fetcher, account.refreshToken);
   return oauth.upsertAccount({
     uid: account.uid,
     kind: account.kind,
@@ -204,6 +204,7 @@ async function exchangeOpenAICodexToken(
   params: Record<string, string>,
   operation: "exchange" | "refresh",
   fetcher: typeof fetch,
+  fallbackRefreshToken?: string,
 ): Promise<OpenAICodexToken> {
   const response = await fetcher(OPENAI_CODEX_TOKEN_URL, {
     method: "POST",
@@ -219,7 +220,8 @@ async function exchangeOpenAICodexToken(
 
   const json = await readJsonObject(response);
   const accessToken = stringField(json, "access_token");
-  const refreshToken = stringField(json, "refresh_token");
+  const refreshToken = stringField(json, "refresh_token") ??
+    (operation === "refresh" ? fallbackRefreshToken ?? null : null);
   const expiresIn = positiveNumberField(json, "expires_in");
   if (!accessToken || !refreshToken || expiresIn === null) {
     throw new Error(`OpenAI Codex token ${operation} response missing fields: ${JSON.stringify(json)}`);

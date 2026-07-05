@@ -264,6 +264,7 @@ async function* parseSse(
         break;
       }
       buffer += decoder.decode(value, { stream: true });
+      buffer = normalizeSseLineEndings(buffer);
       let index = buffer.indexOf("\n\n");
       while (index !== -1) {
         const chunk = buffer.slice(0, index);
@@ -285,6 +286,10 @@ async function* parseSse(
     await reader.cancel().catch(() => {});
     reader.releaseLock();
   }
+}
+
+function normalizeSseLineEndings(buffer: string): string {
+  return buffer.replace(/\r\n/g, "\n");
 }
 
 async function* mapCodexEvents(
