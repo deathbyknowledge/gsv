@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { env } from "cloudflare:test";
+import { env } from "cloudflare:workers";
 import { handleConnect } from "./connect";
 import type { KernelContext } from "./context";
 import { AuthStore } from "./auth-store";

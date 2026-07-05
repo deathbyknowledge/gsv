@@ -1,4 +1,5 @@
-import { defineWorkersConfig } from "@cloudflare/vitest-pool-workers/config";
+import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
+import { defineConfig } from "vitest/config";
 import { loadEnv } from "vite";
 import { fileURLToPath } from "node:url";
 
@@ -7,7 +8,16 @@ const env = { ...process.env, ...loadEnv("test", process.cwd(), "") };
 // when pi-ai imports it through the Vitest Workers runtime.
 const partialJsonShimPath = fileURLToPath(new URL("./test-support/partial-json.ts", import.meta.url));
 
-export default defineWorkersConfig({
+export default defineConfig({
+  plugins: [
+    cloudflareTest({
+      wrangler: {
+        // Use test config without service bindings (channels, AI)
+        // to avoid needing external workers during unit tests
+        configPath: "./wrangler.test.jsonc",
+      },
+    }),
+  ],
   define: {
     __PRINT_FULL_PROMPT__: JSON.stringify(env.PRINT_FULL_PROMPT === "1"),
     __GSV_TEST_OPENAI_KEY__: JSON.stringify(env.GSV_TEST_OPENAI_KEY ?? ""),
@@ -32,19 +42,8 @@ export default defineWorkersConfig({
           esbuildOptions: {
             external: ["node:sqlite"],
           },
-        }
-      }
+        },
+      },
     },
-    poolOptions: {
-      workers: {
-        isolatedStorage: false,
-        singleWorker: true,
-        wrangler: {
-          // Use test config without service bindings (channels, AI)
-          // to avoid needing external workers during unit tests
-          configPath: "./wrangler.test.jsonc"
-        }
-      }
-    }
-  }
+  },
 });

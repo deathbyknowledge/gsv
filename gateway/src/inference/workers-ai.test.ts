@@ -298,13 +298,13 @@ describe("completeWithWorkersAi", () => {
         timeoutMs: 10,
         context: toolContext(),
       });
-
-      await vi.advanceTimersByTimeAsync(10);
-
-      await expect(promise).rejects.toMatchObject({
+      const rejection = expect(promise).rejects.toMatchObject({
         name: "TimeoutError",
         message: "Workers AI generation timed out after 10ms",
       });
+
+      await vi.advanceTimersByTimeAsync(10);
+      await rejection;
       expect(run).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();

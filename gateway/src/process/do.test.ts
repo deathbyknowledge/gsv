@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterEach, vi } from "vitest";
-import { env, runInDurableObject, runDurableObjectAlarm } from "cloudflare:test";
+import { env } from "cloudflare:workers";
+import { runInDurableObject, runDurableObjectAlarm } from "cloudflare:test";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import type { Process } from "./do";
 import { Kernel } from "../kernel/do";

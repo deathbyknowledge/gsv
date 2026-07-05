@@ -12,11 +12,11 @@
     "test:run": "vitest run"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.12.21",
+    "@cloudflare/vitest-pool-workers": "^0.18.0",
     "alchemy": "^0.83.1",
     "tsx": "^4.19.0",
     "typescript": "^5.5.2",
-    "vitest": "^3.2.4",
+    "vitest": "^4.1.9",
     "wrangler": "^4.84.1"
   },
   "dependencies": {
