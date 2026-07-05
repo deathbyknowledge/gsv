@@ -5,6 +5,7 @@ import {
   buildBrowserExtensionConfig,
   buildMachineBootstrapCommand,
   buildMachineInstallCommand,
+  buildMachineRunCommand,
   defaultMachineName,
   expiresAtFromDays,
   machineDeviceIdFromName,
@@ -83,6 +84,27 @@ describe("machineProvision", () => {
       "gsv.exe config --local set node.token \"tok\"",
       "gsv.exe device install --id \"studio-pc\" --workspace \"$HOME\"",
     ].join("\n"));
+  });
+
+  it("builds one-shot foreground device run commands", () => {
+    expect(buildMachineRunCommand({
+      origin: "http://localhost:8788/",
+      platform: "linux",
+      username: "hank",
+      deviceId: "dev-machine",
+      token: "tok\"en",
+    })).toBe(
+      "gsv --url \"ws://localhost:8788/ws\" --user \"hank\" --token \"tok\\\"en\" device run --id \"dev-machine\" --workspace ~/",
+    );
+    expect(buildMachineRunCommand({
+      origin: "https://gsv.example.com",
+      platform: "windows",
+      username: "hank",
+      deviceId: "windows-dev",
+      token: "secret",
+    })).toBe(
+      "gsv.exe --url \"wss://gsv.example.com/ws\" --user \"hank\" --token \"secret\" device run --id \"windows-dev\" --workspace \"$HOME\"",
+    );
   });
 
   it("bounds token expiry days", () => {

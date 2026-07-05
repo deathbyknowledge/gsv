@@ -158,6 +158,23 @@ export function buildMachineBootstrapCommand(input: {
   ].join("\n");
 }
 
+export function buildMachineRunCommand(input: {
+  origin: string;
+  platform: MachineProvisionPlatform;
+  username: string;
+  deviceId: string;
+  token: string;
+}): string {
+  const gatewayWs = escapeCliValue(buildGatewayWsUrl(input.origin));
+  const username = escapeCliValue(input.username.trim() || "root");
+  const deviceId = escapeCliValue(input.deviceId.trim());
+  const token = escapeCliValue(input.token.trim());
+  const workspace = input.platform === "windows" ? "\"$HOME\"" : "~/";
+  const cli = cliExecutableName(input.platform);
+
+  return `${cli} --url "${gatewayWs}" --user "${username}" --token "${token}" device run --id "${deviceId}" --workspace ${workspace}`;
+}
+
 function cliExecutableName(platform: MachineProvisionPlatform): string {
   return platform === "windows" ? "gsv.exe" : "gsv";
 }
