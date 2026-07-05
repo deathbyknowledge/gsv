@@ -900,32 +900,19 @@ fn rewrite_browser_module_source(
     route_map: &BTreeMap<String, String>,
     resolver: &OxcResolver,
 ) -> Result<String, PackageAssemblyDiagnostic> {
-    let mut rewritten = module.content.clone();
-    let rewrites = collect_module_request_spans_with_oxc(&module.path, &module.content)?
-        .into_iter()
-        .map(|request| {
-            let resolved = resolver.resolve_specifier(&module.path, &request.specifier)?;
-            let target_route_path = route_map.get(&resolved.repo_path).ok_or_else(|| {
-                PackageAssemblyDiagnostic::error(
-                    "browser.unsupported-specifier",
-                    format!(
-                        "Browser module {} depends on unsupported module {}.",
-                        module.path, resolved.repo_path
-                    ),
-                    module.path.clone(),
-                )
-            })?;
-            Ok((
-                request.start,
-                request.end,
-                serde_json::to_string(target_route_path).unwrap(),
-            ))
-        })
-        .collect::<Result<Vec<_>, PackageAssemblyDiagnostic>>()?;
-    for (start, end, replacement) in rewrites.into_iter().rev() {
-        rewritten.replace_range(start..end, &replacement);
-    }
-    Ok(rewritten)
+    rewrite_module_source(module, resolver, |resolved_repo_path| {
+        let target_route_path = route_map.get(resolved_repo_path).ok_or_else(|| {
+            PackageAssemblyDiagnostic::error(
+                "browser.unsupported-specifier",
+                format!(
+                    "Browser module {} depends on unsupported module {}.",
+                    module.path, resolved_repo_path
+                ),
+                module.path.clone(),
+            )
+        })?;
+        Ok(serde_json::to_string(target_route_path).unwrap())
+    })
 }
 
 fn rewrite_runtime_module_source(
@@ -934,26 +921,41 @@ fn rewrite_runtime_module_source(
     route_map: &BTreeMap<String, String>,
     resolver: &OxcResolver,
 ) -> Result<String, PackageAssemblyDiagnostic> {
+    rewrite_module_source(module, resolver, |resolved_repo_path| {
+        let target_artifact_path = route_map.get(resolved_repo_path).ok_or_else(|| {
+            PackageAssemblyDiagnostic::error(
+                "runtime.unsupported-specifier",
+                format!(
+                    "Runtime module {} depends on unresolved artifact module {}.",
+                    module.path, resolved_repo_path
+                ),
+                module.path.clone(),
+            )
+        })?;
+        Ok(
+            serde_json::to_string(&relative_specifier(artifact_path, target_artifact_path))
+                .unwrap(),
+        )
+    })
+}
+
+fn rewrite_module_source<F>(
+    module: &PackageAssemblyArtifactModule,
+    resolver: &OxcResolver,
+    mut replacement_for: F,
+) -> Result<String, PackageAssemblyDiagnostic>
+where
+    F: FnMut(&str) -> Result<String, PackageAssemblyDiagnostic>,
+{
     let mut rewritten = module.content.clone();
     let rewrites = collect_module_request_spans_with_oxc(&module.path, &module.content)?
         .into_iter()
         .map(|request| {
             let resolved = resolver.resolve_specifier(&module.path, &request.specifier)?;
-            let target_artifact_path = route_map.get(&resolved.repo_path).ok_or_else(|| {
-                PackageAssemblyDiagnostic::error(
-                    "runtime.unsupported-specifier",
-                    format!(
-                        "Runtime module {} depends on unresolved artifact module {}.",
-                        module.path, resolved.repo_path
-                    ),
-                    module.path.clone(),
-                )
-            })?;
             Ok((
                 request.start,
                 request.end,
-                serde_json::to_string(&relative_specifier(artifact_path, target_artifact_path))
-                    .unwrap(),
+                replacement_for(&resolved.repo_path)?,
             ))
         })
         .collect::<Result<Vec<_>, PackageAssemblyDiagnostic>>()?;

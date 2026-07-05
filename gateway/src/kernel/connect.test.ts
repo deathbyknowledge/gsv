@@ -8,30 +8,26 @@ import { ConfigStore } from "./config";
 import { DeviceRegistry } from "./devices";
 import { ProcessRegistry } from "./processes";
 import { hashPassword } from "../auth/shadow";
-
-type Row = Record<string, unknown>;
+import {
+  createMockSqlTables,
+  handleMockSchemaStatement,
+  mockSqlRows,
+  type MockSqlRow,
+} from "../test-support/mock-sql";
 
 function createMockSql() {
-  const tables = new Map<string, Row[]>();
+  const { getTable } = createMockSqlTables();
 
-  function getTable(name: string): Row[] {
-    if (!tables.has(name)) tables.set(name, []);
-    return tables.get(name)!;
-  }
-
-  function exec<T = Row>(query: string, ...bindings: unknown[]) {
+  function exec<T = MockSqlRow>(query: string, ...bindings: unknown[]) {
     const q = query.trim();
 
-    if (q.startsWith("CREATE TABLE IF NOT EXISTS")) {
-      const match = q.match(/CREATE TABLE IF NOT EXISTS (\w+)/);
-      if (match) getTable(match[1]);
-      return { toArray: () => [] as T[] };
-    }
+    const schemaResult = handleMockSchemaStatement<T>(q, getTable);
+    if (schemaResult) return schemaResult;
 
     // CapabilityStore queries
     if (q.startsWith("SELECT COUNT") && q.includes("group_capabilities")) {
       const table = getTable("group_capabilities");
-      return { toArray: () => [{ cnt: table.length }] as T[] };
+      return mockSqlRows([{ cnt: table.length }] as T[]);
     }
 
     if (q.startsWith("INSERT INTO group_capabilities") || q.startsWith("INSERT OR IGNORE INTO group_capabilities")) {
@@ -39,7 +35,7 @@ function createMockSql() {
       const [gid, capability] = bindings as [number, string];
       const exists = table.some((row) => row.gid === gid && row.capability === capability);
       if (!exists) table.push({ gid, capability });
-      return { toArray: () => [] as T[] };
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("SELECT DISTINCT capability")) {
@@ -49,9 +45,7 @@ function createMockSql() {
       for (const row of table) {
         if (gids.includes(row.gid as number)) caps.add(row.capability as string);
       }
-      return {
-        toArray: () => Array.from(caps).map((c) => ({ capability: c })) as T[],
-      };
+      return mockSqlRows(Array.from(caps).map((c) => ({ capability: c })) as T[]);
     }
 
     // DeviceRegistry queries
@@ -62,7 +56,7 @@ function createMockSql() {
         (r) => r.device_id === deviceId && r.gid === gid,
       );
       if (!exists) table.push({ device_id: deviceId, gid });
-      return { toArray: () => [] as T[] };
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("INSERT INTO devices")) {
@@ -93,14 +87,14 @@ function createMockSql() {
         connected_at,
         disconnected_at: null,
       });
-      return { toArray: () => [] as T[] };
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("SELECT * FROM devices WHERE device_id")) {
       const table = getTable("devices");
       const [deviceId] = bindings as [string];
       const rows = table.filter((r) => r.device_id === deviceId);
-      return { toArray: () => rows as T[] };
+      return mockSqlRows(rows as T[]);
     }
 
     // ConfigStore queries
@@ -110,7 +104,7 @@ function createMockSql() {
       const idx = table.findIndex((row) => row.key === key);
       if (idx >= 0) table[idx] = { key, value };
       else table.push({ key, value });
-      return { toArray: () => [] as T[] };
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("INSERT OR IGNORE INTO config_kv")) {
@@ -118,7 +112,7 @@ function createMockSql() {
       const [key, value] = bindings as [string, string];
       const exists = table.some((row) => row.key === key);
       if (!exists) table.push({ key, value });
-      return { toArray: () => [] as T[] };
+      return mockSqlRows<T>();
     }
 
     if (q.startsWith("SELECT value FROM config_kv WHERE key = ?")) {
@@ -126,7 +120,7 @@ function createMockSql() {
       const [key] = bindings as [string];
       const row = table.find((record) => record.key === key);
       const rows = row ? [{ value: row.value as string }] : [];
-      return { toArray: () => rows as T[] };
+      return mockSqlRows(rows as T[]);
     }
 
     // AuthStore - auth_tokens
@@ -170,7 +164,7 @@ function createMockSql() {
         revoked_at: null,
         revoked_reason: null,
       });
-      return { toArray: () => [] as T[] };
+      return mockSqlRows<T>();
     }
 
     if (q.includes("FROM auth_tokens") && q.includes("WHERE uid = ? AND token_hash = ?")) {
@@ -186,7 +180,7 @@ function createMockSql() {
           expires_at: (row.expires_at as number | null) ?? null,
           revoked_at: (row.revoked_at as number | null) ?? null,
         }));
-      return { toArray: () => rows as T[] };
+      return mockSqlRows(rows as T[]);
     }
 
     if (q.startsWith("UPDATE auth_tokens SET last_used_at = ? WHERE token_id = ?")) {
@@ -194,43 +188,43 @@ function createMockSql() {
       const [lastUsedAt, tokenId] = bindings as [number, string];
       const row = table.find((record) => record.token_id === tokenId);
       if (row) row.last_used_at = lastUsedAt;
-      return { toArray: () => [] as T[] };
+      return mockSqlRows<T>();
     }
 
     // AuthStore - passwd
     if (q.startsWith("SELECT COUNT") && q.includes("passwd")) {
       const table = getTable("passwd");
-      return { toArray: () => [{ c: table.length }] as T[] };
+      return mockSqlRows([{ c: table.length }] as T[]);
     }
 
     if (q.startsWith("INSERT INTO passwd")) {
       const table = getTable("passwd");
       const [username, uid, gid, gecos, home, shell] = bindings as [string, number, number, string, string, string];
       table.push({ username, uid, gid, gecos, home, shell });
-      return { toArray: () => [] as T[] };
+      return mockSqlRows<T>();
     }
 
     if (q.includes("FROM passwd WHERE username")) {
       const table = getTable("passwd");
       const [username] = bindings as [string];
-      return { toArray: () => table.filter(r => r.username === username) as T[] };
+      return mockSqlRows(table.filter(r => r.username === username) as T[]);
     }
 
     if (q.includes("FROM passwd WHERE uid")) {
       const table = getTable("passwd");
       const [uid] = bindings as [number];
-      return { toArray: () => table.filter(r => r.uid === uid) as T[] };
+      return mockSqlRows(table.filter(r => r.uid === uid) as T[]);
     }
 
     if (q.includes("FROM passwd ORDER BY")) {
       const table = getTable("passwd");
-      return { toArray: () => [...table].sort((a, b) => (a.uid as number) - (b.uid as number)) as T[] };
+      return mockSqlRows([...table].sort((a, b) => (a.uid as number) - (b.uid as number)) as T[]);
     }
 
     if (q.includes("MAX(uid)")) {
       const table = getTable("passwd");
       const max = table.reduce((m, r) => Math.max(m, r.uid as number), 0);
-      return { toArray: () => [{ m: table.length > 0 ? max : null }] as T[] };
+      return mockSqlRows([{ m: table.length > 0 ? max : null }] as T[]);
     }
 
     // AuthStore - shadow
@@ -242,18 +236,18 @@ function createMockSql() {
       const entry = { username, hash, lastchanged, min, max, warn, inactive, expire, reserved };
       if (existing >= 0) table[existing] = entry;
       else table.push(entry);
-      return { toArray: () => [] as T[] };
+      return mockSqlRows<T>();
     }
 
     if (q.includes("FROM shadow WHERE username")) {
       const table = getTable("shadow");
       const [username] = bindings as [string];
-      return { toArray: () => table.filter(r => r.username === username) as T[] };
+      return mockSqlRows(table.filter(r => r.username === username) as T[]);
     }
 
     if (q.includes("FROM shadow ORDER BY")) {
       const table = getTable("shadow");
-      return { toArray: () => [...table] as T[] };
+      return mockSqlRows([...table] as T[]);
     }
 
     if (q.includes("UPDATE shadow SET")) {
@@ -261,7 +255,7 @@ function createMockSql() {
       const [hash, lastchanged, username] = bindings as [string, string, string];
       const entry = table.find(r => r.username === username);
       if (entry) { entry.hash = hash; entry.lastchanged = lastchanged; }
-      return { toArray: () => [] as T[] };
+      return mockSqlRows<T>();
     }
 
     // AuthStore - groups
@@ -269,30 +263,30 @@ function createMockSql() {
       const table = getTable("groups");
       const [name, gid, members] = bindings as [string, number, string];
       table.push({ name, gid, members });
-      return { toArray: () => [] as T[] };
+      return mockSqlRows<T>();
     }
 
     if (q.includes("FROM groups WHERE name")) {
       const table = getTable("groups");
       const [name] = bindings as [string];
-      return { toArray: () => table.filter(r => r.name === name) as T[] };
+      return mockSqlRows(table.filter(r => r.name === name) as T[]);
     }
 
     if (q.includes("FROM groups WHERE gid")) {
       const table = getTable("groups");
       const [gid] = bindings as [number];
-      return { toArray: () => table.filter(r => r.gid === gid) as T[] };
+      return mockSqlRows(table.filter(r => r.gid === gid) as T[]);
     }
 
     if (q.includes("FROM groups ORDER BY")) {
       const table = getTable("groups");
-      return { toArray: () => [...table].sort((a, b) => (a.gid as number) - (b.gid as number)) as T[] };
+      return mockSqlRows([...table].sort((a, b) => (a.gid as number) - (b.gid as number)) as T[]);
     }
 
     if (q.includes("MAX(gid)")) {
       const table = getTable("groups");
       const max = table.reduce((m, r) => Math.max(m, r.gid as number), 0);
-      return { toArray: () => [{ m: table.length > 0 ? max : null }] as T[] };
+      return mockSqlRows([{ m: table.length > 0 ? max : null }] as T[]);
     }
 
     // DELETE
@@ -312,10 +306,10 @@ function createMockSql() {
           table.length = 0;
         }
       }
-      return { toArray: () => [] as T[] };
+      return mockSqlRows<T>();
     }
 
-    return { toArray: () => [] as T[] };
+    return mockSqlRows<T>();
   }
 
   return { exec };

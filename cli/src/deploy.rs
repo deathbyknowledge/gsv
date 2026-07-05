@@ -1254,65 +1254,33 @@ async fn ensure_r2_bucket_exists(
     bucket_name: &str,
     jurisdiction: Option<&str>,
 ) -> Result<bool, Box<dyn std::error::Error>> {
-    let get_response = send_cloudflare_request_with_retry(
+    if r2_bucket_exists(client, account_id, api_token, bucket_name, jurisdiction).await? {
+        return Ok(false);
+    }
+
+    let create_response = send_cloudflare_request_with_retry(
         || {
             let mut request = client
-                .get(cloudflare_api_url(&format!(
-                    "/accounts/{}/r2/buckets/{}",
-                    account_id, bucket_name
+                .post(cloudflare_api_url(&format!(
+                    "/accounts/{}/r2/buckets",
+                    account_id
                 )))
-                .bearer_auth(api_token);
+                .bearer_auth(api_token)
+                .json(&json!({ "name": bucket_name }));
             if let Some(value) = jurisdiction {
                 request = request.header("cf-r2-jurisdiction", value);
             }
             request.send()
         },
-        &format!("Get R2 bucket {}", bucket_name),
+        &format!("Create R2 bucket {}", bucket_name),
     )
     .await?;
-    match get_response.status() {
-        StatusCode::OK => {
-            let _: Value =
-                parse_cloudflare_response(get_response, &format!("Get R2 bucket {}", bucket_name))
-                    .await?;
-            Ok(false)
-        }
-        StatusCode::NOT_FOUND => {
-            let create_response = send_cloudflare_request_with_retry(
-                || {
-                    let mut request = client
-                        .post(cloudflare_api_url(&format!(
-                            "/accounts/{}/r2/buckets",
-                            account_id
-                        )))
-                        .bearer_auth(api_token)
-                        .json(&json!({ "name": bucket_name }));
-                    if let Some(value) = jurisdiction {
-                        request = request.header("cf-r2-jurisdiction", value);
-                    }
-                    request.send()
-                },
-                &format!("Create R2 bucket {}", bucket_name),
-            )
-            .await?;
-            let _: Value = parse_cloudflare_response(
-                create_response,
-                &format!("Create R2 bucket {}", bucket_name),
-            )
-            .await?;
-            Ok(true)
-        }
-        _ => {
-            let error = parse_cloudflare_response::<Value>(
-                get_response,
-                &format!("Get R2 bucket {}", bucket_name),
-            )
-            .await
-            .err()
-            .unwrap_or_else(|| "Unknown R2 lookup failure".into());
-            Err(error)
-        }
-    }
+    let _: Value = parse_cloudflare_response(
+        create_response,
+        &format!("Create R2 bucket {}", bucket_name),
+    )
+    .await?;
+    Ok(true)
 }
 
 async fn fetch_account_workers_subdomain(
@@ -3200,17 +3168,14 @@ pub async fn set_discord_bot_token_secret(
     bot_token: &str,
     instance: &DeployInstance,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let client = reqwest::Client::new();
-    let script_name = instance
-        .script_name(COMPONENT_CHANNEL_DISCORD)
-        .ok_or("Unsupported Discord channel component")?;
-    set_worker_secret(
-        &client,
+    set_channel_bot_token_secret(
         account_id,
         api_token,
-        &script_name,
-        "DISCORD_BOT_TOKEN",
         bot_token,
+        instance,
+        COMPONENT_CHANNEL_DISCORD,
+        "DISCORD_BOT_TOKEN",
+        "Discord",
     )
     .await
 }
@@ -3221,16 +3186,37 @@ pub async fn set_telegram_bot_token_secret(
     bot_token: &str,
     instance: &DeployInstance,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    set_channel_bot_token_secret(
+        account_id,
+        api_token,
+        bot_token,
+        instance,
+        COMPONENT_CHANNEL_TELEGRAM,
+        "TELEGRAM_BOT_TOKEN",
+        "Telegram",
+    )
+    .await
+}
+
+async fn set_channel_bot_token_secret(
+    account_id: &str,
+    api_token: &str,
+    bot_token: &str,
+    instance: &DeployInstance,
+    component: &str,
+    secret_name: &str,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     let client = reqwest::Client::new();
     let script_name = instance
-        .script_name(COMPONENT_CHANNEL_TELEGRAM)
-        .ok_or("Unsupported Telegram channel component")?;
+        .script_name(component)
+        .ok_or_else(|| format!("Unsupported {} channel component", label))?;
     set_worker_secret(
         &client,
         account_id,
         api_token,
         &script_name,
-        "TELEGRAM_BOT_TOKEN",
+        secret_name,
         bot_token,
     )
     .await
