@@ -149,6 +149,55 @@ describe("OpenAI Codex routed fetch transport", () => {
     expect(result.content).toContainEqual(expect.objectContaining({ type: "text", text: "ok" }));
   });
 
+  it("emits an error instead of done for terminal failed Codex responses", async () => {
+    const fetchMock = vi.fn(async () => sseResponse([
+      {
+        type: "response.created",
+        response: { id: "resp_failed" },
+      },
+      {
+        type: "response.completed",
+        response: {
+          id: "resp_failed",
+          model: "gpt-5.4-mini",
+          status: "failed",
+          error: {
+            code: "server_error",
+            message: "Codex failed",
+          },
+          usage: {
+            input_tokens: 1,
+            output_tokens: 0,
+            total_tokens: 1,
+            input_tokens_details: { cached_tokens: 0 },
+          },
+        },
+      },
+    ]));
+
+    const stream = streamWithOpenAiCodexFetch({
+      model: codexModel(),
+      context: {
+        systemPrompt: "Reply briefly.",
+        messages: [{ role: "user", content: "Say ok" }],
+      },
+      fetch: fetchMock as unknown as typeof fetch,
+      options: {
+        apiKey: codexToken("acct-123"),
+      },
+    });
+    const events = [];
+    for await (const event of stream) {
+      events.push(event);
+    }
+
+    const result = await stream.result();
+
+    expect(events.map((event) => event.type)).toEqual(["start", "error"]);
+    expect(result.stopReason).toBe("error");
+    expect(result.errorMessage).toContain("OpenAI Codex returned an error stop reason");
+  });
+
   it("includes non-secret response diagnostics on HTML challenge errors", async () => {
     const fetchMock = vi.fn(async () =>
       new Response("<html><body>Unable to load site</body></html>", {

@@ -85,10 +85,13 @@ export function streamWithOpenAiCodexFetch(
       if (request.options?.signal?.aborted) {
         throw new Error("Request was aborted");
       }
+      if (output.stopReason === "aborted" || output.stopReason === "error") {
+        throw new Error(output.errorMessage || "OpenAI Codex returned an error stop reason");
+      }
       stream.push({ type: "done", reason: doneReason(output.stopReason), message: output });
       stream.end();
     } catch (error) {
-      output.stopReason = request.options?.signal?.aborted ? "aborted" : "error";
+      output.stopReason = request.options?.signal?.aborted || output.stopReason === "aborted" ? "aborted" : "error";
       output.errorMessage = error instanceof Error ? error.message : String(error);
       stream.push({ type: "error", reason: output.stopReason, error: output });
       stream.end();
