@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type { JSX } from "preact";
 import { Icon } from "./Icon";
 import { Tooltip } from "./Tooltip";
+import { clipboardImageFiles } from "./messageInputClipboard";
 import "./MessageInput.css";
 
 export type MessageInputAttachment = {
@@ -84,34 +85,6 @@ function StopGlyph() {
   );
 }
 
-function isImageFile(file: File): boolean {
-  return file.type.toLowerCase().startsWith("image/")
-    || /\.(avif|bmp|gif|heic|heif|jpe?g|png|tiff?|webp)$/i.test(file.name);
-}
-
-function clipboardImageFiles(data: DataTransfer | null): File[] {
-  if (!data) {
-    return [];
-  }
-
-  const files: File[] = [];
-  for (const item of Array.from(data.items)) {
-    if (item.kind !== "file") {
-      continue;
-    }
-    const file = item.getAsFile();
-    if (file && isImageFile(file)) {
-      files.push(file);
-    }
-  }
-
-  if (files.length > 0) {
-    return files;
-  }
-
-  return Array.from(data.files).filter(isImageFile);
-}
-
 /** MessageInput — autosizing composer with optional attachments and run control. */
 export function MessageInput({
   actions,
@@ -182,7 +155,7 @@ export function MessageInput({
     event.preventDefault();
     submitDraft();
   };
-  const handlePaste = (event: JSX.TargetedClipboardEvent<HTMLFormElement>) => {
+  const handlePaste = (event: JSX.TargetedClipboardEvent<HTMLTextAreaElement>) => {
     if (!onFiles || disabled || busy) {
       return;
     }
@@ -231,7 +204,7 @@ export function MessageInput({
           ))}
         </div>
       ) : null}
-      <form class="gsv-mi-bar" onSubmit={handleSubmit} onPaste={handlePaste}>
+      <form class="gsv-mi-bar" onSubmit={handleSubmit}>
         {onFiles ? (
           <label class="gsv-mi-icon gsv-mi-file" title="Attach files" aria-label="Attach files">
             <LeadGlyph />
@@ -262,6 +235,7 @@ export function MessageInput({
           value={draft}
           onInput={handleInput}
           onKeyDown={handleKeyDown}
+          onPaste={handlePaste}
         />
         {voiceAction}
         {onVoiceClick ? (
