@@ -3,6 +3,8 @@ import type { KernelContext } from "../context";
 import type { OAuthFlowRecord } from "../oauth-store";
 import {
   completeOAuthCallback,
+  handleSysOAuthDevicePoll,
+  handleSysOAuthDeviceStart,
   handleSysOAuthForget,
   handleSysOAuthList,
   handleSysOAuthStart,
@@ -14,6 +16,7 @@ type FakeOAuth = {
   listAccounts: ReturnType<typeof vi.fn>;
   listFlows: ReturnType<typeof vi.fn>;
   deleteAccount: ReturnType<typeof vi.fn>;
+  getFlow: ReturnType<typeof vi.fn>;
   getFlowByStateHash: ReturnType<typeof vi.fn>;
   upsertAccount: ReturnType<typeof vi.fn>;
   deleteFlow: ReturnType<typeof vi.fn>;
@@ -50,6 +53,7 @@ function createFakeOAuth(): FakeOAuth {
     listAccounts: vi.fn(() => []),
     listFlows: vi.fn(() => []),
     deleteAccount: vi.fn(() => true),
+    getFlow: vi.fn(),
     getFlowByStateHash: vi.fn(),
     upsertAccount: vi.fn((input) => ({
       accountId: "acct-1",
@@ -81,6 +85,25 @@ const flow: OAuthFlowRecord = {
   createdAt: 1_700_000_000_000,
   expiresAt: 1_700_000_600_000,
 };
+
+function encodeBase64Url(value: string): string {
+  return btoa(value)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+function fakeCodexAccessToken(accountId: string): string {
+  return [
+    encodeBase64Url("{}"),
+    encodeBase64Url(JSON.stringify({
+      "https://api.openai.com/auth": {
+        chatgpt_account_id: accountId,
+      },
+    })),
+    "sig",
+  ].join(".");
+}
 
 describe("sys.oauth handlers", () => {
   let oauth: FakeOAuth;
@@ -166,6 +189,156 @@ describe("sys.oauth handlers", () => {
       ctx,
     )).rejects.toThrow("extraAuthParams cannot override state");
     expect(oauth.createFlow).not.toHaveBeenCalled();
+  });
+
+  it("starts an OpenAI Codex device-code flow", async () => {
+    const ctx = makeContext(1000, oauth);
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+      device_auth_id: "device-auth-1",
+      user_code: "ABCD-EFGH",
+      interval: 5,
+      expires_in: 900,
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }));
+
+    const result = await handleSysOAuthDeviceStart({
+      kind: "ai-provider",
+      provider: "openai-codex",
+    }, ctx, fetcher);
+
+    expect(fetcher).toHaveBeenCalledWith("https://auth.openai.com/api/accounts/deviceauth/usercode", expect.objectContaining({
+      method: "POST",
+    }));
+    expect(oauth.createFlow).toHaveBeenCalledWith(expect.objectContaining({
+      uid: 1000,
+      kind: "ai-provider",
+      provider: "openai-codex",
+      accountKey: "default",
+      label: "OpenAI Codex",
+      authorizationEndpoint: "https://auth.openai.com/codex/device",
+      tokenEndpoint: "https://auth.openai.com/oauth/token",
+      redirectUri: "https://auth.openai.com/deviceauth/callback",
+      scope: "openid profile email offline_access",
+      extraAuthParams: expect.objectContaining({
+        device_auth_id: "device-auth-1",
+        user_code: "ABCD-EFGH",
+        interval_seconds: "5",
+      }),
+    }));
+    expect(result).toMatchObject({
+      provider: "openai-codex",
+      userCode: "ABCD-EFGH",
+      verificationUrl: "https://auth.openai.com/codex/device",
+      intervalSeconds: 5,
+      expiresAt: 1_700_000_900_000,
+    });
+    expect(result.flow).not.toHaveProperty("extraAuthParams");
+  });
+
+  it("polls a pending OpenAI Codex device-code flow", async () => {
+    const ctx = makeContext(1000, oauth);
+    oauth.getFlow.mockReturnValue({
+      ...flow,
+      authorizationEndpoint: "https://auth.openai.com/codex/device",
+      tokenEndpoint: "https://auth.openai.com/oauth/token",
+      redirectUri: "https://auth.openai.com/deviceauth/callback",
+      scope: "openid profile email offline_access",
+      extraAuthParams: {
+        device_auth_id: "device-auth-1",
+        user_code: "ABCD-EFGH",
+        interval_seconds: "5",
+      },
+    });
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+      error: "deviceauth_authorization_pending",
+    }), {
+      status: 403,
+      headers: { "content-type": "application/json" },
+    }));
+
+    const result = await handleSysOAuthDevicePoll({
+      flowId: "flow-1",
+    }, ctx, fetcher);
+
+    expect(oauth.getFlow).toHaveBeenCalledWith("flow-1", 1000);
+    expect(fetcher).toHaveBeenCalledWith("https://auth.openai.com/api/accounts/deviceauth/token", expect.objectContaining({
+      method: "POST",
+    }));
+    expect(result).toMatchObject({
+      status: "pending",
+      intervalSeconds: 5,
+      expiresAt: flow.expiresAt,
+    });
+    expect(oauth.upsertAccount).not.toHaveBeenCalled();
+    expect(oauth.deleteFlow).not.toHaveBeenCalled();
+  });
+
+  it("completes an OpenAI Codex device-code flow and stores the OAuth token", async () => {
+    const ctx = makeContext(1000, oauth);
+    oauth.getFlow.mockReturnValue({
+      ...flow,
+      clientId: "app_EMoamEEZ73f0CkXaXp7hrann",
+      authorizationEndpoint: "https://auth.openai.com/codex/device",
+      tokenEndpoint: "https://auth.openai.com/oauth/token",
+      redirectUri: "https://auth.openai.com/deviceauth/callback",
+      scope: "openid profile email offline_access",
+      extraAuthParams: {
+        device_auth_id: "device-auth-1",
+        user_code: "ABCD-EFGH",
+        interval_seconds: "5",
+      },
+    });
+    const accessToken = fakeCodexAccessToken("chatgpt-account-1");
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === "https://auth.openai.com/api/accounts/deviceauth/token") {
+        return new Response(JSON.stringify({
+          authorization_code: "authorization-code-1",
+          code_verifier: "code-verifier-1",
+        }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      const body = init?.body as URLSearchParams;
+      expect(String(input)).toBe("https://auth.openai.com/oauth/token");
+      expect(body.get("grant_type")).toBe("authorization_code");
+      expect(body.get("code")).toBe("authorization-code-1");
+      expect(body.get("code_verifier")).toBe("code-verifier-1");
+      expect(body.get("redirect_uri")).toBe("https://auth.openai.com/deviceauth/callback");
+      return new Response(JSON.stringify({
+        access_token: accessToken,
+        refresh_token: "refresh-token-1",
+        token_type: "Bearer",
+        expires_in: 3600,
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    const result = await handleSysOAuthDevicePoll({
+      flowId: "flow-1",
+    }, ctx, fetcher);
+
+    expect(result.status).toBe("complete");
+    expect(oauth.upsertAccount).toHaveBeenCalledWith(expect.objectContaining({
+      uid: 1000,
+      kind: "ai-provider",
+      provider: "openai-codex",
+      accountKey: "default",
+      accessToken,
+      refreshToken: "refresh-token-1",
+      expiresAt: 1_700_003_600_000,
+      metadata: {
+        authorizedAt: 1_700_000_000_000,
+        chatgptAccountId: "chatgpt-account-1",
+      },
+    }));
+    expect(oauth.deleteFlow).toHaveBeenCalledWith("flow-1");
+    expect(JSON.stringify(result)).not.toContain(accessToken);
+    expect(JSON.stringify(result)).not.toContain("refresh-token-1");
   });
 
   it("lists only caller accounts for non-root users", () => {

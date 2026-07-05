@@ -448,6 +448,40 @@ export type SysOAuthStartResult = {
   flow: SysOAuthFlowSummary;
 };
 
+export type SysOAuthDeviceStartArgs = {
+  uid?: number;
+  kind: "ai-provider";
+  provider: "openai-codex";
+  accountKey?: string;
+  label?: string;
+};
+
+export type SysOAuthDeviceStartResult = {
+  flow: SysOAuthFlowSummary;
+  provider: string;
+  userCode: string;
+  verificationUrl: string;
+  intervalSeconds: number;
+  expiresAt: number;
+};
+
+export type SysOAuthDevicePollArgs = {
+  uid?: number;
+  flowId: string;
+};
+
+export type SysOAuthDevicePollResult =
+  | {
+      status: "pending";
+      flow: SysOAuthFlowSummary;
+      intervalSeconds: number;
+      expiresAt: number;
+    }
+  | {
+      status: "complete";
+      account: SysOAuthAccountSummary;
+    };
+
 export type SysOAuthListArgs = {
   uid?: number;
   includePending?: boolean;

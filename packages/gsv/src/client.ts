@@ -341,6 +341,8 @@ const SYSCALL_NAMES = [
   "sys.device.update",
   "sys.device.delete",
   "sys.oauth.start",
+  "sys.oauth.device.start",
+  "sys.oauth.device.poll",
   "sys.oauth.list",
   "sys.oauth.forget",
   "sys.mcp.add",
