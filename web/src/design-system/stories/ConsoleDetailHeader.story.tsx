@@ -74,8 +74,6 @@ const story: Story = {
               meta: "12 TOOLS",
               rows: [
                 { id: "tools", label: "TOOLS", sub: "12" },
-                { id: "resources", label: "RESOURCES", sub: "4" },
-                { id: "prompts", label: "PROMPTS", sub: "2" },
               ],
             },
           ]}

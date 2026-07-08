@@ -2,6 +2,7 @@ import {
   Connection,
   ConnectionContext,
   Agent as Host,
+  getCurrentAgent,
   type WSMessage,
 } from "agents";
 import {
@@ -83,6 +84,11 @@ import {
   type McpAddConnectionInput,
   type McpAddConnectionResult,
 } from "./sys/mcp";
+import {
+  discoverMcpCapabilitiesLenient,
+  isOptionalMcpListMethodNotFound,
+  type LenientMcpConnection,
+} from "./mcp-discovery";
 import { oauthCallbackHtmlResponse } from "../oauth-http";
 import { isInternalOnlySyscall } from "./syscall-exposure";
 import {
@@ -118,6 +124,57 @@ import { runKernelSqlMigrations } from "./schema/migrations";
 
 const SERVER_VERSION = "0.3.3";
 const KERNEL_BINARY_DEVICE_ID = "__gsv_kernel__";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function createMcpServerId(): string {
+  return `mcp-${crypto.randomUUID().replace(/-/g, "").slice(0, 12)}`;
+}
+
+function resolveMcpCallbackHost(callbackHost: string | undefined): string | undefined {
+  if (callbackHost) {
+    return callbackHost;
+  }
+
+  const { request, connection } = getCurrentAgent();
+  const url = request?.url ?? connection?.uri;
+  if (!url) {
+    return undefined;
+  }
+
+  try {
+    const parsed = new URL(url);
+    return `${parsed.protocol}//${parsed.host}`;
+  } catch {
+    return undefined;
+  }
+}
+
+function buildMcpHeaderTransportOptions(headers: Record<string, string> | undefined) {
+  if (!headers) {
+    return {};
+  }
+
+  return {
+    headers,
+    eventSourceInit: {
+      fetch: (url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        const mergedHeaders = new Headers(init?.headers);
+        for (const [key, value] of Object.entries(headers)) {
+          mergedHeaders.set(key, value);
+        }
+        return fetch(url, {
+          ...init,
+          headers: mergedHeaders,
+        });
+      },
+    },
+    requestInit: { headers },
+  };
+}
+
 const CLI_DOWNLOADS_REFRESHED_VERSION_KEY = "config/downloads/cli/refreshed_for_version";
 const CLI_DOWNLOADS_REFRESH_ATTEMPT_KEY = "config/downloads/cli/refresh_attempt_at";
 const CLI_DOWNLOADS_REFRESHED_AT_KEY = "config/downloads/cli/refreshed_at";
@@ -184,6 +241,8 @@ type ResolvePackageAppRpcResult =
       message: string;
     };
 
+type McpDiscoveryKernelResult = { success: boolean; error?: string } | undefined;
+
 type AuthorizeGitHttpInput = {
   owner: string;
   repo: string;
@@ -231,6 +290,7 @@ export class Kernel extends Host<Env> {
   private readonly binaryRoutes = new Map<number, BinaryRoute>();
   private readonly binaryRoutesByRequest = new Map<string, Set<number>>();
   private readonly pendingBinaryStreams = new Map<number, PendingBinaryStream>();
+  private readonly mcpDiscoveryTasks = new Map<string, Promise<McpDiscoveryKernelResult>>();
   private cliDownloadsRefresh: Promise<void> | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
@@ -290,6 +350,12 @@ export class Kernel extends Host<Env> {
           },
       ),
     });
+    this.mcp.onObservabilityEvent((event) => {
+      this.recordMcpDiscoveryEvent(event);
+    });
+    this.mcp.onServerStateChanged(() => {
+      this.broadcastMcpChanged();
+    });
 
     this.ready = Promise.resolve();
 
@@ -323,41 +389,198 @@ export class Kernel extends Host<Env> {
   }
 
   private async addMcpServerConnection(input: McpAddConnectionInput): Promise<McpAddConnectionResult> {
-    const result = await this.addMcpServer(
-      `u${input.uid}:${input.name}`,
-      input.url,
-      {
-        callbackHost: input.callbackHost,
-        callbackPath: "/oauth/callback",
+    const serverName = `u${input.uid}:${input.name}`;
+    const existingIds = new Set((this.mcp.listServers() as Array<{ id: string }>).map((server) => server.id));
+    let serverId = createMcpServerId();
+    while (existingIds.has(serverId)) {
+      serverId = createMcpServerId();
+    }
+
+    const callbackHost = resolveMcpCallbackHost(input.callbackHost);
+    const callbackUrl = callbackHost
+      ? `${callbackHost.replace(/\/$/, "")}/oauth/callback`
+      : undefined;
+    const authProvider = callbackUrl ? this.createMcpOAuthProvider(callbackUrl) : undefined;
+    if (authProvider) {
+      authProvider.serverId = serverId;
+    }
+
+    const headerTransportOptions = buildMcpHeaderTransportOptions(input.transport.headers);
+
+    let registered = false;
+    try {
+      await this.mcp.registerServer(serverId, {
+        url: input.url,
+        name: serverName,
+        callbackUrl,
         transport: {
+          ...headerTransportOptions,
+          authProvider,
           type: input.transport.type,
-          ...(input.transport.headers ? { headers: input.transport.headers } : {}),
         },
-      },
-    );
-    return {
-      id: result.id,
-      state: result.state,
-      ...("authUrl" in result ? { authUrl: result.authUrl } : {}),
-    };
+      });
+      registered = true;
+
+      const result = await this.mcp.connectToServer(serverId);
+      if (result.state === "failed") {
+        throw new Error(
+          `Failed to connect to MCP server at ${input.url}: ${result.error}`,
+        );
+      }
+      if (result.state === "connected") {
+        this.recordMcpDiscoveryResult(serverId, await this.discoverMcpServerCapabilities(serverId));
+        const connection = this.mcp.mcpConnections[serverId] as { connectionState?: string } | undefined;
+        return {
+          id: serverId,
+          state: connection?.connectionState ?? result.state,
+        };
+      }
+      return {
+        id: serverId,
+        state: result.state,
+        ...("authUrl" in result ? { authUrl: result.authUrl } : {}),
+      };
+    } catch (error) {
+      if (registered) {
+        await this.cleanupRegisteredMcpServerAfterAddFailure(serverId);
+      }
+      throw error;
+    }
   }
 
   private async removeMcpServerConnection(serverId: string): Promise<void> {
     await this.removeMcpServer(serverId);
   }
 
+  private async cleanupRegisteredMcpServerAfterAddFailure(serverId: string): Promise<void> {
+    this.mcpDiscoveryTasks.delete(serverId);
+    try {
+      await this.removeMcpServer(serverId);
+    } catch (error) {
+      console.warn(
+        `[Kernel] Failed to clean up MCP server ${serverId} after add failure:`,
+        error,
+      );
+    }
+  }
+
   private async refreshMcpServerConnection(serverId: string): Promise<void> {
     const connection = this.mcp.mcpConnections[serverId] as {
+      connectionError?: string | null;
       connectionState?: unknown;
     } | undefined;
     if (canRediscoverMcpConnectionState(connection?.connectionState)) {
-      await this.mcp.discoverIfConnected(serverId);
+      this.recordMcpDiscoveryResult(serverId, await this.discoverMcpServerCapabilities(serverId));
+      this.broadcastMcpChanged();
       return;
     }
 
     const result = await this.mcp.connectToServer(serverId);
-    if (result.state === "connected") {
-      await this.mcp.discoverIfConnected(serverId);
+    if (canRediscoverMcpConnectionState(result.state)) {
+      this.recordMcpDiscoveryResult(serverId, await this.discoverMcpServerCapabilities(serverId));
+      this.broadcastMcpChanged();
+    } else if (result.state === "failed") {
+      this.recordMcpConnectionError(serverId, result.error);
+      this.broadcastMcpChanged();
+    }
+  }
+
+  private async discoverMcpServerCapabilities(
+    serverId: string,
+  ): Promise<McpDiscoveryKernelResult> {
+    const existing = this.mcpDiscoveryTasks.get(serverId);
+    if (existing) {
+      return existing;
+    }
+
+    const task = this.discoverMcpServerCapabilitiesOnce(serverId)
+      .finally(() => {
+        this.mcpDiscoveryTasks.delete(serverId);
+      });
+    this.mcpDiscoveryTasks.set(serverId, task);
+    return task;
+  }
+
+  private async discoverMcpServerCapabilitiesOnce(serverId: string): Promise<McpDiscoveryKernelResult> {
+    const connection = this.mcp.mcpConnections[serverId] as LenientMcpConnection | undefined;
+    return connection?.client ? discoverMcpCapabilitiesLenient(connection) : undefined;
+  }
+
+  private recordMcpDiscoveryResult(serverId: string, result: McpDiscoveryKernelResult): void {
+    if (!result) {
+      return;
+    }
+    if (result.success) {
+      this.recordMcpConnectionError(serverId, null);
+      return;
+    }
+    this.recordMcpConnectionError(
+      serverId,
+      `Failed to discover MCP server capabilities: ${result.error ?? "unknown discovery error"}`,
+    );
+  }
+
+  private recordMcpDiscoveryEvent(event: { type: string; payload?: unknown }): void {
+    if (event.type !== "mcp:client:discover" || !isRecord(event.payload)) {
+      return;
+    }
+    const url = typeof event.payload.url === "string" ? event.payload.url : "";
+    if (!url) {
+      return;
+    }
+
+    const error = typeof event.payload.error === "string" ? event.payload.error : "";
+    if (isOptionalMcpListMethodNotFound(error)) {
+      return;
+    }
+
+    // The SDK emits capability-scoped errors for optional -32601 methods that
+    // it already handles. Only whole-discovery errors should mark the server.
+    if (typeof event.payload.capability === "string") {
+      return;
+    }
+
+    if (error) {
+      if (this.recordMcpConnectionErrorByUrl(url, `Failed to discover MCP server capabilities: ${error}`)) {
+        this.broadcastMcpChanged();
+      }
+      return;
+    }
+
+    if (!("state" in event.payload)) {
+      if (this.recordMcpConnectionErrorByUrl(url, null)) {
+        this.broadcastMcpChanged();
+      }
+    }
+  }
+
+  private recordMcpConnectionError(serverId: string, error: string | null): void {
+    const connection = this.mcp.mcpConnections[serverId] as {
+      connectionError?: string | null;
+    } | undefined;
+    if (connection) {
+      connection.connectionError = error;
+    }
+  }
+
+  private recordMcpConnectionErrorByUrl(url: string, error: string | null): boolean {
+    const matches = (Object.entries(this.mcp.mcpConnections) as Array<[
+      string,
+      { url?: URL; connectionError?: string | null },
+    ]>).filter(([, connection]) => connection.url?.toString() === url);
+
+    if (matches.length !== 1) {
+      return false;
+    }
+
+    this.recordMcpConnectionError(matches[0][0], error);
+    return true;
+  }
+
+  private broadcastMcpChanged(): void {
+    const uids = new Set(this.mcpServers.list().map((record) => record.uid));
+    for (const uid of uids) {
+      this.broadcastToUid(uid, "mcp.changed");
     }
   }
 

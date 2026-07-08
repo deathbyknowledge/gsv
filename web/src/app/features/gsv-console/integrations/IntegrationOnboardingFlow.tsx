@@ -1,12 +1,13 @@
-import { useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { useUnsavedGuard } from "../../gsv-shell/unsaved/unsavedGuard";
 import { Button } from "../../../components/ui/Button";
 import { Icon } from "../../../components/ui/Icon";
 import { Select } from "../../../components/ui/Select";
+import { Spinner } from "../../../components/ui/Spinner";
 import { Surface } from "../../../components/ui/Surface";
 import { TextInput } from "../../../components/ui/TextInput";
 import type { ConsoleMcpServer } from "../domain/consoleModels";
-import { useAddConsoleMcpServer } from "../hooks/useConsoleData";
+import { useAddConsoleMcpServer, useConsoleMcpServers } from "../hooks/useConsoleData";
 import { ConnectFlowShell } from "../connect-flows/ConnectFlowShell";
 import type { ConnectFlowDef } from "../connect-flows/connectFlowTypes";
 import {
@@ -63,6 +64,13 @@ function headersFromDrafts(rows: readonly HeaderDraft[]): { ok: true; headers?: 
   return Object.keys(headers).length > 0 ? { ok: true, headers } : { ok: true };
 }
 
+function shouldTrackServer(server: ConsoleMcpServer): boolean {
+  return server.state === "authenticating"
+    || server.state === "connecting"
+    || server.state === "connected"
+    || server.state === "discovering";
+}
+
 function HeaderFields({
   rows,
   onAdd,
@@ -107,6 +115,7 @@ function HeaderFields({
 
 export function IntegrationOnboardingFlow({ onBack, onCreated }: IntegrationOnboardingFlowProps) {
   const addServer = useAddConsoleMcpServer();
+  const servers = useConsoleMcpServers({ enabled: true });
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [transportIndex, setTransportIndex] = useState(0);
@@ -114,14 +123,60 @@ export function IntegrationOnboardingFlow({ onBack, onCreated }: IntegrationOnbo
   const [headers, setHeaders] = useState<HeaderDraft[]>([]);
   const [created, setCreated] = useState<ConsoleMcpServer | null>(null);
   const [formError, setFormError] = useState("");
+  const [authOpenedServerId, setAuthOpenedServerId] = useState<string | null>(null);
+  const [openingAuthServerId, setOpeningAuthServerId] = useState<string | null>(null);
+  const completedServerId = useRef<string | null>(null);
+  const authOpenResetTimer = useRef<number | null>(null);
   const transport = MCP_TRANSPORT_OPTIONS[transportIndex] ?? "auto";
   const urlReady = validUrl(url);
   const headersResult = headersFromDrafts(headers);
   const canSubmit = name.trim().length > 0 && urlReady && headersResult.ok && !addServer.isPending;
   const authenticating = created?.state === "authenticating";
+  const ready = created?.state === "ready";
+  const failed = created?.state === "failed";
+  const waitingForAuth = !!created
+    && authOpenedServerId === created.serverId
+    && !ready
+    && !failed;
+  const openingAuth = !!created && openingAuthServerId === created.serverId;
+
+  useEffect(() => {
+    if (!created) {
+      return;
+    }
+    const live = servers.servers.find((server) => server.serverId === created.serverId);
+    if (live && live !== created) {
+      setCreated(live);
+    }
+  }, [created, servers.servers]);
+
+  useEffect(() => {
+    if (!created || !shouldTrackServer(created)) {
+      return;
+    }
+    void servers.refetch();
+    const interval = window.setInterval(() => {
+      void servers.refetch();
+    }, 2_000);
+    return () => window.clearInterval(interval);
+  }, [created?.serverId, created?.state, servers.refetch]);
+
+  useEffect(() => {
+    if (!created || created.state !== "ready" || completedServerId.current === created.serverId) {
+      return;
+    }
+    completedServerId.current = created.serverId;
+    onCreated(created);
+  }, [created, onCreated]);
+
+  useEffect(() => () => {
+    if (authOpenResetTimer.current !== null) {
+      window.clearTimeout(authOpenResetTimer.current);
+    }
+  }, []);
 
   useUnsavedGuard(() =>
-    !(created && created.state !== "authenticating") &&
+    !(created && (created.state === "ready" || created.state === "failed")) &&
     (created !== null ||
       name.trim().length > 0 ||
       url.trim().length > 0 ||
@@ -134,6 +189,13 @@ export function IntegrationOnboardingFlow({ onBack, onCreated }: IntegrationOnbo
       return;
     }
     setFormError("");
+    setAuthOpenedServerId(null);
+    setOpeningAuthServerId(null);
+    if (authOpenResetTimer.current !== null) {
+      window.clearTimeout(authOpenResetTimer.current);
+      authOpenResetTimer.current = null;
+    }
+    completedServerId.current = null;
     setCreated(null);
     try {
       const server = await addServer.mutateAsync({
@@ -143,7 +205,8 @@ export function IntegrationOnboardingFlow({ onBack, onCreated }: IntegrationOnbo
         headers: headersResult.ok ? headersResult.headers : undefined,
       });
       setCreated(server);
-      if (server.state !== "authenticating") {
+      if (server.state === "ready") {
+        completedServerId.current = server.serverId;
         onCreated(server);
       }
     } catch (error) {
@@ -163,10 +226,27 @@ export function IntegrationOnboardingFlow({ onBack, onCreated }: IntegrationOnbo
     setHeaders((current) => current.filter((row) => row.id !== id));
   };
 
-  // Drive the stepper from live connection state: the endpoint form stays on
-  // step 0 until a server is created, then OAuth (step 1) or success (step 2).
+  const openSignIn = (server: ConsoleMcpServer) => {
+    if (!server.authUrl || openingAuthServerId === server.serverId) {
+      return;
+    }
+    setAuthOpenedServerId(server.serverId);
+    setOpeningAuthServerId(server.serverId);
+    if (authOpenResetTimer.current !== null) {
+      window.clearTimeout(authOpenResetTimer.current);
+    }
+    window.open(server.authUrl, "_blank", "noopener,noreferrer");
+    void servers.refetch();
+    authOpenResetTimer.current = window.setTimeout(() => {
+      setOpeningAuthServerId((current) => current === server.serverId ? null : current);
+      authOpenResetTimer.current = null;
+    }, 1_200);
+  };
+
+  // Drive the stepper from live connection state: pending auth/discovery stays
+  // on step 1; only a ready server reaches the success step.
   // The Stepper is a progress indicator only — footer buttons drive transitions.
-  const current = !created ? 0 : authenticating ? 1 : 2;
+  const current = !created ? 0 : ready ? 2 : 1;
 
   // Step 1 status: while the form is on screen, "AUTHENTICATING" only once the
   // submit kicks off; otherwise show the connection's live state when created.
@@ -265,7 +345,7 @@ export function IntegrationOnboardingFlow({ onBack, onCreated }: IntegrationOnbo
         label: "CONNECT",
         title: "CONNECT & AUTHORIZE",
         meta: "STEP 2 / 3",
-        status: created ? statusForMcpServer(created) : "AUTHENTICATING",
+        status: waitingForAuth ? "WAITING" : created ? statusForMcpServer(created) : "AUTHENTICATING",
         tone: "warn",
         render: () => (
           <>
@@ -274,10 +354,22 @@ export function IntegrationOnboardingFlow({ onBack, onCreated }: IntegrationOnbo
                 <p>This server needs a browser sign-in before tools can be discovered.</p>
                 <Button
                   variant="primary"
-                  label="CONTINUE SIGN-IN"
-                  onClick={() => window.open(created.authUrl, "_blank", "noopener,noreferrer")}
+                  label={openingAuth ? "OPENING SIGN-IN" : waitingForAuth ? "OPEN SIGN-IN AGAIN" : "CONTINUE SIGN-IN"}
+                  disabled={openingAuth}
+                  onClick={() => openSignIn(created)}
                 />
               </Surface>
+            ) : null}
+
+            {waitingForAuth ? (
+              <div class="gsv-integration-waiting gsv-prose-sm" role="status">
+                <Spinner size={15} />
+                <span>
+                  {created.state === "authenticating"
+                    ? "Waiting for browser sign-in to finish."
+                    : "Sign-in received. Waiting for tool discovery."}
+                </span>
+              </div>
             ) : null}
 
             {created ? (
@@ -286,7 +378,7 @@ export function IntegrationOnboardingFlow({ onBack, onCreated }: IntegrationOnbo
 
             <div class="gsv-cf-footer">
               <span class="gsv-cf-footer-spacer" />
-              {created ? (
+              {failed ? (
                 <Button variant="primary" label="VIEW INTEGRATION" onClick={() => onCreated(created)} />
               ) : null}
             </div>

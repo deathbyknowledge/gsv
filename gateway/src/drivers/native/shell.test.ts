@@ -1389,8 +1389,6 @@ describe("pkg shell command", () => {
           server_options: JSON.stringify({ transport: { type: "auto" } }),
         }],
         listTools: () => [{ name: "lookup", description: "Lookup", inputSchema: {} }],
-        listResources: () => [],
-        listPrompts: () => [],
       },
     });
 
@@ -1400,8 +1398,8 @@ describe("pkg shell command", () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(result.stdout).toContain("SERVER_ID\tSTATE\tTOOLS\tRES\tPROMPTS\tAUTH\tNAME\tURL");
-    expect(result.stdout).toContain("server-1\tready\t1\t0\t0\t-\tSearch\thttps://mcp.example.com/mcp");
+    expect(result.stdout).toContain("SERVER_ID\tSTATE\tTOOLS\tAUTH\tNAME\tURL");
+    expect(result.stdout).toContain("server-1\tready\t1\t-\tSearch\thttps://mcp.example.com/mcp");
     expect(result.stderr).toBe("");
   });
 
@@ -1431,8 +1429,6 @@ describe("pkg shell command", () => {
           server_options: JSON.stringify({ transport: { type: "auto" } }),
         }],
         listTools: () => [{ name: "lookup-record", description: "Lookup records", inputSchema: { required: ["query"] } }],
-        listResources: () => [],
-        listPrompts: () => [],
       },
     });
 
@@ -1481,8 +1477,6 @@ describe("pkg shell command", () => {
           server_options: JSON.stringify({ transport: { type: "auto" } }),
         }],
         listTools: () => [{ name: "lookup", description: "Lookup", inputSchema: {} }],
-        listResources: () => [],
-        listPrompts: () => [],
       },
       callMcpTool,
     });

@@ -568,7 +568,7 @@ async function dispatchNative(
         data = await handleSysMcpAdd(frame.args, ctx);
         break;
       case "sys.mcp.list":
-        data = handleSysMcpList(frame.args, ctx);
+        data = await handleSysMcpList(frame.args, ctx);
         break;
       case "sys.mcp.remove":
         data = await handleSysMcpRemove(frame.args, ctx);

@@ -288,14 +288,12 @@ function formatMcpServerList(servers: SysMcpServerSummary[]): string {
   if (servers.length === 0) {
     return "No MCP servers configured.\n";
   }
-  const lines = ["SERVER_ID\tSTATE\tTOOLS\tRES\tPROMPTS\tAUTH\tNAME\tURL"];
+  const lines = ["SERVER_ID\tSTATE\tTOOLS\tAUTH\tNAME\tURL"];
   for (const server of servers) {
     lines.push([
       server.serverId,
       server.state,
       String(server.tools.length),
-      String(server.resourceCount),
-      String(server.promptCount),
       mcpAuthLabel(server),
       server.name,
       server.url,
@@ -336,8 +334,6 @@ function formatMcpServerDetail(
     `url=${server.url}`,
     `transport=${server.transport}`,
     `tools=${server.tools.length}`,
-    `resources=${server.resourceCount}`,
-    `prompts=${server.promptCount}`,
   ];
   if (server.authUrl) {
     lines.push(`auth_url=${server.authUrl}`);
@@ -676,7 +672,7 @@ async function runMcpCommand(args: string[], ctx: KernelContext): Promise<ExecRe
     case "status": {
       requireCommandCapability(ctx, SYS_MCP_LIST);
       const options = parseMcpJsonOptions(rest);
-      const result = handleSysMcpList({}, ctx);
+      const result = await handleSysMcpList({}, ctx);
       return {
         stdout: options.json
           ? `${JSON.stringify(result, null, 2)}\n`
@@ -688,7 +684,7 @@ async function runMcpCommand(args: string[], ctx: KernelContext): Promise<ExecRe
     case "list": {
       requireCommandCapability(ctx, SYS_MCP_LIST);
       const options = parseMcpJsonOptions(rest);
-      const result = handleSysMcpList({}, ctx);
+      const result = await handleSysMcpList({}, ctx);
       return {
         stdout: options.json
           ? `${JSON.stringify(result, null, 2)}\n`
@@ -700,7 +696,7 @@ async function runMcpCommand(args: string[], ctx: KernelContext): Promise<ExecRe
     case "tools": {
       requireCommandCapability(ctx, SYS_MCP_LIST);
       const parsed = parseMcpOptionalServerCommand(rest, "tools");
-      const result = handleSysMcpList({}, ctx);
+      const result = await handleSysMcpList({}, ctx);
       const bindings = buildMcpToolBindings(result.servers);
       const aliasesByToolKey = buildMcpAliasMap(bindings);
       const servers = parsed.serverSelector
@@ -717,7 +713,7 @@ async function runMcpCommand(args: string[], ctx: KernelContext): Promise<ExecRe
     case "describe": {
       requireCommandCapability(ctx, SYS_MCP_LIST);
       const parsed = parseMcpDescribeCommand(rest);
-      const result = handleSysMcpList({}, ctx);
+      const result = await handleSysMcpList({}, ctx);
       const bindings = buildMcpToolBindings(result.servers);
       const aliasesByToolKey = buildMcpAliasMap(bindings);
       const server = resolveMcpServer(result.servers, parsed.serverSelector);
@@ -743,7 +739,7 @@ async function runMcpCommand(args: string[], ctx: KernelContext): Promise<ExecRe
     case "search": {
       requireCommandCapability(ctx, SYS_MCP_LIST);
       const parsed = parseMcpSearchCommand(rest);
-      const result = handleSysMcpList({}, ctx);
+      const result = await handleSysMcpList({}, ctx);
       const aliasesByToolKey = buildMcpAliasMap(buildMcpToolBindings(result.servers));
       const matches = searchMcpServers(result.servers, aliasesByToolKey, parsed.query);
       return {
@@ -757,7 +753,7 @@ async function runMcpCommand(args: string[], ctx: KernelContext): Promise<ExecRe
     case "codemode": {
       requireCommandCapability(ctx, SYS_MCP_LIST);
       const parsed = parseMcpOptionalServerCommand(rest, "codemode");
-      const result = handleSysMcpList({}, ctx);
+      const result = await handleSysMcpList({}, ctx);
       const servers = parsed.serverSelector
         ? [resolveMcpServer(result.servers, parsed.serverSelector)]
         : result.servers;
@@ -793,7 +789,7 @@ async function runMcpCommand(args: string[], ctx: KernelContext): Promise<ExecRe
     case "remove": {
       requireCommandCapability(ctx, SYS_MCP_REMOVE);
       const parsed = parseMcpServerIdCommand(rest, "remove");
-      const list = handleSysMcpList({}, ctx);
+      const list = await handleSysMcpList({}, ctx);
       const server = resolveMcpServer(list.servers, parsed.serverSelector);
       const result = await handleSysMcpRemove({ serverId: server.serverId }, ctx);
       return {
@@ -807,7 +803,7 @@ async function runMcpCommand(args: string[], ctx: KernelContext): Promise<ExecRe
     case "refresh": {
       requireCommandCapability(ctx, SYS_MCP_REFRESH);
       const parsed = parseMcpServerIdCommand(rest, "refresh");
-      const list = handleSysMcpList({}, ctx);
+      const list = await handleSysMcpList({}, ctx);
       const server = resolveMcpServer(list.servers, parsed.serverSelector);
       const result = await handleSysMcpRefresh({ serverId: server.serverId }, ctx);
       const aliasesByToolKey = result.server
@@ -824,7 +820,7 @@ async function runMcpCommand(args: string[], ctx: KernelContext): Promise<ExecRe
     case "call": {
       requireCommandCapability(ctx, SYS_MCP_CALL);
       const parsed = parseMcpCallCommand(rest);
-      const list = handleSysMcpList({}, ctx);
+      const list = await handleSysMcpList({}, ctx);
       const bindings = buildMcpToolBindings(list.servers);
       const aliasesByToolKey = buildMcpAliasMap(bindings);
       const server = resolveMcpServer(list.servers, parsed.serverSelector);
