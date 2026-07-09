@@ -741,6 +741,15 @@
   border-bottom: 1px solid var(--rule-inner);
 }
 
+/* Branch list can grow unbounded — a process may accrue many conversation
+   branches — so cap it and scroll internally instead of pushing rows past the
+   dock/viewport where they'd be unreachable (the removed ChatConversationBar
+   used to cap visible branches + an overflow select). */
+.gsv-chat-conversations-popover .gsv-chat-model-options {
+  max-height: min(288px, 44vh);
+  overflow-y: auto;
+}
+
 .gsv-chat-model-row {
   min-height: 34px;
   display: grid;
