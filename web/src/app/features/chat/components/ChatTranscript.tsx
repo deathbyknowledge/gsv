@@ -3,7 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import DOMPurify from "dompurify";
 import { parse as parseMarkdown } from "marked";
 import { SystemMessage } from "../../../components/ui/SystemMessage";
-import { Tooltip } from "../../../components/ui/Tooltip";
+import { Hint, Tooltip } from "../../../components/ui/Tooltip";
 import type {
   ChatBackupModelInfo,
   ChatTranscriptRow,
@@ -219,22 +219,23 @@ function CopyButton({
   const label = copyButtonLabel(copied, failed);
 
   return (
-    <button
-      type="button"
-      class={`gsv-chat-copy${failed ? " is-failed" : ""}`}
-      disabled={!text.trim()}
-      onClick={onCopy}
-      aria-label={copied ? `Copied ${roleLabel(role).toLowerCase()} message` : `Copy ${roleLabel(role).toLowerCase()} message`}
-      title={copied ? "Copied" : "Copy message"}
-    >
-      <svg width="10" height="10" viewBox="0 0 16 16" aria-hidden="true">
-        <g fill="none" stroke="currentColor" stroke-width="1.5">
-          <rect x="3" y="3" width="7" height="7" />
-          <rect x="6" y="6" width="7" height="7" />
-        </g>
-      </svg>
-      {label}
-    </button>
+    <Hint text={copied ? "Copied to clipboard" : "Copy message text"}>
+      <button
+        type="button"
+        class={`gsv-chat-copy${failed ? " is-failed" : ""}`}
+        disabled={!text.trim()}
+        onClick={onCopy}
+        aria-label={copied ? `Copied ${roleLabel(role).toLowerCase()} message` : `Copy ${roleLabel(role).toLowerCase()} message`}
+      >
+        <svg width="10" height="10" viewBox="0 0 16 16" aria-hidden="true">
+          <g fill="none" stroke="currentColor" stroke-width="1.5">
+            <rect x="3" y="3" width="7" height="7" />
+            <rect x="6" y="6" width="7" height="7" />
+          </g>
+        </svg>
+        {label}
+      </button>
+    </Hint>
   );
 }
 
@@ -983,9 +984,11 @@ function UserMessage({
           {message.time ? <span>{message.time}</span> : null}
           {origin ? <span title={origin}>{origin}</span> : null}
           {message.messageId && onBranch ? (
-            <button type="button" class="gsv-chat-copy" title="Branch from message" onClick={() => onBranch(message.messageId as number)}>
-              BRANCH
-            </button>
+            <Hint text="Branch a new conversation from this message">
+              <button type="button" class="gsv-chat-copy" onClick={() => onBranch(message.messageId as number)}>
+                BRANCH
+              </button>
+            </Hint>
           ) : null}
           <CopyButton
             copied={copied}
@@ -1172,7 +1175,8 @@ function EntryControls({
   onToggle: () => void;
 }) {
   return (
-    <div class="gsv-chat-tool-entry-controls" aria-label={status} title={status}>
+    <Hint text={hasDetails ? (expanded ? `Hide ${label.toLowerCase()} · ${status}` : `Show ${label.toLowerCase()} · ${status}`) : status} position="left">
+    <div class="gsv-chat-tool-entry-controls" aria-label={status}>
       {hasDetails ? (
         <button
           type="button"
@@ -1185,6 +1189,7 @@ function EntryControls({
         </button>
       ) : null}
     </div>
+    </Hint>
   );
 }
 

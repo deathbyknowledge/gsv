@@ -3,6 +3,7 @@ import { Icon } from "../../../components/ui/Icon";
 import { IconButton } from "../../../components/ui/IconButton";
 import { Progress } from "../../../components/ui/Progress";
 import { StatusDot } from "../../../components/ui/StatusDot";
+import { Hint } from "../../../components/ui/Tooltip";
 import type { StatusTone } from "../../../components/ui/StatusDot";
 import type { ChatAgentViewModel, ChatModelProfileData } from "../domain/agent";
 import type { ChatHistory, ChatProcessAiConfig, ChatProcessSummary } from "../domain/processes";
@@ -96,105 +97,119 @@ export function ChatDockHeader({
   return (
     <header class="gsv-chat-head">
       <div class="gsv-chat-agent">
-        <button
-          type="button"
-          class="gsv-chat-agent-main"
-          onClick={onOpenAgentPanel}
-          aria-haspopup="dialog"
-          aria-expanded={agentPanelOpen}
-        >
-          <span class="gsv-chat-avatar">
-            <Avatar src={activeAgent.imageSrc} status={activeAgent.status} size={42} cover />
-          </span>
-          <span class="gsv-chat-agent-name-row">
-            <strong class="gsv-prose-heading">{activeAgent.name}</strong>
+        <Hint text="View agent profile & switch agents" position="bottom-start">
+          <button
+            type="button"
+            class="gsv-chat-agent-main"
+            onClick={onOpenAgentPanel}
+            aria-haspopup="dialog"
+            aria-expanded={agentPanelOpen}
+          >
+            <span class="gsv-chat-avatar">
+              <Avatar src={activeAgent.imageSrc} status={activeAgent.status} size={42} cover />
+            </span>
+            <span class="gsv-chat-agent-name-row">
+              <strong class="gsv-prose-heading">{activeAgent.name}</strong>
+              <svg class="gsv-chat-agent-chevron" width="8" height="10" viewBox="0 0 8 10" aria-hidden="true">
+                <path d="M1 1 L6 5 L1 9" fill="none" stroke="currentColor" stroke-width="1.4" />
+              </svg>
+            </span>
+          </button>
+        </Hint>
+        <Hint text="Change model & reasoning effort" position="bottom-start">
+          <button
+            type="button"
+            class="gsv-chat-agent-model gsv-sublabel"
+            data-chat-popover-trigger="model"
+            onClick={() => onTogglePopover("model")}
+            aria-haspopup="menu"
+            aria-expanded={openPopover === "model"}
+          >
+            <span>{modelLabel}</span>
+            <span>{reasoningLabel}</span>
             <svg class="gsv-chat-agent-chevron" width="8" height="10" viewBox="0 0 8 10" aria-hidden="true">
               <path d="M1 1 L6 5 L1 9" fill="none" stroke="currentColor" stroke-width="1.4" />
             </svg>
-          </span>
-        </button>
-        <button
-          type="button"
-          class="gsv-chat-agent-model gsv-sublabel"
-          data-chat-popover-trigger="model"
-          onClick={() => onTogglePopover("model")}
-          aria-haspopup="menu"
-          aria-expanded={openPopover === "model"}
-        >
-          <span>{modelLabel}</span>
-          <span>{reasoningLabel}</span>
-          <svg class="gsv-chat-agent-chevron" width="8" height="10" viewBox="0 0 8 10" aria-hidden="true">
-            <path d="M1 1 L6 5 L1 9" fill="none" stroke="currentColor" stroke-width="1.4" />
-          </svg>
-        </button>
-        <button
-          type="button"
-          class="gsv-chat-agent-activity gsv-prose-sm"
-          data-chat-popover-trigger="tasks"
-          onClick={() => onTogglePopover("tasks")}
-          aria-haspopup="menu"
-          aria-expanded={openPopover === "tasks"}
-        >
-          <StatusDot tone={effectiveStatus} size={7} />
-          <span>{activeAgent.activity}</span>
-          <i aria-hidden="true" />
-          <svg class="gsv-chat-agent-chevron" width="8" height="10" viewBox="0 0 8 10" aria-hidden="true">
-            <path d="M1 1 L6 5 L1 9" fill="none" stroke="currentColor" stroke-width="1.4" />
-          </svg>
-        </button>
+          </button>
+        </Hint>
+        <Hint text="View activity & tasks" position="bottom-start">
+          <button
+            type="button"
+            class="gsv-chat-agent-activity gsv-prose-sm"
+            data-chat-popover-trigger="tasks"
+            onClick={() => onTogglePopover("tasks")}
+            aria-haspopup="menu"
+            aria-expanded={openPopover === "tasks"}
+          >
+            <StatusDot tone={effectiveStatus} size={7} />
+            <span>{activeAgent.activity}</span>
+            <i aria-hidden="true" />
+            <svg class="gsv-chat-agent-chevron" width="8" height="10" viewBox="0 0 8 10" aria-hidden="true">
+              <path d="M1 1 L6 5 L1 9" fill="none" stroke="currentColor" stroke-width="1.4" />
+            </svg>
+          </button>
+        </Hint>
       </div>
       <div class="gsv-chat-actions">
         <div class="gsv-chat-action-row">
           {!hasActiveProcess ? (
+            <Hint text="Start an interactive process" position="bottom-end">
+              <button
+                type="button"
+                class="gsv-chat-command gsv-chat-command-start"
+                disabled={spawnPending}
+                onClick={onStartProcess}
+                aria-label="Start process"
+              >
+                <Icon name="plus" size={15} />
+              </button>
+            </Hint>
+          ) : null}
+          <Hint text={speechStatus} position="bottom-end">
             <button
               type="button"
-              class="gsv-chat-command gsv-chat-command-start"
-              disabled={spawnPending}
-              onClick={onStartProcess}
-              title="Start process"
-              aria-label="Start process"
+              class={`gsv-chat-command gsv-chat-command-speech${speakReplies ? " is-active" : ""}`}
+              aria-label={speakReplies ? "Disable spoken replies" : "Enable spoken replies"}
+              aria-pressed={speakReplies ? "true" : "false"}
+              onClick={onToggleSpeakReplies}
             >
-              <Icon name="plus" size={15} />
+              <Icon name="volume" family="doticons" size={14} />
             </button>
+          </Hint>
+          {canAbortRun ? (
+            <Hint text="Abort the current run" position="bottom-end">
+              <button
+                type="button"
+                class="gsv-chat-command gsv-chat-command-abort"
+                onClick={onAbortRun}
+                aria-label="Abort current run"
+              >
+                <span aria-hidden="true" />
+              </button>
+            </Hint>
           ) : null}
+          <Hint text={atMax ? "Restore chat to its normal size" : "Expand chat to full width"} position="bottom-end">
+            <IconButton glyph="max" size="medium" ariaLabel={atMax ? "Restore chat" : "Expand chat"} onClick={onToggleMax} />
+          </Hint>
+          <Hint text="Minimize chat to a compact bar" position="bottom-end">
+            <IconButton glyph="min" size="medium" ariaLabel="Minimize chat" onClick={onToggleOpen} />
+          </Hint>
+        </div>
+        <Hint text={contextTitle} position="left">
           <button
             type="button"
-            class={`gsv-chat-command gsv-chat-command-speech${speakReplies ? " is-active" : ""}`}
-            title={speechStatus}
-            aria-label={speakReplies ? "Disable spoken replies" : "Enable spoken replies"}
-            aria-pressed={speakReplies ? "true" : "false"}
-            onClick={onToggleSpeakReplies}
+            class="gsv-chat-context-control"
+            data-chat-popover-trigger="context"
+            onClick={() => onTogglePopover("context")}
+            aria-haspopup="menu"
+            aria-expanded={openPopover === "context"}
           >
-            <Icon name="volume" family="doticons" size={14} />
+            {contextPercent !== null ? (
+              <Progress value={contextPercent} label="" showValue={false} size="medium" width={46} />
+            ) : null}
+            <span>{contextPercent !== null ? `${contextPercent}%` : contextLabel}</span>
           </button>
-          {canAbortRun ? (
-            <button
-              type="button"
-              class="gsv-chat-command gsv-chat-command-abort"
-              onClick={onAbortRun}
-              title="Abort current run"
-              aria-label="Abort current run"
-            >
-              <span aria-hidden="true" />
-            </button>
-          ) : null}
-          <IconButton glyph="max" size="medium" title={atMax ? "Restore chat" : "Expand chat"} onClick={onToggleMax} />
-          <IconButton glyph="min" size="medium" title="Minimize chat" onClick={onToggleOpen} />
-        </div>
-        <button
-          type="button"
-          class="gsv-chat-context-control"
-          data-chat-popover-trigger="context"
-          title={contextTitle}
-          onClick={() => onTogglePopover("context")}
-          aria-haspopup="menu"
-          aria-expanded={openPopover === "context"}
-        >
-          {contextPercent !== null ? (
-            <Progress value={contextPercent} label="" showValue={false} size="medium" width={46} />
-          ) : null}
-          <span>{contextPercent !== null ? `${contextPercent}%` : contextLabel}</span>
-        </button>
+        </Hint>
       </div>
 
       <ChatDockPopovers

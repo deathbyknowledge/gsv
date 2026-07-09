@@ -6,6 +6,7 @@ import { Counter } from "../../../components/ui/Counter";
 import { Icon } from "../../../components/ui/Icon";
 import { MessageInput, type MessageInputAttachment } from "../../../components/ui/MessageInput";
 import type { StatusTone } from "../../../components/ui/StatusDot";
+import { Hint } from "../../../components/ui/Tooltip";
 import type { JSX } from "preact";
 import {
   buildChatAgentViewModel,
@@ -848,24 +849,27 @@ export function ChatDock({
 
       {hasActiveProcess ? (
         <div class="gsv-chat-thread-tools">
-          <button
-            type="button"
-            disabled={!canFreeContext}
-            title={canAbortRun ? "Context can be compacted after the active run finishes" : "Archive older messages and keep the latest context live"}
-            onClick={requestFreeContext}
-          >
-            <Icon name="stars" size={12} />
-            <span>{compactConversation.isPending ? "FREEING" : "FREE CONTEXT"}</span>
-            <small>KEEP {compactKeepLast}</small>
-          </button>
-          <button
-            type="button"
-            aria-expanded={archiveOpen}
-            onClick={() => setArchiveOpen((value) => !value)}
-          >
-            <Icon name="folder" family="doticons" size={12} />
-            <span>{archiveOpen ? "CLOSE ARCHIVE" : "ARCHIVE"}</span>
-          </button>
+          <Hint position="bottom-start" text={canAbortRun ? "Context can be compacted after the active run finishes" : "Archive older messages and keep the latest context live"}>
+            <button
+              type="button"
+              disabled={!canFreeContext}
+              onClick={requestFreeContext}
+            >
+              <Icon name="stars" size={12} />
+              <span>{compactConversation.isPending ? "FREEING" : "FREE CONTEXT"}</span>
+              <small>KEEP {compactKeepLast}</small>
+            </button>
+          </Hint>
+          <Hint position="bottom-start" text={archiveOpen ? "Hide archived message segments" : "Browse archived message segments"}>
+            <button
+              type="button"
+              aria-expanded={archiveOpen}
+              onClick={() => setArchiveOpen((value) => !value)}
+            >
+              <Icon name="folder" family="doticons" size={12} />
+              <span>{archiveOpen ? "CLOSE ARCHIVE" : "ARCHIVE"}</span>
+            </button>
+          </Hint>
         </div>
       ) : null}
 
@@ -937,17 +941,18 @@ export function ChatDock({
         user={userLabel}
         voiceActive={ambientTranscription.dictationActive || ambientTranscription.liveActive}
         voiceAction={(
-          <button
-            type="button"
-            class={`gsv-chat-live-icon${ambientTranscription.liveActive ? " is-active" : ""}`}
-            disabled={ambientTranscription.liveUnavailable}
-            title={ambientTranscription.liveTitle}
-            aria-label={ambientTranscription.liveActive ? "Stop live voice chat" : "Start live voice chat"}
-            aria-pressed={ambientTranscription.liveActive ? "true" : "false"}
-            onClick={ambientTranscription.toggleLive}
-          >
-            <Icon name="wifi" family="doticons" size={13} />
-          </button>
+          <Hint position="top-end" text={ambientTranscription.liveTitle}>
+            <button
+              type="button"
+              class={`gsv-chat-live-icon${ambientTranscription.liveActive ? " is-active" : ""}`}
+              disabled={ambientTranscription.liveUnavailable}
+              aria-label={ambientTranscription.liveActive ? "Stop live voice chat" : "Start live voice chat"}
+              aria-pressed={ambientTranscription.liveActive ? "true" : "false"}
+              onClick={ambientTranscription.toggleLive}
+            >
+              <Icon name="wifi" family="doticons" size={13} />
+            </button>
+          </Hint>
         )}
         voiceAvailableWhenBusy={ambientTranscription.active}
         voiceDisabled={ambientTranscription.liveActive

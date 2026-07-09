@@ -13,6 +13,7 @@ import {
   formatChatMediaDuration,
   formatChatMediaSize,
 } from "../domain/media";
+import { Hint } from "../../../components/ui/Tooltip";
 import { useChatProcessMedia } from "../hooks";
 
 type ChatMediaAttachmentProps = {
@@ -104,9 +105,11 @@ function AudioPlayer({
   return (
     <div class="gsv-chat-audio-player">
       <audio ref={audioRef} preload="metadata" src={source} />
-      <button type="button" title={playing ? "Pause audio" : "Play audio"} aria-label={playing ? "Pause audio" : "Play audio"} onClick={toggle}>
-        <Icon name={playing ? "circlePause" : "circlePlay"} family="doticons" size={12} />
-      </button>
+      <Hint text={playing ? "Pause audio" : "Play audio"}>
+        <button type="button" aria-label={playing ? "Pause audio" : "Play audio"} onClick={toggle}>
+          <Icon name={playing ? "circlePause" : "circlePlay"} family="doticons" size={12} />
+        </button>
+      </Hint>
       <input
         type="range"
         min="0"

@@ -2,7 +2,7 @@ import type { ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { JSX } from "preact";
 import { Icon } from "./Icon";
-import { Tooltip } from "./Tooltip";
+import { Hint, Tooltip } from "./Tooltip";
 import { clipboardImageFiles } from "./messageInputClipboard";
 import "./MessageInput.css";
 
@@ -190,15 +190,16 @@ export function MessageInput({
                 {attachment.meta ? <small>{attachment.meta}</small> : null}
               </span>
               {onRemoveAttachment ? (
-                <button
-                  type="button"
-                  aria-label={`Remove ${attachment.label}`}
-                  title="Remove attachment"
-                  disabled={disabled || busy}
-                  onClick={() => onRemoveAttachment(attachment.id)}
-                >
-                  <Icon name="close" family="doticons" size={11} />
-                </button>
+                <Hint text="Remove attachment">
+                  <button
+                    type="button"
+                    aria-label={`Remove ${attachment.label}`}
+                    disabled={disabled || busy}
+                    onClick={() => onRemoveAttachment(attachment.id)}
+                  >
+                    <Icon name="close" family="doticons" size={11} />
+                  </button>
+                </Hint>
               ) : null}
             </span>
           ))}
@@ -206,19 +207,21 @@ export function MessageInput({
       ) : null}
       <form class="gsv-mi-bar" onSubmit={handleSubmit}>
         {onFiles ? (
-          <label class="gsv-mi-icon gsv-mi-file" title="Attach files" aria-label="Attach files">
-            <LeadGlyph />
-            <input
-              type="file"
-              multiple
-              disabled={disabled || busy}
-              onChange={(event) => {
-                const input = event.currentTarget as HTMLInputElement;
-                onFiles(input.files);
-                input.value = "";
-              }}
-            />
-          </label>
+          <Hint position="top-start" text="Attach files or images">
+            <label class="gsv-mi-icon gsv-mi-file" aria-label="Attach files">
+              <LeadGlyph />
+              <input
+                type="file"
+                multiple
+                disabled={disabled || busy}
+                onChange={(event) => {
+                  const input = event.currentTarget as HTMLInputElement;
+                  onFiles(input.files);
+                  input.value = "";
+                }}
+              />
+            </label>
+          </Hint>
         ) : (
           <span class="gsv-mi-icon" aria-hidden="true">
             <LeadGlyph />
@@ -239,31 +242,33 @@ export function MessageInput({
         />
         {voiceAction}
         {onVoiceClick ? (
-          <button
-            type="button"
-            class={`gsv-mi-icon gsv-mi-voice${voiceActive ? " is-active" : ""}`}
-            disabled={disabled || (!voiceAvailableWhenBusy && busy) || voiceDisabled}
-            aria-label={voiceTitle}
-            title={voiceTitle}
-            onClick={onVoiceClick}
-          >
-            <MicrophoneGlyph />
-          </button>
+          <Hint position="top-end" text={voiceTitle}>
+            <button
+              type="button"
+              class={`gsv-mi-icon gsv-mi-voice${voiceActive ? " is-active" : ""}`}
+              disabled={disabled || (!voiceAvailableWhenBusy && busy) || voiceDisabled}
+              aria-label={voiceTitle}
+              onClick={onVoiceClick}
+            >
+              <MicrophoneGlyph />
+            </button>
+          </Hint>
         ) : (
           <span class="gsv-mi-icon" aria-hidden="true">
             <MicrophoneGlyph />
           </span>
         )}
-        <button
-          class={`gsv-mi-send${canStop ? " is-stop" : ""}`}
-          type={canStop ? "button" : "submit"}
-          disabled={canStop ? false : !canSubmit}
-          aria-label={canStop ? "Stop run" : "Send message"}
-          title={canStop ? "Stop run" : "Send message"}
-          onClick={canStop ? onStop : undefined}
-        >
-          {canStop ? <StopGlyph /> : <SendGlyph />}
-        </button>
+        <Hint position="top-end" text={canStop ? "Stop the running agent" : "Send message"}>
+          <button
+            class={`gsv-mi-send${canStop ? " is-stop" : ""}`}
+            type={canStop ? "button" : "submit"}
+            disabled={canStop ? false : !canSubmit}
+            aria-label={canStop ? "Stop run" : "Send message"}
+            onClick={canStop ? onStop : undefined}
+          >
+            {canStop ? <StopGlyph /> : <SendGlyph />}
+          </button>
+        </Hint>
       </form>
       {user || cost ? (
         <div class="gsv-mi-meta gsv-sublabel">

@@ -1,4 +1,5 @@
 import { Icon } from "../../../components/ui/Icon";
+import { Hint } from "../../../components/ui/Tooltip";
 import type { ChatConversation } from "../domain/processes";
 import { shortId } from "./chatUiFormat";
 
@@ -31,20 +32,21 @@ export function ChatConversationBar({
   return (
     <div class="gsv-chat-conversations" aria-label="Conversations">
       {visible.map((conversation) => (
-        <button
-          key={conversation.id}
-          type="button"
-          class={conversation.id === activeConversationId ? "is-active" : ""}
-          title={conversation.title || conversation.id}
-          onClick={() => onSelect(conversation.id)}
-        >
-          <Icon name="arrowRight" family="doticons" size={11} />
-          <span>{conversation.title || (conversation.id === "default" ? "Default" : shortId(conversation.id))}</span>
-          {conversation.messageCount > 0 ? <small>{conversation.messageCount}</small> : null}
-        </button>
+        <Hint key={conversation.id} position="bottom-start" text={`Switch to ${conversation.title || conversation.id}`}>
+          <button
+            type="button"
+            class={conversation.id === activeConversationId ? "is-active" : ""}
+            onClick={() => onSelect(conversation.id)}
+          >
+            <Icon name="arrowRight" family="doticons" size={11} />
+            <span>{conversation.title || (conversation.id === "default" ? "Default" : shortId(conversation.id))}</span>
+            {conversation.messageCount > 0 ? <small>{conversation.messageCount}</small> : null}
+          </button>
+        </Hint>
       ))}
       {overflow.length > 0 ? (
-        <label title="More conversations">
+        <Hint position="bottom-start" text="Switch to another conversation">
+        <label>
           <Icon name="circleDots" family="doticons" size={12} />
           <select value="" aria-label="More conversations" onChange={selectOverflow}>
             <option value="">+{overflow.length}</option>
@@ -55,6 +57,7 @@ export function ChatConversationBar({
             ))}
           </select>
         </label>
+        </Hint>
       ) : null}
     </div>
   );

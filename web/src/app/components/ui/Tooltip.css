@@ -31,6 +31,12 @@
   border-bottom: 0;
   max-width: 100%;
 }
+/* Hint wrapper — passthrough around an existing control so the bubble anchors to
+   it without disturbing the control's own box (it stays the trigger). */
+.gsv-hint {
+  align-items: center;
+  justify-content: center;
+}
 .gsv-tt-bub {
   position: absolute;
   z-index: 50;
@@ -93,6 +99,59 @@
   margin-left: -3.5px;
   border-bottom: none;
   border-right: none;
+}
+/* Start/end aligned top & bottom bubbles — anchor the bubble edge to the trigger
+   edge (instead of centering) so controls near a container edge open inward and
+   don't overflow/clip. -start hugs the left edge; -end hugs the right edge. */
+.gsv-tt-top-start .gsv-tt-bub,
+.gsv-tt-top-end .gsv-tt-bub {
+  bottom: 100%;
+  margin-bottom: 9px;
+  transform: translateY(4px);
+}
+.gsv-tt-bottom-start .gsv-tt-bub,
+.gsv-tt-bottom-end .gsv-tt-bub {
+  top: 100%;
+  margin-top: 9px;
+  transform: translateY(-4px);
+}
+.gsv-tt-top-start .gsv-tt-bub,
+.gsv-tt-bottom-start .gsv-tt-bub {
+  left: 0;
+}
+.gsv-tt-top-end .gsv-tt-bub,
+.gsv-tt-bottom-end .gsv-tt-bub {
+  right: 0;
+}
+.gsv-tt-top-start:hover .gsv-tt-bub,
+.gsv-tt-top-start:focus-within .gsv-tt-bub,
+.gsv-tt-top-end:hover .gsv-tt-bub,
+.gsv-tt-top-end:focus-within .gsv-tt-bub,
+.gsv-tt-bottom-start:hover .gsv-tt-bub,
+.gsv-tt-bottom-start:focus-within .gsv-tt-bub,
+.gsv-tt-bottom-end:hover .gsv-tt-bub,
+.gsv-tt-bottom-end:focus-within .gsv-tt-bub {
+  transform: translateY(0);
+}
+.gsv-tt-top-start .gsv-tt-arrow,
+.gsv-tt-top-end .gsv-tt-arrow {
+  bottom: -4px;
+  border-top: none;
+  border-left: none;
+}
+.gsv-tt-bottom-start .gsv-tt-arrow,
+.gsv-tt-bottom-end .gsv-tt-arrow {
+  top: -4px;
+  border-bottom: none;
+  border-right: none;
+}
+.gsv-tt-top-start .gsv-tt-arrow,
+.gsv-tt-bottom-start .gsv-tt-arrow {
+  left: 14px;
+}
+.gsv-tt-top-end .gsv-tt-arrow,
+.gsv-tt-bottom-end .gsv-tt-arrow {
+  right: 14px;
 }
 .gsv-tt-left .gsv-tt-bub {
   right: 100%;
