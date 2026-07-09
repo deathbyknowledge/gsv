@@ -3,6 +3,7 @@ import { Icon } from "../../../components/ui/Icon";
 import { IconButton } from "../../../components/ui/IconButton";
 import { Progress } from "../../../components/ui/Progress";
 import { StatusDot } from "../../../components/ui/StatusDot";
+import { SpeakerOnGlyph, SpeakerOffGlyph } from "../../../components/ui/lineGlyphs";
 import { Hint } from "../../../components/ui/Tooltip";
 import type { StatusTone } from "../../../components/ui/StatusDot";
 import type { ChatAgentViewModel, ChatModelProfileData } from "../domain/agent";
@@ -173,7 +174,7 @@ export function ChatDockHeader({
               aria-pressed={speakReplies ? "true" : "false"}
               onClick={onToggleSpeakReplies}
             >
-              <Icon name="volume" family="doticons" size={14} />
+              {speakReplies ? <SpeakerOnGlyph size={15} /> : <SpeakerOffGlyph size={15} />}
             </button>
           </Hint>
           {canAbortRun ? (
@@ -188,10 +189,10 @@ export function ChatDockHeader({
               </button>
             </Hint>
           ) : null}
-          <Hint text={atMax ? "Restore chat to its normal size" : "Expand chat to full width"} position="bottom-end">
+          <Hint text={atMax ? "Restore" : "Full width"} position="bottom-end">
             <IconButton glyph="max" size="medium" ariaLabel={atMax ? "Restore chat" : "Expand chat"} onClick={onToggleMax} />
           </Hint>
-          <Hint text="Minimize chat to a compact bar" position="bottom-end">
+          <Hint text="Minimize" position="bottom-end">
             <IconButton glyph="min" size="medium" ariaLabel="Minimize chat" onClick={onToggleOpen} />
           </Hint>
         </div>

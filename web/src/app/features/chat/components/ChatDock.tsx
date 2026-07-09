@@ -4,6 +4,8 @@ import { AgentImage } from "../../../components/ui/AgentImage";
 import { ConfirmModal } from "../../../components/ui/ConfirmModal";
 import { Counter } from "../../../components/ui/Counter";
 import { Icon } from "../../../components/ui/Icon";
+import { IconButton } from "../../../components/ui/IconButton";
+import { ArchiveFolderGlyph, FreeContextGlyph } from "../../../components/ui/lineGlyphs";
 import { MessageInput, type MessageInputAttachment } from "../../../components/ui/MessageInput";
 import type { StatusTone } from "../../../components/ui/StatusDot";
 import { Hint } from "../../../components/ui/Tooltip";
@@ -25,6 +27,7 @@ import {
   useAbortChatProcess,
   useCompactChatConversation,
   useChatConversations,
+  useChatConversationSegments,
   useChatProcessAiConfig,
   useForkChatConversation,
   useDecideChatHil,
@@ -135,8 +138,6 @@ function formatConversationCostTooltip(context: ProcContextState | null | undefi
   const details = [
     `Conversation cost ${total}`,
     tokens,
-    `input ${formatCount(usage.inputTokens)}`,
-    `output ${formatCount(usage.outputTokens)}`,
   ];
   if (usage.cacheReadTokens > 0) {
     details.push(`cache read ${formatCount(usage.cacheReadTokens)}`);
@@ -348,6 +349,11 @@ export function ChatDock({
     processId: activeProcessId,
     rows: runtime.rows,
   });
+  const conversationSegments = useChatConversationSegments({
+    enabled: open && hasActiveProcess,
+    args: hasActiveProcess ? { pid: activeProcessId, conversationId: selectedConversationId } : {},
+  });
+  const hasArchivedMessages = (conversationSegments.data?.length ?? 0) > 0;
   const contextPercent = contextPressurePercent(context?.pressure);
   const contextTitle = contextPercent === null
     ? contextLabel
@@ -814,7 +820,7 @@ export function ChatDock({
         canStartNewTask={canStartNewTask}
         spawnPending={spawnProcess.isPending}
         speakReplies={replySpeech.speakReplies}
-        speechStatus={replySpeech.speechStatus}
+        speechStatus={replySpeech.speakReplies ? "Agent speech on" : "Agent speech off"}
         taskCount={taskCount}
         onAbortRun={abortActiveRun}
         onOpenAgentPanel={openAgentPanel}
@@ -849,25 +855,26 @@ export function ChatDock({
 
       {hasActiveProcess ? (
         <div class="gsv-chat-thread-tools">
-          <Hint position="bottom-start" text={canAbortRun ? "Context can be compacted after the active run finishes" : "Archive older messages and keep the latest context live"}>
+          <Hint position="bottom-start" text={canAbortRun ? "Context can be compacted after the active run finishes" : "Compress and archive older messages to improve agent performance"}>
             <button
               type="button"
               disabled={!canFreeContext}
               onClick={requestFreeContext}
             >
-              <Icon name="stars" size={12} />
+              <FreeContextGlyph size={14} />
               <span>{compactConversation.isPending ? "FREEING" : "FREE CONTEXT"}</span>
               <small>KEEP {compactKeepLast}</small>
             </button>
           </Hint>
-          <Hint position="bottom-start" text={archiveOpen ? "Hide archived message segments" : "Browse archived message segments"}>
+          <Hint position="bottom-start" text={archiveOpen ? "Hide archived messages" : "Browse archived messages"}>
             <button
               type="button"
               aria-expanded={archiveOpen}
+              disabled={!hasArchivedMessages && !archiveOpen}
               onClick={() => setArchiveOpen((value) => !value)}
             >
-              <Icon name="folder" family="doticons" size={12} />
-              <span>{archiveOpen ? "CLOSE ARCHIVE" : "ARCHIVE"}</span>
+              <ArchiveFolderGlyph size={13} />
+              <span>{archiveOpen ? "HIDE ARCHIVED" : "ARCHIVED"}</span>
             </button>
           </Hint>
         </div>
@@ -942,16 +949,15 @@ export function ChatDock({
         voiceActive={ambientTranscription.dictationActive || ambientTranscription.liveActive}
         voiceAction={(
           <Hint position="top-end" text={ambientTranscription.liveTitle}>
-            <button
-              type="button"
-              class={`gsv-chat-live-icon${ambientTranscription.liveActive ? " is-active" : ""}`}
+            <IconButton
+              variant="floating"
+              glyph="transcribe"
+              size={26}
+              className={`gsv-chat-live-icon${ambientTranscription.liveActive ? " is-active" : ""}`}
+              ariaLabel={ambientTranscription.liveActive ? "Stop live voice chat" : "Start live voice chat"}
               disabled={ambientTranscription.liveUnavailable}
-              aria-label={ambientTranscription.liveActive ? "Stop live voice chat" : "Start live voice chat"}
-              aria-pressed={ambientTranscription.liveActive ? "true" : "false"}
               onClick={ambientTranscription.toggleLive}
-            >
-              <Icon name="wifi" family="doticons" size={13} />
-            </button>
+            />
           </Hint>
         )}
         voiceAvailableWhenBusy={ambientTranscription.active}

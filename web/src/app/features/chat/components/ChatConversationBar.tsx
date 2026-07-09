@@ -14,11 +14,18 @@ export function ChatConversationBar({
   conversations,
   onSelect,
 }: ChatConversationBarProps) {
-  if (conversations.length <= 1) {
+  if (conversations.length === 0) {
     return null;
   }
   const visible = conversations.slice(0, 4);
   const overflow = conversations.slice(4);
+  // A single conversation means only the default thread exists (no branches yet);
+  // surface a hint tooltip inviting the user to branch. Once branches exist the
+  // pills act as a branch selector.
+  const hasBranches = conversations.length > 1;
+  const branchTip = hasBranches
+    ? "Select conversation branch"
+    : "Conversation branches will show up here";
 
   const selectOverflow = (event: Event) => {
     const select = event.currentTarget as HTMLSelectElement;
@@ -32,7 +39,7 @@ export function ChatConversationBar({
   return (
     <div class="gsv-chat-conversations" aria-label="Conversations">
       {visible.map((conversation) => (
-        <Hint key={conversation.id} position="bottom-start" text={`Switch to ${conversation.title || conversation.id}`}>
+        <Hint key={conversation.id} position="bottom-start" text={branchTip}>
           <button
             type="button"
             class={conversation.id === activeConversationId ? "is-active" : ""}
@@ -45,7 +52,7 @@ export function ChatConversationBar({
         </Hint>
       ))}
       {overflow.length > 0 ? (
-        <Hint position="bottom-start" text="Switch to another conversation">
+        <Hint position="bottom-start" text="Select conversation branch">
         <label>
           <Icon name="circleDots" family="doticons" size={12} />
           <select value="" aria-label="More conversations" onChange={selectOverflow}>

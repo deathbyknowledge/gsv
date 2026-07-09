@@ -1202,34 +1202,13 @@ button.gsv-chat-task-row:focus-visible {
   color: #ffb199;
 }
 
-.gsv-chat-live-icon {
-  width: 23px;
-  height: 23px;
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 0;
-  background: transparent;
-  color: #6f6aa2;
-  padding: 0;
-  cursor: pointer;
-}
-
-.gsv-chat-live-icon:hover,
-.gsv-chat-live-icon:focus-visible {
-  color: #b6b1ff;
-  outline: none;
-}
-
-.gsv-chat-live-icon.is-active {
+/* Live transcription button uses the floating IconButton variant; this only adds
+   the green "live" active glow over that borderless base. */
+.gsv-ibtn-floating.gsv-chat-live-icon.is-active {
   color: #7df0b2;
-  text-shadow: 0 0 8px rgba(125, 240, 178, 0.42);
 }
-
-.gsv-chat-live-icon:disabled {
-  color: #45415f;
-  cursor: default;
+.gsv-ibtn-floating.gsv-chat-live-icon.is-active svg {
+  filter: drop-shadow(0 0 5px rgba(125, 240, 178, 0.5));
 }
 
 .gsv-chat-command-abort span {

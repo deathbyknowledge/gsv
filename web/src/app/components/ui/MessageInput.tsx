@@ -2,6 +2,7 @@ import type { ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { JSX } from "preact";
 import { Icon } from "./Icon";
+import { IconButton } from "./IconButton";
 import { Hint, Tooltip } from "./Tooltip";
 import { clipboardImageFiles } from "./messageInputClipboard";
 import "./MessageInput.css";
@@ -38,52 +39,8 @@ export interface MessageInputProps {
   voiceTitle?: string;
 }
 
-function LeadGlyph() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" shape-rendering="crispEdges">
-      <g fill="currentColor">
-        <rect x="10" y="2" width="2" height="2" />
-        <rect x="8" y="4" width="2" height="2" />
-        <rect x="6" y="6" width="2" height="2" />
-        <rect x="5" y="8" width="2" height="3" />
-        <rect x="6" y="11" width="3" height="2" />
-        <rect x="9" y="9" width="2" height="2" />
-        <rect x="11" y="4" width="2" height="5" />
-      </g>
-    </svg>
-  );
-}
-
-function MicrophoneGlyph() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" shape-rendering="crispEdges">
-      <g fill="currentColor">
-        <rect x="6" y="2" width="4" height="7" />
-        <rect x="4" y="7" width="1" height="2" />
-        <rect x="11" y="7" width="1" height="2" />
-        <rect x="5" y="9" width="6" height="1" />
-        <rect x="7" y="10" width="2" height="3" />
-        <rect x="5" y="13" width="6" height="1" />
-      </g>
-    </svg>
-  );
-}
-
-function SendGlyph() {
-  return (
-    <svg width="17" height="17" viewBox="0 0 16 16">
-      <path d="M2 3 L14 8 L2 13 L4 8 Z" fill="currentColor" />
-    </svg>
-  );
-}
-
-function StopGlyph() {
-  return (
-    <svg width="17" height="17" viewBox="0 0 16 16" shape-rendering="crispEdges">
-      <rect x="4" y="4" width="8" height="8" fill="currentColor" />
-    </svg>
-  );
-}
+/** Pixel size of the composer's floating icon buttons (tap target). */
+const COMPOSER_ICON_SIZE = 26;
 
 /** MessageInput — autosizing composer with optional attachments and run control. */
 export function MessageInput({
@@ -112,6 +69,7 @@ export function MessageInput({
   voiceTitle = "Record voice",
 }: MessageInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [internalValue, setInternalValue] = useState(defaultValue);
   const draft = value ?? internalValue;
   const draftText = draft.trim();
@@ -207,25 +165,32 @@ export function MessageInput({
       ) : null}
       <form class="gsv-mi-bar" onSubmit={handleSubmit}>
         {onFiles ? (
-          <Hint position="top-start" text="Attach files or images">
-            <label class="gsv-mi-icon gsv-mi-file" aria-label="Attach files">
-              <LeadGlyph />
-              <input
-                type="file"
-                multiple
+          <>
+            <Hint position="top-start" text="Attach files or images">
+              <IconButton
+                variant="floating"
+                glyph="attach"
+                size={COMPOSER_ICON_SIZE}
+                ariaLabel="Attach files"
                 disabled={disabled || busy}
-                onChange={(event) => {
-                  const input = event.currentTarget as HTMLInputElement;
-                  onFiles(input.files);
-                  input.value = "";
-                }}
+                onClick={() => fileInputRef.current?.click()}
               />
-            </label>
-          </Hint>
+            </Hint>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              hidden
+              disabled={disabled || busy}
+              onChange={(event) => {
+                const input = event.currentTarget as HTMLInputElement;
+                onFiles(input.files);
+                input.value = "";
+              }}
+            />
+          </>
         ) : (
-          <span class="gsv-mi-icon" aria-hidden="true">
-            <LeadGlyph />
-          </span>
+          <IconButton variant="floating" glyph="attach" size={COMPOSER_ICON_SIZE} disabled />
         )}
         {actions}
         <textarea
@@ -243,31 +208,29 @@ export function MessageInput({
         {voiceAction}
         {onVoiceClick ? (
           <Hint position="top-end" text={voiceTitle}>
-            <button
-              type="button"
-              class={`gsv-mi-icon gsv-mi-voice${voiceActive ? " is-active" : ""}`}
+            <IconButton
+              variant="floating"
+              glyph="mic"
+              size={COMPOSER_ICON_SIZE}
+              className={`gsv-mi-voice${voiceActive ? " is-active" : ""}`}
+              ariaLabel={voiceTitle}
               disabled={disabled || (!voiceAvailableWhenBusy && busy) || voiceDisabled}
-              aria-label={voiceTitle}
               onClick={onVoiceClick}
-            >
-              <MicrophoneGlyph />
-            </button>
+            />
           </Hint>
         ) : (
-          <span class="gsv-mi-icon" aria-hidden="true">
-            <MicrophoneGlyph />
-          </span>
+          <IconButton variant="floating" glyph="mic" size={COMPOSER_ICON_SIZE} disabled />
         )}
-        <Hint position="top-end" text={canStop ? "Stop the running agent" : "Send message"}>
-          <button
-            class={`gsv-mi-send${canStop ? " is-stop" : ""}`}
-            type={canStop ? "button" : "submit"}
+        <Hint position="top-end" text={canStop ? "Stop the running agent" : "Send"}>
+          <IconButton
+            variant="floating"
+            glyph={canStop ? "stop" : "send"}
+            size={COMPOSER_ICON_SIZE}
+            className={`gsv-mi-send${canStop ? " is-stop" : ""}`}
+            ariaLabel={canStop ? "Stop run" : "Send message"}
             disabled={canStop ? false : !canSubmit}
-            aria-label={canStop ? "Stop run" : "Send message"}
-            onClick={canStop ? onStop : undefined}
-          >
-            {canStop ? <StopGlyph /> : <SendGlyph />}
-          </button>
+            onClick={canStop ? onStop : submitDraft}
+          />
         </Hint>
       </form>
       {user || cost ? (
