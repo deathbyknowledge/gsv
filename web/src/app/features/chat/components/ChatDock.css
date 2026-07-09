@@ -287,7 +287,7 @@
   min-width: 0;
   max-width: 100%;
   display: inline-flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 11px;
   border: 0;
   background: transparent;
@@ -317,12 +317,62 @@
   white-space: nowrap;
 }
 
+/* First meta line under the agent name — task + branch, left-aligned to the
+   avatar (no indent). Model sits on its own line below. */
+.gsv-shell-root .gsv-chat-agent-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 8px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Conversation branch selector — mirrors the model-selection row (uppercase
+   sublabel + chevron). Disabled until a branch exists. */
+.gsv-shell-root .gsv-chat-agent-conversation {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  max-width: 100%;
+  font-weight: 400;
+  letter-spacing: 0.12em;
+  line-height: 1.2;
+  color: #b6b1ff;
+  text-transform: uppercase;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+.gsv-shell-root .gsv-chat-agent-conversation > span {
+  display: inline-block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gsv-shell-root .gsv-chat-agent-conversation:hover,
+.gsv-shell-root .gsv-chat-agent-conversation:focus-visible {
+  color: #e6e4ff;
+  outline: none;
+}
+.gsv-shell-root .gsv-chat-agent-conversation:disabled {
+  color: #6661a0;
+  cursor: default;
+}
+.gsv-shell-root .gsv-chat-agent-conversation:disabled .gsv-chat-agent-chevron {
+  opacity: 0.5;
+}
+
 .gsv-shell-root .gsv-chat-agent-model {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  max-width: calc(100% - 53px);
-  margin-left: 53px;
+  max-width: 100%;
   margin-top: 7px;
   /* size + family from .gsv-sublabel (10px); tracking, weight + line-height kept */
   font-weight: 400;
@@ -362,15 +412,14 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin-left: 53px;
-  margin-top: 6px;
-  max-width: calc(100% - 53px);
+  min-width: 0;
+  max-width: 100%;
   color: var(--accent-bright);
-  /* size + family from .gsv-prose-sm (12px); italic + tight line-height kept */
-  font-style: italic;
-  letter-spacing: 0.01em;
+  /* mono sublabel — matches the branch + model rows on the same meta line */
+  font-weight: 400;
+  letter-spacing: 0.12em;
   line-height: 1.2;
-  text-transform: none;
+  text-transform: uppercase;
   border: 0;
   background: transparent;
   padding: 0;
@@ -400,13 +449,17 @@
   flex: none;
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
+  /* Stretch so the context bar below matches the icon-button row width exactly.
+     The row's intrinsic width (its buttons) drives the column width; the context
+     control fills it via min-width:100% without widening the column itself. */
+  align-items: stretch;
   gap: 9px;
 }
 
 .gsv-shell-root .gsv-chat-action-row {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 4px;
 }
 
@@ -430,10 +483,14 @@
 }
 
 .gsv-shell-root .gsv-chat-actions .gsv-chat-context-control {
-  width: auto;
+  /* Fill the stretched column (= icon-button row width) without contributing its
+     own intrinsic width, so it can never make the column wider than the row. */
+  box-sizing: border-box;
+  width: 0;
+  min-width: 100%;
   height: auto;
-  max-width: 156px;
   min-height: 27px;
+  overflow: hidden;
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -626,23 +683,15 @@
   text-transform: uppercase;
 }
 
+/* Popover widths only — their top/left are set at open time by ChatDockHeader so
+   each one anchors directly under the control that opened it. */
 .gsv-chat-model-popover,
-.gsv-chat-task-popover {
-  left: 64px;
-  width: min(256px, calc(100% - 84px));
-}
-
-.gsv-chat-model-popover {
-  top: 62px;
-}
-
-.gsv-chat-task-popover {
-  top: 92px;
+.gsv-chat-task-popover,
+.gsv-chat-conversations-popover {
+  width: min(256px, calc(100% - 28px));
 }
 
 .gsv-chat-context-popover {
-  top: 99px;
-  right: 12px;
   width: min(232px, calc(100% - 24px));
 }
 
@@ -1364,97 +1413,15 @@ button.gsv-chat-task-row:focus-visible {
   line-height: 1.4;
 }
 
-.gsv-chat-conversations {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  overflow-x: auto;
-  border-bottom: 1px solid var(--border);
-  background: #0b0a1d;
-  padding: 7px 12px;
-}
-
-.gsv-chat-conversations button,
-.gsv-chat-conversations label {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  min-width: 0;
-  min-height: 24px;
-  border: 1px solid var(--border);
-  background: #100e2a;
-  color: #9aa4b8;
-  padding: 0 7px;
-  font-family: var(--gsv-font-mono);
-  font-size: 0.625rem; /* 9px → .gsv-sublabel floor (10px) */
-  letter-spacing: 0.08em;
-  cursor: pointer;
-}
-
-.gsv-chat-conversations button.is-active {
-  border-color: var(--accent-bright);
-  color: #eef0f7;
-}
-
-.gsv-chat-conversations span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.gsv-chat-conversations small {
-  color: #7d78b8;
-}
-
-.gsv-chat-conversations select {
-  appearance: none;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  letter-spacing: inherit;
-  cursor: pointer;
-}
-
-.gsv-chat-thread-tools {
+.gsv-chat-control-success {
   flex: none;
-  display: flex;
-  gap: 6px;
-  border-bottom: 1px solid var(--border);
-  background: #080716;
-  padding: 6px 12px;
-}
-
-.gsv-chat-thread-tools button {
-  min-width: 0;
-  min-height: 26px;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  border: 1px solid var(--border);
-  background: #100e2a;
-  color: #b6b1ff;
-  padding: 0 8px;
-  cursor: pointer;
-  font-family: var(--gsv-font-mono);
-  font-size: 0.625rem; /* 9px → .gsv-sublabel floor (10px) */
-  letter-spacing: 0.08em;
-}
-
-.gsv-chat-thread-tools button:hover,
-.gsv-chat-thread-tools button:focus-visible {
-  border-color: var(--dashed);
-  color: #eef0f7;
-  outline: none;
-}
-
-.gsv-chat-thread-tools button:disabled {
-  opacity: 0.42;
-  cursor: not-allowed;
-}
-
-.gsv-chat-thread-tools small {
-  color: #7d78b8;
+  margin: 10px 14px 0;
+  border: 1px solid rgba(94, 242, 160, 0.4);
+  background: rgba(18, 54, 38, 0.42);
+  color: var(--online);
+  padding: 8px 10px;
+  font-size: 11px;
+  line-height: 1.4;
 }
 
 .gsv-chat-archive {
@@ -2885,7 +2852,6 @@ button.gsv-chat-task-row:focus-visible {
   }
 
   .gsv-shell-root .gsv-chat-actions .gsv-chat-context-control {
-    max-width: 104px;
     padding-inline: 6px;
   }
 

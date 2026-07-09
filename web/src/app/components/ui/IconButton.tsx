@@ -1,7 +1,7 @@
 import type { ComponentChildren } from "preact";
 import "./IconButton.css";
 
-export type IconButtonGlyph = "back" | "arrowBack" | "menu" | "max" | "min" | "close" | "plus" | "help" | "attention" | "refresh" | "newTab" | "attach" | "transcribe" | "mic" | "send" | "stop";
+export type IconButtonGlyph = "back" | "arrowBack" | "menu" | "max" | "min" | "close" | "plus" | "help" | "attention" | "refresh" | "newTab" | "attach" | "transcribe" | "mic" | "send" | "stop" | "sidepanel";
 export type IconButtonSize = "small" | "medium" | "large" | number;
 /** Visual treatment. "default" = filled box with border; "floating" = borderless
  *  and transparent, glyph-only, with a color-shift on hover (for use inside bars
@@ -167,6 +167,13 @@ const GLYPHS: Record<IconButtonGlyph, ComponentChildren> = {
   stop: (
     <svg width="50%" height="50%" viewBox="0 0 24 24">
       <rect x="4.5" y="4.5" width="15" height="15" rx="3.5" fill="currentColor" />
+    </svg>
+  ),
+  sidepanel: (
+    <svg width="46%" height="46%" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M2.5 8 H9.5" />
+      <path d="M7 5.5 L9.5 8 L7 10.5" />
+      <path d="M13 3 V13" />
     </svg>
   ),
 };

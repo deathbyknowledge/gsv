@@ -5,7 +5,6 @@ import { ConfirmModal } from "../../../components/ui/ConfirmModal";
 import { Counter } from "../../../components/ui/Counter";
 import { Icon } from "../../../components/ui/Icon";
 import { IconButton } from "../../../components/ui/IconButton";
-import { ArchiveFolderGlyph, FreeContextGlyph } from "../../../components/ui/lineGlyphs";
 import { MessageInput, type MessageInputAttachment } from "../../../components/ui/MessageInput";
 import type { StatusTone } from "../../../components/ui/StatusDot";
 import { Hint } from "../../../components/ui/Tooltip";
@@ -41,7 +40,6 @@ import {
 import { ActiveAgentPanel } from "./ActiveAgentPanel";
 import { ChatApprovalBanner } from "./ChatApprovalBanner";
 import { ChatArchivePanel } from "./ChatArchivePanel";
-import { ChatConversationBar } from "./ChatConversationBar";
 import { ChatDockHeader } from "./ChatDockHeader";
 import type { ChatPopoverId } from "./ChatDockPopovers";
 import { ChatTranscript, type ChatDockMessage } from "./ChatTranscript";
@@ -255,6 +253,7 @@ export function ChatDock({
   const [compactKeepLastDraft, setCompactKeepLastDraft] = useState(1);
   const [newTaskFocusKey, setNewTaskFocusKey] = useState(0);
   const [composerDraft, setComposerDraft] = useState("");
+  const [branchNotice, setBranchNotice] = useState("");
   const draftAttachmentsRef = useRef<DraftAttachment[]>([]);
   const activeProcessId = agent?.processId?.trim() ?? "";
   const startRunAs = agent?.runAs?.trim() ?? "";
@@ -312,11 +311,21 @@ export function ChatDock({
     setAttachmentError("");
     setArchiveOpen(false);
     setSelectedArchiveSegmentId("");
+    setBranchNotice("");
   }, [activeProcessId]);
 
   useEffect(() => {
     setSelectedArchiveSegmentId("");
   }, [activeProcessId, activeConversationId]);
+
+  // Auto-dismiss the branch success notice after a few seconds.
+  useEffect(() => {
+    if (!branchNotice) {
+      return;
+    }
+    const timer = setTimeout(() => setBranchNotice(""), 4000);
+    return () => clearTimeout(timer);
+  }, [branchNotice]);
 
   useEffect(() => {
     draftAttachmentsRef.current = draftAttachments;
@@ -603,6 +612,7 @@ export function ChatDock({
     }, {
       onSuccess: (result) => {
         onSelectConversation?.(result.targetConversation.id);
+        setBranchNotice("Successfully branched conversation");
       },
     });
   };
@@ -799,8 +809,28 @@ export function ChatDock({
         activeAgent={activeAgent}
         activeProcessId={activeProcessId}
         agentPanelOpen={agentPanelOpen}
+        archiveOpen={archiveOpen}
         atMax={atMax}
         canAbortRun={canAbortRun}
+        canFreeContext={canFreeContext}
+        compactKeepLast={compactKeepLast}
+        compactPending={compactConversation.isPending}
+        hasArchivedMessages={hasArchivedMessages}
+        onFreeContext={() => {
+          setOpenPopover(null);
+          requestFreeContext();
+        }}
+        onToggleArchive={() => {
+          setOpenPopover(null);
+          setArchiveOpen((value) => !value);
+        }}
+        conversations={conversations.data ?? []}
+        activeConversationId={selectedConversationId}
+        onSelectConversation={(conversationId) => {
+          setOpenPopover(null);
+          setArchiveOpen(false);
+          onSelectConversation?.(conversationId);
+        }}
         context={context}
         contextLabel={contextLabel}
         contextLevel={contextLevel}
@@ -844,42 +874,6 @@ export function ChatDock({
         onTogglePopover={togglePopover}
       />
 
-      <ChatConversationBar
-        activeConversationId={selectedConversationId}
-        conversations={conversations.data ?? []}
-        onSelect={(conversationId) => {
-          setArchiveOpen(false);
-          onSelectConversation?.(conversationId);
-        }}
-      />
-
-      {hasActiveProcess ? (
-        <div class="gsv-chat-thread-tools">
-          <Hint position="bottom-start" text={canAbortRun ? "Context can be compacted after the active run finishes" : "Compress and archive older messages to improve agent performance"}>
-            <button
-              type="button"
-              disabled={!canFreeContext}
-              onClick={requestFreeContext}
-            >
-              <FreeContextGlyph size={14} />
-              <span>{compactConversation.isPending ? "FREEING" : "FREE CONTEXT"}</span>
-              <small>KEEP {compactKeepLast}</small>
-            </button>
-          </Hint>
-          <Hint position="bottom-start" text={archiveOpen ? "Hide archived messages" : "Browse archived messages"}>
-            <button
-              type="button"
-              aria-expanded={archiveOpen}
-              disabled={!hasArchivedMessages && !archiveOpen}
-              onClick={() => setArchiveOpen((value) => !value)}
-            >
-              <ArchiveFolderGlyph size={13} />
-              <span>{archiveOpen ? "HIDE ARCHIVED" : "ARCHIVED"}</span>
-            </button>
-          </Hint>
-        </div>
-      ) : null}
-
       {archiveOpen && hasActiveProcess ? (
         <ChatArchivePanel
           conversationId={selectedConversationId}
@@ -893,6 +887,12 @@ export function ChatDock({
       {controlError ? (
         <div class="gsv-chat-control-error" role="status">
           {controlError}
+        </div>
+      ) : null}
+
+      {branchNotice ? (
+        <div class="gsv-chat-control-success" role="status">
+          {branchNotice}
         </div>
       ) : null}
 
