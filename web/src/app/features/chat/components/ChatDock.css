@@ -533,6 +533,34 @@
   color: var(--update);
 }
 
+/* Empty state — no pressure reading yet (idle / not attached / loading /
+   unknown): a neutral "Context" label rather than a misleading 0% bar. */
+.gsv-shell-root .gsv-chat-actions .gsv-chat-context-control > span.gsv-chat-context-empty {
+  color: #7d78b8;
+}
+
+/* Severity tones — tint the border, the value/label text, and the meter fill.
+   attention = pressure level "warn"; error = "critical"/"full" or a context
+   load failure with no reading. */
+.gsv-shell-root .gsv-chat-actions .gsv-chat-context-control.is-attention {
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--border));
+}
+.gsv-shell-root .gsv-chat-actions .gsv-chat-context-control.is-attention > span:last-child {
+  color: var(--warn);
+}
+.gsv-shell-root .gsv-chat-actions .gsv-chat-context-control.is-attention .gsv-pr-fill {
+  background: var(--warn);
+}
+.gsv-shell-root .gsv-chat-actions .gsv-chat-context-control.is-error {
+  border-color: color-mix(in srgb, var(--error) 45%, var(--border));
+}
+.gsv-shell-root .gsv-chat-actions .gsv-chat-context-control.is-error > span:last-child {
+  color: var(--error);
+}
+.gsv-shell-root .gsv-chat-actions .gsv-chat-context-control.is-error .gsv-pr-fill {
+  background: var(--error);
+}
+
 .gsv-shell-root .gsv-chat-transcript {
   padding: 18px 16px 14px;
   gap: 18px;

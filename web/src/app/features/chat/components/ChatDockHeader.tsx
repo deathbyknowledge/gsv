@@ -30,6 +30,7 @@ type ChatDockHeaderProps = {
   onSelectConversation: (conversationId: string) => void;
   context: ChatHistory["context"] | null;
   contextLevel: string;
+  contextTone: "default" | "attention" | "error";
   contextModel: string;
   contextPercent: number | null;
   contextTitle: string;
@@ -82,6 +83,7 @@ export function ChatDockHeader({
   onSelectConversation,
   context,
   contextLevel,
+  contextTone,
   contextModel,
   contextPercent,
   contextTitle,
@@ -266,14 +268,20 @@ export function ChatDockHeader({
         <Hint text={contextTitle} position="left">
           <button
             type="button"
-            class="gsv-chat-context-control"
+            class={`gsv-chat-context-control${contextTone !== "default" ? ` is-${contextTone}` : ""}`}
             data-chat-popover-trigger="context"
             onClick={() => onTogglePopover("context")}
             aria-haspopup="menu"
             aria-expanded={openPopover === "context"}
           >
-            <Progress value={contextPercent ?? 0} label="" showValue={false} size="medium" width={46} />
-            <span>{`${contextPercent ?? 0}%`}</span>
+            {contextPercent !== null ? (
+              <>
+                <Progress value={contextPercent} label="" showValue={false} size="medium" width={46} />
+                <span>{`${contextPercent}%`}</span>
+              </>
+            ) : (
+              <span class="gsv-chat-context-empty">Context</span>
+            )}
           </button>
         </Hint>
       </div>
