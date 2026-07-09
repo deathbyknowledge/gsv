@@ -364,9 +364,7 @@ export function ChatDock({
   });
   const hasArchivedMessages = (conversationSegments.data?.length ?? 0) > 0;
   const contextPercent = contextPressurePercent(context?.pressure);
-  const contextTitle = contextPercent === null
-    ? contextLabel
-    : `${contextPercent}% context pressure`;
+  const contextTitle = `${contextPercent ?? 0}% context pressure`;
   const conversationCost = formatConversationCostTooltip(context);
   const hasVisibleMessages = transcriptMessages.length > 0;
   const processLookupLoading = !hasActiveProcess && effectiveStatusLabel === "loading";
@@ -832,7 +830,6 @@ export function ChatDock({
           onSelectConversation?.(conversationId);
         }}
         context={context}
-        contextLabel={contextLabel}
         contextLevel={contextLevel}
         contextModel={contextModel}
         contextPercent={contextPercent}

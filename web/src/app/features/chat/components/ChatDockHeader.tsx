@@ -29,7 +29,6 @@ type ChatDockHeaderProps = {
   activeConversationId: string;
   onSelectConversation: (conversationId: string) => void;
   context: ChatHistory["context"] | null;
-  contextLabel: string;
   contextLevel: string;
   contextModel: string;
   contextPercent: number | null;
@@ -82,7 +81,6 @@ export function ChatDockHeader({
   activeConversationId,
   onSelectConversation,
   context,
-  contextLabel,
   contextLevel,
   contextModel,
   contextPercent,
@@ -274,10 +272,8 @@ export function ChatDockHeader({
             aria-haspopup="menu"
             aria-expanded={openPopover === "context"}
           >
-            {contextPercent !== null ? (
-              <Progress value={contextPercent} label="" showValue={false} size="medium" width={46} />
-            ) : null}
-            <span>{contextPercent !== null ? `${contextPercent}%` : contextLabel}</span>
+            <Progress value={contextPercent ?? 0} label="" showValue={false} size="medium" width={46} />
+            <span>{`${contextPercent ?? 0}%`}</span>
           </button>
         </Hint>
       </div>
