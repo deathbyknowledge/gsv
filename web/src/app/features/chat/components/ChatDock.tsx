@@ -850,7 +850,7 @@ export function ChatDock({
         canStartNewTask={canStartNewTask}
         spawnPending={spawnProcess.isPending}
         speakReplies={replySpeech.speakReplies}
-        speechStatus={replySpeech.speakReplies ? "Agent speech on" : "Agent speech off"}
+        speechStatus={replySpeech.speechStatus}
         taskCount={taskCount}
         onAbortRun={abortActiveRun}
         onOpenAgentPanel={openAgentPanel}

@@ -36,6 +36,11 @@
 .gsv-hint {
   align-items: center;
   justify-content: center;
+  /* Passthrough wrappers must shrink with the control they wrap — without this
+     the wrapper's default min-width:auto keeps its max-content width and defeats
+     an inner control's min-width:0/ellipsis truncation, overflowing the row. */
+  min-width: 0;
+  max-width: 100%;
 }
 .gsv-tt-bub {
   position: absolute;
