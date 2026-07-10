@@ -77,11 +77,7 @@ import {
   handleSysUpdate as handleSysUpdateDirect,
   refreshCliDownloads,
 } from "./sys/update";
-import {
-  completeOAuthCallback as completeOAuthCallbackFlow,
-  type OAuthCallbackInput,
-  type OAuthCallbackResult,
-} from "./sys/oauth";
+import { completeOAuthCallback as completeOAuthCallbackFlow } from "./sys/oauth";
 import type { McpAddConnectionInput, McpAddConnectionResult } from "./sys/mcp";
 import { installMcpDiscoveryCompatibility } from "./mcp-compat";
 import { oauthCallbackHtmlResponse } from "../oauth-http";
@@ -494,11 +490,6 @@ export class Kernel extends Host<Env> {
       return this.handleProcessReq(processId, frame);
     }
 
-    if (frame.type === "res") {
-      // Process responding to a kernel-initiated request (future use)
-      return null;
-    }
-
     if (frame.type === "sig") {
       await this.completeIpcCallsForProcessSignal(processId, frame);
       this.enqueueProcessSignal(processId, frame);
@@ -766,16 +757,12 @@ export class Kernel extends Host<Env> {
     };
   }
 
-  async completeOAuthCallback(input: OAuthCallbackInput): Promise<OAuthCallbackResult> {
-    return completeOAuthCallbackFlow(input, this.oauth);
-  }
-
   /**
    * Relay process signals using deterministic run route lookups.
    */
   private async handleProcessSignal(processId: string, frame: SignalFrame): Promise<void> {
-    const identity = this.procs.getIdentity(processId);
-    if (!identity) {
+    const ownerUid = this.procs.getOwnerUid(processId);
+    if (ownerUid === null) {
       console.warn(`[Kernel] Signal from unknown process ${processId}`);
       return;
     }
@@ -786,8 +773,6 @@ export class Kernel extends Host<Env> {
     // Signal watches are scoped to the process owner, not the run-as account.
     // App runtimes register watches under the owning human uid, while the
     // emitting process may run as a personal/package agent.
-    const ownerUid = this.procs.getOwnerUid(processId) ?? identity.uid;
-
     await this.dispatchSignalWatches(ownerUid, processId, frame);
 
     if (!isUserProcessSignal(frame.signal)) return;
@@ -905,13 +890,15 @@ export class Kernel extends Host<Env> {
   }
 
   private async completeIpcCallsForProcessSignal(processId: string, frame: SignalFrame): Promise<void> {
-    const identity = this.procs.getIdentity(processId);
-    if (!identity) {
+    if (frame.signal !== "proc.run.finished") {
       return;
     }
     const runId = this.extractRunId(frame.payload);
-    const ownerUid = this.procs.getOwnerUid(processId) ?? identity.uid;
-    if (frame.signal !== "proc.run.finished" || !runId) {
+    if (!runId) {
+      return;
+    }
+    const ownerUid = this.procs.getOwnerUid(processId);
+    if (ownerUid === null) {
       return;
     }
 
@@ -1906,11 +1893,11 @@ export class Kernel extends Host<Env> {
       throw new Error(`Package app not found for watch ${watch.watchId}`);
     }
 
-    const entrypoint = findUiEntrypoint(
-      record.manifest.entrypoints,
-      watch.entrypointName,
-      watch.routeBase,
-    );
+    const entrypoint = record.manifest.entrypoints.find((candidate) => (
+      candidate.kind === "ui" &&
+      candidate.name === watch.entrypointName &&
+      candidate.route === watch.routeBase
+    ));
     if (!entrypoint) {
       throw new Error(`UI entrypoint not found for watch ${watch.watchId}`);
     }
@@ -2879,16 +2866,6 @@ export function findAppFrameEntrypoint(
       return (entrypoint.command?.trim() || entrypoint.name) === entrypointName;
     }
     return false;
-  }) ?? null;
-}
-
-function findUiEntrypoint(
-  entrypoints: readonly PackageEntrypoint[],
-  entrypointName: string,
-  routeBase: string,
-): PackageEntrypoint | null {
-  return entrypoints.find((entrypoint) => {
-    return entrypoint.kind === "ui" && entrypoint.name === entrypointName && entrypoint.route === routeBase;
   }) ?? null;
 }
 
