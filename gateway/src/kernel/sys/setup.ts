@@ -214,14 +214,14 @@ export async function handleSysSetup(
   let nodeToken: SysSetupResult["nodeToken"];
 
   try {
-    if (ctx.env.RIPGIT && ctx.packages) {
+    if (ctx.env.RIPGIT) {
       bootstrap = await timeSetupStep(
         timings,
         "bootstrap-system",
         () => handleSysBootstrap(rawArgs.bootstrap as SysSetupArgs["bootstrap"], {
           ...ctx,
           identity: bootstrapIdentity,
-        } as KernelContext),
+        }),
       );
     }
 
@@ -343,12 +343,10 @@ export async function handleSysSetup(
     });
 
     await timeSetupStep(timings, "provision-package-agents", async () => {
-      if (ctx.packages && typeof ctx.packages.list === "function") {
-        await provisionEnabledPackagesForCaller(
-          { ...ctx, identity: bootstrapIdentity } as KernelContext,
-          ctx.packages.list({ enabled: true }),
-        );
-      }
+      await provisionEnabledPackagesForCaller(
+        { ...ctx, identity: bootstrapIdentity },
+        ctx.packages.list({ enabled: true }),
+      );
     });
 
     const rootShadow = auth.getShadowByUsername("root");

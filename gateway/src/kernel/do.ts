@@ -24,7 +24,6 @@ import {
   parseBinaryFrame,
   type BinaryFrame,
 } from "@humansandmachines/gsv/protocol";
-import type { ProcHilRequest } from "../syscalls/proc";
 import type { SyscallName } from "../syscalls";
 import type { NetFetchArgs, NetFetchResult } from "../syscalls/net";
 import type { PkgPublicListResult } from "@humansandmachines/gsv/protocol";
@@ -85,7 +84,9 @@ import { installMcpDiscoveryCompatibility } from "./mcp-compat";
 import { oauthCallbackHtmlResponse } from "../oauth-http";
 import { isInternalOnlySyscall } from "./syscall-exposure";
 import {
-  resolveAdapterServiceForKernel,
+  normalizeAdapterHilRequest,
+  renderAdapterHilPrompt,
+  resolveAdapterService,
   setAdapterActivityForKernel,
 } from "./adapter-handlers";
 import {
@@ -106,7 +107,7 @@ import { canReadRepo, canWriteRepo } from "./repo";
 import { handleProcSpawn } from "./proc-handlers";
 import { ensureDefaultConversationExecutor } from "./agents";
 import { handleShellExec } from "../drivers/native/shell";
-import { getVisibleTarget, targetCanHandle } from "./targets";
+import { getVisibleTarget } from "./targets";
 import type {
   ScheduleRecord,
   ScheduleRunResult,
@@ -131,10 +132,8 @@ type ConnectionState = {
 
 type BinaryRoute = {
   requestId: string;
-  streamId: number;
   origin: RouteOrigin;
   deviceId: string;
-  expiresAt: number;
   kind: "relay" | "native-stream";
 };
 
@@ -144,10 +143,7 @@ type PendingBinaryStream = {
 };
 
 type ProcSendData = {
-  ok?: boolean;
-  status?: string;
   runId?: string;
-  queued?: boolean;
 };
 
 type ProcessNetFetchOptions = {
@@ -223,7 +219,6 @@ export class Kernel extends Host<Env> {
   private readonly packages: PackageStore;
   private readonly oauth: OAuthStore;
   private readonly mcpServers: McpServerStore;
-  private readonly ready: Promise<void>;
   private readonly connections = new Map<string, Connection<ConnectionState>>();
   private readonly pendingAppResponses = new Map<string, (frame: ResponseFrame) => void>();
   private readonly pendingProcessSignals = new Map<string, Promise<void>>();
@@ -293,8 +288,6 @@ export class Kernel extends Host<Env> {
     this.mcp.onServerStateChanged(() => {
       this.broadcastMcpChanged();
     });
-
-    this.ready = Promise.resolve();
 
     this.rehydrateConnections();
   }
@@ -461,7 +454,6 @@ export class Kernel extends Host<Env> {
   }
 
   async onMessage(connection: Connection<ConnectionState>, message: WSMessage): Promise<void> {
-    await this.ready;
     if (typeof message !== "string") {
       this.handleBinaryMessage(connection, message);
       return;
@@ -501,7 +493,6 @@ export class Kernel extends Host<Env> {
    * via process.recvFrame callback).
    */
   async recvFrame(processId: string, frame: Frame): Promise<Frame | null> {
-    await this.ready;
     if (frame.type === "req") {
       return this.handleProcessReq(processId, frame);
     }
@@ -545,7 +536,6 @@ export class Kernel extends Host<Env> {
       skipCapabilityCheck?: boolean;
     },
   ): Promise<unknown> {
-    await this.ready;
     const ctx = this.buildProcessContext(processId);
     if (!ctx) {
       throw new Error("Unknown process");
@@ -565,13 +555,6 @@ export class Kernel extends Host<Env> {
     if (target.providerId !== "device" || target.route.kind !== "connection") {
       throw new Error(`Target does not support device requests: ${request.target}`);
     }
-    if (!target.online) {
-      throw new Error(`Device offline: ${target.targetId}`);
-    }
-    if (!targetCanHandle(target, request.call)) {
-      throw new Error(`Device ${target.targetId} does not implement ${request.call}`);
-    }
-
     return await this.requestDevice(
       target.targetId,
       request.call,
@@ -585,7 +568,6 @@ export class Kernel extends Host<Env> {
    * Accepts the same frame format as WS connections/process RPC.
    */
   async serviceFrame(frame: Frame): Promise<Frame | null> {
-    await this.ready;
     if (frame.type !== "req") {
       return null;
     }
@@ -594,7 +576,6 @@ export class Kernel extends Host<Env> {
   }
 
   async appRequest(appFrame: AppFrameContext, frame: RequestFrame): Promise<ResponseFrame> {
-    await this.ready;
     if (isAppFrameContextExpired(appFrame)) {
       return errFrame(frame.id, 401, "App frame expired");
     }
@@ -644,28 +625,17 @@ export class Kernel extends Host<Env> {
   }
 
   async resolvePackageAppRpcSession(input: ResolvePackageAppRpcInput): Promise<ResolvePackageAppRpcResult> {
-    await this.ready;
-    const packageName = input.packageName?.trim() ?? "";
-    const sessionId = input.sessionId.trim();
-    const secret = input.secret.trim();
-
-    if (!sessionId || !secret) {
-      return { ok: false, status: 401, message: "Authentication required" };
-    }
-
-    const clientSession = await this.appSessions.resolve(sessionId, secret);
-    if (!clientSession) {
-      return { ok: false, status: 401, message: "Authentication failed" };
-    }
-    if (packageName && clientSession.packageName !== packageName) {
-      return { ok: false, status: 404, message: "Package app session not found" };
-    }
-
-    return this.resolvePackageAppSessionContext(clientSession);
+    return this.resolvePackageAppRpcSessionByMode(input, "resolve");
   }
 
   async refreshPackageAppRpcSession(input: ResolvePackageAppRpcInput): Promise<ResolvePackageAppRpcResult> {
-    await this.ready;
+    return this.resolvePackageAppRpcSessionByMode(input, "refresh");
+  }
+
+  private async resolvePackageAppRpcSessionByMode(
+    input: ResolvePackageAppRpcInput,
+    mode: "resolve" | "refresh",
+  ): Promise<ResolvePackageAppRpcResult> {
     const packageName = input.packageName?.trim() ?? "";
     const sessionId = input.sessionId.trim();
     const secret = input.secret.trim();
@@ -674,7 +644,9 @@ export class Kernel extends Host<Env> {
       return { ok: false, status: 401, message: "Authentication required" };
     }
 
-    const clientSession = await this.appSessions.refresh(sessionId, secret, APP_CLIENT_SESSION_TTL_MS);
+    const clientSession = mode === "refresh"
+      ? await this.appSessions.refresh(sessionId, secret, APP_CLIENT_SESSION_TTL_MS)
+      : await this.appSessions.resolve(sessionId, secret);
     if (!clientSession) {
       return { ok: false, status: 401, message: "Authentication failed" };
     }
@@ -727,7 +699,6 @@ export class Kernel extends Host<Env> {
   }
 
   async authorizeGitHttp(input: AuthorizeGitHttpInput): Promise<AuthorizeGitHttpResult> {
-    await this.ready;
     const owner = input.owner.trim();
     const repo = input.repo.trim();
     const username = input.username?.trim() ?? "";
@@ -738,66 +709,58 @@ export class Kernel extends Host<Env> {
       return { ok: false, status: 401, message: "Authentication required" };
     }
 
-    if (!input.write && (!username || !credential) && isPublicRead) {
-      return {
-        ok: true,
-        username: null,
-        uid: -1,
-        capabilities: [],
-      };
-    }
-
     if (!username || !credential) {
-      return { ok: false, status: 401, message: "Authentication required" };
-    }
+      if (!isPublicRead) {
+        return { ok: false, status: 401, message: "Authentication required" };
+      }
+    } else {
+      const passwordAuth = await this.auth.authenticate(username, credential);
+      const auth = passwordAuth.ok
+        ? passwordAuth
+        : await this.auth.authenticateToken(username, credential, { role: "user" });
 
-    const passwordAuth = await this.auth.authenticate(username, credential);
-    const auth = passwordAuth.ok
-      ? passwordAuth
-      : await this.auth.authenticateToken(username, credential, { role: "user" });
+      if (auth.ok) {
+        const capabilities = this.caps.resolve(auth.identity.gids);
+        const identity: ConnectionIdentity = {
+          role: "user",
+          process: {
+            ...auth.identity,
+            cwd: auth.identity.home,
+          },
+          capabilities,
+        };
+        const repoRef = `${owner}/${repo}`;
+        const repoCtx = this.buildServiceContext(identity);
 
-    if (!auth.ok) {
-      if (isPublicRead) {
+        if (input.write) {
+          if (!canWriteRepo(repoRef, repoCtx)) {
+            return { ok: false, status: 403, message: "Forbidden" };
+          }
+        } else if (!canReadRepo(repoRef, repoCtx)) {
+          return { ok: false, status: 403, message: "Forbidden" };
+        }
+
         return {
           ok: true,
-          username: null,
-          uid: -1,
-          capabilities: [],
+          username: auth.identity.username,
+          uid: auth.identity.uid,
+          capabilities,
         };
       }
-      return { ok: false, status: 401, message: "Authentication failed" };
-    }
-
-    const capabilities = this.caps.resolve(auth.identity.gids);
-    const identity: ConnectionIdentity = {
-      role: "user",
-      process: {
-        ...auth.identity,
-        cwd: auth.identity.home,
-      },
-      capabilities,
-    };
-    const repoRef = `${owner}/${repo}`;
-    const repoCtx = this.buildServiceContext(identity);
-
-    if (input.write) {
-      if (!canWriteRepo(repoRef, repoCtx)) {
-        return { ok: false, status: 403, message: "Forbidden" };
+      if (!isPublicRead) {
+        return { ok: false, status: 401, message: "Authentication failed" };
       }
-    } else if (!canReadRepo(repoRef, repoCtx)) {
-      return { ok: false, status: 403, message: "Forbidden" };
     }
 
     return {
       ok: true,
-      username: auth.identity.username,
-      uid: auth.identity.uid,
-      capabilities,
+      username: null,
+      uid: -1,
+      capabilities: [],
     };
   }
 
   async listPublicPackages(): Promise<PkgPublicListResult> {
-    await this.ready;
     const serverName = this.config.get("config/server/name")?.trim() || "gsv";
     return {
       serverName,
@@ -807,7 +770,6 @@ export class Kernel extends Host<Env> {
   }
 
   async completeOAuthCallback(input: OAuthCallbackInput): Promise<OAuthCallbackResult> {
-    await this.ready;
     return completeOAuthCallbackFlow(input, this.oauth);
   }
 
@@ -830,7 +792,6 @@ export class Kernel extends Host<Env> {
     const ownerUid = this.procs.getOwnerUid(processId) ?? identity.uid;
 
     await this.dispatchSignalWatches(ownerUid, processId, frame);
-    await this.completeIpcCallsFromSignal(ownerUid, processId, frame, runId);
 
     if (!isUserProcessSignal(frame.signal)) return;
 
@@ -896,22 +857,14 @@ export class Kernel extends Host<Env> {
 
     switch (frame.signal) {
       case "proc.run.started":
-        patchForActive("running");
-        return;
       case "proc.run.stream":
-        patchForActive("running");
-        return;
       case "proc.run.retrying":
-        patchForActive("running");
-        return;
       case "proc.run.output":
+      case "proc.run.tool.finished":
         patchForActive("running");
         return;
       case "proc.run.tool.started":
         patchForActive("waiting_tool");
-        return;
-      case "proc.run.tool.finished":
-        patchForActive("running");
         return;
       case "proc.run.hil.requested":
         patchForActive("waiting_hil");
@@ -941,7 +894,6 @@ export class Kernel extends Host<Env> {
   private enqueueProcessSignal(processId: string, frame: SignalFrame): void {
     const previous = this.pendingProcessSignals.get(processId) ?? Promise.resolve();
     const queued = previous
-      .catch(() => {})
       .then(() => this.handleProcessSignal(processId, frame))
       .catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
@@ -962,15 +914,6 @@ export class Kernel extends Host<Env> {
     }
     const runId = this.extractRunId(frame.payload);
     const ownerUid = this.procs.getOwnerUid(processId) ?? identity.uid;
-    await this.completeIpcCallsFromSignal(ownerUid, processId, frame, runId);
-  }
-
-  private async completeIpcCallsFromSignal(
-    ownerUid: number,
-    processId: string,
-    frame: SignalFrame,
-    runId: string | null,
-  ): Promise<void> {
     if (frame.signal !== "proc.run.finished" || !runId) {
       return;
     }
@@ -1036,7 +979,7 @@ export class Kernel extends Host<Env> {
 
   private async deliverSignalToAdapter(route: AdapterRunRoute, frame: SignalFrame): Promise<void> {
     if (frame.signal === "proc.run.hil.requested") {
-      const request = this.toProcHilRequest(frame.payload);
+      const request = normalizeAdapterHilRequest(frame.payload, "signal");
       if (!request) {
         return;
       }
@@ -1049,7 +992,7 @@ export class Kernel extends Host<Env> {
 
       await this.sendAdapterMessage(route.adapter, route.accountId, {
         surface,
-        text: this.renderAdapterHilPrompt(request, route.surfaceKind),
+        text: renderAdapterHilPrompt(request, route.surfaceKind, "initial"),
       });
       await setAdapterActivityForKernel(
         this.env,
@@ -1104,7 +1047,7 @@ export class Kernel extends Host<Env> {
     accountId: string,
     message: AdapterOutboundMessage,
   ): Promise<void> {
-    const service = resolveAdapterServiceForKernel(this.env, adapter);
+    const service = resolveAdapterService(this.env, adapter);
     if (!service || typeof service.adapterSend !== "function") {
       console.warn(`[Kernel] Adapter service unavailable for ${adapter}`);
       return;
@@ -1118,83 +1061,6 @@ export class Kernel extends Host<Env> {
     } catch (err) {
       console.warn(`[Kernel] Adapter send threw (${adapter}/${accountId}):`, err);
     }
-  }
-
-  private toProcHilRequest(value: unknown): ProcHilRequest | null {
-    if (!value || typeof value !== "object") {
-      return null;
-    }
-    const record = value as Record<string, unknown>;
-    if (
-      typeof record.requestId !== "string"
-      || typeof record.runId !== "string"
-      || typeof record.callId !== "string"
-      || typeof record.toolName !== "string"
-      || typeof record.syscall !== "string"
-      || !record.args
-      || typeof record.args !== "object"
-    ) {
-      return null;
-    }
-    return {
-      requestId: record.requestId,
-      runId: record.runId,
-      callId: record.callId,
-      toolName: record.toolName,
-      syscall: record.syscall,
-      args: record.args as Record<string, unknown>,
-      createdAt: typeof record.createdAt === "number" ? record.createdAt : Date.now(),
-    };
-  }
-
-  private renderAdapterHilPrompt(
-    request: ProcHilRequest,
-    surfaceKind: AdapterRunRoute["surfaceKind"],
-  ): string {
-    const summary = this.summarizeHilRequest(request);
-    const actionLine = surfaceKind === "dm"
-      ? 'Reply "approve" to continue, "approve always" to remember it for this conversation, or "deny" to stop this action.'
-      : "Open Chat to approve or deny this action.";
-    return [
-      "I need your confirmation before I can continue.",
-      "",
-      summary,
-      "",
-      actionLine,
-    ].join("\n");
-  }
-
-  private summarizeHilRequest(request: ProcHilRequest): string {
-    const args = request.args;
-    const path = typeof args.path === "string" ? args.path : "";
-    const command = typeof args.input === "string" ? args.input : "";
-
-    if (request.syscall === "shell.exec") {
-      return command
-        ? `Requested action: run \`${command}\`.`
-        : "Requested action: run a shell command.";
-    }
-    if (request.syscall === "fs.read") {
-      return path
-        ? `Requested action: read \`${path}\`.`
-        : "Requested action: read a file.";
-    }
-    if (request.syscall === "fs.write") {
-      return path
-        ? `Requested action: write \`${path}\`.`
-        : "Requested action: write a file.";
-    }
-    if (request.syscall === "fs.edit") {
-      return path
-        ? `Requested action: edit \`${path}\`.`
-        : "Requested action: edit a file.";
-    }
-    if (request.syscall === "fs.delete") {
-      return path
-        ? `Requested action: delete \`${path}\`.`
-        : "Requested action: delete a file.";
-    }
-    return `Requested action: ${request.toolName}.`;
   }
 
   private async handleProcessReq(processId: string, frame: RequestFrame): Promise<ResponseFrame | null> {
@@ -1233,42 +1099,10 @@ export class Kernel extends Host<Env> {
       capabilities: this.caps.resolve(identity.gids),
     };
 
-    return {
-      env: this.env,
-      auth: this.auth,
-      caps: this.caps,
-      config: this.config,
-      devices: this.devices,
-      procs: this.procs,
-      conversations: this.conversations,
-      packages: this.packages,
-      oauth: this.oauth,
-      mcp: this.mcp,
-      mcpServers: this.mcpServers,
-      adapters: this.adapters,
-      runRoutes: this.runRoutes,
-      shellSessions: this.shellSessions,
-      appSessions: this.appSessions,
-      signalWatches: this.signalWatches,
-      ipcCalls: this.ipcCalls,
-      notifications: this.notifications,
-      schedules: this.schedules,
-      connection: null as unknown as Connection,
+    return this.buildKernelContext({
       identity: connIdentity,
       processId,
-      appFrame: undefined,
-      serverVersion: SERVER_VERSION,
-      broadcastToUid: this.broadcastToUid.bind(this),
-      getAppRunner: this.getAppRunner.bind(this),
-      scheduleIpcCallTimeout: this.scheduleIpcCallTimeout.bind(this),
-      scheduleScheduleWake: this.scheduleScheduleWake.bind(this),
-      cancelScheduleWake: this.cancelScheduleWake.bind(this),
-      runSchedules: this.runSchedules.bind(this),
-      addMcpServerConnection: this.addMcpServerConnection.bind(this),
-      removeMcpServerConnection: this.removeMcpServerConnection.bind(this),
-      refreshMcpServerConnection: this.refreshMcpServerConnection.bind(this),
-      callMcpTool: this.callMcpTool.bind(this),
-    };
+    });
   }
 
   private async handleServiceReq(frame: RequestFrame): Promise<ResponseFrame> {
@@ -1300,45 +1134,23 @@ export class Kernel extends Host<Env> {
   private buildContext(connection: Connection<ConnectionState>): KernelContext {
     const state = connection.state;
     if (!state) throw new Error("Connection state is missing");
-    return {
-      env: this.env,
-      auth: this.auth,
-      caps: this.caps,
-      config: this.config,
-      devices: this.devices,
-      procs: this.procs,
-      conversations: this.conversations,
-      packages: this.packages,
-      oauth: this.oauth,
-      mcp: this.mcp,
-      mcpServers: this.mcpServers,
-      adapters: this.adapters,
-      runRoutes: this.runRoutes,
-      shellSessions: this.shellSessions,
-      appSessions: this.appSessions,
-      signalWatches: this.signalWatches,
-      ipcCalls: this.ipcCalls,
-      notifications: this.notifications,
-      schedules: this.schedules,
+    return this.buildKernelContext({
       connection,
-      identity: state.identity as ConnectionIdentity,
-      processId: undefined,
-      appFrame: undefined,
-      serverVersion: SERVER_VERSION,
-      broadcastToUid: this.broadcastToUid.bind(this),
-      getAppRunner: this.getAppRunner.bind(this),
-      scheduleIpcCallTimeout: this.scheduleIpcCallTimeout.bind(this),
-      scheduleScheduleWake: this.scheduleScheduleWake.bind(this),
-      cancelScheduleWake: this.cancelScheduleWake.bind(this),
-      runSchedules: this.runSchedules.bind(this),
-      addMcpServerConnection: this.addMcpServerConnection.bind(this),
-      removeMcpServerConnection: this.removeMcpServerConnection.bind(this),
-      refreshMcpServerConnection: this.refreshMcpServerConnection.bind(this),
-      callMcpTool: this.callMcpTool.bind(this),
-    };
+      identity: state.identity as ConnectionIdentity | undefined,
+    });
   }
 
   private buildServiceContext(identity: ConnectionIdentity, appFrame?: AppFrameContext): KernelContext {
+    return this.buildKernelContext({ identity, appFrame });
+  }
+
+  private buildKernelContext(options: {
+    connection?: Connection | null;
+    identity?: ConnectionIdentity;
+    processId?: string;
+    callerOwnerUid?: number;
+    appFrame?: AppFrameContext;
+  }): KernelContext {
     return {
       env: this.env,
       auth: this.auth,
@@ -1359,10 +1171,11 @@ export class Kernel extends Host<Env> {
       ipcCalls: this.ipcCalls,
       notifications: this.notifications,
       schedules: this.schedules,
-      connection: null as unknown as Connection,
-      identity,
-      processId: undefined,
-      appFrame,
+      connection: options.connection ?? null,
+      identity: options.identity,
+      processId: options.processId,
+      callerOwnerUid: options.callerOwnerUid,
+      appFrame: options.appFrame,
       serverVersion: SERVER_VERSION,
       broadcastToUid: this.broadcastToUid.bind(this),
       getAppRunner: this.getAppRunner.bind(this),
@@ -1453,13 +1266,10 @@ export class Kernel extends Host<Env> {
     if (this.binaryRoutes.has(route.streamId)) {
       throw new Error(`Binary stream id already active: ${route.streamId}`);
     }
-    const expiresAt = Date.now() + route.ttlMs;
     this.binaryRoutes.set(route.streamId, {
       requestId: route.requestId,
-      streamId: route.streamId,
       origin: route.origin,
       deviceId: route.deviceId,
-      expiresAt,
       kind: route.kind ?? "relay",
     });
 
@@ -1619,50 +1429,8 @@ export class Kernel extends Host<Env> {
     args: unknown,
     ttlMs = 60_000,
   ): Promise<unknown> {
-    const device = this.devices.get(deviceId);
-    if (!device || !device.online) {
-      throw new Error(`Device offline: ${deviceId}`);
-    }
-    if (!this.devices.canHandle(deviceId, call)) {
-      throw new Error(`Device ${deviceId} does not implement ${call}`);
-    }
-
-    const deviceConn = this.findDeviceConnection(deviceId);
-    if (!deviceConn) {
-      throw new Error(`No active connection for device: ${deviceId}`);
-    }
-
-    const id = crypto.randomUUID();
-    const pending = this.createPendingAppResponse(id);
-
-    try {
-      const route = await this.registerRouteWithExpiry({
-        id,
-        call: call as SyscallName,
-        origin: { type: "app", id },
-        deviceId,
-        ttlMs,
-      });
-
-      try {
-        deviceConn.send(JSON.stringify({
-          type: "req",
-          id,
-          call,
-          args,
-        }));
-      } catch (error) {
-        route.cancel();
-        throw error;
-      }
-      const frame = await pending.promise;
-      if (!frame.ok) {
-        throw new Error(frame.error.message);
-      }
-      return frame.data ?? {};
-    } finally {
-      pending.cleanup();
-    }
+    const request = await this.startDeviceRequest(deviceId, call, args, ttlMs);
+    return await request.promise;
   }
 
   private async startDeviceRequest(
@@ -1795,8 +1563,7 @@ export class Kernel extends Host<Env> {
 
   private findDeviceConnection(deviceId: string): Connection<ConnectionState> | null {
     for (const [, conn] of this.connections) {
-      const state = conn.state;
-      if (state?.identity?.role === "driver" && state.identity.device === deviceId) {
+      if (this.isConnectionForDevice(conn, deviceId)) {
         return conn;
       }
     }
@@ -1805,10 +1572,7 @@ export class Kernel extends Host<Env> {
 
   private isConnectionForDevice(connection: Connection<ConnectionState>, deviceId: string): boolean {
     const state = connection.state;
-    if (state?.identity?.role === "driver" && state.identity.device === deviceId) {
-      return true;
-    }
-    return false;
+    return state?.identity?.role === "driver" && state.identity.device === deviceId;
   }
 
   private disconnectDeviceConnections(deviceId: string, reason: string): void {
@@ -2043,19 +1807,13 @@ export class Kernel extends Host<Env> {
       }).data;
 
       this.broadcastToRole("user", "pkg.changed", {
-        action: frame.call === "pkg.install"
-          ? "install"
-          : frame.call === "pkg.create"
-          ? "install"
-          : frame.call === "pkg.add"
-          ? "install"
-          : frame.call === "pkg.remove"
-            ? "remove"
-            : frame.call === "pkg.checkout"
-              ? "checkout"
-              : frame.call === "sys.bootstrap"
-                ? "sync"
-              : "sync",
+        action: frame.call === "pkg.remove"
+          ? "remove"
+          : frame.call === "pkg.checkout"
+            ? "checkout"
+            : frame.call === "pkg.sync" || frame.call === "sys.bootstrap"
+              ? "sync"
+              : "install",
         packageId: typeof args.packageId === "string" ? args.packageId : null,
         ref: typeof data?.package?.source?.ref === "string"
           ? data.package.source.ref
@@ -2107,10 +1865,6 @@ export class Kernel extends Host<Env> {
     const watches = this.signalWatches.match(uid, frame.signal, processId);
     for (const watch of watches) {
       try {
-        if (this.isLegacySignalWatchKey(watch.key)) {
-          this.signalWatches.deleteHandled(watch.watchId);
-          continue;
-        }
         if (watch.targetKind === "app") {
           const appClientSession = this.getActiveAppSignalWatchClient(watch);
           if (watch.appSessionId && watch.appClientId && !appClientSession) {
@@ -2130,10 +1884,6 @@ export class Kernel extends Host<Env> {
         console.warn(`[Kernel] signal watch ${watch.watchId} failed: ${message}`);
       }
     }
-  }
-
-  private isLegacySignalWatchKey(key: string | null | undefined): boolean {
-    return typeof key === "string" && (key.startsWith("live:") || key.startsWith("__gsv_live__:"));
   }
 
   private getActiveAppSignalWatchClient(watch: SignalWatchRecord): AppClientSessionContext | null {
@@ -2279,7 +2029,7 @@ export class Kernel extends Host<Env> {
           existingState.identity?.process.uid === uid &&
           existingState.identity.role === role &&
           existingState.clientId === clientId &&
-          connId !== ctx.connection.id &&
+          connId !== connection.id &&
           existing !== connection
         ) {
           existing.close(1000, "Replaced by newer connection");
@@ -2295,7 +2045,7 @@ export class Kernel extends Host<Env> {
       clientPlatform: clientPlatform || undefined,
     };
     connection.setState(newState);
-    this.connections.set(ctx.connection.id, connection);
+    this.connections.set(connection.id, connection);
 
     if (outcome.identity.role === "driver") {
       this.broadcastDeviceStatus(outcome.identity.device, "connected");
@@ -2303,7 +2053,7 @@ export class Kernel extends Host<Env> {
 
     if (outcome.identity.role === "user") {
       const freshIdentity = outcome.identity.process;
-      await this.ensureUserDefaultExecutor(ctx, freshIdentity);
+      await ensureDefaultConversationExecutor(ctx, freshIdentity);
       this.reconcileOwnedIdentities(freshIdentity.uid);
       this.scheduleCliDownloadsRefreshForVersion();
     }
@@ -2409,7 +2159,7 @@ export class Kernel extends Host<Env> {
     try {
       const data = await handleKernelSetup(frame.args, ctx);
       const setup = data as SysSetupResult;
-      await this.ensureUserDefaultExecutor(ctx, setup.user);
+      await ensureDefaultConversationExecutor(ctx, setup.user);
       this.sendOk(connection, frame.id, data);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -2454,22 +2204,22 @@ export class Kernel extends Host<Env> {
       return;
     }
 
-    const consumed = this.routes.consume(frame.id);
-    if (!consumed) {
+    const removed = this.routes.remove(frame.id);
+    if (!removed) {
       return;
     }
 
     this.clearBinaryRoutesForRequest(frame.id);
 
-    if (consumed.scheduleId) {
-      this.cancelSchedule(consumed.scheduleId).catch(() => {});
+    if (removed.scheduleId) {
+      this.cancelSchedule(removed.scheduleId).catch(() => {});
     }
 
-    if (consumed.call === "shell.exec") {
-      this.recordShellSessionFromResponse(consumed.deviceId, frame);
+    if (removed.call === "shell.exec") {
+      this.recordShellSessionFromResponse(removed.deviceId, frame);
     }
 
-    this.deliverToOrigin(consumed.origin, frame);
+    this.deliverToOrigin(removed.origin, frame);
   }
 
   private handleBinaryMessage(connection: Connection<ConnectionState>, message: WSMessage): void {
@@ -2598,8 +2348,7 @@ export class Kernel extends Host<Env> {
    * Schedule callback — fired when a routing table entry expires.
    */
   async onRouteExpired(routeId: string): Promise<void> {
-    await this.ready;
-    const expired = this.routes.expire(routeId);
+    const expired = this.routes.remove(routeId);
     if (!expired) return;
     this.clearBinaryRoutesForRequest(routeId);
 
@@ -2614,7 +2363,6 @@ export class Kernel extends Host<Env> {
   }
 
   async onIpcCallTimeout(callId: string): Promise<void> {
-    await this.ready;
     const timedOut = this.ipcCalls.timeout(callId);
     if (!timedOut) return;
 
@@ -2624,7 +2372,6 @@ export class Kernel extends Host<Env> {
   }
 
   async onScheduleDue(scheduleId: string, wake?: { id?: unknown }): Promise<void> {
-    await this.ready;
     const record = this.schedules.getStored(scheduleId);
     const wakeId = typeof wake?.id === "string" ? wake.id : null;
     if (wakeId && record?.wakeScheduleId !== wakeId) {
@@ -2686,10 +2433,6 @@ export class Kernel extends Host<Env> {
       if (scheduledAtMs === null || scheduledAtMs > now) {
         return skippedScheduleResult(record.id, "schedule is not due");
       }
-    }
-
-    if (record.state.runningAtMs !== null) {
-      return skippedScheduleResult(record.id, "schedule is already running");
     }
 
     const startedAtMs = Date.now();
@@ -2834,86 +2577,27 @@ export class Kernel extends Host<Env> {
       capabilities: this.caps.resolve(process.gids),
     };
 
-    return {
-      env: this.env,
-      auth: this.auth,
-      caps: this.caps,
-      config: this.config,
-      devices: this.devices,
-      procs: this.procs,
-      conversations: this.conversations,
-      packages: this.packages,
-      oauth: this.oauth,
-      mcp: this.mcp,
-      mcpServers: this.mcpServers,
-      adapters: this.adapters,
-      runRoutes: this.runRoutes,
-      shellSessions: this.shellSessions,
-      appSessions: this.appSessions,
-      signalWatches: this.signalWatches,
-      ipcCalls: this.ipcCalls,
-      notifications: this.notifications,
-      schedules: this.schedules,
-      connection: null as unknown as Connection,
+    return this.buildKernelContext({
       identity,
-      processId: undefined,
       callerOwnerUid: record.ownerUid,
-      appFrame: undefined,
-      serverVersion: SERVER_VERSION,
-      broadcastToUid: this.broadcastToUid.bind(this),
-      getAppRunner: this.getAppRunner.bind(this),
-      scheduleIpcCallTimeout: this.scheduleIpcCallTimeout.bind(this),
-      scheduleScheduleWake: this.scheduleScheduleWake.bind(this),
-      cancelScheduleWake: this.cancelScheduleWake.bind(this),
-      runSchedules: this.runSchedules.bind(this),
-      addMcpServerConnection: this.addMcpServerConnection.bind(this),
-      removeMcpServerConnection: this.removeMcpServerConnection.bind(this),
-      refreshMcpServerConnection: this.refreshMcpServerConnection.bind(this),
-      callMcpTool: this.callMcpTool.bind(this),
-    };
+    });
   }
 
   private resolveScheduleIdentity(record: ScheduleRecord): ProcessIdentity {
     const uid = record.runAs.uid;
     const account = this.auth.getPasswdByUid(uid);
-    if (account) {
-      return {
-        uid: account.uid,
-        gid: account.gid,
-        gids: this.auth.resolveGids(account.username, account.gid),
-        username: account.username,
-        home: account.home,
-        cwd: account.home,
-      };
+    if (!account) {
+      throw new Error(`Cannot resolve schedule run-as uid ${uid}`);
     }
 
-    // Fallback: derive from the recorded process when passwd is not directly
-    // resolvable in a minimal test context.
-    const process = record.runAs.kind === "process" && record.runAs.pid
-      ? this.procs.get(record.runAs.pid)
-      : null;
-    if (process && process.uid === uid) {
-      return {
-        uid: process.uid,
-        gid: process.gid,
-        gids: process.gids,
-        username: process.username,
-        home: process.home,
-        cwd: process.cwd,
-      };
-    }
-    const owned = this.procs.list(record.ownerUid).find((candidate) => candidate.uid === uid);
-    if (owned) {
-      return {
-        uid: owned.uid,
-        gid: owned.gid,
-        gids: owned.gids,
-        username: owned.username,
-        home: owned.home,
-        cwd: owned.cwd,
-      };
-    }
-    throw new Error(`Cannot resolve schedule run-as uid ${uid}`);
+    return {
+      uid: account.uid,
+      gid: account.gid,
+      gids: this.auth.resolveGids(account.username, account.gid),
+      username: account.username,
+      home: account.home,
+      cwd: account.home,
+    };
   }
 
   private resolveScheduledSpawnRunAs(record: ScheduleRecord, targetRunAs?: string): string | undefined {
@@ -3162,13 +2846,6 @@ export class Kernel extends Host<Env> {
         this.broadcastDeviceStatus(device.device_id, "disconnected");
       }
     }
-  }
-
-  private async ensureUserDefaultExecutor(
-    ctx: KernelContext,
-    human: ProcessIdentity,
-  ): Promise<string> {
-    return ensureDefaultConversationExecutor(ctx, human);
   }
 
   private extractRunId(payload: unknown): string | null {

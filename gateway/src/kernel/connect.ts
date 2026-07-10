@@ -85,6 +85,9 @@ export async function handleConnect(
   ctx: KernelContext,
 ): Promise<ConnectOutcome> {
   const { auth, caps, devices, serverVersion } = ctx;
+  if (!ctx.connection) {
+    throw new Error("sys.connect requires an active connection");
+  }
 
   if (args.protocol !== 1) {
     return { ok: false, code: 102, message: "Unsupported protocol version" };

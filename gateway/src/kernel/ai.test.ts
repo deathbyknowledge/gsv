@@ -111,6 +111,25 @@ function makeContext(
     devices: {
       listForUser: vi.fn(() => []),
     },
+    auth: {
+      getPasswdByUid: vi.fn((lookupUid: number) => lookupUid === uid
+        ? {
+          username: uid === 2000 ? "friday" : "sam",
+          uid,
+          gid: uid,
+          gecos: "",
+          home: uid === 2000 ? "/home/friday" : "/home/sam",
+          shell: "/bin/init",
+        }
+        : null),
+    },
+    adapters: {
+      identityLinks: { list: vi.fn(() => []) },
+      status: {
+        list: vi.fn(() => []),
+        listAll: vi.fn(() => []),
+      },
+    },
     mcpServers: {
       list: vi.fn((lookupUid?: number) => lookupUid === mcpRecord.uid ? [mcpRecord] : []),
     },

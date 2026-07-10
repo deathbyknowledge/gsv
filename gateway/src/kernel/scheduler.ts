@@ -757,9 +757,18 @@ function computeCronNextRunAt(
   afterMs: number,
 ): number {
   const fields = parseCronFields(expression.expr);
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: expression.timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  });
   let candidate = Math.floor(afterMs / 60_000) * 60_000 + 60_000;
   for (let scanned = 0; scanned < MAX_CRON_SCAN_MINUTES; scanned += 1) {
-    const local = zonedDateParts(candidate, expression.timezone);
+    const local = zonedDateParts(candidate, formatter);
     if (cronFieldsMatch(fields, local)) {
       return candidate;
     }
@@ -908,16 +917,7 @@ function cronFieldsMatch(fields: CronFields, local: ZonedDateParts): boolean {
   return dayMatches;
 }
 
-function zonedDateParts(ms: number, timezone: string): ZonedDateParts {
-  const formatter = new Intl.DateTimeFormat("en-US", {
-    timeZone: timezone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  });
+function zonedDateParts(ms: number, formatter: Intl.DateTimeFormat): ZonedDateParts {
   const parts = formatter.formatToParts(new Date(ms));
   const value = (type: string) => {
     const part = parts.find((entry) => entry.type === type)?.value;

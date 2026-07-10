@@ -319,7 +319,7 @@ function resolveSkillHomeLayers(ctx: KernelContext, runAsIdentity: ProcessIdenti
     return [{ identity: runAsIdentity, label: "home" }];
   }
 
-  const entry = ctx.auth?.getPasswdByUid(ownerUid);
+  const entry = ctx.auth.getPasswdByUid(ownerUid);
   if (!entry) {
     return [{ identity: runAsIdentity, label: "home" }];
   }
@@ -345,9 +345,7 @@ function resolveSkillOwnerUid(ctx: KernelContext, runAsIdentity: ProcessIdentity
   }
 
   if (ctx.processId) {
-    const ownerUid = typeof ctx.procs?.getOwnerUid === "function"
-      ? ctx.procs.getOwnerUid(ctx.processId)
-      : ctx.procs?.get(ctx.processId)?.ownerUid ?? null;
+    const ownerUid = ctx.procs.getOwnerUid(ctx.processId);
     if (ownerUid != null) {
       return ownerUid;
     }
@@ -741,22 +739,6 @@ function packageTopLevelSkillRoot(record: InstalledPackageRecord): {
   };
 }
 
-function packageProfileSkillRoot(record: InstalledPackageRecord, profileName: string): {
-  repo: RipgitRepoRef;
-  path: string;
-  virtualPath: string;
-} | null {
-  const repo = repoRefFromPackage(record);
-  if (!repo) {
-    return null;
-  }
-  return {
-    repo,
-    path: packageSourceRipgitPath(record, joinPath(joinPath("profiles", profileName), "skills.d")),
-    virtualPath: `${packageSourceRepoPath(record)}/profiles/${profileName}/skills.d`,
-  };
-}
-
 function packageSourceRipgitPath(record: InstalledPackageRecord, child: string): string {
   const subdir = trimSlashes(record.manifest.source.subdir);
   if (!subdir || subdir === ".") {
@@ -885,14 +867,6 @@ function fallbackSkillName(path: string): string {
   }
   const last = parts.at(-1) ?? "skill";
   return last.replace(/\.md$/i, "");
-}
-
-function isSkillMarkdownPath(path: string): boolean {
-  const parts = path.split("/").filter(Boolean);
-  if (parts.length === 1) {
-    return parts[0].endsWith(".md") && parts[0] !== "DESCRIPTION.md";
-  }
-  return parts.at(-1) === "SKILL.md";
 }
 
 function decodeTextFile(bytes: Uint8Array): string | null {

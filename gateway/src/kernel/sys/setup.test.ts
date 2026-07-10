@@ -137,9 +137,9 @@ function createCtx(overrides?: { setupMode?: boolean; packages?: InstalledPackag
       STORAGE: storage,
       ...(overrides?.ripgit ? { RIPGIT: overrides.ripgit } : {}),
     } as unknown as KernelContext["env"],
-    packages: overrides?.packages
-      ? { list: vi.fn(() => overrides.packages ?? []) } as unknown as KernelContext["packages"]
-      : undefined,
+    packages: {
+      list: vi.fn(() => overrides?.packages ?? []),
+    } as unknown as KernelContext["packages"],
   } as KernelContext;
 
   return { ctx, auth, config, storage, usersGroup, passwd, groups };

@@ -196,7 +196,7 @@ function deviceRecordToTarget(ctx: KernelContext, record: DeviceRecord): TargetD
     targetId: record.device_id,
     providerId: "device",
     ownerUid: record.owner_uid,
-    ownerUsername: ctx.auth?.getPasswdByUid(record.owner_uid)?.username ?? null,
+    ownerUsername: ctx.auth.getPasswdByUid(record.owner_uid)?.username ?? null,
     label: record.label,
     description: record.description,
     platform: record.platform,
@@ -222,7 +222,7 @@ function adapterTargetToDescriptor(ctx: KernelContext, target: AdapterTarget): T
     targetId: target.targetId,
     providerId: "adapter",
     ownerUid,
-    ownerUsername: ctx.auth?.getPasswdByUid(ownerUid)?.username
+    ownerUsername: ctx.auth.getPasswdByUid(ownerUid)?.username
       ?? (identity?.uid === ownerUid ? identity.username : null),
     label: target.label,
     description: target.description,

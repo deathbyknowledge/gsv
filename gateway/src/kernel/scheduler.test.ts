@@ -20,6 +20,7 @@ import {
 import type { KernelContext } from "./context";
 import type { SchedulePrincipal, ScheduleRecord } from "../syscalls/scheduler";
 import type { Process } from "../process/do";
+import type { AuthStore } from "./auth-store";
 
 const USER_IDENTITY: ProcessIdentity = {
   uid: 1000,
@@ -47,6 +48,29 @@ const CUSTOM_AGENT_IDENTITY: ProcessIdentity = {
   home: "/home/wiki-builder",
   cwd: "/home/wiki-builder",
 };
+
+type ScheduleTestAuth = Pick<AuthStore, "addUser" | "addGroup" | "setPersonalAgent">;
+
+function addTestAccount(
+  auth: ScheduleTestAuth,
+  identity: ProcessIdentity,
+  gecos: string,
+): void {
+  auth.addUser({
+    username: identity.username,
+    uid: identity.uid,
+    gid: identity.gid,
+    gecos,
+    home: identity.home,
+    shell: "/bin/init",
+  });
+  auth.addGroup({ name: identity.username, gid: identity.gid, members: [] });
+}
+
+function addTestUser(auth: ScheduleTestAuth): void {
+  addTestAccount(auth, USER_IDENTITY, "Sam");
+  auth.addGroup({ name: "users", gid: 100, members: [USER_IDENTITY.username] });
+}
 
 function makeReq(call: string, args: unknown): RequestFrame {
   return { type: "req", id: crypto.randomUUID(), call, args } as RequestFrame;
@@ -675,12 +699,14 @@ describe("scheduler", () => {
     );
     const scheduleId = await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as unknown as {
+        auth: ScheduleTestAuth;
         caps: { seed: () => void };
         procs: { spawn: typeof instance["procs"]["spawn"] };
         schedules: ScheduleStore;
         ctx: DurableObjectState;
       };
       k.caps.seed();
+      addTestUser(k.auth);
       k.procs.spawn("init:1000", USER_IDENTITY, {
         profile: "init",
         label: "init",
@@ -739,18 +765,7 @@ describe("scheduler", () => {
     };
     const scheduleId = await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as unknown as {
-        auth: {
-          addUser: (entry: {
-            username: string;
-            uid: number;
-            gid: number;
-            gecos: string;
-            home: string;
-            shell: string;
-          }) => void;
-          addGroup: (entry: { name: string; gid: number; members: string[] }) => void;
-          setPersonalAgent: (ownerUid: number, agentUid: number) => void;
-        };
+        auth: ScheduleTestAuth;
         caps: {
           seed: () => void;
           grant: (gid: number, capability: string) => { ok: boolean; error?: string };
@@ -759,25 +774,9 @@ describe("scheduler", () => {
         ctx: DurableObjectState;
       };
       k.caps.seed();
-      k.auth.addUser({
-        username: PERSONAL_AGENT_IDENTITY.username,
-        uid: PERSONAL_AGENT_IDENTITY.uid,
-        gid: PERSONAL_AGENT_IDENTITY.gid,
-        gecos: "Sam Agent",
-        home: PERSONAL_AGENT_IDENTITY.home,
-        shell: "/bin/init",
-      });
-      k.auth.addGroup({ name: PERSONAL_AGENT_IDENTITY.username, gid: PERSONAL_AGENT_IDENTITY.gid, members: [] });
+      addTestAccount(k.auth, PERSONAL_AGENT_IDENTITY, "Sam Agent");
       k.auth.setPersonalAgent(USER_IDENTITY.uid, PERSONAL_AGENT_IDENTITY.uid);
-      k.auth.addUser({
-        username: CUSTOM_AGENT_IDENTITY.username,
-        uid: CUSTOM_AGENT_IDENTITY.uid,
-        gid: CUSTOM_AGENT_IDENTITY.gid,
-        gecos: "Wiki Builder",
-        home: CUSTOM_AGENT_IDENTITY.home,
-        shell: "/bin/init",
-      });
-      k.auth.addGroup({ name: CUSTOM_AGENT_IDENTITY.username, gid: CUSTOM_AGENT_IDENTITY.gid, members: [] });
+      addTestAccount(k.auth, CUSTOM_AGENT_IDENTITY, "Wiki Builder");
       k.caps.grant(CUSTOM_AGENT_IDENTITY.gid, "shell.exec");
 
       const now = Date.now();
@@ -1287,33 +1286,15 @@ describe("scheduler", () => {
     );
     const scheduleId = await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as unknown as {
-        auth: {
-          addUser: (entry: {
-            username: string;
-            uid: number;
-            gid: number;
-            gecos: string;
-            home: string;
-            shell: string;
-          }) => void;
-          addGroup: (entry: { name: string; gid: number; members: string[] }) => void;
-          setPersonalAgent: (ownerUid: number, agentUid: number) => void;
-        };
+        auth: ScheduleTestAuth;
         caps: { seed: () => void };
         procs: { spawn: typeof instance["procs"]["spawn"] };
         schedules: ScheduleStore;
         ctx: DurableObjectState;
       };
       k.caps.seed();
-      k.auth.addUser({
-        username: PERSONAL_AGENT_IDENTITY.username,
-        uid: PERSONAL_AGENT_IDENTITY.uid,
-        gid: PERSONAL_AGENT_IDENTITY.gid,
-        gecos: "Sam Agent",
-        home: PERSONAL_AGENT_IDENTITY.home,
-        shell: "/bin/init",
-      });
-      k.auth.addGroup({ name: PERSONAL_AGENT_IDENTITY.username, gid: PERSONAL_AGENT_IDENTITY.gid, members: [] });
+      addTestUser(k.auth);
+      addTestAccount(k.auth, PERSONAL_AGENT_IDENTITY, "Sam Agent");
       k.auth.setPersonalAgent(USER_IDENTITY.uid, PERSONAL_AGENT_IDENTITY.uid);
       k.procs.spawn("init:1000", USER_IDENTITY, {
         profile: "init",
@@ -1404,29 +1385,11 @@ describe("scheduler", () => {
     };
     const scheduleId = await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as unknown as {
-        auth: {
-          addUser: (entry: {
-            username: string;
-            uid: number;
-            gid: number;
-            gecos: string;
-            home: string;
-            shell: string;
-          }) => void;
-          addGroup: (entry: { name: string; gid: number; members: string[] }) => void;
-        };
+        auth: ScheduleTestAuth;
         schedules: ScheduleStore;
         ctx: DurableObjectState;
       };
-      k.auth.addUser({
-        username: CUSTOM_AGENT_IDENTITY.username,
-        uid: CUSTOM_AGENT_IDENTITY.uid,
-        gid: CUSTOM_AGENT_IDENTITY.gid,
-        gecos: "Wiki Builder",
-        home: CUSTOM_AGENT_IDENTITY.home,
-        shell: "/bin/init",
-      });
-      k.auth.addGroup({ name: CUSTOM_AGENT_IDENTITY.username, gid: CUSTOM_AGENT_IDENTITY.gid, members: [] });
+      addTestAccount(k.auth, CUSTOM_AGENT_IDENTITY, "Wiki Builder");
 
       const now = Date.now();
       const schedule = k.schedules.create({

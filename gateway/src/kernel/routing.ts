@@ -79,10 +79,6 @@ export class RoutingTable {
     };
   }
 
-  consume(id: string): { origin: RouteOrigin; call: SyscallName; deviceId: string; scheduleId: string | null } | null {
-    return this.remove(id);
-  }
-
   get(id: string): RouteEntry | null {
     const rows = [...this.sql.exec<{
       id: string;
@@ -158,62 +154,5 @@ export class RoutingTable {
       deviceId: row.device_id,
       scheduleId: row.schedule_id,
     }));
-  }
-
-  failForProcess(processId: string): { id: string; deviceId: string; scheduleId: string | null }[] {
-    const rows = [...this.sql.exec<{
-      id: string;
-      device_id: string;
-      schedule_id: string | null;
-    }>(
-      "SELECT id, device_id, schedule_id FROM routing_table WHERE origin_type = 'process' AND origin_id = ?",
-      processId,
-    )];
-
-    if (rows.length > 0) {
-      this.sql.exec(
-        "DELETE FROM routing_table WHERE origin_type = 'process' AND origin_id = ?",
-        processId,
-      );
-    }
-
-    return rows.map((row) => ({
-      id: row.id,
-      deviceId: row.device_id,
-      scheduleId: row.schedule_id,
-    }));
-  }
-
-  /**
-   * Expire a single route entry. Called by the schedule callback when a
-   * per-entry timer fires. Returns the origin so the kernel can deliver
-   * a timeout error.
-   */
-  expire(id: string): { origin: RouteOrigin; call: SyscallName; deviceId: string } | null {
-    const rows = [...this.sql.exec<{
-      origin_type: string;
-      origin_id: string;
-      call: string;
-      device_id: string;
-    }>(
-      "SELECT origin_type, origin_id, call, device_id FROM routing_table WHERE id = ?",
-      id,
-    )];
-
-    if (rows.length === 0) return null;
-
-    this.sql.exec("DELETE FROM routing_table WHERE id = ?", id);
-
-    const row = rows[0];
-    return {
-      origin: { type: row.origin_type as "connection" | "process" | "app", id: row.origin_id },
-      call: row.call as SyscallName,
-      deviceId: row.device_id,
-    };
-  }
-
-  count(): number {
-    const rows = [...this.sql.exec<{ cnt: number }>("SELECT COUNT(*) as cnt FROM routing_table")];
-    return rows[0]?.cnt ?? 0;
   }
 }

@@ -861,7 +861,7 @@ describe("resolveCallerOwnerUid", () => {
     const ctx = {
       processId: "proc:abc",
       identity: { role: "user", process: { ...IDENTITY, uid: 2000 }, capabilities: [] },
-      procs: { get: vi.fn(() => ({ ownerUid: 1000 })) },
+      procs: { getOwnerUid: vi.fn(() => 1000) },
     } as unknown as KernelContext;
     expect(resolveCallerOwnerUid(ctx)).toBe(1000);
   });
@@ -955,7 +955,7 @@ describe("handleProcList", () => {
       // The process runs as the personal agent (uid 2000) but is owned by the
       // human (uid 1000); listing must resolve to the human owner.
       identity: { role: "user", process: { ...IDENTITY, uid: 2000 }, capabilities: ["proc.list"] },
-      procs: { get: vi.fn(() => ({ ownerUid: 1000 })), list },
+      procs: { getOwnerUid: vi.fn(() => 1000), list },
       conversations: { getByActivePid: vi.fn(() => null) },
     } as unknown as KernelContext;
 

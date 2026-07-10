@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
+import { env } from "cloudflare:workers";
+import { runInDurableObject } from "cloudflare:test";
+import { getAgentByName } from "agents";
 import { handleSignalUnwatch, handleSignalWatch } from "./signals";
 import type { KernelContext } from "./context";
+import type { Kernel } from "./do";
+import type { SignalWatchStore } from "./signal-watches";
 
 function makeContext(overrides: Partial<KernelContext> = {}): KernelContext {
   return {
@@ -30,12 +35,25 @@ function makeContext(overrides: Partial<KernelContext> = {}): KernelContext {
     },
     procs: {
       get: vi.fn(() => ({ uid: 1000, ownerUid: 1000 })),
+      getOwnerUid: vi.fn(() => 1000),
     },
     ...overrides,
   } as unknown as KernelContext;
 }
 
 describe("signal watch handlers", () => {
+  it("reports logical rows removed from the indexed watch table", async () => {
+    const kernel = await getAgentByName(env.KERNEL, crypto.randomUUID());
+    await runInDurableObject(kernel, (instance: Kernel) => {
+      const store = (instance as unknown as { signalWatches: SignalWatchStore }).signalWatches;
+      const target = { kind: "process" as const, processId: "proc-target" };
+      const { watch } = store.upsert({ uid: 1000, target, signal: "proc.run.finished" });
+
+      expect(store.removeById(1000, target, watch.watchId)).toBe(1);
+      expect(store.removeById(1000, target, watch.watchId)).toBe(0);
+    });
+  });
+
   it("registers app-owned watches against the current app frame", () => {
     const ctx = makeContext({
       appFrame: {
@@ -151,6 +169,7 @@ describe("signal watch handlers", () => {
       },
       procs: {
         get: vi.fn(() => ({ uid: 2000, ownerUid: 1000 })),
+        getOwnerUid: vi.fn(() => 1000),
       },
     });
 
@@ -187,6 +206,7 @@ describe("signal watch handlers", () => {
           uid: 2000,
           ownerUid: pid === "proc-agent" || pid === "proc-child" ? 1000 : 1001,
         })),
+        getOwnerUid: vi.fn((pid: string) => pid === "proc-agent" ? 1000 : null),
       },
     });
 

@@ -178,12 +178,7 @@ export async function handleAiTools(
   const tools: ToolDefinition[] = [];
 
   for (const [syscall, baseDef] of Object.entries(SYSCALL_TOOLS)) {
-    const allowed = capabilities.includes("*") || capabilities.some((cap) => {
-      if (cap === syscall) return true;
-      const domain = syscall.split(".")[0];
-      return cap === `${domain}.*`;
-    });
-    if (!allowed) continue;
+    if (!hasCapability(capabilities, syscall)) continue;
 
     if (isRoutableSyscall(syscall as SyscallName)) {
       tools.push(intoSyscallTool(baseDef, deviceIds));
@@ -1293,17 +1288,17 @@ function resolveAiMediaConfig(
   const transcriptionProvider =
     normalizeProviderName(resolveAiProcessConfigValue(processOverrides, "transcription/provider")) ??
     normalizeProviderName(resolveAiConfigValue(config, accountUids, accountProfileOverrides, "transcription/provider")) ??
-    normalizeProviderName(getExplicitConfigValue(config, "config/ai/transcription/provider")) ??
+    normalizeProviderName(config.getExplicit("config/ai/transcription/provider")) ??
     "workers-ai";
   const transcriptionModel =
     resolveAiProcessConfigValue(processOverrides, "transcription/model") ??
     resolveAiConfigValue(config, accountUids, accountProfileOverrides, "transcription/model") ??
-    getExplicitConfigValue(config, "config/ai/transcription/model") ??
+    config.getExplicit("config/ai/transcription/model") ??
     defaultTranscriptionModelForProvider(transcriptionProvider);
   const transcriptionApiKey =
     normalizeOptionalString(resolveAiProcessConfigValue(processOverrides, "transcription/api_key")) ??
     normalizeOptionalString(resolveAiConfigValue(config, accountUids, accountProfileOverrides, "transcription/api_key")) ??
-    normalizeOptionalString(getExplicitConfigValue(config, "config/ai/transcription/api_key")) ??
+    normalizeOptionalString(config.getExplicit("config/ai/transcription/api_key")) ??
     defaultApiKey;
   const transcriptionMaxBytes =
     parsePositiveInt(resolveAiProcessConfigValue(processOverrides, "transcription/max_bytes")) ??
@@ -1313,17 +1308,17 @@ function resolveAiMediaConfig(
   const imageReadingProvider =
     normalizeProviderName(resolveAiProcessConfigValue(processOverrides, "image/read/provider")) ??
     normalizeProviderName(resolveAiConfigValue(config, accountUids, accountProfileOverrides, "image/read/provider")) ??
-    normalizeProviderName(getExplicitConfigValue(config, "config/ai/image/read/provider")) ??
+    normalizeProviderName(config.getExplicit("config/ai/image/read/provider")) ??
     "workers-ai";
   const imageReadingModel =
     resolveAiProcessConfigValue(processOverrides, "image/read/model") ??
     resolveAiConfigValue(config, accountUids, accountProfileOverrides, "image/read/model") ??
-    getExplicitConfigValue(config, "config/ai/image/read/model") ??
+    config.getExplicit("config/ai/image/read/model") ??
     defaultImageReadingModelForProvider(imageReadingProvider);
   const imageReadingApiKey =
     normalizeOptionalString(resolveAiProcessConfigValue(processOverrides, "image/read/api_key")) ??
     normalizeOptionalString(resolveAiConfigValue(config, accountUids, accountProfileOverrides, "image/read/api_key")) ??
-    normalizeOptionalString(getExplicitConfigValue(config, "config/ai/image/read/api_key")) ??
+    normalizeOptionalString(config.getExplicit("config/ai/image/read/api_key")) ??
     defaultApiKey;
   const imageReadingInputFormat =
     normalizeImageReadingInputFormat(resolveAiProcessConfigValue(processOverrides, "image/read/input_format")) ??
@@ -1353,37 +1348,37 @@ function resolveAiMediaConfig(
   const imageGenerationProvider =
     normalizeProviderName(resolveAiProcessConfigValue(processOverrides, "image/generation/provider")) ??
     normalizeProviderName(resolveAiConfigValue(config, accountUids, accountProfileOverrides, "image/generation/provider")) ??
-    normalizeProviderName(getExplicitConfigValue(config, "config/ai/image/generation/provider")) ??
+    normalizeProviderName(config.getExplicit("config/ai/image/generation/provider")) ??
     "workers-ai";
   const imageGenerationModel =
     resolveAiProcessConfigValue(processOverrides, "image/generation/model") ??
     resolveAiConfigValue(config, accountUids, accountProfileOverrides, "image/generation/model") ??
-    getExplicitConfigValue(config, "config/ai/image/generation/model") ??
+    config.getExplicit("config/ai/image/generation/model") ??
     defaultImageGenerationModelForProvider(imageGenerationProvider);
   const imageGenerationApiKey =
     normalizeOptionalString(resolveAiProcessConfigValue(processOverrides, "image/generation/api_key")) ??
     normalizeOptionalString(resolveAiConfigValue(config, accountUids, accountProfileOverrides, "image/generation/api_key")) ??
-    normalizeOptionalString(getExplicitConfigValue(config, "config/ai/image/generation/api_key")) ??
+    normalizeOptionalString(config.getExplicit("config/ai/image/generation/api_key")) ??
     defaultApiKey;
   const speechProvider =
     normalizeProviderName(resolveAiProcessConfigValue(processOverrides, "speech/provider")) ??
     normalizeProviderName(resolveAiConfigValue(config, accountUids, accountProfileOverrides, "speech/provider")) ??
-    normalizeProviderName(getExplicitConfigValue(config, "config/ai/speech/provider")) ??
+    normalizeProviderName(config.getExplicit("config/ai/speech/provider")) ??
     "workers-ai";
   const speechModel =
     resolveAiProcessConfigValue(processOverrides, "speech/model") ??
     resolveAiConfigValue(config, accountUids, accountProfileOverrides, "speech/model") ??
-    getExplicitConfigValue(config, "config/ai/speech/model") ??
+    config.getExplicit("config/ai/speech/model") ??
     defaultSpeechModelForProvider(speechProvider);
   const speechApiKey =
     normalizeOptionalString(resolveAiProcessConfigValue(processOverrides, "speech/api_key")) ??
     normalizeOptionalString(resolveAiConfigValue(config, accountUids, accountProfileOverrides, "speech/api_key")) ??
-    normalizeOptionalString(getExplicitConfigValue(config, "config/ai/speech/api_key")) ??
+    normalizeOptionalString(config.getExplicit("config/ai/speech/api_key")) ??
     defaultApiKey;
   const speechSpeaker =
     resolveAiProcessConfigValue(processOverrides, "speech/speaker") ??
     resolveAiConfigValue(config, accountUids, accountProfileOverrides, "speech/speaker") ??
-    getExplicitConfigValue(config, "config/ai/speech/speaker") ??
+    config.getExplicit("config/ai/speech/speaker") ??
     defaultSpeechSpeakerForProvider(speechProvider);
   const speechEncoding =
     resolveAiProcessConfigValue(processOverrides, "speech/encoding") ??
@@ -1425,15 +1420,6 @@ function resolveAiMediaConfig(
     speechMaxChars,
     speechTimeoutMs,
   };
-}
-
-function getExplicitConfigValue(config: KernelContext["config"], key: string): string | null {
-  const withExplicit = config as KernelContext["config"] & {
-    getExplicit?: (key: string) => string | null;
-  };
-  return typeof withExplicit.getExplicit === "function"
-    ? withExplicit.getExplicit(key)
-    : config.get(key);
 }
 
 function normalizeProviderName(value: string | null | undefined): string | null {

@@ -52,11 +52,6 @@ export function listVisibleAdapterTargets(
     return [];
   }
 
-  const adapters = ctx.adapters as KernelContext["adapters"] | undefined;
-  if (!adapters?.status || !adapters.identityLinks) {
-    return [];
-  }
-
   const statuses = visibleAdapterStatuses(ctx);
   const targets = new Map<string, AdapterTarget>();
 
@@ -110,20 +105,16 @@ function adapterShellExecServiceAvailable(ctx: KernelContext, adapter: string): 
 
 function visibleAdapterStatuses(ctx: KernelContext): AdapterStatusRecord[] {
   const identity = ctx.identity;
-  const adapters = ctx.adapters as KernelContext["adapters"] | undefined;
-  if (!identity || identity.role !== "user" || !adapters?.status) {
+  if (!identity || identity.role !== "user") {
     return [];
   }
 
   const ownerUid = resolveCallerOwnerUid(ctx);
   if (ownerUid === 0) {
-    const statusStore = adapters.status as typeof adapters.status & {
-      listAll?: () => AdapterStatusRecord[];
-    };
-    return typeof statusStore.listAll === "function" ? statusStore.listAll() : [];
+    return ctx.adapters.status.listAll();
   }
 
-  const links = adapters.identityLinks?.list(ownerUid) ?? [];
+  const links = ctx.adapters.identityLinks.list(ownerUid);
   const seen = new Set<string>();
   const statuses: AdapterStatusRecord[] = [];
   for (const link of links) {
@@ -133,7 +124,7 @@ function visibleAdapterStatuses(ctx: KernelContext): AdapterStatusRecord[] {
     if (!adapter || !accountId || seen.has(key)) continue;
     seen.add(key);
 
-    const status = adapters.status.list(adapter, accountId)[0];
+    const status = ctx.adapters.status.list(adapter, accountId)[0];
     if (status) {
       statuses.push({ ...status, adapter });
     }

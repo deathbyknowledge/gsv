@@ -329,11 +329,7 @@ export function handleAccountList(
 }
 
 function resolveAccountCapabilities(ctx: KernelContext, username: string, primaryGid: number): string[] {
-  const caps = ctx.caps as Pick<KernelContext["caps"], "resolve"> | null | undefined;
-  if (!caps || typeof caps.resolve !== "function") {
-    return [];
-  }
-  return caps.resolve(ctx.auth.resolveGids(username, primaryGid)).sort();
+  return ctx.caps.resolve(ctx.auth.resolveGids(username, primaryGid)).sort();
 }
 
 function defaultPersonaContext(agentName: string, ownerUsername: string): string {

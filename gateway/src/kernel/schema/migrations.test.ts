@@ -31,7 +31,7 @@ function createTableStatement(name: string): string {
 describe("kernel schema migrations", () => {
   it("starts the kernel component at a v1 baseline", () => {
     expect(KERNEL_SCHEMA_COMPONENT).toBe("kernel");
-    expect(KERNEL_MIGRATIONS).toHaveLength(3);
+    expect(KERNEL_MIGRATIONS).toHaveLength(4);
     expect(KERNEL_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_kernel_schema",
@@ -43,6 +43,10 @@ describe("kernel schema migrations", () => {
     expect(KERNEL_MIGRATIONS[2]).toMatchObject({
       id: 3,
       name: "remove_process_mounts",
+    });
+    expect(KERNEL_MIGRATIONS[3]).toMatchObject({
+      id: 4,
+      name: "remove_legacy_signal_watches",
     });
   });
 
@@ -95,6 +99,12 @@ describe("kernel schema migrations", () => {
 
   it("removes obsolete process mount metadata", () => {
     expect(normalizedStatements()).toContain("ALTER TABLE processes DROP COLUMN mounts");
+  });
+
+  it("removes deprecated signal watches", () => {
+    expect(normalizedStatements()).toContain(
+      "DELETE FROM signal_watches WHERE dedupe_key LIKE 'live:%' OR dedupe_key LIKE '__gsv_live__:%'",
+    );
   });
 
   it("includes current indexes owned by the kernel stores", () => {

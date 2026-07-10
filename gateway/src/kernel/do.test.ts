@@ -226,10 +226,10 @@ describe("Kernel process device requests", () => {
       bodyBytes: 0,
     }));
     const kernel = Object.create(Kernel.prototype) as {
-      ready: Promise<void>;
       env: Record<string, never>;
       procs: { getIdentity: ReturnType<typeof vi.fn> };
       caps: { resolve: ReturnType<typeof vi.fn> };
+      auth: { getPasswdByUid: ReturnType<typeof vi.fn> };
       devices: {
         canAccess: ReturnType<typeof vi.fn>;
         get: ReturnType<typeof vi.fn>;
@@ -242,7 +242,6 @@ describe("Kernel process device requests", () => {
         options?: { ttlMs?: number; internalPurpose?: "model-transport" },
       ): Promise<unknown>;
     };
-    kernel.ready = Promise.resolve();
     kernel.env = {};
     kernel.procs = { getIdentity: vi.fn(() => ({
       uid: 0,
@@ -253,6 +252,7 @@ describe("Kernel process device requests", () => {
       cwd: "/root",
     })) };
     kernel.caps = { resolve: vi.fn(() => options.capabilities ?? ["net.fetch"]) };
+    kernel.auth = { getPasswdByUid: vi.fn(() => null) };
     kernel.devices = {
       canAccess: vi.fn(() => true),
       get: vi.fn(() => device),

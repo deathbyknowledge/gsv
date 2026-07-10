@@ -196,132 +196,75 @@ export class SignalWatchStore {
 
   removeById(uid: number, target: SignalWatchTargetInput, watchId: string): number {
     if (target.kind === "app") {
-      const count = [...this.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) as count FROM signal_watches
+      return this.sql.exec<{ watch_id: string }>(
+        `DELETE FROM signal_watches
          WHERE uid = ? AND target_type = 'app' AND package_id = ? AND entrypoint_name = ?
-           AND app_session_id IS ? AND app_client_id IS ? AND watch_id = ?`,
+           AND app_session_id IS ? AND app_client_id IS ? AND watch_id = ?
+         RETURNING watch_id`,
         uid,
         target.packageId,
         target.entrypointName,
         target.appSessionId ?? null,
         target.appClientId ?? null,
         watchId,
-      )][0]?.count ?? 0;
-      if (count > 0) {
-        this.sql.exec(
-          `DELETE FROM signal_watches
-           WHERE uid = ? AND target_type = 'app' AND package_id = ? AND entrypoint_name = ?
-             AND app_session_id IS ? AND app_client_id IS ? AND watch_id = ?`,
-          uid,
-          target.packageId,
-          target.entrypointName,
-          target.appSessionId ?? null,
-          target.appClientId ?? null,
-          watchId,
-        );
-      }
-      return count;
+      ).toArray().length;
     }
 
-    const count = [...this.sql.exec<{ count: number }>(
-      `SELECT COUNT(*) as count FROM signal_watches
-       WHERE uid = ? AND target_type = 'process' AND target_process_id = ? AND watch_id = ?`,
+    return this.sql.exec<{ watch_id: string }>(
+      `DELETE FROM signal_watches
+       WHERE uid = ? AND target_type = 'process' AND target_process_id = ? AND watch_id = ?
+       RETURNING watch_id`,
       uid,
       target.processId,
       watchId,
-    )][0]?.count ?? 0;
-    if (count > 0) {
-      this.sql.exec(
-        "DELETE FROM signal_watches WHERE uid = ? AND target_type = 'process' AND target_process_id = ? AND watch_id = ?",
-        uid,
-        target.processId,
-        watchId,
-      );
-    }
-    return count;
+    ).toArray().length;
   }
 
   removeByKey(uid: number, target: SignalWatchTargetInput, key: string): number {
     if (target.kind === "app") {
-      const count = [...this.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) as count FROM signal_watches
+      return this.sql.exec<{ watch_id: string }>(
+        `DELETE FROM signal_watches
          WHERE uid = ? AND target_type = 'app' AND package_id = ? AND entrypoint_name = ?
-           AND app_session_id IS ? AND app_client_id IS ? AND dedupe_key = ?`,
+           AND app_session_id IS ? AND app_client_id IS ? AND dedupe_key = ?
+         RETURNING watch_id`,
         uid,
         target.packageId,
         target.entrypointName,
         target.appSessionId ?? null,
         target.appClientId ?? null,
         key,
-      )][0]?.count ?? 0;
-      if (count > 0) {
-        this.sql.exec(
-          `DELETE FROM signal_watches
-           WHERE uid = ? AND target_type = 'app' AND package_id = ? AND entrypoint_name = ?
-             AND app_session_id IS ? AND app_client_id IS ? AND dedupe_key = ?`,
-          uid,
-          target.packageId,
-          target.entrypointName,
-          target.appSessionId ?? null,
-          target.appClientId ?? null,
-          key,
-        );
-      }
-      return count;
+      ).toArray().length;
     }
 
-    const count = [...this.sql.exec<{ count: number }>(
-      `SELECT COUNT(*) as count FROM signal_watches
-       WHERE uid = ? AND target_type = 'process' AND target_process_id = ? AND dedupe_key = ?`,
+    return this.sql.exec<{ watch_id: string }>(
+      `DELETE FROM signal_watches
+       WHERE uid = ? AND target_type = 'process' AND target_process_id = ? AND dedupe_key = ?
+       RETURNING watch_id`,
       uid,
       target.processId,
       key,
-    )][0]?.count ?? 0;
-    if (count > 0) {
-      this.sql.exec(
-        "DELETE FROM signal_watches WHERE uid = ? AND target_type = 'process' AND target_process_id = ? AND dedupe_key = ?",
-        uid,
-        target.processId,
-        key,
-      );
-    }
-    return count;
+    ).toArray().length;
   }
 
   removeByAppSession(uid: number, appSessionId: string): number {
-    const count = [...this.sql.exec<{ count: number }>(
-      `SELECT COUNT(*) as count FROM signal_watches
-       WHERE uid = ? AND target_type = 'app' AND app_session_id = ?`,
+    return this.sql.exec<{ watch_id: string }>(
+      `DELETE FROM signal_watches
+       WHERE uid = ? AND target_type = 'app' AND app_session_id = ?
+       RETURNING watch_id`,
       uid,
       appSessionId,
-    )][0]?.count ?? 0;
-    if (count > 0) {
-      this.sql.exec(
-        "DELETE FROM signal_watches WHERE uid = ? AND target_type = 'app' AND app_session_id = ?",
-        uid,
-        appSessionId,
-      );
-    }
-    return count;
+    ).toArray().length;
   }
 
   removeByAppClient(uid: number, appSessionId: string, appClientId: string): number {
-    const count = [...this.sql.exec<{ count: number }>(
-      `SELECT COUNT(*) as count FROM signal_watches
-       WHERE uid = ? AND target_type = 'app' AND app_session_id = ? AND app_client_id = ?`,
+    return this.sql.exec<{ watch_id: string }>(
+      `DELETE FROM signal_watches
+       WHERE uid = ? AND target_type = 'app' AND app_session_id = ? AND app_client_id = ?
+       RETURNING watch_id`,
       uid,
       appSessionId,
       appClientId,
-    )][0]?.count ?? 0;
-    if (count > 0) {
-      this.sql.exec(
-        "DELETE FROM signal_watches WHERE uid = ? AND target_type = 'app' AND app_session_id = ? AND app_client_id = ?",
-        uid,
-        appSessionId,
-        appClientId,
-      );
-    }
-    return count;
+    ).toArray().length;
   }
 
   private findActiveByKey(

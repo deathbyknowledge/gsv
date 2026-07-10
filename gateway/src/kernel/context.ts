@@ -49,7 +49,7 @@ export type KernelContext = {
   ipcCalls?: IpcCallStore;
   notifications?: NotificationStore;
   schedules?: ScheduleStore;
-  connection: Connection;
+  connection: Connection | null;
   identity?: ConnectionIdentity;
   processId?: string;
   callerOwnerUid?: number;
@@ -84,10 +84,7 @@ export function resolveCallerOwnerUid(ctx: KernelContext): number {
     return ctx.callerOwnerUid;
   }
   if (ctx.processId) {
-    const procs = ctx.procs;
-    const ownerUid = typeof procs.getOwnerUid === "function"
-      ? procs.getOwnerUid(ctx.processId)
-      : procs.get(ctx.processId)?.ownerUid ?? null;
+    const ownerUid = ctx.procs.getOwnerUid(ctx.processId);
     if (ownerUid != null) return ownerUid;
   }
   return ctx.identity!.process.uid;

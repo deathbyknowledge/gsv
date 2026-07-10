@@ -4,7 +4,7 @@ import { RipgitClient, type RipgitRepoRef } from "../../fs/ripgit/client";
 import { inferDefaultCliChannel } from "../../downloads/cli";
 import { seedRepoSkillsToHome } from "./skills-seed";
 import { setRepoVisibility } from "../repo-visibility";
-import { refreshCliDownloads } from "./update";
+import { allSettledOrThrow, refreshCliDownloads } from "./update";
 
 const DEFAULT_GSV_UPSTREAM_URL = "https://github.com/deathbyknowledge/gsv";
 const DEFAULT_GSV_UPSTREAM_REF = "main";
@@ -49,17 +49,6 @@ function formatBootstrapTimings(timings: BootstrapTiming[]): string {
     return "no steps completed";
   }
   return timings.map((timing) => `${timing.label}=${timing.ms}ms`).join(", ");
-}
-
-async function allSettledOrThrow<T extends readonly unknown[]>(
-  promises: { [K in keyof T]: Promise<T[K]> },
-): Promise<T> {
-  const results = await Promise.allSettled(promises);
-  const rejected = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
-  if (rejected) {
-    throw rejected.reason;
-  }
-  return results.map((result) => (result as PromiseFulfilledResult<unknown>).value) as unknown as T;
 }
 
 function createBootstrapLimiter(maxSlots: number) {

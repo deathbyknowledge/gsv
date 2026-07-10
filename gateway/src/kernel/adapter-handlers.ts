@@ -39,8 +39,6 @@ import type { IdentityLinkRecord } from "./identity-links";
 
 type AdapterServiceBinding = Fetcher & Partial<AdapterWorkerInterface>;
 type ProcSendData = {
-  ok?: boolean;
-  status?: string;
   runId?: string;
   queued?: boolean;
 };
@@ -55,8 +53,11 @@ type HilDecision = {
   decision: "approve" | "deny";
   remember: boolean;
 };
-type AdapterStatusReader = KernelContext["adapters"]["status"] & {
-  listAll?: () => AdapterStatusRecord[];
+export type AdapterHilRequest = {
+  requestId: string;
+  toolName: string;
+  syscall: string;
+  args: Record<string, unknown>;
 };
 
 function traceIdFromConfig(config: Record<string, unknown> | undefined): string {
@@ -64,7 +65,7 @@ function traceIdFromConfig(config: Record<string, unknown> | undefined): string 
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : "no-trace";
 }
 
-function resolveAdapterService(env: Env, adapter: string): AdapterServiceBinding | null {
+export function resolveAdapterService(env: Env, adapter: string): AdapterServiceBinding | null {
   const key = `CHANNEL_${adapter.trim().toUpperCase()}`;
   const binding = (env as unknown as Record<string, unknown>)[key];
   if (!binding) return null;
@@ -360,8 +361,7 @@ export function handleAdapterList(
     entries.set(adapter, adapterListEntry(adapter, service));
   }
 
-  const statusStore = ctx.adapters.status as AdapterStatusReader;
-  const statuses = visibleAdapterStatusRecords(ctx, undefined, undefined, statusStore);
+  const statuses = visibleAdapterStatusRecords(ctx);
 
   for (const status of statuses) {
     const adapter = normalizeAdapterName(status.adapter);
@@ -399,16 +399,16 @@ function visibleAdapterStatusRecords(
   ctx: KernelContext,
   adapterFilter?: string,
   accountIdFilter?: string,
-  statusStore: AdapterStatusReader = ctx.adapters.status,
 ): AdapterStatusRecord[] {
   const adapter = adapterFilter ? normalizeAdapterName(adapterFilter) : undefined;
   const accountId = accountIdFilter?.trim();
+  const statusStore = ctx.adapters.status;
 
   if (canSeeAllAdapterStatuses(ctx)) {
     if (adapter) {
       return statusStore.list(adapter, accountId);
     }
-    return typeof statusStore.listAll === "function" ? statusStore.listAll() : [];
+    return statusStore.listAll();
   }
 
   const accounts = visibleAdapterAccounts(ctx, adapter, accountId);
@@ -548,7 +548,7 @@ export async function handleAdapterInbound(
       return {
         ok: true,
         reply: {
-          text: renderAdapterHilReminder(pendingHil, message.surface.kind),
+          text: renderAdapterHilPrompt(pendingHil, message.surface.kind, "reminder"),
           replyToId: message.messageId,
         },
       };
@@ -574,7 +574,7 @@ export async function handleAdapterInbound(
     }
 
     const hilData = (hilResponse as { data?: { resumed?: boolean; pendingHil?: unknown } }).data;
-    const nextPendingHil = normalizePendingHil(hilData?.pendingHil);
+    const nextPendingHil = normalizeAdapterHilRequest(hilData?.pendingHil);
     if (!nextPendingHil && hilData?.resumed) {
       await setAdapterActivityForKernel(
         ctx.env,
@@ -590,7 +590,7 @@ export async function handleAdapterInbound(
       ...(nextPendingHil
         ? {
             reply: {
-              text: renderAdapterHilReminder(nextPendingHil, message.surface.kind),
+              text: renderAdapterHilPrompt(nextPendingHil, message.surface.kind, "reminder"),
               replyToId: message.messageId,
             },
           }
@@ -607,7 +607,6 @@ export async function handleAdapterInbound(
     };
   }
 
-  const incomingText = renderAdapterInboundText(message);
   const origin = adapterInteractionOrigin(adapter, accountId, message, actorId);
   const response = await sendFrameToProcess(pid, {
     type: "req",
@@ -615,7 +614,7 @@ export async function handleAdapterInbound(
     call: "proc.send",
     args: {
       pid,
-      message: incomingText,
+      message: message.text?.trim() || "",
       media: message.media,
       origin,
     },
@@ -689,10 +688,6 @@ export function handleAdapterStateUpdate(
   });
 
   return { ok: true };
-}
-
-export function resolveAdapterServiceForKernel(env: Env, adapter: string): AdapterServiceBinding | null {
-  return resolveAdapterService(env, adapter);
 }
 
 function adapterNameFromBindingKey(key: string): string | null {
@@ -839,10 +834,6 @@ function identityForUid(uid: number, ctx: KernelContext): ProcessIdentity | null
   };
 }
 
-async function ensureUserDefaultExecutor(identity: ProcessIdentity, ctx: KernelContext): Promise<string> {
-  return ensureDefaultConversationExecutor(ctx, identity);
-}
-
 async function resolveAdapterRoute(
   adapter: string,
   accountId: string,
@@ -866,7 +857,7 @@ async function resolveAdapterRoute(
     ctx.adapters.surfaceRoutes.clearRoute(adapter, accountId, surface.kind, surface.id);
   }
 
-  return ensureUserDefaultExecutor(userIdentity, ctx);
+  return ensureDefaultConversationExecutor(ctx, userIdentity);
 }
 
 async function handleAdapterCommand(args: {
@@ -1089,17 +1080,13 @@ function findRunnableAgent(selector: string, ownerUid: number, ctx: KernelContex
 }
 
 function listRunnableAgents(ownerUid: number, ctx: KernelContext): RunnableAgent[] {
-  const entries = typeof ctx.auth.getPasswdEntries === "function"
-    ? ctx.auth.getPasswdEntries()
-    : [];
+  const entries = ctx.auth.getPasswdEntries();
   const personalAgentUid = ctx.auth.getPersonalAgentUid(ownerUid);
   const agents: RunnableAgent[] = [];
 
   for (const entry of entries) {
     if (entry.uid !== personalAgentUid) {
-      const shadow = typeof ctx.auth.getShadowByUsername === "function"
-        ? ctx.auth.getShadowByUsername(entry.username)
-        : null;
+      const shadow = ctx.auth.getShadowByUsername(entry.username);
       if (!shadow || !isLocked(shadow)) {
         continue;
       }
@@ -1222,18 +1209,7 @@ function adapterInteractionOrigin(
   };
 }
 
-function renderAdapterInboundText(message: AdapterInboundMessage): string {
-  return message.text?.trim() || "";
-}
-
-type PendingHilSummary = {
-  requestId: string;
-  toolName: string;
-  syscall: string;
-  args: Record<string, unknown>;
-};
-
-async function getPendingHil(pid: string): Promise<PendingHilSummary | null> {
+async function getPendingHil(pid: string): Promise<AdapterHilRequest | null> {
   const response = await sendFrameToProcess(pid, {
     type: "req",
     id: crypto.randomUUID(),
@@ -1246,10 +1222,13 @@ async function getPendingHil(pid: string): Promise<PendingHilSummary | null> {
   }
 
   const data = (response as { data?: { pendingHil?: unknown } }).data;
-  return normalizePendingHil(data?.pendingHil);
+  return normalizeAdapterHilRequest(data?.pendingHil);
 }
 
-function normalizePendingHil(value: unknown): PendingHilSummary | null {
+export function normalizeAdapterHilRequest(
+  value: unknown,
+  source: "pending" | "signal" = "pending",
+): AdapterHilRequest | null {
   if (!value || typeof value !== "object") {
     return null;
   }
@@ -1260,6 +1239,10 @@ function normalizePendingHil(value: unknown): PendingHilSummary | null {
     || typeof record.syscall !== "string"
     || !record.args
     || typeof record.args !== "object"
+    || (source === "signal" && (
+      typeof record.runId !== "string"
+      || typeof record.callId !== "string"
+    ))
   ) {
     return null;
   }
@@ -1285,16 +1268,21 @@ function parseHilDecision(text: string): HilDecision | null {
   return null;
 }
 
-function renderAdapterHilReminder(
-  pendingHil: PendingHilSummary,
+export function renderAdapterHilPrompt(
+  pendingHil: AdapterHilRequest,
   surfaceKind: AdapterSurface["kind"],
+  phase: "initial" | "reminder",
 ): string {
-  const action = summarizePendingHil(pendingHil);
+  const action = summarizeAdapterHilRequest(pendingHil);
   const responseLine = surfaceKind === "dm"
-    ? 'Reply "approve", "deny", or "approve always" to continue.'
+    ? phase === "initial"
+      ? 'Reply "approve" to continue, "approve always" to remember it for this conversation, or "deny" to stop this action.'
+      : 'Reply "approve", "deny", or "approve always" to continue.'
     : "Open Chat to approve or deny this action.";
   return [
-    "I’m waiting for confirmation before I can continue.",
+    phase === "initial"
+      ? "I need your confirmation before I can continue."
+      : "I’m waiting for confirmation before I can continue.",
     "",
     action,
     "",
@@ -1302,7 +1290,7 @@ function renderAdapterHilReminder(
   ].join("\n");
 }
 
-function summarizePendingHil(pendingHil: PendingHilSummary): string {
+function summarizeAdapterHilRequest(pendingHil: AdapterHilRequest): string {
   const path = typeof pendingHil.args.path === "string" ? pendingHil.args.path : "";
   const command = typeof pendingHil.args.input === "string" ? pendingHil.args.input : "";
 

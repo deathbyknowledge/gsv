@@ -123,6 +123,7 @@ function makeContext(
     },
     procs: {
       get: vi.fn((pid: string) => pid === "pid-1" ? processRecord : null),
+      getOwnerUid: vi.fn((pid: string) => pid === "pid-1" ? human.uid : null),
       list: vi.fn(() => [processRecord]),
       spawn: vi.fn(),
     },

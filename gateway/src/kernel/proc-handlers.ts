@@ -333,8 +333,8 @@ function interactionOriginForContext(ctx: KernelContext): InteractionOrigin | un
   }
 
   if (identity.role === "user") {
-    const connection = ctx.connection as { id?: string; state?: unknown } | null | undefined;
-    if (!connection?.id) return undefined;
+    const connection = ctx.connection;
+    if (!connection) return undefined;
     const state = connection.state as { clientId?: unknown; clientPlatform?: unknown } | undefined;
     const clientId = typeof state?.clientId === "string" && state.clientId.trim()
       ? state.clientId.trim()
