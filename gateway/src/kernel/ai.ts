@@ -13,8 +13,8 @@
 
 import { resolveCallerOwnerUid, type KernelContext } from "./context";
 import type { Context, Message, Tool } from "@earendil-works/pi-ai";
-import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type {
+  ProcessIdentity,
   AiToolsResult,
   AiToolsDevice,
   AiConfigArgs,
@@ -36,11 +36,9 @@ import type {
   AiTranscriptionCreateArgs,
   AiTranscriptionCreateResult,
   ContextFile,
-} from "../syscalls/ai";
-import type {
   ProcAiConfigGetResult,
   ProcAiConfigProfileRef,
-} from "../syscalls/proc";
+} from "@humansandmachines/gsv/protocol";
 import type { ToolDefinition, SyscallName } from "../syscalls";
 import { intoSyscallTool, isRoutableSyscall } from "../syscalls";
 import {

@@ -20,15 +20,16 @@ import type {
 } from "../protocol/frames";
 import type { ArgsOf, ResultOf, SyscallName, ToolDefinition } from "../syscalls";
 import type { CodeModeExecArgs, CodeModeRunArgs, CodeModeRunResult } from "../syscalls/codemode";
-import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
+import { COMPACTION_SUMMARY_SYSTEM_PROMPT } from "../prompts/compaction";
 import type {
   AiConfigResult,
   AiTextGenerateConfig,
   AiTextGenerateOptions,
   AiToolsDevice,
-} from "../syscalls/ai";
-import { COMPACTION_SUMMARY_SYSTEM_PROMPT } from "../prompts/compaction";
-import type {
+  InteractionOrigin,
+  NetFetchArgs,
+  NetFetchResult,
+  ProcessIdentity,
   ProcSendArgs,
   ProcSendResult,
   ProcIpcDeliverArgs,
@@ -88,8 +89,7 @@ import type {
   ProcResetResult,
   ProcKillResult,
   ProcSpawnAssignment,
-} from "../syscalls/proc";
-import type { InteractionOrigin } from "../syscalls/interaction-origin";
+} from "@humansandmachines/gsv/protocol";
 import type { AdapterSurface } from "../adapter-interface";
 import type {
   AssistantMessage,
@@ -190,7 +190,6 @@ import {
   requestToNetFetchArgs,
   responseFromNetFetchResult,
 } from "../kernel/net";
-import type { NetFetchArgs, NetFetchResult } from "../syscalls/net";
 
 type RunState = {
   runId: string;

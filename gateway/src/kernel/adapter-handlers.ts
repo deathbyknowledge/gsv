@@ -14,6 +14,7 @@ import type {
   AdapterDisconnectResult as AdapterDisconnectSyscallResult,
   AdapterInboundArgs,
   AdapterInboundSyscallResult,
+  InteractionOrigin,
   AdapterListArgs,
   AdapterListEntry,
   AdapterListResult,
@@ -23,12 +24,11 @@ import type {
   AdapterSendResult,
   AdapterStatusArgs,
   AdapterStatusResult,
-} from "../syscalls/adapter";
+  ProcessIdentity,
+} from "@humansandmachines/gsv/protocol";
 import { resolveCallerOwnerUid, type KernelContext } from "./context";
-import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { RequestFrame } from "../protocol/frames";
 import { sendFrameToProcess } from "../shared/utils";
-import type { InteractionOrigin } from "../syscalls/interaction-origin";
 import { isVisibleAdapterTarget } from "./adapter-targets";
 import { ensureDefaultConversationExecutor } from "./agents";
 import { canOwnerRunAsAccount } from "./account-access";

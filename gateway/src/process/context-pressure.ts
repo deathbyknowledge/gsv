@@ -1,5 +1,5 @@
 import type { Context, Usage } from "@earendil-works/pi-ai";
-import type { ProcContextPressureLevel, ProcContextState, ProcUsageState } from "../syscalls/proc";
+import type { ProcContextPressureLevel, ProcContextState, ProcUsageState } from "@humansandmachines/gsv/protocol";
 
 const TOKEN_ESTIMATE_CHARS_PER_TOKEN = 4;
 const TOKEN_ESTIMATE_SAFETY_FACTOR = 1.15;

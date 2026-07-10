@@ -20,7 +20,7 @@ import type {
   ProcUsageCost,
   ProcUsageCostSource,
   ProcUsageState,
-} from "../syscalls/proc";
+} from "@humansandmachines/gsv/protocol";
 import type {
   Message,
   UserMessage,

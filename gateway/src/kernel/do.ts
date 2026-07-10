@@ -13,8 +13,18 @@ import type { MCPConnectionResult } from "agents/mcp/client";
 import type { Frame, RequestFrame, ResponseFrame, SignalFrame } from "../protocol/frames";
 import type {
   ConnectionIdentity,
+  NetFetchArgs,
+  NetFetchResult,
+  PkgPublicListResult,
   ProcessIdentity,
+  ScheduleRecord,
+  ScheduleRunResult,
+  SchedulerRunArgs,
+  SchedulerRunResult,
+  SysCliDownloadsResult,
   SysSetupResult,
+  SysUpdateArgs,
+  SysUpdateResult,
 } from "@humansandmachines/gsv/protocol";
 import {
   BINARY_FRAME_DATA,
@@ -25,16 +35,9 @@ import {
   type BinaryFrame,
 } from "@humansandmachines/gsv/protocol";
 import type { SyscallName } from "../syscalls";
-import type { NetFetchArgs, NetFetchResult } from "../syscalls/net";
-import type { PkgPublicListResult } from "@humansandmachines/gsv/protocol";
 import type {
   AdapterOutboundMessage,
 } from "../adapter-interface";
-import type {
-  SysCliDownloadsResult,
-  SysUpdateArgs,
-  SysUpdateResult,
-} from "@humansandmachines/gsv/protocol";
 import { AuthStore } from "./auth-store";
 import { CapabilityStore, hasCapability } from "./capabilities";
 import { ConfigStore } from "./config";
@@ -108,12 +111,6 @@ import { handleProcSpawn } from "./proc-handlers";
 import { ensureDefaultConversationExecutor } from "./agents";
 import { handleShellExec } from "../drivers/native/shell";
 import { getVisibleTarget } from "./targets";
-import type {
-  ScheduleRecord,
-  ScheduleRunResult,
-  SchedulerRunArgs,
-  SchedulerRunResult,
-} from "../syscalls/scheduler";
 import { runKernelSqlMigrations } from "./schema/migrations";
 
 const SERVER_VERSION = "0.3.3";

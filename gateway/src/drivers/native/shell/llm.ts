@@ -3,7 +3,7 @@ import type {
   AiTextGenerateConfig,
   AiTextGenerateResult,
   AiTextGenerateOptions,
-} from "../../../syscalls/ai";
+} from "@humansandmachines/gsv/protocol";
 import { handleAiTextGenerate } from "../../../kernel/ai";
 import type { KernelContext } from "../../../kernel/context";
 import type { NetFetchDeviceTransport } from "../../../kernel/net";

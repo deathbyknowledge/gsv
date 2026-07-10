@@ -2,7 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 import { env } from "cloudflare:workers";
 import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { getAgentByName } from "agents";
-import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
+import type {
+  ProcessIdentity,
+  SchedulePrincipal,
+  ScheduleRecord,
+} from "@humansandmachines/gsv/protocol";
 import { getProcessByPid } from "../shared/utils";
 import type { RequestFrame } from "../protocol/frames";
 import { Kernel } from "./do";
@@ -18,7 +22,6 @@ import {
   ScheduleStore,
 } from "./scheduler";
 import type { KernelContext } from "./context";
-import type { SchedulePrincipal, ScheduleRecord } from "../syscalls/scheduler";
 import type { Process } from "../process/do";
 import type { AuthStore } from "./auth-store";
 

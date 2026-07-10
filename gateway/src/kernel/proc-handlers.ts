@@ -10,6 +10,8 @@ import type { RequestFrame, ResponseFrame } from "../protocol/frames";
 import type { KernelContext } from "./context";
 import { resolveCallerOwnerUid } from "./context";
 import type {
+  InteractionOrigin,
+  ProcessIdentity,
   ProcListArgs,
   ProcListResult,
   ProcListEntry,
@@ -22,10 +24,8 @@ import type {
   ProcSpawnArgs,
   ProcSpawnResult,
   ProcSendArgs,
-} from "../syscalls/proc";
-import type { InteractionOrigin } from "../syscalls/interaction-origin";
+} from "@humansandmachines/gsv/protocol";
 import { sendFrameToProcess } from "../shared/utils";
-import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { resolveUserPath } from "../fs";
 import { ensureDefaultConversationExecutor, ensurePersonalAgent } from "./agents";
 import { accountIdentity } from "./accounts";

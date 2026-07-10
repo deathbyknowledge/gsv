@@ -3,17 +3,17 @@ import type {
   MkdirOptions,
   RmOptions,
 } from "just-bash";
-import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { canReadConfigKey } from "../../kernel/config-access";
 import type { KernelRefs, ProcessViewCall } from "../refs";
 import type { ArgsOf, ResultOf } from "../../syscalls";
 import type {
+  ProcessIdentity,
   ProcAiConfigSnapshot,
   ProcConversation,
   ProcConversationGenerationManifest,
   ProcConversationSegment,
-} from "../../syscalls/proc";
-import type { ScheduleRecord } from "../../syscalls/scheduler";
+  ScheduleRecord,
+} from "@humansandmachines/gsv/protocol";
 import {
   packageArtifactPublicBase,
   visiblePackageScopesForActor,

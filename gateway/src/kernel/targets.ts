@@ -1,5 +1,8 @@
-import type { SysDeviceDetail, SysDeviceSummary } from "@humansandmachines/gsv/protocol";
-import type { AiToolsDevice } from "../syscalls/ai";
+import type {
+  AiToolsDevice,
+  SysDeviceDetail,
+  SysDeviceSummary,
+} from "@humansandmachines/gsv/protocol";
 import type { AdapterTarget } from "./adapter-targets";
 import { getVisibleAdapterTarget, listVisibleAdapterTargets } from "./adapter-targets";
 import { hasCapability } from "./capabilities";

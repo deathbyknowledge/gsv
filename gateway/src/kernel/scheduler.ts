@@ -1,8 +1,8 @@
-import type { ConnectionIdentity } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "./context";
 import { resolveCallerOwnerUid } from "./context";
 import { hasCapability } from "./capabilities";
 import type {
+  ConnectionIdentity,
   ScheduleExpression,
   SchedulePrincipal,
   ScheduleRecord,
@@ -19,7 +19,7 @@ import type {
   ScheduleRunHistoryEntry,
   ScheduleRunResult,
   ScheduleTarget,
-} from "../syscalls/scheduler";
+} from "@humansandmachines/gsv/protocol";
 
 const DEFAULT_LIST_LIMIT = 100;
 const MAX_LIST_LIMIT = 500;

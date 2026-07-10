@@ -9,7 +9,7 @@ import type { PackageStore } from "../kernel/packages";
 import type { RequestFrame } from "../protocol/frames";
 import { sendFrameToProcess } from "../shared/utils";
 import type { ArgsOf, ResultOf } from "../syscalls";
-import type { ScheduleRecord, ScheduleRunHistoryEntry } from "../syscalls/scheduler";
+import type { ScheduleRecord, ScheduleRunHistoryEntry } from "@humansandmachines/gsv/protocol";
 
 export type ProcessViewCall =
   | "proc.ai.config.get"

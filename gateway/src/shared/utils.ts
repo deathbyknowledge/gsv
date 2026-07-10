@@ -3,7 +3,7 @@ import { Kernel } from "../kernel/do";
 import { env } from "cloudflare:workers";
 import { Process } from "../process/do";
 import type { Frame } from "../protocol/frames";
-import type { NetFetchArgs, NetFetchResult } from "../syscalls/net";
+import type { NetFetchArgs, NetFetchResult } from "@humansandmachines/gsv/protocol";
 
 export const isWebSocketRequest = (request: Request) =>
   request.method === "GET" && request.headers.get("upgrade") === "websocket";

@@ -1,5 +1,10 @@
 import type { PasswdEntry } from "../auth/passwd";
-import type { ConnectionIdentity, ProcessIdentity } from "@humansandmachines/gsv/protocol";
+import type {
+  ConnectionIdentity,
+  ProcessIdentity,
+  ScheduleExpression,
+  SchedulePrincipal,
+} from "@humansandmachines/gsv/protocol";
 import { canOwnerDelegateRunAs } from "./account-access";
 import { hasCapability } from "./capabilities";
 import type { KernelContext } from "./context";
@@ -8,10 +13,6 @@ import {
   armSchedule,
   normalizeScheduleExpression,
 } from "./scheduler";
-import type {
-  ScheduleExpression,
-  SchedulePrincipal,
-} from "../syscalls/scheduler";
 
 const USER_CRON_PREFIX = "/var/spool/cron/";
 const SYSTEM_CRON_PREFIX = "/etc/cron.d/";

@@ -7,7 +7,11 @@
 
 import type { Connection } from "agents";
 import type { MCPClientManager } from "agents/mcp/client";
-import type { ConnectionIdentity } from "@humansandmachines/gsv/protocol";
+import type {
+  ConnectionIdentity,
+  SchedulerRunArgs,
+  SchedulerRunResult,
+} from "@humansandmachines/gsv/protocol";
 import type { AuthStore } from "./auth-store";
 import type { CapabilityStore } from "./capabilities";
 import type { ConfigStore } from "./config";
@@ -26,7 +30,6 @@ import type { IpcCallStore } from "./ipc-calls";
 import type { ScheduleStore } from "./scheduler";
 import type { AppSessionStore } from "./app-sessions";
 import type { AppFrameContext } from "../protocol/app-frame";
-import type { SchedulerRunArgs, SchedulerRunResult } from "../syscalls/scheduler";
 import type { McpAddConnectionInput, McpAddConnectionResult } from "./sys/mcp";
 
 export type KernelContext = {

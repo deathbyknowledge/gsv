@@ -329,7 +329,7 @@ export class AuthStore {
   }
 
   // ---------------------------------------------------------------------------
-  // Authentication — same as auth/index.ts but reads from SQLite
+  // Authentication
   // ---------------------------------------------------------------------------
 
   async authenticate(username: string, credential: string): Promise<AuthResult> {

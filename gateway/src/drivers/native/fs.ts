@@ -24,15 +24,13 @@ import type {
   FsCopyArgs,
   FsCopyEndpoint,
   FsCopyResult,
-} from "../../syscalls/copy";
-import type {
   FsTransferReceiveArgs,
   FsTransferReceiveResult,
   FsTransferSendArgs,
   FsTransferSendResult,
   FsTransferStatArgs,
   FsTransferStatResult,
-} from "../../syscalls/transfer";
+} from "@humansandmachines/gsv/protocol";
 import {
   BINARY_FRAME_DATA,
   BINARY_FRAME_END,

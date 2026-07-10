@@ -1,7 +1,7 @@
 import type { KernelContext } from "./context";
 import { resolveCallerOwnerUid } from "./context";
 import type { SignalWatchTargetInput } from "./signal-watches";
-import type { SignalUnwatchArgs, SignalUnwatchResult, SignalWatchArgs, SignalWatchResult } from "../syscalls/signal";
+import type { SignalUnwatchArgs, SignalUnwatchResult, SignalWatchArgs, SignalWatchResult } from "@humansandmachines/gsv/protocol";
 
 const DEFAULT_SIGNAL_WATCH_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_SIGNAL_WATCH_TTL_MS = 30 * 24 * 60 * 60 * 1000;

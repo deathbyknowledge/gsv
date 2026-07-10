@@ -1,6 +1,6 @@
 import type { KernelContext } from "./context";
 import { getVisibleTarget } from "./targets";
-import type { NetFetchArgs, NetFetchResult } from "../syscalls/net";
+import type { NetFetchArgs, NetFetchResult } from "@humansandmachines/gsv/protocol";
 
 export type NetFetchDeviceTransport = {
   requestDevice: (

@@ -6,7 +6,7 @@ import type {
   ThinkingContent,
   ThinkingLevel,
 } from "@earendil-works/pi-ai";
-import type { AiConfigResult, AiTextGenerateOptions } from "../syscalls/ai";
+import type { AiConfigResult, AiTextGenerateOptions } from "@humansandmachines/gsv/protocol";
 import { completeWithWorkersAi, isWorkersAiProvider, streamWithWorkersAi } from "./workers-ai";
 import { withTimeout } from "./timeout";
 import { resolveModelThinkingLevel, resolvePiAiModel } from "./model-registry";
