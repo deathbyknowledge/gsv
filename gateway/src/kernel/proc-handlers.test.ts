@@ -155,6 +155,7 @@ describe("proc handlers", () => {
       procs: {
         get: vi.fn(() => ({ uid: IDENTITY.uid, ownerUid: IDENTITY.uid })),
       },
+      conversations: { getByActivePid: vi.fn(() => null) },
     } as unknown as KernelContext;
     const spoofedOrigin = {
       kind: "adapter",
@@ -336,6 +337,7 @@ describe("proc handlers", () => {
       config: {
         get: vi.fn((key: string) => configEntries.get(key) ?? null),
       },
+      conversations: { getByActivePid: vi.fn(() => null) },
     } as unknown as KernelContext;
 
     await forwardToProcess({
@@ -394,6 +396,7 @@ describe("proc handlers", () => {
       procs: {
         get: vi.fn(() => ({ uid: 2000, ownerUid: IDENTITY.uid })),
       },
+      conversations: { getByActivePid: vi.fn(() => null) },
     } as unknown as KernelContext;
 
     await forwardToProcess({

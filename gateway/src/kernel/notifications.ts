@@ -179,13 +179,12 @@ export function handleNotificationCreate(
   args: NotificationCreateArgs,
   ctx: KernelContext,
 ): NotificationCreateResult {
-  const store = requireNotificationStore(ctx);
   const uid = ctx.identity!.process.uid;
   const title = args.title.trim();
   if (!title) {
     throw new Error("title is required");
   }
-  const notification = store.create({
+  const notification = ctx.notifications.create({
     uid,
     title,
     body: args.body,
@@ -194,7 +193,7 @@ export function handleNotificationCreate(
     actions: normalizeActions(args.actions),
     expiresAt: clampNotificationTtl(args.ttlMs),
   });
-  ctx.broadcastToUid?.(uid, "notification.created", { notification });
+  ctx.broadcastToUid(uid, "notification.created", { notification });
   return { notification };
 }
 
@@ -202,9 +201,8 @@ export function handleNotificationList(
   args: NotificationListArgs,
   ctx: KernelContext,
 ): NotificationListResult {
-  const store = requireNotificationStore(ctx);
   return {
-    notifications: store.list(ctx.identity!.process.uid, args),
+    notifications: ctx.notifications.list(ctx.identity!.process.uid, args),
   };
 }
 
@@ -212,10 +210,9 @@ export function handleNotificationMarkRead(
   args: NotificationMarkReadArgs,
   ctx: KernelContext,
 ): NotificationMarkReadResult {
-  const store = requireNotificationStore(ctx);
-  const notification = store.markRead(ctx.identity!.process.uid, args.notificationId);
+  const notification = ctx.notifications.markRead(ctx.identity!.process.uid, args.notificationId);
   if (notification) {
-    ctx.broadcastToUid?.(ctx.identity!.process.uid, "notification.updated", { notification });
+    ctx.broadcastToUid(ctx.identity!.process.uid, "notification.updated", { notification });
   }
   return { notification };
 }
@@ -224,19 +221,11 @@ export function handleNotificationDismiss(
   args: NotificationDismissArgs,
   ctx: KernelContext,
 ): NotificationDismissResult {
-  const store = requireNotificationStore(ctx);
-  const notification = store.dismiss(ctx.identity!.process.uid, args.notificationId);
+  const notification = ctx.notifications.dismiss(ctx.identity!.process.uid, args.notificationId);
   if (notification) {
-    ctx.broadcastToUid?.(ctx.identity!.process.uid, "notification.dismissed", { notification });
+    ctx.broadcastToUid(ctx.identity!.process.uid, "notification.dismissed", { notification });
   }
   return { notification };
-}
-
-function requireNotificationStore(ctx: KernelContext): NotificationStore {
-  if (!ctx.notifications) {
-    throw new Error("Notification store is unavailable");
-  }
-  return ctx.notifications;
 }
 
 function deriveNotificationSource(ctx: KernelContext): NotificationSource {

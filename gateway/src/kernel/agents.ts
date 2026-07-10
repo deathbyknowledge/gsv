@@ -356,11 +356,6 @@ export async function resolveConversationExecutor(
   agentIdentity: ProcessIdentity,
   opts?: { interactive?: boolean; label?: string },
 ): Promise<string> {
-  const conversations = ctx.conversations;
-  if (!conversations) {
-    throw new Error("conversation registry unavailable");
-  }
-
   if (conversation.activePid && ctx.procs.get(conversation.activePid)) {
     return conversation.activePid;
   }
@@ -372,7 +367,7 @@ export async function resolveConversationExecutor(
     interactive,
     label: opts?.label,
   });
-  conversations.setActivePid(conversation.conversationId, pid);
+  ctx.conversations.setActivePid(conversation.conversationId, pid);
 
   await sendFrameToProcess(pid, {
     type: "req",
@@ -400,12 +395,8 @@ export async function ensureDefaultConversationExecutor(
   ctx: KernelContext,
   human: ProcessIdentity,
 ): Promise<string> {
-  const conversations = ctx.conversations;
-  if (!conversations) {
-    throw new Error("conversation registry unavailable");
-  }
   const agent = await ensurePersonalAgent(ctx, human);
-  const { record } = conversations.ensureDefault(
+  const { record } = ctx.conversations.ensureDefault(
     human.uid,
     agent.identity.uid,
     agent.identity.home,

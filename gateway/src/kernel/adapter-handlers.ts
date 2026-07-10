@@ -33,7 +33,6 @@ import { isVisibleAdapterTarget } from "./adapter-targets";
 import { ensureDefaultConversationExecutor } from "./agents";
 import { canOwnerRunAsAccount } from "./account-access";
 import { isLocked } from "../auth/shadow";
-import { DEFAULT_CONVERSATION_ID } from "../process/conversations";
 import type { AdapterStatusRecord } from "./adapter-status";
 import type { IdentityLinkRecord } from "./identity-links";
 
@@ -1136,17 +1135,13 @@ async function spawnAdapterAgentProcess(
     cwd: agent.identity.cwd,
   });
 
-  let conversationId: string | undefined;
-  if (ctx.conversations) {
-    const conversation = ctx.conversations.create({
-      ownerUid,
-      agentUid: agent.identity.uid,
-      agentHome: agent.identity.home,
-      title: label,
-    });
-    conversationId = conversation.conversationId;
-    ctx.conversations.setActivePid(conversationId, pid);
-  }
+  const conversation = ctx.conversations.create({
+    ownerUid,
+    agentUid: agent.identity.uid,
+    agentHome: agent.identity.home,
+    title: label,
+  });
+  ctx.conversations.setActivePid(conversation.conversationId, pid);
 
   await sendFrameToProcess(pid, {
     type: "req",
@@ -1156,7 +1151,7 @@ async function spawnAdapterAgentProcess(
       pid,
       identity: agent.identity,
       interactive: true,
-      conversationId: conversationId ?? DEFAULT_CONVERSATION_ID,
+      conversationId: conversation.conversationId,
     },
   } as RequestFrame);
 

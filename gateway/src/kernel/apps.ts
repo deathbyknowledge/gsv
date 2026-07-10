@@ -191,12 +191,9 @@ function toSessionSummary(session: AppSessionContext): AppSessionSummary {
 }
 
 async function closeRunnerAppSession(ctx: KernelContext, session: AppSessionContext): Promise<void> {
-  const runner = ctx.getAppRunner?.(session.uid, session.packageId) as {
-    closeAppSession?: (sessionId: string) => Promise<unknown>;
-  } | undefined;
-  if (!runner?.closeAppSession) {
-    return;
-  }
+  const runner = ctx.getAppRunner(session.uid, session.packageId) as {
+    closeAppSession: (sessionId: string) => Promise<unknown>;
+  };
   await runner.closeAppSession(session.sessionId);
 }
 
@@ -204,12 +201,9 @@ async function closeRunnerAppClient(
   ctx: KernelContext,
   client: Pick<IssuedAppClientSession, "uid" | "packageId" | "sessionId" | "clientId">,
 ): Promise<void> {
-  const runner = ctx.getAppRunner?.(client.uid, client.packageId) as {
-    closeAppClient?: (sessionId: string, clientId: string) => Promise<unknown>;
-  } | undefined;
-  if (!runner?.closeAppClient) {
-    return;
-  }
+  const runner = ctx.getAppRunner(client.uid, client.packageId) as {
+    closeAppClient: (sessionId: string, clientId: string) => Promise<unknown>;
+  };
   await runner.closeAppClient(client.sessionId, client.clientId);
 }
 

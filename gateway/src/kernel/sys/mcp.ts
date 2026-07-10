@@ -60,10 +60,6 @@ export async function handleSysMcpAdd(
     return { server: summarizeServer(existing, ctx) };
   }
 
-  if (!ctx.addMcpServerConnection) {
-    throw new Error("MCP server connection support is unavailable");
-  }
-
   const connection = await ctx.addMcpServerConnection({
     uid: effectiveUid,
     name,
@@ -77,7 +73,7 @@ export async function handleSysMcpAdd(
     uid: effectiveUid,
     name,
   });
-  ctx.broadcastToUid?.(effectiveUid, "mcp.changed");
+  ctx.broadcastToUid(effectiveUid, "mcp.changed");
   return { server: summarizeServer(record, ctx) };
 }
 
@@ -102,12 +98,10 @@ export async function handleSysMcpRemove(
     return { removed: false };
   }
 
-  if (ctx.removeMcpServerConnection) {
-    await ctx.removeMcpServerConnection(serverId);
-  }
+  await ctx.removeMcpServerConnection(serverId);
   const removed = ctx.mcpServers.delete(serverId, effectiveUid);
   if (removed) {
-    ctx.broadcastToUid?.(effectiveUid, "mcp.changed");
+    ctx.broadcastToUid(effectiveUid, "mcp.changed");
   }
   return { removed };
 }
@@ -123,9 +117,7 @@ export async function handleSysMcpRefresh(
     return { server: null };
   }
 
-  if (ctx.refreshMcpServerConnection) {
-    await ctx.refreshMcpServerConnection(serverId);
-  }
+  await ctx.refreshMcpServerConnection(serverId);
   return { server: summarizeServer(record, ctx) };
 }
 
@@ -140,10 +132,6 @@ export async function handleSysMcpCall(
   if (!record || record.uid !== effectiveUid) {
     throw new Error("MCP server not found");
   }
-  if (!ctx.callMcpTool) {
-    throw new Error("MCP tool execution support is unavailable");
-  }
-
   const result = await ctx.callMcpTool(
     serverId,
     toolName,

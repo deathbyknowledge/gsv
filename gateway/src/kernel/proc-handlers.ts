@@ -55,7 +55,7 @@ export function handleProcList(
   const records = ctx.procs.list(uid);
 
   const processes: ProcListEntry[] = records.map((r) => {
-    const conversation = ctx.conversations?.getByActivePid(r.processId);
+    const conversation = ctx.conversations.getByActivePid(r.processId);
     return {
       pid: r.processId,
       uid: r.ownerUid,
@@ -206,17 +206,13 @@ export async function handleProcSpawn(
   // Each spawned process gets its own durable conversation so its transcript
   // persists in the run-as agent's home, addressable independent of this
   // (fungible) executor.
-  let conversationId: string | undefined;
-  if (ctx.conversations) {
-    const conversation = ctx.conversations.create({
-      ownerUid,
-      agentUid: spawnIdentity.uid,
-      agentHome: spawnIdentity.home,
-      title: args.label ?? null,
-    });
-    conversationId = conversation.conversationId;
-    ctx.conversations.setActivePid(conversationId, pid);
-  }
+  const conversation = ctx.conversations.create({
+    ownerUid,
+    agentUid: spawnIdentity.uid,
+    agentHome: spawnIdentity.home,
+    title: args.label ?? null,
+  });
+  ctx.conversations.setActivePid(conversation.conversationId, pid);
 
   await sendFrameToProcess(pid, {
     type: "req",
@@ -227,7 +223,7 @@ export async function handleProcSpawn(
       identity: spawnIdentity,
       interactive,
       assignment: args.assignment as ProcSpawnAssignment | undefined,
-      ...(conversationId ? { conversationId } : {}),
+      conversationId: conversation.conversationId,
     },
   });
 
@@ -400,13 +396,6 @@ export async function handleProcIpcCall(
 ): Promise<ProcIpcCallResult> {
   const resolved = resolveSameOwnerIpc(args, ctx, "proc.ipc.call");
   if (!resolved.ok) return resolved;
-  if (!ctx.ipcCalls) {
-    return { ok: false, error: "proc.ipc.call store is not configured" };
-  }
-  if (!ctx.scheduleIpcCallTimeout) {
-    return { ok: false, error: "proc.ipc.call scheduler is not configured" };
-  }
-
   const timeoutMs = clampIpcCallTimeout(args.timeoutMs);
   const deadlineAt = Date.now() + timeoutMs;
   const callId = crypto.randomUUID();
@@ -518,7 +507,7 @@ export async function forwardToProcess(
   if (response && response.type === "res") {
     const res = response as ResponseFrame;
     if (res.ok) {
-      const conversation = ctx.conversations?.getByActivePid(pid);
+      const conversation = ctx.conversations.getByActivePid(pid);
       if (frame.call === "proc.reset") {
         clearLatestArchiveForConversation(ctx, conversation);
       } else if (frame.call === "proc.conversation.reset") {
@@ -538,10 +527,10 @@ export async function forwardToProcess(
             typeof a.path === "string" && a.path.replace(/^\/+/, "").startsWith(base),
           );
           if (primaryArchive?.path) {
-            ctx.conversations?.setLatestArchive(conversation.conversationId, primaryArchive.path);
+            ctx.conversations.setLatestArchive(conversation.conversationId, primaryArchive.path);
           }
         }
-        ctx.conversations?.clearActivePid(pid);
+        ctx.conversations.clearActivePid(pid);
       }
       return (res as { data?: unknown }).data;
     } else {
@@ -616,7 +605,7 @@ function clearLatestArchiveForConversation(
   conversation: { conversationId: string } | null | undefined,
 ): void {
   if (conversation) {
-    ctx.conversations?.setLatestArchive(conversation.conversationId, null);
+    ctx.conversations.setLatestArchive(conversation.conversationId, null);
   }
 }
 

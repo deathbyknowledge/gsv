@@ -206,6 +206,11 @@ function makeContext(options?: {
       },
       ...(options?.procs ?? {}),
     } as never,
+    conversations: {
+      create: vi.fn(() => ({ conversationId: "conv-1" })),
+      setActivePid: vi.fn(),
+      getByActivePid: vi.fn(() => null),
+    } as unknown as KernelContext["conversations"],
     packages: {
       list(opts?: { scopes?: readonly InstalledPackageRecord["scope"][] }) {
         if (!opts?.scopes) {

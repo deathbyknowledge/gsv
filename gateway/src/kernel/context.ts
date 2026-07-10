@@ -36,7 +36,7 @@ export type KernelContext = {
   config: ConfigStore;
   devices: DeviceRegistry;
   procs: ProcessRegistry;
-  conversations?: ConversationRegistry;
+  conversations: ConversationRegistry;
   packages: PackageStore;
   oauth: OAuthStore;
   mcp: MCPClientManager;
@@ -46,29 +46,29 @@ export type KernelContext = {
   shellSessions: ShellSessionStore;
   appSessions: AppSessionStore;
   signalWatches: SignalWatchStore;
-  ipcCalls?: IpcCallStore;
-  notifications?: NotificationStore;
-  schedules?: ScheduleStore;
+  ipcCalls: IpcCallStore;
+  notifications: NotificationStore;
+  schedules: ScheduleStore;
   connection: Connection | null;
   identity?: ConnectionIdentity;
   processId?: string;
   callerOwnerUid?: number;
   appFrame?: AppFrameContext;
   serverVersion: string;
-  broadcastToUid?: (uid: number, signal: string, payload?: unknown) => void;
-  getAppRunner?: (uid: number, packageId: string) => unknown;
-  scheduleIpcCallTimeout?: (callId: string, delayMs: number) => Promise<string>;
-  scheduleScheduleWake?: (scheduleId: string, dueAtMs: number) => Promise<string>;
-  cancelScheduleWake?: (wakeScheduleId: string) => Promise<void>;
-  runSchedules?: (
+  broadcastToUid: (uid: number, signal: string, payload?: unknown) => void;
+  getAppRunner: (uid: number, packageId: string) => unknown;
+  scheduleIpcCallTimeout: (callId: string, delayMs: number) => Promise<string>;
+  scheduleScheduleWake: (scheduleId: string, dueAtMs: number) => Promise<string>;
+  cancelScheduleWake: (wakeScheduleId: string) => Promise<void>;
+  runSchedules: (
     args: SchedulerRunArgs,
     identity?: ConnectionIdentity,
     callerOwnerUid?: number,
   ) => Promise<SchedulerRunResult>;
-  addMcpServerConnection?: (input: McpAddConnectionInput) => Promise<McpAddConnectionResult>;
-  removeMcpServerConnection?: (serverId: string) => Promise<void>;
-  refreshMcpServerConnection?: (serverId: string) => Promise<void>;
-  callMcpTool?: (serverId: string, toolName: string, args: Record<string, unknown>) => Promise<unknown>;
+  addMcpServerConnection: (input: McpAddConnectionInput) => Promise<McpAddConnectionResult>;
+  removeMcpServerConnection: (serverId: string) => Promise<void>;
+  refreshMcpServerConnection: (serverId: string) => Promise<void>;
+  callMcpTool: (serverId: string, toolName: string, args: Record<string, unknown>) => Promise<unknown>;
 };
 
 /**

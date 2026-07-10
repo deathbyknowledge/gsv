@@ -7,7 +7,6 @@ import { resolveCallerOwnerUid } from "./context";
 import {
   armSchedule,
   normalizeScheduleExpression,
-  type ScheduleStore,
 } from "./scheduler";
 import type {
   ScheduleExpression,
@@ -65,7 +64,7 @@ export function createCronFileService(ctx: KernelContext): CronFileService {
 }
 
 function listUserCrontabs(ctx: KernelContext): string[] {
-  const store = requireScheduleStore(ctx);
+  const store = ctx.schedules;
   const actorUid = requireActor(ctx).process.uid;
   if (actorUid !== 0) {
     const user = ctx.auth.getPasswdByUid(actorUid);
@@ -81,7 +80,7 @@ function listUserCrontabs(ctx: KernelContext): string[] {
 function readUserCrontab(ctx: KernelContext, username: string): string | undefined {
   const user = requireUser(ctx, username);
   assertCanManageUserCrontab(ctx, user);
-  return requireScheduleStore(ctx).getCronFile(userCronPath(user.username))?.content;
+  return ctx.schedules.getCronFile(userCronPath(user.username))?.content;
 }
 
 async function installUserCrontab(ctx: KernelContext, username: string, content: string): Promise<void> {
@@ -105,7 +104,7 @@ async function removeUserCrontab(ctx: KernelContext, username: string): Promise<
 
 function listSystemCrontabs(ctx: KernelContext): string[] {
   assertRoot(ctx, "list system crontabs");
-  return requireScheduleStore(ctx).listCronFiles({ prefix: SYSTEM_CRON_PREFIX, ownerUid: null })
+  return ctx.schedules.listCronFiles({ prefix: SYSTEM_CRON_PREFIX, ownerUid: null })
     .map((record) => record.path.slice(SYSTEM_CRON_PREFIX.length))
     .filter(Boolean)
     .sort();
@@ -113,7 +112,7 @@ function listSystemCrontabs(ctx: KernelContext): string[] {
 
 function readSystemCrontab(ctx: KernelContext, name: string): string | undefined {
   assertRoot(ctx, "read system crontabs");
-  return requireScheduleStore(ctx).getCronFile(systemCronPath(name))?.content;
+  return ctx.schedules.getCronFile(systemCronPath(name))?.content;
 }
 
 async function installSystemCrontab(ctx: KernelContext, name: string, content: string): Promise<void> {
@@ -142,7 +141,7 @@ async function replaceCronFile(
     jobs: CronJobSpec[];
   },
 ): Promise<void> {
-  const store = requireScheduleStore(ctx);
+  const store = ctx.schedules;
   const now = Date.now();
   for (const job of input.jobs) {
     const process = processIdentityForUser(ctx, job.user);
@@ -185,7 +184,7 @@ async function replaceCronFile(
 }
 
 async function removeCronFile(ctx: KernelContext, path: string): Promise<boolean> {
-  const store = requireScheduleStore(ctx);
+  const store = ctx.schedules;
   const existing = store.getCronFile(path);
   const linked = store.cronFileScheduleIds(path);
   await removeLinkedSchedules(ctx, path);
@@ -194,11 +193,11 @@ async function removeCronFile(ctx: KernelContext, path: string): Promise<boolean
 }
 
 async function removeLinkedSchedules(ctx: KernelContext, path: string): Promise<void> {
-  const store = requireScheduleStore(ctx);
+  const store = ctx.schedules;
   const ids = store.cronFileScheduleIds(path);
   for (const id of ids) {
     const existing = store.getStored(id);
-    if (existing?.wakeScheduleId && ctx.cancelScheduleWake) {
+    if (existing?.wakeScheduleId) {
       await ctx.cancelScheduleWake(existing.wakeScheduleId);
     }
     store.remove(id);
@@ -329,13 +328,6 @@ function cronPathSegment(value: string): string {
     throw new Error(`invalid cron file name: ${value}`);
   }
   return segment;
-}
-
-function requireScheduleStore(ctx: KernelContext): ScheduleStore {
-  if (!ctx.schedules) {
-    throw new Error("scheduler store is not configured");
-  }
-  return ctx.schedules;
 }
 
 function requireActor(ctx: KernelContext): ConnectionIdentity {
