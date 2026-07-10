@@ -2466,8 +2466,8 @@ export class Kernel extends Host<Env> {
     firedAtMs: number,
   ): Promise<unknown> {
     const target = record.target;
+    const ctx = this.buildScheduleContext(record);
     if (target.kind === "command.exec") {
-      const ctx = this.buildScheduleContext(record);
       if (!hasCapability(ctx.identity?.capabilities ?? [], "shell.exec")) {
         throw new Error("Permission denied: shell.exec");
       }
@@ -2490,7 +2490,6 @@ export class Kernel extends Host<Env> {
     }
 
     if (target.kind === "process.spawn") {
-      const ctx = this.buildScheduleContext(record);
       const runAs = this.resolveScheduledSpawnRunAs(record, target.runAs);
       const result = await handleProcSpawn({
         interactive: false,

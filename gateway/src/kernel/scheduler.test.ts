@@ -630,12 +630,14 @@ describe("scheduler", () => {
 
     await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as unknown as {
+        auth: ScheduleTestAuth;
         caps: { seed: () => void };
         procs: {
           spawn: typeof instance["procs"]["spawn"];
         };
       };
       k.caps.seed();
+      addTestUser(k.auth);
       k.procs.spawn(pid, PERSONAL_AGENT_IDENTITY, {
         ownerUid: USER_IDENTITY.uid,
         profile: "task",
@@ -823,6 +825,27 @@ describe("scheduler", () => {
     });
   });
 
+  it("fails process events when the run-as account no longer exists", async () => {
+    const kernel = await getAgentByName<Env, Kernel>(
+      env.KERNEL,
+      `scheduler-missing-runas-test-${crypto.randomUUID()}`,
+    );
+    const record = makeScheduleRecord({
+      runAs: { kind: "user", uid: 9999, username: "gone" },
+      target: { kind: "process.event", pid: "missing", message: "Do not deliver." },
+    });
+
+    await expect(runInDurableObject(kernel, (instance: Kernel) =>
+      (instance as unknown as {
+        dispatchScheduleTarget: (
+          record: ScheduleRecord,
+          scheduledAtMs: number | null,
+          firedAtMs: number,
+        ) => Promise<unknown>;
+      }).dispatchScheduleTarget(record, null, Date.now()),
+    )).rejects.toThrow("Cannot resolve schedule run-as uid 9999");
+  });
+
   it("fires an armed one-shot schedule through the Agent alarm", async () => {
     const pid = `sched-alarm-${crypto.randomUUID()}`;
     const kernel = await getAgentByName<Env, Kernel>(
@@ -833,10 +856,12 @@ describe("scheduler", () => {
 
     await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as unknown as {
+        auth: ScheduleTestAuth;
         caps: { seed: () => void };
         procs: { spawn: typeof instance["procs"]["spawn"] };
       };
       k.caps.seed();
+      addTestUser(k.auth);
       k.procs.spawn(pid, USER_IDENTITY, {
         profile: "task",
         label: "alarm target",
@@ -1113,10 +1138,12 @@ describe("scheduler", () => {
 
     await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as unknown as {
+        auth: ScheduleTestAuth;
         caps: { seed: () => void };
         procs: { spawn: typeof instance["procs"]["spawn"] };
       };
       k.caps.seed();
+      addTestUser(k.auth);
       k.procs.spawn(pid, USER_IDENTITY, {
         profile: "task",
         label: "scheduled target",
@@ -1232,10 +1259,12 @@ describe("scheduler", () => {
 
     await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as unknown as {
+        auth: ScheduleTestAuth;
         caps: { seed: () => void };
         procs: { spawn: typeof instance["procs"]["spawn"] };
       };
       k.caps.seed();
+      addTestUser(k.auth);
       k.procs.spawn(pid, USER_IDENTITY, {
         profile: "task",
         label: "one-shot target",
