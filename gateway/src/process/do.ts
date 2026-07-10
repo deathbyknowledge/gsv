@@ -257,6 +257,8 @@ type ArchivedMessageRecord = {
   toolCalls?: ToolCall[];
   thinking?: ThinkingContent[];
   toolCallId?: string;
+  toolName?: string;
+  isError?: boolean;
   media?: unknown;
   origin?: InteractionOrigin;
   metadata?: MessageMetadata;
@@ -267,7 +269,6 @@ const TOOL_APPROVAL_OVERRIDES_KEY = "toolApprovalOverrides";
 const SHELL_SESSION_TARGET_KEY_PREFIX = "shellSessionTarget:";
 const UNKNOWN_SHELL_SESSION_TARGET_MESSAGE =
   "Shell session continuation requires an explicit target because this process does not know which device owns the session";
-const PROCESS_MEDIA_CACHE_LIMIT = 32;
 const MAX_PROCESS_MEDIA_READ_BYTES = 25 * 1024 * 1024;
 const CODE_MODE_NESTED_SYSCALL_TIMEOUT_MS = 55_000;
 const CODE_MODE_APPROVAL_TIMEOUT_MS = 55_000;
@@ -723,7 +724,6 @@ export class Process extends Host<Env> {
   private readonly store: ProcessStore;
   private readonly generation = createGenerationService();
   private readonly ripgit: RipgitClient | null;
-  private readonly mediaCache = new Map<string, string>();
   private readonly codeModeResponses = new Map<string, CodeModeResponseWaiter>();
   private readonly codeModeApprovals = new Map<string, CodeModeApprovalWaiter>();
   private activeRunPhase: { runId: string; phase: ActiveRunPhase } | null = null;
@@ -2090,9 +2090,14 @@ export class Process extends Host<Env> {
           toolCalls: message.toolCalls,
           thinking: message.thinking,
         })
-      : message.toolCalls
-        ? JSON.stringify(message.toolCalls)
-        : undefined;
+      : message.role === "toolResult"
+        ? JSON.stringify({
+            toolName: message.toolName ?? "unknown",
+            isError: message.isError ?? false,
+          })
+        : message.toolCalls
+          ? JSON.stringify(message.toolCalls)
+          : undefined;
     return this.store.appendMessage(message.role, message.content, {
       conversationId,
       generation,
@@ -2176,8 +2181,8 @@ export class Process extends Host<Env> {
         id: message.id,
         role: message.role,
         content: {
-          toolName: "unknown",
-          isError: false,
+          toolName: message.toolName ?? "unknown",
+          isError: message.isError ?? false,
           toolCallId: message.toolCallId ?? null,
           output: message.content,
         },
@@ -2400,7 +2405,6 @@ export class Process extends Host<Env> {
     this.store.clearPendingToolCalls(normalizedConversationId);
     this.store.clearPendingHil(normalizedConversationId);
     this.store.clearQueue(normalizedConversationId);
-    this.mediaCache.clear();
 
     if (stoppedActiveRun) {
       await this.emitRunFinished(activeRun, {
@@ -2477,7 +2481,6 @@ export class Process extends Host<Env> {
     this.store.clearPendingToolCalls();
     this.store.clearPendingHil();
     this.store.clearQueue();
-    this.mediaCache.clear();
     if (activeRun) {
       await this.emitRunFinished(activeRun, {
         status: "aborted",
@@ -3911,6 +3914,7 @@ export class Process extends Host<Env> {
   private async buildContextMessages(conversationId: string): Promise<Context["messages"]> {
     const records = this.store.getMessages({ conversationId, limit: null });
     const messages = this.store.toMessages({ conversationId, limit: null });
+    const mediaBudget = { remainingBytes: MAX_PROCESS_MEDIA_READ_BYTES };
 
     for (let index = 0; index < records.length; index += 1) {
       const record = records[index];
@@ -3918,7 +3922,7 @@ export class Process extends Host<Env> {
         continue;
       }
 
-      const content = await this.hydrateUserContent(record.content, record.media);
+      const content = await this.hydrateUserContent(record.content, record.media, mediaBudget);
       messages[index] = {
         role: "user",
         content,
@@ -3953,6 +3957,7 @@ export class Process extends Host<Env> {
   private async hydrateUserContent(
     text: string,
     rawMedia: string,
+    budget: { remainingBytes: number },
   ): Promise<Array<TextContent | ImageContent>> {
     const media = parseStoredProcessMedia(rawMedia);
     const content: Array<TextContent | ImageContent> = [];
@@ -3970,7 +3975,7 @@ export class Process extends Host<Env> {
             text: describeStoredProcessMedia(item),
           });
         }
-        const data = await this.loadProcessMedia(item.key);
+        const data = await this.loadProcessMedia(item.key, budget);
         if (data) {
           content.push(buildImageBlock(data, item.mimeType));
           continue;
@@ -4001,29 +4006,21 @@ export class Process extends Host<Env> {
     return content;
   }
 
-  private async loadProcessMedia(key: string): Promise<string | null> {
-    const cached = this.mediaCache.get(key);
-    if (cached) {
-      this.mediaCache.delete(key);
-      this.mediaCache.set(key, cached);
-      return cached;
-    }
-
+  private async loadProcessMedia(
+    key: string,
+    budget: { remainingBytes: number },
+  ): Promise<string | null> {
     const object = await this.env.STORAGE.get(key);
-    if (!object) {
+    if (
+      !object
+      || object.size > MAX_PROCESS_MEDIA_READ_BYTES
+      || object.size > budget.remainingBytes
+    ) {
       return null;
     }
 
-    const data = encodeBase64Bytes(await object.arrayBuffer());
-    this.mediaCache.set(key, data);
-    while (this.mediaCache.size > PROCESS_MEDIA_CACHE_LIMIT) {
-      const oldest = this.mediaCache.keys().next().value;
-      if (!oldest) {
-        break;
-      }
-      this.mediaCache.delete(oldest);
-    }
-    return data;
+    budget.remainingBytes -= object.size;
+    return encodeBase64Bytes(await object.arrayBuffer());
   }
 
   private async ingestToolResults(
@@ -5032,6 +5029,16 @@ function parseArchivedMessageRecord(value: unknown): ArchivedMessageRecord {
     : undefined;
   const origin = parseInteractionOriginRecord(record.origin);
   const metadata = normalizeMessageMetadata(record.metadata) ?? undefined;
+  const toolResultMeta = role === "toolResult"
+    && record.tool_calls
+    && typeof record.tool_calls === "object"
+    && !Array.isArray(record.tool_calls)
+    ? record.tool_calls as Record<string, unknown>
+    : null;
+  const toolName = normalizeOptionalString(toolResultMeta?.toolName);
+  const isError = typeof toolResultMeta?.isError === "boolean"
+    ? toolResultMeta.isError
+    : undefined;
 
   return {
     id,
@@ -5045,6 +5052,8 @@ function parseArchivedMessageRecord(value: unknown): ArchivedMessageRecord {
       ? record.thinking as ThinkingContent[]
       : undefined,
     toolCallId,
+    ...(toolName ? { toolName } : {}),
+    ...(isError !== undefined ? { isError } : {}),
     media: record.media,
     origin,
     metadata,

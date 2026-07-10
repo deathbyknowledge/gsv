@@ -2754,6 +2754,42 @@ describe("Process DO — mechanical", () => {
         dataUrl: "data:image/png;base64,AQID",
       });
     });
+
+    it("bounds media materialized while building model context", async () => {
+      const stub = await initProcess("mech-bounded-context-media", ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const originalEnv = process.env;
+        const arrayBuffer = vi.fn(async () => new Uint8Array([1]).buffer);
+        process.store.appendMessage("user", "Review these images.", {
+          media: JSON.stringify([
+            { type: "image", mimeType: "image/png", key: "oversized" },
+            { type: "image", mimeType: "image/png", key: "first" },
+            { type: "image", mimeType: "image/png", key: "second" },
+          ]),
+        });
+        process.env = {
+          ...originalEnv,
+          STORAGE: {
+            get: vi.fn(async (key: string) => ({
+              size: key === "oversized" ? 25 * 1024 * 1024 + 1 : 15 * 1024 * 1024,
+              arrayBuffer,
+            })),
+          },
+        };
+
+        try {
+          const messages = await process.buildContextMessages("default");
+          expect(arrayBuffer).toHaveBeenCalledTimes(1);
+          expect(messages[0].content).toEqual(expect.arrayContaining([
+            expect.objectContaining({ type: "image", data: "AQ==" }),
+          ]));
+        } finally {
+          process.env = originalEnv;
+        }
+      });
+    });
   });
 
   describe("proc.ipc.*", () => {
@@ -3753,6 +3789,7 @@ describe("Process DO — mechanical", () => {
         store.openConversation({ conversationId: "thread", title: "Thread" });
         store.appendMessage("user", "old user", { conversationId: "thread", createdAt: 10 });
         store.appendMessage("assistant", "old assistant", { conversationId: "thread", createdAt: 20 });
+        store.appendToolResult("tool-1", "fs.read", "permission denied", true, "thread");
         store.appendMessage("user", "keep this", { conversationId: "thread", createdAt: 30 });
       });
 
@@ -3777,7 +3814,7 @@ describe("Process DO — mechanical", () => {
         ok: true,
         pid,
         conversationId: "thread",
-        messageCount: 2,
+        messageCount: 3,
         truncated: true,
         segment: {
           id: compactData.segment.id,
@@ -3813,7 +3850,30 @@ describe("Process DO — mechanical", () => {
           timestamp: 20,
         },
       ]);
-      expect((secondPageRes.data as any).truncated).toBe(false);
+      expect((secondPageRes.data as any).truncated).toBe(true);
+
+      const toolResultPageRes = (await stub.recvFrame(
+        makeReq("proc.conversation.segment.read", {
+          conversationId: "thread",
+          segmentId: compactData.segment.id,
+          limit: 1,
+          offset: 2,
+        }),
+      )) as ResponseOkFrame;
+      expect((toolResultPageRes.data as any).messages).toEqual([
+        {
+          id: expect.any(Number),
+          role: "toolResult",
+          content: {
+            toolName: "Read",
+            isError: true,
+            toolCallId: "tool-1",
+            output: "permission denied",
+          },
+          timestamp: expect.any(Number),
+        },
+      ]);
+      expect((toolResultPageRes.data as any).truncated).toBe(false);
     });
 
     it("forks a live conversation from a message", async () => {
@@ -3919,6 +3979,7 @@ describe("Process DO — mechanical", () => {
           origin: JSON.stringify(archivedOrigin),
         });
         store.appendMessage("assistant", "old assistant", { conversationId: "thread", createdAt: 20 });
+        store.appendToolResult("tool-1", "fs.read", "permission denied", true, "thread");
         store.appendMessage("user", "keep this", {
           conversationId: "thread",
           createdAt: 30,
@@ -3957,12 +4018,12 @@ describe("Process DO — mechanical", () => {
         ok: true,
         pid,
         sourceConversationId: "thread",
-        restoredMessages: 3,
+        restoredMessages: 4,
         includedLiveSuffix: true,
         targetConversation: {
           id: "thread-restored",
           title: "Restored thread",
-          messageCount: 3,
+          messageCount: 4,
         },
         segment: {
           id: compactData.segment.id,
@@ -3976,10 +4037,17 @@ describe("Process DO — mechanical", () => {
         expect(restored.map((message: any) => [message.role, message.content])).toEqual([
           ["user", "old user"],
           ["assistant", "old assistant"],
+          ["toolResult", "permission denied"],
           ["user", "keep this"],
         ]);
         expect(JSON.parse(restored[0].origin)).toEqual(archivedOrigin);
-        expect(JSON.parse(restored[2].origin)).toEqual(liveOrigin);
+        expect(JSON.parse(restored[3].origin)).toEqual(liveOrigin);
+        expect(store.toMessages({ conversationId: "thread-restored" })[2]).toMatchObject({
+          role: "toolResult",
+          toolCallId: "tool-1",
+          toolName: "Read",
+          isError: true,
+        });
 
         const source = store.getMessages({ conversationId: "thread" });
         expect(source.map((message: any) => message.content)).toEqual([
