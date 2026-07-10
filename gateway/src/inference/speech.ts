@@ -1,4 +1,5 @@
 import { withTimeout } from "./timeout";
+import { encodeBase64Bytes } from "../shared/base64";
 
 export type AudioSpeechBinding = {
   run(model: string, input: Record<string, unknown>): Promise<unknown>;
@@ -147,7 +148,7 @@ function audioFromArrayBuffer(buffer: ArrayBuffer, mimeType: string): { data: st
   if (buffer.byteLength === 0) {
     return null;
   }
-  const base64 = arrayBufferToBase64(buffer);
+  const base64 = encodeBase64Bytes(buffer);
   return {
     data: `data:${mimeType};base64,${base64}`,
     mimeType,
@@ -168,17 +169,6 @@ function audioFromBase64(value: string, mimeType: string): { data: string; mimeT
     mimeType: resolvedMimeType,
     size,
   };
-}
-
-function arrayBufferToBase64(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer);
-  let binary = "";
-  const chunkSize = 0x8000;
-  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
-    const chunk = bytes.subarray(offset, offset + chunkSize);
-    binary += String.fromCharCode(...chunk);
-  }
-  return btoa(binary);
 }
 
 function base64DecodedLength(base64: string): number {

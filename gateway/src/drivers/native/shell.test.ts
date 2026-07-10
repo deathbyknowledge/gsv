@@ -126,6 +126,30 @@ function makeContext(options?: {
   const records = [...(options?.packages ?? [options?.pkg ?? makePackage()])];
   const identity = options?.identity ?? IDENTITY;
   const configValues = new Map<string, string>(Object.entries(options?.config ?? {}));
+  const defaultAuth = {
+    getPasswdByUid: vi.fn((uid: number) => uid === identity.uid
+      ? {
+        username: identity.username,
+        uid: identity.uid,
+        gid: identity.gid,
+        gecos: identity.username,
+        home: identity.home,
+        shell: "/bin/init",
+      }
+      : null),
+    getPasswdByUsername: vi.fn((username: string) => username === identity.username
+      ? {
+        username: identity.username,
+        uid: identity.uid,
+        gid: identity.gid,
+        gecos: identity.username,
+        home: identity.home,
+        shell: "/bin/init",
+      }
+      : null),
+    getPersonalAgentUid: vi.fn(() => null),
+    resolveGids: vi.fn(() => [...identity.gids]),
+  } as unknown as KernelContext["auth"];
   const findRecord = (packageId: string, scope?: InstalledPackageRecord["scope"]) => {
     const index = records.findIndex((record) =>
       record.packageId === packageId && (!scope || packageScopeKey(record.scope) === packageScopeKey(scope))
@@ -139,12 +163,20 @@ function makeContext(options?: {
       LOADER: { get() { throw new Error("LOADER should not be used in pkg shell tests"); } },
       ...(options?.aiRun ? { AI: { run: vi.fn(options.aiRun) } } : {}),
     } as unknown as Env,
-    auth: options?.auth ?? null as never,
-    caps: options?.caps ?? null as never,
+    auth: {
+      ...defaultAuth,
+      ...options?.auth,
+    } as KernelContext["auth"],
+    caps: options?.caps ?? {
+      resolve: vi.fn(() => []),
+    } as unknown as KernelContext["caps"],
     config: {
       get(key: string) {
         if (key === "config/server/name") return "gsv";
         if (key === "config/server/version") return "0.3.3";
+        return configValues.get(key) ?? null;
+      },
+      getExplicit(key: string) {
         return configValues.get(key) ?? null;
       },
       set(key: string, value: string) {
@@ -214,11 +246,17 @@ function makeContext(options?: {
       listFlows: vi.fn(() => []),
       deleteAccount: vi.fn(() => false),
     } as unknown as KernelContext["oauth"],
-    adapters: null as never,
+    adapters: {
+      identityLinks: { list: vi.fn(() => []) },
+      status: {
+        list: vi.fn(() => []),
+        listAll: vi.fn(() => []),
+      },
+    } as unknown as KernelContext["adapters"],
     runRoutes: null as never,
     schedules: options?.schedules,
     ipcCalls: options?.ipcCalls,
-    connection: null as never,
+    connection: null,
     identity: {
       role: "user",
       process: identity,

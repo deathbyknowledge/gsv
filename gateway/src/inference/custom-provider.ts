@@ -1,10 +1,10 @@
 import {
   calculateCost,
+  createAssistantMessageEventStream,
   createModels,
   createProvider,
   type Api,
   type AssistantMessage,
-  type AssistantMessageEvent,
   type AssistantMessageEventStream,
   type Context,
   type Model,
@@ -24,61 +24,6 @@ import {
   convertResponsesTools,
   processResponsesStream,
 } from "@earendil-works/pi-ai/api/openai-responses-shared";
-
-class RoutedAssistantMessageEventStream implements AsyncIterable<AssistantMessageEvent> {
-  private queue: AssistantMessageEvent[] = [];
-  private waiters: Array<(value: IteratorResult<AssistantMessageEvent>) => void> = [];
-  private done = false;
-  private resolveResult!: (message: AssistantMessage) => void;
-  private readonly resultPromise = new Promise<AssistantMessage>((resolve) => {
-    this.resolveResult = resolve;
-  });
-
-  push(event: AssistantMessageEvent): void {
-    if (this.done) return;
-    if (event.type === "done" || event.type === "error") {
-      this.done = true;
-      this.resolveResult(event.type === "done" ? event.message : event.error);
-    }
-    const waiter = this.waiters.shift();
-    if (waiter) {
-      waiter({ value: event, done: false });
-    } else {
-      this.queue.push(event);
-    }
-  }
-
-  end(): void {
-    this.done = true;
-    while (this.waiters.length > 0) {
-      this.waiters.shift()?.({ value: undefined as never, done: true });
-    }
-  }
-
-  result(): Promise<AssistantMessage> {
-    return this.resultPromise;
-  }
-
-  async *[Symbol.asyncIterator](): AsyncIterator<AssistantMessageEvent> {
-    while (true) {
-      const queued = this.queue.shift();
-      if (queued) {
-        yield queued;
-        continue;
-      }
-      if (this.done) {
-        return;
-      }
-      const next = await new Promise<IteratorResult<AssistantMessageEvent>>((resolve) => {
-        this.waiters.push(resolve);
-      });
-      if (next.done) {
-        return;
-      }
-      yield next.value;
-    }
-  }
-}
 
 export type CustomProviderStyle =
   | "openai-chat-completions"
@@ -171,7 +116,7 @@ function streamOpenAICompletionsWithFetch(
   model: Model<"openai-completions">,
   request: CustomProviderGenerationRequest,
 ): AssistantMessageEventStream {
-  const stream = new RoutedAssistantMessageEventStream();
+  const stream = createAssistantMessageEventStream();
   void (async () => {
     const output = emptyAssistantMessage(model);
     try {
@@ -195,7 +140,7 @@ function streamOpenAICompletionsWithFetch(
       pushStreamError(stream, output, request, error);
     }
   })();
-  return stream as unknown as AssistantMessageEventStream;
+  return stream;
 }
 
 function streamOpenAIResponsesWithFetch(
@@ -203,7 +148,7 @@ function streamOpenAIResponsesWithFetch(
   model: Model<"openai-responses">,
   request: CustomProviderGenerationRequest,
 ): AssistantMessageEventStream {
-  const stream = new RoutedAssistantMessageEventStream();
+  const stream = createAssistantMessageEventStream();
   void (async () => {
     const output = emptyAssistantMessage(model);
     try {
@@ -229,7 +174,7 @@ function streamOpenAIResponsesWithFetch(
       await processResponsesStream(
         parseSseJson(response) as AsyncIterable<never>,
         output,
-        stream as never,
+        stream,
         model,
       );
       if (output.stopReason === "aborted" || output.stopReason === "error") {
@@ -241,7 +186,7 @@ function streamOpenAIResponsesWithFetch(
       pushStreamError(stream, output, request, error);
     }
   })();
-  return stream as unknown as AssistantMessageEventStream;
+  return stream;
 }
 
 export function normalizeCustomProviderStyle(value: unknown): CustomProviderStyle | null {
@@ -439,7 +384,7 @@ async function postJsonSse(
 async function consumeOpenAICompletionsEvents(
   response: Response,
   output: AssistantMessage,
-  stream: RoutedAssistantMessageEventStream,
+  stream: AssistantMessageEventStream,
   model: Model<"openai-completions">,
   request: CustomProviderGenerationRequest,
 ): Promise<void> {
@@ -666,7 +611,7 @@ function parseSseJsonEvent(event: string): unknown | undefined {
 }
 
 function pushStreamError(
-  stream: RoutedAssistantMessageEventStream,
+  stream: AssistantMessageEventStream,
   output: AssistantMessage,
   request: CustomProviderGenerationRequest,
   error: unknown,

@@ -24,6 +24,8 @@
  *   sam:!:19800:0:99999:7:::
  */
 
+import { decodeBase64Bytes, encodeBase64Bytes } from "../shared/base64";
+
 export type ShadowEntry = {
   username: string;
   hash: string;
@@ -102,17 +104,6 @@ const PBKDF2_ITERATIONS = 100_000;
 const PBKDF2_SALT_BYTES = 16;
 const PBKDF2_HASH_BITS = 512;
 
-function toBase64(buf: ArrayBuffer): string {
-  return btoa(String.fromCharCode(...new Uint8Array(buf)));
-}
-
-function fromBase64(str: string): Uint8Array {
-  const bin = atob(str);
-  const buf = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
-  return buf;
-}
-
 function toHex(buf: ArrayBuffer): string {
   return Array.from(new Uint8Array(buf))
     .map((b) => b.toString(16).padStart(2, "0"))
@@ -140,7 +131,7 @@ export async function hashPassword(
     key,
     PBKDF2_HASH_BITS,
   );
-  return `$pbkdf2-sha512$${iterations}$${toBase64(salt.buffer)}$${toBase64(derived)}`;
+  return `$pbkdf2-sha512$${iterations}$${encodeBase64Bytes(salt)}$${encodeBase64Bytes(derived)}`;
 }
 
 async function verifyPassword(
@@ -152,7 +143,7 @@ async function verifyPassword(
   if (parts.length !== 5 || parts[1] !== "pbkdf2-sha512") return false;
 
   const iterations = parseInt(parts[2], 10);
-  const salt = fromBase64(parts[3]);
+  const salt = decodeBase64Bytes(parts[3]);
 
   const key = await crypto.subtle.importKey(
     "raw",
@@ -168,7 +159,7 @@ async function verifyPassword(
   );
 
   const candidate = new Uint8Array(derived);
-  const stored = fromBase64(parts[4]);
+  const stored = decodeBase64Bytes(parts[4]);
   if (candidate.length !== stored.length) return false;
   return crypto.subtle.timingSafeEqual(candidate, stored);
 }

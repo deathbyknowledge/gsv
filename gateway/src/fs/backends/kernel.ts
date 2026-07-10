@@ -724,12 +724,7 @@ export class KernelMountBackend implements MountBackend {
 
   private viewerOwnerUid(): number {
     if (!this.kernel || !this.selfPid) return this.identity.uid;
-    if (typeof this.kernel.procs.getOwnerUid === "function") {
-      const ownerUid = this.kernel.procs.getOwnerUid(this.selfPid);
-      if (ownerUid !== null) return ownerUid;
-    }
-    const proc = this.kernel.procs.get(this.selfPid);
-    return proc ? proc.ownerUid ?? proc.uid : this.identity.uid;
+    return this.kernel.procs.getOwnerUid(this.selfPid) ?? this.identity.uid;
   }
 
   private async processRequest<S extends ProcessViewCall>(

@@ -1,5 +1,5 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
-import { isWebSocketRequest } from "./shared//utils";
+import { isWebSocketRequest } from "./shared/utils";
 import type {
   GatewayAdapterInterface,
 } from "./adapter-interface";

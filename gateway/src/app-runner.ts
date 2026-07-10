@@ -220,7 +220,7 @@ class AppSocketError extends Error {
 
 export class GsvApiBinding extends WorkerEntrypoint<Env, GsvApiBindingProps> {
   async kernelRequest(appFrame: AppFrameContext, call: string, args?: unknown): Promise<unknown> {
-    const kernel = await getAgentByName(this.env.KERNEL, "singleton") as unknown as KernelAppStub;
+    const kernel = await getAgentByName(this.env.KERNEL, "singleton") as KernelAppStub;
     const frame: RequestFrame = {
       type: "req",
       id: crypto.randomUUID(),
@@ -601,7 +601,7 @@ export class AppRunner extends DurableObject<Env> {
     if (!call) {
       throw new AppSocketError(400, "kernel.request requires call");
     }
-    const kernel = await getAgentByName(this.env.KERNEL, "singleton") as unknown as KernelAppStub;
+    const kernel = await getAgentByName(this.env.KERNEL, "singleton") as KernelAppStub;
     const response = await kernel.appRequest(client.appFrame, {
       type: "req",
       id: crypto.randomUUID(),

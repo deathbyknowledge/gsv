@@ -10,13 +10,13 @@ import {
 import {
   DEFAULT_AUDIO_SPEECH_ENCODING,
   DEFAULT_AUDIO_SPEECH_MODEL,
-  DEFAULT_AUDIO_SPEECH_SPEAKER,
   DEFAULT_AUDIO_SPEECH_TIMEOUT_MS,
   synthesizeSpeechWithWorkersAi,
   type AudioSpeechBinding,
   type AudioSpeechRequest,
   type AudioSpeechResult,
 } from "./speech";
+import { decodeBase64Bytes, encodeBase64Bytes } from "../shared/base64";
 import { withTimeout } from "./timeout";
 import { isWorkersAiProvider } from "./workers-ai";
 
@@ -137,7 +137,7 @@ async function transcribeAudioWithOpenAi(
   }
 
   const form = new FormData();
-  const bytes = base64ToUint8Array(base64);
+  const bytes = decodeBase64Bytes(base64);
   const audioBuffer = bytes.buffer.slice(
     bytes.byteOffset,
     bytes.byteOffset + bytes.byteLength,
@@ -537,7 +537,7 @@ function audioFromArrayBuffer(buffer: ArrayBuffer, mimeType: string): { data: st
     return null;
   }
   return {
-    data: `data:${mimeType};base64,${arrayBufferToBase64(buffer)}`,
+    data: `data:${mimeType};base64,${encodeBase64Bytes(buffer)}`,
     mimeType,
     size: buffer.byteLength,
   };
@@ -548,7 +548,7 @@ function imageFromArrayBuffer(buffer: ArrayBuffer, mimeType: string): Omit<Image
     return null;
   }
   return {
-    data: `data:${mimeType};base64,${arrayBufferToBase64(buffer)}`,
+    data: `data:${mimeType};base64,${encodeBase64Bytes(buffer)}`,
     mimeType,
     size: buffer.byteLength,
   };
@@ -567,26 +567,6 @@ function imageFromBase64(value: string, mimeType: string): Omit<ImageGenerationR
     mimeType: resolvedMimeType,
     size,
   };
-}
-
-function base64ToUint8Array(base64: string): Uint8Array {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-  return bytes;
-}
-
-function arrayBufferToBase64(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer);
-  let binary = "";
-  const chunkSize = 0x8000;
-  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
-    const chunk = bytes.subarray(offset, offset + chunkSize);
-    binary += String.fromCharCode(...chunk);
-  }
-  return btoa(binary);
 }
 
 function base64DecodedLength(base64: string): number {

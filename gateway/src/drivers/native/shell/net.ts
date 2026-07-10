@@ -6,6 +6,7 @@ import {
   normalizeTarget,
   type NetFetchDeviceTransport,
 } from "../../../kernel/net";
+import { encodeBase64Bytes } from "../../../shared/base64";
 import { requireShellOptionValue } from "./common";
 
 type FetchCommandOptions = {
@@ -36,7 +37,7 @@ export function buildNetCommands(
       const options = parseFetchArgs(normalizedArgs, name);
       const response = await fetchFromOptions(ctx, transport, options);
       if (options.json) {
-        const bodyBase64 = bytesToBase64(new Uint8Array(await response.arrayBuffer()));
+        const bodyBase64 = encodeBase64Bytes(await response.arrayBuffer());
         return {
           stdout: `${JSON.stringify({
             ok: response.ok,
@@ -273,14 +274,4 @@ function fetchUsage(commandName: string): string {
     "      --json                print a JSON response envelope",
     "",
   ].join("\n");
-}
-
-function bytesToBase64(bytes: Uint8Array): string {
-  let binary = "";
-  const chunkSize = 0x8000;
-  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
-    const chunk = bytes.subarray(offset, offset + chunkSize);
-    binary += String.fromCharCode(...chunk);
-  }
-  return btoa(binary);
 }

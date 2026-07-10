@@ -4,6 +4,8 @@ import type {
   TextContent,
   ThinkingContent,
 } from "@earendil-works/pi-ai";
+import { decodeBase64Bytes } from "../shared/base64";
+import { normalizeBase64Data } from "./transcription";
 import { resolvePiAiModel } from "./model-registry";
 import { completePiAiSimple } from "./pi-ai";
 import { withTimeout } from "./timeout";
@@ -51,7 +53,7 @@ export async function readImageWithWorkersAi(
 
   const model = normalizeOptionalText(request.model) || DEFAULT_IMAGE_READING_MODEL;
   const base64 = normalizeBase64Data(request.data);
-  const bytes = base64ToNumberArray(base64);
+  const bytes = Array.from(decodeBase64Bytes(base64));
   if (bytes.length === 0) {
     return null;
   }
@@ -267,21 +269,6 @@ function firstText(value: unknown): string | null {
   }
 
   return null;
-}
-
-function base64ToNumberArray(base64: string): number[] {
-  const binary = atob(base64);
-  const bytes: number[] = [];
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes.push(binary.charCodeAt(index));
-  }
-  return bytes;
-}
-
-function normalizeBase64Data(base64: string): string {
-  return base64.includes(",")
-    ? base64.slice(base64.indexOf(",") + 1)
-    : base64;
 }
 
 function normalizePositiveNumber(value: unknown): number | undefined {

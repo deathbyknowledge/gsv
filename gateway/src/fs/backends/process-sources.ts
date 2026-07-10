@@ -611,18 +611,11 @@ class ProcessSourceBackend implements MountBackend {
     overlay: SourceOverlayManifest,
     relativePath: string,
   ): Promise<Uint8Array | null> {
-    if (!this.storage) {
-      return null;
-    }
     const change = overlay.changes[relativePath];
     if (change?.type !== "put") {
       return null;
     }
-    const obj = await this.storage.get(change.contentKey);
-    if (!obj) {
-      return null;
-    }
-    return new Uint8Array(await obj.arrayBuffer());
+    return readOverlayContent(this.storage, change);
   }
 
   private async stageOverlayPut(
@@ -703,33 +696,8 @@ class ProcessSourceBackend implements MountBackend {
   }
 
   private readBranchState(pkg: SourcePackage): SourceBranchState | null {
-    if (!this.config || !this.processId) {
-      return null;
-    }
-    const raw = this.config.get(sourceBranchStateKey(this.processId, pkg.record));
-    if (!raw) {
-      return null;
-    }
-    try {
-      const parsed = JSON.parse(raw) as Partial<SourceBranchState>;
-      if (typeof parsed.branch !== "string" || parsed.branch.trim().length === 0) {
-        return null;
-      }
-      if (typeof parsed.baseRef !== "string" || parsed.baseRef.trim().length === 0) {
-        return null;
-      }
-      return {
-        branch: parsed.branch,
-        baseRef: parsed.baseRef,
-        head: typeof parsed.head === "string" ? parsed.head : null,
-        createdAt: typeof parsed.createdAt === "number" ? parsed.createdAt : Date.now(),
-        updatedAt: typeof parsed.updatedAt === "number" ? parsed.updatedAt : Date.now(),
-      };
-    } catch {
-      return null;
-    }
+    return readSourceBranchState(this.config, this.processId, pkg.record);
   }
-
 }
 
 export async function getRepoSourceStatus(
@@ -1359,10 +1327,6 @@ function writeSourceBranchState(
   config.set(sourceBranchStateKey(processId, record), JSON.stringify(state));
 }
 
-function processBranchName(processId: string, packageName: string): string {
-  return `gsv/process/${sanitizeBranchSegment(processId)}/${sanitizeBranchSegment(packageName)}`;
-}
-
 function normalizeSourceBranch(branch: string): string {
   const value = branch.startsWith("refs/heads/") ? branch.slice("refs/heads/".length) : branch;
   if (!/^[A-Za-z0-9._/-]+$/.test(value) || value.includes("..")) {
@@ -1661,11 +1625,6 @@ function formatSimpleDiff(path: string, before: Uint8Array | null, after: Uint8A
 
 function isProbablyBinary(bytes: Uint8Array): boolean {
   return bytes.subarray(0, Math.min(bytes.byteLength, 1024)).includes(0);
-}
-
-function sanitizeBranchSegment(value: string): string {
-  const normalized = value.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
-  return normalized || "source";
 }
 
 function normalizeRepoPath(path: string | null | undefined): string {
