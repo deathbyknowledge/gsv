@@ -1412,6 +1412,29 @@ describe("handleAiConfig", () => {
     });
   });
 
+  it("falls through invalid normalized process config values", async () => {
+    const result = await handleAiConfig({
+      processOverrides: {
+        "config/ai/generation/timeout_ms": "invalid",
+        "config/ai/image/read/provider": " ",
+        "config/ai/image/read/input_format": "invalid",
+        "config/ai/image/read/max_tokens": "invalid",
+      },
+    }, makeAiConfigContext({
+      "users/1000/ai/generation/timeout_ms": "90000",
+      "users/1000/ai/image/read/provider": "openai",
+      "users/1000/ai/image/read/input_format": "chat",
+      "users/1000/ai/image/read/max_tokens": "321",
+    }));
+
+    expect(result.generationTimeoutMs).toBe(90000);
+    expect(result.media).toMatchObject({
+      imageReadingProvider: "openai",
+      imageReadingInputFormat: "chat",
+      imageReadingMaxTokens: 321,
+    });
+  });
+
   it("hydrates process profile secrets inside internal AI config resolution", async () => {
     const result = await handleAiConfig({
       processOverrides: {
