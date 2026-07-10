@@ -59,11 +59,6 @@ export type AdapterHilRequest = {
   args: Record<string, unknown>;
 };
 
-function traceIdFromConfig(config: Record<string, unknown> | undefined): string {
-  const value = config?.__traceId;
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : "no-trace";
-}
-
 export function resolveAdapterService(env: Env, adapter: string): AdapterServiceBinding | null {
   const key = `CHANNEL_${adapter.trim().toUpperCase()}`;
   const binding = (env as unknown as Record<string, unknown>)[key];
@@ -77,19 +72,15 @@ export async function handleAdapterConnect(
 ): Promise<AdapterConnectSyscallResult> {
   const adapter = args.adapter.trim();
   const accountId = args.accountId.trim();
-  const traceId = traceIdFromConfig(args.config);
 
   if (!adapter) return { ok: false, error: "adapter is required" };
   if (!accountId) return { ok: false, error: "accountId is required" };
-  console.log(`[adapter.connect:${traceId}] start adapter=${adapter} accountId=${accountId}`);
 
   const service = resolveAdapterService(ctx.env, adapter);
   if (!service) {
-    console.error(`[adapter.connect:${traceId}] missing service binding adapter=${adapter}`);
     return { ok: false, error: `Adapter service unavailable: ${adapter}` };
   }
   if (typeof service.adapterConnect !== "function") {
-    console.error(`[adapter.connect:${traceId}] service missing adapterConnect() adapter=${adapter}`);
     return { ok: false, error: `Adapter service does not implement connect: ${adapter}` };
   }
 
@@ -97,15 +88,9 @@ export async function handleAdapterConnect(
   try {
     connectResult = await service.adapterConnect(accountId, args.config);
   } catch (error) {
-    console.error(
-      `[adapter.connect:${traceId}] service.adapterConnect threw adapter=${adapter} accountId=${accountId}`,
-      error,
-    );
+    console.error(`[adapter.connect] failed adapter=${adapter} accountId=${accountId}`, error);
     throw error;
   }
-  console.log(
-    `[adapter.connect:${traceId}] service.adapterConnect ok=${connectResult.ok === true} challenge=${Boolean(connectResult.challenge)}`,
-  );
   if (!connectResult.ok) {
     return {
       ok: false,
@@ -118,9 +103,6 @@ export async function handleAdapterConnect(
   const connected = status?.connected ?? connectResult.connected ?? true;
   const authenticated =
     status?.authenticated ?? connectResult.authenticated ?? !connectResult.challenge;
-  console.log(
-    `[adapter.connect:${traceId}] complete adapter=${adapter} accountId=${accountId} connected=${connected} authenticated=${authenticated}`,
-  );
 
   return {
     ok: true,
@@ -764,18 +746,11 @@ async function refreshAdapterStatus(
   }
 
   try {
-    console.log(`[adapter.status] refreshing adapter=${adapter} accountId=${accountId}`);
     const statuses = await service.adapterStatus(accountId);
     for (const status of statuses) {
       ctx.adapters.status.upsert(adapter, status.accountId, status);
     }
-    const exact = statuses.find((status) => status.accountId === accountId);
-    if (exact) {
-      console.log(
-        `[adapter.status] refreshed adapter=${adapter} accountId=${accountId} connected=${exact.connected} authenticated=${exact.authenticated}`,
-      );
-    }
-    return exact || null;
+    return statuses.find((status) => status.accountId === accountId) ?? null;
   } catch (error) {
     console.error(`[adapter.status] refresh failed adapter=${adapter} accountId=${accountId}`, error);
     return null;
