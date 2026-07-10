@@ -55,6 +55,39 @@ describe("Kernel device connection cleanup", () => {
   });
 });
 
+describe("Kernel package app authorization", () => {
+  it("uses account capabilities without elevating from the package manifest", () => {
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.auth = {
+      getPasswdByUid: vi.fn(() => ({
+        uid: 1000,
+        gid: 1000,
+        username: "alice",
+        home: "/home/alice",
+      })),
+      resolveGids: vi.fn(() => [1000, 100]),
+    };
+    kernel.caps = { resolve: vi.fn(() => ["fs.read"]) };
+
+    const identity = kernel.buildAppBindingIdentity(
+      {
+        uid: 1000,
+        username: "alice",
+        packageId: "pkg-admin",
+        packageName: "admin",
+        entrypointName: "main",
+        routeBase: "/apps/admin",
+        issuedAt: 1,
+        expiresAt: 2,
+      },
+      ["sys.config.set"],
+    );
+
+    expect(identity?.capabilities).toEqual(["fs.read"]);
+    expect(kernel.caps.resolve).toHaveBeenCalledWith([1000, 100]);
+  });
+});
+
 describe("Kernel MCP connection cleanup", () => {
   it("removes newly registered MCP servers when the initial connection fails", async () => {
     const kernel = Object.create(Kernel.prototype) as {
