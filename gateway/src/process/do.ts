@@ -287,12 +287,6 @@ function asPlainRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-function normalizeStringArray(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.map((item) => String(item))
-    : [];
-}
-
 function buildAssistantMessageMetadata(
   response: AssistantMessage,
   config: AiConfigResult,
@@ -455,20 +449,6 @@ function isWatchedSignalPayload(
   payload?: unknown;
 } {
   return !!value && typeof value === "object" && (value as { watched?: unknown }).watched === true;
-}
-
-function isScheduleEventPayload(
-  value: unknown,
-): value is {
-  scheduleId?: unknown;
-  scheduleName?: unknown;
-  conversationId?: unknown;
-  message?: unknown;
-  data?: unknown;
-  scheduledAtMs?: unknown;
-  firedAtMs?: unknown;
-} {
-  return !!value && typeof value === "object";
 }
 
 function formatScheduleEventMessage(payload: unknown): string {
@@ -2598,10 +2578,11 @@ export class Process extends Host<Env> {
   }
 
   private async handleScheduleEventSignal(payload: unknown): Promise<void> {
-    if (!isScheduleEventPayload(payload)) {
+    if (!payload || typeof payload !== "object") {
       return;
     }
-    const conversationId = normalizeConversationId(payload.conversationId);
+    const event = payload as { conversationId?: unknown };
+    const conversationId = normalizeConversationId(event.conversationId);
     const runId = this.currentRun ? undefined : crypto.randomUUID();
     await this.appendRuntimeMessage("system", formatScheduleEventMessage(payload), {
       conversationId,
@@ -2945,7 +2926,7 @@ export class Process extends Host<Env> {
         !isRetryableAssistantResponseFailure(response, responseFailure) ||
         attempt >= MAX_RETRYABLE_GENERATION_ATTEMPTS
       ) {
-        if (isFallbackEligibleAssistantResponse(response)) {
+        if (response.stopReason === "error" || response.stopReason === "aborted") {
           const errorMsg = response.errorMessage ?? responseFailure;
           const fallbackState = await switchToFallback(errorMsg, response);
           if (fallbackState === "stopped") {
@@ -3097,14 +3078,14 @@ export class Process extends Host<Env> {
     streamSeq?: StreamSeqCounter;
   }): Promise<AssistantMessage | null> {
     const executor = options.config.executor;
-    if (this.isLocalAiTextExecutor(executor)) {
+    if (executor.kind === "process" && executor.pid === this.pid) {
       return await this.generateAssistantResponseLocally(options);
     }
     const result = await this.kernelRpc("ai.text.generate", this.buildAiTextGenerateArgs({
       config: options.aiTextGenerateConfig,
       context: options.context,
       sessionAffinityKey: options.sessionAffinityKey,
-      target: this.resolveAiTextGenerateTarget(executor),
+      target: executor.kind === "device" ? executor.target : undefined,
     }));
     return result.message as unknown as AssistantMessage;
   }
@@ -3168,13 +3149,13 @@ export class Process extends Host<Env> {
     sessionAffinityKey: string;
   }): Promise<string> {
     const executor = options.config.executor;
-    if (!this.isLocalAiTextExecutor(executor)) {
+    if (executor.kind !== "process" || executor.pid !== this.pid) {
       const result = await this.kernelRpc("ai.text.generate", this.buildAiTextGenerateArgs({
         config: options.aiTextGenerateConfig,
         context: options.context,
         options: options.options,
         sessionAffinityKey: options.sessionAffinityKey,
-        target: this.resolveAiTextGenerateTarget(executor),
+        target: executor.kind === "device" ? executor.target : undefined,
       }));
       return result.text ?? "";
     }
@@ -3222,14 +3203,6 @@ export class Process extends Host<Env> {
       config.processProfile = snapshot.profile;
     }
     return config.processOverrides || config.processProfile ? config : undefined;
-  }
-
-  private isLocalAiTextExecutor(executor: AiConfigResult["executor"]): boolean {
-    return executor.kind === "process" && executor.pid === this.pid;
-  }
-
-  private resolveAiTextGenerateTarget(executor: AiConfigResult["executor"]): string | undefined {
-    return executor.kind === "device" ? executor.target : undefined;
   }
 
   private recordUnpersistedAssistantUsage(
@@ -4219,7 +4192,7 @@ export class Process extends Host<Env> {
         {
           defaultTarget: normalizeOptionalString(args.target),
           defaultCwd: normalizeOptionalString(args.cwd),
-          argv: normalizeStringArray(args.argv),
+          argv: Array.isArray(args.argv) ? args.argv.map((item) => String(item)) : [],
           args: args.args ?? null,
           mcpToolBindings: await this.getCodeModeMcpToolBindings(),
         },
@@ -4924,7 +4897,9 @@ function orderMessagesForProvider(messages: Message[]): Message[] {
     }
 
     ordered.push(message);
-    const toolCallIds = assistantToolCallIds(message);
+    const toolCallIds = message.role === "assistant"
+      ? message.content.flatMap((block) => block.type === "toolCall" ? [block.id] : [])
+      : [];
     if (toolCallIds.length > 0) {
       state.pendingToolBlock = {
         expected: new Set(toolCallIds),
@@ -4942,15 +4917,6 @@ function orderMessagesForProvider(messages: Message[]): Message[] {
   }
 
   return ordered;
-}
-
-function assistantToolCallIds(message: Message): string[] {
-  if (message.role !== "assistant") {
-    return [];
-  }
-  return message.content.flatMap((block) =>
-    block.type === "toolCall" ? [block.id] : [],
-  );
 }
 
 function serializeArchivedMessage(message: MessageRecord): Record<string, unknown> {
@@ -5332,10 +5298,6 @@ function isSameAiRuntimeModelStack(left: AiConfigResult, right: AiConfigResult):
     (left.providerStyle ?? "auto").trim().toLowerCase() === (right.providerStyle ?? "auto").trim().toLowerCase() &&
     (left.transportTarget ?? "gsv").trim() === (right.transportTarget ?? "gsv").trim() &&
     (left.openAiCodex?.accountId ?? "") === (right.openAiCodex?.accountId ?? "");
-}
-
-function isFallbackEligibleAssistantResponse(response: AssistantMessage): boolean {
-  return response.stopReason === "error" || response.stopReason === "aborted";
 }
 
 function formatAiModelStackLabel(config: Pick<AiConfigResult, "provider" | "model">): string {
