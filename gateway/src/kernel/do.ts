@@ -1112,6 +1112,9 @@ export class Kernel extends Host<Env> {
     }
 
     const identity = this.buildServiceBindingIdentity(frame);
+    if (!identity) {
+      return errFrame(frame.id, 503, "Service identity is not configured");
+    }
     if (!hasCapability(identity.capabilities, frame.call)) {
       return errFrame(frame.id, 403, `Permission denied: ${frame.call}`);
     }
@@ -1690,7 +1693,7 @@ export class Kernel extends Host<Env> {
     this.runRoutes.setConnectionRoute(runId, identity.process.uid, connectionId);
   }
 
-  private buildServiceBindingIdentity(frame: RequestFrame): ConnectionIdentity {
+  private buildServiceBindingIdentity(frame: RequestFrame): ConnectionIdentity | null {
     const args = frame.args as Record<string, unknown>;
     const adapterHint =
       typeof args.adapter === "string" && args.adapter.trim().length > 0
@@ -1698,27 +1701,20 @@ export class Kernel extends Host<Env> {
         : "service-binding";
 
     const root = this.auth.getPasswdByUid(0);
-    const process: ProcessIdentity = root
-      ? {
-          uid: root.uid,
-          gid: root.gid,
-          gids: this.auth.resolveGids(root.username, root.gid),
-          username: root.username,
-          home: root.home,
-          cwd: root.home,
-        }
-      : {
-          uid: 0,
-          gid: 0,
-          gids: [0],
-          username: "root",
-          home: "/root",
-          cwd: "/root",
-        };
+    if (!root) {
+      return null;
+    }
 
     return {
       role: "service",
-      process,
+      process: {
+        uid: root.uid,
+        gid: root.gid,
+        gids: this.auth.resolveGids(root.username, root.gid),
+        username: root.username,
+        home: root.home,
+        cwd: root.home,
+      },
       capabilities: this.caps.resolve([102]),
       channel: adapterHint,
     };

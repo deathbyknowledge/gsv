@@ -88,6 +88,27 @@ describe("Kernel package app authorization", () => {
   });
 });
 
+describe("Kernel service binding identity", () => {
+  it("rejects service calls instead of fabricating a missing root account", async () => {
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.auth = { getPasswdByUid: vi.fn(() => null) };
+    kernel.caps = { resolve: vi.fn(() => []) };
+
+    await expect(kernel.handleServiceReq({
+      type: "req",
+      id: "service-without-root",
+      call: "adapter.status",
+      args: { adapter: "discord" },
+    })).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: 503,
+        message: "Service identity is not configured",
+      },
+    });
+  });
+});
+
 describe("Kernel MCP connection cleanup", () => {
   it("removes newly registered MCP servers when the initial connection fails", async () => {
     const kernel = Object.create(Kernel.prototype) as {
