@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from "vitest";
-import { __DO_NOT_USE_WILL_BREAK__agentContext } from "agents";
 import { Kernel } from "./do";
 
 describe("Kernel device connection cleanup", () => {
@@ -63,28 +62,24 @@ describe("Kernel MCP connection cleanup", () => {
         uid: number;
         name: string;
         url: string;
+        callbackHost: string;
         transport: { type: "auto" };
       }): Promise<unknown>;
+      createMcpOAuthProvider: ReturnType<typeof vi.fn>;
       mcp: {
-        listServers: ReturnType<typeof vi.fn>;
         registerServer: ReturnType<typeof vi.fn>;
         connectToServer: ReturnType<typeof vi.fn>;
       };
-      mcpDiscoveryTasks: Map<string, Promise<unknown>>;
       removeMcpServer: ReturnType<typeof vi.fn>;
     };
+    kernel.createMcpOAuthProvider = vi.fn(() => ({}));
     kernel.mcp = {
-      listServers: vi.fn(() => []),
       registerServer: vi.fn(async () => undefined),
-      connectToServer: vi.fn(async (serverId: string) => {
-        kernel.mcpDiscoveryTasks.set(serverId, Promise.resolve(undefined));
-        return {
-          state: "failed",
-          error: "connection rejected",
-        };
-      }),
+      connectToServer: vi.fn(async () => ({
+        state: "failed",
+        error: "connection rejected",
+      })),
     };
-    kernel.mcpDiscoveryTasks = new Map();
     kernel.removeMcpServer = vi.fn(async () => undefined);
     const expectedError =
       "Failed to connect to MCP server at https://tinyfish.example/mcp: connection rejected";
@@ -94,61 +89,18 @@ describe("Kernel MCP connection cleanup", () => {
         uid: 1000,
         name: "TinyFish",
         url: "https://tinyfish.example/mcp",
+        callbackHost: "https://gsv.example.com",
         transport: { type: "auto" },
       }),
     ).rejects.toThrow(expectedError);
 
     const serverId = kernel.mcp.registerServer.mock.calls[0][0];
     expect(kernel.removeMcpServer).toHaveBeenCalledWith(serverId);
-    expect(kernel.mcpDiscoveryTasks.has(serverId)).toBe(false);
   });
 
-  it("does not share discovery errors across duplicate MCP endpoint URLs", () => {
-    const kernel = Object.create(Kernel.prototype) as {
-      recordMcpDiscoveryEvent(event: { type: string; payload?: unknown }): void;
-      broadcastMcpChanged: ReturnType<typeof vi.fn>;
-      mcp: {
-        mcpConnections: Record<string, {
-          url?: URL;
-          connectionError?: string | null;
-        }>;
-      };
-    };
-    const sharedUrl = "https://tinyfish.example/mcp";
-    kernel.mcp = {
-      mcpConnections: {
-        "server-a": {
-          url: new URL(sharedUrl),
-          connectionError: null,
-        },
-        "server-b": {
-          url: new URL(sharedUrl),
-          connectionError: "existing error",
-        },
-      },
-    };
-    kernel.broadcastMcpChanged = vi.fn();
-
-    kernel.recordMcpDiscoveryEvent({
-      type: "mcp:client:discover",
-      payload: {
-        url: sharedUrl,
-        error: "tools/list failed",
-      },
-    });
-
-    expect(kernel.mcp.mcpConnections["server-a"].connectionError).toBeNull();
-    expect(kernel.mcp.mcpConnections["server-b"].connectionError).toBe("existing error");
-    expect(kernel.broadcastMcpChanged).not.toHaveBeenCalled();
-  });
-
-  it("stores custom MCP headers in durable transport options", async () => {
+  it("passes custom MCP headers as serializable request options", async () => {
     type RegisteredServerOptions = {
       transport: {
-        eventSourceInit?: {
-          fetch?: (url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => Promise<Response>;
-        };
-        headers?: Record<string, string>;
         requestInit?: {
           headers?: Record<string, string>;
         };
@@ -159,20 +111,21 @@ describe("Kernel MCP connection cleanup", () => {
         uid: number;
         name: string;
         url: string;
+        callbackHost: string;
         transport: {
           type: "sse";
           headers: Record<string, string>;
         };
       }): Promise<unknown>;
+      createMcpOAuthProvider: ReturnType<typeof vi.fn>;
       mcp: {
-        listServers: ReturnType<typeof vi.fn>;
         registerServer: ReturnType<typeof vi.fn>;
         connectToServer: ReturnType<typeof vi.fn>;
       };
     };
     let registeredOptions: RegisteredServerOptions | null = null;
+    kernel.createMcpOAuthProvider = vi.fn(() => ({}));
     kernel.mcp = {
-      listServers: vi.fn(() => []),
       registerServer: vi.fn(async (_serverId: string, options: RegisteredServerOptions) => {
         registeredOptions = options;
       }),
@@ -186,6 +139,7 @@ describe("Kernel MCP connection cleanup", () => {
       uid: 1000,
       name: "TinyFish",
       url: "https://tinyfish.example/mcp",
+      callbackHost: "https://gsv.example.com",
       transport: {
         type: "sse",
         headers: {
@@ -195,108 +149,12 @@ describe("Kernel MCP connection cleanup", () => {
       },
     });
 
-    expect(registeredOptions?.transport.eventSourceInit?.fetch).toEqual(expect.any(Function));
-    expect(registeredOptions?.transport.headers).toEqual({
-      Authorization: "Bearer user-token",
-      "X-API-Key": "custom-key",
-    });
-    expect(registeredOptions?.transport.requestInit?.headers).toEqual({
-      Authorization: "Bearer user-token",
-      "X-API-Key": "custom-key",
-    });
-
-    const fetchSpy = vi.fn(async () => new Response(null, { status: 200 }));
-    vi.stubGlobal("fetch", fetchSpy);
-    try {
-      await registeredOptions?.transport.eventSourceInit?.fetch?.("https://tinyfish.example/sse", {
-        headers: {
-          Accept: "text/event-stream",
-          "Mcp-Protocol-Version": "2025-06-18",
-        },
-      });
-    } finally {
-      vi.unstubAllGlobals();
-    }
-
-    const sseInit = fetchSpy.mock.calls[0]?.[1] as RequestInit | undefined;
-    const sseHeaders = new Headers(sseInit?.headers);
-    expect(sseHeaders.get("Accept")).toBe("text/event-stream");
-    expect(sseHeaders.get("Mcp-Protocol-Version")).toBe("2025-06-18");
-    expect(sseHeaders.get("Authorization")).toBe("Bearer user-token");
-    expect(sseHeaders.get("X-API-Key")).toBe("custom-key");
-
-    expect(JSON.parse(JSON.stringify(registeredOptions?.transport))).toEqual({
-      eventSourceInit: {},
+    expect(JSON.parse(JSON.stringify(registeredOptions?.transport.requestInit))).toEqual({
       headers: {
         Authorization: "Bearer user-token",
         "X-API-Key": "custom-key",
       },
-      requestInit: {
-        headers: {
-          Authorization: "Bearer user-token",
-          "X-API-Key": "custom-key",
-        },
-      },
-      type: "sse",
     });
-  });
-
-  it("derives the MCP OAuth callback host from the active connection", async () => {
-    type RegisteredServerOptions = {
-      callbackUrl?: string;
-      transport: {
-        authProvider?: unknown;
-      };
-    };
-    const kernel = Object.create(Kernel.prototype) as {
-      addMcpServerConnection(input: {
-        uid: number;
-        name: string;
-        url: string;
-        transport: { type: "auto" };
-      }): Promise<unknown>;
-      createMcpOAuthProvider: ReturnType<typeof vi.fn>;
-      mcp: {
-        listServers: ReturnType<typeof vi.fn>;
-        registerServer: ReturnType<typeof vi.fn>;
-        connectToServer: ReturnType<typeof vi.fn>;
-      };
-    };
-    let registeredOptions: RegisteredServerOptions | null = null;
-    const authProvider = { provider: "oauth" };
-    kernel.createMcpOAuthProvider = vi.fn(() => authProvider);
-    kernel.mcp = {
-      listServers: vi.fn(() => []),
-      registerServer: vi.fn(async (_serverId: string, options: RegisteredServerOptions) => {
-        registeredOptions = options;
-      }),
-      connectToServer: vi.fn(async () => ({
-        state: "authenticating",
-        authUrl: "https://tinyfish.example/oauth",
-      })),
-    };
-
-    await __DO_NOT_USE_WILL_BREAK__agentContext.run({
-      agent: kernel,
-      connection: {
-        uri: "https://gsv.example.com/agents/kernel/user?_pk=conn",
-      } as never,
-      request: undefined,
-      email: undefined,
-    }, async () => {
-      await kernel.addMcpServerConnection({
-        uid: 1000,
-        name: "TinyFish",
-        url: "https://tinyfish.example/mcp",
-        transport: { type: "auto" },
-      });
-    });
-
-    expect(kernel.createMcpOAuthProvider).toHaveBeenCalledWith(
-      "https://gsv.example.com/oauth/callback",
-    );
-    expect(registeredOptions?.callbackUrl).toBe("https://gsv.example.com/oauth/callback");
-    expect(registeredOptions?.transport.authProvider).toBe(authProvider);
   });
 });
 

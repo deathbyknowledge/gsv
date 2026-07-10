@@ -167,6 +167,7 @@ function integrationRow(server: ConsoleMcpServer): OverviewRow {
     label: server.name,
     meta: joinMeta([
       server.tools.length ? `${server.tools.length} tools` : undefined,
+      server.resourceCount ? `${server.resourceCount} resources` : undefined,
       server.error,
     ]),
     tone: failed ? "error" : ready ? "online" : active ? "warn" : "idle",

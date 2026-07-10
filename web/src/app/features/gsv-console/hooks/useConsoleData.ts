@@ -249,17 +249,7 @@ export function useConsoleAdapterInventory(options: ConsoleQueryOptions & { adap
 
 export function useConsoleMcpServers(options: ConsoleQueryOptions = {}) {
   const { client, connected } = useGateway();
-  const queryClient = useQueryClient();
   const enabled = connected && (options.enabled ?? true);
-
-  useEffect(() => {
-    return client.onSignal((signal) => {
-      if (signal === "mcp.changed") {
-        void queryClient.invalidateQueries({ queryKey: consoleMcpServersQueryKey });
-      }
-    });
-  }, [client, queryClient]);
-
   const query = useQuery<ConsoleMcpServer[]>({
     queryKey: consoleMcpServersQueryKey,
     enabled,

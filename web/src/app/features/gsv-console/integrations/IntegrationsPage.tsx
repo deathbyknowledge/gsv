@@ -111,6 +111,7 @@ export function IntegrationsPage({
               <IntegrationOnboardingFlow
                 onBack={() => selectDetail(null)}
                 onCreated={(server) => selectDetail({ kind: "integrations", id: integrationDetailId(server), label: server.name })}
+                servers={data}
               />
             );
           }

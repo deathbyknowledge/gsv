@@ -107,6 +107,8 @@ const mcpServer: ConsoleMcpServer = {
   instructions: "",
   capabilities: null,
   tools: [],
+  resourceCount: 0,
+  promptCount: 0,
   createdAt: 1_700_000_000,
   updatedAt: 1_700_000_100,
 };

@@ -531,6 +531,8 @@ export type SysMcpServerSummary = {
   instructions: string | null;
   capabilities: Record<string, unknown> | null;
   tools: SysMcpToolSummary[];
+  resourceCount: number;
+  promptCount: number;
   createdAt: number;
   updatedAt: number;
 };

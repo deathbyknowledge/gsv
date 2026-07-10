@@ -184,6 +184,8 @@ describe.sequential("CodeMode executor", () => {
             required: ["title"],
           },
         }],
+        resourceCount: 0,
+        promptCount: 0,
         createdAt: 1,
         updatedAt: 2,
       },

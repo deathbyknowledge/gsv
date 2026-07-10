@@ -411,6 +411,8 @@ function normalizeMcpServer(value: unknown): ConsoleMcpServer | null {
       .map(normalizeMcpTool)
       .filter((entry): entry is ConsoleMcpTool => entry !== null)
       .sort((left, right) => left.name.localeCompare(right.name)),
+    resourceCount: numberOrNull(record.resourceCount) ?? 0,
+    promptCount: numberOrNull(record.promptCount) ?? 0,
     createdAt: numberOrNull(record.createdAt),
     updatedAt: numberOrNull(record.updatedAt),
   };

@@ -17,11 +17,6 @@ import type {
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { resolveCallerOwnerUid, type KernelContext } from "../context";
 import type { McpServerRecord } from "../mcp-store";
-import {
-  discoverMcpCapabilitiesLenient,
-  isOptionalMcpListMethodNotFound,
-  type LenientMcpConnection,
-} from "../mcp-discovery";
 
 export type McpAddConnectionInput = {
   uid: number;
@@ -36,8 +31,6 @@ export type McpAddConnectionInput = {
 
 export type McpAddConnectionResult = {
   id: string;
-  state: string;
-  authUrl?: string;
 };
 
 type SdkMcpServerRow = {
@@ -51,12 +44,6 @@ type SdkMcpServerRow = {
 };
 
 const MCP_TRANSPORT_TYPES = new Set<SysMcpTransportType>(["auto", "streamable-http", "sse"]);
-const MCP_CONNECTED_WITHOUT_DISCOVERY_ERROR =
-  "MCP server connected, but capability discovery has not completed. Refresh to retry tool discovery.";
-
-export function canRediscoverMcpConnectionState(input: unknown): boolean {
-  return input === "connected" || input === "discovering" || input === "ready";
-}
 
 export async function handleSysMcpAdd(
   args: SysMcpAddArgs,
@@ -94,12 +81,11 @@ export async function handleSysMcpAdd(
   return { server: summarizeServer(record, ctx) };
 }
 
-export async function handleSysMcpList(
+export function handleSysMcpList(
   args: SysMcpListArgs,
   ctx: KernelContext,
-): Promise<SysMcpListResult> {
+): SysMcpListResult {
   const effectiveUid = parseEffectiveUid(args.uid, ctx, "list MCP servers");
-  await recoverIncompleteMcpDiscovery(ctx, effectiveUid);
   return {
     servers: ctx.mcpServers.list(effectiveUid).map((record) => summarizeServer(record, ctx)),
   };
@@ -119,7 +105,11 @@ export async function handleSysMcpRemove(
   if (ctx.removeMcpServerConnection) {
     await ctx.removeMcpServerConnection(serverId);
   }
-  return { removed: ctx.mcpServers.delete(serverId, effectiveUid) };
+  const removed = ctx.mcpServers.delete(serverId, effectiveUid);
+  if (removed) {
+    ctx.broadcastToUid?.(effectiveUid, "mcp.changed");
+  }
+  return { removed };
 }
 
 export async function handleSysMcpRefresh(
@@ -174,25 +164,14 @@ export function summarizeServer(record: McpServerRecord, ctx: KernelContext): Sy
   const server = findSdkMcpServer(ctx, record.serverId);
   const connection = ctx.mcp.mcpConnections[record.serverId];
   const tools = ctx.mcp.listTools({ serverId: record.serverId }) as Tool[];
-  const rawState = connection
-    ? parseConnectionState(connection.connectionState)
-    : server?.auth_url ? "authenticating" : "not-connected";
-  const discoveryIncomplete = rawState === "connected"
-    && tools.length === 0;
-  const rawConnectionError = typeof connection?.connectionError === "string"
+  const resources = ctx.mcp.listResources({ serverId: record.serverId });
+  const prompts = ctx.mcp.listPrompts({ serverId: record.serverId });
+  const error = typeof connection?.connectionError === "string"
     ? connection.connectionError
     : null;
-  const connectionError = isOptionalMcpListMethodNotFound(rawConnectionError) ? null : rawConnectionError;
-  const error = connectionError ?? (discoveryIncomplete ? MCP_CONNECTED_WITHOUT_DISCOVERY_ERROR : null);
-  const state = error && (rawState === "connected" || rawState === "discovering")
-    ? "failed"
-    : !connectionError && tools.length > 0 && (rawState === "connected" || rawState === "discovering")
-      ? "ready"
-      : rawState;
-
-  if (state === "ready" && connection?.connectionState !== "ready") {
-    connection.connectionState = "ready";
-  }
+  const state = connection
+    ? parseConnectionState(connection.connectionState)
+    : server?.auth_url ? "authenticating" : "not-connected";
 
   return {
     serverId: record.serverId,
@@ -200,49 +179,17 @@ export function summarizeServer(record: McpServerRecord, ctx: KernelContext): Sy
     name: record.name,
     url: server?.server_url ?? "",
     transport: parseSdkServerTransport(server),
-    state,
+    state: error && state === "connected" ? "failed" : state,
     authUrl: typeof server?.auth_url === "string" ? server.auth_url : null,
     error,
     instructions: typeof connection?.instructions === "string" ? connection.instructions : null,
     capabilities: isRecord(connection?.serverCapabilities) ? connection.serverCapabilities : null,
     tools: tools.map(summarizeTool),
+    resourceCount: resources.length,
+    promptCount: prompts.length,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
   };
-}
-
-async function recoverIncompleteMcpDiscovery(ctx: KernelContext, uid: number): Promise<void> {
-  const recoveries = ctx.mcpServers.list(uid).map(async (record) => {
-    const connection = ctx.mcp.mcpConnections[record.serverId] as Partial<LenientMcpConnection> | undefined;
-    if (
-      !connection?.client ||
-      connection.connectionState === "ready" ||
-      !canRediscoverMcpConnectionState(connection.connectionState)
-    ) {
-      return;
-    }
-    if (hasNonOptionalMcpConnectionError(connection)) {
-      return;
-    }
-    const hasInventory = ctx.mcp.listTools({ serverId: record.serverId }).length > 0;
-    if (hasInventory) {
-      return;
-    }
-    const result = await discoverMcpCapabilitiesLenient(connection as LenientMcpConnection);
-    if (!result.success) {
-      connection.connectionError = formatMcpDiscoveryError(result.error);
-    }
-  });
-  await Promise.all(recoveries);
-}
-
-function hasNonOptionalMcpConnectionError(connection: Partial<LenientMcpConnection>): boolean {
-  return typeof connection.connectionError === "string"
-    && !isOptionalMcpListMethodNotFound(connection.connectionError);
-}
-
-function formatMcpDiscoveryError(error: string | undefined): string {
-  return `Failed to discover MCP server capabilities: ${error ?? "unknown discovery error"}`;
 }
 
 function findUserMcpServerByNameUrl(

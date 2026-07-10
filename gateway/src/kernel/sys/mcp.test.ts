@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { KernelContext } from "../context";
 import type { McpServerRecord } from "../mcp-store";
 import {
-  canRediscoverMcpConnectionState,
   handleSysMcpAdd,
   handleSysMcpCall,
   handleSysMcpList,
@@ -66,6 +65,8 @@ function makeContext(
       mcpConnections: {},
       listServers: vi.fn(() => [...mcpServers.sdkServers.values()]),
       listTools: vi.fn(() => []),
+      listResources: vi.fn(() => []),
+      listPrompts: vi.fn(() => []),
     },
     addMcpServerConnection: vi.fn(async (input) => {
       mcpServers.addSdkServer({
@@ -77,7 +78,6 @@ function makeContext(
       });
       return {
         id: "server-1",
-        state: "ready",
       };
     }),
     broadcastToUid: vi.fn(),
@@ -207,7 +207,6 @@ describe("sys.mcp handlers", () => {
 
     (ctx.addMcpServerConnection as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       id: "server-2",
-      state: "ready",
     });
     await handleSysMcpAdd({
       name: "GitHub Work",
@@ -266,10 +265,11 @@ describe("sys.mcp handlers", () => {
       url: "https://other.example.com/mcp",
     });
 
-    expect((await handleSysMcpList({}, ctx)).servers.map((server) => server.serverId)).toEqual(["server-1"]);
+    expect(handleSysMcpList({}, ctx).servers.map((server) => server.serverId)).toEqual(["server-1"]);
     expect(await handleSysMcpRemove({ serverId: "server-2" }, ctx)).toEqual({ removed: false });
     expect(await handleSysMcpRemove({ serverId: "server-1" }, ctx)).toEqual({ removed: true });
     expect(ctx.removeMcpServerConnection).toHaveBeenCalledWith("server-1");
+    expect(ctx.broadcastToUid).toHaveBeenCalledWith(1000, "mcp.changed");
   });
 
   it("defaults process-originated MCP access to the owning human", async () => {
@@ -300,7 +300,7 @@ describe("sys.mcp handlers", () => {
       url: "https://agent.example.com/mcp",
     });
 
-    expect((await handleSysMcpList({}, ctx)).servers.map((server) => server.serverId)).toEqual(["server-1"]);
+    expect(handleSysMcpList({}, ctx).servers.map((server) => server.serverId)).toEqual(["server-1"]);
 
     await handleSysMcpCall({
       serverId: "server-1",
@@ -333,35 +333,7 @@ describe("sys.mcp handlers", () => {
     }, ctx)).rejects.toThrow("MCP server not found");
   });
 
-  it("reports connected MCP clients without discovered inventory as failed", async () => {
-    const ctx = makeContext(1000, mcpServers);
-    mcpServers.upsert({
-      serverId: "server-1",
-      uid: 1000,
-      name: "Pending",
-    });
-    mcpServers.addSdkServer({
-      serverId: "server-1",
-      uid: 1000,
-      name: "Pending",
-      url: "https://pending.example.com/mcp",
-    });
-    ctx.mcp.mcpConnections["server-1"] = {
-      connectionState: "connected",
-      connectionError: null,
-    } as never;
-
-    const result = await handleSysMcpList({}, ctx);
-
-    expect(result.servers[0]).toMatchObject({
-      serverId: "server-1",
-      state: "failed",
-      error: "MCP server connected, but capability discovery has not completed. Refresh to retry tool discovery.",
-      tools: [],
-    });
-  });
-
-  it("promotes connected MCP clients with discovered tools to ready", async () => {
+  it("reports discovery errors without mutating manager state", () => {
     const ctx = makeContext(1000, mcpServers);
     mcpServers.upsert({
       serverId: "server-1",
@@ -376,7 +348,7 @@ describe("sys.mcp handlers", () => {
     });
     ctx.mcp.mcpConnections["server-1"] = {
       connectionState: "connected",
-      connectionError: null,
+      connectionError: "Capability discovery failed",
     } as never;
     (ctx.mcp.listTools as ReturnType<typeof vi.fn>).mockReturnValue([{
       name: "search",
@@ -384,123 +356,21 @@ describe("sys.mcp handlers", () => {
       inputSchema: { type: "object" },
     }]);
 
-    const result = await handleSysMcpList({}, ctx);
+    const result = handleSysMcpList({}, ctx);
 
     expect(result.servers[0]).toMatchObject({
       serverId: "server-1",
-      state: "ready",
-      error: null,
+      state: "failed",
+      error: "Capability discovery failed",
       tools: [{
         name: "search",
         description: "Search",
       }],
     });
-    expect(ctx.mcp.mcpConnections["server-1"].connectionState).toBe("ready");
+    expect(ctx.mcp.mcpConnections["server-1"].connectionState).toBe("connected");
   });
 
-  it("recovers optional prompt discovery errors and reports discovered tools as ready", async () => {
-    const ctx = makeContext(1000, mcpServers);
-    mcpServers.upsert({
-      serverId: "server-1",
-      uid: 1000,
-      name: "TinyFish",
-    });
-    mcpServers.addSdkServer({
-      serverId: "server-1",
-      uid: 1000,
-      name: "TinyFish",
-      url: "https://tinyfish.example.com/mcp",
-    });
-    const promptError =
-      'Streamable HTTP error: Error POSTing to endpoint: {"jsonrpc":"2.0","error":{"code":-32601,"message":"Method not found: prompts/list"},"id":2}';
-    ctx.mcp.mcpConnections["server-1"] = {
-      client: {
-        getInstructions: vi.fn(() => "Search the web."),
-        getServerCapabilities: vi.fn(() => ({ tools: {}, prompts: {} })),
-        listTools: vi.fn(async () => ({
-          tools: [{
-            name: "search",
-            description: "Search TinyFish",
-            inputSchema: { type: "object" },
-          }],
-        })),
-      },
-      connectionState: "connected",
-      connectionError: promptError,
-      prompts: [],
-      resourceTemplates: [],
-      resources: [],
-      tools: [],
-    } as never;
-    (ctx.mcp.listTools as ReturnType<typeof vi.fn>).mockImplementation(({ serverId }) =>
-      serverId === "server-1" ? ctx.mcp.mcpConnections["server-1"].tools : []
-    );
-
-    const result = await handleSysMcpList({}, ctx);
-
-    expect(result.servers[0]).toMatchObject({
-      serverId: "server-1",
-      state: "ready",
-      error: null,
-      tools: [{
-        name: "search",
-        description: "Search TinyFish",
-      }],
-    });
-  });
-
-  it("does not repeat automatic discovery after non-optional failures", async () => {
-    const ctx = makeContext(1000, mcpServers);
-    mcpServers.upsert({
-      serverId: "server-1",
-      uid: 1000,
-      name: "Slow MCP",
-    });
-    mcpServers.addSdkServer({
-      serverId: "server-1",
-      uid: 1000,
-      name: "Slow MCP",
-      url: "https://slow.example.com/mcp",
-    });
-    const listTools = vi.fn(async () => {
-      throw new Error("tools/list timed out");
-    });
-    ctx.mcp.mcpConnections["server-1"] = {
-      client: {
-        getInstructions: vi.fn(() => undefined),
-        getServerCapabilities: vi.fn(() => ({ tools: {} })),
-        listTools,
-      },
-      connectionState: "connected",
-      connectionError: null,
-      prompts: [],
-      resourceTemplates: [],
-      resources: [],
-      tools: [],
-    } as never;
-    (ctx.mcp.listTools as ReturnType<typeof vi.fn>).mockImplementation(({ serverId }) =>
-      serverId === "server-1" ? ctx.mcp.mcpConnections["server-1"].tools : []
-    );
-
-    const first = await handleSysMcpList({}, ctx);
-    const second = await handleSysMcpList({}, ctx);
-
-    expect(listTools).toHaveBeenCalledTimes(1);
-    expect(first.servers[0]).toMatchObject({
-      serverId: "server-1",
-      state: "failed",
-      error: "Failed to discover MCP server capabilities: tools/list timed out",
-      tools: [],
-    });
-    expect(second.servers[0]).toMatchObject({
-      serverId: "server-1",
-      state: "failed",
-      error: "Failed to discover MCP server capabilities: tools/list timed out",
-      tools: [],
-    });
-  });
-
-  it("does not repeat automatic discovery for ready servers with zero tools", async () => {
+  it("keeps ready servers with zero tools ready", () => {
     const ctx = makeContext(1000, mcpServers);
     mcpServers.upsert({
       serverId: "server-1",
@@ -513,54 +383,18 @@ describe("sys.mcp handlers", () => {
       name: "Empty MCP",
       url: "https://empty.example.com/mcp",
     });
-    const listTools = vi.fn(async () => ({
-      tools: [],
-    }));
     ctx.mcp.mcpConnections["server-1"] = {
-      client: {
-        getInstructions: vi.fn(() => undefined),
-        getServerCapabilities: vi.fn(() => ({ tools: {} })),
-        listTools,
-      },
       connectionState: "ready",
       connectionError: null,
-      prompts: [],
-      resourceTemplates: [],
-      resources: [],
-      tools: [],
     } as never;
-    (ctx.mcp.listTools as ReturnType<typeof vi.fn>).mockImplementation(({ serverId }) =>
-      serverId === "server-1" ? ctx.mcp.mcpConnections["server-1"].tools : []
-    );
 
-    const result = await handleSysMcpList({}, ctx);
+    const result = handleSysMcpList({}, ctx);
 
-    expect(listTools).not.toHaveBeenCalled();
     expect(result.servers[0]).toMatchObject({
       serverId: "server-1",
       state: "ready",
       error: null,
       tools: [],
     });
-  });
-
-  it("does not wait for manager-wide MCP connections before listing scoped servers", async () => {
-    const ctx = makeContext(1000, mcpServers);
-    const waitForConnections = vi.fn(async () => {
-      throw new Error("should not wait for unrelated MCP connections");
-    });
-    ctx.mcp.waitForConnections = waitForConnections as never;
-
-    await handleSysMcpList({}, ctx);
-
-    expect(waitForConnections).not.toHaveBeenCalled();
-  });
-
-  it("classifies ready, discovering, and connected MCP clients as rediscoverable", () => {
-    expect(canRediscoverMcpConnectionState("ready")).toBe(true);
-    expect(canRediscoverMcpConnectionState("discovering")).toBe(true);
-    expect(canRediscoverMcpConnectionState("connected")).toBe(true);
-    expect(canRediscoverMcpConnectionState("failed")).toBe(false);
-    expect(canRediscoverMcpConnectionState("authenticating")).toBe(false);
   });
 });

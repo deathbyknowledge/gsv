@@ -67,6 +67,7 @@ export function mcpServerSub(server: ConsoleMcpServer): string {
   return compactText([
     formatServerUrl(server.url),
     `${server.tools.length} tool${server.tools.length === 1 ? "" : "s"}`,
+    `${server.resourceCount} resource${server.resourceCount === 1 ? "" : "s"}`,
     server.error,
   ], server.serverId);
 }
@@ -101,6 +102,8 @@ export function mcpServerDetailSections(server: ConsoleMcpServer): ConsoleDetail
       meta: `${server.tools.length} TOOLS`,
       rows: liveRows([
         detailRow("tools", "TOOLS", server.tools.length),
+        detailRow("resources", "RESOURCES", server.resourceCount),
+        detailRow("prompts", "PROMPTS", server.promptCount),
         detailRow("created", "CREATED", server.createdAt === null ? "" : formatAge(server.createdAt)),
         detailRow("updated", "UPDATED", server.updatedAt === null ? "" : formatAge(server.updatedAt)),
       ]),

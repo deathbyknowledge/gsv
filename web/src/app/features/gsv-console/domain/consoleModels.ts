@@ -158,6 +158,8 @@ export type ConsoleMcpServer = {
   instructions: string;
   capabilities: Record<string, unknown> | null;
   tools: ConsoleMcpTool[];
+  resourceCount: number;
+  promptCount: number;
   createdAt: number | null;
   updatedAt: number | null;
 };
