@@ -1123,26 +1123,12 @@ export class Process extends Host<Env> {
       return { ok: false, error: "proc.ai.config.set requires arguments" };
     }
 
+    let snapshot: ReturnType<typeof createProcessAiConfigSnapshot> | null;
     if ("clear" in args && args.clear === true) {
-      this.store.clearAiConfigSnapshot();
-      await this.emitProcChanged(["ai.config"], { aiConfig: null });
-      return { ok: true, pid: this.pid, config: null };
-    }
-
-    if ("values" in args && args.values && typeof args.values === "object" && !Array.isArray(args.values)) {
-      const snapshot = createProcessAiConfigSnapshot(args.values, args.profile);
-      if (Object.keys(snapshot.values).length === 0 && !snapshot.profile) {
-        this.store.clearAiConfigSnapshot();
-        await this.emitProcChanged(["ai.config"], { aiConfig: null });
-        return { ok: true, pid: this.pid, config: null };
-      }
-      this.store.setAiConfigSnapshot(snapshot);
-      const redacted = redactProcessAiConfigSnapshot(snapshot);
-      await this.emitProcChanged(["ai.config"], { aiConfig: redacted });
-      return { ok: true, pid: this.pid, config: redacted };
-    }
-
-    if ("key" in args && typeof args.key === "string" && "value" in args) {
+      snapshot = null;
+    } else if ("values" in args && args.values && typeof args.values === "object" && !Array.isArray(args.values)) {
+      snapshot = createProcessAiConfigSnapshot(args.values, args.profile);
+    } else if ("key" in args && typeof args.key === "string" && "value" in args) {
       if (!isProcessAiConfigKey(args.key)) {
         return { ok: false, error: `Unsupported AI config key: ${args.key}` };
       }
@@ -1155,20 +1141,21 @@ export class Process extends Host<Env> {
         delete values[args.key];
       }
 
-      const snapshot = createProcessAiConfigSnapshot(values, current?.profile);
-      if (Object.keys(snapshot.values).length === 0 && !snapshot.profile) {
-        this.store.clearAiConfigSnapshot();
-        await this.emitProcChanged(["ai.config"], { aiConfig: null });
-        return { ok: true, pid: this.pid, config: null };
-      }
-
-      this.store.setAiConfigSnapshot(snapshot);
-      const redacted = redactProcessAiConfigSnapshot(snapshot);
-      await this.emitProcChanged(["ai.config"], { aiConfig: redacted });
-      return { ok: true, pid: this.pid, config: redacted };
+      snapshot = createProcessAiConfigSnapshot(values, current?.profile);
+    } else {
+      return { ok: false, error: "proc.ai.config.set requires clear, values, or key/value" };
     }
 
-    return { ok: false, error: "proc.ai.config.set requires clear, values, or key/value" };
+    if (snapshot && (Object.keys(snapshot.values).length > 0 || snapshot.profile)) {
+      this.store.setAiConfigSnapshot(snapshot);
+    } else {
+      snapshot = null;
+      this.store.clearAiConfigSnapshot();
+    }
+
+    const config = redactProcessAiConfigSnapshot(snapshot);
+    await this.emitProcChanged(["ai.config"], { aiConfig: config });
+    return { ok: true, pid: this.pid, config };
   }
 
   private async handleProcIpcDeliver(args: ProcIpcDeliverArgs): Promise<ProcIpcDeliverResult> {
@@ -1381,7 +1368,7 @@ export class Process extends Host<Env> {
           pendingHil.runId,
           pendingHil.toolCallId,
           pendingHil.args,
-          await this.resolveToolApprovalPolicy(run),
+          this.resolveToolApprovalPolicy(run),
           pendingHil.conversationId,
         );
       } else {
@@ -2701,7 +2688,7 @@ export class Process extends Host<Env> {
       }
       run.tools = toolsResult.tools;
       run.devices = toolsResult.devices;
-      run.mcpServers = toolsResult.mcpServers ?? [];
+      run.mcpServers = toolsResult.mcpServers;
 
       this.currentRun = run;
     }
@@ -3109,7 +3096,7 @@ export class Process extends Host<Env> {
     sessionAffinityKey?: string;
     streamSeq?: StreamSeqCounter;
   }): Promise<AssistantMessage | null> {
-    const executor = this.resolveAiTextExecutor(options.config);
+    const executor = options.config.executor;
     if (this.isLocalAiTextExecutor(executor)) {
       return await this.generateAssistantResponseLocally(options);
     }
@@ -3180,7 +3167,7 @@ export class Process extends Host<Env> {
     options: AiTextGenerateOptions;
     sessionAffinityKey: string;
   }): Promise<string> {
-    const executor = this.resolveAiTextExecutor(options.config);
+    const executor = options.config.executor;
     if (!this.isLocalAiTextExecutor(executor)) {
       const result = await this.kernelRpc("ai.text.generate", this.buildAiTextGenerateArgs({
         config: options.aiTextGenerateConfig,
@@ -3235,10 +3222,6 @@ export class Process extends Host<Env> {
       config.processProfile = snapshot.profile;
     }
     return config.processOverrides || config.processProfile ? config : undefined;
-  }
-
-  private resolveAiTextExecutor(config: AiConfigResult): AiConfigResult["executor"] {
-    return config.executor ?? { kind: "process", pid: this.pid };
   }
 
   private isLocalAiTextExecutor(executor: AiConfigResult["executor"]): boolean {
@@ -4104,7 +4087,7 @@ export class Process extends Host<Env> {
       return null;
     }
 
-    const approvalPolicy = await this.resolveToolApprovalPolicy(run);
+    const approvalPolicy = this.resolveToolApprovalPolicy(run);
     if (await this.handleRunStopped(runId)) {
       return null;
     }
@@ -4696,7 +4679,7 @@ export class Process extends Host<Env> {
     }
   }
 
-  private async resolveToolApprovalPolicy(run: RunState): Promise<ToolApprovalPolicy> {
+  private resolveToolApprovalPolicy(run: RunState): ToolApprovalPolicy {
     if (run.approvalPolicy) {
       return run.approvalPolicy;
     }

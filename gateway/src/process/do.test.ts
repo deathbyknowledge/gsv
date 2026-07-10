@@ -774,6 +774,7 @@ describe("Process DO — mechanical", () => {
           runId: "run-origin-context",
           conversationId: "default",
           config: {
+            executor: { kind: "process", pid },
             profile: "task",
             provider: "workers-ai",
             model: "@cf/nvidia/nemotron-3-120b-a12b",
@@ -838,6 +839,7 @@ describe("Process DO — mechanical", () => {
           runId: "run-chat-text-thinking",
           conversationId: "side",
           config: {
+            executor: { kind: "process", pid },
             profile: "task",
             provider: "workers-ai",
             model: "@cf/nvidia/nemotron-3-120b-a12b",
@@ -939,6 +941,7 @@ describe("Process DO — mechanical", () => {
           runId: "run-chat-thinking-only",
           conversationId: "default",
           config: {
+            executor: { kind: "process", pid },
             profile: "task",
             provider: "workers-ai",
             model: "@cf/nvidia/nemotron-3-120b-a12b",
@@ -1027,6 +1030,7 @@ describe("Process DO — mechanical", () => {
           runId: "run-chat-thinking-only-exhausted",
           conversationId: "default",
           config: {
+            executor: { kind: "process", pid },
             profile: "task",
             provider: "workers-ai",
             model: "@cf/nvidia/nemotron-3-120b-a12b",
@@ -1100,6 +1104,7 @@ describe("Process DO — mechanical", () => {
           runId: "run-chat-empty-final-throw",
           conversationId: "default",
           config: {
+            executor: { kind: "process", pid },
             profile: "task",
             provider: "openai",
             model: "gpt-test",
@@ -1189,6 +1194,7 @@ describe("Process DO — mechanical", () => {
           runId: "run-chat-tool-markup-text",
           conversationId: "default",
           config: {
+            executor: { kind: "process", pid },
             profile: "task",
             provider: "openai",
             model: "gpt-test",
@@ -1274,6 +1280,7 @@ describe("Process DO — mechanical", () => {
           runId: "run-chat-provider-error-response",
           conversationId: "default",
           config: {
+            executor: { kind: "process", pid },
             profile: "task",
             provider: "workers-ai",
             model: "@cf/nvidia/nemotron-3-120b-a12b",
@@ -1363,6 +1370,7 @@ describe("Process DO — mechanical", () => {
           runId: "run-chat-provider-error-fallback",
           conversationId: "default",
           config: {
+            executor: { kind: "process", pid },
             profile: "task",
             provider: "custom",
             model: "zai-glm-4.7",
@@ -1503,6 +1511,7 @@ describe("Process DO — mechanical", () => {
           runId: "run-chat-fallback-auto-compact",
           conversationId: "default",
           config: {
+            executor: { kind: "process", pid },
             profile: "task",
             provider: "custom",
             model: "large-primary",
@@ -1619,6 +1628,7 @@ describe("Process DO — mechanical", () => {
           runId: "run-chat-provider-error-account-fallback",
           conversationId: "default",
           config: {
+            executor: { kind: "process", pid },
             profile: "task",
             provider: "openai-codex",
             model: "gpt-5.2-codex",
@@ -1701,6 +1711,7 @@ describe("Process DO — mechanical", () => {
           runId: "run-chat-provider-context-overflow-throw",
           conversationId: "default",
           config: {
+            executor: { kind: "process", pid },
             profile: "task",
             provider: "openai",
             model: "gpt-test",
@@ -1768,6 +1779,7 @@ describe("Process DO — mechanical", () => {
           runId: "run-chat-provider-context-overflow-nested",
           conversationId: "default",
           config: {
+            executor: { kind: "process", pid },
             profile: "task",
             provider: "openai",
             model: "gpt-test",
@@ -1840,6 +1852,7 @@ describe("Process DO — mechanical", () => {
           runId: "run-chat-provider-context-overflow-response",
           conversationId: "default",
           config: {
+            executor: { kind: "process", pid },
             profile: "task",
             provider: "google",
             model: "gemini-test",
@@ -1948,6 +1961,7 @@ describe("Process DO — mechanical", () => {
           runId: "run-chat-stream",
           conversationId: "default",
           config: {
+            executor: { kind: "process", pid },
             profile: "task",
             provider: "workers-ai",
             model: "@cf/nvidia/nemotron-3-120b-a12b",
@@ -2076,6 +2090,7 @@ describe("Process DO — mechanical", () => {
           runId: "run-chat-stream-retry",
           conversationId: "default",
           config: {
+            executor: { kind: "process", pid },
             profile: "task",
             provider: "workers-ai",
             model: "@cf/nvidia/nemotron-3-120b-a12b",
@@ -2206,6 +2221,7 @@ describe("Process DO — mechanical", () => {
           runId: "run-chat-stream-retry-tool-only",
           conversationId: "default",
           config: {
+            executor: { kind: "process", pid },
             profile: "task",
             provider: "workers-ai",
             model: "@cf/nvidia/nemotron-3-120b-a12b",
@@ -2311,6 +2327,7 @@ describe("Process DO — mechanical", () => {
           runId: "run-chat-stream-off",
           conversationId: "default",
           config: {
+            executor: { kind: "process", pid },
             profile: "task",
             provider: "workers-ai",
             model: "@cf/nvidia/nemotron-3-120b-a12b",
@@ -2605,6 +2622,7 @@ describe("Process DO — mechanical", () => {
           runId: "run-chat-custom-provider-transport-target",
           conversationId: "default",
           config: {
+            executor: { kind: "process", pid },
             provider: "custom",
             model: "local-chat",
             apiKey: "",
@@ -3169,6 +3187,7 @@ describe("Process DO — mechanical", () => {
           runId: "active-source-turn",
           conversationId: "default",
           config: {
+            executor: { kind: "process", pid: sourcePid },
             profile: "task",
             provider: "workers-ai",
             model: "@cf/test/model",
@@ -3749,6 +3768,7 @@ describe("Process DO — mechanical", () => {
           runId: "config-source",
           conversationId: "other",
           config: {
+            executor: { kind: "process", pid },
             profile: "task",
             provider: "workers-ai",
             model: "@cf/test/model",
@@ -4213,6 +4233,7 @@ describe("Process DO — mechanical", () => {
           runId: "run-auto-compact",
           conversationId: "default",
           config: {
+            executor: { kind: "process", pid },
             profile: "task",
             provider: "workers-ai",
             model: "@cf/test/model",
@@ -4289,6 +4310,7 @@ describe("Process DO — mechanical", () => {
           runId: "run-auto-compact-provider-billing",
           conversationId: "default",
           config: {
+            executor: { kind: "process", pid },
             profile: "task",
             provider: "deepseek",
             model: "deepseek-chat",
@@ -4371,6 +4393,7 @@ describe("Process DO — mechanical", () => {
           runId: "run-auto-compact-abort",
           conversationId: "default",
           config: {
+            executor: { kind: "process", pid },
             profile: "task",
             provider: "workers-ai",
             model: "@cf/test/model",
