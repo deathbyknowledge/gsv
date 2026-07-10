@@ -199,6 +199,31 @@ describe("AccountHomeMountBackend delegated routing", () => {
     expect(backend?.handles("/home/wiki-builder/context.d/persona.md")).toBe(true);
   });
 
+  it("appends overlay files without UTF-8 conversion", async () => {
+    const initial = new Uint8Array([0xff, 0x00, 0x80]);
+    let applied: number[] = [];
+    const ripgit = {
+      async fetch(_input: RequestInfo | URL, init?: RequestInit) {
+        if (init?.method === "POST") {
+          const body = JSON.parse(String(init.body)) as { ops: Array<{ contentBytes: number[] }> };
+          applied = body.ops[0].contentBytes;
+          return Response.json({ ok: true, head: "test" });
+        }
+        return new Response(initial.slice(), {
+          headers: { "X-Blob-Size": String(initial.byteLength) },
+        });
+      },
+    } satisfies Fetcher;
+    const backend = createAccountHomeBackend(env.STORAGE, ripgit, ALICE);
+
+    await backend?.appendFile(
+      "/home/alice/context.d/binary.dat",
+      new Uint8Array([0xfe, 0x61]),
+    );
+
+    expect(new Uint8Array(applied)).toEqual(new Uint8Array([0xff, 0x00, 0x80, 0xfe, 0x61]));
+  });
+
   it("lists virtual overlay roots from an authorized agent home", async () => {
     await env.STORAGE.put("home/wiki-builder/conversations/.dir", "", {
       customMetadata: {

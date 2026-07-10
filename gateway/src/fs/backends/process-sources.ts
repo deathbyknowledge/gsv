@@ -12,7 +12,7 @@ import {
   type RipgitApplyOp,
   type RipgitRepoRef,
 } from "../ripgit/client";
-import { normalizePath } from "../utils";
+import { concatBytes, normalizePath } from "../utils";
 
 const TEXT_DECODER = new TextDecoder();
 const TEXT_ENCODER = new TextEncoder();
@@ -1678,11 +1678,4 @@ function asBytes(content: FileContent): Uint8Array {
     return TEXT_ENCODER.encode(content);
   }
   return content;
-}
-
-function concatBytes(left: Uint8Array, right: Uint8Array): Uint8Array {
-  const output = new Uint8Array(left.length + right.length);
-  output.set(left, 0);
-  output.set(right, left.length);
-  return output;
 }

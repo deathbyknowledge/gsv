@@ -14,12 +14,12 @@ import type {
   WriteFileStreamOptions,
   WriteFileStreamResult,
 } from "../mount";
-import { inferContentType, isTextContentType, normalizePath } from "../utils";
+import { concatBytes, inferContentType, isTextContentType, normalizePath } from "../utils";
 
 const READ_BIT = 4;
 const WRITE_BIT = 2;
 const MAX_SEARCH_MATCHES = 500;
-const TEXT_DECODER = new TextDecoder();
+const TEXT_ENCODER = new TextEncoder();
 
 export class R2MountBackend implements MountBackend {
   constructor(
@@ -144,8 +144,8 @@ export class R2MountBackend implements MountBackend {
 
     if (existing) {
       this.assertMode(existing, WRITE_BIT, p);
-      const old = await existing.text();
-      const appended = typeof content === "string" ? old + content : old + TEXT_DECODER.decode(content);
+      const old = new Uint8Array(await existing.arrayBuffer());
+      const appended = concatBytes(old, typeof content === "string" ? TEXT_ENCODER.encode(content) : content);
       await this.bucket.put(key, appended, {
         httpMetadata: existing.httpMetadata,
         customMetadata: existing.customMetadata,

@@ -919,6 +919,18 @@ describe("GsvFs write metadata", () => {
     expect(head?.customMetadata?.mode).toBe("644");
   });
 
+  it("appends binary files without UTF-8 conversion", async () => {
+    const fs = makeFs(SAM);
+    const path = `/${TEST_PREFIX}binary.dat`;
+
+    await fs.writeFile(path, new Uint8Array([0xff, 0x00, 0x80]));
+    await fs.appendFile(path, new Uint8Array([0xfe, 0x61]));
+
+    await expect(fs.readFileBuffer(path)).resolves.toEqual(
+      new Uint8Array([0xff, 0x00, 0x80, 0xfe, 0x61]),
+    );
+  });
+
   it("streams writes to R2 with supplied HTTP metadata", async () => {
     const fs = makeFs(SAM);
     const bytes = new TextEncoder().encode("streamed data");
