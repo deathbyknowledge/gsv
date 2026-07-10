@@ -94,13 +94,13 @@ export async function handleFsRead(
     const st = await fs.stat(p);
 
     if (st.isDirectory) {
-      return readDirectory(fs, p);
+      return await readDirectory(fs, p);
     }
 
     const contentType = inferContentType(p);
 
     if (contentType.startsWith("image/")) {
-      return readImage(fs, p, contentType, st.size);
+      return await readImage(fs, p, contentType, st.size);
     }
 
     if (!isTextContentType(contentType)) {
@@ -110,14 +110,9 @@ export async function handleFsRead(
       };
     }
 
-    return readText(fs, p, st.size, args.offset, args.limit);
+    return await readText(fs, p, st.size, args.offset, args.limit);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-
-    if (msg.includes("ENOENT")) {
-      return readDirectory(fs, p);
-    }
-
     return { ok: false, error: msg };
   }
 }
@@ -172,26 +167,22 @@ async function readImage(
 }
 
 async function readDirectory(fs: GsvFs, path: string): Promise<FsReadResult> {
-  try {
-    const names = await fs.readdir(path);
-    const files: string[] = [];
-    const directories: string[] = [];
+  const names = await fs.readdir(path);
+  const files: string[] = [];
+  const directories: string[] = [];
 
-    for (const name of names) {
-      const childPath = path.endsWith("/") ? path + name : path + "/" + name;
-      try {
-        const s = await fs.stat(childPath);
-        if (s.isDirectory) directories.push(name);
-        else files.push(name);
-      } catch {
-        files.push(name);
-      }
+  for (const name of names) {
+    const childPath = path.endsWith("/") ? path + name : path + "/" + name;
+    try {
+      const s = await fs.stat(childPath);
+      if (s.isDirectory) directories.push(name);
+      else files.push(name);
+    } catch {
+      files.push(name);
     }
-
-    return { ok: true, path, files, directories };
-  } catch {
-    return { ok: false, error: `Not found: ${path}` };
   }
+
+  return { ok: true, path, files, directories };
 }
 
 export async function handleFsTransferStat(
@@ -321,7 +312,7 @@ export async function handleFsWrite(
 
   try {
     await fs.writeFile(p, args.content);
-    return { ok: true, path: p, size: args.content.length };
+    return { ok: true, path: p, size: new TextEncoder().encode(args.content).byteLength };
   } catch (err) {
     return {
       ok: false,

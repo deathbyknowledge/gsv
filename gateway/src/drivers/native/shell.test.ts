@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { env } from "cloudflare:workers";
 import { handleShellExec } from "./shell";
-import { handleFsCopy, handleFsRead, handleFsTransferReceive, handleFsTransferSend } from "./fs";
+import { handleFsCopy, handleFsRead, handleFsTransferReceive, handleFsTransferSend, handleFsWrite } from "./fs";
 import { parseBinaryFrame } from "@humansandmachines/gsv/protocol";
 import { sendFrameToProcess } from "../../shared/utils";
 import type { KernelContext } from "../../kernel/context";
@@ -295,6 +295,33 @@ describe("native shell execution", () => {
     expect(result.exitCode).toBe(7);
     expect(result.stderr).toContain("real failure");
     expect(result.error).toContain("real failure");
+  });
+
+  it("shares files with fs syscalls and reports UTF-8 byte sizes", async () => {
+    const ctx = makeContext();
+    const path = "/tmp/fs-cross-surface.txt";
+    await env.STORAGE.delete("tmp/fs-cross-surface.txt");
+
+    await expect(handleFsWrite({ path, content: "é" }, ctx)).resolves.toMatchObject({
+      ok: true,
+      size: 2,
+    });
+    await expect(handleShellExec({ input: `cat ${path}` }, ctx)).resolves.toMatchObject({
+      status: "completed",
+      stdout: "é",
+    });
+
+    await handleShellExec({ input: `printf 'from shell' > ${path}` }, ctx);
+    await expect(handleFsRead({ path }, ctx)).resolves.toMatchObject({
+      ok: true,
+      content: expect.stringContaining("from shell"),
+    });
+  });
+
+  it("preserves filesystem errors from fs.read", async () => {
+    const result = await handleFsRead({ path: "/tmp/does-not-exist" }, makeContext());
+
+    expect(result).toMatchObject({ ok: false, error: expect.stringContaining("ENOENT") });
   });
 
   it("uses the owning human's package scopes for agent-backed fs", async () => {
