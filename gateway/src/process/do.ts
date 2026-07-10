@@ -1046,7 +1046,7 @@ export class Process extends Host<Env> {
     const origin = serializeInteractionOrigin(args.origin);
 
     if (this.currentRun) {
-      this.store.enqueue(runId, args.message, media ?? undefined, undefined, conversationId, origin ?? undefined);
+      this.store.enqueue(runId, args.message, media ?? undefined, conversationId, origin ?? undefined);
       await this.emitProcChanged(["queue"], { conversationId, enqueuedRunId: runId });
       return { ok: true, status: "started", runId, queued: true };
     }
@@ -1189,7 +1189,7 @@ export class Process extends Host<Env> {
     const origin = serializeInteractionOrigin(deliveredArgs.origin);
 
     if (this.currentRun) {
-      this.store.enqueue(runId, renderedMessage, undefined, undefined, conversationId, origin ?? undefined);
+      this.store.enqueue(runId, renderedMessage, undefined, conversationId, origin ?? undefined);
       await this.emitProcChanged(["queue"], { conversationId, enqueuedRunId: runId });
       return {
         ok: true,
@@ -1911,12 +1911,8 @@ export class Process extends Host<Env> {
       maxTokens: 768,
       reasoning: "off",
     };
-    const aiTextGenerateConfig = this.currentRun?.config === config
-      ? this.currentRun.aiTextGenerateConfig
-      : undefined;
     const generated = await this.generateCompactionText({
       config,
-      aiTextGenerateConfig,
       context,
       options: generationOptions,
       sessionAffinityKey: `${this.pid}:compaction`,
@@ -2557,7 +2553,6 @@ export class Process extends Host<Env> {
         wakeRunId,
         "A delegated task event arrived while you were busy. Review the process event above and continue.",
         undefined,
-        undefined,
         DEFAULT_CONVERSATION_ID,
       );
       await this.emitProcChanged(["queue"], {
@@ -3143,7 +3138,6 @@ export class Process extends Host<Env> {
 
   private async generateCompactionText(options: {
     config: AiConfigResult;
-    aiTextGenerateConfig?: AiTextGenerateConfig;
     context: Context;
     options: AiTextGenerateOptions;
     sessionAffinityKey: string;
@@ -3151,7 +3145,6 @@ export class Process extends Host<Env> {
     const executor = options.config.executor;
     if (executor.kind !== "process" || executor.pid !== this.pid) {
       const result = await this.kernelRpc("ai.text.generate", this.buildAiTextGenerateArgs({
-        config: options.aiTextGenerateConfig,
         context: options.context,
         options: options.options,
         sessionAffinityKey: options.sessionAffinityKey,
@@ -3236,7 +3229,6 @@ export class Process extends Host<Env> {
       this.store.enqueue(
         wakeRunId,
         "A delegated task event arrived while you were busy. Review the process event above and continue.",
-        undefined,
         undefined,
         DEFAULT_CONVERSATION_ID,
       );
@@ -4395,10 +4387,6 @@ export class Process extends Host<Env> {
     }
 
     const config = await this.resolveAiConfig();
-    if (run) {
-      run.config = config;
-      this.currentRun = run;
-    }
     return config.capabilities;
   }
 

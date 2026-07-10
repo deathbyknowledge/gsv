@@ -684,14 +684,13 @@ describe("ProcessStore", () => {
       });
     });
 
-    it("enqueue stores optional media and overrides", async () => {
+    it("enqueue stores optional media", async () => {
       const stub = await getProcessByPid("queue-meta");
       await runInDurableObject(stub, (instance: Process) => {
         const store = (instance as any).store;
-        store.enqueue("r1", "hello", '["img.png"]', '{"model":"gpt-4"}');
+        store.enqueue("r1", "hello", '["img.png"]');
         const item = store.dequeue();
         expect(item!.media).toBe('["img.png"]');
-        expect(item!.overrides).toBe('{"model":"gpt-4"}');
       });
     });
 
@@ -700,7 +699,7 @@ describe("ProcessStore", () => {
       await runInDurableObject(stub, (instance: Process) => {
         const store = (instance as any).store;
         store.enqueue("run-default", "default queued");
-        store.enqueue("run-side", "side queued", undefined, undefined, "side");
+        store.enqueue("run-side", "side queued", undefined, "side");
 
         const side = store.drainQueue("side");
         expect(side).toHaveLength(1);

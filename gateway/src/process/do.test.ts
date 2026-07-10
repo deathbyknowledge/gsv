@@ -2983,7 +2983,7 @@ describe("Process DO — mechanical", () => {
         expect(queued[0].message).toContain("Your final answer will be returned to the caller automatically.");
         expect(queued[0].message).not.toContain("Call id:");
         expect(queued[0].message).not.toContain("Reply target:");
-        store.enqueue(data.runId, queued[0].message, undefined, undefined, "mail");
+        store.enqueue(data.runId, queued[0].message, undefined, "mail");
       });
 
       await runInDurableObject(kernel, async (instance: Kernel) => {
@@ -3596,7 +3596,7 @@ describe("Process DO — mechanical", () => {
         store.openConversation({ conversationId: "side" });
         store.appendMessage("user", "side before reset", { conversationId: "side" });
         store.register("call-side", "run-side", "fs.read", { path: "/tmp/side.txt" }, "side");
-        store.enqueue("run-side-next", "side queued", undefined, undefined, "side");
+        store.enqueue("run-side-next", "side queued", undefined, "side");
         store.enqueue("run-default-next", "default queued");
         process.currentRun = {
           runId: "run-side",
