@@ -55,6 +55,109 @@ describe("Kernel device connection cleanup", () => {
   });
 });
 
+describe("Kernel MCP connection cleanup", () => {
+  it("removes newly registered MCP servers when the initial connection fails", async () => {
+    const kernel = Object.create(Kernel.prototype) as {
+      addMcpServerConnection(input: {
+        uid: number;
+        name: string;
+        url: string;
+        callbackHost: string;
+        transport: { type: "auto" };
+      }): Promise<unknown>;
+      createMcpOAuthProvider: ReturnType<typeof vi.fn>;
+      mcp: {
+        registerServer: ReturnType<typeof vi.fn>;
+        connectToServer: ReturnType<typeof vi.fn>;
+      };
+      removeMcpServer: ReturnType<typeof vi.fn>;
+    };
+    kernel.createMcpOAuthProvider = vi.fn(() => ({}));
+    kernel.mcp = {
+      registerServer: vi.fn(async () => undefined),
+      connectToServer: vi.fn(async () => ({
+        state: "failed",
+        error: "connection rejected",
+      })),
+    };
+    kernel.removeMcpServer = vi.fn(async () => undefined);
+    const expectedError =
+      "Failed to connect to MCP server at https://tinyfish.example/mcp: connection rejected";
+
+    await expect(
+      kernel.addMcpServerConnection({
+        uid: 1000,
+        name: "TinyFish",
+        url: "https://tinyfish.example/mcp",
+        callbackHost: "https://gsv.example.com",
+        transport: { type: "auto" },
+      }),
+    ).rejects.toThrow(expectedError);
+
+    const serverId = kernel.mcp.registerServer.mock.calls[0][0];
+    expect(kernel.removeMcpServer).toHaveBeenCalledWith(serverId);
+  });
+
+  it("passes custom MCP headers as serializable request options", async () => {
+    type RegisteredServerOptions = {
+      transport: {
+        requestInit?: {
+          headers?: Record<string, string>;
+        };
+      };
+    };
+    const kernel = Object.create(Kernel.prototype) as {
+      addMcpServerConnection(input: {
+        uid: number;
+        name: string;
+        url: string;
+        callbackHost: string;
+        transport: {
+          type: "sse";
+          headers: Record<string, string>;
+        };
+      }): Promise<unknown>;
+      createMcpOAuthProvider: ReturnType<typeof vi.fn>;
+      mcp: {
+        registerServer: ReturnType<typeof vi.fn>;
+        connectToServer: ReturnType<typeof vi.fn>;
+      };
+    };
+    let registeredOptions: RegisteredServerOptions | null = null;
+    kernel.createMcpOAuthProvider = vi.fn(() => ({}));
+    kernel.mcp = {
+      registerServer: vi.fn(async (_serverId: string, options: RegisteredServerOptions) => {
+        registeredOptions = options;
+      }),
+      connectToServer: vi.fn(async () => ({
+        state: "authenticating",
+        authUrl: "https://tinyfish.example/oauth",
+      })),
+    };
+
+    await kernel.addMcpServerConnection({
+      uid: 1000,
+      name: "TinyFish",
+      url: "https://tinyfish.example/mcp",
+      callbackHost: "https://gsv.example.com",
+      transport: {
+        type: "sse",
+        headers: {
+          Authorization: "Bearer user-token",
+          "X-API-Key": "custom-key",
+        },
+      },
+    });
+
+    expect(JSON.parse(JSON.stringify(registeredOptions?.transport.requestInit))).toEqual({
+      headers: {
+        Authorization: "Bearer user-token",
+        "X-API-Key": "custom-key",
+      },
+    });
+  });
+});
+
 describe("Kernel CLI download refresh coordination", () => {
   it("runs explicit refreshes after an in-flight automatic refresh", async () => {
     const kernel = Object.create(Kernel.prototype) as {

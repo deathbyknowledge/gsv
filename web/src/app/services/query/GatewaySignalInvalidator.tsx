@@ -13,6 +13,11 @@ export function GatewaySignalInvalidator() {
         return;
       }
 
+      if (signal === "mcp.changed") {
+        void queryClient.invalidateQueries({ queryKey: ["mcp-servers"] });
+        return;
+      }
+
       if (
         signal === "notification.created" ||
         signal === "notification.updated" ||

@@ -3,6 +3,7 @@ import { useUnsavedGuard } from "../../gsv-shell/unsaved/unsavedGuard";
 import { Button } from "../../../components/ui/Button";
 import { Icon } from "../../../components/ui/Icon";
 import { Select } from "../../../components/ui/Select";
+import { Spinner } from "../../../components/ui/Spinner";
 import { Surface } from "../../../components/ui/Surface";
 import { TextInput } from "../../../components/ui/TextInput";
 import type { ConsoleMcpServer } from "../domain/consoleModels";
@@ -19,6 +20,7 @@ import "./IntegrationOnboardingFlow.css";
 type IntegrationOnboardingFlowProps = {
   onBack: () => void;
   onCreated: (server: ConsoleMcpServer) => void;
+  servers: readonly ConsoleMcpServer[];
 };
 
 type HeaderDraft = {
@@ -105,23 +107,45 @@ function HeaderFields({
   );
 }
 
-export function IntegrationOnboardingFlow({ onBack, onCreated }: IntegrationOnboardingFlowProps) {
+export function IntegrationOnboardingFlow({
+  onBack,
+  onCreated,
+  servers,
+}: IntegrationOnboardingFlowProps) {
   const addServer = useAddConsoleMcpServer();
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [transportIndex, setTransportIndex] = useState(0);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [headers, setHeaders] = useState<HeaderDraft[]>([]);
-  const [created, setCreated] = useState<ConsoleMcpServer | null>(null);
+  const [createdServerId, setCreatedServerId] = useState<string | null>(null);
   const [formError, setFormError] = useState("");
+  const [authOpened, setAuthOpened] = useState(false);
+  const created = createdServerId
+    ? servers.find((server) => server.serverId === createdServerId)
+      ?? (addServer.data?.serverId === createdServerId ? addServer.data : null)
+    : null;
   const transport = MCP_TRANSPORT_OPTIONS[transportIndex] ?? "auto";
   const urlReady = validUrl(url);
   const headersResult = headersFromDrafts(headers);
   const canSubmit = name.trim().length > 0 && urlReady && headersResult.ok && !addServer.isPending;
-  const authenticating = created?.state === "authenticating";
+  const ready = created?.state === "ready";
+  const failed = !!created && (created.state === "failed" || created.error.length > 0);
+  let progressMessage = "";
+  if (created && !ready && !failed) {
+    if (created.state === "authenticating") {
+      progressMessage = authOpened ? "Waiting for browser sign-in to finish." : "";
+    } else if (created.state === "discovering") {
+      progressMessage = "Discovering tools.";
+    } else {
+      progressMessage = authOpened
+        ? "Sign-in received. Finishing the connection."
+        : "Connecting to the server.";
+    }
+  }
 
   useUnsavedGuard(() =>
-    !(created && created.state !== "authenticating") &&
+    !(created && (created.state === "ready" || created.state === "failed")) &&
     (created !== null ||
       name.trim().length > 0 ||
       url.trim().length > 0 ||
@@ -134,7 +158,8 @@ export function IntegrationOnboardingFlow({ onBack, onCreated }: IntegrationOnbo
       return;
     }
     setFormError("");
-    setCreated(null);
+    setAuthOpened(false);
+    setCreatedServerId(null);
     try {
       const server = await addServer.mutateAsync({
         name,
@@ -142,10 +167,7 @@ export function IntegrationOnboardingFlow({ onBack, onCreated }: IntegrationOnbo
         transport,
         headers: headersResult.ok ? headersResult.headers : undefined,
       });
-      setCreated(server);
-      if (server.state !== "authenticating") {
-        onCreated(server);
-      }
+      setCreatedServerId(server.serverId);
     } catch (error) {
       setFormError(errorText(error));
     }
@@ -163,10 +185,18 @@ export function IntegrationOnboardingFlow({ onBack, onCreated }: IntegrationOnbo
     setHeaders((current) => current.filter((row) => row.id !== id));
   };
 
-  // Drive the stepper from live connection state: the endpoint form stays on
-  // step 0 until a server is created, then OAuth (step 1) or success (step 2).
+  const openSignIn = (server: ConsoleMcpServer) => {
+    if (!server.authUrl) {
+      return;
+    }
+    setAuthOpened(true);
+    window.open(server.authUrl, "_blank", "noopener,noreferrer");
+  };
+
+  // Drive the stepper from live connection state: pending auth/discovery stays
+  // on step 1; only a ready server reaches the success step.
   // The Stepper is a progress indicator only — footer buttons drive transitions.
-  const current = !created ? 0 : authenticating ? 1 : 2;
+  const current = !created ? 0 : ready ? 2 : 1;
 
   // Step 1 status: while the form is on screen, "AUTHENTICATING" only once the
   // submit kicks off; otherwise show the connection's live state when created.
@@ -249,6 +279,7 @@ export function IntegrationOnboardingFlow({ onBack, onCreated }: IntegrationOnbo
             ) : null}
 
             <div class="gsv-cf-footer">
+              <Button variant="secondary" label="CANCEL" onClick={onBack} />
               <span class="gsv-cf-footer-spacer" />
               <Button
                 variant="primary"
@@ -266,7 +297,7 @@ export function IntegrationOnboardingFlow({ onBack, onCreated }: IntegrationOnbo
         title: "CONNECT & AUTHORIZE",
         meta: "STEP 2 / 3",
         status: created ? statusForMcpServer(created) : "AUTHENTICATING",
-        tone: "warn",
+        tone: failed ? "error" : "warn",
         render: () => (
           <>
             {created?.state === "authenticating" && created.authUrl ? (
@@ -274,19 +305,32 @@ export function IntegrationOnboardingFlow({ onBack, onCreated }: IntegrationOnbo
                 <p>This server needs a browser sign-in before tools can be discovered.</p>
                 <Button
                   variant="primary"
-                  label="CONTINUE SIGN-IN"
-                  onClick={() => window.open(created.authUrl, "_blank", "noopener,noreferrer")}
+                  label={authOpened ? "OPEN SIGN-IN AGAIN" : "CONTINUE SIGN-IN"}
+                  onClick={() => openSignIn(created)}
                 />
               </Surface>
             ) : null}
 
-            {created ? (
+            {progressMessage ? (
+              <div class="gsv-integration-waiting gsv-prose-sm" role="status">
+                <Spinner size={15} />
+                <span>{progressMessage}</span>
+              </div>
+            ) : null}
+
+            {created && !failed ? (
               <p class="gsv-integration-form-note gsv-prose">{created.name} · {statusForMcpServer(created)}</p>
+            ) : null}
+
+            {failed && created ? (
+              <p class="gsv-integration-form-error gsv-prose">
+                {created.error || "The MCP server connection failed."}
+              </p>
             ) : null}
 
             <div class="gsv-cf-footer">
               <span class="gsv-cf-footer-spacer" />
-              {created ? (
+              {failed && created ? (
                 <Button variant="primary" label="VIEW INTEGRATION" onClick={() => onCreated(created)} />
               ) : null}
             </div>

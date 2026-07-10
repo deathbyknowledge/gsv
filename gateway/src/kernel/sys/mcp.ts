@@ -31,8 +31,6 @@ export type McpAddConnectionInput = {
 
 export type McpAddConnectionResult = {
   id: string;
-  state: string;
-  authUrl?: string;
 };
 
 type SdkMcpServerRow = {
@@ -46,10 +44,6 @@ type SdkMcpServerRow = {
 };
 
 const MCP_TRANSPORT_TYPES = new Set<SysMcpTransportType>(["auto", "streamable-http", "sse"]);
-
-export function canRediscoverMcpConnectionState(input: unknown): boolean {
-  return input === "connected" || input === "ready";
-}
 
 export async function handleSysMcpAdd(
   args: SysMcpAddArgs,
@@ -83,6 +77,7 @@ export async function handleSysMcpAdd(
     uid: effectiveUid,
     name,
   });
+  ctx.broadcastToUid?.(effectiveUid, "mcp.changed");
   return { server: summarizeServer(record, ctx) };
 }
 
@@ -110,7 +105,11 @@ export async function handleSysMcpRemove(
   if (ctx.removeMcpServerConnection) {
     await ctx.removeMcpServerConnection(serverId);
   }
-  return { removed: ctx.mcpServers.delete(serverId, effectiveUid) };
+  const removed = ctx.mcpServers.delete(serverId, effectiveUid);
+  if (removed) {
+    ctx.broadcastToUid?.(effectiveUid, "mcp.changed");
+  }
+  return { removed };
 }
 
 export async function handleSysMcpRefresh(
@@ -167,6 +166,12 @@ export function summarizeServer(record: McpServerRecord, ctx: KernelContext): Sy
   const tools = ctx.mcp.listTools({ serverId: record.serverId }) as Tool[];
   const resources = ctx.mcp.listResources({ serverId: record.serverId });
   const prompts = ctx.mcp.listPrompts({ serverId: record.serverId });
+  const error = typeof connection?.connectionError === "string"
+    ? connection.connectionError
+    : null;
+  const state = connection
+    ? parseConnectionState(connection.connectionState)
+    : server?.auth_url ? "authenticating" : "not-connected";
 
   return {
     serverId: record.serverId,
@@ -174,11 +179,9 @@ export function summarizeServer(record: McpServerRecord, ctx: KernelContext): Sy
     name: record.name,
     url: server?.server_url ?? "",
     transport: parseSdkServerTransport(server),
-    state: connection
-      ? parseConnectionState(connection.connectionState)
-      : server?.auth_url ? "authenticating" : "not-connected",
+    state: error && state === "connected" ? "failed" : state,
     authUrl: typeof server?.auth_url === "string" ? server.auth_url : null,
-    error: typeof connection?.connectionError === "string" ? connection.connectionError : null,
+    error,
     instructions: typeof connection?.instructions === "string" ? connection.instructions : null,
     capabilities: isRecord(connection?.serverCapabilities) ? connection.serverCapabilities : null,
     tools: tools.map(summarizeTool),

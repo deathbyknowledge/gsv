@@ -2,12 +2,14 @@ import {
   Connection,
   ConnectionContext,
   Agent as Host,
+  getCurrentAgent,
   type WSMessage,
 } from "agents";
 import {
   DurableObjectOAuthClientProvider,
   type AgentMcpOAuthProvider,
 } from "agents/mcp/do-oauth-client-provider";
+import type { MCPConnectionResult } from "agents/mcp/client";
 import type { Frame, RequestFrame, ResponseFrame, SignalFrame } from "../protocol/frames";
 import type {
   ConnectionIdentity,
@@ -78,11 +80,8 @@ import {
   type OAuthCallbackInput,
   type OAuthCallbackResult,
 } from "./sys/oauth";
-import {
-  canRediscoverMcpConnectionState,
-  type McpAddConnectionInput,
-  type McpAddConnectionResult,
-} from "./sys/mcp";
+import type { McpAddConnectionInput, McpAddConnectionResult } from "./sys/mcp";
+import { installMcpDiscoveryCompatibility } from "./mcp-compat";
 import { oauthCallbackHtmlResponse } from "../oauth-http";
 import { isInternalOnlySyscall } from "./syscall-exposure";
 import {
@@ -274,6 +273,7 @@ export class Kernel extends Host<Env> {
     this.oauth = new OAuthStore(sql);
 
     this.mcpServers = new McpServerStore(sql);
+    installMcpDiscoveryCompatibility(this.mcp);
     this.mcp.configureOAuthCallback({
       customHandler: (result) => oauthCallbackHtmlResponse(
         result.authSuccess
@@ -289,6 +289,9 @@ export class Kernel extends Host<Env> {
             message: result.authError,
           },
       ),
+    });
+    this.mcp.onServerStateChanged(() => {
+      this.broadcastMcpChanged();
     });
 
     this.ready = Promise.resolve();
@@ -323,23 +326,59 @@ export class Kernel extends Host<Env> {
   }
 
   private async addMcpServerConnection(input: McpAddConnectionInput): Promise<McpAddConnectionResult> {
-    const result = await this.addMcpServer(
-      `u${input.uid}:${input.name}`,
-      input.url,
-      {
-        callbackHost: input.callbackHost,
-        callbackPath: "/oauth/callback",
-        transport: {
-          type: input.transport.type,
-          ...(input.transport.headers ? { headers: input.transport.headers } : {}),
-        },
+    const serverName = `u${input.uid}:${input.name}`;
+    const serverId = `mcp-${crypto.randomUUID()}`;
+    let callbackHost = input.callbackHost;
+    if (!callbackHost) {
+      const { request, connection } = getCurrentAgent();
+      const activeUrl = request?.url ?? connection?.uri;
+      callbackHost = activeUrl ? new URL(activeUrl).origin : undefined;
+    }
+    const callbackUrl = callbackHost
+      ? `${callbackHost.replace(/\/$/, "")}/oauth/callback`
+      : undefined;
+    const authProvider = callbackUrl ? this.createMcpOAuthProvider(callbackUrl) : undefined;
+    if (authProvider) {
+      authProvider.serverId = serverId;
+    }
+
+    await this.mcp.registerServer(serverId, {
+      url: input.url,
+      name: serverName,
+      callbackUrl,
+      transport: {
+        authProvider,
+        type: input.transport.type,
+        ...(input.transport.headers
+          ? { requestInit: { headers: input.transport.headers } }
+          : {}),
       },
-    );
-    return {
-      id: result.id,
-      state: result.state,
-      ...("authUrl" in result ? { authUrl: result.authUrl } : {}),
-    };
+    });
+
+    let result: MCPConnectionResult;
+    try {
+      result = await this.mcp.connectToServer(serverId);
+      if (result.state === "failed") {
+        throw new Error(
+          `Failed to connect to MCP server at ${input.url}: ${result.error}`,
+        );
+      }
+    } catch (error) {
+      try {
+        await this.removeMcpServer(serverId);
+      } catch (cleanupError) {
+        console.warn(
+          `[Kernel] Failed to clean up MCP server ${serverId} after add failure:`,
+          cleanupError,
+        );
+      }
+      throw error;
+    }
+
+    if (result.state === "connected") {
+      await this.mcp.discoverIfConnected(serverId);
+    }
+    return { id: serverId };
   }
 
   private async removeMcpServerConnection(serverId: string): Promise<void> {
@@ -347,17 +386,38 @@ export class Kernel extends Host<Env> {
   }
 
   private async refreshMcpServerConnection(serverId: string): Promise<void> {
-    const connection = this.mcp.mcpConnections[serverId] as {
-      connectionState?: unknown;
-    } | undefined;
-    if (canRediscoverMcpConnectionState(connection?.connectionState)) {
+    const connection = this.mcp.mcpConnections[serverId];
+    if (connection?.connectionState === "connected" || connection?.connectionState === "ready") {
       await this.mcp.discoverIfConnected(serverId);
       return;
     }
+    if (
+      connection?.connectionState === "authenticating"
+      || connection?.connectionState === "connecting"
+      || connection?.connectionState === "discovering"
+    ) {
+      return;
+    }
 
+    if (connection) {
+      connection.connectionError = null;
+    }
     const result = await this.mcp.connectToServer(serverId);
     if (result.state === "connected") {
       await this.mcp.discoverIfConnected(serverId);
+    } else if (result.state === "failed") {
+      const failedConnection = this.mcp.mcpConnections[serverId];
+      if (failedConnection) {
+        failedConnection.connectionError = result.error;
+      }
+      this.broadcastMcpChanged();
+    }
+  }
+
+  private broadcastMcpChanged(): void {
+    const uids = new Set(this.mcpServers.list().map((record) => record.uid));
+    for (const uid of uids) {
+      this.broadcastToUid(uid, "mcp.changed");
     }
   }
 

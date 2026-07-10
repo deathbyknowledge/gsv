@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { KernelContext } from "../context";
 import type { McpServerRecord } from "../mcp-store";
 import {
-  canRediscoverMcpConnectionState,
   handleSysMcpAdd,
   handleSysMcpCall,
   handleSysMcpList,
@@ -79,9 +78,9 @@ function makeContext(
       });
       return {
         id: "server-1",
-        state: "ready",
       };
     }),
+    broadcastToUid: vi.fn(),
     removeMcpServerConnection: vi.fn(async () => undefined),
     callMcpTool: vi.fn(async () => ({
       content: [{ type: "text", text: "ok" }],
@@ -170,6 +169,21 @@ describe("sys.mcp handlers", () => {
     });
   });
 
+  it("broadcasts MCP adds after storing the owner-scoped server record", async () => {
+    const ctx = makeContext(1000, mcpServers);
+    const broadcastToUid = ctx.broadcastToUid as ReturnType<typeof vi.fn>;
+
+    await handleSysMcpAdd({
+      name: "GitHub",
+      url: "https://mcp.example.com/mcp",
+    }, ctx);
+
+    expect(broadcastToUid).toHaveBeenCalledWith(1000, "mcp.changed");
+    expect(broadcastToUid.mock.invocationCallOrder[0]).toBeGreaterThan(
+      (mcpServers.upsert as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0],
+    );
+  });
+
   it("deduplicates MCP adds by caller, name, and URL", async () => {
     const ctx = makeContext(1000, mcpServers);
     mcpServers.upsert({
@@ -193,7 +207,6 @@ describe("sys.mcp handlers", () => {
 
     (ctx.addMcpServerConnection as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       id: "server-2",
-      state: "ready",
     });
     await handleSysMcpAdd({
       name: "GitHub Work",
@@ -256,6 +269,7 @@ describe("sys.mcp handlers", () => {
     expect(await handleSysMcpRemove({ serverId: "server-2" }, ctx)).toEqual({ removed: false });
     expect(await handleSysMcpRemove({ serverId: "server-1" }, ctx)).toEqual({ removed: true });
     expect(ctx.removeMcpServerConnection).toHaveBeenCalledWith("server-1");
+    expect(ctx.broadcastToUid).toHaveBeenCalledWith(1000, "mcp.changed");
   });
 
   it("defaults process-originated MCP access to the owning human", async () => {
@@ -319,10 +333,68 @@ describe("sys.mcp handlers", () => {
     }, ctx)).rejects.toThrow("MCP server not found");
   });
 
-  it("classifies ready and connected MCP clients as rediscoverable", () => {
-    expect(canRediscoverMcpConnectionState("ready")).toBe(true);
-    expect(canRediscoverMcpConnectionState("connected")).toBe(true);
-    expect(canRediscoverMcpConnectionState("failed")).toBe(false);
-    expect(canRediscoverMcpConnectionState("authenticating")).toBe(false);
+  it("reports discovery errors without mutating manager state", () => {
+    const ctx = makeContext(1000, mcpServers);
+    mcpServers.upsert({
+      serverId: "server-1",
+      uid: 1000,
+      name: "Ready",
+    });
+    mcpServers.addSdkServer({
+      serverId: "server-1",
+      uid: 1000,
+      name: "Ready",
+      url: "https://ready.example.com/mcp",
+    });
+    ctx.mcp.mcpConnections["server-1"] = {
+      connectionState: "connected",
+      connectionError: "Capability discovery failed",
+    } as never;
+    (ctx.mcp.listTools as ReturnType<typeof vi.fn>).mockReturnValue([{
+      name: "search",
+      description: "Search",
+      inputSchema: { type: "object" },
+    }]);
+
+    const result = handleSysMcpList({}, ctx);
+
+    expect(result.servers[0]).toMatchObject({
+      serverId: "server-1",
+      state: "failed",
+      error: "Capability discovery failed",
+      tools: [{
+        name: "search",
+        description: "Search",
+      }],
+    });
+    expect(ctx.mcp.mcpConnections["server-1"].connectionState).toBe("connected");
+  });
+
+  it("keeps ready servers with zero tools ready", () => {
+    const ctx = makeContext(1000, mcpServers);
+    mcpServers.upsert({
+      serverId: "server-1",
+      uid: 1000,
+      name: "Empty MCP",
+    });
+    mcpServers.addSdkServer({
+      serverId: "server-1",
+      uid: 1000,
+      name: "Empty MCP",
+      url: "https://empty.example.com/mcp",
+    });
+    ctx.mcp.mcpConnections["server-1"] = {
+      connectionState: "ready",
+      connectionError: null,
+    } as never;
+
+    const result = handleSysMcpList({}, ctx);
+
+    expect(result.servers[0]).toMatchObject({
+      serverId: "server-1",
+      state: "ready",
+      error: null,
+      tools: [],
+    });
   });
 });
