@@ -71,6 +71,9 @@ function makeContext(overrides: Partial<KernelContext> = {}): KernelContext {
         source: { kind: "user" },
       })),
     } as unknown as KernelContext["notifications"],
+    procs: {
+      getOwnerUid: vi.fn(() => 1000),
+    } as unknown as KernelContext["procs"],
     broadcastToUserUid: vi.fn(),
     ...overrides,
   } as KernelContext;
@@ -136,5 +139,32 @@ describe("notification handlers", () => {
       "notification.dismissed",
       expect.anything(),
     );
+  });
+
+  it("stores and broadcasts process notifications for the owning user", () => {
+    const base = makeContext({ processId: "proc-builder" });
+    const ctx = makeContext({
+      ...base,
+      identity: {
+        ...base.identity!,
+        process: { ...base.identity!.process, uid: 2000 },
+      },
+      processId: "proc-builder",
+    });
+
+    handleNotificationCreate({ title: "Build finished" }, ctx);
+    handleNotificationList({}, ctx);
+    handleNotificationMarkRead({ notificationId: "notif-1" }, ctx);
+    handleNotificationDismiss({ notificationId: "notif-1" }, ctx);
+
+    expect(ctx.procs.getOwnerUid).toHaveBeenCalledWith("proc-builder");
+    expect(ctx.notifications.create).toHaveBeenCalledWith(expect.objectContaining({ uid: 1000 }));
+    expect(ctx.notifications.list).toHaveBeenCalledWith(1000, {});
+    expect(ctx.notifications.markRead).toHaveBeenCalledWith(1000, "notif-1");
+    expect(ctx.notifications.dismiss).toHaveBeenCalledWith(1000, "notif-1");
+    expect(ctx.broadcastToUserUid).toHaveBeenCalledTimes(3);
+    for (const [uid] of (ctx.broadcastToUserUid as ReturnType<typeof vi.fn>).mock.calls) {
+      expect(uid).toBe(1000);
+    }
   });
 });

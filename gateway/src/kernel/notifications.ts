@@ -12,7 +12,7 @@ import type {
   NotificationRecord,
   NotificationSource,
 } from "@humansandmachines/gsv/protocol";
-import type { KernelContext } from "./context";
+import { resolveCallerOwnerUid, type KernelContext } from "./context";
 
 const DEFAULT_UNREAD_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const DEFAULT_READ_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -179,7 +179,7 @@ export function handleNotificationCreate(
   args: NotificationCreateArgs,
   ctx: KernelContext,
 ): NotificationCreateResult {
-  const uid = ctx.identity!.process.uid;
+  const uid = resolveCallerOwnerUid(ctx);
   const title = args.title.trim();
   if (!title) {
     throw new Error("title is required");
@@ -202,7 +202,7 @@ export function handleNotificationList(
   ctx: KernelContext,
 ): NotificationListResult {
   return {
-    notifications: ctx.notifications.list(ctx.identity!.process.uid, args),
+    notifications: ctx.notifications.list(resolveCallerOwnerUid(ctx), args),
   };
 }
 
@@ -210,9 +210,10 @@ export function handleNotificationMarkRead(
   args: NotificationMarkReadArgs,
   ctx: KernelContext,
 ): NotificationMarkReadResult {
-  const notification = ctx.notifications.markRead(ctx.identity!.process.uid, args.notificationId);
+  const uid = resolveCallerOwnerUid(ctx);
+  const notification = ctx.notifications.markRead(uid, args.notificationId);
   if (notification) {
-    ctx.broadcastToUserUid(ctx.identity!.process.uid, "notification.updated", { notification });
+    ctx.broadcastToUserUid(uid, "notification.updated", { notification });
   }
   return { notification };
 }
@@ -221,9 +222,10 @@ export function handleNotificationDismiss(
   args: NotificationDismissArgs,
   ctx: KernelContext,
 ): NotificationDismissResult {
-  const notification = ctx.notifications.dismiss(ctx.identity!.process.uid, args.notificationId);
+  const uid = resolveCallerOwnerUid(ctx);
+  const notification = ctx.notifications.dismiss(uid, args.notificationId);
   if (notification) {
-    ctx.broadcastToUserUid(ctx.identity!.process.uid, "notification.dismissed", { notification });
+    ctx.broadcastToUserUid(uid, "notification.dismissed", { notification });
   }
   return { notification };
 }
