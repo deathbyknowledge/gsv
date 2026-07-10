@@ -158,6 +158,7 @@ describe("proc handlers", () => {
         get: vi.fn(() => ({ uid: IDENTITY.uid, ownerUid: IDENTITY.uid })),
       },
       conversations: { getByActivePid: vi.fn(() => null) },
+      runRoutes: { setConnectionRoute: vi.fn() },
     } as unknown as KernelContext;
     const spoofedOrigin = {
       kind: "adapter",
@@ -193,6 +194,38 @@ describe("proc handlers", () => {
         }),
       }),
     );
+  });
+
+  it("routes proc.send results by the target process owner", async () => {
+    sendFrameToProcessMock.mockResolvedValue({
+      type: "res",
+      id: "send-root",
+      ok: true,
+      data: { ok: true, status: "started", runId: "run-1" },
+    } satisfies ResponseFrame);
+    const setConnectionRoute = vi.fn();
+    const ctx = {
+      identity: {
+        role: "user",
+        process: { ...IDENTITY, uid: 0 },
+        capabilities: ["proc.send"],
+      },
+      connection: { id: "conn-root", state: {} },
+      procs: {
+        get: vi.fn(() => ({ uid: 2000, ownerUid: 1000 })),
+      },
+      conversations: { getByActivePid: vi.fn(() => null) },
+      runRoutes: { setConnectionRoute },
+    } as unknown as KernelContext;
+
+    await forwardToProcess({
+      type: "req",
+      id: "send-root",
+      call: "proc.send",
+      args: { pid: "proc-1", message: "hello" },
+    } as RequestFrame, ctx);
+
+    expect(setConnectionRoute).toHaveBeenCalledWith("run-1", 1000, "conn-root");
   });
 
   it("routes untargeted proc calls through the caller owner's default conversation", async () => {

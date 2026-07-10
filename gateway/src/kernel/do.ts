@@ -134,10 +134,6 @@ type PendingBinaryStream = {
   timeoutId: ReturnType<typeof setTimeout>;
 };
 
-type ProcSendData = {
-  runId?: string;
-};
-
 type ProcessNetFetchOptions = {
   ttlMs?: number;
   internalPurpose?: "model-transport";
@@ -1611,29 +1607,11 @@ export class Kernel extends Host<Env> {
     const result = await dispatch(frame, origin, ctx, this.buildDispatchDeps());
 
     if (result.handled) {
-      this.captureConnectionRunRoute(connection.id, state.identity, frame, result.response);
       this.applyPostDispatchEffects(frame, result.response);
       connection.send(JSON.stringify(result.response));
     }
     // If not handled, request was forwarded to a device.
     // Response will come back via handleRes when the device responds.
-  }
-
-  private captureConnectionRunRoute(
-    connectionId: string,
-    identity: ConnectionIdentity,
-    frame: RequestFrame,
-    response: ResponseFrame,
-  ): void {
-    if (identity.role !== "user") return;
-    if (frame.call !== "proc.send") return;
-    if (!response.ok) return;
-
-    const data = (response as { data?: ProcSendData }).data;
-    const runId = typeof data?.runId === "string" ? data.runId : null;
-    if (!runId) return;
-
-    this.runRoutes.setConnectionRoute(runId, identity.process.uid, connectionId);
   }
 
   private buildServiceBindingIdentity(frame: RequestFrame): ConnectionIdentity | null {

@@ -532,7 +532,16 @@ export async function forwardToProcess(
         }
         ctx.conversations.clearActivePid(pid);
       }
-      return (res as { data?: unknown }).data;
+      const data = (res as { data?: { runId?: unknown } }).data;
+      if (
+        frame.call === "proc.send"
+        && identity.role === "user"
+        && ctx.connection
+        && typeof data?.runId === "string"
+      ) {
+        ctx.runRoutes.setConnectionRoute(data.runId, proc.ownerUid, ctx.connection.id);
+      }
+      return data;
     } else {
       throw new Error((res as { error: { message: string } }).error.message);
     }
