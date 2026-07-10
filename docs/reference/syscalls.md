@@ -728,7 +728,7 @@ Runtime behavior:
 | `pkg.public.list` | `handlePkgPublicList` | Lists local public packages, or fetches `<baseUrl>/public/packages` from a named/URL remote. Invalid remote catalog entries are dropped. |
 | `pkg.public.set` | `handlePkgPublicSet` | Marks a source repo public or private in config. Requires repo owner, root, or wildcard capability. |
 
-Mutating package calls require root, wildcard capability, or ownership of the package user scope. `pkg.add`, `pkg.sync`, `pkg.install`, `pkg.remove`, and `pkg.checkout` broadcast `pkg.changed` after success.
+Mutating package calls require root, wildcard capability, or ownership of the package user scope. `pkg.add`, `pkg.create`, `pkg.sync`, `pkg.install`, `pkg.remove`, and `pkg.checkout` broadcast `pkg.changed` to that scope after success.
 
 ```ts
 type PackageSyscalls = {

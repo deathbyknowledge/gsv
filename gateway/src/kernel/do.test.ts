@@ -82,6 +82,43 @@ describe("Kernel user signal broadcasts", () => {
   });
 });
 
+describe("Kernel package invalidations", () => {
+  it("broadcasts package changes only within their package scope", () => {
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.broadcastToRole = vi.fn();
+    kernel.broadcastToUserUid = vi.fn();
+
+    kernel.applyPostDispatchEffects(
+      { call: "pkg.add", args: {} },
+      { ok: true, data: { package: { scope: { kind: "user", uid: 1000 } } } },
+    );
+    expect(kernel.broadcastToUserUid).toHaveBeenCalledWith(1000, "pkg.changed");
+    expect(kernel.broadcastToRole).not.toHaveBeenCalled();
+
+    kernel.broadcastToUserUid.mockClear();
+    kernel.applyPostDispatchEffects(
+      { call: "pkg.sync", args: {} },
+      { ok: true, data: { packages: [{ scope: { kind: "global" } }] } },
+    );
+    expect(kernel.broadcastToRole).toHaveBeenCalledWith("user", "pkg.changed");
+    expect(kernel.broadcastToUserUid).not.toHaveBeenCalled();
+
+    kernel.broadcastToRole.mockClear();
+    kernel.applyPostDispatchEffects(
+      { call: "sys.bootstrap", args: {} },
+      { ok: true, data: { packages: [] } },
+    );
+    expect(kernel.broadcastToRole).toHaveBeenCalledWith("user", "pkg.changed");
+
+    kernel.broadcastToRole.mockClear();
+    kernel.applyPostDispatchEffects(
+      { call: "pkg.remove", args: {} },
+      { ok: true, data: { package: {} } },
+    );
+    expect(kernel.broadcastToRole).not.toHaveBeenCalled();
+  });
+});
+
 describe("Kernel package app authorization", () => {
   it("uses account capabilities without elevating from the package manifest", () => {
     const kernel = Object.create(Kernel.prototype) as any;

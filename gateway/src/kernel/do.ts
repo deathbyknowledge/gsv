@@ -1688,58 +1688,22 @@ export class Kernel extends Host<Env> {
       frame.call === "pkg.checkout" ||
       frame.call === "sys.bootstrap"
     ) {
-      const args = frame.args as {
-        packageId?: unknown;
-        ref?: unknown;
-        name?: unknown;
-      };
       const data = (response as {
         data?: {
-          changed?: unknown;
-          repo?: unknown;
           package?: {
-            enabled?: unknown;
-            name?: unknown;
-            source?: {
-              ref?: unknown;
-            };
+            scope?: { kind?: unknown; uid?: unknown };
           };
           packages?: Array<{
-            name?: unknown;
-            source?: {
-              ref?: unknown;
-            };
+            scope?: { kind?: unknown; uid?: unknown };
           }>;
         };
       }).data;
-
-      this.broadcastToRole("user", "pkg.changed", {
-        action: frame.call === "pkg.remove"
-          ? "remove"
-          : frame.call === "pkg.checkout"
-            ? "checkout"
-            : frame.call === "pkg.sync" || frame.call === "sys.bootstrap"
-              ? "sync"
-              : "install",
-        packageId: typeof args.packageId === "string" ? args.packageId : null,
-        ref: typeof data?.package?.source?.ref === "string"
-          ? data.package.source.ref
-          : typeof data?.packages?.[0]?.source?.ref === "string"
-            ? data.packages[0].source.ref
-            : typeof args.ref === "string"
-              ? args.ref
-              : null,
-        changed: frame.call === "pkg.sync" || frame.call === "sys.bootstrap" ? true : data?.changed === true,
-        enabled: typeof data?.package?.enabled === "boolean" ? data.package.enabled : null,
-        name: typeof data?.package?.name === "string"
-          ? data.package.name
-          : typeof data?.packages?.[0]?.name === "string"
-            ? data.packages[0].name
-            : typeof args.name === "string"
-              ? args.name
-              : null,
-        repo: typeof data?.repo === "string" ? data.repo : null,
-      });
+      const scope = data?.package?.scope ?? data?.packages?.[0]?.scope;
+      if (frame.call === "sys.bootstrap" || scope?.kind === "global") {
+        this.broadcastToRole("user", "pkg.changed");
+      } else if (scope?.kind === "user" && typeof scope.uid === "number") {
+        this.broadcastToUserUid(scope.uid, "pkg.changed");
+      }
     }
 
     if (frame.call === "adapter.state.update") {
