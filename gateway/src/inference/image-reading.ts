@@ -4,8 +4,7 @@ import type {
   TextContent,
   ThinkingContent,
 } from "@earendil-works/pi-ai";
-import { decodeBase64Bytes } from "../shared/base64";
-import { normalizeBase64Data } from "./transcription";
+import { decodeBase64Bytes, normalizeBase64Data } from "../shared/base64";
 import { resolvePiAiModel } from "./model-registry";
 import { completePiAiSimple } from "./pi-ai";
 import { withTimeout } from "./timeout";

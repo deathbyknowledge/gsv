@@ -71,8 +71,8 @@ import { createRoutedFetch, normalizeTarget, type NetFetchDeviceTransport } from
 import {
   DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
   DEFAULT_MAX_AUDIO_TRANSCRIPTION_BYTES,
-  normalizeBase64Data,
 } from "../inference/transcription";
+import { base64DecodedLength, normalizeBase64Data } from "../shared/base64";
 import {
   DEFAULT_IMAGE_READING_MAX_TOKENS,
   DEFAULT_IMAGE_READING_INPUT_FORMAT,
@@ -1527,15 +1527,6 @@ function normalizeOptionalString(value: unknown): string | undefined {
 
 function normalizePositiveNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
-}
-
-function base64DecodedLength(base64: string): number {
-  const clean = base64.replace(/\s/g, "");
-  if (!clean) {
-    return 0;
-  }
-  const padding = clean.endsWith("==") ? 2 : clean.endsWith("=") ? 1 : 0;
-  return Math.max(0, Math.floor((clean.length * 3) / 4) - padding);
 }
 
 function withCodeModeMcpTypeHints(

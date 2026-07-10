@@ -3,7 +3,6 @@ import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import type { ProcMediaInput } from "@humansandmachines/gsv/protocol";
 import {
   DEFAULT_MAX_AUDIO_TRANSCRIPTION_BYTES,
-  normalizeBase64Data,
   type AudioTranscriptionBinding,
 } from "../inference/transcription";
 import { transcribeAudio } from "../inference/capabilities";
@@ -20,7 +19,7 @@ import {
   type ImageReadingBinding,
 } from "../inference/image-reading";
 import { isWorkersAiProvider } from "../inference/workers-ai";
-import { decodeBase64Bytes } from "../shared/base64";
+import { decodeBase64Bytes, normalizeBase64Data } from "../shared/base64";
 
 export {
   DEFAULT_AUDIO_TRANSCRIPTION_MODEL,

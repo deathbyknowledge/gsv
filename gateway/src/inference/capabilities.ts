@@ -1,6 +1,5 @@
 import {
   DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
-  normalizeBase64Data,
   normalizeTranscriptionResponse,
   transcribeAudioWithWorkersAi,
   type AudioTranscriptionBinding,
@@ -16,7 +15,12 @@ import {
   type AudioSpeechRequest,
   type AudioSpeechResult,
 } from "./speech";
-import { decodeBase64Bytes, encodeBase64Bytes } from "../shared/base64";
+import {
+  base64DataFromBytes,
+  base64DataFromString,
+  decodeBase64Bytes,
+  normalizeBase64Data,
+} from "../shared/base64";
 import { withTimeout } from "./timeout";
 import { isWorkersAiProvider } from "./workers-ai";
 
@@ -214,7 +218,7 @@ async function synthesizeSpeechWithOpenAi(
     "OpenAI speech synthesis",
   );
   await throwIfNotOk(response, "OpenAI speech synthesis");
-  const audio = audioFromArrayBuffer(
+  const audio = base64DataFromBytes(
     await response.arrayBuffer(),
     response.headers.get("content-type") || mimeTypeForOpenAiSpeechFormat(format),
   );
@@ -337,26 +341,25 @@ async function normalizeImageGenerationResponse(
   fallbackMimeType: string,
 ): Promise<Omit<ImageGenerationResult, "provider" | "model"> | null> {
   if (response instanceof Response) {
-    return imageFromArrayBuffer(
+    return base64DataFromBytes(
       await response.arrayBuffer(),
       response.headers.get("content-type") || fallbackMimeType,
     );
   }
   if (response instanceof ReadableStream) {
-    return imageFromArrayBuffer(await new Response(response).arrayBuffer(), fallbackMimeType);
+    return base64DataFromBytes(await new Response(response).arrayBuffer(), fallbackMimeType);
   }
   if (response instanceof ArrayBuffer) {
-    return imageFromArrayBuffer(response, fallbackMimeType);
+    return base64DataFromBytes(response, fallbackMimeType);
   }
   if (ArrayBuffer.isView(response)) {
-    const bytes = new Uint8Array(response.buffer, response.byteOffset, response.byteLength);
-    return imageFromArrayBuffer(bytes.slice().buffer, fallbackMimeType);
+    return base64DataFromBytes(response, fallbackMimeType);
   }
   if (response instanceof Blob) {
-    return imageFromArrayBuffer(await response.arrayBuffer(), response.type || fallbackMimeType);
+    return base64DataFromBytes(await response.arrayBuffer(), response.type || fallbackMimeType);
   }
   if (typeof response === "string" && response.trim().length > 0) {
-    return imageFromBase64(response.trim(), fallbackMimeType);
+    return base64DataFromString(response.trim(), fallbackMimeType);
   }
   if (!response || typeof response !== "object") {
     return null;
@@ -383,7 +386,7 @@ async function normalizeImageGenerationResponse(
     const mimeType =
       firstString(record.mimeType, record.mime_type, record.contentType, record.content_type)
       || fallbackMimeType;
-    const image = imageFromBase64(base64, mimeType);
+    const image = base64DataFromString(base64, mimeType);
     if (!image) {
       return null;
     }
@@ -530,52 +533,6 @@ function defaultAudioFilename(mimeType: string | undefined): string {
   if (normalized.includes("wav")) return "audio.wav";
   if (normalized.includes("mp4")) return "audio.m4a";
   return "audio.webm";
-}
-
-function audioFromArrayBuffer(buffer: ArrayBuffer, mimeType: string): { data: string; mimeType: string; size: number } | null {
-  if (buffer.byteLength === 0) {
-    return null;
-  }
-  return {
-    data: `data:${mimeType};base64,${encodeBase64Bytes(buffer)}`,
-    mimeType,
-    size: buffer.byteLength,
-  };
-}
-
-function imageFromArrayBuffer(buffer: ArrayBuffer, mimeType: string): Omit<ImageGenerationResult, "provider" | "model"> | null {
-  if (buffer.byteLength === 0) {
-    return null;
-  }
-  return {
-    data: `data:${mimeType};base64,${encodeBase64Bytes(buffer)}`,
-    mimeType,
-    size: buffer.byteLength,
-  };
-}
-
-function imageFromBase64(value: string, mimeType: string): Omit<ImageGenerationResult, "provider" | "model"> | null {
-  const dataUrl = /^data:([^;,]+);base64,(.*)$/i.exec(value);
-  const base64 = dataUrl ? dataUrl[2] : value.includes(",") ? value.slice(value.indexOf(",") + 1) : value;
-  const resolvedMimeType = dataUrl?.[1] || mimeType;
-  const size = base64DecodedLength(base64);
-  if (size <= 0) {
-    return null;
-  }
-  return {
-    data: `data:${resolvedMimeType};base64,${base64}`,
-    mimeType: resolvedMimeType,
-    size,
-  };
-}
-
-function base64DecodedLength(base64: string): number {
-  const clean = base64.replace(/\s/g, "");
-  if (!clean) {
-    return 0;
-  }
-  const padding = clean.endsWith("==") ? 2 : clean.endsWith("=") ? 1 : 0;
-  return Math.max(0, Math.floor((clean.length * 3) / 4) - padding);
 }
 
 function normalizePositiveNumber(value: unknown): number | undefined {

@@ -1,5 +1,5 @@
 import { withTimeout } from "./timeout";
-import { encodeBase64Bytes } from "../shared/base64";
+import { base64DataFromBytes, base64DataFromString } from "../shared/base64";
 
 export type AudioSpeechBinding = {
   run(model: string, input: Record<string, unknown>): Promise<unknown>;
@@ -109,26 +109,25 @@ async function normalizeSpeechResponse(
   fallbackMimeType: string,
 ): Promise<{ data: string; mimeType: string; size: number } | null> {
   if (response instanceof ReadableStream) {
-    return audioFromArrayBuffer(await new Response(response).arrayBuffer(), fallbackMimeType);
+    return base64DataFromBytes(await new Response(response).arrayBuffer(), fallbackMimeType);
   }
   if (response instanceof Response) {
-    return audioFromArrayBuffer(
+    return base64DataFromBytes(
       await response.arrayBuffer(),
       response.headers.get("content-type") || fallbackMimeType,
     );
   }
   if (response instanceof ArrayBuffer) {
-    return audioFromArrayBuffer(response, fallbackMimeType);
+    return base64DataFromBytes(response, fallbackMimeType);
   }
   if (ArrayBuffer.isView(response)) {
-    const bytes = new Uint8Array(response.buffer, response.byteOffset, response.byteLength);
-    return audioFromArrayBuffer(bytes.slice().buffer, fallbackMimeType);
+    return base64DataFromBytes(response, fallbackMimeType);
   }
   if (response instanceof Blob) {
-    return audioFromArrayBuffer(await response.arrayBuffer(), response.type || fallbackMimeType);
+    return base64DataFromBytes(await response.arrayBuffer(), response.type || fallbackMimeType);
   }
   if (typeof response === "string" && response.trim().length > 0) {
-    return audioFromBase64(response.trim(), fallbackMimeType);
+    return base64DataFromString(response.trim(), fallbackMimeType);
   }
   if (!response || typeof response !== "object") {
     return null;
@@ -138,47 +137,12 @@ async function normalizeSpeechResponse(
   const base64 = firstString(record.audio, record.data, record.output, record.result);
   if (base64) {
     const mimeType = firstString(record.mimeType, record.mime_type, record.contentType, record.content_type) || fallbackMimeType;
-    return audioFromBase64(base64, mimeType);
+    return base64DataFromString(base64, mimeType);
   }
 
   return null;
 }
 
-function audioFromArrayBuffer(buffer: ArrayBuffer, mimeType: string): { data: string; mimeType: string; size: number } | null {
-  if (buffer.byteLength === 0) {
-    return null;
-  }
-  const base64 = encodeBase64Bytes(buffer);
-  return {
-    data: `data:${mimeType};base64,${base64}`,
-    mimeType,
-    size: buffer.byteLength,
-  };
-}
-
-function audioFromBase64(value: string, mimeType: string): { data: string; mimeType: string; size: number } | null {
-  const dataUrl = /^data:([^;,]+);base64,(.*)$/i.exec(value);
-  const base64 = dataUrl ? dataUrl[2] : value.includes(",") ? value.slice(value.indexOf(",") + 1) : value;
-  const resolvedMimeType = dataUrl?.[1] || mimeType;
-  const size = base64DecodedLength(base64);
-  if (size <= 0) {
-    return null;
-  }
-  return {
-    data: `data:${resolvedMimeType};base64,${base64}`,
-    mimeType: resolvedMimeType,
-    size,
-  };
-}
-
-function base64DecodedLength(base64: string): number {
-  const clean = base64.replace(/\s/g, "");
-  if (!clean) {
-    return 0;
-  }
-  const padding = clean.endsWith("==") ? 2 : clean.endsWith("=") ? 1 : 0;
-  return Math.floor((clean.length * 3) / 4) - padding;
-}
 
 function defaultVoiceForModel(model: string): string | undefined {
   return model.includes("/aura-") ? DEFAULT_AUDIO_SPEECH_SPEAKER : undefined;

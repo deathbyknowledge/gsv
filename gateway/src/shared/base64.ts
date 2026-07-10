@@ -27,3 +27,43 @@ export function decodeBase64Bytes(value: string): Uint8Array {
   }
   return bytes;
 }
+
+export function normalizeBase64Data(value: string): string {
+  return value.includes(",") ? value.slice(value.indexOf(",") + 1) : value;
+}
+
+export function base64DecodedLength(value: string): number {
+  const clean = value.replace(/\s/g, "");
+  if (!clean) {
+    return 0;
+  }
+  const padding = clean.endsWith("==") ? 2 : clean.endsWith("=") ? 1 : 0;
+  return Math.max(0, Math.floor((clean.length * 3) / 4) - padding);
+}
+
+export function base64DataFromBytes(
+  value: ArrayBuffer | ArrayBufferView,
+  mimeType: string,
+): { data: string; mimeType: string; size: number } | null {
+  if (value.byteLength === 0) {
+    return null;
+  }
+  return {
+    data: `data:${mimeType};base64,${encodeBase64Bytes(value)}`,
+    mimeType,
+    size: value.byteLength,
+  };
+}
+
+export function base64DataFromString(
+  value: string,
+  mimeType: string,
+): { data: string; mimeType: string; size: number } | null {
+  const dataUrl = /^data:([^;,]+);base64,(.*)$/i.exec(value);
+  const base64 = dataUrl ? dataUrl[2] : normalizeBase64Data(value);
+  const resolvedMimeType = dataUrl?.[1] || mimeType;
+  const size = base64DecodedLength(base64);
+  return size > 0
+    ? { data: `data:${resolvedMimeType};base64,${base64}`, mimeType: resolvedMimeType, size }
+    : null;
+}
