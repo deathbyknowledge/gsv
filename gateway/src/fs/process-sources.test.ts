@@ -226,6 +226,14 @@ describe("createProcessSourceBackend", () => {
     await backend!.appendFile("/src/repos/sam/docs/notes.md", "more\n");
     await backend!.rm("/src/repos/sam/docs/old.md");
 
+    const manifest = await storage.get(
+      "process-source-overlays/task%3Asource/global%3Arepo%3Asam%2Fdocs/manifest.json",
+    );
+    expect(JSON.parse(await manifest!.text())).toMatchObject({
+      packageId: "repo:sam/docs",
+      packageKey: "global:repo:sam/docs",
+    });
+
     expect(applyCalls).toHaveLength(0);
     await expect(backend!.readFile("/src/repos/sam/docs/new.md")).resolves.toBe("created\n");
     await expect(backend!.readFile("/src/repos/sam/docs/notes.md")).resolves.toBe("old\nmore\n");
