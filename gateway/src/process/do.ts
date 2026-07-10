@@ -5315,6 +5315,7 @@ function aiConfigWithFallback(
     baseUrl: _baseUrl,
     providerStyle: _providerStyle,
     transportTarget: _transportTarget,
+    openAiCodex: _openAiCodex,
     reasoning: _reasoning,
     maxTokens: _maxTokens,
     contextWindowTokens: _contextWindowTokens,
@@ -5331,6 +5332,7 @@ function aiConfigWithFallback(
     ...(fallback.baseUrl ? { baseUrl: fallback.baseUrl } : {}),
     providerStyle: fallback.providerStyle,
     transportTarget: fallback.transportTarget,
+    ...(fallback.openAiCodex ? { openAiCodex: fallback.openAiCodex } : {}),
     reasoning: fallback.reasoning,
     maxTokens: fallback.maxTokens,
     contextWindowTokens: fallback.contextWindowTokens,
@@ -5346,7 +5348,8 @@ function isSameAiRuntimeModelStack(left: AiConfigResult, right: AiConfigResult):
     left.apiKey === right.apiKey &&
     (left.baseUrl ?? "").trim() === (right.baseUrl ?? "").trim() &&
     (left.providerStyle ?? "auto").trim().toLowerCase() === (right.providerStyle ?? "auto").trim().toLowerCase() &&
-    (left.transportTarget ?? "gsv").trim() === (right.transportTarget ?? "gsv").trim();
+    (left.transportTarget ?? "gsv").trim() === (right.transportTarget ?? "gsv").trim() &&
+    (left.openAiCodex?.accountId ?? "") === (right.openAiCodex?.accountId ?? "");
 }
 
 function isFallbackEligibleAssistantResponse(response: AssistantMessage): boolean {

@@ -1318,7 +1318,7 @@ describe("Process DO — mechanical", () => {
       const result = await runInDurableObject(stub, async (instance: Process) => {
         const process = instance as any;
         const emitted: Array<{ signal: string; payload: unknown }> = [];
-        const calls: Array<{ provider: string; model: string }> = [];
+        const calls: Array<{ provider: string; model: string; accountId?: string }> = [];
         process.sendSignal = async (signal: string, payload: unknown) => {
           emitted.push({ signal, payload });
         };
@@ -1327,6 +1327,7 @@ describe("Process DO — mechanical", () => {
             calls.push({
               provider: request.config.provider,
               model: request.config.model,
+              accountId: request.config.openAiCodex?.accountId,
             });
             if (calls.length === 1) {
               return {
@@ -1366,6 +1367,7 @@ describe("Process DO — mechanical", () => {
             provider: "custom",
             model: "zai-glm-4.7",
             apiKey: "bad-key",
+            openAiCodex: { accountId: "primary-account" },
             reasoning: "high",
             maxTokens: 8192,
             contextWindowTokens: 256000,
@@ -1400,8 +1402,8 @@ describe("Process DO — mechanical", () => {
       });
 
       expect(result.calls).toEqual([
-        { provider: "custom", model: "zai-glm-4.7" },
-        { provider: "openrouter", model: "openai/gpt-5-mini" },
+        { provider: "custom", model: "zai-glm-4.7", accountId: "primary-account" },
+        { provider: "openrouter", model: "openai/gpt-5-mini", accountId: undefined },
       ]);
       expect(result.messages.map((message: any) => [message.role, message.content])).toEqual([
         ["user", "fail over please"],
@@ -1567,13 +1569,13 @@ describe("Process DO — mechanical", () => {
       ]);
     });
 
-    it("switches to a fallback credential for the same model stack", async () => {
-      const pid = "mech-chat-provider-error-credential-fallback";
+    it("switches to a fallback Codex account for the same model stack", async () => {
+      const pid = "mech-chat-provider-error-account-fallback";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
       const result = await runInDurableObject(stub, async (instance: Process) => {
         const process = instance as any;
-        const calls: Array<{ provider: string; model: string; apiKey: string }> = [];
+        const calls: Array<{ provider: string; model: string; apiKey: string; accountId?: string }> = [];
         process.sendSignal = async () => {};
         process.generation = {
           async generate(request: any) {
@@ -1581,6 +1583,7 @@ describe("Process DO — mechanical", () => {
               provider: request.config.provider,
               model: request.config.model,
               apiKey: request.config.apiKey,
+              accountId: request.config.openAiCodex?.accountId,
             });
             if (calls.length === 1) {
               return {
@@ -1597,7 +1600,7 @@ describe("Process DO — mechanical", () => {
             }
             return {
               role: "assistant",
-              content: [{ type: "text", text: "secondary key pong" }],
+              content: [{ type: "text", text: "secondary account pong" }],
               api: "test",
               provider: request.config.provider,
               model: request.config.model,
@@ -1611,17 +1614,16 @@ describe("Process DO — mechanical", () => {
           },
         };
 
-        process.store.appendMessage("user", "try another key");
+        process.store.appendMessage("user", "try another account");
         process.currentRun = {
-          runId: "run-chat-provider-error-credential-fallback",
+          runId: "run-chat-provider-error-account-fallback",
           conversationId: "default",
           config: {
             profile: "task",
-            provider: "openrouter",
-            model: "openai/gpt-5-mini",
-            apiKey: "primary-key",
-            baseUrl: "https://openrouter.ai/api/v1",
-            providerStyle: "openai-chat-completions",
+            provider: "openai-codex",
+            model: "gpt-5.2-codex",
+            apiKey: "shared-token",
+            openAiCodex: { accountId: "primary-account" },
             transportTarget: "gsv",
             reasoning: "off",
             maxTokens: 4096,
@@ -1629,13 +1631,12 @@ describe("Process DO — mechanical", () => {
             contextWindowSource: "config",
             maxContextBytes: 32768,
             fallbacks: [{
-              profileId: "secondary-credential",
-              profileName: "Secondary Credential",
-              provider: "openrouter",
-              model: "openai/gpt-5-mini",
-              apiKey: "secondary-key",
-              baseUrl: "https://openrouter.ai/api/v1",
-              providerStyle: "openai-chat-completions",
+              profileId: "secondary-account",
+              profileName: "Secondary Account",
+              provider: "openai-codex",
+              model: "gpt-5.2-codex",
+              apiKey: "shared-token",
+              openAiCodex: { accountId: "secondary-account" },
               transportTarget: "gsv",
               maxTokens: 4096,
               contextWindowTokens: 128000,
@@ -1649,7 +1650,7 @@ describe("Process DO — mechanical", () => {
           systemPrompt: "Test system prompt.",
           approvalPolicy: { default: "auto", rules: [] },
         };
-        await process.tick("run-chat-provider-error-credential-fallback");
+        await process.tick("run-chat-provider-error-account-fallback");
         return {
           calls,
           messages: process.store.getMessages(),
@@ -1657,12 +1658,22 @@ describe("Process DO — mechanical", () => {
       });
 
       expect(result.calls).toEqual([
-        { provider: "openrouter", model: "openai/gpt-5-mini", apiKey: "primary-key" },
-        { provider: "openrouter", model: "openai/gpt-5-mini", apiKey: "secondary-key" },
+        {
+          provider: "openai-codex",
+          model: "gpt-5.2-codex",
+          apiKey: "shared-token",
+          accountId: "primary-account",
+        },
+        {
+          provider: "openai-codex",
+          model: "gpt-5.2-codex",
+          apiKey: "shared-token",
+          accountId: "secondary-account",
+        },
       ]);
       expect(result.messages.map((message: any) => [message.role, message.content])).toEqual([
-        ["user", "try another key"],
-        ["assistant", "secondary key pong"],
+        ["user", "try another account"],
+        ["assistant", "secondary account pong"],
       ]);
     });
 
