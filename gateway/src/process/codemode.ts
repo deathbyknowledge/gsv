@@ -3,6 +3,7 @@ import {
   type ResolvedProvider,
 } from "@cloudflare/codemode";
 import type { CodeModeMcpToolBinding } from "../codemode/mcp";
+import { decodeBase64Bytes, encodeBase64Bytes } from "../shared/base64";
 import type { SyscallName } from "../syscalls";
 import type { CodeModeExecResult } from "../syscalls/codemode";
 import {
@@ -335,7 +336,7 @@ export async function performCodeModeFetch(
     status: response.status,
     statusText: response.statusText,
     headers: Array.from(response.headers.entries()),
-    bodyBase64: arrayBufferToBase64(body),
+    bodyBase64: encodeBase64Bytes(body),
     redirected: response.redirected,
   };
 }
@@ -426,7 +427,7 @@ function buildCodeModeFetchRequest(args: Record<string, unknown>): Request {
     headers,
     ...(redirect ? { redirect } : {}),
     ...(bodyBase64 && method !== "GET" && method !== "HEAD"
-      ? { body: arrayBufferFromBase64(bodyBase64) }
+      ? { body: decodeBase64Bytes(bodyBase64) }
       : {}),
   });
 }
@@ -452,25 +453,4 @@ function parseFetchHeaders(value: unknown): Headers {
     }
   }
   return headers;
-}
-
-function arrayBufferToBase64(buffer: ArrayBuffer | ArrayBufferView): string {
-  const bytes = buffer instanceof ArrayBuffer
-    ? new Uint8Array(buffer)
-    : new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
-  let binary = "";
-  const chunkSize = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
-  }
-  return btoa(binary);
-}
-
-function arrayBufferFromBase64(base64: string): ArrayBuffer {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes.buffer;
 }

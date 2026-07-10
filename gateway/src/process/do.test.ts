@@ -17,7 +17,6 @@ const ROOT_IDENTITY: ProcessIdentity = {
   cwd: "/root",
 };
 const DEFAULT_PROFILE = "task" as const;
-const GENERATION_SERVICE_MARKER = "__gsvGenerationService";
 
 function makeReq(call: string, args: unknown): RequestFrame {
   return { type: "req", id: crypto.randomUUID(), call, args } as RequestFrame;
@@ -75,7 +74,6 @@ async function stubGeneration(
   await runInDurableObject(stub, (instance: Process) => {
     const process = instance as any;
     process.generation = {
-      [GENERATION_SERVICE_MARKER]: true,
       async generate(request: any) {
         const text = await generate(request);
         return {
@@ -317,7 +315,6 @@ describe("Process DO — mechanical", () => {
         expect(instance.identity.uid).toBe(0);
         expect(instance.identity.username).toBe("root");
         expect(instance.identity.home).toBe("/root");
-        expect(instance.initialized).toBe(true);
       });
     });
 
@@ -646,7 +643,6 @@ describe("Process DO — mechanical", () => {
         process.store.appendMessage("user", "measure context");
         process.currentRun = {
           runId: "run-context-pressure",
-          queued: false,
           conversationId: "default",
           config: {
             executor: { kind: "process", pid },
@@ -665,7 +661,7 @@ describe("Process DO — mechanical", () => {
           systemPrompt: "Test system prompt.",
           approvalPolicy: { default: "auto", rules: [] },
         };
-        await process.continueAgentLoop("run-context-pressure");
+        await process.tick("run-context-pressure");
         return emitted;
       });
 
@@ -776,7 +772,6 @@ describe("Process DO — mechanical", () => {
         });
         process.currentRun = {
           runId: "run-origin-context",
-          queued: false,
           conversationId: "default",
           config: {
             profile: "task",
@@ -794,7 +789,7 @@ describe("Process DO — mechanical", () => {
           systemPrompt: "Test system prompt.",
           approvalPolicy: { default: "auto", rules: [] },
         };
-        await process.continueAgentLoop("run-origin-context");
+        await process.tick("run-origin-context");
 
         const messages = process.store.getMessages();
         expect(messages.map((message: any) => message.content)).toEqual([
@@ -841,7 +836,6 @@ describe("Process DO — mechanical", () => {
         process.store.appendMessage("user", "include reasoning", { conversationId: "side" });
         process.currentRun = {
           runId: "run-chat-text-thinking",
-          queued: false,
           conversationId: "side",
           config: {
             profile: "task",
@@ -859,7 +853,7 @@ describe("Process DO — mechanical", () => {
           systemPrompt: "Test system prompt.",
           approvalPolicy: { default: "auto", rules: [] },
         };
-        await process.continueAgentLoop("run-chat-text-thinking");
+        await process.tick("run-chat-text-thinking");
         return emitted;
       });
 
@@ -943,7 +937,6 @@ describe("Process DO — mechanical", () => {
         process.store.appendMessage("user", "answer visibly");
         process.currentRun = {
           runId: "run-chat-thinking-only",
-          queued: false,
           conversationId: "default",
           config: {
             profile: "task",
@@ -961,7 +954,7 @@ describe("Process DO — mechanical", () => {
           systemPrompt: "Test system prompt.",
           approvalPolicy: { default: "auto", rules: [] },
         };
-        await process.continueAgentLoop("run-chat-thinking-only");
+        await process.tick("run-chat-thinking-only");
         return {
           calls,
           emitted,
@@ -1032,7 +1025,6 @@ describe("Process DO — mechanical", () => {
         process.store.appendMessage("user", "answer visibly");
         process.currentRun = {
           runId: "run-chat-thinking-only-exhausted",
-          queued: false,
           conversationId: "default",
           config: {
             profile: "task",
@@ -1050,7 +1042,7 @@ describe("Process DO — mechanical", () => {
           systemPrompt: "Test system prompt.",
           approvalPolicy: { default: "auto", rules: [] },
         };
-        await process.continueAgentLoop("run-chat-thinking-only-exhausted");
+        await process.tick("run-chat-thinking-only-exhausted");
         return {
           calls,
           emitted,
@@ -1106,7 +1098,6 @@ describe("Process DO — mechanical", () => {
         process.store.appendMessage("user", "recover please");
         process.currentRun = {
           runId: "run-chat-empty-final-throw",
-          queued: false,
           conversationId: "default",
           config: {
             profile: "task",
@@ -1124,7 +1115,7 @@ describe("Process DO — mechanical", () => {
           systemPrompt: "Test system prompt.",
           approvalPolicy: { default: "auto", rules: [] },
         };
-        await process.continueAgentLoop("run-chat-empty-final-throw");
+        await process.tick("run-chat-empty-final-throw");
         return {
           calls,
           emitted,
@@ -1196,7 +1187,6 @@ describe("Process DO — mechanical", () => {
         process.store.appendMessage("user", "run pwd");
         process.currentRun = {
           runId: "run-chat-tool-markup-text",
-          queued: false,
           conversationId: "default",
           config: {
             profile: "task",
@@ -1217,7 +1207,7 @@ describe("Process DO — mechanical", () => {
             rules: [{ match: "shell.exec", action: "ask" }],
           },
         };
-        await process.continueAgentLoop("run-chat-tool-markup-text");
+        await process.tick("run-chat-tool-markup-text");
         return {
           calls,
           emitted,
@@ -1282,7 +1272,6 @@ describe("Process DO — mechanical", () => {
         process.store.appendMessage("user", "fail once please");
         process.currentRun = {
           runId: "run-chat-provider-error-response",
-          queued: false,
           conversationId: "default",
           config: {
             profile: "task",
@@ -1300,7 +1289,7 @@ describe("Process DO — mechanical", () => {
           systemPrompt: "Test system prompt.",
           approvalPolicy: { default: "auto", rules: [] },
         };
-        await process.continueAgentLoop("run-chat-provider-error-response");
+        await process.tick("run-chat-provider-error-response");
         return {
           calls,
           emitted,
@@ -1371,7 +1360,6 @@ describe("Process DO — mechanical", () => {
         process.store.appendMessage("user", "fail over please");
         process.currentRun = {
           runId: "run-chat-provider-error-fallback",
-          queued: false,
           conversationId: "default",
           config: {
             profile: "task",
@@ -1403,7 +1391,7 @@ describe("Process DO — mechanical", () => {
           systemPrompt: "Test system prompt.",
           approvalPolicy: { default: "auto", rules: [] },
         };
-        await process.continueAgentLoop("run-chat-provider-error-fallback");
+        await process.tick("run-chat-provider-error-fallback");
         return {
           calls,
           emitted,
@@ -1511,7 +1499,6 @@ describe("Process DO — mechanical", () => {
         }));
         process.currentRun = {
           runId: "run-chat-fallback-auto-compact",
-          queued: false,
           conversationId: "default",
           config: {
             profile: "task",
@@ -1543,7 +1530,7 @@ describe("Process DO — mechanical", () => {
           systemPrompt: "Test system prompt.",
           approvalPolicy: { default: "auto", rules: [] },
         };
-        await process.continueAgentLoop("run-chat-fallback-auto-compact");
+        await process.tick("run-chat-fallback-auto-compact");
         return {
           calls,
           compactionConfigs,
@@ -1627,7 +1614,6 @@ describe("Process DO — mechanical", () => {
         process.store.appendMessage("user", "try another key");
         process.currentRun = {
           runId: "run-chat-provider-error-credential-fallback",
-          queued: false,
           conversationId: "default",
           config: {
             profile: "task",
@@ -1663,7 +1649,7 @@ describe("Process DO — mechanical", () => {
           systemPrompt: "Test system prompt.",
           approvalPolicy: { default: "auto", rules: [] },
         };
-        await process.continueAgentLoop("run-chat-provider-error-credential-fallback");
+        await process.tick("run-chat-provider-error-credential-fallback");
         return {
           calls,
           messages: process.store.getMessages(),
@@ -1702,7 +1688,6 @@ describe("Process DO — mechanical", () => {
         process.store.appendMessage("user", "overflow please");
         process.currentRun = {
           runId: "run-chat-provider-context-overflow-throw",
-          queued: false,
           conversationId: "default",
           config: {
             profile: "task",
@@ -1720,7 +1705,7 @@ describe("Process DO — mechanical", () => {
           systemPrompt: "Test system prompt.",
           approvalPolicy: { default: "auto", rules: [] },
         };
-        await process.continueAgentLoop("run-chat-provider-context-overflow-throw");
+        await process.tick("run-chat-provider-context-overflow-throw");
         return {
           emitted,
           currentRun: process.currentRun,
@@ -1770,7 +1755,6 @@ describe("Process DO — mechanical", () => {
         process.store.appendMessage("user", "overflow please");
         process.currentRun = {
           runId: "run-chat-provider-context-overflow-nested",
-          queued: false,
           conversationId: "default",
           config: {
             profile: "task",
@@ -1788,7 +1772,7 @@ describe("Process DO — mechanical", () => {
           systemPrompt: "Test system prompt.",
           approvalPolicy: { default: "auto", rules: [] },
         };
-        await process.continueAgentLoop("run-chat-provider-context-overflow-nested");
+        await process.tick("run-chat-provider-context-overflow-nested");
         return {
           currentRun: process.currentRun,
           messages: process.store.getMessages(),
@@ -1843,7 +1827,6 @@ describe("Process DO — mechanical", () => {
         process.store.appendMessage("user", "overflow please");
         process.currentRun = {
           runId: "run-chat-provider-context-overflow-response",
-          queued: false,
           conversationId: "default",
           config: {
             profile: "task",
@@ -1861,7 +1844,7 @@ describe("Process DO — mechanical", () => {
           systemPrompt: "Test system prompt.",
           approvalPolicy: { default: "auto", rules: [] },
         };
-        await process.continueAgentLoop("run-chat-provider-context-overflow-response");
+        await process.tick("run-chat-provider-context-overflow-response");
         return {
           emitted,
           contextState: process.store.getContextState("default"),
@@ -1952,7 +1935,6 @@ describe("Process DO — mechanical", () => {
         process.store.appendMessage("user", "stream please");
         process.currentRun = {
           runId: "run-chat-stream",
-          queued: false,
           conversationId: "default",
           config: {
             profile: "task",
@@ -1984,7 +1966,7 @@ describe("Process DO — mechanical", () => {
           systemPrompt: "Test system prompt.",
           approvalPolicy: { default: "auto", rules: [] },
         };
-        await process.continueAgentLoop("run-chat-stream");
+        await process.tick("run-chat-stream");
         return emitted;
       });
 
@@ -2081,7 +2063,6 @@ describe("Process DO — mechanical", () => {
         process.store.appendMessage("user", "stream retry please");
         process.currentRun = {
           runId: "run-chat-stream-retry",
-          queued: false,
           conversationId: "default",
           config: {
             profile: "task",
@@ -2099,7 +2080,7 @@ describe("Process DO — mechanical", () => {
           systemPrompt: "Test system prompt.",
           approvalPolicy: { default: "auto", rules: [] },
         };
-        await process.continueAgentLoop("run-chat-stream-retry");
+        await process.tick("run-chat-stream-retry");
         return {
           calls,
           emitted,
@@ -2212,7 +2193,6 @@ describe("Process DO — mechanical", () => {
         process.store.appendMessage("user", "stream retry to tool please");
         process.currentRun = {
           runId: "run-chat-stream-retry-tool-only",
-          queued: false,
           conversationId: "default",
           config: {
             profile: "task",
@@ -2233,7 +2213,7 @@ describe("Process DO — mechanical", () => {
             rules: [{ match: "fs.read", action: "ask" }],
           },
         };
-        await process.continueAgentLoop("run-chat-stream-retry-tool-only");
+        await process.tick("run-chat-stream-retry-tool-only");
         return {
           calls,
           emitted,
@@ -2288,7 +2268,6 @@ describe("Process DO — mechanical", () => {
           emitted.push({ signal, payload });
         };
         process.generation = {
-          [GENERATION_SERVICE_MARKER]: true,
           stream() {
             throw new Error("stream generation should not be used");
           },
@@ -2319,7 +2298,6 @@ describe("Process DO — mechanical", () => {
         process.store.appendMessage("user", "do not stream");
         process.currentRun = {
           runId: "run-chat-stream-off",
-          queued: false,
           conversationId: "default",
           config: {
             profile: "task",
@@ -2338,7 +2316,7 @@ describe("Process DO — mechanical", () => {
           systemPrompt: "Test system prompt.",
           approvalPolicy: { default: "auto", rules: [] },
         };
-        await process.continueAgentLoop("run-chat-stream-off");
+        await process.tick("run-chat-stream-off");
         return emitted;
       });
 
@@ -2385,7 +2363,6 @@ describe("Process DO — mechanical", () => {
           };
         };
         process.generation = {
-          [GENERATION_SERVICE_MARKER]: true,
           stream() {
             throw new Error("process-local stream should not be used");
           },
@@ -2413,7 +2390,6 @@ describe("Process DO — mechanical", () => {
         process.store.appendMessage("user", "use kernel");
         process.currentRun = {
           runId: "run-chat-kernel-executor",
-          queued: false,
           conversationId: "default",
           config: {
             executor: { kind: "kernel" },
@@ -2442,7 +2418,7 @@ describe("Process DO — mechanical", () => {
           systemPrompt: "Test system prompt.",
           approvalPolicy: { default: "auto", rules: [] },
         };
-        await process.continueAgentLoop("run-chat-kernel-executor");
+        await process.tick("run-chat-kernel-executor");
         return {
           kernelCalls,
           messages: process.store.getMessages(),
@@ -2513,7 +2489,6 @@ describe("Process DO — mechanical", () => {
           };
         };
         process.generation = {
-          [GENERATION_SERVICE_MARKER]: true,
           async generate() {
             throw new Error("process-local generate should not be used");
           },
@@ -2617,7 +2592,6 @@ describe("Process DO — mechanical", () => {
         process.store.appendMessage("user", "use local gateway");
         process.currentRun = {
           runId: "run-chat-custom-provider-transport-target",
-          queued: false,
           conversationId: "default",
           config: {
             provider: "custom",
@@ -2640,7 +2614,7 @@ describe("Process DO — mechanical", () => {
           systemPrompt: "Test system prompt.",
           approvalPolicy: { default: "auto", rules: [] },
         };
-        await process.continueAgentLoop("run-chat-custom-provider-transport-target");
+        await process.tick("run-chat-custom-provider-transport-target");
         return {
           deviceRequests,
           messages: process.store.getMessages(),
@@ -2673,7 +2647,7 @@ describe("Process DO — mechanical", () => {
       // Fire the alarm and wait for the agent loop to complete.
       // The test worker has no AI binding configured, so the LLM call
       // errors out gracefully, but the full lifecycle (tick →
-      // continueAgentLoop → finishRun) should still run.
+      // finishRun) should still run.
       await runDurableObjectAlarm(stub);
       await waitForRunComplete(stub);
 
@@ -2800,7 +2774,6 @@ describe("Process DO — mechanical", () => {
       await runInDurableObject(target, (instance: Process) => {
         (instance as any).currentRun = {
           runId: "existing-target-run",
-          queued: false,
           conversationId: "default",
         };
       });
@@ -2906,7 +2879,6 @@ describe("Process DO — mechanical", () => {
       await runInDurableObject(target, (instance: Process) => {
         (instance as any).currentRun = {
           runId: "existing-target-run",
-          queued: false,
           conversationId: "default",
         };
       });
@@ -2950,7 +2922,7 @@ describe("Process DO — mechanical", () => {
       });
 
       await runInDurableObject(kernel, async (instance: Kernel) => {
-        await (instance as any).handleProcessSignal(targetPid, {
+        await instance.recvFrame(targetPid, {
           type: "sig",
           signal: "proc.run.finished",
           payload: {
@@ -3045,7 +3017,6 @@ describe("Process DO — mechanical", () => {
         process.scheduleTick = vi.fn();
         process.currentRun = {
           runId: "active-source-run",
-          queued: false,
           conversationId: "default",
         };
       });
@@ -3149,7 +3120,6 @@ describe("Process DO — mechanical", () => {
         process.store.resolve("call_shell", { ok: true, stdout: "done" });
         process.currentRun = {
           runId: "active-source-turn",
-          queued: false,
           conversationId: "default",
           config: {
             profile: "task",
@@ -3186,7 +3156,7 @@ describe("Process DO — mechanical", () => {
         });
         expect(process.store.queueSize("default")).toBe(0);
 
-        await process.continueAgentLoop("active-source-turn");
+        await process.tick("active-source-turn");
 
         return {
           generatedInputs,
@@ -3334,7 +3304,6 @@ describe("Process DO — mechanical", () => {
         process.scheduleTick = () => {};
         process.currentRun = {
           runId: "active-run",
-          queued: false,
           conversationId: "default",
         };
       });
@@ -3565,7 +3534,6 @@ describe("Process DO — mechanical", () => {
         store.enqueue("run-default-next", "default queued");
         process.currentRun = {
           runId: "run-side",
-          queued: false,
           conversationId: "side",
         };
       });
@@ -3732,7 +3700,6 @@ describe("Process DO — mechanical", () => {
         store.appendMessage("user", "keep this", { conversationId: "thread" });
         process.currentRun = {
           runId: "config-source",
-          queued: false,
           conversationId: "other",
           config: {
             profile: "task",
@@ -4033,7 +4000,6 @@ describe("Process DO — mechanical", () => {
         store.appendMessage("user", "active message");
         process.currentRun = {
           runId: "run-active-compact",
-          queued: false,
           conversationId: "default",
         };
       });
@@ -4118,7 +4084,6 @@ describe("Process DO — mechanical", () => {
           emitted.push({ signal, payload });
         };
         process.generation = {
-          [GENERATION_SERVICE_MARKER]: true,
           async generate(request: any) {
             const serialized = JSON.stringify(request.context);
             expect(serialized).toContain("Context that must stay live.");
@@ -4167,7 +4132,6 @@ describe("Process DO — mechanical", () => {
         }));
         process.currentRun = {
           runId: "run-auto-compact",
-          queued: false,
           conversationId: "default",
           config: {
             profile: "task",
@@ -4185,7 +4149,7 @@ describe("Process DO — mechanical", () => {
           systemPrompt: "Test system prompt.",
           approvalPolicy: { default: "auto", rules: [] },
         };
-        await process.continueAgentLoop("run-auto-compact");
+        await process.tick("run-auto-compact");
         return {
           emitted,
           messages: process.store.getMessages(),
@@ -4223,7 +4187,6 @@ describe("Process DO — mechanical", () => {
           emitted.push({ signal, payload });
         };
         process.generation = {
-          [GENERATION_SERVICE_MARKER]: true,
           async generate() {
             throw new Error("chat generation should not run after compaction failure");
           },
@@ -4245,7 +4208,6 @@ describe("Process DO — mechanical", () => {
         }));
         process.currentRun = {
           runId: "run-auto-compact-provider-billing",
-          queued: false,
           conversationId: "default",
           config: {
             profile: "task",
@@ -4263,7 +4225,7 @@ describe("Process DO — mechanical", () => {
           systemPrompt: "Test system prompt.",
           approvalPolicy: { default: "auto", rules: [] },
         };
-        await process.continueAgentLoop("run-auto-compact-provider-billing");
+        await process.tick("run-auto-compact-provider-billing");
         return {
           emitted,
           currentRun: process.currentRun,
@@ -4306,7 +4268,6 @@ describe("Process DO — mechanical", () => {
           emitted.push({ signal, payload });
         };
         process.generation = {
-          [GENERATION_SERVICE_MARKER]: true,
           async generate() {
             throw new Error("chat generation should not run after abort");
           },
@@ -4329,7 +4290,6 @@ describe("Process DO — mechanical", () => {
         }));
         process.currentRun = {
           runId: "run-auto-compact-abort",
-          queued: false,
           conversationId: "default",
           config: {
             profile: "task",
@@ -4347,7 +4307,7 @@ describe("Process DO — mechanical", () => {
           systemPrompt: "Test system prompt.",
           approvalPolicy: { default: "auto", rules: [] },
         };
-        await process.continueAgentLoop("run-auto-compact-abort");
+        await process.tick("run-auto-compact-abort");
         return {
           emitted,
           currentRun: process.currentRun,
@@ -4410,7 +4370,7 @@ describe("Process DO — mechanical", () => {
         });
         process.store.register("call-1", "run-1", "fs.read", { path: "/root/test.txt" });
         process.store.enqueue("run-2", "follow-up after abort");
-        process.currentRun = { runId: "run-1", queued: false };
+        process.currentRun = { runId: "run-1" };
       });
 
       const res = (await stub.recvFrame(
@@ -4447,7 +4407,7 @@ describe("Process DO — mechanical", () => {
 
       await runInDurableObject(stub, (instance: Process) => {
         const process = instance as any;
-        process.currentRun = { runId: "run-1", queued: false };
+        process.currentRun = { runId: "run-1" };
       });
 
       let releaseSignalDispatch!: () => void;
@@ -4496,7 +4456,6 @@ describe("Process DO — mechanical", () => {
         const process = instance as any;
         process.currentRun = {
           runId: "run-hil-1",
-          queued: false,
           approvalPolicy: {
             default: "auto",
             rules: [{ match: "fs.read", action: "ask" }],
@@ -4535,7 +4494,6 @@ describe("Process DO — mechanical", () => {
         const process = instance as any;
         process.currentRun = {
           runId: "run-hil-2",
-          queued: false,
           approvalPolicy: {
             default: "auto",
             rules: [{ match: "fs.read", action: "ask" }],
@@ -4579,7 +4537,6 @@ describe("Process DO — mechanical", () => {
         const process = instance as any;
         process.currentRun = {
           runId: "run-hil-remember",
-          queued: false,
           approvalPolicy: {
             default: "auto",
             rules: [{ match: "fs.read", action: "ask" }],
@@ -4844,7 +4801,6 @@ describe("Process DO — mechanical", () => {
         const process = instance as any;
         process.currentRun = {
           runId: "run-history-active",
-          queued: false,
           conversationId: "side",
         };
       });
@@ -5065,7 +5021,6 @@ describe("Process DO — mechanical", () => {
 
         process.currentRun = {
           runId: "run-codemode-fetch-approval",
-          queued: false,
           conversationId: "default",
           approvalPolicy: {
             default: "auto",
@@ -5125,7 +5080,6 @@ describe("Process DO — mechanical", () => {
 
         process.currentRun = {
           runId: "run-codemode-fetch-capability",
-          queued: false,
           conversationId: "default",
           config: { capabilities: ["codemode.*"] },
           approvalPolicy: {
@@ -5169,7 +5123,6 @@ describe("Process DO — mechanical", () => {
 
         process.currentRun = {
           runId: "run-codemode-fetch-stopped-after-fetch",
-          queued: false,
           conversationId: "default",
           config: { capabilities: ["codemode.*", "net.fetch"] },
           approvalPolicy: {
@@ -5247,7 +5200,6 @@ describe("Process DO — mechanical", () => {
 
         process.currentRun = {
           runId: "run-codemode-basic",
-          queued: false,
           approvalPolicy: { default: "auto", rules: [] },
         };
         process.sendSignal = async () => {};
@@ -5393,7 +5345,7 @@ describe("Process DO — mechanical", () => {
 
       await runInDurableObject(stub, (instance: Process) => {
         const store = (instance as any).store;
-        store.setValue("currentRun", JSON.stringify({ runId, queued: false }));
+        store.setValue("currentRun", JSON.stringify({ runId }));
         store.register("call-reset-1", runId, "fs.read", { path: "/tmp/test.txt" });
         store.enqueue(runId, "queued after reset");
         store.appendMessage("user", "hello before reset");
@@ -5427,7 +5379,7 @@ describe("Process DO — mechanical", () => {
 
       await runInDurableObject(stub, (instance: Process) => {
         const store = (instance as any).store;
-        store.setValue("currentRun", JSON.stringify({ runId, queued: false }));
+        store.setValue("currentRun", JSON.stringify({ runId }));
         store.register("call-kill-1", runId, "fs.read", { path: "/tmp/test.txt" });
         store.enqueue(runId, "queued before kill");
         store.appendMessage("user", "hello before kill");
@@ -5579,12 +5531,11 @@ describe("Process DO — mechanical", () => {
 
         process.currentRun = {
           runId: "run-multi-tool-batch",
-          queued: false,
           approvalPolicy: { default: "auto", rules: [] },
         };
 
         process.sendSignal = async () => {};
-        process.continueAgentLoop = async (runId: string) => {
+        process.tick = async (runId: string) => {
           continuedRunIds.push(runId);
         };
         process.scheduleTick = (runId: string) => {
@@ -5672,7 +5623,6 @@ describe("Process DO — mechanical", () => {
 
         process.currentRun = {
           runId: "run-shell-continuation",
-          queued: false,
           conversationId: "default",
           approvalPolicy: {
             default: "auto",
@@ -5703,7 +5653,6 @@ describe("Process DO — mechanical", () => {
         };
         process.currentRun = {
           runId: "run-shell-unknown-continuation",
-          queued: false,
           conversationId: "default",
           approvalPolicy: {
             default: "auto",

@@ -436,20 +436,6 @@ describe("ProcessStore", () => {
       });
     });
 
-    it("allMessagesForArchive returns all messages in order", async () => {
-      const stub = await getProcessByPid("msg-archive");
-      await runInDurableObject(stub, (instance: Process) => {
-        const store = (instance as any).store;
-        store.appendMessage("user", "first");
-        store.appendMessage("assistant", "second");
-        store.appendMessage("user", "third");
-        const all = store.allMessagesForArchive();
-        expect(all).toHaveLength(3);
-        expect(all[0].content).toBe("first");
-        expect(all[2].content).toBe("third");
-      });
-    });
-
     it("keeps messages scoped to a conversation", async () => {
       const stub = await getProcessByPid("msg-conversation-scope");
       await runInDurableObject(stub, (instance: Process) => {

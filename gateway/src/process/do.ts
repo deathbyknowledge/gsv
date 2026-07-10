@@ -67,12 +67,10 @@ import type {
   ProcConversationCompactResult,
   ProcConversationForkArgs,
   ProcConversationForkResult,
-  ProcConversationSegment,
   ProcConversationSegmentReadArgs,
   ProcConversationSegmentReadResult,
   ProcConversationSegmentsArgs,
   ProcConversationSegmentsResult,
-  ProcConversationArchive,
   ProcConversationArchiveKind,
   ProcConversationTimelineEntry,
   ProcConversationTimelineArgs,
@@ -105,7 +103,7 @@ import type {
   UserMessage,
   ImageContent,
 } from "@earendil-works/pi-ai";
-import { createGenerationService, isGenerationService } from "../inference/service";
+import { createGenerationService } from "../inference/service";
 import {
   errorMessageFromUnknown,
   formatProviderErrorMessage,
@@ -160,6 +158,7 @@ import {
   requestProcessNetFetch,
   sendFrameToKernel,
 } from "../shared/utils";
+import { encodeBase64Bytes } from "../shared/base64";
 import {
   NET_FETCH,
   CODEMODE_EXEC,
@@ -176,9 +175,7 @@ import {
 import {
   DEFAULT_CONVERSATION_ID,
   normalizeConversationId,
-  type ProcessConversationArchiveRecord,
   type ProcessConversationRecord,
-  type ProcessConversationSegmentRecord,
 } from "./conversations";
 import {
   createProcessAiConfigSnapshot,
@@ -197,7 +194,6 @@ import type { NetFetchArgs, NetFetchResult } from "../syscalls/net";
 
 type RunState = {
   runId: string;
-  queued: boolean;
   conversationId: string;
   pendingRuntimeEvents?: number;
   config?: AiConfigResult;
@@ -288,12 +284,6 @@ function normalizeOptionalString(value: unknown): string | undefined {
 function asPlainRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
-    : null;
-}
-
-function normalizeRequiredText(value: unknown): string | null {
-  return typeof value === "string" && value.trim().length > 0
-    ? value.trim()
     : null;
 }
 
@@ -759,7 +749,6 @@ export class Process extends Host<Env> {
     return {
       ...parsed,
       runId: parsed.runId,
-      queued: parsed.queued ?? false,
       conversationId: normalizeConversationId(parsed.conversationId),
     };
   }
@@ -797,10 +786,6 @@ export class Process extends Host<Env> {
     const raw = this.store.getValue("interactive");
     if (raw === "0") return false;
     return true;
-  }
-
-  get initialized(): boolean {
-    return this.store.getValue("pid") !== null;
   }
 
   /**
@@ -912,7 +897,6 @@ export class Process extends Host<Env> {
             startedRunId = crypto.randomUUID();
             this.currentRun = {
               runId: startedRunId,
-              queued: false,
               conversationId: DEFAULT_CONVERSATION_ID,
             };
             await this.emitRunStarted(startedRunId, DEFAULT_CONVERSATION_ID, "assignment.autostart");
@@ -1094,7 +1078,7 @@ export class Process extends Host<Env> {
       media: media ?? undefined,
       origin: origin ?? undefined,
     });
-    this.currentRun = { runId, queued: false, conversationId };
+    this.currentRun = { runId, conversationId };
     await this.emitRunStarted(runId, conversationId, "proc.send");
     await this.scheduleTick(runId);
 
@@ -1193,7 +1177,7 @@ export class Process extends Host<Env> {
       return { ok: false, error: "proc.ipc.deliver requires arguments" };
     }
 
-    const sourcePid = normalizeRequiredText(args.sourcePid);
+    const sourcePid = normalizeOptionalString(args.sourcePid);
     if (!sourcePid) {
       return { ok: false, error: "proc.ipc.deliver requires sourcePid" };
     }
@@ -1202,7 +1186,7 @@ export class Process extends Host<Env> {
       return { ok: false, error: "proc.ipc.deliver requires source identity" };
     }
 
-    const message = normalizeRequiredText(args.message);
+    const message = normalizeOptionalString(args.message);
     if (!message) {
       return { ok: false, error: "proc.ipc.deliver requires message" };
     }
@@ -1257,7 +1241,7 @@ export class Process extends Host<Env> {
       runId,
       origin: origin ?? undefined,
     });
-    this.currentRun = { runId, queued: false, conversationId };
+    this.currentRun = { runId, conversationId };
     await this.emitRunStarted(runId, conversationId, "proc.ipc.deliver");
     await this.scheduleTick(runId);
 
@@ -1599,7 +1583,7 @@ export class Process extends Host<Env> {
       activeRunId: activeRun?.runId ?? null,
       activeConversationId: activeRun?.conversationId ?? null,
       pendingHil: this.toProcHilRequest(this.store.getPendingHil()),
-      context: await this.getContextStateForHistory(conversationId),
+      context: this.getContextStateForHistory(conversationId),
     };
   }
 
@@ -1624,7 +1608,7 @@ export class Process extends Host<Env> {
 
     const mimeType = object.httpMetadata?.contentType
       || (typeof args.mimeType === "string" && args.mimeType.trim() ? args.mimeType.trim() : "application/octet-stream");
-    const data = uint8ArrayToBase64(new Uint8Array(await object.arrayBuffer()));
+    const data = encodeBase64Bytes(await object.arrayBuffer());
 
     return {
       ok: true,
@@ -1635,7 +1619,7 @@ export class Process extends Host<Env> {
     };
   }
 
-  private async getContextStateForHistory(conversationId: string): Promise<ProcContextState | null> {
+  private getContextStateForHistory(conversationId: string): ProcContextState | null {
     const stored = this.store.getContextState(conversationId);
     const { count: messageCount, lastMessageId } = this.store.messageStats(conversationId);
     if (
@@ -1932,7 +1916,7 @@ export class Process extends Host<Env> {
       pid,
       conversationId,
       generation: conversation.generation,
-      segment: this.toProcConversationSegment(segment),
+      segment,
       archivedMessages: selected.length,
       archivedTo,
       summaryMessageId,
@@ -1943,7 +1927,7 @@ export class Process extends Host<Env> {
       ok: true,
       pid,
       conversationId,
-      segment: this.toProcConversationSegment(segment),
+      segment,
       archivedMessages: selected.length,
       archivedTo,
       summaryMessageId,
@@ -2068,7 +2052,7 @@ export class Process extends Host<Env> {
       pid,
       sourceConversationId,
       targetConversationId,
-      ...(segment ? { segment: this.toProcConversationSegment(segment) } : {}),
+      ...(segment ? { segment } : {}),
       ...(throughMessageId !== undefined ? { throughMessageId } : {}),
       restoredMessages,
       includedLiveSuffix: includeLiveSuffix,
@@ -2079,7 +2063,7 @@ export class Process extends Host<Env> {
       pid,
       sourceConversationId,
       targetConversation: this.toProcConversation(this.store.getConversation(targetConversationId) ?? conversation),
-      ...(segment ? { segment: this.toProcConversationSegment(segment) } : {}),
+      ...(segment ? { segment } : {}),
       ...(throughMessageId !== undefined ? { throughMessageId } : {}),
       restoredMessages,
       includedLiveSuffix: includeLiveSuffix,
@@ -2144,7 +2128,7 @@ export class Process extends Host<Env> {
     args: ProcConversationSegmentReadArgs,
   ): Promise<ProcConversationSegmentReadResult> {
     const conversationId = normalizeConversationId(args.conversationId);
-    const segmentId = normalizeRequiredText(args.segmentId);
+    const segmentId = normalizeOptionalString(args.segmentId);
     if (!segmentId) {
       return { ok: false, error: "proc.conversation.segment.read requires segmentId" };
     }
@@ -2177,7 +2161,7 @@ export class Process extends Host<Env> {
       ok: true,
       pid: this.pid,
       conversationId,
-      segment: this.toProcConversationSegment(segment),
+      segment,
       messages,
       messageCount: archivedMessages.length,
       truncated: offset + messages.length < archivedMessages.length,
@@ -2255,9 +2239,7 @@ export class Process extends Host<Env> {
       ok: true,
       pid: this.pid,
       conversationId,
-      segments: this.store
-        .listConversationSegments(conversationId)
-        .map((segment) => this.toProcConversationSegment(segment)),
+      segments: this.store.listConversationSegments(conversationId),
     };
   }
 
@@ -2348,12 +2330,10 @@ export class Process extends Host<Env> {
     const conversation = this.store.ensureConversation(conversationId);
     const archives = this.store
       .listConversationArchives(conversationId)
-      .filter((archive) => archive.generation === generation)
-      .map((archive) => this.toProcConversationArchive(archive));
+      .filter((archive) => archive.generation === generation);
     const segments = this.store
       .listConversationSegments(conversationId)
-      .filter((segment) => segment.generation === generation)
-      .map((segment) => this.toProcConversationSegment(segment));
+      .filter((segment) => segment.generation === generation);
     const current = conversation.generation === generation;
 
     if (!current && archives.length === 0 && segments.length === 0) {
@@ -2384,20 +2364,6 @@ export class Process extends Host<Env> {
     };
   }
 
-  private toProcConversationArchive(
-    record: ProcessConversationArchiveRecord,
-  ): ProcConversationArchive {
-    return {
-      id: record.id,
-      conversationId: record.conversationId,
-      generation: record.generation,
-      kind: record.kind,
-      messages: record.messages,
-      archivePath: record.archivePath,
-      createdAt: record.createdAt,
-    };
-  }
-
   private toProcConversationLiveGeneration(
     record: ProcessConversationRecord,
   ): ProcConversationLiveGeneration {
@@ -2409,22 +2375,6 @@ export class Process extends Host<Env> {
       firstMessageId: stats.firstMessageId,
       lastMessageId: stats.lastMessageId,
       updatedAt: record.updatedAt,
-    };
-  }
-
-  private toProcConversationSegment(
-    record: ProcessConversationSegmentRecord,
-  ): ProcConversationSegment {
-    return {
-      id: record.id,
-      conversationId: record.conversationId,
-      generation: record.generation,
-      kind: record.kind,
-      fromMessageId: record.fromMessageId,
-      toMessageId: record.toMessageId,
-      archivePath: record.archivePath,
-      summaryMessageId: record.summaryMessageId,
-      createdAt: record.createdAt,
     };
   }
 
@@ -2610,7 +2560,6 @@ export class Process extends Host<Env> {
     if (!this.currentRun && runId) {
       this.currentRun = {
         runId,
-        queued: false,
         conversationId: DEFAULT_CONVERSATION_ID,
       };
       await this.emitRunStarted(runId, DEFAULT_CONVERSATION_ID, "signal.watch");
@@ -2652,7 +2601,6 @@ export class Process extends Host<Env> {
     if (!this.currentRun) {
       this.currentRun = {
         runId: nextRunId,
-        queued: false,
         conversationId: DEFAULT_CONVERSATION_ID,
       };
       await this.emitRunStarted(nextRunId, DEFAULT_CONVERSATION_ID, "delegated-task");
@@ -2673,7 +2621,6 @@ export class Process extends Host<Env> {
     if (!this.currentRun && runId) {
       this.currentRun = {
         runId,
-        queued: false,
         conversationId,
       };
       await this.emitRunStarted(runId, conversationId, "schedule.event");
@@ -2682,10 +2629,6 @@ export class Process extends Host<Env> {
   }
 
   async tick(runId: string): Promise<void> {
-    await this.continueAgentLoop(runId);
-  }
-
-  private async continueAgentLoop(runId: string): Promise<void> {
     const run = this.currentRun;
     if (!run || run.runId !== runId) {
       console.warn(`[Process] Stale tick for run ${runId}, ignoring`);
@@ -3168,10 +3111,13 @@ export class Process extends Host<Env> {
     if (this.isLocalAiTextExecutor(executor)) {
       return await this.generateAssistantResponseLocally(options);
     }
-    return await this.generateAssistantResponseViaKernel({
-      ...options,
+    const result = await this.kernelRpc("ai.text.generate", this.buildAiTextGenerateArgs({
+      config: options.aiTextGenerateConfig,
+      context: options.context,
+      sessionAffinityKey: options.sessionAffinityKey,
       target: this.resolveAiTextGenerateTarget(executor),
-    });
+    }));
+    return result.message as unknown as AssistantMessage;
   }
 
   private async generateAssistantResponseLocally(options: {
@@ -3196,25 +3142,6 @@ export class Process extends Host<Env> {
       : null;
 
     if (!stream) {
-      const generation = this.generation as unknown;
-      if (!isGenerationService(generation)) {
-        const injected = generation as {
-          generate?: (request: {
-            config: AiConfigResult;
-            context: Context;
-            fetch?: typeof fetch;
-            sessionAffinityKey?: string;
-          }) => Promise<AssistantMessage>;
-        };
-        if (typeof injected.generate === "function") {
-          return await injected.generate({
-            config: options.config,
-            context: options.context,
-            ...(routedFetch ? { fetch: routedFetch } : {}),
-            sessionAffinityKey: options.sessionAffinityKey,
-          });
-        }
-      }
       return await this.generation.generate({
         config: options.config,
         context: options.context,
@@ -3244,22 +3171,6 @@ export class Process extends Host<Env> {
     return response ?? await stream.result();
   }
 
-  private async generateAssistantResponseViaKernel(options: {
-    config: AiConfigResult;
-    aiTextGenerateConfig?: AiTextGenerateConfig;
-    context: Context;
-    sessionAffinityKey?: string;
-    target?: string;
-  }): Promise<AssistantMessage> {
-    const result = await this.kernelRpc("ai.text.generate", this.buildAiTextGenerateArgs({
-      config: options.aiTextGenerateConfig,
-      context: options.context,
-      sessionAffinityKey: options.sessionAffinityKey,
-      target: options.target,
-    }));
-    return result.message as unknown as AssistantMessage;
-  }
-
   private async generateCompactionText(options: {
     config: AiConfigResult;
     aiTextGenerateConfig?: AiTextGenerateConfig;
@@ -3279,27 +3190,6 @@ export class Process extends Host<Env> {
       return result.text ?? "";
     }
     const routedFetch = this.createGenerationFetch(options.config);
-    const generation = this.generation as unknown;
-    if (!isGenerationService(generation)) {
-      const injected = generation as {
-        generateText?: (request: {
-          config: AiConfigResult;
-          context: Context;
-          options?: AiTextGenerateOptions;
-          fetch?: typeof fetch;
-          sessionAffinityKey?: string;
-        }) => Promise<string>;
-      };
-      if (typeof injected.generateText === "function") {
-        return await injected.generateText({
-          config: options.config,
-          context: options.context,
-          options: options.options,
-          ...(routedFetch ? { fetch: routedFetch } : {}),
-          sessionAffinityKey: options.sessionAffinityKey,
-        });
-      }
-    }
     return await this.generation.generateText({
       config: options.config,
       context: options.context,
@@ -3881,7 +3771,10 @@ export class Process extends Host<Env> {
     archiveId: string,
   ): Promise<string | null> {
     const normalizedConversationId = normalizeConversationId(conversationId);
-    const messages = this.store.allMessagesForArchive(normalizedConversationId);
+    const messages = this.store.getMessages({
+      conversationId: normalizedConversationId,
+      limit: null,
+    });
     if (messages.length === 0) return null;
 
     const key = `${this.conversationArchiveDir(normalizedConversationId)}/${archiveId}.jsonl.gz`;
@@ -3902,7 +3795,10 @@ export class Process extends Host<Env> {
       .sort((a, b) => a.id.localeCompare(b.id));
 
     for (const conversation of conversations) {
-      const messages = this.store.allMessagesForArchive(conversation.id);
+      const messages = this.store.getMessages({
+        conversationId: conversation.id,
+        limit: null,
+      });
       if (messages.length === 0) {
         continue;
       }
@@ -3945,13 +3841,8 @@ export class Process extends Host<Env> {
         JSON.stringify(serializeArchivedMessage(m)),
       )
       .join("\n");
-    await this.writeMessageArchive(key, jsonl);
-  }
-
-  private async writeMessageArchive(key: string, jsonl: string): Promise<void> {
     const compressed = await gzip(jsonl);
-    const bucket = this.env.STORAGE;
-    await bucket.put(key, compressed, {
+    await this.env.STORAGE.put(key, compressed, {
       httpMetadata: { contentType: "application/gzip" },
     });
   }
@@ -4123,7 +4014,7 @@ export class Process extends Host<Env> {
       return null;
     }
 
-    const data = uint8ArrayToBase64(new Uint8Array(await object.arrayBuffer()));
+    const data = encodeBase64Bytes(await object.arrayBuffer());
     this.mediaCache.set(key, data);
     while (this.mediaCache.size > PROCESS_MEDIA_CACHE_LIMIT) {
       const oldest = this.mediaCache.keys().next().value;
@@ -5009,7 +4900,6 @@ export class Process extends Host<Env> {
     });
     this.currentRun = {
       runId: next.runId,
-      queued: false,
       conversationId: next.conversationId,
     };
     await this.emitRunStarted(next.runId, next.conversationId, "queue.promote");
@@ -5186,10 +5076,10 @@ function parseInteractionOriginRecord(value: unknown): InteractionOrigin | undef
   const kind = record.kind;
 
   if (kind === "client") {
-    const connectionId = parseRequiredString(record.connectionId);
+    const connectionId = normalizeOptionalString(record.connectionId);
     if (!connectionId) return undefined;
-    const clientId = parseOptionalString(record.clientId);
-    const platform = parseOptionalString(record.platform);
+    const clientId = normalizeOptionalString(record.clientId);
+    const platform = normalizeOptionalString(record.platform);
     return {
       kind,
       connectionId,
@@ -5199,22 +5089,22 @@ function parseInteractionOriginRecord(value: unknown): InteractionOrigin | undef
   }
 
   if (kind === "app") {
-    const packageId = parseRequiredString(record.packageId);
-    const packageName = parseRequiredString(record.packageName);
-    const entrypointName = parseRequiredString(record.entrypointName);
-    const routeBase = parseRequiredString(record.routeBase);
+    const packageId = normalizeOptionalString(record.packageId);
+    const packageName = normalizeOptionalString(record.packageName);
+    const entrypointName = normalizeOptionalString(record.entrypointName);
+    const routeBase = normalizeOptionalString(record.routeBase);
     if (!packageId || !packageName || !entrypointName || !routeBase) return undefined;
     return { kind, packageId, packageName, entrypointName, routeBase };
   }
 
   if (kind === "adapter") {
-    const adapter = parseRequiredString(record.adapter);
-    const accountId = parseRequiredString(record.accountId);
-    const actorId = parseRequiredString(record.actorId);
+    const adapter = normalizeOptionalString(record.adapter);
+    const accountId = normalizeOptionalString(record.accountId);
+    const actorId = normalizeOptionalString(record.actorId);
     const surface = parseAdapterSurface(record.surface);
     if (!adapter || !accountId || !actorId || !surface) return undefined;
-    const actorLabel = parseOptionalString(record.actorLabel);
-    const messageId = parseOptionalString(record.messageId);
+    const actorLabel = normalizeOptionalString(record.actorLabel);
+    const messageId = normalizeOptionalString(record.messageId);
     return {
       kind,
       adapter,
@@ -5227,9 +5117,9 @@ function parseInteractionOriginRecord(value: unknown): InteractionOrigin | undef
   }
 
   if (kind === "device") {
-    const deviceId = parseRequiredString(record.deviceId);
+    const deviceId = normalizeOptionalString(record.deviceId);
     if (!deviceId) return undefined;
-    const cwd = parseOptionalString(record.cwd);
+    const cwd = normalizeOptionalString(record.cwd);
     return {
       kind,
       deviceId,
@@ -5238,7 +5128,7 @@ function parseInteractionOriginRecord(value: unknown): InteractionOrigin | undef
   }
 
   if (kind === "process") {
-    const sourcePid = parseRequiredString(record.sourcePid);
+    const sourcePid = normalizeOptionalString(record.sourcePid);
     if (!sourcePid) return undefined;
     return {
       kind,
@@ -5248,7 +5138,7 @@ function parseInteractionOriginRecord(value: unknown): InteractionOrigin | undef
   }
 
   if (kind === "scheduler") {
-    const scheduleId = parseRequiredString(record.scheduleId);
+    const scheduleId = normalizeOptionalString(record.scheduleId);
     if (!scheduleId) return undefined;
     return { kind, scheduleId };
   }
@@ -5358,16 +5248,16 @@ function parseAdapterSurface(value: unknown): AdapterSurface | undefined {
   if (!value || typeof value !== "object") return undefined;
   const record = value as Record<string, unknown>;
   const kind = record.kind;
-  const id = parseRequiredString(record.id);
+  const id = normalizeOptionalString(record.id);
   if (
     !id ||
     (kind !== "dm" && kind !== "group" && kind !== "channel" && kind !== "thread")
   ) {
     return undefined;
   }
-  const name = parseOptionalString(record.name);
-  const handle = parseOptionalString(record.handle);
-  const threadId = parseOptionalString(record.threadId);
+  const name = normalizeOptionalString(record.name);
+  const handle = normalizeOptionalString(record.handle);
+  const threadId = normalizeOptionalString(record.threadId);
   return {
     kind,
     id,
@@ -5375,16 +5265,6 @@ function parseAdapterSurface(value: unknown): AdapterSurface | undefined {
     ...(handle ? { handle } : {}),
     ...(threadId ? { threadId } : {}),
   };
-}
-
-function parseRequiredString(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function parseOptionalString(value: unknown): string | undefined {
-  return parseRequiredString(value);
 }
 
 function parseArchivedMessageRole(value: unknown): MessageRole {
@@ -5523,14 +5403,4 @@ async function gunzip(input: ArrayBuffer): Promise<string> {
     .stream()
     .pipeThrough(new DecompressionStream("gzip"));
   return new Response(stream).text();
-}
-
-function uint8ArrayToBase64(data: Uint8Array): string {
-  const chunks: string[] = [];
-  const chunkSize = 0x8000;
-  for (let index = 0; index < data.length; index += chunkSize) {
-    const slice = data.subarray(index, index + chunkSize);
-    chunks.push(String.fromCharCode(...slice));
-  }
-  return btoa(chunks.join(""));
 }

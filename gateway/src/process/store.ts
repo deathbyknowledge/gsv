@@ -467,7 +467,7 @@ export class ProcessStore {
       id: row.id,
       conversationId: row.conversation_id,
       generation: row.generation,
-      kind: row.kind === "compaction" ? "compaction" : "compaction",
+      kind: "compaction",
       fromMessageId: row.from_message_id,
       toMessageId: row.to_message_id,
       archivePath: row.archive_path,
@@ -509,7 +509,7 @@ export class ProcessStore {
       id: row.id,
       conversationId: row.conversation_id,
       generation: row.generation,
-      kind: row.kind === "compaction" ? "compaction" : "compaction",
+      kind: "compaction",
       fromMessageId: row.from_message_id,
       toMessageId: row.to_message_id,
       archivePath: row.archive_path,
@@ -960,14 +960,6 @@ export class ProcessStore {
       firstMessageId: rows[0]?.first_id ?? null,
       lastMessageId: rows[0]?.last_id ?? null,
     };
-  }
-
-  allMessagesForArchive(conversationId: string = DEFAULT_CONVERSATION_ID): MessageRecord[] {
-    const normalizedConversationId = normalizeConversationId(conversationId);
-    return [...this.sql.exec<MessageRow>(
-        "SELECT * FROM messages WHERE conversation_id = ? ORDER BY id ASC",
-      normalizedConversationId,
-    )].map(messageRecordFromRow);
   }
 
   clearMessages(conversationId: string = DEFAULT_CONVERSATION_ID): number {
