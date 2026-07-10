@@ -359,7 +359,7 @@ describe("streamWithWorkersAi", () => {
   it("emits thinking and tool call events from OpenAI-style chunks", async () => {
     const run = vi.fn().mockResolvedValue(sseStream([
       "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"think \",\"content\":\"I'll call \",\"tool_calls\":[{\"index\":0,\"id\":\"tool_1\",\"function\":{\"name\":\"fs.read\",\"arguments\":\"{\\\"path\\\"\"}}]}}]}\n\n",
-      "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"more\",\"content\":\"a tool.\",\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\":\\\"README.md\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+      "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"more\",\"content\":\"a tool.\",\"tool_calls\":[{},{\"index\":0,\"function\":{\"arguments\":\":\\\"README.md\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
       "data: [DONE]\n\n",
     ]));
     (env as unknown as { AI: { run: typeof run } }).AI = { run };

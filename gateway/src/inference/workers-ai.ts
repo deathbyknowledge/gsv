@@ -752,7 +752,9 @@ function extractDeltaToolCalls(input: unknown): NonNullable<WorkersAiStreamDelta
     const record = asRecord(entry);
     if (!record) return [];
     const fn = asRecord(record.function);
-    const index = asNumber(record.index) || fallbackIndex;
+    const index = typeof record.index === "number" && Number.isFinite(record.index)
+      ? record.index
+      : fallbackIndex;
     const id = asString(record.id);
     const name = asString(fn?.name) ?? asString(record.name);
     const argumentsDelta = asString(fn?.arguments) ?? asString(record.arguments);
