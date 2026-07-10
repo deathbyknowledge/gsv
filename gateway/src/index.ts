@@ -7,7 +7,6 @@ import type { Frame } from "./protocol/frames";
 import { getAgentByName } from "agents";
 import type { AppFrameContext } from "./protocol/app-frame";
 import { buildAppClientRouteBase, buildAppRunnerName } from "./protocol/app-session";
-import { deserializeAppHttpResponse, serializeAppHttpRequest } from "./app-runner";
 import type { PackageArtifactMetadata } from "./kernel/packages";
 import { buildOAuthClientMetadata } from "./oauth-http";
 import {
@@ -483,9 +482,7 @@ async function handlePackageAppSessionRequest(
     appFrame: resolved.appFrame,
   });
 
-  const response = deserializeAppHttpResponse(
-    await runner.gsvFetch(await serializeAppHttpRequest(buildPackageWorkerRequest(request, resolved, match.suffix))),
-  );
+  const response = await runner.gsvFetch(buildPackageWorkerRequest(request, resolved, match.suffix));
   return await withPackageAppClientSession(response, resolved);
 }
 
