@@ -398,7 +398,7 @@ export class Kernel extends Host<Env> {
   private broadcastMcpChanged(): void {
     const uids = new Set(this.mcpServers.list().map((record) => record.uid));
     for (const uid of uids) {
-      this.broadcastToUid(uid, "mcp.changed");
+      this.broadcastToUserUid(uid, "mcp.changed");
     }
   }
 
@@ -743,13 +743,13 @@ export class Kernel extends Host<Env> {
     // Client-facing process signals route by the owning human (owner_uid), not the
     // run-as identity (which may be the personal agent account).
     if (!runId) {
-      this.broadcastToUid(ownerUid, frame.signal, frame.payload);
+      this.broadcastToUserUid(ownerUid, frame.signal, frame.payload);
       return;
     }
 
     const route = this.runRoutes.get(runId);
     if (!route) {
-      this.broadcastToUid(ownerUid, frame.signal, frame.payload);
+      this.broadcastToUserUid(ownerUid, frame.signal, frame.payload);
       return;
     }
 
@@ -917,7 +917,7 @@ export class Kernel extends Host<Env> {
   ): void {
     const conn = this.connections.get(route.connectionId);
     if (!conn) {
-      this.broadcastToUid(uid, frame.signal, frame.payload);
+      this.broadcastToUserUid(uid, frame.signal, frame.payload);
       return;
     }
 
@@ -1123,7 +1123,7 @@ export class Kernel extends Host<Env> {
       callerOwnerUid: options.callerOwnerUid,
       appFrame: options.appFrame,
       serverVersion: SERVER_VERSION,
-      broadcastToUid: this.broadcastToUid.bind(this),
+      broadcastToUserUid: this.broadcastToUserUid.bind(this),
       getAppRunner: this.getAppRunner.bind(this),
       scheduleIpcCallTimeout: this.scheduleIpcCallTimeout.bind(this),
       scheduleScheduleWake: this.scheduleScheduleWake.bind(this),
@@ -2651,10 +2651,9 @@ export class Kernel extends Host<Env> {
   }
 
   /**
-   * Broadcast a signal to all active WebSocket connections belonging to a UID.
-   * Skips service connections — adapter traffic is explicit via adapter.send.
+   * Broadcast a signal to active user WebSockets belonging to a UID.
    */
-  broadcastToUid(uid: number, signal: string, payload?: unknown): void {
+  broadcastToUserUid(uid: number, signal: string, payload?: unknown): void {
     const frame: SignalFrame = {
       type: "sig",
       signal,
@@ -2665,7 +2664,7 @@ export class Kernel extends Host<Env> {
     for (const [, conn] of this.connections) {
       const state = conn.state;
       if (!state) continue;
-      if (state.identity?.role === "service") continue;
+      if (state.identity?.role !== "user") continue;
       if (state.identity?.process.uid === uid) {
         conn.send(json);
       }

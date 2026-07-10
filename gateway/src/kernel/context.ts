@@ -58,7 +58,7 @@ export type KernelContext = {
   callerOwnerUid?: number;
   appFrame?: AppFrameContext;
   serverVersion: string;
-  broadcastToUid: (uid: number, signal: string, payload?: unknown) => void;
+  broadcastToUserUid: (uid: number, signal: string, payload?: unknown) => void;
   getAppRunner: (uid: number, packageId: string) => unknown;
   scheduleIpcCallTimeout: (callId: string, delayMs: number) => Promise<string>;
   scheduleScheduleWake: (scheduleId: string, dueAtMs: number) => Promise<string>;

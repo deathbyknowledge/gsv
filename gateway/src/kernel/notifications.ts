@@ -193,7 +193,7 @@ export function handleNotificationCreate(
     actions: normalizeActions(args.actions),
     expiresAt: clampNotificationTtl(args.ttlMs),
   });
-  ctx.broadcastToUid(uid, "notification.created", { notification });
+  ctx.broadcastToUserUid(uid, "notification.created", { notification });
   return { notification };
 }
 
@@ -212,7 +212,7 @@ export function handleNotificationMarkRead(
 ): NotificationMarkReadResult {
   const notification = ctx.notifications.markRead(ctx.identity!.process.uid, args.notificationId);
   if (notification) {
-    ctx.broadcastToUid(ctx.identity!.process.uid, "notification.updated", { notification });
+    ctx.broadcastToUserUid(ctx.identity!.process.uid, "notification.updated", { notification });
   }
   return { notification };
 }
@@ -223,7 +223,7 @@ export function handleNotificationDismiss(
 ): NotificationDismissResult {
   const notification = ctx.notifications.dismiss(ctx.identity!.process.uid, args.notificationId);
   if (notification) {
-    ctx.broadcastToUid(ctx.identity!.process.uid, "notification.dismissed", { notification });
+    ctx.broadcastToUserUid(ctx.identity!.process.uid, "notification.dismissed", { notification });
   }
   return { notification };
 }

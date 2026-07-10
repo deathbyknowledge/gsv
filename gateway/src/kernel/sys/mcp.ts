@@ -73,7 +73,7 @@ export async function handleSysMcpAdd(
     uid: effectiveUid,
     name,
   });
-  ctx.broadcastToUid(effectiveUid, "mcp.changed");
+  ctx.broadcastToUserUid(effectiveUid, "mcp.changed");
   return { server: summarizeServer(record, ctx) };
 }
 
@@ -101,7 +101,7 @@ export async function handleSysMcpRemove(
   await ctx.removeMcpServerConnection(serverId);
   const removed = ctx.mcpServers.delete(serverId, effectiveUid);
   if (removed) {
-    ctx.broadcastToUid(effectiveUid, "mcp.changed");
+    ctx.broadcastToUserUid(effectiveUid, "mcp.changed");
   }
   return { removed };
 }

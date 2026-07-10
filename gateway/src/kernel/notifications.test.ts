@@ -71,7 +71,7 @@ function makeContext(overrides: Partial<KernelContext> = {}): KernelContext {
         source: { kind: "user" },
       })),
     } as unknown as KernelContext["notifications"],
-    broadcastToUid: vi.fn(),
+    broadcastToUserUid: vi.fn(),
     ...overrides,
   } as KernelContext;
 }
@@ -98,7 +98,7 @@ describe("notification handlers", () => {
         processId: "proc-builder",
       },
     }));
-    expect(ctx.broadcastToUid).toHaveBeenCalledWith(
+    expect(ctx.broadcastToUserUid).toHaveBeenCalledWith(
       1000,
       "notification.created",
       expect.objectContaining({
@@ -123,7 +123,7 @@ describe("notification handlers", () => {
 
     const readResult = handleNotificationMarkRead({ notificationId: "notif-1" }, ctx);
     expect(readResult.notification?.readAt).toBe(2);
-    expect(ctx.broadcastToUid).toHaveBeenCalledWith(
+    expect(ctx.broadcastToUserUid).toHaveBeenCalledWith(
       1000,
       "notification.updated",
       expect.anything(),
@@ -131,7 +131,7 @@ describe("notification handlers", () => {
 
     const dismissResult = handleNotificationDismiss({ notificationId: "notif-1" }, ctx);
     expect(dismissResult.notification?.dismissedAt).toBe(2);
-    expect(ctx.broadcastToUid).toHaveBeenCalledWith(
+    expect(ctx.broadcastToUserUid).toHaveBeenCalledWith(
       1000,
       "notification.dismissed",
       expect.anything(),

@@ -80,7 +80,7 @@ function makeContext(
         id: "server-1",
       };
     }),
-    broadcastToUid: vi.fn(),
+    broadcastToUserUid: vi.fn(),
     removeMcpServerConnection: vi.fn(async () => undefined),
     callMcpTool: vi.fn(async () => ({
       content: [{ type: "text", text: "ok" }],
@@ -171,15 +171,15 @@ describe("sys.mcp handlers", () => {
 
   it("broadcasts MCP adds after storing the owner-scoped server record", async () => {
     const ctx = makeContext(1000, mcpServers);
-    const broadcastToUid = ctx.broadcastToUid as ReturnType<typeof vi.fn>;
+    const broadcastToUserUid = ctx.broadcastToUserUid as ReturnType<typeof vi.fn>;
 
     await handleSysMcpAdd({
       name: "GitHub",
       url: "https://mcp.example.com/mcp",
     }, ctx);
 
-    expect(broadcastToUid).toHaveBeenCalledWith(1000, "mcp.changed");
-    expect(broadcastToUid.mock.invocationCallOrder[0]).toBeGreaterThan(
+    expect(broadcastToUserUid).toHaveBeenCalledWith(1000, "mcp.changed");
+    expect(broadcastToUserUid.mock.invocationCallOrder[0]).toBeGreaterThan(
       (mcpServers.upsert as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0],
     );
   });
@@ -269,7 +269,7 @@ describe("sys.mcp handlers", () => {
     expect(await handleSysMcpRemove({ serverId: "server-2" }, ctx)).toEqual({ removed: false });
     expect(await handleSysMcpRemove({ serverId: "server-1" }, ctx)).toEqual({ removed: true });
     expect(ctx.removeMcpServerConnection).toHaveBeenCalledWith("server-1");
-    expect(ctx.broadcastToUid).toHaveBeenCalledWith(1000, "mcp.changed");
+    expect(ctx.broadcastToUserUid).toHaveBeenCalledWith(1000, "mcp.changed");
   });
 
   it("defaults process-originated MCP access to the owning human", async () => {

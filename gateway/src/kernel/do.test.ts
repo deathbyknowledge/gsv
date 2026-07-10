@@ -55,6 +55,33 @@ describe("Kernel device connection cleanup", () => {
   });
 });
 
+describe("Kernel user signal broadcasts", () => {
+  it("does not send user signals to driver or service sockets", () => {
+    const user = { state: { identity: { role: "user", process: { uid: 1000 } } }, send: vi.fn() };
+    const otherUser = { state: { identity: { role: "user", process: { uid: 2000 } } }, send: vi.fn() };
+    const driver = { state: { identity: { role: "driver", process: { uid: 1000 } } }, send: vi.fn() };
+    const service = { state: { identity: { role: "service", process: { uid: 1000 } } }, send: vi.fn() };
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.connections = new Map([
+      ["user", user],
+      ["other-user", otherUser],
+      ["driver", driver],
+      ["service", service],
+    ]);
+
+    kernel.broadcastToUserUid(1000, "notification.created", { id: "note-1" });
+
+    expect(user.send).toHaveBeenCalledWith(JSON.stringify({
+      type: "sig",
+      signal: "notification.created",
+      payload: { id: "note-1" },
+    }));
+    expect(otherUser.send).not.toHaveBeenCalled();
+    expect(driver.send).not.toHaveBeenCalled();
+    expect(service.send).not.toHaveBeenCalled();
+  });
+});
+
 describe("Kernel package app authorization", () => {
   it("uses account capabilities without elevating from the package manifest", () => {
     const kernel = Object.create(Kernel.prototype) as any;
