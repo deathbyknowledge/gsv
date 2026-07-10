@@ -22,7 +22,6 @@ import type {
   SchedulerRunArgs,
   SchedulerRunResult,
   SysCliDownloadsResult,
-  SysSetupResult,
   SysUpdateArgs,
   SysUpdateResult,
 } from "@humansandmachines/gsv/protocol";
@@ -367,10 +366,6 @@ export class Kernel extends Host<Env> {
     return { id: serverId };
   }
 
-  private async removeMcpServerConnection(serverId: string): Promise<void> {
-    await this.removeMcpServer(serverId);
-  }
-
   private async refreshMcpServerConnection(serverId: string): Promise<void> {
     const connection = this.mcp.mcpConnections[serverId];
     if (connection?.connectionState === "connected" || connection?.connectionState === "ready") {
@@ -405,18 +400,6 @@ export class Kernel extends Host<Env> {
     for (const uid of uids) {
       this.broadcastToUid(uid, "mcp.changed");
     }
-  }
-
-  private async callMcpTool(
-    serverId: string,
-    toolName: string,
-    args: Record<string, unknown>,
-  ): Promise<unknown> {
-    return await this.mcp.callTool({
-      serverId,
-      name: toolName,
-      arguments: args,
-    });
   }
 
   shouldSendProtocolMessages(_: Connection, __: ConnectionContext): boolean {
@@ -505,50 +488,30 @@ export class Kernel extends Host<Env> {
     args: NetFetchArgs,
     options: ProcessNetFetchOptions = {},
   ): Promise<NetFetchResult> {
-    return await this.requestProcessDevice(processId, {
-      target,
-      call: "net.fetch",
-      args,
-      ttlMs: options.ttlMs,
-      skipCapabilityCheck: options.internalPurpose === "model-transport",
-    }) as NetFetchResult;
-  }
-
-  private async requestProcessDevice(
-    processId: string,
-    request: {
-      target: string;
-      call: SyscallName;
-      args: unknown;
-      ttlMs?: number;
-      skipCapabilityCheck?: boolean;
-    },
-  ): Promise<unknown> {
     const ctx = this.buildProcessContext(processId);
     if (!ctx) {
       throw new Error("Unknown process");
     }
     if (
-      !request.skipCapabilityCheck &&
-      !isInternalOnlySyscall(request.call) &&
-      !hasCapability(ctx.identity!.capabilities, request.call)
+      options.internalPurpose !== "model-transport" &&
+      !hasCapability(ctx.identity!.capabilities, "net.fetch")
     ) {
-      throw new Error(`Permission denied: ${request.call}`);
+      throw new Error("Permission denied: net.fetch");
     }
 
-    const target = getVisibleTarget(ctx, request.target, { includeOffline: true });
-    if (!target) {
-      throw new Error(`Access denied to device: ${request.target}`);
+    const device = getVisibleTarget(ctx, target, { includeOffline: true });
+    if (!device) {
+      throw new Error(`Access denied to device: ${target}`);
     }
-    if (target.providerId !== "device" || target.route.kind !== "connection") {
-      throw new Error(`Target does not support device requests: ${request.target}`);
+    if (device.providerId !== "device" || device.route.kind !== "connection") {
+      throw new Error(`Target does not support device requests: ${target}`);
     }
     return await this.requestDevice(
-      target.targetId,
-      request.call,
-      request.args,
-      request.ttlMs,
-    );
+      device.targetId,
+      "net.fetch",
+      args,
+      options.ttlMs,
+    ) as NetFetchResult;
   }
 
   /**
@@ -598,7 +561,7 @@ export class Kernel extends Host<Env> {
       return errFrame(frame.id, 403, `Permission denied: ${frame.call}`);
     }
 
-    const ctx = this.buildServiceContext(identity, appFrame);
+    const ctx = this.buildKernelContext({ identity, appFrame });
     const origin: RouteOrigin = { type: "app", id: frame.id };
     const pending = this.createPendingAppResponse(frame.id);
     const result = await dispatch(frame, origin, ctx, this.buildDispatchDeps());
@@ -718,7 +681,7 @@ export class Kernel extends Host<Env> {
           capabilities,
         };
         const repoRef = `${owner}/${repo}`;
-        const repoCtx = this.buildServiceContext(identity);
+        const repoCtx = this.buildKernelContext({ identity });
 
         if (input.write) {
           if (!canWriteRepo(repoRef, repoCtx)) {
@@ -1106,7 +1069,7 @@ export class Kernel extends Host<Env> {
       return errFrame(frame.id, 403, `Permission denied: ${frame.call}`);
     }
 
-    const ctx = this.buildServiceContext(identity);
+    const ctx = this.buildKernelContext({ identity });
     const origin: RouteOrigin = { type: "process", id: "__service_binding__" };
     const result = await dispatch(frame, origin, ctx, this.buildDispatchDeps());
 
@@ -1125,10 +1088,6 @@ export class Kernel extends Host<Env> {
       connection,
       identity: state.identity as ConnectionIdentity | undefined,
     });
-  }
-
-  private buildServiceContext(identity: ConnectionIdentity, appFrame?: AppFrameContext): KernelContext {
-    return this.buildKernelContext({ identity, appFrame });
   }
 
   private buildKernelContext(options: {
@@ -1168,12 +1127,18 @@ export class Kernel extends Host<Env> {
       getAppRunner: this.getAppRunner.bind(this),
       scheduleIpcCallTimeout: this.scheduleIpcCallTimeout.bind(this),
       scheduleScheduleWake: this.scheduleScheduleWake.bind(this),
-      cancelScheduleWake: this.cancelScheduleWake.bind(this),
+      cancelScheduleWake: async (wakeScheduleId) => {
+        await this.cancelSchedule(wakeScheduleId);
+      },
       runSchedules: this.runSchedules.bind(this),
       addMcpServerConnection: this.addMcpServerConnection.bind(this),
-      removeMcpServerConnection: this.removeMcpServerConnection.bind(this),
+      removeMcpServerConnection: this.removeMcpServer.bind(this),
       refreshMcpServerConnection: this.refreshMcpServerConnection.bind(this),
-      callMcpTool: this.callMcpTool.bind(this),
+      callMcpTool: (serverId, toolName, args) => this.mcp.callTool({
+        serverId,
+        name: toolName,
+        arguments: args,
+      }),
     };
   }
 
@@ -1205,7 +1170,11 @@ export class Kernel extends Host<Env> {
     deviceId: string;
     ttlMs: number;
   }): Promise<{ cancel: () => void }> {
-    const scheduleId = await this.scheduleRouteExpiry(route.id, route.ttlMs);
+    const scheduleId = (await this.schedule(
+      route.ttlMs / 1000,
+      "onRouteExpired",
+      route.id,
+    )).id;
 
     try {
       this.routes.register(
@@ -1223,15 +1192,6 @@ export class Kernel extends Host<Env> {
     return {
       cancel: () => this.cancelRoute(route.id),
     };
-  }
-
-  private async scheduleRouteExpiry(routeId: string, ttlMs: number): Promise<string> {
-    const sched = await this.schedule(
-      ttlMs / 1000,
-      "onRouteExpired",
-      routeId,
-    );
-    return sched.id;
   }
 
   private cancelRoute(routeId: string): void {
@@ -1590,17 +1550,13 @@ export class Kernel extends Host<Env> {
   }
 
   private async scheduleScheduleWake(scheduleId: string, dueAtMs: number): Promise<string> {
-    const wakeAt = new Date(ceilToSecondMs(Math.max(Date.now() + 1_000, dueAtMs)));
+    const wakeAt = new Date(Math.ceil(Math.max(Date.now() + 1_000, dueAtMs) / 1_000) * 1_000);
     const sched = await this.schedule(
       wakeAt,
       "onScheduleDue",
       scheduleId,
     );
     return sched.id;
-  }
-
-  private async cancelScheduleWake(wakeScheduleId: string): Promise<void> {
-    await this.cancelSchedule(wakeScheduleId);
   }
 
   private async handleReq(connection: Connection<ConnectionState>, frame: RequestFrame): Promise<void> {
@@ -2035,9 +1991,6 @@ export class Kernel extends Host<Env> {
   }
 
   private scheduleCliDownloadsRefreshForVersion(): void {
-    if (!this.env.STORAGE) {
-      return;
-    }
     if (this.config.get(CLI_DOWNLOADS_REFRESHED_VERSION_KEY) === SERVER_VERSION) {
       return;
     }
@@ -2131,8 +2084,7 @@ export class Kernel extends Host<Env> {
 
     try {
       const data = await handleKernelSetup(frame.args, ctx);
-      const setup = data as SysSetupResult;
-      await ensureDefaultConversationExecutor(ctx, setup.user);
+      await ensureDefaultConversationExecutor(ctx, data.user);
       this.sendOk(connection, frame.id, data);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -2177,22 +2129,19 @@ export class Kernel extends Host<Env> {
       return;
     }
 
-    const removed = this.routes.remove(frame.id);
-    if (!removed) {
-      return;
-    }
+    this.routes.remove(frame.id);
 
     this.clearBinaryRoutesForRequest(frame.id);
 
-    if (removed.scheduleId) {
-      this.cancelSchedule(removed.scheduleId).catch(() => {});
+    if (route.scheduleId) {
+      this.cancelSchedule(route.scheduleId).catch(() => {});
     }
 
-    if (removed.call === "shell.exec") {
-      this.recordShellSessionFromResponse(removed.deviceId, frame);
+    if (route.call === "shell.exec") {
+      this.recordShellSessionFromResponse(route.deviceId, frame);
     }
 
-    this.deliverToOrigin(removed.origin, frame);
+    this.deliverToOrigin(route.origin, frame);
   }
 
   private handleBinaryMessage(connection: Connection<ConnectionState>, message: WSMessage): void {
@@ -2874,10 +2823,6 @@ function errFrame(id: string, code: number, message: string): ResponseFrame {
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" ? value as Record<string, unknown> : null;
-}
-
-function ceilToSecondMs(value: number): number {
-  return Math.ceil(value / 1_000) * 1_000;
 }
 
 function scheduleResultSummary(record: ScheduleRecord, result: unknown): string {

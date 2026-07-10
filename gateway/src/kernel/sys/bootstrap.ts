@@ -154,9 +154,6 @@ export async function handleSysBootstrap(
       throw error;
     }
     const defaultCliChannel = inferDefaultCliChannel(imported.remoteRef);
-    if (!ctx.env.STORAGE) {
-      throw new Error("STORAGE binding is required for CLI bootstrap");
-    }
     const storage = ctx.env.STORAGE;
     const importedRepo = {
       ...ROOT_GSV_REPO,
