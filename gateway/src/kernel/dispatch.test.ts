@@ -41,12 +41,17 @@ function makeContext(): KernelContext {
   } as unknown as KernelContext;
 }
 
+function sendFrame(connection: { send(message: string): void }, frame: unknown): void {
+  connection.send(JSON.stringify(frame));
+}
+
 describe("dispatch", () => {
   it("routes target syscalls to browser driver targets", async () => {
     const send = vi.fn();
     const cancelRoute = vi.fn();
     const registerRoute = vi.fn(async () => ({ cancel: cancelRoute }));
     const deps = {
+      sendFrame,
       connections: new Map([
         ["conn_1", {
           state: {
@@ -109,6 +114,7 @@ describe("dispatch", () => {
     const send = vi.fn();
     const registerRoute = vi.fn(async () => ({ cancel: vi.fn() }));
     const deps = {
+      sendFrame,
       connections: new Map([
         ["conn_1", {
           state: {
@@ -225,6 +231,7 @@ describe("dispatch", () => {
       throw new Error("schedule unavailable");
     });
     const deps = {
+      sendFrame,
       connections: new Map([
         ["conn_1", {
           state: {
@@ -288,6 +295,7 @@ describe("dispatch", () => {
       throw new Error("Binary stream id already active: 123");
     });
     const deps = {
+      sendFrame,
       connections: new Map([
         ["conn_1", {
           state: {
@@ -365,6 +373,7 @@ describe("dispatch", () => {
     const cancelRoute = vi.fn();
     const registerRoute = vi.fn(async () => ({ cancel: cancelRoute }));
     const deps = {
+      sendFrame,
       connections: new Map([
         ["conn_1", {
           state: {

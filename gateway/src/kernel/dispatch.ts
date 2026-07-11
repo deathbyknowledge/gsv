@@ -148,6 +148,7 @@ import {
 export type DispatchDeps = {
   shellSessions: ShellSessionStore;
   connections: Map<string, Connection>;
+  sendFrame: (connection: Connection, frame: RequestFrame | ResponseFrame) => void;
   registerRoute: (route: {
     id: string;
     call: SyscallName;
@@ -756,12 +757,13 @@ async function routeToTarget(
   }
 
   try {
-    deviceConn.send(JSON.stringify({
+    deps.sendFrame(deviceConn, {
       type: "req",
       id: frame.id,
       call: frame.call,
       args: frame.args,
-    }));
+      ...(frame.body ? { body: frame.body } : {}),
+    } as RequestFrame);
   } catch (error) {
     route.cancel();
     binaryRoute?.cancel();

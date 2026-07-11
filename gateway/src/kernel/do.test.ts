@@ -6,8 +6,75 @@ vi.mock("../shared/utils", () => ({
 
 import { sendFrameToProcess } from "../shared/utils";
 import { Kernel } from "./do";
+import {
+  BINARY_FRAME_DATA,
+  BINARY_FRAME_END,
+  buildBinaryFrame,
+  parseBinaryFrame,
+} from "@humansandmachines/gsv/protocol";
 
 const sendFrameToProcessMock = vi.mocked(sendFrameToProcess);
+
+describe("Kernel frame bodies", () => {
+  it("decodes WebSocket body frames into a byte stream", async () => {
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.pendingFrameBodies = new Map();
+    const connection = { id: "conn-1" };
+
+    const frame = kernel.decodeWebSocketFrame(connection, {
+      type: "req",
+      id: "req-1",
+      call: "fs.transfer.receive",
+      args: { path: "/tmp/file" },
+      body: { streamId: 7, length: 3 },
+    });
+    kernel.handleBinaryMessage(
+      connection,
+      buildBinaryFrame(7, BINARY_FRAME_DATA, new Uint8Array([1, 2, 3])),
+    );
+    kernel.handleBinaryMessage(connection, buildBinaryFrame(7, BINARY_FRAME_END));
+
+    expect(frame.body.length).toBe(3);
+    expect(
+      new Uint8Array(await new Response(frame.body.stream).arrayBuffer()),
+    ).toEqual(new Uint8Array([1, 2, 3]));
+    expect(kernel.pendingFrameBodies.size).toBe(0);
+  });
+
+  it("announces a response body before sending its chunks", async () => {
+    const sends: Array<string | ArrayBuffer> = [];
+    const pending: Promise<unknown>[] = [];
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.binaryRoutes = new Map();
+    kernel.pendingBinaryStreams = new Map();
+    kernel.nextFrameBodyStreamId = 1;
+    kernel.ctx = { waitUntil: (promise: Promise<unknown>) => pending.push(promise) };
+    const connection = { send: (message: string | ArrayBuffer) => sends.push(message) };
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([4, 5, 6]));
+        controller.close();
+      },
+    });
+
+    kernel.sendWebSocketFrame(connection, {
+      type: "res",
+      id: "req-1",
+      ok: true,
+      data: { ok: true },
+      body: { stream, length: 3 },
+    });
+    await Promise.all(pending);
+
+    const descriptor = JSON.parse(sends[0] as string);
+    const data = parseBinaryFrame(sends[1] as ArrayBuffer);
+    const end = parseBinaryFrame(sends[2] as ArrayBuffer);
+    expect(descriptor.body).toEqual({ streamId: 1, length: 3 });
+    expect(data).toMatchObject({ streamId: descriptor.body.streamId, flags: BINARY_FRAME_DATA });
+    expect(data?.payload).toEqual(new Uint8Array([4, 5, 6]));
+    expect(end).toMatchObject({ flags: BINARY_FRAME_END });
+  });
+});
 
 describe("Kernel device connection cleanup", () => {
   it("closes live driver connections when a machine is forgotten", () => {

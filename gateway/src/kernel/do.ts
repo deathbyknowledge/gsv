@@ -10,7 +10,13 @@ import {
   type AgentMcpOAuthProvider,
 } from "agents/mcp/do-oauth-client-provider";
 import type { MCPConnectionResult } from "agents/mcp/client";
-import type { Frame, RequestFrame, ResponseFrame, SignalFrame } from "../protocol/frames";
+import type {
+  Frame,
+  FrameBody,
+  RequestFrame,
+  ResponseFrame,
+  SignalFrame,
+} from "../protocol/frames";
 import type {
   ConnectionIdentity,
   NetFetchArgs,
@@ -32,6 +38,7 @@ import {
   buildBinaryFrame,
   parseBinaryFrame,
   type BinaryFrame,
+  type BinaryFrameDescriptor,
 } from "@humansandmachines/gsv/protocol";
 import type { SyscallName } from "../syscalls";
 import type {
@@ -110,6 +117,8 @@ import { runKernelSqlMigrations } from "./schema/migrations";
 
 const SERVER_VERSION = "0.4.0";
 const KERNEL_BINARY_DEVICE_ID = "__gsv_kernel__";
+const FRAME_BODY_CHUNK_BYTES = 1024 * 1024;
+const FRAME_BODY_TTL_MS = 120_000;
 const CLI_DOWNLOADS_REFRESHED_VERSION_KEY = "config/downloads/cli/refreshed_for_version";
 const CLI_DOWNLOADS_REFRESH_ATTEMPT_KEY = "config/downloads/cli/refresh_attempt_at";
 const CLI_DOWNLOADS_REFRESHED_AT_KEY = "config/downloads/cli/refreshed_at";
@@ -132,6 +141,14 @@ type BinaryRoute = {
 type PendingBinaryStream = {
   controller: ReadableStreamDefaultController<Uint8Array>;
   timeoutId: ReturnType<typeof setTimeout>;
+};
+
+type PendingFrameBody = {
+  connectionId: string;
+  controller: ReadableByteStreamController;
+  timeoutId: ReturnType<typeof setTimeout>;
+  length?: number;
+  received: number;
 };
 
 type ProcessNetFetchOptions = {
@@ -213,6 +230,8 @@ export class Kernel extends Host<Env> {
   private readonly binaryRoutes = new Map<number, BinaryRoute>();
   private readonly binaryRoutesByRequest = new Map<string, Set<number>>();
   private readonly pendingBinaryStreams = new Map<number, PendingBinaryStream>();
+  private readonly pendingFrameBodies = new Map<string, PendingFrameBody>();
+  private nextFrameBodyStreamId = 1;
   private cliDownloadsRefresh: Promise<void> | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
@@ -426,6 +445,7 @@ export class Kernel extends Host<Env> {
 
     this.failRoutesForConnection(connection.id);
     this.runRoutes.clearForConnection(connection.id);
+    this.failFrameBodiesForConnection(connection.id);
   }
 
   async onMessage(connection: Connection<ConnectionState>, message: WSMessage): Promise<void> {
@@ -434,11 +454,24 @@ export class Kernel extends Host<Env> {
       return;
     }
 
-    let frame: Frame;
+    let parsed: Frame;
     try {
-      frame = JSON.parse(message);
+      parsed = JSON.parse(message) as Frame;
     } catch {
       this.sendError(connection, "?", 400, "Malformed JSON");
+      return;
+    }
+
+    let frame: Frame;
+    try {
+      frame = this.decodeWebSocketFrame(connection, parsed);
+    } catch (error) {
+      this.sendError(
+        connection,
+        "id" in parsed && typeof parsed.id === "string" ? parsed.id : "?",
+        400,
+        error instanceof Error ? error.message : "Invalid frame body",
+      );
       return;
     }
 
@@ -1226,6 +1259,7 @@ export class Kernel extends Host<Env> {
     return {
       shellSessions: this.shellSessions,
       connections: this.connections,
+      sendFrame: this.sendWebSocketFrame.bind(this),
       registerRoute: this.registerRouteWithExpiry.bind(this),
       registerBinaryRoute: this.registerBinaryRoute.bind(this),
       requestDevice: this.requestDevice.bind(this),
@@ -1276,6 +1310,142 @@ export class Kernel extends Host<Env> {
       this.cancelSchedule(route.scheduleId).catch(() => {});
     }
     this.clearBinaryRoutesForRequest(routeId);
+  }
+
+  private decodeWebSocketFrame(
+    connection: Connection<ConnectionState>,
+    frame: Frame,
+  ): Frame {
+    const descriptor = (frame as unknown as { body?: BinaryFrameDescriptor }).body;
+    if (descriptor === undefined) {
+      return frame;
+    }
+    if (frame.type === "sig" || (frame.type === "res" && !frame.ok)) {
+      throw new Error("This frame type cannot carry a body");
+    }
+    return {
+      ...frame,
+      body: this.receiveFrameBody(connection, descriptor),
+    } as Frame;
+  }
+
+  private receiveFrameBody(
+    connection: Connection<ConnectionState>,
+    descriptor: BinaryFrameDescriptor,
+  ): FrameBody {
+    const { streamId, length } = descriptor;
+    if (!Number.isSafeInteger(streamId) || streamId <= 0 || streamId > 0xffffffff) {
+      throw new Error(`Invalid body stream id: ${streamId}`);
+    }
+    if (length !== undefined && (!Number.isSafeInteger(length) || length < 0)) {
+      throw new Error(`Invalid body length: ${length}`);
+    }
+
+    const key = frameBodyKey(connection.id, streamId);
+    if (this.pendingFrameBodies.has(key)) {
+      throw new Error(`Body stream already pending: ${streamId}`);
+    }
+
+    const source: UnderlyingByteSource = {
+      type: "bytes",
+      start: (controller) => {
+        const timeoutId = setTimeout(() => {
+          this.rejectFrameBody(key, new Error(`Body stream timed out: ${streamId}`));
+        }, FRAME_BODY_TTL_MS);
+        this.pendingFrameBodies.set(key, {
+          connectionId: connection.id,
+          controller,
+          timeoutId,
+          length,
+          received: 0,
+        });
+      },
+      cancel: () => {
+        this.clearFrameBody(key);
+      },
+    };
+    const stream = new ReadableStream(source);
+
+    return { stream, ...(length === undefined ? {} : { length }) };
+  }
+
+  private sendWebSocketFrame(connection: Connection, frame: Frame): void {
+    const body = frame.type === "sig" || (frame.type === "res" && !frame.ok)
+      ? undefined
+      : frame.body;
+    if (!body) {
+      connection.send(JSON.stringify(frame));
+      return;
+    }
+
+    const streamId = this.nextFrameBodyStreamId;
+    this.nextFrameBodyStreamId = streamId === 0xffffffff ? 1 : streamId + 1;
+    connection.send(JSON.stringify({
+      ...frame,
+      body: {
+        streamId,
+        ...(body.length === undefined ? {} : { length: body.length }),
+      },
+    }));
+    this.ctx.waitUntil(this.sendFrameBody(connection, streamId, body.stream));
+  }
+
+  private async sendFrameBody(
+    connection: Connection,
+    streamId: number,
+    stream: ReadableStream<Uint8Array>,
+  ): Promise<void> {
+    const reader = stream.getReader();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+        for (let offset = 0; offset < value.byteLength; offset += FRAME_BODY_CHUNK_BYTES) {
+          connection.send(buildBinaryFrame(
+            streamId,
+            BINARY_FRAME_DATA,
+            value.subarray(offset, offset + FRAME_BODY_CHUNK_BYTES),
+          ));
+        }
+      }
+      connection.send(buildBinaryFrame(streamId, BINARY_FRAME_END));
+    } catch (error) {
+      try {
+        connection.send(buildBinaryFrame(
+          streamId,
+          BINARY_FRAME_ERROR | BINARY_FRAME_END,
+          new TextEncoder().encode(error instanceof Error ? error.message : String(error)),
+        ));
+      } catch {
+        // The connection may have closed with the stream.
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  }
+
+  private clearFrameBody(key: string): PendingFrameBody | null {
+    const pending = this.pendingFrameBodies.get(key);
+    if (!pending) {
+      return null;
+    }
+    this.pendingFrameBodies.delete(key);
+    clearTimeout(pending.timeoutId);
+    return pending;
+  }
+
+  private rejectFrameBody(key: string, error: Error): void {
+    this.clearFrameBody(key)?.controller.error(error);
+  }
+
+  private failFrameBodiesForConnection(connectionId: string): void {
+    for (const [key, pending] of this.pendingFrameBodies) {
+      if (pending.connectionId === connectionId) {
+        this.rejectFrameBody(key, new Error("Connection closed"));
+      }
+    }
   }
 
   private registerBinaryRoute(route: {
@@ -1694,7 +1864,7 @@ export class Kernel extends Host<Env> {
 
     if (result.handled) {
       this.applyPostDispatchEffects(frame, result.response);
-      connection.send(JSON.stringify(result.response));
+      this.sendWebSocketFrame(connection, result.response);
     }
     // If not handled, request was forwarded to a device.
     // Response will come back via handleRes when the device responds.
@@ -2157,6 +2327,38 @@ export class Kernel extends Host<Env> {
       return;
     }
 
+    const bodyKey = frameBodyKey(connection.id, frame.streamId);
+    const body = this.pendingFrameBodies.get(bodyKey);
+    if (body) {
+      if ((frame.flags & BINARY_FRAME_ERROR) !== 0) {
+        const message = new TextDecoder().decode(frame.payload) || "Body stream failed";
+        this.rejectFrameBody(bodyKey, new Error(message));
+        return;
+      }
+      if ((frame.flags & BINARY_FRAME_DATA) !== 0 && frame.payload.byteLength > 0) {
+        body.received += frame.payload.byteLength;
+        if (body.length !== undefined && body.received > body.length) {
+          this.rejectFrameBody(
+            bodyKey,
+            new Error(`Body exceeded declared length ${body.length}`),
+          );
+          return;
+        }
+        body.controller.enqueue(frame.payload);
+      }
+      if ((frame.flags & BINARY_FRAME_END) !== 0) {
+        if (body.length !== undefined && body.received !== body.length) {
+          this.rejectFrameBody(
+            bodyKey,
+            new Error(`Body length ${body.received} did not match ${body.length}`),
+          );
+          return;
+        }
+        this.clearFrameBody(bodyKey)?.controller.close();
+      }
+      return;
+    }
+
     const route = this.binaryRoutes.get(frame.streamId);
     if (!route) {
       return;
@@ -2545,7 +2747,7 @@ export class Kernel extends Host<Env> {
     if (origin.type === "connection") {
       const conn = this.connections.get(origin.id);
       if (conn) {
-        conn.send(JSON.stringify(frame));
+        this.sendWebSocketFrame(conn, frame);
       }
       return;
     }
@@ -2822,6 +3024,10 @@ export function findAppFrameEntrypoint(
     }
     return false;
   }) ?? null;
+}
+
+function frameBodyKey(connectionId: string, streamId: number): string {
+  return `${connectionId}:${streamId}`;
 }
 
 function errFrame(id: string, code: number, message: string): ResponseFrame {

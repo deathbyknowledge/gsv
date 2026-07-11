@@ -7,8 +7,20 @@ export type ErrorShape = {
   retryable?: boolean;
 };
 
+export type FrameBody = {
+  stream: ReadableStream<Uint8Array>;
+  length?: number;
+};
+
 export type RequestFrame<S extends SyscallName = SyscallName> = {
-  [K in S]: { type: "req"; id: string; call: K; args: ArgsOf<K>; runId?: string };
+  [K in S]: {
+    type: "req";
+    id: string;
+    call: K;
+    args: ArgsOf<K>;
+    runId?: string;
+    body?: FrameBody;
+  };
 }[S];
 
 export type ResponseOkFrame<S extends SyscallName = SyscallName> = {
@@ -16,6 +28,7 @@ export type ResponseOkFrame<S extends SyscallName = SyscallName> = {
   id: string;
   ok: true;
   data?: ResultOf<S>;
+  body?: FrameBody;
 };
 
 export type ResponseErrFrame = {
