@@ -111,9 +111,10 @@ export class GsvFs implements IFileSystem {
     const body = range
       ? bytes.subarray(range.offset, range.offset + range.length)
       : bytes;
+    const size = body.byteLength;
     return {
       body: bytesToStream(body),
-      size: body.byteLength,
+      size,
       totalSize: stat.size,
       mtime: stat.mtime,
       status: range ? 206 : 200,
@@ -508,12 +509,14 @@ export class GsvFs implements IFileSystem {
 }
 
 function bytesToStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
-  return new ReadableStream<Uint8Array>({
+  const source: UnderlyingByteSource = {
+    type: "bytes",
     start(controller) {
       controller.enqueue(bytes);
       controller.close();
     },
-  });
+  };
+  return new ReadableStream(source);
 }
 
 function resolveOpenFileRange(range: OpenFileRangeRequest, total: number): OpenFileRange {

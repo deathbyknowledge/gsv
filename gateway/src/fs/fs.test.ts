@@ -64,6 +64,24 @@ function bytesToStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
   });
 }
 
+describe("GsvFs openFile", () => {
+  it("returns a byte stream for backends without openFile", async () => {
+    const fs = Object.create(GsvFs.prototype) as any;
+    fs.resolveFinalPath = async (path: string) => path;
+    fs.backendForPath = () => ({
+      stat: async () => ({ isFile: true, isDirectory: false, size: 3, mtime: new Date(1) }),
+      readFileBuffer: async () => new Uint8Array([1, 2, 3]),
+    });
+
+    const opened = await fs.openFile("/virtual.bin");
+    const reader = opened.body.getReader({ mode: "byob" });
+    const { value } = await reader.read(new Uint8Array(3));
+
+    expect(value).toEqual(new Uint8Array([1, 2, 3]));
+    reader.releaseLock();
+  });
+});
+
 function makeConfigBackedFs(
   identity: ProcessIdentity,
   initialEntries: Record<string, string>,
