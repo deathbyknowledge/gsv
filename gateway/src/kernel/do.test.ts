@@ -46,8 +46,12 @@ describe("Kernel frame bodies", () => {
     const pending: Promise<unknown>[] = [];
     const kernel = Object.create(Kernel.prototype) as any;
     kernel.nextFrameBodyStreamId = 1;
+    kernel.outgoingFrameBodyReaders = new Map();
     kernel.ctx = { waitUntil: (promise: Promise<unknown>) => pending.push(promise) };
-    const connection = { send: (message: string | ArrayBuffer) => sends.push(message) };
+    const connection = {
+      id: "connection-1",
+      send: (message: string | ArrayBuffer) => sends.push(message),
+    };
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
         controller.enqueue(new Uint8Array([4, 5, 6]));
@@ -88,6 +92,22 @@ describe("Kernel frame bodies", () => {
     await expect(new Response(body.stream).arrayBuffer()).rejects.toThrow(
       "Body length 2 did not match 3",
     );
+    expect(kernel.pendingFrameBodies.size).toBe(0);
+  });
+
+  it("does not register bodies from an invalid response route", () => {
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.pendingFrameBodies = new Map();
+    kernel.routes = { get: () => ({ deviceId: "expected-device" }) };
+    kernel.isConnectionForDevice = vi.fn(() => false);
+
+    kernel.handleRes({ id: "wrong-connection" }, {
+      type: "res",
+      id: "req-1",
+      ok: true,
+      body: { streamId: 9, length: 3 },
+    });
+
     expect(kernel.pendingFrameBodies.size).toBe(0);
   });
 });

@@ -301,12 +301,24 @@ Each following binary frame uses this format:
 ```
 
 The stream ID links each chunk to its JSON descriptor. Flags identify data,
-end, and error frames. The sender emits the JSON descriptor first, then zero or
-more data frames, and finally an end or error frame.
+end, and error frames:
+
+| Flag | Value | Meaning |
+|---|---:|---|
+| `DATA` | `1` | The payload contains body bytes |
+| `END` | `2` | This is the final frame for the stream |
+| `ERROR` | `4` | The payload contains a UTF-8 error message |
+
+Flags may be combined; failures normally use `ERROR | END` (`6`). The sender
+emits the JSON descriptor first, then zero or more data frames, and finally an
+end or error frame. Stream IDs are scoped to the WebSocket connection; a sender
+must not reuse an ID until that stream has ended.
 
 `fs.transfer.receive` uses a request body and `fs.transfer.send` returns a
 response body. The same primitive is available to other syscalls without
-adding syscall-specific stream IDs.
+adding syscall-specific stream IDs. In the JavaScript SDK, body-bearing calls
+use `client.request()`; they are intentionally omitted from the data-only
+generated namespace methods.
 
 ## See also
 

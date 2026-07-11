@@ -214,6 +214,10 @@ export class Kernel extends Host<Env> {
   private readonly pendingAppResponses = new Map<string, (frame: ResponseFrame) => void>();
   private readonly pendingProcessSignals = new Map<string, Promise<void>>();
   private readonly pendingFrameBodies = new Map<string, PendingFrameBody>();
+  private readonly outgoingFrameBodyReaders = new Map<
+    string,
+    Set<ReadableStreamDefaultReader<Uint8Array>>
+  >();
   private nextFrameBodyStreamId = 1;
   private cliDownloadsRefresh: Promise<void> | null = null;
 
@@ -429,6 +433,7 @@ export class Kernel extends Host<Env> {
     this.failRoutesForConnection(connection.id);
     this.runRoutes.clearForConnection(connection.id);
     this.failFrameBodiesForConnection(connection.id);
+    this.cancelFrameBodiesForConnection(connection.id);
   }
 
   async onMessage(connection: Connection<ConnectionState>, message: WSMessage): Promise<void> {
@@ -439,39 +444,39 @@ export class Kernel extends Host<Env> {
 
     let parsed: Frame;
     try {
-      parsed = JSON.parse(message) as Frame;
+      const value = JSON.parse(message) as unknown;
+      if (!value || typeof value !== "object") {
+        throw new Error("Invalid frame");
+      }
+      parsed = value as Frame;
     } catch {
       this.sendError(connection, "?", 400, "Malformed JSON");
       return;
     }
 
-    let frame: Frame;
-    try {
-      frame = this.decodeWebSocketFrame(connection, parsed);
-    } catch (error) {
-      this.sendError(
-        connection,
-        "id" in parsed && typeof parsed.id === "string" ? parsed.id : "?",
-        400,
-        error instanceof Error ? error.message : "Invalid frame body",
-      );
+    const valid = parsed.type === "req"
+      ? typeof parsed.id === "string" && typeof parsed.call === "string"
+      : parsed.type === "res"
+        ? typeof parsed.id === "string" && typeof parsed.ok === "boolean"
+        : parsed.type === "sig" && typeof parsed.signal === "string";
+    if (!valid) {
+      this.sendError(connection, "?", 400, "Invalid frame");
       return;
     }
 
-    if (!frame.type || !["req", "res", "sig"].includes(frame.type)) {
-      this.sendError(connection, "?", 400, "Invalid frame type");
-      return;
-    }
-
-    switch (frame.type) {
+    switch (parsed.type) {
       case "req":
-        await this.handleReq(connection, frame);
+        await this.handleReq(connection, parsed);
         break;
       case "res":
-        this.handleRes(connection, frame);
+        this.handleRes(connection, parsed);
         break;
       case "sig":
-        this.handleSig(connection, frame);
+        if ((parsed as unknown as { body?: unknown }).body !== undefined) {
+          this.sendError(connection, "?", 400, "Signals cannot carry bodies");
+          return;
+        }
+        this.handleSig(connection, parsed);
         break;
     }
   }
@@ -1356,13 +1361,18 @@ export class Kernel extends Host<Env> {
 
     const streamId = this.nextFrameBodyStreamId;
     this.nextFrameBodyStreamId = streamId === 0xffffffff ? 1 : streamId + 1;
-    connection.send(JSON.stringify({
-      ...frame,
-      body: {
-        streamId,
-        ...(body.length === undefined ? {} : { length: body.length }),
-      },
-    }));
+    try {
+      connection.send(JSON.stringify({
+        ...frame,
+        body: {
+          streamId,
+          ...(body.length === undefined ? {} : { length: body.length }),
+        },
+      }));
+    } catch (error) {
+      void body.stream.cancel(error).catch(() => {});
+      throw error;
+    }
     this.ctx.waitUntil(this.sendFrameBody(connection, streamId, body.stream));
   }
 
@@ -1371,8 +1381,12 @@ export class Kernel extends Host<Env> {
     streamId: number,
     stream: ReadableStream<Uint8Array>,
   ): Promise<void> {
-    const reader = stream.getReader();
+    let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
     try {
+      reader = stream.getReader();
+      const readers = this.outgoingFrameBodyReaders.get(connection.id) ?? new Set();
+      readers.add(reader);
+      this.outgoingFrameBodyReaders.set(connection.id, readers);
       while (true) {
         const { done, value } = await reader.read();
         if (done) {
@@ -1388,6 +1402,11 @@ export class Kernel extends Host<Env> {
       }
       connection.send(buildBinaryFrame(streamId, BINARY_FRAME_END));
     } catch (error) {
+      if (reader) {
+        await reader.cancel(error).catch(() => {});
+      } else {
+        await stream.cancel(error).catch(() => {});
+      }
       try {
         connection.send(buildBinaryFrame(
           streamId,
@@ -1398,7 +1417,14 @@ export class Kernel extends Host<Env> {
         // The connection may have closed with the stream.
       }
     } finally {
-      reader.releaseLock();
+      if (reader) {
+        const readers = this.outgoingFrameBodyReaders.get(connection.id);
+        readers?.delete(reader);
+        if (readers?.size === 0) {
+          this.outgoingFrameBodyReaders.delete(connection.id);
+        }
+        reader.releaseLock();
+      }
     }
   }
 
@@ -1421,6 +1447,17 @@ export class Kernel extends Host<Env> {
       if (pending.connectionId === connectionId) {
         this.rejectFrameBody(key, new Error("Connection closed"));
       }
+    }
+  }
+
+  private cancelFrameBodiesForConnection(connectionId: string): void {
+    const readers = this.outgoingFrameBodyReaders.get(connectionId);
+    if (!readers) {
+      return;
+    }
+    this.outgoingFrameBodyReaders.delete(connectionId);
+    for (const reader of readers) {
+      void reader.cancel("Connection closed").catch(() => {});
     }
   }
 
@@ -1537,25 +1574,28 @@ export class Kernel extends Host<Env> {
     return sched.id;
   }
 
-  private async handleReq(connection: Connection<ConnectionState>, frame: RequestFrame): Promise<void> {
+  private async handleReq(
+    connection: Connection<ConnectionState>,
+    wireFrame: RequestFrame,
+  ): Promise<void> {
     const state = connection.state as ConnectionState | undefined;
 
-    if (frame.call === "sys.connect") {
+    if (wireFrame.call === "sys.connect") {
       if (state?.step === "connected") {
-        this.sendError(connection, frame.id, 409, "Already connected");
+        this.sendError(connection, wireFrame.id, 409, "Already connected");
         return;
       }
-      await this.handleSysConnect(connection, frame);
+      await this.handleSysConnect(connection, wireFrame);
       return;
     }
 
-    if (frame.call === "sys.setup.assist") {
-      await this.handleSysSetupAssist(connection, frame as RequestFrame<"sys.setup.assist">);
+    if (wireFrame.call === "sys.setup.assist") {
+      await this.handleSysSetupAssist(connection, wireFrame as RequestFrame<"sys.setup.assist">);
       return;
     }
 
-    if (frame.call === "sys.setup") {
-      await this.handleSysSetup(connection, frame as RequestFrame<"sys.setup">);
+    if (wireFrame.call === "sys.setup") {
+      await this.handleSysSetup(connection, wireFrame as RequestFrame<"sys.setup">);
       return;
     }
 
@@ -1563,30 +1603,50 @@ export class Kernel extends Host<Env> {
       if (this.auth.isSetupMode()) {
         this.sendError(
           connection,
-          frame.id,
+          wireFrame.id,
           SETUP_REQUIRED_ERROR_CODE,
           "Setup required",
           setupRequiredDetails(),
         );
         return;
       }
-      this.sendError(connection, frame.id, 403, "Must call sys.connect first");
+      this.sendError(connection, wireFrame.id, 403, "Must call sys.connect first");
       return;
     }
 
-    if (isInternalOnlySyscall(frame.call)) {
-      this.sendError(connection, frame.id, 403, `Permission denied: ${frame.call}`);
+    if (isInternalOnlySyscall(wireFrame.call)) {
+      this.sendError(connection, wireFrame.id, 403, `Permission denied: ${wireFrame.call}`);
       return;
     }
 
-    if (!hasCapability(state.identity.capabilities, frame.call)) {
-      this.sendError(connection, frame.id, 403, `Permission denied: ${frame.call}`);
+    if (!hasCapability(state.identity.capabilities, wireFrame.call)) {
+      this.sendError(connection, wireFrame.id, 403, `Permission denied: ${wireFrame.call}`);
+      return;
+    }
+
+    let frame: RequestFrame;
+    try {
+      frame = this.decodeWebSocketFrame(connection, wireFrame) as RequestFrame;
+    } catch (error) {
+      this.sendError(
+        connection,
+        wireFrame.id,
+        400,
+        error instanceof Error ? error.message : "Invalid frame body",
+      );
       return;
     }
 
     const ctx = this.buildContext(connection);
     const origin: RouteOrigin = { type: "connection", id: connection.id };
-    const result = await dispatch(frame, origin, ctx, this.buildDispatchDeps());
+    let result: Awaited<ReturnType<typeof dispatch>>;
+    try {
+      result = await dispatch(frame, origin, ctx, this.buildDispatchDeps());
+    } finally {
+      if (frame.body && !frame.body.stream.locked) {
+        void frame.body.stream.cancel().catch(() => {});
+      }
+    }
 
     if (result.handled) {
       this.applyPostDispatchEffects(frame, result.response);
@@ -2022,13 +2082,26 @@ export class Kernel extends Host<Env> {
     }
   }
 
-  private handleRes(connection: Connection<ConnectionState>, frame: ResponseFrame): void {
-    const route = this.routes.get(frame.id);
+  private handleRes(connection: Connection<ConnectionState>, wireFrame: ResponseFrame): void {
+    const route = this.routes.get(wireFrame.id);
     if (!route) {
       return;
     }
 
     if (!this.isConnectionForDevice(connection, route.deviceId)) {
+      return;
+    }
+
+    let frame: ResponseFrame;
+    try {
+      frame = this.decodeWebSocketFrame(connection, wireFrame) as ResponseFrame;
+    } catch (error) {
+      this.sendError(
+        connection,
+        wireFrame.id,
+        400,
+        error instanceof Error ? error.message : "Invalid frame body",
+      );
       return;
     }
 
@@ -2060,6 +2133,13 @@ export class Kernel extends Host<Env> {
         return;
       }
       if ((frame.flags & BINARY_FRAME_DATA) !== 0 && frame.payload.byteLength > 0) {
+        clearTimeout(body.timeoutId);
+        body.timeoutId = setTimeout(() => {
+          this.rejectFrameBody(
+            bodyKey,
+            new Error(`Body stream timed out: ${frame.streamId}`),
+          );
+        }, FRAME_BODY_TTL_MS);
         body.received += frame.payload.byteLength;
         if (body.length !== undefined && body.received > body.length) {
           this.rejectFrameBody(
@@ -2397,16 +2477,20 @@ export class Kernel extends Host<Env> {
   }
 
   private deliverToOrigin(origin: RouteOrigin, frame: ResponseFrame): void {
+    const body = frame.ok ? frame.body : undefined;
     if (origin.type === "connection") {
       const conn = this.connections.get(origin.id);
       if (conn) {
         this.sendWebSocketFrame(conn, frame);
+      } else {
+        void body?.stream.cancel("Origin disconnected").catch(() => {});
       }
       return;
     }
 
     if (origin.type === "process") {
       sendFrameToProcess(origin.id, frame).catch((err: unknown) => {
+        void body?.stream.cancel(err).catch(() => {});
         console.error(`[Kernel] Failed to deliver frame to process ${origin.id}:`, err);
       });
       return;
@@ -2417,6 +2501,8 @@ export class Kernel extends Host<Env> {
       if (resolve) {
         this.pendingAppResponses.delete(origin.id);
         resolve(frame);
+      } else {
+        void body?.stream.cancel("Request was cancelled").catch(() => {});
       }
     }
   }
