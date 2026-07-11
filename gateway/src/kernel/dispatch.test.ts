@@ -35,6 +35,9 @@ function makeContext(): KernelContext {
       canAccess: vi.fn(() => true),
       get: vi.fn(() => deviceRecord("macbook", false)),
     },
+    auth: {
+      getPasswdByUid: vi.fn(() => null),
+    },
   } as unknown as KernelContext;
 }
 
@@ -536,6 +539,9 @@ describe("dispatch", () => {
       },
       env: {
         CHANNEL_WHATSAPP: { adapterShellExec },
+      },
+      auth: {
+        getPasswdByUid: vi.fn(() => null),
       },
       devices: {
         canAccess: vi.fn(),

@@ -2,28 +2,26 @@ export type IpcCallStatus = "pending" | "completed" | "timed_out";
 
 export type IpcCallRecord = {
   callId: string;
-  uid: number;
   sourcePid: string;
+  sourceRunId: string | null;
   targetPid: string;
-  targetRunId: string | null;
+  targetRunId: string;
   status: IpcCallStatus;
   deadlineAt: number;
   createdAt: number;
-  updatedAt: number;
   response: unknown;
   error: string | null;
 };
 
 type IpcCallRow = {
   call_id: string;
-  uid: number;
   source_pid: string;
+  source_run_id: string | null;
   target_pid: string;
-  target_run_id: string | null;
+  target_run_id: string;
   status: string;
   deadline_at: number;
   created_at: number;
-  updated_at: number;
   response_json: string;
   error: string | null;
 };
@@ -35,59 +33,58 @@ export class IpcCallStore {
     callId: string;
     uid: number;
     sourcePid: string;
+    sourceRunId: string | null;
     targetPid: string;
+    targetRunId: string;
     deadlineAt: number;
-  }): IpcCallRecord {
+  }): void {
     const now = Date.now();
     this.sql.exec(
       `INSERT INTO ipc_calls (
-        call_id, uid, source_pid, target_pid, target_run_id, status,
+        call_id, uid, source_pid, source_run_id, target_pid, target_run_id, status,
         deadline_at, created_at, updated_at, response_json, error
-      ) VALUES (?, ?, ?, ?, NULL, 'pending', ?, ?, ?, 'null', NULL)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, 'null', NULL)`,
       input.callId,
       input.uid,
       input.sourcePid,
+      input.sourceRunId,
       input.targetPid,
+      input.targetRunId,
       input.deadlineAt,
       now,
       now,
     );
-    return {
-      callId: input.callId,
-      uid: input.uid,
-      sourcePid: input.sourcePid,
-      targetPid: input.targetPid,
-      targetRunId: null,
-      status: "pending",
-      deadlineAt: input.deadlineAt,
-      createdAt: now,
-      updatedAt: now,
-      response: null,
-      error: null,
-    };
   }
 
-  attachRun(callId: string, runId: string): IpcCallRecord | null {
-    const now = Date.now();
+  cancelBySourceRun(input: {
+    uid: number;
+    sourcePid: string;
+    sourceRunId: string;
+  }): void {
     this.sql.exec(
-      `UPDATE ipc_calls
-          SET target_run_id = ?,
-              updated_at = ?
-        WHERE call_id = ?
-          AND status = 'pending'`,
-      runId,
-      now,
-      callId,
+      `DELETE FROM ipc_calls
+        WHERE uid = ?
+          AND source_pid = ?
+          AND source_run_id = ?`,
+      input.uid,
+      input.sourcePid,
+      input.sourceRunId,
     );
-    return this.get(callId);
   }
 
-  remove(callId: string): boolean {
-    const cursor = this.sql.exec(
+  cancelBySourcePid(input: { uid: number; sourcePid: string }): void {
+    this.sql.exec(
+      "DELETE FROM ipc_calls WHERE uid = ? AND source_pid = ?",
+      input.uid,
+      input.sourcePid,
+    );
+  }
+
+  remove(callId: string): void {
+    this.sql.exec(
       "DELETE FROM ipc_calls WHERE call_id = ?",
       callId,
     );
-    return cursor.rowsWritten > 0;
   }
 
   completeByRun(input: {
@@ -96,57 +93,105 @@ export class IpcCallStore {
     runId: string;
     response: unknown;
     error?: string | null;
-  }): IpcCallRecord[] {
+  }): string[] {
     const now = Date.now();
-    const pending = this.findPendingByRun(input.uid, input.targetPid, input.runId, now);
-    for (const record of pending) {
-      this.sql.exec(
-        `UPDATE ipc_calls
-            SET status = 'completed',
-                response_json = ?,
-                error = ?,
-                updated_at = ?
-          WHERE call_id = ?
-            AND status = 'pending'`,
-        JSON.stringify(input.response ?? null),
-        input.error ?? null,
-        now,
-        record.callId,
-      );
-    }
-    return pending.map((record) => ({
-      ...record,
-      status: "completed",
-      response: input.response ?? null,
-      error: input.error ?? null,
-      updatedAt: now,
-    }));
-  }
-
-  timeout(callId: string, now = Date.now()): IpcCallRecord | null {
-    const record = this.get(callId);
-    if (!record || record.status !== "pending" || record.deadlineAt > now) {
-      return null;
-    }
-
-    this.sql.exec(
+    return this.sql.exec<{ call_id: string }>(
       `UPDATE ipc_calls
-          SET status = 'timed_out',
+          SET status = 'completed',
+              response_json = ?,
               error = ?,
               updated_at = ?
+        WHERE uid = ?
+          AND target_pid = ?
+          AND target_run_id = ?
+          AND status = 'pending'
+          AND deadline_at > ?
+        RETURNING call_id`,
+      JSON.stringify(input.response ?? null),
+      input.error ?? null,
+      now,
+      input.uid,
+      input.targetPid,
+      input.runId,
+      now,
+    ).toArray().map((row) => row.call_id);
+  }
+
+  failByTargetPid(input: {
+    uid: number;
+    targetPid: string;
+    error: string;
+  }): string[] {
+    const now = Date.now();
+    return this.sql.exec<{ call_id: string }>(
+      `UPDATE ipc_calls
+          SET status = 'completed',
+              response_json = 'null',
+              error = ?,
+              updated_at = ?
+        WHERE uid = ?
+          AND target_pid = ?
+          AND status = 'pending'
+        RETURNING call_id`,
+      input.error,
+      now,
+      input.uid,
+      input.targetPid,
+    ).toArray().map((row) => row.call_id);
+  }
+
+  timeout(callId: string, now = Date.now()): boolean {
+    const cursor = this.sql.exec(
+      `UPDATE ipc_calls
+          SET status = 'timed_out',
+              error = 'IPC call timed out',
+              updated_at = ?
         WHERE call_id = ?
-          AND status = 'pending'`,
-      `IPC call timed out after deadline ${new Date(record.deadlineAt).toISOString()}`,
+          AND status = 'pending'
+          AND deadline_at <= ?`,
       now,
       callId,
+      now,
     );
+    return cursor.rowsWritten > 0;
+  }
 
-    return {
-      ...record,
-      status: "timed_out",
-      error: `IPC call timed out after deadline ${new Date(record.deadlineAt).toISOString()}`,
-      updatedAt: now,
-    };
+  claimDelivery(callId: string): IpcCallRecord | null {
+    const now = Date.now();
+    const rows = this.sql.exec<IpcCallRow>(
+      `UPDATE ipc_calls
+          SET delivery_started_at = ?,
+              updated_at = ?
+        WHERE call_id = ?
+          AND status IN ('completed', 'timed_out')
+          AND delivery_started_at IS NULL
+        RETURNING *`,
+      now,
+      now,
+      callId,
+    ).toArray();
+    return rows[0] ? toIpcCallRecord(rows[0]) : null;
+  }
+
+  releaseDelivery(callId: string): void {
+    this.sql.exec(
+      `UPDATE ipc_calls
+          SET delivery_started_at = NULL,
+              updated_at = ?
+        WHERE call_id = ?
+          AND status IN ('completed', 'timed_out')`,
+      Date.now(),
+      callId,
+    );
+  }
+
+  recoverDeliveryIds(): string[] {
+    return this.sql.exec<{ call_id: string }>(
+      `UPDATE ipc_calls
+          SET delivery_started_at = NULL
+        WHERE status IN ('completed', 'timed_out')
+        RETURNING call_id`,
+    ).toArray().map((row) => row.call_id);
   }
 
   get(callId: string): IpcCallRecord | null {
@@ -156,48 +201,19 @@ export class IpcCallStore {
     ).toArray();
     return rows[0] ? toIpcCallRecord(rows[0]) : null;
   }
-
-  private findPendingByRun(uid: number, targetPid: string, runId: string, now: number): IpcCallRecord[] {
-    return this.sql.exec<IpcCallRow>(
-      `SELECT * FROM ipc_calls
-        WHERE uid = ?
-          AND target_pid = ?
-          AND target_run_id = ?
-          AND status = 'pending'
-          AND deadline_at > ?
-        ORDER BY created_at ASC`,
-      uid,
-      targetPid,
-      runId,
-      now,
-    ).toArray().map(toIpcCallRecord);
-  }
 }
 
 function toIpcCallRecord(row: IpcCallRow): IpcCallRecord {
   return {
     callId: row.call_id,
-    uid: row.uid,
     sourcePid: row.source_pid,
+    sourceRunId: row.source_run_id,
     targetPid: row.target_pid,
     targetRunId: row.target_run_id,
-    status: row.status === "completed"
-      ? "completed"
-      : row.status === "timed_out"
-        ? "timed_out"
-        : "pending",
+    status: row.status as IpcCallStatus,
     deadlineAt: row.deadline_at,
     createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    response: parseJson(row.response_json),
+    response: JSON.parse(row.response_json),
     error: row.error,
   };
-}
-
-function parseJson(value: string): unknown {
-  try {
-    return JSON.parse(value);
-  } catch {
-    return null;
-  }
 }

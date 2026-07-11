@@ -4,7 +4,6 @@ export const FS_WRITE = "fs.write";
 export const FS_EDIT = "fs.edit";
 export const FS_DELETE = "fs.delete";
 export const FS_SEARCH = "fs.search";
-export const FS_COPY = "fs.copy";
 
 // Shell (device commands)
 export const SHELL_EXEC = "shell.exec";
@@ -16,59 +15,7 @@ export const CODEMODE_RUN = "codemode.run";
 // Host-routed network operations
 export const NET_FETCH = "net.fetch";
 
-// Process management (OS-level agent processes)
-export const PROC_SPAWN = "proc.spawn";
-export const PROC_KILL = "proc.kill";
-export const PROC_LIST = "proc.list";
-export const PROC_SEND = "proc.send";
-export const PROC_IPC_SEND = "proc.ipc.send";
-export const PROC_IPC_CALL = "proc.ipc.call";
-export const PROC_IPC_DELIVER = "proc.ipc.deliver";
-export const PROC_ABORT = "proc.abort";
-export const PROC_HIL = "proc.hil";
-export const PROC_HISTORY = "proc.history";
-export const PROC_MEDIA_READ = "proc.media.read";
-export const PROC_CONVERSATION_OPEN = "proc.conversation.open";
-export const PROC_CONVERSATION_LIST = "proc.conversation.list";
-export const PROC_CONVERSATION_GET = "proc.conversation.get";
-export const PROC_CONVERSATION_CLOSE = "proc.conversation.close";
-export const PROC_CONVERSATION_RESET = "proc.conversation.reset";
-export const PROC_CONVERSATION_POLICY_GET = "proc.conversation.policy.get";
-export const PROC_CONVERSATION_POLICY_SET = "proc.conversation.policy.set";
-export const PROC_CONVERSATION_COMPACT = "proc.conversation.compact";
-export const PROC_CONVERSATION_FORK = "proc.conversation.fork";
-export const PROC_CONVERSATION_SEGMENT_READ = "proc.conversation.segment.read";
-export const PROC_CONVERSATION_SEGMENTS = "proc.conversation.segments";
-export const PROC_CONVERSATION_TIMELINE = "proc.conversation.timeline";
-export const PROC_CONVERSATION_GENERATIONS = "proc.conversation.generations";
-export const PROC_CONVERSATION_GENERATION_MANIFEST = "proc.conversation.generation.manifest";
-export const PROC_RESET = "proc.reset";
-export const PROC_SETIDENTITY = "proc.setidentity";
-
-// Repositories
-export const REPO_LIST = "repo.list";
-export const REPO_CREATE = "repo.create";
-export const REPO_REFS = "repo.refs";
-export const REPO_READ = "repo.read";
-export const REPO_SEARCH = "repo.search";
-export const REPO_LOG = "repo.log";
-export const REPO_DIFF = "repo.diff";
-export const REPO_COMPARE = "repo.compare";
-export const REPO_APPLY = "repo.apply";
-export const REPO_IMPORT = "repo.import";
-export const REPO_DELETE = "repo.delete";
-
-// System
-export const SYS_CONNECT = "sys.connect";
-export const SYS_SETUP = "sys.setup";
-export const SYS_BOOTSTRAP = "sys.bootstrap";
-export const SYS_CONFIG_GET = "sys.config.get";
-export const SYS_CONFIG_SET = "sys.config.set";
-export const SYS_DEVICE_LIST = "sys.device.list";
-export const SYS_DEVICE_GET = "sys.device.get";
-export const SYS_DEVICE_UPDATE = "sys.device.update";
-export const SYS_DEVICE_DELETE = "sys.device.delete";
-export const SYS_OAUTH_START = "sys.oauth.start";
+// System calls used by the native shell and CodeMode.
 export const SYS_OAUTH_DEVICE_START = "sys.oauth.device.start";
 export const SYS_OAUTH_DEVICE_POLL = "sys.oauth.device.poll";
 export const SYS_OAUTH_LIST = "sys.oauth.list";
@@ -78,48 +25,6 @@ export const SYS_MCP_LIST = "sys.mcp.list";
 export const SYS_MCP_REMOVE = "sys.mcp.remove";
 export const SYS_MCP_REFRESH = "sys.mcp.refresh";
 export const SYS_MCP_CALL = "sys.mcp.call";
-export const SYS_TOKEN_CREATE = "sys.token.create";
-export const SYS_TOKEN_LIST = "sys.token.list";
-export const SYS_TOKEN_REVOKE = "sys.token.revoke";
-export const SYS_LINK_CONSUME = "sys.link.consume";
-export const SYS_LINK = "sys.link";
-export const SYS_UNLINK = "sys.unlink";
-export const SYS_LINK_LIST = "sys.link.list";
-export const SYS_UPDATE = "sys.update";
-
-// Scheduler (cron)
-export const SCHED_LIST = "sched.list";
-export const SCHED_ADD = "sched.add";
-export const SCHED_UPDATE = "sched.update";
-export const SCHED_REMOVE = "sched.remove";
-export const SCHED_RUN = "sched.run";
-
-// AI (process bootstrap)
-export const AI_TOOLS = "ai.tools";
-export const AI_CONFIG = "ai.config";
-export const AI_TRANSCRIPTION_CREATE = "ai.transcription.create";
-export const AI_IMAGE_READ = "ai.image.read";
-export const AI_IMAGE_GENERATE = "ai.image.generate";
-export const AI_SPEECH_CREATE = "ai.speech.create";
-
-// Adapter transport (external connectors)
-export const ADAPTER_INBOUND = "adapter.inbound";
-export const ADAPTER_STATE_UPDATE = "adapter.state.update";
-export const ADAPTER_CONNECT = "adapter.connect";
-export const ADAPTER_DISCONNECT = "adapter.disconnect";
-export const ADAPTER_SEND = "adapter.send";
-export const ADAPTER_STATUS = "adapter.status";
-export const ADAPTER_LIST = "adapter.list";
-
-// Notifications
-export const NOTIFICATION_CREATE = "notification.create";
-export const NOTIFICATION_LIST = "notification.list";
-export const NOTIFICATION_MARK_READ = "notification.mark_read";
-export const NOTIFICATION_DISMISS = "notification.dismiss";
-
-// Durable signal watches
-export const SIGNAL_WATCH = "signal.watch";
-export const SIGNAL_UNWATCH = "signal.unwatch";
 
 // syscall → LLM tool name map (only for syscalls exposed as tools)
 export const SYSCALL_TOOL_NAMES: Record<string, string> = {

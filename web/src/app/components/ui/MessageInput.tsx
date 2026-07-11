@@ -75,7 +75,7 @@ export function MessageInput({
   const draftText = draft.trim();
   const hasAttachment = attachments.length > 0;
   const canSubmit = Boolean(onSend) && !disabled && !busy && (draftText.length > 0 || hasAttachment) && canSend !== false;
-  const canStop = running && Boolean(onStop) && !busy;
+  const canStop = running && Boolean(onStop) && !busy && !canSubmit;
 
   useEffect(() => {
     const textarea = textareaRef.current;

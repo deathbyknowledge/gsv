@@ -55,7 +55,7 @@ Use these meanings:
 
 - `SignalFrame`: existing transport frame with `type: "sig"` and a `signal`
   topic string.
-- Notification: an outward observation such as `chat.delta`, `chat.complete`,
+- Notification: an outward observation such as `proc.run.stream`, `proc.run.finished`,
   `device.status`, `exec.status`, or `identity.changed`, often carried over a
   `SignalFrame`.
 - Process event: normal input/work delivered to a process conversation or inbox.
@@ -238,8 +238,8 @@ A compact operation should:
 5. Replace the selected active messages with one explicit summary/system record.
 6. Record a `ConversationSegment`.
 7. Allow archived segment reads without restoring the archived messages.
-8. Emit a lifecycle notification over the existing `SignalFrame` transport,
-   for example `process.lifecycle` with `event: "conversation.compacted"`.
+8. Emit `proc.changed` with lifecycle and conversation changes over the
+   existing `SignalFrame` transport.
 
 The summary record should say what happened and where the exact archive lives.
 Agents should be able to inspect the archive through normal history or
@@ -299,31 +299,18 @@ The default should preserve the exact transcript in archive storage. Carrying a
 summary forward should be explicit, because a reset often means "forget the
 working conversation."
 
-Process-wide reset archives each non-empty conversation as its own generation
-file under one archive directory:
+Process-wide reset archives each non-empty conversation under the run-as
+agent's home:
 
 ```text
-/var/sessions/<username>/<pid>/<archiveId>/
-  default.gen-1.jsonl.gz
-  build.gen-3.jsonl.gz
+/home/<agent>/conversations/<conversation-id>/<archive-id>.<conversation-id>.gen-<generation>.jsonl.gz
 ```
 
 ### Checkpoint
 
-Checkpointing should be distinct from compaction and reset.
-
-Compaction manages the active model working set. Reset creates a conversation
-boundary. Checkpointing writes durable continuity artifacts, especially for
-workspace-backed processes.
-
-Workspace-backed checkpoints may update files such as:
-
-- `.gsv/summary.md`
-- `.gsv/processes/<pid>/conversations/<conversationId>/chat.jsonl`
-- `.gsv/processes/<pid>/conversations/<conversationId>/segments.jsonl`
-
-Those paths should be generated from explicit lifecycle operations, not from a
-separate automation system.
+Checkpointing should remain distinct from compaction and reset. The current
+runtime persists reset, kill, and compaction transcripts as exact home
+conversation archives; richer checkpoint artifacts remain future work.
 
 ### History access
 
@@ -513,11 +500,10 @@ the prefix boundary, and records a `compaction` segment that can be listed with
 messages out of a compacted segment without restoring them. `proc.conversation.fork`
 can branch a live conversation through a message id, or restore a compacted
 segment into a new conversation, including the live suffix that existed at the
-compaction boundary by default. Compaction and fork emit `process.lifecycle` so
-UI clients can refresh without polling. Process-wide
-`proc.reset` and `proc.kill` archive every non-empty conversation into a
-directory with one generation file per conversation before clearing all
-conversation messages and runtime state.
+compaction boundary by default. Compaction and fork emit `proc.changed` with
+lifecycle changes so UI clients can refresh without polling. Process-wide
+`proc.reset` and `proc.kill` archive every non-empty conversation under the
+run-as agent's home before clearing all conversation messages and runtime state.
 
 Still pending: checkpoint and richer segmented history read APIs. Preserve raw
 transcript archives, visible summary markers, and forkable segments.
@@ -529,7 +515,7 @@ process-to-process delivery. `proc.ipc.call` adds a bounded call request: the
 kernel records a call id and deadline, delivers the request to the target
 process, and later sends `ipc.reply` or `ipc.timeout` back to the source
 process. Both public syscalls only work from a registered source process,
-validate that source and target processes have the same uid, and deliver through
+validate that source and target processes have the same owner, and deliver through
 kernel-only `proc.ipc.deliver`.
 
 The process-facing userland shape is the shell `proc` command (`proc send` and

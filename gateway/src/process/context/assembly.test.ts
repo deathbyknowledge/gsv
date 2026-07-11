@@ -4,8 +4,7 @@ import { createHomeContextProvider } from "./providers/home";
 import { createSystemContextProvider } from "./providers/system";
 import { resolvePromptProviders } from "./selection";
 import type { PromptAssemblyInput, PromptContextProvider } from "./types";
-import type { AiConfigResult } from "../../syscalls/ai";
-import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
+import type { AiConfigResult, ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { accountHomeRepoRef } from "../../fs";
 
 const CONFIG: AiConfigResult = {

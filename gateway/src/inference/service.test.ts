@@ -22,7 +22,7 @@ import {
   resolveGenerationOptions,
   resolveGenerationTimeoutMs,
 } from "./service";
-import type { AiConfigResult } from "../syscalls/ai";
+import type { AiConfigResult } from "@humansandmachines/gsv/protocol";
 import type { AssistantMessage, Context } from "@earendil-works/pi-ai";
 
 function assistantMessage(content: AssistantMessage["content"]): AssistantMessage {

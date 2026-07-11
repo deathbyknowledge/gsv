@@ -85,6 +85,7 @@ export type ProcSendArgs = {
 
 export type ProcAbortArgs = {
   pid?: string;
+  runId?: string;
 };
 
 export type ProcAbortResult =
@@ -144,6 +145,7 @@ export type ProcIpcSendArgs = {
 };
 
 export type ProcIpcDeliverArgs = {
+  runId: string;
   sourcePid: string;
   source: ProcessIdentity;
   conversationId?: string;
@@ -153,7 +155,6 @@ export type ProcIpcDeliverArgs = {
   sentAt: number;
   call?: {
     callId: string;
-    replyToPid: string;
     deadlineAt: number;
   };
 };

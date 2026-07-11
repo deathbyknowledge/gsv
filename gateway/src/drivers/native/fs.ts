@@ -7,22 +7,14 @@
  * find-and-replace editing).
  */
 
-import { GsvFs } from "../../fs/gsv-fs";
+import type { GsvFs } from "../../fs/gsv-fs";
 import {
-  createAccountHomeBackend,
-  createPackageBackend,
-  createProcessSourceBackend,
-  RipgitClient,
   resolveUserPath,
-  requestProcessView,
   formatSize,
   isTextContentType,
   inferContentType,
 } from "../../fs";
 import type { KernelContext } from "../../kernel/context";
-import { resolveCallerOwnerUid } from "../../kernel/context";
-import { createCronFileService } from "../../kernel/crontab";
-import { handleRepoList } from "../../kernel/repo";
 import type { FsReadArgs, FsReadResult } from "../../syscalls/read";
 import type { FsWriteArgs, FsWriteResult } from "../../syscalls/write";
 import type { FsEditArgs, FsEditResult } from "../../syscalls/edit";
@@ -32,21 +24,21 @@ import type {
   FsCopyArgs,
   FsCopyEndpoint,
   FsCopyResult,
-} from "../../syscalls/copy";
-import type {
   FsTransferReceiveArgs,
   FsTransferReceiveResult,
   FsTransferSendArgs,
   FsTransferSendResult,
   FsTransferStatArgs,
   FsTransferStatResult,
-} from "../../syscalls/transfer";
+} from "@humansandmachines/gsv/protocol";
 import {
   BINARY_FRAME_DATA,
   BINARY_FRAME_END,
   BINARY_FRAME_ERROR,
   buildBinaryFrame,
 } from "@humansandmachines/gsv/protocol";
+import { encodeBase64Bytes } from "../../shared/base64";
+import { createNativeFileSystem } from "./filesystem";
 
 const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
 const TRANSFER_SEND_CHUNK_SIZE = 512 * 1024;
@@ -86,44 +78,6 @@ export type FsCopyDeviceTransport = {
   ): void;
 };
 
-function makeFs(ctx: KernelContext): GsvFs {
-  const identity = ctx.identity!.process;
-  const ownerUid = resolveCallerOwnerUid(ctx);
-  const packageScopeOwner = { uid: ownerUid };
-  const sourceBackend = createProcessSourceBackend({
-    identity,
-    storage: ctx.env.STORAGE,
-    ripgit: ctx.env.RIPGIT ? new RipgitClient(ctx.env.RIPGIT) : null,
-    repos: handleRepoList(undefined, ctx).repos,
-    processId: ctx.processId ?? null,
-    config: ctx.config,
-  });
-  return new GsvFs(
-    ctx.env.STORAGE,
-    identity,
-    {
-      auth: ctx.auth,
-      procs: ctx.procs,
-      conversations: ctx.conversations,
-      devices: ctx.devices,
-      caps: ctx.caps,
-      config: ctx.config,
-      packages: ctx.packages,
-      cron: createCronFileService(ctx),
-      schedules: ctx.schedules,
-      processRequest: requestProcessView,
-    },
-    ctx.processId ?? undefined,
-    sourceBackend,
-    createAccountHomeBackend(ctx.env.STORAGE, ctx.env.RIPGIT, identity, {
-      auth: ctx.auth,
-      ownerUid,
-      isRoot: identity.uid === 0,
-    }),
-    createPackageBackend(identity, ctx.packages, packageScopeOwner),
-  );
-}
-
 function resolve(path: string, ctx: KernelContext): string {
   const identity = ctx.identity!.process;
   return resolveUserPath(path, identity.home, identity.cwd);
@@ -133,20 +87,20 @@ export async function handleFsRead(
   args: FsReadArgs,
   ctx: KernelContext,
 ): Promise<FsReadResult> {
-  const fs = makeFs(ctx);
+  const fs = createNativeFileSystem(ctx);
   const p = resolve(args.path, ctx);
 
   try {
     const st = await fs.stat(p);
 
     if (st.isDirectory) {
-      return readDirectory(fs, p);
+      return await readDirectory(fs, p);
     }
 
     const contentType = inferContentType(p);
 
     if (contentType.startsWith("image/")) {
-      return readImage(fs, p, contentType, st.size);
+      return await readImage(fs, p, contentType, st.size);
     }
 
     if (!isTextContentType(contentType)) {
@@ -156,14 +110,9 @@ export async function handleFsRead(
       };
     }
 
-    return readText(fs, p, st.size, args.offset, args.limit);
+    return await readText(fs, p, st.size, args.offset, args.limit);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-
-    if (msg.includes("ENOENT")) {
-      return readDirectory(fs, p);
-    }
-
     return { ok: false, error: msg };
   }
 }
@@ -201,11 +150,7 @@ async function readImage(
   }
 
   const buf = await fs.readFileBuffer(path);
-  let binary = "";
-  for (let i = 0; i < buf.length; i++) {
-    binary += String.fromCharCode(buf[i]);
-  }
-  const base64 = btoa(binary);
+  const base64 = encodeBase64Bytes(buf);
 
   return {
     ok: true,
@@ -222,33 +167,29 @@ async function readImage(
 }
 
 async function readDirectory(fs: GsvFs, path: string): Promise<FsReadResult> {
-  try {
-    const names = await fs.readdir(path);
-    const files: string[] = [];
-    const directories: string[] = [];
+  const names = await fs.readdir(path);
+  const files: string[] = [];
+  const directories: string[] = [];
 
-    for (const name of names) {
-      const childPath = path.endsWith("/") ? path + name : path + "/" + name;
-      try {
-        const s = await fs.stat(childPath);
-        if (s.isDirectory) directories.push(name);
-        else files.push(name);
-      } catch {
-        files.push(name);
-      }
+  for (const name of names) {
+    const childPath = path.endsWith("/") ? path + name : path + "/" + name;
+    try {
+      const s = await fs.stat(childPath);
+      if (s.isDirectory) directories.push(name);
+      else files.push(name);
+    } catch {
+      files.push(name);
     }
-
-    return { ok: true, path, files, directories };
-  } catch {
-    return { ok: false, error: `Not found: ${path}` };
   }
+
+  return { ok: true, path, files, directories };
 }
 
 export async function handleFsTransferStat(
   args: FsTransferStatArgs,
   ctx: KernelContext,
 ): Promise<FsTransferStatResult> {
-  const fs = makeFs(ctx);
+  const fs = createNativeFileSystem(ctx);
   const rawPath = typeof args.path === "string" ? args.path.trim() : "";
   if (!rawPath) {
     return { ok: false, error: "fs.transfer.stat requires path" };
@@ -277,7 +218,7 @@ export async function handleFsTransferSend(
   args: FsTransferSendArgs,
   ctx: KernelContext,
 ): Promise<FsTransferSendResult> {
-  const fs = makeFs(ctx);
+  const fs = createNativeFileSystem(ctx);
   const rawPath = typeof args.path === "string" ? args.path.trim() : "";
   if (!rawPath) {
     return { ok: false, error: "fs.transfer.send requires path" };
@@ -286,7 +227,7 @@ export async function handleFsTransferSend(
   if (streamId === null) {
     return { ok: false, error: "fs.transfer.send requires streamId" };
   }
-  if (!ctx.connection || typeof ctx.connection.send !== "function") {
+  if (!ctx.connection) {
     return { ok: false, error: "fs.transfer.send requires an active WebSocket connection" };
   }
   const path = resolve(rawPath, ctx);
@@ -326,7 +267,7 @@ export async function handleFsTransferReceive(
   ctx: KernelContext,
   stream: ReadableStream<Uint8Array>,
 ): Promise<FsTransferReceiveResult> {
-  const fs = makeFs(ctx);
+  const fs = createNativeFileSystem(ctx);
   const rawPath = typeof args.path === "string" ? args.path.trim() : "";
   if (!rawPath) {
     return { ok: false, error: "fs.transfer.receive requires path" };
@@ -366,12 +307,12 @@ export async function handleFsWrite(
   args: FsWriteArgs,
   ctx: KernelContext,
 ): Promise<FsWriteResult> {
-  const fs = makeFs(ctx);
+  const fs = createNativeFileSystem(ctx);
   const p = resolve(args.path, ctx);
 
   try {
     await fs.writeFile(p, args.content);
-    return { ok: true, path: p, size: args.content.length };
+    return { ok: true, path: p, size: new TextEncoder().encode(args.content).byteLength };
   } catch (err) {
     return {
       ok: false,
@@ -468,7 +409,7 @@ async function copyGsvToGsv(
   destination: Required<FsCopyEndpoint>,
   ctx: KernelContext,
 ): Promise<FsCopyResult> {
-  const fs = makeFs(ctx);
+  const fs = createNativeFileSystem(ctx);
   const opened = await fs.openFile(source.path);
   if (opened.status !== 200 || !opened.body) {
     return {
@@ -522,7 +463,7 @@ async function copyGsvToDevice(
   ctx: KernelContext,
   transport: FsCopyDeviceTransport,
 ): Promise<FsCopyResult> {
-  const fs = makeFs(ctx);
+  const fs = createNativeFileSystem(ctx);
   const opened = await fs.openFile(source.path);
   if (opened.status !== 200 || !opened.body) {
     return {
@@ -590,7 +531,7 @@ async function copyDeviceToGsv(
     sourceDeviceId: source.target,
     ttlMs: 120_000,
   });
-  const fs = makeFs(ctx);
+  const fs = createNativeFileSystem(ctx);
   let send: Awaited<ReturnType<FsCopyDeviceTransport["startDeviceRequest"]>> | null = null;
   try {
     send = await transport.startDeviceRequest(
@@ -720,7 +661,7 @@ async function resolveGsvDestinationDirectory(
   destination: Required<FsCopyEndpoint>,
   ctx: KernelContext,
 ): Promise<Required<FsCopyEndpoint>> {
-  const fs = makeFs(ctx);
+  const fs = createNativeFileSystem(ctx);
   try {
     const destinationStat = await fs.statExtended(destination.path);
     if (destinationStat.isDirectory) {
@@ -868,7 +809,7 @@ export async function handleFsEdit(
   args: FsEditArgs,
   ctx: KernelContext,
 ): Promise<FsEditResult> {
-  const fs = makeFs(ctx);
+  const fs = createNativeFileSystem(ctx);
   const p = resolve(args.path, ctx);
 
   try {
@@ -968,7 +909,7 @@ export async function handleFsDelete(
   args: FsDeleteArgs,
   ctx: KernelContext,
 ): Promise<FsDeleteResult> {
-  const fs = makeFs(ctx);
+  const fs = createNativeFileSystem(ctx);
   const p = resolve(args.path, ctx);
 
   try {
@@ -998,7 +939,7 @@ export async function handleFsSearch(
   const prefix = args.path
     ? resolveUserPath(args.path, identity.home, identity.cwd)
     : identity.cwd;
-  const fs = makeFs(ctx);
+  const fs = createNativeFileSystem(ctx);
 
   try {
     const result = await fs.search(prefix, query, args.include);

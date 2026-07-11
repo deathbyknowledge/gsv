@@ -80,7 +80,7 @@ describe("presence run activity", () => {
 
     try {
       harness.activity.trackRun("run-3", "log-3", "prompt", "Working");
-      harness.activity.handleSignal("chat.complete", {
+      harness.activity.handleSignal("proc.run.finished", {
         runId: "run-3",
         text: "final answer",
       });
@@ -89,6 +89,34 @@ describe("presence run activity", () => {
       expect(harness.logUpdates).toContainEqual({ logId: "log-3", status: "Done", text: undefined });
       expect(harness.speechOutput.finalizeRunSpeech).toHaveBeenCalledTimes(1);
       expect(harness.speechOutput.speakReply).toHaveBeenCalledWith("final answer", expect.any(Object));
+    } finally {
+      harness.activity.destroy();
+    }
+  });
+
+  it("does not let a superseded run override its successor", () => {
+    const harness = createHarness();
+
+    try {
+      harness.activity.trackRun("run-old", "log-old", "old prompt", "Working");
+      harness.activity.trackRun("run-new", "log-new", "new prompt", "Working");
+
+      harness.activity.handleSignal("proc.run.output", {
+        runId: "run-old",
+        text: "late answer",
+      });
+      harness.activity.handleSignal("proc.run.finished", {
+        runId: "run-old",
+        aborted: true,
+      });
+
+      expect(harness.activity.activeRunCount()).toBe(1);
+      expect(harness.activity.hasRun("run-new")).toBe(true);
+      expect(harness.activities.at(-1)).toMatchObject({ status: "Working", body: "new prompt" });
+      expect(harness.notes).not.toContain("Mind is responding");
+      expect(harness.notes).not.toContain("Mind stopped");
+      expect(harness.logUpdates).toContainEqual({ logId: "log-old", status: "Stopped", text: undefined });
+      expect(harness.speechOutput.finalizeRunSpeech).not.toHaveBeenCalled();
     } finally {
       harness.activity.destroy();
     }

@@ -8,7 +8,7 @@ export type ErrorShape = {
 };
 
 export type RequestFrame<S extends SyscallName = SyscallName> = {
-  [K in S]: { type: "req"; id: string; call: K; args: ArgsOf<K> };
+  [K in S]: { type: "req"; id: string; call: K; args: ArgsOf<K>; runId?: string };
 }[S];
 
 export type ResponseOkFrame<S extends SyscallName = SyscallName> = {

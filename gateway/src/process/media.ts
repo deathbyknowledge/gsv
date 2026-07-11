@@ -2,9 +2,7 @@ import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 
 import type { ProcMediaInput } from "@humansandmachines/gsv/protocol";
 import {
-  DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
   DEFAULT_MAX_AUDIO_TRANSCRIPTION_BYTES,
-  normalizeBase64Data,
   type AudioTranscriptionBinding,
 } from "../inference/transcription";
 import { transcribeAudio } from "../inference/capabilities";
@@ -21,6 +19,7 @@ import {
   type ImageReadingBinding,
 } from "../inference/image-reading";
 import { isWorkersAiProvider } from "../inference/workers-ai";
+import { decodeBase64Bytes, normalizeBase64Data } from "../shared/base64";
 
 export {
   DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
@@ -98,7 +97,7 @@ export async function storeIncomingProcessMedia(
 
     if (typeof item.data === "string" && item.data.length > 0) {
       base64 = normalizeBase64Data(item.data);
-      bytes = base64ToUint8Array(base64);
+      bytes = decodeBase64Bytes(base64);
       const key = `${prefix}${crypto.randomUUID()}${inferExtension(item.filename, item.mimeType)}`;
       await bucket.put(key, bytes, {
         httpMetadata: { contentType: item.mimeType },
@@ -389,15 +388,6 @@ async function describeIncomingImage(
     console.warn("[ProcessMedia] image reading failed:", error);
     return null;
   }
-}
-
-function base64ToUint8Array(base64: string): Uint8Array {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-  return bytes;
 }
 
 function inferExtension(filename: string | undefined, mimeType: string): string {

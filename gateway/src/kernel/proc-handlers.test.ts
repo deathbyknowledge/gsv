@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
+import type {
+  ProcessIdentity,
+  ProcIpcSendResult,
+} from "@humansandmachines/gsv/protocol";
 import type { RequestFrame, ResponseFrame } from "../protocol/frames";
-import type { ProcIpcSendResult } from "../syscalls/proc";
 import type { KernelContext } from "./context";
 
 vi.mock("../shared/utils", () => ({
@@ -9,7 +11,7 @@ vi.mock("../shared/utils", () => ({
 }));
 
 import { sendFrameToProcess } from "../shared/utils";
-import { forwardToProcess, handleProcIpcCall, handleProcSpawn, handleProcList, resolveRunAsIdentity } from "./proc-handlers";
+import { forwardToProcess, handleProcIpcCall, handleProcIpcSend, handleProcSpawn, handleProcList, resolveRunAsIdentity } from "./proc-handlers";
 import { resolveCallerOwnerUid } from "./context";
 
 const IDENTITY: ProcessIdentity = {
@@ -73,14 +75,22 @@ describe("proc handlers", () => {
 
     expect(result).toEqual({ ok: false, error: "target rejected delivery" });
     const callId = ipcCalls.create.mock.calls[0]?.[0]?.callId;
+    const runId = (sendFrameToProcessMock.mock.calls[0]?.[1] as RequestFrame | undefined)?.args.runId;
     expect(callId).toBeTruthy();
+    expect(runId).toBeTruthy();
     expect(ipcCalls.remove).toHaveBeenCalledWith(callId);
-    expect(ipcCalls.attachRun).not.toHaveBeenCalled();
-    expect(ctx.scheduleIpcCallTimeout).not.toHaveBeenCalled();
+    expect(ipcCalls.create).toHaveBeenCalledWith(expect.objectContaining({
+      sourceRunId: "source-run",
+      targetRunId: runId,
+    }));
+    expect(ctx.scheduleIpcCallTimeout).toHaveBeenCalledWith(
+      callId,
+      ipcCalls.create.mock.calls[0]?.[0]?.deadlineAt,
+    );
   });
 
   it("keys same-owner cross-agent IPC calls by owner uid", async () => {
-    sendFrameToProcessMock.mockResolvedValue({
+    sendFrameToProcessMock.mockImplementation(async (_pid, frame) => ({
       type: "res",
       id: "deliver",
       ok: true,
@@ -90,9 +100,9 @@ describe("proc handlers", () => {
         pid: "target-process",
         sourcePid: "source-process",
         conversationId: "default",
-        runId: "run-1",
+        runId: (frame as RequestFrame).args.runId,
       } satisfies ProcIpcSendResult,
-    } satisfies ResponseFrame);
+    } satisfies ResponseFrame));
 
     const ownerUid = 1000;
     const sourceIdentity = {
@@ -121,14 +131,145 @@ describe("proc handlers", () => {
       pid: "target-process",
       sourcePid: "source-process",
       conversationId: "default",
-      runId: "run-1",
     });
+    const runId = (sendFrameToProcessMock.mock.calls[0]?.[1] as RequestFrame).args.runId;
+    expect(result).toMatchObject({ runId });
     expect(ipcCalls.create).toHaveBeenCalledWith(expect.objectContaining({
       uid: ownerUid,
       sourcePid: "source-process",
+      sourceRunId: "source-run",
       targetPid: "target-process",
+      targetRunId: runId,
     }));
-    expect(ipcCalls.attachRun).toHaveBeenCalledWith(expect.any(String), "run-1");
+  });
+
+  it("rejects an IPC send response for a different run", async () => {
+    sendFrameToProcessMock.mockResolvedValue({
+      type: "res",
+      id: "deliver",
+      ok: true,
+      data: {
+        ok: true,
+        status: "started",
+        pid: "target-process",
+        sourcePid: "source-process",
+        conversationId: "default",
+        runId: "unexpected-run",
+      } satisfies ProcIpcSendResult,
+    } satisfies ResponseFrame);
+    const { ctx } = makeIpcCallContext();
+
+    await expect(handleProcIpcSend({
+      pid: "target-process",
+      message: "fire and forget",
+    }, ctx)).resolves.toEqual({
+      ok: false,
+      error: "proc.ipc.deliver returned an unexpected runId",
+    });
+  });
+
+  it("schedules IPC timeout before delivering work to the target", async () => {
+    const { ctx, ipcCalls } = makeIpcCallContext();
+    sendFrameToProcessMock.mockImplementation(async (_pid, frame) => {
+      const callId = ipcCalls.create.mock.calls[0]?.[0]?.callId;
+      expect(ctx.scheduleIpcCallTimeout).toHaveBeenCalledWith(
+        callId,
+        ipcCalls.create.mock.calls[0]?.[0]?.deadlineAt,
+      );
+      return {
+        type: "res",
+        id: "deliver",
+        ok: true,
+        data: {
+          ok: true,
+          status: "started",
+          pid: "target-process",
+          sourcePid: "source-process",
+          conversationId: "default",
+          runId: (frame as RequestFrame).args.runId,
+        } satisfies ProcIpcSendResult,
+      } satisfies ResponseFrame;
+    });
+
+    await expect(handleProcIpcCall({
+      pid: "target-process",
+      message: "bounded work",
+    }, ctx)).resolves.toMatchObject({ ok: true, status: "started" });
+  });
+
+  it("correlates IPC with the dispatching run instead of mutable process state", async () => {
+    sendFrameToProcessMock.mockImplementation(async (_pid, frame) => ({
+      type: "res",
+      id: "deliver",
+      ok: true,
+      data: {
+        ok: true,
+        status: "started",
+        pid: "target-process",
+        sourcePid: "source-process",
+        conversationId: "default",
+        runId: (frame as RequestFrame).args.runId,
+      } satisfies ProcIpcSendResult,
+    } satisfies ResponseFrame));
+    const { ctx, ipcCalls } = makeIpcCallContext({
+      source: { uid: IDENTITY.uid, ownerUid: IDENTITY.uid, activeRunId: "successor-run" },
+    });
+    ctx.processRunId = "dispatching-run";
+
+    await handleProcIpcCall({
+      pid: "target-process",
+      message: "bounded work",
+    }, ctx);
+
+    expect(ipcCalls.create).toHaveBeenCalledWith(expect.objectContaining({
+      sourceRunId: "dispatching-run",
+    }));
+  });
+
+  it("removes the IPC call when timeout scheduling fails", async () => {
+    const { ctx, ipcCalls } = makeIpcCallContext();
+    ctx.scheduleIpcCallTimeout = vi.fn(async () => {
+      throw new Error("scheduler unavailable");
+    });
+
+    await expect(handleProcIpcCall({
+      pid: "target-process",
+      message: "bounded work",
+    }, ctx)).resolves.toEqual({ ok: false, error: "scheduler unavailable" });
+
+    const callId = ipcCalls.create.mock.calls[0]?.[0]?.callId;
+    expect(ipcCalls.remove).toHaveBeenCalledWith(callId);
+    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
+  });
+
+  it("does not report started after a delivered timeout row was removed", async () => {
+    sendFrameToProcessMock.mockImplementation(async (_pid, frame) => ({
+      type: "res",
+      id: "deliver",
+      ok: true,
+      data: {
+        ok: true,
+        status: "started",
+        pid: "target-process",
+        sourcePid: "source-process",
+        conversationId: "default",
+        runId: (frame as RequestFrame).args.runId,
+      } satisfies ProcIpcSendResult,
+    } satisfies ResponseFrame));
+    const { ctx, ipcCalls } = makeIpcCallContext();
+    ipcCalls.get.mockReturnValue(null);
+    const now = vi.spyOn(Date, "now")
+      .mockReturnValueOnce(1_000)
+      .mockReturnValue(61_000);
+    try {
+      await expect(handleProcIpcCall({
+        pid: "target-process",
+        message: "bounded work",
+      }, ctx)).resolves.toEqual({ ok: false, error: "IPC call timed out" });
+      expect(ipcCalls.get).toHaveReturnedWith(null);
+    } finally {
+      now.mockRestore();
+    }
   });
 
   it("derives client interaction origin for forwarded proc.send", async () => {
@@ -155,6 +296,8 @@ describe("proc handlers", () => {
       procs: {
         get: vi.fn(() => ({ uid: IDENTITY.uid, ownerUid: IDENTITY.uid })),
       },
+      conversations: { getByActivePid: vi.fn(() => null) },
+      runRoutes: { setConnectionRoute: vi.fn() },
     } as unknown as KernelContext;
     const spoofedOrigin = {
       kind: "adapter",
@@ -190,6 +333,38 @@ describe("proc handlers", () => {
         }),
       }),
     );
+  });
+
+  it("routes proc.send results by the target process owner", async () => {
+    sendFrameToProcessMock.mockResolvedValue({
+      type: "res",
+      id: "send-root",
+      ok: true,
+      data: { ok: true, status: "started", runId: "run-1" },
+    } satisfies ResponseFrame);
+    const setConnectionRoute = vi.fn();
+    const ctx = {
+      identity: {
+        role: "user",
+        process: { ...IDENTITY, uid: 0 },
+        capabilities: ["proc.send"],
+      },
+      connection: { id: "conn-root", state: {} },
+      procs: {
+        get: vi.fn(() => ({ uid: 2000, ownerUid: 1000 })),
+      },
+      conversations: { getByActivePid: vi.fn(() => null) },
+      runRoutes: { setConnectionRoute },
+    } as unknown as KernelContext;
+
+    await forwardToProcess({
+      type: "req",
+      id: "send-root",
+      call: "proc.send",
+      args: { pid: "proc-1", message: "hello" },
+    } as RequestFrame, ctx);
+
+    expect(setConnectionRoute).toHaveBeenCalledWith("run-1", 1000, "conn-root");
   });
 
   it("routes untargeted proc calls through the caller owner's default conversation", async () => {
@@ -336,6 +511,7 @@ describe("proc handlers", () => {
       config: {
         get: vi.fn((key: string) => configEntries.get(key) ?? null),
       },
+      conversations: { getByActivePid: vi.fn(() => null) },
     } as unknown as KernelContext;
 
     await forwardToProcess({
@@ -394,6 +570,7 @@ describe("proc handlers", () => {
       procs: {
         get: vi.fn(() => ({ uid: 2000, ownerUid: IDENTITY.uid })),
       },
+      conversations: { getByActivePid: vi.fn(() => null) },
     } as unknown as KernelContext;
 
     await forwardToProcess({
@@ -447,6 +624,15 @@ describe("proc handlers", () => {
     } as RequestFrame, ctx);
 
     expect(setLatestArchive).toHaveBeenCalledWith("default:1000:2000", null);
+    expect(ctx.ipcCalls.cancelBySourcePid).toHaveBeenCalledWith({
+      uid: IDENTITY.uid,
+      sourcePid: "proc-1",
+    });
+    expect(ctx.failIpcCallsByTarget).toHaveBeenCalledWith(
+      IDENTITY.uid,
+      "proc-1",
+      "Target process was reset",
+    );
   });
 
   it("clears a default conversation archive pointer after resetting the primary thread", async () => {
@@ -508,6 +694,12 @@ describe("proc handlers", () => {
       "/home/sam-agent/conversations/default%3A1000%3A2000/kill.default.gen-1.jsonl.gz",
     );
     expect(clearActivePid).toHaveBeenCalledWith("proc-1");
+    expect(ctx.runRoutes.delete).toHaveBeenCalledWith("run-active");
+    expect(ctx.failIpcCallsByTarget).toHaveBeenCalledWith(
+      IDENTITY.uid,
+      "proc-1",
+      "Target process was killed",
+    );
   });
 
   it("preserves a default conversation archive pointer on proc.kill when no archive is returned", async () => {
@@ -553,10 +745,18 @@ describe("proc handlers", () => {
 
     expect(result).toEqual({ ok: false, error: "target unavailable" });
     const callId = ipcCalls.create.mock.calls[0]?.[0]?.callId;
+    const runId = (sendFrameToProcessMock.mock.calls[0]?.[1] as RequestFrame | undefined)?.args.runId;
     expect(callId).toBeTruthy();
+    expect(runId).toBeTruthy();
     expect(ipcCalls.remove).toHaveBeenCalledWith(callId);
-    expect(ipcCalls.attachRun).not.toHaveBeenCalled();
-    expect(ctx.scheduleIpcCallTimeout).not.toHaveBeenCalled();
+    expect(ipcCalls.create).toHaveBeenCalledWith(expect.objectContaining({
+      sourceRunId: "source-run",
+      targetRunId: runId,
+    }));
+    expect(ctx.scheduleIpcCallTimeout).toHaveBeenCalledWith(
+      callId,
+      ipcCalls.create.mock.calls[0]?.[0]?.deadlineAt,
+    );
   });
 
   it("spawns a fresh top-level process when explicit cwd is requested", async () => {
@@ -786,19 +986,23 @@ describe("proc handlers", () => {
 
 function makeIpcCallContext(options: {
   identity?: ProcessIdentity;
-  source?: { uid: number; ownerUid: number };
+  source?: { uid: number; ownerUid: number; activeRunId?: string | null };
   target?: { uid: number; ownerUid: number };
 } = {}) {
   const identity = options.identity ?? IDENTITY;
-  const source = options.source ?? { uid: identity.uid, ownerUid: identity.uid };
+  const source = {
+    activeRunId: "source-run",
+    ...(options.source ?? { uid: identity.uid, ownerUid: identity.uid }),
+  };
   const target = options.target ?? { uid: identity.uid, ownerUid: identity.uid };
   const ipcCalls = {
     create: vi.fn(),
+    get: vi.fn(() => ({ status: "pending", error: null })),
     remove: vi.fn(),
-    attachRun: vi.fn(),
   };
   const ctx = {
     processId: "source-process",
+    processRunId: "source-run",
     identity: { process: identity },
     procs: {
       get: vi.fn((pid: string) => {
@@ -817,6 +1021,7 @@ function makeIpcCallContext(options: {
 function makeForwardContext(overrides?: {
   setLatestArchive?: (conversationId: string, archivePath: string | null) => boolean;
   clearActivePid?: (pid: string) => void;
+  cancelBySourcePid?: (input: { uid: number; sourcePid: string }) => void;
 }): KernelContext {
   return {
     identity: {
@@ -825,8 +1030,15 @@ function makeForwardContext(overrides?: {
       capabilities: ["proc.reset", "proc.kill"],
     },
     procs: {
-      get: vi.fn(() => ({ uid: IDENTITY.uid, ownerUid: IDENTITY.uid })),
+      get: vi.fn(() => ({
+        uid: IDENTITY.uid,
+        ownerUid: IDENTITY.uid,
+        activeRunId: "run-active",
+      })),
       kill: vi.fn(),
+    },
+    runRoutes: {
+      delete: vi.fn(),
     },
     conversations: {
       getByActivePid: vi.fn(() => ({
@@ -844,6 +1056,10 @@ function makeForwardContext(overrides?: {
       setLatestArchive: overrides?.setLatestArchive ?? vi.fn(),
       clearActivePid: overrides?.clearActivePid ?? vi.fn(),
     },
+    ipcCalls: {
+      cancelBySourcePid: overrides?.cancelBySourcePid ?? vi.fn(),
+    },
+    failIpcCallsByTarget: vi.fn(),
   } as unknown as KernelContext;
 }
 
@@ -861,7 +1077,7 @@ describe("resolveCallerOwnerUid", () => {
     const ctx = {
       processId: "proc:abc",
       identity: { role: "user", process: { ...IDENTITY, uid: 2000 }, capabilities: [] },
-      procs: { get: vi.fn(() => ({ ownerUid: 1000 })) },
+      procs: { getOwnerUid: vi.fn(() => 1000) },
     } as unknown as KernelContext;
     expect(resolveCallerOwnerUid(ctx)).toBe(1000);
   });
@@ -955,7 +1171,7 @@ describe("handleProcList", () => {
       // The process runs as the personal agent (uid 2000) but is owned by the
       // human (uid 1000); listing must resolve to the human owner.
       identity: { role: "user", process: { ...IDENTITY, uid: 2000 }, capabilities: ["proc.list"] },
-      procs: { get: vi.fn(() => ({ ownerUid: 1000 })), list },
+      procs: { getOwnerUid: vi.fn(() => 1000), list },
       conversations: { getByActivePid: vi.fn(() => null) },
     } as unknown as KernelContext;
 

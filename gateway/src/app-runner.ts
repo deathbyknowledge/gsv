@@ -100,20 +100,6 @@ type AppRuntimeContext = {
   };
 };
 
-export type AppHttpRequest = {
-  url: string;
-  method: string;
-  headers: string[][];
-  body?: ArrayBuffer | null;
-};
-
-export type AppHttpResponse = {
-  status: number;
-  statusText: string;
-  headers: string[][];
-  body?: ArrayBuffer | null;
-};
-
 export type AppRunnerCommandInput = {
   commandName: string;
   args: string[];
@@ -220,7 +206,7 @@ class AppSocketError extends Error {
 
 export class GsvApiBinding extends WorkerEntrypoint<Env, GsvApiBindingProps> {
   async kernelRequest(appFrame: AppFrameContext, call: string, args?: unknown): Promise<unknown> {
-    const kernel = await getAgentByName(this.env.KERNEL, "singleton") as unknown as KernelAppStub;
+    const kernel = await getAgentByName(this.env.KERNEL, "singleton") as KernelAppStub;
     const frame: RequestFrame = {
       type: "req",
       id: crypto.randomUUID(),
@@ -284,51 +270,6 @@ export class GsvApiBinding extends WorkerEntrypoint<Env, GsvApiBindingProps> {
   }
 }
 
-export async function serializeAppHttpRequest(request: Request): Promise<AppHttpRequest> {
-  let body: ArrayBuffer | null = null;
-  if (request.method !== "GET" && request.method !== "HEAD") {
-    body = await request.clone().arrayBuffer();
-  }
-  return {
-    url: request.url,
-    method: request.method,
-    headers: Array.from(request.headers.entries()),
-    body,
-  };
-}
-
-export function deserializeAppHttpResponse(response: AppHttpResponse): Response {
-  return new Response(response.body ?? null, {
-    status: response.status,
-    statusText: response.statusText,
-    headers: response.headers,
-  });
-}
-
-function deserializeAppHttpRequest(request: AppHttpRequest): Request {
-  const init: RequestInit = {
-    method: request.method,
-    headers: request.headers,
-  };
-  if (request.method !== "GET" && request.method !== "HEAD" && request.body) {
-    init.body = request.body;
-  }
-  return new Request(request.url, init);
-}
-
-async function serializeAppHttpResponseValue(response: Response): Promise<AppHttpResponse> {
-  let body: ArrayBuffer | null = null;
-  if (response.body) {
-    body = await response.clone().arrayBuffer();
-  }
-  return {
-    status: response.status,
-    statusText: response.statusText,
-    headers: Array.from(response.headers.entries()),
-    body,
-  };
-}
-
 export class AppRunner extends DurableObject<Env> {
   private readonly daemonSchedules: AppRpcScheduleStore;
   private readonly appClients = new Map<string, RegisteredAppClient>();
@@ -359,16 +300,15 @@ export class AppRunner extends DurableObject<Env> {
     this.ctx.storage.kv.put(PROPS_KEY, props);
   }
 
-  async gsvFetch(request: AppHttpRequest): Promise<AppHttpResponse> {
-    return this.#gsvFetch(request, this.#defaultRuntime());
+  async gsvFetch(request: Request): Promise<Response> {
+    return this.#getAppEntrypoint(this.#defaultRuntime()).fetch(request);
   }
 
   async fetch(request: Request): Promise<Response> {
     if (request.headers.get("upgrade")?.toLowerCase() === "websocket") {
       return this.#acceptAppSocket(request);
     }
-    const response = await this.gsvFetch(await serializeAppHttpRequest(request));
-    return deserializeAppHttpResponse(response);
+    return this.gsvFetch(request);
   }
 
   async deliverSignal(input: AppRunnerSignalInput): Promise<void> {
@@ -601,7 +541,7 @@ export class AppRunner extends DurableObject<Env> {
     if (!call) {
       throw new AppSocketError(400, "kernel.request requires call");
     }
-    const kernel = await getAgentByName(this.env.KERNEL, "singleton") as unknown as KernelAppStub;
+    const kernel = await getAgentByName(this.env.KERNEL, "singleton") as KernelAppStub;
     const response = await kernel.appRequest(client.appFrame, {
       type: "req",
       id: crypto.randomUUID(),
@@ -612,11 +552,6 @@ export class AppRunner extends DurableObject<Env> {
       throw new AppSocketError(response.error.code, response.error.message);
     }
     return response.data;
-  }
-
-  async #gsvFetch(request: AppHttpRequest, runtime: AppRuntimeContext): Promise<AppHttpResponse> {
-    const response = await this.#getAppEntrypoint(runtime).fetch(deserializeAppHttpRequest(request));
-    return serializeAppHttpResponseValue(response);
   }
 
   async alarm(): Promise<void> {

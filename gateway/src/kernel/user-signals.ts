@@ -5,7 +5,6 @@ export const USER_PROCESS_SIGNALS = [
   "proc.run.retrying",
   "proc.run.output",
   "proc.run.tool.started",
-  "proc.run.tool.finished",
   "proc.run.hil.requested",
   "proc.run.finished",
   "process.exit",

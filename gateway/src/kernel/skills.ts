@@ -84,7 +84,7 @@ export async function collectKernelSkillDocuments(
   ctx: KernelContext,
   options: SkillCollectionOptions = { includeNested: true },
 ): Promise<SkillDocument[]> {
-  const files: SkillFile[] = [];
+  const files: ParsedSkillFile[] = [];
 
   const ripgit = ctx.env.RIPGIT ? new RipgitClient(ctx.env.RIPGIT) : null;
   const runAsIdentity = ctx.identity?.process;
@@ -108,7 +108,7 @@ export async function collectFilesystemSkillDocuments(
   options: SkillCollectionOptions = { includeNested: true },
 ): Promise<SkillDocument[]> {
   const roots = filesystemSkillRoots(ctx, identity, resolveSkillHomeLayers(ctx, identity));
-  const files: SkillFile[] = [];
+  const files: ParsedSkillFile[] = [];
   for (const root of roots) {
     files.push(...await collectFsSkillFiles(fs, root.rootPath, root.source, root.idPrefix, options));
   }
@@ -203,18 +203,10 @@ export function renderSkillIndex(entries: SkillIndexEntry[]): string {
     "Use `skills show <skill>` before relying on a reusable workflow.",
     "",
   ];
-  appendPromptEntries(lines, entries, entries.length);
-  return lines.join("\n");
-}
-
-function appendPromptEntries(
-  lines: string[],
-  entries: SkillIndexEntry[],
-  limit: number,
-): void {
-  for (const entry of entries.slice(0, limit)) {
+  for (const entry of entries) {
     lines.push(formatPromptSkillEntry(entry));
   }
+  return lines.join("\n");
 }
 
 function formatPromptSkillEntry(entry: SkillIndexEntry): string {
@@ -232,8 +224,8 @@ async function collectRipgitRuntimeSkillFiles(
   runAsIdentity: ProcessIdentity,
   homeLayers: SkillHomeLayer[],
   options: SkillCollectionOptions,
-): Promise<SkillFile[]> {
-  const files: SkillFile[] = [];
+): Promise<ParsedSkillFile[]> {
+  const files: ParsedSkillFile[] = [];
 
   for (const layer of homeLayers) {
     files.push(...await collectRipgitSkillFiles(
@@ -319,7 +311,7 @@ function resolveSkillHomeLayers(ctx: KernelContext, runAsIdentity: ProcessIdenti
     return [{ identity: runAsIdentity, label: "home" }];
   }
 
-  const entry = ctx.auth?.getPasswdByUid(ownerUid);
+  const entry = ctx.auth.getPasswdByUid(ownerUid);
   if (!entry) {
     return [{ identity: runAsIdentity, label: "home" }];
   }
@@ -345,9 +337,7 @@ function resolveSkillOwnerUid(ctx: KernelContext, runAsIdentity: ProcessIdentity
   }
 
   if (ctx.processId) {
-    const ownerUid = typeof ctx.procs?.getOwnerUid === "function"
-      ? ctx.procs.getOwnerUid(ctx.processId)
-      : ctx.procs?.get(ctx.processId)?.ownerUid ?? null;
+    const ownerUid = ctx.procs.getOwnerUid(ctx.processId);
     if (ownerUid != null) {
       return ownerUid;
     }
@@ -362,8 +352,8 @@ async function collectFsSkillFiles(
   source: SkillSource,
   idPrefix?: string,
   options: SkillCollectionOptions = { includeNested: true },
-): Promise<SkillFile[]> {
-  const files: SkillFile[] = [];
+): Promise<ParsedSkillFile[]> {
+  const files: ParsedSkillFile[] = [];
   await walkFsSkillRoot(
     fs,
     rootPath.replace(/\/+$/, ""),
@@ -383,7 +373,7 @@ async function walkFsSkillRoot(
   absolutePath: string,
   relativePath: string,
   source: SkillSource,
-  files: SkillFile[],
+  files: ParsedSkillFile[],
   parentId: string | undefined,
   depth: number,
   idPrefix?: string,
@@ -473,8 +463,8 @@ async function collectRipgitSkillFiles(
   virtualRoot: string,
   idPrefix?: string,
   options: SkillCollectionOptions = { includeNested: true },
-): Promise<SkillFile[]> {
-  const files: SkillFile[] = [];
+): Promise<ParsedSkillFile[]> {
+  const files: ParsedSkillFile[] = [];
   await walkRipgitSkillRoot(
     ripgit,
     repo,
@@ -498,7 +488,7 @@ async function walkRipgitSkillRoot(
   relativePath: string,
   source: SkillSource,
   virtualRoot: string,
-  files: SkillFile[],
+  files: ParsedSkillFile[],
   parentId: string | undefined,
   depth: number,
   idPrefix?: string,
@@ -628,33 +618,20 @@ async function readFsText(fs: FsReader, path: string): Promise<string | null> {
   }
 }
 
-function createSkillFile(args: Omit<SkillFile, "idBase">): SkillFile | null {
+function createSkillFile(args: Omit<SkillFile, "idBase">): ParsedSkillFile | null {
   const skill = parseSkillMarkdown(args.content, args.fallbackName);
   if (!skill.name) {
     return null;
   }
   return {
     ...args,
+    ...skill,
     idBase: args.parentId ? `${args.parentId}/${skill.name}` : skill.name,
   };
 }
 
-function buildSkillDocuments(files: SkillFile[]): SkillDocument[] {
-  const parsed: ParsedSkillFile[] = [];
-  for (const file of files) {
-    const skill = parseSkillMarkdown(file.content, file.fallbackName);
-    if (!skill.name) {
-      continue;
-    }
-    parsed.push({
-      ...file,
-      name: skill.name,
-      description: skill.description,
-      aliases: skill.aliases,
-    });
-  }
-
-  parsed.sort((left, right) => {
+function buildSkillDocuments(files: ParsedSkillFile[]): SkillDocument[] {
+  const parsed = [...files].sort((left, right) => {
     const source = sourceRank(left.source) - sourceRank(right.source);
     if (source !== 0) {
       return source;
@@ -738,22 +715,6 @@ function packageTopLevelSkillRoot(record: InstalledPackageRecord): {
     repo,
     path: packageSourceRipgitPath(record, "skills.d"),
     virtualPath: `${packageSourceRepoPath(record)}/skills.d`,
-  };
-}
-
-function packageProfileSkillRoot(record: InstalledPackageRecord, profileName: string): {
-  repo: RipgitRepoRef;
-  path: string;
-  virtualPath: string;
-} | null {
-  const repo = repoRefFromPackage(record);
-  if (!repo) {
-    return null;
-  }
-  return {
-    repo,
-    path: packageSourceRipgitPath(record, joinPath(joinPath("profiles", profileName), "skills.d")),
-    virtualPath: `${packageSourceRepoPath(record)}/profiles/${profileName}/skills.d`,
   };
 }
 
@@ -885,14 +846,6 @@ function fallbackSkillName(path: string): string {
   }
   const last = parts.at(-1) ?? "skill";
   return last.replace(/\.md$/i, "");
-}
-
-function isSkillMarkdownPath(path: string): boolean {
-  const parts = path.split("/").filter(Boolean);
-  if (parts.length === 1) {
-    return parts[0].endsWith(".md") && parts[0] !== "DESCRIPTION.md";
-  }
-  return parts.at(-1) === "SKILL.md";
 }
 
 function decodeTextFile(bytes: Uint8Array): string | null {

@@ -167,6 +167,21 @@ export function applyChatSignal(
     return applyProcChanged(state, payload);
   }
 
+  const signalRunId = asString(asRecord(payload)?.runId);
+  if (
+    signalRunId
+    && state.activeRunId
+    && signalRunId !== state.activeRunId
+  ) {
+    return {
+      matched: true,
+      refreshHistory:
+        signal === "proc.run.output"
+        || signal === "proc.run.finished",
+      state,
+    };
+  }
+
   if (signal === "proc.run.started") {
     const record = asRecord(payload);
     const runId = asString(record?.runId);
@@ -253,22 +268,6 @@ export function applyChatSignal(
         conversationId: asString(record?.conversationId) ?? state.conversationId,
         pendingHil: null,
         rows: upsertToolRow(state.rows, toolRowFromStarted(record)),
-        runState: "running",
-      },
-    };
-  }
-
-  if (signal === "proc.run.tool.finished") {
-    const record = asRecord(payload);
-    const runId = asString(record?.runId);
-    return {
-      matched: true,
-      refreshHistory: true,
-      state: {
-        ...state,
-        activeRunId: runId ?? state.activeRunId,
-        conversationId: asString(record?.conversationId) ?? state.conversationId,
-        rows: upsertToolRow(state.rows, toolRowFromFinished(record, state.rows)),
         runState: "running",
       },
     };
@@ -907,38 +906,6 @@ function toolRowFromStarted(record: Record<string, unknown> | null): ChatTranscr
     toolSyscall: syscall,
     runId: asString(record?.runId) ?? undefined,
     status: "running",
-    meta: syscall ?? undefined,
-  };
-}
-
-function toolRowFromFinished(
-  record: Record<string, unknown> | null,
-  rows: ChatTranscriptRow[],
-): ChatTranscriptRow {
-  const now = Date.now();
-  const callId = asString(record?.callId) ?? `tool:${now}`;
-  const runId = asString(record?.runId) ?? undefined;
-  const lookup = { role: "toolResult" as const, runId, toolCallId: callId };
-  const existing = rows.find((row) => sameToolActivityRow(row, lookup));
-  const toolName = asString(record?.name) ?? existing?.toolName ?? "Tool";
-  const syscall = inferToolSyscall(toolName, asString(record?.syscall) ?? existing?.toolSyscall);
-  const ok = record?.ok !== false;
-  const error = asString(record?.error);
-  const output = record?.output;
-  return {
-    id: `tool:${callId}`,
-    role: "toolResult",
-    text: formatToolOutput(output, error, ""),
-    timestamp: now,
-    time: formatTranscriptTime(now),
-    toolArgs: existing?.toolArgs ?? {},
-    toolCallId: callId,
-    toolName,
-    toolOutput: output,
-    toolSyscall: syscall,
-    runId: runId ?? existing?.runId,
-    isError: !ok,
-    status: ok ? "done" : "error",
     meta: syscall ?? undefined,
   };
 }

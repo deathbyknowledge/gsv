@@ -3,17 +3,17 @@ import type {
   MkdirOptions,
   RmOptions,
 } from "just-bash";
-import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { canReadConfigKey } from "../../kernel/config-access";
 import type { KernelRefs, ProcessViewCall } from "../refs";
 import type { ArgsOf, ResultOf } from "../../syscalls";
 import type {
+  ProcessIdentity,
   ProcAiConfigSnapshot,
   ProcConversation,
   ProcConversationGenerationManifest,
   ProcConversationSegment,
-} from "../../syscalls/proc";
-import type { ScheduleRecord } from "../../syscalls/scheduler";
+  ScheduleRecord,
+} from "@humansandmachines/gsv/protocol";
 import {
   packageArtifactPublicBase,
   visiblePackageScopesForActor,
@@ -724,12 +724,7 @@ export class KernelMountBackend implements MountBackend {
 
   private viewerOwnerUid(): number {
     if (!this.kernel || !this.selfPid) return this.identity.uid;
-    if (typeof this.kernel.procs.getOwnerUid === "function") {
-      const ownerUid = this.kernel.procs.getOwnerUid(this.selfPid);
-      if (ownerUid !== null) return ownerUid;
-    }
-    const proc = this.kernel.procs.get(this.selfPid);
-    return proc ? proc.ownerUid ?? proc.uid : this.identity.uid;
+    return this.kernel.procs.getOwnerUid(this.selfPid) ?? this.identity.uid;
   }
 
   private async processRequest<S extends ProcessViewCall>(

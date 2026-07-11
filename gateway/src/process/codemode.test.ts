@@ -52,17 +52,20 @@ describe.sequential("CodeMode executor", () => {
     });
   });
 
-  it("routes sandboxed fetch through the host callback", async () => {
+  it("routes sandboxed fetch through the canonical syscall shape", async () => {
     const calls: Array<{ call: string; args: Record<string, unknown> }> = [];
     const result = await executeCodeMode(
       env,
       `
         const response = await fetch("https://example.test/index.html", {
           headers: { "x-test": "yes" },
+          redirect: "follow",
+          timeoutMs: 12_000,
         });
         return {
           status: response.status,
           url: response.url,
+          redirected: response.redirected,
           header: response.headers.get("content-type"),
           body: await response.text(),
         };
@@ -71,25 +74,32 @@ describe.sequential("CodeMode executor", () => {
         calls.push({ call, args });
         if (call === "net.fetch") {
           return {
-            url: String(args.url),
+            ok: true,
+            url: "https://example.test/final.html",
             status: 200,
             statusText: "OK",
-            headers: [["content-type", "text/plain"]],
+            headers: { "content-type": "text/plain" },
+            redirected: true,
             bodyBase64: btoa("gateway test assets"),
-            redirected: false,
+            bodyText: "gateway test assets",
+            bodyBytes: 19,
           };
         }
         throw new Error(`unexpected call: ${call}`);
       },
+      { defaultTarget: "macbook" },
     );
 
     expect(calls).toEqual([
       {
         call: "net.fetch",
         args: {
+          target: "macbook",
           url: "https://example.test/index.html",
           method: "GET",
-          headers: [["x-test", "yes"]],
+          headers: { "x-test": "yes" },
+          redirect: "follow",
+          timeoutMs: 12_000,
         },
       },
     ]);
@@ -97,11 +107,35 @@ describe.sequential("CodeMode executor", () => {
     if (result.status === "completed") {
       expect(result.result).toMatchObject({
         status: 200,
-        url: "https://example.test/index.html",
+        url: "https://example.test/final.html",
+        redirected: true,
         header: "text/plain",
       });
       expect(String((result.result as { body?: unknown }).body)).toContain("gateway test assets");
     }
+  });
+
+  it("passes redirect error mode through the Workerd request bridge", async () => {
+    const result = await executeCodeMode(
+      env,
+      "return (await fetch('https://example.test/data', { redirect: 'error' })).status;",
+      async (call, args) => {
+        expect(call).toBe("net.fetch");
+        expect(args).toMatchObject({ redirect: "error" });
+        return {
+          ok: true,
+          url: "https://example.test/data",
+          status: 200,
+          statusText: "OK",
+          headers: {},
+          redirected: false,
+          bodyBase64: "",
+          bodyBytes: 0,
+        };
+      },
+    );
+
+    expect(result).toEqual({ status: "completed", result: 200 });
   });
 
   it("applies command defaults and exposes argv and args", async () => {
@@ -276,6 +310,22 @@ describe.sequential("CodeMode executor", () => {
         qualifiedResult: { title: "GSV" },
       },
     });
+  });
+
+  it("qualifies MCP tools that collide with CodeMode globals", () => {
+    const bindings = buildCodeModeMcpToolBindings([{
+      serverId: "server-1",
+      name: "Network",
+      state: "ready",
+      tools: [{
+        name: "fetch",
+        description: "Fetch through MCP",
+        inputSchema: null,
+        outputSchema: null,
+      }],
+    }]);
+
+    expect(bindings.map((binding) => binding.functionName)).toEqual(["Network_fetch"]);
   });
 
   it("generates TypeScript declarations for connected MCP functions", () => {

@@ -107,6 +107,7 @@ function createCtx() {
   function ctxFor(identity: ConnectionIdentity, options: { ripgit?: boolean } = {}): KernelContext {
     return {
       auth: auth as unknown as KernelContext["auth"],
+      caps: { resolve: vi.fn(() => []) } as unknown as KernelContext["caps"],
       env: {
         STORAGE: storage,
         ...(options.ripgit ? { RIPGIT: ripgit } : {}),

@@ -6,7 +6,7 @@ Source of truth:
 
 - `gateway/src/syscalls/index.ts`
 - `gateway/src/kernel/dispatch.ts`
-- `shared/protocol/src/syscalls/*.ts`
+- `packages/gsv/src/protocol/syscalls/*.ts`
 
 ## Calling Convention
 
@@ -375,11 +375,12 @@ shell tools, plus generated async functions for connected MCP tools:
 ```ts
 const res = await shell("npm test", { target: "macbook", cwd: "~/projects/gsv" });
 const file = await fs.read({ target: "macbook", path: "package.json" });
+const response = await fetch("https://example.com", { target: "macbook" });
 const toolResult = await lookup_record({ query: "gsv" });
 ```
 
 Nested tool calls are dispatched back through the Process DO and Kernel as
-ordinary `shell.exec`, `fs.*`, and `sys.mcp.*` request frames. They keep the
+ordinary `shell.exec`, `fs.*`, `net.fetch`, and `sys.mcp.*` request frames. They keep the
 same capability, approval, target routing, async device response, and shell
 session behavior as direct model tool calls.
 
@@ -388,7 +389,7 @@ Runtime behavior:
 | Syscall | Handler | Behavior |
 |---|---|---|
 | `codemode.exec` | Process DO `executeCodeModeTool`; `executeCodeMode` | Runs code in an isolated Worker Loader worker with outbound network disabled. Provides `shell(input, options)`, `fs.read/write/edit/delete/search`, `mcpTools` metadata, and connected MCP tools as generated async functions. Returns a structured `completed` or `failed` CodeMode result. |
-| `codemode.run` | Kernel `forwardToProcess`; Process DO `handleCodeModeRun`; `executeCodeMode` | Manual CodeMode execution for shell/CLI surfaces. Accepts code plus optional wrapper defaults and script arguments. Nested tools route through normal `shell.exec`, `fs.*`, and `sys.mcp.*` syscalls. |
+| `codemode.run` | Kernel `forwardToProcess`; Process DO `handleCodeModeRun`; `executeCodeMode` | Manual CodeMode execution for shell/CLI surfaces. Accepts code plus optional wrapper defaults and script arguments. Nested tools route through normal `shell.exec`, `fs.*`, `net.fetch`, and `sys.mcp.*` syscalls. |
 
 ```ts
 type CodeModeSyscalls = {
@@ -483,12 +484,12 @@ Runtime behavior:
 | `proc.list` | `handleProcList` | Reads the kernel process registry. Root defaults to all processes; non-root defaults to own uid, though an explicit `uid` is currently honored by the handler. |
 | `proc.profile.list` | `handleProcProfileList` | Returns system AI profiles plus enabled package-backed profiles visible to the caller. Package entries are sorted by package name and display name. |
 | `proc.spawn` | `handleProcSpawn` | Resolves the run-as identity, registers the process, sends kernel-only `proc.setidentity`, and optionally sends the initial prompt. A default interactive top-level spawn reuses the caller's default conversation executor; custom spawns get UUID pids. |
-| `proc.send` | Process DO `handleProcSend` | Defaults `pid` to `init:<uid>` when forwarded and `conversationId` to `default`. Stores media, appends a user message, starts a run if idle, or queues the message if a run is active. Touches workspace activity before forwarding. |
-| `proc.ipc.send` | `handleProcIpcSend` | Process-callable same-owner IPC. Validates that the caller is a registered process, the target exists, and source/target uids match, then sends kernel-only `proc.ipc.deliver` to the target Process DO. The target receives a visible user message envelope and starts or queues a run. |
+| `proc.send` | Process DO `handleProcSend` | Defaults `pid` to `init:<uid>` when forwarded and `conversationId` to `default`. A direct user message supersedes the active run; process and scheduler messages remain FIFO queued. Media-bearing user messages are admitted immediately and generation starts after background media preparation. Touches workspace activity before forwarding. |
+| `proc.ipc.send` | `handleProcIpcSend` | Process-callable same-owner IPC. Validates that the caller is a registered process, the target exists, and source/target owners match, then sends kernel-only `proc.ipc.deliver` to the target Process DO. The target receives a visible user message envelope and starts or queues a run. |
 | `proc.ipc.call` | `handleProcIpcCall` | Process-callable bounded same-owner IPC. Creates a call id and deadline, delivers the request to the target process, and later sends either `ipc.reply` or `ipc.timeout` to the source process. The syscall returns after acceptance, not after the target replies. |
-| `proc.abort` | Process DO | Logical cancellation of the active run. Clears pending HIL and current run, emits `chat.complete` with `aborted: true`, and may promote the next queued run. In-flight external work can still resolve later but stale handling guards state. |
+| `proc.abort` | Process DO | Logical cancellation of the active run. Converts outstanding tool calls to error results, clears pending HIL and current run, emits `proc.run.finished` with `status: "aborted"`, and may promote the next queued run. In-flight external work can still resolve later but stale handling guards state. An optional `runId` prevents a stale abort from stopping a successor. |
 | `proc.hil` | Process DO | Resolves a pending human-in-the-loop request. `approve` dispatches the original syscall; `deny` appends a synthetic error tool result. `remember: true` with `approve` stores a process-local allow override for the syscall and target class. |
-| `proc.kill` | Process DO | Checkpoints workspace, optionally archives every non-empty conversation under one archive directory, clears active run, tool state, HIL, queue, media, and all conversation messages, then increments conversation generations. Does not remove the kernel process registry entry in normal syscall use. |
+| `proc.kill` | Process DO | Optionally archives every non-empty conversation under the run-as agent's home, clears process media, and wipes Process DO state. After success the Kernel removes the process registry entry and detaches its conversation executor. |
 | `proc.history` | Process DO | Returns paged stored messages for `conversationId` or `default`, plus message ids, message count, cursor flags, truncation status, timestamps, pending HIL, and the latest context-pressure state when available. Offset paging reads from the beginning. `tail: true` reads the latest page, `beforeMessageId` reads older messages, and `afterMessageId` reads newer messages. Tool results and assistant metadata are expanded into structured content. |
 | `proc.conversation.open` | Process DO | Creates or reopens a process-local conversation. If `conversationId` is omitted, the Process DO generates one. Optional `title` is trimmed and stored. |
 | `proc.conversation.list` | Process DO | Lists open conversations by default. `includeClosed: true` includes closed conversations. Each record includes generation, status, title, message count, and timestamps. |
@@ -501,7 +502,7 @@ Runtime behavior:
 | `proc.conversation.fork` | Process DO | Branches a live conversation through `throughMessageId`, or restores a compacted `segmentId` into a new process-local conversation. Segment restore includes the live suffix that existed at the compaction boundary unless `includeLiveSuffix: false`. |
 | `proc.conversation.segment.read` | Process DO | Reads paged messages from a compacted segment archive without restoring those messages into the live conversation. |
 | `proc.conversation.segments` | Process DO | Lists recorded lifecycle segments for `conversationId` or `default`, including archive paths and summary marker ids. |
-| `proc.reset` | Process DO | Checkpoints workspace, archives every non-empty conversation under `/var/sessions/<username>/<pid>/<archiveId>/`, clears active execution state, queues, process media, and all conversation messages, then increments conversation generations. |
+| `proc.reset` | Process DO | Archives every non-empty conversation under the run-as agent's home, clears active execution state, queues, process media, and all conversation messages, then increments conversation generations. |
 | `proc.ipc.deliver` | Process DO direct path | Kernel-only through public dispatch. Delivers the validated IPC envelope from the kernel into the target conversation. |
 | `proc.setidentity` | Process DO direct path | Kernel-only through public dispatch. Stores pid, identity, interaction mode, assignment context, and conversation hydration pointers; `assignment.autoStart` can create a run immediately. |
 
@@ -557,6 +558,7 @@ type ProcIpcSendArgs = {
 };
 
 type ProcIpcDeliverArgs = {
+  runId: string;
   sourcePid: string;
   source: ProcessIdentity;
   conversationId?: string;
@@ -565,7 +567,6 @@ type ProcIpcDeliverArgs = {
   sentAt: number;
   call?: {
     callId: string;
-    replyToPid: string;
     deadlineAt: number;
   };
 };
@@ -619,7 +620,7 @@ type ProcessSyscalls = {
   };
 
   "proc.abort": {
-    args: { pid?: string };
+    args: { pid?: string; runId?: string };
     result: { ok: true; pid: string; aborted: boolean; runId?: string; interruptedToolCalls?: number; continuedQueuedRunId?: string } | OperationError;
   };
 
@@ -728,7 +729,7 @@ Runtime behavior:
 | `pkg.public.list` | `handlePkgPublicList` | Lists local public packages, or fetches `<baseUrl>/public/packages` from a named/URL remote. Invalid remote catalog entries are dropped. |
 | `pkg.public.set` | `handlePkgPublicSet` | Marks a source repo public or private in config. Requires repo owner, root, or wildcard capability. |
 
-Mutating package calls require root, wildcard capability, or ownership of the package user scope. `pkg.add`, `pkg.sync`, `pkg.install`, `pkg.remove`, and `pkg.checkout` broadcast `pkg.changed` after success.
+Mutating package calls require root, wildcard capability, or ownership of the package user scope. `pkg.add`, `pkg.create`, `pkg.sync`, `pkg.install`, `pkg.remove`, and `pkg.checkout` broadcast `pkg.changed` to that scope after success.
 
 ```ts
 type PackageSyscalls = {
@@ -1113,10 +1114,10 @@ Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `adapter.connect` | `handleAdapterConnect` | Calls service binding `CHANNEL_<ADAPTER>.adapterConnect(accountId, config)`, then best-effort refreshes live status. Requires non-empty adapter and account id. Missing service or method returns operation error. |
-| `adapter.disconnect` | `handleAdapterDisconnect` | Calls adapter disconnect, upserts local status as disconnected and unauthenticated, then best-effort refreshes live status. |
+| `adapter.connect` | `handleAdapterConnect` | User-role only. Rejects foreign-owned accounts, serializes lifecycle operations per account, durably assigns new accounts to the caller's owning human, and calls `CHANNEL_<ADAPTER>.adapterConnect(accountId, config)`. Ownership survives failed provisioning so the owner can retry safely. |
+| `adapter.disconnect` | `handleAdapterDisconnect` | Owner-or-root only. Serializes with connect, calls adapter disconnect, upserts local status as disconnected and unauthenticated, then best-effort refreshes live status. |
 | `adapter.inbound` | `handleAdapterInbound` | Service-role only. Lowercases adapter, resolves linked user, drops unlinked non-DM messages, issues link challenges for unlinked DMs, ensures the user init process exists, handles pending HIL confirmations, and otherwise forwards rendered text/media to `proc.send`. |
-| `adapter.state.update` | `handleAdapterStateUpdate` | Service-role only. Upserts local adapter status and broadcasts `adapter.status` to service-role connections after successful dispatch. |
+| `adapter.state.update` | `handleAdapterStateUpdate` | Service-role only. Updates status without changing ownership and broadcasts a minimal `adapter.status` invalidation to root, the account owner, and linked users. |
 | `adapter.send` | `handleAdapterSend` | Validates adapter/account/surface and forwards outbound text, media, and reply id to the adapter service. Returns adapter message id when available. |
 | `adapter.status` | `handleAdapterStatus` | Attempts live status refresh, swallowing live errors, then returns last known local statuses sorted newest first and optionally filtered by account id. |
 

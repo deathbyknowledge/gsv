@@ -26,7 +26,11 @@ export function RuntimeDetailPage({ onBack, process }: RuntimeDetailPageProps) {
   const pending = action.isPending;
   const canAbort = process.state === "running" || process.activeRunId !== null || process.queuedCount > 0;
   const runAction = (kind: TaskAction) => {
-    action.mutate({ pid: process.pid, action: kind });
+    action.mutate({
+      pid: process.pid,
+      action: kind,
+      ...(kind === "abort" && process.activeRunId ? { runId: process.activeRunId } : {}),
+    });
   };
   const openChat = () => {
     dispatchTargetChatProcess({

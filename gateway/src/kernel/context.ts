@@ -7,7 +7,11 @@
 
 import type { Connection } from "agents";
 import type { MCPClientManager } from "agents/mcp/client";
-import type { ConnectionIdentity } from "@humansandmachines/gsv/protocol";
+import type {
+  ConnectionIdentity,
+  SchedulerRunArgs,
+  SchedulerRunResult,
+} from "@humansandmachines/gsv/protocol";
 import type { AuthStore } from "./auth-store";
 import type { CapabilityStore } from "./capabilities";
 import type { ConfigStore } from "./config";
@@ -26,7 +30,6 @@ import type { IpcCallStore } from "./ipc-calls";
 import type { ScheduleStore } from "./scheduler";
 import type { AppSessionStore } from "./app-sessions";
 import type { AppFrameContext } from "../protocol/app-frame";
-import type { SchedulerRunArgs, SchedulerRunResult } from "../syscalls/scheduler";
 import type { McpAddConnectionInput, McpAddConnectionResult } from "./sys/mcp";
 
 export type KernelContext = {
@@ -36,7 +39,7 @@ export type KernelContext = {
   config: ConfigStore;
   devices: DeviceRegistry;
   procs: ProcessRegistry;
-  conversations?: ConversationRegistry;
+  conversations: ConversationRegistry;
   packages: PackageStore;
   oauth: OAuthStore;
   mcp: MCPClientManager;
@@ -46,29 +49,31 @@ export type KernelContext = {
   shellSessions: ShellSessionStore;
   appSessions: AppSessionStore;
   signalWatches: SignalWatchStore;
-  ipcCalls?: IpcCallStore;
-  notifications?: NotificationStore;
-  schedules?: ScheduleStore;
-  connection: Connection;
+  ipcCalls: IpcCallStore;
+  notifications: NotificationStore;
+  schedules: ScheduleStore;
+  connection: Connection | null;
   identity?: ConnectionIdentity;
   processId?: string;
+  processRunId?: string;
   callerOwnerUid?: number;
   appFrame?: AppFrameContext;
   serverVersion: string;
-  broadcastToUid?: (uid: number, signal: string, payload?: unknown) => void;
-  getAppRunner?: (uid: number, packageId: string) => unknown;
-  scheduleIpcCallTimeout?: (callId: string, delayMs: number) => Promise<string>;
-  scheduleScheduleWake?: (scheduleId: string, dueAtMs: number) => Promise<string>;
-  cancelScheduleWake?: (wakeScheduleId: string) => Promise<void>;
-  runSchedules?: (
+  broadcastToUserUid: (uid: number, signal: string, payload?: unknown) => void;
+  getAppRunner: (uid: number, packageId: string) => unknown;
+  scheduleIpcCallTimeout: (callId: string, deadlineAt: number) => Promise<string>;
+  failIpcCallsByTarget: (uid: number, targetPid: string, error: string) => void;
+  scheduleScheduleWake: (scheduleId: string, dueAtMs: number) => Promise<string>;
+  cancelScheduleWake: (wakeScheduleId: string) => Promise<void>;
+  runSchedules: (
     args: SchedulerRunArgs,
     identity?: ConnectionIdentity,
     callerOwnerUid?: number,
   ) => Promise<SchedulerRunResult>;
-  addMcpServerConnection?: (input: McpAddConnectionInput) => Promise<McpAddConnectionResult>;
-  removeMcpServerConnection?: (serverId: string) => Promise<void>;
-  refreshMcpServerConnection?: (serverId: string) => Promise<void>;
-  callMcpTool?: (serverId: string, toolName: string, args: Record<string, unknown>) => Promise<unknown>;
+  addMcpServerConnection: (input: McpAddConnectionInput) => Promise<McpAddConnectionResult>;
+  removeMcpServerConnection: (serverId: string) => Promise<void>;
+  refreshMcpServerConnection: (serverId: string) => Promise<void>;
+  callMcpTool: (serverId: string, toolName: string, args: Record<string, unknown>) => Promise<unknown>;
 };
 
 /**
@@ -84,10 +89,7 @@ export function resolveCallerOwnerUid(ctx: KernelContext): number {
     return ctx.callerOwnerUid;
   }
   if (ctx.processId) {
-    const procs = ctx.procs;
-    const ownerUid = typeof procs.getOwnerUid === "function"
-      ? procs.getOwnerUid(ctx.processId)
-      : procs.get(ctx.processId)?.ownerUid ?? null;
+    const ownerUid = ctx.procs.getOwnerUid(ctx.processId);
     if (ownerUid != null) return ownerUid;
   }
   return ctx.identity!.process.uid;

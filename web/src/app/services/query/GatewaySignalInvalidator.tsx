@@ -44,10 +44,7 @@ export function GatewaySignalInvalidator() {
         return;
       }
 
-      if (
-        signal === "proc.run.tool.finished" ||
-        signal === "proc.run.finished"
-      ) {
+      if (signal === "proc.run.finished") {
         void queryClient.invalidateQueries({ queryKey: ["processes"] });
         void queryClient.invalidateQueries({ queryKey: ["process"] });
         return;

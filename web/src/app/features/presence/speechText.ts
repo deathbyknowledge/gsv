@@ -1,22 +1,10 @@
 import {
-  INTERIM_SPEECH_MAX_CHARS,
   SPEECH_CHUNK_MAX_CHARS,
   SPEECH_FIRST_CHUNK_MAX_CHARS,
   SPEECH_FIRST_CHUNK_MIN_CHARS,
   SPEECH_FIRST_CHUNK_TARGET_CHARS,
 } from "./constants";
 import type { SpeechChunk } from "./types";
-
-export function normalizeInterimSpeechText(text: string): string {
-  if (text.includes("```") || text.includes("\n|")) {
-    return "";
-  }
-  const normalized = text.replace(/\s+/g, " ").trim();
-  if (!normalized || normalized.length > INTERIM_SPEECH_MAX_CHARS) {
-    return "";
-  }
-  return /[.!?:;)]$/.test(normalized) ? normalized : `${normalized}.`;
-}
 
 export function selectSpeechPrefix(
   pending: string,

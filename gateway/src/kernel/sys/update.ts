@@ -28,10 +28,6 @@ export async function handleSysUpdate(
   args: SysUpdateArgs | undefined,
   ctx: KernelContext,
 ): Promise<SysUpdateResult> {
-  if (!ctx.env.STORAGE) {
-    throw new Error("STORAGE binding is required for system update");
-  }
-
   const defaultChannel = parseRequestedChannel(args?.channel);
   const startedAt = Date.now();
   try {
@@ -102,7 +98,7 @@ function parseRequestedChannel(value: unknown): CliReleaseChannel | undefined {
   return channel;
 }
 
-async function allSettledOrThrow<T extends readonly unknown[]>(
+export async function allSettledOrThrow<T extends readonly unknown[]>(
   promises: { [K in keyof T]: Promise<T[K]> },
 ): Promise<T> {
   const results = await Promise.allSettled(promises);

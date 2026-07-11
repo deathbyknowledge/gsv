@@ -2,7 +2,7 @@
 
 The agent loop is the runtime inside a GSV process. It turns incoming messages,
 signals, and queued work into model calls, syscall requests, tool results, and
-`chat.*` signals. The loop is not tied to one client. CLI chat, browser apps,
+`proc.run.*` / `proc.changed` signals. The loop is not tied to one client. CLI chat, browser apps,
 adapter messages, scheduled work, and signal watches all converge on the same
 Process DO model.
 
@@ -13,16 +13,18 @@ Kernel SQLite stores process registry data such as PID, uid/gid, profile, cwd,
 workspace id, parent, and state. Process SQLite stores the mutable run state:
 
 - `messages`: active conversation history.
-- `pending_tool_calls`: syscalls waiting for Kernel or device responses.
-- `message_queue`: FIFO messages received while a run is active.
+- `pending_tool_calls`: durable tool dispatches from registration through
+  terminal result ingestion.
+- `message_queue`: FIFO process- and scheduler-origin work received while a run
+  is active.
 - `pending_hil`: human-in-the-loop tool approval state.
 - `process_kv`: process metadata such as identity, profile, current run, and
   process-local context files.
 
 The Kernel delivers frames to the Process DO through `recvFrame`. `proc.send`
-starts or queues a run, `proc.history` reads stored messages, `proc.reset`
-archives and clears history, and `proc.kill` checkpoints and clears process
-state.
+starts or supersedes a user run and queues background-origin work, `proc.history` reads stored messages, `proc.reset`
+archives and clears history, and `proc.kill` optionally archives history before
+wiping the process.
 
 ## Message Lifecycle
 
@@ -30,11 +32,13 @@ A normal user message follows this path:
 
 1. The Kernel authorizes the caller and forwards `proc.send` to the target
    Process DO.
-2. The process stores attached media in R2 under `var/media/{uid}/{pid}/`.
-3. If no run is active, the process appends a user message, creates `currentRun`,
-   and schedules a near-immediate `tick`.
-4. If a run is already active, the message is persisted in `message_queue` and
-   the caller receives `queued: true`.
+2. The process appends the user message immediately. Media preparation proceeds
+   in the background and generation waits for it.
+3. If no run is active, the process creates `currentRun` and schedules a
+   near-immediate `tick`.
+4. If a direct user run is active, its outstanding tool calls receive terminal
+   interruption results and the new run supersedes it. Process- and
+   scheduler-origin work remains FIFO in `message_queue`.
 5. The scheduled tick continues the agent loop without keeping one long request
    open.
 
@@ -101,10 +105,11 @@ set to the PID.
 
 The model response can contain text, thinking blocks, and tool calls:
 
-- Text is emitted immediately as `chat.text`.
+- Text is emitted through `proc.run.output` and streaming blocks through
+  `proc.run.stream`.
 - Assistant text, thinking blocks, and tool calls are stored in the `messages`
   table.
-- If there are no tool calls, the process emits `chat.complete` and finishes the
+- If there are no tool calls, the process emits `proc.run.finished` and finishes the
   run.
 - If there are tool calls, the process evaluates approval rules and dispatches
   each allowed call as a syscall frame.
@@ -133,15 +138,15 @@ When a response frame arrives, the process resolves or fails the matching
 process schedules/continues the loop:
 
 1. Completed syscall results are appended as `toolResult` messages.
-2. `chat.tool_result` is emitted for clients.
-3. Any queued user messages are injected at the tool-result boundary.
-4. The model is called again with the updated message history.
+2. `proc.changed` tells clients to refresh persisted history.
+3. The model is called again with the updated message history.
+4. Background-origin queued messages are promoted as separate runs after the
+   current run finishes.
 
 This repeats until the model produces a final response without tool calls.
 
 Tool result content is stored as text. Non-string syscall output is JSON encoded
-for the model history, while the live `chat.tool_result` signal also carries the
-raw output or error for clients.
+for model history.
 
 ## Human-in-the-Loop Approval
 
@@ -162,9 +167,9 @@ commands.
 
 Approval outcomes are:
 
-- `auto`: emit `chat.tool_call` and dispatch the syscall.
+- `auto`: emit `proc.run.tool.started` and dispatch the syscall.
 - `deny`: append a synthetic tool error.
-- `ask`: store `pending_hil` and emit `chat.hil`.
+- `ask`: store `pending_hil` and emit `proc.run.hil.requested`.
 
 The run pauses while a HIL request is pending. A user or adapter reply resumes it
 through `proc.hil` with `approve` or `deny`. Non-interactive profiles such as
@@ -172,18 +177,17 @@ through `proc.hil` with `approve` or `deny`. Non-interactive profiles such as
 
 ## Queueing and Abort
 
-A process handles one run at a time. New messages received during an active run
-are persisted in `message_queue`.
+A process handles one run at a time. A new direct user message supersedes the
+active run. Every outstanding provider tool call receives a terminal error
+result before the new user message is appended, so provider history remains
+valid. Process- and scheduler-origin messages do not preempt; they remain FIFO in
+`message_queue` and are promoted as distinct runs.
 
-If the active run has tool calls, queued messages are drained after tool results
-arrive and before the next model call, so the model can account for follow-up
-messages in the same run. If the active run completes without that boundary, the
-next queued message is promoted into a new run.
-
-`proc.abort` stops the current run. Pending tool calls are converted to
-interruption errors when possible, pending HIL state is cleared, `chat.complete`
-is emitted with `aborted: true`, and the next queued message is promoted unless
-continuation must wait for a tool-result phase to finish safely.
+`proc.abort` applies the same logical cancellation to the current run without
+starting a replacement user turn. Pending HIL state is cleared,
+`proc.run.finished` is emitted with `status: "aborted"`, and the next queued run
+is promoted. An optional expected `runId` makes stale abort requests harmless.
+Late tool responses are ignored after their durable dispatch row is cleared.
 
 ## Media Handling
 
@@ -205,27 +209,17 @@ loop without pretending to be user chat.
 
 ## Checkpointing and Archives
 
-Process conversation state is active runtime state, not the durable artifact of
-work. When a process is reset or killed, GSV can:
-
-- Generate/update `/workspaces/{workspaceId}/.gsv/summary.md`.
-- Write a process transcript to
-  `/workspaces/{workspaceId}/.gsv/processes/{pid}/chat.jsonl`.
-- Commit those files to the workspace ripgit repository.
-- Archive the old message history to
-  `var/sessions/{username}/{pid}/{archiveId}.jsonl.gz` in R2.
-- Delete process media from R2.
-
-Workspaces therefore outlive processes. A process can be reset, killed, or
-replaced while the durable workspace and its summary continue carrying task
-state forward.
+Reset and kill can archive each non-empty conversation under the run-as
+identity's home conversation directory before clearing live Process storage.
+Process media is deleted from R2. A replacement executor can hydrate the primary
+conversation from the recorded home archive.
 
 ## Failure Behavior
 
 The loop treats failures as process events rather than hidden transport details.
 
 - Generation failures are appended as system messages and emitted as
-  `chat.complete` with an error.
+  `proc.run.finished` with `status: "error"`.
 - Unknown tool names become synthetic tool-result errors.
 - Denied or unapproved tools become tool-result errors visible to the model.
 - Kernel/device routing errors are stored as failed pending tool calls and fed

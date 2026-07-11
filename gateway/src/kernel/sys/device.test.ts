@@ -136,6 +136,10 @@ function makeContext(
     procs: {
       getOwnerUid: () => ownerUid,
     },
+    adapters: {
+      identityLinks: { list: () => [] },
+      status: { list: () => [], listAll: () => [] },
+    },
     devices: devices as unknown as KernelContext["devices"],
   } as KernelContext;
 }

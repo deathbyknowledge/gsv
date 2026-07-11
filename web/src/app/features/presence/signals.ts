@@ -6,16 +6,10 @@ export function runIdFromSignalPayload(payload: unknown): string | null {
 }
 
 export function isPresenceRunSignal(signal: string): boolean {
-  return signal === "chat.text"
-    || signal === "chat.tool_call"
-    || signal === "chat.tool_result"
-    || signal === "chat.hil"
-    || signal === "chat.complete"
-    || signal === "proc.run.stream"
+  return signal === "proc.run.stream"
     || signal === "proc.run.retrying"
     || signal === "proc.run.output"
     || signal === "proc.run.tool.started"
-    || signal === "proc.run.tool.finished"
     || signal === "proc.run.hil.requested"
     || signal === "proc.run.finished";
 }

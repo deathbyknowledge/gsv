@@ -7,6 +7,7 @@ import {
   handleAiTranscriptionCreate,
 } from "../../../kernel/ai";
 import type { KernelContext } from "../../../kernel/context";
+import { decodeBase64Bytes, encodeBase64Bytes } from "../../../shared/base64";
 import { requireCommandCapability, requireShellOptionValue } from "./common";
 
 type ParsedArgs = {
@@ -72,7 +73,7 @@ async function runImg2Txt(
 
   const result = await handleAiImageRead({
     image: {
-      data: bytesToBase64(bytes),
+      data: encodeBase64Bytes(bytes),
       mimeType,
       filename: pathName(path),
       size: bytes.byteLength,
@@ -166,7 +167,7 @@ async function runStt(
 
   const result = await handleAiTranscriptionCreate({
     audio: {
-      data: bytesToBase64(bytes),
+      data: encodeBase64Bytes(bytes),
       mimeType,
       filename: pathName(path),
       size: bytes.byteLength,
@@ -343,23 +344,9 @@ function resolvePath(ctx: CommandContext, path: string): string {
   return ctx.fs.resolvePath(ctx.cwd, path);
 }
 
-function bytesToBase64(bytes: Uint8Array): string {
-  let binary = "";
-  const chunkSize = 0x8000;
-  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
-  }
-  return btoa(binary);
-}
-
 function base64ToBytes(value: string): Uint8Array {
   const base64 = value.includes(",") ? value.slice(value.indexOf(",") + 1) : value;
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-  return bytes;
+  return decodeBase64Bytes(base64);
 }
 
 function inferImageMimeType(path: string): string | undefined {

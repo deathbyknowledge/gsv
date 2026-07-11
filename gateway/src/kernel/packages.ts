@@ -173,7 +173,7 @@ export class KernelBinding extends WorkerEntrypoint<Env, KernelBindingProps> {
   }
 
   async request<S extends SyscallName>(call: S, args: ArgsOf<S>): Promise<ResultOf<S>> {
-    const kernel = await getAgentByName(this.env.KERNEL, "singleton") as unknown as KernelAppStub;
+    const kernel = await getAgentByName(this.env.KERNEL, "singleton") as KernelAppStub;
     const frame: RequestFrame<S> = {
       type: "req",
       id: crypto.randomUUID(),
@@ -288,8 +288,6 @@ export interface PackageInstallRecordInput extends Omit<InstalledPackageRecord, 
   installedAt?: number;
   updatedAt?: number;
 }
-
-export type PackageSeed = Omit<PackageInstallRecordInput, "installedAt" | "updatedAt">;
 
 export const DEFAULT_PACKAGE_COMPATIBILITY_DATE = "2026-01-28";
 
@@ -658,32 +656,6 @@ export class PackageStore {
     private readonly sql: SqlStorage,
     private readonly bucket: R2Bucket,
   ) {}
-
-  async seedBuiltinPackages(
-    builtinSeeds: readonly PackageSeed[],
-    now: number = Date.now(),
-  ): Promise<InstalledPackageRecord[]> {
-    const installed: InstalledPackageRecord[] = [];
-    const builtinPackageIds = new Set(builtinSeeds.map((seed) => seed.packageId));
-
-    for (const record of this.list({ scope: { kind: "global" } })) {
-      if (record.packageId.startsWith("builtin:") && !builtinPackageIds.has(record.packageId)) {
-        this.remove(record.packageId, record.scope);
-      }
-    }
-
-    for (const seed of builtinSeeds) {
-      const existing = this.get(seed.packageId, seed.scope);
-      installed.push(await this.install({
-        ...seed,
-        enabled: existing?.enabled ?? seed.enabled,
-        installedAt: existing?.installedAt ?? now,
-        updatedAt: now,
-      }));
-    }
-
-    return installed;
-  }
 
   async install(input: PackageInstallRecordInput): Promise<InstalledPackageRecord> {
     const now = Date.now();

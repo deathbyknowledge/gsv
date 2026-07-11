@@ -638,6 +638,7 @@ describe("handleConnect", () => {
         expect(result.identity.capabilities).toEqual(["adapter.*"]);
       }
       expect(result.result.syscalls).toEqual(["adapter.*"]);
+      expect(result.result.signals).toEqual([]);
     }
   });
 

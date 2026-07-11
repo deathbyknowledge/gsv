@@ -10,21 +10,11 @@
 
 import { Bash } from "just-bash";
 import type { BashExecResult } from "just-bash";
-import { GsvFs } from "../../fs/gsv-fs";
-import {
-  createAccountHomeBackend,
-  createPackageBackend,
-  createProcessSourceBackend,
-  RipgitClient,
-  resolveUserPath,
-  requestProcessView,
-} from "../../fs";
+import { resolveUserPath } from "../../fs";
 import type { KernelContext } from "../../kernel/context";
-import { resolveCallerOwnerUid } from "../../kernel/context";
-import { createCronFileService } from "../../kernel/crontab";
-import { handleRepoList } from "../../kernel/repo";
 import type { ShellExecArgs, ShellExecResult } from "../../syscalls/shell";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
+import { createNativeFileSystem } from "./filesystem";
 import {
   buildCustomCommands,
   type NativeShellCommandOptions,
@@ -124,39 +114,7 @@ function createBash(
   cwd: string,
   options?: NativeShellCommandOptions,
 ): Bash {
-  const ownerUid = resolveCallerOwnerUid(ctx);
-  const packageScopeOwner = { uid: ownerUid };
-  const sourceBackend = createProcessSourceBackend({
-    identity,
-    storage: ctx.env.STORAGE,
-    ripgit: ctx.env.RIPGIT ? new RipgitClient(ctx.env.RIPGIT) : null,
-    repos: handleRepoList(undefined, ctx).repos,
-    processId: ctx.processId ?? null,
-    config: ctx.config,
-  });
-  const fs = new GsvFs(
-    ctx.env.STORAGE,
-    identity,
-    {
-      auth: ctx.auth,
-      procs: ctx.procs,
-      devices: ctx.devices,
-      caps: ctx.caps,
-      config: ctx.config,
-      packages: ctx.packages,
-      cron: createCronFileService(ctx),
-      schedules: ctx.schedules,
-      processRequest: requestProcessView,
-    },
-    ctx.processId ?? undefined,
-    sourceBackend,
-    createAccountHomeBackend(ctx.env.STORAGE, ctx.env.RIPGIT, identity, {
-      auth: ctx.auth,
-      ownerUid,
-      isRoot: identity.uid === 0,
-    }),
-    createPackageBackend(identity, ctx.packages, packageScopeOwner),
-  );
+  const fs = createNativeFileSystem(ctx);
 
   const serverName = ctx.config.get("config/server/name") ?? "gsv";
   const serverVersion = ctx.config.get("config/server/version") ?? ctx.serverVersion;

@@ -19,7 +19,6 @@ import type {
   SysOAuthDevicePollResult,
   SysOAuthDeviceStartResult,
   SysOAuthFlowSummary,
-  SysOAuthListResult,
 } from "@humansandmachines/gsv/protocol";
 import { requireCommandCapability, requireShellOptionValue } from "./common";
 

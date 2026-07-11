@@ -23,7 +23,7 @@ describe("presence signal helpers", () => {
 
   it("recognizes presence run signals", () => {
     expect(isPresenceRunSignal("proc.run.stream")).toBe(true);
-    expect(isPresenceRunSignal("chat.complete")).toBe(true);
+    expect(isPresenceRunSignal("chat.complete")).toBe(false);
     expect(isPresenceRunSignal("notification.created")).toBe(false);
   });
 

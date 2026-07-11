@@ -6,6 +6,7 @@ import {
   handleAdapterInbound,
   handleAdapterList,
   handleAdapterSend,
+  handleAdapterStateUpdate,
   handleAdapterStatus,
 } from "./adapter-handlers";
 import { sendFrameToProcess } from "../shared/utils";
@@ -32,6 +33,21 @@ function makeStorageBucket() {
   return {
     head: vi.fn(async () => null),
     put: vi.fn(async () => undefined),
+  };
+}
+
+function userIdentity(uid = 1000): KernelContext["identity"] {
+  return {
+    role: "user",
+    process: {
+      uid,
+      gid: uid,
+      gids: [uid],
+      username: uid === 0 ? "root" : "sam",
+      home: uid === 0 ? "/root" : "/home/sam",
+      cwd: uid === 0 ? "/root" : "/home/sam",
+    },
+    capabilities: ["adapter.*"],
   };
 }
 
@@ -123,6 +139,7 @@ function makeContext(
     },
     procs: {
       get: vi.fn((pid: string) => pid === "pid-1" ? processRecord : null),
+      getOwnerUid: vi.fn((pid: string) => pid === "pid-1" ? human.uid : null),
       list: vi.fn(() => [processRecord]),
       spawn: vi.fn(),
     },
@@ -157,9 +174,17 @@ function makeContext(
       setActivePid: vi.fn(),
     },
     adapters: {
-      status,
+      status: {
+        get: vi.fn(() => null),
+        setOwner: vi.fn(),
+        beginLifecycle: vi.fn(),
+        endLifecycle: vi.fn(),
+        listByOwner: vi.fn(() => []),
+        ...status,
+      },
       identityLinks: {
         resolveUid: vi.fn(() => 1000),
+        listByAccount: vi.fn(() => []),
         list: vi.fn(() => []),
         ...options.identityLinks,
       },
@@ -179,6 +204,7 @@ function makeContext(
     runRoutes: {
       setAdapterRoute: vi.fn(),
     },
+    broadcastToUserUid: vi.fn(),
     identity: options.identity ?? {
       role: "service",
       service: "test",
@@ -193,6 +219,47 @@ const sendFrameToProcessMock = vi.mocked(sendFrameToProcess);
 describe("adapter lifecycle handlers", () => {
   beforeEach(() => {
     sendFrameToProcessMock.mockReset();
+  });
+
+  it("notifies root and linked users when adapter state changes", () => {
+    const status = {
+      upsert: vi.fn(() => ({ ownerUid: 1000 })),
+    };
+    const ctx = makeContext({}, status, {
+      identityLinks: {
+        listByAccount: vi.fn(() => [
+          { adapter: "whatsapp", accountId: "primary", uid: 2000 },
+          { adapter: "whatsapp", accountId: "primary", uid: 2000 },
+        ]),
+      },
+    });
+
+    handleAdapterStateUpdate({
+      adapter: "WhatsApp",
+      accountId: "primary",
+      status: {
+        accountId: "primary",
+        connected: true,
+        authenticated: true,
+        extra: { selfE164: "+31612345678" },
+      },
+    }, ctx);
+
+    expect(status.upsert).toHaveBeenCalledWith("whatsapp", "primary", expect.anything());
+    expect(ctx.adapters.identityLinks.listByAccount).toHaveBeenCalledWith("whatsapp", "primary");
+    expect(ctx.broadcastToUserUid).toHaveBeenCalledTimes(3);
+    expect(ctx.broadcastToUserUid).toHaveBeenCalledWith(0, "adapter.status", {
+      adapter: "whatsapp",
+      accountId: "primary",
+    });
+    expect(ctx.broadcastToUserUid).toHaveBeenCalledWith(1000, "adapter.status", {
+      adapter: "whatsapp",
+      accountId: "primary",
+    });
+    expect(ctx.broadcastToUserUid).toHaveBeenCalledWith(2000, "adapter.status", {
+      adapter: "whatsapp",
+      accountId: "primary",
+    });
   });
 
   it("adapter.list discovers deployed adapter bindings and cached accounts", () => {
@@ -313,6 +380,17 @@ describe("adapter lifecycle handlers", () => {
         extra: { reason: "missing-worker" },
         updatedAt: 789,
       },
+      {
+        adapter: "discord",
+        accountId: "foreign",
+        connected: true,
+        authenticated: true,
+        mode: "gateway",
+        lastActivity: 456,
+        error: null,
+        extra: null,
+        updatedAt: 790,
+      },
     ];
     const status = {
       upsert: vi.fn(),
@@ -320,6 +398,7 @@ describe("adapter lifecycle handlers", () => {
         rows.filter((row) => row.adapter === adapter && (!accountId || row.accountId === accountId))
       ),
       listAll: vi.fn(() => rows),
+      listByOwner: vi.fn(() => rows.filter((row) => row.adapter === "telegram")),
     };
     const ctx = makeContext(
       {
@@ -363,6 +442,10 @@ describe("adapter lifecycle handlers", () => {
       expect.objectContaining({
         adapter: "discord",
         accounts: [],
+      }),
+      expect.objectContaining({
+        adapter: "telegram",
+        accounts: [expect.objectContaining({ accountId: "alerts" })],
       }),
       expect.objectContaining({
         adapter: "whatsapp",
@@ -661,22 +744,36 @@ describe("adapter lifecycle handlers", () => {
       ]),
     };
 
-    const status = { upsert: vi.fn() };
+    let ownerUid: number | null = null;
+    let exists = false;
+    const get = vi.fn(() => exists ? { ownerUid } : null);
+    const status = {
+      get,
+      setOwner: vi.fn((_adapter: string, _accountId: string, nextOwnerUid: number) => {
+        exists = true;
+        ownerUid = nextOwnerUid;
+        return { ownerUid };
+      }),
+      upsert: vi.fn(() => ({ ownerUid })),
+    };
     const ctx = makeContext(
       {
         CHANNEL_WHATSAPP: service,
       },
       status,
+      { identity: userIdentity() },
     );
 
     const result = await handleAdapterConnect(
-      { adapter: "whatsapp", accountId: "default" },
+      { adapter: "WhatsApp", accountId: "default" },
       ctx,
     );
 
     expect(service.adapterConnect).toHaveBeenCalledWith("default", undefined);
+    expect(status.setOwner).toHaveBeenCalledWith("whatsapp", "default", 1000);
     expect(result.ok).toBe(true);
     if (result.ok) {
+      expect(result.adapter).toBe("whatsapp");
       expect(result.challenge?.type).toBe("qr");
       expect(result.connected).toBe(true);
       expect(result.authenticated).toBe(false);
@@ -689,12 +786,16 @@ describe("adapter lifecycle handlers", () => {
       start: vi.fn(async () => ({ ok: true as const })),
     };
 
-    const status = { upsert: vi.fn() };
+    const status = {
+      upsert: vi.fn(),
+      get: vi.fn(() => ({ ownerUid: 1000 })),
+    };
     const ctx = makeContext(
       {
         CHANNEL_DISCORD: service,
       },
       status,
+      { identity: userIdentity() },
     );
 
     const result = await handleAdapterConnect(
@@ -707,6 +808,128 @@ describe("adapter lifecycle handlers", () => {
     if (!result.ok) {
       expect(result.error).toContain("does not implement connect");
     }
+  });
+
+  it.each([
+    ["foreign", 2000, [], true],
+    ["unlinked unowned", null, [], true],
+    ["ambiguously linked unowned", null, [1000, 2000], true],
+    ["missing with a foreign link", null, [2000], false],
+  ])("rejects %s adapter accounts before connect", async (
+    _label,
+    ownerUid,
+    linkedUids,
+    exists,
+  ) => {
+    const adapterConnect = vi.fn(async () => ({
+      ok: true as const,
+      connected: true,
+      authenticated: true,
+    }));
+    const ctx = makeContext(
+      { CHANNEL_WHATSAPP: { adapterConnect } },
+      {
+        upsert: vi.fn(),
+        get: vi.fn(() => exists ? { ownerUid } : null),
+      },
+      {
+        identity: userIdentity(),
+        identityLinks: {
+          listByAccount: vi.fn(() => linkedUids.map((uid) => ({ uid }))),
+        },
+      },
+    );
+
+    await expect(handleAdapterConnect({ adapter: "whatsapp", accountId: "default" }, ctx))
+      .rejects.toThrow("Permission denied");
+    expect(adapterConnect).not.toHaveBeenCalled();
+  });
+
+  it("lets the sole linked user claim an unowned adapter account", async () => {
+    const setOwner = vi.fn();
+    const ctx = makeContext(
+      {
+        CHANNEL_WHATSAPP: {
+          adapterConnect: vi.fn(async () => ({
+            ok: true as const,
+            connected: true,
+            authenticated: true,
+          })),
+        },
+      },
+      {
+        upsert: vi.fn(),
+        get: vi.fn(() => ({ ownerUid: null })),
+        setOwner,
+      },
+      {
+        identity: userIdentity(),
+        identityLinks: { listByAccount: vi.fn(() => [{ uid: 1000 }]) },
+      },
+    );
+
+    await expect(handleAdapterConnect({ adapter: "whatsapp", accountId: "default" }, ctx))
+      .resolves.toMatchObject({ ok: true });
+    expect(setOwner).toHaveBeenCalledWith("whatsapp", "default", 1000);
+  });
+
+  it("retains ownership when adapter provisioning fails", async () => {
+    let ownerUid: number | null = null;
+    let exists = false;
+    const beginLifecycle = vi.fn();
+    const endLifecycle = vi.fn();
+    const setOwner = vi.fn((_adapter: string, _accountId: string, nextOwnerUid: number) => {
+      exists = true;
+      ownerUid = nextOwnerUid;
+      return { ownerUid };
+    });
+    const ctx = makeContext(
+      {
+        CHANNEL_DISCORD: {
+          adapterConnect: vi.fn(async () => ({ ok: false as const, error: "bad token" })),
+        },
+      },
+      {
+        upsert: vi.fn(),
+        get: vi.fn(() => exists ? { ownerUid } : null),
+        setOwner,
+        beginLifecycle,
+        endLifecycle,
+      },
+      { identity: userIdentity() },
+    );
+
+    await expect(handleAdapterConnect({ adapter: "discord", accountId: "default" }, ctx))
+      .resolves.toEqual({ ok: false, error: "bad token", challenge: undefined });
+    expect(setOwner).toHaveBeenCalledWith("discord", "default", 1000);
+    expect(ownerUid).toBe(1000);
+    expect(beginLifecycle).toHaveBeenCalledWith("discord", "default");
+    expect(endLifecycle).toHaveBeenCalledWith("discord", "default");
+  });
+
+  it("retains a new ownership claim when the adapter outcome is unknown", async () => {
+    const setOwner = vi.fn();
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const ctx = makeContext(
+      {
+        CHANNEL_DISCORD: {
+          adapterConnect: vi.fn(async () => {
+            throw new Error("rpc interrupted");
+          }),
+        },
+      },
+      {
+        upsert: vi.fn(),
+        get: vi.fn(() => null),
+        setOwner,
+      },
+      { identity: userIdentity() },
+    );
+
+    await expect(handleAdapterConnect({ adapter: "discord", accountId: "default" }, ctx))
+      .rejects.toThrow("rpc interrupted");
+    expect(setOwner).toHaveBeenCalledWith("discord", "default", 1000);
+    errorLog.mockRestore();
   });
 
   it("adapter.disconnect calls disconnect and refreshes status", async () => {
@@ -722,12 +945,16 @@ describe("adapter lifecycle handlers", () => {
       ]),
     };
 
-    const status = { upsert: vi.fn() };
+    const status = {
+      upsert: vi.fn(),
+      get: vi.fn(() => ({ ownerUid: 1000 })),
+    };
     const ctx = makeContext(
       {
         CHANNEL_WHATSAPP: service,
       },
       status,
+      { identity: userIdentity() },
     );
 
     const result = await handleAdapterDisconnect(
@@ -744,9 +971,36 @@ describe("adapter lifecycle handlers", () => {
     expect(status.upsert).toHaveBeenCalled();
   });
 
+  it("allows only the owner or root to disconnect an adapter account", async () => {
+    const adapterDisconnect = vi.fn(async () => ({ ok: true as const }));
+    const beginLifecycle = vi.fn();
+    const endLifecycle = vi.fn();
+    const status = {
+      upsert: vi.fn(),
+      get: vi.fn(() => ({ ownerUid: 2000 })),
+      beginLifecycle,
+      endLifecycle,
+    };
+    const env = { CHANNEL_WHATSAPP: { adapterDisconnect } };
+
+    await expect(handleAdapterDisconnect(
+      { adapter: "whatsapp", accountId: "default" },
+      makeContext(env, status, { identity: userIdentity(1000) }),
+    )).rejects.toThrow("Permission denied");
+    expect(adapterDisconnect).not.toHaveBeenCalled();
+
+    await expect(handleAdapterDisconnect(
+      { adapter: "whatsapp", accountId: "default" },
+      makeContext(env, status, { identity: userIdentity(0) }),
+    )).resolves.toMatchObject({ ok: true });
+    expect(adapterDisconnect).toHaveBeenCalledTimes(1);
+    expect(beginLifecycle).toHaveBeenCalledTimes(1);
+    expect(endLifecycle).toHaveBeenCalledTimes(1);
+  });
+
   it("returns an error when adapter binding is missing", async () => {
     const status = { upsert: vi.fn() };
-    const ctx = makeContext({}, status);
+    const ctx = makeContext({}, status, { identity: userIdentity() });
 
     const result = await handleAdapterConnect(
       { adapter: "unknown", accountId: "default" },

@@ -172,7 +172,7 @@ export async function provisionEnabledPackagesForCaller(
   if (!ctx.identity) return;
   if (!records.some((record) => record.enabled && (record.manifest.profiles?.length ?? 0) > 0)) return;
   const humanUid = resolveCallerOwnerUid(ctx);
-  if (!ctx.auth?.getPasswdByUid?.(humanUid)) return;
+  if (!ctx.auth.getPasswdByUid(humanUid)) return;
   for (const record of records) {
     await provisionEnabledPackageAgents(ctx, record, humanUid);
   }

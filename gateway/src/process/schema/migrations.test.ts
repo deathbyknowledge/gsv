@@ -34,7 +34,7 @@ function createTableStatement(name: string): string {
 describe("process schema migrations", () => {
   it("starts the process component at a v1 baseline with ordered migrations", () => {
     expect(PROCESS_SCHEMA_COMPONENT).toBe("process");
-    expect(PROCESS_MIGRATIONS).toHaveLength(3);
+    expect(PROCESS_MIGRATIONS).toHaveLength(4);
     expect(PROCESS_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_process_schema",
@@ -46,6 +46,10 @@ describe("process schema migrations", () => {
     expect(PROCESS_MIGRATIONS[2]).toMatchObject({
       id: 3,
       name: "add_message_metadata",
+    });
+    expect(PROCESS_MIGRATIONS[3]).toMatchObject({
+      id: 4,
+      name: "rebuild_pending_tool_dispatch_state",
     });
   });
 
@@ -71,15 +75,11 @@ describe("process schema migrations", () => {
     expect(messages).toContain("origin_json TEXT");
   });
 
-  it("keeps queued and pending work scoped by conversation generation", () => {
-    const pendingToolCalls = createTableStatement("pending_tool_calls");
+  it("keeps queued work scoped by conversation generation", () => {
     const messageQueue = createTableStatement("message_queue");
-    const pendingHil = createTableStatement("pending_hil");
 
-    for (const statement of [pendingToolCalls, messageQueue, pendingHil]) {
-      expect(statement).toContain("conversation_id TEXT NOT NULL DEFAULT 'default'");
-      expect(statement).toContain("generation INTEGER NOT NULL DEFAULT 1");
-    }
+    expect(messageQueue).toContain("conversation_id TEXT NOT NULL DEFAULT 'default'");
+    expect(messageQueue).toContain("generation INTEGER NOT NULL DEFAULT 1");
     expect(messageQueue).toContain("overrides_json TEXT");
     expect(messageQueue).toContain("origin_json TEXT");
   });
@@ -110,4 +110,5 @@ describe("process schema migrations", () => {
       .map((statement) => statement.trim().replace(/\s+/g, " "));
     expect(statements).toContain("ALTER TABLE messages ADD COLUMN metadata_json TEXT");
   });
+
 });

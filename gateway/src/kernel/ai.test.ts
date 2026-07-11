@@ -111,6 +111,25 @@ function makeContext(
     devices: {
       listForUser: vi.fn(() => []),
     },
+    auth: {
+      getPasswdByUid: vi.fn((lookupUid: number) => lookupUid === uid
+        ? {
+          username: uid === 2000 ? "friday" : "sam",
+          uid,
+          gid: uid,
+          gecos: "",
+          home: uid === 2000 ? "/home/friday" : "/home/sam",
+          shell: "/bin/init",
+        }
+        : null),
+    },
+    adapters: {
+      identityLinks: { list: vi.fn(() => []) },
+      status: {
+        list: vi.fn(() => []),
+        listAll: vi.fn(() => []),
+      },
+    },
     mcpServers: {
       list: vi.fn((lookupUid?: number) => lookupUid === mcpRecord.uid ? [mcpRecord] : []),
     },
@@ -1390,6 +1409,29 @@ describe("handleAiConfig", () => {
       speechModel: "gpt-4o-mini-tts",
       speechApiKey: "process-chat-key",
       speechSpeaker: "alloy",
+    });
+  });
+
+  it("falls through invalid normalized process config values", async () => {
+    const result = await handleAiConfig({
+      processOverrides: {
+        "config/ai/generation/timeout_ms": "invalid",
+        "config/ai/image/read/provider": " ",
+        "config/ai/image/read/input_format": "invalid",
+        "config/ai/image/read/max_tokens": "invalid",
+      },
+    }, makeAiConfigContext({
+      "users/1000/ai/generation/timeout_ms": "90000",
+      "users/1000/ai/image/read/provider": "openai",
+      "users/1000/ai/image/read/input_format": "chat",
+      "users/1000/ai/image/read/max_tokens": "321",
+    }));
+
+    expect(result.generationTimeoutMs).toBe(90000);
+    expect(result.media).toMatchObject({
+      imageReadingProvider: "openai",
+      imageReadingInputFormat: "chat",
+      imageReadingMaxTokens: 321,
     });
   });
 

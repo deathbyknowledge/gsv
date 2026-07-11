@@ -473,9 +473,6 @@ export function canWriteRepo(rawRepo: string, ctx: KernelContext): boolean {
     return true;
   }
   const ownerUid = resolveCallerOwnerUid(ctx);
-  if (!ctx.auth || typeof ctx.auth.getPasswdByUsername !== "function") {
-    return false;
-  }
   const owner = ctx.auth.getPasswdByUid(ownerUid);
   if (
     owner &&
@@ -557,14 +554,14 @@ function repoPackageScopeIdentity(ctx: KernelContext, fallback: ProcessIdentity)
   if (ownerUid === fallback.uid) {
     return fallback;
   }
-  const owner = ctx.auth?.getPasswdByUid(ownerUid);
+  const owner = ctx.auth.getPasswdByUid(ownerUid);
   if (!owner) {
     return { ...fallback, uid: ownerUid };
   }
   return {
     uid: owner.uid,
     gid: owner.gid,
-    gids: ctx.auth?.resolveGids(owner.username, owner.gid) ?? [owner.gid],
+    gids: ctx.auth.resolveGids(owner.username, owner.gid),
     username: owner.username,
     home: owner.home,
     cwd: owner.home,

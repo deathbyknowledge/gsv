@@ -10,6 +10,8 @@ import type { RequestFrame, ResponseFrame } from "../protocol/frames";
 import type { KernelContext } from "./context";
 import { resolveCallerOwnerUid } from "./context";
 import type {
+  InteractionOrigin,
+  ProcessIdentity,
   ProcListArgs,
   ProcListResult,
   ProcListEntry,
@@ -22,10 +24,8 @@ import type {
   ProcSpawnArgs,
   ProcSpawnResult,
   ProcSendArgs,
-} from "../syscalls/proc";
-import type { InteractionOrigin } from "../syscalls/interaction-origin";
+} from "@humansandmachines/gsv/protocol";
 import { sendFrameToProcess } from "../shared/utils";
-import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { resolveUserPath } from "../fs";
 import { ensureDefaultConversationExecutor, ensurePersonalAgent } from "./agents";
 import { accountIdentity } from "./accounts";
@@ -55,7 +55,7 @@ export function handleProcList(
   const records = ctx.procs.list(uid);
 
   const processes: ProcListEntry[] = records.map((r) => {
-    const conversation = ctx.conversations?.getByActivePid(r.processId);
+    const conversation = ctx.conversations.getByActivePid(r.processId);
     return {
       pid: r.processId,
       uid: r.ownerUid,
@@ -206,17 +206,13 @@ export async function handleProcSpawn(
   // Each spawned process gets its own durable conversation so its transcript
   // persists in the run-as agent's home, addressable independent of this
   // (fungible) executor.
-  let conversationId: string | undefined;
-  if (ctx.conversations) {
-    const conversation = ctx.conversations.create({
-      ownerUid,
-      agentUid: spawnIdentity.uid,
-      agentHome: spawnIdentity.home,
-      title: args.label ?? null,
-    });
-    conversationId = conversation.conversationId;
-    ctx.conversations.setActivePid(conversationId, pid);
-  }
+  const conversation = ctx.conversations.create({
+    ownerUid,
+    agentUid: spawnIdentity.uid,
+    agentHome: spawnIdentity.home,
+    title: args.label ?? null,
+  });
+  ctx.conversations.setActivePid(conversation.conversationId, pid);
 
   await sendFrameToProcess(pid, {
     type: "req",
@@ -227,7 +223,7 @@ export async function handleProcSpawn(
       identity: spawnIdentity,
       interactive,
       assignment: args.assignment as ProcSpawnAssignment | undefined,
-      ...(conversationId ? { conversationId } : {}),
+      conversationId: conversation.conversationId,
     },
   });
 
@@ -333,8 +329,8 @@ function interactionOriginForContext(ctx: KernelContext): InteractionOrigin | un
   }
 
   if (identity.role === "user") {
-    const connection = ctx.connection as { id?: string; state?: unknown } | null | undefined;
-    if (!connection?.id) return undefined;
+    const connection = ctx.connection;
+    if (!connection) return undefined;
     const state = connection.state as { clientId?: unknown; clientPlatform?: unknown } | undefined;
     const clientId = typeof state?.clientId === "string" && state.clientId.trim()
       ? state.clientId.trim()
@@ -367,12 +363,14 @@ export async function handleProcIpcSend(
 ): Promise<ProcIpcSendResult> {
   const resolved = resolveSameOwnerIpc(args, ctx, "proc.ipc.send");
   if (!resolved.ok) return resolved;
+  const runId = crypto.randomUUID();
 
   const response = await sendFrameToProcess(resolved.args.pid, {
     type: "req",
     id: crypto.randomUUID(),
     call: "proc.ipc.deliver",
     args: {
+      runId,
       sourcePid: resolved.sourcePid,
       source: ctx.identity!.process,
       conversationId: resolved.args.conversationId,
@@ -386,7 +384,11 @@ export async function handleProcIpcSend(
   if (response && response.type === "res") {
     const res = response as ResponseFrame;
     if (res.ok) {
-      return (res as { data: ProcIpcSendResult }).data;
+      const delivered = (res as { data: ProcIpcSendResult }).data;
+      if (delivered.ok && delivered.runId !== runId) {
+        return { ok: false, error: "proc.ipc.deliver returned an unexpected runId" };
+      }
+      return delivered;
     }
     return { ok: false, error: (res as { error: { message: string } }).error.message };
   }
@@ -400,24 +402,27 @@ export async function handleProcIpcCall(
 ): Promise<ProcIpcCallResult> {
   const resolved = resolveSameOwnerIpc(args, ctx, "proc.ipc.call");
   if (!resolved.ok) return resolved;
-  if (!ctx.ipcCalls) {
-    return { ok: false, error: "proc.ipc.call store is not configured" };
-  }
-  if (!ctx.scheduleIpcCallTimeout) {
-    return { ok: false, error: "proc.ipc.call scheduler is not configured" };
-  }
-
   const timeoutMs = clampIpcCallTimeout(args.timeoutMs);
   const deadlineAt = Date.now() + timeoutMs;
   const callId = crypto.randomUUID();
+  const runId = crypto.randomUUID();
 
   ctx.ipcCalls.create({
     callId,
     uid: resolved.source.ownerUid,
     sourcePid: resolved.sourcePid,
+    sourceRunId: ctx.processRunId ?? null,
     targetPid: resolved.args.pid,
+    targetRunId: runId,
     deadlineAt,
   });
+
+  try {
+    await ctx.scheduleIpcCallTimeout(callId, deadlineAt);
+  } catch (error) {
+    ctx.ipcCalls.remove(callId);
+    return { ok: false, error: formatError(error) };
+  }
 
   let response: ResponseFrame | null;
   try {
@@ -426,6 +431,7 @@ export async function handleProcIpcCall(
       id: crypto.randomUUID(),
       call: "proc.ipc.deliver",
       args: {
+        runId,
         sourcePid: resolved.sourcePid,
         source: ctx.identity!.process,
         conversationId: resolved.args.conversationId,
@@ -435,7 +441,6 @@ export async function handleProcIpcCall(
         sentAt: Date.now(),
         call: {
           callId,
-          replyToPid: resolved.sourcePid,
           deadlineAt,
         },
       },
@@ -459,9 +464,18 @@ export async function handleProcIpcCall(
     ctx.ipcCalls.remove(callId);
     return delivered;
   }
+  if (delivered.runId !== runId) {
+    ctx.ipcCalls.remove(callId);
+    return { ok: false, error: "proc.ipc.deliver returned an unexpected runId" };
+  }
 
-  ctx.ipcCalls.attachRun(callId, delivered.runId);
-  await ctx.scheduleIpcCallTimeout(callId, timeoutMs);
+  const call = ctx.ipcCalls.get(callId);
+  if (Date.now() >= deadlineAt || call?.status === "timed_out") {
+    return {
+      ok: false,
+      error: call?.error ?? "IPC call timed out",
+    };
+  }
 
   return {
     ok: true,
@@ -470,7 +484,7 @@ export async function handleProcIpcCall(
     pid: delivered.pid,
     sourcePid: resolved.sourcePid,
     conversationId: delivered.conversationId,
-    runId: delivered.runId,
+    runId,
     deadlineAt,
     ...(delivered.queued ? { queued: true } : {}),
   };
@@ -518,8 +532,16 @@ export async function forwardToProcess(
   if (response && response.type === "res") {
     const res = response as ResponseFrame;
     if (res.ok) {
-      const conversation = ctx.conversations?.getByActivePid(pid);
+      const conversation = ctx.conversations.getByActivePid(pid);
+      if (frame.call === "proc.reset" || frame.call === "proc.kill") {
+        ctx.ipcCalls.cancelBySourcePid({ uid: proc.ownerUid, sourcePid: pid });
+      }
       if (frame.call === "proc.reset") {
+        ctx.failIpcCallsByTarget(
+          proc.ownerUid,
+          pid,
+          "Target process was reset",
+        );
         clearLatestArchiveForConversation(ctx, conversation);
       } else if (frame.call === "proc.conversation.reset") {
         const data = (res as { data?: { conversationId?: string } }).data;
@@ -527,6 +549,14 @@ export async function forwardToProcess(
           clearLatestArchiveForConversation(ctx, conversation);
         }
       } else if (frame.call === "proc.kill") {
+        if (proc.activeRunId) {
+          ctx.runRoutes.delete(proc.activeRunId);
+        }
+        ctx.failIpcCallsByTarget(
+          proc.ownerUid,
+          pid,
+          "Target process was killed",
+        );
         ctx.procs.kill(pid);
         // The executor is gone. Record where its conversation's transcript was
         // archived (so a future executor hydrates from it), then detach so the
@@ -538,12 +568,21 @@ export async function forwardToProcess(
             typeof a.path === "string" && a.path.replace(/^\/+/, "").startsWith(base),
           );
           if (primaryArchive?.path) {
-            ctx.conversations?.setLatestArchive(conversation.conversationId, primaryArchive.path);
+            ctx.conversations.setLatestArchive(conversation.conversationId, primaryArchive.path);
           }
         }
-        ctx.conversations?.clearActivePid(pid);
+        ctx.conversations.clearActivePid(pid);
       }
-      return (res as { data?: unknown }).data;
+      const data = (res as { data?: { runId?: unknown } }).data;
+      if (
+        frame.call === "proc.send"
+        && identity.role === "user"
+        && ctx.connection
+        && typeof data?.runId === "string"
+      ) {
+        ctx.runRoutes.setConnectionRoute(data.runId, proc.ownerUid, ctx.connection.id);
+      }
+      return data;
     } else {
       throw new Error((res as { error: { message: string } }).error.message);
     }
@@ -616,7 +655,7 @@ function clearLatestArchiveForConversation(
   conversation: { conversationId: string } | null | undefined,
 ): void {
   if (conversation) {
-    ctx.conversations?.setLatestArchive(conversation.conversationId, null);
+    ctx.conversations.setLatestArchive(conversation.conversationId, null);
   }
 }
 

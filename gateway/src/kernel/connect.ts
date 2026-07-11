@@ -85,6 +85,9 @@ export async function handleConnect(
   ctx: KernelContext,
 ): Promise<ConnectOutcome> {
   const { auth, caps, devices, serverVersion } = ctx;
+  if (!ctx.connection) {
+    throw new Error("sys.connect requires an active connection");
+  }
 
   if (args.protocol !== 1) {
     return { ok: false, code: 102, message: "Unsupported protocol version" };
@@ -281,8 +284,6 @@ function buildSignalList(role: string): string[] {
       return [...USER_CONNECTION_SIGNALS];
     case "driver":
       return ["device.status"];
-    case "service":
-      return ["adapter.status"];
     default:
       return [];
   }

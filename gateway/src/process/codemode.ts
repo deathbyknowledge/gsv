@@ -20,26 +20,6 @@ export { buildCodeModeMcpToolBindings } from "../codemode/mcp";
 export type { CodeModeMcpToolBinding } from "../codemode/mcp";
 
 export const CODE_MODE_EXECUTION_TIMEOUT_MS = 60_000;
-export const CODE_MODE_FETCH_MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
-
-export type CodeModeHostCall = SyscallName | typeof NET_FETCH;
-
-export type CodeModeToolRequest = (
-  call: CodeModeHostCall,
-  args: Record<string, unknown>,
-) => Promise<unknown>;
-
-export type CodeModeFetchResult = {
-  url: string;
-  status: number;
-  statusText: string;
-  headers: Array<[string, string]>;
-  bodyBase64: string;
-  redirected: boolean;
-};
-
-type FetchRedirectMode = "follow" | "error" | "manual";
-type CodeModeFetchHandler = (request: Request) => Promise<Response>;
 
 export type CodeModeExecutionOptions = {
   defaultTarget?: string;
@@ -129,22 +109,29 @@ export function buildCodeModeSource(
     }
     return bytes.buffer;
   };
-  const __fetchRedirectMode = (input, init) => {
-    if (__isObject(init) && typeof init.redirect === "string") return init.redirect;
-    if (__isObject(input) && typeof input.redirect === "string") return input.redirect;
-    return undefined;
-  };
   const __normalizeFetchRequest = async (input, init) => {
-    const request = new Request(input, init);
-    const redirect = __fetchRedirectMode(input, init);
+    const redirect = __isObject(init) && typeof init.redirect === "string"
+      ? init.redirect
+      : __isObject(input) && typeof input.redirect === "string"
+        ? input.redirect
+        : undefined;
+    const request = new Request(
+      input,
+      redirect === "error" ? { ...init, redirect: "manual" } : init,
+    );
     const method = request.method.toUpperCase();
     const bodyAllowed = method !== "GET" && method !== "HEAD";
     const normalized = {
       url: request.url,
       method,
-      headers: Array.from(request.headers.entries()),
+      headers: Object.fromEntries(request.headers.entries()),
+      redirect: redirect ?? request.redirect,
     };
-    if (redirect) normalized.redirect = redirect;
+    const target = __isObject(init) && typeof init.target === "string"
+      ? init.target
+      : __defaultTarget;
+    if (target !== null) normalized.target = target;
+    if (__isObject(init) && typeof init.timeoutMs === "number") normalized.timeoutMs = init.timeoutMs;
     if (bodyAllowed) normalized.bodyBase64 = __base64FromArrayBuffer(await request.arrayBuffer());
     return normalized;
   };
@@ -161,7 +148,7 @@ export function buildCodeModeSource(
     );
     try {
       Object.defineProperty(proxiedResponse, "url", { value: response.url });
-      Object.defineProperty(proxiedResponse, "redirected", { value: response.redirected });
+      Object.defineProperty(proxiedResponse, "redirected", { value: response.redirected === true });
     } catch {}
     return proxiedResponse;
   };
@@ -263,7 +250,7 @@ function looksLikeFunctionExpression(source: string): boolean {
 export async function executeCodeMode(
   env: Env,
   code: string,
-  requestTool: CodeModeToolRequest,
+  requestTool: (call: SyscallName, args: Record<string, unknown>) => Promise<unknown>,
   options?: CodeModeExecutionOptions,
 ): Promise<CodeModeExecResult> {
   const executor = new DynamicWorkerExecutor({
@@ -322,80 +309,6 @@ export async function executeCodeMode(
   return { status: "completed", result: response.result, logs };
 }
 
-export async function performCodeModeFetch(
-  args: Record<string, unknown>,
-  fetcher: CodeModeFetchHandler = (request) => fetch(request),
-  maxResponseBytes = CODE_MODE_FETCH_MAX_RESPONSE_BYTES,
-): Promise<CodeModeFetchResult> {
-  const request = buildCodeModeFetchRequest(args);
-  const response = await fetcher(request);
-  const body = await readLimitedResponseBody(response, maxResponseBytes);
-  return {
-    url: response.url,
-    status: response.status,
-    statusText: response.statusText,
-    headers: Array.from(response.headers.entries()),
-    bodyBase64: arrayBufferToBase64(body),
-    redirected: response.redirected,
-  };
-}
-
-async function readLimitedResponseBody(
-  response: Response,
-  maxBytes: number,
-): Promise<Uint8Array> {
-  const contentLength = parseContentLength(response.headers.get("content-length"));
-  if (contentLength !== null && contentLength > maxBytes) {
-    throw new Error(`fetch response body exceeds CodeMode limit of ${maxBytes} bytes`);
-  }
-  if (!response.body) {
-    return new Uint8Array();
-  }
-
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let totalBytes = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) {
-        break;
-      }
-      if (!value) {
-        continue;
-      }
-      totalBytes += value.byteLength;
-      if (totalBytes > maxBytes) {
-        await reader.cancel(`CodeMode fetch response exceeded ${maxBytes} bytes`);
-        throw new Error(`fetch response body exceeds CodeMode limit of ${maxBytes} bytes`);
-      }
-      chunks.push(value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-
-  const body = new Uint8Array(totalBytes);
-  let offset = 0;
-  for (const chunk of chunks) {
-    body.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return body;
-}
-
-function parseContentLength(value: string | null): number | null {
-  if (value === null) {
-    return null;
-  }
-  const trimmed = value.trim();
-  if (!/^\d+$/.test(trimmed)) {
-    return null;
-  }
-  const length = Number(trimmed);
-  return Number.isSafeInteger(length) ? length : null;
-}
-
 function toRecord(value: unknown, name: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${name} requires an object argument`);
@@ -408,69 +321,4 @@ function toOptionalRecord(value: unknown, name: string): Record<string, unknown>
     return {};
   }
   return toRecord(value, name);
-}
-
-function buildCodeModeFetchRequest(args: Record<string, unknown>): Request {
-  const url = typeof args.url === "string" ? args.url : "";
-  if (!url) {
-    throw new Error("fetch requires a url string");
-  }
-  const method = typeof args.method === "string" && args.method.trim()
-    ? args.method.trim().toUpperCase()
-    : "GET";
-  const headers = parseFetchHeaders(args.headers);
-  const bodyBase64 = typeof args.bodyBase64 === "string" ? args.bodyBase64 : "";
-  const redirect = parseFetchRedirect(args.redirect);
-  return new Request(url, {
-    method,
-    headers,
-    ...(redirect ? { redirect } : {}),
-    ...(bodyBase64 && method !== "GET" && method !== "HEAD"
-      ? { body: arrayBufferFromBase64(bodyBase64) }
-      : {}),
-  });
-}
-
-function parseFetchRedirect(value: unknown): FetchRedirectMode | undefined {
-  return value === "follow" || value === "error" || value === "manual"
-    ? value
-    : undefined;
-}
-
-function parseFetchHeaders(value: unknown): Headers {
-  const headers = new Headers();
-  if (!Array.isArray(value)) {
-    return headers;
-  }
-  for (const entry of value) {
-    if (!Array.isArray(entry) || entry.length !== 2) {
-      continue;
-    }
-    const [name, headerValue] = entry;
-    if (typeof name === "string" && typeof headerValue === "string") {
-      headers.append(name, headerValue);
-    }
-  }
-  return headers;
-}
-
-function arrayBufferToBase64(buffer: ArrayBuffer | ArrayBufferView): string {
-  const bytes = buffer instanceof ArrayBuffer
-    ? new Uint8Array(buffer)
-    : new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
-  let binary = "";
-  const chunkSize = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
-  }
-  return btoa(binary);
-}
-
-function arrayBufferFromBase64(base64: string): ArrayBuffer {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes.buffer;
 }

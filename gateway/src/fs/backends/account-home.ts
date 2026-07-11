@@ -17,7 +17,7 @@ import {
   type RipgitPathResult,
 } from "../ripgit/client";
 import { accountHomeRepoRef } from "../ripgit/repos";
-import { normalizePath } from "../utils";
+import { concatBytes, normalizePath } from "../utils";
 
 const DIRECTORY_MARKER = ".dir";
 const TEXT_DECODER = new TextDecoder();
@@ -184,13 +184,12 @@ class AccountHomeMountBackend implements MountBackend {
       throw new Error(`EISDIR: illegal operation on a directory, append '${normalized}'`);
     }
 
-    let current = "";
+    let current: Uint8Array<ArrayBufferLike> = new Uint8Array();
     if (await this.exists(normalized)) {
-      current = await this.readFile(normalized);
+      current = await this.readFileBuffer(normalized);
     }
-    const appended = TEXT_ENCODER.encode(current + TEXT_DECODER.decode(asBytes(content)));
     const relativePath = this.relativePathForOverlay(normalized);
-    await this.applyPut(relativePath, appended, `gsv: append ${relativePath}`);
+    await this.applyPut(relativePath, concatBytes(current, asBytes(content)), `gsv: append ${relativePath}`);
   }
 
   async exists(path: string): Promise<boolean> {

@@ -32,7 +32,7 @@ no separate workspace primitive.
   against the process current directory, not always `home`
 - [x] Let `proc.spawn` accept an explicit `cwd`
 - [x] Keep active conversation state in Process SQLite
-- [x] Archive reset/kill/compaction history under `/var/sessions/...` in R2
+- [x] Archive reset/kill/compaction history under the run-as agent's home in R2
 - [x] Keep prompt context in system/profile/home/process providers
 - [x] Keep skills in profile, home, and visible package `skills.d` sources
 - [ ] Surface richer archive/segment history in Files, Chat, or a process
@@ -227,23 +227,23 @@ Processes produce output; the kernel routes it to the right place based on conte
 - [x] `run_routes` table keyed by `runId` with route kind (`connection` | `adapter`) + TTL
 - [x] Capture route on `proc.send` from WS connections
 - [x] Capture route on adapter inbound -> `proc.send`
-- [x] Route process `chat.*` signals by `runId` (not `lastInboundContext`)
-- [x] Cleanup route on `chat.complete` and on connection close
+- [x] Route process `proc.run.*` signals by `runId` (not `lastInboundContext`)
+- [x] Cleanup route on `proc.run.finished` and on connection close
 - [ ] Add integration tests for run-route delivery/fallback behavior (TTL/store tests done)
 
 ## Conversation archival
 
-Active conversation is process RAM (SQLite in DO). Archived conversations should move to a
-versioned/searchable repo-backed archive. The current raw R2 blob archive is an interim
-implementation, not the target architecture.
+Active conversation state lives in Process SQLite. Exact transcript archives
+currently live in R2 under the run-as agent's home; searchable archive views
+remain future work.
 
-- [ ] Archive path convention: `/var/sessions/{username}/{processId}/{sessionId}.jsonl.gz`
-- [ ] `proc.reset` archives current conversation to the archive repo, starts fresh in the same process
-- [ ] `proc.kill` archives before destroying the Process DO
+- [x] Archive path convention: `/home/{agent}/conversations/{conversationId}/*.jsonl.gz`
+- [x] `proc.reset` archives conversations and starts fresh in the same process
+- [x] `proc.kill` archives before destroying the Process DO
 - [ ] Ephemeral processes (task/cron) auto-archive on completion, then kernel destroys the DO
 - [ ] Init process periodically compacts: summarize old messages, flush full transcript to the archive repo
 - [ ] Any process can load archived conversations through repo-backed retrieval
-- [ ] Create `/var/sessions/` directory structure on first boot / user creation
+- [ ] Add searchable archive views over home conversation transcripts
 
 ## Context assembly / process profiles
 
@@ -358,15 +358,15 @@ Kernel-internal process management. Not routable (no `target`).
 
 - [x] Message history storage (SQLite-backed via `ProcessStore`)
 - [x] Agent loop (`continueAgentLoop`: LLM call → tool dispatch → result collection → continue)
-- [x] `proc.send` — inject user message and start agent loop (or queue if busy)
+- [x] `proc.send` — direct users supersede active work; background origins queue
 - [x] `proc.reset` — archive messages to R2, clear conversation
 - [x] `proc.history` — return message history with limit/offset
-- [x] Message queue: FIFO with tool-result-boundary injection (drain queue before next LLM call)
-- [x] Signal delivery: `chat.text`, `chat.tool_call`, `chat.tool_result`, `chat.complete`
+- [x] Message queue: FIFO background-origin messages promoted as separate runs
+- [x] Signal delivery: `proc.run.*` and `proc.changed`
 - [x] Run state: per-run cache of ai.config, ai.tools, assembled prompt
 - [x] `kernelRpc` helper for synchronous kernel calls (ai.config, ai.tools)
 - [x] Reverse tool map: LLM tool name → syscall name
-- [ ] Token-level streaming (`streamSimple` + `chat.chunk` deltas)
+- [x] Token-level streaming through `proc.run.stream`
 - [ ] Context overflow handling / compaction
 - [ ] Max turns / loop safety limits
 
@@ -474,7 +474,7 @@ Orchestrated binary streaming between R2 and devices. Future work — port from 
 
 ## User management syscalls
 
-- [ ] `sys.useradd` — create passwd/shadow/group entries, home dir, init process, `/var/sessions/{user}/`
+- [ ] `sys.useradd` — create passwd/shadow/group entries, home dir, and init process
 - [ ] `sys.userdel` — remove user entries, kill init + children (uid 0 only)
 - [ ] `sys.usermod` — modify user groups, shell, home (uid 0 only)
 - [ ] `sys.passwd` — change password (own password or any as uid 0)
@@ -493,11 +493,10 @@ Orchestrated binary streaming between R2 and devices. Future work — port from 
 ## Signal infrastructure
 
 ### Kernel → client (outbound)
-- [ ] `chat.chunk` — LLM token streaming
-- [x] `chat.text` — assistant text at tool-call boundary (pre-dispatch)
-- [x] `chat.tool_call` — tool dispatched
-- [x] `chat.tool_result` — tool completed
-- [x] `chat.complete` — run finished (final text + usage)
+- [x] `proc.run.stream` — LLM streaming events
+- [x] `proc.run.output` — assembled assistant output
+- [x] `proc.run.tool.started` — tool dispatched
+- [x] `proc.run.finished` — run finished (final text + usage)
 - [ ] `process.exit` — process terminated
 - [ ] `device.status` — device online/offline
 - [ ] `channel.status` — channel connected/disconnected

@@ -83,25 +83,6 @@ fn process_chat_signal(
                 println!("\n[tool] {}", name);
             }
         }
-        "proc.run.tool.finished" => {
-            let tool_name = payload
-                .get("name")
-                .and_then(|value| value.as_str())
-                .unwrap_or("unknown");
-            let ok = payload
-                .get("ok")
-                .and_then(|value| value.as_bool())
-                .unwrap_or(false);
-            if ok {
-                println!("[tool result] {}: ok", tool_name);
-            } else {
-                let error = payload
-                    .get("error")
-                    .and_then(|value| value.as_str())
-                    .unwrap_or("unknown error");
-                eprintln!("[tool result] {}: {}", tool_name, error);
-            }
-        }
         "proc.run.finished" => {
             if let Some(error) = payload.get("error").and_then(|value| value.as_str()) {
                 eprintln!("\nError: {}", error);
@@ -447,11 +428,6 @@ pub(crate) async fn run_client(
                 completed.as_ref(),
             );
         }
-
-        wait_for_chat_complete(completed.as_ref(), debug_enabled, || {
-            client.connection().is_disconnected()
-        })
-        .await;
 
         print!("\n> ");
         let _ = io::stdout().flush();

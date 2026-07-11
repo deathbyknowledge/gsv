@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { env } from "cloudflare:workers";
 import { handleShellExec } from "./shell";
-import { handleFsCopy, handleFsRead, handleFsTransferReceive, handleFsTransferSend } from "./fs";
+import { handleFsCopy, handleFsRead, handleFsTransferReceive, handleFsTransferSend, handleFsWrite } from "./fs";
 import { parseBinaryFrame } from "@humansandmachines/gsv/protocol";
 import { sendFrameToProcess } from "../../shared/utils";
 import type { KernelContext } from "../../kernel/context";
@@ -119,6 +119,7 @@ function makeContext(options?: {
   getAppRunner?: KernelContext["getAppRunner"];
   scheduleIpcCallTimeout?: KernelContext["scheduleIpcCallTimeout"];
   scheduleScheduleWake?: KernelContext["scheduleScheduleWake"];
+  processRunId?: string;
   identity?: ProcessIdentity;
   aiRun?: (model: string, input: Record<string, unknown>) => Promise<unknown>;
   ripgit?: Fetcher;
@@ -126,6 +127,30 @@ function makeContext(options?: {
   const records = [...(options?.packages ?? [options?.pkg ?? makePackage()])];
   const identity = options?.identity ?? IDENTITY;
   const configValues = new Map<string, string>(Object.entries(options?.config ?? {}));
+  const defaultAuth = {
+    getPasswdByUid: vi.fn((uid: number) => uid === identity.uid
+      ? {
+        username: identity.username,
+        uid: identity.uid,
+        gid: identity.gid,
+        gecos: identity.username,
+        home: identity.home,
+        shell: "/bin/init",
+      }
+      : null),
+    getPasswdByUsername: vi.fn((username: string) => username === identity.username
+      ? {
+        username: identity.username,
+        uid: identity.uid,
+        gid: identity.gid,
+        gecos: identity.username,
+        home: identity.home,
+        shell: "/bin/init",
+      }
+      : null),
+    getPersonalAgentUid: vi.fn(() => null),
+    resolveGids: vi.fn(() => [...identity.gids]),
+  } as unknown as KernelContext["auth"];
   const findRecord = (packageId: string, scope?: InstalledPackageRecord["scope"]) => {
     const index = records.findIndex((record) =>
       record.packageId === packageId && (!scope || packageScopeKey(record.scope) === packageScopeKey(scope))
@@ -139,12 +164,20 @@ function makeContext(options?: {
       LOADER: { get() { throw new Error("LOADER should not be used in pkg shell tests"); } },
       ...(options?.aiRun ? { AI: { run: vi.fn(options.aiRun) } } : {}),
     } as unknown as Env,
-    auth: options?.auth ?? null as never,
-    caps: options?.caps ?? null as never,
+    auth: {
+      ...defaultAuth,
+      ...options?.auth,
+    } as KernelContext["auth"],
+    caps: options?.caps ?? {
+      resolve: vi.fn(() => []),
+    } as unknown as KernelContext["caps"],
     config: {
       get(key: string) {
         if (key === "config/server/name") return "gsv";
-        if (key === "config/server/version") return "0.3.3";
+        if (key === "config/server/version") return "0.4.0";
+        return configValues.get(key) ?? null;
+      },
+      getExplicit(key: string) {
         return configValues.get(key) ?? null;
       },
       set(key: string, value: string) {
@@ -174,6 +207,11 @@ function makeContext(options?: {
       },
       ...(options?.procs ?? {}),
     } as never,
+    conversations: {
+      create: vi.fn(() => ({ conversationId: "conv-1" })),
+      setActivePid: vi.fn(),
+      getByActivePid: vi.fn(() => null),
+    } as unknown as KernelContext["conversations"],
     packages: {
       list(opts?: { scopes?: readonly InstalledPackageRecord["scope"][] }) {
         if (!opts?.scopes) {
@@ -214,18 +252,25 @@ function makeContext(options?: {
       listFlows: vi.fn(() => []),
       deleteAccount: vi.fn(() => false),
     } as unknown as KernelContext["oauth"],
-    adapters: null as never,
+    adapters: {
+      identityLinks: { list: vi.fn(() => []) },
+      status: {
+        list: vi.fn(() => []),
+        listAll: vi.fn(() => []),
+      },
+    } as unknown as KernelContext["adapters"],
     runRoutes: null as never,
     schedules: options?.schedules,
     ipcCalls: options?.ipcCalls,
-    connection: null as never,
+    connection: null,
     identity: {
       role: "user",
       process: identity,
       capabilities: options?.capabilities ?? ["pkg.list", "repo.refs", "repo.log"],
     },
     processId: "task:pkg",
-    serverVersion: "0.3.3",
+    processRunId: options?.processRunId,
+    serverVersion: "0.4.0",
     getAppRunner: options?.getAppRunner,
     scheduleIpcCallTimeout: options?.scheduleIpcCallTimeout,
     scheduleScheduleWake: options?.scheduleScheduleWake,
@@ -252,6 +297,33 @@ describe("native shell execution", () => {
     expect(result.exitCode).toBe(7);
     expect(result.stderr).toContain("real failure");
     expect(result.error).toContain("real failure");
+  });
+
+  it("shares files with fs syscalls and reports UTF-8 byte sizes", async () => {
+    const ctx = makeContext();
+    const path = "/tmp/fs-cross-surface.txt";
+    await env.STORAGE.delete("tmp/fs-cross-surface.txt");
+
+    await expect(handleFsWrite({ path, content: "é" }, ctx)).resolves.toMatchObject({
+      ok: true,
+      size: 2,
+    });
+    await expect(handleShellExec({ input: `cat ${path}` }, ctx)).resolves.toMatchObject({
+      status: "completed",
+      stdout: "é",
+    });
+
+    await handleShellExec({ input: `printf 'from shell' > ${path}` }, ctx);
+    await expect(handleFsRead({ path }, ctx)).resolves.toMatchObject({
+      ok: true,
+      content: expect.stringContaining("from shell"),
+    });
+  });
+
+  it("preserves filesystem errors from fs.read", async () => {
+    const result = await handleFsRead({ path: "/tmp/does-not-exist" }, makeContext());
+
+    expect(result).toMatchObject({ ok: false, error: expect.stringContaining("ENOENT") });
   });
 
   it("uses the owning human's package scopes for agent-backed fs", async () => {
@@ -745,6 +817,7 @@ describe("proc native command", () => {
       cwd: IDENTITY.cwd,
       profile: "task",
       state: "running",
+      activeRunId: "parent-run",
       contextFiles: [],
       createdAt: 1,
     };
@@ -753,8 +826,8 @@ describe("proc native command", () => {
     });
     const ipcCalls = {
       create: vi.fn(),
+      get: vi.fn(() => ({ status: "pending", error: null })),
       remove: vi.fn(),
-      attachRun: vi.fn(),
     };
     const scheduleIpcCallTimeout = vi.fn(async () => "timeout-schedule");
 
@@ -769,7 +842,6 @@ describe("proc native command", () => {
         expect(req.args.metadata).toBeUndefined();
         expect(req.args.call).toEqual(expect.objectContaining({
           callId: expect.any(String),
-          replyToPid: "task:pkg",
           deadlineAt: expect.any(Number),
         }));
         return {
@@ -782,7 +854,7 @@ describe("proc native command", () => {
             pid,
             sourcePid: "task:pkg",
             conversationId: "default",
-            runId: "child-run",
+            runId: req.args.runId,
           },
         };
       }
@@ -812,12 +884,14 @@ describe("proc native command", () => {
         } as unknown as KernelContext["procs"],
         ipcCalls: ipcCalls as unknown as KernelContext["ipcCalls"],
         scheduleIpcCallTimeout,
+        processRunId: "parent-run",
       }),
     );
 
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("status=in_progress");
-    expect(result.stdout).toContain("run_id=child-run");
+    const createdCall = ipcCalls.create.mock.calls[0]?.[0];
+    expect(result.stdout).toContain(`run_id=${createdCall.targetRunId}`);
     expect(result.stdout).toContain("queued=false");
     expect(result.stdout).toContain('label="planning"');
     expect(spawn).toHaveBeenCalledWith(
@@ -831,12 +905,13 @@ describe("proc native command", () => {
     );
     expect(ipcCalls.create).toHaveBeenCalledWith(expect.objectContaining({
       sourcePid: "task:pkg",
+      sourceRunId: "parent-run",
       targetPid: spawnedPids[0],
+      targetRunId: expect.any(String),
       uid: IDENTITY.uid,
     }));
-    const callId = ipcCalls.create.mock.calls[0]?.[0]?.callId;
-    expect(ipcCalls.attachRun).toHaveBeenCalledWith(callId, "child-run");
-    expect(scheduleIpcCallTimeout).toHaveBeenCalledWith(callId, 600_000);
+    const callId = createdCall.callId;
+    expect(scheduleIpcCallTimeout).toHaveBeenCalledWith(callId, createdCall.deadlineAt);
   });
 
   it("rejects legacy profile selection in proc spawn", async () => {

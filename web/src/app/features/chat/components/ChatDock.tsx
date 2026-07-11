@@ -543,7 +543,11 @@ export function ChatDock({
     if (!hasActiveProcess) {
       return;
     }
-    abortProcess.mutate({ pid: activeProcessId });
+    const runId = runtime.activeRunId ?? pendingHil?.runId;
+    abortProcess.mutate({
+      pid: activeProcessId,
+      ...(runId ? { runId } : {}),
+    });
   };
 
   const decidePendingHil = (decision: ChatHilDecision, remember = false) => {

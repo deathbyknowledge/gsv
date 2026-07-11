@@ -63,6 +63,20 @@ export class RunRouteStore {
   ): AdapterRunRoute {
     const now = Date.now();
     const expiresAt = now + ttlMs;
+    this.sql.exec(
+      `DELETE FROM run_routes
+        WHERE route_kind = 'adapter'
+          AND adapter = ?
+          AND account_id = ?
+          AND surface_kind = ?
+          AND surface_id = ?
+          AND thread_id IS ?`,
+      adapter,
+      accountId,
+      surfaceKind,
+      surfaceId,
+      threadId ?? null,
+    );
     this.upsert({
       runId,
       routeKind: "adapter",

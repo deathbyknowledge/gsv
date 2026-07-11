@@ -9,7 +9,7 @@ import {
 } from "../../../kernel/proc-handlers";
 import { handleAccountList } from "../../../kernel/agents";
 import type { SyscallName } from "../../../syscalls";
-import type { ProcSpawnArgs } from "../../../syscalls/proc";
+import type { ProcSpawnArgs } from "@humansandmachines/gsv/protocol";
 import type { Frame } from "../../../protocol/frames";
 import { sendFrameToProcess } from "../../../shared/utils";
 import { parseDurationMs, requireCommandCapability, requireShellOptionValue } from "./common";

@@ -1,7 +1,7 @@
 import type {
   ProcAiConfigProfileRef,
   ProcAiConfigSnapshot,
-} from "../syscalls/proc";
+} from "@humansandmachines/gsv/protocol";
 
 export const PROCESS_AI_CONFIG_STORE_KEY = "aiConfigSnapshot";
 export const PROCESS_AI_CONFIG_KEY_PREFIX = "config/ai/";

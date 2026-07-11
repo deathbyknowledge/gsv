@@ -1,8 +1,8 @@
-import type { ConnectionIdentity } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "./context";
 import { resolveCallerOwnerUid } from "./context";
 import { hasCapability } from "./capabilities";
 import type {
+  ConnectionIdentity,
   ScheduleExpression,
   SchedulePrincipal,
   ScheduleRecord,
@@ -19,7 +19,7 @@ import type {
   ScheduleRunHistoryEntry,
   ScheduleRunResult,
   ScheduleTarget,
-} from "../syscalls/scheduler";
+} from "@humansandmachines/gsv/protocol";
 
 const DEFAULT_LIST_LIMIT = 100;
 const MAX_LIST_LIMIT = 500;
@@ -441,7 +441,7 @@ export function handleSchedulerList(
   args: SchedulerListArgs,
   ctx: KernelContext,
 ): SchedulerListResult {
-  const store = requireSchedulerStore(ctx);
+  const store = ctx.schedules;
   const callerOwnerUid = resolveCallerOwnerUid(ctx);
   const ownerUid = callerOwnerUid === 0 ? args.ownerUid : callerOwnerUid;
   const listed = store.list({
@@ -457,7 +457,7 @@ export async function handleSchedulerAdd(
   args: SchedulerAddArgs,
   ctx: KernelContext,
 ): Promise<SchedulerAddResult> {
-  const store = requireSchedulerStore(ctx);
+  const store = ctx.schedules;
   const now = Date.now();
   const expression = normalizeScheduleExpression(args.expression, ctx);
   const target = normalizeScheduleTarget(args.target);
@@ -485,7 +485,7 @@ export async function handleSchedulerUpdate(
   args: SchedulerUpdateArgs,
   ctx: KernelContext,
 ): Promise<SchedulerUpdateResult> {
-  const store = requireSchedulerStore(ctx);
+  const store = ctx.schedules;
   const existing = store.getStored(normalizeRequiredText(args.id, "schedule id"));
   if (!existing) {
     throw new Error(`Schedule not found: ${args.id}`);
@@ -513,7 +513,7 @@ export async function handleSchedulerUpdate(
   };
 
   const previousWakeId = existing.wakeScheduleId;
-  if (previousWakeId && ctx.cancelScheduleWake) {
+  if (previousWakeId) {
     await ctx.cancelScheduleWake(previousWakeId);
   }
 
@@ -527,14 +527,14 @@ export async function handleSchedulerRemove(
   args: SchedulerRemoveArgs,
   ctx: KernelContext,
 ): Promise<SchedulerRemoveResult> {
-  const store = requireSchedulerStore(ctx);
+  const store = ctx.schedules;
   const existing = store.getStored(normalizeRequiredText(args.id, "schedule id"));
   if (!existing) {
     return { removed: false };
   }
   assertCanManageSchedule(ctx.identity!, existing, resolveCallerOwnerUid(ctx));
   const removed = store.remove(existing.id);
-  if (removed?.wakeScheduleId && ctx.cancelScheduleWake) {
+  if (removed?.wakeScheduleId) {
     await ctx.cancelScheduleWake(removed.wakeScheduleId);
   }
   return { removed: true };
@@ -544,9 +544,6 @@ export async function handleSchedulerRun(
   args: SchedulerRunArgs,
   ctx: KernelContext,
 ): Promise<SchedulerRunResult> {
-  if (!ctx.runSchedules) {
-    throw new Error("sched.run scheduler backend is not configured");
-  }
   return ctx.runSchedules(args, ctx.identity!, resolveCallerOwnerUid(ctx));
 }
 
@@ -621,23 +618,13 @@ export function assertCanManageSchedule(
 }
 
 export async function armSchedule(ctx: KernelContext, record: ScheduleRecord): Promise<void> {
-  const store = requireSchedulerStore(ctx);
+  const store = ctx.schedules;
   if (!record.enabled || record.state.nextRunAtMs === null) {
     store.setWakeScheduleId(record.id, null);
     return;
   }
-  if (!ctx.scheduleScheduleWake) {
-    throw new Error("scheduler wake backend is not configured");
-  }
   const wakeId = await ctx.scheduleScheduleWake(record.id, record.state.nextRunAtMs);
   store.setWakeScheduleId(record.id, wakeId);
-}
-
-function requireSchedulerStore(ctx: KernelContext): ScheduleStore {
-  if (!ctx.schedules) {
-    throw new Error("scheduler store is not configured");
-  }
-  return ctx.schedules;
 }
 
 function principalFromContext(ctx: KernelContext): SchedulePrincipal {
@@ -757,9 +744,18 @@ function computeCronNextRunAt(
   afterMs: number,
 ): number {
   const fields = parseCronFields(expression.expr);
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: expression.timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  });
   let candidate = Math.floor(afterMs / 60_000) * 60_000 + 60_000;
   for (let scanned = 0; scanned < MAX_CRON_SCAN_MINUTES; scanned += 1) {
-    const local = zonedDateParts(candidate, expression.timezone);
+    const local = zonedDateParts(candidate, formatter);
     if (cronFieldsMatch(fields, local)) {
       return candidate;
     }
@@ -908,16 +904,7 @@ function cronFieldsMatch(fields: CronFields, local: ZonedDateParts): boolean {
   return dayMatches;
 }
 
-function zonedDateParts(ms: number, timezone: string): ZonedDateParts {
-  const formatter = new Intl.DateTimeFormat("en-US", {
-    timeZone: timezone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  });
+function zonedDateParts(ms: number, formatter: Intl.DateTimeFormat): ZonedDateParts {
   const parts = formatter.formatToParts(new Date(ms));
   const value = (type: string) => {
     const part = parts.find((entry) => entry.type === type)?.value;

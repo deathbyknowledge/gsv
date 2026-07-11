@@ -10,8 +10,7 @@
  * the run-as agent's home (conversation transcripts), not in the executor.
  */
 
-import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
-import type { ProcContextFile } from "../syscalls/proc";
+import type { ProcessIdentity, ProcContextFile } from "@humansandmachines/gsv/protocol";
 
 export type ProcessState = "idle" | "queued" | "running" | "waiting_tool" | "waiting_hil";
 

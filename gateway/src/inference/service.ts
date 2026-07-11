@@ -6,7 +6,7 @@ import type {
   ThinkingContent,
   ThinkingLevel,
 } from "@earendil-works/pi-ai";
-import type { AiConfigResult, AiTextGenerateOptions } from "../syscalls/ai";
+import type { AiConfigResult, AiTextGenerateOptions } from "@humansandmachines/gsv/protocol";
 import { completeWithWorkersAi, isWorkersAiProvider, streamWithWorkersAi } from "./workers-ai";
 import { withTimeout } from "./timeout";
 import { resolveModelThinkingLevel, resolvePiAiModel } from "./model-registry";
@@ -25,8 +25,6 @@ import {
   streamWithOpenAiCodexFetch,
 } from "./openai-codex";
 
-const GENERATION_SERVICE_MARKER = "__gsvGenerationService";
-
 const OPENROUTER_ATTR_HEADERS = {
   "HTTP-Referer": "https://gsv.space",
   "X-OpenRouter-Title": "GSV",
@@ -43,7 +41,6 @@ type GenerateRequest = {
 };
 
 type GenerationService = {
-  readonly [GENERATION_SERVICE_MARKER]: true;
   generate(request: GenerateRequest): Promise<AssistantMessage>;
   stream(request: GenerateRequest): AssistantMessageEventStream;
   generateText(request: GenerateRequest): Promise<string>;
@@ -270,7 +267,6 @@ export function createGenerationService(
   };
 
   return {
-    [GENERATION_SERVICE_MARKER]: true,
     generate,
     stream,
     async generateText(request: GenerateRequest): Promise<string> {
@@ -296,14 +292,6 @@ export function createGenerationService(
       throw new Error(describeGeneratedTextFailure(request, response));
     },
   };
-}
-
-export function isGenerationService(value: unknown): value is GenerationService {
-  return Boolean(
-    value &&
-    typeof value === "object" &&
-    (value as { [GENERATION_SERVICE_MARKER]?: unknown })[GENERATION_SERVICE_MARKER] === true,
-  );
 }
 
 function resolvePiAiTransportOptions(

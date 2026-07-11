@@ -709,11 +709,9 @@ function ownerUsername(ctx: KernelContext): string {
     throw new Error("identity is required");
   }
   const ownerUid = resolveCallerOwnerUid(ctx);
-  if (ctx.auth && typeof ctx.auth.getPasswdByUid === "function") {
-    const owner = ctx.auth.getPasswdByUid(ownerUid);
-    if (owner?.username) {
-      return owner.username;
-    }
+  const owner = ctx.auth.getPasswdByUid(ownerUid);
+  if (owner?.username) {
+    return owner.username;
   }
   return identity.username;
 }

@@ -8,7 +8,7 @@ import {
   handleSchedulerRun,
   handleSchedulerUpdate,
 } from "../../../kernel/scheduler";
-import type { SchedulerAddArgs, ScheduleTarget } from "../../../syscalls/scheduler";
+import type { SchedulerAddArgs, ScheduleTarget } from "@humansandmachines/gsv/protocol";
 import { requireCommandCapability, requireShellOptionValue } from "./common";
 
 export function buildSchedCommand(ctx: KernelContext) {

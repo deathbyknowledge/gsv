@@ -53,7 +53,6 @@ import { handleSysConfigGet, handleSysConfigSet } from "./sys/config";
 import { handleSysDeviceDelete, handleSysDeviceGet, handleSysDeviceList, handleSysDeviceUpdate } from "./sys/device";
 import { handleNetFetch } from "./net";
 import { handleSysBootstrap } from "./sys/bootstrap";
-import { handleSysUpdate as handleSysUpdateDirect } from "./sys/update";
 import { handleSysSetupAssist } from "./sys/setup-assist";
 import {
   handlePkgAdd,
@@ -197,7 +196,7 @@ export type DispatchDeps = {
     flags: number,
     payload?: Uint8Array,
   ) => void;
-  handleSysUpdate?: (args: SysUpdateArgs | undefined, ctx: KernelContext) => Promise<SysUpdateResult>;
+  handleSysUpdate: (args: SysUpdateArgs | undefined, ctx: KernelContext) => Promise<SysUpdateResult>;
 };
 
 export type DispatchResult =
@@ -205,7 +204,6 @@ export type DispatchResult =
   | { handled: false };
 
 const DEFAULT_DEVICE_TTL_MS = 60_000;
-const NATIVE_TARGET_SYSCALLS = new Set<SyscallName>(["ai.text.generate"]);
 
 export async function dispatch(
   frame: RequestFrame,
@@ -269,7 +267,7 @@ export async function dispatch(
     return routeToTarget(frame, routedTarget, origin, ctx, deps);
   }
 
-  if (target && !preservesNativeTarget(frame.call)) {
+  if (target && frame.call !== "ai.text.generate") {
     delete raw.target;
   }
 
@@ -278,10 +276,6 @@ export async function dispatch(
     handled: true,
     response: result,
   };
-}
-
-function preservesNativeTarget(call: SyscallName): boolean {
-  return NATIVE_TARGET_SYSCALLS.has(call);
 }
 
 async function dispatchNative(
@@ -312,14 +306,7 @@ async function dispatchNative(
         data = await handleFsSearch(frame.args, ctx);
         break;
       case "fs.copy":
-        data = await handleFsCopy(frame.args, ctx, {
-          requestDevice: deps.requestDevice,
-          allocateBinaryStreamId: deps.allocateBinaryStreamId,
-          startDeviceRequest: deps.startDeviceRequest,
-          registerBinaryRelay: deps.registerBinaryRelay,
-          receiveDeviceBinaryStream: deps.receiveDeviceBinaryStream,
-          sendDeviceBinaryFrame: deps.sendDeviceBinaryFrame,
-        });
+        data = await handleFsCopy(frame.args, ctx, deps);
         break;
       case "fs.transfer.stat":
         data = await handleFsTransferStat(frame.args, ctx);
@@ -333,17 +320,8 @@ async function dispatchNative(
 
       case "shell.exec":
         data = await handleShellExec(frame.args, ctx, {
-          fsCopyTransport: {
-            requestDevice: deps.requestDevice,
-            allocateBinaryStreamId: deps.allocateBinaryStreamId,
-            startDeviceRequest: deps.startDeviceRequest,
-            registerBinaryRelay: deps.registerBinaryRelay,
-            receiveDeviceBinaryStream: deps.receiveDeviceBinaryStream,
-            sendDeviceBinaryFrame: deps.sendDeviceBinaryFrame,
-          },
-          netFetchTransport: {
-            requestDevice: deps.requestDevice,
-          },
+          fsCopyTransport: deps,
+          netFetchTransport: deps,
         });
         break;
 
@@ -500,9 +478,7 @@ async function dispatchNative(
         data = await handleAiConfig(frame.args, ctx);
         break;
       case "ai.text.generate":
-        data = await handleAiTextGenerate(frame.args, ctx, {
-          requestDevice: deps.requestDevice,
-        });
+        data = await handleAiTextGenerate(frame.args, ctx, deps);
         break;
       case "ai.transcription.create":
         data = await handleAiTranscriptionCreate(frame.args, ctx);
@@ -529,7 +505,7 @@ async function dispatchNative(
         data = await handleSysBootstrap(frame.args, ctx);
         break;
       case "sys.update":
-        data = await (deps.handleSysUpdate ?? handleSysUpdateDirect)(frame.args, ctx);
+        data = await deps.handleSysUpdate(frame.args, ctx);
         break;
       case "sys.config.get":
         data = handleSysConfigGet(frame.args, ctx);

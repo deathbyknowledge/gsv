@@ -709,9 +709,6 @@ async function runPackageCommand(
   identity: ProcessIdentity,
   ctx: KernelContext,
 ): Promise<PackageCommandResult> {
-  if (!ctx.getAppRunner) {
-    throw new Error("package command runtime is unavailable");
-  }
   const commandName = entrypoint.command?.trim() || entrypoint.name;
   const routeBase = packageRouteBase(record.manifest.name);
   const runner = ctx.getAppRunner(identity.uid, record.packageId) as PackageRunnerStub;

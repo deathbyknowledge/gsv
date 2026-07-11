@@ -14,6 +14,7 @@ import type {
   AdapterDisconnectResult as AdapterDisconnectSyscallResult,
   AdapterInboundArgs,
   AdapterInboundSyscallResult,
+  InteractionOrigin,
   AdapterListArgs,
   AdapterListEntry,
   AdapterListResult,
@@ -23,24 +24,20 @@ import type {
   AdapterSendResult,
   AdapterStatusArgs,
   AdapterStatusResult,
-} from "../syscalls/adapter";
+  ProcessIdentity,
+} from "@humansandmachines/gsv/protocol";
 import { resolveCallerOwnerUid, type KernelContext } from "./context";
-import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { RequestFrame } from "../protocol/frames";
 import { sendFrameToProcess } from "../shared/utils";
-import type { InteractionOrigin } from "../syscalls/interaction-origin";
 import { isVisibleAdapterTarget } from "./adapter-targets";
 import { ensureDefaultConversationExecutor } from "./agents";
 import { canOwnerRunAsAccount } from "./account-access";
 import { isLocked } from "../auth/shadow";
-import { DEFAULT_CONVERSATION_ID } from "../process/conversations";
 import type { AdapterStatusRecord } from "./adapter-status";
 import type { IdentityLinkRecord } from "./identity-links";
 
 type AdapterServiceBinding = Fetcher & Partial<AdapterWorkerInterface>;
 type ProcSendData = {
-  ok?: boolean;
-  status?: string;
   runId?: string;
   queued?: boolean;
 };
@@ -55,16 +52,14 @@ type HilDecision = {
   decision: "approve" | "deny";
   remember: boolean;
 };
-type AdapterStatusReader = KernelContext["adapters"]["status"] & {
-  listAll?: () => AdapterStatusRecord[];
+export type AdapterHilRequest = {
+  requestId: string;
+  toolName: string;
+  syscall: string;
+  args: Record<string, unknown>;
 };
 
-function traceIdFromConfig(config: Record<string, unknown> | undefined): string {
-  const value = config?.__traceId;
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : "no-trace";
-}
-
-function resolveAdapterService(env: Env, adapter: string): AdapterServiceBinding | null {
+export function resolveAdapterService(env: Env, adapter: string): AdapterServiceBinding | null {
   const key = `CHANNEL_${adapter.trim().toUpperCase()}`;
   const binding = (env as unknown as Record<string, unknown>)[key];
   if (!binding) return null;
@@ -75,73 +70,85 @@ export async function handleAdapterConnect(
   args: AdapterConnectArgs,
   ctx: KernelContext,
 ): Promise<AdapterConnectSyscallResult> {
-  const adapter = args.adapter.trim();
+  const adapter = normalizeAdapterName(args.adapter);
   const accountId = args.accountId.trim();
-  const traceId = traceIdFromConfig(args.config);
 
   if (!adapter) return { ok: false, error: "adapter is required" };
   if (!accountId) return { ok: false, error: "accountId is required" };
-  console.log(`[adapter.connect:${traceId}] start adapter=${adapter} accountId=${accountId}`);
+  const ownerUid = requireAdapterControlOwnerUid(ctx, "adapter.connect");
 
   const service = resolveAdapterService(ctx.env, adapter);
   if (!service) {
-    console.error(`[adapter.connect:${traceId}] missing service binding adapter=${adapter}`);
     return { ok: false, error: `Adapter service unavailable: ${adapter}` };
   }
   if (typeof service.adapterConnect !== "function") {
-    console.error(`[adapter.connect:${traceId}] service missing adapterConnect() adapter=${adapter}`);
     return { ok: false, error: `Adapter service does not implement connect: ${adapter}` };
   }
 
-  let connectResult;
+  const needsOwnerClaim = adapterAccountNeedsOwnerClaim(ctx, adapter, accountId, ownerUid);
+  ctx.adapters.status.beginLifecycle(adapter, accountId);
   try {
-    connectResult = await service.adapterConnect(accountId, args.config);
-  } catch (error) {
-    console.error(
-      `[adapter.connect:${traceId}] service.adapterConnect threw adapter=${adapter} accountId=${accountId}`,
-      error,
-    );
-    throw error;
-  }
-  console.log(
-    `[adapter.connect:${traceId}] service.adapterConnect ok=${connectResult.ok === true} challenge=${Boolean(connectResult.challenge)}`,
-  );
-  if (!connectResult.ok) {
+    if (needsOwnerClaim) {
+      ctx.adapters.status.setOwner(adapter, accountId, ownerUid);
+    }
+    let connectResult;
+    try {
+      connectResult = await service.adapterConnect(accountId, args.config);
+    } catch (error) {
+      console.error(`[adapter.connect] failed adapter=${adapter} accountId=${accountId}`, error);
+      throw error;
+    }
+    if (!connectResult.ok) {
+      return {
+        ok: false,
+        error: connectResult.error,
+        challenge: connectResult.challenge,
+      };
+    }
+
+    const previous = ctx.adapters.status.get(adapter, accountId);
+    ctx.adapters.status.upsert(adapter, accountId, {
+      accountId,
+      connected: connectResult.connected ?? true,
+      authenticated: connectResult.authenticated ?? !connectResult.challenge,
+      mode: previous?.mode,
+      lastActivity: previous?.lastActivity,
+      error: undefined,
+      extra: previous?.extra,
+    });
+    const status = await refreshAdapterStatus(service, ctx, adapter, accountId);
+    const connected = status?.connected ?? connectResult.connected ?? true;
+    const authenticated =
+      status?.authenticated ?? connectResult.authenticated ?? !connectResult.challenge;
+
     return {
-      ok: false,
-      error: connectResult.error,
+      ok: true,
+      adapter,
+      accountId,
+      connected,
+      authenticated,
+      message: connectResult.message,
       challenge: connectResult.challenge,
     };
+  } finally {
+    ctx.adapters.status.endLifecycle(adapter, accountId);
   }
-
-  const status = await refreshAdapterStatus(service, ctx, adapter, accountId);
-  const connected = status?.connected ?? connectResult.connected ?? true;
-  const authenticated =
-    status?.authenticated ?? connectResult.authenticated ?? !connectResult.challenge;
-  console.log(
-    `[adapter.connect:${traceId}] complete adapter=${adapter} accountId=${accountId} connected=${connected} authenticated=${authenticated}`,
-  );
-
-  return {
-    ok: true,
-    adapter,
-    accountId,
-    connected,
-    authenticated,
-    message: connectResult.message,
-    challenge: connectResult.challenge,
-  };
 }
 
 export async function handleAdapterDisconnect(
   args: AdapterDisconnectArgs,
   ctx: KernelContext,
 ): Promise<AdapterDisconnectSyscallResult> {
-  const adapter = args.adapter.trim();
+  const adapter = normalizeAdapterName(args.adapter);
   const accountId = args.accountId.trim();
 
   if (!adapter) return { ok: false, error: "adapter is required" };
   if (!accountId) return { ok: false, error: "accountId is required" };
+
+  const ownerUid = requireAdapterControlOwnerUid(ctx, "adapter.disconnect");
+  if (ownerUid !== 0 && ctx.adapters.status.get(adapter, accountId)?.ownerUid !== ownerUid) {
+    throw new Error(`Permission denied: adapter account ${adapter}/${accountId}`);
+  }
 
   const service = resolveAdapterService(ctx.env, adapter);
   if (!service) {
@@ -151,27 +158,68 @@ export async function handleAdapterDisconnect(
     return { ok: false, error: `Adapter service does not implement disconnect: ${adapter}` };
   }
 
-  const result = await service.adapterDisconnect(accountId);
-  if (!result.ok) {
-    return { ok: false, error: result.error };
+  ctx.adapters.status.beginLifecycle(adapter, accountId);
+  try {
+    const result = await service.adapterDisconnect(accountId);
+    if (!result.ok) {
+      return { ok: false, error: result.error };
+    }
+
+    // Keep local status store conservative even if adapter status polling fails.
+    ctx.adapters.status.upsert(adapter, accountId, {
+      accountId,
+      connected: false,
+      authenticated: false,
+      mode: "disconnected",
+      lastActivity: Date.now(),
+    });
+    await refreshAdapterStatus(service, ctx, adapter, accountId);
+
+    return {
+      ok: true,
+      adapter,
+      accountId,
+      message: result.message,
+    };
+  } finally {
+    ctx.adapters.status.endLifecycle(adapter, accountId);
   }
+}
 
-  // Keep local status store conservative even if adapter status polling fails.
-  ctx.adapters.status.upsert(adapter, accountId, {
-    accountId,
-    connected: false,
-    authenticated: false,
-    mode: "disconnected",
-    lastActivity: Date.now(),
-  });
-  await refreshAdapterStatus(service, ctx, adapter, accountId);
+function adapterAccountNeedsOwnerClaim(
+  ctx: KernelContext,
+  adapter: string,
+  accountId: string,
+  ownerUid: number,
+): boolean {
+  const account = ctx.adapters.status.get(adapter, accountId);
+  if (account?.ownerUid != null) {
+    if (ownerUid !== 0 && account.ownerUid !== ownerUid) {
+      throw new Error(`Permission denied: adapter account ${adapter}/${accountId}`);
+    }
+    return false;
+  }
+  if (ownerUid === 0) {
+    return true;
+  }
+  const linkedUids = new Set(
+    ctx.adapters.identityLinks.listByAccount(adapter, accountId).map((link) => link.uid),
+  );
+  if (!account && linkedUids.size === 0) {
+    return true;
+  }
+  if (linkedUids.size !== 1 || !linkedUids.has(ownerUid)) {
+    throw new Error(`Permission denied: adapter account ${adapter}/${accountId}`);
+  }
+  return true;
+}
 
-  return {
-    ok: true,
-    adapter,
-    accountId,
-    message: result.message,
-  };
+function requireAdapterControlOwnerUid(ctx: KernelContext, syscall: string): number {
+  const identity = ctx.identity;
+  if (!identity || identity.role !== "user") {
+    throw new Error(`${syscall} requires a user identity`);
+  }
+  return resolveCallerOwnerUid(ctx);
 }
 
 export async function handleAdapterSend(
@@ -360,8 +408,7 @@ export function handleAdapterList(
     entries.set(adapter, adapterListEntry(adapter, service));
   }
 
-  const statusStore = ctx.adapters.status as AdapterStatusReader;
-  const statuses = visibleAdapterStatusRecords(ctx, undefined, undefined, statusStore);
+  const statuses = visibleAdapterStatusRecords(ctx);
 
   for (const status of statuses) {
     const adapter = normalizeAdapterName(status.adapter);
@@ -399,16 +446,16 @@ function visibleAdapterStatusRecords(
   ctx: KernelContext,
   adapterFilter?: string,
   accountIdFilter?: string,
-  statusStore: AdapterStatusReader = ctx.adapters.status,
 ): AdapterStatusRecord[] {
   const adapter = adapterFilter ? normalizeAdapterName(adapterFilter) : undefined;
   const accountId = accountIdFilter?.trim();
+  const statusStore = ctx.adapters.status;
 
   if (canSeeAllAdapterStatuses(ctx)) {
     if (adapter) {
       return statusStore.list(adapter, accountId);
     }
-    return typeof statusStore.listAll === "function" ? statusStore.listAll() : [];
+    return statusStore.listAll();
   }
 
   const accounts = visibleAdapterAccounts(ctx, adapter, accountId);
@@ -433,27 +480,28 @@ function visibleAdapterAccounts(
     return [];
   }
 
-  const links = ctx.adapters.identityLinks.list(resolveCallerOwnerUid(ctx));
+  const ownerUid = resolveCallerOwnerUid(ctx);
   const seen = new Set<string>();
   const accounts: Array<{ adapter: string; accountId: string }> = [];
-  for (const link of links) {
-    const linkAdapter = normalizeAdapterName(link.adapter);
-    const linkAccountId = link.accountId.trim();
-    if (!linkAdapter || !linkAccountId) {
-      continue;
-    }
-    if (adapter && linkAdapter !== adapter) {
-      continue;
-    }
-    if (accountId && linkAccountId !== accountId) {
-      continue;
-    }
-    const key = `${linkAdapter}\0${linkAccountId}`;
-    if (seen.has(key)) {
-      continue;
+  const add = (candidateAdapter: string, candidateAccountId: string): void => {
+    const normalizedAdapter = normalizeAdapterName(candidateAdapter);
+    const normalizedAccountId = candidateAccountId.trim();
+    const key = `${normalizedAdapter}\0${normalizedAccountId}`;
+    if (
+      !normalizedAdapter || !normalizedAccountId || seen.has(key)
+      || (adapter && normalizedAdapter !== adapter)
+      || (accountId && normalizedAccountId !== accountId)
+    ) {
+      return;
     }
     seen.add(key);
-    accounts.push({ adapter: linkAdapter, accountId: linkAccountId });
+    accounts.push({ adapter: normalizedAdapter, accountId: normalizedAccountId });
+  };
+  for (const status of ctx.adapters.status.listByOwner(ownerUid)) {
+    add(status.adapter, status.accountId);
+  }
+  for (const link of ctx.adapters.identityLinks.list(ownerUid)) {
+    add(link.adapter, link.accountId);
   }
   return accounts.sort((left, right) =>
     left.adapter.localeCompare(right.adapter) || left.accountId.localeCompare(right.accountId)
@@ -548,7 +596,7 @@ export async function handleAdapterInbound(
       return {
         ok: true,
         reply: {
-          text: renderAdapterHilReminder(pendingHil, message.surface.kind),
+          text: renderAdapterHilPrompt(pendingHil, message.surface.kind, "reminder"),
           replyToId: message.messageId,
         },
       };
@@ -574,7 +622,7 @@ export async function handleAdapterInbound(
     }
 
     const hilData = (hilResponse as { data?: { resumed?: boolean; pendingHil?: unknown } }).data;
-    const nextPendingHil = normalizePendingHil(hilData?.pendingHil);
+    const nextPendingHil = normalizeAdapterHilRequest(hilData?.pendingHil);
     if (!nextPendingHil && hilData?.resumed) {
       await setAdapterActivityForKernel(
         ctx.env,
@@ -590,7 +638,7 @@ export async function handleAdapterInbound(
       ...(nextPendingHil
         ? {
             reply: {
-              text: renderAdapterHilReminder(nextPendingHil, message.surface.kind),
+              text: renderAdapterHilPrompt(nextPendingHil, message.surface.kind, "reminder"),
               replyToId: message.messageId,
             },
           }
@@ -607,7 +655,6 @@ export async function handleAdapterInbound(
     };
   }
 
-  const incomingText = renderAdapterInboundText(message);
   const origin = adapterInteractionOrigin(adapter, accountId, message, actorId);
   const response = await sendFrameToProcess(pid, {
     type: "req",
@@ -615,7 +662,7 @@ export async function handleAdapterInbound(
     call: "proc.send",
     args: {
       pid,
-      message: incomingText,
+      message: message.text?.trim() || "",
       media: message.media,
       origin,
     },
@@ -683,16 +730,22 @@ export function handleAdapterStateUpdate(
     throw new Error("accountId is required");
   }
 
-  ctx.adapters.status.upsert(adapter, accountId, {
+  const status = ctx.adapters.status.upsert(adapter, accountId, {
     ...args.status,
     accountId,
   });
+  const uids = new Set([0]);
+  if (status.ownerUid !== null) {
+    uids.add(status.ownerUid);
+  }
+  for (const link of ctx.adapters.identityLinks.listByAccount(adapter, accountId)) {
+    uids.add(link.uid);
+  }
+  for (const uid of uids) {
+    ctx.broadcastToUserUid(uid, "adapter.status", { adapter, accountId });
+  }
 
   return { ok: true };
-}
-
-export function resolveAdapterServiceForKernel(env: Env, adapter: string): AdapterServiceBinding | null {
-  return resolveAdapterService(env, adapter);
 }
 
 function adapterNameFromBindingKey(key: string): string | null {
@@ -770,18 +823,11 @@ async function refreshAdapterStatus(
   }
 
   try {
-    console.log(`[adapter.status] refreshing adapter=${adapter} accountId=${accountId}`);
     const statuses = await service.adapterStatus(accountId);
     for (const status of statuses) {
       ctx.adapters.status.upsert(adapter, status.accountId, status);
     }
-    const exact = statuses.find((status) => status.accountId === accountId);
-    if (exact) {
-      console.log(
-        `[adapter.status] refreshed adapter=${adapter} accountId=${accountId} connected=${exact.connected} authenticated=${exact.authenticated}`,
-      );
-    }
-    return exact || null;
+    return statuses.find((status) => status.accountId === accountId) ?? null;
   } catch (error) {
     console.error(`[adapter.status] refresh failed adapter=${adapter} accountId=${accountId}`, error);
     return null;
@@ -839,10 +885,6 @@ function identityForUid(uid: number, ctx: KernelContext): ProcessIdentity | null
   };
 }
 
-async function ensureUserDefaultExecutor(identity: ProcessIdentity, ctx: KernelContext): Promise<string> {
-  return ensureDefaultConversationExecutor(ctx, identity);
-}
-
 async function resolveAdapterRoute(
   adapter: string,
   accountId: string,
@@ -866,7 +908,7 @@ async function resolveAdapterRoute(
     ctx.adapters.surfaceRoutes.clearRoute(adapter, accountId, surface.kind, surface.id);
   }
 
-  return ensureUserDefaultExecutor(userIdentity, ctx);
+  return ensureDefaultConversationExecutor(ctx, userIdentity);
 }
 
 async function handleAdapterCommand(args: {
@@ -1089,17 +1131,13 @@ function findRunnableAgent(selector: string, ownerUid: number, ctx: KernelContex
 }
 
 function listRunnableAgents(ownerUid: number, ctx: KernelContext): RunnableAgent[] {
-  const entries = typeof ctx.auth.getPasswdEntries === "function"
-    ? ctx.auth.getPasswdEntries()
-    : [];
+  const entries = ctx.auth.getPasswdEntries();
   const personalAgentUid = ctx.auth.getPersonalAgentUid(ownerUid);
   const agents: RunnableAgent[] = [];
 
   for (const entry of entries) {
     if (entry.uid !== personalAgentUid) {
-      const shadow = typeof ctx.auth.getShadowByUsername === "function"
-        ? ctx.auth.getShadowByUsername(entry.username)
-        : null;
+      const shadow = ctx.auth.getShadowByUsername(entry.username);
       if (!shadow || !isLocked(shadow)) {
         continue;
       }
@@ -1149,17 +1187,13 @@ async function spawnAdapterAgentProcess(
     cwd: agent.identity.cwd,
   });
 
-  let conversationId: string | undefined;
-  if (ctx.conversations) {
-    const conversation = ctx.conversations.create({
-      ownerUid,
-      agentUid: agent.identity.uid,
-      agentHome: agent.identity.home,
-      title: label,
-    });
-    conversationId = conversation.conversationId;
-    ctx.conversations.setActivePid(conversationId, pid);
-  }
+  const conversation = ctx.conversations.create({
+    ownerUid,
+    agentUid: agent.identity.uid,
+    agentHome: agent.identity.home,
+    title: label,
+  });
+  ctx.conversations.setActivePid(conversation.conversationId, pid);
 
   await sendFrameToProcess(pid, {
     type: "req",
@@ -1169,7 +1203,7 @@ async function spawnAdapterAgentProcess(
       pid,
       identity: agent.identity,
       interactive: true,
-      conversationId: conversationId ?? DEFAULT_CONVERSATION_ID,
+      conversationId: conversation.conversationId,
     },
   } as RequestFrame);
 
@@ -1222,18 +1256,7 @@ function adapterInteractionOrigin(
   };
 }
 
-function renderAdapterInboundText(message: AdapterInboundMessage): string {
-  return message.text?.trim() || "";
-}
-
-type PendingHilSummary = {
-  requestId: string;
-  toolName: string;
-  syscall: string;
-  args: Record<string, unknown>;
-};
-
-async function getPendingHil(pid: string): Promise<PendingHilSummary | null> {
+async function getPendingHil(pid: string): Promise<AdapterHilRequest | null> {
   const response = await sendFrameToProcess(pid, {
     type: "req",
     id: crypto.randomUUID(),
@@ -1246,10 +1269,13 @@ async function getPendingHil(pid: string): Promise<PendingHilSummary | null> {
   }
 
   const data = (response as { data?: { pendingHil?: unknown } }).data;
-  return normalizePendingHil(data?.pendingHil);
+  return normalizeAdapterHilRequest(data?.pendingHil);
 }
 
-function normalizePendingHil(value: unknown): PendingHilSummary | null {
+export function normalizeAdapterHilRequest(
+  value: unknown,
+  source: "pending" | "signal" = "pending",
+): AdapterHilRequest | null {
   if (!value || typeof value !== "object") {
     return null;
   }
@@ -1260,6 +1286,10 @@ function normalizePendingHil(value: unknown): PendingHilSummary | null {
     || typeof record.syscall !== "string"
     || !record.args
     || typeof record.args !== "object"
+    || (source === "signal" && (
+      typeof record.runId !== "string"
+      || typeof record.callId !== "string"
+    ))
   ) {
     return null;
   }
@@ -1285,16 +1315,21 @@ function parseHilDecision(text: string): HilDecision | null {
   return null;
 }
 
-function renderAdapterHilReminder(
-  pendingHil: PendingHilSummary,
+export function renderAdapterHilPrompt(
+  pendingHil: AdapterHilRequest,
   surfaceKind: AdapterSurface["kind"],
+  phase: "initial" | "reminder",
 ): string {
-  const action = summarizePendingHil(pendingHil);
+  const action = summarizeAdapterHilRequest(pendingHil);
   const responseLine = surfaceKind === "dm"
-    ? 'Reply "approve", "deny", or "approve always" to continue.'
+    ? phase === "initial"
+      ? 'Reply "approve" to continue, "approve always" to remember it for this conversation, or "deny" to stop this action.'
+      : 'Reply "approve", "deny", or "approve always" to continue.'
     : "Open Chat to approve or deny this action.";
   return [
-    "I’m waiting for confirmation before I can continue.",
+    phase === "initial"
+      ? "I need your confirmation before I can continue."
+      : "I’m waiting for confirmation before I can continue.",
     "",
     action,
     "",
@@ -1302,7 +1337,7 @@ function renderAdapterHilReminder(
   ].join("\n");
 }
 
-function summarizePendingHil(pendingHil: PendingHilSummary): string {
+function summarizeAdapterHilRequest(pendingHil: AdapterHilRequest): string {
   const path = typeof pendingHil.args.path === "string" ? pendingHil.args.path : "";
   const command = typeof pendingHil.args.input === "string" ? pendingHil.args.input : "";
 

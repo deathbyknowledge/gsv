@@ -25,6 +25,13 @@ export function normalizePath(path: string): string {
   return "/" + segments.join("/");
 }
 
+export function concatBytes(left: Uint8Array, right: Uint8Array): Uint8Array {
+  const output = new Uint8Array(left.length + right.length);
+  output.set(left);
+  output.set(right, left.length);
+  return output;
+}
+
 export type ModeDigits = { owner: number; group: number; other: number };
 
 export function parseMode(mode: string): ModeDigits {

@@ -1,3 +1,5 @@
+import { normalizeBase64Data } from "../shared/base64";
+
 export type AudioTranscriptionBinding = {
   run(model: string, input: Record<string, unknown>): Promise<unknown>;
 };
@@ -90,10 +92,4 @@ export function normalizeTranscriptionResponse(value: unknown): Omit<AudioTransc
     ...(language ? { language } : {}),
     ...(segments ? { segments } : {}),
   };
-}
-
-export function normalizeBase64Data(base64: string): string {
-  return base64.includes(",")
-    ? base64.slice(base64.indexOf(",") + 1)
-    : base64;
 }
