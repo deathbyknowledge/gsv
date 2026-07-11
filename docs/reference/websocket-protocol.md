@@ -1,7 +1,8 @@
 # WebSocket Protocol Reference
 
 Gateway control requests, responses, and signals use JSON text frames over
-`GET /ws`; transfer payloads may use binary frames.
+`GET /ws`. Requests and successful responses may attach a byte stream carried
+by binary frames.
 
 The current protocol is syscall-based:
 
@@ -39,6 +40,7 @@ For syscall arguments, result shapes, and domain behavior, see [Syscalls Referen
 | `id` | `string` | Yes | Request/response correlation ID |
 | `call` | `string` | Yes | Syscall name |
 | `args` | `object` | No | Syscall arguments |
+| `body` | `BodyDescriptor` | No | Attached request byte stream |
 
 ### Response Frame
 
@@ -74,6 +76,7 @@ Error:
 | `ok` | `boolean` | Yes | Success flag |
 | `data` | `unknown` | No | Present when `ok` is `true` |
 | `error` | `ErrorShape` | No | Present when `ok` is `false` |
+| `body` | `BodyDescriptor` | No | Attached byte stream; only valid when `ok` is `true` |
 
 ### Signal Frame
 
@@ -143,7 +146,7 @@ The gateway rejects setup-mode connections with error code `425` and details:
   "id": "uuid",
   "call": "sys.connect",
   "args": {
-    "protocol": 1,
+    "protocol": 2,
     "client": {
       "id": "client-123",
       "version": "0.1.0",
@@ -160,7 +163,7 @@ The gateway rejects setup-mode connections with error code `425` and details:
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `protocol` | `number` | Yes | Must currently be `1` |
+| `protocol` | `number` | Yes | Must currently be `2` |
 | `client.id` | `string` | Yes | Client identifier |
 | `client.version` | `string` | Yes | Client version |
 | `client.platform` | `string` | Yes | Platform string |
@@ -179,7 +182,7 @@ The gateway rejects setup-mode connections with error code `425` and details:
   "id": "uuid",
   "ok": true,
   "data": {
-    "protocol": 1,
+    "protocol": 2,
     "server": {
       "version": "dev",
       "connectionId": "conn-123"
@@ -272,17 +275,38 @@ Service connections receive no ambient signals. Adapter workers report state thr
 
 ---
 
-## Binary Frames
+## Frame Bodies
 
-Binary transfers use this format:
+A request or successful response announces its body in the JSON frame before
+the binary chunks:
+
+```json
+{
+  "body": {
+    "streamId": 42,
+    "length": 1048576
+  }
+}
+```
+
+`streamId` is a non-zero unsigned 32-bit integer chosen by the sender.
+`length` is optional in the protocol, but operations that require an exact
+size may require it. Error responses and signals cannot carry bodies.
+
+Each following binary frame uses this format:
+
 
 ```text
 [4 bytes little-endian stream id][1 byte flags][raw chunk bytes]
 ```
 
-Flags identify data, end, and error frames. `fs.transfer.send` and
-`fs.transfer.receive` establish public binary streams; ordinary request,
-response, and signal traffic remains JSON text frames.
+The stream ID links each chunk to its JSON descriptor. Flags identify data,
+end, and error frames. The sender emits the JSON descriptor first, then zero or
+more data frames, and finally an end or error frame.
+
+`fs.transfer.receive` uses a request body and `fs.transfer.send` returns a
+response body. The same primitive is available to other syscalls without
+adding syscall-specific stream IDs.
 
 ## See also
 
